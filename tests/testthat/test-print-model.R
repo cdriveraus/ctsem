@@ -64,3 +64,28 @@ test_that("matrices can be suppressed for a model too large to read", {
   expect_false(grepl("DRIFT", text))
   expect_match(text, "ctModelMatrices")
 })
+
+# A fit gained a second class ('ctFit') after 3.11.1, which turned every
+# `class(x) %in% ...` condition into a length-two logical and so into an error
+# under R >= 4.2. The bundled ctstantestfit was saved before that change and
+# carries one class, so no test using it can catch this; the classes are set
+# explicitly here for that reason. `R CMD check --run-donttest` caught it as an
+# error inside plot(fit).
+test_that("post-fit functions accept a fit carrying both of its classes", {
+  skip_on_cran()
+  data("ctstantestfit", package = "ctsem")
+  fit <- ctstantestfit
+  class(fit) <- c("ctStanFit", "ctFit")
+  expect_length(class(fit), 2L)
+
+  # Each of these read the class with a membership test and errored with
+  # "the condition has length > 1".
+  expect_error(suppressWarnings(suppressMessages(ctPlotPosterior(fit))),
+    regexp = NA)
+  expect_error(suppressWarnings(suppressMessages(
+    ctModelLatex(fit, folder = tempdir(), open = FALSE, compile = FALSE))),
+    regexp = NA)
+
+  # And the guard still refuses something that is neither.
+  expect_error(ctPlotPosterior(list(a = 1)), regexp = "ctStanFit")
+})
