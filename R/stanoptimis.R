@@ -318,63 +318,6 @@ handleParstepsAutoModel <- function(parsteps, parstepsAutoModel, optimArgs, stan
   return(parsteps)
 }
 
-# # Function to handle automatic parameter stepwise freeing
-# handleParstepsAutoModel <- function(parsteps, optimArgs, standata, sm, clctsem, cores, 
-#   groupFreeThreshold, tol, stochasticTolAdjust, verbose) {
-#   
-#   if (parstepsAutoModel %in% TRUE) {
-#     # --------------------------------------------------
-#     # Automatic stepwise freeing based on improvement thresholds
-#     currentFixed <- parsteps[[1]]
-#     improvement_threshold <- 1.96   # deltaLL must exceed this
-#     
-#     continueFreeing <- TRUE
-#     while (continueFreeing && length(currentFixed) > 0) {
-#       # Compute expected improvement for each candidate parameter
-#       impr <- sapply(currentFixed, function(idx) {
-#         pvec <- optimArgs$init
-#         grad <- attributes(optimArgs$lpgFunc(pvec))$gradient
-#         # helper: finite-difference Hessian diagonal
-#         jacPars <- function(pars, step = 1e-3, whichpars) {
-#           sapply(whichpars, function(idx) {
-#             pf <- pars; pb <- pars
-#             pf[idx] <- pf[idx] + step
-#             pb[idx] <- pb[idx] - step
-#             gf <- attributes(optimArgs$lpgFunc(pf))$gradient[idx]
-#             gb <- attributes(optimArgs$lpgFunc(pb))$gradient[idx]
-#             (gf - gb) / (2 * step)
-#           })
-#         }
-#         h <- jacPars(pvec, step = 1e-6, whichpars = idx)
-#         if (is.na(h) || h >= 0) h <- -1e-6
-#         0.5 * (grad[idx]^2 / abs(h))
-#       })
-#       
-#       # Find best candidate
-#       if (all(impr < improvement_threshold)) {
-#         message("No parameters exceed improvement threshold; stopping.")
-#         break
-#       }
-#       
-#       best_param <- currentFixed[which.max(impr)]
-#       message(sprintf("Freeing parameter %d (expected improvement: %.2f)", best_param, max(impr)))
-#       
-#       # Update fixed set
-#       currentFixed <- setdiff(currentFixed, best_param)
-#       
-#       # Refit with new parameter freed
-#       optimArgs$whichignore <- currentFixed
-#       iter <- 0
-#       optimfit <- do.call(ctOptim, optimArgs)
-#       optimArgs$init[-currentFixed] <- optimfit$par
-#     }
-#     
-#     parsteps <- currentFixed
-#   }
-#   
-#   return(parsteps)
-# }
-
 # Function to handle group-level parameter stepwise freeing
 handleGroupParstepsAutoModel <- function(parsteps, parstepsAutoModel,optimArgs, standata, sm, clctsem, cores, 
   groupFreeThreshold, tol, stochasticTolAdjust, verbose) {
@@ -1285,7 +1228,7 @@ imis_is <- function(parlp,
 #' @param parsteps ordered list of vectors of integers denoting which parameters should begin fixed
 #' at zero, and freed sequentially (by list order). Useful for complex models, e.g. keep all cross couplings fixed to zero 
 #' as a first step, free them in second step. 
-#' @param parstepsAutoModel if TRUE, determines model structure for the parameters specified in parsteps automatically. If 'group', determines this on a group level first and then a subject level. Primarily for internal ctsem use, see \code{?ctFitAuto}.
+#' @param parstepsAutoModel if TRUE, determines model structure for the parameters specified in parsteps automatically. If 'group', determines this on a group level first and then a subject level. Primarily for internal ctsem use.
 #' @param groupFreeThreshold threshold for determining whether a parameter is free in a group level model. If the proportion of subjects with a non-zero parameter is above this threshold, the parameter is considered free. Only used with parstepsAutoModel = 'group'.
 #' @param matsetup subobject of ctStanFit output. If provided, parameter names instead of numbers are output for any problem indications.
 #' @param nsubsets number of subsets for stochastic optimizer. Subsets are further split across cores, 
