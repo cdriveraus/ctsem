@@ -172,6 +172,42 @@ test_that("a sampled fit keeps the exact Hessian it was built from", {
   expect_true(is.finite(sampled$identifiability$condition))
 })
 
+test_that("processes = TRUE reproduces the in-process draws to numerical noise", {
+  skip_on_cran()
+  skip_without_julia()
+  fit <- .sample_fixture()
+
+  # `.ctBackendSampleProcesses`'s own comment: `seed + k - 1` makes each
+  # worker draw the stream the in-process chain would have used, so with
+  # `warmup = 0` -- the first kept draw sitting as near the shared start as
+  # the sampler ever gets -- the two routes should agree to numerical noise,
+  # not bit for bit: measured there at 6.2e-10 on the first draw. A normal
+  # warmup lets NUTS's chaos carry the difference to order 1 within a few
+  # dozen transitions, which is why this stays at `warmup = 0`.
+  inprocess <- suppressWarnings(suppressMessages(
+    ctSample(fit, chains = 2, warmup = 0, draws = 3, cores = 2, seed = 777,
+      processes = FALSE)))
+  viaprocess <- suppressWarnings(suppressMessages(
+    ctSample(fit, chains = 2, warmup = 0, draws = 3, cores = 2, seed = 777,
+      processes = TRUE)))
+
+  expect_false(isTRUE(inprocess$sample$processes))
+  # If the workers could not be used -- in particular, a `future` worker
+  # cannot load an uninstalled development tree, so this is the expected
+  # outcome under `devtools::load_all()` -- sampling silently falls back to
+  # the in-process path, and comparing that fallback against itself would
+  # trivially "pass" without checking anything. Skip rather than pass
+  # silently; an installed library, as `R CMD check` uses, takes the branch
+  # this test is for.
+  skip_if_not(isTRUE(viaprocess$sample$processes),
+    "processes = TRUE fell back to in-process sampling in this session")
+
+  expect_equal(dim(viaprocess$estimate$rawposterior),
+    dim(inprocess$estimate$rawposterior))
+  expect_equal(viaprocess$estimate$rawposterior,
+    inprocess$estimate$rawposterior, tolerance = 1e-6)
+})
+
 test_that("ctSample refuses what it cannot sample", {
   skip_on_cran()
   skip_without_julia()
