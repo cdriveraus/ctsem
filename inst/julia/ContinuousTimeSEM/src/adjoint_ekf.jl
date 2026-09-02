@@ -758,8 +758,13 @@ function _reverse_update!(x̄::Vector{T}, P̄::Matrix{T}, Θ̄::Matrix{T}, θ̄c
     # engine's own Cholesky plus `m` triangular solves is the same inverse
     # without the lock. See `small_linalg.jl`.
     copyto!(mm2, S)
-    if _ctsem_cholesky!(mm2, m)
-        F = CTSEMCholesky(mm2, m, true)
+    # The same size ternary the forward uses (`kalman_filters.jl`): above
+    # `_CTSEM_SMALL_CHOLESKY` LAPACK's blocking earns its lock back, and using a
+    # different factorization from the forward's is itself a way for the reverse
+    # to decline an `S` the forward accepted.
+    F = m <= _CTSEM_SMALL_CHOLESKY[] ? _ctsem_cholesky(mm2, m) :
+        cholesky!(mm2, check=false)
+    if issuccess(F)
         @inbounds for j in 1:m
             column = view(Sinv, :, j)
             fill!(column, zero(T))
