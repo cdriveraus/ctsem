@@ -116,17 +116,7 @@ ctLaplaceCheck <- function(fit, nodes = 5L, correction = TRUE, step = 1e-3,
     on.exit(.ctBackendRestoreMaxChunks(previous), add = TRUE)
   }
 
-  if (verbose > 0) message("Quadrature at the estimate (", nodes, " nodes)")
-  quadrature <- .ctBackendJuliaValue(module$ctsem_laplace_quadrature(
-    objective, .ctJuliaNumericVector(est), nodes = as.integer(nodes))$value)
-  laplacevalue <- .ctBackendJuliaValue(module$ctsem_laplace_evaluate(
-    objective, .ctJuliaNumericVector(est), gradient = FALSE)$value)
   nsubjects <- length(fit$model_spec$subject_starts)
-  out <- list(gap = quadrature - laplacevalue,
-    quadrature = quadrature, laplace = laplacevalue,
-    gap_per_subject = (quadrature - laplacevalue) / max(1L, nsubjects),
-    nodes = as.integer(nodes), nsubjects = nsubjects)
-  class(out) <- "ctLaplaceCheck"
 
   # Where `ctOptimUncertainty()` leaves it. A `fit$stanfit$uncertainty$hessian`
   # fallback used to sit here "so this reads either without the caller knowing
@@ -134,19 +124,42 @@ ctLaplaceCheck <- function(fit, nodes = 5L, correction = TRUE, step = 1e-3,
   # not a ctJuliaFit thirty lines above, and nothing ever puts a `$stanfit` on
   # one, so the fallback could not fire.
   hessian <- fit$uncertainty$hessian
-  if (!correction) return(out)
-  if (is.null(hessian)) {
+  if (isTRUE(correction) && is.null(hessian)) {
     warning("No Hessian on the fit, so the correction cannot be formed. ",
       "Run ctOptimUncertainty(fit) first, or use correction=FALSE.",
       call. = FALSE)
-    return(out)
+  }
+  do_correction <- isTRUE(correction) && !is.null(hessian)
+
+  if (do_correction) {
+    # `ctsem_laplace_correction` makes this same quadrature and Laplace
+    # evaluation itself and returns both, along with their difference -- so
+    # take `quadrature`, `laplace` and `gap` from its result rather than
+    # evaluating both a second time. The `correction=FALSE` path below still
+    # needs to make these two calls itself.
+    if (verbose > 0) message("Gap gradient (", 2 * length(est), " quadrature evaluations)")
+    result <- JuliaConnectoR::juliaGet(module$ctsem_laplace_correction(
+      objective, .ctJuliaNumericVector(est),
+      JuliaConnectoR::juliaPut(as.matrix(hessian)),
+      nodes = as.integer(nodes), step = as.numeric(step)))
+    quadrature <- as.numeric(result$quadrature)
+    laplacevalue <- as.numeric(result$laplace)
+    gap <- as.numeric(result$gap)
+  } else {
+    if (verbose > 0) message("Quadrature at the estimate (", nodes, " nodes)")
+    quadrature <- .ctBackendJuliaValue(module$ctsem_laplace_quadrature(
+      objective, .ctJuliaNumericVector(est), nodes = as.integer(nodes))$value)
+    laplacevalue <- .ctBackendJuliaValue(module$ctsem_laplace_evaluate(
+      objective, .ctJuliaNumericVector(est), gradient = FALSE)$value)
+    gap <- quadrature - laplacevalue
   }
 
-  if (verbose > 0) message("Gap gradient (", 2 * length(est), " quadrature evaluations)")
-  result <- JuliaConnectoR::juliaGet(module$ctsem_laplace_correction(
-    objective, .ctJuliaNumericVector(est),
-    JuliaConnectoR::juliaPut(as.matrix(hessian)),
-    nodes = as.integer(nodes), step = as.numeric(step)))
+  out <- list(gap = gap, quadrature = quadrature, laplace = laplacevalue,
+    gap_per_subject = gap / max(1L, nsubjects),
+    nodes = as.integer(nodes), nsubjects = nsubjects)
+  class(out) <- "ctLaplaceCheck"
+
+  if (!do_correction) return(out)
   covariance <- fit$estimate$cov
   se <- sqrt(abs(diag(as.matrix(covariance))))
   delta <- as.numeric(result$delta)

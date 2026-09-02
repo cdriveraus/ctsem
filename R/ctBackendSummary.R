@@ -307,8 +307,13 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   if (isTRUE(subjectMatrices)) {
     spec <- .ctBackendKalmanSpec(object, subjects = subjects)
     computed <- lapply(seq_len(nrow(samples)), function(iteration) {
+      # Only `subject_matrices` is read below, which `fields` does not gate --
+      # it is assembled separately from the filter trace regardless of which
+      # named arrays are requested. The bridge cannot marshal a zero-length
+      # vector, so `fields` still needs one name; `subject_loglik` is the
+      # smallest of the eight.
       scores <- try(.ctBackendKalmanRaw(spec, samples[iteration, ],
-        subjectmatrices = TRUE), silent = TRUE)
+        subjectmatrices = TRUE, fields = "subject_loglik"), silent = TRUE)
       if (inherits(scores, "try-error")) NULL else scores$subject_matrices
     })
     admissable <- !vapply(computed, is.null, logical(1L))

@@ -252,7 +252,8 @@ ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
 # Each row's log likelihood at a given raw parameter vector, from the filter.
 .ctBackendRowLoglik <- function(fit, pars) {
   spec <- .ctBackendAsModel(.ctBackendSpec(fit))
-  as.numeric(.ctBackendKalmanRaw(spec, pars, subjectmatrices = FALSE)$llrow)
+  as.numeric(.ctBackendKalmanRaw(spec, pars, subjectmatrices = FALSE,
+    fields = "llrow")$llrow)
 }
 
 .ctBackendLOO <- function(fit, folds, cores, tol, subjectwise, keepfirstobs,
