@@ -13,6 +13,7 @@ Optim = "429524aa-4258-5aef-a3af-852621145aeb"
 PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 
 [compat]
@@ -25,6 +26,7 @@ Optim = "1.10.0"
 PrecompileTools = "1.2"
 Printf = "1.11.0"
 Random = "1.11.0"
+Sockets = "1.11.0"
 SpecialFunctions = "2"
 
 [extras]

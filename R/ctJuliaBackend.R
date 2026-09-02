@@ -317,6 +317,7 @@ ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
       "; Pkg.resolve(io=devnull); ", quiet_instantiate)))
   }
   JuliaConnectoR::juliaEval("using ContinuousTimeSEM")
+  .ctJuliaTuneBridge()
   .ct_julia_cache$project <- project
   .ct_julia_cache$engine <- engineversion
   .ct_julia_cache$module <- JuliaConnectoR::juliaImport("ContinuousTimeSEM")
@@ -360,6 +361,70 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     engine = .ctJuliaOr(.ct_julia_cache$engine,
       tryCatch(.ctJuliaEngineVersion(), error = function(e) NA_character_)),
     threads = threads)
+}
+
+# The socket the bridge runs on ----------------------------------------------
+#
+# JuliaConnectoR sends every message as a run of small writes -- an indicator
+# byte, a length, a name, a count, then each argument -- and reads the reply the
+# same way. On Linux that write-write-read pattern meets Nagle's algorithm on
+# the sending side and a delayed ACK on the receiving side, and the second write
+# waits up to 40 ms for an acknowledgement the kernel is deliberately holding
+# back. Measured on a bare socket with neither Julia nor R packages in the way
+# (23-core Linux box): one write per request 0.033 ms, two writes 40.7 ms, eight
+# writes 40.8 ms. One stall per message, independent of payload.
+#
+# That is the whole of what looked like a per-round-trip latency. A bridge
+# message cost 41 ms when one direction split into several writes and 82 ms when
+# both did, which made `ctJuliaEvaluate` ~370 ms and read as "about nine round
+# trips of 42 ms". It sends six messages, not nine, and the unit is a TCP stall
+# rather than a round trip. (Six: marshal the parameter vector, release the
+# proxies R collected since the last call, evaluate, then three for `juliaGet`,
+# which sets a flag, fetches, and unsets it.)
+#
+# `ctsem_tune_bridge!` in the engine turns both halves off. Same box, per
+# message: 82 ms untuned, 41 ms with Nagle disabled, 2.5 ms with the quickack
+# task as well. Windows and macOS are unaffected either way -- Windows measures
+# ~0.3 ms a message untuned, and TCP_QUICKACK does not exist there.
+#
+# Everything here is advisory: a failure costs the tuning, never the session.
+.ctJuliaCommunicator <- function() {
+  # The Julia object that owns the socket. JuliaConnectoR keeps it in a
+  # package-private environment and passes it to Julia itself when a call needs
+  # it -- `juliaGet` does exactly this. `asNamespace` rather than `:::` because
+  # the latter is an R CMD check note, and the tryCatch is for the day the name
+  # changes.
+  tryCatch({
+    local_env <- get("pkgLocal", envir = asNamespace("JuliaConnectoR"))
+    communicator <- local_env$communicator
+    if (inherits(communicator, "JuliaProxy")) communicator else NULL
+  }, error = function(e) NULL)
+}
+
+.ctJuliaTuneBridge <- function() {
+  # `ctsem.julia.tunebridge = FALSE` leaves the socket exactly as JuliaConnectoR
+  # opened it. It exists as an escape hatch and as the control arm for measuring
+  # what the tuning is worth: the options are set on the connection, so an A/B
+  # needs two sessions rather than a switch inside one.
+  if (!isTRUE(getOption("ctsem.julia.tunebridge", TRUE))) return(invisible(NA_integer_))
+  # `ctsem.julia.quickack` is how often the Julia task re-arms TCP_QUICKACK, in
+  # seconds; zero or less asks for no task at all, which leaves the Nagle half of
+  # the fix in place and the R->Julia half not. Floored at 0.1 ms rather than
+  # taken literally: the task's `sleep` becomes a spin below that, and the stall
+  # it is removing is 40 ms, so there is nothing to win by asking for less.
+  interval <- getOption("ctsem.julia.quickack", 0.001)
+  if (!is.numeric(interval) || length(interval) != 1L || is.na(interval)) {
+    interval <- 0.001
+  } else if (interval > 0) {
+    interval <- max(interval, 1e-4)
+  }
+  communicator <- .ctJuliaCommunicator()
+  if (is.null(communicator)) return(invisible(NA_integer_))
+  out <- tryCatch(as.integer(.ctBackendJuliaValue(JuliaConnectoR::juliaCall(
+    "ContinuousTimeSEM.ctsem_tune_bridge!", communicator,
+    quickack_interval = as.numeric(interval)))),
+    error = function(e) NA_integer_)
+  invisible(out)
 }
 
 .ctJuliaModule <- function(project = NULL) {

@@ -52,6 +52,9 @@ include("small_linalg.jl")
 include("parameters.jl")
 include("constrain_cor_sqrt.jl")
 include("r_interface.jl")
+# Socket options for the R bridge. No engine code depends on it, so it can sit
+# anywhere; here it is beside the rest of the R-facing surface.
+include("bridge_tuning.jl")
 include("helper_functions.jl")
 include("ksolve.jl")
 include("parameter_transforms.jl")
