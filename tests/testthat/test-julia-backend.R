@@ -427,3 +427,69 @@ test_that("a non-default covmattransform is refused on the julia backend", {
   expect_error(suppressMessages(ctFit(dat, model, backend = "julia", fit = FALSE)),
     regexp = NA)
 })
+
+# The same row-1 ordering defect one hop further out. PARS lives in the
+# *predict* transform group, and row 1 ran the td and the update group only, so
+# an update-group cell written from a PARS cell -- LAMBDA, MANIFESTMEANS,
+# MANIFESTVAR or Jy -- read a parameter slot the predict group had not filled
+# and took the buffer's zero. Against stan that was 11.5 log units at one
+# occasion per subject.
+#
+# Pinned like its sibling above and for the same reason: at one occasion the
+# state at the measurement is T0MEANS. The PARS cell here is indvarying, so
+# intoverpop rewrites it to the augmented population coordinate, whose T0MEANS
+# is the raw parameter under the identity transform -- a known value. The
+# consumer is MANIFESTVAR rather than LAMBDA because the manifest covariance
+# does not enter Jy, so the two models agree exactly rather than to a
+# linearisation.
+test_that("a PARS cell is transformed before row 1's update group reads it", {
+  skip_on_cran()
+  skip_without_julia()
+
+  t0 <- 1.5
+
+  .m <- function(manifestvar) suppressWarnings(ctModel(
+    type = "ct",
+    LAMBDA = diag(1),
+    PARS = matrix("mvp||TRUE", 1, 1),
+    DRIFT = matrix("drift", 1, 1),
+    DIFFUSION = matrix("diffusion", 1, 1),
+    MANIFESTVAR = matrix(manifestvar, 1, 1),
+    MANIFESTMEANS = matrix(0, 1, 1),
+    T0VAR = matrix(1, 1, 1),
+    T0MEANS = matrix(t0, 1, 1)))
+
+  # One row per subject, so every row is a row 1.
+  set.seed(11)
+  dat <- data.frame(id = 1:8, time = 0, Y1 = stats::rnorm(8, t0, 1))
+
+  specA <- suppressMessages(ctFit(dat, .m("PARS[1,1]"), backend = "julia", fit = FALSE))
+  ptab <- specA$parameter_table
+  npar <- max(ptab$parnumber, na.rm = TRUE)
+
+  # The two halves of "the value the transform yields at row 1": PARS[1,1] is
+  # the augmented state, and that state at row 1 is its own T0MEANS, which is
+  # the raw parameter untransformed.
+  augmented <- which(ptab$matrix == "T0MEANS" & ptab$row == 2)
+  expect_identical(ptab$predicttransform[ptab$matrix == "PARS"][1], "state[2]")
+  expect_identical(ptab$transform[augmented],
+    paste0("param[", ptab$parnumber[augmented], "]"))
+
+  raw <- rep(-.5, npar)
+  raw[ptab$parnumber[augmented]] <- .4
+
+  specB <- suppressMessages(ctFit(dat, .m("0.4"), backend = "julia", fit = FALSE))
+  expect_equal(npar, max(specB$parameter_table$parnumber, na.rm = TRUE))
+
+  a <- ctJuliaEvaluate(specA, raw, gradient = FALSE)$value
+  b <- ctJuliaEvaluate(specB, raw, gradient = FALSE)$value
+
+  expect_true(is.finite(as.numeric(a)))
+  expect_equal(as.numeric(a), as.numeric(b), tolerance = 1e-10)
+
+  # And the cell has to matter, or the equality above would also hold on a
+  # model whose MANIFESTVAR never varied.
+  specC <- suppressMessages(ctFit(dat, .m("1.2"), backend = "julia", fit = FALSE))
+  cc <- ctJuliaEvaluate(specC, raw, gradient = FALSE)$value
+  expect_false(isTRUE(all.equal(as.numeric(a), as.numeric(cc), tolerance = 1e-6)))
+})
