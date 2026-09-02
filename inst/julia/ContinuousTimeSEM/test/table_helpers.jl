@@ -16,14 +16,15 @@ _tbl_float(column) = [ismissing(v) ? NaN : Float64(v) for v in column]
 _tbl_string(column) = [ismissing(v) ? "" : String(v) for v in column]
 
 """
-    ekf_from_data_frame(df, ti_effects=..., diffusion_state_indices=Int[])
+    ekf_from_data_frame(df, ti_effects=..., diffusion_state_indices=Int[];
+                        continuous_time=true)
 
 Test-only wrapper around `ContinuousTimeSEM.ekf_from_columns`, preserving the
 call shape the tests were written against.
 """
 function ekf_from_data_frame(df::DataFrame,
     ti_effects::DataFrame=DataFrame(parameter=Int[], predictor=Int[], coefficient=Int[]),
-    diffusion_state_indices::AbstractVector=Int[])
+    diffusion_state_indices::AbstractVector=Int[]; continuous_time::Bool=true)
     return ContinuousTimeSEM.ekf_from_columns(
         df.matrix, df.row, df.col,
         _tbl_int(_tbl_column(df, :parnumber, missing)),
@@ -35,7 +36,8 @@ function ekf_from_data_frame(df::DataFrame,
         ti_parameter=Int.(ti_effects.parameter),
         ti_predictor=Int.(ti_effects.predictor),
         ti_coefficient=Int.(ti_effects.coefficient),
-        diffusion_state_indices=Int.(diffusion_state_indices))
+        diffusion_state_indices=Int.(diffusion_state_indices),
+        continuous_time=continuous_time)
 end
 
 """Test-only wrapper: axis for a layout given as a `DataFrame`."""

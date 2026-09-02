@@ -121,7 +121,11 @@ end
 
 # A 2-latent, 2-manifest model with a free cross-effect, so the gradient
 # check exercises coupled dynamics, not just a diagonal system.
-function _adjoint_cross_effect_2d_parameters()
+#
+# `continuous` is threaded through to `ekf_from_data_frame` so
+# `test_discrete_time.jl` can reuse this exact cell layout for its discrete
+# variant (F5) instead of writing a new fixture.
+function _adjoint_cross_effect_2d_parameters(; continuous::Bool=true)
     df = _adjoint_test_dataframe(
         drift=[-0.5 0.3; 0.1 -0.3], jax=[-0.5 0.3; 0.1 -0.3],
         cint=[0.0; 0.0;;], diffusion=[0.2 0.0; 0.0 0.15],
@@ -137,7 +141,7 @@ function _adjoint_cross_effect_2d_parameters()
             (:JAx, 1, 2) => (3, "param[3]"),
         ),
     )
-    ekf_from_data_frame(df)
+    ekf_from_data_frame(df; continuous_time=continuous)
 end
 
 # PARS[1,1] is a free parameter feeding a state-dependent DRIFT/JAx
@@ -169,7 +173,10 @@ end
 # here, so the reverse paths through `sdcovsqrt2cov` (for all three covariance
 # matrices), the discrete-intercept solve, and the measurement-mean term are
 # actually exercised rather than multiplied by a structurally zero cotangent.
-function _adjoint_free_covariance_2d_parameters()
+#
+# `continuous` is threaded through for the same reason as in
+# `_adjoint_cross_effect_2d_parameters` above (F5).
+function _adjoint_free_covariance_2d_parameters(; continuous::Bool=true)
     df = _adjoint_test_dataframe(
         drift=[-0.5 0.3; 0.1 -0.3], jax=[-0.5 0.3; 0.1 -0.3],
         cint=[0.0; 0.0;;], diffusion=[0.2 0.0; 0.05 0.15],
@@ -191,7 +198,7 @@ function _adjoint_free_covariance_2d_parameters()
             (:T0MEANS, 2, 1) => (10, "param[10]"),
         ),
     )
-    ekf_from_data_frame(df)
+    ekf_from_data_frame(df; continuous_time=continuous)
 end
 
 # A free TD-predictor effect, so `_apply_td_impulse!` and its reverse are
