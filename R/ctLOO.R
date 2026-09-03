@@ -92,7 +92,12 @@ ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
   
   # Parallel setup
   if (parallelFolds && cores > 1) {
-    clctsem <- parallelly::makeClusterPSOCK(min(cores, folds))
+    # rscript_libs: without it a worker searches its own default .libPaths(),
+    # not the caller's, so library(ctsem) below can silently load a different
+    # install than the one running this code (e.g. a stale globally-installed
+    # package while a development tree is under test) -- the same failure
+    # mode makeClusterID() (stanoptimis.R) was fixed for.
+    clctsem <- parallelly::makeClusterPSOCK(min(cores, folds), rscript_libs = .libPaths())
     on.exit({ parallel::stopCluster(clctsem) }, add = TRUE)
     
     # Export required data and load library once per worker

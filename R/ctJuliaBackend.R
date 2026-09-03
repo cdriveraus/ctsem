@@ -1896,7 +1896,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
         "varying in the model, or leave intoverpop at its default.", call. = FALSE)
     }
     augmented <- list(nlatent = model$n.latent, nlatent_augmented = model$n.latent,
-      dynamic_state_indices = seq_len(model$n.latent),
+      dynamic_state_indices = .ctJuliaDerrind(parameter_table, model$n.latent, model$n.latent),
       random_effects = data.frame(),
       rewritten_cells = .ctJuliaRewrittenCells(parameter_table))
     ti_effects <- .ctJuliaTIEffects(parameter_table, model, offset = laplace$npar)
