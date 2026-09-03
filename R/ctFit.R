@@ -727,12 +727,13 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     # Said here rather than left to that non-convergence, which describes
     # the symptom and not the cause. A categorical indicator has no such
     # parameter and is unaffected; so is a Gaussian one whose MANIFESTVAR
-    # is fixed.
+    # is fixed. Confirmed degenerate rather than merely biased, so this one
+    # is a hard error rather than a warning: there is no fit to return.
     freevar <- ctm$pars$matrix %in% 'MANIFESTVAR' &
       ctm$pars$row == ctm$pars$col & is.na(ctm$pars$value)
     if(any(freevar)){
       gaussian <- ctm$manifesttype[ctm$pars$row[freevar]] %in% 0
-      if(any(gaussian)) warning(
+      if(any(gaussian)) stop(
         'With intoverstates=FALSE the joint density is unbounded for a ',
         'Gaussian indicator whose MANIFESTVAR is free: the measurement ',
         'variance goes to zero and the latent trajectory interpolates the ',
