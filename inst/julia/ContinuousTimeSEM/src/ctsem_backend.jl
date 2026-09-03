@@ -585,6 +585,14 @@ gives its own answer.
 """
 _ctsem_saturation_range(::CTSEMOptimisable, minimizer) = eachindex(minimizer)
 
+"""
+The `EKFParameters` behind an optimisable objective -- what
+`_ctsem_saturated_parameters` (`parameter_transforms.jl`) needs to look up
+each raw coordinate's materialising transform. `state_sampling.jl` gives its
+own answer for `CTSEMJointObjective`, unwrapping to the same `CTSEMObjective`.
+"""
+_ctsem_params(o::CTSEMObjective) = o.params
+
 """Optimize a prepared likelihood entirely within Julia using L-BFGS."""
 function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     maxiter::Integer=1000, g_tol::Real=1e-8, f_tol::Real=0.0,
@@ -748,19 +756,37 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # A saturated transform reports a zero gradient, and a zero gradient is
     # indistinguishable from an optimum.
     #
-    # Every transform ctsem writes -- `log1p_exp(2x)`, `-(1e-6 + 2log1p_exp(-2x))`,
-    # `2/(1+exp(-x))-1` -- is flat to machine precision by |x| ~ 20: the
-    # exponential underflows and the derivative is *exactly* zero, not merely
-    # small. An optimiser that oversteps into that region then finds
-    # `gradient_norm = 4e-16`, satisfies any tolerance, and reports success.
-    # Observed on a binary model: one L-BFGS iteration to raw 20.9, declared
-    # converged, log likelihood -730.7 where the profile peak is -714.5.
+    # This used to be judged on the raw coordinate's *magnitude* -- flagged
+    # once |raw| >= 20, on the reasoning that every transform ctsem writes is
+    # flat to machine precision by then. That reasoning is only half right: it
+    # is a statement about how far a transform's *derivative* has collapsed,
+    # and raw magnitude is a proxy for that which fails in both directions. An
+    # identity transform (`MANIFESTMEANS`, `T0MEANS` with no scale) has
+    # derivative exactly 1 at any raw magnitude and never saturates, so a
+    # model fit to data with a mean of 25 or 100 -- an unremarkable fit --
+    # reported not converged purely because its mean landed past 20 on the raw
+    # scale it is never transformed away from. And different transforms go
+    # flat at different raw magnitudes in the first place: a drift diagonal's
+    # `-(1e-6 + 2log1p_exp(-2x))` is already down to derivative 8e-9 by raw 10,
+    # while a correlation's `2/(1+exp(-x))-1` is still at 9e-5 there. No single
+    # cutoff on the raw value fits both, and precomputing one per parameter
+    # (per transform, per state-dependent case) is the tedium the derivative
+    # check below avoids entirely.
+    #
+    # So saturation is judged directly on the transform's own derivative at
+    # the estimate -- see `_ctsem_saturated_parameters`
+    # (`parameter_transforms.jl`) -- which is the one quantity that actually
+    # says whether a raw coordinate still does anything: an optimiser that
+    # oversteps into the flat region finds `gradient_norm` underflowing to
+    # zero there, satisfies any tolerance, and reports success. Observed on a
+    # binary model: one L-BFGS iteration to raw 20.9, declared converged, log
+    # likelihood -730.7 where the profile peak is -714.5.
     #
     # `stalled` does not catch it, because the optimiser did move -- it moved
-    # too far. So saturation is its own verdict: past this point the parameter
-    # is not identified by the data but by the transform's floating-point
-    # limit, and calling that converged is the wrong answer confidently
-    # delivered.
+    # too far. So saturation is its own verdict: at a flagged coordinate the
+    # parameter is not identified by the data but by the transform's
+    # floating-point limit, and calling that converged is the wrong answer
+    # confidently delivered.
     # Over the *transformed* coordinates only. Saturation is a statement about
     # ctsem's parameter transforms going flat, and the joint target's vector
     # also carries state innovations, which have no transform and no flat
@@ -768,8 +794,9 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # an unidentified parameter, and reading it as saturation would report
     # every such fit as failed.
     saturation_range = _ctsem_saturation_range(objective, minimizer)
-    saturated = isempty(saturation_range) ? false :
-        maximum(abs, view(minimizer, saturation_range)) >= _CTSEM_SATURATION[]
+    saturated_parameters = _ctsem_saturated_parameters(
+        _ctsem_params(objective), minimizer, saturation_range)
+    saturated = !isempty(saturated_parameters)
     stalled = moved == 0 && (!isfinite(final.value) || gradient_norm > max(g_tol, 1e-6))
     scaled_tolerance = max(g_tol, 1e-6 * max(one(gradient_norm), abs(final.value)))
     # See `ctsem_laplace_optimize`: a NaN gradient is not convergence, and
@@ -779,9 +806,9 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         gradient_norm <= scaled_tolerance
     verbose && stalled && println("ctsem_optimize: the optimizer made no progress ",
         "from its starting values; reporting this as not converged")
-    verbose && saturated && println("ctsem_optimize: a parameter reached ",
-        maximum(abs, minimizer), " on the unconstrained scale, where its ",
-        "transform is flat to machine precision; reporting this as not converged")
+    verbose && saturated && println("ctsem_optimize: raw parameter(s) ",
+        saturated_parameters, " have a materialising transform that is flat ",
+        "to machine precision at the estimate; reporting this as not converged")
 
     return (
         minimizer=minimizer,
@@ -804,6 +831,9 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         converged=!stalled && !saturated && finite_gradient &&
             (Optim.g_converged(result) || converged_enough),
         saturated=saturated,
+        # Which raw parameters, not just whether one did -- most of the
+        # diagnostic value, and free once the derivatives are computed.
+        saturated_parameters=saturated_parameters,
         g_converged=Optim.g_converged(result),
         f_converged=Optim.f_converged(result),
         x_converged=Optim.x_converged(result),
