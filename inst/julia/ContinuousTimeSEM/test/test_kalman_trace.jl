@@ -442,3 +442,77 @@ end
     @test g.llrow[2] == 0
     @test g.llrow[4] == 0
 end
+
+# J9/F3: `_record_row_update!` re-evaluates the measurement model at the
+# post-update state by rerunning the predict and update transform groups, but
+# deliberately not the td group (kalman_trace.jl:31-39, this file's own
+# comments above `_record_row_update!`). Whether that omission can ever
+# misreport a value was flagged as inferred, not verified
+# (review/J9-duplicate-edge-blocks.md F3): it depends on whether a td-group
+# cell is state-dependent and is itself read by an update-group cell, which
+# the R-side group tables permit syntactically. This settles it directly:
+# TDPREDEFFECT (td group) reads state, MANIFESTMEANS (update group) reads
+# TDPREDEFFECT, and the td predictor is active at row 2 with data informative
+# enough to move the posterior state far from where the td group last
+# evaluated it.
+function _kalman_td_group_setup()
+    cells = [
+        (:T0MEANS, 1, 1, missing, 0.0, missing, missing, missing, missing),
+        (:LAMBDA, 1, 1, missing, 1.0, missing, missing, missing, missing),
+        (:DRIFT, 1, 1, 1, missing, "-log1p_exp(param[1])", missing, missing, missing),
+        (:DIFFUSION, 1, 1, missing, 0.2, missing, missing, missing, missing),
+        (:MANIFESTVAR, 1, 1, missing, 0.01, missing, missing, missing, missing),
+        (:MANIFESTMEANS, 1, 1, missing, missing, missing, missing, "TDPREDEFFECT[1,1]", missing),
+        (:CINT, 1, 1, missing, 0.0, missing, missing, missing, missing),
+        (:T0VAR, 1, 1, missing, 1.0, missing, missing, missing, missing),
+        (:JAx, 1, 1, missing, missing, missing, "DRIFT[1,1]", missing, missing),
+        (:Jy, 1, 1, missing, 1.0, missing, missing, missing, missing),
+        (:TDPREDEFFECT, 1, 1, missing, missing, missing, missing, missing, "0.5 * state[1]"),
+        (:Jtd, 1, 1, missing, 1.0, missing, missing, missing, missing),
+        (:PARS, 1, 1, missing, 0.0, missing, missing, missing, missing),
+    ]
+    df = DataFrame(
+        matrix = [c[1] for c in cells],
+        row = [c[2] for c in cells],
+        col = [c[3] for c in cells],
+        parnumber = Union{Missing,Int}[c[4] for c in cells],
+        value = Union{Missing,Float64}[c[5] for c in cells],
+        transform = Union{Missing,String}[c[6] for c in cells],
+        predicttransform = Union{Missing,String}[c[7] for c in cells],
+        updatetransform = Union{Missing,String}[c[8] for c in cells],
+        tdtransform = Union{Missing,String}[c[9] for c in cells],
+    )
+    sp = ekf_from_data_frame(df)
+    times = [0.0, 1.0]
+    data = reshape([0.0, 2.0], 1, 2)
+    tdpreds = reshape([0.0, 1.0], 1, 2)
+    objective = ctsem_objective(sp, [1], times, data, tdpreds, zeros(1, 0))
+    return (sp=sp, objective=objective, times=times, values=[0.0])
+end
+
+@testset "row-update reporting refreshes the td group too, not just predict and update" begin
+    setup = _kalman_td_group_setup()
+    k = ctsem_kalman(setup.objective, setup.values)
+
+    # The td impulse at row 2 is a no-op at the *prior* state (TDPREDEFFECT
+    # evaluates near zero there), so the measurement update is driven almost
+    # entirely by the data (2.0) against a near-zero prediction -- the
+    # posterior state at row 2 ends up far from where the td group last
+    # evaluated TDPREDEFFECT.
+    posterior_state = k.eta[2, 2, :]   # kind = updated
+    @test abs(posterior_state[1]) > 0.5   # otherwise this setup does not probe anything
+
+    # The value the update group *should* report if every group were
+    # refreshed at the post-update state: recompute all three groups
+    # directly at that state via `ctsem_parameter_matrices`
+    # (summary_matrices.jl), which reimplements exactly that "predict, td,
+    # update, in order" sequence independently of the filter (see F1 above).
+    layout = ctsem_parameter_layout(setup.objective)
+    flat = ctsem_parameter_matrices(setup.objective, reshape(setup.values, :, 1);
+        state=posterior_state)
+    j = findfirst(==("MANIFESTMEANS"), layout.matrix)
+    correct_manifestmeans = flat[layout.offset[j]+1, 1]
+
+    reported_manifestmeans = k.y[2, 2, 1] - posterior_state[1]  # LAMBDA = 1
+    @test isapprox(reported_manifestmeans, correct_manifestmeans; atol=1e-8)
+end
