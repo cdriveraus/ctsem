@@ -21,7 +21,6 @@
 ^vignettes/.*\.log
 ^vignettes/Sweave.sty
 ^vignettes/compactPDF.R
-^vignettes/optim-uncertainty.qmd
 ^docs
 ^src/((?!RcppExports\.cpp).)*$
 ^tests/testthat/Rplots.pdf
