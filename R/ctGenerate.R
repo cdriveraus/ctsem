@@ -2,19 +2,20 @@ ctModeltoNumeric <- function(ctmodelobj){
   ###read in model
   #set any matrices to numeric elements
   #
-  # Free parameters need *a* value before anything can be simulated, and zero is
-  # the wrong one nearly everywhere. A zero DRIFT is singular, so `fQinf()`
-  # cannot solve for the asymptotic covariance and generation fails outright; a
-  # zero DIFFUSION is a process with no innovation; a zero MANIFESTVAR is
-  # noiseless measurement; a zero LAMBDA disconnects a manifest from its latent.
-  # Only the location matrices -- means and intercepts -- are naturally zero.
+  # Free parameters need *a* value before anything can be simulated. Zero,
+  # matching ctsem's behaviour before commit 437bfbc0 so existing scripts keep
+  # producing the data they always have -- except DRIFT, which cannot be a
+  # literal zero: a zero DRIFT is singular, so `fQinf()` cannot solve for the
+  # asymptotic covariance and generation fails outright. DRIFT diagonals use
+  # the same near-zero convention `ctModel0DRIFT()` applies to a fixed DRIFT
+  # diagonal of exactly zero.
   #
   # `.ctGenerateDefaults()` holds the per-matrix choices, shared with the julia
   # generation path so both produce the same kind of data from an underspecified
   # model. They are defaults for *simulation*, not estimates: the point is that
-  # generated data looks like data rather than like an artefact, and anything a
-  # user cares about they should set.
-  defaults <- .ctGenerateDefaults()
+  # generation does not error, and anything a user cares about they should set.
+  defaults <- .ctGenerateDefaults(continuoustime =
+    if(!is.null(ctmodelobj$continuoustime)) ctmodelobj$continuoustime else TRUE)
   filled <- character()
   sapply(names(ctmodelobj), function(x){
     if(is.matrix(ctmodelobj[[x]])){
