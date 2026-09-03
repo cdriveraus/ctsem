@@ -1,10 +1,22 @@
 # Workflow derived from https://github.com/r-lib/actions/tree/v2/examples
 # Need help debugging build failures? Start at https://github.com/r-lib/actions#where-to-find-help
+#
+# Routine runs (push/PR) skip building and checking vignettes: one of them,
+# vignettes/uncertainty.qmd, takes 4-6 minutes of R/Julia execution on its
+# own, and the others are not free either -- see dev/vignette-runtime.md. Run
+# this workflow manually with "Build vignettes" checked for a pre-release
+# full check that includes them.
 on:
   push:
     branches: [main, master, rstantools, juliaFit]
   pull_request:
     branches: [main, master, rstantools, juliaFit]
+  workflow_dispatch:
+    inputs:
+      vignettes:
+        description: 'Build and check vignettes (full pre-release check)'
+        type: boolean
+        default: false
 name: R-CMD-check
 
 jobs:
@@ -51,6 +63,8 @@ jobs:
           
       - uses: r-lib/actions/check-r-package@v2
         with:
+          args: ${{ (github.event_name == 'workflow_dispatch' && inputs.vignettes == true) && 'c("--no-manual", "--as-cran")' || 'c("--no-manual", "--as-cran", "--no-vignettes")' }}
+          build_args: ${{ (github.event_name == 'workflow_dispatch' && inputs.vignettes == true) && 'c("--no-manual", "--compact-vignettes=gs+qpdf")' || 'c("--no-manual", "--no-build-vignettes")' }}
           error-on: '"error"'
           upload-snapshots: true
 
