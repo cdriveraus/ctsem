@@ -499,6 +499,12 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
   }
   
 
+  # Refuse a circular dependency here rather than later: the generated Stan
+  # program breaks the T0MEANS / state / PARS loop by evaluation order, so a
+  # cell caught in a real loop is read before anything writes it and returns a
+  # plausible number instead of an error. See R/ctModelCycleCheck.R.
+  .ctCheckModelCycles(ctspec, latentNames, n.latent)
+
   ctspec$indvarying <- as.logical(ctspec$indvarying)
   
   out<-list(pars=ctspec,n.latent=n.latent,n.manifest=n.manifest,n.TIpred=n.TIpred,n.TDpred=n.TDpred,

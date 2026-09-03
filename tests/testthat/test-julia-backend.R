@@ -109,6 +109,8 @@ test_that("Julia reuses the canonical raw transform for shared parameters", {
     Y1 = 0, Y2 = 0)
 
   prepared <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
+  d11 <- subset(prepared$parameter_table,
+    matrix == "DRIFT" & row == 1L & col == 1L)
   d22 <- subset(prepared$parameter_table,
     matrix == "DRIFT" & row == 2L & col == 2L)
   pars <- subset(prepared$parameter_table,
@@ -116,7 +118,21 @@ test_that("Julia reuses the canonical raw transform for shared parameters", {
 
   expect_true(is.na(pars$parnumber))
   expect_equal(d22$parnumber, 3L)
-  expect_equal(d22$transform, "0 + 1 * (param[3] * 1 + 0)")
+
+  # This assertion used to read "0 + 1 * (param[3] * 1 + 0)", the identity,
+  # and it was pinning a bug rather than a behaviour. The PARS carrier row
+  # carries when == 100 by the time the julia setup is built, and the
+  # canonical-transform lookup accepted when == 100 alongside when == 0. A
+  # `when == 100` row holds a *state* index in the column the lookup reads as
+  # a parameter number, so the carrier claimed parameter 3 and handed d22 its
+  # own identity transform. d22 is a drift diagonal: losing that transform
+  # loses the constraint keeping the diagonal negative, which is the whole
+  # point of it. Both diagonals must now carry the same transform, differing
+  # only in which raw parameter they read.
+  expect_equal(d22$transform,
+    "-(1e-06 + 2 * log1p_exp(-(2 * param[3])))")
+  expect_equal(d22$transform, gsub("param[1]", "param[3]", d11$transform,
+    fixed = TRUE))
 })
 
 test_that("Julia preparation retains missing manifest values", {

@@ -220,7 +220,20 @@ if(transform < 49 && shift != 0.0) param+=shift;
     return param;
   }
   
-  // improve PARS when = 100 thing here too
+  // `when == 100` is deliberately NOT accepted here, and that is a fix rather
+  // than an omission. 100 is a wildcard meaning "materialise at every when",
+  // added in 0a0298ca when this function was polymorphic: it was called once
+  // with when = 0 on the parameter vector and five times with when in 1..4 on
+  // the *state* vector, and on those state calls ms[,3] is a state index, so
+  // the wildcard was right. Those calls moved to mcalc, which branches on
+  // `when` and reads the column both ways correctly. What was left here was a
+  // wildcard letting a state index answer a parameter lookup. It was harmless
+  // until db16c43b added the `done` early exit the next day: PARS rows are
+  // sorted to the front of matsetup, so first-match-wins handed the carrier
+  // row's transform to whichever real parameter shared its number, costing a
+  // drift diagonal its negative-definiteness and a diffusion diagonal its
+  // positivity transform and variance floor. Every parameter number in
+  // `which` has its own when == 0 row, so nothing is left unassigned.
   row_vector parvectform(array[] int which, row_vector rawpar, int when, array[,] int ms, data array[,] real mval, int subi){
     row_vector[size(which)] parout;
     if(size(which)){
@@ -228,7 +241,7 @@ if(transform < 49 && shift != 0.0) param+=shift;
         int done=0; //only want to tform once, may be copies
         for(ri in 1:size(ms)){ //for each row of matrix setup
           if(!done){
-            if((ms[ri,8]==when || ms[ri,8]==100)  && ms[ri,3] == which[whichout]){ //if correct when and free parameter //,not a copyrow,&& ms[ri,9] < 1
+            if(ms[ri,8]==when && ms[ri,3] == which[whichout]){ //if correct when and free parameter //,not a copyrow,&& ms[ri,9] < 1
               if(subi ==0 ||  //if population parameter
                 (ms[ri,3] > 0 && (ms[ri,5] > 0 || ms[ri,6] > 0 || ms[ri,8] > 0)) //or there is individual variation
               ){ //otherwise repeated values

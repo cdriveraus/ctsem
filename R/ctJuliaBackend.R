@@ -803,7 +803,12 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     # and a fit that stopped 0.6 log units short.
     setup_parameter <- as.integer(setup$param)
     setup_when <- as.integer(setup$when)
-    candidate <- which(setup_parameter > 0L & setup_when %in% c(0L, 100L))
+    # when == 0 only. A `when == 100` row is a PARS cell whose text references
+    # a state, and its `param` column holds that *state* index rather than a
+    # parameter number, so including it let a carrier cell claim a real
+    # parameter and replace its transform. This mirrors the same correction in
+    # stan's parvectform; see the comment there for why 100 was ever accepted.
+    candidate <- which(setup_parameter > 0L & setup_when %in% 0L)
     canonical <- rep(NA_character_, max(c(0L, setup_parameter), na.rm = TRUE))
     own_row <- match(setup_key, parameter_key)
     for (row in candidate) {
