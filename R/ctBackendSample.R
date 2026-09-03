@@ -216,6 +216,22 @@
 #'   start from a conditional covariance that is exact for a linear model, so
 #'   replacing one with an estimate from a few hundred draws can add more noise
 #'   than it removes.
+#'
+#'   \code{control$callback} is a function called while sampling runs, with
+#'   \code{(phase, iteration, total, logp, divergent)}: \code{phase} is
+#'   \code{"warmup"} or \code{"sampling"}, \code{iteration}/\code{total} count
+#'   against the current phase, and \code{logp}/\code{divergent} are the log
+#'   posterior and divergence count so far. It is for a front end that wants
+#'   to draw progress live; the engine calls it on a time cadence rather than
+#'   once per iteration (see \code{optimcontrol$callback} in
+#'   \code{\link{ctFit}}), and always once more when a phase ends. An error
+#'   inside it disables it and warns, leaving the sample unaffected. With
+#'   several chains only the first calls back, matching the printed line --
+#'   several chains calling into R at once is not just unreadable, it is
+#'   unsafe. Under \code{processes = TRUE} it is not called at all, because a
+#'   worker process cannot call back into this session's callback; the
+#'   parent's own per-chain lines (see \code{verbose}) are what cover that
+#'   case instead.
 #' @param processes Run each chain in its own R process rather than its own
 #'   thread, so that chains share no allocator and no garbage collector.
 #'   \code{TRUE} by default whenever there is more than one chain.
@@ -234,11 +250,27 @@
 #'   bit-identical to a run made before this became the default. Needs the
 #'   \pkg{future} package; without it, or if a worker fails, sampling falls back
 #'   to this session.
-#' @param verbose Print the sampler's configuration before it starts, and
-#'   report progress while it runs. Progress overwrites a single line where the
-#'   output is going to a console and prints occasional separate lines where it
-#'   is not; set \code{options(ctsem.progress.overwrite = FALSE)} if that
-#'   detection is wrong for your front end, or \code{TRUE} to force it on.
+#' @param verbose Report progress while sampling runs: warmup and sampling
+#'   separately, iterations against the total, and an estimated time
+#'   remaining, the same shape \code{\link{ctFit}}'s progress line has. A
+#'   logical flag is accepted as well as a level, as elsewhere in ctsem --
+#'   \code{FALSE}/\code{0} silent (the default), \code{TRUE}/\code{1} the
+#'   progress just described, \code{2} the same reporting kept as scrolling
+#'   history rather than overwritten in place, which is what \code{verbose =
+#'   2} means throughout the julia backend and there is nothing further to add
+#'   for the sampler specifically. With \code{chains > 1} and \code{processes
+#'   = TRUE} (the default above one chain), each worker's own printed line
+#'   never reaches this session, so the parent prints one line per chain
+#'   instead, polling what the workers have done so far -- the single-process
+#'   line's content, relayed rather than duplicated.
+#'
+#'   Progress overwrites a single line where the output is going to a console
+#'   and prints occasional separate lines where it is not; set
+#'   \code{options(ctsem.progress.overwrite = FALSE)} if that detection is
+#'   wrong for your front end, or \code{TRUE} to force it on. The per-chain
+#'   lines under \code{processes = TRUE} are never overwritten in place --
+#'   several chains share the console, and one finishing should not erase an
+#'   earlier line that is still current for another.
 #'
 #' @return The fit, with \code{estimate$rawposterior} holding the draws and
 #'   \code{$sample} holding the diagnostics: split R-hat and effective sample
@@ -425,7 +457,8 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
 # one.
 #' @keywords internal
 .ctBackendSampleEngine <- function(fit, target, chains, warmup, draws, cores,
-  saveEffects, seed, control, verbose, progress = isTRUE(verbose)) {
+  saveEffects, seed, control, verbose, progress = .ctVerboseOn(verbose),
+  callback = control$callback) {
 
   settings <- .ctBackendSampleControl(control)
   module <- .ctJuliaModule(fit$model_spec$project)
@@ -457,6 +490,37 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
   for (name in c("min_ess", "mean_ess", "max_draws", "rhat_target", "settle_tol")) {
     if (!is.null(settings[[name]])) arguments[[name]] <- settings[[name]]
   }
+  # A live callback into R while the chains run, mirroring
+  # `optimcontrol$callback` on `.ctJuliaOptimise()`: a front end that wants to
+  # draw sampling progress rather than read it afterwards. Only chain 1 of an
+  # in-process multi-chain run ever calls it -- see `sample_run.jl` -- so this
+  # is the same "one representative chain" contract the printed line already
+  # has, not a second one invented for the callback.
+  callback_failure <- NULL
+  if (!is.null(callback)) {
+    if (!is.function(callback)) {
+      stop("control$callback must be a function of (phase, iteration, ",
+        "total, logp, divergent).", call. = FALSE)
+    }
+    # Wrapped exactly as the optimiser's callback is: an error thrown out of
+    # an R callback does not reach the engine, it desynchronises the
+    # JuliaConnectoR bridge, and a reporting convenience must never be able to
+    # take the sample down with it. The message is stored rather than warned
+    # immediately, for the same reason as there: `options(warn = 2)` would
+    # turn this warning into exactly the error it exists to prevent.
+    alive <- TRUE
+    arguments$progress_callback <- function(phase, iteration, total, logp,
+      divergent) {
+      if (alive) {
+        tryCatch(callback(phase, iteration, total, logp, divergent),
+          error = function(e) {
+            alive <<- FALSE
+            callback_failure <<- conditionMessage(e)
+          })
+      }
+      NULL
+    }
+  }
   # `npar`, `save_effects` and `adapt_effects` all describe an effect block the
   # marginal entry does not have, which is the whole structural difference
   # between the two calls.
@@ -471,8 +535,14 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
   entry <- if (isTRUE(target$marginal)) module$ctsem_sample_marginal else
     module$ctsem_sample
 
-  .ctBackendWithMaxChunks(cores,
+  result <- .ctBackendWithMaxChunks(cores,
     JuliaConnectoR::juliaGet(do.call(entry, arguments)))
+  if (!is.null(callback_failure)) {
+    warning("The progress callback failed and was disabled after the first ",
+      "error; sampling itself is unaffected. The error was: ",
+      callback_failure, call. = FALSE)
+  }
+  result
 }
 
 # Sample, in this session or in one process per chain, and assemble the fit.
@@ -491,14 +561,14 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
 # garbage collector.
 #' @keywords internal
 .ctBackendSampleRun <- function(fit, target, chains, warmup, draws, cores,
-  saveEffects, seed, control, verbose, progress = isTRUE(verbose),
+  saveEffects, seed, control, verbose, progress = .ctVerboseOn(verbose),
   processes = FALSE, handles = NULL) {
 
   if (isTRUE(processes) && chains > 1L && .ctBackendCanWarm()) {
     out <- .ctBackendSampleProcesses(fit, target, chains = chains,
       warmup = warmup, draws = draws, cores = cores, handles = handles,
       control = control, saveEffects = saveEffects, seed = seed,
-      verbose = verbose)
+      verbose = verbose, progress = progress)
     if (!is.null(out)) return(out)
     message("Sampling in this session instead.")
   }

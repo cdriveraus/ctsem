@@ -248,7 +248,8 @@ function _run_chain(logdensity!, centre::Vector{Float64},
     maxdelta::Float64, init_scale::Float64, adapt_metric::Bool,
     adapt::Union{Nothing,Vector{Bool}}; settle_tol::Float64=0.0,
     resume::Union{Nothing,_ChainResult}=nothing,
-    progress::CTSEMProgress=CTSEMProgress(false))
+    progress::CTSEMProgress=CTSEMProgress(false),
+    callback::CTSEMCallback=CTSEMCallback(nothing))
 
     ndim = length(centre)
     ws = _NUTSWorkspace(ndim, maxdepth)
@@ -259,7 +260,8 @@ function _run_chain(logdensity!, centre::Vector{Float64},
         x = copy(resume.x)
         logp = logdensity!(g, x)
         return _continue_chain(logdensity!, ws, rng, x, g, logp,
-            resume.stepsize, resume.metric, ndraws, maxdepth, maxdelta, progress)
+            resume.stepsize, resume.metric, ndraws, maxdepth, maxdelta, progress,
+            callback)
     end
     x, logp = _sample_initial_point(centre, metric, rng, init_scale,
         logdensity!, g)
@@ -326,6 +328,11 @@ function _run_chain(logdensity!, centre::Vector{Float64},
                 # always did.
                 raises > 0 ? @sprintf("accept %.2f", da.target) : "")
         end
+        # Its own cadence; see `ctsem_optimize`. Unconditional -- the callback
+        # rate-limits itself -- so a GUI watching a chain sees warmup progress
+        # even when nothing is being printed.
+        _invoke_callback(callback, "warmup", iteration, nwarmup, logp,
+            warmup_divergent)
         isempty(windows) && continue
         push!(window_draws, copy(x))
         iteration in windows || continue
@@ -379,6 +386,11 @@ function _run_chain(logdensity!, centre::Vector{Float64},
         end
     end
     eps = _dual_final(da)
+    # Forced: warmup may finish inside a callback interval (a short run, or
+    # the settle_tol early-stop above), and the transition to sampling is
+    # exactly the state a live watcher should not miss.
+    _invoke_callback(callback, "warmup", warmup_used, nwarmup, logp,
+        warmup_divergent; force=true)
 
     draws = Matrix{Float64}(undef, ndim, ndraws)
     accept = Vector{Float64}(undef, ndraws)
@@ -404,7 +416,14 @@ function _run_chain(logdensity!, centre::Vector{Float64},
                 @sprintf("depth %4.1f", sum(view(depth, 1:iteration)) / iteration),
                 @sprintf("div %d", count(view(divergent, 1:iteration))))
         end
+        _invoke_callback(callback, "sampling", iteration, ndraws, logp,
+            count(view(divergent, 1:iteration)))
     end
+    # Forced for the same reason as the optimiser's final call: a rate-limited
+    # callback on a chain that finishes inside one interval would otherwise
+    # never report the finished state at all.
+    _invoke_callback(callback, "sampling", ndraws, ndraws, logp,
+        count(divergent); force=true)
     return _ChainResult(draws, accept, divergent, depth, energy, eps,
         warmup_divergent, warmup_used, copy(x), current)
 end
@@ -423,7 +442,8 @@ already produced.
 function _continue_chain(logdensity!, ws::_NUTSWorkspace, rng::AbstractRNG,
     x::Vector{Float64}, g::Vector{Float64}, logp::Float64, eps::Float64,
     metric::CTSEMMetric, ndraws::Int, maxdepth::Int, maxdelta::Float64,
-    progress::CTSEMProgress=CTSEMProgress(false))
+    progress::CTSEMProgress=CTSEMProgress(false),
+    callback::CTSEMCallback=CTSEMCallback(nothing))
     progress.label = "sampling"
     progress.started = time()
     ndim = length(x)
@@ -449,7 +469,11 @@ function _continue_chain(logdensity!, ws::_NUTSWorkspace, rng::AbstractRNG,
                 @sprintf("depth %4.1f", sum(view(depth, 1:iteration)) / iteration),
                 @sprintf("div %d", count(view(divergent, 1:iteration))))
         end
+        _invoke_callback(callback, "sampling", iteration, ndraws, logp,
+            count(view(divergent, 1:iteration)))
     end
+    _invoke_callback(callback, "sampling", ndraws, ndraws, logp,
+        count(divergent); force=true)
     return _ChainResult(draws, accept, divergent, depth, energy, eps, 0, 0,
         copy(x), metric)
 end
@@ -475,16 +499,17 @@ function _sample_to_target(density_for, centre, metric, nchains::Int,
     target_accept::Float64, maxdelta::Float64, init_scale::Float64,
     adapt_metric::Bool, adapt, settle_tol::Float64, min_ess::Float64,
     mean_ess::Float64, max_draws::Int, rhat_target::Float64, npar::Int,
-    resume, verbose::Bool, overwrite::Bool=true)
+    resume, verbose::Bool, overwrite::Bool=true; progress_callback=nothing)
 
     results = if resume === nothing
         _sample_chains(nchains, parallel, seed, centre, metric, nwarmup, ndraws,
             maxdepth, target_accept, maxdelta, init_scale, adapt_metric, adapt,
             density_for; settle_tol=settle_tol, progress=verbose,
-            overwrite=overwrite)
+            overwrite=overwrite, progress_callback=progress_callback)
     else
         _continue_chains(nchains, parallel, seed, ndraws, maxdepth, maxdelta,
-            density_for, resume; progress=verbose, overwrite=overwrite)
+            density_for, resume; progress=verbose, overwrite=overwrite,
+            progress_callback=progress_callback)
     end
     total = ndraws
     attempt = 0
@@ -531,7 +556,7 @@ function _sample_to_target(density_for, centre, metric, nchains::Int,
         results = _merge_chains(results,
             _continue_chains(nchains, parallel, seed + 1000 * attempt, wanted,
                 maxdepth, maxdelta, density_for, results; progress=verbose,
-                overwrite=overwrite))
+                overwrite=overwrite, progress_callback=progress_callback))
         total += wanted
     end
     return (results=results, ndraws=total)
@@ -553,15 +578,19 @@ end
 function _continue_chains(nchains::Int, parallel::Bool, seed::Integer,
     ndraws::Int, maxdepth::Int, maxdelta::Float64, density_for,
     previous::Vector{_ChainResult}; progress::Bool=false,
-    overwrite::Bool=true)
+    overwrite::Bool=true, progress_callback=nothing)
     results = Vector{_ChainResult}(undef, nchains)
     runner = function (c)
         reporter = CTSEMProgress(progress && c == 1; label="sampling",
             overwrite=overwrite)
+        # Only chain 1 gets a live callback too, and for the same reason as
+        # the printed line: several threads calling back into R at once is
+        # not merely unreadable, it is unsafe. See `_sample_chains`.
+        watcher = CTSEMCallback(c == 1 ? progress_callback : nothing)
         results[c] = _run_chain(density_for(c), previous[c].x,
             previous[c].metric, Random.Xoshiro(UInt64(seed) + UInt64(c)),
             0, ndraws, maxdepth, 0.8, maxdelta, 0.0, false, nothing;
-            resume=previous[c], progress=reporter)
+            resume=previous[c], progress=reporter, callback=watcher)
         return nothing
     end
     if parallel
@@ -623,7 +652,7 @@ function _sample_chains(nchains::Int, parallel::Bool, seed::Integer,
     maxdepth::Int, target_accept::Float64, maxdelta::Float64,
     init_scale::Float64, adapt_metric::Bool, adapt::Union{Nothing,Vector{Bool}},
     density_for; settle_tol::Float64=0.0, progress::Bool=false,
-    overwrite::Bool=true)
+    overwrite::Bool=true, progress_callback=nothing)
     results = Vector{_ChainResult}(undef, nchains)
     runner = function (c)
         # Only the first chain reports. Four threads writing lines interleave
@@ -632,10 +661,16 @@ function _sample_chains(nchains::Int, parallel::Bool, seed::Integer,
         # all doing the same thing.
         reporter = CTSEMProgress(progress && c == 1; label="warmup",
             overwrite=overwrite)
+        # Same restriction on the callback, and for a sharper reason than
+        # readability: several `Threads.@spawn`ed chains calling back into R
+        # at once is a concurrency hazard, not just noise. One representative
+        # chain is what a GUI gets, exactly as one representative chain is
+        # what the console gets.
+        watcher = CTSEMCallback(c == 1 ? progress_callback : nothing)
         results[c] = _run_chain(density_for(c), centre, metric,
             Random.Xoshiro(UInt64(seed) + UInt64(c)), nwarmup, ndraws, maxdepth,
             target_accept, maxdelta, init_scale, adapt_metric, adapt;
-            settle_tol=settle_tol, progress=reporter)
+            settle_tol=settle_tol, progress=reporter, callback=watcher)
         return nothing
     end
     if parallel
@@ -677,7 +712,7 @@ function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     hessian::Union{Nothing,AbstractMatrix}=nothing, verbose::Bool=false,
     min_ess::Real=0.0, mean_ess::Real=0.0, max_draws::Integer=0,
     rhat_target::Real=1.01, settle_tol::Real=0.0, resume=nothing,
-    progress_overwrite::Bool=true)
+    progress_overwrite::Bool=true, progress_callback=nothing)
 
     nchains = Int(nchains); nwarmup = Int(nwarmup); ndraws = Int(ndraws)
     nchains >= 1 || throw(ArgumentError("nchains must be positive"))
@@ -731,7 +766,8 @@ function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
         Float64(target_accept), Float64(maxdelta), Float64(init_scale),
         adapt_metric, adapt, Float64(settle_tol), Float64(min_ess),
         Float64(mean_ess), max(Int(max_draws), ndraws), Float64(rhat_target),
-        sampler.npar, resume, verbose, progress_overwrite)
+        sampler.npar, resume, verbose, progress_overwrite;
+        progress_callback=progress_callback)
     results = run.results
     ndraws = run.ndraws
 
@@ -856,7 +892,7 @@ function ctsem_sample_marginal(objective, values::AbstractVector;
     hessian::Union{Nothing,AbstractMatrix}=nothing, gradient_method=:adjoint,
     verbose::Bool=false, min_ess::Real=0.0, mean_ess::Real=0.0,
     max_draws::Integer=0, rhat_target::Real=1.01, settle_tol::Real=0.0,
-    resume=nothing, progress_overwrite::Bool=true)
+    resume=nothing, progress_overwrite::Bool=true, progress_callback=nothing)
 
     nchains = Int(nchains); nwarmup = Int(nwarmup); ndraws = Int(ndraws)
     nchains >= 1 || throw(ArgumentError("nchains must be positive"))
@@ -899,7 +935,7 @@ function ctsem_sample_marginal(objective, values::AbstractVector;
         Float64(maxdelta), Float64(init_scale), adapt_metric, nothing,
         Float64(settle_tol), Float64(min_ess), Float64(mean_ess),
         max(Int(max_draws), ndraws), Float64(rhat_target), npar, resume,
-        verbose, progress_overwrite)
+        verbose, progress_overwrite; progress_callback=progress_callback)
     results = run.results
     ndraws = run.ndraws
 
