@@ -83,19 +83,76 @@ test_that("Julia pop_* arrays match Stan's constrained parameters", {
     diag(drop(backend_pop$pop_T0VAR)), tolerance = 1e-4)
 })
 
-test_that("ctTIpredEffects refuses a julia fit by name", {
+test_that("ctTIpredEffects reports a julia fit's own TI predictor effect (parmatrices=TRUE)", {
   skip_on_cran()
   skip_without_julia()
-  # A julia fit carries no $ctstanmodel (see .ctFitModelObject()), so without
-  # an explicit guard this would fall through to ctTIpredEffects' own
-  # "no time independent predictors" check and always report that -- even
-  # though .summary_model() has one, which is exactly the point.
+  # .summary_model() gives 'group' (TIpred 1) an effect on B1 only, and B1 is
+  # the CINT[1,1] cell with the model's default meanscale=10 transform
+  # (10*param), so the effect on CINT[1,1] is analytically 10*coefficient*tipred
+  # -- checked exactly below, not just "runs without error".
   model <- .summary_model()
   data <- .summary_data()
   spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
-  fit <- .summary_pointfit(spec, model, rep(0.1, 5), "julia")
+  npar <- max(c(spec$parameter_table$parnumber, spec$ti_effects$coefficient), na.rm = TRUE)
+  raw <- rep(0.1, npar)
+  fit <- .summary_pointfit(spec, model, raw, "julia")
 
-  expect_error(ctTIpredEffects(fit), "not available for julia backend fits")
+  b1parnum <- spec$parameter_table$parnumber[spec$parameter_table$param %in% "B1"][1]
+  coefrow <- spec$ti_effects[spec$ti_effects$parameter == b1parnum, ]
+  expect_equal(nrow(coefrow), 1L)
+  coefval <- raw[coefrow$coefficient]
+
+  res <- suppressMessages(ctTIpredEffects(fit, parmatrices = TRUE,
+    whichpars = "CINT", nsubjects = 5, whichTIpreds = 1))
+
+  expect_named(res, c("y", "x"))
+  expect_equal(dim(res$y), c(5L, 2L, 3L))
+  expect_equal(dimnames(res$y)[[2]], c("CINT[1,1]", "CINT[2,1]"))
+  expected <- 10 * (raw[b1parnum] + coefval * res$x[, 1])
+  expect_equal(unname(res$y[, "CINT[1,1]", "Quantile0.5"]), unname(expected))
+  # B2 has no TI-predictor effect in this model, so it does not move with the
+  # covariate at all.
+  expect_equal(unname(res$y[, "CINT[2,1]", "Quantile0.5"]),
+    rep(10 * raw[spec$parameter_table$parnumber[spec$parameter_table$param %in% "B2"][1]], 5))
+})
+
+test_that("ctTIpredEffects reports a julia fit's own TI predictor effect (parmatrices=FALSE)", {
+  skip_on_cran()
+  skip_without_julia()
+  model <- .summary_model()
+  data <- .summary_data()
+  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
+  npar <- max(c(spec$parameter_table$parnumber, spec$ti_effects$coefficient), na.rm = TRUE)
+  raw <- rep(0.1, npar)
+  fit <- .summary_pointfit(spec, model, raw, "julia")
+
+  b1parnum <- spec$parameter_table$parnumber[spec$parameter_table$param %in% "B1"][1]
+  coefrow <- spec$ti_effects[spec$ti_effects$parameter == b1parnum, ]
+  coefval <- raw[coefrow$coefficient]
+
+  abs <- suppressMessages(ctTIpredEffects(fit, parmatrices = FALSE,
+    whichpars = b1parnum, nsubjects = 4, whichTIpreds = 1))
+  expected <- 10 * (raw[b1parnum] + coefval * abs$x[, 1])
+  expect_equal(unname(abs$y[, 1, "Quantile0.5"]), unname(expected))
+
+  # returndifference=TRUE subtracts the no-effect (population) value, leaving
+  # exactly the covariate's own contribution.
+  diff <- suppressMessages(ctTIpredEffects(fit, parmatrices = FALSE,
+    whichpars = b1parnum, nsubjects = 4, whichTIpreds = 1, returndifference = TRUE))
+  expect_equal(unname(diff$y[, 1, "Quantile0.5"]), unname(10 * coefval * diff$x[, 1]))
+})
+
+test_that("ctTIpredEffects on a julia fit still explains a model with no TI predictors", {
+  skip_on_cran()
+  skip_without_julia()
+  nopred <- suppressWarnings(ctModel(type = "ct", n.latent = 1,
+    LAMBDA = matrix(1), MANIFESTVAR = matrix(.5)))
+  data <- data.frame(id = rep(1:3, each = 2), time = rep(c(0, 1), 3),
+    Y1 = stats::rnorm(6))
+  spec <- suppressMessages(ctFit(data, nopred, backend = "julia", fit = FALSE))
+  fit <- .summary_pointfit(spec, nopred, rep(0.1, 3), "julia")
+
+  expect_error(ctTIpredEffects(fit), "no time independent predictors")
 })
 
 test_that("a Julia model with no state-dependent cells summarises", {

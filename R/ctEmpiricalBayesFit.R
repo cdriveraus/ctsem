@@ -2,7 +2,25 @@ ctEBnum <- function(x){
   sprintf('%.17g', x)
 }
 
+# The length of a fit's raw parameter vector -- stan's stanfit$rawest and
+# julia's estimate$raw -- used both to label it (ctEBrawParnames) and to check
+# every subject fit agrees on how many raw parameters it has.
+ctEBrawLength <- function(fit){
+  if(inherits(fit, 'ctJuliaFit')) length(fit$estimate$raw) else length(fit$stanfit$rawest)
+}
+
 ctEBrawParnames <- function(fit){
+  if(inherits(fit, 'ctJuliaFit')){
+    npar <- ctEBrawLength(fit)
+    # .ctBackendRawParameterNames() (R/ctBackendLaplaceCheck.R) is the julia
+    # counterpart of getparnames(): it labels fit$estimate$raw from the same
+    # parameter_table/laplace metadata getparnames() reads off fit$setup$matsetup.
+    pnames <- try(.ctBackendRawParameterNames(fit, npar), silent=TRUE)
+    if('try-error' %in% class(pnames) || length(pnames) != npar){
+      pnames <- paste0('par', seq_along(fit$estimate$raw))
+    }
+    return(pnames)
+  }
   pnames <- try(getparnames(fit), silent=TRUE)
   if('try-error' %in% class(pnames) || length(pnames) != length(fit$stanfit$rawest)){
     pnames <- paste0('par', seq_along(fit$stanfit$rawest))
@@ -77,18 +95,15 @@ ctEBadjustModel <- function(model, rawstats, sdscale=c('unit','rawsd'), minsd=1e
 
 ctEBrawMatrix <- function(fits, parnames, use=c('rawest','rawposterior')){
   use <- match.arg(use)
-
-  # Named rather than asserted. ctEmpiricalBayesFit() currently requires
-  # backend='stan': this reads stan fit structures (stanfit$rawest, standata)
-  # that a julia fit does not carry.
-  if(inherits(fits[[1]], 'ctJuliaFit')) stop(
-    'ctEmpiricalBayesFit() is not available for julia backend fits yet: it reads the ',
-    'stan fit structures (stanfit$rawest, standata) that a julia fit does not carry. ',
-    'ctEmpiricalBayesFit() currently requires backend=\'stan\'.',
-    call.=FALSE)
+  julia <- inherits(fits[[1]], 'ctJuliaFit')
 
   if(use == 'rawest'){
-    raw <- do.call(rbind, lapply(fits, function(fit) fit$stanfit$rawest))
+    # fit$estimate$raw (R/ctJuliaBackend.R, R/ctBackendSample.R) is the julia
+    # counterpart of stan's stanfit$rawest: the raw-scale point estimate, MAP
+    # for an optimised fit or the posterior mean for a sampled one.
+    raw <- do.call(rbind, lapply(fits, function(fit){
+      if(julia) as.numeric(fit$estimate$raw) else fit$stanfit$rawest
+    }))
     if(ncol(raw) != length(parnames)) stop('Raw point estimates do not match parnames')
     colnames(raw) <- parnames
     rownames(raw) <- names(fits)
@@ -97,7 +112,20 @@ ctEBrawMatrix <- function(fits, parnames, use=c('rawest','rawposterior')){
 
   raw <- do.call(rbind, lapply(seq_along(fits), function(i){
     fit <- fits[[i]]
-    samples <- ctStanRawSamples(fit)
+    # fit$estimate$rawposterior (R/ctBackendUncertainty.R, R/ctBackendSample.R)
+    # is the julia counterpart of ctStanRawSamples(): draws from
+    # ctOptimUncertainty() by default (normal approximation, importance
+    # sampling or a bootstrap depending on optimcontrol$uncertainty), or from
+    # ctSample()'s exact Hamiltonian posterior when the subject fit used
+    # optimize=FALSE. A subject fit with optimcontrol$estonly=TRUE (used for
+    # ctEmpiricalBayesFit()'s first pass) has no posterior draws at all, which
+    # is caught below rather than surfacing as a dimension mismatch.
+    samples <- if(julia) fit$estimate$rawposterior else ctStanRawSamples(fit)
+    if(is.null(samples) || !NROW(samples)) {
+      stop('No raw posterior samples available for subject ', names(fits)[i],
+        '; fit with optimize=FALSE, or without optimcontrol$estonly=TRUE, to ',
+        'get posterior draws.', call.=FALSE)
+    }
     if(ncol(samples) != length(parnames)) {
       stop('Raw posterior samples do not match parnames for subject ', names(fits)[i])
     }
@@ -394,8 +422,13 @@ ctEBfitArgsOptimDefaults <- function(fitargs, stochastic=FALSE,
 #' empirical marginal distribution of the raw parameters, then fits each subject
 #' again using the resulting empirical Bayes prior.
 #'
-#' This function currently requires \code{backend='stan'}: its post-processing
-#' reads stan fit structures that a julia fit does not carry.
+#' Works with either \code{backend='stan'} or \code{backend='julia'}, passed via
+#' \code{subjectFitArgs} or \code{...}; every per-subject \code{\link{ctFit}}
+#' call uses the same backend. \code{ebUse='rawposterior'} needs each subject
+#' fit to carry posterior draws (the default for both backends' optimised fits,
+#' unless \code{optimcontrol$estonly=TRUE}), or a sampled fit
+#' (\code{optimize=FALSE}, or for \code{backend='julia'} a Laplace fit passed
+#' through \code{\link{ctSample}}).
 #'
 #' @param datalong Long format data containing multiple subjects.
 #' @param model Model object from \code{\link{ctModel}}. Time independent
@@ -502,7 +535,7 @@ ctEmpiricalBayesFit <- function(datalong, model, subjects='all',
     cores=cores, verbose=verbose, pass='model prior', progress=progress)
 
   parnames <- ctEBrawParnames(initialfits[[1]])
-  rawlengths <- vapply(initialfits, function(fit) length(fit$stanfit$rawest), numeric(1))
+  rawlengths <- vapply(initialfits, ctEBrawLength, numeric(1))
   if(any(rawlengths != length(parnames))) {
     stop('Subject fits returned differing raw parameter counts')
   }

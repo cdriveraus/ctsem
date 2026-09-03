@@ -92,8 +92,13 @@ empirical marginal distribution of the raw parameters, then fits each subject
 again using the resulting empirical Bayes prior.
 }
 \details{
-This function currently requires \code{backend='stan'}: its post-processing
-reads stan fit structures that a julia fit does not carry.
+Works with either \code{backend='stan'} or \code{backend='julia'}, passed via
+\code{subjectFitArgs} or \code{...}; every per-subject \code{\link{ctFit}}
+call uses the same backend. \code{ebUse='rawposterior'} needs each subject
+fit to carry posterior draws (the default for both backends' optimised fits,
+unless \code{optimcontrol$estonly=TRUE}), or a sampled fit
+(\code{optimize=FALSE}, or for \code{backend='julia'} a Laplace fit passed
+through \code{\link{ctSample}}).
 }
 \examples{
 \donttest{

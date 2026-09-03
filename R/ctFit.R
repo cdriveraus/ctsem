@@ -865,10 +865,25 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # read that frame's columns by position -- carrying it there as a character
   # column turned Stan's `pop_CINT` into NaN.
   if(is.null(ctm$transformtext) && is.character(ctm$pars$transform)){
+    # A cell whose transform column already parses as a bare number (the
+    # output of an earlier ctModelTransformsToNum() call, which
+    # ctEBadjustModel() makes before handing its adjusted model to ctFit --
+    # see R/ctEmpiricalBayesFit.R) is not descriptive source text: it is a
+    # transform *code*, with the real expression already discarded, and this
+    # column is character-typed regardless because it mixes such codes with
+    # genuine expression strings. Recording a bare code as `text` fed
+    # .ctJuliaParameterTable() a rendered transform of literally "1", with no
+    # param[] reference left for the engine's adjoint to find -- see the
+    # comment there. NA leaves that cell to the numeric multiplier/meanscale
+    # reconstruction, which is what a bare code needs regardless of whether it
+    # arrived that way from the user or from an earlier numeric reduction.
+    bareCode <- !is.na(suppressWarnings(as.numeric(ctm$pars$transform)))
+    text <- as.character(ctm$pars$transform)
+    text[bareCode] <- NA_character_
     ctm$transformtext <- data.frame(
       matrix = as.character(ctm$pars$matrix),
       row = as.integer(ctm$pars$row), col = as.integer(ctm$pars$col),
-      text = as.character(ctm$pars$transform), stringsAsFactors = FALSE)
+      text = text, stringsAsFactors = FALSE)
   }
   ctm <- ctModelTransformsToNum(ctm)
 
