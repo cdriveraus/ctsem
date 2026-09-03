@@ -53,11 +53,10 @@ test_that("Julia backend rejects unsupported capabilities before session startup
   # `...` would supply a second value for a formal the defaults already name.
   unsupported <- function(...) do.call(ctsem:::.ctJuliaUnsupported,
     utils::modifyList(list(model = model, optimize = TRUE, priors = FALSE,
-      intoverpop = FALSE, vb = FALSE, gendata = FALSE, stanmodeltext = NA,
+      intoverpop = FALSE, gendata = FALSE, stanmodeltext = NA,
       compileArgs = list(), forcerecompile = FALSE), list(...)))
   binary <- model
   binary$manifesttype <- 1L
-  expect_error(unsupported(vb = TRUE), "variational Bayes")
   expect_error(unsupported(gendata = TRUE), "generation")
   expect_error(unsupported(forcerecompile = TRUE), "Stan compilation controls")
   # Binary is supported now -- the filter integrates the observation rather

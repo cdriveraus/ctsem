@@ -287,7 +287,6 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' Generated data is in the $Ygen subobject after running \code{extract} on the fit object.
 #' For datasets with many manifest variables or time points, file size may be large.
 #' To generate data based on the posterior of a fitted model, see \code{\link{ctGenerateFromFit}}.
-#' @param vb Logical. Use variational Bayes algorithm from stan? Only kind of working, not recommended.
 #' @param compileArgs List of arguments to pass to \code{\link[rstan]{stan_model}} for compilation of the Stan model.
 #' @param ... additional arguments to pass to \code{\link[rstan]{stan}} function.
 #' @export
@@ -541,7 +540,17 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   forcerecompile=FALSE,saveCompile=TRUE,savescores=FALSE,
   savesubjectmatrices=FALSE, saveComplexPars=FALSE,
   gendata=FALSE,
-  control=list(),verbose=0,vb=FALSE,..., ctstanmodel){
+  control=list(),verbose=0,..., ctstanmodel){
+
+  # `vb` (Stan's variational Bayes) was removed: it is a stan-only path,
+  # crashed on the default fit=TRUE, and stan is being deprecated. Without
+  # this check a caller's `vb=TRUE` would silently fall into `...` and be
+  # ignored rather than erroring, which would fit MCMC or MLE while the
+  # caller believed they had asked for variational inference.
+  if('vb' %in% ...names()) stop(
+    "the 'vb' (variational Bayes) argument to ctFit() has been removed -- ",
+    "stan's variational inference was broken and stan is being deprecated. ",
+    "Use optimize=TRUE or optimize=FALSE (sampling) instead.", call.=FALSE)
 
   if(missing(model)){
     if(missing(ctstanmodel)) stop('model must be supplied')
@@ -554,7 +563,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   backend <- match.arg(backend)
   if(backend %in% 'julia') {
     .ctJuliaUnsupported(ctstanmodel, optimize=optimize, priors=priors,
-      intoverpop=intoverpop, vb=vb, gendata=gendata,
+      intoverpop=intoverpop, gendata=gendata,
       stanmodeltext=stanmodeltext, compileArgs=compileArgs,
       forcerecompile=forcerecompile, optimcontrol=optimcontrol)
     # Before any data preparation, so that a first-time user is asked about the
@@ -1090,7 +1099,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
 
   if(backend %in% 'julia') {
     .ctJuliaUnsupported(ctm, optimize=optimize, priors=priors,
-      intoverpop=intoverpop, vb=vb, gendata=gendata,
+      intoverpop=intoverpop, gendata=gendata,
       stanmodeltext=stanmodeltext, compileArgs=compileArgs,
       forcerecompile=forcerecompile, intoverstates=intoverstates,
       optimcontrol=optimcontrol)
@@ -1253,21 +1262,15 @@ install.packages("rstan", repos = c("https://mc-stan.org/r-packages/", getOption
         ...)
       if(!is.null(inits)) stanargs$init=staninits
 
-      if(vb){
-        if(!intoverpop && standata$nindvarying > 0) warning('Poor results are expected with variational inference and sampling individual differences! Suggest disabling vb or enabling intoverpop.')
-        stanfit <- list(stanfit=rstan::vb(object = sm,data=standata, importance_resampling=TRUE,tol_rel_obj=1e-3))
-      } else{ #if not vi
-        if(plot==TRUE) stanfit <- suppressWarnings(list(stanfit=do.call(stanWplot,stanargs))) else stanfit <- suppressWarnings(list(stanfit=do.call(sampling,stanargs)))
+      if(plot==TRUE) stanfit <- suppressWarnings(list(stanfit=do.call(stanWplot,stanargs))) else stanfit <- suppressWarnings(list(stanfit=do.call(sampling,stanargs)))
 
-        #find the median sample and compute kalman scores etc for this
-        # browser()
-        e=rstan::extract(stanfit$stanfit)
-        # middle <- which(abs(e$ll-quantile(e$ll,.5)) == min(abs(e$ll-quantile(e$ll,.5) )))
-        # middle <- which(e$ll==max(e$ll))
-        stanfit$rawposterior <- t(stan_unconstrainsamples(fit = stanfit$stanfit,standata = standata))
-        stanfit$rawest <- apply(stanfit$rawposterior,2,median)
-
-      }
+      #find the median sample and compute kalman scores etc for this
+      # browser()
+      e=rstan::extract(stanfit$stanfit)
+      # middle <- which(abs(e$ll-quantile(e$ll,.5)) == min(abs(e$ll-quantile(e$ll,.5) )))
+      # middle <- which(e$ll==max(e$ll))
+      stanfit$rawposterior <- t(stan_unconstrainsamples(fit = stanfit$stanfit,standata = standata))
+      stanfit$rawest <- apply(stanfit$rawposterior,2,median)
     }
 
     if(optimize==TRUE) {

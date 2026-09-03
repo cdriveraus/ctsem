@@ -602,7 +602,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   values
 }
 
-.ctJuliaUnsupported <- function(model, optimize, priors, intoverpop, vb, gendata,
+.ctJuliaUnsupported <- function(model, optimize, priors, intoverpop, gendata,
   stanmodeltext, compileArgs, forcerecompile, intoverstates = TRUE,
   optimcontrol = list()) {
   failures <- character()
@@ -648,7 +648,6 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     failures <- c(failures, paste0("covmattransform='",
       as.character(model$covmattransform)[1L], "' (only 'rawcorr')"))
   }
-  if (isTRUE(vb)) failures <- c(failures, "variational Bayes")
   if (isTRUE(gendata)) failures <- c(failures, "generation")
   if (!is.na(stanmodeltext)[1] || length(compileArgs) > 0L || isTRUE(forcerecompile)) failures <- c(failures, "Stan compilation controls")
   if (length(failures)) stop("Julia backend v1 does not support: ", paste(failures, collapse = ", "), ".", call. = FALSE)
