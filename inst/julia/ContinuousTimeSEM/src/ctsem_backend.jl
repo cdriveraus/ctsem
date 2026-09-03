@@ -41,10 +41,22 @@ mutable struct CTSEMObjective{P,O} <: CTSEMOptimisable
     prior_index::Vector{Int}
     prior_scale::Vector{Float64}
     prior_weight::Float64
+    # The conditional-imputation term for sampled (missing) TI predictor
+    # values: one Gaussian per missing cell, `values[ti_missing_parameter[k]]
+    # ~ Normal(ti_missing_mu[k], ti_missing_sigma[k])`. `mu`/`sigma` are
+    # pre-computed once on the R side from complete cases (see
+    # SPEC-tipred-sampling.md, "Decisions") and held fixed here -- this is
+    # data, exactly like `prior_index`/`prior_scale` above, and for the same
+    # reason. Empty for every model with no missing TI predictor cells, which
+    # is what keeps `_ctsem_ti_missing_loglik` free for them.
+    ti_missing_parameter::Vector{Int}
+    ti_missing_mu::Vector{Float64}
+    ti_missing_sigma::Vector{Float64}
 end
 
 CTSEMObjective(params, subject_objectives) =
-    CTSEMObjective(params, subject_objectives, nothing, Int[], Float64[], 1.0)
+    CTSEMObjective(params, subject_objectives, nothing, Int[], Float64[], 1.0,
+        Int[], Float64[], Float64[])
 
 """
     _ctsem_log_prior(objective, values)
@@ -81,6 +93,33 @@ function _ctsem_log_prior_gradient!(gradient::AbstractVector{T},
         gradient[idx] -= scale_weight * values[idx] / (scale * scale)
     end
     return gradient
+end
+
+"""
+    _ctsem_ti_missing_loglik(objective, values)
+
+The conditional-imputation contribution to the log posterior: a proper
+Gaussian log-density (the `-log(sigma)` term is *not* dropped, unlike
+`_ctsem_log_prior` above -- these are genuine data values on their own scale,
+not a standardised quantity, and the pre-computed `sigma` differs per
+predictor, so the normalising constant is part of the answer here).
+
+No matching `_gradient!` function: models that reach this term are evaluated
+with `gradient_method=:forward` (ForwardDiff differentiates straight through
+this loop, since it is written in `values`/`p` like anything else), and
+`ctsem_evaluate` refuses `:adjoint` for them -- see the guard there. Empty and
+free for every model with no missing TI predictor cells.
+"""
+function _ctsem_ti_missing_loglik(objective::CTSEMObjective, values::AbstractVector{T}) where {T}
+    isempty(objective.ti_missing_parameter) && return zero(T)
+    total = zero(T)
+    @inbounds for k in eachindex(objective.ti_missing_parameter)
+        idx = objective.ti_missing_parameter[k]
+        sigma = objective.ti_missing_sigma[k]
+        z = (values[idx] - objective.ti_missing_mu[k]) / sigma
+        total += -0.5 * z * z - log(sigma) - 0.5 * log(2 * pi)
+    end
+    return total
 end
 
 export CTSEMObjective, ctsem_objective, ctsem_evaluate, ctsem_optimize
@@ -128,31 +167,64 @@ function CTSEMObjective(params::EKFParameters, subject_starts::AbstractVector,
     tdpred_data::AbstractMatrix=zeros(eltype(data), 0, size(data, 2)),
     tipred_data::AbstractMatrix=zeros(eltype(data), length(subject_starts), 0),
     max_timestep::Real=Inf; prior_index=Int[], prior_scale=Float64[],
-    prior_weight::Real=1.0)
+    prior_weight::Real=1.0,
+    # One entry per missing/sampled TI predictor cell, parallel arrays, empty
+    # for every model with none (the overwhelmingly common case). `subject`
+    # and `predictor` are consumed only here, to sort each cell into its
+    # subject's `TIMissingRecipe`; `parameter`/`mu`/`sigma` are also kept flat
+    # on the returned objective for `_ctsem_ti_missing_loglik`.
+    ti_missing_subject=Int[], ti_missing_predictor=Int[], ti_missing_parameter=Int[],
+    ti_missing_mu=Float64[], ti_missing_sigma=Float64[])
     ranges = _ctsem_subject_ranges(subject_starts, timesteps, data)
     size(tdpred_data, 2) == size(data, 2) || throw(DimensionMismatch("TD predictor columns must match observations"))
     size(tipred_data, 1) == length(ranges) || throw(DimensionMismatch("TI predictor rows must match subjects"))
+    nmissing = length(ti_missing_subject)
+    (length(ti_missing_predictor) == nmissing && length(ti_missing_parameter) == nmissing &&
+        length(ti_missing_mu) == nmissing && length(ti_missing_sigma) == nmissing) ||
+        throw(DimensionMismatch("ti_missing_* vectors must all have equal length"))
+    # Group missing cells by subject once, rather than scanning all of them
+    # for every subject -- irrelevant at fit sizes seen so far, but O(n) not
+    # O(n^2) costs nothing to keep that way.
+    by_subject = Dict{Int,Vector{Int}}()
+    for k in 1:nmissing
+        push!(get!(() -> Int[], by_subject, Int(ti_missing_subject[k])), k)
+    end
     # Copy each subject once. This avoids R proxy/view lifetime issues and makes
     # the objective safe to retain in a Julia session.
     objects = Any[
         ContinuousEKFObjective(params, Matrix(view(data, :, r)), collect(view(timesteps, r));
-            tdpreds=Matrix(view(tdpred_data, :, r)), tipreds=vec(tipred_data[i, :]), subject=i,
-            max_timestep=max_timestep)
+            tdpreds=Matrix(view(tdpred_data, :, r)),
+            # A subject absent from `by_subject` (i.e. every model with no
+            # missing TI predictor cells) takes exactly the path it always
+            # has: a plain `Vector{Float64}`, nothing wrapped around it.
+            tipreds=if haskey(by_subject, i)
+                ks = by_subject[i]
+                TIMissingRecipe(vec(tipred_data[i, :]), Int.(ti_missing_predictor[ks]),
+                    Int.(ti_missing_parameter[ks]))
+            else
+                vec(tipred_data[i, :])
+            end,
+            subject=i, max_timestep=max_timestep)
         for (i, r) in enumerate(ranges)
     ]
     length(prior_index) == length(prior_scale) ||
         throw(DimensionMismatch("prior index and scale vectors must have equal length"))
     return CTSEMObjective(params, objects, nothing, Int.(prior_index),
-        Float64.(prior_scale), Float64(prior_weight))
+        Float64.(prior_scale), Float64(prior_weight), Int.(ti_missing_parameter),
+        Float64.(ti_missing_mu), Float64.(ti_missing_sigma))
 end
 
 ctsem_objective(params::EKFParameters, subject_starts, timesteps, data,
     tdpred_data=zeros(eltype(data), 0, size(data, 2)),
     tipred_data=zeros(eltype(data), length(subject_starts), 0), max_timestep::Real=Inf;
-    prior_index=Int[], prior_scale=Float64[], prior_weight::Real=1.0) =
+    prior_index=Int[], prior_scale=Float64[], prior_weight::Real=1.0,
+    ti_missing_subject=Int[], ti_missing_predictor=Int[], ti_missing_parameter=Int[],
+    ti_missing_mu=Float64[], ti_missing_sigma=Float64[]) =
     CTSEMObjective(params, subject_starts, timesteps, data, tdpred_data, tipred_data,
         max_timestep; prior_index=prior_index, prior_scale=prior_scale,
-        prior_weight=prior_weight)
+        prior_weight=prior_weight, ti_missing_subject=ti_missing_subject,
+        ti_missing_predictor=ti_missing_predictor, ti_missing_parameter=ti_missing_parameter,
+        ti_missing_mu=ti_missing_mu, ti_missing_sigma=ti_missing_sigma)
 
 ################################################################################
 # Threading
@@ -379,7 +451,8 @@ function (objective::CTSEMObjective)(values::AbstractVector)
         @inbounds for subject_objective in subjects
             total += subject_objective(values)
         end
-        return total + _ctsem_log_prior(objective, values)
+        return total + _ctsem_log_prior(objective, values) +
+               _ctsem_ti_missing_loglik(objective, values)
     end
 
     ranges = _ctsem_chunk_ranges(nsubjects, nchunks)
@@ -397,7 +470,8 @@ function (objective::CTSEMObjective)(values::AbstractVector)
     @inbounds for c in 1:nchunks
         total += partials[c]
     end
-    return total + _ctsem_log_prior(objective, values)
+    return total + _ctsem_log_prior(objective, values) +
+           _ctsem_ti_missing_loglik(objective, values)
 end
 
 """
@@ -424,6 +498,18 @@ function ctsem_evaluate(objective::CTSEMObjective, values::AbstractVector;
     method = Symbol(gradient_method)
     method in (:forward, :adjoint) ||
         throw(ArgumentError("gradient_method must be :forward or :adjoint, got :$(method)"))
+    # The reverse pass has no cotangent for a sampled TI predictor value: its
+    # contribution enters through `_ctsem_tipred_vector`'s `TIMissingRecipe`
+    # branch and through `_ctsem_ti_missing_loglik`, neither of which
+    # `ctsem_adjoint_gradient` knows about. Silently returning a gradient that
+    # is short exactly those entries is the wrong-but-plausible failure this
+    # feature's spec singles out, so this refuses rather than guessing.
+    # `gradient_method=:forward` is unaffected -- ForwardDiff differentiates
+    # straight through both of those, needing no adjoint work at all.
+    if gradient && method === :adjoint && !isempty(objective.ti_missing_parameter)
+        throw(ArgumentError("gradient_method=:adjoint does not yet support sampled " *
+            "(missing) TI predictor values; use gradient_method=:forward for this model."))
+    end
     if gradient && method === :adjoint
         result = ctsem_adjoint_gradient(objective, collect(values))
         value = result.value

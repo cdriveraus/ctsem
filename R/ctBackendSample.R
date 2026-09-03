@@ -425,10 +425,11 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
 # reverse.
 #' @keywords internal
 .ctBackendSampleTarget <- function(estimate, npar, marginal = FALSE,
-  state_explicit = FALSE, hessian = NULL) {
+  state_explicit = FALSE, hessian = NULL, gradient = "adjoint") {
   list(estimate = as.numeric(estimate), npar = as.integer(npar)[1L],
     marginal = isTRUE(marginal), state_explicit = isTRUE(state_explicit),
-    hessian = if (is.null(hessian)) NULL else as.matrix(hessian))
+    hessian = if (is.null(hessian)) NULL else as.matrix(hessian),
+    gradient = gradient)
 }
 
 # The objective a target names, in whichever process asks for it. Both branches
@@ -528,6 +529,15 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
     arguments$npar <- as.integer(target$npar)
     arguments$save_effects <- isTRUE(saveEffects)
     arguments$adapt_effects <- settings$adapt_effects
+  } else if (!identical(target$gradient, "adjoint")) {
+    # `ctsem_sample_marginal`'s own default is `:adjoint`; only said
+    # explicitly when something asked for the other one -- currently only a
+    # model with a sampled TI predictor value, which forces 'forward' because
+    # the adjoint path has no cotangent for it (see
+    # `.ctFitJuliaBackendImpl`). `ctsem_sample` (the joint entry, the `!
+    # isTRUE(marginal)` branch above) has no such keyword at all, so this is
+    # deliberately only reachable on the marginal path.
+    arguments$gradient_method <- target$gradient
   }
   if (!is.null(target$hessian)) {
     arguments$hessian <- JuliaConnectoR::juliaPut(as.matrix(target$hessian))
@@ -918,7 +928,7 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # errors use: the sampler moves in every coordinate, so it needs the
   # curvature of every coordinate.
   hessian <- if (is.null(jointobjective)) {
-    try(.ctBackendHessian(spec, estimate, verbose = verbose), silent = TRUE)
+    try(.ctBackendHessian(spec, estimate, verbose = verbose, gradient = gradient), silent = TRUE)
   } else {
     try(matrix(as.numeric(.ctBackendJuliaValue(module$ctsem_joint_hessian(
       jointobjective, .ctJuliaNumericVector(estimate), profile = FALSE))),
@@ -957,7 +967,7 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # `estimate` is longer than `npar` there and the objective is the joint one.
   target <- .ctBackendSampleTarget(estimate = estimate, npar = npar,
     marginal = !joint, state_explicit = !isTRUE(intoverstates),
-    hessian = hessian)
+    hessian = hessian, gradient = gradient)
   out <- .ctBackendSampleRun(out, target, chains = chains, warmup = warmup,
     draws = draws, cores = cores, saveEffects = saveEffects, seed = seed,
     control = control, verbose = verbose,

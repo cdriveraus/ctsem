@@ -74,6 +74,61 @@ function _materialize_subject_values!(subject_values::AbstractVector, values::Ab
 end
 
 """
+    TIMissingRecipe(base, predictor_index, parameter_index)
+
+How to rebuild one subject's TI-predictor row when some of its cells are
+sampled rather than observed.
+
+`base` is the subject's row of `tipred_data` exactly as R sent it -- a fixed
+`Vector{Float64}`, real data at the observed positions and an unused filler
+(`UNSET_PARAMETER`) at the missing ones, since those are overwritten on every
+call and never read as data. `predictor_index` names which columns are
+missing for this subject and `parameter_index` gives, for each of those
+columns in the same order, the raw-parameter position that samples it.
+
+A subject with no missing cells is never wrapped in this: its
+`ContinuousEKFObjective` holds the plain `Vector{Float64}` it always has, so
+nothing about that path changes. See `_ctsem_tipred_vector` for the dispatch
+this exists to drive.
+"""
+struct TIMissingRecipe{V<:AbstractVector{<:Real}}
+    base::V
+    predictor_index::Vector{Int}
+    parameter_index::Vector{Int}
+end
+
+"""
+    _ctsem_tipred_vector(tipreds, p)
+
+The TI-predictor vector a row evaluation should read, for the raw parameter
+vector `p` of the current call.
+
+Two methods, dispatched on the *stored* type, not a runtime flag:
+
+  * `tipreds::AbstractVector` (today's only case, and every case for a model
+    with no missing TI predictors) -- returned unchanged. This method is
+    exactly the identity function and the compiler resolves it at the call
+    site, so a model with nothing missing pays nothing for this feature
+    existing: no branch, no allocation, no new code on its path.
+  * `tipreds::TIMissingRecipe` -- a fresh `Vector{T}` (`T` = `eltype(p)`, so a
+    `ForwardDiff.Dual` during a gradient) built from the fixed base row with
+    each missing cell overwritten by `p[parameter_index]`. This is the
+    "honest cost" the spec accepts for sampling a missing predictor: one
+    small per-subject allocation per evaluation, paid only by subjects that
+    actually have a missing cell.
+"""
+@inline _ctsem_tipred_vector(tipreds::AbstractVector, p::AbstractVector) = tipreds
+
+@inline function _ctsem_tipred_vector(spec::TIMissingRecipe, p::AbstractVector{T}) where {T}
+    buffer = Vector{T}(undef, length(spec.base))
+    copyto!(buffer, spec.base)
+    @inbounds for k in eachindex(spec.predictor_index)
+        buffer[spec.predictor_index[k]] = p[spec.parameter_index[k]]
+    end
+    return buffer
+end
+
+"""
     _materialize_all_params!(all_params, values, sp)
 
 Materialize the full transformed parameter vector for an EKF evaluation.
