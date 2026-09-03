@@ -80,41 +80,48 @@ Three things the counts say that the timings alone would not:
   a per-row `zeros` on the `:theta` tape entry.
 - `ctsem_opcounts()`: deterministic counters for all of the above.
 
-## After (same cells, same machine, same contention)
+## After (same cells, same machine, load 4 to 6 during this run)
 
-| model | design | exp | frechet | adjoint ms before | after |
-|---|---|---|---|---|---|
-| linear n=2 | balanced | 0 | 1 | 22.7 | 23.1 |
-| linear n=2 | shared irregular | 0 | 19 | 30.1 | 23.1 |
-| linear n=2 | few distinct | 0 | 3 | 27.7 | 22.8 |
-| linear n=2 | fully irregular | 3800 | 3800 | 30.2 | 27.8 |
-| linear n=6 | balanced | 0 | 1 | 77.0 | 83.1 (before the LU cache) |
-| linear n=6 | shared irregular | 0 | 19 | 105.5 | 85.1 |
-| linear n=6 | fully irregular | 3800 | 3800 | 105.4 | 99.4 |
-| augmented CINT k=3 m=3 | shared irregular | 0 | 19 | 88.3 | 59.0 |
-| augmented CINT k=3 m=3 | fully irregular | 3800 | 3800 | 89.0 | 72.4 |
-| augmented DRIFT k=2 m=4 | any | 3800 | 3800 | 99 to 103 | 85.7 to 85.9 |
-| state-dependent n=2 | balanced | 7600 | 7600 | 49.5 | 45.5 |
-| state-dependent n=6 | balanced | 7600 | 7600 | 192.5 | 166.6 |
+Two runs: after the kernel, the two tables and the Schur threshold; and after
+the allocation work (LU cache in the packed buffer, scratch for the two
+pullbacks, the four `Val`/`zeros` sites). Counts are from the second run.
 
-Allocation per adjoint gradient fell from 20.9 to 11.9 MB (linear n=2
-irregular), 79 to 32 MB (linear n=6 irregular), 93 to 46 MB (augmented drift)
-and 191 to 57 MB (state-dependent n=6). The 6-latent balanced regression is
-the uncached packed LU and is addressed by the factor cache; its after-number
-is pending the re-run.
+| model | design | exp | frechet | baseline ms | after tables | after allocation | alloc MB before / after |
+|---|---|---|---|---|---|---|---|
+| linear n=2 | balanced | 0 | 1 | 22.7 | 23.1 | 19.6 | 11.9 / 1.7 |
+| linear n=2 | shared irregular | 0 | 19 | 30.1 | 23.1 | 19.9 | 20.9 / 1.7 |
+| linear n=2 | few distinct | 0 | 3 | 27.7 | 22.8 | 19.6 | 17.9 / 1.7 |
+| linear n=2 | fully irregular | 3800 | 3800 | 30.2 | 27.8 | 24.9 | 20.9 / 1.7 |
+| linear n=6 | balanced | 0 | 1 | 77.0 | 83.1 | 68.8 | 31.7 / 2.7 |
+| linear n=6 | shared irregular | 0 | 19 | 105.5 | 85.1 | 69.1 | 79.2 / 2.7 |
+| linear n=6 | few distinct | 0 | 3 | 97.9 | 82.9 | 69.0 | 63.4 / 2.7 |
+| linear n=6 | fully irregular | 3800 | 3800 | 105.4 | 99.4 | 84.1 | 79.2 / 2.7 |
+| augmented CINT k=3 m=3 | balanced | 0 | 1 | 59.0 | 58.6 | 53.3 | 31.5 / 13.1 |
+| augmented CINT k=3 m=3 | shared irregular | 0 | 19 | 88.3 | 59.0 | 53.1 | 79.0 / 13.1 |
+| augmented CINT k=3 m=3 | fully irregular | 3800 | 3800 | 89.0 | 72.4 | 66.9 | 79.0 / 13.1 |
+| augmented DRIFT k=2 m=4 | any | 3800 | 3800 | 99 to 103 | 85.7 to 85.9 | 81.9 to 82.9 | 93.5 / 29.0 |
+| state-dependent n=2 | balanced | 7600 | 7600 | 49.5 | 45.5 | 40.8 | 40.5 / 9.1 |
+| state-dependent n=2 | irregular | 8495 | 8495 | 54.1 | 50.0 | 45.3 | 44.9 / 10.1 |
+| state-dependent n=6 | balanced | 7600 | 7600 | 192.5 | 166.6 | 167.1 | 191 / 18.7 |
+| state-dependent n=6 | irregular | 8495 | 8495 | 212.5 | 186.4 | 183.3 | 213 / 20.8 |
+
+GC time is 0% of every adjoint gradient in the second run (it was 6 to 40%).
+The primal moved too, from the `Val` sites: linear n=2 balanced 7.0 to 5.5 ms,
+1.4 to 0.5 MB. The 6-latent balanced regression in the first run was the
+uncached packed LU and is gone in the second.
+
+Every timing here is the minimum of seven repeats on a shared machine; treat
+differences under about 5% as noise. The counts are not noisy.
 
 ## What remains, with measured shares
 
-1. **Allocation in the reverse pass.** `Profile.Allocs` on the tree before
-   the Fréchet buffer: `_sdcovsqrt2cov_pullback!` and `_ctsem_corrsqrt_row`
-   are seven allocation sites per prediction substep (about half the bytes on
-   the linear 2-latent model), `_ctsem_lyap_pullback` four matrices per
-   substep, and the state-dependent group replay
-   (`_ctsem_complex_group_pullback!`, `_dual_state_derivative`, `_partial1`)
+1. **Allocation left in the reverse pass.** After the scratch work the
+   remaining sites are the state-dependent group replay
+   (`_ctsem_complex_group_pullback!`, `_dual_state_derivative`, `_partial1`:
    tens of thousands of small allocations per gradient on augmented-drift
-   models. GC is still 6 to 17% of the adjoint in most cells and 34% on the
-   smallest. All of this is scratch plumbing through `CTSEMReverseScratch`,
-   mechanical and verifiable by allocation count.
+   models, 29 MB against 2.7 MB for a linear model of the same size) and the
+   per-subject `:init` entry. GC is 0% of the adjoint in every measured cell
+   now, so this matters for threads, not for serial time.
 2. **`rev_update` at 13 to 29%** is now the largest single family on linear
    models. It has not been looked at.
 3. **Lyapunov pullback for state-dependent models** (25% of the 6-latent
