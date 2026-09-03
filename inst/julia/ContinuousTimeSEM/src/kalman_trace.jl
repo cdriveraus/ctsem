@@ -373,7 +373,16 @@ updated state.
 
 `context` already refers to `ws.state`, which the measurement update mutated in
 place, so re-running the transform groups against it evaluates them where the
-filter now is rather than where it was before the observation arrived.
+filter now is rather than where it was before the observation arrived. All
+three groups are rerun, in filter order (predict, td, update) -- not just
+predict and update -- so an update-group cell that reads a td-group cell
+(TDPREDEFFECT, Jtd) sees that cell's value at the post-update state too,
+rather than the value the forward pass's own td step left behind before the
+measurement update ran. Confirmed missing and fixed: J9/F3
+(review/J9-duplicate-edge-blocks.md) -- a td-group cell that was
+state-dependent and read by an update-group cell used to be reported at the
+pre-update state, off by the entire td-group contribution rather than by a
+rounding amount.
 
 The parameter vector and the manifest covariance are restored afterwards, so
 this cannot reach the likelihood: the filter continues from exactly where it
@@ -388,6 +397,8 @@ function _record_row_update!(trace::CTSEMKalmanTrace, ws, pars, sp, context,
 
     apply_complex_transforms_at_indices!(all_params, ws.predict_param_indices,
         sp.predict_transforms, context)   # PARS the measurement cells may read
+    apply_complex_transforms_at_indices!(all_params, ws.td_param_indices,
+        sp.td_transforms, context)        # TDPREDEFFECT/Jtd an update-group cell may read
     apply_complex_transforms_at_indices!(all_params, ws.update_param_indices,
         sp.update_transforms, context)
     ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferΘ, pars.MANIFESTVAR, 0, ws.manifest_dim)

@@ -205,6 +205,61 @@ test_that("state-dependent cells are named and follow the state they are given",
   expect_equal(at_default$LAMBDA, moved$LAMBDA)
 })
 
+# J9/F1: `ctsem_parameter_matrices` (summary_matrices.jl) is an independent,
+# hand-written copy of "apply predict, then td, then update, in that order"
+# -- the same block that drifted from the filter's own row 1 three times
+# (kalman_filters.jl, state_sampling.jl). It is currently correct, but nothing
+# ties its group order to the filter's, so a future change to one would not
+# fail anything. This is the model the review report itself probed: PARS is
+# in the predict group and MANIFESTVAR reads it, so this can only agree if
+# predict runs before update.
+#
+# This test is deliberately built to fail if the summary path's group order
+# regresses: reordering `apply_complex_transforms_at_indices!` in
+# `ctsem_parameter_matrices` (e.g. update before predict) makes MANIFESTVAR
+# read PARS before it is materialized from `state`, which is the same
+# UNSET_PARAMETER-sentinel failure mode the filter's row 1 bug had -- not a
+# silent near-miss.
+test_that("ctBackendParMatrices runs predict before update, so an update-group cell sees a predict-group value", {
+  skip_on_cran()
+  skip_without_julia()
+
+  t0 <- 1.5
+  pars_val <- 0.4
+
+  .m <- function(manifestvar) suppressWarnings(ctModel(
+    type = "ct",
+    LAMBDA = diag(1),
+    PARS = matrix("mvp||TRUE", 1, 1),
+    DRIFT = matrix("drift", 1, 1),
+    DIFFUSION = matrix("diffusion", 1, 1),
+    MANIFESTVAR = matrix(manifestvar, 1, 1),
+    MANIFESTMEANS = matrix(0, 1, 1),
+    T0VAR = matrix(1, 1, 1),
+    T0MEANS = matrix(t0, 1, 1)))
+
+  model <- .m("PARS[1,1]")
+  set.seed(11)
+  dat <- data.frame(id = 1:8, time = 0, Y1 = stats::rnorm(8, t0, 1))
+  spec <- suppressMessages(ctFit(dat, model, backend = "julia", fit = FALSE))
+  npar <- max(spec$parameter_table$parnumber, na.rm = TRUE)
+  fit <- .summary_pointfit(spec, model, rep(-0.5, npar), "julia")
+
+  # `state` is given directly here (bypassing the raw-to-state materialization
+  # ctFit's optimizer would do), so MANIFESTVAR's value depends only on
+  # whether the predict group (which writes PARS from state[2]) ran before
+  # the update group (which reads PARS[1,1] into MANIFESTVAR) -- exactly the
+  # ordering this function must get right.
+  matrices <- ctBackendParMatrices(fit, state = c(t0, pars_val))
+  expect_equal(unname(matrices$MANIFESTVAR[1, 1]), pars_val, tolerance = 1e-10)
+
+  # And it has to actually move with PARS, or a bug that just returned a
+  # constant would pass the check above too.
+  other <- ctBackendParMatrices(fit, state = c(t0, pars_val * 3))
+  expect_false(isTRUE(all.equal(unname(matrices$MANIFESTVAR[1, 1]),
+    unname(other$MANIFESTVAR[1, 1]))))
+})
+
 test_that("summary reports fixed effects and system matrices, with intervals only when earned", {
   skip_on_cran()
   skip_without_julia()
