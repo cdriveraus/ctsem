@@ -524,6 +524,13 @@ tostanarray <- function(flesh, skeleton){
 makeClusterID <- function(cores = parallel::detectCores()) {
   outfile <- getOption("ctsem.cluster.outfile", NULL)
   arguments <- list(cores, useXDR = FALSE,
+    # Workers otherwise search their own default .libPaths(), not the
+    # caller's -- so `library(ctsem)` two lines down can silently load a
+    # different install than the one running this code (e.g. a stale
+    # globally-installed package while a development tree is under test).
+    # Passing the caller's own search path down closes that gap; see
+    # parallelly::makeClusterPSOCK's rscript_libs documentation.
+    rscript_libs = .libPaths(),
     default_packages = c("datasets", "utils", "grDevices", "graphics",
       "stats", "methods"))
   if (!is.null(outfile)) arguments$outfile <- outfile
