@@ -446,6 +446,23 @@
 # engines' own per-subject adjoint contributions rather than by re-initialising
 # a model per subject the way `scorecalc()` must for Stan.
 .ctBackendScoreMatrix <- function(fit, est) {
+  # `ctsem_subject_gradients` (the engine function below) refuses a model with
+  # a sampled/missing TI predictor value outright -- the imputation
+  # log-density's gradient contribution has no single subject's row to land
+  # on (see its docstring in inst/julia/ContinuousTimeSEM/src/adjoint.jl).
+  # Caught here rather than left to surface as a bare JuliaConnectoR/Julia
+  # ArgumentError, which names the engine function instead of the ctsem
+  # methods that need it. `opg`, `sandwich` and `bootstrap` are the only
+  # uncertainty methods that reach this function at all (see
+  # `.ctBackendUncertainty()`), so the alternative named here is complete.
+  if (!is.null(fit$model_spec$ti_missing) && nrow(fit$model_spec$ti_missing)) {
+    stop("Per-subject scores are not available for a fit with a sampled ",
+      "(missing) TI predictor value: the imputation log-density's gradient ",
+      "contribution has no single subject's row to land on. ",
+      "uncertainty='opg', 'sandwich' and 'bootstrap' all need per-subject ",
+      "scores; use uncertainty='hessian', 'surrogate' or 'is' instead, ",
+      "which do not.", call. = FALSE)
+  }
   module <- .ctJuliaModule(fit$model_spec$project)
   result <- JuliaConnectoR::juliaGet(module$ctsem_subject_gradients(
     .ctJuliaObjective(fit), .ctJuliaVector(as.numeric(est))))
