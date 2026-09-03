@@ -580,7 +580,15 @@ end
         progress=false, verbose=false)
     @test isfinite(result.maximum_loglik)
     @test all(isfinite, result.minimizer)
-    @test result.converged
+    # The drift lands at raw -18.5 (see below), where `-log1p_exp`'s
+    # derivative is ~9.2e-9 -- past `_CTSEM_TRANSFORM_FLOOR[]` even though
+    # |raw| is under the old, retired 20.0 raw-magnitude threshold. That gap
+    # is exactly the false negative the derivative-based guard was written to
+    # close: a raw value under any fixed cutoff can still sit on a transform
+    # that has gone flat, and this fit is a case of it, not a contrived one.
+    @test !result.converged
+    @test result.saturated
+    @test result.saturated_parameters == [1]
 
     # The manifest mean is a log rate the counts see directly, and the joint
     # mode recovers it.
