@@ -584,6 +584,51 @@ function ctsem_laplace_popcov(laplace::CTSEMLaplaceObjective, values::AbstractVe
 end
 
 """
+    _laplace_saturated_parameters(laplace, values; threshold=_CTSEM_TRANSFORM_FLOOR[])
+
+Which raw parameter indices have a materialising transform that has stopped
+responding at `values`, over the whole raw vector `ctsem_laplace_optimize`
+works in.
+
+Two layers, because two different pieces of code materialise raw values here:
+ordinary parameter-table coordinates (including each level's `re_index`) go
+through `laplace.objective.params.regular_transforms` and are covered by
+`_ctsem_saturated_parameters` (`parameter_transforms.jl`); each level's
+`sd_index` and `cor_index` coordinates go through the population-scale and
+-correlation formulas `_laplace_popchol` evaluates directly
+(`log1p_exp(2x-1) * sdscale + 1e-10` and `2/(1+exp(-clamp(x))) - 1`), which sit
+outside `regular_transforms` entirely -- "a tail of the vector no model matrix
+cell reads", per `CTSEMLaplaceLevel`'s docstring -- so they need their own
+derivative here. A correlation coordinate sitting past
+`ctsem_set_correlation_cap!`'s cap is flagged by the same mechanism, because
+the clamp itself has zero derivative past it: the same practical fact
+`ctsem_laplace_boundary` already diagnoses separately, by name.
+
+A raw index reached by neither layer -- a TI-predictor coefficient -- is never
+flagged, as in `_ctsem_saturated_parameters`.
+"""
+function _laplace_saturated_parameters(laplace::CTSEMLaplaceObjective,
+        values::AbstractVector{T}; threshold::Real=_CTSEM_TRANSFORM_FLOOR[]) where {T<:Real}
+    found = Set(_ctsem_saturated_parameters(laplace.objective.params, values,
+        eachindex(values); threshold=threshold))
+    for level in laplace.spec.levels
+        for j in eachindex(level.sd_index)
+            idx = level.sd_index[j]
+            scale = level.sd_scale[j]
+            d = abs(ForwardDiff.derivative(
+                raw -> log1p_exp(2 * raw - 1) * scale + 1e-10, values[idx]))
+            d < threshold && push!(found, idx)
+        end
+        for idx in level.cor_index
+            d = abs(ForwardDiff.derivative(
+                raw -> 2 / (1 + exp(-_laplace_cap_correlation(raw))) - 1, values[idx]))
+            d < threshold && push!(found, idx)
+        end
+    end
+    return sort!(collect(found))
+end
+
+"""
     _laplace_member_values(values, spec, Ls, u, offsets)
 
 The raw parameter vector one subject is filtered with: the population vector,
@@ -2895,16 +2940,21 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
     # and `NaN <= tolerance` is false so the scaled test alone would not have
     # caught it. One draw in ten reported convergence with a NaN gradient.
     finite_gradient = isfinite(gradient_norm)
-    # The same guard `ctsem_optimize` has, which this route was left out of.
-    #
-    # Every ctsem transform is flat to machine precision by |raw| ~ 20: the
-    # exponential underflows and the derivative is *exactly* zero. A parameter
-    # that walks out there therefore reports a zero gradient, satisfies any
-    # tolerance, and is indistinguishable from an optimum -- while being pinned
-    # by the transform's floating-point limit rather than by the data. A
-    # variance going to zero is the usual way in.
-    saturated = isempty(minimizer) ? false :
-        maximum(abs, minimizer) >= _CTSEM_SATURATION[]
+    # The same guard `ctsem_optimize` has, which this route was left out of --
+    # and, like that one, judged on the materialising transform's own
+    # derivative rather than the raw coordinate's magnitude. See
+    # `_ctsem_saturated_parameters` (`parameter_transforms.jl`) for why a
+    # magnitude threshold cannot work (an identity-transformed coordinate
+    # never saturates at any magnitude; different transforms go flat at
+    # different raw magnitudes) and `_laplace_saturated_parameters` for the
+    # population-scale and -correlation coordinates this route additionally
+    # carries, which live outside the ordinary parameter transforms. A
+    # parameter whose transform derivative has collapsed reports a zero
+    # gradient, satisfies any tolerance, and is indistinguishable from an
+    # optimum -- while being pinned by the transform's floating-point limit
+    # rather than by the data. A variance going to zero is the usual way in.
+    saturated_parameters = _laplace_saturated_parameters(laplace, minimizer)
+    saturated = !isempty(saturated_parameters)
     converged_enough = isfinite(final.value) && finite_gradient &&
         gradient_norm <= scaled_tolerance
     # Convergence needs a small gradient, and nothing else counts as one.
@@ -2923,9 +2973,9 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
     # out of reach on a log likelihood of order 1e3 however good the fit.
     verbose && stalled && println("Laplace: the optimizer made no progress from ",
         "its starting values; reporting this as not converged")
-    verbose && saturated && println("Laplace: a parameter reached ",
-        maximum(abs, minimizer), " on the unconstrained scale, where its ",
-        "transform is flat to machine precision; reporting this as not converged")
+    verbose && saturated && println("Laplace: raw parameter(s) ",
+        saturated_parameters, " have a materialising transform that is flat ",
+        "to machine precision at the estimate; reporting this as not converged")
     verbose && !stalled && !(finite_gradient &&
         (Optim.g_converged(result) || converged_enough)) &&
         println("Laplace: the optimizer stopped with a largest gradient of ",
@@ -2946,6 +2996,7 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
         gradient_norm=gradient_norm,
         scaled_tolerance=scaled_tolerance,
         saturated=saturated,
+        saturated_parameters=saturated_parameters,
         converged=!stalled && !saturated && finite_gradient &&
             (Optim.g_converged(result) || converged_enough),
         g_converged=Optim.g_converged(result),

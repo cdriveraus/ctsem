@@ -1205,3 +1205,10 @@ one row in a few hundred -- would be reported as a parameter pinned at the
 floating-point limit of its transform, and the fit declared not converged.
 """
 _ctsem_saturation_range(o::CTSEMJointObjective, minimizer) = 1:o.npar
+
+"""
+Unwrap to the `CTSEMObjective` the joint objective is built on -- see
+`_ctsem_params` in `ctsem_backend.jl`. The population block's raw coordinates
+are exactly that objective's, so no separate lookup is needed.
+"""
+_ctsem_params(o::CTSEMJointObjective) = _ctsem_params(o.objective)

@@ -101,3 +101,92 @@ function _materialize_all_params!(all_params::AbstractVector, values::AbstractVe
     map_fixed_values!(all_params, sp.fixed_indices, sp.fixed_values)
     return all_params
 end
+
+"""
+Materialising-transform derivative below which a raw parameter is treated as
+saturated: its transform has stopped responding, so no gradient reaches it for
+reasons that have nothing to do with the data.
+
+Not a bound on the raw coordinate -- see `_ctsem_saturated_parameters` -- but
+on the one quantity that actually says whether a transform has gone flat.
+Every ctsem transform is either always non-saturating (identity: derivative
+exactly its multiplier, at any raw magnitude) or asymptotically flat on
+(at least) one side, and the two regimes are far apart wherever that side is
+reached. Measured with `ForwardDiff` across the transform strings
+`ctJuliaBackend.R` actually writes:
+
+  transform                                  raw    derivative
+  `2/(1+exp(-x))-1` (correlation)             10     9.1e-5
+  `2/(1+exp(-x))-1` (correlation)             17     8.3e-8
+  `-log1p_exp(x)` (drift, negative side)    -18.5    9.2e-9   (see
+      `test_state_sampling.jl`, "a count model fits over the joint density":
+      this is the drift coordinate that test's own comment already calls
+      unidentified)
+  `-(1e-6+2log1p_exp(-2x))` (drift diagonal)  10     8.2e-9
+  `1e-10+5log1p_exp(2x)` (variance)            0     5.0       (never
+      saturates for raw > 0; only for raw very negative, i.e. variance -> 0)
+
+`1e-6` sits two orders of magnitude above the largest of the "gone flat"
+figures and four below the smallest "still responding" one, so where exactly
+it falls inside that gap does not change which of the measurements above it
+classifies. It is deliberately not tied to `_CTSEM_SATURATION` (the retired
+raw-magnitude threshold, `binary_measurement.jl`): that constant still guards
+an unrelated decision (whether `ctsem_optimize`'s Hager-Zhang fallback is
+worth attempting) and lowering it would not fix what was wrong with using a
+raw magnitude for saturation in the first place -- see git history for the
+false positives that motivated this.
+"""
+const _CTSEM_TRANSFORM_FLOOR = Ref(1e-6)
+
+"""
+    _ctsem_saturated_parameters(sp, values, range; threshold=_CTSEM_TRANSFORM_FLOOR[])
+
+Which raw parameter indices in `range` have a materialising transform that has
+stopped responding at `values`.
+
+Each `sp.regular_transforms[tf_idx]` reads exactly one entry of `values` --
+`sp.parnumber[tf_idx]` -- by construction on the R side, the same fact
+`adjoint_parameters.jl` relies on (and verifies once, at adjoint-workspace
+construction) to pull a cotangent back through this layer. So the sensitivity
+of each materialised cell to its raw coordinate is one scalar derivative,
+taken with a seeded `ForwardDiff.Dual` the same way `_ctsem_regular_pullback!`
+does, rather than an `nmut x nvalues` Jacobian over the whole vector -- and
+because it is evaluated at the fit's own `values`, not characterised for the
+transform in the abstract, a raw parameter whose materialised scale itself
+depends on other parameters or predictors is handled for free.
+
+A raw index in `range` that no regular transform names -- a TI-predictor
+coefficient, which enters only as a linear multiplier in
+`_materialize_subject_values!`, or any other position this layer does not
+materialise -- is left out of the result: there is no transform here for it
+to have gone flat in, so it cannot saturate by this mechanism.
+
+If a raw parameter feeds more than one materialised cell, the largest of
+their derivatives decides: one cell still responding means the raw coordinate
+still does something to the likelihood.
+"""
+function _ctsem_saturated_parameters(sp::EKFParameters, values::AbstractVector{T},
+        range; threshold::Real=_CTSEM_TRANSFORM_FLOOR[]) where {T<:Real}
+    isempty(range) && return Int[]
+    D = ForwardDiff.Dual{Nothing,T,1}
+    scratch = Vector{D}(undef, length(values))
+    @inbounds for i in eachindex(values)
+        scratch[i] = D(values[i], ForwardDiff.Partials((zero(T),)))
+    end
+    best = Dict{Int,T}()
+    tf_idx = 0
+    @inbounds for idx in eachindex(sp.mutables)
+        sp.mutables[idx] || continue
+        tf_idx += 1
+        pn = sp.parnumber[tf_idx]
+        pn in range || continue
+        base = values[pn]
+        scratch[pn] = _seed_dual(scratch[pn], base, true)
+        derivative = abs(_partial1(sp.regular_transforms[tf_idx](scratch)))
+        scratch[pn] = _seed_dual(scratch[pn], base, false)
+        best[pn] = haskey(best, pn) ? max(best[pn], derivative) : derivative
+    end
+    flagged = [pn for (pn, derivative) in best if derivative < threshold]
+    sort!(flagged)
+    return flagged
+end
