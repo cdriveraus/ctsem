@@ -89,3 +89,40 @@ test_that("ctChisqTest compares two nested julia fits, and a julia fit against a
   expect_true(is.numeric(p_cross))
   expect_true(!is.na(p_cross))
 })
+
+test_that("ctChisqTest() refuses a sampled stan fit instead of an opaque row-count error, naming ctLOO()", {
+  skip_on_cran()
+  # A sampled fit (optimize=FALSE) never sets stanfit$optimfit -- that field
+  # belongs to stanoptimis() alone -- so .ctFitOptimValue() returned NULL for
+  # it and c(NULL, <value>) silently shrank `ll` to length 1 against `npars`
+  # at length 2; data.frame() then failed with "arguments imply differing
+  # number of rows", which names neither the sampled fit nor why. See
+  # review/J7-sampled-fit-support.md.
+  dat <- .chisq_stan_data()
+  m1 <- ctModel(type = "dt", LAMBDA = diag(1), MANIFESTVAR = 0)
+  f_opt <- suppressMessages(ctFit(dat, m1, cores = 1, verbose = 0))
+  f_samp <- suppressWarnings(suppressMessages(ctFit(dat, m1, cores = 1, verbose = 0,
+    optimize = FALSE, chains = 1, iter = 60)))
+  expect_gt(length(f_samp$stanfit$stanfit@sim), 0)  # genuinely sampled
+
+  err <- tryCatch({
+    ctChisqTest(f_opt, f_samp)
+    NA_character_
+  }, error = function(e) conditionMessage(e))
+  expect_false(is.na(err))
+  expect_match(err, "sampled", fixed = TRUE)
+  expect_match(err, "ctLOO", fixed = TRUE)
+
+  # Order shouldn't matter for the refusal either.
+  err2 <- tryCatch({
+    ctChisqTest(f_samp, f_opt)
+    NA_character_
+  }, error = function(e) conditionMessage(e))
+  expect_false(is.na(err2))
+  expect_match(err2, "sampled", fixed = TRUE)
+
+  # Two optimized fits: unaffected, still works (regression guard for the
+  # early-return check itself).
+  p <- ctChisqTest(f_opt, f_opt)
+  expect_true(is.numeric(p) && !is.na(p))
+})

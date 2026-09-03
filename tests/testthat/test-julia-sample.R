@@ -228,3 +228,37 @@ test_that("ctSample refuses what it cannot sample", {
     backend = "julia", cores = 1, optimcontrol = list(estonly = TRUE))))
   expect_error(ctSample(augmented), "intoverpop='laplace'")
 })
+
+test_that("ctOptimUncertainty() refuses a sampled julia fit instead of silently discarding its posterior", {
+  skip_on_cran()
+  skip_without_julia()
+  # ctOptimUncertainty()'s whole premise is a point estimate plus curvature.
+  # Before this guard, handing it a sampled fit treated fit$estimate$raw (the
+  # posterior mean here, not a mode) as that point estimate and overwrote
+  # fit$estimate$rawposterior -- the real draws -- with fresh Gaussian draws
+  # built from the curvature there. Wrong in a way nothing downstream would
+  # notice, since the replacement is the same shape and a plausible size; see
+  # review/J7-sampled-fit-support.md.
+  fit <- .sample_fixture()
+  sampled <- suppressWarnings(suppressMessages(
+    ctSample(fit, chains = 2, warmup = 40, draws = 40, cores = 1)))
+  expect_false(is.null(sampled$sample))
+  before <- sampled$estimate$rawposterior
+
+  err <- tryCatch({
+    ctOptimUncertainty(sampled, uncertainty = "hessian", finishsamples = 20, cores = 1)
+    NA_character_
+  }, error = function(e) conditionMessage(e))
+  expect_false(is.na(err))
+  expect_match(err, "sampled", fixed = TRUE)
+  expect_match(err, "rawposterior", fixed = TRUE)
+
+  # The refusal happens before anything is touched.
+  expect_identical(sampled$estimate$rawposterior, before)
+
+  # The Laplace fit ctSample() started from is a genuinely optimized fit
+  # (fit$sample is NULL there) -- unaffected by the new check, still works.
+  expect_false(is.null(fit$estimate$raw))
+  out <- ctOptimUncertainty(fit, uncertainty = "hessian", finishsamples = 20, cores = 1)
+  expect_s3_class(out, "ctJuliaFit")
+})

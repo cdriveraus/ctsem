@@ -283,3 +283,64 @@ test_that("targeted stan comparison: same model, same gap, agreeing posteriors",
   expect_gt(sd(jdraws) / sd(sdraws), 0.5)
   expect_lt(sd(jdraws) / sd(sdraws), 2.0)
 })
+
+# Auxiliary/uncertainty functions on this same sampled-missing-TI-predictor
+# fit -- the 2026-09 sampled-fit review (review/J7-sampled-fit-support.md).
+# Two engine functions read a subject's tipreds without the TIMissingRecipe
+# substitution `_ctsem_subject_gradient_chunk!` performs, and used to fail
+# obscurely rather than refuse; both are R-level guards on
+# fit$model_spec$ti_missing, checked before the engine is ever asked.
+test_that("per-subject scores (opg/sandwich/bootstrap uncertainty) refuse cleanly, not obscurely, for a sampled missing TI predictor", {
+  skip_on_cran()
+  skip_without_julia()
+  model <- .tipred_missing_model()
+  set.seed(1)
+  dat <- data.frame(id = rep(1:6, each = 4), time = rep(0:3, 6),
+    Y1 = rnorm(24, 0, 1),
+    group = rep(c(-1, 2, 0.3, -0.7, 1.5, NA), each = 4))
+  fit <- suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
+    optimize = FALSE, intoverpop = "augmented", chains = 1, iter = 60,
+    cores = 1, control = list(warmup = 30),
+    optimcontrol = list(gradient = "forward"))))
+  expect_false(is.null(fit$model_spec$ti_missing))
+
+  # ctOptimUncertainty() refuses any sampled julia fit before it gets this
+  # far (see test-ctOptimUncertainty.R), so .ctBackendScoreMatrix() is
+  # exercised directly here -- it is also reachable on its own, and this is
+  # the refusal the Julia engine's ctsem_subject_gradients() itself documents
+  # ("does not yet support a sampled (missing) TI predictor value").
+  est <- as.numeric(fit$estimate$raw)
+  err <- tryCatch({
+    ctsem:::.ctBackendScoreMatrix(fit, est)
+    NA_character_
+  }, error = function(e) conditionMessage(e))
+  expect_match(err, "Per-subject scores are not available", fixed = TRUE)
+  expect_match(err, "opg", fixed = TRUE)
+  expect_match(err, "sandwich", fixed = TRUE)
+  expect_match(err, "bootstrap", fixed = TRUE)
+  expect_match(err, "hessian", fixed = TRUE)
+})
+
+test_that("ctGenerateFromFit()/ctPostPredict() refuse cleanly, not with a raw Julia MethodError, for a sampled missing TI predictor", {
+  skip_on_cran()
+  skip_without_julia()
+  model <- .tipred_missing_model()
+  set.seed(1)
+  dat <- data.frame(id = rep(1:6, each = 4), time = rep(0:3, 6),
+    Y1 = rnorm(24, 0, 1),
+    group = rep(c(-1, 2, 0.3, -0.7, 1.5, NA), each = 4))
+  fit <- suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
+    optimize = FALSE, intoverpop = "augmented", chains = 1, iter = 60,
+    cores = 1, control = list(warmup = 30),
+    optimcontrol = list(gradient = "forward"))))
+
+  err <- tryCatch({
+    ctGenerateFromFit(fit, nsamples = 5, cores = 1)
+    NA_character_
+  }, error = function(e) conditionMessage(e))
+  expect_false(is.na(err))
+  expect_match(err, "sampled (missing) TI predictor", fixed = TRUE)
+  # Not the raw engine failure this used to surface as, which named an
+  # internal workspace type rather than anything about the model:
+  expect_false(grepl("MethodError", err, fixed = TRUE))
+})

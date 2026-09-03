@@ -1271,6 +1271,25 @@ ctOptimUncertainty <- function(fit,
   # see R/ctBackendUncertainty.R.
   draws <- .ctResolveDraws(uncertainty, draws)
   if(inherits(fit, 'ctJuliaFit')) {
+    # `fit$sample` (class "ctSampleDiagnostics") is set only by
+    # `.ctBackendSampleAssemble()`, the routine shared by `ctFit(optimize =
+    # FALSE)` and `ctSample()` -- so it marks a julia fit built from real
+    # draws either way. Nothing below knows that: `.ctBackendUncertainty()`
+    # treats `fit$estimate$raw` as a point estimate, builds a Hessian or score
+    # matrix around it, and overwrites `fit$estimate$rawposterior` with fresh
+    # curvature-based draws. Run on a sampled fit that would silently discard
+    # the actual posterior draws in favour of a Gaussian approximation around
+    # their mean -- wrong in a way nothing downstream would notice, since the
+    # replacement is the same shape and a plausible size. The stan branch
+    # below already refuses the equivalent case (`fit$stanfit$stanfit@sim`
+    # populated); this mirrors it for julia.
+    if(!is.null(fit$sample)) {
+      stop("ctOptimUncertainty() applies to an optimized ctJuliaFit; this fit ",
+        "was sampled (ctFit(optimize = FALSE) or ctSample()) and already ",
+        "carries its posterior in fit$estimate$rawposterior. Read that ",
+        "directly, or refit with optimize = TRUE if a curvature-based ",
+        "approximation is what you want.", call.=FALSE)
+    }
     if(is.null(finishsamples)) finishsamples <- 1000
     if(is.null(cores)) cores <- 1L
     cores <- max(1L, suppressWarnings(as.integer(cores[1])))
