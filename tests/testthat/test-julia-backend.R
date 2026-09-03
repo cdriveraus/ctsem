@@ -269,11 +269,13 @@ test_that("julia optimises with the imputed TI predictor values", {
   expect_equal(as.numeric(fit$model_spec$tipred_data)[1:5], group[1:5])
 })
 
-# Stan samples a missing TI predictor by writing 99999 and reading it back as a
-# free parameter. The engine has no such convention, so the same array would be
-# fitted as a covariate value of ninety-nine thousand. Refused, with the three
-# things a caller can do instead.
-test_that("the julia sampling path refuses a missing TI predictor", {
+# Stan samples a missing TI predictor by writing 99999 and reading it back as
+# a free parameter. As of SPEC-tipred-sampling.md the julia engine can sample
+# one too (test-julia-tipred-missing.R covers that route end to end), but
+# only with `intoverpop='augmented'` -- the default here resolves to 'none'
+# (`t0m` is indvarying), which is not yet supported and still refuses, with
+# what a caller can do instead.
+test_that("the julia sampling path refuses a missing TI predictor outside intoverpop='augmented'", {
   model <- suppressWarnings(ctModel(
     type = "ct", LAMBDA = diag(1), DRIFT = matrix("drift", 1, 1),
     DIFFUSION = matrix(.2, 1, 1), MANIFESTVAR = matrix(.1, 1, 1),

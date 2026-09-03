@@ -399,16 +399,22 @@
 # Returns NULL rather than erroring if anything goes wrong, so the caller falls
 # back to the finite-difference Hessian: a worse covariance is a better outcome
 # than no fit at all, and the two are interchangeable at this seam.
-.ctBackendHessian <- function(fit, est, verbose = 0) {
+.ctBackendHessian <- function(fit, est, verbose = 0, gradient = "adjoint") {
   # A state-explicit fit maximised a different object, so its curvature is a
   # different object too. See `.ctBackendJointHessian`.
   if (isFALSE(fit$args$intoverstates)) return(.ctBackendJointHessian(fit, est))
   module <- .ctJuliaModule(.ctBackendSpec(fit)$project)
-  # A user whose cached engine environment predates `ctsem_hessian` has no such
+  # `gradient='forward'` selects `ctsem_hessian_forward` instead of
+  # `ctsem_hessian`: a model with a sampled (missing) TI predictor value
+  # forces exactly this (see `.ctFitJuliaBackendImpl`), because
+  # `ctsem_hessian` nests over the adjoint gradient, which refuses such a
+  # model outright rather than silently omitting its cotangent.
+  hessian_fn_name <- if (identical(gradient, "forward")) "ctsem_hessian_forward" else "ctsem_hessian"
+  # A user whose cached engine environment predates this function has no such
   # function, and that is a silent fallback rather than an error: the engine
   # environment is keyed on a hash of the engine's source, so it refreshes
   # itself the moment that source changes.
-  available <- isTRUE(tryCatch(is.function(module$ctsem_hessian),
+  available <- isTRUE(tryCatch(is.function(module[[hessian_fn_name]]),
     error = function(e) FALSE))
   if (!available) return(NULL)
   # Said out loud, as the finite-difference path says "Estimating Hessian",
@@ -418,7 +424,7 @@
   # against 0.78 s for the 2*npar gradient evaluations a finite difference
   # needs -- but an unexplained ten-second pause is worth a line of output.
   message("Computing exact Hessian")
-  result <- try(.ctBackendJuliaValue(module$ctsem_hessian(
+  result <- try(.ctBackendJuliaValue(module[[hessian_fn_name]](
     .ctJuliaObjective(fit), .ctJuliaVector(as.numeric(est)))), silent = TRUE)
   if (inherits(result, "try-error")) {
     warning("The engine could not differentiate its gradient here; ",
