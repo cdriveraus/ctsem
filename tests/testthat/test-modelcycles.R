@@ -13,14 +13,44 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")) {
   m2 <- function(...) ctModel(type = "ct", n.latent = 2, n.manifest = 2,
     manifestNames = mn2, latentNames = ln2, LAMBDA = diag(2), ...)
 
-  test_that("a t0 matrix referencing a latent state is refused", {
-    expect_error(suppressMessages(m2(T0MEANS = c("0.5 * eta2", "t0m2"))),
-      "t0 matrix cannot reference a latent state")
-    # The message names the offending cell and the state, because the user's
-    # only way back is to find the cell they wrote.
-    expect_error(suppressMessages(m2(T0MEANS = c("0.5 * eta2", "t0m2"))),
-      "T0MEANS\\[1,1\\]")
-    expect_error(suppressMessages(m2(T0MEANS = c("0.5 * eta2", "t0m2"))), "eta2")
+  test_that("a t0 matrix referencing a latent state is accepted and evaluates correctly", {
+    # T0MEANS[1,1] reads eta2 (state 2) with a multiplier, T0MEANS[2,1] is the
+    # ordinary free parameter that state 2 itself resolves to at t0. This is
+    # acyclic -- state 2 does not depend back on state 1 -- and is the standard
+    # idiom for a stable latent intercept, ctsem's state-space replacement for
+    # MANIFESTTRAITVAR. It must build, not be refused.
+    mod <- suppressMessages(m2(T0MEANS = c("0.5 * eta2", "t0m2")))
+    expect_s3_class(mod, "ctStanModel")
+
+    # Stan side: the referenced-state cell gets its own `stateref` column
+    # (matsetup column 10) rather than the `param` column, with `param` left
+    # at 0 so nothing can mistake it for a parameter reference, and `when = 1`
+    # so it materialises in the t0 pass, after the state it reads is known.
+    dat <- data.frame(id = rep(1:2, each = 2), time = rep(0:1, 2), Y1 = 0, Y2 = 0)
+    prepared <- suppressMessages(ctFit(dat, mod, backend = "stan", fit = FALSE))
+    ms <- prepared$setup$matsetup
+    row1 <- ms[ms$matrix == 1 & ms$row == 1 & ms$col == 1, ]
+    row2 <- ms[ms$matrix == 1 & ms$row == 2 & ms$col == 1, ]
+    expect_equal(row1$param, 0L)
+    expect_equal(row1$stateref, 2L)
+    expect_equal(row1$when, 1L)
+    expect_true(row2$param > 0L)
+    expect_equal(row2$stateref, 0L)
+
+    # Julia side: T0MEANS[1,1] resolves, at model-build time, to the same free
+    # parameter as T0MEANS[2,1] with its own transform composed on top --
+    # not to whichever parameter happens to share state 2's index.
+    table <- ctsem:::.ctJuliaParameterTable(mod)
+    t1 <- table[table$matrix == "T0MEANS" & table$row == 1 & table$col == 1, ]
+    t2 <- table[table$matrix == "T0MEANS" & table$row == 2 & table$col == 1, ]
+    expect_false(is.na(t1$parnumber))
+    expect_equal(t1$parnumber, t2$parnumber)
+    eval_transform <- function(text, value) {
+      eval(parse(text = gsub("param\\[\\d+\\]", value, text)))
+    }
+    v2 <- eval_transform(t2$transform, 0.37)
+    v1 <- eval_transform(t1$transform, 0.37)
+    expect_equal(v1, 0.5 * v2)
   })
 
   test_that("a T0MEANS to PARS to state loop is refused, and names the path", {

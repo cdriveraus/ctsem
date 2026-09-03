@@ -856,6 +856,124 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       !is.na(canonical[p$parnumber])
     p$transform[use_canonical] <- canonical[p$parnumber[use_canonical]]
   }
+  # A T0MEANS cell that references exactly one other latent state -- the
+  # standard idiom for a stable latent intercept, ctsem's state-space
+  # replacement for MANIFESTTRAITVAR -- is not state-dependent in the sense
+  # the predict/update/td groups below handle. The state it reads is fully
+  # determined at t0 by other free parameters and fixed values, with no
+  # runtime dependency on the Kalman filter's evolving state: `ctStanModel`'s
+  # cycle check (see `ctModelCycleCheck.R`) has already refused any model
+  # where that is not true, so every reference here resolves, in a finite
+  # number of steps, to a free parameter or a fixed constant.
+  #
+  # Rather than adding a fourth state-dependent transform group to the engine
+  # -- mirrored through the adjoint tape, the sampler and the summary
+  # routines, for predict/update/td -- that chain is resolved here, at
+  # model-build time, by composing transform text: T0MEANS[1,1] =
+  # tform_outer(state[3]) becomes T0MEANS[1,1] = tform_outer(tform_inner(param[pn])),
+  # the same free-parameter transform machinery every other T0MEANS cell
+  # already uses. This is numerically identical to Stan's own resolution,
+  # which evaluates state 3 first and then applies tform_outer to that number
+  # (see the two-pass t0 block in `ctModelWriter.R`) -- composing the
+  # transforms symbolically is the same computation done in one pass instead
+  # of two.
+  #
+  # Individual variation on the *referenced* state (an indvarying T0MEANS
+  # cell feeding a state-reference chain) is not propagated to the composed
+  # cell here -- out of scope for the idiom this resolves, which by
+  # construction carries no individual variation of its own.
+  .ctJuliaStateIndex <- function(x) {
+    m <- regmatches(x, regexpr("\\bstate\\[\\d+\\]", x, perl = TRUE))
+    if (!length(m) || !nzchar(m)) return(NA_integer_)
+    as.integer(gsub("\\D", "", m))
+  }
+  t0_resolve_cache <- new.env(parent = emptyenv())
+  resolve_t0_state <- function(state_idx, visited) {
+    key <- as.character(state_idx)
+    cached <- t0_resolve_cache[[key]]
+    if (!is.null(cached)) return(cached)
+    if (state_idx %in% visited) {
+      stop("Circular t0 state reference at state ", state_idx,
+        " -- this should already have been refused when the model was built.",
+        call. = FALSE)
+    }
+    row_k <- which(p$matrix == "T0MEANS" & p$row == state_idx & p$col == 1L)
+    if (!length(row_k)) {
+      stop("T0MEANS[", state_idx, ",1] not found while resolving a state reference.",
+        call. = FALSE)
+    }
+    row_k <- row_k[1L]
+    text_k <- p$param[row_k]
+    result <- if (is.na(text_k)) {
+      # A fixed constant: nothing to compose, this state's t0 value is a number.
+      list(kind = "fixed", value = as.numeric(p$value[row_k]))
+    } else if (ctsem:::simpleStateCheck(text_k)) {
+      # This state's own t0 value is itself a reference to another state --
+      # resolve that one first, then apply this cell's own transform to it.
+      inner <- resolve_t0_state(.ctJuliaStateIndex(text_k), c(visited, state_idx))
+      outer_text <- gsub("\\bstate\\[\\d+\\]", "param", text_k, perl = TRUE)
+      if (identical(inner$kind, "fixed")) {
+        list(kind = "fixed", value = eval(parse(text = gsub("\\bparam\\b",
+          format(inner$value, digits = 17, scientific = FALSE), outer_text, perl = TRUE))))
+      } else {
+        inner_text <- if (is.na(inner$text)) "param" else inner$text
+        list(kind = "free", parnumber = inner$parnumber,
+          text = gsub("\\bparam\\b", paste0("(", inner_text, ")"), outer_text, perl = TRUE))
+      }
+    } else if (grepl("[", text_k, fixed = TRUE)) {
+      stop("T0MEANS[", state_idx, ",1] is a state-dependent expression the ",
+        "julia backend cannot resolve at model-build time: ", text_k, ".", call. = FALSE)
+    } else {
+      # An ordinary free parameter.
+      pn <- p$parnumber[row_k]
+      if (is.na(pn)) {
+        stop("T0MEANS[", state_idx, ",1] must be a free parameter or a fixed ",
+          "value to be referenced by another state's t0 cell.", call. = FALSE)
+      }
+      list(kind = "free", parnumber = pn,
+        text = if (is.na(p$transform[row_k])) NA_character_ else as.character(p$transform[row_k]))
+    }
+    t0_resolve_cache[[key]] <- result
+    result
+  }
+  t0state_rows <- which(p$matrix == "T0MEANS" & !is.na(p$param) &
+    vapply(p$param, function(x) !is.na(x) && ctsem:::simpleStateCheck(x), logical(1)))
+  if (length(t0state_rows)) {
+    # Resolve every reference first, entirely from the table's original
+    # (pre-resolution) contents -- then apply the results in a second pass.
+    # Mutating `p` between resolutions would let one cell's resolved,
+    # already-rewritten row be misread as a fixed value by a later lookup of
+    # the same state.
+    #
+    # Resolved on the state *this row defines* (`p$row[i]`), not the state its
+    # text references: `resolve_t0_state` reads that row's own text and
+    # composes its own outer transform on top of what the reference resolves
+    # to. Resolving the referenced state directly and using it unchanged would
+    # silently drop this row's own transform -- exactly right for a bare
+    # reference, silently wrong for anything else, e.g. `0.5 * eta2`.
+    resolved <- lapply(t0state_rows, function(i)
+      resolve_t0_state(p$row[i], integer(0)))
+    for (j in seq_along(t0state_rows)) {
+      i <- t0state_rows[j]
+      r <- resolved[[j]]
+      p$param[i] <- NA_character_
+      if (identical(r$kind, "fixed")) {
+        p$value[i] <- r$value
+        p$transform[i] <- NA_character_
+        p$parnumber[i] <- NA_integer_
+      } else {
+        inner_text <- if (is.na(r$text)) "param" else r$text
+        p$value[i] <- NA_real_
+        p$parnumber[i] <- r$parnumber
+        # Substituted to its final `param[pn]` form directly, rather than left
+        # for the `free`-only substitution loop below: `free` was computed
+        # before this row was resolved, so it does not include this row.
+        p$transform[i] <- gsub("\\bparam\\b", paste0("param[", r$parnumber, "]"),
+          inner_text, perl = TRUE)
+      }
+    }
+  }
+
   dynamic <- !is.na(p$param) & grepl("[", p$param, fixed = TRUE)
   predict_matrices <- c("PARS", "DRIFT", "CINT", "DIFFUSION", "JAx")
   update_matrices <- c("LAMBDA", "MANIFESTMEANS", "MANIFESTVAR", "Jy")

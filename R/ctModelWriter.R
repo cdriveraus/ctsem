@@ -540,6 +540,7 @@ ctStanModelMatrices <-function(ctm){
     m = mats$all[names(mats$all) %in% nm]
     when = 0 #default, static parameter
     parameter = 0 #for fixed values
+    stateref = 0 #state index for a cell that materialises from a state, not a parameter -- see matsetup column 10
     dynpar=FALSE
     copymatrix=0
     copyrow=0
@@ -563,16 +564,23 @@ ctStanModelMatrices <-function(ctm){
         
         if(simplestate){
           indvar <- 0
-          parameter <- gsub('\\[|\\]','',unlist(regmatches(ctspec$param[i], #extract one or more references
+          # The referenced state's index. This used to be written into the
+          # `param` column, which everywhere else holds a parameter number --
+          # colliding with whichever real parameter happened to share that
+          # index. It now goes into its own `stateref` column (matsetup column
+          # 10) and `parameter` stays 0, so no parameter lookup can ever match
+          # a state-referencing row.
+          stateref <- as.integer(gsub('\\[|\\]','',unlist(regmatches(ctspec$param[i], #extract one or more references
             gregexpr(
               paste0('(?=\\[).*?(?<=\\])'),
               ctspec$param[i], perl=TRUE)
-          )))[1]
+          )))[1])
+          parameter <- 0
           if(nm %in% c('JAx',names(c(mats$driftcint,mats$diffusion)),'PARS')) when = 2 #included PARS here because they can't change due to dynamics
           if(nm %in% c('PARS')) when = 100 #because needs to be expanded to all whens when computing whenvecs -- find a better way of handling this
           if(nm %in% c('Jtd',names(mats$tdpred))) when = 3
           if(nm %in% c(names(mats$measurementMean),names(mats$measurementCov))) when = 4
-          # if(nm %in% c('J0',names(mats$t0))) when = 1
+          if(nm %in% c('J0',names(mats$t0))) when = 1 #t0 matrices: materialised in the second t0 pass, once PARS-dependent state is available -- see "finish updating state" in the ekf init block
           dynpar=TRUE
         }
         
@@ -639,6 +647,7 @@ ctStanModelMatrices <-function(ctm){
       matrix=m, #matrix reference
       when=when,#when to compute
       copymatrix=copymatrix,copyrow=copyrow,copycol=copycol,
+      stateref=stateref, #state index for a state-referencing cell -- kept out of `param` so nothing can mistake it for a parameter number. Appended last so it lands as the final matsetup column and no existing stan column index shifts.
       stringsAsFactors = FALSE)
     
     if(is.null(matsetup)) matsetup <- mdatnew else matsetup<-rbind(matsetup,mdatnew)
@@ -688,8 +697,8 @@ ctStanModelMatrices <-function(ctm){
   
   for(i in 1:nrow(matsetup)){ #copy elements of reference row to copyrow
     if(matsetup$copyrow[i] > 0){
-      matsetup[i,c('param','transform','indvarying','tipred','when')] <- 
-        matsetup[matsetup$copyrow[i],c('param','transform','indvarying','tipred','when')]
+      matsetup[i,c('param','transform','indvarying','tipred','when','stateref')] <-
+        matsetup[matsetup$copyrow[i],c('param','transform','indvarying','tipred','when','stateref')]
     }
   }
   
@@ -1631,11 +1640,11 @@ functions{
   matrix mcalc(matrix matin, vector tfpars, row_vector states, array[] int when, int m, array[,] int ms, data array[,] real mval, int subi){
     matrix[rows(matin),cols(matin)] matout;
     int changeMade=0;
-    
+
     for(ri in 1:size(ms)){ //for each row of matrix setup
       if(m==ms[ri,7] && ( //if correct matrix
         subi ==0 ||  //and need to compute population parameter
-        (ms[ri,3] > 0 && (ms[ri,5] > 0 || ms[ri,6] > 0 || ms[ri,8] > 0)) //or there is individual variation
+        ((ms[ri,3] > 0 || ms[ri,10] > 0) && (ms[ri,5] > 0 || ms[ri,6] > 0 || ms[ri,8] > 0)) //or there is individual variation -- a state reference (col 10) needs this same per-subject recomputation, not only a parameter reference (col 3)
       )){
         int whenyes = (ms[ri,8]==100); //if PARS matrix then need to compute at each kalman step, could improve
         int wi=0;
@@ -1646,9 +1655,9 @@ functions{
         if(whenyes){ // if correct matrix and when
           changeMade=1;
           if(ms[ri,3] > 0 && ms[ri,8]==0)  matout[ms[ri,1], ms[ri,2] ] = tfpars[ms[ri,3]]; //should be already tformed
-          if(ms[ri,3] > 0 && ms[ri,8]>0)  matout[ms[ri,1], ms[ri,2] ] =   //if references param and is state based
-          tform(states[ms[ri,3] ], ms[ri,4], mval[ri,2], mval[ri,3], mval[ri,4], mval[ri,6] );
-          if(ms[ri,3] < 1) matout[ms[ri,1], ms[ri,2] ] = mval[ri, 1]; //doing this once over all subjects unless covariance matrix -- speed ups possible here, check properly!
+          if(ms[ri,10] > 0 && ms[ri,8]>0)  matout[ms[ri,1], ms[ri,2] ] =   //if references a state (col 10), not a parameter
+          tform(states[ms[ri,10] ], ms[ri,4], mval[ri,2], mval[ri,3], mval[ri,4], mval[ri,6] );
+          if(ms[ri,3] < 1 && ms[ri,10] < 1) matout[ms[ri,1], ms[ri,2] ] = mval[ri, 1]; //fixed value: neither a parameter nor a state reference
         }
       }
     }
@@ -1733,7 +1742,7 @@ data {
   int verbose; //level of printing during model fit
   array[nparams, ntipred] int TIPREDEFFECTsetup;
   int nrowmatsetup;
-  array[nrowmatsetup,9] int matsetup;
+  array[nrowmatsetup,10] int matsetup; //col 10 is stateref: the state index for a cell that materialises from a state rather than a parameter
   array[nrowmatsetup,6] real matvalues;
   array[',max(mats$all),',5] int whenmat;
   array[2,nparams]int whenvecp;

@@ -9,8 +9,15 @@
 # genuine loop is read before anything has written it, and what it reads is a
 # number rather than an error.
 #
-# So the loop has to be refused at specification time, where the user can still
-# see which cells they wrote. Two rules, and the messages name the cells.
+# A t0 matrix cell referencing a latent state is NOT itself such a loop -- it is
+# the standard idiom for a stable latent intercept (the state-space equivalent
+# of MANIFESTTRAITVAR), and it is acyclic as long as the state it reads is
+# itself resolvable to something that does not depend back on it. `matsetup`
+# now has its own `stateref` column for this (see R/ctModelWriter.R), so a
+# state-referencing t0 cell materialises from the state it names rather than
+# being silently reinterpreted as a parameter reference. What remains circular,
+# and is refused below, is a cycle: a chain of state/PARS references that comes
+# back to where it started, which cannot be evaluated in any order.
 
 # Latent state indices referenced by a cell's text, by name or as state[k].
 # Names are matched longest-first so eta1 cannot match inside eta10, and on a
@@ -48,40 +55,7 @@
   }, character(1), USE.NAMES = FALSE))
 }
 
-.ctCycleCellName <- function(matrix, row, col) {
-  paste0(matrix, "[", row, ",", col, "]")
-}
-
-# Rule 1. A t0 matrix defines the initial state, so a state reference in one is
-# circular by construction: the cell's value would have to be known before the
-# state it reads exists. Today such a cell is not refused but silently
-# reinterpreted, because it is stored with when = 0 and its state index lands in
-# the column that otherwise holds a parameter number, so `mcalc` materialises it
-# from the parameter vector instead of from the state.
-.ctCheckT0StateRefs <- function(pars, latentNames, t0matrices) {
-  rows <- which(pars$matrix %in% t0matrices & !is.na(pars$param))
-  bad <- character(0)
-  for (ri in rows) {
-    refs <- .ctCycleStateRefs(pars$param[ri], latentNames)
-    if (length(refs)) {
-      bad <- c(bad, paste0(
-        .ctCycleCellName(pars$matrix[ri], pars$row[ri], pars$col[ri]),
-        " references ", paste0(latentNames[refs], collapse = " and ")))
-    }
-  }
-  if (length(bad)) {
-    stop("A t0 matrix cannot reference a latent state:\n  ",
-      paste0(bad, collapse = "\n  "),
-      "\nThe t0 matrices set the initial state, so a state reference in one is ",
-      "circular: the cell would have to be evaluated before the state it reads ",
-      "exists. Put the state dependent quantity in PARS and reference that from ",
-      "the matrix that needs it, or give this cell a value that does not depend ",
-      "on a state.", call. = FALSE)
-  }
-  invisible(TRUE)
-}
-
-# Rule 2. A loop that runs through PARS. state k comes from T0MEANS[k,1], so
+# A loop that runs through PARS. state k comes from T0MEANS[k,1], so
 # state k depends on whatever that cell references; a PARS cell depends on
 # whatever its own text references. A cycle in that graph cannot be evaluated in
 # any order.
@@ -147,15 +121,12 @@
   invisible(TRUE)
 }
 
-# Both rules. Called from the model specification, on the finalised par table.
-.ctCheckModelCycles <- function(pars, latentNames, nlatent,
-  t0matrices = c("T0MEANS", "T0VAR", "J0")) {
+# Called from the model specification, on the finalised par table.
+.ctCheckModelCycles <- function(pars, latentNames, nlatent) {
   if (is.null(pars) || !nrow(pars)) return(invisible(TRUE))
   if (!all(c("matrix", "row", "col", "param") %in% colnames(pars))) {
     return(invisible(TRUE))
   }
-  t0matrices <- intersect(t0matrices, unique(pars$matrix))
-  .ctCheckT0StateRefs(pars, latentNames, t0matrices)
   .ctCheckStatePARSCycles(pars, latentNames, nlatent)
   invisible(TRUE)
 }

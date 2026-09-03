@@ -495,8 +495,11 @@ ctStanData <- function(ctm, datalong,optimize,sameInitialTimes=FALSE){
   
   standata$whenvecs <- array(0L,dim=c(6,standata$nlatentpop)) #when do we need to compute transformed states?
   for(wheni in 1:4){ #whenvecs specifies array of when values for the state transform vector -- 1 to compute, 0 not
-    standata$whenvecs[wheni,ms$param[ms$when %in% c(wheni,100) & ms$copyrow <=0 & ms$param > 0]] <- 
-      as.integer(ms$param[ms$when  %in% c(wheni,100) & ms$copyrow <=0 & ms$param > 0]) #100 is for PARS - needed everywhere.
+    # Indexed by state, so it wants the state index -- which now lives in
+    # `stateref` (matsetup column 10), not `param`. `param` holds a state
+    # index only under the old, now-removed overload.
+    standata$whenvecs[wheni,ms$stateref[ms$when %in% c(wheni,100) & ms$copyrow <=0 & ms$stateref > 0]] <-
+      as.integer(ms$stateref[ms$when  %in% c(wheni,100) & ms$copyrow <=0 & ms$stateref > 0]) #100 is for PARS - needed everywhere.
   }
   
   # why was this in the code? when do we need the below line... ind varying based on states?
