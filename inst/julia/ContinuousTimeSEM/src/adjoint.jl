@@ -607,3 +607,29 @@ function ctsem_hessian(objective::CTSEMObjective, values::AbstractVector;
     hessian = ForwardDiff.jacobian(gradient_of, x, config)
     return (hessian .+ transpose(hessian)) ./ 2
 end
+
+export ctsem_hessian_forward
+"""
+    ctsem_hessian_forward(objective, values; chunk=0)
+
+`ctsem_hessian`'s counterpart for a model with a sampled (missing) TI
+predictor value: nested ForwardDiff over the plain callable `objective(x)`
+rather than over `ctsem_adjoint_gradient`, so it needs none of the adjoint
+cotangent work that feature does not have yet (see the guard in
+`ctsem_adjoint_gradient` above). Correct for every model, not only those --
+it is just the slower route in general, which is why `ctsem_hessian` is the
+one everything else defaults to.
+
+This is what `ctsem_sample_marginal`'s `hessian=` keyword should be given
+explicitly for such a model, since its own default calls `ctsem_hessian`.
+"""
+function ctsem_hessian_forward(objective::CTSEMObjective, values::AbstractVector;
+    chunk::Integer=0)
+    x = collect(Float64, values)
+    n = length(x)
+    n == 0 && return zeros(Float64, 0, 0)
+    chunksize = chunk > 0 ? min(Int(chunk), n) : ForwardDiff.pickchunksize(n)
+    hessian = ForwardDiff.hessian(objective, x, ForwardDiff.HessianConfig(
+        objective, x, ForwardDiff.Chunk{chunksize}()))
+    return (hessian .+ transpose(hessian)) ./ 2
+end

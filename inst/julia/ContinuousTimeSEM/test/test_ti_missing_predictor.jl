@@ -172,10 +172,12 @@ end
         ti_missing_subject=[2], ti_missing_predictor=[1], ti_missing_parameter=[1],
         ti_missing_mu=[mu], ti_missing_sigma=[sigma])
     centre = [mu]
-    # ctsem_hessian is adjoint-only and refused above; supply a ForwardDiff
-    # Hessian explicitly instead of relying on ctsem_sample_marginal's default.
-    H = ForwardDiff.hessian(obj_fixed, centre)
+    # ctsem_hessian is adjoint-only and refused above; ctsem_hessian_forward
+    # is its ForwardDiff-only counterpart, which ctsem_sample_marginal's
+    # `hessian=` should be given explicitly for a model like this one.
+    H = ContinuousTimeSEM.ctsem_hessian_forward(obj_fixed, centre)
     @test isapprox(H[1, 1], -1 / sigma^2; atol=1e-8)
+    @test isapprox(H, ForwardDiff.hessian(obj_fixed, centre); atol=1e-10)
 
     function _sample_index1(ndraws)
         run = ContinuousTimeSEM.ctsem_sample_marginal(obj_fixed, centre;
