@@ -228,6 +228,20 @@ path does and what `ctsem_optimize`'s `fg!` guards expect. There is deliberately
 no silent fallback to ForwardDiff.
 """
 function ctsem_adjoint_gradient(objective::CTSEMObjective, values::AbstractVector{T}) where {T}
+    # This is the one choke point every adjoint entry runs through --
+    # `ctsem_evaluate`'s `:adjoint` branch, and `ctsem_hessian` (which nests
+    # ForwardDiff over exactly this function, bypassing `ctsem_evaluate`
+    # entirely). Neither the trace this builds nor its reverse pass knows
+    # about a `TIMissingRecipe` subject or about `_ctsem_ti_missing_loglik`,
+    # so guarding only the shallower call site would leave `ctsem_hessian` --
+    # and so `ctsem_sample_marginal`'s default metric -- free to compute a
+    # silently wrong Hessian for a sampled TI predictor value. See
+    # SPEC-tipred-sampling.md for the scoping decision this reflects.
+    isempty(objective.ti_missing_parameter) || throw(ArgumentError(
+        "the adjoint gradient does not yet support sampled (missing) TI " *
+        "predictor values; use gradient_method=:forward, and pass an " *
+        "explicit ForwardDiff-computed Hessian to ctsem_sample_marginal " *
+        "rather than relying on its default."))
     subjects = objective.subject_objectives
     nsubjects = length(subjects)
     nchunks = _ctsem_nchunks(nsubjects)

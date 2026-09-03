@@ -39,7 +39,12 @@ end
 
 function ContinuousEKFObjective(params::EKFParameters, data::Matrix, timesteps::Vector;
     tdpreds::AbstractMatrix=zeros(eltype(data), 0, size(data, 2)),
-    tipreds::AbstractVector=eltype(data)[], subject::Integer=1,
+    # Not typed `::AbstractVector`: a subject with a sampled (missing) TI
+    # predictor cell holds a `TIMissingRecipe` here instead, see
+    # `_ctsem_tipred_vector` in parameter_transforms.jl. Every subject without
+    # one still gets a plain `Vector{Float64}`, unchanged from before this
+    # existed.
+    tipreds=eltype(data)[], subject::Integer=1,
     max_timestep::Real=Inf)
     _validate_continuous_ekf_inputs(timesteps, data)
     size(tdpreds, 2) == size(data, 2) || throw(DimensionMismatch("TD predictor columns must match observations"))
@@ -68,8 +73,11 @@ end
 
 function (objective::ContinuousEKFObjective)(p::AbstractVector{T}) where {T}
     ws = _get_or_init_objective_workspace!(objective, eltype(p))
+    # Identity for the common case (see `_ctsem_tipred_vector`); only a
+    # subject with a sampled TI predictor cell does any work here.
+    tipred_vec = _ctsem_tipred_vector(objective.tipreds, p)
     return _extended_kalman_filter_continuous!(ws, p, objective.data, objective.timesteps,
-        objective.params, objective.tdpreds, objective.tipreds, objective.subject,
+        objective.params, objective.tdpreds, tipred_vec, objective.subject,
         objective.max_timestep)::T
 end
 
