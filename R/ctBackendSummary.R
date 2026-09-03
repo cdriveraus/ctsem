@@ -74,6 +74,52 @@
   1L
 }
 
+# The four accessors below are for functions that were written stan-only and
+# read `fit$stanfit$...` directly (ctChisqTest, ctModelCoverage_check). They
+# are not a general "raw sample" API -- .ctBackendRawSamples() above already
+# covers that for julia, and ctStanRawSamples() for stan -- just the specific
+# fields those two callers each named explicitly.
+
+# The raw (unconstrained) parameter vector at the point estimate.
+.ctFitRawEstimate <- function(fit) {
+  if (inherits(fit, 'ctJuliaFit')) return(as.numeric(fit$estimate$raw))
+  fit$stanfit$rawest
+}
+
+# Posterior/uncertainty draws of the raw parameter vector, one row per draw --
+# NULL if uncertainty was never computed for this fit (both backends require
+# it explicitly, e.g. via optimcontrol$uncertainty; the default is 'hessian').
+.ctFitRawPosterior <- function(fit) {
+  if (inherits(fit, 'ctJuliaFit')) return(fit$estimate$rawposterior)
+  fit$stanfit$rawposterior
+}
+
+# The value of the objective actually optimised at the estimate. Stan's
+# `optimfit$value` is the log posterior (lp__), not the pure log likelihood --
+# priors, if any, are included -- so the julia analogue is `logposterior`,
+# falling back to `loglik` for a fit with no prior contribution, the same
+# fallback `.ctBackendSummary()` uses for the same field.
+.ctFitOptimValue <- function(fit) {
+  if (inherits(fit, 'ctJuliaFit')) {
+    ll <- fit$estimate$logposterior
+    if (is.null(ll)) ll <- fit$estimate$loglik
+    return(ll)
+  }
+  fit$stanfit$optimfit$value
+}
+
+# Raw parameter names, in the same order as .ctFitRawEstimate()/
+# .ctFitRawPosterior(). `.ctBackendRawParameterNames()` already exists for
+# julia (ctBackendLaplaceCheck.R); `ctFitgetparnamesfromraw()` is its stan
+# equivalent (summary.ctStanFit.R), returning a list of name blocks in raw
+# parameter order that the caller flattens with unlist().
+.ctFitRawParNames <- function(fit) {
+  if (inherits(fit, 'ctJuliaFit')) {
+    return(.ctBackendRawParameterNames(fit, length(fit$estimate$raw)))
+  }
+  unlist(ctFitgetparnamesfromraw(fit))
+}
+
 .ctBackendModel <- .ctFitModelObject
 
 # Names and dimensions of everything the engine can materialize, plus which
