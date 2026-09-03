@@ -778,7 +778,7 @@ function _laplace_subject_value_gradient!(gradient::AbstractVector{T},
     tape = _tape_reset!(aws.tape)
     resize!(aws.tipreds, length(subject_objective.tipreds))
     copyto!(aws.tipreds, subject_objective.tipreds)
-    aws.frechet_pending = false
+    aws.frechet_count = 0
     deferred = aws.defer_frechet
     aws.defer_frechet = false
     try

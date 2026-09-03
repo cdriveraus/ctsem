@@ -62,17 +62,19 @@ using ChainRulesCore
 ################################################################################
 
 """
-    _ctsem_exp_frechet_block(A, E)
+    _ctsem_exp_frechet_block_reference(A, E)
 
-Return the Fréchet derivative `L(A, E)` of the matrix exponential at `A` in
-direction `E`, as the top-right block of `exp([A E; 0 A])`.
+The Fréchet derivative `L(A, E)` of the matrix exponential at `A` in direction
+`E`, as the top-right block of `exp([A E; 0 A])`. A reference route, kept so
+tests can check `my_exp_frechet!` against something independent of it; the
+engine calls `_ctsem_exp_frechet_block` below.
 
 This is the textbook block-exponential identity (Higham, *Functions of
-Matrices*, Thm. 10.13). It costs one exponential of a `2n × 2n` matrix, which
-is why the adjoint below calls it once per reverse predict step rather than
-once per parameter.
+Matrices*, Thm. 10.13). It costs one exponential of a `2n × 2n` matrix, about
+eight times the arithmetic of one of size `n`, where the recurrence costs
+roughly three.
 """
-function _ctsem_exp_frechet_block(A::AbstractMatrix, E::AbstractMatrix)
+function _ctsem_exp_frechet_block_reference(A::AbstractMatrix, E::AbstractMatrix)
     n = size(A, 1)
     T = promote_type(eltype(A), eltype(E))
 
@@ -101,13 +103,30 @@ function _ctsem_exp_frechet_block(A::AbstractMatrix, E::AbstractMatrix)
 end
 
 """
+    _ctsem_exp_frechet_block(A, E)
+
+The Fréchet derivative `L(A, E)` of the matrix exponential at `A` in direction
+`E`, by the Al-Mohy & Higham recurrence in `my_exp_frechet!`. Allocates its
+workspace; the reverse pass holds one and calls the kernel directly.
+"""
+function _ctsem_exp_frechet_block(A::AbstractMatrix, E::AbstractMatrix)
+    _CTSEM_OPCOUNT.frechet[] += 1
+    T = promote_type(eltype(A), eltype(E))
+    n = size(A, 1)
+    Y = Matrix{T}(undef, n, n)
+    L = Matrix{T}(undef, n, n)
+    my_exp_frechet!(Y, L, A, E, ExpFrechetBuffer{T}(n))
+    return L
+end
+
+"""
     _ctsem_exp_frechet_adjoint(A, Ȳ)
 
 Return `Ā` such that `<Ȳ, d exp(A)> = <Ā, dA>`, i.e. the Fréchet derivative
 evaluated at `A'` in direction `Ȳ`.
 """
 @inline _ctsem_exp_frechet_adjoint(A::AbstractMatrix, Ȳ::AbstractMatrix) =
-    _ctsem_exp_frechet_block(collect(adjoint(A)), Matrix(Ȳ))
+    _ctsem_exp_frechet_block(adjoint(A), Ȳ)
 
 ################################################################################
 # Pure primitives
@@ -159,7 +178,8 @@ Solve the continuous Lyapunov equation `A X + X A' + Q = 0` for `X`.
 every use in the filter, where `Q` is a covariance.
 
 Uses `LyapBuffer`, i.e. exactly the same size-dependent choice the primal
-filter makes: a Schur solve for `Float64` systems larger than 4x4, the packed
+filter makes: a Schur solve for `Float64` systems above
+`_CTSEM_LYAP_SCHUR_ABOVE` (ten states), the packed
 `ksolve!` otherwise (including every `ForwardDiff.Dual` case, which LAPACK
 cannot take).
 
@@ -212,22 +232,33 @@ function _ctsem_lyap_pullback(A::AbstractMatrix, X::AbstractMatrix, X̄::Abstrac
     buffer=LyapBuffer(promote_type(eltype(A), eltype(X), eltype(X̄)), size(A, 1)))
     T = promote_type(eltype(A), eltype(X), eltype(X̄))
     n = size(A, 1)
-    rhs = Matrix{T}(undef, n, n)
+    return _ctsem_lyap_pullback!(Matrix{T}(undef, n, n), Matrix{T}(undef, n, n),
+        Matrix{T}(undef, n, n), Matrix{T}(undef, n, n), A, X, X̄, buffer)
+end
+
+"""
+    _ctsem_lyap_pullback!(Ā, W, rhs, At, A, X, X̄, buffer)
+
+The pullback above into caller-owned storage: `Ā` and `W` receive the two
+cotangents, `rhs` and `At` are scratch. Four fresh matrices per prediction
+substep is what the allocating form cost (`Profile.Allocs`, dev1).
+"""
+function _ctsem_lyap_pullback!(Ā::AbstractMatrix{T}, W::AbstractMatrix{T},
+    rhs::AbstractMatrix{T}, At::AbstractMatrix{T},
+    A::AbstractMatrix, X::AbstractMatrix, X̄::AbstractMatrix, buffer) where {T}
+    n = size(A, 1)
     @inbounds for j in 1:n, i in 1:n
         rhs[i, j] = (X̄[i, j] + X̄[j, i]) / 2
     end
-    W = Matrix{T}(undef, size(X, 1), size(X, 2))
-    # `Matrix{T}(adjoint(A))` materialises the transpose, which is right --
-    # `my_lyap!` wants a plain matrix. `W * adjoint(X) + adjoint(W) * X` is not:
-    # a product with an `adjoint` operand does not reach `gemm` and does not
-    # thread (0.18x on 23 threads at this size), which left this the last
-    # serialised piece of the reverse tape. See `small_linalg.jl`.
-    At = Matrix{T}(undef, size(A, 2), size(A, 1))
-    @inbounds for j in axes(A, 2), i in axes(A, 1)
+    # A transposed copy rather than `adjoint(A)`: `my_lyap!` wants a matrix it
+    # can compare and factor, and a product with an `adjoint` operand does not
+    # reach `gemm` and does not thread (0.18x on 23 threads at this size),
+    # which left this the last serialised piece of the reverse tape. See
+    # `small_linalg.jl`.
+    @inbounds for j in 1:n, i in 1:n
         At[j, i] = A[i, j]
     end
     my_lyap!(W, At, rhs, buffer)
-    Ā = Matrix{T}(undef, size(X, 1), size(X, 2))
     _ctsem_mulNT!(Ā, W, X)
     _ctsem_mulTN!(Ā, W, X, one(T), one(T))
     return Ā, W
@@ -283,7 +314,11 @@ an independently rederived formula. `test_constrain_cor_sqrt.jl`'s "corrsqrt
 row mirror matches the buffered primal it claims to track" asserts the two
 agree, row by row, against `constraincorsqrt1_vec!`'s own buffered output.
 """
-function _ctsem_corrsqrt_row(v::AbstractVector{T}, i::Int, epsilon) where {T}
+_ctsem_corrsqrt_row(v::AbstractVector{T}, i::Int, epsilon) where {T} =
+    _ctsem_corrsqrt_row!(similar(v), v, i, epsilon)
+
+"""In-place form of `_ctsem_corrsqrt_row`: the row is written into `out`."""
+function _ctsem_corrsqrt_row!(out::AbstractVector{T}, v::AbstractVector{T}, i::Int, epsilon) where {T}
     d = length(v)
     e = convert(T, epsilon)
     si = e
@@ -296,7 +331,6 @@ function _ctsem_corrsqrt_row(v::AbstractVector{T}, i::Int, epsilon) where {T}
     abs_si = abs(si)
     tmp = sqrt(log1p(exp(2 * (abs_si - si - one(T)) - 4)))
     r = sqrt(ssi + (tmp * (abs_si / sqrt(ssi) - one(T)) + one(T)) * tmp + one(T))
-    out = similar(v)
     sq = zero(T)
     @inbounds for j in 1:d
         if j == i
@@ -325,7 +359,40 @@ triangle, matching `_sym_lower_get`.
 end
 
 """
-    _sdcovsqrt2cov_pullback!(mat_bar, mat, cov_bar, d; epsilon=1e-5)
+    CTSEMCovSqrtScratch(T, d)
+
+Working storage for `_sdcovsqrt2cov_pullback!`, sized for the largest `d` it
+will see. The pullback runs at every prediction substep (DIFFUSION) and
+every observed row (MANIFESTVAR), and allocated seven arrays each time --
+about half the reverse pass's bytes on a small linear model
+(`Profile.Allocs`, dev1) -- so callers on the hot path hand it one of these.
+"""
+struct CTSEMCovSqrtScratch{T}
+    O::Matrix{T}
+    B::Matrix{T}
+    Csym::Matrix{T}
+    Bbar::Matrix{T}
+    v::Vector{T}
+    Obar_row::Vector{T}
+    vbar::Vector{T}
+end
+
+CTSEMCovSqrtScratch(::Type{T}, d::Int) where {T} = CTSEMCovSqrtScratch{T}(
+    zeros(T, d, d), zeros(T, d, d), zeros(T, d, d), zeros(T, d, d),
+    zeros(T, d), zeros(T, d), zeros(T, d))
+
+# With no scratch, allocate as the pullback always did (tests, the rrule).
+_covsqrt_scratch(::Nothing, ::Type{T}, d::Int) where {T} = (
+    Matrix{T}(undef, d, d), Matrix{T}(undef, d, d), Matrix{T}(undef, d, d),
+    Matrix{T}(undef, d, d), Vector{T}(undef, d), Vector{T}(undef, d), Vector{T}(undef, d))
+
+function _covsqrt_scratch(sc::CTSEMCovSqrtScratch{T}, ::Type{T}, d::Int) where {T}
+    return (view(sc.O, 1:d, 1:d), view(sc.B, 1:d, 1:d), view(sc.Csym, 1:d, 1:d),
+        view(sc.Bbar, 1:d, 1:d), view(sc.v, 1:d), view(sc.Obar_row, 1:d), view(sc.vbar, 1:d))
+end
+
+"""
+    _sdcovsqrt2cov_pullback!(mat_bar, mat, cov_bar, d; epsilon=1e-5, scratch=nothing)
 
 Accumulate into `mat_bar` the cotangent of `mat` for
 `cov = sdcovsqrt2cov(mat)`, given the covariance cotangent `cov_bar`.
@@ -335,7 +402,7 @@ parameter matrix across rows accumulate correctly. Only the lower triangle and
 diagonal of `mat_bar` are written, matching where the free parameters live.
 """
 function _sdcovsqrt2cov_pullback!(mat_bar::AbstractMatrix, mat::AbstractMatrix,
-    cov_bar::AbstractMatrix, d::Int; epsilon::Real=1e-5)
+    cov_bar::AbstractMatrix, d::Int; epsilon::Real=1e-5, scratch=nothing)
     d == 0 && return mat_bar
     # A zero cotangent happens routinely -- e.g. the manifest-covariance
     # cotangent on a fully missing row, where no measurement update ran -- and
@@ -346,24 +413,24 @@ function _sdcovsqrt2cov_pullback!(mat_bar::AbstractMatrix, mat::AbstractMatrix,
     # Recompute O and B. The forward pass overwrites its correlation-factor
     # buffer with the finished covariance, so O is not recoverable from the
     # workspace; recomputing it is one O(d²) pass and keeps the trace small.
-    O = Matrix{T}(undef, d, d)
-    v = Vector{T}(undef, d)
+    O, B, Csym, Bbar, v, Obar_row, vbar = _covsqrt_scratch(scratch, T, d)
     @inbounds for i in 1:d
         _ctsem_symmetric_row!(v, mat, i, d)
-        O[i, :] .= _ctsem_corrsqrt_row(v, i, epsilon)
+        _ctsem_corrsqrt_row!(Obar_row, v, i, epsilon)
+        for j in 1:d
+            O[i, j] = Obar_row[j]
+        end
     end
-    B = Matrix{T}(undef, d, d)
     @inbounds for j in 1:d, i in 1:d
         B[i, j] = mat[i, i] * O[i, j]
     end
 
     # B̄ = (C̄ + C̄') B. cov is symmetric, so this is the correct pullback
     # whether or not the incoming cotangent has been symmetrized.
-    Csym = Matrix{T}(undef, d, d)
     @inbounds for j in 1:d, i in 1:d
         Csym[i, j] = cov_bar[i, j] + cov_bar[j, i]
     end
-    Bbar = Csym * B
+    mul!(Bbar, Csym, B)
 
     # SD path: mat[i,i] scales the whole of row i of O.
     @inbounds for i in 1:d
@@ -375,8 +442,6 @@ function _sdcovsqrt2cov_pullback!(mat_bar::AbstractMatrix, mat::AbstractMatrix,
     end
 
     # Correlation path, one row at a time (the block-diagonal structure).
-    Obar_row = Vector{T}(undef, d)
-    vbar = Vector{T}(undef, d)
     @inbounds for i in 1:d
         for j in 1:d
             Obar_row[j] = mat[i, i] * Bbar[i, j]

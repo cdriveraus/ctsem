@@ -46,6 +46,14 @@ using ComponentArrays
 
 const _CTSEM_RIDGE = 1e-10
 
+# Distinct `JAx * dt` keys the reverse pass holds Fréchet directions for at
+# once. A shared wave schedule with nineteen distinct intervals batched to one
+# Fréchet evaluation per substep under a last-value rule -- 3800 per gradient
+# on 200 subjects of 20 rows -- and batches to nineteen with a table. Fully
+# irregular times fill the table every 32 substeps and flush it, which costs
+# what the last-value rule did plus a scan of 32 scalars per substep.
+const _CTSEM_FRECHET_TABLE = 32
+
 ################################################################################
 # Tape records
 ################################################################################
@@ -450,11 +458,11 @@ approximation, and it turns an O(rows) count of block exponentials into
 O(distinct `(JAx, dt)` pairs) -- one, for a linear model on an equally spaced
 panel.
 
-The guard, in `_reverse_predict!`, is an exact comparison against the actual
-`JAx * dt` that produced the pending directions, so nothing here assumes
-linearity: a state-dependent model changes `JAx` per row, misses every time and
-pays only the comparison, while irregular observation times batch within each
-distinct interval.
+The key, in `_frechet_enqueue!`, is an exact comparison against the actual
+`JAx * dt` that produced each pending direction, so nothing here assumes
+linearity: a state-dependent model changes `JAx` per row, matches nothing and
+pays only the comparison, while a schedule with few distinct intervals
+batches to one evaluation per distinct interval however its rows are ordered.
 
 Correctness depends on nothing consuming the JAx cotangent while a flush is
 outstanding. Two things can: a state-dependent transform group that *writes* a
@@ -462,19 +470,58 @@ JAx cell (whose reverse zeroes that cell's cotangent), and the parameter layer.
 Both flush first.
 """
 function _flush_frechet!(aws)
-    aws.frechet_pending || return nothing
-    aws.frechet_pending = false
-    contribution = aws.frechet_dt .*
-        _ctsem_exp_frechet_adjoint(aws.frechet_A, aws.frechet_accum)
-    if aws.defer_frechet
-        aws.jax_bar_deferred .+= contribution
-        return nothing
-    end
-    θ̄ca = ComponentVector(aws.theta_bar, aws.sp.parameter_axis)
+    count = aws.frechet_count
+    count == 0 && return nothing
+    aws.frechet_count = 0
     n = aws.n
-    @inbounds for j in 1:n, i in 1:n
-        θ̄ca.JAx[i, j] += contribution[i, j]
+    L = aws.frechet_L
+    @inbounds for e in 1:count
+        # `L(A', Ā)` by the Al-Mohy-Higham recurrence, into the workspace's
+        # own buffers; the `_ctsem_exp_frechet_adjoint` wrapper does the same
+        # computation but allocates, which at one flush per substep is what
+        # the GC share of the reverse pass was made of.
+        _CTSEM_OPCOUNT.frechet[] += 1
+        my_exp_frechet!(aws.frechet_Y, L, transpose(aws.frechet_As[e]),
+            aws.frechet_accums[e], aws.frechet_buffer)
+        dt = aws.frechet_dts[e]
+        if aws.defer_frechet
+            _frechet_add!(aws.jax_bar_deferred, L, dt, n)
+        else
+            _frechet_add!(ComponentVector(aws.theta_bar, aws.sp.parameter_axis).JAx, L, dt, n)
+        end
     end
+    return nothing
+end
+
+"""`target .+= dt .* L` over the leading `n × n` block, without a temporary."""
+@inline function _frechet_add!(target, L, dt, n::Int)
+    @inbounds for j in 1:n, i in 1:n
+        target[i, j] += dt * L[i, j]
+    end
+    return nothing
+end
+
+"""
+Queue the direction `Ā` for the exponential of `scaled = JAx * dt`.
+
+A direction whose key is already in the table is added to that entry; a new
+key takes the next free slot, and a full table is flushed first. `dt` is
+compared before the matrix, so a schedule of irregular intervals pays one
+scalar comparison per live entry and no matrix comparison at all.
+"""
+function _frechet_enqueue!(aws, dt, scaled::AbstractMatrix, Ā::AbstractMatrix)
+    @inbounds for e in 1:aws.frechet_count
+        if aws.frechet_dts[e] == dt && aws.frechet_As[e] == scaled
+            aws.frechet_accums[e] .+= Ā
+            return nothing
+        end
+    end
+    aws.frechet_count == length(aws.frechet_dts) && _flush_frechet!(aws)
+    e = aws.frechet_count + 1
+    aws.frechet_dts[e] = dt
+    copyto!(aws.frechet_As[e], scaled)
+    copyto!(aws.frechet_accums[e], Ā)
+    aws.frechet_count = e
     return nothing
 end
 
@@ -586,7 +633,9 @@ function _reverse_predict!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
     Ād .= .-Ād                                     # Ād = -(Qb Ad X' + Qb' Ad X)
 
     # --- X = lyap(JAx[D,D], Qc[D,D])
-    JAxd_bar, Qcd_bar = _ctsem_lyap_pullback(JAxd, X, X̄, lyap_buffer)
+    JAxd_bar = sc.kk7
+    Qcd_bar = sc.kk8
+    _ctsem_lyap_pullback!(JAxd_bar, Qcd_bar, sc.kk9, sc.kk10, JAxd, X, X̄, lyap_buffer)
 
     # --- dINT[D] = JAx[D,D] \ s   (a linear solve: s̄ = JAxd⁻ᵀ dINT_bar, M̄ = -s̄ dINT')
     @inbounds for i in 1:k; s̄[i] = dINT_bar[dyn[i]]; end
@@ -595,7 +644,7 @@ function _reverse_predict!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
     # the call is mostly OpenBLAS's process-global buffer lock -- see
     # `small_linalg.jl` -- so it goes through the engine's own LU instead.
     @inbounds for j in 1:k, i in 1:k; kk6[i, j] = JAxd[j, i]; end
-    _solve_square_system_generic!(kk6, s̄, sc.piv, Val(k))
+    _solve_square_system_generic!(kk6, s̄, sc.piv, k)
     _ctsem_outer!(JAxd_bar, s̄, record.dINT_dynamic, -one(T), one(T))
 
     # --- s = -affine + Ad affine
@@ -637,15 +686,7 @@ function _reverse_predict!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
     # `==` on two matrices is an elementwise comparison and allocates nothing;
     # a `Val(n)`-dispatched helper would, because `n` is a runtime value here
     # and constructing the `Val` costs a dynamic dispatch per row.
-    if aws.frechet_pending && aws.frechet_dt == record.dt && aws.frechet_A == scaled
-        aws.frechet_accum .+= Ā
-    else
-        _flush_frechet!(aws)
-        copyto!(aws.frechet_A, scaled)
-        aws.frechet_dt = record.dt
-        copyto!(aws.frechet_accum, Ā)
-        aws.frechet_pending = true
-    end
+    _frechet_enqueue!(aws, record.dt, scaled, Ā)
 
     # --- Qc = sdcovsqrt2cov(DIFFUSION); only the dynamic block was consumed.
     fill!(Qc_bar, zero(T))
@@ -653,7 +694,8 @@ function _reverse_predict!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
         Qc_bar[dyn[i], dyn[j]] = Qcd_bar[i, j]
     end
     fill!(diffusion_bar, zero(T))
-    _sdcovsqrt2cov_pullback!(diffusion_bar, record.DIFFUSION, Qc_bar, n)
+    _sdcovsqrt2cov_pullback!(diffusion_bar, record.DIFFUSION, Qc_bar, n;
+        scratch=aws.covsqrt_scratch)
     @inbounds for j in 1:n, i in 1:n
         θ̄ca.DIFFUSION[i, j] += diffusion_bar[i, j]
     end
@@ -930,8 +972,13 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
             aws.groups_write_jax && _flush_frechet!(aws)
             _reverse_group!(θ̄, x̄, tape.groups[index], sp, aws)
         elseif kind === :theta
-            manifestvar_bar = zeros(T, m, m)
-            _sdcovsqrt2cov_pullback!(manifestvar_bar, tape.thetas[index].MANIFESTVAR, Θ̄, m)
+            # `mm1` is `_reverse_update!` scratch, and nothing is live in it
+            # between tape entries; a fresh `zeros` here was one heap object
+            # per observed row.
+            manifestvar_bar = aws.reverse_scratch.mm1
+            fill!(manifestvar_bar, zero(T))
+            _sdcovsqrt2cov_pullback!(manifestvar_bar, tape.thetas[index].MANIFESTVAR, Θ̄, m;
+                scratch=aws.covsqrt_scratch)
             @inbounds for j in 1:m, i in 1:m
                 θ̄ca.MANIFESTVAR[i, j] += manifestvar_bar[i, j]
             end
@@ -942,7 +989,8 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
             end
             fill!(x̄, zero(T))
             t0var_bar = zeros(T, n, n)
-            _sdcovsqrt2cov_pullback!(t0var_bar, tape.inits[index].T0VAR, _symmetrized(P̄), n)
+            _sdcovsqrt2cov_pullback!(t0var_bar, tape.inits[index].T0VAR, _symmetrized(P̄), n;
+                scratch=aws.covsqrt_scratch)
             @inbounds for j in 1:n, i in 1:n
                 θ̄ca.T0VAR[i, j] += t0var_bar[i, j]
             end

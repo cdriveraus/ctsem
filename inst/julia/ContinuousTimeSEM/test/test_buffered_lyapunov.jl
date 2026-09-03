@@ -9,7 +9,28 @@ using ForwardDiff
     @test ksolve_buffer isa ContinuousTimeSEM.LyapKsolveBuffer{Float64}
     @test ksolve_buffer.ksolve_dim isa Val{2}
     @test ksolve_buffer.ksolve_system_dim isa Val{3}
-    @test ContinuousTimeSEM.LyapBuffer(Float64, 5) isa ContinuousTimeSEM.LyapSchurBuffer{Float64}
+    # The threshold is where the packed solve stops being faster than a LAPACK
+    # call; see `_CTSEM_LYAP_SCHUR_ABOVE` for the measurement behind ten.
+    @test ContinuousTimeSEM.LyapBuffer(Float64, 10) isa ContinuousTimeSEM.LyapKsolveBuffer{Float64}
+    # The packed buffer keeps its LU across calls: a second solve against the
+    # same A must not refactor, a changed A must, and every answer must match
+    # a fresh ksolve! to roundoff.
+    let A = [-0.9 0.3 0.1; 0.2 -0.6 0.0; 0.05 -0.1 -0.8], Q1 = [0.4 0.1 0.0; 0.1 0.35 0.05; 0.0 0.05 0.5],
+        Q2 = [1.0 0.2 0.1; 0.2 0.8 0.0; 0.1 0.0 0.6], A2 = A .- 0.1 .* I(3)
+        kb = ContinuousTimeSEM.LyapKsolveBuffer{Float64}(3)
+        X = zeros(3, 3)
+        fresh(Aa, Qq) = ContinuousTimeSEM.ksolve!(zeros(3, 3), Aa, Qq, zeros(6, 6), zeros(6))
+        ContinuousTimeSEM.ctsem_reset_opcounts!()
+        ContinuousTimeSEM.my_lyap!(X, A, Q1, kb)
+        @test isapprox(X, fresh(A, Q1); atol=1e-13)
+        ContinuousTimeSEM.my_lyap!(X, A, Q2, kb)
+        @test isapprox(X, fresh(A, Q2); atol=1e-13)
+        @test ContinuousTimeSEM.ctsem_opcounts().lyap_ksolve == 1 + 2   # one cached factorisation, two fresh ones
+        ContinuousTimeSEM.my_lyap!(X, A2, Q1, kb)
+        @test isapprox(X, fresh(A2, Q1); atol=1e-13)
+        @test ContinuousTimeSEM.ctsem_opcounts().lyap_ksolve == 2 + 3
+    end
+    @test ContinuousTimeSEM.LyapBuffer(Float64, 11) isa ContinuousTimeSEM.LyapSchurBuffer{Float64}
 end
 
 # Rather than compare against one implementation detail, validate the defining

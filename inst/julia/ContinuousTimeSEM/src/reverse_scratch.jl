@@ -62,6 +62,11 @@ struct CTSEMReverseScratch{T}
     kk4::Matrix{T}
     kk5::Matrix{T}
     kk6::Matrix{T}
+    # Lyapunov pullback: the two cotangents and its two scratch matrices.
+    kk7::Matrix{T}
+    kk8::Matrix{T}
+    kk9::Matrix{T}
+    kk10::Matrix{T}
     kv1::Vector{T}
     kv2::Vector{T}
     nv1::Vector{T}
@@ -79,6 +84,7 @@ function CTSEMReverseScratch(::Type{T}, n::Int, m::Int, k::Int) where {T}
         z(n, n), z(n, n), z(n, m), z(m, m), z(m, m),
         z(n, n), z(n, n), v(n), z(k, k), z(k, k), z(k, k), z(n, n), z(n, n),
         z(n, n), z(n, n), z(k, k), z(k, k), z(k, k),
+        z(k, k), z(k, k), z(k, k), z(k, k),
         v(k), v(k), v(n), zeros(Int, max(n, k)))
 end
 

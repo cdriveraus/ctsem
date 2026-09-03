@@ -26,7 +26,7 @@ lookups are evaluated through. `tipreds` is the one genuinely per-subject
 field, refreshed by `ctsem_adjoint_gradient` before each subject's reverse
 pass.
 """
-mutable struct CTSEMAdjointWorkspace{T,SP,LB}
+mutable struct CTSEMAdjointWorkspace{T,SP,LB,FB}
     sp::SP
     n::Int
     m::Int
@@ -63,14 +63,16 @@ mutable struct CTSEMAdjointWorkspace{T,SP,LB}
     # be unwound once at the end instead of once per subject.
     parameter_layer_shareable::Bool
     # --- deferred matrix-exponential Frechet derivative (see `_flush_frechet!`)
-    # `A = exp(JAx * dt)` is the single most expensive step in the reverse pass,
-    # and `L(A, E)` is linear in `E`, so directions belonging to the same
-    # `JAx * dt` are accumulated and pushed through one block exponential
-    # instead of one each.
-    frechet_pending::Bool
-    frechet_dt::T
-    frechet_A::Matrix{T}
-    frechet_accum::Matrix{T}
+    # `A = exp(JAx * dt)` is the most expensive step in the reverse pass, and
+    # `L(A, E)` is linear in `E`, so directions belonging to the same
+    # `JAx * dt` are accumulated and pushed through one Fréchet evaluation
+    # instead of one each. The table holds up to `_CTSEM_FRECHET_TABLE`
+    # distinct keys at once, so a schedule with a handful of distinct intervals
+    # batches however its rows are ordered; entries `1:frechet_count` are live.
+    frechet_count::Int
+    frechet_dts::Vector{T}
+    frechet_As::Vector{Matrix{T}}
+    frechet_accums::Vector{Matrix{T}}
     # Frechet contributions held back so the batch can span subjects too;
     # `ctsem_adjoint_gradient` pushes these through the parameter layer once.
     jax_bar_deferred::Matrix{T}
@@ -82,6 +84,17 @@ mutable struct CTSEMAdjointWorkspace{T,SP,LB}
     groups_write_jax::Bool
     # Flat `all_params` positions belonging to the JAx component.
     jax_positions::Vector{Int}
+    # Workspace and outputs for `my_exp_frechet!`, so a flush allocates
+    # nothing: `frechet_Y` receives `exp(A')`, `frechet_L` the derivative.
+    frechet_buffer::FB
+    frechet_Y::Matrix{T}
+    frechet_L::Matrix{T}
+    # The forward exponential table every subject in this chunk shares while
+    # the chunk runs; see `ExpTable`.
+    exp_table::ExpTable{T}
+    # Scratch for `_sdcovsqrt2cov_pullback!`, sized to the larger of the state
+    # and manifest dimensions; one set serves DIFFUSION, T0VAR and MANIFESTVAR.
+    covsqrt_scratch::CTSEMCovSqrtScratch{T}
     # Working storage for the reverse pass; see `CTSEMReverseScratch` for why
     # the temporaries come from here rather than from the heap.
     reverse_scratch::CTSEMReverseScratch{T}
@@ -118,7 +131,8 @@ function CTSEMAdjointWorkspace(::Type{T}, sp::EKFParameters, nvalues::Integer,
         Iterators.flatten((predict_indices, td_indices, update_indices)))
     defer_frechet = isempty(sp.ti_parameter_indices) && !groups_write_jax
 
-    return CTSEMAdjointWorkspace{T,typeof(sp),typeof(lyap_buffer)}(
+    frechet_buffer = ExpFrechetBuffer{T}(n)
+    return CTSEMAdjointWorkspace{T,typeof(sp),typeof(lyap_buffer),typeof(frechet_buffer)}(
         sp, n, m,
         collect(ws.diffusion_state_indices),
         predict_indices, update_indices, td_indices,
@@ -137,8 +151,13 @@ function CTSEMAdjointWorkspace(::Type{T}, sp::EKFParameters, nvalues::Integer,
         zeros(T, m, m),
         Vector{T}(undef, Int(nvalues)),
         _ctsem_parameter_layer_shareable(sp, predict_indices, update_indices, td_indices),
-        false, zero(T), zeros(T, n, n), zeros(T, n, n), zeros(T, n, n),
+        0, zeros(T, _CTSEM_FRECHET_TABLE),
+        [zeros(T, n, n) for _ in 1:_CTSEM_FRECHET_TABLE],
+        [zeros(T, n, n) for _ in 1:_CTSEM_FRECHET_TABLE],
+        zeros(T, n, n),
         defer_frechet, groups_write_jax, jax_positions,
+        frechet_buffer, zeros(T, n, n), zeros(T, n, n), ExpTable(T, n),
+        CTSEMCovSqrtScratch(T, max(n, m)),
         CTSEMReverseScratch(T, n, m, length(ws.diffusion_state_indices)),
         CTSEMAdjointTape(T, group_relevant),
     )
@@ -392,6 +411,9 @@ function _ctsem_subject_gradient_chunk!(scores::Matrix{T}, totals::Vector{T},
         @inbounds for i in range
             subject_objective = subjects[i]
             ws = _get_or_init_objective_workspace!(subject_objective, T)
+        # One exponential table for the chunk: a linear model's `exp(JAx * dt)`
+        # is the same for every subject at the same interval.
+        ws.discretization_cache.exp_table = aws.exp_table
             tape = _tape_reset!(aws.tape)
             # The concrete numeric row this evaluation reads: identity for a
             # plain `Vector{Float64}` (see `_ctsem_tipred_vector`), or the
@@ -402,7 +424,7 @@ function _ctsem_subject_gradient_chunk!(scores::Matrix{T}, totals::Vector{T},
             tipred_vec = _ctsem_tipred_vector(subject_objective.tipreds, values)
             resize!(aws.tipreds, length(tipred_vec))
             copyto!(aws.tipreds, tipred_vec)
-            aws.frechet_pending = false
+            aws.frechet_count = 0
 
             loglik = _extended_kalman_filter_continuous!(ws, values,
                 subject_objective.data, subject_objective.timesteps,
@@ -453,7 +475,7 @@ function _ctsem_adjoint_chunk!(gradient::Vector{T}, totals::Vector{T},
     shared && fill!(aws.theta_bar, zero(T))
     # A previous call that bailed out on an invalid trial point can leave a
     # queued Frechet direction behind; it belongs to that call's cotangent.
-    aws.frechet_pending = false
+    aws.frechet_count = 0
     fill!(aws.jax_bar_deferred, zero(T))
     last_subject_values = nothing
     last_tipreds = nothing
@@ -462,6 +484,9 @@ function _ctsem_adjoint_chunk!(gradient::Vector{T}, totals::Vector{T},
     @inbounds for i in range
         subject_objective = subjects[i]
         ws = _get_or_init_objective_workspace!(subject_objective, T)
+        # One exponential table for the chunk: a linear model's `exp(JAx * dt)`
+        # is the same for every subject at the same interval.
+        ws.discretization_cache.exp_table = aws.exp_table
         tape = _tape_reset!(aws.tape)
         # See the matching comment in `_ctsem_subject_gradient_chunk!`: the
         # forward pass and the group replay need the concrete numeric row, not

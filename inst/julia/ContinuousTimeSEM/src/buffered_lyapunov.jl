@@ -45,6 +45,14 @@ mutable struct LyapKsolveBuffer{TYPE<:Number,D,NTRI} <: AbstractLyapBuffer{TYPE}
     ksolve_piv::Vector{Int}
     ksolve_dim::Val{D}
     ksolve_system_dim::Val{NTRI}
+    # The `A` whose packed system is currently factored in `ksolve_O`, so a
+    # repeated solve against the same `A` reuses the factors -- the same
+    # economy `LyapSchurBuffer` makes. The reverse pass solves against one
+    # `A` at every substep of a linear model; without this, moving the Schur
+    # threshold up handed those models a fresh LU per substep and made the
+    # 6-latent reverse pass 8% slower (dev1).
+    last_A::Matrix{TYPE}
+    valid::Bool
     LyapKsolveBuffer{TYPE}(n::Int) where {TYPE <: Number} = begin
         tri_n = gauss_summation(n)
         new{TYPE,n,tri_n}(
@@ -53,8 +61,40 @@ mutable struct LyapKsolveBuffer{TYPE<:Number,D,NTRI} <: AbstractLyapBuffer{TYPE}
             zeros(Int, tri_n),
             Val(n),
             Val(tri_n),
+            zeros(TYPE, n, n),
+            false,
         )
     end
+end
+
+"""
+Diffusion-block size above which a `Float64` Lyapunov solve goes to LAPACK's
+Schur route rather than the packed `ksolve!`.
+
+`ksolve!` is O(k^6) and Schur is O(k^3), so the crossover is real, but it
+sits far higher than the operation counts suggest: the packed solve is a
+plain LU with no library call, while `schur!` takes LAPACK's process-global
+lock and allocates fresh work arrays every time. Measured on dev1 (23-core
+EPYC, single thread, minimum of 2000 repeats, a fresh factorisation each
+call as a state-dependent model pays at every substep):
+
+    k          2     4     6     8    10    11    12
+    ksolve µs  0.09  0.65  2.7   6.8  14.6  22.2  30.8
+    schur  µs  1.2   3.9   6.6  11.6  17.5  21.6  26.1
+    schur allocates 1-5 KB per call; ksolve none
+
+The two agree to about 1e-14 relative throughout. A linear model never sees
+this choice, because `DiscretizationCache` solves once; it matters for
+state-dependent drift, where a 6-latent model was spending a fifth of its
+adjoint time in `schur!`. `ctsem_set_lyapunov_schur_above!` moves it.
+"""
+const _CTSEM_LYAP_SCHUR_ABOVE = Ref(10)
+
+"""Set the diffusion-block size above which the Schur Lyapunov route is used."""
+function ctsem_set_lyapunov_schur_above!(k::Integer)
+    k >= 1 || throw(ArgumentError("threshold must be at least 1"))
+    _CTSEM_LYAP_SCHUR_ABOVE[] = Int(k)
+    return _CTSEM_LYAP_SCHUR_ABOVE[]
 end
 
 """
@@ -62,11 +102,12 @@ end
 
 Create a Lyapunov workspace for `n × n` matrices with scalar type `T`.
 
-Large BLAS-compatible systems use a Schur buffer; other cases use the direct
-packed `ksolve!` buffer.
+`Float64` systems above `_CTSEM_LYAP_SCHUR_ABOVE` use a Schur buffer; other
+cases, including every `ForwardDiff.Dual` system, use the direct packed
+`ksolve!` buffer.
 """
 function LyapBuffer(::Type{TYPE}, n::Int) where {TYPE<:Number}
-    if TYPE <: LinearAlgebra.BlasFloat && n > 4
+    if TYPE <: LinearAlgebra.BlasFloat && n > _CTSEM_LYAP_SCHUR_ABOVE[]
         return LyapSchurBuffer{TYPE}(n)
     else
         return LyapKsolveBuffer{TYPE}(n)
@@ -103,6 +144,7 @@ function _lyap_factorize_schur!(buffer::LyapSchurBuffer{TYPE}, A::AbstractMatrix
     # Preserve A by factorizing a workspace copy. `schur!` factorizes in
     # place and returns its `T` factor as the very array it was handed, so
     # `buffer.S` aliases itself across calls and needs no fresh storage.
+    _CTSEM_OPCOUNT.lyap_schur[] += 1
     copyto!(buffer.S, A)
     F = schur!(buffer.S)
 
@@ -135,19 +177,25 @@ Solve `A * X + X * A' + Q = 0` using the direct packed `ksolve!` path.
 
 The solution is written to `X`.
 """
-function my_lyap!(X::AbstractMatrix{TYPE}, A::AbstractMatrix{TYPE}, Q::AbstractMatrix{TYPE}, buffer::LyapKsolveBuffer{TYPE}) where {TYPE<:Number}
-    # Small BLAS matrices and non-BLAS element types use ksolve!.
-    # This includes Dual-number paths (e.g., ForwardDiff).
-    ksolve!(
-        X,
-        A,
-        Q,
-        buffer.ksolve_O,
-        buffer.ksolve_triQ,
-        buffer.ksolve_piv,
-        buffer.ksolve_dim,
-        buffer.ksolve_system_dim,
-    )
+function my_lyap!(X::AbstractMatrix{TYPE}, A::AbstractMatrix{TYPE}, Q::AbstractMatrix{TYPE},
+    buffer::LyapKsolveBuffer{TYPE,d,ntri}) where {TYPE<:Number,d,ntri}
+    # Small BLAS matrices and non-BLAS element types (every ForwardDiff.Dual
+    # path) take the packed system. Its LU is kept across calls and rebuilt
+    # only when `A` changes; `_blocks_identical` compares Dual partials too,
+    # so a factor never serves a point it was not built at.
+    O = buffer.ksolve_O
+    if !(buffer.valid && _blocks_identical(buffer.last_A, A, d, d))
+        _CTSEM_OPCOUNT.lyap_ksolve[] += 1
+        _ksolve_system_matrix!(O, A, buffer.ksolve_dim)
+        _lu_factor_generic!(O, buffer.ksolve_piv, ntri)
+        _copy_block!(buffer.last_A, A, d, d)
+        buffer.valid = true
+    end
+    triQ = buffer.ksolve_triQ
+    _ksolve_pack_upper!(triQ, Q, buffer.ksolve_dim)
+    _lu_solve_generic!(O, buffer.ksolve_piv, triQ, ntri)
+    rmul!(triQ, -one(TYPE))
+    _ksolve_unpack_upper!(X, triQ, buffer.ksolve_dim)
     return X
 end
 

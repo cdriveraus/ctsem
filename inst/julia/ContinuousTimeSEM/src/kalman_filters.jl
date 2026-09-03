@@ -463,7 +463,17 @@ function _ekf_masked_update_step!(ws::ContinuousEKFWorkspace, pars,
     Lv = view(pars.LAMBDA, observed, :)
     μv = view(pars.MANIFESTMEANS, observed)
     predview = view(ws.bufferΘ.r, 1:m)
-    _matvec_mul!(predview, Lv, ws.state)
+    # Plain loops rather than the Val-dispatched `_matvec_mul!`: `m` is the
+    # number of observed indicators on this row, a runtime quantity, and a
+    # `Val` built from it is a dynamic dispatch and an allocation per row.
+    state = ws.state
+    @inbounds for i in 1:m
+        acc = zero(eltype(predview))
+        for j in 1:n
+            acc += Lv[i, j] * state[j]
+        end
+        predview[i] = acc
+    end
     yv = view(ws.ỹ, 1:m)
     @inbounds for i in 1:m
         yv[i] = data[observed[i], obs_col] - (predview[i] + μv[i])

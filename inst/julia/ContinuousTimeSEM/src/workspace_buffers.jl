@@ -11,6 +11,7 @@ struct SquareBuffer{T,N}
     row_sq::Vector{T}
     intermediate::Matrix{T}
     out::Matrix{T}
+    piv::Vector{Int}
     dim::Val{N}
     SquareBuffer{T}(n::Int) where {T} = new{T,n}(
         zeros(T, n),
@@ -19,6 +20,7 @@ struct SquareBuffer{T,N}
         zeros(T, n),
         zeros(T, n, n),
         zeros(T, n, n),
+        zeros(Int, n),
         Val(n),
     )
 end
