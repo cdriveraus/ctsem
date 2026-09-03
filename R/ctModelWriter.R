@@ -1584,7 +1584,25 @@ functions{
     return param;
   }
   
-  // improve PARS when = 100 thing here too
+  // `when == 100` is deliberately NOT accepted here, and that is a fix
+  // rather than an omission. 100 is a wildcard meaning "materialise at every
+  // when", added in 0a0298ca while this function was polymorphic: it was
+  // called once with when = 0 on the parameter vector and five times with
+  // when in 1..4 on the *state* vector, and on a state call ms[,3] is a state
+  // index, so the wildcard was right. Those state calls moved to mcalc, which
+  // branches on `when` and reads the column both ways correctly. What was left
+  // here was a wildcard letting a state index answer a parameter lookup.
+  //
+  // It stayed harmless until db16c43b added the `done` early exit the next
+  // day. PARS rows are sorted to the front of matsetup, so first match wins
+  // now gives a carrier row the chance to answer for whichever real parameter
+  // shares its number, and that parameter loses its own transform: a drift
+  // diagonal its negative definiteness, a diffusion diagonal its positivity
+  // and its variance floor.
+  //
+  // Nothing is left unassigned by the removal, because every parameter number
+  // that can be requested has its own when == 0 row.
+  // NOTE: no apostrophes below or above -- this Stan program is an R string.
   row_vector parvectform(array[] int which, row_vector rawpar, int when, array[,] int ms, data array[,] real mval, int subi){
     row_vector[size(which)] parout;
     if(size(which)){
@@ -1592,7 +1610,7 @@ functions{
         int done=0; //only want to tform once, may be copies
         for(ri in 1:size(ms)){ //for each row of matrix setup
           if(!done){
-            if((ms[ri,8]==when || ms[ri,8]==100)  && ms[ri,3] == which[whichout]){ //if correct when and free parameter //,not a copyrow,&& ms[ri,9] < 1
+            if(ms[ri,8]==when && ms[ri,3] == which[whichout]){ //if correct when and free parameter //,not a copyrow,&& ms[ri,9] < 1
               if(subi ==0 ||  //if population parameter
                 (ms[ri,3] > 0 && (ms[ri,5] > 0 || ms[ri,6] > 0 || ms[ri,8] > 0)) //or there is individual variation
               ){ //otherwise repeated values
