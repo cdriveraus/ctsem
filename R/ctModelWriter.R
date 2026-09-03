@@ -318,8 +318,37 @@ ctStanModelIntOverPop <- function(m){
     t0mvaryingsimple <- m$pars$row[m$pars$indvarying & m$pars$matrix %in% 'T0MEANS'] #which t0means are indvarying
     t0mvaryingnames <- m$pars$param[m$pars$indvarying & m$pars$matrix %in% 'T0MEANS'] #names of t0means that are indvarying
     t0mnotvarying <- m$pars$row[!m$pars$indvarying & m$pars$matrix %in% 'T0MEANS']
-    
-    
+
+    # An indvarying T0MEANS label used on more than one T0MEANS row (an
+    # equality constraint between those states -- matsetup already gives them
+    # one shared `param` index) must not become one augmented dimension per
+    # row: downstream, the population covariance block is sized by unique
+    # parameter (nindvarying, from matsetup's deduped indvarying numbering),
+    # so a per-row count disagrees with it as soon as a label repeats --
+    # that's the "intoverpopindvaryingindex dims declared=(3) found=(4)"
+    # mismatch in the generated Stan program, and the equivalent julia-side
+    # "augmented state layout" check. Only the first row gets its own
+    # augmented state; later rows copy that state directly via the same
+    # 'state[n]' rewrite used below for a shared non-T0MEANS parameter, just
+    # pointing at an existing latent instead of a newly appended one -- which
+    # also forces the duplicate row's value to literally equal the first
+    # row's at every draw, rather than merely sharing a prior.
+    t0mdupe <- duplicated(t0mvaryingnames)
+    if(any(t0mdupe)){
+      for(di in which(t0mdupe)){
+        dupname <- t0mvaryingnames[di]
+        duprow <- t0mvaryingsimple[di]
+        srcrow <- t0mvaryingsimple[match(dupname, t0mvaryingnames)] #first occurrence's state row
+        pi <- which(m$pars$matrix %in% 'T0MEANS' & m$pars$row == duprow & m$pars$param %in% dupname)
+        m$pars$param[pi] <- paste0('state[',srcrow,']')
+        m$pars$transform[pi] <- NA
+        m$pars$indvarying[pi] <- FALSE
+        m$pars[pi,paste0(m$TIpredNames,rep('_effect',m$n.TIpred))] <- FALSE
+      }
+      t0mvaryingsimple <- t0mvaryingsimple[!t0mdupe]
+      t0mvaryingnames <- t0mvaryingnames[!t0mdupe]
+    }
+
     ivnames <- unique(m$pars$param[m$pars$indvarying & !m$pars$param %in% t0mvaryingnames]) #don't need new states for t0means
     m$latentPopNames=ivnames
     ivnamesfull <- c(t0mvaryingnames,ivnames) #for t0var naming
