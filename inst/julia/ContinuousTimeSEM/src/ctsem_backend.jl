@@ -104,11 +104,12 @@ Gaussian log-density (the `-log(sigma)` term is *not* dropped, unlike
 not a standardised quantity, and the pre-computed `sigma` differs per
 predictor, so the normalising constant is part of the answer here).
 
-No matching `_gradient!` function: models that reach this term are evaluated
-with `gradient_method=:forward` (ForwardDiff differentiates straight through
-this loop, since it is written in `values`/`p` like anything else), and
-`ctsem_evaluate` refuses `:adjoint` for them -- see the guard there. Empty and
-free for every model with no missing TI predictor cells.
+`_ctsem_ti_missing_loglik_gradient!`, right below, is its analytic derivative
+-- both the adjoint path (`ctsem_adjoint_gradient`, which now supports a
+sampled TI predictor value in full) and `:forward` (ForwardDiff
+differentiating straight through this loop) reach this term; the adjoint calls
+the gradient function once per evaluation rather than differentiating it.
+Empty and free for every model with no missing TI predictor cells.
 """
 function _ctsem_ti_missing_loglik(objective::CTSEMObjective, values::AbstractVector{T}) where {T}
     isempty(objective.ti_missing_parameter) && return zero(T)
@@ -120,6 +121,34 @@ function _ctsem_ti_missing_loglik(objective::CTSEMObjective, values::AbstractVec
         total += -0.5 * z * z - log(sigma) - 0.5 * log(2 * pi)
     end
     return total
+end
+
+"""
+    _ctsem_ti_missing_loglik_gradient!(gradient, objective, values)
+
+Accumulate `_ctsem_ti_missing_loglik`'s gradient contribution into `gradient`,
+analytically: `d/d(values[idx]) [-0.5 z^2 - log(sigma) - 0.5 log(2 pi)]` with
+`z = (values[idx] - mu) / sigma` is `-z / sigma`, i.e.
+`-(values[idx] - mu) / sigma^2`. Each sampled cell gets its own raw-parameter
+index (`.ctJuliaBackend.R` reserves one past every other block), so no two
+`k` ever write the same `idx` -- but `+=` regardless, matching
+`_ctsem_log_prior_gradient!`'s style, since summing is always safe and never
+assumes that non-collision.
+
+Mirrors `_ctsem_log_prior_gradient!` exactly: a closed-form function of the
+raw parameters alone, so it is added once per evaluation rather than folded
+into any per-subject pass. Empty and free for every model with no missing TI
+predictor cells.
+"""
+function _ctsem_ti_missing_loglik_gradient!(gradient::AbstractVector{T},
+    objective::CTSEMObjective, values::AbstractVector{T}) where {T}
+    isempty(objective.ti_missing_parameter) && return gradient
+    @inbounds for k in eachindex(objective.ti_missing_parameter)
+        idx = objective.ti_missing_parameter[k]
+        sigma = objective.ti_missing_sigma[k]
+        gradient[idx] -= (values[idx] - objective.ti_missing_mu[k]) / (sigma * sigma)
+    end
+    return gradient
 end
 
 export CTSEMObjective, ctsem_objective, ctsem_evaluate, ctsem_optimize
@@ -498,18 +527,14 @@ function ctsem_evaluate(objective::CTSEMObjective, values::AbstractVector;
     method = Symbol(gradient_method)
     method in (:forward, :adjoint) ||
         throw(ArgumentError("gradient_method must be :forward or :adjoint, got :$(method)"))
-    # The reverse pass has no cotangent for a sampled TI predictor value: its
-    # contribution enters through `_ctsem_tipred_vector`'s `TIMissingRecipe`
-    # branch and through `_ctsem_ti_missing_loglik`, neither of which
-    # `ctsem_adjoint_gradient` knows about. Silently returning a gradient that
-    # is short exactly those entries is the wrong-but-plausible failure this
-    # feature's spec singles out, so this refuses rather than guessing.
-    # `gradient_method=:forward` is unaffected -- ForwardDiff differentiates
-    # straight through both of those, needing no adjoint work at all.
-    if gradient && method === :adjoint && !isempty(objective.ti_missing_parameter)
-        throw(ArgumentError("gradient_method=:adjoint does not yet support sampled " *
-            "(missing) TI predictor values; use gradient_method=:forward for this model."))
-    end
+    # A sampled TI predictor value is fully covered by the reverse pass now:
+    # `_ctsem_ti_pullback!`'s `TIMissingRecipe` method (adjoint_parameters.jl)
+    # supplies the product-rule term through `_materialize_subject_values!`'s
+    # TI effect, and `ctsem_adjoint_gradient` adds
+    # `_ctsem_ti_missing_loglik_gradient!`'s term for the imputation
+    # log-density itself. See test_ti_missing_predictor.jl for the
+    # cross-checks against ForwardDiff and FiniteDiff this replaced a refusal
+    # with. `gradient_method=:forward` remains available, and identical.
     if gradient && method === :adjoint
         result = ctsem_adjoint_gradient(objective, collect(values))
         value = result.value
