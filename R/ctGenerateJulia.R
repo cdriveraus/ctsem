@@ -12,36 +12,39 @@
 
 # Values for parameters that generation has to pin down.
 #
-# `ctModeltoNumeric()` sets every free parameter to zero, which is right for a
-# location and wrong for everything else: a zero DIFFUSION is a process with no
-# innovation, a zero DRIFT is a random walk rather than the mean-reverting
-# process the user drew, a zero MANIFESTVAR is noiseless measurement, and a zero
-# LAMBDA disconnects the manifest from the latent it loads on. Data generated
-# under those is degenerate in ways that are not obvious until an analysis of it
-# behaves strangely.
+# `ctModeltoNumeric()` sets every free parameter to zero, to stay consistent
+# with ctsem's behaviour before commit 437bfbc0 and not break scripts that
+# depend on it. The one matrix that cannot take a literal zero is DRIFT: a zero
+# DRIFT is singular, so `fQinf()` cannot solve for the asymptotic covariance and
+# generation errors outright (reproduced on a one-latent model with a free
+# DRIFT, the model anyone writes first). DRIFT diagonals therefore use the same
+# near-zero convention `ctModel0DRIFT()` already applies when a fixed DRIFT
+# diagonal is exactly zero: -1e-6 in continuous time, 1-1e-6 in discrete time --
+# close enough to a random walk to be indistinguishable in practice, but
+# non-singular so generation can proceed.
 #
-# So: zero where zero is the natural centre, and a plausible non-zero elsewhere.
 # These are defaults for *simulation*, not estimates of anything, and the point
-# is only that data generated from them looks like data rather than like an
-# artefact. Anything a user cares about they should set.
+# is only that an underspecified model can still be generated from. Anything a
+# user cares about they should set.
 #' @keywords internal
-.ctGenerateDefaults <- function() list(
-  DRIFT = list(diagonal = -0.5, offdiagonal = 0),
-  DIFFUSION = list(diagonal = 1, offdiagonal = 0),
-  T0VAR = list(diagonal = 1, offdiagonal = 0),
-  MANIFESTVAR = list(diagonal = 0.5, offdiagonal = 0),
-  # A free loading defaults to one: zero would cut the manifest off from its
-  # latent entirely, which is never what someone leaving LAMBDA free meant.
-  LAMBDA = list(diagonal = 1, offdiagonal = 0),
-  T0MEANS = list(diagonal = 0, offdiagonal = 0),
-  MANIFESTMEANS = list(diagonal = 0, offdiagonal = 0),
-  CINT = list(diagonal = 0, offdiagonal = 0),
-  TDPREDEFFECT = list(diagonal = 0, offdiagonal = 0),
-  PARS = list(diagonal = 0, offdiagonal = 0))
+.ctGenerateDefaults <- function(continuoustime = TRUE) {
+  driftdiagonal <- if(isTRUE(continuoustime)) -1e-6 else 1 - 1e-6
+  list(
+    DRIFT = list(diagonal = driftdiagonal, offdiagonal = 0),
+    DIFFUSION = list(diagonal = 0, offdiagonal = 0),
+    T0VAR = list(diagonal = 0, offdiagonal = 0),
+    MANIFESTVAR = list(diagonal = 0, offdiagonal = 0),
+    LAMBDA = list(diagonal = 0, offdiagonal = 0),
+    T0MEANS = list(diagonal = 0, offdiagonal = 0),
+    MANIFESTMEANS = list(diagonal = 0, offdiagonal = 0),
+    CINT = list(diagonal = 0, offdiagonal = 0),
+    TDPREDEFFECT = list(diagonal = 0, offdiagonal = 0),
+    PARS = list(diagonal = 0, offdiagonal = 0))
+}
 
 #' @keywords internal
 .ctGenerateResolveFree <- function(model, quiet = FALSE) {
-  defaults <- .ctGenerateDefaults()
+  defaults <- .ctGenerateDefaults(continuoustime = isTRUE(model$continuoustime))
   pars <- model$pars
   # A cell whose label is an expression rather than a parameter name is not a
   # free parameter waiting for a value -- it *is* the specification, and the
