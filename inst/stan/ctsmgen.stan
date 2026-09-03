@@ -262,11 +262,11 @@ if(transform < 49 && shift != 0.0) param+=shift;
   matrix mcalc(matrix matin, vector tfpars, row_vector states, array[] int when, int m, array[,] int ms, data array[,] real mval, int subi){
     matrix[rows(matin),cols(matin)] matout;
     int changeMade=0;
-    
+
     for(ri in 1:size(ms)){ //for each row of matrix setup
       if(m==ms[ri,7] && ( //if correct matrix
         subi ==0 ||  //and need to compute population parameter
-        (ms[ri,3] > 0 && (ms[ri,5] > 0 || ms[ri,6] > 0 || ms[ri,8] > 0)) //or there is individual variation
+        ((ms[ri,3] > 0 || ms[ri,10] > 0) && (ms[ri,5] > 0 || ms[ri,6] > 0 || ms[ri,8] > 0)) //or there is individual variation -- a state reference (col 10) needs this same per-subject recomputation, not only a parameter reference (col 3)
       )){
         int whenyes = (ms[ri,8]==100); //if PARS matrix then need to compute at each kalman step, could improve
         int wi=0;
@@ -277,9 +277,9 @@ if(transform < 49 && shift != 0.0) param+=shift;
         if(whenyes){ // if correct matrix and when
           changeMade=1;
           if(ms[ri,3] > 0 && ms[ri,8]==0)  matout[ms[ri,1], ms[ri,2] ] = tfpars[ms[ri,3]]; //should be already tformed
-          if(ms[ri,3] > 0 && ms[ri,8]>0)  matout[ms[ri,1], ms[ri,2] ] =   //if references param and is state based
-          tform(states[ms[ri,3] ], ms[ri,4], mval[ri,2], mval[ri,3], mval[ri,4], mval[ri,6] );
-          if(ms[ri,3] < 1) matout[ms[ri,1], ms[ri,2] ] = mval[ri, 1]; //doing this once over all subjects unless covariance matrix -- speed ups possible here, check properly!
+          if(ms[ri,10] > 0 && ms[ri,8]>0)  matout[ms[ri,1], ms[ri,2] ] =   //if references a state (col 10), not a parameter
+          tform(states[ms[ri,10] ], ms[ri,4], mval[ri,2], mval[ri,3], mval[ri,4], mval[ri,6] );
+          if(ms[ri,3] < 1 && ms[ri,10] < 1) matout[ms[ri,1], ms[ri,2] ] = mval[ri, 1]; //fixed value: neither a parameter nor a state reference
         }
       }
     }
@@ -360,7 +360,7 @@ data {
   int verbose; //level of printing during model fit
   array[nparams, ntipred] int TIPREDEFFECTsetup;
   int nrowmatsetup;
-  array[nrowmatsetup,9] int matsetup;
+  array[nrowmatsetup,10] int matsetup; //col 10 is stateref: the state index for a cell that materialises from a state rather than a parameter
   array[nrowmatsetup,6] real matvalues;
   array[54,5] int whenmat;
   array[2,nparams]int whenvecp;
