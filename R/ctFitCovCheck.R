@@ -579,42 +579,79 @@ ctFitMelt <- function(fit, maxsamples='all'){
 #' @param lagcovplot Logical. Output lagged covariance type plots?
 #' @param smooth For bivariate plots, use a smoother for estimation?
 #' @param k Integer denoting number of knots to use in the smoothing spline.
-#' @param breaks Integer denoting number of discrete breaks to split variables by (when covariance plotting).
-#' @param entropy Still in development. 
+#' @param breaks Integer denoting number of discrete breaks to split variables by (when covariance plotting,
+#' or for the `trajectoryplot` time axis).
+#' @param entropy Still in development.
 #' @param reg Logical. Use regularisation when estimating covariance matrices? Can be necessary / faster for some problems.
 #' @param verbose Logical. If TRUE, shows optimization output when estimating covariances.
-#' @param indlines Integer number of individual subject lines to draw per data type. 
+#' @param indlines Integer number of individual subject lines to draw per data type.
+#' @param marginalcovcheck Logical. If TRUE, runs \code{\link{ctFitCovCheck}} at lag 0 (marginal,
+#' not lagged, covariance or correlation), split by whether each observation falls in the early or
+#' late half of that subject's own observed time range (a per-subject median split of \code{by},
+#' not a split on absolute time across the sample -- with unbalanced start times, splitting on
+#' absolute time would mix a subject's whole trajectory into a single side). Works for both stan
+#' and julia backend fits, since \code{ctFitCovCheck} already supports both.
+#' @param trajectoryplot Logical. If TRUE, plots observed means over time against the model's
+#' implied (Kalman smoother) means over time, with a 95\% uncertainty band on the implied
+#' trajectory. Reuses \code{\link{ctPredict}}/\code{\link{ctKalman}} (and, for julia fits,
+#' \code{\link{ctBackendKalman}}) for both the implied trajectory and its uncertainty -- the
+#' smoother covariance already computed and already used for the equivalent band in
+#' \code{\link{plot.ctKalmanDF}} -- rather than computing an interval by some other route. Time is
+#' discretised into \code{breaks} groups (as for \code{covplot}) since subjects are rarely
+#' observed at identical times, and each group is plotted at its mean observed time. Works for
+#' both stan and julia backend fits.
 #'
-#' @return Nothing. Just plots. 
+#' @return Nothing. Just plots.
 #' @export
 #'
 #' @examples
 #' \donttest{
 #' ctCheckFit(ctstantestfit)
 #' }
-ctCheckFit <- function(fit, 
+ctCheckFit <- function(fit,
   data=TRUE, postpred=TRUE, priorpred=FALSE, statepred=FALSE, residuals=FALSE,
-  by=fit$ctstanmodelbase$timeName,
+  by=NULL,
   TIpredNames=fit$ctstanmodelbase$TIpredNames,
   nsamples=30, covplot=FALSE, corr=TRUE, combinevars=NA, fastcov=FALSE,
   lagcovplot=FALSE,
   aggfunc=mean,aggregate=FALSE,
   groupbysplit=FALSE, byNA=TRUE,lag=0,
-  smooth=TRUE, k=4,breaks=4,entropy=FALSE,reg=FALSE,verbose=0, indlines=30){
-  
+  smooth=TRUE, k=4,breaks=4,entropy=FALSE,reg=FALSE,verbose=0, indlines=30,
+  marginalcovcheck=FALSE, trajectoryplot=FALSE){
+
+  # `by` defaults to the model's time variable, read through the
+  # backend-agnostic accessor rather than `fit$ctstanmodelbase$timeName`
+  # directly -- the latter is NULL for a julia fit, which used to be moot
+  # because ctCheckFit() refused julia fits outright, but marginalcovcheck and
+  # trajectoryplot below no longer do.
+  if(is.null(by)) by <- .ctFitModelObject(fit)$timeName
+
   # Named rather than asserted. "Not a ctStanFit object" is opaque when the
   # caller is plainly holding a fit; what it means is that this function reads
   # `standata`, `ctstanmodelbase` and the posterior-predictive draws in
-  # `$generated`, none of which a julia fit carries.
-  if(!'ctStanFit' %in% class(fit)){
-    if(inherits(fit, 'ctJuliaFit')) stop(
-      'This function is not available for julia backend fits yet: it reads the ',
-      'stan fit structures (standata, ctstanmodelbase, posterior predictive ',
-      'draws) that a julia fit does not carry. ctFitCovCheck(), ',
-      'ctACFresiduals() and ctPostPredPlots() do work on a julia fit.',
-      call.=FALSE)
-    stop('Not a ctStanFit object', call.=FALSE)
+  # `$generated`, none of which a julia fit carries. That gate only applies to
+  # the classic ctFitMelt-based plots below though -- marginalcovcheck and
+  # trajectoryplot are built on ctFitCovCheck()/ctPredict(), which already work
+  # for both backends, so a julia fit that asks only for those is let through.
+  classicRequested <- data || postpred || priorpred || statepred || residuals ||
+    covplot || entropy
+  if(classicRequested){
+    if(!'ctStanFit' %in% class(fit)){
+      if(inherits(fit, 'ctJuliaFit')) stop(
+        'This function is not available for julia backend fits yet: it reads the ',
+        'stan fit structures (standata, ctstanmodelbase, posterior predictive ',
+        'draws) that a julia fit does not carry. ctFitCovCheck(), ',
+        'ctACFresiduals() and ctPostPredPlots() do work on a julia fit, and so do ',
+        'ctCheckFit(..., marginalcovcheck=TRUE, trajectoryplot=TRUE) with every ',
+        'other plot switch set to FALSE.',
+        call.=FALSE)
+      stop('Not a ctsem fit object', call.=FALSE)
+    }
+  } else {
+    if(!inherits(fit, c('ctStanFit','ctJuliaFit'))) stop('Not a ctsem fit object', call.=FALSE)
   }
+
+  if(classicRequested){
   covORcor <- function(m){
     if(corr) return(cov2cor(m)) else return(m)
   }
@@ -911,6 +948,79 @@ ctCheckFit <- function(fit,
     g=g+facet_wrap(facets = vars(variable),scales = 'free')+theme(legend.position = 'bottom')
     print(g)
   }
+  } # end if(classicRequested)
+
+  if(marginalcovcheck){
+    ctmb <- .ctFitModelObject(fit)
+    idname <- ctmb$subjectIDname
+    covdat <- as.data.table(.ctFitLongData(fit))
+    if(!by %in% names(covdat)) stop('marginalcovcheck requires `by` to name a column present in the fitted data: ', by)
+    splitname <- '.ctCheckFitPeriod'
+    # A per-subject median split -- each subject's own early half against its
+    # own late half -- not a split on absolute time across the sample. With
+    # unbalanced start times or staggered designs, splitting on absolute time
+    # would put a subject's whole trajectory on one side, which is not what
+    # "early vs late" means for panel data; ctFitCovCheck's own documentation
+    # (see its `splitby` examples) does exactly this per-subject split.
+    covdat[, (splitname) := ifelse(get(by) <= stats::median(get(by), na.rm=TRUE), 'Early', 'Late'), by = idname]
+    mcheck <- ctFitCovCheck(fit, cor = corr, plot = TRUE, data = covdat,
+      splitby = splitname, splitdata = covdat, split = 'factor', lags = 0,
+      nsamples = nsamples)
+    for(g in mcheck) print(g)
+  }
+
+  if(trajectoryplot){
+    traj <- .ctCheckFitTrajectory(fit, by = by, breaks = breaks)
+    emp <- traj$observed
+    imp <- traj$implied
+
+    Row <- TimeMid <- Mean <- q025 <- q975 <- NULL # local variables for ggplot
+    g <- ggplot() +
+      geom_ribbon(data = imp, aes(x = TimeMid, ymin = q025, ymax = q975), alpha = .2) +
+      geom_line(data = imp, aes(x = TimeMid, y = Mean, colour = 'Model implied (smoothed)')) +
+      geom_point(data = emp, aes(x = TimeMid, y = Mean, colour = 'Observed'), size = 2) +
+      geom_line(data = emp, aes(x = TimeMid, y = Mean, colour = 'Observed'), linetype = 'dashed') +
+      facet_wrap(facets = vars(Row), scales = 'free_y') +
+      theme_bw() + theme(legend.position = 'bottom') +
+      labs(x = by, y = 'Mean', colour = NULL,
+        title = 'Observed vs model-implied mean trajectory (95% band from Kalman smoother uncertainty)')
+    print(g)
+  }
+}
+
+# Observed vs model-implied (Kalman smoother) mean trajectory over time, for
+# ctCheckFit(trajectoryplot=TRUE). Factored out of ctCheckFit() so the
+# computation -- not just "did the plot error" -- can be tested directly.
+#
+# Reuses ctPredict()/ctKalman() for both the smoothed implied values and their
+# per-observation uncertainty (the same Kalman smoother covariance that
+# plot.ctKalmanDF already bands at errormultiply=1.96), rather than inventing
+# a new uncertainty route. Subjects are rarely observed at identical times, so
+# the time axis is discretised into `breaks` groups the same way ctCheckFit's
+# covplot does, and each group is plotted at its mean observed time; the
+# implied band at each bin combines the individual Kalman smoother variances
+# averaged into that bin via the standard sd-of-a-mean rule.
+#
+# Works for both stan and julia fits, since ctPredict()/ctKalman() already do.
+.ctCheckFitTrajectory <- function(fit, by, breaks){
+  idmap <- .ctFitIdMap(fit)
+  k <- as.data.table(ctPredict(fit, subjects = idmap[,1], timestep = 'asdata',
+    removeObs = FALSE, plot = FALSE))
+  k <- k[Element %in% c('y','ysmooth')]
+  if(!requireNamespace('arules', quietly = TRUE)) stop('arules package needed for discretization!')
+  breaksn <- min(breaks, length(unique(k$Time[!is.na(k$Time)])))
+  k[, .TimeBin := arules::discretize(Time, method = 'cluster', breaks = breaksn, labels = FALSE)]
+  binmid <- k[, .(TimeMid = mean(Time, na.rm = TRUE)), by = .TimeBin]
+
+  emp <- k[Element == 'y', .(Mean = mean(value, na.rm = TRUE)), by = .(Row, .TimeBin)]
+  emp <- merge(emp, binmid, by = '.TimeBin')
+
+  imp <- k[Element == 'ysmooth', .(Mean = mean(value, na.rm = TRUE),
+    se = sqrt(mean(sd^2, na.rm = TRUE) / sum(!is.na(value)))), by = .(Row, .TimeBin)]
+  imp <- merge(imp, binmid, by = '.TimeBin')
+  imp[, `:=`(q025 = Mean - 1.96*se, q975 = Mean + 1.96*se)]
+
+  list(observed = emp, implied = imp)
 }
 
 

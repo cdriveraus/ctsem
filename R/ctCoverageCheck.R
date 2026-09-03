@@ -1,8 +1,10 @@
 #' Coverage Check Function
 #' 
 #' Performs a coverage check analysis by generating data from a model, fitting it multiple times
-#' with different fit arguments, and plotting the results.
-#' 
+#' with different fit arguments, and plotting the results. Works with \code{fit_args}/
+#' \code{fitting_model} combinations that fit with either \code{backend='stan'} (the
+#' \code{\link{ctFit}} default) or \code{backend='julia'}.
+#'
 #' @param initialData An initial dataset to fit to determine 'true' parameters for further generation. 
 #' @param fitting_model A ctModel object used for fitting the data
 #' @param niter Number of iterations to run
@@ -73,7 +75,11 @@ ctModelCoverage_check <- function(initialData, fitting_model, niter, fit_args,
   # Fit the model to get true parameters (use first fit_args configuration)
   initial_fit_args <- ctCoverageFitArgs(default_fit_args, list(), cores)
   initial_fit <- do.call(ctFit, c(list(datalong = initialData, model= fitting_model), initial_fit_args))
-  truepars <- initial_fit$stanfit$rawest
+  # .ctFitRawEstimate()/.ctFitRawPosterior()/.ctFitRawParNames() (R/ctBackendSummary.R)
+  # read `$stanfit$...` or `$estimate$...` depending on which backend produced
+  # the fit, so this works whether fitting_model/fit_args select backend='stan'
+  # (the default) or backend='julia'.
+  truepars <- .ctFitRawEstimate(initial_fit)
   
   # CRITICAL STEP: Generate new data samples from the fitted model
   # This ensures proper parameter specification for all iterations
@@ -113,15 +119,15 @@ ctModelCoverage_check <- function(initialData, fitting_model, niter, fit_args,
         
         # Fit the model with current arguments
         current_fit <- do.call(ctFit, c(list(datalong = dat, model= fitting_model), current_fit_args))
-        estimates <- t(apply(current_fit$stanfit$rawposterior, 2, quantile, probs = c(0.025, 0.5, 0.975)))
-        
+        estimates <- t(apply(.ctFitRawPosterior(current_fit), 2, quantile, probs = c(0.025, 0.5, 0.975)))
+
         # Compile results for this fit type
         current_result <- data.frame(
           iteration = iter_idx,
           type = fit_type,
           truepars = truepars,
           estimates,
-          par=unlist(ctFitgetparnamesfromraw(current_fit)))
+          par=.ctFitRawParNames(current_fit))
         
         # current_result$par <- rownames(current_result)
         

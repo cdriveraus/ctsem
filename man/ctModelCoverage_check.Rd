@@ -45,5 +45,7 @@ A list containing the results data.table and final plots
 }
 \description{
 Performs a coverage check analysis by generating data from a model, fitting it multiple times
-with different fit arguments, and plotting the results.
+with different fit arguments, and plotting the results. Works with \code{fit_args}/
+\code{fitting_model} combinations that fit with either \code{backend='stan'} (the
+\code{\link{ctFit}} default) or \code{backend='julia'}.
 }
