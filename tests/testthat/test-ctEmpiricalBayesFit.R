@@ -277,13 +277,85 @@ test_that("ctEmpiricalBayesFit rejects TI predictor models", {
   expect_error(ctEmpiricalBayesFit(dat, model), 'Time independent predictors')
 })
 
-test_that("ctEmpiricalBayesFit post-processing rejects julia backend fits with an informative error", {
-  # Building a real backend='julia' fit here is expensive, so a minimal object
-  # carrying just the class is used to reach the guard directly.
-  juliafit <- list()
-  class(juliafit) <- c('ctJuliaFit', 'list')
+.ebJuliaModel <- function(){
+  ctModel(type='ct',
+    n.latent=1, latentNames='eta1',
+    n.manifest=1, manifestNames='Y1',
+    DRIFT=matrix('drift||FALSE',1,1),
+    DIFFUSION=matrix('diffusion||FALSE',1,1),
+    CINT=matrix(0,1,1),
+    T0MEANS=matrix(0,1,1),
+    T0VAR=matrix(1,1,1),
+    LAMBDA=matrix(1,1,1),
+    MANIFESTMEANS=matrix(0,1,1),
+    MANIFESTVAR=matrix('merror||FALSE',1,1),
+    silent=TRUE)
+}
 
+.ebJuliaData <- function(n.subjects=4, Tpoints=4){
+  set.seed(1)
+  do.call(rbind, lapply(seq_len(n.subjects), function(i) data.frame(
+    id=i, time=seq_len(Tpoints)-1, Y1=stats::rnorm(Tpoints))))
+}
+
+test_that("ctEBrawParnames and ctEBrawMatrix read a real julia fit's raw estimate and posterior", {
+  skip_on_cran()
+  skip_without_julia()
+  model <- .ebJuliaModel()
+  data <- .ebJuliaData(n.subjects=1, Tpoints=5)
+
+  fit <- suppressWarnings(suppressMessages(ctFit(data, model, backend='julia',
+    cores=1, verbose=0, optimcontrol=list(finishsamples=20))))
+  expect_s3_class(fit, 'ctJuliaFit')
+
+  pnames <- ctsem:::ctEBrawParnames(fit)
+  expect_length(pnames, length(fit$estimate$raw))
+  expect_true(all(c('drift','diffusion','merror') %in% pnames))
+
+  point <- ctsem:::ctEBrawMatrix(fits=list('1'=fit), parnames=pnames, use='rawest')
+  expect_equal(dim(point), c(1L, length(pnames)))
+  expect_equal(as.numeric(point[1,]), as.numeric(fit$estimate$raw))
+
+  posterior <- ctsem:::ctEBrawMatrix(fits=list('1'=fit), parnames=pnames, use='rawposterior')
+  expect_equal(ncol(posterior), length(pnames))
+  expect_equal(nrow(posterior), nrow(fit$estimate$rawposterior))
+  expect_equal(colnames(posterior), pnames)
+})
+
+test_that("ctEBrawMatrix explains a fit with no posterior draws rather than erroring on dimensions", {
+  skip_on_cran()
+  skip_without_julia()
+  model <- .ebJuliaModel()
+  data <- .ebJuliaData(n.subjects=1, Tpoints=5)
+
+  # estonly=TRUE is what ctEmpiricalBayesFit()'s first pass uses, and skips the
+  # uncertainty step that would otherwise populate estimate$rawposterior.
+  fit <- suppressWarnings(suppressMessages(ctFit(data, model, backend='julia',
+    cores=1, verbose=0, optimcontrol=list(estonly=TRUE))))
+  expect_null(fit$estimate$rawposterior)
+
+  pnames <- ctsem:::ctEBrawParnames(fit)
   expect_error(
-    ctsem:::ctEBrawMatrix(fits=list('1'=juliafit), parnames='drift', use='rawest'),
-    "backend='stan'")
+    ctsem:::ctEBrawMatrix(fits=list('1'=fit), parnames=pnames, use='rawposterior'),
+    'No raw posterior samples')
+})
+
+test_that("ctEmpiricalBayesFit runs end to end on backend='julia'", {
+  skip_on_cran()
+  skip_without_julia()
+  model <- .ebJuliaModel()
+  data <- .ebJuliaData(n.subjects=3, Tpoints=6)
+
+  eb <- suppressWarnings(suppressMessages(ctEmpiricalBayesFit(data, model,
+    cores=1, progress=FALSE, verbose=0, backend='julia',
+    subjectFitArgs=list(optimcontrol=list(finishsamples=20)))))
+
+  expect_s3_class(eb, 'ctEmpiricalBayesFit')
+  expect_length(eb$fits, 3)
+  expect_true(all(vapply(eb$fits, inherits, logical(1), 'ctJuliaFit')))
+  expect_equal(eb$parnames, ctsem:::ctEBrawParnames(eb$initialfits[[1]]))
+
+  s <- summary(eb)
+  expect_s3_class(s, 'summary.ctEmpiricalBayesFit')
+  expect_false(any(is.na(s$popmeans$mean)))
 })
