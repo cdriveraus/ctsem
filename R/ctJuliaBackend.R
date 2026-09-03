@@ -2613,15 +2613,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   model_spec <- .ctJuliaPrepare(datalong, model, prepared_data = prepared_data,
     project = project, priors = priors, intoverpop = intoverpop, optimize = optimize,
     tipredMissingIncludeOutcome = .ctJuliaOr(backendcontrol$tipredMissingIncludeOutcome, TRUE))
-  # A sampled TI-predictor value has no adjoint cotangent yet (see
-  # SPEC-tipred-sampling.md and `ctsem_adjoint_gradient`'s guard in
-  # adjoint.jl): forward-mode needs no such work, since the assembly it
-  # differentiates through is ordinary Julia. This overrides whatever
-  # `gradient` resolved to above -- silently for the default, since most
-  # callers never set it -- rather than reaching the engine's own refusal,
-  # which would name a Julia function the caller never called.
   if (!is.null(model_spec$ti_missing) && nrow(model_spec$ti_missing)) {
-    gradient <- "forward"
     # The state-explicit route (`intoverstates=FALSE`) samples the latent
     # trajectory through a different objective (`CTSEMJointObjective`,
     # state_sampling.jl) that this feature has not touched at all -- not
@@ -2637,6 +2629,16 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     }
   }
   if (!fit) return(structure(model_spec, class = c("ctJuliaModel", "ctFitModel")))
+  # A sampled TI-predictor value used to have no adjoint cotangent, so a fit
+  # here was refused unless `gradient='forward'` was requested by name (see
+  # the git history of this function, and SPEC-tipred-sampling.md). The
+  # reverse pass now covers it -- `_ctsem_ti_pullback!`'s `TIMissingRecipe`
+  # method adds the TI-effect product-rule term and `ctsem_adjoint_gradient`
+  # adds `_ctsem_ti_missing_loglik_gradient!`'s term for the imputation
+  # log-density itself, both cross-checked against ForwardDiff and FiniteDiff
+  # in test_ti_missing_predictor.jl -- so `gradient` is left exactly as
+  # resolved above: 'adjoint' by default, 'forward' still available on
+  # request, neither one singled out for this kind of model any more.
 
   # `optimize=FALSE` fits by sampling. Which sampler is decided by
   # `intoverpop`, which says what has already been integrated out; see

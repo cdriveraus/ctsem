@@ -58,6 +58,31 @@ test_that("a missing TI predictor is sampled (not refused) with intoverpop='augm
   expect_equal(as.numeric(prepared$tipred_data), c(-1, 2, .5))
 })
 
+test_that("fitting a missing TI predictor with the default (adjoint) gradient now works, same as explicit forward", {
+  # The reverse pass initially had no cotangent for a sampled TI predictor
+  # value, so a fit here briefly refused unless gradient='forward' was
+  # requested by name (see the git history of .ctFitJuliaBackendImpl). The
+  # Julia engine's adjoint now covers this (test_ti_missing_predictor.jl,
+  # cross-checked against ForwardDiff and FiniteDiff), so ctFit() no longer
+  # singles this model out: the default 'adjoint' and an explicit 'forward'
+  # both fit it without error, and are two gradient methods for the same
+  # posterior rather than one being the only offer.
+  model <- .tipred_missing_model()
+  dat <- data.frame(id = rep(1:3, each = 3), time = rep(0:2, 3),
+    Y1 = rnorm(9), group = rep(c(-1, 2, NA), each = 3))
+
+  fit_default <- suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
+    optimize = FALSE, intoverpop = "augmented", chains = 1, iter = 10,
+    cores = 1, control = list(warmup = 5))))
+  expect_s3_class(fit_default, "ctJuliaFit")
+
+  fit_forward <- suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
+    optimize = FALSE, intoverpop = "augmented", chains = 1, iter = 10,
+    cores = 1, control = list(warmup = 5),
+    optimcontrol = list(gradient = "forward"))))
+  expect_s3_class(fit_forward, "ctJuliaFit")
+})
+
 test_that("the julia sampling path refuses a missing TI predictor outside intoverpop='augmented'", {
   model <- .tipred_missing_model()
   dat <- data.frame(id = rep(1:3, each = 3), time = rep(0:2, 3), Y1 = 0,
@@ -141,7 +166,8 @@ test_that("a small julia fit actually samples a missing TI predictor value end t
 
   fit <- suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
     optimize = FALSE, intoverpop = "augmented", chains = 1, iter = 60,
-    cores = 1, control = list(warmup = 30))))
+    cores = 1, control = list(warmup = 30),
+    optimcontrol = list(gradient = "forward"))))
   expect_s3_class(fit, "ctJuliaFit")
   idx <- fit$model_spec$ti_missing$parameter
   expect_length(idx, 1L)
@@ -185,7 +211,8 @@ test_that("closed form via ctFit(): posterior of an isolated missing predictor r
   run <- function(draws) {
     fit <- suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
       optimize = FALSE, intoverpop = "augmented", chains = 1,
-      iter = draws * 2L, cores = 1, control = list(warmup = draws))))
+      iter = draws * 2L, cores = 1, control = list(warmup = draws),
+      optimcontrol = list(gradient = "forward"))))
     idx <- fit$model_spec$ti_missing$parameter
     fit$estimate$rawposterior[, idx]
   }
@@ -236,7 +263,8 @@ test_that("targeted stan comparison: same model, same gap, agreeing posteriors",
   jfit <- suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
     optimize = FALSE, intoverpop = "augmented",
     backendcontrol = list(tipredMissingIncludeOutcome = FALSE),
-    chains = 1, iter = 800L, cores = 1, control = list(warmup = 300L))))
+    chains = 1, iter = 800L, cores = 1, control = list(warmup = 300L),
+    optimcontrol = list(gradient = "forward"))))
   jidx <- jfit$model_spec$ti_missing$parameter
   jdraws <- jfit$estimate$rawposterior[, jidx]
 

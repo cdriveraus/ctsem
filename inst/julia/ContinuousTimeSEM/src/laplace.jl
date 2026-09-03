@@ -747,7 +747,7 @@ function _laplace_subject_value_gradient!(gradient::AbstractVector{T},
         _ctsem_reverse_tape!(tape, subject_objective.params, aws, aws.n, aws.m)
         fill!(gradient, zero(T))
         _ctsem_parameter_layer!(gradient, aws.theta_bar, tape.subject_values,
-            subject_objective.params, aws, subject_objective.tipreds)
+            subject_objective.params, aws, subject_objective.tipreds, values)
         return loglik
     finally
         aws.defer_frechet = deferred

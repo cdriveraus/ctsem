@@ -181,13 +181,35 @@ end
     D(value, ForwardDiff.Partials((seed ? one(value) : zero(value),)))
 
 """
-    _ctsem_ti_pullback!(values_bar, subject_values_bar, sp, tipreds)
+    _ctsem_ti_pullback!(values_bar, subject_values_bar, sp, tipreds, values)
 
 Undo `_materialize_subject_values!`: the identity copy plus each TI predictor
 effect `subject_values[par] += values[coef] * tipred[pred]`.
+
+Two methods, dispatched on the *stored* `tipreds` type -- exactly mirroring
+`_ctsem_tipred_vector` in parameter_transforms.jl:
+
+  * `tipreds::AbstractVector` -- every predictor value here is data (a
+    constant as far as the gradient is concerned), so the product rule only
+    has one variable factor: the coefficient.
+  * `tipreds::TIMissingRecipe` -- one or more predictor values are
+    *themselves* raw parameters (`_ctsem_tipred_vector`'s other method
+    substitutes `values[parameter_index[k]]` at each missing cell before the
+    row is ever read). The product rule then has two variable factors for
+    every TI effect that reads one of those cells:
+    `d(coef * tipred)/d(values) = tipred * d(coef) + coef * d(tipred)`, so
+    this method accumulates into `values_bar[coefficient]` exactly as the
+    plain method does *and* into `values_bar[parameter_index[k]]`, using
+    `values[coefficient]` -- the raw trial point, not `subject_values`, which
+    only equals it when no TI effect's coefficient is itself the target of
+    another TI effect. Two or more TI effects reading the same missing cell
+    (`predictor` shared across several `i`) each contribute their own term to
+    the same `values_bar[parameter_index[k]]` slot, and the `+=` below sums
+    them rather than overwriting, as it must.
 """
 function _ctsem_ti_pullback!(values_bar::AbstractVector,
-    subject_values_bar::AbstractVector, sp::EKFParameters, tipreds::AbstractVector)
+    subject_values_bar::AbstractVector, sp::EKFParameters, tipreds::AbstractVector,
+    values::AbstractVector)
     @inbounds for i in eachindex(values_bar)
         values_bar[i] += subject_values_bar[i]
     end
@@ -196,6 +218,29 @@ function _ctsem_ti_pullback!(values_bar::AbstractVector,
         predictor = sp.ti_predictor_indices[i]
         coefficient = sp.ti_coefficient_indices[i]
         values_bar[coefficient] += subject_values_bar[parameter] * tipreds[predictor]
+    end
+    return values_bar
+end
+
+function _ctsem_ti_pullback!(values_bar::AbstractVector,
+    subject_values_bar::AbstractVector, sp::EKFParameters, spec::TIMissingRecipe,
+    values::AbstractVector)
+    tipred_vec = _ctsem_tipred_vector(spec, values)
+    @inbounds for i in eachindex(values_bar)
+        values_bar[i] += subject_values_bar[i]
+    end
+    @inbounds for i in eachindex(sp.ti_parameter_indices)
+        parameter = sp.ti_parameter_indices[i]
+        predictor = sp.ti_predictor_indices[i]
+        coefficient = sp.ti_coefficient_indices[i]
+        cotangent = subject_values_bar[parameter]
+        values_bar[coefficient] += cotangent * tipred_vec[predictor]
+        # Second product-rule term, present only when this TI effect's own
+        # predictor column is one of this subject's sampled cells.
+        k = findfirst(==(predictor), spec.predictor_index)
+        if k !== nothing
+            values_bar[spec.parameter_index[k]] += cotangent * values[coefficient]
+        end
     end
     return values_bar
 end

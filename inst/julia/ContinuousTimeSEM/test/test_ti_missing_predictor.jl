@@ -16,7 +16,14 @@
 #      here; both are R-side.
 #
 # Verification order follows the spec: closed form first (the strongest,
-# cheapest evidence), then the gradient, then the adjoint guard.
+# cheapest evidence), then the ForwardDiff/FiniteDiff gradient, then the
+# adjoint's two derivative contributions -- the TI-effect product rule in
+# `_ctsem_ti_pullback!`'s `TIMissingRecipe` method (adjoint_parameters.jl) and
+# the imputation log-density's own term (`_ctsem_ti_missing_loglik_gradient!`,
+# ctsem_backend.jl) -- checked elementwise against ForwardDiff (near machine
+# precision) and FiniteDiff (an independent referee), at the conditional mean
+# and away from it, with more than one missing cell, more than one subject
+# affected, and one predictor driving more than one parameter.
 
 using DataFrames, ForwardDiff, FiniteDiff, Statistics, Random
 
@@ -127,22 +134,128 @@ end
     @test isapprox(g_full_fd, g_full_findiff; atol=1e-3, rtol=1e-3)
 end
 
-@testset "adjoint refuses rather than silently mis-computing" begin
-    params = _ti_missing_test_model(ti_effect=true)
+@testset "adjoint matches ForwardDiff elementwise, at and away from the conditional mean" begin
+    # Isolated model again (see the gradient testset above): p[7] enters only
+    # through the imputation term, so its adjoint partial should equal the
+    # analytic -(x-mu)/sigma^2 exactly, and every other entry should be
+    # unaffected by there being a sampled cell at all.
+    params_iso = _ti_missing_test_model(ti_effect=false)
     tipred_missing = reshape([0.5, 99999.0], 2, 1)
-    obj = ContinuousTimeSEM.ctsem_objective(params, _TI_MISSING_STARTS, _TI_MISSING_TIMES,
+    mu, sigma = 0.2, 0.7
+    obj_iso = ContinuousTimeSEM.ctsem_objective(params_iso, _TI_MISSING_STARTS, _TI_MISSING_TIMES,
+        _TI_MISSING_DATA, _TI_MISSING_TD, tipred_missing, Inf;
+        ti_missing_subject=[2], ti_missing_predictor=[1], ti_missing_parameter=[7],
+        ti_missing_mu=[mu], ti_missing_sigma=[sigma])
+    for val in (mu, -1.3)   # at the mean (prior derivative vanishes there), and well away from it
+        p_iso = vcat(_TI_MISSING_P0, [val])
+        g_adj = ContinuousTimeSEM.ctsem_adjoint_gradient(obj_iso, p_iso).gradient
+        g_fwd = ForwardDiff.gradient(obj_iso, p_iso)
+        @test isapprox(g_adj, g_fwd; atol=1e-9)
+        @test isapprox(g_adj[7], -(val - mu) / sigma^2; atol=1e-9)
+    end
+
+    # Full model: p[8] also feeds the process likelihood through the TI
+    # effect (contribution 1), on top of the imputation term (contribution
+    # 2). Elementwise, not by norm: report the largest absolute and relative
+    # difference explicitly so a single wrong component cannot hide.
+    params_full = _ti_missing_test_model(ti_effect=true)
+    obj_full = ContinuousTimeSEM.ctsem_objective(params_full, _TI_MISSING_STARTS, _TI_MISSING_TIMES,
         _TI_MISSING_DATA, _TI_MISSING_TD, tipred_missing, Inf;
         ti_missing_subject=[2], ti_missing_predictor=[1], ti_missing_parameter=[8],
-        ti_missing_mu=[0.2], ti_missing_sigma=[0.7])
-    p = vcat(_TI_MISSING_P0, [0.3, -0.4])
-    @test_throws ArgumentError ContinuousTimeSEM.ctsem_evaluate(obj, p;
+        ti_missing_mu=[mu], ti_missing_sigma=[sigma])
+    for val in (mu, -1.3)
+        p_full = vcat(_TI_MISSING_P0, [0.3, val])
+        g_adj = ContinuousTimeSEM.ctsem_adjoint_gradient(obj_full, p_full).gradient
+        g_fwd = ForwardDiff.gradient(obj_full, p_full)
+        g_fd = FiniteDiff.finite_difference_gradient(obj_full, p_full)
+        max_abs = maximum(abs.(g_adj .- g_fwd))
+        max_rel = maximum(abs.(g_adj .- g_fwd) ./ max.(abs.(g_fwd), 1e-12))
+        @test max_abs < 1e-9
+        @test max_rel < 1e-8
+        @test isapprox(g_adj, g_fd; atol=1e-4, rtol=1e-4)
+        @test isapprox(ContinuousTimeSEM.ctsem_adjoint_gradient(obj_full, p_full).value,
+            obj_full(p_full); rtol=1e-12)
+    end
+
+    # ctsem_evaluate(:adjoint) end to end, no longer refused.
+    res_adj = ContinuousTimeSEM.ctsem_evaluate(obj_full, vcat(_TI_MISSING_P0, [0.3, -0.4]);
         gradient=true, gradient_method=:adjoint)
-    @test_throws ArgumentError ContinuousTimeSEM.ctsem_adjoint_gradient(obj, p)
-    @test_throws ArgumentError ContinuousTimeSEM.ctsem_hessian(obj, p)
-    # :forward is unaffected.
-    res = ContinuousTimeSEM.ctsem_evaluate(obj, p; gradient=true, gradient_method=:forward)
-    @test isfinite(res.value)
-    @test all(isfinite, res.gradient)
+    res_fwd = ContinuousTimeSEM.ctsem_evaluate(obj_full, vcat(_TI_MISSING_P0, [0.3, -0.4]);
+        gradient=true, gradient_method=:forward)
+    @test isfinite(res_adj.value)
+    @test all(isfinite, res_adj.gradient)
+    @test isapprox(res_adj.gradient, res_fwd.gradient; atol=1e-9)
+
+    # ctsem_hessian nests ForwardDiff over the adjoint gradient; it used to be
+    # refused for exactly this kind of model, forcing ctsem_hessian_forward.
+    # Both should now agree.
+    p_h = vcat(_TI_MISSING_P0, [0.3, -0.4])
+    H = ContinuousTimeSEM.ctsem_hessian(obj_full, p_h)
+    Hfwd = ContinuousTimeSEM.ctsem_hessian_forward(obj_full, p_h)
+    @test isapprox(H, Hfwd; atol=1e-6)
+
+    # ctsem_subject_gradients still refuses: the imputation term has no
+    # single subject's row to land on (CTSEMObjective does not retain which
+    # subject a sampled cell belongs to), so it is short of it structurally,
+    # not by an oversight -- refusing beats a quietly incomplete score matrix.
+    @test_throws ArgumentError ContinuousTimeSEM.ctsem_subject_gradients(obj_full, p_h)
+end
+
+@testset "adjoint: multiple missing cells, multiple subjects, one predictor driving two parameters" begin
+    # A second TI predictor and a second TI effect on top of the smallest
+    # model's one: predictor 1 drives BOTH parameter 4 (MANIFESTMEANS,
+    # coefficient 7) and parameter 6 (T0VAR, coefficient 8), so a subject
+    # missing predictor 1 sends cotangent through two TI effects into the
+    # SAME raw parameter slot -- the accumulation this needs to sum rather
+    # than overwrite. Predictor 2 drives parameter 5 (T0MEANS, coefficient 9)
+    # alone. Four subjects: one fully observed, two missing predictor 1 (at
+    # two different raw parameter slots), one missing predictor 2.
+    df = DataFrame(
+        matrix=["DRIFT", "JAx", "DIFFUSION", "MANIFESTVAR", "MANIFESTMEANS",
+            "T0MEANS", "T0VAR", "LAMBDA", "Jy", "CINT"],
+        row=fill(1, 10), col=fill(1, 10),
+        parnumber=[1, 1, 2, 3, 4, 5, 6, 0, 0, 0],
+        value=[missing, missing, missing, missing, missing, missing, missing, 1.0, 1.0, 0.0],
+        transform=["-exp(param[1])", "-exp(param[1])", "exp(param[2])", "exp(param[3])",
+            "param[4]", "param[5]", "exp(param[6])", missing, missing, missing],
+    )
+    ti_effects = DataFrame(parameter=[4, 6, 5], predictor=[1, 1, 2], coefficient=[7, 8, 9])
+    params = ekf_from_data_frame(df, ti_effects)
+
+    starts = [1, 6, 11, 16]
+    times = repeat(collect(0.0:1.0:4.0), 4)
+    data = reshape([0.1, 0.3, 0.5, 0.9, -0.2,
+                     0.4, -0.1, 0.2, 0.6, 0.0,
+                    -0.3, 0.1, 0.4, -0.5, 0.2,
+                     0.2, -0.4, 0.1, 0.3, -0.1], 1, 20)
+    td = zeros(0, 20)
+    tipred_missing = [0.5 -0.3; 99999.0 0.4; 0.2 99999.0; 99999.0 -0.6]
+    mu = [0.1, -0.1, 0.15]
+    sigma = [0.6, 0.5, 0.55]
+    obj = ContinuousTimeSEM.ctsem_objective(params, starts, times, data, td, tipred_missing, Inf;
+        ti_missing_subject=[2, 3, 4], ti_missing_predictor=[1, 2, 1],
+        ti_missing_parameter=[10, 11, 12], ti_missing_mu=mu, ti_missing_sigma=sigma)
+
+    p_at_mean = vcat(_TI_MISSING_P0, [0.3, -0.2, 0.25], mu)
+    p_away = vcat(_TI_MISSING_P0, [0.3, -0.2, 0.25], [1.2, -1.6, -0.85])
+
+    for p in (p_at_mean, p_away)
+        result = ContinuousTimeSEM.ctsem_adjoint_gradient(obj, p)
+        g_adj = result.gradient
+        g_fwd = ForwardDiff.gradient(obj, p)
+        g_fd = FiniteDiff.finite_difference_gradient(obj, p)
+        max_abs = maximum(abs.(g_adj .- g_fwd))
+        max_rel = maximum(abs.(g_adj .- g_fwd) ./ max.(abs.(g_fwd), 1e-12))
+        @test max_abs < 1e-9
+        @test max_rel < 1e-8
+        @test isapprox(g_adj, g_fd; atol=1e-4, rtol=1e-4)
+        @test isapprox(result.value, obj(p); rtol=1e-12)
+        # The two contributions into slot 10 (subject 2's sampled predictor
+        # 1, read by TWO TI effects, coefficients 7 and 8) must have summed,
+        # not overwritten: it disagrees with a hypothetical single-effect
+        # partial unless both terms are present.
+        @test isfinite(g_adj[10])
+    end
 end
 
 @testset "closed form: sampled posterior recovers the imputation prior" begin
@@ -172,9 +285,11 @@ end
         ti_missing_subject=[2], ti_missing_predictor=[1], ti_missing_parameter=[1],
         ti_missing_mu=[mu], ti_missing_sigma=[sigma])
     centre = [mu]
-    # ctsem_hessian is adjoint-only and refused above; ctsem_hessian_forward
-    # is its ForwardDiff-only counterpart, which ctsem_sample_marginal's
-    # `hessian=` should be given explicitly for a model like this one.
+    # ctsem_hessian now nests over the adjoint for this kind of model too (see
+    # the testset above), but this keeps using ctsem_hessian_forward
+    # deliberately: it is the ForwardDiff-only route ctsem_sample_marginal's
+    # `hessian=` document as the one to pass explicitly, and this test's
+    # `gradient_method=:forward` below matches it.
     H = ContinuousTimeSEM.ctsem_hessian_forward(obj_fixed, centre)
     @test isapprox(H[1, 1], -1 / sigma^2; atol=1e-8)
     @test isapprox(H, ForwardDiff.hessian(obj_fixed, centre); atol=1e-10)

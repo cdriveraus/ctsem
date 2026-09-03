@@ -956,22 +956,28 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
 end
 
 """
-    _ctsem_parameter_layer!(values_bar, θ̄, subject_values, sp, aws, tipreds)
+    _ctsem_parameter_layer!(values_bar, θ̄, subject_values, sp, aws, tipreds, values)
 
 Unwind the parameter layer: whatever cotangent is left on `all_params` was put
 there by the regular (non-state-dependent) transforms, so push it through them
 and then through the TI-predictor effects into `values_bar`.
+
+`tipreds` is untyped rather than `::AbstractVector` because a subject with a
+sampled (missing) TI predictor cell passes its `TIMissingRecipe` here instead
+-- see `_ctsem_ti_pullback!`, which dispatches on it. `values` is the raw
+trial point the forward pass ran at, needed only by that recipe method (the
+plain-vector one ignores it).
 """
 function _ctsem_parameter_layer!(values_bar::AbstractVector{T}, θ̄::AbstractVector{T},
     subject_values::AbstractVector, sp::EKFParameters, aws,
-    tipreds::AbstractVector) where {T}
+    tipreds, values::AbstractVector{T}) where {T}
     aws.defer_frechet || _flush_frechet!(aws)
     subject_values_bar = aws.subject_values_bar
     resize!(subject_values_bar, length(subject_values))
     fill!(subject_values_bar, zero(T))
     _ctsem_regular_pullback!(subject_values_bar, θ̄, subject_values, sp,
         aws.regular_supports, aws.regular_dual_scratch)
-    _ctsem_ti_pullback!(values_bar, subject_values_bar, sp, tipreds)
+    _ctsem_ti_pullback!(values_bar, subject_values_bar, sp, tipreds, values)
     return values_bar
 end
 
