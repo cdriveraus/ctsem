@@ -16,14 +16,35 @@
 # stanExports_X.h, so editing a .stan file's data/parameters and rebuilding
 # regenerates X.h with new content (new mtime) while X.cc is byte-identical
 # to before and rstantools' own content-diffing leaves its mtime untouched.
-# make's only rule for the object is the implicit `%.o: %.cc`, which sees no
-# change and reuses the stale stanExports_X.o -- silently linking a model
-# built from an old data layout, which reads exactly like a code bug rather
-# than a build one. See dev/stan-header-deps.md.
-if [ -f src/Makevars.win ] && ! grep -q '^stanExports_%\.o: stanExports_%\.h$' src/Makevars.win; then
-  {
-    echo ''
-    echo '# ctsem: rebuild an object when its generated stan header changes (see configure.win)'
-    echo 'stanExports_%.o: stanExports_%.h'
-  } >> src/Makevars.win
+# make's only rule for the object is R's own old-style suffix rule (.cc.o:,
+# from Makeconf), which sees no change and reuses the stale stanExports_X.o
+# -- silently linking a model built from an old data layout, which reads
+# exactly like a code bug rather than a build one.
+#
+# One rule per model, by literal name -- not a `%` pattern rule. Proved by
+# direct reproduction against Rtools' GNU Make: a prerequisite-only PATTERN
+# rule (stanExports_%.o: stanExports_%.h) is silently ignored when the
+# target is actually built via an old-style SUFFIX rule (.cc.o:, what
+# Makeconf uses), because make's suffix-rule and pattern-rule mechanisms
+# don't combine for that purpose -- "make: Nothing to be done" even though
+# the header is newer. An explicit-name rule (stanExports_cov.o:
+# stanExports_cov.h) combines with a suffix rule correctly and does trigger
+# the rebuild. See dev/stan-header-deps.md for the reproduction.
+#
+# The model list is read from inst/stan/*.stan at configure time, so a
+# future added/removed .stan file needs no matching edit here.
+if [ -f src/Makevars.win ]; then
+  for _ctsem_stanfile in inst/stan/*.stan; do
+    [ -f "$_ctsem_stanfile" ] || continue
+    _ctsem_model=$(basename "$_ctsem_stanfile" .stan)
+    _ctsem_rule="stanExports_${_ctsem_model}.o: stanExports_${_ctsem_model}.h"
+    if ! grep -qF "$_ctsem_rule" src/Makevars.win; then
+      {
+        echo ''
+        echo "# ctsem: rebuild stanExports_${_ctsem_model}.o when its generated header changes (see configure.win)"
+        echo "$_ctsem_rule"
+      } >> src/Makevars.win
+    fi
+  done
+  unset _ctsem_stanfile _ctsem_model _ctsem_rule
 fi
