@@ -882,8 +882,10 @@ free accuracy; across a sampler's it makes the density a function of where the
 chain has *been* as well as where it is. The inner problem is concave in `u` for
 these models, so the warm start converges to the same mode either way and the
 dependence does not bite -- but it is an assumption rather than a guarantee, and
-`test_sampler.jl` pins it by evaluating the same `theta` from two different
-histories and requiring the same answer.
+`test_sampler.jl`'s "the inner mode does not depend on how the chain got there"
+pins it: the same `theta`, evaluated after three different histories (a nearby
+warm start, a warm start from far away, and a cold start with no prior call at
+all), gives the same value, gradient and retained modes to numerical tolerance.
 """
 function ctsem_sample_marginal(objective, values::AbstractVector;
     nchains::Integer=4, nwarmup::Integer=500, ndraws::Integer=500,

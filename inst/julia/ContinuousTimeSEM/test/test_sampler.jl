@@ -73,6 +73,51 @@ end
     end
 end
 
+
+# `CTSEMLaplaceObjective`'s inner modes are retained state, warm-started
+# across calls (laplace.jl's own docstring on the struct, and
+# sample_run.jl's on `ctsem_sample_marginal`). A sampler's chain calls the
+# objective at a different theta on every step, so unlike an optimizer's
+# trajectory the calls are not merely "close together" -- a warm start
+# could in principle land the inner Newton solve at the same theta from
+# genuinely different starting points. The claim that this cannot happen --
+# the inner problem is concave in `u`, so any warm start converges to the
+# same mode -- was asserted by a docstring with no test behind it (J9's
+# comment sweep, review/J9-duplicate-edge-blocks.md's Finding 4 follow-up).
+# This is that test: the same theta evaluated after three different
+# histories -- a nearby warm start, a warm start from far away that forces
+# Newton to actually move, and a cold start directly at theta with no prior
+# call at all -- must give the same value and gradient.
+@testset "the inner mode does not depend on how the chain got there" begin
+    theta = [0.25, -0.4, 0.1, 0.15, -0.3]
+
+    laplace_near, _ = _fresh_nonlinear()
+    near = copy(theta); near[1] += 0.05; near[3] -= 0.05
+    ContinuousTimeSEM.ctsem_evaluate(laplace_near, near; gradient=false)
+    from_near = ContinuousTimeSEM.ctsem_evaluate(laplace_near, theta; gradient=true)
+
+    laplace_far, _ = _fresh_nonlinear()
+    far = theta .+ [1.5, -1.2, 0.9, -1.4, 1.1]
+    ContinuousTimeSEM.ctsem_evaluate(laplace_far, far; gradient=false)
+    from_far = ContinuousTimeSEM.ctsem_evaluate(laplace_far, theta; gradient=true)
+
+    laplace_cold, _ = _fresh_nonlinear()
+    from_cold = ContinuousTimeSEM.ctsem_evaluate(laplace_cold, theta; gradient=true)
+
+    @test from_near.value ≈ from_far.value atol = 1e-10
+    @test from_near.value ≈ from_cold.value atol = 1e-10
+    @test from_near.gradient ≈ from_far.gradient atol = 1e-9
+    @test from_near.gradient ≈ from_cold.gradient atol = 1e-9
+
+    # The retained modes themselves agree too, not just what they imply for
+    # the value and gradient -- a stronger check than the density agreeing
+    # by coincidence at this one point.
+    for u in eachindex(laplace_near.modes)
+        @test laplace_near.modes[u] ≈ laplace_far.modes[u] atol = 1e-9
+        @test laplace_near.modes[u] ≈ laplace_cold.modes[u] atol = 1e-9
+    end
+end
+
 @testset "the sampled dimension is the population vector plus every effect" begin
     laplace, values = _fresh_twolevel()
     sampler = ContinuousTimeSEM.ctsem_sampler(laplace, length(values))
