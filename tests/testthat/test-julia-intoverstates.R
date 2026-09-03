@@ -307,8 +307,9 @@ test_that("standard errors profile the states out, and the rest are refused", {
 test_that("a free Gaussian measurement variance is called out, not left to fail", {
   skip_on_cran()
   skip_without_julia()
-  # The joint density has no maximum in this direction, so the fit cannot
-  # converge and the reason is not visible in the gradient it stops at.
+  # The joint density has no maximum in this direction, so there is nothing for
+  # the optimiser to converge to; ctFit now stops rather than letting it run to
+  # the boundary and report not converged.
   model <- .gaussian_model()
   set.seed(6)
   data <- data.frame(suppressMessages(ctGenerate(model, n.subjects = 8,
@@ -318,10 +319,10 @@ test_that("a free Gaussian measurement variance is called out, not left to fail"
     LAMBDA = matrix(1), T0MEANS = matrix(0), CINT = matrix(0),
     MANIFESTMEANS = matrix("mmean"), Tpoints = 5)))
   free$pars$indvarying <- FALSE
-  expect_warning(
-    suppressMessages(try(ctFit(data, free, backend = "julia",
+  expect_error(
+    suppressWarnings(suppressMessages(ctFit(data, free, backend = "julia",
       intoverstates = FALSE, verbose = 0,
-      optimcontrol = list(estonly = TRUE)), silent = TRUE)),
+      optimcontrol = list(estonly = TRUE)))),
     "unbounded")
 })
 
