@@ -11,7 +11,7 @@ ctCheckFit(
   priorpred = FALSE,
   statepred = FALSE,
   residuals = FALSE,
-  by = fit$ctstanmodelbase$timeName,
+  by = NULL,
   TIpredNames = fit$ctstanmodelbase$TIpredNames,
   nsamples = 30,
   covplot = FALSE,
@@ -30,7 +30,9 @@ ctCheckFit(
   entropy = FALSE,
   reg = FALSE,
   verbose = 0,
-  indlines = 30
+  indlines = 30,
+  marginalcovcheck = FALSE,
+  trajectoryplot = FALSE
 )
 }
 \arguments{
@@ -84,7 +86,8 @@ for that subject.}
 
 \item{k}{Integer denoting number of knots to use in the smoothing spline.}
 
-\item{breaks}{Integer denoting number of discrete breaks to split variables by (when covariance plotting).}
+\item{breaks}{Integer denoting number of discrete breaks to split variables by (when covariance plotting,
+or for the `trajectoryplot` time axis).}
 
 \item{entropy}{Still in development.}
 
@@ -93,6 +96,23 @@ for that subject.}
 \item{verbose}{Logical. If TRUE, shows optimization output when estimating covariances.}
 
 \item{indlines}{Integer number of individual subject lines to draw per data type.}
+
+\item{marginalcovcheck}{Logical. If TRUE, runs \code{\link{ctFitCovCheck}} at lag 0 (marginal,
+not lagged, covariance or correlation), split by whether each observation falls in the early or
+late half of that subject's own observed time range (a per-subject median split of \code{by},
+not a split on absolute time across the sample -- with unbalanced start times, splitting on
+absolute time would mix a subject's whole trajectory into a single side). Works for both stan
+and julia backend fits, since \code{ctFitCovCheck} already supports both.}
+
+\item{trajectoryplot}{Logical. If TRUE, plots observed means over time against the model's
+implied (Kalman smoother) means over time, with a 95\% uncertainty band on the implied
+trajectory. Reuses \code{\link{ctPredict}}/\code{\link{ctKalman}} (and, for julia fits,
+\code{\link{ctBackendKalman}}) for both the implied trajectory and its uncertainty -- the
+smoother covariance already computed and already used for the equivalent band in
+\code{\link{plot.ctKalmanDF}} -- rather than computing an interval by some other route. Time is
+discretised into \code{breaks} groups (as for \code{covplot}) since subjects are rarely
+observed at identical times, and each group is plotted at its mean observed time. Works for
+both stan and julia backend fits.}
 }
 \value{
 Nothing. Just plots.
