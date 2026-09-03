@@ -365,8 +365,10 @@ end
 # blocked implementation and is invisible in the value alone.
 
 # Free parameters, so there is a population block to differentiate. DRIFT and
-# the manifest mean are estimated; everything else is fixed.
-function _joint_params(; manifesttype=Int[], ncategories=Int[])
+# the manifest mean are estimated by default; everything else is fixed.
+# `free_drift=false` fixes DRIFT too, leaving only the manifest mean free --
+# see "the optimiser drives the joint target" for why a caller would want that.
+function _joint_params(; manifesttype=Int[], ncategories=Int[], free_drift=true)
     matrices = Symbol[]
     rows = Int[]
     cols = Int[]
@@ -385,13 +387,25 @@ function _joint_params(; manifesttype=Int[], ncategories=Int[])
     # value of zero *is* a drift of zero, which makes JAx singular and the
     # discretisation NaN -- so the optimiser would start at an invalid point
     # and the test would be about that rather than about the optimiser.
-    add!(:DRIFT, [-0.5;;], [1;;], "-log1p_exp(param[1])")
-    add!(:JAx, [-0.5;;], [1;;], "-log1p_exp(param[1])")
+    #
+    # `free_drift=false` fixes DRIFT/JAx at a literal value instead of
+    # exposing it as parameter 1. See "the optimiser drives the joint target"
+    # below for why: the joint (state-explicit) mode drives a free DRIFT
+    # toward this transform's saturation boundary regardless of sample size,
+    # so a fixture that needs a tight, platform-robust gradient bound on every
+    # free coordinate cannot afford to leave DRIFT free.
+    if free_drift
+        add!(:DRIFT, [-0.5;;], [1;;], "-log1p_exp(param[1])")
+        add!(:JAx, [-0.5;;], [1;;], "-log1p_exp(param[1])")
+    else
+        add!(:DRIFT, [-0.5;;])
+        add!(:JAx, [-0.5;;])
+    end
     add!(:CINT, reshape([0.0], :, 1))
     add!(:DIFFUSION, [0.4;;])
     add!(:LAMBDA, [1.0;;])
     add!(:Jy, [1.0;;])
-    add!(:MANIFESTMEANS, reshape([0.0], :, 1), reshape([2], :, 1))
+    add!(:MANIFESTMEANS, reshape([0.0], :, 1), reshape([free_drift ? 2 : 1], :, 1))
     add!(:MANIFESTVAR, [0.3;;])
     add!(:T0VAR, [0.6;;])
     add!(:T0MEANS, reshape([0.0], :, 1))
@@ -408,8 +422,9 @@ function _joint_params(; manifesttype=Int[], ncategories=Int[])
 end
 
 function _joint_setup(; nsubjects=3, nobs=4, manifesttype=Int[], ncategories=Int[],
-    seed=99)
-    sp = _joint_params(manifesttype=manifesttype, ncategories=ncategories)
+    seed=99, free_drift=true)
+    sp = _joint_params(manifesttype=manifesttype, ncategories=ncategories,
+        free_drift=free_drift)
     times = repeat(collect(0.0:1.0:(nobs - 1)), nsubjects)
     starts = [1 + (i - 1) * nobs for i in 1:nsubjects]
     rng = MersenneTwister(seed)
@@ -419,7 +434,7 @@ function _joint_setup(; nsubjects=3, nobs=4, manifesttype=Int[], ncategories=Int
         reshape(Float64.(rand(rng, 0:3, nsubjects * nobs)), 1, :)
     end
     objective = ContinuousTimeSEM.ctsem_objective(sp, starts, times, data)
-    return ContinuousTimeSEM.ctsem_joint_objective(objective, 2)
+    return ContinuousTimeSEM.ctsem_joint_objective(objective, free_drift ? 2 : 1)
 end
 
 @testset "the joint objective is the joint density" begin
@@ -479,7 +494,43 @@ end
 end
 
 @testset "the optimiser drives the joint target" begin
-    joint = _joint_setup(nsubjects=4, nobs=5)
+    # This is a test of the optimiser's mechanics -- does it move off the
+    # start, converge tightly, and avoid a false "saturated" report -- not of
+    # DRIFT's identifiability, which "a count model fits over the joint
+    # density" below already owns. The two got entangled by accident: with
+    # DRIFT free (`_joint_setup`'s default), the joint (state-explicit) mode
+    # drives it toward -log1p_exp's saturation boundary (`_CTSEM_SATURATION[]
+    # = 20.0` in `binary_measurement.jl`) *regardless of sample size* --
+    # confirmed by sweeping nsubjects/nobs from 4x5 up to 12x10 and seven
+    # seeds at 4x5, all landing DRIFT's raw coordinate at -17 to -19, bar one
+    # seed that happened to land at -0.4. That is the same bias the count
+    # model test documents and deliberately asserts (`result.minimizer[1] <
+    # truth[1] - 5`): with the states free, less mean reversion means smaller
+    # innovations, so the innovation prior pulls DRIFT toward zero however
+    # much data there is. More data cannot fix it; it is the estimator, not
+    # the fixture size, for a parameter left free like this.
+    #
+    # Near that boundary the transform's derivative is ~2e-8, so the *raw*
+    # gradient is a real signal multiplied by a near-zero chain-rule factor,
+    # and evaluating it at neighbouring points (still exact, verified against
+    # ForwardDiff to the bit) swings between 1e-10 and 1e-5 with random sign
+    # flips -- below the floating-point noise floor of the Kalman-filter/AD
+    # chain, not a resolvable derivative. Whether Hager-Zhang's line search
+    # can satisfy its step criteria there down to 1e-4 turned out to depend on
+    # the platform's BLAS/Julia build: it did on Windows/Julia 1.12.5
+    # (|g|=4.85e-8) and did not on Linux/Julia 1.12.7 (|g|=5.74e-4, Hager-
+    # Zhang giving up after 66 iterations and the backtracking fallback unable
+    # to fully recover) -- both runs on data generated by the same seeded RNG.
+    #
+    # So DRIFT is fixed here (`free_drift=false`) rather than estimated, and
+    # only MANIFESTMEANS -- untransformed, no saturation boundary -- is free.
+    # That is enough to exercise the optimiser, and sample size is a little
+    # more generous than the original 4x5 for margin, not because 4x5 was the
+    # problem: swept at nsubjects*nobs from 20 to 48 and four seeds on both
+    # platforms, this design converges to |g| of 1e-9 to 1e-12 every time.
+    # Shrinking it back toward 4x5 is fine; putting DRIFT back on the free
+    # list is not, without redoing this analysis.
+    joint = _joint_setup(nsubjects=6, nobs=6, free_drift=false)
     ndim = ContinuousTimeSEM.ctsem_joint_dimension(joint)
     start = zeros(ndim)
     result = ContinuousTimeSEM.ctsem_optimize(joint, start; maxiter=200,
@@ -488,6 +539,11 @@ end
     @test result.maximum_loglik > joint(start)
     @test length(result.minimizer) == ndim
     @test result.gradient_norm < 1e-4
+    # The engine's own verdict, asserted alongside the raw bound rather than
+    # instead of it: `converged` folds in the scaled tolerance and the
+    # Hager-Zhang-fallback logic, so this is an independent check that the
+    # engine agrees with the literal number, not a looser substitute for it.
+    @test result.converged
     # Saturation is judged on the population block alone: a large innovation is
     # an unusual trajectory, not a transform pinned at its floating-point
     # limit, and reading it as one would report a good fit as failed.
