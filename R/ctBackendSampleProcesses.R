@@ -31,12 +31,15 @@
 #' @param handles Optional warmed pool from [.ctBackendWarmWorkers()]. When
 #'   absent the workers are started here and the compile is paid in full.
 #' @param control,saveEffects,seed,verbose As for [ctSample()].
+#' @param progress Report chain progress from the parent while the workers
+#'   run. Separate from `verbose` for the same reason `.ctBackendSampleEngine`
+#'   keeps the two apart -- see there.
 #' @return A fit with pooled draws and diagnostics, or `NULL` if the workers
 #'   could not be used, in which case the caller samples in-process.
 #' @keywords internal
 .ctBackendSampleProcesses <- function(fit, target, chains, warmup, draws,
   cores = 1L, handles = NULL, control = list(), saveEffects = FALSE,
-  seed = 1L, verbose = FALSE) {
+  seed = 1L, verbose = FALSE, progress = .ctVerboseOn(verbose)) {
 
   if (!.ctBackendCanWarm() || chains < 2L) return(NULL)
   if (!inherits(fit, "ctJuliaFit")) return(NULL)
@@ -52,6 +55,26 @@
     if (is.null(handles)) return(NULL)
   }
   .ctBackendWarmWait(handles, verbose = verbose)
+
+  # Each chain runs in its own process, so its printed output sits in that
+  # process's own stdout buffer and only reaches the parent -- all at once,
+  # after the fact -- when `future::value()` collects it. `ctSample(verbose =
+  # TRUE)` under `processes = TRUE` used to print nothing at all for exactly
+  # this reason: the reporting existed, in the worker, and had nowhere to go
+  # until the run was already over.
+  #
+  # The fix is to report from the parent instead of hoping a worker's console
+  # output arrives. Each worker's engine call is given a callback -- the same
+  # `progress_callback` a GUI would use, see `.ctBackendSampleEngine` -- that
+  # writes a one-line snapshot to a small file rather than printing, and the
+  # parent polls those files while it waits and prints one line per chain.
+  # That is the same information the single-process path prints live, just
+  # relayed through a file because a process boundary is in the way.
+  report <- isTRUE(progress)
+  progress_files <- if (report) vapply(seq_len(chains), function(i)
+    tempfile(pattern = sprintf("ctsem_sample_chain%d_", i), fileext = ".progress"),
+    character(1)) else NULL
+  if (report) on.exit(unlink(progress_files, force = TRUE), add = TRUE)
 
   # `seed + k - 1`, which makes this path reproduce the in-process one exactly.
   #
@@ -92,12 +115,17 @@
   # layout error would show at the *first* draw, at the scale of the posterior's
   # own width -- order 1, not 1e-10. Neither does.
   results <- lapply(seq_len(chains), function(k) {
+    chain_file <- if (report) progress_files[k] else NULL
     tryCatch(
       future::future(ctsem:::.ctBackendSampleOneChain(fit, target, warmup,
-        draws, per_worker, control, saveEffects, as.integer(seed) + k - 1L),
+        draws, per_worker, control, saveEffects, as.integer(seed) + k - 1L,
+        progress_file = chain_file),
         seed = TRUE),
       error = function(e) NULL)
   })
+  if (report) {
+    .ctBackendReportProcesses(results, progress_files, chains = chains)
+  }
   drawn <- lapply(results, function(h) {
     if (is.null(h)) return(NULL)
     tryCatch(future::value(h), error = function(e) NULL)
@@ -130,17 +158,125 @@
 # for `ctSample()`'s own callers and wrong for two of the three routes
 # `ctFit(optimize = FALSE)` can take, which is why the target now travels
 # explicitly.
+#
+# `progress_file`, when given, replaces `control$callback` for this call: a
+# user's own callback is an R closure over the parent session (a plot device,
+# a Shiny reactive) and calling it from here would try to reach across a
+# process boundary that does not carry it. What can cross is a path, and the
+# parent polls what gets written there -- see `.ctBackendReportProcesses`.
 #' @keywords internal
 .ctBackendSampleOneChain <- function(fit, target, warmup, draws, threads,
-  control, saveEffects, seed) {
+  control, saveEffects, seed, progress_file = NULL) {
   tryCatch({
     if (is.null(.ct_julia_cache$module)) ctsem::ctJuliaSetup(threads = threads)
+    callback <- if (is.null(progress_file)) NULL else
+      .ctBackendProgressFileWriter(progress_file)
     result <- suppressWarnings(suppressMessages(
       .ctBackendSampleEngine(fit, target, chains = 1L, warmup = warmup,
         draws = draws, cores = threads, saveEffects = saveEffects, seed = seed,
-        control = control, verbose = FALSE, progress = FALSE)))
+        control = control, verbose = FALSE, progress = FALSE,
+        callback = callback)))
     .ctBackendChainResult(result)
   }, error = function(e) structure(list(), error = conditionMessage(e)))
+}
+
+# A callback that writes one line rather than printing one -- the worker's
+# stdout is not read live, so a callback that `cat()`ed here would be exactly
+# as invisible as the printed progress line this whole mechanism exists to
+# work around.
+#
+# Written to a temp path and renamed into place, so the parent, reading
+# concurrently, never sees a half-written line: `file.rename` within one
+# filesystem is atomic, a plain `writeLines` to the final path is not.
+# Wrapped in `tryCatch` because a reporting write must never be the thing that
+# fails a chain -- a full disk or a deleted temp directory should cost a
+# missed update, not the sample.
+#' @keywords internal
+.ctBackendProgressFileWriter <- function(path) {
+  tmp <- paste0(path, ".tmp")
+  function(phase, iteration, total, logp, divergent) {
+    tryCatch({
+      writeLines(paste(as.character(phase), as.integer(iteration),
+        as.integer(total), sprintf("%.6f", as.numeric(logp)),
+        as.integer(divergent)), tmp)
+      file.rename(tmp, path)
+    }, error = function(e) NULL)
+    NULL
+  }
+}
+
+# The counterpart read: one line, back into its fields, or `NULL` for
+# anything that does not parse -- a file not yet written, or caught mid-write
+# despite the rename (a stale reader on a slow network share, say).
+#' @keywords internal
+.ctBackendReadProgressFile <- function(path) {
+  if (!file.exists(path)) return(NULL)
+  line <- tryCatch(readLines(path, n = 1L, warn = FALSE), error = function(e) NULL)
+  if (is.null(line) || !length(line) || !nzchar(line)) return(NULL)
+  parts <- strsplit(line, "\\s+")[[1]]
+  if (length(parts) < 5L) return(NULL)
+  iteration <- suppressWarnings(as.integer(parts[2]))
+  total <- suppressWarnings(as.integer(parts[3]))
+  logp <- suppressWarnings(as.numeric(parts[4]))
+  divergent <- suppressWarnings(as.integer(parts[5]))
+  if (anyNA(c(iteration, total, logp, divergent))) return(NULL)
+  list(phase = parts[1], iteration = iteration, total = total, logp = logp,
+    divergent = divergent)
+}
+
+#' Report per-chain progress from the parent while chain processes run
+#'
+#' Polls each chain's progress file on a short interval and prints one line
+#' per chain still running -- the shape asked for when chains are processes:
+#' each worker's own printed progress sits in output that never reaches the
+#' parent until the chain is already done, so the parent reports instead,
+#' from what the workers wrote rather than from what they printed.
+#'
+#' Not overwritten in place. `CTSEMProgress` overwrites a single line because
+#' it owns the whole of what is on it; here several chains share the console
+#' and a later one finishing does not mean an earlier one's last line should
+#' vanish. A short block of chains, printed occasionally, is simple, will not
+#' garble on any terminal, and reads fine at the couple-of-seconds cadence
+#' this polls at -- faster would not show anything a chain-level report needs.
+#'
+#' @param results Future handles from [.ctBackendSampleProcesses()], one per
+#'   chain, possibly containing `NULL` for a chain that never started.
+#' @param progress_files One path per chain, written by
+#'   [.ctBackendProgressFileWriter()].
+#' @param chains Number of chains.
+#' @param interval Seconds between polls.
+#' @return `NULL`, invisibly. Called for its printing.
+#' @keywords internal
+.ctBackendReportProcesses <- function(results, progress_files, chains,
+  interval = 2) {
+  now <- Sys.time()
+  phase_started <- rep(now, chains)
+  phase_seen <- rep(NA_character_, chains)
+  repeat {
+    resolved <- vapply(results, function(h) is.null(h) || future::resolved(h),
+      logical(1))
+    lines <- character(0)
+    for (k in seq_len(chains)) {
+      if (resolved[k]) next
+      info <- .ctBackendReadProgressFile(progress_files[k])
+      if (is.null(info)) next
+      if (is.na(phase_seen[k]) || !identical(phase_seen[k], info$phase)) {
+        phase_started[k] <- Sys.time()
+        phase_seen[k] <- info$phase
+      }
+      elapsed <- as.numeric(difftime(Sys.time(), phase_started[k], units = "secs"))
+      rate <- if (info$iteration > 0 && elapsed > 0) info$iteration / elapsed else 0
+      eta <- if (rate > 0 && info$total > info$iteration)
+        paste0(" | ", .ctDuration((info$total - info$iteration) / rate),
+          " at this rate") else ""
+      lines <- c(lines, sprintf("  chain %d/%d: %-8s %5d/%-5d%s | logp %.2f",
+        k, chains, info$phase, info$iteration, info$total, eta, info$logp))
+    }
+    if (length(lines)) cat(paste(lines, collapse = "\n"), "\n", sep = "")
+    if (all(resolved)) break
+    Sys.sleep(interval)
+  }
+  invisible(NULL)
 }
 
 # What a chain sends home.

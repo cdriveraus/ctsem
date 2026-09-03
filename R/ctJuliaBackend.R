@@ -59,6 +59,38 @@
   } else if (isTRUE(verbose)) 1 else 0
   .ctProgressConsole() && level < 2
 }
+
+# Is progress reporting asked for at all -- `verbose` read the way it is
+# everywhere else, a level as well as a flag.
+#
+# `isTRUE(verbose)` is the wrong test once `verbose` can be `2`: `isTRUE(2)` is
+# `FALSE`, so a caller who raised the level for more detail would silently get
+# no progress output at all. This is the same reading `.ctProgressOverwrite`
+# already gives `verbose`, pulled out because it is also needed everywhere a
+# default of `progress = isTRUE(verbose)` has to become `progress =
+# .ctVerboseOn(verbose)` instead.
+#' @keywords internal
+.ctVerboseOn <- function(verbose) {
+  isTRUE(verbose) ||
+    (is.numeric(verbose) && length(verbose) == 1L && !is.na(verbose) && verbose > 0)
+}
+
+# `1m 04s`, `12.4s`, `2h 05m` -- the R-side twin of `_duration()` in
+# `progress.jl`. Needed on this side too because `.ctBackendReportProcesses`
+# formats an ETA from what a worker process wrote to a file, not from
+# anything the engine printed, so there is no Julia-side line to reuse.
+#' @keywords internal
+.ctDuration <- function(seconds) {
+  seconds <- max(0, as.numeric(seconds)[1L])
+  if (!is.finite(seconds)) return("--")
+  if (seconds < 60) return(sprintf("%.1fs", seconds))
+  if (seconds < 3600) {
+    return(sprintf("%dm %02ds", as.integer(seconds %/% 60),
+      as.integer(round(seconds %% 60))))
+  }
+  sprintf("%dh %02dm", as.integer(seconds %/% 3600),
+    as.integer(round((seconds %% 3600) / 60)))
+}
 .ctJuliaString <- function(value) {
   value <- as.character(value)
   if (length(value) != 1L || is.na(value) || grepl('"', value, fixed = TRUE) ||
