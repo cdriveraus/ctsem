@@ -279,8 +279,9 @@ excluded from every sum below and the diagonal output is recomputed).
 
 This mirrors `constraincorsqrt1_vec!` statement for statement; it exists so the
 pullback differentiates the function the filter actually evaluates rather than
-an independently rederived formula. `test_adjoint_primitives.jl` asserts the
-two agree.
+an independently rederived formula. `test_constrain_cor_sqrt.jl`'s "corrsqrt
+row mirror matches the buffered primal it claims to track" asserts the two
+agree, row by row, against `constraincorsqrt1_vec!`'s own buffered output.
 """
 function _ctsem_corrsqrt_row(v::AbstractVector{T}, i::Int, epsilon) where {T}
     d = length(v)
