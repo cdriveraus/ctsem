@@ -55,10 +55,11 @@ See \code{\link{ctBackendKalman}}. Ignored for other fits.}
 \item{...}{additional arguments to pass to \code{\link{plot.ctKalmanDF}}.}
 }
 \value{
-Returns a list containing matrix objects etaprior, etaupd, etasmooth, y, yprior, 
-yupd, ysmooth, prederror, time, loglik,  with values for each time point in each row. 
-eta refers to latent states and y to manifest indicators - y itself is thus just 
-the input data. 
+Returns a list containing matrix objects etaprior, etaupd, etasmooth, y, yprior,
+yupd, ysmooth, errprior, errupd, errsmooth, time, loglik,  with values for each time point in each row.
+eta refers to latent states and y to manifest indicators - y itself is thus just
+the input data. With \code{standardisederrors=TRUE}, standardised versions
+errstdprior, errstdupd, errstdsmooth are included too.
 Covariance matrices etapriorcov, etaupdcov, etasmoothcov, ypriorcov, yupdcov, ysmoothcov,  
 are returned in a row * column * time array. 
 Some outputs are unavailable for ctStan fits at present.
