@@ -2629,32 +2629,16 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     }
   }
   if (!fit) return(structure(model_spec, class = c("ctJuliaModel", "ctFitModel")))
-  # A sampled TI-predictor value has no adjoint cotangent yet (see
-  # SPEC-tipred-sampling.md and `ctsem_adjoint_gradient`'s guard in
-  # adjoint.jl). Forward-mode (ForwardDiff) needs no such work, since the
-  # assembly it differentiates through is ordinary Julia -- but for a model
-  # large enough to want sampled predictors in the first place, forward mode
-  # is not a usable default: silently downgrading `gradient` for the caller
-  # is exactly the "plausible wrong answer" failure mode this package is
-  # built to avoid, so this refuses unless forward mode was asked for by
-  # name. Checked only once fitting is actually going to happen (past the
-  # `fit=FALSE` early return above) since preparing the spec computes no
-  # gradient at all. `gradient` can only already be "forward" here because
-  # the caller set `optimcontrol$gradient` or `backendcontrol$gradient` to
-  # it -- the resolved default two screens up is "adjoint" -- so checking
-  # its value is exactly checking whether the caller explicitly asked, with
-  # no separate flag needed.
-  if (!is.null(model_spec$ti_missing) && nrow(model_spec$ti_missing) &&
-      !identical(gradient, "forward")) {
-    stop("This model has ", nrow(model_spec$ti_missing), " sampled (missing) ",
-      "TI predictor value(s). The Julia backend's reverse-mode gradient ",
-      "(gradient='adjoint', the default) does not yet cover the derivative ",
-      "of a sampled predictor value, so this refuses rather than silently ",
-      "falling back to a slower gradient method. Alternatives: impute the ",
-      "missing predictor values before fitting, drop the affected subjects, ",
-      "use backend='stan', or explicitly request the slower exact gradient ",
-      "with optimcontrol = list(gradient = 'forward').", call. = FALSE)
-  }
+  # A sampled TI-predictor value used to have no adjoint cotangent, so a fit
+  # here was refused unless `gradient='forward'` was requested by name (see
+  # the git history of this function, and SPEC-tipred-sampling.md). The
+  # reverse pass now covers it -- `_ctsem_ti_pullback!`'s `TIMissingRecipe`
+  # method adds the TI-effect product-rule term and `ctsem_adjoint_gradient`
+  # adds `_ctsem_ti_missing_loglik_gradient!`'s term for the imputation
+  # log-density itself, both cross-checked against ForwardDiff and FiniteDiff
+  # in test_ti_missing_predictor.jl -- so `gradient` is left exactly as
+  # resolved above: 'adjoint' by default, 'forward' still available on
+  # request, neither one singled out for this kind of model any more.
 
   # `optimize=FALSE` fits by sampling. Which sampler is decided by
   # `intoverpop`, which says what has already been integrated out; see

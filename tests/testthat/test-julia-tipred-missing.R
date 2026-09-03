@@ -58,33 +58,29 @@ test_that("a missing TI predictor is sampled (not refused) with intoverpop='augm
   expect_equal(as.numeric(prepared$tipred_data), c(-1, 2, .5))
 })
 
-test_that("fitting a missing TI predictor with the default (adjoint) gradient is refused, not silently downgraded", {
-  # The reverse pass has no cotangent yet for a sampled TI predictor value
-  # (adjoint.jl / ctsem_adjoint_gradient's guard). Before this test's change
-  # ctFit() silently swapped in gradient='forward' for any such model; now it
-  # refuses instead, naming the alternatives, and only proceeds when the
-  # caller explicitly asks for 'forward'. Preparing without fitting
-  # (fit=FALSE, exercised above) is unaffected since no gradient is computed.
+test_that("fitting a missing TI predictor with the default (adjoint) gradient now works, same as explicit forward", {
+  # The reverse pass initially had no cotangent for a sampled TI predictor
+  # value, so a fit here briefly refused unless gradient='forward' was
+  # requested by name (see the git history of .ctFitJuliaBackendImpl). The
+  # Julia engine's adjoint now covers this (test_ti_missing_predictor.jl,
+  # cross-checked against ForwardDiff and FiniteDiff), so ctFit() no longer
+  # singles this model out: the default 'adjoint' and an explicit 'forward'
+  # both fit it without error, and are two gradient methods for the same
+  # posterior rather than one being the only offer.
   model <- .tipred_missing_model()
   dat <- data.frame(id = rep(1:3, each = 3), time = rep(0:2, 3),
     Y1 = rnorm(9), group = rep(c(-1, 2, NA), each = 3))
 
-  told <- tryCatch({
-    suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
-      optimize = FALSE, intoverpop = "augmented", chains = 1, iter = 10,
-      cores = 1, control = list(warmup = 5))))
-    NA_character_
-  }, error = function(e) conditionMessage(e))
-  expect_match(told, "sampled (missing)", fixed = TRUE)
-  expect_match(told, "does not yet cover the derivative", fixed = TRUE)
-  expect_match(told, "gradient = 'forward'", fixed = TRUE)
+  fit_default <- suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
+    optimize = FALSE, intoverpop = "augmented", chains = 1, iter = 10,
+    cores = 1, control = list(warmup = 5))))
+  expect_s3_class(fit_default, "ctJuliaFit")
 
-  # Explicitly asking for forward mode is honoured -- same call, gradient set.
-  fit <- suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
+  fit_forward <- suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
     optimize = FALSE, intoverpop = "augmented", chains = 1, iter = 10,
     cores = 1, control = list(warmup = 5),
     optimcontrol = list(gradient = "forward"))))
-  expect_s3_class(fit, "ctJuliaFit")
+  expect_s3_class(fit_forward, "ctJuliaFit")
 })
 
 test_that("the julia sampling path refuses a missing TI predictor outside intoverpop='augmented'", {
