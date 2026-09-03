@@ -360,7 +360,12 @@ ctEBfitSubjects <- function(subjects, datalong, subjectIDname, fitargs, cores=1,
   progressfun(0L)
 
   if(cores > 1){
-    cl <- parallelly::makeClusterPSOCK(cores, useXDR=FALSE)
+    # rscript_libs: without it a worker searches its own default .libPaths(),
+    # not the caller's, so library(ctsem) below can silently load a different
+    # install than the one running this code (e.g. a stale globally-installed
+    # package while a development tree is under test) -- the same failure
+    # mode makeClusterID() (stanoptimis.R) was fixed for.
+    cl <- parallelly::makeClusterPSOCK(cores, useXDR=FALSE, rscript_libs = .libPaths())
     on.exit(try(parallel::stopCluster(cl), silent=TRUE), add=TRUE)
     parallel::clusterEvalQ(cl, suppressPackageStartupMessages(library(ctsem)))
     .ctEBdatalong <- datalong

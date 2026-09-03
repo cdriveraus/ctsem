@@ -59,9 +59,17 @@ scorecalc <- function(standata, est, stanmodel, subjectsonly = TRUE,
   }
   
   # Parallel processing: compute gradients for all subjects
-  cl <- parallelly::makeClusterPSOCK(cores)
+  # rscript_libs: without it a worker searches its own default .libPaths(),
+  # not the caller's, so the exported ctsem internals below (stan_reinitsf
+  # etc.) can resolve against a different install than the one running this
+  # code -- the same failure mode makeClusterID() (stanoptimis.R) was fixed
+  # for. library(ctsem) is loaded explicitly too, since the closures exported
+  # just below reference the ctsem namespace directly rather than requesting
+  # it.
+  cl <- parallelly::makeClusterPSOCK(cores, rscript_libs = .libPaths())
   on.exit(parallel::stopCluster(cl), add = TRUE)
-  parallel::clusterExport(cl, c("standata", "est", "stanmodel", "subjectsonly", "compute_subject_gradients", 
+  parallel::clusterEvalQ(cl, suppressPackageStartupMessages(library(ctsem)))
+  parallel::clusterExport(cl, c("standata", "est", "stanmodel", "subjectsonly", "compute_subject_gradients",
     "stan_reinitsf", "whichsubjectpars", "standatact_specificsubjects"),envir=environment())
 
   group_size <- ceiling(standata$nsubjects / length(cl))
