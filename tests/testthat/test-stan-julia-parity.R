@@ -32,11 +32,9 @@
 }
 
 test_that("Stan and Julia agree for a linear likelihood", {
+  skip_on_cran()
+  skip_without_julia()
   skip_if_not_installed("rstan")
-  skip_if_not_installed("JuliaConnectoR")
-  project <- Sys.getenv("CTSEM_JULIA_PROJECT", unset = "")
-  skip_if(!nzchar(project) || !dir.exists(project),
-    "Set CTSEM_JULIA_PROJECT to the local ContinuousTimeSEM project to run backend parity tests.")
 
   model <- ctModel(type = "ct", LAMBDA = diag(1), DRIFT = matrix("drift", 1, 1),
     DIFFUSION = matrix(.2, 1, 1), MANIFESTVAR = matrix(.1, 1, 1),
@@ -46,7 +44,7 @@ test_that("Stan and Julia agree for a linear likelihood", {
   stan_spec <- suppressMessages(ctFit(data, model, backend = "stan", fit = FALSE, priors = FALSE))
   stan_fit <- .compiled_stan_fit(stan_spec)
   julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
-    priors = FALSE, backendcontrol = list(julia_project = project)))
+    priors = FALSE))
   raw <- -.7
 
   stan_value <- rstan::log_prob(stan_fit, upars = raw, adjust_transform = FALSE, gradient = TRUE)
@@ -56,11 +54,9 @@ test_that("Stan and Julia agree for a linear likelihood", {
 })
 
 test_that("Stan and Julia agree for a linear augmented random effect", {
+  skip_on_cran()
+  skip_without_julia()
   skip_if_not_installed("rstan")
-  skip_if_not_installed("JuliaConnectoR")
-  project <- Sys.getenv("CTSEM_JULIA_PROJECT", unset = "")
-  skip_if(!nzchar(project) || !dir.exists(project),
-    "Set CTSEM_JULIA_PROJECT to the local ContinuousTimeSEM project to run backend parity tests.")
 
   model <- suppressWarnings(ctModel(
     type = "ct", n.latent = 2, LAMBDA = diag(2), PARS = matrix("cross||TRUE", 1, 1),
@@ -73,7 +69,7 @@ test_that("Stan and Julia agree for a linear augmented random effect", {
   stan_spec <- suppressMessages(ctFit(data, model, backend = "stan", fit = FALSE, priors = FALSE))
   stan_fit <- .compiled_stan_fit(stan_spec)
   julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
-    priors = FALSE, backendcontrol = list(julia_project = project)))
+    priors = FALSE))
   raw <- c(-1, .1, -1, .2, -.4)
 
   stan_value <- rstan::log_prob(stan_fit, upars = raw, adjust_transform = FALSE, gradient = TRUE)
@@ -83,11 +79,9 @@ test_that("Stan and Julia agree for a linear augmented random effect", {
 })
 
 test_that("Stan and Julia agree for a row with partial (not total) missingness", {
+  skip_on_cran()
+  skip_without_julia()
   skip_if_not_installed("rstan")
-  skip_if_not_installed("JuliaConnectoR")
-  project <- Sys.getenv("CTSEM_JULIA_PROJECT", unset = "")
-  skip_if(!nzchar(project) || !dir.exists(project),
-    "Set CTSEM_JULIA_PROJECT to the local ContinuousTimeSEM project to run backend parity tests.")
 
   # This exercises _ekf_update_observed!()'s partial-observation branch (some,
   # but not all, manifest variables observed in a row) -- the branch that
@@ -106,7 +100,7 @@ test_that("Stan and Julia agree for a row with partial (not total) missingness",
   stan_spec <- suppressMessages(ctFit(data, model, backend = "stan", fit = FALSE, priors = FALSE))
   stan_fit <- .compiled_stan_fit(stan_spec)
   julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
-    priors = FALSE, backendcontrol = list(julia_project = project)))
+    priors = FALSE))
   raw <- c(-1, .1, -1, .2, -.4)
 
   stan_value <- rstan::log_prob(stan_fit, upars = raw, adjust_transform = FALSE, gradient = TRUE)
@@ -116,11 +110,9 @@ test_that("Stan and Julia agree for a row with partial (not total) missingness",
 })
 
 test_that("Stan and Julia agree for nonlinear predictors and augmented states", {
+  skip_on_cran()
+  skip_without_julia()
   skip_if_not_installed("rstan")
-  skip_if_not_installed("JuliaConnectoR")
-  project <- Sys.getenv("CTSEM_JULIA_PROJECT", unset = "")
-  skip_if(!nzchar(project) || !dir.exists(project),
-    "Set CTSEM_JULIA_PROJECT to the local ContinuousTimeSEM project to run backend parity tests.")
 
   model <- suppressWarnings(ctModel(
     type = "ct", n.latent = 2, LAMBDA = diag(2),
@@ -146,8 +138,7 @@ test_that("Stan and Julia agree for nonlinear predictors and augmented states", 
   stan_fit <- .compiled_stan_fit(stan_spec)
 
   julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
-    priors = FALSE, nlcontrol = list(maxtimestep = .25),
-    backendcontrol = list(julia_project = project)))
+    priors = FALSE, nlcontrol = list(maxtimestep = .25)))
   raw <- c(-1, .1, -1, .1, .2, -.4, .05)
   expect_equal(rstan::get_num_upars(stan_fit), length(raw))
   expect_equal(max(c(julia_spec$parameter_table$parnumber,
@@ -160,8 +151,7 @@ test_that("Stan and Julia agree for nonlinear predictors and augmented states", 
     priors = FALSE, nlcontrol = list(maxtimestep = .25)))
   zero_stan_fit <- .compiled_stan_fit(zero_stan_spec)
   zero_julia_spec <- suppressMessages(ctFit(zero_predictors, model, backend = "julia", fit = FALSE,
-    priors = FALSE, nlcontrol = list(maxtimestep = .25),
-    backendcontrol = list(julia_project = project)))
+    priors = FALSE, nlcontrol = list(maxtimestep = .25)))
   zero_stan_value <- rstan::log_prob(zero_stan_fit, upars = raw,
     adjust_transform = FALSE, gradient = TRUE)
   zero_julia_value <- ctJuliaEvaluate(zero_julia_spec, raw, gradient = TRUE)
@@ -181,11 +171,9 @@ test_that("Stan and Julia agree for nonlinear predictors and augmented states", 
 })
 
 test_that("Stan and Julia agree for a T0MEANS-indvarying population SD with non-unit meanscale", {
+  skip_on_cran()
+  skip_without_julia()
   skip_if_not_installed("rstan")
-  skip_if_not_installed("JuliaConnectoR")
-  project <- Sys.getenv("CTSEM_JULIA_PROJECT", unset = "")
-  skip_if(!nzchar(project) || !dir.exists(project),
-    "Set CTSEM_JULIA_PROJECT to the local ContinuousTimeSEM project to run backend parity tests.")
 
   # Stan builds the population covariance in raw-parameter units, then
   # explicitly rescales each indvarying T0MEANS row/column by that parameter's
@@ -211,7 +199,7 @@ test_that("Stan and Julia agree for a T0MEANS-indvarying population SD with non-
   stan_spec <- suppressMessages(ctFit(data, model, backend = "stan", fit = FALSE, priors = FALSE))
   stan_fit <- .compiled_stan_fit(stan_spec)
   julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
-    priors = FALSE, backendcontrol = list(julia_project = project)))
+    priors = FALSE))
   raw <- c(0.4112875, -0.1694095, 0.1089385)
   expect_equal(rstan::get_num_upars(stan_fit), length(raw))
 
@@ -222,11 +210,9 @@ test_that("Stan and Julia agree for a T0MEANS-indvarying population SD with non-
 })
 
 test_that("Stan and Julia agree for a moderate-dimensional model mixing both kinds of random effect", {
+  skip_on_cran()
+  skip_without_julia()
   skip_if_not_installed("rstan")
-  skip_if_not_installed("JuliaConnectoR")
-  project <- Sys.getenv("CTSEM_JULIA_PROJECT", unset = "")
-  skip_if(!nzchar(project) || !dir.exists(project),
-    "Set CTSEM_JULIA_PROJECT to the local ContinuousTimeSEM project to run backend parity tests.")
 
   # Distilled from ctsemTutorial.qmd's individual-differences example, which
   # originally crashed Julia outright with a LAPACKException from the
@@ -257,7 +243,7 @@ test_that("Stan and Julia agree for a moderate-dimensional model mixing both kin
   stan_spec <- suppressMessages(ctFit(data, model, backend = "stan", fit = FALSE, priors = FALSE))
   stan_fit <- .compiled_stan_fit(stan_spec)
   julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
-    priors = FALSE, backendcontrol = list(julia_project = project)))
+    priors = FALSE))
   expect_equal(julia_spec$nlatent_augmented, 5L)
   expect_equal(julia_spec$dynamic_state_indices, 1:2)
 
@@ -274,11 +260,9 @@ test_that("Stan and Julia agree for a moderate-dimensional model mixing both kin
 })
 
 test_that("Stan and Julia agree for a state/TD-dependent measurement equation with partial missingness", {
+  skip_on_cran()
+  skip_without_julia()
   skip_if_not_installed("rstan")
-  skip_if_not_installed("JuliaConnectoR")
-  project <- Sys.getenv("CTSEM_JULIA_PROJECT", unset = "")
-  skip_if(!nzchar(project) || !dir.exists(project),
-    "Set CTSEM_JULIA_PROJECT to the local ContinuousTimeSEM project to run backend parity tests.")
 
   # `_ekf_masked_update_step!`'s partial-observation branch must use LAMBDA
   # for the innovation/mean but its Jacobian (pars.Jy) for covariance
@@ -308,8 +292,7 @@ test_that("Stan and Julia agree for a state/TD-dependent measurement equation wi
     priors = FALSE, nlcontrol = list(maxtimestep = .25)))
   stan_fit <- .compiled_stan_fit(stan_spec)
   julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
-    priors = FALSE, nlcontrol = list(maxtimestep = .25),
-    backendcontrol = list(julia_project = project)))
+    priors = FALSE, nlcontrol = list(maxtimestep = .25)))
   raw <- c(-0.1773093, 0.007978311, -0.4549659, -0.408796, 0.3535467, -0.2802454)
   expect_equal(rstan::get_num_upars(stan_fit), length(raw))
 
@@ -322,11 +305,9 @@ test_that("Stan and Julia agree for a state/TD-dependent measurement equation wi
 })
 
 test_that("Stan and Julia agree for 3 original (not just augmented) latents", {
+  skip_on_cran()
+  skip_without_julia()
   skip_if_not_installed("rstan")
-  skip_if_not_installed("JuliaConnectoR")
-  project <- Sys.getenv("CTSEM_JULIA_PROJECT", unset = "")
-  skip_if(!nzchar(project) || !dir.exists(project),
-    "Set CTSEM_JULIA_PROJECT to the local ContinuousTimeSEM project to run backend parity tests.")
 
   # The "moderate-dimensional" test above has 5 *augmented* states but only
   # 2 *original* latents -- this checks the core EKF math (matrix-exponential
@@ -369,7 +350,7 @@ test_that("Stan and Julia agree for 3 original (not just augmented) latents", {
   stan_spec <- suppressMessages(ctFit(data, model, backend = "stan", fit = FALSE, priors = FALSE))
   stan_fit <- .compiled_stan_fit(stan_spec)
   julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
-    priors = FALSE, backendcontrol = list(julia_project = project)))
+    priors = FALSE))
   raw <- c(-0.28858, -0.08775772, 0.07763646, -0.3456396, 0.05873485, 0.009037183,
     0.02562532, 0.3349831, -0.3656572, 0.3802106, -0.2234345, -0.3393656,
     -0.2149075, 0.07579571, 0.04561371, -0.09229693, -0.2859052, -0.1944728,
@@ -383,11 +364,9 @@ test_that("Stan and Julia agree for 3 original (not just augmented) latents", {
 })
 
 test_that("Stan and Julia's actual optimizers converge to the same fit for TD/TI + individual differences", {
+  skip_on_cran()
+  skip_without_julia()
   skip_if_not_installed("rstan")
-  skip_if_not_installed("JuliaConnectoR")
-  project <- Sys.getenv("CTSEM_JULIA_PROJECT", unset = "")
-  skip_if(!nzchar(project) || !dir.exists(project),
-    "Set CTSEM_JULIA_PROJECT to the local ContinuousTimeSEM project to run backend parity tests.")
 
   # Every other test here checks log_prob/gradient agreement at one fixed
   # raw-parameter point -- necessary but not sufficient, since that's exactly
@@ -430,7 +409,7 @@ test_that("Stan and Julia's actual optimizers converge to the same fit for TD/TI
   }
 
   jf <- suppressMessages(ctFit(data, model = model, backend = "julia",
-    backendcontrol = list(julia_project = project), verbose = 0))
+    verbose = 0))
   sf <- suppressMessages(ctFit(data, model = model, backend = "stan",
     optimcontrol = list(carefulfit = FALSE, stochastic = FALSE),
     optimize = TRUE, verbose = 0, savescores = FALSE, cores = 1))
@@ -440,11 +419,9 @@ test_that("Stan and Julia's actual optimizers converge to the same fit for TD/TI
 })
 
 test_that("Julia's adjoint gradient matches its forward gradient and Stan", {
+  skip_on_cran()
+  skip_without_julia()
   skip_if_not_installed("rstan")
-  skip_if_not_installed("JuliaConnectoR")
-  project <- Sys.getenv("CTSEM_JULIA_PROJECT", unset = "")
-  skip_if(!nzchar(project) || !dir.exists(project),
-    "Set CTSEM_JULIA_PROJECT to the local ContinuousTimeSEM project to run backend parity tests.")
 
   # The Julia-side suite already checks the adjoint against ForwardDiff and
   # finite differences across every model shape
@@ -468,7 +445,7 @@ test_that("Julia's adjoint gradient matches its forward gradient and Stan", {
   stan_spec <- suppressMessages(ctFit(data, model, backend = "stan", fit = FALSE, priors = FALSE))
   stan_fit <- .compiled_stan_fit(stan_spec)
   julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
-    priors = FALSE, backendcontrol = list(julia_project = project)))
+    priors = FALSE))
 
   npar <- max(c(julia_spec$parameter_table$parnumber,
     julia_spec$ti_effects$coefficient), na.rm = TRUE)
