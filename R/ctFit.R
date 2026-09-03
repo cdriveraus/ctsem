@@ -710,12 +710,41 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # Sampling the same density has no such problem, which is why it points
   # there.
   if(optimize && !intoverstates){
-    warning(
-      'intoverstates=FALSE maximises over the latent states rather than ',
-      'integrating them out, which biases variance parameters downward: the ',
-      'joint mode is not the maximum likelihood estimate. Use ',
-      'intoverstates=TRUE, or optimize=FALSE to sample the states instead.',
-      call.=FALSE)
+    # Two strengths, because the damage is not uniform. Maximising over the
+    # states biases every variance parameter downward, which is the general
+    # case. But a parameter that governs how tightly the transition prior
+    # constrains the freely chosen states is not merely biased: the joint
+    # mode buys cheaper innovations by weakening mean reversion, so such a
+    # parameter runs to the flat end of its transform and stays there.
+    # Measured on the engine's own fixture: a free DRIFT landed at a raw
+    # value of -17 to -19, against a saturation guard at 20, at every sample
+    # size from 20 to 120 observations and in six of seven seeds. The
+    # engine's count-model test asserts the same runaway independently, on
+    # data generated from the model. Fix those parameters and the joint mode
+    # is well behaved -- the same fixture with DRIFT fixed converges to a
+    # gradient norm of 1e-9 or better -- which is the case this route is for.
+    jointrunaway <- ctm$pars$matrix %in% c('DRIFT','DIFFUSION') &
+      is.na(ctm$pars$value)
+    if(any(jointrunaway)){
+      warning(
+        'intoverstates=FALSE with optimize=TRUE maximises over the latent ',
+        'states rather than integrating them out, and this model leaves ',
+        paste0(unique(ctm$pars$matrix[jointrunaway]), collapse=' and '),
+        ' free. Those parameters set how tightly the transition prior holds ',
+        'the states, so the joint mode weakens them without limit to buy ',
+        'cheaper innovations: they run to the end of their transform and ',
+        'more data does not help. Treat their estimates as unusable. Fix ',
+        'them and free only the means, or use optimize=FALSE to sample the ',
+        'states, or intoverstates=TRUE to integrate them out.',
+        call.=FALSE)
+    } else {
+      warning(
+        'intoverstates=FALSE maximises over the latent states rather than ',
+        'integrating them out, which biases variance parameters downward: ',
+        'the joint mode is not the maximum likelihood estimate. Use ',
+        'intoverstates=TRUE, or optimize=FALSE to sample the states instead.',
+        call.=FALSE)
+    }
     # And for a Gaussian indicator with free measurement error it is worse
     # than biased: the joint density is *unbounded*. Send the measurement
     # variance to zero and let the trajectory interpolate the data exactly,
