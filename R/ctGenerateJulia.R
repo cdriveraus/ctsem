@@ -14,14 +14,21 @@
 #
 # `ctModeltoNumeric()` sets every free parameter to zero, to stay consistent
 # with ctsem's behaviour before commit 437bfbc0 and not break scripts that
-# depend on it. The one matrix that cannot take a literal zero is DRIFT: a zero
-# DRIFT is singular, so `fQinf()` cannot solve for the asymptotic covariance and
-# generation errors outright (reproduced on a one-latent model with a free
-# DRIFT, the model anyone writes first). DRIFT diagonals therefore use the same
-# near-zero convention `ctModel0DRIFT()` already applies when a fixed DRIFT
-# diagonal is exactly zero: -1e-6 in continuous time, 1-1e-6 in discrete time --
-# close enough to a random walk to be indistinguishable in practice, but
-# non-singular so generation can proceed.
+# depend on it. Three matrices cannot take a literal zero on the diagonal
+# because zero is singular there: DRIFT (a zero DRIFT is singular, so `fQinf()`
+# cannot solve for the asymptotic covariance and generation errors outright,
+# reproduced on a one-latent model with a free DRIFT, the model anyone writes
+# first), and DIFFUSION and T0VAR (a zeroed diagonal on either gives a
+# covariance that cannot be factorised, reproduced the same way once DRIFT
+# alone was patched). All three diagonals therefore use the same near-zero
+# convention `ctModel0DRIFT()` already applies when a fixed DRIFT diagonal is
+# exactly zero: -1e-6 in continuous time, 1-1e-6 in discrete time for DRIFT,
+# and a flat 1e-6 for DIFFUSION and T0VAR (both already variances, so there is
+# no continuous/discrete distinction to make). Close enough to negligible to
+# be indistinguishable in practice, but non-singular so generation can
+# proceed. MANIFESTVAR stays exactly zero: it is not singular in the
+# measurement update, and noise-free generated data is what
+# test-ctRaschExampleTest.R and test-timevarying.R are calibrated for.
 #
 # These are defaults for *simulation*, not estimates of anything, and the point
 # is only that an underspecified model can still be generated from. Anything a
@@ -31,8 +38,8 @@
   driftdiagonal <- if(isTRUE(continuoustime)) -1e-6 else 1 - 1e-6
   list(
     DRIFT = list(diagonal = driftdiagonal, offdiagonal = 0),
-    DIFFUSION = list(diagonal = 0, offdiagonal = 0),
-    T0VAR = list(diagonal = 0, offdiagonal = 0),
+    DIFFUSION = list(diagonal = 1e-6, offdiagonal = 0),
+    T0VAR = list(diagonal = 1e-6, offdiagonal = 0),
     MANIFESTVAR = list(diagonal = 0, offdiagonal = 0),
     LAMBDA = list(diagonal = 0, offdiagonal = 0),
     T0MEANS = list(diagonal = 0, offdiagonal = 0),
