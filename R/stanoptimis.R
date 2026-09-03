@@ -199,309 +199,6 @@ processHessianMatrices <- function(hess1, hess2, verbose, matsetup) {
 }
 
 
-# Function to handle parameter stepwise freeing with auto model
-handleParstepsAutoModel <- function(parsteps, parstepsAutoModel, optimArgs, standata, sm, clctsem, cores, 
-  groupFreeThreshold, tol, stochasticTolAdjust, verbose) {
-  
-  if(parstepsAutoModel %in% TRUE){
-    # -----------------------------
-    # Assume the following are available:
-    #   - parFreeList: a list of length 2
-    #         parFreeList[[1]]: vector of indices for basic parameters (always estimated)
-    #         parFreeList[[2]]: vector of candidate parameter indices that are initially fixed
-    #   - init: the current parameter vector (from the previous optimization stage)
-    #   - lpgFunc: a function that returns the log probability, with an attribute "gradient"
-    #   - jac: a function to compute a finite-difference approximation of a parameter's Hessian (diagonal element)
-    #   - sgd: your stochastic optimizer that accepts an argument 'whichignore' (the parameters to keep fixed)
-    #   - tol, stochasticTolAdjust, nsubsets, plot: parameters as in your code.
-    #
-    # Set a Wald threshold:
-    wald_threshold <- 1.96  
-    parstepsAutoModelOptimArgs <- optimArgs
-    
-    jacPars <- function(pars, step = 1e-3, whichpars) {
-      # Initialize a vector to store the Hessian diagonal estimates for the specified parameters.
-      hess_diag <- numeric(length(whichpars))
-      # Loop over each requested parameter index.
-      for (i in seq_along(whichpars)) {
-        idx <- whichpars[i]
-        # Create perturbed parameter vectors: one for the forward difference and one for the backward difference.
-        pars_forward <- pars
-        pars_backward <- pars
-        pars_forward[idx] <- pars_forward[idx] + step
-        pars_backward[idx] <- pars_backward[idx] - step
-        # Evaluate the lpgFunc function at both perturbed vectors.
-        # It is assumed the 'lpgFunc' function returns an object with the gradient as an attribute "gradient".
-        forward_val <- optimArgs$lpgFunc(pars_forward)
-        backward_val <- optimArgs$lpgFunc(pars_backward)
-        # Extract the gradient for the current parameter.
-        grad_forward <- attributes(forward_val)$gradient[idx]
-        grad_backward <- attributes(backward_val)$gradient[idx]
-        # Estimate the second derivative via the central difference formula.
-        hess_diag[i] <- (grad_forward - grad_backward) / (2 * step)
-      }
-      return(hess_diag)
-    }
-    
-    # Start with all candidate parameters fixed:
-    currentFixed <- parsteps[[1]]
-    # The permanently free parameter indices are:
-    freePars <- (1:length(parstepsAutoModelOptimArgs$init))[!parsteps[[1]] %in% (1:length(parstepsAutoModelOptimArgs$init))]
-    # Track which candidate parameters have been freed (initially, none)
-    freed_candidates <- c()
-    
-    continueFreeing <- TRUE
-    improvement_threshold <- 1.96
-    while (continueFreeing && length(currentFixed) > 0) {
-      
-      # Evaluate the current log probability and obtain the gradient.
-      parstepsAutoModelOptimArgs$whichignore <- currentFixed
-      iter <-0
-      optimfit <- do.call(ctOptim, parstepsAutoModelOptimArgs)
-      
-      # Create the list of indices to ignore in the next optimization step.
-      # If no candidates remain, use an empty vector.
-      ignore_indices <- if (length(currentFixed) > 0) currentFixed else integer(0)
-      
-      parstepsAutoModelOptimArgs$init[-ignore_indices] = optimfit$par
-      obj_val <- optimArgs$lpgFunc(parstepsAutoModelOptimArgs$init)
-      grad_vec <- attributes(obj_val)$gradient
-      
-      # For each candidate parameter currently fixed, compute expected improvement.
-      improvement_est <- numeric(length(currentFixed))
-      for (i in seq_along(currentFixed)) {
-        idx <- currentFixed[i]
-        
-        # Use our simple jacPars to compute the approximate second derivative for this parameter.
-        hess_est <- jacPars(parstepsAutoModelOptimArgs$init, step = 1e-6, whichpars = idx)
-        
-        # For stability, if the second derivative is NA or non-negative (which is
-        # unexpected at a maximum), force a small negative value.
-        if (is.na(hess_est) || hess_est >= 0) {
-          hess_val <- -1e-6
-        } else {
-          hess_val <- hess_est
-        }
-        
-        # Estimate expected improvement: 0.5 * (grad^2 / |H_ii|)
-        improvement_est[i] <- 0.5 * (grad_vec[idx]^2 / abs(hess_val))
-      }
-      
-      # Find the candidate with the highest expected improvement.
-      best_candidate_index <- which.max(improvement_est)
-      best_improvement <- improvement_est[best_candidate_index]
-      if (best_improvement >= improvement_threshold) {
-        best_param <- currentFixed[best_candidate_index]
-        ms=data.frame(standata$matsetup)
-        bestpar_ms <- ms[ms$param == best_param,,drop=FALSE][1,]
-        message(paste0("Freeing parameter ",names(sort(ctStanMatricesList()$all))[bestpar_ms$matrix],'[',
-          bestpar_ms$row,',',bestpar_ms$col,'] with expected improvement ',round(best_improvement,3)))
-        
-        # Mark the best candidate as freed.
-        freed_candidates <- c(freed_candidates, best_param)
-        # Remove it from the list of currently fixed candidate parameters.
-        currentFixed <- currentFixed[-best_candidate_index]
-        
-      } else {
-        message("No candidate parameter meets the improvement threshold. Terminating freeing sequence.")
-        continueFreeing <- FALSE
-        parsteps <- currentFixed
-      }
-    }
-    
-    # At this point, all parameters in `freePars` (the basic ones) and those in `freed_candidates`
-    # are free (and have been re-optimized), while those remaining in `currentFixed` are kept fixed.
-    # You can now proceed with the rest of your model estimation using 'init' as the final parameter estimate.
-    parsteps <- currentFixed
-  }
-  
-  return(parsteps)
-}
-
-# Function to handle group-level parameter stepwise freeing
-handleGroupParstepsAutoModel <- function(parsteps, parstepsAutoModel,optimArgs, standata, sm, clctsem, cores, 
-  groupFreeThreshold, tol, stochasticTolAdjust, verbose) {
-  
-  if (parstepsAutoModel %in% 'group') {
-    # --------------------------------------------------
-    # Group-level stepwise freeing, with per-subject re-fit and init averaging
-    groupParStepsOptimArgs <- optimArgs
-    # thresholds
-    improvement_threshold <- 1.96   # per-subject deltaLL must exceed this
-    
-    # initial fixed candidates and subjects
-    currentFixed <- parsteps[[1]]
-    subject_ids  <- unique(standata$subject)
-    
-    
-    parallel::clusterExport(clctsem, c(
-      "tol", "stochasticTolAdjust",  "standatact_specificsubjects","subject_ids"
-    ), envir = environment())
-    
-    continueFreeing <- TRUE
-    subj_init <- matrix(rep(groupParStepsOptimArgs$init, length(subject_ids)), nrow = length(subject_ids), byrow = TRUE)
-    while (continueFreeing && length(currentFixed) > 0) {
-      # export updated init and fixed set to workers
-      parallel::clusterExport(clctsem, c("currentFixed",'subj_init'), envir = environment())
-      # 1) fit each subject with currentFixed held fixed
-      subj_pars <- parallel::parLapply(clctsem, subject_ids, function(sid) {
-        sd    <- standatact_specificsubjects(standata, sid)
-        smf   <- stan_reinitsf(sm, sd)
-        parlp <- function(parm){
-          out <- try(rstan::log_prob(smf,upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
-          if("try-error" %in% class(out) || any(is.nan(attributes(out)$gradient))) {
-            outerr <- out
-            out <- -1e100
-            attributes(out)$gradient <- rep(NaN, length(parm))
-            attributes(out)$err <- outerr
-          }
-          if(is.null(attributes(out)$gradient)) attributes(out)$gradient <- rep(NaN, length(parm))
-          return(out)
-        }
-        groupParStepsOptimArgs$init <- subj_init[sid,]
-        groupParStepsOptimArgs$lpgFunc <- parlp
-        iter <-0
-        fit <- do.call(ctOptim, optimArgs)
-        as.numeric(fit$par)
-      })
-      subj_mat <- do.call(rbind, subj_pars)
-      subj_init[,-currentFixed] <- subj_mat # update init for next iteration
-      
-      # 2) average into init
-      groupParStepsOptimArgs$init[-currentFixed] <- colMeans(subj_mat)
-      
-      # 3) compute per-subject expected deltaLL for each candidate
-      subj_imp <- parallel::parLapply(clctsem,seq_along(subject_ids), function(i) {
-        sid  <- subject_ids[i]
-        pvec <- groupParStepsOptimArgs$init
-        pvec[-currentFixed] <- subj_mat[i, ]
-        sd   <- standatact_specificsubjects(standata, sid)
-        smf  <- stan_reinitsf(sm, sd)
-        tgt  <- function(p) log_prob(smf, upars = p, adjust_transform = TRUE, gradient = TRUE)
-        grad <- attributes(tgt(pvec))$gradient
-        # helper: finite-difference Hessian diagonal
-        jacPars <- function(pars, step = 1e-3, whichpars) {
-          sapply(whichpars, function(idx) {
-            pf <- pars; pb <- pars
-            pf[idx] <- pf[idx] + step
-            pb[idx] <- pb[idx] - step
-            gf <- attributes(tgt(pf))$gradient[idx]
-            gb <- attributes(tgt(pb))$gradient[idx]
-            (gf - gb) / (2 * step)
-          })
-        }
-        sapply(currentFixed, function(idx) {
-          h <- jacPars(pvec, step = 1e-6, whichpars = idx)
-          if (is.na(h) || h >= 0) h <- -1e-6
-          0.5 * (grad[idx]^2 / abs(h))
-        })
-      })
-      # coerce to matrix if needed
-      imp_vecs <- lapply(subj_imp, as.numeric)
-      imp_mat  <- do.call(rbind, imp_vecs)
-      if (is.null(dim(imp_mat))) {
-        imp_mat <- matrix(imp_mat, nrow = length(imp_vecs), byrow = TRUE)
-      }
-      
-      # 4) identify group-level candidates
-      prop_above  <- colMeans(imp_mat >= improvement_threshold)
-      group_cands <- currentFixed[prop_above > groupFreeThreshold]
-      
-      if (length(group_cands) == 0) {
-        message("No group-level parameters exceed threshold; stopping.")
-        break
-      }
-      
-      ## pick group candidate with highest mean deltaLL
-      # means      <- colMeans(imp_mat[, currentFixed %in% group_cands, drop = FALSE])
-      # best_param <- group_cands[which.max(means)]
-      
-      # pick group candidate with highest proportion significant
-      best_param <- currentFixed[which.max(prop_above)]
-      
-      message(sprintf(
-        "Freeing parameter %d (%.0f%% subjects deltaLL >= %.2f)",
-        best_param,
-        100 * prop_above[currentFixed == best_param],
-        improvement_threshold
-      ))
-      
-      # update fixed set only
-      currentFixed <- setdiff(currentFixed, best_param)
-    }
-    groupFixed <- currentFixed
-    parallel::clusterExport(clctsem, c("groupFixed", "subj_init"), envir = environment())
-    
-    subj_res <- parallel::parLapply(clctsem, seq_along(subject_ids), function(i) {
-      # for(i in 1:length(subject_ids)){
-      # lapply(seq_along(subject_ids), function(i) {
-      sid    <- subject_ids[i]
-      sd     <- standatact_specificsubjects(standata, sid)
-      smf    <- stan_reinitsf(sm, sd)
-      p_i    <- subj_init[sid,]
-      free_i <- setdiff(seq_along(groupParStepsOptimArgs$init), groupFixed)
-      subjFixed <- groupFixed
-      freed_i   <- integer(0)
-      parlp <- function(parm){
-        out <- try(rstan::log_prob(smf,upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
-        if("try-error" %in% class(out) || any(is.nan(attributes(out)$gradient))) {
-          outerr <- out
-          out <- -1e100
-          attributes(out)$gradient <- rep(NaN, length(parm))
-          attributes(out)$err <- outerr
-        }
-        if(is.null(attributes(out)$gradient)) attributes(out)$gradient <- rep(NaN, length(parm))
-        return(out)
-      }
-      repeat {
-        lpinit <- parlp(p_i)
-        grad <- attributes(lpinit)$gradient
-        impr <- sapply(subjFixed, function(idx) {
-          pf <- p_i; pb <- p_i
-          pf[idx] <- pf[idx] + 1e-6
-          pb[idx] <- pb[idx] - 1e-6
-          gf <- attributes(parlp(pf))$gradient[idx]
-          gb <- attributes(parlp(pb))$gradient[idx]
-          h  <- (gf - gb) / (2 * 1e-6)
-          if (is.na(h) || h >= 0) h <- -1e-6
-          0.5 * (grad[idx]^2 / abs(h))
-        })
-        if (all(impr < improvement_threshold)) break
-        best_idx  <- subjFixed[which.max(impr)]
-        freed_i   <- c(freed_i, best_idx)
-        subjFixed <- setdiff(subjFixed, freed_i)
-        if(length(subjFixed) == 0) break
-        fit <- sgd(
-          p_i+rnorm(length(p_i),0,.01), #init away from old max
-          lpgFunc = parlp,
-          itertol     = tol * stochasticTolAdjust,
-          maxiter     = 5000,
-          whichignore = subjFixed,
-          worsecountconverge = 20
-        )
-        p_i[sort(c(free_i,freed_i))] <- fit$par
-      }
-      list(par = p_i, freed = freed_i)
-    })
-    
-    # build output matrices
-    subjPars  <- t(sapply(subj_res, `[[`, "par"))
-    subjFreed <- t(sapply(subj_res, function(x) groupFixed %in% x$freed))
-    rownames(subjFreed) <- subject_ids
-    colnames(subjFreed) <- as.character(groupFixed)
-    
-    # finalize
-    parsteps  <- groupFixed
-    optimfit  <- list(
-      par       = groupParStepsOptimArgs$init[-parsteps],
-      subjPars  = subjPars,
-      subjFreed = subjFreed
-    )
-  }
-  
-  return(list(parsteps = parsteps, optimfit = optimfit))
-}
-
 # =============================================================================
 # ADDITIONAL HELPER FUNCTIONS
 # =============================================================================
@@ -1227,9 +924,7 @@ imis_is <- function(parlp,
 #' based covariance or posterior distribution) for final results computation.
 #' @param parsteps ordered list of vectors of integers denoting which parameters should begin fixed
 #' at zero, and freed sequentially (by list order). Useful for complex models, e.g. keep all cross couplings fixed to zero 
-#' as a first step, free them in second step. 
-#' @param parstepsAutoModel if TRUE, determines model structure for the parameters specified in parsteps automatically. If 'group', determines this on a group level first and then a subject level. Primarily for internal ctsem use.
-#' @param groupFreeThreshold threshold for determining whether a parameter is free in a group level model. If the proportion of subjects with a non-zero parameter is above this threshold, the parameter is considered free. Only used with parstepsAutoModel = 'group'.
+#' as a first step, free them in second step.
 #' @param matsetup subobject of ctStanFit output. If provided, parameter names instead of numbers are output for any problem indications.
 #' @param nsubsets number of subsets for stochastic optimizer. Subsets are further split across cores, 
 #' but each subjects data remains whole -- processed by one core in one subset.
@@ -1252,8 +947,6 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
   uncertaintyControl=list(),
   subsamplesize=1,
   parsteps=c(),
-  parstepsAutoModel=FALSE,
-  groupFreeThreshold=.5,
   plot=FALSE,
   finishsamples=1000,
   lproughnesstarget=.2,
@@ -1306,8 +999,6 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
     stochastic=TRUE
     message('Stochastic optimizer used for data driven parameter inclusion') 
   }
-  
-  if(cores<2 && parstepsAutoModel %in% 'group') stop('parstepsAutoModel = "group" requires cores > 1')
   
   optimcores <- ifelse(length(unique(standata$subject)) < cores, length(unique(standata$subject)),cores)
   if(optimcores > 1) rm(smf)
@@ -1471,120 +1162,102 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
   
   ##parameter stepwise / selection
   if(length(parsteps) > 0){
-    if(parstepsAutoModel %in% FALSE){
-      message('Freeing parameters...')
-      parstepsfinished <- FALSE
-      while(!parstepsfinished && length(parsteps)>0){
-        if(length(parsteps)>1) parsteps <- parsteps[-1] else parsteps <- c()
-        
-        optimArgs$tol <- tol * 1000 #increase tolerance for parameter freeing
-        iter <-0
-        optimfit <- do.call(ctOptim,optimArgs)
-        
-        if(length(parsteps)>0){
-          optimArgs$init[-unlist(parsteps)] = optimfit$par
-        }else{
-          parstepsfinished <- TRUE
-          optimArgs$init = optimfit$par
-        }
-      }
-    }
-    
-    # Handle auto model parameter stepwise freeing
-    if(parstepsAutoModel %in% TRUE){
-      parsteps <- handleParstepsAutoModel(parsteps, parstepsAutoModel, optimArgs, standata, sm, clctsem, cores, 
-        groupFreeThreshold, tol, stochasticTolAdjust, verbose)
-    }
-    
-    # Handle group-level parameter stepwise freeing
-    if(parstepsAutoModel %in% 'group'){
-      group_result <- handleGroupParstepsAutoModel(parsteps, parstepsAutoModel, optimArgs, standata, sm, clctsem, cores, 
-        groupFreeThreshold, tol, stochasticTolAdjust, verbose)
-      parsteps <- group_result$parsteps
-      optimfit <- group_result$optimfit
-    }
-  }
-  
-  if(parstepsAutoModel %in% FALSE){
-    message('Optimizing...')
-    
-    optimArgs$nsubsets <- 1
-    optimArgs$parrangetol <- tol*100
-    optimArgs$whichignore <- unlist(parsteps)
-    iter <-0
-    optimfit <- do.call(ctOptim,optimArgs)
-    
-    
-    if(!'try-error' %in% class(optimfit) & !'NULL' %in% class(optimfit)){
-      if(length(parsteps)>0) optimArgs$init[-unlist(parsteps)] = optimfit$par else optimArgs$init=optimfit$par
-    }
-    
-    #use bfgs to double check stochastic fit (or just use bfgs if requested)... 
-    if(stochastic){
-      message('Finishing optimization...')
-      optimArgs$stochastic <- FALSE
+    message('Freeing parameters...')
+    parstepsfinished <- FALSE
+    while(!parstepsfinished && length(parsteps)>0){
+      if(length(parsteps)>1) parsteps <- parsteps[-1] else parsteps <- c()
+
+      optimArgs$tol <- tol * 1000 #increase tolerance for parameter freeing
       iter <-0
       optimfit <- do.call(ctOptim,optimArgs)
-    }
-    optimArgs$init = optimfit$par
-    
-    # A fit can finish exactly where it started. Where the likelihood is rough --
-    # binary indicators found this: the linearised measurement update lets the
-    # filtered states run out to |eta| ~ 100, the logit saturates, and the log
-    # likelihood then swings by hundreds over parameter changes of 1e-4 -- the
-    # step acceptance in sgd rejects every proposal and permanently collapses its
-    # step size, and the L-BFGS pass that follows stops on an unchanged log
-    # probability. Both report success, so the starting values come back as the
-    # estimate with a Hessian computed about them. The gradient tells the two
-    # apart with orders of magnitude to spare: measured over converged fits it is
-    # ~1e-5 per data point, and 1 to 100 per data point when the fit has stalled.
-    if(length(parsteps)==0){
-      stallthreshold <- max(1, stalltol * standata$ndatapoints)
-      stallstate <- function(pars){
-        lpg <- suppressWarnings(try(optimArgs$lpgFunc(pars),silent=TRUE))
-        g <- attributes(lpg)$gradient
-        if('try-error' %in% class(lpg) || is.null(g) || any(!is.finite(g))) 
-          return(list(lp=-Inf, maxg=Inf))
-        list(lp=lpg[1], maxg=max(abs(g)))
+
+      if(length(parsteps)>0){
+        optimArgs$init[-unlist(parsteps)] = optimfit$par
+      }else{
+        parstepsfinished <- TRUE
+        optimArgs$init = optimfit$par
       }
-      best <- stallstate(optimArgs$init)
-      bestfit <- optimfit
-      attempt <- 0
-      while(best$maxg > stallthreshold && randominit && attempt < stallretries){
-        attempt <- attempt + 1
-        message('Optimization stopped with a gradient of ',signif(best$maxg,3),
-          ' -- that is not a maximum. Restarting from new values (',attempt,' of ',stallretries,')...')
-        optimArgs$init <- rnorm(npars, 0, initsd)
-        optimArgs$stochastic <- stochastic
+    }
+  }
+
+  message('Optimizing...')
+
+  optimArgs$nsubsets <- 1
+  optimArgs$parrangetol <- tol*100
+  optimArgs$whichignore <- unlist(parsteps)
+  iter <-0
+  optimfit <- do.call(ctOptim,optimArgs)
+
+
+  if(!'try-error' %in% class(optimfit) & !'NULL' %in% class(optimfit)){
+    if(length(parsteps)>0) optimArgs$init[-unlist(parsteps)] = optimfit$par else optimArgs$init=optimfit$par
+  }
+
+  #use bfgs to double check stochastic fit (or just use bfgs if requested)...
+  if(stochastic){
+    message('Finishing optimization...')
+    optimArgs$stochastic <- FALSE
+    iter <-0
+    optimfit <- do.call(ctOptim,optimArgs)
+  }
+  optimArgs$init = optimfit$par
+
+  # A fit can finish exactly where it started. Where the likelihood is rough --
+  # binary indicators found this: the linearised measurement update lets the
+  # filtered states run out to |eta| ~ 100, the logit saturates, and the log
+  # likelihood then swings by hundreds over parameter changes of 1e-4 -- the
+  # step acceptance in sgd rejects every proposal and permanently collapses its
+  # step size, and the L-BFGS pass that follows stops on an unchanged log
+  # probability. Both report success, so the starting values come back as the
+  # estimate with a Hessian computed about them. The gradient tells the two
+  # apart with orders of magnitude to spare: measured over converged fits it is
+  # ~1e-5 per data point, and 1 to 100 per data point when the fit has stalled.
+  if(length(parsteps)==0){
+    stallthreshold <- max(1, stalltol * standata$ndatapoints)
+    stallstate <- function(pars){
+      lpg <- suppressWarnings(try(optimArgs$lpgFunc(pars),silent=TRUE))
+      g <- attributes(lpg)$gradient
+      if('try-error' %in% class(lpg) || is.null(g) || any(!is.finite(g)))
+        return(list(lp=-Inf, maxg=Inf))
+      list(lp=lpg[1], maxg=max(abs(g)))
+    }
+    best <- stallstate(optimArgs$init)
+    bestfit <- optimfit
+    attempt <- 0
+    while(best$maxg > stallthreshold && randominit && attempt < stallretries){
+      attempt <- attempt + 1
+      message('Optimization stopped with a gradient of ',signif(best$maxg,3),
+        ' -- that is not a maximum. Restarting from new values (',attempt,' of ',stallretries,')...')
+      optimArgs$init <- rnorm(npars, 0, initsd)
+      optimArgs$stochastic <- stochastic
+      iter <- 0
+      newfit <- try(do.call(ctOptim,optimArgs))
+      if(!'try-error' %in% class(newfit) && !'NULL' %in% class(newfit) && stochastic){
+        optimArgs$init <- newfit$par
+        optimArgs$stochastic <- FALSE
         iter <- 0
         newfit <- try(do.call(ctOptim,optimArgs))
-        if(!'try-error' %in% class(newfit) && !'NULL' %in% class(newfit) && stochastic){
-          optimArgs$init <- newfit$par
-          optimArgs$stochastic <- FALSE
-          iter <- 0
-          newfit <- try(do.call(ctOptim,optimArgs))
-        }
-        if('try-error' %in% class(newfit) || 'NULL' %in% class(newfit)) next
-        new <- stallstate(newfit$par)
-        if(new$maxg <= stallthreshold || new$lp > best$lp){
-          best <- new
-          bestfit <- newfit
-        }
       }
-      optimfit <- bestfit
-      optimArgs$init <- optimfit$par
-      if(best$maxg > stallthreshold) warning(paste0(
-        'Optimization finished with a gradient of ',signif(best$maxg,3),
-        ', which is not a maximum -- the estimates are wherever the optimizer stopped, ',
-        'and the uncertainty is computed about that point. ',
-        ifelse(randominit,
-          'Restarting from new values did not help. ',
-          'Supplied inits are not retried automatically -- try init="random". '),
-        'Rough likelihoods do this; with binary indicators, backend="julia" integrates ',
-        'the observation instead of linearising it and does not.'),immediate. = TRUE)
+      if('try-error' %in% class(newfit) || 'NULL' %in% class(newfit)) next
+      new <- stallstate(newfit$par)
+      if(new$maxg <= stallthreshold || new$lp > best$lp){
+        best <- new
+        bestfit <- newfit
+      }
     }
-  } #end if not auto model parsteps
-  
+    optimfit <- bestfit
+    optimArgs$init <- optimfit$par
+    if(best$maxg > stallthreshold) warning(paste0(
+      'Optimization finished with a gradient of ',signif(best$maxg,3),
+      ', which is not a maximum -- the estimates are wherever the optimizer stopped, ',
+      'and the uncertainty is computed about that point. ',
+      ifelse(randominit,
+        'Restarting from new values did not help. ',
+        'Supplied inits are not retried automatically -- try init="random". '),
+      'Rough likelihoods do this; with binary indicators, backend="julia" integrates ',
+      'the observation instead of linearising it and does not.'),immediate. = TRUE)
+  }
+
   
   est2=optimArgs$init #because init contains the fixed values #unconstrain_pars(smf, est1)
   if(length(parsteps)>0) est2[-parsteps] = optimfit$par else est2=optimfit$par

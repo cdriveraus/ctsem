@@ -331,11 +331,11 @@ test_that("the Laplace random-effect route and sampled states are refused togeth
   # composes: augmented random effects are extra latent states, and the state
   # path samples them along with the rest.
   expect_error(ctsem:::.ctJuliaUnsupported(.states_model(), optimize = TRUE,
-    priors = FALSE, intoverpop = "laplace", vb = FALSE, gendata = FALSE,
+    priors = FALSE, intoverpop = "laplace", gendata = FALSE,
     stanmodeltext = NA, compileArgs = list(), forcerecompile = FALSE,
     intoverstates = FALSE), "intoverstates=FALSE")
   expect_silent(ctsem:::.ctJuliaUnsupported(.states_model(), optimize = TRUE,
-    priors = FALSE, intoverpop = TRUE, vb = FALSE, gendata = FALSE,
+    priors = FALSE, intoverpop = TRUE, gendata = FALSE,
     stanmodeltext = NA, compileArgs = list(), forcerecompile = FALSE,
     intoverstates = FALSE))
 })

@@ -37,7 +37,6 @@ ctFit(
   gendata = FALSE,
   control = list(),
   verbose = 0,
-  vb = FALSE,
   ...,
   ctstanmodel
 )
@@ -278,8 +277,6 @@ detected from where the output is going; set
 \code{options(ctsem.progress.overwrite = FALSE)} if that detection is wrong
 for your front end -- a Shiny app capturing stdout, for instance -- or
 \code{TRUE} to force it on.}
-
-\item{vb}{Logical. Use variational Bayes algorithm from stan? Only kind of working, not recommended.}
 
 \item{...}{additional arguments to pass to \code{\link[rstan]{stan}} function.}
 
