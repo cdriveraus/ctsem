@@ -637,9 +637,11 @@ function _extended_kalman_filter_continuous!(
     # supplies *values* as well as a prediction: PARS is in the predict group
     # and an update-group cell -- LAMBDA, MANIFESTMEANS, MANIFESTVAR, Jy -- may
     # be written by a transform that reads one. Skipping the group here left
-    # that read pointing at a parameter slot nothing had written, so it took
-    # the zero the buffer is filled with: 11.5 log units against stan at one
-    # occasion per subject, where every row is a row 1.
+    # that read pointing at a parameter slot nothing had written, which cost
+    # 11.5 log units against stan at one occasion per subject, where every row
+    # is a row 1. The buffer is now filled with `UNSET_PARAMETER` rather than
+    # zero, so a fourth instance of this shape announces itself instead of
+    # quietly reading a plausible number.
     #
     # One context serves all three, as it did for the last two. Its interval is
     # zero, which is the only thing about it a predict-group transform could

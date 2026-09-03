@@ -1,6 +1,31 @@
 using ComponentArrays
 
 export EKFParameters
+"""
+    UNSET_PARAMETER
+
+Fill value for a parameter slot that nothing has written yet.
+
+The full parameter vector is materialised at *mutable* and at *fixed*
+positions only, so a model-matrix cell owned solely by a state-dependent
+transform is covered by neither: it holds whatever the buffer was filled
+with until its transform group runs. Reading it before then is always a
+bug, and the fill value decides whether that bug is visible.
+
+Zero is the worst possible choice, because it is what a well-behaved
+model matrix is mostly made of: it annihilates the products it enters and
+reads back as a plausible fixed value. The row-1 defect fixed in
+`kalman_filters.jl` survived precisely that way -- and one attempt to
+reproduce it saw nothing, because the test model happened to fix the
+initial latent mean at zero, so multiplying it by the unwritten cell hid
+the fault a second time.
+
+This follows the convention ctsem already uses for a missing predictor: a
+number no real parameter can take, finite so that ForwardDiff partials
+stay clean rather than turning into NaNs that travel silently, and large
+enough that any likelihood it reaches is absurd on sight.
+"""
+const UNSET_PARAMETER = 99999.0
 
 """
     EKFParameters

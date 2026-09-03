@@ -229,7 +229,10 @@ function ctsem_parameter_matrices(objective::CTSEMObjective, values::AbstractMat
 
     out = zeros(Float64, layout.size, size(values, 2))
     subject_values = Vector{Float64}(undef, size(values, 1))
-    all_params = Vector{Float64}(undef, nall)
+    # Sentinel-filled for the same reason as the EKF workspace: this path
+    # runs all three transform groups, so a cell in none of them and
+    # neither mutable nor fixed would otherwise be read as garbage.
+    all_params = fill(Float64(UNSET_PARAMETER), nall)
 
     for column in axes(values, 2)
         raw = Vector{Float64}(view(values, :, column))

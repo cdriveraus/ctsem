@@ -127,15 +127,18 @@ Allocate a `ContinuousEKFWorkspace` for scalar type `T` and parameter metadata
 """
 function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
     # Storage for the fully materialized parameter vector (mutable + fixed entries).
-    # Zero, not undef: this buffer is filled at mutable and at fixed positions
-    # only, so a cell owned solely by a transform is covered by neither. A
-    # read before that transform runs is then a deterministic zero rather than
-    # a value that differs between runs and between machines.
-    all_params = zeros(T, length(sp.mutables))
+    # UNSET_PARAMETER, not undef and not zero: this buffer is filled at mutable
+    # and at fixed positions only, so a cell owned solely by a transform is
+    # covered by neither. undef makes a read before that transform runs differ
+    # between runs and between machines; zero makes it invisible. The sentinel
+    # makes it deterministic *and* loud. See `UNSET_PARAMETER` for why 99999.
+    all_params = fill(T(UNSET_PARAMETER), length(sp.mutables))
     subject_values = Vector{T}(undef, maximum(vcat(sp.parnumber, sp.ti_coefficient_indices, [0])))
 
-    # Structured parameter view used throughout the EKF loop.
-    pars = ComponentVector(zeros(T, length(sp.mutables)), sp.parameter_axis)
+    # Structured parameter view used throughout the EKF loop. Every evaluation
+    # overwrites this wholesale from `all_params`, so the fill is only ever
+    # read if some path forgets to -- which is the reason it is a sentinel.
+    pars = ComponentVector(fill(T(UNSET_PARAMETER), length(sp.mutables)), sp.parameter_axis)
 
     # Indices of transforms applied in predict/update phases.
     predict_param_indices = findall(sp.predict_transforms_indices)
