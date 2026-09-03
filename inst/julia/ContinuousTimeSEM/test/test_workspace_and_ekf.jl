@@ -136,6 +136,35 @@ end
     @test size(ws.P_predict.data) == (1, 1)
 end
 
+# A model-matrix cell owned solely by a state-dependent transform is neither
+# mutable nor fixed, so nothing writes it until that transform group runs.
+# Reading it earlier is the shape of three separate defects found in this
+# engine, and all three were invisible because the buffer was filled with a
+# value a real model matrix is mostly made of. This pins the sentinel that
+# replaced it: unwritten must stay recognisable as unwritten.
+@testset "an unwritten parameter slot keeps its sentinel" begin
+    base = fixed_one_dimensional_ekf_parameters()
+    n = length(base.mutables)
+    probe = ComponentVector(Float64.(1:n), base.parameter_axis)
+    carrier = Int(probe.PARS[1, 1])
+
+    fixed = collect(base.fixed_indices)
+    fixed[carrier] = false
+    kept = Vector{Float64}(base.fixed_values)[fixed]
+    sp = ContinuousTimeSEM.EKFParameters(
+        base.mutables, fill(false, n), fill(false, n), fill(false, n),
+        Function[], Function[], Function[], Int[],
+        base.parameter_axis, fixed, AbstractFloat[kept...])
+
+    ws = ContinuousTimeSEM._init_continuous_ekf_workspace(Float64, sp)
+    @test all(ws.all_params .== ContinuousTimeSEM.UNSET_PARAMETER)
+
+    ContinuousTimeSEM._materialize_all_params!(ws.all_params, Float64[], sp)
+    @test ws.all_params[carrier] == ContinuousTimeSEM.UNSET_PARAMETER
+    @test count(==(ContinuousTimeSEM.UNSET_PARAMETER), ws.all_params) == 1
+    @test !any(iszero, ws.all_params[[carrier]])
+end
+
 # A tiny fixed-parameter likelihood path catches integration breakage across
 # covariance transforms, discretization, update steps, and log-likelihood code.
 @testset "Continuous EKF fixed-parameter likelihood" begin
