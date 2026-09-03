@@ -1221,15 +1221,72 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   }, character(1L))
 }
 
+# Stan's `derrind` (ctData.R:310-315) reduction, ported: among the states in
+# `1:span` (the augmented layout when there is one, else just the original
+# states), which ones need their own row/column in the diffusion covariance
+# and Lyapunov solve. Two steps, matching Stan exactly:
+#
+#  1. A state has "structurally zero" diffusion only when every DIFFUSION cell
+#     in its row and column is a *fixed* value of exactly zero -- `table$value`
+#     is NA for every free parameter and for every state-dependent transform
+#     (see `.ctJuliaParameterTable`/`.ctJuliaCanonicalModel`, which leave
+#     `value` NA whenever the cell is anything but a literal constant), so
+#     testing `!is.na(value) && value == 0` never misclassifies a parameter
+#     that merely *evaluates* to zero at the current draw. This mirrors
+#     `listOfMatrices(ctm$pars)$DIFFUSION` where a free cell holds a parameter
+#     name (never equal to the string "0") and only a literal fixed zero
+#     prints as "0".
+#  2. Zero own diffusion is not enough to drop a state: if its drift/Jacobian
+#     (`JAx`, or `DRIFT` when no JAx rows exist -- both padded to `span` by
+#     the caller) structurally couples it to a diffusing state, covariance
+#     still reaches it through the transition, exactly as a matrix
+#     exponential of a coupled-but-noise-free block is not itself block
+#     diagonal. This is computed as the graph-connected-component closure
+#     Stan gets via `JAxsubsets` (`expmGetSubsets`, ctData.R:1-23): coupling
+#     is treated as undirected (`JAx[i,j]` nonzero links i and j both ways),
+#     because that is what `expmGetSubsets` does -- a row-only edge still
+#     grows the same connected component there.
+#
+# Indices beyond `nlatent` (augmented random-effect carriers) are dropped at
+# the end, same as Stan's `derrind[derrind <= standata$nlatent]`; carrier
+# states are never diffusing themselves, so they only ever enter as
+# intermediate coupling nodes on the way to another original state, and this
+# still finds them because the closure runs over the full `span`.
+.ctJuliaDerrind <- function(table, nlatent, span) {
+  if (span <= 0L) return(integer())
+  structurally_nonzero <- function(matrix_name) {
+    m <- matrix(FALSE, span, span)
+    rows <- which(table$matrix == matrix_name & !is.na(table$row) & !is.na(table$col) &
+      table$row >= 1L & table$row <= span & table$col >= 1L & table$col <= span)
+    for (i in rows) {
+      zero <- !is.na(table$value[i]) && isTRUE(as.numeric(table$value[i]) == 0)
+      if (!zero) m[table$row[i], table$col[i]] <- TRUE
+    }
+    m
+  }
+  diffusion <- structurally_nonzero("DIFFUSION")
+  coupling <- if (any(table$matrix == "JAx")) structurally_nonzero("JAx") else structurally_nonzero("DRIFT")
+  reach <- apply(diffusion, 1L, any) | apply(diffusion, 2L, any)
+  if (!any(reach)) return(integer())
+  repeat {
+    grown <- reach
+    for (state in which(reach)) grown <- grown | coupling[state, ] | coupling[, state]
+    if (!any(grown & !reach)) break
+    reach <- grown
+  }
+  sort(which(reach)[which(reach) <= nlatent])
+}
+
 .ctJuliaAugmentRandomEffects <- function(model) {
   original_nlatent <- model$n.latent
   prepared_augmentation <- !is.null(model$intoverpopindvaryingindex)
   has_random_effects <- prepared_augmentation || any(model$pars$indvarying %in% TRUE &
     is.na(suppressWarnings(as.numeric(model$pars$value))), na.rm = TRUE)
   if (!has_random_effects) {
-    return(list(parameter_table = .ctJuliaParameterTable(model),
+    no_re_table <- .ctJuliaParameterTable(model)
+    return(list(parameter_table = no_re_table,
       nlatent = original_nlatent, nlatent_augmented = original_nlatent,
-      dynamic_state_indices = seq_len(original_nlatent),
+      dynamic_state_indices = .ctJuliaDerrind(no_re_table, original_nlatent, original_nlatent),
       random_effects = data.frame(), rewritten_cells = data.frame()))
   }
 
@@ -1370,14 +1427,16 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # (DRIFT/CINT/etc.) random effects -- exactly the combination in
   # ctsemTutorial.qmd's individual-differences example, which failed with a
   # LAPACKException from the Schur-based Lyapunov solver once the augmented
-  # dimension exceeded 4. This does not yet replicate Stan's further
-  # optimization of also excluding original states with structurally zero,
-  # uncoupled diffusion (`derrind`'s first two steps) -- it conservatively
-  # includes every original state, which is correct but not maximally
-  # reduced.
+  # dimension exceeded 4. `table` has already been padded to
+  # `nlatent_augmented` for DRIFT/DIFFUSION/JAx/Jtd above, so
+  # `.ctJuliaDerrind` now applies Stan's further reduction (`derrind`'s first
+  # two steps: drop original states with structurally zero, drift-uncoupled
+  # diffusion) on top of this exclusion rather than instead of it -- see that
+  # function's comment for what "structurally zero" must mean and why the
+  # drift-coupling closure cannot be skipped.
   list(parameter_table = table, nlatent = original_nlatent,
     nlatent_augmented = nlatent_augmented,
-    dynamic_state_indices = seq_len(original_nlatent),
+    dynamic_state_indices = .ctJuliaDerrind(table, original_nlatent, nlatent_augmented),
     random_effects = do.call(rbind, covariance_rows), rewritten_cells = rewritten)
 }
 
