@@ -151,6 +151,7 @@ test_that("one entry point, one contract: the arguments mean the same on both ba
 })
 
 test_that("unsupported uncertainty methods are refused by name, not silently", {
+  skip_without_julia()
   model <- .backend_uncertainty_model()
   data <- .backend_uncertainty_data()[1:24, ]
   julia_fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))

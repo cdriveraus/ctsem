@@ -179,6 +179,7 @@ test_that("a Julia model with no state-dependent cells summarises", {
 })
 
 test_that("state-dependent cells are named and follow the state they are given", {
+  skip_without_julia()
   model <- .summary_model()
   data <- .summary_data()
   spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))

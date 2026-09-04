@@ -54,7 +54,7 @@ jobs:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
       R_KEEP_PKG_SOURCE: yes
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
       - uses: r-lib/actions/setup-pandoc@v2
           
       - uses: r-lib/actions/setup-r@v2
@@ -64,7 +64,13 @@ jobs:
           use-public-rspm: true
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
-          extra-packages: any::rcmdcheck, local::.
+          # No `local::.`. The action's `packages` input already defaults to
+          # `deps::., any::sessioninfo` and is concatenated with this one, so
+          # ctsem's dependencies arrive either way; `local::.` additionally
+          # installed ctsem itself, which meant compiling all three Stan models
+          # here and then again inside R CMD check, which always installs into
+          # its own library.
+          extra-packages: any::rcmdcheck
           needs: check
       
       - name: executable Permissions
@@ -84,21 +90,43 @@ jobs:
           build_args: ${{ (github.event_name == 'workflow_dispatch' && inputs.vignettes == true) && 'c("--no-manual", "--compact-vignettes=gs+qpdf")' || 'c("--no-manual", "--no-build-vignettes")' }}
           error-on: '"error"'
           upload-snapshots: true
+          # This action otherwise uploads the whole check directory whenever the
+          # check fails. Here that is ~250 MB, almost all of it the installed
+          # package and its compiled Stan objects. The logs below are the part
+          # anyone actually reads.
+          upload-results: 'never'
+
+      # Kept on success too: --as-cran records per-section and per-example
+      # timings in 00check.log, which is how the cost of a run gets attributed
+      # without guessing.
+      - name: Upload check logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: check-logs-${{ matrix.config.os }}-r${{ matrix.config.r }}
+          path: |
+            check/**/00check.log
+            check/**/00install.out
+            check/**/*.Rout
+            check/**/*.Rout.fail
+          if-no-files-found: ignore
+          retention-days: 14
 
   check-success:
     needs: R-CMD-check
     runs-on: ubuntu-latest
     if: always()
     steps:
-      - uses: actions/github-script@v6
-        with:
-          script: |
-            const jobs = await github.rest.actions.listJobsForWorkflowRun({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              run_id: context.runId,
-            });
-            const checkJobs = jobs.data.jobs.filter(job => job.name.includes('R-CMD-check') && job.name !== 'check-success');
-            const successCount = checkJobs.filter(job => job.conclusion === 'success').length;
-            console.log(`${successCount} of ${checkJobs.length} jobs succeeded`);
-            if (successCount < 2) process.exit(1);
+      # `needs['R-CMD-check'].result` aggregates the matrix: 'success' only when
+      # every instance that ran succeeded, whatever the count. Index syntax
+      # because the job id has hyphens, which are also the subtraction operator.
+      #
+      # The script this replaces filtered jobs on `name.includes('R-CMD-check')`,
+      # but the matrix jobs are named `ubuntu-latest (release)` and so on, so it
+      # matched nothing and failed every run in the history -- run 213 included,
+      # where all five checks were green. Its `successCount < 2` also assumed a
+      # five-entry matrix the tiered one could never satisfy.
+      - name: Every check job that ran must have succeeded
+        run: |
+          echo "R-CMD-check matrix result: ${{ needs['R-CMD-check'].result }}"
+          test "${{ needs['R-CMD-check'].result }}" = "success"
