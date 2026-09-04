@@ -217,16 +217,41 @@ print.ctLaplaceCheck <- function(x, ...) {
   invisible(x)
 }
 
-# Raw parameter labels for the correction table.
+# A name for every element of the raw (unconstrained) parameter vector.
 #
-# The Laplace layout is: the model's own free parameters, then one block per
-# level of population scales followed by that level's unconstrained
-# correlations, then TI-predictor effects. `.ctJuliaLaplaceSpec` builds it and
-# records the indices, so the names are read off those rather than recounted
-# here.
+# These names are what a user is shown when something has to point at one raw
+# coordinate: the identifiability warning and `fit$identifiability`,
+# `ctIdentify()`, the Laplace correction table, `ctReport()`'s profile
+# component, the column names of `fit$estimate$rawposterior`. So the whole
+# vector has to be namable, not most of it: a positional `raw[17]` in that
+# list says nothing about which part of the model is involved, which is the
+# one thing the reader needs.
+#
+# `.ctJuliaCheckLayout()` (R/ctJuliaBackend.R) enumerates the blocks the raw
+# vector is made of, and they tile `1:npar`. Every block therefore has a name
+# here, spelled to match what the same quantity is called elsewhere:
+#
+#   model parameters              the cell's own name         drift_eta2_eta1
+#   population scales             popsd_<parameter>           popsd_drift_eta1
+#   population correlations       rawcor_<par>__<par>         rawcor_a__b
+#   TI-predictor coefficients     rawtipredeffect_<par>_<ti>  as stan's
+#                                                             ctFitgetparnamesfromraw()
+#   sampled TI-predictor values   tipredvalue_<ti>_<subject>
+#
+# Two of those need the spec rather than the parameter table. The augmented
+# route (`intoverpop='augmented'`) keeps its population scales and correlations
+# *in* the table, under internal cell names (`julia_popcov_3_3`), so they are
+# relabelled from `random_effects` to the same `popsd_`/`rawcor_` spelling the
+# Laplace route uses -- one conceptual parameter, one name, whichever route
+# produced it. TI-predictor coefficients and sampled TI-predictor values are
+# not matrix cells at all and appear only on the spec.
+#
+# A leftover `raw[i]` is therefore a block nobody named rather than a name, and
+# is reported as such: see `.ctBackendReportUnnamedParameters()` below.
 .ctBackendRawParameterNames <- function(fit, npar) {
   names <- paste0("raw[", seq_len(npar), "]")
-  table <- fit$model_spec$parameter_table
+  spec <- fit$model_spec
+  table <- spec$parameter_table
   if (!is.null(table) && nrow(table)) {
     free <- !is.na(table$parnumber) & table$parnumber > 0
     number <- as.integer(table$parnumber[free])
@@ -234,14 +259,27 @@ print.ctLaplaceCheck <- function(x, ...) {
     keep <- !duplicated(number) & number <= npar
     names[number[keep]] <- label[keep]
   }
-  laplace <- fit$model_spec$laplace
+
+  # The augmented route's population scales and correlations, which the loop
+  # above just labelled with their internal cell names.
+  effects <- spec$random_effects
+  if (!is.null(effects) && length(effects) && nrow(effects)) {
+    index <- as.integer(effects$parameter)
+    label <- ifelse(effects$type %in% "correlation",
+      paste0("rawcor_", as.character(effects$param)),
+      paste0("popsd_", as.character(effects$param)))
+    keep <- !is.na(index) & index >= 1L & index <= npar & !is.na(effects$param)
+    names[index[keep]] <- label[keep]
+  }
+
+  laplace <- spec$laplace
   if (!is.null(laplace)) {
     for (level in laplace$levels) {
       varying <- as.character(level$param)
+      suffix <- if (length(laplace$levels) > 1L) paste0(".", level$name) else ""
       sd_index <- as.integer(level$sd_index)
       if (length(sd_index) && length(varying) == length(sd_index)) {
-        names[sd_index] <- paste0("popsd_", varying,
-          if (length(laplace$levels) > 1L) paste0(".", level$name) else "")
+        names[sd_index] <- paste0("popsd_", varying, suffix)
       }
       cor_index <- as.integer(level$cor_index)
       if (length(cor_index) && length(varying) > 1L) {
@@ -249,11 +287,97 @@ print.ctLaplaceCheck <- function(x, ...) {
           arr.ind = TRUE)
         pairs <- pairs[order(pairs[, "col"], pairs[, "row"]), , drop = FALSE]
         n <- min(nrow(pairs), length(cor_index))
+        # Two underscores between the pair, as `summary()`'s `rawpopcorr`
+        # column names use: parameter names contain single underscores
+        # themselves (`drift_eta2_eta1`), so a single one does not say where
+        # the first name stops.
         names[cor_index[seq_len(n)]] <- paste0("rawcor_",
-          varying[pairs[seq_len(n), "row"]], "_", varying[pairs[seq_len(n), "col"]],
-          if (length(laplace$levels) > 1L) paste0(".", level$name) else "")
+          varying[pairs[seq_len(n), "row"]], "__", varying[pairs[seq_len(n), "col"]],
+          suffix)
       }
     }
   }
+
+  # TI-predictor coefficients, named after the parameter they act on and the
+  # predictor they carry -- the same pair, in the same order, that the stan
+  # path's `ctFitgetparnamesfromraw()` spells `rawtipredeffect_<par>_<ti>`.
+  # Named last of the three parameter blocks because the target parameter's own
+  # name has to be resolved first.
+  tipred_names <- spec$TIpredNames
+  if (is.null(tipred_names)) tipred_names <- spec$model$TIpredNames
+  ti_effects <- spec$ti_effects
+  if (!is.null(ti_effects) && length(ti_effects) && nrow(ti_effects)) {
+    index <- as.integer(ti_effects$coefficient)
+    target <- as.integer(ti_effects$parameter)
+    predictor <- .ctBackendPredictorLabel(tipred_names, ti_effects$predictor)
+    keep <- !is.na(index) & index >= 1L & index <= npar &
+      !is.na(target) & target >= 1L & target <= npar
+    names[index[keep]] <- paste0("rawtipredeffect_", names[target[keep]], "_",
+      predictor[keep])
+  }
+
+  # Sampled values for missing TI-predictor cells: one parameter per cell, so
+  # the name says which subject's which predictor. The subject label is the
+  # user's own id where the spec still carries the data (`ti_missing$subject`
+  # indexes subjects in first-appearance order, as `.ctJuliaTIData()` builds
+  # them), and the position otherwise.
+  ti_missing <- spec$ti_missing
+  if (!is.null(ti_missing) && length(ti_missing) && nrow(ti_missing)) {
+    index <- as.integer(ti_missing$parameter)
+    predictor <- .ctBackendPredictorLabel(tipred_names, ti_missing$predictor)
+    subject <- .ctBackendSubjectLabel(fit, ti_missing$subject)
+    keep <- !is.na(index) & index >= 1L & index <= npar
+    names[index[keep]] <- paste0("tipredvalue_", predictor[keep], "_",
+      subject[keep])
+  }
+
+  .ctBackendReportUnnamedParameters(names, spec)
   names
+}
+
+# A predictor's own name, or its position when the spec carries no name for it.
+.ctBackendPredictorLabel <- function(tipred_names, predictor) {
+  predictor <- as.integer(predictor)
+  label <- if (is.null(tipred_names)) rep(NA_character_, length(predictor)) else
+    as.character(tipred_names)[predictor]
+  ifelse(is.na(label) | !nzchar(label), paste0("TI", predictor), label)
+}
+
+# The subject id a raw-vector index belongs to, as the user wrote it.
+#
+# `.ctFitIdMap()` (R/ctBackendKalman.R) is the position-to-original-id mapping
+# every other user-facing report speaks through, so the name here says the same
+# id the rest of the output does. It needs the long data frame, which a fit
+# carries on its spec and a *prepared* spec does not -- `ctFit()` overwrites
+# the top-level `$data` of what it returns with the prepared standata -- so the
+# position is the fallback, spelled so it cannot be mistaken for an id.
+.ctBackendSubjectLabel <- function(fit, subject) {
+  subject <- as.integer(subject)
+  map <- try(.ctFitIdMap(fit), silent = TRUE)
+  label <- if (inherits(map, "try-error") || !is.data.frame(map) || !nrow(map)) {
+    rep(NA_character_, length(subject))
+  } else as.character(map$original)[match(subject, map$new)]
+  ifelse(is.na(label), paste0("subject", subject), label)
+}
+
+# Say so when a raw index had no name to give.
+#
+# `raw[17]` is a defensible last resort, but it is not a name, and shipping it
+# inside a list of names reads as one. The blocks above cover every block
+# `.ctJuliaCheckLayout()` knows about, so a gap here means the raw vector grew
+# a block that nobody taught this function to name -- a developer's problem,
+# and one that otherwise reaches a user as an unreadable identifiability
+# warning. Reported only when the spec is complete enough to have been
+# namable: a fit restored without its parameter table has no gap, it has no
+# spec.
+.ctBackendReportUnnamedParameters <- function(names, spec) {
+  table <- spec$parameter_table
+  if (is.null(table) || !nrow(table)) return(invisible(NULL))
+  unnamed <- which(startsWith(names, "raw["))
+  if (!length(unnamed)) return(invisible(NULL))
+  warning("Raw parameter ", paste(unnamed, collapse = ", "),
+    " could not be named, and is reported by position. This is a gap in ",
+    "ctsem's parameter naming rather than a problem with the model; please ",
+    "report it.", call. = FALSE)
+  invisible(NULL)
 }
