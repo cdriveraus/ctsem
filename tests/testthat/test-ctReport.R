@@ -263,12 +263,15 @@ test_that("ctReport writes the same folder for a julia fit, and its own diagnost
     manifestNames = c("Y1", "Y2"), latentNames = c("eta1", "eta2"),
     LAMBDA = diag(2), MANIFESTVAR = diag(.2, 2), MANIFESTMEANS = matrix(0, 2, 1),
     n.TIpred = 1, TIpredNames = "TI1"))
-  # priors = FALSE: at HEAD this model shape (2 latents, 1 covariate, default
-  # tipred effects) fails .ctBackendPriorSpec() with "the Stan layout accounts
-  # for 21 of 24 free parameters". Nothing to do with ctReport, and the report
-  # needs a fit rather than a prior.
+  # priors = TRUE, and it has to be. 24 free parameters against 100 observations
+  # of pure noise is not identified, so an unregularised fit walks out to
+  # abs(raw) ~ 25 where the surface is nothing like the quadratic its own
+  # Hessian implies -- the calibration check below then fails on the model
+  # rather than on ctReport. This read priors = FALSE to dodge a
+  # .ctBackendPriorSpec() count mismatch ("the Stan layout accounts for 21 of 24
+  # free parameters") that 4b5be586 fixed on a branch merged alongside this one.
   fit <- suppressWarnings(suppressMessages(ctFit(dat, m, backend = "julia",
-    cores = 1, priors = FALSE)))
+    cores = 1, priors = TRUE)))
 
   d <- .ctReportFolder()
   res <- suppressWarnings(suppressMessages(
