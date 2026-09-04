@@ -83,6 +83,7 @@ Suggests:
     pdftools,
     rstudioapi,
     quarto,
+    qgraph,
     JuliaConnectoR,
     digest,
     withr
