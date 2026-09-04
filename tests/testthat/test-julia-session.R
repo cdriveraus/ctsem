@@ -63,10 +63,20 @@ test_that("a model and a data frame fit end to end", {
     }
     data.frame(id = i, time = seq_len(nobs) - 1, Y1 = out)
   }))
+  # MANIFESTVAR is pinned at the sd the data were generated with rather than
+  # left free. Free process noise *and* free measurement error on a single
+  # indicator over 12 subjects and 6 occasions does not identify both: mvarY1
+  # walks to raw 10.17, where the variance transform is flat to machine
+  # precision, and the saturation guard then correctly reports the fit as not
+  # converged -- identically on both routes, with pinned or random starting
+  # values. That is the guard working, and this file's subject is the session
+  # and worker path, not weak identification. The guard has its own coverage in
+  # test-julia-binary.R ("a saturated optimum is not reported as converged"),
+  # so pinning here loses nothing.
   model <- suppressWarnings(suppressMessages(ctModel(type = "ct",
     manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1),
     T0MEANS = matrix(0), CINT = matrix(0), T0VAR = matrix(0.5),
-    MANIFESTMEANS = matrix("mmean"))))
+    MANIFESTVAR = matrix(0.3), MANIFESTMEANS = matrix("mmean"))))
   model$pars$indvarying <- FALSE
   model$pars$indvarying[model$pars$param %in% "mmean"] <- TRUE
 
