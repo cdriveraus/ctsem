@@ -315,7 +315,7 @@ ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
         training[heldout, model$manifestNames] <- NA
         trainingfit <- .ctFitReplaceData(fit, training)
         result <- try(.ctJuliaOptimise(trainingfit$model_spec, start,
-          backendcontrol = fit$args$backendcontrol, cores = cores, tol = tol),
+          backendcontrol = fit$args$resolved$backendcontrol, cores = cores, tol = tol),
           silent = TRUE)
         if (inherits(result, "try-error")) return(NULL)
         pars <- as.numeric(result$minimizer)

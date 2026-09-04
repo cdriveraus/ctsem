@@ -250,7 +250,7 @@ test_that("a fit over the joint density runs and carries its trajectory", {
   # as it always has.
   expect_false(npar == length(fit$estimate$innovations))
   expect_identical(fit$estimate$loglik_type, "joint")
-  expect_identical(fit$args$intoverstates, FALSE)
+  expect_identical(fit$args$resolved$intoverstates, FALSE)
   expect_true(is.finite(fit$estimate$loglik))
 })
 
