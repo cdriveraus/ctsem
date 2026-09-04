@@ -80,7 +80,7 @@ ctGenerateFromPriors <- function(cts,datastruct=NA, is=FALSE,
   if(inherits(cts, 'ctJuliaFit')) stop(
     'This function is not available for julia backend fits yet: it reads the ',
     'stan fit structures (ctstanmodelbase, standata, args) that a julia fit ',
-    'does not carry. ctFitCovCheck(), ctACFresiduals() and ctPostPredPlots() ',
+    'does not carry. ctFitCheckCov(), ctACFresiduals() and ctPostPredPlots() ',
     'do work on a julia fit.',
     call.=FALSE)
 
