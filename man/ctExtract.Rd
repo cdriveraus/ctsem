@@ -11,6 +11,7 @@ ctExtract(
   cores = 1,
   nsamples = "all",
   subjects = "all",
+  state = NULL,
   ...
 )
 }
@@ -24,9 +25,25 @@ ctExtract(
 \item{nsamples}{either 'all' or an integer denoting number of random samples to extract.}
 
 \item{subjects}{either 'all', or an integer vector denoting subjects to extract.}
+
+\item{state}{The latent state at which state dependent cells of the
+\code{pop_*} matrices are evaluated: \code{'T0MEANS'} (the default),
+\code{'mean'}, \code{'asymptotic'}, or a numeric state vector. Only
+\code{backend='julia'} can materialise the matrices anywhere other than the
+default, so anything else is an error on a stan fit rather than being
+silently ignored. Irrelevant to a linear model, whose matrices are the same
+everywhere. Note that it moves the \code{pop_*} arrays only: the subject
+matrices \code{subjectMatrices=TRUE} adds come from the filter, and are
+always at each subject's own last observed row.}
+
+\item{...}{not used.}
 }
 \value{
-Array of posterior samples.
+A list of posterior sample arrays. The point the \code{pop_*}
+matrices were evaluated at is recorded in the \code{'evaluatedAt'} attribute;
+nothing is messaged, because the summaries call this repeatedly and say it
+once themselves. \code{\link{ctModelIsNonlinear}} answers whether the point
+matters for this model at all.
 }
 \description{
 Extract samples from a ctStanFit object
@@ -34,5 +51,6 @@ Extract samples from a ctStanFit object
 \examples{
 \donttest{
 e = ctExtract(ctstantestfit)
+attr(e, 'evaluatedAt')
 }
 }

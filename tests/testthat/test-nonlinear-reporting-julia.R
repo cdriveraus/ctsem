@@ -103,6 +103,39 @@ test_that('the evaluation point changes the dependent cell and nothing else', {
   expect_equal(explicit$DRIFT[1, 1], 2 * atzero$DRIFT[1, 1], tolerance = 1e-6)
 })
 
+# The julia half of ctExtract()'s state= argument; the stan half (which refuses
+# it) is in test-context-dependence.R. Before this, the shorthands reached the
+# engine as a bare string and died there with a Julia MethodError, an explicit
+# vector worked but came back with nothing saying where it had been evaluated,
+# and the stan method dropped the argument entirely.
+test_that('ctExtract honours state= on julia and records the point', {
+  fit <- nonlinearFit()
+  default <- suppressMessages(ctExtract(fit))
+  mean <- suppressMessages(ctExtract(fit, state = 'mean'))
+  asymptotic <- suppressMessages(ctExtract(fit, state = 'asymptotic'))
+  atzero <- suppressMessages(ctExtract(fit, state = c(0, 0)))
+  atfive <- suppressMessages(ctExtract(fit, state = c(0, 5)))
+
+  # Same words as ctSummaryMatrices() uses for the same points.
+  expect_identical(attr(default, 'evaluatedAt'), ctsem:::.ctContextPopLabel)
+  expect_identical(attr(mean, 'evaluatedAt'), 'the mean smoothed latent state')
+  expect_identical(attr(asymptotic, 'evaluatedAt'),
+    "the system's asymptotic (fixed point) state")
+  expect_identical(attr(atfive, 'evaluatedAt'), 'the supplied state')
+
+  # The state dependent cell moves and the others do not -- the same claim
+  # ctSummaryMatrices() makes, checked on the arrays it is computed from.
+  expect_false(isTRUE(all.equal(default$pop_DRIFT[, 1, 1], mean$pop_DRIFT[, 1, 1])))
+  expect_equal(default$pop_DRIFT[, 2, 2], mean$pop_DRIFT[, 2, 2])
+  expect_equal(default$pop_DIFFUSION, mean$pop_DIFFUSION)
+  # DRIFT[1,1] is dr11 * (1 + 0.2 * eta2): eta2 = 5 doubles it against eta2 = 0.
+  expect_equal(atfive$pop_DRIFT[, 1, 1], 2 * atzero$pop_DRIFT[, 1, 1], tolerance = 1e-6)
+
+  # Recorded, never messaged: ctExtract() is called repeatedly by the summaries.
+  expect_no_message(ctExtract(fit))
+  expect_no_message(ctExtract(fit, state = 'mean'))
+})
+
 test_that('the summary names the point, and does not name Jacobian blocks', {
   note <- summary(nonlinearFit())$parmatNote
   expect_match(note, 'DRIFT')

@@ -217,6 +217,28 @@ test_that('ctDiscretePars refuses state= for a stan fit, with a reason', {
     "backend='julia'")
 })
 
+# ctExtract() forwarded state= to the engine on julia and swallowed it through
+# `...` on stan, so the same call returned matrices at two different points and
+# neither said which. This is the stan half; the julia half is in
+# test-nonlinear-reporting-julia.R, where a state dependent fit exists.
+test_that('ctExtract refuses state= for a stan fit and names the point it used', {
+  skip_if_not(exists('ctstantestfit'))
+  expect_error(ctExtract(ctstantestfit, state = 'mean'), "backend='julia'")
+  expect_error(ctExtract(ctstantestfit, state = c(0, 0)), "backend='julia'")
+
+  # The default is not refused, and it is labelled in the words every other
+  # reporting function uses for that point.
+  e <- suppressWarnings(suppressMessages(ctExtract(ctstantestfit)))
+  expect_identical(attr(e, 'evaluatedAt'), ctsem:::.ctContextPopLabel)
+  expect_identical(attr(suppressWarnings(suppressMessages(
+    ctExtract(ctstantestfit, state = 'T0MEANS'))), 'evaluatedAt'),
+    ctsem:::.ctContextPopLabel)
+
+  # It records; it must not message, because summary() and ctSummaryMatrices()
+  # call it and say the sentence once themselves.
+  expect_no_message(suppressWarnings(ctExtract(ctstantestfit)))
+})
+
 # Phase portrait, on the linear side where no engine is needed and the answers
 # are all in closed form.
 test_that('the phase portrait field and fixed point agree with each other', {
