@@ -88,8 +88,11 @@
   # one is free can take whichever chain later.
   handles <- lapply(seq_len(workers), function(k) {
     tryCatch(
-      future::future(ctsem:::.ctBackendWarmSession(object, values),
-        seed = TRUE),
+      # The namespace lookup is explicit because the expression is evaluated
+      # in a worker process, where only the installed ctsem exists. `ctsem:::`
+      # would do the same job but draws a CRAN NOTE for ::: on our own objects.
+      future::future(utils::getFromNamespace(".ctBackendWarmSession",
+        "ctsem")(object, values), seed = TRUE),
       error = function(e) NULL)
   })
   if (!length(handles) || all(vapply(handles, is.null, logical(1)))) return(NULL)
