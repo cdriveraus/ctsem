@@ -221,7 +221,11 @@ linear model elements are fit exactly with only a single step.
 optimum, how nonlinear each observation interval is and refines only the intervals that need it;
 \code{substeptol} (default 0.01) is the largest acceptable linearisation error as a fraction of the
 predicted state standard deviation, and \code{maxsubsteps} (default 64) caps an interval.
-\code{maxtimestep} remains a ceiling on the step. The choice is reported in \code{fit$estimate$substeps}.}
+\code{maxtimestep} remains a ceiling on the step. The choice is reported in \code{fit$estimate$substeps}.
+\code{transition = 'euler'} (julia backend, \code{intoverstates = FALSE} only) replaces the exponential
+step between substeps of the state-explicit path with plain Euler-Maruyama, for a reference that
+shares no approximation with the filter; it needs a fine \code{maxtimestep}. See also
+\code{\link{ctParticleLik}}.}
 
 \item{nopriors}{deprecated, use priors argument. logical. If TRUE, any priors are disabled -- sometimes desirable for optimization.}
 

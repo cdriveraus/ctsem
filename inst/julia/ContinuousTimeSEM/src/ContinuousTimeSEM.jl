@@ -88,6 +88,7 @@ include("binary_measurement.jl")
 # exactly what a sampled state supplies, so the state path evaluates the same
 # kernels the filter integrates.
 include("state_sampling.jl")
+include("particle_filter.jl")
 include("sample_density.jl")
 include("sample_nuts.jl")
 include("sample_adapt.jl")

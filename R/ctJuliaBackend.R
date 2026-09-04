@@ -1893,6 +1893,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     tol = as.numeric(.ctJuliaOr(model$nlcontrol$substeptol, 0.01))[1L],
     max = as.integer(.ctJuliaOr(model$nlcontrol$maxsubsteps, 64L))[1L],
     floor = max_timestep) else NULL
+  # The state-explicit path's step between substeps; see `_ctsem_transition`.
+  transition <- as.character(.ctJuliaOr(model$nlcontrol$transition, "exponential"))[1L]
   laplace <- NULL
   if (intoverpop %in% c("laplace", "none")) {
     # No state augmentation at all: the model the engine filters is the plain
@@ -1996,6 +1998,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     priors = prior_spec,
     max_timestep = max_timestep,
     substeps = substeps,
+    transition = transition,
     # A discrete-time model is the same filter with a different discretization:
     # DRIFT, CINT and DIFFUSION are already the one-step quantities, so the
     # exponential, the Lyapunov solve and the intercept solve all collapse.
@@ -2233,12 +2236,14 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       call. = FALSE)
   }
   npar <- max(1L, as.integer(npar)[1L])
-  key <- paste0(.ctJuliaObjectiveKey(spec), "|joint|", npar)
+  transition <- .ctJuliaOr(spec$transition, "exponential")
+  key <- paste0(.ctJuliaObjectiveKey(spec), "|joint|", npar, "|", transition)
   if (exists(key, envir = .ct_julia_cache$objectives, inherits = FALSE)) {
     return(get(key, envir = .ct_julia_cache$objectives, inherits = FALSE))
   }
   module <- .ctJuliaModule(spec$project)
-  objective <- module$ctsem_joint_objective(.ctJuliaObjective(spec), npar)
+  objective <- module$ctsem_joint_objective(.ctJuliaObjective(spec), npar,
+    transition = transition)
   assign(key, objective, envir = .ct_julia_cache$objectives)
   objective
 }
