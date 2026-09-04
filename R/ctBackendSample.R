@@ -628,6 +628,9 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
   kept <- if (isTRUE(saveEffects)) as.integer(result$ndim) else as.integer(result$npar)
   raw <- matrix(as.numeric(result$draws), nrow = kept)
   posterior <- t(raw[seq_len(npar), , drop = FALSE])
+  # Named here rather than through `.ctFitNameRawUncertainty()`, because the
+  # covariance and the standard errors below are computed *from* this matrix and
+  # inherit its names. Same contract, one step earlier.
   colnames(posterior) <- .ctBackendRawParameterNames(fit, npar)
 
   out <- fit

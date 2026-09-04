@@ -237,6 +237,7 @@ ctLaplaceCorrect <- function(fit, draws = c("normal", "imis", "keep"),
     fit$estimate$cov <- newcov
     fit$estimate$se <- sqrt(diag(newcov))
     fit$estimate$rawposterior <- samples
+    fit <- .ctFitNameRawUncertainty(fit)
     # The constrained draws describe whatever raw draws they were built from,
     # so they are refreshed here rather than left to disagree with the ones
     # above.

@@ -120,6 +120,74 @@
   unlist(ctFitgetparnamesfromraw(fit))
 }
 
+# Label the raw-scale uncertainty fields -- the draws, their covariance, and the
+# standard errors read off its diagonal -- with the raw parameter names, so that
+# `fit$estimate$se` or `apply(fit$estimate$rawposterior, 2, quantile)` says which
+# parameter each column is rather than leaving the reader to count.
+#
+# All three together, and on both backends, or none of them. Two measured
+# constraints leave no other rule. `sd(rawposterior)` is asserted equal to
+# `sqrt(diag(cov))` (test-backend-uncertainty.R), so naming the draws without
+# the covariance makes two views of one quantity differ in shape; and julia's
+# `estimate$cov` is compared against stan's `stanfit$cov` in the same file, so
+# naming one backend and not the other is exactly the "accepted on one backend,
+# ignored on the other" trap. Hence one helper, called from every writer that
+# would otherwise leave them bare -- `.ctBackendUncertainty()`,
+# `ctOptimUncertainty()`, `ctLaplaceCorrect()` and `ctFit()`. `ctSample()` is
+# the exception and needs no call: it names its draws where it builds them and
+# takes the covariance and the standard errors from that named matrix.
+#
+# Names are applied only when there is exactly one per column.
+# `.ctBackendRawParameterNames()` names every element by construction, but
+# stan's `ctFitgetparnamesfromraw()` is assembled from the model object and
+# needs one that is fully built: inside `stanoptimis()` the fit is a stub with
+# no `ctstanmodelbase`, where asking raises rather than returning short. That is
+# why `ctFit()` calls this again once the object is complete. An unnamed field
+# is the honest outcome when the names cannot be trusted to line up; a
+# misaligned one is not.
+#
+# One thing the names carry rather than hide. The two backends spell the
+# *random-effects* blocks differently -- julia's `popsd_mm1` and
+# `rawcor_mm2__mm1` against stan's `mm1_SD` and `mm2_mm1_corr`. Model
+# parameters and TI-predictor effects agree exactly, and the vectors are the
+# same length in the same order, so nothing is misaligned; only the spelling
+# differs. That predates this and already reaches users through
+# `ctCoverageCheck()` and `ctReport()`, which read the same two name functions.
+# Unifying it means changing a user-visible vocabulary on one backend, which is
+# a decision of its own rather than a side effect of labelling three fields.
+.ctFitNameRawUncertainty <- function(fit) {
+  julia <- inherits(fit, 'ctJuliaFit')
+  covariance <- if(julia) fit$estimate$cov else fit$stanfit$cov
+  samples <- if(julia) fit$estimate$rawposterior else fit$stanfit$rawposterior
+  npar <- if(!is.null(covariance)) ncol(covariance) else
+    if(!is.null(samples)) ncol(samples) else NULL
+  if(is.null(npar) || !length(npar)) return(fit)
+
+  parnames <- try(.ctFitRawParNames(fit), silent = TRUE)
+  if(inherits(parnames, 'try-error') || length(parnames) != npar ||
+    anyNA(parnames)) return(fit)
+  parnames <- as.character(parnames)
+
+  if(!is.null(covariance) && nrow(covariance) == npar && ncol(covariance) == npar){
+    dimnames(covariance) <- list(parnames, parnames)
+  }
+  if(!is.null(samples) && ncol(samples) == npar) colnames(samples) <- parnames
+
+  if(julia){
+    fit$estimate$cov <- covariance
+    fit$estimate$rawposterior <- samples
+    # Named, not recomputed: every writer of `se` here sets it to
+    # `sqrt(diag(cov))` already, and relabelling cannot silently change a value.
+    if(length(fit$estimate$se) == npar) names(fit$estimate$se) <- parnames
+  } else {
+    # Stan carries no `stanfit$se`; its standard errors are read from the
+    # covariance where they are wanted, and now come out named when they are.
+    fit$stanfit$cov <- covariance
+    fit$stanfit$rawposterior <- samples
+  }
+  fit
+}
+
 .ctBackendModel <- .ctFitModelObject
 
 # Names and dimensions of everything the engine can materialize, plus which

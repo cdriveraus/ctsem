@@ -1455,6 +1455,9 @@ install.packages("rstan", repos = c("https://mc-stan.org/r-packages/", getOption
       ctstanmodelbase=ctstanmodel, ctstanmodel=ctm,stanmodel=sm, stanfit=stanfit)
     out$backend <- 'stan'
     class(out) <- c('ctStanFit','ctFit')
+    # Not before this point: naming the raw draws and covariance needs
+    # `ctstanmodelbase`, which the fit only has once assembled here.
+    out <- .ctFitNameRawUncertainty(out)
     out$stanfit$kalman<-suppressMessages(ctKalmanArray(out,pointest = TRUE))
   }
 
