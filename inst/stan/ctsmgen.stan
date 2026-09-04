@@ -564,8 +564,8 @@ model{
     matrix[popcovn, nindvarying] x;
     if(nindvarying){
       for(ri in 1:rows(x)){
-        x[ri,] = (rawpopcovchol * 
-          to_vector(normal_rng(rawpopmeans[indvaryingindex],rep_vector(1,nindvarying))) )';
+        x[ri,] = (rawpopmeans[indvaryingindex] + rawpopcovchol * 
+          to_vector(normal_rng(rep_vector(0,nindvarying),rep_vector(1,nindvarying))) )';
       }
     }
     
