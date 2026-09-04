@@ -12,16 +12,27 @@ commits, and a stale remote makes every later question harder.
 
 ## The build
 
-**Delete `src/stanExports_*.o` before any install where `inst/stan` has
-changed.** Until September 2026 the makefile did not declare the generated
-headers as dependencies of their objects, so a months-old object was silently
-relinked. The symptom is a data dimension mismatch that reads exactly like a
-code bug, and it cost a full verification cycle. `configure` now injects
-explicit-name rules per model, so this should be fixed, but verify rather than
-assume after any change to how `src/` is produced: touch a `.stan` file with a
-*content* change, reinstall, and confirm only that object rebuilt. A
-comment-only edit proves nothing, because `stanc` strips comments and the header
-does not change either.
+**Objects rebuild by themselves now; do not delete them.** Until 2026-09-03
+the makefile did not declare the generated headers as prerequisites of their
+objects, so a months-old object was silently relinked when a `.stan` file
+changed, and the working advice was to delete `src/stanExports_*.o` before
+installing. `configure` now emits an explicit rule per model, so make
+rebuilds exactly the models whose headers changed and nothing else. The
+deletion step is obsolete and should not be reinstated.
+
+If you ever change how `src/` is produced, re-prove this from NOTHING rather
+than from a tree that already has objects. The first version of that fix
+passed a targeted rebuild on a fully built tree and broke installation from
+scratch on every platform, because its rule became make's default goal: make
+built one object, said "Nothing to be done", exited zero, and the install
+failed only at the load step with no error anywhere in the log. A build fix
+verified on a tree that already has everything built is not verified.
+
+**Two things legitimately compile from scratch and are not faults.** `R CMD
+build` runs `* cleaning src` before making a tarball, so testing a real build
+costs a full recompile; keep that rare. And a fresh ship to dev1 excludes
+objects and libraries deliberately, because Windows objects will not link on
+Linux.
 
 **Install into a library directory that already exists.** `R CMD INSTALL -l
 ../somewhere` fails immediately if the directory is absent, in a way that looks
