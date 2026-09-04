@@ -10,14 +10,23 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
 
     invlog=function (x) exp(x)/(1 + exp(x))
     
-    #gen data
-    gm <- ctModel(DRIFT= c(-.2, .2, 
+    # Gen data. Every generating matrix is stated, including the four that are
+    # not part of the design -- a free one is filled from
+    # `.ctGenerateDefaults()`, those defaults change, and the data then moves
+    # under a test that reads as though the seed fixed it. That happened to
+    # `test-binary-binary-mix.R`, whose assertions had been written against
+    # MANIFESTVAR 0.5 and were being evaluated on data generated with 0.
+    gm <- ctModel(DRIFT= c(-.2, .2,
       0,-.1),
       DIFFUSION=c(.3,0,
-        0,.4), 
+        0,.4),
       CINT=c(.1,.1),
-      # TRAITVAR=diag(.3,2), #old approach to allow individual variation 
+      # TRAITVAR=diag(.3,2), #old approach to allow individual variation
       LAMBDA= diag(1,2),
+      MANIFESTVAR=diag(0,2),
+      MANIFESTMEANS=matrix(0,2,1),
+      T0VAR=diag(1,2),
+      T0MEANS=matrix(0,2,1),
       n.latent=2,n.manifest=2,Tpoints=50)
     
     d=ctGenerate(gm,n.subjects = 50,logdtsd=.2,dtmean = .2,burnin = 20)
