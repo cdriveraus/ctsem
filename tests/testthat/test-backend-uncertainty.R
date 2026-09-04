@@ -111,6 +111,45 @@ test_that("the Hessian is exact, and agrees with the finite difference it replac
   expect_null(finite$uncertainty$details$hessian)
 })
 
+test_that("one entry point, one contract: the arguments mean the same on both backends", {
+  skip_on_cran()
+  skip_without_julia()
+
+  model <- .backend_uncertainty_model()
+  data <- .backend_uncertainty_data()
+  fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
+
+  # draws='empirical' -- which uncertainty='bootstrap' resolves to -- must
+  # actually return the bootstrap draws, not a normal cloud with the
+  # bootstrap's covariance. The signature is exact: empirical draws are the
+  # sample the covariance was computed from, so their SD *is* sqrt(diag(cov)).
+  # Normal draws are a fresh sample and miss it by sampling error.
+  boot <- suppressWarnings(suppressMessages(ctOptimUncertainty(fit,
+    uncertainty = "bootstrap", finishsamples = 200, cores = 1, verbose = 0)))
+  expect_identical(boot$uncertainty$settings$draws, "empirical")
+  expect_equal(apply(boot$estimate$rawposterior, 2, stats::sd),
+    sqrt(diag(boot$estimate$cov)), tolerance = 1e-10)
+
+  # finishsamples=NULL reuses the fit's existing draw count on both backends.
+  # This hardcoded 1000 on julia, so a second call silently resampled up.
+  small <- suppressWarnings(suppressMessages(ctOptimUncertainty(fit,
+    uncertainty = "hessian", finishsamples = 40, cores = 1, verbose = 0)))
+  again <- suppressWarnings(suppressMessages(ctOptimUncertainty(small,
+    uncertainty = "hessian", finishsamples = NULL, cores = 1, verbose = 0)))
+  expect_equal(nrow(again$estimate$rawposterior), 40L)
+
+  # control$parsteps is a stanoptimis() concept. It reached
+  # ctOptimComputeUncertainty(), which never reads it, and was recorded in
+  # $settings$control as though honoured -- same standard errors, a request
+  # apparently granted. Refused by name instead.
+  expect_error(ctOptimUncertainty(fit, uncertainty = "hessian",
+    finishsamples = 20, control = list(parsteps = 1L)),
+    "only available for backend='stan'", fixed = TRUE)
+
+  # And the class guard names both backends' fits rather than one class.
+  expect_error(ctOptimUncertainty(list(a = 1)), "ctJuliaFit")
+})
+
 test_that("unsupported uncertainty methods are refused by name, not silently", {
   model <- .backend_uncertainty_model()
   data <- .backend_uncertainty_data()[1:24, ]

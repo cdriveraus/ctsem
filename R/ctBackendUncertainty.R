@@ -169,7 +169,18 @@
     finishsamples = finishsamples, cores = cores, matsetup = NA,
     control = control, verbose = verbose, scores = scores, hessian = hessian)
 
-  if (draws == "imis") {
+  # Same three-way choice as the stan branch of `ctOptimUncertainty()`, and in
+  # the same order. `empirical` was missing here, so `uncertainty='bootstrap'`
+  # -- which `.ctResolveDraws()` resolves to `draws='empirical'` -- fell
+  # through to the normal draws below and recorded `draws='empirical'` in
+  # `$uncertainty$settings` anyway. The covariance was the bootstrap's, so
+  # nothing looked wrong; the draws were a Gaussian around the estimate, which
+  # is the one thing asking for a bootstrap says you do not want. Detectable
+  # only by noticing that `sd(rawposterior)` no longer equalled
+  # `sqrt(diag(cov))`, as it does on stan by construction.
+  if (draws == "empirical" && !is.null(uncertaintyfit$draws)) {
+    samples <- uncertaintyfit$draws
+  } else if (draws == "imis") {
     if (is.null(control$imisMaxIter)) control$imisMaxIter <- 50
     # Wider than the curvature says. The
     # proposal starts from the Hessian covariance, which on a modest sample is

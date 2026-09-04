@@ -539,19 +539,6 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
     tol=control$bootstrapTol)
 }
 
-ctOptimSurrogateDesign <- function(p, cov, globalScale, parScale, n){
-  z <- ctOptimNormalDraws(rep(0, p), cov, n)
-  sweep(z * globalScale, 2, parScale, '*')
-}
-
-ctOptimSurrogateDesignWhitened <- function(p, cov, globalScale, parScale, n){
-  cov <- ctOptimSafeCov(cov)
-  cholcov <- chol(cov)
-  z <- matrix(stats::rnorm(n * p), nrow=n)
-  z <- sweep(z * globalScale, 2, parScale, '*')
-  list(raw=z %*% cholcov, white=z, cholcov=cholcov)
-}
-
 ctOptimSurrogateDirections <- function(p, n){
   dirs <- rbind(diag(p), -diag(p))
   while(nrow(dirs) < n){
@@ -818,40 +805,6 @@ ctOptimSurrogateProfileCurvature <- function(hessWhite, est, lpgFunc,
   infoWhite <- (infoWhite + t(infoWhite)) / 2
   list(hessWhite=-infoWhite, profiles=profiles, nProfiled=length(newvals),
     nAdjusted=adjusted)
-}
-
-ctOptimSurrogateScaleUpdate <- function(design, drops, targetDrop, dropRange,
-  globalScale, parScale){
-  finite <- is.finite(drops) & drops > 0
-  if(!any(finite)) {
-    return(list(globalScale=globalScale * .5, parScale=parScale))
-  }
-  meddrop <- stats::median(drops[finite], na.rm=TRUE)
-  if(is.finite(meddrop) && meddrop > 0) {
-    mult <- sqrt(targetDrop / meddrop)
-    globalScale <- globalScale * min(2, max(.5, mult))
-  }
-  globalScale <- min(3, max(.02, globalScale))
-  
-  denom <- apply(abs(design[finite,,drop=FALSE]), 2, stats::median,
-    na.rm=TRUE)
-  denom[!is.finite(denom) | denom <= 0] <- 1
-  toofar <- is.finite(drops) & drops > dropRange[2]
-  tooclose <- is.finite(drops) & drops < dropRange[1]
-  if(sum(toofar) >= 2) {
-    pressure <- apply(abs(design[toofar,,drop=FALSE]), 2, stats::median,
-      na.rm=TRUE) / denom
-    parScale[is.finite(pressure) & pressure > 1.2] <-
-      parScale[is.finite(pressure) & pressure > 1.2] * .85
-  }
-  if(sum(tooclose) >= 2) {
-    pressure <- apply(abs(design[tooclose,,drop=FALSE]), 2, stats::median,
-      na.rm=TRUE) / denom
-    parScale[is.finite(pressure) & pressure > 1.2] <-
-      parScale[is.finite(pressure) & pressure > 1.2] * 1.15
-  }
-  parScale <- pmin(3, pmax(.2, parScale))
-  list(globalScale=globalScale, parScale=parScale)
 }
 
 ctOptimSurrogateHessian <- function(est, lpgFunc, cov, npoints=NULL,
@@ -1173,12 +1126,50 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #'
 #' Recomputes the approximate raw-parameter uncertainty for an optimized
 #' \code{\link{ctFit}} object and refreshes the approximate raw-parameter
-#' samples.
+#' samples. This is the entry point for both backends; \code{ctFit} itself
+#' calls it to finish an optimized fit.
+#'
+#' @section Backend differences:
+#' The methods are the same on both backends and the covariance they produce is
+#' comparable, but three things differ and are worth knowing before comparing
+#' output.
+#'
+#' \emph{Where the result is stored.} A \code{ctStanFit} comes back with
+#' \code{fit$stanfit$cov}, \code{fit$stanfit$rawposterior} and
+#' \code{fit$stanfit$uncertainty}; a \code{ctJuliaFit} with
+#' \code{fit$estimate$cov}, \code{fit$estimate$se},
+#' \code{fit$estimate$rawposterior} and \code{fit$uncertainty}. Both record the
+#' resolved settings in \code{$uncertainty$settings}.
+#'
+#' \emph{The Hessian.} The stan path finite-differences its gradient with a
+#' single global step (\code{control$hessianStep}). The julia engine
+#' differentiates its own reverse-mode gradient in forward mode, so its
+#' Hessian is exact; \code{control$analyticHessian = FALSE} falls back to the
+#' shared finite difference for comparison. The two agree to about 1e-4 on a
+#' well-conditioned model.
+#'
+#' \emph{Backend-specific arguments.} \code{uncertainty='fullbootstrap'} and
+#' its \code{control$bootstrapFitCores} / \code{control$bootstrapTol}, and
+#' \code{control$parsteps}, are stan-only and are refused by name on a
+#' \code{ctJuliaFit}. \code{control$analyticHessian} is julia-only.
+#' \code{cores} means R worker processes on stan and engine threads on julia
+#' (see below). The IMIS proposal defaults also differ:
+#' \code{imisScaleInit = 1.1} and \code{imisTailScale = 1.1} on stan against
+#' \code{1.5} and \code{1.2} on julia, which was measured -- a proposal no
+#' wider than the Hessian covariance cannot correct a posterior wider than it.
+#' Set them explicitly to compare the backends on this method.
+#'
+#' Transformed-parameter summaries are refreshed on stan and not on julia,
+#' which has no parameter-matrix reconstruction through
+#' \code{rstan::constrain_pars}; the raw-scale covariance and draws are
+#' complete on both.
 #'
 #' @param fit Optimized \code{ctStanFit} or \code{ctJuliaFit} object. For a
 #' \code{ctJuliaFit}, every \code{uncertainty} method except
 #' \code{'fullbootstrap'} is available; that one re-optimises each resample and
-#' so needs the model rebuilt rather than re-evaluated.
+#' so needs the model rebuilt rather than re-evaluated. A sampled fit of either
+#' backend is refused: it already carries a posterior, and replacing it with a
+#' curvature-based approximation would discard it.
 #' @param uncertainty Uncertainty approximation. \code{'hessian'} uses the
 #' finite-difference Hessian, \code{'surrogate'} fits a local quadratic
 #' surrogate around the optimum, \code{'is'} uses Hessian-based importance
@@ -1197,13 +1188,19 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' \code{'imis'} runs the importance sampler using the selected covariance as
 #' proposal. For \code{uncertainty='is'}, \code{draws} is set to \code{'imis'}.
 #' @param finishsamples Number of approximate raw-parameter samples. If
-#' \code{NULL}, the existing number of rows in \code{fit$stanfit$rawposterior}
-#' is reused when available; otherwise 1000 samples are used.
-#' @param cores Number of cores. If \code{NULL}, one core is used. Hessian,
-#' surrogate, and IMIS calculations use these cores by splitting each
-#' log-probability/gradient evaluation across subjects. Score-based methods use
-#' these cores for score contribution calculations. Transformed-quantity
-#' calculations also use these cores.
+#' \code{NULL}, the existing number of rows in the fit's raw posterior
+#' (\code{fit$stanfit$rawposterior} for stan, \code{fit$estimate$rawposterior}
+#' for julia) is reused when available; otherwise 1000 samples are used.
+#' @param cores Number of cores. If \code{NULL}, one core is used, and nothing
+#' is parallelised unless a value above one is asked for. On a
+#' \code{ctStanFit} these are R worker processes: each
+#' log-probability/gradient evaluation is split across subjects and reassembled,
+#' and score contributions and transformed quantities use them too. On a
+#' \code{ctJuliaFit} there is no R cluster; the value becomes the engine's
+#' subject-loop chunk ceiling for the duration of the call, and the engine caps
+#' it at its own thread count. Neither route changes what is computed, though
+#' both change the order things are summed in, so results are reproducible at
+#' \code{cores = 1} and agree to rounding above it.
 #' @param control List of method-specific options. Useful entries include
 #' \code{ridge}, \code{hessianStep}, \code{surrogateNpoints},
 #' \code{surrogateScale}, \code{surrogateProfile},
@@ -1237,7 +1234,11 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' target. \code{parsteps} may be supplied internally to keep stepwise-fixed
 #' raw parameters fixed while estimating uncertainty for the remaining
 #' parameters; existing fixed indices from a previous uncertainty calculation
-#' are retained when no new \code{parsteps} are supplied.
+#' are retained when no new \code{parsteps} are supplied. It is stan-only,
+#' since only \code{\link{stanoptimis}} has a stepwise phase to inherit fixed
+#' parameters from, and is refused rather than ignored on a
+#' \code{ctJuliaFit}. \code{analyticHessian = FALSE} is julia-only and asks for
+#' the shared finite-difference Hessian instead of the engine's exact one.
 #' Hessian-based covariance construction first attempts the unmodified
 #' \code{solve(-hessian)} covariance and a Cholesky check. It warns when
 #' numerical repair is needed, such as positive-definite projection, ridge
@@ -1254,9 +1255,11 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' @param verbose Integer controlling progress detail.
 #' @param ... Unused.
 #'
-#' @return Updated \code{ctStanFit} object. The resolved method, draw strategy,
-#' sample count, cores, and non-internal controls are recorded in
-#' \code{fit$stanfit$uncertainty$settings}.
+#' @return The fit, of the class it came in as. The resolved method, draw
+#' strategy, sample count, cores, and non-internal controls are recorded in
+#' \code{fit$stanfit$uncertainty$settings} for a \code{ctStanFit} and in
+#' \code{fit$uncertainty$settings} for a \code{ctJuliaFit}; see the backend
+#' differences above for the other slots each writes.
 #' @export
 ctOptimUncertainty <- function(fit,
   uncertainty=c('hessian','surrogate','is','bootstrap','fullbootstrap',
@@ -1290,7 +1293,30 @@ ctOptimUncertainty <- function(fit,
         "directly, or refit with optimize = TRUE if a curvature-based ",
         "approximation is what you want.", call.=FALSE)
     }
-    if(is.null(finishsamples)) finishsamples <- 1000
+    # `control$parsteps` is a `stanoptimis()` concept and nothing else: the
+    # stan optimiser can hold a block of raw parameters at zero for an early
+    # step, and the branch below then estimates uncertainty for the remainder
+    # and pads the fixed entries back in. The julia optimiser has no such
+    # phase, so there is nothing for this to name -- and it reached
+    # `ctOptimComputeUncertainty()`, which never reads it, as an inert list
+    # element. Same standard errors as without it, and the request recorded in
+    # `$uncertainty$settings$control` as though it had been honoured. Refused
+    # rather than translated, because there is no julia-side meaning to
+    # translate it to.
+    if(!is.null(control$parsteps)) {
+      stop("control$parsteps is only available for backend='stan' fits: it ",
+        "holds parameters that stanoptimis() fixed during a stepwise ",
+        "optimisation, and the julia optimiser has no such step. Drop it, or ",
+        "refit with backend='stan'.", call.=FALSE)
+    }
+    # Same rule as the stan branch below, reading the julia fit's own slot.
+    # Hardcoding 1000 here meant `ctOptimUncertainty(fit)` after
+    # `ctOptimUncertainty(fit, finishsamples=200)` silently resampled to 1000
+    # on julia and stayed at 200 on stan, against one documented default.
+    if(is.null(finishsamples)) {
+      finishsamples <- if(!is.null(fit$estimate$rawposterior))
+        nrow(fit$estimate$rawposterior) else 1000
+    }
     if(is.null(cores)) cores <- 1L
     cores <- max(1L, suppressWarnings(as.integer(cores[1])))
     if(is.na(cores)) cores <- 1L
@@ -1298,7 +1324,13 @@ ctOptimUncertainty <- function(fit,
       finishsamples=finishsamples, cores=cores, control=control,
       verbose=verbose))
   }
-  if(!'ctStanFit' %in% class(fit)) stop('fit must be a ctStanFit object')
+  # Named rather than asserted. "fit must be a ctStanFit object" told a caller
+  # holding some other object about a class; what it needs to say is which
+  # objects this does work on, since it works on both backends' fits.
+  if(!'ctStanFit' %in% class(fit)) stop(
+    'ctOptimUncertainty() takes an optimized ctsem fit: a ctStanFit from ',
+    "ctFit(..., backend='stan') or a ctJuliaFit from ctFit(..., ",
+    "backend='julia'). This object is neither.", call.=FALSE)
   if(length(fit$stanfit$stanfit@sim) > 0) {
     stop('ctOptimUncertainty currently applies to optimized ctStanFit objects')
   }
@@ -1395,7 +1427,10 @@ ctOptimUncertainty <- function(fit,
       Sigma_hat=uncertaintyfit$cov, max_iter=control$imisMaxIter,
       scale_init=control$imisScaleInit, tail_scale=control$imisTailScale,
       target_ess=control$isESS, n_batch=control$isitersize, cl=NA,
-      finishsamples=finishsamples, verbose=TRUE)
+      # `verbose > 0`, not TRUE: this printed IMIS iteration progress at
+      # `verbose = 0`, so the one argument meant two things across the
+      # backends -- silence on julia, a page of output on stan.
+      finishsamples=finishsamples, verbose=verbose > 0)
     samples <- is_res$theta
     uncertaintyfit$proposal_cov <- uncertaintyfit$cov
     if(!is.null(uncertaintyfit$details$covariance)) {
