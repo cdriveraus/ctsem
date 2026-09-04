@@ -131,7 +131,11 @@
 #' @param plot If FALSE, return the field, nullclines and trajectories as data
 #'   rather than a plot.
 #' @param ... Ignored.
-#' @return A ggplot, or a list of data frames when \code{plot=FALSE}.
+#' @return A ggplot, or when \code{plot=FALSE} a list with \code{field}, the
+#'   \code{latents} on the plane, \code{stateLabel} naming where the off-plane
+#'   processes were held, the \code{held} process names, and \code{nullclines},
+#'   \code{fixedpoint} and \code{trajectories} when asked for. The plot names
+#'   \code{stateLabel} in its subtitle whenever anything is held off-plane.
 #' @examples
 #' # A linear stan fit needs no engine, so the bundled example fit is enough.
 #' ctPhasePortrait(ctstantestfit, gridsize = 7, plot = FALSE)
@@ -151,11 +155,27 @@ ctPhasePortrait <- function(fit, latents = 1:2, extent = "data", gridsize = 15,
   nlatent <- .ctFitNlatent(fit)
 
   # The plane is drawn through a point; everything not on the plane stays there.
+  #
+  # The label for that point is kept, not discarded: with more than two processes
+  # the picture is a slice, and a slice is only readable if the reader knows
+  # where it was taken. It used to appear nowhere in the figure.
+  stateLabel <- .ctContextPopLabel
   base <- if (inherits(fit, "ctJuliaFit")) {
     resolved <- try(.ctResolveState(fit, state, tipreds = tipreds), silent = TRUE)
-    if (inherits(resolved, "try-error") || is.null(resolved$state)) {
+    if (inherits(resolved, "try-error")) {
+      # A requested point that cannot be found -- 'asymptotic' on a system with
+      # no fixed point is the usual case -- fell back to T0MEANS in silence, so
+      # the drawn slice was not the one asked for and nothing said so.
+      message("state=", if (is.character(state)) paste0("'", state, "'") else "supplied",
+        " could not be resolved (", conditionMessage(attr(resolved, "condition")),
+        ") so the plane is drawn through ", .ctContextPopLabel, ".")
       .ctContextBaseState(fit, tipreds)
-    } else resolved$state
+    } else if (is.null(resolved$state)) {
+      .ctContextBaseState(fit, tipreds)
+    } else {
+      stateLabel <- resolved$label
+      resolved$state
+    }
   } else {
     as.numeric(suppressMessages(ctSummaryMatrices(fit))$T0MEANS)[seq_len(nlatent)]
   }
@@ -187,7 +207,9 @@ ctPhasePortrait <- function(fit, latents = 1:2, extent = "data", gridsize = 15,
   grid$xend <- grid$x + grid$dx * scaling
   grid$yend <- grid$y + grid$dy * scaling
 
-  out <- list(field = grid, latents = latentNames[latents])
+  out <- list(field = grid, latents = latentNames[latents],
+    stateLabel = stateLabel,
+    held = latentNames[setdiff(seq_len(nlatent), latents)])
 
   if (isTRUE(nullclines)) {
     # A nullcline is a zero contour of one component of the field, so the
@@ -275,11 +297,19 @@ ctPhasePortrait <- function(fit, latents = 1:2, extent = "data", gridsize = 15,
       fill = "white", colour = "black")
   }
 
+  # Where the off-plane processes are held belongs in the figure, not only in the
+  # call: change it and the slice changes, so a saved plot without it cannot be
+  # placed. Said only when something is actually held there.
+  held <- if (length(portrait$held) && !is.null(portrait$stateLabel))
+    paste0(" ", paste0(portrait$held, collapse = ", "), " held at ",
+      portrait$stateLabel, ".") else ""
+
   g + ggplot2::labs(
     x = portrait$latents[1L], y = portrait$latents[2L],
     title = if (contextual) "Phase portrait (state dependent dynamics)" else
       "Phase portrait (linear dynamics)",
     subtitle = paste0("Arrows: deterministic change. Lines: nullclines",
-      if (!is.null(portrait$fixedpoint)) ". Circle: fixed point" else "", ".")) +
+      if (!is.null(portrait$fixedpoint)) ". Circle: fixed point" else "", ".",
+      held)) +
     ggplot2::theme_minimal()
 }

@@ -10,6 +10,7 @@ ctSummaryMatrices(
   calcfunc = quantile,
   calcfuncargs = list(probs = 0.5),
   timeinterval = 1,
+  state = NULL,
   ...
 )
 }
@@ -26,9 +27,14 @@ the probs argument is needed to ensure only a single value is returned.}
 
 \item{timeinterval}{time interval for discrete time parameter matrix computation.}
 
-\item{...}{arguments passed to the method for the fit's backend. The julia
-method additionally takes \code{state}, the point at which state dependent
-matrices are evaluated.}
+\item{state}{The latent state at which state dependent matrix cells are
+evaluated: \code{'T0MEANS'} (the default), \code{'mean'}, \code{'asymptotic'},
+or a numeric state vector. Only \code{backend='julia'} can materialise the
+matrices anywhere other than the default, so anything else is an error on a
+stan fit rather than being silently ignored. Irrelevant to a linear model,
+whose matrices are the same everywhere.}
+
+\item{...}{arguments passed to the method for the fit's backend.}
 }
 \description{
 Summarise model-implied parameter matrices from a ctsem fit object.

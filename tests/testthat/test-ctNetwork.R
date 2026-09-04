@@ -211,3 +211,157 @@ test_that('plotting returns a ggplot, one panel per network and interval', {
   # print() says what it is without erroring on either source.
   expect_output(print(net), 'ctNetwork from a model')
 })
+
+
+# State dependence -------------------------------------------------------------
+#
+# For a model whose DRIFT depends on a latent process there is no such thing as
+# *the* network: what a fit reports is one linearisation, and the graph drawn
+# from it is that linearisation's graph. The failure this guards against is not
+# a wrong number, it is a right number with no label -- a figure that leaves the
+# session claiming to be the system's network.
+#
+# The detector itself is tested against real specifications in
+# test-context-dependence.R. These tests are about the wiring: that ctNetwork
+# asks, says so once, names the point in the package's own words, puts it in the
+# figure, and stays completely silent on a linear model.
+
+# A fit whose DRIFT[1,1] is written by an expression referencing state[2].
+# Mutating the bundled fit's parameter table rather than optimising a nonlinear
+# model keeps this in the fast tier: every reporting path reads the table, so
+# this is the same fit as far as the code under test is concerned.
+.statedepfit <- function(){
+  utils::data('ctstantestfit', package = 'ctsem', envir = environment())
+  fit <- ctstantestfit
+  row <- which(fit$setup$matsetup$matrix == 3 & fit$setup$matsetup$row == 1 &
+      fit$setup$matsetup$col == 1)
+  fit$setup$matsetup$parname[row] <- 'log1p(exp(param)) * state[2]'
+  fit
+}
+
+
+test_that('a linear model says nothing about state dependence, anywhere', {
+  utils::data('ctstantestfit', package = 'ctsem', envir = environment())
+  m <- .netmodel()
+
+  # The point of the whole feature is that it costs a linear model nothing.
+  expect_silent(net <- ctNetwork(ctstantestfit, dt = 1))
+  expect_null(attr(net, 'stateDependent'))
+  expect_equal(attr(net, 'stateLabel'), ctsem:::.ctContextPopLabel)
+  expect_null(ctsem:::.ctNetworkStateDependentCells(ctstantestfit))
+  expect_output(print(net), 'ctNetwork from a fit')
+  expect_false(any(grepl('linearisation', capture.output(print(net)))))
+
+  # And no subtitle: the plot object is the one it was before state= existed.
+  g <- suppressMessages(ctNetworkPlot(ctstantestfit, dt = 1))
+  expect_false('subtitle' %in% names(g$labels))
+  g <- suppressMessages(ctNetworkPlot(m, dt = 1))
+  expect_false('subtitle' %in% names(g$labels))
+})
+
+
+test_that('a state dependent fit is reported once, named, and captioned', {
+  fit <- .statedepfit()
+  cells <- ctsem:::.ctNetworkStateDependentCells(fit)
+  expect_equal(cells$matrix, 'DRIFT')
+  expect_equal(cells$kind, 'state')
+
+  expect_message(net <- ctNetwork(fit, dt = 1), 'linearisation')
+  # Named in the same words as ctSummaryMatrices, summary and ctSubjectPars,
+  # which is the whole reason .ctResolveState returns a label at all.
+  expect_message(ctNetwork(fit, dt = 1), ctsem:::.ctContextPopLabel, fixed = TRUE)
+  # And pointed at the functions that show the variation rather than one slice.
+  expect_message(ctNetwork(fit, dt = 1), 'ctPhasePortrait', fixed = TRUE)
+  expect_message(ctNetwork(fit, dt = 1), 'ctStateDependencePlot', fixed = TRUE)
+
+  expect_equal(nrow(attr(net, 'stateDependent')), 1)
+  expect_equal(attr(net, 'stateLabel'), ctsem:::.ctContextPopLabel)
+  expect_output(print(net), 'state dependent DRIFT')
+
+  # Once, not once per matrix and not once per interval.
+  msgs <- testthat::capture_messages(ctNetwork(fit, dt = 1))
+  expect_equal(sum(grepl('linearisation', msgs)), 1)
+  msgs <- testthat::capture_messages(ctNetworkPlot(fit, dt = c(.5, 2),
+    networks = 'temporal'))
+  expect_equal(sum(grepl('linearisation', msgs)), 1)
+
+  expect_silent(ctNetwork(fit, dt = 1, quiet = TRUE))
+
+  # The figure carries the caveat, because a saved plot outlives the session.
+  g <- suppressMessages(ctNetworkPlot(fit, dt = 1))
+  expect_true(grepl('linearisation', g$labels$subtitle))
+  expect_true(grepl(ctsem:::.ctContextPopLabel, g$labels$subtitle, fixed = TRUE))
+})
+
+
+test_that('matsetup stateref is read, and a carrier index is not state dependence', {
+  # `stateref` is the model writer's own record of a cell that materialises from
+  # a state, so it is read as a second source alongside the expression scan.
+  fit <- structure(list(
+    standata = list(nlatent = 2L),
+    setup = list(matsetup = data.frame(
+      parname = c('d11', 'd22'), row = 1:2, col = 1:2, matrix = c(3L, 3L),
+      stateref = c(2L, 0L)))),
+    class = c('ctStanFit', 'ctFit'))
+  cells <- ctsem:::.ctNetworkStaterefCells(fit)
+  expect_equal(cells$matrix, 'DRIFT')
+  expect_equal(cells$row, 1L)
+
+  # A reference above nlatent is an individually varying parameter's carrier
+  # state, which IS that parameter -- reporting it as state dependence would
+  # tell every multilevel user their network is a linearisation when it is not.
+  fit$setup$matsetup$stateref <- c(9L, 0L)
+  expect_null(ctsem:::.ctNetworkStaterefCells(fit))
+  expect_null(ctsem:::.ctNetworkStateDependentCells(fit))
+
+  # A state dependent CINT is real but cannot move an edge in any of these four
+  # networks, so it is not reported here.
+  fit$setup$matsetup$stateref <- c(0L, 0L)
+  fit$setup$matsetup$parname <- c('d11', 'c1 * state[1]')
+  fit$setup$matsetup$matrix <- c(3L, 7L)
+  expect_true(nrow(ctsem:::.ctFitConditionalCells(fit)) > 0)
+  expect_null(ctsem:::.ctNetworkStateDependentCells(fit))
+})
+
+
+test_that('state= is honoured where it can be and refused where it cannot', {
+  utils::data('ctstantestfit', package = 'ctsem', envir = environment())
+
+  # The default must be indistinguishable from not passing it at all, or every
+  # existing result moves.
+  a <- suppressMessages(ctNetwork(ctstantestfit, dt = 1.4))
+  b <- suppressMessages(ctNetwork(ctstantestfit, dt = 1.4, state = 'T0MEANS'))
+  expect_identical(a$temporal, b$temporal)
+  expect_identical(a$contemporaneous, b$contemporaneous)
+  expect_identical(a$edges, b$edges)
+  expect_identical(suppressMessages(ctSummaryMatrices(ctstantestfit)),
+    suppressMessages(ctSummaryMatrices(ctstantestfit, state = 'T0MEANS')))
+
+  # Only the julia engine can re-materialise the matrices somewhere else. This
+  # used to reach ctSummaryMatrices.ctStanFit through `...` and be dropped, so
+  # the same call reported a chosen state on julia and T0MEANS on stan with
+  # nothing said either way.
+  expect_error(ctSummaryMatrices(ctstantestfit, state = 'mean'), "backend='julia'")
+  expect_error(ctSummaryMatrices(ctstantestfit, state = c(0, 0)), "backend='julia'")
+  expect_error(ctNetwork(ctstantestfit, dt = 1, state = 'asymptotic'), "backend='julia'")
+  expect_error(ctNetworkPlot(ctstantestfit, dt = 1, state = 'mean'), "backend='julia'")
+
+  # state= on an already-built ctNetwork cannot be honoured by relabelling.
+  net <- suppressMessages(ctNetwork(ctstantestfit, dt = 1))
+  expect_message(ctNetworkPlot(net, state = 'mean'), 'state is ignored')
+})
+
+
+test_that('a state dependent specification says which cells it left out, in the figure too', {
+  msd <- suppressMessages(suppressWarnings(ctModel(type = 'ct', n.latent = 2,
+    n.manifest = 1, manifestNames = 'Y1', latentNames = c('eta1', 'eta2'),
+    LAMBDA = matrix(c(1, 0), 1, 2),
+    DRIFT = matrix(c('-2*log1p(exp(-2*eta2))', 0, 0, -.00001), 2, 2),
+    DIFFUSION = matrix(c('diff', 0, 0, 0), 2, 2))))
+  # The specification path omits such a cell rather than linearising it, so
+  # there is no evaluation point to name -- the caveat is about absence.
+  expect_message(ctNetwork(msd, dt = 1), 'shown as absent')
+  g <- suppressMessages(ctNetworkPlot(msd, dt = 1, networks = 'temporal'))
+  expect_true(grepl('absent from these edges', g$labels$subtitle))
+  expect_null(attr(suppressMessages(ctNetwork(msd, dt = 1)), 'stateLabel'))
+})

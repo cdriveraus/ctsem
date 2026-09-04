@@ -7,6 +7,7 @@
 ctNetworkPlot(
   x,
   dt = 1,
+  state = NULL,
   networks = c("temporal", "contemporaneous"),
   threshold = 0,
   engine = c("ggplot", "qgraph"),
@@ -26,6 +27,12 @@ ctNetworkPlot(
 
 \item{dt}{One or more time intervals. Ignored, with a message, when \code{x}
 is already a \code{ctNetwork}.}
+
+\item{state}{Where a state dependent cell is evaluated; see
+\code{\link{ctNetwork}}. Ignored, with a message, when \code{x} is already
+a \code{ctNetwork}, which was built at a point of its own. When the system
+is state dependent the point appears in the plot's subtitle, so a saved
+figure carries its own caveat; a linear system gets no subtitle.}
 
 \item{networks}{Which networks to draw; see \code{\link{ctNetwork}}. Each
 becomes a panel, as does each \code{dt}.}
