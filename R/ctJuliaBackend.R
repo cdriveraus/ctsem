@@ -2321,16 +2321,26 @@ summary.ctJuliaFit <- function(object, timeinterval = 1, digits = 3, parmatrices
 
 #' @export
 ctExtract.ctJuliaFit <- function(object, subjectMatrices = FALSE, cores = 1,
-  nsamples = "all", subjects = "all", ...) {
+  nsamples = "all", subjects = "all", state = NULL, ...) {
   # `cores` was accepted and dropped. It is the engine's subject-chunk ceiling
   # here, not a number of R processes -- there is no cluster on this path -- and
   # it is restored afterwards so an extract does not leave the session
   # reconfigured. Note that `subjectMatrices=TRUE` is dominated by moving the
   # filter output back across the bridge rather than by computing it, so this
   # bounds the work rather than speeding it up much.
-  .ctBackendWithMaxChunks(cores,
+  #
+  # `state` reached the engine raw before, so the shorthands 'mean' and
+  # 'asymptotic' arrived as a string and died in the engine with a Julia
+  # MethodError; only an explicit vector worked, and it came back unlabelled.
+  # Resolve it here, as ctSummaryMatrices does, so both spell the same point the
+  # same way.
+  resolved <- .ctResolveState(object, state)
+  out <- .ctBackendWithMaxChunks(cores,
     .ctBackendExtract(object, subjectMatrices = subjectMatrices, nsamples = nsamples,
-      subjects = subjects, ...))
+      subjects = subjects, state = resolved$state, ...))
+  # Recorded, not messaged: see ctExtract.ctStanFit.
+  attr(out, "evaluatedAt") <- resolved$label
+  out
 }
 
 #' @export
