@@ -3156,11 +3156,15 @@ print.ctJuliaFit <- function(x, ...) {
 #' @method plot ctJuliaFit
 #' @examples
 #' \donttest{
-#' data <- ctstantestdat
-#' model <- ctModel(type = 'ct', manifestNames = 'Y1', latentNames = 'eta1',
-#'   LAMBDA = matrix(1))
-#' fit <- ctFit(data, model, backend = 'julia')
-#' plot(fit, wait = FALSE)
+#' # Needs a working julia backend, so the example is inert where Julia is
+#' # absent -- including on CRAN, whose check machines have none.
+#' if (isTRUE(ctJuliaStatus()$available)) {
+#'   data <- ctstantestdat
+#'   model <- ctModel(type = 'ct', manifestNames = 'Y1', latentNames = 'eta1',
+#'     LAMBDA = matrix(1))
+#'   fit <- ctFit(data, model, backend = 'julia')
+#'   plot(fit, wait = FALSE)
+#' }
 #' }
 #' @export
 plot.ctJuliaFit <- function(x, types = "all", wait = TRUE, ...) {

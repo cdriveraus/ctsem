@@ -54,26 +54,30 @@
 #' @return A ggplot, or a data frame when \code{plot=FALSE}.
 #' @examples
 #' \donttest{
-#' set.seed(1)
-#' generating <- suppressMessages(ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
-#'   manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
-#'   LAMBDA = diag(2), DRIFT = matrix(c(-.4, .1, 0, -.3), 2, 2),
-#'   CINT = matrix(c(.2, .1), 2, 1), MANIFESTMEANS = matrix(0, 2, 1),
-#'   MANIFESTVAR = diag(.2, 2), DIFFUSION = matrix(c(.5, 0, 0, .4), 2, 2)))
-#' datalong <- as.data.frame(suppressMessages(ctGenerate(generating, n.subjects = 25,
-#'   burnin = 5, dtmean = 1, logdtsd = .1, wide = FALSE, Tpoints = 12)))
+#' # Needs a working julia backend, so the example is inert where Julia is
+#' # absent -- including on CRAN, whose check machines have none.
+#' if (isTRUE(ctJuliaStatus()$available)) {
+#'   set.seed(1)
+#'   generating <- suppressMessages(ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
+#'     manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
+#'     LAMBDA = diag(2), DRIFT = matrix(c(-.4, .1, 0, -.3), 2, 2),
+#'     CINT = matrix(c(.2, .1), 2, 1), MANIFESTMEANS = matrix(0, 2, 1),
+#'     MANIFESTVAR = diag(.2, 2), DIFFUSION = matrix(c(.5, 0, 0, .4), 2, 2)))
+#'   datalong <- as.data.frame(suppressMessages(ctGenerate(generating, n.subjects = 25,
+#'     burnin = 5, dtmean = 1, logdtsd = .1, wide = FALSE, Tpoints = 12)))
 #'
-#' # eta1's own decay depends on where eta2 is -- a state-dependent DRIFT cell.
-#' model <- suppressMessages(ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
-#'   manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
-#'   LAMBDA = diag(2), PARS = c('dr11|-log1p_exp(param)'),
-#'   DRIFT = matrix(c('dr11 * (1 + 0.2 * eta2)', 'd21', 0, 'd22'), 2, 2),
-#'   CINT = matrix(c('c1', 'c2'), 2, 1), MANIFESTMEANS = matrix(0, 2, 1),
-#'   MANIFESTVAR = diag(.2, 2), DIFFUSION = matrix(c('df1', 0, 0, 'df2'), 2, 2)))
-#' model$pars$indvarying <- FALSE
+#'   # eta1's own decay depends on where eta2 is -- a state-dependent DRIFT cell.
+#'   model <- suppressMessages(ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
+#'     manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
+#'     LAMBDA = diag(2), PARS = c('dr11|-log1p_exp(param)'),
+#'     DRIFT = matrix(c('dr11 * (1 + 0.2 * eta2)', 'd21', 0, 'd22'), 2, 2),
+#'     CINT = matrix(c('c1', 'c2'), 2, 1), MANIFESTMEANS = matrix(0, 2, 1),
+#'     MANIFESTVAR = diag(.2, 2), DIFFUSION = matrix(c('df1', 0, 0, 'df2'), 2, 2)))
+#'   model$pars$indvarying <- FALSE
 #'
-#' fit <- ctFit(datalong, model, backend = 'julia', cores = 1, verbose = 0)
-#' ctStateDependencePlot(fit, along = 'eta2', gridsize = 11, nsamples = 5)
+#'   fit <- ctFit(datalong, model, backend = 'julia', cores = 1, verbose = 0)
+#'   ctStateDependencePlot(fit, along = 'eta2', gridsize = 11, nsamples = 5)
+#' }
 #' }
 #' @seealso \code{\link{ctContextDependence}}, \code{\link{ctPhasePortrait}}
 #' @export
