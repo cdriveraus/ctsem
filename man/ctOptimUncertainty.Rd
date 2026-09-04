@@ -20,7 +20,9 @@ ctOptimUncertainty(
 \item{fit}{Optimized \code{ctStanFit} or \code{ctJuliaFit} object. For a
 \code{ctJuliaFit}, every \code{uncertainty} method except
 \code{'fullbootstrap'} is available; that one re-optimises each resample and
-so needs the model rebuilt rather than re-evaluated.}
+so needs the model rebuilt rather than re-evaluated. A sampled fit of either
+backend is refused: it already carries a posterior, and replacing it with a
+curvature-based approximation would discard it.}
 
 \item{uncertainty}{Uncertainty approximation. \code{'hessian'} uses the
 finite-difference Hessian, \code{'surrogate'} fits a local quadratic
@@ -42,14 +44,20 @@ covariance, \code{'empirical'} uses empirical draws when available, and
 proposal. For \code{uncertainty='is'}, \code{draws} is set to \code{'imis'}.}
 
 \item{finishsamples}{Number of approximate raw-parameter samples. If
-\code{NULL}, the existing number of rows in \code{fit$stanfit$rawposterior}
-is reused when available; otherwise 1000 samples are used.}
+\code{NULL}, the existing number of rows in the fit's raw posterior
+(\code{fit$stanfit$rawposterior} for stan, \code{fit$estimate$rawposterior}
+for julia) is reused when available; otherwise 1000 samples are used.}
 
-\item{cores}{Number of cores. If \code{NULL}, one core is used. Hessian,
-surrogate, and IMIS calculations use these cores by splitting each
-log-probability/gradient evaluation across subjects. Score-based methods use
-these cores for score contribution calculations. Transformed-quantity
-calculations also use these cores.}
+\item{cores}{Number of cores. If \code{NULL}, one core is used, and nothing
+is parallelised unless a value above one is asked for. On a
+\code{ctStanFit} these are R worker processes: each
+log-probability/gradient evaluation is split across subjects and reassembled,
+and score contributions and transformed quantities use them too. On a
+\code{ctJuliaFit} there is no R cluster; the value becomes the engine's
+subject-loop chunk ceiling for the duration of the call, and the engine caps
+it at its own thread count. Neither route changes what is computed, though
+both change the order things are summed in, so results are reproducible at
+\code{cores = 1} and agree to rounding above it.}
 
 \item{control}{List of method-specific options. Useful entries include
 \code{ridge}, \code{hessianStep}, \code{surrogateNpoints},
@@ -84,7 +92,11 @@ small magnitude-adjusted expansion budget is used before reporting a missed
 target. \code{parsteps} may be supplied internally to keep stepwise-fixed
 raw parameters fixed while estimating uncertainty for the remaining
 parameters; existing fixed indices from a previous uncertainty calculation
-are retained when no new \code{parsteps} are supplied.
+are retained when no new \code{parsteps} are supplied. It is stan-only,
+since only \code{\link{stanoptimis}} has a stepwise phase to inherit fixed
+parameters from, and is refused rather than ignored on a
+\code{ctJuliaFit}. \code{analyticHessian = FALSE} is julia-only and asks for
+the shared finite-difference Hessian instead of the engine's exact one.
 Hessian-based covariance construction first attempts the unmodified
 \code{solve(-hessian)} covariance and a Cholesky check. It warns when
 numerical repair is needed, such as positive-definite projection, ridge
@@ -104,12 +116,52 @@ refits.}
 \item{...}{Unused.}
 }
 \value{
-Updated \code{ctStanFit} object. The resolved method, draw strategy,
-sample count, cores, and non-internal controls are recorded in
-\code{fit$stanfit$uncertainty$settings}.
+The fit, of the class it came in as. The resolved method, draw
+strategy, sample count, cores, and non-internal controls are recorded in
+\code{fit$stanfit$uncertainty$settings} for a \code{ctStanFit} and in
+\code{fit$uncertainty$settings} for a \code{ctJuliaFit}; see the backend
+differences above for the other slots each writes.
 }
 \description{
 Recomputes the approximate raw-parameter uncertainty for an optimized
 \code{\link{ctFit}} object and refreshes the approximate raw-parameter
-samples.
+samples. This is the entry point for both backends; \code{ctFit} itself
+calls it to finish an optimized fit.
 }
+\section{Backend differences}{
+
+The methods are the same on both backends and the covariance they produce is
+comparable, but three things differ and are worth knowing before comparing
+output.
+
+\emph{Where the result is stored.} A \code{ctStanFit} comes back with
+\code{fit$stanfit$cov}, \code{fit$stanfit$rawposterior} and
+\code{fit$stanfit$uncertainty}; a \code{ctJuliaFit} with
+\code{fit$estimate$cov}, \code{fit$estimate$se},
+\code{fit$estimate$rawposterior} and \code{fit$uncertainty}. Both record the
+resolved settings in \code{$uncertainty$settings}.
+
+\emph{The Hessian.} The stan path finite-differences its gradient with a
+single global step (\code{control$hessianStep}). The julia engine
+differentiates its own reverse-mode gradient in forward mode, so its
+Hessian is exact; \code{control$analyticHessian = FALSE} falls back to the
+shared finite difference for comparison. The two agree to about 1e-4 on a
+well-conditioned model.
+
+\emph{Backend-specific arguments.} \code{uncertainty='fullbootstrap'} and
+its \code{control$bootstrapFitCores} / \code{control$bootstrapTol}, and
+\code{control$parsteps}, are stan-only and are refused by name on a
+\code{ctJuliaFit}. \code{control$analyticHessian} is julia-only.
+\code{cores} means R worker processes on stan and engine threads on julia
+(see below). The IMIS proposal defaults also differ:
+\code{imisScaleInit = 1.1} and \code{imisTailScale = 1.1} on stan against
+\code{1.5} and \code{1.2} on julia, which was measured -- a proposal no
+wider than the Hessian covariance cannot correct a posterior wider than it.
+Set them explicitly to compare the backends on this method.
+
+Transformed-parameter summaries are refreshed on stan and not on julia,
+which has no parameter-matrix reconstruction through
+\code{rstan::constrain_pars}; the raw-scale covariance and draws are
+complete on both.
+}
+
