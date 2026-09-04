@@ -22,42 +22,23 @@ simpleStateCheck <- function(x){   #checks if system matrix elements that refere
 }
 
 
-#' Update model/data for an already compiled and fit ctsem object
-#' 
-#' Allows one to change data and or model elements that don't require recompiling, then re fit.
+#' Defunct functions in ctsem
 #'
-#' @param fit ctStanFit object
-#' @param datalong data as normally passed to \code{\link{ctFit}}
-#' @param model model as normally passed to \code{\link{ctFit}}
-#' @param ... extra args for \code{\link{ctFit}}
-#' @param ctstanmodel Deprecated. Use \code{model}.
-#' @aliases ctStanUpdModel
-#' @usage ctFitUpdateModel(fit, datalong, model, ..., ctstanmodel)
+#' `ctFitUpdateModel` and its alias `ctStanUpdModel` are defunct. They wrote
+#' `match.call()` into `fit$args`, which since the split of that slot into
+#' `$input` and `$resolved` left the returned fit unreadable by every consumer
+#' of it. Use \code{\link{ctFitUpdate}}, which takes new data and new arguments.
+#'
+#' @param ... Ignored.
+#' @name ctsem-defunct
+#' @aliases ctFitUpdateModel ctStanUpdModel
+#' @keywords internal
 #' @export
+ctFitUpdateModel <- function(...) .Defunct('ctFitUpdate')
 
-ctFitUpdateModel <- function(fit, datalong, model,..., ctstanmodel){
-  if(missing(model)){
-    if(missing(ctstanmodel)) stop('model must be supplied')
-    warning('ctstanmodel argument is deprecated, use model instead')
-    model <- ctstanmodel
-  } else if(!missing(ctstanmodel)) {
-    stop('Use only one of model or deprecated ctstanmodel')
-  }
-  
-  new <-ctFit(datalong = datalong, model= model,fit=FALSE,...)
-  
-  fit$standata <- new$standata
-  fit$data <- new$data
-  fit$setup <- new$setup
-  fit$args <- match.call()
-  return(fit)
-}
-
+#' @rdname ctsem-defunct
 #' @export
-ctStanUpdModel <- function(fit, datalong, ctstanmodel,...){
-  .Deprecated('ctFitUpdateModel')
-  ctFitUpdateModel(fit=fit, datalong=datalong, model=ctstanmodel,...)
-}
+ctStanUpdModel <- function(...) .Defunct('ctFitUpdate')
 
 
 
@@ -309,12 +290,14 @@ ctModelTransformsToNum<-function(ctm){
 }
 
 
-ctStanModelIntOverPop <- function(m){ 
+# Shared by both backends -- the julia path calls it from .ctJuliaPrepare to get
+# the same state augmentation for individual differences. Do not delete with stan.
+.ctModelIntOverPop <- function(m){ 
   if(sum(m$pars$indvarying) < 1) {
-    message('No individual variation for ctStanModelIntOverPop to work with!')
+    message('No individual variation for .ctModelIntOverPop to work with!')
     return(m)
   } else {
-    m$pars <- ctStanModelCleanctspec(m$pars)
+    m$pars <- .ctModelCleanctspec(m$pars)
     t0mvaryingsimple <- m$pars$row[m$pars$indvarying & m$pars$matrix %in% 'T0MEANS'] #which t0means are indvarying
     t0mvaryingnames <- m$pars$param[m$pars$indvarying & m$pars$matrix %in% 'T0MEANS'] #names of t0means that are indvarying
     t0mnotvarying <- m$pars$row[!m$pars$indvarying & m$pars$matrix %in% 'T0MEANS']
@@ -460,7 +443,7 @@ simplifystanfunction<-function(bcalc,simplify=TRUE){ #input text of list of comp
 
 
 
-ctStanModelCleanctspec <-  function(ctspec){ #clean ctspec structure, non numeric transform style
+.ctModelCleanctspec <-  function(ctspec){ #clean ctspec structure, non numeric transform style
   tieffects <- colnames(ctspec)[grep('_effect',colnames(ctspec),fixed=TRUE)]
   found=FALSE
   ctspec$indvarying=as.logical(ctspec$indvarying)
@@ -512,7 +495,10 @@ ctStanModelCleanctspec <-  function(ctspec){ #clean ctspec structure, non numeri
   return(ctspec)
 }
 
-ctStanMatricesList <- function(unsafe=FALSE){
+# Shared by both backends, despite living in the stan model writer: the julia
+# path reads these codes too (R/ctBackendSummary.R, R/ctJuliaBackend.R). Do not
+# delete with stan.
+.ctMatricesList <- function(unsafe=FALSE){
   # THRESHOLDS exists only on models with an ordinal manifest variable, which
   # only the julia backend accepts -- ctFit refuses them for stan, and the
   # julia branch returns before ctStanModelWriter is reached, so no .stan file
@@ -536,8 +522,11 @@ ctStanMatricesList <- function(unsafe=FALSE){
 }
 
 
-ctStanModelMatrices <-function(ctm){
-  mats <- ctStanMatricesList(unsafe=TRUE)
+# Builds ctm$modelmats: the flat matsetup / matvalues / calcs tables that index
+# every parameter. Shared by both backends (R/ctJuliaBackend.R reads matsetup),
+# and unrelated to the exported ctModelMatrices() accessor in R/ctStanModel.R.
+.ctModelMatSetup <-function(ctm){
+  mats <- .ctMatricesList(unsafe=TRUE)
   ctspec <- ctm$pars
   n.TIpred <- ctm$n.TIpred
   matsetup <-list()
@@ -751,7 +740,8 @@ ctStanModelMatrices <-function(ctm){
 
 
 
-ctStanCalcsList <- function(ctm, save=FALSE){  #extract any calcs from model into specific lists
+# Shared: ctm$modelmats$calcs is read by .ctPrepareData and ctContextDependence.
+.ctCalcsList <- function(ctm, save=FALSE){  #extract any calcs from model into specific lists
   temp <- ctm$modelmats$calcs
   # Backward compatibility for pre-split custom measurement calculations.
   if(is.list(temp) && !is.null(names(temp)) && !is.null(temp$measurement)){
@@ -772,7 +762,7 @@ ctStanCalcsList <- function(ctm, save=FALSE){  #extract any calcs from model int
   temp <- as.character(temp)
   temp <- temp[nzchar(trimws(temp))]
   names(temp) <- NULL
-  mats<-ctStanMatricesList()
+  mats<-.ctMatricesList()
   
   calcs <- lapply(c(
     list(PARS=c(PARS=10)),
@@ -811,7 +801,7 @@ ctStanCalcsList <- function(ctm, save=FALSE){  #extract any calcs from model int
 ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup, simplify=TRUE){
   #if arguments change make sure to change ctFit !
   
-  mats <- ctStanMatricesList()
+  mats <- .ctMatricesList()
   # #check when / if PARS needs to be computed
   # for(mlist in names(mats[-1])){
   #   if(any(unlist(lapply(ctm$calcs[[mlist]], function(m) grepl('PARS',m))))) mats[[mlist]]=c(mats[[mlist]],'PARS')
@@ -1376,7 +1366,7 @@ matcalcs <- function(subjectid,when, matrices, basemats){
 
 subjectparaminit<- function(popmats=FALSE,smats=TRUE,matrices=c(mats$base,31, 32, 33, 21,22)){
   if(smats && popmats) stop('smats and popmats cannot both be TRUE!')
-  ma <- ctStanMatricesList()$all
+  ma <- .ctMatricesList()$all
   out<-''
   for(mn in matrices){ #removed if(smats) 's',
     m=names(ma)[ma %in% mn]
@@ -1393,7 +1383,7 @@ subjectparaminit<- function(popmats=FALSE,smats=TRUE,matrices=c(mats$base,31, 32
 }
 
 collectsubmats <- function(popmats=FALSE,matrices=c(mats$base,31, 32,33,21,22)){ #'DIFFUSIONcov','MANIFESTcov','asymDIFFUSIONcov','asymCINT'
-  ma <- ctStanMatricesList()$all
+  ma <- .ctMatricesList()$all
   out<-''
   for(mn in matrices){
     m=names(ma)[ma %in% mn]

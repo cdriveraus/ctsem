@@ -5,7 +5,7 @@
 \alias{ctAddSamples}
 \title{Sample more values from an optimized ctstanfit object}
 \usage{
-ctFitAddSamples(fit, nsamples, cores = 2)
+ctFitAddSamples(fit, nsamples, cores = 1)
 }
 \arguments{
 \item{fit}{fit object}
@@ -19,6 +19,13 @@ fit object with extra samples
 }
 \description{
 Sample more values from an optimized ctstanfit object
+}
+\details{
+\code{ctAddSamples} is the same function under its pre-3.11 name.
+  Both are kept; new code should use \code{ctFitAddSamples}. The julia
+  backend reaches this by a different route -- see \code{\link{ctSample}},
+  which runs the sampler from an optimised fit rather than resampling its
+  covariance.
 }
 \examples{
 \dontrun{

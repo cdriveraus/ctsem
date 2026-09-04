@@ -1,37 +1,37 @@
 #' Coverage Check Function
 #' 
 #' Performs a coverage check analysis by generating data from a model, fitting it multiple times
-#' with different fit arguments, and plotting the results. Works with \code{fit_args}/
-#' \code{fitting_model} combinations that fit with either \code{backend='stan'} (the
+#' with different fit arguments, and plotting the results. Works with \code{fitArgs}/
+#' \code{fittingModel} combinations that fit with either \code{backend='stan'} (the
 #' \code{\link{ctFit}} default) or \code{backend='julia'}.
 #'
 #' @param initialData An initial dataset to fit to determine 'true' parameters for further generation. 
-#' @param fitting_model A ctModel object used for fitting the data
+#' @param fittingModel A ctModel object used for fitting the data
 #' @param niter Number of iterations to run
-#' @param fit_args Named list of fit argument sets to test 
+#' @param fitArgs Named list of fit argument sets to test 
 #' (e.g., list(boot = list(optimcontrol = list(uncertainty = 'bootstrap')), 
 #' hess = list(optimcontrol = list(uncertainty = 'hessian'))))
 #' @param cores Number of outer simulation iterations to run in parallel.
-#' Inner model fits use \code{fit_cores} by default to avoid nested
+#' Inner model fits use \code{fitCores} by default to avoid nested
 #' parallelism.
-#' @param fit_cores Number of cores for each inner \code{\link{ctFit}} call.
-#' This is enforced after merging each \code{fit_args} entry so that outer
+#' @param fitCores Number of cores for each inner \code{\link{ctFit}} call.
+#' This is enforced after merging each \code{fitArgs} entry so that outer
 #' simulation \code{cores} cannot accidentally be reused by worker fits.
-#' @param generate_cores Number of cores for \code{\link{ctGenerateFromFit}}
-#' when generating replicated datasets. Defaults to \code{fit_cores}; set it
+#' @param generateCores Number of cores for \code{\link{ctGenerateFromFit}}
+#' when generating replicated datasets. Defaults to \code{fitCores}; set it
 #' explicitly to use more cores for generation.
-#' @param plot_every Print plots every n iterations (default = 10)
+#' @param plotEvery Print plots every n iterations (default = 10)
 #' 
 #' @return A list containing the results data.table and final plots
 #' @export
 
-ctModelCoverage_check <- function(initialData, fitting_model, niter, fit_args, 
-  cores = 10, fit_cores = 1, generate_cores = fit_cores,
-  plot_every = max(c(10,cores))) {
+ctCoverageCheck <- function(initialData, fittingModel, niter, fitArgs, 
+  cores = 1, fitCores = 1, generateCores = fitCores,
+  plotEvery = max(c(10,cores))) {
   
-  ctCoverageFitArgs <- function(default_fit_args, fit_args, fit_cores){
-    out <- utils::modifyList(default_fit_args, fit_args)
-    out$cores <- fit_cores
+  ctCoverageFitArgs <- function(default_fit_args, fitArgs, fitCores){
+    out <- utils::modifyList(default_fit_args, fitArgs)
+    out$cores <- fitCores
     out
   }
 
@@ -43,41 +43,41 @@ ctModelCoverage_check <- function(initialData, fitting_model, niter, fit_args,
   })
   
   cores <- suppressWarnings(as.integer(cores[1]))
-  fit_cores <- suppressWarnings(as.integer(fit_cores[1]))
-  generate_cores <- suppressWarnings(as.integer(generate_cores[1]))
+  fitCores <- suppressWarnings(as.integer(fitCores[1]))
+  generateCores <- suppressWarnings(as.integer(generateCores[1]))
   if(!is.finite(cores) || is.na(cores) || cores < 1) cores <- 1L
-  if(!is.finite(fit_cores) || is.na(fit_cores) || fit_cores < 1) fit_cores <- 1L
-  if(!is.finite(generate_cores) || is.na(generate_cores) || generate_cores < 1) generate_cores <- 1L
+  if(!is.finite(fitCores) || is.na(fitCores) || fitCores < 1) fitCores <- 1L
+  if(!is.finite(generateCores) || is.na(generateCores) || generateCores < 1) generateCores <- 1L
   cores <- min(cores, niter)
   
   
   # Default fit arguments. Inner fits are single-core by default to avoid
-  # nested parallelism; fit_cores is enforced after merging fit_args below.
+  # nested parallelism; fitCores is enforced after merging fitArgs below.
   default_fit_args <- list()
   
-  # Ensure fit_args is a named list
-  if(is.null(names(fit_args)) || any(names(fit_args) == "")) {
-    stop("fit_args must be a named list (e.g., list(boot = list(...), hess = list(...)))")
+  # Ensure fitArgs is a named list
+  if(is.null(names(fitArgs)) || any(names(fitArgs) == "")) {
+    stop("fitArgs must be a named list (e.g., list(boot = list(...), hess = list(...)))")
   }
-  fit_args_cores <- vapply(fit_args, function(x) !is.null(x$cores),
+  fit_args_cores <- vapply(fitArgs, function(x) !is.null(x$cores),
     logical(1))
   if(any(fit_args_cores)) {
-    warning('Ignoring top-level cores entries in fit_args; use fit_cores to control inner ctFit cores.',
+    warning('Ignoring top-level cores entries in fitArgs; use fitCores to control inner ctFit cores.',
       call.=FALSE)
   }
-  if(cores > 1 && fit_cores > 1) {
-    warning('ctModelCoverage_check is using outer parallelism and inner ctFit cores > 1. ',
-      'This can oversubscribe CPUs; prefer cores > 1 with fit_cores = 1 unless you have budgeted for nested workers.',
+  if(cores > 1 && fitCores > 1) {
+    warning('ctCoverageCheck is using outer parallelism and inner ctFit cores > 1. ',
+      'This can oversubscribe CPUs; prefer cores > 1 with fitCores = 1 unless you have budgeted for nested workers.',
       call.=FALSE)
   }
   
   
-  # Fit the model to get true parameters (use first fit_args configuration)
+  # Fit the model to get true parameters (use first fitArgs configuration)
   initial_fit_args <- ctCoverageFitArgs(default_fit_args, list(), cores)
-  initial_fit <- do.call(ctFit, c(list(datalong = initialData, model= fitting_model), initial_fit_args))
+  initial_fit <- do.call(ctFit, c(list(datalong = initialData, model= fittingModel), initial_fit_args))
   # .ctFitRawEstimate()/.ctFitRawPosterior()/.ctFitRawParNames() (R/ctBackendSummary.R)
   # read `$stanfit$...` or `$estimate$...` depending on which backend produced
-  # the fit, so this works whether fitting_model/fit_args select backend='stan'
+  # the fit, so this works whether fittingModel/fitArgs select backend='stan'
   # (the default) or backend='julia'.
   truepars <- .ctFitRawEstimate(initial_fit)
   
@@ -85,7 +85,7 @@ ctModelCoverage_check <- function(initialData, fitting_model, niter, fit_args,
   # This ensures proper parameter specification for all iterations
   message("Generating samples for all iterations using ctGenerateFromFit...")
   generated_samples <- ctGenerateFromFit(fit = initial_fit, nsamples = niter,
-    cores = generate_cores)
+    cores = generateCores)
   
   old_plan <- future::plan()
   on.exit(future::plan(old_plan), add=TRUE)
@@ -102,23 +102,23 @@ ctModelCoverage_check <- function(initialData, fitting_model, niter, fit_args,
       # Extract generated data for this iteration from ctGenerateFromFit
       y <- array(generated_samples$generated$Y[iter_idx,,], 
         dim = dim(generated_samples$generated$Y[1,,,drop=FALSE])[-1])
-      colnames(y) <- fitting_model$manifestNames
+      colnames(y) <- fittingModel$manifestNames
       
       # Create data for this iteration using the original data structure
       # but with the newly generated Y values
       dat <- initialData
-      dat[, fitting_model$manifestNames] <- y
+      dat[, fittingModel$manifestNames] <- y
       
       # Fit with each set of fit arguments
       iter_results <- list()
       
-      for(fit_type in names(fit_args)) {
+      for(fit_type in names(fitArgs)) {
         # Merge default args with specific fit args
         current_fit_args <- ctCoverageFitArgs(default_fit_args,
-          fit_args[[fit_type]], fit_cores)
+          fitArgs[[fit_type]], fitCores)
         
         # Fit the model with current arguments
-        current_fit <- do.call(ctFit, c(list(datalong = dat, model= fitting_model), current_fit_args))
+        current_fit <- do.call(ctFit, c(list(datalong = dat, model= fittingModel), current_fit_args))
         estimates <- t(apply(.ctFitRawPosterior(current_fit), 2, quantile, probs = c(0.025, 0.5, 0.975)))
 
         # Compile results for this fit type
@@ -146,9 +146,9 @@ ctModelCoverage_check <- function(initialData, fitting_model, niter, fit_args,
   # Initialize results storage
   all_results <- list()
   
-  # Run iterations in batches and plot every plot_every iterations
-  for(batch_start in seq(1, niter, by = plot_every)) {
-    batch_end <- min(batch_start + plot_every - 1, niter)
+  # Run iterations in batches and plot every plotEvery iterations
+  for(batch_start in seq(1, niter, by = plotEvery)) {
+    batch_end <- min(batch_start + plotEvery - 1, niter)
     batch_indices <- batch_start:batch_end
     
     message(paste("Running iterations", batch_start, "to", batch_end))

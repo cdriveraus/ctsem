@@ -34,36 +34,6 @@
 
 
 
-ctstantestfitfunc<-function(){
-  checkm<-ctModel(
-    type='ct',
-    n.latent=2,n.TDpred=1,n.TIpred=1,n.manifest=2,
-    MANIFESTVAR=matrix(c('merror',0,0,'merror'),2,2),
-    MANIFESTMEANS=0,
-    DIFFUSION=c('diff11',0,'diff21','diff22||||TI1'),
-    CINT=matrix(c('cint1||||TI1','cint2||||TI1'),ncol=1),
-    LAMBDA=diag(2),tipredDefault=FALSE)  
-  
-  ctstantestfit<-ctFit(ctstantestdat,checkm,cores=1,
-    inits = c(0.748310681869536,0.945659953796114,0.0964592332562144,
-      0.029153487981562,0.651471066485501,0.0314778013950629,
-      0.217818608752396,1.10441297459423,-0.801320300354595,
-      0.647010811111734,-0.7344068376597,-1.04150782976995,
-      0.0558819480347101,-0.108435212373754,-0.225029736388403,
-      -0.203457959897841,-0.736264486213394,-0.687369939087293,
-      0.576641002392084,0.248625561427667,-0.0683189297539777,
-      -0.230342395895042,0.205299380670756,-0.34522281922735,
-      0.0829819407118698,0.0137367678089216,-0.0611697475527028),
-    optimize = TRUE,optimcontrol=list(finishsamples=20),priors=TRUE)
-  
-  ctstantestfit <- ctGenerateFromFit(ctstantestfit,nsamples = 20,fullposterior = TRUE)
-  
-  return(ctstantestfit)
-}
-
-
-
-
 # removeOutliers <- function(dat,multiplier,by=2){
 #   dat2 <- array(apply(dat,by,function(x){
 #     s=sd(x,na.rm=TRUE)
@@ -73,73 +43,6 @@ ctstantestfitfunc<-function(){
 #     return(x)
 #   }),dim=dim(dat))
 # }
-
-
-testall<- function(cores=4,folder = '/tests/testthat',examples=TRUE){
-  if(!requireNamespace('testthat', quietly=TRUE)){
-    stop("Package 'testthat' is required to run testall().", call.=FALSE)
-  }
-  .testall_setup <- function(testfolder){
-    Sys.setenv(NOT_CRAN='true')
-    suppressPackageStartupMessages(library(ctsem))
-    supportfiles <- list.files(testfolder, pattern='^(helper|setup).*\\.[rR]$',
-      full.names=TRUE)
-    for(supportfile in supportfiles) sys.source(supportfile, envir=globalenv())
-    pdf(NULL)
-    invisible(TRUE)
-  }
-  testfolder <- normalizePath(paste0('.',folder))
-  Sys.setenv(NOT_CRAN='true')
-  tests <- dir(paste0('.',folder))
-  tests <- tests[grepl('^test',tests)]
-  # `x[-integer(0)]` is empty, not everything, so an unmatched grep here
-  # silently reduced the whole list to nothing. That is what happened when
-  # test-runExamples.R moved out of tests/testthat: this helper ran zero
-  # tests in every mode and said so only by finishing instantly.
-  runex <- grep('runExamples', tests)
-  if(length(runex)) {
-    tests <- if(examples) c(tests[runex], tests[-runex]) else tests[-runex]
-  }
-  a=Sys.time()
-
-  if(cores > 1){
-    # rscript_libs: without it a worker searches its own default .libPaths(),
-    # not the caller's, so library(ctsem) below can silently load a different
-    # install than the one running this code -- exactly wrong for a test
-    # runner, whose whole point is to test the development tree under test
-    # rather than whatever ctsem happens to be installed globally. Same
-    # failure mode makeClusterID() (stanoptimis.R) was fixed for.
-    cl <- parallelly::makeClusterPSOCK(cores, rscript_libs = .libPaths())
-    on.exit(try(parallel::stopCluster(cl),silent=TRUE),add=TRUE)
-    out <- parallel::parLapplyLB(cl,paste0(getwd(),folder,'/',tests),function(x, testfolder){
-      Sys.setenv(NOT_CRAN='true')
-      suppressPackageStartupMessages(library(ctsem))
-      supportfiles <- list.files(testfolder, pattern='^(helper|setup).*\\.[rR]$',
-        full.names=TRUE)
-      for(supportfile in supportfiles) sys.source(supportfile, envir=globalenv())
-      pdf(NULL)
-      on.exit(dev.off(), add=TRUE)
-      out<-testthat::test_file(x, reporter = "minimal")
-      return(out)
-  }, testfolder=testfolder)
-  }
-  if(cores==1){
-    .testall_setup(testfolder)
-    out <- lapply(paste0(getwd(),folder,'/',tests),function(x){
-      cat(x)
-      out<-testthat::test_file(x, reporter = "minimal")
-      print(out)
-      return(out)
-    })
-  }
-  out2 <- do.call(what = rbind,lapply(out,utils::getS3method('as.data.frame','testthat_results')))
-  if(dev.cur() > 1) dev.off()
-  print(out2[,colnames(out2)!='result'])
-  print(Sys.time()-a)
-  if(cores > 1) parallel::stopCluster(cl)
-  return(invisible(out2))
-}
-  
 
 
 suppressOutput <- function(...,verbose=0){

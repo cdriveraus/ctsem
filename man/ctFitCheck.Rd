@@ -139,5 +139,5 @@ ctFitCheck(ctstantestfit)
 }
 \seealso{
 \code{\link{ctFitCheckCov}}, the focused lagged-covariance diagnostic
-this dashboard delegates its \code{marginalcovcheck} panel to.
+  this dashboard delegates its \code{marginalcovcheck} panel to.
 }

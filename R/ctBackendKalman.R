@@ -257,6 +257,15 @@
 #' Prior, filtered and smoothed estimates of the latent states and the
 #' observations, for every row of data, from the same forward pass the engine
 #' uses for the likelihood.
+#' \code{\link{ctKalmanArray}} (alias \code{ctStanKalman}) dispatches here for
+#' a \code{ctJuliaFit}, so call that unless you want the julia route
+#' specifically. \code{\link{ctPredict}} (alias \code{ctKalman}) returns the
+#' same information as a long data frame.
+#'
+#' Internal. \code{ctBackend*} means internal throughout the package, so this is
+#' not exported; users reach it through \code{\link{ctKalmanArray}} and
+#' \code{\link{ctPredict}}, which dispatch here for a \code{ctJuliaFit}. The
+#' \code{randomEffects} notes below describe behaviour those two inherit.
 #'
 #' @param fit A \code{ctJuliaFit}.
 #' @param subjects \code{'all'}, a vector of subject ids, or integer positions
@@ -308,7 +317,7 @@
 #'   prediction with every observation withheld still uses that subject's own
 #'   random effects, which is what makes it a prediction *for that subject*
 #'   rather than for the average one.
-#' @export
+#' @keywords internal
 ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
   maxtime = "asdata", removeObs = FALSE, pointest = TRUE, nsamples = NA,
   collapsefunc = NA, standardisederrors = FALSE, subjectpars = FALSE,
@@ -620,7 +629,7 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
 # `standatatolong()`'s id column is `standata$subject`, the ascending 1:N
 # `makeNumericIDs()` (R/ctsemUtils.R) assigned -- never the user's own ids,
 # which only `standata$idmap` (original/new, built right before that
-# remapping in ctStanData(), R/ctData.R) still knows. Left unmapped, a stan
+# remapping in .ctPrepareData(), R/ctData.R) still knows. Left unmapped, a stan
 # fit returned the internal index and a julia fit returned the user's real
 # ids (from the verbatim frame this used to fall back to), so the two
 # backends silently disagreed about what a subject is called -- a
@@ -658,7 +667,7 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
 # for them.
 .ctFitReplaceData <- function(fit, datalong) {
   if (!.ctFitIsJulia(fit) && !is.null(fit$standata)) {
-    fit$standata <- suppressMessages(ctStanData(fit$ctstanmodel, datalong, optimize = TRUE))
+    fit$standata <- suppressMessages(.ctPrepareData(fit$ctstanmodel, datalong, optimize = TRUE))
     return(fit)
   }
   spec <- .ctBackendSpec(fit)

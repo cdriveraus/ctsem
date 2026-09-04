@@ -1,11 +1,3 @@
-ctTIpredParMats <- function(fit, tipvalues){
-  newpars <- fit$stanfit$rawest
-  effect <- matrix(fit$stanfit$transformedparsfull$TIPREDEFFECT[1,,], fit$standata$nparams,fit$standata$ntipred)
-  newpars[1:fit$standata$nparams] <- newpars[1:fit$standata$nparams] + effect %*% matrix(tipvalues)
-  
-  cp=stan_constrainsamples(fit$stanmodel,standata = fit$standata,samples = matrix(newpars,1),cores = 1)
-}
-
 #' Get time independent predictor effect estimates
 #' 
 #' Computes and plots combined effects and quantiles for effects of time independent predictors

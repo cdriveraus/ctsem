@@ -3,18 +3,18 @@
   library(testthat)
 
 
-test_that("ctModelCoverage_check generation cores default to fit_cores", {
+test_that("ctCoverageCheck generation cores default to fitCores", {
   expect_identical(
-    formals(ctModelCoverage_check)$generate_cores,
-    quote(fit_cores)
+    formals(ctCoverageCheck)$generateCores,
+    quote(fitCores)
   )
 })
 
-# ctModelCoverage_check() used to read fit$stanfit$rawest and
+# ctCoverageCheck() used to read fit$stanfit$rawest and
 # fit$stanfit$rawposterior directly (truepars, and the quantiles it compares
 # them against), and named parameters via ctFitgetparnamesfromraw(), which
 # reads fit$setup$matsetup -- none of which a julia fit carries, so a
-# backend='julia' entry in fit_args would have errored partway through the
+# backend='julia' entry in fitArgs would have errored partway through the
 # first iteration. It now reads through .ctFitRawEstimate()/
 # .ctFitRawPosterior()/.ctFitRawParNames() (R/ctBackendSummary.R), which
 # branch on class(fit). This had no fitting test before this file (the one
@@ -47,7 +47,7 @@ test_that("ctModelCoverage_check generation cores default to fit_cores", {
   data
 }
 
-test_that("ctModelCoverage_check runs end to end for a julia fit", {
+test_that("ctCoverageCheck runs end to end for a julia fit", {
   skip_on_cran()
   skip_without_julia()
   skip_if_not_installed("future")
@@ -58,10 +58,10 @@ test_that("ctModelCoverage_check runs end to end for a julia fit", {
   dat <- .coverage_julia_data()
   model <- .coverage_julia_model()
 
-  res <- suppressWarnings(suppressMessages(ctModelCoverage_check(
-    initialData = dat, fitting_model = model, niter = 1,
-    fit_args = list(hess = list(backend = "julia", verbose = 0)),
-    cores = 1, fit_cores = 1, plot_every = 1)))
+  res <- suppressWarnings(suppressMessages(ctCoverageCheck(
+    initialData = dat, fittingModel = model, niter = 1,
+    fitArgs = list(hess = list(backend = "julia", verbose = 0)),
+    cores = 1, fitCores = 1, plotEvery = 1)))
 
   expect_true(is.list(res))
   expect_true(nrow(res$results) > 0)

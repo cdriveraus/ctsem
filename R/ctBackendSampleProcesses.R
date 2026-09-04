@@ -117,7 +117,11 @@
   results <- lapply(seq_len(chains), function(k) {
     chain_file <- if (report) progress_files[k] else NULL
     tryCatch(
-      future::future(ctsem:::.ctBackendSampleOneChain(fit, target, warmup,
+      # The namespace lookup is explicit because the expression is evaluated in
+      # a worker process, where only the installed ctsem exists. `ctsem:::`
+      # would do the same job but draws a CRAN NOTE for ::: on our own objects.
+      future::future(utils::getFromNamespace(".ctBackendSampleOneChain",
+        "ctsem")(fit, target, warmup,
         draws, per_worker, control, saveEffects, as.integer(seed) + k - 1L,
         progress_file = chain_file),
         seed = TRUE),

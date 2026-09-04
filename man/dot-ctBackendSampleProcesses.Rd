@@ -15,7 +15,8 @@
   control = list(),
   saveEffects = FALSE,
   seed = 1L,
-  verbose = FALSE
+  verbose = FALSE,
+  progress = .ctVerboseOn(verbose)
 )
 }
 \arguments{
@@ -35,6 +36,10 @@ survives serialisation.}
 absent the workers are started here and the compile is paid in full.}
 
 \item{control, saveEffects, seed, verbose}{As for [ctSample()].}
+
+\item{progress}{Report chain progress from the parent while the workers
+run. Separate from `verbose` for the same reason `.ctBackendSampleEngine`
+keeps the two apart -- see there.}
 }
 \value{
 A fit with pooled draws and diagnostics, or `NULL` if the workers

@@ -48,9 +48,21 @@ per time point).}
 \item{realid}{use original (not necessarily integer sequence) subject id's? Otherwise use integers 1:N.}
 
 \item{randomEffects}{For an \code{intoverpop='laplace'} fit, which levels
-of random effect the trajectories are built from -- one of the model's id
-columns, or \code{'population'} for none. Defaults to the innermost id.
-See \code{\link{ctBackendKalman}}. Ignored for other fits.}
+  of random effect the trajectories are built from. Naming one of the
+  model's id columns includes that level and every level outside it, so the
+  innermost id gives each subject its own trajectory and an outer id gives
+  the group mean, shared by every subject in the group.
+  \code{'population'} includes none, giving the trajectory implied by the
+  population parameters alone. Defaults to the innermost id. Ignored for
+  other fits.
+
+  Whichever level is chosen, these are the \emph{smoothed} random effects:
+  modes estimated from each subject's whole record, so there is no version
+  of them from before a subject's later data arrived. They also stay fixed
+  however this call changes the rows being filtered, so a prediction with
+  every observation withheld still uses that subject's own random effects
+  -- which is what makes it a prediction for that subject rather than for
+  the average one.}
 
 \item{...}{additional arguments to pass to \code{\link{plot.ctKalmanDF}}.}
 }
@@ -66,9 +78,13 @@ Some outputs are unavailable for ctStan fits at present.
 If plot=TRUE, nothing is returned but a plot is generated.
 }
 \description{
-Outputs predicted, updated, and smoothed estimates of manifest indicators and latent states, 
+Outputs predicted, updated, and smoothed estimates of manifest indicators and latent states,
 with covariances, for specific subjects from data fit with \code{\link{ctFit}},
 based on either the mode (if optimized) or mean (if sampled) of parameter distribution.
+\code{ctKalman} is an alias for this function and returns the same long data
+frame. The pre-3.11 name \code{ctStanKalman} is not its Stan-prefixed twin:
+that is an alias for \code{\link{ctKalmanArray}}, which returns a list of
+arrays instead.
 }
 \examples{
 \donttest{

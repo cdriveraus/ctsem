@@ -1,6 +1,6 @@
 ctModelBuildPopCov <- function(ctm,linearise){ #for latex
   ctm <- T0VARredundancies(ctm)
-  ctm$pars <- ctStanModelCleanctspec(ctm$pars)
+  ctm$pars <- .ctModelCleanctspec(ctm$pars)
   freepars <- !is.na(ctm$pars$param) &
     !grepl('\\W', gsub('.', '', ctm$pars$param, fixed=TRUE)) &
     !ctm$pars$param %in% ctm$latentNames
@@ -42,7 +42,7 @@ ctModelBuildPopCov <- function(ctm,linearise){ #for latex
 # }
 
 ctModelBuildTIeffects <- function(ctm){ #for latex
-  ctm$pars <- ctStanModelCleanctspec(ctm$pars)
+  ctm$pars <- .ctModelCleanctspec(ctm$pars)
   tieffects <- unique(colnames(ctm$pars)[grep('_effect',colnames(ctm$pars),fixed=TRUE)])
   freepars <- !is.na(ctm$pars$param) &
     !grepl('\\W', gsub('.', '', ctm$pars$param, fixed=TRUE)) &

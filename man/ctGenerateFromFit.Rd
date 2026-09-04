@@ -10,7 +10,7 @@ ctGenerateFromFit(
   nsamples = 200,
   fullposterior = FALSE,
   verboseErrors = FALSE,
-  cores = 2
+  cores = 1
 )
 }
 \arguments{

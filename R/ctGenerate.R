@@ -147,7 +147,7 @@ ctGenerateFromPriors <- function(cts,datastruct=NA, is=FALSE,
     datastruct[,cts$manifestNames] <- -99
     
     #get filled standata object
-    pp$standata<-ctStanData(ctm=pp$ctstanmodel, datalong=datastruct,optimize=TRUE)
+    pp$standata<-.ctPrepareData(ctm=pp$ctstanmodel, datalong=datastruct,optimize=TRUE)
     
     ppf <- ctGenerateFromFit(fit = pp,nsamples = nsamples,fullposterior = fullposterior,cores=cores)
     

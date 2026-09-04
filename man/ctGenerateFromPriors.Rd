@@ -12,7 +12,7 @@ ctGenerateFromPriors(
   fullposterior = TRUE,
   nsamples = 200,
   parsonly = FALSE,
-  cores = 2
+  cores = 1
 )
 }
 \arguments{

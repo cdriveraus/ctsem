@@ -17,7 +17,7 @@
 #' \dontrun{
 #' newfit <- ctFitAddSamples(ctstantestfit, 10, 1)
 #' }
-ctFitAddSamples <- function(fit,nsamples,cores=2){
+ctFitAddSamples <- function(fit,nsamples,cores=1){
   
   if(length(fit$stanfit$stanfit@sim) > 0) stop('ctStanFit object was sampled and not optimized, cannot add samples!')
   
@@ -238,7 +238,7 @@ parallelStanSetup <- function(cl, standata,split=TRUE,nsubsets=1,smfile=NA){
   parallel::clusterEvalQ(cl,{
     # g = eval(parse(text=paste0('gl','obalenv()'))) #avoid spurious cran check -- assigning to global environment only on created parallel workers.
     # environment(parlptext) <- g
-    if(standata$recompile > 0) load(file=smfile) else sm <- utils::getFromNamespace("stanmodels", "ctsem")$ctsm#ctsem:::stanmodels$ctsm
+    if(standata$recompile > 0) load(file=smfile) else sm <- utils::getFromNamespace("stanmodels", "ctsem")$ctsm
     # eval(parse(text=parlptext))
     # assign("parlp",parlp,pos=g)
     if(FALSE){ sm=99;smfile=NULL;nodeid=NULL} #global variables
@@ -258,10 +258,10 @@ parallelStanSetup <- function(cl, standata,split=TRUE,nsubsets=1,smfile=NA){
       if(is.null(attributes(out)$gradient)) attributes(out)$gradient <- rep(NaN, length(parm))
       return(out)
     }
-    if(length(stanindices[[nodeid]]) < length(unique(standata$subject))) standata <-  utils::getFromNamespace("standatact_specificsubjects", "ctsem")(standata,stanindices[[nodeid]])#ctsem:::
+    if(length(stanindices[[nodeid]]) < length(unique(standata$subject))) standata <-  utils::getFromNamespace("standatact_specificsubjects", "ctsem")(standata,stanindices[[nodeid]])
     standata$priormod <- 1/cores
     
-    smf=utils::getFromNamespace("stan_reinitsf", "ctsem")(sm,standata)#ctsem:::
+    smf=utils::getFromNamespace("stan_reinitsf", "ctsem")(sm,standata)
   })
   NULL
 }
@@ -270,9 +270,9 @@ singlecoreStanSetup <-function(standata, nsubsets,sm){
   cores <- 1
   standata$nsubsets <- as.integer(nsubsets)
   # if(!is.null(standata$recompile)) standata$recompile <- 0 #no recompile on single core
-  if(standata$recompile == 0) smf <- stan_reinitsf(stanmodels$ctsm,standata)#ctsem::: ctsem:::
-  if(standata$recompile > 0) smf <- stan_reinitsf(sm,standata)#ctsem::: ctsem:::
-  return(eval(parse(text=parlptext)))#create parlp function) #ctsem:::
+  if(standata$recompile == 0) smf <- stan_reinitsf(stanmodels$ctsm,standata)
+  if(standata$recompile > 0) smf <- stan_reinitsf(sm,standata)
+  return(eval(parse(text=parlptext)))#create parlp function
 }
 
 #create as text because of parallel communication weirdness

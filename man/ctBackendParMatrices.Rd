@@ -44,6 +44,10 @@ derived from them -- from a raw (unconstrained) parameter vector, using the
 same engine code the likelihood uses.
 }
 \details{
+Internal. \code{ctBackend*} means internal throughout the package, so this is
+not exported; the public, backend-neutral accessor for the population
+matrices is \code{\link{ctSummaryMatrices}}.
+
 For a linear model no cell depends on the state and the result is
   exact. For a nonlinear one, the state-dependent cells are evaluated at
   \code{state} and are conditional on it; \code{attr(x, 'stateDependent')}
@@ -54,3 +58,4 @@ For a linear model no cell depends on the state and the result is
 # ctBackendParMatrices(fit)$DRIFT
 }
 }
+\keyword{internal}
