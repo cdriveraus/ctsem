@@ -828,22 +828,11 @@
       ctModelLatex(x, folder = ctx$folder, filename = stem, open = FALSE,
         compile = compile)))
     notes <- character(0)
-    # Two independent reasons this can fall short of "the fitted model, as a
-    # compiled pdf", and they degrade in opposite directions: ctModelLatex()
-    # cannot yet substitute estimates for a ctJuliaFit (it wants a ctStanFit or
-    # a bare model), and compiling needs a LaTeX installation. Each falls back
-    # on its own and says which happened -- the equations without the numbers,
-    # or the numbers without a pdf, are both worth having.
+    # One reason this can fall short of "the fitted model, as a compiled pdf":
+    # compiling needs a LaTeX installation. Writing the .tex does not, so a
+    # machine without one still gets the equations with the estimates in them.
     out <- try(write(fit, TRUE), silent = TRUE)
-    if (inherits(out, "try-error")) {
-      out <- try(write(fit, FALSE), silent = TRUE)
-      if (inherits(out, "try-error")) {
-        out <- try(write(.ctFitModelObject(fit), TRUE), silent = TRUE)
-        if (inherits(out, "try-error")) out <- write(.ctFitModelObject(fit), FALSE)
-        notes <- c(notes, paste0("Estimates could not be substituted for a ",
-          "fit on this backend, so these are the model's expressions."))
-      }
-    }
+    if (inherits(out, "try-error")) write(fit, FALSE)
     files <- paste0(stem, c(".tex", ".pdf"))
     files <- files[file.exists(file.path(ctx$folder, files))]
     if (!any(grepl("[.]pdf$", files))) {
