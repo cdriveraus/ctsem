@@ -14,9 +14,15 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     #gen data
     nsubjects <- 20
     cint <- rnorm(nsubjects, mean = .1, sd = .3)
+    # MANIFESTVAR is stated rather than left free. A free generating cell is
+    # filled from `.ctGenerateDefaults()`, so this test's data moves whenever
+    # those defaults do -- under a set.seed() that reads as though it pinned
+    # everything. Zero is what has always been generated here and what the
+    # rbinom link below wants: the indicators are noise-free before the draw.
     gm <- ctModel(DRIFT=-.3, DIFFUSION=.3, CINT=.1,
       LAMBDA= rep(1,each=n.manifest),
       n.latent=1,n.manifest=n.manifest,Tpoints=20,
+      MANIFESTVAR=diag(0,n.manifest),
       MANIFESTMEANS=c(0,rep(c(.5,-.5),each=(n.manifest-1)/2)),T0MEANS=-.3,T0VAR=.5)
     
     dlist <- vector("list", nsubjects)
