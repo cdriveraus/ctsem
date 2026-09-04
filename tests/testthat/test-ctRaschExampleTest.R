@@ -28,7 +28,12 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     dlist <- vector("list", nsubjects)
     for(i in seq_len(nsubjects)){
       gm_i <- gm
-      gm_i$CINT[] <- cint[i]
+      # Through $matrices, not `gm_i$CINT[] <-`. `gm` is a ctStanModel, whose
+      # canonical specification is $pars; ctGenerate() rebuilds every top level
+      # matrix from $pars before generating, so a direct assignment is silently
+      # discarded and all 20 subjects were generated with CINT = .1. The
+      # $matrices view writes back into $pars, so the value reaches the data.
+      gm_i$matrices$CINT[] <- cint[i]
       d_i <- ctGenerate(gm_i, n.subjects = 1, logdtsd = .2)
       d_i[, "id"] <- i
       dlist[[i]] <- d_i

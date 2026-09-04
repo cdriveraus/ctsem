@@ -253,7 +253,10 @@ ctStanGenerate <- ctGenerateFromPriors
 #' datalist <- vector("list", nsubjects)
 #' for(i in seq_len(nsubjects)){
 #'   subjectModel <- generatingModel
-#'   subjectModel$CINT <- matrix(subjectCint[i,], ncol = 1)
+#'   #through $matrices: a ctStanModel's specification is $pars, which every
+#'   #top level matrix is rebuilt from below, so `subjectModel$CINT <- ` would
+#'   #be discarded and every subject generated with the same CINT.
+#'   subjectModel$matrices$CINT <- matrix(subjectCint[i,], ncol = 1)
 #'   d <- ctGenerate(subjectModel,n.subjects=1,burnin=10)
 #'   d[,'id'] <- i
 #'   datalist[[i]] <- d
