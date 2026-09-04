@@ -199,6 +199,29 @@ test_that("a saturated optimum is not reported as converged", {
   m
 }
 
+# The same shape, as a *generating* model, with every matrix stated.
+#
+# `.jbin_mixed()` is a model to fit, so DRIFT, DIFFUSION and T0VAR are free in
+# it. Handed to `ctGenerate()` those cells are filled from
+# `.ctGenerateDefaults()`, and the data then moves whenever those defaults do --
+# silently, under a `set.seed()` that reads as though it pinned everything. It
+# already has: written on 2026-08-29 this generated a real process (DRIFT -0.5,
+# DIFFUSION 1, T0VAR 1); under the defaults that followed, the latent is pinned
+# at zero to within about 1e-3, which makes the "not degenerate" check below
+# pass for exactly the wrong reason. Values match `.jbin_mixed_data()`,
+# including a measurement sd of 0.5 on the gaussian indicator.
+.jbin_mixed_genmodel <- function() {
+  m <- suppressMessages(ctModel(type = "ct", n.latent = 1, n.manifest = 4,
+    manifestNames = c("b1", "b2", "b3", "y1"), latentNames = "eta1",
+    LAMBDA = matrix(1, 4, 1), MANIFESTMEANS = matrix(0, 4, 1),
+    CINT = matrix(0), T0MEANS = matrix(0), T0VAR = matrix(1),
+    DRIFT = matrix(-0.3), DIFFUSION = matrix(0.8),
+    MANIFESTVAR = diag(c(0, 0, 0, 0.5), 4)))
+  m$manifesttype <- c(1L, 1L, 1L, 0L)
+  m$pars$indvarying <- FALSE
+  m
+}
+
 .jbin_mixed_data <- function(nsubjects = 30) {
   invlog <- function(x) exp(x) / (1 + exp(x))
   set.seed(11)
@@ -253,7 +276,7 @@ test_that("generation draws binary indicators as zeros and ones", {
   # than a bug in the generator.
   set.seed(4)
   d <- suppressWarnings(suppressMessages(
-    ctGenerate(.jbin_mixed(), n.subjects = 30, Tpoints = 10,
+    ctGenerate(.jbin_mixed_genmodel(), n.subjects = 30, Tpoints = 10,
       backend = "julia")))
   for (nm in c("b1", "b2", "b3")) {
     expect_true(all(d[, nm] %in% c(0, 1)), info = nm)
@@ -267,7 +290,7 @@ test_that("generation draws binary indicators as zeros and ones", {
 test_that("a binary model is routed away from the r generator", {
   # The r generator integrates a linear gaussian system and has no link, so it
   # produced continuous values for a manifest declared binary -- silently.
-  m <- .jbin_mixed()
+  m <- .jbin_mixed_genmodel()
   expect_warning(
     suppressMessages(ctGenerate(m, n.subjects = 3, Tpoints = 4,
       backend = "r")),

@@ -17,8 +17,15 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4 &
     lambdafactor = .3
     dt=1
 
-      gm=suppressMessages(ctModel(LAMBDA=diag(2), Tpoints=Tpoints, DRIFT=diag(-.1,2),T0MEANS = matrix(c(3,2)), 
+      # MANIFESTVAR and MANIFESTMEANS are stated rather than left free. A free
+      # generating cell is filled from `.ctGenerateDefaults()`, so this test's
+      # data moves whenever those defaults do -- under a set.seed() that reads
+      # as though it pinned everything. Zero is what has always been generated
+      # here and what the test wants: the measurement error is added by hand
+      # below, so a non-zero generating MANIFESTVAR would double-count it.
+      gm=suppressMessages(ctModel(LAMBDA=diag(2), Tpoints=Tpoints, DRIFT=diag(-.1,2),T0MEANS = matrix(c(3,2)),
         DIFFUSION=diag(.2,2),
+        MANIFESTVAR=diag(0,2), MANIFESTMEANS=matrix(0,2,1),
         T0VAR=diag(2)))
       dat=suppressMessages(ctGenerate(gm,n.subjects = nsubjects,burnin = 3,dtmean = dt))
 
@@ -100,10 +107,16 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4 &
     nsubjects <- 100
     traitChol <- diag(.5,2)
     subjectCint <- t(replicate(nsubjects, as.numeric(traitChol %*% rnorm(2))))
+    # Stated in full, for the same reason as the model above. T0VAR is the one
+    # value that is not what generation has lately been supplying (1e-6 from
+    # the defaults); burnin = 20 against a drift of -1 washes the initial
+    # condition out entirely, and this test asserts only that the fit returns.
     gm <- ctModel(LAMBDA=diag(2), #diagonal factor loading, 2 latents 2 observables
       Tpoints = 5,
       DRIFT=matrix(c(-1,.5,0,-1),2,2), #temporal dynamics
-      DIFFUSION=diag(2)) #within person covariance 
+      MANIFESTVAR=diag(0,2), MANIFESTMEANS=matrix(0,2,1),
+      T0MEANS=matrix(0,2,1), T0VAR=diag(1,2),
+      DIFFUSION=diag(2)) #within person covariance
     
     dlist <- vector("list", nsubjects)
     for(i in seq_len(nsubjects)){

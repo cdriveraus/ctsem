@@ -10,8 +10,15 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     set.seed(1)
     nsubjects <- 600
     manifestTraitChol <- matrix(c(2,-1,-1, 0,1,1,0,0,2),3,3)
+    # MANIFESTVAR and T0MEANS are stated rather than left free. A free
+    # generating cell is filled from `.ctGenerateDefaults()`, so this test's
+    # data moves whenever those defaults do -- under a set.seed() that reads as
+    # though it pinned everything. Zero is what has always been generated here
+    # and what the fitted model below assumes: it fixes MANIFESTVAR to 0, so a
+    # non-zero generating value would be a misspecification.
     gm <- ctModel(type='omx',LAMBDA = diag(1,3),DRIFT=diag(-1,3),
       T0VAR=matrix(c(5,-5,-5,0,1,-1,0,0,2),3,3),
+      MANIFESTVAR=diag(0,3), T0MEANS=matrix(0,3,1),
       DIFFUSION=matrix(c(2,1,1,0,4,-2,0,0,2),3,3),Tpoints=30)
     
     subjectManifestMeans <- t(replicate(nsubjects, as.numeric(manifestTraitChol %*% rnorm(3))))

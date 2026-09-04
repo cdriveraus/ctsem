@@ -30,17 +30,24 @@ ctModeltoNumeric <- function(ctmodelobj){
           value <- if(is.null(spec)) 0 else
             if(i == j) spec$diagonal else spec$offdiagonal
           m[i,j] <- value
-          if(value != 0) filled <<- c(filled, sprintf('%s[%d,%d]=%s', x, i, j,
-            format(value)))
+          # Every filled cell is named, including the ones filled with zero.
+          # Reporting only the non-zero ones made the common case silent: a
+          # model leaving only MANIFESTVAR or T0MEANS free said nothing at all,
+          # so a script -- or a test under a set.seed() -- generated from
+          # values it never stated and had no way to notice when those values
+          # changed underneath it. That is how test-binary-binary-mix.R came to
+          # characterise a dataset that no longer existed.
+          filled <<- c(filled, sprintf('%s[%d,%d]=%s', x, i, j, format(value)))
         }
       }
       ctmodelobj[[x]] <<- matrix(as.numeric(m),nrow=nrow(m), ncol=ncol(m))
     }
   })
-  if(length(filled)) message('Free parameters were given generating values: ',
+  if(length(filled)) message(length(filled),
+    ' free parameters were given generating values: ',
     paste(utils::head(filled, 8), collapse=', '),
     if(length(filled) > 8) ', ...' else '',
-    '. Others were set to zero. Set them in the model if they matter.')
+    '. Set them in the model if they matter.')
   
   return(ctmodelobj)
 }

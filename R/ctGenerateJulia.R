@@ -27,8 +27,14 @@
 # no continuous/discrete distinction to make). Close enough to negligible to
 # be indistinguishable in practice, but non-singular so generation can
 # proceed. MANIFESTVAR stays exactly zero: it is not singular in the
-# measurement update, and noise-free generated data is what
-# test-ctRaschExampleTest.R and test-timevarying.R are calibrated for.
+# measurement update.
+#
+# These values move. When they do, every test whose generating model leaves a
+# cell free gets different data under a `set.seed()` that reads as though it
+# pinned everything -- which is how test-binary-binary-mix.R came to be
+# characterising a dataset that no longer existed. A test that generates should
+# state its generating model in full; the message below names every cell this
+# function had to supply, so an incomplete one says so in its output.
 #
 # These are defaults for *simulation*, not estimates of anything, and the point
 # is only that an underspecified model can still be generated from. Anything a
@@ -78,16 +84,20 @@
     value <- if (is.null(spec)) 0 else
       if (isTRUE(pars$row[i] == pars$col[i])) spec$diagonal else spec$offdiagonal
     pars$value[i] <- value
-    if (value != 0) filled <- c(filled, sprintf("%s[%d,%d]=%s", matrix_name,
+    # Every filled cell is named, including the ones filled with zero. Naming
+    # only the non-zero ones made the common case unreadable: a model leaving
+    # only MANIFESTVAR or T0MEANS free reported a count and no cells, so a
+    # script -- or a test under a set.seed() -- generated from values it never
+    # stated and had no way to notice when those values changed underneath it.
+    filled <- c(filled, sprintf("%s[%d,%d]=%s", matrix_name,
       pars$row[i], pars$col[i], format(value)))
   }
   model$pars <- pars
   if (!quiet) {
     message(length(free), " free parameter", if (length(free) > 1) "s" else "",
-      " had no value and were set for generation",
-      if (length(filled)) paste0(", including ",
-        paste(utils::head(filled, 6), collapse = ", "),
-        if (length(filled) > 6) ", ..." else "") else " to zero",
+      " had no value and were set for generation: ",
+      paste(utils::head(filled, 8), collapse = ", "),
+      if (length(filled) > 8) ", ..." else "",
       ". Set them in the model if they matter.")
   }
   model
