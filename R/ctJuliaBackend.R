@@ -2909,8 +2909,15 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     minimizer <- minimizer[seq_len(npar)]
     gradientvec <- gradientvec[seq_len(npar)]
   }
+  # `$data` is not set here: it is attached by ctFit.R after this call
+  # returns, as the sentinel-cleaned `standata` structure (matching a stan
+  # fit's `$data`/`$standata` split -- see R/ctFit.R). Setting the verbatim
+  # `datalong` here would only be overwritten there in the normal ctFit()
+  # entry point, and `model_spec$data` (the long data.frame `.ctJuliaPrepare()`
+  # kept) already covers what code inside this package needs from it, via
+  # `.ctBackendSpec()`.
   out <- list(backend = "julia", model = model, model_spec = model_spec,
-    data = datalong, estimate = list(raw = minimizer,
+    estimate = list(raw = minimizer,
       loglik = loglik,
       logposterior = as.numeric(result$maximum_loglik),
       gradient = gradientvec,
@@ -3191,5 +3198,13 @@ coef.ctJuliaFit <- function(object, ...) object$estimate$raw
 
 #' @export
 logLik.ctJuliaFit <- function(object, ...) {
-  structure(object$estimate$loglik, df = length(object$estimate$raw), nobs = nrow(object$data), class = "logLik")
+  # `object$data` is now the sentinel-cleaned `standata` structure (a list,
+  # for parity with a stan fit -- see R/ctFit.R), not a data.frame, so
+  # `nrow()` on it no longer gives the row count. `$standata$ndatapoints` is
+  # the same count read directly off that structure; `model_spec$data` (the
+  # long data.frame `.ctJuliaPrepare()` kept) is the fallback for a fit built
+  # before that field existed.
+  nobs <- if (!is.null(object$standata$ndatapoints)) as.integer(object$standata$ndatapoints) else
+    nrow(.ctBackendSpec(object)$data)
+  structure(object$estimate$loglik, df = length(object$estimate$raw), nobs = nobs, class = "logLik")
 }
