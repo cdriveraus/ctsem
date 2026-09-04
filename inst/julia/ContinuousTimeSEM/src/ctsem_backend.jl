@@ -833,7 +833,13 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         saturated=saturated,
         # Which raw parameters, not just whether one did -- most of the
         # diagnostic value, and free once the derivatives are computed.
-        saturated_parameters=saturated_parameters,
+        #
+        # NEVER an empty vector. A zero-length vector deadlocks the
+        # JuliaConnectoR bridge in both directions, and "nothing saturated" is
+        # the normal case, so returning Int[] here hung every healthy fit the
+        # moment its result crossed back to R. 0 means none; any other entry is
+        # a raw parameter index.
+        saturated_parameters=isempty(saturated_parameters) ? [0] : saturated_parameters,
         g_converged=Optim.g_converged(result),
         f_converged=Optim.f_converged(result),
         x_converged=Optim.x_converged(result),
