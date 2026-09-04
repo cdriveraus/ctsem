@@ -311,7 +311,8 @@ ctPostPredict <- function(fit,diffsize=1,jitter=.02, wait=TRUE,probs=c(.025,.5,.
     if(inherits(fit, 'ctJuliaFit')) stop(
       'This function is not available for julia backend fits yet: it reads the ',
       'stan fit structures (standata, data$Y) that a julia fit does not carry. ',
-      'ctFitCovCheck(), ctACFresiduals() and ctPostPredPlots() do work on a julia fit.',
+      'ctFitCheck(), ctFitCheckCov(), ctACFresiduals() and ctPostPredPlots() ',
+      'do work on a julia fit.',
       call.=FALSE)
     stop('Not a ctStanFit object', call.=FALSE)
   }

@@ -153,7 +153,7 @@ test_that("the posterior predictive tools run on a backend fit", {
   expect_true(all(vapply(plots, function(p) inherits(p, "ggplot"), logical(1))))
 
   covcheck <- suppressWarnings(suppressMessages(
-    ctFitCovCheck(generated, plot = FALSE, lags = 0:2, cores = 1, nsamples = 10)))
+    ctFitCheckCov(generated, plot = FALSE, lags = 0:2, cores = 1, nsamples = 10)))
   expect_true(nrow(covcheck) > 0)
   expect_true("Sig" %in% names(covcheck))
 })
@@ -375,12 +375,12 @@ test_that("the posterior predictive tools run on a Laplace backend fit", {
   withresiduals <- suppressMessages(ctsem:::ctPostPredData(generated, residuals = TRUE))
   expect_true("Y1 std. res." %in% withresiduals$variable)
 
-  # marginalcovcheck/trajectoryplot are the ctCheckFit() switches already
+  # marginalcovcheck/trajectoryplot are the ctFitCheck() switches already
   # documented to work on a julia fit; confirm they still do once $generated
   # is populated from the Laplace route.
   grDevices::pdf(NULL)
   on.exit(grDevices::dev.off(), add = TRUE)
-  expect_no_error(ctCheckFit(fit, data = FALSE, postpred = FALSE, priorpred = FALSE,
+  expect_no_error(ctFitCheck(fit, data = FALSE, postpred = FALSE, priorpred = FALSE,
     statepred = FALSE, residuals = FALSE, covplot = FALSE, entropy = FALSE,
     marginalcovcheck = TRUE, trajectoryplot = TRUE))
 })

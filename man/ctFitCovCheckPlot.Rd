@@ -7,7 +7,7 @@
 ctFitCovCheckPlot(x, maxlag = 10, vars = NA, splitvar = NA, cor = FALSE, ...)
 }
 \arguments{
-\item{x}{Data output from `ctFitCovCheck(..., plot = FALSE)`. If a ggplot
+\item{x}{Data output from `ctFitCheckCov(..., plot = FALSE)`. If a ggplot
 object or list of ggplot objects is supplied, it is returned unchanged.}
 
 \item{maxlag}{Maximum lag to plot.}
@@ -24,10 +24,10 @@ object or list of ggplot objects is supplied, it is returned unchanged.}
 ggplot object.
 }
 \description{
-Plot the results of ctFitCovCheck.
+Plot the results of ctFitCheckCov.
 }
 \examples{
 \dontrun{
-ctFitCovCheckPlot(ctFitCovCheck(ctstantestfit,cor=TRUE,plot=FALSE),maxlag=3)
+ctFitCovCheckPlot(ctFitCheckCov(ctstantestfit,cor=TRUE,plot=FALSE),maxlag=3)
 }
 }
