@@ -539,19 +539,6 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
     tol=control$bootstrapTol)
 }
 
-ctOptimSurrogateDesign <- function(p, cov, globalScale, parScale, n){
-  z <- ctOptimNormalDraws(rep(0, p), cov, n)
-  sweep(z * globalScale, 2, parScale, '*')
-}
-
-ctOptimSurrogateDesignWhitened <- function(p, cov, globalScale, parScale, n){
-  cov <- ctOptimSafeCov(cov)
-  cholcov <- chol(cov)
-  z <- matrix(stats::rnorm(n * p), nrow=n)
-  z <- sweep(z * globalScale, 2, parScale, '*')
-  list(raw=z %*% cholcov, white=z, cholcov=cholcov)
-}
-
 ctOptimSurrogateDirections <- function(p, n){
   dirs <- rbind(diag(p), -diag(p))
   while(nrow(dirs) < n){
@@ -818,40 +805,6 @@ ctOptimSurrogateProfileCurvature <- function(hessWhite, est, lpgFunc,
   infoWhite <- (infoWhite + t(infoWhite)) / 2
   list(hessWhite=-infoWhite, profiles=profiles, nProfiled=length(newvals),
     nAdjusted=adjusted)
-}
-
-ctOptimSurrogateScaleUpdate <- function(design, drops, targetDrop, dropRange,
-  globalScale, parScale){
-  finite <- is.finite(drops) & drops > 0
-  if(!any(finite)) {
-    return(list(globalScale=globalScale * .5, parScale=parScale))
-  }
-  meddrop <- stats::median(drops[finite], na.rm=TRUE)
-  if(is.finite(meddrop) && meddrop > 0) {
-    mult <- sqrt(targetDrop / meddrop)
-    globalScale <- globalScale * min(2, max(.5, mult))
-  }
-  globalScale <- min(3, max(.02, globalScale))
-  
-  denom <- apply(abs(design[finite,,drop=FALSE]), 2, stats::median,
-    na.rm=TRUE)
-  denom[!is.finite(denom) | denom <= 0] <- 1
-  toofar <- is.finite(drops) & drops > dropRange[2]
-  tooclose <- is.finite(drops) & drops < dropRange[1]
-  if(sum(toofar) >= 2) {
-    pressure <- apply(abs(design[toofar,,drop=FALSE]), 2, stats::median,
-      na.rm=TRUE) / denom
-    parScale[is.finite(pressure) & pressure > 1.2] <-
-      parScale[is.finite(pressure) & pressure > 1.2] * .85
-  }
-  if(sum(tooclose) >= 2) {
-    pressure <- apply(abs(design[tooclose,,drop=FALSE]), 2, stats::median,
-      na.rm=TRUE) / denom
-    parScale[is.finite(pressure) & pressure > 1.2] <-
-      parScale[is.finite(pressure) & pressure > 1.2] * 1.15
-  }
-  parScale <- pmin(3, pmax(.2, parScale))
-  list(globalScale=globalScale, parScale=parScale)
 }
 
 ctOptimSurrogateHessian <- function(est, lpgFunc, cov, npoints=NULL,
