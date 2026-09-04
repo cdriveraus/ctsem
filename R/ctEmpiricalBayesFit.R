@@ -488,7 +488,7 @@ ctEBfitArgsOptimDefaults <- function(fitargs, stochastic=FALSE,
 #' summary(eb)
 #' }
 ctEmpiricalBayesFit <- function(datalong, model, subjects='all',
-  priors=TRUE, optimize=TRUE, cores=2, subjectFitArgs=list(), Npasses=2,
+  priors=TRUE, optimize=TRUE, cores=1, subjectFitArgs=list(), Npasses=2,
   ebUse=c('rawest','rawposterior'), ebRobust=TRUE, ebOutlierMAD=6, ebOutlierQuantiles=c(.025,.975),
   ebWinsorize=TRUE, minsd=1e-6, verbose=0, progress=TRUE, ...){
 

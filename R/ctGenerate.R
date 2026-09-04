@@ -71,7 +71,7 @@ ctModeltoNumeric <- function(ctmodelobj){
 #' priorpred <- ctGenerateFromPriors(cts = ctstantestfit,cores=2,nsamples = 50)
 #'}
 ctGenerateFromPriors <- function(cts,datastruct=NA, is=FALSE,
-  fullposterior=TRUE, nsamples=200, parsonly=FALSE,cores=2){
+  fullposterior=TRUE, nsamples=200, parsonly=FALSE,cores=1){
 
   # Named rather than asserted. "Not a ctStanModel object" (from ctFit(), further
   # downstream) is opaque when the caller is plainly holding a fit; what it means
