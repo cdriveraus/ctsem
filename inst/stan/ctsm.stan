@@ -1051,8 +1051,8 @@ model{
     matrix[popcovn, nindvarying] x;
     if(nindvarying){
       for(ri in 1:rows(x)){
-        x[ri,] = (rawpopcovchol * 
-          to_vector(normal_rng(rawpopmeans[indvaryingindex],rep_vector(1,nindvarying))) )';
+        x[ri,] = (rawpopmeans[indvaryingindex] + rawpopcovchol * 
+          to_vector(normal_rng(rep_vector(0,nindvarying),rep_vector(1,nindvarying))) )';
       }
     }
     
@@ -1069,8 +1069,8 @@ model{
             found=1;
             if(intoverpop && matsetup[ri,5]) { //check if shifted
               for(ri2 in 1:size(matsetup)){ //check when state reference param of matsetup corresponds to row of t0means in current matsetup row
-                if(matsetup[ri2,8]  && matsetup[ri2,3] == matsetup[ri,1] && 
-                matsetup[ri2,3] > nlatent && matsetup[ri2,7] < 20) pr2 = ri2; //if param is dynamic and matches row (state ref) and is not in jacobian
+                if(matsetup[ri2,8]  && matsetup[ri2,10] == matsetup[ri,1] && 
+                matsetup[ri2,10] > nlatent && matsetup[ri2,7] < 20) pr2 = ri2; //if the row references this state (col 10 is stateref) and is not in jacobian
                 //print("ri = ",ri, " pr2 = ",pr2, " ri2 = ",ri2);
               }
             }
