@@ -69,6 +69,27 @@ test_that("Julia fits get Hessian uncertainty matching Stan's", {
   stan_se <- sqrt(diag(stan_unc$stanfit$cov))
   expect_equal(julia_se, stan_se, tolerance = 1e-3)
 
+  # The draws, the covariance and the standard errors are labelled by raw
+  # parameter, on both backends. All of them or none of them: the comparison
+  # just above is julia's `estimate$cov` against stan's `stanfit$cov`, so a name
+  # on one side only makes the same quantity a different object depending on the
+  # backend; and `sd(rawposterior)` is asserted equal to `sqrt(diag(cov))`
+  # further down this file, which naming one of that pair alone would break.
+  # Spelled out rather than compared to each other, because two NULLs are equal.
+  parnames <- c("drift", "diff", "mvar", "mmean", "t0v")
+  expect_identical(colnames(julia_unc$estimate$cov), parnames)
+  expect_identical(names(julia_unc$estimate$se), parnames)
+  expect_identical(colnames(julia_unc$estimate$rawposterior), parnames)
+  expect_identical(colnames(stan_unc$stanfit$cov), parnames)
+  expect_identical(colnames(stan_unc$stanfit$rawposterior), parnames)
+
+  # And already named on the fits ctFit() returned, not only after a manual
+  # ctOptimUncertainty(): stanoptimis() computes uncertainty on a stub that
+  # carries no model to read names from, so ctFit() names them once the object
+  # is assembled.
+  expect_identical(colnames(julia_fit$estimate$cov), parnames)
+  expect_identical(colnames(stan_fit$stanfit$cov), parnames)
+
   # The fit carries usable uncertainty afterwards, not just a covariance.
   expect_equal(dim(julia_unc$estimate$rawposterior), c(200L, length(julia_se)))
   expect_equal(julia_unc$estimate$se, julia_se)

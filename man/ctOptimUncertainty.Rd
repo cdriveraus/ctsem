@@ -139,7 +139,13 @@ output.
 \code{fit$stanfit$uncertainty}; a \code{ctJuliaFit} with
 \code{fit$estimate$cov}, \code{fit$estimate$se},
 \code{fit$estimate$rawposterior} and \code{fit$uncertainty}. Both record the
-resolved settings in \code{$uncertainty$settings}.
+resolved settings in \code{$uncertainty$settings}. On both backends the
+draws, the covariance and the standard errors are labelled by raw parameter,
+so \code{fit$estimate$se['drift']} or
+\code{apply(fit$estimate$rawposterior, 2, quantile)} reads without counting
+columns. The two backends spell the population-SD and correlation blocks
+differently (\code{popsd_x}/\code{rawcor_x__y} on julia,
+\code{x_SD}/\code{y_x_corr} on stan); the order is the same.
 
 \emph{The Hessian.} The stan path finite-differences its gradient with a
 single global step (\code{control$hessianStep}). The julia engine

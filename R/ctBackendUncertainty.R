@@ -227,6 +227,10 @@
   fit$estimate$cov <- uncertaintyfit$cov
   fit$estimate$se <- sqrt(diag(uncertaintyfit$cov))
   fit$estimate$rawposterior <- samples
+  # All three carry the raw parameter names, and stan's equivalents get them
+  # from the same helper -- see `.ctFitNameRawUncertainty()` for why it has to
+  # be all of them and both backends.
+  fit <- .ctFitNameRawUncertainty(fit)
   fit$uncertainty <- uncertaintyfit
   # New draws mean the fit's constrained draws describe the previous ones, so
   # they are refreshed here rather than left to be noticed downstream.
