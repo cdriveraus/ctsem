@@ -3191,8 +3191,7 @@ function ctsem_subject_gradients(laplace::CTSEMLaplaceObjective,
     return (value=value + _ctsem_log_prior(laplace.objective, theta), scores=scores)
 end
 
-for (f, what) in ((:ctsem_generate, "Data generation"),
-    (:ctsem_generate_states, "Data generation"),
+for (f, what) in ((:ctsem_generate_states, "Data generation"),
     (:ctsem_state_dimension, "The state-explicit path"),
     (:ctsem_joint_loglikelihood, "The state-explicit path"),
     (:ctsem_joint_evaluate, "The state-explicit path"))
@@ -3203,6 +3202,35 @@ for (f, what) in ((:ctsem_generate, "Data generation"),
             "answer instead would be a different quantity than the one asked ",
             "for. Use intoverpop=TRUE for this.")))
     end
+end
+
+"""
+    ctsem_generate(laplace, values, base; subject_values=nothing)
+
+One posterior-predictive dataset from a Laplace fit.
+
+Each subject is generated at its own realized parameters -- the population
+vector shifted by that subject's estimated random effects and TI-predictor
+effects -- rather than at the shared population vector, using exactly the
+per-subject values `ctsem_kalman(laplace, ...)` already computes for
+prediction (`ctsem_laplace_subject_values`). A Laplace random effect is a
+conditional mode estimated from the subject's whole record, not a fresh draw
+from the population distribution, so the individual difference in the
+generated data is the fitted one: this is the same smoothed-equivalent,
+conditional-on-the-subject's-own-data quantity `ctsem_kalman(laplace, ...)`
+already reports for residuals and predictions on this route, not a new
+statistical convention introduced for generation.
+
+`subject_values` supplies those per-subject vectors instead of solving for
+them here, for the same reason `ctsem_kalman` takes it: a caller filtering
+different rows than the fit did needs the fitted modes, not modes re-solved
+against rows that may not condition on anything.
+"""
+function ctsem_generate(laplace::CTSEMLaplaceObjective, values::AbstractVector,
+    base::AbstractMatrix; subject_values::Union{Nothing,AbstractMatrix}=nothing)
+    persubject = subject_values === nothing ?
+        ctsem_laplace_subject_values(laplace, values) : subject_values
+    return ctsem_generate(laplace.objective, persubject, base)
 end
 
 """

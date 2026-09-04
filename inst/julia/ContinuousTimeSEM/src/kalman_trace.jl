@@ -732,18 +732,26 @@ end
 
 One posterior-predictive dataset.
 
-`base` is `nmanifest` by `nrows` standard normals. Returns `Y` (the generated
-observations, `NaN` wherever the original data was missing), `llrow` (each row's
-log likelihood *of the generated data*) and `subject_loglik`.
+`values` is one raw parameter vector, used for every subject -- or a matrix
+whose row `i` is subject `i`'s own, exactly as `ctsem_kalman` accepts. The
+second form is what the Laplace route needs, since it has no single shared
+vector to draw every subject from. `base` is `nmanifest` by `nrows` standard
+normals. Returns `Y` (the generated observations, `NaN` wherever the original
+data was missing), `llrow` (each row's log likelihood *of the generated
+data*) and `subject_loglik`.
 """
-function ctsem_generate(objective::CTSEMObjective, values::AbstractVector,
+function ctsem_generate(objective::CTSEMObjective, values::AbstractVecOrMat,
     base::AbstractMatrix)
 
     sp = objective.params
-    raw = Vector{Float64}(values)
+    subjects = objective.subject_objectives
+    persubject = values isa AbstractMatrix
+    persubject && size(values, 1) == length(subjects) ||
+        persubject && throw(DimensionMismatch(
+            "one row of parameters per subject is required"))
+    raw = persubject ? Vector{Float64}(view(values, 1, :)) : Vector{Float64}(values)
     ws = _init_continuous_ekf_workspace(Float64, sp)
     m = _val(ws.manifest_dim)
-    subjects = objective.subject_objectives
     nrows = sum(size(sub.data, 2) for sub in subjects)
     size(base) == (m, nrows) ||
         throw(DimensionMismatch("base must be $(m) by $(nrows)"))
@@ -755,6 +763,7 @@ function ctsem_generate(objective::CTSEMObjective, values::AbstractVector,
     offset = 0
     for (i, sub) in enumerate(subjects)
         generate.offset = offset
+        persubject && copyto!(raw, view(values, i, :))
         loglik[i] = _extended_kalman_filter_continuous!(ws, raw, sub.data,
             collect(sub.timesteps), sp, sub.tdpreds, sub.tipreds, i, sub.max_timestep,
             nothing, generate)
