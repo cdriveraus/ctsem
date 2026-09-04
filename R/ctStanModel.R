@@ -146,6 +146,11 @@ ctModelUnlist<-function(ctmodelobj,
 
         wasfixed <- !is.na(pars$value[parrow])
         parsed <- .ctModelMatrixValue(mat[rowi,coli])
+        # A cell assigned here can carry the same fields a cell given to
+        # ctModel() can, written either way (R/ctParSpec.R). Without this the
+        # separators or `key=value` text would be stored as the parameter name.
+        spec <- .ctCellSpecFields(parsed$param)
+        parsed$param <- spec$param
         pars$param[parrow] <- parsed$param
         pars$value[parrow] <- parsed$value
 
@@ -164,6 +169,21 @@ ctModelUnlist<-function(ctmodelobj,
           if(wasfixed || is.na(pars$sdscale[parrow])) pars$sdscale[parrow] <- defaults$sdscale
           pars$indvarying[parrow] <- as.logical(pars$indvarying[parrow])
           if(wasfixed || is.na(pars$indvarying[parrow])) pars$indvarying[parrow] <- defaults$indvarying
+
+          # Anything the cell states explicitly beats the default for that cell.
+          if(!is.na(spec$transform)) pars$transform[parrow] <- spec$transform
+          if(!is.na(spec$indvarying)) pars$indvarying[parrow] <- spec$indvarying
+          if(!is.na(spec$sdscale)) pars$sdscale[parrow] <- spec$sdscale
+          if(!is.null(spec$tipreds)){
+            wanted <- paste0(spec$tipreds, '_effect')
+            unknown <- setdiff(wanted, tieffects)
+            if(length(unknown)) {
+              stop(paste(sub('_effect$', '', unknown), collapse=', '),
+                ' is not a time independent predictor of this model')
+            }
+            pars[parrow,tieffects] <- FALSE
+            pars[parrow,wanted] <- TRUE
+          }
         }
       }
     }
@@ -304,7 +324,14 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
   TIpredNames<-ctm$TIpredNames
   
   ctspec<-ctModelUnlist(ctm)
-  
+
+  # A cell may state its fields with `|` separators ('mm||TRUE|0.5') or by name
+  # ('mm, indvarying=TRUE, sdscale=0.5'). Normalise the named form to the `|`
+  # form here so the parser below has exactly one thing to read; see
+  # .ctCellSpecToPipe in R/ctParSpec.R for how the two are told apart.
+  ctspec$param <- vapply(ctspec$param, .ctCellSpecToPipe, character(1),
+    USE.NAMES = FALSE)
+
   freeparams<-is.na(ctspec[,'value'])
   
   ctspec$transform<- NA

@@ -75,7 +75,7 @@
 }
 
 # The four accessors below are for functions that were written stan-only and
-# read `fit$stanfit$...` directly (ctChisqTest, ctModelCoverage_check). They
+# read `fit$stanfit$...` directly (ctChisqTest, ctCoverageCheck). They
 # are not a general "raw sample" API -- .ctBackendRawSamples() above already
 # covers that for julia, and ctStanRawSamples() for stan -- just the specific
 # fields those two callers each named explicitly.
@@ -238,6 +238,10 @@
 #' derived from them -- from a raw (unconstrained) parameter vector, using the
 #' same engine code the likelihood uses.
 #'
+#' Internal. \code{ctBackend*} means internal throughout the package, so this is
+#' not exported; the public, backend-neutral accessor for the population
+#' matrices is \code{\link{ctSummaryMatrices}}.
+#'
 #' @param fit A \code{ctJuliaFit}, or a prepared model from
 #'   \code{ctFit(..., fit=FALSE)}.
 #' @param raw Raw parameter vector. Defaults to the fitted estimate.
@@ -261,7 +265,7 @@
 #' \donttest{
 #' # ctBackendParMatrices(fit)$DRIFT
 #' }
-#' @export
+#' @keywords internal
 ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   time = 0, dt = 0, trim = TRUE) {
   if (is.null(raw)) {

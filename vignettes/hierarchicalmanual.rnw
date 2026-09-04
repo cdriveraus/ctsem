@@ -348,6 +348,8 @@ Figure \ref{fig:tipredeffects} shows how the expectation for an individuals para
 \subsection{Detailed model specification}
 While the defaults are hopefully useful in many cases, they should not be blindly relied upon. 
 Plotting the original prior implied by the model, making a change to the transform, and plotting the resulting prior, are shown here -- in this case we will adjust the prior for the auto effect of our first latent process, captured by row 1 and column 1 of the DRIFT matrix, to also allow positive values, implying an explosive process wherein a change in one direction promotes further change in that direction. To achieve this, we change from the default \verb|-(2 * log1p(exp(2 * param)))| (a scaled `softplus' function that works well for parameters that need either an upper or lower boundary), to a simpler transform wherein we just shift and scale the raw, standard normal, parameter. In this case we also set a negative offset because we still believe negative values are more likely for the drift auto-effect, and we also start by allowing for unobserved individual differences by adjusting the \verb|$indvarying| column of the parameter list (in order to visualise differences in the resulting distributions).  One consideration when altering priors in this manner is that the starting values for sampling are taken from around the median of the distribution. The following code shows two approaches to changing a parameter specification. The first is done after initial model specification by directly editing the model object, the second is done during model specification by specifying one or more of parameter name, transformation, TRUE or FALSE for random effects, a positive numeric for the prior standard deviation of the random effects relative to the prior for the mean, then TRUE or FALSE for any time independent predictors. These elements are input in an ordered sequence separated by the \verb{|{ character, such that in order to specify individual variation (for example), the parameter name and transform must also be specified, but any subsequent elements will assume default values. The example only sets the first two elements, with the rest assuming defaults.
+
+The same elements can instead be given by name, in any order and without counting separators. A cell is read as a named specification when it names one of the fields (\verb|transform|, \verb|indvarying|, \verb|sdscale|, \verb|tipreds|) and assigns to it with \verb|=|; as an ordered sequence when it contains the \verb{|{ character; and as a plain parameter name otherwise. Fields are separated by commas, and a comma inside brackets belongs to the value, so \verb|transform=pnorm(param, 0, 1)| is a single field. \verb|ctParSpec()| writes the ordered form from the same named arguments, which is useful when a specification is built programmatically. The three DRIFT[1,1] specifications shown below are equivalent.
 % Rather than simply scaling by 0.2 as shown here, one could also construct a new form of prior, so long as the resulting distribution was within the bounds required for the specific parameter. Note that the resulting distribution is a result of applying the specified transformation to a standard normal distribution, with mean of 0 and standard deviation of 1. To change the underlying standard normal, one would need to edit the resulting Stan code directly.
 
 %  of auto effects, based on default transform (left) and user-specified form (right)
@@ -375,13 +377,34 @@ p <- plot(model, rows=7,rawpopsd=1, plot=FALSE)
 print(p[[1]] + ggplot2::theme(legend.position = "none"))
 model$pars$transform[7]<- '2 * param -1'
 
-#Change during model specification
+#Change during model specification -- ordered sequence
 model<-ctModel(type='ct',
   DRIFT = matrix(c('drift_eta1_eta1 | 2 * param -1 | TRUE',
     'dr21','dr12','dr22'),2,2),
   latentNames=c('eta1','eta2'),
   manifestNames=c('Y1','Y2'),
-  TDpredNames='TD1', 
+  TDpredNames='TD1',
+  TIpredNames=c('TI1'),
+  LAMBDA=diag(2))
+
+#the same, with the fields named
+model<-ctModel(type='ct',
+  DRIFT = matrix(c('drift_eta1_eta1, transform=2 * param -1, indvarying=TRUE',
+    'dr21','dr12','dr22'),2,2),
+  latentNames=c('eta1','eta2'),
+  manifestNames=c('Y1','Y2'),
+  TDpredNames='TD1',
+  TIpredNames=c('TI1'),
+  LAMBDA=diag(2))
+
+#the same again, written by ctParSpec
+model<-ctModel(type='ct',
+  DRIFT = matrix(c(
+    ctParSpec('drift_eta1_eta1', transform='2 * param -1', indvarying=TRUE),
+    'dr21','dr12','dr22'),2,2),
+  latentNames=c('eta1','eta2'),
+  manifestNames=c('Y1','Y2'),
+  TDpredNames='TD1',
   TIpredNames=c('TI1'),
   LAMBDA=diag(2))
 
@@ -434,7 +457,7 @@ model$pars[model$pars$matrix == 'DRIFT',
   c('TI1_effect','TI2_effect','TI3_effect')] <- TRUE
 @
 
-An alternative approach to specifying the tipredeffects is in the initial model specification, using the `|' separator notation. The following shows an example where the DRIFT[1,1] parameter is influenced by covariates TI1 and TI3,  DRIFT[1,2] is influenced by TI2, and there are no other time independent predictor effects (because \verb|tipredDefault=FALSE|)
+An alternative approach to specifying the tipredeffects is in the initial model specification, using either the `|' separator notation or the named form. The following shows an example where the DRIFT[1,1] parameter is influenced by covariates TI1 and TI3,  DRIFT[1,2] is influenced by TI2, and there are no other time independent predictor effects (because \verb|tipredDefault=FALSE|). The two model specifications are equivalent -- with separators, the predictors are the fifth field, so four separators are needed to reach it; named, they are simply \verb|tipreds=|.
 <<echo=TRUE,eval=FALSE,tipredspec>>=
 model<-ctModel(type='ct', tipredDefault = FALSE,
   DRIFT = matrix(c(
@@ -442,7 +465,17 @@ model<-ctModel(type='ct', tipredDefault = FALSE,
     'dr12','dr22'),2,2),
   latentNames=c('eta1','eta2'),
   manifestNames=c('Y1','Y2'),
-  TDpredNames='TD1', 
+  TDpredNames='TD1',
+  TIpredNames=c('TI1'),
+  LAMBDA=diag(2))
+
+model<-ctModel(type='ct', tipredDefault = FALSE,
+  DRIFT = matrix(c(
+    'drift_eta1_eta1, tipreds=c(TI1, TI3)','dr21, tipreds=TI2',
+    'dr12','dr22'),2,2),
+  latentNames=c('eta1','eta2'),
+  manifestNames=c('Y1','Y2'),
+  TDpredNames='TD1',
   TIpredNames=c('TI1'),
   LAMBDA=diag(2))
 

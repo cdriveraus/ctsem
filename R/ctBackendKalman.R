@@ -258,6 +258,11 @@
 #' observations, for every row of data, from the same forward pass the engine
 #' uses for the likelihood.
 #'
+#' Internal. \code{ctBackend*} means internal throughout the package, so this is
+#' not exported; users reach it through \code{\link{ctKalmanArray}} and
+#' \code{\link{ctPredict}}, which dispatch here for a \code{ctJuliaFit}. The
+#' \code{randomEffects} notes below describe behaviour those two inherit.
+#'
 #' @param fit A \code{ctJuliaFit}.
 #' @param subjects \code{'all'}, a vector of subject ids, or integer positions
 #'   into the fitted subjects.
@@ -308,7 +313,7 @@
 #'   prediction with every observation withheld still uses that subject's own
 #'   random effects, which is what makes it a prediction *for that subject*
 #'   rather than for the average one.
-#' @export
+#' @keywords internal
 ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
   maxtime = "asdata", removeObs = FALSE, pointest = TRUE, nsamples = NA,
   collapsefunc = NA, standardisederrors = FALSE, subjectpars = FALSE,

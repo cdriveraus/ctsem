@@ -42,6 +42,10 @@ A named list of matrices, with an attribute \code{stateDependent}
 Materialise every model matrix -- and the covariance and asymptotic matrices
 derived from them -- from a raw (unconstrained) parameter vector, using the
 same engine code the likelihood uses.
+
+Internal. \code{ctBackend*} means internal throughout the package, so this is
+not exported; the public, backend-neutral accessor for the population
+matrices is \code{\link{ctSummaryMatrices}}.
 }
 \details{
 For a linear model no cell depends on the state and the result is
@@ -54,3 +58,4 @@ For a linear model no cell depends on the state and the result is
 # ctBackendParMatrices(fit)$DRIFT
 }
 }
+\keyword{internal}
