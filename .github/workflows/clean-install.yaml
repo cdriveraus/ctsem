@@ -1,0 +1,102 @@
+# Install from a clean checkout and fit one small model.
+#
+# This exists because the expensive failures of 2026-09-03 all shared one
+# feature: everything we ran started from a tree that already had every object
+# built, so nothing ever exercised the state a user is actually in.
+#
+#   - A make rule added to fix stale objects became make's default goal. make
+#     built one object, printed "Nothing to be done", exited 0, and the install
+#     ran to completion and failed only at the load check. It passed a targeted
+#     rebuild on a fully built tree and broke installation from scratch on every
+#     platform.
+#   - Before that, a changed .stan file never rebuilt its object at all, because
+#     the makefile keyed on a wrapper that stays byte-identical while the header
+#     carrying the model changes. A two-month-old object was being linked.
+#   - The shipped example fit went structurally stale against the code and
+#     nothing noticed until a test that used it errored.
+#
+# None of those are unit-testable. All of them are caught by installing from
+# nothing and doing what a user does, which is what this job is.
+#
+# Deliberately small: no vignettes, no full suite. Its job is to prove the
+# package builds from source and produces a fit, not to test the statistics.
+name: clean-install
+
+on:
+  push:
+    branches: [main, master, juliaFit]
+  pull_request:
+    branches: [main, master, juliaFit]
+  workflow_dispatch:
+
+jobs:
+  clean-install:
+    runs-on: ${{ matrix.config.os }}
+    name: ${{ matrix.config.os }} (${{ matrix.config.r }})
+
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - {os: ubuntu-latest, r: 'release'}
+          - {os: windows-latest, r: 'release'}
+
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      R_KEEP_PKG_SOURCE: yes
+      NOT_CRAN: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # No cache for the package's own compiled objects, deliberately. Caching
+      # them would recreate exactly the already-built state that hid all three
+      # failures above. Dependencies are cached; ctsem itself is not.
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: ${{ matrix.config.r }}
+          use-public-rspm: true
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: any::rcmdcheck
+          needs: check
+
+      - name: Confirm the tree carries no prebuilt artefacts
+        shell: bash
+        run: |
+          # If any of these exist in a fresh checkout, src/ is being tracked
+          # when it should be generated, and this job is not testing what it
+          # thinks it is.
+          found=$(ls src/stanExports_*.o src/stanExports_*.cc src/*.so src/*.dll 2>/dev/null | wc -l)
+          echo "prebuilt artefacts found: $found"
+          test "$found" -eq 0
+
+      - name: Install from source
+        shell: bash
+        run: R CMD INSTALL --no-multiarch --no-docs .
+
+      # The install above can succeed while producing nothing usable: that is
+      # precisely the default-goal failure, where make exits 0 having built one
+      # object. Loading the package and fitting is what actually proves it.
+      - name: Load, and fit one small model on each backend
+        shell: Rscript {0}
+        run: |
+          library(ctsem)
+          cat("loaded ctsem", as.character(packageVersion("ctsem")), "\n")
+
+          set.seed(1)
+          n <- 6; tp <- 4
+          d <- data.frame(id = rep(1:n, each = tp), time = rep(0:(tp - 1), n),
+                          Y1 = rnorm(n * tp))
+          m <- ctModel(type = "ct", n.latent = 1, n.manifest = 1,
+                       manifestNames = "Y1", latentNames = "eta1",
+                       LAMBDA = matrix(1, 1, 1),
+                       MANIFESTVAR = matrix(0.2, 1, 1))
+
+          # Stan: the path this job exists to protect, since it is the one with
+          # compiled models and therefore the one a build failure destroys.
+          f <- ctFit(d, m, backend = "stan", cores = 1, priors = FALSE,
+                     optimcontrol = list(carefulfit = FALSE))
+          stopifnot(is.finite(summary(f)$loglik))
+          cat("stan fit ok, loglik", summary(f)$loglik, "\n")
