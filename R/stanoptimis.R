@@ -6,6 +6,11 @@
 #'
 #' @return fit object with extra samples
 #' @aliases ctAddSamples
+#' @details \code{ctAddSamples} is the same function under its pre-3.11 name.
+#'   Both are kept; new code should use \code{ctFitAddSamples}. The julia
+#'   backend reaches this by a different route -- see \code{\link{ctSample}},
+#'   which runs the sampler from an optimised fit rather than resampling its
+#'   covariance.
 #' @export
 #'
 #' @examples
@@ -34,6 +39,8 @@ ctFitAddSamples <- function(fit,nsamples,cores=2){
   return(fit)
 }
 
+# Pre-3.11 name, documented on ctFitAddSamples' page via @aliases. Kept
+# because it is on CRAN; both go out with the stan backend.
 #' @export
 ctAddSamples <- ctFitAddSamples
 
