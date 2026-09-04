@@ -723,16 +723,23 @@
     # plotctACF() separately rather than through ctACF(plot = TRUE), because
     # its smoothing spline needs more distinct time intervals than a short
     # panel has, and ctACF() gives no way to reach the argument that turns it
-    # off. The failure is at print time, not construction time -- the spline
-    # is a ggplot stat -- so the fallback has to sit around the print.
+    # off. plotctACF() now falls back to the raw samples itself and says so in a
+    # message, so catch that message to write the note; the try() stays as
+    # defence against a failure it does not handle.
     ac <- suppressWarnings(suppressMessages(
       ctACFresiduals(fit, plot = FALSE, nboot = 20)))
     .ctReportPdf(file.path(ctx$folder, "08-residuals.pdf"), {
-      ok <- try(suppressWarnings(suppressMessages(print(plotctACF(ac)))),
-        silent = TRUE)
+      acfmsg <- character(0)
+      ok <- try(withCallingHandlers(suppressWarnings(print(plotctACF(ac))),
+        message = function(m) {
+          acfmsg <<- c(acfmsg, conditionMessage(m))
+          invokeRestart("muffleMessage")
+        }), silent = TRUE)
       if (inherits(ok, "try-error")) {
-        print(plotctACF(ac, estimateSpline = FALSE))
-        ctx$note("Too few distinct time intervals for the smoothing spline; points only.")
+        suppressWarnings(suppressMessages(print(plotctACF(ac, estimateSpline = FALSE))))
+        ctx$note("Too few distinct time intervals for the smoothing spline; samples only.")
+      } else if (any(grepl("plotting ACF samples", acfmsg, fixed = TRUE))) {
+        ctx$note("Too few distinct time intervals for the smoothing spline; samples only.")
       }
     })
     vars <- setdiff(names(res), c("Subject", "Time"))

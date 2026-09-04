@@ -182,36 +182,66 @@ ctACFquantiles<-function(ctacfobj,quantiles=c(.025,.5,.975),separateLearnRates=F
   
   if(!requireNamespace('qgam')) stop("qgam package required for ACF plots: install.packages('qgam')")
   
-  learnrate <- NA #estimate the learning rates based on one variable combination, but if that fails, try the next until one succeeds. 
+  qcols <- paste0('Q',quantiles*100,'%')
+
+  # Estimate the learning rate on one variable combination; if that fails, try the
+  # next until one succeeds. A short panel has too few distinct time intervals for
+  # the spline basis and every attempt fails -- so keep NULL rather than NA as the
+  # "nothing yet" marker, because the failure path below has to be distinguishable
+  # from a fitted rate rather than indexed as one.
+  learnrate <- NULL
   for(vari in unique(ctacfobj$Variable)){
-    if(is.na(learnrate[1])){
-      try({
-        learnrate=qgam::tuneLearnFast(data = ctacfobj[Variable %in% vari,],qu = quantiles,
-          form = ACF ~ s(TimeInterval,bs='cc',k=df),
-          control=list(tol=.Machine$double.eps^0.25,progress=FALSE),
-          argGam=list(select=TRUE))
-      })
+    if(is.null(learnrate)){
+      lr <- try(qgam::tuneLearnFast(data = ctacfobj[Variable %in% vari,],qu = quantiles,
+        form = ACF ~ s(TimeInterval,bs='cc',k=df),
+        control=list(tol=.Machine$double.eps^0.25,progress=FALSE),
+        argGam=list(select=TRUE)), silent=TRUE)
+      if(!inherits(lr,'try-error')) learnrate <- lr
     }
   }
-  # browser()
+
+  # No learning rate anywhere means no quantile band. Substituting a default rate
+  # would return a plausible band with nothing behind it, so return the samples
+  # unchanged and let the caller notice the absent columns.
+  if(is.null(learnrate)){
+    message('Quantile splines could not be fitted (too few distinct time intervals?); ACF samples returned without quantile estimates.')
+    return(ctacfobj)
+  }
+
+  failed <- character(0)
   for(vari in unique(ctacfobj$Variable)){
-    if(separateLearnRates) try({
-      learnrate=qgam::tuneLearnFast(data = ctacfobj[Variable %in% vari,],qu = quantiles,
+    lrv <- learnrate
+    if(separateLearnRates){
+      lr <- try(qgam::tuneLearnFast(data = ctacfobj[Variable %in% vari,],qu = quantiles,
         form = ACF ~ s(TimeInterval,bs='tp',k=df),
         control=list(tol=.Machine$double.eps^0.1,progress=FALSE),
-        argGam=list(select=TRUE,optimizer=c('outer','bfgs')))
-    })
-    
-    qg=qgam::mqgam(data = ctacfobj[Variable %in% vari,],qu = quantiles,
-      form = ACF ~ s(TimeInterval,bs='tp',k=df),
-      # control=list(tol=.Machine$double.eps^0.1,progress=T),
-      err=learnrate$err,
-      lsig = learnrate$lsig,
-      argGam=list(select=TRUE,gamma=2))
-    pred=qgam::qdo(obj = qg,qu = quantiles, fun = predict,newdata=ctacfobj[Variable %in% vari,])
-    ctacfobj[Variable %in% vari,paste0('Q',quantiles*100,'%'):=pred]
-    # })
+        argGam=list(select=TRUE,optimizer=c('outer','bfgs'))), silent=TRUE)
+      if(!inherits(lr,'try-error')) lrv <- lr #otherwise fall back on the shared rate
+    }
+
+    pred <- try({
+      qg=qgam::mqgam(data = ctacfobj[Variable %in% vari,],qu = quantiles,
+        form = ACF ~ s(TimeInterval,bs='tp',k=df),
+        err=lrv$err,
+        lsig = lrv$lsig,
+        argGam=list(select=TRUE,gamma=2))
+      qgam::qdo(obj = qg,qu = quantiles, fun = predict,newdata=ctacfobj[Variable %in% vari,])
+    }, silent=TRUE)
+
+    if(inherits(pred,'try-error')){
+      failed <- c(failed,vari)
+      next #leaves this variable's quantile cells NA
+    }
+    ctacfobj[Variable %in% vari,(qcols):=pred]
   }
+
+  if(!any(qcols %in% names(ctacfobj))){ #every variable failed
+    message('Quantile splines could not be fitted (too few distinct time intervals?); ACF samples returned without quantile estimates.')
+    return(ctacfobj)
+  }
+  if(length(failed)) message('Quantile splines could not be fitted for: ',
+    paste(failed,collapse=', '),'.')
+
   return(ctacfobj)
 }
 
@@ -243,6 +273,12 @@ plotctACF <- function(ctacfobj,df='auto',quantiles=c(.025,.5,.975),
   if(estimateSpline){
     ctacfobj=copy(ctACFquantiles(ctacfobj,quantiles=quantiles,
       separateLearnRates=separateLearnRates,df=df))
+    #ctACFquantiles returns the samples without the quantile columns when the
+    #spline cannot be fitted at all -- then there is no band to draw.
+    estimateSpline <- all(paste0('Q',quantiles*100,'%') %in% names(ctacfobj))
+    if(!estimateSpline) message('No quantile estimates available; plotting ACF samples instead.')
+  }
+  if(estimateSpline){
     ctacfobj <- ctacfobj[abs(TimeInterval) < min(tail(sort(unique(TimeInterval)),reducedXlim)),] #drop the ends of the spline
     gg <- ggplot(ctacfobj,aes(y=!!sym(paste0('Q',quantiles[2]*100,'%')),
       x=TimeInterval))+
