@@ -37,6 +37,24 @@ function _validate_continuous_ekf_inputs(timesteps::Vector, data::Matrix)
     return nothing
 end
 
+"""
+The substep policy a subject objective stores: `maxtimestep` as a `Float64`,
+or a per-row mesh as a `Vector{Int}` (entry 1 is unused; entry `t` is the
+count for the interval ending at row `t`). See `_ctsem_substeps`.
+"""
+function _validate_substep_rule(rule::Real, nrows::Int)
+    rule > 0 || throw(ArgumentError("max_timestep must be positive"))
+    return Float64(rule)
+end
+function _validate_substep_rule(mesh::AbstractVector, nrows::Int)
+    length(mesh) == nrows || throw(DimensionMismatch(
+        "a substep mesh needs one entry per row: got $(length(mesh)) for $nrows rows"))
+    @inbounds for t in 2:nrows
+        mesh[t] >= 1 || throw(ArgumentError("substep counts must be at least 1 (row $t)"))
+    end
+    return Int[Int(m) for m in mesh]
+end
+
 function ContinuousEKFObjective(params::EKFParameters, data::Matrix, timesteps::Vector;
     tdpreds::AbstractMatrix=zeros(eltype(data), 0, size(data, 2)),
     # Not typed `::AbstractVector`: a subject with a sampled (missing) TI
@@ -45,12 +63,12 @@ function ContinuousEKFObjective(params::EKFParameters, data::Matrix, timesteps::
     # one still gets a plain `Vector{Float64}`, unchanged from before this
     # existed.
     tipreds=eltype(data)[], subject::Integer=1,
-    max_timestep::Real=Inf)
+    max_timestep=Inf)
     _validate_continuous_ekf_inputs(timesteps, data)
     size(tdpreds, 2) == size(data, 2) || throw(DimensionMismatch("TD predictor columns must match observations"))
-    max_timestep > 0 || throw(ArgumentError("max_timestep must be positive"))
-    return ContinuousEKFObjective{typeof(params),typeof(data),typeof(timesteps),typeof(tdpreds),typeof(tipreds),typeof(max_timestep)}(
-        nothing, nothing, params, data, timesteps, tdpreds, tipreds, Int(subject), max_timestep)
+    rule = _validate_substep_rule(max_timestep, length(timesteps))
+    return ContinuousEKFObjective{typeof(params),typeof(data),typeof(timesteps),typeof(tdpreds),typeof(tipreds),typeof(rule)}(
+        nothing, nothing, params, data, timesteps, tdpreds, tipreds, Int(subject), rule)
 end
 
 function _get_or_init_objective_workspace!(objective::ContinuousEKFObjective, ::Type{T}) where {T}
@@ -463,7 +481,17 @@ function _ekf_masked_update_step!(ws::ContinuousEKFWorkspace, pars,
     Lv = view(pars.LAMBDA, observed, :)
     μv = view(pars.MANIFESTMEANS, observed)
     predview = view(ws.bufferΘ.r, 1:m)
-    _matvec_mul!(predview, Lv, ws.state)
+    # Plain loops rather than the Val-dispatched `_matvec_mul!`: `m` is the
+    # number of observed indicators on this row, a runtime quantity, and a
+    # `Val` built from it is a dynamic dispatch and an allocation per row.
+    state = ws.state
+    @inbounds for i in 1:m
+        acc = zero(eltype(predview))
+        for j in 1:n
+            acc += Lv[i, j] * state[j]
+        end
+        predview[i] = acc
+    end
     yv = view(ws.ỹ, 1:m)
     @inbounds for i in 1:m
         yv[i] = data[observed[i], obs_col] - (predview[i] + μv[i])
@@ -610,9 +638,13 @@ function _extended_kalman_filter_continuous!(
     tdpreds::AbstractMatrix=zeros(eltype(params), 0, size(data, 2)),
     tipreds::AbstractVector=eltype(params)[],
     subject::Integer=1,
-    max_timestep::Real=Inf,
+    max_timestep=Inf,
     trace=nothing,
     generate=nothing,
+    # `nothing`, or a `CTSEMSubstepRecorder` (substep_mesh.jl) measuring how
+    # nonlinear each prediction step actually was. Every hook has a `::Nothing`
+    # method, so the ordinary paths compile to what they were.
+    substep_recorder=nothing,
 )::T where {T}
     # Materialize transformed/free/fixed values into the full parameter vector.
     _materialize_subject_values!(ws.subject_values, params, sp, tipreds)
@@ -694,7 +726,7 @@ function _extended_kalman_filter_continuous!(
 
         # Match Stan's nonlinear integration contract: re-materialize the
         # local affine model at each bounded substep before prediction.
-        n_substeps = max(1, ceil(Int, Δt / max_timestep))
+        n_substeps = _ctsem_substeps(Δt, max_timestep, t_idx)
         substep_dt = Δt / n_substeps
         @inbounds for substep in 1:n_substeps
             substep_time = prev_timestep + substep * substep_dt
@@ -703,7 +735,10 @@ function _extended_kalman_filter_continuous!(
             _record_group!(trace, 1, ws.predict_param_indices, all_params, predict_context)
             apply_complex_transforms_at_indices!(all_params, ws.predict_param_indices, sp.predict_transforms, predict_context)
             predict_snapshot = _begin_predict!(trace, ws, _val(ws.state_dim))
+            _begin_substep!(substep_recorder, ws)
             _ekf_predict_step!(ws, pars, substep_dt)
+            _record_substep_defect!(substep_recorder, ws, pars, sp, all_params, substep_dt,
+                t_idx, predict_context)
             _record_predict!(trace, ws, pars, predict_snapshot, substep_dt, _val(ws.state_dim))
             _record_transition!(trace, ws, pars, t_idx, substep, n_substeps, Δt)
             # The next bounded step begins from this step's predicted covariance.

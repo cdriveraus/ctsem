@@ -61,6 +61,7 @@ end
 
 function my_exp!(Y::AbstractMatrix{TYPE}, A::AbstractMatrix{TYPE}, W1::AbstractMatrix{TYPE}, buffer::ExpBuffer{TYPE}, dim::Val{d}) where {TYPE<:Number, d}
     # Higham (2008) scaling-and-squaring with [13/13] Pade approximant.
+    _CTSEM_OPCOUNT.exp[] += 1
     a1 = _opnorm1_noalloc(A, dim)
     # A matrix with a non-finite entry has no exponential, and saying so with
     # NaN is the only way to say it that the callers can act on.

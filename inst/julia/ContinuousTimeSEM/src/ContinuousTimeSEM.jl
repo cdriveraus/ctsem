@@ -49,6 +49,7 @@ end
 # First, so that `using Printf` is in scope for every file that reports.
 include("progress.jl")
 include("small_linalg.jl")
+include("opcounts.jl")
 include("parameters.jl")
 include("constrain_cor_sqrt.jl")
 include("r_interface.jl")
@@ -59,12 +60,14 @@ include("helper_functions.jl")
 include("ksolve.jl")
 include("parameter_transforms.jl")
 include("buffered_exponential.jl")
+include("frechet_exponential.jl")
 include("buffered_lyapunov.jl")
 include("discrete_time_form.jl")
 include("log_likelihood.jl")
 include("workspace_buffers.jl")
 include("kalman_filters.jl")
 include("ctsem_backend.jl")
+include("substep_mesh.jl")
 include("adjoint_primitives.jl")
 include("adjoint_parameters.jl")
 include("reverse_scratch.jl")
@@ -93,5 +96,14 @@ include("sample_run.jl")
 # Last, because it exercises everything above it.
 include("precompile_workload.jl")
 
+
+# The operation counters in opcounts.jl increment during the precompile
+# workload, and a `Ref` inside a `const` keeps whatever value it had when the
+# package image was written. Zero them so a session starts counting from its
+# own first evaluation, not from the workload's.
+function __init__()
+    ctsem_reset_opcounts!()
+    return nothing
+end
 
 end # module ContinuousTimeSEM

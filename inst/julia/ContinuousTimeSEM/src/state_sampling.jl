@@ -110,8 +110,20 @@ probability is a whole category. `erfc` is already a dependency here
 """
 @inline _ctsem_normal_cdf(z::Real) = erfc(-z / sqrt(oftype(float(z), 2))) / 2
 
-"""Number of bounded substeps `_extended_kalman_filter_continuous!` would take."""
-@inline _ctsem_substeps(dt, max_timestep) = max(1, ceil(Int, dt / max_timestep))
+"""
+    _ctsem_substeps(dt, rule, t)
+
+Number of prediction substeps for the interval `dt` ending at row `t`.
+
+`rule` is either `maxtimestep` (a positive real: the interval is split into
+steps no longer than it) or a mesh, an integer vector with one entry per row
+giving the count directly. The mesh is what `ctsem_auto_substeps` produces;
+it travels in the same slot as the rule so every consumer of the objective --
+the filter, the tape, the state-explicit dimension count, generation -- sees
+one policy without a second code path.
+"""
+@inline _ctsem_substeps(dt, rule::Real, t::Int) = max(1, ceil(Int, dt / rule))
+@inline _ctsem_substeps(dt, mesh::AbstractVector, t::Int) = Int(mesh[t])
 
 """NaN, for the reason `_invalid_ekf_loglikelihood` is NaN."""
 @inline _ctsem_invalid(::Type{T}) where {T} = -one(T) * NaN
@@ -253,7 +265,7 @@ function _ctsem_subject_innovations(sub, nlatent::Int, ndiffusion::Int)
     prev = timesteps[1]
     @inbounds for t in 2:nsteps
         dt = timesteps[t] - prev
-        total += ndiffusion * _ctsem_substeps(dt, sub.max_timestep)
+        total += ndiffusion * _ctsem_substeps(dt, sub.max_timestep, t)
         prev = timesteps[t]
     end
     return total
@@ -599,7 +611,7 @@ function _ctsem_state_pass!(ws, params::AbstractVector{T}, data::AbstractMatrix,
     nsteps = min(length(timesteps), size(data, 2))
     @inbounds for t in 2:nsteps
         dt = timesteps[t] - prev
-        nsub = _ctsem_substeps(dt, max_timestep)
+        nsub = _ctsem_substeps(dt, max_timestep, t)
         substep_dt = dt / nsub
         for substep in 1:nsub
             substep_time = prev + substep * substep_dt

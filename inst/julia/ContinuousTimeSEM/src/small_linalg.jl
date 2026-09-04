@@ -43,10 +43,22 @@ State dimension up to which the hand-written factorization is used.
 Above it LAPACK's blocking has enough arithmetic to amortize its call overhead
 and its lock, and a plain triple loop starts losing badly -- ctsem models run to
 a hundred latent states in extreme cases, and an unblocked `n^3` loop at that
-size is not what anyone wants. Sixteen is where the two measured even on this
-machine; `ctsem_set_small_linalg!` moves it.
+size is not what anyone wants. The default is nevertheless *never LAPACK*,
+because the lock serialises every thread and the price of the loops is small:
+measured on dev1 (single thread, minimum of 3000 repeats, microseconds)
+
+    n            4     8    16    24    32    48    64
+    Cholesky hand 0.07 0.13  0.46  1.18  2.56  8.39 20.6
+    Cholesky LAPACK 0.12 0.22 0.63 1.22 2.09 6.75 14.8
+    LU solve hand 0.10 0.34  1.54  3.97  7.92 21.6  49.1
+    LU solve LAPACK 0.20 0.44 1.26 2.51 4.53 9.78 18.8
+
+so the unblocked loops win to about 24 states and cost at most 1.4x
+(Cholesky) and 2.6x (LU) at 64 -- tens of microseconds per row.
+`ctsem_set_small_linalg!(dimension = 24)` brings LAPACK back above that size
+for a session that runs one fit on one core and wants it.
 """
-const _CTSEM_SMALL_CHOLESKY = Ref(16)
+const _CTSEM_SMALL_CHOLESKY = Ref(typemax(Int))
 
 """
 Arithmetic budget below which a product is done by hand rather than by `gemm`.
@@ -166,6 +178,46 @@ function LinearAlgebra.ldiv!(y::AbstractVector, F::CTSEMCholesky, b::AbstractVec
 end
 
 LinearAlgebra.ldiv!(F::CTSEMCholesky, b::AbstractVector) = ldiv!(b, F, b)
+
+"""`F \\ b`, allocating: the solve the Laplace block elimination asks for."""
+function Base.:\(F::CTSEMCholesky, b::AbstractVector)
+    y = similar(b, promote_type(eltype(F.U), eltype(b)))
+    return ldiv!(y, F, b)
+end
+
+function Base.:\(F::CTSEMCholesky, B::AbstractMatrix)
+    Y = similar(B, promote_type(eltype(F.U), eltype(B)))
+    @inbounds for j in axes(B, 2)
+        ldiv!(view(Y, :, j), F, view(B, :, j))
+    end
+    return Y
+end
+
+"""The inverse of the factorized matrix, dense: `d` solves against the identity."""
+Base.inv(F::CTSEMCholesky{T}) where {T} = F \ Matrix{T}(LinearAlgebra.I, F.d, F.d)
+
+"""
+    _ctsem_cholesky_uinv(F)
+
+`U^-1` for the upper factor, by back substitution column by column -- what
+`inv(F.U)` would give through LAPACK's `trtri`, without the call.
+"""
+function _ctsem_cholesky_uinv(F::CTSEMCholesky{T}) where {T}
+    d = F.d
+    U = F.U
+    X = zeros(T, d, d)
+    @inbounds for j in 1:d
+        X[j, j] = one(T) / U[j, j]
+        for i in (j - 1):-1:1
+            acc = zero(T)
+            for k in (i + 1):j
+                acc -= U[i, k] * X[k, j]
+            end
+            X[i, j] = acc / U[i, i]
+        end
+    end
+    return X
+end
 
 """`X .= X / S`, one row at a time: `X U^-1` then `X U^-T`."""
 function LinearAlgebra.rdiv!(X::AbstractMatrix, F::CTSEMCholesky)

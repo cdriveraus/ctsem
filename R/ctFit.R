@@ -263,6 +263,11 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' the integration is nested within an Euler like loop.
 #' Smaller values may offer greater accuracy, but are slower and not always necessary. Given the exponential integration,
 #' linear model elements are fit exactly with only a single step.
+#' \code{nsubsteps = 'auto'} (julia backend only) instead measures, at the starting values and again at the
+#' optimum, how nonlinear each observation interval is and refines only the intervals that need it;
+#' \code{substeptol} (default 0.01) is the largest acceptable linearisation error as a fraction of the
+#' predicted state standard deviation, and \code{maxsubsteps} (default 64) caps an interval.
+#' \code{maxtimestep} remains a ceiling on the step. The choice is reported in \code{fit$estimate$substeps}.
 #' @param verbose Integer from 0 to 2. 1 reports progress while the model
 #'   fits; 2 additionally keeps every progress line rather than overwriting one
 #'   in place, and prints more for debugging. Whether overwriting is possible is
@@ -636,6 +641,17 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   #set nlcontrol defaults
   if(is.null(nlcontrol$maxtimestep)) nlcontrol$maxtimestep = 999999
   if(is.null(nlcontrol$Jstep)) nlcontrol$Jstep = 1e-6
+  # nsubsteps = 'auto' lets the julia engine choose the number of prediction
+  # substeps per observation interval from how nonlinear that interval turns
+  # out to be (ctsem_auto_substeps in the engine); maxtimestep stays a ceiling
+  # on the step. substeptol is the largest acceptable linearisation error, as
+  # a fraction of the predicted state standard deviation.
+  if(!is.null(nlcontrol$nsubsteps)) {
+    if(!identical(nlcontrol$nsubsteps, 'auto')) stop("nlcontrol$nsubsteps must be NULL or 'auto'")
+    if(!backend %in% 'julia') stop("nlcontrol$nsubsteps = 'auto' requires backend = 'julia'")
+  }
+  if(is.null(nlcontrol$substeptol)) nlcontrol$substeptol = 0.01
+  if(is.null(nlcontrol$maxsubsteps)) nlcontrol$maxsubsteps = 64
 
   args=c(as.list(environment()), list(...)) #as.list((match.call(expand.dots=FALSE)))
   args$datalong <- NULL

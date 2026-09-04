@@ -142,8 +142,10 @@ Solve `A * X = B` in place for `ForwardDiff.Dual` matrix right-hand sides.
 
 This custom LU path avoids BLAS/LAPACK calls that do not support dual numbers.
 """
-function _solve_square_system_generic!(A::AbstractMatrix{T}, B::AbstractMatrix{T}, piv::AbstractVector{Int}, ::Val{n}) where {T,n}
-    # n = size(A, 1)
+_solve_square_system_generic!(A::AbstractMatrix{T}, B::AbstractMatrix{T}, piv::AbstractVector{Int}, ::Val{n}) where {T,n} =
+    _solve_square_system_generic!(A, B, piv, n)
+
+function _solve_square_system_generic!(A::AbstractMatrix{T}, B::AbstractMatrix{T}, piv::AbstractVector{Int}, n::Int) where {T}
     nrhs = size(B, 2)
     @boundscheck begin
         size(A, 2) == n || throw(DimensionMismatch("A must be square"))
@@ -200,8 +202,10 @@ end
 
 Solve `A * x = b` in place for `ForwardDiff.Dual` vector right-hand sides.
 """
-function _solve_square_system_generic!(A::AbstractMatrix{T}, B::AbstractVector{T}, piv::AbstractVector{Int}, ::Val{n}) where {T,n}
-    # n = size(A, 1)
+_solve_square_system_generic!(A::AbstractMatrix{T}, B::AbstractVector{T}, piv::AbstractVector{Int}, ::Val{n}) where {T,n} =
+    _solve_square_system_generic!(A, B, piv, n)
+
+function _solve_square_system_generic!(A::AbstractMatrix{T}, B::AbstractVector{T}, piv::AbstractVector{Int}, n::Int) where {T}
     @boundscheck begin
         size(A, 2) == n || throw(DimensionMismatch("A must be square"))
         length(B) == n || throw(DimensionMismatch("B length must match A size"))
@@ -260,6 +264,70 @@ function _solve_square_system!(A::AbstractMatrix, B::AbstractVecOrMat, piv::Abst
 end
 
 """
+    _lu_factor_generic!(A, piv, n)
+
+LU-factorize the leading `n × n` block of `A` in place with partial pivoting,
+recording the row interchanges in `piv`, without a right-hand side.
+
+The factor-and-solve kernels above swap only the trailing part of each row
+because they apply the same interchange to the right-hand side at the same
+moment. Here the right-hand side arrives later, so whole rows are swapped and
+`_lu_solve_generic!` replays `piv` against it first -- which is exactly what
+LAPACK's `getrf!`/`getrs!` pair does. Used by `LyapKsolveBuffer` to factor
+the packed Lyapunov system once per distinct `A` and solve it many times.
+"""
+function _lu_factor_generic!(A::AbstractMatrix{T}, piv::AbstractVector{Int}, n::Int) where {T}
+    @inbounds for k in 1:n
+        _, rel = findmax(_custom_abs, @view A[k:n, k])
+        pivot = k + rel - 1
+        piv[k] = pivot
+        if pivot != k
+            for col in 1:n
+                A[k, col], A[pivot, col] = A[pivot, col], A[k, col]
+            end
+        end
+        akk = A[k, k]
+        for i in (k + 1):n
+            lik = A[i, k] / akk
+            A[i, k] = lik
+            for col in (k + 1):n
+                A[i, col] -= lik * A[k, col]
+            end
+        end
+    end
+    return A
+end
+
+"""
+    _lu_solve_generic!(LU, piv, b, n)
+
+Solve `A x = b` in place given the factors `_lu_factor_generic!` left in `LU`.
+"""
+function _lu_solve_generic!(LU::AbstractMatrix{T}, piv::AbstractVector{Int}, b::AbstractVector{T}, n::Int) where {T}
+    @inbounds for k in 1:n
+        p = piv[k]
+        if p != k
+            b[k], b[p] = b[p], b[k]
+        end
+    end
+    @inbounds for i in 2:n
+        acc = b[i]
+        for col in 1:(i - 1)
+            acc -= LU[i, col] * b[col]
+        end
+        b[i] = acc
+    end
+    @inbounds for i in n:-1:1
+        acc = b[i]
+        for col in (i + 1):n
+            acc -= LU[i, col] * b[col]
+        end
+        b[i] = acc / LU[i, i]
+    end
+    return b
+end
+
+"""
     ksolve!(AQ, A, Q, O, triQ, piv)
 
 Solve the continuous Lyapunov equation `A * X + X * A' + Q = 0`.
@@ -289,6 +357,7 @@ function ksolve!(
         length(piv) >= ntri || throw(DimensionMismatch("Pivot buffer too small"))
     end
 
+    _CTSEM_OPCOUNT.lyap_ksolve[] += 1
     _ksolve_system_matrix!(O, A, dim)
     _ksolve_pack_upper!(triQ, Q, dim)
     _solve_square_system!(O, triQ, piv, system_dim)

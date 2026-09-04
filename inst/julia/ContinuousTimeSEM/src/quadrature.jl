@@ -247,7 +247,9 @@ function _quadrature_leaf_rule!(laplace::CTSEMLaplaceObjective, U::Integer,
     curvature_at = function (z)
         A = ForwardDiff.jacobian(loglik_gradient, z)
         M = Matrix{Float64}(LinearAlgebra.I, k, k) .- _laplace_symmetrise(A)
-        return cholesky(Symmetric(M); check=false)
+        # The engine's factorization rather than LAPACK's: once per inner Newton
+        # step per subject, inside the subject loop. See small_linalg.jl.
+        return _ctsem_cholesky(M, k)
     end
 
     z = Float64[u[c] for c in columns]
@@ -265,7 +267,7 @@ function _quadrature_leaf_rule!(laplace::CTSEMLaplaceObjective, U::Integer,
     end
     factorization = curvature_at(z)
     issuccess(factorization) || return failure
-    return (ok=true, centre=z, scale=Matrix(inv(factorization.U)),
+    return (ok=true, centre=z, scale=_ctsem_cholesky_uinv(factorization),
         logdetscale=-logdet(factorization) / 2)
 end
 
@@ -307,7 +309,7 @@ function _quadrature_block(laplace::CTSEMLaplaceObjective, U::Integer,
         # the elimination is what makes that sum telescope.
         factorization = context.factors[b]
         (ok=true, centre=Float64[context.mode[c] for c in columns],
-         scale=Matrix(inv(factorization.U)),
+         scale=_ctsem_cholesky_uinv(factorization),
          logdetscale=-logdet(factorization) / 2)
     end
     rule.ok || return NaN

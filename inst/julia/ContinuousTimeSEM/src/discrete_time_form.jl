@@ -7,33 +7,75 @@ using ForwardDiff
 ################################################################################
 
 """
+Distinct `Δt` values an `ExpTable` holds for one `JAx`.
+
+Sized for the shared wave schedule: a panel measured at the same irregular
+times for every subject has as many distinct intervals as it has waves, and a
+diary design with a handful of gap lengths has fewer still. Fully irregular
+times overflow the table and replace entries round-robin, which costs a scan of
+this many scalars per substep on top of the exponential they would have paid
+anyway.
+"""
+const _CTSEM_EXP_TABLE = 32
+
+"""
+    ExpTable{T}(n)
+
+The exponentials `exp(JAx * Δt)` seen for one `JAx`, keyed by `Δt`.
+
+A panel design hands the filter the same `JAx` at every row of every subject
+and a small set of intervals, in an order the last-value cache this replaces
+could not exploit: a shared schedule of nineteen irregular waves missed on
+every one of 3800 rows, because no row's interval equalled the previous one.
+Here a lookup compares `JAx` once and then scans `dts[1:count]`.
+
+The table is a separate mutable object from the `DiscretizationCache` that
+holds it so that the subjects of one chunk can share a single table: the
+reverse pass installs its chunk's table into each subject workspace before
+filtering it (see `_ctsem_adjoint_chunk!`). One task runs a chunk, so that
+sharing is race-free; two chunks never touch the same table.
+
+A change of `JAx` -- a new trial point, a state-dependent model, a subject
+whose drift carries a TI-predictor effect -- empties the table. Nothing here
+assumes linearity; the `JAx` comparison is exact, and under `ForwardDiff.Dual`
+it compares partials as well as values (see `_blocks_identical`).
+"""
+mutable struct ExpTable{T}
+    JAx::Matrix{T}
+    valid::Bool
+    dts::Vector{T}
+    outs::Vector{Matrix{T}}
+    count::Int
+    next::Int
+end
+
+function ExpTable(::Type{T}, n::Int, capacity::Int=_CTSEM_EXP_TABLE) where {T}
+    return ExpTable{T}(zeros(T, n, n), false, zeros(T, capacity),
+        [zeros(T, n, n) for _ in 1:capacity], 0, 1)
+end
+
+"""
     DiscretizationCache{T}
 
-Last-value cache for the two expensive, row-invariant pieces of
+Cache for the two expensive, row-invariant pieces of
 `_compute_discrete_time_form!`.
 
-Both are guarded by an `O(n^2)` comparison against the inputs that produced
-them, so a miss costs almost nothing and a hit skips an `O(n^3)` factorization:
-
-  * **`exp`**: `eJAx = exp(JAx * Δt)` is reused when both `JAx` and `Δt` are
-    unchanged. That covers the common panel design where every subject is
-    measured on the same wave schedule -- and correctly misses on genuinely
+  * **`exp`**: `eJAx = exp(JAx * Δt)`, in an `ExpTable` keyed by `Δt` for the
+    current `JAx`. It covers the balanced panel, the shared irregular schedule
+    and the few-distinct-gaps diary design, and correctly misses on genuinely
     irregular observation times.
   * **`lyap`**: the asymptotic-diffusion solve `X` depends on `JAx` and the
     diffusion covariance and **not on `Δt` at all**, so for any model whose
     drift and diffusion are not state-dependent it is the same at every row of
     every subject. This is the important one: `schur!` was 38% of the primal
     filter's runtime and 60 of its 68 MB of allocations on a 20-latent model.
+    A last-value entry is enough for it.
 
-A state-dependent model changes `JAx` per row, so it simply misses every time
-and pays only the comparison. Nothing here assumes linearity; the guard checks
-the actual inputs rather than trusting a model-level flag.
+A state-dependent model changes `JAx` per row, so both simply miss every time
+and pay only the comparison.
 """
 mutable struct DiscretizationCache{T}
-    exp_JAx::Matrix{T}
-    exp_dt::T
-    exp_out::Matrix{T}
-    exp_valid::Bool
+    exp_table::ExpTable{T}
     lyap_JAx::Matrix{T}
     lyap_Q::Matrix{T}
     lyap_out::Matrix{T}
@@ -41,8 +83,7 @@ mutable struct DiscretizationCache{T}
 end
 
 function DiscretizationCache(::Type{T}, n::Int, k::Int) where {T}
-    return DiscretizationCache{T}(
-        zeros(T, n, n), zero(T), zeros(T, n, n), false,
+    return DiscretizationCache{T}(ExpTable(T, n),
         zeros(T, k, k), zeros(T, k, k), zeros(T, k, k), false)
 end
 
@@ -77,26 +118,58 @@ end
 
 # `nothing` disables caching, for the convenience constructor below and any
 # caller that has no workspace to hang a cache on.
-@inline _exp_cache_hit(::Nothing, JAx, Δt, n::Int) = false
+@inline _exp_cache_lookup(::Nothing, JAx, Δt, n::Int) = 0
 @inline _exp_cache_store!(::Nothing, JAx, Δt, out, n::Int) = nothing
 @inline _lyap_cache_hit(::Nothing, JAx, Q, k::Int) = false
 @inline _lyap_cache_store!(::Nothing, JAx, Q, out, k::Int) = nothing
 
-@inline function _exp_cache_hit(cache::DiscretizationCache, JAx, Δt, n::Int)
-    return cache.exp_valid && cache.exp_dt == Δt && _blocks_identical(cache.exp_JAx, JAx, n, n)
+"""
+The table slot holding `exp(JAx * Δt)`, or 0 on a miss.
+
+`Δt` is compared as a scalar before anything else, so a schedule of irregular
+intervals pays one comparison per live entry and never a matrix comparison
+beyond the single `JAx` check.
+"""
+@inline function _exp_cache_lookup(cache::DiscretizationCache, JAx, Δt, n::Int)
+    table = cache.exp_table
+    if table.valid && _blocks_identical(table.JAx, JAx, n, n)
+        @inbounds for e in 1:table.count
+            if table.dts[e] == Δt
+                _CTSEM_OPCOUNT.exp_cache_hit[] += 1
+                return e
+            end
+        end
+    end
+    _CTSEM_OPCOUNT.exp_cache_miss[] += 1
+    return 0
 end
 
 @inline function _exp_cache_store!(cache::DiscretizationCache, JAx, Δt, out, n::Int)
-    _copy_block!(cache.exp_JAx, JAx, n, n)
-    cache.exp_dt = Δt
-    _copy_block!(cache.exp_out, out, n, n)
-    cache.exp_valid = true
+    table = cache.exp_table
+    if !(table.valid && _blocks_identical(table.JAx, JAx, n, n))
+        _copy_block!(table.JAx, JAx, n, n)
+        table.valid = true
+        table.count = 0
+        table.next = 1
+    end
+    capacity = length(table.dts)
+    if table.count < capacity
+        e = table.count + 1
+        table.count = e
+    else
+        e = table.next
+        table.next = e == capacity ? 1 : e + 1
+    end
+    @inbounds table.dts[e] = Δt
+    _copy_block!(table.outs[e], out, n, n)
     return nothing
 end
 
 @inline function _lyap_cache_hit(cache::DiscretizationCache, JAx, Q, k::Int)
-    return cache.lyap_valid && _blocks_identical(cache.lyap_JAx, JAx, k, k) &&
+    hit = cache.lyap_valid && _blocks_identical(cache.lyap_JAx, JAx, k, k) &&
         _blocks_identical(cache.lyap_Q, Q, k, k)
+    (hit ? _CTSEM_OPCOUNT.lyap_cache_hit : _CTSEM_OPCOUNT.lyap_cache_miss)[] += 1
+    return hit
 end
 
 @inline function _lyap_cache_store!(cache::DiscretizationCache, JAx, Q, out, k::Int)
@@ -143,8 +216,9 @@ function _compute_discrete_time_form!(discrete_ca, buffer, DIFFUSIONcov, pars, �
     discretization_buffer, dim::Val{d}, cache=nothing) where {d}
     # Stan propagates the local affine EKF model, not the raw DRIFT matrix:
     # f(x) = DRIFT * x + CINT, J = JAx, c = f(x) - J * x.
-    if _exp_cache_hit(cache, pars.JAx, Δt, d)
-        _copy_block!(discrete_ca.eJAx, cache.exp_out, d, d)
+    slot = _exp_cache_lookup(cache, pars.JAx, Δt, d)
+    if slot != 0
+        _copy_block!(discrete_ca.eJAx, cache.exp_table.outs[slot], d, d)
     else
         copyto!(exp_buffer.As, pars.JAx)
         rmul!(exp_buffer.As, Δt)
@@ -186,8 +260,11 @@ function _compute_discrete_time_form!(discrete_ca, buffer, DIFFUSIONcov, pars, �
         end
         diffusion_buffer.s[i] = correction
     end
+    # `diffusion_buffer.dim` is `Val(kdim)` fixed at construction; building
+    # `Val(kdim)` from the runtime length here was a dynamic dispatch and an
+    # allocation on every prediction substep (Profile.Allocs, dev1).
     _solve_square_system!(diffusion_buffer.intermediate, diffusion_buffer.s,
-        view(exp_buffer.piv, 1:kdim), Val(kdim))
+        diffusion_buffer.piv, diffusion_buffer.dim)
     @inbounds for i in 1:kdim
         discrete_ca.dINT[diffusion_state_indices[i]] = diffusion_buffer.s[i]
     end

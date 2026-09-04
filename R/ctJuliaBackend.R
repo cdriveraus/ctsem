@@ -1884,6 +1884,15 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     as.numeric(model$nlcontrol$maxtimestep)[1L]
   } else 999999
   if (!is.finite(max_timestep) || max_timestep <= 0) stop("Julia maxtimestep must be a positive finite number.", call. = FALSE)
+  # The automatic substep policy, when asked for. The mesh itself is decided
+  # later by `.ctJuliaAutoSubsteps` at the starting values and replaces
+  # `max_timestep` on the spec, so every objective built from the spec -- the
+  # fit, prediction, the state-explicit target -- integrates the same way.
+  # `floor` is the maxtimestep rule the mesh never goes below.
+  substeps <- if (identical(model$nlcontrol$nsubsteps, "auto")) list(
+    tol = as.numeric(.ctJuliaOr(model$nlcontrol$substeptol, 0.01))[1L],
+    max = as.integer(.ctJuliaOr(model$nlcontrol$maxsubsteps, 64L))[1L],
+    floor = max_timestep) else NULL
   laplace <- NULL
   if (intoverpop %in% c("laplace", "none")) {
     # No state augmentation at all: the model the engine filters is the plain
@@ -1986,6 +1995,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     ti_missing = ti_missing,
     priors = prior_spec,
     max_timestep = max_timestep,
+    substeps = substeps,
     # A discrete-time model is the same filter with a different discretization:
     # DRIFT, CINT and DIFFUSION are already the one-step quantities, so the
     # exponential, the Lyapunov solve and the intercept solve all collapse.
@@ -2141,7 +2151,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   objective_args <- list(params, .ctJuliaVector(spec$subject_starts),
     .ctJuliaVector(spec$times), JuliaConnectoR::juliaPut(spec$manifest_data),
     JuliaConnectoR::juliaPut(spec$tdpred_data), JuliaConnectoR::juliaPut(spec$tipred_data),
-    spec$max_timestep)
+    .ctJuliaSubstepArgument(spec$max_timestep))
   if (!is.null(spec$priors) && length(spec$priors$index)) {
     objective_args$prior_index <- .ctJuliaVector(spec$priors$index)
     objective_args$prior_scale <- .ctJuliaVector(spec$priors$scale)
@@ -2437,6 +2447,43 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 # same model against held-out data (see .ctBackendLOO) and must do it exactly
 # the way a fit does -- same tolerances, same gradient method, same thread cap.
 # A second copy of this call would be a second set of defaults to keep in step.
+# The engine takes the substep policy in one slot: `maxtimestep` as a number,
+# or a mesh -- one substep count per row of the data -- as an integer vector.
+# `.ctJuliaVector` keeps a one-row mesh a vector rather than the scalar
+# JuliaConnectoR would make of it.
+.ctJuliaSubstepArgument <- function(rule) {
+  if (is.integer(rule) || length(rule) > 1L) .ctJuliaVector(as.integer(rule)) else as.numeric(rule)[1L]
+}
+
+# Choose the substep mesh for `spec` at the parameter values `values`, and
+# return the spec carrying it together with a summary. The engine measures how
+# nonlinear each interval was (substep_mesh.jl); a linear model comes back with
+# the floor and no filter pass. A non-finite likelihood at `values` leaves the
+# spec as it was, and the summary says so.
+.ctJuliaAutoSubsteps <- function(spec, values) {
+  module <- .ctJuliaModule(spec$project)
+  objective <- .ctJuliaObjective(structure(spec, class = c("ctJuliaModel", "ctFitModel")))
+  arguments <- list(objective, .ctJuliaNumericVector(values), tol = as.numeric(spec$substeps$tol),
+    max_substeps = as.integer(spec$substeps$max), floor_rule = as.numeric(spec$substeps$floor))
+  # Re-meshing at the optimum: the engine starts from one step per interval and
+  # may find the filter not finite there on a stiff model; the mesh the fit was
+  # found with is then its fallback.
+  if (is.integer(spec$max_timestep)) arguments$fallback <- .ctJuliaVector(spec$max_timestep)
+  chosen <- JuliaConnectoR::juliaGet(do.call(module$ctsem_auto_substeps, arguments))
+  summary <- list(intervals = as.integer(chosen$intervals), refined = as.integer(chosen$refined),
+    max_substeps = as.integer(chosen$max_substeps), total = as.integer(chosen$total),
+    passes = as.integer(chosen$passes), finite = isTRUE(chosen$finite),
+    tol = as.numeric(spec$substeps$tol), refit = FALSE)
+  if (summary$finite) spec$max_timestep <- as.integer(chosen$mesh)
+  list(spec = spec, summary = summary)
+}
+
+.ctJuliaSubstepMessage <- function(s) {
+  if (!isTRUE(s$finite)) return("Substeps: likelihood not finite at the starting values; maxtimestep rule kept.")
+  paste0("Substeps: ", s$refined, " of ", s$intervals, " intervals refined, max ", s$max_substeps,
+    if (isTRUE(s$refit)) "; refit after the mesh moved at the optimum." else ".")
+}
+
 .ctJuliaOptimise <- function(model_spec, start, backendcontrol = list(),
   gradient = "adjoint", cores = 1L, verbose = 0L, tol = NULL,
   callback = NULL, objective = NULL, progress_label = NULL) {
@@ -2794,9 +2841,41 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       }
     }
   }
+  # Automatic substeps: choose the mesh at the starting values, fit, choose
+  # it again at the optimum, and refit once from there if it moved. Frozen
+  # within each fit so the objective stays smooth; see substep_mesh.jl. The
+  # state-explicit target has one innovation per substep, so its objective
+  # and start vector are rebuilt whenever the mesh changes.
+  substeps <- NULL
+  remesh <- function(values) {
+    chosen <- .ctJuliaAutoSubsteps(model_spec, values)
+    model_spec <<- chosen$spec
+    if (!is.null(jointobjective)) {
+      jointobjective <<- .ctJuliaJointObjective(model_spec, npar)
+      nstate <<- .ctJuliaStateDimension(model_spec)
+    }
+    chosen$summary
+  }
+  if (!is.null(model_spec$substeps)) {
+    substeps <- remesh(start[seq_len(npar)])
+    if (!is.null(jointobjective)) start <- c(start[seq_len(npar)], numeric(nstate))
+  }
   result <- .ctJuliaOptimise(model_spec, start, backendcontrol = backendcontrol,
     gradient = gradient, cores = cores, verbose = verbose,
     callback = optimcontrol$callback, objective = jointobjective)
+  if (!is.null(substeps) && isTRUE(substeps$finite)) {
+    before <- model_spec$max_timestep
+    optimum <- as.numeric(result$minimizer)[seq_len(npar)]
+    substeps <- remesh(optimum)
+    if (!identical(model_spec$max_timestep, before)) {
+      substeps$refit <- TRUE
+      restart <- if (is.null(jointobjective)) optimum else c(optimum, numeric(nstate))
+      result <- .ctJuliaOptimise(model_spec, restart, backendcontrol = backendcontrol,
+        gradient = gradient, cores = cores, verbose = verbose,
+        callback = optimcontrol$callback, objective = jointobjective)
+    }
+  }
+  if (!is.null(substeps)) message(.ctJuliaSubstepMessage(substeps))
   # There is deliberately no second, after-the-fact prior restart here.
   #
   # An earlier version retried a non-converged fit from a full prior
@@ -2868,6 +2947,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       linesearch = if (is.null(result$linesearch)) NA_character_ else
         as.character(result$linesearch),
       stalled = isTRUE(result$stalled),
+      # What nsubsteps = 'auto' decided: intervals, how many were refined, the
+      # largest count, the total, and whether the fit was redone after the
+      # mesh moved at the optimum. NULL unless it was asked for.
+      substeps = substeps,
       # State-explicit fits only. `states` is the trajectory at the
       # estimate, rows by latents, and `innovations` the standard normal
       # vector it was built from -- the same thing `ctGenerate` is handed,

@@ -216,7 +216,12 @@ span covered by the numerical integration. The large default ensures that for ea
 only a single step of exponential integration is used. When \code{maxtimestep} is smaller than the observation time interval,
 the integration is nested within an Euler like loop.
 Smaller values may offer greater accuracy, but are slower and not always necessary. Given the exponential integration,
-linear model elements are fit exactly with only a single step.}
+linear model elements are fit exactly with only a single step.
+\code{nsubsteps = 'auto'} (julia backend only) instead measures, at the starting values and again at the
+optimum, how nonlinear each observation interval is and refines only the intervals that need it;
+\code{substeptol} (default 0.01) is the largest acceptable linearisation error as a fraction of the
+predicted state standard deviation, and \code{maxsubsteps} (default 64) caps an interval.
+\code{maxtimestep} remains a ceiling on the step. The choice is reported in \code{fit$estimate$substeps}.}
 
 \item{nopriors}{deprecated, use priors argument. logical. If TRUE, any priors are disabled -- sometimes desirable for optimization.}
 
