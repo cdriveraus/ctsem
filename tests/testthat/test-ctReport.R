@@ -158,6 +158,34 @@ test_that("the profile's quadratic reference is calibrated: a determined paramet
   expect_true(all(ses$marginal >= ses$conditional * (1 - 1e-8)))
 })
 
+test_that("the profile degrades to the reported SE when the fit carries no Hessian", {
+  skip_on_cran()
+
+  # A fit optimised with uncertainty off has draws or a covariance but no
+  # Hessian, so there is no conditional width and no ridge to report. It must
+  # still produce a profile, and say which of its columns stopped meaning
+  # what the header claims.
+  f <- ctstantestfit
+  f$stanfit$uncertainty$hessian <- NULL
+  ses <- ctsem:::.ctReportRawSE(f)
+  expect_null(ses$conditional)
+  expect_false(is.null(ses$marginal))
+
+  pr <- ctsem:::.ctReportProfile(f, npoints = 5L)
+  expect_false(pr$haveboth)
+  expect_true(all(is.na(pr$table$ridge)))
+  expect_equal(pr$table$se_slice, pr$table$se_report)
+
+  d <- .ctReportFolder()
+  res <- suppressWarnings(suppressMessages(
+    ctReport(f, folder = d, components = "profile", profilepoints = 5,
+      verbose = FALSE)))
+  expect_identical(res$components$profile$status, "ok")
+  txt <- readLines(file.path(d, "04-loglik-profile.txt"))
+  expect_true(any(grepl("No Hessian on this fit", txt, fixed = TRUE)))
+  .ctReportCheckFolder(res)
+})
+
 test_that("ctReport removes only its own files from a reused folder", {
   skip_on_cran()
 
@@ -170,6 +198,50 @@ test_that("ctReport removes only its own files from a reused folder", {
   expect_true(file.exists(file.path(d, "notes.txt")))
   expect_false(file.exists(file.path(d, "99-stale.txt")))
   .ctReportCheckFolder(res)
+})
+
+test_that("the registry, the component functions and the filename prefixes agree", {
+  reg <- ctsem:::.ctReportComponents()
+  expect_setequal(names(reg), names(ctsem:::.ctReportDo))
+  expect_setequal(unique(unname(reg)), c("quick", "default", "all"))
+
+  # A component with no interpretation entry would write its heading into the
+  # index and then two blank lines -- paste0(NULL) is character(0), which
+  # writes nothing and reports no error. Both lines must exist and be prose.
+  interp <- ctsem:::.ctReportInterpretation()
+  expect_setequal(names(interp), names(reg))
+  for (nm in names(interp)) {
+    expect_length(interp[[nm]], 2)
+    expect_true(all(nzchar(interp[[nm]])), info = nm)
+    expect_true(all(nchar(interp[[nm]]) > 25), info = nm)
+  }
+
+  sets <- ctsem:::.ctReportSets()
+  expect_true(all(sets$quick %in% sets$default))
+  expect_true(all(sets$default %in% sets$all))
+  expect_setequal(sets$all, names(reg))
+  # 'default' and 'all' resolve in registry order, not set order, so a
+  # component moved between sets does not silently move in the reading order.
+  expect_identical(ctsem:::.ctReportResolve("all"), names(reg))
+  expect_identical(ctsem:::.ctReportResolve(c("residuals", "summary")),
+    c("summary", "residuals"))
+
+  # The numeric prefixes must ascend in registry order: they are the reading
+  # order, and they live in the component bodies rather than the registry.
+  skip_on_cran()
+  d <- .ctReportFolder()
+  res <- suppressWarnings(suppressMessages(
+    ctReport(ctstantestfit, folder = d, components = "quick", nsamples = 10,
+      profilepoints = 3, verbose = FALSE)))
+  prefix <- vapply(names(reg)[names(reg) %in% names(res$components)],
+    function(nm) {
+      f <- res$components[[nm]]$files
+      if (is.null(f)) NA_character_ else substr(sort(f)[1], 1, 2)
+    }, character(1))
+  prefix <- prefix[!is.na(prefix)]
+  expect_gt(length(prefix), 5)
+  expect_identical(prefix, prefix[order(prefix)])
+  expect_false(any(duplicated(prefix)))
 })
 
 test_that("ctReport rejects a non-fit and an unknown component", {

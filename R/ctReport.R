@@ -29,30 +29,28 @@
 #    -- the reasoning belongs in comments, here and in the component
 #    functions.
 
-# The component registry. `id` orders the files, `set` is the cheapest set the
-# component belongs to, and each component is a function of (fit, ctx) that
-# returns a character vector of files written (relative to the folder), or
-# NULL having called ctx$skip().
-.ctReportComponents <- function() {
-  list(
-    summary        = list(id = "01", set = "quick"),
-    parmatrices    = list(id = "02", set = "quick"),
-    identification = list(id = "03", set = "quick"),
-    profile        = list(id = "04", set = "quick"),
-    discretepars   = list(id = "05", set = "quick"),
-    predictions    = list(id = "06", set = "quick"),
-    residuals      = list(id = "07", set = "quick"),
-    covcheck       = list(id = "08", set = "default"),
-    postpred       = list(id = "09", set = "default"),
-    tipredeffects  = list(id = "10", set = "default"),
-    crossval       = list(id = "11", set = "all"),
-    equations      = list(id = "12", set = "all")
-  )
-}
+# The component registry: the run order, and the cheapest set each component
+# belongs to. The numeric filename prefix is not repeated here -- it lives in
+# the component's own file names in .ctReportDo, so there is one place for it
+# to be wrong rather than two that can disagree. Order here is the order they
+# run in, and must match the prefixes.
+.ctReportComponents <- function() c(
+  summary        = "quick",
+  parmatrices    = "quick",
+  identification = "quick",
+  profile        = "quick",
+  discretepars   = "quick",
+  predictions    = "quick",
+  residuals      = "quick",
+  covcheck       = "default",
+  postpred       = "default",
+  tipredeffects  = "default",
+  crossval       = "all",
+  equations      = "all"
+)
 
 .ctReportSets <- function() {
-  reg <- .ctReportComponents()
-  sets <- vapply(reg, `[[`, character(1), "set")
+  sets <- .ctReportComponents()
   list(quick = names(sets)[sets == "quick"],
     default = names(sets)[sets %in% c("quick", "default")],
     all = names(sets))
@@ -482,6 +480,18 @@
   interp <- .ctReportInterpretation()
   L <- character(0)
   add <- function(...) L <<- c(L, paste0(...))
+  # A component with no interpretation entry would otherwise write its heading
+  # and then nothing: paste0(NULL) is character(0), which appends no line and
+  # raises nothing. A visible placeholder instead, so the gap is in the file
+  # rather than in the reader's understanding.
+  say <- function(nm, i) {
+    x <- interp[[nm]][i]
+    if (length(x) != 1L || is.na(x) || !nzchar(x)) {
+      return(paste0("(ctReport has no description for component '", nm,
+        "' -- please report this.)"))
+    }
+    x
+  }
 
   m <- .ctFitModelObject(fit)
   add("# ctsem report")
@@ -507,9 +517,9 @@
       r <- done[[nm]]
       add("### ", paste(r$files, collapse = ", "))
       add("")
-      add(interp[[nm]][1])
+      add(say(nm, 1))
       add("")
-      add("*", interp[[nm]][2], "*")
+      add("*", say(nm, 2), "*")
       add("")
       if (!is.null(r$note)) {
         add(r$note)
@@ -626,8 +636,10 @@
       "(so a symmetric interval is the wrong shape), ridged (see above).",
       "")
     if (!pr$haveboth) {
-      L <- c(L, "No Hessian on this fit, so se_slice is the reported SE and",
-        "ridge cannot be computed. Refit with uncertainty for those columns.", "")
+      L <- c(L, "No Hessian on this fit, so se_slice is the reported SE and ridge",
+        "cannot be computed. The drops then exceed 2 wherever a parameter is",
+        "correlated with others, and only off-peak still reads cleanly. Refit",
+        "with uncertainty for the rest.", "")
     }
     if (pr$truncated) {
       L <- c(L, paste0("Note: ", nrow(tab), " of ", pr$npar,
@@ -850,8 +862,9 @@
 #' @param nsamples Draws used by the components that sample from the fit's
 #'   uncertainty, and by data generation for \code{covcheck} and
 #'   \code{postpred}.
-#' @param cores Cores for the components that can use more than one. Defaults
-#'   to 1; nothing parallelises unless asked.
+#' @param cores Cores for the components that can use more than one
+#'   (\code{discretepars}, \code{covcheck}, \code{postpred}, \code{crossval}).
+#'   Defaults to 1: nothing parallelises unless asked.
 #' @param quantiles Quantiles for the parameter matrices and the discrete
 #'   parameter plots.
 #' @param times Interval grid for \code{discretepars}. \code{'auto'} uses zero
@@ -897,9 +910,11 @@ ctReport <- function(fit, folder = "ctReport", components = "default",
   if (!inherits(fit, c("ctStanFit", "ctJuliaFit"))) {
     stop("fit must be a ctStanFit or ctJuliaFit from ctFit().", call. = FALSE)
   }
-  # CRAN's cap. A report is run once, so the default is 1 and even an explicit
-  # request is bounded here rather than in each component.
-  cores <- max(1L, min(2L, as.integer(cores[1])))
+  # Default 1: a report is run once, and nothing here should take cores the
+  # user did not offer. An explicit request is passed through -- silently
+  # capping it would read as a bug on a machine that has the cores.
+  cores <- suppressWarnings(as.integer(cores[1]))
+  if (!isTRUE(is.finite(cores)) || cores < 1L) cores <- 1L
   wanted <- .ctReportResolve(components)
 
   if (!dir.exists(folder)) {
