@@ -118,6 +118,80 @@ test_that("Stan and Julia agree with priors=TRUE, with random effects and a TI p
     tolerance = 1e-7)
 })
 
+# A plain `ctModel()` with a TI predictor, which nothing above covers: the two
+# models there fix T0VAR (`T0VAR = diag(2)`) and one sets `tipredDefault =
+# FALSE`, and it takes free T0VAR *plus* default TI-predictor effects to reach
+# this. T0MEANS is individually varying by default, so `T0VARredundancies()`
+# fixes the now-redundant free T0VAR cells -- clearing `param`, `transform` and
+# `indvarying`, but not the `<TIpred>_effect` columns -- and the julia
+# augmentation then reuses those same cells for the population SD and
+# correlation parameters. The stale flag gave each of those a TI-predictor
+# coefficient that the generated Stan model has no counterpart for, with a
+# different symptom per setting: `priors = TRUE` refused the fit because its
+# Stan-derived layout was three parameters short, while `priors = FALSE`
+# silently estimated the three extras and reported them in `summary()$tipreds`
+# as `tip_TI1_julia_popcov_1_1` and friends.
+#
+# MANIFESTMEANS is fixed here on purpose. Leaving it free makes it individually
+# varying too, which adds carrier states, and `ctStanModelIntOverPop()` then
+# rebuilds T0VAR from scratch with the effect columns already FALSE -- so the
+# bug disappears. The narrow case is the one where every random effect is a
+# T0MEANS row and the user's own T0VAR rows survive into the augmentation.
+.prior_tipred_default_model <- function() {
+  suppressMessages(ctModel(type = "ct", n.latent = 2, n.manifest = 2,
+    manifestNames = c("Y1", "Y2"), latentNames = c("eta1", "eta2"),
+    LAMBDA = diag(2), MANIFESTVAR = diag(.2, 2), MANIFESTMEANS = matrix(0, 2, 1),
+    n.TIpred = 1, TIpredNames = "TI1"))
+}
+
+.prior_tipred_default_data <- function() {
+  set.seed(3)
+  do.call(rbind, lapply(1:10, function(i) data.frame(id = i, time = 0:4,
+    Y1 = stats::rnorm(5), Y2 = stats::rnorm(5), TI1 = rep(stats::rnorm(1), 5))))
+}
+
+test_that("redundant free T0VAR gives the population parameters no TI-predictor effects", {
+  skip_on_cran()
+  skip_without_julia()
+  model <- .prior_tipred_default_model()
+  data <- .prior_tipred_default_data()
+
+  # `priors = TRUE` is what refused outright; that this returns at all is half
+  # the assertion.
+  julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
+    priors = TRUE))
+  npar <- max(c(julia_spec$parameter_table$parnumber, julia_spec$ti_effects$coefficient),
+    na.rm = TRUE)
+
+  # Not vacuous: this model shape does have population parameters and does have
+  # TI-predictor effects. They must simply not overlap -- Stan's population
+  # block is `rawpopsdbase`/`sqrtpcov` and takes no TI effects at all.
+  expect_gt(nrow(julia_spec$random_effects), 0L)
+  expect_gt(nrow(julia_spec$ti_effects), 0L)
+  expect_length(intersect(julia_spec$ti_effects$parameter,
+    julia_spec$random_effects$parameter), 0L)
+
+  skip_if_not_installed("rstan")
+  skip_if_not_installed("digest")
+  stan_spec <- suppressMessages(ctFit(data, model, backend = "stan", fit = FALSE,
+    priors = TRUE))
+  stan_fit <- .prior_stan_fit(stan_spec)
+  # Stated against Stan rather than against a literal count, because the
+  # property is that the two backends fit the same model. This is what catches
+  # the `priors = FALSE` case, where nothing errors and the only evidence is
+  # three parameters that Stan does not have.
+  expect_equal(npar, rstan::get_num_upars(stan_fit))
+
+  set.seed(8)
+  raw <- stats::rnorm(npar, 0, .3)
+  stan_value <- rstan::log_prob(stan_fit, upars = raw, adjust_transform = FALSE,
+    gradient = TRUE)
+  julia_value <- ctJuliaEvaluate(julia_spec, raw, gradient = TRUE)
+  expect_equal(as.numeric(julia_value$value), as.numeric(stan_value), tolerance = 1e-7)
+  expect_equal(as.numeric(julia_value$gradient),
+    as.numeric(attributes(stan_value)$gradient), tolerance = 1e-6)
+})
+
 test_that("Laplace priors are refused rather than silently treated as normal", {
   # Tested against `.ctBackendPriorSpec()` directly rather than through a
   # fitted model: setting `model$laplaceprior` stores the field but does not
