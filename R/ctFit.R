@@ -890,7 +890,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
 
   ctm <- ctModel0DRIFT(ctm, ctm$continuoustime) #offset 0 drift
   ctm$pars <- ctModelStatesAndPARS(ctm$pars,statenames = ctm$latentNames,tdprednames=ctm$TDpredNames) #replace latent states and PARS with state and PAR[] refs, need this early because we rely on [] detection
-  if(intoverpop)   ctm <- ctStanModelIntOverPop(ctm) #extend system matrices for individual differences
+  if(intoverpop)   ctm <- .ctModelIntOverPop(ctm) #extend system matrices for individual differences
 
 #   #check this *after* replacing PARS references as needed
 #   if(any(duplicated(ctm$pars$param[ctm$pars$matrix %in% 'T0MEANS' &
@@ -908,7 +908,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   if('try-error' %in% class(ctm$jacobian)) ctm$jacobian <- ctJacobian(ctm,simplify=FALSE)
   # ctm$jacobian <- unfoldmats( #replaces matrix references with base parameter
   #   c(listOfMatrices(ctm$pars),ctm$jacobian))
-  ctm$jacobian <- ctm$jacobian[names(ctStanMatricesList()$jacobian)]
+  ctm$jacobian <- ctm$jacobian[names(.ctMatricesList()$jacobian)]
   jl <- ctModelUnlist(ctm$jacobian,names(ctm$jacobian))
   jl <- jl[apply(jl,1,function(x) any(!is.na(x))),] #clean up messy leftovers of NA's
   jl2 <- as.data.frame(rbind(data.table(ctm$pars[1,]),data.table(jl),fill=TRUE))[-1,]
@@ -964,7 +964,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   }
   ctm <- ctModelTransformsToNum(ctm)
 
-  ctm$pars <- ctStanModelCleanctspec(ctm$pars)
+  ctm$pars <- .ctModelCleanctspec(ctm$pars)
 
   ctm <- T0VARredundancies(ctm)
 
@@ -1122,8 +1122,8 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
         'meant.', call.=FALSE)
     }}
 
-  ctm$modelmats <- ctStanModelMatrices(ctm) #slow!
-  ctm <- ctStanCalcsList(ctm,save=saveComplexPars) #get extra calculations and adjust model spec as needed???
+  ctm$modelmats <- .ctModelMatSetup(ctm) #slow!
+  ctm <- .ctCalcsList(ctm,save=saveComplexPars) #get extra calculations and adjust model spec as needed???
 
   #store values in ctm
   ctm$intoverpop <- as.integer(intoverpop)
@@ -1168,7 +1168,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   ctm$recompile <- recompile
 
 
-  standata <- ctStanData(ctm,datalong,optimize=optimize, sameInitialTimes=sameInitialTimes) #bit slow
+  standata <- .ctPrepareData(ctm,datalong,optimize=optimize, sameInitialTimes=sameInitialTimes) #bit slow
   standata$verbose=as.integer(verbose)
   standata$savesubjectmatrices=as.integer(savesubjectmatrices)
   standata$gendata=as.integer(gendata)
@@ -1257,7 +1257,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     # a no-op attempt at `$tipreds`, which is not a field of this list; the
     # real time-invariant predictor data lives in `$tipredsdata` and keeps its
     # sentinel in both copies). `standata` was already computed above,
-    # unconditionally, before backend dispatch -- ctStanData() runs for julia
+    # unconditionally, before backend dispatch -- .ctPrepareData() runs for julia
     # too, purely to prepare `prepared_data` for `.ctFitJuliaBackend()` -- so
     # attaching it here costs nothing further and is not a second computation.
     standataout <- standata

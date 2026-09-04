@@ -192,7 +192,7 @@ test_that("Stan and Julia agree for a T0MEANS-indvarying population SD with non-
   # `multiplier*meanscale` to convert to state-space units before it's used as
   # a covariance (ctModelWriter.R: `T0cov[matsetup[ri,1], ] *= matvalues[ri,2]
   # * matvalues[ri,3]` and the matching column update). T0MEANS/CINT-type
-  # custom pars default to meanscale=10 (`ctStanModelDefaultFreePar`), so any
+  # custom pars default to meanscale=10 (`.ctModelDefaultFreePar`), so any
   # T0MEANS-indvarying parameter -- like `t0m||TRUE` below -- exercises this.
   # The Julia port originally omitted this rescaling entirely, so its fitted
   # population SD came out ~10x too large relative to Stan's (same maximum

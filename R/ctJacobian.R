@@ -60,7 +60,7 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy'),simplify=TRUE ){
   # m$pars$param <- inv_logit_gsub(m$pars$param) #replace inv_logit with known functions for differentiation
   
   mats <- listOfMatrices(m$pars)
-  matnames <- names(ctStanMatricesList(unsafe=TRUE)$base)
+  matnames <- names(.ctMatricesList(unsafe=TRUE)$base)
   
   mats <- unfoldmats(mats)
   

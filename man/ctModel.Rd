@@ -153,6 +153,20 @@ predictor effects to have effects estimated, FALSE fixes the effect to zero unle
 This function is used to specify a continuous time structural equation model, 
 which can then be fit to data with function \code{\link{ctFit}}.
 }
+\details{
+A matrix cell may be a number, which fixes the parameter, or a
+character string, which frees it. A string can also carry the transform, the
+individual-variation flag, the prior scaling of that variation, and the
+time-independent predictors acting on the parameter. It may say so in either
+of two interchangeable ways: as fields in a fixed order separated by
+\code{|} (\code{'mm||TRUE|0.5'}), or by name
+(\code{'mm, indvarying=TRUE, sdscale=0.5'}). A cell that names one of the
+fields (\code{transform}, \code{indvarying}, \code{sdscale}, \code{tipreds})
+and assigns to it with \code{=} is read the named way, a cell containing
+\code{|} the ordered way, and anything else is a plain parameter name or
+expression. \code{\link{ctParSpec}} writes the ordered form from the same
+named arguments, for when a specification is built programmatically.
+}
 \examples{
  ### Frequentist example:
  ### impulse and level change time dependent predictor 
@@ -182,4 +196,8 @@ n.TIpred=3, TIpredNames=c('TI1','TI2','TI3'),
 LAMBDA=diag(2))
 
 
+}
+\seealso{
+\code{\link{ctParSpec}} for the fields a matrix cell can carry,
+\code{\link{ctFit}} for fitting the result.
 }

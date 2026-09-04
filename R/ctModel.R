@@ -106,9 +106,25 @@
 #' see \code{\link{ctIntervalise}}. 
 #' 
 #' @param PARS for types 'ct' and 'dt' only. May be of any structure, only needed to contain extra parameters for certain non-linear models.
-#' @param silent Suppress all output to console. 
-#' 
-#' @examples 
+#' @param silent Suppress all output to console.
+#'
+#' @details A matrix cell may be a number, which fixes the parameter, or a
+#' character string, which frees it. A string can also carry the transform, the
+#' individual-variation flag, the prior scaling of that variation, and the
+#' time-independent predictors acting on the parameter. It may say so in either
+#' of two interchangeable ways: as fields in a fixed order separated by
+#' \code{|} (\code{'mm||TRUE|0.5'}), or by name
+#' (\code{'mm, indvarying=TRUE, sdscale=0.5'}). A cell that names one of the
+#' fields (\code{transform}, \code{indvarying}, \code{sdscale}, \code{tipreds})
+#' and assigns to it with \code{=} is read the named way, a cell containing
+#' \code{|} the ordered way, and anything else is a plain parameter name or
+#' expression. \code{\link{ctParSpec}} writes the ordered form from the same
+#' named arguments, for when a specification is built programmatically.
+#'
+#' @seealso \code{\link{ctParSpec}} for the fields a matrix cell can carry,
+#' \code{\link{ctFit}} for fitting the result.
+#'
+#' @examples
 #'  ### Frequentist example:
 #'  ### impulse and level change time dependent predictor 
 #'  ### example from Driver, Oud, Voelkle (2015)
@@ -237,7 +253,7 @@ ctModel<-function(LAMBDA, type='ct',n.manifest = 'auto', n.latent='auto', Tpoint
     TIpredNames=c()
   }
   
-  mats <- ctStanMatricesList()
+  mats <- .ctMatricesList()
   for(m in names(mats$base)){
     if(!exists(m, inherits = FALSE)) next
     if(!is.null(get(m, inherits = FALSE))){ #if the matrix is specified

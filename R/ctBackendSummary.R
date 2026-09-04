@@ -52,7 +52,7 @@
   # object the parameter table was actually derived from. It matters when
   # something re-prepares the data (ctPredict interpolating a time grid, say):
   # ctFit hands the backends a model that has already been through
-  # ctStanModelIntOverPop, and re-deriving the augmentation from a model that
+  # .ctModelIntOverPop, and re-deriving the augmentation from a model that
   # has not been produces an algebraically equivalent but differently written
   # parameter table -- with a different mapping from the raw vector.
   if (!is.null(fit$model_spec$model)) return(fit$model_spec$model)
@@ -75,7 +75,7 @@
 }
 
 # The four accessors below are for functions that were written stan-only and
-# read `fit$stanfit$...` directly (ctChisqTest, ctModelCoverage_check). They
+# read `fit$stanfit$...` directly (ctChisqTest, ctCoverageCheck). They
 # are not a general "raw sample" API -- .ctBackendRawSamples() above already
 # covers that for julia, and ctStanRawSamples() for stan -- just the specific
 # fields those two callers each named explicitly.
@@ -238,6 +238,10 @@
 #' derived from them -- from a raw (unconstrained) parameter vector, using the
 #' same engine code the likelihood uses.
 #'
+#' Internal. \code{ctBackend*} means internal throughout the package, so this is
+#' not exported; the public, backend-neutral accessor for the population
+#' matrices is \code{\link{ctSummaryMatrices}}.
+#'
 #' @param fit A \code{ctJuliaFit}, or a prepared model from
 #'   \code{ctFit(..., fit=FALSE)}.
 #' @param raw Raw parameter vector. Defaults to the fitted estimate.
@@ -261,7 +265,7 @@
 #' \donttest{
 #' # ctBackendParMatrices(fit)$DRIFT
 #' }
-#' @export
+#' @keywords internal
 ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   time = 0, dt = 0, trim = TRUE) {
   if (is.null(raw)) {
@@ -419,7 +423,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 .ctSummaryMatricesFromArrays <- function(e, continuoustime, latentNames, manifestNames,
   TDpredNames, calcfunc = quantile, calcfuncargs = list(probs = 0.5), timeinterval = 1) {
 
-  mats <- ctStanMatricesList()
+  mats <- .ctMatricesList()
   mats <- c(names(mats$base), names(mats$asymptotic), names(mats$extra))
   if (isTRUE(continuoustime)) {
     d <- list(DRIFT = e$pop_DRIFT)

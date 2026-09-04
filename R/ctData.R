@@ -22,12 +22,15 @@ expmGetSubsets <- function(m){
   return(subsets)
 }
 
-ctStanData <- function(ctm, datalong,optimize,sameInitialTimes=FALSE){
+# Builds the prepared data list (historically "standata"). Shared: ctFit runs it
+# before backend dispatch and passes the result to the julia engine as
+# prepared_data. Do not delete with stan.
+.ctPrepareData <- function(ctm, datalong,optimize,sameInitialTimes=FALSE){
   
   
   nsubjects <- length(unique(datalong[, ctm$subjectIDname])) 
   
-  mats <- ctStanMatricesList()
+  mats <- .ctMatricesList()
   
   #simply exponential?
   driftdiagonly <- ifelse(all(!is.na(ctm$pars$value[ctm$pars$matrix == 'DRIFT' & ctm$pars$row != ctm$pars$col]) &
@@ -458,7 +461,7 @@ ctStanData <- function(ctm, datalong,optimize,sameInitialTimes=FALSE){
   
   if(!is.null(ctm$TIpredAuto) && ctm$TIpredAuto %in% c(1L,TRUE)) standata$TIpredAuto <- 1L else standata$TIpredAuto <- 0L
   
-  mc=c(ctStanMatricesList()$all)#base,ctStanMatricesList()$jacobian)
+  mc=c(.ctMatricesList()$all)#base,.ctMatricesList()$jacobian)
   ms=data.frame(standata$matsetup)
   ms=ms[order(ms$param),]
   standata$whenmat <- array(0L,dim=c(max(mc),5)) #whenmat contains 0's when matrix isn't computed, 1's when it is. 'when 5' is indvaryig.
@@ -528,7 +531,7 @@ ctStanData <- function(ctm, datalong,optimize,sameInitialTimes=FALSE){
     ms <- data.frame(standata$matsetup)
     standata$laplaceprior[
       ms$param[
-        ms$matrix %in% ctStanMatricesList()$all[names(ctStanMatricesList()$all) %in% ctm$laplaceprior] & 
+        ms$matrix %in% .ctMatricesList()$all[names(.ctMatricesList()$all) %in% ctm$laplaceprior] & 
           ms$param > 0 & 
           ms$row!=ms$col & 
           ms$when==0 & 
@@ -542,7 +545,7 @@ ctStanData <- function(ctm, datalong,optimize,sameInitialTimes=FALSE){
   ms <- data.frame(standata$matsetup)
   CINTnonzero <- c()#1:standata$nlatent
   for(i in 1:standata$nlatent){
-    ri=which(ms$matrix %in% ctStanMatricesList()$all[names(ctStanMatricesList()$all) %in% 'CINT'] & ms$row %in% i)
+    ri=which(ms$matrix %in% .ctMatricesList()$all[names(.ctMatricesList()$all) %in% 'CINT'] & ms$row %in% i)
     if(ms$param[ri]==0 && standata$matvalues[ri,'value']==0) next else CINTnonzero <- c(CINTnonzero,i)
   }
   standata$CINTnonzero <- array(as.integer(CINTnonzero))
