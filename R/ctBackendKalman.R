@@ -20,11 +20,24 @@
 # both simpler and impossible to get subtly out of step with what a fresh fit to
 # the same frame would do.
 
+# Whether `fit` is a julia backend fit. `model_spec` is set only by the julia
+# path (see .ctFitJuliaBackendImpl / .ctJuliaSampleFit in R/ctJuliaBackend.R
+# and R/ctBackendSample.R), so its presence is a reliable backend test -- and,
+# since a julia fit now also carries `$standata` (for `$data`/`$standata`
+# parity with a stan fit, see R/ctFit.R), no longer one that presence of
+# `$standata` can make. The functions below use this to keep a julia fit
+# routed through its own `model_spec`, which is what stays in the row order
+# the engine actually used: ctPostPredData() zips several of these accessors
+# together by row position, and mixing one that reads `$standata` with others
+# that read `model_spec` would misalign rows the moment the two disagree on
+# ordering, silently.
+.ctFitIsJulia <- function(fit) !is.null(fit$model_spec)
+
 # The original-id to internal-index mapping, for the backends that do not carry
 # a `standata`. ctPredict() speaks in the user's own subject ids and the filter
 # speaks in positions, so something has to hold the correspondence.
 .ctFitIdMap <- function(fit) {
-  if (!is.null(fit$standata$idmap)) return(fit$standata$idmap)
+  if (!.ctFitIsJulia(fit) && !is.null(fit$standata$idmap)) return(fit$standata$idmap)
   spec <- .ctBackendSpec(fit)
   ids <- unique(spec$data[[.ctFitModelObject(fit)$subjectIDname]])
   data.frame(original = ids, new = seq_along(ids), stringsAsFactors = FALSE)
@@ -549,7 +562,7 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
 # from either a ctStanFit or a backend fit, so that function has one body.
 
 .ctFitObservedY <- function(fit) {
-  if (!is.null(fit$standata$Y)) {
+  if (!.ctFitIsJulia(fit) && !is.null(fit$standata$Y)) {
     observed <- fit$standata$Y
     observed[observed == 99999] <- NA
     colnames(observed) <- .ctFitModelObject(fit)$manifestNames
@@ -563,14 +576,14 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
 }
 
 .ctFitRowSubject <- function(fit) {
-  if (!is.null(fit$standata$subject)) return(as.integer(fit$standata$subject))
+  if (!.ctFitIsJulia(fit) && !is.null(fit$standata$subject)) return(as.integer(fit$standata$subject))
   spec <- .ctBackendSpec(fit)
   starts <- spec$subject_starts
   rep(seq_along(starts), diff(c(starts, length(spec$times) + 1L)))
 }
 
 .ctFitRowTime <- function(fit) {
-  if (!is.null(fit$standata$time)) return(as.numeric(fit$standata$time))
+  if (!.ctFitIsJulia(fit) && !is.null(fit$standata$time)) return(as.numeric(fit$standata$time))
   as.numeric(.ctBackendSpec(fit)$times)
 }
 
@@ -588,7 +601,7 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
 # A copy of the fit whose observed data has been replaced, so that the residual
 # branch of ctPostPredData() can filter a generated dataset.
 .ctFitReplaceY <- function(fit, Y) {
-  if (!is.null(fit$standata$Y)) {
+  if (!.ctFitIsJulia(fit) && !is.null(fit$standata$Y)) {
     fit$standata$Y <- matrix(Y, ncol = ncol(fit$standata$Y))
     return(fit)
   }
@@ -598,11 +611,14 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
 }
 
 # The observed data as a long data frame in its original structure. A ctStanFit
-# has to reconstruct it from `standata`; the backends were handed one and kept
-# it, so this is where those two roads meet.
+# has to reconstruct it from `standata`; a julia fit now carries a `standata`
+# of its own too (see R/ctFit.R), so this reconstructs it the same way for
+# both -- unlike the accessors above, nothing here reads another accessor's
+# output by row position, so there is no ordering hazard in preferring
+# `standata` whichever backend produced it.
 .ctFitLongData <- function(fit) {
   if (!is.null(fit$standata)) {
-    return(standatatolong(standata = fit$standata, ctm = fit$ctstanmodel,
+    return(standatatolong(standata = fit$standata, ctm = .ctFitModelObject(fit),
       origstructure = TRUE))
   }
   .ctBackendSpec(fit)$data
@@ -612,7 +628,7 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
 # these to pick the covariate values it predicts at.
 .ctFitTIpredData <- function(fit) {
   model <- .ctFitModelObject(fit)
-  values <- if (!is.null(fit$standata$tipredsdata)) {
+  values <- if (!.ctFitIsJulia(fit) && !is.null(fit$standata$tipredsdata)) {
     as.matrix(fit$standata$tipredsdata)
   } else as.matrix(.ctBackendSpec(fit)$tipred_data)
   if (ncol(values) == length(model$TIpredNames)) colnames(values) <- model$TIpredNames
@@ -624,7 +640,7 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
 # pseudo-subjects, one per covariate value, and asks the fitted model to predict
 # for them.
 .ctFitReplaceData <- function(fit, datalong) {
-  if (!is.null(fit$standata)) {
+  if (!.ctFitIsJulia(fit) && !is.null(fit$standata)) {
     fit$standata <- suppressMessages(ctStanData(fit$ctstanmodel, datalong, optimize = TRUE))
     return(fit)
   }

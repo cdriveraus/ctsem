@@ -1223,6 +1223,21 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     # returns the prepared model spec then, unclassed by `$args` before, and
     # assigning a list element to it here does not disturb its class.
     juliafit$args <- list(input = args, resolved = argsresolved)
+    # `$data`/`$standata` mean the same thing on both backends: `$standata` is
+    # the prepared data with the 99999 missing-value sentinel intact, `$data`
+    # is the same thing with that sentinel replaced by `NA` in `$Y` (and,
+    # replicating the stan path exactly -- see the identical two lines below --
+    # a no-op attempt at `$tipreds`, which is not a field of this list; the
+    # real time-invariant predictor data lives in `$tipredsdata` and keeps its
+    # sentinel in both copies). `standata` was already computed above,
+    # unconditionally, before backend dispatch -- ctStanData() runs for julia
+    # too, purely to prepare `prepared_data` for `.ctFitJuliaBackend()` -- so
+    # attaching it here costs nothing further and is not a second computation.
+    standataout <- standata
+    standataout$Y[standataout$Y==99999] <- NA
+    standataout$tipreds[standataout$tipreds==99999] <- NA
+    juliafit$standata <- standata
+    juliafit$data <- standataout
     # `plot` draws the trace *after* the fit here, not during it.
     #
     # The Stan path can plot live because it writes sample files a second

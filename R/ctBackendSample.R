@@ -106,7 +106,13 @@
 #' @keywords internal
 .ctBackendGroupIds <- function(fit, laplace, levelname, subject, nmembers) {
   out <- rep(NA_character_, length(subject))
-  d <- fit$data
+  # `.ctBackendSpec(fit)$data`, not the top-level `fit$data`: the latter is now
+  # the sentinel-cleaned `standata` structure (for `$data`/`$standata` parity
+  # with a stan fit, see R/ctFit.R) and no longer a data.frame with the user's
+  # original column names. `model_spec$data` is the long data.frame
+  # `.ctJuliaPrepare()` kept for exactly this kind of lookup and is unaffected
+  # by that change.
+  d <- .ctBackendSpec(fit)$data
   if (is.null(d)) return(out)
   # The subject identifier is not always called `id`: a nested model names its
   # levels, and the first level's name *is* the subject column. Looking only
@@ -132,8 +138,11 @@
 #' @keywords internal
 .ctBackendSubjectIds <- function(fit, nsubjects) {
   # In first-appearance order, which is the order the engine numbers subjects.
-  if (!is.null(fit$data) && !is.null(fit$data$id)) {
-    original <- unique(fit$data$id)
+  # `.ctBackendSpec(fit)$data`, not the top-level `fit$data` -- see the same
+  # note in `.ctBackendGroupIds()` above.
+  d <- .ctBackendSpec(fit)$data
+  if (!is.null(d) && !is.null(d$id)) {
+    original <- unique(d$id)
     if (length(original) == nsubjects) return(as.character(original))
   }
   ids <- fit$model_spec$subject_ids
@@ -945,8 +954,11 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # parameters on every fit, and the assembler overwrites it with the
   # posterior mean of exactly those.
   theta <- estimate[seq_len(npar)]
+  # `$data` is not set here: see the identical note in .ctFitJuliaBackendImpl()
+  # (R/ctJuliaBackend.R) -- ctFit.R attaches the sentinel-cleaned `standata`
+  # after this call returns, and `model_spec$data` already covers what code in
+  # this package needs from the verbatim long frame.
   out <- list(backend = "julia", model = model, model_spec = model_spec,
-    data = datalong,
     estimate = list(raw = theta,
       loglik = if (length(subject_loglik)) sum(subject_loglik) else
         as.numeric(optimised$maximum_loglik),
