@@ -616,10 +616,27 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
 # both -- unlike the accessors above, nothing here reads another accessor's
 # output by row position, so there is no ordering hazard in preferring
 # `standata` whichever backend produced it.
+#
+# `standatatolong()`'s id column is `standata$subject`, the ascending 1:N
+# `makeNumericIDs()` (R/ctsemUtils.R) assigned -- never the user's own ids,
+# which only `standata$idmap` (original/new, built right before that
+# remapping in ctStanData(), R/ctData.R) still knows. Left unmapped, a stan
+# fit returned the internal index and a julia fit returned the user's real
+# ids (from the verbatim frame this used to fall back to), so the two
+# backends silently disagreed about what a subject is called -- a
+# `merge(userdata, ..., by='id')` downstream would mismatch every row on one
+# backend and not the other. Mapped back here, both return the ids the user
+# supplied.
 .ctFitLongData <- function(fit) {
   if (!is.null(fit$standata)) {
-    return(standatatolong(standata = fit$standata, ctm = .ctFitModelObject(fit),
-      origstructure = TRUE))
+    long <- standatatolong(standata = fit$standata, ctm = .ctFitModelObject(fit),
+      origstructure = TRUE)
+    idname <- .ctFitModelObject(fit)$subjectIDname
+    idmap <- fit$standata$idmap
+    if (!is.null(idmap) && idname %in% names(long)) {
+      long[[idname]] <- idmap$original[match(long[[idname]], idmap$new)]
+    }
+    return(long)
   }
   .ctBackendSpec(fit)$data
 }
