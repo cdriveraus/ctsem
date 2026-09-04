@@ -285,8 +285,13 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   out <- .ctBackendNameMatrices(out, .ctBackendModel(fit))
   attr(out, "stateDependent") <- layout$statedep
   out <- .ctContextAttach(out, fit)
-  # Only when the caller did not choose the point themselves.
-  if (is.null(state)) .ctContextMessage(fit, .ctContextPopLabel)
+  # Name the point whether or not the caller chose it. Saying nothing when they
+  # did was the cheaper half of the same problem: `state` is usually passed from
+  # a variable, so the output carried no record of what that variable held, and
+  # the sentence also names *which* cells are conditional -- which the
+  # stateDependent attribute gives programmatically and nothing gave in prose.
+  .ctContextMessage(fit,
+    if (is.null(state)) .ctContextPopLabel else "the supplied state")
   out
 }
 

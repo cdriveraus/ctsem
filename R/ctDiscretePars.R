@@ -249,9 +249,13 @@ ctDiscretePars<-function(fit, subjects='popmean',
   # Which evaluation point the DRIFT being exponentiated below actually came
   # from -- the population pass, or each subject's own filter pass. They are
   # different points and the reader is told which one they got.
-  .ctContextMessage(fit,
-    if(!'popmean' %in% subjects) .ctContextSubjectLabel else
-      if(is.null(state)) .ctContextPopLabel else .ctResolveState(fit,state)$label,
+  #
+  # Kept in a variable and attached as well as messaged, because
+  # ctDiscreteParsPlot() is a separate call: the producer was careful and the
+  # figure it produced still left the session with no record of the point.
+  stateLabel <- if(!'popmean' %in% subjects) .ctContextSubjectLabel else
+    if(is.null(state)) .ctContextPopLabel else .ctResolveState(fit,state)$label
+  .ctContextMessage(fit, stateLabel,
     paste0("expm(DRIFT*t) is therefore the transition of the model linearised ",
       "there, not the nonlinear system's own interval regression."))
 
@@ -263,6 +267,7 @@ ctDiscretePars<-function(fit, subjects='popmean',
   attributes(out)$observational <- observational
   attributes(out)$cov <- cov
   attributes(out)$method <- 'linearise'
+  attributes(out)$stateLabel <- stateLabel
   out <- .ctContextAttach(out, fit)
 
   if(plot) {
@@ -427,6 +432,21 @@ ctDiscreteParsPlot<- function(x,indices='all',
     }
   }else title=title
 
+  # A state dependent object's figure has to carry its evaluation point. These
+  # curves are expm() of a DRIFT that was linearised somewhere, and which
+  # somewhere is not recoverable from the picture; ctDiscretePars() attached the
+  # cells and the label for exactly this and nothing downstream read them.
+  # Silent for a linear model, whose DRIFT is the same everywhere.
+  .cells <- attributes(x)$contextDependent
+  .conditional <- !is.null(.cells) && nrow(.cells) > 0 &&
+    any(.cells$kind %in% .ctContextProblemKinds)
+  subtitle <- if(isTRUE(.conditional) && !is.null(attributes(x)$stateLabel))
+    paste0('State dependent ',
+      paste0(.ctContextReportableMatrices(
+        .cells[.cells$kind %in% .ctContextProblemKinds, , drop = FALSE]),
+        collapse = '/'),
+      ': linearised at ', attributes(x)$stateLabel, '.') else NULL
+
   nlatent=dim(x)[5]
 
   if(latentNames[1]=='auto') latentNames=dimnames(x)$row
@@ -493,6 +513,11 @@ ctDiscreteParsPlot<- function(x,indices='all',
   if(!is.na(facets)) g <- paste0(g,'+ facet_wrap(facets)')
 
   if(!is.na(ylim)) g <- paste0(g,' + ylim(ylim)')
+
+  # Appended rather than folded into the labs() above, so a linear model's plot
+  # is the object it was before this existed.
+  if(!is.null(subtitle) && !is.null(title)) g <- paste0(g,
+    '+ ggplot2::labs(subtitle = "', subtitle, '")')
 
   if(!ggcode) g <- eval(parse(text=g)) else g <- list(dt=ym,ggcode=g)
 

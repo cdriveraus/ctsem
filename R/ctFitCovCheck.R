@@ -1,5 +1,38 @@
 # ctFitCheckCov with group-specific model-implied lagged covariances
 
+# Reproducible binning for the dashboard's covariance and trajectory panels.
+#
+# `arules::discretize(method='cluster')` runs k-means, which starts from randomly
+# chosen centres, so an unseeded call puts the bin boundaries somewhere slightly
+# different on every run. Both panels aggregate within bin, so the numbers they
+# plot move with the boundaries: the implied trajectory means shifted by 6e-2
+# between identical runs, four orders of magnitude more than the difference
+# between the two backends this dashboard exists to reveal. A diagnostic that
+# moves further than the thing it diagnoses is not a diagnostic.
+#
+# A fixed seed rather than a deterministic breakpoint method, because clustered
+# breaks follow where observations actually fall in time -- which is the reason
+# this is not `method='interval'` -- so changing the method would change what the
+# panels show. This only stops the bins wandering.
+#
+# The caller's stream is restored exactly as found, including the case of there
+# being no stream yet. ctFitCheck() gets called inside simulation loops, and
+# silently reseeding the global RNG would make everything drawn after a dashboard
+# depend on having drawn one.
+.ctDiscretizeCluster <- function(x, breaks, labels = FALSE, seed = 1L){
+  if(!requireNamespace('arules', quietly = TRUE)) stop(call. = FALSE,
+    'arules package needed for discretization!')
+  had <- exists('.Random.seed', envir = globalenv(), inherits = FALSE)
+  old <- if(had) get('.Random.seed', envir = globalenv(), inherits = FALSE) else NULL
+  on.exit({
+    if(had) assign('.Random.seed', old, envir = globalenv())
+    else if(exists('.Random.seed', envir = globalenv(), inherits = FALSE))
+      rm('.Random.seed', envir = globalenv())
+  }, add = TRUE)
+  set.seed(seed)
+  arules::discretize(x, method = 'cluster', breaks = breaks, labels = labels)
+}
+
 #' Visual lagged covariance or correlation diagnostics for ctsem fits.
 #'
 #' Compares empirical lagged covariances or correlations with the same quantity
@@ -779,10 +812,7 @@ ctFitCheck <- function(fit,
     
     nontivars <- unique(discdat$variable)[!unique(discdat$variable) %in% TIpredNames]
     
-    if(requireNamespace('arules')){
-      discdat[[paste0(by)]] <- arules::discretize(dat[[by]], #discretize
-        method='cluster',breaks = breaks,labels=FALSE)
-    } else stop('arules package needed for discretization!')
+    discdat[[paste0(by)]] <- .ctDiscretizeCluster(dat[[by]], breaks = breaks)
     
     if(covplot){
       corlist <- list()
@@ -1080,9 +1110,8 @@ ctCheckFit <- ctFitCheck
   k <- as.data.table(ctPredict(fit, subjects = idmap[,1], timestep = 'asdata',
     removeObs = FALSE, plot = FALSE))
   k <- k[Element %in% c('y','ysmooth')]
-  if(!requireNamespace('arules', quietly = TRUE)) stop('arules package needed for discretization!')
   breaksn <- min(breaks, length(unique(k$Time[!is.na(k$Time)])))
-  k[, .TimeBin := arules::discretize(Time, method = 'cluster', breaks = breaksn, labels = FALSE)]
+  k[, .TimeBin := .ctDiscretizeCluster(Time, breaks = breaksn)]
   binmid <- k[, .(TimeMid = mean(Time, na.rm = TRUE)), by = .TimeBin]
 
   emp <- k[Element == 'y', .(Mean = mean(value, na.rm = TRUE)), by = .(Row, .TimeBin)]

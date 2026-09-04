@@ -86,9 +86,13 @@ ctStanRawSamples<-function(fit){
 #'For instance, with the default of calcfunc = quantile, 
 #'the probs argument is needed to ensure only a single value is returned.
 #'@param timeinterval time interval for discrete time parameter matrix computation.
-#'@param ... arguments passed to the method for the fit's backend. The julia
-#'method additionally takes \code{state}, the point at which state dependent
-#'matrices are evaluated.
+#'@param state The latent state at which state dependent matrix cells are
+#'evaluated: \code{'T0MEANS'} (the default), \code{'mean'}, \code{'asymptotic'},
+#'or a numeric state vector. Only \code{backend='julia'} can materialise the
+#'matrices anywhere other than the default, so anything else is an error on a
+#'stan fit rather than being silently ignored. Irrelevant to a linear model,
+#'whose matrices are the same everywhere.
+#'@param ... arguments passed to the method for the fit's backend.
 #'@examples
 #'\donttest{
 #'#posterior median over all subjects (also reflects mean of unconstrained pars)
@@ -96,15 +100,23 @@ ctStanRawSamples<-function(fit){
 #'}
 #'@aliases ctStanContinuousPars
 #'@export
+# `state` is part of the generic, not an extra the julia method happens to
+# accept. It used to reach ctSummaryMatrices.ctStanFit() through `...` and be
+# dropped there, so the same call reported the matrices at a caller-chosen state
+# on julia and at T0MEANS on stan, with nothing said either way -- the worst
+# available outcome for the one argument whose whole purpose is to say where a
+# number came from. Declaring it here forces every method to answer for it.
 ctSummaryMatrices <- function(fit,
-  calcfunc=quantile, calcfuncargs=list(probs=0.5), timeinterval=1, ...) UseMethod("ctSummaryMatrices")
+  calcfunc=quantile, calcfuncargs=list(probs=0.5), timeinterval=1,
+  state=NULL, ...) UseMethod("ctSummaryMatrices")
 
 #' @export
 ctSummaryMatrices.ctStanFit <- function(fit,
-  calcfunc=quantile,calcfuncargs=list(probs=0.5),timeinterval=1, ...){
-  
+  calcfunc=quantile,calcfuncargs=list(probs=0.5),timeinterval=1, state=NULL, ...){
+
   if(!'ctStanFit' %in% class(fit)) stop(paste0('Not an object of class ctStanFit! Instead is ',paste0(class(fit),collapse=', ')))
-  
+  .ctContextRequireStateSupport(fit, state)
+
   e<-ctExtract(fit,cores=1) #Qfit$stanfit$transformedpars #first dim of subobjects is iter, 2nd subjects
   
   # The collapse itself lives in .ctSummaryMatricesFromArrays (ctBackendSummary.R)

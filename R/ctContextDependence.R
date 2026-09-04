@@ -265,15 +265,24 @@
 #' @param remedy Optional trailing sentence suggesting what to do instead.
 #' @return A single string, or NULL when there is nothing to say.
 #' @noRd
-.ctContextNote <- function(cells, label, remedy = NULL) {
-  if (is.null(cells) || !nrow(cells)) return(NULL)
-  # Jacobian blocks are derivatives of the model matrices, not matrices anyone
-  # is shown, so naming them here would send the reader looking for output that
-  # does not exist. They stay in the cells table, which is the programmatic
-  # answer, and out of the sentence, which is the human one.
+# The matrix names a sentence or a figure caption may use.
+#
+# Jacobian blocks are derivatives of the model matrices, not matrices anyone is
+# shown, so naming them sends the reader looking for output that does not exist.
+# They stay in the cells table, which is the programmatic answer, and out of the
+# prose, which is the human one. Shared rather than inlined, because the second
+# copy of this rule was written without it and put "DRIFT/JAx" in a plot
+# subtitle.
+.ctContextReportableMatrices <- function(cells) {
+  if (is.null(cells) || !nrow(cells)) return(character())
   reportable <- setdiff(unique(cells$matrix), .ctBackendJacobianMatrices)
   if (!length(reportable)) reportable <- unique(cells$matrix)
-  matrices <- paste0(reportable, collapse = ", ")
+  reportable
+}
+
+.ctContextNote <- function(cells, label, remedy = NULL) {
+  if (is.null(cells) || !nrow(cells)) return(NULL)
+  matrices <- paste0(.ctContextReportableMatrices(cells), collapse = ", ")
   kinds <- paste0(unique(unname(.ctContextKindLabels[unique(cells$kind)])), collapse = " and ")
   paste0("Cells of ", matrices, " depend on the ", kinds,
     ", so they have no single value. The values reported here were evaluated at ",
@@ -471,6 +480,32 @@ NULL
   }
   stop("No asymptotic state found in ", maxiter, " iterations -- the system may ",
     "have no stable fixed point. Use state='mean' or supply a state.", call. = FALSE)
+}
+
+# Is `state` asking for anything other than the default evaluation point?
+#
+# NULL and 'T0MEANS' are the same request, and every function here defaults to
+# it, so this is the test for "the caller chose".
+.ctContextStateIsDefault <- function(state) {
+  if (is.null(state)) return(TRUE)
+  if (!is.character(state)) return(FALSE)
+  identical(match.arg(state, .ctContextStateOptions), "T0MEANS")
+}
+
+# Refuse a caller-chosen evaluation point on a backend that cannot honour it.
+#
+# Re-materialising the matrices somewhere other than T0MEANS means running the
+# model's own cell expressions at a new state, which only the julia engine can
+# do; Stan's generated quantities computed theirs once, during sampling, at the
+# point the filter was at. Accepting `state=` and returning the T0MEANS matrices
+# under another state's name is precisely the failure this file exists to
+# prevent, so the argument is refused rather than dropped.
+.ctContextRequireStateSupport <- function(fit, state, what = "state=") {
+  if (.ctContextStateIsDefault(state)) return(invisible(TRUE))
+  if (inherits(fit, "ctJuliaFit")) return(invisible(TRUE))
+  stop(call. = FALSE, paste0(what, " needs the model matrices re-materialised at ",
+    "that point by the engine that fitted the model, which requires ",
+    "backend='julia'. A stan fit reports them at ", .ctContextPopLabel, "."))
 }
 
 #' Resolve a state argument to an evaluation point

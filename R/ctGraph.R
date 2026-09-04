@@ -125,6 +125,120 @@
   out
 }
 
+# State dependence ------------------------------------------------------------
+#
+# A DRIFT, DIFFUSION or LAMBDA cell may be written as an expression referencing
+# a latent process, and then there is no such thing as *the* network: what
+# ctSummaryMatrices() reports is the system linearised at one point of the state
+# space, and the graph drawn from it is that linearisation's graph. Somewhere
+# else in the state space it is a different graph -- different edge weights, and
+# for a strongly nonlinear model different edges present at all.
+#
+# The model-specification path handles this by omission: a cell whose label is an
+# expression rather than a parameter name is reported and left out, because
+# filling it in would draw a model nobody wrote. A fit has no such option -- the
+# matrices arrive already evaluated -- so the fit path names the point instead.
+
+# The matrices an edge in these four networks can come from. A state-dependent
+# CINT or MANIFESTMEANS is real and worth knowing about, but it cannot move an
+# edge here, and naming it would send the reader looking for it in the figure.
+#
+# DIFFUSION and DIFFUSIONcov are one matrix under two names: the parameter table
+# holds the specified DIFFUSION and the summary reports the covariance built from
+# it, so either name means the contemporaneous network is conditional.
+.ctNetworkEdgeMatrices <- c('DRIFT', 'DIFFUSION', 'DIFFUSIONcov',
+  'asymDIFFUSION', 'asymDIFFUSIONcov', 'LAMBDA')
+
+# matsetup's `stateref` column, read as a second and independent source for the
+# stan path.
+#
+# The model writer sets it (R/ctModelWriter.R) for a cell that materialises from
+# a state rather than from a parameter, so for the cells it covers it is
+# authoritative in a way no expression parser is. It is a supplement rather than
+# a replacement: it says nothing about a cell written by `calcs`, nothing about
+# dependence arriving through a PARS reference, and nothing on the julia path.
+#
+# A carrier index is dropped, for the reason set out in R/ctContextDependence.R:
+# ctsem carries an individually varying parameter as a latent state, so an
+# `intoverpop` model has a `stateref` on every such cell, and reporting those as
+# state dependent would tell every multilevel user their network is a
+# linearisation when it is not.
+.ctNetworkStaterefCells <- function(x){
+  matsetup <- x$setup$matsetup
+  if(is.null(matsetup)) matsetup <- x$ctstanmodel$modelmats$matsetup
+  if(is.null(matsetup) || is.null(matsetup$stateref)) return(NULL)
+  codes <- ctStanMatricesList()$all
+  named <- rep(NA_character_, max(codes))
+  named[codes] <- base::names(codes)
+  nlatent <- try(.ctFitNlatent(x), silent = TRUE)
+  if(inherits(nlatent, 'try-error')) return(NULL)
+  hit <- which(matsetup$stateref > 0 & matsetup$stateref <= nlatent &
+      named[matsetup$matrix] %in% .ctNetworkEdgeMatrices)
+  if(!length(hit)) return(NULL)
+  data.frame(matrix = named[matsetup$matrix[hit]],
+    row = as.integer(matsetup$row[hit]), col = as.integer(matsetup$col[hit]),
+    kind = 'state', stringsAsFactors = FALSE)
+}
+
+# Which of the network's own matrices have cells with no single value.
+#
+# `.ctFitConditionalCells()` does the work: it reads the rewritten expression of
+# every cell from the fit's own parameter table -- or, on the stan path, from
+# matsetup plus the `calcs` that write cells from outside it -- propagates
+# dependence through PARS references to a fixed point, and already excludes
+# carrier references. This is a filter over its output plus the stateref union,
+# not a second implementation of it.
+.ctNetworkStateDependentCells <- function(x){
+  cells <- try(.ctFitConditionalCells(x), silent = TRUE)
+  if(inherits(cells, 'try-error')) cells <- NULL
+  extra <- try(.ctNetworkStaterefCells(x), silent = TRUE)
+  if(inherits(extra, 'try-error')) extra <- NULL
+  out <- rbind(cells, extra)
+  if(is.null(out) || !nrow(out)) return(NULL)
+  out <- out[out$matrix %in% .ctNetworkEdgeMatrices, , drop = FALSE]
+  if(!nrow(out)) return(NULL)
+  out <- unique(out[order(out$matrix, out$row, out$col, out$kind), , drop = FALSE])
+  rownames(out) <- NULL
+  out
+}
+
+# The sentence a state-dependent network says once.
+#
+# The kinds come from .ctContextKindLabels and the evaluation point from the
+# label .ctResolveState() returns, so a network reports where it was evaluated in
+# the same words as summary(), ctSummaryMatrices() and ctSubjectPars().
+.ctNetworkStateNote <- function(cells, label){
+  if(is.null(cells) || !nrow(cells)) return(NULL)
+  kinds <- paste0(unique(unname(.ctContextKindLabels[unique(cells$kind)])),
+    collapse = ' and ')
+  paste0('Cells of ',
+    paste0(.ctContextReportableMatrices(cells), collapse = ', '),
+    ' depend on the ', kinds, ', so these edges are a linearisation: they hold ',
+    'at ', label, ', and the network is different elsewhere in the state space. ',
+    'See ctPhasePortrait() and ctStateDependencePlot() for the variation itself.')
+}
+
+# What a figure has to carry when it leaves the session, which is the one thing a
+# reader cannot recover from the picture: where it was evaluated. Shorter than
+# the message, because a subtitle competes with the graph for attention, and
+# absent entirely for a linear system, which has nothing to qualify.
+.ctNetworkStateCaption <- function(cells, label){
+  if(is.null(cells) || !nrow(cells)) return(NULL)
+  paste0('State dependent ',
+    paste0(.ctContextReportableMatrices(cells), collapse = '/'),
+    ': edges are the linearisation at ', label, '.')
+}
+
+# The specification path's counterpart: those cells were omitted, not evaluated,
+# so the caveat is about absence rather than about a point.
+.ctNetworkOmittedCaption <- function(omitted){
+  if(!length(omitted)) return(NULL)
+  counts <- table(omitted)
+  paste0(paste0(as.integer(counts), ' ', names(counts), collapse = ', '),
+    ' cell(s) depend on the latent state and are absent from these edges.')
+}
+
+
 # DRIFT, DIFFUSIONcov, asymDIFFUSIONcov and LAMBDA as point values, from either
 # a model specification or a fit on either backend.
 #
@@ -134,7 +248,8 @@
 # takes at a raw value of zero -- which is where ctsem's own optimiser starts,
 # and is the only defensible reading of "the model as specified" for something
 # nobody has estimated yet.
-.ctNetworkInputs <- function(x, quiet = FALSE, ...){
+.ctNetworkInputs <- function(x, state = NULL, quiet = FALSE, ...){
+  omitted <- character()
   if(inherits(x, 'ctStanModel')){
     m <- ctModelTransformsToNum(x)
     pars <- m$pars
@@ -160,6 +275,10 @@
       if(is.null(raw)) return(matrix(0, nrow, ncol))
       v <- suppressWarnings(as.numeric(raw))
       bad <- sum(is.na(v))
+      # Recorded as well as reported, so that the figure can carry the same
+      # caveat as the message: a saved plot that silently dropped a DRIFT cell
+      # is the specification path's version of a linearisation with no label.
+      if(bad > 0) omitted <<- c(omitted, rep(name, bad))
       if(bad > 0 && !quiet) message(bad, ' ', name,
         ' cell(s) depend on the latent state or another parameter and are shown as absent; ',
         'fit the model, or see ctPhasePortrait() for what a state dependent system does.')
@@ -182,9 +301,21 @@
       LAMBDA = lambda, latentNames = m$latentNames[seq_len(nl)],
       manifestNames = m$manifestNames[seq_len(nm)],
       continuoustime = isTRUE(m$continuoustime), source = 'model')
+    # No evaluation point on this path: a state-dependent cell is left out
+    # rather than linearised, so there is nothing to name.
+    out$stateLabel <- NULL
+    out$stateDependent <- NULL
   } else if(inherits(x, 'ctStanFit') || inherits(x, 'ctJuliaFit') || inherits(x, 'ctFit')){
     m <- .ctFitModelObject(x)
-    mats <- suppressMessages(ctSummaryMatrices(x, ...))
+    # Checked before any work, so the error names the argument rather than
+    # surfacing three calls deeper as a missing engine method.
+    .ctContextRequireStateSupport(x, state)
+    # Resolved once, here, and the resolved *vector* handed on: 'mean' runs the
+    # smoother and 'asymptotic' runs a Newton solve, so letting
+    # ctSummaryMatrices() resolve the shorthand a second time would pay for both
+    # twice and then report the result as 'the supplied state'.
+    resolved <- .ctResolveState(x, state)
+    mats <- suppressMessages(ctSummaryMatrices(x, state = resolved$state, ...))
     nl <- .ctFitNlatent(x)
     nm <- length(m$manifestNames)
     trim <- function(mat, nrow, ncol) as.matrix(mat)[seq_len(nrow), seq_len(ncol), drop = FALSE]
@@ -196,9 +327,12 @@
       latentNames = m$latentNames[seq_len(nl)],
       manifestNames = m$manifestNames[seq_len(nm)],
       continuoustime = isTRUE(m$continuoustime), source = 'fit')
+    out$stateLabel <- resolved$label
+    out$stateDependent <- .ctNetworkStateDependentCells(x)
   } else stop(call. = FALSE, paste0('ctNetwork() needs a ctModel(type="ct"/"dt") ',
     'specification or a fit from ctFit(); got ', paste(class(x), collapse = '/'), '.'))
 
+  out$omitted <- omitted
   ln <- out$latentNames
   dimnames(out$DRIFT) <- dimnames(out$DIFFUSIONcov) <- list(ln, ln)
   if(!is.null(out$asymDIFFUSIONcov)) dimnames(out$asymDIFFUSIONcov) <- list(ln, ln)
@@ -269,6 +403,26 @@
 #' DRIFT, DIFFUSION and LAMBDA cells were treated that way is reported, those
 #' being the only matrices an edge can come from.
 #'
+#' @section State dependent and nonlinear models:
+#' A DRIFT, DIFFUSION or LAMBDA cell may be written as an expression
+#' referencing a latent process, and then there is no such thing as \emph{the}
+#' network. What a fit reports is the system linearised at one point of the
+#' state space, so the graph drawn from it is that linearisation's graph:
+#' somewhere else the edge weights differ, and for a strongly nonlinear model so
+#' does which edges are there at all.
+#'
+#' When any such cell is present, \code{ctNetwork} says so once, names the
+#' evaluation point, and records the cells in
+#' \code{attr(x, 'stateDependent')}; \code{\link{ctNetworkPlot}} puts the point
+#' in the figure's subtitle so a saved plot carries its own caveat. Use
+#' \code{state} to move the point, and
+#' \code{\link{ctPhasePortrait}} or \code{\link{ctStateDependencePlot}} to see
+#' the variation itself rather than one slice of it. Nothing is said for a
+#' linear model, whose matrices are the same everywhere.
+#'
+#' From an unfitted specification such a cell is reported and left out instead,
+#' since filling it in would draw a model that was not written.
+#'
 #' @param x A \code{ctStanModel} from \code{\link{ctModel}}, or a fit from
 #'   \code{\link{ctFit}} on either backend.
 #' @param dt Time interval for the temporal and contemporaneous networks. A
@@ -279,6 +433,14 @@
 #'   \code{asymDIFFUSIONcov}, so edges between processes on different scales are
 #'   comparable. Falls back to FALSE, with a message, when the system has no
 #'   stationary variance to standardise by.
+#' @param state Where a state dependent cell is evaluated, when \code{x} is a
+#'   fit: \code{'T0MEANS'} (the default, and what \code{\link{ctSummaryMatrices}}
+#'   uses), \code{'mean'} for the mean smoothed latent state, \code{'asymptotic'}
+#'   for the system's own fixed point, or a numeric state vector. Only
+#'   \code{backend='julia'} can re-materialise the matrices elsewhere, so
+#'   anything but the default is an error on a stan fit rather than being
+#'   quietly ignored. Irrelevant to a linear model, and to an unfitted
+#'   specification.
 #' @param observational What a one unit change in a process brings with it; see
 #'   \code{\link{ctDiscretePars}}, whose argument this is. \code{FALSE} (the
 #'   default) is the partial regression, a property of the dynamics alone.
@@ -307,11 +469,16 @@
 #'     \code{innovation}}{The matrices the networks were derived from, so every
 #'     number above can be checked.}
 #' }
+#' With attributes \code{dt}, \code{standardise}, \code{observational},
+#'   \code{threshold}, \code{networks}, \code{continuoustime}, \code{source},
+#'   \code{stateLabel} (the evaluation point, for a fit) and
+#'   \code{stateDependent} (the cells with no single value, or \code{NULL}).
 #'
 #' @seealso \code{\link{ctNetworkPlot}} to draw it,
 #'   \code{\link{ctDiscretePars}} for the temporal network across a continuum of
-#'   intervals, \code{\link{ctPhasePortrait}} for a nonlinear system's vector
-#'   field.
+#'   intervals, \code{\link{ctPhasePortrait}} and
+#'   \code{\link{ctStateDependencePlot}} for what a state dependent system does
+#'   away from the point these edges were evaluated at.
 #'
 #' @examples
 #' # Two processes, b driven by a, drawn at one interval.
@@ -327,8 +494,9 @@
 #' net$edges
 #'
 #' @export
-ctNetwork <- function(x, dt = 1, standardise = TRUE, observational = FALSE,
-  threshold = 0, networks = c('temporal', 'contemporaneous'), plot = FALSE,
+ctNetwork <- function(x, dt = 1, state = NULL, standardise = TRUE,
+  observational = FALSE, threshold = 0,
+  networks = c('temporal', 'contemporaneous'), plot = FALSE,
   quiet = FALSE, ...){
 
   if(length(dt) != 1 || !is.finite(dt) || dt <= 0) stop(call. = FALSE,
@@ -340,7 +508,8 @@ ctNetwork <- function(x, dt = 1, standardise = TRUE, observational = FALSE,
   plotargs <- dots[names(dots) %in% names(formals(ctNetworkPlot))]
   summaryargs <- dots[!names(dots) %in% names(formals(ctNetworkPlot))]
 
-  inputs <- do.call(.ctNetworkInputs, c(list(x, quiet = quiet), summaryargs))
+  inputs <- do.call(.ctNetworkInputs,
+    c(list(x, state = state, quiet = quiet), summaryargs))
   if(!inputs$continuoustime && abs(dt - round(dt)) > 1e-8) stop(call. = FALSE,
     'This is a discrete time model, so dt must be a whole number of steps.')
 
@@ -400,7 +569,18 @@ ctNetwork <- function(x, dt = 1, standardise = TRUE, observational = FALSE,
   attributes(out)$networks <- networks
   attributes(out)$continuoustime <- inputs$continuoustime
   attributes(out)$source <- inputs$source
+  attributes(out)$stateLabel <- inputs$stateLabel
+  attributes(out)$stateDependent <- inputs$stateDependent
+  attributes(out)$omitted <- inputs$omitted
   class(out) <- c('ctNetwork', 'list')
+
+  # Said once, after the object exists, so a caller that suppressed the
+  # specification path's messages does not also lose this one -- and so that
+  # ctNetworkPlot() over a vector of dt says it once rather than per interval.
+  if(!quiet){
+    note <- .ctNetworkStateNote(inputs$stateDependent, inputs$stateLabel)
+    if(!is.null(note)) message(note)
+  }
 
   if(plot) return(do.call(ctNetworkPlot, c(list(out), plotargs)))
   out
@@ -422,6 +602,12 @@ print.ctNetwork <- function(x, ...){
   cat('matrices: temporal, contemporaneous',
     if(!is.null(x$asymptotic)) ', asymptotic' else '',
     ', measurement; edge list in $edges\n', sep = '')
+  # A printed network has to say the same thing a plotted one does, because a
+  # console transcript is as likely to be what someone reads later as a figure.
+  statedep <- attributes(x)$stateDependent
+  if(!is.null(statedep) && nrow(statedep)) cat('state dependent ',
+    paste0(.ctContextReportableMatrices(statedep), collapse = '/'),
+    ': edges are the linearisation at ', attributes(x)$stateLabel, '\n', sep = '')
   invisible(x)
 }
 
@@ -497,8 +683,8 @@ print.ctNetwork <- function(x, ...){
   out
 }
 
-.ctNetworkGG <- function(edges, nodes, lambda, maxwidth, title, arrowsize, nodesize,
-  labelsize, poscolour, negcolour, ncol){
+.ctNetworkGG <- function(edges, nodes, lambda, maxwidth, title, subtitle, arrowsize,
+  nodesize, labelsize, poscolour, negcolour, ncol){
   layout <- .ctNetworkLayout(nodes, lambda)
   geom <- .ctNetworkEdgeGeom(edges, layout)
   panels <- levels(droplevels(edges$panel))
@@ -544,6 +730,9 @@ print.ctNetwork <- function(x, ...){
     ggplot2::coord_equal(clip = 'off') +
     ggplot2::expand_limits(x = c(-1.5, 1.5), y = c(-1.5, 1.5)) +
     ggplot2::labs(title = title) +
+    # Added rather than passed as NULL, so a linear model's plot object is
+    # exactly the one it was before this argument existed, labels list included.
+    (if(!is.null(subtitle)) ggplot2::labs(subtitle = subtitle)) +
     ggplot2::theme_void() +
     ggplot2::theme(plot.margin = ggplot2::unit(rep(6, 4), 'pt'))
 }
@@ -572,6 +761,11 @@ print.ctNetwork <- function(x, ...){
 #'   \code{\link{ctNetwork}}.
 #' @param dt One or more time intervals. Ignored, with a message, when \code{x}
 #'   is already a \code{ctNetwork}.
+#' @param state Where a state dependent cell is evaluated; see
+#'   \code{\link{ctNetwork}}. Ignored, with a message, when \code{x} is already
+#'   a \code{ctNetwork}, which was built at a point of its own. When the system
+#'   is state dependent the point appears in the plot's subtitle, so a saved
+#'   figure carries its own caveat; a linear system gets no subtitle.
 #' @param networks Which networks to draw; see \code{\link{ctNetwork}}. Each
 #'   becomes a panel, as does each \code{dt}.
 #' @param threshold Edges with \code{abs(weight)} at or below this are not drawn.
@@ -602,7 +796,8 @@ print.ctNetwork <- function(x, ...){
 #' ctNetworkPlot(m, dt=c(.2, 2), networks='temporal')
 #'
 #' @export
-ctNetworkPlot <- function(x, dt = 1, networks = c('temporal', 'contemporaneous'),
+ctNetworkPlot <- function(x, dt = 1, state = NULL,
+  networks = c('temporal', 'contemporaneous'),
   threshold = 0, engine = c('ggplot', 'qgraph'), maxwidth = 3, arrowsize = 2.6,
   nodesize = 10, labelsize = 3.2, poscolour = '#2166AC', negcolour = '#B2182B',
   title = 'auto', ...){
@@ -612,6 +807,11 @@ ctNetworkPlot <- function(x, dt = 1, networks = c('temporal', 'contemporaneous')
   if(inherits(x, 'ctNetwork')){
     if(!missing(dt)) message('dt is ignored when a ctNetwork object is supplied; ',
       'it was built at dt = ', format(attributes(x)$dt), '.')
+    # Same reason as dt: the matrices are already evaluated, so honouring
+    # state= here would mean relabelling a figure rather than recomputing it.
+    if(!missing(state)) message('state is ignored when a ctNetwork object is ',
+      'supplied; it was built at ', attributes(x)$stateLabel,
+      '. Pass state= to ctNetwork() instead.')
     nets <- list(x)
     dt <- attributes(x)$dt
     if(missing(networks)) networks <- attributes(x)$networks
@@ -620,7 +820,8 @@ ctNetworkPlot <- function(x, dt = 1, networks = c('temporal', 'contemporaneous')
     if(!length(dt) || any(!is.finite(dt)) || any(dt <= 0)) stop(call. = FALSE,
       'dt must be positive.')
     nets <- lapply(seq_along(dt), function(i) ctNetwork(x, dt = dt[i],
-      networks = networks, threshold = threshold, quiet = i > 1, ...))
+      state = state, networks = networks, threshold = threshold,
+      quiet = i > 1, ...))
   }
   networks <- match.arg(networks,
     c('temporal', 'contemporaneous', 'asymptotic', 'measurement'), several.ok = TRUE)
@@ -664,11 +865,21 @@ ctNetworkPlot <- function(x, dt = 1, networks = c('temporal', 'contemporaneous')
     'Model implied networks from a ', attributes(nets[[1]])$source,
     if(length(nets) == 1) paste0(', dt = ', format(dt)) else '')
 
+  # The evaluation point goes in the figure, not only in the session, because a
+  # linearisation with no label is exactly as wrong as no warning at all once
+  # the plot has been saved. Nothing is added for a linear system, which has
+  # nothing to qualify.
+  subtitle <- .ctNetworkStateCaption(attributes(nets[[1]])$stateDependent,
+    attributes(nets[[1]])$stateLabel)
+  if(is.null(subtitle)) subtitle <- .ctNetworkOmittedCaption(
+    attributes(nets[[1]])$omitted)
+
   # Panels are ordered interval-major, so one row per interval means as many
   # columns as networks -- unless there is only one network, when the intervals
   # themselves should run across the page.
   .ctNetworkGG(edges, nodes, lambda = nets[[1]]$measurement, maxwidth = maxwidth,
-    title = title, arrowsize = arrowsize, nodesize = nodesize,
-    labelsize = labelsize, poscolour = poscolour, negcolour = negcolour,
+    title = title, subtitle = subtitle, arrowsize = arrowsize,
+    nodesize = nodesize, labelsize = labelsize, poscolour = poscolour,
+    negcolour = negcolour,
     ncol = if(length(networks) > 1) length(networks) else length(nets))
 }

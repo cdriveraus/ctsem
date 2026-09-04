@@ -49,7 +49,11 @@ rather than a plot.}
 \item{...}{Ignored.}
 }
 \value{
-A ggplot, or a list of data frames when \code{plot=FALSE}.
+A ggplot, or when \code{plot=FALSE} a list with \code{field}, the
+  \code{latents} on the plane, \code{stateLabel} naming where the off-plane
+  processes were held, the \code{held} process names, and \code{nullclines},
+  \code{fixedpoint} and \code{trajectories} when asked for. The plot names
+  \code{stateLabel} in its subtitle whenever anything is held off-plane.
 }
 \description{
 Draw the model's vector field over a plane of the latent state space: at

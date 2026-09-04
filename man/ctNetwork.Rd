@@ -7,6 +7,7 @@
 ctNetwork(
   x,
   dt = 1,
+  state = NULL,
   standardise = TRUE,
   observational = FALSE,
   threshold = 0,
@@ -23,6 +24,15 @@ ctNetwork(
 \item{dt}{Time interval for the temporal and contemporaneous networks. A
 whole number of steps for a discrete time model. Length one; to see the
 interval dependence, call \code{\link{ctNetworkPlot}} with a vector.}
+
+\item{state}{Where a state dependent cell is evaluated, when \code{x} is a
+fit: \code{'T0MEANS'} (the default, and what \code{\link{ctSummaryMatrices}}
+uses), \code{'mean'} for the mean smoothed latent state, \code{'asymptotic'}
+for the system's own fixed point, or a numeric state vector. Only
+\code{backend='julia'} can re-materialise the matrices elsewhere, so
+anything but the default is an error on a stan fit rather than being
+quietly ignored. Irrelevant to a linear model, and to an unfitted
+specification.}
 
 \item{standardise}{If TRUE (the default), temporal edges are in standard
 deviation units of the processes themselves, using
@@ -64,6 +74,10 @@ A list of class \code{ctNetwork}:
     \code{innovation}}{The matrices the networks were derived from, so every
     number above can be checked.}
 }
+With attributes \code{dt}, \code{standardise}, \code{observational},
+  \code{threshold}, \code{networks}, \code{continuoustime}, \code{source},
+  \code{stateLabel} (the evaluation point, for a fit) and
+  \code{stateDependent} (the cells with no single value, or \code{NULL}).
 }
 \description{
 The two graphs network psychometrics draws from a multivariate time series --
@@ -108,6 +122,28 @@ gives at a raw parameter of zero, which is where estimation starts; how many
 DRIFT, DIFFUSION and LAMBDA cells were treated that way is reported, those
 being the only matrices an edge can come from.
 }
+\section{State dependent and nonlinear models}{
+
+A DRIFT, DIFFUSION or LAMBDA cell may be written as an expression
+referencing a latent process, and then there is no such thing as \emph{the}
+network. What a fit reports is the system linearised at one point of the
+state space, so the graph drawn from it is that linearisation's graph:
+somewhere else the edge weights differ, and for a strongly nonlinear model so
+does which edges are there at all.
+
+When any such cell is present, \code{ctNetwork} says so once, names the
+evaluation point, and records the cells in
+\code{attr(x, 'stateDependent')}; \code{\link{ctNetworkPlot}} puts the point
+in the figure's subtitle so a saved plot carries its own caveat. Use
+\code{state} to move the point, and
+\code{\link{ctPhasePortrait}} or \code{\link{ctStateDependencePlot}} to see
+the variation itself rather than one slice of it. Nothing is said for a
+linear model, whose matrices are the same everywhere.
+
+From an unfitted specification such a cell is reported and left out instead,
+since filling it in would draw a model that was not written.
+}
+
 \examples{
 # Two processes, b driven by a, drawn at one interval.
 m <- ctModel(type='ct', n.latent=2, n.manifest=2,
@@ -125,6 +161,7 @@ net$edges
 \seealso{
 \code{\link{ctNetworkPlot}} to draw it,
   \code{\link{ctDiscretePars}} for the temporal network across a continuum of
-  intervals, \code{\link{ctPhasePortrait}} for a nonlinear system's vector
-  field.
+  intervals, \code{\link{ctPhasePortrait}} and
+  \code{\link{ctStateDependencePlot}} for what a state dependent system does
+  away from the point these edges were evaluated at.
 }
