@@ -483,6 +483,20 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
 .ctBackendGenerateFromFit <- function(fit, nsamples = 200, fullposterior = FALSE,
   cores = 2) {
   spec <- .ctBackendSpec(fit)
+  # `ctsem_generate` (and `ctsem_generate_states` below it) pass each
+  # subject's `tipreds` straight to the extended Kalman filter without the
+  # `TIMissingRecipe` substitution the adjoint/gradient path performs for a
+  # sampled (missing) TI predictor value (see `_ctsem_subject_gradient_chunk!`
+  # in adjoint.jl) -- so a subject carrying one dispatches to no matching
+  # `_extended_kalman_filter_continuous!` method and fails with a raw Julia
+  # `MethodError` naming an internal workspace type, not this model. Caught
+  # here rather than left to surface that way.
+  if (!is.null(spec$ti_missing) && nrow(spec$ti_missing)) {
+    stop("ctGenerateFromFit()/ctPostPredict() are not available for a fit ",
+      "with a sampled (missing) TI predictor value: the engine's generate ",
+      "routine does not yet substitute the sampled value the way the ",
+      "gradient does. See fit$model_spec$ti_missing.", call. = FALSE)
+  }
   model <- .ctFitModelObject(fit)
   manifestNames <- model$manifestNames
   nmanifest <- length(manifestNames)

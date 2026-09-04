@@ -2996,7 +2996,9 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
         gradient_norm=gradient_norm,
         scaled_tolerance=scaled_tolerance,
         saturated=saturated,
-        saturated_parameters=saturated_parameters,
+        # Never empty: a zero-length vector deadlocks the JuliaConnectoR
+        # bridge, and this result crosses it. 0 means none.
+        saturated_parameters=isempty(saturated_parameters) ? [0] : saturated_parameters,
         converged=!stalled && !saturated && finite_gradient &&
             (Optim.g_converged(result) || converged_enough),
         g_converged=Optim.g_converged(result),

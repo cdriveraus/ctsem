@@ -46,4 +46,24 @@ if [ -f src/Makevars ]; then
     fi
   done
   unset _ctsem_stanfile _ctsem_model _ctsem_rule
+  # Restore the default goal. R prepends src/Makevars to the makefile list
+  # (tools:::.shlib_internal builds `makefiles <- c("Makevars", makefiles)`), so the
+  # FIRST explicit target in it becomes make's default goal, and R invokes make
+  # without naming one. The rules above would therefore make
+  # stanExports_cov.o the goal: make builds that single object, prints
+  # "Nothing to be done", exits 0, and R CMD INSTALL runs happily to the end
+  # and fails only at the load check with no shared object. Verified with
+  # make -p on a real generated Makevars, and reproduced minimally.
+  #
+  # This only bites a build starting from nothing -- a source install, or a
+  # freshly shipped tree -- because a tree that already has every object still
+  # links successfully after building one. That is why it passed a targeted
+  # rebuild on Windows and failed three times from scratch on Linux.
+  if ! grep -qF '.DEFAULT_GOAL := all' src/Makevars; then
+    {
+      echo ''
+      echo '# ctsem: the rules above must not become the default goal (see configure)'
+      echo '.DEFAULT_GOAL := all'
+    } >> src/Makevars
+  fi
 fi

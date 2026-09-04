@@ -11,6 +11,10 @@ on:
     branches: [main, master, rstantools, juliaFit]
   pull_request:
     branches: [main, master, rstantools, juliaFit]
+  schedule:
+    # Weekly full matrix, so platform-specific breakage is found even during
+    # a long stretch of work on one branch.
+    - cron: '0 5 * * 1'
   workflow_dispatch:
     inputs:
       vignettes:
@@ -25,13 +29,26 @@ jobs:
     name: ${{ matrix.config.os }} (${{ matrix.config.r }})
     strategy:
       fail-fast: false
+      # Tiered, because every entry here is a full stan compile from source:
+      # R CMD check builds and installs, and a fresh checkout has no objects.
+      # Five platforms on every push to a development branch is five of those
+      # for information the first one almost always already gave.
+      #
+      #   development branch push/PR -> ubuntu release only
+      #   master/main, manual, or the weekly schedule -> the full matrix
+      #
+      # So a breakage is caught within one build on the branch being worked
+      # on, and platform-specific breakage is caught before it can reach
+      # master or a release. Run the workflow manually to force the full
+      # matrix at any time.
       matrix:
-        config:
-          - {os: macos-latest,   r: 'release'}
-          - {os: windows-latest, r: 'release'}
-          - {os: ubuntu-latest,   r: 'devel', http-user-agent: 'release'}
-          - {os: ubuntu-latest,   r: 'release'}
-          - {os: ubuntu-latest,   r: 'oldrel-1'}
+        config: ${{ fromJSON(
+          (github.event_name == 'schedule'
+           || github.event_name == 'workflow_dispatch'
+           || github.ref_name == 'master'
+           || github.ref_name == 'main')
+          && '[{"os":"macos-latest","r":"release"},{"os":"windows-latest","r":"release"},{"os":"ubuntu-latest","r":"devel","http-user-agent":"release"},{"os":"ubuntu-latest","r":"release"},{"os":"ubuntu-latest","r":"oldrel-1"}]'
+          || '[{"os":"ubuntu-latest","r":"release"}]' ) }}
     env:
       R_REMOTES_NO_ERRORS_FROM_WARNINGS: true
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
