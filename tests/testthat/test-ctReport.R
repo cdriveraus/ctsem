@@ -81,7 +81,7 @@ test_that("ctReport writes the quick components and an index that matches the fo
   # set is a failure rather than a shorter list.
   expect_setequal(names(res$components),
     c("summary", "parmatrices", "identification", "profile", "discretepars",
-      "predictions", "residuals"))
+      "network", "predictions", "residuals"))
   expect_true(all(vapply(res$components, function(x) x$status, character(1)) == "ok"))
 
   # The numbering is the reading order: sorting the names must not reorder them.

@@ -40,6 +40,7 @@
   identification = "quick",
   profile        = "quick",
   discretepars   = "quick",
+  network        = "quick",
   predictions    = "quick",
   residuals      = "quick",
   covcheck       = "default",
@@ -460,6 +461,8 @@
     "Off-peak: not converged. Ridged: pinned alone, free jointly. Non-quadratic or asymmetric: the interval is the wrong shape."),
   discretepars = c("Regression coefficients between latents as a function of time interval.",
     "This is what the continuous-time DRIFT means for a given gap between measurements."),
+  network = c("The temporal and contemporaneous networks at one time interval.",
+    "An arrow is a directed effect over that interval; an undirected edge is shared innovation."),
   predictions = c("Observed data with model expectations, for the most-observed subjects.",
     "Expectations conditional on covariates only show what the model predicts blind; conditional on all data, what it can reconstruct."),
   residuals = c("Standardised prior residuals, and their autocorrelation.",
@@ -679,8 +682,20 @@
     f
   },
 
+  network = function(fit, ctx) {
+    f <- "06-network.pdf"
+    # engine = 'ggplot' rather than qgraph, which is a Suggests.
+    net <- suppressMessages(ctNetwork(fit, dt = ctx$timeinterval, plot = FALSE))
+    .ctReportPdf(file.path(ctx$folder, f),
+      print(suppressMessages(ctNetworkPlot(net, dt = ctx$timeinterval,
+        engine = "ggplot"))))
+    utils::write.csv(net$edges, file.path(ctx$folder, "06-network-edges.csv"),
+      row.names = FALSE)
+    c(f, "06-network-edges.csv")
+  },
+
   predictions = function(fit, ctx) {
-    f <- "06-predicted-trajectories.pdf"
+    f <- "07-predicted-trajectories.pdf"
     subs <- .ctReportSubjects(fit, ctx$nsubjects)
     if (!length(subs)) {
       ctx$skip("no subjects could be identified in the fit")
@@ -712,7 +727,7 @@
     # is a ggplot stat -- so the fallback has to sit around the print.
     ac <- suppressWarnings(suppressMessages(
       ctACFresiduals(fit, plot = FALSE, nboot = 20)))
-    .ctReportPdf(file.path(ctx$folder, "07-residuals.pdf"), {
+    .ctReportPdf(file.path(ctx$folder, "08-residuals.pdf"), {
       ok <- try(suppressWarnings(suppressMessages(print(plotctACF(ac)))),
         silent = TRUE)
       if (inherits(ok, "try-error")) {
@@ -730,16 +745,16 @@
         max = vapply(vars, function(v) max(res[[v]], na.rm = TRUE), numeric(1)),
         n = vapply(vars, function(v) sum(!is.na(res[[v]])), numeric(1))
       ), 3))))
-    .ctReportWrite(file.path(ctx$folder, "07-residuals.txt"), L)
-    c("07-residuals.pdf", "07-residuals.txt")
+    .ctReportWrite(file.path(ctx$folder, "08-residuals.txt"), L)
+    c("08-residuals.pdf", "08-residuals.txt")
   },
 
   covcheck = function(fit, ctx) {
-    cc <- suppressWarnings(suppressMessages(ctFitCovCheck(ctx$generated(),
+    cc <- suppressWarnings(suppressMessages(ctFitCheckCov(ctx$generated(),
       plot = FALSE, nsamples = ctx$nsamples, cores = ctx$cores, lags = ctx$lags)))
-    utils::write.csv(cc, file.path(ctx$folder, "08-covariance-check.csv"),
+    utils::write.csv(cc, file.path(ctx$folder, "09-covariance-check.csv"),
       row.names = FALSE)
-    .ctReportPdf(file.path(ctx$folder, "08-covariance-check.pdf"), {
+    .ctReportPdf(file.path(ctx$folder, "09-covariance-check.pdf"), {
       p <- ctFitCovCheckPlot(cc, cor = isTRUE(attr(cc, "ctFitCovCheck_cor")))
       if (inherits(p, "list")) lapply(p, print) else print(p)
     })
@@ -748,11 +763,11 @@
       ctx$note(paste0(nsig, " of ", nrow(cc),
         " observed covariances fall outside the generated interval."))
     }
-    c("08-covariance-check.csv", "08-covariance-check.pdf")
+    c("09-covariance-check.csv", "09-covariance-check.pdf")
   },
 
   postpred = function(fit, ctx) {
-    f <- "09-posterior-predictive.pdf"
+    f <- "10-posterior-predictive.pdf"
     pp <- suppressWarnings(suppressMessages(ctPostPredPlots(ctx$generated())))
     .ctReportPdf(file.path(ctx$folder, f), lapply(pp, function(p) try(print(p), silent = TRUE)))
     f
@@ -764,7 +779,7 @@
       ctx$skip("the model has no covariates (time independent predictors)")
       return(NULL)
     }
-    f <- "10-covariate-effects.pdf"
+    f <- "11-covariate-effects.pdf"
     .ctReportPdf(file.path(ctx$folder, f), {
       for (tip in seq_len(m$n.TIpred)) {
         te <- suppressWarnings(suppressMessages(ctTIpredEffects(fit,
@@ -790,7 +805,7 @@
   },
 
   crossval = function(fit, ctx) {
-    f <- "11-cross-validation.txt"
+    f <- "12-cross-validation.txt"
     lo <- suppressWarnings(suppressMessages(ctLOO(fit, folds = ctx$folds,
       cores = ctx$cores)))
     keep <- c("insampleLogLik", "outsampleLogLik",
@@ -808,7 +823,7 @@
   },
 
   equations = function(fit, ctx) {
-    stem <- "12-model-equations"
+    stem <- "13-model-equations"
     write <- function(x, compile) suppressWarnings(suppressMessages(
       ctModelLatex(x, folder = ctx$folder, filename = stem, open = FALSE,
         compile = compile)))
@@ -857,8 +872,9 @@
 #'   data), \code{'default'}, \code{'all'} (adds cross validation and LaTeX), or
 #'   a character vector of component names: \code{summary}, \code{parmatrices},
 #'   \code{identification}, \code{profile}, \code{discretepars},
-#'   \code{predictions}, \code{residuals}, \code{covcheck}, \code{postpred},
-#'   \code{tipredeffects}, \code{crossval}, \code{equations}.
+#'   \code{network}, \code{predictions}, \code{residuals}, \code{covcheck},
+#'   \code{postpred}, \code{tipredeffects}, \code{crossval},
+#'   \code{equations}.
 #' @param nsamples Draws used by the components that sample from the fit's
 #'   uncertainty, and by data generation for \code{covcheck} and
 #'   \code{postpred}.
@@ -869,8 +885,8 @@
 #'   parameter plots.
 #' @param times Interval grid for \code{discretepars}. \code{'auto'} uses zero
 #'   to the 90th percentile of the observed per-subject time span.
-#' @param timeinterval Time interval at which discrete-time parameter matrices
-#'   and covariate effects are reported.
+#' @param timeinterval Time interval at which the networks, the discrete-time
+#'   parameter matrices and the covariate effects are reported.
 #' @param nsubjects Number of subjects plotted by \code{predictions}, chosen as
 #'   those with the most observations.
 #' @param lags Lags for the lagged covariance check.
@@ -929,7 +945,7 @@ ctReport <- function(fit, folder = "ctReport", components = "default",
 
   summ <- suppressWarnings(suppressMessages(summary(fit, timeinterval = timeinterval)))
 
-  # Generated data, made once and shared: ctFitCovCheck and ctPostPredPlots
+  # Generated data, made once and shared: ctFitCheckCov and ctPostPredPlots
   # would each otherwise generate their own with their own defaults.
   genfit <- NULL
   generated <- function() {

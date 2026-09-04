@@ -32,15 +32,17 @@ so the folder always matches its index.}
 data), \code{'default'}, \code{'all'} (adds cross validation and LaTeX), or
 a character vector of component names: \code{summary}, \code{parmatrices},
 \code{identification}, \code{profile}, \code{discretepars},
-\code{predictions}, \code{residuals}, \code{covcheck}, \code{postpred},
-\code{tipredeffects}, \code{crossval}, \code{equations}.}
+\code{network}, \code{predictions}, \code{residuals}, \code{covcheck},
+\code{postpred}, \code{tipredeffects}, \code{crossval},
+\code{equations}.}
 
 \item{nsamples}{Draws used by the components that sample from the fit's
 uncertainty, and by data generation for \code{covcheck} and
 \code{postpred}.}
 
-\item{cores}{Cores for the components that can use more than one. Defaults
-to 1; nothing parallelises unless asked.}
+\item{cores}{Cores for the components that can use more than one
+(\code{discretepars}, \code{covcheck}, \code{postpred}, \code{crossval}).
+Defaults to 1: nothing parallelises unless asked.}
 
 \item{quantiles}{Quantiles for the parameter matrices and the discrete
 parameter plots.}
@@ -48,8 +50,8 @@ parameter plots.}
 \item{times}{Interval grid for \code{discretepars}. \code{'auto'} uses zero
 to the 90th percentile of the observed per-subject time span.}
 
-\item{timeinterval}{Time interval at which discrete-time parameter matrices
-and covariate effects are reported.}
+\item{timeinterval}{Time interval at which the networks, the discrete-time
+parameter matrices and the covariate effects are reported.}
 
 \item{nsubjects}{Number of subjects plotted by \code{predictions}, chosen as
 those with the most observations.}
