@@ -1477,6 +1477,21 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   if (length(random_sd_scale) != length(augmented_indices)) {
     stop("Prepared random-effect covariance metadata does not match the augmented state layout.", call. = FALSE)
   }
+  # A cell repurposed as a population parameter must not inherit the
+  # TI-predictor effect flags of whatever the user originally wrote there.
+  # `T0VARredundancies()` (R/ctFit.R) fixes the free T0VAR cells that indvarying
+  # T0MEANS makes redundant, clearing `param`, `transform` and `indvarying` but
+  # not the `<TIpred>_effect` columns; this function then hands those same cells
+  # to the population SD and correlation parameters below. The stale flag made
+  # `.ctJuliaTIEffects()` mint a TI-predictor coefficient for every population
+  # parameter -- something the generated Stan model has no counterpart for,
+  # since its population block is `rawpopsdbase`/`sqrtpcov` and takes no TI
+  # effects. The consequences were one per backend: the engine silently
+  # estimated those extra coefficients, and `.ctBackendPriorSpec()` refused the
+  # fit outright because its Stan-derived layout was that many parameters short.
+  # The cells `.ctJuliaPadMatrix()` created are already FALSE; these are the
+  # ones that existed before.
+  effect_columns <- grep("_effect$", names(table), value = TRUE)
   covariance_rows <- list()
   # The name of the parameter each varying state carries, read from its T0MEANS
   # cell before that cell is rewritten below. Everything downstream that has to
@@ -1501,6 +1516,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     table$value[index] <- NA_real_
     table$transform[index] <- sprintf("%.17g * (1e-10 + %.17g * log1p_exp(2 * param[%d] - 1))",
       t0means_state_scale[position], random_sd_scale[position], next_parameter)
+    if (length(effect_columns)) table[index, effect_columns] <- FALSE
     covariance_rows[[length(covariance_rows) + 1L]] <- data.frame(
       row = row, col = col, parameter = next_parameter,
       type = "sd", param = varying_names[position],
@@ -1522,6 +1538,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       table$parnumber[index] <- next_parameter
       table$value[index] <- NA_real_
       table$transform[index] <- sprintf("2 / (1 + exp(-param[%d])) - 1", next_parameter)
+      if (length(effect_columns)) table[index, effect_columns] <- FALSE
       covariance_rows[[length(covariance_rows) + 1L]] <- data.frame(
         row = row, col = col, parameter = next_parameter, type = "correlation",
         param = paste0(varying_names[row_position], "__", varying_names[column_position]),
