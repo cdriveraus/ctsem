@@ -3,6 +3,9 @@
 #' Regenerates \code{data/ctstantestdat.rda} and/or \code{data/ctstantestfit.rda},
 #' the fixtures a number of tests compare against.
 #'
+#' Deliberately not exported: it overwrites data shipped with the package,
+#' so it stays reachable only as \code{ctsem:::ctdataupdate()}.
+#'
 #' Called bare (no arguments) this behaves exactly as it always has: it asks
 #' for interactive \code{T}/\code{F} confirmation and regenerates both
 #' objects. \code{confirm} and \code{what} exist so automated tooling can call
@@ -20,7 +23,8 @@
 #'   doing anything, exactly as this always has. Defaults to \code{TRUE};
 #'   pass \code{FALSE} for a non-interactive/scripted call.
 #' @param forcerecompile logical. For development purposes.
-#' @export
+#' @keywords internal
+#' @noRd
 ctdataupdate <- function(what = c("data", "fit"), confirm = TRUE, forcerecompile = FALSE) {
   what <- match.arg(what, c("data", "fit"), several.ok = TRUE)
 
