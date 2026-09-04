@@ -196,8 +196,3 @@
 ctJuliaWorkersStop <- function() {
   invisible(.ctBackendWarmStop(NULL))
 }
-
-# Was a sixth copy of the parameter count. `.ctBackendNpar` is the one
-# definition; this stays as a name because tests and scratch scripts call it.
-#' @keywords internal
-.ctBackendWarmNpar <- function(object) .ctBackendNpar(object)

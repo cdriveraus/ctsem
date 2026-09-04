@@ -20,7 +20,7 @@
 #'   doing anything, exactly as this always has. Defaults to \code{TRUE};
 #'   pass \code{FALSE} for a non-interactive/scripted call.
 #' @param forcerecompile logical. For development purposes.
-#' @export
+#' @keywords internal
 ctdataupdate <- function(what = c("data", "fit"), confirm = TRUE, forcerecompile = FALSE) {
   what <- match.arg(what, c("data", "fit"), several.ok = TRUE)
 
@@ -77,7 +77,6 @@ ctdataupdate <- function(what = c("data", "fit"), confirm = TRUE, forcerecompile
     }
 
     if ("fit" %in% what) {
-      ## now in zzz.R
       checkm<-ctModel(
         type='ct',
         n.latent=2,n.TDpred=1,n.TIpred=1,n.manifest=2,

@@ -16,7 +16,6 @@ ctKalmanArray(
   maxtime = "asdata",
   standardisederrors = FALSE,
   subjectpars = TRUE,
-  tformsubjectpars = TRUE,
   indvarstates = FALSE,
   removeObs = F,
   ...
@@ -44,8 +43,6 @@ a timestep automatically (resulting in some interpolation but not excessive comp
 
 \item{subjectpars}{if TRUE, state estimates are not returned, instead, predictions of each subjects parameters
 are returned, for parameters that had random effects specified.}
-
-\item{tformsubjectpars}{if FALSE, subject level parameters are returned in raw, pre transformation form.}
 
 \item{indvarstates}{if TRUE, do not remove indvarying states from output}
 

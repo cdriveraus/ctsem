@@ -122,7 +122,6 @@
 #' @param standardisederrors If TRUE, computes standardised errors for prior, upd, smooth conditions.
 #' @param subjectpars if TRUE, state estimates are not returned, instead, predictions of each subjects parameters
 #' are returned, for parameters that had random effects specified.
-#' @param tformsubjectpars if FALSE, subject level parameters are returned in raw, pre transformation form.
 #' @param indvarstates if TRUE, do not remove indvarying states from output
 #' @param removeObs Logical or integer. If TRUE, observations (but not covariates)
 #' are set to NA, so only expectations based on parameters and covariates are returned. If a positive integer N, 
@@ -151,7 +150,7 @@
 #' k=ctKalmanArray(ctstantestfit,subjectpars=TRUE,collapsefunc=mean)
 ctKalmanArray <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=1,
   subjects='all', timestep='asdata',maxtime='asdata',
-  standardisederrors=FALSE, subjectpars=TRUE, tformsubjectpars=TRUE, indvarstates=FALSE,removeObs=F,...){
+  standardisederrors=FALSE, subjectpars=TRUE, indvarstates=FALSE,removeObs=F,...){
   
   # The julia engine produces the same four arrays from its own forward pass;
   # everything downstream of that is shared (see .ctKalmanArrayAssemble below

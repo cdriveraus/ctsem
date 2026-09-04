@@ -115,16 +115,3 @@
   out[!is.finite(out)] <- 0
   out
 }
-
-# One line naming what was computed, for the help and for messages.
-.ctCompanionDescription <- function(type) {
-  switch(type,
-    experimental = paste0("independent unit impulses (partial regression): ",
-      "the other processes are held where they were"),
-    observational = paste0("an observed unit change (simple regression): the ",
-      "other processes move with it by Sigma_rc/Sigma_cc"),
-    shock = paste0("one correlated system noise innovation: the other ",
-      "processes get companion shocks of Q_rc/Q_cc"),
-    orthogonal = paste0("orthogonalised shocks from the Cholesky factor of ",
-      "DIFFUSION -- these depend on the order of the latent processes"))
-}
