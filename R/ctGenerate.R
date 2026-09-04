@@ -91,7 +91,7 @@ ctGenerateFromPriors <- function(cts,datastruct=NA, is=FALSE,
   
   if('ctStanFit' %in% class(cts)){
     # if(!fullposterior && cts$standata$nopriors==1) nopriors <- TRUE #generate from point estimate
-    priors <- cts$args$priors
+    priors <- cts$args$resolved$priors
     datastruct <- standatatolong(cts$standata, origstructure=TRUE, ctm=cts$ctstanmodelbase)
     
     cts <- cts$ctstanmodelbase

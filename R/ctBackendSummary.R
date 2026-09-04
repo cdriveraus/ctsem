@@ -1225,7 +1225,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   # uncertainty draws and read as MCMC samples -- a fit that never sampled
   # reporting a sample count.
   if (has_posterior) {
-    out[[if (isTRUE(object$args$optimize %in% FALSE)) "nsamples" else "ndraws"]] <-
+    out[[if (isTRUE(object$args$resolved$optimize %in% FALSE)) "nsamples" else "ndraws"]] <-
       nrow(object$estimate$rawposterior)
   }
   out$uncertaintyNote <- if (has_posterior) {

@@ -85,7 +85,7 @@
   # and using it here would produce standard errors for a model that was not
   # fitted. `hessian` needs only the curvature, which the engine supplies
   # correctly for this target.
-  if (isFALSE(fit$args$intoverstates) && !identical(uncertainty, "hessian")) {
+  if (isFALSE(fit$args$resolved$intoverstates) && !identical(uncertainty, "hessian")) {
     stop("uncertainty='", uncertainty, "' is not available for an ",
       "intoverstates=FALSE fit: it would score the marginal likelihood, ",
       "which is not what this fit maximised. Use uncertainty='hessian', ",
@@ -402,7 +402,7 @@
 .ctBackendHessian <- function(fit, est, verbose = 0, gradient = "adjoint") {
   # A state-explicit fit maximised a different object, so its curvature is a
   # different object too. See `.ctBackendJointHessian`.
-  if (isFALSE(fit$args$intoverstates)) return(.ctBackendJointHessian(fit, est))
+  if (isFALSE(fit$args$resolved$intoverstates)) return(.ctBackendJointHessian(fit, est))
   module <- .ctJuliaModule(.ctBackendSpec(fit)$project)
   # `gradient='forward'` selects `ctsem_hessian_forward` instead of
   # `ctsem_hessian`: a model with a sampled (missing) TI predictor value

@@ -533,7 +533,7 @@ test_that("prediction warns for an intoverstates=FALSE julia fit, as Stan's does
   fit <- suppressWarnings(suppressMessages(ctFit(data, fitmodel,
     backend = "julia", intoverstates = FALSE, verbose = 0,
     optimcontrol = list(estonly = TRUE))))
-  expect_identical(fit$args$intoverstates, FALSE)
+  expect_identical(fit$args$resolved$intoverstates, FALSE)
 
   expect_warning(suppressMessages(ctPredict(fit, subjects = 1)),
     "system noise represents prior")

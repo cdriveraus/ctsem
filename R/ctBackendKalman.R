@@ -306,7 +306,7 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
   # density of states and data, not of the marginal the filter below computes.
   # Filtering through it at that estimate is a draw from a density this fit
   # did not maximise, and it looks entirely reasonable.
-  if (isFALSE(fit$args$intoverstates)) {
+  if (isFALSE(fit$args$resolved$intoverstates)) {
     warning('Kalman filter operation unreliable when states were sampled -- system noise represents prior while point estimates represent posterior / smoothed')
   }
 
@@ -521,7 +521,7 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
   # Generating through the filter at its estimate would be a draw from a
   # density this fit did not maximise -- the very substitution the route
   # exists to avoid -- and it would look entirely reasonable.
-  statepath <- isFALSE(fit$args$intoverstates)
+  statepath <- isFALSE(fit$args$resolved$intoverstates)
   nz <- if (statepath) .ctBackendStateDimension(fit) else 0L
   for (iteration in seq_len(nsamples)) {
     # Innovations first, then the observation deviates, matching the order

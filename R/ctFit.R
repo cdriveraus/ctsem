@@ -21,7 +21,11 @@ ctFitUpdate <- function(oldfit, data=NA, recompile=FALSE,refit=FALSE,...){
   if(!refit) message('Trying to do a quick update -- if there are problems, try with refit=TRUE for more robustness')
 
   dots <- list(...)
-  args <- as.list(oldfit$args)
+  # `$args$input` -- the literal call, still carrying 'auto'/'maxneeded' and
+  # whatever else was unresolved -- not `$args$resolved`, which would freeze
+  # this refit at whatever a previous 'auto' happened to route to instead of
+  # letting it re-route against the new data or overrides in `...`.
+  args <- as.list(oldfit$args$input)
   for(n in names(dots)){
     args[[n]] <- dots[[n]]
   }
@@ -289,6 +293,27 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' To generate data based on the posterior of a fitted model, see \code{\link{ctGenerateFromFit}}.
 #' @param compileArgs List of arguments to pass to \code{\link[rstan]{stan_model}} for compilation of the Stan model.
 #' @param ... additional arguments to pass to \code{\link[rstan]{stan}} function.
+#' @return A fitted object of class \code{ctStanFit} (\code{backend='stan'}) or
+#' \code{ctJuliaFit} (\code{backend='julia'}), both also classed \code{ctFit}.
+#' Besides backend-specific components, every fit carries \code{$args}, a list
+#' with two sublists that mean the same thing on both backends:
+#' \describe{
+#'  \item{\code{input}}{Exactly what was passed to \code{ctFit()}, or the
+#'  formal default when an argument was not supplied -- \code{intoverpop} may
+#'  still read \code{'auto'}, \code{cores} may still read \code{'maxneeded'}.}
+#'  \item{\code{resolved}}{What the fit actually ran with, after \code{'auto'}
+#'  routing, deprecated-argument merges (e.g. \code{nopriors} into
+#'  \code{priors}) and backend-specific defaults were settled -- \code{cores}
+#'  is a concrete integer, \code{intoverpop} is one of \code{'augmented'},
+#'  \code{'laplace'} or \code{'none'}. A call that gives the same \code{input}
+#'  on both backends gives the same \code{resolved} on both.}
+#' }
+#' Before this, \code{$args} itself held the raw call on a stan fit and only
+#' the resolved settings on a julia fit, so the same field name meant opposite
+#' things across backends; code reading \code{fit$args$intoverpop} or
+#' \code{fit$args$cores} directly should now read \code{fit$args$resolved} (or
+#' \code{$input}, if the literal call is what is wanted, as
+#' \code{\link{ctFitUpdate}} does).
 #' @export
 #' @examples
 #' \donttest{
@@ -1142,6 +1167,24 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
       max(1,min(c(chains,parallel::detectCores()-1)))
   }
 
+  # `args` (captured above, at the point nothing had been routed yet) is what
+  # the caller literally passed, or the formal default -- 'auto', 'maxneeded'
+  # and all. `argsresolved` is what the fit actually runs with, once 'auto'
+  # routing and backend-independent defaults are settled. Before this, a stan
+  # fit's `$args` was the raw call and a julia fit's `$args` was a curated
+  # resolved list, so `fit$args$intoverpop` and `fit$args$cores` meant opposite
+  # things across backends for the same call (review/jobs/J10). Both sublists
+  # are attached below, under `$args$input` and `$args$resolved`, and mean the
+  # same thing on both backends -- the fields overridden here are exactly the
+  # ones that get routed or cast between capture and use.
+  argsresolved <- args
+  argsresolved$backend <- backend
+  argsresolved$cores <- cores
+  argsresolved$intoverpop <- intoverpopmethod
+  argsresolved$priors <- as.logical(priors)
+  argsresolved$optimize <- isTRUE(optimize)
+  argsresolved$intoverstates <- isTRUE(intoverstates)
+
   if(backend %in% 'julia') {
     .ctJuliaUnsupported(ctm, optimize=optimize, priors=priors,
       intoverpop=intoverpop, gendata=gendata,
@@ -1173,6 +1216,13 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
       verbose=verbose, fit=fit, priors=priors, optimize=optimize,
       chains=chains, iter=iter, control=control,
       intoverpop=juliaintoverpop, intoverstates=intoverstates)
+    # Replaces whatever narrower `$args` the julia backend built internally
+    # (it only ever had the resolved settings, and not all of them) with the
+    # two-sublist form every fit now carries -- see the `argsresolved` comment
+    # above. This also reaches the `fit=FALSE` case: `.ctFitJuliaBackend()`
+    # returns the prepared model spec then, unclassed by `$args` before, and
+    # assigning a list element to it here does not disturb its class.
+    juliafit$args <- list(input = args, resolved = argsresolved)
     # `plot` draws the trace *after* the fit here, not during it.
     #
     # The Stan path can plot live because it writes sample files a second
@@ -1352,7 +1402,7 @@ install.packages("rstan", repos = c("https://mc-stan.org/r-packages/", getOption
     stanfit$transformedparsfull <- suppressMessages(stan_constrainsamples(sm = sm,standata = standata,
       savesubjectmatrices = TRUE, samples = matrix(stanfit$rawest,1),cores=1,savescores=TRUE,pcovn=5000))
 
-    out <- list(args=args,
+    out <- list(args=list(input=args, resolved=argsresolved),
       setup=setup,
       stanmodeltext=stanmodeltext, data=standataout, ctdatastruct=datalong[c(1,nrow(datalong)),],standata=standata,
       ctstanmodelbase=ctstanmodel, ctstanmodel=ctm,stanmodel=sm, stanfit=stanfit)
@@ -1361,7 +1411,7 @@ install.packages("rstan", repos = c("https://mc-stan.org/r-packages/", getOption
     out$stanfit$kalman<-suppressMessages(ctKalmanArray(out,pointest = TRUE))
   }
 
-  if(!fit) out=list(args=args,setup=setup,
+  if(!fit) out=list(args=list(input=args, resolved=argsresolved),setup=setup,
     stanmodeltext=stanmodeltext,data=standataout,  ctdatastruct=datalong[c(1,nrow(datalong)),],standata=standata,
     ctstanmodelbase=ctstanmodel,  ctstanmodel=ctm)
 
