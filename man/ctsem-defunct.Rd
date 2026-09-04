@@ -14,9 +14,9 @@ ctStanUpdModel(...)
 \item{...}{Ignored.}
 }
 \description{
-\code{ctFitUpdateModel} and its alias \code{ctStanUpdModel} are defunct. They wrote
-\code{match.call()} into \code{fit$args}, which since the split of that slot into
-\code{$input} and \code{$resolved} left the returned fit unreadable by every consumer
+`ctFitUpdateModel` and its alias `ctStanUpdModel` are defunct. They wrote
+`match.call()` into `fit$args`, which since the split of that slot into
+`$input` and `$resolved` left the returned fit unreadable by every consumer
 of it. Use \code{\link{ctFitUpdate}}, which takes new data and new arguments.
 }
 \keyword{internal}

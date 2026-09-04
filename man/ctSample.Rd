@@ -60,13 +60,45 @@ longer than many fits do.}
   random-effect blocks of the metric as well as the population block; they
   start from a conditional covariance that is exact for a linear model, so
   replacing one with an estimate from a few hundred draws can add more noise
-  than it removes.}
+  than it removes.
 
-\item{verbose}{Print the sampler's configuration before it starts, and
-report progress while it runs. Progress overwrites a single line where the
-output is going to a console and prints occasional separate lines where it
-is not; set \code{options(ctsem.progress.overwrite = FALSE)} if that
-detection is wrong for your front end, or \code{TRUE} to force it on.}
+  \code{control$callback} is a function called while sampling runs, with
+  \code{(phase, iteration, total, logp, divergent)}: \code{phase} is
+  \code{"warmup"} or \code{"sampling"}, \code{iteration}/\code{total} count
+  against the current phase, and \code{logp}/\code{divergent} are the log
+  posterior and divergence count so far. It is for a front end that wants
+  to draw progress live; the engine calls it on a time cadence rather than
+  once per iteration (see \code{optimcontrol$callback} in
+  \code{\link{ctFit}}), and always once more when a phase ends. An error
+  inside it disables it and warns, leaving the sample unaffected. With
+  several chains only the first calls back, matching the printed line --
+  several chains calling into R at once is not just unreadable, it is
+  unsafe. Under \code{processes = TRUE} it is not called at all, because a
+  worker process cannot call back into this session's callback; the
+  parent's own per-chain lines (see \code{verbose}) are what cover that
+  case instead.}
+
+\item{verbose}{Report progress while sampling runs: warmup and sampling
+  separately, iterations against the total, and an estimated time
+  remaining, the same shape \code{\link{ctFit}}'s progress line has. A
+  logical flag is accepted as well as a level, as elsewhere in ctsem --
+  \code{FALSE}/\code{0} silent (the default), \code{TRUE}/\code{1} the
+  progress just described, \code{2} the same reporting kept as scrolling
+  history rather than overwritten in place, which is what \code{verbose =
+  2} means throughout the julia backend and there is nothing further to add
+  for the sampler specifically. With \code{chains > 1} and \code{processes
+  = TRUE} (the default above one chain), each worker's own printed line
+  never reaches this session, so the parent prints one line per chain
+  instead, polling what the workers have done so far -- the single-process
+  line's content, relayed rather than duplicated.
+
+  Progress overwrites a single line where the output is going to a console
+  and prints occasional separate lines where it is not; set
+  \code{options(ctsem.progress.overwrite = FALSE)} if that detection is
+  wrong for your front end, or \code{TRUE} to force it on. The per-chain
+  lines under \code{processes = TRUE} are never overwritten in place --
+  several chains share the console, and one finishing should not erase an
+  earlier line that is still current for another.}
 
 \item{processes}{Run each chain in its own R process rather than its own
   thread, so that chains share no allocator and no garbage collector.

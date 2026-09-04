@@ -9,7 +9,7 @@ ctCoverageCheck(
   fittingModel,
   niter,
   fitArgs,
-  cores = 10,
+  cores = 1,
   fitCores = 1,
   generateCores = fitCores,
   plotEvery = max(c(10, cores))

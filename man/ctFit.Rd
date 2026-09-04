@@ -26,7 +26,7 @@ ctFit(
   nopriors = NA,
   priors = FALSE,
   chains = 2,
-  cores = ifelse(optimize, getOption("mc.cores", 2L), "maxneeded"),
+  cores = getOption("mc.cores", 2L),
   inits = NULL,
   compileArgs = list(),
   forcerecompile = FALSE,
@@ -231,8 +231,14 @@ predicted state standard deviation, and \code{maxsubsteps} (default 64) caps an 
 argument is also set, the number of chains determines the number of cpu cores used, up to
 the maximum available minus one. Irrelevant when \code{optimize=TRUE}.}
 
-\item{cores}{number of cpu cores to use. Either 'maxneeded' to use as many as available minus one,
-up to the number of chains, or a positive integer. If \code{optimize=TRUE}, more cores are generally faster.}
+\item{cores}{number of cpu cores to use. A positive integer, or 'maxneeded' for
+as many as available minus one (capped at the number of chains on the stan
+backend, uncapped on julia, whose parallelism is over subject chunks). Defaults
+to \code{getOption("mc.cores", 2)}. More cores are generally faster when
+\code{optimize=TRUE}. Note that a julia fit at \code{cores > 1} is not
+reproducible to the last decimal, because the chunk tuner times candidate
+splits and the timings vary; use \code{cores = 1} for a before-and-after
+comparison.}
 
 \item{inits}{either character string 'optimize, NULL, or vector of (unconstrained)
 parameter start values, as returned by the rstan function \code{rstan::unconstrain_pars}, or the parameter values
@@ -286,6 +292,30 @@ for your front end -- a Shiny app capturing stdout, for instance -- or
 \item{...}{additional arguments to pass to \code{\link[rstan]{stan}} function.}
 
 \item{ctstanmodel}{Deprecated. Use \code{model}.}
+}
+\value{
+A fitted object of class \code{ctStanFit} (\code{backend='stan'}) or
+\code{ctJuliaFit} (\code{backend='julia'}), both also classed \code{ctFit}.
+Besides backend-specific components, every fit carries \code{$args}, a list
+with two sublists that mean the same thing on both backends:
+\describe{
+ \item{\code{input}}{Exactly what was passed to \code{ctFit()}, or the
+ formal default when an argument was not supplied -- \code{intoverpop} may
+ still read \code{'auto'}, and \code{cores} \code{'maxneeded'} if that is
+ what was passed.}
+ \item{\code{resolved}}{What the fit actually ran with, after \code{'auto'}
+ routing, deprecated-argument merges (e.g. \code{nopriors} into
+ \code{priors}) and backend-specific defaults were settled -- \code{cores}
+ is a concrete integer, \code{intoverpop} is one of \code{'augmented'},
+ \code{'laplace'} or \code{'none'}. A call that gives the same \code{input}
+ on both backends gives the same \code{resolved} on both.}
+}
+Before this, \code{$args} itself held the raw call on a stan fit and only
+the resolved settings on a julia fit, so the same field name meant opposite
+things across backends; code reading \code{fit$args$intoverpop} or
+\code{fit$args$cores} directly should now read \code{fit$args$resolved} (or
+\code{$input}, if the literal call is what is wanted, as
+\code{\link{ctFitUpdate}} does).
 }
 \description{
 Fits a ctsem model specified via \code{\link{ctModel}} with type either 'ct' or 'dt'.

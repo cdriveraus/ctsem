@@ -82,13 +82,17 @@ A list of arrays, the same shape \code{\link{ctKalmanArray}} returns
 Prior, filtered and smoothed estimates of the latent states and the
 observations, for every row of data, from the same forward pass the engine
 uses for the likelihood.
-
+\code{\link{ctKalmanArray}} (alias \code{ctStanKalman}) dispatches here for
+a \code{ctJuliaFit}, so call that unless you want the julia route
+specifically. \code{\link{ctPredict}} (alias \code{ctKalman}) returns the
+same information as a long data frame.
+}
+\details{
 Internal. \code{ctBackend*} means internal throughout the package, so this is
 not exported; users reach it through \code{\link{ctKalmanArray}} and
 \code{\link{ctPredict}}, which dispatch here for a \code{ctJuliaFit}. The
 \code{randomEffects} notes below describe behaviour those two inherit.
-}
-\details{
+
 Individual-difference parameters come out of the smoothed initial
   state: ctsem carries an individually varying parameter as an augmented
   latent state with no drift and no diffusion, so its smoothed t0 estimate is
