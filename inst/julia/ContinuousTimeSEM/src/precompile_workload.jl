@@ -208,6 +208,24 @@ end
 
 # This is an optimisation: a broken workload must degrade to "nothing was
 # precompiled", never to a package that will not load. Hence the `try`.
+#
+# It is also almost all of the precompile cost, and that matters while
+# developing the engine. Measured on a real source edit: 120 s with the
+# workload, 7.5 s without it -- so 94% of every recompile is this block,
+# and any engine edit triggers one, since the cache key is a content hash.
+# Loading an unchanged engine is about 2 s either way.
+#
+# For users that trade is right: pay two minutes once at install, and every
+# fit afterwards skips the JIT. For someone editing the engine it inverts,
+# because the loop becomes edit, wait two minutes, test.
+#
+#   CTSEM_PRECOMPILE_WORKLOAD=false   -> skip it; recompiles take seconds,
+#                                        the first fit of a session is slower
+#
+# Read at PRECOMPILE time, so it takes effect on the next recompile and is
+# baked into that cache entry. Unset or anything other than "false" keeps
+# the workload, so users and CI are unaffected by default.
+if get(ENV, "CTSEM_PRECOMPILE_WORKLOAD", "true") != "false"
 @compile_workload begin
     for built in _PRECOMPILE_BUILT
         try
@@ -217,4 +235,5 @@ end
             @debug "ContinuousTimeSEM: precompile workload skipped" err
         end
     end
+end
 end
