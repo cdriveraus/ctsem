@@ -1630,7 +1630,8 @@ functions{
   //
   // Nothing is left unassigned by the removal, because every parameter number
   // that can be requested has its own when == 0 row.
-  // NOTE: no apostrophes below or above -- this Stan program is an R string.
+  // NOTE: no apostrophes below or above -- this program is written from a
+  // single-quoted R string in R/ctModelWriter.R.
   row_vector parvectform(array[] int which, row_vector rawpar, int when, array[,] int ms, data array[,] real mval, int subi){
     row_vector[size(which)] parout;
     if(size(which)){

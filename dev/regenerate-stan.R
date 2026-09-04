@@ -113,7 +113,15 @@ ctRegenerateStan <- function(write = FALSE, clean_src = FALSE, pkgdir = ".") {
   for (nm in names(gen)) {
     f <- file.path(stanpath, paste0(nm, ".stan"))
     if (file.exists(f)) file.rename(f, file.path(stanpath, paste0(nm, ".bak")))
-    cat(gen[[nm]], file = f)
+    # Binary connection, because cat() to a text connection translates \n to
+    # \r\n on Windows and .gitattributes pins these files to LF in the
+    # repository and in every checkout. A CRLF working file still commits as
+    # LF, so the damage is confined to disk -- which is exactly where a
+    # scripted edit matches in one region of a file and silently misses
+    # another.
+    con <- file(f, open = "wb")
+    writeChar(gen[[nm]], con, eos = NULL)
+    close(con)
     message("wrote ", f, " (previous kept as ", nm, ".bak)")
   }
 

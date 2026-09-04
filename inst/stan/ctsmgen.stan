@@ -220,20 +220,26 @@ if(transform < 49 && shift != 0.0) param+=shift;
     return param;
   }
   
-  // `when == 100` is deliberately NOT accepted here, and that is a fix rather
-  // than an omission. 100 is a wildcard meaning "materialise at every when",
-  // added in 0a0298ca when this function was polymorphic: it was called once
-  // with when = 0 on the parameter vector and five times with when in 1..4 on
-  // the *state* vector, and on those state calls ms[,3] is a state index, so
-  // the wildcard was right. Those calls moved to mcalc, which branches on
-  // `when` and reads the column both ways correctly. What was left here was a
-  // wildcard letting a state index answer a parameter lookup. It was harmless
-  // until db16c43b added the `done` early exit the next day: PARS rows are
-  // sorted to the front of matsetup, so first-match-wins handed the carrier
-  // row's transform to whichever real parameter shared its number, costing a
-  // drift diagonal its negative-definiteness and a diffusion diagonal its
-  // positivity transform and variance floor. Every parameter number in
-  // `which` has its own when == 0 row, so nothing is left unassigned.
+  // `when == 100` is deliberately NOT accepted here, and that is a fix
+  // rather than an omission. 100 is a wildcard meaning "materialise at every
+  // when", added in 0a0298ca while this function was polymorphic: it was
+  // called once with when = 0 on the parameter vector and five times with
+  // when in 1..4 on the *state* vector, and on a state call ms[,3] is a state
+  // index, so the wildcard was right. Those state calls moved to mcalc, which
+  // branches on `when` and reads the column both ways correctly. What was left
+  // here was a wildcard letting a state index answer a parameter lookup.
+  //
+  // It stayed harmless until db16c43b added the `done` early exit the next
+  // day. PARS rows are sorted to the front of matsetup, so first match wins
+  // now gives a carrier row the chance to answer for whichever real parameter
+  // shares its number, and that parameter loses its own transform: a drift
+  // diagonal its negative definiteness, a diffusion diagonal its positivity
+  // and its variance floor.
+  //
+  // Nothing is left unassigned by the removal, because every parameter number
+  // that can be requested has its own when == 0 row.
+  // NOTE: no apostrophes below or above -- this program is written from a
+  // single-quoted R string in R/ctModelWriter.R.
   row_vector parvectform(array[] int which, row_vector rawpar, int when, array[,] int ms, data array[,] real mval, int subi){
     row_vector[size(which)] parout;
     if(size(which)){
@@ -262,7 +268,6 @@ if(transform < 49 && shift != 0.0) param+=shift;
   matrix mcalc(matrix matin, vector tfpars, row_vector states, array[] int when, int m, array[,] int ms, data array[,] real mval, int subi){
     matrix[rows(matin),cols(matin)] matout;
     int changeMade=0;
-
     for(ri in 1:size(ms)){ //for each row of matrix setup
       if(m==ms[ri,7] && ( //if correct matrix
         subi ==0 ||  //and need to compute population parameter
@@ -531,7 +536,8 @@ model{
       matrix[matrixdims[6, 1], matrixdims[6, 2] ] subj_MANIFESTMEANS;array[ (savesubjectmatrices && (sum(whenmat[7,1:5]) || statedep[7])) ? nsubjects : 0]
       matrix[matrixdims[7, 1], matrixdims[7, 2] ] subj_CINT;array[ (savesubjectmatrices && (sum(whenmat[8,1:5]) || statedep[8])) ? nsubjects : 0]
       matrix[matrixdims[8, 1], matrixdims[8, 2] ] subj_T0VAR;array[ (savesubjectmatrices && (sum(whenmat[9,1:5]) || statedep[9])) ? nsubjects : 0]
-      matrix[matrixdims[9, 1], matrixdims[9, 2] ] subj_TDPREDEFFECT;array[ (savesubjectmatrices && (sum(whenmat[31,1:5]) || statedep[31])) ? nsubjects : 0]
+      matrix[matrixdims[9, 1], matrixdims[9, 2] ] subj_TDPREDEFFECT;array[ (savesubjectmatrices && (sum(whenmat[11,1:5]) || statedep[11])) ? nsubjects : 0]
+      matrix[matrixdims[11, 1], matrixdims[11, 2] ] subj_THRESHOLDS;array[ (savesubjectmatrices && (sum(whenmat[31,1:5]) || statedep[31])) ? nsubjects : 0]
       matrix[matrixdims[31, 1], matrixdims[31, 2] ] subj_DIFFUSIONcov;array[ (savesubjectmatrices && (sum(whenmat[32,1:5]) || statedep[32])) ? nsubjects : 0]
       matrix[matrixdims[32, 1], matrixdims[32, 2] ] subj_MANIFESTcov;array[ (savesubjectmatrices && (sum(whenmat[33,1:5]) || statedep[33])) ? nsubjects : 0]
       matrix[matrixdims[33, 1], matrixdims[33, 2] ] subj_T0cov;array[ (savesubjectmatrices && (sum(whenmat[21,1:5]) || statedep[21])) ? nsubjects : 0]
@@ -548,6 +554,7 @@ model{
       matrix[matrixdims[7, 1], matrixdims[7, 2] ] pop_CINT;
       matrix[matrixdims[8, 1], matrixdims[8, 2] ] pop_T0VAR;
       matrix[matrixdims[9, 1], matrixdims[9, 2] ] pop_TDPREDEFFECT;
+      matrix[matrixdims[11, 1], matrixdims[11, 2] ] pop_THRESHOLDS;
       matrix[matrixdims[31, 1], matrixdims[31, 2] ] pop_DIFFUSIONcov;
       matrix[matrixdims[32, 1], matrixdims[32, 2] ] pop_MANIFESTcov;
       matrix[matrixdims[33, 1], matrixdims[33, 2] ] pop_T0cov;
@@ -673,6 +680,7 @@ model{
       matrix[matrixdims[7, 1], matrixdims[7, 2] ] CINT;
       matrix[matrixdims[8, 1], matrixdims[8, 2] ] T0VAR;
       matrix[matrixdims[9, 1], matrixdims[9, 2] ] TDPREDEFFECT;
+      matrix[matrixdims[11, 1], matrixdims[11, 2] ] THRESHOLDS;
       matrix[matrixdims[31, 1], matrixdims[31, 2] ] DIFFUSIONcov;
       matrix[matrixdims[32, 1], matrixdims[32, 2] ] MANIFESTcov;
       matrix[matrixdims[33, 1], matrixdims[33, 2] ] T0cov;
@@ -760,6 +768,7 @@ if(si==0 || sum(whenmat[6,{5}]) > 0 )MANIFESTMEANS=mcalc(MANIFESTMEANS,indparams
 if(si==0 || sum(whenmat[7,{5}]) > 0 )CINT=mcalc(CINT,indparams, state,{0}, 7, matsetup, matvalues, si); 
 if(si==0 || sum(whenmat[8,{5}]) > 0 )T0VAR=mcalc(T0VAR,indparams, state,{0}, 8, matsetup, matvalues, si); 
 if(si==0 || sum(whenmat[9,{5}]) > 0 )TDPREDEFFECT=mcalc(TDPREDEFFECT,indparams, state,{0}, 9, matsetup, matvalues, si); 
+if(si==0 || sum(whenmat[11,{5}]) > 0 )THRESHOLDS=mcalc(THRESHOLDS,indparams, state,{0}, 11, matsetup, matvalues, si); 
 if(si==0 || sum(whenmat[52,{5}]) > 0 )JAx=mcalc(JAx,indparams, state,{0}, 52, matsetup, matvalues, si); 
 if(si==0 || sum(whenmat[53,{5}]) > 0 )Jtd=mcalc(Jtd,indparams, state,{0}, 53, matsetup, matvalues, si); 
 if(si==0 || sum(whenmat[54,{5}]) > 0 )Jy=mcalc(Jy,indparams, state,{0}, 54, matsetup, matvalues, si); 
@@ -1081,7 +1090,7 @@ if(verbose > 1) print("b");
       
     
   if(si == 0){
-pop_PARS = PARS; pop_T0MEANS = T0MEANS; pop_LAMBDA = LAMBDA; pop_DRIFT = DRIFT; pop_DIFFUSION = DIFFUSION; pop_MANIFESTVAR = MANIFESTVAR; pop_MANIFESTMEANS = MANIFESTMEANS; pop_CINT = CINT; pop_T0VAR = T0VAR; pop_TDPREDEFFECT = TDPREDEFFECT; pop_DIFFUSIONcov = DIFFUSIONcov; pop_MANIFESTcov = MANIFESTcov; pop_T0cov = T0cov; pop_asymCINT = asymCINT; pop_asymDIFFUSIONcov = asymDIFFUSIONcov; 
+pop_PARS = PARS; pop_T0MEANS = T0MEANS; pop_LAMBDA = LAMBDA; pop_DRIFT = DRIFT; pop_DIFFUSION = DIFFUSION; pop_MANIFESTVAR = MANIFESTVAR; pop_MANIFESTMEANS = MANIFESTMEANS; pop_CINT = CINT; pop_T0VAR = T0VAR; pop_TDPREDEFFECT = TDPREDEFFECT; pop_THRESHOLDS = THRESHOLDS; pop_DIFFUSIONcov = DIFFUSIONcov; pop_MANIFESTcov = MANIFESTcov; pop_T0cov = T0cov; pop_asymCINT = asymCINT; pop_asymDIFFUSIONcov = asymDIFFUSIONcov; 
   }
   
   
