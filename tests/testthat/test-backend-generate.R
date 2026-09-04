@@ -253,3 +253,151 @@ test_that("ctGenerateFromPriors() refuses a julia backend fit with an informativ
   fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
   expect_error(ctGenerateFromPriors(fit), regexp = "not available for julia backend fits")
 })
+
+# Generation on the Laplace random-effect route (intoverpop='laplace') ------
+#
+# `ctGenerateFromFit()` used to error here: the engine's `ctsem_generate`
+# refused any `CTSEMLaplaceObjective` with "not implemented ... yet". The
+# augmented route (intoverpop=TRUE) carries individual differences as
+# augmented latent states the filter integrates over, so one shared raw
+# parameter vector is enough to generate from. The Laplace route has no such
+# vector -- each subject's random effect is a conditional mode estimated from
+# that subject's own data -- so generation needs the per-subject parameter
+# matrix `ctsem_kalman(laplace, ...)` already computes via
+# `ctsem_laplace_subject_values`, and `ctsem_generate` did not accept one.
+#
+# A generator that silently fell back to the population vector for every
+# subject would produce data that looks entirely reasonable -- smooth,
+# correctly scaled, correctly missing -- and would simply have no individual
+# differences in it. That is the specific wrong answer these tests are aimed
+# at: not "does it error", but "does each subject's own random effect
+# actually reach the generated data".
+
+.laplace_generate_data <- function(nsub = 12L, tp = 6L, seed = 31L) {
+  set.seed(seed)
+  do.call(rbind, lapply(seq_len(nsub), function(i) {
+    intercept <- stats::rnorm(1, 0, 0.8)
+    state <- stats::rnorm(1, 0, 0.5)
+    y <- numeric(tp)
+    for (t in seq_len(tp)) {
+      state <- 0.75 * state + stats::rnorm(1, 0, 0.4)
+      y[t] <- state + intercept + stats::rnorm(1, 0, 0.3)
+    }
+    data.frame(id = i, time = seq_len(tp) - 1, Y1 = y)
+  }))
+}
+
+.laplace_generate_model <- function() {
+  model <- suppressWarnings(suppressMessages(ctModel(type = "ct",
+    manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1))))
+  model$pars$indvarying <- FALSE
+  model$pars$indvarying[match(TRUE, model$pars$matrix == "MANIFESTMEANS")] <- TRUE
+  model
+}
+
+test_that("ctGenerateFromFit works on a Laplace fit and matches the augmented route", {
+  skip_on_cran()
+  skip_without_julia()
+  data <- .laplace_generate_data()
+  model <- .laplace_generate_model()
+  nsub <- length(unique(data$id))
+  tp <- sum(data$id == data$id[1])
+
+  fit_laplace <- suppressWarnings(suppressMessages(ctFit(data, model,
+    backend = "julia", cores = 1, intoverpop = "laplace", priors = TRUE,
+    optimcontrol = list(finishsamples = 20))))
+  fit_augmented <- suppressWarnings(suppressMessages(ctFit(data, model,
+    backend = "julia", cores = 1, intoverpop = TRUE, priors = TRUE)))
+
+  set.seed(123)
+  gen_laplace <- ctGenerateFromFit(fit_laplace, nsamples = 20)
+  set.seed(123)
+  gen_augmented <- ctGenerateFromFit(fit_augmented, nsamples = 20)
+
+  # Same shape as the other three routes: same names, same dimensions, same
+  # class, so downstream tools cannot tell which route produced the fit.
+  expect_s3_class(gen_laplace, "ctJuliaFit")
+  expect_s3_class(gen_laplace, "ctFit")
+  expect_identical(class(gen_laplace), class(gen_augmented))
+  expect_identical(names(gen_laplace$generated), names(gen_augmented$generated))
+  expect_identical(dim(gen_laplace$generated$Y), dim(gen_augmented$generated$Y))
+  expect_identical(dimnames(gen_laplace$generated$Y)[[3]], model$manifestNames)
+  expect_identical(dim(gen_laplace$generated$llrow), dim(gen_augmented$generated$llrow))
+
+  # The two routes fit the same model to the same data, so their
+  # posterior-predictive distributions should be close, not merely
+  # "plausible-looking". A generator that quietly used the wrong covariance,
+  # or the wrong (e.g. population-only) per-subject parameters, would show up
+  # here as a shifted mean/sd or a rejected KS test.
+  yl <- as.numeric(gen_laplace$generated$Y)
+  ya <- as.numeric(gen_augmented$generated$Y)
+  yl <- yl[is.finite(yl)]
+  ya <- ya[is.finite(ya)]
+  expect_equal(mean(yl), mean(ya), tolerance = 0.1)
+  expect_equal(stats::sd(yl), stats::sd(ya), tolerance = 0.1)
+  expect_gt(suppressWarnings(stats::ks.test(yl, ya)$p.value), 0.05)
+
+  # The specific failure mode a stub implementation risks: returning the
+  # population-level trajectory for every subject. Each subject has its own
+  # MANIFESTMEANS random effect estimated from its own data, so a correct
+  # generator's per-subject mean should track the subject's own observed
+  # mean closely; a population-only generator would show ~zero correlation.
+  obs_subject_mean <- tapply(data$Y1, data$id, mean)
+  gen_y <- gen_laplace$generated$Y[, , 1]
+  row_subject <- rep(seq_len(nsub), each = tp)
+  gen_subject_mean <- vapply(seq_len(nsub), function(s)
+    mean(gen_y[, row_subject == s]), numeric(1))
+  expect_gt(stats::cor(obs_subject_mean, gen_subject_mean), 0.8)
+})
+
+test_that("the posterior predictive tools run on a Laplace backend fit", {
+  skip_on_cran()
+  skip_without_julia()
+  data <- .laplace_generate_data()
+  model <- .laplace_generate_model()
+  fit <- suppressWarnings(suppressMessages(ctFit(data, model, backend = "julia",
+    cores = 1, intoverpop = "laplace", priors = TRUE,
+    optimcontrol = list(finishsamples = 20))))
+
+  set.seed(7)
+  generated <- ctGenerateFromFit(fit, nsamples = 10, cores = 1)
+
+  predictive <- suppressMessages(ctsem:::ctPostPredData(generated))
+  expect_true(all(c("row", "variable", "sample", "value", "id", "Time",
+    "TimeInterval", "obsValue") %in% names(predictive)))
+
+  plots <- suppressWarnings(suppressMessages(ctPostPredPlots(generated)))
+  expect_true(length(plots) > 0)
+
+  # The residual branch re-filters the generated data conditional on modes
+  # re-estimated from it -- the same design ctPostPredData() already uses on
+  # the other three routes -- so it should run, not merely the default path.
+  withresiduals <- suppressMessages(ctsem:::ctPostPredData(generated, residuals = TRUE))
+  expect_true("Y1 std. res." %in% withresiduals$variable)
+
+  # marginalcovcheck/trajectoryplot are the ctCheckFit() switches already
+  # documented to work on a julia fit; confirm they still do once $generated
+  # is populated from the Laplace route.
+  grDevices::pdf(NULL)
+  on.exit(grDevices::dev.off(), add = TRUE)
+  expect_no_error(ctCheckFit(fit, data = FALSE, postpred = FALSE, priorpred = FALSE,
+    statepred = FALSE, residuals = FALSE, covplot = FALSE, entropy = FALSE,
+    marginalcovcheck = TRUE, trajectoryplot = TRUE))
+})
+
+test_that("missingness survives Laplace-route generation unchanged", {
+  skip_on_cran()
+  skip_without_julia()
+  data <- .laplace_generate_data()
+  data$Y1[c(3, 40)] <- NA
+  model <- .laplace_generate_model()
+  fit <- suppressWarnings(suppressMessages(ctFit(data, model, backend = "julia",
+    cores = 1, intoverpop = "laplace", priors = TRUE,
+    optimcontrol = list(finishsamples = 20))))
+
+  generated <- ctGenerateFromFit(fit, nsamples = 5, cores = 1)
+  missing_rows <- which(is.na(data$Y1))
+  expect_true(all(is.na(generated$generated$Y[, missing_rows, 1])))
+  expect_true(all(is.na(generated$generated$llrow[, missing_rows])))
+  expect_false(any(is.na(generated$generated$Y[, -missing_rows, 1])))
+})
