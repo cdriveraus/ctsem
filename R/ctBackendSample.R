@@ -254,8 +254,13 @@
 #'   adjoint tape, so memory scales with the number of chains.
 #'
 #'   Draws match the in-process path to about 1e-10 on the first draw and
-#'   diverge chaotically from there, which is inherent rather than a defect --
-#'   see \code{.ctBackendSampleProcesses} for why. Results will therefore not be
+#'   diverge chaotically from there. That is inherent rather than a defect:
+#'   each unit's mode comes from an inner Newton solve warm-started from
+#'   whatever the objective last held, and this session carries an
+#'   optimisation's worth of that history where a fresh worker carries one
+#'   warm-up evaluation. Both reach the same mode to solver tolerance rather
+#'   than to the last bit, and NUTS is chaotic, so 1e-10 becomes order 1
+#'   within a few dozen transitions. Results will therefore not be
 #'   bit-identical to a run made before this became the default. Needs the
 #'   \pkg{future} package; without it, or if a worker fails, sampling falls back
 #'   to this session.

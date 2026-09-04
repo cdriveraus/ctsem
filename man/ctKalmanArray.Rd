@@ -67,7 +67,10 @@ likewise the covariance of the linear predictor.
 }
 \description{
 Get Kalman filter estimates from a ctStanFit object.
-\code{ctStanKalman} is maintained as a backward-compatible alias.
+\code{ctStanKalman} is maintained as a backward-compatible alias for this
+function. Its pre-3.11 partner \code{ctKalman} is an alias for
+\code{\link{ctPredict}}, not for this function, and returns a long data
+frame rather than a list of arrays.
 }
 \examples{
 k=ctKalmanArray(ctstantestfit,subjectpars=TRUE,collapsefunc=mean)
