@@ -167,7 +167,7 @@
   matsetup <- x$setup$matsetup
   if(is.null(matsetup)) matsetup <- x$ctstanmodel$modelmats$matsetup
   if(is.null(matsetup) || is.null(matsetup$stateref)) return(NULL)
-  codes <- ctStanMatricesList()$all
+  codes <- .ctMatricesList()$all
   named <- rep(NA_character_, max(codes))
   named[codes] <- base::names(codes)
   nlatent <- try(.ctFitNlatent(x), silent = TRUE)

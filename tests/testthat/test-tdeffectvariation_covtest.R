@@ -7,6 +7,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
   
   
   test_that("randomEffectsTDPREDEFFECT", {
+    set.seed(1)
     nsubjects <- 1000
     ntimes <- 20
     
