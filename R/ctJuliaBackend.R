@@ -698,14 +698,14 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # dispatches to a backend. Reusing it keeps the state and parameter ordering
   # identical to Stan's matsetup/matvalues contract.
   if (!is.null(model$modelmats) && !is.null(model$intoverpop)) return(model)
-  ctm <- ctsem:::ctModel0DRIFT(model, model$continuoustime)
-  ctm$pars <- ctsem:::ctModelStatesAndPARS(
+  ctm <- ctModel0DRIFT(model, model$continuoustime)
+  ctm$pars <- ctModelStatesAndPARS(
     ctm$pars, statenames = ctm$latentNames, tdprednames = ctm$TDpredNames
   )
-  jacobian <- try(ctsem:::ctJacobian(ctm), silent = TRUE)
-  if (inherits(jacobian, "try-error")) jacobian <- ctsem:::ctJacobian(ctm, simplify = FALSE)
-  jacobian <- jacobian[names(ctsem:::ctStanMatricesList()$jacobian)]
-  jacobian_rows <- ctsem:::ctModelUnlist(jacobian, names(jacobian))
+  jacobian <- try(ctJacobian(ctm), silent = TRUE)
+  if (inherits(jacobian, "try-error")) jacobian <- ctJacobian(ctm, simplify = FALSE)
+  jacobian <- jacobian[names(.ctMatricesList()$jacobian)]
+  jacobian_rows <- ctModelUnlist(jacobian, names(jacobian))
   jacobian_rows <- jacobian_rows[apply(jacobian_rows, 1L, function(x) any(!is.na(x))), , drop = FALSE]
   if (nrow(jacobian_rows)) {
     template <- ctm$pars[rep(1L, nrow(jacobian_rows)), , drop = FALSE]
@@ -734,10 +734,10 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       }
     }
   }
-  ctm$pars <- ctsem:::ctModelStatesAndPARS(
+  ctm$pars <- ctModelStatesAndPARS(
     ctm$pars, statenames = ctm$latentNames, tdprednames = ctm$TDpredNames
   )
-  ctsem:::T0VARredundancies(ctm)
+  T0VARredundancies(ctm)
 }
 
 .ctJuliaParameterTable <- function(model) {
@@ -750,7 +750,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       return(sprintf("%.17g + %.17g * (param * %.17g + %.17g)",
         offset, multiplier, meanscale, inneroffset))
     }
-    ctsem:::tform("param", transform, multiplier, meanscale, offset,
+    tform("param", transform, multiplier, meanscale, offset,
       inneroffset, singletext = TRUE)
   }
   # The model's own transform text, matched by cell rather than by row order.
@@ -799,7 +799,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   substitute_exact <- free & !is.na(exact)
   p$transform[substitute_exact] <- exact[substitute_exact]
   if (!is.null(ctm$modelmats$matsetup)) {
-    matrix_codes <- ctsem:::ctStanMatricesList()$all
+    matrix_codes <- .ctMatricesList()$all
     setup <- as.data.frame(ctm$modelmats$matsetup)
     values <- as.data.frame(ctm$modelmats$matvalues)
     setup$matrix_name <- names(matrix_codes)[match(setup$matrix, matrix_codes)]
@@ -907,7 +907,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     result <- if (is.na(text_k)) {
       # A fixed constant: nothing to compose, this state's t0 value is a number.
       list(kind = "fixed", value = as.numeric(p$value[row_k]))
-    } else if (ctsem:::simpleStateCheck(text_k)) {
+    } else if (simpleStateCheck(text_k)) {
       # This state's own t0 value is itself a reference to another state --
       # resolve that one first, then apply this cell's own transform to it.
       inner <- resolve_t0_state(.ctJuliaStateIndex(text_k), c(visited, state_idx))
@@ -937,7 +937,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     result
   }
   t0state_rows <- which(p$matrix == "T0MEANS" & !is.na(p$param) &
-    vapply(p$param, function(x) !is.na(x) && ctsem:::simpleStateCheck(x), logical(1)))
+    vapply(p$param, function(x) !is.na(x) && simpleStateCheck(x), logical(1)))
   if (length(t0state_rows)) {
     # Resolve every reference first, entirely from the table's original
     # (pre-resolution) contents -- then apply the results in a second pass.
@@ -1246,7 +1246,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   varying <- integer()
   sdscale <- numeric()
   if (length(prepared_data$indvaryingindex)) {
-    # Stan's own `indvaryingindex`, built by ctStanData from the same matsetup.
+    # Stan's own `indvaryingindex`, built by .ctPrepareData from the same matsetup.
     # Preferred when present so both backends agree on the set and its order.
     varying <- as.integer(prepared_data$indvaryingindex)
     sdscale <- as.numeric(prepared_data$sdscale)
@@ -1412,10 +1412,10 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   }
 
   expanded <- if (prepared_augmentation) model else {
-    prepared <- ctsem:::ctModel0DRIFT(model, model$continuoustime)
-    prepared$pars <- ctsem:::ctModelStatesAndPARS(prepared$pars,
+    prepared <- ctModel0DRIFT(model, model$continuoustime)
+    prepared$pars <- ctModelStatesAndPARS(prepared$pars,
       statenames = prepared$latentNames, tdprednames = prepared$TDpredNames)
-    ctsem:::ctStanModelIntOverPop(prepared)
+    .ctModelIntOverPop(prepared)
   }
   augmented_indices <- as.integer(expanded$intoverpopindvaryingindex)
   nlatent_augmented <- max(expanded$pars$row[expanded$pars$matrix == "T0MEANS"])
@@ -1467,7 +1467,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     varying_parameters <- varying_parameters[varying_parameters > 0L]
     random_sd_scale <- values$sdscale[match(varying_parameters, setup$param)]
     random_sd_scale[is.na(random_sd_scale)] <- 1
-    t0means_code <- ctsem:::ctStanMatricesList()$all[["T0MEANS"]]
+    t0means_code <- .ctMatricesList()$all[["T0MEANS"]]
     t0means_rows <- setup$matrix == t0means_code & setup$col == 1L
     match_position <- match(augmented_indices, setup$row[t0means_rows])
     t0means_setup_rows <- which(t0means_rows)[match_position]
@@ -1534,7 +1534,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # with population-varying T0VAR: both the newly-created carrier states for
   # non-T0MEANS random effects (DRIFT/CINT/etc., always appended contiguously
   # after the original states -- see `extralatents` in
-  # ctModelWriter.R::ctStanModelIntOverPop) AND any *original* state whose
+  # ctModelWriter.R::.ctModelIntOverPop) AND any *original* state whose
   # own T0MEANS is directly indvarying (e.g. a random initial value). Only the
   # former are static/no-own-dynamics carriers; the latter are still genuine
   # dynamic states that need their own diffusion/Lyapunov treatment, exactly
@@ -1844,7 +1844,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   if (nrow(tdpred_data) != nrow(dat)) stop("Prepared TD predictor rows do not match the fitted data.", call. = FALSE)
   if (nrow(tipred_data) != length(subject_starts)) stop("Prepared TI predictor rows do not match the fitted subjects.", call. = FALSE)
   # A missing TI predictor cell, on the sampling path only. `optimize=TRUE`
-  # is untouched here: `ctStanData()` (`prepared_data`, when supplied)
+  # is untouched here: `.ctPrepareData()` (`prepared_data`, when supplied)
   # already regression-imputed it into a real number before this function
   # ever saw it (`ctData.R`; that is what Charles asked for and it is
   # cheaper), so nothing below runs and `tipred_data` is used exactly as

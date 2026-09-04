@@ -25,11 +25,11 @@ reported in summary.}
 \item{parmatrices}{if TRUE, also return additional parameter matrices -- can be slow to compute
 for large models with many samples.}
 
-\item{priorcheck}{Whether or not to use \code{ctsem:::priorchecking} to compare posterior mean and sd to prior mean and sd.}
+\item{priorcheck}{Whether or not to use \code{priorchecking} to compare posterior mean and sd to prior mean and sd.}
 
 \item{residualcov}{Whether or not to show standardised residual covariance. Takes a little longer to compute.}
 
-\item{...}{Additional arguments to pass to \code{ctsem:::priorcheckreport}, such as \code{meanlim}, or \code{sdlim}.}
+\item{...}{Additional arguments to pass to \code{priorcheckreport}, such as \code{meanlim}, or \code{sdlim}.}
 }
 \value{
 List containing summary items, with a \code{print} method for readable console and knitr output.

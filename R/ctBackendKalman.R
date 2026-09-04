@@ -620,7 +620,7 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
 # `standatatolong()`'s id column is `standata$subject`, the ascending 1:N
 # `makeNumericIDs()` (R/ctsemUtils.R) assigned -- never the user's own ids,
 # which only `standata$idmap` (original/new, built right before that
-# remapping in ctStanData(), R/ctData.R) still knows. Left unmapped, a stan
+# remapping in .ctPrepareData(), R/ctData.R) still knows. Left unmapped, a stan
 # fit returned the internal index and a julia fit returned the user's real
 # ids (from the verbatim frame this used to fall back to), so the two
 # backends silently disagreed about what a subject is called -- a
@@ -658,7 +658,7 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
 # for them.
 .ctFitReplaceData <- function(fit, datalong) {
   if (!.ctFitIsJulia(fit) && !is.null(fit$standata)) {
-    fit$standata <- suppressMessages(ctStanData(fit$ctstanmodel, datalong, optimize = TRUE))
+    fit$standata <- suppressMessages(.ctPrepareData(fit$ctstanmodel, datalong, optimize = TRUE))
     return(fit)
   }
   spec <- .ctBackendSpec(fit)

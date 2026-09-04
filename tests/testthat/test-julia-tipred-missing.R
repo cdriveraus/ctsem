@@ -190,7 +190,7 @@ test_that("closed form via ctFit(): posterior of an isolated missing predictor r
   # same construction as the julia engine suite's closed-form test, run here
   # through the real R -> Julia bridge. `t0m` is left free -- a model with
   # zero free parameters at all hits an unrelated, pre-existing
-  # `ctStanModelMatrices()` error (`undefined columns selected`), reproduced
+  # `.ctModelMatSetup()` error (`undefined columns selected`), reproduced
   # independently of backend and of this feature; one free parameter with no
   # TI effect on it keeps the raw vector at "one ordinary parameter plus one
   # sampled predictor value" without touching that.

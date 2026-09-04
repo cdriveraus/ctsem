@@ -147,7 +147,7 @@
   matsetup <- fit$setup$matsetup
   if (is.null(matsetup)) matsetup <- fit$ctstanmodel$modelmats$matsetup
   if (is.null(matsetup)) stop("The fit does not carry a parameter table.", call. = FALSE)
-  mats <- ctStanMatricesList()$all
+  mats <- .ctMatricesList()$all
   names <- rep(NA_character_, max(mats))
   names[mats] <- base::names(mats)
   out <- data.frame(matrix = names[matsetup$matrix], row = as.integer(matsetup$row),

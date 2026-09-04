@@ -25,7 +25,7 @@ ctModelUnlist<-function(ctmodelobj,
   return(out)
 }
 
-ctStanModelDefaultFreePar <- function(matrix, row, col, continuoustime){
+.ctModelDefaultFreePar <- function(matrix, row, col, continuoustime){
   transform <- 0
   multiplier <- 1
   meanscale <- 1
@@ -100,7 +100,7 @@ ctStanModelDefaultFreePar <- function(matrix, row, col, continuoustime){
   )
 }
 
-ctStanModelMatrixValue <- function(value){
+.ctModelMatrixValue <- function(value){
   if(length(value) != 1) stop('Matrix elements must have length 1')
   if(is.factor(value)) value <- as.character(value)
   if(is.na(value)) return(list(param=NA_character_, value=NA_real_))
@@ -112,11 +112,11 @@ ctStanModelMatrixValue <- function(value){
   list(param=as.character(value), value=NA_real_)
 }
 
-ctStanModelMatricesPlaceholder <- function(){
+.ctModelMatricesPlaceholder <- function(){
   'pars-backed matrix view -- use model$matrices or ctModelMatrices(model)'
 }
 
-ctStanModelUpdateParsFromMatrices <- function(ctm, matrices){
+.ctModelUpdateParsFromMatrices <- function(ctm, matrices){
   if(!'ctStanModel' %in% class(ctm)) stop('x must be a ctStanModel object')
   if(!is.list(matrices) || is.null(names(matrices))) {
     stop('matrices must be a named list of matrices')
@@ -145,7 +145,7 @@ ctStanModelUpdateParsFromMatrices <- function(ctm, matrices){
         }
 
         wasfixed <- !is.na(pars$value[parrow])
-        parsed <- ctStanModelMatrixValue(mat[rowi,coli])
+        parsed <- .ctModelMatrixValue(mat[rowi,coli])
         pars$param[parrow] <- parsed$param
         pars$value[parrow] <- parsed$value
 
@@ -155,7 +155,7 @@ ctStanModelUpdateParsFromMatrices <- function(ctm, matrices){
           pars$sdscale[parrow] <- NA_real_
           if(length(tieffects) > 0) pars[parrow,tieffects] <- FALSE
         } else if(!is.na(parsed$param)){
-          defaults <- ctStanModelDefaultFreePar(
+          defaults <- .ctModelDefaultFreePar(
             matrix=matrixname,
             row=rowi,
             col=coli,
@@ -170,7 +170,7 @@ ctStanModelUpdateParsFromMatrices <- function(ctm, matrices){
   }
 
   ctm[['pars']] <- pars
-  if(is.null(ctm[['matrices']])) ctm[['matrices']] <- ctStanModelMatricesPlaceholder()
+  if(is.null(ctm[['matrices']])) ctm[['matrices']] <- .ctModelMatricesPlaceholder()
   ctm
 }
 
@@ -209,7 +209,7 @@ ctModelMatrices <- function(x){
 #' @rdname ctModelMatrices
 #' @export
 `ctModelMatrices<-` <- function(x, value){
-  ctStanModelUpdateParsFromMatrices(x, value)
+  .ctModelUpdateParsFromMatrices(x, value)
 }
 
 #' @export
@@ -221,7 +221,7 @@ ctModelMatrices <- function(x){
 
 #' @export
 `$<-.ctStanModel` <- function(x, name, value){
-  if(identical(name, 'matrices')) return(ctStanModelUpdateParsFromMatrices(x, value))
+  if(identical(name, 'matrices')) return(.ctModelUpdateParsFromMatrices(x, value))
   x[[name]] <- value
   x
 }
@@ -542,7 +542,7 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
   # out$stationarymeanprior <- NA
   # out$stationaryvarprior <- NA
   out$covmattransform <- 'rawcorr'
-  out[['matrices']] <- ctStanModelMatricesPlaceholder()
+  out[['matrices']] <- .ctModelMatricesPlaceholder()
   # out$NOrdinalIntegrationPoints <- 9L
   
   return(out)

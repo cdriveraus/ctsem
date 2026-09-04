@@ -237,7 +237,7 @@ ctModel<-function(LAMBDA, type='ct',n.manifest = 'auto', n.latent='auto', Tpoint
     TIpredNames=c()
   }
   
-  mats <- ctStanMatricesList()
+  mats <- .ctMatricesList()
   for(m in names(mats$base)){
     if(!exists(m, inherits = FALSE)) next
     if(!is.null(get(m, inherits = FALSE))){ #if the matrix is specified

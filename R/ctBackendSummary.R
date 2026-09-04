@@ -52,7 +52,7 @@
   # object the parameter table was actually derived from. It matters when
   # something re-prepares the data (ctPredict interpolating a time grid, say):
   # ctFit hands the backends a model that has already been through
-  # ctStanModelIntOverPop, and re-deriving the augmentation from a model that
+  # .ctModelIntOverPop, and re-deriving the augmentation from a model that
   # has not been produces an algebraically equivalent but differently written
   # parameter table -- with a different mapping from the raw vector.
   if (!is.null(fit$model_spec$model)) return(fit$model_spec$model)
@@ -414,7 +414,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 .ctSummaryMatricesFromArrays <- function(e, continuoustime, latentNames, manifestNames,
   TDpredNames, calcfunc = quantile, calcfuncargs = list(probs = 0.5), timeinterval = 1) {
 
-  mats <- ctStanMatricesList()
+  mats <- .ctMatricesList()
   mats <- c(names(mats$base), names(mats$asymptotic), names(mats$extra))
   if (isTRUE(continuoustime)) {
     d <- list(DRIFT = e$pop_DRIFT)
