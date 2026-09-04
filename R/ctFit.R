@@ -230,8 +230,14 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' @param chains used when \code{optimize=FALSE}. Number of chains to sample, during HMC or post-optimization importance sampling. Unless the cores
 #' argument is also set, the number of chains determines the number of cpu cores used, up to
 #' the maximum available minus one. Irrelevant when \code{optimize=TRUE}.
-#' @param cores number of cpu cores to use. Either 'maxneeded' to use as many as available minus one,
-#' up to the number of chains, or a positive integer. If \code{optimize=TRUE}, more cores are generally faster.
+#' @param cores number of cpu cores to use. A positive integer, or 'maxneeded' for
+#' as many as available minus one (capped at the number of chains on the stan
+#' backend, uncapped on julia, whose parallelism is over subject chunks). Defaults
+#' to \code{getOption("mc.cores", 2)}. More cores are generally faster when
+#' \code{optimize=TRUE}. Note that a julia fit at \code{cores > 1} is not
+#' reproducible to the last decimal, because the chunk tuner times candidate
+#' splits and the timings vary; use \code{cores = 1} for a before-and-after
+#' comparison.
 #' @param backend Either 'stan' (the default) or 'julia'. The julia backend is a
 #' separate maximum-likelihood engine with the same model definitions and the
 #' same summaries; it takes its own reverse-mode gradient, supports
@@ -305,7 +311,8 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' \describe{
 #'  \item{\code{input}}{Exactly what was passed to \code{ctFit()}, or the
 #'  formal default when an argument was not supplied -- \code{intoverpop} may
-#'  still read \code{'auto'}, \code{cores} may still read \code{'maxneeded'}.}
+#'  still read \code{'auto'}, and \code{cores} \code{'maxneeded'} if that is
+#'  what was passed.}
 #'  \item{\code{resolved}}{What the fit actually ran with, after \code{'auto'}
 #'  routing, deprecated-argument merges (e.g. \code{nopriors} into
 #'  \code{priors}) and backend-specific defaults were settled -- \code{cores}
@@ -438,7 +445,7 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #'
 #' ctPostPredict(f1, wait=FALSE) #compare randomly generated data from posterior to observed data
 #'
-#' cf<-ctCheckFit(f1) #compare mean and covariance of randomly generated data to observed cov
+#' cf<-ctFitCheck(f1) #compare mean and covariance of randomly generated data to observed cov
 #' plot(cf,wait=FALSE)
 #'
 #'  ### Further example models
@@ -564,7 +571,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   optimize=TRUE,  optimcontrol=list(),
   backend=c('stan','julia'), backendcontrol=list(),
   nlcontrol = list(), nopriors=NA, priors=FALSE, chains=2,
-  cores=ifelse(optimize,getOption("mc.cores", 2L),'maxneeded'),
+  cores=getOption("mc.cores", 2L),
   inits=NULL,
   compileArgs=list(),
   forcerecompile=FALSE,saveCompile=TRUE,savescores=FALSE,
@@ -1169,11 +1176,15 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   if(standata$savesubjectmatrices==1L) savescores = TRUE
   standata$savescores=as.integer(savescores)
 
+  # Reached only when the caller asks for 'maxneeded' by name. It is not a
+  # default and must not become one: it resolves to the whole machine, and CRAN
+  # allows at most two cores unless the user has asked for more. It was the
+  # `optimize=FALSE` default until 3.12.0.
+  #
   # Resolved here rather than after the julia branch below, which returns before
-  # ever reaching the old resolution site: `cores='maxneeded'` arrived at
-  # .ctFitJuliaBackend() as a string, `as.integer()` made it NA, and the NA guard
-  # there turned it into 1. So the documented default whenever `optimize=FALSE`
-  # silently meant single-core for the julia backend.
+  # ever reaching the old resolution site: the string arrived at
+  # .ctFitJuliaBackend(), `as.integer()` made it NA, and the NA guard there
+  # turned it into 1 -- so asking for every core silently got one.
   #
   # `chains` does not cap the julia backend -- it has no MCMC chains. Its
   # parallelism is over subject chunks, and `ctsem_tune_chunks!` measures within

@@ -145,7 +145,7 @@ ctStanParnames <- ctRawParnames
 ctDiscretePars<-function(fit, subjects='popmean',
   times=seq(from=0,to=10,by=.1),
   nsamples=200,observational=FALSE,standardise=FALSE,
-  cov=FALSE, plot=FALSE,cores=2,state=NULL,method='linearise',..., ctstanfitobj){
+  cov=FALSE, plot=FALSE,cores=1,state=NULL,method='linearise',..., ctstanfitobj){
 
   if(missing(fit)){
     if(missing(ctstanfitobj)) stop('fit must be supplied')

@@ -148,7 +148,7 @@ ctStanContinuousPars <- ctSummaryMatrices
 #' indpars <- ctSubjectPars(ctstantestfit)
 #' dimnames(indpars)
 #' plot(indpars[1,,'cint1'],indpars[1,,'cint2'])
-ctSubjectPars <- function(fit,pointest=TRUE,cores=2,nsamples='all'){
+ctSubjectPars <- function(fit,pointest=TRUE,cores=1,nsamples='all'){
 
   # A cell that reads a carrier state *is* that subject's parameter, and the
   # last row is the fully informed estimate of it -- nothing to warn about, and

@@ -2302,7 +2302,7 @@ summary.ctJuliaFit <- function(object, timeinterval = 1, digits = 3, parmatrices
 }
 
 #' @export
-ctExtract.ctJuliaFit <- function(object, subjectMatrices = FALSE, cores = 2,
+ctExtract.ctJuliaFit <- function(object, subjectMatrices = FALSE, cores = 1,
   nsamples = "all", subjects = "all", ...) {
   # `cores` was accepted and dropped. It is the engine's subject-chunk ceiling
   # here, not a number of R processes -- there is no cluster on this path -- and

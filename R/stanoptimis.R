@@ -6,6 +6,11 @@
 #'
 #' @return fit object with extra samples
 #' @aliases ctAddSamples
+#' @details \code{ctAddSamples} is the same function under its pre-3.11 name.
+#'   Both are kept; new code should use \code{ctFitAddSamples}. The julia
+#'   backend reaches this by a different route -- see \code{\link{ctSample}},
+#'   which runs the sampler from an optimised fit rather than resampling its
+#'   covariance.
 #' @export
 #'
 #' @examples
@@ -27,11 +32,15 @@ ctFitAddSamples <- function(fit,nsamples,cores=2){
     standata = fit$standata,samples=fit$stanfit$rawposterior,
     savescores = fit$standata$savescores,
     savesubjectmatrices=as.logical(fit$standata$savesubjectmatrices),
-    dokalman=as.logical(fit$standata$savesubjectmatrices),
+    # Either flag needs the filter pass; savesubjectmatrices already forces
+    # savescores on at ctFit.R:1176, so savescores is the one to read.
+    dokalman=as.logical(fit$standata$savescores),
     cores=cores)
   return(fit)
 }
 
+# Pre-3.11 name, documented on ctFitAddSamples' page via @aliases. Kept
+# because it is on CRAN; both go out with the stan backend.
 #' @export
 ctAddSamples <- ctFitAddSamples
 
@@ -417,9 +426,9 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,
   onlyfirstrow=FALSE, #ifelse(any(savesubjectmatrices,savescores),FALSE,TRUE),
   pcovn=2000,
   quiet=FALSE){
-  if(savesubjectmatrices && !dokalman){
+  if((savesubjectmatrices || savescores) && !dokalman){
     dokalman <- TRUE
-    warning('savesubjectmatrices = TRUE requires dokalman=TRUE also!')
+    warning('savescores or savesubjectmatrices = TRUE requires dokalman=TRUE also!')
   }
   standata$savescores <- as.integer(savescores)
   standata$dokalman <- as.integer(dokalman)

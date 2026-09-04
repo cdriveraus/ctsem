@@ -126,7 +126,7 @@ covml <- function(dat,reg=0,verbose=0,hmc=FALSE,
     abs_tol=tol,grad_tol=0,rel_tol=0,step_tol=0,ginf_tol=0)
   } else{
     # browser()
-    covfit=stanWplot(object = stanmodels$cov,iter=2000,chains=4,cores=4,check_data=FALSE,
+    covfit=stanWplot(object = stanmodels$cov,iter=2000,chains=4,cores=2,check_data=FALSE,
       data=covdata,init_r=.01)
     # covfit=sampling(object = stanmodels$cov,iter=2000,chains=2,cores=2,check_data=FALSE,
     #   data=covdata)
