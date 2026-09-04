@@ -137,10 +137,10 @@ evaluated at `A'` in direction `Ȳ`.
 
 Matrix exponential of `A`, as a pure function with a hand-written pullback.
 
-For `Float64` this is `Base.exp`; other scalar types (notably
-`ForwardDiff.Dual`, used by the validation oracle that cross-checks this
-primitive) go through the package's own buffered `my_exp!`, so both paths
-compute the same Padé approximant.
+Every scalar type goes through the package's buffered `my_exp!`, `Float64`
+included: `Base.exp` bottoms out in a LAPACK solve, and this can run inside
+the subject loop. The validation oracle's `ForwardDiff.Dual` path computes
+the same Padé approximant by the same code.
 """
 function _ctsem_expm(A::Matrix{Float64})
     # `Base.exp` picks its Pade degree adaptively from the matrix norm and is
@@ -153,7 +153,6 @@ function _ctsem_expm(A::Matrix{Float64})
     # engine's own LU, neither of which contends, so above one chunk it wins by
     # more than the fixed degree costs.
     n = size(A, 1)
-    n <= _CTSEM_SMALL_CHOLESKY[] || return exp(A)
     Y = Matrix{Float64}(undef, n, n)
     scratch = Matrix{Float64}(undef, n, n)
     my_exp!(Y, copy(A), scratch, ExpBuffer{Float64}(n), Val(n))

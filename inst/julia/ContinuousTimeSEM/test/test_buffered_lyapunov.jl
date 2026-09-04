@@ -30,7 +30,12 @@ using ForwardDiff
         @test isapprox(X, fresh(A2, Q1); atol=1e-13)
         @test ContinuousTimeSEM.ctsem_opcounts().lyap_ksolve == 2 + 3
     end
+    # The Schur route is LAPACK and off by default (`_CTSEM_LYAP_SCHUR_ABOVE` is
+    # typemax); the setter brings it back above a chosen size.
+    @test ContinuousTimeSEM.LyapBuffer(Float64, 11) isa ContinuousTimeSEM.LyapKsolveBuffer{Float64}
+    ContinuousTimeSEM.ctsem_set_lyapunov_schur_above!(10)
     @test ContinuousTimeSEM.LyapBuffer(Float64, 11) isa ContinuousTimeSEM.LyapSchurBuffer{Float64}
+    ContinuousTimeSEM.ctsem_set_lyapunov_schur_above!(typemax(Int))
 end
 
 # Rather than compare against one implementation detail, validate the defining

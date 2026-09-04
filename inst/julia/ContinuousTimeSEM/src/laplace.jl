@@ -876,7 +876,11 @@ function _laplace_block_of(dense::AbstractMatrix{T},
 end
 
 """The Cholesky type `_laplace_block_factor` produces for element type `T`."""
-const _LaplaceCholesky{T} = LinearAlgebra.Cholesky{T,Matrix{T}}
+# The engine's own factorization, not `LinearAlgebra.Cholesky`: this runs once
+# per block per Newton step per subject, inside the threaded subject loop, and
+# LAPACK's per-call lock is what stopped that loop from threading (see
+# small_linalg.jl). The blocks are the size of a subject's random effects.
+const _LaplaceCholesky{T} = CTSEMCholesky{T,Matrix{T}}
 
 """One unit's factorized curvature: the per-block Choleskys and the eliminated
 couplings, exactly what `_laplace_block_solve` and `_laplace_selected_inverse`
@@ -913,7 +917,7 @@ function _laplace_block_factor(M::CTSEMBlockMatrix{T},
     factors = Vector{_LaplaceCholesky{T}}(undef, nb)
     total = zero(T)
     for b in 1:nb
-        f = cholesky(Symmetric(_laplace_symmetrise(diag[b])); check=false)
+        f = _ctsem_cholesky(Matrix{T}(_laplace_symmetrise(diag[b])), size(diag[b], 1))
         issuccess(f) || return (false, T(NaN), factors, coupling)
         # Numerically singular counts as failure, so the caller shifts it.
         #

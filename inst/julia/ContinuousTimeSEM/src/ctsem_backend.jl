@@ -153,6 +153,10 @@ end
 
 export CTSEMObjective, ctsem_objective, ctsem_evaluate, ctsem_optimize
 
+"""The substep policy for one subject's rows `r`: a rule is shared, a mesh is sliced."""
+_ctsem_subject_substeps(rule::Real, r) = rule
+_ctsem_subject_substeps(mesh::AbstractVector, r) = Int[Int(m) for m in view(mesh, r)]
+
 function _ctsem_row_loglikelihood(objective::CTSEMObjective, values::AbstractVector)
     contributions = Vector{eltype(values)}()
     for subject_objective in objective.subject_objectives
@@ -164,7 +168,7 @@ function _ctsem_row_loglikelihood(objective::CTSEMObjective, values::AbstractVec
                 collect(subject_objective.timesteps[1:row]);
                 tdpreds=Matrix(subject_objective.tdpreds[:, 1:row]),
                 tipreds=subject_objective.tipreds, subject=subject_objective.subject,
-                max_timestep=subject_objective.max_timestep)
+                max_timestep=_ctsem_subject_substeps(subject_objective.max_timestep, 1:row))
             current = prefix(values)
             push!(contributions, current - previous)
             previous = current
@@ -195,7 +199,7 @@ function CTSEMObjective(params::EKFParameters, subject_starts::AbstractVector,
     timesteps::AbstractVector, data::AbstractMatrix,
     tdpred_data::AbstractMatrix=zeros(eltype(data), 0, size(data, 2)),
     tipred_data::AbstractMatrix=zeros(eltype(data), length(subject_starts), 0),
-    max_timestep::Real=Inf; prior_index=Int[], prior_scale=Float64[],
+    max_timestep=Inf; prior_index=Int[], prior_scale=Float64[],
     prior_weight::Real=1.0,
     # One entry per missing/sampled TI predictor cell, parallel arrays, empty
     # for every model with none (the overwhelmingly common case). `subject`
@@ -205,6 +209,10 @@ function CTSEMObjective(params::EKFParameters, subject_starts::AbstractVector,
     ti_missing_subject=Int[], ti_missing_predictor=Int[], ti_missing_parameter=Int[],
     ti_missing_mu=Float64[], ti_missing_sigma=Float64[])
     ranges = _ctsem_subject_ranges(subject_starts, timesteps, data)
+    # A mesh (one substep count per row of the whole dataset) is sliced per
+    # subject exactly as `timesteps` is; a `maxtimestep` rule is shared.
+    max_timestep isa AbstractVector && length(max_timestep) != length(timesteps) &&
+        throw(DimensionMismatch("a substep mesh needs one entry per row of the data"))
     size(tdpred_data, 2) == size(data, 2) || throw(DimensionMismatch("TD predictor columns must match observations"))
     size(tipred_data, 1) == length(ranges) || throw(DimensionMismatch("TI predictor rows must match subjects"))
     nmissing = length(ti_missing_subject)
@@ -233,7 +241,7 @@ function CTSEMObjective(params::EKFParameters, subject_starts::AbstractVector,
             else
                 vec(tipred_data[i, :])
             end,
-            subject=i, max_timestep=max_timestep)
+            subject=i, max_timestep=_ctsem_subject_substeps(max_timestep, r))
         for (i, r) in enumerate(ranges)
     ]
     length(prior_index) == length(prior_scale) ||
@@ -245,7 +253,7 @@ end
 
 ctsem_objective(params::EKFParameters, subject_starts, timesteps, data,
     tdpred_data=zeros(eltype(data), 0, size(data, 2)),
-    tipred_data=zeros(eltype(data), length(subject_starts), 0), max_timestep::Real=Inf;
+    tipred_data=zeros(eltype(data), length(subject_starts), 0), max_timestep=Inf;
     prior_index=Int[], prior_scale=Float64[], prior_weight::Real=1.0,
     ti_missing_subject=Int[], ti_missing_predictor=Int[], ti_missing_parameter=Int[],
     ti_missing_mu=Float64[], ti_missing_sigma=Float64[]) =

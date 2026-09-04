@@ -83,12 +83,18 @@ call as a state-dependent model pays at every substep):
     schur  µs  1.2   3.9   6.6  11.6  17.5  21.6  26.1
     schur allocates 1-5 KB per call; ksolve none
 
-The two agree to about 1e-14 relative throughout. A linear model never sees
-this choice, because `DiscretizationCache` solves once; it matters for
-state-dependent drift, where a 6-latent model was spending a fifth of its
-adjoint time in `schur!`. `ctsem_set_lyapunov_schur_above!` moves it.
+The two agree to about 1e-14 relative throughout. Beyond that table the packed
+solve loses fast when it has to refactor -- k = 16: 357 vs 56; k = 20: 1344 vs
+80; k = 24: 5628 vs 124 -- but a solve against a *cached* factor costs 13, 33
+and 69 microseconds at those sizes, and a linear model's reverse pass solves
+against one `A` throughout.
+
+The default is therefore *never Schur*: no LAPACK call, no lock, at any size.
+The one case that pays is state-dependent drift with more than about twelve
+diffusing states, which refactors at every substep; a session fitting such a
+model on one core can call `ctsem_set_lyapunov_schur_above!(12)`.
 """
-const _CTSEM_LYAP_SCHUR_ABOVE = Ref(10)
+const _CTSEM_LYAP_SCHUR_ABOVE = Ref(typemax(Int))
 
 """Set the diffusion-block size above which the Schur Lyapunov route is used."""
 function ctsem_set_lyapunov_schur_above!(k::Integer)
