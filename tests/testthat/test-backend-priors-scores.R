@@ -124,11 +124,11 @@ test_that("Stan and Julia agree with priors=TRUE, with random effects and a TI p
 # models there fix T0VAR (`T0VAR = diag(2)`) and one sets `tipredDefault =
 # FALSE`, and it takes free T0VAR *plus* default TI-predictor effects to reach
 # this. T0MEANS is individually varying by default, so `T0VARredundancies()`
-# fixes the now-redundant free T0VAR cells -- clearing `param`, `transform` and
-# `indvarying`, but not the `<TIpred>_effect` columns -- and the julia
-# augmentation then reuses those same cells for the population SD and
-# correlation parameters. The stale flag gave each of those a TI-predictor
-# coefficient that the generated Stan model has no counterpart for, with a
+# fixes the now-redundant free T0VAR cells, and the julia augmentation then
+# reuses those same cells for the population SD and correlation parameters.
+# Those cells used to arrive still carrying the `<TIpred>_effect` columns of
+# whatever the user wrote there, which gave each population parameter a
+# TI-predictor coefficient that the Stan model has no counterpart for, with a
 # different symptom per setting: `priors = TRUE` refused the fit because its
 # Stan-derived layout was three parameters short, while `priors = FALSE`
 # silently estimated the three extras and reported them in `summary()$tipreds`

@@ -70,6 +70,11 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
     ctm$pars$param[whichT0VAR_T0MEANSindvarying] <- NA
     ctm$pars$transform[whichT0VAR_T0MEANSindvarying] <- NA
     ctm$pars$indvarying[whichT0VAR_T0MEANSindvarying] <- FALSE
+    #these cells are no longer parameters, so they carry no TI predictor
+    #effects either -- a stale TRUE here makes ctStanData compute a
+    #per subject T0VAR that cannot vary by subject.
+    if(ctm$n.TIpred > 0) ctm$pars[whichT0VAR_T0MEANSindvarying,
+      paste0(ctm$TIpredNames,rep('_effect',ctm$n.TIpred))] <- FALSE
   }
   return(ctm)
 }

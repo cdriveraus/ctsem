@@ -1480,13 +1480,14 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # A cell repurposed as a population parameter must not inherit the
   # TI-predictor effect flags of whatever the user originally wrote there.
   # `T0VARredundancies()` (R/ctFit.R) fixes the free T0VAR cells that indvarying
-  # T0MEANS makes redundant, clearing `param`, `transform` and `indvarying` but
-  # not the `<TIpred>_effect` columns; this function then hands those same cells
-  # to the population SD and correlation parameters below. The stale flag made
-  # `.ctJuliaTIEffects()` mint a TI-predictor coefficient for every population
-  # parameter -- something the generated Stan model has no counterpart for,
-  # since its population block is `rawpopsdbase`/`sqrtpcov` and takes no TI
-  # effects. The consequences were one per backend: the engine silently
+  # T0MEANS makes redundant and clears their `<TIpred>_effect` columns along with
+  # `param`, `transform` and `indvarying`; this function then hands those same
+  # cells to the population SD and correlation parameters below, and clears the
+  # flags again rather than trust that every cell arrived by that route. A stale
+  # flag made `.ctJuliaTIEffects()` mint a TI-predictor coefficient for every
+  # population parameter -- something the generated Stan model has no
+  # counterpart for, since its population block is `rawpopsdbase`/`sqrtpcov`
+  # and takes no TI effects. The consequences were one per backend: the engine silently
   # estimated those extra coefficients, and `.ctBackendPriorSpec()` refused the
   # fit outright because its Stan-derived layout was that many parameters short.
   # The cells `.ctJuliaPadMatrix()` created are already FALSE; these are the
