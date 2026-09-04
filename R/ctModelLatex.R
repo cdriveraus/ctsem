@@ -204,6 +204,39 @@ texPrep <- function(x){ #replaces certain characters with tex safe versions
   values[!is.na(names(values))]
 }
 
+# Every model matrix with the fit's estimates in it: a number in each cell,
+# except the cells written as expressions over the state or the TD predictors,
+# which keep their structure and lose only their labels (see
+# .ctLatexRenderExpression above).
+#
+# Shared by the two backend branches of ctModelLatex(). They differ only in
+# where the four inputs come from -- the matrices, the pop_* arrays, the
+# parameter table and the context cells -- so only that differs, and the
+# substitution itself is written once.
+.ctLatexFillEstimates <- function(ctmodelmats, e, pars, contextcells, estimates,
+  latentNames, TDpredNames, digits) {
+
+  isContextCell <- function(mi,i,j) !is.null(contextcells) &&
+    any(contextcells$matrix %in% mi & contextcells$row %in% i & contextcells$col %in% j)
+
+  for(mi in names(ctmodelmats)){
+    # A matrix the backend does not report leaves its expressions in place,
+    # rather than taking the whole document down on a NULL.
+    if(is.null(e[[paste0('pop_',mi)]])) next
+    mimean <- ctCollapse(e[[paste0('pop_',mi)]],1,mean)
+    for(i in 1:nrow(ctmodelmats[[mi]])){
+      for(j in 1:ncol(ctmodelmats[[mi]])){
+        if(isContextCell(mi,i,j)){
+          ctmodelmats[[mi]][i,j] <- .ctLatexRenderExpression(
+            .ctLatexCellExpression(pars,mi,i,j), estimates,
+            latentNames, TDpredNames, digits)
+        } else ctmodelmats[[mi]][i,j] <- round(mimean[i,j],digits)
+      }
+    }
+  }
+  ctmodelmats
+}
+
 # The expression a cell was actually written as.
 #
 # Two spec syntaxes reach the same place. A bare expression lives in `param`
@@ -218,9 +251,36 @@ texPrep <- function(x){ #replaces certain characters with tex safe versions
   transform <- pars$transform[row]
   written <- !is.na(transform) && nzchar(as.character(transform)) &&
     is.na(suppressWarnings(as.numeric(transform)))
-  if (written) return(gsub('\\bparam\\b', as.character(pars$param[row]),
-    as.character(transform), perl = TRUE))
-  as.character(pars$param[row])
+  if (written) return(.ctLatexResolvePARS(gsub('\\bparam\\b',
+    as.character(pars$param[row]), as.character(transform), perl = TRUE), pars))
+  .ctLatexResolvePARS(as.character(pars$param[row]), pars)
+}
+
+# `PARS[i,j]` referred to by its own name.
+#
+# A cell may hold a parameter in the PARS matrix and reference it from the
+# dynamics, and ctModelStatesAndPARS rewrites the name into that coordinate
+# before either backend sees the model -- so a julia fit's parameter table
+# spells `dr11 * (1 + 0.2 * eta2)` as `PARS[1,1] * (1 + 0.2 * state[2])`, while
+# the stan branch reads the base model and still sees `dr11`. Left alone the
+# coordinate renders as the literal text `PARS[1,1]` in a document whose point
+# is the estimates; resolved to the label, it substitutes like any other
+# parameter and the two backends write the same cell.
+#
+# The label, not the PARS cell's own transform: what this expression multiplies
+# is the parameter, and the transform is reported where that cell is -- the
+# same thing the stan branch does by reading the name the user wrote.
+.ctLatexResolvePARS <- function(expression, pars) {
+  if (length(expression) != 1 || is.na(expression) ||
+      !grepl('PARS[', expression, fixed = TRUE)) return(expression)
+  for (row in which(pars$matrix %in% 'PARS')) {
+    label <- if (is.na(pars$value[row])) as.character(pars$param[row]) else
+      as.character(pars$value[row])
+    if (is.na(label)) next
+    expression <- gsub(paste0('\\bPARS\\s*\\[\\s*', pars$row[row], '\\s*,\\s*',
+      pars$col[row], '\\s*\\]'), gsub('\\\\', '\\\\\\\\', label), expression, perl = TRUE)
+  }
+  expression
 }
 
 # One cell's expression, with estimates for labels and math for references.
@@ -490,11 +550,16 @@ ctModelLatexMeasurementBlock <- function(ctmodel, matrixnames=TRUE,
 
 #' Generate and optionally compile latex equation of subject level ctsem model.
 #'
-#' @param x ctsem model object or ctStanFit object.
+#' @param x A model from \code{\link{ctModel}}, or a fit from
+#' \code{\link{ctFit}} on either backend (\code{ctStanFit} or
+#' \code{ctJuliaFit}). Given a fit, the estimates are substituted for the
+#' parameter labels. The subject parameter distribution is written out for a
+#' \code{ctStanFit} only.
 #' @param matrixnames Logical. If TRUE, includes ctsem matrix names such as DRIFT and DIFFUSION under the matrices.
 #' @param digits Precision of decimals for numeric values.
 #' @param linearise Logical. Show the linearised normal approximation for subject parameters and 
-#' covariate effects, or the raw parameters?
+#' covariate effects, or the raw parameters? Only relevant where the subject
+#' parameter distribution is shown.
 #' @param textsize Standard latex text sizes -- 
 #' tiny scriptsize footnotesize small normalsize large Large LARGE huge Huge. 
 #' Useful if output overflows page. 
@@ -608,20 +673,75 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=inherits(x,'ctStan
       try(.ctLatexRawEstimates(x, e), silent = TRUE)
     } else NULL
     if(inherits(estimates,'try-error')) estimates <- numeric()
-    isContextCell <- function(mi,i,j) !is.null(contextcells) &&
-      any(contextcells$matrix %in% mi & contextcells$row %in% i & contextcells$col %in% j)
+    ctmodelmats <- .ctLatexFillEstimates(ctmodelmats, e, x$ctstanmodelbase$pars,
+      contextcells, estimates, ctmodel$latentNames, ctmodel$TDpredNames, digits)
+    ctmodel <- c(ctmodel,ctmodelmats)
+    class(ctmodel) <- 'ctStanModel'
+  } else if(inherits(x,'ctJuliaFit')){
+    ####################################################################
+    # The same substitution for the julia backend. Everything it needs is
+    # already backend agnostic -- `ctExtract()` has a ctJuliaFit method
+    # returning the same pop_* arrays, `.ctFitModelObject()` returns the model
+    # they belong to -- so what follows is only the two places the layouts
+    # genuinely differ from stan's.
+    e <- ctExtract(x)
+    ctmodel <- .ctFitModelObject(x)
+    ctmodelmats <- listOfMatrices(ctmodel$pars)
 
-    for(mi in names(ctmodelmats)){
-      mimean <- ctCollapse(e[[paste0('pop_',mi)]],1,mean)
-      for(i in 1:nrow(ctmodelmats[[mi]])){
-        for(j in 1:ncol(ctmodelmats[[mi]])){
-          if(isContextCell(mi,i,j)){
-            ctmodelmats[[mi]][i,j] <- .ctLatexRenderExpression(
-              .ctLatexCellExpression(x$ctstanmodelbase$pars,mi,i,j), estimates,
-              ctmodel$latentNames, ctmodel$TDpredNames, digits)
-          } else ctmodelmats[[mi]][i,j] <- round(mimean[i,j],digits)
-        }
+    # First difference: a julia fit carries the model ctFit handed the engine,
+    # which for an intoverpop model is written over the *augmented* state. The
+    # stan branch above sidesteps that by taking its structure from the base
+    # model, and the engine reports pop_* over the real processes either way
+    # (.ctBackendTrimAugmented), so the augmented rows and columns come off
+    # here and the two backends write the same system out. T0MEANS and T0VAR
+    # are trimmed too, which pop_* leaves augmented because a carrier state's
+    # T0 moments *are* a parameter's population moments -- reported elsewhere,
+    # not part of the equations. The Jacobians are ctStanCalcsList's working
+    # matrices rather than anything a reader asked for.
+    ctmodelmats <- ctmodelmats[!names(ctmodelmats) %in% .ctBackendJacobianMatrices]
+    augmented <- .ctBackendSpec(x)$nlatent_augmented
+    if(!is.null(augmented) && !identical(augmented, ctmodel$n.latent)){
+      latent <- seq_len(ctmodel$n.latent)
+      for(mi in names(ctmodelmats)){
+        mat <- ctmodelmats[[mi]]
+        rows <- if(mi %in% c(.ctBackendLatentRows,'T0MEANS','T0VAR') &&
+            nrow(mat) == augmented) latent else seq_len(nrow(mat))
+        cols <- if(mi %in% c(.ctBackendLatentCols,'T0VAR') &&
+            ncol(mat) == augmented) latent else seq_len(ncol(mat))
+        ctmodelmats[[mi]] <- mat[rows,cols,drop=FALSE]
       }
+    }
+
+    # Second difference: which cells keep their structure. `carrier` cells --
+    # a CINT written `10*state[3]` because a parameter varies over subjects --
+    # are how this backend spells an individual difference, not a dependence
+    # on the dynamics, and the stan branch never sees them because the base
+    # model spells the same thing `cint1`. .ctFitConditionalCells() is the
+    # existing name for the subset that excludes them.
+    contextcells <- try(.ctFitConditionalCells(x), silent = TRUE)
+    if(inherits(contextcells,'try-error')) contextcells <- NULL
+    estimates <- if(!is.null(contextcells) && nrow(contextcells)){
+      try(.ctLatexRawEstimates(x), silent = TRUE)
+    } else NULL
+    if(inherits(estimates,'try-error')) estimates <- numeric()
+
+    ctmodelmats <- .ctLatexFillEstimates(ctmodelmats, e, ctmodel$pars,
+      contextcells, estimates, ctmodel$latentNames, ctmodel$TDpredNames, digits)
+
+    # The population distribution and the covariate effects are not written
+    # out for this backend: it holds both in a different shape (per level, and
+    # as an sd of the transformed parameter rather than a raw covariance), and
+    # rendering the stan section from them would be a guess at a scaling.
+    # Said rather than silently dropped, because a random effects model whose
+    # equations arrive without them looks like a model that has none.
+    popcov <- diag(0,0)
+    timat <- diag(0,0)
+    popmeans <- character(0)
+    spec <- .ctBackendSpec(x)
+    if(length(.ctBackendRandomEffectParameters(spec)) || !is.null(spec$laplace) ||
+        (!is.null(spec$ti_effects) && nrow(spec$ti_effects))){
+      message('Subject distribution and covariate effects are not written out ',
+        "for a backend='julia' fit; see summary().")
     }
     ctmodel <- c(ctmodel,ctmodelmats)
     class(ctmodel) <- 'ctStanModel'
@@ -629,7 +749,7 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=inherits(x,'ctStan
   
   if('ctStanModel' %in% class(ctmodel)) {
     
-    if(!'ctStanFit' %in% class(x)){ #construct pop effects
+    if(!inherits(x,c('ctStanFit','ctJuliaFit'))){ #construct pop effects
       popcov <- ctModelBuildPopCov(ctmodel,linearise=linearise)
       if(ctmodel$n.TIpred > 0) timat <- ctModelBuildTIeffects(ctmodel) else timat <- diag(0,0)
       if(!linearise) timat[,] <- paste0('raw_',timat)
