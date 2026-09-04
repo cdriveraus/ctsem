@@ -24,14 +24,19 @@ ctModelLatex(
 )
 }
 \arguments{
-\item{x}{ctsem model object or ctStanFit object.}
+\item{x}{A model from \code{\link{ctModel}}, or a fit from
+\code{\link{ctFit}} on either backend (\code{ctStanFit} or
+\code{ctJuliaFit}). Given a fit, the estimates are substituted for the
+parameter labels. The subject parameter distribution is written out for a
+\code{ctStanFit} only.}
 
 \item{matrixnames}{Logical. If TRUE, includes ctsem matrix names such as DRIFT and DIFFUSION under the matrices.}
 
 \item{digits}{Precision of decimals for numeric values.}
 
 \item{linearise}{Logical. Show the linearised normal approximation for subject parameters and 
-covariate effects, or the raw parameters?}
+covariate effects, or the raw parameters? Only relevant where the subject
+parameter distribution is shown.}
 
 \item{textsize}{Standard latex text sizes -- 
 tiny scriptsize footnotesize small normalsize large Large LARGE huge Huge. 
