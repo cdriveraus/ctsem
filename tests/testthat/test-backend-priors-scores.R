@@ -64,6 +64,7 @@
 }
 
 test_that("Stan and Julia agree with priors=TRUE, without random effects", {
+  skip_without_julia()
   skip_if_not_installed("rstan")
   skip_if_not_installed("digest")
   model <- .prior_simple_model()
@@ -91,6 +92,7 @@ test_that("Stan and Julia agree with priors=TRUE, without random effects", {
 })
 
 test_that("Stan and Julia agree with priors=TRUE, with random effects and a TI predictor", {
+  skip_without_julia()
   skip_if_not_installed("rstan")
   skip_if_not_installed("digest")
   model <- .prior_full_model()
@@ -146,6 +148,7 @@ test_that("Laplace priors are refused rather than silently treated as normal", {
 })
 
 test_that("per-subject scores sum to the gradient, with and without priors", {
+  skip_without_julia()
   model <- .prior_full_model()
   data <- .prior_full_data()
 

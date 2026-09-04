@@ -59,6 +59,7 @@ test_that("a missing TI predictor is sampled (not refused) with intoverpop='augm
 })
 
 test_that("fitting a missing TI predictor with the default (adjoint) gradient now works, same as explicit forward", {
+  skip_without_julia()
   # The reverse pass initially had no cotangent for a sampled TI predictor
   # value, so a fit here briefly refused unless gradient='forward' was
   # requested by name (see the git history of .ctFitJuliaBackendImpl). The

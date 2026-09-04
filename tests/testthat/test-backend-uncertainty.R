@@ -112,6 +112,7 @@ test_that("the Hessian is exact, and agrees with the finite difference it replac
 })
 
 test_that("unsupported uncertainty methods are refused by name, not silently", {
+  skip_without_julia()
   model <- .backend_uncertainty_model()
   data <- .backend_uncertainty_data()[1:24, ]
   julia_fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
