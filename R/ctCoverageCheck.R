@@ -26,7 +26,7 @@
 #' @export
 
 ctCoverageCheck <- function(initialData, fittingModel, niter, fitArgs, 
-  cores = 10, fitCores = 1, generateCores = fitCores,
+  cores = 1, fitCores = 1, generateCores = fitCores,
   plotEvery = max(c(10,cores))) {
   
   ctCoverageFitArgs <- function(default_fit_args, fitArgs, fitCores){

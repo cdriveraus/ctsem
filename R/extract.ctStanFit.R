@@ -12,10 +12,10 @@
 #' e = ctExtract(ctstantestfit)
 #' }
 #' @export
-ctExtract <- function(object, subjectMatrices=FALSE, cores=2, nsamples='all', subjects='all', ...) UseMethod("ctExtract")
+ctExtract <- function(object, subjectMatrices=FALSE, cores=1, nsamples='all', subjects='all', ...) UseMethod("ctExtract")
 
 #' @export
-ctExtract.ctStanFit <- function(object,subjectMatrices=FALSE,cores=2,nsamples='all', subjects='all', ...){
+ctExtract.ctStanFit <- function(object,subjectMatrices=FALSE,cores=1,nsamples='all', subjects='all', ...){
   # inherits(), not class() %in%: a fit carries both 'ctStanFit' and 'ctFit'
   # since the ctFit rename, and `if` on a length-2 condition is an error in
   # R >= 4.2 -- so this guard used to reject every fit it was given.
