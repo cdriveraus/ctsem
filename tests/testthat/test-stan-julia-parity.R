@@ -20,10 +20,34 @@
 # the actual compile is additionally cached by generated-code hash to avoid
 # paying for it more than once per distinct model.
 .parity_stan_cache <- new.env(parent = emptyenv())
+
+# Tiered, because the two tiers differ by three orders of magnitude in cost.
+#
+# A model shape with `recompile == 0` reuses ctsem's own precompiled binary and
+# costs seconds. A shape with `recompile == 1` -- the nonlinear and
+# state-dependent ones -- calls rstan::stan_model() and compiles C++ at test
+# time: 15 to 25 minutes EACH on Windows, per distinct generated model. That is
+# not a slow machine, it is a test file that compiles compilers' worth of code,
+# and no amount of hardware fixes it.
+#
+# So the compiling ones skip by default and run on request:
+#
+#   CTSEM_PARITY_COMPILE=true Rscript -e '...test_file(...)'
+#
+# Run them before a release, and whenever anything touches the generated stan
+# program, since that is what they cover. The rest run in any ordinary suite,
+# which is the point: parity that never runs protects nothing, and that was
+# this file's previous state for a different reason (it skipped on an
+# environment variable nothing ever set).
+
 .compiled_stan_fit <- function(stan_spec) {
   if (identical(stan_spec$standata$recompile, 0L)) {
     return(ctsem:::stan_reinitsf(ctsem:::stanmodels$ctsm, stan_spec$standata))
   }
+  testthat::skip_if(
+    !identical(Sys.getenv("CTSEM_PARITY_COMPILE"), "true"),
+    paste("this model shape compiles a fresh stan program (minutes);",
+      "set CTSEM_PARITY_COMPILE=true to run it"))
   key <- digest::digest(stan_spec$stanmodeltext)
   if (!exists(key, envir = .parity_stan_cache, inherits = FALSE)) {
     assign(key, rstan::stan_model(model_code = stan_spec$stanmodeltext), envir = .parity_stan_cache)
