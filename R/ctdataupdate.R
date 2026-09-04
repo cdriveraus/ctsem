@@ -81,7 +81,6 @@ ctdataupdate <- function(what = c("data", "fit"), confirm = TRUE, forcerecompile
     }
 
     if ("fit" %in% what) {
-      ## now in zzz.R
       checkm<-ctModel(
         type='ct',
         n.latent=2,n.TDpred=1,n.TIpred=1,n.manifest=2,

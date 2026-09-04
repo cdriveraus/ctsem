@@ -57,6 +57,9 @@ compare against. Refresh the fit alone unless the data change is the point.
 assertions looks identical to a file that passed. Check assertion counts, not
 just the absence of failures.
 
+**`testall()` is in `dev/testall.R`** -- `source("dev/testall.R")`, then
+`testall()`. It used to be inside `R/`, reachable only as `ctsem:::testall()`.
+
 **Do not trust a green run from `testall()` alone** for anything before
 September 2026: its workers loaded whichever ctsem was installed rather than the
 tree in hand, so it may have been testing something else entirely. Fixed now,

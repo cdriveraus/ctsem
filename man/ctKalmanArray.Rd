@@ -16,7 +16,6 @@ ctKalmanArray(
   maxtime = "asdata",
   standardisederrors = FALSE,
   subjectpars = TRUE,
-  tformsubjectpars = TRUE,
   indvarstates = FALSE,
   removeObs = F,
   ...
@@ -45,8 +44,6 @@ a timestep automatically (resulting in some interpolation but not excessive comp
 \item{subjectpars}{if TRUE, state estimates are not returned, instead, predictions of each subjects parameters
 are returned, for parameters that had random effects specified.}
 
-\item{tformsubjectpars}{if FALSE, subject level parameters are returned in raw, pre transformation form.}
-
 \item{indvarstates}{if TRUE, do not remove indvarying states from output}
 
 \item{removeObs}{Logical or integer. If TRUE, observations (but not covariates)
@@ -70,7 +67,10 @@ likewise the covariance of the linear predictor.
 }
 \description{
 Get Kalman filter estimates from a ctStanFit object.
-\code{ctStanKalman} is maintained as a backward-compatible alias.
+\code{ctStanKalman} is maintained as a backward-compatible alias for this
+function. Its pre-3.11 partner \code{ctKalman} is an alias for
+\code{\link{ctPredict}}, not for this function, and returns a long data
+frame rather than a list of arrays.
 }
 \examples{
 k=ctKalmanArray(ctstantestfit,subjectpars=TRUE,collapsefunc=mean)
