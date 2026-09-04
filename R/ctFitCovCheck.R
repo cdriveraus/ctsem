@@ -667,9 +667,8 @@ ctFitCheck <- function(fit,
 
   # `by` defaults to the model's time variable, read through the
   # backend-agnostic accessor rather than `fit$ctstanmodelbase$timeName`
-  # directly -- the latter is NULL for a julia fit, which used to be moot
-  # because ctFitCheck() refused julia fits outright, but marginalcovcheck and
-  # trajectoryplot below no longer do.
+  # directly -- the latter is NULL for a julia fit, and this function accepts
+  # one.
   if(is.null(by)) by <- .ctFitModelObject(fit)$timeName
 
   if(!inherits(fit, c('ctStanFit','ctJuliaFit'))) stop('Not a ctsem fit object', call.=FALSE)
