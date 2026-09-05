@@ -120,6 +120,8 @@
 #' @param fit fit object from \code{\link{ctFit}}, from any backend.
 #' @param nsamples either NA (to extract all) or a positive integer from 1 to maximum samples in the fit.
 #' @param cores Integer number of cpu cores to use. Only needed if savescores was set to FALSE when fitting.
+#' \code{backend='stan'} only -- the julia path runs this loop serially in the engine and refuses
+#' \code{cores} by name rather than accepting it and ignoring it.
 #' @param collapsefunc function to apply over samples, such as \code{mean}
 #' @param pointest If TRUE, uses the posterior mode as the single sample.
 #' @param standardisederrors If TRUE, computes standardised errors for prior, upd, smooth conditions.
@@ -159,6 +161,18 @@ ctKalmanArray <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=1
   # everything downstream of that is shared (see .ctKalmanArrayAssemble below
   # and R/ctBackendKalman.R).
   if(inherits(fit,'ctJuliaFit')){
+    # `cores` is a stan-path argument: it is handed to stan_constrainsamples()
+    # below to split the per-sample filter across R worker processes.
+    # ctBackendKalman() has no such parameter -- it walks the samples one at a
+    # time through the engine -- so a `cores` given here reached nothing and the
+    # call ran serially while reporting nothing. Refused rather than honoured:
+    # each worker would need its own Julia session, which is a design change and
+    # not a wiring-up.
+    if(!missing(cores)) stop(
+      "ctKalmanArray(cores=) is only available for backend='stan' fits: it ",
+      "splits the per-sample filter across R worker processes, and the julia ",
+      "path runs that loop serially in the engine. Drop it -- ctFit(cores=) is ",
+      "where the julia engine takes a thread count.", call.=FALSE)
     return(ctBackendKalman(fit,subjects=subjects,timestep=timestep,maxtime=maxtime,
       removeObs=removeObs,pointest=pointest,nsamples=nsamples,collapsefunc=collapsefunc,
       standardisederrors=standardisederrors,subjectpars=subjectpars,

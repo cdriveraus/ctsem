@@ -146,7 +146,9 @@ ctStanContinuousPars <- ctSummaryMatrices
 #' @param fit fit object
 #' @param pointest if TRUE, returns only the set of individual difference parameters
 #' based on the max a posteriori estimate (or the median if sampling approaches were used).
-#' @param cores Number of cores to use.
+#' @param cores Number of cores to use. \code{backend='stan'} only -- a julia fit already
+#' carries the subject matrices, so there is nothing here to split, and \code{cores} is refused
+#' by name rather than accepted and ignored.
 #' @param nsamples Number of samples to calculate parameters for. Not used if pointest=TRUE.
 #' 
 #' @details This function returns the estimates of individual parameters, taking into account any
@@ -161,6 +163,22 @@ ctStanContinuousPars <- ctSummaryMatrices
 #' dimnames(indpars)
 #' plot(indpars[1,,'cint1'],indpars[1,,'cint2'])
 ctSubjectPars <- function(fit,pointest=TRUE,cores=2,nsamples='all'){
+
+  # `cores` is a stan-path argument: with pointest=FALSE it is handed to
+  # ctExtract() to rebuild the subject matrices across R worker processes.
+  # .ctBackendSubjectPars() has no such parameter -- it reads the arrays the
+  # julia fit already carries -- so a `cores` given here reached nothing.
+  # Refused rather than honoured: there is no per-sample work on this path to
+  # split, so honouring it would mean accepting it and doing nothing, which is
+  # what this refusal exists to stop. Before the conflated-cell warning below,
+  # so a rejected call does not also emit a warning about a result it will not
+  # produce.
+  if(inherits(fit,'ctJuliaFit') && !missing(cores)) stop(
+    "ctSubjectPars(cores=) is only available for backend='stan' fits: it ",
+    "splits ctExtract()'s subject-matrix reconstruction across R worker ",
+    "processes, and a julia fit already carries those arrays. Drop it -- ",
+    "ctFit(cores=) is where the julia engine takes a thread count.",
+    call.=FALSE)
 
   # A cell that reads a carrier state *is* that subject's parameter, and the
   # last row is the fully informed estimate of it -- nothing to warn about, and

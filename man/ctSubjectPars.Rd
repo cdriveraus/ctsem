@@ -13,7 +13,9 @@ ctSubjectPars(fit, pointest = TRUE, cores = 2, nsamples = "all")
 \item{pointest}{if TRUE, returns only the set of individual difference parameters
 based on the max a posteriori estimate (or the median if sampling approaches were used).}
 
-\item{cores}{Number of cores to use.}
+\item{cores}{Number of cores to use. \code{backend='stan'} only -- a julia fit already
+carries the subject matrices, so there is nothing here to split, and \code{cores} is refused
+by name rather than accepted and ignored.}
 
 \item{nsamples}{Number of samples to calculate parameters for. Not used if pointest=TRUE.}
 }
