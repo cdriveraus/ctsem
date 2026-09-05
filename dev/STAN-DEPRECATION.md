@@ -42,6 +42,32 @@ nobody acts on them until Charles calls the deprecation.
 | `vignettes/hierarchicalmanual.rnw`, `vignettes/uncertainty.qmd`, the README's Rtools section | documents written when stan was the only path | the stan-specific prose. The Rtools requirement goes with the compile step | documentation reads as julia-first | J4.1 F7, F8, F9 |
 | `fit$stanfit$transformedparsfull` versus `fit$transformedpars` (`R/ctFit.R:1286`, `R/ctJuliaBackend.R:2472`) | two storage locations for constrained draws, one per backend | one location, or one accessor users are told to use instead of either | users who read the stan slot directly need a pointer; `ctExtract()` is that pointer today | J4.1 F5 |
 
+### Test files
+
+The legacy test stratum is stan-only by construction: those files predate the
+julia backend and call `ctFit()` at its default `backend = 'stan'`. Whether they
+should still exist is therefore a *deprecation* question and belongs here --
+answering it as a test-quality question is how a real check gets deleted early.
+A `ctStan*` name proves nothing either way (the model class is `ctStanModel` on
+both backends), so a file is listed below only because it was read and found to
+fit no julia model.
+
+| location | serves | freed by removal | user notices | found by |
+|---|---|---|---|---|
+| `tests/testthat/test-ctLOO.R` (130 lines, 106 s) | the stan arm of `ctLOO()`: the loglik decomposition identity and agreement between the fold variants. The julia arm is `tests/testthat/test-backend-loo.R`; `ctLOO()` itself is shared | the file, including 40 lines inside an `if(F)` plotting block | nothing | J15 §4, §10 |
+| `tests/testthat/test-binary-gaussian-mix.R` (96 lines, 22 s) | binary and Gaussian indicators together under stan's linearised binary update, with interval coverage. Julia covers that mix in `test-julia-multivariate-mixed.R`, `test-julia-binary.R` and `test-julia-prediction-scale.R` | the file | nothing | J15 §10 |
+| `tests/testthat/test-sunspots.R` (52 lines, 22 s) | a nonlinear single-subject stan fit is invariant to `cores` and to `maxtimestep`, plus one sampled arm. On julia the mesh question is `test-julia-substeps.R`, `cores` is `test-julia-session.R`, sampling is `test-julia-sample.R` | the file | nothing | J15 §10 |
+| `tests/testthat/test-bootHessian.R` (104 lines) and `tests/testthat/test-nonlinearVlinear.R` (54 lines) | nothing: both are an unconditional `testthat::skip()` on the first line of the only test. Bootstrap-Hessian coverage exists on julia in `test-backend-uncertainty.R` | 158 lines that are read by everyone and run by nobody | nothing | J15 §4, R1 |
+| `tests/testthat/test-timevarying.R::higherDimNonLinearCompileCheck` (188 s, one `expect_s3_class`) | that a high-dimensional nonlinear specification still compiles and fits under stan. What it guards is the generated stan program, so it has no julia counterpart and needs none | 188 s, 4% of the R suite | nothing | J15 §6, R2 |
+| `tests/testthat/test_behavGenNLcor.R` (227 lines, 198 s, one `expect_s3_class`) | that a wide behaviour-genetics nonlinear specification fits at all under stan; like the row above, in effect a stan compile check | 198 s | nothing | J15 §6, R2 |
+| `tests/testthat/test-dtVct.R` (154 lines, 55 s) and `tests/testthat/test-ukfpoptest.R` (136 lines, 54 s) | ct-versus-dt agreement, and random CINT and random DRIFT against a hand-written augmented model, on stan. The ct/dt claim has a julia twin in `test-backend-discretetime.R` and random DRIFT one in `test-tdeffectvariation_covtest.R::randomEffectsDRIFT_julia`; the random-CINT half has none -- see the blocker below | the two files, once the merge design in J15 R3 exists | nothing | J15 §8, R3 |
+
+`tests/testthat/test-tdeffectvariation_covtest.R`, `test-binary-path.R`,
+`test-binary-binary-mix.R`, `test-ctChisqTest.R`, `test-ctCoverageCheck.R` and
+`test-ctEmpiricalBayesFit.R` were checked and are **not** stan-only: each fits
+or refuses a julia model in at least one block, so each loses only part of
+itself when stan goes.
+
 ## Blockers
 
 Things the julia path does not yet do that the stan path does. Each must be
@@ -55,6 +81,11 @@ resolved or explicitly dropped before deprecation starts.
 | `ctEmpiricalBayesFit()` | `R/ctEmpiricalBayesFit.R:82,90-99` reads `fit$stanfit$rawest` and `fit$standata` | stan-only, and until this review said so nowhere. Needs a julia port or an explicit decision to retire it | J1.3 F5 |
 | `ctTIpredEffects()` | `R/ctStanTIpredeffects.R:67-71` reads `fit$ctstanmodel` | fails on julia fits. `ctPredictTIP()` and `summary()` already report TI effects there, so this may want a pointer rather than a port | J1.2 F1 |
 | analytic Jacobian of the drift for nonlinear models | `R/ctJacobian.R`, consumed by `R/ctJuliaBackend.R:615-618` to build the engine spec, and read back by every nonlinear helper through `ctBackendParMatrices()` | not a removal point at all: shared by both backends today. The engine has no Jacobian source of its own, so this R file stays until it does | J1.6b F4 |
+| an end-to-end fit pinned to a reference value | `tests/testthat/test-knownFits.R` (AnomAuth and Oscillating -2LL) | the julia counterpart exists, `tests/testthat/test-julia-backend.R:341`, but is gated on `CTSEM_RUN_JULIA_E2E`, which is set in no workflow, script or document -- so nothing pins a julia fit's value end to end. Ungate it and give julia its own reference values before the stan file goes | J15 §4, §10 |
+| recovery of a known TI-predictor effect | `tests/testthat/test-stantipred.R` | julia covers *missing* TI predictors thoroughly (`test-julia-tipred-missing.R`) and reports TI effects in `summary()`, but no julia test asserts that an estimated effect recovers the value that generated the data | J15 §10 |
+| recovery of a random-effect covariance and correlation matrix, and of random effects on matrices other than DRIFT | `tests/testthat/test-corrcheck.R` (three manifest means, 600 subjects, `popcov` and `rawpopcorr`); the CINT, TDPREDEFFECT, LAMBDA and MANIFESTVAR arms of `test-tdeffectvariation_covtest.R` and `test-ukfpoptest.R` | julia recovers one random-effect sd (`randomEffectsDRIFT_julia`, `test-julia-laplace.R`) and no correlation matrix. This is also the coverage the J15 R3 merge must not lose | J15 §8, §10 |
+| a fitted state-dependent LAMBDA | `tests/testthat/test-timevarying.R::varyingLAMBDA`, `test-tdeffectvariation_covtest.R::randomEffectsLambda` | julia detects state-dependent cells fit-free (`test-context-dependence.R`) and fits a state-dependent DRIFT (`test-nonlinear-reporting-julia.R`), but no julia test fits a LAMBDA cell that references a state | J15 §8, §10 |
+| population summaries on the natural scale for a parameter carried by an extra state (`intoverpop`) | `tests/testthat/test-popsummary-scale.R`, which evaluates the stan generated quantities through `rstan::constrain_pars` | julia asserts that a summary applies the transform (`test-backend-summary.R`) but not for a cell whose transform carries a multiplier or a nonlinearity -- the class of the `stateref` defect. The stan test is fit-free and runs in under a second, so a julia twin is cheap | J15 §10 |
 
 ## Resolved or reframed
 
