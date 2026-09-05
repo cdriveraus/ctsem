@@ -658,13 +658,24 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # is exactly the one nobody thought to turn reporting on for.
     trace = CTSEMTrace(:objective, :gradient_norm)
     watcher = CTSEMCallback(progress_callback)
+    # How far toward `g_tol` the gradient has come; see `CTSEMConvergence`. It
+    # is fed every iteration rather than every printed line, because the scale
+    # it interpolates on is the worst gradient the fit ever had and the
+    # printed lines are a time-sampled subset. It survives the backtracking
+    # retry below for the same reason `CTSEMProgress.shown` does: the fit
+    # continued, so the estimate must not restart.
+    convergence = CTSEMConvergence(g_tol)
     watch = function (state)
         latest = state isa AbstractVector ? last(state) : state
         _record!(trace, latest.iteration, -latest.value, latest.g_norm)
+        percent = _convergence_percent!(convergence, latest.g_norm)
         if _due(reporter)
+            # Never on a budget stage: its own fraction is exact, and an
+            # estimate would replace a correct denominator with a guess.
             _progress_optimise(reporter, latest.iteration, Int(maxiter),
                 @sprintf("logpost %11.2f", -latest.value),
-                @sprintf("|g| %9.2e", latest.g_norm); budget=progress_budget)
+                @sprintf("|g| %9.2e", latest.g_norm); budget=progress_budget,
+                percent=progress_budget ? NaN : percent)
         end
         # Its own cadence, so passing a callback with `verbose = 0` -- the
         # obvious combination for a front end that draws rather than prints --

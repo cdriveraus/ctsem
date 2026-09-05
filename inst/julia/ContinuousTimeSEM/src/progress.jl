@@ -95,6 +95,132 @@ function _duration(seconds::Real)
 end
 
 """
+    CTSEMConvergence(tolerance)
+
+How far the optimiser has come toward its stopping rule, as a percentage.
+
+# The formula is ctsem's, not a new one
+
+`sgd.R` has printed a "Progress est." for years on the stan path, and this is
+the same expression: a log-scale interpolation between the worst value seen,
+the current one, and the tolerance. What it reports is the fraction of the
+*orders of magnitude* between the starting point and the criterion that have
+been covered -- not a fraction of the time, and not a fraction of the
+iterations.
+
+# Why the gradient and not the change in log posterior
+
+`sgd.R` feeds the formula a log-posterior change because sgd *stops* on one.
+This optimiser does not: `f_tol` is 0 by default, so Optim's `f` criterion is
+off, and the fit ends when `maxabs(g) < g_tol` or when it runs out of
+iterations. The change in log posterior therefore has no tolerance here to be
+measured against, and inventing one would be inventing a criterion rather than
+reporting against the one in force. The gradient is the criterion, so the
+gradient is what is reported -- and it is the same number `g_tol` is compared
+with, which is why the header can state the rule and the line can state the
+distance to it in the same terms.
+
+# Why the reported value never goes down
+
+`sgd.R` does not clamp its output, and does not need to: the quantity it feeds
+in is already smoothed -- a difference of running maxima over an
+`nconvergeiter` window, non-negative by construction. Optim hands the callback
+a raw per-iteration `g_norm`, and a line search that has to lengthen its step
+raises it. Measured over 1184 iterations of eight fits (a well-conditioned one,
+two- and three-latent, a nearly unidentified one, a saturating one, a binary
+one, the state-augmented route and the Laplace route), the unclamped percentage
+stepped backwards on 40--51% of iterations of the fits that grind -- by up to
+9.9 points, and on 101 of the 200 lines a user would actually have seen on the
+state-augmented fit. A percentage that goes backwards on half its updates is
+not readable as progress, so the best reached so far is what is reported. The
+raw gradient is on the same line and is where a fit going wrong is visible;
+nothing is hidden by holding this number.
+
+# What it is worth, measured
+
+Against the fraction of iterations actually done, the estimate is one-sided:
+across the five fits that ran to a stopping decision it never over-claimed by
+more than 5.3 points, and it under-claimed by up to 53. The under-claiming is
+concentrated in the last few iterations of a *healthy* fit, where L-BFGS
+converges superlinearly and crosses five or more orders of magnitude in a
+handful of steps -- so a number linear in `log|g|` must lag there, and there is
+no fixing that without abandoning the criterion it is measured against.
+
+That lag matters least where it is largest. A fit that converges superlinearly
+is a fit that is nearly over, and it is on screen for a second; the fits that
+show this number for minutes are the ones that converge linearly, where
+`log|g|` really is linear in the iteration count and the estimate tracked the
+iteration fraction to within about five points throughout. And on the fit that
+never converged at all -- 1000 iterations to the cap -- it sat at 25--28% and
+never promised completion, which is the one thing an iteration fraction cannot
+do.
+
+So it is an estimate that runs late and never runs early, which is the safe
+direction: the failure it cannot have is telling someone a fit is nearly done
+when it is not.
+
+# The test the removed time estimate failed
+
+`_progress_optimise` records what the old "time remaining" said at the end: 13.6
+seconds, 0.27 seconds before the fit finished. The same question, asked of this
+number on fits long enough to print more than one line -- the last *periodic*
+line, not the forced closing one, since that is what a user's screen holds while
+the fit ends:
+
+    fit                        iterations   last line   said     outcome
+    3 latent, 400 subjects         41       iter 39     99.1%    converged
+    Laplace, 400 subjects          11       iter  8     89.0%    converged
+    state augmented, 200 subj    1000       iter 965    45.8%    hit the cap
+    nearly unidentified            46       iter  0      0.0%    saturated
+
+The first three are the answer. The fourth is the limit of the whole mechanism
+rather than of this number: that fit ran its 46 iterations inside a single 0.4s
+cadence interval, so one line printed and the closing line followed it
+immediately. Nothing printed on a time cadence can report on a fit that finishes
+inside one interval.
+
+# Where it is not reported
+
+Not on a stage whose cap is the plan. The prior warm-up takes exactly its ten
+iterations, so `7/10` is already exact there and an estimate would replace a
+correct denominator with a guessed one.
+"""
+mutable struct CTSEMConvergence
+    tolerance::Float64
+    # Running worst, as in `sgd.R`'s `lpdiff1`. A new worst rebases the scale
+    # rather than sending the percentage out of range.
+    worst::Float64
+    # Best reported so far; see above. NaN until the first estimate exists.
+    best::Float64
+end
+
+CTSEMConvergence(tolerance::Real) = CTSEMConvergence(Float64(tolerance), 0.0, NaN)
+
+"""
+    _convergence_percent!(c, current)
+
+Record this iteration's criterion value and return the percentage to report, or
+`NaN` when no honest estimate exists -- no positive tolerance to aim at, or a
+value that is not a finite non-negative number.
+"""
+function _convergence_percent!(c::CTSEMConvergence, current::Real)
+    value = Float64(current)
+    (c.tolerance > 0 && isfinite(value) && value >= 0) || return NaN
+    # At or inside the criterion. Reached before the log below, which would be
+    # asked for `log(0)` at an exactly zero gradient.
+    if value <= c.tolerance
+        c.best = 100.0
+        return 100.0
+    end
+    c.worst = max(c.worst, value)
+    # `value > tolerance` and `worst >= value`, so the span is positive.
+    reached = clamp(100.0 * (1 - log(value / c.tolerance) /
+        log(c.worst / c.tolerance)), 0.0, 100.0)
+    c.best = isnan(c.best) ? reached : max(c.best, reached)
+    return c.best
+end
+
+"""
     _progress_line(p, done, total, fields...)
 
 One line: what fraction is done, how fast, how long is left, then whatever the
@@ -125,10 +251,11 @@ function _progress_line(p::CTSEMProgress, done::Integer, total::Integer,
 end
 
 """
-    _progress_optimise(p, done, cap, fields...; budget=false)
+    _progress_optimise(p, done, cap, fields...; budget=false, percent=NaN)
 
-The optimiser's line: iterations done, elapsed, rate, then the caller's fields.
-Deliberately no time remaining, and usually no denominator.
+The optimiser's line: iterations done, how far toward the stopping rule,
+elapsed, then the caller's fields. Deliberately no time remaining, and usually
+no denominator.
 
 # Why there is no time remaining
 
@@ -165,19 +292,39 @@ half of it -- at which point the denominator is the story and appears.
 `budget=true` is for a stage whose cap *is* the plan and is always reached, the
 prior warm-up being the only one. There "7/10" is honest at every iteration and
 reaching 10 is not a failure.
+
+# What `percent` replaced
+
+The iteration rate, which used to sit between the elapsed time and the caller's
+fields. Two reasons, and the second is the deciding one.
+
+A rate is worth printing when it is going to be multiplied by a count of work
+remaining, and this line refuses to print a count of work remaining -- so the
+rate was the residue of the estimate that was removed, and `_convergence_percent!`
+answers the question it was standing in for directly. Elapsed and the iteration
+count still give it to anyone who wants it.
+
+And the line has to fit. A line that wraps cannot be overwritten in place: a
+carriage return goes to the start of the last visual row, so the update leaves
+the earlier rows behind as debris. The marginal line was already 81 characters
+and the Laplace one, which also carries an inner-mode count, 102. Adding a
+field without removing one puts those at 92 and 113; trading the rate for the
+estimate leaves them at 83 and 98.
 """
 function _progress_optimise(p::CTSEMProgress, done::Integer, cap::Integer,
-    fields::AbstractString...; budget::Bool=false)
+    fields::AbstractString...; budget::Bool=false, percent::Real=NaN)
     elapsed = _elapsed(p)
     # Never rewind; see `shown`.
     done = p.shown = max(p.shown, Int(done))
-    rate = (done <= 0 || elapsed <= 0) ? 0.0 : done / elapsed
     p.lines += 1
     counter = (budget || (cap > 0 && 2 * done >= cap)) ?
         @sprintf("%5d/%-5d", done, cap) : @sprintf("%5d iter ", done)
-    parts = [@sprintf("%s %s", p.label, counter),
-             @sprintf("%8s", _duration(elapsed)),
-             @sprintf("%5.1f/s", rate)]
+    parts = [@sprintf("%s %s", p.label, counter)]
+    # "est." is not decoration. It is the same word `sgd.R` prints, and it is
+    # the difference between a number that is checkable and one that is a
+    # promise; see `CTSEMConvergence` for what the estimate is and is not.
+    isnan(percent) || push!(parts, @sprintf("%3.0f%% est.", percent))
+    push!(parts, @sprintf("%8s", _duration(elapsed)))
     _emit(p, "  " * join(vcat(parts, filter(!isempty, collect(fields))), " | "))
     return nothing
 end

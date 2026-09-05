@@ -2770,16 +2770,23 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
     # in the inner solve and the outer objective alone does not show it.
     trace = CTSEMTrace(:objective, :gradient_norm, :inner_converged)
     watcher = CTSEMCallback(progress_callback)
+    # See `ctsem_optimize`. The stopping rule here is the same `g_tol` on the
+    # same outer gradient, so the estimate means the same thing; `inner` is
+    # what says whether that gradient is to be trusted, and it is already on
+    # the line beside it.
+    convergence = CTSEMConvergence(g_tol)
     watch = function (state)
         latest = state isa AbstractVector ? last(state) : state
         inner = count(laplace.inner_converged)
         _record!(trace, latest.iteration, -latest.value, latest.g_norm, inner)
+        percent = _convergence_percent!(convergence, latest.g_norm)
         if _due(reporter)
             _progress_optimise(reporter, latest.iteration, Int(maxiter),
                 @sprintf("logpost %11.2f", -latest.value),
                 @sprintf("|g| %9.2e", latest.g_norm),
                 @sprintf("inner %d/%d", inner,
-                    length(laplace.inner_converged)); budget=progress_budget)
+                    length(laplace.inner_converged)); budget=progress_budget,
+                percent=progress_budget ? NaN : percent)
         end
         # Its own cadence; see `ctsem_optimize`.
         _invoke_callback(watcher, latest.iteration, Int(maxiter),
