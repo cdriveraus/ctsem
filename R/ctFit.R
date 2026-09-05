@@ -279,6 +279,10 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' \code{substeptol} (default 0.01) is the largest acceptable linearisation error as a fraction of the
 #' predicted state standard deviation, and \code{maxsubsteps} (default 64) caps an interval.
 #' \code{maxtimestep} remains a ceiling on the step. The choice is reported in \code{fit$estimate$substeps}.
+#' \code{transition = 'euler'} (julia backend, \code{intoverstates = FALSE} only) replaces the exponential
+#' step between substeps of the state-explicit path with plain Euler-Maruyama, for a reference that
+#' shares no approximation with the filter; it needs a fine \code{maxtimestep}. See also
+#' \code{\link{ctParticleLik}}.
 #' @param verbose Integer from 0 to 2. 1 reports progress while the model
 #'   fits; 2 additionally keeps every progress line rather than overwriting one
 #'   in place, and prints more for debugging. Whether overwriting is possible is
@@ -664,6 +668,13 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   }
   if(is.null(nlcontrol$substeptol)) nlcontrol$substeptol = 0.01
   if(is.null(nlcontrol$maxsubsteps)) nlcontrol$maxsubsteps = 64
+  # transition = 'euler' replaces the exponential (locally linearised) step of
+  # the state-explicit path (intoverstates = FALSE) with plain Euler-Maruyama,
+  # a reference that shares no approximation with the filter. It needs a fine
+  # maxtimestep. No effect on the filter itself.
+  if(is.null(nlcontrol$transition)) nlcontrol$transition = 'exponential'
+  if(!nlcontrol$transition %in% c('exponential', 'euler')) stop("nlcontrol$transition must be 'exponential' or 'euler'")
+  if(nlcontrol$transition == 'euler' && !backend %in% 'julia') stop("nlcontrol$transition = 'euler' requires backend = 'julia'")
 
   args=c(as.list(environment()), list(...)) #as.list((match.call(expand.dots=FALSE)))
   args$datalong <- NULL

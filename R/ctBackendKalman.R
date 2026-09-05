@@ -489,7 +489,8 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
   module <- .ctJuliaModule(spec$project)
   .ctBackendJuliaValue(module$ctsem_generate_states(.ctJuliaObjective(fit),
     .ctJuliaNumericVector(as.numeric(raw)),
-    .ctJuliaNumericVector(as.numeric(z)), JuliaConnectoR::juliaPut(base)))
+    .ctJuliaNumericVector(as.numeric(z)), JuliaConnectoR::juliaPut(base),
+    transition = .ctJuliaOr(spec$transition, "exponential")))
 }
 
 # The joint density of states and data, and its gradient with respect to the
