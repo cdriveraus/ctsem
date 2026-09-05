@@ -3,56 +3,25 @@
 \name{ctPostPredict}
 \alias{ctPostPredict}
 \alias{ctStanPostPredict}
-\title{Compares model implied density and values to observed, for a ctStanFit object.}
+\title{Posterior predictive checks for a ctsem fit}
 \usage{
-ctPostPredict(
-  fit,
-  diffsize = 1,
-  jitter = 0.02,
-  wait = TRUE,
-  probs = c(0.025, 0.5, 0.975),
-  datarows = "all",
-  nsamples = 500,
-  resolution = 100,
-  plot = TRUE
-)
+ctPostPredict(fit, ...)
 }
 \arguments{
-\item{fit}{ctStanFit object.}
+\item{fit}{A fitted ctsem model.}
 
-\item{diffsize}{Integer > 0. Number of discrete time lags to use for data viz.}
-
-\item{jitter}{Positive numeric between 0 and 1, if TRUE, jitters empirical data by specified proportion of std dev.}
-
-\item{wait}{Logical, if TRUE and \code{plot=TRUE}, waits for input before plotting next plot.}
-
-\item{probs}{Vector of length 3 containing quantiles to plot -- should be rising numeric values between 0 and 1.}
-
-\item{datarows}{integer vector specifying rows of data to plot. Otherwise 'all' uses all data.}
-
-\item{nsamples}{Number of datasets to generate for comparisons, if fit object does not contain generated
-data already.}
-
-\item{resolution}{Positive integer, the number of rows and columns to split plots into for shading.}
-
-\item{plot}{logical. If FALSE, a list of ggplot objects is returned.}
+\item{...}{Passed to \code{\link{ctPostPredPlots}}.}
 }
 \value{
-If plot=FALSE, an array containing quantiles of generated data. If plot=TRUE, nothing, only plots.
-
-if plot=TRUE, nothing is returned and plots are created. Otherwise, a list containing ggplot objects is returned 
-and may be customized as desired.
+A named list of ggplot objects, invisibly.
 }
 \description{
-Compares model implied density and values to observed, for a ctStanFit object.
-\code{ctStanPostPredict} is maintained as a backward-compatible alias.
-}
-\details{
-This function relies on the data generated during each iteration of fitting to approximate the
-model implied distributions -- thus, when limited iterations are available, the approximation will be worse.
+\code{ctPostPredict} and \code{ctStanPostPredict} are aliases for
+\code{\link{ctPostPredPlots}}, which the two functions were merged into. They differ from
+it only in printing the panels by default rather than returning them.
 }
 \examples{
-\donttest{#'
-ctPostPredict(ctstantestfit,wait=FALSE, diffsize=2,resolution=100)
+\donttest{
+ctPostPredict(ctstantestfit, wait = FALSE)
 }
 }

@@ -151,6 +151,22 @@ test_that("the posterior predictive tools run on a backend fit", {
   plots <- suppressWarnings(suppressMessages(ctPostPredPlots(generated)))
   expect_true(length(plots) > 0)
   expect_true(all(vapply(plots, function(p) inherits(p, "ggplot"), logical(1))))
+  # Both panel families, from the merged function.
+  expect_true(all(c("Density", "PIT", "CalibrationBySubject") %in% names(plots)))
+  expect_true(any(grepl("^ChangeByValue_", names(plots))))
+  # Time intervals run forwards. They did not: the generated table was ordered
+  # by row label rather than row number, so diff(Time) crossed subject
+  # boundaries for every subject whose rows span a digit-count boundary.
+  expect_true(all(predictive$TimeInterval >= 0, na.rm = TRUE))
+  # Notes are captions, and can be turned off.
+  bare <- suppressWarnings(suppressMessages(
+    ctPostPredPlots(generated, panels = "PIT", notes = FALSE)))
+  expect_null(bare$PIT$labels$caption)
+  expect_false(is.null(plots$PIT$labels$caption))
+  # datarows selects rows rather than erroring, which it used to.
+  sub <- suppressWarnings(suppressMessages(
+    ctPostPredPlots(generated, panels = "PIT", datarows = 5:40)))
+  expect_true(inherits(sub$PIT, "ggplot"))
 
   covcheck <- suppressWarnings(suppressMessages(
     ctFitCheckCov(generated, plot = FALSE, lags = 0:2, cores = 1, nsamples = 10)))
@@ -236,13 +252,20 @@ test_that("state dependent generation carries the dependence into the data", {
   expect_gt(slope(high), slope(!high) + 0.2)
 })
 
-test_that("ctPostPredict() refuses a julia backend fit with an informative message", {
+test_that("ctPostPredict() runs on a julia backend fit", {
   skip_on_cran()
   skip_without_julia()
+  # It used to refuse one, because it read `standata` and `data$Y` directly. It
+  # is now an alias for ctPostPredPlots(), which goes through the
+  # backend-agnostic accessors, so the refusal is gone.
   model <- .generate_model()
   data <- .generate_data()
   fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
-  expect_error(ctPostPredict(fit), regexp = "not available for julia backend fits")
+  generated <- suppressMessages(ctGenerateFromFit(fit, nsamples = 10, cores = 1))
+  plots <- suppressWarnings(suppressMessages(
+    ctPostPredict(generated, plot = FALSE, panels = "calibration")))
+  expect_true(length(plots) > 0)
+  expect_true(all(vapply(plots, function(p) inherits(p, "ggplot"), logical(1))))
 })
 
 test_that("ctGenerateFromPriors() refuses a julia backend fit with an informative message", {

@@ -4,15 +4,24 @@
 \alias{ctPostPredData}
 \title{Create a data.table to compare data generated from a ctsem fit with the original data.}
 \usage{
-ctPostPredData(fit, residuals = F)
+ctPostPredData(fit, residuals = FALSE, nsamples = NA)
 }
 \arguments{
-\item{fit}{A fitted ctsem model.}
+\item{fit}{A fitted ctsem model, from either backend.}
 
-\item{residuals}{If set to TRUE, includes residuals in the comparison.}
+\item{residuals}{If set to TRUE, includes standardised prior residuals in the comparison,
+as extra rows whose variable names are suffixed \code{' std. res.'}. Needs one Kalman
+filter pass per generated dataset, so it is much slower than the default.}
+
+\item{nsamples}{Integer or NA. Number of generated datasets to use. If the fit carries
+more than this, draws are subsampled; if it carries none, this many are generated. NA
+uses whatever the fit already has, or the \code{\link{ctGenerateFromFit}} default.}
 }
 \value{
-A data table containing the comparison between generated and original data.
+A long data table with one row per generated draw x data row x variable, carrying
+the generated \code{value}, the corresponding \code{obsValue}, and the \code{id},
+\code{Time} and \code{TimeInterval} of that data row. \code{LogLik} appears as an extra
+'variable', holding the row-wise log likelihood.
 }
 \description{
 This function allows for easy comparison of data generated from a fitted ctsem model
@@ -24,5 +33,5 @@ data_comparison <- ctPostPredData(ctstantestfit)
 
 }
 \seealso{
-Other ctsem functions for model fitting and analysis.
+\code{\link{ctPostPredPlots}}, which turns this into diagnostic plots.
 }

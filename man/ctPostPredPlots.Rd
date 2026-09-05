@@ -2,30 +2,108 @@
 % Please edit documentation in R/ctStanPostPredict.R
 \name{ctPostPredPlots}
 \alias{ctPostPredPlots}
-\title{Create diagnostic plots to assess the goodness-of-fit for a ctsem model.}
+\title{Posterior predictive checks for a ctsem fit}
 \usage{
-ctPostPredPlots(fit)
+ctPostPredPlots(
+  fit,
+  panels = "all",
+  variables = NULL,
+  nsamples = NA,
+  datarows = "all",
+  diffsize = 1,
+  interval = 0.95,
+  resolution = 100,
+  jitter = 0,
+  residuals = FALSE,
+  notes = TRUE,
+  plot = FALSE,
+  wait = FALSE
+)
 }
 \arguments{
 \item{fit}{A fitted ctsem model.}
+
+\item{panels}{Which panels to produce. \code{'all'} (the default), \code{'structure'},
+\code{'calibration'}, or a character vector of panel names -- see Details.}
+
+\item{variables}{Character vector of variable names to restrict to, or NULL for all.
+\code{'LogLik'} is a valid name here.}
+
+\item{nsamples}{Integer or NA. Number of generated datasets to compare against. NA uses
+whatever the fit already carries.}
+
+\item{datarows}{Integer vector of data rows to use, or \code{'all'}.}
+
+\item{diffsize}{Integer vector > 0. Lags, in observations, for the rate-of-change panels.
+One pair of panels is produced per lag.}
+
+\item{interval}{Numeric in (0,1). Width of the central predictive interval used by the
+\code{PredictedVsObserved} and \code{IntervalCoverage} panels.}
+
+\item{resolution}{Positive integer. Grid resolution of the shaded model density in the
+bivariate panels.}
+
+\item{jitter}{Non-negative numeric. Jitter added to the values in the rate-of-change
+panels, as a proportion of each variable's standard deviation, applied to observed and
+generated alike. Useful when data are rounded or ordinal. 0, the default, adds none.}
+
+\item{residuals}{Logical. Include standardised prior residuals as extra variables. Slow --
+it needs one Kalman pass per generated dataset.}
+
+\item{notes}{Logical. If TRUE (the default), each panel carries a caption saying what it
+shows and what a departure from its reference line means. Set FALSE for bare plots.}
+
+\item{plot}{Logical. If TRUE, prints the panels and returns them invisibly. If FALSE (the
+default) returns the list without printing.}
+
+\item{wait}{Logical. If TRUE and \code{plot=TRUE}, waits for a keypress between panels.}
 }
 \value{
-a list of ggplot2 plots.
+A named list of ggplot objects, invisibly if \code{plot=TRUE}.
 }
 \description{
-This function generates a set of diagnostic plots to assess the goodness-of-fit for
-a fitted ctsem model.
+Compares data generated from the fitted model against the data it was fitted to, as a
+set of diagnostic plots. Works for both the stan and julia backends.
+\code{ctPostPredict} and \code{ctStanPostPredict} are maintained as aliases.
 }
 \details{
-The function calculates various statistics and creates visualizations to evaluate
-how well the generated data matches the original data used to fit the model. The plots
-included are as follows:
-  - A scatter plot comparing observed values and the median of generated data.
-  - A plot showing the proportion of observed data outside the 95% confidence interval
-  - A density plot of the proportion of observed data greater than the generated data.
-  - A time series plot of the proportion of observed data greater than generated data.
+Two families of panel are produced.
+
+\strong{structure} asks whether the model reproduces the shape of the data:
+\code{Density} (marginal distributions), \code{ValueByTime} and \code{ValueByOccasion}
+(the model-implied density of each variable against time and against occasion number,
+with the observed data as points on top), and \code{ChangeByValue} and
+\code{ChangeByTime} (rate of change against current value and against time).
+\code{ChangeByValue} is the phase plane, and is the panel that shows nonlinear dynamics:
+a linear model implies a straight band with a constant slope, so curvature in the
+observed points relative to the model shading is evidence the drift is not linear.
+
+\strong{calibration} asks whether the predictive distribution is the right width and in
+the right place: \code{PredictedVsObserved}, \code{IntervalCoverage}, \code{PIT}, and the
+PIT resolved by \code{CalibrationByInterval} and \code{CalibrationBySubject}. A departure
+that depends on the time interval implicates the dynamics rather than the measurement
+model, since the measurement model cannot know the interval.
+
+The row-wise log likelihood appears throughout as an extra variable, \code{LogLik} --
+its distribution should match between model and data like any other quantity. It is
+omitted from the rate-of-change panels, where the derivative of a log likelihood with
+respect to time is not a meaningful quantity. Note that the observed side of the LogLik
+comparison is evaluated at the point estimate, so it carries no parameter uncertainty
+while the generated side does.
+
+The approximation is only as good as the number of generated datasets, so a fit carrying
+few draws gives a coarse picture -- the PIT in particular is discrete on
+\code{nsamples + 1} values.
 }
 \examples{
-print(ctPostPredPlots(ctstantestfit))
-
+\donttest{
+plots <- ctPostPredPlots(ctstantestfit)
+print(plots$PIT)
+}
+}
+\seealso{
+\code{\link{ctPostPredData}} for the underlying table,
+\code{\link{ctFitCheck}} for a broader dashboard, \code{\link{ctFitCheckCov}} for the
+lagged covariance version of the same question, and \code{\link{ctPhasePortrait}} for the
+model-implied phase plane on its own.
 }
