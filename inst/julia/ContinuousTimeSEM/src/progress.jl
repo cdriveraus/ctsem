@@ -52,6 +52,13 @@ mutable struct CTSEMProgress
     lines::Int
     overwrite::Bool
     width::Int
+    # Highest iteration count already shown. A fit can run Optim twice -- the
+    # backtracking fallback continues from where Hager-Zhang stopped -- and the
+    # second run's callback counts from one again, so the printed counter ran
+    # *backwards*: "prior warm-up 2/10" and then "prior warm-up 1/10", which
+    # reads as a fit that lost its place. The work did continue, so the count
+    # is held rather than rewound.
+    shown::Int
 end
 
 # `overwrite` defaults on: a fit reports for as long as it runs, and one line per
@@ -63,7 +70,7 @@ end
 CTSEMProgress(enabled::Bool; every::Real=0.0, label::String="",
     overwrite::Bool=true) =
     CTSEMProgress(enabled, every > 0 ? Float64(every) : (overwrite ? 0.4 : 5.0),
-        time(), 0.0, label, 0, overwrite, 0)
+        time(), 0.0, label, 0, overwrite, 0, 0)
 
 """Seconds since this reporter was created."""
 _elapsed(p::CTSEMProgress) = time() - p.started
@@ -91,10 +98,15 @@ end
     _progress_line(p, done, total, fields...)
 
 One line: what fraction is done, how fast, how long is left, then whatever the
-caller thinks matters. Time remaining is extrapolated from the rate so far,
-which is honest for a sampler (iterations cost about the same) and optimistic
-for an optimiser (later iterations are usually cheaper), so it is labelled as an
-estimate rather than presented as a fact.
+caller thinks matters.
+
+**Only for work with a target it will actually reach** -- the sampler, which
+takes exactly `nwarmup` and then exactly `ndraws` iterations. There the
+extrapolation is sound, and measured so: a 200-draw chain reported "0.2s at
+this rate" at draw 188 and finished 0.2s later.
+
+An optimiser is the opposite case and uses `_progress_optimise` instead. The
+note there records what extrapolating against `maxiter` actually produced.
 """
 function _progress_line(p::CTSEMProgress, done::Integer, total::Integer,
     fields::AbstractString...)
@@ -104,17 +116,90 @@ function _progress_line(p::CTSEMProgress, done::Integer, total::Integer,
     p.lines += 1
     parts = [@sprintf("%s %5d/%-5d", p.label, done, total),
              @sprintf("%5.1f/s", rate),
-             # "at this rate", not "left". For an optimiser the two are very
-             # different: the run below stopped four iterations after reporting
-             # "15m 06s left", because its gradient was already 9.28e-09 and it
-             # was about to converge -- the extrapolation assumes every one of
-             # `maxiter` iterations will be taken, and convergence is precisely
-             # the thing that stops that being true.
              @sprintf("%7s at this rate", _duration(remaining))]
     # Empty fields are dropped rather than joined: a caller with a field that
     # only sometimes applies passes "" for it, and joining that leaves a
     # separator with nothing after it.
     _emit(p, "  " * join(vcat(parts, filter(!isempty, collect(fields))), " | "))
+    return nothing
+end
+
+"""
+    _progress_optimise(p, done, cap, fields...; budget=false)
+
+The optimiser's line: iterations done, elapsed, rate, then the caller's fields.
+Deliberately no time remaining, and usually no denominator.
+
+# Why there is no time remaining
+
+An optimiser stops when the gradient is small enough, not when it has taken
+`maxiter` iterations, so `(maxiter - done) / rate` extrapolates against a
+number the fit never approaches. Measured on a 2-latent, 60-subject fit that
+converged at iteration 307 of a cap of 1000, comparing each printed estimate
+with the time the fit actually had left:
+
+    iter    rate    predicted    realised    ratio
+      17    41.0/s      24.0s       5.59s     4.3x
+      99    48.1/s      18.7s       3.94s     4.7x
+     209    51.0/s      15.5s       1.90s     8.1x
+     297    51.8/s      13.6s       0.27s    51.0x
+
+Every estimate was too long, the error grew as the fit approached its optimum,
+and the last thing the user saw was "13.6s at this rate" 0.27s before the fit
+finished. That is worse than useless: it is the number that makes someone kill
+a fit that was nearly done. Elapsed time and an iteration count cannot be
+wrong, so that is what this prints.
+
+The rate is contaminated too, and separably. The prior warm-up has a cap of 10
+that it always exhausts -- a correct denominator -- and still predicted "1m 14s
+at this rate" for a stage that finished 0.1s later, because the first iteration
+pays Julia's compilation and no rate measured across it describes the rest.
+
+# Why the denominator usually is not shown
+
+`maxiter` is a safety limit, not a target. Showing "297/1000" invites reading a
+30% completion that means nothing, when the fit was in fact about to stop. So
+the count stands alone until the cap is close enough to be a real risk -- past
+half of it -- at which point the denominator is the story and appears.
+
+`budget=true` is for a stage whose cap *is* the plan and is always reached, the
+prior warm-up being the only one. There "7/10" is honest at every iteration and
+reaching 10 is not a failure.
+"""
+function _progress_optimise(p::CTSEMProgress, done::Integer, cap::Integer,
+    fields::AbstractString...; budget::Bool=false)
+    elapsed = _elapsed(p)
+    # Never rewind; see `shown`.
+    done = p.shown = max(p.shown, Int(done))
+    rate = (done <= 0 || elapsed <= 0) ? 0.0 : done / elapsed
+    p.lines += 1
+    counter = (budget || (cap > 0 && 2 * done >= cap)) ?
+        @sprintf("%5d/%-5d", done, cap) : @sprintf("%5d iter ", done)
+    parts = [@sprintf("%s %s", p.label, counter),
+             @sprintf("%8s", _duration(elapsed)),
+             @sprintf("%5.1f/s", rate)]
+    _emit(p, "  " * join(vcat(parts, filter(!isempty, collect(fields))), " | "))
+    return nothing
+end
+
+"""
+    _progress_break(p)
+
+End the current in-place line so something else can print on its own.
+
+The engine's own `verbose` messages go to the same stdout as the progress line,
+and a carriage-returned line has no newline on it -- so they landed *inside*
+it: "|g| 2.70e+02ctsem_optimize: Hager-Zhang stopped after 10 iteration(s)".
+Anything that prints while a fit is running calls this first.
+"""
+function _progress_break(p::CTSEMProgress)
+    (p.enabled && p.overwrite && p.lines > 0) || return nothing
+    print(NEWLINE)
+    flush(stdout)
+    p.width = 0
+    # Not zero: the cursor is already at the start of a fresh line, so the next
+    # update must not open with `_emit`'s leading newline and leave a blank one.
+    p.lines = 1
     return nothing
 end
 
@@ -168,11 +253,21 @@ function _progress_done(p::CTSEMProgress, fields::AbstractString...)
     return nothing
 end
 
-"""A heading, printed once before the work starts."""
-function _progress_header(enabled::Bool, text::AbstractString)
-    enabled || return nothing
-    println(text)
+"""
+A heading, printed once before the work starts.
+
+The optimiser's counter has no denominator, so this is where the stopping rule
+goes: one line saying what the fit is waiting for, rather than a fraction on
+every line implying it is waiting for `maxiter`.
+
+`p.lines` is bumped so the first update does not add `_emit`'s leading newline
+on top of this line's own.
+"""
+function _progress_header(p::CTSEMProgress, text::AbstractString)
+    p.enabled || return nothing
+    println("  " * text)
     flush(stdout)
+    p.lines = max(p.lines, 1)
     return nothing
 end
 

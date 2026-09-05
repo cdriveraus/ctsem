@@ -2675,7 +2675,8 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
     verbose::Bool=false, nested_gradient::Bool=false, tune_chunks::Bool=true,
     lbfgs_memory::Integer=_CTSEM_LBFGS_MEMORY, progress_overwrite::Bool=true,
     progress_callback=nothing, progress::Bool=verbose,
-    progress_label::AbstractString="optimise")
+    progress_label::AbstractString="optimise",
+    progress_budget::Bool=false, progress_every::Real=0.0)
     start_values = collect(Float64, start)
     invalid_objective = floatmax(Float64) / 1e8
     gradient_limit = sqrt(floatmax(Float64))
@@ -2758,7 +2759,12 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
     # up as a stall that the objective alone does not explain.
     # See `ctsem_optimize`: progress is not verbosity.
     reporter = CTSEMProgress(progress; label=progress_label,
-        overwrite=progress_overwrite)
+        overwrite=progress_overwrite, every=progress_every)
+    # See `ctsem_optimize`: the counter carries no denominator, so the stopping
+    # rule is stated once here instead.
+    progress_budget || _progress_header(reporter,
+        @sprintf("%s: stops when |g| < %.0e, or at %d iterations",
+            progress_label, g_tol, Int(maxiter)))
     # Recorded every iteration whatever `verbose` says; see `ctsem_optimize`.
     # `inner` is traced too, because a Laplace fit that stalls usually stalls
     # in the inner solve and the outer objective alone does not show it.
@@ -2769,11 +2775,11 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
         inner = count(laplace.inner_converged)
         _record!(trace, latest.iteration, -latest.value, latest.g_norm, inner)
         if _due(reporter)
-            _progress_line(reporter, latest.iteration, Int(maxiter),
+            _progress_optimise(reporter, latest.iteration, Int(maxiter),
                 @sprintf("logpost %11.2f", -latest.value),
                 @sprintf("|g| %9.2e", latest.g_norm),
                 @sprintf("inner %d/%d", inner,
-                    length(laplace.inner_converged)))
+                    length(laplace.inner_converged)); budget=progress_budget)
         end
         # Its own cadence; see `ctsem_optimize`.
         _invoke_callback(watcher, latest.iteration, Int(maxiter),
@@ -2833,8 +2839,12 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
             (Optim.optimize(Optim.only_fg!(fg!), from, method, options), true)
         catch err
             err isa InterruptException && rethrow()
-            verbose && println("Laplace: Hager-Zhang line search failed (",
-                sprint(showerror, err), "); retrying with backtracking")
+            if verbose
+                _progress_break(reporter)
+                println("Laplace: Hager-Zhang line search failed (",
+                    sprint(showerror, err), "); retrying with backtracking")
+                flush(stdout)
+            end
             (Optim.optimize(Optim.only_fg!(fg!), from,
                 Optim.LBFGS(m=Int(lbfgs_memory),
                     alphaguess=Optim.LineSearches.InitialStatic(scaled=true),
@@ -2877,9 +2887,14 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
         gnorm = isempty(probe.gradient) ? 0.0 : maximum(abs, probe.gradient)
         if !isfinite(gnorm) || gnorm > max(g_tol,
                 1e-6 * max(one(gnorm), abs(probe.value)))
-            verbose && println("Laplace: Hager-Zhang stopped after ",
-                Optim.iterations(result), " iteration(s) with |g| ", gnorm,
-                "; continuing with backtracking")
+            if verbose
+                _progress_break(reporter)
+                @printf("Laplace: Hager-Zhang stopped after %d iteration(s) with |g| %.2e; continuing with backtracking\n",
+                    Optim.iterations(result), gnorm)
+                flush(stdout)
+            end
+            # Counts from one again; `CTSEMProgress.shown` holds the printed
+            # counter rather than letting it rewind. See `ctsem_optimize`.
             retry = Optim.optimize(Optim.only_fg!(fg!), reached,
                 Optim.LBFGS(m=Int(lbfgs_memory),
                     alphaguess=Optim.LineSearches.InitialStatic(scaled=true),
@@ -2911,13 +2926,6 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
     end
     minimizer = collect(Optim.minimizer(result))
     final = ctsem_laplace_evaluate(laplace, minimizer; gradient=true)
-    # `ctsem_optimize` has always closed its progress line and this route never
-    # did, so an in-place update was left open and whatever R printed next
-    # landed on the same line -- reported as "inner 100/100Computing exact
-    # Hessian".
-    progress && _progress_done(reporter,
-        @sprintf("%d iterations", Optim.iterations(result)),
-        @sprintf("logpost %.4f", final.value))
     # A fit that ends where it started, with a gradient nowhere near zero, has
     # not converged whatever Optim says. Optim's own verdict is the disjunction
     # of three criteria, and a line search that fails on its first try
@@ -2927,6 +2935,22 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
     # wrong rather than loudly broken.
     moved = isempty(minimizer) ? 0.0 : maximum(abs, minimizer .- start_values)
     gradient_norm = isempty(final.gradient) ? 0.0 : maximum(abs, final.gradient)
+    # `ctsem_optimize` has always closed its progress line and this route never
+    # did, so an in-place update was left open and whatever R printed next
+    # landed on the same line -- reported as "inner 100/100Computing exact
+    # Hessian".
+    #
+    # Ordered after `gradient_norm` so the closing line can carry it. The two
+    # routes' closing lines used to differ in exactly that field, and |g| is
+    # the number that says whether the fit arrived or merely stopped.
+    # See `ctsem_optimize` for `max(shown, ...)`.
+    iterations = max(reporter.shown, Optim.iterations(result))
+    capped = !progress_budget && iterations >= Int(maxiter)
+    progress && _progress_done(reporter,
+        @sprintf("%d iterations%s", iterations,
+            capped ? " -- ITERATION CAP REACHED, not converged" : ""),
+        @sprintf("logpost %.4f", final.value),
+        @sprintf("|g| %.2e", gradient_norm))
     stalled = moved == 0 && (!isfinite(final.value) || gradient_norm > max(g_tol, 1e-6))
     # Optim's `g_tol` is an *absolute* bound on the gradient, and a log
     # likelihood of order 1e3 puts 1e-8 out of reach however good the fit is --

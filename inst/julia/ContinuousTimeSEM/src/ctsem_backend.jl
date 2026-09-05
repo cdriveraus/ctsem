@@ -607,7 +607,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     x_tol::Real=0.0, verbose::Bool=false, gradient_method=:adjoint,
     tune_chunks::Bool=true, lbfgs_memory::Integer=_CTSEM_LBFGS_MEMORY,
     progress_overwrite::Bool=true, progress_callback=nothing,
-    progress::Bool=verbose, progress_label::AbstractString="optimise")
+    progress::Bool=verbose, progress_label::AbstractString="optimise",
+    progress_budget::Bool=false, progress_every::Real=0.0)
     start_values = collect(start)
     invalid_objective = floatmax(eltype(start_values)) / 1e8
     gradient_limit = sqrt(floatmax(eltype(start_values)))
@@ -645,7 +646,13 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # the model-shape summary that `verbose` also turns on. Separating them is
     # what lets progress be the default without making the default noisy.
     reporter = CTSEMProgress(progress; label=progress_label,
-        overwrite=progress_overwrite)
+        overwrite=progress_overwrite, every=progress_every)
+    # The stopping rule, once, because the counter below carries no denominator
+    # -- see `_progress_optimise`. The warm-up's rule is its own cap and its
+    # fraction already shows it, so it says nothing here.
+    progress_budget || _progress_header(reporter,
+        @sprintf("%s: stops when |g| < %.0e, or at %d iterations",
+            progress_label, g_tol, Int(maxiter)))
     # The trace records every iteration whatever `verbose` says: it costs a
     # push onto a vector, and a fit that turns out to have gone somewhere odd
     # is exactly the one nobody thought to turn reporting on for.
@@ -655,9 +662,9 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         latest = state isa AbstractVector ? last(state) : state
         _record!(trace, latest.iteration, -latest.value, latest.g_norm)
         if _due(reporter)
-            _progress_line(reporter, latest.iteration, Int(maxiter),
+            _progress_optimise(reporter, latest.iteration, Int(maxiter),
                 @sprintf("logpost %11.2f", -latest.value),
-                @sprintf("|g| %9.2e", latest.g_norm))
+                @sprintf("|g| %9.2e", latest.g_norm); budget=progress_budget)
         end
         # Its own cadence, so passing a callback with `verbose = 0` -- the
         # obvious combination for a front end that draws rather than prints --
@@ -716,9 +723,14 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         if (!isfinite(gnorm) || gnorm > max(g_tol,
                 1e-6 * max(one(gnorm), abs(probe.value)))) &&
                 maximum(abs, reached; init=0.0) < _CTSEM_SATURATION[]
-            verbose && println("ctsem_optimize: Hager-Zhang stopped after ",
-                Optim.iterations(result), " iteration(s) with |g| ", gnorm,
-                "; continuing with backtracking")
+            if verbose
+                _progress_break(reporter)
+                @printf("ctsem_optimize: %s stopped after %d iteration(s) with |g| %.2e; continuing with backtracking\n",
+                    linesearch, Optim.iterations(result), gnorm)
+                flush(stdout)
+            end
+            # The retry counts from one again; `CTSEMProgress.shown` is what
+            # stops the printed counter rewinding.
             retry = Optim.optimize(Optim.only_fg!(fg!), reached,
                 Optim.LBFGS(m=Int(lbfgs_memory),
                     alphaguess=Optim.LineSearches.InitialStatic(scaled=true),
@@ -752,8 +764,19 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # passing either.
     moved = isempty(minimizer) ? 0.0 : maximum(abs, minimizer .- start_values)
     gradient_norm = isempty(final.gradient) ? 0.0 : maximum(abs, final.gradient)
+    # `max(shown, ...)`: when the backtracking fallback ran and was kept,
+    # `Optim.iterations` describes that second run alone, which can be fewer
+    # than the user already watched go past. The closing line closes what was
+    # on screen.
+    iterations = max(reporter.shown, Optim.iterations(result))
+    # Running out of iterations is a different outcome from converging, and the
+    # closing line used to report both as a bare count. On a stage whose cap is
+    # the plan (`budget`) reaching it is not news; anywhere else it is the one
+    # thing about the fit the user most needs to know.
+    capped = !progress_budget && iterations >= Int(maxiter)
     progress && _progress_done(reporter,
-        @sprintf("%d iterations", Optim.iterations(result)),
+        @sprintf("%d iterations%s", iterations,
+            capped ? " -- ITERATION CAP REACHED, not converged" : ""),
         @sprintf("logpost %.4f", final.value),
         @sprintf("|g| %.2e", gradient_norm))
     # Forced, whatever the cadence says: a rate-limited callback on a fit that

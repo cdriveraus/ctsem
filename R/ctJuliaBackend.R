@@ -2519,7 +2519,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 
 .ctJuliaOptimise <- function(model_spec, start, backendcontrol = list(),
   gradient = "adjoint", cores = 1L, verbose = 0L, tol = NULL,
-  callback = NULL, objective = NULL, progress_label = NULL) {
+  callback = NULL, objective = NULL, progress_label = NULL,
+  progress_budget = FALSE) {
   spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
   # A caller may hand in the objective to maximise. `intoverstates=FALSE` does,
   # passing the joint one over `[theta; z]`; everything below is unchanged by
@@ -2544,6 +2545,22 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # its printed twin.
     progress_label = if (is.null(progress_label)) "optimise" else
       as.character(progress_label)[1L],
+    # Whether `maxiter` is the plan or a safety limit, which decides whether
+    # the counter carries a denominator at all. The warm-up's cap of 10 is
+    # always reached, so "7/10" is honest there; the fit's cap of 1000 is not a
+    # target and showing "297/1000" invited reading a completion fraction that
+    # meant nothing. See `_progress_optimise` in progress.jl.
+    progress_budget = isTRUE(progress_budget),
+    # `verbose = 2` asks for the history, and the engine's non-overwriting
+    # cadence is 5s against 0.4s for the overwriting one -- so raising the
+    # level printed *fewer* progress lines than leaving it alone, and on any
+    # fit shorter than five seconds it printed none at all. Asking for more
+    # detail must not give less of it.
+    # Keyed on the level, not on `!.ctProgressOverwrite()`: that is also FALSE
+    # for a `verbose = 1` run whose output goes to a log file, where the slow
+    # cadence is right and hundreds of lines are not.
+    progress_every = if (is.numeric(verbose) && length(verbose) == 1L &&
+      !is.na(verbose) && verbose >= 2) 0.4 else 0,
     # On when someone is watching, which is not the same question as how
     # verbose to be. A default fit used to print two lines and then nothing at
     # all however long it ran, because progress was tied to `verbose` and
@@ -2865,7 +2882,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       # which is exactly `warmiter`.
       warmed <- try(.ctJuliaOptimise(spec, start, backendcontrol = warmcontrol,
         gradient = gradient, cores = cores, verbose = verbose,
-        callback = NULL, progress_label = "prior warm-up"), silent = TRUE)
+        callback = NULL, progress_label = "prior warm-up",
+        # This stage runs its cap and stops; the cap is the plan, not a limit
+        # it is trying to stay under, so its counter keeps a denominator.
+        progress_budget = TRUE), silent = TRUE)
       # A warm start is only a starting value: if it produced numbers the fit
       # can use, use them, and otherwise start where we would have anyway.
       if (!inherits(warmed, "try-error")) {
