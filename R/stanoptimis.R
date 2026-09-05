@@ -605,7 +605,11 @@ clusterIDeval <- function(cl,commands){
     recursive = FALSE)
 }
 
-ctOptim <- function(init, lpgFunc, tol, nsubsets, stochastic, stochasticTolAdjust,bfgsType='mize',...){
+# `mizemaxiter`, `grad_tol`, `step_tol` and `lbfgs_memory` are formals rather
+# than part of `...` deliberately: `...` goes to sgd(), which takes none of them,
+# and `maxiter` there is sgd's own and a different number from mize's.
+ctOptim <- function(init, lpgFunc, tol, nsubsets, stochastic, stochasticTolAdjust,
+  bfgsType='mize', mizemaxiter=99999L, grad_tol=0, step_tol=0, lbfgs_memory=100L, ...){
   if(nsubsets > 1) stochastic <- TRUE #if nsubsets > 1, use stochastic
   if(stochastic){
     args <- list(...)
@@ -633,10 +637,10 @@ ctOptim <- function(init, lpgFunc, tol, nsubsets, stochastic, stochasticTolAdjus
         fn=function(x) -lpgFunc(x),
         gr=function(pars) -attributes(lpgFunc(pars))$gradient
       )
-      f=mize::mize(init, fg=mizelpg, max_iter=99999,
-        method="L-BFGS",memory=100,
+      f=mize::mize(init, fg=mizelpg, max_iter=mizemaxiter,
+        method="L-BFGS",memory=lbfgs_memory,
         line_search='Schmidt',c1=1e-10,c2=.9,step0='schmidt',ls_max_fn=999,
-        abs_tol=tol,grad_tol=0,rel_tol=0,step_tol=0,ginf_tol=0)
+        abs_tol=tol,grad_tol=grad_tol,rel_tol=0,step_tol=step_tol,ginf_tol=0)
       f$value = -f$f #reverse because mize minimizes
     }
   } #end bfgs section
@@ -933,7 +937,18 @@ imis_is <- function(parlp,
 #' @param plot Logical. If TRUE, plot iteration details. Probably slower.
 #' @param estonly if TRUE,just return point estimates under $rawest subobject.
 #' @param verbose Integer from 0 to 2. Higher values print more information during model fit -- for debugging.
-#' @param tol objective tolerance.
+#' @param tol objective tolerance -- the optimizer stops when the objective
+#' changes by less than this between evaluations.
+#' @param g_tol gradient tolerance: stop when the l2 norm of the gradient falls
+#' below this. \code{NULL} (the default) leaves it off, which is what this
+#' optimizer has always done -- \code{tol} is its criterion. The julia backend
+#' reads the same name and defaults it to 1e-8 instead.
+#' @param x_tol parameter-step tolerance: stop when the update to the parameter
+#' vector is smaller than this. \code{NULL} leaves it off.
+#' @param maxiter maximum optimizer iterations. \code{NULL} leaves the existing
+#' caps in place (99999 for the bfgs optimizer, 5000 for the stochastic one).
+#' @param lbfgs_memory number of curvature pairs L-BFGS keeps. \code{NULL} uses
+#' 100.
 #' @param priors logical. If TRUE, a priors integer is set to 1 (TRUE) in the standata object -- only has an effect if 
 #' the stan model uses this value. 
 #' @param carefulfit Logical. If TRUE, priors are always used for a rough first pass to obtain starting values when priors=FALSE
@@ -1000,8 +1015,12 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
   verbose=0,
   cores=2,
   matsetup=NA,
-  nsubsets=1, 
-  stochasticTolAdjust=1000){
+  nsubsets=1,
+  stochasticTolAdjust=1000,
+  # Appended rather than placed beside `tol`, so that a positional call to this
+  # exported function keeps meaning what it did. NULL is "leave the optimizer as
+  # it was"; see the vocabulary table at the top of R/ctFit.R.
+  g_tol=NULL, x_tol=NULL, maxiter=NULL, lbfgs_memory=NULL){
   
   
   
@@ -1034,6 +1053,18 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
     lproughnesstarget=lproughnesstarget,
     parrangetol=1e-6,
     whichignore=integer())
+
+  # The three tolerances mize also offers, and its iteration cap and memory.
+  # ctsem pinned grad_tol and step_tol at zero and max_iter at 99999, which is
+  # why the gradient criterion looked like something only the julia engine had;
+  # mize has had it all along. NULL means "leave it as it was", so an existing
+  # call optimises exactly as before. `optimArgs$maxiter` is left alone because
+  # it is sgd's, not mize's, and the two have never been the same number.
+  optimArgs$mizemaxiter <- if(is.null(maxiter)) 99999L else as.integer(maxiter)[1]
+  optimArgs$grad_tol <- if(is.null(g_tol)) 0 else as.numeric(g_tol)[1]
+  optimArgs$step_tol <- if(is.null(x_tol)) 0 else as.numeric(x_tol)[1]
+  optimArgs$lbfgs_memory <- if(is.null(lbfgs_memory)) 100L else as.integer(lbfgs_memory)[1]
+  if(!is.null(maxiter)) optimArgs$maxiter <- as.integer(maxiter)[1]
   
   smf <- stan_reinitsf(sm,standata)
   npars=rstan::get_num_upars(smf)

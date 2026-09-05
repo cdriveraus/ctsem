@@ -21,7 +21,6 @@ ctFit(
   optimize = TRUE,
   optimcontrol = list(),
   backend = c("stan", "julia"),
-  backendcontrol = list(),
   nlcontrol = list(),
   nopriors = NA,
   priors = FALSE,
@@ -122,19 +121,35 @@ When \code{optimize=FALSE}, the stored point estimate (\code{stanfit$rawest}) is
 median of the posterior draws; the julia backend's sampled point estimate (see \code{\link{ctSample}})
 is the per-parameter mean instead.}
 
-\item{optimcontrol}{list of parameters sent to \code{\link{stanoptimis}} governing optimization / importance sampling.
-Names are checked against the chosen backend before anything else happens.
+\item{optimcontrol}{list of parameters sent to \code{\link{stanoptimis}}
+governing optimization. It is the only optimizer control list: the julia
+backend's \code{backendcontrol} was merged into it, and every name below
+means the same thing on both backends.
+
+Stopping rules, honoured by both: \code{tol} (the objective stops changing),
+\code{g_tol} (l2 norm of the gradient), \code{x_tol} (size of the parameter
+step), \code{maxiter}, and \code{lbfgs_memory} for how many curvature pairs
+L-BFGS keeps. \code{initsd} is the sd of the random start on both.
 \code{estonly}, \code{carefulfit}, \code{finishsamples}, \code{uncertainty},
-\code{uncertaintyDraws} and \code{uncertaintyControl} work on both backends.
-\code{gradient}, \code{datastart}, \code{callback} and \code{saveEffects} are
-\code{backend='julia'} only; \code{tol}, \code{initsd},
-\code{stochastic=TRUE}, \code{stallretries}, \code{stalltol},
-\code{subsamplesize}, \code{parsteps}, \code{nsubsets},
-\code{lproughnesstarget} and \code{stochasticTolAdjust} are
-\code{backend='stan'} only. Each is refused by name on the other backend,
-with the equivalent setting where there is one -- \code{backendcontrol$g_tol}
-for \code{optimcontrol$tol}, \code{optimcontrol$carefulfit} for the
-stall-and-restart settings.
+\code{uncertaintyDraws} and \code{uncertaintyControl} also work on both.
+
+The \emph{defaults} are each backend's own, and are mirror images: stan stops
+on the objective (\code{tol = 1e-8}, \code{g_tol} off), julia on the gradient
+(\code{g_tol = 1e-8}, \code{tol} off). Leaving a name unset keeps that
+backend's default; setting one is honoured by both.
+
+What is left is a capability one backend has and the other does not.
+\code{backend='stan'} alone has the stochastic-gradient optimizer
+(\code{stochastic}, \code{nsubsets}, \code{subsamplesize},
+\code{lproughnesstarget}, \code{stochasticTolAdjust}, \code{parsteps}) and
+the stall-and-restart pass (\code{stallretries}, \code{stalltol});
+\code{backend='julia'} alone has \code{gradient}, \code{datastart},
+\code{callback}, \code{saveEffects}, \code{progress} and
+\code{tipredMissingIncludeOutcome}. A \emph{value} asking for a capability
+the chosen backend does not have is refused by name before anything else
+happens; a value that describes what it already does is simply accepted, so
+\code{stochastic=FALSE} works on julia and \code{gradient='adjoint'} works on
+stan.
 With \code{backend='julia'}, \code{optimcontrol$gradient} selects the
 gradient method: \code{'adjoint'} (reverse mode, the default) or
 \code{'forward'} (ForwardDiff). Both compute the same gradient; 'adjoint'
@@ -215,16 +230,6 @@ same summaries; it takes its own reverse-mode gradient, supports
 \code{intoverpop='laplace'} for random effects, and can be sampled afterwards
 with \code{\link{ctSample}}. It needs a working Julia -- see
 \code{\link{ctJuliaSetup}} and \code{\link{ctJuliaInstall}}.}
-
-\item{backendcontrol}{Used when \code{backend='julia'}. List of engine
-settings: \code{maxiter}, \code{g_tol}, \code{f_tol}, \code{x_tol} for the
-optimizer's stopping rules, \code{lbfgs_memory} for how many curvature pairs
-L-BFGS keeps, \code{gradient} ('adjoint' or 'forward'), \code{julia_project}
-to point at a local engine checkout, \code{restart_session} to clear the
-Julia session before fitting, and \code{progress} to force progress
-reporting on or off for this fit. Nothing on the stan path reads it, so a
-non-empty \code{backendcontrol} with \code{backend='stan'} is refused by name
-rather than silently ignored.}
 
 \item{nlcontrol}{List of non-linear control parameters.
 \code{maxtimestep} must be a positive numeric,  specifying the largest time

@@ -150,7 +150,7 @@ test_that("the imputation fallback rule warns naming the fallback taken, and onl
   withCallingHandlers({
     prepped2 <- suppressMessages(ctFit(dat, model, backend = "julia",
       optimize = FALSE, fit = FALSE, intoverpop = "augmented",
-      backendcontrol = list(tipredMissingIncludeOutcome = FALSE)))
+      optimcontrol = list(tipredMissingIncludeOutcome = FALSE)))
   }, warning = function(w) { warned2[[length(warned2) + 1L]] <<- conditionMessage(w); invokeRestart("muffleWarning") })
   expect_length(grep("not enough complete cases", warned2, value = TRUE), 0L)
   expect_equal(prepped2$ti_missing$parameter, prepped$ti_missing$parameter)
@@ -260,9 +260,9 @@ test_that("targeted stan comparison: same model, same gap, agreeing posteriors",
 
   jfit <- suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
     optimize = FALSE, intoverpop = "augmented",
-    backendcontrol = list(tipredMissingIncludeOutcome = FALSE),
     chains = 1, iter = 800L, cores = 1, control = list(warmup = 300L),
-    optimcontrol = list(gradient = "forward"))))
+    optimcontrol = list(gradient = "forward",
+      tipredMissingIncludeOutcome = FALSE))))
   jidx <- jfit$model_spec$ti_missing$parameter
   jdraws <- jfit$estimate$rawposterior[, jidx]
 

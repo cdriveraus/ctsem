@@ -870,7 +870,7 @@ print.ctSampleDiagnostics <- function(x, ...) {
 # it does not have to be.
 #' @keywords internal
 .ctJuliaSampleFit <- function(model_spec, datalong, model, inits, cores,
-  backendcontrol, optimcontrol, chains, iter, control, priors, intoverpop,
+  optimcontrol, chains, iter, control, priors, intoverpop,
   gradient, verbose, intoverstates = TRUE) {
 
   npar <- .ctBackendNpar(model_spec)
@@ -883,7 +883,8 @@ print.ctSampleDiagnostics <- function(x, ...) {
       "Free a parameter, or use fit = FALSE to prepare the model without ",
       "fitting it.", call. = FALSE)
   }
-  start <- .ctJuliaInitialValues(npar, inits)
+  start <- .ctJuliaInitialValues(npar, inits,
+    initsd = .ctJuliaOr(optimcontrol$initsd, .01))
 
   # Stan's vocabulary, because these are Stan's arguments: `iter` counts warmup
   # and sampling together and warmup is half of it unless said otherwise.
@@ -934,7 +935,7 @@ print.ctSampleDiagnostics <- function(x, ...) {
     .ctBackendWarmWorkers(spec, workers = chains, values = start)
   } else NULL
 
-  optimised <- .ctJuliaOptimise(model_spec, start, backendcontrol = backendcontrol,
+  optimised <- .ctJuliaOptimise(model_spec, start, optimcontrol = optimcontrol,
     gradient = gradient, cores = cores, verbose = verbose,
     objective = jointobjective)
   estimate <- as.numeric(optimised$minimizer)
@@ -980,7 +981,7 @@ print.ctSampleDiagnostics <- function(x, ...) {
       logposterior = as.numeric(optimised$maximum_loglik),
       converged = TRUE, chunks = as.integer(optimised$chunks)),
     engine = model_spec$engine,
-    args = list(backend = "julia", backendcontrol = backendcontrol,
+    args = list(backend = "julia",
       optimcontrol = optimcontrol, cores = cores, priors = priors,
       intoverpop = intoverpop, optimize = FALSE,
       intoverstates = isTRUE(intoverstates)))

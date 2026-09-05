@@ -30,14 +30,14 @@
 #' Progress and reporting are also controlled per fit, and those win over these:
 #' \code{verbose} in \code{\link{ctFit}} (0 quiet, 1 reports progress, 2 keeps
 #' every line rather than overwriting), \code{optimcontrol$callback} for a
-#' function called while the fit runs, and \code{backendcontrol$progress} to
+#' function called while the fit runs, and \code{optimcontrol$progress} to
 #' force progress on or off for one fit.
 #'
 #' @section Julia:
 #' The Julia backend is located through the environment rather than options:
 #' \code{JULIA_BINDIR} names the binary directory, and
-#' \code{backendcontrol$julia_project} points a single fit at a different
-#' engine environment. See \code{\link{ctJuliaSetup}}.
+#' \code{ctJuliaSetup(project=)} points the session at a different engine
+#' environment. See \code{\link{ctJuliaSetup}}.
 #'
 #' @return Nothing; this page documents options rather than defining a
 #'   function.

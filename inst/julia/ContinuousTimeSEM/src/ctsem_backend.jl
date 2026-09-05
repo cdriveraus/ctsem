@@ -582,7 +582,7 @@ criterion at ten perfectly well. So "ten silently fails" is not a property of
 the setting; it is a thing that *can* happen at ten and did not happen twice.
 
 Twenty is the knee on both. The `lbfgs_memory` keyword overrides it, and R
-reaches that through `backendcontrol`.
+reaches that through `optimcontrol`.
 """
 const _CTSEM_LBFGS_MEMORY = 20
 
