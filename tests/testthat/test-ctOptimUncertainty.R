@@ -145,11 +145,22 @@ test_that("surrogate profiling uses drop magnitude for flat directions", {
     attr(out, 'gradient') <- -.001 * x
     out
   }
+  # maxStep is 200 rather than the default 64 so the cap cannot be what
+  # produces the answer: the expansion grows by factors of 8 and lands on
+  # exactly 64 of its own accord, which under maxStep=64 was indistinguishable
+  # from running out of room. `expect_lt` is the assertion that fails if the
+  # expansion ever does reach the cap.
+  #
+  # Measured step is exactly 64.0 -- identical over three repeats and at
+  # maxStep 64, 200 and 1000 -- against a target of sqrt(2*2/.001) = 63.2456,
+  # a relative difference of 0.0119. The tolerance below has 1.7x headroom
+  # over that; the old tolerance of 1 had 84x and could discriminate nothing.
   prof <- ctsem:::ctOptimSurrogateProfileDirections(est=0, lpgFunc=lpg,
     cholcov=matrix(1), directions=matrix(1), targetDrop=2,
-    maxStep=64, verbose=0)
+    maxStep=200, verbose=0)
   expect_true(all(prof$reached))
-  expect_equal(prof$step, rep(sqrt(2 * 2 / .001), 2), tolerance=1)
+  expect_lt(max(prof$step), 200)
+  expect_equal(prof$step, rep(sqrt(2 * 2 / .001), 2), tolerance=.02)
 })
 
 test_that("surrogate profiling expands to surrogate-implied flat target", {

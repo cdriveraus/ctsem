@@ -148,8 +148,15 @@ test_that("the two routes agree on a count model", {
     optimcontrol = list(estonly = TRUE))))
   laplace <- suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
     intoverpop = "laplace", optimcontrol = list(estonly = TRUE))))
+  # The two routes integrate the same random effect differently, so the gap is
+  # a real methodological difference and not noise: measured at -1471.584
+  # (laplace) against -1483.480 (augmented), 11.896 apart, 0.0080 relative,
+  # bit-for-bit identical over three repeats. `expect_equal` tolerances are
+  # relative, so the old value of 1 permitted a difference of 1483 -- the two
+  # could have had nothing to do with each other and passed. 0.02 keeps 2.5x
+  # headroom over the measurement.
   expect_equal(as.numeric(laplace$estimate$loglik),
-    as.numeric(augmented$estimate$loglik), tolerance = 1)
+    as.numeric(augmented$estimate$loglik), tolerance = 0.02)
 })
 
 test_that("ctGenerate draws counts rather than continuous values", {

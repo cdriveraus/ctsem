@@ -11,7 +11,6 @@
 "test-binary-binary-mix.R",295.188210010529,16,0,0
 "test-binary-gaussian-mix.R",22.1246299743652,2,0,0
 "test-binary-path.R",40.1953670978546,18,0,0
-"test-bootHessian.R",0.017949104309082,0,0,1
 "test-context-dependence.R",1.0093150138855,80,0,0
 "test-corrcheck.R",53.5246229171753,3,0,0
 "test-ctACF.R",1.10688614845276,17,0,0
@@ -57,7 +56,6 @@
 "test-latex-nonlinear.R",0.217200040817261,12,0,0
 "test-modelcycles.R",1.13240504264832,27,0,0
 "test-nonlinear-reporting-julia.R",108.526712179184,60,0,0
-"test-nonlinearVlinear.R",0.0168569087982178,0,0,1
 "test-popsummary-scale.R",0.342808961868286,8,0,0
 "test-print-model.R",10.4647860527039,20,0,0
 "test-reshaping.R",0.341041088104248,1,0,0

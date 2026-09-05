@@ -30,9 +30,28 @@ test_that("anomauth", {
     model= sm1, optimize=TRUE,verbose=0,savescores = FALSE,cores=cores)
   # sink()
   print(Sys.time()-a)
+  # PROVENANCE: 23415.929 is the OpenMx -2LL for this model, i.e. what the
+  # previous engine produced -- it is `expect_equal(23415.929, AnomAuthfit$
+  # mxobj$output$Minus2LogLikelihood)` in ctsem 3cd210cc (Nov 2016) and still
+  # is in ctsemOMX's own tests/testthat/test-knownFits.R. It came into the
+  # stan tests unchanged, so it is a cross-implementation reference and not a
+  # recording of what stan happens to do. The julia backend reproduces it to
+  # 5e-5 absolute (test-julia-backend.R).
   test_isclose(23415.929,-2*sf$stanfit$optimfit$value,tol=.01)
+  # A stan-side convergence property: `ginfn` is the infinity norm of the
+  # gradient at the reported optimum, recorded by the optimiser and, until
+  # review J15/R8, asserted nowhere. Its termination *reason* is not the same
+  # claim -- both stan optimisers report "no step found" as a termination --
+  # so the gradient is what gets checked. See test-stan-convergence.R.
+  # Measured 0.016 and 0.023 on two runs of this fit; a fit stalled at its
+  # starting values would be orders of magnitude above the bound.
+  expect_lt(sf$stanfit$optimfit$ginfn, 1)
   anoms=summary(sf)
-  anoms$popmeans['mm_Y1','sd']
+  # PROVENANCE: origin unknown -- treat as a regression pin, not ground truth.
+  # It entered as `.038 ... tolerance=.004` in a072d351 (Dec 2019) with the
+  # stan port, has no counterpart in ctsemOMX (whose summary reports no such
+  # column) and no source named anywhere. It pins the reported standard error
+  # of the Y1 manifest mean at whatever ctsem produced then.
   test_isclose(.036,anoms$popmeans['mm_Y1','sd'],tol=.01)
  }
 
@@ -63,8 +82,17 @@ oscillatingm <- ctModel(type='omx', n.latent = 2, n.manifest = 1, Tpoints = 11,
     cores=2,verbose=0,
     # optimcontrol=list(carefulfit=T),
     model= sm, optimize=TRUE,savescores = FALSE,priors=FALSE)
+  # PROVENANCE: -3461.936 is the OpenMx -2LL for the damped-oscillator example,
+  # asserted against `oscillatingf$mxobj$output$Minus2LogLikelihood` in ctsem
+  # 3cd210cc (Nov 2016) and still carried, commented out, in ctsemOMX's
+  # tests/testthat/test-knownFits.R. Like the AnomAuth value it is what the
+  # previous engine produced, so it is a cross-implementation reference rather
+  # than a stan recording.
   expect_equal(-3461.936,-2*sf$stanfit$optimfit$value,tolerance=.01)
-  
+  # As above: the gradient, not the termination reason. Measured 0.015 and
+  # 0.027 on two runs of this fit.
+  expect_lt(sf$stanfit$optimfit$ginfn, 1)
+
 
 })
 
