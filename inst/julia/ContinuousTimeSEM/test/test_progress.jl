@@ -48,7 +48,12 @@ _optimise_reporter(; label="optimise") =
     # Elapsed and the count are what replace it, and neither can be wrong.
     @test occursin("297", text)
     @test occursin("logpost -1232.52", text)
-    @test occursin("/s", text)
+    # The iteration rate went when the convergence estimate arrived: a rate is
+    # for multiplying by a count of work remaining, and this line prints no
+    # count of work remaining. See `_progress_optimise`.
+    @test !occursin("/s", text)
+    # And nothing is printed in its place unless a percentage is passed.
+    @test !occursin("est.", text)
 end
 
 @testset "the sampler's line keeps its estimate" begin
@@ -147,6 +152,138 @@ end
     @test _capture_progress() do
         ContinuousTimeSEM._progress_header(off, "anything")
     end == ""
+end
+
+@testset "the convergence estimate is sgd.R's formula on this optimiser's rule" begin
+    # `sgd.R:405`:
+    #   100 * (1 - log(current/tol) / log(worst/tol))
+    # with `worst` the running maximum. Same expression here, with the gradient
+    # norm in place of the log-posterior change because the gradient is what
+    # this optimiser stops on -- `f_tol` is 0 by default, so there is no
+    # log-posterior tolerance to interpolate against.
+    c = ContinuousTimeSEM.CTSEMConvergence(1e-8)
+    reference(cur, worst, tol) = 100 * (1 - log(cur / tol) / log(worst / tol))
+    # The first value is the worst by definition, so the fit starts at zero.
+    @test ContinuousTimeSEM._convergence_percent!(c, 361.8) == 0.0
+    @test ContinuousTimeSEM._convergence_percent!(c, 0.6775) ≈
+        reference(0.6775, 361.8, 1e-8)
+    @test ContinuousTimeSEM._convergence_percent!(c, 1.423e-8) ≈
+        reference(1.423e-8, 361.8, 1e-8)
+end
+
+@testset "a new worst rebases the scale rather than leaving the range" begin
+    # `sgd.R` does the same with `lpdiff1`: a value worse than any seen becomes
+    # the new baseline, so the reported number stays a fraction of a span that
+    # actually contains the current value.
+    c = ContinuousTimeSEM.CTSEMConvergence(1e-8)
+    ContinuousTimeSEM._convergence_percent!(c, 1.447)
+    ContinuousTimeSEM._convergence_percent!(c, 0.3)
+    @test c.worst == 1.447
+    # Iteration 2 of the nearly-unidentified fit: the line search lengthens its
+    # step and the gradient overshoots every value seen so far.
+    ContinuousTimeSEM._convergence_percent!(c, 3.387)
+    @test c.worst == 3.387
+    # Still in range, and still a percentage.
+    @test 0 <= c.best <= 100
+end
+
+@testset "the reported percentage never goes backwards" begin
+    # Optim hands the callback a raw per-iteration gradient norm, unlike the
+    # window-smoothed quantity `sgd.R` feeds the same formula. Measured over
+    # eight fits, the unclamped number stepped backwards on up to 51% of
+    # iterations, by as much as 9.9 points. The best reached is what is shown.
+    c = ContinuousTimeSEM.CTSEMConvergence(1e-8)
+    # The gradient trace of the two-latent fit's first six iterations, which
+    # rises twice.
+    seen = Float64[1.551, 1.043, 1.384, 0.7369, 1.074, 0.3661]
+    reported = [ContinuousTimeSEM._convergence_percent!(c, g) for g in seen]
+    @test all(diff(reported) .>= 0)
+    # Held, not recomputed: iteration 3's 1.384 is worse than iteration 2's
+    # 1.043, so the raw formula would have fallen there.
+    @test reported[3] == reported[2]
+    # The raw gradient is on the same line, so a fit going backwards is still
+    # visible; only the estimate is held.
+    @test reported[end] > reported[1]
+end
+
+@testset "the estimate is 100% at the criterion and needs no log of zero" begin
+    c = ContinuousTimeSEM.CTSEMConvergence(1e-8)
+    ContinuousTimeSEM._convergence_percent!(c, 12.0)
+    @test ContinuousTimeSEM._convergence_percent!(c, 1e-8) == 100.0
+    # A gradient that underflows to exactly zero is the normal end of a healthy
+    # fit, and `log(0/tol)` would be -Inf. Reached before the logarithm.
+    d = ContinuousTimeSEM.CTSEMConvergence(1e-8)
+    ContinuousTimeSEM._convergence_percent!(d, 12.0)
+    @test ContinuousTimeSEM._convergence_percent!(d, 0.0) == 100.0
+    # And past it, rather than beyond 100.
+    e = ContinuousTimeSEM.CTSEMConvergence(1e-8)
+    ContinuousTimeSEM._convergence_percent!(e, 12.0)
+    @test ContinuousTimeSEM._convergence_percent!(e, 1e-14) == 100.0
+end
+
+@testset "no estimate is reported when there is nothing to estimate against" begin
+    # A NaN gradient is a fit in trouble, not a fit at 0%. `NaN` here means
+    # "say nothing", and `_progress_optimise` then prints no field at all --
+    # the failure this whole line exists to avoid is a plausible number.
+    c = ContinuousTimeSEM.CTSEMConvergence(1e-8)
+    @test isnan(ContinuousTimeSEM._convergence_percent!(c, NaN))
+    @test isnan(ContinuousTimeSEM._convergence_percent!(c, Inf))
+    @test isnan(ContinuousTimeSEM._convergence_percent!(c, -1.0))
+    # `g_tol = 0` asks for an exactly zero gradient, which no span can be
+    # measured against.
+    @test isnan(ContinuousTimeSEM._convergence_percent!(
+        ContinuousTimeSEM.CTSEMConvergence(0.0), 1.0))
+    # A bad iteration does not destroy an estimate already earned.
+    d = ContinuousTimeSEM.CTSEMConvergence(1e-8)
+    ContinuousTimeSEM._convergence_percent!(d, 100.0)
+    good = ContinuousTimeSEM._convergence_percent!(d, 1e-3)
+    @test isnan(ContinuousTimeSEM._convergence_percent!(d, NaN))
+    @test ContinuousTimeSEM._convergence_percent!(d, 1e-3) == good
+end
+
+@testset "the percentage appears on the line, labelled as an estimate" begin
+    text = _capture_progress() do
+        ContinuousTimeSEM._progress_optimise(_optimise_reporter(), 297, 1000,
+            "logpost -1232.52"; percent=38.4)
+    end
+    @test occursin("38% est.", text)
+    # Where a reader looks for "how far": immediately after the counter, ahead
+    # of the elapsed time.
+    @test findfirst("38% est.", text)[1] < findfirst("logpost", text)[1]
+    # A NaN percentage prints nothing rather than "NaN%".
+    absent = _capture_progress() do
+        ContinuousTimeSEM._progress_optimise(_optimise_reporter(), 297, 1000,
+            "logpost -1232.52"; percent=NaN)
+    end
+    @test !occursin("est.", absent)
+    @test !occursin("NaN", absent)
+end
+
+@testset "a budget stage keeps its exact fraction and gets no estimate" begin
+    # The prior warm-up runs its cap of 10 every time, so "3/10" is already
+    # correct. Replacing a right denominator with an estimated one is the
+    # mistake this whole file exists to prevent, so the caller passes NaN and
+    # the line carries the fraction alone.
+    text = _capture_progress() do
+        ContinuousTimeSEM._progress_optimise(_optimise_reporter(label="prior warm-up"),
+            3, 10; budget=true, percent=NaN)
+    end
+    @test occursin("3/10", text)
+    @test !occursin("est.", text)
+end
+
+@testset "the line does not grow wide enough to wrap" begin
+    # A wrapped line cannot be overwritten in place: a carriage return goes to
+    # the start of the last visual row and leaves the earlier ones as debris.
+    # The widest optimiser line is the Laplace one, which carries an inner-mode
+    # count as well.
+    text = _capture_progress() do
+        ContinuousTimeSEM._progress_optimise(_optimise_reporter(), 297, 1000,
+            @sprintf("logpost %11.2f", -1232.52),
+            @sprintf("|g| %9.2e", 3.98e-13),
+            @sprintf("inner %d/%d", 120, 120); percent=38.4)
+    end
+    @test maximum(length, split(strip(text, '\n'), '\n')) <= 100
 end
 
 @testset "durations read at the magnitude they are" begin
