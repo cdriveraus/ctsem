@@ -153,6 +153,16 @@ test_that("the posterior predictive tools run on a backend fit", {
   expect_true(all(vapply(plots, function(p) inherits(p, "ggplot"), logical(1))))
   # Both panel families, from the merged function.
   expect_true(all(c("Density", "PIT", "CalibrationBySubject") %in% names(plots)))
+  # Subject-level log likelihood: totals per subject, compared against the same
+  # curve from each generated dataset. Both sides must total the same rows.
+  expect_true("SubjectLogLik" %in% names(plots))
+  ll <- predictive[as.character(predictive$variable) == "LogLik" &
+    is.finite(predictive$obsValue) & is.finite(predictive$value), ]
+  gensub <- ll[, .(tot = sum(value)), by = .(sample, id)]
+  obssub <- unique(ll[, .(row, id, obsValue)])[, .(tot = sum(obsValue)), by = id]
+  expect_equal(nrow(obssub), length(unique(ll$id)))
+  expect_equal(nrow(gensub), nrow(obssub) * length(unique(ll$sample)))
+  expect_true(all(is.finite(gensub$tot)) && all(is.finite(obssub$tot)))
   expect_true(any(grepl("^ChangeByValue_", names(plots))))
   # Time intervals run forwards. They did not: the generated table was ordered
   # by row label rather than row number, so diff(Time) crossed subject
