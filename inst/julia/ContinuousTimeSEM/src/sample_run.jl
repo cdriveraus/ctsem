@@ -676,11 +676,11 @@ function _sample_chains(nchains::Int, parallel::Bool, seed::Integer,
             Random.Xoshiro(UInt64(seed) + UInt64(c)), nwarmup, ndraws, maxdepth,
             target_accept, maxdelta, init_scale, adapt_metric, adapt;
             settle_tol=settle_tol, progress=reporter, callback=watcher)
-        # See `_continue_chains`. Warmup's line was terminated only by the
-        # *sampling* reporter's leading newline, which left it showing whatever
-        # iteration the last cadence tick caught -- "warmup 176/200" on a run
-        # that completed all 200.
-        _progress_done(reporter, @sprintf("%d warmup iterations", nwarmup))
+        # See `_continue_chains`. One reporter spans both phases -- `_run_chain`
+        # relabels it from "warmup" to "sampling" partway -- so the closing line
+        # names both rather than whichever phase it ended in.
+        _progress_done(reporter,
+            @sprintf("%d warmup + %d draws", nwarmup, ndraws))
         return nothing
     end
     if parallel
