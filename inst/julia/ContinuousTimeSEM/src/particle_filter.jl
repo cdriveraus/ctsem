@@ -48,7 +48,7 @@ the convergence check.
 
 using Random
 
-export ctsem_particle_loglik
+export ctsem_particle_loglik, ctsem_particle_batch
 
 """
     ctsem_particle_loglik(objective, values; particles=2000, substeps=20,
@@ -64,6 +64,11 @@ row of the data in data order; `subject_loglik`; `ess_min`, the smallest
 effective sample size any row saw; and the settings. `substeps` is the number
 of transition steps per observation interval, floored by the objective's own
 `maxtimestep` rule or mesh. `seed` fixes every draw.
+
+Each subject has its own random stream, seeded from `(seed, subject)`, and the
+subjects are split across threads the way the filter's own subject loop is
+(`ctsem_set_max_chunks!` caps it). So the result is the same whatever the
+thread count, and a difference between two runs is a difference in `seed`.
 """
 function ctsem_particle_loglik(objective::CTSEMObjective, values::AbstractVector;
     particles::Integer=2000, substeps::Integer=20, transition=:exponential,
@@ -71,18 +76,34 @@ function ctsem_particle_loglik(objective::CTSEMObjective, values::AbstractVector
     N = Int(particles)
     N >= 2 || throw(ArgumentError("particles must be at least 2"))
     substeps >= 1 || throw(ArgumentError("substeps must be at least 1"))
+    seed >= 0 || throw(ArgumentError("seed must be non-negative"))
     0 < resample_threshold <= 1 || throw(ArgumentError("resample_threshold must be in (0, 1]"))
     trans = _ctsem_transition(transition)
-    rng = MersenneTwister(Int(seed))
     x = Vector{Float64}(values)
     subjects = objective.subject_objectives
+    nsubjects = length(subjects)
+    results = Vector{Tuple{Float64,Vector{Float64},Float64,Float64}}(undef, nsubjects)
+    nchunks = _ctsem_nchunks(nsubjects)
+    if nchunks <= 1
+        for i in 1:nsubjects
+            _ctsem_particle_run!(results, i, objective, x, N, Int(substeps), trans,
+                Float64(resample_threshold), seed)
+        end
+    else
+        ranges = _ctsem_chunk_ranges(nsubjects, nchunks)
+        Threads.@sync for c in 1:nchunks
+            Threads.@spawn for i in ranges[c]
+                _ctsem_particle_run!(results, i, objective, x, N, Int(substeps), trans,
+                    Float64(resample_threshold), seed)
+            end
+        end
+    end
     row_loglik = Float64[]
-    subject_loglik = zeros(Float64, length(subjects))
+    subject_loglik = zeros(Float64, nsubjects)
     varsum = 0.0
     ess_min = Inf
-    for (i, sub) in enumerate(subjects)
-        ll, rows, v, e = _ctsem_particle_subject!(sub, objective.params, x, N,
-            Int(substeps), trans, Float64(resample_threshold), rng)
+    @inbounds for i in 1:nsubjects
+        ll, rows, v, e = results[i]
         subject_loglik[i] = ll
         append!(row_loglik, rows)
         varsum += v
@@ -91,6 +112,76 @@ function ctsem_particle_loglik(objective::CTSEMObjective, values::AbstractVector
     return (loglik=sum(subject_loglik), se=sqrt(varsum), row_loglik=row_loglik,
         subject_loglik=subject_loglik, ess_min=ess_min, particles=N,
         substeps=Int(substeps), transition=trans)
+end
+
+# One subject into its slot. A function rather than a closure in the spawn, so
+# nothing in the loop body can rebind a caller's local.
+function _ctsem_particle_run!(results, i::Int, objective, x, N, nsubsteps, trans,
+    threshold, seed)
+    results[i] = _ctsem_particle_subject!(objective.subject_objectives[i],
+        objective.params, x, N, nsubsteps, trans, threshold,
+        _ctsem_particle_rng(seed, i))
+    return nothing
+end
+
+# The stream for one subject: seeded from the two halves of `seed` and the
+# subject index, so no two (seed, subject) pairs share a stream and the
+# assignment of subjects to threads cannot change a result.
+function _ctsem_particle_rng(seed::Integer, i::Integer)
+    s = UInt64(seed)
+    return MersenneTwister(UInt32[UInt32(s & 0xffffffff), UInt32(s >> 32), UInt32(i)])
+end
+
+"""
+    ctsem_particle_batch(objective, values::AbstractMatrix; particles=1000,
+                         substeps=10, transition=:exponential, seed=1,
+                         resample_threshold=0.5)
+
+The particle log likelihood at each column of `values`, beside the filter's.
+
+Returns a NamedTuple of vectors, one entry per column: `particle`, the particle
+estimate; `se` and `ess_min` as in `ctsem_particle_loglik`; `filter`, the
+filter's log likelihood summed over subjects; and `posterior`, the objective's
+full value at the column, which is `filter` plus the prior and any term for
+missing time-independent predictors. So `posterior - filter + particle` is the
+log posterior with the filter's likelihood replaced by the particle one, which
+is what an importance weight against the particle posterior needs.
+
+`seed` is one integer for every column, or a vector with one per column. The
+importance weights downstream want the latter: the estimates must be
+independent across draws for the self-normalised weights to be consistent. A
+shared seed was tried first and is wrong for that use -- it makes the filter's
+Monte Carlo error a fixed random function of the parameters, which tilts the
+weighted posterior by that seed's error surface instead of averaging out, and
+more draws do not cure it. Measured on a two-parameter linear fit: a shared
+seed put the corrected mean 0.7 standard errors from the exact posterior with
+an effective sample size of 158; independent seeds removed it.
+"""
+function ctsem_particle_batch(objective::CTSEMObjective, values::AbstractMatrix;
+    particles::Integer=1000, substeps::Integer=10, transition=:exponential,
+    seed=1, resample_threshold::Real=0.5)
+    ncol = size(values, 2)
+    ncol >= 1 || throw(ArgumentError("values must have at least one column"))
+    seeds = seed isa AbstractVector ? seed : fill(seed, ncol)
+    length(seeds) == ncol ||
+        throw(ArgumentError("seed must be one integer or one per column of values"))
+    particle = Vector{Float64}(undef, ncol)
+    se = Vector{Float64}(undef, ncol)
+    ess_min = Vector{Float64}(undef, ncol)
+    filter = Vector{Float64}(undef, ncol)
+    posterior = Vector{Float64}(undef, ncol)
+    for j in 1:ncol
+        x = Vector{Float64}(view(values, :, j))
+        pf = ctsem_particle_loglik(objective, x; particles=particles, substeps=substeps,
+            transition=transition, seed=Int(seeds[j]), resample_threshold=resample_threshold)
+        particle[j] = pf.loglik
+        se[j] = pf.se
+        ess_min[j] = pf.ess_min
+        full = objective(x)
+        posterior[j] = full
+        filter[j] = full - _ctsem_log_prior(objective, x) - _ctsem_ti_missing_loglik(objective, x)
+    end
+    return (particle=particle, se=se, ess_min=ess_min, filter=filter, posterior=posterior)
 end
 
 """

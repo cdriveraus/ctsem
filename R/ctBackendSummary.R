@@ -1305,7 +1305,12 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     out[[if (isTRUE(object$args$resolved$optimize %in% FALSE)) "nsamples" else "ndraws"]] <-
       nrow(object$estimate$rawposterior)
   }
-  out$uncertaintyNote <- if (has_posterior) {
+  out$uncertaintyNote <- if (has_posterior && !is.null(object$particle_correction)) {
+    # The draws were corrected after the uncertainty pass, so naming that pass's
+    # method would describe draws the fit no longer carries.
+    paste0("Julia backend; intervals from draws corrected by ctParticleCorrect() ",
+      "against the particle-filter likelihood, pushed through the transforms.")
+  } else if (has_posterior) {
     paste0("Julia backend; intervals from ctOptimUncertainty(uncertainty='",
       object$uncertainty$settings$method, "') draws pushed through the transforms.")
   } else {
