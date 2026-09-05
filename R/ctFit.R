@@ -1155,7 +1155,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   if(forcerecompile) recompile <- TRUE
   if(naf(!is.na(ctm$rawpopsdbaselowerbound))) recompile <- TRUE
   if(ctm$rawpopsdbase != 'normal(0,1)') recompile <- TRUE
-  if(ctm$rawpopsdtransform != 'log1p_exp(2*rawpopsdbase-1) .* sdscale') ctm$recompile <- TRUE
+  if(ctm$rawpopsdtransform != 'log1p_exp(2*rawpopsdbase-1) .* sdscale') recompile <- TRUE
   if(any(ctm$modelmats$matsetup[,'transform'] < -10)) recompile <- TRUE #if custom transforms needed
 
   ncalcsNoJ<- length(unlist(ctm$modelmats$calcs)[!grepl('JAx[',unlist(ctm$modelmats$calcs),fixed=TRUE)])
