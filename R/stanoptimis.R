@@ -17,7 +17,7 @@
 #' \dontrun{
 #' newfit <- ctFitAddSamples(ctstantestfit, 10, 1)
 #' }
-ctFitAddSamples <- function(fit,nsamples,cores=1){
+ctFitAddSamples <- function(fit,nsamples,cores=2){
   
   if(length(fit$stanfit$stanfit@sim) > 0) stop('ctStanFit object was sampled and not optimized, cannot add samples!')
   

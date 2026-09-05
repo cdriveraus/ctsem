@@ -7,7 +7,7 @@
 ctLOO(
   fit,
   folds = 10,
-  cores = 1,
+  cores = 2,
   parallelFolds = FALSE,
   tol = 1e-05,
   subjectwise = ifelse(length(unique(.ctFitRowSubject(fit))) >= folds, TRUE, FALSE),

@@ -510,6 +510,20 @@ function _ctsem_state_row!(ws, pars, data::AbstractMatrix, col::Int,
 end
 
 """
+The transition a state-explicit pass uses between substeps: `:exponential`
+(the filter's own discretisation applied at the sampled state -- exact for
+the linear parts of the model, second order otherwise) or `:euler`
+(Euler-Maruyama, nothing linearised over the step, needs a finer mesh). Strings
+are accepted because the selector crosses the R bridge as one.
+"""
+function _ctsem_transition(transition)
+    s = Symbol(transition)
+    s in (:exponential, :euler) ||
+        throw(ArgumentError("transition must be :exponential or :euler, got $(transition)"))
+    return s
+end
+
+"""
     _ctsem_state_pass!(ws, params, data, timesteps, sp, tdpreds, tipreds,
                        subject, max_timestep, z, zoffset, gen)
 
@@ -530,7 +544,8 @@ would still return a perfectly plausible number.
 """
 function _ctsem_state_pass!(ws, params::AbstractVector{T}, data::AbstractMatrix,
     timesteps, sp, tdpreds::AbstractMatrix, tipreds::AbstractVector,
-    subject::Int, max_timestep, z::AbstractVector, zoffset::Int, gen) where {T}
+    subject::Int, max_timestep, z::AbstractVector, zoffset::Int, gen,
+    transition::Symbol=:exponential) where {T}
 
     _materialize_subject_values!(ws.subject_values, params, sp, tipreds)
     _materialize_all_params!(ws.all_params, ws.subject_values, sp)
@@ -623,6 +638,33 @@ function _ctsem_state_pass!(ws, params::AbstractVector{T}, data::AbstractMatrix,
 
             ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, 0,
                 ws.state_dim)
+            if transition === :euler && ws.continuous_time
+                # Euler-Maruyama: x += f(x) h + L sqrt(h) z with L L' the
+                # diffusion covariance at x. No exponential and no Lyapunov
+                # solve, so nothing is linearised over the step -- a reference
+                # that shares no approximation with the filter's mean step. It
+                # needs a finer mesh than the exponential step for the same
+                # accuracy, and is stable only for h below 2 over the largest
+                # drift eigenvalue.
+                _matvec_mul!(ws.bufferQ.r, pars.DRIFT, ws.state, ws.state_dim, ws.state_dim)
+                for i in 1:n
+                    ws.state[i] += (ws.bufferQ.r[i] + pars.CINT[i]) * substep_dt
+                end
+                for j in 1:k, i in 1:k
+                    qfactor[i, j] = ws.bufferQ.out[indices[i], indices[j]]
+                end
+                _ctsem_lower_chol!(qfactor, k)
+                sqrt_h = sqrt(substep_dt)
+                for i in 1:k
+                    acc = zero(T)
+                    for j in 1:i
+                        acc += qfactor[i, j] * T(z[at + j])
+                    end
+                    ws.state[indices[i]] += sqrt_h * acc
+                end
+                at += k
+                continue
+            end
             if ws.continuous_time
                 _compute_discrete_time_form!(ws.discrete_ca, ws.bufferQ,
                     ws.bufferQ.out, pars, substep_dt, ws.exp_buffer,
@@ -720,7 +762,8 @@ cost-weighted chunking would apply unchanged -- it is left out because nothing
 calls this in a loop yet. A fit over this target is what would want it.
 """
 function ctsem_joint_loglikelihood(objective::CTSEMObjective,
-    values::AbstractVector, z::AbstractVector)
+    values::AbstractVector, z::AbstractVector; transition=:exponential)
+    trans = _ctsem_transition(transition)
     T = promote_type(eltype(values), eltype(z), Float64)
     parameters = collect(T, values)
     innovations = collect(T, z)
@@ -735,7 +778,7 @@ function ctsem_joint_loglikelihood(objective::CTSEMObjective,
         ws = _get_or_init_objective_workspace!(sub, T)
         contribution = _ctsem_state_pass!(ws, parameters, sub.data,
             sub.timesteps, sp, sub.tdpreds, sub.tipreds, sub.subject,
-            sub.max_timestep, innovations, layout.zoffsets[i], nothing)
+            sub.max_timestep, innovations, layout.zoffsets[i], nothing, trans)
         isfinite(contribution) || return _ctsem_invalid(T)
         total += contribution
     end
@@ -819,7 +862,9 @@ the row after that is drawn from a rate that has already moved. Nothing of the
 kind can happen here, because no observation ever moves a state.
 """
 function ctsem_generate_states(objective::CTSEMObjective,
-    values::AbstractVector, z::AbstractVector, base::AbstractMatrix)
+    values::AbstractVector, z::AbstractVector, base::AbstractMatrix;
+    transition=:exponential)
+    trans = _ctsem_transition(transition)
 
     sp = objective.params
     parameters = collect(Float64, values)
@@ -842,7 +887,7 @@ function ctsem_generate_states(objective::CTSEMObjective,
         ws = _get_or_init_objective_workspace!(sub, Float64)
         loglik[i] = _ctsem_state_pass!(ws, parameters, sub.data, sub.timesteps,
             sp, sub.tdpreds, sub.tipreds, sub.subject, sub.max_timestep,
-            innovations, layout.zoffsets[i], gen)
+            innovations, layout.zoffsets[i], gen, trans)
     end
     return (Y=gen.out, states=gen.states, llrow=gen.llrow,
         subject_loglik=loglik)
@@ -888,12 +933,16 @@ struct CTSEMJointObjective{O} <: CTSEMOptimisable
     objective::O
     layout::CTSEMStateLayout
     npar::Int
+    # `:exponential` or `:euler`; see `_ctsem_transition`.
+    transition::Symbol
 end
 
-function ctsem_joint_objective(objective::CTSEMObjective, npar::Integer)
+function ctsem_joint_objective(objective::CTSEMObjective, npar::Integer;
+    transition=:exponential)
     npar = Int(npar)
     npar >= 0 || throw(ArgumentError("npar must be non-negative"))
-    return CTSEMJointObjective(objective, _ctsem_state_layout(objective), npar)
+    return CTSEMJointObjective(objective, _ctsem_state_layout(objective), npar,
+        _ctsem_transition(transition))
 end
 
 """Total dimension optimised or sampled: parameters plus innovations."""
@@ -948,7 +997,7 @@ function _ctsem_joint_subject(o::CTSEMJointObjective, i::Int,
     ws = _get_or_init_objective_workspace!(sub, T)
     value = _ctsem_state_pass!(ws, theta, sub.data, sub.timesteps,
         o.objective.params, sub.tdpreds, sub.tipreds, sub.subject,
-        sub.max_timestep, z, offset, nothing)
+        sub.max_timestep, z, offset, nothing, o.transition)
     isfinite(value) || return value
     prior = zero(T)
     @inbounds for k in eachindex(z)
@@ -1088,7 +1137,7 @@ function _ctsem_joint_record(o::CTSEMJointObjective, x::AbstractVector)
         ws = _get_or_init_objective_workspace!(sub, Float64)
         _ctsem_state_pass!(ws, theta, sub.data, sub.timesteps,
             o.objective.params, sub.tdpreds, sub.tipreds, sub.subject,
-            sub.max_timestep, innovations, layout.zoffsets[i], gen)
+            sub.max_timestep, innovations, layout.zoffsets[i], gen, o.transition)
     end
     return gen
 end

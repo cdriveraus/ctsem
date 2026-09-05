@@ -8,7 +8,7 @@
 ctExtract(
   object,
   subjectMatrices = FALSE,
-  cores = 1,
+  cores = 2,
   nsamples = "all",
   subjects = "all",
   state = NULL,

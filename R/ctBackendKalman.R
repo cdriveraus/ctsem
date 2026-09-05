@@ -489,7 +489,8 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
   module <- .ctJuliaModule(spec$project)
   .ctBackendJuliaValue(module$ctsem_generate_states(.ctJuliaObjective(fit),
     .ctJuliaNumericVector(as.numeric(raw)),
-    .ctJuliaNumericVector(as.numeric(z)), JuliaConnectoR::juliaPut(base)))
+    .ctJuliaNumericVector(as.numeric(z)), JuliaConnectoR::juliaPut(base),
+    transition = .ctJuliaOr(spec$transition, "exponential")))
 }
 
 # The joint density of states and data, and its gradient with respect to the
@@ -503,7 +504,7 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
 }
 
 .ctBackendGenerateFromFit <- function(fit, nsamples = 200, fullposterior = FALSE,
-  cores = 1) {
+  cores = 2) {
   spec <- .ctBackendSpec(fit)
   # `ctsem_generate` (and `ctsem_generate_states` below it) pass each
   # subject's `tipreds` straight to the extended Kalman filter without the
