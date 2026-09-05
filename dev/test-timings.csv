@@ -29,7 +29,7 @@
 "test-ctReport.R",48.9308490753174,181,0,0
 "test-ctStanModel-matrices.R",0.22418999671936,22,0,0
 "test-datastart.R",8.2884521484375,45,0,0
-"test-dtVct.R",54.6815938949585,34,0,0
+"test-dtVct.R",48.4,34,0,0
 "test-intervalise.R",0.03006911277771,1,0,0
 "test-julia-backend.R",30.5933952331543,80,0,1
 "test-julia-binary.R",208.581409931183,42,0,0
@@ -63,7 +63,7 @@
 "test-stantipred.R",107.705454826355,6,0,0
 "test-sunspots.R",21.643355846405,6,0,0
 "test-t0var-redundancies.R",1.00355505943298,9,0,0
-"test-tdeffectvariation_covtest.R",517.529834985733,25,0,1
-"test-timevarying.R",570.357617139816,57,0,0
-"test-ukfpoptest.R",53.822653055191,6,0,0
+"test-tdeffectvariation_covtest.R",425.2,17,0,0
+"test-timevarying.R",573.1,63,0,0
+"test-ukfpoptest.R",55.2,6,0,0
 "test_behavGenNLcor.R",198.103805065155,1,0,0

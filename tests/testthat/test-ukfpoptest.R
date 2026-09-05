@@ -6,8 +6,22 @@ skip_on_32bit()
   library(testthat)
   cores=2
   
-  context("ukfpopcheck") 
-  
+  context("ukfpopcheck")
+
+  # Part of the family whose design is written down at the top of
+  # test-tdeffectvariation_covtest.R. Both blocks here are C1 (equivalence):
+  # ctsem's own random effect against a hand-written state augmentation, on
+  # CINT here and on a nonlinear DRIFT below.
+  #
+  # Both sizes are left as they are, and that is also measured. For
+  # ukfpopcheck1 the loglik, correlation and DRIFT gaps have room at every n
+  # tried (n = 160/80/40: loglik 1.0e-4/1.3e-4/2.0e-4 against 1e-3, correlation
+  # 7.2e-4/2.6e-4/8.1e-5 against 1e-2, DRIFT 9.8e-5/3.4e-5/2.6e-5 against
+  # 1e-2), but the pop_T0cov-to-popcov RATIO check does not: max |ratio - 1| is
+  # 0.861 at n = 160, 0.069 at 80 and 0.185 at 40, against a tolerance of 1.
+  # It is erratic because the ratio has near-zero elements in its denominator,
+  # so it can neither be tightened nor relied on to survive a smaller n. The
+  # 12 s a shrink would save is not worth a test that fails on a seed.
   test_that("ukfpopcheck1", {
     set.seed(2)
     Tpoints<-10

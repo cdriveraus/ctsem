@@ -8,11 +8,25 @@ skip_on_32bit()
   library(testthat)
   
   context("dtVct_lVnl")
-  
+
+  # Part of the family whose design is written down at the top of
+  # test-tdeffectvariation_covtest.R. Both blocks here assert C3: with equal
+  # intervals of 1 a ct model and a dt model are reparameterisations of each
+  # other, so their parmatrices and their logliks agree. The first block also
+  # carries a random CINT, so it is a C1 instance as well.
+  #
+  # n = 200 is measured, not chosen. The loglik gap is 0 at every n tried; what
+  # binds is the parmatrices mean gap against its 1e-2 tolerance:
+  #
+  #   n     mean gap   sd gap
+  #   500     .008      .007
+  #   200     .003      .005
+  #   100     .015      .019   <- past 1e-2
+  #    50     .015      .012   <- past 1e-2
   test_that("dtVct_CINTheterogeneity", {
     set.seed(1)
     s=list()
-    nsubjects=500
+    nsubjects=200
     Tpoints=15
     parsd=1.4
     parmu= -3.4
@@ -78,6 +92,9 @@ skip_on_32bit()
   }) #end cint heterogeneity
     
     
+    # This one stays at 200: measured, the mean/sd gaps are .034/.029 at n=200,
+    # .099/.105 at n=100 -- the sd gap is already past its 1e-1 tolerance -- and
+    # .176/.136 at n=50. There is nothing to take here.
     test_that("dtVct_noheterogeneity", {
       set.seed(1)
       s=list()

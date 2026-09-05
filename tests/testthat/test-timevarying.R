@@ -12,7 +12,26 @@ skip_if(.Platform$OS.type == "windows" && R.version$major %in% 4 &&
   set.seed(1)
   
   context("timevarying")
-  
+
+  # Part of the random-effect / ct-vs-dt family whose design is written down at
+  # the top of test-tdeffectvariation_covtest.R. This block carries two claims:
+  # C3, that a ct fit and a dt fit of the same state-dependent LAMBDA model
+  # agree, and a recovery claim -- that `lbystate` comes back as the
+  # lambdafactor the data were generated with.
+  #
+  # The size below is NOT shrinkable, which was measured rather than assumed.
+  # The recovery error on lambdafactor (true 0.3), and the ct-vs-dt loglik gap:
+  #
+  #   n x Tpoints   err_ct   err_dt   loglik gap
+  #   50 x 50        0.001    0.001    0        <- as written
+  #   50 x 25        0.105    0.104    0        <- past the 1e-1 assertion
+  #   30 x 50        0.066    0.067    0
+  #   30 x 30        0.044    0.279    430      <- the dt fit diverged outright
+  #   25 x 25        0.017    0.020    0
+  #
+  # Recovery degrades non-monotonically and one intermediate size loses the dt
+  # fit completely, so there is no smaller design here that is safe. Halving
+  # the data to save 180 s buys a test that fails.
   test_that("varyingLAMBDA", {
     set.seed(1)
     s=list()
@@ -142,8 +161,42 @@ skip_if(.Platform$OS.type == "windows" && R.version$major %in% 4 &&
     d$X <- d$Y1
     d$Y <- d$Y2
     
+    # The cheap half first, so a specification bug fails in under a second
+    # rather than after the compile. `recompile == 1` is the reason this block
+    # is expensive and is what its name refers to: this shape cannot use the
+    # precompiled ctsm program, so rstan builds a bespoke one, and that C++
+    # compile -- not the data -- is essentially all of the block's wall clock.
+    # Measured: the whole block is 197 s at 100 subjects and 191 s at 25, of
+    # which `fit = FALSE` is 0.7 s.
+    spec <- ctFit(datalong = d, model = test_, fit = FALSE)
+    testthat::expect_equal(spec$standata$recompile, 1)
+    # The state-dependent DRIFT cell has to reach matsetup as a state
+    # reference, not as a parameter. Column 10 is `stateref`.
+    testthat::expect_true(sum(spec$standata$matsetup[, 10] != 0) > 0)
+
     f <- ctFit(datalong = d,model= test_)
     testthat::expect_s3_class(f, 'ctStanFit')
+
+    # ...and then say the fit MOVED. `expect_s3_class` alone passed on a fit
+    # that had done nothing: an optimiser that returned its starting values
+    # still returns an object of the right class. Every number below is
+    # measured on this design (25 subjects, seed 1); the counterfactual in
+    # brackets is the same quantity evaluated at the neutral raw start, which
+    # is what a fit that did not move would report.
+    sf <- f$stanfit$stanfit
+    raw <- f$stanfit$rawest
+    lp_opt <- rstan::log_prob(sf, upars = raw, adjust_transform = FALSE)
+    lp_start <- rstan::log_prob(sf, upars = rep(0, length(raw)),
+      adjust_transform = FALSE)
+    grad_opt <- rstan::grad_log_prob(sf, upars = raw, adjust_transform = FALSE)
+
+    testthat::expect_true(is.finite(summary(f)$loglik))
+    # measured gain 471 [0]
+    testthat::expect_true(lp_opt > lp_start + 10)
+    # measured max|grad| 0.005 at the optimum [126 at the start]
+    testthat::expect_true(max(abs(grad_opt)) < 1)
+    # measured max|raw| 37.9 [0]
+    testthat::expect_true(max(abs(raw)) > 1)
   })
   
 }
