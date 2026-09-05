@@ -114,7 +114,6 @@
 }
 
 test_that("a Gaussian model reports exactly what it reported before", {
-  skip_on_cran()
   skip_without_julia()
   k <- .pscale("gaussian")
   # LAMBDA is 1 and MANIFESTMEANS 0, so the untouched Gaussian path makes the
@@ -133,7 +132,6 @@ test_that("a Gaussian model reports exactly what it reported before", {
 })
 
 test_that("a binary model reports the marginal probability", {
-  skip_on_cran()
   skip_without_julia()
   k <- .pscale("binary")
   observed <- .pscale_obs(k, 1)
@@ -172,7 +170,6 @@ test_that("a binary model reports the marginal probability", {
 })
 
 test_that("a count model reports the marginal rate in closed form", {
-  skip_on_cran()
   skip_without_julia()
   k <- .pscale("count")
   observed <- .pscale_obs(k, 1)
@@ -208,7 +205,6 @@ test_that("a count model reports the marginal rate in closed form", {
 })
 
 test_that("an ordinal model reports the expected category", {
-  skip_on_cran()
   skip_without_julia()
   k <- .pscale("ordinal")
   observed <- .pscale_obs(k, 1)
@@ -237,7 +233,6 @@ test_that("an ordinal model reports the expected category", {
 })
 
 test_that("a non-Gaussian row leaves the Gaussian rows beside it alone", {
-  skip_on_cran()
   skip_without_julia()
   k <- .pscale("mixed")
   # Column 1 is binary, column 2 Gaussian.
@@ -263,7 +258,6 @@ test_that("a non-Gaussian row leaves the Gaussian rows beside it alone", {
 })
 
 test_that("indicators of the same non-Gaussian kind share no covariance either", {
-  skip_on_cran()
   skip_without_julia()
   for (name in c("binary", "ordinal", "count")) {
     k <- .pscale(name)

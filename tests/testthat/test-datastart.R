@@ -155,7 +155,6 @@ test_that("an unsolvable transform leaves the default rather than guessing", {
 })
 
 test_that("the derived start rescues a badly scaled fit", {
-  skip_on_cran()
   skip_without_julia()
   d <- .datastart_gen(0.01, nsubjects = 50)
   fit <- function(datastart) suppressWarnings(suppressMessages(

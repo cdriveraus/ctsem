@@ -251,7 +251,6 @@ test_that("ctReport rejects a non-fit and an unknown component", {
 })
 
 test_that("ctReport writes the same folder for a julia fit, and its own diagnostics", {
-  skip_on_cran()
   skip_without_julia()
 
   set.seed(3)

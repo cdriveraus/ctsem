@@ -73,7 +73,6 @@
 
 test_that("Julia per-row Kalman output matches Stan's", {
   skip_if_not_installed("rstan")
-  skip_on_cran()
   skip_without_julia()
   model <- .kalman_linear_model()
   data <- .kalman_linear_data()
@@ -101,7 +100,6 @@ test_that("Julia per-row Kalman output matches Stan's", {
 })
 
 test_that("tracing does not change the filter", {
-  skip_on_cran()
   skip_without_julia()
   model <- .kalman_linear_model()
   data <- .kalman_linear_data()
@@ -133,7 +131,6 @@ test_that("tracing does not change the filter", {
 
 test_that("ctKalmanArray matches Stan through the whole R path", {
   skip_if_not_installed("rstan")
-  skip_on_cran()
   skip_without_julia()
   model <- .kalman_indvar_model()
   data <- .kalman_indvar_data()
@@ -172,7 +169,6 @@ test_that("ctKalmanArray matches Stan through the whole R path", {
 
 test_that("ctPredict interpolates a time grid the same way Stan does", {
   skip_if_not_installed("rstan")
-  skip_on_cran()
   skip_without_julia()
   model <- .kalman_indvar_model()
   data <- .kalman_indvar_data()
@@ -206,7 +202,6 @@ test_that("ctPredict interpolates a time grid the same way Stan does", {
 
 test_that("subject matrices match Stan's, and only the varying ones vary", {
   skip_if_not_installed("rstan")
-  skip_on_cran()
   skip_without_julia()
   model <- .kalman_indvar_model()
   data <- .kalman_indvar_data()
@@ -239,7 +234,6 @@ test_that("subject matrices match Stan's, and only the varying ones vary", {
 })
 
 test_that("removeObs withholds observations without withholding covariates", {
-  skip_on_cran()
   skip_without_julia()
   model <- .kalman_linear_model()
   data <- .kalman_linear_data()
@@ -259,7 +253,6 @@ test_that("removeObs withholds observations without withholding covariates", {
 })
 
 test_that("standardised residuals feed ctResiduals and ctACFresiduals", {
-  skip_on_cran()
   skip_without_julia()
   # ctResiduals() and everything on top of it (ctACFresiduals, and the residual
   # diagnostics in the tutorial) go through ctKalmanArray(standardisederrors=
@@ -319,7 +312,6 @@ test_that("standardised residuals feed ctResiduals and ctACFresiduals", {
 }
 
 test_that("the measurement model is re-evaluated at the updated state", {
-  skip_on_cran()
   skip_without_julia()
   model <- .kalman_indvarmeans_model()
   data <- .kalman_indvarmeans_data()
@@ -357,7 +349,6 @@ test_that("the measurement model is re-evaluated at the updated state", {
 })
 
 test_that("the interval transition is the Jacobian of the interval", {
-  skip_on_cran()
   skip_without_julia()
   skip_if_not_installed("Matrix")
   model <- .kalman_indvarmeans_model()
@@ -392,7 +383,6 @@ test_that("the interval transition is the Jacobian of the interval", {
 
 test_that("the improved reports differ from Stan only where Stan is approximate", {
   skip_if_not_installed("rstan")
-  skip_on_cran()
   skip_without_julia()
   # The divergence is deliberate, so it is asserted rather than tolerated: the
   # prior estimates and the likelihood still match Stan exactly, and only the
@@ -434,7 +424,6 @@ test_that("the improved reports differ from Stan only where Stan is approximate"
 
 test_that("ctPredictTIP builds its covariate grid on a backend fit", {
   skip_if_not_installed("rstan")
-  skip_on_cran()
   skip_without_julia()
   # ctPredictTIP predicts at chosen covariate values by constructing a dataset
   # of pseudo-subjects, one per value, and asking the fitted model for its
@@ -495,7 +484,6 @@ test_that("ctPredictTIP builds its covariate grid on a backend fit", {
 })
 
 test_that("prediction warns for an intoverstates=FALSE julia fit, as Stan's does", {
-  skip_on_cran()
   skip_without_julia()
   # The smallest intoverstates=FALSE julia fit already used in the suite
   # (tests/testthat/test-julia-intoverstates.R, "a fit over the joint density

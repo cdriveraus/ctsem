@@ -29,7 +29,6 @@
 }
 
 test_that("the trace is recorded even with reporting off", {
-  skip_on_cran()
   skip_without_julia()
   fit <- .trace_fit()
   trace <- fit$trace
@@ -47,7 +46,6 @@ test_that("the trace is recorded even with reporting off", {
 })
 
 test_that("the callback fires while the fit runs, rate limited, without verbose", {
-  skip_on_cran()
   skip_without_julia()
   seen <- new.env()
   seen$iterations <- integer()
@@ -68,7 +66,6 @@ test_that("the callback fires while the fit runs, rate limited, without verbose"
 })
 
 test_that("a callback that errors is disabled and the fit survives", {
-  skip_on_cran()
   skip_without_julia()
   # An error thrown out of an R callback never reaches the engine: it aborts
   # before a reply is sent and leaves the JuliaConnectoR bridge desynchronised,
@@ -93,7 +90,6 @@ test_that("a callback that errors is disabled and the fit survives", {
 })
 
 test_that("a callback does not change the answer", {
-  skip_on_cran()
   skip_without_julia()
   plain <- .trace_fit()
   watched <- .trace_fit(callback = function(...) NULL)
@@ -101,7 +97,6 @@ test_that("a callback does not change the answer", {
 })
 
 test_that("the laplace route traces the inner solve as well", {
-  skip_on_cran()
   skip_without_julia()
   model <- suppressMessages(ctModel(type = "ct", n.latent = 1, n.manifest = 1,
     manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1),
@@ -118,7 +113,6 @@ test_that("the laplace route traces the inner solve as well", {
 })
 
 test_that("ctTracePlot draws, and refuses a fit with no trace", {
-  skip_on_cran()
   skip_without_julia()
   fit <- .trace_fit()
   file <- file.path(tempdir(), "ctsem-trace-test.png")
@@ -136,7 +130,6 @@ test_that("ctTracePlot draws, and refuses a fit with no trace", {
 })
 
 test_that("a callback that is not a function is refused before fitting", {
-  skip_on_cran()
   skip_without_julia()
   expect_error(
     suppressMessages(ctFit(.trace_data(), .trace_model(), backend = "julia",

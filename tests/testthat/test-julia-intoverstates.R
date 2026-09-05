@@ -43,7 +43,6 @@
 }
 
 test_that("the engine reports the innovation count the design needs", {
-  skip_on_cran()
   skip_without_julia()
   model <- .states_model()
   times <- lapply(1:3, function(i) 0:4)
@@ -59,7 +58,6 @@ test_that("the engine reports the innovation count the design needs", {
 })
 
 test_that("generation without a maxtimestep is reproducible from the seed", {
-  skip_on_cran()
   skip_without_julia()
   model <- .states_model()
   set.seed(11)
@@ -76,7 +74,6 @@ test_that("generation without a maxtimestep is reproducible from the seed", {
 })
 
 test_that("a mixed ordinal, binary and count model generates bounded data", {
-  skip_on_cran()
   skip_without_julia()
   # The reported reproduction, at its own seed.
   model <- .states_model()
@@ -108,7 +105,6 @@ test_that("a mixed ordinal, binary and count model generates bounded data", {
 })
 
 test_that("with no process noise the counts are Poisson at the fixed rate", {
-  skip_on_cran()
   skip_without_julia()
   # T0VAR and DIFFUSION at zero pin every state at T0MEANS, so each row is an
   # independent draw at the same rate and the sample mean and variance are the
@@ -134,7 +130,6 @@ test_that("with no process noise the counts are Poisson at the fixed rate", {
 })
 
 test_that("the joint density is finite and differentiable through R", {
-  skip_on_cran()
   skip_without_julia()
   model <- suppressMessages(ctsem:::.ctGenerateResolveFree(.states_model(),
     quiet = TRUE))
@@ -187,7 +182,6 @@ test_that("the joint density is finite and differentiable through R", {
 }
 
 test_that("intoverstates='auto' picks the route the model needs", {
-  skip_on_cran()
   skip_without_julia()
   # Linear and Gaussian: the filter's predictive is exact, so 'auto' keeps it
   # and the output is what an existing caller already gets.
@@ -217,7 +211,6 @@ test_that("intoverstates='auto' picks the route the model needs", {
 })
 
 test_that("a fit over the joint density runs and carries its trajectory", {
-  skip_on_cran()
   skip_without_julia()
   model <- .states_model()
   set.seed(2)
@@ -255,7 +248,6 @@ test_that("a fit over the joint density runs and carries its trajectory", {
 })
 
 test_that("standard errors profile the states out, and the rest are refused", {
-  skip_on_cran()
   skip_without_julia()
   model <- .gaussian_model()
   set.seed(6)
@@ -312,7 +304,6 @@ test_that("standard errors profile the states out, and the rest are refused", {
 })
 
 test_that("a free Gaussian measurement variance is called out, not left to fail", {
-  skip_on_cran()
   skip_without_julia()
   # The joint density has no maximum in this direction, so there is nothing for
   # the optimiser to converge to; ctFit now stops rather than letting it run to
@@ -349,7 +340,6 @@ test_that("the Laplace random-effect route and sampled states are refused togeth
 })
 
 test_that("sampling the joint density gives a posterior over both", {
-  skip_on_cran()
   skip_without_julia()
   # The mode this route is actually for. Optimising the joint density gives its
   # mode, which is biased and whose profile is flat; sampling it gives the exact

@@ -46,7 +46,6 @@
 
 test_that("Julia fits get Hessian uncertainty matching Stan's", {
   skip_if_not_installed("rstan")
-  skip_on_cran()
   skip_without_julia()
 
   model <- .backend_uncertainty_model()
@@ -104,7 +103,6 @@ test_that("Julia fits get Hessian uncertainty matching Stan's", {
 })
 
 test_that("the Hessian is exact, and agrees with the finite difference it replaces", {
-  skip_on_cran()
   skip_without_julia()
 
   model <- .backend_uncertainty_model()
@@ -133,7 +131,6 @@ test_that("the Hessian is exact, and agrees with the finite difference it replac
 })
 
 test_that("one entry point, one contract: the arguments mean the same on both backends", {
-  skip_on_cran()
   skip_without_julia()
 
   model <- .backend_uncertainty_model()

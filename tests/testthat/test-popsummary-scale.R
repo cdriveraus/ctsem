@@ -21,7 +21,8 @@
 # `rstan::constrain_pars` evaluates the generated quantities at raw values we
 # choose, so the expected numbers are arithmetic rather than estimates.
 
-if(identical(Sys.getenv("NOT_CRAN"), "true")){
+skip_on_cran()
+{  # body of the guard this replaced; indentation unchanged
 
   library(ctsem)
   library(testthat)

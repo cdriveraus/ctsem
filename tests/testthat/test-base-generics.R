@@ -31,7 +31,7 @@ test_that("coef returns a plain numeric raw parameter vector on both backends", 
   expect_null(dim(stanraw))
   expect_equal(length(stanraw), length(ctsem:::.ctFitRawEstimate(stanfit)))
 
-  skip_on_cran()
+  skip_without_julia()
   juliafit <- .generics_julia_fit()
   juliaraw <- coef(juliafit)
   expect_true(is.numeric(juliaraw))
@@ -49,7 +49,7 @@ test_that("logLik returns a logLik with df and nobs on both backends", {
   expect_equal(AIC(stanll),
     -2 * as.numeric(stanll) + 2 * attr(stanll, 'df'))
 
-  skip_on_cran()
+  skip_without_julia()
   juliafit <- .generics_julia_fit()
   juliall <- logLik(juliafit)
   expect_s3_class(juliall, 'logLik')
@@ -65,7 +65,7 @@ test_that("print gives a short summary rather than the whole object", {
   expect_lt(length(stanlines), 10L)
   expect_match(stanlines[1], 'ctsem Stan fit')
 
-  skip_on_cran()
+  skip_without_julia()
   julialines <- capture.output(print(.generics_julia_fit()))
   expect_lt(length(julialines), 10L)
   expect_match(julialines[1], 'ctsem Julia fit')

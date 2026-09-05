@@ -42,7 +42,6 @@
 }
 
 test_that("generated data is a draw from the model the filter conditions on", {
-  skip_on_cran()
   skip_without_julia()
   model <- .generate_model()
   data <- .generate_data()
@@ -77,7 +76,6 @@ test_that("generated data is a draw from the model the filter conditions on", {
 })
 
 test_that("the observed data is an unremarkable draw from the fitted model", {
-  skip_on_cran()
   skip_without_julia()
   # The calibration check the identity above cannot make: at the maximum
   # likelihood estimate, the observed data's log likelihood should sit somewhere
@@ -100,7 +98,6 @@ test_that("the observed data is an unremarkable draw from the fitted model", {
 })
 
 test_that("ctGenerateFromFit returns what the posterior predictive tools expect", {
-  skip_on_cran()
   skip_without_julia()
   model <- .generate_model()
   data <- .generate_data()
@@ -131,7 +128,6 @@ test_that("ctGenerateFromFit returns what the posterior predictive tools expect"
 })
 
 test_that("the posterior predictive tools run on a backend fit", {
-  skip_on_cran()
   skip_without_julia()
   model <- .generate_model()
   data <- .generate_data()
@@ -185,7 +181,6 @@ test_that("the posterior predictive tools run on a backend fit", {
 })
 
 test_that("ctPostPredData(residuals=TRUE) works, for stan too", {
-  skip_on_cran()
   skip_without_julia()
   # This branch could never run: the residual rows lacked the id/time columns
   # the rbind below them needs, on every backend including stan. Fixed here, so
@@ -241,7 +236,6 @@ test_that("an expression cell survives generation rather than being filled", {
 })
 
 test_that("state dependent generation carries the dependence into the data", {
-  skip_on_cran()
   skip_without_julia()
   m <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 1,
     n.manifest = 2, manifestNames = c("y1", "y2"), latentNames = "eta1",
@@ -263,7 +257,6 @@ test_that("state dependent generation carries the dependence into the data", {
 })
 
 test_that("ctPostPredict() runs on a julia backend fit", {
-  skip_on_cran()
   skip_without_julia()
   # It used to refuse one, because it read `standata` and `data$Y` directly. It
   # is now an alias for ctPostPredPlots(), which goes through the
@@ -279,7 +272,6 @@ test_that("ctPostPredict() runs on a julia backend fit", {
 })
 
 test_that("ctGenerateFromPriors() refuses a julia backend fit with an informative message", {
-  skip_on_cran()
   skip_without_julia()
   model <- .generate_model()
   data <- .generate_data()
@@ -329,7 +321,6 @@ test_that("ctGenerateFromPriors() refuses a julia backend fit with an informativ
 }
 
 test_that("ctGenerateFromFit works on a Laplace fit and matches the augmented route", {
-  skip_on_cran()
   skip_without_julia()
   data <- .laplace_generate_data()
   model <- .laplace_generate_model()
@@ -384,7 +375,6 @@ test_that("ctGenerateFromFit works on a Laplace fit and matches the augmented ro
 })
 
 test_that("the posterior predictive tools run on a Laplace backend fit", {
-  skip_on_cran()
   skip_without_julia()
   data <- .laplace_generate_data()
   model <- .laplace_generate_model()
@@ -419,7 +409,6 @@ test_that("the posterior predictive tools run on a Laplace backend fit", {
 })
 
 test_that("missingness survives Laplace-route generation unchanged", {
-  skip_on_cran()
   skip_without_julia()
   data <- .laplace_generate_data()
   data$Y1[c(3, 40)] <- NA

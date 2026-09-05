@@ -2,7 +2,9 @@ context("boothesscheck")
 
 test_that("boothesscheck1", {
   testthat::skip("disabled: references undefined variables (s1, tfit2), never ran to completion; see review J1.3 F6")
-  if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
+  skip_on_cran()
+  skip_on_32bit()
+  {  # body of the guard this replaced; indentation unchanged
     if(F){
       library(ctsem)
       library(testthat)

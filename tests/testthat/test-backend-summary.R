@@ -44,7 +44,6 @@
 
 test_that("Julia pop_* arrays match Stan's constrained parameters", {
   skip_if_not_installed("rstan")
-  skip_on_cran()
   skip_without_julia()
   model <- .summary_model()
   data <- .summary_data()
@@ -84,7 +83,6 @@ test_that("Julia pop_* arrays match Stan's constrained parameters", {
 })
 
 test_that("ctTIpredEffects reports a julia fit's own TI predictor effect (parmatrices=TRUE)", {
-  skip_on_cran()
   skip_without_julia()
   # .summary_model() gives 'group' (TIpred 1) an effect on B1 only, and B1 is
   # the CINT[1,1] cell with the model's default meanscale=10 transform
@@ -117,7 +115,6 @@ test_that("ctTIpredEffects reports a julia fit's own TI predictor effect (parmat
 })
 
 test_that("ctTIpredEffects reports a julia fit's own TI predictor effect (parmatrices=FALSE)", {
-  skip_on_cran()
   skip_without_julia()
   model <- .summary_model()
   data <- .summary_data()
@@ -143,7 +140,6 @@ test_that("ctTIpredEffects reports a julia fit's own TI predictor effect (parmat
 })
 
 test_that("ctTIpredEffects on a julia fit still explains a model with no TI predictors", {
-  skip_on_cran()
   skip_without_julia()
   nopred <- suppressWarnings(ctModel(type = "ct", n.latent = 1,
     LAMBDA = matrix(1), MANIFESTVAR = matrix(.5)))
@@ -157,7 +153,6 @@ test_that("ctTIpredEffects on a julia fit still explains a model with no TI pred
 
 test_that("a Julia model with no state-dependent cells summarises", {
   skip_without_julia()
-  skip_on_cran()
   skip_without_julia()
   # Regression: the engine used to return the state-dependent cells as vectors
   # from the layout call, and JuliaConnectoR *hangs* -- not errors -- marshalling
@@ -222,7 +217,6 @@ test_that("state-dependent cells are named and follow the state they are given",
 # UNSET_PARAMETER-sentinel failure mode the filter's row 1 bug had -- not a
 # silent near-miss.
 test_that("ctBackendParMatrices runs predict before update, so an update-group cell sees a predict-group value", {
-  skip_on_cran()
   skip_without_julia()
 
   t0 <- 1.5
@@ -262,7 +256,6 @@ test_that("ctBackendParMatrices runs predict before update, so an update-group c
 })
 
 test_that("summary reports fixed effects and system matrices, with intervals only when earned", {
-  skip_on_cran()
   skip_without_julia()
   set.seed(5)
   data <- do.call(rbind, lapply(1:30, function(i) data.frame(id = i,
@@ -309,7 +302,6 @@ test_that("summary reports fixed effects and system matrices, with intervals onl
 })
 
 test_that("a default julia fit carries uncertainty, as an optimized Stan fit does", {
-  skip_on_cran()
   skip_without_julia()
   set.seed(5)
   data <- do.call(rbind, lapply(1:30, function(i) data.frame(id = i,
@@ -372,7 +364,6 @@ test_that("a default julia fit carries uncertainty, as an optimized Stan fit doe
 }
 
 test_that("summary reports transformed values, not the raw parameters", {
-  skip_on_cran()
   skip_without_julia()
   data <- .summary_ou_data()
   model <- suppressWarnings(ctModel(type = "ct", LAMBDA = matrix(1, 1, 1),
@@ -397,7 +388,6 @@ test_that("summary reports transformed values, not the raw parameters", {
 })
 
 test_that("ctSummaryMatrices and ctDiscretePars work on backend fits", {
-  skip_on_cran()
   skip_without_julia()
   set.seed(5)
   data <- do.call(rbind, lapply(1:30, function(i) data.frame(id = i,
@@ -435,7 +425,6 @@ test_that("ctSummaryMatrices and ctDiscretePars work on backend fits", {
 })
 
 test_that("ctExtract returns pop_* arrays sized by the posterior", {
-  skip_on_cran()
   skip_without_julia()
   data <- .summary_ou_data()
   model <- suppressWarnings(ctModel(type = "ct", LAMBDA = matrix(1, 1, 1),
@@ -459,7 +448,6 @@ test_that("ctExtract returns pop_* arrays sized by the posterior", {
 })
 
 test_that("the Stan summary path is unchanged by the shared refactor", {
-  skip_on_cran()
   skip_without_julia()
   # ctSummaryMatrices.ctStanFit and ctDiscretePars now route through shared
   # helpers; this is the regression guard that they still work for Stan fits.
@@ -486,7 +474,6 @@ test_that("the Stan summary path is unchanged by the shared refactor", {
 # visible only as a wrong number in a summary. So the test is that selecting
 # engine-side gives bit-for-bit what selecting in R off the full array gives.
 test_that("engine-side cell selection returns exactly what full transfer did", {
-  skip_on_cran()
   skip_without_julia()
   set.seed(11)
   data <- do.call(rbind, lapply(1:15, function(i)

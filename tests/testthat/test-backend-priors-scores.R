@@ -153,7 +153,6 @@ test_that("Stan and Julia agree with priors=TRUE, with random effects and a TI p
 }
 
 test_that("redundant free T0VAR gives the population parameters no TI-predictor effects", {
-  skip_on_cran()
   skip_without_julia()
   model <- .prior_tipred_default_model()
   data <- .prior_tipred_default_data()
@@ -247,7 +246,6 @@ test_that("per-subject scores sum to the gradient, with and without priors", {
 })
 
 test_that("score-based uncertainty methods work for backend fits", {
-  skip_on_cran()
   skip_without_julia()
   model <- .prior_full_model()
   # More subjects than parameters, so the score covariance is not rank limited.

@@ -33,7 +33,6 @@
 
 test_that("discrete-time likelihood and gradient match Stan", {
   skip_if_not_installed("rstan")
-  skip_on_cran()
   skip_without_julia()
   model <- .discrete_model()
   data <- .discrete_data()
@@ -64,7 +63,6 @@ test_that("discrete-time likelihood and gradient match Stan", {
 })
 
 test_that("in discrete time the recorded intervals do not matter", {
-  skip_on_cran()
   skip_without_julia()
   # The property that distinguishes a discrete model from a continuous one: each
   # row advances exactly one step whatever the interval says. This is also the
@@ -98,7 +96,6 @@ test_that("in discrete time the recorded intervals do not matter", {
 
 test_that("discrete-time prediction matches Stan and the asymptotics are discrete", {
   skip_if_not_installed("rstan")
-  skip_on_cran()
   skip_without_julia()
   model <- .discrete_model()
   data <- .discrete_data()
@@ -137,7 +134,6 @@ test_that("discrete-time prediction matches Stan and the asymptotics are discret
 })
 
 test_that("summary, ctKalmanArray and generation work in discrete time", {
-  skip_on_cran()
   skip_without_julia()
   model <- .discrete_model()
   data <- .discrete_data()

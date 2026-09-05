@@ -1,4 +1,6 @@
-if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
+skip_on_cran()
+skip_on_32bit()
+{  # body of the guard this replaced; indentation unchanged
   # Sys.setenv(NOT_CRAN='true')
 
   set.seed(1)

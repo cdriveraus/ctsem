@@ -2,7 +2,7 @@
 # prediction substeps per observation interval from how nonlinear each interval
 # turns out to be, at the starting values and again at the optimum.
 
-skip_on_cran()
+skip_without_julia()
 
 .substep_linear_model <- function() {
   suppressWarnings(ctModel(

@@ -1,6 +1,10 @@
-if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4 & 
-    !(.Platform$OS.type=="windows" && R.version$major %in% 4 && as.numeric(R.version$minor) >= 2 &&
-        unlist(utils::packageVersion('rstan'))[2] < 25)){
+skip_on_cran()
+skip_on_32bit()
+skip_if(.Platform$OS.type == "windows" && R.version$major %in% 4 &&
+    as.numeric(R.version$minor) >= 2 &&
+    unlist(utils::packageVersion('rstan'))[2] < 25,
+  "rstan < 2.26 cannot compile a model on R >= 4.2 on Windows.")
+{  # body of the guard this replaced; indentation unchanged
   # Sys.setenv(NOT_CRAN = 'true')
   
   library(ctsem)

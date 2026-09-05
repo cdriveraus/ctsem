@@ -748,7 +748,7 @@ test_that("a multilevel summary prints its tables and not its payload", {
 })
 
 test_that("optimising without integrating the random effects is refused", {
-  skip_on_cran()
+  skip_without_julia()
   # `intoverpop=FALSE` leaves each subject's random effects as free parameters
   # of the objective, so maximising it maximises over those effects too and the
   # population variance it lands on is whatever makes them most likely --

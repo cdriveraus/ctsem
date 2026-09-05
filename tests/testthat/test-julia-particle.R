@@ -1,7 +1,7 @@
 # ctParticleLik: the particle-filter reference likelihood against a julia fit,
 # and nlcontrol$transition for the state-explicit path. Kept small: one fit.
 
-skip_on_cran()
+skip_without_julia()
 
 test_that("ctParticleLik agrees with the filter on a linear fit and reports per row", {
   model <- suppressWarnings(ctModel(

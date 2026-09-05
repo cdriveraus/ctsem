@@ -5,7 +5,9 @@ context("bootHessian")
 
 test_that("bootHessianCoverage", {
 testthat::skip("disabled: coverage simulation study, never wired to run (unconditional if(FALSE) block); see review J1.3 F6")
-  if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
+  skip_on_cran()
+  skip_on_32bit()
+  {  # body of the guard this replaced; indentation unchanged
     
     
     # library(future)
