@@ -30,7 +30,9 @@ ctKalmanArray(
 
 \item{collapsefunc}{function to apply over samples, such as \code{mean}}
 
-\item{cores}{Integer number of cpu cores to use. Only needed if savescores was set to FALSE when fitting.}
+\item{cores}{Integer number of cpu cores to use. Only needed if savescores was set to FALSE when fitting.
+\code{backend='stan'} only -- the julia path runs this loop serially in the engine and refuses
+\code{cores} by name rather than accepting it and ignoring it.}
 
 \item{subjects}{'all' (the default), or an integer vector of subjects to compute for.}
 

@@ -85,7 +85,9 @@ integrates the random effects out subject by subject with a Laplace
 approximation, leaving each subject's filtered state space at its
 single-subject size, so the cost of a random effect stops growing cubically
 with the number of varying parameters. 'laplace' requires
-\code{backend='julia'} and \code{optimize=TRUE}, and is exact whenever the
+\code{backend='julia'} and works with either \code{optimize=TRUE} (Laplace
+maximum likelihood) or \code{optimize=FALSE} (NUTS over the Laplace
+marginal). It is exact whenever the
 varying parameters enter the state mean linearly; elsewhere it is an
 approximation, and \code{summary()} says so.
 \code{FALSE} is the other route, and the one \code{'auto'} chooses when
@@ -121,6 +123,18 @@ median of the posterior draws; the julia backend's sampled point estimate (see \
 is the per-parameter mean instead.}
 
 \item{optimcontrol}{list of parameters sent to \code{\link{stanoptimis}} governing optimization / importance sampling.
+Names are checked against the chosen backend before anything else happens.
+\code{estonly}, \code{carefulfit}, \code{finishsamples}, \code{uncertainty},
+\code{uncertaintyDraws} and \code{uncertaintyControl} work on both backends.
+\code{gradient}, \code{datastart}, \code{callback} and \code{saveEffects} are
+\code{backend='julia'} only; \code{tol}, \code{initsd},
+\code{stochastic=TRUE}, \code{stallretries}, \code{stalltol},
+\code{subsamplesize}, \code{parsteps}, \code{nsubsets},
+\code{lproughnesstarget} and \code{stochasticTolAdjust} are
+\code{backend='stan'} only. Each is refused by name on the other backend,
+with the equivalent setting where there is one -- \code{backendcontrol$g_tol}
+for \code{optimcontrol$tol}, \code{optimcontrol$carefulfit} for the
+stall-and-restart settings.
 With \code{backend='julia'}, \code{optimcontrol$gradient} selects the
 gradient method: \code{'adjoint'} (reverse mode, the default) or
 \code{'forward'} (ForwardDiff). Both compute the same gradient; 'adjoint'
@@ -208,7 +222,9 @@ optimizer's stopping rules, \code{lbfgs_memory} for how many curvature pairs
 L-BFGS keeps, \code{gradient} ('adjoint' or 'forward'), \code{julia_project}
 to point at a local engine checkout, \code{restart_session} to clear the
 Julia session before fitting, and \code{progress} to force progress
-reporting on or off for this fit.}
+reporting on or off for this fit. Nothing on the stan path reads it, so a
+non-empty \code{backendcontrol} with \code{backend='stan'} is refused by name
+rather than silently ignored.}
 
 \item{nlcontrol}{List of non-linear control parameters.
 \code{maxtimestep} must be a positive numeric,  specifying the largest time
@@ -275,7 +291,7 @@ To generate data based on the posterior of a fitted model, see \code{\link{ctGen
 
 \item{control}{Used when \code{optimize=FALSE}. For \code{backend='stan'}, a list of arguments sent to \code{\link[rstan]{stan}} control argument,
 regarding warmup / sampling behaviour. Unless specified, values used are:
-list(adapt_delta = .8, adapt_window=2, max_treedepth=10, adapt_init_buffer=2, stepsize = .001).
+list(adapt_delta = .8, adapt_window=5, max_treedepth=10, adapt_init_buffer=2, stepsize = .001).
 For \code{backend='julia'}, the same argument instead carries the julia sampler's own settings:
 \code{maxdepth}/\code{max_treedepth} (default 10), \code{target_accept}/\code{adapt_delta} (0.8),
 \code{maxdelta} (1000), \code{init_scale} (1), \code{adapt_metric} (TRUE), \code{adapt_effects} (FALSE),
