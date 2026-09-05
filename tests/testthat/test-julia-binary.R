@@ -173,8 +173,7 @@ test_that("a saturated optimum is not reported as converged", {
   npar <- sum(is.na(m$pars$value) & !is.na(m$pars$param))
   fit <- suppressWarnings(suppressMessages(
     ctFit(d, m, backend = "julia", cores = 1, inits = rep(24, npar),
-      optimcontrol = list(estonly = TRUE),
-      backendcontrol = list(maxiter = 1))))
+      optimcontrol = list(estonly = TRUE, maxiter = 1))))
   expect_gt(max(abs(fit$estimate$raw)), 20)
   expect_false(isTRUE(fit$estimate$converged))
 })

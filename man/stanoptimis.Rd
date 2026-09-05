@@ -29,7 +29,11 @@ stanoptimis(
   cores = 2,
   matsetup = NA,
   nsubsets = 1,
-  stochasticTolAdjust = 1000
+  stochasticTolAdjust = 1000,
+  g_tol = NULL,
+  x_tol = NULL,
+  maxiter = NULL,
+  lbfgs_memory = NULL
 )
 }
 \arguments{
@@ -45,7 +49,8 @@ if init='random' .}
 
 \item{estonly}{if TRUE,just return point estimates under $rawest subobject.}
 
-\item{tol}{objective tolerance.}
+\item{tol}{objective tolerance -- the optimizer stops when the objective
+changes by less than this between evaluations.}
 
 \item{stochastic}{Logical. Use stochastic gradient descent as main optimizer. Always finishes (double checks) with mize (bfgs) optimizer.}
 
@@ -110,6 +115,20 @@ based covariance or posterior distribution) for final results computation.}
 but each subjects data remains whole -- processed by one core in one subset.}
 
 \item{stochasticTolAdjust}{Multiplier for stochastic optimizer tolerance.}
+
+\item{g_tol}{gradient tolerance: stop when the l2 norm of the gradient falls
+below this. \code{NULL} (the default) leaves it off, which is what this
+optimizer has always done -- \code{tol} is its criterion. The julia backend
+reads the same name and defaults it to 1e-8 instead.}
+
+\item{x_tol}{parameter-step tolerance: stop when the update to the parameter
+vector is smaller than this. \code{NULL} leaves it off.}
+
+\item{maxiter}{maximum optimizer iterations. \code{NULL} leaves the existing
+caps in place (99999 for the bfgs optimizer, 5000 for the stochastic one).}
+
+\item{lbfgs_memory}{number of curvature pairs L-BFGS keeps. \code{NULL} uses
+100.}
 }
 \value{
 list containing fit elements

@@ -13,7 +13,7 @@ test_that("Julia backend preparation is serializable and does not start Julia", 
 
   prepared <- suppressMessages(ctFit(
     dat, model, backend = "julia", fit = FALSE,
-    backendcontrol = list(gradient = "forward"), nlcontrol = list(maxtimestep = .5)
+    optimcontrol = list(gradient = "forward"), nlcontrol = list(maxtimestep = .5)
   ))
   expect_s3_class(prepared, "ctJuliaModel")
   expect_true(is.data.frame(prepared$parameter_table))

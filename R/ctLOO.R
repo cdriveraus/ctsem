@@ -314,8 +314,14 @@ ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
         # gap exactly as it will when the row is scored out of sample.
         training[heldout, model$manifestNames] <- NA
         trainingfit <- .ctFitReplaceData(fit, training)
+        # `tol` means the same thing here as it does on the stan branch above
+        # and as `optimcontrol$tol` does in ctFit(): the objective tolerance.
+        # It used to be handed to the engine's gradient criterion instead, so
+        # the same argument relaxed two different things depending on backend.
         result <- try(.ctJuliaOptimise(trainingfit$model_spec, start,
-          backendcontrol = fit$args$resolved$backendcontrol, cores = cores, tol = tol),
+          optimcontrol = utils::modifyList(
+            as.list(fit$args$resolved$optimcontrol), list(tol = tol)),
+          cores = cores),
           silent = TRUE)
         if (inherits(result, "try-error")) return(NULL)
         pars <- as.numeric(result$minimizer)

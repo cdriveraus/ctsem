@@ -622,10 +622,13 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   JuliaConnectoR::juliaPut(values)
 }
 
-.ctJuliaInitialValues <- function(npar, inits = NULL) {
+.ctJuliaInitialValues <- function(npar, inits = NULL, initsd = .01) {
   # Match stanoptimis(): absent initial values are small, R-seeded draws in
-  # unconstrained space rather than an exact all-zero vector.
-  if (is.null(inits) || identical(inits, "random")) return(stats::rnorm(npar, 0, .01))
+  # unconstrained space rather than an exact all-zero vector, and `initsd` is
+  # its name for the scale, with its default.
+  if (is.null(inits) || identical(inits, "random")) {
+    return(stats::rnorm(npar, 0, as.numeric(initsd)[1L]))
+  }
   values <- as.numeric(inits)
   if (length(values) != npar) {
     stop("Julia initial values must have one entry per free parameter.", call. = FALSE)
@@ -2517,8 +2520,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     if (isTRUE(s$refit)) "; refit after the mesh moved at the optimum." else ".")
 }
 
-.ctJuliaOptimise <- function(model_spec, start, backendcontrol = list(),
-  gradient = "adjoint", cores = 1L, verbose = 0L, tol = NULL,
+.ctJuliaOptimise <- function(model_spec, start, optimcontrol = list(),
+  gradient = "adjoint", cores = 1L, verbose = 0L, maxiter = NULL,
   callback = NULL, objective = NULL, progress_label = NULL,
   progress_budget = FALSE) {
   spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
@@ -2527,10 +2530,18 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # that, because `ctsem_optimize` is typed on what the two have in common.
   if (is.null(objective)) objective <- .ctJuliaObjective(spec)
   module <- .ctJuliaModule(model_spec$project)
-  common <- list(maxiter = as.integer(.ctJuliaOr(backendcontrol$maxiter, 1000L)),
-    g_tol = .ctJuliaOr(tol, .ctJuliaOr(backendcontrol$g_tol, 1e-8)),
-    f_tol = .ctJuliaOr(backendcontrol$f_tol, 0),
-    x_tol = .ctJuliaOr(backendcontrol$x_tol, 0),
+  # The shared optimcontrol vocabulary (see the table at the top of R/ctFit.R).
+  # `tol` is the objective criterion on both backends -- mize's `abs_tol` there,
+  # the engine's `f_tol` here -- and `g_tol` is the gradient norm on both. The
+  # defaults are this backend's own and are the mirror image of stan's: stop on
+  # the gradient, with the objective criterion off unless asked for.
+  # `maxiter` as an argument is the caller overriding the cap for one stage (the
+  # prior warm-up does), and beats the user's setting for that stage only.
+  common <- list(
+    maxiter = as.integer(.ctJuliaOr(maxiter, .ctJuliaOr(optimcontrol$maxiter, 1000L))),
+    g_tol = .ctJuliaOr(optimcontrol$g_tol, 1e-8),
+    f_tol = .ctJuliaOr(optimcontrol$tol, 0),
+    x_tol = .ctJuliaOr(optimcontrol$x_tol, 0),
     verbose = verbose > 0L,
     # Overwrite one line in place when someone is watching, and print
     # occasional separate lines when the output is going to a file or a knitr
@@ -2567,8 +2578,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # `verbose` defaults to 0 -- so the reporting existed and almost nobody
     # saw it. Keyed on the same console detection the overwriting uses, so a
     # script or a knitr chunk still gets nothing, and overridable with
-    # `backendcontrol$progress`.
-    progress = isTRUE(.ctJuliaOr(backendcontrol$progress,
+    # `optimcontrol$progress`.
+    progress = isTRUE(.ctJuliaOr(optimcontrol$progress,
       verbose > 0L || .ctProgressConsole())))
   # A live callback into R, for a front end that wants to draw the trace as it
   # happens rather than read it afterwards. The engine calls it on the same time
@@ -2606,8 +2617,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # Exposed because it is the one optimiser knob that measurably changed both
   # speed and whether the gradient criterion was met; the engine's default is
   # documented at `_CTSEM_LBFGS_MEMORY`.
-  if (!is.null(backendcontrol$lbfgs_memory)) {
-    common$lbfgs_memory <- as.integer(backendcontrol$lbfgs_memory)[1L]
+  if (!is.null(optimcontrol$lbfgs_memory)) {
+    common$lbfgs_memory <- as.integer(optimcontrol$lbfgs_memory)[1L]
   }
   # `cores` is the ceiling; `ctsem_tune_chunks!` measures the count to use
   # within it, and the fit records what it picked. Restored afterwards so the
@@ -2636,12 +2647,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 }
 
 .ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NULL, cores = 1L,
-  backendcontrol = list(), optimcontrol = list(), verbose = 0L, fit = TRUE,
+  optimcontrol = list(), verbose = 0L, fit = TRUE,
   priors = FALSE, intoverpop = "augmented", optimize = TRUE, chains = 4L,
   iter = 2000L, control = list(), intoverstates = TRUE) {
   .ctJuliaInterruptSafe(.ctFitJuliaBackendImpl(datalong = datalong,
     model = model, prepared_data = prepared_data, inits = inits, cores = cores,
-    backendcontrol = backendcontrol, optimcontrol = optimcontrol,
+    optimcontrol = optimcontrol,
     verbose = verbose, fit = fit, priors = priors, intoverpop = intoverpop,
     optimize = optimize, chains = chains, iter = iter, control = control,
     intoverstates = intoverstates))
@@ -2650,11 +2661,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 #' @keywords internal
 .ctFitJuliaBackendImpl <- function(datalong, model, prepared_data = NULL,
   inits = NULL, cores = 1L,
-  backendcontrol = list(), optimcontrol = list(), verbose = 0L, fit = TRUE,
+  optimcontrol = list(), verbose = 0L, fit = TRUE,
   priors = FALSE, intoverpop = "augmented", optimize = TRUE, chains = 4L,
   iter = 2000L, control = list(), intoverstates = TRUE) {
-  if (isTRUE(backendcontrol$restart_session)) .ctJuliaClearSession()
-  project <- .ctJuliaOr(backendcontrol$julia_project, NULL)
+  # The engine environment and a session restart are ctJuliaSetup()'s own
+  # `project` and `force = TRUE`; the per-fit copies of both were a second
+  # spelling of an exported function, so a fit uses whatever session is set up.
   # `cores` splits the engine's subject loop. It is requested as a Julia thread
   # count before the session starts (which is the only time that can be set),
   # and capped per fit afterwards, so a session started with more threads is not
@@ -2687,10 +2699,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       .ct_julia_cache$threads_from_cores <- as.character(cores)
     }
   }
-  # `optimcontrol$gradient` is the documented control; `backendcontrol$gradient`
-  # is still honoured because it was the only way to set this before, and
-  # silently ignoring it would change results for anyone already passing it.
-  gradient <- .ctJuliaOr(optimcontrol$gradient, .ctJuliaOr(backendcontrol$gradient, "adjoint"))
+  gradient <- .ctJuliaOr(optimcontrol$gradient, "adjoint")
   if (!gradient %in% c("forward", "adjoint")) stop("gradient must be 'forward' or 'adjoint'", call. = FALSE)
   # 'adjoint' selects the Julia engine's reverse-mode gradient. Its cost is
   # independent of the free-parameter count (one traced forward sweep plus one
@@ -2708,8 +2717,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # is the longer-tested path, not because it is faster; there is no silent
   # fallback between them in either direction.
   model_spec <- .ctJuliaPrepare(datalong, model, prepared_data = prepared_data,
-    project = project, priors = priors, intoverpop = intoverpop, optimize = optimize,
-    tipredMissingIncludeOutcome = .ctJuliaOr(backendcontrol$tipredMissingIncludeOutcome, TRUE))
+    priors = priors, intoverpop = intoverpop, optimize = optimize,
+    tipredMissingIncludeOutcome = .ctJuliaOr(optimcontrol$tipredMissingIncludeOutcome, TRUE))
   if (!is.null(model_spec$ti_missing) && nrow(model_spec$ti_missing)) {
     # The state-explicit route (`intoverstates=FALSE`) samples the latent
     # trajectory through a different objective (`CTSEMJointObjective`,
@@ -2742,7 +2751,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # `.ctJuliaSampleFit`.
   if (!isTRUE(optimize)) {
     return(.ctJuliaSampleFit(model_spec, datalong = datalong, model = model,
-      inits = inits, cores = cores, backendcontrol = backendcontrol,
+      inits = inits, cores = cores,
       optimcontrol = optimcontrol, chains = chains, iter = iter,
       control = control, priors = priors, intoverpop = intoverpop,
       gradient = gradient, verbose = verbose,
@@ -2762,7 +2771,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       "Free a parameter, or use fit = FALSE to prepare the model without ",
       "fitting it.", call. = FALSE)
   }
-  start <- .ctJuliaInitialValues(npar, inits)
+  start <- .ctJuliaInitialValues(npar, inits,
+    initsd = .ctJuliaOr(optimcontrol$initsd, .01))
   # Starting values read off the data, for the diagonals whose defaults are
   # guesses about the data's scale. See R/ctDataStart.R for what is derived and
   # why; `optimcontrol$datastart = FALSE` restores the fixed start. Supplied
@@ -2866,8 +2876,6 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   if (warmiter >= 1) {
     spec <- warmspec()
     if (!is.null(spec)) {
-      warmcontrol <- backendcontrol
-      warmcontrol$maxiter <- as.integer(warmiter)
       # No callback here, deliberately. This stage is a starting-value device,
       # not the fit: it optimises a *different* objective (the posterior rather
       # than the likelihood) and its result is used only as `start` below.
@@ -2880,7 +2888,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       # `fit$trace` and `fit$estimate$iterations`, both of which describe the
       # fit alone. Reported as test-julia-trace.R expecting 8 and seeing 10,
       # which is exactly `warmiter`.
-      warmed <- try(.ctJuliaOptimise(spec, start, backendcontrol = warmcontrol,
+      warmed <- try(.ctJuliaOptimise(spec, start, optimcontrol = optimcontrol,
+        maxiter = as.integer(warmiter),
         gradient = gradient, cores = cores, verbose = verbose,
         callback = NULL, progress_label = "prior warm-up",
         # This stage runs its cap and stops; the cap is the plan, not a limit
@@ -2913,7 +2922,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     substeps <- remesh(start[seq_len(npar)])
     if (!is.null(jointobjective)) start <- c(start[seq_len(npar)], numeric(nstate))
   }
-  result <- .ctJuliaOptimise(model_spec, start, backendcontrol = backendcontrol,
+  result <- .ctJuliaOptimise(model_spec, start, optimcontrol = optimcontrol,
     gradient = gradient, cores = cores, verbose = verbose,
     callback = optimcontrol$callback, objective = jointobjective)
   if (!is.null(substeps) && isTRUE(substeps$finite)) {
@@ -2923,7 +2932,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     if (!identical(model_spec$max_timestep, before)) {
       substeps$refit <- TRUE
       restart <- if (is.null(jointobjective)) optimum else c(optimum, numeric(nstate))
-      result <- .ctJuliaOptimise(model_spec, restart, backendcontrol = backendcontrol,
+      result <- .ctJuliaOptimise(model_spec, restart, optimcontrol = optimcontrol,
         gradient = gradient, cores = cores, verbose = verbose,
         callback = optimcontrol$callback, objective = jointobjective)
     }
@@ -3029,7 +3038,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # out to be worth looking at is exactly the one nobody thought to turn
     # reporting on for.
     trace = .ctBackendTrace(result$trace),
-    args = list(backend = "julia", backendcontrol = backendcontrol,
+    args = list(backend = "julia",
       optimcontrol = optimcontrol, cores = cores, priors = priors,
       intoverpop = intoverpop, intoverstates = isTRUE(intoverstates)))
   # An optimizer that ends where it started has not fitted anything, whatever

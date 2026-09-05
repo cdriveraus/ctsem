@@ -1,3 +1,35 @@
+# One control list, one vocabulary.
+#
+# `optimcontrol` holds every optimiser setting for both backends, and a name in
+# it means the same thing on each. Stan's names are on CRAN and fixed, so the
+# julia side -- unreleased, and free -- was moved onto them. The correspondence
+# is exact, because the two optimisers expose the same stopping rules:
+#
+#   optimcontrol   stan (mize)   julia engine   stops on
+#   tol            abs_tol       f_tol          change in the objective
+#   g_tol          grad_tol      g_tol          l2 norm of the gradient
+#   x_tol          step_tol      x_tol          size of the parameter step
+#   maxiter        max_iter      maxiter        iteration count
+#   lbfgs_memory   memory        lbfgs_memory   curvature pairs L-BFGS keeps
+#   initsd         initsd        (the same)     sd of the random start
+#
+# Each of those was previously honoured on one side and ignored on the other:
+# `tol` and `initsd` did nothing on julia, and `g_tol`, `x_tol`, `maxiter` and
+# `lbfgs_memory` existed only as `backendcontrol` names that reached nothing on
+# stan. mize's gradient and step tolerances were pinned at zero by ctsem rather
+# than absent from mize, which is what made the split look irreducible.
+#
+# The *defaults* stay each backend's own, and they are mirror images: stan stops
+# on the objective (tol = 1e-8, g_tol off), julia on the gradient (g_tol = 1e-8,
+# tol off). Leaving a name unset keeps that backend's default; setting it is
+# honoured by both.
+#
+# `backendcontrol` is gone. It existed because these settings had nowhere to go
+# and `optimcontrol` was stan-shaped, which made a second list the mismatch
+# rather than the fix. Its two session controls were already ctJuliaSetup()'s
+# own arguments -- `julia_project` is `project`, `restart_session` is
+# `force = TRUE` -- and the rest are the rows above.
+
 # Names ctFit() sets on optimcontrol itself on the way into stanoptimis() (see
 # the `optimcontrol$cores <- cores` block below). A caller who passes one of
 # these is overridden on stan and ignored on julia -- the same nothing on both
@@ -7,147 +39,145 @@
 .ctOptimcontrolInert <- c('init','priors','plot','verbose','cores','matsetup',
   'standata','sm','is')
 
-# Read by the julia path: .ctFitJuliaBackend() and .ctJuliaSampleFit().
-.ctOptimcontrolJuliaOK <- c('callback','carefulfit','datastart','estonly',
-  'finishsamples','gradient','saveEffects','uncertainty','uncertaintyControl',
-  'uncertaintyDraws')
+# Honoured by both backends, with the same meaning.
+.ctOptimcontrolShared <- c('tol','g_tol','x_tol','maxiter','lbfgs_memory',
+  'initsd','carefulfit','estonly','finishsamples','uncertainty',
+  'uncertaintyDraws','uncertaintyControl')
 
-# stanoptimis() has no `...`, so an optimcontrol name it does not know is a hard
-# "unused argument" error on the stan path. The julia path reads the handful of
-# names above and never looks at the rest, so the same list arrived, changed
-# nothing, and said nothing -- a user tightening `tol` on a julia fit got the
-# default tolerance and no warning. Refused by name, with the julia equivalent
-# where there is one.
+# What is left after the vocabulary above is a genuine capability difference: a
+# phase or a hook one backend has and the other does not. Each such name is
+# listed here with the backend that has it and, where there is one, the value
+# that asks for nothing.
 #
-# `tol` is refused rather than translated. It is stanoptimis()'s *objective*
-# tolerance (mize's abs_tol, with grad_tol fixed at 0), while the julia
-# optimiser stops on the gradient norm; mapping one onto the other silently is
-# the same class of quiet mismatch this check exists to remove. ctLOO() does
-# pass its own `tol` through to g_tol, but it does so by name and documents it.
-.ctOptimcontrolStanOnly <- function() c(
-  tol = paste0(
-    "optimcontrol$tol is only available for backend='stan' fits: it is ",
-    "stanoptimis()'s objective tolerance, and the julia optimiser stops on the ",
-    "gradient norm instead. Use backendcontrol$g_tol (gradient norm, default ",
-    "1e-8) or backendcontrol$f_tol (objective change), or refit with ",
-    "backend='stan'."),
-  initsd = paste0(
-    "optimcontrol$initsd is only available for backend='stan' fits: the julia ",
-    "backend draws its random start from rnorm(npar, 0, 0.01) with no control ",
-    "over the scale. Pass inits (a vector of raw parameter values) to choose ",
-    "the start, or refit with backend='stan'."),
-  stochastic = paste0(
-    "optimcontrol$stochastic=TRUE is only available for backend='stan' fits: ",
-    "the julia backend optimises with L-BFGS and has no stochastic gradient ",
-    "descent phase. Drop it -- stochastic=FALSE is already what happens on ",
-    "julia -- or refit with backend='stan'."),
-  stallretries = paste0(
-    "optimcontrol$stallretries is only available for backend='stan' fits: it ",
-    "restarts stanoptimis() from fresh values when it stops short of a ",
-    "maximum, and the julia backend has no such retry. It warms every fit from ",
-    "the priors instead; use optimcontrol$carefulfit to control that, or refit ",
-    "with backend='stan'."),
-  stalltol = paste0(
-    "optimcontrol$stalltol is only available for backend='stan' fits: it is the ",
-    "gradient per data point at which stanoptimis() calls a fit stalled and ",
-    "restarts it, and the julia backend has no such retry. Use ",
-    "optimcontrol$carefulfit for its prior warm-up, or refit with ",
-    "backend='stan'."),
-  subsamplesize = paste0(
-    "optimcontrol$subsamplesize is only available for backend='stan' fits: it ",
-    "gives stanoptimis() a first pass over a proportion of subjects, and the ",
-    "julia backend has no subset pass. Use optimcontrol$carefulfit for its ",
-    "prior warm-up, or refit with backend='stan'."),
-  parsteps = paste0(
-    "optimcontrol$parsteps is only available for backend='stan' fits: it holds ",
-    "parameters at zero during a stepwise optimisation, and the julia ",
-    "optimiser has no such step. Drop it, or refit with backend='stan'."),
-  nsubsets = paste0(
-    "optimcontrol$nsubsets is only available for backend='stan' fits: it splits ",
-    "the data for stanoptimis()'s stochastic optimizer, which the julia backend ",
-    "does not have. Drop it, or refit with backend='stan'."),
-  lproughnesstarget = paste0(
-    "optimcontrol$lproughnesstarget is only available for backend='stan' fits: ",
-    "it tunes stanoptimis()'s stochastic optimizer, which the julia backend ",
-    "does not have. Drop it, or refit with backend='stan'."),
-  stochasticTolAdjust = paste0(
-    "optimcontrol$stochasticTolAdjust is only available for backend='stan' ",
-    "fits: it tunes stanoptimis()'s stochastic optimizer, which the julia ",
-    "backend does not have. Drop it, or refit with backend='stan'.")
-)
+# The rule is on the value, not the name. A value that asks for a capability the
+# chosen backend lacks is refused; a value that merely *describes* what that
+# backend already does is accepted, because it is true -- `stochastic = FALSE`
+# on julia names the deterministic optimiser julia already runs, and
+# `gradient = 'adjoint'` on stan names the reverse-mode gradient Stan's autodiff
+# already takes. That is why several honest calls carrying `stochastic = FALSE`
+# keep working.
+.ctOptimcontrolSplit <- function() list(
 
-.ctOptimcontrolJuliaOnly <- function() c(
-  gradient = paste0(
-    "optimcontrol$gradient is only available for backend='julia' fits: it ",
-    "selects the julia engine's 'forward' or 'adjoint' gradient, and the stan ",
-    "path has one gradient. Drop it, or refit with backend='julia'."),
-  datastart = paste0(
-    "optimcontrol$datastart is only available for backend='julia' fits: it ",
-    "chooses whether the julia backend derives its starting values from the ",
-    "data. Pass inits to choose the start on stan, or refit with ",
-    "backend='julia'."),
-  callback = paste0(
-    "optimcontrol$callback is only available for backend='julia' fits: the ",
-    "julia engine calls it while the fit runs, and the stan optimizer has no ",
-    "such hook. Use verbose=1 for stan's own iteration output, or refit with ",
-    "backend='julia'."),
-  saveEffects = paste0(
-    "optimcontrol$saveEffects is only available for backend='julia' fits: it ",
-    "keeps every draw of every random effect from the julia sampler. Use ",
-    "ctSubjectPars() on a stan fit for per-subject parameter draws, or refit ",
-    "with backend='julia'.")
+  # -- stan only: the stochastic-gradient family. The julia optimiser is L-BFGS
+  # over the full data and has no SGD phase for these to tune.
+  stochastic = list(only = 'stan',
+    inert = function(v) !isTRUE(v),
+    msg = paste0("asks for stochastic gradient descent; the julia backend ",
+      "optimises with L-BFGS over the full data. Drop it -- stochastic=FALSE ",
+      "is what julia does")),
+  nsubsets = list(only = 'stan',
+    inert = function(v) isTRUE(all(v == 1)),
+    msg = paste0("splits the data for stan's stochastic optimizer, which the ",
+      "julia backend does not have. Drop it")),
+  subsamplesize = list(only = 'stan',
+    inert = function(v) isTRUE(all(v >= 1)),
+    msg = paste0("gives stan's first pass a proportion of the subjects; the ",
+      "julia warm-up uses the priors over all of them instead. Use ",
+      "optimcontrol$carefulfit")),
+  lproughnesstarget = list(only = 'stan',
+    inert = function(v) FALSE,
+    msg = paste0("tunes stan's stochastic optimizer, which the julia backend ",
+      "does not have. Drop it")),
+  stochasticTolAdjust = list(only = 'stan',
+    inert = function(v) FALSE,
+    msg = paste0("tunes stan's stochastic optimizer, which the julia backend ",
+      "does not have. Drop it")),
+  parsteps = list(only = 'stan',
+    inert = function(v) length(v) == 0L,
+    msg = paste0("holds parameters at zero during a stepwise stan ",
+      "optimisation, which the julia optimiser has no step for. Drop it")),
+  stallretries = list(only = 'stan',
+    inert = function(v) isTRUE(all(v == 0)),
+    msg = paste0("restarts the stan optimizer from fresh values when it stops ",
+      "short of a maximum; the julia backend warms every fit from the priors ",
+      "instead. Use optimcontrol$carefulfit")),
+  stalltol = list(only = 'stan',
+    inert = function(v) FALSE,
+    msg = paste0("is the gradient at which stan calls a fit stalled and ",
+      "restarts it, and the julia backend has no such retry. Use ",
+      "optimcontrol$carefulfit")),
+
+  # -- julia only.
+  gradient = list(only = 'julia',
+    # Stan's autodiff is reverse mode, so 'adjoint' is a true description of it
+    # and costs nothing to accept. 'forward' names a second gradient that only
+    # the julia engine has.
+    inert = function(v) identical(as.character(v)[1L], 'adjoint'),
+    msg = paste0("selects the julia engine's gradient; stan has one, and it ",
+      "is already reverse mode. Drop it, or use gradient='adjoint'")),
+  datastart = list(only = 'julia',
+    inert = function(v) isFALSE(v),
+    msg = paste0("reads starting values off the data through the julia ",
+      "parameter table, which the stan path does not build. Pass inits, or ",
+      "optimcontrol$initsd for the scale of the random start")),
+  callback = list(only = 'julia',
+    inert = function(v) is.null(v),
+    msg = paste0("is called by the julia engine while the fit runs, and the ",
+      "stan optimizer has no such hook. Use verbose=1 for stan's own ",
+      "iteration output")),
+  saveEffects = list(only = 'julia',
+    inert = function(v) !isTRUE(v),
+    msg = paste0("keeps every draw of every random effect from the julia ",
+      "sampler. Use ctSubjectPars() on a stan fit for per-subject draws")),
+  progress = list(only = 'julia',
+    inert = function(v) !isTRUE(v),
+    msg = paste0("forces the julia engine's progress line on or off, and the ",
+      "stan optimizer does not draw one. Use verbose=1")),
+  tipredMissingIncludeOutcome = list(only = 'julia',
+    inert = function(v) isTRUE(v),
+    msg = paste0("chooses whether the outcome informs julia's imputation of ",
+      "missing TI predictors; stan imputes them as parameters of the joint ",
+      "posterior, so on stan it always does. Drop it"))
 )
 
 # Refuse a control-list name the chosen backend cannot honour, before any data
 # preparation happens. Called from ctFit() for both backends.
-.ctFitCheckControls <- function(optimcontrol, backendcontrol, backend){
+#
+# Most of what this used to refuse now simply works, so what is left is the
+# capability split above and a misspelling check. stanoptimis() would report an
+# unknown name itself as "unused argument", but only when optimize=TRUE: an
+# optimcontrol passed with optimize=FALSE never reaches it at all, so a
+# misspelled name was silent on exactly the route with no other feedback.
+.ctFitCheckControls <- function(optimcontrol, backend){
   supplied <- names(optimcontrol)
   if(is.null(supplied)) supplied <- character()
   supplied <- supplied[nzchar(supplied)]
-  stanonly <- .ctOptimcontrolStanOnly()
-  juliaonly <- .ctOptimcontrolJuliaOnly()
+  split <- .ctOptimcontrolSplit()
 
-  if(identical(backend,'julia')){
-    refused <- intersect(supplied, names(stanonly))
-    # `stochastic` is refused only when it asks for something: the julia
-    # optimiser is deterministic, so stochastic=FALSE is already what happens
-    # and refusing it would break calls that are honest about their intent.
-    # Same rule as the isTRUE(optimcontrol$is) refusal in .ctJuliaUnsupported().
-    if('stochastic' %in% refused && !isTRUE(optimcontrol$stochastic)){
-      refused <- setdiff(refused,'stochastic')
-    }
-    if(length(refused)) stop(paste(stanonly[refused],collapse='\n'), call.=FALSE)
-    unknown <- setdiff(supplied, c(names(stanonly), names(juliaonly),
-      .ctOptimcontrolJuliaOK, .ctOptimcontrolInert))
-    if(length(unknown)) stop(
-      "Unrecognised optimcontrol name(s) for backend='julia': ",
-      paste(unknown,collapse=', '), ". Recognised: ",
-      paste(sort(c(.ctOptimcontrolJuliaOK,'stochastic')),collapse=', '),
-      ". Engine settings go in backendcontrol.", call.=FALSE)
-    return(invisible(TRUE))
+  refused <- character()
+  for(nm in intersect(supplied, names(split))){
+    entry <- split[[nm]]
+    if(identical(entry$only, backend)) next
+    inert <- try(entry$inert(optimcontrol[[nm]]), silent=TRUE)
+    if(isTRUE(inert)) next
+    refused <- c(refused, paste0("optimcontrol$", nm, " ", entry$msg,
+      ", or refit with backend='", entry$only, "'."))
   }
+  if(length(refused)) stop(paste(refused, collapse='\n'), call.=FALSE)
 
-  refused <- intersect(supplied, names(juliaonly))
-  if(length(refused)) stop(paste(juliaonly[refused],collapse='\n'), call.=FALSE)
-  unknown <- setdiff(supplied, c(names(formals(stanoptimis)), .ctOptimcontrolInert))
-  # stanoptimis() would say this itself as "unused argument", but only for
-  # optimize=TRUE: an optimcontrol passed with optimize=FALSE never reaches it
-  # at all, so a misspelled name was silent on exactly the route that has no
-  # other feedback.
+  onlyhere <- names(split)[vapply(split, function(x) identical(x$only, backend),
+    logical(1))]
+  known <- c(.ctOptimcontrolShared, .ctOptimcontrolInert, names(split),
+    if(identical(backend,'stan')) names(formals(stanoptimis)))
+  unknown <- setdiff(supplied, known)
   if(length(unknown)) stop(
-    "Unrecognised optimcontrol name(s) for backend='stan': ",
-    paste(unknown,collapse=', '),
-    ". See ?stanoptimis for the settings this backend takes.", call.=FALSE)
-  # backendcontrol reaches nothing on the stan path -- its only reader is
-  # .ctFitJuliaBackend() -- so it was validated by nobody and honoured by
-  # nobody.
-  if(length(backendcontrol)) stop(
-    "backendcontrol is only used with backend='julia': it holds julia engine ",
-    "settings (maxiter, g_tol, f_tol, x_tol, lbfgs_memory, gradient, progress, ",
-    "julia_project, restart_session) and nothing on the stan path reads it. Use ",
-    "optimcontrol for the stan optimizer, or refit with backend='julia'.",
-    call.=FALSE)
+    "Unrecognised optimcontrol name(s): ", paste(unknown, collapse=', '),
+    ". Both backends take ", paste(sort(.ctOptimcontrolShared), collapse=', '),
+    "; backend='", backend, "' also takes ", paste(sort(onlyhere), collapse=', '),
+    ".", call.=FALSE)
   invisible(TRUE)
+}
+
+# The stan path hands its optimcontrol straight to stanoptimis(), which has no
+# `...`, so the julia-only names have to come off first. Each has already been
+# checked above and is inert here by definition -- `gradient='adjoint'` is what
+# Stan's autodiff does, `progress=FALSE` is what its optimizer draws -- so
+# dropping them removes nothing the caller asked for.
+.ctOptimcontrolForStan <- function(optimcontrol){
+  split <- .ctOptimcontrolSplit()
+  drop <- names(split)[vapply(split, function(x) identical(x$only, 'julia'),
+    logical(1))]
+  optimcontrol[setdiff(names(optimcontrol), drop)]
 }
 
 #' Update a ctStanFit object
@@ -305,19 +335,35 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' When \code{optimize=FALSE}, the stored point estimate (\code{stanfit$rawest}) is the per-parameter
 #' median of the posterior draws; the julia backend's sampled point estimate (see \code{\link{ctSample}})
 #' is the per-parameter mean instead.
-#' @param optimcontrol list of parameters sent to \code{\link{stanoptimis}} governing optimization / importance sampling.
-#' Names are checked against the chosen backend before anything else happens.
+#' @param optimcontrol list of parameters sent to \code{\link{stanoptimis}}
+#' governing optimization. It is the only optimizer control list: the julia
+#' backend's \code{backendcontrol} was merged into it, and every name below
+#' means the same thing on both backends.
+#'
+#' Stopping rules, honoured by both: \code{tol} (the objective stops changing),
+#' \code{g_tol} (l2 norm of the gradient), \code{x_tol} (size of the parameter
+#' step), \code{maxiter}, and \code{lbfgs_memory} for how many curvature pairs
+#' L-BFGS keeps. \code{initsd} is the sd of the random start on both.
 #' \code{estonly}, \code{carefulfit}, \code{finishsamples}, \code{uncertainty},
-#' \code{uncertaintyDraws} and \code{uncertaintyControl} work on both backends.
-#' \code{gradient}, \code{datastart}, \code{callback} and \code{saveEffects} are
-#' \code{backend='julia'} only; \code{tol}, \code{initsd},
-#' \code{stochastic=TRUE}, \code{stallretries}, \code{stalltol},
-#' \code{subsamplesize}, \code{parsteps}, \code{nsubsets},
-#' \code{lproughnesstarget} and \code{stochasticTolAdjust} are
-#' \code{backend='stan'} only. Each is refused by name on the other backend,
-#' with the equivalent setting where there is one -- \code{backendcontrol$g_tol}
-#' for \code{optimcontrol$tol}, \code{optimcontrol$carefulfit} for the
-#' stall-and-restart settings.
+#' \code{uncertaintyDraws} and \code{uncertaintyControl} also work on both.
+#'
+#' The \emph{defaults} are each backend's own, and are mirror images: stan stops
+#' on the objective (\code{tol = 1e-8}, \code{g_tol} off), julia on the gradient
+#' (\code{g_tol = 1e-8}, \code{tol} off). Leaving a name unset keeps that
+#' backend's default; setting one is honoured by both.
+#'
+#' What is left is a capability one backend has and the other does not.
+#' \code{backend='stan'} alone has the stochastic-gradient optimizer
+#' (\code{stochastic}, \code{nsubsets}, \code{subsamplesize},
+#' \code{lproughnesstarget}, \code{stochasticTolAdjust}, \code{parsteps}) and
+#' the stall-and-restart pass (\code{stallretries}, \code{stalltol});
+#' \code{backend='julia'} alone has \code{gradient}, \code{datastart},
+#' \code{callback}, \code{saveEffects}, \code{progress} and
+#' \code{tipredMissingIncludeOutcome}. A \emph{value} asking for a capability
+#' the chosen backend does not have is refused by name before anything else
+#' happens; a value that describes what it already does is simply accepted, so
+#' \code{stochastic=FALSE} works on julia and \code{gradient='adjoint'} works on
+#' stan.
 #' With \code{backend='julia'}, \code{optimcontrol$gradient} selects the
 #' gradient method: \code{'adjoint'} (reverse mode, the default) or
 #' \code{'forward'} (ForwardDiff). Both compute the same gradient; 'adjoint'
@@ -415,15 +461,6 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' \code{intoverpop='laplace'} for random effects, and can be sampled afterwards
 #' with \code{\link{ctSample}}. It needs a working Julia -- see
 #' \code{\link{ctJuliaSetup}} and \code{\link{ctJuliaInstall}}.
-#' @param backendcontrol Used when \code{backend='julia'}. List of engine
-#' settings: \code{maxiter}, \code{g_tol}, \code{f_tol}, \code{x_tol} for the
-#' optimizer's stopping rules, \code{lbfgs_memory} for how many curvature pairs
-#' L-BFGS keeps, \code{gradient} ('adjoint' or 'forward'), \code{julia_project}
-#' to point at a local engine checkout, \code{restart_session} to clear the
-#' Julia session before fitting, and \code{progress} to force progress
-#' reporting on or off for this fit. Nothing on the stan path reads it, so a
-#' non-empty \code{backendcontrol} with \code{backend='stan'} is refused by name
-#' rather than silently ignored.
 #' @param control Used when \code{optimize=FALSE}. For \code{backend='stan'}, a list of arguments sent to \code{\link[rstan]{stan}} control argument,
 #' regarding warmup / sampling behaviour. Unless specified, values used are:
 #' list(adapt_delta = .8, adapt_window=5, max_treedepth=10, adapt_init_buffer=2, stepsize = .001).
@@ -746,7 +783,7 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE, binomial=FALSE,
   fit=TRUE, intoverpop='auto', sameInitialTimes=FALSE, stationary=FALSE,plot=FALSE,  derrind=NA,
   optimize=TRUE,  optimcontrol=list(),
-  backend=c('stan','julia'), backendcontrol=list(),
+  backend=c('stan','julia'),
   nlcontrol = list(), nopriors=NA, priors=FALSE, chains=2,
   cores=getOption("mc.cores", 2L),
   inits=NULL,
@@ -766,6 +803,18 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     "stan's variational inference was broken and stan is being deprecated. ",
     "Use optimize=TRUE or optimize=FALSE (sampling) instead.", call.=FALSE)
 
+  # `backendcontrol` was a second, julia-only control list for settings that
+  # `optimcontrol` had no room for; they are all in `optimcontrol` now and mean
+  # the same thing on both backends. Caught here rather than left to `...`,
+  # where it would be accepted in silence -- which is the fault the merge was
+  # for.
+  if('backendcontrol' %in% ...names()) stop(
+    "backendcontrol has been merged into optimcontrol, which now means the ",
+    "same thing on both backends: maxiter, g_tol, f_tol (now tol), x_tol and ",
+    "lbfgs_memory are optimcontrol names, and so are gradient, progress and ",
+    "tipredMissingIncludeOutcome. julia_project and restart_session were ",
+    "already ctJuliaSetup()'s project and force=TRUE.", call.=FALSE)
+
   if(missing(model)){
     if(missing(ctstanmodel)) stop('model must be supplied')
     warning('ctstanmodel argument is deprecated, use model instead')
@@ -778,7 +827,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # Before any data preparation and before the Julia install prompt: a control
   # name the chosen backend cannot honour is a mistake to report immediately,
   # not after a wait.
-  .ctFitCheckControls(optimcontrol, backendcontrol, backend)
+  .ctFitCheckControls(optimcontrol, backend)
   if(backend %in% 'julia') {
     .ctJuliaUnsupported(ctstanmodel, optimize=optimize, priors=priors,
       intoverpop=intoverpop, gendata=gendata,
@@ -1431,7 +1480,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
         if(!optimize && any(ctm$pars$indvarying[is.na(ctm$pars$value)])) 'none' else
           'augmented'
     juliafit <- .ctFitJuliaBackend(datalong=datalong, model=ctm, prepared_data=standata, inits=inits,
-      cores=cores, backendcontrol=backendcontrol, optimcontrol=optimcontrol,
+      cores=cores, optimcontrol=optimcontrol,
       verbose=verbose, fit=fit, priors=priors, optimize=optimize,
       chains=chains, iter=iter, control=control,
       intoverpop=juliaintoverpop, intoverstates=intoverstates)
@@ -1535,6 +1584,9 @@ install.packages("rstan", repos = c("https://mc-stan.org/r-packages/", getOption
     # configure inits ---------------------------------------------------------
     initOptim <- (length(inits)==1 && (inits=='optimize' || inits=='Optimize' || inits=='optimise' || inits=='Optimise'))
     if(optimize || initOptim){ #then set optimcontrol list
+      # The julia-only names come off here: they were checked at the top of
+      # ctFit() and are inert on stan, and stanoptimis() has no `...`.
+      optimcontrol <- .ctOptimcontrolForStan(optimcontrol)
       optimcontrol$cores <- cores
       optimcontrol$verbose <- verbose
       optimcontrol$priors <- as.logical(priors)
