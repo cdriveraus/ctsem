@@ -29,7 +29,13 @@ message("loading ctsem (compile = FALSE) ...")
 suppressMessages(devtools::load_all(".", compile = FALSE, quiet = TRUE))
 message("ready. tt('pattern'), tt_changed(), tt_fast()")
 
-.tt_files <- function() sort(basename(Sys.glob("tests/testthat/test-*.R")))
+# Both separators. testthat collects anything matching `^test`, and one file is
+# spelled `test_behavGenNLcor.R`, so a glob of `test-*.R` alone left one of the
+# most expensive files in the suite out of tt(), tt_changed(), tt_fast() and
+# tt_time() -- silently, since a file that is never selected looks exactly like
+# a file that passed.
+.tt_files <- function() sort(basename(c(Sys.glob("tests/testthat/test-*.R"),
+  Sys.glob("tests/testthat/test_*.R"))))
 
 .tt_run <- function(files) {
   if (!length(files)) { message("no matching test files"); return(invisible(NULL)) }
