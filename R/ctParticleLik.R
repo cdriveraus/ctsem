@@ -38,6 +38,9 @@
 #' @param replicates Independent runs (with seeds \code{seed}, \code{seed + 1},
 #'   ...). One run reports an approximate standard error from the effective
 #'   sample sizes; more than one reports the standard deviation across runs.
+#' @param cores Engine threads. The particle filter splits the subjects across
+#'   them, each subject with its own random stream, so the result does not
+#'   depend on the count.
 #' @return A list: \code{loglik}, the particle estimate (mean over replicates);
 #'   \code{se}; \code{fit_loglik}, the filter's log likelihood from the fit;
 #'   \code{difference}, particle minus filter; \code{rows}, a data frame with
@@ -45,13 +48,19 @@
 #'   their difference; \code{replicates}, the individual estimates;
 #'   \code{ess_min}, the smallest effective sample size any row saw; and the
 #'   settings.
+#' @seealso \code{\link{ctParticleCorrect}} applies the correction this
+#'   measures, to the fit's posterior draws.
 #' @export
 ctParticleLik <- function(fit, particles = 2000, substeps = 20,
-  transition = c("exponential", "euler"), seed = 1, replicates = 1) {
+  transition = c("exponential", "euler"), seed = 1, replicates = 1, cores = NULL) {
   if (!inherits(fit, "ctJuliaFit")) {
     stop("ctParticleLik needs a fit from ctFit(..., backend = 'julia').", call. = FALSE)
   }
   transition <- match.arg(transition)
+  if (!is.null(cores)) {
+    previous <- .ctBackendSetMaxChunks(max(1L, cores))
+    on.exit(.ctBackendRestoreMaxChunks(previous), add = TRUE)
+  }
   spec <- .ctBackendSpec(fit)
   if (!is.null(spec$laplace)) {
     stop("ctParticleLik is not available for intoverpop = 'laplace' or 'none' fits: ",

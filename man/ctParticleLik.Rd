@@ -10,7 +10,8 @@ ctParticleLik(
   substeps = 20,
   transition = c("exponential", "euler"),
   seed = 1,
-  replicates = 1
+  replicates = 1,
+  cores = NULL
 )
 }
 \arguments{
@@ -35,6 +36,10 @@ approximation with the filter at all but needs several times more substeps.}
 \item{replicates}{Independent runs (with seeds \code{seed}, \code{seed + 1},
 ...). One run reports an approximate standard error from the effective
 sample sizes; more than one reports the standard deviation across runs.}
+
+\item{cores}{Engine threads. The particle filter splits the subjects across
+them, each subject with its own random stream, so the result does not
+depend on the count.}
 }
 \value{
 A list: \code{loglik}, the particle estimate (mean over replicates);
@@ -68,4 +73,8 @@ whether to trust the comparison: \code{se} should be well below the
 difference you care about (raise \code{particles}, or set \code{replicates}
 for an empirical standard error), and doubling \code{substeps} should not
 move the answer.
+}
+\seealso{
+\code{\link{ctParticleCorrect}} applies the correction this
+  measures, to the fit's posterior draws.
 }

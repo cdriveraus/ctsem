@@ -280,3 +280,49 @@ end
     @test ContinuousTimeSEM.ctsem_joint_loglikelihood(obj, [-0.5], z) ≈ a atol=1e-9
     @test_throws ArgumentError ContinuousTimeSEM.ctsem_joint_objective(obj, npar; transition=:bogus)
 end
+
+@testset "batch evaluation matches single runs and separates the prior from the likelihood" begin
+    starts, times = _pf_times(3, 4, 1.0)
+    data = 0.5 .* randn(MersenneTwister(21), 2, length(times))
+    obj = ContinuousTimeSEM.ctsem_objective(_PF_LINEAR, starts, times, data)
+    thetas = [0.1 0.3]                      # one parameter, two columns
+    b = ContinuousTimeSEM.ctsem_particle_batch(obj, thetas; particles=500, substeps=1, seed=4)
+    @test length(b.particle) == 2
+    for j in 1:2
+        single = ContinuousTimeSEM.ctsem_particle_loglik(obj, thetas[:, j]; particles=500,
+            substeps=1, seed=4)
+        @test b.particle[j] == single.loglik
+        @test b.se[j] == single.se
+        @test b.ess_min[j] == single.ess_min
+        @test b.filter[j] ≈ obj(thetas[:, j]) atol=1e-10      # no prior on this model
+        @test b.posterior[j] == b.filter[j]
+    end
+    # With a prior the posterior column carries it and the filter column does not.
+    objp = ContinuousTimeSEM.ctsem_objective(_PF_LINEAR, starts, times, data;
+        prior_index=[1], prior_scale=[2.0])
+    bp = ContinuousTimeSEM.ctsem_particle_batch(objp, thetas; particles=200, substeps=1, seed=4)
+    for j in 1:2
+        @test bp.filter[j] ≈ b.filter[j] atol=1e-10
+        @test bp.posterior[j] - bp.filter[j] ≈
+            ContinuousTimeSEM._ctsem_log_prior(objp, thetas[:, j]) atol=1e-10
+        @test bp.posterior[j] != bp.filter[j]
+    end
+    # One seed per column: the second column then equals a single run at its seed.
+    bs = ContinuousTimeSEM.ctsem_particle_batch(obj, thetas; particles=500, substeps=1, seed=[4, 5])
+    @test bs.particle[1] == b.particle[1]
+    @test bs.particle[2] == ContinuousTimeSEM.ctsem_particle_loglik(obj, thetas[:, 2];
+        particles=500, substeps=1, seed=5).loglik
+    @test bs.particle[2] != b.particle[2]
+    @test_throws ArgumentError ContinuousTimeSEM.ctsem_particle_batch(obj, thetas; seed=[4, 5, 6])
+    @test_throws ArgumentError ContinuousTimeSEM.ctsem_particle_batch(obj, zeros(1, 0))
+    @test_throws ArgumentError ContinuousTimeSEM.ctsem_particle_loglik(obj, [0.1]; seed=-1)
+    # Splitting the subjects across chunks does not change the answer: every
+    # subject has its own stream. (Vacuous on one thread, real on several.)
+    previous = ContinuousTimeSEM.ctsem_max_chunks().max_chunks
+    ContinuousTimeSEM.ctsem_set_max_chunks!(2)
+    two = ContinuousTimeSEM.ctsem_particle_loglik(obj, [0.1]; particles=500, substeps=1, seed=4)
+    ContinuousTimeSEM.ctsem_set_max_chunks!(previous)
+    one = ContinuousTimeSEM.ctsem_particle_loglik(obj, [0.1]; particles=500, substeps=1, seed=4)
+    @test two.loglik == one.loglik
+    @test two.row_loglik == one.row_loglik
+end
