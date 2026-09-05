@@ -15,7 +15,7 @@
 #' @examples
 #' gen <- ctGenerateFromFit(ctstantestfit, nsamples=3,fullposterior=TRUE,cores=1)
 #' plot(gen$generated$Y[3,,2],type='l') #Third random data sample, 2nd manifest var, all time points. 
-ctGenerateFromFit<-function(fit,nsamples=200,fullposterior=FALSE, verboseErrors=FALSE,cores=1){
+ctGenerateFromFit<-function(fit,nsamples=200,fullposterior=FALSE, verboseErrors=FALSE,cores=2){
   
   # The julia engine generates from the same forward pass it filters with,
   # drawing each row from its own prior predictive (see R/ctBackendKalman.R and

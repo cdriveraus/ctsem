@@ -38,12 +38,12 @@ sample sizes; more than one reports the standard deviation across runs.}
 }
 \value{
 A list: \code{loglik}, the particle estimate (mean over replicates);
-\code{se}; \code{fit_loglik}, the filter's log likelihood from the fit;
-\code{difference}, particle minus filter; \code{rows}, a data frame with
-the subject, time, particle and filter log likelihood of every row and
-their difference; \code{replicates}, the individual estimates;
-\code{ess_min}, the smallest effective sample size any row saw; and the
-settings.
+  \code{se}; \code{fit_loglik}, the filter's log likelihood from the fit;
+  \code{difference}, particle minus filter; \code{rows}, a data frame with
+  the subject, time, particle and filter log likelihood of every row and
+  their difference; \code{replicates}, the individual estimates;
+  \code{ess_min}, the smallest effective sample size any row saw; and the
+  settings.
 }
 \description{
 The filter ctsem fits with is an assumed-density approximation: it carries a

@@ -5,7 +5,7 @@
 \alias{ctStanSubjectPars}
 \title{Extract an array of subject specific parameters from a ctStanFit object.}
 \usage{
-ctSubjectPars(fit, pointest = TRUE, cores = 1, nsamples = "all")
+ctSubjectPars(fit, pointest = TRUE, cores = 2, nsamples = "all")
 }
 \arguments{
 \item{fit}{fit object}

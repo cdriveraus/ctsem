@@ -5,7 +5,7 @@
 \alias{ctAddSamples}
 \title{Sample more values from an optimized ctstanfit object}
 \usage{
-ctFitAddSamples(fit, nsamples, cores = 1)
+ctFitAddSamples(fit, nsamples, cores = 2)
 }
 \arguments{
 \item{fit}{fit object}

@@ -504,7 +504,7 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
 }
 
 .ctBackendGenerateFromFit <- function(fit, nsamples = 200, fullposterior = FALSE,
-  cores = 1) {
+  cores = 2) {
   spec <- .ctBackendSpec(fit)
   # `ctsem_generate` (and `ctsem_generate_states` below it) pass each
   # subject's `tipreds` straight to the extended Kalman filter without the

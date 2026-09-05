@@ -14,7 +14,7 @@ ctDiscretePars(
   standardise = FALSE,
   cov = FALSE,
   plot = FALSE,
-  cores = 1,
+  cores = 2,
   state = NULL,
   method = "linearise",
   ...,
