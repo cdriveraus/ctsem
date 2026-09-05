@@ -34,12 +34,12 @@ utils::globalVariables(c("invDRIFT","II","DRIFTexp","vec2diag","diag2vec",
   'manifest',
   'Original','sysnoise','starts', 'obsNames',
   'parlp',
-  "ACF", "ACFhigh", "ACFlow", "Element", "Estimate", "Model", "NobsDT", "Obs", 
-  "ObsVsGenID", "ObsVsGenRow", "OutOf95Row", "Row", "Sample", "Time", 
-  "TimeInterval", "V2", "Variable", "aic", "ci", "highdat", "leaveOutN", 
+  "ACF", "ACFhigh", "ACFlow", "Element", "Estimate", "Model", "Obs", 
+  "Row", "Sample", "Time", 
+  "TimeInterval", "V2", "Variable", "aic", "ci", "leaveOutN", 
   ".ObsCount", ".splitmedian", ".timerange", "DataType", "Iter", "Split", "Time.interval",
   "Type", "condval", "ll", "var1",
-  "lowdat", "lp", "mediandat", "mediandatRank", "np", "obsValue"))
+  "lp", "np", "obsValue"))
 utils::globalVariables(c(".ObsCol", ".ObsRow", ".splitgroup",
   ".splitscore", "Sig", "colvar", "empirical", "n", "n_empirical",
   "ntime", "q025", "q50", "q975", "rowvar"))
