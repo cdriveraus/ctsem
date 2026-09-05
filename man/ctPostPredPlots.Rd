@@ -91,6 +91,14 @@ respect to time is not a meaningful quantity. Note that the observed side of the
 comparison is evaluated at the point estimate, so it carries no parameter uncertainty
 while the generated side does.
 
+\code{SubjectLogLik} asks the same question one level up: each subject's total log
+likelihood, summed over that subject's rows, compared as a cumulative distribution
+across subjects against the same curve from each generated dataset. Aggregating within
+a subject first is what makes a subject the model fits badly across many occasions show
+up, rather than being spread thin across the row-wise panels. The comparison is against
+replicate datasets of the same size rather than a smooth density, so it is the right
+reference however few subjects there are.
+
 The approximation is only as good as the number of generated datasets, so a fit carrying
 few draws gives a coarse picture -- the PIT in particular is discrete on
 \code{nsamples + 1} values.

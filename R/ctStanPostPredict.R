@@ -28,7 +28,7 @@
   structure = c('Density', 'ValueByTime', 'ValueByOccasion',
     'ChangeByValue', 'ChangeByTime'),
   calibration = c('PredictedVsObserved', 'IntervalCoverage', 'PIT',
-    'CalibrationByInterval', 'CalibrationBySubject')
+    'CalibrationByInterval', 'CalibrationBySubject', 'SubjectLogLik')
 )
 
 # The explanatory notes. Each panel carries one as a ggplot caption unless
@@ -92,7 +92,20 @@
       'are the ones the model fits worst. Grey band: the range expected if a ',
       'subject\'s own observations were independent. They are not -- a random ',
       'effect or a persistent state makes them agree -- so the true band is ',
-      'wider, and this one is a guide rather than a test.')
+      'wider, and this one is a guide rather than a test.'),
+    SubjectLogLik = paste0(
+      'Distribution across subjects of each subject total log likelihood, as a ',
+      'cumulative curve. Band: the same curve from ', ndraws, ' replicate ',
+      'datasets the model generated, each with the same subjects and the same ',
+      'observation schedule, so it is the right reference however few subjects ',
+      'there are. The observed curve should sit inside it. Left of the band ',
+      'means subjects are less likely under the model than it expects -- ',
+      'systematic misfit spread across occasions; right means the model is ',
+      'fitting them better than it should, which usually means overfitting or ',
+      'a variance component absorbing the noise. The rug marks the individual ',
+      'subjects; CalibrationBySubject names which are which. The observed ',
+      'totals are evaluated at the point estimate, so they carry no parameter ',
+      'uncertainty while the replicates do.')
   )
 }
 
@@ -500,6 +513,14 @@ ctPostPredData <- function(fit, residuals = FALSE, nsamples = NA){
 #' comparison is evaluated at the point estimate, so it carries no parameter uncertainty
 #' while the generated side does.
 #'
+#' \code{SubjectLogLik} asks the same question one level up: each subject's total log
+#' likelihood, summed over that subject's rows, compared as a cumulative distribution
+#' across subjects against the same curve from each generated dataset. Aggregating within
+#' a subject first is what makes a subject the model fits badly across many occasions show
+#' up, rather than being spread thin across the row-wise panels. The comparison is against
+#' replicate datasets of the same size rather than a smooth density, so it is the right
+#' reference however few subjects there are.
+#'
 #' The approximation is only as good as the number of generated datasets, so a fit carrying
 #' few draws gives a coarse picture -- the PIT in particular is discrete on
 #' \code{nsamples + 1} values.
@@ -533,6 +554,7 @@ ctPostPredPlots <- function(fit, panels = 'all', variables = NULL,
     value <- obsValue <- PIT <- med <- lo <- hi <- Outside <- DataType <- NULL
     Bin <- Rate <- RateLo <- RateHi <- Mid <- Expected <- Count <- NULL
     BandLo <- BandHi <- Rank <- SubjMean <- TimeInterval <- Time <- NULL
+    mid <- obsF <- gensub <- obssub <- NULL
     variable <- row <- id <- nout <- Nobs <- se <- NULL
   }
 
@@ -765,6 +787,58 @@ ctPostPredPlots <- function(fit, panels = 'all', variables = NULL,
         labs(x = 'Subjects, ordered by mean PIT', y = 'Mean PIT') +
         theme(legend.position = 'bottom')
       gglist$CalibrationBySubject <- cap(g, 'CalibrationBySubject')
+    }
+  }
+
+  if('SubjectLogLik' %in% panels && hasll){
+    # Each subject's total log likelihood, summed over that subject's rows. The
+    # row-wise version is in every other panel; this one aggregates within a
+    # subject first, so a subject the model fits badly across many occasions
+    # shows up as one point in the tail rather than being spread thin.
+    #
+    # Compared as ECDFs against a band of replicate datasets rather than as
+    # densities. Each generated draw supplies one total per subject, so its ECDF
+    # is a replicate of the observed ECDF at the same number of subjects -- the
+    # band is then the right reference at any n, where a kernel density over a
+    # few dozen subjects is not.
+    ll <- dat[as.character(variable) == 'LogLik' & is.finite(obsValue) & is.finite(value)]
+    # Both sides must total the same rows, or the totals are not comparable.
+    ll <- ll[, if(all(is.finite(value)) && is.finite(obsValue[1L])) .SD, by = .(row)]
+    gensub <- ll[, .(ll = sum(value)), by = .(sample, id)]
+    obssub <- unique(ll[, .(row, id, obsValue)])[, .(ll = sum(obsValue)), by = id]
+    if(nrow(obssub) > 2 && nrow(gensub) > 0){
+      grid <- seq(min(c(gensub$ll, obssub$ll)), max(c(gensub$ll, obssub$ll)),
+        length.out = 200)
+      ecdfs <- vapply(split(gensub$ll, gensub$sample),
+        function(v) vapply(grid, function(g0) mean(v <= g0), numeric(1)),
+        numeric(length(grid)))
+      if(is.null(dim(ecdfs))) ecdfs <- matrix(ecdfs, nrow = length(grid))
+      band <- data.table(
+        x = grid,
+        lo = apply(ecdfs, 1, quantile, qlo, na.rm = TRUE),
+        mid = apply(ecdfs, 1, median, na.rm = TRUE),
+        hi = apply(ecdfs, 1, quantile, 1 - qlo, na.rm = TRUE),
+        obsF = vapply(grid, function(g0) mean(obssub$ll <= g0), numeric(1)))
+      outside <- round(100 * mean(band$obsF < band$lo | band$obsF > band$hi), 1)
+      g <- ggplot(band, aes(x = x)) +
+        geom_ribbon(aes(ymin = lo, ymax = hi, fill = 'Model replicates'), alpha = .3) +
+        geom_line(aes(y = mid, colour = 'Model median'), linewidth = .7) +
+        geom_line(aes(y = obsF, colour = 'Observed'), linewidth = .9) +
+        geom_rug(data = obssub, aes(x = ll), inherit.aes = FALSE,
+          colour = .ctPostPredCols[['Observed']], alpha = .6) +
+        scale_fill_manual(name = '', values = c('Model replicates' = .ctPostPredCols[['Model']])) +
+        scale_colour_manual(name = '', values = c(
+          'Model median' = .ctPostPredCols[['Model']],
+          'Observed' = .ctPostPredCols[['Observed']])) +
+        coord_cartesian(ylim = c(0, 1)) +
+        theme_bw() +
+        labs(x = 'Total log likelihood per subject', y = 'Cumulative proportion of subjects',
+          subtitle = paste0(nrow(obssub), ' subjects, ', ndraws,
+            ' replicate datasets. Observed curve outside the band over ',
+            outside, '% of the range.')) +
+        theme(legend.position = 'bottom',
+          plot.subtitle = element_text(size = rel(.8), colour = 'grey30'))
+      gglist$SubjectLogLik <- cap(g, 'SubjectLogLik')
     }
   }
 
