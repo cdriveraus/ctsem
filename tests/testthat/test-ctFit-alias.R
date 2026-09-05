@@ -51,3 +51,13 @@ test_that("ctStan-prefixed helper names remain aliases", {
   expect_identical(ctStanSubjectPars, ctSubjectPars)
   expect_identical(ctStanTIpredeffects, ctTIpredEffects)
 })
+
+test_that("the defunct model-update stubs error and name their replacement", {
+  # Both are exported, so both are reachable from user code that has not been
+  # updated. What matters is that they stop rather than return something, and
+  # that the message says where to go.
+  expect_error(ctFitUpdateModel(), 'ctFitUpdate')
+  expect_error(ctStanUpdModel(), 'ctFitUpdate')
+  expect_error(ctFitUpdateModel(), 'defunct')
+  expect_error(ctStanUpdModel(), 'defunct')
+})
