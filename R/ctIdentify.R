@@ -154,20 +154,23 @@
 #' @examples
 #' \donttest{
 #' # ctIdentify() always uses the julia backend internally, whatever the
-#' # eventual fit will use.
-#' gen <- suppressMessages(ctModel(type = 'ct', n.latent = 1, n.manifest = 1,
-#'   manifestNames = 'Y1', latentNames = 'eta1', LAMBDA = matrix(1),
-#'   DRIFT = matrix(-0.4), DIFFUSION = matrix(0.6), MANIFESTVAR = matrix(0.3),
-#'   T0VAR = matrix(1), T0MEANS = matrix(0), CINT = matrix(0),
-#'   MANIFESTMEANS = matrix(0), Tpoints = 8))
-#' datalong <- ctGenerate(gen, n.subjects = 40, Tpoints = 8, backend = 'r')
+#' # eventual fit will use, so the example is inert where Julia is absent --
+#' # including on CRAN, whose check machines have none.
+#' if (isTRUE(ctJuliaStatus()$available)) {
+#'   gen <- suppressMessages(ctModel(type = 'ct', n.latent = 1, n.manifest = 1,
+#'     manifestNames = 'Y1', latentNames = 'eta1', LAMBDA = matrix(1),
+#'     DRIFT = matrix(-0.4), DIFFUSION = matrix(0.6), MANIFESTVAR = matrix(0.3),
+#'     T0VAR = matrix(1), T0MEANS = matrix(0), CINT = matrix(0),
+#'     MANIFESTMEANS = matrix(0), Tpoints = 8))
+#'   datalong <- ctGenerate(gen, n.subjects = 40, Tpoints = 8, backend = 'r')
 #'
-#' model <- suppressMessages(ctModel(type = 'ct', n.latent = 1, n.manifest = 1,
-#'   manifestNames = 'Y1', latentNames = 'eta1', LAMBDA = matrix(1),
-#'   T0MEANS = matrix(0), CINT = matrix(0), MANIFESTMEANS = matrix(0)))
+#'   model <- suppressMessages(ctModel(type = 'ct', n.latent = 1, n.manifest = 1,
+#'     manifestNames = 'Y1', latentNames = 'eta1', LAMBDA = matrix(1),
+#'     T0MEANS = matrix(0), CINT = matrix(0), MANIFESTMEANS = matrix(0)))
 #'
-#' result <- ctIdentify(datalong, model, cores = 1)
-#' print(result)
+#'   result <- ctIdentify(datalong, model, cores = 1)
+#'   print(result)
+#' }
 #' }
 #'
 #' @export

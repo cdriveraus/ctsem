@@ -454,8 +454,8 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #'
 #' ctPostPredict(f1, wait=FALSE) #compare randomly generated data from posterior to observed data
 #'
-#' cf<-ctFitCheck(f1) #compare mean and covariance of randomly generated data to observed cov
-#' plot(cf,wait=FALSE)
+#' #compare mean and covariance of randomly generated data to observed cov
+#' ctFitCheck(f1)
 #'
 #'  ### Further example models
 #'
