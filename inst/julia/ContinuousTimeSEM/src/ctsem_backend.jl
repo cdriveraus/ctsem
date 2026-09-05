@@ -764,15 +764,15 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # passing either.
     moved = isempty(minimizer) ? 0.0 : maximum(abs, minimizer .- start_values)
     gradient_norm = isempty(final.gradient) ? 0.0 : maximum(abs, final.gradient)
-    # Running out of iterations is a different outcome from converging, and the
-    # closing line used to report both as a bare count. On a stage whose cap is
-    # the plan (`budget`) reaching it is not news; anywhere else it is the one
-    # thing about the fit the user most needs to know.
     # `max(shown, ...)`: when the backtracking fallback ran and was kept,
     # `Optim.iterations` describes that second run alone, which can be fewer
     # than the user already watched go past. The closing line closes what was
     # on screen.
     iterations = max(reporter.shown, Optim.iterations(result))
+    # Running out of iterations is a different outcome from converging, and the
+    # closing line used to report both as a bare count. On a stage whose cap is
+    # the plan (`budget`) reaching it is not news; anywhere else it is the one
+    # thing about the fit the user most needs to know.
     capped = !progress_budget && iterations >= Int(maxiter)
     progress && _progress_done(reporter,
         @sprintf("%d iterations%s", iterations,
