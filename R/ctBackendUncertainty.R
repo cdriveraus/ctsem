@@ -75,8 +75,10 @@
       fit$backend, "' fits. ",
       "fullbootstrap resamples subjects and re-optimises each sample, which ",
       "needs the model rebuilt per resample rather than re-evaluated. ",
-      "Available: ", paste(.ctBackendUncertaintySupported, collapse = ", "),
-      ".", call. = FALSE)
+      # `stored` is served by `ctOptimUncertainty()` before it reaches here, so
+      # it is named in the message rather than added to the list checked above.
+      "Available: ", paste(c(.ctBackendUncertaintySupported, "stored"),
+        collapse = ", "), ".", call. = FALSE)
   }
 
   # A state-explicit fit has one uncertainty route and not five. The others

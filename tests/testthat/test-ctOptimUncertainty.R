@@ -268,3 +268,90 @@ test_that("uncertainty data checks report small sample limitations", {
     'at least two samples'
   )
 })
+
+# uncertainty='stored' is the cheap redraw: same covariance, new draws, no model
+# evaluations. It replaces `ctFitAddSamples()`, which did this on stan alone and
+# appended rather than replaced.
+
+test_that("uncertainty='stored' redraws from the fit's covariance and computes nothing", {
+  skip_if_not_installed('rstan')
+  fit <- ctstantestfit
+  before <- fit$stanfit$cov
+
+  set.seed(41)
+  redrawn <- suppressMessages(ctOptimUncertainty(fit, uncertainty='stored',
+    finishsamples=37, cores=1))
+
+  expect_equal(nrow(redrawn$stanfit$rawposterior), 37L)
+  # The covariance, the Hessian and the recorded method survive: this path is
+  # about the draws and nothing else.
+  expect_equal(unname(redrawn$stanfit$cov), unname(before), tolerance=0)
+  expect_equal(redrawn$stanfit$uncertainty$hessian, fit$stanfit$uncertainty$hessian,
+    tolerance=0)
+  expect_identical(redrawn$stanfit$uncertainty$settings$method, 'hessian')
+  expect_true(isTRUE(redrawn$stanfit$uncertainty$settings$redrawn))
+  expect_identical(redrawn$stanfit$uncertainty$settings$finishsamples, 37)
+
+  # The draws are exactly `ctOptimNormalDraws()` on the stored covariance --
+  # which is the whole claim, and it also pins what a given seed produces.
+  set.seed(41)
+  direct <- ctsem:::ctOptimNormalDraws(fit$stanfit$rawest, before, 37)
+  expect_equal(unname(redrawn$stanfit$rawposterior), unname(direct), tolerance=0)
+
+  # No log-probability evaluations. Counted rather than timed: a wall clock on a
+  # shared machine says nothing, and the count is the property that matters.
+  calls <- 0L
+  trace(ctsem:::ctOptimFitLpgFunc, tracer=function() calls <<- calls + 1L,
+    where=asNamespace('ctsem'), print=FALSE)
+  on.exit(untrace(ctsem:::ctOptimFitLpgFunc, where=asNamespace('ctsem')), add=TRUE)
+  suppressMessages(ctOptimUncertainty(fit, uncertainty='stored', finishsamples=5,
+    cores=1))
+  expect_identical(calls, 0L)
+})
+
+test_that("uncertainty='stored' refuses a fit with no covariance and warns on non-normal draws", {
+  skip_if_not_installed('rstan')
+  nocov <- ctstantestfit
+  nocov$stanfit$cov <- NULL
+  expect_error(ctOptimUncertainty(nocov, uncertainty='stored'),
+    'no usable one')
+
+  # Redrawing an importance-sampled or bootstrapped posterior gives normal
+  # draws from that covariance, which is not the same distribution. Said out
+  # loud, because `ctFitAddSamples()` used to mix the two silently.
+  wasimis <- ctstantestfit
+  wasimis$stanfit$uncertainty$settings$draws <- 'imis'
+  wasimis$stanfit$uncertainty$settings$method <- 'is'
+  expect_warning(suppressMessages(ctOptimUncertainty(wasimis, uncertainty='stored',
+    finishsamples=5, cores=1)), "came from 'imis'")
+})
+
+test_that("ctFitAddSamples is deprecated and its draws have not moved", {
+  skip_if_not_installed('rstan')
+  fit <- ctstantestfit
+
+  # Verbatim reimplementation of the pre-deprecation body. If the function is
+  # ever routed through ctOptimUncertainty() this fails, which is the point:
+  # `ctOptimNormalDraws()` consumes the same normals in a different order (one
+  # `rnorm(n*npar)` filled by column against one `rnorm(npar)` per sample), so
+  # every number a given seed used to produce would change.
+  set.seed(707)
+  mchol <- t(chol(fit$stanfit$cov))
+  reference <- matrix(unlist(lapply(1:6, function(x){
+    fit$stanfit$rawest + mchol %*% t(matrix(rnorm(length(fit$stanfit$rawest)), nrow=1))
+  })), byrow=TRUE, ncol=length(fit$stanfit$rawest))
+
+  set.seed(707)
+  added <- suppressWarnings(suppressMessages(ctFitAddSamples(fit, nsamples=6, cores=1)))
+  appended <- added$stanfit$rawposterior[-seq_len(nrow(fit$stanfit$rawposterior)), ,
+    drop=FALSE]
+  expect_equal(unname(appended), unname(reference), tolerance=0)
+  # And it still appends rather than replaces.
+  expect_equal(unname(added$stanfit$rawposterior[seq_len(nrow(fit$stanfit$rawposterior)), ]),
+    unname(fit$stanfit$rawposterior), tolerance=0)
+
+  expect_warning(suppressMessages(ctFitAddSamples(fit, nsamples=2, cores=1)),
+    'deprecated')
+  expect_warning(suppressMessages(ctAddSamples(fit, nsamples=2, cores=1)),
+    'deprecated')
+})

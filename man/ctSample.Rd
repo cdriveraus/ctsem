@@ -149,7 +149,12 @@ posterior rather than a point estimate with a normal approximation around it.
 The result is a \code{ctJuliaFit} carrying \code{estimate$rawposterior}, so
 \code{\link{summary}}, \code{\link{ctExtract}}, \code{ctKalman} and the
 system-matrix helpers all read it the way they read an optimised fit's
-normal-approximation draws.
+normal-approximation draws. Those draws are the thing this is not: an
+optimised fit's \code{rawposterior} holds pseudo-posterior draws from a
+covariance fitted around the mode, written by
+\code{\link{ctOptimUncertainty}}, and no number of them makes a posterior
+sample. This writes genuine posterior draws into the same slot and marks the
+fit with \code{$sample}, which is how the two are told apart afterwards.
 
 The reported \code{estimate$se} of an optimised fit is the curvature of the
 approximated marginal posterior at its mode, so it describes a normal
@@ -194,7 +199,9 @@ ctLaplaceCheck(fit)
 \seealso{
 \code{\link{ctLaplaceCheck}} measures the Laplace approximation's
   error and corrects it to first order, at a small fraction of the cost;
-  \code{\link{ctFit}} for the fit this starts from, and
+  \code{\link{ctOptimUncertainty}} for pseudo-posterior draws from a fitted
+  covariance, which is the cheap approximation this replaces rather than
+  extends; \code{\link{ctFit}} for the fit this starts from, and
   \code{\link{ctJuliaSetup}} for the thread count that decides whether
   chains run concurrently.
 }

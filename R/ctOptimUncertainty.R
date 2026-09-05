@@ -1122,12 +1122,91 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   draws
 }
 
+# uncertainty='stored': redraw from the covariance the fit already carries.
+#
+# Every other method here builds a covariance out of model evaluations -- 2*npar
+# log-probability/gradient calls for the finite-difference Hessian, more for the
+# score and bootstrap methods -- and then draws from it. Asking for a different
+# number of draws is not asking for that work again: the draws are iid from a
+# covariance that has not changed, so this path costs no model evaluations at
+# all on either backend.
+#
+# It replaces `ctFitAddSamples()`, which did the same thing on stan alone and
+# appended rather than replaced. Appending is what makes it stan-only in spirit
+# as well as in code: the rows already on the fit may have come from `is` or
+# `bootstrap`, and adding normal draws to those leaves a posterior that is part
+# one distribution and part another, with nothing recording the mixture.
+# Replacing them cannot do that, and the warning below says when the previous
+# draws were of a kind this cannot reproduce.
+.ctOptimStoredRedraw <- function(fit, finishsamples, cores, verbose=0){
+  julia <- inherits(fit, 'ctJuliaFit')
+  cov <- if(julia) fit$estimate$cov else fit$stanfit$cov
+  est <- if(julia) as.numeric(fit$estimate$raw) else fit$stanfit$rawest
+  if(is.null(cov) || !length(cov) || any(!is.finite(cov))) stop(
+    "uncertainty='stored' redraws from the covariance already on the fit, and ",
+    "this fit has no usable one. Run ctOptimUncertainty() with a method that ",
+    "computes one first -- 'hessian' is the default.", call.=FALSE)
+  if(is.null(est) || length(est) != ncol(cov)) stop(
+    "uncertainty='stored' needs the fit's raw estimate and stored covariance ",
+    "to describe the same parameters; they do not.", call.=FALSE)
+
+  uncertaintyfit <- if(julia) fit$uncertainty else fit$stanfit$uncertainty
+  if(is.null(uncertaintyfit)) uncertaintyfit <- list(method='stored', cov=cov)
+  previousdraws <- uncertaintyfit$settings$draws
+  if(!is.null(previousdraws) && !identical(previousdraws, 'normal')) {
+    warning("This fit's draws came from '", previousdraws, "'; redrawing from ",
+      "the stored covariance gives normal draws instead. Rerun with ",
+      "uncertainty='", uncertaintyfit$settings$method, "' to keep them.",
+      call.=FALSE)
+  }
+
+  samples <- ctOptimNormalDraws(est, cov, finishsamples)
+
+  # `method` keeps naming the method that produced the covariance, because that
+  # is what every reader of it wants to know and it has not changed; `redrawn`
+  # records that the draws were regenerated from it afterwards.
+  uncertaintyfit$draws <- 'normal'
+  uncertaintyfit$settings$method <- .ctJuliaOr(uncertaintyfit$settings$method,
+    'stored')
+  uncertaintyfit$settings$draws <- 'normal'
+  uncertaintyfit$settings$finishsamples <- finishsamples
+  uncertaintyfit$settings$cores <- cores
+  uncertaintyfit$settings$redrawn <- TRUE
+
+  if(julia){
+    fit$estimate$rawposterior <- samples
+    fit <- .ctFitNameRawUncertainty(fit)
+    fit$uncertainty <- uncertaintyfit
+    fit$transformedpars <- .ctBackendConstrain(fit)
+    return(fit)
+  }
+  fit$stanfit$rawposterior <- samples
+  fit <- .ctFitNameRawUncertainty(fit)
+  fit$stanfit$uncertainty <- uncertaintyfit
+  if(verbose > 0) message('Redrawing ', finishsamples,
+    ' samples from the stored covariance')
+  ctOptimUpdateTransformed(fit, samples=samples, cores=cores)
+}
+
 #' Update optimized ctsem uncertainty estimates
 #'
 #' Recomputes the approximate raw-parameter uncertainty for an optimized
 #' \code{\link{ctFit}} object and refreshes the approximate raw-parameter
 #' samples. This is the entry point for both backends; \code{ctFit} itself
 #' calls it to finish an optimized fit.
+#'
+#' The draws it writes to \code{$rawposterior} are \emph{pseudo-posterior}
+#' draws: a sample from a covariance fitted to the log-posterior surface around
+#' the optimum, not a sample from the posterior itself. \code{\link{ctSample}}
+#' is the other thing, genuine posterior draws by Hamiltonian Monte Carlo from
+#' an optimized \code{ctJuliaFit}. Everything downstream reads either from the
+#' same slot, so the difference is recorded rather than visible in the shape of
+#' the result: an optimized fit carries \code{$uncertainty$settings}, a sampled
+#' one carries \code{$sample}, and \code{ctOptimUncertainty} refuses a sampled
+#' fit rather than replacing its draws.
+#'
+#' To change only the number of draws, use \code{uncertainty='stored'}, which
+#' redraws from the covariance the fit already carries and evaluates no model.
 #'
 #' @section Backend differences:
 #' The methods are the same on both backends and the covariance they produce is
@@ -1185,7 +1264,15 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' re-optimizes each sample from the original maximum likelihood or MAP
 #' estimate using mize L-BFGS, \code{'sandwich'} uses Hessian bread with score
 #' covariance meat, and \code{'opg'} uses an OPG-style score information
-#' approximation.
+#' approximation. \code{'stored'} computes nothing: it redraws
+#' \code{finishsamples} normal draws from the covariance already on the fit and
+#' leaves that covariance, the Hessian and the recorded \code{method}
+#' untouched, marking \code{$uncertainty$settings$redrawn = TRUE}. It is the
+#' way to change the number of draws, or to reseed them, without paying for the
+#' covariance again -- the other methods cost at least \code{2 * npar}
+#' log-probability evaluations, this one costs none -- and it warns if the
+#' fit's existing draws came from \code{'is'} or \code{'bootstrap'}, which
+#' normal draws from that covariance do not reproduce.
 #' @param draws Approximate raw-parameter draw method. \code{'auto'} uses
 #' empirical draws for \code{uncertainty='bootstrap'} and
 #' \code{uncertainty='fullbootstrap'} and normal draws otherwise.
@@ -1266,10 +1353,14 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' \code{fit$stanfit$uncertainty$settings} for a \code{ctStanFit} and in
 #' \code{fit$uncertainty$settings} for a \code{ctJuliaFit}; see the backend
 #' differences above for the other slots each writes.
+#' @seealso \code{\link{ctSample}} for genuine posterior draws by Hamiltonian
+#' Monte Carlo, rather than the pseudo-posterior draws from a covariance that
+#' this function produces. \code{\link{ctFitAddSamples}} is the deprecated
+#' stan-only predecessor of \code{uncertainty='stored'}.
 #' @export
 ctOptimUncertainty <- function(fit,
   uncertainty=c('hessian','surrogate','is','bootstrap','fullbootstrap',
-    'sandwich','opg'),
+    'sandwich','opg','stored'),
   draws=c('auto','normal','empirical','imis'), finishsamples=NULL,
   cores=NULL, control=list(), verbose=0, ...){
   
@@ -1326,6 +1417,8 @@ ctOptimUncertainty <- function(fit,
     if(is.null(cores)) cores <- 1L
     cores <- max(1L, suppressWarnings(as.integer(cores[1])))
     if(is.na(cores)) cores <- 1L
+    if(uncertainty == 'stored') return(.ctOptimStoredRedraw(fit,
+      finishsamples=finishsamples, cores=cores, verbose=verbose))
     return(.ctBackendUncertainty(fit=fit, uncertainty=uncertainty, draws=draws,
       finishsamples=finishsamples, cores=cores, control=control,
       verbose=verbose))
@@ -1347,6 +1440,10 @@ ctOptimUncertainty <- function(fit,
   if(is.null(cores)) cores <- 1
   cores <- suppressWarnings(as.integer(cores[1]))
   if(!is.finite(cores) || is.na(cores) || cores < 1) cores <- 1L
+  # Before `ctOptimFitLpgFunc()`, which reinitialises the stan model object,
+  # and before any of it is needed: a stored redraw evaluates no model.
+  if(uncertainty == 'stored') return(.ctOptimStoredRedraw(fit,
+    finishsamples=finishsamples, cores=cores, verbose=verbose))
   lpg_cores <- if(uncertainty %in% c('opg','fullbootstrap') &&
       draws != 'imis') 1L else cores
   lpgsetup <- ctOptimFitLpgFunc(fit, cores=lpg_cores)
