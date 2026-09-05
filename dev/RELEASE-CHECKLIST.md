@@ -57,6 +57,16 @@ compare against. Refresh the fit alone unless the data change is the point.
 assertions looks identical to a file that passed. Check assertion counts, not
 just the absence of failures.
 
+**One guard per axis, and no test reads an environment variable.**
+`skip_without_julia()` means "this drives the julia backend" and asserts both
+that this is not CRAN and that Julia is reachable; `skip_on_cran()` alone means
+"too slow for CRAN"; `skip_on_32bit()` means the stan models will not build.
+All three work at the top of a file as well as inside `test_that()`, and both
+placements are reported with a reason -- which the `if (Sys.getenv("NOT_CRAN")
+== "true")` wrappers they replaced were not. An example uses
+`if (isTRUE(ctJuliaStatus()$available))`, the same question through public API.
+`grep -rn NOT_CRAN tests/` should find nothing but comments.
+
 **`testall()` is in `dev/testall.R`** -- `source("dev/testall.R")`, then
 `testall()`. It used to be inside `R/`, reachable only as `ctsem:::testall()`.
 
@@ -74,6 +84,21 @@ review found by hand would have been caught by it.
 historically been portable: one test passed on Windows and failed on Linux for
 months because a fixture sat where a transform's derivative had collapsed. Both
 platforms now give the same count, and keeping it that way needs both to be run.
+
+## CI
+
+**Four tiers, and only one of them is the CRAN check.** `fast-tests.yaml` runs
+on every push in the CRAN configuration -- NOT_CRAN unset, no Julia -- so every
+guard is exercised where it has to hold. `julia-tests.yaml` and
+`julia-engine.yaml` run what CRAN never will, with Julia installed and
+`NOT_CRAN=true`. `check-standard.yaml` is `--as-cran` on the full platform
+matrix and no longer runs on a development-branch push; it runs on master, on a
+pull request, weekly, and on demand.
+
+**A release needs the manual run.** `check-standard.yaml` skips vignettes
+unless it is dispatched with "Build vignettes" checked, and only that variant
+installs Julia -- three of the four vignettes use `backend = 'julia'` with no
+eval guard. Do that run before submitting.
 
 ## Numbers and claims
 

@@ -1,14 +1,24 @@
 # Workflow derived from https://github.com/r-lib/actions/tree/v2/examples
 # Need help debugging build failures? Start at https://github.com/r-lib/actions#where-to-find-help
 #
-# Routine runs (push/PR) skip building and checking vignettes: one of them,
+# Tier 3 of four: the CRAN gate. NOT_CRAN unset and no Julia, `--as-cran`, the
+# whole platform matrix -- the configuration CRAN will run, and the slowest
+# thing this repository has. It is therefore not on a development-branch push
+# any more. `fast-tests.yaml` (tier 1) runs the same CRAN-configuration
+# examples and tests on every push in minutes, and `julia-tests.yaml` (tier 2)
+# runs what CRAN never will; this one runs on master, weekly, on a pull request
+# and on demand.
+#
+# Routine runs skip building and checking vignettes: one of them,
 # vignettes/uncertainty.qmd, takes 4-6 minutes of R/Julia execution on its
 # own, and the others are not free either -- see dev/vignette-runtime.md. Run
 # this workflow manually with "Build vignettes" checked for a pre-release
-# full check that includes them.
+# full check that includes them; that variant installs Julia, because three of
+# the four vignettes use `backend = 'julia'` with no eval guard and failed the
+# build without it.
 on:
   push:
-    branches: [main, master, rstantools, juliaFit]
+    branches: [main, master, rstantools]
   pull_request:
     branches: [main, master, rstantools, juliaFit]
   schedule:
@@ -23,6 +33,11 @@ on:
         default: false
 name: R-CMD-check
 
+# Four hours per run is worth spending once per ref, not once per push to it.
+concurrency:
+  group: R-CMD-check-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   R-CMD-check:
     runs-on: ${{ matrix.config.os }}
@@ -31,10 +46,10 @@ jobs:
       fail-fast: false
       # Tiered, because every entry here is a full stan compile from source:
       # R CMD check builds and installs, and a fresh checkout has no objects.
-      # Five platforms on every push to a development branch is five of those
-      # for information the first one almost always already gave.
+      # Five platforms on a pull request is five of those for information the
+      # first one almost always already gave.
       #
-      #   development branch push/PR -> ubuntu release only
+      #   pull request -> ubuntu release only
       #   master/main, manual, or the weekly schedule -> the full matrix
       #
       # So a breakage is caught within one build on the branch being worked
@@ -49,14 +64,27 @@ jobs:
            || github.ref_name == 'main')
           && '[{"os":"macos-latest","r":"release"},{"os":"windows-latest","r":"release"},{"os":"ubuntu-latest","r":"devel","http-user-agent":"release"},{"os":"ubuntu-latest","r":"release"},{"os":"ubuntu-latest","r":"oldrel-1"}]'
           || '[{"os":"ubuntu-latest","r":"release"}]' ) }}
+    # Run 216 spent 4 h 13 m in the check step and then failed. Whatever that
+    # was, nobody wants to pay for it twice; a cap turns a hang into a report.
+    timeout-minutes: 300
     env:
       R_REMOTES_NO_ERRORS_FROM_WARNINGS: true
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
       R_KEEP_PKG_SOURCE: yes
+      # Julia is installed, and the vignettes therefore executed, only when the
+      # vignettes are being built. Three of the four use backend='julia' with no
+      # eval guard, which is how runs 214 and 215 died in R CMD build.
+      BUILD_VIGNETTES: ${{ github.event_name == 'workflow_dispatch' && inputs.vignettes == true }}
     steps:
       - uses: actions/checkout@v5
       - uses: r-lib/actions/setup-pandoc@v2
-          
+
+      - uses: julia-actions/setup-julia@v2
+        if: env.BUILD_VIGNETTES == 'true'
+        with:
+          # In step with the pin in R/ctJuliaInstall.R.
+          version: '1.12.7'
+
       - uses: r-lib/actions/setup-r@v2
         with:
           r-version: ${{ matrix.config.r }}
@@ -76,6 +104,40 @@ jobs:
       - name: executable Permissions
         run: |
           chmod +x configure
+
+      # The three Stan models are what makes this workflow expensive. ccache
+      # keys on the preprocessed source, so an R-only change recompiles nothing
+      # -- including inside R CMD check, which installs into its own library
+      # from a fresh tarball and would otherwise start from zero every time.
+      # Linux only: the hosted macOS and Windows images have no ccache, and
+      # those two entries run on the weekly and on master, not per push.
+      - name: Compiler cache
+        if: runner.os == 'Linux'
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-check-${{ matrix.config.os }}-${{ matrix.config.r }}-${{ hashFiles('inst/stan/**', 'inst/include/**', 'configure') }}
+          restore-keys: |
+            ccache-check-${{ matrix.config.os }}-${{ matrix.config.r }}-
+
+      - name: Point R at ccache
+        if: runner.os == 'Linux'
+        run: |
+          command -v ccache >/dev/null || sudo apt-get install -y ccache
+          mkdir -p ~/.R ~/.ccache
+          # Only the compiler driver is replaced. R supplies -std=gnu++17 itself
+          # through CXX17STD, and src/Makevars sets only PKG_* variables, so
+          # nothing here collides with what configure appends.
+          {
+            echo 'CC = ccache gcc'
+            echo 'CXX = ccache g++'
+            echo 'CXX11 = ccache g++'
+            echo 'CXX14 = ccache g++'
+            echo 'CXX17 = ccache g++'
+            echo 'CXX20 = ccache g++'
+          } >> ~/.R/Makevars
+          printf 'max_size = 5.0G\nsloppiness = include_file_ctime,include_file_mtime,time_macros\n' > ~/.ccache/ccache.conf
+          ccache -z
       - uses: r-lib/actions/setup-tinytex@v2
         env: 
           TINYTEX_INSTALLER: TinyTeX
@@ -86,8 +148,8 @@ jobs:
           
       - uses: r-lib/actions/check-r-package@v2
         with:
-          args: ${{ (github.event_name == 'workflow_dispatch' && inputs.vignettes == true) && 'c("--no-manual", "--as-cran")' || 'c("--no-manual", "--as-cran", "--no-vignettes")' }}
-          build_args: ${{ (github.event_name == 'workflow_dispatch' && inputs.vignettes == true) && 'c("--no-manual", "--compact-vignettes=gs+qpdf")' || 'c("--no-manual", "--no-build-vignettes")' }}
+          args: ${{ env.BUILD_VIGNETTES == 'true' && 'c("--no-manual", "--as-cran")' || 'c("--no-manual", "--as-cran", "--no-vignettes")' }}
+          build_args: ${{ env.BUILD_VIGNETTES == 'true' && 'c("--no-manual", "--compact-vignettes=gs+qpdf")' || 'c("--no-manual", "--no-build-vignettes")' }}
           error-on: '"error"'
           upload-snapshots: true
           # This action otherwise uploads the whole check directory whenever the
@@ -95,6 +157,26 @@ jobs:
           # package and its compiled Stan objects. The logs below are the part
           # anyone actually reads.
           upload-results: 'never'
+
+      - name: Compiler cache statistics
+        if: always() && runner.os == 'Linux'
+        run: ccache -s
+
+      # --as-cran sets _R_CHECK_TIMINGS_, so 00check.log carries a [Ns/Ns] on
+      # every section and a per-example table. Printing them here means the next
+      # long run is attributed from the job log, without downloading anything.
+      # Run 216's four hours were never attributed because nobody could get at
+      # this file.
+      - name: Where the time went
+        if: always()
+        run: |
+          f=$(find check -name 00check.log 2>/dev/null | head -1)
+          [ -n "$f" ] || { echo "no 00check.log"; exit 0; }
+          echo "== timed sections (user/elapsed seconds) =="
+          grep -E '\[[0-9]+s?/[0-9]+s?\]' "$f" || echo "none"
+          echo "== slowest examples =="
+          sed -n '/Examples with CPU/,/^\* checking/p' "$f" | head -40 || true
+        shell: bash
 
       # Kept on success too: --as-cran records per-section and per-example
       # timings in 00check.log, which is how the cost of a run gets attributed

@@ -22,6 +22,10 @@ on:
 
 name: julia-engine
 
+concurrency:
+  group: julia-engine-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   engine-tests:
     runs-on: ubuntu-latest
