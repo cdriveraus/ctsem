@@ -1161,8 +1161,12 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   ncalcsNoJ<- length(unlist(ctm$modelmats$calcs)[!grepl('JAx[',unlist(ctm$modelmats$calcs),fixed=TRUE)])
   if(ncalcsNoJ > 0) recompile <- TRUE
 
-  if(!recompile &&
-      length(unlist(ctm$modelmats$calcs)[!grepl('JAx[',unlist(ctm$modelmats$calcs),fixed=TRUE)])>0)
+  # Fires when the only calcs are JAx entries: those no longer force a fresh
+  # program, so the model reuses the precompiled one with finite difference
+  # jacobians. Tested against the TOTAL calc count -- testing ncalcsNoJ, as this
+  # did from the commit that introduced it, is the same condition that has just
+  # set recompile, so the message could never appear.
+  if(!recompile && length(unlist(ctm$modelmats$calcs)) > 0)
     message('Finite difference jacobian used to avoid recompiling -- use forcerecompile=TRUE for analytic jacobians')
 
 
