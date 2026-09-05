@@ -1,6 +1,9 @@
-if(identical(Sys.getenv("NOT_CRAN"), "true")& !(.Platform$OS.type=="windows" && 
-    R.version$major %in% 4 && as.numeric(R.version$minor) >= 2 &&
-    unlist(utils::packageVersion('rstan'))[2] < 25) ){
+skip_on_cran()
+skip_if(.Platform$OS.type == "windows" && R.version$major %in% 4 &&
+    as.numeric(R.version$minor) >= 2 &&
+    unlist(utils::packageVersion('rstan'))[2] < 25,
+  "rstan < 2.26 cannot compile a model on R >= 4.2 on Windows.")
+{  # body of the guard this replaced; indentation unchanged
   library(ctsem)
   library(testthat)
   library(data.table)

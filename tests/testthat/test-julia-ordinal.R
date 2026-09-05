@@ -99,7 +99,6 @@ test_that("a ragged model leaves the unused threshold cells fixed", {
 })
 
 test_that("one ordinal observation has the likelihood it can be shown to have", {
-  skip_on_cran()
   skip_without_julia()
   # T0MEANS 0, T0VAR 1, one observation in the bottom category of a
   # three-category variable with both thresholds fixed at zero. The bottom
@@ -124,7 +123,6 @@ test_that("one ordinal observation has the likelihood it can be shown to have", 
 })
 
 test_that("the gradient matches finite differences, thresholds included", {
-  skip_on_cran()
   skip_without_julia()
   # The reverse pass is hand written and the threshold cotangent has to travel
   # back through the cumulative sum as well as the quadrature; a reverse pass
@@ -153,7 +151,6 @@ test_that("the gradient matches finite differences, thresholds included", {
 })
 
 test_that("the ordinal adjoint is exact with more than one latent state", {
-  skip_on_cran()
   skip_without_julia()
   # The companion of the binary case in test-julia-binary.R, and it found the
   # same bug harder: with a random effect expanding the state, the adjoint was
@@ -180,7 +177,6 @@ test_that("the ordinal adjoint is exact with more than one latent state", {
 })
 
 test_that("a fit recovers the thresholds it generated from", {
-  skip_on_cran()
   skip_without_julia()
   d <- .jord_data(nsubjects = 120, nobs = 15, nindicators = 3, seed = 5)
   m <- .jord_model(nindicators = 3)
@@ -202,7 +198,6 @@ test_that("a fit recovers the thresholds it generated from", {
 })
 
 test_that("generation draws categories in the proportions the model implies", {
-  skip_on_cran()
   skip_without_julia()
   # Every parameter fixed. With free ones the values come from a prior draw,
   # which can put the latent variance so high that only the end categories are
@@ -257,7 +252,7 @@ test_that("stan refuses an ordinal model rather than ignoring the thresholds", {
 })
 
 test_that("ordinal data are checked against the model's category count", {
-  skip_on_cran()
+  skip_without_julia()
   d <- .jord_data(nsubjects = 10, nobs = 5, nindicators = 1)
   m <- .jord_model(nindicators = 1, ncategories = 4)
   bad <- d
@@ -273,7 +268,6 @@ test_that("ordinal data are checked against the model's category count", {
 })
 
 test_that("mixed ordinal, binary and Gaussian indicators fit together", {
-  skip_on_cran()
   skip_without_julia()
   set.seed(6)
   gen <- suppressMessages(ctModel(type = "ct", n.latent = 1, n.manifest = 1,
@@ -304,7 +298,6 @@ test_that("mixed ordinal, binary and Gaussian indicators fit together", {
 })
 
 test_that("post-fit functions work on an ordinal fit", {
-  skip_on_cran()
   skip_without_julia()
   d <- .jord_data(nsubjects = 30, nobs = 8, nindicators = 2)
   fit <- suppressWarnings(suppressMessages(ctFit(d, .jord_model(),
@@ -337,7 +330,6 @@ test_that("the print method names the ordinal variables and their categories", {
 })
 
 test_that("a degenerate predicted variance costs its likelihood, not nothing", {
-  skip_on_cran()
   skip_without_julia()
   # T0VAR fixed at zero makes the first occasion's linear predictor known
   # exactly, so the observation there contributes `log P(y | eta)` and moves
@@ -373,7 +365,6 @@ test_that("a degenerate predicted variance costs its likelihood, not nothing", {
 })
 
 test_that("the gradient stays finite as a threshold gap closes", {
-  skip_on_cran()
   skip_without_julia()
   # The interval probability is computed as a product of tails rather than a
   # difference of CDFs, so a gap far below the point where the difference would
@@ -404,7 +395,6 @@ test_that("the gradient stays finite as a threshold gap closes", {
 })
 
 test_that("an unlikely observation is a large penalty, not an impossible row", {
-  skip_on_cran()
   skip_without_julia()
   # Push the first threshold to about 300, so every observed category above the
   # first has a probability around exp(-300). Computed as a probability that
@@ -437,7 +427,6 @@ test_that("an unlikely observation is a large penalty, not an impossible row", {
 })
 
 test_that("the adjoint is exact where the predicted variance is degenerate", {
-  skip_on_cran()
   skip_without_julia()
   # T0VAR at zero makes the first occasion's linear predictor known exactly.
   # The forward update is then skipped and the observation contributes

@@ -148,7 +148,6 @@ test_that("ctFitMelt reads the same one-step-ahead predictions the backend's own
 }
 
 test_that("the whole dashboard runs on a julia fit, and its panels match the backend's own filter", {
-  skip_on_cran()
   skip_without_julia()
   withr::local_pdf(NULL)
 

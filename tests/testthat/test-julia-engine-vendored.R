@@ -54,7 +54,6 @@ test_that("the vendored engine declares no heavyweight dependencies", {
 
 test_that("ctJuliaSetup works from the vendored copy, with no project argument", {
   skip_without_julia()
-  skip_on_cran()
 
   status <- ctJuliaSetup()
   expect_true(status$available)

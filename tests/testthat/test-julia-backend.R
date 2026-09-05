@@ -239,7 +239,6 @@ test_that("a missing TI predictor is imputed for the julia optimising path, with
 })
 
 test_that("julia optimises with the imputed TI predictor values", {
-  skip_on_cran()
   skip_without_julia()
 
   model <- suppressWarnings(ctModel(
@@ -366,7 +365,6 @@ test_that("Julia completes a full AnomAuth optimization", {
 # here, so the state-dependent cell must give exactly what the same model gives
 # with that cell fixed at the transform's value there.
 test_that("a state-dependent MANIFESTVAR is transformed before row 1 reads it", {
-  skip_on_cran()
   skip_without_julia()
 
   t0 <- 1.5
@@ -460,7 +458,6 @@ test_that("a non-default covmattransform is refused on the julia backend", {
 # does not enter Jy, so the two models agree exactly rather than to a
 # linearisation.
 test_that("a PARS cell is transformed before row 1's update group reads it", {
-  skip_on_cran()
   skip_without_julia()
 
   t0 <- 1.5
@@ -534,7 +531,6 @@ test_that("a PARS cell is transformed before row 1's update group reads it", {
 # NaN and so announces itself. A MANIFESTMEANS that takes the zero returns a
 # finite, ordinary-looking number, 12.67 log units from the right one.
 test_that("a PARS cell is transformed before row 1 of the state pass reads it", {
-  skip_on_cran()
   skip_without_julia()
 
   t0 <- 1.5

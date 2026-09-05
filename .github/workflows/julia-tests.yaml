@@ -1,0 +1,128 @@
+# Tier 2 of four: the R-side julia suite, with Julia actually present.
+#
+# These ~280 test blocks skip in every other workflow. `R CMD check` has no
+# Julia and no NOT_CRAN, so they skip there by design; julia-engine.yaml runs
+# the engine's own assertions inside Julia and never crosses the R bridge --
+# which is exactly how an empty vector that deadlocked every R fit was merged
+# with 1400 green engine assertions behind it. This tier is the one that runs
+# ctsem's julia backend the way a user does.
+#
+# NOT_CRAN=true also unlocks the expensive stan test files, so this is where
+# the slow stan suite runs too. That is deliberately not left to the tier 3
+# matrix, where it would be paid for five times.
+on:
+  push:
+    branches: [juliaFit, master, main]
+  pull_request:
+    branches: [juliaFit, master, main]
+  workflow_dispatch:
+
+name: julia-tests
+
+concurrency:
+  group: julia-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  julia-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      R_KEEP_PKG_SOURCE: yes
+      # Every julia test is skip_on_cran. Without this the suite reports zero
+      # assertions and a zero-assertion run looks exactly like a clean one.
+      NOT_CRAN: 'true'
+      # Consent to the managed Julia install from a script. Julia is installed
+      # by the step below, so this only covers the engine's own dependencies.
+      CTSEM_JULIA_AGREE: 'yes'
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: julia-actions/setup-julia@v2
+        with:
+          # In step with the pin in R/ctJuliaInstall.R and julia-engine.yaml.
+          version: '1.12.7'
+
+      - uses: julia-actions/cache@v2
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: release
+          use-public-rspm: true
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: any::testthat, any::JuliaConnectoR
+          needs: check
+
+      - name: Compiler cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-ubuntu-release-${{ hashFiles('inst/stan/**', 'inst/include/**', 'configure') }}
+          restore-keys: |
+            ccache-ubuntu-release-
+
+      - name: Point R at ccache
+        run: |
+          command -v ccache >/dev/null || sudo apt-get install -y ccache
+          mkdir -p ~/.R ~/.ccache
+          {
+            echo 'CC = ccache gcc'
+            echo 'CXX = ccache g++'
+            echo 'CXX11 = ccache g++'
+            echo 'CXX14 = ccache g++'
+            echo 'CXX17 = ccache g++'
+            echo 'CXX20 = ccache g++'
+          } >> ~/.R/Makevars
+          printf 'max_size = 5.0G\nsloppiness = include_file_ctime,include_file_mtime,time_macros\n' > ~/.ccache/ccache.conf
+
+      - name: Install ctsem
+        run: |
+          chmod +x configure
+          R CMD INSTALL --no-multiarch --no-docs --no-byte-compile .
+
+      # Fail here rather than 40 minutes later with a green run full of skips.
+      - name: Julia is reachable from R
+        run: |
+          Rscript -e '
+            library(ctsem)
+            s <- ctJuliaStatus()
+            cat("julia bin :", format(s$julia), "\n")
+            cat("available :", isTRUE(s$available), "\n")
+            if (!isTRUE(s$available)) stop("Julia is not reachable; this tier would skip everything.")'
+
+      # One fit through the R bridge, before the suite, because the suite is
+      # long and this is the failure that matters most.
+      - name: Smoke test
+        run: Rscript dev/smoke.R
+
+      - name: Suite
+        run: |
+          Rscript -e '
+            library(testthat)
+            pdf(NULL)
+            r <- test_dir("tests/testthat", package = "ctsem", load_package = "installed",
+                          reporter = "summary", stop_on_failure = FALSE)
+            d <- as.data.frame(r)
+            cat(sprintf("\nTIER2 pass=%d fail=%d error=%d skip=%d\n",
+                sum(d$passed), sum(d$failed), sum(d$error), sum(d$skipped)))
+            jl <- d[grepl("^test-(julia|backend|stan-julia)", d$file), , drop = FALSE]
+            cat(sprintf("TIER2 julia files=%d pass=%d skip=%d\n",
+                length(unique(jl$file)), sum(jl$passed), sum(jl$skipped)))
+            if (sum(d$failed) + sum(d$error) > 0) stop("test failures")
+            # The failure mode this tier exists to catch is not a red suite, it
+            # is a green one that ran nothing.
+            if (sum(jl$passed) == 0) stop("the julia files asserted nothing")
+            # A skip for some other reason is legitimate; a skip because Julia
+            # could not be found is this tier failing quietly.
+            why <- unlist(lapply(r, function(f)
+              vapply(f$results, function(x)
+                if (inherits(x, "expectation_skip")) conditionMessage(x) else NA_character_,
+                character(1))))
+            why <- why[!is.na(why)]
+            if (length(why)) { cat("\nskip reasons:\n"); print(table(why)) }
+            if (any(grepl("Julia is not available|JuliaConnectoR", why))) {
+              stop("julia tests skipped in the tier that installs Julia")
+            }'

@@ -48,7 +48,6 @@ test_that("ctCoverageCheck generation cores default to fitCores", {
 }
 
 test_that("ctCoverageCheck runs end to end for a julia fit", {
-  skip_on_cran()
   skip_without_julia()
   skip_if_not_installed("future")
   skip_if_not_installed("future.apply")

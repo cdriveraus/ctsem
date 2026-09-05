@@ -47,7 +47,6 @@ test_that("ctModelLatex handles scalar numeric T0VAR display covariance", {
 # they write are the same document, and any difference is a difference in how
 # ctModelLatex reads the two layouts rather than in the fits.
 test_that("ctModelLatex substitutes a julia fit's estimates, as stan's", {
-  skip_on_cran()
   skip_without_julia()
 
   generating <- suppressMessages(ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
@@ -95,7 +94,6 @@ test_that("ctModelLatex substitutes a julia fit's estimates, as stan's", {
 # state[2])` where the stan branch reads `dr11 * (1 + 0.2 * eta2)` from the
 # base model, and both have to come out as the same equation.
 test_that("a state dependent cell keeps its expression for a julia fit", {
-  skip_on_cran()
   skip_without_julia()
 
   generating <- suppressMessages(ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
@@ -135,7 +133,6 @@ test_that("a state dependent cell keeps its expression for a julia fit", {
 # not write out, and says so rather than leaving a random effects model looking
 # like a fixed effects one.
 test_that("an intoverpop julia fit writes the unaugmented system", {
-  skip_on_cran()
   skip_without_julia()
 
   set.seed(11)

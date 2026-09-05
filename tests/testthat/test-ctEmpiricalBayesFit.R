@@ -299,7 +299,6 @@ test_that("ctEmpiricalBayesFit rejects TI predictor models", {
 }
 
 test_that("ctEBrawParnames and ctEBrawMatrix read a real julia fit's raw estimate and posterior", {
-  skip_on_cran()
   skip_without_julia()
   model <- .ebJuliaModel()
   data <- .ebJuliaData(n.subjects=1, Tpoints=5)
@@ -323,7 +322,6 @@ test_that("ctEBrawParnames and ctEBrawMatrix read a real julia fit's raw estimat
 })
 
 test_that("ctEBrawMatrix explains a fit with no posterior draws rather than erroring on dimensions", {
-  skip_on_cran()
   skip_without_julia()
   model <- .ebJuliaModel()
   data <- .ebJuliaData(n.subjects=1, Tpoints=5)
@@ -341,7 +339,6 @@ test_that("ctEBrawMatrix explains a fit with no posterior draws rather than erro
 })
 
 test_that("ctEmpiricalBayesFit runs end to end on backend='julia'", {
-  skip_on_cran()
   skip_without_julia()
   model <- .ebJuliaModel()
   data <- .ebJuliaData(n.subjects=3, Tpoints=6)

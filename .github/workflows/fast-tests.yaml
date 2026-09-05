@@ -1,0 +1,141 @@
+# Tier 1 of four. Every push, every branch, and the only workflow that is
+# meant to be watched while it runs.
+#
+#   Tier 0  dev/test-local.R -- tt_fast(), tt_changed(), seconds, on a laptop
+#   Tier 1  this file        -- the CRAN-visible surface with no Julia
+#   Tier 2  julia-tests.yaml -- the same suite with Julia present and
+#           julia-engine.yaml   NOT_CRAN=true, plus the engine's own suite
+#   Tier 3  check-standard.yaml -- the full --as-cran matrix, on master, weekly
+#           and on demand
+#
+# What this tier is for. It runs the package exactly as CRAN would -- NOT_CRAN
+# unset, no Julia anywhere -- which is the configuration in which every julia
+# guard has to hold and in which nothing may error. Measured locally in that
+# configuration: 69 example files 189 s, 70 test files 56 s, and zero run-time
+# `rstan::stan_model()` compiles. So the only large cost here is building the
+# package, which is what the compiler cache below is for.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+name: fast-tests
+
+# A burst of pushes to a development branch should leave one run, not six.
+concurrency:
+  group: fast-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fast-tests:
+    runs-on: ubuntu-latest
+    # Nothing here has any business taking an hour. A run that does has hung,
+    # and the point of a cap is that a hang costs this rather than six hours.
+    timeout-minutes: 60
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      R_KEEP_PKG_SOURCE: yes
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: release
+          use-public-rspm: true
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          # No `local::.`: that would install ctsem here and then again below.
+          # The action's `packages` default (`deps::., any::sessioninfo`) is
+          # concatenated with this, so the dependencies arrive either way.
+          extra-packages: any::testthat, any::pkgload, any::roxygen2, any::rprojroot
+          needs: check
+
+      # The three Stan models are the whole cost of building this package.
+      # ccache keys on the preprocessed source, so an R-only change -- which is
+      # most changes -- recompiles nothing. The cache key covers the inputs that
+      # actually regenerate stanExports_*.h; anything else falls back to the
+      # restore-key and still hits object for object.
+      - name: Compiler cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-ubuntu-release-${{ hashFiles('inst/stan/**', 'inst/include/**', 'configure') }}
+          restore-keys: |
+            ccache-ubuntu-release-
+
+      - name: Point R at ccache
+        run: |
+          command -v ccache >/dev/null || sudo apt-get install -y ccache
+          mkdir -p ~/.R ~/.ccache
+          # Only the compiler driver is replaced. R supplies -std=gnu++17 itself
+          # through CXX17STD, and src/Makevars sets only PKG_* variables, so
+          # nothing here collides with what configure appends.
+          {
+            echo 'CC = ccache gcc'
+            echo 'CXX = ccache g++'
+            echo 'CXX11 = ccache g++'
+            echo 'CXX14 = ccache g++'
+            echo 'CXX17 = ccache g++'
+            echo 'CXX20 = ccache g++'
+          } >> ~/.R/Makevars
+          printf 'max_size = 5.0G\nsloppiness = include_file_ctime,include_file_mtime,time_macros\n' > ~/.ccache/ccache.conf
+          ccache -z
+
+      - name: Install ctsem
+        run: |
+          chmod +x configure
+          R CMD INSTALL --no-multiarch --no-docs --no-byte-compile .
+
+      - name: Compiler cache statistics
+        if: always()
+        run: ccache -s
+
+      # man/ and NAMESPACE are generated and committed, so a roxygen edit that
+      # was never regenerated ships the old help page. That drift is what
+      # produced the "Codoc mismatches" and "Undocumented arguments" WARNINGs in
+      # the four-hour run, four hours after the point where this would have said
+      # so. Seven seconds here.
+      - name: Documentation is regenerated
+        run: |
+          Rscript dev/document.R
+          git --no-pager diff --stat -- man NAMESPACE
+          git diff --exit-code -- man NAMESPACE
+
+      # NOT_CRAN deliberately unset and no Julia installed: this is the CRAN
+      # configuration. Every julia test must skip, and nothing may error.
+      - name: Tests, as CRAN runs them
+        run: |
+          Rscript -e '
+            library(testthat)
+            r <- test_dir("tests/testthat", package = "ctsem", load_package = "installed",
+                          reporter = "summary", stop_on_failure = FALSE)
+            d <- as.data.frame(r)
+            cat(sprintf("\nTIER1 pass=%d fail=%d error=%d skip=%d\n",
+                sum(d$passed), sum(d$failed), sum(d$error), sum(d$skipped)))
+            # A skip is fine here; an error is not, and neither is a suite that
+            # asserted nothing -- that is what a silently broken guard looks
+            # like.
+            if (sum(d$failed) + sum(d$error) > 0) stop("test failures")
+            if (sum(d$passed) < 300) stop("suspiciously few assertions: ", sum(d$passed))'
+
+      - name: Examples, with donttest live
+        run: |
+          Rscript -e '
+            # tools::Rd2ex is what R CMD check uses to build ctsem-Ex.R, and
+            # --as-cran runs the donttest blocks, so both are reproduced.
+            dir.create("exsweep", showWarnings = FALSE)
+            bad <- character()
+            for (rd in sort(Sys.glob("man/*.Rd"))) {
+              f <- file.path("exsweep", sub("[.]Rd$", ".R", basename(rd)))
+              tools::Rd2ex(rd, f, commentDonttest = FALSE, commentDontrun = TRUE)
+              if (!file.exists(f)) next
+              r <- try(source(f, echo = FALSE, local = new.env(parent = globalenv())),
+                       silent = TRUE)
+              if (inherits(r, "try-error")) {
+                bad <- c(bad, basename(rd))
+                cat("\n#### ", basename(rd), "\n", as.character(r), "\n", sep = "")
+              }
+            }
+            cat(sprintf("\nTIER1 examples failed=%d\n", length(bad)))
+            if (length(bad)) stop("examples failed: ", paste(bad, collapse = ", "))'

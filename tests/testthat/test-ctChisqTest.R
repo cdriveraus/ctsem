@@ -61,7 +61,6 @@ test_that("ctChisqTest compares two nested stan fits", {
 }
 
 test_that("ctChisqTest compares two nested julia fits, and a julia fit against a stan fit", {
-  skip_on_cran()
   skip_without_julia()
 
   dat <- .chisq_julia_data()

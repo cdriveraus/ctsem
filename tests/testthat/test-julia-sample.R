@@ -32,7 +32,6 @@
 }
 
 test_that("a sampled fit carries draws the summary machinery can read", {
-  skip_on_cran()
   skip_without_julia()
   fit <- .sample_fixture()
   npar <- length(fit$estimate$raw)
@@ -66,7 +65,6 @@ test_that("a sampled fit carries draws the summary machinery can read", {
 })
 
 test_that("the diagnostics come back per parameter and per chain", {
-  skip_on_cran()
   skip_without_julia()
   fit <- .sample_fixture()
   npar <- length(fit$estimate$raw)
@@ -113,7 +111,6 @@ test_that("the diagnostics come back per parameter and per chain", {
 })
 
 test_that("the effects come back summarised, or in full when asked for", {
-  skip_on_cran()
   skip_without_julia()
   fit <- .sample_fixture()
   neffects <- length(fit$model_spec$subject_starts) *
@@ -137,7 +134,6 @@ test_that("the effects come back summarised, or in full when asked for", {
 })
 
 test_that("a sampled fit keeps the exact Hessian it was built from", {
-  skip_on_cran()
   skip_without_julia()
   fit <- .sample_fixture()
   npar <- length(fit$estimate$raw)
@@ -176,7 +172,6 @@ test_that("a sampled fit keeps the exact Hessian it was built from", {
 })
 
 test_that("processes = TRUE reproduces the in-process draws to numerical noise", {
-  skip_on_cran()
   skip_without_julia()
   fit <- .sample_fixture()
 
@@ -212,7 +207,6 @@ test_that("processes = TRUE reproduces the in-process draws to numerical noise",
 })
 
 test_that("ctSample refuses what it cannot sample", {
-  skip_on_cran()
   skip_without_julia()
   expect_error(ctSample(list()), "ctFit\\(backend='julia'\\)")
 
@@ -230,7 +224,6 @@ test_that("ctSample refuses what it cannot sample", {
 })
 
 test_that("ctOptimUncertainty() refuses a sampled julia fit instead of silently discarding its posterior", {
-  skip_on_cran()
   skip_without_julia()
   # ctOptimUncertainty()'s whole premise is a point estimate plus curvature.
   # Before this guard, handing it a sampled fit treated fit$estimate$raw (the

@@ -1,4 +1,5 @@
-if(identical(Sys.getenv("NOT_CRAN"), "true")) {
+skip_on_cran()
+{  # body of the guard this replaced; indentation unchanged
 
   # The T0MEANS / state / PARS loop is expressible in a model specification and
   # the generated Stan program breaks it by evaluation order rather than by a

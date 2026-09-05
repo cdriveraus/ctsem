@@ -21,7 +21,6 @@
 }
 
 test_that("an identified model reports no uninformed directions", {
-  skip_on_cran()
   skip_without_julia()
   result <- suppressMessages(ctIdentify(.identify_data(), .identify_model(),
     cores = 2))
@@ -35,7 +34,6 @@ test_that("an identified model reports no uninformed directions", {
 })
 
 test_that("a freed loading is reported with the parameter it trades against", {
-  skip_on_cran()
   skip_without_julia()
   # LAMBDA free as well as DIFFUSION leaves only their product determined, so
   # the pair is unidentified however much data there is.
@@ -50,7 +48,6 @@ test_that("a freed loading is reported with the parameter it trades against", {
 })
 
 test_that("the information used is positive semi-definite away from any mode", {
-  skip_on_cran()
   skip_without_julia()
   # The reason this uses scores rather than the Hessian: at an arbitrary point
   # the Hessian is indefinite and its flat directions describe the point, not
@@ -68,7 +65,6 @@ test_that("the information used is positive semi-definite away from any mode", {
 })
 
 test_that("a model with no free parameters is refused rather than answered", {
-  skip_on_cran()
   skip_without_julia()
   fixed <- suppressMessages(ctModel(type = "ct", n.latent = 1, n.manifest = 1,
     manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1),

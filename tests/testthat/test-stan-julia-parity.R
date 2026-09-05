@@ -56,7 +56,6 @@
 }
 
 test_that("Stan and Julia agree for a linear likelihood", {
-  skip_on_cran()
   skip_without_julia()
   skip_if_not_installed("rstan")
 
@@ -78,7 +77,6 @@ test_that("Stan and Julia agree for a linear likelihood", {
 })
 
 test_that("Stan and Julia agree for a linear augmented random effect", {
-  skip_on_cran()
   skip_without_julia()
   skip_if_not_installed("rstan")
 
@@ -103,7 +101,6 @@ test_that("Stan and Julia agree for a linear augmented random effect", {
 })
 
 test_that("Stan and Julia agree for a row with partial (not total) missingness", {
-  skip_on_cran()
   skip_without_julia()
   skip_if_not_installed("rstan")
 
@@ -134,7 +131,6 @@ test_that("Stan and Julia agree for a row with partial (not total) missingness",
 })
 
 test_that("Stan and Julia agree for nonlinear predictors and augmented states", {
-  skip_on_cran()
   skip_without_julia()
   skip_if_not_installed("rstan")
 
@@ -195,7 +191,6 @@ test_that("Stan and Julia agree for nonlinear predictors and augmented states", 
 })
 
 test_that("Stan and Julia agree for a T0MEANS-indvarying population SD with non-unit meanscale", {
-  skip_on_cran()
   skip_without_julia()
   skip_if_not_installed("rstan")
 
@@ -234,7 +229,6 @@ test_that("Stan and Julia agree for a T0MEANS-indvarying population SD with non-
 })
 
 test_that("Stan and Julia agree for a moderate-dimensional model mixing both kinds of random effect", {
-  skip_on_cran()
   skip_without_julia()
   skip_if_not_installed("rstan")
 
@@ -284,7 +278,6 @@ test_that("Stan and Julia agree for a moderate-dimensional model mixing both kin
 })
 
 test_that("Stan and Julia agree for a state/TD-dependent measurement equation with partial missingness", {
-  skip_on_cran()
   skip_without_julia()
   skip_if_not_installed("rstan")
 
@@ -329,7 +322,6 @@ test_that("Stan and Julia agree for a state/TD-dependent measurement equation wi
 })
 
 test_that("Stan and Julia agree for 3 original (not just augmented) latents", {
-  skip_on_cran()
   skip_without_julia()
   skip_if_not_installed("rstan")
 
@@ -388,7 +380,6 @@ test_that("Stan and Julia agree for 3 original (not just augmented) latents", {
 })
 
 test_that("Stan and Julia's actual optimizers converge to the same fit for TD/TI + individual differences", {
-  skip_on_cran()
   skip_without_julia()
   skip_if_not_installed("rstan")
 
@@ -443,7 +434,6 @@ test_that("Stan and Julia's actual optimizers converge to the same fit for TD/TI
 })
 
 test_that("Julia's adjoint gradient matches its forward gradient and Stan", {
-  skip_on_cran()
   skip_without_julia()
   skip_if_not_installed("rstan")
 

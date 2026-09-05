@@ -41,7 +41,6 @@
 }
 
 test_that("ctLOO runs on a julia fit and reports the same structure as Stan's", {
-  skip_on_cran()
   skip_without_julia()
   data <- .loo_data()
   fit <- suppressMessages(ctFit(data, .loo_model(), backend = "julia", verbose = 0,
@@ -71,7 +70,6 @@ test_that("ctLOO runs on a julia fit and reports the same structure as Stan's", 
 })
 
 test_that("without refitting, the out-of-sample likelihoods are the in-sample ones", {
-  skip_on_cran()
   skip_without_julia()
   # The sharpest available check on the bookkeeping: with `refit=FALSE` every
   # fold scores the same parameters against the same full data, so assembling
@@ -92,7 +90,6 @@ test_that("without refitting, the out-of-sample likelihoods are the in-sample on
 
 test_that("julia and Stan cross-validate to the same answer", {
   skip_if_not_installed("rstan")
-  skip_on_cran()
   skip_without_julia()
   data <- .loo_data()
   model <- .loo_model()
@@ -130,7 +127,6 @@ test_that("julia and Stan cross-validate to the same answer", {
 })
 
 test_that("subjectwise folds hold out whole subjects", {
-  skip_on_cran()
   skip_without_julia()
   data <- .loo_data()
   fit <- suppressMessages(ctFit(data, .loo_model(), backend = "julia", verbose = 0,

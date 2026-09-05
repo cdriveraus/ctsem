@@ -52,7 +52,6 @@ test_that("a binary model recovers what generated it", {
 })
 
 test_that("the julia backend fits binary indicators rather than refusing them", {
-  skip_on_cran()
   skip_without_julia()
   # This asserted a refusal, from back when the julia filter had no measurement
   # link and treating a binary indicator as Gaussian would have produced a fit

@@ -47,7 +47,6 @@
 }
 
 test_that("one binary observation has the likelihood it can be shown to have", {
-  skip_on_cran()
   skip_without_julia()
   # T0MEANS 0, T0VAR 1, a single observation of 1: the likelihood is
   # int inv_logit(eta) N(eta;0,1) deta, which is 0.5 by symmetry.
@@ -67,7 +66,6 @@ test_that("one binary observation has the likelihood it can be shown to have", {
 })
 
 test_that("the gradient matches finite differences, both ways of computing it", {
-  skip_on_cran()
   skip_without_julia()
   # The reverse pass is hand written, and a reverse pass that does not know a
   # branch returns a confident wrong number rather than failing -- before it
@@ -91,7 +89,6 @@ test_that("the gradient matches finite differences, both ways of computing it", 
 })
 
 test_that("the binary adjoint is exact with more than one latent state", {
-  skip_on_cran()
   skip_without_julia()
   # Every earlier gradient test used one latent state, and with one state the
   # covariance cotangent is a scalar and trivially symmetric. The binary
@@ -124,7 +121,6 @@ test_that("the binary adjoint is exact with more than one latent state", {
 })
 
 test_that("the two gradient methods agree with each other", {
-  skip_on_cran()
   skip_without_julia()
   handle <- .jbin_spec(.jbin_data(nsubjects = 15, nindicators = 4),
     .jbin_model(nindicators = 4))
@@ -139,7 +135,6 @@ test_that("the two gradient methods agree with each other", {
 })
 
 test_that("a binary model recovers what generated it", {
-  skip_on_cran()
   skip_without_julia()
   fit <- suppressWarnings(suppressMessages(
     ctFit(.jbin_data(nsubjects = 50), .jbin_model(), backend = "julia",
@@ -154,7 +149,6 @@ test_that("a binary model recovers what generated it", {
 })
 
 test_that("a saturated optimum is not reported as converged", {
-  skip_on_cran()
   skip_without_julia()
   # Every ctsem transform is flat to machine precision by |raw| ~ 20: the
   # exponential underflows and the gradient is exactly zero, indistinguishable
@@ -239,7 +233,6 @@ test_that("a saturated optimum is not reported as converged", {
 }
 
 test_that("mixed binary and gaussian indicators fit together", {
-  skip_on_cran()
   skip_without_julia()
   fit <- suppressWarnings(suppressMessages(
     ctFit(.jbin_mixed_data(), .jbin_mixed(), backend = "julia", cores = 2,
@@ -251,7 +244,6 @@ test_that("mixed binary and gaussian indicators fit together", {
 })
 
 test_that("the functions that re-run the filter work on a binary fit", {
-  skip_on_cran()
   skip_without_julia()
   # These all pass a `CTSEMKalmanTrace` rather than the adjoint tape, and the
   # binary recorder accepted it and then reached for a field it does not have.
@@ -269,7 +261,6 @@ test_that("the functions that re-run the filter work on a binary fit", {
 })
 
 test_that("generation draws binary indicators as zeros and ones", {
-  skip_on_cran()
   skip_without_julia()
   # The generate hook was passed only to the gaussian block, so binary columns
   # came back all NaN -- data that looks like a missing-data problem rather
@@ -298,7 +289,6 @@ test_that("a binary model is routed away from the r generator", {
 })
 
 test_that("state dependent measurement works alongside binary indicators", {
-  skip_on_cran()
   skip_without_julia()
   d <- .jbin_mixed_data(nsubjects = 20)
   build <- function(lambda, means, mvar) {
@@ -329,7 +319,6 @@ test_that("state dependent measurement works alongside binary indicators", {
 })
 
 test_that("binary works with random effects and with laplace", {
-  skip_on_cran()
   skip_without_julia()
   d <- .jbin_mixed_data(nsubjects = 25)
   d$age <- rep(stats::rnorm(25), each = 12)

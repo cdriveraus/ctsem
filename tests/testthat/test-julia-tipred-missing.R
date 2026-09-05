@@ -157,7 +157,6 @@ test_that("the imputation fallback rule warns naming the fallback taken, and onl
 })
 
 test_that("a small julia fit actually samples a missing TI predictor value end to end", {
-  skip_on_cran()
   skip_without_julia()
   model <- .tipred_missing_model()
   set.seed(1)
@@ -183,7 +182,6 @@ test_that("a small julia fit actually samples a missing TI predictor value end t
 })
 
 test_that("closed form via ctFit(): posterior of an isolated missing predictor recovers its prior, error shrinking with draws", {
-  skip_on_cran()
   skip_without_julia()
   # No TI effect at all (the `group_effect` column is never set), so the
   # sampled value has no process-likelihood contribution and its marginal
@@ -243,7 +241,6 @@ test_that("closed form via ctFit(): posterior of an isolated missing predictor r
 })
 
 test_that("targeted stan comparison: same model, same gap, agreeing posteriors", {
-  skip_on_cran()
   skip_without_julia()
   # The smallest model that exercises the path: one latent, one manifest, one
   # TI predictor with one missing cell, a TI effect on T0MEANS. Symmetric
@@ -292,7 +289,6 @@ test_that("targeted stan comparison: same model, same gap, agreeing posteriors",
 # obscurely rather than refuse; both are R-level guards on
 # fit$model_spec$ti_missing, checked before the engine is ever asked.
 test_that("per-subject scores (opg/sandwich/bootstrap uncertainty) refuse cleanly, not obscurely, for a sampled missing TI predictor", {
-  skip_on_cran()
   skip_without_julia()
   model <- .tipred_missing_model()
   set.seed(1)
@@ -323,7 +319,6 @@ test_that("per-subject scores (opg/sandwich/bootstrap uncertainty) refuse cleanl
 })
 
 test_that("ctGenerateFromFit()/ctPostPredict() refuse cleanly, not with a raw Julia MethodError, for a sampled missing TI predictor", {
-  skip_on_cran()
   skip_without_julia()
   model <- .tipred_missing_model()
   set.seed(1)
