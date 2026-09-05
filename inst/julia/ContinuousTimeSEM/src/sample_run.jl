@@ -591,6 +591,11 @@ function _continue_chains(nchains::Int, parallel::Bool, seed::Integer,
             previous[c].metric, Random.Xoshiro(UInt64(seed) + UInt64(c)),
             0, ndraws, maxdepth, 0.8, maxdelta, 0.0, false, nothing;
             resume=previous[c], progress=reporter, callback=watcher)
+        # Close the line. Nothing did, so the last in-place update was left open
+        # with no newline on it and whatever R printed next landed inside it --
+        # "div 0Laplace fit: trajectories are conditional...". The optimiser
+        # routes have closed theirs for a while; this one never has.
+        _progress_done(reporter, @sprintf("%d draws", ndraws))
         return nothing
     end
     if parallel
@@ -671,6 +676,11 @@ function _sample_chains(nchains::Int, parallel::Bool, seed::Integer,
             Random.Xoshiro(UInt64(seed) + UInt64(c)), nwarmup, ndraws, maxdepth,
             target_accept, maxdelta, init_scale, adapt_metric, adapt;
             settle_tol=settle_tol, progress=reporter, callback=watcher)
+        # See `_continue_chains`. Warmup's line was terminated only by the
+        # *sampling* reporter's leading newline, which left it showing whatever
+        # iteration the last cadence tick caught -- "warmup 176/200" on a run
+        # that completed all 200.
+        _progress_done(reporter, @sprintf("%d warmup iterations", nwarmup))
         return nothing
     end
     if parallel
