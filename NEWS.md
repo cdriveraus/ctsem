@@ -16,6 +16,8 @@
 - Fixed: population values and standard deviations for individually varying parameters implemented as state expansions were reported from the raw carrier state, without the parameter's own transform applied.
 - Posterior predictive checking is consolidated into `ctPostPredPlots()`, with clearer plots and an explanatory note on each panel that can be switched off. `ctPostPredict()` remains as an alias, and now accepts julia backend fits.
 - Fixed: the observed data and the model were labelled the wrong way round in the bivariate `ctPostPredict()` plots.
+- Model matrix cells accept a named form as well as the pipe separated one, so `'mm, indvarying=TRUE, sdscale=0.5'` and `'mm||TRUE|0.5'` mean the same thing. `ctParSpec()` builds either from named arguments.
+- `ctModelCoverage_check()` is renamed `ctCoverageCheck()`, with camelCase arguments to match the rest of the package. The old name is not retained.
 
 ## 29/6/2026
 ### 3.11.0
