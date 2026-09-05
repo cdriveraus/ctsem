@@ -1,4 +1,8 @@
-#' Sample more values from an optimized ctstanfit object
+#' Append pseudo-posterior samples to an optimized ctStanFit object (deprecated)
+#'
+#' Appends normal draws from the fit's already-computed covariance to its
+#' raw posterior. Deprecated in favour of \code{\link{ctOptimUncertainty}} with
+#' \code{uncertainty = 'stored'}, which does the same on both backends.
 #'
 #' @param fit fit object
 #' @param nsamples number of samples desired
@@ -6,21 +10,47 @@
 #'
 #' @return fit object with extra samples
 #' @aliases ctAddSamples
-#' @details \code{ctAddSamples} is the same function under its pre-3.11 name.
-#'   Both are kept; new code should use \code{ctFitAddSamples}. The julia
-#'   backend reaches this by a different route -- see \code{\link{ctSample}},
-#'   which runs the sampler from an optimised fit rather than resampling its
-#'   covariance.
+#' @details These are pseudo-posterior draws from the fitted covariance, not
+#'   posterior draws from a sampler. \code{\link{ctSample}} is the latter --
+#'   Hamiltonian Monte Carlo from an optimized \code{ctJuliaFit} -- and is a
+#'   different object, not another route to this one.
+#'
+#'   Deprecated in favour of \code{ctOptimUncertainty(fit, uncertainty =
+#'   'stored', finishsamples = n)}, which draws from the same covariance for
+#'   the same zero model evaluations, works on a \code{ctJuliaFit} as well as a
+#'   \code{ctStanFit}, and records the new sample count in
+#'   \code{$uncertainty$settings}. It also replaces the draws rather than
+#'   appending to them: appending normal draws to a posterior that came from
+#'   \code{uncertainty='is'} or \code{'bootstrap'} leaves part of each in one
+#'   matrix with nothing recording the mixture, which is what this function
+#'   does.
+#'
+#'   \code{ctAddSamples} is the same function under its pre-3.11 name; both are
+#'   deprecated together.
+#' @seealso \code{\link{ctOptimUncertainty}}, \code{\link{ctSample}}
 #' @export
 #'
 #' @examples
 #' \dontrun{
-#' newfit <- ctFitAddSamples(ctstantestfit, 10, 1)
+#' newfit <- ctOptimUncertainty(ctstantestfit, uncertainty = 'stored',
+#'   finishsamples = 30, cores = 1)
 #' }
 ctFitAddSamples <- function(fit,nsamples,cores=2){
-  
+
+  # `.Deprecated(msg=)` rather than a bare `warning()`: it carries the same
+  # text but as a `deprecatedWarning`, so a caller can silence or catch it by
+  # class. The body below is deliberately unchanged -- it draws in a different
+  # RNG order from `ctOptimNormalDraws()` (one `rnorm(npar)` per sample rather
+  # than one `rnorm(n*npar)` filled by column), so routing it through the
+  # replacement would move every number this has ever produced for a given
+  # seed.
+  .Deprecated(msg = paste0(
+    "ctFitAddSamples() is deprecated. Use ctOptimUncertainty(fit, ",
+    "uncertainty = 'stored', finishsamples = n), which redraws from the same ",
+    "covariance and works on both backends."))
+
   if(length(fit$stanfit$stanfit@sim) > 0) stop('ctStanFit object was sampled and not optimized, cannot add samples!')
-  
+
   mchol <- t(chol(fit$stanfit$cov))
   resamples <- matrix(unlist(lapply(1:nsamples,function(x){
     fit$stanfit$rawest + (mchol) %*% t(matrix(rnorm(length(fit$stanfit$rawest)),nrow=1))
@@ -40,7 +70,8 @@ ctFitAddSamples <- function(fit,nsamples,cores=2){
 }
 
 # Pre-3.11 name, documented on ctFitAddSamples' page via @aliases. Kept
-# because it is on CRAN; both go out with the stan backend.
+# because it is on CRAN; both are deprecated together and both go out with the
+# stan backend.
 #' @export
 ctAddSamples <- ctFitAddSamples
 

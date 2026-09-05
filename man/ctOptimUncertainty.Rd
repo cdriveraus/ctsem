@@ -7,7 +7,7 @@
 ctOptimUncertainty(
   fit,
   uncertainty = c("hessian", "surrogate", "is", "bootstrap", "fullbootstrap", "sandwich",
-    "opg"),
+    "opg", "stored"),
   draws = c("auto", "normal", "empirical", "imis"),
   finishsamples = NULL,
   cores = NULL,
@@ -33,7 +33,15 @@ Hessian bread, \code{'fullbootstrap'} resamples subjects and fully
 re-optimizes each sample from the original maximum likelihood or MAP
 estimate using mize L-BFGS, \code{'sandwich'} uses Hessian bread with score
 covariance meat, and \code{'opg'} uses an OPG-style score information
-approximation.}
+approximation. \code{'stored'} computes nothing: it redraws
+\code{finishsamples} normal draws from the covariance already on the fit and
+leaves that covariance, the Hessian and the recorded \code{method}
+untouched, marking \code{$uncertainty$settings$redrawn = TRUE}. It is the
+way to change the number of draws, or to reseed them, without paying for the
+covariance again -- the other methods cost at least \code{2 * npar}
+log-probability evaluations, this one costs none -- and it warns if the
+fit's existing draws came from \code{'is'} or \code{'bootstrap'}, which
+normal draws from that covariance do not reproduce.}
 
 \item{draws}{Approximate raw-parameter draw method. \code{'auto'} uses
 empirical draws for \code{uncertainty='bootstrap'} and
@@ -128,6 +136,20 @@ Recomputes the approximate raw-parameter uncertainty for an optimized
 samples. This is the entry point for both backends; \code{ctFit} itself
 calls it to finish an optimized fit.
 }
+\details{
+The draws it writes to \code{$rawposterior} are \emph{pseudo-posterior}
+draws: a sample from a covariance fitted to the log-posterior surface around
+the optimum, not a sample from the posterior itself. \code{\link{ctSample}}
+is the other thing, genuine posterior draws by Hamiltonian Monte Carlo from
+an optimized \code{ctJuliaFit}. Everything downstream reads either from the
+same slot, so the difference is recorded rather than visible in the shape of
+the result: an optimized fit carries \code{$uncertainty$settings}, a sampled
+one carries \code{$sample}, and \code{ctOptimUncertainty} refuses a sampled
+fit rather than replacing its draws.
+
+To change only the number of draws, use \code{uncertainty='stored'}, which
+redraws from the covariance the fit already carries and evaluates no model.
+}
 \section{Backend differences}{
 
 The methods are the same on both backends and the covariance they produce is
@@ -171,3 +193,9 @@ which has no parameter-matrix reconstruction through
 complete on both.
 }
 
+\seealso{
+\code{\link{ctSample}} for genuine posterior draws by Hamiltonian
+Monte Carlo, rather than the pseudo-posterior draws from a covariance that
+this function produces. \code{\link{ctFitAddSamples}} is the deprecated
+stan-only predecessor of \code{uncertainty='stored'}.
+}

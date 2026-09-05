@@ -26,10 +26,27 @@ ctGenerateFromFit<-function(fit,nsamples=200,fullposterior=FALSE, verboseErrors=
   }
   if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object!')
   
-  if(nsamples > ncol(fit$stanfit$rawposterior) & fullposterior & is.null(fit$stanfit$stanfit)) fit <- ctFitAddSamples(fit,nsamples = nsamples,cores=1)
-  
-  if(nsamples > ncol(fit$stanfit$rawposterior)) replace=TRUE else replace=FALSE #if nsamples still larger than available, use replacement
-  
+  # `nrow`, not `ncol`: `rawposterior` is samples by parameters, so both of
+  # these asked whether more datasets were wanted than the model has
+  # parameters. And the top-up was gated on `is.null(fit$stanfit$stanfit)`,
+  # which `stanoptimis()` never leaves NULL -- it always stores a reinitialised
+  # stan model object there -- so the branch could not fire and a fit with
+  # twenty draws generated two hundred datasets by resampling them with
+  # replacement, silently, whenever the parameter count happened to be the
+  # smaller number.
+  #
+  # Optimized fits only. A sampled fit's draws are the posterior; there is no
+  # covariance to draw more of them from, and asking for more datasets than
+  # draws resamples them with replacement below, as it always did.
+  if(fullposterior && nsamples > nrow(fit$stanfit$rawposterior) &&
+      length(fit$stanfit$stanfit@sim) == 0) {
+    fit <- suppressMessages(ctOptimUncertainty(fit, uncertainty='stored',
+      finishsamples=nsamples, cores=1))
+  }
+
+  #if nsamples still larger than available, use replacement
+  replace <- nsamples > nrow(fit$stanfit$rawposterior)
+
   if(!fullposterior){
     umat=matrix(fit$stanfit$rawest,nrow=length(fit$stanfit$rawest),ncol=nsamples)
     } else umat=t(fit$stanfit$rawposterior)[,sample(1:nrow(fit$stanfit$rawposterior),size=nsamples,replace = replace),drop=FALSE]

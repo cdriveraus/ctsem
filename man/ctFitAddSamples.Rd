@@ -3,7 +3,7 @@
 \name{ctFitAddSamples}
 \alias{ctFitAddSamples}
 \alias{ctAddSamples}
-\title{Sample more values from an optimized ctstanfit object}
+\title{Append pseudo-posterior samples to an optimized ctStanFit object (deprecated)}
 \usage{
 ctFitAddSamples(fit, nsamples, cores = 2)
 }
@@ -18,17 +18,35 @@ ctFitAddSamples(fit, nsamples, cores = 2)
 fit object with extra samples
 }
 \description{
-Sample more values from an optimized ctstanfit object
+Appends normal draws from the fit's already-computed covariance to its
+raw posterior. Deprecated in favour of \code{\link{ctOptimUncertainty}} with
+\code{uncertainty = 'stored'}, which does the same on both backends.
 }
 \details{
-\code{ctAddSamples} is the same function under its pre-3.11 name.
-  Both are kept; new code should use \code{ctFitAddSamples}. The julia
-  backend reaches this by a different route -- see \code{\link{ctSample}},
-  which runs the sampler from an optimised fit rather than resampling its
-  covariance.
+These are pseudo-posterior draws from the fitted covariance, not
+  posterior draws from a sampler. \code{\link{ctSample}} is the latter --
+  Hamiltonian Monte Carlo from an optimized \code{ctJuliaFit} -- and is a
+  different object, not another route to this one.
+
+  Deprecated in favour of \code{ctOptimUncertainty(fit, uncertainty =
+  'stored', finishsamples = n)}, which draws from the same covariance for
+  the same zero model evaluations, works on a \code{ctJuliaFit} as well as a
+  \code{ctStanFit}, and records the new sample count in
+  \code{$uncertainty$settings}. It also replaces the draws rather than
+  appending to them: appending normal draws to a posterior that came from
+  \code{uncertainty='is'} or \code{'bootstrap'} leaves part of each in one
+  matrix with nothing recording the mixture, which is what this function
+  does.
+
+  \code{ctAddSamples} is the same function under its pre-3.11 name; both are
+  deprecated together.
 }
 \examples{
 \dontrun{
-newfit <- ctFitAddSamples(ctstantestfit, 10, 1)
+newfit <- ctOptimUncertainty(ctstantestfit, uncertainty = 'stored',
+  finishsamples = 30, cores = 1)
 }
+}
+\seealso{
+\code{\link{ctOptimUncertainty}}, \code{\link{ctSample}}
 }

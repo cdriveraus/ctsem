@@ -187,3 +187,58 @@ test_that("unsupported uncertainty methods are refused by name, not silently", {
   expect_true(all(c("opg", "sandwich", "bootstrap") %in%
       ctsem:::.ctBackendUncertaintySupported))
 })
+
+# uncertainty='stored' is backend-neutral, which is the point of it: the cheap
+# redraw used to exist only as ctFitAddSamples(), which writes into
+# fit$stanfit and so could never work here. Nothing about drawing from a
+# covariance is backend-specific, and this asserts that the julia route reaches
+# the same code and leaves the fit in the same shape.
+test_that("uncertainty='stored' redraws a julia fit without touching the engine", {
+  skip_without_julia()
+  model <- .backend_uncertainty_model()
+  data <- .backend_uncertainty_data()[1:96, ]
+  fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
+
+  cov0 <- fit$estimate$cov
+  se0 <- fit$estimate$se
+  hess0 <- fit$uncertainty$hessian
+
+  set.seed(29)
+  redrawn <- suppressMessages(ctOptimUncertainty(fit, uncertainty = "stored",
+    finishsamples = 220, cores = 1))
+
+  expect_equal(nrow(redrawn$estimate$rawposterior), 220L)
+  expect_equal(unname(redrawn$estimate$cov), unname(cov0), tolerance = 0)
+  expect_equal(unname(redrawn$estimate$se), unname(se0), tolerance = 0)
+  expect_equal(redrawn$uncertainty$hessian, hess0, tolerance = 0)
+  # `method` keeps naming what produced the covariance; `redrawn` says the
+  # draws were regenerated from it.
+  expect_identical(redrawn$uncertainty$settings$method, "hessian")
+  expect_true(isTRUE(redrawn$uncertainty$settings$redrawn))
+  expect_identical(colnames(redrawn$estimate$rawposterior),
+    colnames(fit$estimate$rawposterior))
+
+  # The same normals the shared helper would produce, so the two backends draw
+  # identically given the same covariance and seed.
+  set.seed(29)
+  direct <- ctsem:::ctOptimNormalDraws(as.numeric(fit$estimate$raw), cov0, 220)
+  expect_equal(unname(redrawn$estimate$rawposterior), unname(direct), tolerance = 0)
+
+  # And no engine work: the exact Hessian is the expensive part of every other
+  # method here, and this path must not ask for it.
+  asked <- 0L
+  trace(ctsem:::.ctBackendHessian, tracer = function() asked <<- asked + 1L,
+    where = asNamespace("ctsem"), print = FALSE)
+  on.exit(untrace(ctsem:::.ctBackendHessian, where = asNamespace("ctsem")),
+    add = TRUE)
+  suppressMessages(ctOptimUncertainty(fit, uncertainty = "stored",
+    finishsamples = 10, cores = 1))
+  expect_identical(asked, 0L)
+
+  # Downstream reads it the way it reads any other draws.
+  expect_silent(invisible(nrow(ctExtract(redrawn)$pop_DRIFT)))
+
+  nocov <- fit
+  nocov$estimate$cov <- NULL
+  expect_error(ctOptimUncertainty(nocov, uncertainty = "stored"), "no usable one")
+})
