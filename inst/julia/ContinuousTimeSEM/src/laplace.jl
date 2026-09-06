@@ -2992,6 +2992,21 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
     saturated = !isempty(saturated_parameters)
     converged_enough = isfinite(final.value) && finite_gradient &&
         gradient_norm <= scaled_tolerance
+    # See `_ctsem_overshot` (`ctsem_backend.jl`): saturation is two different
+    # outcomes wearing the same zero gradient, and only one of them -- the
+    # optimizer overstepping into the flat region -- is a failure to converge.
+    #
+    # The probe evaluates the objective away from the estimate, which on this
+    # route overwrites `laplace`'s inner modes and their status, and everything
+    # below reads that state. So `final` is taken again afterwards: reporting
+    # the probe point's inner-mode failures as the fit's would be exactly the
+    # class of plausible wrong answer this is fixing.
+    overshoot = _ctsem_overshot(laplace, minimizer, saturated_parameters,
+        final.value, scaled_tolerance)
+    overshot = overshoot.overshot
+    if saturated
+        final = ctsem_laplace_evaluate(laplace, minimizer; gradient=true)
+    end
     # Convergence needs a small gradient, and nothing else counts as one.
     #
     # `Optim.converged` is the disjunction of its x, f and g criteria, and the
@@ -3008,9 +3023,16 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
     # out of reach on a log likelihood of order 1e3 however good the fit.
     verbose && stalled && println("Laplace: the optimizer made no progress from ",
         "its starting values; reporting this as not converged")
-    verbose && saturated && println("Laplace: raw parameter(s) ",
+    verbose && overshot && println("Laplace: raw parameter(s) ",
         saturated_parameters, " have a materialising transform that is flat ",
-        "to machine precision at the estimate; reporting this as not converged")
+        "to machine precision at the estimate, and pulling one back improves ",
+        "the objective by ", overshoot.gain, ", so this is not a maximum; ",
+        "reporting this as not converged")
+    verbose && saturated && !overshot && println("Laplace: raw parameter(s) ",
+        saturated_parameters, " have a materialising transform that is flat ",
+        "to machine precision at the estimate, but no pullback improves the ",
+        "objective, so this is a maximum with those coordinates unidentified ",
+        "rather than a failed fit")
     verbose && !stalled && !(finite_gradient &&
         (Optim.g_converged(result) || converged_enough)) &&
         println("Laplace: the optimizer stopped with a largest gradient of ",
@@ -3034,7 +3056,11 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
         # Never empty: a zero-length vector deadlocks the JuliaConnectoR
         # bridge, and this result crosses it. 0 means none.
         saturated_parameters=isempty(saturated_parameters) ? [0] : saturated_parameters,
-        converged=!stalled && !saturated && finite_gradient &&
+        # `overshot`, not `saturated` -- see `ctsem_optimize`, which carries the
+        # same verdict and the reasoning behind it.
+        overshot=overshot,
+        overshoot_gain=overshoot.gain,
+        converged=!stalled && !overshot && finite_gradient &&
             (Optim.g_converged(result) || converged_enough),
         g_converged=Optim.g_converged(result),
         f_converged=Optim.f_converged(result),

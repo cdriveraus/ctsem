@@ -557,8 +557,8 @@ end
     # the first size tried here -- left the drift unidentified: the optimiser
     # ran its transform to a raw value of -29, where a drift of zero is flat to
     # machine precision, and the profiled curvature in that direction came back
-    # at 7e-4. The engine reported that correctly as not converged; the test
-    # was simply asking a question the data could not answer.
+    # at 7e-4. The engine reported that correctly as saturated; the test was
+    # simply asking a question the data could not answer.
     generator = _joint_setup(nsubjects=12, nobs=8,
         manifesttype=[ContinuousTimeSEM.CTSEM_OBS_COUNT], ncategories=[0])
     ndim = ContinuousTimeSEM.ctsem_joint_dimension(generator)
@@ -586,9 +586,23 @@ end
     # is exactly the false negative the derivative-based guard was written to
     # close: a raw value under any fixed cutoff can still sit on a transform
     # that has gone flat, and this fit is a case of it, not a contrived one.
-    @test !result.converged
     @test result.saturated
     @test result.saturated_parameters == [1]
+    # Saturated, and still a maximum. The drift's transform has gone flat, but
+    # the objective is at its supremum there -- this test's own closing
+    # assertions say so, checking that the profiled Hessian is negative *semi*
+    # definite with the drift direction flat. Pulling the coordinate back finds
+    # nothing better, so the optimizer did not overstep: it arrived where this
+    # estimator sends a drift that the innovation prior pushes to zero.
+    #
+    # This read `!result.converged` while saturation alone decided convergence.
+    # That conflated a fit like this one with an optimizer that overstepped and
+    # stopped somewhere worse, and it is why `converged` came back FALSE on 45
+    # of 64 benchmark replications whose log likelihoods matched Stan's to the
+    # digit. See `_ctsem_overshot`.
+    @test !result.overshot
+    @test result.overshoot_gain == 0.0
+    @test result.converged
 
     # The manifest mean is a log rate the counts see directly, and the joint
     # mode recovers it.

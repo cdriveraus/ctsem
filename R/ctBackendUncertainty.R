@@ -233,7 +233,20 @@
   # from the same helper -- see `.ctFitNameRawUncertainty()` for why it has to
   # be all of them and both backends.
   fit <- .ctFitNameRawUncertainty(fit)
+  # Whether each interval just produced is as wide as the curvature at the
+  # estimate supports. Attached here rather than at the end of a fit so it
+  # describes whatever `uncertainty` was last run, a later
+  # `ctOptimUncertainty()` call included -- a check that silently went on
+  # describing the previous method would be worse than none.
+  uncertaintyfit$intervalcheck <- .ctBackendIntervalCheck(uncertaintyfit$hessian,
+    fit$estimate$se, names(fit$estimate$se))
   fit$uncertainty <- uncertaintyfit
+  # And the identifiability report, for the same reason: it is a statement
+  # about the curvature this call just used. A fit made with `estonly = TRUE`
+  # and finished later by `ctOptimUncertainty()` carried none at all, so
+  # nothing named the parameter whose interval had no width.
+  fit$identifiability <- .ctBackendIdentifiability(uncertaintyfit$hessian,
+    names(fit$estimate$se))
   # New draws mean the fit's constrained draws describe the previous ones, so
   # they are refreshed here rather than left to be noticed downstream.
   fit$transformedpars <- .ctBackendConstrain(fit)

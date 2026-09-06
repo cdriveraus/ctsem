@@ -70,7 +70,77 @@ ctOptimSafeCov <- function(cov, ridge=1e-8){
   cov
 }
 
-ctOptimCovFromHessian <- function(hess, ridge=1e-8, warn=TRUE,
+# Invert an information matrix over the subspace the data actually determines,
+# leaving the rest alone.
+#
+# The alternative -- flooring every eigenvalue at a small `ridge` and inverting
+# the result -- manufactures a variance of `1/ridge` along each direction that
+# carries no information, and that number is a property of the ridge rather
+# than of the data. With the default ridge of 1e-8 it is 1e8, a standard error
+# of 1e4. Two things then go wrong, and both were measured on a benchmark fit
+# (60 subjects x 150 occasions, a population SD with no individual differences
+# behind it):
+#
+#   * The orientation of a null eigenvector is set by rounding error, because
+#     the block it spans is numerically zero. It therefore has an arbitrary
+#     small component on the *identified* parameters, and 1e8 multiplies that
+#     component. Perturbing the information matrix by 1e-12 of its own scale --
+#     less than the difference between two runs that reached the same optimum
+#     to eight decimal places -- moved the reported standard error of a
+#     well-determined drift parameter from 0.019 to 0.24, and a second such
+#     perturbation to 0.087. A quantity that moves by an order of magnitude
+#     under rounding is not a statement about the data.
+#   * Nothing downstream can tell 1e4 from a real standard error, so it flows
+#     into the draws, the quantiles and the mean over draws that `popmeans`
+#     reports, which is how a fit at the right optimum came to report
+#     intervals a hundred times too wide and point estimates that had wandered.
+#
+# So a direction whose curvature is negligible against the sharpest one is
+# projected out instead of floored: the identified subspace is inverted
+# exactly, and the null subspace contributes zero rather than 1/ridge. That
+# leaves the identified parameters stable under rounding, which is the whole
+# point, and it leaves the flat coordinates reported with no spread at all --
+# which is why the null directions are recorded and named here, and warned
+# about by the caller.
+#
+# `rtol` is deliberately *not* `.ctBackendIdentifiability()`'s 1e-8, and the
+# difference is the point. That one is a judgement about identification and it
+# only warns, so a false positive costs a warning. This one acts: a direction
+# it drops comes back with no spread at all, which would be a new wrong answer
+# for a direction that is weak but real. So it is set by numerical resolution
+# instead. A symmetric eigendecomposition resolves eigenvalues to about
+# `eps * largest`, so below ~1e-14 of the largest an eigenvalue is inside the
+# error bar of zero; 1e-12 leaves two orders of margin above that and ten below
+# the identification judgement. Every flat direction measured here sat between
+# 1e-18 and 1e-25 of its matrix's largest eigenvalue, so nothing real is near
+# this line. A direction between the two tolerances is inverted as usual --
+# its variance is genuinely enormous, which is the truth about it -- and
+# `.ctBackendIntervalCheck()` is what says so.
+.ctOptimIdentifiedInverse <- function(info, rtol=1e-12){
+  info <- (info + t(info)) / 2
+  eig <- try(eigen(info, symmetric=TRUE), silent=TRUE)
+  if('try-error' %in% class(eig)) return(NULL)
+  values <- eig$values
+  scale <- max(values)
+  if(!is.finite(scale) || scale <= 0) return(NULL)
+  threshold <- rtol * scale
+  keep <- values > threshold
+  if(!any(keep)) return(NULL)
+  vectors <- eig$vectors[, keep, drop=FALSE]
+  cov <- vectors %*% (t(vectors) / values[keep])
+  cov <- (cov + t(cov)) / 2
+  if(any(!is.finite(cov))) return(NULL)
+  # Which parameters the dropped directions load on. `loading` matches
+  # `.ctBackendIdentifiability()`: a direction is described by the coordinates
+  # that carry it, not by all of them.
+  nullvectors <- eig$vectors[, !keep, drop=FALSE]
+  loaded <- if(ncol(nullvectors)) which(apply(abs(nullvectors), 1, max) >= .25) else
+    integer()
+  list(cov=cov, nnull=sum(!keep), nullEigenvalues=values[!keep],
+    nullParameters=loaded, threshold=threshold)
+}
+
+ctOptimCovFromHessian <- function(hess, ridge=1e-8, rtol=1e-12, warn=TRUE,
   context='Hessian'){
   hess <- (hess + t(hess)) / 2
   info <- -hess
@@ -102,7 +172,10 @@ ctOptimCovFromHessian <- function(hess, ridge=1e-8, warn=TRUE,
   rawSolveSucceeded <- FALSE
   rawCholSucceeded <- FALSE
   usedNearPD <- FALSE
-  usedInfoRidge <- FALSE
+  usedNullProjection <- FALSE
+  nullDirections <- 0L
+  nullEigenvalues <- numeric()
+  nullParameters <- integer()
   usedGinv <- FALSE
   infoNearPD <- FALSE
   covNearPD <- FALSE
@@ -111,8 +184,25 @@ ctOptimCovFromHessian <- function(hess, ridge=1e-8, warn=TRUE,
   minInfoEigenFinal <- minInfoEig
   minCovEigenOriginal <- NA_real_
   minCovEigenFinal <- NA_real_
-  
-  rawcov <- try(suppressWarnings(solve(info)), silent=TRUE)
+
+  # Decided before `solve()` is tried, not after it fails.
+  #
+  # Whether a matrix with a numerically zero eigenvalue makes LAPACK's `solve`
+  # give up or merely return an enormous inverse is settled by rounding -- the
+  # same rounding that orients the null eigenvector -- so a repair reached only
+  # on failure is reached only some of the time. That is the coin flip behind
+  # the two runs this was found from: same data, same starting values, the same
+  # optimum to eight decimal places, and intervals differing by a factor of a
+  # hundred, because one of them fell into this branch and the other did not.
+  nullPresent <- is.finite(minInfoEig) && is.finite(maxInfoEig) &&
+    maxInfoEig > 0 && minInfoEig <= rtol * maxInfoEig
+
+  rawcov <- if(nullPresent) {
+    repairSteps <- c(repairSteps, paste0(
+      'solve(-hessian) not attempted: smallest eigenvalue is ',
+      signif(infoEigenRatio, 3), ' of the largest'))
+    structure('skipped', class='try-error')
+  } else try(suppressWarnings(solve(info)), silent=TRUE)
   rawSolveSucceeded <- !'try-error' %in% class(rawcov) &&
     all(is.finite(rawcov))
   if(rawSolveSucceeded) {
@@ -127,7 +217,9 @@ ctOptimCovFromHessian <- function(hess, ridge=1e-8, warn=TRUE,
         method='solve', minInfoEigenOriginal=minInfoEig,
         rawSolveSucceeded=rawSolveSucceeded,
         rawCholSucceeded=rawCholSucceeded,
-        infoNearPD=FALSE, infoRidgeApplied=FALSE,
+        infoNearPD=FALSE, usedNullProjection=FALSE,
+        nullDirections=0L, nullEigenvalues=numeric(),
+        nullParameters=integer(),
         minInfoEigenFinal=minInfoEigenFinal,
         usedNearPD=FALSE, usedGinv=FALSE,
         covNearPD=FALSE, covRidgeApplied=FALSE,
@@ -148,27 +240,34 @@ ctOptimCovFromHessian <- function(hess, ridge=1e-8, warn=TRUE,
         only.values=TRUE)$values)
       repairSteps <- c(repairSteps, 'nearPD applied to solved covariance')
     }
-  } else {
+  } else if(!nullPresent) {
     repairSteps <- c(repairSteps, 'solve(-hessian) failed')
   }
-  
+
   if(!covReady) {
-    safeInfo <- ctOptimSafeCov(info, ridge=ridge)
-    infoDiagnostics <- attr(safeInfo, 'ctOptimSafeCov')
-    infoNearPD <- isTRUE(infoDiagnostics$nearPD)
-    usedInfoRidge <- isTRUE(infoDiagnostics$ridgeApplied)
-    minInfoEigenFinal <- infoDiagnostics$minEigenFinal
-    ridgecov <- try(suppressWarnings(solve(safeInfo)), silent=TRUE)
-    if(covOk(ridgecov)) {
-      cov <- (ridgecov + t(ridgecov)) / 2
+    # See `.ctOptimIdentifiedInverse()`. This used to floor the information
+    # eigenvalues at `ridge` and invert, which put 1/ridge along every
+    # direction the data does not determine and leaked it into the ones it
+    # does. `covOk()` is deliberately not the test here: the projected
+    # covariance is singular by construction -- that is what it is for -- so
+    # `chol()` cannot succeed on it and asking would send every such matrix to
+    # the generalized inverse below.
+    projected <- .ctOptimIdentifiedInverse(info, rtol=rtol)
+    if(!is.null(projected)) {
+      cov <- projected$cov
       covReady <- TRUE
+      usedNullProjection <- TRUE
+      nullDirections <- projected$nnull
+      nullEigenvalues <- projected$nullEigenvalues
+      nullParameters <- projected$nullParameters
+      minInfoEigenFinal <- projected$threshold
       minCovEigenFinal <- min(eigen(cov, symmetric=TRUE,
         only.values=TRUE)$values)
-      repairSteps <- c(repairSteps,
-        'information matrix repaired before inversion')
+      repairSteps <- c(repairSteps, paste0(nullDirections,
+        ' direction(s) with no curvature were projected out before inversion'))
     } else {
       repairSteps <- c(repairSteps,
-        'solve() failed or covariance was not positive definite after information repair')
+        'the information matrix has no direction with positive curvature')
     }
   }
   
@@ -227,7 +326,14 @@ ctOptimCovFromHessian <- function(hess, ridge=1e-8, warn=TRUE,
     rawSolveSucceeded=rawSolveSucceeded,
     rawCholSucceeded=rawCholSucceeded,
     infoNearPD=infoNearPD,
-    infoRidgeApplied=usedInfoRidge,
+    usedNullProjection=usedNullProjection,
+    # The directions the data does not determine: how many, how flat, and which
+    # parameters carry them. Reported rather than repaired away, because a
+    # covariance that is silently missing a dimension is the thing this used to
+    # hide behind a fabricated 1e4 standard error.
+    nullDirections=nullDirections,
+    nullEigenvalues=nullEigenvalues,
+    nullParameters=nullParameters,
     minInfoEigenFinal=minInfoEigenFinal,
     usedNearPD=usedNearPD,
     usedGinv=usedGinv,
@@ -235,16 +341,17 @@ ctOptimCovFromHessian <- function(hess, ridge=1e-8, warn=TRUE,
     covRidgeApplied=covRidgeApplied,
     minCovEigenOriginal=minCovEigenOriginal,
     minCovEigenFinal=minCovEigenFinal,
-    method=if(usedGinv) 'ginv' else if(usedInfoRidge) 'ridge_info'
+    method=if(usedGinv) 'ginv' else if(usedNullProjection) 'nullprojection'
       else if(usedNearPD) 'nearPD_cov' else 'solve',
     repairSteps=repairSteps)
   attr(cov, 'ctOptimCovFromHessian') <- diagnostics
   issues <- repairSteps
   if(isTRUE(diagnostics$infoNearPD)) issues <- c(issues,
     'nearPD was needed for the information matrix')
-  if(isTRUE(diagnostics$infoRidgeApplied)) issues <- c(issues,
-    paste0('information eigenvalues were floored at ridge=', ridge,
-      ' (minimum original eigenvalue=', signif(minInfoEig, 4),
+  if(isTRUE(diagnostics$usedNullProjection)) issues <- c(issues,
+    paste0(nullDirections, ' direction(s) carry no curvature and were left out',
+      ' of the inversion, so they have no reported spread at all (minimum',
+      ' eigenvalue=', signif(minInfoEig, 4),
       if(is.finite(infoEigenRatio))
         paste0(', ', signif(infoEigenRatio, 3), ' of the largest)') else ')'))
   if(isTRUE(diagnostics$usedGinv)) issues <- c(issues,
@@ -261,7 +368,13 @@ ctOptimCovFromHessian <- function(hess, ridge=1e-8, warn=TRUE,
     # the same text for both is what taught people to ignore it, and the cases
     # it currently conflates are genuinely different. A near-integrated trend
     # process *should* warn here.
+    #
+    # `usedNullProjection` is excluded from the quiet branch on purpose. A
+    # direction that had to be left out of the inversion is a statement about
+    # what the data determines whatever the sign of the smallest eigenvalue
+    # was, and the parameters carrying it have no reported spread at all.
     if(isTRUE(diagnostics$infoRepairNegligible) &&
+        !isTRUE(diagnostics$usedNullProjection) &&
         !isTRUE(diagnostics$usedGinv) && !isTRUE(diagnostics$infoNearPD)) {
       # Deliberately not "arithmetic, not a statement about the model", which
       # is what this said and could not support. A smallest eigenvalue of
@@ -283,7 +396,7 @@ ctOptimCovFromHessian <- function(hess, ridge=1e-8, warn=TRUE,
         paste(issues, collapse='; '),
         if(is.finite(infoEigenRatio) &&
             infoEigenRatio >= sqrt(.Machine$double.eps))
-          paste0('. The floored eigenvalue is ', signif(infoEigenRatio, 3),
+          paste0('. The smallest eigenvalue is ', signif(infoEigenRatio, 3),
             ' of the largest, too large to be rounding: some direction of this ',
             'model is close to unidentified and the standard errors along it ',
             'are not trustworthy') else '',
@@ -1232,6 +1345,24 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' Hessian is exact; \code{control$analyticHessian = FALSE} falls back to the
 #' shared finite difference for comparison. The two agree to about 1e-4 on a
 #' well-conditioned model.
+#'
+#' \emph{Directions with no curvature.} A direction whose curvature is
+#' negligible against the sharpest one is left out of the inversion rather
+#' than floored at \code{control$ridge}, so the parameters that carry it come
+#' back with no spread at all instead of a standard error of \code{1/ridge}.
+#' Floored, that number leaks into the parameters the data \emph{does}
+#' determine, and by an amount rounding decides: it can differ by a factor of a
+#' hundred between two fits that reach the same optimum.
+#' \code{$uncertainty$cov} records which directions were dropped, and
+#' \code{fit$identifiability} names the parameters.
+#'
+#' \emph{Whether the intervals are as wide as the curvature allows.} A julia
+#' fit carries \code{fit$uncertainty$intervalcheck}: for each raw parameter,
+#' the reported standard error against \code{1/sqrt(information[i,i])}, the
+#' width that parameter's own curvature supports. Their ratio is 1 when the
+#' parameter is separable from the rest and grows without bound as it stops
+#' being; anything past about 100 means the reported width comes from the
+#' entanglement rather than from the data, and will not repeat between runs.
 #'
 #' \emph{Backend-specific arguments.} \code{uncertainty='fullbootstrap'} and
 #' its \code{control$bootstrapFitCores} / \code{control$bootstrapTol}, and

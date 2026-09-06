@@ -294,8 +294,20 @@ test_that("summary reports fixed effects and system matrices, with intervals onl
   # sample count for uncertainty draws read as MCMC output.
   expect_equal(interval$ndraws, 100)
   expect_null(interval$nsamples)
-  # The intervals come from the draws, so they must have width.
-  expect_true(all(interval$popmeans[, "97.5%"] > interval$popmeans[, "2.5%"]))
+  # The intervals come from the draws, so they must have width -- except along
+  # a direction the data does not determine, which is not inverted at all and
+  # so contributes none. This model, fitted to noise, drives its diffusion
+  # correlation onto the boundary and gives exactly one such direction. The
+  # covariance used to floor that eigenvalue at `ridge` instead, which put a
+  # standard error of 1e4 on the coordinate and, through the draws, an interval
+  # of [-1, 1] on a correlation estimated at -1 -- width invented by the ridge.
+  # No width is the honest report, and `fit$identifiability` names it.
+  flat <- uncertain$identifiability$parameters
+  expect_length(flat, 1L)
+  widths <- stats::setNames(interval$popmeans[, "97.5%"] -
+      interval$popmeans[, "2.5%"], rownames(interval$popmeans))
+  expect_true(all(widths[setdiff(names(widths), flat)] > 0))
+  expect_equal(unname(widths[flat]), 0)
 
   expect_output(print(interval), "System Matrices")
   expect_output(print(interval), "Fixed-effects")

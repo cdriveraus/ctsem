@@ -56,9 +56,67 @@
   list(
     nweak = length(weak),
     condition = scale / max(min(values[values > 0], na.rm = TRUE), .Machine$double.xmin),
-    negative = sum(values < 0),
+    # Negative *against the scale of the matrix*, not against zero. An
+    # eigenvalue of -3e-16 where the largest is 9e5 is what a symmetric
+    # eigendecomposition does to a direction whose true curvature is zero; it
+    # is the flat direction `nweak` already counts, not a saddle. Counting it
+    # as negative fired "this is not a maximum" on ordinary fits sitting at
+    # their optimum with a gradient of 5e-10, which is how a warning worth
+    # reading gets ignored.
+    negative = sum(values < -rtol * scale),
     directions = directions,
     parameters = unique(unlist(lapply(directions, `[[`, "parameters"))))
+}
+
+# Is each reported interval as wide as the curvature at the estimate supports?
+#
+# Two standard errors can be computed for a parameter from the same Hessian.
+# The *conditional* one, `1 / sqrt(information[i, i])`, is what the curvature in
+# that one coordinate supports with every other parameter held. The *marginal*
+# one, `sqrt(cov[i, i])`, is what gets reported, and it is the conditional one
+# divided by `sqrt(1 - R^2)`, where `R^2` is how well the other parameters
+# reproduce this one in the information metric. So their ratio is a pure number
+# saying how much of the reported width comes from the data and how much from
+# the parameter not being separable from the rest: a ratio of 10 is `R^2` of
+# .99, and 100 is .9999.
+#
+# Why it earns its place. A benchmark fit reached the right optimum -- the same
+# log likelihood to eight decimal places as its twin, and Stan's -- and reported
+# a drift interval a hundred times too wide, with a point estimate that had
+# wandered with it. Nothing else about the fit looked wrong; it was caught only
+# because two runs on identical data could be compared, and a user gets one run.
+# This ratio separates the two cleanly: 1.0 to 1.5 across every parameter of the
+# healthy fits measured here, against 1e4 on the parameter that had gone.
+#
+# Cheap: one diagonal and one square root, no extra evaluation of anything.
+# Computed for julia fits, where the exact Hessian is already on the fit;
+# nothing prevents the stan path from using it, and `ctReport()` is where that
+# would show.
+#' @keywords internal
+.ctBackendIntervalCheck <- function(hessian, se, parnames = NULL,
+  threshold = 100) {
+  empty <- list(threshold = threshold, nflagged = 0L, parameters = character(),
+    table = data.frame(param = character(), se = numeric(),
+      curvature_se = numeric(), ratio = numeric(), stringsAsFactors = FALSE))
+  if (is.null(hessian) || is.null(se)) return(empty)
+  hessian <- as.matrix(hessian)
+  se <- as.numeric(se)
+  if (nrow(hessian) != ncol(hessian) || nrow(hessian) != length(se)) return(empty)
+  if (!all(is.finite(hessian))) return(empty)
+  n <- length(se)
+  if (is.null(parnames) || length(parnames) != n) parnames <- paste0("par", seq_len(n))
+  information <- diag(-(hessian + t(hessian)) / 2)
+  # A non-positive diagonal is not a wider interval, it is no curvature at all;
+  # `.ctBackendIdentifiability()` is what reports that, so it is left NA here
+  # rather than counted as a ratio of infinity and reported twice.
+  curvature <- ifelse(information > 0, 1 / sqrt(information), NA_real_)
+  ratio <- se / curvature
+  table <- data.frame(param = as.character(parnames), se = se,
+    curvature_se = curvature, ratio = ratio, stringsAsFactors = FALSE)
+  flagged <- which(is.finite(ratio) & ratio > threshold)
+  list(threshold = threshold, nflagged = length(flagged),
+    parameters = as.character(parnames[flagged]),
+    table = table[order(-ifelse(is.finite(ratio), ratio, -Inf)), , drop = FALSE])
 }
 
 # Population standard deviations that have collapsed to the floor of their
@@ -100,7 +158,7 @@
 
 # Say it once, at the end of a fit, in the terms a reader needs.
 #' @keywords internal
-.ctBackendIdentifyWarn <- function(identify, collapsed) {
+.ctBackendIdentifyWarn <- function(identify, collapsed, intervals = NULL) {
   if (!is.null(identify) && identify$nweak > 0L) {
     involved <- paste(utils::head(identify$parameters, 6), collapse = ", ")
     if (length(identify$parameters) > 6) involved <- paste0(involved, ", ...")
@@ -128,6 +186,25 @@
       "parameter sits at the edge of its transform, where the curvature is ",
       "zero, so its reported interval is not a confidence statement. See ",
       "fit$collapsedScales.")
+  }
+  # Said even when no direction is flat enough to count as unidentified, which
+  # is the case this exists for: a parameter can be separable in principle and
+  # still have almost all of its reported width come from its entanglement with
+  # the others, and then the interval moves by orders of magnitude between two
+  # runs that reached the same optimum.
+  if (!is.null(intervals) && isTRUE(intervals$nflagged > 0L)) {
+    involved <- paste(utils::head(intervals$parameters, 6), collapse = ", ")
+    if (length(intervals$parameters) > 6) involved <- paste0(involved, ", ...")
+    widest <- max(intervals$table$ratio[is.finite(intervals$table$ratio)])
+    warning(intervals$nflagged, " reported interval",
+      if (intervals$nflagged > 1L) "s are" else " is",
+      " far wider than the curvature at the estimate supports -- up to ",
+      signif(widest, 3), " times the width that parameter's own curvature ",
+      "gives. That width comes from the parameter not being separable from ",
+      "the others rather than from the data, and it is not stable: it can ",
+      "move by orders of magnitude between two fits that reach the same ",
+      "optimum. Parameters involved: ", involved,
+      ". See fit$uncertainty$intervalcheck.", call. = FALSE)
   }
   invisible(NULL)
 }

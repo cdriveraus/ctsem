@@ -601,6 +601,65 @@ own answer for `CTSEMJointObjective`, unwrapping to the same `CTSEMObjective`.
 """
 _ctsem_params(o::CTSEMObjective) = o.params
 
+"""
+    _ctsem_overshot(objective, minimizer, saturated_parameters, value, tolerance)
+
+Whether the optimizer walked a saturated coordinate *past* an optimum, rather
+than stopping at one.
+
+Saturation -- a materialising transform gone flat, see
+`_ctsem_saturated_parameters` -- covers two outcomes that look identical from
+the gradient, because a flat transform reports zero gradient in both:
+
+  1. The optimizer overstepped. Measured on a binary model: one L-BFGS
+     iteration to raw 20.9, log likelihood -730.7 where the profile peak is
+     -714.5. That fit did not converge, and the point it stopped at is not a
+     maximum.
+  2. The data do not identify that coordinate, so the optimizer correctly ran
+     it to the edge while every other parameter converged. A population
+     standard deviation with no individual differences behind it is the common
+     case, and it is a *finding*, not a failure -- one such fit stopped with a
+     largest gradient of 5e-10 and matched Stan's log likelihood to the digit.
+
+Treating both as "not converged" is what made the flag useless: over 64
+optimisation replications of a benchmark whose log likelihoods matched Stan's,
+45 reported `converged=false`, every one of them for a collapsed population
+scale and the correlation that goes with it.
+
+The two are told apart by asking the only question that separates them -- is
+this a maximum? At a maximum no move improves the objective. So each saturated
+coordinate is pulled back toward zero, into the region where its transform
+still responds, one at a time with everything else held. An improvement larger
+than `tolerance` means the reported point is not a maximum in that coordinate,
+which is case 1; no improvement is case 2.
+
+At most `length(fractions)` value-only evaluations per saturated coordinate,
+and none at all unless something saturated.
+"""
+function _ctsem_overshot(objective, minimizer, saturated_parameters, value,
+        tolerance; fractions=(0.5, 0.25, 0.1, 0.0))
+    gain = 0.0
+    (isempty(saturated_parameters) || !isfinite(value)) &&
+        return (overshot=false, gain=gain)
+    probe = collect(minimizer)
+    for p in saturated_parameters
+        (1 <= p <= length(probe)) || continue
+        keep = probe[p]
+        for f in fractions
+            probe[p] = f * keep
+            trial = try
+                ctsem_evaluate(objective, probe; gradient=false).value
+            catch
+                -Inf
+            end
+            isfinite(trial) && (gain = max(gain, trial - value))
+        end
+        probe[p] = keep
+        gain > tolerance && return (overshot=true, gain=gain)
+    end
+    return (overshot=gain > tolerance, gain=gain)
+end
+
 """Optimize a prepared likelihood entirely within Julia using L-BFGS."""
 function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     maxiter::Integer=1000, g_tol::Real=1e-8, f_tol::Real=0.0,
@@ -846,11 +905,26 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     finite_gradient = isfinite(gradient_norm)
     converged_enough = isfinite(final.value) && finite_gradient &&
         gradient_norm <= scaled_tolerance
+    # Saturation on its own is not a failure to converge -- see
+    # `_ctsem_overshot`, which asks the question that separates an optimizer
+    # that overstepped into the flat region from a coordinate the data simply
+    # do not identify. Only the first is a convergence failure, and only the
+    # first disqualifies the fit below.
+    overshoot = _ctsem_overshot(objective, minimizer, saturated_parameters,
+        final.value, scaled_tolerance)
+    overshot = overshoot.overshot
     verbose && stalled && println("ctsem_optimize: the optimizer made no progress ",
         "from its starting values; reporting this as not converged")
-    verbose && saturated && println("ctsem_optimize: raw parameter(s) ",
+    verbose && overshot && println("ctsem_optimize: raw parameter(s) ",
         saturated_parameters, " have a materialising transform that is flat ",
-        "to machine precision at the estimate; reporting this as not converged")
+        "to machine precision at the estimate, and pulling one back improves ",
+        "the objective by ", overshoot.gain, ", so this is not a maximum; ",
+        "reporting this as not converged")
+    verbose && saturated && !overshot && println("ctsem_optimize: raw ",
+        "parameter(s) ", saturated_parameters, " have a materialising ",
+        "transform that is flat to machine precision at the estimate, but no ",
+        "pullback improves the objective, so this is a maximum with those ",
+        "coordinates unidentified rather than a failed fit")
 
     return (
         minimizer=minimizer,
@@ -870,9 +944,21 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # See `ctsem_laplace_optimize`: `Optim.converged` includes the x and
         # f criteria, which a line search that stops making progress satisfies
         # trivially, so convergence is judged on the gradient alone.
-        converged=!stalled && !saturated && finite_gradient &&
+        #
+        # `overshot`, not `saturated`. `converged` answers one question -- did
+        # the optimizer arrive at a maximum -- and a coordinate the data do not
+        # identify is a separate finding, reported separately in `saturated`
+        # and `saturated_parameters`. Keying convergence on saturation made the
+        # flag false on two thirds of good fits; see `_ctsem_overshot`.
+        converged=!stalled && !overshot && finite_gradient &&
             (Optim.g_converged(result) || converged_enough),
         saturated=saturated,
+        # The pullback verdict and its margin. `overshot` is the half of
+        # saturation that is a convergence failure; `overshoot_gain` is how
+        # much the objective improved when the flagged coordinate was pulled
+        # back, so a user can see whether it was 16 log units or 1e-13.
+        overshot=overshot,
+        overshoot_gain=overshoot.gain,
         # Which raw parameters, not just whether one did -- most of the
         # diagnostic value, and free once the derivatives are computed.
         #
