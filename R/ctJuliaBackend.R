@@ -262,11 +262,15 @@
 #'   part of ctsem, and the version \code{ctJuliaStatus()} reports is a hash of
 #'   its source rather than something selectable.
 #' @param julia_bin Optional Julia binary directory.
-#' @param threads Number of Julia threads. The engine splits its subject loop
-#'   across them. Julia fixes its thread count at process start, so this only
-#'   takes effect if no Julia session is running yet -- pass \code{force = TRUE}
-#'   to restart one. \code{NULL} leaves it to Julia's own default (one thread
-#'   unless \code{JULIA_NUM_THREADS} is already set).
+#' @param threads Number of Julia threads, fixed for the life of the session.
+#'   The engine splits its subject loop across them, and \code{ctFit}'s
+#'   \code{cores} cannot exceed this count: Julia fixes it at process start, so
+#'   setting it here takes effect only if no Julia session is running yet --
+#'   pass \code{force = TRUE} to restart one. \code{NULL} leaves it to Julia's
+#'   own default (one thread unless \code{JULIA_NUM_THREADS} is already set),
+#'   which is why starting the engine before the first fit and then asking for
+#'   \code{cores = 4} gives four chunks' worth of nothing. A fit that asks for
+#'   more cores than the session has threads says so; see \code{\link{ctFit}}.
 #' @param force Reconfigure an existing Julia session.
 #' @param agree \code{TRUE} to consent to instantiating the engine's Julia
 #'   package dependencies without being asked, \code{FALSE} to refuse.
@@ -2412,6 +2416,118 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   invisible(NULL)
 }
 
+# The Julia session's thread count, or NA -- without starting a session.
+#
+# `juliaEval()` starts a server rather than reporting on one, so a running
+# session is asked directly and a session that has not begun is predicted from
+# the environment instead. Julia also accepts "auto" and "N,M" (worker threads,
+# interactive threads) there; "auto" is never short of anything, and any other
+# spelling this cannot parse is reported as unknown rather than guessed at.
+.ctBackendSessionThreads <- function() {
+  if (.ctJuliaSessionRunning()) {
+    return(tryCatch(as.integer(JuliaConnectoR::juliaEval("Threads.nthreads()")),
+      error = function(e) NA_integer_))
+  }
+  existing <- Sys.getenv("JULIA_NUM_THREADS", unset = "")
+  if (!nzchar(existing)) return(1L)
+  suppressWarnings(as.integer(sub(",.*$", "", existing))[1L])
+}
+
+# Say so when `cores` is more than the session can give, once per session per
+# pair. Separate from `.ctBackendReportChunks()` below on purpose: that one is
+# about the chunk tuner declining headroom it measured, and this is about
+# headroom that never existed, which is a different thing to say and a different
+# thing to do about it.
+.ctBackendReportThreads <- function(cores, threads) {
+  key <- paste0(cores, ":", threads)
+  if (key %in% .ct_julia_cache$threads_reported) return(invisible(NULL))
+  .ct_julia_cache$threads_reported <- c(.ct_julia_cache$threads_reported, key)
+  message("cores = ", cores, " requested, ", threads, " used: Julia's thread ",
+    "count is fixed at session start. ctJuliaSetup(threads = ", cores,
+    ", force = TRUE) restarts it with ", cores, ".")
+  invisible(NULL)
+}
+
+# Resolve `cores` against that thread count, and never do it in silence.
+#
+# Julia fixes `Threads.nthreads()` at process start, so `cores` is a request
+# only an unstarted session can grant. Three situations, and the third is the
+# one this exists for:
+#
+#   * No session yet and the thread count is ours to set -- set it, and the fit
+#     gets what it asked for.
+#   * No session yet but JULIA_NUM_THREADS was set deliberately, by
+#     ctJuliaSetup(threads=), by the user, or by a cluster scheduler -- that
+#     wins, and it may be narrower than `cores`.
+#   * A session is already running -- its count is fixed and cannot be raised.
+#
+# The third cost a whole benchmark pass. A harness that calls `ctJuliaSetup()`
+# once up front, to pay the engine load before timing anything, pins the session
+# to one thread; every later `cores = n` fit then ran on one subject chunk,
+# serially, and said nothing. It was caught only because the gradient counts for
+# `cores = 1` and `cores = 4` came back identical to the digit.
+#
+# `options(ctsem.julia.restart = TRUE)` opts in to fixing it rather than saying
+# it. Not the default, for two measured reasons: a restart discards the
+# session's compiled model shapes -- ~5 s to restart, plus ~15 s of
+# respecialisation on the next fit, on a one-latent model -- and `cores`
+# defaults to `getOption("mc.cores", 2)`, so a default fit would otherwise kill
+# and rebuild a deliberately narrow session nobody asked it to widen.
+#
+# `threads` is a parameter so the gate can be exercised at a count the test
+# machine does not have to be restarted into. `report = FALSE` is `fit = FALSE`:
+# a call that only builds a specification still wants the thread count requested
+# while that is possible, since preparing starts the session, but has nothing to
+# say about cores it was never going to use and no reason to restart anything.
+.ctBackendResolveThreads <- function(cores, threads = NULL, report = TRUE) {
+  cores <- suppressWarnings(as.integer(cores)[1L])
+  if (is.na(cores) || cores < 2L) return(invisible(NA_integer_))
+  restart <- isTRUE(report) && isTRUE(getOption("ctsem.julia.restart", FALSE))
+  if (is.null(threads) && !.ctJuliaSessionRunning()) {
+    existing <- Sys.getenv("JULIA_NUM_THREADS", unset = "")
+    # An existing value is respected unless *this* function set it for an
+    # earlier fit. Without that distinction a `cores=8` fit left the variable
+    # behind, and the next `ctFit(cores=2)` in a restarted session started
+    # eight threads while asking for two -- the subject loop still honoured
+    # `cores`, but the process held cores the user had not asked for. A value
+    # from ctJuliaSetup(threads=) or from the user's own environment is
+    # deliberate and still wins, unless the restart option says otherwise --
+    # there is no session to lose here, so honouring it costs nothing.
+    ours <- nzchar(existing) &&
+      identical(existing, .ct_julia_cache$threads_from_cores)
+    if (!nzchar(existing) || ours || restart) {
+      Sys.setenv(JULIA_NUM_THREADS = as.character(cores))
+      .ct_julia_cache$threads_from_cores <- as.character(cores)
+      return(invisible(cores))
+    }
+  }
+  if (is.null(threads)) threads <- .ctBackendSessionThreads()
+  threads <- suppressWarnings(as.integer(threads)[1L])
+  if (is.na(threads) || threads >= cores || !isTRUE(report)) {
+    return(invisible(threads))
+  }
+  if (restart) {
+    # Said before it happens, because it takes seconds and ends a process the
+    # caller may have set up. The engine environment is ctJuliaSetup()'s own
+    # `project`, and .ctJuliaClearSession() forgets it, so it is carried over.
+    message("Restarting the Julia session at ", cores, " threads for cores = ",
+      cores, ".")
+    project <- .ct_julia_cache$project
+    got <- tryCatch({
+      suppressWarnings(ctJuliaSetup(project = project, threads = cores,
+        force = TRUE))
+      .ct_julia_cache$threads_from_cores <- as.character(cores)
+      .ctBackendSessionThreads()
+    }, error = function(e) NA_integer_)
+    if (!is.na(got)) {
+      if (got >= cores) return(invisible(got))
+      threads <- got
+    }
+  }
+  .ctBackendReportThreads(cores, threads)
+  invisible(threads)
+}
+
 # Say so when the chunk tuner used materially fewer chunks than `cores` allowed.
 #
 # `cores` is a ceiling, not an instruction: `ctsem_tune_chunks!` times a ladder
@@ -2427,6 +2543,13 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 # fewer threads than `cores` says nothing here rather than blaming the tuner
 # for a limit it never saw -- and each limit-and-count pair is said once per
 # session, so a simulation study looping a hundred fits gets one line.
+#
+# That first exclusion left the worst case silent for a while: a `cores = 4` fit
+# in a one-thread session is not the tuner declining headroom, it is headroom
+# that never existed, and nothing said so. The exclusion is still right -- the
+# tuner is not at fault and naming it would misattribute -- so the case is
+# reported by `.ctBackendResolveThreads()` above instead, before the fit and
+# against `threads`, which is where the fix is.
 #
 # `threads` is the session's thread count and is asked for when not supplied.
 # It is a parameter so the gate can be exercised at a thread count the test
@@ -2670,7 +2793,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # `cores` splits the engine's subject loop. It is requested as a Julia thread
   # count before the session starts (which is the only time that can be set),
   # and capped per fit afterwards, so a session started with more threads is not
-  # forced to use them all.
+  # forced to use them all. A session started with fewer cannot be widened, and
+  # `.ctBackendResolveThreads()` says so rather than running serially in silence.
   requested <- cores
   cores <- suppressWarnings(as.integer(cores)[1L])
   if (is.na(cores)) {
@@ -2683,22 +2807,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     cores <- 1L
   }
   cores <- max(1L, cores)
-  if (cores > 1L && !.ctJuliaSessionRunning()) {
-    existing <- Sys.getenv("JULIA_NUM_THREADS", unset = "")
-    # An existing value is respected unless *this* function set it for an
-    # earlier fit. Without that distinction a `cores=8` fit left the variable
-    # behind, and the next `ctFit(cores=2)` in a restarted session started
-    # eight threads while asking for two -- the subject loop still honoured
-    # `cores`, but the process held cores the user had not asked for. A value
-    # from ctJuliaSetup(threads=) or from the user's own environment is
-    # deliberate and still wins.
-    ours <- nzchar(existing) &&
-      identical(existing, .ct_julia_cache$threads_from_cores)
-    if (!nzchar(existing) || ours) {
-      Sys.setenv(JULIA_NUM_THREADS = as.character(cores))
-      .ct_julia_cache$threads_from_cores <- as.character(cores)
-    }
-  }
+  # Requested as a Julia thread count while that is still possible, and said
+  # out loud when it is not: a session already running at fewer threads than
+  # `cores` caps the subject loop at its own count, and used to do so silently.
+  # Before `.ctJuliaPrepare()` deliberately -- the opt-in restart ends the
+  # process, and nothing prepared here may be alive across that.
+  .ctBackendResolveThreads(cores, report = isTRUE(fit))
   gradient <- .ctJuliaOr(optimcontrol$gradient, "adjoint")
   if (!gradient %in% c("forward", "adjoint")) stop("gradient must be 'forward' or 'adjoint'", call. = FALSE)
   # 'adjoint' selects the Julia engine's reverse-mode gradient. Its cost is

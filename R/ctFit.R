@@ -455,6 +455,16 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' reproducible to the last decimal, because the chunk tuner times candidate
 #' splits and the timings vary; use \code{cores = 1} for a before-and-after
 #' comparison.
+#'
+#' On julia, \code{cores} cannot exceed the Julia session's thread count, which
+#' Julia fixes when the session starts. A fit asked for more than the session
+#' has runs at the count it has and says so;
+#' \code{\link{ctJuliaSetup}(threads = n, force = TRUE)} restarts the session
+#' wider, \code{ctJuliaStatus()$threads} reports what it currently has, and
+#' \code{options(ctsem.julia.restart = TRUE)} has a fit restart it for itself
+#' when it is short. Starting the engine before the first fit -- which any
+#' script that warms it up front does -- otherwise pins every later fit to one
+#' thread.
 #' @param backend Either 'stan' (the default) or 'julia'. The julia backend is a
 #' separate maximum-likelihood engine with the same model definitions and the
 #' same summaries; it takes its own reverse-mode gradient, supports

@@ -24,11 +24,15 @@ its source rather than something selectable.}
 
 \item{julia_bin}{Optional Julia binary directory.}
 
-\item{threads}{Number of Julia threads. The engine splits its subject loop
-across them. Julia fixes its thread count at process start, so this only
-takes effect if no Julia session is running yet -- pass \code{force = TRUE}
-to restart one. \code{NULL} leaves it to Julia's own default (one thread
-unless \code{JULIA_NUM_THREADS} is already set).}
+\item{threads}{Number of Julia threads, fixed for the life of the session.
+The engine splits its subject loop across them, and \code{ctFit}'s
+\code{cores} cannot exceed this count: Julia fixes it at process start, so
+setting it here takes effect only if no Julia session is running yet --
+pass \code{force = TRUE} to restart one. \code{NULL} leaves it to Julia's
+own default (one thread unless \code{JULIA_NUM_THREADS} is already set),
+which is why starting the engine before the first fit and then asking for
+\code{cores = 4} gives four chunks' worth of nothing. A fit that asks for
+more cores than the session has threads says so; see \code{\link{ctFit}}.}
 
 \item{force}{Reconfigure an existing Julia session.}
 

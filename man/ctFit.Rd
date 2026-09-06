@@ -263,7 +263,17 @@ to \code{getOption("mc.cores", 2)}. More cores are generally faster when
 \code{optimize=TRUE}. Note that a julia fit at \code{cores > 1} is not
 reproducible to the last decimal, because the chunk tuner times candidate
 splits and the timings vary; use \code{cores = 1} for a before-and-after
-comparison.}
+comparison.
+
+On julia, \code{cores} cannot exceed the Julia session's thread count, which
+Julia fixes when the session starts. A fit asked for more than the session
+has runs at the count it has and says so;
+\code{\link{ctJuliaSetup}(threads = n, force = TRUE)} restarts the session
+wider, \code{ctJuliaStatus()$threads} reports what it currently has, and
+\code{options(ctsem.julia.restart = TRUE)} has a fit restart it for itself
+when it is short. Starting the engine before the first fit -- which any
+script that warms it up front does -- otherwise pins every later fit to one
+thread.}
 
 \item{inits}{either character string 'optimize, NULL, or vector of (unconstrained)
 parameter start values, as returned by the rstan function \code{rstan::unconstrain_pars}, or the parameter values

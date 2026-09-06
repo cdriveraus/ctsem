@@ -40,9 +40,19 @@ force progress on or off for one fit.
 
 \section{Julia}{
 
-The Julia backend is located through the environment rather than options:
-\code{JULIA_BINDIR} names the binary directory, and
-\code{ctJuliaSetup(project=)} points the session at a different engine
+The Julia backend is mostly located through the environment rather than
+options: \code{JULIA_BINDIR} names the binary directory,
+\code{JULIA_NUM_THREADS} the thread count of the session that starts next,
+and \code{ctJuliaSetup(project=)} points the session at a different engine
 environment. See \code{\link{ctJuliaSetup}}.
+\describe{
+  \item{\code{ctsem.julia.restart}}{Whether a fit asking for more
+    \code{cores} than the running Julia session has threads may restart the
+    session to get them. \code{FALSE} by default: Julia fixes its thread
+    count at process start, so the only way to raise it is to end the
+    process, which discards the engine's compiled model shapes and costs
+    seconds. Left \code{FALSE}, such a fit runs at the threads it has and
+    says so.}
+}
 }
 
