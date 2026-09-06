@@ -279,3 +279,120 @@ test_that("a pool that fails to warm any worker is not left half-started", {
   expect_true(inherits(future::plan(), "sequential"))
   expect_identical(getOption("future.connections.onMisuse"), previous_option)
 })
+
+# `cores` on the julia backend is capped by the Julia session's thread count,
+# and Julia fixes that count at process start. So a script that starts the
+# engine before its first fit -- which any benchmark harness does, to pay the
+# engine load once and outside the timing -- pins every later `cores = n` fit
+# to one subject chunk. That ran serially and said nothing, and it invalidated
+# two whole benchmark passes: the tell was that the gradient counts for
+# `cores = 1` and `cores = 4` came back identical to the digit.
+#
+# The gate is checked without a session first, since `.ctBackendResolveThreads()`
+# takes `threads` for exactly that, and then the whole thing is driven for real:
+# a session started at one thread, asked for two, must either get two or say so.
+test_that("a fit asking for more cores than the session has threads says so", {
+  cache <- ctsem:::.ct_julia_cache
+  original <- cache$threads_reported
+  on.exit(cache$threads_reported <- original, add = TRUE)
+  said <- function(cores, threads, report = TRUE) {
+    seen <- character()
+    withCallingHandlers(
+      ctsem:::.ctBackendResolveThreads(cores, threads = threads,
+        report = report),
+      message = function(m) {
+        seen <<- c(seen, conditionMessage(m)); invokeRestart("muffleMessage")
+      })
+    seen
+  }
+  fired <- function(...) {
+    cache$threads_reported <- NULL
+    any(grepl("^cores = ", said(...)))
+  }
+
+  # The case that cost the benchmark, and the line it now prints. It names both
+  # numbers, why the shortfall cannot be undone in place, and the exact call
+  # that undoes it.
+  cache$threads_reported <- NULL
+  line <- said(4L, 1L)
+  expect_length(line, 1L)
+  expect_equal(line, paste0(
+    "cores = 4 requested, 1 used: Julia's thread count is fixed at session ",
+    "start. ctJuliaSetup(threads = 4, force = TRUE) restarts it with 4.
+"))
+
+  # Nothing to say when the session can give what was asked for, when nothing
+  # was asked for, or when the count could not be established.
+  expect_false(fired(4L, 4L))
+  expect_false(fired(4L, 8L))
+  expect_false(fired(1L, 1L))
+  expect_false(fired(4L, NA_integer_))
+  # `report = FALSE` is `fit = FALSE`: a call that only builds a specification
+  # has no cores to fall short of, so it takes the thread count it can and says
+  # nothing about the one it cannot.
+  expect_false(fired(4L, 1L, report = FALSE))
+  # Two is the default `cores` and one is Julia's default thread count, so this
+  # is the pairing a user meets first. Halving the available parallelism is
+  # worth a line as much as quartering it is.
+  expect_true(fired(2L, 1L))
+
+  # Said once per pair, so a simulation study looping a hundred fits gets one
+  # line -- but a fit that asks for a different number is a different thing to
+  # say and is said.
+  expect_true(fired(8L, 1L))
+  expect_false(any(grepl("^cores = ", said(8L, 1L))))
+  expect_true(any(grepl("^cores = ", said(8L, 2L))))
+})
+
+test_that("a one-thread session asked for more cores either gets more or says so", {
+  skip_without_julia()
+  cache <- ctsem:::.ct_julia_cache
+  previous_env <- Sys.getenv("JULIA_NUM_THREADS", unset = NA)
+  previous_from_cores <- cache$threads_from_cores
+  previous_reported <- cache$threads_reported
+  nthreads <- function() as.integer(
+    JuliaConnectoR::juliaEval("Threads.nthreads()"))
+  on.exit({
+    cache$threads_from_cores <- previous_from_cores
+    cache$threads_reported <- previous_reported
+    if (is.na(previous_env)) Sys.unsetenv("JULIA_NUM_THREADS")
+    else Sys.setenv(JULIA_NUM_THREADS = previous_env)
+  }, add = TRUE)
+
+  set.seed(11)
+  dat <- do.call(rbind, lapply(1:8, function(i)
+    data.frame(id = i, time = 0:4, Y1 = cumsum(stats::rnorm(5)) * .5)))
+  model <- suppressWarnings(suppressMessages(ctModel(type = "ct",
+    manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1))))
+  # Every message, not the first one: `expect_message()` looks at one condition
+  # and a fit raises several, so the line under test would be missed by it.
+  messages <- function(expr) {
+    seen <- character()
+    withCallingHandlers(suppressWarnings(force(expr)),
+      message = function(m) {
+        seen <<- c(seen, conditionMessage(m)); invokeRestart("muffleMessage")
+      })
+    seen
+  }
+  onefit <- function() ctFit(dat, model, backend = "julia", cores = 2,
+    optimcontrol = list(estonly = TRUE))
+
+  # The harness's own opening move: start the engine, then fit.
+  suppressMessages(suppressWarnings(ctJuliaSetup(threads = 1L, force = TRUE)))
+  expect_equal(nthreads(), 1L)
+  cache$threads_reported <- NULL
+  seen <- messages(onefit())
+  expect_true(any(grepl("cores = 2 requested, 1 used", seen)),
+    label = paste(seen, collapse = " | "))
+  # And it really did run on one thread; the message is not decoration.
+  expect_equal(nthreads(), 1L)
+
+  # Opted in, the same call gets the threads instead of a line about them.
+  cache$threads_reported <- NULL
+  seen <- withr::with_options(list(ctsem.julia.restart = TRUE),
+    messages(onefit()))
+  expect_gte(nthreads(), 2L)
+  expect_true(any(grepl("Restarting the Julia session at 2 threads", seen)),
+    label = paste(seen, collapse = " | "))
+  expect_false(any(grepl("cores = 2 requested", seen)))
+})
