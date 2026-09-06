@@ -3347,6 +3347,19 @@ print.ctJuliaFit <- function(x, ...) {
   cat("ctsem Julia fit\n")
   cat("  log likelihood:", format(x$estimate$loglik), "\n")
   cat("  converged:", x$estimate$converged, " iterations:", x$estimate$iterations, "\n")
+  # A sampled fit's headline is not the optimiser's. That optimisation ran only
+  # to place the sampler and build its metric, so a fit whose chains never
+  # agreed prints `converged: TRUE` on the line above and is still worthless.
+  if (!is.null(x$sample)) {
+    cat("  sampled: ", x$sample$chains, " chains x ", x$sample$draws,
+      " draws; chains converged: ",
+      if (is.null(x$sample$converged) || is.na(x$sample$converged)) "unknown" else
+        as.character(isTRUE(x$sample$converged)), "\n", sep = "")
+    if (length(x$sample$diagnosis)) {
+      cat("  ", paste(utils::head(x$sample$diagnosis, 3), collapse = "; "),
+        ". See fit$sample.\n", sep = "")
+    }
+  }
   # One line, only when there is something to say. A reported interval much
   # wider than the curvature at the estimate supports is not visible anywhere
   # in the numbers themselves -- it was found once only by fitting the same

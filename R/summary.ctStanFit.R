@@ -482,6 +482,10 @@ summaryCtStanFitLabel <- function(x){
     nsamples = 'Number of samples',
     ndraws = 'Uncertainty draws',
     backendNote = 'Note',
+    # Not 'Note'. It is the first thing printed and it is the one line that says
+    # whether the tables below it are a posterior at all, so it is labelled for
+    # what it is rather than filed with the footnotes.
+    sampleNote = 'Sampling',
     uncertaintyNote = 'Note',
     parmatNote = 'Note')
   if(x %in% names(labels)) return(unname(labels[x]))

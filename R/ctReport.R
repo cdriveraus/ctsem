@@ -377,6 +377,19 @@
     }
     if (!is.null(e$linesearch)) add("  line search: ", e$linesearch)
     add("")
+    # On a sampled fit the block above describes the optimisation that placed
+    # the sampler, not the sample. Without this one the report says "converged:
+    # TRUE" about a run whose chains never met.
+    if (!is.null(fit$sample)) {
+      add("Sampler")
+      add("  ", fit$sample$chains, " chains x ", fit$sample$draws,
+        " draws (", fit$sample$warmup, " warmup discarded)")
+      add("  chains converged: ",
+        if (is.null(fit$sample$converged) || is.na(fit$sample$converged))
+          "unknown" else isTRUE(fit$sample$converged))
+      for (problem in fit$sample$diagnosis) add("  ", problem)
+      add("")
+    }
     idf <- fit$identifiability
     if (!is.null(idf)) {
       add("Information matrix")

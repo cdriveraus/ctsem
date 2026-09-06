@@ -676,11 +676,55 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   list(values = values, parnumber = as.integer(cells$parnumber))
 }
 
-# Mean / sd / quantiles of a sample matrix, in Stan's summary column order. Uses
-# base R rather than rstan's `monitor()`: with one point-estimate "sample" there
-# is nothing to monitor, and with a normal-approximation posterior the
-# convergence diagnostics `monitor()` adds would be meaningless anyway.
-.ctBackendSampleSummary <- function(values, digits = 3, z = FALSE) {
+# Convergence diagnostics for a matrix of draws, or NULL when there are none to
+# have.
+#
+# `rstan::monitor()` rather than a second implementation, because that is the
+# function `summary.ctStanFit()` already reports the stan backend's `n_eff` and
+# `Rhat` with (`rawpopcorr` and `tipreds` there call it directly, and
+# `summary(stanfit)` supplies the same two names for the rest). Sharing it is
+# what makes a column called `Rhat` mean the same quantity on both backends
+# rather than two things spelled alike: `Rhat` is the rank-normalised split
+# R-hat of Vehtari et al. (2021) and `n_eff` the split-chain effective sample
+# size, whichever backend produced the draws.
+#
+# `values` is draws x quantities with the rows chain-major -- chain 1's draws,
+# then chain 2's -- which is the layout `estimate$rawposterior` carries and
+# everything derived from it inherits. Getting that wrong would not error; it
+# would report R-hat over an interleaved mixture, which is always reassuring.
+#
+# Only a genuine sample gets these. An optimised fit's `rawposterior` holds
+# draws from a covariance fitted around the mode, and there is no such thing as
+# a between-chain variance for those -- which is why `summary.ctStanFit()` drops
+# the same two columns under `optimize`.
+#' @keywords internal
+.ctBackendDrawDiagnostics <- function(values, chains) {
+  chains <- suppressWarnings(as.integer(chains)[1L])
+  if (is.null(values) || !length(dim(values))) return(NULL)
+  if (is.na(chains) || chains < 1L) return(NULL)
+  total <- nrow(values)
+  if (total < 1L || total %% chains != 0L) return(NULL)
+  perchain <- total %/% chains
+  # rstan's split diagnostics halve each chain, so four draws is the least that
+  # produces a number rather than an NA.
+  if (perchain < 4L) return(NULL)
+  quantities <- ncol(values)
+  if (is.null(quantities) || quantities < 1L) return(NULL)
+  sims <- array(as.numeric(values), dim = c(perchain, chains, quantities))
+  dimnames(sims) <- list(NULL, NULL, colnames(values))
+  monitored <- try(suppressWarnings(
+    rstan::monitor(sims, warmup = 0, print = FALSE)), silent = TRUE)
+  if (inherits(monitored, "try-error")) return(NULL)
+  data.frame(n_eff = as.numeric(monitored[, "n_eff"]),
+    Rhat = as.numeric(monitored[, "Rhat"]),
+    row.names = colnames(values), check.names = FALSE)
+}
+
+# Mean / sd / quantiles of a sample matrix, in Stan's summary column order, with
+# `n_eff` and `Rhat` in Stan's place when the draws are a Hamiltonian sample and
+# `chains` says how they are grouped. Base R for the moments: with one
+# point-estimate "sample" there is nothing to monitor.
+.ctBackendSampleSummary <- function(values, digits = 3, z = FALSE, chains = NULL) {
   if (nrow(values) < 2L) {
     out <- data.frame(mean = as.numeric(values[1L, ]), row.names = colnames(values))
     return(round(out, digits))
@@ -691,6 +735,14 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     sd = apply(values, 2L, stats::sd, na.rm = TRUE),
     quantiles, check.names = FALSE, row.names = colnames(values))
   colnames(out) <- c("mean", "sd", "2.5%", "50%", "97.5%")
+  # Before `z`, so the column order is Stan's: the moments, the interval, the
+  # diagnostics, then the derived z.
+  diagnostics <- if (is.null(chains)) NULL else
+    .ctBackendDrawDiagnostics(values, chains)
+  if (!is.null(diagnostics)) {
+    out$n_eff <- diagnostics$n_eff
+    out$Rhat <- diagnostics$Rhat
+  }
   if (isTRUE(z)) out$z <- out$mean / out$sd
   round(out, digits)
 }
@@ -1168,6 +1220,91 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   .ctBackendConstrain(fit, samples)
 }
 
+# How many chains a summary's draws came from, or NULL if they are not a sample.
+#
+# Three things have to hold before `n_eff` and `Rhat` mean anything: the fit
+# sampled, it recorded how the draws are grouped, and the draws being summarised
+# are still those draws. The third is not decoration -- `ctParticleCorrect()`
+# replaces `estimate$rawposterior` with draws that have no chain structure, and
+# a between-chain variance computed over those would be a number with nothing
+# behind it. (`ctOptimUncertainty()` would do the same, and refuses a sampled
+# fit outright rather than reach here.)
+#' @keywords internal
+.ctBackendSummaryChains <- function(fit, samples) {
+  diagnostics <- fit$sample
+  if (is.null(diagnostics)) return(NULL)
+  # `ctParticleCorrect()` reweights the draws against the particle-filter
+  # likelihood, which keeps the row count and destroys the chain ordering. The
+  # count matching is therefore not enough on its own.
+  if (!is.null(fit$particle_correction)) return(NULL)
+  chains <- suppressWarnings(as.integer(diagnostics$chains)[1L])
+  draws <- suppressWarnings(as.integer(diagnostics$draws)[1L])
+  if (is.na(chains) || is.na(draws) || chains < 1L || draws < 1L) return(NULL)
+  if (!identical(nrow(samples), chains * draws)) return(NULL)
+  chains
+}
+
+# The convergence verdict as one line, from the tables the reader is about to
+# see rather than from a second set of numbers.
+#
+# Deliberately the summary's own `Rhat` and `n_eff` columns and not
+# `fit$sample$rhat`: the latter is the engine's split R-hat over the *raw*
+# coordinates, this is the rank-normalised one over the transformed quantities
+# actually tabulated, and a headline quoting a number that appears nowhere below
+# it is worse than no headline.
+#' @keywords internal
+.ctBackendSampleNote <- function(fit, sections, chains) {
+  worst <- NA_real_; worstname <- NA_character_
+  fewest <- NA_real_; fewestname <- NA_character_
+  for (section in sections) {
+    if (!is.data.frame(section)) next
+    if (!all(c("Rhat", "n_eff") %in% names(section))) next
+    rhat <- suppressWarnings(as.numeric(section$Rhat))
+    ess <- suppressWarnings(as.numeric(section$n_eff))
+    labels <- rownames(section)
+    if (any(is.finite(rhat))) {
+      index <- which.max(replace(rhat, !is.finite(rhat), -Inf))
+      if (is.na(worst) || rhat[index] > worst) {
+        worst <- rhat[index]; worstname <- labels[index]
+      }
+    }
+    if (any(is.finite(ess))) {
+      index <- which.min(replace(ess, !is.finite(ess), Inf))
+      if (is.na(fewest) || ess[index] < fewest) {
+        fewest <- ess[index]; fewestname <- labels[index]
+      }
+    }
+  }
+  draws <- nrow(fit$estimate$rawposterior) %/% chains
+  note <- paste0(chains, " chain", if (chains > 1L) "s" else "", " x ", draws,
+    " draws.")
+  if (is.finite(worst)) {
+    note <- paste0(note, " Worst R-hat ", signif(worst, 4), " (", worstname, ")")
+    note <- paste0(note, if (is.finite(fewest))
+      paste0(", smallest n_eff ", round(fewest), " (", fewestname, ").") else ".")
+  }
+  divergent <- suppressWarnings(as.integer(fit$sample$divergent)[1L])
+  if (!is.na(divergent) && divergent > 0L) {
+    note <- paste0(note, " ", divergent, " divergent transition",
+      if (divergent > 1L) "s" else "", ".")
+  }
+  # The thresholds are the ones `.ctSampleWarn()` warns at, so the summary and
+  # the fit-time warning cannot disagree about whether a run failed.
+  bad <- (is.finite(worst) && worst > 1.01) ||
+    (!is.na(divergent) && divergent > 0L)
+  if (bad) {
+    # Not "these are not posterior summaries": a run can mix perfectly in the
+    # population parameters and not at all in the random-effects scales, and it
+    # commonly does. The reader is sent to the column rather than told to
+    # discard the table.
+    note <- paste0(note, " The chains have not converged, so any estimate with ",
+      "an R-hat above 1.01 is not a posterior summary. See fit$sample.")
+  } else if (is.finite(fewest) && fewest < 100) {
+    note <- paste0(note, " Too few effective draws for reliable intervals.")
+  }
+  note
+}
+
 .ctBackendSummary <- function(object, timeinterval = 1, digits = 3, parmatrices = TRUE,
   residualcov = TRUE, ...) {
   has_posterior <- !is.null(object$estimate$rawposterior)
@@ -1179,6 +1316,13 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   cells <- constrained$cells
   layout <- constrained$layout
   flat <- constrained$flat
+
+  # Non-NULL only for a Hamiltonian sample, and only while the draws still are
+  # the ones the sampler produced: a later `ctOptimUncertainty()` or
+  # `ctParticleCorrect()` replaces `rawposterior` with draws that have no chains,
+  # and `n_eff` and `Rhat` computed over those would be arithmetic rather than a
+  # diagnostic.
+  chains <- .ctBackendSummaryChains(object, samples)
 
   if (isTRUE(residualcov)) {
     residCovStd <- .ctBackendResidCovStd(object, digits = digits)
@@ -1205,19 +1349,19 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     for (lv in constrained$randomeffectlevels) {
       if (!is.null(lv$rawpopcorr)) {
         out[[paste0("rawpopcorr.", lv$level)]] <-
-          .ctBackendSampleSummary(lv$rawpopcorr, digits = digits)
+          .ctBackendSampleSummary(lv$rawpopcorr, digits = digits, chains = chains)
       }
     }
   } else if (!is.null(constrained$rawpopcorr)) {
     out$rawpopcorr <- .ctBackendSampleSummary(constrained$rawpopcorr,
-      digits = digits, z = nrow(samples) > 1L)
+      digits = digits, z = nrow(samples) > 1L, chains = chains)
     out$rawpopcorrNote <-
       "These reflect correlations between the raw / unconstrained parameters."
   }
 
   if (!is.null(constrained$tipreds)) {
     out$tipreds <- .ctBackendSampleSummary(constrained$tipreds, digits = digits,
-      z = nrow(samples) > 1L)
+      z = nrow(samples) > 1L, chains = chains)
     out$tipredsNote <- "Approximate (linearised) effects on the transformed parameters."
   }
 
@@ -1274,16 +1418,18 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     for (lv in constrained$randomeffectlevels) {
       if (!is.null(lv$popsd)) {
         out[[paste0("popsd.", lv$level)]] <-
-          .ctBackendSampleSummary(lv$popsd, digits = digits)
+          .ctBackendSampleSummary(lv$popsd, digits = digits, chains = chains)
       }
     }
   } else if (!is.null(constrained$popsd)) {
-    out$popsd <- .ctBackendSampleSummary(constrained$popsd, digits = digits)
+    out$popsd <- .ctBackendSampleSummary(constrained$popsd, digits = digits,
+      chains = chains)
   }
 
   fixed <- cells[!cells$randomeffect, , drop = FALSE]
   out$popmeans <- .ctBackendSampleSummary(
-    .ctBackendPopCellsFromFlat(flat, fixed, layout), digits = digits)
+    .ctBackendPopCellsFromFlat(flat, fixed, layout), digits = digits,
+    chains = chains)
   out$popNote <- paste0("Population values on the transformed scale. ",
     "Covariance parameters appear in sd / unconstrained correlation form; ",
     "see System Matrices (or ctSummaryMatrices()) for cor/cov.")
@@ -1310,12 +1456,26 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     # method would describe draws the fit no longer carries.
     paste0("Julia backend; intervals from draws corrected by ctParticleCorrect() ",
       "against the particle-filter likelihood, pushed through the transforms.")
+  } else if (!is.null(chains)) {
+    # A sampled fit ran no uncertainty pass, and saying it did was not a
+    # cosmetic slip: `uncertainty$settings$method` is NULL on this route, so the
+    # note read "intervals from ctOptimUncertainty(uncertainty='')" -- a normal
+    # approximation named on the one fit that does not use one.
+    paste0("Julia backend; intervals from Hamiltonian posterior draws ",
+      "pushed through the transforms.")
   } else if (has_posterior) {
     paste0("Julia backend; intervals from ctOptimUncertainty(uncertainty='",
       object$uncertainty$settings$method, "') draws pushed through the transforms.")
   } else {
     paste0("Julia backend; point estimates only. ",
       "Run ctOptimUncertainty() for standard errors and intervals.")
+  }
+
+  # The convergence verdict, first, so that a reader who never opens a table
+  # still meets it. The case this exists for returned in five minutes with two
+  # chains 384,000 log units apart and a summary that read like any other.
+  if (!is.null(chains)) {
+    out <- c(list(sampleNote = .ctBackendSampleNote(object, out, chains)), out)
   }
 
   # Matrices become data frames exactly as summary.ctStanFit does, so the shared
