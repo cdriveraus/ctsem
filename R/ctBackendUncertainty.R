@@ -207,15 +207,18 @@
       verbose = verbose > 0)
     samples <- is_res$theta
     uncertaintyfit$proposal_cov <- uncertaintyfit$cov
-    if (!is.null(is_res$covariance) && all(is.finite(is_res$covariance))) {
+    weighted <- !is.null(is_res$covariance) && all(is.finite(is_res$covariance))
+    if (weighted) {
       uncertaintyfit$cov <- ctOptimSafeCov(is_res$covariance)
     } else if (nrow(samples) > 1) {
       uncertaintyfit$cov <- ctOptimSafeCov(stats::cov(samples))
     }
     uncertaintyfit$imis <- is_res
     uncertaintyfit$details$importance_sampling <- list(ess = is_res$ess,
-      df_used = is_res$df_used,
-      covariance = "weighted importance-sampling covariance")
+      df_used = is_res$df_used, weighted = weighted,
+      covariance = if (weighted) "weighted importance-sampling covariance" else
+        "unweighted covariance of the resampled draws")
+    .ctOptimImisReport(is_res, control$isESS, weighted)
   } else {
     samples <- ctOptimNormalDraws(est, uncertaintyfit$cov, finishsamples)
   }

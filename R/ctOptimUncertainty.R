@@ -43,6 +43,44 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
   return(list(hess=hess,scores=scores))
 }
 
+# What the importance sampler actually delivered, said out loud.
+#
+# `ctLaplaceCorrect()` and `ctParticleCorrect()` already warn when their
+# importance sampling ends short of its effective-sample-size target.
+# `uncertainty='is'` did not, and it is the call that most needs it, because
+# the condition that defeats it is ordinary rather than exotic: a likelihood
+# that is flat in some raw direction -- an individually varying parameter with
+# no individual differences behind it, and the raw correlation that goes with
+# it -- makes the target improper in that direction. The weights then have
+# infinite variance, so the effective sample size does not converge to
+# anything, and the run burns every one of `imisMaxIter` iterations to arrive
+# at an effective sample of a few dozen. Measured on a 400-subject, 8-wave
+# linear fit whose `rawcor` coordinate carries no curvature: 51,000
+# log-probability evaluations, an ESS oscillating between 1.1 and 64.8 against
+# a target of 100, and standard errors of 873 and 1214 on the two population
+# standard deviations the Hessian puts at 1.5 and 0.8.
+#
+# The second half matters as much. When the weighted covariance comes back
+# non-finite -- which it does when proposal draws land where the model cannot
+# be evaluated -- both backends fall back to the unweighted covariance of the
+# resampled draws. That is a different estimator, and until now nothing on the
+# fit or in the session said which of the two had produced the intervals.
+.ctOptimImisReport <- function(is_res, target, weighted){
+  ess <- if(is.null(is_res$ess)) NA_real_ else as.numeric(is_res$ess)[1L]
+  if(!isTRUE(weighted)) warning(
+    'The weighted importance-sampling covariance was not finite, so the ',
+    'unweighted covariance of the resampled draws was used instead.',
+    call.=FALSE)
+  if(is.finite(ess) && is.finite(target) && ess < target / 2) warning(
+    'Importance sampling reached an effective sample size of ', round(ess, 1),
+    ' against a target of ', target, '. The intervals rest on that many ',
+    'points, not on the number of draws. A direction the data does not ',
+    'identify cannot be importance sampled at all -- check the ',
+    'identifiability report, and consider uncertainty = "hessian".',
+    call.=FALSE)
+  invisible(ess)
+}
+
 ctOptimSafeCov <- function(cov, ridge=1e-8){
   cov <- as.matrix(cov)
   cov <- (cov + t(cov)) / 2
@@ -1672,14 +1710,18 @@ ctOptimUncertainty <- function(fit,
         uncertaintyfit$details$covariance
       uncertaintyfit$details$covariance <- NULL
     }
-    if(!is.null(is_res$covariance) && all(is.finite(is_res$covariance))) {
+    weighted <- !is.null(is_res$covariance) && all(is.finite(is_res$covariance))
+    if(weighted) {
       uncertaintyfit$cov <- ctOptimSafeCov(is_res$covariance)
     } else if(nrow(samples) > 1) {
       uncertaintyfit$cov <- ctOptimSafeCov(stats::cov(samples))
     }
     uncertaintyfit$imis <- is_res
     uncertaintyfit$details$importance_sampling <- list(ess=is_res$ess,
-      df_used=is_res$df_used, covariance='weighted importance-sampling covariance')
+      df_used=is_res$df_used, weighted=weighted,
+      covariance=if(weighted) 'weighted importance-sampling covariance' else
+        'unweighted covariance of the resampled draws')
+    .ctOptimImisReport(is_res, control$isESS, weighted)
   } else {
     samples <- ctOptimNormalDraws(fit$stanfit$rawest, uncertaintyfit$cov,
       finishsamples)
