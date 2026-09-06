@@ -1061,6 +1061,24 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     c("matrix", "row", "col"), drop = FALSE]
 }
 
+# Which raw parameters the engine flagged as saturated, by name.
+#
+# The engine reports indices, and never an empty vector -- a zero-length
+# vector deadlocks the JuliaConnectoR bridge, so "nothing saturated" arrives
+# as the single index 0. "Raw parameter 10" is not something a user can act
+# on; "rawcor_mm2__mm1" is, and it is usually the whole diagnosis.
+.ctJuliaSaturatedNames <- function(result, model_spec, npar) {
+  index <- suppressWarnings(as.integer(result$saturated_parameters))
+  index <- index[!is.na(index) & index >= 1L & index <= npar]
+  if (!length(index)) return(character())
+  names <- try(.ctBackendRawParameterNames(list(model_spec = model_spec), npar),
+    silent = TRUE)
+  if (inherits(names, "try-error") || length(names) != npar) {
+    return(paste0("raw[", index, "]"))
+  }
+  as.character(names[index])
+}
+
 # Which random-effect correlations, if any, ended the fit on their cap.
 #
 # Reported as a data frame naming the parameter pair and the level, because
@@ -3003,12 +3021,26 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         as.numeric(result$gradient_norm),
       gradient_tolerance = if (is.null(result$scaled_tolerance)) NA_real_ else
         as.numeric(result$scaled_tolerance),
-      # A parameter that reached the flat region of its transform is the other
-      # reason a fit is not converged, and it is invisible in the gradient --
-      # a saturated transform reports a gradient of zero, which passes every
-      # tolerance. Without this the warning below described such a fit by its
-      # gradient alone and read as though it had passed.
+      # A parameter that reached the flat region of its transform, and which.
+      # Invisible in the gradient -- a saturated transform reports a gradient
+      # of zero, which passes every tolerance -- so without this the warning
+      # below described such a fit by its gradient alone and read as though it
+      # had passed.
+      #
+      # `saturated` is a statement about identification, not about
+      # convergence: the usual cause is a population standard deviation with
+      # no individual differences behind it, which is a finding. `overshot` is
+      # the half of it that *is* a convergence failure -- the optimizer
+      # overstepped and the point is not a maximum -- and it is what
+      # `converged` is keyed on. See `_ctsem_overshot` in the engine.
       saturated = isTRUE(result$saturated),
+      # 0 from the engine means "none"; never an empty vector, which deadlocks
+      # the bridge. Named where names are available, because "raw parameter 10"
+      # is not something a user can act on and "rawcor_mm2__mm1" is.
+      saturated_parameters = .ctJuliaSaturatedNames(result, model_spec, npar),
+      overshot = isTRUE(result$overshot),
+      overshoot_gain = if (is.null(result$overshoot_gain)) NA_real_ else
+        as.numeric(result$overshoot_gain),
       # Whether the first pass with priors ran, and how long it was allowed.
       carefulfit = warmiter >= 1, carefulfit_iterations = as.integer(warmiter),
       # Which line search produced the answer. "hagerzhang+backtracking" means
@@ -3049,20 +3081,18 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     warning("The optimizer made no progress from its starting values, and the ",
       "gradient there is not zero. Treat this fit as failed: check the starting ",
       "values, and see fit$estimate$stalled.", call. = FALSE)
-  } else if (isTRUE(result$saturated)) {
-    # Reported separately because the gradient says nothing useful here. Past
-    # |raw| ~ 20 every ctsem transform is flat to machine precision, so the
-    # gradient underflows to zero and the fit looks converged by any tolerance
-    # -- one such fit stopped with a largest gradient of 1.7e-06 against a
-    # tolerance of 1.1e-03. What went wrong is that the parameter is pinned by
-    # the transform's floating-point limit rather than by the data.
-    warning("A parameter reached ", signif(max(abs(as.numeric(
-      result$minimizer))), 4), " on the unconstrained scale, where its ",
-      "transform is flat to machine precision. The gradient there is ",
-      "uninformative, so this is reported as not converged. Usually it means ",
-      "that parameter is not identified by the data -- a variance going to ",
-      "zero is the common case. See fit$estimate$saturated and $raw.",
-      call. = FALSE)
+  } else if (isTRUE(result$overshot)) {
+    # Reported separately because the gradient says nothing useful here: the
+    # coordinate's transform is flat, so the gradient underflows to zero and
+    # the point passes every tolerance while not being a maximum at all. The
+    # engine establishes that by pulling the coordinate back and finding the
+    # objective improves -- `overshoot_gain` is by how much.
+    warning("The optimizer overstepped into a region where the transform of ",
+      paste(out$estimate$saturated_parameters, collapse = ", "),
+      " is flat to machine precision, and the objective improves by ",
+      signif(as.numeric(result$overshoot_gain), 3), " when that parameter is ",
+      "pulled back, so this is not a maximum. Treat this fit as failed and ",
+      "check the starting values. See fit$estimate$overshot.", call. = FALSE)
   } else if (!isTRUE(result$converged)) {
     warning("The optimizer stopped without meeting its convergence criterion: ",
       "largest gradient ", signif(as.numeric(result$gradient_norm), 3),
@@ -3183,10 +3213,18 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # whether the answer is sensible -- that is a judgement about the model and
   # the data -- but a statement of which directions the data does not determine,
   # and therefore which reported intervals do not mean what they appear to.
+  rawnames <- .ctBackendRawParameterNames(out, length(out$estimate$raw))
   out$identifiability <- .ctBackendIdentifiability(out$uncertainty$hessian,
-    .ctBackendRawParameterNames(out, length(out$estimate$raw)))
+    rawnames)
+  # `$uncertainty$intervalcheck` is attached by `.ctBackendUncertainty()`, so
+  # it describes whichever method ran; it is only warned about here. A separate
+  # question from identifiability: a direction can be flat enough to ruin every
+  # interval that touches it without being flat enough to be called
+  # unidentified, and that case reaches the user as a plausible fit with
+  # suspiciously wide intervals.
   out$collapsedScales <- .ctBackendCollapsedScales(out)
-  .ctBackendIdentifyWarn(out$identifiability, out$collapsedScales)
+  .ctBackendIdentifyWarn(out$identifiability, out$collapsedScales,
+    out$uncertainty$intervalcheck)
   out
 }
 
@@ -3195,6 +3233,16 @@ print.ctJuliaFit <- function(x, ...) {
   cat("ctsem Julia fit\n")
   cat("  log likelihood:", format(x$estimate$loglik), "\n")
   cat("  converged:", x$estimate$converged, " iterations:", x$estimate$iterations, "\n")
+  # One line, only when there is something to say. A reported interval much
+  # wider than the curvature at the estimate supports is not visible anywhere
+  # in the numbers themselves -- it was found once only by fitting the same
+  # data twice -- so it is said here, where a single fit is looked at.
+  ivc <- x$uncertainty$intervalcheck
+  if (!is.null(ivc) && isTRUE(ivc$nflagged > 0L)) {
+    cat("  ", ivc$nflagged, " interval(s) far wider than the curvature supports: ",
+      paste(utils::head(ivc$parameters, 4), collapse = ", "),
+      ". See fit$uncertainty$intervalcheck.\n", sep = "")
+  }
   invisible(x)
 }
 

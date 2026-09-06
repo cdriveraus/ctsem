@@ -45,8 +45,14 @@ test_that("Hessian covariance reports numerical repairs", {
       context='test Hessian'),
     'required numerical repair')
   diagnostics <- attr(cov, 'ctOptimCovFromHessian')
-  expect_true(diagnostics$infoRidgeApplied)
+  expect_true(diagnostics$usedNullProjection)
+  expect_equal(diagnostics$nullDirections, 1L)
+  expect_equal(diagnostics$nullParameters, 2L)
   expect_equal(diagnostics$ridge, 1e-6)
+  # The second coordinate has no curvature, so it gets no spread -- not
+  # `1 / ridge`, which is a property of the ridge and not of the data. The
+  # first is untouched by the repair.
+  expect_equal(unname(diag(cov)), c(1, 0))
 })
 
 test_that("Hessian covariance tries raw inversion before repair", {
@@ -56,19 +62,28 @@ test_that("Hessian covariance tries raw inversion before repair", {
   expect_equal(diagnostics$method, 'solve')
   expect_true(diagnostics$rawSolveSucceeded)
   expect_true(diagnostics$rawCholSucceeded)
-  expect_false(diagnostics$infoRidgeApplied)
+  expect_false(diagnostics$usedNullProjection)
   expect_false(diagnostics$usedGinv)
   
+  # An information matrix with a direction of negative curvature is not
+  # inverted either. `solve()` returns a finite answer for it and only the
+  # subsequent Cholesky notices, which is one rounding step away from not
+  # noticing -- so the eigenvalues decide, before anything is inverted. The
+  # answer is the same one nearPD reached by a longer route (unit variance on
+  # the well-curved coordinate, none on the other); what is new is that the
+  # dropped direction is named rather than smoothed away.
   hess <- diag(c(-1, 1))
   expect_warning(
     cov <- ctsem:::ctOptimCovFromHessian(hess, context='indefinite Hessian'),
-    'nearPD')
+    'no curvature')
   diagnostics <- attr(cov, 'ctOptimCovFromHessian')
-  expect_equal(diagnostics$method, 'nearPD_cov')
-  expect_true(diagnostics$rawSolveSucceeded)
+  expect_equal(diagnostics$method, 'nullprojection')
+  expect_false(diagnostics$rawSolveSucceeded)
   expect_false(diagnostics$rawCholSucceeded)
-  expect_true(diagnostics$usedNearPD)
-  expect_false(diagnostics$infoRidgeApplied)
+  expect_false(diagnostics$usedNearPD)
+  expect_true(diagnostics$usedNullProjection)
+  expect_equal(diagnostics$nullParameters, 2L)
+  expect_equal(unname(diag(cov)), c(1, 0))
 })
 
 test_that("Hessian processing reports one-sided and weak curvature parameters", {
@@ -365,4 +380,100 @@ test_that("ctFitAddSamples is deprecated and its draws have not moved", {
     'deprecated')
   expect_warning(suppressMessages(ctAddSamples(fit, nsamples=2, cores=1)),
     'deprecated')
+})
+
+# --- a flat direction must not manufacture a standard error ------------------
+#
+# The defect these two cover, in its measured form. A benchmark fit reached the
+# same optimum as its twin to eight decimal places -- same data, same starting
+# values, same log likelihood -- and reported a drift interval a hundred times
+# wider, with a point estimate that had moved with it. Its information matrix
+# had three eigenvalues at 1e-16 against a largest of 8.8e5: a population SD
+# with no individual differences behind it, and the correlation that goes with
+# it.
+#
+# Flooring those eigenvalues at `ridge` and inverting put 1/ridge = 1e8 along
+# each of them. The orientation of a null eigenvector is set by rounding error,
+# because the block it spans is numerically zero, so it carries an arbitrary
+# small component of the identified parameters and 1e8 multiplies that
+# component. That is the leak, and it is not reproducible: the same Hessian
+# perturbed by 1e-12 of its own scale gave standard errors of 0.019, 0.24 and
+# 0.087 for the same well-determined parameter.
+
+.leaky_information <- function(leak = 1e-3, curvature = c(1e4, 1e3)) {
+  # Three parameters. The third has almost no curvature of its own, and the
+  # direction it dominates carries a `leak` component of the first, which is
+  # well determined. Built from its own eigendecomposition so the null
+  # direction is exact rather than merely small.
+  v3 <- c(leak, 0, 1); v3 <- v3 / sqrt(sum(v3^2))
+  v1 <- c(1, 0, -leak); v1 <- v1 / sqrt(sum(v1^2))
+  v2 <- c(0, 1, 0)
+  V <- cbind(v1, v2, v3)
+  V %*% diag(c(curvature, 0)) %*% t(V)
+}
+
+test_that("a direction with no curvature is projected out, not floored", {
+  info <- .leaky_information()
+
+  # What the old repair did, reconstructed here so the contrast is in the test
+  # rather than only in the commit message: eigenvalues floored at the ridge,
+  # then inverted.
+  floored <- solve(ctsem:::ctOptimSafeCov(info, ridge = 1e-8))
+  expect_gt(sqrt(diag(floored))[1], 5)      # measured 10, from 1e-3 * 1e4
+
+  cov <- suppressWarnings(suppressMessages(
+    ctsem:::ctOptimCovFromHessian(-info, warn = FALSE)))
+  diagnostics <- attr(cov, 'ctOptimCovFromHessian')
+  expect_equal(diagnostics$method, 'nullprojection')
+  expect_equal(diagnostics$nullDirections, 1L)
+  expect_equal(diagnostics$nullParameters, 3L)
+
+  # The identified parameter keeps the width its own curvature supports, and
+  # the flat one gets none rather than a fabricated 1e4.
+  expect_equal(sqrt(diag(cov))[1], 1 / sqrt(1e4), tolerance = 1e-6)
+  expect_lt(sqrt(diag(cov))[3], 1e-3)
+
+  # And it is stable. Rounding-scale noise in the information matrix used to
+  # move the first parameter's standard error by an order of magnitude, because
+  # the floored eigenvalue's 1e8 multiplied whatever component of it the
+  # rotated null vector happened to pick up: measured on the real Hessian this
+  # came from, 0.019 became 0.24 and then 0.087 under perturbations of 1e-12 of
+  # its scale. The perturbation here is 1e-14 -- two orders below the tolerance
+  # that decides which directions are dropped, so the classification is not
+  # what is being tested; the arithmetic after it is.
+  set.seed(11)
+  scale <- max(abs(info))
+  perturbed <- replicate(5, {
+    E <- matrix(stats::rnorm(9), 3, 3); E <- (E + t(E)) / 2
+    cv <- suppressWarnings(suppressMessages(
+      ctsem:::ctOptimCovFromHessian(-(info + 1e-14 * scale * E), warn = FALSE)))
+    sqrt(diag(cv))[1]
+  })
+  expect_equal(max(perturbed) / min(perturbed), 1, tolerance = 1e-5)
+})
+
+test_that("an interval wider than the curvature supports is detected and named", {
+  info <- .leaky_information()
+  parnames <- c('drift', 'diffusion', 'popsd')
+
+  # The reported width under the old repair, against the width the curvature at
+  # the estimate supports. This is the check a user with a single fit now has:
+  # nothing else about such a fit looks wrong.
+  leaked <- ctsem:::.ctBackendIntervalCheck(-info,
+    sqrt(diag(solve(ctsem:::ctOptimSafeCov(info, ridge = 1e-8)))), parnames)
+  expect_gt(leaked$nflagged, 0)
+  expect_true('drift' %in% leaked$parameters)
+  expect_gt(max(leaked$table$ratio), 100)
+
+  # And it is quiet on the covariance that does not leak. Measured across the
+  # healthy benchmark fits, every ratio sat between 1.0 and 2.5.
+  cov <- suppressWarnings(suppressMessages(
+    ctsem:::ctOptimCovFromHessian(-info, warn = FALSE)))
+  clean <- ctsem:::.ctBackendIntervalCheck(-info, sqrt(diag(cov)), parnames)
+  expect_equal(clean$nflagged, 0L)
+  expect_equal(clean$parameters, character())
+  # A ratio is only defined where there is curvature to compare against; a
+  # non-positive diagonal is `.ctBackendIdentifiability()`'s business.
+  expect_equal(nrow(clean$table), 3L)
+  expect_true(all(clean$table$ratio[clean$table$param != 'popsd'] < 2))
 })

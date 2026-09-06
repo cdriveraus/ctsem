@@ -365,7 +365,16 @@
           .ctReportNum(e$gradient_tolerance), ")") else "")
     }
     if (isTRUE(e$stalled)) add("  stalled: TRUE  -- the line search stopped finding a step")
-    if (isTRUE(e$saturated)) add("  saturated: TRUE")
+    if (isTRUE(e$saturated)) {
+      add("  transform flat at the estimate: ",
+        paste(e$saturated_parameters, collapse = ", "))
+      # The two outcomes that share a zero gradient. TRUE is a failed fit;
+      # FALSE is a maximum with those coordinates unidentified.
+      add("  optimizer overstepped into it: ", isTRUE(e$overshot),
+        if (isTRUE(is.finite(e$overshoot_gain)))
+          paste0("  (best pullback gains ", .ctReportNum(e$overshoot_gain), ")")
+        else "")
+    }
     if (!is.null(e$linesearch)) add("  line search: ", e$linesearch)
     add("")
     idf <- fit$identifiability
@@ -385,6 +394,18 @@
               .ctReportNum(dd$loadings[ord]), collapse = "   "))
           }
         }
+      }
+      add("")
+    }
+    ivc <- fit$uncertainty$intervalcheck
+    if (!is.null(ivc) && nrow(ivc$table)) {
+      add("Reported interval against the curvature at the estimate")
+      add("  ratio > ", ivc$threshold, ": ", ivc$nflagged, " parameter(s)")
+      worst <- utils::head(ivc$table, 5)
+      for (i in seq_len(nrow(worst))) {
+        add("  ", worst$param[i], "  se ", .ctReportNum(worst$se[i]),
+          "  curvature ", .ctReportNum(worst$curvature_se[i]),
+          "  ratio ", .ctReportNum(worst$ratio[i]))
       }
       add("")
     }
@@ -432,7 +453,11 @@
   add("Read: a condition number above about 1e6, a non-positive eigenvalue, or")
   add("any weak direction means the data do not pin every parameter. Estimates")
   add("can then be moved along that direction without worsening the fit, so")
-  add("their intervals describe a shape the data did not choose.")
+  add("their intervals describe a shape the data did not choose. The ratio")
+  add("above says the same thing per parameter: how much wider the reported")
+  add("interval is than that parameter's own curvature supports. Healthy fits")
+  add("sit near 1; a ratio of 100 means the width is entanglement with the")
+  add("other parameters, and it will not repeat between runs.")
   add("04-loglik-profile says which individual parameters are involved.")
   L
 }

@@ -108,3 +108,41 @@ end
     expected = (exp(A + h * E) - exp(A - h * E)) / (2h)
     @test ContinuousTimeSEM._ctsem_exp_frechet_block(A, E) ≈ expected rtol=1e-5
 end
+
+# `_ctsem_overshot` decides which half of "saturated" a fit is in, and
+# `converged` is keyed on its answer. A mock objective is used rather than a
+# fitted model because the two cases differ only in the shape of the objective
+# along the flagged coordinate, and that is exactly what a mock can state.
+struct _OvershotMock
+    peak::Float64
+end
+ContinuousTimeSEM.ctsem_evaluate(m::_OvershotMock, x::AbstractVector;
+    gradient::Bool=true, contributions::Bool=false, gradient_method=:adjoint) =
+    (value = -sum(abs2, x .- m.peak), gradient = nothing)
+
+@testset "a saturated coordinate that is not a maximum is an overshoot" begin
+    # The optimizer overstepped: the objective peaks at 1 and the reported
+    # estimate is at 20, where the transform is flat. Pulling the coordinate
+    # back improves the objective, so this is not a maximum. This is the shape
+    # measured on a binary model -- one L-BFGS iteration to raw 20.9, log
+    # likelihood 16 units below the profile peak.
+    mock = _OvershotMock(1.0)
+    value = -sum(abs2, [20.0] .- 1.0)
+    out = ContinuousTimeSEM._ctsem_overshot(mock, [20.0], [1], value, 1e-3)
+    @test out.overshot
+    @test out.gain > 100
+
+    # And the other half: the data do not identify the coordinate, so the
+    # optimizer ran it to the edge from a maximum that really is there. Nothing
+    # a pullback can do improves it, so the fit converged.
+    atpeak = _OvershotMock(0.0)
+    out2 = ContinuousTimeSEM._ctsem_overshot(atpeak, [0.0], [1],
+        -sum(abs2, [0.0]), 1e-3)
+    @test !out2.overshot
+    @test out2.gain == 0.0
+
+    # Nothing flagged means nothing evaluated and nothing claimed.
+    out3 = ContinuousTimeSEM._ctsem_overshot(mock, [20.0], Int[], value, 1e-3)
+    @test !out3.overshot
+    @test out3.gain == 0.0
+end

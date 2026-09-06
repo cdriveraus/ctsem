@@ -176,6 +176,24 @@ Hessian is exact; \code{control$analyticHessian = FALSE} falls back to the
 shared finite difference for comparison. The two agree to about 1e-4 on a
 well-conditioned model.
 
+\emph{Directions with no curvature.} A direction whose curvature is
+negligible against the sharpest one is left out of the inversion rather
+than floored at \code{control$ridge}, so the parameters that carry it come
+back with no spread at all instead of a standard error of \code{1/ridge}.
+Floored, that number leaks into the parameters the data \emph{does}
+determine, and by an amount rounding decides: it can differ by a factor of a
+hundred between two fits that reach the same optimum.
+\code{$uncertainty$cov} records which directions were dropped, and
+\code{fit$identifiability} names the parameters.
+
+\emph{Whether the intervals are as wide as the curvature allows.} A julia
+fit carries \code{fit$uncertainty$intervalcheck}: for each raw parameter,
+the reported standard error against \code{1/sqrt(information[i,i])}, the
+width that parameter's own curvature supports. Their ratio is 1 when the
+parameter is separable from the rest and grows without bound as it stops
+being; anything past about 100 means the reported width comes from the
+entanglement rather than from the data, and will not repeat between runs.
+
 \emph{Backend-specific arguments.} \code{uncertainty='fullbootstrap'} and
 its \code{control$bootstrapFitCores} / \code{control$bootstrapTol}, and
 \code{control$parsteps}, are stan-only and are refused by name on a
