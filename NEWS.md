@@ -18,6 +18,7 @@
 - Fixed: the observed data and the model were labelled the wrong way round in the bivariate `ctPostPredict()` plots.
 - Model matrix cells accept a named form as well as the pipe separated one, so `'mm, indvarying=TRUE, sdscale=0.5'` and `'mm||TRUE|0.5'` mean the same thing. `ctParSpec()` builds either from named arguments.
 - `ctModelCoverage_check()` is renamed `ctCoverageCheck()`, with camelCase arguments to match the rest of the package. The old name is not retained.
+- Fixed: standard errors along a direction the data does not identify were computed by flooring the information matrix and inverting, which produced an arbitrary finite width set by rounding rather than by the data, and could inflate the intervals of well determined parameters alongside it. Such directions are now excluded, and `fit$uncertainty$intervalcheck` reports each standard error against the width that parameter's own curvature supports.
 
 ## 29/6/2026
 ### 3.11.0
