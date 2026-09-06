@@ -127,7 +127,8 @@ longer than many fits do.}
 \value{
 The fit, with \code{estimate$rawposterior} holding the draws and
   \code{$sample} holding the diagnostics: split R-hat and effective sample
-  size per parameter, divergences, tree depths, step sizes and E-BFMI.
+  size per parameter, divergences, tree depths, step sizes and E-BFMI, plus
+  \code{converged} and \code{diagnosis} summarising them.
   \code{estimate$raw} is set to the per-parameter posterior mean of the
   draws -- unlike \code{backend='stan'}'s sampled point estimate
   (\code{ctFit(..., optimize=FALSE)}'s \code{stanfit$rawest}), which is the
@@ -175,6 +176,23 @@ averaging does not fix. \code{fit$sample} carries the per-parameter R-hat and
 effective sample size, the per-draw acceptance statistic, tree depth and
 energy, and the per-chain step size and E-BFMI. An E-BFMI below about 0.3
 indicates a funnel the metric could not straighten.
+
+Because a warning is only seen by whoever is at the console, and any batch
+script wraps its fitting call in \code{suppressWarnings()}, the verdict is
+also kept on the object: \code{fit$sample$converged} says whether the chains
+agreed on one distribution and \code{fit$sample$diagnosis} lists what went
+wrong, both of which \code{print()} shows. \code{summary()} reports
+\code{n_eff} and \code{Rhat} beside every estimate, exactly as it does for
+\code{backend='stan'}, and opens with a line naming the worst of each.
+
+The two R-hats a fit carries are not the same statistic and are not meant to
+be. \code{fit$sample$rhat} is the engine's split R-hat over the raw,
+unconstrained coordinates -- the one the sampler's own \code{rhatTarget}
+stopping rule reads, and unbounded, so a badly failed run shows a number in
+the thousands. The \code{Rhat} column in \code{summary()} is
+\code{rstan::monitor}'s rank-normalised split R-hat over the transformed
+quantities in the table, which is what \code{backend='stan'} reports and is
+deliberately robust rather than dramatic. Both cross 1.01 on the same runs.
 }
 
 \examples{

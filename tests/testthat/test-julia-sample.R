@@ -255,3 +255,132 @@ test_that("ctOptimUncertainty() refuses a sampled julia fit instead of silently 
   out <- ctOptimUncertainty(fit, uncertainty = "hessian", finishsamples = 20, cores = 1)
   expect_s3_class(out, "ctJuliaFit")
 })
+
+# ---------------------------------------------------------------------------
+# Convergence diagnostics, reported the way the stan backend reports them.
+#
+# The case behind these: a julia sampling run on intensive-longitudinal data
+# returned in five minutes with two chains 384,000 log units apart and a
+# parameter whose true value is -0.5 estimated at 29.1. Nothing a reader would
+# meet said so -- `summary()` had `mean`, `sd` and quantiles where a `ctStanFit`
+# has `n_eff` and `Rhat` too, and the fit-time warnings are gone the moment a
+# script wraps its call in `suppressWarnings()`, which every batch script does.
+#
+# The detection itself is tested on constructed draws rather than on a fit,
+# because a test that has to make a real sampler fail on cue is a flaky test.
+# The fit tests below check that the columns arrive, on the right scale, and
+# only for a genuine sample.
+
+test_that("split R-hat and effective size separate agreeing chains from disagreeing ones", {
+  set.seed(11)
+  # 2 chains x 400 draws, stacked chain-major, which is the layout
+  # `estimate$rawposterior` carries.
+  healthy <- cbind(a = stats::rnorm(800), b = stats::rnorm(800))
+  good <- ctsem:::.ctBackendDrawDiagnostics(healthy, chains = 2L)
+  expect_equal(rownames(good), c("a", "b"))
+  expect_true(all(good$Rhat < 1.01))
+  expect_true(all(good$n_eff > 100))
+
+  # The failure this exists for: chain 2 somewhere else entirely.
+  broken <- healthy
+  broken[401:800, "a"] <- broken[401:800, "a"] + 5000
+  bad <- ctsem:::.ctBackendDrawDiagnostics(broken, chains = 2L)
+  expect_gt(bad["a", "Rhat"], 1.01)
+  expect_lt(bad["a", "n_eff"], 10)
+  # And it is the parameter that moved, not both.
+  expect_lt(bad["b", "Rhat"], 1.01)
+
+  # Nothing to diagnose is NULL rather than a number: an optimised fit's draws
+  # come from a covariance fitted at the mode and have no chains at all.
+  expect_null(ctsem:::.ctBackendDrawDiagnostics(healthy, chains = NULL))
+  expect_null(ctsem:::.ctBackendDrawDiagnostics(healthy[1:3, , drop = FALSE], chains = 1L))
+})
+
+test_that("the summary's opening line says whether the chains agreed", {
+  set.seed(12)
+  healthy <- cbind(a = stats::rnorm(800), b = stats::rnorm(800))
+  broken <- healthy
+  broken[401:800, "a"] <- broken[401:800, "a"] + 5000
+
+  note <- function(values, divergent = 0L) {
+    fit <- list(estimate = list(rawposterior = values),
+      sample = list(chains = 2L, draws = 400L, divergent = divergent))
+    sections <- list(popmeans = ctsem:::.ctBackendSampleSummary(values, chains = 2L))
+    ctsem:::.ctBackendSampleNote(fit, sections, 2L)
+  }
+
+  good <- note(healthy)
+  expect_match(good, "2 chains x 400 draws")
+  expect_match(good, "Worst R-hat")
+  expect_false(grepl("have not converged", good, fixed = TRUE))
+
+  bad <- note(broken)
+  expect_match(bad, "have not converged", fixed = TRUE)
+  expect_match(bad, "(a)", fixed = TRUE)
+
+  # A divergence alone is enough, whatever R-hat says.
+  expect_match(note(healthy, divergent = 3L), "3 divergent transitions", fixed = TRUE)
+  expect_match(note(healthy, divergent = 3L), "have not converged", fixed = TRUE)
+})
+
+test_that("a sampled fit reports n_eff and Rhat where a ctStanFit does, and an optimised one does not", {
+  skip_without_julia()
+  fit <- .sample_fixture()
+  npar <- length(fit$estimate$raw)
+  sampled <- suppressWarnings(suppressMessages(
+    ctSample(fit, chains = 2, warmup = 120, draws = 120, cores = 1)))
+  total <- 2L * 120L
+
+  summarised <- suppressWarnings(summary(sampled))
+  expect_true(all(c("n_eff", "Rhat") %in% names(summarised$popmeans)))
+  # Stan's column order: the moments, the interval, then the diagnostics.
+  expect_equal(names(summarised$popmeans),
+    c("mean", "sd", "2.5%", "50%", "97.5%", "n_eff", "Rhat"))
+  # Not `npar` rows: the individually varying parameter is reported under
+  # popsd rather than popmeans, exactly as on the stan backend.
+  expect_gt(nrow(summarised$popmeans), 0L)
+  expect_lt(nrow(summarised$popmeans), npar + 1L)
+  expect_true(all(is.finite(summarised$popmeans$Rhat)))
+  # Sane rather than converged: a 120-draw run is not asked to mix, only to
+  # produce numbers that are numbers.
+  expect_true(all(summarised$popmeans$Rhat > 0.9))
+  expect_true(all(summarised$popmeans$n_eff > 0))
+  expect_true(all(summarised$popmeans$n_eff <= total * 1.5))
+  expect_true(all(c("n_eff", "Rhat") %in% names(summarised$popsd)))
+
+  # The verdict is on the object, not only in a warning that a batch script
+  # suppresses, and it is a decision rather than a table to read.
+  expect_true(is.logical(sampled$sample$converged))
+  expect_length(sampled$sample$converged, 1L)
+  expect_true(is.character(sampled$sample$diagnosis))
+  expect_output(print(sampled), "chains converged")
+
+  # And the summary opens with it.
+  expect_true(is.character(summarised$sampleNote))
+  expect_match(summarised$sampleNote, "2 chains x 120 draws", fixed = TRUE)
+  expect_identical(names(summarised)[1L], "sampleNote")
+  # A sampled fit did not run an uncertainty pass, and used to say it had.
+  expect_match(summarised$uncertaintyNote, "Hamiltonian", fixed = TRUE)
+  expect_false(grepl("ctOptimUncertainty", summarised$uncertaintyNote, fixed = TRUE))
+
+  # The optimised fit it started from has draws too -- from a covariance fitted
+  # at the mode -- and there is no between-chain variance for those. Same
+  # treatment as summary.ctStanFit gives an optimised stan fit.
+  optimised <- suppressWarnings(summary(fit))
+  expect_false(any(c("n_eff", "Rhat") %in% names(optimised$popmeans)))
+  expect_null(optimised$sampleNote)
+})
+
+test_that("a run too short to mix says so rather than returning quietly", {
+  skip_without_julia()
+  fit <- .sample_fixture()
+  # Twelve draws off a twelve-subject Laplace fit: too few to adapt and far too
+  # few to mix. The assertion is on the verdict, not on a threshold being
+  # crossed by a particular margin.
+  broken <- suppressWarnings(suppressMessages(
+    ctSample(fit, chains = 2, warmup = 12, draws = 12, cores = 1)))
+  expect_false(isTRUE(broken$sample$converged))
+  expect_gt(length(broken$sample$diagnosis), 0L)
+  note <- suppressWarnings(summary(broken))$sampleNote
+  expect_match(note, "have not converged|Too few effective draws")
+})

@@ -194,6 +194,23 @@
 #' energy, and the per-chain step size and E-BFMI. An E-BFMI below about 0.3
 #' indicates a funnel the metric could not straighten.
 #'
+#' Because a warning is only seen by whoever is at the console, and any batch
+#' script wraps its fitting call in \code{suppressWarnings()}, the verdict is
+#' also kept on the object: \code{fit$sample$converged} says whether the chains
+#' agreed on one distribution and \code{fit$sample$diagnosis} lists what went
+#' wrong, both of which \code{print()} shows. \code{summary()} reports
+#' \code{n_eff} and \code{Rhat} beside every estimate, exactly as it does for
+#' \code{backend='stan'}, and opens with a line naming the worst of each.
+#'
+#' The two R-hats a fit carries are not the same statistic and are not meant to
+#' be. \code{fit$sample$rhat} is the engine's split R-hat over the raw,
+#' unconstrained coordinates -- the one the sampler's own \code{rhatTarget}
+#' stopping rule reads, and unbounded, so a badly failed run shows a number in
+#' the thousands. The \code{Rhat} column in \code{summary()} is
+#' \code{rstan::monitor}'s rank-normalised split R-hat over the transformed
+#' quantities in the table, which is what \code{backend='stan'} reports and is
+#' deliberately robust rather than dramatic. Both cross 1.01 on the same runs.
+#'
 #' @param fit A \code{ctJuliaFit} made with \code{intoverpop='laplace'}.
 #' @param chains Number of chains. Run concurrently when the Julia session has
 #'   at least that many threads; see \code{\link{ctJuliaSetup}}.
@@ -293,7 +310,8 @@
 #'
 #' @return The fit, with \code{estimate$rawposterior} holding the draws and
 #'   \code{$sample} holding the diagnostics: split R-hat and effective sample
-#'   size per parameter, divergences, tree depths, step sizes and E-BFMI.
+#'   size per parameter, divergences, tree depths, step sizes and E-BFMI, plus
+#'   \code{converged} and \code{diagnosis} summarising them.
 #'   \code{estimate$raw} is set to the per-parameter posterior mean of the
 #'   draws -- unlike \code{backend='stan'}'s sampled point estimate
 #'   (\code{ctFit(..., optimize=FALSE)}'s \code{stanfit$rawest}), which is the
@@ -697,8 +715,63 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
   # Computed here because the warner sees only the diagnostics, and the draws
   # and the parameter names both live at this level.
   out$sample$unidentified <- .ctBackendFlatParameters(out, npar)
+  # The verdict, kept on the fit rather than only shouted once. A warning is
+  # seen by whoever is at the console at the time and by nobody afterwards --
+  # and `suppressWarnings()` around a fitting call, which any batch script has,
+  # removes it entirely. A failed sample has to be readable from the object.
+  verdict <- .ctSampleDiagnosis(out$sample)
+  out$sample$converged <- verdict$converged
+  out$sample$diagnosis <- verdict$problems
   .ctSampleWarn(out$sample)
   out
+}
+
+# What went wrong with this sample, as short phrases, and whether the chains
+# agreed at all.
+#
+# `converged` is about whether the draws are a posterior, not about how precise
+# one they are: a bad R-hat or a divergent transition means the chains did not
+# describe the same distribution, while a small effective sample size or a
+# saturated tree depth means they did and did so inefficiently. Only the first
+# two set it to FALSE.
+#' @keywords internal
+.ctSampleDiagnosis <- function(diagnostics) {
+  total <- diagnostics$chains * diagnostics$draws
+  problems <- character(0)
+  divergent <- suppressWarnings(as.integer(diagnostics$divergent)[1L])
+  if (!is.na(divergent) && divergent > 0L) {
+    problems <- c(problems,
+      paste0(divergent, " of ", total, " transitions diverged"))
+  }
+  flat <- if (is.null(diagnostics$unidentified)) character(0) else
+    diagnostics$unidentified
+  if (length(flat)) {
+    problems <- c(problems, paste0(length(flat),
+      " parameter(s) reached a flat region of their transform: ",
+      paste(utils::head(flat, 5), collapse = ", ")))
+  }
+  worst <- suppressWarnings(max(diagnostics$rhat, na.rm = TRUE))
+  if (is.finite(worst) && worst > 1.01) {
+    problems <- c(problems, paste0("largest R-hat ", signif(worst, 4)))
+  }
+  fewest <- suppressWarnings(min(diagnostics$ess, na.rm = TRUE))
+  if (is.finite(fewest) && fewest < 100) {
+    problems <- c(problems,
+      paste0("smallest effective sample size ", round(fewest)))
+  }
+  saturated <- suppressWarnings(as.integer(diagnostics$saturated)[1L])
+  if (!is.na(saturated) && saturated > 0L) {
+    problems <- c(problems, paste0(saturated, " of ", total,
+      " transitions hit the maximum tree depth"))
+  }
+  # NA, not TRUE, when nothing could be computed: every R-hat is NaN only when
+  # every chain sat still, and calling that convergence is the failure mode this
+  # whole field exists to avoid.
+  converged <- if (!is.finite(worst)) {
+    problems <- c(problems, "R-hat could not be computed for any parameter")
+    NA
+  } else !(worst > 1.01 || (!is.na(divergent) && divergent > 0L))
+  list(converged = converged, problems = problems)
 }
 
 # Past |raw| ~ 20 every ctsem transform is flat to machine precision. A sampled
@@ -820,6 +893,15 @@ print.ctSampleDiagnostics <- function(x, ...) {
   print(data.frame(parameter = names(x$rhat)[worst],
     rhat = round(x$rhat[worst], 4), ess = round(x$ess[worst])),
     row.names = FALSE)
+  # Last, because it is the conclusion. A reader who stops at the table above
+  # has to know what the numbers in it mean; this says it.
+  if (!is.null(x$converged)) {
+    cat("  chains converged: ", if (is.na(x$converged)) "unknown" else
+      as.character(isTRUE(x$converged)), "\n", sep = "")
+    if (length(x$diagnosis)) {
+      cat("  ", paste(x$diagnosis, collapse = "; "), "\n", sep = "")
+    }
+  }
   invisible(x)
 }
 
