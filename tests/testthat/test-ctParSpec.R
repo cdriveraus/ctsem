@@ -103,8 +103,13 @@ test_that("the same cell works through model$matrices <- ", {
   named$matrices$MANIFESTMEANS[1, 1] <- "mm, indvarying=TRUE, sdscale=0.5, tipreds=age"
   expect_identical(.ctParSpec_row(piped), .ctParSpec_row(named))
   expect_true(.ctParSpec_row(named)$indvarying)
-  expect_true(.ctParSpec_row(named)$age_effect)
-  expect_false(.ctParSpec_row(named)$sex_effect)
+  # Read through the accessor, because the TI effect columns are character
+  # rather than logical: an effect is TRUE, FALSE, or a value for generation to
+  # use ('age=0.4'), and a logical column cannot hold the third. The columns
+  # still read 'TRUE'/'FALSE' here, so the change is in the type and not in
+  # what this cell says.
+  expect_true(ctsem:::.ctTipredEffectActive(.ctParSpec_row(named)$age_effect))
+  expect_false(ctsem:::.ctTipredEffectActive(.ctParSpec_row(named)$sex_effect))
 })
 
 test_that("an unusable field is refused rather than becoming a parameter name", {
