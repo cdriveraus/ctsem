@@ -1449,17 +1449,15 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
       "These reflect correlations between the raw / unconstrained parameters."
   }
 
-  # A `poprank` fit's regression coefficients are what it estimated: the
-  # standard deviations and correlations reported around them are implied by
-  # these and by the basis effects' covariance. Printed rather than left on the
-  # fit object, because a reader who is shown only the derived moments has no
-  # way to see which of them were estimated.
-  popregression <- .ctBackendPopRegressionTable(object, .ctBackendSpec(object),
-    samples, digits = digits)
-  if (!is.null(popregression)) {
-    out$popregression <- popregression
-    out$popregressionNote <- .ctBackendPopRegressionNote(.ctBackendSpec(object))
-  }
+  # A `poprank` fit's regression coefficients are the mechanism, not the
+  # result. What a reader wants from the individual differences is the same
+  # thing they want from any multilevel fit -- how much each parameter varies
+  # and how those spreads go together -- and that is the `popsd` and
+  # `rawpopcorr` tables either way. So the coefficients are *not* printed, and
+  # the structure is carried by a note beside the tables it qualifies instead.
+  # `.ctBackendPopRegressionTable()` remains available for anyone who wants the
+  # coefficients themselves, on the same footing as `rawpopcov`: reachable,
+  # not in the way.
 
   if (!is.null(constrained$tipreds)) {
     out$tipreds <- .ctBackendSampleSummary(constrained$tipreds, digits = digits,
@@ -1531,8 +1529,23 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     out$popsd <- .ctBackendMarkNoWidth(out$popsd,
       .ctBackendNoWidthRows(nowidth, rownames(out$popsd), "popsd_"))
   }
+  # Said here because this is the table it qualifies: some of these spreads
+  # were estimated and some follow from the dimension structure, and a reader
+  # cannot tell which from the numbers.
+  popsdnote <- .ctBackendPopRegressionNote(.ctBackendSpec(object))
+  if (!is.null(popsdnote) && !is.null(out$popsd)) out$popsdNote <- popsdnote
 
   fixed <- cells[!cells$randomeffect, , drop = FALSE]
+  # A `poprank` fit's coefficients are free parameters, so without this they
+  # appear here as `beta_df11_dr11` beside the model's own parameters -- an
+  # internal coordinate in the one table a reader treats as the answer. Dropped
+  # for the same reason the coefficient table is not printed; the note under
+  # `popsd` says the structure, and `npar` still counts them.
+  coefficients <- .ctBackendSpec(object)$model$popregression$coefficients
+  if (!is.null(coefficients) && nrow(coefficients)) {
+    fixed <- fixed[!(.ctBackendParameterNames(fixed) %in%
+        coefficients$coefficient), , drop = FALSE]
+  }
   out$popmeans <- .ctBackendSampleSummary(
     .ctBackendPopCellsFromFlat(flat, fixed, layout), digits = digits,
     chains = chains)

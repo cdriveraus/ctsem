@@ -150,22 +150,64 @@
   out
 }
 
-# What to say under the tables. A reduced-rank fit reports standard deviations
-# and correlations it did not estimate, and the reader has to know which.
+# The same statement for LaTeX, as one escaped line.
+#
+# Separate from `.ctBackendPopRegressionNote()` because the register is
+# different -- a figure outlives the session that made it, so this says the
+# structure and the count and nothing else -- and because the text has to
+# survive TeX. Only the parameter names can carry characters TeX would read, and
+# ctsem labels are alphanumeric, so an underscore is the whole of the escaping.
+.ctPopRegressionLatexNote <- function(fit) {
+  model <- tryCatch(.ctFitModelObject(fit), error = function(e) NULL)
+  regression <- model$popregression
+  if (is.null(regression) || is.null(regression$coefficients)) return(NULL)
+  escape <- function(x) gsub('_', '\\\\_', x, fixed = FALSE)
+  regressed <- escape(paste(unique(regression$coefficients$param), collapse = ', '))
+  basis <- escape(paste(regression$basis, collapse = ', '))
+  total <- regression$rank + length(unique(regression$coefficients$param))
+  paste0("&\\textrm{Individual differences have ", regression$rank,
+    " dimension", if (regression$rank > 1) "s" else "", " of ", total,
+    ": the spread of ", regressed, " follows from ", basis,
+    " and is not independent of it.} \\\\\n")
+}
+
+# What to say under the tables.
+#
+# The reader is shown standard deviations and correlations, which is what they
+# want from a multilevel fit, and some of those were estimated while others
+# follow from the dimension structure. Nothing in the numbers distinguishes
+# them, so the note has to -- and it is phrased in terms of *dimensions of
+# individual difference* rather than of the regression that implements them,
+# because the coefficients are the mechanism and not the finding.
 .ctBackendPopRegressionNote <- function(spec) {
   regression <- spec$model$popregression
   if (is.null(regression)) return(NULL)
-  regressed <- paste(unique(regression$coefficients$param), collapse = ', ')
-  note <- paste0('poprank = ', regression$rank,
-    ': the population sd and correlations of ', regressed,
-    ' are implied by their regression on ',
-    paste(regression$basis, collapse = ', '),
-    ' rather than separately estimated, and each has no variance independent ',
-    'of them.')
-  if (isTRUE(regression$approximate)) {
-    note <- paste0(note, ' This rank is below the ', regression$nmean,
-      ' dimensions the model identifies, so it is an approximation: the ',
-      'retained parameters absorb what the dropped dimensions carried.')
+  regressed <- unique(regression$coefficients$param)
+  roles <- regression$roles
+  variancecell <- intersect(regressed, roles$param[!roles$mean])
+  demoted <- intersect(regressed, roles$param[roles$mean])
+  basis <- paste(regression$basis, collapse = ', ')
+  total <- regression$rank + length(regressed)
+
+  note <- paste0('Individual differences here have ', regression$rank,
+    ' dimension', if (regression$rank > 1) 's' else '', ', not ', total,
+    ': the spread and correlations of ', paste(regressed, collapse = ', '),
+    ' follow from ', basis, ' rather than being estimated separately, so ',
+    if (length(regressed) > 1) 'they have' else 'it has',
+    ' no variation independent of ', basis, '.')
+  if (length(variancecell)) {
+    note <- paste0(note, ' ', paste(variancecell, collapse = ', '),
+      if (length(variancecell) > 1) ' vary' else ' varies',
+      ' only in DIFFUSION / MANIFESTVAR, where this is the whole of what the ',
+      'data determines.')
   }
-  note
+  if (length(demoted)) {
+    note <- paste0(note, ' ', paste(demoted, collapse = ', '),
+      if (length(demoted) > 1) ' are' else ' is',
+      ' constrained beyond that, to the ', regression$rank,
+      ' dimensions asked for rather than the ', regression$nmean,
+      ' the data supports -- an approximation, and the spreads above absorb ',
+      'what it drops.')
+  }
+  paste0(note, ' See poprank in ?ctFit.')
 }

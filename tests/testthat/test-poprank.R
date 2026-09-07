@@ -257,6 +257,67 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
     expect_equal(augdim(auto), 2L)
   })
 
+  # What a reduced-rank fit shows a user. The point of the feature is that the
+  # interesting quantities are the same ones as always -- how much each
+  # parameter varies and how the spreads go together -- so the tables keep their
+  # shape and the *structure* is carried by a note. The regression coefficients
+  # are the mechanism and stay out of the way: not a printed section, and not a
+  # row in the population means beside the model's own parameters.
+  # 100 subjects rather than this file's 40, deliberately. At 40 the rank-1
+  # optimum on this data sits at the boundary -- the basis spread goes to zero
+  # with the coefficient going to infinity, holding their product -- so
+  # `popsd` is legitimately 0 there and an assertion that the spreads are
+  # positive would be asserting something false. Verified that -384.4209 is the
+  # genuine rank-1 optimum and not an optimiser failure: a grid over sensible
+  # (basis sd, coefficient) values, then optimised, reaches only -384.467. Full
+  # rank gets -383.846 on the same data, so at 40 subjects the restriction
+  # costs 0.575 -- it refuses to spend an unidentified parameter on noise, which
+  # is the point, but it is not the "costs nothing" of the well-determined case.
+  # ctsem already reports that fit properly: non-convergence, and the
+  # identifiability warning naming popsd_dr11 and beta_df11_dr11 as not
+  # estimable with NA widths. No extra warning was added for it.
+  test_that('a poprank fit reports the spreads, not the mechanism', {
+    dat <- poprank_data(nsub = 100L)
+    set.seed(303)
+    f <- suppressWarnings(suppressMessages(ctFit(datalong = dat,
+      model = poprank_model(), backend = 'julia', intoverpop = 'augmented',
+      cores = 1L, verbose = 0L)))
+    s <- suppressWarnings(suppressMessages(summary(f, parmatrices = FALSE,
+      priorcheck = FALSE, residualcov = FALSE)))
+
+    # every varying parameter has a spread, including the regressed one
+    expect_setequal(rownames(s$popsd), c('dr11', 'df11'))
+    expect_true(all(s$popsd[, 'mean'] > 0))
+    # and a correlation between them
+    expect_equal(rownames(s$rawpopcorr), 'df11__dr11')
+
+    # the note says the dimension structure
+    expect_false(is.null(s$popsdNote))
+    expect_match(s$popsdNote, '1 dimension, not 2', fixed = TRUE)
+    expect_match(s$popsdNote, 'no variation independent of dr11', fixed = TRUE)
+    expect_match(s$popsdNote, 'DIFFUSION / MANIFESTVAR', fixed = TRUE)
+
+    # the mechanism is not in the way
+    expect_null(s$popregression)
+    expect_false(any(grepl('^beta_', rownames(s$popmeans))))
+    # ... while the parameter count still counts it
+    expect_equal(length(f$estimate$raw), 5L)
+    # ... and it is still reachable for anyone who wants it
+    coefficients <- ctsem:::.ctBackendPopRegressionTable(f,
+      ctsem:::.ctBackendSpec(f), ctsem:::.ctBackendRawSamples(f))
+    expect_equal(coefficients$param, 'df11')
+    expect_equal(coefficients$on, 'dr11')
+
+    # the resolved rank is recorded as a number, not as the argument
+    expect_equal(f$args$resolved$poprank, 1L)
+
+    # and a figure says it too, since a figure outlives the fit message
+    tex <- suppressWarnings(suppressMessages(ctModelLatex(f, compile = FALSE,
+      open = FALSE, equationonly = TRUE)))
+    expect_match(paste(tex, collapse = ' '),
+      'Individual differences have 1 dimension of 2', fixed = TRUE)
+  })
+
   # A regressed effect varies by subject without a carrier state of its own, so
   # the enumeration ctSubjectPars is built on could not see it and it was
   # silently absent -- the failure mode that looks identical to "not
