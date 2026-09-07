@@ -150,6 +150,25 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
     expect_match(message_one, 'approximation', fixed = TRUE)
   })
 
+  # ctIdentify deliberately assesses the *unrestricted* covariance, whatever
+  # ctFit's poprank default is, and this pins that rather than leaving it to be
+  # "fixed" later. Its job is to say what the data identifies -- nweak on the
+  # full-rank model is exactly why poprank exists, and reporting the reduced
+  # model's 0 instead would hide the finding. Routing it through
+  # ctFit(fit = FALSE) to pick up poprank was tried and reverted: it made
+  # ctIdentify consume random numbers (it is documented as leaving the RNG
+  # alone), broke intoverpop='laplace' through it, and changed an error
+  # message, for a diagnostic that was already answering the right question.
+  test_that('ctIdentify assesses the unrestricted covariance, not the reduced one', {
+    dat <- poprank_data(nsub = 60L)
+    id <- suppressWarnings(suppressMessages(ctIdentify(dat, poprank_model(),
+      nstart = 1L, cores = 1L, verbose = 0L)))
+    # three population parameters, and the flat direction poprank removes
+    expect_equal(id$npar, 6L)
+    expect_gte(id$nweak, 1L)
+    expect_false('poprank' %in% names(formals(ctIdentify)))
+  })
+
   # POPCOV is the specification surface for the population covariance, and the
   # augmentation reads it per varying parameter: a number fixes an sd or a
   # correlation. A regressed effect has neither of its own, so anything stated
