@@ -257,6 +257,57 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
     expect_equal(augdim(auto), 2L)
   })
 
+  # A regressed effect varies by subject without a carrier state of its own, so
+  # the enumeration ctSubjectPars is built on could not see it and it was
+  # silently absent -- the failure mode that looks identical to "not
+  # applicable" from outside.
+  #
+  # Nothing here compares the two fits' per-subject *values*, and the reason is
+  # worth recording rather than discovering again. Under full rank the position
+  # on the ridge is arbitrary, and it perturbs the per-subject estimates as well
+  # as the population sd -- not only for the variance-cell effect whose carrier
+  # state the filter never updates, but for the identified effect too, because
+  # the two states are correlated and the arbitrary one changes the gain.
+  # Measured on this dataset, at likelihoods agreeing to 1e-10: per-subject
+  # values differing by up to 0.05, with Spearman correlations between the two
+  # fits of 0.93 for `dr11` and 0.89 for `df11`. So neither equality nor a
+  # rank-correlation threshold is an invariant here; picking a threshold that
+  # passes would be a test that discriminates nothing. What is asserted below is
+  # what actually holds: the column exists, it varies by subject, and under
+  # rank 1 the regressed effect is a monotone function of the basis by
+  # construction.
+  test_that('ctSubjectPars carries a regressed effect and it varies by subject', {
+    dat <- poprank_data()
+    fitboth <- function(poprank) {
+      set.seed(303)
+      args <- list(datalong = dat, model = poprank_model(), backend = 'julia',
+        intoverpop = 'augmented', cores = 1L, verbose = 0L)
+      args$poprank <- poprank
+      suppressWarnings(suppressMessages(do.call(ctFit, args)))
+    }
+    auto <- fitboth('auto')
+    full <- fitboth(NA)
+
+    pauto <- suppressWarnings(suppressMessages(ctSubjectPars(auto)))
+    pfull <- suppressWarnings(suppressMessages(ctSubjectPars(full)))
+
+    expect_setequal(dimnames(pauto)$param, c('dr11', 'df11'))
+    expect_setequal(dimnames(pfull)$param, c('dr11', 'df11'))
+    expect_equal(dim(pauto), dim(pfull))
+
+    for (p in c('dr11', 'df11')) {
+      # genuinely per subject, not a constant column, on both routes
+      expect_gt(stats::sd(apply(pauto[, , p, drop = FALSE], 2L, mean)), 0)
+      expect_gt(stats::sd(apply(pfull[, , p, drop = FALSE], 2L, mean)), 0)
+    }
+
+    # And under rank 1 the regressed effect is a monotone function of the basis
+    # effect by construction, which is the structure rather than an estimate.
+    values <- apply(pauto, c(2, 3), mean)
+    expect_equal(abs(stats::cor(values[, 'dr11'], values[, 'df11'],
+      method = 'spearman')), 1)
+  })
+
   # A TI effect shifts a subject's raw parameter value, which under the
   # augmented route is the population mean rather than the random deviation.
   # So a TI effect on a regressed effect follows its mean parameter, and must

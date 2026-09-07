@@ -1192,6 +1192,36 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     values <- extracted[[paste0("subj_", cells$matrix[cell])]]
     out[, , position] <- values[, , cells$row[cell], cells$col[cell]]
   }
+
+  # A `poprank` fit's regressed effects vary by subject without having a
+  # carrier state of their own, so `.ctBackendVaryingParameters()` -- which
+  # enumerates carrier states -- does not see them and they were silently
+  # absent from the result. Their per-subject values need no new computation:
+  # the cell each one drives is an expression over the basis carrier states, so
+  # `subj_<MATRIX>` already holds the value, on the same transformed scale as
+  # every other column here. Only the coordinates have to be carried, because
+  # the cell's `param` is that expression and cannot be found by label.
+  #
+  # This is a second place that knows about `poprank`, against the one branch
+  # the population summary needed. It earns it: what is wanted is the
+  # per-subject value of a cell that is not a plain parameter, and the
+  # enumeration this function is built on has no way to name that.
+  driven <- .ctBackendSpec(fit)$model$popregression$cells
+  if (!is.null(driven) && nrow(driven)) {
+    extra <- array(NA_real_, dim = c(dim(out)[1L], dim(out)[2L], nrow(driven)))
+    keep <- rep(TRUE, nrow(driven))
+    for (position in seq_len(nrow(driven))) {
+      values <- extracted[[paste0("subj_", driven$matrix[position])]]
+      if (is.null(values)) { keep[position] <- FALSE; next }
+      extra[, , position] <- values[, , driven$row[position], driven$col[position]]
+    }
+    if (any(keep)) {
+      out <- array(c(out, extra[, , keep, drop = FALSE]),
+        dim = c(dim(out)[1L], dim(out)[2L], dim(out)[3L] + sum(keep)))
+      parnames <- c(parnames, driven$param[keep])
+    }
+  }
+
   alphabetical <- order(parnames)
   out <- out[, , alphabetical, drop = FALSE]
   dimnames(out) <- list(iter = seq_len(dim(out)[1L]), subject = seq_len(dim(out)[2L]),

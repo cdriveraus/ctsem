@@ -290,6 +290,7 @@
   }
 
   coefficients <- list()
+  drivencells <- list()
   for (p in spec$regressed) {
     # TI-predictor effects follow the parameter's *mean*, which is where they
     # already acted: a TI effect shifts a subject's raw parameter value, and
@@ -325,6 +326,10 @@
         call. = FALSE)
     }
     for (ri in cells) {
+      drivencells[[length(drivencells) + 1L]] <- data.frame(
+        param = p, matrix = as.character(m$pars$matrix[ri]),
+        row = as.integer(m$pars$row[ri]), col = as.integer(m$pars$col[ri]),
+        row.names = NULL, stringsAsFactors = FALSE)
       transform <- as.character(m$pars$transform[ri])
       if (is.na(transform) || !nzchar(transform)) transform <- 'param'
       # Lookarounds rather than `\b`: `param` has to be substituted as a whole
@@ -343,6 +348,7 @@
   m$pars <- rbind(m$pars, do.call(rbind, newpars))
   m$pars[] <- lapply(m$pars, utils::type.convert, as.is = TRUE)
   spec$coefficients <- do.call(rbind, coefficients)
+  spec$cells <- do.call(rbind, drivencells)
   spec$state <- stateof
   m$popregression <- spec
   m
