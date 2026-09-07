@@ -71,4 +71,32 @@ skip_on_32bit()
     test_isclose(s3$tipreds[2,'mean'],5,tol=.5)
     test_isclose(s3$popsd[2,'50%'],.6,tol=.5)
   })
+
+  #stanoptimis() under estonly=TRUE used to return no $standata, so ctFit's
+  #copy-back was a no-op and the TIpred block hit apply(NULL,1,sum).
+  test_that("estonly stan fit reports tipred effects", {
+    m <- suppressMessages(ctModel(type='ct',n.latent=2,n.manifest=2,
+      LAMBDA=diag(2),manifestNames=c('Y1','Y2'),
+      TIpredNames=c('TI1','TI2')))
+    m$pars$indvarying <- FALSE
+
+    f <- ctFit(ctstantestdat, m, backend='stan', cores=1, verbose=0,
+      optimcontrol=list(estonly=TRUE, carefulfit=FALSE))
+
+    expect_s3_class(f, 'ctStanFit')
+    expect_true(sum(f$setup$matsetup$tipred) > 0)
+    expect_true(f$standata$ntipredeffects > 0)
+
+    #one flagged population parameter per nonzero row of TIPREDEFFECTsetup
+    ms <- f$setup$matsetup
+    expect_equal(
+      length(unique(ms$param[ms$tipred == 1L])),
+      sum(apply(f$standata$TIPREDEFFECTsetup,1,sum) > 0))
+
+    #and the estonly path agrees with the full one
+    ffull <- ctFit(ctstantestdat, m, backend='stan', cores=1, verbose=0,
+      optimcontrol=list(carefulfit=FALSE))
+    expect_equal(ms$tipred, ffull$setup$matsetup$tipred)
+    expect_equal(f$standata$ntipredeffects, ffull$standata$ntipredeffects)
+  })
 }

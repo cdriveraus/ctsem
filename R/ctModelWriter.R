@@ -346,27 +346,40 @@ ctModelTransformsToNum<-function(ctm){
       t0m$transform <- 'param'
       t0m$indvarying <- TRUE
       
-      #new t0var 
-      t0v <- m$pars[m$pars$matrix %in% 'T0VAR' & m$pars$row==1 & m$pars$col==1,,drop=FALSE]
+      #new t0var
+      # Built by copying a template row and assigning by *name*, not by
+      # position. The positional form -- c('T0VAR',ri,ci,NA,0,NA,FALSE,1,...) --
+      # encoded the column order of `pars` as a literal, so adding any column
+      # anywhere before the tipred block silently misaligned every field and
+      # rbind warned about a length mismatch rather than failing. Copying the
+      # template also inherits whatever columns exist without naming them.
+      template <- m$pars[m$pars$matrix %in% 'T0VAR' & m$pars$row==1 & m$pars$col==1,,drop=FALSE]
+      newt0v <- list()
       for(ri in 1:(m$n.latent+nindvaryingsmall)){
         for(ci in 1:(m$n.latent+nindvaryingsmall)){
           if(!(ri %in% t0mnotvarying && ci %in% t0mnotvarying)){
-            t0v <- rbind(t0v,c('T0VAR',ri,ci,
-              NA,  #param
-              0,  #value
-              NA, #transform,
-              FALSE,1,rep(FALSE,m$n.TIpred)))
+            row <- template
+            row$matrix <- 'T0VAR'
+            row$row <- ri
+            row$col <- ci
+            row$param <- NA
+            row$value <- 0
+            row$transform <- NA
+            row$indvarying <- FALSE
+            row$sdscale <- 1
+            if(m$n.TIpred > 0) row[,paste0(m$TIpredNames,'_effect')] <- 'FALSE'
+            newt0v[[length(newt0v)+1L]] <- row
             m$pars <- m$pars[!(m$pars$matrix %in% 'T0VAR' & m$pars$row==ri & m$pars$col==ci),,drop=FALSE] #remove old t0var line
           }
         }}
-      t0v=t0v[-1,,drop=FALSE] #remove initialisation row
+      t0v <- do.call(rbind, newt0v)
       
       
       
       #reference new states
       for(ivi in ivnames){
         m$pars$indvarying[m$pars$param %in% ivi] <- FALSE
-        m$pars[m$pars$param %in% ivi,paste0(m$TIpredNames,rep('_effect',m$n.TIpred))] <- FALSE
+        m$pars[m$pars$param %in% ivi,paste0(m$TIpredNames,rep('_effect',m$n.TIpred))] <- 'FALSE'
         m$pars$param[m$pars$param %in% ivi] <- sapply(which(m$pars$param %in% ivi), function(ri){
           gsub('param',paste0( 'state[',m$n.latent+match(ivi,ivnames),']'),m$pars$transform[ri]) 
         })
@@ -644,9 +657,16 @@ simplifystanfunction<-function(bcalc,simplify=TRUE){ #input text of list of comp
           }
           
           if(n.TIpred > 0) {
-            TIPREDEFFECTsetup[freepar,][ ctspec[i,paste0(ctm$TIpredNames,'_effect')]==TRUE ] <- 
-              tipredcounter: (tipredcounter + sum(as.integer(suppressWarnings(ctspec[i,paste0(ctm$TIpredNames,'_effect')]))) -1)
-            tipredcounter<- tipredcounter + sum(as.integer(suppressWarnings(ctspec[i,paste0(ctm$TIpredNames,'_effect')])))
+            # Only the *free* effects are numbered. A fixed one carries its
+            # value rather than a parameter slot, so counting it here would
+            # shift every index after it.
+            freeeffects <- .ctTipredEffectFree(ctspec[i,paste0(ctm$TIpredNames,'_effect')])
+            nfree <- sum(freeeffects)
+            if(nfree > 0){
+              TIPREDEFFECTsetup[freepar,][ freeeffects ] <-
+                tipredcounter:(tipredcounter + nfree - 1)
+              tipredcounter <- tipredcounter + nfree
+            }
             tipred <- as.integer( any(TIPREDEFFECTsetup[freepar,] > 0))
           }
         }#end not duplicated loop

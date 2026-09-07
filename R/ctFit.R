@@ -958,7 +958,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
 
   if(!is.null(ctm$TIpredAuto) && ctm$TIpredAuto %in% c(1L,TRUE)){ #if auto tipred, set all effects to true
     for(tip in ctm$TIpredNames){
-      ctm$pars[[paste0(tip,'_effect')]] <- TRUE
+      ctm$pars[[paste0(tip,'_effect')]] <- 'TRUE'
     }
   }
 

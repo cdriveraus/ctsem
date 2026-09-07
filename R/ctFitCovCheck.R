@@ -719,7 +719,7 @@ ctFitCheck <- function(fit,
     if(inherits(fit, 'ctJuliaFit')){
       message('Skipping prior predictive panel: ctGenerateFromPriors(), which supplies fit$priorpred, does not support julia backend fits.')
     } else {
-      message('Skipping prior predictive panel: attach prior draws first with fit$priorpred <- ctGenerateFromPriors(fit).')
+      message('Skipping prior predictive panel: attach prior draws first with fit$priorpred <- ctGenerate(fit, fromPriors = TRUE).')
     }
     priorpred <- FALSE
   }

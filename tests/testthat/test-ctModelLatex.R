@@ -129,9 +129,8 @@ test_that("a state dependent cell keeps its expression for a julia fit", {
 
 # An intoverpop fit is written over an augmented state -- one extra latent per
 # individually varying parameter -- and the equations are of the system the
-# user wrote, not of that. The subject distribution itself this backend does
-# not write out, and says so rather than leaving a random effects model looking
-# like a fixed effects one.
+# user wrote, not of that. The parameters that vary belong in the subject
+# distribution, which is a separate line, and not in the dynamics.
 test_that("an intoverpop julia fit writes the unaugmented system", {
   skip_without_julia()
 
@@ -148,11 +147,199 @@ test_that("an intoverpop julia fit writes the unaugmented system", {
 
   fit <- suppressWarnings(suppressMessages(ctFit(datalong, model,
     backend = 'julia', cores = 1, optimcontrol = list(estonly = TRUE))))
-  expect_message(tex <- ctModelLatex(fit, equationonly = TRUE, compile = FALSE,
-    open = FALSE, tex = FALSE), 'not written out')
-  tex <- paste(as.character(tex), collapse = '')
+  tex <- paste(as.character(suppressMessages(ctModelLatex(fit,
+    equationonly = TRUE, compile = FALSE, open = FALSE, tex = FALSE))),
+    collapse = '')
 
   # Two latent processes, not four: no carrier state reaches the equations.
   expect_false(grepl('eta_{3}', tex, fixed = TRUE))
-  expect_false(grepl('cint1', tex, fixed = TRUE))
+  # The varying parameters are named once, in the subject distribution.
+  expect_true(grepl('vect{\\phi}(i)', tex, fixed = TRUE))
+  expect_equal(lengths(regmatches(tex, gregexpr('cint1', tex, fixed = TRUE))), 1L)
+})
+
+
+# The subject parameter distribution and the covariate effects, for a julia
+# fit. Not a comparison against stan for the numbers, deliberately: the raw
+# population covariance of a weakly identified random effect is where the two
+# optimisers most easily land in different places, and a test that needs them
+# to agree there is testing the optimisers. The population is set to a known
+# value instead, and the equation has to show that value.
+test_that("a julia fit's subject distribution is the one it holds", {
+  skip_on_cran()
+  skip_without_julia()
+
+  generating <- suppressMessages(ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
+    manifestNames = c('Y1','Y2'), latentNames = c('L1','L2'), LAMBDA = diag(2),
+    DRIFT = matrix(c(-.5,.1,0,-.3), 2, 2, byrow = TRUE),
+    DIFFUSION = matrix(c(.8,0,.2,.6), 2, 2, byrow = TRUE),
+    MANIFESTVAR = diag(.3,2), MANIFESTMEANS = matrix(0,2,1),
+    CINT = matrix(c(.2,-.1),2,1), T0MEANS = matrix(0,2,1), T0VAR = diag(1,2)))
+  set.seed(7)
+  datalong <- as.data.frame(suppressMessages(ctGenerate(generating,
+    n.subjects = 20, Tpoints = 10, burnin = 5, dtmean = 1, logdtsd = 0,
+    wide = FALSE)))
+  ids <- unique(datalong$id)
+  set.seed(9)
+  datalong$Z1 <- rnorm(length(ids))[match(datalong$id, ids)]
+  datalong$Z2 <- rnorm(length(ids))[match(datalong$id, ids)]
+
+  model <- suppressMessages(ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
+    manifestNames = c('Y1','Y2'), latentNames = c('L1','L2'), LAMBDA = diag(2),
+    n.TIpred = 2, TIpredNames = c('Z1','Z2'),
+    MANIFESTMEANS = matrix(0,2,1), CINT = matrix(c('cint1','cint2'),2,1),
+    T0MEANS = matrix(0,2,1), T0VAR = diag(1,2)))
+  model$pars$indvarying <- FALSE
+  model$pars$indvarying[model$pars$matrix %in% 'CINT'] <- TRUE
+
+  fit <- suppressWarnings(suppressMessages(ctFit(datalong, model,
+    backend = 'julia', cores = 1, optimcontrol = list(estonly = TRUE))))
+
+  # A population the data need not have located: what is under test is whether
+  # the equation reports the covariance the fit holds, on the right scale.
+  effects <- as.data.frame(ctsem:::.ctBackendSpec(fit)$random_effects)
+  raw <- ctsem:::.ctFitRawEstimate(fit)
+  raw[effects$parameter[effects$type %in% 'sd']] <- c(-0.5, 0.3)
+  raw[effects$parameter[effects$type %in% 'correlation']] <- 0.4
+  fit$estimate$raw <- raw
+  fit$estimate$rawposterior <- NULL
+  fit$transformedpars <- NULL
+
+  # The covariance is the engine's own T0 covariance of the carrier states,
+  # which for this representation *is* the population covariance -- so the
+  # accessor is checked against the filter rather than against a second copy
+  # of the same arithmetic.
+  popcov <- ctsem:::.ctBackendRawPopCov(fit)[[1]]$cov
+  carrier <- ctCollapse(ctExtract(fit)$pop_T0cov, 1, mean)[3:4, 3:4]
+  expect_equal(unname(popcov), unname(carrier))
+  expect_true(all(diag(popcov) > 0))
+
+  # A covariate coefficient is a free parameter; `coefficient` is where it sits
+  # in the raw vector.
+  effects <- as.data.frame(ctsem:::.ctBackendSpec(fit)$ti_effects)
+  timat <- ctsem:::.ctBackendRawTipredEffects(fit)
+  expect_equal(dim(timat), c(11L, 2L))
+  expect_equal(timat[cbind(match(effects$parameter, sort(unique(effects$parameter))),
+    effects$predictor)], unname(raw[effects$coefficient]))
+
+  tex <- paste(as.character(suppressMessages(ctModelLatex(fit,
+    equationonly = TRUE, compile = FALSE, open = FALSE, tex = FALSE,
+    digits = 3))), collapse = '')
+  for (cell in unique(as.character(round(c(popcov[1,1], popcov[2,2], popcov[2,1]), 3)))) {
+    expect_true(grepl(cell, tex, fixed = TRUE))
+  }
+  expect_true(grepl('cint1', tex, fixed = TRUE))
+  expect_true(grepl('\\text{Z1}', tex, fixed = TRUE))
+  expect_true(grepl(as.character(round(timat[1,1], 3)), tex, fixed = TRUE))
+})
+
+# `linearise` shows the distribution of the transformed parameters, and this
+# backend has no covariance on that scale to show. Refused by name rather than
+# accepted and quietly ignored.
+test_that("linearise is refused for a julia fit rather than ignored", {
+  skip_on_cran()
+  m <- suppressMessages(ctModel(type = 'ct', manifestNames = 'Y1', LAMBDA = diag(1)))
+  fake <- structure(list(model = m), class = c('ctJuliaFit', 'ctFit'))
+  expect_error(ctModelLatex(fake, linearise = TRUE, compile = FALSE, open = FALSE),
+    'linearise = TRUE is not available')
+  # And the default is the scale this backend does have.
+  expect_equal(formals(ctModelLatex)$linearise, quote(inherits(x, 'ctStanFit')))
+})
+
+# The union of the covariance, the covariate effects and the initial state is
+# ordered by where a parameter first appears, which is not parameter order.
+# Both halves have to carry names for the equation to line up, and for a while
+# neither did: the raw covariance was dropped and the linearised means were
+# rendered against the wrong labels.
+test_that("population means and covariance are matched by name, not position", {
+  skip_on_cran()
+  # The shape the union above produces: parameters ordered by where they first
+  # appear -- the covariance first, then whatever only the covariates touch --
+  # while the means arrive in parameter order. Position matching sends every
+  # mean to the wrong label; both halves carry names so that it cannot.
+  pars <- c('b', 'c', 'a')
+  popcov <- matrix(0, 3, 3, dimnames = list(pars, pars))
+  popcov['b','b'] <- 4; popcov['c','c'] <- 9; popcov['b','c'] <- popcov['c','b'] <- 1
+  timat <- matrix(1:6, 3, 2, dimnames = list(pars, c('Z1','Z2')))
+  popmeans <- c(a = 10, b = 20, c = 30)
+  m <- suppressMessages(ctModel(type = 'ct', manifestNames = 'Y1', LAMBDA = diag(1)))
+  m <- c(m, ctsem:::listOfMatrices(m$pars))
+  out <- ctsem:::ctModelLatexAugmentT0(popmeans = popmeans, popcov = popcov,
+    timat = timat, ctm = m, digits = 3)
+  # Character, because the initial state it merges in is the model's own
+  # symbolic T0VAR; the point here is which label each number lands on.
+  expect_equal(as.numeric(out$popmeans[c('a','b','c')]), c(10, 20, 30))
+  expect_equal(as.numeric(out$popcov['b','c']), 1)
+})
+
+# The label a population mean is printed under has to be its own.
+#
+# The parameters are listed in the order they first appear -- the covariance
+# first, then whatever only the covariates touch -- and the means arrive in
+# parameter order, so the two orders differ as soon as a model has both random
+# effects and covariates. Both halves have to carry names. Neither did: the
+# linearised means were rendered against the wrong labels, and the raw
+# covariance was dropped for zeros.
+test_that("each population mean is printed under its own parameter", {
+  skip_on_cran()
+
+  generating <- suppressMessages(ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
+    manifestNames = c('Y1','Y2'), latentNames = c('L1','L2'), LAMBDA = diag(2),
+    DRIFT = matrix(c(-.5,.1,0,-.3), 2, 2, byrow = TRUE),
+    DIFFUSION = matrix(c(.8,0,.2,.6), 2, 2, byrow = TRUE),
+    MANIFESTVAR = diag(.3,2), MANIFESTMEANS = matrix(0,2,1),
+    CINT = matrix(c(.2,-.1),2,1), T0MEANS = matrix(0,2,1), T0VAR = diag(1,2)))
+  set.seed(7)
+  datalong <- as.data.frame(suppressMessages(ctGenerate(generating,
+    n.subjects = 20, Tpoints = 10, burnin = 5, dtmean = 1, logdtsd = 0,
+    wide = FALSE)))
+  ids <- unique(datalong$id)
+  set.seed(9)
+  datalong$Z1 <- rnorm(length(ids))[match(datalong$id, ids)]
+
+  model <- suppressMessages(ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
+    manifestNames = c('Y1','Y2'), latentNames = c('L1','L2'), LAMBDA = diag(2),
+    n.TIpred = 1, TIpredNames = 'Z1',
+    MANIFESTMEANS = matrix(0,2,1), CINT = matrix(c('cint1','cint2'),2,1),
+    T0MEANS = matrix(0,2,1), T0VAR = diag(1,2)))
+  model$pars$indvarying <- FALSE
+  model$pars$indvarying[model$pars$matrix %in% 'CINT'] <- TRUE
+
+  fit <- suppressWarnings(suppressMessages(ctFit(datalong, model,
+    backend = 'stan', cores = 1)))
+
+  # The two vectors of the subject distribution line, in the order they are
+  # printed: the labels, then the means.
+  open <- '\\begin{bmatrix}'
+  close <- '\\end{bmatrix}'
+  block <- function(tex, from) {
+    at <- regexpr(open, substring(tex, from), fixed = TRUE) + from - 1L
+    to <- regexpr(close, substring(tex, at), fixed = TRUE) + at - 1L
+    cells <- strsplit(substring(tex, at + nchar(open), to - 1L), '\\\\',
+      fixed = TRUE)[[1]]
+    trimws(cells[nzchar(trimws(cells))])
+  }
+
+  for (linearise in c(TRUE, FALSE)) {
+    tex <- paste(as.character(suppressMessages(ctModelLatex(fit,
+      equationonly = TRUE, compile = FALSE, open = FALSE, tex = FALSE,
+      digits = 4, linearise = linearise))), collapse = '')
+    labels <- block(tex, 1L)
+    means <- block(tex, regexpr('\\mathrm{N} \\left(', tex, fixed = TRUE))
+    labels <- sub('_i$', '', sub('\\text{', '', labels, fixed = TRUE))
+    labels <- gsub('\\_', '_', sub('}$', '', labels), fixed = TRUE)
+    expect_equal(length(labels), length(means))
+
+    ms <- ctsem:::ctMatsetupFreePars(fit$setup$matsetup)
+    keep <- as.logical(ms$indvarying + ms$tipred)
+    e <- ctExtract(fit)
+    truth <- round(ctCollapse(if (linearise) e$popmeans else e$rawpopmeans,
+      1, mean), 4)[keep]
+    names(truth) <- ms$parname[keep]
+
+    shown <- suppressWarnings(as.numeric(means))
+    named <- labels %in% names(truth)
+    expect_true(any(named))
+    expect_equal(shown[named], as.numeric(truth[labels[named]]))
+  }
 })

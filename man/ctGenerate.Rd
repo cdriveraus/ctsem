@@ -13,8 +13,12 @@ ctGenerate(
   dtmat = NA,
   Tpoints = NULL,
   wide = FALSE,
-  backend = c("auto", "r", "julia"),
-  intoverstates = "auto"
+  backend = c("auto", "r", "julia", "stan"),
+  intoverstates = "auto",
+  fromPriors = FALSE,
+  nsamples = 200,
+  datastruct = NA,
+  cores = 2
 )
 }
 \arguments{
@@ -79,6 +83,22 @@ from a rate that has already run away. A state-dependent drift makes the
 prediction a moment approximation in the same way.
 
 \code{backend='r'} already generates this way and ignores the argument.}
+
+\item{fromPriors}{Draw the parameters from the model's priors rather than
+using the values the model specifies, and return \code{nsamples} datasets
+instead of one. This is the prior predictive: what the model says the data
+could look like before it has seen any. It needs no fitted model and no
+data -- with no \code{datastruct}, a balanced design of \code{n.subjects}
+subjects at \code{Tpoints} occasions \code{dtmean} apart is used.}
+
+\item{nsamples}{With \code{fromPriors=TRUE}, how many datasets to draw.}
+
+\item{datastruct}{With \code{fromPriors=TRUE}, an optional long format data
+structure giving the subjects, times and missingness to generate for, used
+in place of the balanced design. A fit passed as \code{ctmodelobj} brings
+its own.}
+
+\item{cores}{With \code{fromPriors=TRUE}, cpu cores to use.}
 }
 \description{
 This function generates data according to the specified ctsem model object.
@@ -117,4 +137,12 @@ for(i in seq_len(nsubjects)){
   datalist[[i]] <- d
 }
 data <- do.call(rbind, datalist)
+
+#the prior predictive: what the model says data could look like before it
+#has seen any. No fit, and no data.
+\donttest{
+priorpred <- ctGenerate(generatingModel, fromPriors = TRUE, Tpoints = 6,
+  n.subjects = 10, nsamples = 20, cores = 2)
+str(priorpred$Y)
+}
 }

@@ -1095,6 +1095,83 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   if (!length(out)) NULL else out
 }
 
+# The raw population covariance of the varying parameters, one entry per level.
+#
+# `popsd`/`rawpopcorr` report this population the way a summary reads it: the
+# spread of the *transformed* parameter, by quadrature. On the raw scale the
+# same population is a normal with a covariance -- Stan's `rawpopcov` -- and
+# that is what an equation of the model needs, because it is the scale the
+# distribution is actually normal on.
+#
+# Both ingredients already exist and neither is re-derived here: the level
+# populations are the ones `.ctBackendRandomEffectDraws()` summarises, and
+# their `rawsd` and `rawcorr` are recombined into the covariance they came
+# apart from. Averaged over draws as a covariance, not as an sd and a
+# correlation separately -- for a skewed posterior those are different numbers,
+# and Stan averages the covariance.
+.ctBackendRawPopCov <- function(fit, samples = NULL) {
+  spec <- .ctBackendSpec(fit)
+  populations <- if (!is.null(spec$laplace)) {
+    .ctBackendLaplacePopulations(fit, spec,
+      if (is.null(samples)) .ctBackendRawSamples(fit) else samples)
+  } else {
+    constrained <- .ctBackendConstrained(fit, samples)
+    one <- .ctBackendAugmentedPopulation(spec, constrained$samples,
+      constrained$layout, constrained$flat)
+    if (is.null(one)) NULL else list(one)
+  }
+  if (is.null(populations) || !length(populations)) return(NULL)
+  lapply(populations, function(population) {
+    parname <- .ctBackendParamLabel(population$param, population$parnumber)
+    rawsd <- population$rawsd
+    rawcorr <- population$rawcorr
+    k <- ncol(rawsd)
+    lower <- which(lower.tri(diag(k)), arr.ind = TRUE)
+    cov <- matrix(0, k, k, dimnames = list(parname, parname))
+    for (draw in seq_len(nrow(rawsd))) {
+      one <- diag(rawsd[draw, ]^2, k)
+      if (!is.null(rawcorr) && ncol(rawcorr)) {
+        for (entry in seq_len(nrow(lower))) {
+          i <- lower[entry, 1L]
+          j <- lower[entry, 2L]
+          one[i, j] <- one[j, i] <-
+            rawcorr[draw, entry] * rawsd[draw, i] * rawsd[draw, j]
+        }
+      }
+      cov <- cov + one / nrow(rawsd)
+    }
+    list(level = population$level, parnumber = population$parnumber,
+      param = parname, cov = cov)
+  })
+}
+
+# Raw time-independent predictor coefficients, parameters x predictors.
+#
+# `.ctBackendTipredDraws()` below reports the effect on the transformed
+# parameter, linearised at the population mean, which is the quantity a summary
+# should show. The raw coefficient is the one a raw-scale equation multiplies
+# its covariate by, and it needs no derivation at all: an effect is a free
+# parameter, and `ti_effects$coefficient` is its index in the raw vector.
+#
+# Zero where a parameter takes one predictor and not another, which is the same
+# rectangle Stan's `TIPREDEFFECT` is, rather than a ragged list.
+.ctBackendRawTipredEffects <- function(fit) {
+  spec <- .ctBackendSpec(fit)
+  effects <- spec$ti_effects
+  if (is.null(effects) || !nrow(effects)) return(NULL)
+  effects <- as.data.frame(effects, stringsAsFactors = FALSE)
+  cells <- .ctBackendFreeParameterCells(fit)
+  parname <- stats::setNames(.ctBackendParameterNames(cells), cells$parnumber)
+  predictors <- .ctBackendModel(fit)$TIpredNames
+  parameters <- sort(unique(as.integer(effects$parameter)))
+  out <- matrix(0, length(parameters), length(predictors),
+    dimnames = list(unname(parname[as.character(parameters)]), predictors))
+  out[cbind(match(as.integer(effects$parameter), parameters),
+    as.integer(effects$predictor))] <-
+    .ctFitRawEstimate(fit)[as.integer(effects$coefficient)]
+  out
+}
+
 # Time-independent predictor effects, on the transformed parameters -- Stan's
 # `linearTIPREDEFFECT`.
 #

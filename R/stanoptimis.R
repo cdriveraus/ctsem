@@ -1389,7 +1389,12 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
   
   if(estonly) {
     smf <- stan_reinitsf(sm,standata)
-    stanfit=list(optimfit=optimfit,stanfit=smf, rawest=est2,parsteps=parsteps)
+    #same standata subobject as the full path below -- TIpredAuto has already
+    #rewritten TIPREDEFFECTsetup by this point, and ctFit needs it to set the
+    #tipred column of matsetup.
+    stanfit=list(optimfit=optimfit,stanfit=smf, rawest=est2,parsteps=parsteps,
+      standata=list(TIPREDEFFECTsetup=standata$TIPREDEFFECTsetup,
+        ntipredeffects = standata$ntipredeffects))
     optimfinished <- TRUE #disable exit message re pars
     return(stanfit)
   }

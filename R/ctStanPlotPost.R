@@ -44,7 +44,10 @@ ctPlotPosterior<-function(obj, rows='all', npp=6,priorwidth=TRUE,
 
 
   e<-ctExtract(obj)
-  priors <- ctGenerateFromPriors(cts = obj,parsonly=TRUE,nsamples=priorsamples,...)
+  # The internal, not the deprecated wrapper: `parsonly` is not part of
+  # ctGenerate(fromPriors=TRUE), which returns data, and a user asking for a
+  # posterior plot should not be told an internal call is deprecated.
+  priors <- .ctGenerateFromPriors(cts = obj,parsonly=TRUE,nsamples=priorsamples,...)
   priors <- priors$stanfit$transformedpars
   posteriors <- ctExtract(obj)
   
