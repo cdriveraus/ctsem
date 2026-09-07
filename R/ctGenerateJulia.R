@@ -181,6 +181,10 @@
       call. = FALSE)
   }
   model <- .ctGenerateResolveFree(model, quiet = quiet)
+  # Every population sd pinned too, from sdscale where POPCOV says nothing.
+  # Generating is not sampling: the spread is as much a number this has to know
+  # as any entry of DRIFT.
+  model <- .ctModelPopCovFromSdscale(model, quiet = quiet)
   varying <- !is.null(model$pars$indvarying) && any(model$pars$indvarying)
 
   skeleton <- .ctGenerateSkeleton(model, n.subjects, times)

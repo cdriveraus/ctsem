@@ -105,6 +105,42 @@
 
 # The entry for one varying parameter pair, by name, or NA when the model has
 # nothing to say about it.
+# POPCOV falls back to sdscale, for generation only.
+#
+# `sdscale` multiplies the population sd's *prior* when a model is fitted, and
+# that is the right meaning there: the spread is a parameter, and a prior is
+# the only thing a specification can say about a quantity the data will
+# estimate. Generating is the other case. Nothing is being estimated, there is
+# no prior to scale, and the number the user wrote is simply the number to use
+# -- so a model saying `sdscale = 0.2` generates a between-subject sd of 0.2.
+#
+# Only where POPCOV says nothing. A stated POPCOV wins, value or label, because
+# it is the more specific statement of the two.
+#' @keywords internal
+.ctModelPopCovFromSdscale <- function(model, quiet = FALSE) {
+  popcov <- model[["POPCOV"]]
+  if (is.null(popcov) || !length(popcov)) return(model)
+  pars <- model$pars
+  used <- character()
+  for (nm in rownames(popcov)) {
+    if (is.finite(.ctModelPopCovValue(popcov[nm, nm]))) next
+    row <- which(!is.na(pars$param) & as.character(pars$param) == nm)
+    if (!length(row)) next
+    sdscale <- suppressWarnings(as.numeric(pars$sdscale[row[1L]]))
+    if (!is.finite(sdscale) || sdscale < 0) sdscale <- 1
+    popcov[nm, nm] <- format(sdscale, digits = 17, scientific = FALSE)
+    used <- c(used, sprintf("%s=%s", nm, format(sdscale)))
+  }
+  model[["POPCOV"]] <- popcov
+  if (!is.null(model$matrices)) model$matrices$POPCOV <- popcov
+  if (!quiet && length(used)) {
+    message("Population sd taken from sdscale for ",
+      paste(used, collapse = ", "),
+      ". Set model$matrices$POPCOV to state it directly.")
+  }
+  model
+}
+
 #' @keywords internal
 .ctModelPopCovEntry <- function(model, rowname, colname = rowname) {
   popcov <- model[["POPCOV"]]

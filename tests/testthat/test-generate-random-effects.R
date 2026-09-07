@@ -343,44 +343,52 @@ test_that("the drawn spread is governed by set.seed", {
   expect_false(identical(a, c))
 })
 
-test_that("generating without fromPriors pins every quantity, and says which", {
+test_that("without fromPriors, sdscale is the population sd and nothing is drawn", {
   skip_without_julia()
-  # The contract: `ctGenerate()` is not a prior predictive. Anything the model
-  # leaves unstated gets a stated default and is named, and nothing is drawn
-  # from a prior -- so two generations from one specification agree.
+  # The contract. `ctGenerate()` is not a prior predictive: every quantity is
+  # pinned, the number the user wrote is the number used, and anything the
+  # model leaves unsaid gets a stated default that is named.
   #
-  # The population spread used to be drawn on every call. Measured on this
-  # model before the fix, the realised between-subject sd came back 1.10, 0.63
-  # and 0.53 on three consecutive seeds from an unchanged specification, which
-  # made plain ctGenerate() a partial prior predictive.
-  model <- suppressWarnings(ctModel(type = 'ct', n.latent = 1, n.manifest = 1,
-    Tpoints = 4, LAMBDA = matrix(1), DRIFT = matrix(-0.5),
+  # `sdscale` multiplies the population sd's *prior* when a model is fitted,
+  # which is the only thing a specification can say about a quantity the data
+  # will estimate. Generating estimates nothing, so it is simply the sd.
+  mk <- function(sdscale) suppressWarnings(ctModel(type = 'ct', n.latent = 1,
+    n.manifest = 1, Tpoints = 4, LAMBDA = matrix(1), DRIFT = matrix(-0.5),
     DIFFUSION = matrix(0.01), MANIFESTVAR = matrix(0.01),
-    MANIFESTMEANS = matrix('mmean'), T0VAR = matrix(0.01),
-    T0MEANS = matrix(0), CINT = matrix(0)))
+    MANIFESTMEANS = matrix(paste0('mmean||TRUE|', sdscale)),
+    T0VAR = matrix(0.01), T0MEANS = matrix(0), CINT = matrix(0)))
 
-  spread <- vapply(1:3, function(s) {
-    set.seed(s)
-    d <- suppressMessages(ctGenerate(model, n.subjects = 200, backend = 'julia'))
+  realised <- function(model, n = 400, seed = 1) {
+    set.seed(seed)
+    d <- suppressMessages(ctGenerate(model, n.subjects = n, backend = 'julia'))
     stats::sd(tapply(d[, 'Y1'], d[, 'id'], mean))
-  }, numeric(1))
-  # Only the finite-sample realisation over 200 subjects moves between seeds,
-  # not the parameter. A redrawn spread was a factor of two apart.
+  }
+
+  # Equal to sdscale, not merely proportional to it. Before this the same three
+  # values gave 0.178, 0.732 and 3.593 -- a monotone function of what was asked
+  # for, which is the kind of wrong that looks right in a plot.
+  expect_equal(realised(mk(0.2)), 0.2, tolerance = 0.15)
+  expect_equal(realised(mk(1)), 1, tolerance = 0.15)
+  expect_equal(realised(mk(5)), 5, tolerance = 0.15)
+
+  # A stated POPCOV is the more specific statement and wins.
+  stated <- mk(0.2)
+  stated$matrices$POPCOV['mmean', 'mmean'] <- 2
+  expect_equal(realised(stated), 2, tolerance = 0.15)
+
+  # Nothing is drawn. The spread used to come from its prior on every call:
+  # measured 1.10, 0.63 and 0.53 on three consecutive seeds from an unchanged
+  # specification, which made plain ctGenerate() a partial prior predictive.
+  # What moves between seeds now is the finite-sample realisation alone.
+  spread <- vapply(1:3, function(s) realised(mk(1), n = 200, seed = s), numeric(1))
   expect_lt(max(spread) / min(spread), 1.3)
 
-  # A stated spread is honoured, and to the value asked for.
-  stated <- model
-  stated$matrices$POPCOV['mmean', 'mmean'] <- 0.5
-  set.seed(1)
-  d <- suppressMessages(ctGenerate(stated, n.subjects = 300, backend = 'julia'))
-  expect_equal(stats::sd(tapply(d[, 'Y1'], d[, 'id'], mean)), 0.5, tolerance = 0.15)
-
-  # And both unstated quantities are named rather than invented in silence:
-  # the population mean among the filled parameters, the spread on its own.
+  # And both defaults are reported rather than invented in silence: the
+  # population mean among the filled parameters, the sd on its own.
   expect_message(
-    suppressWarnings(ctGenerate(model, n.subjects = 10, backend = 'julia')),
+    suppressWarnings(ctGenerate(mk(0.2), n.subjects = 10, backend = 'julia')),
     regexp = 'population mean')
   expect_message(
-    suppressWarnings(ctGenerate(model, n.subjects = 10, backend = 'julia')),
-    regexp = 'Population spread not stated')
+    suppressWarnings(ctGenerate(mk(0.2), n.subjects = 10, backend = 'julia')),
+    regexp = 'taken from sdscale')
 })

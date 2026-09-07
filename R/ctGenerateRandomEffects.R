@@ -180,11 +180,14 @@
 
   raw <- .ctGenerateTiEffectRaw(model, spec, raw)
 
+  # Sds arrive fixed on the generation path -- `.ctModelPopCovFromSdscale()`
+  # gives every one of them a value before preparation -- so what reaches here
+  # free is a population *correlation*, for which raw zero is uncorrelated.
   if (!quiet && length(drawn)) {
-    message("Population spread not stated for ",
+    message("Population correlation not stated for ",
       paste(unique(drawn), collapse = ", "),
-      "; the centre of its prior was used. Set model$matrices$POPCOV to ",
-      "choose it, or use fromPriors=TRUE to draw it.")
+      "; generated uncorrelated. Set model$matrices$POPCOV to choose it, or ",
+      "use fromPriors=TRUE to draw it.")
   }
   raw
 }
