@@ -299,6 +299,24 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' @param binomial Deprecated. Logical indicating the use of binary rather than Gaussian data, as with IRT analyses.
 #' This now sets \code{intoverstates = FALSE} and the \code{manifesttype} of every indicator to 1, for binary.
 #' @param fit If TRUE, fit specified model using Stan, if FALSE, return stan model object without fitting.
+#' @param poprank Rank of the population covariance of the individually
+#' varying parameters. \code{NA} (the default) leaves it unrestricted, as in
+#' earlier versions. \code{'auto'} uses the number of varying parameters that
+#' reach the observation mean, which is the most the \code{intoverpop='augmented'}
+#' filter can identify: under that route a random effect on a variance cell
+#' (DIFFUSION, MANIFESTVAR) has its covariance with the mean-affecting effects
+#' determined by the data but not the split of that covariance into a standard
+#' deviation and correlations, and \code{'auto'} estimates exactly the part that
+#' is determined. It costs no likelihood and is a no-op when every varying
+#' parameter reaches the mean. A whole number below that is an explicit
+#' **approximation**: it describes the individual differences with fewer
+#' dimensions than the data supports, which lowers the likelihood and will
+#' distort the parameters it retains -- the fit is joint, so nothing holds the
+#' retained covariances fixed while the rest is squeezed into them. Requires
+#' \code{backend='julia'}. The population covariance is then
+#' \code{Sigma = [[S, S b'], [b S, b S b']]} for a freely estimated \code{S}
+#' over the basis effects and regression coefficients \code{b} for the rest,
+#' and each regressed effect has no variance independent of the basis.
 #' @param intoverpop how to handle declared individual differences. If 'auto',
 #' set to TRUE if optimizing and FALSE if using hmc.
 #' if TRUE, integrates over population distribution of parameters rather than full sampling.
@@ -796,7 +814,7 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' }
 
 ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE, binomial=FALSE,
-  fit=TRUE, intoverpop='auto', sameInitialTimes=FALSE, stationary=FALSE,plot=FALSE,  derrind=NA,
+  fit=TRUE, intoverpop='auto', poprank=NA, sameInitialTimes=FALSE, stationary=FALSE,plot=FALSE,  derrind=NA,
   optimize=TRUE,  optimcontrol=list(),
   backend=c('stan','julia'),
   nlcontrol = list(), nopriors=NA, priors=FALSE, chains=2,
@@ -1188,7 +1206,38 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
 
   ctm <- ctModel0DRIFT(ctm, ctm$continuoustime) #offset 0 drift
   ctm$pars <- ctModelStatesAndPARS(ctm$pars,statenames = ctm$latentNames,tdprednames=ctm$TDpredNames) #replace latent states and PARS with state and PAR[] refs, need this early because we rely on [] detection
+
+  # A reduced-rank population covariance, written as a regression of the
+  # remaining random effects on a basis of them. Three steps around the
+  # augmentation rather than a second path through it: resolve the basis while
+  # `indvarying` still says which parameters vary, clear the flag on the
+  # regressed ones so `.ctModelIntOverPop()` gives carrier states to the basis
+  # alone, then write the regression expressions once those states exist. The
+  # rewrite deliberately lands *before* the second `ctModelStatesAndPARS()`
+  # call below, so the new mean and coefficient parameters can be introduced as
+  # plain labels and turned into `PARS[r,c]` references by the machinery that
+  # already does exactly that. See R/ctPopRegression.R.
+  popregression <- NULL
+  if(!(length(poprank)==1 && is.na(poprank))){
+    if(!identical(backend,'julia')) stop(
+      "poprank requires backend='julia'.", call.=FALSE)
+    if(!intoverpop) stop(
+      "poprank restricts the population covariance the augmented filter ",
+      "estimates, so it needs intoverpop='augmented'. Under ",
+      "intoverpop='laplace' the coordinates it would remove are identified, ",
+      "and removing them is an approximation rather than a repair.", call.=FALSE)
+    popregression <- .ctPopRegressionSpec(ctm$pars, poprank)
+    if(!is.null(popregression)) ctm <- .ctPopRegressionDemote(ctm, popregression)
+  }
   if(intoverpop)   ctm <- .ctModelIntOverPop(ctm) #extend system matrices for individual differences
+  if(!is.null(popregression)){
+    ctm <- .ctPopRegressionRewrite(ctm, popregression)
+    popregression <- ctm$popregression
+    if(popregression$approximate) message('poprank = ', popregression$rank,
+      ' is below the ', popregression$nmean, ' dimensions this model identifies, ',
+      'so it is an approximation: the likelihood will be lower and the ',
+      'retained parameters will absorb what the dropped dimensions carried.')
+  }
 
 #   #check this *after* replacing PARS references as needed
 #   if(any(duplicated(ctm$pars$param[ctm$pars$matrix %in% 'T0MEANS' &
