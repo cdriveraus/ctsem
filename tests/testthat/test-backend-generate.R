@@ -273,10 +273,16 @@ test_that("ctPostPredict() runs on a julia backend fit", {
 
 test_that("ctGenerateFromPriors() refuses a julia backend fit with an informative message", {
   skip_without_julia()
+  # The reason changed when this function stopped fitting. It is no longer that
+  # a julia fit lacks stan fit structures -- it is that a julia fit does not
+  # carry the unaugmented model, only the form .ctModelIntOverPop() produced,
+  # and re-preparing from that would augment it twice. The message says to pass
+  # the model, which is all this ever wanted.
   model <- .generate_model()
   data <- .generate_data()
   fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
-  expect_error(ctGenerateFromPriors(fit), regexp = "not available for julia backend fits")
+  expect_error(ctGenerateFromPriors(fit), regexp = "does not carry")
+  expect_error(ctGenerateFromPriors(fit), regexp = "Pass the model instead")
 })
 
 # Generation on the Laplace random-effect route (intoverpop='laplace') ------

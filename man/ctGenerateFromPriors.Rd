@@ -13,15 +13,24 @@ ctGenerateFromPriors(
   nsamples = 200,
   parsonly = FALSE,
   cores = 2,
-  backend = c("auto", "julia", "stan")
+  backend = c("auto", "julia", "stan"),
+  n.subjects = 20,
+  Tpoints = NULL,
+  dtmean = 1
 )
 }
 \arguments{
-\item{cts}{\code{\link{ctModelConvertOMX}}, \code{\link{ctModel}}, or
-\code{\link{ctStanFit}} object.}
+\item{cts}{A model -- \code{\link{ctModel}} or
+\code{\link{ctModelConvertOMX}} -- or a fit from either backend, which is
+simply a model that arrives with a design attached. Nothing here needs a fit:
+generating from the prior needs the model and a set of subjects and times to
+generate over, and a fit is one way to supply both.}
 
-\item{datastruct}{long format data structure as used by ctsem. 
-Not used if cts is a ctStanFit object.}
+\item{datastruct}{Long format data structure as used by ctsem, giving the
+subjects, times and missingness to generate for. Ignored when \code{cts} is
+a fit, which carries its own. Left at NA for a model, a balanced design of
+\code{n.subjects} subjects observed at \code{Tpoints} occasions
+\code{dtmean} apart is built instead.}
 
 \item{is}{Deprecated and ignored, with a warning if set. Importance
 sampling reweights draws taken from a gaussian approximation onto a target
@@ -45,6 +54,12 @@ origin)?}
 themselves do not depend on this: they come from the model's prior, which is
 the same object either way. \code{parsonly=TRUE} returns those draws and
 generates nothing, so it does not use this argument.}
+
+\item{n.subjects, Tpoints, dtmean}{The design to build when \code{cts} is a
+model and no \code{datastruct} is given, and unused otherwise.
+\code{Tpoints} falls back to the model's own when it carries one.
+\code{n.subjects} is deliberately smaller than \code{\link{ctGenerate}}'s:
+this returns \code{nsamples} datasets rather than one.}
 }
 \value{
 List containing Y, an array of nsamples by data rows by manifest

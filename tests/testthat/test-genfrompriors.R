@@ -196,3 +196,63 @@ test_that("laplace priors are refused rather than quietly drawn as normal", {
   expect_error(ctsem:::.ctPriorRawDraws(standata, 28L, 5L),
     regexp = 'not a density it can draw from')
 })
+
+test_that("a model on its own is enough -- no fit, and no data either", {
+  skip_on_cran()
+  # The prior predictive is the question you ask *before* fitting anything, so
+  # needing a fit to ask it was backwards. A fit is now unwrapped to the two
+  # things this uses -- the model, and a design -- and both can be supplied
+  # directly. Without a design at all, a balanced one is built from the model's
+  # own Tpoints.
+  model <- suppressWarnings(ctModel(type = 'ct', n.latent = 1, n.manifest = 1,
+    Tpoints = 5, LAMBDA = matrix(1), DRIFT = matrix('drift'),
+    DIFFUSION = matrix('diff'), MANIFESTVAR = matrix('mvar'),
+    MANIFESTMEANS = matrix('mmean'), T0VAR = matrix('t0v'),
+    T0MEANS = matrix(0), CINT = matrix(0)))
+
+  bare <- suppressMessages(suppressWarnings(ctGenerateFromPriors(model,
+    n.subjects = 6, nsamples = 3, cores = 1, backend = 'stan')))
+  expect_equal(dim(bare$Y), c(3L, 30L, 1L))
+  expect_true(all(is.finite(bare$Y)))
+
+  # Tpoints as an argument overrides the model's.
+  arg <- suppressMessages(suppressWarnings(ctGenerateFromPriors(model,
+    Tpoints = 4, n.subjects = 6, nsamples = 3, cores = 1, backend = 'stan')))
+  expect_equal(dim(arg$Y)[2], 24L)
+
+  # An explicit design is used as given, unbalanced rows and all.
+  ds <- data.frame(id = rep(1:4, each = 3), time = rep(0:2, 4), Y1 = NA_real_)
+  given <- suppressMessages(suppressWarnings(ctGenerateFromPriors(model,
+    datastruct = ds, nsamples = 3, cores = 1, backend = 'stan')))
+  expect_equal(dim(given$Y)[2], 12L)
+})
+
+test_that("a model with no Tpoints and no datastruct says what is missing", {
+  skip_on_cran()
+  model <- suppressWarnings(ctModel(type = 'ct', n.latent = 1, n.manifest = 1,
+    LAMBDA = matrix(1), MANIFESTMEANS = matrix('mmean')))
+  expect_error(ctGenerateFromPriors(model, nsamples = 2, cores = 1, backend = 'stan'),
+    regexp = 'no design to generate over')
+})
+
+test_that("a julia fit is refused for the reason that is actually true", {
+  skip_without_julia()
+  # It does not carry the unaugmented model, only the form .ctModelIntOverPop()
+  # produced, and re-preparing from that would augment it twice and renumber
+  # the raw vector the prior indices refer to.
+  model <- suppressWarnings(ctModel(type = 'ct', n.latent = 1, n.manifest = 1,
+    Tpoints = 5, LAMBDA = matrix(1), DRIFT = matrix('drift'),
+    DIFFUSION = matrix('diff'), MANIFESTVAR = matrix('mvar'),
+    MANIFESTMEANS = matrix('mmean'), T0VAR = matrix('t0v'),
+    T0MEANS = matrix(0), CINT = matrix(0)))
+  data <- suppressMessages(ctGenerate(model, n.subjects = 8, burnin = 2))
+  fit <- suppressMessages(suppressWarnings(ctFit(data, model, backend = 'julia',
+    verbose = 0)))
+
+  expect_error(ctGenerateFromPriors(fit), regexp = 'does not carry')
+  # And the way past it works.
+  expect_s3_class(ctsem:::.ctFitModelObject(fit), 'ctStanModel')
+  ok <- suppressMessages(suppressWarnings(ctGenerateFromPriors(model,
+    n.subjects = 4, nsamples = 2, cores = 1)))
+  expect_equal(dim(ok$Y)[1], 2L)
+})

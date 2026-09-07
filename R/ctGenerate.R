@@ -57,10 +57,21 @@ ctModeltoNumeric <- function(ctmodelobj){
 #' Generate data from a ctstanmodel object.
 #' \code{ctStanGenerate} is maintained as a backward-compatible alias.
 #'
-#' @param cts \code{\link{ctModelConvertOMX}}, \code{\link{ctModel}}, or
-#' \code{\link{ctStanFit}} object.
-#' @param datastruct long format data structure as used by ctsem. 
-#' Not used if cts is a ctStanFit object.
+#' @param cts A model -- \code{\link{ctModel}} or
+#' \code{\link{ctModelConvertOMX}} -- or a fit from either backend, which is
+#' simply a model that arrives with a design attached. Nothing here needs a fit:
+#' generating from the prior needs the model and a set of subjects and times to
+#' generate over, and a fit is one way to supply both.
+#' @param datastruct Long format data structure as used by ctsem, giving the
+#' subjects, times and missingness to generate for. Ignored when \code{cts} is
+#' a fit, which carries its own. Left at NA for a model, a balanced design of
+#' \code{n.subjects} subjects observed at \code{Tpoints} occasions
+#' \code{dtmean} apart is built instead.
+#' @param n.subjects,Tpoints,dtmean The design to build when \code{cts} is a
+#' model and no \code{datastruct} is given, and unused otherwise.
+#' \code{Tpoints} falls back to the model's own when it carries one.
+#' \code{n.subjects} is deliberately smaller than \code{\link{ctGenerate}}'s:
+#' this returns \code{nsamples} datasets rather than one.
 #' @param is Deprecated and ignored, with a warning if set. Importance
 #' sampling reweights draws taken from a gaussian approximation onto a target
 #' that cannot be sampled directly. Fitted to an empty dataset there is no
@@ -93,22 +104,27 @@ ctModeltoNumeric <- function(ctmodelobj){
 #'}
 ctGenerateFromPriors <- function(cts,datastruct=NA, is=FALSE,
   fullposterior=TRUE, nsamples=200, parsonly=FALSE,cores=2,
-  backend=c('auto','julia','stan')){
+  backend=c('auto','julia','stan'),
+  n.subjects=20, Tpoints=NULL, dtmean=1){
 
   backend <- match.arg(backend)
 
-  # Named rather than asserted. "Not a ctStanModel object" (from ctFit(), further
-  # downstream) is opaque when the caller is plainly holding a fit; what it means
-  # is that this function reads stan fit structures (ctstanmodelbase, standata,
-  # args) that a julia fit does not carry.
+  # A julia fit is refused for one specific reason, and it is no longer the old
+  # one about stan fit structures: it does not carry the model it was built
+  # from. `$ctstanmodelbase` is absent, `$args$input$model` is NULL, and what
+  # `.ctFitModelObject()` finds is the model after .ctModelIntOverPop() has
+  # augmented it -- 18 parameter rows against the 8 the user wrote. Re-preparing
+  # from that would augment it again and quietly renumber the raw vector the
+  # prior indices refer to, which is worse than saying so.
+  #
+  # The model is all this wants, so pass it.
   if(inherits(cts, 'ctJuliaFit')) stop(
-    'This function is not available for julia backend fits yet: it reads the ',
-    'stan fit structures (ctstanmodelbase, standata, args) that a julia fit ',
-    'does not carry. ctFitCheck(), ctFitCheckCov(), ctACFresiduals() and ',
-    'ctPostPredPlots() do work on a julia fit -- ctFitCheck() simply omits its ',
-    'prior predictive panel, which is the one thing that needs this function. ',
-    "Note that backend='julia' here selects the generator, not the kind of fit ",
-    'this accepts.',
+    'ctGenerateFromPriors() needs the model, and a julia fit does not carry ',
+    'the unaugmented model it was built from -- only the augmented form the ',
+    'engine runs, which cannot be prepared again. Pass the model instead: ',
+    'ctGenerateFromPriors(mymodel), adding datastruct if you want the design ',
+    "this fit used rather than a default one. backend='julia' is about which ",
+    'engine generates the data and is available either way.',
     call.=FALSE)
 
   # `is` selected stan's optimize-then-importance-sample route, back when
@@ -120,6 +136,13 @@ ctGenerateFromPriors <- function(cts,datastruct=NA, is=FALSE,
     'this function draws from the prior directly, so there is no ',
     'approximation to correct.'))
 
+  # A fit is unwrapped to the two things this needs -- the model it was built
+  # from, and the design to generate over. `$ctstanmodelbase` is the model as
+  # the user wrote it; `$ctstanmodel`, which .ctFitModelObject() returns and
+  # every other backend-agnostic caller wants, is that model after
+  # .ctModelIntOverPop() has augmented it. Handing the augmented one back to
+  # ctFit() below augments it a second time -- measured on ctstantestfit, 28
+  # parameter rows against 82 -- and it does not survive that.
   if('ctStanFit' %in% class(cts)){
     # Three places, in order, because a fit made before `$args$resolved`
     # existed has only the other two -- and `ctstantestfit`, the fit every
@@ -134,6 +157,28 @@ ctGenerateFromPriors <- function(cts,datastruct=NA, is=FALSE,
   } else priors<-TRUE
 
   if(!is.null(priors) && !as.logical(priors)) stop('Priors disabled, cannot sample from prior!')
+
+  # A model on its own is enough to ask what its prior implies. `datastruct`
+  # says which subjects and times to generate for; a fit brought one, and
+  # without either there is a balanced design to fall back on -- otherwise a
+  # model that has never been fitted to anything, which is exactly the case a
+  # prior predictive is for, could not be asked the question.
+  if(!is.data.frame(datastruct) && !is.matrix(datastruct) &&
+      length(datastruct) == 1 && is.na(datastruct)){
+    tp <- if(!is.null(Tpoints) && !is.na(Tpoints[1])) as.integer(Tpoints[1]) else
+      if(!is.null(cts$Tpoints) && !is.na(cts$Tpoints[1])) as.integer(cts$Tpoints[1]) else
+        stop('No datastruct was given and the model carries no Tpoints, so ',
+          'there is no design to generate over. Pass Tpoints (with n.subjects ',
+          'and dtmean if the defaults do not suit), or a datastruct naming the ',
+          'subjects, times and missingness you want.', call.=FALSE)
+    datastruct <- data.frame(
+      rep(seq_len(n.subjects), each = tp),
+      rep(seq(0, by = dtmean, length.out = tp), times = n.subjects))
+    names(datastruct) <- c(cts$subjectIDname, cts$timeName)
+    # Zero rather than absent: a predictor column the model declares has to be
+    # there, and zero is the value that asks it for nothing.
+    for(predname in c(cts$TDpredNames, cts$TIpredNames)) datastruct[[predname]] <- 0
+  }
 
   # -99, not NA. The placeholder says "generate a value for this row"; NA says
   # the row is missing, and a missing row is one the generator steps over.
