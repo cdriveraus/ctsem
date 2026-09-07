@@ -2760,11 +2760,6 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
     # See `ctsem_optimize`: progress is not verbosity.
     reporter = CTSEMProgress(progress; label=progress_label,
         overwrite=progress_overwrite, every=progress_every)
-    # See `ctsem_optimize`: the counter carries no denominator, so the stopping
-    # rule is stated once here instead.
-    progress_budget || _progress_header(reporter,
-        @sprintf("%s: stops when |g| < %.0e, or at %d iterations",
-            progress_label, g_tol, Int(maxiter)))
     # Recorded every iteration whatever `verbose` says; see `ctsem_optimize`.
     # `inner` is traced too, because a Laplace fit that stalls usually stalls
     # in the inner solve and the outer objective alone does not show it.

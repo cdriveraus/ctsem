@@ -706,12 +706,6 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # what lets progress be the default without making the default noisy.
     reporter = CTSEMProgress(progress; label=progress_label,
         overwrite=progress_overwrite, every=progress_every)
-    # The stopping rule, once, because the counter below carries no denominator
-    # -- see `_progress_optimise`. The warm-up's rule is its own cap and its
-    # fraction already shows it, so it says nothing here.
-    progress_budget || _progress_header(reporter,
-        @sprintf("%s: stops when |g| < %.0e, or at %d iterations",
-            progress_label, g_tol, Int(maxiter)))
     # The trace records every iteration whatever `verbose` says: it costs a
     # push onto a vector, and a fit that turns out to have gone somewhere odd
     # is exactly the one nobody thought to turn reporting on for.

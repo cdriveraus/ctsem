@@ -175,9 +175,10 @@ test_that("a coordinate in the flat subspace gets no reported spread, and is sai
   # has no ratio to be large.
   expect_false("popsd_diff_eta1" %in% check$parameters)
 
-  # Said, rather than only computed.
+  # Said, rather than only computed -- in the brief register the warning uses,
+  # since R truncates a warning at 1000 bytes.
   expect_warning(ctsem:::.ctBackendIdentifyWarn(NULL, data.frame(), check),
-    "absent rather than small")
+    "No width at all for")
 })
 
 test_that("a genuinely redundant parameter still gets the fix-or-remove advice", {
@@ -215,16 +216,46 @@ test_that("the same advice is given after a fit as before one", {
   skip_without_julia()
   # `.ctBackendIdentifyWarn()` is the post-fit site and takes no model, so the
   # classification travels on the identifiability object. One helper writes the
-  # text at both sites; this checks the post-fit one uses it.
+  # text at both sites; this checks the post-fit one uses it -- in its `brief`
+  # register, because a warning is truncated at 1000 bytes and the paragraph
+  # `print.ctIdentify()` prints ran past that (the test above asserts the long
+  # form on the print path).
   partial <- list(nweak = 1L, parameters = "popsd_diff_eta1", negative = 0L,
     directions = list(list(parameters = "popsd_diff_eta1",
       partial = list(parameters = "diff_eta1", partners = "drift_eta1"))))
   expect_warning(ctsem:::.ctBackendIdentifyWarn(partial, data.frame()),
-    "only the covariances they generate are")
+    "only the covariance is")
   complete <- list(nweak = 1L, parameters = "lambda", negative = 0L,
     directions = list(list(parameters = c("lambda", "diff_eta1"))))
   expect_warning(ctsem:::.ctBackendIdentifyWarn(complete, data.frame()),
-    "not estimable from this data as the model stands")
+    "Not estimable as the model stands")
+})
+
+test_that("the post-fit warning fits inside R's warning length", {
+  # R truncates a warning at getOption("warning.length"), 1000 bytes by
+  # default, and it truncates the *end* -- which is where the advice and the
+  # object to look at were. Both cases are measured here rather than trusted,
+  # since the text is assembled from several pieces and any of them can grow.
+  intervals <- list(nunidentified = 2L, unidentified = c("popsd_diff_eta1",
+    "rawcor_diff_eta1__drift_eta1"))
+  partial <- list(nweak = 1L, parameters = "popsd_diff_eta1", negative = 0L,
+    directions = list(list(parameters = "popsd_diff_eta1",
+      partial = list(parameters = "diff_eta1", partners = "drift_eta1"))))
+  text <- tryCatch(
+    ctsem:::.ctBackendIdentifyWarn(partial, data.frame(), intervals),
+    warning = function(w) conditionMessage(w))
+  expect_lt(nchar(text, type = "bytes"), 1000L)
+  # The tail is the part that was being lost, so it is the part asserted.
+  expect_match(text, "fit\\$identifiability")
+  expect_match(text, "summary\\(\\) reports")
+
+  complete <- list(nweak = 1L, parameters = "lambda", negative = 0L,
+    directions = list(list(parameters = c("lambda", "diff_eta1"))))
+  text <- tryCatch(
+    ctsem:::.ctBackendIdentifyWarn(complete, data.frame(), intervals),
+    warning = function(w) conditionMessage(w))
+  expect_lt(nchar(text, type = "bytes"), 1000L)
+  expect_match(text, "fit\\$identifiability")
 })
 
 test_that("intoverpop='laplace' works from ctIdentify", {
