@@ -174,6 +174,19 @@ ctGenerateFromPriors <- function(cts,datastruct=NA, is=FALSE,
   args$optimize <- TRUE
   args$intoverstates <- TRUE
   args$intoverpop <- TRUE
+  # `poprank` exists because the augmented *filter* cannot identify part of the
+  # population covariance. Generating is the other direction -- the covariance
+  # is being specified, not recovered -- so restricting its rank here would only
+  # stop a user generating data with a full-rank one.
+  #
+  # Anticipatory rather than load-bearing today, and said plainly because a
+  # comment claiming more than it does is worse than none: generating from a
+  # model with individually varying parameters is refused on this backend (see
+  # the stop() further down), and `poprank` is julia-only, so neither backend
+  # currently reaches a state this line changes. It is here because the moment
+  # random-effect generation lands, its absence would move seed-for-seed output
+  # for every model with an indvarying DIFFUSION or MANIFESTVAR cell, silently.
+  args$poprank <- NA
   args$cores <- cores
   args$backend <- backend
 

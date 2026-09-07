@@ -1449,6 +1449,18 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
       "These reflect correlations between the raw / unconstrained parameters."
   }
 
+  # A `poprank` fit's regression coefficients are what it estimated: the
+  # standard deviations and correlations reported around them are implied by
+  # these and by the basis effects' covariance. Printed rather than left on the
+  # fit object, because a reader who is shown only the derived moments has no
+  # way to see which of them were estimated.
+  popregression <- .ctBackendPopRegressionTable(object, .ctBackendSpec(object),
+    samples, digits = digits)
+  if (!is.null(popregression)) {
+    out$popregression <- popregression
+    out$popregressionNote <- .ctBackendPopRegressionNote(.ctBackendSpec(object))
+  }
+
   if (!is.null(constrained$tipreds)) {
     out$tipreds <- .ctBackendSampleSummary(constrained$tipreds, digits = digits,
       z = nrow(samples) > 1L, chains = chains)

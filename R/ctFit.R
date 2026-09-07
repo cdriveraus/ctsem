@@ -1589,6 +1589,10 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   argsresolved$backend <- backend
   argsresolved$cores <- cores
   argsresolved$intoverpop <- intoverpopmethod
+  # The rank actually used, not the argument: 'auto' resolves to a number, and a
+  # model the restriction did not apply to reports NA whatever was asked for.
+  argsresolved$poprank <- if(is.null(popregression)) NA_integer_ else
+    as.integer(popregression$rank)
   argsresolved$priors <- as.logical(priors)
   argsresolved$optimize <- isTRUE(optimize)
   argsresolved$intoverstates <- isTRUE(intoverstates)
