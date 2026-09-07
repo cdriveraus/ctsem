@@ -61,12 +61,12 @@ ctModeltoNumeric <- function(ctmodelobj){
 #' \code{\link{ctStanFit}} object.
 #' @param datastruct long format data structure as used by ctsem. 
 #' Not used if cts is a ctStanFit object.
-#' @param is Follow the optimization with importance sampling? This is
-#' \code{uncertainty='is'}, and it leaves the draws alone for a model whose
-#' raw priors are all normal(0,1): fitted to an empty dataset the target is
-#' then exactly gaussian, so the Hessian approximation it would correct is
-#' already exact. It is worth something for a model carrying laplace priors,
-#' where that is not true.
+#' @param is Deprecated and ignored, with a warning if set. Importance
+#' sampling reweights draws taken from a gaussian approximation onto a target
+#' that cannot be sampled directly. Fitted to an empty dataset there is no
+#' such target: the likelihood contributes nothing and what remains is the
+#' prior, which ctsem holds as independent univariate densities in the raw
+#' space these draws are taken in. There is no approximation to correct.
 #' @param fullposterior Generate from the full posterior or just the (unconstrained) mean?
 #' @param nsamples How many samples to generate?
 #' @param parsonly If TRUE, only return samples of raw parameters, don't generate data.
@@ -96,6 +96,29 @@ ctGenerateFromPriors <- function(cts,datastruct=NA, is=FALSE,
     'ctPostPredPlots() do work on a julia fit -- ctFitCheck() simply omits its ',
     'prior predictive panel, which is the one thing that needs this function.',
     call.=FALSE)
+
+  # `is` selected stan's optimize-then-importance-sample route, back when
+  # ctFit() had an `optimcontrol$is` to select it with. It has done nothing
+  # for a long time -- the control list carrying it was overwritten two lines
+  # after it was built -- and that silence was load bearing, because ctFit()
+  # now refuses `optimcontrol$is` by name and every call would have stopped.
+  #
+  # It is not being rewired to `uncertainty='is'`, because there is nothing
+  # here for importance sampling to do. Importance sampling reweights draws
+  # from a gaussian approximation onto a target that cannot be sampled
+  # directly. This function fits to an empty dataset, so the likelihood
+  # contributes exactly nothing and the target is exactly the prior: on
+  # ctstantestfit, log_prob at the raw origin is -25.73028, which is
+  # 28 * log(1 / sqrt(2 * pi)) to every digit reported, and the fit returns
+  # an estimate of 0 with covariance I. ctsem's raw priors are independent
+  # univariate densities -- normal(0,1), or the smoothed double exponential
+  # where `laplaceprior` is set -- so there is no intractable target and no
+  # approximation worth correcting, laplace priors included.
+  if(!identical(is, FALSE)) .Deprecated(msg = paste0(
+    'The `is` argument of ctGenerateFromPriors() is deprecated and ignored. ',
+    'Importance sampling corrects a gaussian approximation to a posterior; ',
+    'fitted to an empty dataset the target here is the prior itself, so ',
+    'there is no approximation to correct.'))
 
   # includePreds <- FALSE #old argument, could reinstate some day...
   #update this function to also generate posterior predictive
@@ -144,17 +167,11 @@ ctGenerateFromPriors <- function(cts,datastruct=NA, is=FALSE,
   
   args <- cts$args
   # Built here, once. There were two of these lists and the one below
-  # overwrote this one wholesale, so `is` and `finishsamples` never reached
-  # ctFit() -- and `is` arriving there would have been worse than being
-  # dropped, because ctFit() refuses `optimcontrol$is` by name (it is in
-  # .ctOptimcontrolInert) and the call would have stopped. `uncertainty='is'`
-  # is what that route is called now, and both backends honour it.
-  #
-  # `uncertainty` is set only when asked for, so the default path passes
-  # exactly what it passed before.
+  # overwrote this one wholesale, so `finishsamples` never reached ctFit()
+  # and the fit always drew stanoptimis' default of 1000 however few the
+  # caller asked for.
   args$optimcontrol <- list(stochastic=FALSE, carefulfit=FALSE,
     finishsamples=nsamples)
-  if(isTRUE(is)) args$optimcontrol$uncertainty <- 'is'
   args$optimize=TRUE
   args$cores=cores
   args$model <- cts

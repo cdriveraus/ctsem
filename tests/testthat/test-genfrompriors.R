@@ -103,28 +103,52 @@ test_that("ctGenerateFromPriors() fits the empty dataset with priors on", {
   expect_lt(rstan::log_prob(smf, rep(1, npar)), rstan::log_prob(smf, rep(0, npar)))
 })
 
-test_that("ctGenerateFromPriors() honours nsamples and is", {
+test_that("ctGenerateFromPriors() honours nsamples, and refuses `is`", {
   skip_on_cran()
-  # Both used to be dropped on the floor. The function built an optimcontrol
+  # Both used to be dropped on the floor: the function built an optimcontrol
   # carrying `is` and finishsamples, then overwrote the whole list two lines
   # later, so the fit always drew the stanoptimis default of 1000 no matter what
-  # nsamples said, and `is` did nothing. Wiring the old `optimcontrol$is`
-  # through would not have worked either -- ctFit() refuses that name outright,
-  # so the call would have stopped rather than importance sampled.
+  # nsamples said. Wiring the old `optimcontrol$is` through would not have
+  # worked either -- ctFit() refuses that name outright, so the call would have
+  # stopped rather than importance sampled.
   hess <- suppressMessages(suppressWarnings(ctGenerateFromPriors(cts = ctstantestfit,
     cores = 1, nsamples = 20, parsonly = TRUE)))
   expect_equal(nrow(hess$stanfit$rawposterior), 20L)
   expect_equal(hess$stanfit$uncertainty$settings$method, 'hessian')
 
-  isfit <- suppressMessages(suppressWarnings(ctGenerateFromPriors(cts = ctstantestfit,
-    cores = 1, nsamples = 20, parsonly = TRUE, is = TRUE)))
-  expect_equal(isfit$stanfit$uncertainty$settings$method, 'is')
-  expect_equal(nrow(isfit$stanfit$rawposterior), 20L)
+  # `is` is deprecated rather than rewired, because there is nothing here for
+  # importance sampling to do. It says so instead of accepting quietly.
+  expect_warning(
+    suppressMessages(ctGenerateFromPriors(cts = ctstantestfit, cores = 1,
+      nsamples = 5, parsonly = TRUE, is = TRUE)),
+    regexp = 'deprecated and ignored')
+})
 
-  # And it is the same prior either way, which is the point of the note on the
-  # argument: with every raw prior normal(0,1) and no data, the target is
-  # exactly gaussian, so there is nothing for the importance weights to
-  # correct. Measured sd 1.006 against 1.009.
-  expect_equal(stats::sd(as.numeric(isfit$stanfit$rawposterior)), 1, tolerance = .15)
-  expect_equal(stats::sd(as.numeric(hess$stanfit$rawposterior)), 1, tolerance = .15)
+test_that("the empty-data target is the prior itself, not an approximation of one", {
+  skip_on_cran()
+  # This is the reason `is` has no role, so it is asserted rather than argued.
+  # With no observations the likelihood contributes exactly zero and what is
+  # left is ctsem's raw prior: independent standard normals. Nothing about that
+  # needs a gaussian approximation, so nothing needs reweighting onto it.
+  pp <- suppressMessages(suppressWarnings(ctGenerateFromPriors(cts = ctstantestfit,
+    cores = 1, nsamples = 5, parsonly = TRUE)))
+  smf <- ctsem:::stan_reinitsf(pp$stanmodel, pp$standata)
+  npar <- length(pp$stanfit$rawest)
+
+  expect_equal(rstan::log_prob(smf, rep(0, npar)), npar * log(1 / sqrt(2 * pi)),
+    tolerance = 1e-6)
+  # And away from the origin too, so this is the whole density and not one
+  # point that happens to agree.
+  v <- seq(-1, 1, length.out = npar)
+  expect_equal(rstan::log_prob(smf, v), sum(stats::dnorm(v, log = TRUE)),
+    tolerance = 1e-6)
+
+  # The mode and curvature the fit reports are the prior's own.
+  expect_equal(pp$stanfit$rawest, rep(0, npar), tolerance = 1e-6)
+  # Stripped to the numbers: the fit tags this with a
+  # `ctOptimCovFromHessian` attribute that unname() does not remove, and
+  # expect_equal() compares attributes.
+  cv <- pp$stanfit$cov
+  attributes(cv) <- list(dim = dim(cv))
+  expect_equal(cv, diag(npar), tolerance = 1e-6)
 })

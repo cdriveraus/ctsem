@@ -22,12 +22,12 @@ ctGenerateFromPriors(
 \item{datastruct}{long format data structure as used by ctsem. 
 Not used if cts is a ctStanFit object.}
 
-\item{is}{Follow the optimization with importance sampling? This is
-\code{uncertainty='is'}, and it leaves the draws alone for a model whose
-raw priors are all normal(0,1): fitted to an empty dataset the target is
-then exactly gaussian, so the Hessian approximation it would correct is
-already exact. It is worth something for a model carrying laplace priors,
-where that is not true.}
+\item{is}{Deprecated and ignored, with a warning if set. Importance
+sampling reweights draws taken from a gaussian approximation onto a target
+that cannot be sampled directly. Fitted to an empty dataset there is no
+such target: the likelihood contributes nothing and what remains is the
+prior, which ctsem holds as independent univariate densities in the raw
+space these draws are taken in. There is no approximation to correct.}
 
 \item{fullposterior}{Generate from the full posterior or just the (unconstrained) mean?}
 
