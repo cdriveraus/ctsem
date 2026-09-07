@@ -136,24 +136,6 @@ end
     end == ""
 end
 
-@testset "the header states the stopping rule once" begin
-    p = _optimise_reporter()
-    text = _capture_progress() do
-        ContinuousTimeSEM._progress_header(p,
-            @sprintf("optimise: stops when |g| < %.0e, or at %d iterations", 1e-8, 1000))
-    end
-    @test occursin("stops when |g| < 1e-08", text)
-    @test occursin("1000 iterations", text)
-    # Bumped so the first update does not add `_emit`'s leading newline on top
-    # of this line's own.
-    @test p.lines >= 1
-    # Nothing is printed when reporting is off.
-    off = ContinuousTimeSEM.CTSEMProgress(false)
-    @test _capture_progress() do
-        ContinuousTimeSEM._progress_header(off, "anything")
-    end == ""
-end
-
 @testset "the convergence estimate is sgd.R's formula on this optimiser's rule" begin
     # `sgd.R:405`:
     #   100 * (1 - log(current/tol) / log(worst/tol))

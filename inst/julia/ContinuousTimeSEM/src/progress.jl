@@ -373,6 +373,9 @@ function _emit(p::CTSEMProgress, text::AbstractString)
     # messages go to stderr, the two are interleaved by the terminal, and the
     # result was "...afterwards skip it.  optimise 39/1000" on one line. One
     # newline costs nothing and guarantees the progress line starts on its own.
+    # `<= 1` rather than `== 0`: nothing prints a heading before this any more,
+    # so the first update is the first line either way, and the extra case
+    # costs nothing while covering a caller that has emitted one line already.
     if p.lines <= 1
         print(NEWLINE)
     end
@@ -397,24 +400,6 @@ function _progress_done(p::CTSEMProgress, fields::AbstractString...)
         println(text)
         flush(stdout)
     end
-    return nothing
-end
-
-"""
-A heading, printed once before the work starts.
-
-The optimiser's counter has no denominator, so this is where the stopping rule
-goes: one line saying what the fit is waiting for, rather than a fraction on
-every line implying it is waiting for `maxiter`.
-
-`p.lines` is bumped so the first update does not add `_emit`'s leading newline
-on top of this line's own.
-"""
-function _progress_header(p::CTSEMProgress, text::AbstractString)
-    p.enabled || return nothing
-    println("  " * text)
-    flush(stdout)
-    p.lines = max(p.lines, 1)
     return nothing
 end
 

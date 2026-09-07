@@ -1448,7 +1448,15 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # jacobians. Tested against the TOTAL calc count -- testing ncalcsNoJ, as this
   # did from the commit that introduced it, is the same condition that has just
   # set recompile, so the message could never appear.
-  if(!recompile && length(unlist(ctm$modelmats$calcs)) > 0)
+  #
+  # Stan only, and said so because it was not: `JAxfinite` and `Jyfinite` are
+  # read by `ctData.R` into standata and from there by the generated Stan
+  # program, and nothing under `inst/julia` reads either. The julia engine
+  # differentiates its own model text, so it has analytic jacobians whatever
+  # `recompile` says, and `forcerecompile=TRUE` is advice it cannot act on --
+  # a message offering a fix for a problem the reader does not have.
+  if(!recompile && length(unlist(ctm$modelmats$calcs)) > 0 &&
+      !identical(backend, 'julia'))
     message('Finite difference jacobian used to avoid recompiling -- use forcerecompile=TRUE for analytic jacobians')
 
 

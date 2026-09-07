@@ -351,11 +351,36 @@
 # The wording, in one place, because it is said twice: before a fit by
 # `print.ctIdentify` and after one by `.ctBackendIdentifyWarn`. One paragraph
 # per element, so a caller can wrap it or run it together.
+#
+# `brief` is the same content in a phrase, for the second of those callers.
+# The two media are not the same size: `print.ctIdentify()` is a report the
+# user asked for and can run to a paragraph, while `warning()` is truncated by
+# R at `getOption("warning.length")` -- 1000 bytes by default. The full text
+# plus the interval note ran past that, so the end of the warning was cut off
+# mid-word, which is worse than either version. Still one function, so there
+# is still one place per element to change.
 #' @keywords internal
-.ctIdentifyAdvice <- function(partition) {
+.ctIdentifyAdvice <- function(partition, brief = FALSE) {
   lines <- character()
   if (length(partition$partial)) {
     many <- length(partition$partial) > 1L
+    # The correlation noun follows the number of *partners*, the covariance
+    # noun the number of pairs; one sd against one partner otherwise read
+    # "its correlations with drift_eta1; only the covariances are".
+    pairs <- max(1L, length(partition$partial)) *
+      max(1L, length(partition$partners))
+    if (brief) lines <- c(lines, paste0(
+      "The population ", if (many) "sds of " else "sd of ",
+      paste(partition$partial, collapse = ", "),
+      if (many) " are" else " is", " not separately identified from ",
+      if (many) "their" else "its", " correlation",
+      if (length(partition$partners) == 1L) " with " else "s with ",
+      if (length(partition$partners))
+        paste(partition$partners, collapse = ", ") else "each other",
+      if (pairs > 1L) "; only the covariances are. " else
+        "; only the covariance is. ",
+      "intoverpop='laplace' identifies ",
+      if (many) "them" else "it", " separately.")) else
     lines <- c(lines, paste0(
       "The population ", if (many) "sds of " else "sd of ",
       paste(partition$partial, collapse = ", "),
@@ -373,7 +398,10 @@
       "that subject's likelihood."))
   }
   if (length(partition$structural)) {
-    lines <- c(lines, paste0("Parameters involved: ",
+    lines <- c(lines, if (brief) paste0("Not estimable as the model stands: ",
+      paste(partition$structural, collapse = ", "),
+      ". Fix one of each set, or remove it.") else paste0(
+      "Parameters involved: ",
       paste(partition$structural, collapse = ", "),
       ". These are not estimable from this data as the model stands. Fix one ",
       "of each set to a value, or remove it."))
@@ -558,12 +586,16 @@
 # see is a number that is too small and a z of 65. See
 # `.ctBackendIntervalCheck()` for how the share is measured and why.
 #' @keywords internal
-.ctBackendNoWidthAdvice <- function(intervals) {
+.ctBackendNoWidthAdvice <- function(intervals, brief = FALSE) {
   if (is.null(intervals) || !isTRUE(intervals$nunidentified > 0L)) return("")
   named <- utils::head(intervals$unidentified, 6)
+  more <- if (length(intervals$unidentified) > 6) ", ..." else ""
   many <- length(intervals$unidentified) > 1L
-  paste0(" The reported spread for ", paste(named, collapse = ", "),
-    if (length(intervals$unidentified) > 6) ", ..." else "",
+  if (brief) return(paste0(" No width at all for ",
+    paste(named, collapse = ", "), more, ", so summary() reports ",
+    if (many) "those sds, intervals and zs" else "that sd, interval and z",
+    " as NA."))
+  paste0(" The reported spread for ", paste(named, collapse = ", "), more,
     " is absent rather than small: ",
     if (many) "those coordinates lie" else "that coordinate lies",
     " in a direction with no curvature, which is left out of the inversion, ",
@@ -575,26 +607,32 @@
 # Say it once, at the end of a fit, in the terms a reader needs.
 #' @keywords internal
 .ctBackendIdentifyWarn <- function(identify, collapsed, intervals = NULL) {
-  nowidth <- .ctBackendNoWidthAdvice(intervals)
+  nowidth <- .ctBackendNoWidthAdvice(intervals, brief = TRUE)
   if (!is.null(identify) && identify$nweak > 0L) {
     # Which parameters are on a random-effect scale/correlation ridge and which
     # the data says nothing about, in the same words `print.ctIdentify()` uses
     # -- the advice differs between the two cases and a fit is where it is
     # most expensive to get wrong.
+    #
+    # `brief`, and the shell around it kept to a phrase, because R truncates a
+    # warning at 1000 bytes and the full wording plus the interval note ran
+    # past it -- the reader lost exactly the part naming what to do. What is
+    # dropped is explanation, not content: every parameter and every piece of
+    # advice is still named, and `fit$identifiability` carries the rest.
     partition <- .ctIdentifyPartition(identify$directions)
     warning("The data do not identify ", identify$nweak, " direction",
-      if (identify$nweak > 1L) "s" else "", " of this model. The estimates ",
-      "are still whatever the optimiser found, but the standard errors along ",
-      "those directions are arbitrary rather than small or large, and any ",
-      "interval built from them will be too. ",
-      paste(.ctIdentifyAdvice(partition), collapse = " "),
+      if (identify$nweak > 1L) "s" else "", " of this model; the estimates ",
+      "stand but the standard error",
+      if (identify$nweak > 1L) "s along them do" else " along it does",
+      " not. ",
+      paste(.ctIdentifyAdvice(partition, brief = TRUE), collapse = " "),
       if (!length(partition$partial) && !length(partition$structural))
         paste0("Parameters involved: ",
           paste(utils::head(identify$parameters, 6), collapse = ", "),
           if (length(identify$parameters) > 6) ", ..." else "", ".") else "",
       nowidth,
-      " See fit$identifiability, and ctIdentify(data, model) to check this ",
-      "before spending a fit next time.", call. = FALSE)
+      " See fit$identifiability, or ctIdentify(data, model) before the next ",
+      "fit.", call. = FALSE)
     # Carried by the warning above rather than repeated under it: the two are
     # about one finding and a reader who has to be told twice stops reading.
     nowidth <- ""

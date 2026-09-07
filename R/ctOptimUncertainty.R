@@ -397,23 +397,33 @@ ctOptimCovFromHessian <- function(hess, ridge=1e-8, rtol=1e-12, warn=TRUE,
       else if(usedNearPD) 'nearPD_cov' else 'solve',
     repairSteps=repairSteps)
   attr(cov, 'ctOptimCovFromHessian') <- diagnostics
-  issues <- repairSteps
+  # `repairSteps` is the audit trail and goes out whole on the diagnostics; the
+  # warning gets one sentence per fact. Three of those steps describe the null
+  # projection from three angles -- solve was skipped, directions were dropped,
+  # they have no spread -- and printing all three spent most of a warning
+  # saying one thing. R truncates a warning at `getOption('warning.length')`,
+  # 1000 bytes by default, so the length was not merely untidy: the tail of
+  # this warning and of the identifiability one was being cut off mid-word.
+  issues <- if(isTRUE(diagnostics$usedNullProjection)) {
+    repairSteps[!grepl('^solve\\(-hessian\\) not attempted', repairSteps) &
+      !grepl('projected out before inversion$', repairSteps)]
+  } else repairSteps
   if(isTRUE(diagnostics$infoNearPD)) issues <- c(issues,
     'nearPD was needed for the information matrix')
   if(isTRUE(diagnostics$usedNullProjection)) issues <- c(issues,
-    paste0(nullDirections, ' direction(s) carry no curvature and were left out',
-      ' of the inversion, so they have no reported spread at all (minimum',
-      ' eigenvalue=', signif(minInfoEig, 4),
+    paste0(nullDirections, ' direction(s) with no curvature left out of the',
+      ' inversion',
       if(is.finite(infoEigenRatio))
-        paste0(', ', signif(infoEigenRatio, 3), ' of the largest)') else ')',
+        paste0(' (smallest eigenvalue ', signif(infoEigenRatio, 3),
+          ' of the largest)') else '',
       # The count of *parameters* as well as of directions, because that is the
       # number a reader is about to be misled by. A parameter lying along a
       # dropped direction has an infinite variance and is given a small
       # reported one, which reads as precision rather than as a gap. See
       # `.ctBackendIntervalCheck()`, which names them on a julia fit.
-      if(sum(nullMass >= 1e-3) > 0) paste0('; ', sum(nullMass >= 1e-3),
-        ' parameter(s) lie along them, so the sd and interval reported for',
-        ' those are an artefact of the projection rather than small') else ''))
+      if(sum(nullMass >= 1e-3) > 0) paste0(', and ', sum(nullMass >= 1e-3),
+        ' parameter(s) along them whose reported sd is that projection rather',
+        ' than a small width') else ''))
   if(isTRUE(diagnostics$usedGinv)) issues <- c(issues,
     'MASS::ginv() was used')
   if(isTRUE(diagnostics$covNearPD) || isTRUE(diagnostics$covRidgeApplied)) {

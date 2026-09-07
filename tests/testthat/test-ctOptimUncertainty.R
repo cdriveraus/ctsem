@@ -545,6 +545,30 @@ test_that("a parameter along a projected-out direction is reported as unidentifi
     tolerance = 1e-8)
 })
 
+test_that("the projection warning says it once, and fits in a warning", {
+  info <- .mixed_null_information()
+  text <- tryCatch(ctsem:::ctOptimCovFromHessian(-info),
+    warning = function(w) conditionMessage(w))
+
+  # It used to say the same thing three times -- solve was skipped, directions
+  # were projected out, they have no reported spread -- and the total ran past
+  # R's 1000-byte warning cap, so the end was cut off mid-word.
+  expect_lt(nchar(text, type = "bytes"), 1000L)
+  expect_false(grepl("not attempted", text, fixed = TRUE))
+  expect_false(grepl("projected out before inversion", text, fixed = TRUE))
+  # Said once, with both counts: directions dropped and parameters affected.
+  expect_match(text, "1 direction\\(s\\) with no curvature left out")
+  expect_match(text, "2 parameter\\(s\\) along them")
+
+  # The audit trail is unchanged -- the steps are still all on the object, it
+  # is only the warning that is a phrase.
+  cov <- suppressWarnings(suppressMessages(
+    ctsem:::ctOptimCovFromHessian(-info, warn = FALSE)))
+  steps <- attr(cov, 'ctOptimCovFromHessian')$repairSteps
+  expect_true(any(grepl("not attempted", steps, fixed = TRUE)))
+  expect_true(any(grepl("projected out before inversion", steps, fixed = TRUE)))
+})
+
 test_that("a covariance with no flat direction flags nothing as unidentified", {
   # The margin matters as much as the verdict. A well conditioned information
   # matrix must give a null mass of exactly zero, not merely a small one, or
