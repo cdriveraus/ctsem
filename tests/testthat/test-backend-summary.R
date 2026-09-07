@@ -301,13 +301,26 @@ test_that("summary reports fixed effects and system matrices, with intervals onl
   # covariance used to floor that eigenvalue at `ridge` instead, which put a
   # standard error of 1e4 on the coordinate and, through the draws, an interval
   # of [-1, 1] on a correlation estimated at -1 -- width invented by the ridge.
-  # No width is the honest report, and `fit$identifiability` names it.
+  #
+  # NA rather than zero, which is what this asserted before. A zero-width
+  # interval is still an interval to read, and on a coordinate that only
+  # partly lies in the flat direction the same projection gives a *small*
+  # width instead of none -- measured elsewhere as sd 0.009 and z 65.3 on a
+  # correlation whose profile likelihood is bit-identical from 0.60 to 0.998.
+  # There is no width that reports that honestly, so none is reported; the
+  # note and `fit$uncertainty$intervalcheck` say which coordinates and why.
   flat <- uncertain$identifiability$parameters
   expect_length(flat, 1L)
   widths <- stats::setNames(interval$popmeans[, "97.5%"] -
       interval$popmeans[, "2.5%"], rownames(interval$popmeans))
   expect_true(all(widths[setdiff(names(widths), flat)] > 0))
-  expect_equal(unname(widths[flat]), 0)
+  expect_true(is.na(unname(widths[flat])))
+  expect_true(is.na(interval$popmeans[flat, "sd"]))
+  expect_equal(uncertain$uncertainty$intervalcheck$unidentified, flat)
+  # And the reader is told, in the note that is always there rather than in a
+  # section that comes and goes.
+  expect_match(interval$uncertaintyNote, "No curvature at the estimate along")
+  expect_match(interval$uncertaintyNote, flat, fixed = TRUE)
 
   expect_output(print(interval), "System Matrices")
   expect_output(print(interval), "Fixed-effects")
@@ -514,4 +527,51 @@ test_that("engine-side cell selection returns exactly what full transfer did", {
     rows = ctsem:::.ctBackendCellPositions(cells[2L, , drop = FALSE], layout))
   expect_equal(nrow(narrow), 1L)
   expect_lt(nrow(narrow), nrow(full))
+})
+
+# A coordinate with no curvature reaches the reader through the summary tables,
+# not through the diagnostics object, so the mapping from raw coordinate names
+# to table row names is the part that has to be right. The two vocabularies
+# differ by a prefix and, on a multilevel Laplace fit, by the level: the raw
+# vector says `popsd_a.study` where the section is `popsd.study` and the row is
+# `a`.
+test_that("no-width coordinates are matched to the rows that report them", {
+  expect_equal(
+    ctsem:::.ctBackendNoWidthRows("popsd_diff_eta1",
+      c("drift_eta1", "diff_eta1"), "popsd_"),
+    c(FALSE, TRUE))
+  expect_equal(
+    ctsem:::.ctBackendNoWidthRows("rawcor_diff_eta1__drift_eta1",
+      c("diff_eta1__drift_eta1"), "rawcor_"),
+    TRUE)
+  # The level travels on the raw name and in the section heading, so it has to
+  # be put back before the comparison or a multilevel fit would match nothing.
+  expect_equal(
+    ctsem:::.ctBackendNoWidthRows("popsd_a.study", "a", "popsd_", "study"),
+    TRUE)
+  expect_equal(
+    ctsem:::.ctBackendNoWidthRows("popsd_a.subject", "a", "popsd_", "study"),
+    FALSE)
+  # A model parameter is spelled the same way in both, so no prefix.
+  expect_equal(ctsem:::.ctBackendNoWidthRows("lambda", c("lambda", "drift"), ""),
+    c(TRUE, FALSE))
+  expect_equal(ctsem:::.ctBackendNoWidthRows(character(), c("a", "b"), "popsd_"),
+    c(FALSE, FALSE))
+})
+
+test_that("marking a row blanks its width and keeps its estimate", {
+  table <- data.frame(mean = c(0.6, -0.4), sd = c(0.009, 0.02),
+    `2.5%` = c(0.579, -0.44), `50%` = c(0.597, -0.4),
+    `97.5%` = c(0.614, -0.36), z = c(65.3, -20),
+    row.names = c("diff_eta1__drift_eta1", "drift_eta1"), check.names = FALSE)
+  marked <- ctsem:::.ctBackendMarkNoWidth(table, c(TRUE, FALSE))
+  # The estimate stays: it is an arbitrary point on the ridge, but it is what
+  # the optimiser returned and there is nothing else to print. The sd, the
+  # interval and the z are the ones claiming something the data does not say.
+  expect_equal(marked$mean, c(0.6, -0.4))
+  expect_true(all(is.na(unlist(marked[1, c("sd", "2.5%", "50%", "97.5%", "z")]))))
+  # And the identified row is untouched, column for column.
+  expect_equal(marked[2, ], table[2, ])
+  # Nothing flagged, nothing changed.
+  expect_equal(ctsem:::.ctBackendMarkNoWidth(table, c(FALSE, FALSE)), table)
 })

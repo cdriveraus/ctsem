@@ -747,6 +747,52 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   round(out, digits)
 }
 
+# Reported quantities the covariance has no width for at all.
+#
+# `.ctBackendIntervalCheck()` measures which raw coordinates lie in the
+# directions `ctOptimCovFromHessian()` projected out before inverting, and
+# those get almost none of the variance that is left -- a tight interval and a
+# large z on a coordinate the likelihood does not distinguish. The numbers are
+# not merely uncertain, they are an artefact of the projection, so they are
+# reported as NA rather than printed.
+#
+# Only for a fit whose draws come from that inverse. A Hamiltonian sample's
+# spread is its chains' and owes nothing to a projection; there the same
+# geometry shows up as R-hat, which is already reported, and blanking those
+# columns would throw a real diagnostic away. `chains` is what tells the two
+# apart, and it is the same test the rest of this file uses.
+.ctBackendNoWidthCoordinates <- function(fit, chains) {
+  if (!is.null(chains)) return(character())
+  named <- fit$uncertainty$intervalcheck$unidentified
+  if (is.null(named)) return(character())
+  as.character(named)
+}
+
+# Whether each row of a reported table is one of those coordinates.
+#
+# The two vocabularies again (see `.ctIdentifyPartition`): the raw vector calls
+# it `popsd_diff_eta1` and `rawcor_a__b`, a summary table calls the same thing
+# `diff_eta1` and `a__b`, and a multilevel Laplace fit puts the level on the
+# end of the raw name and in the section heading instead. So the prefix and the
+# level are supplied by the caller and the row name is what is matched.
+.ctBackendNoWidthRows <- function(nowidth, rows, prefix = "", level = NULL) {
+  if (!length(nowidth) || !length(rows)) return(logical(length(rows)))
+  suffix <- if (is.null(level)) "" else paste0(".", as.character(level))
+  paste0(prefix, rows, suffix) %in% nowidth
+}
+
+# Blank the width columns, keeping the estimate. The point estimate is an
+# arbitrary point on the ridge and the warning says so, but it is what the
+# optimiser returned and there is nothing else to put there; the sd, the
+# interval and the z are the ones that claim something false.
+.ctBackendMarkNoWidth <- function(table, flagged) {
+  if (!is.data.frame(table) || !length(flagged) || !any(flagged)) return(table)
+  for (column in intersect(names(table), c("sd", "2.5%", "50%", "97.5%", "z"))) {
+    table[[column]][flagged] <- NA_real_
+  }
+  table
+}
+
 # Gauss-Hermite nodes and weights for a standard normal, by Golub-Welsch on the
 # probabilists' Hermite recurrence. Used to integrate a parameter's transform
 # over its population distribution (see .ctBackendRandomEffectSummary), where a
@@ -1323,6 +1369,9 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   # and `n_eff` and `Rhat` computed over those would be arithmetic rather than a
   # diagnostic.
   chains <- .ctBackendSummaryChains(object, samples)
+  # Which raw coordinates the reported covariance has no width for, so every
+  # table below can mark its own rows as it builds them.
+  nowidth <- .ctBackendNoWidthCoordinates(object, chains)
 
   if (isTRUE(residualcov)) {
     residCovStd <- .ctBackendResidCovStd(object, digits = digits)
@@ -1348,13 +1397,17 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     out$randomEffects <- constrained$randomeffectlevels
     for (lv in constrained$randomeffectlevels) {
       if (!is.null(lv$rawpopcorr)) {
-        out[[paste0("rawpopcorr.", lv$level)]] <-
-          .ctBackendSampleSummary(lv$rawpopcorr, digits = digits, chains = chains)
+        section <- .ctBackendSampleSummary(lv$rawpopcorr, digits = digits,
+          chains = chains)
+        out[[paste0("rawpopcorr.", lv$level)]] <- .ctBackendMarkNoWidth(section,
+          .ctBackendNoWidthRows(nowidth, rownames(section), "rawcor_", lv$level))
       }
     }
   } else if (!is.null(constrained$rawpopcorr)) {
     out$rawpopcorr <- .ctBackendSampleSummary(constrained$rawpopcorr,
       digits = digits, z = nrow(samples) > 1L, chains = chains)
+    out$rawpopcorr <- .ctBackendMarkNoWidth(out$rawpopcorr,
+      .ctBackendNoWidthRows(nowidth, rownames(out$rawpopcorr), "rawcor_"))
     out$rawpopcorrNote <-
       "These reflect correlations between the raw / unconstrained parameters."
   }
@@ -1417,19 +1470,30 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   if (length(constrained$randomeffectlevels) > 1L) {
     for (lv in constrained$randomeffectlevels) {
       if (!is.null(lv$popsd)) {
-        out[[paste0("popsd.", lv$level)]] <-
-          .ctBackendSampleSummary(lv$popsd, digits = digits, chains = chains)
+        section <- .ctBackendSampleSummary(lv$popsd, digits = digits,
+          chains = chains)
+        out[[paste0("popsd.", lv$level)]] <- .ctBackendMarkNoWidth(section,
+          .ctBackendNoWidthRows(nowidth, rownames(section), "popsd_", lv$level))
       }
     }
   } else if (!is.null(constrained$popsd)) {
     out$popsd <- .ctBackendSampleSummary(constrained$popsd, digits = digits,
       chains = chains)
+    out$popsd <- .ctBackendMarkNoWidth(out$popsd,
+      .ctBackendNoWidthRows(nowidth, rownames(out$popsd), "popsd_"))
   }
 
   fixed <- cells[!cells$randomeffect, , drop = FALSE]
   out$popmeans <- .ctBackendSampleSummary(
     .ctBackendPopCellsFromFlat(flat, fixed, layout), digits = digits,
     chains = chains)
+  # A model parameter's raw coordinate is spelled the same way here as in the
+  # raw vector, so no prefix -- see `.ctBackendRawParameterNames()`. Marked
+  # too, because a flat direction is not confined to random-effect
+  # coordinates: a free loading against a diffusion is the textbook case and
+  # both of those are population means.
+  out$popmeans <- .ctBackendMarkNoWidth(out$popmeans,
+    .ctBackendNoWidthRows(nowidth, rownames(out$popmeans)))
   out$popNote <- paste0("Population values on the transformed scale. ",
     "Covariance parameters appear in sd / unconstrained correlation form; ",
     "see System Matrices (or ctSummaryMatrices()) for cor/cov.")
@@ -1469,6 +1533,21 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   } else {
     paste0("Julia backend; point estimates only. ",
       "Run ctOptimUncertainty() for standard errors and intervals.")
+  }
+  # One sentence, in the note that is already about what the intervals are, and
+  # only when there is something to say -- rather than a section that appears
+  # on some fits and not others, which is a summary shape this codebase does
+  # not vary. The NAs in the tables above are the marker; this says what they
+  # are and where to read the detail.
+  if (length(nowidth)) {
+    named <- utils::head(nowidth, 6)
+    out$uncertaintyNote <- paste0(out$uncertaintyNote,
+      " No curvature at the estimate along ", paste(named, collapse = ", "),
+      if (length(nowidth) > 6) ", ..." else "",
+      ", so sd, interval and z are NA for ",
+      if (length(nowidth) > 1L) "those coordinates" else "that coordinate",
+      " rather than the artefact of the projection they would otherwise be. ",
+      "See fit$uncertainty$intervalcheck and fit$identifiability.")
   }
 
   # The convergence verdict, first, so that a reader who never opens a table

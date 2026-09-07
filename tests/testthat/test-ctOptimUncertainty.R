@@ -478,6 +478,85 @@ test_that("an interval wider than the curvature supports is detected and named",
   expect_true(all(clean$table$ratio[clean$table$param != 'popsd'] < 2))
 })
 
+# The projection's own failure mode, which is the opposite of the one above and
+# reads as a result rather than as a problem: a coordinate lying *along* a
+# dropped direction inherits almost none of the variance that is left, so it is
+# reported with a tight interval and a large z on a quantity the likelihood does
+# not distinguish at all.
+#
+# The geometry is the measured one. On a one-latent model with `indvarying` on
+# DRIFT and DIFFUSION under `intoverpop='augmented'` the flat direction mixes
+# the population sd of the diffusion effect with its correlation to the drift
+# effect -- the profile likelihood is bit-identical from r = 0.597 to r = 0.998
+# while the sd compensates to hold their product fixed -- and `summary()`
+# reported that correlation as 0.597 with sd 0.009 and z 65.3. Here the same
+# direction is written down exactly rather than fitted, so the test is
+# deterministic and needs no engine.
+.mixed_null_information <- function(curvature = c(1e4, 1e3)) {
+  # Two coordinates share the flat direction, 0.36 of one and 0.64 of the
+  # other. Neither is flat on its own axis, which is the whole difficulty:
+  # each has real curvature of its own and each is reported with a plausible
+  # standard error.
+  flat <- c(0.6, 0.8, 0)
+  V <- cbind(c(-0.8, 0.6, 0), c(0, 0, 1), flat)
+  V %*% diag(c(curvature, 0)) %*% t(V)
+}
+
+test_that("a parameter along a projected-out direction is reported as unidentified", {
+  info <- .mixed_null_information()
+  parnames <- c('popsd', 'rawcor', 'drift')
+  cov <- suppressWarnings(suppressMessages(
+    ctsem:::ctOptimCovFromHessian(-info, warn = FALSE)))
+  se <- sqrt(diag(cov))
+  check <- ctsem:::.ctBackendIntervalCheck(-info, se, parnames)
+
+  # The fault, stated as the test's premise: the reported spread is small and
+  # entirely fictitious. 0.006 on a coordinate whose asymptotic variance is
+  # infinite is a z of 100 at an estimate of 0.6.
+  expect_equal(unname(se[2]), 0.006, tolerance = 1e-8)
+
+  # And the check that now says so. The share of the dropped subspace is the
+  # statement, and it is basis-invariant: any rotation within the null space
+  # leaves these two numbers alone, which no single eigenvector's loading does.
+  expect_equal(check$table$nullmass[match(parnames, check$table$param)],
+    c(0.36, 0.64, 0), tolerance = 1e-8)
+  expect_equal(check$nunidentified, 2L)
+  expect_setequal(check$unidentified, c('popsd', 'rawcor'))
+
+  # The existing width check cannot see it, which is why this is a second
+  # branch rather than a lower threshold on the first: the ratio only grows.
+  expect_equal(check$nflagged, 0L)
+  # Below one, in fact -- the reported width is *narrower* than the curvature
+  # in that one coordinate supports, which no genuine marginal standard error
+  # can be.
+  expect_true(all(check$table$ratio[check$table$param != 'drift'] < 1))
+  # The identified coordinate keeps everything it had.
+  expect_equal(check$table$ratio[check$table$param == 'drift'], 1,
+    tolerance = 1e-8)
+
+  # Undetermined coordinates come first, or a reader ordering by ratio meets
+  # them last: their ratio is small precisely because their interval collapsed.
+  expect_setequal(check$table$param[1:2], c('popsd', 'rawcor'))
+
+  # `ctOptimCovFromHessian()` carries the same number, so the stan path -- which
+  # has no interval check of its own -- can still say how many parameters lost
+  # their spread rather than only how many directions were dropped.
+  expect_equal(attr(cov, 'ctOptimCovFromHessian')$nullMass, c(0.36, 0.64, 0),
+    tolerance = 1e-8)
+})
+
+test_that("a covariance with no flat direction flags nothing as unidentified", {
+  # The margin matters as much as the verdict. A well conditioned information
+  # matrix must give a null mass of exactly zero, not merely a small one, or
+  # the threshold would be reading rounding.
+  info <- diag(c(1e4, 1e3, 1e2))
+  check <- ctsem:::.ctBackendIntervalCheck(-info, 1 / sqrt(diag(info)),
+    c('a', 'b', 'c'))
+  expect_equal(check$nunidentified, 0L)
+  expect_equal(check$unidentified, character())
+  expect_equal(check$table$nullmass, rep(0, 3))
+})
+
 test_that("imisScaleInit scales the whole proposal covariance, not its diagonal", {
   skip_if_not_installed('mvtnorm')
   skip_if_not_installed('diagis')

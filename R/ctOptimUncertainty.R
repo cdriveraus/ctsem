@@ -174,8 +174,17 @@ ctOptimSafeCov <- function(cov, ridge=1e-8){
   nullvectors <- eig$vectors[, !keep, drop=FALSE]
   loaded <- if(ncol(nullvectors)) which(apply(abs(nullvectors), 1, max) >= .25) else
     integer()
+  # And how much of each coordinate the projection took away, which is the
+  # number that says whether its reported spread means anything: a coordinate
+  # with a large share of the dropped subspace has an infinite asymptotic
+  # variance, and the covariance built here reports it as almost none. Free
+  # from the decomposition already taken, basis-invariant where any single
+  # eigenvector's loading is not, and the same quantity
+  # `.ctBackendIntervalCheck()` reads -- see the comment there for the fit this
+  # was measured on.
+  mass <- if(ncol(nullvectors)) rowSums(nullvectors^2) else rep(0, nrow(info))
   list(cov=cov, nnull=sum(!keep), nullEigenvalues=values[!keep],
-    nullParameters=loaded, threshold=threshold)
+    nullParameters=loaded, nullMass=mass, threshold=threshold)
 }
 
 ctOptimCovFromHessian <- function(hess, ridge=1e-8, rtol=1e-12, warn=TRUE,
@@ -214,6 +223,7 @@ ctOptimCovFromHessian <- function(hess, ridge=1e-8, rtol=1e-12, warn=TRUE,
   nullDirections <- 0L
   nullEigenvalues <- numeric()
   nullParameters <- integer()
+  nullMass <- numeric()
   usedGinv <- FALSE
   infoNearPD <- FALSE
   covNearPD <- FALSE
@@ -257,7 +267,7 @@ ctOptimCovFromHessian <- function(hess, ridge=1e-8, rtol=1e-12, warn=TRUE,
         rawCholSucceeded=rawCholSucceeded,
         infoNearPD=FALSE, usedNullProjection=FALSE,
         nullDirections=0L, nullEigenvalues=numeric(),
-        nullParameters=integer(),
+        nullParameters=integer(), nullMass=numeric(),
         minInfoEigenFinal=minInfoEigenFinal,
         usedNearPD=FALSE, usedGinv=FALSE,
         covNearPD=FALSE, covRidgeApplied=FALSE,
@@ -298,6 +308,7 @@ ctOptimCovFromHessian <- function(hess, ridge=1e-8, rtol=1e-12, warn=TRUE,
       nullDirections <- projected$nnull
       nullEigenvalues <- projected$nullEigenvalues
       nullParameters <- projected$nullParameters
+      nullMass <- projected$nullMass
       minInfoEigenFinal <- projected$threshold
       minCovEigenFinal <- min(eigen(cov, symmetric=TRUE,
         only.values=TRUE)$values)
@@ -372,6 +383,9 @@ ctOptimCovFromHessian <- function(hess, ridge=1e-8, rtol=1e-12, warn=TRUE,
     nullDirections=nullDirections,
     nullEigenvalues=nullEigenvalues,
     nullParameters=nullParameters,
+    # Per coordinate, so a caller can ask which reported spreads the
+    # projection removed rather than only how many directions it dropped.
+    nullMass=nullMass,
     minInfoEigenFinal=minInfoEigenFinal,
     usedNearPD=usedNearPD,
     usedGinv=usedGinv,
@@ -391,7 +405,15 @@ ctOptimCovFromHessian <- function(hess, ridge=1e-8, rtol=1e-12, warn=TRUE,
       ' of the inversion, so they have no reported spread at all (minimum',
       ' eigenvalue=', signif(minInfoEig, 4),
       if(is.finite(infoEigenRatio))
-        paste0(', ', signif(infoEigenRatio, 3), ' of the largest)') else ')'))
+        paste0(', ', signif(infoEigenRatio, 3), ' of the largest)') else ')',
+      # The count of *parameters* as well as of directions, because that is the
+      # number a reader is about to be misled by. A parameter lying along a
+      # dropped direction has an infinite variance and is given a small
+      # reported one, which reads as precision rather than as a gap. See
+      # `.ctBackendIntervalCheck()`, which names them on a julia fit.
+      if(sum(nullMass >= 1e-3) > 0) paste0('; ', sum(nullMass >= 1e-3),
+        ' parameter(s) lie along them, so the sd and interval reported for',
+        ' those are an artefact of the projection rather than small') else ''))
   if(isTRUE(diagnostics$usedGinv)) issues <- c(issues,
     'MASS::ginv() was used')
   if(isTRUE(diagnostics$covNearPD) || isTRUE(diagnostics$covRidgeApplied)) {
@@ -1401,6 +1423,13 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' parameter is separable from the rest and grows without bound as it stops
 #' being; anything past about 100 means the reported width comes from the
 #' entanglement rather than from the data, and will not repeat between runs.
+#' The same object answers the opposite question, which the ratio cannot:
+#' \code{$nullmass} is each coordinate's share of the directions left out of
+#' the inversion, and \code{$unidentified} names those with enough of it that
+#' their true asymptotic variance is infinite. Those get almost none of the
+#' variance the projected inverse has to give, so they would otherwise be
+#' reported as precisely estimated -- more precisely the more data there is.
+#' \code{summary()} reports their sd, interval and z as \code{NA}.
 #'
 #' \emph{Backend-specific arguments.} \code{uncertainty='fullbootstrap'} and
 #' its \code{control$bootstrapFitCores} / \code{control$bootstrapTol}, and
