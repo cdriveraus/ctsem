@@ -1,4 +1,4 @@
-# ctGenerateFromPriors(), and the two defects behind its intermittent failure.
+# ctGenerateFromPriors(), and the faults behind its intermittent failure.
 #
 # The \donttest example on its help page failed under `R CMD check --as-cran`
 # on roughly two runs in three, with a raw stan exception -- `quad_form_sym: A
@@ -6,16 +6,17 @@
 # faults produced that, and each is pinned separately below, because either one
 # alone leaves a hole.
 #
-#   1. The priors never reached the fit, so the objective was flat: no data and
-#      no priors. The optimizer then had no gradient to hold it anywhere, and
-#      the draws it eventually produced could be anywhere.
+#   1. This function fitted the model to an empty dataset so that the posterior
+#      it optimised would be the prior. The priors then failed to reach that
+#      fit, leaving an objective flat in every direction, and the optimiser
+#      wandered until the model overflowed.
 #   2. `flexlapplytext()` dropped and permuted its results at `cores > 1`, so
 #      one inadmissible draw among them ended the whole call instead of being
 #      skipped.
 #
-# The first is the silent one and matters on its own: a flat objective gives a
-# "prior predictive" that is one parameter vector repeated, which looks like
-# data and is not.
+# The fit is gone now -- the prior is sampled directly -- so (1) cannot recur in
+# that form. What replaced it is asserted here too: that the draws really are
+# the prior, and that both generators turn them into data.
 
 test_that("flexlapplytext() returns results in input order and keeps NULLs", {
   skip_on_cran()
@@ -76,79 +77,122 @@ test_that("stan_constrainsamples() skips an inadmissible first draw at cores>1",
   expect_equal(dim(out$rawpopmeans)[1], 4L)
 })
 
-test_that("ctGenerateFromPriors() fits the empty dataset with priors on", {
+test_that("the draws are the prior, drawn rather than approximated", {
   skip_on_cran()
-  # `priors` was read only from `cts$args$resolved$priors`, a field that fits
-  # made before it existed -- ctstantestfit among them -- do not carry. NULL
-  # there meant `args$priors <- NULL` *removed* the element rather than setting
-  # it, so ctFit() fell back to its own default of FALSE and the guard for
-  # exactly this case never fired.
+  # What the fit-to-empty-data route existed to produce, asserted on the thing
+  # that replaced it. ctsem's raw priors are independent standard normals, so
+  # this is testable as a distribution rather than as a mechanism: 200 draws,
+  # checked for location, spread and independence.
   #
-  # Measured on the unfixed code: log density identically 0 at every raw
-  # vector tried, a Hessian with no direction of positive curvature, a repaired
-  # covariance of 1e-8 * I, and all 1000 draws within 5e-4 of the raw origin.
-  # Every generated dataset came from the same parameter vector.
-  expect_null(ctstantestfit$args$resolved)
-
+  # Distributional, because the failure it guards against was distributional
+  # and silent. With the priors not reaching the fit, every draw came back
+  # within 5e-4 of the raw origin -- the "prior predictive" was one parameter
+  # vector repeated, which looks like data.
   pp <- suppressMessages(suppressWarnings(ctGenerateFromPriors(cts = ctstantestfit,
-    cores = 1, nsamples = 20, parsonly = TRUE)))
+    cores = 1, nsamples = 200, parsonly = TRUE)))
+  draws <- pp$stanfit$rawposterior
+
+  expect_equal(dim(draws), c(200L, 28L))
+  expect_equal(mean(draws), 0, tolerance = 0.05)
+  expect_equal(stats::sd(as.numeric(draws)), 1, tolerance = 0.1)
+  # Independent, not merely spread out. The largest of the 378 off-diagonal
+  # correlations over 200 draws sits well inside this.
+  offdiag <- abs(stats::cor(draws)[upper.tri(diag(ncol(draws)))])
+  expect_lt(max(offdiag), 0.45)
+})
+
+test_that("the prior is what the model's own density says it is", {
+  skip_on_cran()
+  # The claim the direct draw rests on, checked against the stan program rather
+  # than against a comment: with the likelihood switched off, the log density
+  # over the raw parameters is the standard normal one, at the origin and away
+  # from it. If a change ever gives this model a prior that is not that, this
+  # fails and .ctPriorRawDraws() needs revisiting.
+  #
+  # `dokalman = 0` is how the likelihood is switched off; the prepared data
+  # here carries the real row structure with -99 placeholders in Y, so leaving
+  # it on would have the filter condition on those placeholders as if they were
+  # observations. (That is what the fit-to-empty-data route arranged the long
+  # way round, by handing the optimiser a dataset with nothing in it.)
+  pp <- suppressMessages(suppressWarnings(ctGenerateFromPriors(cts = ctstantestfit,
+    cores = 1, nsamples = 5, parsonly = TRUE)))
+  npar <- ncol(pp$stanfit$rawposterior)
+  prioronly <- pp$standata
+  prioronly$dokalman <- 0L
+  smf <- ctsem:::stan_reinitsf(pp$stanmodel, prioronly)
 
   expect_equal(pp$standata$priors, 1L)
-  # The raw priors are normal(0,1), so the draws carry that spread. The point
-  # is the contrast with 5e-4, not the exact number.
-  expect_gt(stats::sd(as.numeric(pp$stanfit$rawposterior)), 0.5)
-  # And the objective is the prior, not a flat surface.
-  smf <- ctsem:::stan_reinitsf(pp$stanmodel, pp$standata)
-  npar <- length(pp$stanfit$rawest)
-  expect_lt(rstan::log_prob(smf, rep(1, npar)), rstan::log_prob(smf, rep(0, npar)))
+  expect_equal(rstan::log_prob(smf, rep(0, npar)), npar * log(1 / sqrt(2 * pi)),
+    tolerance = 1e-6)
+  v <- seq(-1, 1, length.out = npar)
+  expect_equal(rstan::log_prob(smf, v), sum(stats::dnorm(v, log = TRUE)),
+    tolerance = 1e-6)
 })
 
 test_that("ctGenerateFromPriors() honours nsamples, and refuses `is`", {
   skip_on_cran()
-  # Both used to be dropped on the floor: the function built an optimcontrol
-  # carrying `is` and finishsamples, then overwrote the whole list two lines
-  # later, so the fit always drew the stanoptimis default of 1000 no matter what
-  # nsamples said. Wiring the old `optimcontrol$is` through would not have
-  # worked either -- ctFit() refuses that name outright, so the call would have
-  # stopped rather than importance sampled.
-  hess <- suppressMessages(suppressWarnings(ctGenerateFromPriors(cts = ctstantestfit,
+  # nsamples used to be dropped on the floor: the function built an optimcontrol
+  # carrying it, then overwrote the whole list two lines later, so the fit
+  # always drew the stanoptimis default of 1000 however few were asked for.
+  pp <- suppressMessages(suppressWarnings(ctGenerateFromPriors(cts = ctstantestfit,
     cores = 1, nsamples = 20, parsonly = TRUE)))
-  expect_equal(nrow(hess$stanfit$rawposterior), 20L)
-  expect_equal(hess$stanfit$uncertainty$settings$method, 'hessian')
+  expect_equal(nrow(pp$stanfit$rawposterior), 20L)
+  expect_equal(nrow(pp$stanfit$transformedpars$popmeans), 20L)
 
-  # `is` is deprecated rather than rewired, because there is nothing here for
-  # importance sampling to do. It says so instead of accepting quietly.
+  # `is` is deprecated rather than rewired, because nothing here approximates
+  # anything for importance sampling to correct. It says so instead of
+  # accepting quietly.
   expect_warning(
     suppressMessages(ctGenerateFromPriors(cts = ctstantestfit, cores = 1,
       nsamples = 5, parsonly = TRUE, is = TRUE)),
     regexp = 'deprecated and ignored')
 })
 
-test_that("the empty-data target is the prior itself, not an approximation of one", {
+test_that("both backends generate from the same prior draws", {
   skip_on_cran()
-  # This is the reason `is` has no role, so it is asserted rather than argued.
-  # With no observations the likelihood contributes exactly zero and what is
-  # left is ctsem's raw prior: independent standard normals. Nothing about that
-  # needs a gaussian approximation, so nothing needs reweighting onto it.
-  pp <- suppressMessages(suppressWarnings(ctGenerateFromPriors(cts = ctstantestfit,
-    cores = 1, nsamples = 5, parsonly = TRUE)))
-  smf <- ctsem:::stan_reinitsf(pp$stanmodel, pp$standata)
-  npar <- length(pp$stanfit$rawest)
+  # `backend` chooses the generator, not the draws. Whatever turns a parameter
+  # vector into data, the shape and the completeness of the result are the
+  # same, and both routes vary the dataset with the draw -- which is the point,
+  # and exactly what the degenerate prior predictive did not do.
+  nsamples <- 6L
+  stangen <- suppressMessages(suppressWarnings(ctGenerateFromPriors(
+    cts = ctstantestfit, cores = 1, nsamples = nsamples, backend = 'stan')))
 
-  expect_equal(rstan::log_prob(smf, rep(0, npar)), npar * log(1 / sqrt(2 * pi)),
-    tolerance = 1e-6)
-  # And away from the origin too, so this is the whole density and not one
-  # point that happens to agree.
-  v <- seq(-1, 1, length.out = npar)
-  expect_equal(rstan::log_prob(smf, v), sum(stats::dnorm(v, log = TRUE)),
-    tolerance = 1e-6)
+  expect_equal(dim(stangen$Y)[1], nsamples)
+  expect_equal(names(dimnames(stangen$Y))[1:2], c('sample', 'row'))
+  expect_true(all(is.finite(stangen$Y)))
+  expect_equal(length(unique(round(apply(stangen$Y, 1, mean), 9))), nsamples)
+  expect_equal(dim(stangen$llrow), dim(stangen$Y)[1:2])
 
-  # The mode and curvature the fit reports are the prior's own.
-  expect_equal(pp$stanfit$rawest, rep(0, npar), tolerance = 1e-6)
-  # Stripped to the numbers: the fit tags this with a
-  # `ctOptimCovFromHessian` attribute that unname() does not remove, and
-  # expect_equal() compares attributes.
-  cv <- pp$stanfit$cov
-  attributes(cv) <- list(dim = dim(cv))
-  expect_equal(cv, diag(npar), tolerance = 1e-6)
+  skip_without_julia()
+  juliagen <- suppressMessages(suppressWarnings(ctGenerateFromPriors(
+    cts = ctstantestfit, cores = 1, nsamples = nsamples, backend = 'julia')))
+
+  expect_equal(dim(juliagen$Y), dim(stangen$Y))
+  expect_equal(names(dimnames(juliagen$Y))[1:2], c('sample', 'row'))
+  expect_true(all(is.finite(juliagen$Y)))
+  expect_equal(length(unique(round(apply(juliagen$Y, 1, mean), 9))), nsamples)
+})
+
+test_that("backend='auto' takes julia when a session is available", {
+  skip_without_julia()
+  # Stated as the observable consequence rather than by reading a flag: with
+  # julia available, the default runs and produces what backend='julia' does.
+  auto <- suppressMessages(suppressWarnings(ctGenerateFromPriors(
+    cts = ctstantestfit, cores = 1, nsamples = 4)))
+  expect_equal(dim(auto$Y)[c(1, 3)], c(4L, 2L))
+  expect_true(all(is.finite(auto$Y)))
+  expect_true(isTRUE(ctJuliaStatus()$available))
+})
+
+test_that("laplace priors are refused rather than quietly drawn as normal", {
+  skip_on_cran()
+  # The one thing the direct draw cannot do, and the one place it is louder
+  # than what it replaced rather than merely faster. The old route drew these
+  # from a gaussian approximation, so a laplaceprior parameter's "prior" draws
+  # came back normal whatever laplaceprior said, and nothing reported it.
+  standata <- ctstantestfit$standata
+  standata$laplaceprior <- rep(1L, length(standata$laplaceprior))
+  expect_error(ctsem:::.ctPriorRawDraws(standata, 28L, 5L),
+    regexp = 'not a density it can draw from')
 })

@@ -67,13 +67,22 @@ ctModeltoNumeric <- function(ctmodelobj){
 #' such target: the likelihood contributes nothing and what remains is the
 #' prior, which ctsem holds as independent univariate densities in the raw
 #' space these draws are taken in. There is no approximation to correct.
-#' @param fullposterior Generate from the full posterior or just the (unconstrained) mean?
+#' @param fullposterior Generate from the full prior, or from its mode (the raw
+#' origin)?
 #' @param nsamples How many samples to generate?
 #' @param parsonly If TRUE, only return samples of raw parameters, don't generate data.
 #' @param cores Number of cpu cores to use.
+#' @param backend Which engine turns a parameter draw into data: \code{'auto'}
+#' (the default -- \code{'julia'} when a julia session is available,
+#' \code{'stan'} otherwise), \code{'julia'} or \code{'stan'}. The draws
+#' themselves do not depend on this: they come from the model's prior, which is
+#' the same object either way. \code{parsonly=TRUE} returns those draws and
+#' generates nothing, so it does not use this argument.
 #'
-#' @return List contining Y, and array of nsamples by data rows by manifest variables, 
-#' and llrow, an array of nsamples by data rows log likelihoods.
+#' @return List containing Y, an array of nsamples by data rows by manifest
+#' variables, and llrow, an array of nsamples by data rows log likelihoods.
+#' With \code{parsonly=TRUE}, the prepared model carrying the prior draws
+#' under \code{$stanfit$rawposterior} and \code{$stanfit$transformedpars}.
 #' @aliases ctStanGenerate
 #' @export
 #'
@@ -83,7 +92,10 @@ ctModeltoNumeric <- function(ctmodelobj){
 #' priorpred <- ctGenerateFromPriors(cts = ctstantestfit,cores=2,nsamples = 50)
 #'}
 ctGenerateFromPriors <- function(cts,datastruct=NA, is=FALSE,
-  fullposterior=TRUE, nsamples=200, parsonly=FALSE,cores=2){
+  fullposterior=TRUE, nsamples=200, parsonly=FALSE,cores=2,
+  backend=c('auto','julia','stan')){
+
+  backend <- match.arg(backend)
 
   # Named rather than asserted. "Not a ctStanModel object" (from ctFit(), further
   # downstream) is opaque when the caller is plainly holding a fit; what it means
@@ -94,119 +106,177 @@ ctGenerateFromPriors <- function(cts,datastruct=NA, is=FALSE,
     'stan fit structures (ctstanmodelbase, standata, args) that a julia fit ',
     'does not carry. ctFitCheck(), ctFitCheckCov(), ctACFresiduals() and ',
     'ctPostPredPlots() do work on a julia fit -- ctFitCheck() simply omits its ',
-    'prior predictive panel, which is the one thing that needs this function.',
+    'prior predictive panel, which is the one thing that needs this function. ',
+    "Note that backend='julia' here selects the generator, not the kind of fit ",
+    'this accepts.',
     call.=FALSE)
 
   # `is` selected stan's optimize-then-importance-sample route, back when
-  # ctFit() had an `optimcontrol$is` to select it with. It has done nothing
-  # for a long time -- the control list carrying it was overwritten two lines
-  # after it was built -- and that silence was load bearing, because ctFit()
-  # now refuses `optimcontrol$is` by name and every call would have stopped.
-  #
-  # It is not being rewired to `uncertainty='is'`, because there is nothing
-  # here for importance sampling to do. Importance sampling reweights draws
-  # from a gaussian approximation onto a target that cannot be sampled
-  # directly. This function fits to an empty dataset, so the likelihood
-  # contributes exactly nothing and the target is exactly the prior: on
-  # ctstantestfit, log_prob at the raw origin is -25.73028, which is
-  # 28 * log(1 / sqrt(2 * pi)) to every digit reported, and the fit returns
-  # an estimate of 0 with covariance I. ctsem's raw priors are independent
-  # univariate densities -- normal(0,1), or the smoothed double exponential
-  # where `laplaceprior` is set -- so there is no intractable target and no
-  # approximation worth correcting, laplace priors included.
+  # ctFit() had an `optimcontrol$is` to select it with. It is not rewired,
+  # because nothing below approximates anything for it to correct.
   if(!identical(is, FALSE)) .Deprecated(msg = paste0(
     'The `is` argument of ctGenerateFromPriors() is deprecated and ignored. ',
     'Importance sampling corrects a gaussian approximation to a posterior; ',
-    'fitted to an empty dataset the target here is the prior itself, so ',
-    'there is no approximation to correct.'))
+    'this function draws from the prior directly, so there is no ',
+    'approximation to correct.'))
 
-  # includePreds <- FALSE #old argument, could reinstate some day...
-  #update this function to also generate posterior predictive
-  
-  # nopriors <- FALSE # update this when creating posterior predictive, go to TRUE if fullposterior=F and fit object had no priors
-  
   if('ctStanFit' %in% class(cts)){
-    # if(!fullposterior && cts$standata$nopriors==1) nopriors <- TRUE #generate from point estimate
     # Three places, in order, because a fit made before `$args$resolved`
     # existed has only the other two -- and `ctstantestfit`, the fit every
-    # example on this page uses, is one of them. Reading `$args$resolved`
-    # alone returned NULL there, `args$priors <- NULL` then *removed* the
-    # element rather than setting it, so `ctFit()` below took its own default
-    # of `priors = FALSE` and the guard two lines down never fired. The
-    # result was a flat objective: no data and no priors, log density
-    # identically zero, a Hessian with no curvature in any direction, and a
-    # repaired covariance of 1e-8 * I. Every one of the `nsamples` draws came
-    # back within 5e-4 of the raw origin, so the prior predictive was one
-    # parameter vector repeated -- silently, and it looked like data.
+    # example on this page uses, is one of them.
     priors <- cts$args$resolved$priors
     if(is.null(priors)) priors <- cts$args$priors
     if(is.null(priors) && !is.null(cts$standata$priors)) priors <- as.logical(cts$standata$priors)
     datastruct <- standatatolong(cts$standata, origstructure=TRUE, ctm=cts$ctstanmodelbase)
-    
+
     cts <- cts$ctstanmodelbase
-    # browser() 
-    #  if(cts$setup$recompile){ #then temporarily attach compiled stanmodels to search path to avoid recompiling
-    #    ctsem.compiledmodel <- new.env()
-    #    ctsem.compiledmodel$fitmodel <- cts$stanmodel
-    #    if(!is.null(cts$generated)) ctsem.compiledmodel$genmodel <- cts$generated$stanmodel
-    #    attach(ctsem.compiledmodel)
-    #    on.exit(add = TRUE, {detach(name = 'ctsem.compiledmodel')})
-    #    }
-    
+
   } else priors<-TRUE
-  
-  datastruct[,cts$manifestNames] <- NA #remove manifest variables
-  
+
+  if(!is.null(priors) && !as.logical(priors)) stop('Priors disabled, cannot sample from prior!')
+
+  # -99, not NA. The placeholder says "generate a value for this row"; NA says
+  # the row is missing, and a missing row is one the generator steps over.
+  datastruct[,cts$manifestNames] <- -99
+
   cts$TIpredAuto <- 0L
-  
-  ds <- data.table(datastruct)
-  ds[,WhichObs:=(1:.N),by=eval(cts$subjectIDname)]
-  datadummy= data.frame(datastruct)[ds$WhichObs==1,]
-  datadummy[,cts$TIpredNames] <- 0
-  
-  
+
+  # `parsonly` asks about parameters and generates nothing, so there is no
+  # generator to choose; the prior draws are the same object either way. It
+  # takes the stan preparation because the constrained draws it returns are
+  # stan shaped -- ctPlotPosterior() reads `$stanfit$transformedpars`.
+  if(backend == 'auto') backend <-
+    if(isTRUE(tryCatch(ctJuliaStatus()$available, error=function(e) FALSE)))
+      'julia' else 'stan'
+  if(parsonly) backend <- 'stan'
+
+  # Prepared, not fitted.
+  #
+  # This used to fit the model to a one-row-per-subject dataset with every
+  # manifest set to NA, so that the "posterior" it optimised would be the
+  # prior, and then draw from the hessian covariance at the mode. That was a
+  # way to get a stan model instance to draw through, not a statement about
+  # the prior, and it cost an optimisation and a hessian to arrive at an
+  # answer that is written down in the model: ctsem's raw priors are
+  # independent normals, so the draws are one rnorm() each. It also went
+  # wrong in the ways an unnecessary optimisation does -- an empty dataset
+  # with priors off is a completely flat objective, and the optimiser wanders.
+  #
+  # `fit=FALSE` gives the same prepared data and model this needs, over the
+  # real row and missingness structure rather than a dummy one, without
+  # running anything.
   args <- cts$args
-  # Built here, once. There were two of these lists and the one below
-  # overwrote this one wholesale, so `finishsamples` never reached ctFit()
-  # and the fit always drew stanoptimis' default of 1000 however few the
-  # caller asked for.
-  args$optimcontrol <- list(stochastic=FALSE, carefulfit=FALSE,
-    finishsamples=nsamples)
-  args$optimize=TRUE
-  args$cores=cores
   args$model <- cts
   args$ctstanmodel <- NULL
+  args$datalong <- datastruct
+  args$fit <- FALSE
+  args$priors <- TRUE
+  args$optimize <- TRUE
   args$intoverstates <- TRUE
   args$intoverpop <- TRUE
-  args$inits=0
-  args$datalong=datadummy
-  args$priors <- priors
+  args$cores <- cores
+  args$backend <- backend
 
-  if(!is.null(args$priors) && !as.logical(args$priors)) stop('Priors disabled, cannot sample from prior!')
-  
-  #fit to empty data 
-  message('Fitting model to empty dataset...')
-  
-  pp<-do.call(ctFit,args)
-  
-  if(parsonly) dat <- pp else{
-    
-    datastruct[,cts$manifestNames] <- -99
-    
-    #get filled standata object
-    pp$standata<-.ctPrepareData(ctm=pp$ctstanmodel, datalong=datastruct,optimize=TRUE)
-    
-    ppf <- ctGenerateFromFit(fit = pp,nsamples = nsamples,fullposterior = fullposterior,cores=cores)
-    
-    #collect generated stuff
-    dat <-list()
-    dat$Y <- ppf$generated$Y
-    dimnames(dat$Y) <- list(datapoints=1:dim(dat$Y)[1], samples=1:dim(dat$Y)[2], manifests = cts$manifestNames)
-    dat$llrow <- ppf$generated$llrow
+  prepared <- do.call(ctFit, args)
+
+  if(backend == 'julia'){
+    spec <- .ctBackendSpec(prepared)
+    if(is.null(spec$priors) || !length(spec$priors$index)) stop(
+      'The prepared model carries no prior specification, so there is nothing ',
+      "to draw from. Use backend='stan'.", call.=FALSE)
+    # The spec accounts for every free parameter or refuses to be built, so its
+    # index is exactly seq_len(npar).
+    npar <- length(spec$priors$index)
+    draws <- .ctPriorRawDraws(prepared$standata, npar, nsamples)
+    prepared$estimate <- list(raw = rep(0, npar), rawposterior = draws)
+    message('Generating ', nsamples, ' datasets from the prior, backend julia.')
+    ppf <- .ctBackendGenerateFromFit(prepared, nsamples=nsamples,
+      fullposterior=fullposterior, cores=cores)
+    return(list(Y = ppf$generated$Y, llrow = ppf$generated$llrow))
   }
-  
-  
-  return(dat)
+
+  # stan. `sm` follows ctFit()'s own rule: the built-in model unless this
+  # model's text differs from it, in which case there is nothing compiled to
+  # reuse.
+  standata <- prepared$standata
+  if(isTRUE(prepared$setup$recompile)){
+    message('Compiling model -- usually ~ 1 min.')
+    sm <- rstan::stan_model(model_code = prepared$stanmodeltext)
+  } else sm <- stanmodels$ctsm
+
+  npar <- rstan::get_num_upars(stan_reinitsf(sm, standata))
+  draws <- .ctPriorRawDraws(standata, npar, nsamples)
+
+  prepared$stanmodel <- sm
+  prepared$stanfit <- list(rawest = rep(0, npar), rawposterior = draws)
+  class(prepared) <- c('ctStanFit','ctFit')
+
+  if(parsonly){
+    # dokalman=FALSE matches what the fitted route computed here: it took
+    # `dokalman` from `savescores`, which is off for this data.
+    prepared$stanfit$transformedpars <- suppressMessages(stan_constrainsamples(
+      sm = sm, standata = standata, samples = draws, cores = cores,
+      savescores = FALSE, savesubjectmatrices = FALSE, dokalman = FALSE,
+      pcovn = FALSE))
+    return(prepared)
+  }
+
+  ppf <- ctGenerateFromFit(fit = prepared, nsamples = nsamples,
+    fullposterior = fullposterior, cores = cores)
+
+  # Named by ctGenerateFromFit() and by .ctBackendGenerateFromFit() alike, and
+  # named correctly: dim 1 is the sample. This used to relabel dim 1
+  # `datapoints` and dim 2 `samples`, which is the wrong way round and
+  # contradicted the @return text directly above.
+  list(Y = ppf$generated$Y, llrow = ppf$generated$llrow)
+}
+
+# ctsem's prior over the raw parameters, sampled directly.
+#
+# `.ctBackendPriorSpec()` reads the index and scale of each raw parameter's
+# prior out of the prepared data. It is the same spec the julia engine is
+# handed and the same layout the generated stan model uses, and every family in
+# it is normal: the density the engines evaluate is
+# `weight * sum(dnorm(value / scale, log = TRUE))`, which as a distribution over
+# `value` is `normal(0, scale / sqrt(weight))`. `weight` is
+# `priormod / nsubsets`, and is 1 for anything but a subsetted fit.
+#
+# The spec accounts for every free parameter or refuses to be built, so there
+# is no unnamed remainder; the zero-filled matrix is there to make that
+# assumption visible rather than to be relied on.
+.ctPriorRawDraws <- function(standata, npar, nsamples){
+  .ctPriorRejectUnsamplable(standata)
+  spec <- .ctBackendPriorSpec(standata, npar)
+  sdvec <- spec$scale / sqrt(spec$weight)
+  draws <- matrix(0, nrow = nsamples, ncol = npar)
+  draws[, spec$index] <- stats::rnorm(nsamples * length(spec$index)) *
+    rep(sdvec, each = nsamples)
+  draws
+}
+
+# The prior families this cannot draw from, refused where the caller can act.
+#
+# `.ctBackendRejectLaplacePriors()` refuses the same models but advises
+# `backend='stan'`, which is wrong here: the obstacle is the density, not the
+# engine, and no backend samples it.
+#
+# Worth saying plainly what changed, because it reads like a lost capability
+# and is not one. The fit-to-empty-data route this replaced did not sample
+# these either -- it optimised to the mode and drew from the hessian covariance
+# there, so a laplaceprior parameter's "prior" draws came back gaussian
+# whatever laplaceprior said, and nothing reported it.
+.ctPriorRejectUnsamplable <- function(standata){
+  laplaceprior <- as.integer(standata$laplaceprior)
+  if((length(laplaceprior) && any(laplaceprior == 1L)) ||
+      isTRUE(as.integer(standata$laplacetipreds)[1L] == 1L)) stop(
+    'ctGenerateFromPriors() draws from the prior directly, and the smoothed ',
+    'double exponential ctsem uses for laplaceprior parameters is not a ',
+    'density it can draw from. No backend changes that -- the obstacle is the ',
+    'prior rather than the engine. The route this replaced did not sample them ',
+    'either: it drew from a gaussian approximation, so those draws were normal ',
+    'whatever laplaceprior said. Drop laplaceprior for the affected matrices ',
+    'to generate from priors.', call.=FALSE)
+  invisible(TRUE)
 }
 
 #' @export
