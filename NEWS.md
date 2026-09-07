@@ -20,6 +20,7 @@
 - `ctModelCoverage_check()` is renamed `ctCoverageCheck()`, with camelCase arguments to match the rest of the package. The old name is not retained.
 - Fixed: standard errors along a direction the data does not identify were computed by flooring the information matrix and inverting, which produced an arbitrary finite width set by rounding rather than by the data, and could inflate the intervals of well determined parameters alongside it. Such directions are now excluded, and `fit$uncertainty$intervalcheck` reports each standard error against the width that parameter's own curvature supports.
 - Fixed: computing quantities from more than one posterior draw with `cores > 1` stopped with a raw Stan exception whenever the first draw was one the model could not evaluate, and otherwise returned the remaining draws in an order that did not match the samples they came from. This affected `ctGenerateFromPriors()`, `ctKalman()`, `ctPredict()` and `plot()`, intermittently.
+- `ctGenerateFromPriors()` draws from the prior directly rather than fitting the model to an empty dataset in order to approximate it, and takes a `backend` argument choosing which engine turns those draws into data -- `'auto'`, the default, uses julia where a julia session is available. A model using `laplaceprior` is now refused by name, where before it was silently drawn from a normal approximation.
 
 ## 29/6/2026
 ### 3.11.0

@@ -12,7 +12,8 @@ ctGenerateFromPriors(
   fullposterior = TRUE,
   nsamples = 200,
   parsonly = FALSE,
-  cores = 2
+  cores = 2,
+  backend = c("auto", "julia", "stan")
 )
 }
 \arguments{
@@ -29,17 +30,27 @@ such target: the likelihood contributes nothing and what remains is the
 prior, which ctsem holds as independent univariate densities in the raw
 space these draws are taken in. There is no approximation to correct.}
 
-\item{fullposterior}{Generate from the full posterior or just the (unconstrained) mean?}
+\item{fullposterior}{Generate from the full prior, or from its mode (the raw
+origin)?}
 
 \item{nsamples}{How many samples to generate?}
 
 \item{parsonly}{If TRUE, only return samples of raw parameters, don't generate data.}
 
 \item{cores}{Number of cpu cores to use.}
+
+\item{backend}{Which engine turns a parameter draw into data: \code{'auto'}
+(the default -- \code{'julia'} when a julia session is available,
+\code{'stan'} otherwise), \code{'julia'} or \code{'stan'}. The draws
+themselves do not depend on this: they come from the model's prior, which is
+the same object either way. \code{parsonly=TRUE} returns those draws and
+generates nothing, so it does not use this argument.}
 }
 \value{
-List contining Y, and array of nsamples by data rows by manifest variables, 
-and llrow, an array of nsamples by data rows log likelihoods.
+List containing Y, an array of nsamples by data rows by manifest
+variables, and llrow, an array of nsamples by data rows log likelihoods.
+With \code{parsonly=TRUE}, the prepared model carrying the prior draws
+under \code{$stanfit$rawposterior} and \code{$stanfit$transformedpars}.
 }
 \description{
 Generate data from a ctstanmodel object.
