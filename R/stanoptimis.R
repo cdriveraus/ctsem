@@ -334,14 +334,44 @@ flexlapply <- function(cl, X, fn,cores=1,...){
   if(cores > 1) parallel::parLapply(cl,X,fn,...) else lapply(X, fn,...)
 }
 
+# Results come back in input order, and a NULL stays a NULL.
+#
+# Neither held at `cores > 1`, and together they ended whole calls. Each worker
+# evaluates `nodeindices[[nodeid]]`, and `nodeid` is a rank drawn inside
+# `makeClusterID()` rather than the node's position in `cl`, so the
+# concatenated results arrive in an order the caller cannot reconstruct.
+# `unlist()` then *drops* the NULL a failed element returns, so the result was
+# both permuted and short, with nothing left to say which elements were
+# missing.
+#
+# `stan_constrainsamples()` is the only caller, and it reads both properties:
+# it takes `which(!nulls)[1]` as a row of `samples` to build the skeleton from.
+# With the NULLs dropped that index is always 1, so an inadmissible first draw
+# was handed straight to an unprotected `rstan::constrain_pars()` and its
+# exception -- `quad_form_sym: A is not symmetric. A[1,2] = inf`, or
+# `mdivide_left_spd: Matrix A is not positive definite` -- ended the call.
+# Intermittent, because it needed draw 1 in particular to be inadmissible, and
+# invisible at `cores = 1`, where `lapply()` keeps the NULLs and the two
+# indices agree. That is the \donttest example on ctGenerateFromPriors failing
+# under `R CMD check --as-cran`, and no seed suppresses it.
+#
+# Carrying the index alongside each result fixes both, and leaves the two
+# branches returning the same shape. `ordered[i] <- list(v)`, not
+# `ordered[[i]] <- v`: the latter *deletes* element i when v is NULL, which is
+# exactly the case being preserved.
 flexlapplytext <- function(cl, X, fn,cores=1,...){
   if(cores > 1) {
     nodeindices <- split(1:length(X), sort((1:length(X))%%cores))
     nodeindices<-nodeindices[1:cores]
     clusterIDexport(cl,c('nodeindices'))
-    
-    out <-unlist(clusterIDeval(cl,paste0('lapply(nodeindices[[nodeid]],',fn,')')),recursive = FALSE)
-    # out2<-parallel::parLapply(cl,X,tparfunc,...) 
+
+    out <-unlist(clusterIDeval(cl,paste0(
+      'lapply(nodeindices[[nodeid]], function(.i) list(.idx = .i, .val = ',fn,'(.i)))')),
+      recursive = FALSE)
+    ordered <- vector('list', length(X))
+    for(el in out) ordered[el$.idx] <- list(el$.val)
+    out <- ordered
+    # out2<-parallel::parLapply(cl,X,tparfunc,...)
   } else out <- lapply(X, eval(parse(text=fn),envir =parent.frame()),...)
   return(out)
 }
