@@ -137,4 +137,12 @@ for(i in seq_len(nsubjects)){
   datalist[[i]] <- d
 }
 data <- do.call(rbind, datalist)
+
+#the prior predictive: what the model says data could look like before it
+#has seen any. No fit, and no data.
+\donttest{
+priorpred <- ctGenerate(generatingModel, fromPriors = TRUE, Tpoints = 6,
+  n.subjects = 10, nsamples = 20, cores = 2)
+str(priorpred$Y)
+}
 }
