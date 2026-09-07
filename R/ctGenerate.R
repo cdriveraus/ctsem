@@ -99,7 +99,20 @@ ctGenerateFromPriors <- function(cts,datastruct=NA, is=FALSE,
   
   if('ctStanFit' %in% class(cts)){
     # if(!fullposterior && cts$standata$nopriors==1) nopriors <- TRUE #generate from point estimate
+    # Three places, in order, because a fit made before `$args$resolved`
+    # existed has only the other two -- and `ctstantestfit`, the fit every
+    # example on this page uses, is one of them. Reading `$args$resolved`
+    # alone returned NULL there, `args$priors <- NULL` then *removed* the
+    # element rather than setting it, so `ctFit()` below took its own default
+    # of `priors = FALSE` and the guard two lines down never fired. The
+    # result was a flat objective: no data and no priors, log density
+    # identically zero, a Hessian with no curvature in any direction, and a
+    # repaired covariance of 1e-8 * I. Every one of the `nsamples` draws came
+    # back within 5e-4 of the raw origin, so the prior predictive was one
+    # parameter vector repeated -- silently, and it looked like data.
     priors <- cts$args$resolved$priors
+    if(is.null(priors)) priors <- cts$args$priors
+    if(is.null(priors) && !is.null(cts$standata$priors)) priors <- as.logical(cts$standata$priors)
     datastruct <- standatatolong(cts$standata, origstructure=TRUE, ctm=cts$ctstanmodelbase)
     
     cts <- cts$ctstanmodelbase
