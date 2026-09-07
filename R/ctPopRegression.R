@@ -146,7 +146,7 @@
 # population covariance -- so this is a conditioning choice, not a modelling
 # one. Putting the identified effects first is what makes the retained
 # coordinates the identified ones when `poprank='auto'`.
-.ctPopRegressionSpec <- function(pars, poprank) {
+.ctPopRegressionSpec <- function(pars, poprank, explicit = TRUE) {
   if (is.null(poprank) || (length(poprank) == 1L && is.na(poprank))) return(NULL)
   roles <- .ctPopEffectRoles(pars)
   if (!nrow(roles)) return(NULL)
@@ -164,6 +164,13 @@
       ' individually varying parameters.', call. = FALSE)
   }
   if (rank == 0L) {
+    # Nothing reaches the observation mean, so under `intoverpop='augmented'`
+    # no part of the population covariance is identified and there is no basis
+    # to regress on. Refuse when the rank was asked for; when it is only the
+    # default, leave the model alone -- the pre-fit warning in `ctFit()` already
+    # names these parameters, and turning a call that used to run into an error
+    # is not this argument's job.
+    if (!isTRUE(explicit)) return(NULL)
     stop('This model has no individually varying parameter that reaches the ',
       'observation mean, so nothing about the population covariance is ',
       "identified under intoverpop='augmented'. Use intoverpop='laplace', ",
@@ -182,6 +189,50 @@
     npar = rank * (rank + 1L) / 2L + length(regressed) * rank)
 }
 
+# What to tell the user when the rank was dropped.
+#
+# `poprank='auto'` is the default, so a model can lose population parameters
+# without the user having asked, and the message has to carry three things: how
+# much was dropped, why those particular effects, and how to get the other
+# behaviour back. Kept to a few lines -- the reasoning belongs in the comment at
+# the top of this file, not in every fit's output.
+#
+# The two reasons are reported separately, because they are not the same claim.
+# An effect that never reaches the observation mean is regressed because its
+# own spread is *not identified* -- nothing is lost. An effect that does reach
+# the mean and is regressed anyway was dropped to meet a rank the user asked
+# for, and that does lose something. A first version of this message explained
+# every regressed effect with the identification reason and so told a user that
+# `dr2` and `dr3` "vary only where the filter cannot see their spread", which
+# is untrue of a DRIFT effect and is exactly the kind of plausible wrong
+# statement this whole feature exists to remove.
+.ctPopRegressionMessage <- function(spec) {
+  regressed <- unique(spec$coefficients$param)
+  roles <- spec$roles
+  variancecell <- intersect(regressed, roles$param[!roles$mean])
+  demoted <- intersect(regressed, roles$param[roles$mean])
+  basis <- paste(spec$basis, collapse = ', ')
+  out <- paste0('poprank: population covariance reduced to rank ', spec$rank,
+    ' of ', spec$rank + length(regressed), '.')
+  if (length(variancecell)) {
+    out <- paste0(out, ' ', paste(variancecell, collapse = ', '),
+      if (length(variancecell) > 1) ' vary' else ' varies',
+      ' only in DIFFUSION / MANIFESTVAR, where the augmented filter cannot see',
+      if (length(variancecell) > 1) ' their' else ' its', ' own spread, so ',
+      if (length(variancecell) > 1) 'they are' else 'it is',
+      ' estimated as a regression on ', basis, '.')
+  }
+  if (length(demoted)) {
+    out <- paste0(out, ' ', paste(demoted, collapse = ', '),
+      if (length(demoted) > 1) ' are' else ' is',
+      ' also regressed on ', basis, ' to meet the requested rank, which is ',
+      'below the ', spec$nmean, ' this model identifies -- an approximation, ',
+      'and the retained parameters absorb what it drops.')
+  }
+  paste0(out, " poprank=NA estimates the full covariance instead;",
+    " intoverpop='laplace' identifies it.")
+}
+
 # Turn the regressed effects off before the augmentation runs.
 #
 # `.ctModelIntOverPop()` creates one carrier state per individually varying
@@ -190,21 +241,7 @@
 # which is the point: the regression form adds a rewrite either side of it
 # rather than a second augmentation path through it.
 .ctPopRegressionDemote <- function(m, spec) {
-  effectcols <- grep('_effect$', names(m$pars), value = TRUE)
-  rows <- !is.na(m$pars$param) & m$pars$param %in% spec$regressed
-  if (length(effectcols) && any(rows)) {
-    carried <- vapply(effectcols, function(cc) any(m$pars[rows, cc] %in% TRUE),
-      logical(1L))
-    if (any(carried)) {
-      stop('poprank cannot yet be combined with TI-predictor effects on a ',
-        'regressed random effect (', paste(unique(m$pars$param[rows]),
-          collapse = ', '), '). A regressed effect becomes an expression over ',
-        'the basis effects, and a TI effect on an expression cell has no ',
-        'meaning. Put the TI effects on the basis effects, or use ',
-        'poprank=NA.', call. = FALSE)
-    }
-  }
-  m$pars$indvarying[rows] <- FALSE
+  m$pars$indvarying[!is.na(m$pars$param) & m$pars$param %in% spec$regressed] <- FALSE
   m
 }
 
@@ -238,22 +275,39 @@
   newpars <- list()
   parsrow <- suppressWarnings(max(c(0L,
     as.integer(m$pars$row[m$pars$matrix %in% 'PARS']))))
-  addpar <- function(label) {
+  addpar <- function(label, effects = NULL) {
     parsrow <<- parsrow + 1L
     row <- template
     row$matrix <- 'PARS'; row$row <- parsrow; row$col <- 1L
     row$param <- label; row$value <- NA; row$transform <- 'param'
     row$indvarying <- FALSE
-    if (length(effectcols)) row[, effectcols] <- FALSE
+    if (length(effectcols)) {
+      row[, effectcols] <- FALSE
+      if (!is.null(effects)) row[, effectcols] <- effects
+    }
     newpars[[length(newpars) + 1L]] <<- row
     invisible(NULL)
   }
 
   coefficients <- list()
   for (p in spec$regressed) {
+    # TI-predictor effects follow the parameter's *mean*, which is where they
+    # already acted: a TI effect shifts a subject's raw parameter value, and
+    # under the augmented route that means the population mean rather than the
+    # random deviation -- `.ctModelIntOverPop()` does the same thing for a basis
+    # effect, copying the flags onto the carrier state's T0MEANS row and
+    # clearing them on the cell it rewrites. `.ctJuliaTIEffects()` attaches an
+    # effect to any free parameter whose `param` is a plain label, which the
+    # mean is and the rewritten cell is not.
+    effects <- NULL
+    if (length(effectcols)) {
+      own <- which(!is.na(m$pars$param) & m$pars$param %in% p)
+      if (length(own)) effects <- vapply(effectcols,
+        function(cc) any(m$pars[own, cc] %in% TRUE), logical(1L))
+    }
     # The mean keeps the parameter's own name, so the summary still has a row
     # called `df11` meaning the population mean of `df11`.
-    addpar(p)
+    addpar(p, effects)
     betas <- paste0('beta_', p, '_', spec$basis)
     for (b in betas) addpar(b)
     coefficients[[length(coefficients) + 1L]] <- data.frame(
@@ -280,6 +334,9 @@
         predictor, transform, perl = TRUE)
       m$pars$transform[ri] <- NA
       m$pars$indvarying[ri] <- FALSE
+      # Cleared here as well as carried above: a TI-predictor flag left on a
+      # cell whose `param` is now an expression is the shape that made
+      # `.ctJuliaTIEffects()` mint a coefficient with nothing to attach it to.
       if (length(effectcols)) m$pars[ri, effectcols] <- FALSE
     }
   }

@@ -14,7 +14,7 @@ ctFit(
   binomial = FALSE,
   fit = TRUE,
   intoverpop = "auto",
-  poprank = NA,
+  poprank = "auto",
   sameInitialTimes = FALSE,
   stationary = FALSE,
   plot = FALSE,
@@ -104,23 +104,38 @@ staying at the parameter count. \code{TRUE} and \code{FALSE} may be given
 in place of the character forms above.}
 
 \item{poprank}{Rank of the population covariance of the individually
-varying parameters. \code{NA} (the default) leaves it unrestricted, as in
-earlier versions. \code{'auto'} uses the number of varying parameters that
-reach the observation mean, which is the most the \code{intoverpop='augmented'}
+varying parameters.
+
+\code{'auto'}, the default, uses the number of varying parameters that reach
+the observation mean. That is the most the \code{intoverpop='augmented'}
 filter can identify: under that route a random effect on a variance cell
-(DIFFUSION, MANIFESTVAR) has its covariance with the mean-affecting effects
-determined by the data but not the split of that covariance into a standard
-deviation and correlations, and \code{'auto'} estimates exactly the part that
-is determined. It costs no likelihood and is a no-op when every varying
-parameter reaches the mean. A whole number below that is an explicit
-**approximation**: it describes the individual differences with fewer
-dimensions than the data supports, which lowers the likelihood and will
-distort the parameters it retains -- the fit is joint, so nothing holds the
-retained covariances fixed while the rest is squeezed into them. Requires
-\code{backend='julia'}. The population covariance is then
-\code{Sigma = [[S, S b'], [b S, b S b']]} for a freely estimated \code{S}
-over the basis effects and regression coefficients \code{b} for the rest,
-and each regressed effect has no variance independent of the basis.}
+(DIFFUSION, MANIFESTVAR) reaches the likelihood only through the predicted
+covariance, so the filter never updates its carrier state, and the data
+determines its covariance with the mean-affecting effects but not the split
+of that covariance into a standard deviation and correlations. \code{'auto'}
+estimates exactly the part that is determined, which costs no likelihood, and
+it is a no-op on any model where every varying parameter reaches the mean.
+When it does reduce the rank it says so, naming the parameters affected.
+
+\code{NA} leaves the covariance unrestricted, as in versions before this
+argument existed. The extra parameters are then estimated but not identified:
+their reported values are one arbitrary point on a ridge, and their intervals
+are not trustworthy in either direction.
+
+A whole number below the \code{'auto'} value is an explicit
+**approximation**. It describes the individual differences with fewer
+dimensions than the data supports, which lowers the likelihood and
+\strong{distorts the parameters it retains} -- the fit is joint, so nothing
+holds the retained covariances fixed while the rest is squeezed into them.
+Useful for parsimony, or for speed in high dimensions, and not otherwise.
+
+The population covariance is \code{Sigma = [[S, S b'], [b S, b S b']]}, for a
+freely estimated \code{S} over the basis effects and regression coefficients
+\code{b} for the rest; each regressed effect has no variance independent of
+the basis. \code{summary()} reports \code{b} alongside the standard
+deviations and correlations it implies. Requires \code{backend='julia'} and
+\code{intoverpop='augmented'}; a rank explicitly asked for elsewhere is an
+error, and the default is simply not applied.}
 
 \item{sameInitialTimes}{if TRUE, include an empty observation for every subject that has no observation
 at the earliest observation time of the dataset. This ensures that the T0MEANS occurs for every subject at the same time,

@@ -300,23 +300,38 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' This now sets \code{intoverstates = FALSE} and the \code{manifesttype} of every indicator to 1, for binary.
 #' @param fit If TRUE, fit specified model using Stan, if FALSE, return stan model object without fitting.
 #' @param poprank Rank of the population covariance of the individually
-#' varying parameters. \code{NA} (the default) leaves it unrestricted, as in
-#' earlier versions. \code{'auto'} uses the number of varying parameters that
-#' reach the observation mean, which is the most the \code{intoverpop='augmented'}
+#' varying parameters.
+#'
+#' \code{'auto'}, the default, uses the number of varying parameters that reach
+#' the observation mean. That is the most the \code{intoverpop='augmented'}
 #' filter can identify: under that route a random effect on a variance cell
-#' (DIFFUSION, MANIFESTVAR) has its covariance with the mean-affecting effects
-#' determined by the data but not the split of that covariance into a standard
-#' deviation and correlations, and \code{'auto'} estimates exactly the part that
-#' is determined. It costs no likelihood and is a no-op when every varying
-#' parameter reaches the mean. A whole number below that is an explicit
-#' **approximation**: it describes the individual differences with fewer
-#' dimensions than the data supports, which lowers the likelihood and will
-#' distort the parameters it retains -- the fit is joint, so nothing holds the
-#' retained covariances fixed while the rest is squeezed into them. Requires
-#' \code{backend='julia'}. The population covariance is then
-#' \code{Sigma = [[S, S b'], [b S, b S b']]} for a freely estimated \code{S}
-#' over the basis effects and regression coefficients \code{b} for the rest,
-#' and each regressed effect has no variance independent of the basis.
+#' (DIFFUSION, MANIFESTVAR) reaches the likelihood only through the predicted
+#' covariance, so the filter never updates its carrier state, and the data
+#' determines its covariance with the mean-affecting effects but not the split
+#' of that covariance into a standard deviation and correlations. \code{'auto'}
+#' estimates exactly the part that is determined, which costs no likelihood, and
+#' it is a no-op on any model where every varying parameter reaches the mean.
+#' When it does reduce the rank it says so, naming the parameters affected.
+#'
+#' \code{NA} leaves the covariance unrestricted, as in versions before this
+#' argument existed. The extra parameters are then estimated but not identified:
+#' their reported values are one arbitrary point on a ridge, and their intervals
+#' are not trustworthy in either direction.
+#'
+#' A whole number below the \code{'auto'} value is an explicit
+#' **approximation**. It describes the individual differences with fewer
+#' dimensions than the data supports, which lowers the likelihood and
+#' \strong{distorts the parameters it retains} -- the fit is joint, so nothing
+#' holds the retained covariances fixed while the rest is squeezed into them.
+#' Useful for parsimony, or for speed in high dimensions, and not otherwise.
+#'
+#' The population covariance is \code{Sigma = [[S, S b'], [b S, b S b']]}, for a
+#' freely estimated \code{S} over the basis effects and regression coefficients
+#' \code{b} for the rest; each regressed effect has no variance independent of
+#' the basis. \code{summary()} reports \code{b} alongside the standard
+#' deviations and correlations it implies. Requires \code{backend='julia'} and
+#' \code{intoverpop='augmented'}; a rank explicitly asked for elsewhere is an
+#' error, and the default is simply not applied.
 #' @param intoverpop how to handle declared individual differences. If 'auto',
 #' set to TRUE if optimizing and FALSE if using hmc.
 #' if TRUE, integrates over population distribution of parameters rather than full sampling.
@@ -814,7 +829,7 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' }
 
 ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE, binomial=FALSE,
-  fit=TRUE, intoverpop='auto', poprank=NA, sameInitialTimes=FALSE, stationary=FALSE,plot=FALSE,  derrind=NA,
+  fit=TRUE, intoverpop='auto', poprank='auto', sameInitialTimes=FALSE, stationary=FALSE,plot=FALSE,  derrind=NA,
   optimize=TRUE,  optimcontrol=list(),
   backend=c('stan','julia'),
   nlcontrol = list(), nopriors=NA, priors=FALSE, chains=2,
@@ -857,6 +872,10 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   }
   ctstanmodel <- model
   backend <- match.arg(backend)
+  # Whether `poprank` was asked for or merely defaulted. Taken here because
+  # `missing()` has to be evaluated before the argument is touched, and it
+  # decides whether an inapplicable rank is an error or a no-op.
+  poprankexplicit <- !missing(poprank)
   # Before any data preparation and before the Julia install prompt: a control
   # name the chosen backend cannot honour is a mistake to report immediately,
   # not after a wait.
@@ -1217,26 +1236,29 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # call below, so the new mean and coefficient parameters can be introduced as
   # plain labels and turned into `PARS[r,c]` references by the machinery that
   # already does exactly that. See R/ctPopRegression.R.
+  # `poprank` defaults to 'auto', so the places it does not apply have to be
+  # inapplicable rather than errors: only a rank the user asked for is refused.
   popregression <- NULL
   if(!(length(poprank)==1 && is.na(poprank))){
-    if(!identical(backend,'julia')) stop(
-      "poprank requires backend='julia'.", call.=FALSE)
-    if(!intoverpop) stop(
-      "poprank restricts the population covariance the augmented filter ",
-      "estimates, so it needs intoverpop='augmented'. Under ",
-      "intoverpop='laplace' the coordinates it would remove are identified, ",
-      "and removing them is an approximation rather than a repair.", call.=FALSE)
-    popregression <- .ctPopRegressionSpec(ctm$pars, poprank)
-    if(!is.null(popregression)) ctm <- .ctPopRegressionDemote(ctm, popregression)
+    if(!identical(backend,'julia')){
+      if(poprankexplicit) stop("poprank requires backend='julia'.", call.=FALSE)
+    } else if(!intoverpop){
+      if(poprankexplicit) stop(
+        "poprank restricts the population covariance the augmented filter ",
+        "estimates, so it needs intoverpop='augmented'. Under ",
+        "intoverpop='laplace' the coordinates it would remove are identified, ",
+        "and removing them is an approximation rather than a repair.", call.=FALSE)
+    } else {
+      popregression <- .ctPopRegressionSpec(ctm$pars, poprank,
+        explicit=poprankexplicit)
+      if(!is.null(popregression)) ctm <- .ctPopRegressionDemote(ctm, popregression)
+    }
   }
   if(intoverpop)   ctm <- .ctModelIntOverPop(ctm) #extend system matrices for individual differences
   if(!is.null(popregression)){
     ctm <- .ctPopRegressionRewrite(ctm, popregression)
     popregression <- ctm$popregression
-    if(popregression$approximate) message('poprank = ', popregression$rank,
-      ' is below the ', popregression$nmean, ' dimensions this model identifies, ',
-      'so it is an approximation: the likelihood will be lower and the ',
-      'retained parameters will absorb what the dropped dimensions carried.')
+    if(!is.null(popregression)) message(.ctPopRegressionMessage(popregression))
   }
 
 #   #check this *after* replacing PARS references as needed
