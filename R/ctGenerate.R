@@ -52,57 +52,11 @@ ctModeltoNumeric <- function(ctmodelobj){
   return(ctmodelobj)
 }
 
-#' Generate data from a ctstanmodel object
-#'
-#' Generate data from a ctstanmodel object.
-#' \code{ctStanGenerate} is maintained as a backward-compatible alias.
-#'
-#' @param cts A model -- \code{\link{ctModel}} or
-#' \code{\link{ctModelConvertOMX}} -- or a fit from either backend, which is
-#' simply a model that arrives with a design attached. Nothing here needs a fit:
-#' generating from the prior needs the model and a set of subjects and times to
-#' generate over, and a fit is one way to supply both.
-#' @param datastruct Long format data structure as used by ctsem, giving the
-#' subjects, times and missingness to generate for. Ignored when \code{cts} is
-#' a fit, which carries its own. Left at NA for a model, a balanced design of
-#' \code{n.subjects} subjects observed at \code{Tpoints} occasions
-#' \code{dtmean} apart is built instead.
-#' @param n.subjects,Tpoints,dtmean The design to build when \code{cts} is a
-#' model and no \code{datastruct} is given, and unused otherwise.
-#' \code{Tpoints} falls back to the model's own when it carries one.
-#' \code{n.subjects} is deliberately smaller than \code{\link{ctGenerate}}'s:
-#' this returns \code{nsamples} datasets rather than one.
-#' @param is Deprecated and ignored, with a warning if set. Importance
-#' sampling reweights draws taken from a gaussian approximation onto a target
-#' that cannot be sampled directly. Fitted to an empty dataset there is no
-#' such target: the likelihood contributes nothing and what remains is the
-#' prior, which ctsem holds as independent univariate densities in the raw
-#' space these draws are taken in. There is no approximation to correct.
-#' @param fullposterior Generate from the full prior, or from its mode (the raw
-#' origin)?
-#' @param nsamples How many samples to generate?
-#' @param parsonly If TRUE, only return samples of raw parameters, don't generate data.
-#' @param cores Number of cpu cores to use.
-#' @param backend Which engine turns a parameter draw into data: \code{'auto'}
-#' (the default -- \code{'julia'} when a julia session is available,
-#' \code{'stan'} otherwise), \code{'julia'} or \code{'stan'}. The draws
-#' themselves do not depend on this: they come from the model's prior, which is
-#' the same object either way. \code{parsonly=TRUE} returns those draws and
-#' generates nothing, so it does not use this argument.
-#'
-#' @return List containing Y, an array of nsamples by data rows by manifest
-#' variables, and llrow, an array of nsamples by data rows log likelihoods.
-#' With \code{parsonly=TRUE}, the prepared model carrying the prior draws
-#' under \code{$stanfit$rawposterior} and \code{$stanfit$transformedpars}.
-#' @aliases ctStanGenerate
-#' @export
-#'
-#' @examples
-#' \donttest{
-#' #generate and plot samples from prior predictive
-#' priorpred <- ctGenerateFromPriors(cts = ctstantestfit,cores=2,nsamples = 50)
-#'}
-ctGenerateFromPriors <- function(cts,datastruct=NA, is=FALSE,
+# The prior predictive itself. `ctGenerate(fromPriors = TRUE)` is the way in;
+# `ctGenerateFromPriors()` below is the deprecated former entry point, kept
+# because it is on CRAN, and `ctPlotPosterior()` reaches here directly for
+# `parsonly`, which generating data does not expose.
+.ctGenerateFromPriors <- function(cts,datastruct=NA,
   fullposterior=TRUE, nsamples=200, parsonly=FALSE,cores=2,
   backend=c('auto','julia','stan'),
   n.subjects=20, Tpoints=NULL, dtmean=1){
@@ -126,15 +80,6 @@ ctGenerateFromPriors <- function(cts,datastruct=NA, is=FALSE,
     "this fit used rather than a default one. backend='julia' is about which ",
     'engine generates the data and is available either way.',
     call.=FALSE)
-
-  # `is` selected stan's optimize-then-importance-sample route, back when
-  # ctFit() had an `optimcontrol$is` to select it with. It is not rewired,
-  # because nothing below approximates anything for it to correct.
-  if(!identical(is, FALSE)) .Deprecated(msg = paste0(
-    'The `is` argument of ctGenerateFromPriors() is deprecated and ignored. ',
-    'Importance sampling corrects a gaussian approximation to a posterior; ',
-    'this function draws from the prior directly, so there is no ',
-    'approximation to correct.'))
 
   # A fit is unwrapped to the two things this needs -- the model it was built
   # from, and the design to generate over. `$ctstanmodelbase` is the model as
@@ -324,6 +269,83 @@ ctGenerateFromPriors <- function(cts,datastruct=NA, is=FALSE,
   invisible(TRUE)
 }
 
+#' Generate data from a model's priors (deprecated)
+#'
+#' Deprecated. Use \code{\link{ctGenerate}(fromPriors = TRUE)}, which is the
+#' same computation reached through the function that generates data from a
+#' ctsem model generally. \code{ctStanGenerate} is a backward-compatible alias
+#' and is deprecated with it.
+#'
+#' @param cts A model -- \code{\link{ctModel}} or
+#' \code{\link{ctModelConvertOMX}} -- or a fit from either backend, which is
+#' simply a model that arrives with a design attached. Nothing here needs a fit:
+#' generating from the prior needs the model and a set of subjects and times to
+#' generate over, and a fit is one way to supply both.
+#' @param datastruct Long format data structure as used by ctsem, giving the
+#' subjects, times and missingness to generate for. Ignored when \code{cts} is
+#' a fit, which carries its own. Left at NA for a model, a balanced design of
+#' \code{n.subjects} subjects observed at \code{Tpoints} occasions
+#' \code{dtmean} apart is built instead.
+#' @param n.subjects,Tpoints,dtmean The design to build when \code{cts} is a
+#' model and no \code{datastruct} is given, and unused otherwise.
+#' \code{Tpoints} falls back to the model's own when it carries one.
+#' \code{n.subjects} is deliberately smaller than \code{\link{ctGenerate}}'s:
+#' this returns \code{nsamples} datasets rather than one.
+#' @param is Deprecated and ignored, with a warning if set. Importance
+#' sampling reweights draws taken from a gaussian approximation onto a target
+#' that cannot be sampled directly. Fitted to an empty dataset there is no
+#' such target: the likelihood contributes nothing and what remains is the
+#' prior, which ctsem holds as independent univariate densities in the raw
+#' space these draws are taken in. There is no approximation to correct.
+#' @param fullposterior Generate from the full prior, or from its mode (the raw
+#' origin)?
+#' @param nsamples How many samples to generate?
+#' @param parsonly If TRUE, only return samples of raw parameters, don't generate data.
+#' @param cores Number of cpu cores to use.
+#' @param backend Which engine turns a parameter draw into data: \code{'auto'}
+#' (the default -- \code{'julia'} when a julia session is available,
+#' \code{'stan'} otherwise), \code{'julia'} or \code{'stan'}. The draws
+#' themselves do not depend on this: they come from the model's prior, which is
+#' the same object either way. \code{parsonly=TRUE} returns those draws and
+#' generates nothing, so it does not use this argument.
+#'
+#' @return List containing Y, an array of nsamples by data rows by manifest
+#' variables, and llrow, an array of nsamples by data rows log likelihoods.
+#' With \code{parsonly=TRUE}, the prepared model carrying the prior draws
+#' under \code{$stanfit$rawposterior} and \code{$stanfit$transformedpars}.
+#' @aliases ctStanGenerate
+#' @export
+#'
+#' @examples
+#' \donttest{
+#' #generate and plot samples from prior predictive
+#' priorpred <- ctGenerateFromPriors(cts = ctstantestfit,cores=2,nsamples = 50)
+#'}
+ctGenerateFromPriors <- function(cts,datastruct=NA, is=FALSE,
+  fullposterior=TRUE, nsamples=200, parsonly=FALSE,cores=2,
+  backend=c('auto','julia','stan'),
+  n.subjects=20, Tpoints=NULL, dtmean=1){
+
+  .Deprecated(msg = paste0(
+    'ctGenerateFromPriors() is deprecated. Use ctGenerate(model, ',
+    'fromPriors = TRUE) instead -- same computation, reached through the ',
+    'function that generates data from a ctsem model generally.'))
+
+  # `is` selected stan's optimize-then-importance-sample route, back when
+  # ctFit() had an `optimcontrol$is` to select it with. It is not rewired,
+  # because nothing here approximates anything for it to correct. Named
+  # separately from the deprecation above, since it is a different mistake.
+  if(!identical(is, FALSE)) .Deprecated(msg = paste0(
+    'The `is` argument is deprecated and ignored. Importance sampling ',
+    'corrects a gaussian approximation to a posterior; this draws from the ',
+    'prior directly, so there is no approximation to correct.'))
+
+  .ctGenerateFromPriors(cts=cts, datastruct=datastruct,
+    fullposterior=fullposterior, nsamples=nsamples, parsonly=parsonly,
+    cores=cores, backend=backend, n.subjects=n.subjects, Tpoints=Tpoints,
+    dtmean=dtmean)
+}
+
 #' @export
 ctStanGenerate <- ctGenerateFromPriors
 
@@ -363,6 +385,18 @@ ctStanGenerate <- ctGenerateFromPriors
 #' the model is nonlinear or declares a non-Gaussian indicator, and \code{'r'}
 #' otherwise -- the split is by capability, not preference, so linear Gaussian
 #' models keep the seed-for-seed output every existing caller already gets.
+#' @param fromPriors Draw the parameters from the model's priors rather than
+#' using the values the model specifies, and return \code{nsamples} datasets
+#' instead of one. This is the prior predictive: what the model says the data
+#' could look like before it has seen any. It needs no fitted model and no
+#' data -- with no \code{datastruct}, a balanced design of \code{n.subjects}
+#' subjects at \code{Tpoints} occasions \code{dtmean} apart is used.
+#' @param nsamples With \code{fromPriors=TRUE}, how many datasets to draw.
+#' @param datastruct With \code{fromPriors=TRUE}, an optional long format data
+#' structure giving the subjects, times and missingness to generate for, used
+#' in place of the balanced design. A fit passed as \code{ctmodelobj} brings
+#' its own.
+#' @param cores With \code{fromPriors=TRUE}, cpu cores to use.
 #' @param intoverstates For \code{backend='julia'}: \code{'auto'} (the
 #' default), \code{TRUE} or \code{FALSE}, choosing how the latent states are
 #' handled while generating.
@@ -417,17 +451,63 @@ ctStanGenerate <- ctGenerateFromPriors
 #'   datalist[[i]] <- d
 #' }
 #' data <- do.call(rbind, datalist)
+#'
+#' #the prior predictive: what the model says data could look like before it
+#' #has seen any. No fit, and no data.
+#' \donttest{
+#' priorpred <- ctGenerate(generatingModel, fromPriors = TRUE, Tpoints = 6,
+#'   n.subjects = 10, nsamples = 20, cores = 2)
+#' str(priorpred$Y)
+#' }
 #' @export
 
 ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat=NA,
-  Tpoints=NULL, wide=FALSE, backend=c('auto','r','julia'), intoverstates='auto'){
+  Tpoints=NULL, wide=FALSE, backend=c('auto','r','julia','stan'),
+  intoverstates='auto', fromPriors=FALSE, nsamples=200, datastruct=NA, cores=2){
   backend <- match.arg(backend)
-  # `auto` routes to julia only what the generator below cannot do. That
-  # generator integrates the linear system with a matrix exponential, which is
-  # exact for a linear model and simply inapplicable to a state-dependent one;
-  # the engine filters and generates both. Defaulting to julia for everything
-  # would change the numbers under every existing caller for no gain on the
-  # models they use, so the split is by capability rather than by preference.
+
+  # The prior predictive is a different question about the same model -- what
+  # could the data look like, before the model has seen any -- so it lives
+  # behind a flag here rather than in a function of its own. The body is
+  # `.ctGenerateFromPriors()`.
+  #
+  # Arguments that shape the balanced design carry through; the rest describe a
+  # single dataset built by the generator below, which this route does not use,
+  # and are refused by name rather than accepted and ignored.
+  if(isTRUE(fromPriors)){
+    if(backend == 'r') stop("backend='r' cannot generate from priors: it ",
+      'integrates the model at fixed parameter values and has no way to ',
+      "apply a draw of them. Use 'julia' or 'stan'.", call.=FALSE)
+    unused <- c(if(!identical(burnin, 0)) 'burnin',
+      if(!identical(logdtsd, 0)) 'logdtsd',
+      if(!identical(dtmat, NA) && !is.na(dtmat[1])) 'dtmat',
+      if(!identical(wide, FALSE)) 'wide',
+      if(!identical(intoverstates, 'auto')) 'intoverstates')
+    if(length(unused)) stop('fromPriors=TRUE does not use ',
+      paste(unused, collapse=', '), ': it returns nsamples datasets over one ',
+      'design rather than a single dataset, and the design is n.subjects, ',
+      'Tpoints and dtmean, or a datastruct. Drop ',
+      if(length(unused) > 1) 'those arguments' else 'that argument',
+      ' or build the design yourself and pass it as datastruct.', call.=FALSE)
+    return(.ctGenerateFromPriors(cts=ctmodelobj, datastruct=datastruct,
+      nsamples=nsamples, cores=cores,
+      backend=if(backend == 'auto') 'auto' else backend,
+      n.subjects=n.subjects, Tpoints=Tpoints, dtmean=dtmean))
+  }
+  if(backend == 'stan') stop("backend='stan' generates only from priors, ",
+    'which is what it is there for. Use fromPriors=TRUE, or one of ',
+    "'auto', 'r' and 'julia'.", call.=FALSE)
+  # `auto` prefers julia wherever julia can do the job, and falls back to the
+  # generator below otherwise -- including when there is no julia session.
+  #
+  # It used to route purely by capability, julia only for the models the
+  # generator below cannot do, specifically so that a linear gaussian model
+  # kept the seed-for-seed output every existing caller already had. That tie
+  # is now broken on purpose: on a machine with julia, a linear gaussian model
+  # with no random effects generates different data for the same seed than it
+  # did. Pass `backend='r'` to pin the old output. Generating through the same
+  # filter that fits the model is the better default, and the engine is the
+  # developed path.
   nonlinear <- isTRUE(try(ctModelIsNonlinear(ctmodelobj), silent=TRUE))
   # A categorical indicator is the same situation as a nonlinear one: the
   # generator below integrates a linear Gaussian system and has no notion of a
@@ -437,7 +517,24 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
   # mean of 0.063 and no zeros or ones among them.
   categorical <- !is.null(ctmodelobj$manifesttype) &&
     any(ctmodelobj$manifesttype > 0)
-  if(backend == 'auto') backend <- if(nonlinear || categorical) 'julia' else 'r'
+  # Individual differences are the one thing the engine's generate route cannot
+  # do: `.ctGenerateJulia()` refuses them by name rather than quietly producing
+  # data with no between-subject variation. ctsem makes MANIFESTMEANS
+  # indvarying by default, so that is most models and not a corner, and `auto`
+  # has to keep sending them to the generator below. Preferring julia where
+  # julia can do the job is as far as the preference can go until the engine's
+  # generate route draws random effects.
+  indvarying <- !is.null(ctmodelobj$pars$indvarying) && any(ctmodelobj$pars$indvarying)
+  # And the matrix-list model form, which the julia route refuses a few lines
+  # below because it carries no parameter specification for the engine to read.
+  # `auto` has to know that too, or it sends the omx-style models straight into
+  # that refusal -- which is what test-corrcheck.R caught.
+  specified <- inherits(ctmodelobj, 'ctStanModel')
+  if(backend == 'auto') backend <-
+    if(nonlinear || categorical) 'julia' else
+      if(specified && !indvarying &&
+          isTRUE(tryCatch(ctJuliaStatus()$available, error=function(e) FALSE)))
+        'julia' else 'r'
   # `intoverstates='auto'` asks the same question the backend choice asks, one
   # level down: is the filter's one-step-ahead predictive the model's own?
   #

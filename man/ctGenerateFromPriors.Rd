@@ -3,7 +3,7 @@
 \name{ctGenerateFromPriors}
 \alias{ctGenerateFromPriors}
 \alias{ctStanGenerate}
-\title{Generate data from a ctstanmodel object}
+\title{Generate data from a model's priors (deprecated)}
 \usage{
 ctGenerateFromPriors(
   cts,
@@ -68,8 +68,10 @@ With \code{parsonly=TRUE}, the prepared model carrying the prior draws
 under \code{$stanfit$rawposterior} and \code{$stanfit$transformedpars}.
 }
 \description{
-Generate data from a ctstanmodel object.
-\code{ctStanGenerate} is maintained as a backward-compatible alias.
+Deprecated. Use \code{\link{ctGenerate}(fromPriors = TRUE)}, which is the
+same computation reached through the function that generates data from a
+ctsem model generally. \code{ctStanGenerate} is a backward-compatible alias
+and is deprecated with it.
 }
 \examples{
 \donttest{
