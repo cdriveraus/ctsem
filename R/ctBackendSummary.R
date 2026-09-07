@@ -1116,7 +1116,14 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
       if (is.null(samples)) .ctBackendRawSamples(fit) else samples)
   } else {
     constrained <- .ctBackendConstrained(fit, samples)
-    one <- .ctBackendAugmentedPopulation(spec, constrained$samples,
+    # Through `.ctBackendPopulation()` rather than straight to the augmented
+    # reader, so a `poprank` fit's implied covariance over *every* varying
+    # parameter arrives here. `ctModelLatex()` draws the subject parameter
+    # distribution from this, and without it a reduced-rank fit's figure showed
+    # only the basis effects -- a two-parameter model rendered as a
+    # one-parameter one, with the regressed effect's individual variation
+    # invisible.
+    one <- .ctBackendPopulation(spec, constrained$samples,
       constrained$layout, constrained$flat)
     if (is.null(one)) NULL else list(one)
   }
@@ -1127,6 +1134,13 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     rawcorr <- population$rawcorr
     k <- ncol(rawsd)
     lower <- which(lower.tri(diag(k)), arr.ind = TRUE)
+    # A posterior mean of the covariance, which for a `poprank` fit is *not*
+    # itself rank deficient even though every draw is: the degenerate direction
+    # turns with the coefficients, and an average of rank-`r` matrices has
+    # higher rank. So `det()` of a reduced-rank fit's reported covariance is
+    # not zero, and that is arithmetic rather than the restriction having
+    # failed. It is also why the note beside these tables has to say the
+    # dimension count -- the matrix itself does not show it.
     cov <- matrix(0, k, k, dimnames = list(parname, parname))
     for (draw in seq_len(nrow(rawsd))) {
       one <- diag(rawsd[draw, ]^2, k)

@@ -146,7 +146,41 @@
 # population covariance -- so this is a conditioning choice, not a modelling
 # one. Putting the identified effects first is what makes the retained
 # coordinates the identified ones when `poprank='auto'`.
-.ctPopRegressionSpec <- function(pars, poprank, explicit = TRUE) {
+# Which POPCOV cells a user has stated for a regressed effect.
+#
+# POPCOV is the specification surface for the population covariance
+# (R/ctModelPopCov.R), and `.ctJuliaAugmentRandomEffects()` reads it per varying
+# parameter: a number there fixes an sd or a correlation, and a label estimates
+# it. A regressed effect has neither -- its spread and its correlations follow
+# from the basis -- so anything stated about it would be **silently dropped**,
+# which is the one outcome this whole feature exists to avoid. Both a fixed
+# value and a relabelling count: a label differing from the default is an
+# equality constraint, and that is a specification too.
+.ctPopRegressionPopCovConflicts <- function(model, regressed) {
+  popcov <- model[['POPCOV']]
+  if (is.null(popcov) || !length(popcov) || !length(regressed)) return(character())
+  default <- .ctModelPopCov(model$pars)
+  names <- rownames(popcov)
+  regressed <- intersect(regressed, names)
+  out <- character()
+  for (r in regressed) for (other in names) {
+    for (cell in unique(c(paste(r, other), paste(other, r)))) {
+      coords <- strsplit(cell, ' ', fixed = TRUE)[[1]]
+      stated <- .ctModelPopCovEntry(model, coords[1L], coords[2L])
+      if (is.na(stated) || !nzchar(stated)) next
+      expected <- if (!is.null(default) && all(coords %in% rownames(default)))
+        as.character(default[coords[1L], coords[2L]]) else NA_character_
+      if (!is.na(expected) && identical(stated, expected)) next
+      # An upper-triangle zero is POPCOV's own placeholder, not a statement.
+      if (identical(stated, '0') && !is.na(expected) && identical(expected, '0')) next
+      out <- c(out, sprintf("POPCOV['%s', '%s'] = %s", coords[1L], coords[2L],
+        stated))
+    }
+  }
+  unique(out)
+}
+
+.ctPopRegressionSpec <- function(pars, poprank, explicit = TRUE, model = NULL) {
   if (is.null(poprank) || (length(poprank) == 1L && is.na(poprank))) return(NULL)
   roles <- .ctPopEffectRoles(pars)
   if (!nrow(roles)) return(NULL)
@@ -180,6 +214,24 @@
   order <- order(!roles$mean, seq_len(k))
   basis <- roles$param[order][seq_len(rank)]
   regressed <- setdiff(roles$param[order], basis)
+
+  # A POPCOV statement about a regressed effect cannot be honoured, so it is
+  # refused rather than ignored. Asked for, that is an error; defaulted, the
+  # user's own specification is the more explicit statement of the two and wins.
+  if (!is.null(model)) {
+    conflicts <- .ctPopRegressionPopCovConflicts(model, regressed)
+    if (length(conflicts)) {
+      if (!isTRUE(explicit)) return(NULL)
+      stop('poprank would drop what POPCOV states about ',
+        paste(regressed[regressed %in% rownames(model[['POPCOV']])],
+          collapse = ', '), ': ', paste(conflicts, collapse = '; '),
+        '. Under a reduced rank those effects have no population sd or ',
+        'correlation of their own -- both follow from ',
+        paste(basis, collapse = ', '), '. Use poprank=NA to estimate the full ',
+        'covariance, or state POPCOV only for the effects that keep their own ',
+        'spread.', call. = FALSE)
+    }
+  }
   # Above `nmean` the restriction stops being free: it starts fixing residual
   # variances the data does determine. Said once, here, rather than left for a
   # user to infer from a likelihood that moved.

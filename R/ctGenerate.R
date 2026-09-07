@@ -169,13 +169,10 @@ ctModeltoNumeric <- function(ctmodelobj){
   # is being specified, not recovered -- so restricting its rank here would only
   # stop a user generating data with a full-rank one.
   #
-  # Anticipatory rather than load-bearing today, and said plainly because a
-  # comment claiming more than it does is worse than none: generating from a
-  # model with individually varying parameters is refused on this backend (see
-  # the stop() further down), and `poprank` is julia-only, so neither backend
-  # currently reaches a state this line changes. It is here because the moment
-  # random-effect generation lands, its absence would move seed-for-seed output
-  # for every model with an indvarying DIFFUSION or MANIFESTVAR cell, silently.
+  # Load-bearing since julia gained random-effect generation: without it, every
+  # model with an indvarying DIFFUSION or MANIFESTVAR cell would generate from a
+  # rank-restricted population covariance, and seed-for-seed output would have
+  # moved for a reason that has nothing to do with generating.
   args$poprank <- NA
   args$cores <- cores
   args$backend <- backend

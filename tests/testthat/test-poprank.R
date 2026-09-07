@@ -150,6 +150,45 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
     expect_match(message_one, 'approximation', fixed = TRUE)
   })
 
+  # POPCOV is the specification surface for the population covariance, and the
+  # augmentation reads it per varying parameter: a number fixes an sd or a
+  # correlation. A regressed effect has neither of its own, so anything stated
+  # about one would be silently dropped -- the single outcome this feature
+  # exists to prevent. Asked for, refused by name; defaulted, the user's own
+  # specification wins and the rank is simply not applied.
+  test_that('poprank refuses to drop a POPCOV statement about a regressed effect', {
+    m <- poprank_model()
+    pars <- prepared_pars(m)
+    m$pars <- pars
+    # a fresh POPCOV over the two varying parameters, then a fixed sd for the
+    # one poprank would regress
+    m[['POPCOV']] <- ctsem:::.ctModelPopCov(pars)
+    expect_true('df11' %in% rownames(m[['POPCOV']]))
+    m[['POPCOV']]['df11', 'df11'] <- 0.3
+
+    conflicts <- ctsem:::.ctPopRegressionPopCovConflicts(m, 'df11')
+    expect_length(conflicts, 1L)
+    expect_match(conflicts, "POPCOV['df11', 'df11'] = 0.3", fixed = TRUE)
+
+    expect_error(ctsem:::.ctPopRegressionSpec(pars, 'auto', explicit = TRUE,
+      model = m), 'poprank would drop what POPCOV states')
+    expect_null(ctsem:::.ctPopRegressionSpec(pars, 'auto', explicit = FALSE,
+      model = m))
+
+    # a statement about the basis effect is fine -- it keeps its own spread
+    m2 <- m
+    m2[['POPCOV']] <- ctsem:::.ctModelPopCov(pars)
+    m2[['POPCOV']]['dr11', 'dr11'] <- 0.3
+    expect_length(ctsem:::.ctPopRegressionPopCovConflicts(m2, 'df11'), 0L)
+    spec <- ctsem:::.ctPopRegressionSpec(pars, 'auto', explicit = TRUE, model = m2)
+    expect_equal(spec$regressed, 'df11')
+
+    # and an untouched POPCOV states nothing, so it cannot conflict
+    m3 <- m
+    m3[['POPCOV']] <- ctsem:::.ctModelPopCov(pars)
+    expect_length(ctsem:::.ctPopRegressionPopCovConflicts(m3, 'df11'), 0L)
+  })
+
   test_that('poprank refuses a model in which nothing reaches the observation mean', {
     m <- poprank_model()
     m$pars$indvarying <- FALSE

@@ -1250,7 +1250,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
         "and removing them is an approximation rather than a repair.", call.=FALSE)
     } else {
       popregression <- .ctPopRegressionSpec(ctm$pars, poprank,
-        explicit=poprankexplicit)
+        explicit=poprankexplicit, model=ctm)
       if(!is.null(popregression)) ctm <- .ctPopRegressionDemote(ctm, popregression)
     }
   }
