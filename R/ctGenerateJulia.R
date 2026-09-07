@@ -73,6 +73,32 @@
   label <- !is.na(pars$param) & grepl('^[A-Za-z.][A-Za-z0-9._]*$', pars$param) &
     !pars$param %in% reserved
   free <- which(is.na(pars$value) & (is.na(pars$param) | label))
+  # An individually varying parameter must stay *free*, and this is the whole
+  # reason generation with random effects did not work.
+  #
+  # Giving it a value makes it fixed, and a fixed parameter is not augmented:
+  # the state that would have carried its individual deviations is never
+  # created, its population standard deviation never becomes an entry of T0VAR,
+  # and the prepared model ends up with no free parameters at all. The symptom
+  # was `npar = -Inf` and a between-subject spread that ignored every number the
+  # user set, because there was no slot left to write one into.
+  #
+  # So the intended value is recorded rather than assigned, and applied later to
+  # the *population mean* slot of the raw vector instead.
+  varying <- if (is.null(pars$indvarying)) rep(FALSE, nrow(pars)) else
+    !is.na(pars$indvarying) & pars$indvarying
+  intended <- stats::setNames(numeric(0), character(0))
+  for (i in free[varying[free]]) {
+    matrix_name <- as.character(pars$matrix[i])
+    spec <- defaults[[matrix_name]]
+    value <- if (is.null(spec)) 0 else
+      if (isTRUE(pars$row[i] == pars$col[i])) spec$diagonal else spec$offdiagonal
+    if (!is.na(pars$param[i])) {
+      intended[[as.character(pars$param[i])]] <- value
+    }
+  }
+  free <- free[!varying[free]]
+  attr(model, "ctGenerateMeans") <- intended
   if (!length(free)) return(model)
   filled <- character()
   for (i in free) {
@@ -116,12 +142,24 @@
   # on the draw, never on what was there. An all-NA skeleton therefore produces
   # an all-NA result, which is what it did before this line said zero.
   for (nm in model$manifestNames) rows[[nm]] <- 0
-  # Predictors at zero. A time-dependent predictor that is never non-zero has
-  # no effect on the generated data, which is the honest default for a value
-  # the caller did not supply; `ctGenerate`'s own path uses TDPREDMEANS and
-  # this could too once the specification carries them.
+  # Time-dependent predictors at zero. One that is never non-zero has no effect
+  # on the generated data, which is the honest default for a value the caller
+  # did not supply; `ctGenerate`'s own path uses TDPREDMEANS and this could too
+  # once the specification carries them.
   for (nm in model$TDpredNames) rows[[nm]] <- 0
-  for (nm in model$TIpredNames) rows[[nm]] <- 0
+  # Time-independent predictors are *drawn*, one value per subject, held
+  # constant across that subject's rows -- which is what makes them time
+  # independent. Zeros would have been consistent with the line above and wrong
+  # here: a predictor column that is constant carries no information, so an
+  # effect on it could not show up in the data and a fit to that data could not
+  # identify one. Standard normal because the specification carries no
+  # distribution for them (`ctGenerate`'s own path has TIPREDMEANS and
+  # TIPREDVAR; a `ctModel` of type 'ct' has neither), and because a predictor on
+  # that scale makes an effect size directly readable as "change per standard
+  # deviation". Drawn on the R side so `set.seed()` governs them.
+  for (nm in model$TIpredNames) {
+    rows[[nm]] <- stats::rnorm(n.subjects)[rows$id]
+  }
   rows
 }
 
@@ -134,29 +172,35 @@
       call. = FALSE)
   }
   model <- .ctGenerateResolveFree(model, quiet = quiet)
-  # Individual differences are not generated here yet. Silently producing data
-  # with no between-subject variation from a model that asks for it would be a
-  # wrong answer rather than a missing feature, so it is refused.
   varying <- !is.null(model$pars$indvarying) && any(model$pars$indvarying)
-  if (varying) {
-    stop("Generating from a model with individually varying parameters is not ",
-      "supported through backend='julia' yet: the specification does not carry ",
-      "the population distribution generation would have to draw from. Set ",
-      "indvarying to FALSE to generate a fixed-effects dataset, or use ",
-      "backend='r'.", call. = FALSE)
-  }
 
   skeleton <- .ctGenerateSkeleton(model, n.subjects, times)
   spec <- .ctJuliaPrepare(skeleton, model, project = project, priors = FALSE,
     intoverpop = "augmented")
   handle <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
 
-  npar <- suppressWarnings(max(c(0L, as.integer(spec$parameter_table$parnumber)),
+  # Every source of a raw index, not just the parameter table. TI-predictor
+  # coefficients and the Laplace block are numbered past the end of it, so
+  # counting the table alone produced a raw vector two short and the engine
+  # raised a BoundsError from deep inside `_materialize_subject_values!` --
+  # which says nothing about the actual mistake. This matches how `ctFit()`
+  # counts them.
+  npar <- suppressWarnings(max(c(0L, as.integer(spec$parameter_table$parnumber),
+    as.integer(spec$laplace$npar), as.integer(spec$ti_effects$coefficient)),
     na.rm = TRUE))
   # A zero-length vector deadlocks the JuliaConnectoR bridge, and a fully fixed
   # model legitimately has no free parameters, so a single unread element is
   # sent instead of nothing.
   raw <- if (npar < 1L) 0 else numeric(npar)
+  # Individual differences need no drawing machinery here: with the augmented
+  # layout a varying parameter *is* a state, its population standard deviation
+  # is an ordinary entry of T0VAR, and the engine's own T0 draw produces the
+  # between-subject spread. All that is required is putting the right number in
+  # the right slot -- and leaving the slot alone where the model states nothing,
+  # which is what makes the prior the fallback.
+  if (varying && npar >= 1L) {
+    raw <- .ctGenerateRandomRaw(model, spec, raw, quiet = quiet)
+  }
 
   nmanifest <- length(model$manifestNames)
   if (isTRUE(intoverstates)) {

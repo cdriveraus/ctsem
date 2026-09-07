@@ -687,6 +687,15 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     failures <- c(failures, paste0("covmattransform='",
       as.character(model$covmattransform)[1L], "' (only 'rawcorr')"))
   }
+  # A TI effect fixed to a value ('TI1=4.3') is honoured by generation and not
+  # by fitting: the coefficient it occupies is an ordinary free parameter to
+  # the optimiser, so a fit would estimate it and silently ignore the value.
+  fixedeffects <- .ctTipredFixedEffects(model)
+  if (length(fixedeffects)) {
+    failures <- c(failures, paste0("time independent predictor effects fixed ",
+      "to a value (", paste(utils::head(fixedeffects, 4), collapse = ", "),
+      ") -- these are for generation; use TRUE for an effect to estimate"))
+  }
   if (isTRUE(gendata)) failures <- c(failures, "generation")
   if (!is.na(stanmodeltext)[1] || length(compileArgs) > 0L || isTRUE(forcerecompile)) failures <- c(failures, "Stan compilation controls")
   if (length(failures)) stop("Julia backend v1 does not support: ", paste(failures, collapse = ", "), ".", call. = FALSE)
@@ -1521,6 +1530,24 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     t0means_setup_rows <- which(t0means_rows)[match_position]
     t0means_state_scale <- values$multiplier[t0means_setup_rows] * values$meanscale[t0means_setup_rows]
     t0means_state_scale[is.na(t0means_state_scale)] <- 1
+  } else if (!is.null(expanded$pars$sdscale)) {
+    # `modelmats` is built by ctFit on its way to a backend, so the branch above
+    # covers every fit. It is *not* built when a specification is prepared
+    # directly -- which is what generation does -- and the fallback of 1 then
+    # discarded `sdscale` without saying so: a model asking for a population
+    # spread a fifth of the default generated data with the default spread.
+    #
+    # Reading it from `pars` costs a name lookup and makes the two routes agree.
+    scale <- vapply(augmented_indices, function(row) {
+      entry <- which(table$matrix == "T0MEANS" & table$row == row & table$col == 1L)
+      if (!length(entry) || is.na(table$param[entry[1L]])) return(1)
+      match_row <- which(!is.na(expanded$pars$param) &
+        as.character(expanded$pars$param) == as.character(table$param[entry[1L]]))
+      if (!length(match_row)) return(1)
+      value <- suppressWarnings(as.numeric(expanded$pars$sdscale[match_row[1L]]))
+      if (!is.finite(value)) 1 else value
+    }, numeric(1L))
+    random_sd_scale <- scale
   }
   if (length(random_sd_scale) != length(augmented_indices)) {
     stop("Prepared random-effect covariance metadata does not match the augmented state layout.", call. = FALSE)
@@ -1559,15 +1586,53 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     col <- row
     index <- which(table$matrix == "T0VAR" & table$row == row & table$col == col)
     length(index) == 1L || stop("Internal Julia augmentation error: missing T0VAR entry.", call. = FALSE)
-    next_parameter <- next_parameter + 1L
-    table$param[index] <- sprintf("julia_popcov_%d_%d", row, col)
-    table$parnumber[index] <- next_parameter
-    table$value[index] <- NA_real_
-    table$transform[index] <- sprintf("%.17g * (1e-10 + %.17g * log1p_exp(2 * param[%d] - 1))",
-      t0means_state_scale[position], random_sd_scale[position], next_parameter)
+    # What the model says about this population sd, if anything. POPCOV is the
+    # specification surface (see R/ctModelPopCov.R); a number there fixes the
+    # cell and a label names the parameter, in place of the positional
+    # `julia_popcov_i_j` this used to invent.
+    spec <- .ctModelPopCovEntry(model, varying_names[position])
+    fixedvalue <- .ctModelPopCovValue(spec)
+    if (is.finite(fixedvalue)) {
+      if (fixedvalue < 0) {
+        stop("POPCOV['", varying_names[position], "', '",
+          varying_names[position], "'] is ", fixedvalue,
+          ". A population standard deviation cannot be negative.",
+          call. = FALSE)
+      }
+      # Converted from the parameter's natural scale to the state scale this
+      # cell is in.
+      #
+      # The free branch produces `k_i * raw_sd`, and the natural-scale spread is
+      # `slope * raw_sd` where `slope` is the derivative of the parameter's own
+      # transform -- for a mean parameter, `10 * param`, that is the constant
+      # 10. So a requested natural spread `v` needs `v * k_i / slope` here.
+      # Getting this wrong is silent and large: placing `v` directly produced a
+      # spread ten times what was asked for.
+      #
+      # Exact for a linear transform, which is every mean parameter. For a
+      # nonlinear one the slope depends on the population mean and this is a
+      # first-order match at the raw origin.
+      table$param[index] <- NA_character_
+      table$parnumber[index] <- NA_integer_
+      table$value[index] <- fixedvalue *
+        t0means_state_scale[position] / .ctJuliaPopCovSlope(model,
+          varying_names[position])
+      table$transform[index] <- NA_character_
+    } else {
+      next_parameter <- next_parameter + 1L
+      table$param[index] <- if (is.na(spec) || !nzchar(spec))
+        sprintf("julia_popcov_%d_%d", row, col) else spec
+      table$parnumber[index] <- next_parameter
+      table$value[index] <- NA_real_
+      table$transform[index] <- sprintf("%.17g * (1e-10 + %.17g * log1p_exp(2 * param[%d] - 1))",
+        t0means_state_scale[position], random_sd_scale[position], next_parameter)
+    }
+    # Whether the sd is fixed by POPCOV or free, this row is a population
+    # covariance cell and carries no TI predictor effect of its own.
     if (length(effect_columns)) table[index, effect_columns] <- FALSE
     covariance_rows[[length(covariance_rows) + 1L]] <- data.frame(
-      row = row, col = col, parameter = next_parameter,
+      row = row, col = col,
+      parameter = if (is.finite(fixedvalue)) NA_integer_ else next_parameter,
       type = "sd", param = varying_names[position],
       # The factor folded into the sd transform above, kept so the summary can
       # divide it back out: T0cov is in state units, and the random-effects
@@ -1582,14 +1647,35 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       col <- augmented_indices[column_position]
       index <- which(table$matrix == "T0VAR" & table$row == row & table$col == col)
       length(index) == 1L || stop("Internal Julia augmentation error: missing T0VAR entry.", call. = FALSE)
-      next_parameter <- next_parameter + 1L
-      table$param[index] <- sprintf("julia_popcov_%d_%d", row, col)
-      table$parnumber[index] <- next_parameter
-      table$value[index] <- NA_real_
-      table$transform[index] <- sprintf("2 / (1 + exp(-param[%d])) - 1", next_parameter)
+      spec <- .ctModelPopCovEntry(model, varying_names[row_position],
+        varying_names[column_position])
+      fixedvalue <- .ctModelPopCovValue(spec)
+      if (is.finite(fixedvalue)) {
+        if (abs(fixedvalue) > 1) {
+          stop("POPCOV['", varying_names[row_position], "', '",
+            varying_names[column_position], "'] is ", fixedvalue,
+            ". Off-diagonal entries are correlations and must lie in [-1, 1].",
+            call. = FALSE)
+        }
+        table$param[index] <- NA_character_
+        table$parnumber[index] <- NA_integer_
+        table$value[index] <- fixedvalue
+        table$transform[index] <- NA_character_
+      } else {
+        next_parameter <- next_parameter + 1L
+        table$param[index] <- if (is.na(spec) || !nzchar(spec))
+          sprintf("julia_popcov_%d_%d", row, col) else spec
+        table$parnumber[index] <- next_parameter
+        table$value[index] <- NA_real_
+        table$transform[index] <- sprintf("2 / (1 + exp(-param[%d])) - 1", next_parameter)
+      }
+      # As for the sd cells above: a population correlation carries no TI
+      # predictor effect of its own, fixed by POPCOV or not.
       if (length(effect_columns)) table[index, effect_columns] <- FALSE
       covariance_rows[[length(covariance_rows) + 1L]] <- data.frame(
-        row = row, col = col, parameter = next_parameter, type = "correlation",
+        row = row, col = col,
+        parameter = if (is.finite(fixedvalue)) NA_integer_ else next_parameter,
+        type = "correlation",
         param = paste0(varying_names[row_position], "__", varying_names[column_position]),
         scale = 1
       )
@@ -1866,7 +1952,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   for (predictor in seq_along(model$TIpredNames)) {
     column <- effect_columns[predictor]
     if (!column %in% available) next
-    parameters <- sort(unique(table$parnumber[direct & (table[[column]] %in% TRUE)]))
+    parameters <- sort(unique(table$parnumber[direct & .ctTipredEffectActive(table[[column]])]))
     for (parameter in parameters) {
       coefficient <- coefficient + 1L
       entries[[length(entries) + 1L]] <- data.frame(

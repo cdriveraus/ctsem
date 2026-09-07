@@ -519,7 +519,7 @@ ctEmpiricalBayesFit <- function(datalong, model, subjects='all',
   subjectmodel <- model
   subjectmodel$pars$indvarying <- FALSE
   tieffects <- colnames(subjectmodel$pars)[grep('_effect', colnames(subjectmodel$pars), fixed=TRUE)]
-  if(length(tieffects) > 0) subjectmodel$pars[, tieffects] <- FALSE
+  if(length(tieffects) > 0) subjectmodel$pars[, tieffects] <- 'FALSE'
 
   dots <- list(...)
   fitargs <- list(
