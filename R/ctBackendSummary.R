@@ -743,7 +743,14 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     out$n_eff <- diagnostics$n_eff
     out$Rhat <- diagnostics$Rhat
   }
-  if (isTRUE(z)) out$z <- out$mean / out$sd
+  # A quantity with no posterior spread has no z, rather than an enormous one.
+  # Two things land here with an exactly zero sd and both want this: a
+  # structurally determined report (in a `poprank` fit the correlation between
+  # a regressed effect and its only basis effect is 1 by construction), and a
+  # parameter whose direction carried no curvature and was projected out of the
+  # Hessian before inversion. Dividing by zero gave `z` = 2.7e16 for the first
+  # and a confident-looking number for the second.
+  if (isTRUE(z)) out$z <- ifelse(out$sd > 0, out$mean / out$sd, NA_real_)
   round(out, digits)
 }
 
