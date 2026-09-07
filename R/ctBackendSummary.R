@@ -840,7 +840,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   populations <- if (!is.null(spec$laplace)) {
     .ctBackendLaplacePopulations(fit, spec, samples)
   } else {
-    p <- .ctBackendAugmentedPopulation(spec, samples, layout, flat)
+    p <- .ctBackendPopulation(spec, samples, layout, flat)
     if (is.null(p)) NULL else list(p)
   }
   if (is.null(populations) || !length(populations)) return(NULL)
