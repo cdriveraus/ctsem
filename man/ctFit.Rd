@@ -14,6 +14,7 @@ ctFit(
   binomial = FALSE,
   fit = TRUE,
   intoverpop = "auto",
+  poprank = NA,
   sameInitialTimes = FALSE,
   stationary = FALSE,
   plot = FALSE,
@@ -101,6 +102,25 @@ parameters and every subject's random effects. That is exact whatever the
 model, and its dimension grows with the number of subjects rather than
 staying at the parameter count. \code{TRUE} and \code{FALSE} may be given
 in place of the character forms above.}
+
+\item{poprank}{Rank of the population covariance of the individually
+varying parameters. \code{NA} (the default) leaves it unrestricted, as in
+earlier versions. \code{'auto'} uses the number of varying parameters that
+reach the observation mean, which is the most the \code{intoverpop='augmented'}
+filter can identify: under that route a random effect on a variance cell
+(DIFFUSION, MANIFESTVAR) has its covariance with the mean-affecting effects
+determined by the data but not the split of that covariance into a standard
+deviation and correlations, and \code{'auto'} estimates exactly the part that
+is determined. It costs no likelihood and is a no-op when every varying
+parameter reaches the mean. A whole number below that is an explicit
+**approximation**: it describes the individual differences with fewer
+dimensions than the data supports, which lowers the likelihood and will
+distort the parameters it retains -- the fit is joint, so nothing holds the
+retained covariances fixed while the rest is squeezed into them. Requires
+\code{backend='julia'}. The population covariance is then
+\code{Sigma = [[S, S b'], [b S, b S b']]} for a freely estimated \code{S}
+over the basis effects and regression coefficients \code{b} for the rest,
+and each regressed effect has no variance independent of the basis.}
 
 \item{sameInitialTimes}{if TRUE, include an empty observation for every subject that has no observation
 at the earliest observation time of the dataset. This ensures that the T0MEANS occurs for every subject at the same time,

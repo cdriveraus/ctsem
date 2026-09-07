@@ -81,20 +81,19 @@
     '($|[^[:alnum:]_.])')
 }
 
-#' @keywords internal
-#' Which random effects reach the observation mean, and which do not.
-#'
-#' Returns one row per individually varying free parameter with a logical
-#' `mean` column. A parameter counts as mean-affecting if it appears in a cell
-#' of a mean-affecting matrix, following `PARS` indirection transitively -- a
-#' DIFFUSION parameter also referenced inside a DRIFT expression *is*
-#' mean-affecting and identified, and that is the case a pattern match over
-#' `$pars$matrix` alone gets wrong (see the review note's section 3).
-#'
-#' `pars` must already have been through `ctModelStatesAndPARS()`, so that
-#' cross-cell label references appear as `PARS[r,c]`, and must not yet have been
-#' through `.ctModelIntOverPop()`, which clears `indvarying` on the cells it
-#' rewrites into state references.
+# Which random effects reach the observation mean, and which do not.
+#
+# Returns one row per individually varying free parameter with a logical
+# `mean` column. A parameter counts as mean-affecting if it appears in a cell
+# of a mean-affecting matrix, following `PARS` indirection transitively -- a
+# DIFFUSION parameter also referenced inside a DRIFT expression *is*
+# mean-affecting and identified, and that is the case a pattern match over
+# `$pars$matrix` alone gets wrong (see the review note's section 3).
+#
+# `pars` must already have been through `ctModelStatesAndPARS()`, so that
+# cross-cell label references appear as `PARS[r,c]`, and must not yet have been
+# through `.ctModelIntOverPop()`, which clears `indvarying` on the cells it
+# rewrites into state references.
 .ctPopEffectRoles <- function(pars) {
   pars <- .ctModelCleanctspec(pars)
   free <- !is.na(pars$param) & is.na(pars$value)
@@ -134,20 +133,19 @@
     row.names = NULL, stringsAsFactors = FALSE)
 }
 
-#' @keywords internal
-#' Resolve `poprank` into a basis and a set of regressed effects.
-#'
-#' `poprank` is `NA` (no restriction, today's full-rank behaviour), `'auto'`
-#' (the number of mean-affecting effects, which is the largest rank the
-#' augmented route can identify and is a no-op when every effect is
-#' mean-affecting), or an integer `r` (an explicit approximation).
-#'
-#' The basis is chosen mean-affecting effects first, then in the order they
-#' appear. Which effects form the basis changes the coordinates but not the
-#' model -- any `r` effects spanning the same rank-`r` space describe the same
-#' population covariance -- so this is a conditioning choice, not a modelling
-#' one. Putting the identified effects first is what makes the retained
-#' coordinates the identified ones when `poprank='auto'`.
+# Resolve `poprank` into a basis and a set of regressed effects.
+#
+# `poprank` is `NA` (no restriction, today's full-rank behaviour), `'auto'`
+# (the number of mean-affecting effects, which is the largest rank the
+# augmented route can identify and is a no-op when every effect is
+# mean-affecting), or an integer `r` (an explicit approximation).
+#
+# The basis is chosen mean-affecting effects first, then in the order they
+# appear. Which effects form the basis changes the coordinates but not the
+# model -- any `r` effects spanning the same rank-`r` space describe the same
+# population covariance -- so this is a conditioning choice, not a modelling
+# one. Putting the identified effects first is what makes the retained
+# coordinates the identified ones when `poprank='auto'`.
 .ctPopRegressionSpec <- function(pars, poprank) {
   if (is.null(poprank) || (length(poprank) == 1L && is.na(poprank))) return(NULL)
   roles <- .ctPopEffectRoles(pars)
