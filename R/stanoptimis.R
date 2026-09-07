@@ -785,9 +785,11 @@ imis_is <- function(parlp,
   # every proposal correlation by `scale_init^2`. That is not a wider proposal
   # but a differently shaped one, and along the correlated directions it is
   # narrower than `Sigma` itself, which is the opposite of what a scale above
-  # one is for. Computed exactly for a Gaussian target on a fit whose raw
-  # correlations reach 0.87, ESS/n at `scale_init = 1.5` was 0.058 the old way
-  # against 0.190 this way.
+  # one is for. Computed exactly for a Gaussian target in the nine identified
+  # dimensions of a 400-subject fit, ESS/n at `scale_init = 1.5` was 0.058 the
+  # old way against 0.190 this way; run end to end on that fit at the julia
+  # defaults and a fixed seed, the old form spent all 51,000 evaluations to
+  # reach an effective sample of 7.7 and this one reached 144 in 4,000.
   comp_cov <- list(Sigma_hat * scale_init^2)
   T_comp   <- 1L
   
