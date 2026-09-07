@@ -88,6 +88,12 @@
   varying <- if (is.null(pars$indvarying)) rep(FALSE, nrow(pars)) else
     !is.na(pars$indvarying) & pars$indvarying
   intended <- stats::setNames(numeric(0), character(0))
+  # Named for the message too, not only recorded for the raw vector. A
+  # population mean supplied by this function is as much a value the caller did
+  # not state as any other, and the whole point of the message is that
+  # generating from an underspecified model says so. Leaving these out was the
+  # one place where a number was invented in silence.
+  varyingfilled <- character()
   for (i in free[varying[free]]) {
     matrix_name <- as.character(pars$matrix[i])
     spec <- defaults[[matrix_name]]
@@ -95,11 +101,13 @@
       if (isTRUE(pars$row[i] == pars$col[i])) spec$diagonal else spec$offdiagonal
     if (!is.na(pars$param[i])) {
       intended[[as.character(pars$param[i])]] <- value
+      varyingfilled <- c(varyingfilled, sprintf("%s[%d,%d]=%s (population mean)",
+        matrix_name, pars$row[i], pars$col[i], format(value)))
     }
   }
   free <- free[!varying[free]]
   attr(model, "ctGenerateMeans") <- intended
-  if (!length(free)) return(model)
+  if (!length(free) && !length(varyingfilled)) return(model)
   filled <- character()
   for (i in free) {
     matrix_name <- as.character(pars$matrix[i])
@@ -119,8 +127,9 @@
       pars$row[i], pars$col[i], format(value)))
   }
   model$pars <- pars
-  if (!quiet) {
-    message(length(free), " free parameter", if (length(free) > 1) "s" else "",
+  filled <- c(filled, varyingfilled)
+  if (!quiet && length(filled)) {
+    message(length(filled), " free parameter", if (length(filled) > 1) "s" else "",
       " had no value and were set for generation: ",
       paste(utils::head(filled, 8), collapse = ", "),
       if (length(filled) > 8) ", ..." else "",

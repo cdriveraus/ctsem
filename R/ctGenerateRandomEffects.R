@@ -116,12 +116,22 @@
 
 # Fill the raw vector's population-SD and TI-effect entries from the model.
 #
-# An unstated spread is *drawn from its own prior*, which is
+# An unstated spread is set to the *centre* of its own prior, which is
 # `rawpopsdbase ~ normal(0, 1)` mapped through
-# `log1p_exp(2 * rawpopsdbase - 1) .* sdscale`. So the draw is a standard normal
-# into the raw slot and the transform does the rest -- `sdscale` is already
-# inside it, which is what makes `sdscale` the knob for how large an unstated
-# population spread should be.
+# `log1p_exp(2 * rawpopsdbase - 1) .* sdscale`. So the raw slot takes zero and
+# the transform does the rest -- `sdscale` is already inside it, which is what
+# makes `sdscale` the knob for how large an unstated population spread should
+# be.
+#
+# The centre, and not a draw from that prior, because this is `ctGenerate()`
+# and not `ctGenerate(fromPriors = TRUE)`. Generating from a specification
+# means every quantity is pinned: unstated ones get a stated default and the
+# function says which, exactly as `.ctGenerateResolveFree()` does for the
+# system matrices. Drawing one silently made plain `ctGenerate()` a partial
+# prior predictive -- measured on a one-latent model with indvarying
+# MANIFESTMEANS, the realised between-subject sd came out 1.10, 0.63 and 0.53
+# on three consecutive seeds, from a specification that had not changed. Two
+# generations from one specification now agree.
 #
 # Drawn rather than fixed at the prior's centre, and it costs nothing in
 # reproducibility to do so: the draw comes from R's own generator, so
@@ -156,14 +166,14 @@
   #
   # A cell the model fixed in POPCOV arrives in the prepared table as a value
   # with no parameter number, so there is nothing here to set -- the engine
-  # already has it. A free one is drawn from its own prior: `rawpopsdbase` is
-  # standard normal and `sdscale` sits inside the slot's transform, so one
-  # standard normal here *is* the prior draw, scaled as the model asked.
+  # already has it. A free one takes the centre of its own prior: `rawpopsdbase`
+  # is standard normal and `sdscale` sits inside the slot's transform, so zero
+  # here *is* that centre, scaled as the model asked.
   if (!is.null(effects) && nrow(effects)) {
     for (i in seq_len(nrow(effects))) {
       index <- as.integer(effects$parameter[i])
       if (is.na(index) || index < 1L || index > length(raw)) next
-      raw[index] <- stats::rnorm(1)
+      raw[index] <- 0
       drawn <- c(drawn, as.character(effects$param[i]))
     }
   }
@@ -171,9 +181,10 @@
   raw <- .ctGenerateTiEffectRaw(model, spec, raw)
 
   if (!quiet && length(drawn)) {
-    message("Population spread drawn from the prior for ",
+    message("Population spread not stated for ",
       paste(unique(drawn), collapse = ", "),
-      ". Set model$matrices$POPCOV to choose it.")
+      "; the centre of its prior was used. Set model$matrices$POPCOV to ",
+      "choose it, or use fromPriors=TRUE to draw it.")
   }
   raw
 }
