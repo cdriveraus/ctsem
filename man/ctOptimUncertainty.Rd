@@ -193,6 +193,13 @@ width that parameter's own curvature supports. Their ratio is 1 when the
 parameter is separable from the rest and grows without bound as it stops
 being; anything past about 100 means the reported width comes from the
 entanglement rather than from the data, and will not repeat between runs.
+The same object answers the opposite question, which the ratio cannot:
+\code{$nullmass} is each coordinate's share of the directions left out of
+the inversion, and \code{$unidentified} names those with enough of it that
+their true asymptotic variance is infinite. Those get almost none of the
+variance the projected inverse has to give, so they would otherwise be
+reported as precisely estimated -- more precisely the more data there is.
+\code{summary()} reports their sd, interval and z as \code{NA}.
 
 \emph{Backend-specific arguments.} \code{uncertainty='fullbootstrap'} and
 its \code{control$bootstrapFitCores} / \code{control$bootstrapTol}, and

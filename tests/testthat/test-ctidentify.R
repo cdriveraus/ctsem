@@ -133,6 +133,53 @@ test_that("a random effect on a variance cell reports the covariance as determin
   expect_length(result$sometimes, 0L)
 })
 
+test_that("a coordinate in the flat subspace gets no reported spread, and is said to", {
+  skip_without_julia()
+  # Fit free, and deliberately so: the information matrix is the whole input to
+  # the covariance a fit would report, so the fault is reachable in seconds
+  # through the route `ctIdentify()` already uses rather than by spending a fit
+  # to reproduce it. Same model as the partial-identification test above.
+  spec <- suppressMessages(.ctFitJuliaBackend(.identify_data(),
+    .identify_varying_model(), fit = FALSE, priors = FALSE,
+    intoverpop = "augmented", cores = 1, verbose = 0))
+  npar <- max(spec$parameter_table$parnumber, na.rm = TRUE)
+  info <- ctsem:::.ctIdentifyInformation(spec, numeric(npar))
+  parnames <- ctsem:::.ctBackendRawParameterNames(list(model_spec = spec), npar)
+
+  # Exactly what a fit does with it: project the flat directions out, invert,
+  # report the square roots of the diagonal.
+  cov <- suppressWarnings(suppressMessages(
+    ctsem:::ctOptimCovFromHessian(-info$information, warn = FALSE)))
+  se <- sqrt(diag(cov))
+  check <- ctsem:::.ctBackendIntervalCheck(-info$information, se, parnames)
+
+  # The population sd of the diffusion effect is the coordinate the augmented
+  # filter cannot see -- its carrier state enters only the predicted covariance,
+  # so the Kalman update never moves it.
+  expect_true("popsd_diff_eta1" %in% check$unidentified)
+  expect_gte(check$nunidentified, 1L)
+  mass <- check$table$nullmass[match(parnames, check$table$param)]
+  names(mass) <- parnames
+  # It is the whole of the flat direction here, and the identified coordinates
+  # carry none of it -- not merely little, which is what makes the threshold a
+  # threshold rather than a tuning.
+  expect_equal(unname(mass["popsd_diff_eta1"]), 1, tolerance = 1e-8)
+  expect_lt(max(mass[setdiff(parnames, "popsd_diff_eta1")]), 1e-10)
+
+  # And what the user would otherwise read: a standard error of zero, which
+  # prints as a point estimate with a zero-width interval rather than as a
+  # parameter the data says nothing about.
+  expect_equal(unname(se[match("popsd_diff_eta1", parnames)]), 0,
+    tolerance = 1e-12)
+  # The width check cannot reach it: a coordinate with no curvature of its own
+  # has no ratio to be large.
+  expect_false("popsd_diff_eta1" %in% check$parameters)
+
+  # Said, rather than only computed.
+  expect_warning(ctsem:::.ctBackendIdentifyWarn(NULL, data.frame(), check),
+    "absent rather than small")
+})
+
 test_that("a genuinely redundant parameter still gets the fix-or-remove advice", {
   skip_without_julia()
   # Not a ridge: LAMBDA free against the latent scale leaves nothing about the

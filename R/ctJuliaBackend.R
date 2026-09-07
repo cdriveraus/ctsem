@@ -3396,6 +3396,16 @@ print.ctJuliaFit <- function(x, ...) {
       paste(utils::head(ivc$parameters, 4), collapse = ", "),
       ". See fit$uncertainty$intervalcheck.\n", sep = "")
   }
+  # And the opposite, which needs saying here more than the above does: a
+  # coordinate lying in a direction with no curvature keeps none of the
+  # variance the projected inverse has left to give, so it prints as tightly
+  # estimated. Nothing in the numbers themselves shows it.
+  if (!is.null(ivc) && isTRUE(ivc$nunidentified > 0L)) {
+    cat("  ", ivc$nunidentified,
+      " parameter(s) with no curvature, so no interval: ",
+      paste(utils::head(ivc$unidentified, 4), collapse = ", "),
+      ". summary() reports these as NA.\n", sep = "")
+  }
   invisible(x)
 }
 

@@ -405,12 +405,51 @@
 # Computed for julia fits, where the exact Hessian is already on the fit;
 # nothing prevents the stan path from using it, and `ctReport()` is where that
 # would show.
+#
+# The other half of the question: an interval far *narrower* than the truth.
+#
+# The ratio above only ever grows, so it cannot see the opposite failure, and
+# that one is worse because it reads as a result rather than as a problem.
+# `ctOptimCovFromHessian()` projects the no-curvature directions out of the
+# information matrix before inverting it (see `.ctOptimIdentifiedInverse()`),
+# which is the right thing to do with a direction whose variance is infinite --
+# but a coordinate lying mostly *along* such a direction then inherits almost
+# none of the variance that is left, and is reported with a tight interval and
+# a large z instead of as undetermined. Measured on a one-latent model with
+# `indvarying` on DRIFT and DIFFUSION under `intoverpop='augmented'`: the raw
+# correlation between the two random effects has a dead flat profile -- the log
+# likelihood is bit-identical at r = 0.597, 0.750, 0.958 and 0.998, the
+# population sd compensating to hold their product fixed -- and `summary()`
+# reported `mean 0.597, sd 0.009, z 65.3`. The spurious precision *grows* with
+# the sample: z was 21.2 at 50 occasions and 65.3 at 200, so more data buys
+# more confidence in a number the likelihood does not distinguish at all.
+# Before the projection went in the same coordinate got a fabricated variance
+# of 1e8; the projection fixed the blow-up and left this in its place.
+#
+# What says so is the coordinate's share of the projected-out subspace,
+# `sum over flat k of V[i, k]^2` -- the squared length of `e_i`'s projection
+# onto the null space, between 0 and 1, and unlike any single eigenvector's
+# loading it does not depend on the arbitrary basis the eigendecomposition
+# returns inside that subspace. Any of it that is not rounding means the
+# asymptotic variance of that coordinate is infinite, whatever the projected
+# covariance reports. `rtol` is therefore `.ctOptimIdentifiedInverse()`'s 1e-12
+# rather than `.ctBackendIdentifiability()`'s 1e-8, so the two branches
+# partition rather than overlap: a direction flatter than 1e-12 was dropped and
+# lands here, one between the two tolerances was inverted into an enormous
+# variance and lands in the ratio above. `nullmass` sits well above the
+# 1e-16-ish leakage a well separated eigenvalue produces (measured: below
+# 1e-10 on every identified coordinate of the model above) and well below the
+# share a coordinate genuinely on the ridge carries, which was 0.36 for the
+# smaller half of a two-coordinate ridge and 1.0 where the flat direction was
+# a coordinate axis.
 #' @keywords internal
 .ctBackendIntervalCheck <- function(hessian, se, parnames = NULL,
-  threshold = 100) {
+  threshold = 100, rtol = 1e-12, nullmass = 1e-3) {
   empty <- list(threshold = threshold, nflagged = 0L, parameters = character(),
+    nullmass = nullmass, nunidentified = 0L, unidentified = character(),
     table = data.frame(param = character(), se = numeric(),
-      curvature_se = numeric(), ratio = numeric(), stringsAsFactors = FALSE))
+      curvature_se = numeric(), ratio = numeric(), nullmass = numeric(),
+      stringsAsFactors = FALSE))
   if (is.null(hessian) || is.null(se)) return(empty)
   hessian <- as.matrix(hessian)
   se <- as.numeric(se)
@@ -418,18 +457,60 @@
   if (!all(is.finite(hessian))) return(empty)
   n <- length(se)
   if (is.null(parnames) || length(parnames) != n) parnames <- paste0("par", seq_len(n))
-  information <- diag(-(hessian + t(hessian)) / 2)
+  information <- -(hessian + t(hessian)) / 2
+  diagonal <- diag(information)
   # A non-positive diagonal is not a wider interval, it is no curvature at all;
   # `.ctBackendIdentifiability()` is what reports that, so it is left NA here
   # rather than counted as a ratio of infinity and reported twice.
-  curvature <- ifelse(information > 0, 1 / sqrt(information), NA_real_)
+  curvature <- ifelse(diagonal > 0, 1 / sqrt(diagonal), NA_real_)
   ratio <- se / curvature
+  mass <- .ctBackendNullMass(information, rtol = rtol)
   table <- data.frame(param = as.character(parnames), se = se,
-    curvature_se = curvature, ratio = ratio, stringsAsFactors = FALSE)
+    curvature_se = curvature, ratio = ratio, nullmass = mass,
+    stringsAsFactors = FALSE)
   flagged <- which(is.finite(ratio) & ratio > threshold)
+  undetermined <- which(is.finite(mass) & mass >= nullmass)
   list(threshold = threshold, nflagged = length(flagged),
     parameters = as.character(parnames[flagged]),
-    table = table[order(-ifelse(is.finite(ratio), ratio, -Inf)), , drop = FALSE])
+    # The threshold goes out with the column, so a caller reading `$table` does
+    # not have to know the default to read it.
+    nullmass = nullmass, nunidentified = length(undetermined),
+    unidentified = as.character(parnames[undetermined]),
+    # Undetermined coordinates first, then the widest ratios. Ordering the whole
+    # table by ratio put them at the bottom, which is where a reader stops
+    # looking, and their ratio is small precisely because their interval
+    # collapsed.
+    table = table[order(-as.integer(is.finite(mass) & mass >= nullmass),
+      -ifelse(is.finite(mass), mass, -Inf),
+      -ifelse(is.finite(ratio), ratio, -Inf)), , drop = FALSE])
+}
+
+# How much of each coordinate lies in the null space of an information matrix.
+#
+# Zero for every coordinate when nothing is flat, and NA when the
+# decomposition cannot be had -- never silently zero, because "no flat
+# directions" and "could not tell" are opposite findings and one of them is a
+# clean bill of health.
+#
+# The eigenvalues are taken first and the eigenvectors only if one of them is
+# flat, because the usual answer is "nothing is flat" and a values-only
+# decomposition is several times cheaper than a full one -- this runs on every
+# fit, and on a model with a thousand-odd parameters the difference is seconds
+# rather than milliseconds.
+#' @keywords internal
+.ctBackendNullMass <- function(information, rtol = 1e-12) {
+  n <- nrow(information)
+  values <- try(eigen(information, symmetric = TRUE,
+    only.values = TRUE)$values, silent = TRUE)
+  if (inherits(values, "try-error")) return(rep(NA_real_, n))
+  scale <- max(values)
+  if (!is.finite(scale) || scale <= 0) return(rep(NA_real_, n))
+  if (!any(values <= rtol * scale)) return(rep(0, n))
+  decomposition <- try(eigen(information, symmetric = TRUE), silent = TRUE)
+  if (inherits(decomposition, "try-error")) return(rep(NA_real_, n))
+  flat <- decomposition$values <= rtol * max(decomposition$values)
+  if (!any(flat)) return(rep(0, n))
+  rowSums(decomposition$vectors[, flat, drop = FALSE]^2)
 }
 
 # Population standard deviations that have collapsed to the floor of their
@@ -469,9 +550,32 @@
   do.call(rbind, rows)
 }
 
+# The coordinates whose reported spread the projection removed, named.
+#
+# Said as its own sentence because it is the one thing the surrounding warning
+# does not imply: "the standard errors along those directions are arbitrary"
+# prepares a reader for a number that is too big, and what they will actually
+# see is a number that is too small and a z of 65. See
+# `.ctBackendIntervalCheck()` for how the share is measured and why.
+#' @keywords internal
+.ctBackendNoWidthAdvice <- function(intervals) {
+  if (is.null(intervals) || !isTRUE(intervals$nunidentified > 0L)) return("")
+  named <- utils::head(intervals$unidentified, 6)
+  many <- length(intervals$unidentified) > 1L
+  paste0(" The reported spread for ", paste(named, collapse = ", "),
+    if (length(intervals$unidentified) > 6) ", ..." else "",
+    " is absent rather than small: ",
+    if (many) "those coordinates lie" else "that coordinate lies",
+    " in a direction with no curvature, which is left out of the inversion, ",
+    "so the sd, interval and z printed for ", if (many) "them" else "it",
+    " are artefacts of that projection and say nothing about the data. ",
+    "summary() reports them as NA.")
+}
+
 # Say it once, at the end of a fit, in the terms a reader needs.
 #' @keywords internal
 .ctBackendIdentifyWarn <- function(identify, collapsed, intervals = NULL) {
+  nowidth <- .ctBackendNoWidthAdvice(intervals)
   if (!is.null(identify) && identify$nweak > 0L) {
     # Which parameters are on a random-effect scale/correlation ridge and which
     # the data says nothing about, in the same words `print.ctIdentify()` uses
@@ -488,8 +592,21 @@
         paste0("Parameters involved: ",
           paste(utils::head(identify$parameters, 6), collapse = ", "),
           if (length(identify$parameters) > 6) ", ..." else "", ".") else "",
+      nowidth,
       " See fit$identifiability, and ctIdentify(data, model) to check this ",
       "before spending a fit next time.", call. = FALSE)
+    # Carried by the warning above rather than repeated under it: the two are
+    # about one finding and a reader who has to be told twice stops reading.
+    nowidth <- ""
+  }
+  # A null direction at 1e-12 is a flat direction at 1e-8 too, so this normally
+  # travels with the warning above. It stands alone only when the two were
+  # computed from different Hessians -- `ctOptimUncertainty()` re-run with a
+  # different method is the case -- and then it is the more specific of the two
+  # and worth saying by itself.
+  if (nzchar(nowidth)) {
+    warning(trimws(nowidth), " See fit$uncertainty$intervalcheck.",
+      call. = FALSE)
   }
   if (!is.null(identify) && isTRUE(identify$negative > 0L)) {
     warning(identify$negative, " direction",

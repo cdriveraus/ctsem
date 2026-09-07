@@ -414,11 +414,23 @@
     if (!is.null(ivc) && nrow(ivc$table)) {
       add("Reported interval against the curvature at the estimate")
       add("  ratio > ", ivc$threshold, ": ", ivc$nflagged, " parameter(s)")
+      # The other direction: coordinates whose reported spread the null
+      # projection removed, so their interval is too narrow rather than too
+      # wide. Reported next to the ratio because they are two failures of the
+      # same claim and a reader checking one should meet the other.
+      if (!is.null(ivc$nunidentified)) {
+        add("  no curvature (spread absent, not small): ", ivc$nunidentified,
+          " parameter(s)",
+          if (length(ivc$unidentified)) paste0("  ",
+            paste(utils::head(ivc$unidentified, 6), collapse = ", ")) else "")
+      }
       worst <- utils::head(ivc$table, 5)
       for (i in seq_len(nrow(worst))) {
         add("  ", worst$param[i], "  se ", .ctReportNum(worst$se[i]),
           "  curvature ", .ctReportNum(worst$curvature_se[i]),
-          "  ratio ", .ctReportNum(worst$ratio[i]))
+          "  ratio ", .ctReportNum(worst$ratio[i]),
+          if (is.null(worst$nullmass)) "" else
+            paste0("  nullmass ", .ctReportNum(worst$nullmass[i])))
       }
       add("")
     }
