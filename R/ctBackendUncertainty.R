@@ -25,24 +25,38 @@
 # `ctOptimComputeUncertainty` expects: a numeric log probability carrying its
 # gradient as an attribute, and a finite fallback rather than an error at a
 # point the Hessian's finite differences happen to wander into.
-.ctBackendLpgFunc <- function(fit) {
+#
+# `gradient = FALSE` returns the value alone, for a caller that reads only the
+# value. That caller is `imis_is`, which evaluates the log probability at every
+# proposal draw through `vapply(..., numeric(1))` -- which strips the attribute
+# -- and so was paying for a reverse pass per draw and throwing it away, tens
+# of thousands of times per run. The engine's value-only route is the same
+# forward accumulation the adjoint's own value comes from, in the same order,
+# so this changes no number; `test-backend-uncertainty.R` asserts the two
+# values bitwise rather than leaving that to be assumed.
+.ctBackendLpgFunc <- function(fit, gradient = TRUE) {
   if (!inherits(fit, "ctJuliaFit")) {
     stop("Unsupported fit class for backend uncertainty.", call. = FALSE)
   }
-  evaluate <- function(parm) ctJuliaEvaluate(fit, parm, gradient = TRUE)
+  wantgrad <- isTRUE(gradient)
+  evaluate <- function(parm) ctJuliaEvaluate(fit, parm, gradient = wantgrad)
   function(parm) {
     result <- try(evaluate(as.numeric(parm)), silent = TRUE)
-    value <- if (inherits(result, "try-error")) NaN else as.numeric(result$value)[1L]
-    gradient <- if (inherits(result, "try-error")) NULL else as.numeric(result$gradient)
-    if (!is.finite(value) || is.null(gradient) || length(gradient) != length(parm) ||
-        any(!is.finite(gradient))) {
+    failed <- inherits(result, "try-error")
+    value <- if (failed) NaN else as.numeric(result$value)[1L]
+    grad <- if (failed || !wantgrad) NULL else as.numeric(result$gradient)
+    if (!is.finite(value) || (wantgrad && (is.null(grad) ||
+        length(grad) != length(parm) || any(!is.finite(grad))))) {
       # Matches the Stan path's own guard: a large finite penalty with a zero
       # gradient, so a finite-difference step into an invalid region degrades
       # the local approximation rather than aborting the whole calculation.
+      # The value-only caller needs the same guard for its own reason: a
+      # proposal draw the model cannot evaluate has to come back with a finite,
+      # negligible weight rather than aborting the batch.
       value <- -1e100
-      gradient <- rep(0, length(parm))
+      grad <- if (wantgrad) rep(0, length(parm)) else NULL
     }
-    attributes(value) <- list(gradient = gradient)
+    if (wantgrad) attributes(value) <- list(gradient = grad)
     value
   }
 }
@@ -191,6 +205,15 @@
     # correct it, because the region carrying the missing mass is never
     # visited. This previously defaulted to 1.1, and returned standard errors
     # within 10% of the Hessian's where the posterior was up to twice as wide.
+    #
+    # Deliberately left at 1.5 after a second measurement disagreed. On a
+    # 400-subject model stan's 1.1 measures better at every evaluation count,
+    # but the reasoning above was measured on a 40-subject one, where the
+    # posterior really is wider than the curvature. That is evidence that one
+    # constant cannot serve both sample sizes, not evidence against this one,
+    # and the small-sample case is the only setting in which importance
+    # sampling beats the exact Hessian at all -- so the default stays where the
+    # case for the method lives.
     if (is.null(control$imisScaleInit)) control$imisScaleInit <- 1.5
     if (is.null(control$imisTailScale)) control$imisTailScale <- 1.2
     # Normal, not t. See `imis_is`: the heavier-tailed proposal was measured
@@ -199,7 +222,11 @@
     if (is.null(control$imisDf)) control$imisDf <- Inf
     if (is.null(control$isESS)) control$isESS <- 100
     if (is.null(control$isitersize)) control$isitersize <- 1000
-    is_res <- imis_is(lpgFunc, mu_hat = est, Sigma_hat = uncertaintyfit$cov,
+    # Value-only, not `lpgFunc`: `imis_is` reads the log probability and
+    # nothing else, so the reverse pass `lpgFunc` computes per draw was being
+    # discarded by the `vapply` that collects it.
+    is_res <- imis_is(.ctBackendLpgFunc(fit, gradient = FALSE),
+      mu_hat = est, Sigma_hat = uncertaintyfit$cov,
       max_iter = control$imisMaxIter, scale_init = control$imisScaleInit,
       tail_scale = control$imisTailScale, df = control$imisDf,
       target_ess = control$isESS,

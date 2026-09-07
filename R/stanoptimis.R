@@ -778,7 +778,19 @@ imis_is <- function(parlp,
   
   ## ── containers ───────────────────────────────────────────────────────
   comp_mu  <- list(mu_hat)
-  comp_cov <- list(Sigma_hat * (diag(scale_init^2-1,nrow(Sigma_hat)) + 1))
+  # `scale_init^2 * Sigma`, the whole matrix. This was written
+  # `Sigma_hat * (diag(scale_init^2-1, n) + 1)`, an elementwise product with a
+  # matrix carrying `scale_init^2` on the diagonal and *1* off it -- so it
+  # inflated the variances, left the covariances untouched, and thereby divided
+  # every proposal correlation by `scale_init^2`. That is not a wider proposal
+  # but a differently shaped one, and along the correlated directions it is
+  # narrower than `Sigma` itself, which is the opposite of what a scale above
+  # one is for. Computed exactly for a Gaussian target in the nine identified
+  # dimensions of a 400-subject fit, ESS/n at `scale_init = 1.5` was 0.058 the
+  # old way against 0.190 this way; run end to end on that fit at the julia
+  # defaults and a fixed seed, the old form spent all 51,000 evaluations to
+  # reach an effective sample of 7.7 and this one reached 144 in 4,000.
+  comp_cov <- list(Sigma_hat * scale_init^2)
   T_comp   <- 1L
   
   samples   <- matrix(0, 0, length(mu_hat))
@@ -889,10 +901,13 @@ imis_is <- function(parlp,
     top_idx <- w_raw > quantile(w_raw, 0.9)
     comp_mu[[T_comp + 1L]] <- diagis::weighted_mean(
       samples[top_idx,,drop=FALSE], w_raw[top_idx])
+    # `tail_scale^2 *` the weighted covariance, for the same reason the initial
+    # component is scaled that way above: the elementwise form this replaces
+    # left the covariances at their unscaled values and so shrank the
+    # correlations of every added component.
     comp_cov[[T_comp + 1L]] <- safe_pd(
       diagis::weighted_var(
-        samples[top_idx,,drop=FALSE], w_raw[top_idx]) *
-        (diag(tail_scale^2-1, nrow(Sigma_hat))+1))
+        samples[top_idx,,drop=FALSE], w_raw[top_idx]) * tail_scale^2)
     T_comp <- T_comp + 1L
     
     lq_newcomp <- mvtnorm::dmvnorm(samples, comp_mu[[T_comp]],

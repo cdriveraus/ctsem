@@ -477,3 +477,47 @@ test_that("an interval wider than the curvature supports is detected and named",
   expect_equal(nrow(clean$table), 3L)
   expect_true(all(clean$table$ratio[clean$table$param != 'popsd'] < 2))
 })
+
+test_that("imisScaleInit scales the whole proposal covariance, not its diagonal", {
+  skip_if_not_installed('mvtnorm')
+  skip_if_not_installed('diagis')
+  skip_if_not_installed('gridExtra')
+  skip_if_not_installed('ggplot2')
+
+  # A strongly correlated Gaussian target, which is what makes the two
+  # spellings of "scale the proposal" differ: the elementwise
+  # `Sigma * (diag(s^2-1, n) + 1)` this replaced inflated the variances and
+  # left the covariances alone, so it divided every proposal correlation by
+  # s^2 -- narrower than Sigma along the correlated directions.
+  d <- 5
+  Sigma <- matrix(0.9, d, d); diag(Sigma) <- 1
+  target <- function(x) mvtnorm::dmvnorm(x, rep(0, d), Sigma, log = TRUE)
+  # max_iter = 0 is one batch drawn from the initial component alone, so the
+  # effective sample size measures that component and nothing else.
+  run <- function(S, s) {
+    set.seed(7)
+    ctsem:::imis_is(target, mu_hat = rep(0, d), Sigma_hat = S, max_iter = 0,
+      scale_init = s, tail_scale = 1.2, df = Inf, target_ess = 1e9,
+      n_batch = 4000, cl = NA, finishsamples = 100, verbose = FALSE,
+      diag_plots = FALSE)
+  }
+
+  # `scale_init = s` and a proposal pre-scaled by s^2 are the same proposal.
+  # They agree only to the ridge `safe_pd` adds, which is why this is a
+  # tolerance rather than `expect_identical`.
+  scaled <- run(Sigma, 1.5)
+  prescaled <- run(Sigma * 1.5^2, 1)
+  expect_equal(scaled$ess, prescaled$ess, tolerance = 1e-6)
+  expect_equal(scaled$covariance, prescaled$covariance, tolerance = 1e-6)
+
+  # And it matters: for the same nominal scale the elementwise form is a
+  # markedly worse proposal on a correlated target.
+  elementwise <- run(Sigma * (diag(1.5^2 - 1, d) + 1), 1)
+  expect_gt(scaled$ess, 2 * elementwise$ess)
+
+  # `scale_init = 1` still leaves the proposal alone, which is what
+  # `ctParticleCorrect()` and `ctLaplaceCorrect()` rely on when they pre-scale
+  # their own proposal and pass 1: the weighted covariance recovers the target.
+  unscaled <- run(Sigma, 1)
+  expect_equal(unscaled$covariance, Sigma, tolerance = 0.1)
+})

@@ -239,3 +239,42 @@ test_that("uncertainty='stored' redraws a julia fit without touching the engine"
   nocov$estimate$cov <- NULL
   expect_error(ctOptimUncertainty(nocov, uncertainty = "stored"), "no usable one")
 })
+
+test_that("the value-only log probability is the value the gradient route returns", {
+  skip_without_julia()
+
+  # `imis_is` reads the log probability and nothing else, so it was paying for
+  # a reverse pass per proposal draw and discarding it. Dropping that is only
+  # free if the engine's value-only route returns the same number the adjoint's
+  # own forward pass does -- they are separate code paths, and the adjoint sums
+  # its chunk totals before adding the prior. Asserted bitwise, because
+  # anything less would move a reported interval by an amount nobody could
+  # then account for.
+  fit <- suppressMessages(ctFit(.backend_uncertainty_data(),
+    .backend_uncertainty_model(), backend = "julia", verbose = 0))
+  withgrad <- ctsem:::.ctBackendLpgFunc(fit, gradient = TRUE)
+  valueonly <- ctsem:::.ctBackendLpgFunc(fit, gradient = FALSE)
+  est <- as.numeric(fit$estimate$raw)
+
+  set.seed(3)
+  npar <- length(est)
+  points <- rbind(est, matrix(est, nrow = 15, ncol = npar, byrow = TRUE) +
+      matrix(stats::rnorm(15 * npar, 0, .4), nrow = 15))
+  a <- vapply(seq_len(nrow(points)),
+    function(i) as.numeric(withgrad(points[i, ])), numeric(1))
+  b <- vapply(seq_len(nrow(points)),
+    function(i) as.numeric(valueonly(points[i, ])), numeric(1))
+  expect_identical(a, b)
+
+  # The gradient is there on one route and absent on the other, which is the
+  # whole of the difference.
+  expect_length(attr(withgrad(est), "gradient"), npar)
+  expect_null(attr(valueonly(est), "gradient"))
+
+  # And the invalid-point guard survives on both: `imis_is` needs a finite,
+  # negligible weight at a draw the model cannot evaluate, not a failed batch.
+  bad <- est; bad[1L] <- NaN
+  expect_identical(as.numeric(withgrad(bad)), -1e100)
+  expect_identical(as.numeric(valueonly(bad)), -1e100)
+  expect_equal(attr(withgrad(bad), "gradient"), rep(0, npar))
+})
