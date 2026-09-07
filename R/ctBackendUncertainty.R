@@ -276,7 +276,7 @@
   # and finished later by `ctOptimUncertainty()` carried none at all, so
   # nothing named the parameter whose interval had no width.
   fit$identifiability <- .ctBackendIdentifiability(uncertaintyfit$hessian,
-    names(fit$estimate$se))
+    names(fit$estimate$se), fit = fit, at = fit$estimate$raw)
   # New draws mean the fit's constrained draws describe the previous ones, so
   # they are refreshed here rather than left to be noticed downstream.
   fit$transformedpars <- .ctBackendConstrain(fit)

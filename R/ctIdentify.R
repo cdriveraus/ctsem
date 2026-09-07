@@ -95,7 +95,71 @@
   flat <- !is.finite(diagonal) | diagonal <= 0
   scale <- sqrt(ifelse(flat, 1, diagonal))
   scaled <- information / outer(scale, scale)
-  list(information = scaled, uninformed = flat, nsubjects = nrow(scores))
+  # `scale` goes out with it: an eigenvector of the scaled matrix is a
+  # direction in scaled coordinates, and anything comparing it against a
+  # gradient taken in raw ones has to divide by this first.
+  list(information = scaled, uninformed = flat, nsubjects = nrow(scores),
+    metric = scale)
+}
+
+# The evaluation points, all of them reproducible.
+#
+# `nstart - 1` dispersed draws used to come straight from the session stream,
+# so two identical calls could report different parameters -- observed:
+# `always = (empty)` from one and `always = popsd_df11` from the next. Only the
+# first point, the origin, was reproducible, and the docstring claimed no more
+# than that. A named seed fixes the whole function, and the session stream is
+# put back afterwards so that calling this neither depends on where the user's
+# RNG had got to nor moves it.
+#' @keywords internal
+.ctIdentifyPoints <- function(npar, nstart, spread, inits, seed) {
+  draw <- function() {
+    if (!is.null(inits)) return(list(.ctJuliaInitialValues(npar, inits)))
+    c(list(numeric(npar)),
+      if (nstart > 1L) lapply(seq_len(as.integer(nstart) - 1L),
+        function(i) stats::rnorm(npar, 0, spread)) else NULL)
+  }
+  if (is.null(seed)) return(draw())
+  existing <- if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
+    get(".Random.seed", envir = globalenv(), inherits = FALSE)
+  } else NULL
+  set.seed(as.integer(seed)[1L])
+  on.exit({
+    if (is.null(existing)) {
+      suppressWarnings(rm(".Random.seed", envir = globalenv()))
+    } else assign(".Random.seed", existing, envir = globalenv())
+  }, add = TRUE)
+  draw()
+}
+
+# Which coordinates lie in the flat subspace, rather than on one of the axes an
+# eigendecomposition happened to return.
+#
+# Intersecting parameter *names* across evaluation points is what hid the model
+# this function exists for. On it there is a flat direction at every point --
+# relative eigenvalues 1.8e-19, 1.2e-16, 3.9e-18 -- but the loading rotates
+# along the ridge, so the names implicated at one point are not the names
+# implicated at the next, the intersection came out empty, and everything
+# landed in `$sometimes` under text saying a fit may still settle. It will not.
+#
+# The invariant is the *dimension* of the flat subspace, not any basis for it.
+# So `k`, the smallest number of flat directions seen at any point, is the rank
+# deficiency the data has everywhere, and the `k` flattest directions at each
+# point are a basis for it. A coordinate's involvement is then the length of
+# its projection onto that subspace, which is what an orthonormal basis gives
+# as the norm of its row -- unchanged by any rotation within the subspace.
+# Directions beyond the first `k` at a point that had more are the weaker
+# statement, and are reported as one.
+#' @keywords internal
+.ctIdentifySubspaceLoading <- function(directions, npar, loading = 0.25) {
+  if (!length(directions)) return(logical(npar))
+  vectors <- vapply(directions, function(d) {
+    v <- d$vector
+    if (length(v) != npar) rep(NA_real_, npar) else v
+  }, numeric(npar))
+  vectors <- matrix(vectors, nrow = npar)
+  if (any(!is.finite(vectors))) return(logical(npar))
+  sqrt(rowSums(vectors^2)) >= loading
 }
 
 #' Check which parameters a dataset can inform, before fitting
@@ -109,7 +173,16 @@
 #' which is a property of the model and holds wherever it is evaluated. It is
 #' not a verdict on the model: a direction that is flat at one point may be
 #' perfectly informed at the estimate, which is why several points are used and
-#' only parameters implicated at every one of them are reported as uninformed.
+#' only parameters lying in the flat subspace at every one of them are reported
+#' as uninformed.
+#'
+#' Not every flat direction means the same thing. A random effect on a variance
+#' cell (DIFFUSION, MANIFESTVAR) under \code{intoverpop = 'augmented'} is
+#' partially identified: the population covariances it generates with the other
+#' individually varying parameters are determined, while their decomposition
+#' into a scale and correlations is a ridge. The printed summary distinguishes
+#' the two cases, because the advice differs -- fixing a value discards
+#' information in the first case and is the fix in the second.
 #'
 #' @param datalong Long format data, as for \code{\link{ctFit}}.
 #' @param model Model from \code{\link{ctModel}}.
@@ -117,12 +190,16 @@
 #' @param inits Optional evaluation point. Supplying one uses that single point
 #'   and disables the comparison across points described above.
 #' @param nstart Number of points to evaluate. The first is the origin of the
-#'   unconstrained space, so a result is reproducible; the rest are dispersed
-#'   draws around it.
+#'   unconstrained space; the rest are dispersed draws around it.
 #' @param spread Standard deviation of the additional evaluation points on the
 #'   raw scale. Large enough that they are genuinely different points, which
 #'   \code{\link{ctFit}}'s own \code{rnorm(npar, 0, 0.01)} initialisation is
 #'   not.
+#' @param seed Seed for the dispersed evaluation points, so that two identical
+#'   calls give identical output. The session's random stream is restored
+#'   afterwards, so this neither depends on it nor disturbs it. \code{NULL}
+#'   draws from the session stream instead, which makes the result depend on
+#'   where that had got to.
 #' @param priors Whether to include the prior. \code{FALSE} by default, because
 #'   the question is what the \emph{data} can inform: a prior informs every
 #'   direction, so a model unidentified by its data looks fine with priors on
@@ -139,9 +216,13 @@
 #'   settled.
 #'
 #' @return An object of class \code{ctIdentify} with \code{$parameters} (names
-#'   implicated at every evaluation point), \code{$sometimes} (implicated at
-#'   some), \code{$nweak}, \code{$condition}, and \code{$starts} holding the
-#'   per-point detail. Printing it summarises what was found.
+#'   in the flat subspace at every evaluation point), \code{$partial} and
+#'   \code{$structural} splitting those into the partially and completely
+#'   unidentified, \code{$sometimes} (in a flat direction beyond that subspace
+#'   at some points), \code{$rotating} (whether the basis of the flat subspace
+#'   turns between points), \code{$nweak}, \code{$condition}, and
+#'   \code{$starts} holding the per-point detail. Printing it summarises what
+#'   was found.
 #'
 #' @details Requires the Julia backend, which is where the per-subject scores
 #'   come from. The statistic has rank at most the number of subjects, so a
@@ -176,7 +257,7 @@
 #' @export
 ctIdentify <- function(datalong, model, inits = NULL, nstart = 3L,
   spread = 0.5, priors = FALSE, intoverpop = "augmented", cores = 1L,
-  verbose = 0L, rtol = 1e-13, ctstanmodel) {
+  verbose = 0L, rtol = 1e-13, seed = 1L, ctstanmodel) {
 
   if(missing(model)){
     if(missing(ctstanmodel)) stop('model must be supplied')
@@ -196,24 +277,22 @@ ctIdentify <- function(datalong, model, inits = NULL, nstart = 3L,
   }
   parnames <- .ctBackendRawParameterNames(list(model_spec = spec), npar)
 
-  # The origin first: it is the one point that is the same on every run, so the
-  # result is reproducible rather than a function of the seed.
-  points <- list(numeric(npar))
-  if (!is.null(inits)) {
-    points <- list(.ctJuliaInitialValues(npar, inits))
-  } else if (nstart > 1L) {
-    points <- c(points, lapply(seq_len(as.integer(nstart) - 1L),
-      function(i) stats::rnorm(npar, 0, spread)))
-  }
+  # The origin first, then the dispersed points; see `.ctIdentifyPoints()` for
+  # why the whole set is seeded rather than only the first being fixed.
+  points <- .ctIdentifyPoints(npar, nstart, spread, inits, seed)
 
+  handle <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
   nsubjects <- NA_integer_
   starts <- lapply(points, function(at) {
     info <- .ctIdentifyInformation(spec, at)
     if (is.null(info)) return(NULL)
     nsubjects <<- info$nsubjects
     # `.ctBackendIdentifiability()` takes a Hessian and negates it, so the
-    # information is passed negated to arrive the right way up.
-    result <- .ctBackendIdentifiability(-info$information, parnames, rtol = rtol)
+    # information is passed negated to arrive the right way up. `metric` is
+    # what the information was scaled by, so the partial-identification check
+    # can bring a scaled eigenvector back to raw coordinates.
+    result <- .ctBackendIdentifiability(-info$information, parnames, rtol = rtol,
+      fit = handle, at = at, metric = info$metric, vectors = TRUE)
     result$at <- at
     result$uninformed <- parnames[info$uninformed]
     spectrum <- eigen(info$information, symmetric = TRUE,
@@ -229,16 +308,50 @@ ctIdentify <- function(datalong, model, inits = NULL, nstart = 3L,
   }
   starts <- starts[usable]
 
-  implicated <- lapply(starts, function(s) s$parameters)
-  # Implicated everywhere, which is the structural statement, against
-  # implicated somewhere, which is not one.
-  always <- Reduce(intersect, implicated)
-  ever <- Reduce(union, implicated)
+  # Aggregated by subspace, not by name. `k` is the rank deficiency the data
+  # has at every point, and the `k` flattest directions at each point span it;
+  # see `.ctIdentifySubspaceLoading()` for what intersecting names did instead.
+  nweak <- vapply(starts, function(s) as.integer(s$nweak), integer(1))
+  k <- min(nweak)
+  flattest <- lapply(starts, function(s) {
+    if (!length(s$directions)) return(list())
+    s$directions[order(vapply(s$directions, function(d) as.numeric(d$relative),
+      numeric(1)))]
+  })
+  core <- lapply(flattest, function(d) d[seq_len(min(k, length(d)))])
+  extra <- lapply(flattest, function(d)
+    if (length(d) > k) d[seq.int(k + 1L, length(d))] else list())
+  ispartial <- function(directions) !vapply(directions,
+    function(d) is.null(d$partial), logical(1))
+  named <- function(directions) parnames[.ctIdentifySubspaceLoading(directions,
+    npar)]
+  corenames <- lapply(core, named)
+  extranames <- lapply(extra, named)
+  ridgenames <- lapply(core, function(d) named(d[ispartial(d)]))
+  # Union rather than intersection over the core. Every core direction is flat
+  # at the point it came from, so a coordinate lying in one is part of the
+  # structural finding there; a coordinate that appears at one point and not
+  # another is the ridge turning, which is a fact about the ridge's curvature
+  # and not about identification. `rotating` says that happened, because a
+  # reader comparing this against the per-point detail in `$starts` will
+  # otherwise see two different answers and not know which to trust.
+  always <- as.character(sort(unique(unlist(corenames))))
+  rotating <- length(always) > 0L &&
+    !all(vapply(corenames, function(n) setequal(n, always), logical(1)))
+  partition <- .ctIdentifyPartition(unlist(core, recursive = FALSE))
+  ridge <- as.character(sort(unique(unlist(ridgenames))))
   structure(list(
     parameters = always,
-    sometimes = setdiff(ever, always),
-    nweak = min(vapply(starts, function(s) as.integer(s$nweak), integer(1))),
-    nweakmax = max(vapply(starts, function(s) as.integer(s$nweak), integer(1))),
+    # Model parameter names, for the sentence about population sds; the raw
+    # coordinates that ridge occupies are `$ridge`.
+    partial = partition$partial,
+    partners = partition$partners,
+    ridge = ridge,
+    structural = setdiff(always, ridge),
+    rotating = rotating,
+    sometimes = setdiff(as.character(sort(unique(unlist(extranames)))), always),
+    nweak = k,
+    nweakmax = max(nweak),
     condition = stats::median(vapply(starts, function(s)
       as.numeric(s$condition), numeric(1))),
     smallest = max(vapply(starts, function(s) s$relative[1L], numeric(1))),
@@ -268,10 +381,20 @@ print.ctIdentify <- function(x, ...) {
     cat("  ", x$nweak, " direction", if (x$nweak != 1L) "s" else "",
       " the data carries no information about, at every point checked.\n",
       sep = "")
-    cat("  Parameters involved: ", paste(x$parameters, collapse = ", "), "\n",
-      sep = "")
-    cat("  These are not estimable from this data as the model stands. Fix one\n",
-      "  of each set to a value, or remove it.\n", sep = "")
+    if (isTRUE(x$rotating)) {
+      cat("  It turns between points, so what follows names every parameter\n",
+        "  lying in it somewhere rather than only those it involves at each.\n",
+        "  See $starts for the per-point detail.\n", sep = "")
+    }
+    # Partially and completely unidentified read the same in the eigenvalues
+    # and need opposite advice, so `.ctIdentifyAdvice()` -- the same wording a
+    # finished fit warns with -- says which is which. The fallback is for a
+    # partition that classifies everything and so has nothing left to list:
+    # printing nothing here would read as a clean result.
+    advice <- .ctIdentifyAdvice(x)
+    if (!length(advice)) advice <- paste0("Parameters involved: ",
+      paste(x$parameters, collapse = ", "), ".")
+    writeLines(strwrap(advice, indent = 2, exdent = 2, width = 78))
   }
   if (length(x$sometimes)) {
     cat("  Uninformed at some points but not all: ",

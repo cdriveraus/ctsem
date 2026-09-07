@@ -21,7 +21,7 @@
 
 #' @keywords internal
 .ctBackendIdentifiability <- function(hessian, parnames = NULL, rtol = 1e-8,
-  loading = 0.25) {
+  loading = 0.25, fit = NULL, at = NULL, metric = NULL, vectors = FALSE) {
   empty <- list(nweak = 0L, condition = NA_real_, directions = list(),
     parameters = character())
   if (is.null(hessian)) return(empty)
@@ -50,9 +50,30 @@
     involved <- order(-abs(loadings))
     involved <- involved[abs(loadings[involved]) >= loading]
     if (!length(involved)) involved <- which.max(abs(loadings))
+    # The whole eigenvector, not only the loadings above the threshold. Two
+    # things downstream need it: the partial-identification check below, which
+    # asks whether a functional of the parameters changes along this direction,
+    # and the aggregation in `ctIdentify()`, which asks how much of a
+    # coordinate lies in the flat *subspace* rather than on one of its axes.
     list(eigenvalue = values[k], relative = values[k] / scale,
-      parameters = parnames[involved], loadings = loadings[involved])
+      parameters = parnames[involved], loadings = loadings[involved],
+      vector = loadings)
   })
+  # Which of those directions are a random-effect block trading its scale off
+  # against its correlations -- partially rather than completely unidentified.
+  # Only attempted when a caller supplies the model and the point, because it
+  # takes engine calls; without them every direction reads as complete
+  # non-identification, which is what this said before.
+  directions <- .ctIdentifyClassify(fit, at, directions, metric = metric)
+  # The eigenvectors go out only when a caller asked for them. A fit stores
+  # this report, and one length-`npar` vector per flat direction is
+  # `nweak * npar` doubles for something nothing downstream of a fit reads --
+  # 12 MB on a 1490-parameter model with a thousand flat directions. The
+  # classification above and `ctIdentify()`'s subspace aggregation are the two
+  # readers, and only the second outlives this call.
+  if (!isTRUE(vectors)) {
+    directions <- lapply(directions, function(d) { d$vector <- NULL; d })
+  }
   list(
     nweak = length(weak),
     condition = scale / max(min(values[values > 0], na.rm = TRUE), .Machine$double.xmin),
@@ -66,6 +87,298 @@
     negative = sum(values < -rtol * scale),
     directions = directions,
     parameters = unique(unlist(lapply(directions, `[[`, "parameters"))))
+}
+
+# Partial against complete non-identification, and why the difference is worth
+# the engine calls it costs.
+#
+# A random effect on a *variance* cell -- DIFFUSION, MANIFESTVAR -- under
+# `intoverpop='augmented'` is a latent state whose value enters only the
+# predicted covariance. The observation mean function's Jacobian with respect
+# to it is zero, so the Kalman update can never move it, and it is learned
+# about only through its correlation with states the filter can update. The
+# consequence, measured: the population sd and the correlations trade off along
+# a ridge whose *cross-covariances* are pinned to five significant figures
+# while the sd runs over a factor of 16 and the log likelihood moves by 1.3e-06.
+#
+# So the data does determine something here, and the advice that fits complete
+# non-identification -- fix one of the set, or remove it -- throws that
+# something away. Telling the two cases apart is computable rather than
+# guessable: if every coordinate a flat direction loads on is a population
+# scale or correlation of one random-effect block, and the block's
+# cross-covariance functionals do not change along the direction, then the
+# covariances are what the data determines and their decomposition into scales
+# and correlations is what it does not.
+#
+# The one functional that legitimately *does* change along such a direction is
+# the implicated effect's own variance -- a variance is not a covariance
+# between two effects, and nothing in this mechanism identifies it. Any other
+# entry moving is a different problem, and then this reports nothing and the
+# complete-non-identification advice stands.
+
+# Which raw coordinates make up each level's population covariance block, and
+# how to materialise that covariance.
+#
+# Both routes are described the same way because the identification question is
+# the same on both: the augmented route holds the scales and correlations in
+# `spec$random_effects` (they are T0VAR cells of the augmented model), the
+# Laplace route in `spec$laplace$levels`. A block is one level's scales and
+# correlations together, because a scale is identified or not *jointly with the
+# correlations it multiplies*.
+#' @keywords internal
+.ctIdentifyBlocks <- function(spec) {
+  if (is.null(spec)) return(list())
+  blocks <- list()
+  effects <- spec$random_effects
+  if (!is.null(effects) && length(effects) && nrow(effects)) {
+    sds <- effects[effects$type %in% "sd", , drop = FALSE]
+    cors <- effects[effects$type %in% "correlation", , drop = FALSE]
+    if (nrow(sds)) blocks[[length(blocks) + 1L]] <- list(
+      route = "augmented", level = 1L, name = "subject",
+      sd_index = as.integer(sds$parameter), cor_index = as.integer(cors$parameter),
+      param = as.character(sds$param),
+      # The carrier state each scale belongs to, which is where it sits in the
+      # augmented T0VAR and therefore in the population covariance.
+      state = as.integer(sds$row))
+  }
+  laplace <- spec$laplace
+  if (!is.null(laplace) && length(laplace$levels)) {
+    for (l in seq_along(laplace$levels)) {
+      level <- laplace$levels[[l]]
+      if (!length(level$sd_index)) next
+      blocks[[length(blocks) + 1L]] <- list(
+        route = "laplace", level = as.integer(l),
+        name = as.character(.ctJuliaOr(level$name, l))[1L],
+        sd_index = as.integer(level$sd_index),
+        cor_index = as.integer(level$cor_index),
+        param = as.character(level$param),
+        state = seq_along(level$sd_index))
+    }
+  }
+  blocks
+}
+
+# The population covariance of one block at one raw vector.
+#' @keywords internal
+.ctIdentifyPopcov <- function(fit, block, values) {
+  spec <- .ctBackendSpec(fit)
+  if (identical(block$route, "laplace")) {
+    module <- .ctJuliaModule(spec$project)
+    objective <- .ctJuliaObjective(fit)
+    out <- lapply(seq_len(ncol(values)), function(column) {
+      value <- try(.ctBackendJuliaValue(module$ctsem_laplace_popcov(objective,
+        .ctJuliaNumericVector(as.numeric(values[, column])),
+        as.integer(block$level))), silent = TRUE)
+      if (inherits(value, "try-error")) return(NULL)
+      as.numeric(as.matrix(value))
+    })
+    if (any(vapply(out, is.null, logical(1)))) return(NULL)
+    return(matrix(unlist(out), ncol = ncol(values)))
+  }
+  # The augmented route's population covariance is the carrier block of the
+  # augmented model's T0cov, and `rows` keeps everything else off the bridge.
+  layout <- try(.ctBackendSummaryLayout(fit), silent = TRUE)
+  if (inherits(layout, "try-error")) return(NULL)
+  slot <- which(layout$matrix %in% "T0cov")
+  if (!length(slot)) return(NULL)
+  n <- layout$nrow[slot[1L]]
+  states <- block$state
+  if (!length(states) || any(!is.finite(states)) || any(states > n)) return(NULL)
+  grid <- expand.grid(i = seq_along(states), j = seq_along(states))
+  rows <- layout$offset[slot[1L]] +
+    (states[grid$j] - 1L) * n + states[grid$i]
+  flat <- try(.ctBackendParMatricesFlat(fit, values, rows = rows), silent = TRUE)
+  if (inherits(flat, "try-error")) return(NULL)
+  flat
+}
+
+# Central differences of every entry of the block's population covariance, over
+# the block's own coordinates only.
+#
+# Computed once per block and point rather than once per direction, because it
+# does not depend on the direction and a rank-limited model can have dozens.
+#' @keywords internal
+.ctIdentifyPopcovGradient <- function(fit, at, block, h = 1e-5) {
+  index <- c(block$sd_index, block$cor_index)
+  index <- index[is.finite(index) & index >= 1L & index <= length(at)]
+  if (!length(index)) return(NULL)
+  values <- matrix(as.numeric(at), nrow = length(at),
+    ncol = 2L * length(index) + 1L)
+  for (position in seq_along(index)) {
+    values[index[position], 2L * position] <-
+      values[index[position], 2L * position] + h
+    values[index[position], 2L * position + 1L] <-
+      values[index[position], 2L * position + 1L] - h
+  }
+  covariance <- .ctIdentifyPopcov(fit, block, values)
+  if (is.null(covariance) || !all(is.finite(covariance))) return(NULL)
+  k <- length(block$sd_index)
+  if (nrow(covariance) != k * k) return(NULL)
+  gradient <- matrix(0, nrow = k * k, ncol = length(index))
+  for (position in seq_along(index)) {
+    gradient[, position] <- (covariance[, 2L * position] -
+      covariance[, 2L * position + 1L]) / (2 * h)
+  }
+  list(index = index, gradient = gradient, size = sqrt(rowSums(gradient^2)),
+    entries = expand.grid(i = seq_len(k), j = seq_len(k)),
+    value = covariance[, 1L])
+}
+
+# How far each entry of the block's population covariance is from constant
+# along `direction`: zero means the direction preserves it.
+#
+# The direction has been checked to lie in the block already, so its components
+# elsewhere are zero and cannot contribute to the derivative along it.
+# Restricting the gradient to the block can therefore only make the reported
+# cosine larger, which is the safe side for a check that has to be convinced
+# before it will say the covariance is determined.
+#' @keywords internal
+.ctIdentifyPopcovCosines <- function(measured, direction) {
+  step <- direction[measured$index]
+  norm <- sqrt(sum(step^2))
+  if (!is.finite(norm) || norm <= 0) return(NULL)
+  along <- abs(as.numeric(measured$gradient %*% (step / norm)))
+  ifelse(measured$size > 0, along / measured$size, NA_real_)
+}
+
+# Tag each flat direction that is one random-effect block's scale/correlation
+# ridge rather than a parameter the data says nothing about.
+#' @keywords internal
+.ctIdentifyClassify <- function(fit, at, directions, metric = NULL,
+  mass = 0.99, cosine = 1e-4) {
+  if (is.null(fit) || is.null(at) || !length(directions)) return(directions)
+  blocks <- try(.ctIdentifyBlocks(.ctBackendSpec(fit)), silent = TRUE)
+  if (inherits(blocks, "try-error") || !length(blocks)) return(directions)
+  at <- as.numeric(at)
+  # One entry per block, filled the first time a direction needs it and NA
+  # once it is known not to be obtainable, so a failed probe is not retried
+  # for every remaining direction.
+  probes <- vector("list", length(blocks))
+  for (k in seq_along(directions)) {
+    v <- directions[[k]]$vector
+    if (length(v) != length(at)) next
+    total <- sum(v^2)
+    if (!is.finite(total) || total <= 0) next
+    for (b in seq_along(blocks)) {
+      block <- blocks[[b]]
+      index <- c(block$sd_index, block$cor_index)
+      index <- index[is.finite(index) & index >= 1L & index <= length(v)]
+      if (!length(index) || length(block$sd_index) < 2L) next
+      # Everything the direction loads on has to be in this block. A single
+      # random effect (`sd_index` shorter than two) is skipped above: with no
+      # partner there is no covariance for the data to determine, so its scale
+      # being flat is complete non-identification and reads as such.
+      if (sum(v[index]^2) < mass * total) next
+      if (is.null(probes[[b]])) {
+        probe <- .ctIdentifyPopcovGradient(fit, at, block)
+        probes[[b]] <- if (is.null(probe)) NA else probe
+      }
+      if (!is.list(probes[[b]])) next
+      measured <- probes[[b]]
+      # `metric` is the scaling the information matrix was put in before its
+      # eigenvectors were taken (`.ctIdentifyInformation`); the covariance
+      # functionals are differentiated in raw coordinates, so the direction has
+      # to come back to them before the two are compared.
+      raw <- if (is.null(metric)) v else v / as.numeric(metric)
+      measured$cosine <- .ctIdentifyPopcovCosines(measured, raw)
+      if (is.null(measured$cosine)) next
+      i <- measured$entries$i
+      j <- measured$entries$j
+      # Which sds are implicated is read off what actually moves rather than
+      # off the eigenvector's loadings. At one fitted estimate the ridge
+      # direction was 0.99 correlation and 0.16 scale in raw coordinates, so a
+      # loading threshold of 0.25 said the scale was not involved while the
+      # scale was exactly what was running -- the covariance it preserved says
+      # so unambiguously and a threshold on the basis does not.
+      present <- measured$size > 0 & is.finite(measured$cosine)
+      moving <- present & measured$cosine >= cosine
+      # A cross-covariance that moves along the direction is not determined
+      # either, and then this is complete non-identification of the block, not
+      # a scale trading against its correlations.
+      if (any(moving & i != j)) next
+      implicated <- sort(unique(i[moving]))
+      if (!length(implicated)) next
+      # Something has to be determined, or there is nothing to preserve and
+      # nothing to say: a block with no cross-covariance to hold constant
+      # tells us nothing about this direction.
+      if (!any(present & i != j)) next
+      directions[[k]]$partial <- list(route = block$route, level = block$level,
+        block = block$name, parameters = block$param[implicated],
+        partners = block$param[setdiff(seq_along(block$param), implicated)],
+        cosine = max(measured$cosine[present & i != j]))
+      break
+    }
+  }
+  directions
+}
+
+# Split a set of flat directions into the parameters whose covariances the data
+# still determines and the parameters it says nothing about.
+#
+# Two vocabularies meet here and they are not the same. `$partial` and
+# `$partners` are *model* parameter names -- `diff_eta1` -- because that is
+# what the sentence about population sds is about. `$covered` and
+# `$structural` are *raw coordinate* names -- `popsd_diff_eta1` --  because
+# that is what the eigenvectors are indexed by and what "parameters involved"
+# has always listed. Comparing one against the other silently produced an
+# empty intersection and the wrong message.
+#' @keywords internal
+.ctIdentifyPartition <- function(directions) {
+  empty <- list(partial = character(), covered = character(),
+    structural = character(), partners = character())
+  if (!length(directions)) return(empty)
+  partial <- character(); structural <- character()
+  partners <- character(); covered <- character()
+  for (direction in directions) {
+    if (!is.null(direction$partial)) {
+      partial <- c(partial, direction$partial$parameters)
+      partners <- c(partners, direction$partial$partners)
+      covered <- c(covered, direction$parameters)
+    } else {
+      structural <- c(structural, direction$parameters)
+    }
+  }
+  covered <- unique(covered)
+  list(partial = unique(partial), covered = covered,
+    # A coordinate on a partially identified ridge and on a genuinely flat
+    # direction elsewhere is reported under the stronger of the two.
+    structural = setdiff(unique(structural), covered),
+    # One direction's partner can be another's implicated scale; naming it in
+    # both halves of the same sentence would be worse than dropping it here.
+    partners = setdiff(unique(partners), unique(partial)))
+}
+
+# The wording, in one place, because it is said twice: before a fit by
+# `print.ctIdentify` and after one by `.ctBackendIdentifyWarn`. One paragraph
+# per element, so a caller can wrap it or run it together.
+#' @keywords internal
+.ctIdentifyAdvice <- function(partition) {
+  lines <- character()
+  if (length(partition$partial)) {
+    many <- length(partition$partial) > 1L
+    lines <- c(lines, paste0(
+      "The population ", if (many) "sds of " else "sd of ",
+      paste(partition$partial, collapse = ", "),
+      if (many) " are" else " is",
+      " not separately identified from ", if (many) "their" else "its",
+      " correlations with ",
+      if (length(partition$partners)) paste0(
+        "the other individually varying parameters (",
+        paste(partition$partners, collapse = ", "), ")") else "each other",
+      ": only the covariances they generate are, and those the data ",
+      "determines. Reported sds and correlations for these parameters trade ",
+      "off along a ridge and will not repeat between runs. ",
+      "intoverpop='laplace' identifies the ", if (many) "sds" else "sd",
+      " separately, because there each subject's own random effect enters ",
+      "that subject's likelihood."))
+  }
+  if (length(partition$structural)) {
+    lines <- c(lines, paste0("Parameters involved: ",
+      paste(partition$structural, collapse = ", "),
+      ". These are not estimable from this data as the model stands. Fix one ",
+      "of each set to a value, or remove it."))
+  }
+  lines
 }
 
 # Is each reported interval as wide as the curvature at the estimate supports?
@@ -160,14 +473,22 @@
 #' @keywords internal
 .ctBackendIdentifyWarn <- function(identify, collapsed, intervals = NULL) {
   if (!is.null(identify) && identify$nweak > 0L) {
-    involved <- paste(utils::head(identify$parameters, 6), collapse = ", ")
-    if (length(identify$parameters) > 6) involved <- paste0(involved, ", ...")
+    # Which parameters are on a random-effect scale/correlation ridge and which
+    # the data says nothing about, in the same words `print.ctIdentify()` uses
+    # -- the advice differs between the two cases and a fit is where it is
+    # most expensive to get wrong.
+    partition <- .ctIdentifyPartition(identify$directions)
     warning("The data do not identify ", identify$nweak, " direction",
       if (identify$nweak > 1L) "s" else "", " of this model. The estimates ",
       "are still whatever the optimiser found, but the standard errors along ",
       "those directions are arbitrary rather than small or large, and any ",
-      "interval built from them will be too. Parameters involved: ", involved,
-      ". See fit$identifiability, and ctIdentify(data, model) to check this ",
+      "interval built from them will be too. ",
+      paste(.ctIdentifyAdvice(partition), collapse = " "),
+      if (!length(partition$partial) && !length(partition$structural))
+        paste0("Parameters involved: ",
+          paste(utils::head(identify$parameters, 6), collapse = ", "),
+          if (length(identify$parameters) > 6) ", ..." else "", ".") else "",
+      " See fit$identifiability, and ctIdentify(data, model) to check this ",
       "before spending a fit next time.", call. = FALSE)
   }
   if (!is.null(identify) && isTRUE(identify$negative > 0L)) {
