@@ -79,7 +79,12 @@ This now sets \code{intoverstates = FALSE} and the \code{manifesttype} of every 
 set to TRUE if optimizing and FALSE if using hmc.
 if TRUE, integrates over population distribution of parameters rather than full sampling.
 Allows for optimization of non-linearities and random effects, via state expansion.
-'augmented' names that state-expansion method explicitly. 'laplace' instead
+'augmented' names that state-expansion method explicitly. Individual
+variation on a DIFFUSION or MANIFESTVAR parameter is only partially
+identified under 'augmented' -- the data determines that effect's covariance
+with the other random effects but not the split of it into a standard
+deviation and correlations -- and \code{ctFit} warns when it sees one.
+'laplace' instead
 integrates the random effects out subject by subject with a Laplace
 approximation, leaving each subject's filtered state space at its
 single-subject size, so the cost of a random effect stops growing cubically

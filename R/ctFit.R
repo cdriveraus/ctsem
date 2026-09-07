@@ -303,7 +303,12 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' set to TRUE if optimizing and FALSE if using hmc.
 #' if TRUE, integrates over population distribution of parameters rather than full sampling.
 #' Allows for optimization of non-linearities and random effects, via state expansion.
-#' 'augmented' names that state-expansion method explicitly. 'laplace' instead
+#' 'augmented' names that state-expansion method explicitly. Individual
+#' variation on a DIFFUSION or MANIFESTVAR parameter is only partially
+#' identified under 'augmented' -- the data determines that effect's covariance
+#' with the other random effects but not the split of it into a standard
+#' deviation and correlations -- and \code{ctFit} warns when it sees one.
+#' 'laplace' instead
 #' integrates the random effects out subject by subject with a Laplace
 #' approximation, leaving each subject's filtered state space at its
 #' single-subject size, so the cost of a random effect stops growing cubically
@@ -1134,6 +1139,52 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   #   # message('No individual variation -- disabling intoverpop switch');
   #   intoverpop <- FALSE
   # }
+
+  # Individual variation on a variance cell is only partially identified under
+  # the augmented route, and it is not backend specific -- the filter is the
+  # same on both, so this sits ahead of the stan / julia dispatch deliberately.
+  #
+  # The augmented route makes a random effect a static latent state with LAMBDA
+  # zero on it. A mean-affecting cell (MANIFESTMEANS, CINT, T0MEANS, DRIFT)
+  # reaches the observation mean, so the Kalman update moves that state and its
+  # population variance is informed. A DIFFUSION or MANIFESTVAR cell is built
+  # from the state's mean only: the observation mean function's Jacobian with
+  # respect to it is zero, so the update can never move it, and the data learns
+  # about the effect solely through its correlation with states the filter can
+  # update. The covariance sd_i x sd_j x corr_ij is then identified and its
+  # split into an sd and correlations is a ridge -- bounded below, unbounded
+  # above. See review/RANDOMEFFECTS-partial-identification-2026-09-07.md.
+  #
+  # This is deliberately coarse and will occasionally fire where the parameter
+  # IS identified, because a parameter also referenced inside a mean-affecting
+  # expression -- a DRIFT string, say -- is identified and has no DRIFT row in
+  # `$pars` to reveal it. That false positive is accepted rather than chased
+  # with a substring scan of the character cells. The accurate distinction is
+  # computable, not pattern-matched: `.ctBackendIdentifiability()` returns each
+  # flat direction's loadings, so one helper checking that the covariance
+  # functionals are orthogonal to the direction would serve both this pre-fit
+  # site and the post-fit `.ctBackendIdentifyWarn()`. That is where an exact
+  # version belongs.
+  #
+  # It must run before `.ctModelIntOverPop()` below, which clears `indvarying`
+  # on the cells it rewrites into state references, and MANIFESTVAR rows for
+  # non-Gaussian indicators are excluded because they are fixed further down
+  # (the `errfix` block) and warning about them would contradict that message.
+  if(intoverpop){
+    revarpars <- ctm$pars$matrix %in% c('DIFFUSION','MANIFESTVAR') &
+      ctm$pars$indvarying & is.na(ctm$pars$value)
+    if(any(revarpars)) revarpars <- revarpars &
+      !(ctm$pars$matrix %in% 'MANIFESTVAR' &
+          ctm$pars$row %in% which(ctm$manifesttype > 0 & ctm$manifesttype != 4))
+    if(any(revarpars)) warning(
+      "Individual variation on DIFFUSION or MANIFESTVAR is only partially ",
+      "identified with intoverpop='augmented': the random effect enters only ",
+      "the predicted covariance, so the filter never updates it, and the data ",
+      "determines its covariance with the other random effects but not the ",
+      "split of that covariance into a standard deviation and correlations. ",
+      "Affected: ", paste(unique(ctm$pars$param[revarpars]), collapse=', '),
+      ". intoverpop='laplace' identifies these separately.", call.=FALSE)
+  }
 
   ctm <- ctModel0DRIFT(ctm, ctm$continuoustime) #offset 0 drift
   ctm$pars <- ctModelStatesAndPARS(ctm$pars,statenames = ctm$latentNames,tdprednames=ctm$TDpredNames) #replace latent states and PARS with state and PAR[] refs, need this early because we rely on [] detection
