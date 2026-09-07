@@ -1,3 +1,4 @@
+# backend='r' pinned, not left at 'auto'. This test characterises what the model recovers from one particular dataset, and 'auto' prefers the julia engine now, which generates different data for the same seed. The generator is not what is under test here.
 skip_on_cran()
 skip_on_32bit()
 {  # body of the guard this replaced; indentation unchanged
@@ -40,8 +41,8 @@ skip_on_32bit()
         T0MEANS=matrix(c(30,50),n.latent),
         MANIFESTVAR=t(chol(diag(.5,n.manifest))),
         DIFFUSION=t(chol(diag(3,2)))))
-      if(i==1) cd<-suppressMessages(ctGenerate(gm,n.subjects=1,burnin=burnin,wide=FALSE,dtmat = dtmat)) else {
-        newdat <- suppressMessages(ctGenerate(gm,n.subjects=1,burnin=burnin,wide=FALSE,dtmat = dtmat))
+      if(i==1) cd<-suppressMessages(ctGenerate(gm,n.subjects=1,burnin=burnin,wide=FALSE,dtmat = dtmat,backend='r')) else {
+        newdat <- suppressMessages(ctGenerate(gm,n.subjects=1,burnin=burnin,wide=FALSE,dtmat = dtmat,backend='r'))
         newdat[,'id'] <- i
         cd<-rbind(cd,newdat)
       }
@@ -113,7 +114,8 @@ skip_on_32bit()
     for(si in 1:nsubjects){
       m=suppressMessages(ctModel(LAMBDA=diag(1), Tpoints=Tpoints, DRIFT=matrix(drift[si]),T0MEANS = matrix(3), 
         T0VAR=matrix(sqrt(.1)), DIFFUSION=diag(1,1), CINT=matrix(-2),MANIFESTVAR=matrix(sqrt(.1))))
-      d=suppressMessages(ctGenerate(m,n.subjects = 1,burnin = 0,wide = FALSE,dtmean = dt))[,-1]
+      d=suppressMessages(ctGenerate(m,n.subjects = 1,burnin = 0,wide = FALSE,dtmean = dt,
+        backend='r'))[,-1]
       if(si==1) dat=cbind(si,d) else dat=rbind(dat,cbind(si,d))
     }
     colnames(dat)[1]='id'

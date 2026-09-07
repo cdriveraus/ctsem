@@ -122,8 +122,18 @@ ctModelUnlist<-function(ctmodelobj,
     stop('matrices must be a named list of matrices')
   }
 
+  # POPCOV is not a system matrix and has no rows in `pars`; it is stored on
+  # the model and taken out here before the loop below, which requires every
+  # matrix it sees to be present in `pars`.
+  if('POPCOV' %in% names(matrices)){
+    ctm <- .ctModelPopCovAssign(ctm, matrices[['POPCOV']])
+    matrices[['POPCOV']] <- NULL
+  }
+
   pars <- ctm[['pars']]
   tieffects <- colnames(pars)[grep('_effect', colnames(pars), fixed=TRUE)]
+
+  if(!length(matrices)) return(ctm)
 
   for(matrixname in names(matrices)){
     mat <- matrices[[matrixname]]
@@ -158,7 +168,7 @@ ctModelUnlist<-function(ctmodelobj,
           pars$transform[parrow] <- NA
           pars$indvarying[parrow] <- FALSE
           pars$sdscale[parrow] <- NA_real_
-          if(length(tieffects) > 0) pars[parrow,tieffects] <- FALSE
+          if(length(tieffects) > 0) pars[parrow,tieffects] <- 'FALSE'
         } else if(!is.na(parsed$param)){
           defaults <- .ctModelDefaultFreePar(
             matrix=matrixname,
@@ -223,7 +233,13 @@ ctModelUnlist<-function(ctmodelobj,
 #' @export
 ctModelMatrices <- function(x){
   if(!'ctStanModel' %in% class(x)) stop('x must be a ctStanModel object')
-  listOfMatrices(x[['pars']])
+  out <- listOfMatrices(x[['pars']])
+  # Rebuilt on read rather than trusted: `indvarying` is routinely set directly
+  # after the model is built, and a POPCOV describing a different set of random
+  # effects than the model currently has would be worse than none.
+  synced <- .ctModelPopCovSync(x)
+  if(!is.null(synced[['POPCOV']])) out$POPCOV <- synced[['POPCOV']]
+  out
 }
 
 #' @rdname ctModelMatrices
@@ -427,6 +443,7 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
   ctspec$sdscale<-NA
   ctspec$sdscale[is.na(ctspec$value)]<-1
 
+
   # One sdscale per id element, defaulting to 1. `sdscale` is the subject
   # level's; each grouping level above it gets `sdscale_<idname>`, the same
   # rectangular encoding `indvarying_<idname>` uses. A genuine list column
@@ -450,9 +467,12 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
     tipredspec<-matrix(TRUE,ncol=n.TIpred,nrow=1)
     colnames(tipredspec)<-paste0(TIpredNames,'_effect')
     ctspec<-cbind(ctspec,tipredspec,stringsAsFactors=FALSE)
-    ctspec[,paste0(TIpredNames,'_effect')]<-tipredDefault
+    # Character, not logical. An effect can now be free ('TRUE'), free and named
+    # ('myeffect', so two parameters can share one), fixed ('4.3') or absent
+    # ('FALSE'); see R/ctTipredEffect.R. A logical could say only the first and
+    # last of those, and a numeric could not tell 'free' from 'fixed at 1'.
     for(predi in TIpredNames){
-      class(ctspec[,paste0(predi,'_effect')])<-'logical'
+      ctspec[[paste0(predi,'_effect')]] <- as.character(tipredDefault)
     }
   }
   
@@ -490,21 +510,27 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
       whichtipreds <- c()
       timessage <- c()
       if(!is.na(tisplit)){
-        tisplit <- strsplit(getwords(tisplit),split = ',')[[1]]
-        ctspec[pi,paste0(TIpredNames,'_effect')] <- FALSE #first set all FALSE
-        if(!tisplit[1] %in% ''){
-          for(ti in TIpredNames){ #check which tipreds were included
-            for(spliti in tisplit){
-              if(!spliti %in% TIpredNames) stop (spliti,' is not a time independent predictor!')
-              if(grepl(paste0('\\b(',ti,')\\b'),spliti)) whichtipreds <- c(whichtipreds,ti)
-            }
-          }
+        # `TI1, TI2=4.3, TI3=myeffect` -- a bare name is a free effect as it
+        # always was, `=` gives it a value or a name of its own.
+        #
+        # Deliberately not `getwords()`, which every other field here uses:
+        # it replaces each non-word character with a comma, so `TI1=4.3` came
+        # out as `TI1,4,3` and there was no way to write a value at all.
+        tisplit <- trimws(strsplit(tisplit, ',', fixed=TRUE)[[1]])
+        ctspec[pi,paste0(TIpredNames,'_effect')] <- 'FALSE' #first set all off
+        for(entry in tisplit){
+          if(!nzchar(entry)) next
+          parts <- trimws(strsplit(entry, '=', fixed=TRUE)[[1]])
+          ti <- parts[1]
+          if(!ti %in% TIpredNames) stop(ti,' is not a time independent predictor!')
+          spec <- if(length(parts) > 1 && nzchar(parts[2])) parts[2] else 'TRUE'
+          ctspec[pi,paste0(ti,'_effect')] <- spec
+          whichtipreds <- c(whichtipreds,
+            if(identical(spec,'TRUE')) ti else paste0(ti,'=',spec))
         }
-        
-        if(!is.null(whichtipreds))  ctspec[pi,paste0(whichtipreds,'_effect')] <- TRUE #set those effects TRUE
         if(is.null(whichtipreds)) whichtipreds <- 'NULL'
         timessage <- paste0(ctspec$param[pi],' tipred effects from: ', paste0(whichtipreds,collapse=', '))
-        
+
       }
       
       
@@ -514,7 +540,7 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
     }
   }
   
-  if(n.TIpred > 0 && sum(unlist(ctspec[,paste0(TIpredNames,'_effect')]))==0) warning('TI predictors included but no effects specified!')
+  if(n.TIpred > 0 && !any(.ctTipredEffectActive(ctspec[,paste0(TIpredNames,'_effect')]))) warning('TI predictors included but no effects specified!')
   
   for(ri in 1:nrow(ctspec)){ #set NA's on complex params
     
@@ -569,6 +595,12 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
   # out$stationarymeanprior <- NA
   # out$stationaryvarprior <- NA
   out$covmattransform <- 'rawcorr'
+  # The population covariance, one row and column per varying parameter. Held
+  # beside `pars` rather than in it, deliberately: everything that enumerates
+  # free parameters walks `pars`, and the population covariance is not one of
+  # those -- both backends build it from their own parameterisation. See
+  # R/ctModelPopCov.R.
+  out <- .ctModelPopCovSync(out)
   out[['matrices']] <- .ctModelMatricesPlaceholder()
   # out$NOrdinalIntegrationPoints <- 9L
   

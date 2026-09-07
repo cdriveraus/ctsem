@@ -232,7 +232,19 @@ test_that("an expression cell survives generation rather than being filled", {
     n.manifest = 1, manifestNames = "y1", latentNames = "eta1",
     LAMBDA = matrix(1), T0MEANS = matrix(0), CINT = matrix(0))))
   filled <- ctsem:::.ctGenerateResolveFree(free, quiet = TRUE)
-  expect_false(any(is.na(filled$pars$value)))
+  # Every free parameter is filled except an individually varying one, and that
+  # exception is the point rather than an oversight. Assigning a value makes a
+  # parameter fixed, a fixed parameter is not augmented, and the state that
+  # would carry its individual deviations is then never created -- so the model
+  # would generate no between-subject variation at all. The intended value is
+  # recorded on the `ctGenerateMeans` attribute and applied to the population
+  # mean later instead. MANIFESTMEANS is individually varying by default, which
+  # is why this model has one.
+  varying <- !is.na(filled$pars$indvarying) & filled$pars$indvarying
+  expect_true(any(varying))
+  expect_false(any(is.na(filled$pars$value[!varying])))
+  expect_true(all(is.na(filled$pars$value[varying])))
+  expect_true(length(attr(filled, "ctGenerateMeans")) > 0)
 })
 
 test_that("state dependent generation carries the dependence into the data", {
@@ -273,10 +285,16 @@ test_that("ctPostPredict() runs on a julia backend fit", {
 
 test_that("ctGenerateFromPriors() refuses a julia backend fit with an informative message", {
   skip_without_julia()
+  # The reason changed when this function stopped fitting. It is no longer that
+  # a julia fit lacks stan fit structures -- it is that a julia fit does not
+  # carry the unaugmented model, only the form .ctModelIntOverPop() produced,
+  # and re-preparing from that would augment it twice. The message says to pass
+  # the model, which is all this ever wanted.
   model <- .generate_model()
   data <- .generate_data()
   fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
-  expect_error(ctGenerateFromPriors(fit), regexp = "not available for julia backend fits")
+  expect_error(ctGenerateFromPriors(fit), regexp = "does not carry")
+  expect_error(ctGenerateFromPriors(fit), regexp = "Pass the model instead")
 })
 
 # Generation on the Laplace random-effect route (intoverpop='laplace') ------
