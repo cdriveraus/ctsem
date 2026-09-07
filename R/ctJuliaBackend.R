@@ -1282,6 +1282,29 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     rows <- rows[!duplicated(as.integer(setup$param)[rows])]
     varying <- as.integer(setup$param)[rows]
     sdscale <- as.numeric(values$sdscale)[rows]
+  } else {
+    # Neither, which is a model straight from `ctModel()`. `ctFit()` always
+    # supplies both -- it builds `modelmats` and hands `.ctPrepareData()`'s
+    # output over as `prepared_data` -- so this branch is for the callers that
+    # prepare a specification without fitting one, `ctIdentify()` among them.
+    # Without it `nrandom` came out zero on a model that plainly has random
+    # effects and `intoverpop='laplace'` was refused as "no parameters are
+    # marked indvarying", which is the opposite of what the model said.
+    #
+    # `table` is the canonical parameter table, so its `indvarying` is the
+    # flag after `.ctJuliaCanonicalModel()` has had its say, and its
+    # `parnumber` is the raw index. `sdscale` is not carried on the table, so
+    # it is read from the model's own `pars` by parameter name.
+    hit <- which(table$indvarying %in% TRUE & !is.na(table$parnumber) &
+      table$parnumber > 0L)
+    varying <- sort(unique(as.integer(table$parnumber[hit])))
+    sdscale <- rep(1, length(varying))
+    if (!is.null(model$pars$sdscale)) {
+      names_at_index <- .ctJuliaLaplaceNames(table, varying)
+      matched <- match(names_at_index, as.character(model$pars$param))
+      supplied <- suppressWarnings(as.numeric(model$pars$sdscale[matched]))
+      sdscale[is.finite(supplied)] <- supplied[is.finite(supplied)]
+    }
   }
   if (length(sdscale) != length(varying)) sdscale <- rep(1, length(varying))
   usable <- !is.na(varying) & varying > 0L & varying <= base_npar
@@ -3328,8 +3351,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # the data -- but a statement of which directions the data does not determine,
   # and therefore which reported intervals do not mean what they appear to.
   rawnames <- .ctBackendRawParameterNames(out, length(out$estimate$raw))
+  # `fit`/`at` let it tell a random-effect block trading its scale off against
+  # its correlations -- where the covariances are determined, and fixing a
+  # value throws them away -- from a direction the data says nothing about.
   out$identifiability <- .ctBackendIdentifiability(out$uncertainty$hessian,
-    rawnames)
+    rawnames, fit = out, at = out$estimate$raw)
   # `$uncertainty$intervalcheck` is attached by `.ctBackendUncertainty()`, so
   # it describes whichever method ran; it is only warned about here. A separate
   # question from identifiability: a direction can be flat enough to ruin every

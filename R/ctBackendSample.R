@@ -1107,6 +1107,6 @@ print.ctSampleDiagnostics <- function(x, ...) {
     out$estimate$loglik_type <- "joint"
   }
   out$identifiability <- .ctBackendIdentifiability(identhessian,
-    .ctBackendRawParameterNames(out, npar))
+    .ctBackendRawParameterNames(out, npar), fit = out, at = theta)
   out
 }

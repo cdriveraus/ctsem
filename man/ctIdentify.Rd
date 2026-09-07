@@ -15,6 +15,7 @@ ctIdentify(
   cores = 1L,
   verbose = 0L,
   rtol = 1e-13,
+  seed = 1L,
   ctstanmodel
 )
 }
@@ -27,8 +28,7 @@ ctIdentify(
 and disables the comparison across points described above.}
 
 \item{nstart}{Number of points to evaluate. The first is the origin of the
-unconstrained space, so a result is reproducible; the rest are dispersed
-draws around it.}
+unconstrained space; the rest are dispersed draws around it.}
 
 \item{spread}{Standard deviation of the additional evaluation points on the
 raw scale. Large enough that they are genuinely different points, which
@@ -54,13 +54,23 @@ a weakly identified one on a comparable model sat at 3e-12. Raise it to
 catch weak directions too, at the cost of reporting some a fit would have
 settled.}
 
+\item{seed}{Seed for the dispersed evaluation points, so that two identical
+calls give identical output. The session's random stream is restored
+afterwards, so this neither depends on it nor disturbs it. \code{NULL}
+draws from the session stream instead, which makes the result depend on
+where that had got to.}
+
 \item{ctstanmodel}{Deprecated. Use \code{model}.}
 }
 \value{
 An object of class \code{ctIdentify} with \code{$parameters} (names
-  implicated at every evaluation point), \code{$sometimes} (implicated at
-  some), \code{$nweak}, \code{$condition}, and \code{$starts} holding the
-  per-point detail. Printing it summarises what was found.
+  in the flat subspace at every evaluation point), \code{$partial} and
+  \code{$structural} splitting those into the partially and completely
+  unidentified, \code{$sometimes} (in a flat direction beyond that subspace
+  at some points), \code{$rotating} (whether the basis of the flat subspace
+  turns between points), \code{$nweak}, \code{$condition}, and
+  \code{$starts} holding the per-point detail. Printing it summarises what
+  was found.
 }
 \description{
 Reports the directions of the parameter space this data carries no
@@ -73,7 +83,16 @@ together, a latent process nothing measures, a scale that is never fixed --
 which is a property of the model and holds wherever it is evaluated. It is
 not a verdict on the model: a direction that is flat at one point may be
 perfectly informed at the estimate, which is why several points are used and
-only parameters implicated at every one of them are reported as uninformed.
+only parameters lying in the flat subspace at every one of them are reported
+as uninformed.
+
+Not every flat direction means the same thing. A random effect on a variance
+cell (DIFFUSION, MANIFESTVAR) under \code{intoverpop = 'augmented'} is
+partially identified: the population covariances it generates with the other
+individually varying parameters are determined, while their decomposition
+into a scale and correlations is a ridge. The printed summary distinguishes
+the two cases, because the advice differs -- fixing a value discards
+information in the first case and is the fix in the second.
 
 Requires the Julia backend, which is where the per-subject scores
   come from. The statistic has rank at most the number of subjects, so a
