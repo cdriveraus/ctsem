@@ -22,7 +22,12 @@ ctGenerateFromPriors(
 \item{datastruct}{long format data structure as used by ctsem. 
 Not used if cts is a ctStanFit object.}
 
-\item{is}{If optimizing, follow up with importance sampling?}
+\item{is}{Follow the optimization with importance sampling? This is
+\code{uncertainty='is'}, and it leaves the draws alone for a model whose
+raw priors are all normal(0,1): fitted to an empty dataset the target is
+then exactly gaussian, so the Hessian approximation it would correct is
+already exact. It is worth something for a model carrying laplace priors,
+where that is not true.}
 
 \item{fullposterior}{Generate from the full posterior or just the (unconstrained) mean?}
 

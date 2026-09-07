@@ -61,7 +61,12 @@ ctModeltoNumeric <- function(ctmodelobj){
 #' \code{\link{ctStanFit}} object.
 #' @param datastruct long format data structure as used by ctsem. 
 #' Not used if cts is a ctStanFit object.
-#' @param is If optimizing, follow up with importance sampling? 
+#' @param is Follow the optimization with importance sampling? This is
+#' \code{uncertainty='is'}, and it leaves the draws alone for a model whose
+#' raw priors are all normal(0,1): fitted to an empty dataset the target is
+#' then exactly gaussian, so the Hessian approximation it would correct is
+#' already exact. It is worth something for a model carrying laplace priors,
+#' where that is not true.
 #' @param fullposterior Generate from the full posterior or just the (unconstrained) mean?
 #' @param nsamples How many samples to generate?
 #' @param parsonly If TRUE, only return samples of raw parameters, don't generate data.
@@ -128,12 +133,6 @@ ctGenerateFromPriors <- function(cts,datastruct=NA, is=FALSE,
   } else priors<-TRUE
   
   datastruct[,cts$manifestNames] <- NA #remove manifest variables
-  optimcontrol<- list()
-  optimcontrol$carefulfit=FALSE
-  optimcontrol$is <- is
-  optimcontrol$stochastic=FALSE
-  optimcontrol$finishsamples=nsamples
-  
   
   cts$TIpredAuto <- 0L
   
@@ -144,7 +143,18 @@ ctGenerateFromPriors <- function(cts,datastruct=NA, is=FALSE,
   
   
   args <- cts$args
-  args$optimcontrol=optimcontrol
+  # Built here, once. There were two of these lists and the one below
+  # overwrote this one wholesale, so `is` and `finishsamples` never reached
+  # ctFit() -- and `is` arriving there would have been worse than being
+  # dropped, because ctFit() refuses `optimcontrol$is` by name (it is in
+  # .ctOptimcontrolInert) and the call would have stopped. `uncertainty='is'`
+  # is what that route is called now, and both backends honour it.
+  #
+  # `uncertainty` is set only when asked for, so the default path passes
+  # exactly what it passed before.
+  args$optimcontrol <- list(stochastic=FALSE, carefulfit=FALSE,
+    finishsamples=nsamples)
+  if(isTRUE(is)) args$optimcontrol$uncertainty <- 'is'
   args$optimize=TRUE
   args$cores=cores
   args$model <- cts
@@ -154,7 +164,7 @@ ctGenerateFromPriors <- function(cts,datastruct=NA, is=FALSE,
   args$inits=0
   args$datalong=datadummy
   args$priors <- priors
-  args$optimcontrol=list(stochastic=FALSE,carefulfit=FALSE)
+
   if(!is.null(args$priors) && !as.logical(args$priors)) stop('Priors disabled, cannot sample from prior!')
   
   #fit to empty data 
