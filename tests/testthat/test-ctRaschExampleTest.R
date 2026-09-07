@@ -1,3 +1,4 @@
+# backend='r' pinned, not left at 'auto'. This test characterises what the model recovers from one particular dataset, and 'auto' prefers the julia engine now, which generates different data for the same seed. The generator is not what is under test here.
 # A Rasch-style measurement model: seven binary indicators loading on one
 # latent process, item difficulties as free manifest means with the first fixed
 # at zero for identification, and a per-subject continuous intercept.
@@ -57,7 +58,8 @@
     for (i in seq_len(nsubjects)) {
       gm_i <- gm
       gm_i$matrices$CINT[] <- cint[i]
-      d_i <- suppressMessages(ctGenerate(gm_i, n.subjects = 1, logdtsd = .2))
+      d_i <- suppressMessages(ctGenerate(gm_i, n.subjects = 1, logdtsd = .2,
+        backend = 'r'))
       d_i[, "id"] <- i
       dlist[[i]] <- d_i
     }

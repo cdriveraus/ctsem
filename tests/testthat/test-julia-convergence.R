@@ -1,3 +1,4 @@
+# backend='r' pinned, not left at 'auto'. This test characterises what the model recovers from one particular dataset, and 'auto' prefers the julia engine now, which generates different data for the same seed. The generator is not what is under test here.
 # Does `fit$estimate$converged` mean what it says?
 #
 # The stan side has `test-stan-convergence.R`, which checks the same thing the
@@ -39,7 +40,8 @@ skip_on_32bit()
     MANIFESTVAR = diag(.2, 2), T0VAR = matrix(1), T0MEANS = matrix(0),
     CINT = matrix(0), MANIFESTMEANS = matrix(c(1, -.5), 2, 1), Tpoints = 8))
   set.seed(3)
-  data.frame(ctGenerate(gm, n.subjects = 25, Tpoints = 8, burnin = 0))
+  data.frame(ctGenerate(gm, n.subjects = 25, Tpoints = 8, burnin = 0,
+    backend = 'r'))
 }
 
 .jconv_model <- function() suppressMessages(ctModel(type = "ct", n.latent = 1,

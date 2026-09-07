@@ -392,3 +392,32 @@ test_that("without fromPriors, sdscale is the population sd and nothing is drawn
     suppressWarnings(ctGenerate(mk(0.2), n.subjects = 10, backend = 'julia')),
     regexp = 'taken from sdscale')
 })
+
+test_that("with fromPriors, the population sd is drawn per dataset", {
+  skip_without_julia()
+  # The other half of the pair, and only meaningful beside it. The test above
+  # pins the spread for `ctGenerate()`; if that pinning ever leaked into the
+  # prior predictive, the prior predictive would silently stop exploring the
+  # one parameter it exists to explore, and nothing above would notice.
+  #
+  # Each dataset draws its own population sd here, so the realised
+  # between-subject spread varies far beyond finite-sample noise -- measured
+  # 0.805 to 16.2 over eight datasets of 60 subjects, against a ratio the
+  # deterministic route holds under 1.3.
+  model <- suppressWarnings(ctModel(type = 'ct', n.latent = 1, n.manifest = 1,
+    Tpoints = 4, LAMBDA = matrix(1), DRIFT = matrix(-0.5),
+    DIFFUSION = matrix(0.01), MANIFESTVAR = matrix(0.01),
+    MANIFESTMEANS = matrix('mmean||TRUE|1'), T0VAR = matrix(0.01),
+    T0MEANS = matrix(0), CINT = matrix(0)))
+
+  set.seed(1)
+  drawn <- suppressMessages(suppressWarnings(ctGenerate(model, fromPriors = TRUE,
+    n.subjects = 60, nsamples = 8, cores = 1, backend = 'julia')))
+  subject <- rep(seq_len(60), each = 4)
+  spread <- apply(drawn$Y, 1, function(y)
+    stats::sd(tapply(as.numeric(y), subject, mean)))
+
+  expect_length(spread, 8L)
+  expect_true(all(is.finite(spread)))
+  expect_gt(max(spread) / min(spread), 3)
+})
