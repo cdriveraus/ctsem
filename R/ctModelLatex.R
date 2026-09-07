@@ -344,6 +344,19 @@ ctModelLatexMathElement <- function(x){
   x
 }
 
+# A named covariance placed into a wider set of parameters, zero elsewhere.
+#
+# Every source of a covariance here covers some of the parameters and not
+# others -- one random-effect level, the covariate effects, the initial state --
+# and they are shown as one distribution over the union of them.
+.ctLatexExpandCov <- function(cov, pars) {
+  out <- matrix(0, length(pars), length(pars), dimnames=list(pars,pars))
+  index <- match(rownames(cov), pars)
+  keep <- !is.na(index)
+  out[index[keep], index[keep]] <- cov[keep, keep, drop=FALSE]
+  out
+}
+
 bmatrix = function(x, digits=NULL,nottext=FALSE, ...) {
   if(!is.null(x)){
     if(!nottext){
@@ -553,13 +566,13 @@ ctModelLatexMeasurementBlock <- function(ctmodel, matrixnames=TRUE,
 #' @param x A model from \code{\link{ctModel}}, or a fit from
 #' \code{\link{ctFit}} on either backend (\code{ctStanFit} or
 #' \code{ctJuliaFit}). Given a fit, the estimates are substituted for the
-#' parameter labels. The subject parameter distribution is written out for a
-#' \code{ctStanFit} only.
+#' parameter labels.
 #' @param matrixnames Logical. If TRUE, includes ctsem matrix names such as DRIFT and DIFFUSION under the matrices.
 #' @param digits Precision of decimals for numeric values.
 #' @param linearise Logical. Show the linearised normal approximation for subject parameters and 
-#' covariate effects, or the raw parameters? Only relevant where the subject
-#' parameter distribution is shown.
+#' covariate effects, or the raw parameters? Only relevant where a subject
+#' parameter distribution is shown, and not available for a \code{ctJuliaFit},
+#' which holds that distribution on the raw scale.
 #' @param textsize Standard latex text sizes -- 
 #' tiny scriptsize footnotesize small normalsize large Large LARGE huge Huge. 
 #' Useful if output overflows page. 
@@ -608,6 +621,20 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=inherits(x,'ctStan
   latentPopNames <- NULL
   # Only a fit can have these; an unfitted model shows its expressions anyway.
   contextcells <- NULL
+  # Random-effect levels above the subject. Only the julia backend has them.
+  extracov <- list()
+
+  # `linearise` shows the subject distribution of the *transformed* parameters.
+  # Reaching it needs a covariance on that scale, and the julia backend does not
+  # have one: it reports the sd of each transformed parameter by quadrature
+  # (summary()$popsd) and the correlations on the raw scale, which is not a
+  # transformed covariance and cannot be assembled into one. Refused by name
+  # rather than quietly ignored.
+  if(inherits(x,'ctJuliaFit') && isTRUE(linearise)) stop(call.=FALSE,
+    "linearise = TRUE is not available for a backend='julia' fit: it holds the ",
+    "subject distribution on the raw scale, and the transformed spread it does ",
+    "report (summary()$popsd) is not a covariance to show here. Use ",
+    "linearise = FALSE for the raw distribution the model was fitted with.")
   
   # When savepng is TRUE, force compilation settings
   if(savepng) {
@@ -628,7 +655,14 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=inherits(x,'ctStan
     
     if(!is.null(e$rawpopcov)){ 
       
-      if(!linearise) popcov <- round(ctCollapse(e$rawpopcov,1,mean),digits)
+      # Named, because everything downstream matches these by name: the union
+      # with the covariate effects below, and ctModelLatexAugmentT0(). Without
+      # the names the union dropped this covariance entirely and the equation
+      # showed a subject distribution of zeros.
+      if(!linearise) {
+        popcov <- round(ctCollapse(e$rawpopcov,1,mean),digits)
+        rownames(popcov) <- colnames(popcov) <- ms$parname[as.logical(ms$indvarying)]
+      }
       if(linearise) {
         popcov <- stan_constrainsamples(x$stanmodel,x$standata,matrix(x$stanfit$rawest,nrow=1),
           cores=1,pcovn =1000,dokalman=FALSE,savesubjectmatrices = FALSE)$popcov
@@ -646,6 +680,11 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=inherits(x,'ctStan
       }
     } else popcov <- diag(0,0)
     
+    # Named for the same reason, and it is the half that was missing: the union
+    # orders the parameters by where they first appear, which is not parameter
+    # order once a covariance goes in front of the covariate effects, so an
+    # unnamed vector was rendered against whichever labels happened to line up.
+    popnames <- ms$parname[as.logical(ms$indvarying + ms$tipred)]
     if(!linearise) popmeans <- round(ctCollapse(e$rawpopmeans,1,mean),digits)[
       as.logical(ms$indvarying + ms$tipred),drop=FALSE]
     if(linearise) {
@@ -656,6 +695,7 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=inherits(x,'ctStan
           t0index,1]
       }
     }
+    names(popmeans) <- popnames
     
     # parmats <- summary(x,residualcov=FALSE,priorcheck=FALSE,digits=digits)
     # parmats <- data.frame(parmats$parmatrices,matrix=rownames(parmats$parmatrices))
@@ -728,21 +768,27 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=inherits(x,'ctStan
     ctmodelmats <- .ctLatexFillEstimates(ctmodelmats, e, ctmodel$pars,
       contextcells, estimates, ctmodel$latentNames, ctmodel$TDpredNames, digits)
 
-    # The population distribution and the covariate effects are not written
-    # out for this backend: it holds both in a different shape (per level, and
-    # as an sd of the transformed parameter rather than a raw covariance), and
-    # rendering the stan section from them would be a guess at a scaling.
-    # Said rather than silently dropped, because a random effects model whose
-    # equations arrive without them looks like a model that has none.
-    popcov <- diag(0,0)
-    timat <- diag(0,0)
-    popmeans <- character(0)
-    spec <- .ctBackendSpec(x)
-    if(length(.ctBackendRandomEffectParameters(spec)) || !is.null(spec$laplace) ||
-        (!is.null(spec$ti_effects) && nrow(spec$ti_effects))){
-      message('Subject distribution and covariate effects are not written out ',
-        "for a backend='julia' fit; see summary().")
+    # The subject parameter distribution and the covariate effects, on the raw
+    # scale -- which is the scale `linearise = FALSE` writes, and the scale this
+    # distribution is a normal on. All three pieces are the estimates
+    # themselves: .ctBackendRawPopCov() recombines the same level populations
+    # the summary's popsd comes from, and a covariate coefficient is a free
+    # parameter with its own place in the raw vector.
+    levelcovs <- .ctBackendRawPopCov(x)
+    popcov <- if(length(levelcovs)) round(levelcovs[[1]]$cov,digits) else diag(0,0)
+    # Levels above the subject are their own populations -- a study sd is the
+    # spread between studies -- so they are shown as their own zero-mean term
+    # rather than pooled into one covariance that would describe neither.
+    extracov <- list()
+    if(length(levelcovs) > 1){
+      extracov <- lapply(levelcovs[-1], function(l) round(l$cov,digits))
+      names(extracov) <- vapply(levelcovs[-1],
+        function(l) as.character(l$level)[1], character(1))
     }
+    timat <- .ctBackendRawTipredEffects(x)
+    timat <- if(is.null(timat)) diag(0,0) else round(timat,digits)
+    popmeans <- round(.ctLatexRawEstimates(x)[unique(c(rownames(popcov),
+      unlist(lapply(extracov,rownames)), rownames(timat)))], digits)
     ctmodel <- c(ctmodel,ctmodelmats)
     class(ctmodel) <- 'ctStanModel'
   } else ctmodel <- x
@@ -761,16 +807,20 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=inherits(x,'ctStan
     dopopcov <- as.logical(nrow(popcov))
     doti <- as.logical(nrow(timat))
     
-    if(doti){
-      # both <- rownames(timat) %in% rownames(popcov)
-      pars <- unique(c(rownames(popcov),rownames(timat)))
-      newpopcov <- matrix(0,length(pars),length(pars),dimnames=list(pars,pars))
-      newtimat <- matrix(0,length(pars),ncol(timat),dimnames=list(pars,colnames(timat)))
-      newtimat[na.omit(match(rownames(timat),rownames(newtimat))),] <- timat
-      newpopcov[na.omit(match(rownames(popcov),rownames(newpopcov))), 
-        na.omit(match(rownames(popcov),rownames(newpopcov)))] <- popcov
-      popcov <- newpopcov
-      timat <- newtimat
+    if(doti || length(extracov)){
+      pars <- unique(c(rownames(popcov),unlist(lapply(extracov,rownames)),
+        rownames(timat)))
+      popcov <- .ctLatexExpandCov(popcov, pars)
+      extracov <- lapply(extracov, .ctLatexExpandCov, pars=pars)
+      if(doti){
+        newtimat <- matrix(0,length(pars),ncol(timat),dimnames=list(pars,colnames(timat)))
+        newtimat[na.omit(match(rownames(timat),rownames(newtimat))),] <- timat
+        timat <- newtimat
+      }
+      # The union may have given popcov rows it did not have -- a level above
+      # the subject can be the only thing that varies -- and the block below
+      # tests this before it is recomputed there.
+      dopopcov <- as.logical(nrow(popcov))
     }
     
     if(dopopcov || doti){
@@ -788,6 +838,7 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=inherits(x,'ctStan
         t0cov=t0cov, latentPopNames=latentPopNames, t0covIsTotal=t0covIsTotal)
       popmeans <- t0aug$popmeans
       popcov <- t0aug$popcov
+      extracov <- lapply(extracov, .ctLatexExpandCov, pars=rownames(t0aug$popcov))
       timat <- t0aug$timat
       dopopcov <- as.logical(nrow(popcov))
       doti <- as.logical(nrow(timat))
@@ -1029,6 +1080,10 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=inherits(x,'ctStan
     ifelse(linearise,"","\\textrm{tform}\\left\\{"),
     " \\mathrm{N} \\left(
               ",bmatrix(popmeans),", ", bmatrix(popcov)," \\right) ",
+    if(length(extracov)) paste0(vapply(seq_along(extracov), function(l)
+      paste0(" + \\underbrace{\\mathrm{N} \\left( \\mathbf{0}, ",
+        bmatrix(extracov[[l]])," \\right)}_{\\textrm{",
+        texPrep(names(extracov)[l]),"}}"), character(1)), collapse=""),
     if(doti) paste0(" + \\underbrace{",bmatrix(timat),"}_{\\vect{",ifelse(linearise,"\\hat",""),"\\beta}}","
   \\underbrace{
     ",bmatrix(matrix(colnames(timat))),"}_{\\vect{z}}"),
