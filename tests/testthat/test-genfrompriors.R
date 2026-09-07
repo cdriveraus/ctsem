@@ -102,3 +102,29 @@ test_that("ctGenerateFromPriors() fits the empty dataset with priors on", {
   npar <- length(pp$stanfit$rawest)
   expect_lt(rstan::log_prob(smf, rep(1, npar)), rstan::log_prob(smf, rep(0, npar)))
 })
+
+test_that("ctGenerateFromPriors() honours nsamples and is", {
+  skip_on_cran()
+  # Both used to be dropped on the floor. The function built an optimcontrol
+  # carrying `is` and finishsamples, then overwrote the whole list two lines
+  # later, so the fit always drew the stanoptimis default of 1000 no matter what
+  # nsamples said, and `is` did nothing. Wiring the old `optimcontrol$is`
+  # through would not have worked either -- ctFit() refuses that name outright,
+  # so the call would have stopped rather than importance sampled.
+  hess <- suppressMessages(suppressWarnings(ctGenerateFromPriors(cts = ctstantestfit,
+    cores = 1, nsamples = 20, parsonly = TRUE)))
+  expect_equal(nrow(hess$stanfit$rawposterior), 20L)
+  expect_equal(hess$stanfit$uncertainty$settings$method, 'hessian')
+
+  isfit <- suppressMessages(suppressWarnings(ctGenerateFromPriors(cts = ctstantestfit,
+    cores = 1, nsamples = 20, parsonly = TRUE, is = TRUE)))
+  expect_equal(isfit$stanfit$uncertainty$settings$method, 'is')
+  expect_equal(nrow(isfit$stanfit$rawposterior), 20L)
+
+  # And it is the same prior either way, which is the point of the note on the
+  # argument: with every raw prior normal(0,1) and no data, the target is
+  # exactly gaussian, so there is nothing for the importance weights to
+  # correct. Measured sd 1.006 against 1.009.
+  expect_equal(stats::sd(as.numeric(isfit$stanfit$rawposterior)), 1, tolerance = .15)
+  expect_equal(stats::sd(as.numeric(hess$stanfit$rawposterior)), 1, tolerance = .15)
+})
