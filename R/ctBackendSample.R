@@ -689,18 +689,25 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
   # Warmup is not only a burn-in here: it is the whole of the adaptation. With
   # none, dual averaging never updates, so each chain samples for its whole run
   # at the step size `_init_stepsize` guessed -- doubling or halving from 1
-  # against the acceptance of *one* trial trajectory under *one* momentum draw,
-  # which is a different guess in every chain. Chains then differ in speed and
+  # until a *single* leapfrog step, under a *single* momentum draw, crosses an
+  # acceptance of one half. One step rather than a trajectory, aimed at 0.5
+  # rather than at `target_accept`, and evaluated only where the chain starts,
+  # so it is a different guess in every chain. Chains then differ in speed and
   # in divergences, which is easy to read as one chain being broken when it is
   # the setting.
+  #
+  # The metric is not what is lost. It is the Laplace one to begin with, and
+  # warmup only re-estimates it at `warmup >= 150` -- 75 of initial buffer, a
+  # 25-iteration window, 50 of terminal buffer -- so every shorter warmup
+  # already keeps the curvature the fit measured.
   #
   # `target_accept` is what dual averaging aims at, so with no warmup it is not
   # used at all. Said only when the caller set it, because that is the case
   # where something was asked for and is not happening.
   if (warmup < 1L) {
-    message("warmup = 0, so nothing adapts: each chain keeps the step size its ",
-      "first trial trajectory found, and chains will differ in speed and ",
-      "divergences.",
+    message("warmup = 0, so nothing adapts: each chain keeps the step size ",
+      "found by a single trial leapfrog step, so chains will differ in speed ",
+      "and in divergences. The metric is the fit's own curvature either way.",
       if (!is.null(control$target_accept) || !is.null(control$adapt_delta))
         " target_accept only reaches the dual averaging that warmup runs, so it is unused here." else "")
   }
