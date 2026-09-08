@@ -396,3 +396,66 @@ test_that("a one-thread session asked for more cores either gets more or says so
     label = paste(seen, collapse = " | "))
   expect_false(any(grepl("cores = 2 requested", seen)))
 })
+
+test_that("a control name the sampler does not read is refused, not ignored", {
+  # `control$minEss` on `list(minESS = 100)` is NULL, so the setting was
+  # accepted and ignored and the run said nothing -- reported from a real
+  # session as a sampler that would not stop at the effective size asked for.
+  expect_error(.ctBackendSampleCheckControl(list(minESS = 100)),
+    "minESS \\(did you mean minEss\\?\\)")
+  expect_error(.ctBackendSampleCheckControl(list(nonsense = 1)),
+    "does not read: nonsense")
+  # The suggestion is case-insensitive, because case is what goes wrong.
+  expect_error(.ctBackendSampleCheckControl(list(MaxDraws = 2)),
+    "did you mean maxDraws")
+  # An unnamed entry cannot be read either, and says so rather than being
+  # silently dropped by the `setdiff`.
+  expect_error(.ctBackendSampleCheckControl(list(5)), "must be named")
+
+  # Every name the sampler actually reads passes, and the list is the one the
+  # readers use -- a knob added to `.ctBackendSampleControl` and not to
+  # `.CT_SAMPLE_CONTROL_NAMES` fails here rather than in a user's script.
+  expect_null(.ctBackendSampleCheckControl(list(minEss = 100, warmup = 0L,
+    target_accept = 0.9, maxdepth = 12L, max_treedepth = 12L, maxdelta = 900,
+    adapt_delta = 0.9, init_scale = 1, adapt_metric = TRUE,
+    adapt_effects = FALSE, meanEss = 200, maxDraws = 4000L,
+    rhatTarget = 1.01, settleTol = 0, seed = 1L, processes = FALSE,
+    callback = function(...) NULL)))
+  expect_null(.ctBackendSampleCheckControl(list()))
+  expect_null(.ctBackendSampleCheckControl(NULL))
+})
+
+test_that("a worker pool left busy by an interrupted run is seen as stale", {
+  skip_if_not_installed("future")
+  # An interrupted sample leaves its chains running in the pool. R is single
+  # threaded, so a busy worker at the moment a fit starts warming can only be
+  # an orphan -- and `future::future()` waits for a free worker rather than
+  # failing, so warming would queue behind a chain nobody is collecting.
+  on.exit(try(future::plan(future::sequential), silent = TRUE), add = TRUE)
+
+  # Says nothing about a sequential plan: the caller replaces that anyway.
+  future::plan(future::sequential)
+  expect_false(.ctBackendWarmPoolStale(2L))
+
+  future::plan(future::multisession, workers = 2L)
+  expect_false(.ctBackendWarmPoolStale(2L))
+
+  orphan <- future::future({ Sys.sleep(30); TRUE }, seed = TRUE)
+  # The worker is taken up asynchronously, so this waits for the state rather
+  # than assuming it: an assertion here that raced would fail intermittently
+  # and be read as the detection not working.
+  for (attempt in 1:100) {
+    if (future::nbrOfFreeWorkers() < future::nbrOfWorkers()) break
+    Sys.sleep(0.1)
+  }
+  expect_lt(future::nbrOfFreeWorkers(), future::nbrOfWorkers())
+  expect_true(.ctBackendWarmPoolStale(2L))
+
+  # And the repair is a repair: releasing the sessions takes the orphan with
+  # them, and the pool built next is free.
+  .ctBackendWarmStop(NULL)
+  expect_s3_class(future::plan("list")[[1L]], "sequential")
+  future::plan(future::multisession, workers = 2L)
+  expect_false(.ctBackendWarmPoolStale(2L))
+  expect_equal(future::value(future::future({ 42L }, seed = TRUE)), 42L)
+})

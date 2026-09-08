@@ -65,7 +65,18 @@
     message(pending, " of ", length(handles), " chain worker(s) still ",
       "compiling for this model shape.")
   }
-  .ctBackendWarmWait(handles, verbose = verbose)
+  # Nothing warmed means no worker in the pool can build this model's
+  # objective, so none of them can run a chain either. Returning here samples
+  # in this session instead, which is where a broken pool used to arrive
+  # anyway -- but by way of every chain failing first, so the fallback cost a
+  # chain's startup per chain and reported itself as "2 of 2 chains failed in
+  # their worker process" rather than as a pool that was not there.
+  if (.ctBackendWarmWait(handles, verbose = verbose) < 1L) {
+    warning("No sampling worker process could prepare this model, so the ",
+      "chains ran in this session. ctJuliaWorkersStop() clears the pool if it ",
+      "was left behind by an interrupted run.", call. = FALSE)
+    return(NULL)
+  }
 
   # Each chain runs in its own process, so its printed output sits in that
   # process's own stdout buffer and only reaches the parent -- all at once,

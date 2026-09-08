@@ -59,6 +59,28 @@
   values <- rep_len(values, npar)
   values[!is.finite(values)] <- 0
 
+  # Every worker must be idle before this asks for one, and if any is not then
+  # the pool is left over from a run that was interrupted: R is single threaded,
+  # so at the moment a fit starts warming there is nothing of ours that could
+  # legitimately still be running in it.
+  #
+  # That state is not merely untidy. `future::future()` waits for a free worker
+  # rather than failing, so warming would queue behind a chain from the
+  # abandoned run -- and a worker the parent was mid-read of when the interrupt
+  # landed answers with the previous call's reply, the same desynchronisation
+  # the Julia bridge suffers. `.ctJuliaInterruptSafe` clears the pool when it
+  # sees the interrupt; this is the same repair for every other way it can
+  # happen, including an interrupt that reached R somewhere the handler did not.
+  #
+  # Re-planning the identical plan is a no-op in future -- it keeps the pool,
+  # which is the whole point of warming across fits -- so the reset has to be
+  # explicit.
+  if (.ctBackendWarmPoolStale(workers)) {
+    message("Sampling workers from an interrupted run are still busy, so they ",
+      "are being replaced. This model's shape recompiles in the new ones.")
+    .ctBackendWarmStop(NULL)
+  }
+
   started <- tryCatch({
     future::plan(future::multisession, workers = workers)
     TRUE
@@ -114,6 +136,28 @@
 
   attr(handles, "started") <- Sys.time()
   handles
+}
+
+# Is the current pool unusable for a run that is about to start?
+#
+# True when a `multisession` plan is in force and any of its workers is busy:
+# see the caller for why that can only be an orphan. Deliberately narrow -- it
+# says nothing about a sequential plan, or about a pool of a different size,
+# both of which the caller is about to replace anyway.
+#
+# Every question here is asked through `tryCatch`, because the answer only
+# decides whether to spend a few seconds rebuilding: a `future` version whose
+# `nbrOfFreeWorkers()` behaves differently, or a plan this cannot read, should
+# leave warming to proceed exactly as it did before this existed.
+#' @keywords internal
+.ctBackendWarmPoolStale <- function(workers) {
+  if (!.ctBackendCanWarm()) return(FALSE)
+  current <- tryCatch(future::plan("list")[[1L]], error = function(e) NULL)
+  if (is.null(current) || !inherits(current, "multisession")) return(FALSE)
+  free <- tryCatch(future::nbrOfFreeWorkers(), error = function(e) NA_integer_)
+  total <- tryCatch(future::nbrOfWorkers(), error = function(e) NA_integer_)
+  if (!isTRUE(is.finite(free)) || !isTRUE(is.finite(total))) return(FALSE)
+  free < total
 }
 
 # Runs inside a worker. Wrapped, because a worker that cannot warm should leave

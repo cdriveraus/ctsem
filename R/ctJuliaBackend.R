@@ -556,15 +556,31 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # than an R session that silently returns the wrong answers, or refuses to fit
 # at all, until someone thinks to restart it.
 #
+# The worker pool has to go the same way, and for the same reason one layer up.
+# A sampled fit runs its chains in `future::multisession` workers, and Escape
+# during one leaves two kinds of wreckage: the chains keep running, so every
+# worker is still busy when the next fit asks for one, and if the interrupt
+# landed while the parent was reading a worker's result then that socket is
+# desynchronised exactly as the Julia bridge is. Reported from a real session as
+# workers that "seem broken", after which sampling silently fell back to one
+# process for the rest of the session -- which is what the fallback is *for*,
+# but nobody asked for it and nothing said the pool was the reason.
+#
+# Dropping the pool costs each worker's compiled shapes, as dropping the Julia
+# session costs the parent's. Same trade, and it is not close: a recompile is
+# tens of seconds and an unusable pool lasts as long as the session.
+#
 # `withCallingHandlers` rather than `tryCatch`: the handler runs and the
 # interrupt then carries on unwinding, so Escape still aborts the fit. It only
 # stops leaving wreckage behind.
 #' @keywords internal
 .ctJuliaInterruptSafe <- function(expr) {
   withCallingHandlers(expr, interrupt = function(cnd) {
-    message("Interrupted. Restarting the Julia session, because a half-finished ",
-      "request would leave every later fit in this session reading the wrong ",
-      "reply. The next fit will recompile the engine for its model shape.")
+    message("Interrupted. Restarting the Julia session and any sampling ",
+      "workers, because a half-finished request would leave every later fit ",
+      "in this session reading the wrong reply. The next fit will recompile ",
+      "the engine for its model shape.")
+    try(.ctBackendWarmStop(NULL), silent = TRUE)
     try(.ctJuliaClearSession(), silent = TRUE)
   })
 }

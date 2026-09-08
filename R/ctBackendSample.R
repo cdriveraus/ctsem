@@ -347,10 +347,30 @@
 ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
   saveEffects = FALSE, seed = 20260828L, control = list(), verbose = FALSE,
   processes = TRUE) {
+  # Wrapped as `ctFit(backend='julia')` is wrapped, and it was not: an
+  # interrupted `ctSample()` left the Julia session desynchronised and the
+  # worker pool full of orphaned chains, with nothing to put either right. This
+  # is the entry point most likely to be interrupted -- it is the one that runs
+  # for an hour.
+  # Whether the caller *named* `processes` is decided here and passed on: it is
+  # a fact about this call, and `match.call()` one frame down would report the
+  # arguments this line writes rather than the ones the user wrote -- so the
+  # message below would have fired for everyone rather than for the caller who
+  # asked for something they are not getting.
+  .ctJuliaInterruptSafe(.ctSampleImpl(fit, chains = chains, warmup = warmup,
+    draws = draws, cores = cores, saveEffects = saveEffects, seed = seed,
+    control = control, verbose = verbose, processes = processes,
+    processes_named = "processes" %in% names(match.call())))
+}
+
+#' @keywords internal
+.ctSampleImpl <- function(fit, chains, warmup, draws, cores, saveEffects, seed,
+  control, verbose, processes, processes_named = FALSE) {
 
   if (!inherits(fit, "ctJuliaFit")) {
     stop("ctSample applies to fits made with ctFit(backend='julia').", call. = FALSE)
   }
+  .ctBackendSampleCheckControl(control)
   if (is.null(fit$model_spec$laplace)) {
     stop("ctSample needs a fit made with intoverpop='laplace'. The augmented ",
       "route carries the random effects in the state, so there is no separate ",
@@ -368,7 +388,7 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
   # user's doing and there is nothing for them to act on -- and said out loud
   # when they asked for processes and are not getting them.
   if (isTRUE(processes) && chains > 1L && !.ctBackendCanWarm() &&
-      "processes" %in% names(match.call())) {
+      isTRUE(processes_named)) {
     message("processes = TRUE needs the future package, which is not ",
       "installed. Sampling in this session instead.")
   }
@@ -384,6 +404,55 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
   .ctBackendSampleRun(fit, target, chains = chains, warmup = warmup,
     draws = draws, cores = cores, saveEffects = saveEffects, seed = seed,
     control = control, verbose = verbose, processes = processes)
+}
+
+# Every name the sampler reads out of `control`, in one place.
+#
+# Kept beside `.ctBackendSampleControl()` because that is what reads most of
+# them: a knob added there and not added here is refused as a typo, which is a
+# loud failure and the right way round. The four it does not read are read by
+# `.ctJuliaSampleFit()` (`warmup`, `seed`, `processes`) and
+# `.ctBackendSampleEngine()` (`callback`).
+.CT_SAMPLE_CONTROL_NAMES <- c(
+  "maxdepth", "max_treedepth", "target_accept", "adapt_delta", "maxdelta",
+  "init_scale", "adapt_metric", "adapt_effects",
+  "minEss", "meanEss", "maxDraws", "rhatTarget", "settleTol",
+  "warmup", "seed", "processes", "callback")
+
+# Refuse a control name nothing reads.
+#
+# `control$minEss` on `list(minESS = 100)` is NULL -- `$` on a list matches
+# exactly or by unique prefix, and neither makes `minESS` into `minEss`. So the
+# setting was accepted, ignored, and the run reported nothing about it: reported
+# from a real session as a sampler that would not stop at an effective size the
+# user had asked for. That is the shape this package refuses by name elsewhere
+# (see the note on arguments honoured by one backend and ignored by the other),
+# and there is no reason for the control list to be the exception.
+#
+# An error rather than a warning, and before any fitting rather than at the
+# sampler: the whole cost of getting this wrong is a long run that answers a
+# different question, and the cure is one character. A near match is named
+# because case is what goes wrong most.
+#' @keywords internal
+.ctBackendSampleCheckControl <- function(control) {
+  control <- .ctJuliaOr(control, list())
+  if (!length(control)) return(invisible(NULL))
+  if (is.null(names(control)) || any(!nzchar(names(control)))) {
+    stop("Every entry of control must be named. Accepted names: ",
+      paste(sort(.CT_SAMPLE_CONTROL_NAMES), collapse = ", "), ".", call. = FALSE)
+  }
+  unknown <- setdiff(names(control), .CT_SAMPLE_CONTROL_NAMES)
+  if (!length(unknown)) return(invisible(NULL))
+  hint <- vapply(unknown, function(name) {
+    near <- .CT_SAMPLE_CONTROL_NAMES[tolower(.CT_SAMPLE_CONTROL_NAMES) ==
+        tolower(name)]
+    if (length(near)) paste0(" (did you mean ", near[1L], "?)") else ""
+  }, character(1))
+  stop("control has ", if (length(unknown) > 1L) "entries" else "an entry",
+    " the julia sampler does not read: ",
+    paste0(unknown, hint, collapse = ", "),
+    ". Accepted names: ", paste(sort(.CT_SAMPLE_CONTROL_NAMES),
+      collapse = ", "), ".", call. = FALSE)
 }
 
 # The sampler settings, from either spelling of the control list.
@@ -612,6 +681,27 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
 .ctBackendSampleRun <- function(fit, target, chains, warmup, draws, cores,
   saveEffects, seed, control, verbose, progress = .ctVerboseOn(verbose),
   processes = FALSE, handles = NULL) {
+
+  # What `warmup = 0` costs, said where it is asked for.
+  #
+  # Warmup is not only a burn-in here: it is the whole of the adaptation. With
+  # none, dual averaging never updates, so each chain samples for its whole run
+  # at the step size `_init_stepsize` guessed -- doubling or halving from 1
+  # against the acceptance of *one* trial trajectory under *one* momentum draw,
+  # which is a different guess in every chain. Chains then differ in speed and
+  # in divergences, which is easy to read as one chain being broken when it is
+  # the setting.
+  #
+  # `target_accept` is what dual averaging aims at, so with no warmup it is not
+  # used at all. Said only when the caller set it, because that is the case
+  # where something was asked for and is not happening.
+  if (warmup < 1L) {
+    message("warmup = 0, so nothing adapts: each chain keeps the step size its ",
+      "first trial trajectory found, and chains will differ in speed and ",
+      "divergences.",
+      if (!is.null(control$target_accept) || !is.null(control$adapt_delta))
+        " target_accept only reaches the dual averaging that warmup runs, so it is unused here." else "")
+  }
 
   if (isTRUE(processes) && chains > 1L && .ctBackendCanWarm()) {
     out <- .ctBackendSampleProcesses(fit, target, chains = chains,
@@ -955,6 +1045,8 @@ print.ctSampleDiagnostics <- function(x, ...) {
   optimcontrol, chains, iter, control, priors, intoverpop,
   gradient, verbose, intoverstates = TRUE) {
 
+  # First, because everything after it takes minutes and this takes none.
+  .ctBackendSampleCheckControl(control)
   npar <- .ctBackendNpar(model_spec)
   # As in the optimising path: the zero keeps `max` from warning and returning
   # -Inf on a fully fixed model, and the refusal replaces the "invalid
