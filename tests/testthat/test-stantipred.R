@@ -65,7 +65,7 @@ skip_on_32bit()
     test_isclose(s2$popsd[2,'50%'],.6,tol=.2)
     
     tfit3<-suppressWarnings(ctFit(tdat,checkm,iter=300,chains=2,optimize=FALSE,
-      control=list(adapt_delta=.8,max_treedepth=6),plot=FALSE))
+      sampleControl=list(adapt_delta=.8,max_treedepth=6),plot=FALSE))
     s3=summary(tfit3)
     
     test_isclose(s3$tipreds[2,'mean'],5,tol=.5)

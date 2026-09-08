@@ -436,3 +436,33 @@ test_that("the process-path progress line holds every chain on one line", {
   expect_lte(nchar(narrow), 79L)
   expect_match(narrow, "logp -5299, -5298, -5297, -5296", fixed = TRUE)
 })
+
+test_that("an effective-size target turns the draw count into a budget", {
+  skip_without_julia()
+  fit <- .sample_fixture()
+
+  # `minESS` used to do nothing at all without `maxDraws`: the engine extends
+  # towards a budget that defaulted to exactly the draws asked for, so there
+  # was nothing to extend into and the target could only be reported after the
+  # fact. The count asked for is the budget now, so a target met early stops
+  # the run -- and can only ever shorten it.
+  #
+  # `rhatTarget` is raised out of the way because this fixture is twelve
+  # subjects and will not reach 1.01; what is under test is the stopping rule,
+  # not whether a small fixture mixes.
+  met <- suppressWarnings(suppressMessages(ctSample(fit, chains = 2,
+    warmup = 100, draws = 200, cores = 1, processes = FALSE,
+    sampleControl = list(minESS = 0.5, rhatTarget = 100))))
+  expect_lt(met$sample$draws, 200L)
+  expect_gt(met$sample$draws, 0L)
+
+  # And with no target it takes exactly what it was asked for.
+  full <- suppressWarnings(suppressMessages(ctSample(fit, chains = 2,
+    warmup = 100, draws = 200, cores = 1, processes = FALSE)))
+  expect_equal(full$sample$draws, 200L)
+
+  # The old spelling is refused with the new one named, rather than dropped by
+  # `$` and silently ignored.
+  expect_error(ctSample(fit, sampleControl = list(minEss = 100)),
+    "did you mean minESS")
+})

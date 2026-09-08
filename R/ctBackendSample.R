@@ -225,7 +225,9 @@
 #'   bridge moves about 1 MB/s -- for a hundred subjects that transfer takes
 #'   longer than many fits do.
 #' @param seed Random seed; each chain uses \code{seed + chain}.
-#' @param control A list of sampler settings: \code{maxdepth} (default 10),
+#' @param control \strong{Deprecated} -- use \code{sampleControl}. Still
+#'   honoured, with a warning.
+#' @param sampleControl A list of sampler settings: \code{maxdepth} (default 10),
 #'   \code{target_accept} (0.8), \code{adapt_metric} (TRUE),
 #'   \code{adapt_effects} (FALSE), \code{init_scale} (1), \code{maxdelta}
 #'   (1000). Stan's spellings \code{max_treedepth} and \code{adapt_delta},
@@ -233,14 +235,23 @@
 #'   accepted here as well.
 #'
 #'   Sampling takes exactly the draws it was asked for unless it is given a
-#'   target to reach: \code{minEss} and \code{meanEss} are effective sample
-#'   sizes to keep drawing towards, \code{rhatTarget} (1.01) the R-hat to reach
-#'   alongside them, and \code{maxDraws} the budget that stops it. All are off
-#'   by default, so nothing runs longer than asked without being told to, and
-#'   setting \code{minEss} without \code{maxDraws} does nothing -- the budget
-#'   is what the loop checks it against. Worth setting when a draw count had to
-#'   be guessed at; not worth setting when a warning says a parameter is
-#'   unidentified, because no number of draws fixes an improper posterior.
+#'   target to reach: \code{minESS} and \code{meanESS} are effective sample
+#'   sizes to draw towards and \code{rhatTarget} (1.01) the R-hat to reach
+#'   alongside them. Given one, the count asked for becomes a \emph{budget}
+#'   rather than an instruction -- the run stops as soon as the target is met,
+#'   and never draws more than was asked unless \code{maxDraws} says so
+#'   explicitly. It is checked in batches, the first a quarter of the budget,
+#'   so a target met early costs at most a quarter of the run in overshoot.
+#'
+#'   That is a change: \code{minEss} used to do nothing at all unless
+#'   \code{maxDraws} was also set, because the budget defaulted to exactly the
+#'   draws asked for and the loop had nothing to extend into. Setting an
+#'   effective size and watching the sampler run to the end regardless is what
+#'   this fixes.
+#'
+#'   Worth setting when a draw count had to be guessed at; not worth setting
+#'   when a warning says a parameter is unidentified, because no number of
+#'   draws fixes an improper posterior.
 #'
 #'   \code{adapt_effects} controls whether warmup re-estimates the
 #'   random-effect blocks of the metric as well as the population block; they
@@ -345,8 +356,35 @@
 #' }
 #' @export
 ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
-  saveEffects = FALSE, seed = 20260828L, control = list(), verbose = FALSE,
-  processes = TRUE) {
+  saveEffects = FALSE, seed = 20260828L, sampleControl = list(),
+  verbose = FALSE, processes = TRUE, control = list()) {
+  # `control` renamed to `sampleControl`, as on `ctFit()`, where the same list
+  # had to be told apart from rstan's `control`. Still accepted, at the end of
+  # the signature so that nobody's positional call quietly means something new,
+  # and under `sampleControl` where both name a setting.
+  if ("control" %in% names(match.call())) {
+    warning("ctSample(control = ) is deprecated: it is sampleControl now. ",
+      "What was passed still takes effect.", call. = FALSE)
+    for (name in setdiff(names(control), names(sampleControl))) {
+      sampleControl[[name]] <- control[[name]]
+    }
+  }
+
+  # The five settings that are also arguments here can be written in either
+  # place -- `ctFit()` has only the list, so a script moving between the two
+  # should not have to move them. Both at once is refused rather than resolved
+  # by a precedence rule nobody would remember.
+  supplied <- names(match.call())
+  for (name in c("chains", "warmup", "draws", "seed", "saveEffects",
+      "processes")) {
+    if (is.null(sampleControl[[name]])) next
+    if (name %in% supplied) {
+      stop("ctSample(", name, " = ) and sampleControl$", name,
+        " were both given. Use one.", call. = FALSE)
+    }
+    assign(name, sampleControl[[name]])
+    sampleControl[[name]] <- NULL
+  }
   # Wrapped as `ctFit(backend='julia')` is wrapped, and it was not: an
   # interrupted `ctSample()` left the Julia session desynchronised and the
   # worker pool full of orphaned chains, with nothing to put either right. This
@@ -359,8 +397,8 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
   # asked for something they are not getting.
   .ctJuliaInterruptSafe(.ctSampleImpl(fit, chains = chains, warmup = warmup,
     draws = draws, cores = cores, saveEffects = saveEffects, seed = seed,
-    control = control, verbose = verbose, processes = processes,
-    processes_named = "processes" %in% names(match.call())))
+    control = sampleControl, verbose = verbose, processes = processes,
+    processes_named = "processes" %in% supplied))
 }
 
 #' @keywords internal
@@ -413,16 +451,86 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
 # loud failure and the right way round. The four it does not read are read by
 # `.ctJuliaSampleFit()` (`warmup`, `seed`, `processes`) and
 # `.ctBackendSampleEngine()` (`callback`).
+# Whether the deprecation has already been said this session.
+.ct_sample_deprecation <- new.env(parent = emptyenv())
+
 .CT_SAMPLE_CONTROL_NAMES <- c(
   "maxdepth", "max_treedepth", "target_accept", "adapt_delta", "maxdelta",
   "init_scale", "adapt_metric", "adapt_effects",
-  "minEss", "meanEss", "maxDraws", "rhatTarget", "settleTol",
-  "warmup", "seed", "processes", "callback")
+  "minESS", "meanESS", "maxDraws", "rhatTarget", "settleTol",
+  # How much to draw and how, which `ctFit()` used to take as arguments of its
+  # own. `iter` is kept because it is what `chains` and `warmup` were always
+  # expressed against, and because a script that passed it should keep working
+  # through `sampleControl` as well as through the deprecated argument.
+  "iter", "chains", "warmup", "draws", "seed", "saveEffects", "processes",
+  "callback")
+
+#' Fold the deprecated sampling arguments into \code{sampleControl}
+#'
+#' \code{ctFit()} took \code{iter}, \code{chains} and \code{control} as
+#' arguments of its own, which put three of a sampler's settings in the
+#' signature and the rest in a list -- and made \code{control} mean rstan's
+#' control list on one backend and the julia sampler's settings on the other.
+#' They are all entries of \code{sampleControl} now.
+#'
+#' Resolved here rather than threaded through: everything downstream, on both
+#' backends, still receives \code{iter}, \code{chains} and \code{control} as
+#' it always did, so the rename cannot change what a fit does. In particular
+#' \code{control} still reaches \code{\link[rstan]{stan}} unchanged on the
+#' stan path.
+#'
+#' Precedence is \code{sampleControl} first, because it is the argument being
+#' kept. A deprecated argument that was *explicitly supplied* is used only for
+#' what \code{sampleControl} does not say, and is reported either way -- a
+#' silent deprecation teaches nobody, and a silently ignored one is worse.
+#'
+#' @param sampleControl The new list.
+#' @param given Names the caller actually used, from \code{names(match.call())}
+#'   in the calling function -- a default cannot be told from a value that
+#'   happens to equal it any other way.
+#' @param iter,chains,control The deprecated arguments, as they arrived.
+#' @return A list of \code{iter}, \code{chains} and \code{control} to carry on
+#'   with.
+#' @keywords internal
+.ctSampleControlResolve <- function(sampleControl = list(), given = character(0),
+  iter = 1000L, chains = 2L, control = list()) {
+  sampleControl <- .ctJuliaOr(sampleControl, list())
+  control <- .ctJuliaOr(control, list())
+  if (!is.list(sampleControl)) {
+    stop("sampleControl must be a list of named sampler settings.", call. = FALSE)
+  }
+  deprecated <- intersect(c("iter", "chains", "control"), given)
+  if (length(deprecated) && !isTRUE(.ct_sample_deprecation$said)) {
+    .ct_sample_deprecation$said <- TRUE
+    warning("ctFit(", paste(paste0(deprecated, " = "), collapse = ", "),
+      ") is deprecated: sampling settings are entries of sampleControl now, ",
+      "as in sampleControl = list(iter = 2000, chains = 4, warmup = 500). ",
+      "What was passed here still takes effect. Said once per session.",
+      call. = FALSE)
+  }
+
+  # The deprecated `control` sits *under* `sampleControl`: an entry in both is
+  # the new argument's.
+  merged <- sampleControl
+  for (name in setdiff(names(control), names(sampleControl))) {
+    merged[[name]] <- control[[name]]
+  }
+
+  # `iter` and `chains` move into the list, so the list is where they are read
+  # from; the arguments fill in only when the list is silent about them.
+  resolved_iter <- if (!is.null(merged$iter)) merged$iter else iter
+  resolved_chains <- if (!is.null(merged$chains)) merged$chains else chains
+  merged$iter <- NULL
+  merged$chains <- NULL
+
+  list(iter = as.integer(resolved_iter)[1L],
+    chains = as.integer(resolved_chains)[1L], control = merged)
+}
 
 # Refuse a control name nothing reads.
 #
-# `control$minEss` on `list(minESS = 100)` is NULL -- `$` on a list matches
-# exactly or by unique prefix, and neither makes `minESS` into `minEss`. So the
+# `control$minESS` on `list(minEss = 100)` is NULL -- `$` on a list matches
+# exactly or by unique prefix, and neither folds case. So the
 # setting was accepted, ignored, and the run reported nothing about it: reported
 # from a real session as a sampler that would not stop at an effective size the
 # user had asked for. That is the shape this package refuses by name elsewhere
@@ -461,7 +569,7 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
 # takes the engine's, so both are read here rather than each entry point
 # quietly ignoring what the other documents. The rest are spelled the same on
 # both, and the whole list is assembled in one place so that a knob added for
-# one cannot go missing from the other -- which is how `minEss` and its three
+# one cannot go missing from the other -- which is how `minESS` and its three
 # companions came to be documented on `ctSample()` and passed only by `ctFit()`.
 #' @keywords internal
 .ctBackendSampleControl <- function(control) {
@@ -505,8 +613,8 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
   # spent 559 s for min ESS 246.3, a factor of 5.5 against. A settled metric is
   # not a good metric, and the sampling phase pays for the shortened warmup on
   # every draw.
-  if (!is.null(control$minEss)) settings$min_ess <- as.numeric(control$minEss)
-  if (!is.null(control$meanEss)) settings$mean_ess <- as.numeric(control$meanEss)
+  if (!is.null(control$minESS)) settings$min_ess <- as.numeric(control$minESS)
+  if (!is.null(control$meanESS)) settings$mean_ess <- as.numeric(control$meanESS)
   if (!is.null(control$maxDraws)) settings$max_draws <- as.integer(control$maxDraws)
   if (!is.null(control$rhatTarget)) settings$rhat_target <- as.numeric(control$rhatTarget)
   if (!is.null(control$settleTol)) settings$settle_tol <- as.numeric(control$settleTol)
@@ -570,6 +678,29 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
   callback = control$callback) {
 
   settings <- .ctBackendSampleControl(control)
+
+  # An effective-size target turns the draw count into a budget.
+  #
+  # It used to be inert without `maxDraws`: the engine takes `ndraws` and then
+  # extends towards `max_draws`, which defaulted to `ndraws` itself, so there
+  # was nothing to extend into and the target could only ever be reported after
+  # the fact. Someone who set `minESS` watched the sampler run to the end
+  # regardless -- reported exactly that way.
+  #
+  # So the count asked for becomes the budget, and the first batch a quarter of
+  # it. The target can then only ever *shorten* a run, which is the safe
+  # direction and the one a budget implies: `maxDraws` is still there to say
+  # "keep going past what I asked for", and given explicitly it wins.
+  #
+  # A quarter because the overshoot past the target is bounded by one batch, and
+  # four checks is enough to catch a target met early without paying the
+  # per-batch cost of many more -- each batch pools every chain's draws and
+  # recomputes R-hat and effective size over all of them.
+  if (is.null(settings$max_draws) &&
+      (!is.null(settings$min_ess) || !is.null(settings$mean_ess))) {
+    settings$max_draws <- as.integer(draws)
+    draws <- max(1L, as.integer(floor(as.integer(draws) / 4)))
+  }
   module <- .ctJuliaModule(fit$model_spec$project)
   objective <- .ctBackendSampleObjective(fit, target)
 
@@ -943,7 +1074,7 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
       if (length(flat)) "raise" else "Raise", " the draw count -- iter in ctFit (now ",
       diagnostics$warmup + diagnostics$draws, ", of which ",
       diagnostics$warmup, " is warmup, leaving ", diagnostics$draws,
-      " per chain) or draws in ctSample -- or set control$minEss together with ",
+      " per chain) or draws in ctSample -- or set sampleControl$minESS with ",
       "control$maxDraws to keep sampling until an effective size is reached. ",
       "See fit$sample$rhat.", call. = FALSE)
   }
@@ -952,7 +1083,7 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
     warning("Smallest effective sample size is ", round(fewest), ", from ",
       total, " draws. Interval estimates from this few are unreliable. Raise ",
       "the draw count (iter in ctFit, draws in ctSample), or set ",
-      "control$minEss with control$maxDraws to keep sampling until an ",
+      "sampleControl$minESS to keep sampling until an ",
       "effective size is reached. See fit$sample$ess.", call. = FALSE)
   }
   if (diagnostics$saturated > 0L) {
@@ -1069,12 +1200,22 @@ print.ctSampleDiagnostics <- function(x, ...) {
   start <- .ctJuliaInitialValues(npar, inits,
     initsd = .ctJuliaOr(optimcontrol$initsd, .01))
 
-  # Stan's vocabulary, because these are Stan's arguments: `iter` counts warmup
+  # Stan's vocabulary, because these were Stan's arguments: `iter` counts warmup
   # and sampling together and warmup is half of it unless said otherwise.
+  #
+  # `draws` says the post-warmup count directly, which is what a user means
+  # nine times in ten: `iter` and `warmup` together to express "500 draws" is
+  # arithmetic nobody should have to do, and getting it wrong silently changes
+  # how much of the run is kept. Given, it wins and `iter` is not consulted.
   warmup <- as.integer(.ctJuliaOr(control$warmup, max(1L, floor(iter / 2))))
-  draws <- max(1L, as.integer(iter) - warmup)
+  draws <- if (!is.null(control$draws)) max(1L, as.integer(control$draws)[1L]) else
+    max(1L, as.integer(iter) - warmup)
   seed <- as.integer(.ctJuliaOr(control$seed, 20260828L))
-  saveEffects <- isTRUE(optimcontrol$saveEffects)
+  # `optimcontrol$saveEffects` is where this lived, which was always the wrong
+  # list -- it is a sampling setting, and the optimiser has no effects to save.
+  # Still read, because scripts pass it.
+  saveEffects <- isTRUE(.ctJuliaOr(control$saveEffects,
+    optimcontrol$saveEffects))
 
   # Whenever the progress line below it will be drawn, not only at `verbose`.
   #

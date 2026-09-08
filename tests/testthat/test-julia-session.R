@@ -401,8 +401,8 @@ test_that("a control name the sampler does not read is refused, not ignored", {
   # `control$minEss` on `list(minESS = 100)` is NULL, so the setting was
   # accepted and ignored and the run said nothing -- reported from a real
   # session as a sampler that would not stop at the effective size asked for.
-  expect_error(.ctBackendSampleCheckControl(list(minESS = 100)),
-    "minESS \\(did you mean minEss\\?\\)")
+  expect_error(.ctBackendSampleCheckControl(list(minEss = 100)),
+    "minEss \\(did you mean minESS\\?\\)")
   expect_error(.ctBackendSampleCheckControl(list(nonsense = 1)),
     "does not read: nonsense")
   # The suggestion is case-insensitive, because case is what goes wrong.
@@ -415,10 +415,10 @@ test_that("a control name the sampler does not read is refused, not ignored", {
   # Every name the sampler actually reads passes, and the list is the one the
   # readers use -- a knob added to `.ctBackendSampleControl` and not to
   # `.CT_SAMPLE_CONTROL_NAMES` fails here rather than in a user's script.
-  expect_null(.ctBackendSampleCheckControl(list(minEss = 100, warmup = 0L,
+  expect_null(.ctBackendSampleCheckControl(list(minESS = 100, warmup = 0L,
     target_accept = 0.9, maxdepth = 12L, max_treedepth = 12L, maxdelta = 900,
     adapt_delta = 0.9, init_scale = 1, adapt_metric = TRUE,
-    adapt_effects = FALSE, meanEss = 200, maxDraws = 4000L,
+    adapt_effects = FALSE, meanESS = 200, maxDraws = 4000L,
     rhatTarget = 1.01, settleTol = 0, seed = 1L, processes = FALSE,
     callback = function(...) NULL)))
   expect_null(.ctBackendSampleCheckControl(list()))
@@ -539,4 +539,44 @@ test_that("the overwrite option overrides the detection in both directions", {
   expect_false(.ctProgressOverwrite(2))   # verbose 2 keeps the history
   withr::local_options(ctsem.progress.overwrite = FALSE)
   expect_false(.ctProgressOverwrite(1))
+})
+
+test_that("sampleControl absorbs the deprecated iter, chains and control", {
+  r <- .ctSampleControlResolve
+
+  # The list is where these are read from now.
+  got <- r(list(iter = 400, chains = 3, minESS = 50))
+  expect_equal(got$iter, 400L)
+  expect_equal(got$chains, 3L)
+  expect_equal(got$control, list(minESS = 50))
+
+  # The arguments fill in only what the list does not say, and their defaults
+  # are unchanged when it says nothing.
+  got <- r(list(), iter = 111, chains = 7)
+  expect_equal(got$iter, 111L)
+  expect_equal(got$chains, 7L)
+  got <- r(list(iter = 222), iter = 111)
+  expect_equal(got$iter, 222L)
+
+  # The deprecated `control` sits under `sampleControl`: an entry in both is
+  # the new argument's, and the rest merge.
+  got <- r(list(warmup = 5), control = list(warmup = 99, seed = 7))
+  expect_equal(got$control$warmup, 5)
+  expect_equal(got$control$seed, 7)
+
+  # `iter` and `chains` are stripped from what goes on to the backends, which
+  # receive them as they always did rather than twice.
+  expect_false(any(c("iter", "chains") %in% names(got$control)))
+
+  # Said once per session, and only for an argument the caller actually wrote.
+  # `given` is the caller's `names(match.call())`, since a default cannot
+  # otherwise be told from a value that happens to equal it.
+  .ct_sample_deprecation$said <- NULL
+  expect_warning(r(list(), given = c("iter", "control"), iter = 500),
+    "sampleControl")
+  expect_silent(r(list(), given = c("iter", "control"), iter = 500))
+  .ct_sample_deprecation$said <- NULL
+  expect_silent(r(list(), given = character(0), iter = 500))
+
+  expect_error(r("nonsense"), "must be a list")
 })

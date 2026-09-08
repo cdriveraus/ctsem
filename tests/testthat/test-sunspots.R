@@ -33,7 +33,7 @@ ssfit1 <- ctFit(datalong, ssmodel,cores=1,verbose=0)
 ssfit2 <- ctFit(datalong, ssmodel,cores=2,verbose=0)
 ssfit3 <- ctFit(datalong, ssmodel,cores=1,nlcontrol=list(maxtimestep=.3))
 ssfit4 <- ctFit(datalong, ssmodel,chains=2,cores=2,iter=300,optimize=F,priors=F,
-  control=list(max_treedepth=8),verbose=0,  
+  sampleControl=list(max_treedepth=8),verbose=0,  
   inits='optimize',
   intoverpop = T)
 

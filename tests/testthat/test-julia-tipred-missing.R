@@ -74,12 +74,12 @@ test_that("fitting a missing TI predictor with the default (adjoint) gradient no
 
   fit_default <- suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
     optimize = FALSE, intoverpop = "augmented", chains = 1, iter = 10,
-    cores = 1, control = list(warmup = 5))))
+    cores = 1, sampleControl = list(warmup = 5))))
   expect_s3_class(fit_default, "ctJuliaFit")
 
   fit_forward <- suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
     optimize = FALSE, intoverpop = "augmented", chains = 1, iter = 10,
-    cores = 1, control = list(warmup = 5),
+    cores = 1, sampleControl = list(warmup = 5),
     optimcontrol = list(gradient = "forward"))))
   expect_s3_class(fit_forward, "ctJuliaFit")
 })
@@ -166,7 +166,7 @@ test_that("a small julia fit actually samples a missing TI predictor value end t
 
   fit <- suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
     optimize = FALSE, intoverpop = "augmented", chains = 1, iter = 60,
-    cores = 1, control = list(warmup = 30),
+    cores = 1, sampleControl = list(warmup = 30),
     optimcontrol = list(gradient = "forward"))))
   expect_s3_class(fit, "ctJuliaFit")
   idx <- fit$model_spec$ti_missing$parameter
@@ -210,7 +210,7 @@ test_that("closed form via ctFit(): posterior of an isolated missing predictor r
   run <- function(draws) {
     fit <- suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
       optimize = FALSE, intoverpop = "augmented", chains = 1,
-      iter = draws * 2L, cores = 1, control = list(warmup = draws),
+      cores = 1, sampleControl = list(iter = draws * 2L, warmup = draws),
       optimcontrol = list(gradient = "forward"))))
     idx <- fit$model_spec$ti_missing$parameter
     fit$estimate$rawposterior[, idx]
@@ -260,7 +260,7 @@ test_that("targeted stan comparison: same model, same gap, agreeing posteriors",
 
   jfit <- suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
     optimize = FALSE, intoverpop = "augmented",
-    chains = 1, iter = 800L, cores = 1, control = list(warmup = 300L),
+    cores = 1, sampleControl = list(chains = 1, iter = 800L, warmup = 300L),
     optimcontrol = list(gradient = "forward",
       tipredMissingIncludeOutcome = FALSE))))
   jidx <- jfit$model_spec$ti_missing$parameter
@@ -297,7 +297,7 @@ test_that("per-subject scores (opg/sandwich/bootstrap uncertainty) refuse cleanl
     group = rep(c(-1, 2, 0.3, -0.7, 1.5, NA), each = 4))
   fit <- suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
     optimize = FALSE, intoverpop = "augmented", chains = 1, iter = 60,
-    cores = 1, control = list(warmup = 30),
+    cores = 1, sampleControl = list(warmup = 30),
     optimcontrol = list(gradient = "forward"))))
   expect_false(is.null(fit$model_spec$ti_missing))
 
@@ -327,7 +327,7 @@ test_that("ctGenerateFromFit()/ctPostPredict() refuse cleanly, not with a raw Ju
     group = rep(c(-1, 2, 0.3, -0.7, 1.5, NA), each = 4))
   fit <- suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
     optimize = FALSE, intoverpop = "augmented", chains = 1, iter = 60,
-    cores = 1, control = list(warmup = 30),
+    cores = 1, sampleControl = list(warmup = 30),
     optimcontrol = list(gradient = "forward"))))
 
   err <- tryCatch({
