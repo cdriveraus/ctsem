@@ -191,8 +191,8 @@ ctModelUnlist<-function(ctmodelobj,
               stop(paste(sub('_effect$', '', unknown), collapse=', '),
                 ' is not a time independent predictor of this model')
             }
-            pars[parrow,tieffects] <- FALSE
-            pars[parrow,wanted] <- TRUE
+            pars[parrow,tieffects] <- 'FALSE'
+            pars[parrow,wanted] <- 'TRUE'
           }
         }
       }
