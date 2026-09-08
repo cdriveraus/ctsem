@@ -240,8 +240,19 @@
 #'   alongside them. Given one, the count asked for becomes a \emph{budget}
 #'   rather than an instruction -- the run stops as soon as the target is met,
 #'   and never draws more than was asked unless \code{maxDraws} says so
-#'   explicitly. It is checked in batches, the first a quarter of the budget,
-#'   so a target met early costs at most a quarter of the run in overshoot.
+#'   explicitly. It is checked in batches: the first is sized from the target
+#'   rather than from the budget -- effective size cannot exceed the draws
+#'   behind it, so \code{minESS} needs at least \code{minESS / chains} of them,
+#'   with a floor of 50 because R-hat and effective size read off fewer are too
+#'   noisy to stop on.
+#'
+#'   A small target does not buy a short run, and this is the half that
+#'   surprises: the rule is min ESS \emph{and} mean ESS \emph{and}
+#'   \code{rhatTarget}, so at a small size target R-hat is what binds. Asked
+#'   for \code{minESS = 100} on five chains, a well behaved model met the size
+#'   target at the first check of 50 draws (250 effective) and went on to 86
+#'   because R-hat was still 1.027 there; it stopped with 430. Raise
+#'   \code{rhatTarget} to let the size target decide alone.
 #'
 #'   That is a change: \code{minEss} used to do nothing at all unless
 #'   \code{maxDraws} was also set, because the budget defaulted to exactly the
@@ -687,19 +698,38 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
   # the fact. Someone who set `minESS` watched the sampler run to the end
   # regardless -- reported exactly that way.
   #
-  # So the count asked for becomes the budget, and the first batch a quarter of
-  # it. The target can then only ever *shorten* a run, which is the safe
-  # direction and the one a budget implies: `maxDraws` is still there to say
+  # So the count asked for becomes the budget. `maxDraws` is still there to say
   # "keep going past what I asked for", and given explicitly it wins.
   #
-  # A quarter because the overshoot past the target is bounded by one batch, and
-  # four checks is enough to catch a target met early without paying the
-  # per-batch cost of many more -- each batch pools every chain's draws and
-  # recomputes R-hat and effective size over all of them.
+  # The first batch is sized from the *target*, not from the budget, and that
+  # distinction is the whole of whether the target does anything. A quarter of
+  # the budget was the first rule here and it is useless for a small target: on
+  # a 1900-draw budget with `minESS = 100` the first batch was 475 draws, which
+  # on five chains is already about 2300 effective ones, so the target was met
+  # before it could ever bind and the run returned 29 times what was asked for.
+  #
+  # Effective size cannot exceed the draws behind it, so `minESS` needs at least
+  # `minESS / nchains` draws per chain and there is no point asking for fewer.
+  # The floor of 50 is about the estimators rather than the target: split R-hat
+  # and effective size read off a few dozen draws are too noisy to stop on, and
+  # `rhatTarget` is ANDed with the size target so a batch that cannot support
+  # an R-hat estimate just spends a round of scheduling.
+  #
+  # Which is worth saying plainly, because it is the other half of the surprise:
+  # a small `minESS` does not buy a short run. The rule is min ESS *and* mean
+  # ESS *and* R-hat, and at a small size target R-hat is what binds -- so a run
+  # asked for `minESS = 100` stops when the chains agree, with whatever
+  # effective size that took, which is usually far more than 100.
   if (is.null(settings$max_draws) &&
       (!is.null(settings$min_ess) || !is.null(settings$mean_ess))) {
     settings$max_draws <- as.integer(draws)
-    draws <- max(1L, as.integer(floor(as.integer(draws) / 4)))
+    # Not `target`: that is this function's own argument, and shadowing it
+    # replaced the sampling target with a number, which surfaced as
+    # "$ operator is invalid for atomic vectors" from a line nowhere near here.
+    ess_target <- max(.ctJuliaOr(settings$min_ess, 0),
+      .ctJuliaOr(settings$mean_ess, 0))
+    first <- max(50L, ceiling(ess_target / max(1L, as.integer(chains))))
+    draws <- max(1L, min(as.integer(draws), as.integer(first)))
   }
   module <- .ctJuliaModule(fit$model_spec$project)
   objective <- .ctBackendSampleObjective(fit, target)

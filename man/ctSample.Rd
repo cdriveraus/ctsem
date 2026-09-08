@@ -53,8 +53,19 @@ longer than many fits do.}
   alongside them. Given one, the count asked for becomes a \emph{budget}
   rather than an instruction -- the run stops as soon as the target is met,
   and never draws more than was asked unless \code{maxDraws} says so
-  explicitly. It is checked in batches, the first a quarter of the budget,
-  so a target met early costs at most a quarter of the run in overshoot.
+  explicitly. It is checked in batches: the first is sized from the target
+  rather than from the budget -- effective size cannot exceed the draws
+  behind it, so \code{minESS} needs at least \code{minESS / chains} of them,
+  with a floor of 50 because R-hat and effective size read off fewer are too
+  noisy to stop on.
+
+  A small target does not buy a short run, and this is the half that
+  surprises: the rule is min ESS \emph{and} mean ESS \emph{and}
+  \code{rhatTarget}, so at a small size target R-hat is what binds. Asked
+  for \code{minESS = 100} on five chains, a well behaved model met the size
+  target at the first check of 50 draws (250 effective) and went on to 86
+  because R-hat was still 1.027 there; it stopped with 430. Raise
+  \code{rhatTarget} to let the size target decide alone.
 
   That is a change: \code{minEss} used to do nothing at all unless
   \code{maxDraws} was also set, because the budget defaulted to exactly the
