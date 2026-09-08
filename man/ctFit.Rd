@@ -358,7 +358,8 @@ To generate data based on the posterior of a fitted model, see \code{\link{ctGen
 
 \item{sampleControl}{Used when \code{optimize=FALSE}: a list holding
 everything about how to sample. \code{iter} (default 1000) counts warmup and
-sampling together, \code{warmup} (half of \code{iter}) how much of it is
+sampling together, \code{warmup} (200, or half of \code{iter} if that is
+less) how much of it is
 discarded, \code{draws} the post-warmup count directly -- given, it wins and
 \code{iter} is not consulted -- \code{chains} (2) how many chains,
 \code{seed} (20260828), \code{saveEffects} whether individual random-effect

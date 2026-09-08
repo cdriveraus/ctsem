@@ -1302,7 +1302,44 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # nine times in ten: `iter` and `warmup` together to express "500 draws" is
   # arithmetic nobody should have to do, and getting it wrong silently changes
   # how much of the run is kept. Given, it wins and `iter` is not consulted.
-  warmup <- as.integer(.ctJuliaOr(control$warmup, max(1L, floor(iter / 2))))
+  # Half of `iter` was the default -- 500 on the default 1000 -- and it is now
+  # 200, capped by half of `iter` so a small `iter` still splits sensibly.
+  #
+  # Measured on dev1, three models, 4 chains x 200 draws, two seeds, with the
+  # metric left as the fit measured it (mean ESS per second, and the spread of
+  # the adapted step size across chains):
+  #
+  #   warmup   informative     sparse       wider      eps spread
+  #       50   3.56 / 3.45   11.9 / 13.9   6.8 / 8.4        13%
+  #      100   3.16 / 3.03   10.2 / 11.6   6.5 / 4.1        29%
+  #      200   2.44 / 2.48    9.7 / 9.0    4.2 / 4.3        11%
+  #      500   1.48 / 1.45    6.0 / 5.9    2.2 / 3.0        11%
+  #
+  # 500 costs two to two and a half times what 200 does and buys nothing: on
+  # `informative` the effective size is at its ceiling (800 of 800 draws) at
+  # every level, so warmup there is pure cost.
+  #
+  # 50 is the fastest and 100 is *not* second, which is the part that decided
+  # this. At 100 the step sizes the chains adapt to still disagree -- a 29%
+  # spread against 11-13% at 50 and at 200 -- because dual averaging is
+  # half-converged and each chain is somewhere different. Chains that are
+  # tuned differently mix differently, and the diagnostics say so: the three
+  # worst cells of the whole sweep for R-hat and minimum effective size are
+  # all at warmup 100 (`sparse` 1.234 and 1.101 with min ESS 22 and 48,
+  # `wider` 1.145 with min 38), where 50 and 200 are between 1.006 and 1.051
+  # throughout. Two seeds is not many, so that is a signal rather than a
+  # settled number -- but the step-size spread behind it is consistent and is
+  # the mechanism.
+  #
+  # So: 200, the point at which the adaptation has converged and the chains
+  # agree, rather than 50, which is faster but leaves every chain equally
+  # under-adapted and has nothing in reserve for a model whose starting metric
+  # is *not* exact -- a repaired or floored curvature, where the step size has
+  # further to travel. It is also the shortest warmup at which
+  # `adapt_metric = TRUE` does anything at all, so the default does not
+  # silently disable a documented setting.
+  warmup <- as.integer(.ctJuliaOr(control$warmup,
+    max(1L, min(200L, floor(iter / 2)))))
   draws <- if (!is.null(control$draws)) max(1L, as.integer(control$draws)[1L]) else
     max(1L, as.integer(iter) - warmup)
   seed <- as.integer(.ctJuliaOr(control$seed, 20260828L))

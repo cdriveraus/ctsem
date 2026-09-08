@@ -522,7 +522,8 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' \code{\link{ctJuliaSetup}} and \code{\link{ctJuliaInstall}}.
 #' @param sampleControl Used when \code{optimize=FALSE}: a list holding
 #' everything about how to sample. \code{iter} (default 1000) counts warmup and
-#' sampling together, \code{warmup} (half of \code{iter}) how much of it is
+#' sampling together, \code{warmup} (200, or half of \code{iter} if that is
+#' less) how much of it is
 #' discarded, \code{draws} the post-warmup count directly -- given, it wins and
 #' \code{iter} is not consulted -- \code{chains} (2) how many chains,
 #' \code{seed} (20260828), \code{saveEffects} whether individual random-effect
