@@ -280,3 +280,46 @@ end
     # Never negative, whatever the arithmetic upstream produced.
     @test ContinuousTimeSEM._duration(-5) == "0.0s"
 end
+
+# A line can be handed to the caller instead of printed, so that R can deliver
+# it through its own condition system -- which is what a console styles. The
+# engine keeps the line's content either way; only its delivery moves.
+@testset "a sink receives the line instead of the stream" begin
+    seen = Tuple{String,String}[]
+    p = ContinuousTimeSEM.CTSEMProgress(true; label="optimise", overwrite=true,
+        sink=(text, kind) -> push!(seen, (String(text), String(kind))))
+    # Nothing reaches the stream while a sink is taking the lines.
+    printed = _capture_progress() do
+        ContinuousTimeSEM._progress_optimise(p, 10, 1000)
+        ContinuousTimeSEM._progress_break(p)
+        ContinuousTimeSEM._progress_optimise(p, 20, 1000)
+        ContinuousTimeSEM._progress_done(p, "20 iterations")
+    end
+    @test isempty(strip(printed))
+    @test [kind for (_, kind) in seen] == ["update", "break", "update", "done"]
+    @test occursin("optimise", seen[1][1])
+    @test occursin("10 iter", seen[1][1])
+    @test seen[2][1] == ""
+    @test occursin("done in", seen[4][1])
+    @test occursin("20 iterations", seen[4][1])
+    # The line handed over carries no carriage return or padding: those are the
+    # display's business, and only the display knows whether its console has a
+    # cursor to move.
+    @test !any(occursin(ContinuousTimeSEM.CARRIAGE, text) for (text, _) in seen)
+end
+
+@testset "a sink that fails is dropped rather than taking the fit with it" begin
+    calls = Ref(0)
+    p = ContinuousTimeSEM.CTSEMProgress(true; label="optimise", overwrite=false,
+        sink=(text, kind) -> (calls[] += 1; error("the display went away")))
+    printed = _capture_progress() do
+        ContinuousTimeSEM._progress_optimise(p, 10, 1000)
+        ContinuousTimeSEM._progress_optimise(p, 20, 1000)
+    end
+    # Called once, disabled, and the second line printed normally -- so a fit
+    # whose front end dies keeps reporting rather than failing.
+    @test calls[] == 1
+    @test p.sink === nothing
+    @test occursin("disabled", printed)
+    @test occursin("20 iter", printed)
+end

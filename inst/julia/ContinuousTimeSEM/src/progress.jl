@@ -86,6 +86,9 @@ mutable struct CTSEMProgress
     lines::Int
     overwrite::Bool
     width::Int
+    # Where a line goes instead of being printed: an R function, or `nothing`.
+    # See `_deliver!`.
+    sink::Any
     # Highest iteration count already shown. A fit can run Optim twice -- the
     # backtracking fallback continues from where Hager-Zhang stopped -- and the
     # second run's callback counts from one again, so the printed counter ran
@@ -102,9 +105,9 @@ end
 # chunk, a non-interactive session -- where the same updates should be rarer and
 # on their own lines instead.
 CTSEMProgress(enabled::Bool; every::Real=0.0, label::String="",
-    overwrite::Bool=true) =
+    overwrite::Bool=true, sink=nothing) =
     CTSEMProgress(enabled, every > 0 ? Float64(every) : (overwrite ? 0.4 : 5.0),
-        time(), 0.0, label, 0, overwrite, 0, 0)
+        time(), 0.0, label, 0, overwrite, 0, sink, 0)
 
 """Seconds since this reporter was created."""
 _elapsed(p::CTSEMProgress) = time() - p.started
@@ -375,6 +378,11 @@ Anything that prints while a fit is running calls this first.
 """
 function _progress_break(p::CTSEMProgress)
     (p.enabled && p.overwrite && p.lines > 0) || return nothing
+    if _deliver!(p, "", "break")
+        p.width = 0
+        p.lines = 1
+        return nothing
+    end
     print(_console(), NEWLINE)
     flush(_console())
     p.width = 0
@@ -382,6 +390,49 @@ function _progress_break(p::CTSEMProgress)
     # update must not open with `_emit`'s leading newline and leave a blank one.
     p.lines = 1
     return nothing
+end
+
+"""
+    _deliver!(p, text, kind)
+
+Hand one line to whoever is displaying it, and say whether it is `"update"`,
+the closing `"done"` line, or a `"break"` that only ends the current line.
+
+# Why a line ever leaves Julia rather than being printed
+
+Because printing it cannot be styled. The R console draws a message -- anything
+delivered through R's condition system -- differently from text that merely
+arrives on the same stream: in RStudio, `message()` output is a shaded block and
+a raw write to `stderr()` is plain body text, verified by the two of them side by
+side. So an engine that prints, however correct the stream, produces a fit whose
+own progress does not look like the rest of what that fit says.
+
+What crosses is the finished line, not the numbers behind it. R could format its
+own from the callback it already gets, and that was the alternative: it would
+have put a second spelling of every field in a second language, drifting from
+this one, and R does not receive the inner mode count, the step size, the tree
+depth or the divergences at all. The whole content stays here; only its delivery
+moves.
+
+Measured through JuliaConnectoR at 0.5 ms per call, against a cadence of one
+line every 0.4 s.
+
+`sink` is dropped on its first failure and the line printed instead, for the
+reason `_invoke_callback` gives: a reporting convenience must never be able to
+take a fit with it.
+"""
+function _deliver!(p::CTSEMProgress, text::AbstractString, kind::AbstractString)
+    p.sink === nothing && return false
+    try
+        p.sink(text, kind)
+        return true
+    catch err
+        err isa InterruptException && rethrow()
+        p.sink = nothing
+        println(_console(), "  progress display failed and was disabled: ", err)
+        flush(_console())
+        return false
+    end
 end
 
 """
@@ -396,6 +447,9 @@ Carriage returns survive the trip to the R console intact, which is what makes
 this possible at all.
 """
 function _emit(p::CTSEMProgress, text::AbstractString)
+    # The sink owns the carriage return and the padding as well as the styling:
+    # it is the side that knows what its console does with either.
+    _deliver!(p, text, "update") && return nothing
     if !p.overwrite
         println(_console(), text)
         flush(_console())
@@ -424,6 +478,10 @@ function _progress_done(p::CTSEMProgress, fields::AbstractString...)
     p.enabled || return nothing
     text = "  " * join(vcat([@sprintf("%s done in %s", p.label,
         _duration(_elapsed(p)))], collect(fields)), " | ")
+    if _deliver!(p, text, "done")
+        p.width = 0
+        return nothing
+    end
     if p.overwrite
         # Replaces the last in-place update, then ends the line so whatever
         # comes next starts cleanly.

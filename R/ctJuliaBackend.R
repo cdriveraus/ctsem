@@ -50,6 +50,21 @@
 # Whether to overwrite, which is the console question and the history question
 # together. `verbose >= 2` asks to keep every update, and at that point the
 # history is the reason it was turned on.
+#
+# One line that is rewritten is the whole design, and it is not given up on for
+# a console that might not honour a carriage return: the alternative is a stream
+# of updates down the screen, which is what this exists to avoid. A slower
+# cadence only makes that stream shorter. So overwriting stays on wherever
+# anything is being watched, and the option below settles the cases this cannot
+# know about -- in both directions, which it previously did not.
+#
+# The RStudio case is why that matters. Its console renders each arriving chunk
+# as its own block, and while the engine printed to *stdout* while R messaged on
+# *stderr*, the two interleaved and the line could not survive: reported as
+# "extra line breaks". Both now arrive as messages on one stream, which removes
+# that cause -- so in-place is the default there too, and
+# `options(ctsem.progress.overwrite = FALSE)` is the way out if a particular
+# console still cannot do it.
 #' @keywords internal
 .ctProgressOverwrite <- function(verbose = 0) {
   # `verbose` is a level on the fitting paths and a flag on `ctSample()`; a
@@ -57,7 +72,71 @@
   level <- if (is.numeric(verbose) && length(verbose) == 1L && !is.na(verbose)) {
     verbose
   } else if (isTRUE(verbose)) 1 else 0
+  option <- getOption("ctsem.progress.overwrite")
+  if (is.logical(option) && length(option) == 1L && !is.na(option)) {
+    return(option && level < 2)
+  }
   .ctProgressConsole() && level < 2
+}
+
+#' Deliver an engine progress line as an R message
+#'
+#' Returns a function of `(text, kind)` -- the protocol `_deliver!()` in
+#' `progress.jl` calls, with `kind` one of `"update"`, `"done"` or `"break"`.
+#'
+#' It exists because a console draws a *message* differently from text that
+#' merely arrives on the same stream. In RStudio, `message()` output is a
+#' shaded block and a raw write to `stderr()` is plain body text, so an engine
+#' that printed its own line -- however correct the stream -- produced a fit
+#' whose progress did not look like anything else that fit said. The engine
+#' still owns the line's content: only its delivery is here, so there is no
+#' second spelling of the fields in a second language.
+#'
+#' The carriage return and the padding are this side's business too, for the
+#' same reason: whether a cursor can be moved at all is a property of the
+#' console, not of the engine.
+#'
+#' Wrapped in `tryCatch` throughout. This is called from inside a running Julia
+#' call, and an error thrown back across that boundary does not merely lose a
+#' progress line -- it desynchronises the bridge, which costs the fit. The
+#' engine drops the sink on its first failure for the same reason.
+#'
+#' @param overwrite Update one line in place rather than emitting each report
+#'   on its own line.
+#' @return A function of `(text, kind)`, invisibly stateful.
+#' @keywords internal
+.ctProgressSink <- function(overwrite = .ctProgressOverwrite(1)) {
+  pad <- 0L
+  open <- FALSE
+  function(text, kind = "update") {
+    tryCatch({
+      text <- as.character(text)[1L]
+      if (is.na(text)) text <- ""
+      if (identical(kind, "break")) {
+        # Only ends the line, so that something else can print on its own.
+        if (open) {
+          message("")
+          open <<- FALSE
+          pad <<- 0L
+        }
+        return(invisible(NULL))
+      }
+      final <- identical(kind, "done")
+      if (!overwrite) {
+        message(text)
+        open <<- FALSE
+        return(invisible(NULL))
+      }
+      pad <<- max(pad, nchar(text))
+      # `appendLF = FALSE` for an update, so the next carriage return lands on
+      # this line; the closing line ends itself. The padding is what stops a
+      # shorter update leaving the tail of a longer one behind it.
+      message("\r", formatC(text, width = -pad), appendLF = final)
+      open <<- !final
+      if (final) pad <<- 0L
+      invisible(NULL)
+    }, error = function(e) invisible(NULL))
+  }
 }
 
 # Is progress reporting asked for at all -- `verbose` read the way it is
@@ -2807,6 +2886,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # the gradient, with the objective criterion off unless asked for.
   # `maxiter` as an argument is the caller overriding the cap for one stage (the
   # prior warm-up does), and beats the user's setting for that stage only.
+  # Whether anything is reported at all, decided before the list below because
+  # two of its elements need the same answer: `progress` runs the engine's
+  # reporter and `progress_sink` says where its line goes. See the note on
+  # `progress` at the foot of the list for why it is not simply `verbose`.
+  reporting <- isTRUE(.ctJuliaOr(optimcontrol$progress,
+    verbose > 0L || .ctProgressConsole()))
   common <- list(
     maxiter = as.integer(.ctJuliaOr(maxiter, .ctJuliaOr(optimcontrol$maxiter, 1000L))),
     g_tol = .ctJuliaOr(optimcontrol$g_tol, 1e-8),
@@ -2818,6 +2903,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # chunk, where a carriage return is not a cursor movement. `verbose = 2`
     # keeps the history too, because at that point the point is the history.
     progress_overwrite = .ctProgressOverwrite(verbose),
+    # Delivered as an R message rather than printed by the engine; see
+    # `.ctProgressSink()`. Only when something is being reported at all -- a
+    # silent fit should not pay a bridge callback per iteration.
+    progress_sink = if (reporting) .ctProgressSink(
+      .ctProgressOverwrite(verbose)) else NULL,
     # Names the stage on the progress line, defaulting to the engine's own
     # "optimise" when unset. `carefulfit` runs an optimisation before the fit's
     # and both carried that same label, so the counter ran up to the warm-up's
@@ -2849,8 +2939,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # saw it. Keyed on the same console detection the overwriting uses, so a
     # script or a knitr chunk still gets nothing, and overridable with
     # `optimcontrol$progress`.
-    progress = isTRUE(.ctJuliaOr(optimcontrol$progress,
-      verbose > 0L || .ctProgressConsole())))
+    progress = reporting)
   # A live callback into R, for a front end that wants to draw the trace as it
   # happens rather than read it afterwards. The engine calls it on the same time
   # cadence as the printed line, not once per iteration: measured through

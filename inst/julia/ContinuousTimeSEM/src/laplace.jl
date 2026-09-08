@@ -2674,6 +2674,7 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
     maxiter::Integer=1000, g_tol::Real=1e-8, f_tol::Real=0.0, x_tol::Real=0.0,
     verbose::Bool=false, nested_gradient::Bool=false, tune_chunks::Bool=true,
     lbfgs_memory::Integer=_CTSEM_LBFGS_MEMORY, progress_overwrite::Bool=true,
+    progress_sink=nothing,
     progress_callback=nothing, progress::Bool=verbose,
     progress_label::AbstractString="optimise",
     progress_budget::Bool=false, progress_every::Real=0.0)
@@ -2759,7 +2760,7 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
     # up as a stall that the objective alone does not explain.
     # See `ctsem_optimize`: progress is not verbosity.
     reporter = CTSEMProgress(progress; label=progress_label,
-        overwrite=progress_overwrite, every=progress_every)
+        overwrite=progress_overwrite, every=progress_every, sink=progress_sink)
     # Recorded every iteration whatever `verbose` says; see `ctsem_optimize`.
     # `inner` is traced too, because a Laplace fit that stalls usually stalls
     # in the inner solve and the outer objective alone does not show it.

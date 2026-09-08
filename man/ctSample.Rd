@@ -12,9 +12,10 @@ ctSample(
   cores = 1L,
   saveEffects = FALSE,
   seed = 20260828L,
-  control = list(),
+  sampleControl = list(),
   verbose = FALSE,
-  processes = TRUE
+  processes = TRUE,
+  control = list()
 )
 }
 \arguments{
@@ -39,7 +40,7 @@ longer than many fits do.}
 
 \item{seed}{Random seed; each chain uses \code{seed + chain}.}
 
-\item{control}{A list of sampler settings: \code{maxdepth} (default 10),
+\item{sampleControl}{A list of sampler settings: \code{maxdepth} (default 10),
   \code{target_accept} (0.8), \code{adapt_metric} (TRUE),
   \code{adapt_effects} (FALSE), \code{init_scale} (1), \code{maxdelta}
   (1000). Stan's spellings \code{max_treedepth} and \code{adapt_delta},
@@ -47,14 +48,23 @@ longer than many fits do.}
   accepted here as well.
 
   Sampling takes exactly the draws it was asked for unless it is given a
-  target to reach: \code{minEss} and \code{meanEss} are effective sample
-  sizes to keep drawing towards, \code{rhatTarget} (1.01) the R-hat to reach
-  alongside them, and \code{maxDraws} the budget that stops it. All are off
-  by default, so nothing runs longer than asked without being told to, and
-  setting \code{minEss} without \code{maxDraws} does nothing -- the budget
-  is what the loop checks it against. Worth setting when a draw count had to
-  be guessed at; not worth setting when a warning says a parameter is
-  unidentified, because no number of draws fixes an improper posterior.
+  target to reach: \code{minESS} and \code{meanESS} are effective sample
+  sizes to draw towards and \code{rhatTarget} (1.01) the R-hat to reach
+  alongside them. Given one, the count asked for becomes a \emph{budget}
+  rather than an instruction -- the run stops as soon as the target is met,
+  and never draws more than was asked unless \code{maxDraws} says so
+  explicitly. It is checked in batches, the first a quarter of the budget,
+  so a target met early costs at most a quarter of the run in overshoot.
+
+  That is a change: \code{minEss} used to do nothing at all unless
+  \code{maxDraws} was also set, because the budget defaulted to exactly the
+  draws asked for and the loop had nothing to extend into. Setting an
+  effective size and watching the sampler run to the end regardless is what
+  this fixes.
+
+  Worth setting when a draw count had to be guessed at; not worth setting
+  when a warning says a parameter is unidentified, because no number of
+  draws fixes an improper posterior.
 
   \code{adapt_effects} controls whether warmup re-estimates the
   random-effect blocks of the metric as well as the population block; they
@@ -123,6 +133,9 @@ longer than many fits do.}
   bit-identical to a run made before this became the default. Needs the
   \pkg{future} package; without it, or if a worker fails, sampling falls back
   to this session.}
+
+\item{control}{\strong{Deprecated} -- use \code{sampleControl}. Still
+honoured, with a warning.}
 }
 \value{
 The fit, with \code{estimate$rawposterior} holding the draws and

@@ -665,7 +665,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     maxiter::Integer=1000, g_tol::Real=1e-8, f_tol::Real=0.0,
     x_tol::Real=0.0, verbose::Bool=false, gradient_method=:adjoint,
     tune_chunks::Bool=true, lbfgs_memory::Integer=_CTSEM_LBFGS_MEMORY,
-    progress_overwrite::Bool=true, progress_callback=nothing,
+    progress_overwrite::Bool=true, progress_sink=nothing,
+    progress_callback=nothing,
     progress::Bool=verbose, progress_label::AbstractString="optimise",
     progress_budget::Bool=false, progress_every::Real=0.0)
     start_values = collect(start)
@@ -705,7 +706,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # the model-shape summary that `verbose` also turns on. Separating them is
     # what lets progress be the default without making the default noisy.
     reporter = CTSEMProgress(progress; label=progress_label,
-        overwrite=progress_overwrite, every=progress_every)
+        overwrite=progress_overwrite, every=progress_every, sink=progress_sink)
     # The trace records every iteration whatever `verbose` says: it costs a
     # push onto a vector, and a fit that turns out to have gone somewhere odd
     # is exactly the one nobody thought to turn reporting on for.

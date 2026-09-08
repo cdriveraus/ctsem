@@ -491,13 +491,11 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #'
 #' @param nopriors deprecated, use priors argument. logical. If TRUE, any priors are disabled -- sometimes desirable for optimization.
 #' @param priors if TRUE, priors are included in computations, otherwise specified priors are ignored.
-#' @param iter used when \code{optimize=FALSE}. number of iterations, half of which will be devoted to warmup by default when sampling.
+#' @param iter \strong{Deprecated} -- use \code{sampleControl$iter}. Still
+#' honoured, with a warning.
 #' @param inits either character string 'optimize, NULL, or vector of (unconstrained)
 #' parameter start values, as returned by the rstan function \code{rstan::unconstrain_pars}, or the parameter values
 #' found in a ctsem fit object \code{myfit$stanfit$rawest} (or \code{$rawposterior}) for instance.
-#' @param chains used when \code{optimize=FALSE}. Number of chains to sample, during HMC or post-optimization importance sampling. Unless the cores
-#' argument is also set, the number of chains determines the number of cpu cores used, up to
-#' the maximum available minus one. Irrelevant when \code{optimize=TRUE}.
 #' @param cores number of cpu cores to use. A positive integer, or 'maxneeded' for
 #' as many as available minus one (capped at the number of chains on the stan
 #' backend, uncapped on julia, whose parallelism is over subject chunks). Defaults
@@ -522,13 +520,42 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' \code{intoverpop='laplace'} for random effects, and can be sampled afterwards
 #' with \code{\link{ctSample}}. It needs a working Julia -- see
 #' \code{\link{ctJuliaSetup}} and \code{\link{ctJuliaInstall}}.
-#' @param control Used when \code{optimize=FALSE}. For \code{backend='stan'}, a list of arguments sent to \code{\link[rstan]{stan}} control argument,
+#' @param sampleControl Used when \code{optimize=FALSE}: a list holding
+#' everything about how to sample. \code{iter} (default 1000) counts warmup and
+#' sampling together, \code{warmup} (half of \code{iter}) how much of it is
+#' discarded, \code{draws} the post-warmup count directly -- given, it wins and
+#' \code{iter} is not consulted -- \code{chains} (2) how many chains,
+#' \code{seed} (20260828), \code{saveEffects} whether individual random-effect
+#' draws are kept, and \code{processes} (TRUE) whether the chains get their own
+#' R processes.
+#'
+#' For \code{backend='julia'} it also carries the sampler's own settings:
+#' \code{maxdepth}/\code{max_treedepth} (default 10),
+#' \code{target_accept}/\code{adapt_delta} (0.8), \code{maxdelta} (1000),
+#' \code{init_scale} (1), \code{adapt_metric} (TRUE), \code{adapt_effects}
+#' (FALSE), and the optional effective-sample-size target \code{minESS},
+#' \code{meanESS}, \code{maxDraws}, \code{rhatTarget} (1.01) and
+#' \code{settleTol} -- all documented in full under \code{sampleControl} in
+#' \code{\link{ctSample}}. A name the sampler does not read is an error rather
+#' than ignored, because a name the list drops silently costs a whole run.
+#' Given \code{minESS} or \code{meanESS}, \code{iter} becomes the budget the
+#' run may take rather than the count it must: it stops as soon as the target
+#' is met.
+#'
+#' For \code{backend='stan'} the sampler settings are rstan's, and are passed
+#' to \code{\link[rstan]{stan}}'s own \code{control} argument.
+#' @param chains \strong{Deprecated} -- use \code{sampleControl$chains}. Still
+#' honoured, with a warning.
+#' @param control \strong{Deprecated} -- use \code{sampleControl}, which is the
+#' same list under a name that says what it controls. Still honoured, with a
+#' warning; where both name the same setting, \code{sampleControl} wins.
+#' For \code{backend='stan'}, a list of arguments sent to \code{\link[rstan]{stan}} control argument,
 #' regarding warmup / sampling behaviour. Unless specified, values used are:
 #' list(adapt_delta = .8, adapt_window=5, max_treedepth=10, adapt_init_buffer=2, stepsize = .001).
 #' For \code{backend='julia'}, the same argument instead carries the julia sampler's own settings:
 #' \code{maxdepth}/\code{max_treedepth} (default 10), \code{target_accept}/\code{adapt_delta} (0.8),
 #' \code{maxdelta} (1000), \code{init_scale} (1), \code{adapt_metric} (TRUE), \code{adapt_effects} (FALSE),
-#' and the optional effective-sample-size target \code{minEss}, \code{meanEss}, \code{maxDraws},
+#' and the optional effective-sample-size target \code{minESS}, \code{meanESS}, \code{maxDraws},
 #' \code{rhatTarget} (1.01) and \code{settleTol} -- all documented in full under \code{control} in
 #' \code{\link{ctSample}} -- plus \code{warmup} (default half of \code{iter}), \code{seed} (default
 #' 20260828) and \code{processes} (default TRUE), which \code{\link{ctSample}} instead takes as
@@ -852,6 +879,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   forcerecompile=FALSE,saveCompile=TRUE,savescores=FALSE,
   savesubjectmatrices=FALSE, saveComplexPars=FALSE,
   gendata=FALSE,
+  sampleControl=list(),
   control=list(),verbose=0,..., ctstanmodel){
 
   # `vb` (Stan's variational Bayes) was removed: it is a stan-only path,
@@ -859,6 +887,20 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # this check a caller's `vb=TRUE` would silently fall into `...` and be
   # ignored rather than erroring, which would fit MCMC or MLE while the
   # caller believed they had asked for variational inference.
+  # `iter`, `chains` and `control` are entries of `sampleControl` now. Folded
+  # here, at the top, so that everything below -- on both backends -- goes on
+  # receiving exactly what it received before: the rename cannot change what a
+  # fit does, and `control` still reaches rstan unchanged on the stan path.
+  # `names(match.call())` because a default cannot otherwise be told from a
+  # value that happens to equal it, and only an argument the caller actually
+  # wrote should draw a deprecation warning.
+  .ctsample_resolved <- .ctSampleControlResolve(sampleControl,
+    given = names(match.call()), iter = iter, chains = chains,
+    control = control)
+  iter <- .ctsample_resolved$iter
+  chains <- .ctsample_resolved$chains
+  control <- .ctsample_resolved$control
+
   if('vb' %in% ...names()) stop(
     "the 'vb' (variational Bayes) argument to ctFit() has been removed -- ",
     "stan's variational inference was broken and stan is being deprecated. ",
