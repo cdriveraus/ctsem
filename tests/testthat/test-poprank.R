@@ -260,14 +260,14 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
     f <- fresh(); f[['POPCOV']]['dr1', 'dr1'] <- 0.3
     expect_equal(split(f)$basis, c('dr1', 'dr2', 'dr3'))
 
-    # a zero variance on an effect that would otherwise be regressed: honoured
-    # by dropping it from the split, so it keeps ctsem's own zero-sd handling
-    zv <- fresh(); zv[['POPCOV']]['df1', 'df1'] <- 0
-    expect_equal(split(zv)$regressed, c('df2', 'df3'))
-
-    # and the two that cannot be honoured
+    # and any statement about a regressed effect is refused, zero or not.
+    # A zero on the diagonal is not special-cased: fixing a population sd to
+    # zero is not a sensible thing to state -- `indvarying = FALSE` is how a
+    # parameter is made non-varying -- so it gets no path of its own.
     nz <- fresh(); nz[['POPCOV']]['df1', 'df1'] <- 0.3
     expect_error(split(nz), 'poprank would drop what POPCOV states')
+    zd <- fresh(); zd[['POPCOV']]['df1', 'df1'] <- 0
+    expect_error(split(zd), 'poprank would drop what POPCOV states')
     zc <- fresh(); zc[['POPCOV']]['df1', 'dr1'] <- 0
     expect_error(split(zc), 'poprank would drop what POPCOV states')
   })

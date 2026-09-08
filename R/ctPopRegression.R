@@ -150,8 +150,17 @@
 #
 # POPCOV is the specification surface for the population covariance
 # (R/ctModelPopCov.R), and `.ctJuliaAugmentRandomEffects()` reads it per varying
-# parameter: a number there fixes an sd or a correlation, and a label estimates
-# it. A regressed effect has neither -- its spread and its correlations follow
+# parameter: a number there fixes a cell and a label estimates it.
+#
+# Worth knowing what those numbers mean, because it is not what the surface
+# says. The diagonal is a population sd on the parameter's natural scale, and
+# that is exact for a linear transform -- measured, 0.3 in gives 0.3 out. The
+# off-diagonal is documented and error-checked as a correlation but is really
+# the coordinate `constraincorsqrt1()` consumes, so 0.3 in gives a population
+# correlation of 0.54 and 0.5 gives 0.79. Zero is the exception and is exact:
+# uncorrelated in means uncorrelated out. None of that is this feature's doing,
+# but a guard here that reasoned about "the correlation the user asked for"
+# would be reasoning about the wrong number. A regressed effect has neither -- its spread and its correlations follow
 # from the basis -- so anything stated about it would be **silently dropped**,
 # which is the one outcome this whole feature exists to avoid. Both a fixed
 # value and a relabelling count: a label differing from the default is an
@@ -171,13 +180,6 @@
       expected <- if (!is.null(default) && all(coords %in% rownames(default)))
         as.character(default[coords[1L], coords[2L]]) else NA_character_
       if (!is.na(expected) && identical(stated, expected)) next
-      # A zero variance is handled by dropping the effect from the split, so it
-      # never reaches here as a regressed effect; a zero *covariance* with a
-      # basis effect is a linear constraint across a whole row of coefficients
-      # rather than one cell, which is not expressible, so that one does still
-      # conflict.
-      if (identical(coords[1L], coords[2L]) &&
-          isTRUE(.ctModelPopCovValue(stated) == 0)) next
       # An upper-triangle zero is POPCOV's own placeholder, not a statement.
       if (identical(stated, '0') && !is.na(expected) && identical(expected, '0')) next
       out <- c(out, sprintf("POPCOV['%s', '%s'] = %s", coords[1L], coords[2L],
@@ -192,28 +194,6 @@
   roles <- .ctPopEffectRoles(pars)
   if (!nrow(roles)) return(NULL)
 
-  # An effect whose POPCOV variance is fixed at zero has no individual
-  # variation, and that is a statement with a clear meaning under any rank -- so
-  # it is honoured rather than refused, by leaving that effect out of the basis
-  # and regressed sets entirely. It stays `indvarying`, so the augmentation
-  # handles it exactly as it does without `poprank`: a carrier state whose sd is
-  # the fixed zero. What it must not be is *regressed*, because a regressed
-  # effect's spread comes from the basis and there would be nothing left for the
-  # zero to constrain.
-  #
-  # This is also what makes zeroes in the freely parameterised part of POPCOV
-  # keep working: a correlation fixed between two basis effects is a statement
-  # about `Sigma_AA`, which the reduced form leaves in exactly today's sd and
-  # correlation coordinates, so it needs nothing from here.
-  if (!is.null(model) && !is.null(model[['POPCOV']])) {
-    novariance <- vapply(roles$param, function(nm) {
-      entry <- .ctModelPopCovEntry(model, nm, nm)
-      value <- .ctModelPopCovValue(entry)
-      isTRUE(is.finite(value) && value == 0)
-    }, logical(1L))
-    roles <- roles[!novariance, , drop = FALSE]
-    if (!nrow(roles)) return(NULL)
-  }
   k <- nrow(roles)
   nmean <- sum(roles$mean)
   rank <- if (identical(poprank, 'auto')) nmean else {
