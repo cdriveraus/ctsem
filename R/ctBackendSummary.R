@@ -743,7 +743,14 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     out$n_eff <- diagnostics$n_eff
     out$Rhat <- diagnostics$Rhat
   }
-  if (isTRUE(z)) out$z <- out$mean / out$sd
+  # A quantity with no posterior spread has no z, rather than an enormous one.
+  # Two things land here with an exactly zero sd and both want this: a
+  # structurally determined report (in a `poprank` fit the correlation between
+  # a regressed effect and its only basis effect is 1 by construction), and a
+  # parameter whose direction carried no curvature and was projected out of the
+  # Hessian before inversion. Dividing by zero gave `z` = 2.7e16 for the first
+  # and a confident-looking number for the second.
+  if (isTRUE(z)) out$z <- ifelse(out$sd > 0, out$mean / out$sd, NA_real_)
   round(out, digits)
 }
 
@@ -840,7 +847,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   populations <- if (!is.null(spec$laplace)) {
     .ctBackendLaplacePopulations(fit, spec, samples)
   } else {
-    p <- .ctBackendAugmentedPopulation(spec, samples, layout, flat)
+    p <- .ctBackendPopulation(spec, samples, layout, flat)
     if (is.null(p)) NULL else list(p)
   }
   if (is.null(populations) || !length(populations)) return(NULL)
@@ -1109,7 +1116,14 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
       if (is.null(samples)) .ctBackendRawSamples(fit) else samples)
   } else {
     constrained <- .ctBackendConstrained(fit, samples)
-    one <- .ctBackendAugmentedPopulation(spec, constrained$samples,
+    # Through `.ctBackendPopulation()` rather than straight to the augmented
+    # reader, so a `poprank` fit's implied covariance over *every* varying
+    # parameter arrives here. `ctModelLatex()` draws the subject parameter
+    # distribution from this, and without it a reduced-rank fit's figure showed
+    # only the basis effects -- a two-parameter model rendered as a
+    # one-parameter one, with the regressed effect's individual variation
+    # invisible.
+    one <- .ctBackendPopulation(spec, constrained$samples,
       constrained$layout, constrained$flat)
     if (is.null(one)) NULL else list(one)
   }
@@ -1120,6 +1134,13 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     rawcorr <- population$rawcorr
     k <- ncol(rawsd)
     lower <- which(lower.tri(diag(k)), arr.ind = TRUE)
+    # A posterior mean of the covariance, which for a `poprank` fit is *not*
+    # itself rank deficient even though every draw is: the degenerate direction
+    # turns with the coefficients, and an average of rank-`r` matrices has
+    # higher rank. So `det()` of a reduced-rank fit's reported covariance is
+    # not zero, and that is arithmetic rather than the restriction having
+    # failed. It is also why the note beside these tables has to say the
+    # dimension count -- the matrix itself does not show it.
     cov <- matrix(0, k, k, dimnames = list(parname, parname))
     for (draw in seq_len(nrow(rawsd))) {
       one <- diag(rawsd[draw, ]^2, k)
@@ -1262,6 +1283,36 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     values <- extracted[[paste0("subj_", cells$matrix[cell])]]
     out[, , position] <- values[, , cells$row[cell], cells$col[cell]]
   }
+
+  # A `poprank` fit's regressed effects vary by subject without having a
+  # carrier state of their own, so `.ctBackendVaryingParameters()` -- which
+  # enumerates carrier states -- does not see them and they were silently
+  # absent from the result. Their per-subject values need no new computation:
+  # the cell each one drives is an expression over the basis carrier states, so
+  # `subj_<MATRIX>` already holds the value, on the same transformed scale as
+  # every other column here. Only the coordinates have to be carried, because
+  # the cell's `param` is that expression and cannot be found by label.
+  #
+  # This is a second place that knows about `poprank`, against the one branch
+  # the population summary needed. It earns it: what is wanted is the
+  # per-subject value of a cell that is not a plain parameter, and the
+  # enumeration this function is built on has no way to name that.
+  driven <- .ctBackendSpec(fit)$model$popregression$cells
+  if (!is.null(driven) && nrow(driven)) {
+    extra <- array(NA_real_, dim = c(dim(out)[1L], dim(out)[2L], nrow(driven)))
+    keep <- rep(TRUE, nrow(driven))
+    for (position in seq_len(nrow(driven))) {
+      values <- extracted[[paste0("subj_", driven$matrix[position])]]
+      if (is.null(values)) { keep[position] <- FALSE; next }
+      extra[, , position] <- values[, , driven$row[position], driven$col[position]]
+    }
+    if (any(keep)) {
+      out <- array(c(out, extra[, , keep, drop = FALSE]),
+        dim = c(dim(out)[1L], dim(out)[2L], dim(out)[3L] + sum(keep)))
+      parnames <- c(parnames, driven$param[keep])
+    }
+  }
+
   alphabetical <- order(parnames)
   out <- out[, , alphabetical, drop = FALSE]
   dimnames(out) <- list(iter = seq_len(dim(out)[1L]), subject = seq_len(dim(out)[2L]),
@@ -1489,6 +1540,16 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
       "These reflect correlations between the raw / unconstrained parameters."
   }
 
+  # A `poprank` fit's regression coefficients are the mechanism, not the
+  # result. What a reader wants from the individual differences is the same
+  # thing they want from any multilevel fit -- how much each parameter varies
+  # and how those spreads go together -- and that is the `popsd` and
+  # `rawpopcorr` tables either way. So the coefficients are *not* printed, and
+  # the structure is carried by a note beside the tables it qualifies instead.
+  # `.ctBackendPopRegressionTable()` remains available for anyone who wants the
+  # coefficients themselves, on the same footing as `rawpopcov`: reachable,
+  # not in the way.
+
   if (!is.null(constrained$tipreds)) {
     out$tipreds <- .ctBackendSampleSummary(constrained$tipreds, digits = digits,
       z = nrow(samples) > 1L, chains = chains)
@@ -1559,8 +1620,23 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     out$popsd <- .ctBackendMarkNoWidth(out$popsd,
       .ctBackendNoWidthRows(nowidth, rownames(out$popsd), "popsd_"))
   }
+  # Said here because this is the table it qualifies: some of these spreads
+  # were estimated and some follow from the dimension structure, and a reader
+  # cannot tell which from the numbers.
+  popsdnote <- .ctBackendPopRegressionNote(.ctBackendSpec(object))
+  if (!is.null(popsdnote) && !is.null(out$popsd)) out$popsdNote <- popsdnote
 
   fixed <- cells[!cells$randomeffect, , drop = FALSE]
+  # A `poprank` fit's coefficients are free parameters, so without this they
+  # appear here as `beta_df11_dr11` beside the model's own parameters -- an
+  # internal coordinate in the one table a reader treats as the answer. Dropped
+  # for the same reason the coefficient table is not printed; the note under
+  # `popsd` says the structure, and `npar` still counts them.
+  coefficients <- .ctBackendSpec(object)$model$popregression$coefficients
+  if (!is.null(coefficients) && nrow(coefficients)) {
+    fixed <- fixed[!(.ctBackendParameterNames(fixed) %in%
+        coefficients$coefficient), , drop = FALSE]
+  }
   out$popmeans <- .ctBackendSampleSummary(
     .ctBackendPopCellsFromFlat(flat, fixed, layout), digits = digits,
     chains = chains)

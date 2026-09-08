@@ -299,6 +299,50 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' @param binomial Deprecated. Logical indicating the use of binary rather than Gaussian data, as with IRT analyses.
 #' This now sets \code{intoverstates = FALSE} and the \code{manifesttype} of every indicator to 1, for binary.
 #' @param fit If TRUE, fit specified model using Stan, if FALSE, return stan model object without fitting.
+#' @param poprank Rank of the population covariance of the individually
+#' varying parameters.
+#'
+#' \code{'auto'}, the default, uses the number of varying parameters that reach
+#' the observation mean. That is the most the \code{intoverpop='augmented'}
+#' filter can identify: under that route a random effect on a variance cell
+#' (DIFFUSION, MANIFESTVAR) reaches the likelihood only through the predicted
+#' covariance, so the filter never updates its carrier state, and the data
+#' determines its covariance with the mean-affecting effects but not the split
+#' of that covariance into a standard deviation and correlations. \code{'auto'}
+#' estimates exactly the part that is determined, which costs no likelihood, and
+#' it is a no-op on any model where every varying parameter reaches the mean.
+#' When it does reduce the rank it says so, naming the parameters affected.
+#'
+#' \code{NA} leaves the covariance unrestricted, as in versions before this
+#' argument existed. The extra parameters are then estimated but not identified:
+#' their reported values are one arbitrary point on a ridge, and their intervals
+#' are not trustworthy in either direction.
+#'
+#' A whole number below the \code{'auto'} value is an explicit
+#' **approximation**. It describes the individual differences with fewer
+#' dimensions than the data supports, which lowers the likelihood and
+#' \strong{distorts the parameters it retains} -- the fit is joint, so nothing
+#' holds the retained covariances fixed while the rest is squeezed into them.
+#' Useful for parsimony, or for speed in high dimensions, and not otherwise.
+#'
+#' The population covariance is \code{Sigma = [[S, S b'], [b S, b S b']]}, for a
+#' freely estimated \code{S} over the basis effects and regression coefficients
+#' \code{b} for the rest; each regressed effect has no variance independent of
+#' the basis. \code{summary()} reports the standard deviations and correlations
+#' this implies, with a note saying which of them follow from the structure
+#' rather than being estimated.
+#'
+#' Applies under \code{intoverpop='augmented'}, \code{'laplace'} and
+#' \code{'none'}, and requires \code{backend='julia'} -- but the **default only
+#' applies to** \code{'augmented'}. What it means differs between them: on the
+#' augmented route the coordinates it removes cannot be identified, so removing
+#' them costs no likelihood; under \code{'laplace'} they are identified, and
+#' removing them is an approximation that on one 250-subject design cost 48 log
+#' likelihood units. So off the augmented route it has to be asked for
+#' explicitly, and the message then says which of the two it is doing.
+#'
+#' May also be stated on the model, as \code{model$poprank <- 2}; an argument
+#' here wins over that.
 #' @param intoverpop how to handle declared individual differences. If 'auto',
 #' set to TRUE if optimizing and FALSE if using hmc.
 #' if TRUE, integrates over population distribution of parameters rather than full sampling.
@@ -796,7 +840,7 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' }
 
 ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE, binomial=FALSE,
-  fit=TRUE, intoverpop='auto', sameInitialTimes=FALSE, stationary=FALSE,plot=FALSE,  derrind=NA,
+  fit=TRUE, intoverpop='auto', poprank='auto', sameInitialTimes=FALSE, stationary=FALSE,plot=FALSE,  derrind=NA,
   optimize=TRUE,  optimcontrol=list(),
   backend=c('stan','julia'),
   nlcontrol = list(), nopriors=NA, priors=FALSE, chains=2,
@@ -839,6 +883,10 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   }
   ctstanmodel <- model
   backend <- match.arg(backend)
+  # Whether `poprank` was asked for or merely defaulted. Taken here because
+  # `missing()` has to be evaluated before the argument is touched, and it
+  # decides whether an inapplicable rank is an error or a no-op.
+  poprankexplicit <- !missing(poprank)
   # Before any data preparation and before the Julia install prompt: a control
   # name the chosen backend cannot honour is a mistake to report immediately,
   # not after a wait.
@@ -1188,7 +1236,80 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
 
   ctm <- ctModel0DRIFT(ctm, ctm$continuoustime) #offset 0 drift
   ctm$pars <- ctModelStatesAndPARS(ctm$pars,statenames = ctm$latentNames,tdprednames=ctm$TDpredNames) #replace latent states and PARS with state and PAR[] refs, need this early because we rely on [] detection
+
+  # A reduced-rank population covariance, written as a regression of the
+  # remaining random effects on a basis of them. Three steps around the
+  # augmentation rather than a second path through it: resolve the basis while
+  # `indvarying` still says which parameters vary, clear the flag on the
+  # regressed ones so `.ctModelIntOverPop()` gives carrier states to the basis
+  # alone, then write the regression expressions once those states exist. The
+  # rewrite deliberately lands *before* the second `ctModelStatesAndPARS()`
+  # call below, so the new mean and coefficient parameters can be introduced as
+  # plain labels and turned into `PARS[r,c]` references by the machinery that
+  # already does exactly that. See R/ctPopRegression.R.
+  # `poprank` defaults to 'auto', so the places it does not apply have to be
+  # inapplicable rather than errors: only a rank the user asked for is refused.
+  #
+  # Two routes to the same restriction, because the two have different
+  # machinery to hang it on. Under `'augmented'` a basis effect has a carrier
+  # state and a regressed cell references `state[j]`, so the rewrite has to
+  # follow `.ctModelIntOverPop()`. Under `'laplace'` -- and `'none'`, which
+  # prepares the same structure without integrating -- there are no carrier
+  # states, so the basis effects move into PARS and the regressed cells
+  # reference them as parameters. Both land before the second
+  # `ctModelStatesAndPARS()` call below, which is what turns the new labels into
+  # `PARS[r,c]` references.
+  #
+  # What the restriction *means* differs between them, and only the message says
+  # so: on the augmented route it removes coordinates the filter cannot see and
+  # costs no likelihood, while under laplace those coordinates are identified
+  # and removing them is an approximation. Same structure, different claim.
+  # The rank may be stated on the model instead, as `model$poprank`, which is
+  # where it belongs for anyone who thinks of it as part of the specification --
+  # `indvarying` is set that way in nearly every multilevel model in the tests,
+  # so the idiom is already the house one. Not a `ctModel()` argument: that
+  # list goes through `ctModelConvertOMX()` and an unknown field there is a
+  # risk for no gain, where a plain assignment onto the returned model works and
+  # survives.
+  #
+  # A rank passed to `ctFit()` wins, because an argument at the call site is the
+  # more specific statement of the two; the model's value is used only when the
+  # argument was left at its default.
+  if(!poprankexplicit && !is.null(ctm[['poprank']])) poprank <- ctm[['poprank']]
+
+  popregression <- NULL
+  if(!(length(poprank)==1 && is.na(poprank))){
+    if(!identical(backend,'julia')){
+      if(poprankexplicit) stop("poprank requires backend='julia'.", call.=FALSE)
+    } else if(!intoverpop && !identical(intoverpopmethod,'laplace') &&
+        !any(ctm$pars$indvarying[is.na(ctm$pars$value)])){
+      if(poprankexplicit) stop(
+        "poprank restricts the population covariance, so it needs a model with ",
+        "individually varying parameters.", call.=FALSE)
+    } else if(!intoverpop && !poprankexplicit){
+      # Not by default off the augmented route, and this is the whole reason
+      # the two are distinguished. On the augmented route the coordinates
+      # `'auto'` removes cannot be identified, so removing them costs nothing
+      # and is a good default. Under laplace they *are* identified, and
+      # measured on a 250 x 50 design the same restriction costs 48 log
+      # likelihood units and takes the fit to the boundary -- basis sd to zero
+      # with the coefficient to -612. A default that does that to a user who
+      # chose the route precisely because it identifies these things would be
+      # indefensible, so here it has to be asked for.
+      popregression <- NULL
+    } else {
+      popregression <- .ctPopRegressionSpec(ctm$pars, poprank,
+        explicit=poprankexplicit, model=ctm)
+      if(!is.null(popregression)) ctm <- .ctPopRegressionDemote(ctm, popregression)
+    }
+  }
   if(intoverpop)   ctm <- .ctModelIntOverPop(ctm) #extend system matrices for individual differences
+  if(!is.null(popregression)){
+    ctm <- if(intoverpop) .ctPopRegressionRewrite(ctm, popregression) else
+      .ctPopRegressionRewriteParameters(ctm, popregression)
+    popregression <- ctm$popregression
+    if(!is.null(popregression)) message(.ctPopRegressionMessage(popregression))
+  }
 
 #   #check this *after* replacing PARS references as needed
 #   if(any(duplicated(ctm$pars$param[ctm$pars$matrix %in% 'T0MEANS' &
@@ -1518,6 +1639,10 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   argsresolved$backend <- backend
   argsresolved$cores <- cores
   argsresolved$intoverpop <- intoverpopmethod
+  # The rank actually used, not the argument: 'auto' resolves to a number, and a
+  # model the restriction did not apply to reports NA whatever was asked for.
+  argsresolved$poprank <- if(is.null(popregression)) NA_integer_ else
+    as.integer(popregression$rank)
   argsresolved$priors <- as.logical(priors)
   argsresolved$optimize <- isTRUE(optimize)
   argsresolved$intoverstates <- isTRUE(intoverstates)

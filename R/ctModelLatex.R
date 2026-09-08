@@ -1109,7 +1109,15 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=inherits(x,'ctStan
 ",if(linearise) "&\\textrm{Linearised approximation of subject parameter distribution shown.} \\\\"),
         # Only for a model that has such cells: for every other model this line
         # would be a caveat about something the reader cannot see.
-        if(isTRUE(nrow(contextcells) > 0)) "&\\textrm{Cells depending on the latent state or a time dependent predictor keep their expression, with estimates substituted for parameter labels.} \\\\"),
+        if(isTRUE(nrow(contextcells) > 0)) "&\\textrm{Cells depending on the latent state or a time dependent predictor keep their expression, with estimates substituted for parameter labels.} \\\\",
+        # A reduced-rank population covariance is a claim about the individual
+        # differences, and a figure is read long after the message that
+        # announced it. Note only: this branch renders no individual-differences
+        # block at all for a julia fit -- full rank or reduced -- so there is
+        # nothing here for a matrix to qualify, and saying the dimension count
+        # is the honest half of the job that can be done without building that
+        # section first.
+        if(inherits(x,'ctFit')) .ctPopRegressionLatexNote(x)),
       "\\end{flalign*}
       ")
   }

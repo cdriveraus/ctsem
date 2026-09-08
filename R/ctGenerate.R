@@ -164,6 +164,16 @@ ctModeltoNumeric <- function(ctmodelobj){
   args$optimize <- TRUE
   args$intoverstates <- TRUE
   args$intoverpop <- TRUE
+  # `poprank` exists because the augmented *filter* cannot identify part of the
+  # population covariance. Generating is the other direction -- the covariance
+  # is being specified, not recovered -- so restricting its rank here would only
+  # stop a user generating data with a full-rank one.
+  #
+  # Load-bearing since julia gained random-effect generation: without it, every
+  # model with an indvarying DIFFUSION or MANIFESTVAR cell would generate from a
+  # rank-restricted population covariance, and seed-for-seed output would have
+  # moved for a reason that has nothing to do with generating.
+  args$poprank <- NA
   args$cores <- cores
   args$backend <- backend
 

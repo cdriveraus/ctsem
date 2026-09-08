@@ -32,10 +32,47 @@
 #   m$matrices$POPCOV['mm', 'mm'] <- 0.3     # this spread, exactly
 #   m$matrices$POPCOV['mm', 'T0m_eta1'] <- 0 # uncorrelated with that effect
 #
-# Diagonal entries are standard deviations and off-diagonal entries below it are
-# correlations, which is the form both backends already work in (`popsd` and
-# `rawpopcorr` in every summary) rather than a covariance needing decomposition.
 # Above the diagonal is a fixed zero, as T0VAR's own upper triangle is.
+#
+# ## What the numbers mean, which is not the same for the two triangles
+#
+# **Diagonal entries are standard deviations**, on the parameter's own natural
+# scale, and a number written there is that spread. Exact for a linear
+# transform, which is every mean parameter, and a first-order match at the raw
+# origin for a nonlinear one -- `.ctJuliaAugmentRandomEffects()` divides out the
+# transform's slope to place it. Measured: `0.3` gives a population sd of
+# 0.3000, `0.8` gives 0.8000.
+#
+# **Off-diagonal entries are unconstrained correlation coordinates, not
+# correlations.** They lie in `[-1, 1]` and are ordered the same way a
+# correlation is -- zero is uncorrelated, larger magnitudes give stronger
+# association, and the sign carries through -- but the value is the T0VAR entry
+# that `constraincorsqrt1()` consumes, and that map row-normalises. So the
+# correlation that comes out is *further from zero* than the coordinate written
+# in. Measured on two random effects:
+#
+#     coordinate   0     0.3      0.5      0.8     -0.5
+#     correlation  0.0   0.539    0.788    0.970   -0.769
+#
+# Note the last column: the map is monotone and sign-preserving but *not*
+# symmetric, so the same magnitude either side of zero gives different
+# correlations -- `constraincorsqrt1()`'s row scale carries an `|s| - s` term.
+# One more reason not to read the coordinate as a correlation.
+#
+# Zero is the exception and is exact, in any number of dimensions: a zero
+# coordinate contributes nothing to the row and the correlation is zero. So
+# "uncorrelated with that effect" above means exactly what it says, and it is
+# the case to rely on. A specific non-zero correlation cannot be requested
+# through this surface, because inverting the map is not a per-cell operation --
+# `constraincorsqrt1()` normalises by the whole row, so what one coordinate
+# yields depends on its neighbours.
+#
+# This is the same parameterisation both backends fit in (Stan's
+# `rawpopcovbase` lower triangle, and `sdcovsqrt2cov()`'s in the engine), so the
+# coordinates are not an invention of this surface -- but naming them
+# correlations, as an earlier version of this comment and of the error message
+# in `.ctJuliaAugmentRandomEffects()` both did, invites a user to write 0.5 and
+# read back 0.79.
 
 #' @keywords internal
 .ctModelPopCovNames <- function(pars) {

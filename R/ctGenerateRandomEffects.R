@@ -183,11 +183,16 @@
   # Sds arrive fixed on the generation path -- `.ctModelPopCovFromSdscale()`
   # gives every one of them a value before preparation -- so what reaches here
   # free is a population *correlation*, for which raw zero is uncorrelated.
+  #
+  # "State" rather than "choose": a POPCOV off-diagonal is the coordinate
+  # `constraincorsqrt1()` consumes, not the correlation, so only zero lands on
+  # the value written. See R/ctModelPopCov.R.
   if (!quiet && length(drawn)) {
     message("Population correlation not stated for ",
       paste(unique(drawn), collapse = ", "),
-      "; generated uncorrelated. Set model$matrices$POPCOV to choose it, or ",
-      "use fromPriors=TRUE to draw it.")
+      "; generated uncorrelated. Set model$matrices$POPCOV to state the ",
+      "coordinate (zero is uncorrelated exactly), or use fromPriors=TRUE to ",
+      "draw it.")
   }
   raw
 }

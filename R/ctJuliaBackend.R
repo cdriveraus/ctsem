@@ -1654,7 +1654,11 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
         if (abs(fixedvalue) > 1) {
           stop("POPCOV['", varying_names[row_position], "', '",
             varying_names[column_position], "'] is ", fixedvalue,
-            ". Off-diagonal entries are correlations and must lie in [-1, 1].",
+            ". Off-diagonal entries are unconstrained correlation coordinates ",
+            "and must lie in [-1, 1]. Zero means uncorrelated exactly; a ",
+            "non-zero coordinate gives a correlation further from zero than ",
+            "itself (0.5 gives about 0.79), because constraincorsqrt1() ",
+            "normalises by the row. See R/ctModelPopCov.R.",
             call. = FALSE)
         }
         table$param[index] <- NA_character_

@@ -467,6 +467,7 @@ summaryCtStanFitLabel <- function(x){
     residCovStdConditioning = 'Note',
     rawpopcorr = 'Random-effects correlations',
     rawpopcorrNote = 'Note',
+    popsdNote = 'Note',
     priorcheck = 'Prior check',
     priorcheckNote = 'Note',
     tipreds = 'Time-independent predictor effects',
