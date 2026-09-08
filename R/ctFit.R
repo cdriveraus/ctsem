@@ -253,10 +253,12 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
     ctm$pars$transform[whichT0VAR_T0MEANSindvarying] <- NA
     ctm$pars$indvarying[whichT0VAR_T0MEANSindvarying] <- FALSE
     #these cells are no longer parameters, so they carry no TI predictor
-    #effects either -- a stale TRUE here makes ctStanData compute a
-    #per subject T0VAR that cannot vary by subject.
+    #effects either -- a stale effect here makes ctStanData compute a
+    #per subject T0VAR that cannot vary by subject. 'FALSE' as a string:
+    #the column holds a character spec, not a logical (R/ctTipredEffect.R),
+    #and this has to clear a fixed size or an effect name as well as TRUE.
     if(ctm$n.TIpred > 0) ctm$pars[whichT0VAR_T0MEANSindvarying,
-      paste0(ctm$TIpredNames,rep('_effect',ctm$n.TIpred))] <- FALSE
+      paste0(ctm$TIpredNames,rep('_effect',ctm$n.TIpred))] <- 'FALSE'
   }
   return(ctm)
 }

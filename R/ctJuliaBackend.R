@@ -1070,7 +1070,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     entry$value <- 0
     entry$indvarying <- FALSE
     effect_columns <- grep("_effect$", names(entry), value = TRUE)
-    if (length(effect_columns)) entry[effect_columns] <- FALSE
+    if (length(effect_columns)) entry[effect_columns] <- "FALSE"
     table <- rbind(table, entry)
   }
   table
@@ -1645,7 +1645,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     }
     # Whether the sd is fixed by POPCOV or free, this row is a population
     # covariance cell and carries no TI predictor effect of its own.
-    if (length(effect_columns)) table[index, effect_columns] <- FALSE
+    if (length(effect_columns)) table[index, effect_columns] <- "FALSE"
     covariance_rows[[length(covariance_rows) + 1L]] <- data.frame(
       row = row, col = col,
       parameter = if (is.finite(fixedvalue)) NA_integer_ else next_parameter,
@@ -1691,7 +1691,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       }
       # As for the sd cells above: a population correlation carries no TI
       # predictor effect of its own, fixed by POPCOV or not.
-      if (length(effect_columns)) table[index, effect_columns] <- FALSE
+      if (length(effect_columns)) table[index, effect_columns] <- "FALSE"
       covariance_rows[[length(covariance_rows) + 1L]] <- data.frame(
         row = row, col = col,
         parameter = if (is.finite(fixedvalue)) NA_integer_ else next_parameter,

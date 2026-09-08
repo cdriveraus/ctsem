@@ -326,7 +326,7 @@ ctModelTransformsToNum<-function(ctm){
         m$pars$param[pi] <- paste0('state[',srcrow,']')
         m$pars$transform[pi] <- NA
         m$pars$indvarying[pi] <- FALSE
-        m$pars[pi,paste0(m$TIpredNames,rep('_effect',m$n.TIpred))] <- FALSE
+        m$pars[pi,paste0(m$TIpredNames,rep('_effect',m$n.TIpred))] <- 'FALSE'
       }
       t0mvaryingsimple <- t0mvaryingsimple[!t0mdupe]
       t0mvaryingnames <- t0mvaryingnames[!t0mdupe]
@@ -480,7 +480,7 @@ simplifystanfunction<-function(bcalc,simplify=TRUE){ #input text of list of comp
   ctspec$indvarying[ fixed | calc ] <- FALSE #remove indvarying for calcs also
   ctspec$param[ fixed ] <- NA
   ctspec$transform[ fixed] <- NA
-  if(length(tieffects) > 0)  ctspec[fixed | calc,tieffects] <- FALSE
+  if(length(tieffects) > 0)  ctspec[fixed | calc,tieffects] <- 'FALSE'
   if(any(apply(ctspec[,c('value','param')],1,function(x) all(is.na(x))))) stop('Parameters specified as NA ! Needs a value or character label.')
   
   
