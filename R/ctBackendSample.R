@@ -228,7 +228,7 @@
 #' @param control \strong{Deprecated} -- use \code{sampleControl}. Still
 #'   honoured, with a warning.
 #' @param sampleControl A list of sampler settings: \code{maxdepth} (default 10),
-#'   \code{target_accept} (0.8), \code{adapt_metric} (TRUE),
+#'   \code{target_accept} (0.8), \code{adapt_metric} (FALSE),
 #'   \code{adapt_effects} (FALSE), \code{init_scale} (1), \code{maxdelta}
 #'   (1000). Stan's spellings \code{max_treedepth} and \code{adapt_delta},
 #'   which \code{\link{ctFit}} takes for the same two settings, are
@@ -263,6 +263,14 @@
 #'   Worth setting when a draw count had to be guessed at; not worth setting
 #'   when a warning says a parameter is unidentified, because no number of
 #'   draws fixes an improper posterior.
+#'
+#'   \code{adapt_metric} re-estimates the metric during warmup. It is off by
+#'   default: the metric starts as the inverse of the exact Hessian at the
+#'   mode, and a sample covariance from a few hundred warmup draws is measured
+#'   to be worse -- a smaller step size, deeper trees, 15-40% more time for the
+#'   same effective sample, on every model tried. Worth turning on where the
+#'   starting curvature had to be repaired or floored, which is where the
+#'   estimate has something to improve on.
 #'
 #'   \code{adapt_effects} controls whether warmup re-estimates the
 #'   random-effect blocks of the metric as well as the population block; they
@@ -608,7 +616,32 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
     # 2 alike, so it discriminated nothing. `control$init_scale` takes any value
     # meanwhile.
     init_scale = as.numeric(.ctJuliaOr(control$init_scale, 1)),
-    adapt_metric = isTRUE(.ctJuliaOr(control$adapt_metric, TRUE)),
+    # `adapt_metric` defaults to FALSE, which is a change, and it is measured
+    # rather than argued. Warmup re-estimates the metric from 150 iterations
+    # up; the metric it replaces is `inv(-H)` for the *exact* Hessian at the
+    # mode. Stan shrinks its estimate toward the identity because the identity
+    # is all it starts with -- here the starting point is already the right
+    # answer, and a few hundred draws cannot improve on it.
+    #
+    # Three models on dev1, 4 chains x 200 draws, adapt against Laplace-only:
+    #
+    #   model        warmup   eps (adapt)   eps (laplace)   s (adapt)   s (lap)
+    #   informative     200   0.533-0.580   0.708-0.726         393       324
+    #   informative     500   0.510-0.668   0.762-0.781         650       533
+    #   sparse          200   0.198-0.525   0.613-0.629          99        75
+    #   sparse          500   0.243-0.503   0.632-0.699         175       126
+    #   wider           200   0.284-0.431   0.616-0.665         218       169
+    #   wider           500   0.428-0.443   0.638-0.676         320       275
+    #
+    # Every cell: a smaller step size, deeper trees, 15-40% more time, and
+    # never more effective draws (`sparse` at 200 gave 800 against 595, and
+    # `wider` at 500 782 against 688). Below 150 the two are the same run,
+    # which is the control -- and those cells agree.
+    #
+    # It is a setting rather than a removal because the reasoning for it is
+    # sound wherever the starting metric is *not* exact, which is any route
+    # whose curvature had to be repaired or floored.
+    adapt_metric = isTRUE(.ctJuliaOr(control$adapt_metric, FALSE)),
     adapt_effects = isTRUE(.ctJuliaOr(control$adapt_effects, FALSE)))
 
   # Sampling targets, when asked for, and absent from the call when not: the
@@ -812,6 +845,15 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
   }
   if (!is.null(target$hessian)) {
     arguments$hessian <- JuliaConnectoR::juliaPut(as.matrix(target$hessian))
+  }
+  # How many of the sampled coordinates are model parameters. Only differs
+  # from all of them on the state-explicit route, where the vector is
+  # `[theta; innovations]` -- and there the engine needs to know, or it builds
+  # one dense block over every innovation in the data by inverting an arrow
+  # Hessian that is indefinite at the point it is handed. See the note at the
+  # metric in `ctsem_sample_marginal`.
+  if (isTRUE(target$marginal) && isTRUE(target$state_explicit)) {
+    arguments$nparameters <- as.integer(target$npar)
   }
   entry <- if (isTRUE(target$marginal)) module$ctsem_sample_marginal else
     module$ctsem_sample
@@ -1266,12 +1308,31 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # where optimising the same density gives its joint mode and the downward
   # bias in the variances that comes with maximising over what should be
   # integrated.
+  # The state-explicit sampler is placed from the *integrated* fit, not from
+  # the joint mode.
+  #
+  # Optimising the joint density over parameters and states is the one thing
+  # this route must not do: that density has no interior maximum in the state
+  # directions, so its "mode" is wherever the optimiser stopped, and the
+  # curvature there is not a covariance. Measured on a 12-subject,
+  # 10-occasion model, the arrow Hessian at that point had **16 non-positive
+  # eigenvalues of 155**, which `_bounded_inverse` floors -- so the metric
+  # claimed a standard deviation of about 8.6 along sixteen directions in
+  # which the density increases. That is a worse start than no information.
+  #
+  # So the optimisation and the Hessian both come from the filter, with the
+  # states integrated out, which is a proper Laplace approximation of the
+  # parameter posterior: positive definite, npar x npar, and already what
+  # `intoverstates = TRUE` computes. The innovations then start at zero --
+  # their prior mode, and the trajectory the parameters alone imply -- and the
+  # engine meters them at identity, which is exactly their prior scale since
+  # they are standardised. `nparameters` is what tells it where the parameters
+  # stop; see the metric note in `ctsem_sample_marginal`.
   jointobjective <- NULL
   nstate <- 0L
   if (!isTRUE(intoverstates)) {
     jointobjective <- .ctJuliaJointObjective(model_spec, npar)
     nstate <- .ctJuliaStateDimension(model_spec)
-    start <- c(start, numeric(nstate))
   }
   # The workers, started before the optimisation rather than after it. A worker
   # costs 26-43 s of Julia startup and engine compilation, and the optimisation
@@ -1295,9 +1356,10 @@ print.ctSampleDiagnostics <- function(x, ...) {
     .ctBackendWarmWorkers(spec, workers = chains, values = start)
   } else NULL
 
+  # `objective = NULL` even on the state route: the integrated objective is
+  # what is optimised, for the reason given where `jointobjective` is built.
   optimised <- .ctJuliaOptimise(model_spec, start, optimcontrol = optimcontrol,
-    gradient = gradient, cores = cores, verbose = verbose,
-    objective = jointobjective)
+    gradient = gradient, cores = cores, verbose = verbose)
   estimate <- as.numeric(optimised$minimizer)
 
   module <- .ctJuliaModule(model_spec$project)
@@ -1308,18 +1370,17 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # returns NULL -- so every sampled fit warned that the engine could not
   # differentiate its gradient, when nothing had been asked of the engine at
   # all. `spec` is the same object the objective is already cached under.
-  # The metric's curvature. On the state-explicit target that is the whole
-  # arrow-shaped joint Hessian rather than the profiled one the standard
-  # errors use: the sampler moves in every coordinate, so it needs the
-  # curvature of every coordinate.
-  hessian <- if (is.null(jointobjective)) {
-    try(.ctBackendHessian(spec, estimate, verbose = verbose, gradient = gradient), silent = TRUE)
-  } else {
-    try(matrix(as.numeric(.ctBackendJuliaValue(module$ctsem_joint_hessian(
-      jointobjective, .ctJuliaNumericVector(estimate), profile = FALSE))),
-      nrow = length(estimate), ncol = length(estimate)), silent = TRUE)
-  }
+  # The metric's curvature: the integrated parameter Hessian, on every route.
+  # The state route used to take the arrow-shaped joint Hessian at the joint
+  # mode instead, which is where its metric went wrong.
+  hessian <- try(.ctBackendHessian(spec, estimate, verbose = verbose,
+    gradient = gradient), silent = TRUE)
   if (inherits(hessian, "try-error")) hessian <- NULL
+
+  # The innovations join the vector after the optimisation rather than before
+  # it, at zero: their prior mode, and the trajectory these parameters alone
+  # imply. The sampler moves them from there.
+  if (!is.null(jointobjective)) estimate <- c(estimate, numeric(nstate))
 
   joint <- identical(intoverpop, "none")
 
