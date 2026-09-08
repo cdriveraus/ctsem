@@ -135,7 +135,7 @@ test_that("Stan and Julia agree with priors=TRUE, with random effects and a TI p
 # as `tip_TI1_julia_popcov_1_1` and friends.
 #
 # MANIFESTMEANS is fixed here on purpose. Leaving it free makes it individually
-# varying too, which adds carrier states, and `ctStanModelIntOverPop()` then
+# varying too, which adds carrier states, and `.ctModelIntOverPop()` then
 # rebuilds T0VAR from scratch with the effect columns already FALSE -- so the
 # bug disappears. The narrow case is the one where every random effect is a
 # T0MEANS row and the user's own T0VAR rows survive into the augmentation.
