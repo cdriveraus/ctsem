@@ -368,7 +368,7 @@ R processes.
 For \code{backend='julia'} it also carries the sampler's own settings:
 \code{maxdepth}/\code{max_treedepth} (default 10),
 \code{target_accept}/\code{adapt_delta} (0.8), \code{maxdelta} (1000),
-\code{init_scale} (1), \code{adapt_metric} (TRUE), \code{adapt_effects}
+\code{init_scale} (1), \code{adapt_metric} (FALSE), \code{adapt_effects}
 (FALSE), and the optional effective-sample-size target \code{minESS},
 \code{meanESS}, \code{maxDraws}, \code{rhatTarget} (1.01) and
 \code{settleTol} -- all documented in full under \code{sampleControl} in
@@ -389,7 +389,7 @@ regarding warmup / sampling behaviour. Unless specified, values used are:
 list(adapt_delta = .8, adapt_window=5, max_treedepth=10, adapt_init_buffer=2, stepsize = .001).
 For \code{backend='julia'}, the same argument instead carries the julia sampler's own settings:
 \code{maxdepth}/\code{max_treedepth} (default 10), \code{target_accept}/\code{adapt_delta} (0.8),
-\code{maxdelta} (1000), \code{init_scale} (1), \code{adapt_metric} (TRUE), \code{adapt_effects} (FALSE),
+\code{maxdelta} (1000), \code{init_scale} (1), \code{adapt_metric} (FALSE), \code{adapt_effects} (FALSE),
 and the optional effective-sample-size target \code{minESS}, \code{meanESS}, \code{maxDraws},
 \code{rhatTarget} (1.01) and \code{settleTol} -- all documented in full under \code{control} in
 \code{\link{ctSample}} -- plus \code{warmup} (default half of \code{iter}), \code{seed} (default
