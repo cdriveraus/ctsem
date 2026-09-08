@@ -132,10 +132,21 @@ Useful for parsimony, or for speed in high dimensions, and not otherwise.
 The population covariance is \code{Sigma = [[S, S b'], [b S, b S b']]}, for a
 freely estimated \code{S} over the basis effects and regression coefficients
 \code{b} for the rest; each regressed effect has no variance independent of
-the basis. \code{summary()} reports \code{b} alongside the standard
-deviations and correlations it implies. Requires \code{backend='julia'} and
-\code{intoverpop='augmented'}; a rank explicitly asked for elsewhere is an
-error, and the default is simply not applied.}
+the basis. \code{summary()} reports the standard deviations and correlations
+this implies, with a note saying which of them follow from the structure
+rather than being estimated.
+
+Applies under \code{intoverpop='augmented'}, \code{'laplace'} and
+\code{'none'}, and requires \code{backend='julia'} -- but the **default only
+applies to** \code{'augmented'}. What it means differs between them: on the
+augmented route the coordinates it removes cannot be identified, so removing
+them costs no likelihood; under \code{'laplace'} they are identified, and
+removing them is an approximation that on one 250-subject design cost 48 log
+likelihood units. So off the augmented route it has to be asked for
+explicitly, and the message then says which of the two it is doing.
+
+May also be stated on the model, as \code{model$poprank <- 2}; an argument
+here wins over that.}
 
 \item{sameInitialTimes}{if TRUE, include an empty observation for every subject that has no observation
 at the earliest observation time of the dataset. This ensures that the T0MEANS occurs for every subject at the same time,

@@ -328,10 +328,21 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' The population covariance is \code{Sigma = [[S, S b'], [b S, b S b']]}, for a
 #' freely estimated \code{S} over the basis effects and regression coefficients
 #' \code{b} for the rest; each regressed effect has no variance independent of
-#' the basis. \code{summary()} reports \code{b} alongside the standard
-#' deviations and correlations it implies. Requires \code{backend='julia'} and
-#' \code{intoverpop='augmented'}; a rank explicitly asked for elsewhere is an
-#' error, and the default is simply not applied.
+#' the basis. \code{summary()} reports the standard deviations and correlations
+#' this implies, with a note saying which of them follow from the structure
+#' rather than being estimated.
+#'
+#' Applies under \code{intoverpop='augmented'}, \code{'laplace'} and
+#' \code{'none'}, and requires \code{backend='julia'} -- but the **default only
+#' applies to** \code{'augmented'}. What it means differs between them: on the
+#' augmented route the coordinates it removes cannot be identified, so removing
+#' them costs no likelihood; under \code{'laplace'} they are identified, and
+#' removing them is an approximation that on one 250-subject design cost 48 log
+#' likelihood units. So off the augmented route it has to be asked for
+#' explicitly, and the message then says which of the two it is doing.
+#'
+#' May also be stated on the model, as \code{model$poprank <- 2}; an argument
+#' here wins over that.
 #' @param intoverpop how to handle declared individual differences. If 'auto',
 #' set to TRUE if optimizing and FALSE if using hmc.
 #' if TRUE, integrates over population distribution of parameters rather than full sampling.
@@ -1238,16 +1249,54 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # already does exactly that. See R/ctPopRegression.R.
   # `poprank` defaults to 'auto', so the places it does not apply have to be
   # inapplicable rather than errors: only a rank the user asked for is refused.
+  #
+  # Two routes to the same restriction, because the two have different
+  # machinery to hang it on. Under `'augmented'` a basis effect has a carrier
+  # state and a regressed cell references `state[j]`, so the rewrite has to
+  # follow `.ctModelIntOverPop()`. Under `'laplace'` -- and `'none'`, which
+  # prepares the same structure without integrating -- there are no carrier
+  # states, so the basis effects move into PARS and the regressed cells
+  # reference them as parameters. Both land before the second
+  # `ctModelStatesAndPARS()` call below, which is what turns the new labels into
+  # `PARS[r,c]` references.
+  #
+  # What the restriction *means* differs between them, and only the message says
+  # so: on the augmented route it removes coordinates the filter cannot see and
+  # costs no likelihood, while under laplace those coordinates are identified
+  # and removing them is an approximation. Same structure, different claim.
+  # The rank may be stated on the model instead, as `model$poprank`, which is
+  # where it belongs for anyone who thinks of it as part of the specification --
+  # `indvarying` is set that way in nearly every multilevel model in the tests,
+  # so the idiom is already the house one. Not a `ctModel()` argument: that
+  # list goes through `ctModelConvertOMX()` and an unknown field there is a
+  # risk for no gain, where a plain assignment onto the returned model works and
+  # survives.
+  #
+  # A rank passed to `ctFit()` wins, because an argument at the call site is the
+  # more specific statement of the two; the model's value is used only when the
+  # argument was left at its default.
+  if(!poprankexplicit && !is.null(ctm[['poprank']])) poprank <- ctm[['poprank']]
+
   popregression <- NULL
   if(!(length(poprank)==1 && is.na(poprank))){
     if(!identical(backend,'julia')){
       if(poprankexplicit) stop("poprank requires backend='julia'.", call.=FALSE)
-    } else if(!intoverpop){
+    } else if(!intoverpop && !identical(intoverpopmethod,'laplace') &&
+        !any(ctm$pars$indvarying[is.na(ctm$pars$value)])){
       if(poprankexplicit) stop(
-        "poprank restricts the population covariance the augmented filter ",
-        "estimates, so it needs intoverpop='augmented'. Under ",
-        "intoverpop='laplace' the coordinates it would remove are identified, ",
-        "and removing them is an approximation rather than a repair.", call.=FALSE)
+        "poprank restricts the population covariance, so it needs a model with ",
+        "individually varying parameters.", call.=FALSE)
+    } else if(!intoverpop && !poprankexplicit){
+      # Not by default off the augmented route, and this is the whole reason
+      # the two are distinguished. On the augmented route the coordinates
+      # `'auto'` removes cannot be identified, so removing them costs nothing
+      # and is a good default. Under laplace they *are* identified, and
+      # measured on a 250 x 50 design the same restriction costs 48 log
+      # likelihood units and takes the fit to the boundary -- basis sd to zero
+      # with the coefficient to -612. A default that does that to a user who
+      # chose the route precisely because it identifies these things would be
+      # indefensible, so here it has to be asked for.
+      popregression <- NULL
     } else {
       popregression <- .ctPopRegressionSpec(ctm$pars, poprank,
         explicit=poprankexplicit, model=ctm)
@@ -1256,7 +1305,8 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   }
   if(intoverpop)   ctm <- .ctModelIntOverPop(ctm) #extend system matrices for individual differences
   if(!is.null(popregression)){
-    ctm <- .ctPopRegressionRewrite(ctm, popregression)
+    ctm <- if(intoverpop) .ctPopRegressionRewrite(ctm, popregression) else
+      .ctPopRegressionRewriteParameters(ctm, popregression)
     popregression <- ctm$popregression
     if(!is.null(popregression)) message(.ctPopRegressionMessage(popregression))
   }

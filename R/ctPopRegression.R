@@ -171,6 +171,13 @@
       expected <- if (!is.null(default) && all(coords %in% rownames(default)))
         as.character(default[coords[1L], coords[2L]]) else NA_character_
       if (!is.na(expected) && identical(stated, expected)) next
+      # A zero variance is handled by dropping the effect from the split, so it
+      # never reaches here as a regressed effect; a zero *covariance* with a
+      # basis effect is a linear constraint across a whole row of coefficients
+      # rather than one cell, which is not expressible, so that one does still
+      # conflict.
+      if (identical(coords[1L], coords[2L]) &&
+          isTRUE(.ctModelPopCovValue(stated) == 0)) next
       # An upper-triangle zero is POPCOV's own placeholder, not a statement.
       if (identical(stated, '0') && !is.na(expected) && identical(expected, '0')) next
       out <- c(out, sprintf("POPCOV['%s', '%s'] = %s", coords[1L], coords[2L],
@@ -184,6 +191,29 @@
   if (is.null(poprank) || (length(poprank) == 1L && is.na(poprank))) return(NULL)
   roles <- .ctPopEffectRoles(pars)
   if (!nrow(roles)) return(NULL)
+
+  # An effect whose POPCOV variance is fixed at zero has no individual
+  # variation, and that is a statement with a clear meaning under any rank -- so
+  # it is honoured rather than refused, by leaving that effect out of the basis
+  # and regressed sets entirely. It stays `indvarying`, so the augmentation
+  # handles it exactly as it does without `poprank`: a carrier state whose sd is
+  # the fixed zero. What it must not be is *regressed*, because a regressed
+  # effect's spread comes from the basis and there would be nothing left for the
+  # zero to constrain.
+  #
+  # This is also what makes zeroes in the freely parameterised part of POPCOV
+  # keep working: a correlation fixed between two basis effects is a statement
+  # about `Sigma_AA`, which the reduced form leaves in exactly today's sd and
+  # correlation coordinates, so it needs nothing from here.
+  if (!is.null(model) && !is.null(model[['POPCOV']])) {
+    novariance <- vapply(roles$param, function(nm) {
+      entry <- .ctModelPopCovEntry(model, nm, nm)
+      value <- .ctModelPopCovValue(entry)
+      isTRUE(is.finite(value) && value == 0)
+    }, logical(1L))
+    roles <- roles[!novariance, , drop = FALSE]
+    if (!nrow(roles)) return(NULL)
+  }
   k <- nrow(roles)
   nmean <- sum(roles$mean)
   rank <- if (identical(poprank, 'auto')) nmean else {
@@ -266,13 +296,24 @@
   basis <- paste(spec$basis, collapse = ', ')
   out <- paste0('poprank: population covariance reduced to rank ', spec$rank,
     ' of ', spec$rank + length(regressed), '.')
-  if (length(variancecell)) {
+  # The "cannot see its own spread" clause is true of the augmented filter and
+  # false of everything else, so it is keyed on the route rather than always
+  # said. Under laplace those coordinates are identified -- that route is the
+  # one that identifies them -- and telling a laplace user their spreads were
+  # invisible would be exactly backwards.
+  augmented <- !identical(spec$route, 'parameters')
+  if (length(variancecell) && augmented) {
     out <- paste0(out, ' ', paste(variancecell, collapse = ', '),
       if (length(variancecell) > 1) ' vary' else ' varies',
       ' only in DIFFUSION / MANIFESTVAR, where the augmented filter cannot see',
       if (length(variancecell) > 1) ' their' else ' its', ' own spread, so ',
       if (length(variancecell) > 1) 'they are' else 'it is',
       ' estimated as a regression on ', basis, '.')
+  } else if (length(variancecell)) {
+    out <- paste0(out, ' ', paste(variancecell, collapse = ', '),
+      if (length(variancecell) > 1) ' are' else ' is',
+      ' estimated as a regression on ', basis, ', with no variation',
+      ' independent of ', basis, '.')
   }
   if (length(demoted)) {
     out <- paste0(out, ' ', paste(demoted, collapse = ', '),
@@ -281,8 +322,147 @@
       'below the ', spec$nmean, ' this model identifies -- an approximation, ',
       'and the retained parameters absorb what it drops.')
   }
+  # And the closing sentence, for the same reason. On the augmented route the
+  # restriction is free and laplace is the recommendation; on laplace the
+  # restriction is the approximation and there is nothing better to point at.
+  if (!augmented) {
+    return(paste0(out, ' On this route those coordinates are identified, so',
+      ' this is an approximation for parsimony or speed rather than a repair.',
+      ' poprank=NA estimates the full covariance.'))
+  }
   paste0(out, " poprank=NA estimates the full covariance instead;",
     " intoverpop='laplace' identifies it.")
+}
+
+# Make a random effect referenceable from another cell, for the routes that do
+# not augment the state.
+#
+# On the augmented route a basis effect already has a carrier state, so a
+# regressed cell can say `state[j]`. Under `intoverpop='laplace'` (and `'none'`,
+# which prepares the same structure without integrating) there are no carrier
+# states -- the random effect *is* the parameter -- so the only way one cell can
+# refer to another's parameter is ctsem's own mechanism: the parameter lives in
+# PARS, and `ctModelStatesAndPARS()` turns references to its label into
+# `PARS[r,c]`.
+#
+# So the basis effects are moved into PARS: a row holding the raw parameter with
+# the identity transform, carrying the `indvarying` flag and the `sdscale` that
+# sets its population prior, and the cell it came from becomes that transform
+# applied to the reference. The laplace spec builds `re_index` from the
+# parameter table's indvarying entries, so a PARS row is eligible exactly as the
+# original cell was, and nothing in the engine needs to know.
+.ctPopRegressionToPars <- function(m, labels) {
+  if (!length(labels)) return(m)
+  effectcols <- grep('_effect$', names(m$pars), value = TRUE)
+  parsrow <- suppressWarnings(max(c(0L,
+    as.integer(m$pars$row[m$pars$matrix %in% 'PARS']))))
+  template <- m$pars[1L, , drop = FALSE]
+  added <- list()
+  for (label in labels) {
+    own <- which(!is.na(m$pars$param) & m$pars$param %in% label)
+    if (!length(own)) next
+    # Already a PARS entry with nothing wrapped round it: referenceable as is.
+    if (all(m$pars$matrix[own] %in% 'PARS')) next
+    transform <- as.character(m$pars$transform[own[1L]])
+    if (is.na(transform) || !nzchar(transform)) transform <- 'param'
+    sdscale <- m$pars$sdscale[own[1L]]
+    parsrow <- parsrow + 1L
+    row <- template
+    row$matrix <- 'PARS'; row$row <- parsrow; row$col <- 1L
+    row$param <- label; row$value <- NA; row$transform <- 'param'
+    row$indvarying <- TRUE
+    row$sdscale <- sdscale
+    if (length(effectcols)) {
+      row[, effectcols] <- FALSE
+      # TI effects follow the parameter, which is now this row.
+      for (cc in effectcols) row[[cc]] <- any(m$pars[own, cc] %in% TRUE)
+    }
+    for (ri in own) {
+      m$pars$param[ri] <- gsub('(?<![[:alnum:]_.])param(?![[:alnum:]_.])',
+        label, as.character(m$pars$transform[ri]), perl = TRUE)
+      m$pars$transform[ri] <- NA
+      m$pars$indvarying[ri] <- FALSE
+      if (length(effectcols)) m$pars[ri, effectcols] <- FALSE
+    }
+    added[[length(added) + 1L]] <- row
+  }
+  if (length(added)) {
+    m$pars <- rbind(m$pars, do.call(rbind, added))
+    m$pars[] <- lapply(m$pars, utils::type.convert, as.is = TRUE)
+  }
+  m
+}
+
+# The rewrite for a route with no carrier states. Same structure as
+# `.ctPopRegressionRewrite()`, referencing the basis parameters by label -- the
+# second `ctModelStatesAndPARS()` call in `ctFit()` turns those into `PARS[r,c]`,
+# which is why this has to run before it, exactly as the augmented rewrite does.
+.ctPopRegressionRewriteParameters <- function(m, spec) {
+  if (!length(spec$regressed)) return(m)
+  m <- .ctPopRegressionToPars(m, spec$basis)
+  effectcols <- grep('_effect$', names(m$pars), value = TRUE)
+  template <- m$pars[1L, , drop = FALSE]
+  parsrow <- suppressWarnings(max(c(0L,
+    as.integer(m$pars$row[m$pars$matrix %in% 'PARS']))))
+  newpars <- list()
+  addpar <- function(label, effects = NULL) {
+    parsrow <<- parsrow + 1L
+    row <- template
+    row$matrix <- 'PARS'; row$row <- parsrow; row$col <- 1L
+    row$param <- label; row$value <- NA; row$transform <- 'param'
+    row$indvarying <- FALSE
+    if (length(effectcols)) {
+      row[, effectcols] <- FALSE
+      if (!is.null(effects)) row[, effectcols] <- effects
+    }
+    newpars[[length(newpars) + 1L]] <<- row
+    invisible(NULL)
+  }
+  coefficients <- list()
+  drivencells <- list()
+  nbefore <- nrow(m$pars)
+  for (p in spec$regressed) {
+    effects <- NULL
+    if (length(effectcols)) {
+      own <- which(!is.na(m$pars$param) & m$pars$param %in% p)
+      if (length(own)) effects <- vapply(effectcols,
+        function(cc) any(m$pars[own, cc] %in% TRUE), logical(1L))
+    }
+    addpar(p, effects)
+    betas <- paste0('beta_', p, '_', spec$basis)
+    for (b in betas) addpar(b)
+    coefficients[[length(coefficients) + 1L]] <- data.frame(
+      param = p, basis = spec$basis, coefficient = betas,
+      state = NA_integer_, row.names = NULL, stringsAsFactors = FALSE)
+    predictor <- paste0('(', p, ' + ',
+      paste0(betas, ' * ', spec$basis, collapse = ' + '), ')')
+    cells <- which(!is.na(m$pars$param) & m$pars$param %in% p)
+    cells <- cells[cells <= nbefore]
+    if (!length(cells)) {
+      stop('Internal error: no cell found for regressed random effect ', p, '.',
+        call. = FALSE)
+    }
+    for (ri in cells) {
+      drivencells[[length(drivencells) + 1L]] <- data.frame(
+        param = p, matrix = as.character(m$pars$matrix[ri]),
+        row = as.integer(m$pars$row[ri]), col = as.integer(m$pars$col[ri]),
+        row.names = NULL, stringsAsFactors = FALSE)
+      transform <- as.character(m$pars$transform[ri])
+      if (is.na(transform) || !nzchar(transform)) transform <- 'param'
+      m$pars$param[ri] <- gsub('(?<![[:alnum:]_.])param(?![[:alnum:]_.])',
+        predictor, transform, perl = TRUE)
+      m$pars$transform[ri] <- NA
+      m$pars$indvarying[ri] <- FALSE
+      if (length(effectcols)) m$pars[ri, effectcols] <- FALSE
+    }
+  }
+  m$pars <- rbind(m$pars, do.call(rbind, newpars))
+  m$pars[] <- lapply(m$pars, utils::type.convert, as.is = TRUE)
+  spec$coefficients <- do.call(rbind, coefficients)
+  spec$cells <- do.call(rbind, drivencells)
+  spec$route <- 'parameters'
+  m$popregression <- spec
+  m
 }
 
 # Turn the regressed effects off before the augmentation runs.
@@ -401,6 +581,7 @@
   m$pars[] <- lapply(m$pars, utils::type.convert, as.is = TRUE)
   spec$coefficients <- do.call(rbind, coefficients)
   spec$cells <- do.call(rbind, drivencells)
+  spec$route <- 'augmented'
   spec$state <- stateof
   m$popregression <- spec
   m

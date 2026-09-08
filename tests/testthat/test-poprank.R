@@ -150,6 +150,128 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
     expect_match(message_one, 'approximation', fixed = TRUE)
   })
 
+  # Under laplace and 'none' there are no carrier states, so the basis effects
+  # move into PARS and the regressed cells reference them as parameters. No
+  # engine change: the laplace spec builds re_index from the parameter table's
+  # indvarying entries, so a PARS row is eligible exactly as the original cell
+  # was, and the route simply sees fewer random effects.
+  test_that('poprank restricts the laplace and none routes too, when asked', {
+    dat <- poprank_data()
+    prepared <- function(iop, ...) {
+      suppressWarnings(suppressMessages(ctFit(datalong = dat,
+        model = poprank_model(), backend = 'julia', fit = FALSE,
+        intoverpop = iop, cores = 1L, ...)))
+    }
+    for (iop in c('laplace', 'augmented')) {
+      full <- prepared(iop, poprank = NA)
+      auto <- prepared(iop, poprank = 'auto')
+      expect_equal(ctsem:::.ctBackendNpar(full), 6L)
+      expect_equal(ctsem:::.ctBackendNpar(auto), 5L)
+      names <- ctsem:::.ctBackendRawParameterNames(list(model_spec = auto),
+        ctsem:::.ctBackendNpar(auto))
+      expect_true('beta_df11_dr11' %in% names)
+      expect_false(any(c('popsd_df11', 'rawcor_df11__dr11') %in% names))
+    }
+  })
+
+  # And it is NOT the default off the augmented route. On the augmented route
+  # 'auto' removes coordinates that cannot be identified, so it costs nothing.
+  # Under laplace those coordinates are identified: measured on a 250 x 50
+  # design the same restriction cost 48 log likelihood units and took the fit to
+  # the boundary, basis sd to zero with the coefficient at -612. A default doing
+  # that to someone who chose laplace *because* it identifies these things would
+  # be indefensible.
+  test_that('the poprank default does not restrict a laplace fit', {
+    dat <- poprank_data()
+    auto <- suppressWarnings(suppressMessages(ctFit(datalong = dat,
+      model = poprank_model(), backend = 'julia', fit = FALSE,
+      intoverpop = 'laplace', cores = 1L)))
+    expect_null(auto$model$popregression)
+    expect_equal(ctsem:::.ctBackendNpar(auto), 6L)
+    # the augmented default does restrict, which is the contrast
+    augmented <- suppressWarnings(suppressMessages(ctFit(datalong = dat,
+      model = poprank_model(), backend = 'julia', fit = FALSE,
+      intoverpop = 'augmented', cores = 1L)))
+    expect_equal(ctsem:::.ctBackendNpar(augmented), 5L)
+  })
+
+  # The message must not carry the augmented route's justification onto a route
+  # where it is false. A first version told a laplace user that df11 "varies
+  # only in DIFFUSION / MANIFESTVAR, where the augmented filter cannot see its
+  # own spread" -- on the one route that does identify it.
+  test_that('the poprank message says which claim it is making', {
+    pars <- prepared_pars(poprank_model())
+    spec <- ctsem:::.ctPopRegressionSpec(pars, 'auto')
+    spec$coefficients <- data.frame(param = spec$regressed,
+      stringsAsFactors = FALSE)
+
+    spec$route <- 'augmented'
+    augmented <- ctsem:::.ctPopRegressionMessage(spec)
+    expect_match(augmented, 'cannot see its own spread', fixed = TRUE)
+    expect_match(augmented, "intoverpop='laplace' identifies it", fixed = TRUE)
+
+    spec$route <- 'parameters'
+    parameters <- ctsem:::.ctPopRegressionMessage(spec)
+    expect_false(grepl('cannot see', parameters, fixed = TRUE))
+    expect_match(parameters, 'those coordinates are identified', fixed = TRUE)
+    expect_match(parameters, 'approximation for parsimony or speed', fixed = TRUE)
+  })
+
+  # The rank may be stated on the model, which is the idiom indvarying already
+  # uses. An argument at the call site wins over it.
+  test_that('poprank can be stated on the model, and the argument wins', {
+    dat <- poprank_data()
+    m <- poprank_model()
+    m$poprank <- 'auto'
+    onmodel <- suppressWarnings(suppressMessages(ctFit(datalong = dat, model = m,
+      backend = 'julia', fit = FALSE, intoverpop = 'augmented', cores = 1L)))
+    expect_equal(ctsem:::.ctBackendNpar(onmodel), 5L)
+
+    overridden <- suppressWarnings(suppressMessages(ctFit(datalong = dat,
+      model = m, backend = 'julia', fit = FALSE, intoverpop = 'augmented',
+      poprank = NA, cores = 1L)))
+    expect_equal(ctsem:::.ctBackendNpar(overridden), 6L)
+  })
+
+  # What POPCOV can and cannot say once the rank is reduced. The freely
+  # parameterised part keeps today's sd and correlation coordinates, so
+  # statements there work untouched; a zero *variance* has one clear meaning
+  # under any rank and is honoured by leaving that effect out of the split; and
+  # a non-zero statement about a regressed effect, or a zero covariance -- which
+  # is a linear constraint across a whole row of coefficients rather than a cell
+  # -- is refused rather than dropped.
+  test_that('POPCOV statements work where they can be honoured and are refused where not', {
+    m <- poprank_model6()
+    pars <- prepared_pars(m)
+    m$pars <- pars
+    fresh <- function() { out <- m; out[['POPCOV']] <- ctsem:::.ctModelPopCov(pars); out }
+    split <- function(model) ctsem:::.ctPopRegressionSpec(prepared_pars(model),
+      'auto', explicit = TRUE, model = model)
+
+    base <- split(fresh())
+    expect_equal(base$basis, c('dr1', 'dr2', 'dr3'))
+    expect_equal(base$regressed, c('df1', 'df2', 'df3'))
+
+    # a zero correlation between two basis effects: the freely parameterised part
+    z <- fresh(); z[['POPCOV']]['dr2', 'dr1'] <- 0
+    expect_equal(split(z)$regressed, c('df1', 'df2', 'df3'))
+
+    # a fixed sd on a basis effect
+    f <- fresh(); f[['POPCOV']]['dr1', 'dr1'] <- 0.3
+    expect_equal(split(f)$basis, c('dr1', 'dr2', 'dr3'))
+
+    # a zero variance on an effect that would otherwise be regressed: honoured
+    # by dropping it from the split, so it keeps ctsem's own zero-sd handling
+    zv <- fresh(); zv[['POPCOV']]['df1', 'df1'] <- 0
+    expect_equal(split(zv)$regressed, c('df2', 'df3'))
+
+    # and the two that cannot be honoured
+    nz <- fresh(); nz[['POPCOV']]['df1', 'df1'] <- 0.3
+    expect_error(split(nz), 'poprank would drop what POPCOV states')
+    zc <- fresh(); zc[['POPCOV']]['df1', 'dr1'] <- 0
+    expect_error(split(zc), 'poprank would drop what POPCOV states')
+  })
+
   # ctIdentify deliberately assesses the *unrestricted* covariance, whatever
   # ctFit's poprank default is, and this pins that rather than leaving it to be
   # "fixed" later. Its job is to say what the data identifies -- nweak on the
@@ -218,14 +340,13 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
 
   # Explicitly asking for a rank where it cannot apply is an error; the default
   # is simply not applied, which is what lets 'auto' be the default at all.
-  test_that('an explicitly requested poprank is refused on stan and under laplace', {
+  # Laplace is no longer among the refusals -- it is supported, just not by
+  # default -- so only the backend is.
+  test_that('an explicitly requested poprank is refused on stan', {
     dat <- poprank_data()
     expect_error(suppressWarnings(ctFit(datalong = dat, model = poprank_model(),
       backend = 'stan', fit = FALSE, intoverpop = 'augmented', poprank = 'auto')),
       "requires backend='julia'")
-    expect_error(suppressWarnings(ctFit(datalong = dat, model = poprank_model(),
-      backend = 'julia', fit = FALSE, intoverpop = 'laplace', poprank = 'auto')),
-      'augmented')
   })
 
   test_that('the default poprank is silently inapplicable where it cannot be used', {
