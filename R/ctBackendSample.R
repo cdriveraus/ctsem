@@ -229,7 +229,8 @@
 #'   honoured, with a warning.
 #' @param sampleControl A list of sampler settings: \code{maxdepth} (default 10),
 #'   \code{target_accept} (0.8), \code{adapt_metric} (FALSE),
-#'   \code{adapt_effects} (FALSE), \code{init_scale} (1), \code{maxdelta}
+#'   \code{adapt_effects} (FALSE), \code{init_scale} (1), \code{stepsize},
+#'   \code{maxdelta}
 #'   (1000). Stan's spellings \code{max_treedepth} and \code{adapt_delta},
 #'   which \code{\link{ctFit}} takes for the same two settings, are
 #'   accepted here as well.
@@ -263,6 +264,13 @@
 #'   Worth setting when a draw count had to be guessed at; not worth setting
 #'   when a warning says a parameter is unidentified, because no number of
 #'   draws fixes an improper posterior.
+#'
+#'   \code{stepsize} fixes the step size every chain starts from, instead of
+#'   each chain estimating its own from a single trial leapfrog step -- which
+#'   answers differently in every chain, and is the whole of what a chain keeps
+#'   when \code{warmup} is 0. Dual averaging moves it from there unless warmup
+#'   is 0, so this is a starting point rather than a setting of the step size
+#'   itself.
 #'
 #'   \code{adapt_metric} re-estimates the metric during warmup. It is off by
 #'   default: the metric starts as the inverse of the exact Hessian at the
@@ -482,6 +490,7 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
   # expressed against, and because a script that passed it should keep working
   # through `sampleControl` as well as through the deprecated argument.
   "iter", "chains", "warmup", "draws", "seed", "saveEffects", "processes",
+  "stepsize",
   "callback")
 
 #' Fold the deprecated sampling arguments into \code{sampleControl}
@@ -616,6 +625,19 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
     # 2 alike, so it discriminated nothing. `control$init_scale` takes any value
     # meanwhile.
     init_scale = as.numeric(.ctJuliaOr(control$init_scale, 1)),
+    # A step size for every chain to start from, instead of each estimating
+    # its own. `_init_stepsize` doubles or halves from 1 until one leapfrog
+    # step under one momentum draw crosses an acceptance of a half, at that
+    # chain's own starting point, so its answer differs between chains for
+    # reasons that carry no information. Warmup erases that; `warmup = 0` has
+    # nothing to erase it with, which is why chains asked for no warmup came
+    # back some fast and divergent and others fine.
+    #
+    # Supplied here rather than shared inside the engine, deliberately: one
+    # estimate computed per run there answers differently in a worker process
+    # than in this session, because the chunk tuner shifts the last bits of
+    # the density and the ladder's threshold turns that into a factor of two.
+    stepsize = as.numeric(.ctJuliaOr(control$stepsize, 0)),
     # `adapt_metric` defaults to FALSE, which is a change, and it is measured
     # rather than argued. Warmup re-estimates the metric from 150 iterations
     # up; the metric it replaces is `inv(-H)` for the *exact* Hessian at the
@@ -787,6 +809,7 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
     ndraws = as.integer(draws), seed = as.integer(seed)[1L],
     maxdepth = settings$maxdepth, target_accept = settings$target_accept,
     maxdelta = settings$maxdelta, init_scale = settings$init_scale,
+    stepsize = settings$stepsize,
     adapt_metric = settings$adapt_metric,
     verbose = isTRUE(progress),
     progress_overwrite = .ctProgressOverwrite(verbose),

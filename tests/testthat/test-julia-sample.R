@@ -466,3 +466,29 @@ test_that("an effective-size target turns the draw count into a budget", {
   expect_error(ctSample(fit, sampleControl = list(minEss = 100)),
     "did you mean minESS")
 })
+
+test_that("a fixed stepsize is what every chain starts from", {
+  skip_without_julia()
+  fit <- .sample_fixture()
+
+  # With no warmup there is nothing to move the step size from where it began,
+  # so this is the one setting where the initial value *is* the value -- and
+  # where each chain estimating its own showed up as chains that behaved
+  # differently for no reason.
+  fixed <- suppressWarnings(suppressMessages(ctSample(fit, chains = 3,
+    warmup = 0, draws = 20, cores = 1, processes = FALSE,
+    sampleControl = list(stepsize = 0.05))))
+  expect_equal(fixed$sample$stepsize, rep(0.05, 3L))
+
+  # Left unset, the chains estimate their own and need not agree; what is
+  # asserted is only that the setting is not silently ignored.
+  free <- suppressWarnings(suppressMessages(ctSample(fit, chains = 3,
+    warmup = 0, draws = 20, cores = 1, processes = FALSE)))
+  expect_false(isTRUE(all.equal(free$sample$stepsize, rep(0.05, 3L))))
+
+  # And with warmup it is a starting point rather than the answer.
+  moved <- suppressWarnings(suppressMessages(ctSample(fit, chains = 2,
+    warmup = 60, draws = 20, cores = 1, processes = FALSE,
+    sampleControl = list(stepsize = 0.05))))
+  expect_false(isTRUE(all.equal(moved$sample$stepsize, rep(0.05, 2L))))
+})

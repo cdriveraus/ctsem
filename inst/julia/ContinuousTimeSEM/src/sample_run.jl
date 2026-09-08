@@ -247,6 +247,7 @@ function _run_chain(logdensity!, centre::Vector{Float64},
     nwarmup::Int, ndraws::Int, maxdepth::Int, target_accept::Float64,
     maxdelta::Float64, init_scale::Float64, adapt_metric::Bool,
     adapt::Union{Nothing,Vector{Bool}}; settle_tol::Float64=0.0,
+    init_eps::Float64=0.0,
     resume::Union{Nothing,_ChainResult}=nothing,
     progress::CTSEMProgress=CTSEMProgress(false),
     callback::CTSEMCallback=CTSEMCallback(nothing))
@@ -267,7 +268,26 @@ function _run_chain(logdensity!, centre::Vector{Float64},
         logdensity!, g)
 
     current = metric
-    eps = _init_stepsize(logdensity!, current, rng, x, g, logp, ws)
+    # A step size the caller fixed, or this chain's own crude estimate.
+    #
+    # `_init_stepsize` doubles or halves from 1 until a *single* leapfrog step
+    # under a *single* momentum draw crosses an acceptance of one half, at the
+    # chain's own starting point -- so it answers differently in every chain,
+    # for reasons that carry no information. Dual averaging erases that over a
+    # warmup, which is why it was left alone; with `nwarmup = 0` there is
+    # nothing to erase it, and chains came back some fast and divergent and
+    # others fine.
+    #
+    # Given rather than estimated, every chain starts from the same number.
+    # It has to come from the caller rather than be shared here: computing it
+    # once per run inside the engine gives a *different* answer in a worker
+    # process than in this session, because the subject-loop chunk tuner picks
+    # its count by timing and the last bits of the density differ -- and this
+    # ladder's `> log(0.5)` test turns that into a factor of two. Measured:
+    # 0.125 in-process against 0.0625 in a worker, on one fixture at one seed,
+    # which broke the processes-reproduce-in-process invariant.
+    eps = init_eps > 0 ? init_eps :
+        _init_stepsize(logdensity!, current, rng, x, g, logp, ws)
     da = _DualAverage(eps, target_accept)
     # Divergences since the last checkpoint, for the automatic raise below.
     check_divergent = 0
@@ -521,13 +541,14 @@ function _sample_to_target(density_for, centre, metric, nchains::Int,
     adapt_metric::Bool, adapt, settle_tol::Float64, min_ess::Float64,
     mean_ess::Float64, max_draws::Int, rhat_target::Float64, npar::Int,
     resume, verbose::Bool, overwrite::Bool=true; progress_callback=nothing,
-    progress_sink=nothing)
+    progress_sink=nothing, init_eps::Float64=0.0)
 
     results = if resume === nothing
         _sample_chains(nchains, parallel, seed, centre, metric, nwarmup, ndraws,
             maxdepth, target_accept, maxdelta, init_scale, adapt_metric, adapt,
-            density_for; settle_tol=settle_tol, progress=verbose,
-            overwrite=overwrite, progress_callback=progress_callback,
+            density_for; settle_tol=settle_tol, init_eps=init_eps,
+            progress=verbose, overwrite=overwrite,
+            progress_callback=progress_callback,
             progress_sink=progress_sink)
     else
         _continue_chains(nchains, parallel, seed, ndraws, maxdepth, maxdelta,
@@ -680,8 +701,9 @@ function _sample_chains(nchains::Int, parallel::Bool, seed::Integer,
     centre::Vector{Float64}, metric::CTSEMMetric, nwarmup::Int, ndraws::Int,
     maxdepth::Int, target_accept::Float64, maxdelta::Float64,
     init_scale::Float64, adapt_metric::Bool, adapt::Union{Nothing,Vector{Bool}},
-    density_for; settle_tol::Float64=0.0, progress::Bool=false,
-    overwrite::Bool=true, progress_callback=nothing, progress_sink=nothing)
+    density_for; settle_tol::Float64=0.0, init_eps::Float64=0.0,
+    progress::Bool=false, overwrite::Bool=true, progress_callback=nothing,
+    progress_sink=nothing)
     results = Vector{_ChainResult}(undef, nchains)
     runner = function (c)
         # Only the first chain reports. Four threads writing lines interleave
@@ -699,7 +721,8 @@ function _sample_chains(nchains::Int, parallel::Bool, seed::Integer,
         results[c] = _run_chain(density_for(c), centre, metric,
             Random.Xoshiro(UInt64(seed) + UInt64(c)), nwarmup, ndraws, maxdepth,
             target_accept, maxdelta, init_scale, adapt_metric, adapt;
-            settle_tol=settle_tol, progress=reporter, callback=watcher)
+            settle_tol=settle_tol, init_eps=init_eps, progress=reporter,
+            callback=watcher)
         # See `_continue_chains`. One reporter spans both phases -- `_run_chain`
         # relabels it from "warmup" to "sampling" partway -- so the closing line
         # names both rather than whichever phase it ended in.
@@ -747,7 +770,7 @@ function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     min_ess::Real=0.0, mean_ess::Real=0.0, max_draws::Integer=0,
     rhat_target::Real=1.01, settle_tol::Real=0.0, resume=nothing,
     progress_overwrite::Bool=true, progress_callback=nothing,
-    progress_sink=nothing)
+    progress_sink=nothing, stepsize::Real=0.0)
 
     nchains = Int(nchains); nwarmup = Int(nwarmup); ndraws = Int(ndraws)
     nchains >= 1 || throw(ArgumentError("nchains must be positive"))
@@ -805,7 +828,8 @@ function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
         adapt_metric, adapt, Float64(settle_tol), Float64(min_ess),
         Float64(mean_ess), max(Int(max_draws), ndraws), Float64(rhat_target),
         sampler.npar, resume, verbose, progress_overwrite;
-        progress_callback=progress_callback, progress_sink=progress_sink)
+        progress_callback=progress_callback, progress_sink=progress_sink,
+        init_eps=Float64(stepsize))
     results = run.results
     ndraws = run.ndraws
 
@@ -933,7 +957,7 @@ function ctsem_sample_marginal(objective, values::AbstractVector;
     verbose::Bool=false, min_ess::Real=0.0, mean_ess::Real=0.0,
     max_draws::Integer=0, rhat_target::Real=1.01, settle_tol::Real=0.0,
     resume=nothing, progress_overwrite::Bool=true, progress_callback=nothing,
-    progress_sink=nothing, nparameters::Integer=0)
+    progress_sink=nothing, nparameters::Integer=0, stepsize::Real=0.0)
 
     nchains = Int(nchains); nwarmup = Int(nwarmup); ndraws = Int(ndraws)
     nchains >= 1 || throw(ArgumentError("nchains must be positive"))
@@ -1021,7 +1045,7 @@ function ctsem_sample_marginal(objective, values::AbstractVector;
         Float64(settle_tol), Float64(min_ess), Float64(mean_ess),
         max(Int(max_draws), ndraws), Float64(rhat_target), npar, resume,
         verbose, progress_overwrite; progress_callback=progress_callback,
-        progress_sink=progress_sink)
+        progress_sink=progress_sink, init_eps=Float64(stepsize))
     results = run.results
     ndraws = run.ndraws
 
