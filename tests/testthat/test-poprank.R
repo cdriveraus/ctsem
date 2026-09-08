@@ -272,6 +272,73 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
     expect_error(split(zc), 'poprank would drop what POPCOV states')
   })
 
+  # What a fixed POPCOV entry means. Pinned because the documentation in
+  # R/ctModelPopCov.R now states these numbers, and a comment is not evidence:
+  # if `constraincorsqrt1()` or the placement changes, this is what notices.
+  #
+  # The diagonal is the population sd it says it is. The off-diagonal is the
+  # coordinate that map consumes, so the correlation that comes out is further
+  # from zero than the coordinate written in -- except at zero, which is exact
+  # and is the case the surface's own example relies on.
+  test_that('a fixed POPCOV entry means what R/ctModelPopCov.R says it means', {
+    set.seed(4); nsub <- 120L; nt <- 6L
+    o <- vector('list', nsub)
+    for (i in seq_len(nsub)) {
+      eta <- numeric(nt); eta[1] <- rnorm(1)
+      for (t in 2:nt) eta[t] <- exp(-.5) * eta[t - 1] + rnorm(1, 0, .4)
+      o[[i]] <- data.frame(id = i, time = seq_len(nt) - 1,
+        Y1 = eta + rnorm(1, 0, .5) + rnorm(nt, 0, .3),
+        Y2 = eta + rnorm(1, 0, .5) + rnorm(nt, 0, .3))
+    }
+    dat <- do.call(rbind, o)
+    mk <- function() {
+      m <- suppressMessages(ctModel(type = 'ct', n.latent = 1, n.manifest = 2,
+        LAMBDA = matrix(c(1, 1), 2, 1), manifestNames = c('Y1', 'Y2'),
+        latentNames = 'eta', DRIFT = matrix(-0.5), DIFFUSION = matrix(0.4),
+        CINT = matrix(0), T0MEANS = matrix(0), T0VAR = matrix(1),
+        MANIFESTMEANS = matrix(c('mm1|param', 'mm2|param'), 2, 1),
+        MANIFESTVAR = matrix(c('mv1|log1p_exp(param)', 0, 0,
+          'mv2|log1p_exp(param)'), 2, 2)))
+      m$pars$indvarying <- FALSE
+      m$pars$indvarying[m$pars$matrix %in% 'MANIFESTMEANS'] <- TRUE
+      m
+    }
+    withcell <- function(row, col, value) {
+      m <- mk()
+      p <- ctsem:::ctModelStatesAndPARS(ctsem:::ctModel0DRIFT(m, TRUE)$pars,
+        statenames = 'eta', tdprednames = NULL)
+      m$pars <- p
+      m[['POPCOV']] <- ctsem:::.ctModelPopCov(p)
+      nms <- rownames(m[['POPCOV']])
+      m[['POPCOV']][nms[row], nms[col]] <- value
+      set.seed(77)
+      f <- suppressWarnings(suppressMessages(ctFit(datalong = dat, model = m,
+        backend = 'julia', intoverpop = 'augmented', poprank = NA, cores = 1L,
+        verbose = 0L, optimcontrol = list(estonly = TRUE))))
+      ctsem:::.ctBackendRawPopCov(f)[[1L]]$cov
+    }
+    correlation <- function(cov) cov[2, 1] / sqrt(cov[1, 1] * cov[2, 2])
+
+    # the diagonal is the sd, exactly, for these linear transforms
+    expect_equal(sqrt(withcell(1, 1, 0.3)[1, 1]), 0.3, tolerance = 1e-4)
+    expect_equal(sqrt(withcell(1, 1, 0.8)[1, 1]), 0.8, tolerance = 1e-4)
+
+    # zero off the diagonal is uncorrelated, exactly
+    expect_equal(correlation(withcell(2, 1, 0)), 0, tolerance = 1e-6)
+
+    # and a non-zero coordinate gives a correlation further from zero than
+    # itself -- the numbers the documentation quotes
+    expect_equal(correlation(withcell(2, 1, 0.3)), 0.539, tolerance = 2e-3)
+    expect_equal(correlation(withcell(2, 1, 0.5)), 0.788, tolerance = 2e-3)
+    # Monotone and sign-preserving, which is why it reads like a correlation --
+    # but not symmetric in sign, which is another way it is not one. The same
+    # coordinate magnitude gives a different correlation magnitude either side
+    # of zero, because constraincorsqrt1()'s row scale carries an |s| - s term.
+    expect_equal(correlation(withcell(2, 1, -0.5)), -0.769, tolerance = 2e-3)
+    expect_lt(abs(correlation(withcell(2, 1, -0.5))),
+      abs(correlation(withcell(2, 1, 0.5))))
+  })
+
   # ctIdentify deliberately assesses the *unrestricted* covariance, whatever
   # ctFit's poprank default is, and this pins that rather than leaving it to be
   # "fixed" later. Its job is to say what the data identifies -- nweak on the
