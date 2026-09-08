@@ -37,6 +37,12 @@ until the chain is already done, so the parent reports instead, from what
 the workers wrote rather than from what they printed.
 }
 \details{
+Written to `stderr()`, which is where `message()` writes and where the
+engine's own progress line arrives from Julia -- see `_console()` in
+`progress.jl`. One stream for the whole of a fit's reporting, so that a
+console which styles or separates the two does not split this line off
+from the messages around it.
+
 Overwritten in place where a carriage return means something, exactly as
 `CTSEMProgress` does it in `progress.jl` and under the same detection --
 `.ctProgressOverwrite()`, so a log file, a knitr chunk or a captured stream

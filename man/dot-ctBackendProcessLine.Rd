@@ -10,7 +10,8 @@
 \item{infos}{One entry per chain from [.ctBackendReadProgressFile()], with
 `NULL` for a chain that has not written yet.}
 
-\item{chains}{Number of chains.}
+\item{chains}{Number of chains, so that the line can say when it is
+describing fewer of them than are running.}
 
 \item{elapsed}{Seconds each chain has spent in its current phase, for the
 rate the estimate extrapolates from.}

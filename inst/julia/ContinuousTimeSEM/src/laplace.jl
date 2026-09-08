@@ -2721,13 +2721,13 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
                 rejected_gradient += 1
                 if verbose && rejected_gradient == 1
                     finite_part = filter(isfinite, evaluated.gradient)
-                    println("Laplace probe: first gradient rejection, objective ",
+                    println(_console(), "Laplace probe: first gradient rejection, objective ",
                         objective, ", ", count(!isfinite, evaluated.gradient),
                         " of ", length(evaluated.gradient),
                         " entries non-finite, largest finite ",
                         isempty(finite_part) ? 0.0 : maximum(abs, finite_part))
-                    println("Laplace probe: at x = ", collect(x))
-                    println("Laplace probe: gradient = ", collect(evaluated.gradient))
+                    println(_console(), "Laplace probe: at x = ", collect(x))
+                    println(_console(), "Laplace probe: gradient = ", collect(evaluated.gradient))
                 end
             end
         end
@@ -2800,7 +2800,7 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
             nested_gradient=nested_gradient); verbose=verbose) : nothing
     if verbose
         chunks = ctsem_max_chunks()
-        println("Laplace: ", length(laplace.objective.subject_objectives),
+        println(_console(), "Laplace: ", length(laplace.objective.subject_objectives),
             " subjects in ", length(laplace.units.members), " unit(s), ",
             nlevels(laplace.spec), " level(s), ", nrandomeffects(laplace.spec),
             " random effects, ", min(max(chunks.max_chunks == 0 ? chunks.nthreads :
@@ -2843,7 +2843,7 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
             err isa InterruptException && rethrow()
             if verbose
                 _progress_break(reporter)
-                println("Laplace: Hager-Zhang line search failed (",
+                println(_console(), "Laplace: Hager-Zhang line search failed (",
                     sprint(showerror, err), "); retrying with backtracking")
                 flush(stdout)
             end
@@ -2913,13 +2913,13 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
     end
 
     if verbose
-        println("Laplace: ", accepted_calls, " objective evaluations accepted, ",
+        println(_console(), "Laplace: ", accepted_calls, " objective evaluations accepted, ",
             rejected_nonfinite, " rejected as non-finite, ", rejected_inner,
             " for an inner mode solve that did not converge, ",
             rejected_gradient, " for the gradient; ",
             _CTSEM_LAPLACE_FALLBACKS[],
             " gradient(s) fell back to the nested route")
-        println("Laplace: inner modes ",
+        println(_console(), "Laplace: inner modes ",
             count(laplace.inner_converged), "/", length(laplace.inner_converged),
             " converged, max |dg/dz| ",
             isempty(laplace.inner_gradient) ? 0.0 : maximum(laplace.inner_gradient),
@@ -3016,21 +3016,21 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
     # `g_converged` is kept as an alternative to the scaled test because it is
     # a genuine gradient criterion; it is just an absolute one, and `g_tol` is
     # out of reach on a log likelihood of order 1e3 however good the fit.
-    verbose && stalled && println("Laplace: the optimizer made no progress from ",
+    verbose && stalled && println(_console(), "Laplace: the optimizer made no progress from ",
         "its starting values; reporting this as not converged")
-    verbose && overshot && println("Laplace: raw parameter(s) ",
+    verbose && overshot && println(_console(), "Laplace: raw parameter(s) ",
         saturated_parameters, " have a materialising transform that is flat ",
         "to machine precision at the estimate, and pulling one back improves ",
         "the objective by ", overshoot.gain, ", so this is not a maximum; ",
         "reporting this as not converged")
-    verbose && saturated && !overshot && println("Laplace: raw parameter(s) ",
+    verbose && saturated && !overshot && println(_console(), "Laplace: raw parameter(s) ",
         saturated_parameters, " have a materialising transform that is flat ",
         "to machine precision at the estimate, but no pullback improves the ",
         "objective, so this is a maximum with those coordinates unidentified ",
         "rather than a failed fit")
     verbose && !stalled && !(finite_gradient &&
         (Optim.g_converged(result) || converged_enough)) &&
-        println("Laplace: the optimizer stopped with a largest gradient of ",
+        println(_console(), "Laplace: the optimizer stopped with a largest gradient of ",
             gradient_norm, " against a tolerance of ", scaled_tolerance,
             "; reporting this as not converged")
     return (

@@ -392,7 +392,7 @@ function ctsem_tune_chunks!(evaluate; ceiling::Integer=0, verbose::Bool=false)
                 noise = max(noise, (slowest - elapsed) / elapsed)
             end
             push!(timings, (n, elapsed))
-            verbose && println("Chunk tuning: ", n, " chunk(s) ",
+            verbose && println(_console(), "Chunk tuning: ", n, " chunk(s) ",
                 round(elapsed; digits=4), " s")
             # `1 - noise`, not a fixed 0.95. Splitting a small model's subject
             # loop finely is close to free either way, so the ladder was picking
@@ -423,7 +423,7 @@ function ctsem_tune_chunks!(evaluate; ceiling::Integer=0, verbose::Bool=false)
         rethrow()
     end
     _CTSEM_MAX_CHUNKS[] = best_chunks
-    verbose && println("Chunk tuning: using ", best_chunks, " chunk(s) of at most ", limit)
+    verbose && println(_console(), "Chunk tuning: using ", best_chunks, " chunk(s) of at most ", limit)
     return (chunks=best_chunks, timings=timings)
 end
 
@@ -907,14 +907,14 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     overshoot = _ctsem_overshot(objective, minimizer, saturated_parameters,
         final.value, scaled_tolerance)
     overshot = overshoot.overshot
-    verbose && stalled && println("ctsem_optimize: the optimizer made no progress ",
+    verbose && stalled && println(_console(), "ctsem_optimize: the optimizer made no progress ",
         "from its starting values; reporting this as not converged")
-    verbose && overshot && println("ctsem_optimize: raw parameter(s) ",
+    verbose && overshot && println(_console(), "ctsem_optimize: raw parameter(s) ",
         saturated_parameters, " have a materialising transform that is flat ",
         "to machine precision at the estimate, and pulling one back improves ",
         "the objective by ", overshoot.gain, ", so this is not a maximum; ",
         "reporting this as not converged")
-    verbose && saturated && !overshot && println("ctsem_optimize: raw ",
+    verbose && saturated && !overshot && println(_console(), "ctsem_optimize: raw ",
         "parameter(s) ", saturated_parameters, " have a materialising ",
         "transform that is flat to machine precision at the estimate, but no ",
         "pullback improves the objective, so this is a maximum with those ",

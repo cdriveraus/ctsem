@@ -4,11 +4,31 @@ Progress reporting for long fits.
 # Why this can exist at all
 
 Output written by the engine reaches the R console *while a call is still
-running* -- JuliaConnectoR forwards the subprocess's stdout as it arrives rather
+running* -- JuliaConnectoR forwards the subprocess's output as it arrives rather
 than collecting it at the end. Measured: a Julia function printing once a second
 for six seconds had its first line visible in R after one second and its last
 before the call returned. So a fit can report on itself as it goes, which is the
 only kind of progress report worth having.
+
+# Which stream, and why it matters
+
+`stderr`, through `_console()`, and everything the engine prints to a console
+goes there -- the progress line and the `verbose` messages alike.
+
+JuliaConnectoR redirects both of the subprocess's streams and relays them to the
+R side asynchronously, `stdout` to R's `stdout()` and `stderr` to R's `stderr()`
+(`handleCallbacksAndOutput` and `readOutput` in its `communicating.jl` and R
+sources; the relay adds no newline of its own and strips ANSI escapes, which is
+why the carriage return survives and colour would not).
+
+R's `stderr()` is where `message()` writes, so a front end that styles R's
+messages styles the engine's too -- reported from RStudio, where the engine's
+lines had been arriving as plain white console output alongside grey message
+boxes from the R side of the same fit. The second reason is the one that also
+fixes the in-place line: a console that separates the two streams puts a break
+between them, so a progress line on one stream and a message on the other could
+not share a line however the carriage returns fell. One stream for everything
+the engine says is what makes `_progress_break` mean anything.
 
 # What is reported, and what is not
 
@@ -33,6 +53,20 @@ representative when the chains are doing the same work.
 """
 
 using Printf
+
+"""
+    _console()
+
+Where everything the engine prints goes: `stderr`. The file header says why.
+
+A function rather than a `const`, which is load-bearing rather than a
+preference. `stderr` is a global binding that `redirect_stderr()` rebinds, and
+JuliaConnectoR calls it when it starts serving -- so a `const` bound at
+precompile time would hold the stream this module saw while being compiled, and
+every report would be written somewhere nobody is reading. Read at call time it
+is whatever the running session's `stderr` currently is.
+"""
+_console() = stderr
 
 """Cursor to column zero; see `_emit`."""
 const CARRIAGE = Char(13)   # cursor to column zero
@@ -341,8 +375,8 @@ Anything that prints while a fit is running calls this first.
 """
 function _progress_break(p::CTSEMProgress)
     (p.enabled && p.overwrite && p.lines > 0) || return nothing
-    print(NEWLINE)
-    flush(stdout)
+    print(_console(), NEWLINE)
+    flush(_console())
     p.width = 0
     # Not zero: the cursor is already at the start of a fresh line, so the next
     # update must not open with `_emit`'s leading newline and leave a blank one.
@@ -363,8 +397,8 @@ this possible at all.
 """
 function _emit(p::CTSEMProgress, text::AbstractString)
     if !p.overwrite
-        println(text)
-        flush(stdout)
+        println(_console(), text)
+        flush(_console())
         return nothing
     end
     # The first in-place update opens with a newline. A carriage return only
@@ -377,11 +411,11 @@ function _emit(p::CTSEMProgress, text::AbstractString)
     # so the first update is the first line either way, and the extra case
     # costs nothing while covering a caller that has emitted one line already.
     if p.lines <= 1
-        print(NEWLINE)
+        print(_console(), NEWLINE)
     end
     p.width = max(p.width, length(text))
-    print(CARRIAGE, rpad(text, p.width))
-    flush(stdout)
+    print(_console(), CARRIAGE, rpad(text, p.width))
+    flush(_console())
     return nothing
 end
 
@@ -393,12 +427,12 @@ function _progress_done(p::CTSEMProgress, fields::AbstractString...)
     if p.overwrite
         # Replaces the last in-place update, then ends the line so whatever
         # comes next starts cleanly.
-        print(CARRIAGE, rpad(text, p.width), NEWLINE)
-        flush(stdout)
+        print(_console(), CARRIAGE, rpad(text, p.width), NEWLINE)
+        flush(_console())
         p.width = 0
     else
-        println(text)
-        flush(stdout)
+        println(_console(), text)
+        flush(_console())
     end
     return nothing
 end
@@ -500,8 +534,8 @@ function _invoke_callback(cb::CTSEMCallback, values...; force::Bool=false)
         cb.f(values...)
     catch err
         cb.alive = false
-        println("  progress callback failed and was disabled: ", err)
-        flush(stdout)
+        println(_console(), "  progress callback failed and was disabled: ", err)
+        flush(_console())
     end
     return nothing
 end

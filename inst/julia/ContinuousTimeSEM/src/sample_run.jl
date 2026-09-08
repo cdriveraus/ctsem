@@ -530,7 +530,7 @@ function _sample_to_target(density_for, centre, metric, nchains::Int,
         # extra batch removes most of that, and costs one batch.
         confirmed = met && was_met
         if verbose
-            println("  ", total, " draws per chain: min ESS ",
+            println(_console(), "  ", total, " draws per chain: min ESS ",
                 round(worst; digits=1), ", mean ESS ", round(average; digits=1),
                 ", worst R-hat ", round(rhat; digits=3),
                 confirmed ? " -- targets met" :
@@ -539,7 +539,7 @@ function _sample_to_target(density_for, centre, metric, nchains::Int,
         was_met = met
         confirmed && break
         if total >= max_draws
-            verbose && println("  draw budget of ", max_draws,
+            verbose && println(_console(), "  draw budget of ", max_draws,
                 " per chain reached before the targets were met")
             break
         end
@@ -755,7 +755,7 @@ function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
             push!(laplace.workspaces, Dict{Any,Any}())
         end
     end
-    verbose && println("Sampling: ", nchains, " chain(s), ", ctsem_sample_dimension(sampler),
+    verbose && println(_console(), "Sampling: ", nchains, " chain(s), ", ctsem_sample_dimension(sampler),
         " dimensions (", sampler.npar, " population + ",
         ctsem_sample_dimension(sampler) - sampler.npar, " effects), ",
         parallel ? (per_chain > 1 ?
@@ -941,7 +941,7 @@ function ctsem_sample_marginal(objective, values::AbstractVector;
     information = Symmetric((-(H .+ transpose(H))) ./ 2)
     metric = _metric_from_covariances([1:npar], [_bounded_inverse(information)])
 
-    verbose && println("Sampling: ", nchains, " chain(s), ", npar,
+    verbose && println(_console(), "Sampling: ", nchains, " chain(s), ", npar,
         " dimensions (effects integrated out), chains sequential, ",
         "metric in 1 block")
 

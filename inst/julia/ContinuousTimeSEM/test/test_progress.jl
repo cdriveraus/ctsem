@@ -16,15 +16,19 @@ using Printf
 # Capture what a reporter writes. `overwrite=false` keeps each update on its own
 # line, which is what makes the text testable at all.
 #
-# Through a temp file rather than an IOBuffer: `redirect_stdout` takes a real
+# `stderr`, because that is where the engine writes: R's `stderr()` is where
+# `message()` goes, so a front end that styles R's messages styles these too.
+# See `_console()` in progress.jl.
+#
+# Through a temp file rather than an IOBuffer: `redirect_stderr` takes a real
 # stream, and an IOBuffer raises `MethodError: no method matching
 # (::Base.RedirectStdStream)(::IOBuffer)`.
 function _capture_progress(f::Function)
     path, io = mktemp()
     try
-        redirect_stdout(io) do
+        redirect_stderr(io) do
             f()
-            flush(stdout)
+            flush(stderr)
         end
         close(io)
         return read(path, String)
@@ -115,14 +119,15 @@ end
 end
 
 @testset "_progress_break ends an in-place line" begin
-    # The engine's own `verbose` messages share stdout with the progress line,
-    # and a carriage-returned line has no newline on it -- so they landed inside
-    # it: "|g| 2.70e+02ctsem_optimize: Hager-Zhang stopped...".
+    # The engine's own `verbose` messages share a stream with the progress line
+    # -- deliberately, see `_console()` -- and a carriage-returned line has no
+    # newline on it, so they landed inside it: "|g| 2.70e+02ctsem_optimize:
+    # Hager-Zhang stopped...".
     p = ContinuousTimeSEM.CTSEMProgress(true; label="optimise", overwrite=true)
     text = _capture_progress() do
         ContinuousTimeSEM._progress_optimise(p, 10, 1000)
         ContinuousTimeSEM._progress_break(p)
-        print("a message")
+        print(ContinuousTimeSEM._console(), "a message")
     end
     @test endswith(text, "\na message")
     # Not reset to zero: the cursor is already on a fresh line, so the next
