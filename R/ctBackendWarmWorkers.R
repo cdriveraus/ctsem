@@ -125,12 +125,23 @@
     # thread count cannot be changed on a running session, which is true and
     # not worth saying: a warmed worker being asked for more work is the
     # expected case, not a problem.
-    if (is.null(.ct_julia_cache$module)) ctsem::ctJuliaSetup(threads = 1)
-    # One evaluation does both jobs: `ctJuliaEvaluate` builds the objective,
-    # which marshals the data, and evaluating it forces the specialisation. The
-    # objective cache is per process and keyed on content, and this process has
-    # an empty one, so nothing here is shared with the parent.
-    invisible(ctsem::ctJuliaEvaluate(object, values, gradient = TRUE))
+    # Suppressed, as `.ctBackendSampleOneChain` suppresses its own: `future`
+    # relays a worker's messages to the parent when the parent collects the
+    # worker's value, which here is in the middle of the parent's own run and
+    # long after they were true. One warmed worker per chain put "Starting
+    # Julia ..." and "Compiling the julia engine for this model shape" on the
+    # parent's console once per worker, directly after the parent's Hessian --
+    # which reads as the parent restarting Julia, and the last of them landed
+    # inside the progress line. `.ctBackendWarmWait()` says how many warmed,
+    # which is the parent's business; how each one got there is not.
+    suppressMessages({
+      if (is.null(.ct_julia_cache$module)) ctsem::ctJuliaSetup(threads = 1)
+      # One evaluation does both jobs: `ctJuliaEvaluate` builds the objective,
+      # which marshals the data, and evaluating it forces the specialisation.
+      # The objective cache is per process and keyed on content, and this
+      # process has an empty one, so nothing here is shared with the parent.
+      invisible(ctsem::ctJuliaEvaluate(object, values, gradient = TRUE))
+    })
     TRUE
   }, error = function(e) structure(FALSE, message = conditionMessage(e)))
 }

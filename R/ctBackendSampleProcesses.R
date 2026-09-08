@@ -54,6 +54,17 @@
       values = target$estimate)
     if (is.null(handles)) return(NULL)
   }
+  # `resolved()` does not block, so this can say what the pause is for before
+  # paying it. The pool is started before the optimisation so that the compile
+  # overlaps it, and usually nothing is left to wait for -- but a fast
+  # optimisation finishes first, and then the parent sits silent for the
+  # remainder of a 26-43 s compile with no indication of why.
+  pending <- sum(!vapply(handles, function(h)
+    is.null(h) || future::resolved(h), logical(1)))
+  if (isTRUE(progress) && pending > 0L) {
+    message(pending, " of ", length(handles), " chain worker(s) still ",
+      "compiling for this model shape.")
+  }
   .ctBackendWarmWait(handles, verbose = verbose)
 
   # Each chain runs in its own process, so its printed output sits in that
@@ -128,7 +139,8 @@
       error = function(e) NULL)
   })
   if (report) {
-    .ctBackendReportProcesses(results, progress_files, chains = chains)
+    .ctBackendReportProcesses(results, progress_files, chains = chains,
+      overwrite = .ctProgressOverwrite(verbose))
   }
   drawn <- lapply(results, function(h) {
     if (is.null(h)) return(NULL)
@@ -228,20 +240,113 @@
     divergent = divergent)
 }
 
+#' One line describing every chain
+#'
+#' The whole report on one line, so that it can be overwritten in place: a
+#' carriage return goes to the start of the last visual row, so a block of
+#' `chains` lines cannot be updated without cursor movement that not every
+#' console honours. One line can, and the same line is what the
+#' single-process path prints.
+#'
+#' What is on it, and why in this order. The phase and the per-chain iteration
+#' counts answer "is this going to finish"; the counts share their total and
+#' their phase label whenever the chains agree on them, which is nearly
+#' always and is what keeps the line inside a terminal width. Then the time
+#' remaining, from the *slowest* chain, because that is when the run ends.
+#' Then the log posterior per chain, which is what says whether the draws are
+#' going anywhere sensible -- and it is per chain rather than summarised
+#' because a single chain stuck in a bad region is the failure this reveals,
+#' and an average hides exactly that. Divergences last, and only once there
+#' are some.
+#'
+#' @param infos One entry per chain from [.ctBackendReadProgressFile()], with
+#'   `NULL` for a chain that has not written yet.
+#' @param chains Number of chains, so that the line can say when it is
+#'   describing fewer of them than are running.
+#' @param elapsed Seconds each chain has spent in its current phase, for the
+#'   rate the estimate extrapolates from.
+#' @param width Console width to truncate to. A line that wraps cannot be
+#'   overwritten in place -- the earlier rows are left behind as debris.
+#' @return One string, or `NULL` when no chain has reported yet.
+#' @keywords internal
+.ctBackendProcessLine <- function(infos, chains, elapsed,
+  width = getOption("width", 80L)) {
+  have <- which(!vapply(infos, is.null, logical(1)))
+  if (!length(have)) return(NULL)
+  phase <- vapply(infos[have], function(i) i$phase, character(1))
+  iteration <- vapply(infos[have], function(i) i$iteration, integer(1))
+  total <- vapply(infos[have], function(i) i$total, integer(1))
+  logp <- vapply(infos[have], function(i) i$logp, numeric(1))
+  divergent <- vapply(infos[have], function(i) i$divergent, integer(1))
+
+  # Chains in the same phase with the same target are described once: the
+  # alternative repeats `warmup` and `/500` per chain, and four of those do
+  # not fit on a line that has to hold four log posteriors as well.
+  groups <- unique(paste(phase, total))
+  counts <- vapply(groups, function(g) {
+    use <- paste(phase, total) == g
+    sprintf("%s %s/%d", phase[use][1L],
+      paste(iteration[use], collapse = ", "), total[use][1L])
+  }, character(1), USE.NAMES = FALSE)
+
+  # The slowest chain's estimate, not the mean of them: the pooled draws are
+  # not there until every chain has finished.
+  rate <- ifelse(iteration > 0 & elapsed[have] > 0, iteration / elapsed[have], 0)
+  remaining <- ifelse(rate > 0 & total > iteration, (total - iteration) / rate, 0)
+
+  # Fit the line to the console by dropping what matters least, rather than by
+  # cutting the end off. Truncation removed the log posteriors -- four chains
+  # of a 500-draw run do not fit in eighty columns with everything on -- and
+  # those are the whole reason this line is per chain, so they are the last
+  # thing to go and the phrase around the time estimate is the first.
+  compose <- function(digits, phrase, showdiv) {
+    parts <- counts
+    if (any(remaining > 0)) {
+      parts <- c(parts, paste0(.ctDuration(max(remaining)),
+        if (phrase) " at this rate" else ""))
+    }
+    parts <- c(parts, paste("logp", paste(
+      sprintf(paste0("%.", digits, "g"), logp), collapse = ", ")))
+    if (showdiv && any(divergent > 0L)) {
+      parts <- c(parts, paste("div", paste(divergent, collapse = ", ")))
+    }
+    # Every field above is a positional list over the chains that have
+    # reported, so a chain missing from them shifts the rest silently. Said
+    # only when one is missing, which is the first second of a run -- and a
+    # worker that started and never reported, where it is the whole story.
+    if (length(have) < chains) {
+      parts <- c(parts, sprintf("%d of %d chains reporting", length(have),
+        chains))
+    }
+    paste0("  ", paste(parts, collapse = " | "))
+  }
+  variants <- list(compose(6, TRUE, TRUE), compose(6, FALSE, TRUE),
+    compose(4, FALSE, TRUE), compose(4, FALSE, FALSE))
+  width <- as.integer(width)[1L]
+  if (is.na(width) || width <= 10L) return(variants[[1L]])
+  for (line in variants) if (nchar(line) <= width - 1L) return(line)
+  substr(variants[[length(variants)]], 1L, width - 1L)
+}
+
 #' Report per-chain progress from the parent while chain processes run
 #'
-#' Polls each chain's progress file on a short interval and prints one line
-#' per chain still running -- the shape asked for when chains are processes:
-#' each worker's own printed progress sits in output that never reaches the
-#' parent until the chain is already done, so the parent reports instead,
-#' from what the workers wrote rather than from what they printed.
+#' Polls each chain's progress file on a short interval and reports every
+#' chain on one line -- the shape asked for when chains are processes: each
+#' worker's own printed progress sits in output that never reaches the parent
+#' until the chain is already done, so the parent reports instead, from what
+#' the workers wrote rather than from what they printed.
 #'
-#' Not overwritten in place. `CTSEMProgress` overwrites a single line because
-#' it owns the whole of what is on it; here several chains share the console
-#' and a later one finishing does not mean an earlier one's last line should
-#' vanish. A short block of chains, printed occasionally, is simple, will not
-#' garble on any terminal, and reads fine at the couple-of-seconds cadence
-#' this polls at -- faster would not show anything a chain-level report needs.
+#' Overwritten in place where a carriage return means something, exactly as
+#' `CTSEMProgress` does it in `progress.jl` and under the same detection --
+#' `.ctProgressOverwrite()`, so a log file, a knitr chunk or a captured stream
+#' gets its updates on their own lines and rarely instead. Printing a fresh
+#' block every poll is what this replaced: a five-minute sample left hundreds
+#' of lines of scrollback saying nothing the last of them did not.
+#'
+#' A chain that has finished keeps its last reported state on the line rather
+#' than dropping out of it. The line would otherwise shorten as chains end,
+#' which reads as chains disappearing, and the padding that makes in-place
+#' overwriting work would leave the tail of the longer line behind.
 #'
 #' @param results Future handles from [.ctBackendSampleProcesses()], one per
 #'   chain, possibly containing `NULL` for a chain that never started.
@@ -249,36 +354,64 @@
 #'   [.ctBackendProgressFileWriter()].
 #' @param chains Number of chains.
 #' @param interval Seconds between polls.
+#' @param overwrite Update one line in place rather than printing each report
+#'   on its own line.
 #' @return `NULL`, invisibly. Called for its printing.
 #' @keywords internal
 .ctBackendReportProcesses <- function(results, progress_files, chains,
-  interval = 2) {
+  interval = 1, overwrite = .ctProgressOverwrite(1)) {
   now <- Sys.time()
   phase_started <- rep(now, chains)
   phase_seen <- rep(NA_character_, chains)
+  # Last-known state per chain, so a finished chain stays on the line and a
+  # poll that catches a file mid-write does not blank one.
+  infos <- vector("list", chains)
+  emitted <- FALSE
+  shown <- NULL
+  pad <- 0L
   repeat {
     resolved <- vapply(results, function(h) is.null(h) || future::resolved(h),
       logical(1))
-    lines <- character(0)
     for (k in seq_len(chains)) {
-      if (resolved[k]) next
       info <- .ctBackendReadProgressFile(progress_files[k])
       if (is.null(info)) next
       if (is.na(phase_seen[k]) || !identical(phase_seen[k], info$phase)) {
         phase_started[k] <- Sys.time()
         phase_seen[k] <- info$phase
       }
-      elapsed <- as.numeric(difftime(Sys.time(), phase_started[k], units = "secs"))
-      rate <- if (info$iteration > 0 && elapsed > 0) info$iteration / elapsed else 0
-      eta <- if (rate > 0 && info$total > info$iteration)
-        paste0(" | ", .ctDuration((info$total - info$iteration) / rate),
-          " at this rate") else ""
-      lines <- c(lines, sprintf("  chain %d/%d: %-8s %5d/%-5d%s | logp %.2f",
-        k, chains, info$phase, info$iteration, info$total, eta, info$logp))
+      infos[[k]] <- info
     }
-    if (length(lines)) cat(paste(lines, collapse = "\n"), "\n", sep = "")
+    elapsed <- as.numeric(difftime(Sys.time(), phase_started, units = "secs"))
+    line <- .ctBackendProcessLine(infos, chains, elapsed)
+    # An update that says exactly what is already on the line is not written.
+    # Every chain has finished by the last poll, so the closing state would
+    # otherwise be written twice -- invisible in a console, which overwrites
+    # itself, and a duplicated line everywhere a carriage return is a character.
+    if (!is.null(line) && !identical(line, shown)) {
+      if (overwrite) {
+        # The first update opens with a newline: a carriage return only
+        # returns to the start of the current line, and that line may already
+        # hold a message R printed before sampling started. The padding is
+        # what keeps a shorter update from leaving the tail of a longer one
+        # behind it -- the same two rules `_emit()` follows in progress.jl.
+        if (!emitted) cat("\n")
+        pad <- max(pad, nchar(line))
+        cat("\r", formatC(line, width = -pad), sep = "")
+      } else {
+        cat(line, "\n", sep = "")
+      }
+      utils::flush.console()
+      emitted <- TRUE
+      shown <- line
+    }
     if (all(resolved)) break
     Sys.sleep(interval)
+  }
+  # End the line so whatever prints next -- the pooling, a diagnostic warning
+  # -- starts on its own rather than inside this one.
+  if (emitted && overwrite) {
+    cat("\n")
+    utils::flush.console()
   }
   invisible(NULL)
 }

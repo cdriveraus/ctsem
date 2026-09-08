@@ -384,3 +384,55 @@ test_that("a run too short to mix says so rather than returning quietly", {
   note <- suppressWarnings(summary(broken))$sampleNote
   expect_match(note, "have not converged|Too few effective draws")
 })
+
+test_that("the process-path progress line holds every chain on one line", {
+  info <- function(phase, iteration, total, logp, divergent = 0L) {
+    list(phase = phase, iteration = iteration, total = total, logp = logp,
+      divergent = divergent)
+  }
+  two <- list(info("warmup", 8L, 500L, -2321546.15),
+    info("warmup", 4L, 500L, -29733.03))
+  line <- .ctBackendProcessLine(two, 2L, c(200, 200), width = 100L)
+
+  # One line, whatever the chain count: it is overwritten in place, and a
+  # carriage return only returns to the start of the last visual row.
+  expect_length(line, 1L)
+  expect_false(grepl("\n", line, fixed = TRUE))
+  expect_lte(nchar(line), 99L)
+  # The phase and the target are said once for chains that agree on them; the
+  # iteration and the log posterior are per chain, because a single chain stuck
+  # in a bad region is the failure this line exists to reveal.
+  expect_match(line, "warmup 8, 4/500", fixed = TRUE)
+  expect_match(line, "-2.32155e+06", fixed = TRUE)
+  expect_match(line, "-29733", fixed = TRUE)
+  # And the estimate is the slowest chain's: chain 2 has 496 iterations left at
+  # 4 per 200s, so it decides when the run ends.
+  expect_match(line, "6h 53m at this rate", fixed = TRUE)
+
+  # Divergences appear once there are any, and not before.
+  expect_false(grepl("div", line, fixed = TRUE))
+  expect_match(.ctBackendProcessLine(list(info("warmup", 8L, 500L, -12.5, 3L),
+    info("warmup", 9L, 500L, -12.1, 0L)), 2L, c(10, 10), width = 100L),
+    "div 3, 0", fixed = TRUE)
+
+  # Chains in different phases keep their own group rather than being merged
+  # into one count that means neither.
+  mixed <- .ctBackendProcessLine(list(info("sampling", 12L, 500L, -12.5),
+    info("warmup", 498L, 500L, -12.1)), 2L, c(10, 10), width = 100L)
+  expect_match(mixed, "sampling 12/500", fixed = TRUE)
+  expect_match(mixed, "warmup 498/500", fixed = TRUE)
+
+  # A chain that has not written yet is absent, not an NA, and no chain having
+  # written is nothing to print rather than an empty line.
+  expect_match(.ctBackendProcessLine(list(info("warmup", 5L, 500L, -12.5), NULL),
+    2L, c(10, 10), width = 100L), "warmup 5/500", fixed = TRUE)
+  expect_null(.ctBackendProcessLine(list(NULL, NULL), 2L, c(10, 10)))
+
+  # The narrow case is the one that matters, because 80 columns is the default
+  # and four chains do not fit in it with everything on. What has to survive is
+  # the log posteriors -- truncation used to take exactly those.
+  four <- lapply(1:4, function(k) info("warmup", 300L + k, 500L, -5300 + k, 0L))
+  narrow <- .ctBackendProcessLine(four, 4L, rep(600, 4), width = 80L)
+  expect_lte(nchar(narrow), 79L)
+  expect_match(narrow, "logp -5299, -5298, -5297, -5296", fixed = TRUE)
+})

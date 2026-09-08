@@ -4,7 +4,13 @@
 \alias{.ctBackendReportProcesses}
 \title{Report per-chain progress from the parent while chain processes run}
 \usage{
-.ctBackendReportProcesses(results, progress_files, chains, interval = 2)
+.ctBackendReportProcesses(
+  results,
+  progress_files,
+  chains,
+  interval = 1,
+  overwrite = .ctProgressOverwrite(1)
+)
 }
 \arguments{
 \item{results}{Future handles from [.ctBackendSampleProcesses()], one per
@@ -16,23 +22,31 @@ chain, possibly containing `NULL` for a chain that never started.}
 \item{chains}{Number of chains.}
 
 \item{interval}{Seconds between polls.}
+
+\item{overwrite}{Update one line in place rather than printing each report
+on its own line.}
 }
 \value{
 `NULL`, invisibly. Called for its printing.
 }
 \description{
-Polls each chain's progress file on a short interval and prints one line
-per chain still running -- the shape asked for when chains are processes:
-each worker's own printed progress sits in output that never reaches the
-parent until the chain is already done, so the parent reports instead,
-from what the workers wrote rather than from what they printed.
+Polls each chain's progress file on a short interval and reports every
+chain on one line -- the shape asked for when chains are processes: each
+worker's own printed progress sits in output that never reaches the parent
+until the chain is already done, so the parent reports instead, from what
+the workers wrote rather than from what they printed.
 }
 \details{
-Not overwritten in place. `CTSEMProgress` overwrites a single line because
-it owns the whole of what is on it; here several chains share the console
-and a later one finishing does not mean an earlier one's last line should
-vanish. A short block of chains, printed occasionally, is simple, will not
-garble on any terminal, and reads fine at the couple-of-seconds cadence
-this polls at -- faster would not show anything a chain-level report needs.
+Overwritten in place where a carriage return means something, exactly as
+`CTSEMProgress` does it in `progress.jl` and under the same detection --
+`.ctProgressOverwrite()`, so a log file, a knitr chunk or a captured stream
+gets its updates on their own lines and rarely instead. Printing a fresh
+block every poll is what this replaced: a five-minute sample left hundreds
+of lines of scrollback saying nothing the last of them did not.
+
+A chain that has finished keeps its last reported state on the line rather
+than dropping out of it. The line would otherwise shorten as chains end,
+which reads as chains disappearing, and the padding that makes in-place
+overwriting work would leave the tail of the longer line behind.
 }
 \keyword{internal}
