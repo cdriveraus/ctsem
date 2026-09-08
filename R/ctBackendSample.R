@@ -595,7 +595,9 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
     maxdelta = settings$maxdelta, init_scale = settings$init_scale,
     adapt_metric = settings$adapt_metric,
     verbose = isTRUE(progress),
-    progress_overwrite = .ctProgressOverwrite(verbose))
+    progress_overwrite = .ctProgressOverwrite(verbose),
+    progress_sink = if (isTRUE(progress)) .ctProgressSink(
+      .ctProgressOverwrite(verbose)) else NULL)
   for (name in c("min_ess", "mean_ess", "max_draws", "rhat_target", "settle_tol")) {
     if (!is.null(settings[[name]])) arguments[[name]] <- settings[[name]]
   }

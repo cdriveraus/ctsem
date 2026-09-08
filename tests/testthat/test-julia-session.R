@@ -459,3 +459,89 @@ test_that("a worker pool left busy by an interrupted run is seen as stale", {
   expect_false(.ctBackendWarmPoolStale(2L))
   expect_equal(future::value(future::future({ 42L }, seed = TRUE)), 42L)
 })
+
+test_that("a progress line is delivered as a message, not written to a stream", {
+  # A console draws a message differently from text that merely arrives on the
+  # same stream -- in RStudio a shaded block against plain body text -- so what
+  # matters is that these are conditions, and a calling handler is the only
+  # proof of that.
+  sink <- .ctProgressSink(overwrite = TRUE)
+  caught <- character(0)
+  onstream <- capture.output(type = "message", withCallingHandlers({
+    sink("  optimise 1 iter | logpost -12.50", "update")
+    sink("  optimise 2 iter | logpost -12.40", "update")
+    sink("  optimise done in 1.2s", "done")
+  }, message = function(cnd) {
+    caught <<- c(caught, conditionMessage(cnd))
+    invokeRestart("muffleMessage")
+  }))
+  expect_length(caught, 3L)
+  expect_length(onstream, 0L)
+
+  # Each update opens with a carriage return and does not end the line, so the
+  # next one lands on top of it; the closing line ends itself.
+  expect_true(all(startsWith(caught, "\r")))
+  expect_false(endsWith(caught[1L], "\n"))
+  expect_true(endsWith(caught[3L], "\n"))
+
+  # Padded to the longest line so far, or a shorter update leaves the tail of a
+  # longer one behind it.
+  expect_equal(nchar(caught[3L]), nchar(caught[2L]) + 1L)  # +1 for the newline
+  expect_match(caught[2L], "logpost -12.40", fixed = TRUE)
+
+  # `break` only ends the line, and only when one is open.
+  sink2 <- .ctProgressSink(overwrite = TRUE)
+  broken <- character(0)
+  withCallingHandlers({
+    sink2("", "break")            # nothing open: nothing to end
+    sink2("  sampling 1/10", "update")
+    sink2("", "break")            # now there is
+  }, message = function(cnd) {
+    broken <<- c(broken, conditionMessage(cnd))
+    invokeRestart("muffleMessage")
+  })
+  expect_length(broken, 2L)
+  expect_equal(broken[2L], "\n")
+
+  # Without overwriting -- a log file, or a console where a carriage return
+  # moves nothing -- each update is its own line and carries no control
+  # characters at all.
+  plain <- .ctProgressSink(overwrite = FALSE)
+  lines <- character(0)
+  withCallingHandlers({
+    plain("  optimise 1 iter", "update")
+    plain("  optimise done in 1.2s", "done")
+  }, message = function(cnd) {
+    lines <<- c(lines, conditionMessage(cnd))
+    invokeRestart("muffleMessage")
+  })
+  expect_length(lines, 2L)
+  expect_false(any(grepl("\r", lines, fixed = TRUE)))
+  expect_true(all(endsWith(lines, "\n")))
+
+  # A failure in the display must never reach the fit: this is called from
+  # inside a running Julia call, where an error does not merely lose a line, it
+  # desynchronises the bridge.
+  # An environment cannot be coerced to a string, so this raises inside the
+  # sink -- and must not raise out of it.
+  expect_silent(.ctProgressSink(TRUE)(new.env(), "update"))
+})
+
+test_that("RStudio is a console that cannot be overwritten in place", {
+  # Progress is still reported there -- it is a console and someone is watching
+  # -- but not by carriage return, which its console does not honour: each
+  # arriving chunk becomes its own block, so an overwritten line became one
+  # line per update. The option overrides the detection either way.
+  withr::local_options(ctsem.progress.overwrite = NULL)
+  expect_type(.ctProgressRStudio(), "logical")
+  if (.ctProgressRStudio()) {
+    expect_false(.ctProgressOverwrite(1))
+  } else {
+    expect_equal(.ctProgressOverwrite(1), .ctProgressConsole())
+  }
+  withr::local_options(ctsem.progress.overwrite = TRUE)
+  expect_true(.ctProgressOverwrite(1))
+  expect_false(.ctProgressOverwrite(2))   # verbose 2 keeps the history
+  withr::local_options(ctsem.progress.overwrite = FALSE)
+  expect_false(.ctProgressOverwrite(1))
+})

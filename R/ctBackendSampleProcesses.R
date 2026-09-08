@@ -347,11 +347,10 @@
 #' until the chain is already done, so the parent reports instead, from what
 #' the workers wrote rather than from what they printed.
 #'
-#' Written to `stderr()`, which is where `message()` writes and where the
-#' engine's own progress line arrives from Julia -- see `_console()` in
-#' `progress.jl`. One stream for the whole of a fit's reporting, so that a
-#' console which styles or separates the two does not split this line off
-#' from the messages around it.
+#' Emitted through [.ctProgressSink()], which is what the engine's own
+#' progress line is delivered by -- so the two look alike wherever a console
+#' distinguishes a message from plain output, and the rules about carriage
+#' returns and padding live in one place rather than in two copies that drift.
 #'
 #' Overwritten in place where a carriage return means something, exactly as
 #' `CTSEMProgress` does it in `progress.jl` and under the same detection --
@@ -383,9 +382,8 @@
   # Last-known state per chain, so a finished chain stays on the line and a
   # poll that catches a file mid-write does not blank one.
   infos <- vector("list", chains)
-  emitted <- FALSE
+  emit <- .ctProgressSink(overwrite)
   shown <- NULL
-  pad <- 0L
   repeat {
     resolved <- vapply(results, function(h) is.null(h) || future::resolved(h),
       logical(1))
@@ -405,31 +403,18 @@
     # otherwise be written twice -- invisible in a console, which overwrites
     # itself, and a duplicated line everywhere a carriage return is a character.
     if (!is.null(line) && !identical(line, shown)) {
-      if (overwrite) {
-        # The first update opens with a newline: a carriage return only
-        # returns to the start of the current line, and that line may already
-        # hold a message R printed before sampling started. The padding is
-        # what keeps a shorter update from leaving the tail of a longer one
-        # behind it -- the same two rules `_emit()` follows in progress.jl.
-        if (!emitted) cat("\n", file = stderr())
-        pad <- max(pad, nchar(line))
-        cat("\r", formatC(line, width = -pad), sep = "", file = stderr())
-      } else {
-        cat(line, "\n", sep = "", file = stderr())
-      }
+      emit(line, "update")
       utils::flush.console()
-      emitted <- TRUE
       shown <- line
     }
     if (all(resolved)) break
     Sys.sleep(interval)
   }
   # End the line so whatever prints next -- the pooling, a diagnostic warning
-  # -- starts on its own rather than inside this one.
-  if (emitted && overwrite) {
-    cat("\n", file = stderr())
-    utils::flush.console()
-  }
+  # -- starts on its own rather than inside this one. A no-op when nothing was
+  # emitted, or when each update already ended its own line.
+  emit("", "break")
+  utils::flush.console()
   invisible(NULL)
 }
 

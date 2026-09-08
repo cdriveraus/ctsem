@@ -499,17 +499,19 @@ function _sample_to_target(density_for, centre, metric, nchains::Int,
     target_accept::Float64, maxdelta::Float64, init_scale::Float64,
     adapt_metric::Bool, adapt, settle_tol::Float64, min_ess::Float64,
     mean_ess::Float64, max_draws::Int, rhat_target::Float64, npar::Int,
-    resume, verbose::Bool, overwrite::Bool=true; progress_callback=nothing)
+    resume, verbose::Bool, overwrite::Bool=true; progress_callback=nothing,
+    progress_sink=nothing)
 
     results = if resume === nothing
         _sample_chains(nchains, parallel, seed, centre, metric, nwarmup, ndraws,
             maxdepth, target_accept, maxdelta, init_scale, adapt_metric, adapt,
             density_for; settle_tol=settle_tol, progress=verbose,
-            overwrite=overwrite, progress_callback=progress_callback)
+            overwrite=overwrite, progress_callback=progress_callback,
+            progress_sink=progress_sink)
     else
         _continue_chains(nchains, parallel, seed, ndraws, maxdepth, maxdelta,
             density_for, resume; progress=verbose, overwrite=overwrite,
-            progress_callback=progress_callback)
+            progress_callback=progress_callback, progress_sink=progress_sink)
     end
     total = ndraws
     attempt = 0
@@ -556,7 +558,8 @@ function _sample_to_target(density_for, centre, metric, nchains::Int,
         results = _merge_chains(results,
             _continue_chains(nchains, parallel, seed + 1000 * attempt, wanted,
                 maxdepth, maxdelta, density_for, results; progress=verbose,
-                overwrite=overwrite, progress_callback=progress_callback))
+                overwrite=overwrite, progress_callback=progress_callback,
+                progress_sink=progress_sink))
         total += wanted
     end
     return (results=results, ndraws=total)
@@ -578,11 +581,11 @@ end
 function _continue_chains(nchains::Int, parallel::Bool, seed::Integer,
     ndraws::Int, maxdepth::Int, maxdelta::Float64, density_for,
     previous::Vector{_ChainResult}; progress::Bool=false,
-    overwrite::Bool=true, progress_callback=nothing)
+    overwrite::Bool=true, progress_callback=nothing, progress_sink=nothing)
     results = Vector{_ChainResult}(undef, nchains)
     runner = function (c)
         reporter = CTSEMProgress(progress && c == 1; label="sampling",
-            overwrite=overwrite)
+            overwrite=overwrite, sink=progress_sink)
         # Only chain 1 gets a live callback too, and for the same reason as
         # the printed line: several threads calling back into R at once is
         # not merely unreadable, it is unsafe. See `_sample_chains`.
@@ -657,7 +660,7 @@ function _sample_chains(nchains::Int, parallel::Bool, seed::Integer,
     maxdepth::Int, target_accept::Float64, maxdelta::Float64,
     init_scale::Float64, adapt_metric::Bool, adapt::Union{Nothing,Vector{Bool}},
     density_for; settle_tol::Float64=0.0, progress::Bool=false,
-    overwrite::Bool=true, progress_callback=nothing)
+    overwrite::Bool=true, progress_callback=nothing, progress_sink=nothing)
     results = Vector{_ChainResult}(undef, nchains)
     runner = function (c)
         # Only the first chain reports. Four threads writing lines interleave
@@ -665,7 +668,7 @@ function _sample_chains(nchains::Int, parallel::Bool, seed::Integer,
         # the work being reported on; one chain is representative when they are
         # all doing the same thing.
         reporter = CTSEMProgress(progress && c == 1; label="warmup",
-            overwrite=overwrite)
+            overwrite=overwrite, sink=progress_sink)
         # Same restriction on the callback, and for a sharper reason than
         # readability: several `Threads.@spawn`ed chains calling back into R
         # at once is a concurrency hazard, not just noise. One representative
@@ -722,7 +725,8 @@ function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     hessian::Union{Nothing,AbstractMatrix}=nothing, verbose::Bool=false,
     min_ess::Real=0.0, mean_ess::Real=0.0, max_draws::Integer=0,
     rhat_target::Real=1.01, settle_tol::Real=0.0, resume=nothing,
-    progress_overwrite::Bool=true, progress_callback=nothing)
+    progress_overwrite::Bool=true, progress_callback=nothing,
+    progress_sink=nothing)
 
     nchains = Int(nchains); nwarmup = Int(nwarmup); ndraws = Int(ndraws)
     nchains >= 1 || throw(ArgumentError("nchains must be positive"))
@@ -780,7 +784,7 @@ function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
         adapt_metric, adapt, Float64(settle_tol), Float64(min_ess),
         Float64(mean_ess), max(Int(max_draws), ndraws), Float64(rhat_target),
         sampler.npar, resume, verbose, progress_overwrite;
-        progress_callback=progress_callback)
+        progress_callback=progress_callback, progress_sink=progress_sink)
     results = run.results
     ndraws = run.ndraws
 
@@ -907,7 +911,8 @@ function ctsem_sample_marginal(objective, values::AbstractVector;
     hessian::Union{Nothing,AbstractMatrix}=nothing, gradient_method=:adjoint,
     verbose::Bool=false, min_ess::Real=0.0, mean_ess::Real=0.0,
     max_draws::Integer=0, rhat_target::Real=1.01, settle_tol::Real=0.0,
-    resume=nothing, progress_overwrite::Bool=true, progress_callback=nothing)
+    resume=nothing, progress_overwrite::Bool=true, progress_callback=nothing,
+    progress_sink=nothing)
 
     nchains = Int(nchains); nwarmup = Int(nwarmup); ndraws = Int(ndraws)
     nchains >= 1 || throw(ArgumentError("nchains must be positive"))
@@ -950,7 +955,8 @@ function ctsem_sample_marginal(objective, values::AbstractVector;
         Float64(maxdelta), Float64(init_scale), adapt_metric, nothing,
         Float64(settle_tol), Float64(min_ess), Float64(mean_ess),
         max(Int(max_draws), ndraws), Float64(rhat_target), npar, resume,
-        verbose, progress_overwrite; progress_callback=progress_callback)
+        verbose, progress_overwrite; progress_callback=progress_callback,
+        progress_sink=progress_sink)
     results = run.results
     ndraws = run.ndraws
 
