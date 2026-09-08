@@ -732,9 +732,12 @@ function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
 
     sampler = ctsem_sampler(laplace, npar)
     start = collect(Float64, values)
-    # Builds the metric *and* leaves each unit's conditional mode on the Laplace
-    # object, which `ctsem_sample_start` then uses to place the effects. So the
-    # order of these two lines matters.
+    # Builds the metric *and* solves each unit's conditional mode at `start`,
+    # leaving it on the Laplace object, which `ctsem_sample_start` then uses to
+    # place the effects. So the order of these two lines matters: reversed, the
+    # effects are placed at whatever the objective's last call left behind --
+    # zero on a fresh one -- and `ctsem_sample_metric` records what that was
+    # measured to do to a chain.
     metric = ctsem_sample_metric(sampler, start; hessian=hessian)
 
     # Grown before anything is spawned: a concurrent push! onto the shared

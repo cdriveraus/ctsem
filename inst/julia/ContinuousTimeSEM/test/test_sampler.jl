@@ -118,14 +118,70 @@ end
     end
 end
 
+# Where a chain starts, and the metric it starts with, are read off the Laplace
+# object's retained per-unit modes -- which hold whatever its last call left
+# there. Nothing about a wrong one is visible: the metric factorizes, the
+# density is finite, the gradient is finite, and the chain sits still at a step
+# size of order 1e-9. Measured on a 100-subject fit whose joint density at the
+# mode is -5297, a freshly built objective started a chain at -4.7e9 and one
+# last evaluated at the pre-optimisation start values at -4.0e14 -- the state
+# every process-parallel chain of `ctFit(optimize = FALSE)` is in, since the
+# worker pool is warmed before the optimisation it overlaps.
+#
+# So this asserts what the reference state gives, from the two states that
+# reach it by ordinary use. The last assertion is what keeps it from passing
+# vacuously: modes that were never solved are zeros of the right length, so
+# every comparison here would agree at zero effects.
+@testset "the starting point and the metric do not depend on the objective's history" begin
+    for (name, fresh, theta, distant) in (
+            ("nonlinear", _fresh_nonlinear, [0.25, -0.4, 0.1, 0.15, -0.3],
+                [1.5, -1.2, 0.9, -1.4, 1.1]),
+            ("two levels", _fresh_twolevel,
+                [0.2, -0.1, 0.3, -0.2, 0.05, -0.3, -0.15, 0.4, -0.25],
+                [0.8, -0.9, 1.1, -0.7, 0.6, 0.5, 0.4, -0.6, 0.7]))
+        reference, _ = fresh()
+        ContinuousTimeSEM.ctsem_evaluate(reference, theta; gradient=false)
+        sampler = ContinuousTimeSEM.ctsem_sampler(reference, length(theta))
+        metric = ctsem_sample_metric(sampler, theta)
+        centre = ContinuousTimeSEM.ctsem_sample_start(sampler, theta)
+        g = zeros(length(centre))
+        logp = ContinuousTimeSEM.ctsem_sample_density!(g, sampler, centre)
+
+        histories = (
+            "never evaluated" => lp -> nothing,
+            "evaluated far away" => lp ->
+                ContinuousTimeSEM.ctsem_evaluate(lp, theta .+ distant; gradient=false))
+        for (label, prepare) in histories
+            other, _ = fresh()
+            prepare(other)
+            s = ContinuousTimeSEM.ctsem_sampler(other, length(theta))
+            m = ctsem_sample_metric(s, theta)
+            x = ContinuousTimeSEM.ctsem_sample_start(s, theta)
+            @test x ≈ centre atol = 1e-7
+            @test length(m.factors) == length(metric.factors)
+            for b in eachindex(metric.factors)
+                @test m.factors[b] ≈ metric.factors[b] rtol = 1e-5
+            end
+            @test ContinuousTimeSEM.ctsem_sample_density!(g, s, x) ≈ logp atol = 1e-7
+        end
+
+        # Not vacuous: the modes are somewhere, so the effects the start places
+        # are not the zeros an unsolved objective would have handed back.
+        @test maximum(abs, centre[(sampler.npar + 1):end]) > 0.02
+    end
+end
+
 @testset "the sampled dimension is the population vector plus every effect" begin
     laplace, values = _fresh_twolevel()
     sampler = ContinuousTimeSEM.ctsem_sampler(laplace, length(values))
     @test sampler.npar == length(values)
     @test ContinuousTimeSEM.ctsem_sample_dimension(sampler) ==
         length(values) + sum(laplace.units.dims)
-    # The effects start at zero, which is their prior mean and, after a fit,
-    # close to their posterior mode.
+    # This fixture's objective has not been evaluated, and an unevaluated one
+    # holds zero modes -- so zero is what the start places, their prior mean.
+    # After a fit the modes are elsewhere and the start follows them there:
+    # `ctsem_sample_metric` solves them at the sampled parameter vector, which
+    # is what the history test above pins.
     x = ContinuousTimeSEM.ctsem_sample_start(sampler, values)
     @test x[1:sampler.npar] == collect(Float64, values)
     @test all(iszero, x[(sampler.npar + 1):end])

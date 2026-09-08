@@ -277,6 +277,10 @@ already computed by the Laplace factorization.
 
 This is the difference between a chain that starts well conditioned and one that
 spends its warmup finding out what the model could have told it.
+
+The per-unit modes are re-solved at `values` first, so that what comes back
+describes `values` and not wherever the objective was last evaluated. The body
+records what reading them instead was measured to cost.
 """
 function ctsem_sample_metric(sampler::CTSEMSampler, values::AbstractVector;
     hessian::Union{Nothing,AbstractMatrix}=nothing, regularize::Real=1e-8)
@@ -301,6 +305,51 @@ function ctsem_sample_metric(sampler::CTSEMSampler, values::AbstractVector;
     # by scaling its outer blocks with the marginal covariance rather than the
     # eliminated diagonal.
     Ls = _laplace_popchols(theta, laplace.spec)
+
+    # The per-unit modes are solved here, at `theta`, rather than read as they
+    # stand -- and this is the whole difference between a chain that starts at
+    # the fit and one that does not come back.
+    #
+    # `laplace.modes` is retained *state*: a warm start for the next inner
+    # Newton solve, holding whatever the objective's last call left there (see
+    # `CTSEMLaplaceObjective`). Three functions downstream of here read it as
+    # though it described `theta` -- this metric's effect blocks, the
+    # conditional population block below, which evaluates the joint curvature
+    # at those effects, and `ctsem_sample_start`, which places the chain's
+    # starting effects at them. A freshly constructed objective has them all at
+    # zero, and one last evaluated elsewhere has that elsewhere's modes.
+    #
+    # Both states are reached by ordinary use, because the objective a chain
+    # samples need not be the one that was optimised. `ctSample()` on a fit
+    # reloaded into a new session builds a fresh one. Worse, every chain of
+    # `ctFit(optimize = FALSE)` run as a process does: the worker pool is warmed
+    # with one gradient at the *pre-optimisation start values*, deliberately, so
+    # that the engine compiles while the optimisation it overlaps is still
+    # running -- and the chain then samples with `theta` at the estimate and
+    # every subject's effects at whatever was modal for the start.
+    #
+    # Measured on a 100-subject, 50-occasion, 311-dimension fit whose joint
+    # density at the mode is -5297, reading the modes rather than solving them:
+    #
+    #     objective state                      centre     chain 1 start
+    #     last evaluated at the estimate      -5296.99         -5471.27
+    #     freshly built (all modes zero)    -411899.24        -4.70e+09
+    #     last evaluated at the start values -114649.76        -4.00e+14
+    #
+    # Nothing announced any of it. The metric was plausible, the density finite,
+    # the gradient finite, and the chain went nowhere: reported from a real run
+    # as two chains that between them had made twelve transitions in forty
+    # minutes, one sitting at logp -2.3e6 and the other at -3e4, while the
+    # optimisation they started from had reported -5834.
+    #
+    # The solve costs one inner Newton pass per unit, once per sample run,
+    # against the thousands of joint gradients that follow. It warm-starts from
+    # whatever is there and retries from the origin when that fails, so a bad
+    # warm start costs a few iterations rather than the answer.
+    for U in 1:sampler.nunits
+        _laplace_solve_unit_mode!(laplace, U, theta, Ls)
+    end
+
     popcov = _conditional_population_covariance(sampler, theta, Ls, hessian)
     push!(ranges, 1:sampler.npar)
     push!(covariances, popcov)

@@ -1010,7 +1010,13 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # and pays the compile serially.
   #
   # Any finite point compiles the same code, so the pre-optimisation start is as
-  # good as the estimate for this.
+  # good as the estimate for this -- but only because `ctsem_sample_metric`
+  # re-solves the inner modes at the vector being sampled from. Until it did,
+  # this warm decided where every process-parallel chain of this path started:
+  # the worker's objective retains the modes of whatever it last evaluated, so
+  # the chains sampled with theta at the estimate and each subject's effects at
+  # the values that were modal for `start`, which put a real 100-subject fit's
+  # chains at a joint density of -1e5 and -4e14 against a mode of -5300.
   spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
   processes <- isTRUE(.ctJuliaOr(control$processes, TRUE))
   handles <- if (processes && chains > 1L && .ctBackendCanWarm()) {

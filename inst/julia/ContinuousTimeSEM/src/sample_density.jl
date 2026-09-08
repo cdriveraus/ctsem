@@ -58,10 +58,14 @@ The joint target built from a `CTSEMLaplaceObjective`.
 
 Reuses the Laplace object outright -- its `spec` says which raw parameters vary
 and at which level, its `units` say how the effects are laid out and shared, and
-its per-chunk adjoint workspaces are exactly what the subject sweeps need. What
-it does *not* reuse is `modes`: those are the Laplace approximation's answer,
-and nothing here reads or writes them, so a fit may be sampled and then
-summarised without the sample having moved anything underneath.
+its per-chunk adjoint workspaces are exactly what the subject sweeps need.
+
+The joint density itself does not touch `modes`: the effects are coordinates of
+`x` here, so a chain moves through them rather than solving for them, and a fit
+can be sampled and then summarised without the sample having moved anything
+underneath. Placing the chain's *starting* effects and metering their metric
+blocks does read them, in `ctsem_sample_start` and `ctsem_sample_metric`, which
+is why the latter solves them at the parameter vector it was given first.
 
 `x` is laid out as `[theta; u_1; u_2; ...]`, population parameters first and
 then each unit's latent vector in unit order.
@@ -314,9 +318,15 @@ function ctsem_sample_start(sampler::CTSEMSampler, values::AbstractVector;
     # effect blocks describe. Starting at zero asks the chain to travel there
     # first, through the part of warmup that is also adapting the step size.
     #
-    # Guarded on length because `modes` is only populated once the Laplace
-    # objective has been evaluated; an unevaluated one leaves them empty and
-    # zero remains the honest answer.
+    # Guarded on length, and on nothing else -- in particular this cannot tell
+    # a solved mode from an unsolved one. A `CTSEMLaplaceObjective` allocates
+    # `modes` at full length and zero-filled, so an objective that has never
+    # been evaluated reaches here with the guard satisfied and every effect at
+    # zero. `ctsem_sample_metric` solves them at the parameter vector being
+    # sampled from before this is called for exactly that reason; on a fit with
+    # informative per-subject records, zero effects are not a neutral start but
+    # a catastrophic one, measured at a joint density of -411899 where the fit's
+    # own modes give -5297.
     laplace = sampler.laplace
     @inbounds for U in 1:sampler.nunits
         mode = laplace.modes[U]
