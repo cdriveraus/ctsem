@@ -527,18 +527,13 @@ test_that("a progress line is delivered as a message, not written to a stream", 
   expect_silent(.ctProgressSink(TRUE)(new.env(), "update"))
 })
 
-test_that("RStudio is a console that cannot be overwritten in place", {
-  # Progress is still reported there -- it is a console and someone is watching
-  # -- but not by carriage return, which its console does not honour: each
-  # arriving chunk becomes its own block, so an overwritten line became one
-  # line per update. The option overrides the detection either way.
+test_that("the overwrite option overrides the detection in both directions", {
+  # It used to override only downwards, so a console the detection had given up
+  # on could not be told to overwrite after all -- which is the direction
+  # someone asks in, because the point of one rewritten line is that it stays
+  # one line.
   withr::local_options(ctsem.progress.overwrite = NULL)
-  expect_type(.ctProgressRStudio(), "logical")
-  if (.ctProgressRStudio()) {
-    expect_false(.ctProgressOverwrite(1))
-  } else {
-    expect_equal(.ctProgressOverwrite(1), .ctProgressConsole())
-  }
+  expect_equal(.ctProgressOverwrite(1), .ctProgressConsole())
   withr::local_options(ctsem.progress.overwrite = TRUE)
   expect_true(.ctProgressOverwrite(1))
   expect_false(.ctProgressOverwrite(2))   # verbose 2 keeps the history

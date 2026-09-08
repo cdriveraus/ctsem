@@ -47,30 +47,24 @@
   interactive()
 }
 
-# Is this the RStudio console?
-#
-# Asked separately from `.ctProgressConsole()` because the two answers differ
-# there: RStudio is a console and wants progress, and it is not a terminal, so
-# a carriage return does not reliably move its cursor. Its console renders each
-# arriving chunk of output as its own block, which turned a line meant to be
-# overwritten into one line per update.
-#
-# `.Platform$GUI`, not `Sys.getenv("RSTUDIO")`: that variable is inherited by
-# every child process an RStudio session launches, including `Rscript` run from
-# its terminal pane, where the output really is a terminal and the carriage
-# return really does work.
-#' @keywords internal
-.ctProgressRStudio <- function() identical(.Platform$GUI, "RStudio")
-
 # Whether to overwrite, which is the console question and the history question
 # together. `verbose >= 2` asks to keep every update, and at that point the
 # history is the reason it was turned on.
 #
-# And not in RStudio, where a carriage return does not do what this needs: see
-# `.ctProgressRStudio()`. The updates then go one per line on the slower cadence
-# the engine already uses for a log -- 5 s rather than 0.4 s -- which is the
-# same trade as writing to a file. `options(ctsem.progress.overwrite = TRUE)`
-# forces it back on for a front end where it does work.
+# One line that is rewritten is the whole design, and it is not given up on for
+# a console that might not honour a carriage return: the alternative is a stream
+# of updates down the screen, which is what this exists to avoid. A slower
+# cadence only makes that stream shorter. So overwriting stays on wherever
+# anything is being watched, and the option below settles the cases this cannot
+# know about -- in both directions, which it previously did not.
+#
+# The RStudio case is why that matters. Its console renders each arriving chunk
+# as its own block, and while the engine printed to *stdout* while R messaged on
+# *stderr*, the two interleaved and the line could not survive: reported as
+# "extra line breaks". Both now arrive as messages on one stream, which removes
+# that cause -- so in-place is the default there too, and
+# `options(ctsem.progress.overwrite = FALSE)` is the way out if a particular
+# console still cannot do it.
 #' @keywords internal
 .ctProgressOverwrite <- function(verbose = 0) {
   # `verbose` is a level on the fitting paths and a flag on `ctSample()`; a
@@ -82,7 +76,7 @@
   if (is.logical(option) && length(option) == 1L && !is.na(option)) {
     return(option && level < 2)
   }
-  .ctProgressConsole() && level < 2 && !.ctProgressRStudio()
+  .ctProgressConsole() && level < 2
 }
 
 #' Deliver an engine progress line as an R message
