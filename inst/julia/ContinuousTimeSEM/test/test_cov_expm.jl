@@ -168,6 +168,34 @@ try
         end
     end
 
+    @testset "choleskymats selects the construction" begin
+        # `choleskymats == 2` is covmattransform='z', the same code the stan
+        # path reads from its data block. This pins that the argument is
+        # honoured rather than accepted and ignored, which is the failure mode
+        # this engine has had before with covmattransform.
+        ContinuousTimeSEM.ctsem_cov_expm!(false)
+        for k in (3, 6)
+            v = _covexpm_coords(k)
+            M = _covexpm_unpack(v, k, Float64)
+            b0 = _COVEXPM_BUF(k, Float64)
+            ContinuousTimeSEM.sdcovsqrt2cov!(b0, M, 0, Val(k))
+            b2 = _COVEXPM_BUF(k, Float64)
+            ContinuousTimeSEM.sdcovsqrt2cov!(b2, M, 2, Val(k))
+            @test !isapprox(b0.out, b2.out)
+            # 0 still reproduces constraincorsqrt1 exactly
+            bc = _COVEXPM_BUF(k, Float64)
+            ContinuousTimeSEM.constraincorsqrt1_vec!(bc, M, 1e-5, Val(k))
+            D = Diagonal([M[i, i] for i in 1:k])
+            @test b0.out ≈ (D * bc.out) * (D * bc.out)'
+            # and 2 matches what the flag forces
+            ContinuousTimeSEM.ctsem_cov_expm!(true)
+            bf = _COVEXPM_BUF(k, Float64)
+            ContinuousTimeSEM.sdcovsqrt2cov!(bf, M, 0, Val(k))
+            ContinuousTimeSEM.ctsem_cov_expm!(false)
+            @test b2.out ≈ bf.out
+        end
+    end
+
     @testset "flag toggling reports the previous value" begin
         @test ContinuousTimeSEM.ctsem_cov_expm() == false
         @test ContinuousTimeSEM.ctsem_cov_expm!(true) == false

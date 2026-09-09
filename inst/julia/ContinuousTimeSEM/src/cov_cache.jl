@@ -62,8 +62,8 @@ const _COVCACHE_LOCK = ReentrantLock()
 # one route is served under the other, which a switch mid-session -- every
 # comparison test and benchmark here -- turns into a wrong answer with no
 # symptom. Caught by the transparency test, not by inspection.
-function _covcache(::Type{T}, ::Val{d}) where {T,d}
-    key = (T, d, Threads.threadid(), _CTSEM_COV_EXPM[])
+function _covcache(::Type{T}, ::Val{d}, expm::Bool) where {T,d}
+    key = (T, d, Threads.threadid(), expm)
     c = get(_COVCACHE, key, nothing)
     if c === nothing
         lock(_COVCACHE_LOCK) do
