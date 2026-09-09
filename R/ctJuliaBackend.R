@@ -1756,16 +1756,6 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
         varying_names[column_position])
       fixedvalue <- .ctModelRawPopVarValue(spec)
       if (is.finite(fixedvalue)) {
-        if (abs(fixedvalue) > 1) {
-          stop("RAWPOPVAR['", varying_names[row_position], "', '",
-            varying_names[column_position], "'] is ", fixedvalue,
-            ". Off-diagonal entries are unconstrained correlation coordinates ",
-            "and must lie in [-1, 1]. Zero means uncorrelated exactly; a ",
-            "non-zero coordinate gives a correlation further from zero than ",
-            "itself (0.5 gives about 0.79), because constraincorsqrt1() ",
-            "normalises by the row. See R/ctModelRawPopVar.R.",
-            call. = FALSE)
-        }
         table$param[index] <- NA_character_
         table$parnumber[index] <- NA_integer_
         table$value[index] <- fixedvalue
@@ -1776,7 +1766,11 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
           sprintf("julia_popcov_%d_%d", row, col) else spec
         table$parnumber[index] <- next_parameter
         table$value[index] <- NA_real_
-        table$transform[index] <- sprintf("2 / (1 + exp(-param[%d])) - 1", next_parameter)
+        # Identity, like every other covariance off-diagonal now: the
+        # (-1, 1) map lives in `constraincorsqrt1`, which this cell reaches
+        # through T0VAR. Leaving the squash here applied it twice and moved a
+        # fitted likelihood by 0.88 on a two-latent model.
+        table$transform[index] <- sprintf("param[%d]", next_parameter)
       }
       # As for the sd cells above: a population correlation carries no TI
       # predictor effect of its own, fixed by RAWPOPVAR or not.

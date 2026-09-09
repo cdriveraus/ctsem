@@ -549,8 +549,11 @@ function _laplace_popchol(values::AbstractVector{T}, level::CTSEMLaplaceLevel) w
         for i in 1:k
             if i > j
                 counter += 1
-                base[i, j] = 2 / (1 + exp(-_laplace_cap_correlation(
-                    values[level.cor_index[counter]]))) - 1
+                # No squash here any more: `constraincorsqrt1` applies it.
+                # The cap still bounds the correlation at 0.99, because it
+                # bounds the coordinate the squash then maps.
+                base[i, j] = _laplace_cap_correlation(
+                    values[level.cor_index[counter]])
             end
         end
     end

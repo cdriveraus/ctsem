@@ -54,9 +54,17 @@ ctModelUnlist<-function(ctmodelobj,
 
   if(matrix %in% c('DIFFUSION','MANIFESTVAR', 'T0VAR')) {
     if(row != col){
-      transform <- 3
-      multiplier <- 2
-      offset <- -1
+      # Free on the real line, with no squash here. Each covariance transform
+      # reads this cell differently -- 'rawcorr' as a coordinate it bounds
+      # itself inside constraincorsqrt1, 'z' as an unbounded Fisher z,
+      # 'cholesky' as a factor entry -- so one model structure now works under
+      # all three. The (-1, 1) map that used to live here (transform 3,
+      # multiplier 2, offset -1) moved into constraincorsqrt1 unchanged, so the
+      # composite raw -> correlation is the same and 'rawcorr' fits are
+      # bit-identical.
+      transform <- 0
+      multiplier <- 1
+      offset <- 0
       meanscale <- 1
     }
     if(row == col){
@@ -87,6 +95,11 @@ ctModelUnlist<-function(ctmodelobj,
     }
   }
 
+  # The numeric fields come back alongside the text form, because the loop in
+  # `ctStanModel()` needs them and used to restate every default itself. Two
+  # copies of the same table is how a change to the covariance off-diagonal
+  # default got made in one of them, verified in isolation, and had no effect on
+  # a built model -- the other copy was the one that ran.
   list(
     transform = Simplify(tform(parin = 'param',
       transform = as.integer(transform),
@@ -96,7 +109,9 @@ ctModelUnlist<-function(ctmodelobj,
       inneroffset = inneroffset,
       singletext = TRUE)),
     indvarying = matrix %in% c('T0MEANS','MANIFESTMEANS','CINT'),
-    sdscale = 1
+    sdscale = 1,
+    numeric = list(transform = transform, multiplier = multiplier,
+      meanscale = meanscale, offset = offset, inneroffset = inneroffset)
   )
 }
 
@@ -359,58 +374,23 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
   
   
   ######### STAN parameter transforms
+  # One source of truth: `.ctModelDefaultFreePar` states these defaults, and
+  # this loop asks it rather than restating them. They were two copies of the
+  # same table, and only this one ran for a labelled cell -- so a default
+  # changed in the other took no effect on a built model, which cost real time
+  # to find.
   for(pi in 1:length(ctspec$matrix)){
     if(freeparams[pi]){
-      if(ctspec$matrix[pi] %in% c('T0MEANS','MANIFESTMEANS','TDPREDEFFECT','CINT')) {
-        ctspec$meanscale[pi] <-10
-      }
-      if(ctspec$matrix[pi] %in% c('LAMBDA')) {
-        ctspec$offset[pi] <- 0.5
-        ctspec$meanscale[pi] <- 5
-      }
-      if(ctspec$matrix[pi] %in% c('THRESHOLDS')) {
-        if(ctspec$col[pi] == 1) ctspec$meanscale[pi] <- 10
-        if(ctspec$col[pi] > 1) {
-          ctspec$transform[pi] <- 1
-          ctspec$meanscale[pi] <- 2
-          ctspec$multiplier[pi] <- 2
-        }
-      }
-      
-      if(ctspec$matrix[pi] %in% c('DIFFUSION','MANIFESTVAR', 'T0VAR')) {
-        if(ctspec$row[pi] != ctspec$col[pi]){
-          ctspec$transform[pi] <- 3
-          ctspec$multiplier[pi] <- 2
-          ctspec$offset[pi] <- -1
-          ctspec$meanscale[pi] <-1
-        }
-        if(ctspec$row[pi] == ctspec$col[pi]){
-          ctspec$transform[pi] <- 1
-          ctspec$meanscale[pi] <- 2
-          ctspec$multiplier[pi] <- 5
-          ctspec$offset[pi] <- 1e-10
-          if(ctspec$matrix[pi] %in% c('DIFFUSION')) ctspec$multiplier[pi] <-10
-        }
-      }
-      if(ctspec$matrix[pi] %in% c('DRIFT')) {
-        if(ctspec$row[pi] == ctspec$col[pi]){
-          if(continuoustime==TRUE) {
-            ctspec$transform[pi] <- 1
-            ctspec$meanscale[pi] <- -2
-            ctspec$multiplier[pi] <- -2
-            ctspec$offset[pi] <- -1e-6
-          }
-          if(continuoustime==FALSE) {
-            ctspec$transform[pi] <- 3
-            ctspec$meanscale[pi] <- 2
-            ctspec$offset[pi] <- 0
-          }
-        }
-        if(ctspec$row[pi] != ctspec$col[pi]){
-          ctspec$transform[pi] <- 0
-          ctspec$meanscale[pi] <- 1
-        }
-      }
+      defaults <- .ctModelDefaultFreePar(
+        matrix = ctspec$matrix[pi],
+        row = ctspec$row[pi],
+        col = ctspec$col[pi],
+        continuoustime = continuoustime)$numeric
+      ctspec$transform[pi] <- defaults$transform
+      ctspec$multiplier[pi] <- defaults$multiplier
+      ctspec$meanscale[pi] <- defaults$meanscale
+      ctspec$offset[pi] <- defaults$offset
+      ctspec$inneroffset[pi] <- defaults$inneroffset
     }
   }
   

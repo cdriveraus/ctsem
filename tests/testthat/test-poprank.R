@@ -277,9 +277,11 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
   # if `constraincorsqrt1()` or the placement changes, this is what notices.
   #
   # The diagonal is the population sd it says it is. The off-diagonal is the
-  # coordinate that map consumes, so the correlation that comes out is further
-  # from zero than the coordinate written in -- except at zero, which is exact
-  # and is the case the surface's own example relies on.
+  # coordinate that map consumes, and it is unbounded: the (-1, 1) squash moved
+  # off the parameter and into `constraincorsqrt1`, so one model structure works
+  # under any covmattransform and a correlation near one is reachable here.
+  # Zero is still exact for a two-effect model, which is what this checks; it is
+  # NOT exact in general, and R/ctModelRawPopVar.R says why.
   test_that('a fixed RAWPOPVAR entry means what R/ctModelRawPopVar.R says it means', {
     set.seed(4); nsub <- 120L; nt <- 6L
     o <- vector('list', nsub)
@@ -328,13 +330,16 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
 
     # and a non-zero coordinate gives a correlation further from zero than
     # itself -- the numbers the documentation quotes
-    expect_equal(correlation(withcell(2, 1, 0.3)), 0.539, tolerance = 2e-3)
-    expect_equal(correlation(withcell(2, 1, 0.5)), 0.788, tolerance = 2e-3)
+    expect_equal(correlation(withcell(2, 1, 0.3)), 0.2846, tolerance = 2e-3)
+    expect_equal(correlation(withcell(2, 1, 0.5)), 0.4522, tolerance = 2e-3)
+    # Unbounded, which the coordinate was not while the (-1, 1) map sat on the
+    # parameter: a correlation near one is now reachable through this surface.
+    expect_equal(correlation(withcell(2, 1, 5)), 0.9993, tolerance = 2e-3)
     # Monotone and sign-preserving, which is why it reads like a correlation --
     # but not symmetric in sign, which is another way it is not one. The same
     # coordinate magnitude gives a different correlation magnitude either side
     # of zero, because constraincorsqrt1()'s row scale carries an |s| - s term.
-    expect_equal(correlation(withcell(2, 1, -0.5)), -0.769, tolerance = 2e-3)
+    expect_equal(correlation(withcell(2, 1, -0.5)), -0.4463, tolerance = 2e-3)
     expect_lt(abs(correlation(withcell(2, 1, -0.5))),
       abs(correlation(withcell(2, 1, 0.5))))
   })

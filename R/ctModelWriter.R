@@ -1565,16 +1565,27 @@ functions{
     real r3;
     real r4;
     real r1;
+    // The (-1, 1) map that used to sit on the off-diagonal parameter lives
+    // here now, so one model structure works under any covmattransform: this
+    // one bounds its own coordinate, z reads the same cell as an unbounded
+    // Fisher z, and cholesky as a factor entry. Same expression as the
+    // parameter table applied, so the composite is unchanged.
+    matrix[d,d] matsq = mat;
+    for(coli in 1:d){
+      for(rowi in 1:d){
+        if(rowi != coli) matsq[rowi,coli] = inv_logit(mat[rowi,coli])*2-1;
+      }
+    }
     
     for(i in 1:d){
       for(j in 1:d){
         if(j > i) {
-          ss[i] +=square(mat[j,i]);
-          s[i] +=mat[j,i];
+          ss[i] +=square(matsq[j,i]);
+          s[i] +=matsq[j,i];
         }
         if(j < i){
-          ss[i] += square(mat[i,j]);
-          s[i] += mat[i,j];
+          ss[i] += square(matsq[i,j]);
+          s[i] += matsq[i,j];
         }
       }
       s[i] += 1e-5;
@@ -1590,8 +1601,8 @@ functions{
       r=(r4*((r3))+1)*r4+1;
       r=(sqrt(ss[i]+r));
       for(j in 1:d){
-        if(j > i)  o[i,j]=mat[j,i]/r;
-        if(j < i) o[i,j] = mat[i,j] /r;
+        if(j > i)  o[i,j]=matsq[j,i]/r;
+        if(j < i) o[i,j] = matsq[i,j] /r;
       }
       o[i,i]=sqrt(1-sum(square(o[i,]))+1e-5);
     }
@@ -1943,7 +1954,7 @@ transformed parameters{
       for(i in 1:nindvarying){
         if(i > j){
           counter += 1;
-          rawpopcovbase[i,j]=inv_logit(sqrtpcov[counter])*2-1;
+          rawpopcovbase[i,j]=sqrtpcov[counter]; //squash now inside constraincorsqrt1
           rawpopcovbase[j,i]=0;// needed to avoid nan output;
         }
       }

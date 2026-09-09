@@ -65,28 +65,37 @@
 # convention means ten times as much spread under this one.
 #
 # **Off-diagonal entries are unconstrained correlation coordinates, not
-# correlations.** They lie in `[-1, 1]` and are ordered the same way a
-# correlation is -- zero is uncorrelated, larger magnitudes give stronger
-# association, and the sign carries through -- but the value is the T0VAR entry
-# that `constraincorsqrt1()` consumes, and that map row-normalises. So the
-# correlation that comes out is *further from zero* than the coordinate written
-# in. Measured on two random effects:
+# correlations.** The value is the T0VAR entry `constraincorsqrt1()` consumes,
+# and that map squashes it into `(-1, 1)` and then row-normalises. It is
+# unbounded and free on the real line -- the bound used to sit on the parameter
+# and now lives in the construction, so that one model structure works under
+# any `covmattransform`. Ordered the way a correlation is: zero is
+# uncorrelated, larger magnitudes give stronger association, the sign carries
+# through. Measured on two random effects with the other coordinates at zero:
 #
-#     coordinate   0     0.3      0.5      0.8     -0.5
-#     correlation  0.0   0.539    0.788    0.970   -0.769
+#     coordinate   0     0.3      0.5      0.8     1.0     2.0     5.0    -0.5
+#     correlation  0.0   0.2846   0.4522   0.6520  0.7496  0.9576  0.9993 -0.4463
 #
-# Note the last column: the map is monotone and sign-preserving but *not*
-# symmetric, so the same magnitude either side of zero gives different
-# correlations -- `constraincorsqrt1()`'s row scale carries an `|s| - s` term.
-# One more reason not to read the coordinate as a correlation.
+# Two things to read off that. The magnitudes are unbounded, so a correlation
+# near one is reachable -- `5` gives `0.9993` -- which the old bounded
+# coordinate could not do. And the map is monotone and sign-preserving but
+# *not* symmetric: `0.5` and `-0.5` give `0.4522` and `-0.4463`, because
+# `constraincorsqrt1()`'s row scale carries an `|s| - s` term. One more reason
+# not to read the coordinate as a correlation.
 #
-# Zero is the exception and is exact, in any number of dimensions: a zero
-# coordinate contributes nothing to the row and the correlation is zero. So
-# "uncorrelated with that effect" above means exactly what it says, and it is
-# the case to rely on. A specific non-zero correlation cannot be requested
-# through this surface, because inverting the map is not a per-cell operation --
-# `constraincorsqrt1()` normalises by the whole row, so what one coordinate
-# yields depends on its neighbours.
+# A specific non-zero correlation cannot be requested through this surface,
+# because inverting the map is not a per-cell operation -- the row scale means
+# what one coordinate yields depends on its neighbours.
+#
+# **A zero coordinate does not mean uncorrelated** unless the rest of that row
+# is zero too, and an earlier version of this comment claimed otherwise. With
+# `C = O O'` and `O`'s row `i` proportional to that row's coordinates, zeroing
+# one entry removes two terms of `C[i,j]` and leaves the rest, so at three
+# effects the coordinates `(0, 0.6, 0.6)` give a correlation of `0.255`, and
+# `(0, 0.9, -0.7)` give `-0.355`. What *is* exact, at any size, is a whole
+# effect or a whole block: zero an effect's entire row and column and it is
+# uncorrelated with everything, to machine precision, and zero the rectangle
+# between two blocks and they are independent.
 #
 # This is the same parameterisation both backends fit in (Stan's
 # `rawpopcovbase` lower triangle, and `sdcovsqrt2cov()`'s in the engine), so the

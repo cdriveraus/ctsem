@@ -49,7 +49,9 @@
 # Default contents for one new T0VAR cell, in T0VAR's own idiom.
 #' @keywords internal
 .ctModelRandomEffectCell <- function(rowname, colname, continuoustime) {
-  defaults <- ctStanModelDefaultFreePar("T0VAR",
+  # `.ctModelDefaultFreePar`, not `ctStanModelDefaultFreePar`: the latter is
+  # defined nowhere in the package, so this call errored if it was ever reached.
+  defaults <- .ctModelDefaultFreePar("T0VAR",
     row = if (identical(rowname, colname)) 1L else 2L,
     col = 1L, continuoustime = continuoustime)
   list(

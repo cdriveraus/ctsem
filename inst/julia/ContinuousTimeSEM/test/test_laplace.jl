@@ -563,7 +563,10 @@ end
               spec.levels[1].sd_scale[j] + 1e-10 for j in 1:2]
     base = zeros(2, 2)
     base[1, 1] = scales[1]; base[2, 2] = scales[2]
-    base[2, 1] = 2 / (1 + exp(-values[spec.levels[1].cor_index[1]])) - 1
+    # Raw: constraincorsqrt1 applies the (-1, 1) squash itself now, on this
+    # path and on stan's, so applying it here too would compare against a
+    # double squash.
+    base[2, 1] = values[spec.levels[1].cor_index[1]]
     corsqrt = ContinuousTimeSEM.constraincorsqrt1(base)
     correlation = corsqrt * corsqrt'
     scaled = scales .+ 1e-8
