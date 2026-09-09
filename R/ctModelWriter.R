@@ -1599,9 +1599,39 @@ functions{
     return o;
   }
 
+  // covmattransform z: the diagonal is a standard deviation as usual, and the
+  // lower triangle holds the Fisher z of the correlation -- for a lone pair the
+  // correlation is exactly tanh(mat[i,j]). Unlike constraincorsqrt1 this is
+  // onto the space of correlation matrices, permutation equivariant (so a
+  // parameter shared across cells means equal correlations), and unbounded.
+  matrix sdcovexpm2cov(matrix mat){
+    int d = rows(mat);
+    matrix[d,d] A = rep_matrix(0.0, d, d);
+    matrix[d,d] Y;
+    matrix[d,d] out;
+    vector[d] g;
+    for(coli in 1:d){
+      for(rowi in 1:d){
+        if(rowi > coli){
+          A[rowi,coli] = mat[rowi,coli];
+          A[coli,rowi] = mat[rowi,coli];
+        }
+      }
+    }
+    Y = matrix_exp(A);
+    for(i in 1:d) g[i] = mat[i,i] / sqrt(Y[i,i]);
+    for(coli in 1:d){
+      for(rowi in 1:d){
+        out[rowi,coli] = rowi==coli ? square(mat[rowi,rowi]) : g[rowi]*g[coli]*Y[rowi,coli];
+      }
+    }
+    return(out);
+  }
+
   matrix sdcovsqrt2cov(matrix mat, int choleskymats){ //covariance from cholesky or unconstrained cor sq root
     if(rows(mat) == 0) return(mat);
     else {
+      if(choleskymats == 2) return(sdcovexpm2cov(mat));
       if(choleskymats< 1) return(tcrossprod(diag_pre_multiply(diagonal(mat),constraincorsqrt1(mat))));
       else return(tcrossprod(mat));
     }

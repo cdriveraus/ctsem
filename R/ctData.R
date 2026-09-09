@@ -400,8 +400,12 @@ expmGetSubsets <- function(m){
   if(!is.null(ctm$covmattransform)){
     if(ctm$covmattransform=='rawcorr_indep') standata$choleskymats<- -1L
     if(ctm$covmattransform=='cholesky') standata$choleskymats<- 1L
-    if(!ctm$covmattransform %in% c('rawcorr','rawcorr_indep','cholesky')) stop(
-      'covtransform must be either "rawcorr", "rawcorr_indep", or "cholesky"')
+    # 'z': the off-diagonal is Fisher's z of the correlation, and the covariance
+    # is D * normalise(matrix_exp(A)) * D with A hollow symmetric. See
+    # `sdcovexpm2cov` in inst/stan/ctsm.stan and cov_expm.jl in the engine.
+    if(ctm$covmattransform=='z') standata$choleskymats<- 2L
+    if(!ctm$covmattransform %in% c('rawcorr','rawcorr_indep','cholesky','z')) stop(
+      'covmattransform must be "z", "rawcorr", "rawcorr_indep", or "cholesky"')
   }
   
   standata$matsetup <- apply(ctm$modelmats$matsetup[,-1],c(1,2),as.integer,.drop=FALSE) #remove parname and convert to int
