@@ -7,7 +7,7 @@
 ^R/donotpackage/*.
 ^.git
 ^.gitignore
-^README\.Rmd$
+^README\.[Rr]md$
 ^vignettes/hierarchicalmanual\.pdf$
 ^vignettes/ctsem\.pdf$
 ^vignettes/cache
@@ -36,3 +36,4 @@
 ^\.agents$
 ^~
 ^ci-testenv$
+^render\.log$

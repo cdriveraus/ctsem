@@ -17,7 +17,7 @@ Description: Hierarchical continuous (and discrete) time state space modelling, 
     are possible, using either max likelihood / max a posteriori optimization 
     (with optional importance sampling) or Stan's Hamiltonian Monte Carlo sampling. 
     See  <https://github.com/cdriveraus/ctsem/raw/master/vignettes/hierarchicalmanual.pdf>
-    for details. See <https://osf.io/preprints/psyarxiv/4q9ex_v2> for a detailed tutorial. 
+    for details. See <https://osf.io/preprints/psyarxiv/4q9ex_v3> for a detailed tutorial. 
     Priors may be used. For the conceptual overview of the hierarchical Bayesian 
     linear SDE approach, 
     see <https://www.researchgate.net/publication/324093594_Hierarchical_Bayesian_Continuous_Time_Dynamic_Modeling>.
@@ -28,6 +28,7 @@ Depends:
     R (>= 4.2.0), 
     Rcpp (>= 0.12.16)
 URL: https://github.com/cdriveraus/ctsem
+BugReports: https://github.com/cdriveraus/ctsem/issues
 Imports:
     cOde,
     data.table (>= 1.12.8),
@@ -66,6 +67,7 @@ LinkingTo:
     rstan (>= 2.26),
     StanHeaders (>= 2.26.0)
 Suggests:
+    doBy,
     knitr,
     testthat,
     devtools,
