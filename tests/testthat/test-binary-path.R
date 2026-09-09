@@ -119,7 +119,7 @@ test_that("post-fit functions work on a binary fit", {
   expect_true(works(ctKalman(fit, subjects = 1)))
   expect_true(works(ctPredict(fit, subjects = 1)))
   expect_true(works(ctExtract(fit)))
-  expect_true(works(ctFitCheck(fit)))
+  expect_true(works(ctPostPredPlots(fit)))
 })
 
 test_that("ctTIpredEffects explains itself when there are no predictors", {

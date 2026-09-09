@@ -15,6 +15,9 @@ ctPostPredPlots(
   resolution = 100,
   jitter = 0,
   residuals = FALSE,
+  timebins = 10,
+  lags = 0:5,
+  lagcor = TRUE,
   notes = TRUE,
   plot = FALSE,
   wait = FALSE
@@ -50,6 +53,16 @@ generated alike. Useful when data are rounded or ordinal. 0, the default, adds n
 \item{residuals}{Logical. Include standardised prior residuals as extra variables. Slow --
 it needs one Kalman pass per generated dataset.}
 
+\item{timebins}{Positive integer. Number of equal-count bins of time for the
+\code{MeanTrajectory} panel. Subjects are rarely observed at identical times, so the mean
+at a time is a mean within a bin of times.}
+
+\item{lags}{Non-negative integer vector. Observation lags for the \code{LaggedCovariance}
+panel, passed to \code{\link{ctFitCheckCov}}.}
+
+\item{lagcor}{Logical. If TRUE (the default) the \code{LaggedCovariance} panel shows
+correlations, which are usually easier to read; FALSE shows covariances.}
+
 \item{notes}{Logical. If TRUE (the default), each panel carries a caption saying what it
 shows and what a departure from its reference line means. Set FALSE for bare plots.}
 
@@ -70,13 +83,29 @@ set of diagnostic plots. Works for both the stan and julia backends.
 Two families of panel are produced.
 
 \strong{structure} asks whether the model reproduces the shape of the data:
-\code{Density} (marginal distributions), \code{ValueByTime} and \code{ValueByOccasion}
-(the model-implied density of each variable against time and against occasion number,
-with the observed data as points on top), and \code{ChangeByValue} and
-\code{ChangeByTime} (rate of change against current value and against time).
-\code{ChangeByValue} is the phase plane, and is the panel that shows nonlinear dynamics:
-a linear model implies a straight band with a constant slope, so curvature in the
-observed points relative to the model shading is evidence the drift is not linear.
+\code{Density} (marginal distributions), \code{MeanTrajectory} (the mean over subjects
+against time), \code{ValueByTime} and \code{ValueByOccasion} (the model-implied density
+of each variable against time and against occasion number, with the observed data as
+points on top), \code{ChangeByValue} and \code{ChangeByTime} (rate of change against
+current value and against time), and \code{LaggedCovariance} (the lagged covariance or
+correlation structure). \code{ChangeByValue} is the phase plane, and is the panel that
+shows nonlinear dynamics: a linear model implies a straight band with a constant slope, so
+curvature in the observed points relative to the model shading is evidence the drift is
+not linear.
+
+\code{MeanTrajectory} and \code{ValueByTime} both plot against time and answer different
+questions. \code{ValueByTime} shows where the model puts an individual observation, so its
+envelope is as wide as the data; \code{MeanTrajectory} shows where it puts the \emph{mean}
+of a bin of observations, whose sampling distribution is narrower by roughly the square
+root of the bin count. A bias in the average level is therefore visible in the second while
+sitting comfortably inside the first.
+
+\code{LaggedCovariance} is \code{\link{ctFitCheckCov}} rendered as a dashboard panel: one
+plot per variable, faceted by the variable it is paired with, empirical against the central
+95\% of the generated datasets at each lag. It is the only panel that looks at dependence
+\emph{across} time rather than at each time, which is what makes it the one that responds
+to a wrong drift or diffusion when every marginal already matches. Call
+\code{\link{ctFitCheckCov}} directly to split it by a group or a predictor.
 
 \strong{calibration} asks whether the predictive distribution is the right width and in
 the right place: \code{PredictedVsObserved}, \code{IntervalCoverage}, \code{PIT}, and the
@@ -111,7 +140,7 @@ print(plots$PIT)
 }
 \seealso{
 \code{\link{ctPostPredData}} for the underlying table,
-\code{\link{ctFitCheck}} for a broader dashboard, \code{\link{ctFitCheckCov}} for the
-lagged covariance version of the same question, and \code{\link{ctPhasePortrait}} for the
-model-implied phase plane on its own.
+\code{\link{ctFitCheckCov}} for the lagged covariance panel on its own, with splits by
+group or predictor, and \code{\link{ctPhasePortrait}} for the model-implied phase plane
+on its own.
 }

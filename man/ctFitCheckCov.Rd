@@ -105,6 +105,6 @@ ctFitCheckCov(ctstantestfit, data = dat, splitby = "period",
 }
 }
 \seealso{
-\code{\link{ctFitCheck}}, the whole diagnostic dashboard, of which
-  this is the focused lagged-covariance panel.
+\code{\link{ctPostPredPlots}}, the posterior predictive dashboard,
+  whose \code{LaggedCovariance} panel is this function without the splitting.
 }

@@ -554,10 +554,9 @@ summary(f1)
 ctPredict(f1,plot=TRUE,subjects=1,kalmanvec=c('y','yprior'),timestep=.01)
 ctPredict(f1,plot=TRUE,subjects=1:3,kalmanvec=c('y','ysmooth'),timestep=.01,errorvec=NA)
 
-ctPostPredict(f1, wait=FALSE) #compare randomly generated data from posterior to observed data
-
-#compare mean and covariance of randomly generated data to observed cov
-ctFitCheck(f1)
+#compare randomly generated data from the posterior to the observed data,
+#including the lagged covariance structure and the mean trajectory over time
+ctPostPredict(f1, wait=FALSE)
 
  ### Further example models
 
