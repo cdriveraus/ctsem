@@ -3,10 +3,14 @@
 # One entry point, ctPostPredPlots(), producing two families of panel:
 #
 #   structure   -- does the model reproduce the joint shape of the data?
-#                  Marginal densities, the value/time and value/occasion
-#                  clouds, and the phase plane (rate of change against current
-#                  value) that reveals nonlinear dynamics a linear drift cannot
-#                  produce. These came from the old ctPostPredict().
+#                  Marginal densities, the mean trajectory over time, the
+#                  value/time and value/occasion clouds, the phase plane (rate
+#                  of change against current value) that reveals nonlinear
+#                  dynamics a linear drift cannot produce, and the lagged
+#                  covariance structure. Most came from the old
+#                  ctPostPredict(); the lagged covariances are ctFitCheckCov(),
+#                  which used to be reachable only on its own or through the
+#                  since-removed ctFitCheck() dashboard.
 #
 #   calibration -- is the predictive distribution the right width, in the right
 #                  place, everywhere? Predicted interval against observed
@@ -25,8 +29,8 @@
 
 # Panel groups. 'all' is both, in this order.
 .ctPostPredGroups <- list(
-  structure = c('Density', 'ValueByTime', 'ValueByOccasion',
-    'ChangeByValue', 'ChangeByTime'),
+  structure = c('Density', 'MeanTrajectory', 'ValueByTime', 'ValueByOccasion',
+    'ChangeByValue', 'ChangeByTime', 'LaggedCovariance'),
   calibration = c('PredictedVsObserved', 'IntervalCoverage', 'PIT',
     'CalibrationByInterval', 'CalibrationBySubject', 'SubjectLogLik')
 )
@@ -44,6 +48,15 @@
       'fitted model (', ndraws, ' draws). Black: the observed data. A shift in ',
       'location or width means the model does not reproduce the marginal, ',
       'before any question of dynamics arises.'),
+    MeanTrajectory = paste0(
+      'Mean over subjects at each time, in equal-count bins of time. Dark ',
+      'band: where the model puts ', pc, ' of the bin MEAN, across ', ndraws,
+      ' generated datasets -- the reference the observed mean should sit ',
+      'inside. Light band: where it puts ', pc, ' of individual observations, ',
+      'which is the spread in the data rather than uncertainty about its ',
+      'mean. The mean band is much the narrower of the two, which is the point ',
+      'of the panel: a bias in the average level that disappears inside the ',
+      'observation cloud of ValueByTime is plain against it.'),
     ValueByTime = paste0(
       'Shaded: where the model puts 50, 80 and 95% of its predictive mass, from ',
       ndraws, ' draws. Points: the observed data, orange outside the 95% region. ',
@@ -65,6 +78,15 @@
       'shaded by the 50, 80 and 95% predictive regions. A scatter that ',
       'widens or narrows over time while the regions do not points at the ',
       'diffusion rather than the drift.'),
+    LaggedCovariance = paste0(
+      'Lagged covariance or correlation of each variable with each other ',
+      'variable, computed across subjects and averaged over matching ',
+      'observation-index pairs. Points: the empirical value. Bars: the ',
+      'central 95% of the same quantity over ', ndraws, ' generated datasets. ',
+      'This is the panel that asks about dependence ACROSS time rather than ',
+      'the marginal at each time, so it is where a wrong drift or diffusion ',
+      'shows up even when every marginal matches. Computed by ',
+      'ctFitCheckCov(), which can be called directly for splits by group.'),
     PredictedVsObserved = paste0(
       'Each observation against the central ', pc, ' predictive interval for ',
       'it, ordered along the x axis by predicted median so the interval reads ',
@@ -482,6 +504,13 @@ ctPostPredData <- function(fit, residuals = FALSE, nsamples = NA){
 #' generated alike. Useful when data are rounded or ordinal. 0, the default, adds none.
 #' @param residuals Logical. Include standardised prior residuals as extra variables. Slow --
 #' it needs one Kalman pass per generated dataset.
+#' @param timebins Positive integer. Number of equal-count bins of time for the
+#' \code{MeanTrajectory} panel. Subjects are rarely observed at identical times, so the mean
+#' at a time is a mean within a bin of times.
+#' @param lags Non-negative integer vector. Observation lags for the \code{LaggedCovariance}
+#' panel, passed to \code{\link{ctFitCheckCov}}.
+#' @param lagcor Logical. If TRUE (the default) the \code{LaggedCovariance} panel shows
+#' correlations, which are usually easier to read; FALSE shows covariances.
 #' @param notes Logical. If TRUE (the default), each panel carries a caption saying what it
 #' shows and what a departure from its reference line means. Set FALSE for bare plots.
 #' @param plot Logical. If TRUE, prints the panels and returns them invisibly. If FALSE (the
@@ -492,13 +521,29 @@ ctPostPredData <- function(fit, residuals = FALSE, nsamples = NA){
 #' Two families of panel are produced.
 #'
 #' \strong{structure} asks whether the model reproduces the shape of the data:
-#' \code{Density} (marginal distributions), \code{ValueByTime} and \code{ValueByOccasion}
-#' (the model-implied density of each variable against time and against occasion number,
-#' with the observed data as points on top), and \code{ChangeByValue} and
-#' \code{ChangeByTime} (rate of change against current value and against time).
-#' \code{ChangeByValue} is the phase plane, and is the panel that shows nonlinear dynamics:
-#' a linear model implies a straight band with a constant slope, so curvature in the
-#' observed points relative to the model shading is evidence the drift is not linear.
+#' \code{Density} (marginal distributions), \code{MeanTrajectory} (the mean over subjects
+#' against time), \code{ValueByTime} and \code{ValueByOccasion} (the model-implied density
+#' of each variable against time and against occasion number, with the observed data as
+#' points on top), \code{ChangeByValue} and \code{ChangeByTime} (rate of change against
+#' current value and against time), and \code{LaggedCovariance} (the lagged covariance or
+#' correlation structure). \code{ChangeByValue} is the phase plane, and is the panel that
+#' shows nonlinear dynamics: a linear model implies a straight band with a constant slope, so
+#' curvature in the observed points relative to the model shading is evidence the drift is
+#' not linear.
+#'
+#' \code{MeanTrajectory} and \code{ValueByTime} both plot against time and answer different
+#' questions. \code{ValueByTime} shows where the model puts an individual observation, so its
+#' envelope is as wide as the data; \code{MeanTrajectory} shows where it puts the \emph{mean}
+#' of a bin of observations, whose sampling distribution is narrower by roughly the square
+#' root of the bin count. A bias in the average level is therefore visible in the second while
+#' sitting comfortably inside the first.
+#'
+#' \code{LaggedCovariance} is \code{\link{ctFitCheckCov}} rendered as a dashboard panel: one
+#' plot per variable, faceted by the variable it is paired with, empirical against the central
+#' 95\% of the generated datasets at each lag. It is the only panel that looks at dependence
+#' \emph{across} time rather than at each time, which is what makes it the one that responds
+#' to a wrong drift or diffusion when every marginal already matches. Call
+#' \code{\link{ctFitCheckCov}} directly to split it by a group or a predictor.
 #'
 #' \strong{calibration} asks whether the predictive distribution is the right width and in
 #' the right place: \code{PredictedVsObserved}, \code{IntervalCoverage}, \code{PIT}, and the
@@ -528,9 +573,9 @@ ctPostPredData <- function(fit, residuals = FALSE, nsamples = NA){
 #' @return A named list of ggplot objects, invisibly if \code{plot=TRUE}.
 #'
 #' @seealso \code{\link{ctPostPredData}} for the underlying table,
-#' \code{\link{ctFitCheck}} for a broader dashboard, \code{\link{ctFitCheckCov}} for the
-#' lagged covariance version of the same question, and \code{\link{ctPhasePortrait}} for the
-#' model-implied phase plane on its own.
+#' \code{\link{ctFitCheckCov}} for the lagged covariance panel on its own, with splits by
+#' group or predictor, and \code{\link{ctPhasePortrait}} for the model-implied phase plane
+#' on its own.
 #'
 #' @export
 #'
@@ -541,7 +586,8 @@ ctPostPredData <- function(fit, residuals = FALSE, nsamples = NA){
 #' }
 ctPostPredPlots <- function(fit, panels = 'all', variables = NULL,
   nsamples = NA, datarows = 'all', diffsize = 1, interval = .95,
-  resolution = 100, jitter = 0, residuals = FALSE, notes = TRUE,
+  resolution = 100, jitter = 0, residuals = FALSE, timebins = 10,
+  lags = 0:5, lagcor = TRUE, notes = TRUE,
   plot = FALSE, wait = FALSE){
 
   if(!inherits(fit, c('ctStanFit','ctJuliaFit'))) stop('Not a ctsem fit object', call.=FALSE)
@@ -556,6 +602,8 @@ ctPostPredPlots <- function(fit, panels = 'all', variables = NULL,
     BandLo <- BandHi <- Rank <- SubjMean <- TimeInterval <- Time <- NULL
     mid <- obsF <- gensub <- obssub <- NULL
     variable <- row <- id <- nout <- Nobs <- se <- NULL
+    MeanLo <- MeanMid <- MeanHi <- ObsLo <- ObsHi <- TimeMid <- NULL
+    Observed <- m <- rowbin <- NULL
   }
 
   dat <- ctPostPredData(fit, residuals = residuals, nsamples = nsamples)
@@ -598,8 +646,8 @@ ctPostPredPlots <- function(fit, panels = 'all', variables = NULL,
   obs[, Rank := rank(med, ties.method = 'first'), by = variable]
 
   gglist <- list()
-  llpanels <- c('Density','PredictedVsObserved','IntervalCoverage','PIT',
-    'CalibrationByInterval','CalibrationBySubject')
+  llpanels <- c('Density','MeanTrajectory','PredictedVsObserved',
+    'IntervalCoverage','PIT','CalibrationByInterval','CalibrationBySubject')
   cap <- function(g, key) .ctPostPredCaption(g, key, notes, interval, ndraws,
     hasll = hasll && key %in% llpanels)
 
@@ -617,6 +665,93 @@ ctPostPredPlots <- function(fit, panels = 'all', variables = NULL,
       theme_bw() + labs(x = 'Value', y = 'Density') +
       theme(legend.position = 'bottom')
     gglist$Density <- cap(g, 'Density')
+  }
+
+  if('MeanTrajectory' %in% panels){
+    # The mean over subjects against time, which is a different question from
+    # ValueByTime's cloud of individual observations: the sampling distribution
+    # of a bin mean is narrower than the data by about sqrt(n), so a bias in the
+    # average level shows here while sitting inside the observation envelope
+    # there. Both bands are drawn for exactly that reason -- the wide one is the
+    # spread in the data, the narrow one is uncertainty about its mean, and
+    # showing only one of them is what makes such a plot easy to misread.
+    #
+    # Binned time, not raw time. The panel this restores grouped by exact Time,
+    # which is right for a balanced panel and wrong for anything else: with
+    # continuous or unbalanced observation times most groups hold a single
+    # observation, so the 'mean' is the raw data and the band has no width.
+    # .ctPostPredBin is the equal-count binning the calibration panels already
+    # use, so the time axis is cut the same way throughout.
+    #
+    # Both sides are restricted to rows that were actually observed, and to
+    # rows every draw could evaluate. Generated values exist for every row
+    # including the missing ones, so a model mean over more rows than the
+    # observed mean is not a comparison; and a bin mean taken over a different
+    # set of rows in each draw has a spread that is partly an artifact of which
+    # rows dropped, which is the reason SubjectLogLik totals complete rows only.
+    tj <- dat[is.finite(obsValue) & is.finite(Time)]
+    tj <- tj[, if(all(is.finite(value))) .SD, by = .(variable, row)]
+    if(nrow(tj)){
+      tbins <- max(1L, as.integer(timebins))
+      # Bin the observation schedule, not the draw-replicated table. dat holds
+      # each row once per draw, and equal-count bins of a vector with every
+      # value repeated ndraws times do not land in quite the same place as bins
+      # of the values themselves -- so binning tj directly made the bin edges,
+      # and with them the plotted x positions and bin counts, depend on how
+      # many draws the fit happened to carry.
+      rowbin <- unique(tj[, .(variable, row, Time)])
+      rowbin[, Bin := .ctPostPredBin(Time, tbins), by = variable]
+      tj <- merge(tj, rowbin[, .(variable, row, Bin)], by = c('variable','row'))
+
+      # Reference for the observed bin mean: the bin mean of each generated
+      # dataset. One value per draw, so the spread over draws is the model's
+      # own predictive distribution for this statistic -- the same argument
+      # SubjectLogLik makes for comparing against replicates.
+      bmean <- tj[, .(m = mean(value)), by = .(variable, Bin, sample)][
+        , .(MeanLo = quantile(m, qlo, names = FALSE),
+            MeanMid = median(m),
+            MeanHi = quantile(m, 1 - qlo, names = FALSE)), by = .(variable, Bin)]
+
+      # Spread of individual generated observations in the bin, pooled over
+      # draws: the data variation, for scale.
+      bobs <- tj[, .(ObsLo = quantile(value, qlo, names = FALSE),
+        ObsHi = quantile(value, 1 - qlo, names = FALSE)), by = .(variable, Bin)]
+
+      # One row per observation before averaging. dat holds each observed value
+      # once per draw, so the repetition leaves the mean alone but would make n
+      # a multiple of the real observation count -- and n is reported, in the
+      # subtitle and to anyone reading the returned data.
+      bemp <- unique(tj[, .(variable, row, Bin, Time, obsValue)])[
+        , .(Observed = mean(obsValue), TimeMid = mean(Time), n = .N),
+        by = .(variable, Bin)]
+
+      tjs <- merge(merge(bemp, bmean, by = c('variable','Bin')), bobs,
+        by = c('variable','Bin'))
+      setorder(tjs, variable, TimeMid)
+      g <- ggplot(tjs, aes(x = TimeMid)) +
+        geom_ribbon(aes(ymin = ObsLo, ymax = ObsHi,
+          fill = 'Model, individual observations'), alpha = .5) +
+        geom_ribbon(aes(ymin = MeanLo, ymax = MeanHi, fill = 'Model, mean'),
+          alpha = .75) +
+        geom_line(aes(y = MeanMid, colour = 'Model mean'), linewidth = .8) +
+        geom_line(aes(y = Observed, colour = 'Observed mean'), linewidth = .8,
+          linetype = 'dashed') +
+        geom_point(aes(y = Observed, colour = 'Observed mean'), size = 1.6) +
+        scale_fill_manual(name = '', values = c(
+          'Model, individual observations' = '#C6DBEF',
+          'Model, mean' = '#6BAED6')) +
+        scale_colour_manual(name = '', values = c(
+          'Model mean' = .ctPostPredCols[['Model']],
+          'Observed mean' = .ctPostPredCols[['Observed']])) +
+        facet_wrap(vars(variable), scales = 'free_y') +
+        theme_bw() +
+        labs(x = 'Time (mean within bin)', y = 'Mean over subjects',
+          subtitle = paste0(tbins, ' equal-count bins of time, ',
+            min(bemp$n), '-', max(bemp$n), ' observations each')) +
+        theme(legend.position = 'bottom',
+          plot.subtitle = element_text(size = rel(.8), colour = 'grey30'))
+      gglist$MeanTrajectory <- cap(g, 'MeanTrajectory')
+    }
   }
 
   if(any(c('ValueByTime','ValueByOccasion','ChangeByValue','ChangeByTime') %in% panels)){
@@ -661,6 +796,26 @@ ctPostPredPlots <- function(fit, panels = 'all', variables = NULL,
             title = paste0(v, ', lag ', k), resolution = resolution, trimx = c(0, 1))
           if(!is.null(g)) gglist[[paste0('ChangeByTime_', v, sfx)]] <- cap(g, 'ChangeByTime')
         }
+      }
+    }
+  }
+
+  if('LaggedCovariance' %in% panels){
+    # ctFitCheckCov() computes this, and ctFitCovCheckPlot() draws it -- one
+    # ggplot per row variable, which is the same shape as the per-variable
+    # panels above, so they go into gglist under the same suffixed naming.
+    # Only manifest variables: the lagged covariance is defined against the
+    # observed data, and LogLik and the residual pseudo-variables are neither.
+    lagvars <- intersect(mans, lev)
+    if(length(lagvars)){
+      cc <- ctFitCheckCov(fit, cor = lagcor, plot = FALSE, lags = lags,
+        variables = lagvars,
+        nsamples = if(is.na(nsamples)) NULL else nsamples)
+      ccg <- ctFitCovCheckPlot(cc, maxlag = max(lags), vars = lagvars,
+        cor = lagcor)
+      for(nm in names(ccg)){
+        gglist[[paste0('LaggedCovariance_', nm)]] <- cap(ccg[[nm]],
+          'LaggedCovariance')
       }
     }
   }

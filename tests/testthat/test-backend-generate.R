@@ -416,14 +416,16 @@ test_that("the posterior predictive tools run on a Laplace backend fit", {
   withresiduals <- suppressMessages(ctsem:::ctPostPredData(generated, residuals = TRUE))
   expect_true("Y1 std. res." %in% withresiduals$variable)
 
-  # marginalcovcheck/trajectoryplot are the ctFitCheck() switches already
-  # documented to work on a julia fit; confirm they still do once $generated
-  # is populated from the Laplace route.
+  # The two structure panels that came from the removed ctFitCheck() dashboard.
+  # LaggedCovariance goes through ctFitCheckCov(), which is documented to work
+  # on a julia fit; confirm both do once $generated is populated from the
+  # Laplace route.
   grDevices::pdf(NULL)
   on.exit(grDevices::dev.off(), add = TRUE)
-  expect_no_error(ctFitCheck(fit, data = FALSE, postpred = FALSE, priorpred = FALSE,
-    statepred = FALSE, residuals = FALSE, covplot = FALSE, entropy = FALSE,
-    marginalcovcheck = TRUE, trajectoryplot = TRUE))
+  panels <- suppressWarnings(suppressMessages(ctPostPredPlots(generated,
+    panels = c("MeanTrajectory", "LaggedCovariance"), lags = 0:2)))
+  expect_true("MeanTrajectory" %in% names(panels))
+  expect_true(any(grepl("^LaggedCovariance_", names(panels))))
 })
 
 test_that("missingness survives Laplace-route generation unchanged", {

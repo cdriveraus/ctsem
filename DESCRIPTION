@@ -73,7 +73,6 @@ Suggests:
     lme4,
     shiny,
     gridExtra,
-    arules,
     collapse,
     qgam,
     papaja,
