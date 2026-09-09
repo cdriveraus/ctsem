@@ -1,38 +1,56 @@
 ## An alternative covariance construction: Sigma = D * normalise(exp(A)) * D.
 ##
-## An alternative to `sdcovsqrt2cov!`, selected at runtime by
-## `ctsem_cov_expm!(true)` so both routes can be compared in one build with
-## nothing else differing. The default is off, and with it off `sdcovsqrt2cov!`
-## reproduces `constraincorsqrt1` to 1e-16.
+## Selected at runtime by `ctsem_cov_expm!(true)` so both routes can be compared
+## in one build with nothing else differing. The default is off, and with it off
+## `sdcovsqrt2cov!` reproduces `constraincorsqrt1` to 1e-16.
 ##
 ## Why it exists: `constraincorsqrt1` is not onto the space of correlation
 ## matrices, and a gradient optimiser strands on it -- at k=12, 1 of 30 matched
 ## starts reached the known unique optimum of an unrestricted covariance problem,
-## against 30 of 30 here. Measured on a fitted state-dependent DIFFUSION model
-## (k=6, 60 subjects, 1500 rows, dev1): this route reaches a better likelihood,
-## -6569.960321 against -6569.961397, identically from three starting vectors,
-## and costs 1.36x the fit time.
+## against 30 of 30 here. It is also permutation equivariant, so an iid prior on
+## the coordinates stays order invariant and a parameter shared across cells
+## still means equal correlations. And its coefficients mean something: for a
+## lone pair the correlation is exactly `tanh(A[i,j])`, so a coordinate is
+## Fisher's z, unbounded rather than squashed into (-1, 1).
 ##
 ## Layout is deliberately identical to the sd/correlation form, so no model spec
 ## changes: `mat`'s diagonal is the standard deviation and its lower triangle is
-## the off-diagonal coordinate. What changes is the meaning of that coordinate --
-## here it is the entry of a hollow symmetric `A`, and for a lone pair the
-## resulting correlation is exactly `tanh(A[i,j])`, i.e. the coordinate is
-## Fisher's z. Unlike the `constraincorsqrt1` coordinate it is unbounded, and the
-## construction is permutation equivariant and onto.
+## the off-diagonal coordinate, read into a hollow symmetric `A`.
 ##
-## Scratch is cached per (element type, dimension, thread) rather than threaded
-## through the filter's workspace, which would mean touching every construction
-## site. The `::ExpmCovScratch{T,d}` assertion on the lookup is load-bearing and
-## not decoration: without it every field read downstream is a boxed `Any`
-## access, and that cost alone swamped the construction -- a real gradient came
-## out at 2.85x rather than 1.18x, and 36x the primitive-level projection. The
-## `Dict` lookup that remains is a few tens of nanoseconds against a construction
-## of ~1 microsecond, so it is not worth removing.
+## ## Cost, and where it goes
 ##
-## Like `_sdcovsqrt2cov_pullback!`, the reverse pass recomputes the forward
-## quantities rather than storing them per row; the forward buffer is long
-## overwritten by the time the reverse sweep arrives.
+## `_ekf_predict_step!` calls `sdcovsqrt2cov!` unconditionally on every row, so
+## the construction is rebuilt per row whether or not DIFFUSION depends on the
+## state. Two things follow, and both are exploited below.
+##
+## `A` is hollow, so it carries only the correlation coordinates -- the standard
+## deviations sit outside the exponential. In the usual formulation it is the
+## variances that depend on the state, so `A` is then constant across rows and
+## everything expensive can be cached against its contents.
+##
+## And `A` is symmetric, so the Frechet derivative needed by the reverse pass has
+## a closed form through the eigendecomposition,
+##
+##     L(A, E) = Q [ (Q' E Q) .* Psi ] Q',
+##     Psi[i,j] = (exp(l_i) - exp(l_j)) / (l_i - l_j),  exp(l_i) when l_i == l_j
+##
+## which is self-adjoint for symmetric `A`, so the same expression serves the
+## pullback. `Q` and `Psi` depend on `A` alone, so a cache miss pays one
+## symmetric eigendecomposition and each row then costs two matrix products
+## instead of a full Pade recursion with its linear solve.
+##
+## The eigendecomposition needs a BLAS float, so anything else -- `Dual` above
+## all -- falls back to `my_exp!` and `my_exp_frechet!`, which are correct at any
+## element type. The fallback is exercised by the tests, not assumed.
+##
+## Scratch lives in a table keyed by (element type, dimension, thread). It has to
+## be a table rather than one slot: T0VAR, DIFFUSION and MANIFESTVAR of the same
+## size all share the entry, and with a single slot they evict each other -- a
+## constant-DIFFUSION fit measured ~890,000 exponentials that way against the
+## sd/correlation route's ~1,590. The `::ExpmCovScratch{T,d}` assertion on the
+## lookup is load-bearing for the same reason: without it every field read is a
+## boxed `Any` access, which alone put a real gradient at 2.85x rather than
+## 1.18x.
 
 const _CTSEM_COV_EXPM = Ref(false)
 
@@ -64,36 +82,31 @@ struct ExpmCovScratch{T,D}
     Ybar::Matrix{T}
     Abar::Matrix{T}
     Ytmp::Matrix{T}
+    M1::Matrix{T}
+    M2::Matrix{T}
     g::Vector{T}
     yd::Vector{T}
     eb::ExpBuffer{T,D}
     fb::ExpFrechetBuffer{T,D}
-    # Cache of exp(A), in the spirit of `DiscretizationCache`'s exp_table:
-    # `_ekf_predict_step!` rebuilds the process noise on every row whether or not
-    # DIFFUSION depends on the state, so for a constant DIFFUSION the same A
-    # would otherwise be exponentiated once per row for no reason.
-    #
-    # It has to be a TABLE rather than one slot. The scratch is keyed by element
-    # type and dimension, so T0VAR, DIFFUSION and MANIFESTVAR of the same size
-    # all land here and a single slot thrashes -- measured: a constant-DIFFUSION
-    # fit still paid ~890,000 exponentials with one slot, against ~1,590 for the
-    # sd/correlation route.
-    #
-    # Keyed on each A's full contents rather than a hash, so an entry cannot go
-    # stale: a hit costs up to `_EXPM_CACHE_SLOTS` comparisons of O(d^2) against
-    # an O(d^3) Pade evaluation.
+    # Content-keyed cache. `Atab` holds the key, `Ytab` the exponential, and
+    # `Qtab`/`Psitab` the eigendecomposition-derived Frechet factors when the
+    # element type admits one (`eigok`).
     Atab::Vector{Matrix{T}}
     Ytab::Vector{Matrix{T}}
+    Qtab::Vector{Matrix{T}}
+    Psitab::Vector{Matrix{T}}
+    eigok::Vector{Bool}
     nslots::Base.RefValue{Int}
     nextslot::Base.RefValue{Int}
 end
 
 function ExpmCovScratch{T,D}() where {T,D}
+    mk() = [zeros(T, D, D) for _ in 1:_EXPM_CACHE_SLOTS]
     ExpmCovScratch{T,D}(zeros(T, D, D), zeros(T, D, D), zeros(T, D, D),
-        zeros(T, D, D), zeros(T, D, D), zeros(T, D, D), zeros(T, D), zeros(T, D),
+        zeros(T, D, D), zeros(T, D, D), zeros(T, D, D), zeros(T, D, D),
+        zeros(T, D, D), zeros(T, D), zeros(T, D),
         ExpBuffer{T}(D), ExpFrechetBuffer{T}(D),
-        [zeros(T, D, D) for _ in 1:_EXPM_CACHE_SLOTS],
-        [zeros(T, D, D) for _ in 1:_EXPM_CACHE_SLOTS], Ref(0), Ref(1))
+        mk(), mk(), mk(), mk(), fill(false, _EXPM_CACHE_SLOTS), Ref(0), Ref(1))
 end
 
 const _EXPM_COV_SCRATCH = Dict{Tuple{DataType,Int,Int},Any}()
@@ -101,7 +114,7 @@ const _EXPM_COV_LOCK = ReentrantLock()
 
 # Keyed by thread as well as shape, so each thread works in its own buffers, and
 # the first-use insertion is locked: without that, two threads reaching a new
-# shape at once race on the Dict. The read is unlocked, which is safe here only
+# shape at once race on the Dict. The read is unlocked, which is safe only
 # because an entry is never replaced once written -- a thread either sees
 # `nothing` and takes the lock, or sees a fully constructed struct.
 function _expm_cov_scratch(::Type{T}, ::Val{d}) where {T,d}
@@ -119,28 +132,16 @@ function _expm_cov_scratch(::Type{T}, ::Val{d}) where {T,d}
     return sc::ExpmCovScratch{T,d}
 end
 
+# Only a BLAS float has a symmetric eigendecomposition here; `Dual` and friends
+# take the Pade fallback.
+_expm_eigen_eltype(::Type{T}) where {T<:Union{Float32,Float64}} = true
+_expm_eigen_eltype(::Type) = false
+
 @inline function _blocks_equal(A::AbstractMatrix, B::AbstractMatrix, ::Val{d}) where {d}
     @inbounds for j in 1:d, i in 1:d
         A[i, j] == B[i, j] || return false
     end
     return true
-end
-
-# exp(A), with the content-keyed cache table in front of it
-@inline function _cached_exp!(Y, sc, A, ::Val{d}) where {d}
-    @inbounds for e in 1:sc.nslots[]
-        if _blocks_equal(sc.Atab[e], A, Val(d))
-            copyto!(Y, sc.Ytab[e])
-            return nothing
-        end
-    end
-    my_exp!(Y, A, sc.W1, sc.eb, Val(d))
-    slot = sc.nextslot[]
-    @inbounds copyto!(sc.Atab[slot], A)
-    @inbounds copyto!(sc.Ytab[slot], Y)
-    sc.nslots[] = max(sc.nslots[], slot)
-    sc.nextslot[] = slot == _EXPM_CACHE_SLOTS ? 1 : slot + 1
-    return nothing
 end
 
 # A is hollow symmetric, read from mat's lower triangle.
@@ -152,6 +153,49 @@ end
 end
 
 """
+    _expm_cov_slot!(sc, A, dim)
+
+Index of the cache slot holding `exp(A)` for this `A`, filling it on a miss.
+"""
+function _expm_cov_slot!(sc::ExpmCovScratch{T,D}, A, ::Val{d}) where {T,D,d}
+    @inbounds for e in 1:sc.nslots[]
+        _blocks_equal(sc.Atab[e], A, Val(d)) && return e
+    end
+    slot = sc.nextslot[]
+    @inbounds begin
+        copyto!(sc.Atab[slot], A)
+        if _expm_eigen_eltype(T)
+            # One symmetric eigendecomposition per distinct A. It allocates and
+            # calls LAPACK, which is why it happens here and not per row.
+            F = eigen(Symmetric(copy(A)))
+            Q, lam = F.vectors, F.values
+            copyto!(sc.Qtab[slot], Q)
+            Psi = sc.Psitab[slot]
+            for j in 1:d, i in 1:d
+                delta = lam[i] - lam[j]
+                # exp(l_j) * expm1(delta)/delta is the stable form of the
+                # difference quotient, and tends to exp(l_j) as delta -> 0.
+                Psi[i, j] = iszero(delta) ? exp(lam[j]) :
+                    exp(lam[j]) * expm1(delta) / delta
+            end
+            # Y = Q diag(exp(lam)) Q', built through M1 to avoid a temporary.
+            M1 = sc.M1
+            for j in 1:d, i in 1:d
+                M1[i, j] = Q[i, j] * exp(lam[j])
+            end
+            _mul_right_transpose!(sc.Ytab[slot], M1, Q, Val(d), Val(d), Val(d))
+            sc.eigok[slot] = true
+        else
+            my_exp!(sc.Ytab[slot], A, sc.W1, sc.eb, Val(d))
+            sc.eigok[slot] = false
+        end
+    end
+    sc.nslots[] = max(sc.nslots[], slot)
+    sc.nextslot[] = slot == _EXPM_CACHE_SLOTS ? 1 : slot + 1
+    return slot
+end
+
+"""
     sdcovexpm2cov!(buffer, mat, dim)
 
 Write `D * normalise(exp(A)) * D` into `buffer.out`, where `D` is `mat`'s
@@ -160,9 +204,10 @@ diagonal and `A` is hollow symmetric from `mat`'s lower triangle.
 function sdcovexpm2cov!(buffer, mat, ::Val{d}) where {d}
     T = eltype(buffer.out)
     sc = _expm_cov_scratch(T, Val(d))
-    A, Y = sc.A, sc.Y
+    A = sc.A
     _fill_hollow!(A, mat, Val(d), T)
-    _cached_exp!(Y, sc, A, Val(d))
+    slot = _expm_cov_slot!(sc, A, Val(d))
+    Y = sc.Ytab[slot]
     yd, g = sc.yd, sc.g
     @inbounds for i in 1:d
         yd[i] = sqrt(Y[i, i])
@@ -171,6 +216,24 @@ function sdcovexpm2cov!(buffer, mat, ::Val{d}) where {d}
     @inbounds for j in 1:d, i in 1:d
         buffer.out[i, j] = i == j ? T(mat[i, i])^2 : g[i] * g[j] * Y[i, j]
     end
+    return nothing
+end
+
+# Frechet derivative of exp at A in direction E, through the cached
+# eigendecomposition: L = Q [ (Q' E Q) .* Psi ] Q'.
+@inline function _expm_frechet_eigen!(L, sc::ExpmCovScratch{T,D}, slot::Int, E,
+        ::Val{d}) where {T,D,d}
+    Q, Psi, M1, M2 = sc.Qtab[slot], sc.Psitab[slot], sc.M1, sc.M2
+    # M2 = Q' E Q, elementwise-scaled by Psi. `mul!` reaches BLAS gemm here,
+    # because this path only runs for a BLAS float.
+    mul!(M1, transpose(Q), E)
+    mul!(M2, M1, Q)
+    @inbounds for j in 1:d, i in 1:d
+        M2[i, j] *= Psi[i, j]
+    end
+    # L = Q * M2 * Q'
+    mul!(M1, Q, M2)
+    _mul_right_transpose!(L, M1, Q, Val(d), Val(d), Val(d))
     return nothing
 end
 
@@ -194,9 +257,10 @@ function _sdcovexpm2cov_pullback!(mat_bar::AbstractMatrix, mat::AbstractMatrix,
         cov_bar::AbstractMatrix, ::Val{d}) where {d}
     T = promote_type(eltype(mat), eltype(cov_bar))
     sc = _expm_cov_scratch(T, Val(d))
-    A, Y = sc.A, sc.Y
+    A = sc.A
     _fill_hollow!(A, mat, Val(d), T)
-    _cached_exp!(Y, sc, A, Val(d))
+    slot = _expm_cov_slot!(sc, A, Val(d))
+    Y = sc.Ytab[slot]
     yd = sc.yd
     @inbounds for i in 1:d
         yd[i] = sqrt(Y[i, i])
@@ -228,9 +292,13 @@ function _sdcovexpm2cov_pullback!(mat_bar::AbstractMatrix, mat::AbstractMatrix,
         Ybar[i, i] -= cbar * cij / (2 * Y[i, i])
         Ybar[j, j] -= cbar * cij / (2 * Y[j, j])
     end
-    # Y = exp(A); the adjoint of E -> L(A, E) is Ybar -> L(A', Ybar), and A is
-    # symmetric, so one Frechet evaluation at A in direction Ybar suffices.
-    my_exp_frechet!(sc.Ytmp, sc.Abar, A, Ybar, sc.fb)
+    # Y = exp(A), and the adjoint of E -> L(A, E) is L(A', .) = L(A, .) for
+    # symmetric A, so the same map serves the pullback.
+    if sc.eigok[slot]
+        _expm_frechet_eigen!(sc.Abar, sc, slot, Ybar, Val(d))
+    else
+        my_exp_frechet!(sc.Ytmp, sc.Abar, A, Ybar, sc.fb)
+    end
     @inbounds for i in 1:d, j in 1:(i - 1)
         mat_bar[i, j] += sc.Abar[i, j] + sc.Abar[j, i]
     end

@@ -99,6 +99,56 @@ try
         end
     end
 
+    @testset "eigen path agrees with the Pade fallback" begin
+        ContinuousTimeSEM.ctsem_cov_expm!(true)
+        # Float64 takes the eigendecomposition route, BigFloat cannot and falls
+        # back to my_exp!/my_exp_frechet!. The two must agree, otherwise one of
+        # the two paths is wrong and only some element types would notice.
+        @test ContinuousTimeSEM._expm_eigen_eltype(Float64)
+        @test !ContinuousTimeSEM._expm_eigen_eltype(BigFloat)
+        for k in (3, 6)
+            v = _covexpm_coords(k)
+            cb = _covexpm_cotangent(k)
+            fast = zeros(k, k)
+            ContinuousTimeSEM._sdcovexpm2cov_pullback!(fast,
+                _covexpm_unpack(v, k, Float64), cb, k)
+            slow = zeros(BigFloat, k, k)
+            ContinuousTimeSEM._sdcovexpm2cov_pullback!(slow,
+                _covexpm_unpack(BigFloat.(v), k, BigFloat), BigFloat.(cb), k)
+            @test Float64.(slow) ≈ fast rtol = 1e-8
+        end
+    end
+
+    @testset "the cache serves several matrices at one size" begin
+        ContinuousTimeSEM.ctsem_cov_expm!(true)
+        # T0VAR, DIFFUSION and MANIFESTVAR of the same size share one scratch
+        # entry. With a single cache slot they evicted each other; this cycles
+        # three distinct matrices repeatedly and checks every answer.
+        k = 6
+        mats = [_covexpm_unpack(_covexpm_coords(k) .* f, k, Float64)
+                for f in (1.0, 0.6, 1.4)]
+        expected = map(m -> begin
+            b = _COVEXPM_BUF(k, Float64)
+            ContinuousTimeSEM.sdcovsqrt2cov!(b, m, 0, Val(k))
+            copy(b.out)
+        end, mats)
+        for _ in 1:5, (m, want) in zip(mats, expected)
+            b = _COVEXPM_BUF(k, Float64)
+            ContinuousTimeSEM.sdcovsqrt2cov!(b, m, 0, Val(k))
+            @test b.out ≈ want
+        end
+        # and a matrix that has fallen out of the table still comes back right
+        many = [_covexpm_unpack(_covexpm_coords(k) .* (0.5 + 0.1 * i), k, Float64)
+                for i in 1:10]
+        for m in many
+            b = _COVEXPM_BUF(k, Float64)
+            ContinuousTimeSEM.sdcovsqrt2cov!(b, m, 0, Val(k))
+            b2 = _COVEXPM_BUF(k, Float64)
+            ContinuousTimeSEM.sdcovexpm2cov!(b2, m, Val(k))
+            @test b.out ≈ b2.out
+        end
+    end
+
     @testset "the default route is untouched" begin
         ContinuousTimeSEM.ctsem_cov_expm!(false)
         for k in (3, 6)
