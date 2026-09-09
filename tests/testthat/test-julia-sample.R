@@ -502,3 +502,143 @@ test_that("a fixed stepsize is what every chain starts from", {
     sampleControl = list(stepsize = 0.05))))
   expect_false(isTRUE(all.equal(moved$sample$stepsize, rep(0.05, 2L))))
 })
+
+# --- the posterior predictive uses the effect draws, not conditional modes ----
+#
+# `ctsem_generate(laplace, ...)` puts each subject at its conditional mode,
+# solved from that subject's own data. For a fit that integrated the random
+# effects out that is the quantity to use. For a fit that *sampled* them it is
+# not: the draws exist, and generating at modes conditions the predictive on a
+# point estimate of each effect instead of integrating over its posterior.
+#
+# Asserted on the mechanism rather than on the generated data's statistics,
+# because the two routes are not far apart in distribution -- with
+# fullposterior=TRUE the modes are re-solved at each parameter draw, so they
+# move with it, and the aligned correlation between a subject's generated mean
+# and its own effect draw measured 0.378 through the draws against 0.241
+# through the modes. A difference in the right direction, and far too small a
+# gap to test on. The per-subject exactness below is decisive instead.
+test_that("generation at given effects is exact and per-subject", {
+  skip_without_julia()
+  fit <- suppressWarnings(suppressMessages(ctSample(.sample_fixture(),
+    chains = 1, warmup = 60, draws = 60, cores = 1, saveEffects = TRUE)))
+  expect_false(is.null(fit$sample$effects))
+
+  raw <- fit$estimate$raw
+  nrows <- length(fit$model_spec$times)
+  nsub <- length(fit$model_spec$subject_starts)
+  rowid <- rep(seq_len(nsub), each = nrows / nsub)
+  set.seed(1)
+  base <- matrix(stats::rnorm(nrows), 1, nrows)
+  effects <- as.numeric(fit$sample$effects[1, ])
+
+  first <- .ctBackendGenerate(fit, raw, base, effects = effects)
+  again <- .ctBackendGenerate(fit, raw, base, effects = effects)
+  # The effects are data, not a draw: the same ones reproduce the dataset.
+  expect_identical(as.numeric(first$Y), as.numeric(again$Y))
+
+  # One subject's effect moves that subject and nothing else. The filter runs
+  # per subject at that subject's own parameter vector, so the others are not
+  # merely close -- they are the same numbers. Anything that reached them would
+  # mean an effect had been applied to the wrong subject, which is the failure
+  # this is here to catch.
+  moved <- effects
+  moved[1] <- moved[1] + 2
+  shifted <- .ctBackendGenerate(fit, raw, base, effects = moved)
+  y0 <- as.numeric(first$Y)
+  y1 <- as.numeric(shifted$Y)
+  expect_gt(abs(mean(y1[rowid == 1]) - mean(y0[rowid == 1])), 0.1)
+  expect_identical(y1[rowid != 1], y0[rowid != 1])
+
+  # And the effects are actually being used: modes are a different answer.
+  modes <- .ctBackendGenerate(fit, raw, base)
+  expect_false(isTRUE(all.equal(as.numeric(modes$Y), y0)))
+})
+
+test_that("a sampled fit without saved effects says it fell back to modes", {
+  skip_without_julia()
+  fit <- suppressWarnings(suppressMessages(ctSample(.sample_fixture(),
+    chains = 1, warmup = 60, draws = 60, cores = 1, saveEffects = TRUE)))
+  # Silence is the failure mode: the draws are summarised by default, so
+  # without a message a user asking for a posterior predictive would get one
+  # conditioned on point estimates and no way to notice.
+  stripped <- fit
+  stripped$sample$effects <- NULL
+  expect_message(ctGenerateFromFit(stripped, nsamples = 3,
+    fullposterior = TRUE, cores = 1), "saveEffects=TRUE")
+  # With them, nothing to report.
+  expect_no_message(ctGenerateFromFit(fit, nsamples = 3,
+    fullposterior = TRUE, cores = 1))
+})
+
+# Which route generates the states, as a choice rather than a consequence.
+#
+# What a fit contributes to generated data is its sampled individual
+# differences. The states are always regenerated -- nothing a fit sampled is
+# carried over -- and `intoverstates` says how: through the filter's
+# one-step-ahead predictive, or by drawing the trajectory from the process at
+# each subject's own parameters and then each observation given its state.
+# `'fit'` mirrors what the fit did, which is the default because it keeps the
+# identity that a generated dataset's llrow is the likelihood reported while
+# generating it.
+test_that("ctGenerateFromFit can resample the trajectory or mirror the fit", {
+  skip_without_julia()
+  fit <- suppressWarnings(suppressMessages(ctSample(.sample_fixture(),
+    chains = 1, warmup = 60, draws = 60, cores = 1, saveEffects = TRUE)))
+  expect_true(isTRUE(fit$args$resolved$intoverstates))
+
+  generate <- function(io) {
+    set.seed(11)
+    suppressMessages(ctGenerateFromFit(fit, nsamples = 6, fullposterior = TRUE,
+      cores = 1, intoverstates = io))$generated$Y
+  }
+  mirror <- generate("fit")
+  forced <- generate(TRUE)
+  resampled <- generate(FALSE)
+
+  # This fit integrated its states, so mirroring it is the filter route.
+  expect_equal(mirror, forced)
+  expect_false(isTRUE(all.equal(mirror, resampled)))
+  expect_true(all(is.finite(resampled)))
+  # Not merely finite: a route that had lost the process or the measurement
+  # model would still be finite and would not be on this scale.
+  expect_equal(stats::sd(resampled), stats::sd(mirror), tolerance = 0.25)
+
+  # The state-explicit generator and the innovation count both used to throw
+  # for a random-effect objective, which is what made this route unreachable
+  # from a fit that had any.
+  expect_gt(.ctBackendStateDimension(fit), 0L)
+})
+
+test_that("the resampled trajectory is drawn at each subject's own parameters", {
+  skip_without_julia()
+  fit <- suppressWarnings(suppressMessages(ctSample(.sample_fixture(),
+    chains = 1, warmup = 60, draws = 60, cores = 1, saveEffects = TRUE)))
+  raw <- fit$estimate$raw
+  nrows <- length(fit$model_spec$times)
+  nsub <- length(fit$model_spec$subject_starts)
+  rowid <- rep(seq_len(nsub), each = nrows / nsub)
+  set.seed(2)
+  base <- matrix(stats::rnorm(nrows), 1, nrows)
+  set.seed(3)
+  z <- stats::rnorm(.ctBackendStateDimension(fit))
+  effects <- as.numeric(fit$sample$effects[1, ])
+  moved <- effects
+  moved[1] <- moved[1] + 2
+
+  y0 <- as.numeric(.ctBackendGenerateStates(fit, raw, z, base, effects = effects)$Y)
+  y1 <- as.numeric(.ctBackendGenerateStates(fit, raw, z, base, effects = moved)$Y)
+  expect_gt(abs(mean(y1[rowid == 1]) - mean(y0[rowid == 1])), 0.1)
+  # Bit-identical, as on the filter route: an effect reaching another subject
+  # would mean it had been applied to the wrong one.
+  expect_identical(y1[rowid != 1], y0[rowid != 1])
+})
+
+test_that("intoverstates is refused on the stan path rather than ignored", {
+  # An argument that means something on one backend and nothing on the other is
+  # the shape of mistake ctsem keeps paying for, so it is refused by name.
+  expect_error(ctGenerateFromFit(ctstantestfit, nsamples = 2,
+    intoverstates = FALSE), "backend='julia'", fixed = TRUE)
+  expect_error(ctGenerateFromFit(ctstantestfit, nsamples = 2,
+    intoverstates = TRUE), "backend='julia'", fixed = TRUE)
+})

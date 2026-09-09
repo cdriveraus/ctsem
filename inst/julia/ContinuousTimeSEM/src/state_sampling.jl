@@ -862,12 +862,24 @@ the row after that is drawn from a rate that has already moved. Nothing of the
 kind can happen here, because no observation ever moves a state.
 """
 function ctsem_generate_states(objective::CTSEMObjective,
-    values::AbstractVector, z::AbstractVector, base::AbstractMatrix;
+    values::AbstractVecOrMat, z::AbstractVector, base::AbstractMatrix;
     transition=:exponential)
     trans = _ctsem_transition(transition)
 
     sp = objective.params
-    parameters = collect(Float64, values)
+    # One shared vector, or one row per subject -- the second form exactly as
+    # `ctsem_generate` accepts it, and for the same reason: a fit whose random
+    # effects were sampled has a parameter vector per subject rather than one
+    # shared vector, and generating its trajectory means generating at that
+    # subject's own parameters.
+    persubject = values isa AbstractMatrix
+    if persubject
+        size(values, 1) == length(objective.subject_objectives) ||
+            throw(DimensionMismatch(
+                "one row of parameters per subject is required"))
+    end
+    parameters = persubject ? Vector{Float64}(view(values, 1, :)) :
+        collect(Float64, values)
     innovations = collect(Float64, z)
     layout = _ctsem_state_layout(objective)
     length(innovations) == layout.ndim || throw(DimensionMismatch(
@@ -884,6 +896,7 @@ function ctsem_generate_states(objective::CTSEMObjective,
 
     for (i, sub) in enumerate(subjects)
         gen.offset = layout.rowoffsets[i]
+        persubject && copyto!(parameters, view(values, i, :))
         ws = _get_or_init_objective_workspace!(sub, Float64)
         loglik[i] = _ctsem_state_pass!(ws, parameters, sub.data, sub.timesteps,
             sp, sub.tdpreds, sub.tipreds, sub.subject, sub.max_timestep,

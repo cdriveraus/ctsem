@@ -1222,6 +1222,41 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # vary before an upper one does -- a study effect with exchangeable subjects
   # inside it is an ordinary model -- so this is about which route can
   # represent the request, not about which requests are meaningful.
+  # A fixed value asked to vary between individuals, which it cannot.
+  #
+  # `.ctVaryingRows()` treats a cell with a value as fixed whatever its
+  # `indvarying` flag says, so neither preparation route augments it and the
+  # request simply evaporated -- and RAWPOPVAR used to go on offering a
+  # population spread for the parameter anyway. Setting `indvarying` directly
+  # on `pars` is how nearly every multilevel model here is written, so this is
+  # a reachable mistake rather than a hypothetical one.
+  #
+  # Named cells only. A number written in a matrix has no parameter name, and
+  # the common idiom `model$pars$indvarying <- TRUE` sets the flag on every row
+  # including those; naming each fixed LAMBDA and T0VAR cell back at someone
+  # who wrote that would be noise. A *named* parameter that also carries a
+  # value got there by a deliberate assignment, which is the case worth
+  # reporting.
+  #
+  # A warning rather than an error, matching what the model spec parser does
+  # with the same contradiction written in one cell: the value is kept, the
+  # individual differences are dropped, and the drop is said out loud.
+  fixedvarying <- .ctVaryingColumns(ctm)
+  fixedvarying <- fixedvarying[fixedvarying %in% names(ctm$pars)]
+  if(length(fixedvarying)){
+    flagged <- rep(FALSE, nrow(ctm$pars))
+    for(cl in fixedvarying) flagged <- flagged | ctm$pars[[cl]] %in% TRUE
+    inert <- flagged & !is.na(ctm$pars$value) & !is.na(ctm$pars$param)
+    if(any(inert)) warning(
+      'Individual differences were requested for ', 
+      paste(unique(ctm$pars$param[inert]), collapse=', '),
+      ', which ', if(sum(inert) > 1) 'are' else 'is',
+      ' fixed to a value and so cannot vary between individuals. Fitted as ',
+      'fixed. Clear the value to estimate ', 
+      if(sum(inert) > 1) 'them' else 'it', ' with a population spread.',
+      call.=FALSE)
+  }
+
   outervarying <- .ctVaryingParams(ctm, .ctOuterVaryingColumns(ctm))
   if(length(outervarying)){
     named <- paste(outervarying, collapse=', ')
