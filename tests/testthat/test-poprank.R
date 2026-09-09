@@ -233,18 +233,18 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
     expect_equal(ctsem:::.ctBackendNpar(overridden), 6L)
   })
 
-  # What POPCOV can and cannot say once the rank is reduced. The freely
+  # What RAWPOPVAR can and cannot say once the rank is reduced. The freely
   # parameterised part keeps today's sd and correlation coordinates, so
   # statements there work untouched; a zero *variance* has one clear meaning
   # under any rank and is honoured by leaving that effect out of the split; and
   # a non-zero statement about a regressed effect, or a zero covariance -- which
   # is a linear constraint across a whole row of coefficients rather than a cell
   # -- is refused rather than dropped.
-  test_that('POPCOV statements work where they can be honoured and are refused where not', {
+  test_that('RAWPOPVAR statements work where they can be honoured and are refused where not', {
     m <- poprank_model6()
     pars <- prepared_pars(m)
     m$pars <- pars
-    fresh <- function() { out <- m; out[['POPCOV']] <- ctsem:::.ctModelPopCov(pars); out }
+    fresh <- function() { out <- m; out[['RAWPOPVAR']] <- ctsem:::.ctModelRawPopVar(pars); out }
     split <- function(model) ctsem:::.ctPopRegressionSpec(prepared_pars(model),
       'auto', explicit = TRUE, model = model)
 
@@ -253,34 +253,34 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
     expect_equal(base$regressed, c('df1', 'df2', 'df3'))
 
     # a zero correlation between two basis effects: the freely parameterised part
-    z <- fresh(); z[['POPCOV']]['dr2', 'dr1'] <- 0
+    z <- fresh(); z[['RAWPOPVAR']]['dr2', 'dr1'] <- 0
     expect_equal(split(z)$regressed, c('df1', 'df2', 'df3'))
 
     # a fixed sd on a basis effect
-    f <- fresh(); f[['POPCOV']]['dr1', 'dr1'] <- 0.3
+    f <- fresh(); f[['RAWPOPVAR']]['dr1', 'dr1'] <- 0.3
     expect_equal(split(f)$basis, c('dr1', 'dr2', 'dr3'))
 
     # and any statement about a regressed effect is refused, zero or not.
     # A zero on the diagonal is not special-cased: fixing a population sd to
     # zero is not a sensible thing to state -- `indvarying = FALSE` is how a
     # parameter is made non-varying -- so it gets no path of its own.
-    nz <- fresh(); nz[['POPCOV']]['df1', 'df1'] <- 0.3
-    expect_error(split(nz), 'poprank would drop what POPCOV states')
-    zd <- fresh(); zd[['POPCOV']]['df1', 'df1'] <- 0
-    expect_error(split(zd), 'poprank would drop what POPCOV states')
-    zc <- fresh(); zc[['POPCOV']]['df1', 'dr1'] <- 0
-    expect_error(split(zc), 'poprank would drop what POPCOV states')
+    nz <- fresh(); nz[['RAWPOPVAR']]['df1', 'df1'] <- 0.3
+    expect_error(split(nz), 'poprank would drop what RAWPOPVAR states')
+    zd <- fresh(); zd[['RAWPOPVAR']]['df1', 'df1'] <- 0
+    expect_error(split(zd), 'poprank would drop what RAWPOPVAR states')
+    zc <- fresh(); zc[['RAWPOPVAR']]['df1', 'dr1'] <- 0
+    expect_error(split(zc), 'poprank would drop what RAWPOPVAR states')
   })
 
-  # What a fixed POPCOV entry means. Pinned because the documentation in
-  # R/ctModelPopCov.R now states these numbers, and a comment is not evidence:
+  # What a fixed RAWPOPVAR entry means. Pinned because the documentation in
+  # R/ctModelRawPopVar.R now states these numbers, and a comment is not evidence:
   # if `constraincorsqrt1()` or the placement changes, this is what notices.
   #
   # The diagonal is the population sd it says it is. The off-diagonal is the
   # coordinate that map consumes, so the correlation that comes out is further
   # from zero than the coordinate written in -- except at zero, which is exact
   # and is the case the surface's own example relies on.
-  test_that('a fixed POPCOV entry means what R/ctModelPopCov.R says it means', {
+  test_that('a fixed RAWPOPVAR entry means what R/ctModelRawPopVar.R says it means', {
     set.seed(4); nsub <- 120L; nt <- 6L
     o <- vector('list', nsub)
     for (i in seq_len(nsub)) {
@@ -308,9 +308,9 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
       p <- ctsem:::ctModelStatesAndPARS(ctsem:::ctModel0DRIFT(m, TRUE)$pars,
         statenames = 'eta', tdprednames = NULL)
       m$pars <- p
-      m[['POPCOV']] <- ctsem:::.ctModelPopCov(p)
-      nms <- rownames(m[['POPCOV']])
-      m[['POPCOV']][nms[row], nms[col]] <- value
+      m[['RAWPOPVAR']] <- ctsem:::.ctModelRawPopVar(p)
+      nms <- rownames(m[['RAWPOPVAR']])
+      m[['RAWPOPVAR']][nms[row], nms[col]] <- value
       set.seed(77)
       f <- suppressWarnings(suppressMessages(ctFit(datalong = dat, model = m,
         backend = 'julia', intoverpop = 'augmented', poprank = NA, cores = 1L,
@@ -358,43 +358,43 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
     expect_false('poprank' %in% names(formals(ctIdentify)))
   })
 
-  # POPCOV is the specification surface for the population covariance, and the
+  # RAWPOPVAR is the specification surface for the population covariance, and the
   # augmentation reads it per varying parameter: a number fixes an sd or a
   # correlation. A regressed effect has neither of its own, so anything stated
   # about one would be silently dropped -- the single outcome this feature
   # exists to prevent. Asked for, refused by name; defaulted, the user's own
   # specification wins and the rank is simply not applied.
-  test_that('poprank refuses to drop a POPCOV statement about a regressed effect', {
+  test_that('poprank refuses to drop a RAWPOPVAR statement about a regressed effect', {
     m <- poprank_model()
     pars <- prepared_pars(m)
     m$pars <- pars
-    # a fresh POPCOV over the two varying parameters, then a fixed sd for the
+    # a fresh RAWPOPVAR over the two varying parameters, then a fixed sd for the
     # one poprank would regress
-    m[['POPCOV']] <- ctsem:::.ctModelPopCov(pars)
-    expect_true('df11' %in% rownames(m[['POPCOV']]))
-    m[['POPCOV']]['df11', 'df11'] <- 0.3
+    m[['RAWPOPVAR']] <- ctsem:::.ctModelRawPopVar(pars)
+    expect_true('df11' %in% rownames(m[['RAWPOPVAR']]))
+    m[['RAWPOPVAR']]['df11', 'df11'] <- 0.3
 
-    conflicts <- ctsem:::.ctPopRegressionPopCovConflicts(m, 'df11')
+    conflicts <- ctsem:::.ctPopRegressionRawPopVarConflicts(m, 'df11')
     expect_length(conflicts, 1L)
-    expect_match(conflicts, "POPCOV['df11', 'df11'] = 0.3", fixed = TRUE)
+    expect_match(conflicts, "RAWPOPVAR['df11', 'df11'] = 0.3", fixed = TRUE)
 
     expect_error(ctsem:::.ctPopRegressionSpec(pars, 'auto', explicit = TRUE,
-      model = m), 'poprank would drop what POPCOV states')
+      model = m), 'poprank would drop what RAWPOPVAR states')
     expect_null(ctsem:::.ctPopRegressionSpec(pars, 'auto', explicit = FALSE,
       model = m))
 
     # a statement about the basis effect is fine -- it keeps its own spread
     m2 <- m
-    m2[['POPCOV']] <- ctsem:::.ctModelPopCov(pars)
-    m2[['POPCOV']]['dr11', 'dr11'] <- 0.3
-    expect_length(ctsem:::.ctPopRegressionPopCovConflicts(m2, 'df11'), 0L)
+    m2[['RAWPOPVAR']] <- ctsem:::.ctModelRawPopVar(pars)
+    m2[['RAWPOPVAR']]['dr11', 'dr11'] <- 0.3
+    expect_length(ctsem:::.ctPopRegressionRawPopVarConflicts(m2, 'df11'), 0L)
     spec <- ctsem:::.ctPopRegressionSpec(pars, 'auto', explicit = TRUE, model = m2)
     expect_equal(spec$regressed, 'df11')
 
-    # and an untouched POPCOV states nothing, so it cannot conflict
+    # and an untouched RAWPOPVAR states nothing, so it cannot conflict
     m3 <- m
-    m3[['POPCOV']] <- ctsem:::.ctModelPopCov(pars)
-    expect_length(ctsem:::.ctPopRegressionPopCovConflicts(m3, 'df11'), 0L)
+    m3[['RAWPOPVAR']] <- ctsem:::.ctModelRawPopVar(pars)
+    expect_length(ctsem:::.ctPopRegressionRawPopVarConflicts(m3, 'df11'), 0L)
   })
 
   test_that('poprank refuses a model in which nothing reaches the observation mean', {

@@ -1681,20 +1681,20 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     col <- row
     index <- which(table$matrix == "T0VAR" & table$row == row & table$col == col)
     length(index) == 1L || stop("Internal Julia augmentation error: missing T0VAR entry.", call. = FALSE)
-    # What the model says about this population sd, if anything. POPCOV is the
-    # specification surface (see R/ctModelPopCov.R); a number there fixes the
+    # What the model says about this population sd, if anything. RAWPOPVAR is the
+    # specification surface (see R/ctModelRawPopVar.R); a number there fixes the
     # cell and a label names the parameter, in place of the positional
     # `julia_popcov_i_j` this used to invent.
-    spec <- .ctModelPopCovEntry(model, varying_names[position])
-    fixedvalue <- .ctModelPopCovValue(spec)
+    spec <- .ctModelRawPopVarEntry(model, varying_names[position])
+    fixedvalue <- .ctModelRawPopVarValue(spec)
     if (is.finite(fixedvalue)) {
       if (fixedvalue < 0) {
-        stop("POPCOV['", varying_names[position], "', '",
+        stop("RAWPOPVAR['", varying_names[position], "', '",
           varying_names[position], "'] is ", fixedvalue,
           ". A population standard deviation cannot be negative.",
           call. = FALSE)
       }
-      # Converted from the raw parameter scale a POPCOV entry is written on to
+      # Converted from the raw parameter scale a RAWPOPVAR entry is written on to
       # the state scale this cell is in, which is `k_i` and nothing else.
       #
       # The free branch produces `k_i * raw_sd`, so a requested raw spread `v`
@@ -1723,7 +1723,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       table$transform[index] <- sprintf("%.17g * (1e-10 + %.17g * log1p_exp(2 * param[%d] - 1))",
         t0means_state_scale[position], random_sd_scale[position], next_parameter)
     }
-    # Whether the sd is fixed by POPCOV or free, this row is a population
+    # Whether the sd is fixed by RAWPOPVAR or free, this row is a population
     # covariance cell and carries no TI predictor effect of its own.
     if (length(effect_columns)) table[index, effect_columns] <- "FALSE"
     covariance_rows[[length(covariance_rows) + 1L]] <- data.frame(
@@ -1743,18 +1743,18 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       col <- augmented_indices[column_position]
       index <- which(table$matrix == "T0VAR" & table$row == row & table$col == col)
       length(index) == 1L || stop("Internal Julia augmentation error: missing T0VAR entry.", call. = FALSE)
-      spec <- .ctModelPopCovEntry(model, varying_names[row_position],
+      spec <- .ctModelRawPopVarEntry(model, varying_names[row_position],
         varying_names[column_position])
-      fixedvalue <- .ctModelPopCovValue(spec)
+      fixedvalue <- .ctModelRawPopVarValue(spec)
       if (is.finite(fixedvalue)) {
         if (abs(fixedvalue) > 1) {
-          stop("POPCOV['", varying_names[row_position], "', '",
+          stop("RAWPOPVAR['", varying_names[row_position], "', '",
             varying_names[column_position], "'] is ", fixedvalue,
             ". Off-diagonal entries are unconstrained correlation coordinates ",
             "and must lie in [-1, 1]. Zero means uncorrelated exactly; a ",
             "non-zero coordinate gives a correlation further from zero than ",
             "itself (0.5 gives about 0.79), because constraincorsqrt1() ",
-            "normalises by the row. See R/ctModelPopCov.R.",
+            "normalises by the row. See R/ctModelRawPopVar.R.",
             call. = FALSE)
         }
         table$param[index] <- NA_character_
@@ -1770,7 +1770,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
         table$transform[index] <- sprintf("2 / (1 + exp(-param[%d])) - 1", next_parameter)
       }
       # As for the sd cells above: a population correlation carries no TI
-      # predictor effect of its own, fixed by POPCOV or not.
+      # predictor effect of its own, fixed by RAWPOPVAR or not.
       if (length(effect_columns)) table[index, effect_columns] <- "FALSE"
       covariance_rows[[length(covariance_rows) + 1L]] <- data.frame(
         row = row, col = col,

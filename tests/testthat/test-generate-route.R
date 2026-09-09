@@ -68,7 +68,7 @@ test_that("burnin and wide output honour a custom time name", {
 # Fixed values only: no random effects at any level.
 #
 # The between-subject spread used to be drawn from the augmented layout's own
-# T0 draw -- measured 2.18 against a stated 2 -- through a POPCOV entry read on
+# T0 draw -- measured 2.18 against a stated 2 -- through a RAWPOPVAR entry read on
 # the parameter's natural scale, which is not the scale a fit reports. Rather
 # than carry a convention that disagrees with fitting, user side generation
 # draws nothing and says so; ctGenerateFromFit() is where random effects in
@@ -80,10 +80,10 @@ test_that("burnin and wide output honour a custom time name", {
     DIFFUSION = matrix(0.2), MANIFESTVAR = matrix(0.05), T0VAR = matrix(0.2),
     MANIFESTMEANS = matrix("mm"))))
   m$pars$indvarying <- m$pars$param %in% "mm"
-  m <- ctsem:::.ctModelPopCovSync(m)
+  m <- ctsem:::.ctModelRawPopVarSync(m)
   if (!is.na(sd)) {
     mats <- m$matrices
-    mats$POPCOV["mm", "mm"] <- sd
+    mats$RAWPOPVAR["mm", "mm"] <- sd
     m$matrices <- mats
   }
   m

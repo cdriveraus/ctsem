@@ -255,9 +255,9 @@ test_that("parking the random effects names what it dropped", {
     MANIFESTVAR = matrix(0.05), T0VAR = matrix(0.2), T0MEANS = matrix(0),
     CINT = matrix(0), MANIFESTMEANS = matrix("mm"), Tpoints = 5)))
   m$pars$indvarying <- m$pars$param %in% "mm"
-  m <- ctsem:::.ctModelPopCovSync(m)
+  m <- ctsem:::.ctModelRawPopVarSync(m)
   mats <- m$matrices
-  mats$POPCOV["mm", "mm"] <- 0.3
+  mats$RAWPOPVAR["mm", "mm"] <- 0.3
   m$matrices <- mats
 
   expect_message(cleared <- ctsem:::.ctGenerateFixedOnly(m),
@@ -267,12 +267,12 @@ test_that("parking the random effects names what it dropped", {
   expect_false(any(cleared$pars$indvarying %in% TRUE))
   # The covariance goes with them, so nothing downstream can read a spread for
   # a parameter that no longer has a random effect.
-  expect_null(cleared[["POPCOV"]])
+  expect_null(cleared[["RAWPOPVAR"]])
 
   # A fixed-effects model says nothing, having dropped nothing.
   plain <- m
   plain$pars$indvarying <- FALSE
-  plain <- ctsem:::.ctModelPopCovSync(plain)
+  plain <- ctsem:::.ctModelRawPopVarSync(plain)
   expect_no_message(ctsem:::.ctGenerateFixedOnly(plain))
 })
 

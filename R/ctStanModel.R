@@ -122,12 +122,12 @@ ctModelUnlist<-function(ctmodelobj,
     stop('matrices must be a named list of matrices')
   }
 
-  # POPCOV is not a system matrix and has no rows in `pars`; it is stored on
+  # RAWPOPVAR is not a system matrix and has no rows in `pars`; it is stored on
   # the model and taken out here before the loop below, which requires every
   # matrix it sees to be present in `pars`.
-  if('POPCOV' %in% names(matrices)){
-    ctm <- .ctModelPopCovAssign(ctm, matrices[['POPCOV']])
-    matrices[['POPCOV']] <- NULL
+  if('RAWPOPVAR' %in% names(matrices)){
+    ctm <- .ctModelRawPopVarAssign(ctm, matrices[['RAWPOPVAR']])
+    matrices[['RAWPOPVAR']] <- NULL
   }
 
   pars <- ctm[['pars']]
@@ -235,10 +235,10 @@ ctModelMatrices <- function(x){
   if(!'ctStanModel' %in% class(x)) stop('x must be a ctStanModel object')
   out <- listOfMatrices(x[['pars']])
   # Rebuilt on read rather than trusted: `indvarying` is routinely set directly
-  # after the model is built, and a POPCOV describing a different set of random
+  # after the model is built, and a RAWPOPVAR describing a different set of random
   # effects than the model currently has would be worse than none.
-  synced <- .ctModelPopCovSync(x)
-  if(!is.null(synced[['POPCOV']])) out$POPCOV <- synced[['POPCOV']]
+  synced <- .ctModelRawPopVarSync(x)
+  if(!is.null(synced[['RAWPOPVAR']])) out$RAWPOPVAR <- synced[['RAWPOPVAR']]
   out
 }
 
@@ -599,8 +599,8 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
   # beside `pars` rather than in it, deliberately: everything that enumerates
   # free parameters walks `pars`, and the population covariance is not one of
   # those -- both backends build it from their own parameterisation. See
-  # R/ctModelPopCov.R.
-  out <- .ctModelPopCovSync(out)
+  # R/ctModelRawPopVar.R.
+  out <- .ctModelRawPopVarSync(out)
   out[['matrices']] <- .ctModelMatricesPlaceholder()
   # out$NOrdinalIntegrationPoints <- 9L
   

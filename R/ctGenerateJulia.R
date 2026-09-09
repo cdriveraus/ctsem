@@ -190,14 +190,14 @@
   # a distribution no longer in the model, and leaving it would let preparation
   # read a spread for a parameter that has no random effect.
   stated <- character()
-  popvar <- model[["POPCOV"]]
+  popvar <- model[["RAWPOPVAR"]]
   if (!is.null(popvar) && length(popvar)) {
     for (nm in rownames(popvar)) {
-      if (is.finite(.ctModelPopCovValue(popvar[nm, nm]))) stated <- c(stated, nm)
+      if (is.finite(.ctModelRawPopVarValue(popvar[nm, nm]))) stated <- c(stated, nm)
     }
   }
-  model[["POPCOV"]] <- NULL
-  if (!is.null(model$matrices)) model$matrices$POPCOV <- NULL
+  model[["RAWPOPVAR"]] <- NULL
+  if (!is.null(model$matrices)) model$matrices$RAWPOPVAR <- NULL
   # Time-independent predictor effects go with them, and this has to be said
   # rather than left to be discovered. A TI effect shifts a *varying*
   # parameter -- the prepared spec indexes `ti_effects` against the order the
