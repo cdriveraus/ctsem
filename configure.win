@@ -27,8 +27,8 @@
 # target is actually built via an old-style SUFFIX rule (.cc.o:, what
 # Makeconf uses), because make's suffix-rule and pattern-rule mechanisms
 # don't combine for that purpose -- "make: Nothing to be done" even though
-# the header is newer. An explicit-name rule (stanExports_cov.o:
-# stanExports_cov.h) combines with a suffix rule correctly and does trigger
+# the header is newer. An explicit-name rule (stanExports_ctsm.o:
+# stanExports_ctsm.h) combines with a suffix rule correctly and does trigger
 # the rebuild. See dev/stan-header-deps.md for the reproduction.
 #
 # The model list is read from inst/stan/*.stan at configure time, so a
@@ -51,7 +51,7 @@ if [ -f src/Makevars.win ]; then
   # (tools:::.shlib_internal builds `makefiles <- c("Makevars.win", makefiles)`), so the
   # FIRST explicit target in it becomes make's default goal, and R invokes make
   # without naming one. The rules above would therefore make
-  # stanExports_cov.o the goal: make builds that single object, prints
+  # the first model's object the goal: make builds that single object, prints
   # "Nothing to be done", exits 0, and R CMD INSTALL runs happily to the end
   # and fails only at the load check with no shared object. Verified with
   # make -p on a real generated Makevars, and reproduced minimally.
