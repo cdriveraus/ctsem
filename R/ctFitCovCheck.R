@@ -849,7 +849,7 @@ ctFitCheck <- function(fit,
         if(!fastcov) corlist[[dsi]] <- covml(
           data.frame(wdat)[,!colnames(wdat) %in% c('Sample',ctmb$subjectIDname),drop=FALSE],
           reg=reg,
-          verbose=verbose)$cp$covm
+          verbose=verbose)$estimate$covm
         
         if(fastcov) corlist[[dsi]] <- cov(
           data.frame(wdat)[,!colnames(wdat) %in% c('Sample',ctmb$subjectIDname),drop=FALSE],

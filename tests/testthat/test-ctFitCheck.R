@@ -103,6 +103,35 @@ test_that("ctFitCheck() defaults are unchanged and it returns its panels invisib
   expect_true(all(c("DataSource", "Sample", "WhichObs") %in% names(out$data)))
 })
 
+# The covariance heatmaps have two routes to a covariance matrix, and the
+# default one is covml(). Its return element was renamed cp -> estimate in
+# 2024 and this caller was not updated, so the default path read NULL: with
+# corr=TRUE that surfaced as cov2cor()'s "'V' is not a square numeric matrix",
+# and with corr=FALSE it was silent -- assigning NULL to a list element
+# *removes* it, so corlist stayed empty, every downstream seq_along() loop ran
+# zero times, and the function returned no covariances and no plots without
+# complaint. Every existing covplot test passed fastcov=TRUE, which is why two
+# years went by. So assert on the default route, and on the list being
+# populated rather than only on the call not erroring.
+test_that("ctFitCheck() covariance panels work on the default covml route, corr either way (stan)", {
+  skip_on_cran()
+  withr::local_pdf(NULL)
+  expect_identical(formals(ctFitCheck)$fastcov, FALSE)
+  expect_identical(formals(ctFitCheck)$corr, TRUE)
+
+  for (cr in c(TRUE, FALSE)) {
+    out <- suppressWarnings(suppressMessages(ctFitCheck(ctstantestfit, covplot = TRUE,
+      breaks = 2, nsamples = 5, data = TRUE, postpred = TRUE, corr = cr)))
+    expect_true(all(c("Data", "PostPred") %in% names(out$covariances)))
+    expect_length(out$plots, 3L) # one heatmap per source, plus their difference
+    for (cm in out$covariances) {
+      expect_true(is.matrix(cm))
+      expect_identical(nrow(cm), ncol(cm))
+      if (cr) expect_equal(diag(cm), setNames(rep(1, nrow(cm)), rownames(cm)))
+    }
+  }
+})
+
 test_that("ctFitMelt reads the same one-step-ahead predictions the backend's own filter gives (stan)", {
   skip_on_cran()
 
