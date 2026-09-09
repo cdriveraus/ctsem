@@ -403,6 +403,9 @@ diagonal of `mat_bar` are written, matching where the free parameters live.
 function _sdcovsqrt2cov_pullback!(mat_bar::AbstractMatrix, mat::AbstractMatrix,
     cov_bar::AbstractMatrix, d::Int; epsilon::Real=1e-5, scratch=nothing)
     d == 0 && return mat_bar
+    if _CTSEM_COV_EXPM[]
+        return _sdcovexpm2cov_pullback!(mat_bar, mat, cov_bar, d)
+    end
     # A zero cotangent happens routinely -- e.g. the manifest-covariance
     # cotangent on a fully missing row, where no measurement update ran -- and
     # this map is O(d^3) to pull back, so it is worth not doing.

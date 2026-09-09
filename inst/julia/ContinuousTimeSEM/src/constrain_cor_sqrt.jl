@@ -93,6 +93,9 @@ function sdcovsqrt2cov!(buffer, mat, choleskymats)
 end
 
 function sdcovsqrt2cov!(buffer, mat, choleskymats, dim::Val{d}) where {d}
+    if _CTSEM_COV_EXPM[]
+        return sdcovexpm2cov!(buffer, mat, dim)
+    end
     # TODO: Rewrite this for performance
     # if size(mat, 1) == 0
     #     # return Symmetric(mat, :L) 
