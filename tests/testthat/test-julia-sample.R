@@ -456,10 +456,20 @@ test_that("an effective-size target turns the draw count into a budget", {
   expect_lt(met$sample$draws, 200L)
   expect_gt(met$sample$draws, 0L)
 
-  # And with no target it takes exactly what it was asked for.
+  # `minESS = 0` is the off switch, and then it takes exactly what it was
+  # asked for. Needed explicitly now that 200 is the default target -- a
+  # default fit stops early, which is the point of it.
   full <- suppressWarnings(suppressMessages(ctSample(fit, chains = 2,
-    warmup = 100, draws = 200, cores = 1, processes = FALSE)))
+    warmup = 100, draws = 200, cores = 1, processes = FALSE,
+    sampleControl = list(minESS = 0))))
   expect_equal(full$sample$draws, 200L)
+
+  # And the default is a target rather than an instruction: the twelve-subject
+  # fixture will not reach min ESS 200 in 200 draws, so the budget is spent in
+  # full and nothing is lost by the default being on.
+  default <- suppressWarnings(suppressMessages(ctSample(fit, chains = 2,
+    warmup = 100, draws = 200, cores = 1, processes = FALSE)))
+  expect_lte(default$sample$draws, 200L)
 
   # The old spelling is refused with the new one named, rather than dropped by
   # `$` and silently ignored.

@@ -235,13 +235,13 @@
 #'   which \code{\link{ctFit}} takes for the same two settings, are
 #'   accepted here as well.
 #'
-#'   Sampling takes exactly the draws it was asked for unless it is given a
-#'   target to reach: \code{minESS} and \code{meanESS} are effective sample
-#'   sizes to draw towards and \code{rhatTarget} (1.01) the R-hat to reach
-#'   alongside them. Given one, the count asked for becomes a \emph{budget}
-#'   rather than an instruction -- the run stops as soon as the target is met,
-#'   and never draws more than was asked unless \code{maxDraws} says so
-#'   explicitly. It is checked in batches: the first is sized from the target
+#'   Sampling stops early once it has enough. \code{minESS} (200) is the
+#'   effective sample size the \emph{worst} parameter must reach and
+#'   \code{rhatTarget} (1.01) the R-hat to reach alongside it; \code{meanESS}
+#'   is the same idea averaged, and off by default. The count asked for is a
+#'   \emph{budget}, not an instruction -- the run stops as soon as the target
+#'   is met, and never draws more than was asked unless \code{maxDraws} says
+#'   so explicitly. \code{minESS = 0} takes exactly the draws asked for. It is checked in batches: the first is sized from the target
 #'   rather than from the budget -- effective size cannot exceed the draws
 #'   behind it, so \code{minESS} needs at least \code{minESS / chains} of them,
 #'   with a floor of 50 because R-hat and effective size read off fewer are too
@@ -679,7 +679,18 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
   # spent 559 s for min ESS 246.3, a factor of 5.5 against. A settled metric is
   # not a good metric, and the sampling phase pays for the shortened warmup on
   # every draw.
-  if (!is.null(control$minESS)) settings$min_ess <- as.numeric(control$minESS)
+  # 200, by default, and it can only ever *shorten* a run: the draw count
+  # asked for stays the budget (see the note where `max_draws` is set), so this
+  # says "stop once every parameter has 200 effective draws and the chains
+  # agree" rather than "keep going until it does".
+  #
+  # It is the *worst* coordinate that has to reach it, not the mean, which is
+  # what makes 200 a defensible floor rather than a loose one -- the 2.5% and
+  # 97.5% quantiles `summary()` reports are the part that needs the draws, and
+  # they need them for every parameter, not on average. `minESS = 0` turns it
+  # off and takes exactly the draws asked for.
+  settings$min_ess <- as.numeric(.ctJuliaOr(control$minESS, 200))
+  if (!isTRUE(settings$min_ess > 0)) settings$min_ess <- NULL
   if (!is.null(control$meanESS)) settings$mean_ess <- as.numeric(control$meanESS)
   if (!is.null(control$maxDraws)) settings$max_draws <- as.integer(control$maxDraws)
   if (!is.null(control$rhatTarget)) settings$rhat_target <- as.numeric(control$rhatTarget)
@@ -936,6 +947,25 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
       "and in divergences. The metric is the fit's own curvature either way.",
       if (!is.null(control$target_accept) || !is.null(control$adapt_delta))
         " target_accept only reaches the dual averaging that warmup runs, so it is unused here." else "")
+  }
+
+  # What this run will do, in one line, before it does it.
+  #
+  # The effective-size target belongs in it: it decides when the run stops, so
+  # a reader who does not know it is there cannot tell a sample that finished
+  # early from one that was cut short. Reported wherever progress is --
+  # someone watching a console is exactly the someone who needs it.
+  if (isTRUE(progress) || .ctProgressConsole()) {
+    settings <- .ctBackendSampleControl(control)
+    target_ess <- max(.ctJuliaOr(settings$min_ess, 0),
+      .ctJuliaOr(settings$mean_ess, 0))
+    message("Sampling: ", chains, " chain", if (chains == 1L) "" else "s",
+      ", ", warmup, " warmup + ",
+      if (target_ess > 0) paste0("up to ", draws) else draws,
+      " draws each",
+      if (target_ess > 0) paste0(", stopping once min ESS ",
+        .ctJuliaOr(settings$min_ess, target_ess), " and R-hat ",
+        .ctJuliaOr(settings$rhat_target, 1.01), " are reached") else "", ".")
   }
 
   if (isTRUE(processes) && chains > 1L && .ctBackendCanWarm()) {

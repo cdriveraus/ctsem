@@ -48,13 +48,13 @@ longer than many fits do.}
   which \code{\link{ctFit}} takes for the same two settings, are
   accepted here as well.
 
-  Sampling takes exactly the draws it was asked for unless it is given a
-  target to reach: \code{minESS} and \code{meanESS} are effective sample
-  sizes to draw towards and \code{rhatTarget} (1.01) the R-hat to reach
-  alongside them. Given one, the count asked for becomes a \emph{budget}
-  rather than an instruction -- the run stops as soon as the target is met,
-  and never draws more than was asked unless \code{maxDraws} says so
-  explicitly. It is checked in batches: the first is sized from the target
+  Sampling stops early once it has enough. \code{minESS} (200) is the
+  effective sample size the \emph{worst} parameter must reach and
+  \code{rhatTarget} (1.01) the R-hat to reach alongside it; \code{meanESS}
+  is the same idea averaged, and off by default. The count asked for is a
+  \emph{budget}, not an instruction -- the run stops as soon as the target
+  is met, and never draws more than was asked unless \code{maxDraws} says
+  so explicitly. \code{minESS = 0} takes exactly the draws asked for. It is checked in batches: the first is sized from the target
   rather than from the budget -- effective size cannot exceed the draws
   behind it, so \code{minESS} needs at least \code{minESS / chains} of them,
   with a floor of 50 because R-hat and effective size read off fewer are too

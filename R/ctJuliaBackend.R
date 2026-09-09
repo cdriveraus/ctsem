@@ -30,8 +30,13 @@
 # once at startup rather than passing an argument through every fitting call.
 #' @keywords internal
 .ctProgressConsole <- function() {
-  option <- getOption("ctsem.progress.overwrite")
-  if (is.logical(option) && length(option) == 1L && !is.na(option)) return(option)
+  # `options(ctsem.progress.overwrite = )` is *not* read here, and used to be.
+  # This function answers "is anyone watching", and its answer decides whether
+  # a fit reports at all; the option says whether a carriage return moves the
+  # cursor, which `.ctProgressOverwrite()` reads. Conflating them meant that
+  # setting the option FALSE -- to ask for plain lines rather than an
+  # overwritten one -- silently turned reporting off altogether, which is not
+  # what it says and not what anyone setting it wants.
   # Inside a Shiny session: a non-NULL reactive domain is the reliable signal,
   # and reaching it through the namespace keeps shiny a suggestion rather than
   # a dependency.
