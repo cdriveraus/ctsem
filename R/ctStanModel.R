@@ -610,3 +610,49 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
 #' @export
 ctStanModel <- ctModelConvertOMX
 
+
+# --- which parameters vary, at which level -----------------------------------
+
+# The subject level is `indvarying`; each grouping level above it is
+# `indvarying_<idname>`, created in `ctModelConvertOMX()` above.
+#
+# Everything that asks "does this model have random effects" has to ask about
+# every level, not just the subject's. A study effect with no subject effect is
+# an ordinary multilevel model -- one intercept per study, subjects treated as
+# exchangeable within a study -- and testing `indvarying` alone refused it as
+# having nothing to integrate over.
+.ctVaryingColumns <- function(model){
+  c('indvarying',
+    if(length(model$groupIDnames)) paste0('indvarying_', model$groupIDnames))
+}
+
+# Which rows are free and varying at the given levels. A cell with a value is
+# fixed and never varies, whatever its flag says. `%in% TRUE` rather than
+# `isTRUE` per element because these columns carry NA on rows added after the
+# model was built.
+.ctVaryingRows <- function(model, columns = .ctVaryingColumns(model)){
+  columns <- columns[columns %in% names(model$pars)]
+  free <- is.na(model$pars$value)
+  out <- rep(FALSE, nrow(model$pars))
+  for(cl in columns) out <- out | (model$pars[[cl]] %in% TRUE & free)
+  out
+}
+
+# Does anything vary at any of the given levels?
+.ctAnyVarying <- function(model, columns = .ctVaryingColumns(model))
+  any(.ctVaryingRows(model, columns))
+
+# The same, named. For messages that have to say which parameters a route
+# cannot carry; an unnamed row cannot be reported and is dropped here only.
+.ctVaryingParams <- function(model, columns = .ctVaryingColumns(model)){
+  rows <- .ctVaryingRows(model, columns)
+  unique(model$pars$param[rows & !is.na(model$pars$param)])
+}
+
+# The grouping levels above the subject, alone. Used where a route handles the
+# subject level and nothing else, so it can say which parameters it would have
+# had to drop rather than dropping them.
+.ctOuterVaryingColumns <- function(model){
+  cols <- .ctVaryingColumns(model)
+  cols[-1L]
+}

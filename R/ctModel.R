@@ -49,6 +49,16 @@
 #' 
 #' @param id character string denoting column name containing subject identification variables. 
 #' id data may be of any form, though will be coerced internally to an integer sequence rising from 1.
+#' May instead be a character vector naming a nested hierarchy, innermost first:
+#' \code{id = c('subject','study')} treats each subject as belonging to one
+#' study. The subject level declares its varying parameters in
+#' \code{model$pars$indvarying} as usual and each level above it in
+#' \code{model$pars$indvarying_<idname>}, so a study effect may be estimated
+#' with or without subject level effects alongside it -- an intercept that
+#' varies between studies, with subjects exchangeable within a study, is an
+#' ordinary model and is specified by setting \code{indvarying_study} alone.
+#' Levels above the subject require \code{backend='julia'} with
+#' \code{intoverpop='laplace'}, and the hierarchy must be strictly nested.
 #' @param time character string denoting column name containing timing data. Timing data must be numeric.
 #' 
 #' @param T0VAR lower triangular n.latent*n.latent cholesky matrix of latent process initial variance / covariance. 

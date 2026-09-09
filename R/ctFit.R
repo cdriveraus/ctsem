@@ -346,7 +346,9 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' May also be stated on the model, as \code{model$poprank <- 2}; an argument
 #' here wins over that.
 #' @param intoverpop how to handle declared individual differences. If 'auto',
-#' set to TRUE if optimizing and FALSE if using hmc.
+#' set to TRUE if optimizing and FALSE if using hmc -- except when a grouping
+#' level above the subject varies (see \code{id} in \code{\link{ctModel}}),
+#' which only 'laplace' can integrate out, so 'auto' resolves to that.
 #' if TRUE, integrates over population distribution of parameters rather than full sampling.
 #' Allows for optimization of non-linearities and random effects, via state expansion.
 #' 'augmented' names that state-expansion method explicitly. Individual
@@ -1182,7 +1184,16 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   if(is.character(intoverpop)){
     intoverpop <- match.arg(intoverpop[1], c('auto','augmented','laplace'))
     if(intoverpop %in% 'auto'){
-      intoverpop <- isTRUE(optimize) && any(ctm$pars$indvarying[is.na(ctm$pars$value)])
+      intoverpop <- isTRUE(optimize) && .ctAnyVarying(ctm)
+      # The augmented layout gives a carrier state to every `indvarying` cell
+      # and knows nothing about the columns a grouping level uses, so a model
+      # with effects above the subject has one route rather than two and 'auto'
+      # has to take it. Resolving to 'augmented' here would silently fit a
+      # model without the study effect that was asked for.
+      if(intoverpop && .ctAnyVarying(ctm, .ctOuterVaryingColumns(ctm))){
+        intoverpopmethod <- 'laplace'
+        intoverpop <- FALSE
+      }
     } else {
       intoverpopmethod <- intoverpop
       intoverpop <- identical(intoverpopmethod,'augmented')
@@ -1195,9 +1206,32 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     if(!backend %in% 'julia') stop(
       "intoverpop='laplace' requires backend='julia'; the generated Stan model ",
       "does not provide the higher-order derivatives it needs.", call.=FALSE)
-    if(!any(ctm$pars$indvarying[is.na(ctm$pars$value)])) stop(
+    if(!.ctAnyVarying(ctm)) stop(
       "intoverpop='laplace' was requested but no free parameters are marked ",
-      "indvarying, so there is nothing to integrate over.", call.=FALSE)
+      "indvarying at any level, so there is nothing to integrate over.",
+      call.=FALSE)
+  }
+
+  # An outer level on a route that cannot carry it.
+  #
+  # `.ctModelIntOverPop()` reads `indvarying` and nothing else, so a study
+  # effect declared in `indvarying_study` would be dropped without trace and
+  # the fit would report a single-level model as though that were what was
+  # asked for. Refuse by name instead. There is no reason for a lower level to
+  # vary before an upper one does -- a study effect with exchangeable subjects
+  # inside it is an ordinary model -- so this is about which route can
+  # represent the request, not about which requests are meaningful.
+  outervarying <- .ctVaryingParams(ctm, .ctOuterVaryingColumns(ctm))
+  if(length(outervarying)){
+    named <- paste(outervarying, collapse=', ')
+    if(!backend %in% 'julia') stop(
+      "Random effects above the subject level (", named, ") are represented by ",
+      "backend='julia' only; the generated Stan model has one grouping level.",
+      call.=FALSE)
+    if(intoverpop || (isTRUE(optimize) && !identical(intoverpopmethod,'laplace'))) stop(
+      "Random effects above the subject level (", named, ") are integrated out ",
+      "by intoverpop='laplace' only -- the augmented route gives carrier states ",
+      "to subject level effects and would drop these.", call.=FALSE)
   }
 
   # Optimizing without integrating over the population distribution is not a
@@ -1214,7 +1248,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # would silently answer a different question. Before this it died inside a
   # transform rendering with `invalid format '%.17g'`, which named neither.
   if(isTRUE(optimize) && !intoverpop && identical(intoverpopmethod,'none') &&
-      any(ctm$pars$indvarying[is.na(ctm$pars$value)])) stop(
+      .ctAnyVarying(ctm)) stop(
     "intoverpop=FALSE with optimize=TRUE leaves each subject's random effects ",
     "as free parameters to be maximized over, which drives the population ",
     "variance to zero rather than estimating it. Use intoverpop='augmented' ",
@@ -1715,7 +1749,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     # -- which is what says *which* parameters vary -- without integrating.
     juliaintoverpop <- if(identical(intoverpopmethod,'laplace')) 'laplace' else
       if(intoverpop) 'augmented' else
-        if(!optimize && any(ctm$pars$indvarying[is.na(ctm$pars$value)])) 'none' else
+        if(!optimize && .ctAnyVarying(ctm)) 'none' else
           'augmented'
     juliafit <- .ctFitJuliaBackend(datalong=datalong, model=ctm, prepared_data=standata, inits=inits,
       cores=cores, optimcontrol=optimcontrol,
