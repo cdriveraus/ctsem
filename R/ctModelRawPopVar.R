@@ -1,11 +1,21 @@
-# The population covariance, as a matrix of its own.
+# RAWPOPVAR: the population spread specification, as a matrix of its own.
+#
+# ## Why the name is not POPCOV
+#
+# It is not a covariance matrix and reading it as one is the mistake the name
+# exists to prevent. It holds standard deviations on the diagonal and
+# unconstrained correlation *coordinates* below it, both on the raw
+# (untransformed) parameter scale -- exactly the parameterisation the two
+# backends fit in, and the same shape T0VAR, MANIFESTVAR and DIFFUSION use.
+# `COV` is reserved for a surface that actually reports a covariance matrix,
+# such as `.ctBackendRawPopCov()`.
 #
 # ## Why a separate matrix rather than a bigger T0VAR
 #
 # Under the augmented layout a varying parameter becomes a state, so its
 # population covariance really does end up inside T0VAR, and extending T0VAR to
 # expose it is the obvious move. It does not work, and the reason is worth
-# keeping: **the population covariance is not an ordinary free parameter.** Stan
+# keeping: **the population spread is not an ordinary free parameter.** Stan
 # parameterises it through `rawpopcovbase`/`rawpopsd`, the julia backend builds
 # its own `julia_popcov_*` entries, and adding labelled T0VAR cells counts it a
 # second time -- one varying parameter took a one-latent model from 4 free
@@ -29,19 +39,30 @@
 # parameter. Written like any other ctsem matrix: a number fixes a cell, a
 # character labels a free one.
 #
-#   m$matrices$POPCOV['mm', 'mm'] <- 0.3     # this spread, exactly
-#   m$matrices$POPCOV['mm', 'T0m_eta1'] <- 0 # uncorrelated with that effect
+#   m$matrices$RAWPOPVAR['mm', 'mm'] <- 0.3     # this raw-scale spread, exactly
+#   m$matrices$RAWPOPVAR['mm', 'T0m_eta1'] <- 0 # uncorrelated with that effect
 #
 # Above the diagonal is a fixed zero, as T0VAR's own upper triangle is.
 #
 # ## What the numbers mean, which is not the same for the two triangles
 #
-# **Diagonal entries are standard deviations**, on the parameter's own natural
-# scale, and a number written there is that spread. Exact for a linear
-# transform, which is every mean parameter, and a first-order match at the raw
-# origin for a nonlinear one -- `.ctJuliaAugmentRandomEffects()` divides out the
-# transform's slope to place it. Measured: `0.3` gives a population sd of
-# 0.3000, `0.8` gives 0.8000.
+# **Diagonal entries are standard deviations on the raw parameter scale** --
+# the unconstrained scale the model is parameterised in, and the one a fit
+# reports through `.ctBackendRawPopCov()`. A number written there is that
+# spread, exactly, on every route: the augmented layout multiplies it by the
+# carrier state's own `multiplier * meanscale` to reach the state units its
+# T0VAR holds, which is exact arithmetic, and the Laplace layout reads it
+# directly.
+#
+# Raw rather than the parameter's own natural scale, which is what this
+# surface used to mean. A natural-scale spread has to be divided by the
+# derivative of the parameter's transform to be placed, which is exact only
+# for a linear transform and a first-order match for anything else -- so the
+# number written here and the number a fit reported were not the same
+# quantity, and a model with a nonlinear transform could not be generated
+# from and fitted with one number. For a mean parameter (`10 * param`) the two
+# readings differ by that constant 10, so an entry written under the old
+# convention means ten times as much spread under this one.
 #
 # **Off-diagonal entries are unconstrained correlation coordinates, not
 # correlations.** They lie in `[-1, 1]` and are ordered the same way a
@@ -75,7 +96,7 @@
 # read back 0.79.
 
 #' @keywords internal
-.ctModelPopCovNames <- function(pars) {
+.ctModelRawPopVarNames <- function(pars) {
   if (is.null(pars$indvarying)) return(character())
   varying <- !is.na(pars$indvarying) & pars$indvarying & !is.na(pars$param)
   if (!any(varying)) return(character())
@@ -89,8 +110,8 @@
 # parameter's population spread has always been estimated -- and the point of
 # surfacing it is to show what the model implies, not to change it.
 #' @keywords internal
-.ctModelPopCov <- function(pars) {
-  names <- .ctModelPopCovNames(pars)
+.ctModelRawPopVar <- function(pars) {
+  names <- .ctModelRawPopVarNames(pars)
   if (!length(names)) return(NULL)
   n <- length(names)
   out <- matrix("0", n, n, dimnames = list(names, names))
@@ -103,7 +124,7 @@
   out
 }
 
-# Keep a POPCOV in step with the parameters that are varying now.
+# Keep a RAWPOPVAR in step with the parameters that are varying now.
 #
 # `indvarying` can change after `ctModel()` returns -- setting it directly is
 # how nearly every multilevel model in the tests is written -- so the matrix has
@@ -111,11 +132,11 @@
 # are carried across by *name*, not position, so adding a random effect does not
 # shuffle the specification of the ones already there.
 #' @keywords internal
-.ctModelPopCovSync <- function(model) {
-  fresh <- .ctModelPopCov(model$pars)
-  previous <- model[["POPCOV"]]
+.ctModelRawPopVarSync <- function(model) {
+  fresh <- .ctModelRawPopVar(model$pars)
+  previous <- model[["RAWPOPVAR"]]
   if (is.null(fresh)) {
-    model[["POPCOV"]] <- NULL
+    model[["RAWPOPVAR"]] <- NULL
     return(model)
   }
   if (!is.null(previous) && !is.null(dimnames(previous))) {
@@ -125,62 +146,26 @@
       fresh[shared_row, shared_col] <- previous[shared_row, shared_col]
     }
   }
-  model[["POPCOV"]] <- fresh
+  model[["RAWPOPVAR"]] <- fresh
   model
 }
 
 # What a cell says: a number, or a label for something to estimate.
 #' @keywords internal
-.ctModelPopCovValue <- function(x) {
+.ctModelRawPopVarValue <- function(x) {
   suppressWarnings(as.numeric(as.character(x)))
 }
 
 #' @keywords internal
-.ctModelPopCovFree <- function(x) {
-  is.na(.ctModelPopCovValue(x)) & !is.na(x) & nzchar(as.character(x))
+.ctModelRawPopVarFree <- function(x) {
+  is.na(.ctModelRawPopVarValue(x)) & !is.na(x) & nzchar(as.character(x))
 }
 
 # The entry for one varying parameter pair, by name, or NA when the model has
 # nothing to say about it.
-# POPCOV falls back to sdscale, for generation only.
-#
-# `sdscale` multiplies the population sd's *prior* when a model is fitted, and
-# that is the right meaning there: the spread is a parameter, and a prior is
-# the only thing a specification can say about a quantity the data will
-# estimate. Generating is the other case. Nothing is being estimated, there is
-# no prior to scale, and the number the user wrote is simply the number to use
-# -- so a model saying `sdscale = 0.2` generates a between-subject sd of 0.2.
-#
-# Only where POPCOV says nothing. A stated POPCOV wins, value or label, because
-# it is the more specific statement of the two.
 #' @keywords internal
-.ctModelPopCovFromSdscale <- function(model, quiet = FALSE) {
-  popcov <- model[["POPCOV"]]
-  if (is.null(popcov) || !length(popcov)) return(model)
-  pars <- model$pars
-  used <- character()
-  for (nm in rownames(popcov)) {
-    if (is.finite(.ctModelPopCovValue(popcov[nm, nm]))) next
-    row <- which(!is.na(pars$param) & as.character(pars$param) == nm)
-    if (!length(row)) next
-    sdscale <- suppressWarnings(as.numeric(pars$sdscale[row[1L]]))
-    if (!is.finite(sdscale) || sdscale < 0) sdscale <- 1
-    popcov[nm, nm] <- format(sdscale, digits = 17, scientific = FALSE)
-    used <- c(used, sprintf("%s=%s", nm, format(sdscale)))
-  }
-  model[["POPCOV"]] <- popcov
-  if (!is.null(model$matrices)) model$matrices$POPCOV <- popcov
-  if (!quiet && length(used)) {
-    message("Population sd taken from sdscale for ",
-      paste(used, collapse = ", "),
-      ". Set model$matrices$POPCOV to state it directly.")
-  }
-  model
-}
-
-#' @keywords internal
-.ctModelPopCovEntry <- function(model, rowname, colname = rowname) {
-  popcov <- model[["POPCOV"]]
+.ctModelRawPopVarEntry <- function(model, rowname, colname = rowname) {
+  popcov <- model[["RAWPOPVAR"]]
   if (is.null(popcov)) return(NA_character_)
   if (!rowname %in% rownames(popcov) || !colname %in% colnames(popcov)) {
     return(NA_character_)
@@ -188,15 +173,15 @@
   as.character(popcov[rowname, colname])
 }
 
-# Take a user's POPCOV, checked against what the model actually has.
+# Take a user's RAWPOPVAR, checked against what the model actually has.
 #
 # By name rather than position: a matrix written for one set of random effects
 # and assigned to a model with another would otherwise silently attach each
 # value to the wrong parameter.
 #' @keywords internal
-.ctModelPopCovAssign <- function(model, value) {
-  model <- .ctModelPopCovSync(model)
-  current <- model[["POPCOV"]]
+.ctModelRawPopVarAssign <- function(model, value) {
+  model <- .ctModelRawPopVarSync(model)
+  current <- model[["RAWPOPVAR"]]
   if (is.null(current)) {
     stop("This model has no individually varying parameters, so there is no ",
       "population covariance to set.", call. = FALSE)
@@ -204,7 +189,7 @@
   value <- as.matrix(value)
   if (is.null(dimnames(value)) || is.null(rownames(value))) {
     if (!identical(dim(value), dim(current))) {
-      stop("POPCOV must be ", nrow(current), " x ", ncol(current),
+      stop("RAWPOPVAR must be ", nrow(current), " x ", ncol(current),
         " for this model's ", nrow(current), " varying parameter",
         if (nrow(current) > 1L) "s" else "", ".", call. = FALSE)
     }
@@ -212,31 +197,12 @@
   }
   unknown <- setdiff(c(rownames(value), colnames(value)), rownames(current))
   if (length(unknown)) {
-    stop("POPCOV names ", paste(unknown, collapse = ", "),
+    stop("RAWPOPVAR names ", paste(unknown, collapse = ", "),
       ", which ", if (length(unknown) > 1L) "are" else "is",
       " not individually varying in this model.", call. = FALSE)
   }
   storage.mode(value) <- "character"
   current[rownames(value), colnames(value)] <- value
-  model[["POPCOV"]] <- current
+  model[["RAWPOPVAR"]] <- current
   model
-}
-
-# The derivative of a varying parameter's own transform, which converts between
-# the scale a POPCOV entry is written on and the state scale the augmented
-# T0VAR holds.
-#
-# One for anything it cannot work out, which leaves the entry on the state scale
-# rather than guessing at a conversion.
-#' @keywords internal
-.ctJuliaPopCovSlope <- function(model, param) {
-  if (is.na(param)) return(1)
-  pars <- model$pars
-  row <- which(!is.na(pars$param) & as.character(pars$param) == as.character(param))
-  if (!length(row)) return(1)
-  transform <- as.character(pars$transform[row[1L]])
-  if (is.na(transform) || !nzchar(transform)) return(1)
-  slope <- .ctGenerateTransformSlope(transform, 0)
-  if (!is.finite(slope) || slope == 0) return(1)
-  abs(slope)
 }

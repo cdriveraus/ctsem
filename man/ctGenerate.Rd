@@ -63,24 +63,22 @@ models keep the seed-for-seed output every existing caller already gets.}
 
 \item{intoverstates}{For \code{backend='julia'}: \code{'auto'} (the
 default), \code{TRUE} or \code{FALSE}, choosing how the latent states are
-handled while generating.
+handled while generating. A diagnostic handle rather than a modelling
+choice -- \code{'auto'} is \code{FALSE} for every model, and that is the
+route to use.
 
-\code{TRUE} draws each row from the filter's own one-step-ahead predictive
-and lets the filter condition on the draw, so the dataset is an exact draw
-from the density a fit maximises. \code{FALSE} samples the latent
-trajectory from the process and then each observation from its conditional
-distribution given the state at its row -- a draw from the model rather than
-from the filter's approximation of it.
-
-\code{'auto'} picks \code{TRUE} exactly when the filter's predictive *is*
-the model's: linear dynamics and Gaussian indicators. There the two agree in
-distribution, and \code{TRUE} keeps the output every existing caller gets
-for a given seed. Otherwise it picks \code{FALSE}. A categorical indicator
-makes the measurement update an assumed-density projection, which moves the
-state it conditions on -- and with an unbounded indicator (a count) an
-improbable draw can move it far enough that the following rows are drawn
-from a rate that has already run away. A state-dependent drift makes the
-prediction a moment approximation in the same way.
+\code{FALSE} samples the latent trajectory from the process and then each
+observation from its conditional distribution given the state at its row:
+a draw from the model. \code{TRUE} instead draws each row from the filter's
+one-step-ahead predictive and lets the filter condition on the draw, which
+is a draw from the density a fit maximises. The two agree in distribution
+for linear dynamics with Gaussian indicators, where the filter's predictive
+is exact, and do not otherwise: a categorical indicator makes the
+measurement update an assumed-density projection that moves the state it
+conditions on, and with an unbounded indicator (a count) one improbable
+draw can move it far enough that the following rows are drawn from a rate
+that has already run away. A state-dependent drift makes the prediction a
+moment approximation in the same way.
 
 \code{backend='r'} already generates this way and ignores the argument.}
 
@@ -109,6 +107,18 @@ TRAITTDPREDCOV and TIPREDCOV matrices are not accounted for, at present.
 The first 1:n.TDpred rows and columns of TDPREDVAR are used for generating
 tdpreds at each time point.
 }
+\section{Individual differences}{
+
+\code{ctGenerate} produces one dataset from the values the model states,
+with every subject at the same parameters: individual differences and any
+population spread in \code{RAWPOPVAR} are ignored, and named in a message
+when the model declares them. To generate data \emph{with} random effects,
+use \code{\link{ctGenerateFromFit}}, which has a fit and so has the
+population distribution on the same scale the fit itself used.
+\code{fromPriors=TRUE} draws the parameters, including population spreads,
+from the model's priors and is unaffected by this.
+}
+
 \examples{
 #generate data for 2 process model, each process measured by noisy indicator, 
 #stable individual differences in process levels.

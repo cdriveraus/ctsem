@@ -181,18 +181,26 @@ test_that("the joint density is finite and differentiable through R", {
     CINT = matrix(0), MANIFESTMEANS = matrix(0.5), Tpoints = 6)))
 }
 
-test_that("intoverstates='auto' picks the route the model needs", {
+test_that("intoverstates='auto' is the sampled route for every model", {
   skip_without_julia()
-  # Linear and Gaussian: the filter's predictive is exact, so 'auto' keeps it
-  # and the output is what an existing caller already gets.
+  # Linear and Gaussian: the filter's predictive is exact here, so the two
+  # routes agree in distribution and the choice is only about which stream of
+  # random numbers a seed produces. 'auto' takes the sampled route anyway,
+  # because one route that is right everywhere beats two that are each right
+  # somewhere -- it used to keep the filter route here, which is why a linear
+  # Gaussian model generates different data for a given seed than it did.
   model <- .gaussian_model()
   set.seed(21)
   auto <- suppressMessages(ctGenerate(model, n.subjects = 4, Tpoints = 6,
     backend = "julia", intoverstates = "auto"))
   set.seed(21)
+  sampledgauss <- suppressMessages(ctGenerate(model, n.subjects = 4,
+    Tpoints = 6, backend = "julia", intoverstates = FALSE))
+  set.seed(21)
   filtered <- suppressMessages(ctGenerate(model, n.subjects = 4, Tpoints = 6,
     backend = "julia", intoverstates = TRUE))
-  expect_equal(auto, filtered)
+  expect_equal(auto, sampledgauss)
+  expect_false(isTRUE(all.equal(auto, filtered)))
 
   # Non-Gaussian indicators: the update is an assumed-density projection, so
   # 'auto' takes the state path instead.

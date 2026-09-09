@@ -409,26 +409,33 @@ ctStanGenerate <- ctGenerateFromPriors
 #' @param cores With \code{fromPriors=TRUE}, cpu cores to use.
 #' @param intoverstates For \code{backend='julia'}: \code{'auto'} (the
 #' default), \code{TRUE} or \code{FALSE}, choosing how the latent states are
-#' handled while generating.
+#' handled while generating. A diagnostic handle rather than a modelling
+#' choice -- \code{'auto'} is \code{FALSE} for every model, and that is the
+#' route to use.
 #'
-#' \code{TRUE} draws each row from the filter's own one-step-ahead predictive
-#' and lets the filter condition on the draw, so the dataset is an exact draw
-#' from the density a fit maximises. \code{FALSE} samples the latent
-#' trajectory from the process and then each observation from its conditional
-#' distribution given the state at its row -- a draw from the model rather than
-#' from the filter's approximation of it.
-#'
-#' \code{'auto'} picks \code{TRUE} exactly when the filter's predictive *is*
-#' the model's: linear dynamics and Gaussian indicators. There the two agree in
-#' distribution, and \code{TRUE} keeps the output every existing caller gets
-#' for a given seed. Otherwise it picks \code{FALSE}. A categorical indicator
-#' makes the measurement update an assumed-density projection, which moves the
-#' state it conditions on -- and with an unbounded indicator (a count) an
-#' improbable draw can move it far enough that the following rows are drawn
-#' from a rate that has already run away. A state-dependent drift makes the
-#' prediction a moment approximation in the same way.
+#' \code{FALSE} samples the latent trajectory from the process and then each
+#' observation from its conditional distribution given the state at its row:
+#' a draw from the model. \code{TRUE} instead draws each row from the filter's
+#' one-step-ahead predictive and lets the filter condition on the draw, which
+#' is a draw from the density a fit maximises. The two agree in distribution
+#' for linear dynamics with Gaussian indicators, where the filter's predictive
+#' is exact, and do not otherwise: a categorical indicator makes the
+#' measurement update an assumed-density projection that moves the state it
+#' conditions on, and with an unbounded indicator (a count) one improbable
+#' draw can move it far enough that the following rows are drawn from a rate
+#' that has already run away. A state-dependent drift makes the prediction a
+#' moment approximation in the same way.
 #'
 #' \code{backend='r'} already generates this way and ignores the argument.
+#' @section Individual differences:
+#' \code{ctGenerate} produces one dataset from the values the model states,
+#' with every subject at the same parameters: individual differences and any
+#' population spread in \code{RAWPOPVAR} are ignored, and named in a message
+#' when the model declares them. To generate data \emph{with} random effects,
+#' use \code{\link{ctGenerateFromFit}}, which has a fit and so has the
+#' population distribution on the same scale the fit itself used.
+#' \code{fromPriors=TRUE} draws the parameters, including population spreads,
+#' from the model's priors and is unaffected by this.
 #' @details Covariance related matrices are treated as Cholesky factors.
 #' TRAITTDPREDCOV and TIPREDCOV matrices are not accounted for, at present. 
 #' The first 1:n.TDpred rows and columns of TDPREDVAR are used for generating
@@ -545,23 +552,27 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
       if(specified &&
           isTRUE(tryCatch(ctJuliaStatus()$available, error=function(e) FALSE)))
         'julia' else 'r'
-  # `intoverstates='auto'` asks the same question the backend choice asks, one
-  # level down: is the filter's one-step-ahead predictive the model's own?
+  # `'auto'` resolves to the sampled route for every model, and it used to
+  # resolve by capability -- TRUE wherever the filter's one-step-ahead
+  # predictive *is* the model's own, which is the linear Gaussian case.
   #
-  # It is exactly when the dynamics are linear and every indicator Gaussian.
-  # There the filter's predictive is exact, the two routes agree in
-  # distribution, and TRUE is kept -- it preserves the seed-for-seed output
-  # every existing caller gets, and the round-trip identity that a generated
-  # dataset's likelihood is the one reported while generating it.
+  # One route rather than two, because the sampled route is right everywhere
+  # the filter route is and right in cases it is not: a categorical indicator
+  # makes the measurement update an assumed-density projection, which moves
+  # the state it conditions on, and on an unbounded indicator one improbable
+  # draw can move it far enough that the following rows are drawn from a rate
+  # that has already run away. A state-dependent drift makes the prediction a
+  # moment approximation the same way. Where the two agree in distribution --
+  # linear dynamics, Gaussian indicators -- the choice was never about
+  # correctness, only about which stream of random numbers a given seed
+  # produced.
   #
-  # It is not, for anything else. A categorical indicator makes the update an
-  # assumed-density projection, which moves the state it conditions on and
-  # can run away on an unbounded one -- the count case this route exists for.
-  # A state-dependent drift makes the *prediction* a moment approximation in
-  # the same way. In both, sampling the trajectory and then the observations
-  # given it is a draw from the model where the filter route is a draw from
-  # the filter's approximation of it.
-  if(identical(intoverstates,'auto')) intoverstates <- !(nonlinear || categorical)
+  # The argument stays, rather than going with the choice, because comparing
+  # the two routes on one specification is how the state-explicit path is
+  # checked against an independently derived answer rather than against
+  # itself; see tests/testthat/test-julia-intoverstates.R. It is a diagnostic
+  # handle, not a modelling decision.
+  if(identical(intoverstates,'auto')) intoverstates <- FALSE
   intoverstates <- isTRUE(as.logical(intoverstates)[1])
   if(backend == 'r' && categorical){
     warning('This model declares non-Gaussian indicators (manifesttype ',
@@ -604,10 +615,12 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
       # the first observed interval look like the whole burnin period.
       for(si in seq_len(n.subjects)){
         rows <- (si-1)*(fullTpoints-burnin) + seq_len(fullTpoints-burnin)
-        out[rows,'time'] <- out[rows,'time'] - out[rows[1],'time']
+        out[rows,ctmodelobj$timeName] <-
+          out[rows,ctmodelobj$timeName] - out[rows[1],ctmodelobj$timeName]
       }
     }
-    if(wide) return(ctLongToWide(out, id='id', time='time',
+    if(wide) return(ctLongToWide(out, id=ctmodelobj$subjectIDname,
+      time=ctmodelobj$timeName,
       manifestNames=ctmodelobj$manifestNames,
       TDpredNames=ctmodelobj$TDpredNames, TIpredNames=ctmodelobj$TIpredNames))
     return(out)
@@ -713,10 +726,18 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
   }
   
   datalong<-as.matrix(datalong)
-  
-  
+
+  # Named as the model names them, matching backend='julia'. The loop above
+  # works in 'id' and 'time' throughout, so the rename happens once here
+  # rather than at every reference. A matrix-list model carries neither name
+  # and keeps the defaults.
+  idname <- if(!is.null(m$subjectIDname)) m$subjectIDname else 'id'
+  timename <- if(!is.null(m$timeName)) m$timeName else 'time'
+  colnames(datalong)[match(c('id','time'), colnames(datalong))] <-
+    c(idname, timename)
+
   if(wide==FALSE) return(datalong) else {
-    datawide <- ctLongToWide(datalong = datalong,id = 'id',time = 'time',
+    datawide <- ctLongToWide(datalong = datalong,id = idname,time = timename,
       manifestNames = m$manifestNames, TDpredNames = m$TDpredNames,TIpredNames = m$TIpredNames)
     datawide <- ctIntervalise(datawide = datawide,Tpoints = m$Tpoints,n.manifest = m$n.manifest,n.TDpred = m$n.TDpred,n.TIpred = m$n.TIpred,
       manifestNames=m$manifestNames,TDpredNames=m$TDpredNames,TIpredNames=m$TIpredNames)

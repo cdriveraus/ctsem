@@ -231,20 +231,49 @@ test_that("an expression cell survives generation rather than being filled", {
   free <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 1,
     n.manifest = 1, manifestNames = "y1", latentNames = "eta1",
     LAMBDA = matrix(1), T0MEANS = matrix(0), CINT = matrix(0))))
-  filled <- ctsem:::.ctGenerateResolveFree(free, quiet = TRUE)
-  # Every free parameter is filled except an individually varying one, and that
-  # exception is the point rather than an oversight. Assigning a value makes a
-  # parameter fixed, a fixed parameter is not augmented, and the state that
-  # would carry its individual deviations is then never created -- so the model
-  # would generate no between-subject variation at all. The intended value is
-  # recorded on the `ctGenerateMeans` attribute and applied to the population
-  # mean later instead. MANIFESTMEANS is individually varying by default, which
-  # is why this model has one.
-  varying <- !is.na(filled$pars$indvarying) & filled$pars$indvarying
-  expect_true(any(varying))
-  expect_false(any(is.na(filled$pars$value[!varying])))
-  expect_true(all(is.na(filled$pars$value[varying])))
-  expect_true(length(attr(filled, "ctGenerateMeans")) > 0)
+  # An individually varying parameter is filled like any other. It used to be
+  # left free deliberately -- assigning a value makes a parameter fixed, a
+  # fixed parameter is not augmented, and the carrier state that would hold its
+  # individual deviations was then never created -- but user side generation
+  # draws no random effects, so `.ctGenerateFixedOnly()` has cleared every
+  # varying flag before this function sees the model and there is no carrier
+  # state to preserve. MANIFESTMEANS is individually varying by default, which
+  # is why this model has one to clear.
+  cleared <- ctsem:::.ctGenerateFixedOnly(free, quiet = TRUE)
+  expect_false(any(cleared$pars$indvarying %in% TRUE))
+  expect_false(any(is.na(ctsem:::.ctGenerateResolveFree(cleared,
+    quiet = TRUE)$pars$value)))
+})
+
+# What the message has to say, because silence is the failure mode: a model
+# declaring individual differences generates a fixed-effects dataset, and
+# nothing in the data itself says the random effects were dropped.
+test_that("parking the random effects names what it dropped", {
+  m <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 1,
+    n.manifest = 1, manifestNames = "Y1", latentNames = "eta1",
+    LAMBDA = matrix(1), DRIFT = matrix(-0.4), DIFFUSION = matrix(0.2),
+    MANIFESTVAR = matrix(0.05), T0VAR = matrix(0.2), T0MEANS = matrix(0),
+    CINT = matrix(0), MANIFESTMEANS = matrix("mm"), Tpoints = 5)))
+  m$pars$indvarying <- m$pars$param %in% "mm"
+  m <- ctsem:::.ctModelRawPopVarSync(m)
+  mats <- m$matrices
+  mats$RAWPOPVAR["mm", "mm"] <- 0.3
+  m$matrices <- mats
+
+  expect_message(cleared <- ctsem:::.ctGenerateFixedOnly(m),
+    "Individual differences are ignored for mm")
+  expect_message(ctsem:::.ctGenerateFixedOnly(m),
+    "population spread stated for mm is unused")
+  expect_false(any(cleared$pars$indvarying %in% TRUE))
+  # The covariance goes with them, so nothing downstream can read a spread for
+  # a parameter that no longer has a random effect.
+  expect_null(cleared[["RAWPOPVAR"]])
+
+  # A fixed-effects model says nothing, having dropped nothing.
+  plain <- m
+  plain$pars$indvarying <- FALSE
+  plain <- ctsem:::.ctModelRawPopVarSync(plain)
+  expect_no_message(ctsem:::.ctGenerateFixedOnly(plain))
 })
 
 test_that("state dependent generation carries the dependence into the data", {
