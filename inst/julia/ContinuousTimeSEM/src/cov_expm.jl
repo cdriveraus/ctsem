@@ -53,6 +53,10 @@ end
 ctsem_cov_expm(on::Bool) = ctsem_cov_expm!(on)
 ctsem_cov_expm() = _CTSEM_COV_EXPM[]
 
+# Three distinct covariance matrices of one size is the common case (T0VAR,
+# DIFFUSION, MANIFESTVAR); a few more slots cost only a comparison each.
+const _EXPM_CACHE_SLOTS = 6
+
 struct ExpmCovScratch{T,D}
     A::Matrix{T}
     Y::Matrix{T}
@@ -64,12 +68,32 @@ struct ExpmCovScratch{T,D}
     yd::Vector{T}
     eb::ExpBuffer{T,D}
     fb::ExpFrechetBuffer{T,D}
+    # Cache of exp(A), in the spirit of `DiscretizationCache`'s exp_table:
+    # `_ekf_predict_step!` rebuilds the process noise on every row whether or not
+    # DIFFUSION depends on the state, so for a constant DIFFUSION the same A
+    # would otherwise be exponentiated once per row for no reason.
+    #
+    # It has to be a TABLE rather than one slot. The scratch is keyed by element
+    # type and dimension, so T0VAR, DIFFUSION and MANIFESTVAR of the same size
+    # all land here and a single slot thrashes -- measured: a constant-DIFFUSION
+    # fit still paid ~890,000 exponentials with one slot, against ~1,590 for the
+    # sd/correlation route.
+    #
+    # Keyed on each A's full contents rather than a hash, so an entry cannot go
+    # stale: a hit costs up to `_EXPM_CACHE_SLOTS` comparisons of O(d^2) against
+    # an O(d^3) Pade evaluation.
+    Atab::Vector{Matrix{T}}
+    Ytab::Vector{Matrix{T}}
+    nslots::Base.RefValue{Int}
+    nextslot::Base.RefValue{Int}
 end
 
 function ExpmCovScratch{T,D}() where {T,D}
     ExpmCovScratch{T,D}(zeros(T, D, D), zeros(T, D, D), zeros(T, D, D),
         zeros(T, D, D), zeros(T, D, D), zeros(T, D, D), zeros(T, D), zeros(T, D),
-        ExpBuffer{T}(D), ExpFrechetBuffer{T}(D))
+        ExpBuffer{T}(D), ExpFrechetBuffer{T}(D),
+        [zeros(T, D, D) for _ in 1:_EXPM_CACHE_SLOTS],
+        [zeros(T, D, D) for _ in 1:_EXPM_CACHE_SLOTS], Ref(0), Ref(1))
 end
 
 const _EXPM_COV_SCRATCH = Dict{Tuple{DataType,Int,Int},Any}()
@@ -95,6 +119,30 @@ function _expm_cov_scratch(::Type{T}, ::Val{d}) where {T,d}
     return sc::ExpmCovScratch{T,d}
 end
 
+@inline function _blocks_equal(A::AbstractMatrix, B::AbstractMatrix, ::Val{d}) where {d}
+    @inbounds for j in 1:d, i in 1:d
+        A[i, j] == B[i, j] || return false
+    end
+    return true
+end
+
+# exp(A), with the content-keyed cache table in front of it
+@inline function _cached_exp!(Y, sc, A, ::Val{d}) where {d}
+    @inbounds for e in 1:sc.nslots[]
+        if _blocks_equal(sc.Atab[e], A, Val(d))
+            copyto!(Y, sc.Ytab[e])
+            return nothing
+        end
+    end
+    my_exp!(Y, A, sc.W1, sc.eb, Val(d))
+    slot = sc.nextslot[]
+    @inbounds copyto!(sc.Atab[slot], A)
+    @inbounds copyto!(sc.Ytab[slot], Y)
+    sc.nslots[] = max(sc.nslots[], slot)
+    sc.nextslot[] = slot == _EXPM_CACHE_SLOTS ? 1 : slot + 1
+    return nothing
+end
+
 # A is hollow symmetric, read from mat's lower triangle.
 @inline function _fill_hollow!(A, mat, ::Val{d}, ::Type{T}) where {d,T}
     @inbounds for j in 1:d, i in 1:d
@@ -114,7 +162,7 @@ function sdcovexpm2cov!(buffer, mat, ::Val{d}) where {d}
     sc = _expm_cov_scratch(T, Val(d))
     A, Y = sc.A, sc.Y
     _fill_hollow!(A, mat, Val(d), T)
-    my_exp!(Y, A, sc.W1, sc.eb, Val(d))
+    _cached_exp!(Y, sc, A, Val(d))
     yd, g = sc.yd, sc.g
     @inbounds for i in 1:d
         yd[i] = sqrt(Y[i, i])
@@ -148,7 +196,7 @@ function _sdcovexpm2cov_pullback!(mat_bar::AbstractMatrix, mat::AbstractMatrix,
     sc = _expm_cov_scratch(T, Val(d))
     A, Y = sc.A, sc.Y
     _fill_hollow!(A, mat, Val(d), T)
-    my_exp!(Y, A, sc.W1, sc.eb, Val(d))
+    _cached_exp!(Y, sc, A, Val(d))
     yd = sc.yd
     @inbounds for i in 1:d
         yd[i] = sqrt(Y[i, i])
