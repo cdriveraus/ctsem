@@ -140,10 +140,26 @@
 
 # A long-format skeleton with the requested subjects and times and no
 # observations: the shape generation fills in.
+#
+# The id and time columns are named as the *model* names them, not `id` and
+# `time`. Hardcoding those two made the whole julia generation route
+# unreachable for any model built with `ctModel(id = ...)` or `time = ...`:
+# `.ctJuliaPrepare()` looks the columns up by `model$subjectIDname` and
+# `model$timeName`, found neither, and died inside `order()` with "argument 1
+# is not a vector", which names nothing about the actual mistake. Reproduced
+# on a one-latent model with `id = 'subject'`, and again with `time = 'age'`.
 #' @keywords internal
 .ctGenerateSkeleton <- function(model, n.subjects, times) {
+  idname <- model$subjectIDname
+  timename <- model$timeName
   rows <- do.call(rbind, lapply(seq_len(n.subjects), function(i)
-    data.frame(id = i, time = times[[i]])))
+    stats::setNames(data.frame(i, times[[i]]), c(idname, timename))))
+  # A grouping level above the subject needs its column present or preparation
+  # cannot build the data at all, and every subject goes in one group: user
+  # side generation ignores random effects entirely for now, so the grouping
+  # cannot affect what is generated, and any other choice here would be a claim
+  # about a design the caller did not state.
+  for (nm in model$groupIDnames) rows[[nm]] <- 1L
   # Zero, not NA. The engine generates only where an observation exists --
   # `_generate_row!` is handed the observed indices and writes only those -- so
   # the skeleton's *missingness pattern* is the input and its values are not:
@@ -167,7 +183,7 @@
   # that scale makes an effect size directly readable as "change per standard
   # deviation". Drawn on the R side so `set.seed()` governs them.
   for (nm in model$TIpredNames) {
-    rows[[nm]] <- stats::rnorm(n.subjects)[rows$id]
+    rows[[nm]] <- stats::rnorm(n.subjects)[rows[[idname]]]
   }
   rows
 }

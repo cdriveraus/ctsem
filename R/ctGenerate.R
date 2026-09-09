@@ -604,10 +604,12 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
       # the first observed interval look like the whole burnin period.
       for(si in seq_len(n.subjects)){
         rows <- (si-1)*(fullTpoints-burnin) + seq_len(fullTpoints-burnin)
-        out[rows,'time'] <- out[rows,'time'] - out[rows[1],'time']
+        out[rows,ctmodelobj$timeName] <-
+          out[rows,ctmodelobj$timeName] - out[rows[1],ctmodelobj$timeName]
       }
     }
-    if(wide) return(ctLongToWide(out, id='id', time='time',
+    if(wide) return(ctLongToWide(out, id=ctmodelobj$subjectIDname,
+      time=ctmodelobj$timeName,
       manifestNames=ctmodelobj$manifestNames,
       TDpredNames=ctmodelobj$TDpredNames, TIpredNames=ctmodelobj$TIpredNames))
     return(out)
@@ -713,10 +715,18 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
   }
   
   datalong<-as.matrix(datalong)
-  
-  
+
+  # Named as the model names them, matching backend='julia'. The loop above
+  # works in 'id' and 'time' throughout, so the rename happens once here
+  # rather than at every reference. A matrix-list model carries neither name
+  # and keeps the defaults.
+  idname <- if(!is.null(m$subjectIDname)) m$subjectIDname else 'id'
+  timename <- if(!is.null(m$timeName)) m$timeName else 'time'
+  colnames(datalong)[match(c('id','time'), colnames(datalong))] <-
+    c(idname, timename)
+
   if(wide==FALSE) return(datalong) else {
-    datawide <- ctLongToWide(datalong = datalong,id = 'id',time = 'time',
+    datawide <- ctLongToWide(datalong = datalong,id = idname,time = timename,
       manifestNames = m$manifestNames, TDpredNames = m$TDpredNames,TIpredNames = m$TIpredNames)
     datawide <- ctIntervalise(datawide = datawide,Tpoints = m$Tpoints,n.manifest = m$n.manifest,n.TDpred = m$n.TDpred,n.TIpred = m$n.TIpred,
       manifestNames=m$manifestNames,TDpredNames=m$TDpredNames,TIpredNames=m$TIpredNames)
