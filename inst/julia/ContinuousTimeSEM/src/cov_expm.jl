@@ -28,20 +28,17 @@
 ## variances that depend on the state, so `A` is then constant across rows and
 ## everything expensive can be cached against its contents.
 ##
-## And `A` is symmetric, so the Frechet derivative needed by the reverse pass has
-## a closed form through the eigendecomposition,
+## And `A` is symmetric, so `exp(A)` is too and the Frechet map is self-adjoint:
+## the adjoint of `E -> L(A, E)` is `L(A', .) = L(A, .)`, so the same kernel
+## serves the pullback with no transpose.
 ##
-##     L(A, E) = Q [ (Q' E Q) .* Psi ] Q',
-##     Psi[i,j] = (exp(l_i) - exp(l_j)) / (l_i - l_j),  exp(l_i) when l_i == l_j
-##
-## which is self-adjoint for symmetric `A`, so the same expression serves the
-## pullback. `Q` and `Psi` depend on `A` alone, so a cache miss pays one
-## symmetric eigendecomposition and each row then costs two matrix products
-## instead of a full Pade recursion with its linear solve.
-##
-## The eigendecomposition needs a BLAS float, so anything else -- `Dual` above
-## all -- falls back to `my_exp!` and `my_exp_frechet!`, which are correct at any
-## element type. The fallback is exercised by the tests, not assumed.
+## `my_exp!` and `my_exp_frechet!` do the work. Both are matmul-only -- the one
+## linear solve inside the Pade evaluation goes through
+## `_solve_square_system!`, whose default path is the hand-written generic LU --
+## so this route calls no LAPACK, at any element type. An earlier version of
+## this file reached for `eigen` to get a cheaper per-row Frechet; that was a
+## mistake twice over, because it broke the no-LAPACK-per-row rule and because
+## the engine already has a better answer, below.
 ##
 ## Scratch lives in a table keyed by (element type, dimension, thread). It has to
 ## be a table rather than one slot: T0VAR, DIFFUSION and MANIFESTVAR of the same
@@ -71,6 +68,25 @@ end
 ctsem_cov_expm(on::Bool) = ctsem_cov_expm!(on)
 ctsem_cov_expm() = _CTSEM_COV_EXPM[]
 
+# Instrumentation for this route specifically. `_CTSEM_OPCOUNT.exp` does not
+# serve: it is incremented by `_ctsem_expm`, the wrapper the discretisation
+# uses, not by `my_exp!` itself, so it counts DRIFT exponentials and says
+# nothing about this construction. Reading a difference in it between the two
+# routes measures how many inner iterations the laplace mode-finder took, which
+# is not the question.
+const _EXPM_COV_CALLS = Ref(0)
+const _EXPM_COV_MISSES = Ref(0)
+
+"""Calls into the expm covariance construction, and how many missed the cache."""
+ctsem_cov_expm_counts() = (calls = _EXPM_COV_CALLS[], misses = _EXPM_COV_MISSES[])
+
+"""Zero the expm covariance counters."""
+function ctsem_cov_expm_reset_counts()
+    _EXPM_COV_CALLS[] = 0
+    _EXPM_COV_MISSES[] = 0
+    return nothing
+end
+
 # Three distinct covariance matrices of one size is the common case (T0VAR,
 # DIFFUSION, MANIFESTVAR); a few more slots cost only a comparison each.
 const _EXPM_CACHE_SLOTS = 6
@@ -88,14 +104,9 @@ struct ExpmCovScratch{T,D}
     yd::Vector{T}
     eb::ExpBuffer{T,D}
     fb::ExpFrechetBuffer{T,D}
-    # Content-keyed cache. `Atab` holds the key, `Ytab` the exponential, and
-    # `Qtab`/`Psitab` the eigendecomposition-derived Frechet factors when the
-    # element type admits one (`eigok`).
+    # Content-keyed cache: `Atab` holds the key and `Ytab` the exponential.
     Atab::Vector{Matrix{T}}
     Ytab::Vector{Matrix{T}}
-    Qtab::Vector{Matrix{T}}
-    Psitab::Vector{Matrix{T}}
-    eigok::Vector{Bool}
     nslots::Base.RefValue{Int}
     nextslot::Base.RefValue{Int}
 end
@@ -106,7 +117,7 @@ function ExpmCovScratch{T,D}() where {T,D}
         zeros(T, D, D), zeros(T, D, D), zeros(T, D, D), zeros(T, D, D),
         zeros(T, D, D), zeros(T, D), zeros(T, D),
         ExpBuffer{T}(D), ExpFrechetBuffer{T}(D),
-        mk(), mk(), mk(), mk(), fill(false, _EXPM_CACHE_SLOTS), Ref(0), Ref(1))
+        mk(), mk(), Ref(0), Ref(1))
 end
 
 const _EXPM_COV_SCRATCH = Dict{Tuple{DataType,Int,Int},Any}()
@@ -132,11 +143,6 @@ function _expm_cov_scratch(::Type{T}, ::Val{d}) where {T,d}
     return sc::ExpmCovScratch{T,d}
 end
 
-# Only a BLAS float has a symmetric eigendecomposition here; `Dual` and friends
-# take the Pade fallback.
-_expm_eigen_eltype(::Type{T}) where {T<:Union{Float32,Float64}} = true
-_expm_eigen_eltype(::Type) = false
-
 @inline function _blocks_equal(A::AbstractMatrix, B::AbstractMatrix, ::Val{d}) where {d}
     @inbounds for j in 1:d, i in 1:d
         A[i, j] == B[i, j] || return false
@@ -158,37 +164,15 @@ end
 Index of the cache slot holding `exp(A)` for this `A`, filling it on a miss.
 """
 function _expm_cov_slot!(sc::ExpmCovScratch{T,D}, A, ::Val{d}) where {T,D,d}
+    _EXPM_COV_CALLS[] += 1
     @inbounds for e in 1:sc.nslots[]
         _blocks_equal(sc.Atab[e], A, Val(d)) && return e
     end
+    _EXPM_COV_MISSES[] += 1
     slot = sc.nextslot[]
     @inbounds begin
         copyto!(sc.Atab[slot], A)
-        if _expm_eigen_eltype(T)
-            # One symmetric eigendecomposition per distinct A. It allocates and
-            # calls LAPACK, which is why it happens here and not per row.
-            F = eigen(Symmetric(copy(A)))
-            Q, lam = F.vectors, F.values
-            copyto!(sc.Qtab[slot], Q)
-            Psi = sc.Psitab[slot]
-            for j in 1:d, i in 1:d
-                delta = lam[i] - lam[j]
-                # exp(l_j) * expm1(delta)/delta is the stable form of the
-                # difference quotient, and tends to exp(l_j) as delta -> 0.
-                Psi[i, j] = iszero(delta) ? exp(lam[j]) :
-                    exp(lam[j]) * expm1(delta) / delta
-            end
-            # Y = Q diag(exp(lam)) Q', built through M1 to avoid a temporary.
-            M1 = sc.M1
-            for j in 1:d, i in 1:d
-                M1[i, j] = Q[i, j] * exp(lam[j])
-            end
-            _mul_right_transpose!(sc.Ytab[slot], M1, Q, Val(d), Val(d), Val(d))
-            sc.eigok[slot] = true
-        else
-            my_exp!(sc.Ytab[slot], A, sc.W1, sc.eb, Val(d))
-            sc.eigok[slot] = false
-        end
+        my_exp!(sc.Ytab[slot], A, sc.W1, sc.eb, Val(d))
     end
     sc.nslots[] = max(sc.nslots[], slot)
     sc.nextslot[] = slot == _EXPM_CACHE_SLOTS ? 1 : slot + 1
@@ -216,24 +200,6 @@ function sdcovexpm2cov!(buffer, mat, ::Val{d}) where {d}
     @inbounds for j in 1:d, i in 1:d
         buffer.out[i, j] = i == j ? T(mat[i, i])^2 : g[i] * g[j] * Y[i, j]
     end
-    return nothing
-end
-
-# Frechet derivative of exp at A in direction E, through the cached
-# eigendecomposition: L = Q [ (Q' E Q) .* Psi ] Q'.
-@inline function _expm_frechet_eigen!(L, sc::ExpmCovScratch{T,D}, slot::Int, E,
-        ::Val{d}) where {T,D,d}
-    Q, Psi, M1, M2 = sc.Qtab[slot], sc.Psitab[slot], sc.M1, sc.M2
-    # M2 = Q' E Q, elementwise-scaled by Psi. `mul!` reaches BLAS gemm here,
-    # because this path only runs for a BLAS float.
-    mul!(M1, transpose(Q), E)
-    mul!(M2, M1, Q)
-    @inbounds for j in 1:d, i in 1:d
-        M2[i, j] *= Psi[i, j]
-    end
-    # L = Q * M2 * Q'
-    mul!(M1, Q, M2)
-    _mul_right_transpose!(L, M1, Q, Val(d), Val(d), Val(d))
     return nothing
 end
 
@@ -294,11 +260,7 @@ function _sdcovexpm2cov_pullback!(mat_bar::AbstractMatrix, mat::AbstractMatrix,
     end
     # Y = exp(A), and the adjoint of E -> L(A, E) is L(A', .) = L(A, .) for
     # symmetric A, so the same map serves the pullback.
-    if sc.eigok[slot]
-        _expm_frechet_eigen!(sc.Abar, sc, slot, Ybar, Val(d))
-    else
-        my_exp_frechet!(sc.Ytmp, sc.Abar, A, Ybar, sc.fb)
-    end
+    my_exp_frechet!(sc.Ytmp, sc.Abar, A, Ybar, sc.fb)
     @inbounds for i in 1:d, j in 1:(i - 1)
         mat_bar[i, j] += sc.Abar[i, j] + sc.Abar[j, i]
     end

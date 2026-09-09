@@ -99,13 +99,11 @@ try
         end
     end
 
-    @testset "eigen path agrees with the Pade fallback" begin
+    @testset "the route is generic in the element type" begin
         ContinuousTimeSEM.ctsem_cov_expm!(true)
-        # Float64 takes the eigendecomposition route, BigFloat cannot and falls
-        # back to my_exp!/my_exp_frechet!. The two must agree, otherwise one of
-        # the two paths is wrong and only some element types would notice.
-        @test ContinuousTimeSEM._expm_eigen_eltype(Float64)
-        @test !ContinuousTimeSEM._expm_eigen_eltype(BigFloat)
+        # Float64 and BigFloat must agree. The construction calls no LAPACK, so
+        # there is no fast path that only some element types take -- this pins
+        # that, and would fail if one were reintroduced for BLAS floats alone.
         for k in (3, 6)
             v = _covexpm_coords(k)
             cb = _covexpm_cotangent(k)
