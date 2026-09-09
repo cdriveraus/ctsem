@@ -123,20 +123,8 @@ expmGetSubsets <- function(m){
         # meandat <- cbind(meandat,sddat)
         
         
-        # cml <- covml(meandat,reg = TRUE)
         
         for(i in 1:ctm$n.TIpred){
-          # cnames <- c(colnames(meandat)[!colnames(meandat) %in% ctm$TIpredNames[i]],ctm$TIpredNames[i])
-          # 
-          # 
-          # chol <- cml$cp$covm
-          # dimnames(chol) <- list(colnames(meandat),colnames(meandat))
-          # chol <- t(chol(chol[cnames,cnames]))
-          # 
-          #  tipreds[is.na(tipreds[,i]),i] <- 
-          #    apply(meandat[is.na(tipreds[,i]),head(cnames,length(cnames)-1)],1,function(x){
-          #      sum(x * c(tail(chol,1))[-ncol(chol)])
-          #    }) *tisd[i] + timu[i]
           
           lmform = formula(paste0(ctm$TIpredNames[i],' ~ 1 + ',
             paste0(colnames(meandat)[-which(colnames(meandat) %in% ctm$TIpredNames[i])],

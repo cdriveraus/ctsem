@@ -45,7 +45,7 @@ reproduction rather than by reasoning about it:
    done" even though the header is newer than the object. Reproduced
    directly against Rtools' GNU Make (4.4.1) with a minimal two-rule
    Makefile before touching the real one. An explicit-name rule
-   (`stanExports_cov.o: stanExports_cov.h`) does combine with a suffix rule
+   (`stanExports_ctsm.o: stanExports_ctsm.h`) does combine with a suffix rule
    correctly. The model list is read from `inst/stan/*.stan` at configure
    time, so a future added/removed `.stan` file needs no matching edit here.
 
@@ -64,9 +64,9 @@ package DLL actually relinks) instead of being silently reused.
    content-diffing means a change that doesn't alter the compiled output
    doesn't even bump the generated header's mtime -- there's nothing to
    detect a rebuild from. A harmless way to force a real content change: add
-   an unused local, e.g. `transformed data{ int probe = 1; }`, to the
-   smallest model (`cov.stan`). Remove it again afterwards; it isn't meant to
-   ship.
+   an unused local, e.g. `transformed data{ int probe = 1; }`, to one of the
+   models -- `ctsmgen.stan` is the cheaper of the two. Remove it again
+   afterwards; it isn't meant to ship.
 3. Reinstall (should be fast -- only the touched model's object and the
    final link should redo). Confirm: the generated header's content/mtime
    changed, the corresponding object's mtime moved to after that, the

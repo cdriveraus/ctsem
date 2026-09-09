@@ -14,6 +14,8 @@
 #
 #   as: stanExports_cov.o: too many sections (89954)
 #   Fatal error: stanExports_cov.o: file too big
+# (verbatim from when cov.stan was still in the tree; the same limit is hit by
+# whichever stanExports object the debug rebuild reaches first.)
 #
 # So it fails after 83 seconds having documented nothing. Same root cause as
 # devtools::load_all(compile = TRUE), which cannot succeed here either.
