@@ -2295,7 +2295,98 @@ function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
     return out
 end
 
+"""
+    ctsem_laplace_subject_values(laplace, values, effects)
+
+Each subject's own raw parameter vector at the random effects it is *given*,
+rather than at the conditional modes solved from the data.
+
+The method above estimates each unit's effects as a mode. That is the right
+answer for a fit that integrated them out, and the wrong one for a fit that
+sampled them: a sampler already has a draw of every effect, and pairing draw
+`s` of the parameters with draw `s` of the effects is what makes a posterior
+predictive integrate over the random effects instead of conditioning on a
+point estimate of them.
+
+`effects` is the flat vector one draw of the sampler produces: unit by unit in
+unit order, and within a unit by block offset, exactly the layout
+`ctsem_laplace_effect_layout` reports and the sampler returns. Its length must
+be the total latent dimension over all units.
+
+Everything after the slicing is shared with the mode method -- the same
+`_laplace_popchols`, `_laplace_member_values` and
+`_materialize_subject_values!` -- so the two cannot drift in how a shifted
+parameter vector is built.
+
+Returns `nsubjects x length(values)`.
+"""
+function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
+    values::AbstractVector, effects::AbstractVector)
+    theta = collect(Float64, values)
+    Ls = _laplace_popchols(theta, laplace.spec)
+    units = laplace.units
+    total = sum(units.dims; init=0)
+    length(effects) == total || throw(DimensionMismatch(string(
+        "effects must have ", total, " entries for this design, got ",
+        length(effects))))
+    nsubjects = length(laplace.objective.subject_objectives)
+    out = zeros(Float64, nsubjects, length(theta))
+    buffer = Float64[]
+    base = 0
+    for U in eachindex(units.members)
+        u = Vector{Float64}(view(effects, (base + 1):(base + units.dims[U])))
+        for (m, i) in enumerate(units.members[U])
+            shifted = _laplace_member_values(theta, laplace.spec, Ls, u,
+                units.offsets[U][m])
+            subject = laplace.objective.subject_objectives[i]
+            _materialize_subject_values!(buffer, shifted, subject.params,
+                subject.tipreds)
+            out[i, :] = buffer
+        end
+        base += units.dims[U]
+    end
+    return out
+end
+
 export ctsem_laplace_subject_values
+
+"""
+    ctsem_state_dimension(laplace)
+
+How many innovations the design needs. That does not depend on how the random
+effects are handled -- it is a property of the subjects, their rows and their
+substeps -- so a caller holding a Laplace objective can size an innovation
+vector without unwrapping it.
+"""
+ctsem_state_dimension(laplace::CTSEMLaplaceObjective) =
+    ctsem_state_dimension(laplace.objective)
+
+"""
+    ctsem_generate_states(laplace, values, z, base; effects, subject_values)
+
+One dataset with each subject's trajectory drawn from *its own* model.
+
+`values` is the population parameter vector. `effects` is one draw of the
+random effects in the sampler's layout, from which each subject's own
+parameter vector is built; `subject_values` supplies those vectors directly
+instead. Given neither, each subject is put at its conditional mode, matching
+what `ctsem_generate` does.
+
+The states are drawn afresh here -- from the process, at that subject's own
+parameters -- and never carried over from anything a fit sampled. What comes
+from a fit is the individual differences; the trajectory is regenerated
+conditional on the subject-specific model.
+"""
+function ctsem_generate_states(laplace::CTSEMLaplaceObjective,
+    values::AbstractVector, z::AbstractVector, base::AbstractMatrix;
+    effects::Union{Nothing,AbstractVector}=nothing,
+    subject_values::Union{Nothing,AbstractMatrix}=nothing, kwargs...)
+    persubject = subject_values !== nothing ? subject_values :
+        effects !== nothing ?
+            ctsem_laplace_subject_values(laplace, values, effects) :
+            ctsem_laplace_subject_values(laplace, values)
+    return ctsem_generate_states(laplace.objective, persubject, z, base; kwargs...)
+end
 
 """
     _laplace_restrict_levels(laplace, U, u, from_level)
@@ -3248,9 +3339,14 @@ function ctsem_subject_gradients(laplace::CTSEMLaplaceObjective,
     return (value=value + _ctsem_log_prior(laplace.objective, theta), scores=scores)
 end
 
-for (f, what) in ((:ctsem_generate_states, "Data generation"),
-    (:ctsem_state_dimension, "The state-explicit path"),
-    (:ctsem_joint_loglikelihood, "The state-explicit path"),
+# `ctsem_generate_states` and `ctsem_state_dimension` used to be on this list.
+# Both now delegate to the wrapped objective: the first because generating a
+# trajectory needs a per-subject parameter vector and there is one to give it,
+# the second because the innovation count is a property of the design and not
+# of how the random effects are handled. What remains is the state-explicit
+# *target*, which really is not implemented for this route -- it would have to
+# integrate the random effects and sample the states in one objective.
+for (f, what) in ((:ctsem_joint_loglikelihood, "The state-explicit path"),
     (:ctsem_joint_evaluate, "The state-explicit path"))
     @eval function $f(laplace::CTSEMLaplaceObjective, args...; kwargs...)
         throw(ArgumentError(string($what, " is not implemented for the Laplace ",

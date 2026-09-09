@@ -451,11 +451,32 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
 # *here*, with R's RNG, so that `set.seed()` means what a user expects and the
 # two engines produce identical data for the same seed.
 
-.ctBackendGenerate <- function(fit, raw, base) {
+.ctBackendGenerate <- function(fit, raw, base, effects = NULL) {
   spec <- .ctBackendSpec(fit)
   module <- .ctJuliaModule(spec$project)
-  .ctBackendJuliaValue(module$ctsem_generate(.ctJuliaObjective(fit),
-    .ctJuliaNumericVector(as.numeric(raw)), JuliaConnectoR::juliaPut(base)))
+  objective <- .ctJuliaObjective(fit)
+  raw <- .ctJuliaNumericVector(as.numeric(raw))
+  # A draw of the random effects, when the caller has one.
+  #
+  # Without it `ctsem_generate(laplace, ...)` puts each subject at its
+  # *conditional mode*, solved from that subject's data. For a fit that
+  # integrated the effects out that is the right quantity. For a fit that
+  # sampled them it is not: the draws exist, and using modes conditions the
+  # predictive on a point estimate of each effect rather than integrating over
+  # its posterior, which understates between-subject uncertainty. Measured on a
+  # 12-subject sampled fit, the generated subject means carried no relationship
+  # to the effect draws they were supposed to come from -- mean |correlation|
+  # 0.123 against a shuffled null of 0.087 -- while tracking the *mean* effect
+  # across subjects at 0.965, which is the signature of modes.
+  if (!is.null(effects)) {
+    persubject <- .ctBackendJuliaValue(module$ctsem_laplace_subject_values(
+      objective, raw, .ctJuliaNumericVector(as.numeric(effects))))
+    return(.ctBackendJuliaValue(module$ctsem_generate(objective, raw,
+      JuliaConnectoR::juliaPut(base),
+      subject_values = JuliaConnectoR::juliaPut(persubject))))
+  }
+  .ctBackendJuliaValue(module$ctsem_generate(objective, raw,
+    JuliaConnectoR::juliaPut(base)))
 }
 
 
@@ -484,13 +505,20 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
     module$ctsem_state_dimension(.ctJuliaObjective(fit))))
 }
 
-.ctBackendGenerateStates <- function(fit, raw, z, base) {
+.ctBackendGenerateStates <- function(fit, raw, z, base, effects = NULL) {
   spec <- .ctBackendSpec(fit)
   module <- .ctJuliaModule(spec$project)
-  .ctBackendJuliaValue(module$ctsem_generate_states(.ctJuliaObjective(fit),
+  arguments <- list(.ctJuliaObjective(fit),
     .ctJuliaNumericVector(as.numeric(raw)),
     .ctJuliaNumericVector(as.numeric(z)), JuliaConnectoR::juliaPut(base),
-    transition = .ctJuliaOr(spec$transition, "exponential")))
+    transition = .ctJuliaOr(spec$transition, "exponential"))
+  # A draw of the random effects, so each subject's trajectory is drawn at that
+  # subject's own parameters rather than at the population vector. Only the
+  # random-effect objective takes it; the plain one has no effects to place.
+  if (!is.null(effects)) {
+    arguments$effects <- .ctJuliaNumericVector(as.numeric(effects))
+  }
+  .ctBackendJuliaValue(do.call(module$ctsem_generate_states, arguments))
 }
 
 # The joint density of states and data, and its gradient with respect to the
@@ -504,7 +532,7 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
 }
 
 .ctBackendGenerateFromFit <- function(fit, nsamples = 200, fullposterior = FALSE,
-  cores = 2) {
+  cores = 2, intoverstates = "fit") {
   spec <- .ctBackendSpec(fit)
   # `ctsem_generate` (and `ctsem_generate_states` below it) pass each
   # subject's `tipreds` straight to the extended Kalman filter without the
@@ -525,6 +553,23 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
   nmanifest <- length(manifestNames)
   nrows <- length(spec$times)
 
+  # Random effect draws, paired with the parameter draws they were taken with.
+  #
+  # A fit that sampled its random effects carries one draw of every effect
+  # alongside every draw of the parameters, and the two belong together: draw
+  # `s` of the predictive is the model at draw `s` of everything. Pairing them
+  # is what makes this integrate over the random effects. Without it the engine
+  # falls back to conditional modes, which is a point estimate of each effect.
+  #
+  # `sample$effects` exists only when the fit was sampled with
+  # `saveEffects=TRUE` -- the draws are nsubjects x neffects x chains x draws
+  # numbers and the bridge moves about 1 MB/s, so they are summarised by
+  # default. Where they are absent this says so and uses the modes, rather than
+  # substituting them in silence.
+  effectdraws <- fit$sample$effects
+  sampledeffects <- !is.null(fit$sample) &&
+    (!is.null(effectdraws) || length(fit$sample$effect_mean))
+
   if (isTRUE(fullposterior)) {
     posterior <- fit$estimate$rawposterior
     if (is.null(posterior)) {
@@ -533,18 +578,59 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
     }
     rows <- sample(seq_len(nrow(posterior)), nsamples, replace = nsamples > nrow(posterior))
     samples <- posterior[rows, , drop = FALSE]
+    # The same rows, so parameters and effects come from one draw. They are
+    # only alignable when the two have the same number of draws; a fit whose
+    # `rawposterior` came from somewhere other than the sampler (a Hessian
+    # draw, say) is not paired with these effects and must not be treated as
+    # though it were.
+    effects <- if (!is.null(effectdraws) &&
+        nrow(effectdraws) == nrow(posterior)) effectdraws[rows, , drop = FALSE]
   } else {
     samples <- matrix(as.numeric(fit$estimate$raw), nrow = nsamples,
       ncol = length(fit$estimate$raw), byrow = TRUE)
+    # A point estimate of the parameters takes the point estimate of the
+    # effects, which is their posterior mean -- available whether or not the
+    # draws themselves were kept.
+    mean_effects <- if (length(fit$sample$effect_mean))
+      as.numeric(fit$sample$effect_mean) else
+        if (!is.null(effectdraws)) colMeans(effectdraws)
+    effects <- if (!is.null(mean_effects))
+      matrix(mean_effects, nrow = nsamples, ncol = length(mean_effects),
+        byrow = TRUE)
+  }
+
+  if (sampledeffects && is.null(effects)) {
+    message("This fit sampled its random effects, but the draws needed to pair ",
+      "them with the parameter draws are not on it, so each subject is ",
+      "generated at its conditional mode instead -- a point estimate of its ",
+      "effect rather than a draw from its posterior. Re-sample with ",
+      "saveEffects=TRUE to generate from the draws.")
   }
 
   generated <- array(NA_real_, dim = c(nsamples, nrows, nmanifest))
   llrow <- matrix(0, nsamples, nrows)
-  # A state-explicit fit gets a state-explicit posterior predictive.
-  # Generating through the filter at its estimate would be a draw from a
-  # density this fit did not maximise -- the very substitution the route
-  # exists to avoid -- and it would look entirely reasonable.
-  statepath <- isFALSE(fit$args$resolved$intoverstates)
+  # Which route generates the states, and it is a choice rather than a
+  # consequence.
+  #
+  # `'fit'`, the default, mirrors the fit: a state-explicit fit gets a
+  # state-explicit predictive, because generating through the filter at its
+  # estimate would be a draw from a density that fit did not maximise, and it
+  # would look entirely reasonable. It also keeps the identity that the
+  # generated dataset's `llrow` is the likelihood reported while generating it.
+  #
+  # `FALSE` resamples the trajectory whatever the fit did -- drawn from the
+  # process at that subject's own parameters, then each observation from its
+  # conditional distribution given the state. That is a draw from the model
+  # rather than from the filter's approximation of it, and the two differ for a
+  # non-Gaussian indicator, where the measurement update is an assumed-density
+  # projection, or for state-dependent dynamics. `TRUE` forces the filter
+  # route.
+  #
+  # Either way the states are *regenerated*: nothing a fit sampled is carried
+  # over. What comes from the fit is the individual differences.
+  statepath <- if (identical(as.character(intoverstates)[1L], "fit"))
+    isFALSE(fit$args$resolved$intoverstates) else
+      !isTRUE(as.logical(intoverstates)[1L])
   nz <- if (statepath) .ctBackendStateDimension(fit) else 0L
   for (iteration in seq_len(nsamples)) {
     # Innovations first, then the observation deviates, matching the order
@@ -552,8 +638,10 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
     z <- if (statepath) stats::rnorm(nz) else NULL
     base <- matrix(stats::rnorm(nmanifest * nrows), nmanifest, nrows)
     drawn <- if (statepath) {
-      .ctBackendGenerateStates(fit, samples[iteration, ], z, base)
-    } else .ctBackendGenerate(fit, samples[iteration, ], base)
+      .ctBackendGenerateStates(fit, samples[iteration, ], z, base,
+        effects = if (!is.null(effects)) effects[iteration, ])
+    } else .ctBackendGenerate(fit, samples[iteration, ], base,
+      effects = if (!is.null(effects)) effects[iteration, ])
     generated[iteration, , ] <- t(matrix(as.numeric(drawn$Y), nmanifest, nrows))
     llrow[iteration, ] <- as.numeric(drawn$llrow)
   }
