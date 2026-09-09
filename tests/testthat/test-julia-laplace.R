@@ -450,6 +450,89 @@ test_that("a TI predictor operates at a grouping level when it varies there", {
   expect_gt(fits[[2]]$estimate$loglik, fits[[1]]$estimate$loglik)
 })
 
+# --- a grouping level with no subject level effects --------------------------
+
+# One intercept per study with subjects exchangeable inside it is an ordinary
+# model, and nothing about the method needs a level below the varying one. It
+# was refused anyway: every "does this model have random effects" test read the
+# subject level's `indvarying` column and no other.
+
+.laplace_studyonly_model <- function() {
+  model <- suppressWarnings(suppressMessages(ctModel(
+    type = "ct", manifestNames = "Y1", latentNames = "eta1",
+    LAMBDA = matrix(1), T0MEANS = matrix(0), CINT = matrix(0),
+    T0VAR = matrix(0.5), MANIFESTMEANS = matrix("mmean"),
+    id = c("subject", "study"))))
+  model$pars$indvarying <- FALSE
+  model$pars$indvarying_study <- model$pars$param %in% "mmean"
+  model
+}
+
+test_that("a study level effect needs no subject level effect", {
+  skip_without_julia()
+  dat <- .laplace_nested_data()
+  spec <- suppressMessages(ctFit(dat, .laplace_studyonly_model(),
+    backend = "julia", intoverpop = "laplace", fit = FALSE))
+
+  expect_equal(spec$laplace$nlevels, 2L)
+  expect_equal(vapply(spec$laplace$levels, function(x) x$nrandom, integer(1)),
+    c(0L, 1L))
+  expect_equal(spec$laplace$nrandom, 1L)
+
+  fit <- suppressMessages(ctFit(dat, .laplace_studyonly_model(),
+    backend = "julia", intoverpop = "laplace",
+    optimcontrol = list(estonly = TRUE)))
+  expect_true(is.finite(fit$estimate$loglik))
+})
+
+test_that("one subject per study reproduces the subject level fit exactly", {
+  skip_without_julia()
+  # The check that is not parity between two of our own paths: with one subject
+  # in every study the two specifications are the same model, so the study
+  # level route has to return what the subject level route -- tested against
+  # closed forms elsewhere in this file -- already returns. Anything the empty
+  # inner level perturbs shows up here as a difference in the likelihood.
+  dat <- .laplace_nested_data(nstudy = 20, npersub = 1, nobs = 6)
+
+  subjectlevel <- suppressWarnings(suppressMessages(ctModel(
+    type = "ct", manifestNames = "Y1", latentNames = "eta1",
+    LAMBDA = matrix(1), T0MEANS = matrix(0), CINT = matrix(0),
+    T0VAR = matrix(0.5), MANIFESTMEANS = matrix("mmean"), id = "subject")))
+  subjectlevel$pars$indvarying <- subjectlevel$pars$param %in% "mmean"
+
+  set.seed(99)
+  one <- suppressMessages(ctFit(dat, subjectlevel, backend = "julia",
+    intoverpop = "laplace", cores = 1))
+  set.seed(99)
+  two <- suppressMessages(ctFit(dat, .laplace_studyonly_model(),
+    backend = "julia", intoverpop = "laplace", cores = 1))
+
+  expect_equal(two$estimate$loglik, one$estimate$loglik)
+  expect_equal(two$estimate$raw, one$estimate$raw)
+  expect_equal(summary(two)$popsd, summary(one)$popsd)
+})
+
+test_that("a varying grouping level chooses its own route", {
+  skip_without_julia()
+  dat <- .laplace_nested_data(nstudy = 4, npersub = 3, nobs = 4)
+
+  # 'auto' resolved to the augmented route, which reads `indvarying` alone and
+  # would have dropped the study effect without saying so.
+  auto <- suppressMessages(ctFit(dat, .laplace_studyonly_model(),
+    backend = "julia", fit = FALSE))
+  expect_identical(auto$args$resolved$intoverpop, "laplace")
+  expect_equal(auto$laplace$nlevels, 2L)
+
+  # Asked for explicitly, the same route is refused rather than silently
+  # narrowed, and the message names the parameter it could not carry.
+  expect_error(suppressMessages(ctFit(dat, .laplace_studyonly_model(),
+    backend = "julia", intoverpop = "augmented")), "mmean")
+  # Same for the backend that has one grouping level, whatever the route.
+  expect_error(suppressMessages(ctFit(dat, .laplace_studyonly_model(),
+    backend = "stan", optimize = FALSE, fit = FALSE)), "mmean")
+})
+
+
 test_that("subject parameters are available at draws, with spread", {
   skip_without_julia()
   fit <- .laplace_exact_fit()

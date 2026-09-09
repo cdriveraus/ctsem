@@ -79,7 +79,9 @@ This now sets \code{intoverstates = FALSE} and the \code{manifesttype} of every 
 \item{fit}{If TRUE, fit specified model using Stan, if FALSE, return stan model object without fitting.}
 
 \item{intoverpop}{how to handle declared individual differences. If 'auto',
-set to TRUE if optimizing and FALSE if using hmc.
+set to TRUE if optimizing and FALSE if using hmc -- except when a grouping
+level above the subject varies (see \code{id} in \code{\link{ctModel}}),
+which only 'laplace' can integrate out, so 'auto' resolves to that.
 if TRUE, integrates over population distribution of parameters rather than full sampling.
 Allows for optimization of non-linearities and random effects, via state expansion.
 'augmented' names that state-expansion method explicitly. Individual
