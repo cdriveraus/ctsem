@@ -51,6 +51,7 @@ include("progress.jl")
 include("small_linalg.jl")
 include("opcounts.jl")
 include("parameters.jl")
+include("cov_cache.jl")
 include("constrain_cor_sqrt.jl")
 include("r_interface.jl")
 # Socket options for the R bridge. No engine code depends on it, so it can sit

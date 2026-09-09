@@ -93,6 +93,24 @@ function sdcovsqrt2cov!(buffer, mat, choleskymats)
 end
 
 function sdcovsqrt2cov!(buffer, mat, choleskymats, dim::Val{d}) where {d}
+    T = eltype(buffer.out)
+    if _CTSEM_COV_CACHE[]
+        _COVCACHE_CALLS[] += 1
+        c = _covcache(T, dim)
+        hit = _covcache_lookup(c, mat, dim)
+        if hit != 0
+            copyto!(buffer.out, c.outs[hit])
+            return nothing
+        end
+        _COVCACHE_MISSES[] += 1
+        _sdcovsqrt2cov_uncached!(buffer, mat, choleskymats, dim)
+        _covcache_store!(c, mat, buffer.out, dim)
+        return nothing
+    end
+    return _sdcovsqrt2cov_uncached!(buffer, mat, choleskymats, dim)
+end
+
+function _sdcovsqrt2cov_uncached!(buffer, mat, choleskymats, dim::Val{d}) where {d}
     if _CTSEM_COV_EXPM[]
         return sdcovexpm2cov!(buffer, mat, dim)
     end
