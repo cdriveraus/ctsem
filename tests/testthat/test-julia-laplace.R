@@ -189,21 +189,42 @@ test_that("verbose reports the optimiser trace and the inner solve", {
   model <- .laplace_test_model()
   dat <- .laplace_test_data(nsubjects = 8, nobs = 5)
 
-  chatter <- capture.output(suppressMessages(ctFit(dat, model, backend = "julia",
-    intoverpop = "laplace", verbose = 1, optimcontrol = list(estonly = TRUE))))
+  # Neither half of the trace travels on stdout, and they do not travel
+  # together, so this captures both channels separately and asserts on the one
+  # each line is actually on. The engine's `verbose` lines are raw writes to
+  # Julia's `stderr`, which JuliaConnectoR relays to R's `stderr()`, so a sink
+  # catches them and `suppressMessages()` never could. The progress line goes
+  # through `.ctProgressSink()`, which emits it with `message()` -- a condition,
+  # which testthat muffles as it records it, so under testthat it does not reach
+  # `stderr()` for a sink to catch either. Capturing stdout and suppressing
+  # messages, as this did, saw neither: three assertions passed vacuously for as
+  # long as the greps happened to be wrong.
+  relayed <- character(); emitted <- character()
+  invisible(capture.output(
+    relayed <- capture.output(
+      emitted <- capture_messages(ctFit(dat, model, backend = "julia",
+        intoverpop = "laplace", verbose = 1,
+        optimcontrol = list(estonly = TRUE))),
+      type = "message")))
+
   # The inner solve is part of the objective, so its status belongs in the
-  # trace rather than only on the fit object.
-  expect_true(any(grepl("Laplace: inner modes", chatter, fixed = TRUE)))
+  # trace rather than only on the fit object. Asserted nowhere else: the engine
+  # suite proves the solve, and this is the only check that its status is
+  # reported.
+  expect_true(any(grepl("Laplace: inner modes", relayed, fixed = TRUE)))
   # The progress reporter replaced Optim's own trace, so the assertion is on
   # what it emits: a labelled line carrying the objective. `Iter` was the old
   # format's column heading and says nothing about whether the fit is going
   # anywhere.
-  expect_true(any(grepl("optimise", chatter, fixed = TRUE)))
-  expect_true(any(grepl("logpost", chatter, fixed = TRUE)))
-
-  quiet <- capture.output(suppressMessages(ctFit(dat, model, backend = "julia",
-    intoverpop = "laplace", verbose = 0, optimcontrol = list(estonly = TRUE))))
-  expect_false(any(grepl("Laplace: inner modes", quiet, fixed = TRUE)))
+  #
+  # The line's content is `test_progress.jl`'s subject and its delivery as a
+  # message is `test-julia-session.R`'s, so what is left for a real fit to prove
+  # is that the reporter is *wired in* -- which is a failure neither of those can
+  # see, and one that has happened: `progress = isTRUE(progress)` named an
+  # element of the list being built rather than anything in scope, so the sink
+  # was never called.
+  expect_true(any(grepl("optimise", emitted, fixed = TRUE)))
+  expect_true(any(grepl("logpost", emitted, fixed = TRUE)))
 })
 
 # --- subjects nested in studies ----------------------------------------------
