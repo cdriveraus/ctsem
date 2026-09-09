@@ -86,7 +86,73 @@ ctAddSamples <- ctFitAddSamples
 #'
 #' @examples
 #' sf <- stan_reinitsf(ctstantestfit$stanmodel,ctstantestfit$standata)
+# Whether the legacy covariance transform has already been reported this
+# session, keyed by which matrices carried it.
+.ct_legacy_covtransform <- new.env(parent = emptyenv())
+
+# Does this `standata` predate the squash moving into `constraincorsqrt1`?
+#
+# The (-1, 1) map on a covariance off-diagonal used to be transform code 3 in
+# the parameter table; it is now applied inside the construction, and the
+# parameter is a free real. A model built by this version therefore never
+# carries code 3 there -- but a fit saved by an earlier one does, in its own
+# `standata`, and reusing that fit squashes twice. The correlations come back
+# shrunk towards zero and nothing errors, which is exactly how it went
+# unnoticed here.
+#
+# Only the model matrices are affected. The population covariance built from
+# RAWPOPVAR applied its squash in the stan program rather than in a stored
+# transform, so it moved with the code and an old fit reads the same either
+# way.
+#
+# `matsetup` is addressed positionally everywhere it is read (see CLAUDE.md):
+# column 1 row, 2 col, 4 transform, 7 matrix, with DIFFUSION 4, MANIFESTVAR 5
+# and T0VAR 8 from ctModelWriter's `base` vector.
+# The same thing on a stored model rather than a stored `standata`.
+#
+# `pars$transform` is text, so there is no code to test: match the expression
+# the old default produced. Only that exact string, because a hand-written
+# transform on a covariance off-diagonal is a legitimate thing to write and
+# must not be second-guessed.
+.CT_LEGACY_COR_TRANSFORM <- '2/(1 + exp(-param)) - 1'
+
+.ctCheckLegacyCovTransformModel <- function(pars){
+  if(is.null(pars) || is.null(pars$transform) || is.null(pars$matrix)) {
+    return(invisible(NULL))
+  }
+  hit <- pars$matrix %in% c('DIFFUSION','MANIFESTVAR','T0VAR') &
+    pars$row != pars$col &
+    !is.na(pars$transform) &
+    gsub(' ', '', pars$transform) == gsub(' ', '', .CT_LEGACY_COR_TRANSFORM)
+  if(!any(hit)) return(invisible(NULL))
+  .ctWarnLegacyCovTransform(paste0(sort(unique(pars$matrix[hit])),
+    collapse = ', '))
+}
+
+.ctWarnLegacyCovTransform <- function(which_mats){
+  if(!is.null(.ct_legacy_covtransform[[which_mats]])) return(invisible(NULL))
+  .ct_legacy_covtransform[[which_mats]] <- TRUE
+  warning('Covariance off-diagonals in ', which_mats, ' carry the transform ',
+    'this version applies inside the covariance construction, so it is ',
+    'applied twice and correlations are shrunk towards zero. This is a fit ',
+    'or model saved by an earlier ctsem: refit it.', call. = FALSE)
+  invisible(NULL)
+}
+
+.ctCheckLegacyCovTransform <- function(data){
+  ms <- data$matsetup
+  if(is.null(ms) || !is.matrix(ms) || ncol(ms) < 7 || !nrow(ms)) {
+    return(invisible(NULL))
+  }
+  mats <- c(DIFFUSION = 4, MANIFESTVAR = 5, T0VAR = 8)
+  hit <- ms[, 7] %in% mats & ms[, 1] != ms[, 2] & ms[, 4] == 3
+  if(!any(hit)) return(invisible(NULL))
+  .ctWarnLegacyCovTransform(paste0(
+    sort(unique(names(mats)[match(ms[hit, 7], mats)])), collapse = ', '))
+}
+
 stan_reinitsf <- function(model, data,fast=FALSE){
+  .ctCheckLegacyCovTransform(data)
   if(fast) sf <- new(model@mk_cppmodule(model),data,0L,getcxxfun(model@dso))
   
   if(!fast) suppressMessages(suppressWarnings(suppressOutput(sf<- 

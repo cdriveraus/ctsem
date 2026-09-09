@@ -1014,6 +1014,11 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
 
   ctm <- ctstanmodel
 
+  # A model saved before the correlation squash moved into the covariance
+  # construction still carries it in its own parameter table, so it would be
+  # applied twice. Both backends come through here.
+  .ctCheckLegacyCovTransformModel(ctm$pars)
+
   if(!is.null(ctm$TIpredAuto) && ctm$TIpredAuto %in% c(1L,TRUE)){ #if auto tipred, set all effects to true
     for(tip in ctm$TIpredNames){
       ctm$pars[[paste0(tip,'_effect')]] <- 'TRUE'
