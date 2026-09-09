@@ -1694,24 +1694,25 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
           ". A population standard deviation cannot be negative.",
           call. = FALSE)
       }
-      # Converted from the parameter's natural scale to the state scale this
-      # cell is in.
+      # Converted from the raw parameter scale a POPCOV entry is written on to
+      # the state scale this cell is in, which is `k_i` and nothing else.
       #
-      # The free branch produces `k_i * raw_sd`, and the natural-scale spread is
-      # `slope * raw_sd` where `slope` is the derivative of the parameter's own
-      # transform -- for a mean parameter, `10 * param`, that is the constant
-      # 10. So a requested natural spread `v` needs `v * k_i / slope` here.
-      # Getting this wrong is silent and large: placing `v` directly produced a
-      # spread ten times what was asked for.
+      # The free branch produces `k_i * raw_sd`, so a requested raw spread `v`
+      # needs `v * k_i` here. `k_i` is exact arithmetic -- the carrier state's
+      # own `multiplier * meanscale` -- so the number a user writes is the raw
+      # population sd on this route, and the same number is the raw population
+      # sd on the Laplace route, which has no `k_i` and reads it directly.
       #
-      # Exact for a linear transform, which is every mean parameter. For a
-      # nonlinear one the slope depends on the population mean and this is a
-      # first-order match at the raw origin.
+      # It used to be divided by the derivative of the parameter's own
+      # transform as well, making the entry a spread on the parameter's
+      # *natural* scale. That was exact only for a linear transform and a
+      # first-order match otherwise, and it meant the specification surface and
+      # the fit disagreed about what the number was: a fit reports the raw
+      # population sd (see `.ctBackendRawPopCov`), so a model with a nonlinear
+      # transform could not be generated from and fitted with one number.
       table$param[index] <- NA_character_
       table$parnumber[index] <- NA_integer_
-      table$value[index] <- fixedvalue *
-        t0means_state_scale[position] / .ctJuliaPopCovSlope(model,
-          varying_names[position])
+      table$value[index] <- fixedvalue * t0means_state_scale[position]
       table$transform[index] <- NA_character_
     } else {
       next_parameter <- next_parameter + 1L
@@ -2047,7 +2048,14 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   }
   direct <- !is.na(table$parnumber) & !grepl("[", table$param, fixed = TRUE)
   entries <- list()
-  coefficient <- if (is.null(offset)) max(table$parnumber, na.rm = TRUE) else as.integer(offset)
+  # The leading zero is the count of a model with nothing free, and it is not
+  # hypothetical: `ctGenerate` resolves every free parameter to a value before
+  # preparing, so on the generation path every `parnumber` is NA and `max` had
+  # nothing to take a maximum over -- it warned and returned -Inf, on an
+  # ordinary call. Same guard as `.ctBackendNpar()` and `.ctGenerateJulia()`
+  # already use for the same reason.
+  coefficient <- if (is.null(offset)) max(c(0L, table$parnumber), na.rm = TRUE) else
+    as.integer(offset)
   for (predictor in seq_along(model$TIpredNames)) {
     column <- effect_columns[predictor]
     if (!column %in% available) next
