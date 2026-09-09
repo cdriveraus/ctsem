@@ -247,6 +247,7 @@ function _run_chain(logdensity!, centre::Vector{Float64},
     nwarmup::Int, ndraws::Int, maxdepth::Int, target_accept::Float64,
     maxdelta::Float64, init_scale::Float64, adapt_metric::Bool,
     adapt::Union{Nothing,Vector{Bool}}; settle_tol::Float64=0.0,
+    init_eps::Float64=0.0,
     resume::Union{Nothing,_ChainResult}=nothing,
     progress::CTSEMProgress=CTSEMProgress(false),
     callback::CTSEMCallback=CTSEMCallback(nothing))
@@ -267,11 +268,37 @@ function _run_chain(logdensity!, centre::Vector{Float64},
         logdensity!, g)
 
     current = metric
-    eps = _init_stepsize(logdensity!, current, rng, x, g, logp, ws)
+    # A step size the caller fixed, or this chain's own crude estimate.
+    #
+    # `_init_stepsize` doubles or halves from 1 until a *single* leapfrog step
+    # under a *single* momentum draw crosses an acceptance of one half, at the
+    # chain's own starting point -- so it answers differently in every chain,
+    # for reasons that carry no information. Dual averaging erases that over a
+    # warmup, which is why it was left alone; with `nwarmup = 0` there is
+    # nothing to erase it, and chains came back some fast and divergent and
+    # others fine.
+    #
+    # Given rather than estimated, every chain starts from the same number.
+    # It has to come from the caller rather than be shared here: computing it
+    # once per run inside the engine gives a *different* answer in a worker
+    # process than in this session, because the subject-loop chunk tuner picks
+    # its count by timing and the last bits of the density differ -- and this
+    # ladder's `> log(0.5)` test turns that into a factor of two. Measured:
+    # 0.125 in-process against 0.0625 in a worker, on one fixture at one seed,
+    # which broke the processes-reproduce-in-process invariant.
+    eps = init_eps > 0 ? init_eps :
+        _init_stepsize(logdensity!, current, rng, x, g, logp, ws)
     da = _DualAverage(eps, target_accept)
     # Divergences since the last checkpoint, for the automatic raise below.
     check_divergent = 0
-    check_start = 0
+    # Counting starts after the init buffer, not at iteration 1. The rate this
+    # watches is meant to say "this geometry needs shorter steps"; over the
+    # first stride it says "the step size has not been adapted yet", which is
+    # true of every fit and is what the adaptation is for. Counting it raised
+    # `target_accept` on the strength of the transient, never lowered it again,
+    # and did so more often the longer the warmup -- so a longer warmup bought
+    # a permanently smaller step size and a slower sample.
+    check_start = _ADAPT_INIT_BUFFER
     raises = 0
     windows = adapt_metric ? _adapt_windows(nwarmup) : Int[]
     window_draws = Vector{Vector{Float64}}()
@@ -288,7 +315,10 @@ function _run_chain(logdensity!, centre::Vector{Float64},
         logp = step.logp
         depths += step.depth
         step.divergent && (warmup_divergent += 1)
-        step.divergent && (check_divergent += 1)
+        # `warmup_divergent` counts everything, for the report; the rate that
+        # raises the target counts only what happened after the buffer.
+        (step.divergent && iteration > _ADAPT_INIT_BUFFER) &&
+            (check_divergent += 1)
         eps = _dual_update!(da, step.accept)
         # Raise `target_accept` rather than only reporting divergences.
         #
@@ -308,7 +338,8 @@ function _run_chain(logdensity!, centre::Vector{Float64},
         # rather than a smaller step. `_dual_restart!` because the averaging is
         # chasing a new target from here, and its accumulated `hbar` is evidence
         # about the old one.
-        if iteration - check_start >= _ACCEPT_CHECK_STRIDE
+        if iteration > check_start &&
+                iteration - check_start >= _ACCEPT_CHECK_STRIDE
             rate = check_divergent / (iteration - check_start)
             if rate > _ACCEPT_DIVERGENCE_RATE && da.target < _ACCEPT_MAX &&
                     raises < _ACCEPT_MAX_RAISES
@@ -334,6 +365,16 @@ function _run_chain(logdensity!, centre::Vector{Float64},
         _invoke_callback(callback, "warmup", iteration, nwarmup, logp,
             warmup_divergent)
         isempty(windows) && continue
+        # Past the init buffer only. `_adapt_windows` lays the window ends out
+        # as though accumulation began at `_ADAPT_INIT_BUFFER + 1` -- that is
+        # what the buffer is for, and what Stan does by resetting its
+        # accumulator there -- but this loop accumulated from iteration 1, so
+        # the first estimate was taken over draws 1..100 rather than 76..100.
+        # Those first draws are the ones taken while the step size is still the
+        # crude one-leapfrog guess and the chain is still leaving its start, so
+        # they inflate the covariance with a transient the metric should not
+        # describe.
+        iteration > _ADAPT_INIT_BUFFER || continue
         push!(window_draws, copy(x))
         iteration in windows || continue
         # Re-estimate from this window only. Earlier draws were taken under a
@@ -500,13 +541,14 @@ function _sample_to_target(density_for, centre, metric, nchains::Int,
     adapt_metric::Bool, adapt, settle_tol::Float64, min_ess::Float64,
     mean_ess::Float64, max_draws::Int, rhat_target::Float64, npar::Int,
     resume, verbose::Bool, overwrite::Bool=true; progress_callback=nothing,
-    progress_sink=nothing)
+    progress_sink=nothing, init_eps::Float64=0.0)
 
     results = if resume === nothing
         _sample_chains(nchains, parallel, seed, centre, metric, nwarmup, ndraws,
             maxdepth, target_accept, maxdelta, init_scale, adapt_metric, adapt,
-            density_for; settle_tol=settle_tol, progress=verbose,
-            overwrite=overwrite, progress_callback=progress_callback,
+            density_for; settle_tol=settle_tol, init_eps=init_eps,
+            progress=verbose, overwrite=overwrite,
+            progress_callback=progress_callback,
             progress_sink=progress_sink)
     else
         _continue_chains(nchains, parallel, seed, ndraws, maxdepth, maxdelta,
@@ -659,8 +701,9 @@ function _sample_chains(nchains::Int, parallel::Bool, seed::Integer,
     centre::Vector{Float64}, metric::CTSEMMetric, nwarmup::Int, ndraws::Int,
     maxdepth::Int, target_accept::Float64, maxdelta::Float64,
     init_scale::Float64, adapt_metric::Bool, adapt::Union{Nothing,Vector{Bool}},
-    density_for; settle_tol::Float64=0.0, progress::Bool=false,
-    overwrite::Bool=true, progress_callback=nothing, progress_sink=nothing)
+    density_for; settle_tol::Float64=0.0, init_eps::Float64=0.0,
+    progress::Bool=false, overwrite::Bool=true, progress_callback=nothing,
+    progress_sink=nothing)
     results = Vector{_ChainResult}(undef, nchains)
     runner = function (c)
         # Only the first chain reports. Four threads writing lines interleave
@@ -678,7 +721,8 @@ function _sample_chains(nchains::Int, parallel::Bool, seed::Integer,
         results[c] = _run_chain(density_for(c), centre, metric,
             Random.Xoshiro(UInt64(seed) + UInt64(c)), nwarmup, ndraws, maxdepth,
             target_accept, maxdelta, init_scale, adapt_metric, adapt;
-            settle_tol=settle_tol, progress=reporter, callback=watcher)
+            settle_tol=settle_tol, init_eps=init_eps, progress=reporter,
+            callback=watcher)
         # See `_continue_chains`. One reporter spans both phases -- `_run_chain`
         # relabels it from "warmup" to "sampling" partway -- so the closing line
         # names both rather than whichever phase it ended in.
@@ -726,7 +770,7 @@ function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     min_ess::Real=0.0, mean_ess::Real=0.0, max_draws::Integer=0,
     rhat_target::Real=1.01, settle_tol::Real=0.0, resume=nothing,
     progress_overwrite::Bool=true, progress_callback=nothing,
-    progress_sink=nothing)
+    progress_sink=nothing, stepsize::Real=0.0)
 
     nchains = Int(nchains); nwarmup = Int(nwarmup); ndraws = Int(ndraws)
     nchains >= 1 || throw(ArgumentError("nchains must be positive"))
@@ -784,7 +828,8 @@ function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
         adapt_metric, adapt, Float64(settle_tol), Float64(min_ess),
         Float64(mean_ess), max(Int(max_draws), ndraws), Float64(rhat_target),
         sampler.npar, resume, verbose, progress_overwrite;
-        progress_callback=progress_callback, progress_sink=progress_sink)
+        progress_callback=progress_callback, progress_sink=progress_sink,
+        init_eps=Float64(stepsize))
     results = run.results
     ndraws = run.ndraws
 
@@ -912,7 +957,7 @@ function ctsem_sample_marginal(objective, values::AbstractVector;
     verbose::Bool=false, min_ess::Real=0.0, mean_ess::Real=0.0,
     max_draws::Integer=0, rhat_target::Real=1.01, settle_tol::Real=0.0,
     resume=nothing, progress_overwrite::Bool=true, progress_callback=nothing,
-    progress_sink=nothing)
+    progress_sink=nothing, nparameters::Integer=0, stepsize::Real=0.0)
 
     nchains = Int(nchains); nwarmup = Int(nwarmup); ndraws = Int(ndraws)
     nchains >= 1 || throw(ArgumentError("nchains must be positive"))
@@ -921,7 +966,12 @@ function ctsem_sample_marginal(objective, values::AbstractVector;
     0 < target_accept < 1 || throw(ArgumentError("target_accept must be in (0, 1)"))
 
     centre = collect(Float64, values)
-    npar = length(centre)
+    # `ndim` for every coordinate sampled, which is what this entry returns
+    # draws for; `nparameters` (a keyword) for how many of them are model
+    # parameters, which is fewer only on the state-explicit route. `npar` kept
+    # as the name of the returned count so the R side reads what it always did.
+    ndim = length(centre)
+    npar = ndim
     logdensity! = function (g, x)
         result = try
             ctsem_evaluate(objective, x; gradient=true,
@@ -944,7 +994,46 @@ function ctsem_sample_marginal(objective, values::AbstractVector;
     # population parameters are all coupled.
     H = hessian === nothing ? ctsem_hessian(objective, centre) : Matrix(hessian)
     information = Symmetric((-(H .+ transpose(H))) ./ 2)
-    metric = _metric_from_covariances([1:npar], [_bounded_inverse(information)])
+    # `nparameters` is set when the coordinates past it are not parameters at
+    # all: the state-explicit route hands this entry `[theta; innovations]`,
+    # and treating the whole vector as one dense population block was wrong in
+    # three separate ways.
+    #
+    # It inverted the arrow-shaped joint Hessian at the joint mode -- and that
+    # mode is degenerate in the state directions, which is why the fit is
+    # sampled rather than optimised. Measured on a 12-subject, 10-occasion
+    # model: a 155x155 information matrix with **16 non-positive eigenvalues**.
+    # `_bounded_inverse` floors those at 1e-8 of the largest, so the metric
+    # came back claiming a standard deviation of about 8.6 in sixteen
+    # directions along which the density actually *increases*. A worse start
+    # than no information at all.
+    #
+    # The innovations are standardised -- their prior is N(0, 1) and the
+    # posterior is tighter wherever data informs them -- so the identity is
+    # both defensible and an upper bound, where the floored inverse was
+    # neither. The parameters keep a dense block, from the `(1:nparameters)`
+    # sub-block of the information, which is their curvature conditional on
+    # the states: the same choice, and for the same reason, as
+    # `ctsem_sample_metric` makes for the joint route's population block.
+    #
+    # It is also the difference between an O(ndim^3) eigendecomposition of
+    # everything and an O(nparameters^3) one: `nstate` grows with rows times
+    # latents, so the dense form was cubic in the size of the data.
+    # A parameter-only Hessian with no `nparameters` to say so would fall into
+    # the dense branch and index it as though it covered every coordinate, so
+    # the matrix decides when the caller did not.
+    nfixed = nparameters > 0 ? Int(nparameters) :
+        (size(information, 1) < ndim ? size(information, 1) : 0)
+    metric = if 0 < nfixed < ndim
+        keep = 1:nfixed
+        popcov = _bounded_inverse(Symmetric(Matrix(information[keep, keep])))
+        ranges = vcat([keep], [i:i for i in (nfixed + 1):ndim])
+        covariances = vcat([popcov],
+            [ones(1, 1) for _ in (nfixed + 1):ndim])
+        _metric_from_covariances(ranges, covariances)
+    else
+        _metric_from_covariances([1:ndim], [_bounded_inverse(information)])
+    end
 
     verbose && println(_console(), "Sampling: ", nchains, " chain(s), ", npar,
         " dimensions (effects integrated out), chains sequential, ",
@@ -956,7 +1045,7 @@ function ctsem_sample_marginal(objective, values::AbstractVector;
         Float64(settle_tol), Float64(min_ess), Float64(mean_ess),
         max(Int(max_draws), ndraws), Float64(rhat_target), npar, resume,
         verbose, progress_overwrite; progress_callback=progress_callback,
-        progress_sink=progress_sink)
+        progress_sink=progress_sink, init_eps=Float64(stepsize))
     results = run.results
     ndraws = run.ndraws
 

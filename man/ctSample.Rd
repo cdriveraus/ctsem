@@ -41,8 +41,9 @@ longer than many fits do.}
 \item{seed}{Random seed; each chain uses \code{seed + chain}.}
 
 \item{sampleControl}{A list of sampler settings: \code{maxdepth} (default 10),
-  \code{target_accept} (0.8), \code{adapt_metric} (TRUE),
-  \code{adapt_effects} (FALSE), \code{init_scale} (1), \code{maxdelta}
+  \code{target_accept} (0.8), \code{adapt_metric} (FALSE),
+  \code{adapt_effects} (FALSE), \code{init_scale} (1), \code{stepsize},
+  \code{maxdelta}
   (1000). Stan's spellings \code{max_treedepth} and \code{adapt_delta},
   which \code{\link{ctFit}} takes for the same two settings, are
   accepted here as well.
@@ -76,6 +77,21 @@ longer than many fits do.}
   Worth setting when a draw count had to be guessed at; not worth setting
   when a warning says a parameter is unidentified, because no number of
   draws fixes an improper posterior.
+
+  \code{stepsize} fixes the step size every chain starts from, instead of
+  each chain estimating its own from a single trial leapfrog step -- which
+  answers differently in every chain, and is the whole of what a chain keeps
+  when \code{warmup} is 0. Dual averaging moves it from there unless warmup
+  is 0, so this is a starting point rather than a setting of the step size
+  itself.
+
+  \code{adapt_metric} re-estimates the metric during warmup. It is off by
+  default: the metric starts as the inverse of the exact Hessian at the
+  mode, and a sample covariance from a few hundred warmup draws is measured
+  to be worse -- a smaller step size, deeper trees, 15-40% more time for the
+  same effective sample, on every model tried. Worth turning on where the
+  starting curvature had to be repaired or floored, which is where the
+  estimate has something to improve on.
 
   \code{adapt_effects} controls whether warmup re-estimates the
   random-effect blocks of the metric as well as the population block; they

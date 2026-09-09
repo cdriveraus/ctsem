@@ -360,7 +360,8 @@ To generate data based on the posterior of a fitted model, see \code{\link{ctGen
 
 \item{sampleControl}{Used when \code{optimize=FALSE}: a list holding
 everything about how to sample. \code{iter} (default 1000) counts warmup and
-sampling together, \code{warmup} (half of \code{iter}) how much of it is
+sampling together, \code{warmup} (200, or half of \code{iter} if that is
+less) how much of it is
 discarded, \code{draws} the post-warmup count directly -- given, it wins and
 \code{iter} is not consulted -- \code{chains} (2) how many chains,
 \code{seed} (20260828), \code{saveEffects} whether individual random-effect
@@ -370,7 +371,7 @@ R processes.
 For \code{backend='julia'} it also carries the sampler's own settings:
 \code{maxdepth}/\code{max_treedepth} (default 10),
 \code{target_accept}/\code{adapt_delta} (0.8), \code{maxdelta} (1000),
-\code{init_scale} (1), \code{adapt_metric} (TRUE), \code{adapt_effects}
+\code{init_scale} (1), \code{adapt_metric} (FALSE), \code{adapt_effects}
 (FALSE), and the optional effective-sample-size target \code{minESS},
 \code{meanESS}, \code{maxDraws}, \code{rhatTarget} (1.01) and
 \code{settleTol} -- all documented in full under \code{sampleControl} in
@@ -391,7 +392,7 @@ regarding warmup / sampling behaviour. Unless specified, values used are:
 list(adapt_delta = .8, adapt_window=5, max_treedepth=10, adapt_init_buffer=2, stepsize = .001).
 For \code{backend='julia'}, the same argument instead carries the julia sampler's own settings:
 \code{maxdepth}/\code{max_treedepth} (default 10), \code{target_accept}/\code{adapt_delta} (0.8),
-\code{maxdelta} (1000), \code{init_scale} (1), \code{adapt_metric} (TRUE), \code{adapt_effects} (FALSE),
+\code{maxdelta} (1000), \code{init_scale} (1), \code{adapt_metric} (FALSE), \code{adapt_effects} (FALSE),
 and the optional effective-sample-size target \code{minESS}, \code{meanESS}, \code{maxDraws},
 \code{rhatTarget} (1.01) and \code{settleTol} -- all documented in full under \code{control} in
 \code{\link{ctSample}} -- plus \code{warmup} (default half of \code{iter}), \code{seed} (default

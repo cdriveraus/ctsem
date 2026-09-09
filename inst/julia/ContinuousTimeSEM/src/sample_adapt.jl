@@ -126,6 +126,14 @@ _dual_final(da::_DualAverage) = exp(da.logepsbar)
 ################################################################################
 
 """
+Warmup iterations excluded from the metric estimate, and from the divergence
+rate that raises `target_accept`. Stan's `init_buffer`, and a constant here
+because `_run_chain` has to agree with `_adapt_windows` about where the first
+window starts -- it did not, see the note on `window_draws` there.
+"""
+const _ADAPT_INIT_BUFFER = 75
+
+"""
     _adapt_windows(nwarmup; init_buffer, term_buffer, base_window)
 
 The warmup iterations at which the metric is re-estimated.
@@ -141,8 +149,9 @@ case the Laplace metric is simply used as it stands. That is a perfectly
 reasonable mode of operation here and not a degenerate one: it is already a good
 metric, which is the whole point of starting from a fit.
 """
-function _adapt_windows(nwarmup::Int; init_buffer::Int=75, term_buffer::Int=50,
-    base_window::Int=25)
+
+function _adapt_windows(nwarmup::Int; init_buffer::Int=_ADAPT_INIT_BUFFER,
+    term_buffer::Int=50, base_window::Int=25)
     nwarmup < init_buffer + term_buffer + base_window && return Int[]
     ends = Int[]
     start = init_buffer + 1
