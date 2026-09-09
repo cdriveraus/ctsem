@@ -591,14 +591,55 @@ tostanarray <- function(flesh, skeleton){
 # be silenced, and the workers have it before any work is dispatched either way.
 # `options(ctsem.cluster.outfile = "")` restores the old behaviour for anyone
 # debugging a worker, which is the only thing it was useful for.
+# Do the workers and this session hold the same ctsem?
+#
+# `rscript_libs = .libPaths()` at each cluster creation stops a worker
+# preferring its own library, but it cannot help when the caller's ctsem is not
+# on `.libPaths()` at all -- which is exactly the case under
+# `devtools::load_all()`. The worker's `library(ctsem)` then finds the
+# installed package instead, and the mismatch is silent: the master builds
+# `standata` from one build's parameter table while the workers evaluate the
+# density with another build's compiled model. The fit converges, to the wrong
+# optimum, with estimates that look entirely sensible -- moving a covariance
+# construction between the two builds cost a day here before the cause was
+# attributed. `nchar()` of the model text is a cheap stand-in for "which build
+# was this compiled from": it comes from the same install as the object code.
+.ctBuildFingerprint <- function() {
+  paste0(as.character(utils::packageVersion('ctsem')), '/',
+    nchar(stanmodels$ctsm@model_code)[1])
+}
+
+.ctClusterCheckBuild <- function(cl) {
+  master <- try(.ctBuildFingerprint(), silent = TRUE)
+  # Spelled out rather than calling .ctBuildFingerprint() on the worker: the
+  # build most likely to differ is an older one that does not have it, and a
+  # worker erroring on a missing name is indistinguishable here from a worker
+  # that matches. `stanmodels` has been there since the package used
+  # rstantools.
+  workers <- try(unlist(parallel::clusterEvalQ(cl, paste0(
+    as.character(utils::packageVersion('ctsem')), '/',
+    nchar(ctsem:::stanmodels$ctsm@model_code)[1]))), silent = TRUE)
+  if(inherits(master, 'try-error') || inherits(workers, 'try-error') ||
+      !length(workers)) return(invisible(NULL))
+  bad <- unique(workers[workers != master])
+  if(length(bad)) warning('Parallel workers loaded a different ctsem build (',
+    paste0(bad, collapse = ', '), ' vs ', master,
+    '). Estimates will not match cores = 1. Install this tree to a library ',
+    'and use that, or fit with cores = 1.', call. = FALSE)
+  invisible(NULL)
+}
+
 makeClusterID <- function(cores = parallel::detectCores()) {
   outfile <- getOption("ctsem.cluster.outfile", NULL)
   arguments <- list(cores, useXDR = FALSE,
     # Workers otherwise search their own default .libPaths(), not the
-    # caller's -- so `library(ctsem)` two lines down can silently load a
-    # different install than the one running this code (e.g. a stale
-    # globally-installed package while a development tree is under test).
-    # Passing the caller's own search path down closes that gap; see
+    # caller's -- so `library(ctsem)` below can silently load a different
+    # install than the one running this code (e.g. a stale globally-installed
+    # package while a development tree is under test). Passing the caller's
+    # own search path down narrows that gap but does not close it: a tree
+    # loaded with devtools::load_all() is on no library path at all, so the
+    # workers still fall back to the installed package. That is what
+    # .ctClusterCheckBuild() below is for. See
     # parallelly::makeClusterPSOCK's rscript_libs documentation.
     rscript_libs = .libPaths(),
     default_packages = c("datasets", "utils", "grDevices", "graphics",
@@ -607,6 +648,7 @@ makeClusterID <- function(cores = parallel::detectCores()) {
   cl <- do.call(parallelly::makeClusterPSOCK, arguments)
   invisible(parallel::clusterEvalQ(cl,
     suppressWarnings(suppressPackageStartupMessages(library(ctsem)))))
+  .ctClusterCheckBuild(cl)
   duplicateNodeIDs <- TRUE
   while(duplicateNodeIDs){ 
     nodeids=unlist(parallel::clusterEvalQ(cl,{

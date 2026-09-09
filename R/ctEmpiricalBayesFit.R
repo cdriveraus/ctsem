@@ -364,10 +364,12 @@ ctEBfitSubjects <- function(subjects, datalong, subjectIDname, fitargs, cores=1,
     # not the caller's, so library(ctsem) below can silently load a different
     # install than the one running this code (e.g. a stale globally-installed
     # package while a development tree is under test) -- the same failure
-    # mode makeClusterID() (stanoptimis.R) was fixed for.
+    # mode makeClusterID() (stanoptimis.R) was fixed for. It narrows the gap
+    # rather than closing it -- see .ctClusterCheckBuild(), called below.
     cl <- parallelly::makeClusterPSOCK(cores, useXDR=FALSE, rscript_libs = .libPaths())
     on.exit(try(parallel::stopCluster(cl), silent=TRUE), add=TRUE)
     parallel::clusterEvalQ(cl, suppressPackageStartupMessages(library(ctsem)))
+    .ctClusterCheckBuild(cl)
     .ctEBdatalong <- datalong
     .ctEBsubjectIDname <- subjectIDname
     .ctEBfitargs <- fitargs
