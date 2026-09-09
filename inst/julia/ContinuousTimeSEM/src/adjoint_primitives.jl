@@ -401,9 +401,13 @@ parameter matrix across rows accumulate correctly. Only the lower triangle and
 diagonal of `mat_bar` are written, matching where the free parameters live.
 """
 function _sdcovsqrt2cov_pullback!(mat_bar::AbstractMatrix, mat::AbstractMatrix,
-    cov_bar::AbstractMatrix, d::Int; epsilon::Real=1e-5, scratch=nothing)
+    cov_bar::AbstractMatrix, d::Int; epsilon::Real=1e-5, scratch=nothing,
+    covmatcode::Int=0)
     d == 0 && return mat_bar
-    if _CTSEM_COV_EXPM[]
+    # Mirrors the forward's dispatch: `covmatcode == 2` is covmattransform='z'.
+    # A reverse pass that ignored the setting the forward honoured would give a
+    # gradient for a different model than the likelihood.
+    if covmatcode == 2 || _CTSEM_COV_EXPM[]
         return _sdcovexpm2cov_pullback!(mat_bar, mat, cov_bar, d)
     end
     # A zero cotangent happens routinely -- e.g. the manifest-covariance

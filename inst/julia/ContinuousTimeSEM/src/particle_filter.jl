@@ -321,7 +321,7 @@ function _ctsem_particle_subject!(sub, sp, x::Vector{Float64}, N::Int, nsubsteps
                     prev + substep * h, h, subject, t)
                 apply_complex_transforms_at_indices!(all_params, ws.predict_param_indices,
                     sp.predict_transforms, ctx)
-                ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, 0, ws.state_dim)
+                ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, ws.covmatcode, ws.state_dim)
                 randn!(rng, view(z, 1:k))
                 if transition === :euler && ws.continuous_time
                     _matvec_mul!(ws.bufferQ.r, pars.DRIFT, ws.state, ws.state_dim, ws.state_dim)

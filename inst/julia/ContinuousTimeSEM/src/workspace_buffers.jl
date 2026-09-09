@@ -119,6 +119,11 @@ struct ContinuousEKFWorkspace{T, N, M, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF
     thresholds::Vector{T}
     censormin::Vector{Float64}
     censormax::Vector{Float64}
+    # Which covariance construction the model asked for, copied from the
+    # `EKFParameters` for the same reason `manifesttype` is: `pars` is the
+    # evaluated matrix ComponentVector and has nowhere for model-level metadata.
+    # 0 is the unconstrained correlation square root, 2 is covmattransform='z'.
+    covmatcode::Int
 end
 
 """
@@ -221,5 +226,6 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
         thresholds,
         censormin,
         censormax,
+        sp.covmatcode,
     )
 end

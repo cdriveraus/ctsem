@@ -564,7 +564,8 @@ function _reverse_predict!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
     # (no linear solve). Written out separately rather than branched inside the
     # shared recursion, which would put a test in every step of it.
     if !aws.sp.continuous_time
-        return _reverse_predict_discrete!(x̄, P̄, θ̄ca, record, dyn, n)
+        return _reverse_predict_discrete!(x̄, P̄, θ̄ca, record, dyn, n;
+            covmatcode=aws.sp.covmatcode)
     end
 
     # Every temporary is a view of a scratch buffer; see `CTSEMReverseScratch`.
@@ -695,7 +696,7 @@ function _reverse_predict!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
     end
     fill!(diffusion_bar, zero(T))
     _sdcovsqrt2cov_pullback!(diffusion_bar, record.DIFFUSION, Qc_bar, n;
-        scratch=aws.covsqrt_scratch)
+        scratch=aws.covsqrt_scratch, covmatcode=aws.sp.covmatcode)
     @inbounds for j in 1:n, i in 1:n
         θ̄ca.DIFFUSION[i, j] += diffusion_bar[i, j]
     end
@@ -978,7 +979,7 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
             manifestvar_bar = aws.reverse_scratch.mm1
             fill!(manifestvar_bar, zero(T))
             _sdcovsqrt2cov_pullback!(manifestvar_bar, tape.thetas[index].MANIFESTVAR, Θ̄, m;
-                scratch=aws.covsqrt_scratch)
+                scratch=aws.covsqrt_scratch, covmatcode=aws.sp.covmatcode)
             @inbounds for j in 1:m, i in 1:m
                 θ̄ca.MANIFESTVAR[i, j] += manifestvar_bar[i, j]
             end
@@ -990,7 +991,7 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
             fill!(x̄, zero(T))
             t0var_bar = zeros(T, n, n)
             _sdcovsqrt2cov_pullback!(t0var_bar, tape.inits[index].T0VAR, _symmetrized(P̄), n;
-                scratch=aws.covsqrt_scratch)
+                scratch=aws.covsqrt_scratch, covmatcode=aws.sp.covmatcode)
             @inbounds for j in 1:n, i in 1:n
                 θ̄ca.T0VAR[i, j] += t0var_bar[i, j]
             end
@@ -1060,7 +1061,8 @@ function _reverse_group!(θ̄::Vector{T}, x̄::Vector{T}, record::CTSEMGroupReco
 end
 
 """
-    _reverse_predict_discrete!(XBAR, PBAR, THETA, record, dyn, n)
+    _reverse_predict_discrete!(XBAR, PBAR, THETA, record, dyn, n;
+        covmatcode=sp.covmatcode)
 
 Undo one prediction step of a discrete-time model.
 
@@ -1079,7 +1081,8 @@ rather than only the diffusing ones, matching the forward pass: with no solve to
 keep away from the singular augmented block there is no reason to restrict it.
 """
 function _reverse_predict_discrete!(XBAR::Vector{T}, PBAR::Matrix{T}, THETA,
-    record::CTSEMPredictRecord{T}, dyn::AbstractVector{Int}, n::Int) where {T}
+    record::CTSEMPredictRecord{T}, dyn::AbstractVector{Int}, n::Int;
+    covmatcode::Int=0) where {T}
     A = record.A
     JAx = record.JAx
     x = record.state_in
@@ -1125,7 +1128,8 @@ function _reverse_predict_discrete!(XBAR::Vector{T}, PBAR::Matrix{T}, THETA,
         Qc_bar[dyn[i], dyn[j]] = Qcd_bar[i, j]
     end
     diffusion_bar = zeros(T, n, n)
-    _sdcovsqrt2cov_pullback!(diffusion_bar, record.DIFFUSION, Qc_bar, n)
+    _sdcovsqrt2cov_pullback!(diffusion_bar, record.DIFFUSION, Qc_bar, n;
+        covmatcode=covmatcode)
     @inbounds for j in 1:n, i in 1:n
         THETA.DIFFUSION[i, j] += diffusion_bar[i, j]
     end

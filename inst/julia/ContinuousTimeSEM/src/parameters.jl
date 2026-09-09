@@ -79,6 +79,11 @@ struct EKFParameters{RT,PT,UT,TT,AX,FV}
     # no variable is censored, which is every model that does not ask for it.
     censormin::Vector{Float64}
     censormax::Vector{Float64}
+    # Which covariance construction the model asked for, the same code the stan
+    # path reads from `standata$choleskymats`: 0 for the unconstrained
+    # correlation square root, 2 for covmattransform='z'. Declared last and
+    # supplied last, for the reason the `manifesttype` comment above gives.
+    covmatcode::Int
 
     # The constructor ensures that the provided vectors are of the correct types and converts them if necessary.
     function EKFParameters(
@@ -104,6 +109,7 @@ struct EKFParameters{RT,PT,UT,TT,AX,FV}
         ncategories=Int[],
         censormin=Float64[],
         censormax=Float64[],
+        covmatcode::Int=0,
     )
         regular_transforms_tuple = Tuple(regular_transforms)
         predict_transforms_tuple = Tuple(predict_transforms)
@@ -142,6 +148,7 @@ struct EKFParameters{RT,PT,UT,TT,AX,FV}
             Vector{Int}(ncategories),
             Vector{Float64}(censormin),
             Vector{Float64}(censormax),
+            covmatcode,
         )
     end
 end

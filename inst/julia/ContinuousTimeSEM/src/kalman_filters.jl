@@ -140,7 +140,7 @@ prediction is written back into `ws.state` and `ws.P_predict`.
     # Refresh process noise and map continuous-time dynamics to discrete time.
     # Discretization provides:
     #   A_d = dDRIFT, b_d = dINT, Q_d = dDIFFUSION
-    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, 0, ws.state_dim)
+    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, ws.covmatcode, ws.state_dim)
     if ws.continuous_time
         _compute_discrete_time_form!(ws.discrete_ca, ws.bufferQ, ws.bufferQ.out, pars, Δt,
             ws.exp_buffer, ws.lyap_buffer, ws.state, ws.diffusion_state_indices,
@@ -665,7 +665,7 @@ function _extended_kalman_filter_continuous!(
     # Initial prior:
     #   x_{1|0} = T0MEANS
     #   P_{1|0} = T0VAR
-    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.T0VAR, 0, ws.state_dim)
+    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.T0VAR, ws.covmatcode, ws.state_dim)
     copyto!(ws.P_predict.data, ws.bufferQ.out)
     _copy_lower_to_upper!(ws.P_predict.data, ws.state_dim)
     copyto!(ws.state, pars.T0MEANS)
@@ -705,7 +705,7 @@ function _extended_kalman_filter_continuous!(
     # written nowhere else, so building the covariance first read the parameter
     # buffer before anything had filled that slot. Every later row already
     # runs transform, covariance, record in this order.
-    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferΘ, pars.MANIFESTVAR, 0, ws.manifest_dim)
+    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferΘ, pars.MANIFESTVAR, ws.covmatcode, ws.manifest_dim)
     _record_theta!(trace, pars, _val(ws.manifest_dim))
     log2π_const = log(2π)
     _record_row_prior!(trace, ws, pars, 1)
@@ -757,7 +757,7 @@ function _extended_kalman_filter_continuous!(
             curr_timestep, Δt, Int(subject), t_idx)
         _record_group!(trace, 3, ws.update_param_indices, all_params, measurement_context)
         apply_complex_transforms_at_indices!(all_params, ws.update_param_indices, sp.update_transforms, measurement_context)
-        ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferΘ, pars.MANIFESTVAR, 0, ws.manifest_dim)
+        ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferΘ, pars.MANIFESTVAR, ws.covmatcode, ws.manifest_dim)
         _record_theta!(trace, pars, _val(ws.manifest_dim))
         _record_row_prior!(trace, ws, pars, t_idx)
         row_ll = _ekf_update_observed!(ws, pars, data, t_idx, log2π_const, trace, generate)
