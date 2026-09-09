@@ -494,6 +494,49 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
         split <- split[1:4]
       }
       
+      # A number in the first element fixes the cell, and nothing after it can
+      # apply.
+      #
+      # A fixed value cannot individually differ, cannot carry a covariate and
+      # cannot have a transform -- there is no parameter left for any of those
+      # to act on. So the value is heeded and the rest dropped, with a warning
+      # naming exactly what was dropped, because the alternative is what this
+      # branch used to do: `'2|param|TRUE|3'` became a *free* parameter named
+      # "2" with value NA and indvarying TRUE, and `'2||||TI1=4.3'` became a
+      # free parameter named "2" carrying a covariate of 4.3. Both silently.
+      #
+      # Only non-negative integers even got that far. `'-2|...'` and
+      # `'-0.5|...'` both hit the simpleStateCheck error below, because a minus
+      # sign and a decimal point are non-word characters -- so one
+      # specification errored or silently misbehaved depending on which number
+      # was written in it.
+      fixedvalue <- suppressWarnings(as.numeric(split[1]))
+      if(!is.na(fixedvalue)){
+        ignored <- c(
+          if(length(split) > 1 && nzchar(split[2])) paste0('transform ',split[2]),
+          if(length(split) > 2 && nzchar(split[3])) paste0('indvarying ',split[3]),
+          if(length(split) > 3 && nzchar(split[4])) paste0('sdscale ',split[4]),
+          if(!is.na(tisplit) && nzchar(tisplit)) paste0('tipred effects ',tisplit))
+        ctspec$value[pi] <- fixedvalue
+        ctspec$param[pi] <- NA
+        # Cleared here rather than left to the earlier pass that blanks the
+        # transform of a valued cell: that pass runs before this loop, when the
+        # cell still looked like a free parameter whose name happened to
+        # contain separators.
+        ctspec$transform[pi] <- NA
+        for(cl in grep('^indvarying', names(ctspec), value=TRUE)) ctspec[[cl]][pi] <- FALSE
+        for(cl in grep('^sdscale', names(ctspec), value=TRUE)) ctspec[[cl]][pi] <- NA
+        for(cl in grep('_effect$', names(ctspec), value=TRUE)) ctspec[[cl]][pi] <- 'FALSE'
+        if(length(ignored)) warning(paste0(ctspec$matrix[pi],'[',ctspec$row[pi],',',
+          ctspec$col[pi],'] is fixed to ',format(fixedvalue),', so ',
+          paste0(ignored,collapse=', '),
+          if(length(ignored) > 1) ' were' else ' was',
+          ' ignored: a fixed value cannot be transformed, cannot vary between ',
+          'individuals and cannot carry a predictor effect. Give the cell a ',
+          'parameter name if any of those were meant.'), call.=FALSE)
+        next
+      }
+
       if(grepl('\\W',split[1]) || 
           any(sapply(latentNames,function(x){ #if symbols or latent states
         grepl(paste0('\\b(',x,')\\b'),split[1])

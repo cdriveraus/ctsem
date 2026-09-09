@@ -95,10 +95,25 @@
 # in `.ctJuliaAugmentRandomEffects()` both did, invites a user to write 0.5 and
 # read back 0.79.
 
+# One name per parameter that actually has a random effect.
+#
+# A cell with a value is fixed, and a fixed value cannot individually differ --
+# so it gets no row here, however its `indvarying` flag reads. Without the
+# `free` term this surface and `.ctVaryingRows()` disagreed: fixing a varying
+# parameter's value removed its random effect everywhere that matters (neither
+# preparation route augments a fixed cell, verified on both) while RAWPOPVAR
+# went on offering a population spread for it. A number written in that row
+# then described a distribution the model does not have, and nothing said so.
+#
+# `is.na(pars$value)` is the same test `.ctVaryingRows()` uses, deliberately:
+# the two have to mean the same thing by construction rather than by
+# coincidence.
 #' @keywords internal
 .ctModelRawPopVarNames <- function(pars) {
   if (is.null(pars$indvarying)) return(character())
-  varying <- !is.na(pars$indvarying) & pars$indvarying & !is.na(pars$param)
+  free <- is.na(pars$value)
+  varying <- !is.na(pars$indvarying) & pars$indvarying & !is.na(pars$param) &
+    free
   if (!any(varying)) return(character())
   unique(as.character(pars$param[varying]))
 }
