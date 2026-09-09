@@ -677,8 +677,11 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     spec$manifest_data, spec$tdpred_data, spec$tipred_data,
     spec$ti_effects, spec$priors, spec$max_timestep, spec$project, spec$engine,
     # Two fits differing only in how random effects are integrated share every
-    # field above and are not the same objective.
-    spec$intoverpop, spec$laplace),
+    # field above and are not the same objective. Nor do two differing only in
+    # the covariance construction: without `covmatcode` here, a 'z' model built
+    # after a 'rawcorr' one was handed the earlier objective and silently
+    # returned the earlier likelihood.
+    spec$intoverpop, spec$laplace, spec$covmatcode),
     algo = "sha256")
 }
 
@@ -783,9 +786,10 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # the stan path as well, so nothing a user can rely on is removed, and the
   # julia contract does not inherit that accident.
   if (!is.null(model$covmattransform) &&
-      !identical(as.character(model$covmattransform)[1L], "rawcorr")) {
+      !as.character(model$covmattransform)[1L] %in% c("rawcorr", "z")) {
     failures <- c(failures, paste0("covmattransform='",
-      as.character(model$covmattransform)[1L], "' (only 'rawcorr')"))
+      as.character(model$covmattransform)[1L],
+      "' (only 'rawcorr' and 'z')"))
   }
   # A TI effect fixed to a value ('TI1=4.3') is honoured by generation and not
   # by fitting: the coefficient it occupies is an ordinary free parameter to
@@ -2267,6 +2271,11 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     # DRIFT, CINT and DIFFUSION are already the one-step quantities, so the
     # exponential, the Lyapunov solve and the intercept solve all collapse.
     continuoustime = isTRUE(model$continuoustime),
+    # Which covariance construction to use, as the integer code both backends
+    # share -- 0 for the unconstrained correlation square root, 2 for
+    # covmattransform='z'. Carried on the spec so a fit rebuilt from a saved
+    # object constructs its covariances the way it was estimated.
+    covmatcode = .ctCovMatCode(model),
     TDpredNames = model$TDpredNames,
     TIpredNames = model$TIpredNames,
     # 0 Gaussian, 1 binary, 2 ordinal, with the category count alongside for
@@ -2349,6 +2358,16 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   if (!is.finite(n)) 0L else as.integer(n)
 }
 
+# The integer code for a model's covariance construction, shared with the stan
+# path's `standata$choleskymats` so one model means one construction on either
+# backend. 'rawcorr_indep' and 'cholesky' are refused above rather than mapped:
+# they were accepted and then ignored here once already.
+.ctCovMatCode <- function(model) {
+  tf <- if (is.null(model$covmattransform)) "rawcorr" else
+    as.character(model$covmattransform)[1L]
+  if (identical(tf, "z")) 2L else 0L
+}
+
 .ctJuliaObjective <- function(object) {
   stopifnot(inherits(object, "ctJuliaModel") || inherits(object, "ctJuliaFit"))
   spec <- if (inherits(object, "ctJuliaFit")) object$model_spec else object
@@ -2390,6 +2409,10 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       .ctJuliaVector(as.integer(spec$dynamic_state_indices))
   }
   arguments$continuous_time <- isTRUE(spec$continuoustime)
+  # Omitted when zero: the engine defaults to it, and this keeps a spec built
+  # before the setting existed working unchanged.
+  covmatcode <- if (is.null(spec$covmatcode)) 0L else as.integer(spec$covmatcode)
+  if (covmatcode != 0L) arguments$covmatcode <- covmatcode
   # Only when something is actually binary: an empty vector lets the engine
   # skip the branch, and a zero-length vector deadlocks the bridge, so the two
   # reasons to omit it agree.

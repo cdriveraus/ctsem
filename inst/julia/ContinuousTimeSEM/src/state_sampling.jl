@@ -440,7 +440,7 @@ function _ctsem_state_row!(ws, pars, data::AbstractMatrix, col::Int,
         pred[i] = acc
     end
 
-    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferΘ, pars.MANIFESTVAR, 0,
+    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferΘ, pars.MANIFESTVAR, ws.covmatcode,
         ws.manifest_dim)
     @inbounds for j in 1:m, i in 1:m
         theta[i, j] = ws.bufferΘ.out[i, j]
@@ -636,7 +636,7 @@ function _ctsem_state_pass!(ws, params::AbstractVector{T}, data::AbstractMatrix,
             apply_complex_transforms_at_indices!(all_params,
                 ws.predict_param_indices, sp.predict_transforms, predict_context)
 
-            ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, 0,
+            ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, ws.covmatcode,
                 ws.state_dim)
             if transition === :euler && ws.continuous_time
                 # Euler-Maruyama: x += f(x) h + L sqrt(h) z with L L' the
