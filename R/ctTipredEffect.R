@@ -6,6 +6,13 @@
 # constraining two parameters to share an effect requires a name, and neither
 # fits in a logical.
 #
+# The name is what `.ctTipredEffectKey()` turns into a coefficient identity.
+# Naming an effect was accepted and then ignored for a while -- the label was
+# parsed, stored, and never read, so two parameters given one name still got a
+# coefficient each -- which is why the key lives here rather than in either
+# backend: they number coefficients independently (R/ctModelWriter.R for stan,
+# `.ctJuliaTIEffects()` for julia) and would otherwise agree only by accident.
+#
 # So the column holds a character, written in the spec's own separator block:
 #
 #   'mypar||||TI1=4.3, TI2=myti2effect, TI3'
@@ -56,6 +63,9 @@
 }
 
 # The name a free effect was given, or NA where it was not named or is not free.
+#
+# Read by `.ctTipredEffectKey()`, and by the specification check that requires
+# parameters sharing a name to share a transform.
 #' @keywords internal
 .ctTipredEffectLabel <- function(x) {
   spec <- .ctTipredEffectSpec(x)
@@ -64,6 +74,24 @@
     !spec %in% c("TRUE", "T")
   label[named] <- spec[named]
   label
+}
+
+# Which coefficient a free effect belongs to, as a key both backends group by.
+#
+# Two parameters given the same effect *name* share one coefficient. Anything
+# else -- a bare `TRUE`, or a different name -- gets its own, keyed on the
+# parameter number so it cannot collide.
+#
+# Scoped per predictor, because a coefficient multiplies one predictor's
+# values: the same label written under two different predictors is two
+# coefficients, not one. Constraining an age effect and a sex effect to be
+# equal is a different claim from constraining two parameters' age effects to
+# be equal, and only the second is what a shared name says.
+#' @keywords internal
+.ctTipredEffectKey <- function(x, predictor, parnumber) {
+  label <- .ctTipredEffectLabel(x)
+  ifelse(is.na(label), paste0(predictor, ':#', parnumber),
+    paste0(predictor, ':', label))
 }
 
 # Whether an effect is free, i.e. estimated rather than fixed.

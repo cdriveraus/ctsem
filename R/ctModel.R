@@ -141,22 +141,60 @@
 #' \code{\link{ctParSpec}} writes the ordered form from the same named
 #' arguments, for when a specification is built programmatically.
 #'
-#' An expression must reference at least one latent state, time dependent
-#' predictor or \code{PARS} cell, since those are what the fitted program
-#' computes it from; a fresh parameter name appearing alongside such a
-#' reference is declared by being written there. So
-#' \code{'lbystate * eta2 + 1'} is a valid cell, while \code{'-exp(dr)'} is
-#' not -- to transform one parameter, put the transform in the second field
-#' and call the parameter \code{param} there (\code{'dr|-exp(param)'}). A
-#' cell cannot reference a manifest variable, a time-independent predictor or
-#' the time interval; predictor effects are set with the \code{tipreds}
-#' field.
+#' Every name in an expression has to be declared: a latent state, a time
+#' dependent predictor, or a parameter given a \code{PARS} cell. Writing a
+#' fresh name inside an expression does not declare it, so
+#' \code{DRIFT = matrix('-exp(dr)*eta1')} needs
+#' \code{PARS = c('dr')} alongside it. To transform one parameter and nothing
+#' else the second field is shorter --
+#' \code{DRIFT = matrix('dr|-exp(param)')}. A cell cannot reference a
+#' manifest variable, a time-independent predictor or the time interval at
+#' all; predictor effects are set with the \code{tipreds} field.
+#'
+#' Not every simple name in a cell is a parameter name. A latent state or
+#' time dependent predictor name is a \emph{reference} to it, and any number
+#' of matrices may reference the same one. A name declared in a \code{PARS}
+#' cell is likewise a reference wherever else it is written: the
+#' \code{PARS} cell holds the parameter and carries its transform, and the
+#' cells that name it are rewritten into references to that cell.
+#'
+#' Repeating a name that is \emph{not} one of those is the equality
+#' constraint, and those cells are one parameter -- one value, one random
+#' effect -- so one transform has to apply to all of them. Cells that would
+#' transform it differently are refused, and that includes cells whose
+#' \emph{defaults} differ: the \code{DRIFT} diagonal is bounded negative
+#' while its off-diagonals are not, so \code{DRIFT = matrix('a', 2, 2)} is
+#' not a way to tie the whole matrix to one parameter. To share a parameter
+#' across cells that would otherwise transform it differently, declare it in
+#' one \code{PARS} cell (\code{PARS = c('a')}) and then apply whatever
+#' transform each cell needs in an expression there --
+#' \code{DRIFT[1,1] = '-exp(a)'} and \code{DIFFUSION[1,1] = 'exp(a)'}. One
+#' parameter then serves cells that need different transforms, and each
+#' transform is stated where it applies. Giving the \code{PARS} cell the
+#' transform instead (\code{PARS = c('a|-exp(param)')}) and writing just the
+#' name in each cell works when one transform suits them all. Two \code{PARS}
+#' cells sharing one label are co-holders rather than references, so they must
+#' agree on the transform as any other repeated name must.
+#'
+#' A predictor effect belongs to the parameter rather than to the cell, so
+#' cells that are one parameter must state the same \code{tipreds}. Naming an
+#' effect (\code{'mypar||||age=shared'}) constrains every parameter given that
+#' name under that predictor to one coefficient, which costs one fewer free
+#' parameter and makes the two parameters' reported effects identical. Because
+#' one coefficient displaces each parameter's raw value equally, it means the
+#' same thing on the natural scale only where the transforms agree, so sharing
+#' a name between parameters transformed differently is refused. A name is
+#' scoped per predictor: the same label under two predictors is two
+#' coefficients.
 #'
 #' A cell that is exactly a latent state or time dependent predictor name is
 #' taken as a reference to it rather than as a parameter of that name, and
-#' warns, because the two readings are different models.
-#' \code{'state[1]'} and \code{'tdpreds[rowi, 1]'} say the same thing
-#' without the ambiguity.
+#' warns, because the two readings are different models. \code{'state[1]'}
+#' and \code{'tdpreds[rowi, 1]'} say the same thing without the ambiguity. In
+#' \code{PARS} it is an error rather than a warning: a bare name there reads
+#' as the declaration of a parameter, so write the reference as part of an
+#' expression (\code{'log1p(exp(eta1))'}) if a state-dependent \code{PARS}
+#' cell is what is wanted.
 #'
 #' @seealso \code{\link{ctParSpec}} for the fields a matrix cell can carry,
 #' \code{\link{ctFit}} for fitting the result.

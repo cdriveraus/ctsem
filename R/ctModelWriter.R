@@ -549,6 +549,11 @@ simplifystanfunction<-function(bcalc,simplify=TRUE){ #input text of list of comp
   
   indvaryingcounter <- 0
   TIPREDEFFECTsetup <- matrix(0,0,n.TIpred)
+  # Coefficient index by `.ctTipredEffectKey()`, so two parameters given the
+  # same effect name reuse one index instead of each taking a fresh one. The
+  # julia path keeps the same map in `.ctJuliaTIEffects()`; the two number
+  # coefficients differently but must group them identically.
+  tipredkeys <- list()
   tipredcounter <- 1
   indvar <- 0
   extratformcounter <- 0
@@ -660,12 +665,15 @@ simplifystanfunction<-function(bcalc,simplify=TRUE){ #input text of list of comp
             # Only the *free* effects are numbered. A fixed one carries its
             # value rather than a parameter slot, so counting it here would
             # shift every index after it.
-            freeeffects <- .ctTipredEffectFree(ctspec[i,paste0(ctm$TIpredNames,'_effect')])
-            nfree <- sum(freeeffects)
-            if(nfree > 0){
-              TIPREDEFFECTsetup[freepar,][ freeeffects ] <-
-                tipredcounter:(tipredcounter + nfree - 1)
-              tipredcounter <- tipredcounter + nfree
+            effectspec <- ctspec[i,paste0(ctm$TIpredNames,'_effect')]
+            freeeffects <- .ctTipredEffectFree(effectspec)
+            for(ei in which(freeeffects)){
+              key <- .ctTipredEffectKey(effectspec[[ei]], ei, freepar)
+              if(is.null(tipredkeys[[key]])){
+                tipredkeys[[key]] <- tipredcounter
+                tipredcounter <- tipredcounter + 1L
+              }
+              TIPREDEFFECTsetup[freepar,ei] <- tipredkeys[[key]]
             }
             tipred <- as.integer( any(TIPREDEFFECTsetup[freepar,] > 0))
           }
