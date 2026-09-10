@@ -258,6 +258,23 @@ ctStanFitUpdate <- ctFitUpdate
 # pair rather than T0VAR stating zero -- which is why the disabling is done at
 # assembly and not left to these values surviving a construction.
 #
+# Level-specific, and it has to be. `indvarying` is the subject level, and
+# that is the only flag this reads. A T0MEANS that varies over studies but not
+# over subjects keeps its T0VAR: within a study every subject has the same
+# T0MEANS, so T0VAR's dispersion really is that subject's initial covariance,
+# and the study effect shifts the value for the whole study rather than adding
+# to any individual's initial spread. Generalising this to "varies at any
+# level" would delete a parameter the data can identify, quietly. There is a
+# test for the three cases in test-t0var-redundancies.R.
+#
+# The composition a reader might expect -- T0VAR plus the subject effects plus
+# the study effects -- is the *marginal* initial covariance over all
+# individuals, and it is not what T0cov holds. T0cov is conditional on the
+# levels above it: T0VAR for the latents that keep it, and the subject level
+# population covariance for the rest. The study level reaches an individual by
+# moving that individual's parameter values, so adding a study covariance into
+# T0cov as well would count it twice.
+#
 # They are still *fixed* rather than left free, because taking them out of the
 # parameter vector is the whole job of this function. The particular values
 # are kept as they were only because the julia backend still builds its

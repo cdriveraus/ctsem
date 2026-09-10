@@ -170,3 +170,52 @@ test_that("T0cov takes the main latents from T0VAR and the population block from
   expect_true(all(is.finite(T0cov)))
   expect_gt(min(eigen(T0cov, symmetric = TRUE, only.values = TRUE)$values), 0)
 })
+
+# The rule is level-specific and that is load-bearing.
+#
+# A T0MEANS that varies over studies but not over subjects must KEEP its
+# T0VAR: within a study every subject shares that T0MEANS, so T0VAR is still
+# what disperses their initial states, and the study effect moves the whole
+# study rather than widening any individual. Disabling on "varies at any
+# level" would delete a parameter the data can identify, and nothing else in
+# the suite would notice.
+#
+# Note that T0MEANS is indvarying by default, so the no-effect case has to
+# turn it off explicitly -- leaving it alone tests the subject-level case
+# twice, which is how this test first came out green for the wrong reason.
+test_that("only a subject level T0MEANS random effect disables T0VAR", {
+  skip_on_cran()
+  mk <- function() suppressMessages(ctModel(type = "ct", n.latent = 2,
+    n.manifest = 2, manifestNames = c("Y1", "Y2"),
+    latentNames = c("eta1", "eta2"), LAMBDA = diag(2),
+    MANIFESTVAR = diag(.2, 2), MANIFESTMEANS = matrix(0, 2, 1),
+    DRIFT = matrix(c("dr1", 0, 0, "dr2"), 2, 2),
+    T0MEANS = matrix(c("t0a", 0), 2, 1),
+    T0VAR = matrix(c("t0v11", 0, "t0v21", "t0v22"), 2, 2, byrow = TRUE),
+    id = c("id", "study")))
+
+  m <- mk()
+  # the higher level is expressible at all, which the rest of this depends on
+  expect_true("indvarying_study" %in% names(m$pars))
+  expect_identical(m$groupIDnames, "study")
+
+  nfree <- function(mm) sum(mm$pars$matrix %in% "T0VAR" & is.na(mm$pars$value))
+
+  none <- mk(); none$pars$indvarying[none$pars$param %in% "t0a"] <- FALSE
+  subj <- mk(); subj$pars$indvarying[subj$pars$param %in% "t0a"] <- TRUE
+  study <- mk(); study$pars$indvarying[study$pars$param %in% "t0a"] <- FALSE
+  study$pars$indvarying_study[study$pars$param %in% "t0a"] <- TRUE
+
+  expect_equal(nfree(suppressMessages(ctsem:::T0VARredundancies(none))),
+    nfree(none))
+  expect_lt(nfree(suppressMessages(ctsem:::T0VARredundancies(subj))),
+    nfree(subj))
+  expect_equal(nfree(suppressMessages(ctsem:::T0VARredundancies(study))),
+    nfree(study))
+
+  # and precisely: the subject level case drops eta1 row and column, keeping
+  # eta2 own variance, which RAWPOPVAR knows nothing about
+  out <- suppressMessages(ctsem:::T0VARredundancies(subj))
+  kept <- out$pars[out$pars$matrix %in% "T0VAR" & is.na(out$pars$value), ]
+  expect_identical(as.character(kept$param), "t0v22")
+})
