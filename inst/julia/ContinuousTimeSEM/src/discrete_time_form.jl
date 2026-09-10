@@ -317,25 +317,36 @@ the intercept is the local affine offset with no solve around it. `Δt` plays no
 part -- a discrete model advances one step per row whatever the recorded
 interval, which is also what Stan does.
 
-The affine offset is formed over every state rather than only the diffusing
-ones: with no solve to keep away from the singular augmented block there is no
-reason to restrict it, and it is zero on the static states in any case.
+The affine offset is formed only over the diffusing states, as in the
+continuous form. It is NOT zero on the static augmented coordinates a random
+effect introduces: `ctJacobian()` builds `JAx` from a padded copy of DRIFT
+whose augmented diagonal is 1 for a discrete-time model (a static state
+carries forward one whole step), while the DRIFT the engine holds is padded
+with zeros there. So `DRIFT[i,i] - JAx[i,i]` is `-1` rather than `0` on those
+rows, and running the offset over them subtracted the state back off again --
+`x_next[i] = JAx[i,i] x[i] + dINT[i] = x[i] - x[i]`, zeroing every
+random-effect coordinate at every step, so a subject's intercept applied to
+the first transition only. Stan reaches the same map from the other side:
+`state[1:nlatent] *= DRIFT'` touches the dynamic block alone and leaves the
+augmented coordinates untouched (ctModelWriter.R).
 """
 function _compute_one_step_form!(discrete_ca, DIFFUSIONcov, pars, state,
     diffusion_state_indices, dim::Val{d}) where {d}
     copyto!(discrete_ca.eJAx, pars.JAx)
     copyto!(discrete_ca.dDRIFT, pars.JAx)
 
-    @inbounds for i in 1:d
-        affine = pars.CINT[i]
+    kdim = length(diffusion_state_indices)
+    fill!(discrete_ca.dINT, zero(eltype(discrete_ca.dINT)))
+    @inbounds for i in 1:kdim
+        ii = diffusion_state_indices[i]
+        affine = pars.CINT[ii]
         for j in 1:d
-            affine += (pars.DRIFT[i, j] - pars.JAx[i, j]) * state[j]
+            affine += (pars.DRIFT[ii, j] - pars.JAx[ii, j]) * state[j]
         end
-        discrete_ca.dINT[i] = affine
+        discrete_ca.dINT[ii] = affine
     end
 
     fill!(discrete_ca.dDIFFUSION, zero(eltype(discrete_ca.dDIFFUSION)))
-    kdim = length(diffusion_state_indices)
     @inbounds for j in 1:kdim, i in 1:kdim
         ii = diffusion_state_indices[i]
         jj = diffusion_state_indices[j]

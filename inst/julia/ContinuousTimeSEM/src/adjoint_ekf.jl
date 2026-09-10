@@ -1069,16 +1069,16 @@ Undo one prediction step of a discrete-time model.
 Forward:
 
     A          = JAx
-    dINT[i]    = CINT[i] + sum_j (DRIFT[i,j] - JAx[i,j]) x[j]
+    dINT[Di]   = CINT[Di] + sum_j (DRIFT[Di,j] - JAx[Di,j]) x[j]   (zero elsewhere)
     dDIFF[D,D] = Qc[D,D]
     x_next     = A x + dINT
     P_next     = A (P + eps I) A' + dDIFF
 
 which is the continuous form with the exponential, the Lyapunov solve and the
 intercept solve all collapsed -- a discrete model's DRIFT, CINT and DIFFUSION
-are already the one-step quantities. The affine offset runs over every state
-rather than only the diffusing ones, matching the forward pass: with no solve to
-keep away from the singular augmented block there is no reason to restrict it.
+are already the one-step quantities. The affine offset runs over the diffusing
+states only, matching `_compute_one_step_form!`, whose docstring says why the
+static augmented coordinates a random effect introduces must be left out of it.
 """
 function _reverse_predict_discrete!(XBAR::Vector{T}, PBAR::Matrix{T}, THETA,
     record::CTSEMPredictRecord{T}, dyn::AbstractVector{Int}, n::Int;
@@ -1105,15 +1105,16 @@ function _reverse_predict_discrete!(XBAR::Vector{T}, PBAR::Matrix{T}, THETA,
     # --- dDIFF[D,D] = Qc[D,D]: the cotangent passes straight through.
     Qcd_bar = _symmetrized(Ps[dyn, dyn])
 
-    # --- dINT[i] = CINT[i] + sum_j (DRIFT[i,j] - JAx[i,j]) x[j]
-    @inbounds for i in 1:n
-        THETA.CINT[i] += dINT_bar[i]
+    # --- dINT[Di] = CINT[Di] + sum_j (DRIFT[Di,j] - JAx[Di,j]) x[j], and zero on
+    # every other row, so only the dynamic rows of `dINT_bar` have anywhere to go.
+    @inbounds for i in 1:k
+        THETA.CINT[dyn[i]] += dINT_bar[dyn[i]]
     end
-    @inbounds for j in 1:n, i in 1:n
-        contribution = dINT_bar[i] * x[j]
-        THETA.DRIFT[i, j] += contribution
-        JAx_bar[i, j] -= contribution
-        xbar_new[j] += (record.DRIFT[i, j] - JAx[i, j]) * dINT_bar[i]
+    @inbounds for j in 1:n, i in 1:k
+        contribution = dINT_bar[dyn[i]] * x[j]
+        THETA.DRIFT[dyn[i], j] += contribution
+        JAx_bar[dyn[i], j] -= contribution
+        xbar_new[j] += (record.DRIFT[dyn[i], j] - JAx[dyn[i], j]) * dINT_bar[dyn[i]]
     end
 
     # --- A is JAx itself, so its cotangent simply adds.

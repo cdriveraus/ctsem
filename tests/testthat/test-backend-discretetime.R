@@ -9,6 +9,16 @@
 #
 # The comparison against Stan is made at a *fixed* raw parameter vector rather
 # than between two fits, so the optimizer plays no part in it.
+#
+# `.discrete_model()` below fixes T0MEANS and CINT at zero, so nothing here is
+# `indvarying` and the state is never augmented -- which is how a defect in
+# exactly that combination lived through this whole file. A discrete-time
+# model *with* random effects is the one shape where the one-step form is not
+# simply the continuous form with the discretization removed, because
+# `ctJacobian()` puts 1 on JAx's augmented diagonal where DRIFT has 0. It is
+# covered in test-stan-julia-parity.R ("a discrete-time model with augmented
+# random effects"), which has the Stan comparison harness; add to that one
+# rather than growing a second here.
 
 .discrete_model <- function() {
   suppressWarnings(ctModel(type = "dt", n.latent = 2, LAMBDA = diag(2),
