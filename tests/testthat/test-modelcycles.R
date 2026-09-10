@@ -78,8 +78,13 @@ skip_on_cran()
       DRIFT = matrix(c("PARS[1,1]", 0, 0, "d22"), 2, 2))), "ctStanModel")
 
     # Direct state references in the measurement and dynamics matrices.
+    # `lbystate` needs its PARS cell: a name written inside an expression is
+    # not declared by being written there, and without the declaration this
+    # model died at ctFit() with `object 'lbystate' not found` -- which this
+    # test could not see, because it only builds.
     expect_s3_class(suppressMessages(ctModel(type = "ct", n.latent = 2,
       n.manifest = 2, manifestNames = mn2, latentNames = ln2,
+      PARS = matrix("lbystate", 1, 1),
       LAMBDA = matrix(c("lbystate * eta2 + 1", 0, 0, 1), 2, 2),
       DRIFT = matrix(c("-0.5 * eta2", 0, 0, "d22"), 2, 2))), "ctStanModel")
 

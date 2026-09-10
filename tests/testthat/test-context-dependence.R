@@ -49,21 +49,25 @@ test_that('dependence propagates through PARS references', {
 # warned once per candidate row -- around fifty times per ctGenerate call on a
 # model with two PARS cells. A blank is not a parameter name.
 test_that('a blank PARS label is not treated as a parameter name', {
-  # The PARS cells are the bare latent names 'A' and 'D' on purpose, and
-  # R/ctModelSpecCheck.R warns about exactly that -- so the warning is
-  # suppressed here rather than the model changed. Writing 'state[2]' instead
-  # would silence it and build the same model, but it would also give those
-  # cells a transform, and a PARS cell with *no* transform is the condition
-  # this test exists to cover.
-  model <- suppressWarnings(suppressMessages(ctModel(type = 'ct', n.latent = 2,
-    n.manifest = 2,
+  # The condition is a PARS cell with *no transform*, which is what arrives at
+  # the expansion loop as "". State-dependent PARS cells are the way to get
+  # one, and they have to be expressions: a PARS cell that is a bare latent
+  # name is refused (R/ctModelSpecCheck.R), because there a bare name reads as
+  # a declaration. `state[2]` would not do either -- it takes the simple-state
+  # path and so acquires a transform, which is exactly what this test needs
+  # absent.
+  model <- suppressMessages(ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
     manifestNames = c('Y1', 'Y2'), latentNames = c('D', 'A'), LAMBDA = diag(2),
     CINT = matrix(0, 2, 1), MANIFESTMEANS = matrix(0, 2, 1),
     MANIFESTVAR = diag(.2, 2), T0MEANS = matrix(0, 2, 1), T0VAR = diag(1, 2),
-    Tpoints = 8, PARS = matrix(c('A', 'D'), 2, 1),
+    Tpoints = 8, PARS = matrix(c('log1p(exp(A))', 'log1p(exp(D))'), 2, 1),
     DRIFT = matrix(c('-0.5 * (1 + 0.2 * PARS[1,1]) + 0.01 * PARS[2,1]', 0.1,
       0, -0.3), 2, 2),
-    DIFFUSION = matrix(c(.3, 0, 0, .4), 2, 2))))
+    DIFFUSION = matrix(c(.3, 0, 0, .4), 2, 2)))
+
+  # The blank labels this test is about are still there to be mishandled.
+  parstf <- model$pars$transform[model$pars$matrix %in% 'PARS']
+  expect_true(any(is.na(parstf)))
 
   expect_silent(cells <- ctsem:::.ctContextCellTable(model))
   expect_true(ctsem:::ctModelIsNonlinear(model))
@@ -123,9 +127,12 @@ test_that('detection works from an unfitted model, in both spec syntaxes', {
   expect_true(ctModelIsNonlinear(nonlinear))
 
   # TD predictor dependence is the same problem and must be caught the same way.
+  # `dr11` gets its PARS cell because a name inside an expression is not
+  # declared by being written there. Without it this model built and `dr11`
+  # was not a parameter at all.
   tddependent <- suppressMessages(ctModel(type = 'ct', n.latent = 1, n.manifest = 1,
     n.TDpred = 1, manifestNames = 'Y1', latentNames = 'eta1', TDpredNames = 'TD1',
-    LAMBDA = matrix(1, 1, 1),
+    LAMBDA = matrix(1, 1, 1), PARS = matrix('dr11', 1, 1),
     DRIFT = matrix('-log1p(exp(dr11)) * (1+TD1)', 1, 1),
     DIFFUSION = matrix('diff', 1, 1)))
   expect_equal(ctsem:::.ctFitContextDependentCells(tddependent)$kind, 'tdpred')
