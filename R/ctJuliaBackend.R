@@ -1738,8 +1738,34 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   nlatent_augmented <- max(expanded$pars$row[expanded$pars$matrix == "T0MEANS"])
   table <- .ctJuliaParameterTable(expanded)
 
+  # The rows DRIFT genuinely has, before padding invents any. Everything past
+  # this is a static coordinate the augmentation added.
+  drift_rows <- suppressWarnings(max(table$row[table$matrix == "DRIFT"], na.rm = TRUE))
   for (matrix in c("DRIFT", "DIFFUSION", "JAx", "Jtd")) {
     table <- .ctJuliaPadMatrix(table, matrix, nlatent_augmented, nlatent_augmented)
+  }
+  # `.ctJuliaPadMatrix` pads with zeros, which is right for a continuous-time
+  # model -- a static coordinate has zero derivative -- and wrong for a
+  # discrete-time one, where DRIFT is the one-step transition itself and a
+  # static coordinate carries forward whole: the diagonal is 1, not 0.
+  # `ctJacobian()` (R/ctJacobian.R) already does exactly this to the padded
+  # copy of DRIFT it builds JAx from, so leaving DRIFT at 0 here made the two
+  # disagree on those rows by 1, and the engine forms the local affine offset
+  # from their difference: `dINT[i] = CINT[i] + sum_j (DRIFT[i,j] -
+  # JAx[i,j]) x[j]` came out as `-x[i]`, which cancelled the state the
+  # transition had just carried and zeroed every random effect at every step.
+  # A subject's deviation reached the first transition and nothing after it,
+  # with a finite likelihood and plausible estimates throughout.
+  if (!isTRUE(expanded$continuoustime) && is.finite(drift_rows) &&
+    nlatent_augmented > drift_rows) {
+    static_rows <- (drift_rows + 1L):nlatent_augmented
+    diagonal <- table$matrix == "DRIFT" & table$row %in% static_rows &
+      table$row == table$col
+    if (!identical(sum(diagonal), length(static_rows))) {
+      stop("Augmented DRIFT diagonal is not the shape the padding just made; ",
+        "please report this model shape.", call. = FALSE)
+    }
+    table$value[diagonal] <- 1
   }
   for (matrix in c("CINT", "T0MEANS")) {
     table <- .ctJuliaPadMatrix(table, matrix, nlatent_augmented, 1L)

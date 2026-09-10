@@ -317,36 +317,36 @@ the intercept is the local affine offset with no solve around it. `Δt` plays no
 part -- a discrete model advances one step per row whatever the recorded
 interval, which is also what Stan does.
 
-The affine offset is formed only over the diffusing states, as in the
-continuous form. It is NOT zero on the static augmented coordinates a random
-effect introduces: `ctJacobian()` builds `JAx` from a padded copy of DRIFT
-whose augmented diagonal is 1 for a discrete-time model (a static state
-carries forward one whole step), while the DRIFT the engine holds is padded
-with zeros there. So `DRIFT[i,i] - JAx[i,i]` is `-1` rather than `0` on those
-rows, and running the offset over them subtracted the state back off again --
-`x_next[i] = JAx[i,i] x[i] + dINT[i] = x[i] - x[i]`, zeroing every
-random-effect coordinate at every step, so a subject's intercept applied to
-the first transition only. Stan reaches the same map from the other side:
-`state[1:nlatent] *= DRIFT'` touches the dynamic block alone and leaves the
-augmented coordinates untouched (ctModelWriter.R).
+The affine offset runs over every state, not only the diffusing ones: there
+is no solve here to keep away from the singular augmented block, and a state
+left out of it silently loses its CINT -- which is what an isolated
+deterministic latent (no diffusion, no coupling to a diffusing state) falls
+victim to, since `.ctJuliaDerrind()` excludes it.
+
+That makes this function depend on DRIFT being the *true* one-step map on
+every row, including the static coordinates a random effect augments the
+state with. Their diagonal must be 1, not 0: a static state carries forward
+whole. `.ctJuliaAugmentRandomEffects()` sets it, matching what
+`ctJacobian()` does to the copy of DRIFT it builds JAx from, and the offset
+then cancels to zero on those rows the way it should. When it was left at 0
+the offset came out as `-x[i]` and cancelled the state the transition had
+just carried, zeroing every random-effect coordinate at every step.
 """
 function _compute_one_step_form!(discrete_ca, DIFFUSIONcov, pars, state,
     diffusion_state_indices, dim::Val{d}) where {d}
     copyto!(discrete_ca.eJAx, pars.JAx)
     copyto!(discrete_ca.dDRIFT, pars.JAx)
 
-    kdim = length(diffusion_state_indices)
-    fill!(discrete_ca.dINT, zero(eltype(discrete_ca.dINT)))
-    @inbounds for i in 1:kdim
-        ii = diffusion_state_indices[i]
-        affine = pars.CINT[ii]
+    @inbounds for i in 1:d
+        affine = pars.CINT[i]
         for j in 1:d
-            affine += (pars.DRIFT[ii, j] - pars.JAx[ii, j]) * state[j]
+            affine += (pars.DRIFT[i, j] - pars.JAx[i, j]) * state[j]
         end
-        discrete_ca.dINT[ii] = affine
+        discrete_ca.dINT[i] = affine
     end
 
     fill!(discrete_ca.dDIFFUSION, zero(eltype(discrete_ca.dDIFFUSION)))
+    kdim = length(diffusion_state_indices)
     @inbounds for j in 1:kdim, i in 1:kdim
         ii = diffusion_state_indices[i]
         jj = diffusion_state_indices[j]

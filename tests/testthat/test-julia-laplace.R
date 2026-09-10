@@ -149,6 +149,68 @@ test_that("Laplace and augmented agree where the integrand is exactly Gaussian",
   expect_false(any(laplace$laplace$hessian_repaired))
 })
 
+test_that("Laplace and augmented agree in discrete time too", {
+  skip_without_julia()
+
+  # Every other model in this file is `type = 'ct'`, and so is every model in
+  # every other test-julia-*.R -- discrete time had one file to itself
+  # (test-backend-discretetime.R) whose model has no random effects at all.
+  # That is the gap a defect in exactly discrete-time-plus-random-effects
+  # lived in: the augmented route zeroed every random-effect coordinate at
+  # every prediction step, so a subject's deviation reached the first
+  # transition and nothing after it, with a finite likelihood and plausible
+  # estimates throughout. See `.ctJuliaAugmentRandomEffects()` on why DRIFT's
+  # augmented diagonal must be 1 rather than 0 for a discrete-time model.
+  #
+  # This is worth more than the Stan parity test that also covers it, because
+  # it is not parity: the two routes share no code for the random-effect
+  # integral. Laplace optimises per-subject deviations and adds a curvature
+  # correction; the augmented route pushes them through the Kalman filter as
+  # extra states. Both are exact for a linear Gaussian model, so they must
+  # agree -- and an error inherited by both, which parity cannot see, would
+  # have to be inherited through two unrelated implementations to hide here.
+  #
+  # Evaluated at a fixed raw vector rather than fitted: the claim is about the
+  # objective, and the optimiser only adds noise and seconds to it. The two
+  # routes' raw layouts coincide by construction (see `.ctJuliaLaplaceSpec`),
+  # which is what lets one vector serve both.
+  model <- suppressMessages(ctModel(
+    type = "dt", n.latent = 2, LAMBDA = diag(2),
+    DRIFT = matrix(c("d11", "d12", "d21", "d22"), 2, 2, byrow = TRUE),
+    DIFFUSION = matrix(c("q11", 0, "q21", "q22"), 2, 2, byrow = TRUE),
+    MANIFESTVAR = matrix(c("m1", 0, 0, "m2"), 2, 2, byrow = TRUE),
+    MANIFESTMEANS = matrix(0, 2, 1),
+    CINT = matrix(c("c1", "c2"), 2, 1),
+    T0MEANS = matrix(c("t01", "t02"), 2, 1)))
+  set.seed(21)
+  dat <- do.call(rbind, lapply(1:12, function(i) data.frame(
+    id = i, time = 0:5, Y1 = stats::rnorm(6, 0, .7), Y2 = stats::rnorm(6, 0, .7))))
+
+  augmented <- suppressMessages(ctFit(dat, model, backend = "julia", fit = FALSE,
+    priors = FALSE, intoverpop = "augmented"))
+  laplace <- suppressMessages(ctFit(dat, model, backend = "julia", fit = FALSE,
+    priors = FALSE, intoverpop = "laplace"))
+
+  # T0MEANS and CINT are indvarying by default, so this is 4 random effects on
+  # 2 latents: the augmented route grows the state, the Laplace route does not.
+  expect_equal(augmented$nlatent_augmented, augmented$nlatent + 2L)
+  expect_equal(laplace$nlatent_augmented, laplace$nlatent)
+  npar <- ctsem:::.ctBackendNpar(augmented)
+  expect_equal(ctsem:::.ctBackendNpar(laplace), npar)
+
+  set.seed(2)
+  raw <- stats::rnorm(npar, 0, .25)
+  a <- ctJuliaEvaluate(augmented, raw, gradient = TRUE)
+  l <- ctJuliaEvaluate(laplace, raw, gradient = TRUE)
+
+  # Measured at 8e-10 relative on the value and 8e-9 on the gradient, which is
+  # the inner optimisation's own convergence tolerance rather than anything
+  # about the approximation. Pre-fix the two disagreed by whole log-likelihood
+  # units, so there is a wide margin between passing and catching a regression.
+  expect_equal(as.numeric(l$value), as.numeric(a$value), tolerance = 1e-7)
+  expect_equal(as.numeric(l$gradient), as.numeric(a$gradient), tolerance = 1e-5)
+})
+
 test_that("the random-effect population sd is reported and recovers its value", {
   skip_without_julia()
   fit <- .laplace_exact_fit()
