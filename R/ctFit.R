@@ -208,6 +208,18 @@ ctFitUpdate <- function(oldfit, data=NA, recompile=FALSE,refit=FALSE,...){
   # this refit at whatever a previous 'auto' happened to route to instead of
   # letting it re-route against the new data or overrides in `...`.
   args <- as.list(oldfit$args$input)
+  # That capture is the calling environment rather than the literal call, so a
+  # defaulted argument is in it and `do.call()` below hands it back looking as
+  # though the caller had typed it. For `poprank` that is the difference
+  # between a no-op and an error: `ctFit()` reads `!missing(poprank)` as "a
+  # rank was asked for" and refuses one on the stan backend, so replaying the
+  # default 'auto' made this function fail on every stan fit, the documented
+  # example included. The capture recorded the distinction next to the value;
+  # use it, before the `...` overrides, so a rank passed here still counts as
+  # asked for. The flag itself goes: it is a local of `ctFit()`, not an
+  # argument of it, and would only fall into `...`.
+  if(!isTRUE(args$poprankexplicit)) args$poprank <- NULL
+  args$poprankexplicit <- NULL
   for(n in names(dots)){
     args[[n]] <- dots[[n]]
   }
