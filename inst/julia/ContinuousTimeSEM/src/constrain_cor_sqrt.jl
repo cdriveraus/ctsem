@@ -136,7 +136,7 @@ function sdcovsqrt2cov!(buffer, mat, choleskymats, dim::Val{d}) where {d}
     T = eltype(buffer.out)
     if _CTSEM_COV_CACHE[]
         _COVCACHE_CALLS[] += 1
-        c = _covcache(T, dim, choleskymats == 2 || _CTSEM_COV_EXPM[])
+        c = _covcache(T, dim, _effective_covmatcode(choleskymats))
         hit = _covcache_lookup(c, mat, dim)
         if hit != 0
             copyto!(buffer.out, c.outs[hit])
@@ -150,35 +150,50 @@ function sdcovsqrt2cov!(buffer, mat, choleskymats, dim::Val{d}) where {d}
     return _sdcovsqrt2cov_uncached!(buffer, mat, choleskymats, dim)
 end
 
+"""
+    _effective_covmatcode(choleskymats)
+
+The construction actually used, which is the argument unless
+`_CTSEM_COV_EXPM[]` overrides it.
+
+One function so that the forward pass, the reverse pass and the cache key
+cannot disagree about which construction is in force. Each read the flag
+separately before, and a cache key that disagrees with the forward pass is a
+wrong answer with no symptom.
+"""
+@inline _effective_covmatcode(choleskymats) =
+    _CTSEM_COV_EXPM[] ? 2 : Int(choleskymats)
+
 function _sdcovsqrt2cov_uncached!(buffer, mat, choleskymats, dim::Val{d}) where {d}
-    # `choleskymats == 2` is covmattransform='z', the same code the stan path
-    # reads from `standata$choleskymats`; the two implementations agree to 3e-16.
-    # `_CTSEM_COV_EXPM[]` forces the same route irrespective of the argument and
-    # exists so a benchmark can switch routes on one prepared model. It goes
-    # once the model setting reaches every call site, which still pass 0.
-    if choleskymats == 2 || _CTSEM_COV_EXPM[]
+    # 2 is covmattransform='z', 1 is 'cholesky', 0 and -1 the correlation
+    # square root -- the same codes the stan path reads from
+    # `standata$choleskymats`, and the z implementations agree to 3e-16.
+    code = _effective_covmatcode(choleskymats)
+    if code == 2
         return sdcovexpm2cov!(buffer, mat, dim)
-    end
-    # TODO: Rewrite this for performance
-    # if size(mat, 1) == 0
-    #     # return Symmetric(mat, :L) 
-    #     copyto!(buffer.out, mat)
-    #     return nothing
-    # elseif choleskymats < 1
-        constraincorsqrt1_vec!(buffer, mat, 1e-5, dim)
-
+    elseif code >= 1
+        # Stan's `tcrossprod(mat)`: `mat` is the factor itself. Summed over the
+        # whole of 1:d rather than 1:min(i,j), which is what stan does, so a
+        # model with something above the diagonal gets one answer and not two.
+        T = eltype(buffer.out)
         @inbounds for j in 1:d, i in 1:d
-            buffer.intermediate[i, j] = mat[i, i] * buffer.out[i, j]
+            acc = zero(T)
+            for k in 1:d
+                acc += T(mat[i, k]) * T(mat[j, k])
+            end
+            buffer.out[i, j] = acc
         end
-
-        _mul_right_transpose!(buffer.out, buffer.intermediate, buffer.intermediate, dim, dim, dim)
         return nothing
-    # else
-    #     # TODO: Implement this as a specialization of the function
-    #     # return Symmetric(mat * mat', :L)
-    #     mul!(buffer.out, mat, mat')
-    #     return nothing
-    # end
+    end
+    constraincorsqrt1_vec!(buffer, mat, 1e-5, dim)
+
+    @inbounds for j in 1:d, i in 1:d
+        buffer.intermediate[i, j] = mat[i, i] * buffer.out[i, j]
+    end
+
+    _mul_right_transpose!(buffer.out, buffer.intermediate, buffer.intermediate,
+        dim, dim, dim)
+    return nothing
 end
 
 """

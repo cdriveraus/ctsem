@@ -26,11 +26,11 @@
 # question, answered against independent references in
 # `test_constrain_cor_sqrt.jl` and `test_cov_expm.jl`.
 #
-# Two constructions, not four: the julia backend refuses 'cholesky', which the
-# engine cannot build, and 'rawcorr_indep', which selects the same construction
-# as 'rawcorr' and differs only in the prior. See the covmattransform gate in
-# `.ctJuliaUnsupported`. Adding a code here is the natural place to notice that
-# its reporting path was never checked.
+# Three constructions, not four: the julia backend refuses 'rawcorr_indep',
+# which selects the same construction as 'rawcorr' and differs only in the
+# prior, so accepting it would accept a setting that does nothing. See the
+# covmattransform gate in `.ctJuliaUnsupported`. Adding a code here is the
+# natural place to notice that its reporting path was never checked.
 #
 # No random effects in the fixture, deliberately. The augmentation trims rows
 # out of some reported arrays after they are built, so `construct(trim(raw))`
@@ -76,7 +76,7 @@ test_that("every covmattransform reports covariances its own raw matrices rebuil
   pairs <- list(c("DIFFUSION", "DIFFUSIONcov"), c("MANIFESTVAR", "MANIFESTcov"),
     c("T0VAR", "T0cov"))
 
-  for (transform in c("rawcorr", "z")) {
+  for (transform in c("rawcorr", "cholesky", "z")) {
     model <- .covrt_model(transform)
     spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
     code <- if (is.null(spec$covmatcode)) 0L else as.integer(spec$covmatcode)

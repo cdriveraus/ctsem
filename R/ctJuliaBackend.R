@@ -775,28 +775,28 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   if (any(!model$manifesttype %in% 0:4)) {
     failures <- c(failures, "manifest types beyond censored (manifesttype > 4)")
   }
-  # `covmattransform` now reaches the engine at every construction site,
-  # including the population covariance and the laplace route, and 'rawcorr'
-  # and 'z' agree with stan to machine precision. What is refused here is the
-  # two values the engine still cannot build.
+  # `covmattransform` reaches the engine at every construction site, including
+  # the population covariance and the laplace route, and 'rawcorr', 'cholesky'
+  # and 'z' agree with stan to machine precision.
   #
-  # 'cholesky' (code 1) is genuinely unimplemented: the branch that would
-  # select the factor form is still commented out in
-  # `_sdcovsqrt2cov_uncached!`, so a code of 1 falls through to the correlation
-  # square root. It used to be accepted and silently ignored, and a 'cholesky'
-  # model measured 3.76 log units away from the same model on stan with no
-  # error and no warning. Implementing it is a prerequisite for the
-  # reduced-rank factor form.
+  # 'cholesky' used to be refused because the engine could not build it: the
+  # branch selecting the factor form was commented out, so a code of 1 fell
+  # through to the correlation square root. Before it was refused it was
+  # accepted and silently ignored, and a 'cholesky' model measured 3.76 log
+  # units away from the same model on stan with no error and no warning --
+  # which is why the refusal came first and the implementation second.
   #
-  # 'rawcorr_indep' (code -1) selects the same construction as 'rawcorr' and
-  # differs only in the prior, so it is inert on the stan path too. Refused
-  # rather than mapped, so the julia contract does not inherit that
-  # accident.
+  # 'rawcorr_indep' (code -1) is still refused, and not because the engine
+  # cannot build it: it selects the same construction as 'rawcorr' and differs
+  # only in the prior, so accepting it would mean accepting a setting that
+  # does nothing. That is an accident of the stan path and the julia contract
+  # does not inherit it.
   if (!is.null(model$covmattransform) &&
-      !as.character(model$covmattransform)[1L] %in% c("rawcorr", "z")) {
+      !as.character(model$covmattransform)[1L] %in%
+        c("rawcorr", "cholesky", "z")) {
     failures <- c(failures, paste0("covmattransform='",
       as.character(model$covmattransform)[1L],
-      "' (only 'rawcorr' and 'z')"))
+      "' (only 'rawcorr', 'cholesky' and 'z')"))
   }
   # A TI effect fixed to a value ('TI1=4.3') is honoured by generation and not
   # by fitting: the coefficient it occupies is an ordinary free parameter to
@@ -2425,13 +2425,29 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 }
 
 # The integer code for a model's covariance construction, shared with the stan
-# path's `standata$choleskymats` so one model means one construction on either
-# backend. 'rawcorr_indep' and 'cholesky' are refused above rather than mapped:
-# they were accepted and then ignored here once already.
+# path's `standata$choleskymats` (R/ctData.R) so one model means one
+# construction on either backend.
+#
+# A lookup naming every value, and an error on anything else -- not a default
+# with one exception, which is what this was. That form was correct only while
+# every other value was refused upstream, and the moment one of them was
+# allowed through it would have resolved to 0: accepted, and then quietly the
+# wrong construction. That is the same shape as the defect this function's own
+# comment used to describe, so it is refused structurally here rather than
+# remembered.
+#
+# An unknown name arriving means the validation in `.ctJuliaUnsupported` has
+# drifted from this table. Erroring says so; returning 0 would fit a different
+# model and report nothing.
 .ctCovMatCode <- function(model) {
+  codes <- c(rawcorr_indep = -1L, rawcorr = 0L, cholesky = 1L, z = 2L)
   tf <- if (is.null(model$covmattransform)) "rawcorr" else
     as.character(model$covmattransform)[1L]
-  if (identical(tf, "z")) 2L else 0L
+  if (!tf %in% names(codes)) {
+    stop("Unknown covmattransform '", tf, "'. Expected one of ",
+      paste(names(codes), collapse = ", "), ".", call. = FALSE)
+  }
+  codes[[tf]]
 }
 
 .ctJuliaObjective <- function(object) {

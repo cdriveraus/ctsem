@@ -94,6 +94,53 @@ test_that("Julia pop_* arrays match Stan's constrained parameters", {
   expect_true(all(diag(t0cov)[population_rows] > 0))
 })
 
+test_that("every covmattransform means the same thing on both backends", {
+  skip_if_not_installed("rstan")
+  skip_without_julia()
+  data <- .summary_data()
+
+  # The integer the two backends have to agree on, so a mismatch is reported as
+  # the code rather than as a pile of differing arrays.
+  wanted <- c(rawcorr = 0L, cholesky = 1L, z = 2L)
+
+  for (transform in names(wanted)) {
+    model <- .summary_model()
+    model$covmattransform <- transform
+    spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
+    stan_spec <- suppressMessages(ctFit(data, model, backend = "stan",
+      fit = FALSE))
+    expect_equal(as.integer(spec$covmatcode), wanted[[transform]],
+      info = transform)
+    expect_equal(as.integer(stan_spec$standata$choleskymats),
+      wanted[[transform]], info = transform)
+
+    npar <- max(c(spec$parameter_table$parnumber, spec$ti_effects$coefficient),
+      na.rm = TRUE)
+    set.seed(8)
+    raw <- stats::rnorm(npar, 0, .3)
+
+    stan_pop <- suppressMessages(ctsem:::stan_constrainsamples(
+      sm = ctsem:::stanmodels$ctsm, standata = stan_spec$standata,
+      samples = matrix(raw, nrow = 1), cores = 1, pcovn = 10,
+      dokalman = FALSE, savesubjectmatrices = FALSE))
+    backend_pop <- ctsem:::.ctBackendPopArrays(
+      .summary_pointfit(spec, model, raw, "julia"))
+
+    compared <- intersect(grep("^pop_", names(stan_pop), value = TRUE),
+      names(backend_pop))
+    # The covariances are the arrays a construction can differ on, so require
+    # them by name: a layout change that dropped one would otherwise leave the
+    # loop comparing only the matrices no construction touches.
+    expect_true(all(c("pop_T0cov", "pop_DIFFUSIONcov", "pop_MANIFESTcov") %in%
+      compared), info = transform)
+    for (name in compared) {
+      expect_equal(as.numeric(backend_pop[[name]]),
+        as.numeric(stan_pop[[name]]), tolerance = 1e-10,
+        info = paste(transform, name))
+    }
+  }
+})
+
 test_that("ctTIpredEffects reports a julia fit's own TI predictor effect (parmatrices=TRUE)", {
   skip_without_julia()
   # .summary_model() gives 'group' (TIpred 1) an effect on B1 only, and B1 is

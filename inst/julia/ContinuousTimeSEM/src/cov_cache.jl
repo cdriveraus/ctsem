@@ -55,15 +55,20 @@ CovCache{T,D}() where {T,D} = CovCache{T,D}(
     [zeros(T, D, D) for _ in 1:_COVCACHE_SLOTS],
     [zeros(T, D, D) for _ in 1:_COVCACHE_SLOTS], Ref(0), Ref(1))
 
-const _COVCACHE = Dict{Tuple{DataType,Int,Int,Bool},Any}()
+const _COVCACHE = Dict{Tuple{DataType,Int,Int,Int},Any}()
 const _COVCACHE_LOCK = ReentrantLock()
 
 # The construction in force is part of the key. Without it an entry built under
 # one route is served under the other, which a switch mid-session -- every
 # comparison test and benchmark here -- turns into a wrong answer with no
 # symptom. Caught by the transparency test, not by inspection.
-function _covcache(::Type{T}, ::Val{d}, expm::Bool) where {T,d}
-    key = (T, d, Threads.threadid(), expm)
+#
+# The *code*, not a flag saying "expm or not". That was enough while there were
+# two constructions and stopped being enough the moment there were three: a
+# code-0 entry would have been served to a code-1 call, which is the same
+# failure one level down.
+function _covcache(::Type{T}, ::Val{d}, code::Int) where {T,d}
+    key = (T, d, Threads.threadid(), code)
     c = get(_COVCACHE, key, nothing)
     if c === nothing
         lock(_COVCACHE_LOCK) do
