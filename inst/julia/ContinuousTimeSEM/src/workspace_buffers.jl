@@ -79,7 +79,7 @@ The workspace holds materialized parameters, structured parameter views, matrix
 factorizations, covariance buffers, and log-likelihood scratch storage for one
 scalar type.
 """
-struct ContinuousEKFWorkspace{T, N, M, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF, DBUF, DSI, ST, DCACHE}
+struct ContinuousEKFWorkspace{T, N, M, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF, DBUF, DSI, ST, DCACHE, BPOP}
     all_params::Vector{T}
     subject_values::Vector{T}
     pars::PARS
@@ -131,6 +131,14 @@ struct ContinuousEKFWorkspace{T, N, M, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF
     # signal the initialisation reads to skip the whole thing.
     population_indices::Vector{Int}
     population_range::UnitRange{Int}
+    # Scratch for the population construction, sized to the population block
+    # and not to the state dimension. Those are not the same number -- the
+    # block is as wide as the number of random effects, and every population
+    # row names a distinct state, so it is at most the state dimension and
+    # usually less. `sdcovsqrt2cov!` requires its buffer to match the matrix
+    # it is given, and the cache in front of it enforces that; sharing
+    # `bufferQ` here was a size mismatch.
+    population_buffer::BPOP
 end
 
 """
@@ -171,6 +179,7 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
 
     # Reusable matrix/vector work buffers.
     bufferQ = _make_square_buffer(T, n)
+    population_buffer = _make_square_buffer(T, length(sp.population_indices))
     bufferΘ = _make_square_buffer(T, m)
     discrete_ca = _make_discrete_ca_buffer(T, n)
     exp_buffer = ExpBuffer(pars.DIFFUSION)
@@ -236,5 +245,6 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
         sp.covmatcode,
         sp.population_indices,
         sp.population_range,
+        population_buffer,
     )
 end

@@ -114,7 +114,18 @@ function sdcovsqrt2cov!(buffer, mat, choleskymats)
     return sdcovsqrt2cov!(buffer, mat, choleskymats, Val(size(mat, 1)))
 end
 
+# The buffer's dimension must be the matrix's. It is not a lower bound: the
+# construction cache stores and serves `buffer.out` whole against d*d slots, so
+# an oversized buffer throws on a miss and -- worse -- returns a scrambled block
+# on a hit. Both dimensions are `Val`s, so this folds away at compile time.
+@inline function _check_buffer_dim(::Val{n}, ::Val{d}) where {n,d}
+    n == d && return nothing
+    throw(DimensionMismatch(
+        "sdcovsqrt2cov! buffer is $(n)x$(n) for a $(d)x$(d) matrix"))
+end
+
 function sdcovsqrt2cov!(buffer, mat, choleskymats, dim::Val{d}) where {d}
+    _check_buffer_dim(buffer.dim, dim)
     T = eltype(buffer.out)
     if _CTSEM_COV_CACHE[]
         _COVCACHE_CALLS[] += 1

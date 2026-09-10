@@ -287,6 +287,16 @@ function _ctsem_pack_matrices!(column, pars, sp::EKFParameters, layout)
         Matrix(sdcovsqrt2cov(pars.DIFFUSION, sp.covmatcode))[dyn, dyn]
     manifestcov = Matrix(sdcovsqrt2cov(pars.MANIFESTVAR, sp.covmatcode))
     t0cov = Matrix(sdcovsqrt2cov(pars.T0VAR, sp.covmatcode))
+    # And the population block, through the same placement the filter uses.
+    # Reporting T0VAR alone here was wrong the moment the population
+    # covariance became its own matrix: the block came back zero while the
+    # filter had it, which is the disagreement this whole separation exists to
+    # remove.
+    if !isempty(sp.population_indices)
+        _place_population_block!(t0cov, getdata(pars), sp.population_indices,
+            sp.population_range, sp.covmatcode,
+            _make_square_buffer(Float64, length(sp.population_indices)))
+    end
     asym_diffusion, asym_cint = _ctsem_asymptotics(pars.DRIFT, diffusioncov,
         pars.CINT, dyn, nlatent, sp.continuous_time)
 

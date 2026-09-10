@@ -1144,6 +1144,42 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   out
 }
 
+# Create a matrix the table does not have yet, as a complete rectangle.
+#
+# `.ctJuliaPadMatrix()` deliberately no-ops when the matrix is absent -- it
+# fills gaps in one the model already declared, and creating TDPREDEFFECT for a
+# model with no TD predictors would be wrong. RAWPOPVAR is the opposite case:
+# it exists only because the augmentation is adding it.
+#
+# Every cell gets a value of 0 rather than NA for the reason
+# `.ctJuliaPadMatrix()` does the same: `ekf_from_columns` treats NaN as "no
+# fixed value", so a cell with neither a value nor a parameter is never written
+# and reads the UNSET_PARAMETER sentinel. The cells the loops below claim have
+# their value replaced by a parameter; the upper triangle keeps the zero, which
+# is what the construction expects to ignore.
+.ctJuliaAddMatrix <- function(table, matrix, nrow, ncol) {
+  if (any(table$matrix == matrix)) {
+    return(.ctJuliaPadMatrix(table, matrix, nrow, ncol))
+  }
+  template <- table[1L, , drop = FALSE]
+  entries <- vector("list", nrow * ncol)
+  k <- 0L
+  for (row in seq_len(nrow)) for (col in seq_len(ncol)) {
+    entry <- template
+    entry[] <- NA
+    entry$matrix <- matrix
+    entry$row <- row
+    entry$col <- col
+    entry$value <- 0
+    entry$indvarying <- FALSE
+    effect_columns <- grep("_effect$", names(entry), value = TRUE)
+    if (length(effect_columns)) entry[effect_columns] <- "FALSE"
+    k <- k + 1L
+    entries[[k]] <- entry
+  }
+  rbind(table, do.call(rbind, entries))
+}
+
 .ctJuliaPadMatrix <- function(table, matrix, nrow, ncol) {
   present <- table$matrix == matrix
   if (!any(present)) return(table)
@@ -1683,13 +1719,24 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     if (!length(entry) || is.na(table$param[entry[1L]])) NA_character_ else
       as.character(table$param[entry[1L]])
   }, character(1L))
+  # The population covariance is its own matrix, sized by the number of random
+  # effects rather than by the augmented state dimension. Its row `i` is
+  # population position `i`; which state that is lives in `population_indices`,
+  # sent to the engine separately, because the two are not the same mapping --
+  # an individually varying T0MEANS gets no carrier state, so its population
+  # row refers to a main latent.
+  table <- .ctJuliaAddMatrix(table, "RAWPOPVAR", length(augmented_indices),
+    length(augmented_indices))
   # Match Stan's unconstrained parameter order exactly: all population scales,
   # then lower-triangular correlation coordinates column by column.
   for (position in seq_along(augmented_indices)) {
     row <- augmented_indices[position]
     col <- row
-    index <- which(table$matrix == "T0VAR" & table$row == row & table$col == col)
-    length(index) == 1L || stop("Internal Julia augmentation error: missing T0VAR entry.", call. = FALSE)
+    index <- which(table$matrix == "RAWPOPVAR" & table$row == position &
+      table$col == position)
+    length(index) == 1L ||
+      stop("Internal Julia augmentation error: missing RAWPOPVAR entry.",
+        call. = FALSE)
     # What the model says about this population sd, if anything. RAWPOPVAR is the
     # specification surface (see R/ctModelRawPopVar.R); a number there fixes the
     # cell and a label names the parameter, in place of the positional
@@ -1750,8 +1797,11 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     for (row_position in (column_position + 1L):length(augmented_indices)) {
       row <- augmented_indices[row_position]
       col <- augmented_indices[column_position]
-      index <- which(table$matrix == "T0VAR" & table$row == row & table$col == col)
-      length(index) == 1L || stop("Internal Julia augmentation error: missing T0VAR entry.", call. = FALSE)
+      index <- which(table$matrix == "RAWPOPVAR" & table$row == row_position &
+        table$col == column_position)
+      length(index) == 1L ||
+        stop("Internal Julia augmentation error: missing RAWPOPVAR entry.",
+          call. = FALSE)
       spec <- .ctModelRawPopVarEntry(model, varying_names[row_position],
         varying_names[column_position])
       fixedvalue <- .ctModelRawPopVarValue(spec)
@@ -2407,6 +2457,19 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # before the setting existed working unchanged.
   covmatcode <- if (is.null(spec$covmatcode)) 0L else as.integer(spec$covmatcode)
   if (covmatcode != 0L) arguments$covmatcode <- covmatcode
+  # Which state each population row describes. Sent only when the table
+  # actually carries a RAWPOPVAR matrix, so a spec built before it existed
+  # still reaches an engine that treats an absent block as "T0VAR is the whole
+  # initial covariance". The order is the order the scales were emitted in.
+  if (any(table$matrix %in% "RAWPOPVAR")) {
+    popeffects <- spec$random_effects
+    popindices <- if (is.null(popeffects) || !length(popeffects) ||
+        !nrow(popeffects)) integer() else
+      as.integer(popeffects$row[popeffects$type %in% "sd"])
+    if (length(popindices)) {
+      arguments$population_indices <- .ctJuliaVector(popindices)
+    }
+  }
   # Only when something is actually binary: an empty vector lets the engine
   # skip the branch, and a zero-length vector deadlocks the bridge, so the two
   # reasons to omit it agree.

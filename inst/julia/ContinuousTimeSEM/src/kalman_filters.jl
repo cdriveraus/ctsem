@@ -656,12 +656,27 @@ touches only the leading `d` by `d` of the buffer it is given. `bufferQ` is
 free at this point: its T0VAR contents are already in `P_predict`.
 """
 @inline function _apply_population_block!(ws, all_params)
-    idx = ws.population_indices
-    isempty(idx) && return nothing
-    k = length(idx)
-    raw = reshape(view(all_params, ws.population_range), k, k)
-    P = ws.P_predict.data
-    @inbounds for s in idx
+    return _place_population_block!(ws.P_predict.data, all_params,
+        ws.population_indices, ws.population_range, ws.covmatcode,
+        ws.population_buffer)
+end
+
+"""
+    _place_population_block!(P, all_params, indices, range, covmatcode, buffer)
+
+Drop the rows and columns of the states the population block accounts for, and
+write the constructed block over them.
+
+Called by the filter and by the summary, deliberately: they used to each build
+the initial covariance their own way, and that is how the two came to disagree
+about what a fit had estimated. One placement, two callers.
+"""
+@inline function _place_population_block!(P, all_params, indices, range,
+        covmatcode, buffer)
+    isempty(indices) && return nothing
+    k = length(indices)
+    raw = reshape(view(all_params, range), k, k)
+    @inbounds for s in indices
         for j in axes(P, 2)
             P[s, j] = zero(eltype(P))
         end
@@ -669,9 +684,9 @@ free at this point: its T0VAR contents are already in `P_predict`.
             P[i, s] = zero(eltype(P))
         end
     end
-    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, raw, ws.covmatcode, Val(k))
+    ContinuousTimeSEM.sdcovsqrt2cov!(buffer, raw, covmatcode, Val(k))
     @inbounds for b in 1:k, a in 1:k
-        P[idx[a], idx[b]] = ws.bufferQ.out[a, b]
+        P[indices[a], indices[b]] = buffer.out[a, b]
     end
     return nothing
 end

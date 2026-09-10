@@ -7,15 +7,13 @@
 # constrain step -- which is a much sharper check than comparing two fits, since
 # it removes the optimizer from the comparison entirely.
 #
-# pop_T0VAR is deliberately excluded from that comparison. Stan computes
-# T0cov = sdcovsqrt2cov(T0VAR) and *then* rescales T0cov's indvarying T0MEANS
-# rows and columns by the parameter's multiplier and meanscale, leaving T0VAR
-# itself unscaled; the engines fold that scale into T0VAR, so their T0VAR is the
-# one whose sdcovsqrt2cov actually equals the reported T0cov. Both routes give
-# an identical T0cov, which is the quantity summaries report -- summary() drops
-# T0VAR from the system matrices table for precisely this parameterisation
-# reason. The test asserts the agreement on T0cov rather than papering over the
-# difference on T0VAR.
+# pop_T0VAR is in that comparison, and its being there is the point of the
+# population covariance having become a matrix of its own. It used to be
+# excluded: the engines folded the population scale into the augmented T0VAR
+# cells, so their T0VAR was the matrix whose sdcovsqrt2cov equalled the reported
+# T0cov, and stan's was the model's own -- two different quantities under one
+# name, comparable only through T0cov. Both sides now report the model's own
+# T0VAR and agree to machine precision.
 
 .summary_model <- function() {
   model <- suppressWarnings(ctModel(type = "ct", n.latent = 2, LAMBDA = diag(2),
@@ -61,25 +59,39 @@ test_that("Julia pop_* arrays match Stan's constrained parameters", {
   fit <- .summary_pointfit(spec, model, raw, "julia")
   backend_pop <- ctsem:::.ctBackendPopArrays(fit)
 
-  compared <- setdiff(intersect(grep("^pop_", names(stan_pop), value = TRUE),
-    names(backend_pop)), "pop_T0VAR")
+  compared <- intersect(grep("^pop_", names(stan_pop), value = TRUE),
+    names(backend_pop))
   # A model with an intoverpop augmentation, TI predictors and a state-dependent
   # DRIFT: if this list ever shrinks, the comparison below has stopped covering
   # the interesting matrices and the test has quietly weakened.
-  expect_true(all(c("pop_DRIFT", "pop_DIFFUSIONcov", "pop_T0cov", "pop_asymCINT",
-    "pop_asymDIFFUSIONcov", "pop_CINT", "pop_LAMBDA") %in% compared))
+  expect_true(all(c("pop_DRIFT", "pop_DIFFUSIONcov", "pop_T0cov", "pop_T0VAR",
+    "pop_asymCINT", "pop_asymDIFFUSIONcov", "pop_CINT", "pop_LAMBDA") %in%
+    compared))
   for (name in compared) {
     expect_equal(dim(backend_pop[[name]]), dim(stan_pop[[name]]), info = name)
     expect_equal(as.numeric(backend_pop[[name]]), as.numeric(stan_pop[[name]]),
       tolerance = 1e-8, info = name)
   }
 
-  # The reported T0VAR differs by parameterisation, but the covariance it stands
-  # for does not, and that identity is what makes the difference harmless.
-  # 1e-4 rather than machine precision: sdcovsqrt2cov's correlation constraint
-  # carries a 1e-5 ridge, so the implied SD is the parameter plus that ridge.
-  expect_equal(sqrt(diag(drop(backend_pop$pop_T0cov))),
-    diag(drop(backend_pop$pop_T0VAR)), tolerance = 1e-4)
+  # A state whose T0MEANS is a random effect has no initial covariance of its
+  # own: T0VAR's row and column for it are disabled, and its entry in T0cov
+  # comes from the population block. Both T0MEANS are individually varying
+  # here, so both latent rows are disabled, and so is every carrier state --
+  # which leaves T0VAR entirely zero and T0cov entirely population. Asserting
+  # it this way rather than by index keeps the test honest if the fixture
+  # changes: `random_effects` is where the population rows are named.
+  population_rows <- sort(unique(spec$random_effects$row[
+    spec$random_effects$type %in% "sd"]))
+  t0var <- drop(backend_pop$pop_T0VAR)
+  t0cov <- drop(backend_pop$pop_T0cov)
+  expect_gt(length(population_rows), 0)
+  expect_equal(as.numeric(t0var[population_rows, ]),
+    rep(0, length(population_rows) * ncol(t0var)))
+  expect_equal(as.numeric(t0var[, population_rows]),
+    rep(0, nrow(t0var) * length(population_rows)))
+  # And the block T0VAR does not state is a covariance nonetheless, so the
+  # zeros above are a reparameterisation and not a lost variance.
+  expect_true(all(diag(t0cov)[population_rows] > 0))
 })
 
 test_that("ctTIpredEffects reports a julia fit's own TI predictor effect (parmatrices=TRUE)", {
