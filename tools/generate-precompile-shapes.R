@@ -69,6 +69,16 @@ emit <- function(shape) {
   lap <- spec$laplace
   if (is.null(lap)) lap <- list(npar = NA_integer_, re_index = integer(),
     sd_index = integer(), cor_index = integer(), sd_scale = numeric())
+  # Which state each population row of RAWPOPVAR describes, exactly as
+  # `.ctJuliaSpec` sends it. Not part of the spec's type -- so it cannot make a
+  # shape stop matching -- but a captured spec without it has a population
+  # matrix and no population, so the block placement every augmented fit with
+  # random effects runs would not be compiled here. Empty on the laplace route,
+  # which has no RAWPOPVAR at all.
+  re <- spec$random_effects
+  popidx <- if (is.null(re) || !length(re) || !nrow(re) ||
+      !any(tb$matrix %in% "RAWPOPVAR")) integer() else
+    as.integer(re$row[re$type %in% "sd"])
   paste0(
     "    ", shape$name, " = (\n",
     "        matrix = ", vec(tb$matrix, quote = TRUE), ",\n",
@@ -85,6 +95,7 @@ emit <- function(shape) {
     "        sd_index = Int", vec(as.integer(lap$sd_index)), ",\n",
     "        cor_index = Int", vec(as.integer(lap$cor_index)), ",\n",
     "        sd_scale = Float64", vec(format(as.numeric(lap$sd_scale), digits = 17)), ",\n",
+    "        population_indices = Int", vec(popidx), ",\n",
     "    ),\n")
 }
 

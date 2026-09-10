@@ -469,7 +469,7 @@ test_that("a state-dependent MANIFESTVAR is transformed before row 1 reads it", 
 # the branch the other values select is commented out, so a 'cholesky' model
 # was fitted with the default transform and measured 3.76 log units away from
 # the same model on stan, silently. Refused rather than implemented.
-test_that("a non-default covmattransform is refused on the julia backend", {
+test_that("the julia backend accepts the constructions it can build", {
   skip_on_cran()
 
   .m <- function() suppressWarnings(ctModel(
@@ -481,24 +481,48 @@ test_that("a non-default covmattransform is refused on the julia backend", {
     T0MEANS = matrix(0, 2, 1)))
   dat <- data.frame(id = rep(1:4, each = 2), time = rep(0:1, 4),
     Y1 = 0, Y2 = 0)
-
-  for (tf in c("cholesky", "rawcorr_indep")) {
+  build <- function(tf) {
     model <- .m()
     model$covmattransform <- tf
-    expect_error(
-      suppressMessages(ctFit(dat, model, backend = "julia", fit = FALSE)),
-      regexp = "covmattransform")
+    suppressMessages(ctFit(dat, model, backend = "julia", fit = FALSE))
   }
 
-  # The default still passes the guard. `fit = FALSE` stops before Julia is
-  # needed, so this half does not depend on a Julia installation.
-  model <- .m()
-  # Whatever the default is, it has to be one the guard accepts. Pinning
-  # the string made this fail the moment the default moved to "z",
-  # which tested the default rather than the guard this block is for.
-  expect_true(model$covmattransform %in% c("rawcorr", "z"))
-  expect_error(suppressMessages(ctFit(dat, model, backend = "julia", fit = FALSE)),
-    regexp = NA)
+  # `fit = FALSE` stops before Julia is needed, so none of this depends on a
+  # Julia installation.
+  for (tf in c("rawcorr", "cholesky", "z")) {
+    expect_error(build(tf), regexp = NA, info = tf)
+  }
+
+  # One value is refused, and not because the engine cannot build it:
+  # 'rawcorr_indep' selects the same construction as 'rawcorr' and differs only
+  # in the prior, so accepting it would accept a setting that does nothing.
+  expect_error(build("rawcorr_indep"), regexp = "covmattransform")
+
+  # Whatever the default is, it has to be one the guard accepts. Pinning the
+  # string made this fail the moment the default moved to "z", which tested the
+  # default rather than the guard this block is for.
+  expect_true(.m()$covmattransform %in% c("rawcorr", "cholesky", "z"))
+})
+
+test_that("the construction code map resolves every accepted name and no other", {
+  # The integers are stan's, from `standata$choleskymats` in R/ctData.R, so one
+  # model means one construction on either backend. Checked here as a table
+  # rather than through a fit, because what went wrong was the map itself:
+  # `.ctCovMatCode` sent 'z' to 2 and everything else to 0, which was correct
+  # only while the other values were refused upstream. Nothing tested it, and
+  # accepting 'cholesky' would have sent it to 0 -- the right answer for a
+  # different model, reported as this one's.
+  code <- function(tf) ctsem:::.ctCovMatCode(list(covmattransform = tf))
+  expect_equal(code("rawcorr_indep"), -1L)
+  expect_equal(code("rawcorr"), 0L)
+  expect_equal(code("cholesky"), 1L)
+  expect_equal(code("z"), 2L)
+  # No covmattransform at all is the pre-3.12 shape, and it means 'rawcorr'.
+  expect_equal(ctsem:::.ctCovMatCode(list()), 0L)
+  # And an unknown name errors rather than resolving: it means the validation
+  # has drifted from this table, which must not resolve to a construction by
+  # luck.
+  expect_error(code("nonesuch"), "Unknown covmattransform")
 })
 
 # The same row-1 ordering defect one hop further out. PARS lives in the

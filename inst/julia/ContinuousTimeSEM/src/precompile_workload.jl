@@ -69,9 +69,14 @@ function _precompile_spec(name::Symbol; binary::Bool=false)
     s = _PRECOMPILE_SHAPES[name]
     nmanifest = maximum(s.row[i] for i in eachindex(s.matrix) if s.matrix[i] == "LAMBDA")
     manifesttype = binary ? fill(1, nmanifest) : Int[]
+    # `population_indices` as well as the columns: a captured augmented shape
+    # has a RAWPOPVAR block, and without the indices saying which states it
+    # describes the placement no-ops and never gets compiled here. It is not
+    # part of the type, so passing it changes what is compiled and not what
+    # matches.
     spec = ekf_from_columns(s.matrix, s.row, s.col, s.parnumber, s.value,
         s.transform, s.predicttransform, s.updatetransform, s.tdtransform;
-        manifesttype=manifesttype)
+        manifesttype=manifesttype, population_indices=s.population_indices)
     _PRECOMPILE_SHAPE_TYPES[name] = typeof(spec)
     return spec, s
 end
