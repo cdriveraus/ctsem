@@ -857,6 +857,20 @@ if(si==0 || sum(whenmat[54,{5}]) > 0 )Jy=mcalc(Jy,indparams, state,{0}, 54, mats
     // row and column, and ctFit does that before either backend runs.
     T0cov = sdcovsqrt2cov(T0VAR,choleskymats); 
     if(intoverpop && nindvarying > 0){ //adjust cov matrix for transforms
+      // Drop the row and column of every latent whose T0MEANS is a random
+      // effect: it has no initial covariance of its own, RAWPOPVAR states it.
+      // Done here rather than left to the zeros ctFit fixes in T0VAR, so it
+      // does not depend on a zero row surviving whichever construction ran.
+      for(ri in 1:size(matsetup)){
+        if(matsetup[ri,7]==1 && matsetup[ri,5]){ //indvarying t0means
+          T0cov[matsetup[ri,1], ] = rep_row_vector(0.0, cols(T0cov));
+          T0cov[, matsetup[ri,1] ] = rep_vector(0.0, rows(T0cov));
+        }
+      }
+      // and write back the entries RAWPOPVAR does span. So an indvarying
+      // T0MEANS does not covary with a non-indvarying one -- nothing states
+      // that pair -- but does covary with an indvarying CINT, since both sit
+      // in this block.
     T0cov[intoverpopindvaryingindex, intoverpopindvaryingindex] = rawpopcov;
     
       for(ri in 1:size(matsetup)){

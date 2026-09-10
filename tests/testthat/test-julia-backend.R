@@ -450,7 +450,10 @@ test_that("a non-default covmattransform is refused on the julia backend", {
   # The default still passes the guard. `fit = FALSE` stops before Julia is
   # needed, so this half does not depend on a Julia installation.
   model <- .m()
-  expect_identical(model$covmattransform, "rawcorr")
+  # Whatever the default is, it has to be one the guard accepts. Pinning
+  # the string made this fail the moment the default moved to "z",
+  # which tested the default rather than the guard this block is for.
+  expect_true(model$covmattransform %in% c("rawcorr", "z"))
   expect_error(suppressMessages(ctFit(dat, model, backend = "julia", fit = FALSE)),
     regexp = NA)
 })

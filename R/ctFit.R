@@ -250,17 +250,19 @@ ctStanFitUpdate <- ctFitUpdate
 # how the two came to be entangled in the first place. This is the whole of the
 # remaining relationship between them.
 #
-# Note which of the fixed values still do work. The diagonal does not: T0cov's
-# population block is overwritten by the constructed RAWPOPVAR, so whatever
-# sits on the T0VAR diagonal there is discarded. The off-diagonals do: they are
-# the covariance between a latent that has a random effect and one that does
-# not, RAWPOPVAR does not span that pair, and zero is the answer this has
-# always given. They are fixed rather than left free so that they leave the
-# parameter vector.
+# The values these cells are fixed to do no work on the stan path. That row
+# and column of T0cov are dropped where it is assembled, and the entries
+# RAWPOPVAR spans are written back there, so neither the diagonal nor the
+# off-diagonals reach the fit. The zero covariance between an indvarying
+# T0MEANS and a non-indvarying one is the absence of any statement about that
+# pair rather than T0VAR stating zero -- which is why the disabling is done at
+# assembly and not left to these values surviving a construction.
 #
-# (The diagonal is left at 1e-6 rather than zeroed for now because the julia
-# backend still builds the population block through T0VAR; once that side is
-# separated too the value is dead and can go.)
+# They are still *fixed* rather than left free, because taking them out of the
+# parameter vector is the whole job of this function. The particular values
+# are kept as they were only because the julia backend still builds its
+# population block through T0VAR; once that side is separated they are
+# arbitrary.
 T0VARredundancies <- function(ctm) {
   whichT0VAR_T0MEANSindvarying <- ctm$pars$matrix %in% 'T0VAR'  &
     is.na(ctm$pars$value) &
