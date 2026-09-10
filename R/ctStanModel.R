@@ -301,20 +301,14 @@ ctModelMatrices <- function(x){
 #' @details
 #' \code{ctStanModel} is maintained as a backward-compatible alias.
 #'
-#' This is where a model is built, whichever way it is asked for.
-#' \code{ctModel(type='ct')} and \code{ctModel(type='dt')} call it, and
-#' \code{ctStanModel()} is the same function under its pre-3.11 name, so it is
-#' the single place the \code{pars} table is assembled: cell fields parsed,
-#' per-matrix defaults resolved, and the specification checked (see
-#' \code{ctModel}'s details for what a cell may say, and
-#' R/ctModelSpecCheck.R).
+#' Call this when you have a matrix-list model built with
+#' \code{ctModel(type='omx')} and want to fit it: \code{ctFit()} takes a
+#' built model, and an \code{omx} object is not one until it comes through
+#' here. That conversion is the reason the function is exported.
 #'
-#' The \code{ConvertOMX} in the name is for the other half of the job:
-#' converting a matrix-list model built with \code{ctModel(type='omx')}, which
-#' is the one \code{type} that does not already come through here. Such an
-#' object is not fittable until it does, since \code{ctFit()} takes a built
-#' model. Prefer \code{ctModel(type='ct')} for new work; call this directly
-#' only to convert an \code{omx} model.
+#' New models need it only implicitly. \code{ctModel(type='ct')} and
+#' \code{ctModel(type='dt')} call it for you and return a model that is
+#' already built, so there is nothing left to convert.
 #' @importFrom rstantools rstan_config
 #' @aliases ctStanModel
 #' @export
