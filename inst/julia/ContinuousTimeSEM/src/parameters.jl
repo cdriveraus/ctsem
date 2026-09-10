@@ -99,6 +99,13 @@ struct EKFParameters{RT,PT,UT,TT,AX,FV}
     # axis is a type parameter, so `pars.RAWPOPVAR` has to compile for every
     # model, and for a model without the block it cannot. `0:-1` when absent.
     population_range::UnitRange{Int}
+    # Which construction builds the population block, which need not be the one
+    # the rest of the model's covariances use. A reduced-rank population
+    # covariance is a factor -- code 1 -- while DIFFUSION and T0VAR keep the
+    # model's own setting, and forcing all four to agree would change three
+    # matrices to fix one. Defaults to `covmatcode`, so a model that has not
+    # asked for anything different is exactly as it was.
+    population_covmatcode::Int
 
     # The constructor ensures that the provided vectors are of the correct types and converts them if necessary.
     function EKFParameters(
@@ -127,6 +134,7 @@ struct EKFParameters{RT,PT,UT,TT,AX,FV}
         covmatcode::Int=0,
         population_indices=Int[],
         population_range::UnitRange{Int}=0:-1,
+        population_covmatcode::Union{Nothing,Integer}=nothing,
     )
         regular_transforms_tuple = Tuple(regular_transforms)
         predict_transforms_tuple = Tuple(predict_transforms)
@@ -168,6 +176,8 @@ struct EKFParameters{RT,PT,UT,TT,AX,FV}
             covmatcode,
             Vector{Int}(population_indices),
             population_range,
+            population_covmatcode === nothing ? Int(covmatcode) :
+                Int(population_covmatcode),
         )
     end
 end

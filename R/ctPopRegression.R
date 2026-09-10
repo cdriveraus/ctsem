@@ -165,6 +165,13 @@
 # which is the one outcome this whole feature exists to avoid. Both a fixed
 # value and a relabelling count: a label differing from the default is an
 # equality constraint, and that is a specification too.
+# A RAWPOPVAR entry about a regressed effect cannot be honoured: its spread
+# follows entirely from the basis, so there is no cell to fix.
+#
+# The basis effects have a separate and narrower problem under the factor
+# construction, checked in `.ctPopRegressionFactorConflicts()` below rather
+# than here -- the two are different claims and refusing them together refused
+# statements that are perfectly honourable.
 .ctPopRegressionRawPopVarConflicts <- function(model, regressed) {
   popcov <- model[['RAWPOPVAR']]
   if (is.null(popcov) || !length(popcov) || !length(regressed)) return(character())
@@ -184,6 +191,51 @@
       if (identical(stated, '0') && !is.na(expected) && identical(expected, '0')) next
       out <- c(out, sprintf("RAWPOPVAR['%s', '%s'] = %s", coords[1L], coords[2L],
         stated))
+    }
+  }
+  unique(out)
+}
+
+# What a factor construction cannot honour about the basis effects.
+#
+# `Sigma = M M'` with M lower triangular, so `Sigma[i,j] = M[i,j] M[j,j]` below
+# the diagonal. A zero off-diagonal therefore gives an exact zero covariance
+# and is allowed. A diagonal is a loading, and an effect's spread is a row norm
+# rather than a cell -- except for the first basis effect, which loads on one
+# dimension and no other, so `|M[1,1]|` is its spread exactly. A non-zero
+# off-diagonal is a factor entry rather than a correlation, and the correlation
+# it implies depends on the rest of its row.
+.ctPopRegressionFactorConflicts <- function(model, basis) {
+  popcov <- model[['RAWPOPVAR']]
+  if (is.null(popcov) || !length(popcov) || length(basis) < 2L) return(character())
+  names <- rownames(popcov)
+  # RAWPOPVAR is constructed with a default label in every cell, so "is there
+  # text here" is not the question -- a default label is the absence of a
+  # statement, and treating it as one refuses every model that has not been
+  # touched. Compared against the default the same way
+  # `.ctPopRegressionRawPopVarConflicts()` does.
+  default <- .ctModelRawPopVar(model$pars)
+  isdefault <- function(stated, ...) {
+    coords <- c(...)
+    if (is.null(default) || !all(coords %in% rownames(default))) return(FALSE)
+    identical(stated, as.character(default[coords[1L], coords[length(coords)]]))
+  }
+  out <- character()
+  for (b in intersect(basis[-1L], names)) {
+    diagonal <- .ctModelRawPopVarEntry(model, b)
+    if (!is.na(diagonal) && nzchar(diagonal) && !isdefault(diagonal, b, b)) {
+      out <- c(out, sprintf("RAWPOPVAR['%s', '%s'] = %s (a loading, not a standard deviation)",
+        b, b, diagonal))
+    }
+    for (other in setdiff(names, b)) {
+      stated <- .ctModelRawPopVarEntry(model, b, other)
+      if (is.na(stated) || !nzchar(stated)) next
+      if (isdefault(stated, b, other)) next
+      # A zero is honoured exactly, so it is not a conflict.
+      value <- suppressWarnings(as.numeric(stated))
+      if (isTRUE(value == 0)) next
+      out <- c(out, sprintf("RAWPOPVAR['%s', '%s'] = %s (a factor entry, not a correlation)",
+        b, other, stated))
     }
   }
   unique(out)
@@ -229,17 +281,22 @@
   # refused rather than ignored. Asked for, that is an error; defaulted, the
   # user's own specification is the more explicit statement of the two and wins.
   if (!is.null(model)) {
-    conflicts <- .ctPopRegressionRawPopVarConflicts(model, regressed)
+    conflicts <- c(.ctPopRegressionRawPopVarConflicts(model, regressed),
+      .ctPopRegressionFactorConflicts(model, basis))
     if (length(conflicts)) {
       if (!isTRUE(explicit)) return(NULL)
-      stop('poprank would drop what RAWPOPVAR states about ',
-        paste(regressed[regressed %in% rownames(model[['RAWPOPVAR']])],
-          collapse = ', '), ': ', paste(conflicts, collapse = '; '),
-        '. Under a reduced rank those effects have no population sd or ',
-        'correlation of their own -- both follow from ',
-        paste(basis, collapse = ', '), '. Use poprank=NA to estimate the full ',
-        'covariance, or state RAWPOPVAR only for the effects that keep their own ',
-        'spread.', call. = FALSE)
+      # Opens with the phrase it always opened with. The rest is new -- the
+      # factor construction gives a second, narrower reason -- but the leading
+      # clause is accurate for both and is what the tests and anything else
+      # reading this message match on.
+      stop('poprank would drop what RAWPOPVAR states: ',
+        paste(conflicts, collapse = '; '),
+        '. Under a reduced rank the population covariance is a factor. A ',
+        'regressed effect has no spread of its own at all, and for a basis ',
+        "effect past the first the spread is a row norm rather than a cell -- ",
+        'only ', basis[1L], ' keeps a standard deviation this can state, ',
+        'though a zero covariance is honoured exactly anywhere. Use ',
+        'poprank=NA to estimate the full covariance.', call. = FALSE)
     }
   }
   # Above `nmean` the restriction stops being free: it starts fixing residual

@@ -131,6 +131,9 @@ struct ContinuousEKFWorkspace{T, N, M, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF
     # signal the initialisation reads to skip the whole thing.
     population_indices::Vector{Int}
     population_range::UnitRange{Int}
+    # The population block's own construction code, copied from the
+    # `EKFParameters` for the same reason `covmatcode` is.
+    population_covmatcode::Int
     # Scratch for the population construction, sized to the population block
     # and not to the state dimension. Those are not the same number -- the
     # block is as wide as the number of random effects, and every population
@@ -245,6 +248,7 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
         sp.covmatcode,
         sp.population_indices,
         sp.population_range,
+        sp.population_covmatcode,
         population_buffer,
     )
 end

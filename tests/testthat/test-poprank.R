@@ -328,20 +328,27 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
     # zero off the diagonal is uncorrelated, exactly
     expect_equal(correlation(withcell(2, 1, 0)), 0, tolerance = 1e-6)
 
-    # and a non-zero coordinate gives a correlation further from zero than
-    # itself -- the numbers the documentation quotes
-    expect_equal(correlation(withcell(2, 1, 0.3)), 0.2846, tolerance = 2e-3)
-    expect_equal(correlation(withcell(2, 1, 0.5)), 0.4522, tolerance = 2e-3)
-    # Unbounded, which the coordinate was not while the (-1, 1) map sat on the
-    # parameter: a correlation near one is now reachable through this surface.
-    expect_equal(correlation(withcell(2, 1, 5)), 0.9993, tolerance = 2e-3)
-    # Monotone and sign-preserving, which is why it reads like a correlation --
-    # but not symmetric in sign, which is another way it is not one. The same
-    # coordinate magnitude gives a different correlation magnitude either side
-    # of zero, because constraincorsqrt1()'s row scale carries an |s| - s term.
-    expect_equal(correlation(withcell(2, 1, -0.5)), -0.4463, tolerance = 2e-3)
-    expect_lt(abs(correlation(withcell(2, 1, -0.5))),
-      abs(correlation(withcell(2, 1, 0.5))))
+    # And a non-zero coordinate is Fisher's z of the correlation, exactly.
+    #
+    # That is the whole point of the 'z' construction and it is worth asserting
+    # as an identity rather than as a table of decimals: `tanh` over the range
+    # says what the specification surface means, and it fails if the default
+    # ever moves back to a construction where the coordinate means something
+    # else. This test previously pinned 0.2846, 0.4522 and -0.4463, which are
+    # `constraincorsqrt1`'s numbers from when that was the default.
+    for (stated in c(0.3, 0.5, 5, -0.5, -2)) {
+      expect_equal(correlation(withcell(2, 1, stated)), tanh(stated),
+        tolerance = 1e-4, info = paste("stated", stated))
+    }
+    # Unbounded, so a correlation near one is reachable through this surface --
+    # it was not while the (-1, 1) map sat on the parameter.
+    expect_gt(correlation(withcell(2, 1, 5)), 0.999)
+    # And symmetric in sign, which `constraincorsqrt1` was not: its row scale
+    # carries an `|s| - s` term, so the same coordinate magnitude gave a
+    # different correlation magnitude either side of zero. `tanh` is odd, so
+    # the surface now reads like a correlation in that respect too.
+    expect_equal(abs(correlation(withcell(2, 1, -0.5))),
+      abs(correlation(withcell(2, 1, 0.5))), tolerance = 1e-6)
   })
 
   # ctIdentify deliberately assesses the *unrestricted* covariance, whatever

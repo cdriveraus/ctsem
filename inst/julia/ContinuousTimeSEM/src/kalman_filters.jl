@@ -657,8 +657,8 @@ free at this point: its T0VAR contents are already in `P_predict`.
 """
 @inline function _apply_population_block!(ws, all_params)
     return _place_population_block!(ws.P_predict.data, all_params,
-        ws.population_indices, ws.population_range, ws.covmatcode,
-        ws.population_buffer)
+        ws.population_indices, ws.population_range,
+        ws.population_covmatcode, ws.population_buffer)
 end
 
 """

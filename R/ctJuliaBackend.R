@@ -1749,6 +1749,13 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # row refers to a main latent.
   table <- .ctJuliaAddMatrix(table, "RAWPOPVAR", length(augmented_indices),
     length(augmented_indices))
+  # A reduced rank builds this block as a factor, which changes what its cells
+  # mean as well as how they are transformed.
+  # A statement about one of these cells is refused in
+  # `.ctPopRegressionRawPopVarConflicts()` rather than here, so that the
+  # explicit/defaulted convention this feature already has -- an asked-for rank
+  # errors, a defaulted one backs off -- applies to it too.
+  population_factor <- .ctPopFactorConstruction(model)
   # Match Stan's unconstrained parameter order exactly: all population scales,
   # then lower-triangular correlation coordinates column by column.
   for (position in seq_along(augmented_indices)) {
@@ -1798,8 +1805,20 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
         sprintf("julia_popcov_%d_%d", row, col) else spec
       table$parnumber[index] <- next_parameter
       table$value[index] <- NA_real_
-      table$transform[index] <- sprintf("%.17g * (1e-10 + %.17g * log1p_exp(2 * param[%d] - 1))",
-        t0means_state_scale[position], random_sd_scale[position], next_parameter)
+      table$transform[index] <- if (population_factor) {
+        # Linear and signed, with no floor. A factor diagonal must be free to
+        # pass through zero -- `M M'` is positive semi-definite whatever the
+        # signs -- and a softplus here costs most of the reparameterisation's
+        # benefit, because its saturation reintroduces the flat boundary the
+        # factor form exists to remove.
+        sprintf("%.17g * (%.17g * param[%d])",
+          t0means_state_scale[position], random_sd_scale[position],
+          next_parameter)
+      } else {
+        sprintf("%.17g * (1e-10 + %.17g * log1p_exp(2 * param[%d] - 1))",
+          t0means_state_scale[position], random_sd_scale[position],
+          next_parameter)
+      }
     }
     # Whether the sd is fixed by RAWPOPVAR or free, this row is a population
     # covariance cell and carries no TI predictor effect of its own.
@@ -2424,6 +2443,24 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   if (!is.finite(n)) 0L else as.integer(n)
 }
 
+# Is this model's population covariance a factor rather than a scale-and-
+# correlation block?
+#
+# True exactly when a reduced rank is in force. `model$popregression` is
+# attached by `.ctPopRegressionRewrite()` only when there are effects to
+# regress, so `poprank='auto'` on a model whose every effect reaches the
+# observation mean leaves it NULL and nothing here changes -- the default path
+# is only affected where it actually restricts the rank.
+#
+# The reduced-rank set is a non-convex variety, and on it the
+# sd-plus-`constraincorsqrt1` coordinates carry genuine spurious optima: 0 of
+# 40 starts at the best value against 40 of 40 for the factor form, measured at
+# k=12 r=3. At full rank the same substitution is nearly neutral, which is why
+# this is asked of the population block and not of every covariance.
+.ctPopFactorConstruction <- function(model) {
+  !is.null(model[["popregression"]])
+}
+
 # The integer code for a model's covariance construction, shared with the stan
 # path's `standata$choleskymats` (R/ctData.R) so one model means one
 # construction on either backend.
@@ -2499,6 +2536,13 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # actually carries a RAWPOPVAR matrix, so a spec built before it existed
   # still reaches an engine that treats an absent block as "T0VAR is the whole
   # initial covariance". The order is the order the scales were emitted in.
+  # The population block's own construction, when it differs from the model's.
+  # Sent only when it does, so a spec built for an engine that predates the
+  # keyword still works and every ordinary model is byte-for-byte as it was.
+  if (!is.null(spec$model) && .ctPopFactorConstruction(spec$model) &&
+      any(table$matrix %in% "RAWPOPVAR")) {
+    arguments$population_covmatcode <- 1L
+  }
   if (any(table$matrix %in% "RAWPOPVAR")) {
     popeffects <- spec$random_effects
     popindices <- if (is.null(popeffects) || !length(popeffects) ||

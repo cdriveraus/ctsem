@@ -294,7 +294,7 @@ function _ctsem_pack_matrices!(column, pars, sp::EKFParameters, layout)
     # remove.
     if !isempty(sp.population_indices)
         _place_population_block!(t0cov, getdata(pars), sp.population_indices,
-            sp.population_range, sp.covmatcode,
+            sp.population_range, sp.population_covmatcode,
             _make_square_buffer(Float64, length(sp.population_indices)))
     end
     asym_diffusion, asym_cint = _ctsem_asymptotics(pars.DRIFT, diffusioncov,

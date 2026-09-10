@@ -1010,9 +1010,13 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
                     popbar[a, b] = P̄[popidx[a], popidx[b]]
                 end
                 popraw_bar = zeros(T, k, k)
+                # The POPULATION code, not the model's: the forward pass
+                # built this block with it, and a reverse pass differentiating
+                # the other construction gives a gradient for a different
+                # model than the likelihood.
                 _sdcovsqrt2cov_pullback!(popraw_bar, tape.inits[index].POPRAW,
-                    _symmetrized(popbar), k;
-                    scratch=aws.covsqrt_scratch, covmatcode=aws.sp.covmatcode)
+                    _symmetrized(popbar), k; scratch=aws.covsqrt_scratch,
+                    covmatcode=aws.sp.population_covmatcode)
                 # Written through the flat cotangent by range rather than by
                 # name: `θ̄ca.RAWPOPVAR` would have to compile for models
                 # whose axis has no such block, and cannot.

@@ -391,7 +391,8 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
     ti_parameter=Int[], ti_predictor=Int[], ti_coefficient=Int[],
     diffusion_state_indices=Int[], continuous_time::Bool=true,
     manifesttype=Int[], ncategories=Int[], censormin=Float64[],
-    censormax=Float64[], covmatcode::Int=0, population_indices=Int[])
+    censormax=Float64[], covmatcode::Int=0, population_indices=Int[],
+    population_covmatcode::Union{Nothing,Integer}=nothing)
 
     n = length(matrix)
     length(row) == n && length(col) == n ||
@@ -489,5 +490,7 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
         Int.(ti_predictor), Int.(ti_coefficient), Int.(diffusion_state_indices),
         continuous_time, Int.(manifesttype), Int.(ncategories),
         Float64.(censormin), Float64.(censormax), covmatcode,
-        Int.(population_indices), population_range)
+        Int.(population_indices), population_range,
+        population_covmatcode === nothing ? covmatcode :
+            Int(population_covmatcode))
 end
