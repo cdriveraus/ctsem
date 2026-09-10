@@ -123,20 +123,70 @@ jobs:
 
       # NOT_CRAN deliberately unset and no Julia installed: this is the CRAN
       # configuration. Every julia test must skip, and nothing may error.
+      #
+      # One file per process, under `timeout`, rather than one `test_dir()`.
+      # Two reasons, and the first is the whole design constraint here:
+      #
+      # GitHub does not serve Actions logs without a login, and the REST API
+      # refuses them unauthenticated, so from outside a browser session the
+      # only thing readable about a failed run is its ANNOTATIONS. A step
+      # that dies at the job's 60-minute cap therefore reports exactly
+      # "Process completed with exit code 1" and nothing about where it was.
+      # That happened: the first run ever to get past the documentation check
+      # spent 56.9 minutes here and said nothing, against 117 s for the same
+      # 80 files locally in the same configuration, slowest file 30.7 s. So
+      # every file's time is echoed as a `::notice::`/`::error::` workflow
+      # command, which becomes an annotation, which the API does serve.
+      #
+      # Second, `timeout` in the shell is the only thing that survives a file
+      # that hangs rather than merely runs long. R's own `setTimeLimit()`
+      # cannot interrupt a blocking C call -- a PSOCK worker that never
+      # connects is exactly that -- so it would hang with the timer armed.
+      #
+      # The cost is one R startup per file, a couple of seconds each on this
+      # tier, which has no Julia to precompile and nothing cached in-session.
+      # Worth it for a tier that is meant to be watched while it runs.
       - name: Tests, as CRAN runs them
+        env:
+          CTSEM_FILE_TIMEOUT: '300'
         run: |
-          Rscript -e '
-            library(testthat)
-            r <- test_dir("tests/testthat", package = "ctsem", load_package = "installed",
-                          reporter = "summary", stop_on_failure = FALSE)
-            d <- as.data.frame(r)
-            cat(sprintf("\nTIER1 pass=%d fail=%d error=%d skip=%d\n",
-                sum(d$passed), sum(d$failed), sum(d$error), sum(d$skipped)))
-            # A skip is fine here; an error is not, and neither is a suite that
-            # asserted nothing -- that is what a silently broken guard looks
-            # like.
-            if (sum(d$failed) + sum(d$error) > 0) stop("test failures")
-            if (sum(d$passed) < 300) stop("suspiciously few assertions: ", sum(d$passed))'
+          cd tests/testthat
+          fail=0; slow=0; ran=0
+          printf 'TIER1 per file, %s s each at most\n' "$CTSEM_FILE_TIMEOUT"
+          for f in $(ls test*.R | sort); do
+            start=$(date +%s)
+            out=$(timeout -k 10 "$CTSEM_FILE_TIMEOUT" Rscript -e '
+              library(testthat)
+              d <- as.data.frame(test_file(commandArgs(TRUE)[1], package = "ctsem",
+                     reporter = "silent", stop_on_failure = FALSE))
+              cat(sprintf("COUNTS %d %d %d %d\n", sum(d$passed), sum(d$failed),
+                  sum(d$error), sum(d$skipped)))' "$f" 2>&1)
+            rc=$?; secs=$(( $(date +%s) - start ))
+            counts=$(printf '%s\n' "$out" | sed -n 's/^COUNTS //p' | tail -1)
+            printf '%-44s %4ss rc=%s %s\n' "$f" "$secs" "$rc" "${counts:-<no counts>}"
+            if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+              echo "::error title=Test file timed out::$f did not finish in ${CTSEM_FILE_TIMEOUT}s. It takes seconds locally, so it is blocked rather than slow."
+              slow=$((slow+1))
+            elif [ "$rc" -ne 0 ]; then
+              echo "::error title=Test file failed::$f exited $rc"
+              printf '%s\n' "$out" | tail -40
+              fail=$((fail+1))
+            else
+              set -- $counts
+              ran=$((ran + ${1:-0}))
+              if [ "${2:-0}" -ne 0 ] || [ "${3:-0}" -ne 0 ]; then
+                echo "::error title=Test failures::$f had ${2:-0} failures and ${3:-0} errors"
+                printf '%s\n' "$out" | tail -40
+                fail=$((fail+1))
+              fi
+            fi
+          done
+          printf '\nTIER1 assertions=%s files_failed=%s files_timed_out=%s\n' "$ran" "$fail" "$slow"
+          # A skip is fine here; an error is not, and neither is a suite that
+          # asserted nothing -- that is what a silently broken guard looks
+          # like.
+          [ "$fail" -eq 0 ] && [ "$slow" -eq 0 ] || { echo "::error::tier 1 had $fail failing and $slow blocked files"; exit 1; }
+          [ "$ran" -ge 300 ] || { echo "::error::suspiciously few assertions: $ran"; exit 1; }
 
       - name: Examples, with donttest live
         run: |
