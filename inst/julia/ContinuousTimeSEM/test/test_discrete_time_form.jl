@@ -63,27 +63,31 @@ end
     @test discrete_ca.dDRIFT[1, 1] * state[1] + discrete_ca.dINT[1] ≈ expected atol = 1e-12
 end
 
-# A random effect augments the state with a static coordinate. `ctJacobian()`
-# builds JAx from a copy of DRIFT padded so that a discrete-time model's
-# augmented diagonal is 1 -- a static state carries forward one whole step --
-# while the DRIFT the engine holds is padded with zeros there. So the two
-# disagree on those rows, and forming the local affine offset over them gave
-# `dINT[i] = (0 - 1) x[i] = -x[i]`, which cancelled the state the transition
-# had just carried: `x_next[i] = 1*x[i] - x[i] = 0`. Every random-effect
-# coordinate was zeroed at every step, so a subject's intercept deviation
-# reached the first transition and nothing after it -- the likelihood was
-# finite and plausible throughout.
+# A random effect augments the state with a static coordinate, and DRIFT must
+# be the true one-step map on that row: diagonal 1, because a static state
+# carries forward whole. `.ctJuliaAugmentRandomEffects()` guarantees it for a
+# discrete-time model, matching what `ctJacobian()` does to the copy of DRIFT
+# it builds JAx from. This asserts the invariant from the engine's side --
+# given that DRIFT, the offset cancels on the static row and the state
+# survives the step.
 #
-# State 2 here is such a coordinate, and state 1 reads it the way an
-# `intoverpop` CINT does: JAx[1,2] is the multiplier, CINT[1] is the value.
+# When the padding left that diagonal at 0 the offset came out as
+# `(0 - 1) x[i] = -x[i]`, cancelling the state the transition had just
+# carried: `x_next[i] = 1*x[i] - x[i] = 0`. Every random-effect coordinate was
+# zeroed at every step, so a subject's deviation reached the first transition
+# and nothing after it, with a finite likelihood throughout. On the tutorial
+# handbook's two-variable ESM model that read as an autoregression of .993
+# instead of .709 -- a near-unit root absorbing the between-person differences
+# in level the intercept could no longer carry.
+#
+# State 2 is the static coordinate, and state 1 reads it the way an
+# `intoverpop` CINT does: JAx[1,2] is the multiplier, CINT[1] the value.
 @testset "One-step form carries static augmented coordinates forward" begin
     drift = -0.6
     multiplier = 10.0
     state = [2.0, 0.3]
-    # CINT[1] = multiplier * state[2] is what the predict transform writes;
-    # JAx is its Jacobian, with 1 on the static diagonal for discrete time.
     pars = ComponentVector(
-        DRIFT = [drift 0.0; 0.0 0.0],
+        DRIFT = [drift 0.0; 0.0 1.0],
         JAx = [drift multiplier; 0.0 1.0],
         CINT = [multiplier * state[2], 0.0],
     )
@@ -107,4 +111,34 @@ end
     # Jacobian of exactly that map, or the mean and the covariance describe
     # different systems.
     @test discrete_ca.dDRIFT ≈ pars.JAx atol = 1e-12
+end
+
+# The offset must run over EVERY row, not just the diffusing ones. An isolated
+# deterministic latent -- no diffusion of its own and no coupling to anything
+# that has some -- is excluded from `.ctJuliaDerrind()`'s set, so restricting
+# the offset to that set drops its CINT entirely and the parameter stops
+# affecting the likelihood at all (gradient exactly zero). Stan applies it:
+# `state[CINTnonzero] += CINT[CINTnonzero,1]` is over every row.
+#
+# State 2 here is that latent: zero process noise, no coupling, its own drift
+# and its own intercept, and it is deliberately NOT in the dynamic set passed
+# to the engine.
+@testset "One-step form keeps CINT on a non-diffusing state" begin
+    state = [2.0, 0.3]
+    pars = ComponentVector(
+        DRIFT = [-0.6 0.0; 0.0 0.8],
+        JAx = [-0.6 0.0; 0.0 0.8],
+        CINT = [0.4, 0.7],
+    )
+    discrete_ca = ContinuousTimeSEM._make_discrete_ca_buffer(Float64, 2)
+    Qc = [0.2 0.0; 0.0 0.0]
+
+    ContinuousTimeSEM._compute_one_step_form!(discrete_ca, Qc, pars, state,
+        [1], Val(2))
+
+    # A linear model has JAx == DRIFT, so the offset is exactly CINT.
+    @test discrete_ca.dINT[1] ≈ 0.4 atol = 1e-12
+    @test discrete_ca.dINT[2] ≈ 0.7 atol = 1e-12
+    x_next = discrete_ca.dDRIFT * state .+ discrete_ca.dINT
+    @test x_next[2] ≈ 0.8 * state[2] + 0.7 atol = 1e-12
 end
