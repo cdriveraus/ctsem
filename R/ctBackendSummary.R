@@ -800,6 +800,61 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   table
 }
 
+# Blank the rows whose reported value is not a number, and say how many.
+#
+# `.ctBackendMarkNoWidth` above blanks the *width* of an estimate that has
+# none. This is the same judgement one column over: an estimate that came back
+# `Inf` or `NaN` is not an estimate, and printing it as one reads as a
+# population correlation of positive infinity.
+#
+# It happens, and for a reason worth naming rather than hiding. `popsd` and
+# `rawpopcorr` report the spread of the *transformed* parameter by quadrature,
+# so a population sd estimated large enough to push its parameter onto the flat
+# part of its own transform gives a transformed spread of numerically zero --
+# and then the correlation is 0/0. Observed on a 6-subject fit whose optimiser
+# walked one drift sd to about 13 on the raw scale.
+#
+# Returns the table with an `nonfinite` attribute carrying the count, so the
+# caller can put a sentence beside the table rather than leaving a column of
+# blanks unexplained.
+.ctBackendMarkNotFinite <- function(table) {
+  if (!is.data.frame(table) || !nrow(table)) return(table)
+  numeric_columns <- names(table)[vapply(table, is.numeric, logical(1))]
+  if (!length(numeric_columns)) return(table)
+  # `is.nan() | is.infinite()` and not `!is.na() & !is.finite()`: in R
+  # `is.na(NaN)` is TRUE, so the second form excludes the NaN it is meant to
+  # catch and only finds +-Inf. Written the first way it is also plainly what
+  # it means -- not a number, as against not available -- and a genuine NA,
+  # which is what a blanked width already is, is left alone by both.
+  notanumber <- function(x) is.nan(x) | is.infinite(x)
+  bad <- Reduce(`|`, lapply(table[numeric_columns], notanumber))
+  if (!any(bad)) return(table)
+  for (column in numeric_columns) {
+    entries <- table[[column]]
+    entries[notanumber(entries)] <- NA_real_
+    table[[column]] <- entries
+  }
+  attr(table, "nonfinite") <- sum(bad)
+  table
+}
+
+# The sentence that goes with it, or nothing when every row is a number.
+#
+# Singular and plural both spelled out. "1 correlations is not reported" is the
+# kind of thing that never gets fixed afterwards, and this note appears exactly
+# when a reader is already puzzled.
+.ctBackendNotFiniteNote <- function(table, singular, plural = paste0(singular, "s")) {
+  n <- attr(table, "nonfinite")
+  if (is.null(n) || !isTRUE(n > 0L)) return(NULL)
+  paste0(n, " ", if (n == 1L) singular else plural,
+    if (n == 1L) " is" else " are",
+    " not reported: the population spread of a parameter involved is",
+    " numerically zero on the transformed scale, so the quantity is",
+    " undefined there. That happens when a population sd has been estimated",
+    " large enough to push its parameter onto the flat part of its own",
+    " transform. See fit$identifiability.")
+}
+
 # Gauss-Hermite nodes and weights for a standard normal, by Golub-Welsch on the
 # probabilists' Hermite recurrence. Used to integrate a parameter's transform
 # over its population distribution (see .ctBackendRandomEffectSummary), where a
@@ -1527,8 +1582,12 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
       if (!is.null(lv$rawpopcorr)) {
         section <- .ctBackendSampleSummary(lv$rawpopcorr, digits = digits,
           chains = chains)
-        out[[paste0("rawpopcorr.", lv$level)]] <- .ctBackendMarkNoWidth(section,
+        section <- .ctBackendMarkNoWidth(section,
           .ctBackendNoWidthRows(nowidth, rownames(section), "rawcor_", lv$level))
+        section <- .ctBackendMarkNotFinite(section)
+        out[[paste0("rawpopcorr.", lv$level)]] <- section
+        note <- .ctBackendNotFiniteNote(section, "correlation")
+        if (!is.null(note)) out[[paste0("rawpopcorr.", lv$level, "Note")]] <- note
       }
     }
   } else if (!is.null(constrained$rawpopcorr)) {
@@ -1536,8 +1595,11 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
       digits = digits, z = nrow(samples) > 1L, chains = chains)
     out$rawpopcorr <- .ctBackendMarkNoWidth(out$rawpopcorr,
       .ctBackendNoWidthRows(nowidth, rownames(out$rawpopcorr), "rawcor_"))
-    out$rawpopcorrNote <-
-      "These reflect correlations between the raw / unconstrained parameters."
+    out$rawpopcorr <- .ctBackendMarkNotFinite(out$rawpopcorr)
+    out$rawpopcorrNote <- paste(c(
+      "These reflect correlations between the raw / unconstrained parameters.",
+      .ctBackendNotFiniteNote(out$rawpopcorr, "correlation")),
+      collapse = " ")
   }
 
   # A `poprank` fit's regression coefficients are the mechanism, not the
@@ -1619,12 +1681,18 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
       chains = chains)
     out$popsd <- .ctBackendMarkNoWidth(out$popsd,
       .ctBackendNoWidthRows(nowidth, rownames(out$popsd), "popsd_"))
+    out$popsd <- .ctBackendMarkNotFinite(out$popsd)
   }
   # Said here because this is the table it qualifies: some of these spreads
   # were estimated and some follow from the dimension structure, and a reader
-  # cannot tell which from the numbers.
+  # cannot tell which from the numbers. The non-finite sentence joins it rather
+  # than replacing it -- both can be true of one table.
   popsdnote <- .ctBackendPopRegressionNote(.ctBackendSpec(object))
-  if (!is.null(popsdnote) && !is.null(out$popsd)) out$popsdNote <- popsdnote
+  popsdnote <- c(popsdnote,
+    .ctBackendNotFiniteNote(out$popsd, "standard deviation"))
+  if (length(popsdnote) && !is.null(out$popsd)) {
+    out$popsdNote <- paste(popsdnote, collapse = " ")
+  }
 
   fixed <- cells[!cells$randomeffect, , drop = FALSE]
   # A `poprank` fit's coefficients are free parameters, so without this they

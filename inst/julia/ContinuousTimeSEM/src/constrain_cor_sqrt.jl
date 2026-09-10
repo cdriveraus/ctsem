@@ -153,16 +153,14 @@ end
 """
     _effective_covmatcode(choleskymats)
 
-The construction actually used, which is the argument unless
-`_CTSEM_COV_EXPM[]` overrides it.
+The construction code as an `Int`.
 
-One function so that the forward pass, the reverse pass and the cache key
-cannot disagree about which construction is in force. Each read the flag
-separately before, and a cache key that disagrees with the forward pass is a
-wrong answer with no symptom.
+Nothing overrides the argument any more -- `_CTSEM_COV_EXPM[]` used to, and
+removing it is why this is now only a conversion. It stays as a function
+because the forward pass, the reverse pass and the cache key must agree about
+which construction is in force, and one place to look is how that stays true.
 """
-@inline _effective_covmatcode(choleskymats) =
-    _CTSEM_COV_EXPM[] ? 2 : Int(choleskymats)
+@inline _effective_covmatcode(choleskymats) = Int(choleskymats)
 
 function _sdcovsqrt2cov_uncached!(buffer, mat, choleskymats, dim::Val{d}) where {d}
     # 2 is covmattransform='z', 1 is 'cholesky', 0 and -1 the correlation

@@ -141,6 +141,66 @@ test_that("every covmattransform means the same thing on both backends", {
   }
 })
 
+# summary() printed `+Inf` and `NaN` in the rawpopcorr mean column on a
+# degenerate fit. `popsd` and `rawpopcorr` report the spread of the
+# *transformed* parameter by quadrature, so a population sd estimated large
+# enough to push its parameter onto the flat part of its own transform gives a
+# transformed spread of numerically zero -- and then the correlation is 0/0.
+# Observed on a 6-subject, 5-random-effect fit whose optimiser walked one drift
+# sd to about 13 on the raw scale.
+#
+# An estimate of positive infinity is worse than a blank, because a blank with
+# a sentence beside it sends the reader to fit$identifiability and an Inf sends
+# them nowhere. `.ctBackendMarkNoWidth` already makes the same judgement one
+# column over, for a parameter whose width the curvature cannot supply.
+#
+# Unit and julia-free: arranging a fit that lands somewhere degenerate is
+# neither cheap nor reliable, and the decision is what matters.
+test_that("a reported value that is not a number is blanked and explained", {
+  ordinary <- data.frame(mean = c(0.4, -0.2), sd = c(0.1, 0.2),
+    `2.5%` = c(0.2, -0.6), `97.5%` = c(0.6, 0.2), check.names = FALSE,
+    row.names = c("rawcor_a__b", "rawcor_c__b"))
+
+  # Untouched, and no note: every entry is a number.
+  clean <- ctsem:::.ctBackendMarkNotFinite(ordinary)
+  expect_equal(clean, ordinary, ignore_attr = TRUE)
+  expect_null(attr(clean, "nonfinite"))
+  expect_null(ctsem:::.ctBackendNotFiniteNote(clean, "correlation"))
+
+  # Inf and NaN both go, in every numeric column of the affected row, and NA
+  # that was already there is left as it was -- a blanked width is not a
+  # non-finite value and must not be counted as one.
+  degenerate <- ordinary
+  degenerate$mean <- c(Inf, -0.2)
+  degenerate$sd <- c(NA_real_, NaN)
+  marked <- ctsem:::.ctBackendMarkNotFinite(degenerate)
+  expect_true(is.na(marked$mean[1]))
+  expect_false(is.nan(marked$sd[2]))
+  expect_true(is.na(marked$sd[2]))
+  # Both rows carried a non-finite entry, so both are counted.
+  expect_equal(attr(marked, "nonfinite"), 2L)
+  # And the untouched row's own numbers survive.
+  expect_equal(marked$mean[2], -0.2)
+
+  note <- ctsem:::.ctBackendNotFiniteNote(marked, "correlation")
+  expect_true(is.character(note))
+  expect_match(note, "^2 correlations are not reported")
+  expect_match(note, "fit$identifiability", fixed = TRUE)
+  # Singular agreement, since a one-row note reading "1 correlations are" is
+  # the kind of thing nobody fixes later.
+  one <- ctsem:::.ctBackendMarkNotFinite(
+    data.frame(mean = c(Inf, 0.3), row.names = c("rawcor_a__b", "rawcor_c__b")))
+  expect_equal(attr(one, "nonfinite"), 1L)
+  expect_match(ctsem:::.ctBackendNotFiniteNote(one, "correlation"),
+    "^1 correlation is not reported")
+
+  # A table with no numeric column at all, and an empty one: both return
+  # unchanged rather than erroring, since this runs on every summary.
+  expect_silent(ctsem:::.ctBackendMarkNotFinite(
+    data.frame(label = "a", stringsAsFactors = FALSE)))
+  expect_silent(ctsem:::.ctBackendMarkNotFinite(ordinary[0, , drop = FALSE]))
+})
+
 test_that("ctTIpredEffects reports a julia fit's own TI predictor effect (parmatrices=TRUE)", {
   skip_without_julia()
   # .summary_model() gives 'group' (TIpred 1) an effect on B1 only, and B1 is

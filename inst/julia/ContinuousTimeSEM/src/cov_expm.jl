@@ -1,6 +1,7 @@
 ## An alternative covariance construction: Sigma = D * normalise(exp(A)) * D.
 ##
-## Selected at runtime by `ctsem_cov_expm!(true)` so both routes can be compared
+## Selected by `choleskymats == 2` -- covmattransform='z' -- so both routes can
+## be compared
 ## in one build with nothing else differing. The default is off, and with it off
 ## `sdcovsqrt2cov!` reproduces `constraincorsqrt1` to 1e-16.
 ##
@@ -49,24 +50,6 @@
 ## boxed `Any` access, which alone put a real gradient at 2.85x rather than
 ## 1.18x.
 
-const _CTSEM_COV_EXPM = Ref(false)
-
-"""
-    ctsem_cov_expm!(on::Bool)
-
-Route `sdcovsqrt2cov!` and its pullback through the matrix-exponential
-construction instead of `constraincorsqrt1`. Returns the previous setting.
-"""
-function ctsem_cov_expm!(on::Bool)
-    prev = _CTSEM_COV_EXPM[]
-    _CTSEM_COV_EXPM[] = on
-    return prev
-end
-
-# Bang-free aliases: JuliaConnectoR addresses module members by name, and a
-# trailing `!` is awkward to reach from R.
-ctsem_cov_expm(on::Bool) = ctsem_cov_expm!(on)
-ctsem_cov_expm() = _CTSEM_COV_EXPM[]
 
 # Instrumentation for this route specifically. `_CTSEM_OPCOUNT.exp` does not
 # serve: it is incremented by `_ctsem_expm`, the wrapper the discretisation
