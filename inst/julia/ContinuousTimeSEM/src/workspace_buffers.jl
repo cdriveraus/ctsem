@@ -124,6 +124,13 @@ struct ContinuousEKFWorkspace{T, N, M, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF
     # evaluated matrix ComponentVector and has nowhere for model-level metadata.
     # 0 is the unconstrained correlation square root, 2 is covmattransform='z'.
     covmatcode::Int
+    # Which augmented states the population covariance accounts for, and where
+    # that matrix sits in the flat parameter vector. Copied from the
+    # `EKFParameters` for the same reason `covmatcode` is. Empty and `0:-1`
+    # when the model has no separate population covariance, which is the
+    # signal the initialisation reads to skip the whole thing.
+    population_indices::Vector{Int}
+    population_range::UnitRange{Int}
 end
 
 """
@@ -227,5 +234,7 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
         censormin,
         censormax,
         sp.covmatcode,
+        sp.population_indices,
+        sp.population_range,
     )
 end

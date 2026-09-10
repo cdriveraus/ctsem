@@ -569,8 +569,10 @@ end
     base[2, 1] = values[spec.levels[1].cor_index[1]]
     corsqrt = ContinuousTimeSEM.constraincorsqrt1(base)
     correlation = corsqrt * corsqrt'
-    scaled = scales .+ 1e-8
-    expected = (scaled .* correlation) .* scaled'
+    # No second floor: `scales` already carries the 1e-10 its own transform
+    # applies, and `_laplace_popchol` no longer adds 1e-8 on top of it. One
+    # floor, in the diagonal element's transform, matching the stan path.
+    expected = (scales .* correlation) .* scales'
     @test isapprox(L * L', expected; rtol=1e-12)
 
     covariance = ctsem_laplace_popcov(laplace, values)

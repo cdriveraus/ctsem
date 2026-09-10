@@ -84,6 +84,21 @@ struct EKFParameters{RT,PT,UT,TT,AX,FV}
     # correlation square root, 2 for covmattransform='z'. Declared last and
     # supplied last, for the reason the `manifesttype` comment above gives.
     covmatcode::Int
+    # Which augmented states the population covariance occupies, in the order
+    # of the RAWPOPVAR matrix rows: `population_indices[j]` is the state that
+    # population row `j` describes. Those indices are not disjoint from the
+    # model own latents -- an individually varying T0MEANS gets no carrier
+    # state, so its own latent state is what its population row refers to.
+    #
+    # Empty means the model has no separate population covariance and T0VAR is
+    # the whole of the initial covariance, which is every model that does not
+    # use intoverpop.
+    population_indices::Vector{Int}
+    # Where that matrix sits in the flat parameter vector, as first and last
+    # positions. A name lookup would not do: `pars` is a ComponentVector whose
+    # axis is a type parameter, so `pars.RAWPOPVAR` has to compile for every
+    # model, and for a model without the block it cannot. `0:-1` when absent.
+    population_range::UnitRange{Int}
 
     # The constructor ensures that the provided vectors are of the correct types and converts them if necessary.
     function EKFParameters(
@@ -110,6 +125,8 @@ struct EKFParameters{RT,PT,UT,TT,AX,FV}
         censormin=Float64[],
         censormax=Float64[],
         covmatcode::Int=0,
+        population_indices=Int[],
+        population_range::UnitRange{Int}=0:-1,
     )
         regular_transforms_tuple = Tuple(regular_transforms)
         predict_transforms_tuple = Tuple(predict_transforms)
@@ -149,6 +166,8 @@ struct EKFParameters{RT,PT,UT,TT,AX,FV}
             Vector{Float64}(censormin),
             Vector{Float64}(censormax),
             covmatcode,
+            Vector{Int}(population_indices),
+            population_range,
         )
     end
 end

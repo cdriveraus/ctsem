@@ -140,6 +140,10 @@ end
 """The `t = 1` prior: state from T0MEANS, covariance from T0VAR."""
 mutable struct CTSEMInitRecord{T}
     T0VAR::Matrix{T}
+    # The raw population covariance matrix, at the point the forward pass
+    # constructed it. `0` by `0` for a model whose population covariance is not
+    # a matrix of its own, which is every model that does not use intoverpop.
+    POPRAW::Matrix{T}
 end
 
 """
@@ -264,14 +268,18 @@ function _record_subject_values!(tape::CTSEMAdjointTape, subject_values)
     return nothing
 end
 
-function _record_init!(tape::CTSEMAdjointTape{T}, pars, n::Int) where {T}
+function _record_init!(tape::CTSEMAdjointTape{T}, pars, n::Int,
+        popraw=nothing) where {T}
     index = (tape.ninits += 1)
     source = view(pars.T0VAR, 1:n, 1:n)
+    popsource = popraw === nothing ? view(zeros(T, 0, 0), 1:0, 1:0) : popraw
     if index <= length(tape.inits)
         record = tape.inits[index]
         record.T0VAR = _tape_fill!(record.T0VAR, source)
+        record.POPRAW = _tape_fill!(record.POPRAW, popsource)
     else
-        push!(tape.inits, CTSEMInitRecord{T}(Matrix{T}(source)))
+        push!(tape.inits, CTSEMInitRecord{T}(Matrix{T}(source),
+            Matrix{T}(popsource)))
     end
     _tape_push!(tape, :init, index)
     return nothing
@@ -989,6 +997,39 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
                 θ̄ca.T0MEANS[i] += x̄[i]
             end
             fill!(x̄, zero(T))
+            # The population block first, while P̄ still holds its
+            # cotangent, then mask those rows and columns out so the T0VAR
+            # pullback sees only what survived the overwrite. See the note on
+            # `_apply_population_block!` in kalman_filters.jl for the forward
+            # order this mirrors.
+            popidx = aws.sp.population_indices
+            if !isempty(popidx)
+                k = length(popidx)
+                popbar = zeros(T, k, k)
+                @inbounds for b in 1:k, a in 1:k
+                    popbar[a, b] = P̄[popidx[a], popidx[b]]
+                end
+                popraw_bar = zeros(T, k, k)
+                _sdcovsqrt2cov_pullback!(popraw_bar, tape.inits[index].POPRAW,
+                    _symmetrized(popbar), k;
+                    scratch=aws.covsqrt_scratch, covmatcode=aws.sp.covmatcode)
+                # Written through the flat cotangent by range rather than by
+                # name: `θ̄ca.RAWPOPVAR` would have to compile for models
+                # whose axis has no such block, and cannot.
+                rng = aws.sp.population_range
+                popslot = reshape(view(θ̄, rng), k, k)
+                @inbounds for b in 1:k, a in 1:k
+                    popslot[a, b] += popraw_bar[a, b]
+                end
+                @inbounds for sidx in popidx
+                    for j in 1:n
+                        P̄[sidx, j] = zero(T)
+                    end
+                    for i in 1:n
+                        P̄[i, sidx] = zero(T)
+                    end
+                end
+            end
             t0var_bar = zeros(T, n, n)
             _sdcovsqrt2cov_pullback!(t0var_bar, tape.inits[index].T0VAR, _symmetrized(P̄), n;
                 scratch=aws.covsqrt_scratch, covmatcode=aws.sp.covmatcode)

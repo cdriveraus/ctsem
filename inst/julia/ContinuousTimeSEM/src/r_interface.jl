@@ -373,7 +373,7 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
     ti_parameter=Int[], ti_predictor=Int[], ti_coefficient=Int[],
     diffusion_state_indices=Int[], continuous_time::Bool=true,
     manifesttype=Int[], ncategories=Int[], censormin=Float64[],
-    censormax=Float64[], covmatcode::Int=0)
+    censormax=Float64[], covmatcode::Int=0, population_indices=Int[])
 
     n = length(matrix)
     length(row) == n && length(col) == n ||
@@ -452,10 +452,28 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
     fixed_positions = getdata(values) .|> !isnan
     fixed_values = values[fixed_positions]
 
+    # The population block flat range, laid out exactly as retrieve_axes lays
+    # the blocks out: same names in the same order, so the same cumulative sum
+    # gives the same offsets. `RAWPOPVAR` is present only when the R side
+    # emits it, which it does for a model whose population covariance is its
+    # own matrix rather than part of T0VAR.
+    population_range = let (bnames, bnrows, bncols) =
+            retrieve_names_and_dims(matrix, row, col)
+        slot = findfirst(isequal(:RAWPOPVAR), bnames)
+        if slot === nothing
+            0:-1
+        else
+            ends = cumsum([a * b for (a, b) in zip(bnrows, bncols)])
+            starts = vcat(1, ends[1:end-1] .+ 1)
+            starts[slot]:ends[slot]
+        end
+    end
+
     return EKFParameters(par_pos, tfs_pos, ptf_pos, utf_pos, ttf_pos,
         reg_tfs, predict_tfs, update_tfs, td_tfs, map_from, axis,
         fixed_positions, fixed_values, Int.(ti_parameter),
         Int.(ti_predictor), Int.(ti_coefficient), Int.(diffusion_state_indices),
         continuous_time, Int.(manifesttype), Int.(ncategories),
-        Float64.(censormin), Float64.(censormax), covmatcode)
+        Float64.(censormin), Float64.(censormax), covmatcode,
+        Int.(population_indices), population_range)
 end
