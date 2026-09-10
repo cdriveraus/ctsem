@@ -11,11 +11,16 @@
 #
 # The classification is silent, so a cell that means one of these and reads as
 # another produces a different model without complaint. The checks below are the
-# cases where that has happened, or can. They run in `ctModelConvertOMX()` after
-# the field parsing and before the cycle check, while `ctspec$param` still holds
-# the text the user wrote -- `ctModelStatesAndPARS()` rewrites latent and tdpred
-# names into `state[i]` and `tdpreds[rowi, j]` later, in ctFit(), by which point
-# the collisions are no longer visible.
+# cases where that has happened, or can.
+#
+# They run from `ctModelConvertOMX()` -- which, despite the name, is where every
+# ct/dt model is built: `ctModel()` calls it and `ctStanModel` is an alias for
+# it, so it is the one chokepoint every fittable model passes through
+# (`ctModel(type='omx')` alone skips it, and that object is not fittable until
+# converted). Placed after the field parsing and before the cycle check, while
+# `ctspec$param` still holds the text the user wrote: `ctModelStatesAndPARS()`
+# rewrites latent and tdpred names into `state[i]` and `tdpreds[rowi, j]` later,
+# in ctFit(), by which point the collisions are no longer visible.
 
 # Bare identifiers in a cell's text: names that are not a function call and not
 # an indexed reference. Those two are the only other things a name can be in a
