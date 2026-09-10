@@ -860,6 +860,137 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   T0VARredundancies(ctm)
 }
 
+# A reference inside a matrix the engine evaluates once, from the parameters
+# alone -- T0MEANS and T0VAR are the two -- rather than per row or per state.
+#
+# `PARS[k,1]` there is not dynamics, it is aliasing. Declaring a parameter in
+# PARS and naming it in several cells is how ctsem shares one parameter
+# between them, and `.ctModelIntOverPop()` rewrites every such use into a
+# reference. The value is known as soon as the parameter vector is; there is
+# nothing to evaluate per row. This used to be refused wholesale, by a check
+# that fired on any `[` in the cell and reported every case as "does not
+# support a state-dependent expression in ..." -- including, as here, cells
+# with no state in them at all. What it actually stopped was a
+# behaviour-genetics model whose T0MEANS is four cells sharing two PARS
+# parameters.
+#
+# So resolve it the way the T0MEANS *state* references above are resolved:
+# compose the transform text at model-build time, leaving an ordinary
+# transformed free parameter that needs no engine support. Refuse only what
+# genuinely cannot be resolved, and say which of the four reasons it is.
+#
+# ONE distinct reference per cell, and that is a hard constraint rather than
+# a convenience. `parameter_transforms.jl` states that each regular transform
+# reads exactly one entry of the parameter vector, `sp.parnumber[tf_idx]`,
+# and `adjoint_parameters.jl` verifies it when the adjoint workspace is
+# built. A cell over two raw parameters has no single `parnumber` to give, so
+# it is refused rather than mis-indexed -- which would be a wrong gradient
+# rather than an error.
+#
+# The referencing cell's own `transform` is dropped, not composed on top of
+# the referenced value. Measured against stan, which is the reference: for
+# `PARS = 'a'` with `T0MEANS = c('a','a')`, whose cells carry ctsem's default
+# `10 * param`, stan reports T0MEANS[1,1] equal to PARS[1,1] and not ten
+# times it. The comment above `use_mapped` says the same thing from the other
+# side -- a parameter reused in another matrix must not reapply that cell's
+# local transform.
+#
+# Circularity is caught here by `visited`, and again, earlier and with a
+# better message, by `ctModelCycleCheck.R` when the model is built. Both are
+# worth having: this one also covers a chain that only exists after
+# `.ctModelIntOverPop()` has rewritten the cells.
+.CT_JULIA_PARSREF <- "\\bPARS\\s*\\[\\s*\\d+\\s*,\\s*\\d+\\s*\\]"
+
+.ctJuliaResolveStaticRefs <- function(p, rows) {
+
+  refs_of <- function(x) unique(gsub("[[:space:]]", "",
+    regmatches(x, gregexpr(.CT_JULIA_PARSREF, x, perl = TRUE))[[1L]]))
+  index_of <- function(ref) as.integer(regmatches(ref, gregexpr("\\d+", ref))[[1L]])
+  cellname <- function(i) paste0(p$matrix[i], "[", p$row[i], ",", p$col[i], "]")
+
+  # `resolve` and `compose` are mutually recursive -- a PARS cell may itself
+  # be an expression over another PARS cell -- which works because both are
+  # looked up when they are called, not when they are defined.
+  resolve <- function(key, visited) {
+    if (key %in% visited) return(list(kind = "no", why = paste0(
+      "It is a circular reference: ", paste(c(visited, key), collapse = " -> "),
+      ". Break the chain by making one of those cells a fixed value")))
+    kc <- index_of(key)
+    row_k <- which(p$matrix == "PARS" & p$row == kc[1L] & p$col == kc[2L])
+    if (!length(row_k)) return(list(kind = "no", why = paste0(
+      "It references ", key, ", which the model does not define")))
+    row_k <- row_k[1L]
+    text_k <- p$param[row_k]
+    if (is.na(text_k)) {
+      value <- suppressWarnings(as.numeric(p$value[row_k]))
+      if (is.na(value)) return(list(kind = "no", why = paste0(
+        key, " is neither a free parameter nor a fixed value")))
+      return(list(kind = "fixed", value = value))
+    }
+    if (grepl("[", text_k, fixed = TRUE)) return(compose(text_k, c(visited, key), key))
+    parnumber <- p$parnumber[row_k]
+    if (is.na(parnumber)) return(list(kind = "no", why = paste0(
+      key, " has no parameter number, so there is nothing to reference")))
+    inner <- if (is.na(p$transform[row_k])) "param" else as.character(p$transform[row_k])
+    list(kind = "free", parnumber = parnumber,
+      text = gsub("\\bparam\\b", paste0("param[", parnumber, "]"), inner, perl = TRUE))
+  }
+
+  compose <- function(text, visited, what) {
+    if (grepl("tdpreds[", text, fixed = TRUE)) return(list(kind = "no", why = paste0(
+      what, " depends on the time-dependent predictor data, which varies by row, ",
+      "and this matrix is evaluated once from the parameters")))
+    if (grepl("\\bstate\\s*\\[", text, perl = TRUE)) return(list(kind = "no", why = paste0(
+      what, " depends on a latent state")))
+    refs <- refs_of(text)
+    if (!length(refs)) return(list(kind = "no", why = paste0(
+      what, " contains an index the julia backend does not recognise: ", text)))
+    if (length(refs) > 1L) return(list(kind = "no", why = paste0(
+      what, " combines ", length(refs), " PARS cells (", paste(refs, collapse = ", "),
+      "). The engine's transform layer reads exactly one raw parameter per cell, ",
+      "so this one cannot be resolved to a single parameter")))
+    inner <- resolve(refs[1L], visited)
+    if (identical(inner$kind, "no")) return(inner)
+    outer <- gsub(.CT_JULIA_PARSREF, "param", text, perl = TRUE)
+    if (identical(inner$kind, "fixed")) {
+      folded <- try(eval(parse(text = gsub("\\bparam\\b",
+        format(inner$value, digits = 17, scientific = FALSE), outer, perl = TRUE))),
+        silent = TRUE)
+      if (inherits(folded, "try-error") || !is.numeric(folded) || length(folded) != 1L ||
+          !is.finite(folded)) {
+        return(list(kind = "no", why = paste0(what,
+          " resolves to a fixed value the expression could not be evaluated at: ", text)))
+      }
+      return(list(kind = "fixed", value = as.numeric(folded)))
+    }
+    list(kind = "free", parnumber = inner$parnumber,
+      text = gsub("\\bparam\\b", paste0("(", inner$text, ")"), outer, perl = TRUE))
+  }
+
+  for (i in rows) {
+    r <- compose(as.character(p$param[i]), character(0), cellname(i))
+    if (identical(r$kind, "no")) {
+      stop("Julia backend cannot resolve ", cellname(i), " = ", p$param[i], ". ",
+        r$why, ".", call. = FALSE)
+    }
+    p$param[i] <- NA_character_
+    if (identical(r$kind, "fixed")) {
+      p$value[i] <- r$value
+      p$transform[i] <- NA_character_
+      p$parnumber[i] <- NA_integer_
+    } else {
+      # Already in final `param[k]` form. This row is not in `free` -- that
+      # was computed with `!grepl("[", param)` and this cell's param had one
+      # -- so the substitution loop below leaves the text alone, which is
+      # what keeps `param[3]` from becoming `param[3][3]`.
+      p$value[i] <- NA_real_
+      p$parnumber[i] <- r$parnumber
+      p$transform[i] <- r$text
+    }
+  }
+  p
+}
+
 .ctJuliaParameterTable <- function(model) {
   ctm <- .ctJuliaCanonicalModel(model)
   p <- as.data.frame(ctm$pars, stringsAsFactors = FALSE)
@@ -1103,9 +1234,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   p$tdtransform[dynamic & p$matrix %in% td_matrices] <- .ctJuliaTDExpression(p$param[dynamic & p$matrix %in% td_matrices])
   unsupported_dynamic <- dynamic & !(p$matrix %in% c(predict_matrices, update_matrices, td_matrices))
   if (any(unsupported_dynamic)) {
-    bad <- p[which(unsupported_dynamic)[1L], c("matrix", "row", "col"), drop = FALSE]
-    stop("Julia backend does not support a state-dependent expression in ",
-      bad$matrix, "[", bad$row, ",", bad$col, "].", call. = FALSE)
+    p <- .ctJuliaResolveStaticRefs(p, which(unsupported_dynamic))
   }
   p$param[dynamic] <- NA_character_
   bare <- free & is.na(p$transform)
