@@ -1,6 +1,23 @@
 using LinearAlgebra
 
 """
+    _cor_sqrt_squash(x)
+
+Map an unconstrained off-diagonal coordinate into (-1, 1).
+
+This lives in the construction rather than in the model's parameter table, so
+that one model structure works under any covariance transform: 'rawcorr' needs
+its off-diagonal bounded, 'z' reads the same cell as an unbounded Fisher z, and
+'cholesky' as a factor entry. The expression is transform 3 with multiplier 2
+and offset -1, exactly as the parameter table applied it, so the composite
+raw -> correlation is unchanged and existing 'rawcorr' fits are bit-identical.
+"""
+@inline _cor_sqrt_squash(x) = 2 / (1 + exp(-x)) - 1
+
+"""Derivative of `_cor_sqrt_squash`, as `(1 - u^2)/2` in terms of its output."""
+@inline _cor_sqrt_squash_grad(u) = (1 - u * u) / 2
+
+"""
     constraincorsqrt1(mat, epsilon=1e-5)
 
 Transform an unconstrained lower-triangular correlation square-root parameter
@@ -20,11 +37,13 @@ function constraincorsqrt1(mat::AbstractArray{T}, epsilon = 1e-5) where T
     for i in 1:d
         for j in 1:d
             if j > i
-                ss[i] += mat[j, i]^2
-                s[i] += mat[j, i]
+                v = _cor_sqrt_squash(mat[j, i])
+                ss[i] += v^2
+                s[i] += v
             elseif j < i
-                ss[i] += mat[i, j]^2
-                s[i] += mat[i, j]
+                v = _cor_sqrt_squash(mat[i, j])
+                ss[i] += v^2
+                s[i] += v
             end
         end
         s[i] += epsilon
@@ -43,9 +62,9 @@ function constraincorsqrt1(mat::AbstractArray{T}, epsilon = 1e-5) where T
         
         for j in 1:d
             if j > i
-                o[i, j] = mat[j, i] / r
+                o[i, j] = _cor_sqrt_squash(mat[j, i]) / r
             elseif j < i
-                o[i, j] = mat[i, j] / r
+                o[i, j] = _cor_sqrt_squash(mat[i, j]) / r
             end
         end
         o[i, i] = sqrt(1 - sum(o[i, :].^2) + epsilon)
@@ -165,6 +184,13 @@ The input is treated as symmetric, the off-diagonal entries are scaled row-wise,
 and the diagonal is adjusted so rows have valid correlation-factor norms.
 """
 function constraincorsqrt1_vec(sym_mat, epsilon = 1e-5)
+    # The squash applies off the diagonal only, and the row sums below subtract
+    # the diagonal's own contribution, so this copy keeps the diagonal as it was.
+    sq = _cor_sqrt_squash.(sym_mat)
+    for i in axes(sym_mat, 1)
+        sq[i, i] = sym_mat[i, i]
+    end
+    sym_mat = sq
     d = collect(diag(sym_mat))
     s = sum(sym_mat, dims=1)' .- d .+ epsilon
     ss = sum(abs2, sym_mat, dims=1)' .- d.^2 .+ epsilon
@@ -213,7 +239,7 @@ function constraincorsqrt1_vec!(buffer, sym_mat, epsilon, ::Val{d}) where {d}
         ssi = e
         for j in 1:d
             if j != i
-                v = _sym_lower_get(sym_mat, i, j)
+                v = _cor_sqrt_squash(_sym_lower_get(sym_mat, i, j))
                 si += v
                 ssi += v * v
             end
@@ -237,7 +263,7 @@ function constraincorsqrt1_vec!(buffer, sym_mat, epsilon, ::Val{d}) where {d}
             if j == i
                 buffer.out[i, j] = zero(S)
             else
-                v = _sym_lower_get(sym_mat, i, j) * inv_ri
+                v = _cor_sqrt_squash(_sym_lower_get(sym_mat, i, j)) * inv_ri
                 buffer.out[i, j] = v
                 sq += v * v
             end

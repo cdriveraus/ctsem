@@ -26,6 +26,12 @@ test_that("anomauth", {
   sm1$pars$indvarying<- FALSE
   a=Sys.time()
   # sink('bad.txt')
+  # The start is rnorm(npar, 0, .01) and nothing here fixed it, so what this
+  # block tested depended on the RNG state -- which, run inside a suite, is
+  # whatever the preceding sixty files left behind. Seeded immediately before
+  # the fit, so it does not depend on position in the session. See the
+  # oscillator block below for what that cost.
+  set.seed(1)
   sf=ctFit(ctDeintervalise(ctWideToLong(AnomAuth,Tpoints = AnomAuthmodel$Tpoints,n.manifest = 2)),
     model= sm1, optimize=TRUE,verbose=0,savescores = FALSE,cores=cores)
   # sink()
@@ -62,10 +68,6 @@ test_that("anomauth", {
 test_that("oscillator", {
 data("Oscillating")
 
-inits <- c(-39.5, -.5, .1, 1, 0, 1, 0.05, .9)
-names(inits) <- c("crosseffect","autoeffect", "diffusion",
-  "T0var11", "T0var21", "T0var22","m1", "m2")
-
 oscillatingm <- ctModel(type='omx', n.latent = 2, n.manifest = 1, Tpoints = 11, 
   MANIFESTVAR = matrix(c(0), nrow = 1, ncol = 1),
   LAMBDA = matrix(c(1, 0), nrow = 1, ncol = 2),
@@ -78,6 +80,18 @@ oscillatingm <- ctModel(type='omx', n.latent = 2, n.manifest = 1, Tpoints = 11,
   oscillatingm$DRIFT[2,1]="crosseffect|-log1p(exp(-param))-1e-5"
  sm <- ctModelConvertOMX(oscillatingm)
   sm$pars$indvarying<- FALSE
+  # Load-bearing seed. This surface has a second local optimum, and the
+  # optimiser converges into it properly rather than stalling: -2LL -3103.34
+  # against the -3462.15 that matches the reference, with a gradient norm of
+  # 0.01 to 0.12 either way. From an unseeded start it landed there 3 times in
+  # 8 (measured, this machine), so the block passed or failed on the RNG state
+  # it inherited -- it failed inside a full-suite run and passed standalone,
+  # three times in one session, and after its eight preceding files. The claim
+  # being tested is that the optimum equals what OpenMx produced, not that a
+  # blind start finds it, so fixing the start is the right scope. Seeds 1, 2
+  # and 3 all reach the reference, and the fit is bit-identical across prior
+  # stream positions.
+  set.seed(1)
   sf=ctFit(ctDeintervalise(ctWideToLong(Oscillating,Tpoints = oscillatingm$Tpoints,n.manifest = 1)),
     cores=2,verbose=0,
     # optimcontrol=list(carefulfit=T),

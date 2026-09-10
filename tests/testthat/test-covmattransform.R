@@ -99,4 +99,53 @@ if (requireNamespace('testthat', quietly = TRUE)) {
     }
     expect_false(isTRUE(all.equal(got$rawcorr, got$z)))
   })
+
+  # A fit or model saved before the (-1, 1) map moved into the covariance
+  # construction still carries it in its own parameter table, so it would be
+  # applied twice: correlations come back shrunk towards zero with nothing
+  # raised. That is how it went unnoticed on a shipped fixture here, so the
+  # detection is asserted rather than trusted.
+  test_that('a covariance off-diagonal carrying the old transform is reported', {
+    skip_on_cran()
+    m <- covmat_model('rawcorr')
+    off <- m$pars$matrix %in% c('DIFFUSION', 'MANIFESTVAR', 'T0VAR') &
+      m$pars$row != m$pars$col & is.na(m$pars$value)
+    expect_true(sum(off) > 0)
+
+    # A model built by this version says nothing.
+    reset <- function() rm(list = ls(envir = ctsem:::.ct_legacy_covtransform),
+      envir = ctsem:::.ct_legacy_covtransform)
+    reset()
+    expect_silent(ctsem:::.ctCheckLegacyCovTransformModel(m$pars))
+
+    # One carrying the old expression is reported, once.
+    legacy <- m
+    legacy$pars$transform[off] <- ctsem:::.CT_LEGACY_COR_TRANSFORM
+    reset()
+    expect_warning(ctsem:::.ctCheckLegacyCovTransformModel(legacy$pars),
+      'applied twice')
+    expect_silent(ctsem:::.ctCheckLegacyCovTransformModel(legacy$pars))
+
+    # A hand-written transform on the same cell is not second-guessed.
+    custom <- m
+    custom$pars$transform[off] <- 'tanh(param)'
+    reset()
+    expect_silent(ctsem:::.ctCheckLegacyCovTransformModel(custom$pars))
+
+    # And the stored-standata shape, which is where a saved stan fit carries
+    # it: transform code 3 on an off-diagonal of matrix 4, 5 or 8. Columns are
+    # positional -- 1 row, 2 col, 4 transform, 7 matrix.
+    p <- suppressWarnings(suppressMessages(ctFit(datalong = covmat_data(),
+      model = m, fit = FALSE, cores = 1L, verbose = 0L)))
+    sdat <- p$standata
+    ms <- sdat$matsetup
+    soff <- ms[, 7] %in% c(4, 5, 8) & ms[, 1] != ms[, 2] & ms[, 3] > 0
+    expect_true(sum(soff) > 0)
+    reset()
+    expect_silent(ctsem:::.ctCheckLegacyCovTransform(sdat))
+    sdat$matsetup[soff, 4] <- 3L
+    reset()
+    expect_warning(ctsem:::.ctCheckLegacyCovTransform(sdat), 'applied twice')
+    reset()
+  })
 }

@@ -322,10 +322,14 @@ function _ctsem_corrsqrt_row!(out::AbstractVector{T}, v::AbstractVector{T}, i::I
     e = convert(T, epsilon)
     si = e
     ssi = e
+    # `v` is the raw row, as the buffered primal takes the raw matrix: the
+    # (-1, 1) squash belongs to this construction, so it is applied here and no
+    # caller has to know about it.
     @inbounds for j in 1:d
         j == i && continue
-        si += v[j]
-        ssi += v[j] * v[j]
+        u = _cor_sqrt_squash(v[j])
+        si += u
+        ssi += u * u
     end
     abs_si = abs(si)
     tmp = sqrt(log1p(exp(2 * (abs_si - si - one(T)) - 4)))
@@ -335,7 +339,7 @@ function _ctsem_corrsqrt_row!(out::AbstractVector{T}, v::AbstractVector{T}, i::I
         if j == i
             out[j] = zero(T)
         else
-            o = v[j] / r
+            o = _cor_sqrt_squash(v[j]) / r
             out[j] = o
             sq += o * o
         end
@@ -455,6 +459,8 @@ function _sdcovsqrt2cov_pullback!(mat_bar::AbstractMatrix, mat::AbstractMatrix,
         _ctsem_symmetric_row!(v, mat, i, d)
         _ctsem_corrsqrt_row_pullback!(vbar, v, Obar_row, i, epsilon)
         # Scatter the symmetric row cotangent back into the lower triangle.
+        # `vbar` is already with respect to the raw coordinate: the row
+        # pullback pushes it through the squash, as the row primal applies it.
         for j in 1:d
             j == i && continue
             if j < i
@@ -513,10 +519,17 @@ function _ctsem_corrsqrt_row_pullback!(vbar::AbstractVector{T}, v::AbstractVecto
     e = convert(T, epsilon)
     s = e
     ss = e
+    # `v` is the raw row, matching `_ctsem_corrsqrt_row!` and the buffered
+    # primal. Every read below goes through the squash, and the cotangent is
+    # pushed back through its derivative at the end, so this returns the
+    # gradient with respect to the raw coordinate and callers never see the
+    # squash. Getting that boundary wrong once left the diagonal gradients
+    # exact and the off-diagonal ones out by a factor of about three.
     @inbounds for j in 1:d
         j == i && continue
-        s += v[j]
-        ss += v[j] * v[j]
+        u = _cor_sqrt_squash(v[j])
+        s += u
+        ss += u * u
     end
 
     # r and its two partials, from a single dual evaluation.
@@ -534,7 +547,7 @@ function _ctsem_corrsqrt_row_pullback!(vbar::AbstractVector{T}, v::AbstractVecto
     sq = zero(T)
     @inbounds for j in 1:d
         j == i && continue
-        o = v[j] * inv_r
+        o = _cor_sqrt_squash(v[j]) * inv_r
         sq += o * o
     end
     diagonal = sqrt(one(T) - sq + e)
@@ -546,7 +559,7 @@ function _ctsem_corrsqrt_row_pullback!(vbar::AbstractVector{T}, v::AbstractVecto
         if j == i
             vbar[j] = zero(T)
         else
-            o = v[j] * inv_r
+            o = _cor_sqrt_squash(v[j]) * inv_r
             o_bar = obar[j] + 2 * sq_bar * o
             vbar[j] = o_bar * inv_r
             r_bar -= o_bar * o * inv_r
@@ -558,7 +571,9 @@ function _ctsem_corrsqrt_row_pullback!(vbar::AbstractVector{T}, v::AbstractVecto
     ss_bar = r_bar * dr_dss
     @inbounds for j in 1:d
         j == i && continue
-        vbar[j] += s_bar + 2 * ss_bar * v[j]
+        vbar[j] += s_bar + 2 * ss_bar * _cor_sqrt_squash(v[j])
+        # Through the squash, so `vbar` is with respect to the raw coordinate.
+        vbar[j] *= _cor_sqrt_squash_grad(_cor_sqrt_squash(v[j]))
     end
     return vbar
 end

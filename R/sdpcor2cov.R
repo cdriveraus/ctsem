@@ -39,9 +39,28 @@ sdpcor2cov <- function(mat, coronly=FALSE, cholesky=FALSE){
 }
 
 
+# The (-1, 1) squash lives here rather than in the parameter table, so that one
+# model structure works under any of the covariance transforms: 'rawcorr' needs
+# its off-diagonal coordinate bounded, 'z' reads the same cell as an unbounded
+# Fisher z, and 'cholesky' as a factor entry. Putting the bound in the
+# construction that needs it leaves the off-diagonal parameter free on the real
+# line for all three.
+#
+# The expression is transform 3 with multiplier 2 and offset -1, exactly as the
+# parameter table applied it, so the composite raw -> correlation is unchanged
+# and every existing 'rawcorr' fit is bit-identical.
+.ctCorSqrtSquash <- function(x) 2 / (1 + exp(-x)) - 1
+
 constraincorsqrt1 <- function(mat) {
   d <- nrow(mat)
   if (ncol(mat) != d) stop("`mat` must be square.")
+
+  # Squash the off-diagonals on the way in; the diagonal is a standard
+  # deviation and this map never reads it.
+  if (d > 1) {
+    off <- which(row(mat) != col(mat))
+    mat[off] <- .ctCorSqrtSquash(mat[off])
+  }
   
   # output matrix
   o <- matrix(0, d, d)

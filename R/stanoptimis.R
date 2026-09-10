@@ -86,7 +86,73 @@ ctAddSamples <- ctFitAddSamples
 #'
 #' @examples
 #' sf <- stan_reinitsf(ctstantestfit$stanmodel,ctstantestfit$standata)
+# Whether the legacy covariance transform has already been reported this
+# session, keyed by which matrices carried it.
+.ct_legacy_covtransform <- new.env(parent = emptyenv())
+
+# Does this `standata` predate the squash moving into `constraincorsqrt1`?
+#
+# The (-1, 1) map on a covariance off-diagonal used to be transform code 3 in
+# the parameter table; it is now applied inside the construction, and the
+# parameter is a free real. A model built by this version therefore never
+# carries code 3 there -- but a fit saved by an earlier one does, in its own
+# `standata`, and reusing that fit squashes twice. The correlations come back
+# shrunk towards zero and nothing errors, which is exactly how it went
+# unnoticed here.
+#
+# Only the model matrices are affected. The population covariance built from
+# RAWPOPVAR applied its squash in the stan program rather than in a stored
+# transform, so it moved with the code and an old fit reads the same either
+# way.
+#
+# `matsetup` is addressed positionally everywhere it is read (see CLAUDE.md):
+# column 1 row, 2 col, 4 transform, 7 matrix, with DIFFUSION 4, MANIFESTVAR 5
+# and T0VAR 8 from ctModelWriter's `base` vector.
+# The same thing on a stored model rather than a stored `standata`.
+#
+# `pars$transform` is text, so there is no code to test: match the expression
+# the old default produced. Only that exact string, because a hand-written
+# transform on a covariance off-diagonal is a legitimate thing to write and
+# must not be second-guessed.
+.CT_LEGACY_COR_TRANSFORM <- '2/(1 + exp(-param)) - 1'
+
+.ctCheckLegacyCovTransformModel <- function(pars){
+  if(is.null(pars) || is.null(pars$transform) || is.null(pars$matrix)) {
+    return(invisible(NULL))
+  }
+  hit <- pars$matrix %in% c('DIFFUSION','MANIFESTVAR','T0VAR') &
+    pars$row != pars$col &
+    !is.na(pars$transform) &
+    gsub(' ', '', pars$transform) == gsub(' ', '', .CT_LEGACY_COR_TRANSFORM)
+  if(!any(hit)) return(invisible(NULL))
+  .ctWarnLegacyCovTransform(paste0(sort(unique(pars$matrix[hit])),
+    collapse = ', '))
+}
+
+.ctWarnLegacyCovTransform <- function(which_mats){
+  if(!is.null(.ct_legacy_covtransform[[which_mats]])) return(invisible(NULL))
+  .ct_legacy_covtransform[[which_mats]] <- TRUE
+  warning('Covariance off-diagonals in ', which_mats, ' carry the transform ',
+    'this version applies inside the covariance construction, so it is ',
+    'applied twice and correlations are shrunk towards zero. This is a fit ',
+    'or model saved by an earlier ctsem: refit it.', call. = FALSE)
+  invisible(NULL)
+}
+
+.ctCheckLegacyCovTransform <- function(data){
+  ms <- data$matsetup
+  if(is.null(ms) || !is.matrix(ms) || ncol(ms) < 7 || !nrow(ms)) {
+    return(invisible(NULL))
+  }
+  mats <- c(DIFFUSION = 4, MANIFESTVAR = 5, T0VAR = 8)
+  hit <- ms[, 7] %in% mats & ms[, 1] != ms[, 2] & ms[, 4] == 3
+  if(!any(hit)) return(invisible(NULL))
+  .ctWarnLegacyCovTransform(paste0(
+    sort(unique(names(mats)[match(ms[hit, 7], mats)])), collapse = ', '))
+}
+
 stan_reinitsf <- function(model, data,fast=FALSE){
+  .ctCheckLegacyCovTransform(data)
   if(fast) sf <- new(model@mk_cppmodule(model),data,0L,getcxxfun(model@dso))
   
   if(!fast) suppressMessages(suppressWarnings(suppressOutput(sf<- 
@@ -591,14 +657,55 @@ tostanarray <- function(flesh, skeleton){
 # be silenced, and the workers have it before any work is dispatched either way.
 # `options(ctsem.cluster.outfile = "")` restores the old behaviour for anyone
 # debugging a worker, which is the only thing it was useful for.
+# Do the workers and this session hold the same ctsem?
+#
+# `rscript_libs = .libPaths()` at each cluster creation stops a worker
+# preferring its own library, but it cannot help when the caller's ctsem is not
+# on `.libPaths()` at all -- which is exactly the case under
+# `devtools::load_all()`. The worker's `library(ctsem)` then finds the
+# installed package instead, and the mismatch is silent: the master builds
+# `standata` from one build's parameter table while the workers evaluate the
+# density with another build's compiled model. The fit converges, to the wrong
+# optimum, with estimates that look entirely sensible -- moving a covariance
+# construction between the two builds cost a day here before the cause was
+# attributed. `nchar()` of the model text is a cheap stand-in for "which build
+# was this compiled from": it comes from the same install as the object code.
+.ctBuildFingerprint <- function() {
+  paste0(as.character(utils::packageVersion('ctsem')), '/',
+    nchar(stanmodels$ctsm@model_code)[1])
+}
+
+.ctClusterCheckBuild <- function(cl) {
+  master <- try(.ctBuildFingerprint(), silent = TRUE)
+  # Spelled out rather than calling .ctBuildFingerprint() on the worker: the
+  # build most likely to differ is an older one that does not have it, and a
+  # worker erroring on a missing name is indistinguishable here from a worker
+  # that matches. `stanmodels` has been there since the package used
+  # rstantools.
+  workers <- try(unlist(parallel::clusterEvalQ(cl, paste0(
+    as.character(utils::packageVersion('ctsem')), '/',
+    nchar(ctsem:::stanmodels$ctsm@model_code)[1]))), silent = TRUE)
+  if(inherits(master, 'try-error') || inherits(workers, 'try-error') ||
+      !length(workers)) return(invisible(NULL))
+  bad <- unique(workers[workers != master])
+  if(length(bad)) warning('Parallel workers loaded a different ctsem build (',
+    paste0(bad, collapse = ', '), ' vs ', master,
+    '). Estimates will not match cores = 1. Install this tree to a library ',
+    'and use that, or fit with cores = 1.', call. = FALSE)
+  invisible(NULL)
+}
+
 makeClusterID <- function(cores = parallel::detectCores()) {
   outfile <- getOption("ctsem.cluster.outfile", NULL)
   arguments <- list(cores, useXDR = FALSE,
     # Workers otherwise search their own default .libPaths(), not the
-    # caller's -- so `library(ctsem)` two lines down can silently load a
-    # different install than the one running this code (e.g. a stale
-    # globally-installed package while a development tree is under test).
-    # Passing the caller's own search path down closes that gap; see
+    # caller's -- so `library(ctsem)` below can silently load a different
+    # install than the one running this code (e.g. a stale globally-installed
+    # package while a development tree is under test). Passing the caller's
+    # own search path down narrows that gap but does not close it: a tree
+    # loaded with devtools::load_all() is on no library path at all, so the
+    # workers still fall back to the installed package. That is what
+    # .ctClusterCheckBuild() below is for. See
     # parallelly::makeClusterPSOCK's rscript_libs documentation.
     rscript_libs = .libPaths(),
     default_packages = c("datasets", "utils", "grDevices", "graphics",
@@ -607,6 +714,7 @@ makeClusterID <- function(cores = parallel::detectCores()) {
   cl <- do.call(parallelly::makeClusterPSOCK, arguments)
   invisible(parallel::clusterEvalQ(cl,
     suppressWarnings(suppressPackageStartupMessages(library(ctsem)))))
+  .ctClusterCheckBuild(cl)
   duplicateNodeIDs <- TRUE
   while(duplicateNodeIDs){ 
     nodeids=unlist(parallel::clusterEvalQ(cl,{
