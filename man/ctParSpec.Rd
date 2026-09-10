@@ -20,7 +20,11 @@ depends on the cell -- a variance, a drift diagonal and a mean all differ.}
 meaningful when \code{indvarying} is TRUE.}
 
 \item{tipreds}{Time-independent predictors acting on this parameter: a
-character vector of names for effects to estimate.}
+character vector of names for effects to estimate, e.g. \code{'age'} or
+\code{c('age', 'sex')}. Naming any predictor switches the rest off for
+this cell, so the list is the whole set of effects on it. A name must be
+one of the model's \code{TIpredNames}; anything else is an error when the
+model is built.}
 }
 \value{
 A single character string, suitable for a model matrix cell.
@@ -36,11 +40,11 @@ The output is the same string the \code{|} syntax produces, so this
   "unspecified".
 
   The same named fields can also be written directly into a model matrix
-  cell, in which case nothing needs to be called. A cell is read as a named
-  specification when it contains one of these argument names followed by
-  \code{=}, as a \code{|}-separated specification when it contains \code{|},
-  and as a plain parameter name otherwise. All three of these specify the
-  same parameter:
+  cell, in which case nothing needs to be called. A cell containing
+  \code{|} is read as a \code{|}-separated specification; otherwise a cell
+  with a field of the form \code{name=value} is read as a named
+  specification, and anything else as a plain parameter name. All three of
+  these specify the same parameter:
 
   \preformatted{
   MANIFESTMEANS = matrix('mm||TRUE|0.5')
@@ -51,9 +55,12 @@ The output is the same string the \code{|} syntax produces, so this
   In the named form, fields are separated by commas (commas inside brackets
   belong to the value, so \code{transform=pnorm(param, 0, 1)} is one field),
   the parameter name comes first, and several predictors are given as
-  \code{tipreds=c(age, sex)}. Detection keys on the argument names rather
-  than on a bare \code{=} because a state-dependent cell may legitimately
-  contain \code{==}, \code{>=} or \code{<=}.
+  \code{tipreds=c(age, sex)}. A field name that is not one of the above is
+  an error naming the nearest valid field, so a misspelling such as
+  \code{topreds=age} is refused rather than becoming part of a parameter
+  name. Comparisons are unaffected: a state-dependent cell may contain
+  \code{==}, \code{>=}, \code{<=} or \code{!=}, and a named argument
+  inside a call belongs to the value it appears in.
 }
 \examples{
 ctParSpec('mm', indvarying = TRUE)
