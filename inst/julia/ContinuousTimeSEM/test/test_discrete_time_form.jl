@@ -62,3 +62,49 @@ end
     @test discrete_ca.dDRIFT[1, 1] ≈ jacobian_transition atol = 1e-12
     @test discrete_ca.dDRIFT[1, 1] * state[1] + discrete_ca.dINT[1] ≈ expected atol = 1e-12
 end
+
+# A random effect augments the state with a static coordinate. `ctJacobian()`
+# builds JAx from a copy of DRIFT padded so that a discrete-time model's
+# augmented diagonal is 1 -- a static state carries forward one whole step --
+# while the DRIFT the engine holds is padded with zeros there. So the two
+# disagree on those rows, and forming the local affine offset over them gave
+# `dINT[i] = (0 - 1) x[i] = -x[i]`, which cancelled the state the transition
+# had just carried: `x_next[i] = 1*x[i] - x[i] = 0`. Every random-effect
+# coordinate was zeroed at every step, so a subject's intercept deviation
+# reached the first transition and nothing after it -- the likelihood was
+# finite and plausible throughout.
+#
+# State 2 here is such a coordinate, and state 1 reads it the way an
+# `intoverpop` CINT does: JAx[1,2] is the multiplier, CINT[1] is the value.
+@testset "One-step form carries static augmented coordinates forward" begin
+    drift = -0.6
+    multiplier = 10.0
+    state = [2.0, 0.3]
+    # CINT[1] = multiplier * state[2] is what the predict transform writes;
+    # JAx is its Jacobian, with 1 on the static diagonal for discrete time.
+    pars = ComponentVector(
+        DRIFT = [drift 0.0; 0.0 0.0],
+        JAx = [drift multiplier; 0.0 1.0],
+        CINT = [multiplier * state[2], 0.0],
+    )
+    discrete_ca = ContinuousTimeSEM._make_discrete_ca_buffer(Float64, 2)
+    Qc = [0.2 0.0; 0.0 0.0]
+
+    ContinuousTimeSEM._compute_one_step_form!(discrete_ca, Qc, pars, state,
+        [1], Val(2))
+
+    x_next = discrete_ca.dDRIFT * state .+ discrete_ca.dINT
+    # Stan's discrete-time map: the dynamic block gets DRIFT*x + CINT, the
+    # augmented coordinate is left alone (`state[1:nlatent] *= DRIFT'`).
+    @test x_next[1] ≈ drift * state[1] + multiplier * state[2] atol = 1e-12
+    @test x_next[2] ≈ state[2] atol = 1e-12
+    @test discrete_ca.dINT[2] ≈ 0.0 atol = 1e-12
+    # Only the diffusing state gets process noise.
+    @test discrete_ca.dDIFFUSION[1, 1] ≈ 0.2 atol = 1e-12
+    @test discrete_ca.dDIFFUSION[2, 2] ≈ 0.0 atol = 1e-12
+
+    # And the transition the covariance is propagated with must be the
+    # Jacobian of exactly that map, or the mean and the covariance describe
+    # different systems.
+    @test discrete_ca.dDRIFT ≈ pars.JAx atol = 1e-12
+end

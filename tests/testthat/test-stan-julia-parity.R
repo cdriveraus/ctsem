@@ -100,6 +100,70 @@ test_that("Stan and Julia agree for a linear augmented random effect", {
   expect_equal(as.numeric(julia_value$gradient), as.numeric(attributes(stan_value)$gradient), tolerance = 1e-7)
 })
 
+test_that("Stan and Julia agree for a discrete-time model with augmented random effects", {
+  skip_without_julia()
+  skip_if_not_installed("rstan")
+
+  # Every other test in this file is `type = "ct"`, and that is how a
+  # discrete-time defect survived: the engine's one-step form
+  # (`_compute_one_step_form!`) formed the local affine offset over every
+  # state instead of only the diffusing ones. In continuous time that is
+  # harmless, because DRIFT and JAx agree (both zero) on the static
+  # coordinates a random effect augments the state with. In discrete time
+  # `ctJacobian()` puts 1 on JAx's augmented diagonal -- a static state
+  # carries forward one whole step -- while the DRIFT the engine holds stays
+  # padded with zeros there, so the offset came out as `-x[i]` and cancelled
+  # the state: every random-effect coordinate was zeroed at every step, and a
+  # subject's intercept deviation applied to the first transition only.
+  #
+  # On the tutorial handbook's two-variable ESM model that moved the
+  # autoregression from .71 to .99 and the intercept from -.01 to -.55, with
+  # nothing failing: a near-unit root absorbing the individual differences in
+  # level the augmented intercept could no longer carry.
+  #
+  # T0MEANS and CINT are `indvarying` by default, so the plain specification
+  # below is the one a user writes -- 13 population means, 4 population SDs
+  # and 6 population correlations.
+  model <- suppressMessages(ctModel(
+    type = "dt", n.latent = 2, LAMBDA = diag(2),
+    DRIFT = matrix(c("d11", "d12", "d21", "d22"), 2, 2, byrow = TRUE),
+    DIFFUSION = matrix(c("diff11", 0, "diff21", "diff22"), 2, 2, byrow = TRUE),
+    MANIFESTVAR = matrix(c("merr1", 0, 0, "merr2"), 2, 2, byrow = TRUE),
+    MANIFESTMEANS = matrix(0, 2, 1),
+    CINT = matrix(c("cint1", "cint2"), 2, 1),
+    T0MEANS = matrix(c("t0m1", "t0m2"), 2, 1)))
+  set.seed(11)
+  data <- data.frame(id = rep(1:3, each = 5),
+    time = rep(c(0, .125, .25, .5, 1), 3),
+    Y1 = rnorm(15), Y2 = rnorm(15))
+  data$Y2[4] <- NA
+
+  stan_spec <- suppressMessages(ctFit(data, model, backend = "stan", fit = FALSE, priors = FALSE))
+  stan_fit <- .compiled_stan_fit(stan_spec)
+  julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
+    priors = FALSE))
+
+  # The augmentation is what this test is about, so assert it happened rather
+  # than silently checking parity on a two-state model.
+  expect_equal(julia_spec$nlatent_augmented, 4L)
+  npar <- rstan::get_num_upars(stan_fit)
+  expect_equal(npar, 23L)
+
+  set.seed(5)
+  raw <- rnorm(npar, 0, .3)
+  stan_value <- rstan::log_prob(stan_fit, upars = raw, adjust_transform = FALSE, gradient = TRUE)
+  # Both gradient methods: the reverse pass has its own copy of the one-step
+  # form (`_reverse_predict_discrete!`) and had the same defect.
+  forward <- ctJuliaEvaluate(julia_spec, raw, gradient = TRUE, gradient_method = "forward")
+  adjoint <- ctJuliaEvaluate(julia_spec, raw, gradient = TRUE, gradient_method = "adjoint")
+
+  expect_equal(as.numeric(forward$value), as.numeric(stan_value), tolerance = 1e-8)
+  expect_equal(as.numeric(forward$gradient), as.numeric(attributes(stan_value)$gradient),
+    tolerance = 1e-7)
+  expect_equal(as.numeric(adjoint$gradient), as.numeric(attributes(stan_value)$gradient),
+    tolerance = 1e-7)
+})
+
 test_that("Stan and Julia agree for a row with partial (not total) missingness", {
   skip_without_julia()
   skip_if_not_installed("rstan")
