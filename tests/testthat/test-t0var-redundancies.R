@@ -87,3 +87,86 @@ test_that("a T0VAR that stayed free still gets a per-subject T0VAR", {
   sd <- .t0varred_standata(m)
   expect_equal(sd$subindices[.t0varred_T0VAR_slot], 1L)
 })
+
+# T0cov is two covariances in one matrix, and the indices interleave.
+#
+# The population block is indexed by `intoverpopindvaryingindex`, and for an
+# individually varying T0MEANS that index is the *main latent state* -- no
+# carrier state is appended for it. So with eta1 varying and eta2 not, row 1 of
+# T0cov comes from RAWPOPVAR and row 2 from T0VAR, and a random effect on a
+# non-T0MEANS cell adds a third row from RAWPOPVAR after the latents. Getting
+# that mapping wrong reads a plausible covariance out of the wrong matrix, so
+# it is checked directly, at a fixed raw vector, with no optimiser involved.
+test_that("T0cov takes the main latents from T0VAR and the population block from RAWPOPVAR", {
+  skip_on_cran()
+  skip_if_not_installed("rstan")
+
+  model <- suppressMessages(ctModel(type = "ct", n.latent = 2, n.manifest = 2,
+    manifestNames = c("Y1", "Y2"), latentNames = c("eta1", "eta2"),
+    LAMBDA = diag(2), MANIFESTVAR = diag(.2, 2),
+    MANIFESTMEANS = matrix(0, 2, 1),
+    # eta1 varies, eta2 does not; and a non-T0MEANS effect that does get its
+    # own appended state.
+    T0MEANS = matrix(c("t0a||TRUE", 0), 2, 1),
+    CINT = matrix(c("b1||TRUE", 0), 2, 1),
+    T0VAR = matrix(c("t0v11", 0, "t0v21", "t0v22"), 2, 2, byrow = TRUE),
+    DRIFT = matrix(c("dr1", 0, 0, "dr2"), 2, 2)))
+  set.seed(4)
+  data <- data.frame(id = rep(1:8, each = 4), time = rep(0:3, 8),
+    Y1 = stats::rnorm(32), Y2 = stats::rnorm(32))
+
+  prep <- suppressMessages(suppressWarnings(
+    ctFit(data, model, fit = FALSE, cores = 1L, verbose = 0L)))
+  sdat <- prep$standata
+  popidx <- as.integer(sdat$intoverpopindvaryingindex)
+  # eta1 is a varying T0MEANS, so the population block starts at state 1
+  # rather than after the latents. That is the overlap this test exists for.
+  expect_true(1L %in% popidx)
+  expect_false(2L %in% popidx)
+  expect_equal(length(popidx), 2L)
+
+  sf <- ctsem:::stan_reinitsf(ctsem:::stanmodels$ctsm, sdat)
+  npar <- rstan::get_num_upars(sf)
+  set.seed(9)
+  cp <- rstan::constrain_pars(sf, stats::rnorm(npar, 0, .4))
+  grab <- function(x) if (length(dim(x)) == 3) x[1, , ] else drop(x)
+  T0cov <- grab(cp$pop_T0cov)
+  popcov <- grab(cp$rawpopcov)
+
+  # The population block is the constructed RAWPOPVAR, in state units.
+  #
+  # rawpopcov is in raw parameter units; T0cov's block is what the filter
+  # carries, so each state's row and column are scaled by that state's own
+  # multiplier*meanscale. A varying T0MEANS puts natural units on the state
+  # (factor 10 by default); an appended carrier keeps raw units, because the
+  # augmentation writes its T0MEANS with the identity transform and the cell
+  # that reads the state does the scaling (factor 1). So the diagonal here
+  # differs by 100 for eta1 and by 1 for the carrier, and the pair spanning
+  # one of each by 10 -- and that is the whole of the unit conversion, stated
+  # rather than assumed.
+  ms <- sdat$matsetup
+  mv <- sdat$matvalues
+  t0meansrows <- which(ms[, 7] == .t0varred_T0MEANS_slot & ms[, 2] == 1L)
+  scale <- vapply(popidx, function(state) {
+    ri <- t0meansrows[ms[t0meansrows, 1] == state][1L]
+    if (is.na(ri)) 1 else mv[ri, 2] * mv[ri, 3]
+  }, numeric(1))
+  expect_equal(scale[1], 10, tolerance = 1e-8)   # eta1's T0MEANS
+  expect_equal(scale[2], 1, tolerance = 1e-8)    # b1's carrier
+  block <- popcov[seq_along(popidx), seq_along(popidx), drop = FALSE]
+  expect_equal(T0cov[popidx, popidx], outer(scale, scale) * block,
+    tolerance = 1e-10)
+  # The correlation is what a user reads and is scale free, so it must match
+  # regardless of the units above.
+  expect_equal(cov2cor(T0cov[popidx, popidx]), cov2cor(block),
+    tolerance = 1e-10)
+  # eta2 keeps its own T0VAR variance, which RAWPOPVAR knows nothing about
+  expect_gt(T0cov[2, 2], 0)
+  # and the pair spanning both matrices is the disabled off-diagonal: zero,
+  # because RAWPOPVAR does not span it and T0VAR was told not to state it
+  expect_equal(T0cov[1, 2], 0, tolerance = 1e-12)
+  expect_equal(T0cov[2, 1], 0, tolerance = 1e-12)
+  # T0cov stays a covariance matrix across the join
+  expect_true(all(is.finite(T0cov)))
+  expect_gt(min(eigen(T0cov, symmetric = TRUE, only.values = TRUE)$values), 0)
+})

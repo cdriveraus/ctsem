@@ -240,13 +240,34 @@ ctFitUpdate <- function(oldfit, data=NA, recompile=FALSE,refit=FALSE,...){
 ctStanFitUpdate <- ctFitUpdate
 
 
-T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (because indvarying t0means) and disable
+# Disable the T0VAR rows and columns that RAWPOPVAR already accounts for.
+#
+# An individually varying T0MEANS gets no carrier state of its own: that latent
+# state *is* the carrier (see `.ctModelIntOverPop`, which skips T0MEANS when
+# appending states). So that state's initial covariance is the population
+# covariance of its random effect, and RAWPOPVAR is what states it. T0VAR
+# stating it as well would be two matrices specifying one quantity, which is
+# how the two came to be entangled in the first place. This is the whole of the
+# remaining relationship between them.
+#
+# Note which of the fixed values still do work. The diagonal does not: T0cov's
+# population block is overwritten by the constructed RAWPOPVAR, so whatever
+# sits on the T0VAR diagonal there is discarded. The off-diagonals do: they are
+# the covariance between a latent that has a random effect and one that does
+# not, RAWPOPVAR does not span that pair, and zero is the answer this has
+# always given. They are fixed rather than left free so that they leave the
+# parameter vector.
+#
+# (The diagonal is left at 1e-6 rather than zeroed for now because the julia
+# backend still builds the population block through T0VAR; once that side is
+# separated too the value is dead and can go.)
+T0VARredundancies <- function(ctm) {
   whichT0VAR_T0MEANSindvarying <- ctm$pars$matrix %in% 'T0VAR'  &
     is.na(ctm$pars$value) &
     (ctm$pars$row %in% ctm$pars$row[ctm$pars$matrix %in% 'T0MEANS' & ctm$pars$indvarying] |
         ctm$pars$col %in% ctm$pars$row[ctm$pars$matrix %in% 'T0MEANS' & ctm$pars$indvarying])
   if(any(whichT0VAR_T0MEANSindvarying)){
-    message('Free T0VAR parameters as well as indvarying T0MEANS -- fixing T0VAR pars to diag matrix of 1e-6')
+    message('T0VAR rows/columns for latents with individually varying T0MEANS disabled: RAWPOPVAR gives their covariance.')
     ctm$pars$value[whichT0VAR_T0MEANSindvarying & ctm$pars$col == ctm$pars$row ] <- 1e-6
     ctm$pars$value[whichT0VAR_T0MEANSindvarying & ctm$pars$col != ctm$pars$row ] <- 0
     ctm$pars$param[whichT0VAR_T0MEANSindvarying] <- NA
