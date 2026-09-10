@@ -148,10 +148,21 @@ jobs:
       # Worth it for a tier that is meant to be watched while it runs.
       - name: Tests, as CRAN runs them
         env:
-          CTSEM_FILE_TIMEOUT: '300'
+          # Six times the slowest file measured locally in this configuration
+          # (test-sunspots.R, 30.7 s of 117 s for all 80). Anything past this
+          # is blocked, not slow.
+          CTSEM_FILE_TIMEOUT: '180'
         run: |
+          # GitHub runs a `run:` block as `bash -e`, so a command substitution
+          # whose command fails aborts the script there and then. That is
+          # exactly what this loop is built to survive -- the first file to
+          # time out took the step with it, and the whole point is to keep
+          # going and name every file that failed. The run before this one
+          # reported the bare `exit code 124` from `timeout` and none of the
+          # annotations below, for that reason.
+          set +e
           cd tests/testthat
-          fail=0; slow=0; ran=0
+          fail=0; slow=0; ran=0; t_all=$(date +%s)
           printf 'TIER1 per file, %s s each at most\n' "$CTSEM_FILE_TIMEOUT"
           for f in $(ls test*.R | sort); do
             start=$(date +%s)
@@ -179,6 +190,17 @@ jobs:
                 printf '%s\n' "$out" | tail -40
                 fail=$((fail+1))
               fi
+            fi
+            # Several blocked files at the per-file cap would add up past the
+            # job's own 60-minute cap, and a job killed there loses every
+            # annotation below -- which is the failure this whole step exists
+            # to stop happening again. Stop while there is still time to
+            # report.
+            elapsed=$(( $(date +%s) - t_all ))
+            if [ "$elapsed" -gt 2100 ]; then
+              echo "::error title=Tier 1 budget::stopped after ${elapsed}s at $f, with files remaining. $slow blocked and $fail failed so far."
+              slow=$((slow+1))
+              break
             fi
           done
           printf '\nTIER1 assertions=%s files_failed=%s files_timed_out=%s\n' "$ran" "$fail" "$slow"
