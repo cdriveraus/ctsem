@@ -86,6 +86,17 @@ ctAddSamples <- ctFitAddSamples
 #'
 #' @examples
 #' sf <- stan_reinitsf(ctstantestfit$stanmodel,ctstantestfit$standata)
+stan_reinitsf <- function(model, data,fast=FALSE){
+  .ctCheckLegacyCovTransform(data)
+  if(fast) sf <- new(model@mk_cppmodule(model),data,0L,getcxxfun(model@dso))
+  
+  if(!fast) suppressMessages(suppressWarnings(suppressOutput(sf<- 
+      rstan::sampling(model,iter=0,chains=0,init=0,data=data,check_data=FALSE,
+        control=list(max_treedepth=0),save_warmup=FALSE,test_grad=FALSE))))
+  
+  return(sf)
+}
+
 # Whether the legacy covariance transform has already been reported this
 # session, keyed by which matrices carried it.
 .ct_legacy_covtransform <- new.env(parent = emptyenv())
@@ -151,16 +162,6 @@ ctAddSamples <- ctFitAddSamples
     sort(unique(names(mats)[match(ms[hit, 7], mats)])), collapse = ', '))
 }
 
-stan_reinitsf <- function(model, data,fast=FALSE){
-  .ctCheckLegacyCovTransform(data)
-  if(fast) sf <- new(model@mk_cppmodule(model),data,0L,getcxxfun(model@dso))
-  
-  if(!fast) suppressMessages(suppressWarnings(suppressOutput(sf<- 
-      rstan::sampling(model,iter=0,chains=0,init=0,data=data,check_data=FALSE,
-        control=list(max_treedepth=0),save_warmup=FALSE,test_grad=FALSE))))
-  
-  return(sf)
-}
 
 # Function to compute numeric Hessian using finite differences
 numericHessianFunc <- function(pars, step=1e-3, whichpars='all',
@@ -1540,8 +1541,5 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
   optimfinished <- TRUE #disable exit message re pars
   return(stanfit)
 }
-
-
-
 
 
