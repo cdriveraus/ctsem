@@ -1629,6 +1629,22 @@ functions{
         }
       }
     }
+    // Shift the diagonal by an upper bound on the largest eigenvalue before
+    // exponentiating, so no entry of Y exceeds one. Exact, not a tolerance:
+    // the normalisation below divides by sqrt(Y[i,i]*Y[j,j]) and
+    // exp(A - c*I) = exp(-c)*exp(A), so the common factor cancels. Without it
+    // an unbounded coordinate -- which is what this cell now carries -- can
+    // overflow matrix_exp and turn the matrix into NaN. The row-sum norm
+    // bounds the spectral radius of a symmetric matrix and costs one pass.
+    {
+      real shift = 0;
+      for(rowi in 1:d){
+        real rowsum = 0;
+        for(coli in 1:d) rowsum += abs(A[rowi,coli]);
+        if(rowsum > shift) shift = rowsum;
+      }
+      for(rowi in 1:d) A[rowi,rowi] -= shift;
+    }
     Y = matrix_exp(A);
     for(i in 1:d) g[i] = mat[i,i] / sqrt(Y[i,i]);
     for(coli in 1:d){

@@ -155,6 +155,32 @@ end
     @inbounds for j in 1:d, i in 1:d
         A[i, j] = i == j ? zero(T) : (i > j ? T(mat[i, j]) : T(mat[j, i]))
     end
+    # Shift the diagonal by an upper bound on the largest eigenvalue, so no
+    # entry of `exp(A)` exceeds one and it cannot overflow. Exact rather than a
+    # tolerance: `sdcovexpm2cov!` normalises by `sqrt(Y[i,i]*Y[j,j])` and
+    # `exp(A - c*I) = exp(-c)*exp(A)`, so the common factor divides straight
+    # back out. The coordinate is unbounded now that the squash lives in the
+    # construction, and without this a single step to a large one turns the
+    # matrix into NaN.
+    #
+    # Both the primal and the pullback build `A` here, so both see the shift
+    # and the `exp` cache keys on the same matrix. Differentiating through `c`
+    # needs no counterpart in the pullback: the composite does not depend on
+    # it, so dSigma/dc is exactly zero and the chain-rule term vanishes.
+    #
+    # The row-sum (infinity) norm bounds the spectral radius of a symmetric
+    # matrix and costs one pass over `A`.
+    shift = zero(T)
+    @inbounds for i in 1:d
+        rowsum = zero(T)
+        for j in 1:d
+            rowsum += abs(A[i, j])
+        end
+        rowsum > shift && (shift = rowsum)
+    end
+    @inbounds for i in 1:d
+        A[i, i] -= shift
+    end
     return nothing
 end
 
