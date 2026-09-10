@@ -114,7 +114,13 @@ skip_on_32bit()
     #
     # The stan half stays here rather than moving to `dev/STAN-DEPRECATION.md`:
     # stan is still the default backend, and this is the only test that fits
-    # eleven binary indicators through it.
+    # eleven binary indicators through it. It runs under CTSEM_TEST_STAN now
+    # rather than on every run: it is about half the file's 295 s, on the
+    # backend being deprecated, for the same eight recovery claims the julia
+    # block below makes. The two already share `.bbmix_expect_recovery()`, so
+    # this is the same test on both backends whenever it runs; the flag
+    # decides only how often the expensive half is paid for.
+    skip_if_not(.ctsem_test_stan(), "CTSEM_TEST_STAN is not set.")
     gen <- .bbmix_gen(1234)
     f <- ctFit(datalong = gen$d, model = .bbmix_model(gen$nind), cores = 2,
       plot = 10)

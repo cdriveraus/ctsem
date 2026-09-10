@@ -1,3 +1,13 @@
+# STAYS ON STAN, for now, and this is the most expensive file that does: 425 s
+# and eight stan fits. Its C1 blocks compare ctsem's own random-effect
+# parameterisation against a hand-written one by reading
+# `f2$stanfit$transformedparsfull$pop_T0cov` -- stan's own population
+# covariance -- and checking it against `popsd` and `rawpopcorr`. Choosing the
+# julia equivalent of that object is not mechanical, and choosing it wrongly
+# gives a test that compares the wrong quantity and passes. It converts once
+# the population-covariance work settles; see `helper-julia.R` for the
+# harness the other expensive files use.
+#
 # The random-effect equivalence family: what is claimed, and where.
 #
 # Four files check that ctsem's own parameterisation of a random effect agrees

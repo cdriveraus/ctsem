@@ -1,3 +1,21 @@
+# STAYS ON STAN, and this is the one file in the expensive set that cannot
+# move. It was the obvious candidate -- 198 s, all of it a stan fit, for a
+# single `expect_s3_class` assertion, the worst seconds-per-claim in the
+# suite by a factor of eight -- but the julia backend cannot build the model:
+#
+#   Julia backend cannot resolve
+#   T0VAR[4,3] = 2/(1+exp(-(PARS[3,1]+PARS[4,1]+PARS[5,1]*tdpreds[rowi,2]
+#     +PARS[6,1]*(tdpreds[rowi,2])^2)))-1.
+#   T0VAR[4,3] depends on the time-dependent predictor data, which varies by
+#   row, and this matrix is evaluated once from the parameters.
+#
+# The T0MEANS cells this used to stop on -- four of them sharing two PARS
+# parameters -- resolve now; see `test-julia-parsrefs.R`. What is left is a
+# real difference between the backends rather than a build-time resolution
+# that has not been written: T0VAR here varies with `centeredAge`, and stan
+# evaluates that at the subject's first row, which the julia t0 block has no
+# access to. Giving it that is an engine change. When it happens, this file
+# converts the way the others did.
 skip_on_cran()
 skip_if(.Platform$OS.type == "windows" && R.version$major %in% 4 &&
     as.numeric(R.version$minor) >= 2 &&
@@ -212,8 +230,13 @@ skip_if(.Platform$OS.type == "windows" && R.version$major %in% 4 &&
     
     # fit ---------------------------------------------------------------------
     f <- ctFit(datalong = ltsData, model= m1,cores=cores,saveComplexPars = T,fit=T)#,optimcontrol=list(stochastic=F,carefulfit=F),init=rep(0,30)
-    
+
     testthat::expect_s3_class(f, 'ctStanFit')
+    # ...and then something about the fit. `expect_s3_class` on its own is
+    # also what an optimiser that never left its starting values returns, and
+    # for 198 s it was the whole of what this block asked.
+    testthat::expect_true(is.finite(summary(f)$loglik))
+    testthat::expect_true(max(abs(f$stanfit$rawest)) > 1)
     
     
     
