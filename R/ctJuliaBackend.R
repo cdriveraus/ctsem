@@ -2198,12 +2198,22 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   for (predictor in seq_along(model$TIpredNames)) {
     column <- effect_columns[predictor]
     if (!column %in% available) next
-    active <- direct & .ctTipredEffectActive(table[[column]])
-    parameters <- sort(unique(table$parnumber[active]))
+    # `Free`, not `Active`: an effect fixed to a value carries the value and
+    # needs no coefficient, so counting it would claim a parameter that is not
+    # estimated. R/ctModelWriter.R has always used `Free` here; this used
+    # `Active` and was inert only because nothing reached it with a fixed
+    # effect -- measured, on the fitting path `.ctJuliaUnsupported()` refuses
+    # a fixed effect before this runs, and on the generation path every
+    # `parnumber` is NA so `direct` excludes every row and this returns
+    # nothing. Both of those are other functions' behaviour, and the julia
+    # refusal is worded "v1 does not support", so the day it does the wrong
+    # test here would silently free an effect the user fixed.
+    freeeffects <- direct & .ctTipredEffectFree(table[[column]])
+    parameters <- sort(unique(table$parnumber[freeeffects]))
     for (parameter in parameters) {
       # Cells sharing a parameter are required to state the same effects
       # (R/ctModelSpecCheck.R), so the first of them carries the label.
-      first <- which(active & table$parnumber %in% parameter)[1L]
+      first <- which(freeeffects & table$parnumber %in% parameter)[1L]
       key <- .ctTipredEffectKey(table[[column]][first], predictor, parameter)
       if (is.null(keys[[key]])) {
         coefficient <- coefficient + 1L

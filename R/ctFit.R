@@ -941,6 +941,18 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     stop('Use only one of model or deprecated ctstanmodel')
   }
   ctstanmodel <- model
+
+  # A `ctModel(type='omx')` object is a list of matrices, not a built model: it
+  # has no `pars` table and none of the fields read below. The first of them
+  # reached is `$timeName`, and a NULL on the left of `&&` gave "invalid
+  # argument type" -- naming neither the argument nor what to do. Refuse it
+  # here, where both are still known.
+  if(inherits(model, 'ctsemInit')) stop(
+    'model is a ctModel(type=\'omx\') object, which is a list of matrices ',
+    'rather than a model ctFit() can use. Convert it first with ',
+    'ctModelConvertOMX(model), or build the model with ctModel(type=\'ct\') ',
+    'instead.', call.=FALSE)
+
   backend <- match.arg(backend)
   # Whether `poprank` was asked for or merely defaulted. Taken here because
   # `missing()` has to be evaluated before the argument is touched, and it

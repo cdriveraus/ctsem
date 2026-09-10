@@ -104,3 +104,51 @@ test_that('a shared effect costs one parameter and reports one value', {
   tsp <- as.data.frame(ssp$tipreds)
   expect_false(isTRUE(all.equal(tsp$mean[1], tsp$mean[2])))
 })
+
+test_that('a fixed effect claims no coefficient', {
+  skip_on_cran()
+  # An effect fixed to a value carries the value and is not estimated, so it
+  # must not take a coefficient slot. `.ctJuliaTIEffects()` tested for an
+  # *active* effect rather than a free one, which was inert only because
+  # nothing reached it with a fixed effect: the fitting path refuses one
+  # outright, and on the generation path every parnumber is NA. Both are other
+  # functions' behaviour, so this pins the local test instead.
+  spec <- .ctTipredEffectSpec(c('TRUE', '4.3', 'FALSE', 'myeffect'))
+  expect_equal(.ctTipredEffectFree(spec), c(TRUE, FALSE, FALSE, TRUE))
+  expect_equal(.ctTipredEffectActive(spec), c(TRUE, TRUE, FALSE, TRUE))
+
+  # Fitting a fixed effect is refused by name, which is what keeps the two
+  # backends from disagreeing about whether it is estimated.
+  fixedmodel <- suppressWarnings(suppressMessages(ctModel(type = 'ct',
+    n.latent = 1, n.manifest = 1, manifestNames = 'Y1', latentNames = 'e1',
+    LAMBDA = matrix(1), n.TIpred = 1, TIpredNames = 'age',
+    tipredDefault = FALSE, DRIFT = matrix(-0.5), DIFFUSION = matrix(1),
+    T0VAR = matrix(1), T0MEANS = matrix(0), CINT = matrix(0),
+    MANIFESTVAR = matrix(0.5),
+    MANIFESTMEANS = matrix('mm||||age=0.7'))))
+  d <- .tishare_data()
+  expect_error(suppressWarnings(suppressMessages(ctFit(dat = d,
+    model = fixedmodel, fit = FALSE, backend = 'julia'))),
+    'fixed to a value')
+
+  # Generating with one is what a fixed effect is for, and still works.
+  set.seed(1)
+  generated <- suppressWarnings(suppressMessages(ctGenerate(fixedmodel,
+    n.subjects = 5, Tpoints = 4, backend = 'julia')))
+  expect_equal(nrow(generated), 20L)
+  expect_true('age' %in% colnames(generated))
+})
+
+test_that('ctFit names the fix when given an unconverted omx model', {
+  # A ctModel(type='omx') object is a list of matrices, so the first model
+  # field ctFit reads is a NULL inside an `&&`: the failure was "invalid
+  # argument type", naming neither the argument nor the conversion.
+  omx <- suppressMessages(ctModel(type = 'omx', Tpoints = 5, n.latent = 1,
+    n.manifest = 1, manifestNames = 'Y1', latentNames = 'e1',
+    LAMBDA = matrix(1)))
+  err <- tryCatch(ctFit(datalong = .tishare_data(), model = omx, fit = FALSE),
+    error = function(e) conditionMessage(e))
+  expect_match(err, "ctModel\\(type='omx'\\)")
+  expect_match(err, 'ctModelConvertOMX\\(model\\)')
+  expect_false(grepl('invalid argument type', err, fixed = TRUE))
+})
