@@ -188,7 +188,15 @@ jobs:
             start=$(date +%s)
             out=$(timeout -k 10 "$CTSEM_FILE_TIMEOUT" Rscript -e '
               library(testthat)
+              # `load_package = "installed"`, as the `test_dir()` call this
+              # replaced had. `test_file()` defaults to "none", and only 21 of
+              # the 81 files call `library(ctsem)` themselves -- the rest
+              # reached ctsem through the attach `test_dir()` did for them.
+              # Most of those survive the difference by skipping before they
+              # touch anything, which is why dropping it showed up as three
+              # files erroring rather than sixty.
               d <- as.data.frame(test_file(commandArgs(TRUE)[1], package = "ctsem",
+                     load_package = "installed",
                      reporter = "silent", stop_on_failure = FALSE))
               cat(sprintf("COUNTS %d %d %d %d\n", sum(d$passed), sum(d$failed),
                   sum(d$error), sum(d$skipped)))' "$f" 2>&1)
