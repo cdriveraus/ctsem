@@ -10,6 +10,16 @@
 # NOT_CRAN=true also unlocks the expensive stan test files, so this is where
 # the slow stan suite runs too. That is deliberately not left to the tier 3
 # matrix, where it would be paid for five times.
+#
+# Four shards, because one job does not fit. As a single job this tier had
+# never once been green: seven consecutive runs spent 105 minutes in the suite
+# and were killed by the cap below without reaching the end. The same files
+# measure about 70 minutes on the development laptop and a runner core is
+# roughly half its speed, so that is slowness rather than a hang, and the cap
+# stays where it is -- it is there to catch a hang, and a shard that needs an
+# hour is one that has hung. dev/test-shard.R does the split by measured cost;
+# see the comment there for what happens as that measurement goes stale, which
+# it does.
 on:
   push:
     branches: [juliaFit, master, main]
@@ -27,6 +37,13 @@ jobs:
   julia-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    name: shard ${{ matrix.shard }} of 4
+    strategy:
+      # One shard's failure is not a reason to throw away the other three's
+      # results; the whole point of the split is to see all of them at once.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
       R_KEEP_PKG_SOURCE: yes
@@ -36,6 +53,8 @@ jobs:
       # Consent to the managed Julia install from a script. Julia is installed
       # by the step below, so this only covers the engine's own dependencies.
       CTSEM_JULIA_AGREE: 'yes'
+      CTSEM_SHARD: ${{ matrix.shard }}
+      CTSEM_SHARDS: '4'
     steps:
       - uses: actions/checkout@v5
 
@@ -102,19 +121,32 @@ jobs:
         run: |
           Rscript -e '
             library(testthat)
+            source("dev/test-shard.R")
+            n <- as.integer(Sys.getenv("CTSEM_SHARD"))
+            of <- as.integer(Sys.getenv("CTSEM_SHARDS"))
+            # ctTestShard checks that its filter selects exactly these files
+            # and stops if it does not, because a shard that runs a subset of
+            # what it was given is indistinguishable from a shard that passed.
+            s <- ctTestShard(n, of)
+            cat(sprintf("TIER2 shard %d/%d: %d files, %.0f s by the last measurement\n",
+                n, of, length(s$files), s$secs))
+            cat(paste0("  ", s$files, collapse = "\n"), "\n", sep = "")
             pdf(NULL)
             r <- test_dir("tests/testthat", package = "ctsem", load_package = "installed",
-                          reporter = "summary", stop_on_failure = FALSE)
+                          filter = s$filter, reporter = "summary", stop_on_failure = FALSE)
             d <- as.data.frame(r)
-            cat(sprintf("\nTIER2 pass=%d fail=%d error=%d skip=%d\n",
-                sum(d$passed), sum(d$failed), sum(d$error), sum(d$skipped)))
+            cat(sprintf("\nTIER2 shard %d pass=%d fail=%d error=%d skip=%d\n",
+                n, sum(d$passed), sum(d$failed), sum(d$error), sum(d$skipped)))
             jl <- d[grepl("^test-(julia|backend|stan-julia)", d$file), , drop = FALSE]
-            cat(sprintf("TIER2 julia files=%d pass=%d skip=%d\n",
-                length(unique(jl$file)), sum(jl$passed), sum(jl$skipped)))
+            cat(sprintf("TIER2 shard %d julia files=%d pass=%d skip=%d\n",
+                n, length(unique(jl$file)), sum(jl$passed), sum(jl$skipped)))
             if (sum(d$failed) + sum(d$error) > 0) stop("test failures")
             # The failure mode this tier exists to catch is not a red suite, it
-            # is a green one that ran nothing.
-            if (sum(jl$passed) == 0) stop("the julia files asserted nothing")
+            # is a green one that ran nothing. Every shard so far has drawn
+            # julia files, but the split is by cost and nothing guarantees it,
+            # so ask whether this one has any before demanding assertions.
+            if (any(grepl("^test-(julia|backend|stan-julia)", s$files)) &&
+                sum(jl$passed) == 0) stop("the julia files asserted nothing")
             # A skip for some other reason is legitimate; a skip because Julia
             # could not be found is this tier failing quietly.
             why <- unlist(lapply(r, function(f)
@@ -126,3 +158,14 @@ jobs:
             if (any(grepl("Julia is not available|JuliaConnectoR", why))) {
               stop("julia tests skipped in the tier that installs Julia")
             }'
+
+  # One check to require, rather than four that a shard count change renames.
+  julia-tests-complete:
+    needs: julia-tests
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every shard passed
+        run: |
+          echo "shards: ${{ needs.julia-tests.result }}"
+          test "${{ needs.julia-tests.result }}" = success
