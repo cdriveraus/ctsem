@@ -570,33 +570,21 @@ transformed parameters{
         }
       }
     }
-    // The population covariance is a covariance matrix like any other, so
-    // it honours covmattransform too. It did not: it was built here with
-    // constraincorsqrt1 whatever the setting, while intoverpop separately
-    // fed rawpopcovbase into T0VAR, where sdcovsqrt2cov applied the chosen
-    // construction. So the population correlation the model used and the
-    // one it reported were two different numbers under z or cholesky --
-    // measured 0.102 apart on a four-effect model, with the reported value
-    // exactly what rawcorr would have given. Nothing failed; the julia
-    // backend reads its own from the constructed T0cov and was right,
-    // which is how the parity test caught this.
+    // One construction for the population covariance, whatever the
+    // transform. rawpopcovbase carries the sds on its diagonal and the
+    // off-diagonal coordinates below, which is the layout sdcovsqrt2cov
+    // reads, so there is nothing here to special-case.
     //
-    // rawpopcovbase already carries the sds on its diagonal and the
-    // coordinates below, which is the layout sdcovsqrt2cov expects.
-    // rawcorr keeps its own two lines rather than going through it: that
-    // would drop the 1e-8 added to the sds here and move every existing
-    // fit by about that much, and rawcorr is the comparison baseline, so
-    // it stays bit-identical.
-    if(choleskymats < 1){
-      rawpopcorr = tcrossprod( constraincorsqrt1(rawpopcovbase));
-      rawpopcov = makesym(quad_form_diag(rawpopcorr, rawpopsd +1e-8),verbose,1);
-    } else {
-      rawpopcov = makesym(sdcovsqrt2cov(rawpopcovbase, choleskymats),verbose,1);
-      for(coli in 1:nindvarying){
-        for(rowi in 1:nindvarying){
-          rawpopcorr[rowi,coli] = rawpopcov[rowi,coli] /
-            sqrt(rawpopcov[rowi,rowi] * rawpopcov[coli,coli]);
-        }
+    // It used to be built with constraincorsqrt1 whatever the setting, while
+    // intoverpop separately fed rawpopcovbase into T0VAR where sdcovsqrt2cov
+    // applied the chosen construction -- so under z or cholesky the
+    // population correlation the model used and the one it reported were two
+    // different numbers, measured 0.102 apart on a four-effect model.
+    rawpopcov = makesym(sdcovsqrt2cov(rawpopcovbase, choleskymats),verbose,1);
+    for(coli in 1:nindvarying){
+      for(rowi in 1:nindvarying){
+        rawpopcorr[rowi,coli] = rawpopcov[rowi,coli] /
+          sqrt(rawpopcov[rowi,rowi] * rawpopcov[coli,coli]);
       }
     }
     rawpopcovchol = cholesky_decompose(rawpopcov); 
@@ -751,9 +739,16 @@ if(si==0 || sum(whenmat[54,{5}]) > 0 )Jy=mcalc(Jy,indparams, state,{0}, 54, mats
     
     
  if(si==0 || (sum(whenmat[8,]) + statedep[8]) > 0 ) { // this causes problems but shouldnt -- is t0var being adjusted each iteration when it shouldnt?
-   if(intoverpop && nindvarying > 0) T0VAR[intoverpopindvaryingindex, intoverpopindvaryingindex] = rawpopcovbase;
+    // T0VAR is the model own initial covariance and nothing else. The
+    // population covariance is built once, above, from RAWPOPVAR, and the
+    // *constructed* block is placed below -- rather than its raw coordinates
+    // being written in here so that one construction call built both. They
+    // are two matrices with two parameter sets; the only thing T0VAR takes
+    // from the population side is that an indvarying T0MEANS disables its
+    // row and column, and ctFit does that before either backend runs.
     T0cov = sdcovsqrt2cov(T0VAR,choleskymats); 
     if(intoverpop && nindvarying > 0){ //adjust cov matrix for transforms
+    T0cov[intoverpopindvaryingindex, intoverpopindvaryingindex] = rawpopcov;
     if(si==0) rawpopcovchol = cholesky_decompose(makesym(T0cov[intoverpopindvaryingindex, intoverpopindvaryingindex],verbose,1));
       for(ri in 1:size(matsetup)){
         if(matsetup[ri,7]==1){ //if t0means

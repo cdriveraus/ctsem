@@ -559,7 +559,10 @@ function _laplace_popchol(values::AbstractVector{T}, level::CTSEMLaplaceLevel) w
     end
     corsqrt = constraincorsqrt1(base)
     correlation = corsqrt * transpose(corsqrt)
-    scaled = scales .+ 1e-8
+    # `scales` already carries the 1e-10 floor its transform applies;
+    # a second 1e-8 here made this covariance differ from the one the
+    # model uses. One floor, in the diagonal element's own transform.
+    scaled = scales
     covariance = (scaled .* correlation) .* transpose(scaled)
     symmetric = (covariance .+ transpose(covariance)) ./ 2
     return Matrix(cholesky(Symmetric(symmetric)).L)
