@@ -44,7 +44,11 @@
 #' @param sdscale Multiplier on the population standard deviation's prior. Only
 #'   meaningful when \code{indvarying} is TRUE.
 #' @param tipreds Time-independent predictors acting on this parameter: a
-#'   character vector of names for effects to estimate.
+#'   character vector of names for effects to estimate, e.g. \code{'age'} or
+#'   \code{c('age', 'sex')}. Naming any predictor switches the rest off for
+#'   this cell, so the list is the whole set of effects on it. A name must be
+#'   one of the model's \code{TIpredNames}; anything else is an error when the
+#'   model is built.
 #'
 #' @return A single character string, suitable for a model matrix cell.
 #'
@@ -54,11 +58,11 @@
 #'   "unspecified".
 #'
 #'   The same named fields can also be written directly into a model matrix
-#'   cell, in which case nothing needs to be called. A cell is read as a named
-#'   specification when it contains one of these argument names followed by
-#'   \code{=}, as a \code{|}-separated specification when it contains \code{|},
-#'   and as a plain parameter name otherwise. All three of these specify the
-#'   same parameter:
+#'   cell, in which case nothing needs to be called. A cell containing
+#'   \code{|} is read as a \code{|}-separated specification; otherwise a cell
+#'   with a field of the form \code{name=value} is read as a named
+#'   specification, and anything else as a plain parameter name. All three of
+#'   these specify the same parameter:
 #'
 #'   \preformatted{
 #'   MANIFESTMEANS = matrix('mm||TRUE|0.5')
@@ -69,9 +73,12 @@
 #'   In the named form, fields are separated by commas (commas inside brackets
 #'   belong to the value, so \code{transform=pnorm(param, 0, 1)} is one field),
 #'   the parameter name comes first, and several predictors are given as
-#'   \code{tipreds=c(age, sex)}. Detection keys on the argument names rather
-#'   than on a bare \code{=} because a state-dependent cell may legitimately
-#'   contain \code{==}, \code{>=} or \code{<=}.
+#'   \code{tipreds=c(age, sex)}. A field name that is not one of the above is
+#'   an error naming the nearest valid field, so a misspelling such as
+#'   \code{topreds=age} is refused rather than becoming part of a parameter
+#'   name. Comparisons are unaffected: a state-dependent cell may contain
+#'   \code{==}, \code{>=}, \code{<=} or \code{!=}, and a named argument
+#'   inside a call belongs to the value it appears in.
 #'
 #' @examples
 #' ctParSpec('mm', indvarying = TRUE)
@@ -127,14 +134,33 @@ ctParSpec <- function(name, transform = NA, indvarying = NA, sdscale = NA,
 # the `|` form puts them.
 .ctCellSpecKeys <- c('name', 'transform', 'indvarying', 'sdscale', 'tipreds')
 
-# A cell is a named specification when it names one of those fields and assigns
-# to it. The test is deliberately not "contains an `=`": a state-dependent cell
-# may legitimately contain `==`, `>=` or `<=`, and those must keep meaning what
-# they say.
+# A cell is a named specification when one of its comma-separated fields opens
+# with `<name>=`. Deliberately not keyed on the field being one of the *known*
+# names: a misspelling then went undetected, and `'mm, topreds=age'` became a
+# free parameter literally named "mm, topreds=age" carrying whatever tipred
+# effects the model defaults to. Nothing warned, and the eventual failure was
+# `Could not retrieve body of '=()'` from the symbolic differentiator, which
+# names neither the cell nor the typo. An unrecognised name is now an error
+# from .ctCellSpecToPipe(), which can say what was meant.
+#
+# Two things must still keep meaning what they say, and the shape of the test
+# is what protects them:
+#
+#  * A comparison. `state[1]>=2`, `x==0` and `a!=b` have no `<name>=` at the
+#    start of a field -- the character before the `=` is an operator, and
+#    `=(?!=)` rules out the `==` case besides.
+#  * The ordered form, whose tipreds field may itself contain `name=value`
+#    ('mm||||age=4.3,sex=2'). A `|` anywhere says the cell is that form, so it
+#    is never read as a named specification.
+#
+# Fields are split bracket-aware, so a named argument inside a call --
+# `transform=pnorm(param, mean=0)` -- is part of a value and not a field of
+# its own.
 .ctCellSpecIsNamed <- function(x) {
   if (!is.character(x) || length(x) != 1L || is.na(x)) return(FALSE)
-  grepl(paste0('(^|,)\\s*(', paste(.ctCellSpecKeys, collapse = '|'),
-    ')\\s*=(?!=)'), x, perl = TRUE)
+  if (grepl('|', x, fixed = TRUE)) return(FALSE)
+  parts <- trimws(.ctCellSpecSplit(x))
+  any(grepl('^[A-Za-z.][A-Za-z0-9._]*[[:space:]]*=(?!=)', parts, perl = TRUE))
 }
 
 # Split on commas that are not inside brackets, so a value may contain commas:
@@ -182,8 +208,10 @@ ctParSpec <- function(name, transform = NA, indvarying = NA, sdscale = NA,
     key <- trimws(sub('=$', '', keyed))
     value <- trimws(substring(part, nchar(keyed) + 1L))
     if (!key %in% .ctCellSpecKeys) {
-      stop("'", key, "' is not a parameter specification field. Valid fields ",
-        'are: ', paste(.ctCellSpecKeys, collapse = ', '), '.', call. = FALSE)
+      stop("In the parameter specification '", x, "', '", key, "' is not a ",
+        'field. Valid fields are: ',
+        paste(.ctCellSpecKeys, collapse = ', '), '.',
+        .ctCellSpecDidYouMean(key), call. = FALSE)
     }
     if (key %in% names(args)) {
       stop("Field '", key, "' given twice in the parameter specification '",
@@ -200,6 +228,15 @@ ctParSpec <- function(name, transform = NA, indvarying = NA, sdscale = NA,
       'comes first, before any named field.', call. = FALSE)
   }
   do.call(ctParSpec, args)
+}
+
+# A misspelled field name is the common case, so say which field was probably
+# meant rather than only listing all of them. `tipred` for `tipreds` and
+# `indvarying` for `indvaring` are both one edit away.
+.ctCellSpecDidYouMean <- function(key) {
+  d <- as.integer(utils::adist(tolower(key), .ctCellSpecKeys)[1, ])
+  if (min(d) > max(1L, nchar(key) %/% 3L)) return('')
+  paste0(" Did you mean '", .ctCellSpecKeys[which.min(d)], "'?")
 }
 
 .ctCellSpecLogical <- function(value, x) {

@@ -121,3 +121,65 @@ test_that("an unusable field is refused rather than becoming a parameter name", 
   expect_error(model$matrices$MANIFESTMEANS[1, 1] <- "mm, tipreds=notapredictor",
     "not a time independent predictor")
 })
+
+test_that("tipreds names the predictors acting on a cell, written either way", {
+  expect_equal(.ctCellSpecToPipe("mm, tipreds=age"), "mm||||age")
+  # A bare name, a quoted name and a c() of either all mean the same list.
+  expect_equal(.ctCellSpecToPipe("mm, tipreds=c(age,sex)"), "mm||||age,sex")
+  expect_equal(.ctCellSpecToPipe("mm, tipreds=c('age','sex')"), "mm||||age,sex")
+  expect_equal(.ctCellSpecToPipe('mm, tipreds="age"'), "mm||||age")
+  # And they reach the model as the ordered form does.
+  expect_identical(
+    .ctParSpec_row(.ctParSpec_model("mm, tipreds=c(age,sex)")),
+    .ctParSpec_row(.ctParSpec_model("mm||||age,sex")))
+  one <- .ctParSpec_row(.ctParSpec_model("mm, tipreds=age"))
+  expect_true(ctsem:::.ctTipredEffectActive(one$age_effect))
+  # Naming one predictor switches the others off: the list is the whole set of
+  # effects on the cell, not an addition to the default.
+  expect_false(ctsem:::.ctTipredEffectActive(one$sex_effect))
+})
+
+test_that("a misspelled field is refused rather than becoming a parameter name", {
+  # This was silent. 'mm, topreds=age' is not the ordered form and named no
+  # known field, so it fell through as a parameter literally called
+  # "mm, topreds=age", took the model's default tipred effects, and failed much
+  # later inside the symbolic differentiator with `Could not retrieve body of
+  # '=()'` -- which names neither the cell nor the typo.
+  expect_error(.ctCellSpecToPipe("mm, topreds=age"), "'tipreds'")
+  expect_error(.ctCellSpecToPipe("mm, tipred=age"), "'tipreds'")
+  expect_error(.ctCellSpecToPipe("mm, TIpreds=age"), "'tipreds'")
+  expect_error(.ctCellSpecToPipe("mm, indvaring=TRUE"), "'indvarying'")
+  expect_error(.ctCellSpecToPipe("mm, sdscal=0.5"), "'sdscale'")
+  expect_error(.ctCellSpecToPipe("mm, tranform=exp(param)"), "'transform'")
+  # Nothing near enough to suggest still says what the valid fields are.
+  expect_error(.ctCellSpecToPipe("mm, notafield=3"), "is not a field")
+  # Through ctModel(), not only through the helper.
+  expect_error(.ctParSpec_model("mm, topreds=age"), "'tipreds'")
+})
+
+test_that("only a field boundary makes a named specification", {
+  # A named argument inside a call belongs to the value, so the bracket-aware
+  # split is what decides -- not the presence of an `=` anywhere.
+  expect_false(.ctCellSpecIsNamed("mm|pnorm(param, mean=0)"))
+  expect_equal(.ctCellSpecToPipe("mm, transform=pnorm(param, mean=0)"),
+    "mm|pnorm(param, mean=0)")
+  expect_equal(.ctCellSpecToPipe("state[1]<=2"), "state[1]<=2")
+  expect_equal(.ctCellSpecToPipe("a!=b"), "a!=b")
+  # The ordered form's tipreds field may itself carry `name=value`, so a `|`
+  # anywhere settles which form the cell is and the named parser never sees it.
+  expect_false(.ctCellSpecIsNamed("mm||||age=4.3,sex=2"))
+  expect_equal(.ctCellSpecToPipe("mm||||age=4.3,sex=2"), "mm||||age=4.3,sex=2")
+})
+
+test_that("a predictor the model does not have is named in the error", {
+  expect_error(.ctParSpec_model("mm, tipreds=aeg"),
+    "not a time independent predictor")
+  # And asking for effects in a model with no predictors says that, rather
+  # than counting separators the user never wrote.
+  nopreds <- function(spec) suppressMessages(ctModel(type = "ct", n.latent = 1,
+    n.manifest = 1, manifestNames = "Y1", latentNames = "eta1",
+    LAMBDA = matrix(1), MANIFESTMEANS = matrix(spec), Tpoints = 5))
+  expect_error(nopreds("mm, tipreds=age"),
+    "no time independent predictors")
+  expect_error(nopreds("mm||||age"), "no time independent predictors")
+})

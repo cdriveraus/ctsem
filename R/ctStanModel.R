@@ -469,7 +469,15 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
       
       tisplit <- NA
       if(length(split) > 4){ #check for ti pred spec in splits
-        if(n.TIpred < 1 || length(split) > 5) stop(paste0('Param spec has too many separators!  ', ctspec$param[pi]))
+        # Two different mistakes used to share one message. Naming predictors
+        # in a model that has none is the common one, and 'too many
+        # separators' says nothing about it -- least of all to someone who
+        # wrote `tipreds=age` and never counted a separator.
+        if(n.TIpred < 1) stop(paste0(ctspec$matrix[pi],'[',ctspec$row[pi],',',
+          ctspec$col[pi],'] asks for time independent predictor effects (',
+          split[5],'), but the model has no time independent predictors. Set ',
+          'n.TIpred and TIpredNames in ctModel().'), call.=FALSE)
+        if(length(split) > 5) stop(paste0('Param spec has too many separators!  ', ctspec$param[pi]))
         tisplit <- split[5]
         split <- split[1:4]
       }
