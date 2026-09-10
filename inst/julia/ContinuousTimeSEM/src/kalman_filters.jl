@@ -145,7 +145,7 @@ prediction is written back into `ws.state` and `ws.P_predict`.
         _compute_discrete_time_form!(ws.discrete_ca, ws.bufferQ, ws.bufferQ.out, pars, Δt,
             ws.exp_buffer, ws.lyap_buffer, ws.state, ws.diffusion_state_indices,
             ws.diffusion_buffer, ws.discretization_buffer, ws.state_dim,
-            ws.discretization_cache)
+            ws.discretization_cache, ws.affine_buffer)
     else
         _compute_one_step_form!(ws.discrete_ca, ws.bufferQ.out, pars, ws.state,
             ws.diffusion_state_indices, ws.state_dim)

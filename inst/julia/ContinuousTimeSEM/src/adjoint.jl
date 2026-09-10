@@ -30,6 +30,10 @@ mutable struct CTSEMAdjointWorkspace{T,SP,LB,FB}
     sp::SP
     n::Int
     m::Int
+    # The leading block of genuine dynamics, over which the intercept solve and
+    # the affine offset run. Not the same set as `diffusion_state_indices`:
+    # see `affine_dim` in `EKFParameters`.
+    affine_dim::Int
     diffusion_state_indices::Vector{Int}
     predict_indices::Vector{Int}
     update_indices::Vector{Int}
@@ -143,7 +147,7 @@ function CTSEMAdjointWorkspace(::Type{T}, sp::EKFParameters, nvalues::Integer,
 
     frechet_buffer = ExpFrechetBuffer{T}(n)
     return CTSEMAdjointWorkspace{T,typeof(sp),typeof(lyap_buffer),typeof(frechet_buffer)}(
-        sp, n, m,
+        sp, n, m, _val(ws.affine_buffer.dim),
         collect(ws.diffusion_state_indices),
         predict_indices, update_indices, td_indices,
         predict_supports,
@@ -168,7 +172,8 @@ function CTSEMAdjointWorkspace(::Type{T}, sp::EKFParameters, nvalues::Integer,
         defer_frechet, groups_write_jax, jax_positions,
         frechet_buffer, zeros(T, n, n), zeros(T, n, n), ExpTable(T, n),
         CTSEMCovSqrtScratch(T, max(n, m)),
-        CTSEMReverseScratch(T, n, m, length(ws.diffusion_state_indices)),
+        CTSEMReverseScratch(T, n, m, length(ws.diffusion_state_indices),
+            _val(ws.affine_buffer.dim)),
         CTSEMAdjointTape(T, group_relevant),
     )
 end

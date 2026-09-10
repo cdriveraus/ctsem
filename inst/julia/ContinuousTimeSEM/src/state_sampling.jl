@@ -670,7 +670,7 @@ function _ctsem_state_pass!(ws, params::AbstractVector{T}, data::AbstractMatrix,
                     ws.bufferQ.out, pars, substep_dt, ws.exp_buffer,
                     ws.lyap_buffer, ws.state, indices, ws.diffusion_buffer,
                     ws.discretization_buffer, ws.state_dim,
-                    ws.discretization_cache)
+                    ws.discretization_cache, ws.affine_buffer)
             else
                 _compute_one_step_form!(ws.discrete_ca, ws.bufferQ.out, pars,
                     ws.state, indices, ws.state_dim)

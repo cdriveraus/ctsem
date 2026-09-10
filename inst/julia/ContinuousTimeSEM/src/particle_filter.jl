@@ -345,7 +345,7 @@ function _ctsem_particle_subject!(sub, sp, x::Vector{Float64}, N::Int, nsubsteps
                         _compute_discrete_time_form!(ws.discrete_ca, ws.bufferQ, ws.bufferQ.out,
                             pars, h, ws.exp_buffer, ws.lyap_buffer, ws.state, indices,
                             ws.diffusion_buffer, ws.discretization_buffer, ws.state_dim,
-                            ws.discretization_cache)
+                            ws.discretization_cache, ws.affine_buffer)
                     else
                         _compute_one_step_form!(ws.discrete_ca, ws.bufferQ.out, pars, ws.state,
                             indices, ws.state_dim)

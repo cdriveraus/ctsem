@@ -84,6 +84,28 @@ struct EKFParameters{RT,PT,UT,TT,AX,FV}
     # correlation square root, 2 for covmattransform='z'. Declared last and
     # supplied last, for the reason the `manifesttype` comment above gives.
     covmatcode::Int
+    # How many leading states are genuine dynamics rather than the static
+    # coordinates a random effect augments the state with.
+    #
+    # The continuous form's local affine offset needs `JAx` inverted, and `JAx`
+    # is exactly singular on a static coordinate -- zero row and zero column --
+    # so that solve runs over this leading block. Restricting it is exact rather
+    # than an approximation: order the states [d, s] and `JAx` is block
+    # triangular with zero static rows while the offset is genuinely zero there,
+    # so the sub-solve equals the full one, and the static-to-dynamic coupling
+    # still arrives through the full matrix exponential.
+    #
+    # This is Stan's `1:nlatent` (`ctModelWriter.R`:
+    # `mdivide_left(JAx[1:nlatent,1:nlatent], ...)`), NOT its `derrind`.
+    # `derrind` additionally drops a latent that merely has no diffusion of its
+    # own and no coupling to anything that has some -- whose offset is *not*
+    # zero -- and using it took that state's CINT out of the likelihood
+    # altogether: gradient exactly zero, so the optimizer left the parameter at
+    # its starting value and the summary reported that as an estimate.
+    #
+    # 0 means the whole state vector. Declared last and supplied last, for the
+    # reason the `manifesttype` comment above gives.
+    affine_dim::Int
 
     # The constructor ensures that the provided vectors are of the correct types and converts them if necessary.
     function EKFParameters(
@@ -110,6 +132,7 @@ struct EKFParameters{RT,PT,UT,TT,AX,FV}
         censormin=Float64[],
         censormax=Float64[],
         covmatcode::Int=0,
+        affine_dim::Int=0,
     )
         regular_transforms_tuple = Tuple(regular_transforms)
         predict_transforms_tuple = Tuple(predict_transforms)
@@ -149,6 +172,7 @@ struct EKFParameters{RT,PT,UT,TT,AX,FV}
             Vector{Float64}(censormin),
             Vector{Float64}(censormax),
             covmatcode,
+            affine_dim,
         )
     end
 end

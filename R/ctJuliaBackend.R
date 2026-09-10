@@ -2610,6 +2610,28 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       .ctJuliaVector(as.integer(spec$dynamic_state_indices))
   }
   arguments$continuous_time <- isTRUE(spec$continuoustime)
+  # How many leading states are genuine dynamics rather than the static
+  # coordinates the random-effect augmentation appended. The engine runs the
+  # continuous form's intercept solve over that block, because JAx is exactly
+  # singular on a static coordinate.
+  #
+  # This is deliberately NOT `dynamic_state_indices` above, which is stan's
+  # `derrind` -- the states with their own diffusion. `derrind` additionally
+  # drops a latent that merely has no diffusion of its own and no coupling to
+  # one that has some, and the affine offset is *not* zero on such a row: using
+  # it there took that state's CINT out of the likelihood altogether, with a
+  # gradient of exactly zero, so the optimiser left the parameter at its
+  # starting value and the summary reported that as an estimate. Stan uses
+  # `1:nlatent` for this and `derrind` for the Lyapunov solve; so does the
+  # engine now.
+  #
+  # Always stated, never left to the engine default. The engine falls back to
+  # the diffusion block for a caller that says nothing, which is right for its
+  # own direct constructions and wrong here: a model whose latent has no
+  # diffusion of its own has a diffusion block one short of the dynamics, and
+  # that is the whole defect this argument exists to fix.
+  affine_dim <- suppressWarnings(as.integer(spec$nlatent)[1L])
+  if (!is.na(affine_dim) && affine_dim > 0L) arguments$affine_dim <- affine_dim
   # Omitted when zero: the engine defaults to it, and this keeps a spec built
   # before the setting existed working unchanged.
   covmatcode <- if (is.null(spec$covmatcode)) 0L else as.integer(spec$covmatcode)

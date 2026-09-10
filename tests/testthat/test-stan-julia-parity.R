@@ -164,6 +164,84 @@ test_that("Stan and Julia agree for a discrete-time model with augmented random 
     tolerance = 1e-7)
 })
 
+test_that("Stan and Julia agree for a latent with no diffusion of its own", {
+  skip_without_julia()
+  skip_if_not_installed("rstan")
+
+  # Two sub-blocks of the state appear in the continuous form and conflating
+  # them was a bug:
+  #
+  #   derrind    the states with their own diffusion, grown through JAx
+  #              coupling (`.ctJuliaDerrind`). The Lyapunov solve lives here.
+  #   1:nlatent  everything that is not a static random-effect carrier. The
+  #              intercept solve and the affine offset live here.
+  #
+  # They coincide for every other model in this file, because a full DIFFUSION
+  # makes every latent diffusion-reachable -- which is why using the first for
+  # the second passed the whole suite. Latent 2 below has a zero DIFFUSION row
+  # and column and no coupling to latent 1, so derrind excludes it, and the
+  # affine offset is NOT zero on its row: `cint2` left the likelihood
+  # altogether, with a gradient of exactly zero, so the optimiser held it at
+  # its starting value and the summary reported that as an estimate. 1745 log
+  # posterior units on this model.
+  #
+  # `drift22` came out wrong too, not just `cint2`: the predicted mean for the
+  # indicator loading on latent 2 was wrong, so everything touching that state
+  # was. Both are checked.
+  #
+  # Run in both time bases. The discrete form has no solve and so needs no
+  # index set at all -- it runs over every row -- but it was briefly given the
+  # same wrong one, so it is pinned here as well.
+  for (type in c("ct", "dt")) {
+    model <- suppressWarnings(suppressMessages(ctModel(
+      type = type, n.latent = 2, LAMBDA = diag(2),
+      DRIFT = matrix(c("drift11", 0, 0, "drift22"), 2, 2, byrow = TRUE),
+      DIFFUSION = matrix(c("diff11", 0, 0, 0), 2, 2, byrow = TRUE),
+      MANIFESTVAR = diag(c(.1, .1)), MANIFESTMEANS = matrix(0, 2, 1),
+      T0VAR = diag(2), T0MEANS = matrix(c("t0m1", "t0m2"), 2, 1),
+      CINT = matrix(c("cint1", "cint2"), 2, 1))))
+    model$pars$indvarying <- FALSE   # keep this about derrind, not augmentation
+    set.seed(4)
+    data <- data.frame(id = rep(1:3, each = 4), time = rep(c(0, 1, 2, 3), 3),
+      Y1 = stats::rnorm(12, 0, .5), Y2 = stats::rnorm(12, 0, .5))
+
+    stan_spec <- suppressMessages(ctFit(data, model, backend = "stan", fit = FALSE,
+      priors = FALSE))
+    stan_fit <- .compiled_stan_fit(stan_spec)
+    julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
+      priors = FALSE))
+
+    # The premise of the test: derrind really is the smaller set here. Without
+    # this the model could quietly become an ordinary one and prove nothing.
+    expect_equal(julia_spec$dynamic_state_indices, 1L, info = type)
+    expect_equal(julia_spec$nlatent, 2L, info = type)
+
+    npar <- rstan::get_num_upars(stan_fit)
+    set.seed(9)
+    raw <- stats::rnorm(npar, 0, .3)
+    stan_value <- rstan::log_prob(stan_fit, upars = raw, adjust_transform = FALSE,
+      gradient = TRUE)
+    stan_grad <- as.numeric(attributes(stan_value)$gradient)
+    forward <- ctJuliaEvaluate(julia_spec, raw, gradient = TRUE, gradient_method = "forward")
+    adjoint <- ctJuliaEvaluate(julia_spec, raw, gradient = TRUE, gradient_method = "adjoint")
+
+    # Relative, because this raw vector puts the model somewhere stiff: the
+    # gradient entries run to 5e4, so 1e-7 relative is ~5e-3 absolute and is
+    # accumulated floating point, not a difference in the model. Pre-fix the gap
+    # was 1745 on the value and the whole of one gradient entry.
+    expect_equal(as.numeric(forward$value), as.numeric(stan_value),
+      tolerance = 1e-7, info = type)
+    expect_equal(as.numeric(forward$gradient), stan_grad, tolerance = 1e-7, info = type)
+    expect_equal(as.numeric(adjoint$gradient), stan_grad, tolerance = 1e-7, info = type)
+
+    # The two entries the defect actually moved, named so a failure says which.
+    which_cint2 <- which(julia_spec$parameter_table$param %in% "cint2")[1L]
+    par_cint2 <- julia_spec$parameter_table$parnumber[which_cint2]
+    expect_false(isTRUE(all.equal(as.numeric(adjoint$gradient)[par_cint2], 0)),
+      info = type)
+  }
+})
+
 test_that("Stan and Julia agree for a row with partial (not total) missingness", {
   skip_without_julia()
   skip_if_not_installed("rstan")
