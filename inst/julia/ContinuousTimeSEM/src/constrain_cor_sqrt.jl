@@ -78,25 +78,26 @@ end
 
 Convert standard-deviation/correlation square-root parameters to a covariance.
 
-The diagonal of `mat` supplies standard deviations, and the lower triangle
-supplies unconstrained correlation parameters. `choleskymats` is currently
-accepted for compatibility with the R-side interface.
+The diagonal of `mat` supplies standard deviations and the lower triangle the
+off-diagonal coordinates, read according to `choleskymats`: the row-normalised
+correlation square root (0 and -1), a factor (1), or Fisher z inside a matrix
+exponential (2).
+
+Allocating, for the reporting and summary paths; `sdcovsqrt2cov!` is the one
+the filter uses. This delegates to it rather than carrying a second
+implementation of the same map, which is how the two came apart: this function
+accepted `choleskymats` and ignored it, with the other two constructions
+commented out beside it, so a fit under covmattransform='z' or 'cholesky' was
+estimated with the requested construction and *reported* through the
+row-normalised one. On a four-effect model that left the reported T0cov 0.083
+from the one the model used, including a sign flip, and nothing was raised.
 """
 function sdcovsqrt2cov(mat, choleskymats)
-    # TODO: Rewrite this for performance
-    # if size(mat, 1) == 0
-    #     return Symmetric(mat, :L) 
-    # elseif choleskymats < 1
-
-        # TODO: 
-        diag_vals = Diagonal(mat)
-        # corr_mat = constraincorsqrt1(mat)
-        corr_mat = constraincorsqrt1_vec(Symmetric(mat, :L))
-        return Symmetric(diag_vals * corr_mat * corr_mat' * diag_vals, :L)
-    # else
-    #     # TODO: Implement this as a specialization of the function
-    #     return Symmetric(mat * mat', :L)
-    # end
+    d = size(mat, 1)
+    d == 0 && return Symmetric(Matrix(mat), :L)
+    buffer = _make_square_buffer(eltype(mat), d)
+    sdcovsqrt2cov!(buffer, mat, choleskymats)
+    return Symmetric(copy(buffer.out), :L)
 end
 
 """
@@ -105,7 +106,9 @@ end
 In-place buffered version of `sdcovsqrt2cov`.
 
 The covariance is written to `buffer.out`; other fields of `buffer` are used as
-scratch storage. `choleskymats` is currently accepted for compatibility.
+scratch storage. `choleskymats` selects the construction: 0 and -1 the
+row-normalised correlation square root, 1 a factor, 2 Fisher z inside a
+matrix exponential.
 """
 function sdcovsqrt2cov!(buffer, mat, choleskymats)
     return sdcovsqrt2cov!(buffer, mat, choleskymats, Val(size(mat, 1)))
