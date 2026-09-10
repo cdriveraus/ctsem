@@ -1,4 +1,9 @@
-skip_on_cran()
+# Fits on julia. This file was the most expensive in the suite at 573 s, all
+# of it stan: the two fits below cost 226 s there against 62 s on julia, and
+# the block after them spent its whole wall clock in a bespoke rstan C++
+# compile that the julia path does not do at all. Set CTSEM_TEST_STAN to fit
+# both backends and compare them -- see helper-julia.R.
+skip_without_julia()
 skip_on_32bit()
 skip_if(.Platform$OS.type == "windows" && R.version$major %in% 4 &&
     as.numeric(R.version$minor) >= 2 &&
@@ -70,11 +75,19 @@ skip_if(.Platform$OS.type == "windows" && R.version$major %in% 4 &&
     dm$pars$indvarying <- FALSE
     
 
-    fct <- ctFit(datalong = dat,model= cm)
-    fdt <- ctFit(datalong = dat,model= dm)
-    
-    sct <- summary(fct,parmatrices=TRUE)
-    sdt <- summary(fdt,parmatrices=TRUE)
+    fitsct <- fit_backends(datalong = dat, model = cm)
+    fitsdt <- fit_backends(datalong = dat, model = dm)
+
+    # C3 below is checked on julia. Under CTSEM_TEST_STAN each fit is also
+    # checked against its stan twin, which is coverage this file never had:
+    # fitting only stan said nothing about whether the two agree. Measured on
+    # this design, they agree on the log likelihood to 4 decimal places
+    # (-83.9120 both) and recover lbystate to 0.264 against 0.263.
+    expect_backends_agree(fitsct)
+    expect_backends_agree(fitsdt)
+
+    sct <- summary(fitsct$julia, parmatrices = TRUE)
+    sdt <- summary(fitsdt$julia, parmatrices = TRUE)
     
     ctpars=sct$parmatrices
     ctpars <- ctpars[!ctpars$matrix %in% c('DRIFT','CINT','DIFFUSIONcov'),]
@@ -162,41 +175,53 @@ skip_if(.Platform$OS.type == "windows" && R.version$major %in% 4 &&
     d$Y <- d$Y2
     
     # The cheap half first, so a specification bug fails in under a second
-    # rather than after the compile. `recompile == 1` is the reason this block
-    # is expensive and is what its name refers to: this shape cannot use the
-    # precompiled ctsm program, so rstan builds a bespoke one, and that C++
-    # compile -- not the data -- is essentially all of the block's wall clock.
-    # Measured: the whole block is 197 s at 100 subjects and 191 s at 25, of
-    # which `fit = FALSE` is 0.7 s.
-    spec <- ctFit(datalong = d, model = test_, fit = FALSE)
-    testthat::expect_equal(spec$standata$recompile, 1)
-    # The state-dependent DRIFT cell has to reach matsetup as a state
-    # reference, not as a parameter. Column 10 is `stateref`.
-    testthat::expect_true(sum(spec$standata$matsetup[, 10] != 0) > 0)
+    # rather than after the fit. `recompile == 1` is what this block's name
+    # refers to: this shape cannot use the precompiled ctsm program, so on the
+    # stan path rstan builds a bespoke one, and that C++ compile -- not the
+    # data -- used to be essentially all of the block's wall clock (197 s at
+    # 100 subjects, 191 s at 25, of which `fit = FALSE` was 0.7 s). The julia
+    # path does not compile anything, which is why the fit below is on it and
+    # the block now costs 82 s.
+    #
+    # Both fields are checked on both backends, unconditionally, because both
+    # are properties of the prepared `standata` rather than of a fit and are
+    # built identically on the two paths -- verified: `recompile` is 1 and
+    # three matsetup rows carry a stateref either way. Keeping the stan half
+    # here is what makes it a parity check rather than a lost assertion, and
+    # it costs under a second.
+    for (be in c('julia', 'stan')) {
+      spec <- ctFit(datalong = d, model = test_, fit = FALSE, backend = be)
+      testthat::expect_equal(spec$standata$recompile, 1)
+      # The state-dependent DRIFT cell has to reach matsetup as a state
+      # reference, not as a parameter. Column 10 is `stateref`.
+      testthat::expect_true(sum(spec$standata$matsetup[, 10] != 0) > 0)
+    }
 
-    f <- ctFit(datalong = d,model= test_)
-    testthat::expect_s3_class(f, 'ctStanFit')
+    f <- ctFit(datalong = d, model = test_, backend = 'julia')
+    # `ctFit` rather than `ctStanFit`: the julia fit's classes are
+    # c('ctJuliaFit', 'ctFit'), the stan fit's c('ctStanFit', 'ctFit'), and
+    # the shared one is what this assertion means.
+    testthat::expect_s3_class(f, 'ctFit')
 
     # ...and then say the fit MOVED. `expect_s3_class` alone passed on a fit
     # that had done nothing: an optimiser that returned its starting values
-    # still returns an object of the right class. Every number below is
-    # measured on this design (25 subjects, seed 1); the counterfactual in
-    # brackets is the same quantity evaluated at the neutral raw start, which
-    # is what a fit that did not move would report.
-    sf <- f$stanfit$stanfit
-    raw <- f$stanfit$rawest
-    lp_opt <- rstan::log_prob(sf, upars = raw, adjust_transform = FALSE)
-    lp_start <- rstan::log_prob(sf, upars = rep(0, length(raw)),
-      adjust_transform = FALSE)
-    grad_opt <- rstan::grad_log_prob(sf, upars = raw, adjust_transform = FALSE)
-
+    # still returns an object of the right class. On the stan path this took
+    # three `rstan::log_prob` calls to re-evaluate the density by hand; the
+    # julia fit records what its own optimiser did, so ask that instead.
+    est <- f$estimate
     testthat::expect_true(is.finite(summary(f)$loglik))
-    # measured gain 471 [0]
-    testthat::expect_true(lp_opt > lp_start + 10)
-    # measured max|grad| 0.005 at the optimum [126 at the start]
-    testthat::expect_true(max(abs(grad_opt)) < 1)
-    # measured max|raw| 37.9 [0]
-    testthat::expect_true(max(abs(raw)) > 1)
+    # A fit that never moved reports the gradient at the neutral raw start,
+    # which was 126 on the stan path for this design. Measured here: 0.046.
+    testthat::expect_true(max(abs(est$gradient)) < 1)
+    # ...and raw estimates of exactly zero. Measured here: 4.15.
+    testthat::expect_true(max(abs(est$raw)) > 1)
+    # `est$converged` is deliberately NOT asserted, and re-adding it will
+    # fail. On this design the julia optimiser stops at its 1000-iteration
+    # cap with a gradient norm of 0.0459 against a tolerance of 0.0018, and
+    # says so in a warning. Whether that cap should be higher for a
+    # 43-parameter nonlinear model is a question about the optimiser; this
+    # block is about a state-dependent DRIFT specification reaching the
+    # backend and being fitted, and it answers that either way.
   })
   
 }

@@ -51,3 +51,119 @@ skip_without_julia <- function() {
 skip_on_32bit <- function() {
   testthat::skip_if(.Machine$sizeof.pointer == 4, "32-bit build.")
 }
+
+
+# ---------------------------------------------------------------------------
+# Fitting one model on both backends
+#
+# The expensive files in this suite used to fit on stan, which is the default
+# backend and the one being deprecated. They fit on julia now and cost a
+# fraction of what they did. Setting CTSEM_TEST_STAN fits both and compares
+# them, so the stan coverage those files used to give is a run away rather
+# than deleted -- and the comparison is stronger than what was there before,
+# which never checked one backend against the other at all.
+#
+#   Rscript -e 'Sys.setenv(NOT_CRAN="true", CTSEM_TEST_STAN="true"); ...'
+#
+# `test-stan-julia-parity.R` does this too, on small models built for it. The
+# difference is scale: these are the suite's large designs -- 50 subjects x 50
+# occasions, nonlinear LAMBDA, individually varying loadings, mixed binary and
+# Gaussian indicators -- and a disagreement that only appears at that size
+# would not show up there.
+#
+# Nothing below reads the environment except `.ctsem_test_stan()`, for the
+# reason at the top of this file.
+
+.ctsem_test_stan <- function() {
+  v <- tolower(trimws(Sys.getenv("CTSEM_TEST_STAN", "")))
+  v %in% c("true", "yes", "1", "t")
+}
+
+#' The backends a test that can run on either should fit.
+#'
+#' Always 'julia', first, so a test can write `fits$julia` unconditionally.
+#' 'stan' as well when CTSEM_TEST_STAN is set.
+test_backends <- function() {
+  if (.ctsem_test_stan()) c("julia", "stan") else "julia"
+}
+
+#' Fit the same model on every backend `test_backends()` asks for.
+#'
+#' Arguments go to `ctFit()` unchanged, minus `backend`. `stanargs` are extra
+#' arguments for the stan fit only, for the few settings that path needs and
+#' julia has no equivalent of; passing one to julia is an error there rather
+#' than a no-op, which is the house rule for an argument a backend cannot
+#' honour.
+#'
+#' Returns a named list, always with `$julia`, `$stan` only when asked for.
+fit_backends <- function(..., backends = test_backends(), stanargs = list()) {
+  args <- list(...)
+  if (!is.null(args$backend)) stop("fit_backends() chooses the backend")
+  out <- list()
+  for (be in backends) {
+    a <- args
+    if (identical(be, "stan")) a <- utils::modifyList(a, stanargs)
+    a$backend <- be
+    out[[be]] <- do.call(ctsem::ctFit, a)
+  }
+  out
+}
+
+# The summary sections both backends build, and that mean the same thing on
+# each. `parmatrices` is deliberately not here: it is compared by the tests
+# that care, row by matrix/row/col, because its row *order* differs between
+# the two and a whole-table comparison would report that as a difference.
+.CT_BACKEND_SECTIONS <- c("popmeans", "popsd", "rawpopcorr")
+
+#' Compare the same model's summary across the backends that were fitted.
+#'
+#' A no-op with one backend, so a test can call it unconditionally.
+#'
+#' Compares the `mean` column of each section elementwise by row name, and the
+#' log likelihood. Elementwise and by name, not as whole tables: the sections
+#' can carry different row orders and different extra columns, and a norm over
+#' the lot reports "not equal" without saying which parameter moved.
+#'
+#' `sections` names what to compare. `rawpopcorr` is the population
+#' correlation, and a mismatch there is the first place the population
+#' covariance shows up -- see the note in the files that pass
+#' `sections = setdiff(.CT_BACKEND_SECTIONS, "rawpopcorr")`.
+expect_backends_agree <- function(fits, tol = 1e-2, logliktol = 1e-1,
+  sections = .CT_BACKEND_SECTIONS) {
+
+  if (length(fits) < 2L) return(invisible(NULL))
+  if (is.null(fits$julia) || is.null(fits$stan)) {
+    stop("expect_backends_agree() wants $julia and $stan")
+  }
+  sj <- summary(fits$julia)
+  ss <- summary(fits$stan)
+
+  testthat::expect_equal(as.numeric(sj$loglik), as.numeric(ss$loglik),
+    tolerance = logliktol)
+
+  compared <- 0L
+  for (sec in sections) {
+    a <- sj[[sec]]
+    b <- ss[[sec]]
+    # A section absent on one side is not a failure -- a model with no random
+    # effects has no popsd -- but absent on one and present on the other is.
+    if (is.null(a) && is.null(b)) next
+    testthat::expect_false(xor(is.null(a), is.null(b)),
+      label = paste0(sec, " is present on one backend and not the other"))
+    if (is.null(a) || is.null(b)) next
+
+    nm <- intersect(rownames(a), rownames(b))
+    # The rows have to line up by name or nothing is being compared, and a
+    # comparison of nothing passes. This is the guard for that.
+    testthat::expect_gt(length(nm), 0L)
+    if (!length(nm)) next
+    av <- stats::setNames(as.numeric(a[nm, "mean"]), nm)
+    bv <- stats::setNames(as.numeric(b[nm, "mean"]), nm)
+    testthat::expect_equal(av, bv, tolerance = tol)
+    compared <- compared + length(nm)
+  }
+  # Same reason again, one level up: every section skipped is a green check
+  # that checked nothing.
+  testthat::expect_gt(compared, 0L)
+  invisible(list(julia = sj, stan = ss))
+}

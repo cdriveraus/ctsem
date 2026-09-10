@@ -1,3 +1,9 @@
+# STAYS ON STAN, and the name is accurate: `estonly stan fit reports tipred
+# effects` asserts `$setup$matsetup` and `$standata$ntipredeffects`, which are
+# stan's own structures, and the first block's third fit is stan MCMC. This is
+# a test about stan rather than a test that happens to run on it, so moving it
+# would change the claim. The julia side of time-invariant predictors is
+# `test-julia-tipred-missing.R`.
 skip_on_cran()
 skip_on_32bit()
 {  # body of the guard this replaced; indentation unchanged
