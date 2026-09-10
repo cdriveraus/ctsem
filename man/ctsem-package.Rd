@@ -32,6 +32,7 @@ Stan Development Team (2018). RStan: the R interface to Stan. R package version 
 Useful links:
 \itemize{
   \item \url{https://github.com/cdriveraus/ctsem}
+  \item Report bugs at \url{https://github.com/cdriveraus/ctsem/issues}
 }
 
 }

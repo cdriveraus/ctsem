@@ -75,17 +75,6 @@ ctFitAddSamples <- function(fit,nsamples,cores=2){
 #' @export
 ctAddSamples <- ctFitAddSamples
 
-#' Quickly initialise stanfit object from model and data
-#'
-#' @param model stanmodel
-#' @param data standata
-#' @param fast Use cut down form for speed
-#'
-#' @return stanfit object
-#' @export
-#'
-#' @examples
-#' sf <- stan_reinitsf(ctstantestfit$stanmodel,ctstantestfit$standata)
 # Whether the legacy covariance transform has already been reported this
 # session, keyed by which matrices carried it.
 .ct_legacy_covtransform <- new.env(parent = emptyenv())
@@ -151,6 +140,17 @@ ctAddSamples <- ctFitAddSamples
     sort(unique(names(mats)[match(ms[hit, 7], mats)])), collapse = ', '))
 }
 
+#' Quickly initialise stanfit object from model and data
+#'
+#' @param model stanmodel
+#' @param data standata
+#' @param fast Use cut down form for speed
+#'
+#' @return stanfit object
+#' @export
+#'
+#' @examples
+#' sf <- stan_reinitsf(ctstantestfit$stanmodel,ctstantestfit$standata)
 stan_reinitsf <- function(model, data,fast=FALSE){
   .ctCheckLegacyCovTransform(data)
   if(fast) sf <- new(model@mk_cppmodule(model),data,0L,getcxxfun(model@dso))
