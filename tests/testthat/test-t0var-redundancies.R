@@ -133,17 +133,18 @@ test_that("T0cov takes the main latents from T0VAR and the population block from
   T0cov <- grab(cp$pop_T0cov)
   popcov <- grab(cp$rawpopcov)
 
-  # The population block is the constructed RAWPOPVAR, in state units.
+  # The population block is the constructed RAWPOPVAR, and no conversion
+  # happens here.
   #
-  # rawpopcov is in raw parameter units; T0cov's block is what the filter
-  # carries, so each state's row and column are scaled by that state's own
-  # multiplier*meanscale. A varying T0MEANS puts natural units on the state
-  # (factor 10 by default); an appended carrier keeps raw units, because the
-  # augmentation writes its T0MEANS with the identity transform and the cell
-  # that reads the state does the scaling (factor 1). So the diagonal here
-  # differs by 100 for eta1 and by 1 for the carrier, and the pair spanning
-  # one of each by 10 -- and that is the whole of the unit conversion, stated
-  # rather than assumed.
+  # Each state has a scale: 10 for a varying T0MEANS, whose state carries
+  # natural units, and 1 for an appended carrier, which keeps raw units
+  # because the augmentation writes its T0MEANS with the identity transform
+  # and the cell reading the state does the scaling. Those factors are applied
+  # inside the population standard deviation -- in the diagonal element's own
+  # transform -- so rawpopcov is already in state units and T0cov's block
+  # equals it outright. They used to be applied here instead, to T0cov's rows
+  # and columns after construction, which is why the two backends disagreed
+  # about pop_T0VAR and why this block used to differ by 100, 10 and 1.
   ms <- sdat$matsetup
   mv <- sdat$matvalues
   t0meansrows <- which(ms[, 7] == .t0varred_T0MEANS_slot & ms[, 2] == 1L)
@@ -154,8 +155,7 @@ test_that("T0cov takes the main latents from T0VAR and the population block from
   expect_equal(scale[1], 10, tolerance = 1e-8)   # eta1's T0MEANS
   expect_equal(scale[2], 1, tolerance = 1e-8)    # b1's carrier
   block <- popcov[seq_along(popidx), seq_along(popidx), drop = FALSE]
-  expect_equal(T0cov[popidx, popidx], outer(scale, scale) * block,
-    tolerance = 1e-10)
+  expect_equal(T0cov[popidx, popidx], block, tolerance = 1e-12)
   # The correlation is what a user reads and is scale free, so it must match
   # regardless of the units above.
   expect_equal(cov2cor(T0cov[popidx, popidx]), cov2cor(block),

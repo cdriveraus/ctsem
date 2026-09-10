@@ -521,6 +521,26 @@ transformed parameters{
   if(nindvarying > 0){
     int counter =0;
     rawpopsd = log1p_exp(2*rawpopsdbase-1) .* sdscale + 1e-10; // sqrts of proportions of total variance
+    // The scale of the state this effect carries, folded into its own
+    // standard deviation rather than applied to the covariance afterwards.
+    // A varying T0MEANS puts natural units on its state, so its factor is
+    // that cell multiplier*meanscale; an appended carrier keeps raw units,
+    // because the augmentation writes its T0MEANS with the identity transform
+    // and the consuming cell does the scaling, so its factor is one. After
+    // this the population standard deviation is the standard deviation of the
+    // state, which is what the cell transform consumes, and nothing
+    // downstream rescales.
+    if(intoverpop && nindvarying > 0){
+      for(ri in 1:size(matsetup)){
+        if(matsetup[ri,7]==1 && matsetup[ri,5]){ //indvarying t0means
+          for(j in 1:nindvarying){
+            if(intoverpopindvaryingindex[j] == matsetup[ri,1]){
+              rawpopsd[j] *= matvalues[ri,2] * matvalues[ri,3];
+            }
+          }
+        }
+      }
+    }
     for(j in 1:nindvarying){
       rawpopcovbase[j,j] = rawpopsd[j]; //used with intoverpop
       for(i in 1:nindvarying){
@@ -541,14 +561,22 @@ transformed parameters{
     // applied the chosen construction -- so under z or cholesky the
     // population correlation the model used and the one it reported were two
     // different numbers, measured 0.102 apart on a four-effect model.
-    rawpopcov = makesym(sdcovsqrt2cov(rawpopcovbase, choleskymats),verbose,1);
+    // No jitter on the covariance itself: the floor lives in the diagonal
+    // element transform, and makesym adding 1e-10 here put a third one on top
+    // -- which is the whole of the 1.0e-10 this used to differ from the julia
+    // backend by. sdcovsqrt2cov returns a symmetric matrix, and the
+    // factorisation below goes through makesym, which symmetrises as well as
+    // guarding, so nothing here needs to.
+    rawpopcov = sdcovsqrt2cov(rawpopcovbase, choleskymats);
     for(coli in 1:nindvarying){
       for(rowi in 1:nindvarying){
         rawpopcorr[rowi,coli] = rawpopcov[rowi,coli] /
           sqrt(rawpopcov[rowi,rowi] * rawpopcov[coli,coli]);
       }
     }
-    rawpopcovchol = cholesky_decompose(rawpopcov); 
+    // The jitter belongs to the factorisation, not to the estimand: it is
+    // there so a rounding level negative eigenvalue cannot stop a fit.
+    rawpopcovchol = cholesky_decompose(makesym(rawpopcov,verbose,1));
   }//end indvarying par setup
   {
   }
@@ -873,14 +901,8 @@ if(si==0 || sum(whenmat[54,{5}]) > 0 )Jy=mcalc(Jy,indparams, state,{0}, 54, mats
       // in this block.
     T0cov[intoverpopindvaryingindex, intoverpopindvaryingindex] = rawpopcov;
     
-      for(ri in 1:size(matsetup)){
-        if(matsetup[ri,7]==1){ //if t0means
-          if(matsetup[ri,5]) { //and indvarying
-            T0cov[matsetup[ri,1], ] *= matvalues[ri,2] * matvalues[ri,3]; //multiplier meanscale
-            T0cov[, matsetup[ri,1] ] *=  matvalues[ri,2] * matvalues[ri,3]; //multiplier meanscale
-          }
-        }
-      }
+      // No rescaling here: the scale is in the population standard
+      // deviation, so rawpopcov is already in state units.
     }
  }
   
