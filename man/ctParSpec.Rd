@@ -24,7 +24,9 @@ character vector of names for effects to estimate, e.g. \code{'age'} or
 \code{c('age', 'sex')}. Naming any predictor switches the rest off for
 this cell, so the list is the whole set of effects on it. A name must be
 one of the model's \code{TIpredNames}; anything else is an error when the
-model is built.}
+model is built. \code{character(0)} (or \code{tipreds=} with nothing
+after it, in a cell) means no predictor acts on this cell, which is not
+the same as leaving the argument out -- that keeps the model's default.}
 }
 \value{
 A single character string, suitable for a model matrix cell.

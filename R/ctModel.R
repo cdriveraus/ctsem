@@ -118,18 +118,45 @@
 #' @param PARS for types 'ct' and 'dt' only. May be of any structure, only needed to contain extra parameters for certain non-linear models.
 #' @param silent Suppress all output to console.
 #'
-#' @details A matrix cell may be a number, which fixes the parameter, or a
-#' character string, which frees it. A string can also carry the transform, the
-#' individual-variation flag, the prior scaling of that variation, and the
-#' time-independent predictors acting on the parameter. It may say so in either
-#' of two interchangeable ways: as fields in a fixed order separated by
-#' \code{|} (\code{'mm||TRUE|0.5'}), or by name
-#' (\code{'mm, indvarying=TRUE, sdscale=0.5'}). A cell that names one of the
-#' fields (\code{transform}, \code{indvarying}, \code{sdscale}, \code{tipreds})
-#' and assigns to it with \code{=} is read the named way, a cell containing
-#' \code{|} the ordered way, and anything else is a plain parameter name or
-#' expression. \code{\link{ctParSpec}} writes the ordered form from the same
-#' named arguments, for when a specification is built programmatically.
+#' @details A matrix cell is one of four things, and which one is decided by
+#' what its text looks like:
+#'
+#' \itemize{
+#'   \item a \strong{number}, which fixes the cell;
+#'   \item a \strong{parameter name}, which frees it -- the same name in two
+#'     cells is one parameter, which is how an equality constraint is written;
+#'   \item a name \strong{with fields}, adding the transform, the
+#'     individual-variation flag, the prior scaling of that variation, and the
+#'     time-independent predictors acting on the parameter;
+#'   \item an \strong{expression}, computed from the latent states, the time
+#'     dependent predictors and the \code{PARS} cells.
+#' }
+#'
+#' Fields may be given in either of two interchangeable ways: in a fixed order
+#' separated by \code{|} (\code{'mm||TRUE|0.5'}), or by name
+#' (\code{'mm, indvarying=TRUE, sdscale=0.5'}). A cell containing \code{|} is
+#' read the ordered way; otherwise a cell with a field of the form
+#' \code{name=value} is read the named way, and an unrecognised field name is
+#' an error rather than part of a parameter name.
+#' \code{\link{ctParSpec}} writes the ordered form from the same named
+#' arguments, for when a specification is built programmatically.
+#'
+#' An expression must reference at least one latent state, time dependent
+#' predictor or \code{PARS} cell, since those are what the fitted program
+#' computes it from; a fresh parameter name appearing alongside such a
+#' reference is declared by being written there. So
+#' \code{'lbystate * eta2 + 1'} is a valid cell, while \code{'-exp(dr)'} is
+#' not -- to transform one parameter, put the transform in the second field
+#' and call the parameter \code{param} there (\code{'dr|-exp(param)'}). A
+#' cell cannot reference a manifest variable, a time-independent predictor or
+#' the time interval; predictor effects are set with the \code{tipreds}
+#' field.
+#'
+#' A cell that is exactly a latent state or time dependent predictor name is
+#' taken as a reference to it rather than as a parameter of that name, and
+#' warns, because the two readings are different models.
+#' \code{'state[1]'} and \code{'tdpreds[rowi, 1]'} say the same thing
+#' without the ambiguity.
 #'
 #' @seealso \code{\link{ctParSpec}} for the fields a matrix cell can carry,
 #' \code{\link{ctFit}} for fitting the result.
@@ -294,6 +321,26 @@ ctModel<-function(LAMBDA, type='ct',n.manifest = 'auto', n.latent='auto', Tpoint
   }
   
   
+  # An NA cell says nothing, and the four `[1]=="auto"` tests below compare
+  # against it, so a single NA in the first cell of one of those matrices came
+  # out as "missing value where TRUE/FALSE needed" -- naming neither the matrix
+  # nor the cell. Refuse it here, where both are still known. A cell is a
+  # number, a name, or an expression; there is no reading under which NA is one
+  # of those, and `0` is what an absent cell usually means.
+  for(m in c('T0MEANS','T0VAR','LAMBDA','DRIFT','DIFFUSION','MANIFESTVAR',
+    'MANIFESTMEANS','CINT','TDPREDEFFECT','PARS')){
+    mat <- get0(m, ifnotfound=NULL)
+    if(is.null(mat) || (length(mat)==1 && !is.na(mat[1]) && mat[1]=='auto')) next
+    bad <- which(is.na(mat))
+    if(length(bad)){
+      idx <- if(is.matrix(mat)) paste0('[',(bad[1]-1) %% nrow(mat) + 1,',',
+        (bad[1]-1) %/% nrow(mat) + 1,']') else paste0('[',bad[1],']')
+      stop(m,idx,' is NA. A matrix cell must be a number, a parameter name, or ',
+        'an expression -- write 0 for a cell that is fixed to zero.',
+        call.=FALSE)
+    }
+  }
+
   #matrices
   if(T0MEANS[1]=="auto") T0MEANS<-ctLabel(TDpredNames=TDpredNames,TIpredNames=TIpredNames,
     manifestNames=manifestNames,latentNames=latentNames,matrixname="T0MEANS",n.latent=n.latent,

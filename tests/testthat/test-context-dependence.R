@@ -49,14 +49,21 @@ test_that('dependence propagates through PARS references', {
 # warned once per candidate row -- around fifty times per ctGenerate call on a
 # model with two PARS cells. A blank is not a parameter name.
 test_that('a blank PARS label is not treated as a parameter name', {
-  model <- suppressMessages(ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
+  # The PARS cells are the bare latent names 'A' and 'D' on purpose, and
+  # R/ctModelSpecCheck.R warns about exactly that -- so the warning is
+  # suppressed here rather than the model changed. Writing 'state[2]' instead
+  # would silence it and build the same model, but it would also give those
+  # cells a transform, and a PARS cell with *no* transform is the condition
+  # this test exists to cover.
+  model <- suppressWarnings(suppressMessages(ctModel(type = 'ct', n.latent = 2,
+    n.manifest = 2,
     manifestNames = c('Y1', 'Y2'), latentNames = c('D', 'A'), LAMBDA = diag(2),
     CINT = matrix(0, 2, 1), MANIFESTMEANS = matrix(0, 2, 1),
     MANIFESTVAR = diag(.2, 2), T0MEANS = matrix(0, 2, 1), T0VAR = diag(1, 2),
     Tpoints = 8, PARS = matrix(c('A', 'D'), 2, 1),
     DRIFT = matrix(c('-0.5 * (1 + 0.2 * PARS[1,1]) + 0.01 * PARS[2,1]', 0.1,
       0, -0.3), 2, 2),
-    DIFFUSION = matrix(c(.3, 0, 0, .4), 2, 2)))
+    DIFFUSION = matrix(c(.3, 0, 0, .4), 2, 2))))
 
   expect_silent(cells <- ctsem:::.ctContextCellTable(model))
   expect_true(ctsem:::ctModelIsNonlinear(model))
