@@ -140,6 +140,72 @@ test_that("two cells asking for different sdscales for one parameter warn", {
     'one prior scale')
 })
 
+test_that("a named tipred effect groups by predictor and label", {
+  # The key both backends group coefficients by. They number them
+  # independently -- stan as it walks the cells, julia predictor-major -- so
+  # what has to match is which effects are *one* coefficient.
+  expect_equal(.ctTipredEffectKey('sh', 1, 5), '1:sh')
+  expect_equal(.ctTipredEffectKey('sh', 1, 9), '1:sh')
+  # A bare TRUE is never shared: it keys on the parameter.
+  expect_equal(.ctTipredEffectKey('TRUE', 1, 5), '1:#5')
+  expect_false(identical(.ctTipredEffectKey('TRUE', 1, 5),
+    .ctTipredEffectKey('TRUE', 1, 9)))
+  # The same label under two predictors is two coefficients. Constraining an
+  # age effect equal to a sex effect is a different claim from constraining
+  # two parameters' age effects equal, and only the second is what a shared
+  # name says.
+  expect_false(identical(.ctTipredEffectKey('sh', 1, 5),
+    .ctTipredEffectKey('sh', 2, 5)))
+  # A fixed effect carries a value rather than a name, so it is not shared.
+  expect_equal(.ctTipredEffectKey('4.3', 1, 5), '1:#5')
+})
+
+test_that("one effect name across different transforms is refused", {
+  # A shared coefficient displaces every parameter carrying it by the same
+  # amount on the raw scale, so it means one thing only where the transforms
+  # agree. Where they differ there is one number and two meanings, and nothing
+  # for a summary or a plot to report as "the effect".
+  msg <- tryCatch(suppressWarnings(suppressMessages(ctModel(type = 'ct',
+    n.latent = 2, n.manifest = 2, manifestNames = c('Y1', 'Y2'),
+    latentNames = c('e1', 'e2'), LAMBDA = diag(2), n.TIpred = 1,
+    TIpredNames = 'age', MANIFESTMEANS = matrix(c(0, 0), 2, 1),
+    DRIFT = matrix(c('dr||||age=sh', 0, 0, -0.3), 2, 2),
+    DIFFUSION = matrix(c('df||||age=sh', 0, 0, .4), 2, 2)))),
+    error = function(e) conditionMessage(e))
+  expect_match(msg, 'transformed differently')
+  expect_match(msg, '"dr" in DRIFT\\[1,1\\]')
+  expect_match(msg, '"df" in DIFFUSION\\[1,1\\]')
+  # Same transform, so the same name is fine.
+  expect_silent(suppressMessages(ctModel(type = 'ct', n.latent = 2,
+    n.manifest = 2, manifestNames = c('Y1', 'Y2'),
+    latentNames = c('e1', 'e2'), LAMBDA = diag(2), n.TIpred = 1,
+    TIpredNames = 'age',
+    MANIFESTMEANS = matrix(c('a||||age=sh', 'b||||age=sh'), 2, 1))))
+})
+
+test_that("cells that are one parameter cannot differ on predictor effects", {
+  # An effect displaces the parameter, and TIPREDEFFECTsetup is indexed by
+  # parameter rather than by cell, so per-cell effects cannot be represented
+  # at all. It was accepted and resolved by position: the same two cells in
+  # the other order gave a different set of estimated effects.
+  mm <- function(a, b) suppressWarnings(suppressMessages(ctModel(type = 'ct',
+    n.latent = 2, n.manifest = 2, manifestNames = c('Y1', 'Y2'),
+    latentNames = c('e1', 'e2'), LAMBDA = diag(2), n.TIpred = 2,
+    TIpredNames = c('age', 'sex'), MANIFESTMEANS = matrix(c(a, b), 2, 1))))
+  expect_error(mm('mm||||age', 'mm||||sex'), 'different time independent')
+  # One cell states effects and the other leaves the field alone, so it takes
+  # the model default -- still two different claims about one parameter.
+  expect_error(mm('mm||||age', 'mm'), 'different time independent')
+  expect_error(mm('mm||||age', 'mm||||age,sex'), 'different time independent')
+  # The message says the effect is on the parameter, not the cell.
+  msg <- tryCatch(mm('mm||||age', 'mm||||sex'),
+    error = function(e) conditionMessage(e))
+  expect_match(msg, 'not one cell of it')
+  # Agreeing cells are the ordinary equality constraint and stay fine.
+  expect_silent(suppressMessages(mm('mm||||age', 'mm||||age')))
+  expect_silent(suppressMessages(mm('mm', 'mm')))
+})
+
 test_that("an NA cell names the matrix and the cell", {
   # Four `[1]=="auto"` tests compare against the first cell, so a leading NA
   # came out as "missing value where TRUE/FALSE needed".

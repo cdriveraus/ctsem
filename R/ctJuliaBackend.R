@@ -2188,15 +2188,30 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # already use for the same reason.
   coefficient <- if (is.null(offset)) max(c(0L, table$parnumber), na.rm = TRUE) else
     as.integer(offset)
+  # Coefficient index by `.ctTipredEffectKey()`: two parameters given the same
+  # effect name share one. The stan path keeps the same map in
+  # R/ctModelWriter.R. The indices themselves differ between the two -- stan
+  # allocates as it walks the cells, this walks predictors then parameters --
+  # but which effects are *the same coefficient* has to match, or the two
+  # backends fit different models from one specification.
+  keys <- list()
   for (predictor in seq_along(model$TIpredNames)) {
     column <- effect_columns[predictor]
     if (!column %in% available) next
-    parameters <- sort(unique(table$parnumber[direct & .ctTipredEffectActive(table[[column]])]))
+    active <- direct & .ctTipredEffectActive(table[[column]])
+    parameters <- sort(unique(table$parnumber[active]))
     for (parameter in parameters) {
-      coefficient <- coefficient + 1L
+      # Cells sharing a parameter are required to state the same effects
+      # (R/ctModelSpecCheck.R), so the first of them carries the label.
+      first <- which(active & table$parnumber %in% parameter)[1L]
+      key <- .ctTipredEffectKey(table[[column]][first], predictor, parameter)
+      if (is.null(keys[[key]])) {
+        coefficient <- coefficient + 1L
+        keys[[key]] <- coefficient
+      }
       entries[[length(entries) + 1L]] <- data.frame(
         parameter = as.integer(parameter), predictor = as.integer(predictor),
-        coefficient = as.integer(coefficient)
+        coefficient = as.integer(keys[[key]])
       )
     }
   }

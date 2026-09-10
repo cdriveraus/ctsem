@@ -222,6 +222,17 @@ name in each cell works when one transform suits them all. Two \code{PARS}
 cells sharing one label are co-holders rather than references, so they must
 agree on the transform as any other repeated name must.
 
+A predictor effect belongs to the parameter rather than to the cell, so
+cells that are one parameter must state the same \code{tipreds}. Naming an
+effect (\code{'mypar||||age=shared'}) constrains every parameter given that
+name under that predictor to one coefficient, which costs one fewer free
+parameter and makes the two parameters' reported effects identical. Because
+one coefficient displaces each parameter's raw value equally, it means the
+same thing on the natural scale only where the transforms agree, so sharing
+a name between parameters transformed differently is refused. A name is
+scoped per predictor: the same label under two predictors is two
+coefficients.
+
 A cell that is exactly a latent state or time dependent predictor name is
 taken as a reference to it rather than as a parameter of that name, and
 warns, because the two readings are different models. \code{'state[1]'}

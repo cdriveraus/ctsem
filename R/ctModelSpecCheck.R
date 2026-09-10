@@ -359,6 +359,77 @@
     }
   }
 
+  # --- one parameter, two different sets of predictor effects ------------
+  #
+  # A predictor effect displaces the *raw* parameter, and `TIPREDEFFECTsetup`
+  # is indexed by parameter rather than by cell, so "age affects this cell but
+  # not that one" cannot be represented for cells that are one parameter. It
+  # was accepted anyway and resolved by position: measured,
+  # `MANIFESTMEANS = c('mm||||age', 'mm||||sex')` and the same two cells in the
+  # other order produce different sets of estimated effects.
+  effectcols <- if (length(TIpredNames)) paste0(TIpredNames, '_effect') else
+    character(0)
+  effectcols <- intersect(effectcols, names(ctspec))
+  if (length(effectcols)) {
+    for (nm in unique(ctspec$param[holds])) {
+      rows <- which(holds & ctspec$param %in% nm)
+      if (length(rows) < 2) next
+      stated <- vapply(rows, function(r) paste(
+        .ctTipredEffectSpec(ctspec[r, effectcols]), collapse = ', '),
+        character(1))
+      if (length(unique(stated)) < 2) next
+      shown <- rows[!duplicated(stated)][1:2]
+      stop('Parameter "', nm, '" is declared by cells that give it different ',
+        'time independent predictor effects:\n  ',
+        paste(vapply(shown, function(r) paste0(.ctSpecCellName(ctspec, r),
+          ' as ', paste0(sub('_effect$', '', effectcols), '=',
+            .ctTipredEffectSpec(ctspec[r, effectcols]), collapse = ', ')),
+          character(1)), collapse = '\n  '),
+        if (length(rows) > 2) paste0('\n  (', length(rows),
+          ' cells name it)') else '',
+        '\nAn effect displaces the parameter itself, not one cell of it, so ',
+        'the cells that are one parameter cannot differ here -- which of them ',
+        'was used depended on the order they were written in. State the same ',
+        'effects in every cell that names "', nm, '", or give the cells ',
+        'different parameter names.', call. = FALSE)
+    }
+  }
+
+  # --- one effect name, two different transforms -------------------------
+  #
+  # Naming an effect constrains the parameters that carry it to one
+  # coefficient (`.ctTipredEffectKey()`). That coefficient displaces each
+  # parameter's raw value equally, so what it does on the natural scale is the
+  # same for all of them only when their transforms are the same. Where they
+  # differ there is one number and two meanings, and nothing a summary or a
+  # plot could report as "the effect".
+  if (length(effectcols)) {
+    for (ci in seq_along(effectcols)) {
+      spec <- .ctTipredEffectSpec(ctspec[[effectcols[ci]]])
+      label <- .ctTipredEffectLabel(spec)
+      for (nm in unique(label[!is.na(label) & holds])) {
+        rows <- which(holds & !is.na(label) & label %in% nm)
+        pars <- unique(ctspec$param[rows])
+        if (length(pars) < 2) next
+        tf <- ctspec$transform[rows][!duplicated(ctspec$param[rows])]
+        if (length(unique(tf)) < 2) next
+        shown <- rows[!duplicated(ctspec$transform[rows])][1:2]
+        stop('The ', sub('_effect$', '', effectcols[ci]), ' effect named "',
+          nm, '" is shared by parameters that are transformed differently:\n  ',
+          paste(vapply(shown, function(r) paste0('"', ctspec$param[r],
+            '" in ', .ctSpecCellName(ctspec, r), ', as ',
+            ctspec$transform[r]), character(1)), collapse = '\n  '),
+          '\nOne coefficient displaces every parameter that carries it by the ',
+          'same amount on the raw scale, so it only means one thing where the ',
+          'transforms agree -- here it would mean something different for each, ',
+          'and there is no single effect for a summary or a plot to report. ',
+          'Share the name only between parameters with the same transform, or ',
+          'let each have its own effect by writing a bare predictor name.',
+          call. = FALSE)
+      }
+    }
+  }
+
   # --- sdscale where nothing varies --------------------------------------
   #
   # sdscale multiplies the prior on a population standard deviation, so it
