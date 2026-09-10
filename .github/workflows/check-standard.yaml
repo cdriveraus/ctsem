@@ -71,6 +71,15 @@ jobs:
       R_REMOTES_NO_ERRORS_FROM_WARNINGS: true
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
       R_KEEP_PKG_SOURCE: yes
+      # `r-lib/actions/setup-r` sets NOT_CRAN=true unless it is already set, so
+      # this gate has not been running the CRAN configuration it exists to run.
+      # The julia tests were active, with no Julia installed, and
+      # JuliaConnectoR waits on a Julia that never starts -- which is the
+      # likeliest reading of the 4 h 13 m recorded above the timeout, and of
+      # this workflow's failures on juliaFit. `skip_on_cran()` compares against
+      # the string "true", so 'false' is the CRAN configuration and unset is
+      # not.
+      NOT_CRAN: 'false'
       # Julia is installed, and the vignettes therefore executed, only when the
       # vignettes are being built. Three of the four use backend='julia' with no
       # eval guard, which is how runs 214 and 215 died in R CMD build.

@@ -35,6 +35,23 @@ jobs:
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
       R_KEEP_PKG_SOURCE: yes
+      # Set here, and this is the whole tier working or not working.
+      #
+      # `r-lib/actions/setup-r` does
+      #     if (!process.env["NOT_CRAN"]) core.exportVariable("NOT_CRAN","true")
+      # so leaving it unset does not give the CRAN configuration, it gives the
+      # opposite one. Every julia test therefore RAN here, on a runner with no
+      # Julia, and JuliaConnectoR sat waiting for a Julia that was never going
+      # to start: 56.9 minutes in the test step and death at the job cap, the
+      # first time this step was ever reached. The comment below claiming
+      # NOT_CRAN was "deliberately unset" described an intention the runner
+      # had already overridden.
+      #
+      # 'false' rather than unset, for the same reason: the action only skips
+      # its default when the variable is already there. `skip_on_cran()` tests
+      # `identical(Sys.getenv("NOT_CRAN"), "true")`, so anything but "true"
+      # means the CRAN configuration, which is what this tier is for.
+      NOT_CRAN: 'false'
     steps:
       - uses: actions/checkout@v5
 
@@ -121,8 +138,11 @@ jobs:
           git --no-pager diff --stat -- man NAMESPACE
           git diff --exit-code -- man NAMESPACE
 
-      # NOT_CRAN deliberately unset and no Julia installed: this is the CRAN
-      # configuration. Every julia test must skip, and nothing may error.
+      # NOT_CRAN pinned to 'false' in the job env above, and no Julia
+      # installed: this is the CRAN configuration. Every julia test must skip,
+      # and nothing may error. It has to be pinned rather than left alone --
+      # see the comment there, which is the reason this step used to run for
+      # an hour.
       #
       # One file per process, under `timeout`, rather than one `test_dir()`.
       # Two reasons, and the first is the whole design constraint here:
@@ -162,7 +182,7 @@ jobs:
           # annotations below, for that reason.
           set +e
           cd tests/testthat
-          fail=0; slow=0; ran=0; t_all=$(date +%s)
+          fail=0; slow=0; ran=0; t_all=$(date +%s); slownames=; failnames=
           printf 'TIER1 per file, %s s each at most\n' "$CTSEM_FILE_TIMEOUT"
           for f in $(ls test*.R | sort); do
             start=$(date +%s)
@@ -177,18 +197,18 @@ jobs:
             printf '%-44s %4ss rc=%s %s\n' "$f" "$secs" "$rc" "${counts:-<no counts>}"
             if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
               echo "::error title=Test file timed out::$f did not finish in ${CTSEM_FILE_TIMEOUT}s. It takes seconds locally, so it is blocked rather than slow."
-              slow=$((slow+1))
+              slow=$((slow+1)); slownames="$slownames $f"
             elif [ "$rc" -ne 0 ]; then
               echo "::error title=Test file failed::$f exited $rc"
               printf '%s\n' "$out" | tail -40
-              fail=$((fail+1))
+              fail=$((fail+1)); failnames="$failnames $f"
             else
               set -- $counts
               ran=$((ran + ${1:-0}))
               if [ "${2:-0}" -ne 0 ] || [ "${3:-0}" -ne 0 ]; then
                 echo "::error title=Test failures::$f had ${2:-0} failures and ${3:-0} errors"
                 printf '%s\n' "$out" | tail -40
-                fail=$((fail+1))
+                fail=$((fail+1)); failnames="$failnames $f"
               fi
             fi
             # Several blocked files at the per-file cap would add up past the
@@ -204,6 +224,13 @@ jobs:
             fi
           done
           printf '\nTIER1 assertions=%s files_failed=%s files_timed_out=%s\n' "$ran" "$fail" "$slow"
+          # The whole list in one annotation as well as the per-file ones.
+          # GitHub serves only the first ten annotations of a run, and on the
+          # run that found the NOT_CRAN problem the tenth was reached before
+          # the end, so the list could have been truncated without saying so.
+          if [ -n "$slownames$failnames" ]; then
+            echo "::error title=Tier 1 summary::blocked:${slownames:- none} | failed:${failnames:- none}"
+          fi
           # A skip is fine here; an error is not, and neither is a suite that
           # asserted nothing -- that is what a silently broken guard looks
           # like.
