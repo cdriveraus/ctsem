@@ -77,7 +77,8 @@ export CTSEMLaplaceSpec, CTSEMLaplaceObjective, ctsem_laplace_objective,
     ctsem_laplace_popcov
 
 """
-    CTSEMLaplaceLevel(re_index, sd_index, cor_index, sd_scale, group, ngroups)
+    CTSEMLaplaceLevel(re_index, sd_index, cor_index, sd_scale, group, ngroups;
+                      covmatcode = 0)
 
 One level of the hierarchy: which raw parameters vary at it, which raw
 parameters say how much, and which group each subject belongs to.
@@ -98,6 +99,10 @@ no packing anywhere.
     column-major lower-triangular order -- the order Stan's own counter walks.
   * `sd_scale[j]`: the model's `sdscale` multiplier for that parameter.
   * `group[i]`: which group at this level subject `i` belongs to.
+  * `covmatcode`: which covariance construction this level's population matrix
+    uses, in `sdcovsqrt2cov`'s own encoding -- 0 the row-normalised correlation
+    square root, 1 a factor, 2 Fisher z inside a matrix exponential. Per level
+    because each level's population covariance is its own matrix.
 """
 struct CTSEMLaplaceLevel
     re_index::Vector{Int}
@@ -106,9 +111,10 @@ struct CTSEMLaplaceLevel
     sd_scale::Vector{Float64}
     group::Vector{Int}
     ngroups::Int
+    covmatcode::Int
 
     function CTSEMLaplaceLevel(re_index, sd_index, cor_index, sd_scale, group,
-        ngroups::Integer)
+        ngroups::Integer; covmatcode::Integer=0)
         re = Vector{Int}(collect(re_index))
         sd = Vector{Int}(collect(sd_index))
         cor = Vector{Int}(collect(cor_index))
@@ -125,7 +131,7 @@ struct CTSEMLaplaceLevel
         allunique(re) || throw(ArgumentError("random-effect parameter indices must be distinct within a level"))
         isempty(grp) || (minimum(grp) >= 1 && maximum(grp) <= ngroups) ||
             throw(ArgumentError("group ids must lie in 1:ngroups"))
-        return new(re, sd, cor, scale, grp, Int(ngroups))
+        return new(re, sd, cor, scale, grp, Int(ngroups), Int(covmatcode))
     end
 end
 
@@ -146,10 +152,10 @@ end
 
 """Single-level convenience form: subject-level effects, one group per subject."""
 function CTSEMLaplaceSpec(re_index, sd_index, cor_index, sd_scale,
-    nsubjects::Integer=0)
+    nsubjects::Integer=0; covmatcode::Integer=0)
     group = collect(1:Int(nsubjects))
     return CTSEMLaplaceSpec([CTSEMLaplaceLevel(re_index, sd_index, cor_index,
-        sd_scale, group, Int(nsubjects))])
+        sd_scale, group, Int(nsubjects); covmatcode=covmatcode)])
 end
 
 """Total number of random effects across every level, per subject."""
@@ -396,8 +402,8 @@ single-level form and none of it needs sending.
 """
 function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
     sd_index=Int[], cor_index=Int[], sd_scale=Float64[], level_nre=Int[],
-    group=Int[], level_ngroups=Int[], inner_maxiter::Integer=50,
-    inner_tol::Real=1e-10)
+    group=Int[], level_ngroups=Int[], level_covmatcode=Int[],
+    inner_maxiter::Integer=50, inner_tol::Real=1e-10)
     nsubjects = length(objective.subject_objectives)
     counts = isempty(level_nre) ? [length(re_index)] : Vector{Int}(Int.(level_nre))
     ngroups = isempty(level_ngroups) ? [nsubjects] : Vector{Int}(Int.(level_ngroups))
@@ -406,6 +412,18 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
     groups = isempty(group) ? collect(1:nsubjects) : Vector{Int}(Int.(group))
     length(groups) == nsubjects * length(counts) || throw(DimensionMismatch(
         "group must hold one entry per subject per level"))
+    # The model's own construction unless a level names its own. Read from the
+    # objective rather than defaulted to 0, so a covmattransform='z' model does
+    # not get a Laplace population distribution built the other way -- which is
+    # a wrong answer with no symptom, since both constructions return a
+    # perfectly ordinary covariance matrix.
+    codes = if isempty(level_covmatcode)
+        fill(objective.params.covmatcode, length(counts))
+    else
+        Vector{Int}(Int.(level_covmatcode))
+    end
+    length(codes) == length(counts) || throw(DimensionMismatch(
+        "level_covmatcode must hold one construction code per level"))
 
     levels = CTSEMLaplaceLevel[]
     re_at = 0; cor_at = 0
@@ -418,7 +436,7 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
             Int.(cor_index[(cor_at + 1):(cor_at + ncor)]),
             Float64.(sd_scale[(re_at + 1):(re_at + k)]),
             groups[((l - 1) * nsubjects + 1):(l * nsubjects)],
-            ngroups[l]))
+            ngroups[l]; covmatcode=codes[l]))
         re_at += k; cor_at += ncor
     end
     return CTSEMLaplaceObjective(objective, CTSEMLaplaceSpec(levels);
@@ -530,9 +548,12 @@ including both of its numerical offsets and its exact correlation
 parameterisation, so that a Laplace fit and a Stan fit of the same model are
 describing the same population distribution rather than two similar ones.
 
-`constraincorsqrt1` reads only the off-diagonal entries of its argument, so the
-scales sitting on the diagonal of `base` are inert there; they are written in
-anyway to keep the correspondence with Stan's `rawpopcovbase` literal.
+`base` is exactly Stan's `rawpopcovbase`: the transformed scales on the
+diagonal, the capped correlation coordinates in the lower triangle. Handing it
+to `sdcovsqrt2cov` is what makes this the same construction the filter and the
+stan program use rather than a second implementation of it -- this function
+used to spell the code=0 route out by hand, and so silently ignored the model's
+`covmattransform`.
 """
 function _laplace_popchol(values::AbstractVector{T}, level::CTSEMLaplaceLevel) where {T}
     k = nrandomeffects(level)
@@ -557,15 +578,18 @@ function _laplace_popchol(values::AbstractVector{T}, level::CTSEMLaplaceLevel) w
             end
         end
     end
-    corsqrt = constraincorsqrt1(base)
-    correlation = corsqrt * transpose(corsqrt)
-    # `scales` already carries the 1e-10 floor its transform applies;
-    # a second 1e-8 here made this covariance differ from the one the
-    # model uses. One floor, in the diagonal element's own transform.
-    scaled = scales
-    covariance = (scaled .* correlation) .* transpose(scaled)
-    symmetric = (covariance .+ transpose(covariance)) ./ 2
-    return Matrix(cholesky(Symmetric(symmetric)).L)
+    # `scales` already carries the 1e-10 floor its own transform applies, and
+    # nothing is added on top of it here: one floor, in the diagonal element's
+    # transform, matching the stan path.
+    # `_sdcovsqrt2cov_uncached!` rather than `sdcovsqrt2cov`: the same
+    # construction, without the content-keyed cache in front of it. This
+    # function runs under nested ForwardDiff -- the outer gradient needs third
+    # derivatives -- and a cache whose key comparison is `!=` on Duals compares
+    # values and not partials. One construction per outer evaluation per level
+    # is not a path worth caching anyway.
+    buffer = _make_square_buffer(T, k)
+    _sdcovsqrt2cov_uncached!(buffer, base, level.covmatcode, Val(k))
+    return Matrix(cholesky(Symmetric(buffer.out, :L)).L)
 end
 
 """Every level's Cholesky factor, innermost first."""

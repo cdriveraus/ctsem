@@ -218,4 +218,22 @@ test_that("only a subject level T0MEANS random effect disables T0VAR", {
   out <- suppressMessages(ctsem:::T0VARredundancies(subj))
   kept <- out$pars[out$pars$matrix %in% "T0VAR" & is.na(out$pars$value), ]
   expect_identical(as.character(kept$param), "t0v22")
+
+  # An effect at *both* levels behaves exactly like the subject-only case, and
+  # that is the answer to the question a reader is most likely to get wrong.
+  # The marginal initial covariance over all individuals is indeed T0VAR plus
+  # the subject effects plus the study effects, but T0cov is not the marginal:
+  # it is conditional on the levels above it. A study effect reaches an
+  # individual by moving that individual's T0MEANS, so counting it in T0cov
+  # too would count it twice. Adding a study level on top therefore changes
+  # nothing about which T0VAR cells survive.
+  both <- mk()
+  both$pars$indvarying[both$pars$param %in% "t0a"] <- TRUE
+  both$pars$indvarying_study[both$pars$param %in% "t0a"] <- TRUE
+  bothout <- suppressMessages(ctsem:::T0VARredundancies(both))
+  bothkept <- bothout$pars[bothout$pars$matrix %in% "T0VAR" &
+    is.na(bothout$pars$value), ]
+  expect_identical(as.character(bothkept$param), "t0v22")
+  expect_equal(bothout$pars$value[bothout$pars$matrix %in% "T0VAR"],
+    out$pars$value[out$pars$matrix %in% "T0VAR"])
 })

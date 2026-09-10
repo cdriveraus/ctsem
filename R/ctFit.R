@@ -276,10 +276,12 @@ ctStanFitUpdate <- ctFitUpdate
 # T0cov as well would count it twice.
 #
 # They are still *fixed* rather than left free, because taking them out of the
-# parameter vector is the whole job of this function. The particular values
-# are kept as they were only because the julia backend still builds its
-# population block through T0VAR; once that side is separated they are
-# arbitrary.
+# parameter vector is the whole job of this function. Neither backend now reads
+# the values: both drop these rows and columns where T0cov is assembled and
+# write RAWPOPVAR's entries over them. A small positive diagonal rather than
+# zero all the same, because the R-side paths that build a covariance straight
+# from T0VAR -- ctGenerate(backend='r'), ctGraph, ctModelLatex -- would meet a
+# singular matrix, and they are not what this function is about.
 T0VARredundancies <- function(ctm) {
   whichT0VAR_T0MEANSindvarying <- ctm$pars$matrix %in% 'T0VAR'  &
     is.na(ctm$pars$value) &

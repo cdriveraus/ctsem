@@ -118,14 +118,21 @@ end
 # construction cache stores and serves `buffer.out` whole against d*d slots, so
 # an oversized buffer throws on a miss and -- worse -- returns a scrambled block
 # on a hit. Both dimensions are `Val`s, so this folds away at compile time.
-@inline function _check_buffer_dim(::Val{n}, ::Val{d}) where {n,d}
+# Asked of `out` rather than of the buffer's type. Not every buffer here is a
+# `SquareBuffer` -- the expm tests hand over a NamedTuple with the same scratch
+# fields and no `dim` -- and this file is included before
+# workspace_buffers.jl, so a method dispatching on `SquareBuffer` cannot even
+# be defined (`UndefVarError: SquareBuffer not defined`). One integer load is
+# not a cost worth a specialisation next to an O(d^3) construction.
+@inline function _check_buffer_dim(buffer, ::Val{d}) where {d}
+    n = size(buffer.out, 1)
     n == d && return nothing
     throw(DimensionMismatch(
         "sdcovsqrt2cov! buffer is $(n)x$(n) for a $(d)x$(d) matrix"))
 end
 
 function sdcovsqrt2cov!(buffer, mat, choleskymats, dim::Val{d}) where {d}
-    _check_buffer_dim(buffer.dim, dim)
+    _check_buffer_dim(buffer, dim)
     T = eltype(buffer.out)
     if _CTSEM_COV_CACHE[]
         _COVCACHE_CALLS[] += 1

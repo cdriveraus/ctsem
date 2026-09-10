@@ -775,16 +775,23 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   if (any(!model$manifesttype %in% 0:4)) {
     failures <- c(failures, "manifest types beyond censored (manifesttype > 4)")
   }
-  # `covmattransform` reaches the engine nowhere: every call to
-  # `sdcovsqrt2cov!` passes a literal 0, and the branch the other values would
-  # select is commented out. R computes `standata$choleskymats` for both
-  # backends one dispatch above this, so the setting was validated and then
-  # ignored, which reads as support -- a 'cholesky' model measured 3.76 log
-  # units away from the same model on stan, with no error and no warning, and
-  # its summary matrices would be wrong too. Refused for every non-default
-  # value rather than only 'cholesky': 'rawcorr_indep' happens to be inert on
-  # the stan path as well, so nothing a user can rely on is removed, and the
-  # julia contract does not inherit that accident.
+  # `covmattransform` now reaches the engine at every construction site,
+  # including the population covariance and the laplace route, and 'rawcorr'
+  # and 'z' agree with stan to machine precision. What is refused here is the
+  # two values the engine still cannot build.
+  #
+  # 'cholesky' (code 1) is genuinely unimplemented: the branch that would
+  # select the factor form is still commented out in
+  # `_sdcovsqrt2cov_uncached!`, so a code of 1 falls through to the correlation
+  # square root. It used to be accepted and silently ignored, and a 'cholesky'
+  # model measured 3.76 log units away from the same model on stan with no
+  # error and no warning. Implementing it is a prerequisite for the
+  # reduced-rank factor form.
+  #
+  # 'rawcorr_indep' (code -1) selects the same construction as 'rawcorr' and
+  # differs only in the prior, so it is inert on the stan path too. Refused
+  # rather than mapped, so the julia contract does not inherit that
+  # accident.
   if (!is.null(model$covmattransform) &&
       !as.character(model$covmattransform)[1L] %in% c("rawcorr", "z")) {
     failures <- c(failures, paste0("covmattransform='",
@@ -1103,9 +1110,24 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   p$tdtransform[dynamic & p$matrix %in% td_matrices] <- .ctJuliaTDExpression(p$param[dynamic & p$matrix %in% td_matrices])
   unsupported_dynamic <- dynamic & !(p$matrix %in% c(predict_matrices, update_matrices, td_matrices))
   if (any(unsupported_dynamic)) {
-    bad <- p[which(unsupported_dynamic)[1L], c("matrix", "row", "col"), drop = FALSE]
-    stop("Julia backend does not support a state-dependent expression in ",
-      bad$matrix, "[", bad$row, ",", bad$col, "].", call. = FALSE)
+    first <- which(unsupported_dynamic)[1L]
+    bad <- p[first, c("matrix", "row", "col"), drop = FALSE]
+    cell <- paste0(bad$matrix, "[", bad$row, ",", bad$col, "]")
+    # Which of the two it is. A state reference reaches the canonical table as
+    # `state[i]` and a time-dependent predictor as `tdpreds[...]`; anything
+    # else bracketed is a reference to another matrix, which is a *parameter*
+    # dependence and a different problem with a different answer.
+    text <- as.character(p$param[first])
+    references_row <- grepl("state\\[|tdpreds\\[", text, perl = TRUE)
+    if (references_row) {
+      stop("Julia backend does not support a state-dependent expression in ",
+        cell, ".", call. = FALSE)
+    }
+    stop("Julia backend does not yet support a parameter-dependent expression",
+      " in ", cell, " (", text, "). Every transform group runs after the",
+      " initial prior is formed, so a cell there cannot read another matrix.",
+      " The stan backend supports this; use backend='stan' for now.",
+      call. = FALSE)
   }
   p$param[dynamic] <- NA_character_
   bare <- free & is.na(p$transform)
