@@ -258,6 +258,57 @@ test_that("starting and stopping the warmed pool leaves no workers behind", {
   expect_true(inherits(future::plan(), "sequential"))
 })
 
+# A warmed worker on a different ctsem build samples a different model, and
+# used to say nothing: the pooled draws came back plausible, `sample$processes`
+# said TRUE, and the only symptom was that the draws sat 7.5e-05 from the
+# in-process ones where the documented figure is 6.2e-10. That reads as a
+# pooling fault and is not one.
+#
+# The fallback the sampling path relied on -- a future worker cannot load an
+# uninstalled tree, so `processes = TRUE` degrades to in-process -- does not
+# cover an installed ctsem that merely *differs*, which is the ordinary state
+# of affairs under `devtools::load_all()`.
+#
+# Unit rather than integration: the case needs two builds and a test cannot
+# arrange one. What is pinned here is the decision.
+test_that("a warmed worker on a different build is reported", {
+  warned <- function(results) {
+    seen <- character()
+    withCallingHandlers(
+      ctsem:::.ctBackendWarmCheckBuild(results),
+      warning = function(w) {
+        seen <<- c(seen, conditionMessage(w))
+        invokeRestart("muffleWarning")
+      })
+    seen
+  }
+  mine <- ctsem:::.ctBackendWarmFingerprint()
+  # The version and the engine's content hash, which is the part that
+  # distinguishes a tree from its installed sibling -- they normally share a
+  # version, so a version-only fingerprint would match when the builds differ.
+  expect_match(mine, "^[^/]+/.+$")
+
+  # Nothing collected, and workers on this build: silence.
+  expect_length(warned(list()), 0L)
+  expect_length(warned(list(list(ok = TRUE, fingerprint = mine),
+    list(ok = TRUE, fingerprint = mine))), 0L)
+
+  # A different build is named.
+  other <- warned(list(list(ok = TRUE, fingerprint = mine),
+    list(ok = TRUE, fingerprint = "3.11.1/deadbeefcafe")))
+  expect_length(other, 1L)
+  expect_match(other, "different ctsem build")
+  expect_match(other, "3.11.1/deadbeefcafe", fixed = TRUE)
+  expect_match(other, "processes = FALSE", fixed = TRUE)
+
+  # And a bare TRUE -- what a build predating this returns -- is a difference
+  # too, not a pass. This is the case the globally installed package produces,
+  # and taking it for agreement is what kept the problem invisible.
+  legacy <- warned(list(TRUE, list(ok = TRUE, fingerprint = mine)))
+  expect_length(legacy, 1L)
+  expect_match(legacy, "predating this check")
+})
+
 test_that("a pool that fails to warm any worker is not left half-started", {
   skip_if_not_installed("future")
   # No live Julia needed: `future::future()` itself is made to fail for every

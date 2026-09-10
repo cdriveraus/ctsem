@@ -186,8 +186,38 @@
       # process has an empty one, so nothing here is shared with the parent.
       invisible(ctsem::ctJuliaEvaluate(object, values, gradient = TRUE))
     })
-    TRUE
+    # A list rather than a bare TRUE, so the parent can check that this worker
+    # is running the same build it is. `.ctBackendWarmWait()` accepts both
+    # shapes: a worker old enough to predate this returns TRUE, and that
+    # absence is itself a difference worth reporting.
+    #
+    # Not `structure(TRUE, fingerprint = ...)`, which would look like success
+    # and not be: `isTRUE()` is FALSE for a TRUE carrying attributes, so the
+    # warmed count would silently drop to zero and every run would fall back to
+    # in-process sampling.
+    list(ok = TRUE, fingerprint = .ctBackendWarmFingerprint())
   }, error = function(e) structure(FALSE, message = conditionMessage(e)))
+}
+
+# What identifies the build a process is running, for this path.
+#
+# The package version and the engine's content hash.
+# `.ctJuliaEngineVersion()` hashes `system.file("julia", ...)`, which resolves
+# to the working tree under `devtools::load_all()` and to the installed copy
+# inside a worker -- so these strings differ exactly when the two processes
+# would compute different numbers. The version alone would not: a tree and its
+# installed sibling usually carry the same version, which is the whole
+# difficulty.
+#
+# Tolerant of an engine it cannot hash. This decides whether to warn, and a
+# fingerprint that could not be taken is reported as unknown rather than
+# allowed to take a sampling run down.
+#' @keywords internal
+.ctBackendWarmFingerprint <- function() {
+  version <- tryCatch(as.character(utils::packageVersion("ctsem")),
+    error = function(e) "?")
+  engine <- tryCatch(.ctJuliaEngineVersion(), error = function(e) "?")
+  paste0(version, "/", engine)
 }
 
 #' Wait for warmed workers
@@ -203,7 +233,10 @@
     if (is.null(h)) return(FALSE)
     tryCatch(future::value(h), error = function(e) FALSE)
   })
-  ok <- sum(vapply(results, isTRUE, logical(1)))
+  warmed <- vapply(results, function(r)
+    isTRUE(r) || (is.list(r) && isTRUE(r$ok)), logical(1))
+  ok <- sum(warmed)
+  .ctBackendWarmCheckBuild(results[warmed])
   if (isTRUE(verbose)) {
     elapsed <- if (is.null(started)) NA_real_ else
       as.numeric(difftime(Sys.time(), started, units = "secs"))
@@ -212,6 +245,41 @@
         "most of it alongside the fit)") else "", ".")
   }
   as.integer(ok)
+}
+
+# Warn when a warmed worker is not running this build.
+#
+# The failure this exists for is silent and expensive: the worker samples a
+# different model from the one the parent optimised, the pooled draws come back
+# plausible, and `sample$processes` says TRUE. Measured once here at 7.5e-05
+# against a documented 6.2e-10, which reads as a pooling fault and is not one.
+#
+# The same shape as `.ctClusterCheckBuild()` on the stan path, and it is here
+# for the same reason: `devtools::load_all()` puts the tree on no library path,
+# so a worker's `library(ctsem)` finds the *installed* package. The fallback
+# the sampling path relies on -- no installed ctsem, no warm -- does not cover
+# an installed ctsem that merely differs.
+#
+# A worker with no fingerprint at all is reported too. That means a build
+# predating this function, which is itself a difference.
+#' @keywords internal
+.ctBackendWarmCheckBuild <- function(results) {
+  if (!length(results)) return(invisible(NULL))
+  master <- tryCatch(.ctBackendWarmFingerprint(), error = function(e) NULL)
+  if (is.null(master)) return(invisible(NULL))
+  workers <- vapply(results, function(r)
+    if (is.list(r) && is.character(r$fingerprint) &&
+      length(r$fingerprint) == 1L) r$fingerprint else NA_character_,
+    character(1))
+  bad <- unique(workers[is.na(workers) | workers != master])
+  if (!length(bad)) return(invisible(NULL))
+  bad[is.na(bad)] <- "unknown (a build predating this check)"
+  warning("Sampling worker process(es) loaded a different ctsem build (",
+    paste(bad, collapse = ", "), " vs ", master,
+    "). Their draws are from a different model than this session optimised. ",
+    "Install this tree to a library and put it on .libPaths(), or sample ",
+    "with processes = FALSE.", call. = FALSE)
+  invisible(NULL)
 }
 
 #' Shut down a warmed pool
