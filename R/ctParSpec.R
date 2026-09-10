@@ -48,7 +48,9 @@
 #'   \code{c('age', 'sex')}. Naming any predictor switches the rest off for
 #'   this cell, so the list is the whole set of effects on it. A name must be
 #'   one of the model's \code{TIpredNames}; anything else is an error when the
-#'   model is built.
+#'   model is built. \code{character(0)} (or \code{tipreds=} with nothing
+#'   after it, in a cell) means no predictor acts on this cell, which is not
+#'   the same as leaving the argument out -- that keeps the model's default.
 #'
 #' @return A single character string, suitable for a model matrix cell.
 #'
@@ -112,7 +114,13 @@ ctParSpec <- function(name, transform = NA, indvarying = NA, sdscale = NA,
   parts <- c(as.character(name), field(transform), field(indvarying),
     field(sdscale))
 
-  if (!is.null(tipreds) && length(tipreds)) {
+  # NULL is "not stated"; character(0) is "no predictors act on this cell".
+  # They are different cells -- the first leaves the model's default alone, the
+  # second switches every effect off -- and the `|` form has always been able
+  # to say both ('mm' against 'mm||||'). Only the named form could not, so
+  # `tipreds=` was silently read as the default.
+  tipredsgiven <- !is.null(tipreds)
+  if (tipredsgiven) {
     if (!is.character(tipreds)) {
       stop("ctParSpec(tipreds=) takes predictor names. An effect is estimated; ",
         "to fix one to a value, set it in the model's matrices afterwards.",
@@ -121,8 +129,11 @@ ctParSpec <- function(name, transform = NA, indvarying = NA, sdscale = NA,
     parts <- c(parts, paste(tipreds, collapse = ","))
   }
 
-  # Trailing empty fields carry no information and only add pipes to read past.
-  while (length(parts) > 1L && !nzchar(parts[length(parts)])) {
+  # Trailing empty fields carry no information and only add pipes to read past
+  # -- except an empty tipreds field, which is the whole of how "no predictor
+  # effects" is written and must survive.
+  keep <- if (tipredsgiven) length(.ctCellSpecKeys) else 1L
+  while (length(parts) > keep && !nzchar(parts[length(parts)])) {
     parts <- parts[-length(parts)]
   }
   paste(parts, collapse = "|")
@@ -257,7 +268,8 @@ ctParSpec <- function(name, transform = NA, indvarying = NA, sdscale = NA,
 }
 
 # `tipreds=age`, `tipreds=c(age, sex)` and `tipreds=c('age','sex')` all mean the
-# same list of names.
+# same list of names. An empty value gives character(0), which is not the same
+# as NULL: it says no predictor acts on this cell.
 .ctCellSpecNames <- function(value) {
   value <- sub('^c\\(', '', sub('\\)$', '', trimws(value)))
   out <- trimws(strsplit(value, ',', fixed = TRUE)[[1]])
@@ -280,16 +292,28 @@ ctParSpec <- function(name, transform = NA, indvarying = NA, sdscale = NA,
     return(out)
   }
   split <- gsub(' ', '', strsplit(x, '|', fixed = TRUE)[[1]], fixed = TRUE)
+  # strsplit drops trailing empties, so 'mm||||' arrives as four fields and the
+  # fifth -- an empty but present tipreds field, meaning no predictor effects
+  # -- would be indistinguishable from not stating one. Count the separators
+  # and pad back to the number of fields actually written.
+  nfields <- 1L + length(gregexpr('|', x, fixed = TRUE)[[1]][
+    gregexpr('|', x, fixed = TRUE)[[1]] > 0])
+  if (nfields > length(split)) {
+    split <- c(split, rep('', nfields - length(split)))
+  }
   if (length(split) > length(.ctCellSpecKeys)) {
     stop('Param spec has too many separators!  ', x, call. = FALSE)
   }
   for (i in seq_along(split)) {
-    if (!nzchar(split[i])) next
     key <- .ctCellSpecKeys[i]
+    if (identical(key, 'tipreds')) {
+      out$tipreds <- .ctCellSpecNames(split[i])
+      next
+    }
+    if (!nzchar(split[i])) next
     if (identical(key, 'name')) out$param <- split[i]
     else if (identical(key, 'indvarying')) out$indvarying <- as.logical(split[i])
     else if (identical(key, 'sdscale')) out$sdscale <- as.numeric(split[i])
-    else if (identical(key, 'tipreds')) out$tipreds <- .ctCellSpecNames(split[i])
     else out[[key]] <- split[i]
   }
   out

@@ -200,7 +200,9 @@ ctModelUnlist<-function(ctmodelobj,
           if(!is.na(spec$indvarying)) pars$indvarying[parrow] <- spec$indvarying
           if(!is.na(spec$sdscale)) pars$sdscale[parrow] <- spec$sdscale
           if(!is.null(spec$tipreds)){
-            wanted <- paste0(spec$tipreds, '_effect')
+            # character(0) means no predictor acts on this cell, so `wanted` has
+            # to stay empty; paste0() would recycle it into "_effect".
+            wanted <- if(length(spec$tipreds)) paste0(spec$tipreds, '_effect') else character(0)
             unknown <- setdiff(wanted, tieffects)
             if(length(unknown)) {
               stop(paste(sub('_effect$', '', unknown), collapse=', '),
@@ -529,7 +531,16 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
           any(sapply(latentNames,function(x){ #if symbols or latent states
         grepl(paste0('\\b(',x,')\\b'),split[1])
       }))) {
-        if(!simpleStateCheck(split[1])) stop(paste0(split[1],' invalid -- Matrix elements involving multiple parameters / latent states cannot have | separators -- transformations should be specified as part of the first element, indvarying and tipredeffects must be specified in the corresponding singular PARS matrix elements.'))
+        # Both spellings reach here, so the message cannot talk about `|`: a
+        # cell written 'eta1, indvarying=TRUE' has no separator in it, and
+        # being told about separators sends the reader looking for one.
+        if(!simpleStateCheck(split[1])) stop(paste0('The cell "',
+          trimws(ctspec$param[pi]),'" builds ',ctspec$matrix[pi],'[',ctspec$row[pi],',',
+          ctspec$col[pi],'] from more than one parameter or latent state, so it ',
+          'cannot also carry transform, indvarying, sdscale or tipreds fields. ',
+          'Put the transform inside the expression itself, and set indvarying ',
+          'and tipred effects on the single PARS cell that names the ',
+          'parameter.'), call.=FALSE)
       }
       
       nonzero <- which(!split %in% '')
@@ -582,6 +593,13 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
     }
   }
   
+
+  # What each cell is -- a number, a name, a name with fields, or an expression
+  # -- is decided by what its text looks like, so a cell that means one and
+  # reads as another builds a different model quietly. See
+  # R/ctModelSpecCheck.R.
+  .ctCheckModelSpec(ctspec, latentNames, manifestNames, TDpredNames,
+    TIpredNames)
 
   # Refuse a circular dependency here rather than later: the generated Stan
   # program breaks the T0MEANS / state / PARS loop by evaluation order, so a
