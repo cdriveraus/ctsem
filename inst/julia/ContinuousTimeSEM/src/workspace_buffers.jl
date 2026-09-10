@@ -79,7 +79,7 @@ The workspace holds materialized parameters, structured parameter views, matrix
 factorizations, covariance buffers, and log-likelihood scratch storage for one
 scalar type.
 """
-struct ContinuousEKFWorkspace{T, N, M, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF, DBUF, DSI, ST, DCACHE}
+struct ContinuousEKFWorkspace{T, N, M, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF, DBUF, DSI, ST, DCACHE, AFBUF}
     all_params::Vector{T}
     subject_values::Vector{T}
     pars::PARS
@@ -124,6 +124,13 @@ struct ContinuousEKFWorkspace{T, N, M, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF
     # evaluated matrix ComponentVector and has nowhere for model-level metadata.
     # 0 is the unconstrained correlation square root, 2 is covmattransform='z'.
     covmatcode::Int
+    # Scratch for the continuous form's intercept solve, sized to the leading
+    # block of genuine dynamics (`sp.affine_dim`) rather than to the diffusion
+    # subset. Its `dim` field carries that size as a `Val`, so the solve needs
+    # nothing else passed alongside it. Separate from `diffusion_buffer`
+    # because the two blocks are different sets and the Lyapunov solve wants
+    # its own: see `affine_dim` in `EKFParameters`.
+    affine_buffer::AFBUF
 end
 
 """
@@ -161,6 +168,27 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
         throw(ArgumentError("diffusion-state indices are outside the latent-state range"))
     length(unique(diffusion_state_indices)) == length(diffusion_state_indices) ||
         throw(ArgumentError("diffusion-state indices must be unique"))
+    # The leading block of genuine dynamics, over which the intercept solve
+    # runs. Every fit from R states it. A caller that does not -- the engine's
+    # own direct `EKFParameters` constructions, and anything predating the
+    # argument -- falls back to the diffusion block, which is what the offset
+    # used before this existed. That matters: such a caller building an
+    # `intoverpop`-style model has static carrier states, and running the
+    # solve over them inverts a structurally singular `JAx` and returns NaN.
+    # The fallback only applies when the diffusion block is itself a leading
+    # block, which is exactly the augmented shape; otherwise the whole state
+    # vector is the safe reading.
+    stated = isdefined(sp, :affine_dim) ? sp.affine_dim : 0
+    affine_dim = if stated != 0
+        stated
+    elseif !isempty(diffusion_state_indices) &&
+            diffusion_state_indices == 1:length(diffusion_state_indices)
+        length(diffusion_state_indices)
+    else
+        n
+    end
+    1 <= affine_dim <= n ||
+        throw(ArgumentError("affine_dim must be between 1 and the latent-state dimension"))
 
     # Reusable matrix/vector work buffers.
     bufferQ = _make_square_buffer(T, n)
@@ -171,6 +199,7 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
     diffusion_buffer = _make_square_buffer(T, length(diffusion_state_indices))
     discretization_buffer = _make_discretization_buffer(T, n)
     discretization_cache = DiscretizationCache(T, n, length(diffusion_state_indices))
+    affine_buffer = _make_square_buffer(T, affine_dim)
 
     # EKF state for innovation, gain, and covariance updates.
     ỹ = zeros(T, m)
@@ -227,5 +256,6 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
         censormin,
         censormax,
         sp.covmatcode,
+        affine_buffer,
     )
 end

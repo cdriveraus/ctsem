@@ -193,6 +193,7 @@ function _compute_discrete_time_form!(discrete_ca, buffer, DIFFUSIONcov, pars, Î
     n = size(DIFFUSIONcov, 1)
     diffusion_state_indices = collect(1:n)
     diffusion_buffer = _make_square_buffer(eltype(DIFFUSIONcov), n)
+    affine_buffer = _make_square_buffer(eltype(DIFFUSIONcov), n)
     discretization_buffer = _make_discretization_buffer(eltype(DIFFUSIONcov), n)
     return _compute_discrete_time_form!(
         discrete_ca,
@@ -208,12 +209,14 @@ function _compute_discrete_time_form!(discrete_ca, buffer, DIFFUSIONcov, pars, Î
         discretization_buffer,
         exp_buffer.dim,
         nothing,
+        affine_buffer,
     )
 end
 
 function _compute_discrete_time_form!(discrete_ca, buffer, DIFFUSIONcov, pars, Î”t, exp_buffer,
     lyap_buffer, state, diffusion_state_indices, diffusion_buffer,
-    discretization_buffer, dim::Val{d}, cache=nothing) where {d}
+    discretization_buffer, dim::Val{d}, cache=nothing,
+    affine_buffer=diffusion_buffer) where {d}
     # Stan propagates the local affine EKF model, not the raw DRIFT matrix:
     # f(x) = DRIFT * x + CINT, J = JAx, c = f(x) - J * x.
     slot = _exp_cache_lookup(cache, pars.JAx, Î”t, d)
@@ -234,39 +237,49 @@ function _compute_discrete_time_form!(discrete_ca, buffer, DIFFUSIONcov, pars, Î
     kdim = length(diffusion_state_indices)
     fill!(discrete_ca.dINT, zero(eltype(discrete_ca.dINT)))
 
-    # Stan forms the local affine correction only in the dynamic state block.
-    # The full eJAx above still supplies the dynamic-from-static contribution;
-    # keeping this solve in the dynamic block avoids inverting the singular
-    # augmented Jacobian induced by static random-effect coordinates.
-    @inbounds for i in 1:kdim
-        ii = diffusion_state_indices[i]
-        affine = pars.CINT[ii]
+    # The local affine offset, over the leading block of genuine dynamics.
+    #
+    # `x(Î”t) = e^{JÎ”t} x0 + J^-1 (e^{JÎ”t} - I) c` needs J inverted, and J is
+    # exactly singular on a static coordinate a random effect augments the
+    # state with -- zero row and zero column -- so the solve cannot run over
+    # the whole system. Restricting it to the leading block is exact, not an
+    # approximation: order the states [d, s] and J is block triangular with
+    # zero static rows, while c is genuinely zero there (both DRIFT and CINT
+    # are padded with zeros on those rows), so the sub-solve equals the full
+    # one. The static-to-dynamic coupling still arrives through the full eJAx
+    # computed above.
+    #
+    # The block is `affine_buffer`'s own dimension -- Stan's `1:nlatent`, not
+    # its `derrind`. It used to be `diffusion_state_indices`, which also drops
+    # a latent that merely has no diffusion of its own and no coupling to
+    # anything that has some; c is NOT zero on such a row, so its CINT left the
+    # likelihood entirely and the parameter's gradient was exactly zero.
+    # Because the block is a leading one, this indexes directly with no gather.
+    naff = _val(affine_buffer.dim)
+    @inbounds for i in 1:naff
+        affine = pars.CINT[i]
         for j in 1:d
-            affine += (pars.DRIFT[ii, j] - pars.JAx[ii, j]) * state[j]
+            affine += (pars.DRIFT[i, j] - pars.JAx[i, j]) * state[j]
         end
-        diffusion_buffer.r[i] = affine
+        affine_buffer.r[i] = affine
     end
-    @inbounds for j in 1:kdim, i in 1:kdim
-        ii = diffusion_state_indices[i]
-        jj = diffusion_state_indices[j]
-        diffusion_buffer.intermediate[i, j] = pars.JAx[ii, jj]
+    @inbounds for j in 1:naff, i in 1:naff
+        affine_buffer.intermediate[i, j] = pars.JAx[i, j]
     end
-    @inbounds for i in 1:kdim
-        ii = diffusion_state_indices[i]
-        correction = -diffusion_buffer.r[i]
-        for q in 1:kdim
-            qq = diffusion_state_indices[q]
-            correction += discrete_ca.eJAx[ii, qq] * diffusion_buffer.r[q]
+    @inbounds for i in 1:naff
+        correction = -affine_buffer.r[i]
+        for q in 1:naff
+            correction += discrete_ca.eJAx[i, q] * affine_buffer.r[q]
         end
-        diffusion_buffer.s[i] = correction
+        affine_buffer.s[i] = correction
     end
-    # `diffusion_buffer.dim` is `Val(kdim)` fixed at construction; building
-    # `Val(kdim)` from the runtime length here was a dynamic dispatch and an
-    # allocation on every prediction substep (Profile.Allocs, dev1).
-    _solve_square_system!(diffusion_buffer.intermediate, diffusion_buffer.s,
-        diffusion_buffer.piv, diffusion_buffer.dim)
-    @inbounds for i in 1:kdim
-        discrete_ca.dINT[diffusion_state_indices[i]] = diffusion_buffer.s[i]
+    # `affine_buffer.dim` is a `Val` fixed at construction; building one from a
+    # runtime length here was a dynamic dispatch and an allocation on every
+    # prediction substep (Profile.Allocs, dev1).
+    _solve_square_system!(affine_buffer.intermediate, affine_buffer.s,
+        affine_buffer.piv, affine_buffer.dim)
+    @inbounds for i in 1:naff
+        discrete_ca.dINT[i] = affine_buffer.s[i]
     end
 
     @inbounds for j in 1:kdim, i in 1:kdim

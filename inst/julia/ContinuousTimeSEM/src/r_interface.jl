@@ -360,6 +360,13 @@ column vectors, one entry per model-matrix cell.
     does well.
   * `diffusion_state_indices` — the states carrying their own diffusion,
     defaulting to all of them.
+  * `affine_dim` — how many leading states are genuine dynamics rather than
+    the static coordinates a random effect augments the state with. The
+    continuous form's intercept solve runs over that leading block, because
+    `JAx` is singular on a static coordinate. `0` (the default) means the
+    whole state vector. Distinct from `diffusion_state_indices`: a latent
+    with no diffusion of its own is still genuine dynamics and still has an
+    intercept.
   * `manifesttype` — `0` for a Gaussian manifest variable, `1` for binary,
     `2` for ordinal. Empty (the default) means every variable is Gaussian,
     which lets the filter skip the branch entirely rather than test a vector of
@@ -380,7 +387,7 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
     ti_parameter=Int[], ti_predictor=Int[], ti_coefficient=Int[],
     diffusion_state_indices=Int[], continuous_time::Bool=true,
     manifesttype=Int[], ncategories=Int[], censormin=Float64[],
-    censormax=Float64[], covmatcode::Int=0)
+    censormax=Float64[], covmatcode::Int=0, affine_dim::Int=0)
 
     n = length(matrix)
     length(row) == n && length(col) == n ||
@@ -464,5 +471,5 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
         fixed_positions, fixed_values, Int.(ti_parameter),
         Int.(ti_predictor), Int.(ti_coefficient), Int.(diffusion_state_indices),
         continuous_time, Int.(manifesttype), Int.(ncategories),
-        Float64.(censormin), Float64.(censormax), covmatcode)
+        Float64.(censormin), Float64.(censormax), covmatcode, affine_dim)
 end

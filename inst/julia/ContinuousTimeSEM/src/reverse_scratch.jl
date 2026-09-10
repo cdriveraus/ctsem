@@ -1,5 +1,5 @@
 """
-    CTSEMReverseScratch(T, n, m, k)
+    CTSEMReverseScratch(T, n, m, k, naff)
 
 Working storage for the reverse pass, one set per workspace.
 
@@ -70,10 +70,18 @@ struct CTSEMReverseScratch{T}
     kv1::Vector{T}
     kv2::Vector{T}
     nv1::Vector{T}
+    # --- intercept solve and affine offset, sized (naff) ------------------
+    # A different and larger block than the diffusion one above -- the leading
+    # states that are genuine dynamics rather than static random-effect
+    # carriers -- and live at the same time as it, so it cannot share the `kk`
+    # and `kv` slots. See `_compute_discrete_time_form!`.
+    aa1::Matrix{T}
+    av1::Vector{T}
+    av2::Vector{T}
     piv::Vector{Int}
 end
 
-function CTSEMReverseScratch(::Type{T}, n::Int, m::Int, k::Int) where {T}
+function CTSEMReverseScratch(::Type{T}, n::Int, m::Int, k::Int, naff::Int=k) where {T}
     z(r, c) = zeros(T, r, c)
     v(r) = zeros(T, r)
     return CTSEMReverseScratch{T}(
@@ -85,7 +93,8 @@ function CTSEMReverseScratch(::Type{T}, n::Int, m::Int, k::Int) where {T}
         z(n, n), z(n, n), v(n), z(k, k), z(k, k), z(k, k), z(n, n), z(n, n),
         z(n, n), z(n, n), z(k, k), z(k, k), z(k, k),
         z(k, k), z(k, k), z(k, k), z(k, k),
-        v(k), v(k), v(n), zeros(Int, max(n, k)))
+        v(k), v(k), v(n),
+        z(naff, naff), v(naff), v(naff), zeros(Int, max(n, k, naff)))
 end
 
 """The leading `r x c` block of a scratch buffer, as a view."""

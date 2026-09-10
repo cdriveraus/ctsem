@@ -392,10 +392,12 @@ function _record_update!(tape::CTSEMAdjointTape{T}, ws, pars, data, obs_col::Int
 end
 
 """An all-zero predict record shaped for `n` states and `k` dynamic states."""
-_empty_predict_record(::Type{T}, n::Int, k::Int) where {T} =
+# `k` sizes the Lyapunov block (the diffusing states), `naff` the affine one
+# (the leading genuine dynamics). They are different sets; see `affine_dim`.
+_empty_predict_record(::Type{T}, n::Int, k::Int, naff::Int=k) where {T} =
     CTSEMPredictRecord{T}(zeros(T, n), zeros(T, n, n), zeros(T, n, n),
         zeros(T, n, n), zeros(T, n, n), zeros(T, n, n), zeros(T, k, k),
-        zeros(T, k), zeros(T, k), zero(T))
+        zeros(T, naff), zeros(T, naff), zero(T))
 
 """
 Snapshot the substep inputs, which `_ekf_predict_step!` overwrites.
@@ -410,7 +412,8 @@ function _begin_predict!(tape::CTSEMAdjointTape{T}, ws, n::Int) where {T}
     index = tape.npredicts + 1
     if index > length(tape.predicts)
         push!(tape.predicts,
-            _empty_predict_record(T, n, length(ws.diffusion_state_indices)))
+            _empty_predict_record(T, n, length(ws.diffusion_state_indices),
+                _val(ws.affine_buffer.dim)))
     end
     record = tape.predicts[index]
     _tape_fill!(record.state_in, ws.state)
@@ -428,8 +431,13 @@ function _record_predict!(tape::CTSEMAdjointTape{T}, ws, pars,
     record.DRIFT = _tape_fill!(record.DRIFT, view(pars.DRIFT, 1:n, 1:n))
     record.DIFFUSION = _tape_fill!(record.DIFFUSION, view(pars.DIFFUSION, 1:n, 1:n))
     record.Xlyap = _tape_fill!(record.Xlyap, view(ws.diffusion_buffer.out, 1:k, 1:k))
-    _tape_fill!(record.affine, view(ws.diffusion_buffer.r, 1:k))
-    _tape_fill!(record.dINT_dynamic, view(ws.discrete_ca.dINT, dyn))
+    # The affine offset and the solved intercept live on the affine block, not
+    # the diffusion one, so they come from `affine_buffer` and from the leading
+    # entries of `dINT`. (Unused by the discrete-time reverse pass, which has
+    # neither a solve nor a Lyapunov term.)
+    naff = _val(ws.affine_buffer.dim)
+    _tape_fill!(record.affine, view(ws.affine_buffer.r, 1:naff))
+    _tape_fill!(record.dINT_dynamic, view(ws.discrete_ca.dINT, 1:naff))
     record.dt = T(Δt)
     _tape_push!(tape, :predict, index)
     return nothing
@@ -533,9 +541,9 @@ Undo one prediction substep.
 Forward, on the dynamic index subset `D = dyn` of size `k`:
 
     A            = exp(JAx * dt)
-    affine[i]    = CINT[Dᵢ] + Σⱼ (DRIFT[Dᵢ,j] - JAx[Dᵢ,j]) x[j]
-    s[i]         = -affine[i] + Σ_q A[Dᵢ,D_q] affine[q]
-    dINT[D]      = JAx[D,D] \\ s
+    affine[i]    = CINT[i] + Σⱼ (DRIFT[i,j] - JAx[i,j]) x[j]      (i ≤ naff)
+    s[i]         = -affine[i] + Σ_q A[i,q] affine[q]              (q ≤ naff)
+    dINT[1:naff] = JAx[1:naff,1:naff] \\ s
     X            = lyap(JAx[D,D], Qc[D,D])
     dDIFF[D,D]   = X - A[D,D] X A[D,D]'
     x⁺           = A x + dINT
@@ -543,11 +551,17 @@ Forward, on the dynamic index subset `D = dyn` of size `k`:
 
 Note `A` is the matrix exponential itself: this port sets `dDRIFT = eJAx`, so
 the discrete drift and the exponential are the same object and share one
-cotangent. `D` is `diffusion_state_indices` -- the states with their own
-diffusion. For an ordinary model that is all of them, but `intoverpop`-style
-augmentation appends static "carrier" states with structurally zero diffusion,
-and the Lyapunov solve, the discrete-intercept solve and the `dDIFF` term all
-live on that sub-block while `A` still spans the whole augmented state.
+cotangent.
+
+Two different sub-blocks appear, and conflating them was a bug. `D = dyn` is
+`diffusion_state_indices`, the states with their own diffusion; the Lyapunov
+solve and the `dDIFF` term live there. `1:naff` is the leading block of genuine
+dynamics -- everything that is not a static random-effect carrier -- and the
+intercept solve and the affine offset live there. `dyn` is a subset of
+`1:naff`, equal to it for any model with a full DIFFUSION, and strictly smaller
+when a latent has no diffusion of its own and no coupling to one that has some.
+Running the affine offset over `dyn` dropped such a state's CINT from the
+likelihood entirely. `A` spans the whole augmented state throughout.
 """
 function _reverse_predict!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
     record::CTSEMPredictRecord{T}, dyn::AbstractVector{Int}, n::Int,
@@ -592,8 +606,13 @@ function _reverse_predict!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
     kk6        = _rs(sc.kk6, k, k)
     x̄_new      = _rs(sc.xbar_new, n)
     dINT_bar   = _rs(sc.nv1, n)
-    s̄          = _rs(sc.kv1, k)
-    affine_bar = _rs(sc.kv2, k)
+    # The intercept solve and the affine offset run over the leading `naff`
+    # states, a different and larger block than `dyn`; both are live at once,
+    # so these cannot share the `kk`/`kv` slots.
+    naff       = aws.affine_dim
+    s̄          = _rs(sc.av1, naff)
+    affine_bar = _rs(sc.av2, naff)
+    aa1        = _rs(sc.aa1, naff, naff)
 
     @inbounds for j in 1:k, i in 1:k
         Ad[i, j] = A[dyn[i], dyn[j]]
@@ -638,30 +657,42 @@ function _reverse_predict!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
     Qcd_bar = sc.kk8
     _ctsem_lyap_pullback!(JAxd_bar, Qcd_bar, sc.kk9, sc.kk10, JAxd, X, X̄, lyap_buffer)
 
-    # --- dINT[D] = JAx[D,D] \ s   (a linear solve: s̄ = JAxd⁻ᵀ dINT_bar, M̄ = -s̄ dINT')
-    @inbounds for i in 1:k; s̄[i] = dINT_bar[dyn[i]]; end
-    # `transpose(JAxd) \ s̄` would be a LAPACK `getrf!`/`getrs!` pair, once per
+    # --- dINT[1:naff] = JAx[1:naff,1:naff] \ s   (s̄ = JAx⁻ᵀ dINT_bar, M̄ = -s̄ dINT')
+    # The affine block is a leading one, so everything below indexes directly
+    # with no gather, and its two outer products go straight into the full
+    # cotangents rather than through a sub-block that then has to be scattered.
+    @inbounds for i in 1:naff; s̄[i] = dINT_bar[i]; end
+    # `transpose(JAx) \ s̄` would be a LAPACK `getrf!`/`getrs!` pair, once per
     # prediction substep, on a matrix of the dynamic-state size. At that size
     # the call is mostly OpenBLAS's process-global buffer lock -- see
     # `small_linalg.jl` -- so it goes through the engine's own LU instead.
-    @inbounds for j in 1:k, i in 1:k; kk6[i, j] = JAxd[j, i]; end
-    _solve_square_system_generic!(kk6, s̄, sc.piv, k)
-    _ctsem_outer!(JAxd_bar, s̄, record.dINT_dynamic, -one(T), one(T))
-
-    # --- s = -affine + Ad affine
-    _ctsem_mulTvec!(affine_bar, Ad, s̄)
-    affine_bar .-= s̄
-    _ctsem_outer!(Ād, s̄, record.affine, one(T), one(T))
-
-    # --- affine[i] = CINT[Dᵢ] + Σⱼ (DRIFT[Dᵢ,j] - JAx[Dᵢ,j]) x[j]
-    @inbounds for i in 1:k
-        θ̄ca.CINT[dyn[i]] += affine_bar[i]
+    @inbounds for j in 1:naff, i in 1:naff; aa1[i, j] = JAx[j, i]; end
+    _solve_square_system_generic!(aa1, s̄, sc.piv, naff)
+    @inbounds for j in 1:naff, i in 1:naff
+        JAx_bar[i, j] -= s̄[i] * record.dINT_dynamic[j]
     end
-    @inbounds for j in 1:n, i in 1:k
+
+    # --- s = -affine + A affine, on the same leading block
+    @inbounds for i in 1:naff
+        acc = zero(T)
+        for q in 1:naff
+            acc += A[q, i] * s̄[q]
+        end
+        affine_bar[i] = acc - s̄[i]
+    end
+    @inbounds for j in 1:naff, i in 1:naff
+        Ā[i, j] += s̄[i] * record.affine[j]
+    end
+
+    # --- affine[i] = CINT[i] + Σⱼ (DRIFT[i,j] - JAx[i,j]) x[j]
+    @inbounds for i in 1:naff
+        θ̄ca.CINT[i] += affine_bar[i]
+    end
+    @inbounds for j in 1:n, i in 1:naff
         contribution = affine_bar[i] * x[j]
-        θ̄ca.DRIFT[dyn[i], j] += contribution
-        JAx_bar[dyn[i], j] -= contribution
-        x̄_new[j] += (record.DRIFT[dyn[i], j] - JAx[dyn[i], j]) * affine_bar[i]
+        θ̄ca.DRIFT[i, j] += contribution
+        JAx_bar[i, j] -= contribution
+        x̄_new[j] += (record.DRIFT[i, j] - JAx[i, j]) * affine_bar[i]
     end
 
     # Scatter the dynamic-block contributions back into the full matrices.
