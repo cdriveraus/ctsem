@@ -199,16 +199,21 @@ const _CTSEM_TRANSFORM_FLOOR = Ref(1e-6)
 Which raw parameter indices in `range` have a materialising transform that has
 stopped responding at `values`.
 
-Each `sp.regular_transforms[tf_idx]` reads exactly one entry of `values` --
-`sp.parnumber[tf_idx]` -- by construction on the R side, the same fact
-`adjoint_parameters.jl` relies on (and verifies once, at adjoint-workspace
-construction) to pull a cotangent back through this layer. So the sensitivity
-of each materialised cell to its raw coordinate is one scalar derivative,
-taken with a seeded `ForwardDiff.Dual` the same way `_ctsem_regular_pullback!`
-does, rather than an `nmut x nvalues` Jacobian over the whole vector -- and
-because it is evaluated at the fit's own `values`, not characterised for the
-transform in the abstract, a raw parameter whose materialised scale itself
-depends on other parameters or predictors is handled for free.
+Each `sp.regular_transforms[tf_idx]` is differentiated with respect to
+`sp.parnumber[tf_idx]`, the raw parameter the cell belongs to. So the
+sensitivity of each materialised cell to its raw coordinate is one scalar
+derivative, taken with a seeded `ForwardDiff.Dual` the same way
+`_ctsem_regular_pullback!` does, rather than an `nmut x nvalues` Jacobian over
+the whole vector -- and because it is evaluated at the fit's own `values`, not
+characterised for the transform in the abstract, a raw parameter whose
+materialised scale itself depends on other parameters or predictors is handled
+for free.
+
+A composed T0MEANS/T0VAR cell reads other raw parameters besides its own
+(`adjoint_parameters.jl` discovers the full support for the gradient); this
+asks only about the cell's own coordinate, which is the question a saturation
+check is asking. Every raw parameter also occupies the cell it was declared
+in, so nothing goes unexamined by only looking at `parnumber` here.
 
 A raw index in `range` that no regular transform names -- a TI-predictor
 coefficient, which enters only as a linear multiplier in

@@ -37,7 +37,12 @@ mutable struct CTSEMAdjointWorkspace{T,SP,LB,FB}
     predict_supports::Vector{Vector{Int}}
     update_supports::Vector{Vector{Int}}
     td_supports::Vector{Vector{Int}}
-    regular_supports::Vector{Int}
+    # One entry per mutable position: the `subject_values` indices its regular
+    # transform reads. Almost always a single index -- a cell materialised from
+    # one raw parameter -- but a cell written as an expression over several
+    # PARS parameters reads all of them, so this is a support *set* rather than
+    # the `parnumber` it used to be.
+    regular_supports::Vector{Vector{Int}}
     regular_dual_scratch::Vector{ForwardDiff.Dual{Nothing,T,1}}
     dual_context::Any
     tipreds::Vector{T}
@@ -111,7 +116,12 @@ function CTSEMAdjointWorkspace(::Type{T}, sp::EKFParameters, nvalues::Integer,
     update_indices = findall(sp.update_transforms_indices)
     td_indices = findall(sp.td_transforms_indices)
 
-    zero_dual = ForwardDiff.Dual{Nothing,T,1}(zero(T), ForwardDiff.Partials((zero(T),)))
+    # `regular_dual_scratch` (below) is filled with NaN, not zero, for the same
+    # reason `group_scratch` is: every entry a transform reads is written
+    # immediately before the read, so an entry that reaches a transform
+    # unwritten is a bug, and a NaN says so instead of contributing a
+    # plausible term. See `_ctsem_regular_pullback!`.
+    nan_dual = ForwardDiff.Dual{Nothing,T,1}(T(NaN), ForwardDiff.Partials((zero(T),)))
     theta_bar = zeros(T, length(sp.mutables))
     lyap_buffer = LyapBuffer(T, length(ws.diffusion_state_indices))
 
@@ -140,7 +150,7 @@ function CTSEMAdjointWorkspace(::Type{T}, sp::EKFParameters, nvalues::Integer,
         update_supports,
         td_supports,
         _ctsem_regular_transform_supports(sp, nvalues),
-        fill(zero_dual, Int(nvalues)),
+        fill(nan_dual, Int(nvalues)),
         CTSEMDualContext(T, sp, zeros(T, n)),
         T[],
         group_scratch,

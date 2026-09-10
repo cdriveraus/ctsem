@@ -126,11 +126,14 @@ not by which index each one happens to read. The engine's own transforms come
 from a handful of templates, so a second model of the same shape reuses the
 first one's compiled code.
 
-A regular transform reads exactly one free parameter -- `_ctsem_regular_
-transform_supports` asserts it, and the adjoint's parameter layer depends on it
--- so there is exactly one index to lift out. Anything that does not match that
-shape falls through to `_transform_closure` unchanged rather than being guessed
-at.
+Almost every regular transform reads exactly one free parameter, so there is
+exactly one index to lift out. The exception is a T0MEANS or T0VAR cell
+composed from several PARS parameters, which reads one index per parameter; a
+template cannot represent that with a single `i`, so `_regular_transform_index`
+returns `nothing` for it and it falls through to `_transform_closure` with its
+literal indices, minting its own specialisation. That is the right trade for a
+cell that appears once or twice in a model, and it is why the fall-through is a
+deliberate branch rather than a guess.
 """
 function _regular_transform_closure(expression::AbstractString)
     text = String(expression)
@@ -143,7 +146,11 @@ function _regular_transform_closure(expression::AbstractString)
     return Base.invokelatest(_transform_closure(_regular_transform_key(text)), index)
 end
 
-"""The single parameter index a regular transform reads, or `nothing`."""
+"""
+The single parameter index a regular transform reads, or `nothing` when it
+reads none or several -- see `_regular_transform_closure` for what happens to
+the several case.
+"""
 function _regular_transform_index(text::AbstractString)
     indices = Set{Int}()
     for m in eachmatch(r"param\[\s*(\d+)\s*\]", text)

@@ -879,13 +879,25 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # transformed free parameter that needs no engine support. Refuse only what
 # genuinely cannot be resolved, and say which of the four reasons it is.
 #
-# ONE distinct reference per cell, and that is a hard constraint rather than
-# a convenience. `parameter_transforms.jl` states that each regular transform
-# reads exactly one entry of the parameter vector, `sp.parnumber[tf_idx]`,
-# and `adjoint_parameters.jl` verifies it when the adjoint workspace is
-# built. A cell over two raw parameters has no single `parnumber` to give, so
-# it is refused rather than mis-indexed -- which would be a wrong gradient
-# rather than an error.
+# Any number of distinct references per cell. This used to be one, because
+# `parameter_transforms.jl` materialised each cell from exactly one entry of
+# the parameter vector, `sp.parnumber[tf_idx]`, and `adjoint_parameters.jl`
+# built its parameter-layer pullback on that -- one seeded dual, one scalar
+# derivative. A cell over two raw parameters had no single `parnumber` to
+# give, so it was refused rather than mis-indexed, which would have been a
+# wrong gradient rather than an error. The forward pass never needed the
+# restriction: the composed text is just Julia source and evaluates fine.
+#
+# What lifted it was making the pullback read the support set that
+# `_ctsem_regular_transform_supports` already *discovers* exactly, with a
+# recording vector, instead of asserting it equals `[parnumber]`. `parnumber`
+# is now the cell's representative parameter -- it still marks the position as
+# mutable and sizes the subject buffer -- and the julia side verifies that it
+# is a member of the discovered support, which is the part of the old
+# assertion that still catches an R-side rendering mistake.
+#
+# `stateref`-style multiplicity is not affected: a cell still belongs to one
+# matrix position and is still written once per evaluation.
 #
 # The referencing cell's own `transform` is dropped, not composed on top of
 # the referenced value. Measured against stan, which is the reference: for
@@ -932,7 +944,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     if (is.na(parnumber)) return(list(kind = "no", why = paste0(
       key, " has no parameter number, so there is nothing to reference")))
     inner <- if (is.na(p$transform[row_k])) "param" else as.character(p$transform[row_k])
-    list(kind = "free", parnumber = parnumber,
+    list(kind = "free", parnumber = parnumber, parnumbers = parnumber,
       text = gsub("\\bparam\\b", paste0("param[", parnumber, "]"), inner, perl = TRUE))
   }
 
@@ -945,17 +957,32 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     refs <- refs_of(text)
     if (!length(refs)) return(list(kind = "no", why = paste0(
       what, " contains an index the julia backend does not recognise: ", text)))
-    if (length(refs) > 1L) return(list(kind = "no", why = paste0(
-      what, " combines ", length(refs), " PARS cells (", paste(refs, collapse = ", "),
-      "). The engine's transform layer reads exactly one raw parameter per cell, ",
-      "so this one cannot be resolved to a single parameter")))
-    inner <- resolve(refs[1L], visited)
-    if (identical(inner$kind, "no")) return(inner)
-    outer <- gsub(.CT_JULIA_PARSREF, "param", text, perl = TRUE)
-    if (identical(inner$kind, "fixed")) {
-      folded <- try(eval(parse(text = gsub("\\bparam\\b",
-        format(inner$value, digits = 17, scientific = FALSE), outer, perl = TRUE))),
-        silent = TRUE)
+    # Each distinct reference is resolved on its own and substituted at its own
+    # occurrences, so an expression over several PARS cells composes exactly as
+    # one over a single cell does. Substitution goes through placeholders
+    # because a resolved text is itself `param[k]`: rewriting every reference
+    # to a bare `param` first, as the single-reference version could afford to,
+    # would make the second substitution rewrite the first one's output.
+    inner <- lapply(refs, resolve, visited = visited)
+    for (k in seq_along(inner)) {
+      if (identical(inner[[k]]$kind, "no")) return(inner[[k]])
+    }
+    marks <- paste0("\001", seq_along(refs), "\001")
+    outer <- text
+    for (k in seq_along(refs)) {
+      kc <- index_of(refs[k])
+      outer <- gsub(paste0("\\bPARS\\s*\\[\\s*", kc[1L], "\\s*,\\s*",
+        kc[2L], "\\s*\\]"), marks[k], outer, perl = TRUE)
+    }
+    for (k in seq_along(refs)) {
+      outer <- gsub(marks[k], if (identical(inner[[k]]$kind, "fixed")) {
+        paste0("(", format(inner[[k]]$value, digits = 17, scientific = FALSE), ")")
+      } else paste0("(", inner[[k]]$text, ")"), outer, fixed = TRUE)
+    }
+    parnumbers <- unique(unlist(lapply(inner, `[[`, "parnumbers")))
+    if (!length(parnumbers)) {
+      # Every reference was a fixed value, so the whole cell is one too.
+      folded <- try(eval(parse(text = outer)), silent = TRUE)
       if (inherits(folded, "try-error") || !is.numeric(folded) || length(folded) != 1L ||
           !is.finite(folded)) {
         return(list(kind = "no", why = paste0(what,
@@ -963,8 +990,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       }
       return(list(kind = "fixed", value = as.numeric(folded)))
     }
-    list(kind = "free", parnumber = inner$parnumber,
-      text = gsub("\\bparam\\b", paste0("(", inner$text, ")"), outer, perl = TRUE))
+    list(kind = "free", parnumber = parnumbers[1L], parnumbers = parnumbers,
+      text = outer)
   }
 
   for (i in rows) {

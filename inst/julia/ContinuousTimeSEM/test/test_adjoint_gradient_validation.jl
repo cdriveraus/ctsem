@@ -252,12 +252,48 @@ function _adjoint_td_cross_2d_parameters()
     ekf_from_data_frame(df)
 end
 
+# A T0MEANS and a T0VAR cell each materialised from *two* raw parameters, which
+# is what `.ctJuliaResolveStaticRefs` composes for `T0VAR = 'log1p(par1 +
+# par2)'`: the referenced PARS cells' own transforms are substituted into the
+# user's expression at model-build time, leaving one regular transform that
+# reads both parameters.
+#
+# The parameter-layer pullback used to require exactly one read per transform
+# and threw at workspace construction otherwise, so this shape was refused in
+# R before it could reach the engine. It now discovers the support and pushes a
+# term back through each index, and this is the scenario that checks the terms
+# are both there and both right -- a pullback that kept only the representative
+# parameter would still produce a plausible gradient, just one missing
+# `param[4]`'s contribution entirely.
+#
+# `parnumber` for each composed cell is its representative (3), the first
+# parameter the expression references, which is what R sends; the support
+# `[3, 4]` is discovered rather than declared.
+function _adjoint_composed_static_1d_parameters()
+    df = _adjoint_test_dataframe(
+        drift=[-0.5;;], jax=[-0.5;;], cint=[0.0;;], diffusion=[0.2;;],
+        lambda=[1.0;;], jy=[1.0;;], manifestmeans=[0.0;;], manifestvar=[0.3;;],
+        t0var=[0.5;;], t0means=[0.0;;], pars=[0.0; 0.0;;],
+        free=Dict(
+            (:DRIFT, 1, 1) => (1, "-log1p_exp(param[1])"),
+            (:JAx, 1, 1) => (1, "-log1p_exp(param[1])"),
+            (:DIFFUSION, 1, 1) => (2, "log1p_exp(param[2])"),
+            (:PARS, 1, 1) => (3, "param[3]"),
+            (:PARS, 2, 1) => (4, "2 * param[4]"),
+            (:T0VAR, 1, 1) => (3, "log1p_exp((param[3]) + (2 * param[4]))"),
+            (:T0MEANS, 1, 1) => (3, "(param[3]) - 0.5 * (2 * param[4])"),
+        ),
+    )
+    ekf_from_data_frame(df)
+end
+
 _ADJOINT_SP_LINEAR_1D = _adjoint_linear_1d_parameters()
 _ADJOINT_SP_CROSS_2D = _adjoint_cross_effect_2d_parameters()
 _ADJOINT_SP_STATE_DEPENDENT = _adjoint_state_dependent_1d_parameters()
 _ADJOINT_SP_FREE_COVARIANCE = _adjoint_free_covariance_2d_parameters()
 _ADJOINT_SP_TD_TI = _adjoint_td_ti_parameters()
 _ADJOINT_SP_TD_CROSS_2D = _adjoint_td_cross_2d_parameters()
+_ADJOINT_SP_COMPOSED_STATIC = _adjoint_composed_static_1d_parameters()
 
 @testset "Forward-gradient validation: linear 1D" begin
     sp = _ADJOINT_SP_LINEAR_1D
@@ -339,6 +375,43 @@ end
     objective = ContinuousTimeSEM.ctsem_objective(sp, [1], [0.0, 0.5, 1.2], data, tdpreds)
     values = [0.2, -0.3, 0.15]
     _check_adjoint(objective, values)
+end
+
+@testset "Forward-gradient validation: T0 cells composed from two parameters" begin
+    sp = _ADJOINT_SP_COMPOSED_STATIC
+    data = reshape([0.1, -0.2, 0.15, 0.05], 1, :)
+    objective = ContinuousTimeSEM.ctsem_objective(sp, [1], [0.0, 0.5, 1.2, 2.1], data)
+    values = [0.3, -0.4, 0.25, -0.15]
+    _check_adjoint(objective, values)
+
+    # The support is discovered, not declared. Asserted directly as well as
+    # through the gradient, because a support that silently lost `4` would
+    # still pass every gate above for a model where `param[4]` happens to be
+    # weakly identified -- and this fixture exists precisely to stop that.
+    supports = ContinuousTimeSEM._ctsem_regular_transform_supports(sp, length(values))
+    composed = [s for s in supports if length(s) > 1]
+    @test length(composed) == 2
+    @test all(s -> s == [3, 4], composed)
+
+    # A transform that does not read its own parameter number is still a
+    # fault, and still throws -- that is the half of the old one-parameter
+    # assertion worth keeping, and the pullback would otherwise push this
+    # cell's cotangent onto a parameter that never materialised it. Built as
+    # its own tiny spec because `regular_transforms` is a Tuple, so the
+    # closures of an existing spec cannot be swapped out.
+    misrendered = _adjoint_test_dataframe(
+        drift=[-0.5;;], jax=[-0.5;;], cint=[0.0;;], diffusion=[0.2;;],
+        lambda=[1.0;;], jy=[1.0;;], manifestmeans=[0.0;;], manifestvar=[0.3;;],
+        t0var=[0.5;;], t0means=[0.0;;],
+        free=Dict(
+            (:DRIFT, 1, 1) => (1, "-log1p_exp(param[1])"),
+            (:JAx, 1, 1) => (1, "-log1p_exp(param[1])"),
+            # Declares parameter 2 and reads parameter 1.
+            (:DIFFUSION, 1, 1) => (2, "log1p_exp(param[1])"),
+        ),
+    )
+    @test_throws ArgumentError ContinuousTimeSEM._ctsem_regular_transform_supports(
+        ekf_from_data_frame(misrendered), 2)
 end
 
 @testset "Forward-gradient validation: bounded prediction substeps" begin

@@ -9,9 +9,10 @@
 # `test_behavGenNLcor.R`'s model, whose T0MEANS is four cells sharing two PARS
 # parameters and contains no state reference at all.
 #
-# It is resolved at model-build time now. What is still refused is what
-# genuinely cannot be resolved there, and the three shapes below are the
-# reasons, each named in its own message.
+# It is resolved at model-build time now, including an expression over
+# several PARS cells. What is still refused is what genuinely cannot be
+# resolved there -- a row-varying dependence, and a cycle -- each named in its
+# own message.
 skip_without_julia()
 skip_on_32bit()
 
@@ -67,19 +68,48 @@ test_that("a shared PARS parameter in T0MEANS and T0VAR is resolved, not refused
   expect_backends_agree(fits, tol = 5e-2)
 })
 
-test_that("a static cell over two PARS cells is refused, and says so", {
+test_that("a static cell over two PARS cells composes both parameters", {
+  # This used to be refused, on the grounds that a regular transform reads one
+  # entry of the parameter vector and a cell over two raw parameters has no
+  # single `parnumber` to give. The engine's parameter-layer pullback now
+  # discovers each transform's support instead of asserting it, so the
+  # composition is the same one a single reference gets -- see the comment
+  # above `.ctJuliaResolveStaticRefs`.
+  #
+  # Fit-free, because what it checks is a string: that the rendered transform
+  # reads *both* parameters. A composition that dropped one would still fit,
+  # still converge, and report a plausible T0MEANS.
   d <- .parsref_data(n = 12)
   m <- .parsref_model(T0MEANS = c('aa + bb', 'aa'), PARS = c('aa', 'bb'),
     T0VAR = diag(2))
-  # Refused rather than mis-resolved, and this is a real constraint rather
-  # than an unfinished case: `parameter_transforms.jl` requires each regular
-  # transform to read exactly one entry of the parameter vector, and
-  # `adjoint_parameters.jl` verifies that when the adjoint workspace is built.
-  # A cell over two raw parameters has no single `parnumber` to give.
-  testthat::expect_error(
-    suppressMessages(ctFit(datalong = d, model = m, fit = FALSE,
-      backend = 'julia', intoverpop = TRUE)),
-    "combines 2 PARS cells")
+  prepped <- suppressMessages(ctFit(datalong = d, model = m, fit = FALSE,
+    backend = 'julia', intoverpop = TRUE))
+  pt <- prepped$parameter_table
+  cell <- pt[pt$matrix == 'T0MEANS' & pt$row == 1 & pt$col == 1, ]
+  testthat::expect_equal(nrow(cell), 1L)
+
+  reads <- sort(unique(as.integer(regmatches(cell$transform,
+    gregexpr('(?<=param\\[)\\d+', cell$transform, perl = TRUE))[[1]])))
+  aa <- pt$parnumber[pt$matrix == 'PARS' & pt$row == 1 & pt$col == 1]
+  bb <- pt$parnumber[pt$matrix == 'PARS' & pt$row == 2 & pt$col == 1]
+  testthat::expect_equal(reads, sort(c(as.integer(aa), as.integer(bb))))
+  # And the representative `parnumber` is one of them, which is what the
+  # engine's support check requires of an R-rendered transform.
+  testthat::expect_true(as.integer(cell$parnumber) %in% reads)
+})
+
+test_that("a composed T0VAR fits, and agrees with stan", {
+  # The end-to-end half: an identified expression over two parameters, where
+  # one of them also appears alone in T0MEANS. Stan writes the expression
+  # straight into its model text, so it is the independent implementation to
+  # check against rather than a parity mirror.
+  d <- .parsref_data(n = 20)
+  m <- .parsref_model(T0MEANS = c('aa', 'aa'), PARS = c('aa', 'bb'),
+    T0VAR = matrix(c('log1p_exp(aa + bb)', 0, 0, 't0sd'), 2, 2, byrow = TRUE))
+  fits <- fit_backends(datalong = d, model = m, cores = 1, verbose = 0,
+    intoverpop = TRUE)
+  testthat::expect_s3_class(fits$julia, 'ctJuliaFit')
+  expect_backends_agree(fits, tol = 5e-2)
 })
 
 test_that("a static cell depending on a time-dependent predictor is refused, and says so", {

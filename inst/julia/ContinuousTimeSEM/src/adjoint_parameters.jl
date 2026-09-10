@@ -18,13 +18,16 @@ using ComponentArrays
 #      Linear, so its pullback is exact and trivial.
 #
 #   2. `_materialize_all_params!`: for each mutable position `idx`,
-#      `all_params[idx] = regular_transform_idx(subject_values)`. By
-#      construction on the R side (`ctJuliaBackend.R` rewrites every bare
-#      `param` in a transform string to `param[parnumber]`) each of these
-#      reads exactly one entry of `subject_values`, so the Jacobian is
-#      diagonal-in-parameter and one scalar derivative per position suffices.
-#      That "by construction" claim is *verified*, not assumed -- see
-#      `_ctsem_regular_transform_supports` below, which throws if it fails.
+#      `all_params[idx] = regular_transform_idx(subject_values)`. Almost every
+#      one of these reads a single entry of `subject_values` -- R renders the
+#      cell's transform with its own `param[parnumber]` substituted in -- so
+#      the Jacobian is diagonal-in-parameter and one scalar derivative per
+#      position suffices. The exception is a T0MEANS or T0VAR cell written as
+#      an expression over several PARS parameters, which
+#      `.ctJuliaResolveStaticRefs` composes into one transform reading each of
+#      them. The read set is *discovered*, not assumed -- see
+#      `_ctsem_regular_transform_supports` below -- and the pullback takes one
+#      scalar derivative per index in it.
 #
 #   3. `apply_complex_transforms_at_indices!`: state-dependent cells,
 #      re-evaluated at every row (and every prediction substep). These read the
@@ -78,17 +81,27 @@ _reset_recording!(v::RecordingVector) = (fill!(v.touched, false); v)
 """
     _ctsem_regular_transform_supports(sp, nvalues)
 
-Return, for each mutable position in `sp`, the single `subject_values` index
-its regular transform reads.
+Return, for each mutable position in `sp`, the `subject_values` indices its
+regular transform reads.
 
-Throws if any transform reads something other than exactly its own
-`parnumber`. That would not be a Julia bug but an R-side change to how
-transform strings are rendered, and it must fail loudly here rather than
-produce a gradient that silently drops a term.
+Discovered with a `RecordingVector` rather than assumed, so a cell composed
+from several raw parameters (`.ctJuliaResolveStaticRefs` builds those for
+T0MEANS and T0VAR) reports all of them and `_ctsem_regular_pullback!` pushes a
+term back through each.
+
+Two things still throw, because both would be R-side rendering mistakes that
+the gradient would otherwise absorb silently:
+
+  * a transform that reads *nothing*, which means the cell was marked mutable
+    but its text has no `param[...]` in it at all, so its raw coordinate has
+    no path to the likelihood; and
+  * a transform whose own `parnumber` is not among the indices it reads, which
+    is the part of the old one-parameter assertion that catches a substitution
+    landing on the wrong slot.
 """
 function _ctsem_regular_transform_supports(sp::EKFParameters, nvalues::Integer)
     probe = RecordingVector(collect(range(0.11, step=0.017, length=Int(nvalues))))
-    supports = Vector{Int}(undef, length(sp.regular_transforms))
+    supports = Vector{Vector{Int}}(undef, length(sp.regular_transforms))
     tf_idx = 0
     for idx in eachindex(sp.mutables)
         sp.mutables[idx] || continue
@@ -97,16 +110,17 @@ function _ctsem_regular_transform_supports(sp::EKFParameters, nvalues::Integer)
         sp.regular_transforms[tf_idx](probe)
         read = _recorded_indices(probe)
         expected = sp.parnumber[tf_idx]
-        if read != [expected]
+        if isempty(read) || !(expected in read)
             throw(ArgumentError(string(
                 "adjoint: regular transform for flattened parameter position ", idx,
-                " reads subject_values indices ", read, ", expected exactly [",
-                expected, "]. The adjoint's parameter-layer pullback assumes one ",
-                "free parameter per transform, which is how ctJuliaBackend.R ",
-                "renders them; a multi-parameter transform needs the pullback in ",
-                "adjoint_parameters.jl generalised before it can be used.")))
+                " reads subject_values indices ", read, ", which does not include ",
+                "its own parameter number ", expected, ". A transform is rendered ",
+                "by ctJuliaBackend.R from the cell's own parameter, plus any PARS ",
+                "parameters a composed T0MEANS/T0VAR expression references; a ",
+                "transform that reads neither is a rendering fault, and the ",
+                "parameter-layer pullback would silently drop the term.")))
         end
-        supports[tf_idx] = expected
+        supports[tf_idx] = read
     end
     return supports
 end
@@ -153,26 +167,47 @@ end
 Push the cotangent on `all_params` back through the regular transforms into
 `subject_values_bar`.
 
-`scratch` is a `Vector{ForwardDiff.Dual{...,1}}` mirror of `subject_values`
-whose entries all carry a zero partial; each transform is evaluated with a
-single seeded entry, which is why one scalar derivative per mutable position
-is enough.
+`scratch` is a `Vector{ForwardDiff.Dual{...,1}}` mirror of `subject_values`,
+seeded one entry at a time: the transform is evaluated once per index in its
+support, and each evaluation reads a partial of 1 at that index and 0
+everywhere else. A cell materialised from a single raw parameter -- all of them
+except a T0MEANS or T0VAR cell composed from several PARS parameters -- has a
+one-element support, so the common case is the one seeded evaluation this
+always was, and the loop is neither a per-cell allocation nor a Jacobian.
+
+**`scratch` carries no values between calls.** Seeding an entry writes its
+*value* as well as its partial, so a single-parameter transform never needed
+any other entry of `scratch` to be current -- and none of them were. A
+composed transform reads every index in its support on each of its
+evaluations, so all of them are refreshed up front. Without that, the
+unseeded ones were read at whatever was last left in the buffer, which is a
+gradient wrong by a term rather than an error: on the composed-cell scenario
+in `test_adjoint_gradient_validation.jl` it disagreed with ForwardDiff by 4.5%
+while every other gate still passed.
 """
 function _ctsem_regular_pullback!(subject_values_bar::AbstractVector,
     all_params_bar::AbstractVector, subject_values::AbstractVector,
-    sp::EKFParameters, supports::AbstractVector{Int}, scratch::AbstractVector)
+    sp::EKFParameters, supports::AbstractVector{Vector{Int}}, scratch::AbstractVector)
     tf_idx = 0
     @inbounds for idx in eachindex(sp.mutables)
         sp.mutables[idx] || continue
         tf_idx += 1
         cotangent = all_params_bar[idx]
         iszero(cotangent) && continue
-        pn = supports[tf_idx]
-        base = subject_values[pn]
-        scratch[pn] = _seed_dual(scratch[pn], base, true)
-        derivative = _partial1(sp.regular_transforms[tf_idx](scratch))
-        scratch[pn] = _seed_dual(scratch[pn], base, false)
-        subject_values_bar[pn] += cotangent * derivative
+        transform = sp.regular_transforms[tf_idx]
+        support = supports[tf_idx]
+        if length(support) > 1
+            for pn in support
+                scratch[pn] = _seed_dual(scratch[pn], subject_values[pn], false)
+            end
+        end
+        for pn in support
+            base = subject_values[pn]
+            scratch[pn] = _seed_dual(scratch[pn], base, true)
+            derivative = _partial1(transform(scratch))
+            scratch[pn] = _seed_dual(scratch[pn], base, false)
+            subject_values_bar[pn] += cotangent * derivative
+        end
     end
     return subject_values_bar
 end
