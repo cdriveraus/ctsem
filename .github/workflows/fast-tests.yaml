@@ -124,6 +124,13 @@ jobs:
           Rscript -e '
             # tools::Rd2ex is what R CMD check uses to build ctsem-Ex.R, and
             # --as-cran runs the donttest blocks, so both are reproduced.
+            # What Rd2ex does not write, and R CMD check puts at the head of
+            # ctsem-Ex.R itself, is the attach and the graphics device. Without
+            # the attach every example dies on "could not find function", so
+            # the first run that reached this step would have called 59 of 69
+            # broken -- an artifact of the harness rather than the package.
+            library(ctsem)
+            pdf(NULL)
             dir.create("exsweep", showWarnings = FALSE)
             bad <- character()
             for (rd in sort(Sys.glob("man/*.Rd"))) {
