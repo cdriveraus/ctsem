@@ -571,8 +571,48 @@ test_that("Stan and Julia's actual optimizers converge to the same fit for TD/TI
     optimcontrol = list(carefulfit = FALSE, stochastic = FALSE),
     optimize = TRUE, verbose = 0, savescores = FALSE, cores = 1))
 
-  expect_equal(jf$estimate$loglik, -sf$stanfit$optimfit$f, tolerance = 1e-3)
-  expect_equal(jf$estimate$raw, sf$stanfit$rawest, tolerance = 1e-2)
+  # The loglik is the claim that holds whatever the identifiability: both
+  # optimisers found the same maximum. 1e-5 rather than the old 1e-3, because
+  # the measurement is 3.8e-07 and a tolerance three orders above it would not
+  # notice a real divergence.
+  expect_equal(jf$estimate$loglik, -sf$stanfit$optimfit$f, tolerance = 1e-5)
+
+  # The raw parameters, EXCEPT the directions this fixture cannot identify.
+  # 6 subjects and 4 waves do not pin 10 population correlations among 5
+  # random effects: the julia fit's own `identifiability` reports one flat
+  # direction with condition 3.19e11 and names exactly those ten, and the
+  # population covariance at stan's own point has a smallest eigenvalue of
+  # 8.75e-10 against a largest of 170. Along a flat direction two optimisers
+  # with different stopping rules stop in different places -- measured at about
+  # 0.3 in the raw coordinates -- and that is not a disagreement about the
+  # model. Everything the data does pin agrees to 1.1e-04.
+  #
+  # Taken from the fit rather than written out here, so this tightens by itself
+  # if the fixture ever becomes identified. Stan carries no `identifiability`,
+  # hence the julia side supplies the set for both.
+  weak <- jf$identifiability$parameters
+  # The SAME naming function the fit used, not a second one that happens to
+  # describe the same parameters. `.ctBackendParameterNames()` calls a
+  # population correlation `popcorr_B2__B1` and `.ctBackendRawParameterNames()`
+  # calls it `rawcor_B2__B1`; `identifiability$parameters` is drawn from the
+  # second (see the call in .ctJuliaBackend.R), so matching against the first
+  # matches nothing and leaves every parameter in the comparison -- which is
+  # how this test first "passed" its own exclusion and failed the assertion
+  # beneath it.
+  parnames <- ctsem:::.ctBackendRawParameterNames(jf, length(jf$estimate$raw))
+  keep <- !parnames %in% weak
+
+  # What is NOT being compared, asserted -- an exclusion that comes from the
+  # fit could otherwise grow to cover everything and leave this passing
+  # vacuously.
+  expect_gt(length(weak), 0L)
+  expect_true(all(grepl("^rawcor_", weak)),
+    info = paste(weak[!grepl("^rawcor_", weak)], collapse = " "))
+  expect_equal(sum(keep), length(jf$estimate$raw) - length(weak))
+  expect_gt(sum(keep), length(jf$estimate$raw) / 2)
+
+  expect_equal(jf$estimate$raw[keep], sf$stanfit$rawest[keep],
+    tolerance = 1e-2)
 })
 
 test_that("Julia's adjoint gradient matches its forward gradient and Stan", {

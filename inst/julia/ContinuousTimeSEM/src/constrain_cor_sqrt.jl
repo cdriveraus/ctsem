@@ -78,25 +78,26 @@ end
 
 Convert standard-deviation/correlation square-root parameters to a covariance.
 
-The diagonal of `mat` supplies standard deviations, and the lower triangle
-supplies unconstrained correlation parameters. `choleskymats` is currently
-accepted for compatibility with the R-side interface.
+The diagonal of `mat` supplies standard deviations and the lower triangle the
+off-diagonal coordinates, read according to `choleskymats`: the row-normalised
+correlation square root (0 and -1), a factor (1), or Fisher z inside a matrix
+exponential (2).
+
+Allocating, for the reporting and summary paths; `sdcovsqrt2cov!` is the one
+the filter uses. This delegates to it rather than carrying a second
+implementation of the same map, which is how the two came apart: this function
+accepted `choleskymats` and ignored it, with the other two constructions
+commented out beside it, so a fit under covmattransform='z' or 'cholesky' was
+estimated with the requested construction and *reported* through the
+row-normalised one. On a four-effect model that left the reported T0cov 0.083
+from the one the model used, including a sign flip, and nothing was raised.
 """
 function sdcovsqrt2cov(mat, choleskymats)
-    # TODO: Rewrite this for performance
-    # if size(mat, 1) == 0
-    #     return Symmetric(mat, :L) 
-    # elseif choleskymats < 1
-
-        # TODO: 
-        diag_vals = Diagonal(mat)
-        # corr_mat = constraincorsqrt1(mat)
-        corr_mat = constraincorsqrt1_vec(Symmetric(mat, :L))
-        return Symmetric(diag_vals * corr_mat * corr_mat' * diag_vals, :L)
-    # else
-    #     # TODO: Implement this as a specialization of the function
-    #     return Symmetric(mat * mat', :L)
-    # end
+    d = size(mat, 1)
+    d == 0 && return Symmetric(Matrix(mat), :L)
+    buffer = _make_square_buffer(eltype(mat), d)
+    sdcovsqrt2cov!(buffer, mat, choleskymats)
+    return Symmetric(copy(buffer.out), :L)
 end
 
 """
@@ -105,17 +106,37 @@ end
 In-place buffered version of `sdcovsqrt2cov`.
 
 The covariance is written to `buffer.out`; other fields of `buffer` are used as
-scratch storage. `choleskymats` is currently accepted for compatibility.
+scratch storage. `choleskymats` selects the construction: 0 and -1 the
+row-normalised correlation square root, 1 a factor, 2 Fisher z inside a
+matrix exponential.
 """
 function sdcovsqrt2cov!(buffer, mat, choleskymats)
     return sdcovsqrt2cov!(buffer, mat, choleskymats, Val(size(mat, 1)))
 end
 
+# The buffer's dimension must be the matrix's. It is not a lower bound: the
+# construction cache stores and serves `buffer.out` whole against d*d slots, so
+# an oversized buffer throws on a miss and -- worse -- returns a scrambled block
+# on a hit. Both dimensions are `Val`s, so this folds away at compile time.
+# Asked of `out` rather than of the buffer's type. Not every buffer here is a
+# `SquareBuffer` -- the expm tests hand over a NamedTuple with the same scratch
+# fields and no `dim` -- and this file is included before
+# workspace_buffers.jl, so a method dispatching on `SquareBuffer` cannot even
+# be defined (`UndefVarError: SquareBuffer not defined`). One integer load is
+# not a cost worth a specialisation next to an O(d^3) construction.
+@inline function _check_buffer_dim(buffer, ::Val{d}) where {d}
+    n = size(buffer.out, 1)
+    n == d && return nothing
+    throw(DimensionMismatch(
+        "sdcovsqrt2cov! buffer is $(n)x$(n) for a $(d)x$(d) matrix"))
+end
+
 function sdcovsqrt2cov!(buffer, mat, choleskymats, dim::Val{d}) where {d}
+    _check_buffer_dim(buffer, dim)
     T = eltype(buffer.out)
     if _CTSEM_COV_CACHE[]
         _COVCACHE_CALLS[] += 1
-        c = _covcache(T, dim, choleskymats == 2 || _CTSEM_COV_EXPM[])
+        c = _covcache(T, dim, _effective_covmatcode(choleskymats))
         hit = _covcache_lookup(c, mat, dim)
         if hit != 0
             copyto!(buffer.out, c.outs[hit])
@@ -129,35 +150,48 @@ function sdcovsqrt2cov!(buffer, mat, choleskymats, dim::Val{d}) where {d}
     return _sdcovsqrt2cov_uncached!(buffer, mat, choleskymats, dim)
 end
 
+"""
+    _effective_covmatcode(choleskymats)
+
+The construction code as an `Int`.
+
+Nothing overrides the argument any more -- `_CTSEM_COV_EXPM[]` used to, and
+removing it is why this is now only a conversion. It stays as a function
+because the forward pass, the reverse pass and the cache key must agree about
+which construction is in force, and one place to look is how that stays true.
+"""
+@inline _effective_covmatcode(choleskymats) = Int(choleskymats)
+
 function _sdcovsqrt2cov_uncached!(buffer, mat, choleskymats, dim::Val{d}) where {d}
-    # `choleskymats == 2` is covmattransform='z', the same code the stan path
-    # reads from `standata$choleskymats`; the two implementations agree to 3e-16.
-    # `_CTSEM_COV_EXPM[]` forces the same route irrespective of the argument and
-    # exists so a benchmark can switch routes on one prepared model. It goes
-    # once the model setting reaches every call site, which still pass 0.
-    if choleskymats == 2 || _CTSEM_COV_EXPM[]
+    # 2 is covmattransform='z', 1 is 'cholesky', 0 and -1 the correlation
+    # square root -- the same codes the stan path reads from
+    # `standata$choleskymats`, and the z implementations agree to 3e-16.
+    code = _effective_covmatcode(choleskymats)
+    if code == 2
         return sdcovexpm2cov!(buffer, mat, dim)
-    end
-    # TODO: Rewrite this for performance
-    # if size(mat, 1) == 0
-    #     # return Symmetric(mat, :L) 
-    #     copyto!(buffer.out, mat)
-    #     return nothing
-    # elseif choleskymats < 1
-        constraincorsqrt1_vec!(buffer, mat, 1e-5, dim)
-
+    elseif code >= 1
+        # Stan's `tcrossprod(mat)`: `mat` is the factor itself. Summed over the
+        # whole of 1:d rather than 1:min(i,j), which is what stan does, so a
+        # model with something above the diagonal gets one answer and not two.
+        T = eltype(buffer.out)
         @inbounds for j in 1:d, i in 1:d
-            buffer.intermediate[i, j] = mat[i, i] * buffer.out[i, j]
+            acc = zero(T)
+            for k in 1:d
+                acc += T(mat[i, k]) * T(mat[j, k])
+            end
+            buffer.out[i, j] = acc
         end
-
-        _mul_right_transpose!(buffer.out, buffer.intermediate, buffer.intermediate, dim, dim, dim)
         return nothing
-    # else
-    #     # TODO: Implement this as a specialization of the function
-    #     # return Symmetric(mat * mat', :L)
-    #     mul!(buffer.out, mat, mat')
-    #     return nothing
-    # end
+    end
+    constraincorsqrt1_vec!(buffer, mat, 1e-5, dim)
+
+    @inbounds for j in 1:d, i in 1:d
+        buffer.intermediate[i, j] = mat[i, i] * buffer.out[i, j]
+    end
+
+    _mul_right_transpose!(buffer.out, buffer.intermediate, buffer.intermediate,
+        dim, dim, dim)
+    return nothing
 end
 
 """

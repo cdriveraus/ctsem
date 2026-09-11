@@ -204,6 +204,22 @@ functions{
         }
       }
     }
+    // Shift the diagonal by an upper bound on the largest eigenvalue before
+    // exponentiating, so no entry of Y exceeds one. Exact, not a tolerance:
+    // the normalisation below divides by sqrt(Y[i,i]*Y[j,j]) and
+    // exp(A - c*I) = exp(-c)*exp(A), so the common factor cancels. Without it
+    // an unbounded coordinate -- which is what this cell now carries -- can
+    // overflow matrix_exp and turn the matrix into NaN. The row-sum norm
+    // bounds the spectral radius of a symmetric matrix and costs one pass.
+    {
+      real shift = 0;
+      for(rowi in 1:d){
+        real rowsum = 0;
+        for(coli in 1:d) rowsum += abs(A[rowi,coli]);
+        if(rowsum > shift) shift = rowsum;
+      }
+      for(rowi in 1:d) A[rowi,rowi] -= shift;
+    }
     Y = matrix_exp(A);
     for(i in 1:d) g[i] = mat[i,i] / sqrt(Y[i,i]);
     for(coli in 1:d){
@@ -469,6 +485,15 @@ parameters{
 }
 transformed parameters{
   vector[nindvarying] rawpopsd; //population level std dev
+  // The state-unit conversion for each carrier, applied once where the
+  // population block is written into T0cov. One for an appended
+  // carrier, whose T0MEANS uses the identity transform so the
+  // consuming cell does the scaling; the cell multiplier*meanscale
+  // for an individually varying T0MEANS, whose carrier is the model
+  // latent itself and so must hold its covariance in the units of
+  // that latent. NOT folded into rawpopsd: that would make a vector called
+  // raw mean state units for some of its entries.
+  vector[nindvarying] popstatescale = rep_vector(1.0, nindvarying);
   matrix[nindvarying, nindvarying] rawpopcovbase;
   matrix[nindvarying, nindvarying] rawpopcov;
   matrix[nindvarying, nindvarying] rawpopcovchol;
@@ -505,6 +530,20 @@ transformed parameters{
   if(nindvarying > 0){
     int counter =0;
     rawpopsd = log1p_exp(2*rawpopsdbase-1) .* sdscale + 1e-10; // sqrts of proportions of total variance
+    // The state-unit factor for each carrier, recorded here and applied
+    // once where the block is placed into T0cov. See the declaration of
+    // popstatescale.
+    if(intoverpop && nindvarying > 0){
+      for(ri in 1:size(matsetup)){
+        if(matsetup[ri,7]==1 && matsetup[ri,5]){ //indvarying t0means
+          for(j in 1:nindvarying){
+            if(intoverpopindvaryingindex[j] == matsetup[ri,1]){
+              popstatescale[j] = matvalues[ri,2] * matvalues[ri,3];
+            }
+          }
+        }
+      }
+    }
     for(j in 1:nindvarying){
       rawpopcovbase[j,j] = rawpopsd[j]; //used with intoverpop
       for(i in 1:nindvarying){
@@ -515,11 +554,32 @@ transformed parameters{
         }
       }
     }
-    //if(choleskymats==0) rawpopcorr = constraincorsqrt1(rawpopcovbase);
-    //if(choleskymats== -1) 
-    rawpopcorr = tcrossprod( constraincorsqrt1(rawpopcovbase));
-    rawpopcov = makesym(quad_form_diag(rawpopcorr, rawpopsd +1e-8),verbose,1);
-    rawpopcovchol = cholesky_decompose(rawpopcov); 
+    // One construction for the population covariance, whatever the
+    // transform. rawpopcovbase carries the sds on its diagonal and the
+    // off-diagonal coordinates below, which is the layout sdcovsqrt2cov
+    // reads, so there is nothing here to special-case.
+    //
+    // It used to be built with constraincorsqrt1 whatever the setting, while
+    // intoverpop separately fed rawpopcovbase into T0VAR where sdcovsqrt2cov
+    // applied the chosen construction -- so under z or cholesky the
+    // population correlation the model used and the one it reported were two
+    // different numbers, measured 0.102 apart on a four-effect model.
+    // No jitter on the covariance itself: the floor lives in the diagonal
+    // element transform, and makesym adding 1e-10 here put a third one on top
+    // -- which is the whole of the 1.0e-10 this used to differ from the julia
+    // backend by. sdcovsqrt2cov returns a symmetric matrix, and the
+    // factorisation below goes through makesym, which symmetrises as well as
+    // guarding, so nothing here needs to.
+    rawpopcov = sdcovsqrt2cov(rawpopcovbase, choleskymats);
+    for(coli in 1:nindvarying){
+      for(rowi in 1:nindvarying){
+        rawpopcorr[rowi,coli] = rawpopcov[rowi,coli] /
+          sqrt(rawpopcov[rowi,rowi] * rawpopcov[coli,coli]);
+      }
+    }
+    // The jitter belongs to the factorisation, not to the estimand: it is
+    // there so a rounding level negative eigenvalue cannot stop a fit.
+    rawpopcovchol = cholesky_decompose(makesym(rawpopcov,verbose,1));
   }//end indvarying par setup
   {
   }
@@ -819,18 +879,34 @@ if(si==0 || sum(whenmat[54,{5}]) > 0 )Jy=mcalc(Jy,indparams, state,{0}, 54, mats
     
     
  if(si==0 || (sum(whenmat[8,]) + statedep[8]) > 0 ) { // this causes problems but shouldnt -- is t0var being adjusted each iteration when it shouldnt?
-   if(intoverpop && nindvarying > 0) T0VAR[intoverpopindvaryingindex, intoverpopindvaryingindex] = rawpopcovbase;
+    // T0VAR is the model own initial covariance and nothing else. The
+    // population covariance is built once, above, from RAWPOPVAR, and the
+    // *constructed* block is placed below -- rather than its raw coordinates
+    // being written in here so that one construction call built both. They
+    // are two matrices with two parameter sets; the only thing T0VAR takes
+    // from the population side is that an indvarying T0MEANS disables its
+    // row and column, and ctFit does that before either backend runs.
     T0cov = sdcovsqrt2cov(T0VAR,choleskymats); 
     if(intoverpop && nindvarying > 0){ //adjust cov matrix for transforms
-    
+      // Drop the row and column of every latent whose T0MEANS is a random
+      // effect: it has no initial covariance of its own, RAWPOPVAR states it.
+      // Done here rather than left to the zeros ctFit fixes in T0VAR, so it
+      // does not depend on a zero row surviving whichever construction ran.
       for(ri in 1:size(matsetup)){
-        if(matsetup[ri,7]==1){ //if t0means
-          if(matsetup[ri,5]) { //and indvarying
-            T0cov[matsetup[ri,1], ] *= matvalues[ri,2] * matvalues[ri,3]; //multiplier meanscale
-            T0cov[, matsetup[ri,1] ] *=  matvalues[ri,2] * matvalues[ri,3]; //multiplier meanscale
-          }
+        if(matsetup[ri,7]==1 && matsetup[ri,5]){ //indvarying t0means
+          T0cov[matsetup[ri,1], ] = rep_row_vector(0.0, cols(T0cov));
+          T0cov[, matsetup[ri,1] ] = rep_vector(0.0, rows(T0cov));
         }
       }
+      // and write back the entries RAWPOPVAR does span. So an indvarying
+      // T0MEANS does not covary with a non-indvarying one -- nothing states
+      // that pair -- but does covary with an indvarying CINT, since both sit
+      // in this block.
+    // The one conversion to state units, here rather than folded into
+    // rawpopsd: scaling row i and column j by k_i and k_j is what the
+    // carrier states need, and quad_form_diag says so in one line.
+    T0cov[intoverpopindvaryingindex, intoverpopindvaryingindex] = quad_form_diag(rawpopcov, popstatescale);
+    
     }
  }
   

@@ -648,7 +648,17 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
   out$rawpopsdtransform <- 'log1p_exp(2*rawpopsdbase-1) .* sdscale' #'log(1+exp(2*rawpopsdbase)) .* sdscale' #'exp(rawpopsdbase * 2 -2) .* sdscale' # 'rawpopsdbase .* sdscale' #
   # out$stationarymeanprior <- NA
   # out$stationaryvarprior <- NA
-  out$covmattransform <- 'rawcorr'
+  # 'z' by default. Measured against known optima at k = 2, 3, 4 and 6, over
+  # random, near-singular, uniformly-high-correlation and alternating-sign
+  # targets: 'z' reached every one from every start, and 'rawcorr' could not
+  # represent three of the twelve at all -- best of ten starts still 0.04 to
+  # 0.21 short of the attainable optimum, with the fit converging and nothing
+  # raised. That is `constraincorsqrt1` not being onto the correlation space,
+  # and it applies to T0VAR, DIFFUSION, MANIFESTVAR and the population
+  # covariance alike. Set covmattransform='rawcorr' for the previous
+  # parameterisation, which is what a comparison against stan or against a
+  # stored fit needs.
+  out$covmattransform <- 'z'
   # The population covariance, one row and column per varying parameter. Held
   # beside `pars` rather than in it, deliberately: everything that enumerates
   # free parameters walks `pars`, and the population covariance is not one of

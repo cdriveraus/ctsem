@@ -75,6 +75,14 @@
 
 .ctPopVarianceMatrices <- function() c('DIFFUSION', 'MANIFESTVAR', 'T0VAR')
 
+# Labels sitting in T0MEANS. Read before `.ctModelIntOverPop()` runs, while the
+# cell still carries the label rather than a state reference.
+.ctPopT0meansEffects <- function(pars) {
+  pars <- .ctModelCleanctspec(pars)
+  rows <- pars$matrix %in% 'T0MEANS' & !is.na(pars$param)
+  unique(as.character(pars$param[rows]))
+}
+
 # Word-boundary regex for a literal parameter label.
 .ctPopLabelPattern <- function(label) {
   paste0('(^|[^[:alnum:]_.])', gsub('([][{}()+*^$|\\\\?.])', '\\\\\\1', label),
@@ -165,6 +173,13 @@
 # which is the one outcome this whole feature exists to avoid. Both a fixed
 # value and a relabelling count: a label differing from the default is an
 # equality constraint, and that is a specification too.
+# A RAWPOPVAR entry about a regressed effect cannot be honoured: its spread
+# follows entirely from the basis, so there is no cell to fix.
+#
+# The basis effects have a separate and narrower problem under the factor
+# construction, checked in `.ctPopRegressionFactorConflicts()` below rather
+# than here -- the two are different claims and refusing them together refused
+# statements that are perfectly honourable.
 .ctPopRegressionRawPopVarConflicts <- function(model, regressed) {
   popcov <- model[['RAWPOPVAR']]
   if (is.null(popcov) || !length(popcov) || !length(regressed)) return(character())
@@ -189,7 +204,57 @@
   unique(out)
 }
 
-.ctPopRegressionSpec <- function(pars, poprank, explicit = TRUE, model = NULL) {
+# What a factor construction cannot honour about the basis effects.
+#
+# `Sigma = M M'` with M lower triangular, so `Sigma[i,j]` for `i > j` is
+# `sum_{m<=j} M[i,m] M[j,m]` -- j products, not one. Nothing below the diagonal
+# is a cell of the estimand: an off-diagonal is a factor entry whose implied
+# correlation depends on the rest of its row, and an effect's spread is a row
+# norm rather than a cell, except for the first basis effect, which loads on
+# one dimension and no other, so `|M[1,1]|` is its spread exactly.
+#
+# A zero is no exception. Only against the first dimension does it reduce to
+# one cell (`M[i,1] M[1,1] = 0`), for any later one it is a constraint across a
+# row, and in neither case does the rewrite act on it -- a stated zero leaves
+# every loading free. So it is refused with the rest rather than accepted and
+# dropped. Fixing loadings from a declared zero pattern is a real feature and
+# would need a rotation-rigidity check to go with it; until then this is what
+# is true.
+.ctPopRegressionFactorConflicts <- function(model, basis) {
+  popcov <- model[['RAWPOPVAR']]
+  if (is.null(popcov) || !length(popcov) || length(basis) < 2L) return(character())
+  names <- rownames(popcov)
+  # RAWPOPVAR is constructed with a default label in every cell, so "is there
+  # text here" is not the question -- a default label is the absence of a
+  # statement, and treating it as one refuses every model that has not been
+  # touched. Compared against the default the same way
+  # `.ctPopRegressionRawPopVarConflicts()` does.
+  default <- .ctModelRawPopVar(model$pars)
+  isdefault <- function(stated, ...) {
+    coords <- c(...)
+    if (is.null(default) || !all(coords %in% rownames(default))) return(FALSE)
+    identical(stated, as.character(default[coords[1L], coords[length(coords)]]))
+  }
+  out <- character()
+  for (b in intersect(basis[-1L], names)) {
+    diagonal <- .ctModelRawPopVarEntry(model, b)
+    if (!is.na(diagonal) && nzchar(diagonal) && !isdefault(diagonal, b, b)) {
+      out <- c(out, sprintf("RAWPOPVAR['%s', '%s'] = %s (a loading, not a standard deviation)",
+        b, b, diagonal))
+    }
+    for (other in setdiff(names, b)) {
+      stated <- .ctModelRawPopVarEntry(model, b, other)
+      if (is.na(stated) || !nzchar(stated)) next
+      if (isdefault(stated, b, other)) next
+      out <- c(out, sprintf("RAWPOPVAR['%s', '%s'] = %s (a factor entry, not a correlation)",
+        b, other, stated))
+    }
+  }
+  unique(out)
+}
+
+.ctPopRegressionSpec <- function(pars, poprank, explicit = TRUE, model = NULL,
+    augmented = TRUE) {
   if (is.null(poprank) || (length(poprank) == 1L && is.na(poprank))) return(NULL)
   roles <- .ctPopEffectRoles(pars)
   if (!nrow(roles)) return(NULL)
@@ -225,29 +290,76 @@
   basis <- roles$param[order][seq_len(rank)]
   regressed <- setdiff(roles$param[order], basis)
 
+  # An individually varying T0MEANS cannot be a loading on the standardised
+  # dimensions. T0MEANS reaches the observation mean, so such an effect is
+  # always in the basis; and its carrier state is the model latent itself
+  # rather than an appended one, so its cell reads its own parameter and there
+  # is no `state[<carrier>]` for `.ctPopRegressionRewrite()` to substitute a
+  # predictor into. Giving it a dimension of its own needs a T0MEANS cell that
+  # reads another state, which is the thing the augmented arrangement exists to
+  # avoid, so this is a limit of the parameterisation rather than an oversight.
+  # Laplace has no carrier states and rewrites the parameter table instead, so
+  # it is not restricted here.
+  # Only where the reduction reaches a cell: with nothing regressed the rewrite
+  # returns the model untouched, so a rank equal to the number of varying
+  # parameters is a no-op and there is nothing to refuse.
+  if (isTRUE(augmented) && length(regressed)) {
+    t0basis <- intersect(basis, .ctPopT0meansEffects(pars))
+    if (length(t0basis)) {
+      if (!isTRUE(explicit)) return(NULL)
+      stop('poprank cannot reduce a population covariance that includes an ',
+        'individually varying T0MEANS (', paste(t0basis, collapse = ', '),
+        '): its carrier state is the latent itself, so it has no dimension of ',
+        'its own to load on. Use poprank=NA to estimate the full covariance, ',
+        "or intoverpop='laplace'.", call. = FALSE)
+    }
+  }
+
   # A RAWPOPVAR statement about a regressed effect cannot be honoured, so it is
   # refused rather than ignored. Asked for, that is an error; defaulted, the
   # user's own specification is the more explicit statement of the two and wins.
   if (!is.null(model)) {
-    conflicts <- .ctPopRegressionRawPopVarConflicts(model, regressed)
+    conflicts <- c(.ctPopRegressionRawPopVarConflicts(model, regressed),
+      .ctPopRegressionFactorConflicts(model, basis))
     if (length(conflicts)) {
       if (!isTRUE(explicit)) return(NULL)
-      stop('poprank would drop what RAWPOPVAR states about ',
-        paste(regressed[regressed %in% rownames(model[['RAWPOPVAR']])],
-          collapse = ', '), ': ', paste(conflicts, collapse = '; '),
-        '. Under a reduced rank those effects have no population sd or ',
-        'correlation of their own -- both follow from ',
-        paste(basis, collapse = ', '), '. Use poprank=NA to estimate the full ',
-        'covariance, or state RAWPOPVAR only for the effects that keep their own ',
-        'spread.', call. = FALSE)
+      # Opens with the phrase it always opened with. The rest is new -- the
+      # factor construction gives a second, narrower reason -- but the leading
+      # clause is accurate for both and is what the tests and anything else
+      # reading this message match on.
+      stop('poprank would drop what RAWPOPVAR states: ',
+        paste(conflicts, collapse = '; '),
+        '. Under a reduced rank the population covariance is a factor. A ',
+        'regressed effect has no spread of its own at all, and for a basis ',
+        "effect past the first the spread is a row norm rather than a cell -- ",
+        'only ', basis[1L], ' keeps a standard deviation this can state, and a ',
+        'zero covariance is a constraint across a row of loadings rather than ',
+        'a cell. Use poprank=NA to estimate the full covariance.',
+        call. = FALSE)
     }
   }
   # Above `nmean` the restriction stops being free: it starts fixing residual
   # variances the data does determine. Said once, here, rather than left for a
   # user to infer from a likelihood that moved.
   approximate <- rank < nmean
+  # Where each basis effect's cells are, as coordinates, recorded now because
+  # they cannot be found later. `.ctModelIntOverPop()` replaces the `param`
+  # token in a basis cell with `state[j]`, so after it runs the cell's text no
+  # longer mentions the effect at all -- and it rebuilds the T0VAR block, so a
+  # row index taken here would not survive either.
+  #
+  # Every row carrying the label, which is what the regressed path also takes:
+  # an effect can drive more than one cell (a DRIFT entry and its JAx mirror,
+  # or a label used twice), and all of them read the same carrier state.
+  basiscells <- do.call(rbind, lapply(basis, function(b) {
+    rows <- which(!is.na(pars$param) & pars$param %in% b)
+    if (!length(rows)) return(NULL)
+    data.frame(param = b, matrix = as.character(pars$matrix[rows]),
+      row = as.integer(pars$row[rows]), col = as.integer(pars$col[rows]),
+      row.names = NULL, stringsAsFactors = FALSE)
+  }))
   list(rank = rank, basis = basis, regressed = regressed, roles = roles,
-    nmean = nmean, approximate = approximate,
+    nmean = nmean, approximate = approximate, basiscells = basiscells,
     npar = rank * (rank + 1L) / 2L + length(regressed) * rank)
 }
 
@@ -557,12 +669,101 @@
       if (length(effectcols)) m$pars[ri, effectcols] <- FALSE
     }
   }
+  # --- the basis effects, as loadings on the standardised dimensions --------
+  #
+  # Each basis cell reads `tf(state[j])` by now, and the substitution target is
+  # that one token. Addressed by the coordinates `.ctPopRegressionSpec()`
+  # recorded before the augmentation, because the cell's text no longer
+  # mentions the effect and the regressed cells contain the same token and must
+  # keep it.
+  loadings <- list()
+  for (pos in seq_along(spec$basis)) {
+    p <- spec$basis[pos]
+    cells <- spec$basiscells[spec$basiscells$param %in% p, , drop = FALSE]
+    if (!nrow(cells)) {
+      stop('Internal error: no recorded cell for basis random effect ', p, '.',
+        call. = FALSE)
+    }
+    effects <- NULL
+    if (length(effectcols)) {
+      own <- which(!is.na(m$pars$param) & m$pars$param %in% p)
+      if (length(own)) effects <- vapply(effectcols,
+        function(cc) any(m$pars[own, cc] %in% TRUE), logical(1L))
+    }
+    # The mean keeps the effect's own name, as a regressed effect's does, so a
+    # summary still has a row called `dr1` meaning the population mean of dr1.
+    # It moves here from the carrier's T0MEANS row, which is fixed to zero
+    # below.
+    addpar(p, effects)
+    # Triangular: effect at position `pos` loads on dimensions 1..pos. That is
+    # what removes the rotation freedom a free loading matrix would have, and
+    # it keeps the parameter count at r(r+1)/2 over the basis block, which is
+    # what the sd-and-correlation block had.
+    own_loadings <- paste0('L_', p, '_', seq_len(pos))
+    # `sdscale` multiplied this effect's population sd under the previous
+    # parameterisation. Its spread is a row norm of the loading matrix now, so
+    # the scale goes on the row -- which scales the spread by exactly the same
+    # factor. Omitting it would leave the argument accepted and ignored.
+    own_scale <- suppressWarnings(as.numeric(
+      m$pars$sdscale[!is.na(m$pars$param) & m$pars$param %in% p])[1L])
+    if (!is.finite(own_scale) || own_scale == 0) own_scale <- 1
+    for (l in own_loadings) {
+      addpar(l)
+      if (own_scale != 1) {
+        newpars[[length(newpars)]]$transform <-
+          sprintf('%.17g * param', own_scale)
+      }
+    }
+    loadings[[length(loadings) + 1L]] <- data.frame(
+      param = p, dimension = seq_len(pos), loading = own_loadings,
+      state = as.integer(stateof[seq_len(pos)]),
+      row.names = NULL, stringsAsFactors = FALSE)
+    predictor <- paste0('(', p, ' + ', paste0(own_loadings, ' * state[',
+      stateof[seq_len(pos)], ']', collapse = ' + '), ')')
+    target <- paste0('state[', stateof[pos], ']')
+    for (ci in seq_len(nrow(cells))) {
+      ri <- which(m$pars$matrix %in% cells$matrix[ci] &
+          m$pars$row == cells$row[ci] & m$pars$col == cells$col[ci])
+      if (length(ri) != 1L) {
+        stop('Internal error: basis cell ', cells$matrix[ci], '[',
+          cells$row[ci], ',', cells$col[ci], '] for ', p,
+          ' is not uniquely locatable after augmentation.', call. = FALSE)
+      }
+      text <- as.character(m$pars$param[ri])
+      if (is.na(text) || !grepl(target, text, fixed = TRUE)) {
+        stop('Internal error: basis cell ', cells$matrix[ci], '[',
+          cells$row[ci], ',', cells$col[ci], '] does not read ', target,
+          ' as expected; found ', if (is.na(text)) 'NA' else text, '.',
+          call. = FALSE)
+      }
+      m$pars$param[ri] <- gsub(target, predictor, text, fixed = TRUE)
+      m$pars$indvarying[ri] <- FALSE
+      if (length(effectcols)) m$pars[ri, effectcols] <- FALSE
+    }
+    # And the carrier becomes the dimension: mean zero, so `state[i]` is the
+    # standardised deviation and nothing else.
+    ti <- which(m$pars$matrix %in% 'T0MEANS' & m$pars$row == stateof[pos] &
+        m$pars$col == 1)
+    if (length(ti) != 1L) {
+      stop('Internal error: no unique carrier T0MEANS row for ', p, '.',
+        call. = FALSE)
+    }
+    m$pars$param[ti] <- NA_character_
+    m$pars$value[ti] <- 0
+    m$pars$transform[ti] <- NA_character_
+    if (length(effectcols)) m$pars[ti, effectcols] <- FALSE
+  }
+
   m$pars <- rbind(m$pars, do.call(rbind, newpars))
   m$pars[] <- lapply(m$pars, utils::type.convert, as.is = TRUE)
   spec$coefficients <- do.call(rbind, coefficients)
+  spec$loadings <- do.call(rbind, loadings)
   spec$cells <- do.call(rbind, drivencells)
   spec$route <- 'augmented'
   spec$state <- stateof
+  # The population block is the identity under this form, which the julia
+  # augmentation reads to fix it rather than estimate it.
+  spec$standardised <- TRUE
   m$popregression <- spec
   m
 }

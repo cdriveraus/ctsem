@@ -252,13 +252,55 @@ ctFitUpdate <- function(oldfit, data=NA, recompile=FALSE,refit=FALSE,...){
 ctStanFitUpdate <- ctFitUpdate
 
 
-T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (because indvarying t0means) and disable
+# Disable the T0VAR rows and columns that RAWPOPVAR already accounts for.
+#
+# An individually varying T0MEANS gets no carrier state of its own: that latent
+# state *is* the carrier (see `.ctModelIntOverPop`, which skips T0MEANS when
+# appending states). So that state's initial covariance is the population
+# covariance of its random effect, and RAWPOPVAR is what states it. T0VAR
+# stating it as well would be two matrices specifying one quantity, which is
+# how the two came to be entangled in the first place. This is the whole of the
+# remaining relationship between them.
+#
+# The values these cells are fixed to do no work on the stan path. That row
+# and column of T0cov are dropped where it is assembled, and the entries
+# RAWPOPVAR spans are written back there, so neither the diagonal nor the
+# off-diagonals reach the fit. The zero covariance between an indvarying
+# T0MEANS and a non-indvarying one is the absence of any statement about that
+# pair rather than T0VAR stating zero -- which is why the disabling is done at
+# assembly and not left to these values surviving a construction.
+#
+# Level-specific, and it has to be. `indvarying` is the subject level, and
+# that is the only flag this reads. A T0MEANS that varies over studies but not
+# over subjects keeps its T0VAR: within a study every subject has the same
+# T0MEANS, so T0VAR's dispersion really is that subject's initial covariance,
+# and the study effect shifts the value for the whole study rather than adding
+# to any individual's initial spread. Generalising this to "varies at any
+# level" would delete a parameter the data can identify, quietly. There is a
+# test for the three cases in test-t0var-redundancies.R.
+#
+# The composition a reader might expect -- T0VAR plus the subject effects plus
+# the study effects -- is the *marginal* initial covariance over all
+# individuals, and it is not what T0cov holds. T0cov is conditional on the
+# levels above it: T0VAR for the latents that keep it, and the subject level
+# population covariance for the rest. The study level reaches an individual by
+# moving that individual's parameter values, so adding a study covariance into
+# T0cov as well would count it twice.
+#
+# They are still *fixed* rather than left free, because taking them out of the
+# parameter vector is the whole job of this function. Neither backend now reads
+# the values: both drop these rows and columns where T0cov is assembled and
+# write RAWPOPVAR's entries over them. A small positive diagonal rather than
+# zero all the same, because the R-side paths that build a covariance straight
+# from T0VAR -- ctGenerate(backend='r'), ctGraph, ctModelLatex -- would meet a
+# singular matrix, and they are not what this function is about.
+T0VARredundancies <- function(ctm) {
   whichT0VAR_T0MEANSindvarying <- ctm$pars$matrix %in% 'T0VAR'  &
     is.na(ctm$pars$value) &
     (ctm$pars$row %in% ctm$pars$row[ctm$pars$matrix %in% 'T0MEANS' & ctm$pars$indvarying] |
         ctm$pars$col %in% ctm$pars$row[ctm$pars$matrix %in% 'T0MEANS' & ctm$pars$indvarying])
   if(any(whichT0VAR_T0MEANSindvarying)){
-    message('Free T0VAR parameters as well as indvarying T0MEANS -- fixing T0VAR pars to diag matrix of 1e-6')
+    message('T0VAR rows/columns for latents with individually varying T0MEANS disabled: RAWPOPVAR gives their covariance.')
     ctm$pars$value[whichT0VAR_T0MEANSindvarying & ctm$pars$col == ctm$pars$row ] <- 1e-6
     ctm$pars$value[whichT0VAR_T0MEANSindvarying & ctm$pars$col != ctm$pars$row ] <- 0
     ctm$pars$param[whichT0VAR_T0MEANSindvarying] <- NA
@@ -339,12 +381,27 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' holds the retained covariances fixed while the rest is squeezed into them.
 #' Useful for parsimony, or for speed in high dimensions, and not otherwise.
 #'
-#' The population covariance is \code{Sigma = [[S, S b'], [b S, b S b']]}, for a
-#' freely estimated \code{S} over the basis effects and regression coefficients
-#' \code{b} for the rest; each regressed effect has no variance independent of
-#' the basis. \code{summary()} reports the standard deviations and correlations
-#' this implies, with a note saying which of them follow from the structure
-#' rather than being estimated.
+#' Under \code{intoverpop='augmented'} the population covariance is
+#' \code{Sigma = L L'}, for a loading matrix \code{L} with one row per varying
+#' parameter and \code{poprank} columns, lower triangular in its first
+#' \code{poprank} rows: a basis effect loads on its own dimension and those
+#' before it, a regressed effect on all of them, and no regressed effect has
+#' variance independent of the basis. The dimensions are standardised, so a
+#' loading is a covariance with a unit-variance dimension rather than a
+#' correlation -- and the sign of a whole dimension is arbitrary, since negating
+#' a column of \code{L} leaves \code{Sigma} unchanged. Read the standard
+#' deviations and correlations \code{summary()} reports, which do not depend on
+#' that choice, rather than the sign of one loading. Under \code{'laplace'} and
+#' \code{'none'} the coordinates are
+#' \code{Sigma = [[S, S b'], [b S, b S b']]} instead, for a freely estimated
+#' \code{S} over the basis effects and coefficients \code{b} for the rest.
+#' Either way \code{summary()} notes which reported values follow from the
+#' structure rather than being estimated.
+#'
+#' An individually varying T0MEANS cannot be reduced on the augmented route:
+#' its carrier state is the latent itself, so it has no dimension of its own to
+#' load on. Such a model keeps the full covariance under \code{'auto'}, and an
+#' explicit rank is refused by name.
 #'
 #' Applies under \code{intoverpop='augmented'}, \code{'laplace'} and
 #' \code{'none'}, and requires \code{backend='julia'} -- but the **default only
@@ -1442,7 +1499,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
       popregression <- NULL
     } else {
       popregression <- .ctPopRegressionSpec(ctm$pars, poprank,
-        explicit=poprankexplicit, model=ctm)
+        explicit=poprankexplicit, model=ctm, augmented=isTRUE(intoverpop))
       if(!is.null(popregression)) ctm <- .ctPopRegressionDemote(ctm, popregression)
     }
   }

@@ -1542,6 +1542,3 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
 }
 
 
-
-
-

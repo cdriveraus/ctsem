@@ -316,6 +316,27 @@ function retrieve_names_and_dims(matrix, row, col)
 end
 
 """
+    retrieve_layout(matrix, row, col)
+
+Where each matrix sits in the flat parameter vector: `(names, nrows, ncols,
+ranges)`, with `ranges[j]` the column-major slice belonging to `names[j]`.
+
+One function because two callers need the same answer and one of them cannot
+notice being wrong. `retrieve_axes` uses the ranges to build the
+ComponentArrays axis; `ekf_from_columns` uses them to find the population
+block. That block's range indexes a `view` into the parameter vector, so a
+range computed independently and disagreeing by one would not error -- it would
+read the wrong slice, build a covariance out of it, and return a number.
+"""
+function retrieve_layout(matrix, row, col)
+    names, nrows, ncols = retrieve_names_and_dims(matrix, row, col)
+    endings = cumsum([a * b for (a, b) in zip(nrows, ncols)])
+    startings = vcat(1, endings[1:end-1] .+ 1)
+    ranges = [starts:ends for (starts, ends) in zip(startings, endings)]
+    return (names, nrows, ncols, ranges)
+end
+
+"""
     retrieve_axes(matrix, row, col)
 
 Build a `ComponentArrays.Axis` from the matrix layout encoded in the parameter
@@ -325,10 +346,7 @@ Each distinct matrix name becomes a shaped component whose row and column
 dimensions are inferred from the `row` and `col` columns.
 """
 function retrieve_axes(matrix, row, col)
-    names, nrows, ncols = retrieve_names_and_dims(matrix, row, col)
-    endings = cumsum([a * b for (a, b) in zip(nrows, ncols)])
-    startings = vcat(1, endings[1:end-1] .+ 1)
-    ranges = [starts:ends for (starts, ends) in zip(startings, endings)]
+    names, nrows, ncols, ranges = retrieve_layout(matrix, row, col)
     symbols = tuple(names...)
     axes = ViewAxis.(ranges, ShapedAxis.(zip(nrows, ncols)))
     named_axes = NamedTuple{symbols}(axes)
@@ -387,7 +405,9 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
     ti_parameter=Int[], ti_predictor=Int[], ti_coefficient=Int[],
     diffusion_state_indices=Int[], continuous_time::Bool=true,
     manifesttype=Int[], ncategories=Int[], censormin=Float64[],
-    censormax=Float64[], covmatcode::Int=0, affine_dim::Int=0)
+    censormax=Float64[], covmatcode::Int=0, population_indices=Int[],
+    population_covmatcode::Union{Nothing,Integer}=nothing,
+    population_scale=Float64[], affine_dim::Int=0)
 
     n = length(matrix)
     length(row) == n && length(col) == n ||
@@ -466,10 +486,27 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
     fixed_positions = getdata(values) .|> !isnan
     fixed_values = values[fixed_positions]
 
+    # The population block's slice of the flat vector, read from the same
+    # layout the axis is built from rather than derived again. `RAWPOPVAR` is
+    # present only when the R side emits it, which it does for a model whose
+    # population covariance is its own matrix rather than part of T0VAR.
+    population_range = let (bnames, _, _, branges) =
+            retrieve_layout(matrix, row, col)
+        slot = findfirst(isequal(:RAWPOPVAR), bnames)
+        # Parenthesised: `? 0:-1 :` puts the range operator and the
+        # conditional's own colon in the same expression, which parses as
+        # something else entirely.
+        slot === nothing ? (0:-1) : branges[slot]
+    end
+
     return EKFParameters(par_pos, tfs_pos, ptf_pos, utf_pos, ttf_pos,
         reg_tfs, predict_tfs, update_tfs, td_tfs, map_from, axis,
         fixed_positions, fixed_values, Int.(ti_parameter),
         Int.(ti_predictor), Int.(ti_coefficient), Int.(diffusion_state_indices),
         continuous_time, Int.(manifesttype), Int.(ncategories),
-        Float64.(censormin), Float64.(censormax), covmatcode, affine_dim)
+        Float64.(censormin), Float64.(censormax), covmatcode,
+        Int.(population_indices), population_range,
+        population_covmatcode === nothing ? covmatcode :
+            Int(population_covmatcode),
+        Float64.(population_scale), affine_dim)
 end

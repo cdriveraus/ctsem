@@ -84,6 +84,38 @@ struct EKFParameters{RT,PT,UT,TT,AX,FV}
     # correlation square root, 2 for covmattransform='z'. Declared last and
     # supplied last, for the reason the `manifesttype` comment above gives.
     covmatcode::Int
+    # Which augmented states the population covariance occupies, in the order
+    # of the RAWPOPVAR matrix rows: `population_indices[j]` is the state that
+    # population row `j` describes. Those indices are not disjoint from the
+    # model own latents -- an individually varying T0MEANS gets no carrier
+    # state, so its own latent state is what its population row refers to.
+    #
+    # Empty means the model has no separate population covariance and T0VAR is
+    # the whole of the initial covariance, which is every model that does not
+    # use intoverpop.
+    population_indices::Vector{Int}
+    # Where that matrix sits in the flat parameter vector, as first and last
+    # positions. A name lookup would not do: `pars` is a ComponentVector whose
+    # axis is a type parameter, so `pars.RAWPOPVAR` has to compile for every
+    # model, and for a model without the block it cannot. `0:-1` when absent.
+    population_range::UnitRange{Int}
+    # Which construction builds the population block, which need not be the one
+    # the rest of the model's covariances use. A reduced-rank population
+    # covariance is a factor -- code 1 -- while DIFFUSION and T0VAR keep the
+    # model's own setting, and forcing all four to agree would change three
+    # matrices to fix one. Defaults to `covmatcode`, so a model that has not
+    # asked for anything different is exactly as it was.
+    population_covmatcode::Int
+    # The state-unit conversion for each population row, applied where the
+    # block is placed. An appended carrier is 1, because its T0MEANS uses the
+    # identity transform and the consuming cell does the scaling; an
+    # individually varying T0MEANS carries its cell multiplier*meanscale,
+    # because the carrier is the model latent itself and its covariance has to
+    # be in that latent's units. Deliberately NOT folded into the block's own
+    # transform: the same conversion is applied at the same point on the stan
+    # path, and two implementations of one rule about this matrix is what the
+    # previous arrangement cost.
+    population_scale::Vector{Float64}
     # How many leading states are genuine dynamics rather than the static
     # coordinates a random effect augments the state with.
     #
@@ -132,6 +164,10 @@ struct EKFParameters{RT,PT,UT,TT,AX,FV}
         censormin=Float64[],
         censormax=Float64[],
         covmatcode::Int=0,
+        population_indices=Int[],
+        population_range::UnitRange{Int}=0:-1,
+        population_covmatcode::Union{Nothing,Integer}=nothing,
+        population_scale=Float64[],
         affine_dim::Int=0,
     )
         regular_transforms_tuple = Tuple(regular_transforms)
@@ -172,6 +208,13 @@ struct EKFParameters{RT,PT,UT,TT,AX,FV}
             Vector{Float64}(censormin),
             Vector{Float64}(censormax),
             covmatcode,
+            Vector{Int}(population_indices),
+            population_range,
+            population_covmatcode === nothing ? Int(covmatcode) :
+                Int(population_covmatcode),
+            isempty(population_scale) ?
+                ones(Float64, length(population_indices)) :
+                Vector{Float64}(population_scale),
             affine_dim,
         )
     end

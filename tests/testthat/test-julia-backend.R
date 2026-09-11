@@ -83,6 +83,55 @@ test_that("Julia backend rejects unsupported capabilities before session startup
   expect_no_error(unsupported(optimize = FALSE))
 })
 
+test_that("a bracketed expression is resolved or refused for the reason it actually hit", {
+  # One model shape, three expressions, so the difference in the message is
+  # attributable to the expression and nothing else.
+  mk <- function(matrixname, cell) {
+    args <- list(type = "ct", n.latent = 2, n.manifest = 2, LAMBDA = diag(2),
+      manifestNames = c("Y1", "Y2"), latentNames = c("eta1", "eta2"),
+      PARS = matrix("shrink", 1, 1),
+      DRIFT = matrix(c("dr1", 0, 0, "dr2"), 2, 2, byrow = TRUE),
+      DIFFUSION = matrix(c("df1", 0, 0, "df2"), 2, 2),
+      MANIFESTVAR = matrix(c("mv1", 0, 0, "mv2"), 2, 2),
+      MANIFESTMEANS = matrix(0, 2, 1), CINT = matrix(0, 2, 1),
+      T0MEANS = matrix(0, 2, 1),
+      T0VAR = matrix(c("t0v1", 0, "t0v21", "t0v2"), 2, 2, byrow = TRUE))
+    args[[matrixname]][2, 1] <- cell
+    suppressWarnings(suppressMessages(do.call(ctModel, args)))
+  }
+
+  # A state reference reaches the canonical table as `state[1]`, which is what
+  # the message keys on -- so assert the rewriting as well as the refusal,
+  # since the refusal reads the rewritten text and not what was written.
+  canonical <- ctsem:::.ctJuliaCanonicalModel(mk("T0VAR", "0.5 * eta1"))
+  cell <- canonical$pars$param[canonical$pars$matrix %in% "T0VAR" &
+    canonical$pars$row == 2 & canonical$pars$col == 1]
+  expect_equal(as.character(cell), "0.5 * state[1]")
+
+  expect_error(ctsem:::.ctJuliaParameterTable(mk("T0VAR", "0.5 * eta1")),
+    "cannot resolve T0VAR\\[2,1\\]")
+  expect_error(ctsem:::.ctJuliaParameterTable(mk("T0VAR", "0.5 * eta1")),
+    "depends on a latent state")
+  # And a parameter reference is a different problem with a different answer:
+  # it is resolved over the parameter it names, so the cell becomes that
+  # expression over a parameter slot rather than an error. Asserted by the
+  # shape of the composed transform, because which slot it lands in is fixture
+  # arithmetic. The resolver itself is tested in test-julia-parsrefs.R.
+  resolved <- ctsem:::.ctJuliaParameterTable(mk("T0VAR", "0.5 * PARS[1,1]"))
+  cell <- resolved[resolved$matrix %in% "T0VAR" & resolved$row == 2 &
+    resolved$col == 1, ]
+  expect_equal(nrow(cell), 1L)
+  expect_match(as.character(cell$transform),
+    "^0[.]5 [*] [(]param\\[[0-9]+[]][)]$")
+
+  # The three groups still take one, so the refusal above is about T0VAR being
+  # outside them rather than about bracketed expressions in general.
+  expect_no_error(ctsem:::.ctJuliaParameterTable(
+    mk("DIFFUSION", "0.2 + 0.05 * PARS[1,1]")))
+  expect_no_error(ctsem:::.ctJuliaParameterTable(
+    mk("MANIFESTVAR", "0.1 + 0.02 * PARS[1,1]")))
+})
+
 test_that("Julia parameter preparation emits state and Jacobian expressions", {
   model <- ctModel(
     type = "ct", LAMBDA = matrix("1 + eta1", 1, 1),
@@ -426,7 +475,7 @@ test_that("a state-dependent MANIFESTVAR is transformed before row 1 reads it", 
 # the branch the other values select is commented out, so a 'cholesky' model
 # was fitted with the default transform and measured 3.76 log units away from
 # the same model on stan, silently. Refused rather than implemented.
-test_that("a non-default covmattransform is refused on the julia backend", {
+test_that("the julia backend accepts the constructions it can build", {
   skip_on_cran()
 
   .m <- function() suppressWarnings(ctModel(
@@ -438,21 +487,48 @@ test_that("a non-default covmattransform is refused on the julia backend", {
     T0MEANS = matrix(0, 2, 1)))
   dat <- data.frame(id = rep(1:4, each = 2), time = rep(0:1, 4),
     Y1 = 0, Y2 = 0)
-
-  for (tf in c("cholesky", "rawcorr_indep")) {
+  build <- function(tf) {
     model <- .m()
     model$covmattransform <- tf
-    expect_error(
-      suppressMessages(ctFit(dat, model, backend = "julia", fit = FALSE)),
-      regexp = "covmattransform")
+    suppressMessages(ctFit(dat, model, backend = "julia", fit = FALSE))
   }
 
-  # The default still passes the guard. `fit = FALSE` stops before Julia is
-  # needed, so this half does not depend on a Julia installation.
-  model <- .m()
-  expect_identical(model$covmattransform, "rawcorr")
-  expect_error(suppressMessages(ctFit(dat, model, backend = "julia", fit = FALSE)),
-    regexp = NA)
+  # `fit = FALSE` stops before Julia is needed, so none of this depends on a
+  # Julia installation.
+  for (tf in c("rawcorr", "cholesky", "z")) {
+    expect_error(build(tf), regexp = NA, info = tf)
+  }
+
+  # One value is refused, and not because the engine cannot build it:
+  # 'rawcorr_indep' selects the same construction as 'rawcorr' and differs only
+  # in the prior, so accepting it would accept a setting that does nothing.
+  expect_error(build("rawcorr_indep"), regexp = "covmattransform")
+
+  # Whatever the default is, it has to be one the guard accepts. Pinning the
+  # string made this fail the moment the default moved to "z", which tested the
+  # default rather than the guard this block is for.
+  expect_true(.m()$covmattransform %in% c("rawcorr", "cholesky", "z"))
+})
+
+test_that("the construction code map resolves every accepted name and no other", {
+  # The integers are stan's, from `standata$choleskymats` in R/ctData.R, so one
+  # model means one construction on either backend. Checked here as a table
+  # rather than through a fit, because what went wrong was the map itself:
+  # `.ctCovMatCode` sent 'z' to 2 and everything else to 0, which was correct
+  # only while the other values were refused upstream. Nothing tested it, and
+  # accepting 'cholesky' would have sent it to 0 -- the right answer for a
+  # different model, reported as this one's.
+  code <- function(tf) ctsem:::.ctCovMatCode(list(covmattransform = tf))
+  expect_equal(code("rawcorr_indep"), -1L)
+  expect_equal(code("rawcorr"), 0L)
+  expect_equal(code("cholesky"), 1L)
+  expect_equal(code("z"), 2L)
+  # No covmattransform at all is the pre-3.12 shape, and it means 'rawcorr'.
+  expect_equal(ctsem:::.ctCovMatCode(list()), 0L)
+  # And an unknown name errors rather than resolving: it means the validation
+  # has drifted from this table, which must not resolve to a construction by
+  # luck.
+  expect_error(code("nonesuch"), "Unknown covmattransform")
 })
 
 # The same row-1 ordering defect one hop further out. PARS lives in the

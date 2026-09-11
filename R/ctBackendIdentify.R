@@ -121,7 +121,7 @@
 #
 # Both routes are described the same way because the identification question is
 # the same on both: the augmented route holds the scales and correlations in
-# `spec$random_effects` (they are T0VAR cells of the augmented model), the
+# `spec$random_effects` (they are cells of the RAWPOPVAR matrix), the
 # Laplace route in `spec$laplace$levels`. A block is one level's scales and
 # correlations together, because a scale is identified or not *jointly with the
 # correlations it multiplies*.

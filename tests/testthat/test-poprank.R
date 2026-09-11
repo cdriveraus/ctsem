@@ -237,9 +237,10 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
   # parameterised part keeps today's sd and correlation coordinates, so
   # statements there work untouched; a zero *variance* has one clear meaning
   # under any rank and is honoured by leaving that effect out of the split; and
-  # a non-zero statement about a regressed effect, or a zero covariance -- which
-  # is a linear constraint across a whole row of coefficients rather than a cell
-  # -- is refused rather than dropped.
+  # anything the factor cannot state -- a statement about a regressed effect, a
+  # standard deviation for a basis effect past the first, or a zero covariance,
+  # which is a constraint across a row of loadings rather than a cell -- is
+  # refused rather than dropped.
   test_that('RAWPOPVAR statements work where they can be honoured and are refused where not', {
     m <- poprank_model6()
     pars <- prepared_pars(m)
@@ -252,9 +253,17 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
     expect_equal(base$basis, c('dr1', 'dr2', 'dr3'))
     expect_equal(base$regressed, c('df1', 'df2', 'df3'))
 
-    # a zero correlation between two basis effects: the freely parameterised part
+    # A zero correlation between two basis effects was accepted while the basis
+    # block was a free sd-and-correlation matrix, which is what it was under
+    # the previous coordinates. Under loadings there is no such cell: the
+    # rewrite leaves every loading free whatever is stated, verified against
+    # the built spec, so accepting it would drop it silently.
     z <- fresh(); z[['RAWPOPVAR']]['dr2', 'dr1'] <- 0
-    expect_equal(split(z)$regressed, c('df1', 'df2', 'df3'))
+    expect_error(split(z), 'poprank would drop what RAWPOPVAR states')
+    # And left to the default it is kept, because the full covariance states it
+    # directly -- so a user who declares a zero and asks for no rank gets it.
+    expect_null(ctsem:::.ctPopRegressionSpec(prepared_pars(z), 'auto',
+      explicit = FALSE, model = z))
 
     # a fixed sd on a basis effect
     f <- fresh(); f[['RAWPOPVAR']]['dr1', 'dr1'] <- 0.3
@@ -328,20 +337,27 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
     # zero off the diagonal is uncorrelated, exactly
     expect_equal(correlation(withcell(2, 1, 0)), 0, tolerance = 1e-6)
 
-    # and a non-zero coordinate gives a correlation further from zero than
-    # itself -- the numbers the documentation quotes
-    expect_equal(correlation(withcell(2, 1, 0.3)), 0.2846, tolerance = 2e-3)
-    expect_equal(correlation(withcell(2, 1, 0.5)), 0.4522, tolerance = 2e-3)
-    # Unbounded, which the coordinate was not while the (-1, 1) map sat on the
-    # parameter: a correlation near one is now reachable through this surface.
-    expect_equal(correlation(withcell(2, 1, 5)), 0.9993, tolerance = 2e-3)
-    # Monotone and sign-preserving, which is why it reads like a correlation --
-    # but not symmetric in sign, which is another way it is not one. The same
-    # coordinate magnitude gives a different correlation magnitude either side
-    # of zero, because constraincorsqrt1()'s row scale carries an |s| - s term.
-    expect_equal(correlation(withcell(2, 1, -0.5)), -0.4463, tolerance = 2e-3)
-    expect_lt(abs(correlation(withcell(2, 1, -0.5))),
-      abs(correlation(withcell(2, 1, 0.5))))
+    # And a non-zero coordinate is Fisher's z of the correlation, exactly.
+    #
+    # That is the whole point of the 'z' construction and it is worth asserting
+    # as an identity rather than as a table of decimals: `tanh` over the range
+    # says what the specification surface means, and it fails if the default
+    # ever moves back to a construction where the coordinate means something
+    # else. This test previously pinned 0.2846, 0.4522 and -0.4463, which are
+    # `constraincorsqrt1`'s numbers from when that was the default.
+    for (stated in c(0.3, 0.5, 5, -0.5, -2)) {
+      expect_equal(correlation(withcell(2, 1, stated)), tanh(stated),
+        tolerance = 1e-4, info = paste("stated", stated))
+    }
+    # Unbounded, so a correlation near one is reachable through this surface --
+    # it was not while the (-1, 1) map sat on the parameter.
+    expect_gt(correlation(withcell(2, 1, 5)), 0.999)
+    # And symmetric in sign, which `constraincorsqrt1` was not: its row scale
+    # carries an `|s| - s` term, so the same coordinate magnitude gave a
+    # different correlation magnitude either side of zero. `tanh` is odd, so
+    # the surface now reads like a correlation in that respect too.
+    expect_equal(abs(correlation(withcell(2, 1, -0.5))),
+      abs(correlation(withcell(2, 1, 0.5))), tolerance = 1e-6)
   })
 
   # ctIdentify deliberately assesses the *unrestricted* covariance, whatever
@@ -450,6 +466,70 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
   })
 
   # 'auto' is the default, so the case where it changes nothing has to be
+  # An individually varying T0MEANS is ctsem's default and no fixture above has
+  # one -- they all fix T0MEANS at zero -- which is how a default-path internal
+  # error survived here. Its carrier state is the latent itself, so there is no
+  # dimension for the loadings to sit on and the rewrite cannot substitute a
+  # predictor into the cell.
+  #
+  # The transform is stated as the identity because the default one is a
+  # parameter-dependent expression the julia engine does not yet take in
+  # T0MEANS, which would refuse this model before poprank was reached and tell
+  # us nothing.
+  t0varying_model <- function() {
+    m <- suppressMessages(ctModel(type = 'ct', n.latent = 1, n.manifest = 1,
+      LAMBDA = matrix(1), manifestNames = 'Y1', latentNames = 'eta',
+      T0MEANS = matrix('t0m|param|TRUE'), T0VAR = matrix(1),
+      DRIFT = matrix('dr11|-log1p_exp(param)'),
+      DIFFUSION = matrix('df11|log1p_exp(param)'),
+      CINT = matrix(0), MANIFESTMEANS = matrix(0),
+      MANIFESTVAR = matrix('mv|log1p_exp(param)')))
+    m$pars$indvarying <- FALSE
+    m$pars$indvarying[m$pars$matrix %in%
+        c('DRIFT', 'DIFFUSION', 'T0MEANS')] <- TRUE
+    m
+  }
+
+  test_that('an individually varying T0MEANS cannot be a loading, and the default says nothing', {
+    skip_without_julia()
+    dat <- poprank_data()
+    m <- t0varying_model()
+
+    # The default. This raised `Internal error: basis cell T0MEANS[1,1] does
+    # not read state[1] as expected` -- the reduction reached a cell it cannot
+    # rewrite -- so the assertion is that it builds at all.
+    auto <- suppressWarnings(suppressMessages(ctFit(datalong = dat, model = m,
+      backend = 'julia', fit = FALSE, intoverpop = 'augmented', cores = 1L)))
+    expect_null(auto$model$popregression)
+    none <- suppressWarnings(suppressMessages(ctFit(datalong = dat, model = m,
+      backend = 'julia', fit = FALSE, intoverpop = 'augmented',
+      poprank = NA, cores = 1L)))
+    expect_equal(ctsem:::.ctBackendNpar(auto), ctsem:::.ctBackendNpar(none))
+
+    # Asked for, it says which effect and what to do instead.
+    expect_error(suppressWarnings(suppressMessages(ctFit(datalong = dat,
+      model = m, backend = 'julia', fit = FALSE, intoverpop = 'augmented',
+      poprank = 2L, cores = 1L))), 'individually varying T0MEANS')
+
+    # A rank that regresses nothing is a no-op: the rewrite returns the model
+    # untouched, no cell is reached, and refusing it would tell a user who
+    # asked for the full rank that they cannot reduce.
+    full <- suppressWarnings(suppressMessages(ctFit(datalong = dat, model = m,
+      backend = 'julia', fit = FALSE, intoverpop = 'augmented',
+      poprank = 3L, cores = 1L)))
+    expect_null(full$model$popregression)
+    expect_equal(ctsem:::.ctBackendNpar(full), ctsem:::.ctBackendNpar(none))
+
+    # And it is the augmented route's restriction, not the reduction's: with no
+    # carrier states there is no cell to rewrite, so the effect is an ordinary
+    # basis member.
+    pars <- prepared_pars(m)
+    expect_error(ctsem:::.ctPopRegressionSpec(pars, 'auto'),
+      'individually varying T0MEANS')
+    laplace <- ctsem:::.ctPopRegressionSpec(pars, 'auto', augmented = FALSE)
+    expect_true('t0m' %in% laplace$basis)
+  })
+
   # verified rather than assumed: with both effects mean-affecting the rank is
   # already full and the model must come out exactly as poprank=NA does.
   test_that('poprank auto is a no-op when every varying parameter reaches the mean', {
@@ -497,8 +577,16 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
     expect_true('beta_df11_dr11' %in% namesauto)
     # The coordinates the profile likelihood cannot distinguish are gone.
     expect_false(any(c('popsd_df11', 'rawcor_df11__dr11') %in% namesauto))
-    # ... and the population mean of the regressed effect is still estimated.
-    expect_true(all(c('dr11', 'df11', 'popsd_dr11') %in% namesauto))
+    # And no population sd or correlation coordinate survives at all: the
+    # reduced-rank block is a fixed identity over standardised dimensions, so
+    # the spread lives in the loadings. A basis effect keeps one -- `L_<p>_<j>`
+    # is its loading on dimension j -- and that is the parameter `popsd_dr11`
+    # used to be.
+    expect_false(any(grepl('^popsd_|^rawcor_', namesauto)))
+    expect_true('L_dr11_1' %in% namesauto)
+    # ... and every effect population mean is still estimated, basis and
+    # regressed alike.
+    expect_true(all(c('dr11', 'df11') %in% namesauto))
 
     augdim <- function(spec) {
       table <- as.data.frame(spec$parameter_table)

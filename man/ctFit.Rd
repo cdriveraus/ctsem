@@ -133,12 +133,27 @@ dimensions than the data supports, which lowers the likelihood and
 holds the retained covariances fixed while the rest is squeezed into them.
 Useful for parsimony, or for speed in high dimensions, and not otherwise.
 
-The population covariance is \code{Sigma = [[S, S b'], [b S, b S b']]}, for a
-freely estimated \code{S} over the basis effects and regression coefficients
-\code{b} for the rest; each regressed effect has no variance independent of
-the basis. \code{summary()} reports the standard deviations and correlations
-this implies, with a note saying which of them follow from the structure
-rather than being estimated.
+Under \code{intoverpop='augmented'} the population covariance is
+\code{Sigma = L L'}, for a loading matrix \code{L} with one row per varying
+parameter and \code{poprank} columns, lower triangular in its first
+\code{poprank} rows: a basis effect loads on its own dimension and those
+before it, a regressed effect on all of them, and no regressed effect has
+variance independent of the basis. The dimensions are standardised, so a
+loading is a covariance with a unit-variance dimension rather than a
+correlation -- and the sign of a whole dimension is arbitrary, since negating
+a column of \code{L} leaves \code{Sigma} unchanged. Read the standard
+deviations and correlations \code{summary()} reports, which do not depend on
+that choice, rather than the sign of one loading. Under \code{'laplace'} and
+\code{'none'} the coordinates are
+\code{Sigma = [[S, S b'], [b S, b S b']]} instead, for a freely estimated
+\code{S} over the basis effects and coefficients \code{b} for the rest.
+Either way \code{summary()} notes which reported values follow from the
+structure rather than being estimated.
+
+An individually varying T0MEANS cannot be reduced on the augmented route:
+its carrier state is the latent itself, so it has no dimension of its own to
+load on. Such a model keeps the full covariance under \code{'auto'}, and an
+explicit rank is refused by name.
 
 Applies under \code{intoverpop='augmented'}, \code{'laplace'} and
 \code{'none'}, and requires \code{backend='julia'} -- but the **default only

@@ -408,16 +408,33 @@ function _sdcovsqrt2cov_pullback!(mat_bar::AbstractMatrix, mat::AbstractMatrix,
     cov_bar::AbstractMatrix, d::Int; epsilon::Real=1e-5, scratch=nothing,
     covmatcode::Int=0)
     d == 0 && return mat_bar
-    # Mirrors the forward's dispatch: `covmatcode == 2` is covmattransform='z'.
-    # A reverse pass that ignored the setting the forward honoured would give a
-    # gradient for a different model than the likelihood.
-    if covmatcode == 2 || _CTSEM_COV_EXPM[]
+    # Mirrors the forward's dispatch, through the same function, so the two
+    # cannot disagree about which construction is in force. A reverse pass that
+    # ignored the setting the forward honoured would give a gradient for a
+    # different model than the likelihood.
+    code = _effective_covmatcode(covmatcode)
+    if code == 2
         return _sdcovexpm2cov_pullback!(mat_bar, mat, cov_bar, d)
     end
     # A zero cotangent happens routinely -- e.g. the manifest-covariance
     # cotangent on a fully missing row, where no measurement update ran -- and
     # this map is O(d^3) to pull back, so it is worth not doing.
     all(iszero, cov_bar) && return mat_bar
+    if code >= 1
+        # covmattransform='cholesky'. Sigma = M M', so dSigma = dM M' + M dM'
+        # and Mbar = (Sigmabar + Sigmabar') M. The transpose is added rather
+        # than assumed away: the cotangent is not symmetric in general, and the
+        # other two pullbacks make the same "add both triangles" choice.
+        S = promote_type(eltype(mat), eltype(cov_bar))
+        @inbounds for b in 1:d, a in 1:d
+            acc = zero(S)
+            for j in 1:d
+                acc += (S(cov_bar[a, j]) + S(cov_bar[j, a])) * S(mat[j, b])
+            end
+            mat_bar[a, b] += acc
+        end
+        return mat_bar
+    end
     T = promote_type(eltype(mat), eltype(cov_bar))
 
     # Recompute O and B. The forward pass overwrites its correlation-factor

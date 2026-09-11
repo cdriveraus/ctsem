@@ -7,15 +7,13 @@
 # constrain step -- which is a much sharper check than comparing two fits, since
 # it removes the optimizer from the comparison entirely.
 #
-# pop_T0VAR is deliberately excluded from that comparison. Stan computes
-# T0cov = sdcovsqrt2cov(T0VAR) and *then* rescales T0cov's indvarying T0MEANS
-# rows and columns by the parameter's multiplier and meanscale, leaving T0VAR
-# itself unscaled; the engines fold that scale into T0VAR, so their T0VAR is the
-# one whose sdcovsqrt2cov actually equals the reported T0cov. Both routes give
-# an identical T0cov, which is the quantity summaries report -- summary() drops
-# T0VAR from the system matrices table for precisely this parameterisation
-# reason. The test asserts the agreement on T0cov rather than papering over the
-# difference on T0VAR.
+# pop_T0VAR is in that comparison, and its being there is the point of the
+# population covariance having become a matrix of its own. It used to be
+# excluded: the engines folded the population scale into the augmented T0VAR
+# cells, so their T0VAR was the matrix whose sdcovsqrt2cov equalled the reported
+# T0cov, and stan's was the model's own -- two different quantities under one
+# name, comparable only through T0cov. Both sides now report the model's own
+# T0VAR and agree to machine precision.
 
 .summary_model <- function() {
   model <- suppressWarnings(ctModel(type = "ct", n.latent = 2, LAMBDA = diag(2),
@@ -56,30 +54,180 @@ test_that("Julia pop_* arrays match Stan's constrained parameters", {
   stan_spec <- suppressMessages(ctFit(data, model, backend = "stan", fit = FALSE))
   stan_pop <- suppressMessages(ctsem:::stan_constrainsamples(sm = ctsem:::stanmodels$ctsm,
     standata = stan_spec$standata, samples = matrix(raw, nrow = 1), cores = 1,
-    pcovn = 10, dokalman = FALSE, savesubjectmatrices = FALSE))
+    pcovn = 500, dokalman = FALSE, savesubjectmatrices = FALSE))
 
   fit <- .summary_pointfit(spec, model, raw, "julia")
   backend_pop <- ctsem:::.ctBackendPopArrays(fit)
 
-  compared <- setdiff(intersect(grep("^pop_", names(stan_pop), value = TRUE),
-    names(backend_pop)), "pop_T0VAR")
+  compared <- intersect(grep("^pop_", names(stan_pop), value = TRUE),
+    names(backend_pop))
   # A model with an intoverpop augmentation, TI predictors and a state-dependent
   # DRIFT: if this list ever shrinks, the comparison below has stopped covering
   # the interesting matrices and the test has quietly weakened.
-  expect_true(all(c("pop_DRIFT", "pop_DIFFUSIONcov", "pop_T0cov", "pop_asymCINT",
-    "pop_asymDIFFUSIONcov", "pop_CINT", "pop_LAMBDA") %in% compared))
+  expect_true(all(c("pop_DRIFT", "pop_DIFFUSIONcov", "pop_T0cov", "pop_T0VAR",
+    "pop_asymCINT", "pop_asymDIFFUSIONcov", "pop_CINT", "pop_LAMBDA") %in%
+    compared))
   for (name in compared) {
     expect_equal(dim(backend_pop[[name]]), dim(stan_pop[[name]]), info = name)
     expect_equal(as.numeric(backend_pop[[name]]), as.numeric(stan_pop[[name]]),
       tolerance = 1e-8, info = name)
   }
 
-  # The reported T0VAR differs by parameterisation, but the covariance it stands
-  # for does not, and that identity is what makes the difference harmless.
-  # 1e-4 rather than machine precision: sdcovsqrt2cov's correlation constraint
-  # carries a 1e-5 ridge, so the implied SD is the parameter plus that ridge.
-  expect_equal(sqrt(diag(drop(backend_pop$pop_T0cov))),
-    diag(drop(backend_pop$pop_T0VAR)), tolerance = 1e-4)
+  # A state whose T0MEANS is a random effect has no initial covariance of its
+  # own: T0VAR's row and column for it are disabled, and its entry in T0cov
+  # comes from the population block. Both T0MEANS are individually varying
+  # here, so both latent rows are disabled, and so is every carrier state --
+  # which leaves T0VAR entirely zero and T0cov entirely population. Asserting
+  # it this way rather than by index keeps the test honest if the fixture
+  # changes: `random_effects` is where the population rows are named.
+  population_rows <- sort(unique(spec$random_effects$row[
+    spec$random_effects$type %in% "sd"]))
+  t0var <- drop(backend_pop$pop_T0VAR)
+  t0cov <- drop(backend_pop$pop_T0cov)
+  expect_gt(length(population_rows), 0)
+  expect_equal(as.numeric(t0var[population_rows, ]),
+    rep(0, length(population_rows) * ncol(t0var)))
+  expect_equal(as.numeric(t0var[, population_rows]),
+    rep(0, nrow(t0var) * length(population_rows)))
+  # And the block T0VAR does not state is a covariance nonetheless, so the
+  # zeros above are a reparameterisation and not a lost variance.
+  expect_true(all(diag(t0cov)[population_rows] > 0))
+
+  # The state-unit conversion, at the one point it happens. A carrier state
+  # holds its effect in the units the consuming cell reads, so T0cov's
+  # diagonal for a carrier is that effect's raw population sd times the
+  # carrier factor: the cell multiplier*meanscale for an individually varying
+  # T0MEANS, whose carrier is the model latent itself, and one for an appended
+  # carrier, whose T0MEANS uses the identity transform. Exact arithmetic, so no
+  # tolerance, and fit-free -- which is the point, because the failure mode
+  # here leaves the fit correct and only what a user reads is wrong.
+  sds <- spec$random_effects$type %in% "sd"
+  scales <- as.numeric(spec$random_effects$scale[sds])
+  carrier_rows <- as.integer(spec$random_effects$row[sds])
+  rawsd <- as.numeric(drop(stan_pop$rawpopsd))
+  # Without a factor other than one the two assertions below say nothing.
+  expect_true(any(scales != 1))
+  expect_equal(sqrt(diag(drop(stan_pop$pop_T0cov))[carrier_rows]),
+    rawsd * scales)
+
+  # And it is applied once. `popsd` is the spread of the *transformed*
+  # parameter, drawn from rawpopmeans and the factorisation of the population
+  # covariance, and a varying T0MEANS has a linear cell transform whose slope
+  # is exactly that factor -- so its reported spread is the raw sd times the
+  # factor and not the factor twice. Loose because it is a standard deviation
+  # over pcovn draws; the quantity being ruled out is an order of magnitude,
+  # which is what this reported when the factorisation was taken from the
+  # scaled block rather than the raw one.
+  varying_t0 <- which(scales != 1)
+  expect_equal(as.numeric(drop(stan_pop$popsd))[varying_t0],
+    (rawsd * scales)[varying_t0], tolerance = 0.1)
+})
+
+test_that("every covmattransform means the same thing on both backends", {
+  skip_if_not_installed("rstan")
+  skip_without_julia()
+  data <- .summary_data()
+
+  # The integer the two backends have to agree on, so a mismatch is reported as
+  # the code rather than as a pile of differing arrays.
+  wanted <- c(rawcorr = 0L, cholesky = 1L, z = 2L)
+
+  for (transform in names(wanted)) {
+    model <- .summary_model()
+    model$covmattransform <- transform
+    spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
+    stan_spec <- suppressMessages(ctFit(data, model, backend = "stan",
+      fit = FALSE))
+    expect_equal(as.integer(spec$covmatcode), wanted[[transform]],
+      info = transform)
+    expect_equal(as.integer(stan_spec$standata$choleskymats),
+      wanted[[transform]], info = transform)
+
+    npar <- max(c(spec$parameter_table$parnumber, spec$ti_effects$coefficient),
+      na.rm = TRUE)
+    set.seed(8)
+    raw <- stats::rnorm(npar, 0, .3)
+
+    stan_pop <- suppressMessages(ctsem:::stan_constrainsamples(
+      sm = ctsem:::stanmodels$ctsm, standata = stan_spec$standata,
+      samples = matrix(raw, nrow = 1), cores = 1, pcovn = 10,
+      dokalman = FALSE, savesubjectmatrices = FALSE))
+    backend_pop <- ctsem:::.ctBackendPopArrays(
+      .summary_pointfit(spec, model, raw, "julia"))
+
+    compared <- intersect(grep("^pop_", names(stan_pop), value = TRUE),
+      names(backend_pop))
+    # The covariances are the arrays a construction can differ on, so require
+    # them by name: a layout change that dropped one would otherwise leave the
+    # loop comparing only the matrices no construction touches.
+    expect_true(all(c("pop_T0cov", "pop_DIFFUSIONcov", "pop_MANIFESTcov") %in%
+      compared), info = transform)
+    for (name in compared) {
+      expect_equal(as.numeric(backend_pop[[name]]),
+        as.numeric(stan_pop[[name]]), tolerance = 1e-10,
+        info = paste(transform, name))
+    }
+  }
+})
+
+# summary() printed `+Inf` and `NaN` in the rawpopcorr mean column on a
+# degenerate fit. `popsd` and `rawpopcorr` report the spread of the
+# *transformed* parameter by quadrature, so a population sd estimated large
+# enough to push its parameter onto the flat part of its own transform gives a
+# transformed spread of numerically zero -- and then the correlation is 0/0.
+# Observed on a 6-subject, 5-random-effect fit whose optimiser walked one drift
+# sd to about 13 on the raw scale.
+#
+# An estimate of positive infinity is worse than a blank, because a blank with
+# a sentence beside it sends the reader to fit$identifiability and an Inf sends
+# them nowhere. `.ctBackendMarkNoWidth` already makes the same judgement one
+# column over, for a parameter whose width the curvature cannot supply.
+#
+# Unit and julia-free: arranging a fit that lands somewhere degenerate is
+# neither cheap nor reliable, and the decision is what matters.
+test_that("a reported value that is not a number is blanked and explained", {
+  ordinary <- data.frame(mean = c(0.4, -0.2), sd = c(0.1, 0.2),
+    `2.5%` = c(0.2, -0.6), `97.5%` = c(0.6, 0.2), check.names = FALSE,
+    row.names = c("rawcor_a__b", "rawcor_c__b"))
+
+  # Untouched, and no note: every entry is a number.
+  clean <- ctsem:::.ctBackendMarkNotFinite(ordinary)
+  expect_equal(clean, ordinary, ignore_attr = TRUE)
+  expect_null(attr(clean, "nonfinite"))
+  expect_null(ctsem:::.ctBackendNotFiniteNote(clean, "correlation"))
+
+  # Inf and NaN both go, in every numeric column of the affected row, and NA
+  # that was already there is left as it was -- a blanked width is not a
+  # non-finite value and must not be counted as one.
+  degenerate <- ordinary
+  degenerate$mean <- c(Inf, -0.2)
+  degenerate$sd <- c(NA_real_, NaN)
+  marked <- ctsem:::.ctBackendMarkNotFinite(degenerate)
+  expect_true(is.na(marked$mean[1]))
+  expect_false(is.nan(marked$sd[2]))
+  expect_true(is.na(marked$sd[2]))
+  # Both rows carried a non-finite entry, so both are counted.
+  expect_equal(attr(marked, "nonfinite"), 2L)
+  # And the untouched row's own numbers survive.
+  expect_equal(marked$mean[2], -0.2)
+
+  note <- ctsem:::.ctBackendNotFiniteNote(marked, "correlation")
+  expect_true(is.character(note))
+  expect_match(note, "^2 correlations are not reported")
+  expect_match(note, "fit$identifiability", fixed = TRUE)
+  # Singular agreement, since a one-row note reading "1 correlations are" is
+  # the kind of thing nobody fixes later.
+  one <- ctsem:::.ctBackendMarkNotFinite(
+    data.frame(mean = c(Inf, 0.3), row.names = c("rawcor_a__b", "rawcor_c__b")))
+  expect_equal(attr(one, "nonfinite"), 1L)
+  expect_match(ctsem:::.ctBackendNotFiniteNote(one, "correlation"),
+    "^1 correlation is not reported")
+
+  # A table with no numeric column at all, and an empty one: both return
+  # unchanged rather than erroring, since this runs on every summary.
+  expect_silent(ctsem:::.ctBackendMarkNotFinite(
+    data.frame(label = "a", stringsAsFactors = FALSE)))
+  expect_silent(ctsem:::.ctBackendMarkNotFinite(ordinary[0, , drop = FALSE]))
 })
 
 test_that("ctTIpredEffects reports a julia fit's own TI predictor effect (parmatrices=TRUE)", {

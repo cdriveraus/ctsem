@@ -800,6 +800,61 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   table
 }
 
+# Blank the rows whose reported value is not a number, and say how many.
+#
+# `.ctBackendMarkNoWidth` above blanks the *width* of an estimate that has
+# none. This is the same judgement one column over: an estimate that came back
+# `Inf` or `NaN` is not an estimate, and printing it as one reads as a
+# population correlation of positive infinity.
+#
+# It happens, and for a reason worth naming rather than hiding. `popsd` and
+# `rawpopcorr` report the spread of the *transformed* parameter by quadrature,
+# so a population sd estimated large enough to push its parameter onto the flat
+# part of its own transform gives a transformed spread of numerically zero --
+# and then the correlation is 0/0. Observed on a 6-subject fit whose optimiser
+# walked one drift sd to about 13 on the raw scale.
+#
+# Returns the table with an `nonfinite` attribute carrying the count, so the
+# caller can put a sentence beside the table rather than leaving a column of
+# blanks unexplained.
+.ctBackendMarkNotFinite <- function(table) {
+  if (!is.data.frame(table) || !nrow(table)) return(table)
+  numeric_columns <- names(table)[vapply(table, is.numeric, logical(1))]
+  if (!length(numeric_columns)) return(table)
+  # `is.nan() | is.infinite()` and not `!is.na() & !is.finite()`: in R
+  # `is.na(NaN)` is TRUE, so the second form excludes the NaN it is meant to
+  # catch and only finds +-Inf. Written the first way it is also plainly what
+  # it means -- not a number, as against not available -- and a genuine NA,
+  # which is what a blanked width already is, is left alone by both.
+  notanumber <- function(x) is.nan(x) | is.infinite(x)
+  bad <- Reduce(`|`, lapply(table[numeric_columns], notanumber))
+  if (!any(bad)) return(table)
+  for (column in numeric_columns) {
+    entries <- table[[column]]
+    entries[notanumber(entries)] <- NA_real_
+    table[[column]] <- entries
+  }
+  attr(table, "nonfinite") <- sum(bad)
+  table
+}
+
+# The sentence that goes with it, or nothing when every row is a number.
+#
+# Singular and plural both spelled out. "1 correlations is not reported" is the
+# kind of thing that never gets fixed afterwards, and this note appears exactly
+# when a reader is already puzzled.
+.ctBackendNotFiniteNote <- function(table, singular, plural = paste0(singular, "s")) {
+  n <- attr(table, "nonfinite")
+  if (is.null(n) || !isTRUE(n > 0L)) return(NULL)
+  paste0(n, " ", if (n == 1L) singular else plural,
+    if (n == 1L) " is" else " are",
+    " not reported: the population spread of a parameter involved is",
+    " numerically zero on the transformed scale, so the quantity is",
+    " undefined there. That happens when a population sd has been estimated",
+    " large enough to push its parameter onto the flat part of its own",
+    " transform. See fit$identifiability.")
+}
+
 # Gauss-Hermite nodes and weights for a standard normal, by Golub-Welsch on the
 # probabilists' Hermite recurrence. Used to integrate a parameter's transform
 # over its population distribution (see .ctBackendRandomEffectSummary), where a
@@ -953,7 +1008,19 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # the reportable cells, and raised the same message when nothing survived. Only
 # the first line differs, so only the first line is written twice.
 .ctBackendVaryingParameters <- function(spec, cells) {
-  varying <- if (!is.null(spec$laplace)) as.integer(spec$laplace$re_index) else {
+  regression <- spec$model$popregression
+  varying <- if (!is.null(spec$laplace)) as.integer(spec$laplace$re_index) else
+    if (isTRUE(regression$standardised)) {
+    # The loading form has no population sd parameters at all: the block is a
+    # fixed identity and the loadings carry the spread. So the parameters that
+    # differ by subject are the effects' MEANS -- which is the slot the
+    # quadrature displaces to integrate a transform over its population
+    # distribution, and the slot a regressed effect has always been identified
+    # by (see `.ctBackendPopRegressionPopulation()`). Every effect is in that
+    # position now, the basis ones included.
+    as.integer(.ctBackendPopParnumber(spec,
+      c(regression$basis, regression$regressed)))
+  } else {
     augmented <- .ctBackendAugmentedSds(spec)
     if (is.null(augmented)) integer() else augmented$parnumber
   }
@@ -967,9 +1034,10 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 }
 
 # The augmented route's population scales and correlations, read out of the
-# filtered T0 covariance the carrier states live in. `scale` divides out the
-# state-unit factor `.ctJuliaAugmentRandomEffects` folded into the sd transform,
-# because what is wanted here is the sd on the *raw parameter* scale.
+# filtered T0 covariance the carrier states live in. That covariance is in the
+# carrier states' own units -- the engine scales row and column by `k_a` and
+# `k_b` where it places the block -- so `scale` divides those factors back out
+# to give the sd on the *raw parameter* scale, which is what is wanted here.
 .ctBackendAugmentedPopulation <- function(spec, samples, layout, flat) {
   augmented <- .ctBackendAugmentedSds(spec)
   if (is.null(augmented)) return(NULL)
@@ -1269,19 +1337,41 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   }
   cells <- .ctBackendFreeParameterCells(fit)
   cells <- cells[!cells$randomeffect, , drop = FALSE]
-  varying <- .ctBackendVaryingParameters(spec, cells)
+  regression <- spec$model$popregression
+  # Under the standardised loading form no effect is locatable by parameter
+  # number: a carrier state is a dimension rather than an effect, and an
+  # effect's `varying` parameter is its *mean*, which is a fixed effect whose
+  # cell is the same for every subject. Reading it gives a constant column. So
+  # every effect goes through the cell route below instead, basis included.
+  standardised <- isTRUE(regression$standardised)
+  varying <- if (standardised) integer() else
+    .ctBackendVaryingParameters(spec, cells)
 
   if (isTRUE(pointest)) fit$estimate$rawposterior <- NULL
   extracted <- .ctBackendExtract(fit, subjectMatrices = TRUE, nsamples = nsamples)
 
   index <- match(varying, cells$parnumber)
   parnames <- .ctBackendParameterNames(cells)[index]
-  reference <- extracted[[paste0("subj_", cells$matrix[index[1L]])]]
-  out <- array(NA_real_, dim = c(dim(reference)[1L], dim(reference)[2L], length(varying)))
-  for (position in seq_along(index)) {
-    cell <- index[position]
-    values <- extracted[[paste0("subj_", cells$matrix[cell])]]
-    out[, , position] <- values[, , cells$row[cell], cells$col[cell]]
+  if (length(index)) {
+    reference <- extracted[[paste0("subj_", cells$matrix[index[1L]])]]
+    out <- array(NA_real_, dim = c(dim(reference)[1L], dim(reference)[2L],
+      length(varying)))
+    for (position in seq_along(index)) {
+      cell <- index[position]
+      values <- extracted[[paste0("subj_", cells$matrix[cell])]]
+      out[, , position] <- values[, , cells$row[cell], cells$col[cell]]
+    }
+  } else {
+    # Nothing from this route. The dimensions come from whichever subject
+    # matrix the cell route is about to read, so that the arrays concatenate.
+    first <- if (!is.null(regression$basiscells)) regression$basiscells$matrix[1L]
+      else regression$cells$matrix[1L]
+    reference <- extracted[[paste0("subj_", first)]]
+    if (is.null(reference)) {
+      stop("No individually varying parameters in model!", call. = FALSE)
+    }
+    out <- array(NA_real_, dim = c(dim(reference)[1L], dim(reference)[2L], 0L))
+    parnames <- character()
   }
 
   # A `poprank` fit's regressed effects vary by subject without having a
@@ -1297,7 +1387,21 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   # the population summary needed. It earns it: what is wanted is the
   # per-subject value of a cell that is not a plain parameter, and the
   # enumeration this function is built on has no way to name that.
-  driven <- .ctBackendSpec(fit)$model$popregression$cells
+  driven <- regression$cells
+  # The basis effects join them under the loading form. Their coordinates were
+  # recorded before the augmentation, and the augmentation rewrites a cell's
+  # text in place rather than moving it, so they still locate the same cells.
+  if (standardised && !is.null(regression$basiscells)) {
+    shared <- intersect(names(regression$basiscells), names(driven))
+    driven <- if (is.null(driven) || !nrow(driven))
+      regression$basiscells[, c("param", "matrix", "row", "col"), drop = FALSE]
+      else rbind(regression$basiscells[, shared, drop = FALSE],
+        driven[, shared, drop = FALSE])
+    # One effect can drive more than one cell -- a DRIFT entry and its JAx
+    # mirror carry the same label -- and they hold the same value, so reporting
+    # both would give a duplicated column.
+    driven <- driven[!duplicated(driven$param), , drop = FALSE]
+  }
   if (!is.null(driven) && nrow(driven)) {
     extra <- array(NA_real_, dim = c(dim(out)[1L], dim(out)[2L], nrow(driven)))
     keep <- rep(TRUE, nrow(driven))
@@ -1527,8 +1631,12 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
       if (!is.null(lv$rawpopcorr)) {
         section <- .ctBackendSampleSummary(lv$rawpopcorr, digits = digits,
           chains = chains)
-        out[[paste0("rawpopcorr.", lv$level)]] <- .ctBackendMarkNoWidth(section,
+        section <- .ctBackendMarkNoWidth(section,
           .ctBackendNoWidthRows(nowidth, rownames(section), "rawcor_", lv$level))
+        section <- .ctBackendMarkNotFinite(section)
+        out[[paste0("rawpopcorr.", lv$level)]] <- section
+        note <- .ctBackendNotFiniteNote(section, "correlation")
+        if (!is.null(note)) out[[paste0("rawpopcorr.", lv$level, "Note")]] <- note
       }
     }
   } else if (!is.null(constrained$rawpopcorr)) {
@@ -1536,8 +1644,11 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
       digits = digits, z = nrow(samples) > 1L, chains = chains)
     out$rawpopcorr <- .ctBackendMarkNoWidth(out$rawpopcorr,
       .ctBackendNoWidthRows(nowidth, rownames(out$rawpopcorr), "rawcor_"))
-    out$rawpopcorrNote <-
-      "These reflect correlations between the raw / unconstrained parameters."
+    out$rawpopcorr <- .ctBackendMarkNotFinite(out$rawpopcorr)
+    out$rawpopcorrNote <- paste(c(
+      "These reflect correlations between the raw / unconstrained parameters.",
+      .ctBackendNotFiniteNote(out$rawpopcorr, "correlation")),
+      collapse = " ")
   }
 
   # A `poprank` fit's regression coefficients are the mechanism, not the
@@ -1619,12 +1730,18 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
       chains = chains)
     out$popsd <- .ctBackendMarkNoWidth(out$popsd,
       .ctBackendNoWidthRows(nowidth, rownames(out$popsd), "popsd_"))
+    out$popsd <- .ctBackendMarkNotFinite(out$popsd)
   }
   # Said here because this is the table it qualifies: some of these spreads
   # were estimated and some follow from the dimension structure, and a reader
-  # cannot tell which from the numbers.
+  # cannot tell which from the numbers. The non-finite sentence joins it rather
+  # than replacing it -- both can be true of one table.
   popsdnote <- .ctBackendPopRegressionNote(.ctBackendSpec(object))
-  if (!is.null(popsdnote) && !is.null(out$popsd)) out$popsdNote <- popsdnote
+  popsdnote <- c(popsdnote,
+    .ctBackendNotFiniteNote(out$popsd, "standard deviation"))
+  if (length(popsdnote) && !is.null(out$popsd)) {
+    out$popsdNote <- paste(popsdnote, collapse = " ")
+  }
 
   fixed <- cells[!cells$randomeffect, , drop = FALSE]
   # A `poprank` fit's coefficients are free parameters, so without this they

@@ -143,20 +143,46 @@ test_that("the two routes agree on a count model", {
   skip_without_julia()
   d <- .count_data()
   m <- .count_model_varying()
-  augmented <- suppressWarnings(suppressMessages(ctFit(d, m,
-    backend = "julia", intoverpop = "augmented",
-    optimcontrol = list(estonly = TRUE))))
-  laplace <- suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
-    intoverpop = "laplace", optimcontrol = list(estonly = TRUE))))
+  # A COMMON, FIXED starting point, because the difference below is read as a
+  # methodological gap and that reading needs both routes to have started from
+  # the same place. `inits = NULL` starts each at rnorm(npar, 0, .01) from
+  # whatever RNG state it inherits, so the laplace fit's start depended on how
+  # much RNG the augmented fit above it had consumed -- and on this model that
+  # matters far more than 0.01 suggests. From fixed starts:
+  #
+  #   route      zeros          rnorm sd .01     rnorm sd .3
+  #   augmented  -1483.480158   -1483.480158     -1483.480158
+  #   laplace    -1471.584356   -1471.584356     -1.47e14
+  #
+  # The augmented route is flat over all three; the laplace route reaches the
+  # intended optimum from a small start, runs away from a wider one, and from
+  # some sd-0.01 starts lands near -2175. That is what made this fail
+  # intermittently, and it is a property of the model rather than of either
+  # construction -- both recorded values below are reproduced exactly from
+  # zeros, so zeros is the neutral choice and not the one that passes.
+  fit <- function(route) {
+    spec <- suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
+      intoverpop = route, fit = FALSE)))
+    suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
+      intoverpop = route, inits = rep(0, ctsem:::.ctBackendNpar(spec)),
+      optimcontrol = list(estonly = TRUE))))
+  }
+  augmented <- fit("augmented")
+  laplace <- fit("laplace")
   # The two routes integrate the same random effect differently, so the gap is
-  # a real methodological difference and not noise: measured at -1471.584
-  # (laplace) against -1483.480 (augmented), 11.896 apart, 0.0080 relative,
-  # bit-for-bit identical over three repeats. `expect_equal` tolerances are
-  # relative, so the old value of 1 permitted a difference of 1483 -- the two
-  # could have had nothing to do with each other and passed. 0.02 keeps 2.5x
-  # headroom over the measurement.
+  # a real methodological difference and not noise: -1471.584 (laplace) against
+  # -1483.480 (augmented), 11.896 apart, 0.0080 relative. `expect_equal`
+  # tolerances are relative, so the old value of 1 permitted a difference of
+  # 1483 -- the two could have had nothing to do with each other and passed.
+  # 0.02 keeps 2.5x headroom over the measurement.
   expect_equal(as.numeric(laplace$estimate$loglik),
     as.numeric(augmented$estimate$loglik), tolerance = 0.02)
+  # And the laplace route is the better fit here, which is the direction the
+  # methodology predicts: it integrates the random effect rather than carrying
+  # it as a state through a linearised filter. A gap inside tolerance but the
+  # wrong way round would be worth knowing about.
+  expect_gt(as.numeric(laplace$estimate$loglik),
+    as.numeric(augmented$estimate$loglik))
 })
 
 test_that("ctGenerate draws counts rather than continuous values", {

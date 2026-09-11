@@ -276,10 +276,27 @@ function _ctsem_pack_matrices!(column, pars, sp::EKFParameters, layout)
     nlatent = layout.nlatent
     dyn = isempty(sp.diffusion_state_indices) ? collect(1:nlatent) :
           sp.diffusion_state_indices
+    # `sp.covmatcode`, not a hardcoded 0: these are the covariances the
+    # summaries report, and the filter builds its own with the requested
+    # construction (`kalman_filters.jl` passes `ws.covmatcode`). Hardcoding it
+    # here meant a fit under 'z' or 'cholesky' was estimated with one
+    # construction and reported through another -- T0cov came back 0.083 out
+    # with a sign flip, and nothing failed.
     diffusioncov = zeros(Float64, nlatent, nlatent)
-    diffusioncov[dyn, dyn] .= Matrix(sdcovsqrt2cov(pars.DIFFUSION, 0))[dyn, dyn]
-    manifestcov = Matrix(sdcovsqrt2cov(pars.MANIFESTVAR, 0))
-    t0cov = Matrix(sdcovsqrt2cov(pars.T0VAR, 0))
+    diffusioncov[dyn, dyn] .=
+        Matrix(sdcovsqrt2cov(pars.DIFFUSION, sp.covmatcode))[dyn, dyn]
+    manifestcov = Matrix(sdcovsqrt2cov(pars.MANIFESTVAR, sp.covmatcode))
+    t0cov = Matrix(sdcovsqrt2cov(pars.T0VAR, sp.covmatcode))
+    # And the population block, through the same placement the filter uses.
+    # Reporting T0VAR alone here was wrong the moment the population
+    # covariance became its own matrix: the block came back zero while the
+    # filter had it, which is the disagreement this whole separation exists to
+    # remove.
+    if !isempty(sp.population_indices)
+        _place_population_block!(t0cov, getdata(pars), sp.population_indices,
+            sp.population_range, sp.population_covmatcode, sp.population_scale,
+            _make_square_buffer(Float64, length(sp.population_indices)))
+    end
     asym_diffusion, asym_cint = _ctsem_asymptotics(pars.DRIFT, diffusioncov,
         pars.CINT, dyn, nlatent, sp.continuous_time)
 

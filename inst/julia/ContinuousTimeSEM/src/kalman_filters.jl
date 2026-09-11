@@ -619,6 +619,84 @@ end
     -one(eltype(ws.state)) * NaN
 
 """
+    _population_raw_view(ws, all_params)
+
+The raw population covariance matrix as a `k` by `k` view, or `nothing` when
+the model has no separate population covariance.
+
+This is what the reverse pass needs recorded -- the point the construction was
+evaluated at, which cannot be recovered from `subject_values`. Read the same
+way `_apply_population_block!` reads it, so the forward pass and the tape
+cannot disagree about the layout.
+"""
+@inline function _population_raw_view(ws, all_params)
+    isempty(ws.population_indices) && return nothing
+    k = length(ws.population_indices)
+    return reshape(view(all_params, ws.population_range), k, k)
+end
+
+"""
+    _apply_population_block!(ws, all_params)
+
+Write the population covariance over the states it accounts for.
+
+T0VAR is the model own initial covariance and states nothing about a random
+effect. Where a population block exists, each state it accounts for has its
+row and column of the initial covariance dropped and the constructed block
+written in. Dropping first is what makes the two cases come out right: a state
+the block accounts for does not covary with one it does not -- nothing states
+that pair -- while two states the block does span covary through it. An
+individually varying T0MEANS gets no carrier state, so those indices are not
+disjoint from the model own latents, which is why this is indexed rather than
+appended.
+
+No allocation and no extra buffer. `bufferQ` is sized to the state dimension,
+the block is a subset of the states so it is no larger, and `sdcovsqrt2cov!`
+touches only the leading `d` by `d` of the buffer it is given. `bufferQ` is
+free at this point: its T0VAR contents are already in `P_predict`.
+"""
+@inline function _apply_population_block!(ws, all_params)
+    return _place_population_block!(ws.P_predict.data, all_params,
+        ws.population_indices, ws.population_range,
+        ws.population_covmatcode, ws.population_scale, ws.population_buffer)
+end
+
+"""
+    _place_population_block!(P, all_params, indices, range, covmatcode, scale,
+        buffer)
+
+Drop the rows and columns of the states the population block accounts for, and
+write the constructed block over them.
+
+Called by the filter and by the summary, deliberately: they used to each build
+the initial covariance their own way, and that is how the two came to disagree
+about what a fit had estimated. One placement, two callers.
+"""
+@inline function _place_population_block!(P, all_params, indices, range,
+        covmatcode, scale, buffer)
+    isempty(indices) && return nothing
+    k = length(indices)
+    raw = reshape(view(all_params, range), k, k)
+    @inbounds for s in indices
+        for j in axes(P, 2)
+            P[s, j] = zero(eltype(P))
+        end
+        for i in axes(P, 1)
+            P[i, s] = zero(eltype(P))
+        end
+    end
+    ContinuousTimeSEM.sdcovsqrt2cov!(buffer, raw, covmatcode, Val(k))
+    # The state-unit conversion, here and nowhere else. Row a and column b by
+    # their own factors, which is the same `quad_form_diag(rawpopcov,
+    # popstatescale)` the stan program writes at the one line that places this
+    # block.
+    @inbounds for b in 1:k, a in 1:k
+        P[indices[a], indices[b]] = scale[a] * scale[b] * buffer.out[a, b]
+    end
+    return nothing
+end
+
+"""
     _extended_kalman_filter_continuous!(ws, params, data, timesteps, sp, tdpreds,
                                         tipreds, subject, max_timestep, trace,
                                         generate)
@@ -668,8 +746,10 @@ function _extended_kalman_filter_continuous!(
     ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.T0VAR, ws.covmatcode, ws.state_dim)
     copyto!(ws.P_predict.data, ws.bufferQ.out)
     _copy_lower_to_upper!(ws.P_predict.data, ws.state_dim)
+    _apply_population_block!(ws, all_params)
     copyto!(ws.state, pars.T0MEANS)
-    _record_init!(trace, pars, _val(ws.state_dim))
+    _record_init!(trace, pars, _val(ws.state_dim),
+        _population_raw_view(ws, all_params))
 
     # Each row follows one contract: prediction, TD impulse, measurement, and
     # the three transform groups run in that order. The first row has no

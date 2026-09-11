@@ -40,11 +40,16 @@ function _covexpm_pack(M, k)
     v
 end
 
-# Sigma through whichever route is armed, as a function of the packed coordinates
-function _covexpm_sigma(v, k)
+# Sigma under a named construction, as a function of the packed coordinates.
+#
+# The code is a required argument. Two callers need different ones -- the
+# pullback comparisons differentiate the expm route, "the default route is
+# untouched" differentiates the correlation square root -- and a default would
+# make whichever of them disagreed with it silently compare the wrong thing.
+function _covexpm_sigma(v, k, code)
     T = eltype(v)
     b = _COVEXPM_BUF(k, T)
-    ContinuousTimeSEM.sdcovsqrt2cov!(b, _covexpm_unpack(v, k, T), 0, Val(k))
+    ContinuousTimeSEM.sdcovsqrt2cov!(b, _covexpm_unpack(v, k, T), code, Val(k))
     copy(b.out)
 end
 
@@ -63,13 +68,10 @@ end
 # than hidden by a symmetric one.
 _covexpm_cotangent(k) = [0.03 * (1 + i) + 0.011 * j for i in 1:k, j in 1:k]
 
-previous_flag = ContinuousTimeSEM.ctsem_cov_expm!(false)
-try
-    @testset "expm covariance forward" begin
-        ContinuousTimeSEM.ctsem_cov_expm!(true)
+@testset "expm covariance forward" begin
         for k in (3, 6)
             v = _covexpm_coords(k)
-            S = _covexpm_sigma(v, k)
+            S = _covexpm_sigma(v, k, 2)
             @test diag(S) ≈ v[1:k] .^ 2
             @test S ≈ S'
             @test minimum(eigvals(Symmetric(S))) > 0
@@ -81,17 +83,16 @@ try
             v = zeros(k + _covexpm_lower_n(k))
             fill!(view(v, 1:k), 1.0)
             v[k + 1] = a
-            S = _covexpm_sigma(v, k)
+            S = _covexpm_sigma(v, k, 2)
             @test S[2, 1] / sqrt(S[1, 1] * S[2, 2]) ≈ tanh(a) atol = 1e-12
         end
     end
 
     @testset "expm covariance pullback against ForwardDiff" begin
-        ContinuousTimeSEM.ctsem_cov_expm!(true)
         for k in (2, 3, 6, 12)
             v = _covexpm_coords(k)
             cb = _covexpm_cotangent(k)
-            analytic = ForwardDiff.gradient(x -> sum(cb .* _covexpm_sigma(x, k)), v)
+            analytic = ForwardDiff.gradient(x -> sum(cb .* _covexpm_sigma(x, k, 2)), v)
             mb = zeros(k, k)
             ContinuousTimeSEM._sdcovexpm2cov_pullback!(mb,
                 _covexpm_unpack(v, k, Float64), cb, k)
@@ -100,7 +101,6 @@ try
     end
 
     @testset "the route is generic in the element type" begin
-        ContinuousTimeSEM.ctsem_cov_expm!(true)
         # Float64 and BigFloat must agree. The construction calls no LAPACK, so
         # there is no fast path that only some element types take -- this pins
         # that, and would fail if one were reintroduced for BLAS floats alone.
@@ -118,7 +118,6 @@ try
     end
 
     @testset "the cache serves several matrices at one size" begin
-        ContinuousTimeSEM.ctsem_cov_expm!(true)
         # T0VAR, DIFFUSION and MANIFESTVAR of the same size share one scratch
         # entry. With a single cache slot they evicted each other; this cycles
         # three distinct matrices repeatedly and checks every answer.
@@ -127,12 +126,12 @@ try
                 for f in (1.0, 0.6, 1.4)]
         expected = map(m -> begin
             b = _COVEXPM_BUF(k, Float64)
-            ContinuousTimeSEM.sdcovsqrt2cov!(b, m, 0, Val(k))
+            ContinuousTimeSEM.sdcovsqrt2cov!(b, m, 2, Val(k))
             copy(b.out)
         end, mats)
         for _ in 1:5, (m, want) in zip(mats, expected)
             b = _COVEXPM_BUF(k, Float64)
-            ContinuousTimeSEM.sdcovsqrt2cov!(b, m, 0, Val(k))
+            ContinuousTimeSEM.sdcovsqrt2cov!(b, m, 2, Val(k))
             @test b.out ≈ want
         end
         # and a matrix that has fallen out of the table still comes back right
@@ -140,7 +139,7 @@ try
                 for i in 1:10]
         for m in many
             b = _COVEXPM_BUF(k, Float64)
-            ContinuousTimeSEM.sdcovsqrt2cov!(b, m, 0, Val(k))
+            ContinuousTimeSEM.sdcovsqrt2cov!(b, m, 2, Val(k))
             b2 = _COVEXPM_BUF(k, Float64)
             ContinuousTimeSEM.sdcovexpm2cov!(b2, m, Val(k))
             @test b.out ≈ b2.out
@@ -148,7 +147,6 @@ try
     end
 
     @testset "the default route is untouched" begin
-        ContinuousTimeSEM.ctsem_cov_expm!(false)
         for k in (3, 6)
             v = _covexpm_coords(k)
             M = _covexpm_unpack(v, k, Float64)
@@ -161,7 +159,7 @@ try
             # and the existing pullback still agrees with ForwardDiff, so the
             # branch added to it did not disturb the arithmetic
             cb = _covexpm_cotangent(k)
-            analytic = ForwardDiff.gradient(x -> sum(cb .* _covexpm_sigma(x, k)), v)
+            analytic = ForwardDiff.gradient(x -> sum(cb .* _covexpm_sigma(x, k, 0)), v)
             mb = zeros(k, k)
             ContinuousTimeSEM._sdcovsqrt2cov_pullback!(mb, M, cb, k)
             @test _covexpm_pack(mb, k) ≈ analytic rtol = 1e-9
@@ -173,7 +171,6 @@ try
         # path reads from its data block. This pins that the argument is
         # honoured rather than accepted and ignored, which is the failure mode
         # this engine has had before with covmattransform.
-        ContinuousTimeSEM.ctsem_cov_expm!(false)
         for k in (3, 6)
             v = _covexpm_coords(k)
             M = _covexpm_unpack(v, k, Float64)
@@ -187,23 +184,15 @@ try
             ContinuousTimeSEM.constraincorsqrt1_vec!(bc, M, 1e-5, Val(k))
             D = Diagonal([M[i, i] for i in 1:k])
             @test b0.out ≈ (D * bc.out) * (D * bc.out)'
-            # and 2 matches what the flag forces
-            ContinuousTimeSEM.ctsem_cov_expm!(true)
+            # and 2 is the expm construction and not merely "not 0"
             bf = _COVEXPM_BUF(k, Float64)
-            ContinuousTimeSEM.sdcovsqrt2cov!(bf, M, 0, Val(k))
-            ContinuousTimeSEM.ctsem_cov_expm!(false)
+            ContinuousTimeSEM.sdcovexpm2cov!(bf, M, Val(k))
             @test b2.out ≈ bf.out
+            # 1 is the factor form, which is neither of the other two
+            b1 = _COVEXPM_BUF(k, Float64)
+            ContinuousTimeSEM.sdcovsqrt2cov!(b1, M, 1, Val(k))
+            @test b1.out ≈ M * M'
+            @test !isapprox(b1.out, b0.out)
+            @test !isapprox(b1.out, b2.out)
         end
     end
-
-    @testset "flag toggling reports the previous value" begin
-        @test ContinuousTimeSEM.ctsem_cov_expm() == false
-        @test ContinuousTimeSEM.ctsem_cov_expm!(true) == false
-        @test ContinuousTimeSEM.ctsem_cov_expm() == true
-        @test ContinuousTimeSEM.ctsem_cov_expm!(false) == true
-    end
-finally
-    # Leaking this flag would silently reroute every later test file's
-    # covariance construction.
-    ContinuousTimeSEM.ctsem_cov_expm!(previous_flag)
-end

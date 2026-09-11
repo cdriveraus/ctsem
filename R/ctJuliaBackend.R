@@ -775,21 +775,28 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   if (any(!model$manifesttype %in% 0:4)) {
     failures <- c(failures, "manifest types beyond censored (manifesttype > 4)")
   }
-  # `covmattransform` reaches the engine nowhere: every call to
-  # `sdcovsqrt2cov!` passes a literal 0, and the branch the other values would
-  # select is commented out. R computes `standata$choleskymats` for both
-  # backends one dispatch above this, so the setting was validated and then
-  # ignored, which reads as support -- a 'cholesky' model measured 3.76 log
-  # units away from the same model on stan, with no error and no warning, and
-  # its summary matrices would be wrong too. Refused for every non-default
-  # value rather than only 'cholesky': 'rawcorr_indep' happens to be inert on
-  # the stan path as well, so nothing a user can rely on is removed, and the
-  # julia contract does not inherit that accident.
+  # `covmattransform` reaches the engine at every construction site, including
+  # the population covariance and the laplace route, and 'rawcorr', 'cholesky'
+  # and 'z' agree with stan to machine precision.
+  #
+  # 'cholesky' used to be refused because the engine could not build it: the
+  # branch selecting the factor form was commented out, so a code of 1 fell
+  # through to the correlation square root. Before it was refused it was
+  # accepted and silently ignored, and a 'cholesky' model measured 3.76 log
+  # units away from the same model on stan with no error and no warning --
+  # which is why the refusal came first and the implementation second.
+  #
+  # 'rawcorr_indep' (code -1) is still refused, and not because the engine
+  # cannot build it: it selects the same construction as 'rawcorr' and differs
+  # only in the prior, so accepting it would mean accepting a setting that
+  # does nothing. That is an accident of the stan path and the julia contract
+  # does not inherit it.
   if (!is.null(model$covmattransform) &&
-      !as.character(model$covmattransform)[1L] %in% c("rawcorr", "z")) {
+      !as.character(model$covmattransform)[1L] %in%
+        c("rawcorr", "cholesky", "z")) {
     failures <- c(failures, paste0("covmattransform='",
       as.character(model$covmattransform)[1L],
-      "' (only 'rawcorr' and 'z')"))
+      "' (only 'rawcorr', 'cholesky' and 'z')"))
   }
   # A TI effect fixed to a value ('TI1=4.3') is honoured by generation and not
   # by fitting: the coefficient it occupies is an ordinary free parameter to
@@ -1300,6 +1307,42 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   out
 }
 
+# Create a matrix the table does not have yet, as a complete rectangle.
+#
+# `.ctJuliaPadMatrix()` deliberately no-ops when the matrix is absent -- it
+# fills gaps in one the model already declared, and creating TDPREDEFFECT for a
+# model with no TD predictors would be wrong. RAWPOPVAR is the opposite case:
+# it exists only because the augmentation is adding it.
+#
+# Every cell gets a value of 0 rather than NA for the reason
+# `.ctJuliaPadMatrix()` does the same: `ekf_from_columns` treats NaN as "no
+# fixed value", so a cell with neither a value nor a parameter is never written
+# and reads the UNSET_PARAMETER sentinel. The cells the loops below claim have
+# their value replaced by a parameter; the upper triangle keeps the zero, which
+# is what the construction expects to ignore.
+.ctJuliaAddMatrix <- function(table, matrix, nrow, ncol) {
+  if (any(table$matrix == matrix)) {
+    return(.ctJuliaPadMatrix(table, matrix, nrow, ncol))
+  }
+  template <- table[1L, , drop = FALSE]
+  entries <- vector("list", nrow * ncol)
+  k <- 0L
+  for (row in seq_len(nrow)) for (col in seq_len(ncol)) {
+    entry <- template
+    entry[] <- NA
+    entry$matrix <- matrix
+    entry$row <- row
+    entry$col <- col
+    entry$value <- 0
+    entry$indvarying <- FALSE
+    effect_columns <- grep("_effect$", names(entry), value = TRUE)
+    if (length(effect_columns)) entry[effect_columns] <- "FALSE"
+    k <- k + 1L
+    entries[[k]] <- entry
+  }
+  rbind(table, do.call(rbind, entries))
+}
+
 .ctJuliaPadMatrix <- function(table, matrix, nrow, ncol) {
   present <- table$matrix == matrix
   if (!any(present)) return(table)
@@ -1783,6 +1826,13 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   table <- .ctJuliaPadMatrix(table, "T0VAR", nlatent_augmented, nlatent_augmented)
 
   next_parameter <- max(table$parnumber, na.rm = TRUE)
+  # A reduced rank builds this block as a factor, and the loading form makes it
+  # the fixed identity. Both are needed below, before the scales are derived:
+  # a standardised carrier has no T0MEANS label, so the scale derivation cannot
+  # find it and has nothing to find -- the block carries no parameters for a
+  # scale to apply to.
+  population_factor <- .ctPopFactorConstruction(model)
+  population_standardised <- isTRUE(model[["popregression"]]$standardised)
   random_sd_scale <- rep(1, length(augmented_indices))
   # Stan's population covariance is built entirely in raw-parameter units
   # (`rawpopcovbase`/`rawpopsd`, via `sdscale`), then explicitly rescaled to
@@ -1803,7 +1853,15 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # (including off-diagonals) by k_i*k_j, with no separate adjustment needed
   # for the correlation parameters themselves (they stay dimensionless).
   t0means_state_scale <- rep(1, length(augmented_indices))
-  if (!is.null(expanded$modelmats$matsetup)) {
+  # Skipped entirely when the block is the standardised identity: there is no
+  # population sd for `sdscale` to scale (the loadings carry it, applied in
+  # `.ctPopRegressionRewrite()`), and a dimension is dimensionless so its
+  # state scale is 1. Deriving them would also fail rather than mislead -- a
+  # standardised carrier has no T0MEANS parameter, so the lookup comes back
+  # short and trips the layout check below.
+  if (population_standardised) {
+    # nothing to derive
+  } else if (!is.null(expanded$modelmats$matsetup)) {
     setup <- as.data.frame(expanded$modelmats$matsetup)
     values <- as.data.frame(expanded$modelmats$matvalues)
     varying_parameters <- unique(setup$param[setup$indvarying > 0L])
@@ -1865,19 +1923,56 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     if (!length(entry) || is.na(table$param[entry[1L]])) NA_character_ else
       as.character(table$param[entry[1L]])
   }, character(1L))
+  # A standardised carrier has no T0MEANS label: its mean is fixed to zero and
+  # the effect's mean has moved to a PARS parameter of its own. The names come
+  # from the popregression spec, which is where the basis is decided, and they
+  # are in carrier order because `.ctPopRegressionRewrite()` reads the carrier
+  # states in that same order.
+  if (isTRUE(model[["popregression"]]$standardised)) {
+    basis <- model[["popregression"]]$basis
+    if (length(basis) == length(varying_names)) {
+      varying_names <- as.character(basis)
+    }
+  }
+  # The population covariance is its own matrix, sized by the number of random
+  # effects rather than by the augmented state dimension. Its row `i` is
+  # population position `i`; which state that is lives in `population_indices`,
+  # sent to the engine separately, because the two are not the same mapping --
+  # an individually varying T0MEANS gets no carrier state, so its population
+  # row refers to a main latent.
+  table <- .ctJuliaAddMatrix(table, "RAWPOPVAR", length(augmented_indices),
+    length(augmented_indices))
+  # A reduced rank builds this block as a factor, which changes what its cells
+  # mean as well as how they are transformed.
+  # A statement about one of these cells is refused in
+  # `.ctPopRegressionSpec()` rather than here, so that the explicit/defaulted
+  # convention this feature already has -- an asked-for rank errors, a
+  # defaulted one backs off -- applies to it too.
+
   # Match Stan's unconstrained parameter order exactly: all population scales,
   # then lower-triangular correlation coordinates column by column.
   for (position in seq_along(augmented_indices)) {
     row <- augmented_indices[position]
     col <- row
-    index <- which(table$matrix == "T0VAR" & table$row == row & table$col == col)
-    length(index) == 1L || stop("Internal Julia augmentation error: missing T0VAR entry.", call. = FALSE)
+    index <- which(table$matrix == "RAWPOPVAR" & table$row == position &
+      table$col == position)
+    length(index) == 1L ||
+      stop("Internal Julia augmentation error: missing RAWPOPVAR entry.",
+        call. = FALSE)
     # What the model says about this population sd, if anything. RAWPOPVAR is the
     # specification surface (see R/ctModelRawPopVar.R); a number there fixes the
     # cell and a label names the parameter, in place of the positional
     # `julia_popcov_i_j` this used to invent.
     spec <- .ctModelRawPopVarEntry(model, varying_names[position])
     fixedvalue <- .ctModelRawPopVarValue(spec)
+    # A standardised dimension has unit variance by definition, so the
+    # diagonal is fixed at 1 and no RAWPOPVAR statement can apply: the basis
+    # loadings carry the spread now, and a reduced rank is refused outright
+    # for any stated cell, so nothing reaches here that meant otherwise.
+    if (population_standardised) {
+      spec <- NA_character_
+      fixedvalue <- 1
+    }
     if (is.finite(fixedvalue)) {
       if (fixedvalue < 0) {
         stop("RAWPOPVAR['", varying_names[position], "', '",
@@ -1885,14 +1980,10 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
           ". A population standard deviation cannot be negative.",
           call. = FALSE)
       }
-      # Converted from the raw parameter scale a RAWPOPVAR entry is written on to
-      # the state scale this cell is in, which is `k_i` and nothing else.
-      #
-      # The free branch produces `k_i * raw_sd`, so a requested raw spread `v`
-      # needs `v * k_i` here. `k_i` is exact arithmetic -- the carrier state's
-      # own `multiplier * meanscale` -- so the number a user writes is the raw
-      # population sd on this route, and the same number is the raw population
-      # sd on the Laplace route, which has no `k_i` and reads it directly.
+      # Written as stated, with no conversion: the number a user puts in
+      # RAWPOPVAR is the raw population sd, and it is the raw population sd on
+      # the Laplace route too, which reads it directly. The state-unit
+      # conversion happens once, where the engine places the block.
       #
       # It used to be divided by the derivative of the parameter's own
       # transform as well, making the entry a spread on the parameter's
@@ -1903,7 +1994,10 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       # transform could not be generated from and fitted with one number.
       table$param[index] <- NA_character_
       table$parnumber[index] <- NA_integer_
-      table$value[index] <- fixedvalue * t0means_state_scale[position]
+      # Raw, as stated. The engine multiplies row and column by the
+      # state-unit conversion where it places the block, which is the same
+      # point the stan program applies it.
+      table$value[index] <- fixedvalue
       table$transform[index] <- NA_character_
     } else {
       next_parameter <- next_parameter + 1L
@@ -1911,8 +2005,18 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
         sprintf("julia_popcov_%d_%d", row, col) else spec
       table$parnumber[index] <- next_parameter
       table$value[index] <- NA_real_
-      table$transform[index] <- sprintf("%.17g * (1e-10 + %.17g * log1p_exp(2 * param[%d] - 1))",
-        t0means_state_scale[position], random_sd_scale[position], next_parameter)
+      table$transform[index] <- if (population_factor) {
+        # Linear and signed, with no floor. A factor diagonal must be free to
+        # pass through zero -- `M M'` is positive semi-definite whatever the
+        # signs -- and a softplus here costs most of the reparameterisation's
+        # benefit, because its saturation reintroduces the flat boundary the
+        # factor form exists to remove.
+        sprintf("%.17g * param[%d]", random_sd_scale[position],
+          next_parameter)
+      } else {
+        sprintf("1e-10 + %.17g * log1p_exp(2 * param[%d] - 1)",
+          random_sd_scale[position], next_parameter)
+      }
     }
     # Whether the sd is fixed by RAWPOPVAR or free, this row is a population
     # covariance cell and carries no TI predictor effect of its own.
@@ -1932,11 +2036,19 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     for (row_position in (column_position + 1L):length(augmented_indices)) {
       row <- augmented_indices[row_position]
       col <- augmented_indices[column_position]
-      index <- which(table$matrix == "T0VAR" & table$row == row & table$col == col)
-      length(index) == 1L || stop("Internal Julia augmentation error: missing T0VAR entry.", call. = FALSE)
+      index <- which(table$matrix == "RAWPOPVAR" & table$row == row_position &
+        table$col == column_position)
+      length(index) == 1L ||
+        stop("Internal Julia augmentation error: missing RAWPOPVAR entry.",
+          call. = FALSE)
       spec <- .ctModelRawPopVarEntry(model, varying_names[row_position],
         varying_names[column_position])
       fixedvalue <- .ctModelRawPopVarValue(spec)
+      # Orthogonal dimensions, so every off-diagonal is a fixed zero.
+      if (population_standardised) {
+        spec <- NA_character_
+        fixedvalue <- 0
+      }
       if (is.finite(fixedvalue)) {
         table$param[index] <- NA_character_
         table$parnumber[index] <- NA_integer_
@@ -2559,14 +2671,48 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   if (!is.finite(n)) 0L else as.integer(n)
 }
 
+# Is this model's population covariance a factor rather than a scale-and-
+# correlation block?
+#
+# True exactly when a reduced rank is in force. `model$popregression` is
+# attached by `.ctPopRegressionRewrite()` only when there are effects to
+# regress, so `poprank='auto'` on a model whose every effect reaches the
+# observation mean leaves it NULL and nothing here changes -- the default path
+# is only affected where it actually restricts the rank.
+#
+# The reduced-rank set is a non-convex variety, and on it the
+# sd-plus-`constraincorsqrt1` coordinates carry genuine spurious optima: 0 of
+# 40 starts at the best value against 40 of 40 for the factor form, measured at
+# k=12 r=3. At full rank the same substitution is nearly neutral, which is why
+# this is asked of the population block and not of every covariance.
+.ctPopFactorConstruction <- function(model) {
+  !is.null(model[["popregression"]])
+}
+
 # The integer code for a model's covariance construction, shared with the stan
-# path's `standata$choleskymats` so one model means one construction on either
-# backend. 'rawcorr_indep' and 'cholesky' are refused above rather than mapped:
-# they were accepted and then ignored here once already.
+# path's `standata$choleskymats` (R/ctData.R) so one model means one
+# construction on either backend.
+#
+# A lookup naming every value, and an error on anything else -- not a default
+# with one exception, which is what this was. That form was correct only while
+# every other value was refused upstream, and the moment one of them was
+# allowed through it would have resolved to 0: accepted, and then quietly the
+# wrong construction. That is the same shape as the defect this function's own
+# comment used to describe, so it is refused structurally here rather than
+# remembered.
+#
+# An unknown name arriving means the validation in `.ctJuliaUnsupported` has
+# drifted from this table. Erroring says so; returning 0 would fit a different
+# model and report nothing.
 .ctCovMatCode <- function(model) {
+  codes <- c(rawcorr_indep = -1L, rawcorr = 0L, cholesky = 1L, z = 2L)
   tf <- if (is.null(model$covmattransform)) "rawcorr" else
     as.character(model$covmattransform)[1L]
-  if (identical(tf, "z")) 2L else 0L
+  if (!tf %in% names(codes)) {
+    stop("Unknown covmattransform '", tf, "'. Expected one of ",
+      paste(names(codes), collapse = ", "), ".", call. = FALSE)
+  }
+  codes[[tf]]
 }
 
 .ctJuliaObjective <- function(object) {
@@ -2636,6 +2782,39 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # before the setting existed working unchanged.
   covmatcode <- if (is.null(spec$covmatcode)) 0L else as.integer(spec$covmatcode)
   if (covmatcode != 0L) arguments$covmatcode <- covmatcode
+  # Which state each population row describes. Sent only when the table
+  # actually carries a RAWPOPVAR matrix, so a spec built before it existed
+  # still reaches an engine that treats an absent block as "T0VAR is the whole
+  # initial covariance". The order is the order the scales were emitted in.
+  # The population block's own construction, when it differs from the model's.
+  # Sent only when it does, so a spec built for an engine that predates the
+  # keyword still works and every ordinary model is byte-for-byte as it was.
+  if (!is.null(spec$model) && .ctPopFactorConstruction(spec$model) &&
+      any(table$matrix %in% "RAWPOPVAR")) {
+    arguments$population_covmatcode <- 1L
+  }
+  # The state-unit conversion, one factor per population row, applied by the
+  # engine where it places the block. Sent only when some row needs one, so an
+  # ordinary model is byte-for-byte as it was and a spec built for an engine
+  # that predates the keyword still works.
+  if (any(table$matrix %in% "RAWPOPVAR")) {
+    popeffects <- spec$random_effects
+    popscale <- if (is.null(popeffects) || !length(popeffects) ||
+        !nrow(popeffects)) numeric() else
+      as.numeric(popeffects$scale[popeffects$type %in% "sd"])
+    if (length(popscale) && any(popscale != 1)) {
+      arguments$population_scale <- .ctJuliaVector(popscale)
+    }
+  }
+  if (any(table$matrix %in% "RAWPOPVAR")) {
+    popeffects <- spec$random_effects
+    popindices <- if (is.null(popeffects) || !length(popeffects) ||
+        !nrow(popeffects)) integer() else
+      as.integer(popeffects$row[popeffects$type %in% "sd"])
+    if (length(popindices)) {
+      arguments$population_indices <- .ctJuliaVector(popindices)
+    }
+  }
   # Only when something is actually binary: an empty vector lets the engine
   # skip the branch, and a zero-length vector deadlocks the bridge, so the two
   # reasons to omit it agree.

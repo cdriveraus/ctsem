@@ -1,6 +1,7 @@
 ## An alternative covariance construction: Sigma = D * normalise(exp(A)) * D.
 ##
-## Selected at runtime by `ctsem_cov_expm!(true)` so both routes can be compared
+## Selected by `choleskymats == 2` -- covmattransform='z' -- so both routes can
+## be compared
 ## in one build with nothing else differing. The default is off, and with it off
 ## `sdcovsqrt2cov!` reproduces `constraincorsqrt1` to 1e-16.
 ##
@@ -49,24 +50,6 @@
 ## boxed `Any` access, which alone put a real gradient at 2.85x rather than
 ## 1.18x.
 
-const _CTSEM_COV_EXPM = Ref(false)
-
-"""
-    ctsem_cov_expm!(on::Bool)
-
-Route `sdcovsqrt2cov!` and its pullback through the matrix-exponential
-construction instead of `constraincorsqrt1`. Returns the previous setting.
-"""
-function ctsem_cov_expm!(on::Bool)
-    prev = _CTSEM_COV_EXPM[]
-    _CTSEM_COV_EXPM[] = on
-    return prev
-end
-
-# Bang-free aliases: JuliaConnectoR addresses module members by name, and a
-# trailing `!` is awkward to reach from R.
-ctsem_cov_expm(on::Bool) = ctsem_cov_expm!(on)
-ctsem_cov_expm() = _CTSEM_COV_EXPM[]
 
 # Instrumentation for this route specifically. `_CTSEM_OPCOUNT.exp` does not
 # serve: it is incremented by `_ctsem_expm`, the wrapper the discretisation
@@ -154,6 +137,32 @@ end
 @inline function _fill_hollow!(A, mat, ::Val{d}, ::Type{T}) where {d,T}
     @inbounds for j in 1:d, i in 1:d
         A[i, j] = i == j ? zero(T) : (i > j ? T(mat[i, j]) : T(mat[j, i]))
+    end
+    # Shift the diagonal by an upper bound on the largest eigenvalue, so no
+    # entry of `exp(A)` exceeds one and it cannot overflow. Exact rather than a
+    # tolerance: `sdcovexpm2cov!` normalises by `sqrt(Y[i,i]*Y[j,j])` and
+    # `exp(A - c*I) = exp(-c)*exp(A)`, so the common factor divides straight
+    # back out. The coordinate is unbounded now that the squash lives in the
+    # construction, and without this a single step to a large one turns the
+    # matrix into NaN.
+    #
+    # Both the primal and the pullback build `A` here, so both see the shift
+    # and the `exp` cache keys on the same matrix. Differentiating through `c`
+    # needs no counterpart in the pullback: the composite does not depend on
+    # it, so dSigma/dc is exactly zero and the chain-rule term vanishes.
+    #
+    # The row-sum (infinity) norm bounds the spectral radius of a symmetric
+    # matrix and costs one pass over `A`.
+    shift = zero(T)
+    @inbounds for i in 1:d
+        rowsum = zero(T)
+        for j in 1:d
+            rowsum += abs(A[i, j])
+        end
+        rowsum > shift && (shift = rowsum)
+    end
+    @inbounds for i in 1:d
+        A[i, i] -= shift
     end
     return nothing
 end
