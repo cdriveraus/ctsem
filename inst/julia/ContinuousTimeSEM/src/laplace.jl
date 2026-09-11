@@ -2797,7 +2797,7 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
     lbfgs_memory::Integer=_CTSEM_LBFGS_MEMORY, progress_overwrite::Bool=true,
     progress_sink=nothing,
     progress_callback=nothing, progress::Bool=verbose,
-    progress_label::AbstractString="optimise",
+    progress_label::AbstractString="optimise", gap_tol::Real=0.0,
     progress_budget::Bool=false, progress_every::Real=0.0)
     start_values = collect(Float64, start)
     invalid_objective = floatmax(Float64) / 1e8
@@ -2892,10 +2892,20 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
     # what says whether that gradient is to be trusted, and it is already on
     # the line beside it.
     convergence = CTSEMConvergence(g_tol)
+    # The same cheap stopping rule `ctsem_optimize` uses, on the same quantity:
+    # the line search is handed `dphi0 = g'p` every iteration and `-dphi0/2` is
+    # the objective that step was predicted to gain. A proxy, for the reason
+    # given there -- `B` is limited memory and carries its own scaling -- and
+    # backstopped by the same exact check afterwards.
+    directional = CTSEMDirectional(Optim.LineSearches.BackTracking())
+    # Optim's counters do not survive a callback stop; see `ctsem_optimize`.
+    seen_iterations = Ref(0)
+    stopped_by_gap = Ref(false)
     watch = function (state)
         latest = state isa AbstractVector ? last(state) : state
         inner = count(laplace.inner_converged)
         _record!(trace, latest.iteration, -latest.value, latest.g_norm, inner)
+        seen_iterations[] = max(seen_iterations[], Int(latest.iteration))
         percent = _convergence_percent!(convergence, latest.g_norm)
         if _due(reporter)
             _progress_optimise(reporter, latest.iteration, Int(maxiter),
@@ -2908,6 +2918,10 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
         # Its own cadence; see `ctsem_optimize`.
         _invoke_callback(watcher, latest.iteration, Int(maxiter),
             -latest.value, latest.g_norm)
+        if gap_tol > 0 && _ctsem_predicted_gain(directional) < gap_tol
+            stopped_by_gap[] = true
+            return true
+        end
         return false
     end
     options = Optim.Options(iterations=Int(maxiter), g_tol=g_tol, f_reltol=f_tol,
@@ -2929,15 +2943,15 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
                 chunks.max_chunks, 1), length(laplace.units.members)),
             " chunk(s) over ", chunks.nthreads, " thread(s)")
     end
-    # Optim's default Hager-Zhang line search asserts its own bracketing
+    # A third reason backtracking is the line search here, beside the two in
+    # `ctsem_optimize`. Optim's Hager-Zhang asserts its own bracketing
     # invariant (`B > A`) and *throws* when an evaluation it is handed is
-    # invalid -- which happens here whenever a trial point makes an inner mode
-    # solve or a curvature factorization fail, since those return a sentinel
-    # objective with a zero gradient and a zero directional derivative breaks
-    # the bracket. Backtracking makes no such assumption: it simply shrinks the
-    # step. Falling back to it turns a crashed fit into a slower one, which is
-    # the right trade, and `linesearch` on the result says which was used
-    # rather than leaving it to be guessed.
+    # invalid -- which happens on this route whenever a trial point makes an
+    # inner mode solve or a curvature factorization fail, since those return a
+    # sentinel objective with a zero gradient, and a zero directional
+    # derivative breaks the bracket. Backtracking makes no such assumption: it
+    # simply shrinks the step. So what used to be a fallback from a crashed fit
+    # is now the thing that cannot crash that way.
     # `alphaguess` for the same reason `ctsem_optimize` has it, which this
     # route was simply left out of. L-BFGS has no curvature history on its
     # first iteration, so it goes downhill with whatever the initial step guess
@@ -2955,85 +2969,26 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
     #
     # `scaled=true` divides alpha by the gradient norm, so the first step has
     # length one in parameter space however steep the objective is.
+    # Backtracking, for the reason `ctsem_optimize` gives: a Wolfe line search
+    # wants the directional derivative at every trial point and so pays a full
+    # gradient for each, where Armijo asks only for the objective and this
+    # engine's value-only path really is value-only. It also removes both of
+    # the rescue stages that stood here, which existed solely because
+    # Hager-Zhang has two ways to give up -- throwing, and quietly running out
+    # of line search while Optim reports success -- and answered each by
+    # switching to backtracking.
     lbfgs = Optim.LBFGS(m=Int(lbfgs_memory),
-        alphaguess=Optim.LineSearches.InitialStatic(scaled=true))
-    linesearch = "hagerzhang"
-    run_from = function (from, method)
-        try
-            (Optim.optimize(Optim.only_fg!(fg!), from, method, options), true)
-        catch err
-            err isa InterruptException && rethrow()
-            if verbose
-                _progress_break(reporter)
-                println(_console(), "Laplace: Hager-Zhang line search failed (",
-                    sprint(showerror, err), "); retrying with backtracking")
-                flush(stdout)
-            end
-            (Optim.optimize(Optim.only_fg!(fg!), from,
-                Optim.LBFGS(m=Int(lbfgs_memory),
-                    alphaguess=Optim.LineSearches.InitialStatic(scaled=true),
-                    linesearch=Optim.LineSearches.BackTracking()), options),
-                false)
-        end
-    end
-    result, hz = run_from(start_values, lbfgs)
-    hz || (linesearch = "backtracking")
-    # Hager-Zhang has a second way to fail, and it is quieter than throwing: it
-    # runs out of line search, returns whatever iterate it had reached, and
-    # Optim reports that as a finished optimisation. Watched on a 60-subject
-    # ordinal model, it stopped after two iterations having gone -2503.9 ->
-    # -2500.2 -> -2501.3, uphill on the last one, with 68 objective evaluations
-    # spent for those two steps and a final gradient of 475. Nothing was
-    # rejected and every inner mode solve converged; the objective is simply
-    # curved enough here that the Wolfe bracketing gives up. The verdict below
-    # calls that not converged, correctly, but a correct verdict on a failed
-    # fit is still a failed fit.
-    #
-    # The `catch` above already treats a Hager-Zhang failure as a reason to
-    # switch line searches. This is the same failure without the exception, so
-    # it gets the same answer. Backtracking asks only for sufficient decrease,
-    # so it cannot fail to bracket -- on the eight fits that reproduced this
-    # stall it converged every time, from the same starting values.
-    #
-    # It resumes from Hager-Zhang's own minimizer rather than the starting
-    # values: that point is already downhill, and a fresh L-BFGS there has no
-    # stale curvature history from the steps that went wrong.
-    #
-    # Backtracking is not simply made the default because it is worse when
-    # nothing has gone wrong. Armijo alone imposes no curvature condition, so
-    # it stops polishing sooner: over those same eight fits it took 47
-    # iterations against Hager-Zhang's 36 and finished at gradients around
-    # 1e-5 where Hager-Zhang reaches 1e-9. Fast and precise where that works,
-    # robust where it does not.
-    if hz
-        reached = collect(Optim.minimizer(result))
-        probe = ctsem_laplace_evaluate(laplace, reached; gradient=true)
-        gnorm = isempty(probe.gradient) ? 0.0 : maximum(abs, probe.gradient)
-        if !isfinite(gnorm) || gnorm > max(g_tol,
-                1e-6 * max(one(gnorm), abs(probe.value)))
-            if verbose
-                _progress_break(reporter)
-                @printf("Laplace: Hager-Zhang stopped after %d iteration(s) with |g| %.2e; continuing with backtracking\n",
-                    Optim.iterations(result), gnorm)
-                flush(stdout)
-            end
-            # Counts from one again; `CTSEMProgress.shown` holds the printed
-            # counter rather than letting it rewind. See `ctsem_optimize`.
-            retry = Optim.optimize(Optim.only_fg!(fg!), reached,
-                Optim.LBFGS(m=Int(lbfgs_memory),
-                    alphaguess=Optim.LineSearches.InitialStatic(scaled=true),
-                    linesearch=Optim.LineSearches.BackTracking()), options)
-            after = ctsem_laplace_evaluate(laplace,
-                collect(Optim.minimizer(retry)); gradient=true)
-            # Only if it actually helped. Keeping the better of the two points
-            # means the fallback can never make a fit worse than not having it.
-            if isfinite(after.value) && after.value >= probe.value
-                result = retry
-                linesearch = "hagerzhang+backtracking"
-            end
-        end
-    end
-
+        alphaguess=Optim.LineSearches.InitialStatic(scaled=true),
+        linesearch=directional)
+    linesearch = "backtracking"
+    result = Optim.optimize(Optim.only_fg!(fg!), start_values, lbfgs, options)
+    # No rescue stage, for the reason `ctsem_optimize` records: the one that
+    # stood here caught Hager-Zhang running out of line search -- measured on a
+    # 60-subject ordinal model, two iterations for 68 objective evaluations,
+    # the last step uphill and a final gradient of 475 -- and answered by
+    # restarting with backtracking, which is now what runs. A stop that is
+    # short for another reason is the certification's to find and
+    # `.ctBackendCorrectResult()`'s to continue from.
     if verbose
         println(_console(), "Laplace: ", accepted_calls, " objective evaluations accepted, ",
             rejected_nonfinite, " rejected as non-finite, ", rejected_inner,
@@ -3160,7 +3115,7 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
         maximum_loglik=final.value,
         gradient=collect(final.gradient),
         subject_loglik=collect(final.subject_loglik),
-        iterations=Optim.iterations(result),
+        iterations=max(Optim.iterations(result), seen_iterations[]),
         f_calls=Optim.f_calls(result),
         g_calls=Optim.g_calls(result),
         linesearch=linesearch,
@@ -3169,6 +3124,9 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
         chunk_timings=tuning === nothing ? Tuple{Int,Float64}[] : tuning.timings,
         gradient_norm=gradient_norm,
         scaled_tolerance=scaled_tolerance,
+        predicted_gain=_ctsem_predicted_gain(directional),
+        gap_tol=Float64(gap_tol),
+        stopped_by_gap=stopped_by_gap[],
         saturated=saturated,
         # Never empty: a zero-length vector deadlocks the JuliaConnectoR
         # bridge, and this result crosses it. 0 means none.

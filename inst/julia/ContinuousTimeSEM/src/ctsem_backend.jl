@@ -660,6 +660,38 @@ function _ctsem_overshot(objective, minimizer, saturated_parameters, value,
     return (overshot=gain > tolerance, gain=gain)
 end
 
+"""
+A line search that records the directional derivative it is handed.
+
+`LineSearches` receives `dphi0 = g'p` as its last positional argument, every
+iteration, because it needs it to test the Wolfe conditions. For a quasi-Newton
+direction `-dphi0 / 2` is the improvement that step was predicted to make, in
+objective units -- so observing it here gives a stopping rule on the quantity
+that matters, for no arithmetic at all.
+
+Deliberately an observer: it forwards every call unchanged, so which line
+search actually runs is unaffected and `linesearch` still reports what it
+always did.
+"""
+mutable struct CTSEMDirectional{LS}
+    inner::LS
+    dphi0::Float64
+end
+
+CTSEMDirectional(inner) = CTSEMDirectional(inner, NaN)
+
+function (ls::CTSEMDirectional)(args...)
+    # Last positional argument in both of LineSearches' call forms.
+    last = args[end]
+    ls.dphi0 = last isa Real ? Float64(last) : NaN
+    ls.inner(args...)
+end
+
+"""The improvement the last accepted step was predicted to make, or `Inf`."""
+function _ctsem_predicted_gain(ls::CTSEMDirectional)
+    isfinite(ls.dphi0) ? abs(ls.dphi0) / 2 : Inf
+end
+
 """Optimize a prepared likelihood entirely within Julia using L-BFGS."""
 function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     maxiter::Integer=1000, g_tol::Real=1e-8, f_tol::Real=0.0,
@@ -668,7 +700,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     progress_overwrite::Bool=true, progress_sink=nothing,
     progress_callback=nothing,
     progress::Bool=verbose, progress_label::AbstractString="optimise",
-    progress_budget::Bool=false, progress_every::Real=0.0)
+    progress_budget::Bool=false, progress_every::Real=0.0,
+    gap_tol::Real=0.0)
     start_values = collect(start)
     invalid_objective = floatmax(eltype(start_values)) / 1e8
     gradient_limit = sqrt(floatmax(eltype(start_values)))
@@ -715,13 +748,24 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # How far toward `g_tol` the gradient has come; see `CTSEMConvergence`. It
     # is fed every iteration rather than every printed line, because the scale
     # it interpolates on is the worst gradient the fit ever had and the
-    # printed lines are a time-sampled subset. It survives the backtracking
-    # retry below for the same reason `CTSEMProgress.shown` does: the fit
-    # continued, so the estimate must not restart.
+    # printed lines are a time-sampled subset.
     convergence = CTSEMConvergence(g_tol)
+    # An observer around the line search that runs; it changes nothing about
+    # which one that is.
+    directional = CTSEMDirectional(Optim.LineSearches.BackTracking())
+    # Optim's own `iterations`, `f_calls` and `g_calls` do not survive a
+    # callback stop: measured on a two-latent model, four runs that stopped
+    # after 4, 8 and 10 iterations all reported 1 iteration and 2 gradient
+    # calls, while the trace -- one row per iteration, recorded here -- showed
+    # 5, 9 and 11 rows and log likelihoods five orders apart. So the iteration
+    # count is taken from what this callback saw, which is the same number on a
+    # run that ends any other way.
+    seen_iterations = Ref(0)
+    stopped_by_gap = Ref(false)
     watch = function (state)
         latest = state isa AbstractVector ? last(state) : state
         _record!(trace, latest.iteration, -latest.value, latest.g_norm)
+        seen_iterations[] = max(seen_iterations[], Int(latest.iteration))
         percent = _convergence_percent!(convergence, latest.g_norm)
         if _due(reporter)
             # Never on a budget stage: its own fraction is exact, and an
@@ -736,6 +780,19 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # still reports.
         _invoke_callback(watcher, latest.iteration, Int(maxiter),
             -latest.value, latest.g_norm)
+        # Stop when the step just taken was predicted to gain less objective
+        # than asked for. The predicted gain of the *next* step is not knowable
+        # here, and the last one is the standard stand-in: a quasi-Newton
+        # direction that has stopped promising anything is not about to start.
+        #
+        # A proxy, and treated as one -- `B` is limited memory and carries its
+        # own scaling, so this is not the invariant decrement. The exact check
+        # after the fit is what certifies, and what resumes with a tightened
+        # rule when this stopped too early.
+        if gap_tol > 0 && _ctsem_predicted_gain(directional) < gap_tol
+            stopped_by_gap[] = true
+            return true
+        end
         return false
     end
     options = Optim.Options(iterations=Int(maxiter), g_tol=g_tol,
@@ -763,51 +820,39 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # length one in parameter space regardless of how steep the objective is.
     # That is the standard remedy and it is what the saturation guard below
     # would otherwise spend its life reporting.
-    linesearch = "hagerzhang"
+    #
+    # Backtracking, not Hager-Zhang. A Wolfe line search needs the directional
+    # derivative at every trial point, so every trial costs a full adjoint;
+    # Armijo needs only the objective, and on this engine that is genuinely
+    # cheaper -- `ctsem_evaluate(..., gradient=false)` takes the forward-only
+    # branch, with no reverse pass and no Frechet blocks, those existing solely
+    # for derivatives. Armijo imposes no curvature condition and so stops
+    # polishing sooner, which was the reason it was not the default: measured
+    # here, 47 iterations against 36, finishing near 1e-5 where Hager-Zhang
+    # reaches 1e-9. Both halves of that objection have gone. It counted
+    # iterations rather than their cost, and the precision it was protecting
+    # was protecting a *gradient* convergence test -- where the estimate stands
+    # relative to the optimum is now measured exactly after the fit, in
+    # objective units, and the fit continues when it matters.
+    linesearch = "backtracking"
     result = Optim.optimize(Optim.only_fg!(fg!), start_values,
         Optim.LBFGS(m=Int(lbfgs_memory),
-            alphaguess=Optim.LineSearches.InitialStatic(scaled=true)), options)
-    # Hager-Zhang can run out of line search and return the iterate it had
-    # reached, which Optim presents as a finished optimisation. See
-    # `ctsem_laplace_optimize`, where the same failure was measured: two
+            alphaguess=Optim.LineSearches.InitialStatic(scaled=true),
+            linesearch=directional), options)
+    # No rescue stage. The one that stood here existed because Hager-Zhang can
+    # run out of line search and return the iterate it had reached while Optim
+    # reports a finished optimisation -- measured on a binary model: two
     # iterations, 68 objective evaluations, a final gradient of 475, and the
-    # last step uphill. The verdict below already refuses to call that
-    # converged; this is what stops it happening.
+    # last step uphill. It answered by restarting with backtracking, which is
+    # now what runs in the first place, and over the eight fits that reproduced
+    # that stall backtracking converged every one.
     #
-    # Backtracking asks only for sufficient decrease, so it cannot fail to
-    # bracket. It resumes from Hager-Zhang's minimizer -- already downhill, and
-    # with none of the curvature history that led there -- and is kept only if
-    # the log likelihood actually improved, so the fallback can never make a
-    # fit worse than not having it. It is not the default because Armijo alone
-    # stops polishing sooner: measured on this objective, 47 iterations to
-    # Hager-Zhang's 36, finishing near 1e-5 where Hager-Zhang reaches 1e-9.
-    let reached = collect(Optim.minimizer(result))
-        probe = ctsem_evaluate(objective, reached; gradient=true,
-            gradient_method=gradient_method)
-        gnorm = isempty(probe.gradient) ? 0.0 : maximum(abs, probe.gradient)
-        if (!isfinite(gnorm) || gnorm > max(g_tol,
-                1e-6 * max(one(gnorm), abs(probe.value)))) &&
-                maximum(abs, reached; init=0.0) < _CTSEM_SATURATION[]
-            if verbose
-                _progress_break(reporter)
-                @printf("ctsem_optimize: %s stopped after %d iteration(s) with |g| %.2e; continuing with backtracking\n",
-                    linesearch, Optim.iterations(result), gnorm)
-                flush(stdout)
-            end
-            # The retry counts from one again; `CTSEMProgress.shown` is what
-            # stops the printed counter rewinding.
-            retry = Optim.optimize(Optim.only_fg!(fg!), reached,
-                Optim.LBFGS(m=Int(lbfgs_memory),
-                    alphaguess=Optim.LineSearches.InitialStatic(scaled=true),
-                    linesearch=Optim.LineSearches.BackTracking()), options)
-            after = ctsem_evaluate(objective, collect(Optim.minimizer(retry));
-                gradient=true, gradient_method=gradient_method)
-            if isfinite(after.value) && after.value >= probe.value
-                result = retry
-                linesearch = "hagerzhang+backtracking"
-            end
-        end
-    end
+    # A stop that is short for any other reason is not the line search's
+    # problem to solve twice: the certification measures what the estimate
+    # still has to gain, and `.ctBackendCorrectResult()` continues the fit from
+    # a damped Newton step with a tightened stopping rule. Two mechanisms for
+    # one job, where the second can only act in cases the first did not fix, is
+    # a way to be surprised rather than a safety net.
     minimizer = collect(Optim.minimizer(result))
     final = ctsem_evaluate(objective, minimizer; gradient=true,
         contributions=true, gradient_method=gradient_method)
@@ -927,14 +972,25 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         gradient=collect(final.gradient),
         subject_loglik=collect(final.subject_loglik),
         row_loglik=final.row_loglik,
-        iterations=Optim.iterations(result),
+        # The larger of the two: they agree unless the callback stopped the
+        # run, in which case Optim's is the one that stopped being updated.
+        iterations=max(Optim.iterations(result), seen_iterations[]),
+        # Left as Optim reports them, and undercounted for the same reason when
+        # the run was stopped by the callback -- there is no second source for
+        # these, and inventing one would be worse than a number whose limit is
+        # written down. `stopped_by_gap` is what says the run is such a case.
         f_calls=Optim.f_calls(result),
         g_calls=Optim.g_calls(result),
+        stopped_by_gap=stopped_by_gap[],
         stalled=stalled,
         chunks=ctsem_max_chunks().max_chunks,
         chunk_timings=tuning === nothing ? Tuple{Int,Float64}[] : tuning.timings,
         gradient_norm=gradient_norm,
         scaled_tolerance=scaled_tolerance,
+        # What the last step was predicted to gain, and the rule it was judged
+        # against. `Inf` when no line search ran, and `0` when the rule was off.
+        predicted_gain=_ctsem_predicted_gain(directional),
+        gap_tol=Float64(gap_tol),
         linesearch=linesearch,
         # See `ctsem_laplace_optimize`: `Optim.converged` includes the x and
         # f criteria, which a line search that stops making progress satisfies

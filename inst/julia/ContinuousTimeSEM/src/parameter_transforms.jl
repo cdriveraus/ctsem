@@ -185,11 +185,13 @@ reached. Measured with `ForwardDiff` across the transform strings
 figures and four below the smallest "still responding" one, so where exactly
 it falls inside that gap does not change which of the measurements above it
 classifies. It is deliberately not tied to `_CTSEM_SATURATION` (the retired
-raw-magnitude threshold, `binary_measurement.jl`): that constant still guards
-an unrelated decision (whether `ctsem_optimize`'s Hager-Zhang fallback is
-worth attempting) and lowering it would not fix what was wrong with using a
-raw magnitude for saturation in the first place -- see git history for the
-false positives that motivated this.
+raw-magnitude threshold, `binary_measurement.jl`), and lowering that constant
+would not fix what was wrong with using a raw magnitude for saturation in the
+first place -- see git history for the false positives that motivated this.
+That constant now guards no decision at all: the one it was kept for was
+whether `ctsem_optimize`'s Hager-Zhang fallback was worth attempting, and with
+a backtracking line search there is no such fallback. It survives as the
+boundary `test_state_sampling.jl` names.
 """
 const _CTSEM_TRANSFORM_FLOOR = Ref(1e-6)
 
