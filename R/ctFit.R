@@ -398,6 +398,13 @@ T0VARredundancies <- function(ctm) {
 #' Either way \code{summary()} notes which reported values follow from the
 #' structure rather than being estimated.
 #'
+#' The reduction needs the population covariance free, so any \code{RAWPOPVAR}
+#' cell stated -- a fixed value, or a label differing from the default -- turns
+#' it off: none of them is a cell of a factor, since a standard deviation is a
+#' row norm over dimensions and a covariance is a sum over them. \code{'auto'}
+#' then leaves the model alone and an explicit rank is refused, naming the
+#' cells.
+#'
 #' An individually varying T0MEANS cannot be reduced on the augmented route:
 #' its carrier state is the latent itself, so it has no dimension of its own to
 #' load on. Such a model keeps the full covariance under \code{'auto'}, and an

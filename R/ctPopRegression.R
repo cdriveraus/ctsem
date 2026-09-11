@@ -154,104 +154,47 @@
 # population covariance -- so this is a conditioning choice, not a modelling
 # one. Putting the identified effects first is what makes the retained
 # coordinates the identified ones when `poprank='auto'`.
-# Which RAWPOPVAR cells a user has stated for a regressed effect.
+# Every RAWPOPVAR cell a user has stated, whatever it says.
 #
 # RAWPOPVAR is the specification surface for the population covariance
-# (R/ctModelRawPopVar.R), and `.ctJuliaAugmentRandomEffects()` reads it per varying
-# parameter: a number there fixes a cell and a label estimates it.
+# (R/ctModelRawPopVar.R): a label estimates a cell and a number fixes it, and a
+# label differing from the default is an equality constraint, so both are
+# statements.
 #
-# Worth knowing what those numbers mean, because it is not what the surface
-# says. The diagonal is a population sd on the parameter's natural scale, and
-# that is exact for a linear transform -- measured, 0.3 in gives 0.3 out. The
-# off-diagonal is documented and error-checked as a correlation but is really
-# the coordinate `constraincorsqrt1()` consumes, so 0.3 in gives a population
-# correlation of 0.54 and 0.5 gives 0.79. Zero is the exception and is exact:
-# uncorrelated in means uncorrelated out. None of that is this feature's doing,
-# but a guard here that reasoned about "the correlation the user asked for"
-# would be reasoning about the wrong number. A regressed effect has neither -- its spread and its correlations follow
-# from the basis -- so anything stated about it would be **silently dropped**,
-# which is the one outcome this whole feature exists to avoid. Both a fixed
-# value and a relabelling count: a label differing from the default is an
-# equality constraint, and that is a specification too.
-# A RAWPOPVAR entry about a regressed effect cannot be honoured: its spread
-# follows entirely from the basis, so there is no cell to fix.
+# A reduced rank honours none of them, and the reason is the parameterisation
+# rather than the cell. The covariance is `Sigma = L L'` on standardised
+# dimensions: below the diagonal `Sigma[i,j]` is `sum_{m<=min(i,j)} L[i,m]
+# L[j,m]` and not a cell, an effect's spread is a row norm and not a cell, and a
+# regressed effect has neither a spread nor correlations of its own. So the
+# reduction requires the covariance free and says so when it is not.
 #
-# The basis effects have a separate and narrower problem under the factor
-# construction, checked in `.ctPopRegressionFactorConflicts()` below rather
-# than here -- the two are different claims and refusing them together refused
-# statements that are perfectly honourable.
-.ctPopRegressionRawPopVarConflicts <- function(model, regressed) {
+# Sorting statements into the expressible and the rest was tried and removed. It
+# accepted a fixed sd for the first basis effect, whose row really is one
+# loading, and a zero anywhere, on the grounds that a zero covariance is exact
+# -- which is true only against the first dimension, and which nothing
+# implemented in either case, so the zero was accepted and then silently
+# dropped.
+.ctPopRegressionRawPopVarStated <- function(model) {
   popcov <- model[['RAWPOPVAR']]
-  if (is.null(popcov) || !length(popcov) || !length(regressed)) return(character())
+  if (is.null(popcov) || !length(popcov)) return(character())
   default <- .ctModelRawPopVar(model$pars)
-  names <- rownames(popcov)
-  regressed <- intersect(regressed, names)
+  if (is.null(default) || !length(default)) return(character())
+  # Only cells both matrices have. A RAWPOPVAR built for a different set of
+  # varying parameters -- `pars$indvarying` edited after `ctModel()`, which the
+  # tests here do -- is stale rather than stated, and refusing on it would
+  # refuse a model nobody constrained.
+  rows <- intersect(rownames(popcov), rownames(default))
+  cols <- intersect(colnames(popcov), colnames(default))
   out <- character()
-  for (r in regressed) for (other in names) {
-    for (cell in unique(c(paste(r, other), paste(other, r)))) {
-      coords <- strsplit(cell, ' ', fixed = TRUE)[[1]]
-      stated <- .ctModelRawPopVarEntry(model, coords[1L], coords[2L])
-      if (is.na(stated) || !nzchar(stated)) next
-      expected <- if (!is.null(default) && all(coords %in% rownames(default)))
-        as.character(default[coords[1L], coords[2L]]) else NA_character_
-      if (!is.na(expected) && identical(stated, expected)) next
-      # An upper-triangle zero is RAWPOPVAR's own placeholder, not a statement.
-      if (identical(stated, '0') && !is.na(expected) && identical(expected, '0')) next
-      out <- c(out, sprintf("RAWPOPVAR['%s', '%s'] = %s", coords[1L], coords[2L],
-        stated))
-    }
+  for (ri in rows) for (ci in cols) {
+    stated <- as.character(popcov[ri, ci])
+    if (is.na(stated) || !nzchar(stated)) next
+    if (identical(stated, as.character(default[ri, ci]))) next
+    out <- c(out, sprintf("RAWPOPVAR['%s', '%s'] = %s", ri, ci, stated))
   }
   unique(out)
 }
 
-# What a factor construction cannot honour about the basis effects.
-#
-# `Sigma = M M'` with M lower triangular, so `Sigma[i,j]` for `i > j` is
-# `sum_{m<=j} M[i,m] M[j,m]` -- j products, not one. Nothing below the diagonal
-# is a cell of the estimand: an off-diagonal is a factor entry whose implied
-# correlation depends on the rest of its row, and an effect's spread is a row
-# norm rather than a cell, except for the first basis effect, which loads on
-# one dimension and no other, so `|M[1,1]|` is its spread exactly.
-#
-# A zero is no exception. Only against the first dimension does it reduce to
-# one cell (`M[i,1] M[1,1] = 0`), for any later one it is a constraint across a
-# row, and in neither case does the rewrite act on it -- a stated zero leaves
-# every loading free. So it is refused with the rest rather than accepted and
-# dropped. Fixing loadings from a declared zero pattern is a real feature and
-# would need a rotation-rigidity check to go with it; until then this is what
-# is true.
-.ctPopRegressionFactorConflicts <- function(model, basis) {
-  popcov <- model[['RAWPOPVAR']]
-  if (is.null(popcov) || !length(popcov) || length(basis) < 2L) return(character())
-  names <- rownames(popcov)
-  # RAWPOPVAR is constructed with a default label in every cell, so "is there
-  # text here" is not the question -- a default label is the absence of a
-  # statement, and treating it as one refuses every model that has not been
-  # touched. Compared against the default the same way
-  # `.ctPopRegressionRawPopVarConflicts()` does.
-  default <- .ctModelRawPopVar(model$pars)
-  isdefault <- function(stated, ...) {
-    coords <- c(...)
-    if (is.null(default) || !all(coords %in% rownames(default))) return(FALSE)
-    identical(stated, as.character(default[coords[1L], coords[length(coords)]]))
-  }
-  out <- character()
-  for (b in intersect(basis[-1L], names)) {
-    diagonal <- .ctModelRawPopVarEntry(model, b)
-    if (!is.na(diagonal) && nzchar(diagonal) && !isdefault(diagonal, b, b)) {
-      out <- c(out, sprintf("RAWPOPVAR['%s', '%s'] = %s (a loading, not a standard deviation)",
-        b, b, diagonal))
-    }
-    for (other in setdiff(names, b)) {
-      stated <- .ctModelRawPopVarEntry(model, b, other)
-      if (is.na(stated) || !nzchar(stated)) next
-      if (isdefault(stated, b, other)) next
-      out <- c(out, sprintf("RAWPOPVAR['%s', '%s'] = %s (a factor entry, not a correlation)",
-        b, other, stated))
-    }
-  }
-  unique(out)
-}
 
 .ctPopRegressionSpec <- function(pars, poprank, explicit = TRUE, model = NULL,
     augmented = TRUE) {
@@ -315,27 +258,20 @@
     }
   }
 
-  # A RAWPOPVAR statement about a regressed effect cannot be honoured, so it is
-  # refused rather than ignored. Asked for, that is an error; defaulted, the
-  # user's own specification is the more explicit statement of the two and wins.
+  # The population covariance has to be free. Asked for, a statement is an
+  # error naming the cells; defaulted, the user's own specification is the more
+  # explicit of the two and the rank is simply not applied.
   if (!is.null(model)) {
-    conflicts <- c(.ctPopRegressionRawPopVarConflicts(model, regressed),
-      .ctPopRegressionFactorConflicts(model, basis))
-    if (length(conflicts)) {
+    stated <- .ctPopRegressionRawPopVarStated(model)
+    if (length(stated)) {
       if (!isTRUE(explicit)) return(NULL)
-      # Opens with the phrase it always opened with. The rest is new -- the
-      # factor construction gives a second, narrower reason -- but the leading
-      # clause is accurate for both and is what the tests and anything else
-      # reading this message match on.
-      stop('poprank would drop what RAWPOPVAR states: ',
-        paste(conflicts, collapse = '; '),
-        '. Under a reduced rank the population covariance is a factor. A ',
-        'regressed effect has no spread of its own at all, and for a basis ',
-        "effect past the first the spread is a row norm rather than a cell -- ",
-        'only ', basis[1L], ' keeps a standard deviation this can state, and a ',
-        'zero covariance is a constraint across a row of loadings rather than ',
-        'a cell. Use poprank=NA to estimate the full covariance.',
-        call. = FALSE)
+      stop('poprank needs a free population covariance, and RAWPOPVAR states: ',
+        paste(stated, collapse = '; '),
+        '. Under a reduced rank the covariance is a factor, where a standard ',
+        'deviation is a row norm over dimensions and a covariance is a sum ',
+        'over them, so none of these is a cell that can be fixed. Use ',
+        'poprank=NA to estimate the full covariance, or leave RAWPOPVAR ',
+        'alone.', call. = FALSE)
     }
   }
   # Above `nmean` the restriction stops being free: it starts fixing residual

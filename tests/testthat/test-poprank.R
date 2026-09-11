@@ -233,15 +233,13 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
     expect_equal(ctsem:::.ctBackendNpar(overridden), 6L)
   })
 
-  # What RAWPOPVAR can and cannot say once the rank is reduced. The freely
-  # parameterised part keeps today's sd and correlation coordinates, so
-  # statements there work untouched; a zero *variance* has one clear meaning
-  # under any rank and is honoured by leaving that effect out of the split; and
-  # anything the factor cannot state -- a statement about a regressed effect, a
-  # standard deviation for a basis effect past the first, or a zero covariance,
-  # which is a constraint across a row of loadings rather than a cell -- is
-  # refused rather than dropped.
-  test_that('RAWPOPVAR statements work where they can be honoured and are refused where not', {
+  # A reduced rank needs the population covariance free, and that is the whole
+  # of the rule: under `Sigma = L L'` nothing below the diagonal is a cell, a
+  # spread is a row norm, and a regressed effect has neither -- so no stated
+  # cell survives, whichever effect it is about and whatever it says. The
+  # cases below are the ones an earlier version sorted into expressible and
+  # not, which is how a stated zero came to be accepted and then dropped.
+  test_that('a reduced rank refuses any stated RAWPOPVAR cell', {
     m <- poprank_model6()
     pars <- prepared_pars(m)
     m$pars <- pars
@@ -249,36 +247,39 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
     split <- function(model) ctsem:::.ctPopRegressionSpec(prepared_pars(model),
       'auto', explicit = TRUE, model = model)
 
+    # An untouched RAWPOPVAR states nothing, so the reduction proceeds. Its own
+    # labels are the default and a default is the absence of a statement --
+    # without this the rule would refuse every model.
     base <- split(fresh())
     expect_equal(base$basis, c('dr1', 'dr2', 'dr3'))
     expect_equal(base$regressed, c('df1', 'df2', 'df3'))
+    expect_length(ctsem:::.ctPopRegressionRawPopVarStated(fresh()), 0L)
 
-    # A zero correlation between two basis effects was accepted while the basis
-    # block was a free sd-and-correlation matrix, which is what it was under
-    # the previous coordinates. Under loadings there is no such cell: the
-    # rewrite leaves every loading free whatever is stated, verified against
-    # the built spec, so accepting it would drop it silently.
-    z <- fresh(); z[['RAWPOPVAR']]['dr2', 'dr1'] <- 0
-    expect_error(split(z), 'poprank would drop what RAWPOPVAR states')
-    # And left to the default it is kept, because the full covariance states it
-    # directly -- so a user who declares a zero and asks for no rank gets it.
-    expect_null(ctsem:::.ctPopRegressionSpec(prepared_pars(z), 'auto',
-      explicit = FALSE, model = z))
+    cases <- list(
+      c('dr1', 'dr1', '0.3'),   # a basis sd, the one case that used to pass
+      c('dr2', 'dr1', '0'),     # a zero between basis effects
+      c('dr3', 'dr2', '0.4'),   # a covariance between basis effects
+      c('df1', 'df1', '0.3'),   # a regressed sd
+      c('df1', 'df1', '0'),     # and at zero
+      c('df1', 'dr1', '0'))     # a zero against a regressed effect
+    for (case in cases) {
+      one <- fresh()
+      one[['RAWPOPVAR']][case[1L], case[2L]] <- case[3L]
+      info <- paste(case, collapse = ' ')
+      expect_length(ctsem:::.ctPopRegressionRawPopVarStated(one), 1L)
+      expect_error(split(one), 'poprank needs a free population covariance',
+        info = info)
+      # Defaulted, the statement wins and the rank is not applied -- so a user
+      # who fixes a cell and asks for nothing keeps the full covariance and the
+      # cell with it.
+      expect_null(ctsem:::.ctPopRegressionSpec(prepared_pars(one), 'auto',
+        explicit = FALSE, model = one), info = info)
+    }
 
-    # a fixed sd on a basis effect
-    f <- fresh(); f[['RAWPOPVAR']]['dr1', 'dr1'] <- 0.3
-    expect_equal(split(f)$basis, c('dr1', 'dr2', 'dr3'))
-
-    # and any statement about a regressed effect is refused, zero or not.
-    # A zero on the diagonal is not special-cased: fixing a population sd to
-    # zero is not a sensible thing to state -- `indvarying = FALSE` is how a
-    # parameter is made non-varying -- so it gets no path of its own.
-    nz <- fresh(); nz[['RAWPOPVAR']]['df1', 'df1'] <- 0.3
-    expect_error(split(nz), 'poprank would drop what RAWPOPVAR states')
-    zd <- fresh(); zd[['RAWPOPVAR']]['df1', 'df1'] <- 0
-    expect_error(split(zd), 'poprank would drop what RAWPOPVAR states')
-    zc <- fresh(); zc[['RAWPOPVAR']]['df1', 'dr1'] <- 0
-    expect_error(split(zc), 'poprank would drop what RAWPOPVAR states')
+    # A relabelling is a statement too: an equality constraint is a
+    # specification, not an estimate.
+    lab <- fresh(); lab[['RAWPOPVAR']]['dr2', 'dr2'] <- 'shared'
+    expect_error(split(lab), 'poprank needs a free population covariance')
   })
 
   # What a fixed RAWPOPVAR entry means. Pinned because the documentation in
@@ -377,45 +378,6 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
     expect_equal(id$npar, 6L)
     expect_gte(id$nweak, 1L)
     expect_false('poprank' %in% names(formals(ctIdentify)))
-  })
-
-  # RAWPOPVAR is the specification surface for the population covariance, and the
-  # augmentation reads it per varying parameter: a number fixes an sd or a
-  # correlation. A regressed effect has neither of its own, so anything stated
-  # about one would be silently dropped -- the single outcome this feature
-  # exists to prevent. Asked for, refused by name; defaulted, the user's own
-  # specification wins and the rank is simply not applied.
-  test_that('poprank refuses to drop a RAWPOPVAR statement about a regressed effect', {
-    m <- poprank_model()
-    pars <- prepared_pars(m)
-    m$pars <- pars
-    # a fresh RAWPOPVAR over the two varying parameters, then a fixed sd for the
-    # one poprank would regress
-    m[['RAWPOPVAR']] <- ctsem:::.ctModelRawPopVar(pars)
-    expect_true('df11' %in% rownames(m[['RAWPOPVAR']]))
-    m[['RAWPOPVAR']]['df11', 'df11'] <- 0.3
-
-    conflicts <- ctsem:::.ctPopRegressionRawPopVarConflicts(m, 'df11')
-    expect_length(conflicts, 1L)
-    expect_match(conflicts, "RAWPOPVAR['df11', 'df11'] = 0.3", fixed = TRUE)
-
-    expect_error(ctsem:::.ctPopRegressionSpec(pars, 'auto', explicit = TRUE,
-      model = m), 'poprank would drop what RAWPOPVAR states')
-    expect_null(ctsem:::.ctPopRegressionSpec(pars, 'auto', explicit = FALSE,
-      model = m))
-
-    # a statement about the basis effect is fine -- it keeps its own spread
-    m2 <- m
-    m2[['RAWPOPVAR']] <- ctsem:::.ctModelRawPopVar(pars)
-    m2[['RAWPOPVAR']]['dr11', 'dr11'] <- 0.3
-    expect_length(ctsem:::.ctPopRegressionRawPopVarConflicts(m2, 'df11'), 0L)
-    spec <- ctsem:::.ctPopRegressionSpec(pars, 'auto', explicit = TRUE, model = m2)
-    expect_equal(spec$regressed, 'df11')
-
-    # and an untouched RAWPOPVAR states nothing, so it cannot conflict
-    m3 <- m
-    m3[['RAWPOPVAR']] <- ctsem:::.ctModelRawPopVar(pars)
-    expect_length(ctsem:::.ctPopRegressionRawPopVarConflicts(m3, 'df11'), 0L)
   })
 
   test_that('poprank refuses a model in which nothing reaches the observation mean', {
