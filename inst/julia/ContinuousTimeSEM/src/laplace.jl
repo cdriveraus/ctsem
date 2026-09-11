@@ -2774,11 +2774,175 @@ ctsem_laplace_diagnostics(laplace::CTSEMLaplaceObjective) = (
 
 export ctsem_laplace_diagnostics
 
+"""Per-run state: the fallback counter this route keeps for its own report."""
+function _ctsem_optimise_setup!(::CTSEMLaplaceObjective)
+    _CTSEM_LAPLACE_FALLBACKS[] = 0
+    return nothing
+end
+
+_ctsem_optimise_label(::CTSEMLaplaceObjective) = "Laplace"
+
+"""
+Why trial points were rejected, counted rather than guessed at.
+
+A fit that stops short of a stationary point almost always did so because its
+line search ran out of points it was allowed to accept, and these say which of
+the three reasons was doing it.
+"""
+mutable struct CTSEMLaplaceCallLog
+    rejected_nonfinite::Int
+    rejected_inner::Int
+    rejected_gradient::Int
+    accepted::Int
+    verbose::Bool
+    reported_gradient::Bool
+end
+
+_ctsem_optimise_log(::CTSEMLaplaceObjective, verbose::Bool) =
+    CTSEMLaplaceCallLog(0, 0, 0, 0, verbose, false)
+
+# The inner mode count is worth tracing and reporting here and not on the
+# marginal route: an iteration re-solving every unit's mode from scratch costs
+# an order of magnitude more than one warm-starting, and the difference shows up
+# as a stall the objective alone does not explain.
+_ctsem_optimise_trace_keys(::CTSEMLaplaceObjective) =
+    (:objective, :gradient_norm, :inner_converged)
+_ctsem_optimise_trace_values(o::CTSEMLaplaceObjective) =
+    (count(o.inner_converged),)
+_ctsem_optimise_progress_extra(o::CTSEMLaplaceObjective) =
+    (@sprintf("inner %d/%d", count(o.inner_converged),
+        length(o.inner_converged)),)
+
+# A level of correlations can saturate together here, which the per-cell check
+# cannot see. See `_laplace_saturated_parameters`.
+_ctsem_saturated_for(o::CTSEMLaplaceObjective, minimizer) =
+    _laplace_saturated_parameters(o, minimizer)
+
+"""
+A trial point on the laplace route, where finite is not the same as usable.
+
+`converged` is the inner solve's verdict, and a point it failed at is invalid
+however finite its value: the Laplace term is defined at the mode, so away from
+one the number is not the objective. `ctsem_laplace_evaluate` is called rather
+than the generic `ctsem_evaluate`, which deliberately drops that flag.
+
+`gradient_method === :nested` is how `nested_gradient` reaches here through the
+shared driver's one gradient-method argument.
+"""
+function _ctsem_optimise_trial(o::CTSEMLaplaceObjective, x, want_gradient::Bool,
+        gradient_method, limit::Real, log)
+    evaluated = try
+        ctsem_laplace_evaluate(o, x; gradient=want_gradient,
+            nested_gradient=(Symbol(gradient_method) === :nested))
+    catch
+        nothing
+    end
+    value = evaluated === nothing ? NaN : evaluated.value
+    finite_value = evaluated !== nothing && isfinite(value)
+    inner_ok = evaluated !== nothing && evaluated.converged
+    valid = finite_value && inner_ok
+    if valid && want_gradient
+        valid = all(isfinite, evaluated.gradient) &&
+            all(abs(entry) < limit for entry in evaluated.gradient)
+        if !valid
+            log.rejected_gradient += 1
+            # Once, and only if asked: the probe prints the whole raw vector
+            # and the whole gradient, which is what makes it worth having and
+            # what makes it unwelcome on a quiet fit.
+            if log.verbose && !log.reported_gradient
+                log.reported_gradient = true
+                finite_part = filter(isfinite, evaluated.gradient)
+                println(_console(), "Laplace probe: first gradient rejection, objective ",
+                    value, ", ", count(!isfinite, evaluated.gradient), " of ",
+                    length(evaluated.gradient), " entries non-finite, largest finite ",
+                    isempty(finite_part) ? 0.0 : maximum(abs, finite_part))
+                println(_console(), "Laplace probe: at x = ", collect(x))
+                println(_console(), "Laplace probe: gradient = ",
+                    collect(evaluated.gradient))
+            end
+        end
+    end
+    finite_value || (log.rejected_nonfinite += 1)
+    (finite_value && !inner_ok) && (log.rejected_inner += 1)
+    valid && (log.accepted += 1)
+    return (evaluated=evaluated, valid=valid)
+end
+
+"""The laplace route's own result fields, and no `row_loglik`.
+
+The integral is over a whole subject's trajectory, so a single row has no
+marginal contribution to report: returning the subject terms and omitting the
+row ones is more honest than inventing a decomposition the approximation does
+not have.
+"""
+_ctsem_optimise_result_extra(o::CTSEMLaplaceObjective, final, log) = (
+    inner_converged=all(o.inner_converged),
+    inner_failures=count(!, o.inner_converged),
+    rejected_nonfinite=log.rejected_nonfinite,
+    rejected_inner=log.rejected_inner,
+    rejected_gradient=log.rejected_gradient,
+    accepted_calls=log.accepted,
+    inner_worst_gradient=isempty(o.inner_gradient) ? 0.0 :
+        maximum(o.inner_gradient),
+    inner_iterations=copy(o.inner_iterations),
+    hessian_repaired=copy(o.hessian_repaired),
+    mode_repaired=copy(o.mode_repaired))
+
+"""
+What is about to be fitted: the sizes that decide what the fit will cost.
+
+The unit and level counts are what a misdeclared grouping shows up as -- one
+unit per subject when a study level was meant -- and the chunk and thread counts
+are the difference between a run that uses the machine and one that does not.
+Printed after chunk tuning, which is what decides the chunk count.
+"""
+function _ctsem_optimise_verbose_shape(o::CTSEMLaplaceObjective)
+    chunks = ctsem_max_chunks()
+    println(_console(), "Laplace: ", length(o.objective.subject_objectives),
+        " subjects in ", length(o.units.members), " unit(s), ",
+        nlevels(o.spec), " level(s), ", nrandomeffects(o.spec),
+        " random effects, ", min(max(chunks.max_chunks == 0 ? chunks.nthreads :
+            chunks.max_chunks, 1), length(o.units.members)),
+        " chunk(s) over ", chunks.nthreads, " thread(s)")
+    return nothing
+end
+
+"""
+What the run did, for a user who asked.
+
+Two things that are otherwise invisible and both of which explain a fit that
+stopped short. The first is why trial points were refused, which is the
+difference between a line search that ran out of room and one that was never
+offered a usable point. The second is the inner solve: the Laplace term is
+defined at each unit's mode, so a run where modes went unconverged or needed
+their curvature repaired is one whose objective was approximate in a way the
+final numbers do not show.
+
+Asserted in `test-julia-laplace.R`, and that is deliberate -- the engine suite
+proves the inner solve works, and this is the only check anywhere that its
+status reaches the user who asked for it.
+"""
+function _ctsem_optimise_verbose_report(o::CTSEMLaplaceObjective,
+        log::CTSEMLaplaceCallLog)
+    println(_console(), "Laplace: ", log.accepted, " objective evaluations accepted, ",
+        log.rejected_nonfinite, " rejected as non-finite, ", log.rejected_inner,
+        " for an inner mode solve that did not converge, ",
+        log.rejected_gradient, " for the gradient; ",
+        _CTSEM_LAPLACE_FALLBACKS[],
+        " gradient(s) fell back to the nested route")
+    println(_console(), "Laplace: inner modes ",
+        count(o.inner_converged), "/", length(o.inner_converged),
+        " converged, max |dg/dz| ",
+        isempty(o.inner_gradient) ? 0.0 : maximum(o.inner_gradient),
+        ", curvature repaired at the mode for ", count(o.mode_repaired),
+        " unit(s) (", count(o.hessian_repaired), " somewhere on the way)")
+    return nothing
+end
+
 """
     ctsem_laplace_optimize(laplace, start; ...)
 
-Maximize with L-BFGS, mirroring `ctsem_optimize`'s contract so the R side can
-treat the two the same way.
+Maximize a Laplace-approximated multilevel likelihood with L-BFGS.
 
 The Laplace value and the Laplace gradient are a consistent pair, so the line
 search behaves and convergence means something.
@@ -2790,307 +2954,20 @@ variance components -- nothing in it penalises the population scales growing,
 so they run away. A nine-replication recovery study put its population sd at
 19.6 against a truth of 1.0, and one replication failed outright. It was not a
 cheaper route to the same answer, so there is no version of it worth keeping.
+
+The driver is `ctsem_optimize`, which this route used to carry a copy of. The
+copy cost three bugs -- the convergence verdict was fixed on one route and left
+on the other, the saturation guard had to be copied across afterwards, and
+`gap_tol` went into one and killed every fit here with a MethodError -- and what
+it differed by is the eleven methods above.
+
+`nested_gradient` travels as `gradient_method`, which is the shared driver's one
+name for the same choice.
 """
-function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractVector;
-    maxiter::Integer=1000, g_tol::Real=1e-8, f_tol::Real=0.0, x_tol::Real=0.0,
-    verbose::Bool=false, nested_gradient::Bool=false, tune_chunks::Bool=true,
-    lbfgs_memory::Integer=_CTSEM_LBFGS_MEMORY, progress_overwrite::Bool=true,
-    progress_sink=nothing,
-    progress_callback=nothing, progress::Bool=verbose,
-    progress_label::AbstractString="optimise", gap_tol::Real=0.0,
-    progress_budget::Bool=false, progress_every::Real=0.0)
-    start_values = collect(Float64, start)
-    invalid_objective = floatmax(Float64) / 1e8
-    gradient_limit = sqrt(floatmax(Float64))
-    # Why trial points were rejected, counted rather than guessed at. A fit
-    # that stops short of a stationary point almost always did so because its
-    # line search ran out of points it was allowed to accept, and these say
-    # which of the three reasons was doing it.
-    _CTSEM_LAPLACE_FALLBACKS[] = 0
-    rejected_nonfinite = 0
-    rejected_inner = 0
-    rejected_gradient = 0
-    accepted_calls = 0
-    # `evaluated`, not `result`: Julia binds an assignment inside a closure to
-    # the enclosing scope's local of the same name, and the outer Optim result
-    # below is called `result`. Every objective call was overwriting it. That
-    # was invisible while the outer one was only read after `Optim.optimize`
-    # returned, and stopped being invisible the moment anything read it
-    # between runs -- the restart loop below did, and `Optim.minimum` was
-    # handed an evaluation named tuple.
-    fg! = function (F, G, x)
-        evaluated = try
-            ctsem_laplace_evaluate(laplace, x; gradient=G !== nothing,
-                nested_gradient=nested_gradient)
-        catch
-            nothing
-        end
-        objective = evaluated === nothing ? NaN : evaluated.value
-        # A unit whose inner Newton did not reach `inner_tol` has not produced
-        # the mode the term is defined at, so the number is not the objective
-        # -- it is whatever the iteration happened to stop on. Treating the
-        # trial point as invalid makes the line search shrink towards a point
-        # where the inner problem is solvable, which is the right response;
-        # accepting it lets the outer optimizer follow a function that is not
-        # a function of theta.
-        finite_value = evaluated !== nothing && isfinite(objective)
-        inner_ok = evaluated !== nothing && evaluated.converged
-        valid = finite_value && inner_ok
-        if valid && G !== nothing
-            valid = all(isfinite, evaluated.gradient) &&
-                all(abs(value) < gradient_limit for value in evaluated.gradient)
-            if !valid
-                rejected_gradient += 1
-                if verbose && rejected_gradient == 1
-                    finite_part = filter(isfinite, evaluated.gradient)
-                    println(_console(), "Laplace probe: first gradient rejection, objective ",
-                        objective, ", ", count(!isfinite, evaluated.gradient),
-                        " of ", length(evaluated.gradient),
-                        " entries non-finite, largest finite ",
-                        isempty(finite_part) ? 0.0 : maximum(abs, finite_part))
-                    println(_console(), "Laplace probe: at x = ", collect(x))
-                    println(_console(), "Laplace probe: gradient = ", collect(evaluated.gradient))
-                end
-            end
-        end
-        finite_value || (rejected_nonfinite += 1)
-        (finite_value && !inner_ok) && (rejected_inner += 1)
-        valid && (accepted_calls += 1)
-        if !valid
-            # Zeros, and deliberately not the last valid gradient.
-            #
-            # Handing back the previous gradient at a new point was tried, on
-            # the reasoning that it keeps the search direction pointing back
-            # toward the feasible region. It does, and it also feeds L-BFGS a
-            # secant pair whose gradient never belonged to that point, which
-            # corrupts the curvature history and sends later directions
-            # somewhere arbitrary: one fit in ten came back after a single
-            # iteration with a NaN gradient, and the next spent half an hour
-            # not finishing. The sentinel objective is what makes the line
-            # search shrink, and it does that on the value alone.
-            G !== nothing && fill!(G, zero(eltype(G)))
-            return F === nothing ? nothing : invalid_objective
-        end
-        G !== nothing && (G .= -evaluated.gradient)
-        return F === nothing ? nothing : -objective
-    end
-    # See `ctsem_optimize` for why this is a callback rather than `show_trace`.
-    # The inner mode count is worth reporting here and not there: a Laplace
-    # iteration that is re-solving every unit's mode from scratch costs an order
-    # of magnitude more than one that is warm-starting, and the difference shows
-    # up as a stall that the objective alone does not explain.
-    # See `ctsem_optimize`: progress is not verbosity.
-    reporter = CTSEMProgress(progress; label=progress_label,
-        overwrite=progress_overwrite, every=progress_every, sink=progress_sink)
-    # Recorded every iteration whatever `verbose` says; see `ctsem_optimize`.
-    # `inner` is traced too, because a Laplace fit that stalls usually stalls
-    # in the inner solve and the outer objective alone does not show it.
-    trace = CTSEMTrace(:objective, :gradient_norm, :inner_converged)
-    watcher = CTSEMCallback(progress_callback)
-    # See `ctsem_optimize`. The stopping rule here is the same `g_tol` on the
-    # same outer gradient, so the estimate means the same thing; `inner` is
-    # what says whether that gradient is to be trusted, and it is already on
-    # the line beside it.
-    convergence = CTSEMConvergence(g_tol)
-    # The same cheap stopping rule `ctsem_optimize` uses, on the same quantity:
-    # the line search is handed `dphi0 = g'p` every iteration and `-dphi0/2` is
-    # the objective that step was predicted to gain. A proxy, for the reason
-    # given there -- `B` is limited memory and carries its own scaling -- and
-    # backstopped by the same exact check afterwards.
-    directional = CTSEMDirectional(Optim.LineSearches.BackTracking())
-    # Optim's counters do not survive a callback stop; see `ctsem_optimize`.
-    seen_iterations = Ref(0)
-    stopped_by_gap = Ref(false)
-    watch = function (state)
-        latest = state isa AbstractVector ? last(state) : state
-        inner = count(laplace.inner_converged)
-        _record!(trace, latest.iteration, -latest.value, latest.g_norm, inner)
-        seen_iterations[] = max(seen_iterations[], Int(latest.iteration))
-        percent = _convergence_percent!(convergence, latest.g_norm)
-        if _due(reporter)
-            _progress_optimise(reporter, latest.iteration, Int(maxiter),
-                @sprintf("logpost %11.2f", -latest.value),
-                @sprintf("|g| %9.2e", latest.g_norm),
-                @sprintf("inner %d/%d", inner,
-                    length(laplace.inner_converged)); budget=progress_budget,
-                percent=progress_budget ? NaN : percent)
-        end
-        # Its own cadence; see `ctsem_optimize`.
-        _invoke_callback(watcher, latest.iteration, Int(maxiter),
-            -latest.value, latest.g_norm)
-        if gap_tol > 0 && _ctsem_predicted_gain(directional) < gap_tol
-            stopped_by_gap[] = true
-            return true
-        end
-        return false
-    end
-    options = Optim.Options(iterations=Int(maxiter), g_tol=g_tol, f_reltol=f_tol,
-        x_abstol=x_tol, show_trace=false, store_trace=false, callback=watch,
-        extended_trace=false)
-    # Measure the chunk count rather than trusting `cores`. See
-    # `ctsem_tune_chunks!`: on small models the wide split is slower than the
-    # serial one, by up to 3.7x, and no rule from the model shape alone
-    # predicts where the crossover is.
-    tuning = tune_chunks ? ctsem_tune_chunks!(
-        () -> ctsem_laplace_evaluate(laplace, start_values; gradient=true,
-            nested_gradient=nested_gradient); verbose=verbose) : nothing
-    if verbose
-        chunks = ctsem_max_chunks()
-        println(_console(), "Laplace: ", length(laplace.objective.subject_objectives),
-            " subjects in ", length(laplace.units.members), " unit(s), ",
-            nlevels(laplace.spec), " level(s), ", nrandomeffects(laplace.spec),
-            " random effects, ", min(max(chunks.max_chunks == 0 ? chunks.nthreads :
-                chunks.max_chunks, 1), length(laplace.units.members)),
-            " chunk(s) over ", chunks.nthreads, " thread(s)")
-    end
-    # A third reason backtracking is the line search here, beside the two in
-    # `ctsem_optimize`. Optim's Hager-Zhang asserts its own bracketing
-    # invariant (`B > A`) and *throws* when an evaluation it is handed is
-    # invalid -- which happens on this route whenever a trial point makes an
-    # inner mode solve or a curvature factorization fail, since those return a
-    # sentinel objective with a zero gradient, and a zero directional
-    # derivative breaks the bracket. Backtracking makes no such assumption: it
-    # simply shrinks the step. So what used to be a fallback from a crashed fit
-    # is now the thing that cannot crash that way.
-    # `alphaguess` for the same reason `ctsem_optimize` has it, which this
-    # route was simply left out of. L-BFGS has no curvature history on its
-    # first iteration, so it goes downhill with whatever the initial step guess
-    # gives, and Optim's default `InitialStatic()` is an unscaled alpha of one
-    # -- a first step as long as the gradient. On this objective the gradient
-    # at the starting values is routinely in the hundreds, so the first step
-    # was hundreds of units into a region where every ctsem transform is flat
-    # to machine precision and the inner mode solve has nothing to work with.
-    #
-    # It shows up as extreme sensitivity to the starting draw, which is only
-    # `rnorm(npar, 0, 0.01)` and cannot itself explain anything. Ten seeds on
-    # one 25-subject ordinal model before this line: two converged, six stopped
-    # short with gradients between 5.6 and 82, one threw, and one reported
-    # convergence 146 log units below the answer.
-    #
-    # `scaled=true` divides alpha by the gradient norm, so the first step has
-    # length one in parameter space however steep the objective is.
-    # Backtracking, for the reason `ctsem_optimize` gives: a Wolfe line search
-    # wants the directional derivative at every trial point and so pays a full
-    # gradient for each, where Armijo asks only for the objective and this
-    # engine's value-only path really is value-only. It also removes both of
-    # the rescue stages that stood here, which existed solely because
-    # Hager-Zhang has two ways to give up -- throwing, and quietly running out
-    # of line search while Optim reports success -- and answered each by
-    # switching to backtracking.
-    lbfgs = Optim.LBFGS(m=Int(lbfgs_memory),
-        alphaguess=Optim.LineSearches.InitialStatic(scaled=true),
-        linesearch=directional)
-    linesearch = "backtracking"
-    result = Optim.optimize(Optim.only_fg!(fg!), start_values, lbfgs, options)
-    # No rescue stage, for the reason `ctsem_optimize` records: the one that
-    # stood here caught Hager-Zhang running out of line search -- measured on a
-    # 60-subject ordinal model, two iterations for 68 objective evaluations,
-    # the last step uphill and a final gradient of 475 -- and answered by
-    # restarting with backtracking, which is now what runs. A stop that is
-    # short for another reason is the certification's to find and
-    # `.ctBackendCorrectResult()`'s to continue from.
-    if verbose
-        println(_console(), "Laplace: ", accepted_calls, " objective evaluations accepted, ",
-            rejected_nonfinite, " rejected as non-finite, ", rejected_inner,
-            " for an inner mode solve that did not converge, ",
-            rejected_gradient, " for the gradient; ",
-            _CTSEM_LAPLACE_FALLBACKS[],
-            " gradient(s) fell back to the nested route")
-        println(_console(), "Laplace: inner modes ",
-            count(laplace.inner_converged), "/", length(laplace.inner_converged),
-            " converged, max |dg/dz| ",
-            isempty(laplace.inner_gradient) ? 0.0 : maximum(laplace.inner_gradient),
-            ", curvature repaired at the mode for ", count(laplace.mode_repaired),
-            " unit(s) (", count(laplace.hessian_repaired), " somewhere on the way)")
-    end
-    minimizer = collect(Optim.minimizer(result))
-    final = ctsem_laplace_evaluate(laplace, minimizer; gradient=true)
-    # A fit that ends where it started, with a gradient nowhere near zero, has
-    # not converged whatever Optim says. Optim's own verdict is the disjunction
-    # of three criteria, and a line search that fails on its first try
-    # satisfies the `f` one trivially: the objective did not change because
-    # nothing was accepted. Two fits in thirteen returned their starting values
-    # this way, reporting success, which in a simulation study is silently
-    # wrong rather than loudly broken.
-    gradient_norm = isempty(final.gradient) ? 0.0 : maximum(abs, final.gradient)
-    # `ctsem_optimize` has always closed its progress line and this route never
-    # did, so an in-place update was left open and whatever R printed next
-    # landed on the same line -- reported as "inner 100/100Computing exact
-    # Hessian".
-    #
-    # Ordered after `gradient_norm` so the closing line can carry it. The two
-    # routes' closing lines used to differ in exactly that field, and |g| is
-    # the number that says whether the fit arrived or merely stopped.
-    # See `ctsem_optimize` for `max(shown, ...)`.
-    iterations = max(reporter.shown, Optim.iterations(result))
-    capped = !progress_budget && iterations >= Int(maxiter)
-    progress && _progress_done(reporter,
-        @sprintf("%d iterations%s", iterations,
-            capped ? " -- ITERATION CAP REACHED, not converged" : ""),
-        @sprintf("logpost %.4f", final.value),
-        @sprintf("|g| %.2e", gradient_norm))
-    # `_laplace_saturated_parameters` rather than the shared detector: a level
-    # of correlations can saturate together here, which the per-cell check does
-    # not see. The verdict it feeds is the shared one.
-    saturated_parameters = _laplace_saturated_parameters(laplace, minimizer)
-    verdict = _ctsem_optimise_verdict(laplace, minimizer, start_values,
-        final.value, gradient_norm, saturated_parameters, g_tol;
-        label="Laplace", verbose=verbose)
-    saturated = verdict.saturated
-    stalled = verdict.stalled
-    scaled_tolerance = verdict.scaled_tolerance
-    finite_gradient = verdict.finite_gradient
-    converged_enough = verdict.converged_enough
-    overshoot = verdict.overshoot
-    overshot = verdict.overshot
-    verbose && !stalled && !(finite_gradient &&
-        (Optim.g_converged(result) || converged_enough)) &&
-        println(_console(), "Laplace: the optimizer stopped with a largest gradient of ",
-            gradient_norm, " against a tolerance of ", scaled_tolerance,
-            "; reporting this as not converged")
-    return (
-        minimizer=minimizer,
-        maximum_loglik=final.value,
-        gradient=collect(final.gradient),
-        subject_loglik=collect(final.subject_loglik),
-        iterations=max(Optim.iterations(result), seen_iterations[]),
-        f_calls=Optim.f_calls(result),
-        g_calls=Optim.g_calls(result),
-        linesearch=linesearch,
-        stalled=stalled,
-        chunks=ctsem_max_chunks().max_chunks,
-        chunk_timings=tuning === nothing ? Tuple{Int,Float64}[] : tuning.timings,
-        gradient_norm=gradient_norm,
-        scaled_tolerance=scaled_tolerance,
-        predicted_gain=_ctsem_predicted_gain(directional),
-        gap_tol=Float64(gap_tol),
-        stopped_by_gap=stopped_by_gap[],
-        saturated=saturated,
-        # Never empty: a zero-length vector deadlocks the JuliaConnectoR
-        # bridge, and this result crosses it. 0 means none.
-        saturated_parameters=isempty(saturated_parameters) ? [0] : saturated_parameters,
-        # `overshot`, not `saturated` -- see `ctsem_optimize`, which carries the
-        # same verdict and the reasoning behind it.
-        overshot=overshot,
-        overshoot_gain=overshoot.gain,
-        converged=!stalled && !overshot && finite_gradient &&
-            (Optim.g_converged(result) || converged_enough),
-        g_converged=Optim.g_converged(result),
-        f_converged=Optim.f_converged(result),
-        x_converged=Optim.x_converged(result),
-        inner_converged=all(laplace.inner_converged),
-        inner_failures=count(!, laplace.inner_converged),
-        rejected_nonfinite=rejected_nonfinite,
-        rejected_inner=rejected_inner,
-        rejected_gradient=rejected_gradient,
-        accepted_calls=accepted_calls,
-        inner_worst_gradient=isempty(laplace.inner_gradient) ? 0.0 :
-            maximum(laplace.inner_gradient),
-        inner_iterations=copy(laplace.inner_iterations),
-        hessian_repaired=copy(laplace.hessian_repaired),
-        mode_repaired=copy(laplace.mode_repaired),
-        trace=_trace_result(trace),
-    )
+function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective,
+        start::AbstractVector; nested_gradient::Bool=false, kwargs...)
+    ctsem_optimize(laplace, start;
+        gradient_method=(nested_gradient ? :nested : :adjoint), kwargs...)
 end
 
 """

@@ -704,6 +704,89 @@ function _ctsem_predicted_gain(ls::CTSEMDirectional)
 end
 
 """
+The per-objective pieces of the shared optimiser.
+
+`ctsem_optimize` drives every route. What the routes differ by is here, as one
+small generic function each, so that anything added to the optimiser is added
+once. Three things were not, and each cost a bug: the convergence verdict was
+fixed on one route and left on the other, the saturation guard had to be copied
+across afterwards, and `gap_tol` went into one and every laplace fit died with a
+MethodError.
+
+The defaults are the marginal and joint routes' behaviour, so those two need no
+methods at all; `laplace.jl` supplies the differences.
+
+* `_ctsem_optimise_label` names the route in its messages.
+* `_ctsem_optimise_setup!` resets whatever per-run state the route keeps.
+* `_ctsem_optimise_log` returns a mutable accumulator for the route's own call
+  accounting, or `nothing` when it keeps none. It is told `verbose`, because a
+  route that narrates its accounting as it goes has to know whether anyone
+  asked.
+* `_ctsem_optimise_trace_keys` and `_ctsem_optimise_trace_values` are the
+  columns the per-iteration trace carries: keys are fixed at construction so the
+  vectors stay type-stable, values are read each iteration.
+* `_ctsem_optimise_progress_extra` is anything further the progress line should
+  carry, already formatted.
+* `_ctsem_optimise_trial` evaluates a trial point and says whether it may be
+  used. This is the one hook with real semantics rather than plumbing: on the
+  laplace route a point where a unit's inner Newton did not reach its tolerance
+  is *invalid* even though its value is finite, because the objective is only
+  defined at the mode -- accepting it lets the outer optimiser follow a function
+  of something other than theta.
+* `_ctsem_saturated_for` detects a flat transform, which the laplace route does
+  differently: a level of correlations can saturate together, which the per-cell
+  check cannot see.
+* `_ctsem_optimise_result_extra` adds the route's own result fields.
+* `_ctsem_optimise_verbose_shape` and `_ctsem_optimise_verbose_report` are the
+  route's own `verbose` lines, before the run and after it: what is about to be
+  fitted, and what the run did. The second is where the call accounting in its
+  log gets read.
+"""
+_ctsem_optimise_label(::CTSEMOptimisable) = "ctsem_optimize"
+_ctsem_optimise_setup!(::CTSEMOptimisable) = nothing
+_ctsem_optimise_log(::CTSEMOptimisable, verbose::Bool) = nothing
+_ctsem_optimise_trace_keys(::CTSEMOptimisable) = (:objective, :gradient_norm)
+_ctsem_optimise_trace_values(::CTSEMOptimisable) = ()
+_ctsem_optimise_progress_extra(::CTSEMOptimisable) = ()
+_ctsem_optimise_verbose_shape(::CTSEMOptimisable) = nothing
+_ctsem_optimise_verbose_report(::CTSEMOptimisable, log) = nothing
+
+_ctsem_saturated_for(o::CTSEMOptimisable, minimizer) =
+    _ctsem_saturated_parameters(_ctsem_params(o), minimizer,
+        _ctsem_saturation_range(o, minimizer))
+
+"""The row-wise contributions only the filter routes can decompose."""
+_ctsem_optimise_result_extra(::CTSEMOptimisable, final, log) =
+    (row_loglik=final.row_loglik,)
+
+"""
+    _ctsem_optimise_trial(objective, x, want_gradient, gradient_method, limit, log)
+
+One trial point: what it evaluated to, and whether the optimiser may use it.
+
+`nothing` for the evaluation, or `valid == false`, both mean the same thing to
+the caller -- hand back the sentinel objective and a zero gradient so the line
+search shrinks. Deliberately not the last valid gradient: that feeds L-BFGS a
+secant pair whose gradient never belonged to the point, which corrupts the
+curvature history.
+"""
+function _ctsem_optimise_trial(o::CTSEMOptimisable, x, want_gradient::Bool,
+        gradient_method, limit::Real, log)
+    evaluated = try
+        ctsem_evaluate(o, x; gradient=want_gradient,
+            gradient_method=gradient_method)
+    catch
+        nothing
+    end
+    valid = evaluated !== nothing && isfinite(evaluated.value)
+    if valid && want_gradient
+        valid = all(isfinite, evaluated.gradient) &&
+            all(abs(value) < limit for value in evaluated.gradient)
+    end
+    return (evaluated=evaluated, valid=valid)
+end
+
+"""
     _ctsem_optimise_verdict(objective, minimizer, start_values, value, gradient_norm,
                             saturated_parameters, g_tol; label, verbose)
 
@@ -797,20 +880,23 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     start_values = collect(start)
     invalid_objective = floatmax(eltype(start_values)) / 1e8
     gradient_limit = sqrt(floatmax(eltype(start_values)))
+    label = _ctsem_optimise_label(objective)
+    _ctsem_optimise_setup!(objective)
+    # The route's own call accounting, or `nothing` where it keeps none. Passed
+    # to every trial so the counting happens where the validity is decided.
+    call_log = _ctsem_optimise_log(objective, verbose)
     # `evaluated`, not `result`: see `ctsem_laplace_optimize`. A closure's
     # assignment binds to the enclosing local of the same name, and the outer
     # Optim result below is called `result`.
     fg! = function (F, G, x)
-        evaluated = try
-            ctsem_evaluate(objective, x; gradient=G !== nothing,
-                gradient_method=gradient_method)
-        catch
-            nothing
-        end
-        valid = evaluated !== nothing && isfinite(evaluated.value)
-        if valid && G !== nothing
-            valid = all(isfinite, evaluated.gradient) && all(abs(value) < gradient_limit for value in evaluated.gradient)
-        end
+        # The route decides what a usable trial point is: see
+        # `_ctsem_optimise_trial`. On the laplace route a finite value at a
+        # point whose inner Newton did not converge is *not* usable, because the
+        # objective is only defined at the mode.
+        trial = _ctsem_optimise_trial(objective, x, G !== nothing,
+            gradient_method, gradient_limit, call_log)
+        evaluated = trial.evaluated
+        valid = trial.valid
         if !valid
             G !== nothing && fill!(G, zero(eltype(G)))
             return F === nothing ? nothing : invalid_objective
@@ -835,7 +921,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # The trace records every iteration whatever `verbose` says: it costs a
     # push onto a vector, and a fit that turns out to have gone somewhere odd
     # is exactly the one nobody thought to turn reporting on for.
-    trace = CTSEMTrace(:objective, :gradient_norm)
+    trace = CTSEMTrace(_ctsem_optimise_trace_keys(objective)...)
     watcher = CTSEMCallback(progress_callback)
     # How far toward `g_tol` the gradient has come; see `CTSEMConvergence`. It
     # is fed every iteration rather than every printed line, because the scale
@@ -856,7 +942,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     stopped_by_gap = Ref(false)
     watch = function (state)
         latest = state isa AbstractVector ? last(state) : state
-        _record!(trace, latest.iteration, -latest.value, latest.g_norm)
+        _record!(trace, latest.iteration, -latest.value, latest.g_norm,
+            _ctsem_optimise_trace_values(objective)...)
         seen_iterations[] = max(seen_iterations[], Int(latest.iteration))
         percent = _convergence_percent!(convergence, latest.g_norm)
         if _due(reporter)
@@ -864,7 +951,9 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             # estimate would replace a correct denominator with a guess.
             _progress_optimise(reporter, latest.iteration, Int(maxiter),
                 @sprintf("logpost %11.2f", -latest.value),
-                @sprintf("|g| %9.2e", latest.g_norm); budget=progress_budget,
+                @sprintf("|g| %9.2e", latest.g_norm),
+                _ctsem_optimise_progress_extra(objective)...;
+                budget=progress_budget,
                 percent=progress_budget ? NaN : percent)
         end
         # Its own cadence, so passing a callback with `verbose = 0` -- the
@@ -896,6 +985,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     tuning = tune_chunks ? ctsem_tune_chunks!(
         () -> ctsem_evaluate(objective, start_values; gradient=true,
             gradient_method=gradient_method); verbose=verbose) : nothing
+    # After the tuning, which is what decided the chunk count it reports.
+    verbose && _ctsem_optimise_verbose_shape(objective)
     # A first step of unit *length*, not of unit alpha.
     #
     # L-BFGS has no curvature history on its first iteration, so it takes the
@@ -945,6 +1036,9 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # a damped Newton step with a tightened stopping rule. Two mechanisms for
     # one job, where the second can only act in cases the first did not fix, is
     # a way to be surprised rather than a safety net.
+    # Before the final evaluation, so what it reports is the run rather than
+    # the extra call: see `_ctsem_optimise_verbose_report`.
+    verbose && _ctsem_optimise_verbose_report(objective, call_log)
     minimizer = collect(Optim.minimizer(result))
     final = ctsem_evaluate(objective, minimizer; gradient=true,
         contributions=true, gradient_method=gradient_method)
@@ -1020,14 +1114,12 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # region -- a trajectory five standard deviations out is unusual data, not
     # an unidentified parameter, and reading it as saturation would report
     # every such fit as failed.
-    saturated_parameters = _ctsem_saturated_parameters(
-        _ctsem_params(objective), minimizer,
-        _ctsem_saturation_range(objective, minimizer))
+    saturated_parameters = _ctsem_saturated_for(objective, minimizer)
     # And the verdict itself, which every route reaches the same way and in one
     # place: see `_ctsem_optimise_verdict`.
     verdict = _ctsem_optimise_verdict(objective, minimizer, start_values,
         final.value, gradient_norm, saturated_parameters, g_tol;
-        label="ctsem_optimize", verbose=verbose)
+        label=label, verbose=verbose)
     saturated = verdict.saturated
     stalled = verdict.stalled
     scaled_tolerance = verdict.scaled_tolerance
@@ -1037,15 +1129,15 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     overshot = verdict.overshot
     verbose && !stalled && !(finite_gradient &&
         (Optim.g_converged(result) || converged_enough)) &&
-        println(_console(), "ctsem_optimize: the optimizer stopped with a largest gradient of ",
-            gradient_norm, " against a tolerance of ", scaled_tolerance,
-            "; reporting this as not converged")
+        println(_console(), label, ": the optimizer stopped with a largest ",
+            "gradient of ", gradient_norm, " against a tolerance of ",
+            scaled_tolerance, "; reporting this as not converged")
     return (
         minimizer=minimizer,
         maximum_loglik=final.value,
         gradient=collect(final.gradient),
         subject_loglik=collect(final.subject_loglik),
-        row_loglik=final.row_loglik,
+        _ctsem_optimise_result_extra(objective, final, call_log)...,
         # The larger of the two: they agree unless the callback stopped the
         # run, in which case Optim's is the one that stopped being updated.
         iterations=max(Optim.iterations(result), seen_iterations[]),
