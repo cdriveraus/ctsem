@@ -3378,6 +3378,14 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     g_tol = .ctJuliaOr(optimcontrol$g_tol, 1e-8),
     f_tol = .ctJuliaOr(optimcontrol$tol, 0),
     x_tol = .ctJuliaOr(optimcontrol$x_tol, 0),
+    # The cheap stopping rule, in objective units: stop once a step is
+    # predicted to gain less than this. The same tolerance the certification
+    # uses, and zero whenever nothing will certify -- see
+    # `.ctBackendInnerGapTol()`, which is where that reasoning lives.
+    # `objective` is supplied only by the state-explicit route, which is
+    # what `intoverstates = FALSE` means here -- that name is not in this
+    # function's scope, and the argument it arrives as is.
+    gap_tol = .ctBackendInnerGapTol(optimcontrol, is.null(objective)),
     verbose = verbose > 0L,
     # Overwrite one line in place when someone is watching, and print
     # occasional separate lines when the output is going to a file or a knitr
@@ -3769,6 +3777,32 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     }
   }
   if (!is.null(substeps)) message(.ctJuliaSubstepMessage(substeps))
+  # What the curvature says about the point the optimiser stopped at, and a
+  # corrected one when it says the optimum is materially further on. Here
+  # rather than after the fit is built, because everything below this line is
+  # derived from `result` and a correction applied later would leave all of it
+  # describing a different point. See R/ctBackendOptimGap.R.
+  #
+  # Not on the state-explicit route: its curvature is the profile's, which the
+  # states flatten, so there is nothing to certify against -- the same reason
+  # that route reports no standard errors.
+  correction <- NULL
+  if (isTRUE(intoverstates) && !isTRUE(optimcontrol$estonly) &&
+      !identical(optimcontrol$certify, FALSE)) {
+    correction <- .ctBackendCorrectResult(result, model_spec, npar,
+      tolerance = .ctJuliaOr(optimcontrol$gaptol, 1e-6),
+      maxtries = .ctJuliaOr(optimcontrol$gapretries, 2L),
+      gradient = gradient, verbose = verbose,
+      maxiter = .ctJuliaOr(optimcontrol$maxiter, 1000L),
+      gtol = .ctJuliaOr(optimcontrol$g_tol, 1e-8),
+      optimise = function(from, overrides = list()) .ctJuliaOptimise(model_spec,
+        if (is.null(jointobjective)) from else c(from, numeric(nstate)),
+        optimcontrol = utils::modifyList(optimcontrol, overrides),
+        gradient = gradient, cores = cores,
+        verbose = verbose, callback = optimcontrol$callback,
+        objective = jointobjective))
+    result <- correction$result
+  }
   # There is deliberately no second, after-the-fact prior restart here.
   #
   # An earlier version retried a non-converged fit from a full prior
@@ -3861,6 +3895,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       linesearch = if (is.null(result$linesearch)) NA_character_ else
         as.character(result$linesearch),
       stalled = isTRUE(result$stalled),
+      # Whether the cheap stopping rule ended the run, which is what makes
+      # `f_calls` and `g_calls` undercounts: Optim stops updating them when a
+      # callback stops it, and there is no second source for those two.
+      # `iterations` is taken from the engine's own count and is right either
+      # way. See `ctsem_optimize`.
+      stopped_by_gap = isTRUE(result$stopped_by_gap),
       # What nsubsteps = 'auto' decided: intervals, how many were refined, the
       # largest count, the total, and whether the fit was redone after the
       # mesh moved at the optimum. NULL unless it was asked for.
@@ -3954,6 +3994,22 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         ". This usually means the level has too few groups to identify that ",
         "correlation. See fit$laplace$boundary.", call. = FALSE)
     }
+  }
+  if (!is.null(correction)) {
+    # The Hessian goes on the fit so the uncertainty stage does not recompute
+    # the same matrix at the same point, and the certification with it so a
+    # fit made with `estonly` can still be told from one that was checked.
+    out$estimate$hessian <- correction$hessian
+    out$estimate$corrections <- correction$corrections
+    # Totals over every stage the fit ran, which is what these names should
+    # always have meant. `stage_iterations` keeps the last stage's own count
+    # for anyone reading a trace against it.
+    out$estimate$stage_iterations <- out$estimate$iterations
+    out$estimate$iterations <- as.integer(correction$totals[["iterations"]])
+    out$estimate$f_calls <- as.integer(correction$totals[["f_calls"]])
+    out$estimate$g_calls <- as.integer(correction$totals[["g_calls"]])
+    out$estimate$hessians <- correction$hessians
+    out$uncertainty <- list(certification = correction$certification)
   }
   class(out) <- c("ctJuliaFit", "ctFit")
 

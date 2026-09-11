@@ -469,6 +469,18 @@
   # A state-explicit fit maximised a different object, so its curvature is a
   # different object too. See `.ctBackendJointHessian`.
   if (isFALSE(fit$args$resolved$intoverstates)) return(.ctBackendJointHessian(fit, est))
+  # The convergence certification computed this matrix, at this estimate, on
+  # the way out of the optimiser -- see `.ctBackendCorrectResult()`. Recomputing
+  # it would be the fit's second most expensive step run twice for the same
+  # answer. Only when the estimate has not moved since: `ctOptimUncertainty()`
+  # can be called on a fit whose estimate came from somewhere else entirely.
+  stored <- fit$estimate$hessian
+  if (!is.null(stored) && is.matrix(stored) &&
+      nrow(stored) == length(est) && ncol(stored) == length(est) &&
+      isTRUE(all.equal(as.numeric(fit$estimate$raw), as.numeric(est),
+        tolerance = 0))) {
+    return(stored)
+  }
   module <- .ctJuliaModule(.ctBackendSpec(fit)$project)
   # `gradient='forward'` selects `ctsem_hessian_forward` instead of
   # `ctsem_hessian`: a model with a sampled (missing) TI predictor value
