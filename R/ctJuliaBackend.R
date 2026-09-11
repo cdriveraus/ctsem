@@ -1659,6 +1659,13 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   table <- .ctJuliaPadMatrix(table, "T0VAR", nlatent_augmented, nlatent_augmented)
 
   next_parameter <- max(table$parnumber, na.rm = TRUE)
+  # A reduced rank builds this block as a factor, and the loading form makes it
+  # the fixed identity. Both are needed below, before the scales are derived:
+  # a standardised carrier has no T0MEANS label, so the scale derivation cannot
+  # find it and has nothing to find -- the block carries no parameters for a
+  # scale to apply to.
+  population_factor <- .ctPopFactorConstruction(model)
+  population_standardised <- isTRUE(model[["popregression"]]$standardised)
   random_sd_scale <- rep(1, length(augmented_indices))
   # Stan's population covariance is built entirely in raw-parameter units
   # (`rawpopcovbase`/`rawpopsd`, via `sdscale`), then explicitly rescaled to
@@ -1679,7 +1686,15 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # (including off-diagonals) by k_i*k_j, with no separate adjustment needed
   # for the correlation parameters themselves (they stay dimensionless).
   t0means_state_scale <- rep(1, length(augmented_indices))
-  if (!is.null(expanded$modelmats$matsetup)) {
+  # Skipped entirely when the block is the standardised identity: there is no
+  # population sd for `sdscale` to scale (the loadings carry it, applied in
+  # `.ctPopRegressionRewrite()`), and a dimension is dimensionless so its
+  # state scale is 1. Deriving them would also fail rather than mislead -- a
+  # standardised carrier has no T0MEANS parameter, so the lookup comes back
+  # short and trips the layout check below.
+  if (population_standardised) {
+    # nothing to derive
+  } else if (!is.null(expanded$modelmats$matsetup)) {
     setup <- as.data.frame(expanded$modelmats$matsetup)
     values <- as.data.frame(expanded$modelmats$matvalues)
     varying_parameters <- unique(setup$param[setup$indvarying > 0L])
@@ -1741,6 +1756,17 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     if (!length(entry) || is.na(table$param[entry[1L]])) NA_character_ else
       as.character(table$param[entry[1L]])
   }, character(1L))
+  # A standardised carrier has no T0MEANS label: its mean is fixed to zero and
+  # the effect's mean has moved to a PARS parameter of its own. The names come
+  # from the popregression spec, which is where the basis is decided, and they
+  # are in carrier order because `.ctPopRegressionRewrite()` reads the carrier
+  # states in that same order.
+  if (isTRUE(model[["popregression"]]$standardised)) {
+    basis <- model[["popregression"]]$basis
+    if (length(basis) == length(varying_names)) {
+      varying_names <- as.character(basis)
+    }
+  }
   # The population covariance is its own matrix, sized by the number of random
   # effects rather than by the augmented state dimension. Its row `i` is
   # population position `i`; which state that is lives in `population_indices`,
@@ -1755,7 +1781,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # `.ctPopRegressionRawPopVarConflicts()` rather than here, so that the
   # explicit/defaulted convention this feature already has -- an asked-for rank
   # errors, a defaulted one backs off -- applies to it too.
-  population_factor <- .ctPopFactorConstruction(model)
+
   # Match Stan's unconstrained parameter order exactly: all population scales,
   # then lower-triangular correlation coordinates column by column.
   for (position in seq_along(augmented_indices)) {
@@ -1772,6 +1798,14 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     # `julia_popcov_i_j` this used to invent.
     spec <- .ctModelRawPopVarEntry(model, varying_names[position])
     fixedvalue <- .ctModelRawPopVarValue(spec)
+    # A standardised dimension has unit variance by definition, so the
+    # diagonal is fixed at 1 and no RAWPOPVAR statement can apply: the basis
+    # loadings carry the spread now, and `.ctPopRegressionFactorConflicts()`
+    # is what refuses a statement that would have meant otherwise.
+    if (population_standardised) {
+      spec <- NA_character_
+      fixedvalue <- 1 / t0means_state_scale[position]
+    }
     if (is.finite(fixedvalue)) {
       if (fixedvalue < 0) {
         stop("RAWPOPVAR['", varying_names[position], "', '",
@@ -1846,6 +1880,11 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       spec <- .ctModelRawPopVarEntry(model, varying_names[row_position],
         varying_names[column_position])
       fixedvalue <- .ctModelRawPopVarValue(spec)
+      # Orthogonal dimensions, so every off-diagonal is a fixed zero.
+      if (population_standardised) {
+        spec <- NA_character_
+        fixedvalue <- 0
+      }
       if (is.finite(fixedvalue)) {
         table$param[index] <- NA_character_
         table$parnumber[index] <- NA_integer_

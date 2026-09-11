@@ -1008,7 +1008,19 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # the reportable cells, and raised the same message when nothing survived. Only
 # the first line differs, so only the first line is written twice.
 .ctBackendVaryingParameters <- function(spec, cells) {
-  varying <- if (!is.null(spec$laplace)) as.integer(spec$laplace$re_index) else {
+  regression <- spec$model$popregression
+  varying <- if (!is.null(spec$laplace)) as.integer(spec$laplace$re_index) else
+    if (isTRUE(regression$standardised)) {
+    # The loading form has no population sd parameters at all: the block is a
+    # fixed identity and the loadings carry the spread. So the parameters that
+    # differ by subject are the effects' MEANS -- which is the slot the
+    # quadrature displaces to integrate a transform over its population
+    # distribution, and the slot a regressed effect has always been identified
+    # by (see `.ctBackendPopRegressionPopulation()`). Every effect is in that
+    # position now, the basis ones included.
+    as.integer(.ctBackendPopParnumber(spec,
+      c(regression$basis, regression$regressed)))
+  } else {
     augmented <- .ctBackendAugmentedSds(spec)
     if (is.null(augmented)) integer() else augmented$parnumber
   }
@@ -1324,19 +1336,41 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   }
   cells <- .ctBackendFreeParameterCells(fit)
   cells <- cells[!cells$randomeffect, , drop = FALSE]
-  varying <- .ctBackendVaryingParameters(spec, cells)
+  regression <- spec$model$popregression
+  # Under the standardised loading form no effect is locatable by parameter
+  # number: a carrier state is a dimension rather than an effect, and an
+  # effect's `varying` parameter is its *mean*, which is a fixed effect whose
+  # cell is the same for every subject. Reading it gives a constant column. So
+  # every effect goes through the cell route below instead, basis included.
+  standardised <- isTRUE(regression$standardised)
+  varying <- if (standardised) integer() else
+    .ctBackendVaryingParameters(spec, cells)
 
   if (isTRUE(pointest)) fit$estimate$rawposterior <- NULL
   extracted <- .ctBackendExtract(fit, subjectMatrices = TRUE, nsamples = nsamples)
 
   index <- match(varying, cells$parnumber)
   parnames <- .ctBackendParameterNames(cells)[index]
-  reference <- extracted[[paste0("subj_", cells$matrix[index[1L]])]]
-  out <- array(NA_real_, dim = c(dim(reference)[1L], dim(reference)[2L], length(varying)))
-  for (position in seq_along(index)) {
-    cell <- index[position]
-    values <- extracted[[paste0("subj_", cells$matrix[cell])]]
-    out[, , position] <- values[, , cells$row[cell], cells$col[cell]]
+  if (length(index)) {
+    reference <- extracted[[paste0("subj_", cells$matrix[index[1L]])]]
+    out <- array(NA_real_, dim = c(dim(reference)[1L], dim(reference)[2L],
+      length(varying)))
+    for (position in seq_along(index)) {
+      cell <- index[position]
+      values <- extracted[[paste0("subj_", cells$matrix[cell])]]
+      out[, , position] <- values[, , cells$row[cell], cells$col[cell]]
+    }
+  } else {
+    # Nothing from this route. The dimensions come from whichever subject
+    # matrix the cell route is about to read, so that the arrays concatenate.
+    first <- if (!is.null(regression$basiscells)) regression$basiscells$matrix[1L]
+      else regression$cells$matrix[1L]
+    reference <- extracted[[paste0("subj_", first)]]
+    if (is.null(reference)) {
+      stop("No individually varying parameters in model!", call. = FALSE)
+    }
+    out <- array(NA_real_, dim = c(dim(reference)[1L], dim(reference)[2L], 0L))
+    parnames <- character()
   }
 
   # A `poprank` fit's regressed effects vary by subject without having a
@@ -1352,7 +1386,21 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   # the population summary needed. It earns it: what is wanted is the
   # per-subject value of a cell that is not a plain parameter, and the
   # enumeration this function is built on has no way to name that.
-  driven <- .ctBackendSpec(fit)$model$popregression$cells
+  driven <- regression$cells
+  # The basis effects join them under the loading form. Their coordinates were
+  # recorded before the augmentation, and the augmentation rewrites a cell's
+  # text in place rather than moving it, so they still locate the same cells.
+  if (standardised && !is.null(regression$basiscells)) {
+    shared <- intersect(names(regression$basiscells), names(driven))
+    driven <- if (is.null(driven) || !nrow(driven))
+      regression$basiscells[, c("param", "matrix", "row", "col"), drop = FALSE]
+      else rbind(regression$basiscells[, shared, drop = FALSE],
+        driven[, shared, drop = FALSE])
+    # One effect can drive more than one cell -- a DRIFT entry and its JAx
+    # mirror carry the same label -- and they hold the same value, so reporting
+    # both would give a duplicated column.
+    driven <- driven[!duplicated(driven$param), , drop = FALSE]
+  }
   if (!is.null(driven) && nrow(driven)) {
     extra <- array(NA_real_, dim = c(dim(out)[1L], dim(out)[2L], nrow(driven)))
     keep <- rep(TRUE, nrow(driven))

@@ -303,8 +303,24 @@
   # variances the data does determine. Said once, here, rather than left for a
   # user to infer from a likelihood that moved.
   approximate <- rank < nmean
+  # Where each basis effect's cells are, as coordinates, recorded now because
+  # they cannot be found later. `.ctModelIntOverPop()` replaces the `param`
+  # token in a basis cell with `state[j]`, so after it runs the cell's text no
+  # longer mentions the effect at all -- and it rebuilds the T0VAR block, so a
+  # row index taken here would not survive either.
+  #
+  # Every row carrying the label, which is what the regressed path also takes:
+  # an effect can drive more than one cell (a DRIFT entry and its JAx mirror,
+  # or a label used twice), and all of them read the same carrier state.
+  basiscells <- do.call(rbind, lapply(basis, function(b) {
+    rows <- which(!is.na(pars$param) & pars$param %in% b)
+    if (!length(rows)) return(NULL)
+    data.frame(param = b, matrix = as.character(pars$matrix[rows]),
+      row = as.integer(pars$row[rows]), col = as.integer(pars$col[rows]),
+      row.names = NULL, stringsAsFactors = FALSE)
+  }))
   list(rank = rank, basis = basis, regressed = regressed, roles = roles,
-    nmean = nmean, approximate = approximate,
+    nmean = nmean, approximate = approximate, basiscells = basiscells,
     npar = rank * (rank + 1L) / 2L + length(regressed) * rank)
 }
 
@@ -614,12 +630,101 @@
       if (length(effectcols)) m$pars[ri, effectcols] <- FALSE
     }
   }
+  # --- the basis effects, as loadings on the standardised dimensions --------
+  #
+  # Each basis cell reads `tf(state[j])` by now, and the substitution target is
+  # that one token. Addressed by the coordinates `.ctPopRegressionSpec()`
+  # recorded before the augmentation, because the cell's text no longer
+  # mentions the effect and the regressed cells contain the same token and must
+  # keep it.
+  loadings <- list()
+  for (pos in seq_along(spec$basis)) {
+    p <- spec$basis[pos]
+    cells <- spec$basiscells[spec$basiscells$param %in% p, , drop = FALSE]
+    if (!nrow(cells)) {
+      stop('Internal error: no recorded cell for basis random effect ', p, '.',
+        call. = FALSE)
+    }
+    effects <- NULL
+    if (length(effectcols)) {
+      own <- which(!is.na(m$pars$param) & m$pars$param %in% p)
+      if (length(own)) effects <- vapply(effectcols,
+        function(cc) any(m$pars[own, cc] %in% TRUE), logical(1L))
+    }
+    # The mean keeps the effect's own name, as a regressed effect's does, so a
+    # summary still has a row called `dr1` meaning the population mean of dr1.
+    # It moves here from the carrier's T0MEANS row, which is fixed to zero
+    # below.
+    addpar(p, effects)
+    # Triangular: effect at position `pos` loads on dimensions 1..pos. That is
+    # what removes the rotation freedom a free loading matrix would have, and
+    # it keeps the parameter count at r(r+1)/2 over the basis block, which is
+    # what the sd-and-correlation block had.
+    own_loadings <- paste0('L_', p, '_', seq_len(pos))
+    # `sdscale` multiplied this effect's population sd under the previous
+    # parameterisation. Its spread is a row norm of the loading matrix now, so
+    # the scale goes on the row -- which scales the spread by exactly the same
+    # factor. Omitting it would leave the argument accepted and ignored.
+    own_scale <- suppressWarnings(as.numeric(
+      m$pars$sdscale[!is.na(m$pars$param) & m$pars$param %in% p])[1L])
+    if (!is.finite(own_scale) || own_scale == 0) own_scale <- 1
+    for (l in own_loadings) {
+      addpar(l)
+      if (own_scale != 1) {
+        newpars[[length(newpars)]]$transform <-
+          sprintf('%.17g * param', own_scale)
+      }
+    }
+    loadings[[length(loadings) + 1L]] <- data.frame(
+      param = p, dimension = seq_len(pos), loading = own_loadings,
+      state = as.integer(stateof[seq_len(pos)]),
+      row.names = NULL, stringsAsFactors = FALSE)
+    predictor <- paste0('(', p, ' + ', paste0(own_loadings, ' * state[',
+      stateof[seq_len(pos)], ']', collapse = ' + '), ')')
+    target <- paste0('state[', stateof[pos], ']')
+    for (ci in seq_len(nrow(cells))) {
+      ri <- which(m$pars$matrix %in% cells$matrix[ci] &
+          m$pars$row == cells$row[ci] & m$pars$col == cells$col[ci])
+      if (length(ri) != 1L) {
+        stop('Internal error: basis cell ', cells$matrix[ci], '[',
+          cells$row[ci], ',', cells$col[ci], '] for ', p,
+          ' is not uniquely locatable after augmentation.', call. = FALSE)
+      }
+      text <- as.character(m$pars$param[ri])
+      if (is.na(text) || !grepl(target, text, fixed = TRUE)) {
+        stop('Internal error: basis cell ', cells$matrix[ci], '[',
+          cells$row[ci], ',', cells$col[ci], '] does not read ', target,
+          ' as expected; found ', if (is.na(text)) 'NA' else text, '.',
+          call. = FALSE)
+      }
+      m$pars$param[ri] <- gsub(target, predictor, text, fixed = TRUE)
+      m$pars$indvarying[ri] <- FALSE
+      if (length(effectcols)) m$pars[ri, effectcols] <- FALSE
+    }
+    # And the carrier becomes the dimension: mean zero, so `state[i]` is the
+    # standardised deviation and nothing else.
+    ti <- which(m$pars$matrix %in% 'T0MEANS' & m$pars$row == stateof[pos] &
+        m$pars$col == 1)
+    if (length(ti) != 1L) {
+      stop('Internal error: no unique carrier T0MEANS row for ', p, '.',
+        call. = FALSE)
+    }
+    m$pars$param[ti] <- NA_character_
+    m$pars$value[ti] <- 0
+    m$pars$transform[ti] <- NA_character_
+    if (length(effectcols)) m$pars[ti, effectcols] <- FALSE
+  }
+
   m$pars <- rbind(m$pars, do.call(rbind, newpars))
   m$pars[] <- lapply(m$pars, utils::type.convert, as.is = TRUE)
   spec$coefficients <- do.call(rbind, coefficients)
+  spec$loadings <- do.call(rbind, loadings)
   spec$cells <- do.call(rbind, drivencells)
   spec$route <- 'augmented'
   spec$state <- stateof
+  # The population block is the identity under this form, which the julia
+  # augmentation reads to fix it rather than estimate it.
+  spec$standardised <- TRUE
   m$popregression <- spec
   m
 }

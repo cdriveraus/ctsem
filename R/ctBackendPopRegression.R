@@ -50,12 +50,84 @@
 # spread because `b` and `S` both have one -- so the interval it reports is
 # real, unlike the full-rank route's interval on a coordinate the likelihood
 # cannot distinguish.
+# The population moments under the standardised loading form: `Sigma = L L'`.
+#
+# One matrix product per draw, and no `T0cov` read at all -- the dimensions are
+# standardised by construction, so the covariance is entirely the loadings.
+# Rows are the basis effects in carrier order, then the regressed ones, which
+# is the order the rest of the summary machinery expects.
+#
+# Row `i` of the basis block has `i` free loadings and zeros after, which is
+# what removes the rotation freedom. A regressed row is full.
+.ctBackendPopLoadingPopulation <- function(spec, samples, regression,
+  basis, regressed, coefficients, ndraws) {
+  loadings <- regression$loadings
+  if (is.null(loadings) || !nrow(loadings)) return(NULL)
+  r <- length(basis)
+  k <- r + length(regressed)
+
+  number <- matrix(NA_integer_, k, r,
+    dimnames = list(c(basis, regressed), NULL))
+  for (i in seq_len(nrow(loadings))) {
+    number[loadings$param[i], loadings$dimension[i]] <-
+      .ctBackendPopParnumber(spec, loadings$loading[i])
+  }
+  for (i in seq_len(nrow(coefficients))) {
+    number[coefficients$param[i], match(coefficients$basis[i], basis)] <-
+      .ctBackendPopParnumber(spec, coefficients$coefficient[i])
+  }
+  # The basis block's upper triangle is structurally zero, so those entries are
+  # expected to be missing; anything else missing means the table and the spec
+  # disagree and a covariance built from it would be wrong.
+  structural <- outer(seq_len(k), seq_len(r), function(i, j) i <= r & j > i)
+  if (any(is.na(number) != structural)) return(NULL)
+
+  covariance <- array(0, dim = c(ndraws, k, k))
+  for (d in seq_len(ndraws)) {
+    L <- matrix(0, k, r)
+    L[!structural] <- samples[d, as.integer(number[!structural])]
+    covariance[d, , ] <- L %*% t(L)
+  }
+
+  meannumber <- .ctBackendPopParnumber(spec, c(basis, regressed))
+  if (anyNA(meannumber)) return(NULL)
+  rawsd <- matrix(vapply(seq_len(k), function(i) sqrt(pmax(covariance[, i, i], 0)),
+    numeric(ndraws)), nrow = ndraws)
+  rawcorr <- NULL
+  if (k > 1L) {
+    lower <- which(lower.tri(diag(k)), arr.ind = TRUE)
+    rawcorr <- matrix(vapply(seq_len(nrow(lower)), function(entry) {
+      i <- lower[entry, 1L]; j <- lower[entry, 2L]
+      denominator <- sqrt(covariance[, i, i] * covariance[, j, j])
+      ifelse(denominator > 0, covariance[, i, j] / denominator, NA_real_)
+    }, numeric(ndraws)), nrow = ndraws)
+  }
+  list(parnumber = as.integer(meannumber), param = c(basis, regressed),
+    rawsd = rawsd, rawcorr = rawcorr, level = spec$model$subjectIDname,
+    covariance = covariance, rank = regression$rank,
+    regressed = regressed, approximate = isTRUE(regression$approximate))
+}
+
 .ctBackendPopRegressionPopulation <- function(spec, samples, layout, flat) {
   regression <- spec$model$popregression
-  augmented <- .ctBackendAugmentedSds(spec)
-  if (is.null(regression) || is.null(augmented)) return(NULL)
+  if (is.null(regression)) return(NULL)
   coefficients <- regression$coefficients
   if (is.null(coefficients) || !nrow(coefficients)) return(NULL)
+
+  # BEFORE the `augmented` guard below, not after. Under the standardised
+  # loading form there are no free population sd parameters at all -- the block
+  # is a fixed identity -- so `.ctBackendAugmentedSds()` is empty and that
+  # guard returned NULL before this branch could run, which is what left
+  # `summary()$popsd` NULL. The whole covariance is `L L'` here: the dimensions
+  # have unit variance by construction, so there is no basis block to read out
+  # of `T0cov` and no product with it to form.
+  if (isTRUE(regression$standardised)) {
+    return(.ctBackendPopLoadingPopulation(spec, samples, regression,
+      regression$basis, regression$regressed, coefficients, nrow(samples)))
+  }
+
+  augmented <- .ctBackendAugmentedSds(spec)
+  if (is.null(augmented)) return(NULL)
 
   sds <- augmented$sds
   basis <- regression$basis
@@ -68,6 +140,7 @@
   basisorder <- match(basisparam, basis)
   if (anyNA(basisorder)) return(NULL)
   scale <- if (is.null(sds$scale)) rep(1, nrow(sds)) else as.numeric(sds$scale)
+
   t0cov <- .ctBackendReshape(flat, layout, match("T0cov", layout$matrix))
   S <- .ctBackendPopBasisCovariance(t0cov, sds$row, scale, ndraws)
 

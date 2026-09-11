@@ -504,8 +504,16 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
     expect_true('beta_df11_dr11' %in% namesauto)
     # The coordinates the profile likelihood cannot distinguish are gone.
     expect_false(any(c('popsd_df11', 'rawcor_df11__dr11') %in% namesauto))
-    # ... and the population mean of the regressed effect is still estimated.
-    expect_true(all(c('dr11', 'df11', 'popsd_dr11') %in% namesauto))
+    # And no population sd or correlation coordinate survives at all: the
+    # reduced-rank block is a fixed identity over standardised dimensions, so
+    # the spread lives in the loadings. A basis effect keeps one -- `L_<p>_<j>`
+    # is its loading on dimension j -- and that is the parameter `popsd_dr11`
+    # used to be.
+    expect_false(any(grepl('^popsd_|^rawcor_', namesauto)))
+    expect_true('L_dr11_1' %in% namesauto)
+    # ... and every effect population mean is still estimated, basis and
+    # regressed alike.
+    expect_true(all(c('dr11', 'df11') %in% namesauto))
 
     augdim <- function(spec) {
       table <- as.data.frame(spec$parameter_table)
