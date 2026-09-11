@@ -4,12 +4,23 @@
 Anything `ctsem_optimize` can maximise: a prepared likelihood over a vector,
 answering `ctsem_evaluate(objective, x; gradient, gradient_method)`.
 
-There are two. `CTSEMObjective` is the marginal one, over the parameters alone
-with the latent states integrated out by the filter. `CTSEMJointObjective`
+There are three. `CTSEMObjective` is the marginal one, over the parameters
+alone with the latent states integrated out by the filter. `CTSEMJointObjective`
 (`state_sampling.jl`) is the state-explicit one, over the parameters *and* the
-innovations that build the states. The optimiser needs to know nothing about
-the difference, and does not: it asks for a value and a gradient at a vector,
-and both answer.
+innovations that build the states. `CTSEMLaplaceObjective` (`laplace.jl`) is
+the multilevel one, over the population parameters with each unit's random
+effects at their own mode. The optimiser needs to know nothing about the
+difference, and does not: it asks for a value and a gradient at a vector, and
+all three answer.
+
+The third answers that contract but does not yet go through
+`ctsem_optimize`: it has its own copy of the driver, which is why the
+convergence verdict below is shared rather than duplicated a fourth time. What
+remains to merge is the `fg!` closure -- whose only semantic difference is that
+a trial point where a unit's inner Newton did not converge is invalid, since
+the objective is not defined away from the mode -- the trace's extra `inner`
+column, the progress line's extra field, the call accounting, and five extra
+result fields.
 
 An abstract type rather than a `Union` because the second is defined several
 files later -- a signature naming it here could not be parsed.
@@ -692,6 +703,87 @@ function _ctsem_predicted_gain(ls::CTSEMDirectional)
     isfinite(ls.dphi0) ? abs(ls.dphi0) / 2 : Inf
 end
 
+"""
+    _ctsem_optimise_verdict(objective, minimizer, start_values, value, gradient_norm,
+                            saturated_parameters, g_tol; label, verbose)
+
+Whether an optimiser arrived at a maximum, in one place for every route.
+
+Optim's own `converged` is the disjunction of three criteria, and a line search
+that fails on its first try satisfies the `f` one trivially: the objective did
+not change because nothing was accepted. Measured on a 100-subject model, that
+route stopped with `g_converged=false` and a largest gradient of 3.5e-07
+against `g_tol=1e-8` and reported success. So convergence is judged on the
+gradient, and on three separate ways of not being at a maximum.
+
+`stalled` is an optimiser that never left its starting values while the
+gradient there is not zero -- a fit that has not fitted anything, whatever its
+flags say. `overshot` is an optimiser that stepped into the flat region of a
+parameter's transform, where the gradient underflows to zero and every
+tolerance passes: `_ctsem_overshot` separates that from a coordinate the data
+simply do not identify by pulling the coordinate back and asking whether the
+objective improves. Saturation on its own is a finding and not a failure, and
+only the overshoot disqualifies the fit.
+
+Two measurements are why the criteria are shaped as they are, and they were
+recorded on the two routes separately before this was one function. Optim's
+`g_tol` is an *absolute* bound, and a log likelihood of order 1e3 puts 1e-8 out
+of reach however good the fit is -- L-BFGS runs out of line search first and
+reports nothing converged -- so convergence is also allowed on a criterion that
+scales with the problem. That is deliberately an addition to the strict test and
+never a loosening of it, because loosening is how the failure it replaced stayed
+hidden: on one 12-subject model the old code stopped after a single iteration
+with a gradient of 1.2e9 and a log likelihood of -7.7e6 and reported success,
+and that point fails the scaled criterion by eight orders. And `finite_gradient`
+is tested explicitly because `Optim.g_converged` can be true at a point whose
+gradient is NaN -- it was set on an earlier iterate -- and `NaN <= tolerance` is
+false, so the scaled test alone would not catch it: one draw in ten reported
+convergence with a NaN gradient.
+
+`scaled_tolerance` is retained as the criterion this returns, and is *not*
+recommended as the thing to judge a fit by: it compares a gradient against
+`1e-6 * max(1, |value|)`, which is dimensionally a threshold in objective units
+against a quantity in objective-per-parameter, and carries the likelihood's
+arbitrary additive constants -- rescaling the manifest variables loosens it.
+What a fit still has to gain is measured exactly after it, in objective units,
+by `.ctBackendOptimGap()` on the R side.
+
+`saturated_parameters` arrives as an argument because the routes detect it
+differently: the marginal and joint ones ask `_ctsem_saturated_parameters` over
+`_ctsem_saturation_range`, and the laplace one adds the levels whose
+correlations saturate together (`_laplace_saturated_parameters`).
+"""
+function _ctsem_optimise_verdict(objective, minimizer, start_values, value,
+        gradient_norm, saturated_parameters, g_tol;
+        label::AbstractString="ctsem_optimize", verbose::Bool=false)
+    moved = isempty(minimizer) ? 0.0 : maximum(abs, minimizer .- start_values)
+    saturated = !isempty(saturated_parameters)
+    stalled = moved == 0 && (!isfinite(value) || gradient_norm > max(g_tol, 1e-6))
+    scaled_tolerance = max(g_tol, 1e-6 * max(one(gradient_norm), abs(value)))
+    finite_gradient = isfinite(gradient_norm)
+    converged_enough = isfinite(value) && finite_gradient &&
+        gradient_norm <= scaled_tolerance
+    overshoot = _ctsem_overshot(objective, minimizer, saturated_parameters,
+        value, scaled_tolerance)
+    overshot = overshoot.overshot
+    verbose && stalled && println(_console(), label, ": the optimizer made no ",
+        "progress from its starting values; reporting this as not converged")
+    verbose && overshot && println(_console(), label, ": raw parameter(s) ",
+        saturated_parameters, " have a materialising transform that is flat ",
+        "to machine precision at the estimate, and pulling one back improves ",
+        "the objective by ", overshoot.gain, ", so this is not a maximum; ",
+        "reporting this as not converged")
+    verbose && saturated && !overshot && println(_console(), label,
+        ": raw parameter(s) ", saturated_parameters, " have a materialising ",
+        "transform that is flat to machine precision at the estimate, but no ",
+        "pullback improves the objective, so this is a maximum with those ",
+        "coordinates unidentified rather than a failed fit")
+    (moved=moved, saturated=saturated, stalled=stalled,
+        scaled_tolerance=scaled_tolerance, finite_gradient=finite_gradient,
+        converged_enough=converged_enough, overshoot=overshoot,
+        overshot=overshot)
+end
+
 """Optimize a prepared likelihood entirely within Julia using L-BFGS."""
 function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     maxiter::Integer=1000, g_tol::Real=1e-8, f_tol::Real=0.0,
@@ -867,12 +959,6 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # 100-subject model, this route stopped with `g_converged=false` and a
     # largest gradient of 3.5e-7 against `g_tol=1e-8` and reported success.
     #
-    # `g_tol` is an *absolute* bound, so a log likelihood of order 1e3 puts 1e-8
-    # out of reach however good the fit is. `scaled_tolerance` is the criterion
-    # that scales with the problem; it is an addition to the strict test, never
-    # a loosening of it, and `stalled` is what stops a fit that never moved from
-    # passing either.
-    moved = isempty(minimizer) ? 0.0 : maximum(abs, minimizer .- start_values)
     gradient_norm = isempty(final.gradient) ? 0.0 : maximum(abs, final.gradient)
     # `max(shown, ...)`: when the backtracking fallback ran and was kept,
     # `Optim.iterations` describes that second run alone, which can be fewer
@@ -934,38 +1020,26 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # region -- a trajectory five standard deviations out is unusual data, not
     # an unidentified parameter, and reading it as saturation would report
     # every such fit as failed.
-    saturation_range = _ctsem_saturation_range(objective, minimizer)
     saturated_parameters = _ctsem_saturated_parameters(
-        _ctsem_params(objective), minimizer, saturation_range)
-    saturated = !isempty(saturated_parameters)
-    stalled = moved == 0 && (!isfinite(final.value) || gradient_norm > max(g_tol, 1e-6))
-    scaled_tolerance = max(g_tol, 1e-6 * max(one(gradient_norm), abs(final.value)))
-    # See `ctsem_laplace_optimize`: a NaN gradient is not convergence, and
-    # Optim's own criterion can be true at one.
-    finite_gradient = isfinite(gradient_norm)
-    converged_enough = isfinite(final.value) && finite_gradient &&
-        gradient_norm <= scaled_tolerance
-    # Saturation on its own is not a failure to converge -- see
-    # `_ctsem_overshot`, which asks the question that separates an optimizer
-    # that overstepped into the flat region from a coordinate the data simply
-    # do not identify. Only the first is a convergence failure, and only the
-    # first disqualifies the fit below.
-    overshoot = _ctsem_overshot(objective, minimizer, saturated_parameters,
-        final.value, scaled_tolerance)
-    overshot = overshoot.overshot
-    verbose && stalled && println(_console(), "ctsem_optimize: the optimizer made no progress ",
-        "from its starting values; reporting this as not converged")
-    verbose && overshot && println(_console(), "ctsem_optimize: raw parameter(s) ",
-        saturated_parameters, " have a materialising transform that is flat ",
-        "to machine precision at the estimate, and pulling one back improves ",
-        "the objective by ", overshoot.gain, ", so this is not a maximum; ",
-        "reporting this as not converged")
-    verbose && saturated && !overshot && println(_console(), "ctsem_optimize: raw ",
-        "parameter(s) ", saturated_parameters, " have a materialising ",
-        "transform that is flat to machine precision at the estimate, but no ",
-        "pullback improves the objective, so this is a maximum with those ",
-        "coordinates unidentified rather than a failed fit")
-
+        _ctsem_params(objective), minimizer,
+        _ctsem_saturation_range(objective, minimizer))
+    # And the verdict itself, which every route reaches the same way and in one
+    # place: see `_ctsem_optimise_verdict`.
+    verdict = _ctsem_optimise_verdict(objective, minimizer, start_values,
+        final.value, gradient_norm, saturated_parameters, g_tol;
+        label="ctsem_optimize", verbose=verbose)
+    saturated = verdict.saturated
+    stalled = verdict.stalled
+    scaled_tolerance = verdict.scaled_tolerance
+    finite_gradient = verdict.finite_gradient
+    converged_enough = verdict.converged_enough
+    overshoot = verdict.overshoot
+    overshot = verdict.overshot
+    verbose && !stalled && !(finite_gradient &&
+        (Optim.g_converged(result) || converged_enough)) &&
+        println(_console(), "ctsem_optimize: the optimizer stopped with a largest gradient of ",
+            gradient_norm, " against a tolerance of ", scaled_tolerance,
+            "; reporting this as not converged")
     return (
         minimizer=minimizer,
         maximum_loglik=final.value,

@@ -334,7 +334,7 @@ warm-start the next evaluation's Newton solve. Across an outer optimizer's
 trajectory consecutive parameter vectors are close, so the inner solve usually
 converges in one or two steps after the first evaluation.
 """
-mutable struct CTSEMLaplaceObjective{O}
+mutable struct CTSEMLaplaceObjective{O} <: CTSEMOptimisable
     objective::O
     spec::CTSEMLaplaceSpec
     units::CTSEMLaplaceUnits
@@ -3012,7 +3012,6 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
     # nothing was accepted. Two fits in thirteen returned their starting values
     # this way, reporting success, which in a simulation study is silently
     # wrong rather than loudly broken.
-    moved = isempty(minimizer) ? 0.0 : maximum(abs, minimizer .- start_values)
     gradient_norm = isempty(final.gradient) ? 0.0 : maximum(abs, final.gradient)
     # `ctsem_optimize` has always closed its progress line and this route never
     # did, so an in-place update was left open and whatever R printed next
@@ -3030,81 +3029,20 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
             capped ? " -- ITERATION CAP REACHED, not converged" : ""),
         @sprintf("logpost %.4f", final.value),
         @sprintf("|g| %.2e", gradient_norm))
-    stalled = moved == 0 && (!isfinite(final.value) || gradient_norm > max(g_tol, 1e-6))
-    # Optim's `g_tol` is an *absolute* bound on the gradient, and a log
-    # likelihood of order 1e3 puts 1e-8 out of reach however good the fit is --
-    # L-BFGS runs out of line search first and reports nothing converged. So
-    # convergence is also allowed on a criterion that scales with the problem.
-    #
-    # This is deliberately not a loosening of the strict test, because that is
-    # how the failure this replaced stayed hidden: on one 12-subject model the
-    # old code stopped after a single iteration with a gradient of 1.2e9 and a
-    # log likelihood of -7.7e6, and reported success. That point fails the
-    # scaled criterion by eight orders of magnitude.
-    scaled_tolerance = max(g_tol, 1e-6 * max(one(gradient_norm), abs(final.value)))
-    # `isfinite(gradient_norm)` explicitly: `Optim.g_converged` can be true at
-    # a point whose gradient is NaN, since it was set on an earlier iterate,
-    # and `NaN <= tolerance` is false so the scaled test alone would not have
-    # caught it. One draw in ten reported convergence with a NaN gradient.
-    finite_gradient = isfinite(gradient_norm)
-    # The same guard `ctsem_optimize` has, which this route was left out of --
-    # and, like that one, judged on the materialising transform's own
-    # derivative rather than the raw coordinate's magnitude. See
-    # `_ctsem_saturated_parameters` (`parameter_transforms.jl`) for why a
-    # magnitude threshold cannot work (an identity-transformed coordinate
-    # never saturates at any magnitude; different transforms go flat at
-    # different raw magnitudes) and `_laplace_saturated_parameters` for the
-    # population-scale and -correlation coordinates this route additionally
-    # carries, which live outside the ordinary parameter transforms. A
-    # parameter whose transform derivative has collapsed reports a zero
-    # gradient, satisfies any tolerance, and is indistinguishable from an
-    # optimum -- while being pinned by the transform's floating-point limit
-    # rather than by the data. A variance going to zero is the usual way in.
+    # `_laplace_saturated_parameters` rather than the shared detector: a level
+    # of correlations can saturate together here, which the per-cell check does
+    # not see. The verdict it feeds is the shared one.
     saturated_parameters = _laplace_saturated_parameters(laplace, minimizer)
-    saturated = !isempty(saturated_parameters)
-    converged_enough = isfinite(final.value) && finite_gradient &&
-        gradient_norm <= scaled_tolerance
-    # See `_ctsem_overshot` (`ctsem_backend.jl`): saturation is two different
-    # outcomes wearing the same zero gradient, and only one of them -- the
-    # optimizer overstepping into the flat region -- is a failure to converge.
-    #
-    # The probe evaluates the objective away from the estimate, which on this
-    # route overwrites `laplace`'s inner modes and their status, and everything
-    # below reads that state. So `final` is taken again afterwards: reporting
-    # the probe point's inner-mode failures as the fit's would be exactly the
-    # class of plausible wrong answer this is fixing.
-    overshoot = _ctsem_overshot(laplace, minimizer, saturated_parameters,
-        final.value, scaled_tolerance)
-    overshot = overshoot.overshot
-    if saturated
-        final = ctsem_laplace_evaluate(laplace, minimizer; gradient=true)
-    end
-    # Convergence needs a small gradient, and nothing else counts as one.
-    #
-    # `Optim.converged` is the disjunction of its x, f and g criteria, and the
-    # first two are satisfied by a line search that stops making progress: the
-    # step went to zero, so x did not move and f did not change. That is the
-    # signature of giving up, not of arriving. Measured on a 25-subject ordinal
-    # model, one starting draw in ten stopped after three iterations with a
-    # gradient of 681 and a log likelihood 146 units below the optimum, and
-    # `Optim.converged` said true. `stalled` did not catch it because the
-    # optimizer had moved.
-    #
-    # `g_converged` is kept as an alternative to the scaled test because it is
-    # a genuine gradient criterion; it is just an absolute one, and `g_tol` is
-    # out of reach on a log likelihood of order 1e3 however good the fit.
-    verbose && stalled && println(_console(), "Laplace: the optimizer made no progress from ",
-        "its starting values; reporting this as not converged")
-    verbose && overshot && println(_console(), "Laplace: raw parameter(s) ",
-        saturated_parameters, " have a materialising transform that is flat ",
-        "to machine precision at the estimate, and pulling one back improves ",
-        "the objective by ", overshoot.gain, ", so this is not a maximum; ",
-        "reporting this as not converged")
-    verbose && saturated && !overshot && println(_console(), "Laplace: raw parameter(s) ",
-        saturated_parameters, " have a materialising transform that is flat ",
-        "to machine precision at the estimate, but no pullback improves the ",
-        "objective, so this is a maximum with those coordinates unidentified ",
-        "rather than a failed fit")
+    verdict = _ctsem_optimise_verdict(laplace, minimizer, start_values,
+        final.value, gradient_norm, saturated_parameters, g_tol;
+        label="Laplace", verbose=verbose)
+    saturated = verdict.saturated
+    stalled = verdict.stalled
+    scaled_tolerance = verdict.scaled_tolerance
+    finite_gradient = verdict.finite_gradient
+    converged_enough = verdict.converged_enough
+    overshoot = verdict.overshoot
+    overshot = verdict.overshot
     verbose && !stalled && !(finite_gradient &&
         (Optim.g_converged(result) || converged_enough)) &&
         println(_console(), "Laplace: the optimizer stopped with a largest gradient of ",
@@ -3247,6 +3185,12 @@ Returns the approximated log *marginal* likelihood and its gradient. The
 `gradient_method` names the process gradient elsewhere in the engine and has no
 meaning here -- the Laplace gradient is a forward sweep over the reverse pass
 regardless -- so it is accepted and ignored rather than rejected.
+
+Deliberately without `converged`, which `ctsem_laplace_evaluate` does carry: a
+caller through this entry point wants a value and a gradient, and the one thing
+that needs the inner solve's verdict is the optimiser's own `fg!`, which calls
+`ctsem_laplace_evaluate` directly. Merging the two drivers means giving the
+shared one a validity hook rather than smuggling the flag through here.
 """
 function ctsem_evaluate(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     gradient::Bool=true, contributions::Bool=false, gradient_method=:adjoint)
@@ -3427,3 +3371,6 @@ function ctsem_laplace_effect_layout(laplace::CTSEMLaplaceObjective)
         first_member=first_member[order], nmembers=nmembers[order],
         within=within[order])
 end
+
+"""The parameters a saturation check reads, for the wrapped objective."""
+_ctsem_params(o::CTSEMLaplaceObjective) = _ctsem_params(o.objective)
