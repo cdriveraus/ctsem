@@ -3907,12 +3907,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       "pulled back, so this is not a maximum. Treat this fit as failed and ",
       "check the starting values. See fit$estimate$overshot.", call. = FALSE)
   } else if (!isTRUE(result$converged)) {
-    warning("The optimizer stopped without meeting its convergence criterion: ",
-      "largest gradient ", signif(as.numeric(result$gradient_norm), 3),
-      " against a tolerance of ",
-      signif(as.numeric(result$scaled_tolerance), 3),
-      ". The estimate may still be usable -- compare the two, and see ",
-      "fit$estimate$gradient_norm.", call. = FALSE)
+    # Held rather than raised. The gradient says where the optimizer stopped;
+    # whether that is the optimum is a question about the curvature, and the
+    # curvature is computed a few lines below. Raised there, or superseded.
+    out$estimate$convergence_pending <- TRUE
   }
   if (!is.null(model_spec$laplace)) {
     # The inner solve is part of the objective, so its status is part of
@@ -4041,6 +4039,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   out$collapsedScales <- .ctBackendCollapsedScales(out)
   .ctBackendIdentifyWarn(out$identifiability, out$collapsedScales,
     out$uncertainty$intervalcheck)
+  # And the convergence verdict, once, now that both halves exist: where the
+  # optimizer stopped, and what the curvature there says about the optimum.
+  .ctBackendCertifyWarn(out)
   out
 }
 

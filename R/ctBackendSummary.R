@@ -1778,6 +1778,26 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   out$loglik <- object$estimate$loglik
   out$npars <- length(object$estimate$raw)
   out$aic <- 2 * out$npars - 2 * object$estimate$loglik
+  # How far this estimate is from the optimum, when the curvature to say so was
+  # computed. Absent rather than zero when it was not -- `estonly = TRUE`
+  # computes no Hessian, and reporting a gap of zero for a fit nobody checked
+  # would be the most expensive kind of wrong answer here.
+  certification <- object$uncertainty$certification
+  if (!is.null(certification) && is.finite(certification$gap)) {
+    # As a sentence, not a number. Every numeric element of a summary goes
+    # through `roundSummaryCtStanFitValue()` at `digits` -- three by default --
+    # and a gap worth reporting spans 1e-8 to 1e2, so a converged fit's 1.9e-04
+    # printed as `0`: a measurement turned into a claim of exactness. Fixed
+    # point rounding is the wrong treatment for this quantity rather than the
+    # rounding being wrong, so the exact value stays where it is computed and
+    # the summary says where that is.
+    out$optimgapNote <- paste0(
+      "Predicted objective still available at this estimate: ",
+      signif(certification$gap, 3), " (joint displacement ",
+      signif(certification$lambda, 3),
+      " in the information metric). Status: ", certification$status,
+      ". Exact value: fit$uncertainty$certification$gap.")
+  }
   # Named for what they are. "Number of samples" on an optimised fit meant the
   # uncertainty draws and read as MCMC samples -- a fit that never sampled
   # reporting a sample count.

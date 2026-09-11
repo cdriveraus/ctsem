@@ -277,6 +277,12 @@
   # nothing named the parameter whose interval had no width.
   fit$identifiability <- .ctBackendIdentifiability(uncertaintyfit$hessian,
     names(fit$estimate$se), fit = fit, at = fit$estimate$raw)
+  # What the curvature says about convergence, which a gradient cannot: the
+  # objective still available under the local quadratic approximation, over the
+  # subspace whose curvature the data supports, plus a measurement of what the
+  # excluded directions hold. See R/ctBackendOptimGap.R.
+  fit$uncertainty$certification <- .ctBackendCertification(fit,
+    uncertaintyfit$hessian, tolerance = .ctBackendGapTolerance(fit))
   # New draws mean the fit's constrained draws describe the previous ones, so
   # they are refreshed here rather than left to be noticed downstream.
   fit$transformedpars <- .ctBackendConstrain(fit)
