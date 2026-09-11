@@ -729,12 +729,55 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   JuliaConnectoR::juliaPut(values)
 }
 
-.ctJuliaInitialValues <- function(npar, inits = NULL, initsd = .01) {
+# Raw starting values for the reduced-rank loadings, or NULL when the model has
+# none.
+#
+# Every other parameter can start at raw zero because its transform decides what
+# that means. A loading's transform is linear, so raw zero means a population
+# covariance of zero -- and `Sigma = L L'` has `dSigma/dL = 0` there, so the
+# origin is a stationary point of the map rather than merely a small value.
+# Measured fit-free on a 3-latent, 6-effect model at 90 subjects, the loading
+# gradients at `initsd = .01` are 6.3 against 131.9 for the rest of the model,
+# where the full covariance's own block is 52.4 at the same point: `initsd` was
+# tuned for coordinates in which raw zero means a population sd of 3.47.
+#
+# So each basis effect's own diagonal loading starts at raw 1, which its linear
+# transform turns into one `sdscale` of spread: a diagonal population covariance
+# of `sdscale^2`. The off-diagonals need nothing, because
+# `dSigma[i,m]/dL[i,m] = L[m,m]` and a unit diagonal gives them an O(1)
+# gradient too.
+#
+# The diagonal is the largest dimension each basis effect loads on: the matrix
+# is triangular in its first `r` rows, so the effect at position `pos` loads on
+# dimensions `1..pos` and `pos` is its own.
+.ctJuliaLoadingStart <- function(spec) {
+  loadings <- spec$model$popregression$loadings
+  if (is.null(loadings) || !nrow(loadings)) return(NULL)
+  pt <- spec$parameter_table
+  if (is.null(pt) || !all(c("param", "parnumber") %in% names(pt))) return(NULL)
+  own <- vapply(split(loadings, loadings$param), function(rows)
+    rows$loading[which.max(rows$dimension)], character(1L))
+  number <- pt$parnumber[match(own, as.character(pt$param))]
+  number <- number[!is.na(number)]
+  if (!length(number)) return(NULL)
+  number
+}
+
+.ctJuliaInitialValues <- function(npar, inits = NULL, initsd = .01,
+  spec = NULL) {
   # Match stanoptimis(): absent initial values are small, R-seeded draws in
   # unconstrained space rather than an exact all-zero vector, and `initsd` is
   # its name for the scale, with its default.
   if (is.null(inits) || identical(inits, "random")) {
-    return(stats::rnorm(npar, 0, as.numeric(initsd)[1L]))
+    out <- stats::rnorm(npar, 0, as.numeric(initsd)[1L])
+    # Not optional and not jittered. A supplied `inits` is never touched --
+    # a starting value the caller chose is the one thing here that is not a
+    # guess -- but a random start has to leave the origin, whatever
+    # `optimcontrol$datastart` says, because this is the parameterisation and
+    # not the data's scale.
+    diagonal <- if (is.null(spec)) NULL else .ctJuliaLoadingStart(spec)
+    if (length(diagonal)) out[diagonal[diagonal <= npar]] <- 1
+    return(out)
   }
   values <- as.numeric(inits)
   if (length(values) != npar) {
@@ -3560,7 +3603,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       "fitting it.", call. = FALSE)
   }
   start <- .ctJuliaInitialValues(npar, inits,
-    initsd = .ctJuliaOr(optimcontrol$initsd, .01))
+    initsd = .ctJuliaOr(optimcontrol$initsd, .01), spec = model_spec)
   # Starting values read off the data, for the diagonals whose defaults are
   # guesses about the data's scale. See R/ctDataStart.R for what is derived and
   # why; `optimcontrol$datastart = FALSE` restores the fixed start. Supplied
