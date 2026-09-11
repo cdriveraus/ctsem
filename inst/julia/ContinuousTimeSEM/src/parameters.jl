@@ -106,6 +106,16 @@ struct EKFParameters{RT,PT,UT,TT,AX,FV}
     # matrices to fix one. Defaults to `covmatcode`, so a model that has not
     # asked for anything different is exactly as it was.
     population_covmatcode::Int
+    # The state-unit conversion for each population row, applied where the
+    # block is placed. An appended carrier is 1, because its T0MEANS uses the
+    # identity transform and the consuming cell does the scaling; an
+    # individually varying T0MEANS carries its cell multiplier*meanscale,
+    # because the carrier is the model latent itself and its covariance has to
+    # be in that latent's units. Deliberately NOT folded into the block's own
+    # transform: the same conversion is applied at the same point on the stan
+    # path, and two implementations of one rule about this matrix is what the
+    # previous arrangement cost.
+    population_scale::Vector{Float64}
 
     # The constructor ensures that the provided vectors are of the correct types and converts them if necessary.
     function EKFParameters(
@@ -135,6 +145,7 @@ struct EKFParameters{RT,PT,UT,TT,AX,FV}
         population_indices=Int[],
         population_range::UnitRange{Int}=0:-1,
         population_covmatcode::Union{Nothing,Integer}=nothing,
+        population_scale=Float64[],
     )
         regular_transforms_tuple = Tuple(regular_transforms)
         predict_transforms_tuple = Tuple(predict_transforms)
@@ -178,6 +189,9 @@ struct EKFParameters{RT,PT,UT,TT,AX,FV}
             population_range,
             population_covmatcode === nothing ? Int(covmatcode) :
                 Int(population_covmatcode),
+            isempty(population_scale) ?
+                ones(Float64, length(population_indices)) :
+                Vector{Float64}(population_scale),
         )
     end
 end

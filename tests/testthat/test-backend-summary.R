@@ -54,7 +54,7 @@ test_that("Julia pop_* arrays match Stan's constrained parameters", {
   stan_spec <- suppressMessages(ctFit(data, model, backend = "stan", fit = FALSE))
   stan_pop <- suppressMessages(ctsem:::stan_constrainsamples(sm = ctsem:::stanmodels$ctsm,
     standata = stan_spec$standata, samples = matrix(raw, nrow = 1), cores = 1,
-    pcovn = 10, dokalman = FALSE, savesubjectmatrices = FALSE))
+    pcovn = 500, dokalman = FALSE, savesubjectmatrices = FALSE))
 
   fit <- .summary_pointfit(spec, model, raw, "julia")
   backend_pop <- ctsem:::.ctBackendPopArrays(fit)
@@ -92,6 +92,35 @@ test_that("Julia pop_* arrays match Stan's constrained parameters", {
   # And the block T0VAR does not state is a covariance nonetheless, so the
   # zeros above are a reparameterisation and not a lost variance.
   expect_true(all(diag(t0cov)[population_rows] > 0))
+
+  # The state-unit conversion, at the one point it happens. A carrier state
+  # holds its effect in the units the consuming cell reads, so T0cov's
+  # diagonal for a carrier is that effect's raw population sd times the
+  # carrier factor: the cell multiplier*meanscale for an individually varying
+  # T0MEANS, whose carrier is the model latent itself, and one for an appended
+  # carrier, whose T0MEANS uses the identity transform. Exact arithmetic, so no
+  # tolerance, and fit-free -- which is the point, because the failure mode
+  # here leaves the fit correct and only what a user reads is wrong.
+  sds <- spec$random_effects$type %in% "sd"
+  scales <- as.numeric(spec$random_effects$scale[sds])
+  carrier_rows <- as.integer(spec$random_effects$row[sds])
+  rawsd <- as.numeric(drop(stan_pop$rawpopsd))
+  # Without a factor other than one the two assertions below say nothing.
+  expect_true(any(scales != 1))
+  expect_equal(sqrt(diag(drop(stan_pop$pop_T0cov))[carrier_rows]),
+    rawsd * scales)
+
+  # And it is applied once. `popsd` is the spread of the *transformed*
+  # parameter, drawn from rawpopmeans and the factorisation of the population
+  # covariance, and a varying T0MEANS has a linear cell transform whose slope
+  # is exactly that factor -- so its reported spread is the raw sd times the
+  # factor and not the factor twice. Loose because it is a standard deviation
+  # over pcovn draws; the quantity being ruled out is an order of magnitude,
+  # which is what this reported when the factorisation was taken from the
+  # scaled block rather than the raw one.
+  varying_t0 <- which(scales != 1)
+  expect_equal(as.numeric(drop(stan_pop$popsd))[varying_t0],
+    (rawsd * scales)[varying_t0], tolerance = 0.1)
 })
 
 test_that("every covmattransform means the same thing on both backends", {

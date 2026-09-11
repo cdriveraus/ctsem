@@ -1005,9 +1005,14 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
             popidx = aws.sp.population_indices
             if !isempty(popidx)
                 k = length(popidx)
+                # The forward pass wrote `k_a k_b block[a,b]` into P, so the
+                # cotangent picks up the same factors on its way back. Missing
+                # them leaves the likelihood right and the gradient wrong.
+                popscale = aws.sp.population_scale
                 popbar = zeros(T, k, k)
                 @inbounds for b in 1:k, a in 1:k
-                    popbar[a, b] = P̄[popidx[a], popidx[b]]
+                    popbar[a, b] = popscale[a] * popscale[b] *
+                        P̄[popidx[a], popidx[b]]
                 end
                 popraw_bar = zeros(T, k, k)
                 # The POPULATION code, not the model's: the forward pass

@@ -134,6 +134,9 @@ struct ContinuousEKFWorkspace{T, N, M, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF
     # The population block's own construction code, copied from the
     # `EKFParameters` for the same reason `covmatcode` is.
     population_covmatcode::Int
+    # The per-row state-unit conversion, copied from the `EKFParameters` for the
+    # same reason `population_covmatcode` is.
+    population_scale::Vector{Float64}
     # Scratch for the population construction, sized to the population block
     # and not to the state dimension. Those are not the same number -- the
     # block is as wide as the number of random effects, and every population
@@ -249,6 +252,7 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
         sp.population_indices,
         sp.population_range,
         sp.population_covmatcode,
+        sp.population_scale,
         population_buffer,
     )
 end

@@ -44,19 +44,25 @@ if (requireNamespace('testthat', quietly = TRUE)) {
     }
   })
 
+  # 'cholesky' used to be here: the engine could not build the factor form, so
+  # it was refused by name. It builds it now, and what is left refused is
+  # 'rawcorr_indep' -- not because the engine cannot build it but because it
+  # selects the same construction as 'rawcorr' and differs only in the prior,
+  # so accepting it would accept a setting that does nothing.
   test_that("an unsupported covmattransform is refused by name", {
     skip_on_cran()
     expect_error(suppressMessages(ctFit(datalong = covmat_data(),
-      model = covmat_model('cholesky'), backend = 'julia', fit = FALSE,
-      cores = 1L)), 'cholesky')
+      model = covmat_model('rawcorr_indep'), backend = 'julia', fit = FALSE,
+      cores = 1L)), 'rawcorr_indep')
   })
 
   test_that("covmattransform reaches the julia spec", {
     skip_on_cran()
-    for (tf in c('rawcorr', 'z')) {
+    codes <- c(rawcorr = 0L, cholesky = 1L, z = 2L)
+    for (tf in names(codes)) {
       p <- suppressWarnings(suppressMessages(ctFit(datalong = covmat_data(),
         model = covmat_model(tf), backend = 'julia', fit = FALSE, cores = 1L)))
-      expect_equal(p$covmatcode, if (identical(tf, 'z')) 2L else 0L)
+      expect_equal(p$covmatcode, codes[[tf]], info = tf)
     }
   })
 

@@ -1034,9 +1034,10 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 }
 
 # The augmented route's population scales and correlations, read out of the
-# filtered T0 covariance the carrier states live in. `scale` divides out the
-# state-unit factor `.ctJuliaAugmentRandomEffects` folded into the sd transform,
-# because what is wanted here is the sd on the *raw parameter* scale.
+# filtered T0 covariance the carrier states live in. That covariance is in the
+# carrier states' own units -- the engine scales row and column by `k_a` and
+# `k_b` where it places the block -- so `scale` divides those factors back out
+# to give the sd on the *raw parameter* scale, which is what is wanted here.
 .ctBackendAugmentedPopulation <- function(spec, samples, layout, flat) {
   augmented <- .ctBackendAugmentedSds(spec)
   if (is.null(augmented)) return(NULL)

@@ -485,6 +485,15 @@ parameters{
 }
 transformed parameters{
   vector[nindvarying] rawpopsd; //population level std dev
+  // The state-unit conversion for each carrier, applied once where the
+  // population block is written into T0cov. One for an appended
+  // carrier, whose T0MEANS uses the identity transform so the
+  // consuming cell does the scaling; the cell multiplier*meanscale
+  // for an individually varying T0MEANS, whose carrier is the model
+  // latent itself and so must hold its covariance in the units of
+  // that latent. NOT folded into rawpopsd: that would make a vector called
+  // raw mean state units for some of its entries.
+  vector[nindvarying] popstatescale = rep_vector(1.0, nindvarying);
   matrix[nindvarying, nindvarying] rawpopcovbase;
   matrix[nindvarying, nindvarying] rawpopcov;
   matrix[nindvarying, nindvarying] rawpopcovchol;
@@ -521,21 +530,15 @@ transformed parameters{
   if(nindvarying > 0){
     int counter =0;
     rawpopsd = log1p_exp(2*rawpopsdbase-1) .* sdscale + 1e-10; // sqrts of proportions of total variance
-    // The scale of the state this effect carries, folded into its own
-    // standard deviation rather than applied to the covariance afterwards.
-    // A varying T0MEANS puts natural units on its state, so its factor is
-    // that cell multiplier*meanscale; an appended carrier keeps raw units,
-    // because the augmentation writes its T0MEANS with the identity transform
-    // and the consuming cell does the scaling, so its factor is one. After
-    // this the population standard deviation is the standard deviation of the
-    // state, which is what the cell transform consumes, and nothing
-    // downstream rescales.
+    // The state-unit factor for each carrier, recorded here and applied
+    // once where the block is placed into T0cov. See the declaration of
+    // popstatescale.
     if(intoverpop && nindvarying > 0){
       for(ri in 1:size(matsetup)){
         if(matsetup[ri,7]==1 && matsetup[ri,5]){ //indvarying t0means
           for(j in 1:nindvarying){
             if(intoverpopindvaryingindex[j] == matsetup[ri,1]){
-              rawpopsd[j] *= matvalues[ri,2] * matvalues[ri,3];
+              popstatescale[j] = matvalues[ri,2] * matvalues[ri,3];
             }
           }
         }
@@ -899,10 +902,11 @@ if(si==0 || sum(whenmat[54,{5}]) > 0 )Jy=mcalc(Jy,indparams, state,{0}, 54, mats
       // T0MEANS does not covary with a non-indvarying one -- nothing states
       // that pair -- but does covary with an indvarying CINT, since both sit
       // in this block.
-    T0cov[intoverpopindvaryingindex, intoverpopindvaryingindex] = rawpopcov;
+    // The one conversion to state units, here rather than folded into
+    // rawpopsd: scaling row i and column j by k_i and k_j is what the
+    // carrier states need, and quad_form_diag says so in one line.
+    T0cov[intoverpopindvaryingindex, intoverpopindvaryingindex] = quad_form_diag(rawpopcov, popstatescale);
     
-      // No rescaling here: the scale is in the population standard
-      // deviation, so rawpopcov is already in state units.
     }
  }
   

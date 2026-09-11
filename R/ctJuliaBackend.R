@@ -1804,7 +1804,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     # is what refuses a statement that would have meant otherwise.
     if (population_standardised) {
       spec <- NA_character_
-      fixedvalue <- 1 / t0means_state_scale[position]
+      fixedvalue <- 1
     }
     if (is.finite(fixedvalue)) {
       if (fixedvalue < 0) {
@@ -1813,14 +1813,10 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
           ". A population standard deviation cannot be negative.",
           call. = FALSE)
       }
-      # Converted from the raw parameter scale a RAWPOPVAR entry is written on to
-      # the state scale this cell is in, which is `k_i` and nothing else.
-      #
-      # The free branch produces `k_i * raw_sd`, so a requested raw spread `v`
-      # needs `v * k_i` here. `k_i` is exact arithmetic -- the carrier state's
-      # own `multiplier * meanscale` -- so the number a user writes is the raw
-      # population sd on this route, and the same number is the raw population
-      # sd on the Laplace route, which has no `k_i` and reads it directly.
+      # Written as stated, with no conversion: the number a user puts in
+      # RAWPOPVAR is the raw population sd, and it is the raw population sd on
+      # the Laplace route too, which reads it directly. The state-unit
+      # conversion happens once, where the engine places the block.
       #
       # It used to be divided by the derivative of the parameter's own
       # transform as well, making the entry a spread on the parameter's
@@ -1831,7 +1827,10 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       # transform could not be generated from and fitted with one number.
       table$param[index] <- NA_character_
       table$parnumber[index] <- NA_integer_
-      table$value[index] <- fixedvalue * t0means_state_scale[position]
+      # Raw, as stated. The engine multiplies row and column by the
+      # state-unit conversion where it places the block, which is the same
+      # point the stan program applies it.
+      table$value[index] <- fixedvalue
       table$transform[index] <- NA_character_
     } else {
       next_parameter <- next_parameter + 1L
@@ -1845,13 +1844,11 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
         # signs -- and a softplus here costs most of the reparameterisation's
         # benefit, because its saturation reintroduces the flat boundary the
         # factor form exists to remove.
-        sprintf("%.17g * (%.17g * param[%d])",
-          t0means_state_scale[position], random_sd_scale[position],
+        sprintf("%.17g * param[%d]", random_sd_scale[position],
           next_parameter)
       } else {
-        sprintf("%.17g * (1e-10 + %.17g * log1p_exp(2 * param[%d] - 1))",
-          t0means_state_scale[position], random_sd_scale[position],
-          next_parameter)
+        sprintf("1e-10 + %.17g * log1p_exp(2 * param[%d] - 1)",
+          random_sd_scale[position], next_parameter)
       }
     }
     # Whether the sd is fixed by RAWPOPVAR or free, this row is a population
@@ -2581,6 +2578,19 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   if (!is.null(spec$model) && .ctPopFactorConstruction(spec$model) &&
       any(table$matrix %in% "RAWPOPVAR")) {
     arguments$population_covmatcode <- 1L
+  }
+  # The state-unit conversion, one factor per population row, applied by the
+  # engine where it places the block. Sent only when some row needs one, so an
+  # ordinary model is byte-for-byte as it was and a spec built for an engine
+  # that predates the keyword still works.
+  if (any(table$matrix %in% "RAWPOPVAR")) {
+    popeffects <- spec$random_effects
+    popscale <- if (is.null(popeffects) || !length(popeffects) ||
+        !nrow(popeffects)) numeric() else
+      as.numeric(popeffects$scale[popeffects$type %in% "sd"])
+    if (length(popscale) && any(popscale != 1)) {
+      arguments$population_scale <- .ctJuliaVector(popscale)
+    }
   }
   if (any(table$matrix %in% "RAWPOPVAR")) {
     popeffects <- spec$random_effects

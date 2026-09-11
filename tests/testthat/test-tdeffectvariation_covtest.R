@@ -134,14 +134,14 @@ skip_on_32bit()
     dfsd=data.frame(
       f2est=sqrt(diag(f2$stanfit$transformedparsfull$pop_T0cov[1,,]))[c(3,1,4)],
       s$popsd[c('mm_Y1','t0m','tdpredeffect'),]) #population estimate
-    testthat::expect_true(all(abs(dfsd$f2est - dfsd$X50.) < .01))
+    testthat::expect_lt(max(abs(dfsd$f2est - dfsd$X50.)), .01)
 
     #corr of ctsem between subjects setup vs manual specification.
     #Measured gap at NEQ: .0041.
     dfcorr <- data.frame(
       f2est=cov2cor(f2$stanfit$transformedparsfull$pop_T0cov[1,-2,-2])[lower.tri(diag(3))],
       s$rawpopcorr  )
-    testthat::expect_true(all(abs(dfcorr$f2est - dfcorr$X50.) < .01))
+    testthat::expect_lt(max(abs(dfcorr$f2est - dfcorr$X50.)), .01)
 
   })
   
@@ -221,14 +221,14 @@ skip_on_32bit()
     dfsd=data.frame(
       f2est=sqrt(diag(f2$stanfit$transformedparsfull$pop_T0cov[1,,]))[c(3,1,4)],
       s$popsd[c('mm_Y1','t0m','tdpredeffect'),]) #population estimate
-    testthat::expect_true(all(abs(dfsd$f2est - dfsd$X50.) < .01))
+    testthat::expect_lt(max(abs(dfsd$f2est - dfsd$X50.)), .01)
 
     #corr of ctsem between subjects setup vs manual specification.
     #Measured gap at NEQ: .0075.
     dfcorr <- data.frame(
       f2est=cov2cor(f2$stanfit$transformedparsfull$pop_T0cov[1,-2,-2])[lower.tri(diag(3))][c(2,1,3)],
       s$rawpopcorr  )
-    testthat::expect_true(all(abs(dfcorr$f2est - dfcorr$X50.) < .01))
+    testthat::expect_lt(max(abs(dfcorr$f2est - dfcorr$X50.)), .01)
 
   })
   
@@ -355,8 +355,8 @@ skip_on_32bit()
     #Measured gap at NEQ: 6.9e-5.
     rawpopsd_f <- c(f$stanfit$transformedparsfull$rawpopsd) * c(10,1,10)
     testthat::expect_length(rawpopsd_f, 3L)
-    testthat::expect_true(all(abs(sqrt(diag(f2$stanfit$transformedparsfull$pop_T0cov[1,,])) -
-        rawpopsd_f) < 1e-2))
+    testthat::expect_lt(max(abs(sqrt(diag(f2$stanfit$transformedparsfull$pop_T0cov[1,,])) -
+        rawpopsd_f)), 1e-2)
 
     #test sd of ctsem between subjects setup vs subject specific pars.  These
     #are shrunken point estimates, so their sd is not the population sd and a
@@ -382,7 +382,7 @@ skip_on_32bit()
 
     #test corr of ctsem between subjects setup vs manual specification.
     #Measured gap at NEQ: .0017.
-    testthat::expect_true(all(abs(dfcorr$f2est -dfcorr[,'X50.']) <1e-2))
+    testthat::expect_lt(max(abs(dfcorr$f2est -dfcorr[,'X50.'])), 1e-2)
 
     #The same correlations against the generating draws are C2 and are asserted
     #in randomEffectsDRIFT_julia.
@@ -417,14 +417,16 @@ skip_on_32bit()
     #the subjects' own drifts, s$popsd the population sd of that same quantity
     dfsd <- data.frame(trueSample = c(sd(g$t0m), sd(g$effect), sd(g$baseline)),
       s$popsd[c('T0m_eta1','drift','cint'),])
-    testthat::expect_true(all(abs(dfsd[,'trueSample'] - dfsd[,'X50.']) <
-        .1*dfsd[,'X50.']))
+    # As a ratio against the elementwise tolerance, so the number reported on
+    # failure is how many times over it went.
+    testthat::expect_lt(max(abs(dfsd[,'trueSample'] - dfsd[,'X50.']) /
+        dfsd[,'X50.']), .1)
 
     #corr checks -- RAW scale, so the drift row pairs with raweffect
     dfcorr <- data.frame(
       trueSample = cor(cbind(g$t0m, g$raweffect, g$baseline))[lower.tri(diag(3))],
       s$rawpopcorr)
-    testthat::expect_true(all(abs(dfcorr[,'trueSample'] - dfcorr[,'X50.']) < .1))
+    testthat::expect_lt(max(abs(dfcorr[,'trueSample'] - dfcorr[,'X50.'])), .1)
   })
 
   # randomEffectsDIFFUSION lived here.  It was 130 lines inside `if(F)`: it ran
