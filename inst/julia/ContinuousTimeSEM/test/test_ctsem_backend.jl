@@ -146,3 +146,53 @@ ContinuousTimeSEM.ctsem_evaluate(m::_OvershotMock, x::AbstractVector;
     @test !out3.overshot
     @test out3.gain == 0.0
 end
+
+
+# The gradient bar and the objective floor were one quantity, `1e-6 * max(1,
+# |value|)`, used both as a gradient threshold and as an objective one. These
+# are about what survives a change of scale, because that is where the old one
+# failed and no measurement on a single model could have said so.
+@testset "the gradient bar is relative to the gradient, not to the objective" begin
+    bar = ContinuousTimeSEM._ctsem_gradient_tolerance
+
+    # Homogeneous in the gradient. Ten times the subjects is ten times the
+    # gradient and ten times the bar, so the same fit is judged the same way --
+    # which is the whole point, and is what the old bar got wrong in the other
+    # direction: it scaled with the objective, so more data meant a *looser*
+    # test on a quantity that had itself grown.
+    @test bar(0.0, 10 * 37.0) ≈ 10 * bar(0.0, 37.0)
+    @test bar(0.0, 1e6) ≈ 1e6 * bar(0.0, 1.0)
+
+    # It cannot see the objective at all, which is the structural version of
+    # the same statement: no additive constant of the log likelihood, and no
+    # change of measurement units, can move it.
+    @test length(first(methods(bar)).sig.parameters) == 3
+
+    # A run that saw nothing falls back to the absolute tolerance rather than
+    # to zero: a bar of zero is unreachable and would report every fit failed.
+    @test bar(1e-8, 0.0) == 1e-8
+    @test bar(1e-8, -1.0) == 1e-8
+    # And the absolute tolerance is a floor, never overridden downward.
+    @test bar(1e-3, 1.0) == 1e-3
+end
+
+@testset "the objective bar is in objective units, at materiality" begin
+    bar = ContinuousTimeSEM._ctsem_objective_tolerance
+
+    # Proportional to the value, so it means the same thing on a log likelihood
+    # of -30 and one of -3e6, and blind to the sign.
+    @test bar(-2e6) ≈ 100 * bar(-2e4)
+    @test bar(2000.0) == bar(-2000.0)
+    # Never smaller than the bar for a value of one, so an objective near zero
+    # does not get a tolerance of zero.
+    @test bar(0.0) == bar(1.0)
+    @test bar(1e-30) == bar(-0.5)
+
+    # Between the arithmetic and the finding, with room on both sides: the
+    # overstep this guards against was worth 16 log likelihood units and the
+    # flat transform it must not flag is worth exactly zero. Deliberately not
+    # `sqrt(eps)`, which answers a different question -- a false positive here
+    # tells a user a converged fit is not a maximum.
+    @test bar(-2000.0) > 2000.0 * sqrt(eps(Float64))
+    @test bar(-2000.0) < 1.0
+end

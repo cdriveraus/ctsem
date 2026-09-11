@@ -78,7 +78,7 @@ test_that("a small gap with a live flat direction is not certified", {
   expect_lt(out$gap, 1e-10)
   verdict <- ctsem:::.ctBackendCertify(out, probe = list(gain = 1.4),
     tolerance = 0.01)
-  expect_equal(verdict$status, "uncertified")
+  expect_equal(verdict$status, "notstationary")
   expect_match(verdict$reason, "no curvature")
   # The same point with nothing to be had along that direction is certified:
   # a flat direction is not by itself a failure, it is a flat direction.
@@ -93,7 +93,7 @@ test_that("a saturated transform is never certified by a gradient that underflow
   # that, which is why it is consulted rather than recomputed.
   out <- ctsem:::.ctBackendOptimGap(-diag(c(4, 0)), c(1e-9, 0))
   expect_equal(ctsem:::.ctBackendCertify(out, probe = list(gain = 0),
-    tolerance = 0.01, saturated = TRUE)$status, "uncertified")
+    tolerance = 0.01, saturated = TRUE)$status, "unidentified")
   expect_equal(ctsem:::.ctBackendCertify(out, probe = list(gain = 0),
     tolerance = 0.01, overshot = TRUE)$status, "notmaximum")
   expect_equal(ctsem:::.ctBackendCertify(out, probe = list(gain = 0),
@@ -373,4 +373,61 @@ test_that("stopping is not certifying: the optimiser's verdict is not consulted"
   short <- ctsem:::.ctBackendOptimGap(-diag(c(4, 25)), c(2, 5))
   expect_equal(ctsem:::.ctBackendCertify(short, probe = list(gain = 0),
     tolerance = 1e-6)$status, "suboptimal")
+})
+
+
+# --- the fit's own verdict ---------------------------------------------------
+
+.verdict_fit <- function(status, certified = FALSE, pending = TRUE) {
+  list(estimate = list(converged = FALSE, convergence_pending = pending),
+    uncertainty = list(certification = list(status = status,
+      certified = certified, reason = "because")))
+}
+
+test_that("the curvature's verdict replaces the optimiser's, in both directions", {
+  # The complaint this answers: a fit could be certified -- the optimum bounded
+  # within `gaptol` of the estimate -- and still report `converged = FALSE`,
+  # because `converged` was keyed on a gradient bar computed before anything
+  # knew the curvature. Whichever way they disagree, the measurement wins.
+  certified <- ctsem:::.ctBackendCertifiedVerdict(
+    .verdict_fit("certified", certified = TRUE))
+  expect_true(certified$estimate$converged)
+  # And the held complaint is dropped rather than left to be warned about.
+  expect_null(certified$estimate$convergence_pending)
+
+  # The other direction: the optimiser was happy, the curvature is not.
+  happy <- .verdict_fit("suboptimal", pending = FALSE)
+  happy$estimate$converged <- TRUE
+  expect_false(ctsem:::.ctBackendCertifiedVerdict(happy)$estimate$converged)
+})
+
+test_that("converged says maximum, and the two findings that are not failures", {
+  # `unidentified` is a maximum with a coordinate the data does not determine,
+  # which is a result and not a failure -- reporting it as a failure to
+  # converge is what put `converged = FALSE` on 45 of 64 fits whose log
+  # likelihoods matched stan's to the digit. `notstationary` is the other half
+  # of what used to share that name, and it *is* a failure: stepping along the
+  # direction gains likelihood, so the point is not a maximum at all.
+  expected <- c(certified = TRUE, unidentified = TRUE,
+    suboptimal = FALSE, notstationary = FALSE, notmaximum = FALSE,
+    unknown = FALSE)
+  got <- vapply(names(expected), function(status)
+    isTRUE(ctsem:::.ctBackendCertifiedVerdict(
+      .verdict_fit(status, certified = identical(status, "certified"))
+    )$estimate$converged), logical(1))
+  expect_equal(got, expected)
+})
+
+test_that("a fit that certified nothing keeps the optimiser's verdict", {
+  # `estonly`, or `certify = FALSE`: there is no better measurement, so there is
+  # nothing to replace it with, and inventing one would be worse than the bit
+  # the optimiser can honestly supply. `convergence_pending` is what says so.
+  bare <- list(estimate = list(converged = TRUE, convergence_pending = TRUE))
+  kept <- ctsem:::.ctBackendCertifiedVerdict(bare)
+  expect_true(kept$estimate$converged)
+  expect_true(kept$estimate$convergence_pending)
+  # An empty certification is the same case, not a verdict of FALSE.
+  empty <- list(estimate = list(converged = TRUE),
+    uncertainty = list(certification = list(status = character(0))))
+  expect_true(ctsem:::.ctBackendCertifiedVerdict(empty)$estimate$converged)
 })

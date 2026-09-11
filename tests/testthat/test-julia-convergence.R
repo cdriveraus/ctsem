@@ -72,6 +72,15 @@ test_that("a collapsed population scale is not reported as a failure to converge
   expect_equal(e$overshoot_gain, 0)
   expect_true(e$converged)
 
+  # And it survives the curvature having the last word. A saturated coordinate
+  # cannot be certified -- it has no gradient and no curvature, so no tolerance
+  # means anything for it -- but that is a statement about the coordinate and
+  # not about the maximum, which is why `unidentified` is its own status and
+  # maps to converged. Keyed on the status rather than on `certified`, because
+  # the two deliberately differ exactly here.
+  expect_equal(fit$uncertainty$certification$status, "unidentified")
+  expect_false(fit$uncertainty$certification$certified)
+
   # And the flat coordinates are still reported -- as a statement about
   # identification, which is what they are, rather than about convergence.
   expect_gt(fit$identifiability$nweak, 0)
@@ -94,4 +103,31 @@ test_that("a julia fit stopped early reports a large gradient and does not conve
   expect_gt(capped$estimate$gradient_norm, 1)
   expect_equal(max(abs(capped$estimate$gradient)),
     capped$estimate$gradient_norm, tolerance = 1e-10)
+})
+
+
+test_that("what the fit reports is what the curvature measured", {
+  # The complaint: a fit could pass certification -- the optimum bounded within
+  # `gaptol` of the estimate, no warning raised, the summary saying so -- and
+  # still report `converged = FALSE`, because that field was the optimiser's
+  # own gradient verdict and nothing ever revisited it. Two verdicts on one
+  # fit, and the weaker one was the one a user reads.
+  fit <- suppressWarnings(suppressMessages(ctFit(.jconv_data(), .jconv_model(),
+    backend = "julia", cores = 1, verbose = 0)))
+  certification <- fit$uncertainty$certification
+
+  # The precondition: something was measured. Without this the assertion below
+  # would hold vacuously on a fit that certified nothing.
+  expect_true(is.list(certification) && length(certification$status) == 1L)
+  expect_true(is.finite(certification$gap))
+
+  # The one rule, on a real fit: converged iff the curvature says this is a
+  # maximum. `unidentified` is a maximum with a coordinate the data does not
+  # determine; the rest of the not-certified statuses are not maxima.
+  expect_equal(isTRUE(fit$estimate$converged),
+    certification$status %in% c("certified", "unidentified"))
+
+  # The held complaint is gone rather than left behind to be warned about by a
+  # later call on the same fit.
+  expect_null(fit$estimate$convergence_pending)
 })

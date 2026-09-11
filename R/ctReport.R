@@ -357,7 +357,13 @@
   if (inherits(fit, "ctJuliaFit")) {
     e <- fit$estimate
     add("Optimizer")
-    add("  converged: ", isTRUE(e$converged))
+    # With what decided it. A bare TRUE/FALSE invites the next question, and
+    # the answer is one field away.
+    certification <- fit$uncertainty$certification
+    add("  converged: ", isTRUE(e$converged),
+      if (!is.null(certification) && length(certification$status))
+        paste0("  (certification: ", certification$status, ")")
+      else "  (not certified: no curvature was computed)")
     if (!is.null(e$iterations)) add("  iterations: ", e$iterations)
     if (!is.null(e$gradient_norm)) {
       add("  gradient norm: ", .ctReportNum(e$gradient_norm),

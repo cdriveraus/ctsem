@@ -283,6 +283,9 @@
   # excluded directions hold. See R/ctBackendOptimGap.R.
   fit$uncertainty$certification <- .ctBackendCertification(fit,
     uncertaintyfit$hessian, tolerance = .ctBackendGapTolerance(fit))
+  # And `converged` with it: a fit finished here had only the engine's verdict
+  # until this call, and that verdict is what this one replaces.
+  fit <- .ctBackendCertifiedVerdict(fit)
   # New draws mean the fit's constrained draws describe the previous ones, so
   # they are refreshed here rather than left to be noticed downstream.
   fit$transformedpars <- .ctBackendConstrain(fit)

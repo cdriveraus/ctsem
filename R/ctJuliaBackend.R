@@ -3861,13 +3861,16 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       # it was previously only obtainable by timing one evaluation and dividing.
       f_calls = if (is.null(result$f_calls)) NA_integer_ else as.integer(result$f_calls),
       g_calls = if (is.null(result$g_calls)) NA_integer_ else as.integer(result$g_calls),
-      # The gradient at the estimate, and the tolerance it was judged against.
+      # The gradient at the estimate, and the bar the optimizer stopped
+      # against -- a fraction of the worst gradient the run saw, which is the
+      # only gradient comparison that means the same thing on two models. It is
+      # not what `converged` reports: see `.ctBackendCertifiedVerdict()`.
       # `converged` is one bit and a fit that stops just short of a tolerance
       # looks the same as one that never moved; these are what tell them apart.
       gradient_norm = if (is.null(result$gradient_norm)) NA_real_ else
         as.numeric(result$gradient_norm),
-      gradient_tolerance = if (is.null(result$scaled_tolerance)) NA_real_ else
-        as.numeric(result$scaled_tolerance),
+      gradient_tolerance = if (is.null(result$gradient_tolerance)) NA_real_ else
+        as.numeric(result$gradient_tolerance),
       # A parameter that reached the flat region of its transform, and which.
       # Invisible in the gradient -- a saturated transform reports a gradient
       # of zero, which passes every tolerance -- so without this the warning
@@ -4010,6 +4013,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     out$estimate$g_calls <- as.integer(correction$totals[["g_calls"]])
     out$estimate$hessians <- correction$hessians
     out$uncertainty <- list(certification = correction$certification)
+    out <- .ctBackendCertifiedVerdict(out)
   }
   class(out) <- c("ctJuliaFit", "ctFit")
 

@@ -39,16 +39,25 @@
 # engine's own `_ctsem_overshot` answers its question the same way, by taking
 # the step and looking.
 #
-# ## Three outcomes, not two
+# ## Four outcomes, not two
 #
 #   certified      the gap is below tolerance and the excluded directions hold
 #                  no material likelihood
-#   uncertified    the gap is small but something outside the trusted subspace
-#                  is not: flat directions with a live gradient, or a
-#                  transform that has saturated, where the gradient underflows
-#                  to zero and every tolerance passes for the wrong reason
+#   suboptimal     the gap says the optimum is measurably above this estimate
+#   notstationary  a flat direction with a live gradient: stepping along it
+#                  gains likelihood, so this is not a maximum, and the gap
+#                  cannot see it because that direction was excluded
+#   unidentified   a transform has saturated, where the gradient underflows to
+#                  zero and the curvature with it, so no tolerance means
+#                  anything for that coordinate. The point is still a maximum
 #   notmaximum     a direction of genuine negative curvature, where the point
 #                  is a saddle whatever the gap says
+#
+# `notstationary` and `unidentified` were one status, and they are not one
+# finding: the first is a fit nobody should use and the second is a fit with a
+# result in it -- a population scale with no individual differences behind it is
+# the usual cause, and reporting that as a failure to converge is the mistake
+# `test-julia-convergence.R` exists to prevent.
 #
 # The saturation verdict is consulted rather than recomputed. A saturated
 # parameter has both a zero gradient and no curvature, so it lands in the
@@ -186,16 +195,18 @@
   }
   material <- is.finite(residual_gain) && residual_gain > tolerance
   if (material) {
-    return(list(status = "uncertified", certified = FALSE,
+    return(list(status = "notstationary", certified = FALSE,
       reason = paste0("stepping along the directions with no curvature gains ",
         signif(residual_gain, 3), " log likelihood, so the estimate is not ",
         "stationary in a direction the data does not determine")))
   }
   if (isTRUE(saturated) && isTRUE(gap$nflat > 0L)) {
-    return(list(status = "uncertified", certified = FALSE,
+    return(list(status = "unidentified", certified = FALSE,
       reason = paste0("a parameter transform has saturated, where the ",
         "gradient underflows to zero and the curvature with it, so no ",
-        "tolerance here means anything for that coordinate")))
+        "tolerance here means anything for that coordinate. Nothing here says ",
+        "the estimate is not a maximum -- see fit$identifiability for which ",
+        "coordinate the data does not determine")))
   }
   if (!is.finite(gap$gap)) {
     return(list(status = "unknown", certified = FALSE,
@@ -275,10 +286,51 @@
     step = gap$step)
 }
 
+# The verdict on the fit, once the curvature has been measured.
+#
+# `converged` used to be the engine's own: a gradient against a bar, computed
+# before anything knew the curvature. The certification is the same question
+# answered properly -- how much objective is still available, in objective
+# units, invariantly to reparameterisation -- and it was being computed, stored
+# and reported while `converged` went on saying what the gradient bar thought.
+# A fit could be certified and report `converged = FALSE`, which is the one
+# reading a user takes at face value.
+#
+# So the better measurement wins, in both directions. A certified fit is
+# converged. A fit whose curvature says the optimum is above it is not, however
+# small its gradient -- which is the case a gradient bar cannot see at all,
+# since a flat direction reports no gradient and no curvature.
+#
+# Applied wherever a certification is attached: after the correction loop in
+# `.ctJuliaOptimise()`, and after `ctOptimUncertainty()` computes one for a fit
+# that had none. Where nothing certified -- `estonly`, `certify = FALSE` -- the
+# engine's verdict is all there is, and `convergence_pending` says so.
+#' @keywords internal
+.ctBackendCertifiedVerdict <- function(fit) {
+  certification <- fit$uncertainty$certification
+  if (is.null(certification) || !length(certification$status)) return(fit)
+  # `converged` answers "is this a maximum", which is what a reader takes it
+  # for. `certified` is the stronger claim that also bounds how far the optimum
+  # can be, and a saturated coordinate defeats that bound without saying
+  # anything against the maximum -- so the two statuses that are findings
+  # rather than failures map to TRUE.
+  fit$estimate$converged <- certification$status %in%
+    c("certified", "unidentified")
+  # Superseded rather than answered: the optimizer's complaint was held for
+  # this measurement, and the measurement has now been made. Leaving it would
+  # make `.ctBackendCertifyWarn()` warn about a gradient on a fit whose
+  # curvature already said better.
+  fit$estimate$convergence_pending <- NULL
+  fit
+}
+
 # The one convergence statement a fit makes.
 #
 # Three cases, and they are genuinely different things to tell a user:
 #
+#   unidentified     the coordinate the data does not determine, once,
+#                    pointing at the identifiability report rather than
+#                    repeating it here.
 #   certified        nothing. The optimizer's own stopping rule was superseded
 #                    by a criterion it does not know about, and repeating its
 #                    complaint would send someone chasing a fit that is right.
@@ -299,6 +351,14 @@
     return(invisible(NULL))
   }
   if (isTRUE(certification$certified)) return(invisible(NULL))
+  # A maximum with a coordinate the data does not determine is a finding, and
+  # the finding is `fit$identifiability`'s to report. Warning "not converged"
+  # here is what sent 45 of 64 good fits back to be re-run.
+  if (identical(certification$status, "unidentified")) {
+    warning("This fit is a maximum, but ", certification$reason, ".",
+      call. = FALSE)
+    return(invisible(NULL))
+  }
   warning("This fit is not certified as converged: ", certification$reason,
     ". See fit$uncertainty$certification.", call. = FALSE)
   invisible(NULL)

@@ -671,6 +671,56 @@ function _ctsem_overshot(objective, minimizer, saturated_parameters, value,
     return (overshot=gain > tolerance, gain=gain)
 end
 
+# The two relative scales, together, because the point of the pair is that they
+# are relative to *different* quantities: one to the objective and one to the
+# gradient. They were one number used for both.
+const _CTSEM_OBJECTIVE_RTOL = 1e-6
+const _CTSEM_GRADIENT_RTOL = 1e-6
+
+"""
+The size of an objective difference worth acting on, relative to the objective.
+
+In objective units and proportional to the value, so it means the same thing on
+a log likelihood of -30 and one of -3e6. Used by `_ctsem_overshot`, where the
+question is not whether a difference is above the arithmetic -- `sqrt(eps)`
+would answer that -- but whether it is large enough to call a fit failed. It is
+the more forgiving of the two, deliberately: the two cases that test separates
+are an overstep worth 16 log likelihood units and a flat transform worth
+exactly zero, so the bar has orders of magnitude of room, and the cost of
+setting it too low is telling someone a converged fit is not a maximum.
+
+This is the expression `scaled_tolerance` used to carry, kept because it was
+always dimensionally right *here* -- an objective difference against an
+objective threshold. What was wrong was the same quantity being used as a
+gradient bar; see `_ctsem_gradient_tolerance`.
+"""
+_ctsem_objective_tolerance(value) =
+    _CTSEM_OBJECTIVE_RTOL * max(abs(Float64(value)), 1.0)
+
+"""
+The gradient bar, relative to the worst gradient this fit ever saw.
+
+There is no absolute gradient tolerance that is right for two models, because a
+gradient is a sum over observations: `g_tol = 1e-8` is unreachable on a
+100-subject likelihood and trivial on a 6-subject one. What is comparable
+across models is how far the gradient has come, so the bar is a fraction of the
+largest gradient the run ever had -- dimensionally a gradient against a
+gradient, unchanged when the likelihood is scaled, and carrying none of its
+additive constants.
+
+It replaced `1e-6 * max(1, |value|)`, which compared a gradient against an
+objective: dimensionally incoherent, sensitive to the likelihood's arbitrary
+constants, and *looser* for larger data, so the same model with ten times the
+subjects was judged ten times more leniently.
+
+This bar decides `converged` only when nothing certified the fit. What a fit
+still has to gain is measured exactly, in objective units, by
+`.ctBackendOptimGap()` on the R side, and that verdict supersedes this one --
+see `.ctBackendCertifiedVerdict()`.
+"""
+_ctsem_gradient_tolerance(g_tol, gradient_worst) =
+    max(Float64(g_tol), _CTSEM_GRADIENT_RTOL * max(Float64(gradient_worst), 0.0))
+
 """
 A line search that records the directional derivative it is handed.
 
@@ -788,7 +838,8 @@ end
 
 """
     _ctsem_optimise_verdict(objective, minimizer, start_values, value, gradient_norm,
-                            saturated_parameters, g_tol; label, verbose)
+                            gradient_worst, saturated_parameters, g_tol;
+                            label, verbose)
 
 Whether an optimiser arrived at a maximum, in one place for every route.
 
@@ -823,13 +874,19 @@ gradient is NaN -- it was set on an earlier iterate -- and `NaN <= tolerance` is
 false, so the scaled test alone would not catch it: one draw in ten reported
 convergence with a NaN gradient.
 
-`scaled_tolerance` is retained as the criterion this returns, and is *not*
-recommended as the thing to judge a fit by: it compares a gradient against
-`1e-6 * max(1, |value|)`, which is dimensionally a threshold in objective units
-against a quantity in objective-per-parameter, and carries the likelihood's
-arbitrary additive constants -- rescaling the manifest variables loosens it.
-What a fit still has to gain is measured exactly after it, in objective units,
-by `.ctBackendOptimGap()` on the R side.
+The gradient criterion is `_ctsem_gradient_tolerance`, a fraction of the worst
+gradient the run saw, and the overshoot bar is `_ctsem_objective_tolerance`,
+which is in objective units because an objective gain is what the overshoot
+test measures. Those were one quantity -- `1e-6 * max(1, |value|)` -- serving both,
+which meant a gradient compared against an objective in one place and an
+objective gain compared against a gradient bar in the other.
+
+Neither is the authority on whether a fit converged. What a fit still has to
+gain is measured exactly, in objective units and invariantly to
+reparameterisation, by `.ctBackendOptimGap()` on the R side; that verdict
+replaces this one on the fit whenever it exists
+(`.ctBackendCertifiedVerdict()`), and this one is what a fit that certified
+nothing is left with.
 
 `saturated_parameters` arrives as an argument because the routes detect it
 differently: the marginal and joint ones ask `_ctsem_saturated_parameters` over
@@ -837,17 +894,23 @@ differently: the marginal and joint ones ask `_ctsem_saturated_parameters` over
 correlations saturate together (`_laplace_saturated_parameters`).
 """
 function _ctsem_optimise_verdict(objective, minimizer, start_values, value,
-        gradient_norm, saturated_parameters, g_tol;
+        gradient_norm, gradient_worst, saturated_parameters, g_tol;
         label::AbstractString="ctsem_optimize", verbose::Bool=false)
     moved = isempty(minimizer) ? 0.0 : maximum(abs, minimizer .- start_values)
     saturated = !isempty(saturated_parameters)
     stalled = moved == 0 && (!isfinite(value) || gradient_norm > max(g_tol, 1e-6))
-    scaled_tolerance = max(g_tol, 1e-6 * max(one(gradient_norm), abs(value)))
+    # Not relative, deliberately, and not the bar below. A fit that failed its
+    # first line search has a worst gradient equal to its starting one, so a
+    # relative bar is satisfied by definition at the point it never left -- the
+    # 1.2e9 failure this whole function exists to catch, in miniature.
+    gradient_tolerance = _ctsem_gradient_tolerance(g_tol, gradient_worst)
     finite_gradient = isfinite(gradient_norm)
     converged_enough = isfinite(value) && finite_gradient &&
-        gradient_norm <= scaled_tolerance
+        gradient_norm <= gradient_tolerance
+    # In objective units, because the overshoot test measures an objective
+    # gain: how much pulling a saturated coordinate back improves the fit.
     overshoot = _ctsem_overshot(objective, minimizer, saturated_parameters,
-        value, scaled_tolerance)
+        value, _ctsem_objective_tolerance(value))
     overshot = overshoot.overshot
     verbose && stalled && println(_console(), label, ": the optimizer made no ",
         "progress from its starting values; reporting this as not converged")
@@ -862,7 +925,7 @@ function _ctsem_optimise_verdict(objective, minimizer, start_values, value,
         "pullback improves the objective, so this is a maximum with those ",
         "coordinates unidentified rather than a failed fit")
     (moved=moved, saturated=saturated, stalled=stalled,
-        scaled_tolerance=scaled_tolerance, finite_gradient=finite_gradient,
+        gradient_tolerance=gradient_tolerance, finite_gradient=finite_gradient,
         converged_enough=converged_enough, overshoot=overshoot,
         overshot=overshot)
 end
@@ -1043,10 +1106,6 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     final = ctsem_evaluate(objective, minimizer; gradient=true,
         contributions=true, gradient_method=gradient_method)
 
-    # The same convergence verdict `ctsem_laplace_optimize` reaches, and for the
-    # same reasons -- this route was simply left behind when that one was fixed,
-    # which is worse than it sounds because this is ctsem's *default* route.
-    #
     # Optim's own `converged` is the disjunction of three criteria, and a line
     # search that fails on its first try satisfies the `f` one trivially: the
     # objective did not change because nothing was accepted. Measured on a
@@ -1118,11 +1177,11 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # And the verdict itself, which every route reaches the same way and in one
     # place: see `_ctsem_optimise_verdict`.
     verdict = _ctsem_optimise_verdict(objective, minimizer, start_values,
-        final.value, gradient_norm, saturated_parameters, g_tol;
-        label=label, verbose=verbose)
+        final.value, gradient_norm, convergence.worst, saturated_parameters,
+        g_tol; label=label, verbose=verbose)
     saturated = verdict.saturated
     stalled = verdict.stalled
-    scaled_tolerance = verdict.scaled_tolerance
+    gradient_tolerance = verdict.gradient_tolerance
     finite_gradient = verdict.finite_gradient
     converged_enough = verdict.converged_enough
     overshoot = verdict.overshoot
@@ -1131,7 +1190,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         (Optim.g_converged(result) || converged_enough)) &&
         println(_console(), label, ": the optimizer stopped with a largest ",
             "gradient of ", gradient_norm, " against a tolerance of ",
-            scaled_tolerance, "; reporting this as not converged")
+            gradient_tolerance, "; reporting this as not converged")
     return (
         minimizer=minimizer,
         maximum_loglik=final.value,
@@ -1152,7 +1211,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         chunks=ctsem_max_chunks().max_chunks,
         chunk_timings=tuning === nothing ? Tuple{Int,Float64}[] : tuning.timings,
         gradient_norm=gradient_norm,
-        scaled_tolerance=scaled_tolerance,
+        gradient_tolerance=gradient_tolerance,
         # What the last step was predicted to gain, and the rule it was judged
         # against. `Inf` when no line search ran, and `0` when the rule was off.
         predicted_gain=_ctsem_predicted_gain(directional),
