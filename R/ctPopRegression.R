@@ -206,13 +206,20 @@
 
 # What a factor construction cannot honour about the basis effects.
 #
-# `Sigma = M M'` with M lower triangular, so `Sigma[i,j] = M[i,j] M[j,j]` below
-# the diagonal. A zero off-diagonal therefore gives an exact zero covariance
-# and is allowed. A diagonal is a loading, and an effect's spread is a row norm
-# rather than a cell -- except for the first basis effect, which loads on one
-# dimension and no other, so `|M[1,1]|` is its spread exactly. A non-zero
-# off-diagonal is a factor entry rather than a correlation, and the correlation
-# it implies depends on the rest of its row.
+# `Sigma = M M'` with M lower triangular, so `Sigma[i,j]` for `i > j` is
+# `sum_{m<=j} M[i,m] M[j,m]` -- j products, not one. Nothing below the diagonal
+# is a cell of the estimand: an off-diagonal is a factor entry whose implied
+# correlation depends on the rest of its row, and an effect's spread is a row
+# norm rather than a cell, except for the first basis effect, which loads on
+# one dimension and no other, so `|M[1,1]|` is its spread exactly.
+#
+# A zero is no exception. Only against the first dimension does it reduce to
+# one cell (`M[i,1] M[1,1] = 0`), for any later one it is a constraint across a
+# row, and in neither case does the rewrite act on it -- a stated zero leaves
+# every loading free. So it is refused with the rest rather than accepted and
+# dropped. Fixing loadings from a declared zero pattern is a real feature and
+# would need a rotation-rigidity check to go with it; until then this is what
+# is true.
 .ctPopRegressionFactorConflicts <- function(model, basis) {
   popcov <- model[['RAWPOPVAR']]
   if (is.null(popcov) || !length(popcov) || length(basis) < 2L) return(character())
@@ -239,9 +246,6 @@
       stated <- .ctModelRawPopVarEntry(model, b, other)
       if (is.na(stated) || !nzchar(stated)) next
       if (isdefault(stated, b, other)) next
-      # A zero is honoured exactly, so it is not a conflict.
-      value <- suppressWarnings(as.numeric(stated))
-      if (isTRUE(value == 0)) next
       out <- c(out, sprintf("RAWPOPVAR['%s', '%s'] = %s (a factor entry, not a correlation)",
         b, other, stated))
     }
@@ -328,9 +332,10 @@
         '. Under a reduced rank the population covariance is a factor. A ',
         'regressed effect has no spread of its own at all, and for a basis ',
         "effect past the first the spread is a row norm rather than a cell -- ",
-        'only ', basis[1L], ' keeps a standard deviation this can state, ',
-        'though a zero covariance is honoured exactly anywhere. Use ',
-        'poprank=NA to estimate the full covariance.', call. = FALSE)
+        'only ', basis[1L], ' keeps a standard deviation this can state, and a ',
+        'zero covariance is a constraint across a row of loadings rather than ',
+        'a cell. Use poprank=NA to estimate the full covariance.',
+        call. = FALSE)
     }
   }
   # Above `nmean` the restriction stops being free: it starts fixing residual

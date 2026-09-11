@@ -237,9 +237,10 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
   # parameterised part keeps today's sd and correlation coordinates, so
   # statements there work untouched; a zero *variance* has one clear meaning
   # under any rank and is honoured by leaving that effect out of the split; and
-  # a non-zero statement about a regressed effect, or a zero covariance -- which
-  # is a linear constraint across a whole row of coefficients rather than a cell
-  # -- is refused rather than dropped.
+  # anything the factor cannot state -- a statement about a regressed effect, a
+  # standard deviation for a basis effect past the first, or a zero covariance,
+  # which is a constraint across a row of loadings rather than a cell -- is
+  # refused rather than dropped.
   test_that('RAWPOPVAR statements work where they can be honoured and are refused where not', {
     m <- poprank_model6()
     pars <- prepared_pars(m)
@@ -252,9 +253,17 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
     expect_equal(base$basis, c('dr1', 'dr2', 'dr3'))
     expect_equal(base$regressed, c('df1', 'df2', 'df3'))
 
-    # a zero correlation between two basis effects: the freely parameterised part
+    # A zero correlation between two basis effects was accepted while the basis
+    # block was a free sd-and-correlation matrix, which is what it was under
+    # the previous coordinates. Under loadings there is no such cell: the
+    # rewrite leaves every loading free whatever is stated, verified against
+    # the built spec, so accepting it would drop it silently.
     z <- fresh(); z[['RAWPOPVAR']]['dr2', 'dr1'] <- 0
-    expect_equal(split(z)$regressed, c('df1', 'df2', 'df3'))
+    expect_error(split(z), 'poprank would drop what RAWPOPVAR states')
+    # And left to the default it is kept, because the full covariance states it
+    # directly -- so a user who declares a zero and asks for no rank gets it.
+    expect_null(ctsem:::.ctPopRegressionSpec(prepared_pars(z), 'auto',
+      explicit = FALSE, model = z))
 
     # a fixed sd on a basis effect
     f <- fresh(); f[['RAWPOPVAR']]['dr1', 'dr1'] <- 0.3
