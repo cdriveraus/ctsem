@@ -457,6 +457,70 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
   })
 
   # 'auto' is the default, so the case where it changes nothing has to be
+  # An individually varying T0MEANS is ctsem's default and no fixture above has
+  # one -- they all fix T0MEANS at zero -- which is how a default-path internal
+  # error survived here. Its carrier state is the latent itself, so there is no
+  # dimension for the loadings to sit on and the rewrite cannot substitute a
+  # predictor into the cell.
+  #
+  # The transform is stated as the identity because the default one is a
+  # parameter-dependent expression the julia engine does not yet take in
+  # T0MEANS, which would refuse this model before poprank was reached and tell
+  # us nothing.
+  t0varying_model <- function() {
+    m <- suppressMessages(ctModel(type = 'ct', n.latent = 1, n.manifest = 1,
+      LAMBDA = matrix(1), manifestNames = 'Y1', latentNames = 'eta',
+      T0MEANS = matrix('t0m|param|TRUE'), T0VAR = matrix(1),
+      DRIFT = matrix('dr11|-log1p_exp(param)'),
+      DIFFUSION = matrix('df11|log1p_exp(param)'),
+      CINT = matrix(0), MANIFESTMEANS = matrix(0),
+      MANIFESTVAR = matrix('mv|log1p_exp(param)')))
+    m$pars$indvarying <- FALSE
+    m$pars$indvarying[m$pars$matrix %in%
+        c('DRIFT', 'DIFFUSION', 'T0MEANS')] <- TRUE
+    m
+  }
+
+  test_that('an individually varying T0MEANS cannot be a loading, and the default says nothing', {
+    skip_without_julia()
+    dat <- poprank_data()
+    m <- t0varying_model()
+
+    # The default. This raised `Internal error: basis cell T0MEANS[1,1] does
+    # not read state[1] as expected` -- the reduction reached a cell it cannot
+    # rewrite -- so the assertion is that it builds at all.
+    auto <- suppressWarnings(suppressMessages(ctFit(datalong = dat, model = m,
+      backend = 'julia', fit = FALSE, intoverpop = 'augmented', cores = 1L)))
+    expect_null(auto$model$popregression)
+    none <- suppressWarnings(suppressMessages(ctFit(datalong = dat, model = m,
+      backend = 'julia', fit = FALSE, intoverpop = 'augmented',
+      poprank = NA, cores = 1L)))
+    expect_equal(ctsem:::.ctBackendNpar(auto), ctsem:::.ctBackendNpar(none))
+
+    # Asked for, it says which effect and what to do instead.
+    expect_error(suppressWarnings(suppressMessages(ctFit(datalong = dat,
+      model = m, backend = 'julia', fit = FALSE, intoverpop = 'augmented',
+      poprank = 2L, cores = 1L))), 'individually varying T0MEANS')
+
+    # A rank that regresses nothing is a no-op: the rewrite returns the model
+    # untouched, no cell is reached, and refusing it would tell a user who
+    # asked for the full rank that they cannot reduce.
+    full <- suppressWarnings(suppressMessages(ctFit(datalong = dat, model = m,
+      backend = 'julia', fit = FALSE, intoverpop = 'augmented',
+      poprank = 3L, cores = 1L)))
+    expect_null(full$model$popregression)
+    expect_equal(ctsem:::.ctBackendNpar(full), ctsem:::.ctBackendNpar(none))
+
+    # And it is the augmented route's restriction, not the reduction's: with no
+    # carrier states there is no cell to rewrite, so the effect is an ordinary
+    # basis member.
+    pars <- prepared_pars(m)
+    expect_error(ctsem:::.ctPopRegressionSpec(pars, 'auto'),
+      'individually varying T0MEANS')
+    laplace <- ctsem:::.ctPopRegressionSpec(pars, 'auto', augmented = FALSE)
+    expect_true('t0m' %in% laplace$basis)
+  })
+
   # verified rather than assumed: with both effects mean-affecting the rank is
   # already full and the model must come out exactly as poprank=NA does.
   test_that('poprank auto is a no-op when every varying parameter reaches the mean', {

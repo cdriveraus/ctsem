@@ -75,6 +75,14 @@
 
 .ctPopVarianceMatrices <- function() c('DIFFUSION', 'MANIFESTVAR', 'T0VAR')
 
+# Labels sitting in T0MEANS. Read before `.ctModelIntOverPop()` runs, while the
+# cell still carries the label rather than a state reference.
+.ctPopT0meansEffects <- function(pars) {
+  pars <- .ctModelCleanctspec(pars)
+  rows <- pars$matrix %in% 'T0MEANS' & !is.na(pars$param)
+  unique(as.character(pars$param[rows]))
+}
+
 # Word-boundary regex for a literal parameter label.
 .ctPopLabelPattern <- function(label) {
   paste0('(^|[^[:alnum:]_.])', gsub('([][{}()+*^$|\\\\?.])', '\\\\\\1', label),
@@ -241,7 +249,8 @@
   unique(out)
 }
 
-.ctPopRegressionSpec <- function(pars, poprank, explicit = TRUE, model = NULL) {
+.ctPopRegressionSpec <- function(pars, poprank, explicit = TRUE, model = NULL,
+    augmented = TRUE) {
   if (is.null(poprank) || (length(poprank) == 1L && is.na(poprank))) return(NULL)
   roles <- .ctPopEffectRoles(pars)
   if (!nrow(roles)) return(NULL)
@@ -276,6 +285,31 @@
   order <- order(!roles$mean, seq_len(k))
   basis <- roles$param[order][seq_len(rank)]
   regressed <- setdiff(roles$param[order], basis)
+
+  # An individually varying T0MEANS cannot be a loading on the standardised
+  # dimensions. T0MEANS reaches the observation mean, so such an effect is
+  # always in the basis; and its carrier state is the model latent itself
+  # rather than an appended one, so its cell reads its own parameter and there
+  # is no `state[<carrier>]` for `.ctPopRegressionRewrite()` to substitute a
+  # predictor into. Giving it a dimension of its own needs a T0MEANS cell that
+  # reads another state, which is the thing the augmented arrangement exists to
+  # avoid, so this is a limit of the parameterisation rather than an oversight.
+  # Laplace has no carrier states and rewrites the parameter table instead, so
+  # it is not restricted here.
+  # Only where the reduction reaches a cell: with nothing regressed the rewrite
+  # returns the model untouched, so a rank equal to the number of varying
+  # parameters is a no-op and there is nothing to refuse.
+  if (isTRUE(augmented) && length(regressed)) {
+    t0basis <- intersect(basis, .ctPopT0meansEffects(pars))
+    if (length(t0basis)) {
+      if (!isTRUE(explicit)) return(NULL)
+      stop('poprank cannot reduce a population covariance that includes an ',
+        'individually varying T0MEANS (', paste(t0basis, collapse = ', '),
+        '): its carrier state is the latent itself, so it has no dimension of ',
+        'its own to load on. Use poprank=NA to estimate the full covariance, ',
+        "or intoverpop='laplace'.", call. = FALSE)
+    }
+  }
 
   # A RAWPOPVAR statement about a regressed effect cannot be honoured, so it is
   # refused rather than ignored. Asked for, that is an error; defaulted, the
