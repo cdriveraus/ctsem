@@ -37,7 +37,8 @@ ctPlotPosterior<-function(obj, rows='all', npp=6,priorwidth=TRUE,
   plots <- list()
   densiter <- 1e5
   ps <- cbind(obj$setup$popsetup, obj$setup$popvalues)
-  ps <- ps[ps$when %in% c(0,-1) & ps$param > 0 & ps$copyrow < 1 & ps$matrix < 11,]
+  # `matrix < 11` is this plot's own restriction to the base matrices.
+  ps <- ps[.ctMatsetupFreeRows(ps, defining = TRUE) & ps$matrix < 11,]
   ps <- ps[!duplicated(ps$param),]
 
   ps<-ps[order(ps$param),]

@@ -2095,9 +2095,10 @@ install.packages("rstan", repos = c("https://mc-stan.org/r-packages/", getOption
         ctm$modelmats$TIPREDEFFECTsetup <- stanfit$standata$TIPREDEFFECTsetup
         ms <- ctm$modelmats$matsetup
         ms$tipred <- 0L
-        parswithtipreds <- sort(unique(ms$param[ms$param >0 & ms$when %in% c(0,-1) & ms$copyrow < 1]))
+        defining <- .ctMatsetupFreeRows(ms, defining = TRUE)
+        parswithtipreds <- sort(unique(ms$param[defining]))
         parswithtipreds<-parswithtipreds[apply(stanfit$standata$TIPREDEFFECTsetup,1,sum)>0]
-        ms$tipred[ms$param >0 & ms$when %in% c(0,-1) & ms$copyrow < 1 & ms$param %in% parswithtipreds] <- 1L
+        ms$tipred[defining & ms$param %in% parswithtipreds] <- 1L
         ctm$modelmats$matsetup <- ms
       }
     }
@@ -2111,8 +2112,8 @@ install.packages("rstan", repos = c("https://mc-stan.org/r-packages/", getOption
   # standataout <- utils::relist((standataout),skeleton=standata)
 
   setup=list(recompile=recompile,idmap=standata$idmap,matsetup=ctm$modelmats$matsetup,matvalues=ctm$modelmats$matvalues,
-    popsetup=ctm$modelmats$matsetup[ctm$modelmats$matsetup$when %in% c(0,-1) & ctm$modelmats$matsetup$param > 0,],
-    popvalues=ctm$modelmats$matvalues[ctm$modelmats$matsetup$when %in% c(0,-1) & ctm$modelmats$matsetup$param > 0,],
+    popsetup=ctm$modelmats$matsetup[.ctMatsetupFreeRows(ctm$modelmats$matsetup),],
+    popvalues=ctm$modelmats$matvalues[.ctMatsetupFreeRows(ctm$modelmats$matsetup),],
     extratforms=ctm$modelmats$extratforms)
   if(fit) {
     stanfit$transformedparsfull <- suppressMessages(stan_constrainsamples(sm = sm,standata = standata,

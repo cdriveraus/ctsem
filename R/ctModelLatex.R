@@ -166,11 +166,6 @@ ctModelLatexAugmentT0 <- function(popmeans, popcov, timat, ctm, digits=3,
   list(popmeans=popmeans, popcov=popcov, timat=timat)
 }
 
-ctMatsetupFreePars <- function(m,intoverpop){
-  m=m[m$when %in% c(0,-1) & m$param > 0,,drop=FALSE]
-  m=m[match(unique(m$param),m$param),,drop=FALSE]
-  m = m[order(m$param),,drop=FALSE]
-}
 
 texPrep <- function(x){ #replaces certain characters with tex safe versions
   for(i in 1:length(x)){
