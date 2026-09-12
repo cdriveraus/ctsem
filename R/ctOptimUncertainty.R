@@ -65,20 +65,90 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
 # be evaluated -- both backends fall back to the unweighted covariance of the
 # resampled draws. That is a different estimator, and until now nothing on the
 # fit or in the session said which of the two had produced the intervals.
-.ctOptimImisReport <- function(is_res, target, weighted){
+# "These intervals rest on too few effective points to mean what they look like
+# they mean."
+#
+# Four places asked that and each wrote its own answer: here, in
+# `ctLaplaceCorrect()`, and twice in `ctParticleCorrect()`. Three of the four
+# did not call this one, and the thresholds had already drifted -- so a change
+# to the rule, or to the wording, had to be made in up to four places to stay
+# consistent, and nothing made it.
+#
+# `floor` is an argument rather than `target/2` throughout, because the drift is
+# not all accident: reweighting one fixed batch of draws has no target to halve,
+# and `max(50, 0.1 * n)` is a rule about that batch. `remedy` is the other real
+# per-caller part -- what to do instead differs by where you are, and naming the
+# wrong alternative is worse than naming none.
+#' @keywords internal
+.ctOptimEffectiveSampleWarn <- function(ess, floor, remedy, ndraws = NULL){
+  ess <- if(is.null(ess)) NA_real_ else as.numeric(ess)[1L]
+  if(!is.finite(ess) || !is.finite(floor) || ess >= floor) return(invisible(ess))
+  warning('Importance sampling reached an effective sample size of ',
+    round(ess, 1),
+    if(is.null(ndraws)) '' else paste0(' from ', ndraws, ' draws'),
+    '. The intervals rest on that many points, not on the number of draws. ',
+    remedy, call.=FALSE)
+  invisible(ess)
+}
+
+.ctOptimImisReport <- function(is_res, target, weighted,
+  remedy = paste0('A direction the data does not identify cannot be importance ',
+    'sampled at all -- check the identifiability report, and consider ',
+    'uncertainty = "hessian".')){
   ess <- if(is.null(is_res$ess)) NA_real_ else as.numeric(is_res$ess)[1L]
   if(!isTRUE(weighted)) warning(
     'The weighted importance-sampling covariance was not finite, so the ',
     'unweighted covariance of the resampled draws was used instead.',
     call.=FALSE)
-  if(is.finite(ess) && is.finite(target) && ess < target / 2) warning(
-    'Importance sampling reached an effective sample size of ', round(ess, 1),
-    ' against a target of ', target, '. The intervals rest on that many ',
-    'points, not on the number of draws. A direction the data does not ',
-    'identify cannot be importance sampled at all -- check the ',
-    'identifiability report, and consider uncertainty = "hessian".',
-    call.=FALSE)
+  .ctOptimEffectiveSampleWarn(ess,
+    floor = if(is.finite(target)) target / 2 else NA_real_, remedy = remedy)
   invisible(ess)
+}
+
+# Importance sampling against a reference density, and the covariance and draws
+# that come out of it.
+#
+# Three places do this, and they are the same six lines each time -- `imis_is`,
+# then the weighted covariance with an unweighted fallback, then the
+# effective-size check. What differs is only which density is handed in and what
+# to suggest when the effective size is short:
+#
+#   the uncertainty stage's `uncertainty='is'`, against the model's own density;
+#   `ctLaplaceCorrect(draws='imis')`, against the adaptive-quadrature posterior;
+#   `ctParticleCorrect(draws='imis')`, against the particle-filter likelihood.
+#
+# The last two are corrections *to a different objective* -- the reference is
+# more accurate than what was optimised -- where the first reweights the same
+# one. That is a real difference in what the answer means, and none in how it is
+# computed, which is why only this part is shared.
+#
+# `cov` is the proposal covariance as the caller wants it used. A caller that
+# has already widened it passes `scaleInit = 1` rather than compounding two
+# scalings, which is what `ctLaplaceCorrect()` does.
+#' @keywords internal
+.ctOptimImisDraws <- function(lpg, centre, cov, finishsamples, remedy,
+  nbatch = 1000, target_ess = 100, maxiter = 50, scaleInit = 1.1,
+  tailScale = 1.1, df = Inf, verbose = 0, diagPlots = TRUE){
+
+  is_res <- imis_is(lpg, mu_hat = centre, Sigma_hat = cov,
+    cl = NA, n_batch = as.integer(nbatch), target_ess = target_ess,
+    max_iter = as.integer(maxiter), scale_init = scaleInit,
+    tail_scale = tailScale, df = df,
+    finishsamples = as.integer(finishsamples), diag_plots = diagPlots,
+    # `verbose > 0`, not TRUE: this printed IMIS iteration progress at
+    # `verbose = 0`, so the one argument meant two things across the backends --
+    # silence on julia, a page of output on stan.
+    verbose = verbose > 0)
+
+  samples <- is_res$theta
+  weighted <- !is.null(is_res$covariance) && all(is.finite(is_res$covariance))
+  cov_out <- if(weighted) ctOptimSafeCov(is_res$covariance) else
+    if(!is.null(samples) && nrow(samples) > 1) ctOptimSafeCov(stats::cov(samples)) else cov
+  .ctOptimImisReport(is_res, target_ess, weighted, remedy = remedy)
+
+  list(samples = samples, cov = cov_out,
+    ess = if(is.null(is_res$ess)) NA_real_ else as.numeric(is_res$ess)[1L],
+    weighted = weighted, is_res = is_res)
 }
 
 ctOptimSafeCov <- function(cov, ridge=1e-8){
@@ -154,7 +224,7 @@ ctOptimSafeCov <- function(cov, ridge=1e-8){
 # this line. A direction between the two tolerances is inverted as usual --
 # its variance is genuinely enormous, which is the truth about it -- and
 # `.ctBackendIntervalCheck()` is what says so.
-.ctOptimIdentifiedInverse <- function(info, rtol=1e-12){
+.ctOptimIdentifiedInverse <- function(info, rtol=.ctFlatDirectionRtol()){
   info <- (info + t(info)) / 2
   eig <- try(eigen(info, symmetric=TRUE), silent=TRUE)
   if('try-error' %in% class(eig)) return(NULL)
@@ -187,7 +257,7 @@ ctOptimSafeCov <- function(cov, ridge=1e-8){
     nullParameters=loaded, nullMass=mass, threshold=threshold)
 }
 
-ctOptimCovFromHessian <- function(hess, ridge=1e-8, rtol=1e-12, warn=TRUE,
+ctOptimCovFromHessian <- function(hess, ridge=1e-8, rtol=.ctFlatDirectionRtol(), warn=TRUE,
   context='Hessian'){
   hess <- (hess + t(hess)) / 2
   info <- -hess
@@ -1321,6 +1391,96 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 # one distribution and part another, with nothing recording the mixture.
 # Replacing them cannot do that, and the warning below says when the previous
 # draws were of a kind this cannot reproduce.
+# Turn a computed covariance into the draws a fit reports, given which kind of
+# draws were asked for.
+#
+# This was written twice -- once in `ctOptimUncertainty()`'s stan branch and
+# once in `.ctBackendUncertainty()` -- around the same shared core
+# (`ctOptimComputeUncertainty()`), in the same order, with the same five
+# `imis*` constants filled in by hand on each side. The julia copy's comment
+# records what that cost: `empirical` was missing there, so
+# `uncertainty='bootstrap'` fell through to normal draws while recording
+# `draws='empirical'`, and nothing looked wrong because the *covariance* was
+# still the bootstrap's.
+#
+# The two genuine differences are arguments here rather than hardcoded
+# constants, so that the divergence is visible in one place instead of being
+# two similar-looking blocks:
+#
+#   `scaleInit`/`tailScale` -- stan uses 1.1/1.1, julia 1.5/1.2. Deliberate on
+#   both sides and measured: a proposal narrower than its target cannot correct
+#   it, which argues for the wider default, but a 400-subject model measures
+#   better at 1.1 where a 40-subject one measures better at 1.5. One constant
+#   does not serve both sample sizes; see the note in `.ctBackendUncertainty()`.
+#
+#   `lpg` -- where the log density comes from. Value-only on julia, because
+#   `imis_is` reads the log probability and nothing else, so a `lpgFunc` that
+#   also computes a reverse pass per draw has that work thrown away.
+#
+# @return list(samples, uncertaintyfit, control) -- `control` comes back
+#   because the defaults filled in here are what gets recorded in `$settings`.
+.ctOptimDrawSamples <- function(uncertaintyfit, draws, control, est,
+  finishsamples, lpg, verbose = 0, scaleInit = 1.1, tailScale = 1.1,
+  df = Inf) {
+
+  if (draws == 'empirical' && !is.null(uncertaintyfit$draws)) {
+    return(list(samples = uncertaintyfit$draws, uncertaintyfit = uncertaintyfit,
+      control = control))
+  }
+
+  if (draws != 'imis') {
+    return(list(samples = ctOptimNormalDraws(est, uncertaintyfit$cov, finishsamples),
+      uncertaintyfit = uncertaintyfit, control = control))
+  }
+
+  if (is.null(control$imisMaxIter)) control$imisMaxIter <- 50
+  if (is.null(control$imisScaleInit)) control$imisScaleInit <- scaleInit
+  if (is.null(control$imisTailScale)) control$imisTailScale <- tailScale
+  # Normal, not t. See `imis_is`: the heavier-tailed proposal was measured and
+  # was worse at equal scale, and only competitive at a scale that collapsed
+  # the effective sample size.
+  if (is.null(control$imisDf)) control$imisDf <- df
+  if (is.null(control$isESS)) control$isESS <- 100
+  if (is.null(control$isitersize)) control$isitersize <- 1000
+
+  is_res <- imis_is(lpg, mu_hat = est, Sigma_hat = uncertaintyfit$cov,
+    max_iter = control$imisMaxIter, scale_init = control$imisScaleInit,
+    tail_scale = control$imisTailScale, df = control$imisDf,
+    target_ess = control$isESS, n_batch = control$isitersize, cl = NA,
+    finishsamples = finishsamples,
+    # `verbose > 0`, not TRUE: this printed IMIS iteration progress at
+    # `verbose = 0`, so the one argument meant two things across the backends --
+    # silence on julia, a page of output on stan.
+    verbose = verbose > 0)
+
+  samples <- is_res$theta
+  uncertaintyfit$proposal_cov <- uncertaintyfit$cov
+  # `$details$covariance` diagnoses the covariance `ctOptimComputeUncertainty()`
+  # produced, which after this point is the *proposal* rather than the reported
+  # one. Renaming it was done on stan and not on julia -- so a julia fit
+  # corrected by importance sampling carried diagnostics describing a matrix it
+  # was no longer reporting. Unconditional here, which changes that julia field
+  # and nothing else.
+  if (!is.null(uncertaintyfit$details$covariance)) {
+    uncertaintyfit$details$proposal_covariance <- uncertaintyfit$details$covariance
+    uncertaintyfit$details$covariance <- NULL
+  }
+  weighted <- !is.null(is_res$covariance) && all(is.finite(is_res$covariance))
+  if (weighted) {
+    uncertaintyfit$cov <- ctOptimSafeCov(is_res$covariance)
+  } else if (nrow(samples) > 1) {
+    uncertaintyfit$cov <- ctOptimSafeCov(stats::cov(samples))
+  }
+  uncertaintyfit$imis <- is_res
+  uncertaintyfit$details$importance_sampling <- list(ess = is_res$ess,
+    df_used = is_res$df_used, weighted = weighted,
+    covariance = if (weighted) 'weighted importance-sampling covariance' else
+      'unweighted covariance of the resampled draws')
+  .ctOptimImisReport(is_res, control$isESS, weighted)
+
+  list(samples = samples, uncertaintyfit = uncertaintyfit, control = control)
+}
+
 .ctOptimStoredRedraw <- function(fit, finishsamples, cores, verbose=0){
   julia <- inherits(fit, 'ctJuliaFit')
   cov <- if(julia) fit$estimate$cov else fit$stanfit$cov
@@ -1641,6 +1801,18 @@ ctOptimUncertainty <- function(fit,
   if(length(fit$stanfit$stanfit@sim) > 0) {
     stop('ctOptimUncertainty currently applies to optimized ctStanFit objects')
   }
+  # The mirror of the julia branch's `parsteps` refusal above. `analyticHessian`
+  # selects the julia engine's exact Hessian, differentiated out of its own
+  # gradient; the stan path has no such thing. It was neither read nor stripped
+  # here, so it reached `$uncertainty$settings$control` unchanged, and a caller
+  # who passed `analyticHessian=FALSE` got a settings record indistinguishable
+  # from one where the request had been honoured. Refused by name rather than
+  # dropped quietly, because there is no stan-side meaning to translate it to.
+  if(!is.null(control$analyticHessian)) {
+    stop("control$analyticHessian is only available for backend='julia' fits: ",
+      "it selects the engine's exact Hessian, which the stan path does not ",
+      "have. Drop it, or refit with backend='julia'.", call.=FALSE)
+  }
   if(is.null(finishsamples)) {
     finishsamples <- if(!is.null(fit$stanfit$rawposterior))
       nrow(fit$stanfit$rawposterior) else 1000
@@ -1726,45 +1898,15 @@ ctOptimUncertainty <- function(fit,
     }
   }
   
-  if(draws == 'empirical' && !is.null(uncertaintyfit$draws)) {
-    samples <- uncertaintyfit$draws
-  } else if(draws == 'imis'){
-    if(is.null(control$imisMaxIter)) control$imisMaxIter <- 50
-    if(is.null(control$imisScaleInit)) control$imisScaleInit <- 1.1
-    if(is.null(control$imisTailScale)) control$imisTailScale <- 1.1
-    if(is.null(control$isESS)) control$isESS <- 100
-    if(is.null(control$isitersize)) control$isitersize <- 1000
-    is_res <- imis_is(lpgsetup$lpg, mu_hat=fit$stanfit$rawest,
-      Sigma_hat=uncertaintyfit$cov, max_iter=control$imisMaxIter,
-      scale_init=control$imisScaleInit, tail_scale=control$imisTailScale,
-      target_ess=control$isESS, n_batch=control$isitersize, cl=NA,
-      # `verbose > 0`, not TRUE: this printed IMIS iteration progress at
-      # `verbose = 0`, so the one argument meant two things across the
-      # backends -- silence on julia, a page of output on stan.
-      finishsamples=finishsamples, verbose=verbose > 0)
-    samples <- is_res$theta
-    uncertaintyfit$proposal_cov <- uncertaintyfit$cov
-    if(!is.null(uncertaintyfit$details$covariance)) {
-      uncertaintyfit$details$proposal_covariance <-
-        uncertaintyfit$details$covariance
-      uncertaintyfit$details$covariance <- NULL
-    }
-    weighted <- !is.null(is_res$covariance) && all(is.finite(is_res$covariance))
-    if(weighted) {
-      uncertaintyfit$cov <- ctOptimSafeCov(is_res$covariance)
-    } else if(nrow(samples) > 1) {
-      uncertaintyfit$cov <- ctOptimSafeCov(stats::cov(samples))
-    }
-    uncertaintyfit$imis <- is_res
-    uncertaintyfit$details$importance_sampling <- list(ess=is_res$ess,
-      df_used=is_res$df_used, weighted=weighted,
-      covariance=if(weighted) 'weighted importance-sampling covariance' else
-        'unweighted covariance of the resampled draws')
-    .ctOptimImisReport(is_res, control$isESS, weighted)
-  } else {
-    samples <- ctOptimNormalDraws(fit$stanfit$rawest, uncertaintyfit$cov,
-      finishsamples)
-  }
+  # `scaleInit`/`tailScale` at stan's own 1.1/1.1 rather than the julia 1.5/1.2.
+  # See `.ctOptimDrawSamples()` for why one constant does not serve both.
+  drawn <- .ctOptimDrawSamples(uncertaintyfit, draws = draws, control = control,
+    est = fit$stanfit$rawest, finishsamples = finishsamples,
+    lpg = lpgsetup$lpg, verbose = verbose,
+    scaleInit = 1.1, tailScale = 1.1)
+  samples <- drawn$samples
+  uncertaintyfit <- drawn$uncertaintyfit
+  control <- drawn$control
   
   fit$stanfit$cov <- uncertaintyfit$cov
   fit$stanfit$rawposterior <- samples

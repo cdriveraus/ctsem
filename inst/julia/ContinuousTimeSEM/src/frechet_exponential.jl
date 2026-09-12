@@ -104,13 +104,7 @@ function my_exp_frechet!(Y::AbstractMatrix{TYPE}, L::AbstractMatrix{TYPE},
     mul!(M6, A4, M2)
     mul!(M6, M4, A2, one_t, one_t)
 
-    # b[1]..b[14] are b0..b13 of Higham (2008), as in `my_exp!`.
-    b = (
-        TYPE(64764752532480000.0), TYPE(32382376266240000.0), TYPE(7771770303897600.0),
-        TYPE(1187353796428800.0), TYPE(129060195264000.0), TYPE(10559470521600.0),
-        TYPE(670442572800.0), TYPE(33522128640.0), TYPE(1323241920.0), TYPE(40840800.0),
-        TYPE(960960.0), TYPE(16380.0), TYPE(182.0), TYPE(1.0)
-    )
+    b = _pade13_b(TYPE)
 
     W1, W, Z1, V, U = buf.W1, buf.W, buf.Z1, buf.V, buf.U
     LW, LU, LV, T1, T2 = buf.LW, buf.LU, buf.LV, buf.T1, buf.T2

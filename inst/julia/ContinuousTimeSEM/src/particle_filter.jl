@@ -109,7 +109,9 @@ function ctsem_particle_loglik(objective::CTSEMObjective, values::AbstractVector
         varsum += v
         ess_min = min(ess_min, e)
     end
-    return (loglik=sum(subject_loglik), se=sqrt(varsum), row_loglik=row_loglik,
+    # Non-negative by construction above; clamped again so a future third
+    # contributor to `varsum` cannot turn a standard error into a DomainError.
+    return (loglik=sum(subject_loglik), se=sqrt(max(varsum, 0.0)), row_loglik=row_loglik,
         subject_loglik=subject_loglik, ess_min=ess_min, particles=N,
         substeps=Int(substeps), transition=trans)
 end
@@ -305,7 +307,15 @@ function _ctsem_particle_subject!(sub, sp, x::Vector{Float64}, N::Int, nsubsteps
     increment, ess = _ctsem_pf_weigh!(lw, logw, N)
     rows[1] = increment
     isfinite(increment) || return (-Inf, rows, varsum, 0.0)
-    varsum += (N / ess - 1) / N
+    # `max(., 0)` because this term is a variance contribution and is
+    # non-negative in exact arithmetic: `ess` is `1 / sum(w^2)` over normalised
+    # weights, so it is at most `N`, reached exactly when the weights are equal.
+    # In floating point the normalisation and the sum of squares can put it an
+    # ulp *above* `N`, making this term a tiny negative -- and a run whose
+    # weights stay near-uniform accumulates enough of those to take `varsum`
+    # below zero, where `sqrt(varsum)` threw a DomainError out of an exported
+    # function. Observed on a fit whose DIFFUSION had gone to a boundary.
+    varsum += max((N / ess - 1) / N, 0.0)
     ess_min = min(ess_min, ess)
     ess < threshold * N && _ctsem_pf_resample!(X, Xnew, lw, rng, N)
 
@@ -328,18 +338,8 @@ function _ctsem_particle_subject!(sub, sp, x::Vector{Float64}, N::Int, nsubsteps
                     for i in 1:n
                         ws.state[i] += (ws.bufferQ.r[i] + pars.CINT[i]) * h
                     end
-                    for j in 1:k, i in 1:k
-                        qfactor[i, j] = ws.bufferQ.out[indices[i], indices[j]]
-                    end
-                    _ctsem_lower_chol!(qfactor, k)
-                    sqrt_h = sqrt(h)
-                    for i in 1:k
-                        acc = zero(T)
-                        for j in 1:i
-                            acc += qfactor[i, j] * z[j]
-                        end
-                        ws.state[indices[i]] += sqrt_h * acc
-                    end
+                    _ctsem_add_process_noise!(ws.state, indices, qfactor,
+                        ws.bufferQ.out, z, 0, k, sqrt(h), T)
                 else
                     if ws.continuous_time
                         _compute_discrete_time_form!(ws.discrete_ca, ws.bufferQ, ws.bufferQ.out,
@@ -350,22 +350,9 @@ function _ctsem_particle_subject!(sub, sp, x::Vector{Float64}, N::Int, nsubsteps
                         _compute_one_step_form!(ws.discrete_ca, ws.bufferQ.out, pars, ws.state,
                             indices, ws.state_dim)
                     end
-                    _matvec_mul!(ws.bufferQ.r, ws.discrete_ca.dDRIFT, ws.state, ws.state_dim,
-                        ws.state_dim)
-                    for i in 1:n
-                        ws.state[i] = ws.bufferQ.r[i] + ws.discrete_ca.dINT[i]
-                    end
-                    for j in 1:k, i in 1:k
-                        qfactor[i, j] = ws.discrete_ca.dDIFFUSION[indices[i], indices[j]]
-                    end
-                    _ctsem_lower_chol!(qfactor, k)
-                    for i in 1:k
-                        acc = zero(T)
-                        for j in 1:i
-                            acc += qfactor[i, j] * z[j]
-                        end
-                        ws.state[indices[i]] += acc
-                    end
+                    _ctsem_deterministic_step!(ws, n)
+                    _ctsem_add_process_noise!(ws.state, indices, qfactor,
+                        ws.discrete_ca.dDIFFUSION, z, 0, k, one(T), T)
                 end
             end
             ctx = CTSEMRowContext(ws.state, pars, view(tdpreds, :, t), tipreds, ts[t], dt,
@@ -382,7 +369,15 @@ function _ctsem_particle_subject!(sub, sp, x::Vector{Float64}, N::Int, nsubsteps
         increment, ess = _ctsem_pf_weigh!(lw, logw, N)
         rows[t] = increment
         isfinite(increment) || return (-Inf, rows, varsum, 0.0)
-        varsum += (N / ess - 1) / N
+        # `max(., 0)` because this term is a variance contribution and is
+        # non-negative in exact arithmetic: `ess` is `1 / sum(w^2)` over normalised
+        # weights, so it is at most `N`, reached exactly when the weights are equal.
+        # In floating point the normalisation and the sum of squares can put it an
+        # ulp *above* `N`, making this term a tiny negative -- and a run whose
+        # weights stay near-uniform accumulates enough of those to take `varsum`
+        # below zero, where `sqrt(varsum)` threw a DomainError out of an exported
+        # function. Observed on a fit whose DIFFUSION had gone to a boundary.
+        varsum += max((N / ess - 1) / N, 0.0)
         ess_min = min(ess_min, ess)
         ess < threshold * N && _ctsem_pf_resample!(X, Xnew, lw, rng, N)
         prev = ts[t]

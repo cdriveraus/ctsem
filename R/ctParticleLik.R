@@ -94,7 +94,22 @@ ctParticleLik <- function(fit, particles = 2000, substeps = 20,
   rows <- data.frame(subject = rep(seq_along(starts), counts), time = as.numeric(spec$times),
     particle = rowmean, filter = filter_rows, difference = rowmean - filter_rows)
   fit_loglik <- as.numeric(fit$estimate$loglik)
-  list(loglik = mean(estimates), se = se, fit_loglik = fit_loglik,
+  # The one place in this function that says what the number means rather than
+  # what it is. `$difference` is the same quantity `ctLaplaceCheck()` calls
+  # `$gap` and the curvature certification calls `$gap`; `$verdict` is the
+  # shape all three now share. See R/ctFitGap.R.
+  #
+  # This is the only one of the three whose reference is stochastic, so it is
+  # the only one whose verdict can say whether the gap is distinguishable from
+  # its own noise -- which `$se` allowed and nothing previously asked.
+  verdict <- .ctFitGap("particle",
+    gap = mean(estimates) - fit_loglik, gap_se = se,
+    nsubjects = .ctFitNsubjects(fit),
+    remedy = paste0("A resolved positive gap means the filter's Gaussian ",
+      "assumption is costing likelihood; ctParticleCorrect() reweights the ",
+      "posterior against the particle filter."))
+  list(verdict = verdict,
+    loglik = mean(estimates), se = se, fit_loglik = fit_loglik,
     difference = mean(estimates) - fit_loglik, rows = rows, replicates = estimates,
     ess_min = min(vapply(runs, function(x) as.numeric(x$ess_min), numeric(1))),
     particles = particles, substeps = substeps, transition = transition)

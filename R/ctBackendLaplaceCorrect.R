@@ -192,35 +192,34 @@ ctLaplaceCorrect <- function(fit, draws = c("normal", "imis", "keep"),
   if (identical(draws, "imis")) {
     if (verbose > 0) message("Importance sampling against the quadrature ",
       "posterior (", nodes, " nodes, ", nbatch, " draws per iteration)")
-    is_res <- imis_is(quadlp, mu_hat = centre,
-      Sigma_hat = as.matrix(covariance) * scale^2,
-      cl = NA, n_batch = as.integer(nbatch), target_ess = target_ess,
-      max_iter = as.integer(maxiter),
-      # The proposal is already scaled above, so the sampler's own initial
-      # scaling is left at one rather than compounding with it.
-      scale_init = 1, tail_scale = 1.2, df = Inf,
-      finishsamples = as.integer(finishsamples), verbose = verbose > 0)
-    samples <- is_res$theta
+    # `.ctOptimImisDraws()` is shared with `ctParticleCorrect()` and with the
+    # uncertainty stage's `uncertainty='is'`: same `imis_is` call, same weighted
+    # covariance with an unweighted fallback, same effective-size check. What is
+    # this function's own is the density (`quadlp`) and the remedy named below.
+    #
+    # The proposal is already widened by `scale^2` here, so `scaleInit = 1`
+    # rather than compounding two scalings.
+    drawn <- .ctOptimImisDraws(quadlp, centre = centre,
+      cov = as.matrix(covariance) * scale^2,
+      finishsamples = finishsamples, nbatch = nbatch, target_ess = target_ess,
+      maxiter = maxiter, scaleInit = 1, tailScale = 1.2, df = Inf,
+      verbose = verbose,
+      # Said plainly rather than left in a list nobody prints. A corrected
+      # interval resting on a handful of effective draws is worse than the
+      # uncorrected one, because it looks like it has been improved.
+      remedy = paste0("Treat the corrected interval as indicative. ctSample() ",
+        "samples the joint posterior directly and does not rely on the ",
+        "approximation being close."))
+    is_res <- drawn$is_res
+    samples <- drawn$samples
     if (is.null(samples) || !nrow(samples)) {
       stop("Importance sampling returned no usable draws against the ",
         "quadrature posterior. The Laplace approximation is likely too far ",
         "from the target to repair by reweighting; use ctSample() instead.",
         call. = FALSE)
     }
-    newcov <- if (!is.null(is_res$covariance) && all(is.finite(is_res$covariance)))
-      ctOptimSafeCov(is_res$covariance) else ctOptimSafeCov(stats::cov(samples))
-    ess <- if (is.null(is_res$ess)) NA_real_ else as.numeric(is_res$ess)[1L]
-    # Said plainly rather than left in a list nobody prints. A corrected
-    # interval resting on a handful of effective draws is worse than the
-    # uncorrected one, because it looks like it has been improved.
-    if (is.finite(ess) && ess < target_ess / 2) {
-      warning("Importance sampling reached an effective sample size of ",
-        round(ess, 1), " against a target of ", target_ess,
-        ". The corrected draws rest on few points, so treat the corrected ",
-        "interval as indicative. ctSample() samples the joint posterior ",
-        "directly and does not rely on the approximation being close.",
-        call. = FALSE)
-    }
+    newcov <- drawn$cov
+    ess <- drawn$ess
   } else if (identical(draws, "normal")) {
     # The centre is corrected and the width is not: these draws carry the
     # Laplace curvature, moved to the corrected point. That is the honest

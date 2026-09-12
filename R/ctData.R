@@ -76,7 +76,8 @@ expmGetSubsets <- function(m){
       length(c(ctm$modelmats$calcs$driftcint, ctm$modelmats$calcs$diffusion)) > 0) message('Stationarity assumptions based on initial states when using non-linear dynamics')
   
   nindvarying <- max(ctm$modelmats$matsetup$indvarying)
-  nparams <- max(ctm$modelmats$matsetup$param[ctm$modelmats$matsetup$when %in% c(0,-1)])
+  nparams <- max(ctm$modelmats$matsetup$param[
+    .ctMatsetupFreeRows(ctm$modelmats$matsetup, free = FALSE)])
   nmatrices <- length(mats$base)
   ctm$modelmats$matsetup[which(ctm$modelmats$matsetup$indvarying > 0),]
   indvaryingindex <- ctm$modelmats$matsetup$param[which(ctm$modelmats$matsetup$indvarying > 0)]
@@ -484,8 +485,12 @@ expmGetSubsets <- function(m){
   #this PARS when = 100 thing is annoyinh, improve it...
   standata$whenvecp <- array(0L, c(2,standata$nparams)) #whenvecp contains 0's for unchanging pars
   standata$whenvecp[1,] <- as.integer(1:standata$nparams) #base parameters
-  standata$whenvecp[2,ms$param[ms$when %in% c(0,100) & ms$copyrow <1 & (ms$tipred > 0 | ms$indvarying > 0) & ms$param > 0]] <- 
-    as.integer(ms$param[ms$when %in% c(0,100) & ms$copyrow <1 & (ms$tipred > 0 | ms$indvarying > 0) & ms$param > 0])
+  # `when = c(0,100)` deliberately: PARS are needed at every when, so the
+  # wildcard belongs in this one lookup. See .ctMatsetupFreeRows() for what
+  # the wildcard cost the last time it reached a lookup that did not want it.
+  whenvecprows <- .ctMatsetupFreeRows(ms, when = c(0,100), defining = TRUE,
+    varying = TRUE)
+  standata$whenvecp[2,ms$param[whenvecprows]] <- as.integer(ms$param[whenvecprows])
   # standata$whenvecp[3,] <- as.integer(1:ncol(standata$whenvecp))
   
   standata$whenvecs <- array(0L,dim=c(6,standata$nlatentpop)) #when do we need to compute transformed states?
@@ -523,11 +528,9 @@ expmGetSubsets <- function(m){
     ms <- data.frame(standata$matsetup)
     standata$laplaceprior[
       ms$param[
-        ms$matrix %in% .ctMatricesList()$all[names(.ctMatricesList()$all) %in% ctm$laplaceprior] & 
-          ms$param > 0 & 
-          ms$row!=ms$col & 
-          ms$when==0 & 
-          ms$copyrow<1]
+        .ctMatsetupFreeRows(ms, when = 0, defining = TRUE) &
+          ms$matrix %in% .ctMatricesList()$all[names(.ctMatricesList()$all) %in% ctm$laplaceprior] &
+          ms$row != ms$col]
     ] <- 1L
   }
   standata$laplaceprioronly <- ifelse(is.null(ctm$laplaceprioronly),0L,as.integer(ctm$laplaceprioronly))

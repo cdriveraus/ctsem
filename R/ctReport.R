@@ -656,7 +656,22 @@
   parmatrices = function(fit, ctx) {
     f <- "02-parameter-matrices.txt"
     probs <- sort(unique(ctx$quantiles))
-    L <- character(0)
+    # Where the matrices were evaluated, at the top of the file.
+    #
+    # `ctSummaryMatrices()` says this in a `message()`, and the
+    # `suppressMessages()` below -- which is there to keep one copy of that note
+    # per quantile out of the console -- was eating it. So a model with
+    # state-dependent DRIFT, DIFFUSION or LAMBDA cells got a file of numbers
+    # with nothing saying they are a linearisation at one point in the state
+    # space, which is the one thing a reported matrix must never do. The
+    # `summary` component is unaffected because `summary()` carries the same
+    # text in `$parmatNote` and it is captured along with everything else, and
+    # `discretepars` because its evaluation point is in the plot subtitle. A
+    # file outlives the session that wrote it, so it needs this more than the
+    # console does.
+    note <- .ctContextNote(.ctFitConditionalCells(fit), .ctContextPopLabel,
+      .ctContextRemedy(fit))
+    L <- if (is.null(note)) character(0) else c(strwrap(note, width = 78), "")
     for (p in probs) {
       mats <- suppressMessages(ctSummaryMatrices(fit, calcfuncargs = list(probs = p),
         timeinterval = ctx$timeinterval))

@@ -472,7 +472,7 @@
 # a coordinate axis.
 #' @keywords internal
 .ctBackendIntervalCheck <- function(hessian, se, parnames = NULL,
-  threshold = 100, rtol = 1e-12, nullmass = 1e-3) {
+  threshold = 100, rtol = .ctFlatDirectionRtol(), nullmass = 1e-3) {
   empty <- list(threshold = threshold, nflagged = 0L, parameters = character(),
     nullmass = nullmass, nunidentified = 0L, unidentified = character(),
     table = data.frame(param = character(), se = numeric(),
@@ -513,6 +513,36 @@
       -ifelse(is.finite(ratio), ratio, -Inf)), , drop = FALSE])
 }
 
+# The one rule for "this direction has no curvature".
+#
+# Three functions ask an information matrix that question and each took the
+# eigenvalues, scaled by the largest, and cut at 1e-12: `.ctBackendNullMass()`
+# below, `.ctBackendInformationSplit()` in R/ctBackendOptimGap.R, and
+# `.ctOptimIdentifiedInverse()` in R/ctOptimUncertainty.R. They agreed because
+# each carried the literal and a comment saying the others carried the same one
+# -- two rules that can disagree is how a fit comes to be described one way by
+# its intervals and another by its convergence verdict, and a comment is not
+# what stops that.
+#
+# Only the constant is shared, deliberately. The three differ in what they do
+# around it in ways that are not incidental: this one takes a values-only pass
+# first and returns NA when the decomposition fails, because "nothing is flat"
+# and "could not tell" are opposite findings; `.ctBackendInformationSplit()`
+# falls back to `max(abs(values))` when nothing is positive, so a point that is
+# a maximum in no direction is reported as such rather than as an empty gap;
+# `.ctOptimIdentifiedInverse()` returns NULL and inverts the trusted subspace.
+# Merging those error contracts would cost more than the four shared lines are
+# worth.
+#
+# The engine floors an information matrix at `1e-8` rather than this, in
+# `_bounded_inverse` (sample_nuts.jl). Deliberate rather than a fourth copy that
+# drifted: it builds the sampler's *metric*, where a direction wrongly called
+# flat costs only efficiency, against a reported covariance here, where it costs
+# a standard error. The looser bar belongs to the cheaper mistake. Do not
+# reconcile the two without reading both.
+#' @keywords internal
+.ctFlatDirectionRtol <- function() 1e-12
+
 # How much of each coordinate lies in the null space of an information matrix.
 #
 # Zero for every coordinate when nothing is flat, and NA when the
@@ -526,7 +556,7 @@
 # fit, and on a model with a thousand-odd parameters the difference is seconds
 # rather than milliseconds.
 #' @keywords internal
-.ctBackendNullMass <- function(information, rtol = 1e-12) {
+.ctBackendNullMass <- function(information, rtol = .ctFlatDirectionRtol()) {
   n <- nrow(information)
   values <- try(eigen(information, symmetric = TRUE,
     only.values = TRUE)$values, silent = TRUE)

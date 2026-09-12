@@ -235,8 +235,10 @@ getparnames <- function(fit,reonly=FALSE, subjvariationonly=FALSE, popstatesonly
   ms <- fit$setup$matsetup
   
   if(popstatesonly)  indices=ms$param > 0 & ms$copyrow <1 & ms$matrix==1 & ms$indvarying > 0 & ms$row > fit$standata$nlatent
-  if(!popstatesonly)  indices=ms$when %in% c(0,-1) & ms$param > 0 & ms$copyrow < 1 & !grepl('[',ms$parname,fixed=TRUE)
-  if(subjvariationonly) indices = ms$when %in% c(0,-1) & ms$param > 0 & ms$copyrow < 1 & (ms$tipred >0 | ms$indvarying > 0)
+  # The `parname` test is this caller's own: a bracketed name is a state or
+  # tdpred reference rather than something to report as a parameter.
+  if(!popstatesonly)  indices=.ctMatsetupFreeRows(ms, defining = TRUE) & !grepl('[',ms$parname,fixed=TRUE)
+  if(subjvariationonly) indices = .ctMatsetupFreeRows(ms, defining = TRUE, varying = TRUE)
   pars <- data.frame(parnames = ms$parname[indices],  parindices = ms$param[indices])
   
   pars<-pars[!duplicated(pars$parnames),]
