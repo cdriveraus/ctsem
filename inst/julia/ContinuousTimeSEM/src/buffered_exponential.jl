@@ -4,6 +4,29 @@ using LinearAlgebra
 # Matrix exponential related functions
 ################################################################################
 """
+    _pade13_b(T)
+
+The thirteenth-order Padé numerator coefficients b0..b13 of Higham (2008),
+as a 14-tuple in `T`.
+
+One definition rather than two. `my_exp!` and `my_exp_frechet!` both need
+them, and they were written out as separate literal tuples with a comment on
+the second saying it matched the first -- which is a statement nothing
+checked. `test_pade_coefficients.jl` checks it now, and there is only one
+tuple for it to check.
+
+A function of the element type rather than a `const`, so each caller gets the
+tuple already in its own working type and the conversion is constant-folded
+rather than done per call.
+"""
+@inline _pade13_b(::Type{T}) where {T<:Number} = (
+    T(64764752532480000.0), T(32382376266240000.0), T(7771770303897600.0),
+    T(1187353796428800.0), T(129060195264000.0), T(10559470521600.0),
+    T(670442572800.0), T(33522128640.0), T(1323241920.0), T(40840800.0),
+    T(960960.0), T(16380.0), T(182.0), T(1.0)
+)
+
+"""
     ExpBuffer{T}(n)
 
 Workspace for allocation-conscious matrix exponential computations.
@@ -91,13 +114,7 @@ function my_exp!(Y::AbstractMatrix{TYPE}, A::AbstractMatrix{TYPE}, W1::AbstractM
     mul!(buffer.A4, buffer.A2, buffer.A2)
     mul!(buffer.A6, buffer.A4, buffer.A2)
 
-    # Coefficients b[1]..b[14] correspond to b0..b13 in Higham (2008).
-    b = (
-        TYPE(64764752532480000.0), TYPE(32382376266240000.0), TYPE(7771770303897600.0),
-        TYPE(1187353796428800.0), TYPE(129060195264000.0), TYPE(10559470521600.0),
-        TYPE(670442572800.0), TYPE(33522128640.0), TYPE(1323241920.0), TYPE(40840800.0),
-        TYPE(960960.0), TYPE(16380.0), TYPE(182.0), TYPE(1.0)
-    )
+    b = _pade13_b(TYPE)
 
     # Odd polynomial core (before left-multiplication by As):
     # W = A6*(b13*A6 + b11*A4 + b9*A2) + b7*A6 + b5*A4 + b3*A2 + b1*I
