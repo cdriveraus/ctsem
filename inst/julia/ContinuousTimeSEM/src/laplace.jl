@@ -1518,10 +1518,15 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
         step = _laplace_block_solve(fac.factors, fac.coupling,
             laplace.units.blocks[U], current.gradient)
         accepted = false
+        # Whether any trial could be evaluated at all, which is what separates
+        # "there is nothing left to gain here" from "the step went somewhere
+        # the model has no value". See the `stationary` branch below.
+        evaluable = false
         scale = 1.0
         for _ in 1:20
             candidate = u .+ scale .* step
             trial = _laplace_unit_objective_gradient(laplace, U, values, Ls, candidate, aws)
+            evaluable |= isfinite(trial.value)
             if isfinite(trial.value) && trial.value >= current.value - 1e-12
                 u = candidate
                 current = trial
@@ -1530,7 +1535,31 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
             end
             scale /= 2
         end
-        accepted || break
+        if !accepted
+            # Aim for the tolerance; do not fail for missing it when the
+            # arithmetic is what stopped you.
+            #
+            # The curvature here is repaired to negative definite before the
+            # solve, so the Newton direction is an ascent direction. If no
+            # scale of it -- down to 2^-20 -- produces a value that is even
+            # equal, then the improvement still available has fallen below the
+            # objective's own roundoff, and that is what being at a mode looks
+            # like in floating point. Measured on a count model: |g| 2.43e-4
+            # against a curvature of 7158, so `g^2/2M` = 4.1e-12 of value left
+            # to gain, while the first trial came back 4.1e-11 lower -- noise,
+            # on a value of size 242.
+            #
+            # Reporting that as a failure is what killed the fit rather than
+            # the unit: one unit of forty invalidates the whole trial point, so
+            # the outer optimiser was offered nothing usable and stopped at its
+            # starting values, six times in twenty random starts.
+            #
+            # `inner_gradient` keeps what was actually reached, so a unit that
+            # stopped four orders above the tolerance is visible in the
+            # diagnostics rather than silently equated with one that did not.
+            converged = evaluable
+            break
+        end
     end
     if d == 0 || maximum(abs, current.gradient) <
             _laplace_inner_tolerance(laplace, current.value)
@@ -2775,8 +2804,33 @@ ctsem_laplace_diagnostics(laplace::CTSEMLaplaceObjective) = (
 export ctsem_laplace_diagnostics
 
 """Per-run state: the fallback counter this route keeps for its own report."""
-function _ctsem_optimise_setup!(::CTSEMLaplaceObjective)
+function _ctsem_optimise_setup!(o::CTSEMLaplaceObjective)
     _CTSEM_LAPLACE_FALLBACKS[] = 0
+    # The modes are a warm start *within* one optimisation, where consecutive
+    # parameter vectors are close and the Newton solve lands in one or two
+    # steps. Between optimisations they are nothing of the kind: R caches this
+    # object by a hash of the model spec, so without this the next `ctFit()` of
+    # the same model begins at wherever the last one left its units -- and a
+    # previous fit that failed leaves them somewhere its successor cannot
+    # recover from. Measured on a 40-subject count model: from zeros in a clean
+    # session, -1471.584 in 28 iterations; from the same start after a failed
+    # laplace fit, -6.4e86 in 2.
+    #
+    # Zero is what the constructor uses, so this is the state a fit would have
+    # had if it were the first one in the session -- which is the property
+    # being restored.
+    for mode in o.modes
+        fill!(mode, 0.0)
+    end
+    # The diagnostics describe the run that is about to happen, and
+    # `_ctsem_optimise_verbose_shape` reads `inner_converged` before the first
+    # evaluation of it -- so leaving the previous fit's values here reports one
+    # fit's inner solve as another's.
+    fill!(o.inner_iterations, 0)
+    fill!(o.inner_gradient, 0.0)
+    fill!(o.inner_converged, false)
+    fill!(o.hessian_repaired, false)
+    fill!(o.mode_repaired, false)
     return nothing
 end
 

@@ -25,7 +25,8 @@ ctModelUnlist<-function(ctmodelobj,
   return(out)
 }
 
-.ctModelDefaultFreePar <- function(matrix, row, col, continuoustime){
+.ctModelDefaultFreePar <- function(matrix, row, col, continuoustime,
+  manifesttype = NULL){
   transform <- 0
   multiplier <- 1
   meanscale <- 1
@@ -34,6 +35,24 @@ ctModelUnlist<-function(ctmodelobj,
 
   if(matrix %in% c('T0MEANS','MANIFESTMEANS','TDPREDEFFECT','CINT')) {
     meanscale <- 10
+    # ...except where the parameter is not a location on the data's scale.
+    #
+    # A count manifest's mean is a log rate: it sits inside `exp()`, so a raw
+    # unit step multiplies the Poisson rate by `exp(meanscale)`. At 10 that is
+    # 22026, and a raw unit step is exactly what the optimiser's first step is,
+    # so every line search opens at a point where the model overflows. Measured
+    # on a 40-subject Poisson model over twenty random starts, all within 0.01
+    # of zero: the augmented route reached the optimum 9 times at `meanscale =
+    # 10` and 20 times at 1, and its traces stopped opening at -3.6e19.
+    #
+    # The same argument applies to a binary manifest's logit and to the first
+    # ordinal threshold -- both are link-scale parameters wearing a location
+    # parameter's prior width, and `|raw| ~ 2` already saturates a logit at 10
+    # per unit. Neither is changed here, because neither has been measured.
+    if(identical(matrix, 'MANIFESTMEANS') && !is.null(manifesttype) &&
+      length(manifesttype) >= row && isTRUE(manifesttype[row] == 3)) {
+      meanscale <- 1
+    }
   }
   if(matrix %in% c('LAMBDA')) {
     offset <- 0.5
@@ -189,7 +208,8 @@ ctModelUnlist<-function(ctmodelobj,
             matrix=matrixname,
             row=rowi,
             col=coli,
-            continuoustime=ctm[['continuoustime']])
+            continuoustime=ctm[['continuoustime']],
+            manifesttype=ctm[['manifesttype']])
           if(wasfixed || is.na(pars$transform[parrow])) pars$transform[parrow] <- defaults$transform
           if(wasfixed || is.na(pars$sdscale[parrow])) pars$sdscale[parrow] <- defaults$sdscale
           pars$indvarying[parrow] <- as.logical(pars$indvarying[parrow])
@@ -392,7 +412,8 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
         matrix = ctspec$matrix[pi],
         row = ctspec$row[pi],
         col = ctspec$col[pi],
-        continuoustime = continuoustime)$numeric
+        continuoustime = continuoustime,
+        manifesttype = ctm[['manifesttype']])$numeric
       ctspec$transform[pi] <- defaults$transform
       ctspec$multiplier[pi] <- defaults$multiplier
       ctspec$meanscale[pi] <- defaults$meanscale

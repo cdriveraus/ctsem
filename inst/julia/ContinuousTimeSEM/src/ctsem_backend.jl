@@ -671,17 +671,18 @@ function _ctsem_overshot(objective, minimizer, saturated_parameters, value,
     return (overshot=gain > tolerance, gain=gain)
 end
 
-# The two relative scales, together, because the point of the pair is that they
-# are relative to *different* quantities: one to the objective and one to the
-# gradient. They were one number used for both.
+# The two relative tolerances. Both are `1e-6` of `_ctsem_objective_scale` and
+# neither is the other: one bounds a gradient per unit of objective, the other
+# an objective difference worth acting on, and they move for different reasons.
 const _CTSEM_OBJECTIVE_RTOL = 1e-6
 const _CTSEM_GRADIENT_RTOL = 1e-6
 
 """
 The size of an objective difference worth acting on, relative to the objective.
 
-In objective units and proportional to the value, so it means the same thing on
-a log likelihood of -30 and one of -3e6. Used by `_ctsem_overshot`, where the
+In objective units and proportional to how big the objective is, so it means
+the same thing on a log likelihood of -30 and one of -3e6. Used by
+`_ctsem_overshot`, where the
 question is not whether a difference is above the arithmetic -- `sqrt(eps)`
 would answer that -- but whether it is large enough to call a fit failed. It is
 the more forgiving of the two, deliberately: the two cases that test separates
@@ -694,32 +695,69 @@ always dimensionally right *here* -- an objective difference against an
 objective threshold. What was wrong was the same quantity being used as a
 gradient bar; see `_ctsem_gradient_tolerance`.
 """
-_ctsem_objective_tolerance(value) =
-    _CTSEM_OBJECTIVE_RTOL * max(abs(Float64(value)), 1.0)
+_ctsem_objective_tolerance(scale) =
+    _CTSEM_OBJECTIVE_RTOL * max(Float64(scale), 1.0)
 
 """
-The gradient bar, relative to the worst gradient this fit ever saw.
+    _ctsem_objective_scale(subject_loglik)
 
-There is no absolute gradient tolerance that is right for two models, because a
-gradient is a sum over observations: `g_tol = 1e-8` is unreachable on a
-100-subject likelihood and trivial on a 6-subject one. What is comparable
-across models is how far the gradient has come, so the bar is a fraction of the
-largest gradient the run ever had -- dimensionally a gradient against a
-gradient, unchanged when the likelihood is scaled, and carrying none of its
-additive constants.
+How big the objective is, as distinct from what it equals.
 
-It replaced `1e-6 * max(1, |value|)`, which compared a gradient against an
-objective: dimensionally incoherent, sensitive to the likelihood's arbitrary
-constants, and *looser* for larger data, so the same model with ten times the
-subjects was judged ten times more leniently.
+`sum(abs, .)` over the per-subject contributions rather than `abs(sum)`, and
+the difference is the whole point. A log likelihood is a sum of log
+*densities*, not of probabilities: each term is positive wherever a density
+exceeds one, so the total can be large and positive on well-measured continuous
+data, and a sum of mixed-sign contributions can sit near zero with any amount
+of data behind it. Forty subjects contributing +37 and forty contributing -37
+total exactly zero and are still eighty subjects of data. This says so; the
+total does not.
 
-This bar decides `converged` only when nothing certified the fit. What a fit
-still has to gain is measured exactly, in objective units, by
-`.ctBackendOptimGap()` on the R side, and that verdict supersedes this one --
-see `.ctBackendCertifiedVerdict()`.
+Where every contribution has the same sign -- the ordinary case -- it equals
+`abs(value)`, so it is the same number that the tolerances below were measured
+with, and a different one only where that number was indefensible.
+
+What it does *not* fix, and what keeps the bar built on it a sanity floor
+rather than a verdict, is a parameter-free additive constant: a Gaussian's
+`2*pi` term, a Poisson's `log(y!)`. Those have derivative exactly zero, so
+including one moves the objective and no part of the gradient -- and since the
+constant lands on every subject's contribution, it moves this scale too.
+Nothing built from the objective's magnitude can see that. The verdict is
+`.ctBackendOptimGap()`'s, which compares an objective difference against an
+objective tolerance and is therefore immune to it.
+
+(Rescaling the data is a different thing and not an example of this: `y -> c*y`
+shifts the objective by `N*log(c)` but also reparameterises the model, so the
+gradient moves too, by that reparameterisation's Jacobian. Both sides move,
+in unrelated ways.)
 """
-_ctsem_gradient_tolerance(g_tol, gradient_worst) =
-    max(Float64(g_tol), _CTSEM_GRADIENT_RTOL * max(Float64(gradient_worst), 0.0))
+_ctsem_objective_scale(subject_loglik) =
+    isempty(subject_loglik) ? 1.0 : max(sum(abs, subject_loglik), 1.0)
+
+"""
+The gradient bar: a gradient per unit of objective, not an absolute one.
+
+No absolute gradient tolerance is right for two models. Both the log likelihood
+and its gradient are sums over observations, so `g_tol = 1e-8` is unreachable
+on a 100-subject model and trivial on a 6-subject one. Dividing by how big the
+objective is removes that, and `_ctsem_objective_scale` is what makes "how big"
+a quantity that survives a positive log likelihood and a cancelling one.
+
+This is a sanity floor and not the verdict. The verdict is
+`.ctBackendOptimGap()`'s, which is exact, in objective units, and invariant to
+reparameterisation; it supersedes this whenever a Hessian was computed, so what
+is left here is the fits that certified nothing (`estonly`, `certify = FALSE`).
+
+Deliberately *not* relative to the worst gradient the run saw, which was tried
+and is worse in the way that matters: a fit that starts somewhere terrible has
+a huge worst gradient, so its bar is huge too, and a bar is exactly what must
+not relax for a bad fit. Measured on a 40-subject count model over twenty
+starts, eleven augmented fits stopped after two iterations with a largest
+gradient of 2.7e4, a log likelihood 2400 nats short of the optimum and a
+population mean of 10 against a truth of 1.2 -- and passed, because the bar
+there was 3e4.
+"""
+_ctsem_gradient_tolerance(g_tol, scale) =
+    max(Float64(g_tol), _CTSEM_GRADIENT_RTOL * max(Float64(scale), 1.0))
 
 """
 A line search that records the directional derivative it is handed.
@@ -838,8 +876,7 @@ end
 
 """
     _ctsem_optimise_verdict(objective, minimizer, start_values, value, gradient_norm,
-                            gradient_worst, saturated_parameters, g_tol;
-                            label, verbose)
+                            scale, saturated_parameters, g_tol; label, verbose)
 
 Whether an optimiser arrived at a maximum, in one place for every route.
 
@@ -874,10 +911,13 @@ gradient is NaN -- it was set on an earlier iterate -- and `NaN <= tolerance` is
 false, so the scaled test alone would not catch it: one draw in ten reported
 convergence with a NaN gradient.
 
-The gradient criterion is `_ctsem_gradient_tolerance`, a fraction of the worst
-gradient the run saw, and the overshoot bar is `_ctsem_objective_tolerance`,
-which is in objective units because an objective gain is what the overshoot
-test measures. Those were one quantity -- `1e-6 * max(1, |value|)` -- serving both,
+The gradient criterion is `_ctsem_gradient_tolerance` and the overshoot bar is
+`_ctsem_objective_tolerance`. Both are relative to the objective's magnitude
+and they are the same number, which is not the same as being one quantity: they
+are compared against different things -- a gradient and an objective difference
+-- and keeping them apart is what makes it possible to change one without
+silently moving the other, which is how the single `scaled_tolerance` hid a
+68x change to the overshoot test. Those were one quantity -- `1e-6 * max(1, |value|)` -- serving both,
 which meant a gradient compared against an objective in one place and an
 objective gain compared against a gradient bar in the other.
 
@@ -894,23 +934,19 @@ differently: the marginal and joint ones ask `_ctsem_saturated_parameters` over
 correlations saturate together (`_laplace_saturated_parameters`).
 """
 function _ctsem_optimise_verdict(objective, minimizer, start_values, value,
-        gradient_norm, gradient_worst, saturated_parameters, g_tol;
+        gradient_norm, scale, saturated_parameters, g_tol;
         label::AbstractString="ctsem_optimize", verbose::Bool=false)
     moved = isempty(minimizer) ? 0.0 : maximum(abs, minimizer .- start_values)
     saturated = !isempty(saturated_parameters)
     stalled = moved == 0 && (!isfinite(value) || gradient_norm > max(g_tol, 1e-6))
-    # Not relative, deliberately, and not the bar below. A fit that failed its
-    # first line search has a worst gradient equal to its starting one, so a
-    # relative bar is satisfied by definition at the point it never left -- the
-    # 1.2e9 failure this whole function exists to catch, in miniature.
-    gradient_tolerance = _ctsem_gradient_tolerance(g_tol, gradient_worst)
+    gradient_tolerance = _ctsem_gradient_tolerance(g_tol, scale)
     finite_gradient = isfinite(gradient_norm)
     converged_enough = isfinite(value) && finite_gradient &&
         gradient_norm <= gradient_tolerance
     # In objective units, because the overshoot test measures an objective
     # gain: how much pulling a saturated coordinate back improves the fit.
     overshoot = _ctsem_overshot(objective, minimizer, saturated_parameters,
-        value, _ctsem_objective_tolerance(value))
+        value, _ctsem_objective_tolerance(scale))
     overshot = overshoot.overshot
     verbose && stalled && println(_console(), label, ": the optimizer made no ",
         "progress from its starting values; reporting this as not converged")
@@ -1177,8 +1213,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # And the verdict itself, which every route reaches the same way and in one
     # place: see `_ctsem_optimise_verdict`.
     verdict = _ctsem_optimise_verdict(objective, minimizer, start_values,
-        final.value, gradient_norm, convergence.worst, saturated_parameters,
-        g_tol; label=label, verbose=verbose)
+        final.value, gradient_norm, _ctsem_objective_scale(final.subject_loglik),
+        saturated_parameters, g_tol; label=label, verbose=verbose)
     saturated = verdict.saturated
     stalled = verdict.stalled
     gradient_tolerance = verdict.gradient_tolerance

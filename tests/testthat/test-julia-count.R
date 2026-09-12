@@ -123,20 +123,61 @@ test_that("the adjoint matches forward mode on a count model", {
   }
 })
 
-test_that("a count model recovers what generated it, both routes", {
+test_that("a count model recovers what generated it, and laplace does it better", {
   skip_without_julia()
   d <- .count_data()
   m <- .count_model_varying()
-  for (method in c("augmented", "laplace")) {
-    fit <- suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
-      intoverpop = method, optimcontrol = list(estonly = TRUE))))
-    expect_true(isTRUE(fit$estimate$converged))
-    means <- summary(fit)$popmeans
-    # Wide, because this is one dataset of forty subjects and the test is that
-    # the estimator is pointed at the right place, not that it is precise.
-    expect_equal(unname(means["drift_eta1", "mean"]), -0.4, tolerance = 0.35)
-    expect_equal(unname(means["mm", "mean"]), 1.2, tolerance = 0.35)
-  }
+
+  # A random start, deliberately: `inits = NULL` draws `rnorm(npar, 0, .01)`
+  # from wherever the session's RNG has reached, so this asks whether the fit
+  # depends on where it began. It used to. Over twenty such starts the laplace
+  # route reached the optimum 14 times and the augmented route 9, and eleven of
+  # the augmented failures reported `converged = TRUE` at a largest gradient of
+  # 2.7e4; both are 20/20 now. The two defects behind that are a count
+  # intercept carrying a location parameter's `meanscale` (see
+  # `.ctModelDefaultFreePar`) and an inner mode solve that reported failure for
+  # reaching the limit of double precision (see `_laplace_newton_unit_mode`).
+  #
+  # So this test is not pinned, and should not be: a pinned start would pass
+  # over either defect returning.
+  fits <- lapply(c(augmented = "augmented", laplace = "laplace"), function(route) {
+    suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
+      intoverpop = route, optimcontrol = list(estonly = TRUE))))
+  })
+  for (route in names(fits)) expect_true(isTRUE(fits[[route]]$estimate$converged))
+
+  got <- vapply(fits, function(f) {
+    means <- summary(f)$popmeans
+    c(mm = unname(means["mm", "mean"]),
+      drift = unname(means["drift_eta1", "mean"]))
+  }, numeric(2))
+
+  # One tolerance for both routes is what this used to have, and it hid the
+  # result rather than testing it: the two do not have the same accuracy here
+  # and the difference is the point of having both.
+  #
+  # The laplace route integrates the random intercept; the augmented route
+  # carries it as a state through a linearised filter, which biases a nonlinear
+  # model -- the same shrinkage `test-julia-multivariate-mixed.R` records for a
+  # nonlinear sd, here on a Poisson intercept. Measured, both converged:
+  #
+  #   route      mm (truth 1.2)      drift (truth -0.4)
+  #   laplace    1.242   3.5% off    -0.402   0.5% off
+  #   augmented  1.716    43% off    -0.219    45% off
+  #
+  # So each route is asked for what it delivers, with room over the
+  # measurement, and the ordering is asserted separately because that is the
+  # claim worth defending: a tolerance that covered both would pass whichever
+  # way round they came out.
+  expect_equal(unname(got["mm", "laplace"]), 1.2, tolerance = 0.1)
+  expect_equal(unname(got["drift", "laplace"]), -0.4, tolerance = 0.1)
+  expect_equal(unname(got["mm", "augmented"]), 1.2, tolerance = 0.6)
+  expect_equal(unname(got["drift", "augmented"]), -0.4, tolerance = 0.6)
+
+  # The direction, which a pair of tolerances cannot state.
+  expect_lt(abs(got["mm", "laplace"] - 1.2), abs(got["mm", "augmented"] - 1.2))
+  expect_lt(abs(got["drift", "laplace"] + 0.4),
+    abs(got["drift", "augmented"] + 0.4))
 })
 
 test_that("the two routes agree on a count model", {
