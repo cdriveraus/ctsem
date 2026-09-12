@@ -622,28 +622,46 @@ function _pool_draws(results::Vector{_ChainResult}, npar::Int)
     return pooled
 end
 
-"""Continue every chain from its own state."""
-function _continue_chains(nchains::Int, parallel::Bool, seed::Integer,
-    ndraws::Int, maxdepth::Int, maxdelta::Float64, density_for,
-    previous::Vector{_ChainResult}; progress::Bool=false,
+"""
+    _run_chains(nchains, parallel, seed, label, closing, chain; kwargs...)
+
+Run `nchains` chains, concurrently when there are threads for them, and collect
+their results.
+
+`chain(c, rng, reporter, watcher)` runs chain `c` and returns its
+`_ChainResult`. Everything around that is the same whether the chains are
+starting or continuing, and was written out twice: the results vector, the
+per-chain RNG, the restriction of reporting to chain 1, and the spawn-or-serial
+dispatch.
+
+Only the first chain reports. Four threads writing lines interleave into
+something unreadable, and a lock to prevent that would serialise the work being
+reported on; one chain is representative when they are all doing the same thing.
+The same restriction applies to the callback for a sharper reason than
+readability: several `Threads.@spawn`ed chains calling back into R at once is a
+concurrency hazard, not just noise. One representative chain is what a GUI gets,
+exactly as one representative chain is what the console gets.
+
+`closing` is the text the progress line is closed with. Closing it matters:
+nothing did, once, and the last in-place update was left open with no newline
+on it, so whatever R printed next landed inside it -- "div 0Laplace fit:
+trajectories are conditional...".
+
+The RNG is constructed here rather than by the caller so that both routes seed
+the same way -- `Xoshiro(seed + c)`, per chain, from the same base -- which is
+the property a run has to keep to be reproducible from its seed.
+"""
+function _run_chains(nchains::Int, parallel::Bool, seed::Integer,
+    label::String, closing::String, chain; progress::Bool=false,
     overwrite::Bool=true, progress_callback=nothing, progress_sink=nothing)
     results = Vector{_ChainResult}(undef, nchains)
     runner = function (c)
-        reporter = CTSEMProgress(progress && c == 1; label="sampling",
+        reporter = CTSEMProgress(progress && c == 1; label=label,
             overwrite=overwrite, sink=progress_sink)
-        # Only chain 1 gets a live callback too, and for the same reason as
-        # the printed line: several threads calling back into R at once is
-        # not merely unreadable, it is unsafe. See `_sample_chains`.
         watcher = CTSEMCallback(c == 1 ? progress_callback : nothing)
-        results[c] = _run_chain(density_for(c), previous[c].x,
-            previous[c].metric, Random.Xoshiro(UInt64(seed) + UInt64(c)),
-            0, ndraws, maxdepth, 0.8, maxdelta, 0.0, false, nothing;
-            resume=previous[c], progress=reporter, callback=watcher)
-        # Close the line. Nothing did, so the last in-place update was left open
-        # with no newline on it and whatever R printed next landed inside it --
-        # "div 0Laplace fit: trajectories are conditional...". The optimiser
-        # routes have closed theirs for a while; this one never has.
-        _progress_done(reporter, @sprintf("%d draws", ndraws))
+        results[c] = chain(c, Random.Xoshiro(UInt64(seed) + UInt64(c)),
+            reporter, watcher)
+        _progress_done(reporter, closing)
         return nothing
     end
     if parallel
@@ -656,6 +674,26 @@ function _continue_chains(nchains::Int, parallel::Bool, seed::Integer,
         end
     end
     return results
+end
+
+"""Continue every chain from its own state.
+
+No warmup and no adaptation, so the target accept rate, initial scale and
+adaptation flags are the inert values: this is the same chain going on, not a
+new one tuned again.
+"""
+function _continue_chains(nchains::Int, parallel::Bool, seed::Integer,
+    ndraws::Int, maxdepth::Int, maxdelta::Float64, density_for,
+    previous::Vector{_ChainResult}; progress::Bool=false,
+    overwrite::Bool=true, progress_callback=nothing, progress_sink=nothing)
+    return _run_chains(nchains, parallel, seed, "sampling",
+        @sprintf("%d draws", ndraws),
+        (c, rng, reporter, watcher) -> _run_chain(density_for(c),
+            previous[c].x, previous[c].metric, rng,
+            0, ndraws, maxdepth, 0.8, maxdelta, 0.0, false, nothing;
+            resume=previous[c], progress=reporter, callback=watcher);
+        progress=progress, overwrite=overwrite,
+        progress_callback=progress_callback, progress_sink=progress_sink)
 end
 
 """Glue two batches of the same chains into one."""
@@ -707,42 +745,18 @@ function _sample_chains(nchains::Int, parallel::Bool, seed::Integer,
     density_for; settle_tol::Float64=0.0, init_eps::Float64=0.0,
     progress::Bool=false, overwrite::Bool=true, progress_callback=nothing,
     progress_sink=nothing)
-    results = Vector{_ChainResult}(undef, nchains)
-    runner = function (c)
-        # Only the first chain reports. Four threads writing lines interleave
-        # into something unreadable, and a lock to prevent that would serialise
-        # the work being reported on; one chain is representative when they are
-        # all doing the same thing.
-        reporter = CTSEMProgress(progress && c == 1; label="warmup",
-            overwrite=overwrite, sink=progress_sink)
-        # Same restriction on the callback, and for a sharper reason than
-        # readability: several `Threads.@spawn`ed chains calling back into R
-        # at once is a concurrency hazard, not just noise. One representative
-        # chain is what a GUI gets, exactly as one representative chain is
-        # what the console gets.
-        watcher = CTSEMCallback(c == 1 ? progress_callback : nothing)
-        results[c] = _run_chain(density_for(c), centre, metric,
-            Random.Xoshiro(UInt64(seed) + UInt64(c)), nwarmup, ndraws, maxdepth,
+    # One reporter spans both phases -- `_run_chain` relabels it from "warmup"
+    # to "sampling" partway -- so it opens on "warmup" and the closing line
+    # names both rather than whichever phase it ended in.
+    return _run_chains(nchains, parallel, seed, "warmup",
+        @sprintf("%d warmup + %d draws", nwarmup, ndraws),
+        (c, rng, reporter, watcher) -> _run_chain(density_for(c), centre,
+            metric, rng, nwarmup, ndraws, maxdepth,
             target_accept, maxdelta, init_scale, adapt_metric, adapt;
             settle_tol=settle_tol, init_eps=init_eps, progress=reporter,
-            callback=watcher)
-        # See `_continue_chains`. One reporter spans both phases -- `_run_chain`
-        # relabels it from "warmup" to "sampling" partway -- so the closing line
-        # names both rather than whichever phase it ended in.
-        _progress_done(reporter,
-            @sprintf("%d warmup + %d draws", nwarmup, ndraws))
-        return nothing
-    end
-    if parallel
-        Threads.@sync for c in 1:nchains
-            Threads.@spawn runner(c)
-        end
-    else
-        for c in 1:nchains
-            runner(c)
-        end
-    end
-    return results
+            callback=watcher);
+        progress=progress, overwrite=overwrite,
+        progress_callback=progress_callback, progress_sink=progress_sink)
 end
 
 """
