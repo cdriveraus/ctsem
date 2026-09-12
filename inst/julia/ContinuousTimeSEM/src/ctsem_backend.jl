@@ -787,6 +787,43 @@ function _ctsem_optimise_trial(o::CTSEMOptimisable, x, want_gradient::Bool,
 end
 
 """
+    _ctsem_metric(precondition, n)
+
+A diagonal metric for L-BFGS, or `nothing` to leave it alone.
+
+L-BFGS starts with a *scalar* initial inverse Hessian and takes a first step of
+unit length in the raw coordinates, so it has no per-coordinate scaling until
+secant pairs accumulate. When one coordinate maps to model quantities ten times
+faster than the others -- which a `meanscale` of 10 against 1 is exactly -- the
+step that suits the rest is ten times too long for it, and the line search has
+to shrink the *whole* step to accommodate the worst one. Measured on a
+40-subject count model's laplace route: gradient components spanning 210:1
+across coordinates, 30 function evaluations spent on 4 iterations, stopping with
+303 nats still available and not one trial point rejected. At 26:1 the same fit
+converges.
+
+`precondition[i]` is `|d value / d raw|` for coordinate `i`, so `P` is its
+square: `P` stands in for the Hessian, and a transform with factor `s`
+multiplies second derivatives by `s^2`. A step is then the same amount of model
+in every coordinate, which is the metric L-BFGS would have built for itself
+after enough iterations to be worth having.
+
+Non-finite or non-positive entries become 1 -- no preconditioning for that
+coordinate -- rather than disqualifying the whole metric, since a single
+un-differentiable transform should not cost every other parameter its scaling.
+"""
+function _ctsem_metric(precondition, n::Integer)
+    precondition === nothing && return nothing
+    scale = collect(Float64, precondition)
+    length(scale) == n || return nothing
+    @inbounds for i in eachindex(scale)
+        (isfinite(scale[i]) && scale[i] > 0) || (scale[i] = 1.0)
+    end
+    all(isequal(1.0), scale) && return nothing
+    Diagonal(scale .^ 2)
+end
+
+"""
 What the final iteration gained, in objective units.
 
 `Inf` when there is no pair of iterations to compare, so a run that recorded one
@@ -940,7 +977,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     progress_callback=nothing,
     progress::Bool=verbose, progress_label::AbstractString="optimise",
     progress_budget::Bool=false, progress_every::Real=0.0,
-    gap_tol::Real=0.0, converge_tol::Real=1e-6)
+    gap_tol::Real=0.0, converge_tol::Real=1e-6,
+    precondition=nothing, initial_alpha::Real=1.0)
     start_values = collect(start)
     invalid_objective = floatmax(eltype(start_values)) / 1e8
     gradient_limit = sqrt(floatmax(eltype(start_values)))
@@ -1084,8 +1122,10 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     linesearch = "backtracking"
     result = Optim.optimize(Optim.only_fg!(fg!), start_values,
         Optim.LBFGS(m=Int(lbfgs_memory),
-            alphaguess=Optim.LineSearches.InitialStatic(scaled=true),
-            linesearch=directional), options)
+            alphaguess=Optim.LineSearches.InitialStatic(
+                alpha=Float64(initial_alpha), scaled=true),
+            linesearch=directional,
+            P=_ctsem_metric(precondition, length(start_values))), options)
     # No rescue stage. The one that stood here existed because Hager-Zhang can
     # run out of line search and return the iterate it had reached while Optim
     # reports a finished optimisation -- measured on a binary model: two

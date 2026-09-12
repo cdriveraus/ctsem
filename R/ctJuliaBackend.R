@@ -763,6 +763,60 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   number
 }
 
+# How much a raw unit is worth, per parameter.
+#
+# `|d value / d raw|` from each parameter's own transform, evaluated at the
+# starting point. The optimiser uses it as a diagonal metric so that a step of
+# one unit means the same amount of *model* in every coordinate -- see
+# `ctsem_optimize`'s `precondition`.
+#
+# Read from the parameter table, which is where the transform text lives;
+# `model$pars$transform` holds the numeric transform code and would silently
+# differentiate to zero. A parameter appearing in several cells takes the
+# largest factor, since that is the one that sets how far a step goes wrong.
+# Anything that cannot be differentiated finitely gets 1, which is the same as
+# not preconditioning that coordinate.
+#' @keywords internal
+.ctJuliaParameterScale <- function(spec, at = NULL, npar = NULL) {
+  pt <- spec$parameter_table
+  if (is.null(pt)) return(NULL)
+  pt <- as.data.frame(pt, stringsAsFactors = FALSE)
+  if (!all(c("parnumber", "transform") %in% names(pt))) return(NULL)
+  rows <- which(!is.na(pt$parnumber) & pt$parnumber > 0 &
+    !is.na(pt$transform) & nzchar(pt$transform))
+  if (!length(rows)) return(NULL)
+  width <- max(pt$parnumber, na.rm = TRUE)
+  if (is.null(npar) || !is.finite(npar)) npar <- width
+  if (is.null(at) || length(at) < width) at <- rep(0, width)
+  out <- rep(1, npar)
+  # An environment whose parent is this frame: `eval()` given a list looks
+  # unresolved names up in `parent.frame()`, which from inside a numerical
+  # derivative is not this package.
+  scope <- new.env(parent = environment())
+  for (i in rows) {
+    number <- as.integer(pt$parnumber[i])
+    if (number > npar) next
+    expr <- try(parse(text = pt$transform[i]), silent = TRUE)
+    if (inherits(expr, "try-error")) next
+    value <- function(v) {
+      x <- at[seq_len(width)]
+      x[number] <- v
+      assign("param", x, envir = scope)
+      got <- try(eval(expr, scope), silent = TRUE)
+      if (inherits(got, "try-error") || length(got) != 1L) NA_real_ else
+        as.numeric(got)
+    }
+    base <- at[number]
+    step <- 1e-4 * max(1, abs(base))
+    up <- value(base + step); down <- value(base - step)
+    if (!is.finite(up) || !is.finite(down)) next
+    d <- abs(up - down) / (2 * step)
+    if (!is.finite(d) || d <= 0) next
+    out[number] <- max(out[number], d)
+  }
+  out
+}
+
 .ctJuliaInitialValues <- function(npar, inits = NULL, initsd = .01,
   spec = NULL) {
   # Match stanoptimis(): absent initial values are small, R-seeded draws in
@@ -3391,6 +3445,16 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # rather than two different questions. `gap_tol` above is the stopping rule
     # and aims inside it, at a hundredth.
     converge_tol = .ctBackendConvergeTol(optimcontrol),
+    # How much a raw unit is worth in each coordinate, so a step means the same
+    # amount of model everywhere. L-BFGS has only a scalar metric until secant
+    # pairs accumulate, and a model whose transforms differ by a factor of ten
+    # hands it a problem conditioned ten times worse than it needs to be. See
+    # `.ctJuliaParameterScale()` and `_ctsem_metric` in the engine.
+    precondition = if (identical(optimcontrol$precondition, FALSE)) NULL else
+      .ctJuliaVector(.ctJuliaParameterScale(model_spec,
+        at = as.numeric(start), npar = length(as.numeric(start)))),
+    initial_alpha = if (is.null(optimcontrol$initial_alpha)) 1.0 else
+      as.numeric(optimcontrol$initial_alpha)[1L],
     verbose = verbose > 0L,
     # Overwrite one line in place when someone is watching, and print
     # occasional separate lines when the output is going to a file or a knitr
