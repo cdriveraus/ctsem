@@ -71,7 +71,7 @@
 # direction has no curvature" that can disagree is how a fit comes to be
 # described one way by its intervals and another by its convergence.
 #' @keywords internal
-.ctBackendInformationSplit <- function(hessian, rtol = 1e-12,
+.ctBackendInformationSplit <- function(hessian, rtol = .ctFlatDirectionRtol(),
   negative = 1e-8) {
   if (is.null(hessian)) return(NULL)
   hessian <- as.matrix(hessian)
@@ -103,7 +103,7 @@
 # vector, because the caller measures it rather than comparing its norm to
 # anything.
 #' @keywords internal
-.ctBackendOptimGap <- function(hessian, gradient, rtol = 1e-12,
+.ctBackendOptimGap <- function(hessian, gradient, rtol = .ctFlatDirectionRtol(),
   negative = 1e-8) {
   gradient <- as.numeric(gradient)
   split <- .ctBackendInformationSplit(hessian, rtol = rtol,

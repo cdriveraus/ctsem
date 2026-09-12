@@ -185,70 +185,44 @@
     finishsamples = finishsamples, cores = cores, matsetup = NA,
     control = control, verbose = verbose, scores = scores, hessian = hessian)
 
-  # Same three-way choice as the stan branch of `ctOptimUncertainty()`, and in
-  # the same order. `empirical` was missing here, so `uncertainty='bootstrap'`
-  # -- which `.ctResolveDraws()` resolves to `draws='empirical'` -- fell
-  # through to the normal draws below and recorded `draws='empirical'` in
-  # `$uncertainty$settings` anyway. The covariance was the bootstrap's, so
-  # nothing looked wrong; the draws were a Gaussian around the estimate, which
-  # is the one thing asking for a bootstrap says you do not want. Detectable
-  # only by noticing that `sd(rawposterior)` no longer equalled
+  # The draw choice itself is `.ctOptimDrawSamples()`, shared with the stan
+  # branch of `ctOptimUncertainty()`. It used to be written out here as well,
+  # and the copies drifted: `empirical` was missing on this side, so
+  # `uncertainty='bootstrap'` -- which `.ctResolveDraws()` resolves to
+  # `draws='empirical'` -- fell through to normal draws and recorded
+  # `draws='empirical'` in `$uncertainty$settings` anyway. The covariance was
+  # the bootstrap's, so nothing looked wrong; the draws were a Gaussian around
+  # the estimate, which is the one thing asking for a bootstrap says you do not
+  # want. Detectable only by noticing that `sd(rawposterior)` no longer equalled
   # `sqrt(diag(cov))`, as it does on stan by construction.
-  if (draws == "empirical" && !is.null(uncertaintyfit$draws)) {
-    samples <- uncertaintyfit$draws
-  } else if (draws == "imis") {
-    if (is.null(control$imisMaxIter)) control$imisMaxIter <- 50
-    # Wider than the curvature says. The
-    # proposal starts from the Hessian covariance, which on a modest sample is
-    # *narrower* than the posterior -- the very thing importance sampling is
-    # being asked to correct -- and a proposal narrower than its target cannot
-    # correct it, because the region carrying the missing mass is never
-    # visited. This previously defaulted to 1.1, and returned standard errors
-    # within 10% of the Hessian's where the posterior was up to twice as wide.
-    #
-    # Deliberately left at 1.5 after a second measurement disagreed. On a
-    # 400-subject model stan's 1.1 measures better at every evaluation count,
-    # but the reasoning above was measured on a 40-subject one, where the
-    # posterior really is wider than the curvature. That is evidence that one
-    # constant cannot serve both sample sizes, not evidence against this one,
-    # and the small-sample case is the only setting in which importance
-    # sampling beats the exact Hessian at all -- so the default stays where the
-    # case for the method lives.
-    if (is.null(control$imisScaleInit)) control$imisScaleInit <- 1.5
-    if (is.null(control$imisTailScale)) control$imisTailScale <- 1.2
-    # Normal, not t. See `imis_is`: the heavier-tailed proposal was measured
-    # and was worse at equal scale, and only competitive at a scale that
-    # collapsed the effective sample size.
-    if (is.null(control$imisDf)) control$imisDf <- Inf
-    if (is.null(control$isESS)) control$isESS <- 100
-    if (is.null(control$isitersize)) control$isitersize <- 1000
-    # Value-only, not `lpgFunc`: `imis_is` reads the log probability and
-    # nothing else, so the reverse pass `lpgFunc` computes per draw was being
-    # discarded by the `vapply` that collects it.
-    is_res <- imis_is(.ctBackendLpgFunc(fit, gradient = FALSE),
-      mu_hat = est, Sigma_hat = uncertaintyfit$cov,
-      max_iter = control$imisMaxIter, scale_init = control$imisScaleInit,
-      tail_scale = control$imisTailScale, df = control$imisDf,
-      target_ess = control$isESS,
-      n_batch = control$isitersize, cl = NA, finishsamples = finishsamples,
-      verbose = verbose > 0)
-    samples <- is_res$theta
-    uncertaintyfit$proposal_cov <- uncertaintyfit$cov
-    weighted <- !is.null(is_res$covariance) && all(is.finite(is_res$covariance))
-    if (weighted) {
-      uncertaintyfit$cov <- ctOptimSafeCov(is_res$covariance)
-    } else if (nrow(samples) > 1) {
-      uncertaintyfit$cov <- ctOptimSafeCov(stats::cov(samples))
-    }
-    uncertaintyfit$imis <- is_res
-    uncertaintyfit$details$importance_sampling <- list(ess = is_res$ess,
-      df_used = is_res$df_used, weighted = weighted,
-      covariance = if (weighted) "weighted importance-sampling covariance" else
-        "unweighted covariance of the resampled draws")
-    .ctOptimImisReport(is_res, control$isESS, weighted)
-  } else {
-    samples <- ctOptimNormalDraws(est, uncertaintyfit$cov, finishsamples)
-  }
+  #
+  # Two arguments carry what is genuinely this backend's:
+  #
+  #   `scaleInit = 1.5`, `tailScale = 1.2` -- wider than the curvature says. The
+  #   proposal starts from the Hessian covariance, which on a modest sample is
+  #   *narrower* than the posterior -- the very thing importance sampling is
+  #   being asked to correct -- and a proposal narrower than its target cannot
+  #   correct it, because the region carrying the missing mass is never visited.
+  #   This was 1.1, and returned standard errors within 10% of the Hessian's
+  #   where the posterior was up to twice as wide. Left at 1.5 after a second
+  #   measurement disagreed: on a 400-subject model stan's 1.1 measures better at
+  #   every evaluation count, but the reasoning above was measured on a
+  #   40-subject one, where the posterior really is wider than the curvature.
+  #   That is evidence one constant cannot serve both sample sizes, not evidence
+  #   against this one -- and the small-sample case is the only setting in which
+  #   importance sampling beats the exact Hessian at all, so the default stays
+  #   where the case for the method lives.
+  #
+  #   `lpg` value-only, not `lpgFunc`: `imis_is` reads the log probability and
+  #   nothing else, so the reverse pass `lpgFunc` computes per draw was being
+  #   discarded by the `vapply` that collects it.
+  drawn <- .ctOptimDrawSamples(uncertaintyfit, draws = draws, control = control,
+    est = est, finishsamples = finishsamples,
+    lpg = .ctBackendLpgFunc(fit, gradient = FALSE), verbose = verbose,
+    scaleInit = 1.5, tailScale = 1.2)
+  samples <- drawn$samples
+  uncertaintyfit <- drawn$uncertaintyfit
+  control <- drawn$control
 
   storedControl <- control
   storedControl$initialCov <- NULL

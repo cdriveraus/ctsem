@@ -3083,11 +3083,24 @@ ctJuliaEvaluate <- function(object, pars = NULL, gradient = TRUE, contributions 
 #' @export
 summary.ctJuliaFit <- function(object, timeinterval = 1, digits = 3, parmatrices = TRUE,
   priorcheck = TRUE, residualcov = TRUE, ...) {
-  # `priorcheck` is accepted and ignored rather than rejected: it is part of
-  # summary.ctStanFit's signature, and a script that summarises whichever fit it
-  # was handed should not fail on the argument. What it reports -- posterior
-  # means and sds against ctsem's normal(0,1) raw priors -- would need the Stan
-  # model's own prior block, which this backend does not carry.
+  # `priorcheck` reports posterior means and sds against ctsem's normal(0,1) raw
+  # priors, which needs the Stan model's own prior block. This backend does not
+  # carry one, so there is nothing here to report.
+  #
+  # The value decides, which is the rule `.ctOptimcontrolSplit()` already
+  # applies to optimcontrol names. `priorcheck = FALSE` describes what this
+  # backend does and is accepted in silence; so is the default, so a script that
+  # summarises whichever fit it was handed still works, which is why this was
+  # accepted-and-ignored in the first place. `priorcheck = TRUE` written out by
+  # hand asks for a report that will not appear, and used to get silence -- a
+  # summary with no prior check in it and nothing saying one had been asked for.
+  # `missing()` before the argument is touched is what tells a default from a
+  # value that happens to equal it; `ctFit()` does the same for `poprank`.
+  if(!missing(priorcheck) && isTRUE(priorcheck)) stop(
+    "priorcheck compares the posterior against ctsem's raw-scale priors, which ",
+    "needs the stan model's prior block; a backend='julia' fit does not carry ",
+    "one. Drop the argument, or pass priorcheck=FALSE. ctLaplaceCheck() and ",
+    "fit$priorerrors are what this backend reports instead.", call.=FALSE)
   .ctBackendSummary(object, timeinterval = timeinterval, digits = digits,
     parmatrices = parmatrices, residualcov = residualcov, ...)
 }
