@@ -39,7 +39,7 @@
     latentNames = "eta1", manifesttype = rep(2L, nindicators),
     ncategories = rep(ncategories, nindicators),
     LAMBDA = matrix(1, nindicators, 1),
-    MANIFESTMEANS = matrix(0, nindicators, 1), CINT = matrix(0),
+    CINT = matrix(0),
     T0MEANS = matrix(0), MANIFESTVAR = diag(0, nindicators))))
   m$pars$indvarying <- FALSE
   m
@@ -73,15 +73,27 @@ test_that("ctModel refuses an ordinal specification it cannot act on", {
   expect_equal(m$ncategories, 4L)
 })
 
-test_that("THRESHOLDS holds a free first threshold and positive gaps", {
+test_that("THRESHOLDS pins the first threshold and estimates positive gaps", {
   m <- .jord_model(nindicators = 1, ncategories = 4)
   thr <- m$pars[m$pars$matrix %in% "THRESHOLDS", ]
   expect_equal(nrow(thr), 3L)
-  expect_true(all(is.na(thr$value)))
-  # Column 1 is an unconstrained threshold; the rest are gaps, and a gap that
-  # could go negative would let the thresholds cross.
-  expect_false(grepl("log1p_exp", thr$transform[thr$col == 1]))
+
+  # Column 1 is the zero of the category scale, not a parameter. Shifting the
+  # manifest mean and every threshold together leaves the cumulative logit
+  # unchanged, so one location among them is redundant; fixing this one puts it
+  # in MANIFESTMEANS, which is `indvarying` where thresholds are not. A
+  # per-person shift of the whole category scale is then one random effect
+  # instead of K-1, which is the reason for the choice.
+  expect_equal(as.numeric(thr$value[thr$col == 1]), 0)
+  expect_true(all(is.na(thr$value[thr$col > 1])))
+
+  # And the estimated cells are gaps, which a negative value would let cross.
   expect_true(all(grepl("log1p_exp", thr$transform[thr$col > 1])))
+
+  # The location it was traded for is free, and there is exactly one of it.
+  mm <- m$pars[m$pars$matrix %in% "MANIFESTMEANS", ]
+  expect_equal(nrow(mm), 1L)
+  expect_true(is.na(mm$value))
 })
 
 test_that("a ragged model leaves the unused threshold cells fixed", {
@@ -92,8 +104,10 @@ test_that("a ragged model leaves the unused threshold cells fixed", {
     CINT = matrix(0), T0MEANS = matrix(0), MANIFESTVAR = diag(0, 2))))
   thr <- m$pars[m$pars$matrix %in% "THRESHOLDS", ]
   # o1 needs three thresholds and o2 two, so the matrix is 2x3 with one cell
-  # unused -- fixed, and never read by the engine.
-  expect_equal(sum(is.na(thr$value)), 5L)
+  # unused -- fixed, and never read by the engine. Of the five that are used,
+  # each variable's first is also fixed, leaving three estimated gaps.
+  expect_equal(sum(is.na(thr$value)), 3L)
+  expect_equal(as.numeric(thr$value[thr$col == 1]), c(0, 0))
   spare <- thr[thr$row == 2 & thr$col == 3, ]
   expect_equal(as.numeric(spare$value), 0)
 })
@@ -183,15 +197,22 @@ test_that("a fit recovers the thresholds it generated from", {
   fit <- suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
     cores = 1, optimcontrol = list(estonly = TRUE))))
   est <- summary(fit)$popmeans
-  # THRESHOLDS holds the first threshold then gaps, so that is what the truth
-  # has to be expressed as too.
-  gaps <- c(.jord_thresholds[1], diff(.jord_thresholds))
+  # The model holds the first threshold at zero and estimates the mean and the
+  # gaps, so that is what the truth has to be expressed as. Shifting every
+  # threshold down by the first leaves the same cumulative logit provided the
+  # mean takes the shift, so the generating mean is `-.jord_thresholds[1]` and
+  # the gaps are the differences.
+  gaps <- diff(.jord_thresholds)
   for (i in 1:3) {
-    for (k in 1:3) {
+    expect_equal(unname(est[paste0("mm_o", i), "mean"]),
+      -.jord_thresholds[1], tolerance = 0.25)
+    for (k in 2:3) {
       name <- paste0("threshold_o", i, "_", k)
       expect_true(name %in% rownames(est))
-      expect_equal(unname(est[name, "mean"]), gaps[k], tolerance = 0.25)
+      expect_equal(unname(est[name, "mean"]), gaps[k - 1], tolerance = 0.25)
     }
+    # And the threshold that is not estimated is not reported as estimated.
+    expect_false(paste0("threshold_o", i, "_1") %in% rownames(est))
   }
   expect_equal(unname(est["drift_eta1", "mean"]), -0.3, tolerance = 0.15)
   expect_equal(unname(est["diff_eta1", "mean"]), 0.8, tolerance = 0.2)
@@ -285,14 +306,20 @@ test_that("mixed ordinal, binary and Gaussian indicators fit together", {
   m <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 1,
     n.manifest = 3, manifestNames = c("o1", "b1", "y1"), latentNames = "eta1",
     manifesttype = c(2L, 1L, 0L), ncategories = c(4L, 0L, 0L),
-    LAMBDA = matrix(1, 3, 1), MANIFESTMEANS = matrix(0, 3, 1),
+    LAMBDA = matrix(1, 3, 1),
+    # Means left at their default, which is free. The ordinal indicator's is
+    # where its location lives now that the first threshold is the fixed zero
+    # of its category scale, and fixing them all would leave it with none.
     CINT = matrix(0), T0MEANS = matrix(0), MANIFESTVAR = mvar)))
   m$pars$indvarying <- FALSE
   fit <- suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
     cores = 1, optimcontrol = list(estonly = TRUE))))
   expect_true(is.finite(fit$estimate$loglik))
   est <- summary(fit)$popmeans
-  expect_true("threshold_o1_1" %in% rownames(est))
+  # The ordinal indicator's estimated parameters: its location is the manifest
+  # mean, since the first threshold is the fixed zero of its category scale.
+  expect_true("mm_o1" %in% rownames(est))
+  expect_true("threshold_o1_2" %in% rownames(est))
   expect_true("mvar" %in% rownames(est))
   expect_equal(unname(est["drift_eta1", "mean"]), -0.3, tolerance = 0.2)
 })
@@ -407,7 +434,11 @@ test_that("an unlikely observation is a large penalty, not an impossible row", {
   handle <- .jord_spec(d, m)
   tab <- handle$parameter_table
   npar <- max(tab$parnumber, na.rm = TRUE)
-  first <- unique(tab$parnumber[tab$matrix %in% "THRESHOLDS" & tab$col == 1 &
+  # The location is the manifest mean now: the first threshold is fixed at zero,
+  # so pushing *it* is no longer possible and would not be the same test if it
+  # were. Shifting the mean moves every category boundary together, which is the
+  # same absurd model this was always about.
+  first <- unique(tab$parnumber[tab$matrix %in% "MANIFESTMEANS" &
       !is.na(tab$parnumber)])
   expect_equal(length(first), 1L)
   for (raw in c(5, 30, 70)) {

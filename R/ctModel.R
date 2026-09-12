@@ -516,7 +516,13 @@ ctModel<-function(LAMBDA, type='ct',n.manifest = 'auto', n.latent='auto', Tpoint
     if(any(duplicated(get(names)))) stop(paste0('Duplicate names in ',names))
   }
   
-  if(any(manifesttype>0 ) && all(CINT %in% 0)) warning('CINT usually needs to be specified for non-continuous variables -- consider fixing relevant MANIFESTMEANS to zero instead')
+  # No advice to move the location into CINT. It was needed when the link was
+  # applied to the latent alone, so a manifest intercept could not shift a
+  # probability; it is not now -- `adjoint_binary.jl` forms the linear predictor
+  # as `mu + lambda'x` and passes that to the link, so MANIFESTMEANS does the
+  # job directly for binary, count and censored indicators. The one case where
+  # the advice was true is ordinal, and `.ctThresholdMatrix()` now settles that
+  # by construction rather than by asking the user to.
 
   if(any(!manifesttype %in% 0:4)) stop('manifesttype must be 0 (continuous), 1 (binary), 2 (ordinal), 3 (count) or 4 (censored)')
   censorlimits <- .ctCheckCensorLimits(censormin, censormax, manifesttype,
@@ -526,9 +532,10 @@ ctModel<-function(LAMBDA, type='ct',n.manifest = 'auto', n.latent='auto', Tpoint
   THRESHOLDS <- NULL
   ncategories <- .ctCheckNcategories(ncategories, manifesttype, manifestNames)
   if(any(manifesttype %in% 2)){
+    # The first threshold is fixed at zero and the location lives in
+    # MANIFESTMEANS -- see `.ctThresholdMatrix()`. Nothing to warn about
+    # afterwards, because the pair can no longer both be free.
     THRESHOLDS <- .ctThresholdMatrix(ncategories, manifesttype, manifestNames)
-    if(!all(MANIFESTMEANS[manifesttype %in% 2] %in% 0)) warning(
-      'An ordinal variable has both a free MANIFESTMEANS and free thresholds, which are not separately identified -- consider fixing the relevant MANIFESTMEANS to zero')
   }
   
   

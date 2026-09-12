@@ -35,20 +35,33 @@ ctModelUnlist<-function(ctmodelobj,
 
   if(matrix %in% c('T0MEANS','MANIFESTMEANS','TDPREDEFFECT','CINT')) {
     meanscale <- 10
-    # ...except where the parameter is not a location on the data's scale.
+    # ...except for a count, whose mean is a log rate.
     #
-    # A count manifest's mean is a log rate: it sits inside `exp()`, so a raw
-    # unit step multiplies the Poisson rate by `exp(meanscale)`. At 10 that is
-    # 22026, and a raw unit step is exactly what the optimiser's first step is,
-    # so every line search opens at a point where the model overflows. Measured
-    # on a 40-subject Poisson model over twenty random starts, all within 0.01
-    # of zero: the augmented route reached the optimum 9 times at `meanscale =
-    # 10` and 20 times at 1, and its traces stopped opening at -3.6e19.
+    # It sits inside `exp()`, so a raw unit step -- which is what the
+    # optimiser's first step is -- multiplies the Poisson rate by `exp(10)` =
+    # 22026, and every line search opens where the model overflows.
     #
-    # The same argument applies to a binary manifest's logit and to the first
-    # ordinal threshold -- both are link-scale parameters wearing a location
-    # parameter's prior width, and `|raw| ~ 2` already saturates a logit at 10
-    # per unit. Neither is changed here, because neither has been measured.
+    # This is load-bearing, and a start alone does not replace it. Measured on a
+    # 40-subject Poisson model, twenty random starts each, at the default
+    # starting values:
+    #
+    #   route       meanscale 10                meanscale 1
+    #   augmented   20/20, -1483.480            20/20, -1483.480
+    #   laplace      0/20, best -2104.7         20/20, -1471.584
+    #
+    # A data-informed intercept or a modest variance start rescues the augmented
+    # route at either scale, so it looked for a while as though the scale were
+    # compensating for a poor start. The laplace route says otherwise: there,
+    # nothing but the scale works.
+    #
+    # Binary and ordinal are *not* narrowed, and the difference is the link
+    # rather than an inconsistency. A logit saturates where a log overflows: at
+    # 10 per raw unit a logit reaches a probability of 0.99995, which costs
+    # gradient but stays finite. Measured the same way on the nats convergence
+    # criterion, binary was identical at widths 10, 3 and 1, and ordinal was
+    # worse as it narrowed -- reaching the best optimum 12, 10 and 2 times out
+    # of 20 -- because a wider scale covers more value-space per step. Censored
+    # (4) is Gaussian within limits, on the data's own scale.
     if(identical(matrix, 'MANIFESTMEANS') && !is.null(manifesttype) &&
       length(manifesttype) >= row && isTRUE(manifesttype[row] == 3)) {
       meanscale <- 1
@@ -63,6 +76,9 @@ ctModelUnlist<-function(ctmodelobj,
   # they take the same positive transform the variances use. At a raw value of
   # zero a gap is log(2)*2 = 1.39, which is a sane spacing on a logit scale.
   if(matrix %in% c('THRESHOLDS')) {
+    # Column 1 is fixed at zero by `.ctThresholdMatrix()`, so this applies to
+    # nothing a model estimates; it is kept so the column has a coherent default
+    # if anything ever frees it.
     if(col == 1) meanscale <- 10
     if(col > 1) {
       transform <- 1

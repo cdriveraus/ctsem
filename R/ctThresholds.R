@@ -10,6 +10,14 @@
 #' previous threshold, constrained positive by its transform. The engine
 #' accumulates them.
 #'
+#' Column 1 is fixed at zero. Shifting `mu` and every threshold together leaves
+#' the cumulative logit unchanged, so one location among them is redundant, and
+#' fixing `tau_1` puts that location in MANIFESTMEANS -- which is `indvarying`
+#' where the thresholds are not. A person-level shift of an indicator's whole
+#' category scale is then one random effect rather than one per threshold, which
+#' is the reason for the choice. The free parameters are the gaps, so a K
+#' category variable has K-2 of them plus its mean.
+#'
 #' Storing gaps rather than thresholds is what makes the ordering constraint
 #' free. Handed K-1 unconstrained cells an optimiser will cross them, and a
 #' crossed pair gives the category between them probability zero -- the
@@ -65,7 +73,16 @@ NULL
     dimnames = list(manifestNames, paste0('threshold', seq_len(ncol))))
   for (i in seq_len(n)) {
     if (!manifesttype[i] %in% 2) next
+    # Column 1 stays at its initialised zero: see the file header. The location
+    # lives in MANIFESTMEANS, so the ambiguous model -- both free, neither
+    # identified -- cannot be built, and there is nothing left to warn about.
+    #
+    # Unconditional. A model that *also* fixes its manifest mean has made a
+    # choice and it is a coherent one: the thresholds are then pinned to the
+    # category scale and their centre is set from the latent side, by T0MEANS
+    # and CINT. Nothing here second-guesses that.
     for (j in seq_len(ncategories[i] - 1L)) {
+      if (j == 1L) next
       out[i, j] <- paste0('threshold_', manifestNames[i], '_', j)
     }
   }
