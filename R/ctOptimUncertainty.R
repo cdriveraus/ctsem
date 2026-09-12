@@ -65,20 +65,90 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
 # be evaluated -- both backends fall back to the unweighted covariance of the
 # resampled draws. That is a different estimator, and until now nothing on the
 # fit or in the session said which of the two had produced the intervals.
-.ctOptimImisReport <- function(is_res, target, weighted){
+# "These intervals rest on too few effective points to mean what they look like
+# they mean."
+#
+# Four places asked that and each wrote its own answer: here, in
+# `ctLaplaceCorrect()`, and twice in `ctParticleCorrect()`. Three of the four
+# did not call this one, and the thresholds had already drifted -- so a change
+# to the rule, or to the wording, had to be made in up to four places to stay
+# consistent, and nothing made it.
+#
+# `floor` is an argument rather than `target/2` throughout, because the drift is
+# not all accident: reweighting one fixed batch of draws has no target to halve,
+# and `max(50, 0.1 * n)` is a rule about that batch. `remedy` is the other real
+# per-caller part -- what to do instead differs by where you are, and naming the
+# wrong alternative is worse than naming none.
+#' @keywords internal
+.ctOptimEffectiveSampleWarn <- function(ess, floor, remedy, ndraws = NULL){
+  ess <- if(is.null(ess)) NA_real_ else as.numeric(ess)[1L]
+  if(!is.finite(ess) || !is.finite(floor) || ess >= floor) return(invisible(ess))
+  warning('Importance sampling reached an effective sample size of ',
+    round(ess, 1),
+    if(is.null(ndraws)) '' else paste0(' from ', ndraws, ' draws'),
+    '. The intervals rest on that many points, not on the number of draws. ',
+    remedy, call.=FALSE)
+  invisible(ess)
+}
+
+.ctOptimImisReport <- function(is_res, target, weighted,
+  remedy = paste0('A direction the data does not identify cannot be importance ',
+    'sampled at all -- check the identifiability report, and consider ',
+    'uncertainty = "hessian".')){
   ess <- if(is.null(is_res$ess)) NA_real_ else as.numeric(is_res$ess)[1L]
   if(!isTRUE(weighted)) warning(
     'The weighted importance-sampling covariance was not finite, so the ',
     'unweighted covariance of the resampled draws was used instead.',
     call.=FALSE)
-  if(is.finite(ess) && is.finite(target) && ess < target / 2) warning(
-    'Importance sampling reached an effective sample size of ', round(ess, 1),
-    ' against a target of ', target, '. The intervals rest on that many ',
-    'points, not on the number of draws. A direction the data does not ',
-    'identify cannot be importance sampled at all -- check the ',
-    'identifiability report, and consider uncertainty = "hessian".',
-    call.=FALSE)
+  .ctOptimEffectiveSampleWarn(ess,
+    floor = if(is.finite(target)) target / 2 else NA_real_, remedy = remedy)
   invisible(ess)
+}
+
+# Importance sampling against a reference density, and the covariance and draws
+# that come out of it.
+#
+# Three places do this, and they are the same six lines each time -- `imis_is`,
+# then the weighted covariance with an unweighted fallback, then the
+# effective-size check. What differs is only which density is handed in and what
+# to suggest when the effective size is short:
+#
+#   the uncertainty stage's `uncertainty='is'`, against the model's own density;
+#   `ctLaplaceCorrect(draws='imis')`, against the adaptive-quadrature posterior;
+#   `ctParticleCorrect(draws='imis')`, against the particle-filter likelihood.
+#
+# The last two are corrections *to a different objective* -- the reference is
+# more accurate than what was optimised -- where the first reweights the same
+# one. That is a real difference in what the answer means, and none in how it is
+# computed, which is why only this part is shared.
+#
+# `cov` is the proposal covariance as the caller wants it used. A caller that
+# has already widened it passes `scaleInit = 1` rather than compounding two
+# scalings, which is what `ctLaplaceCorrect()` does.
+#' @keywords internal
+.ctOptimImisDraws <- function(lpg, centre, cov, finishsamples, remedy,
+  nbatch = 1000, target_ess = 100, maxiter = 50, scaleInit = 1.1,
+  tailScale = 1.1, df = Inf, verbose = 0, diagPlots = TRUE){
+
+  is_res <- imis_is(lpg, mu_hat = centre, Sigma_hat = cov,
+    cl = NA, n_batch = as.integer(nbatch), target_ess = target_ess,
+    max_iter = as.integer(maxiter), scale_init = scaleInit,
+    tail_scale = tailScale, df = df,
+    finishsamples = as.integer(finishsamples), diag_plots = diagPlots,
+    # `verbose > 0`, not TRUE: this printed IMIS iteration progress at
+    # `verbose = 0`, so the one argument meant two things across the backends --
+    # silence on julia, a page of output on stan.
+    verbose = verbose > 0)
+
+  samples <- is_res$theta
+  weighted <- !is.null(is_res$covariance) && all(is.finite(is_res$covariance))
+  cov_out <- if(weighted) ctOptimSafeCov(is_res$covariance) else
+    if(!is.null(samples) && nrow(samples) > 1) ctOptimSafeCov(stats::cov(samples)) else cov
+  .ctOptimImisReport(is_res, target_ess, weighted, remedy = remedy)
+
+  list(samples = samples, cov = cov_out,
+    ess = if(is.null(is_res$ess)) NA_real_ else as.numeric(is_res$ess)[1L],
+    weighted = weighted, is_res = is_res)
 }
 
 ctOptimSafeCov <- function(cov, ridge=1e-8){

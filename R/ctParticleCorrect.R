@@ -263,12 +263,12 @@ ctParticleCorrect <- function(fit, draws = c("reweight", "imis"), particles = 10
     # Said plainly rather than left in a list nobody prints: a corrected
     # interval resting on a handful of effective draws is worse than the
     # uncorrected one, because it looks like it has been improved.
-    if (ess < max(50, 0.1 * nrow(theta))) {
-      warning("Reweighting left an effective sample size of ", round(ess, 1),
-        " from ", nrow(theta), " draws. The corrected draws rest on few points; ",
-        "treat the corrected intervals as indicative, or use draws = 'imis' to ",
-        "sample against the particle posterior directly.", call. = FALSE)
-    }
+    # A different floor from the IMIS branches, and deliberately: reweighting one
+    # fixed batch has no target to halve, so the rule is about that batch.
+    .ctOptimEffectiveSampleWarn(ess, floor = max(50, 0.1 * nrow(theta)),
+      ndraws = nrow(theta),
+      remedy = paste0("Treat the corrected intervals as indicative, or use ",
+        "draws = 'imis' to sample against the particle posterior directly."))
   } else {
     # Every evaluation is kept, so the record can show the particle and filter
     # likelihoods per proposal draw as it does under reweighting; `imis_is`
@@ -290,40 +290,34 @@ ctParticleCorrect <- function(fit, draws = c("reweight", "imis"), particles = 10
       message("Importance sampling against the particle posterior (", nbatch,
         " draws per iteration, one particle filter each)")
     }
-    is_res <- imis_is(lp, mu_hat = est,
-      Sigma_hat = ctOptimSafeCov(as.matrix(covariance)) * scale^2,
-      cl = NA, n_batch = as.integer(nbatch), target_ess = target_ess,
-      max_iter = as.integer(maxiter),
-      # The proposal is already scaled above, so the sampler's own initial
-      # scaling is left at one rather than compounding with it.
-      scale_init = 1, tail_scale = 1.2, df = Inf,
-      finishsamples = as.integer(finishsamples), verbose = verbose > 0,
-      diag_plots = FALSE)
-    samples <- is_res$theta
+    # Shared with ctLaplaceCorrect() and the uncertainty stage's
+    # `uncertainty='is'`; see .ctOptimImisDraws(). This function's own parts are
+    # the density (`lp`, one particle filter per proposal draw) and the remedy.
+    #
+    # The proposal is already widened by `scale^2` here, so `scaleInit = 1`
+    # rather than compounding two scalings.
+    drawn <- .ctOptimImisDraws(lp, centre = est,
+      cov = ctOptimSafeCov(as.matrix(covariance)) * scale^2,
+      finishsamples = finishsamples, nbatch = nbatch, target_ess = target_ess,
+      maxiter = maxiter, scaleInit = 1, tailScale = 1.2, df = Inf,
+      verbose = verbose, diagPlots = FALSE,
+      remedy = paste0("Treat the corrected intervals as indicative; a wider ",
+        "scale or more iterations may help."))
+    is_res <- drawn$is_res
+    samples <- drawn$samples
     if (is.null(samples) || !nrow(samples)) {
       stop("Importance sampling returned no usable draws against the particle ",
         "posterior. Widen the proposal (scale) or raise nbatch.", call. = FALSE)
     }
     theta <- is_res$full_theta
     w <- as.numeric(is_res$full_weights)
-    ess <- if (is.null(is_res$ess)) NA_real_ else as.numeric(is_res$ess)[1L]
+    ess <- drawn$ess
     newmean <- as.numeric(is_res$mean)
-    newcov <- if (!is.null(is_res$covariance) && all(is.finite(is_res$covariance))) {
-      ctOptimSafeCov(is_res$covariance)
-    } else {
-      ctOptimSafeCov(stats::cov(samples))
-    }
+    newcov <- drawn$cov
     ev <- do.call(rbind, memo$rows)
     evaluations <- data.frame(particle = ev$particle, filter = ev$filter,
       difference = ev$particle - ev$filter, se = ev$se,
       weight = if (nrow(ev) == length(w)) w else NA_real_)
-    if (is.finite(ess) && ess < target_ess / 2) {
-      warning("Importance sampling reached an effective sample size of ",
-        round(ess, 1), " against a target of ", target_ess,
-        ". The corrected draws rest on few points, so treat the corrected ",
-        "intervals as indicative; a wider scale or more iterations may help.",
-        call. = FALSE)
-    }
   }
 
   shift_se <- (newmean - est) / before$se
