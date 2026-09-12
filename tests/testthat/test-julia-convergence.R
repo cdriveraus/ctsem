@@ -60,10 +60,26 @@ test_that("a collapsed population scale is not reported as a failure to converge
   expect_true(any(grepl("^popsd_", e$saturated_parameters)))
 
   # The recorded number is the thing it claims to be, so the assertion after it
-  # is not just the optimizer agreeing with itself. Measured: 9.7e-07 against a
-  # tolerance of 2.0e-04.
+  # is not just the optimizer agreeing with itself.
   expect_equal(max(abs(e$gradient)), e$gradient_norm, tolerance = 1e-10)
-  expect_lt(e$gradient_norm, e$gradient_tolerance)
+  # The criterion is in log likelihood units, not gradient units, and this fit
+  # is the case that shows why it needs two ways to be satisfied.
+  #
+  # `predicted_gain` is `1/2 g'Bg` under the optimiser's own metric, and here it
+  # is useless: the saturated coordinate has a gradient underflowing toward zero
+  # and an inverse curvature blowing up, so their product lands on about one nat
+  # where the exact gap is 2e-15. A quadratic model cannot say how much is
+  # available along a direction with no curvature, and `.ctBackendOptimGap()`
+  # only gets it right because it excludes such directions and probes them
+  # instead -- which nothing inside the optimiser can do.
+  #
+  # So the fit is carried by the other condition: its last iteration gained
+  # nothing, which is the operational statement that no further progress was
+  # available. Asserted in both directions, because a future change that made
+  # the metric-based test sufficient on its own would break this fit silently.
+  expect_true(is.finite(e$predicted_gain))
+  expect_gt(e$predicted_gain, e$convergence_tolerance)
+  expect_lt(e$last_gain, e$convergence_tolerance)
 
   # Pulling the flat coordinate back does not improve the objective, so the
   # point is a maximum and the fit converged. This is the assertion that fails

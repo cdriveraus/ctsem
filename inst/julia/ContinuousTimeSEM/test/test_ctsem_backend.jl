@@ -148,73 +148,46 @@ ContinuousTimeSEM.ctsem_evaluate(m::_OvershotMock, x::AbstractVector;
 end
 
 
-# The gradient bar and the objective floor were one quantity, `1e-6 * max(1,
-# |value|)`, used both as a gradient threshold and as an objective one. These
-# are about what survives a change of scale, because that is where the old one
-# failed and no measurement on a single model could have said so.
-@testset "how big the objective is, not what it equals" begin
-    scale = ContinuousTimeSEM._ctsem_objective_scale
+# The convergence criterion. `converge_tol` is in nats and what is tested
+# against it is the objective still available, so these are about units and
+# about what the verdict refuses to look at, not about one model's numbers.
+#
+# `_ctsem_optimise_verdict` needs no objective here: `_ctsem_overshot` returns
+# before touching it when nothing saturated, so the rule can be exercised on its
+# own.
+@testset "convergence is judged on the objective still available" begin
+    verdict(gain, last = Inf; g = 1.0e3, tol = 1.0e-6) =
+        ContinuousTimeSEM._ctsem_optimise_verdict(nothing, [1.0], [0.0],
+            -1483.0, g, gain, last, Int[], 1e-8, tol)
 
-    # The ordinary case: every subject contributes the same sign, and this is
-    # the total's magnitude. That is what keeps it the same bar the tolerances
-    # were measured against.
-    @test scale(fill(-37.0, 40)) ≈ 1480.0
-    @test scale(fill(37.0, 40)) ≈ 1480.0
+    # Below the tolerance is converged, above it is not -- and the gradient is
+    # a thousand in both, which is the point: it is not consulted.
+    @test verdict(1.0e-9).converged_enough
+    @test !verdict(1.0e-3).converged_enough
+    @test verdict(1.0e-9; g = 1.0e9).converged_enough
 
-    # The cases `abs(sum)` gets wrong. A log likelihood is a sum of log
-    # *densities*, positive wherever a density exceeds one, so contributions can
-    # cancel: forty subjects whose total is zero still have forty subjects'
-    # worth of data, and a bar built on the total would collapse to its floor.
-    mixed = vcat(fill(37.0, 20), fill(-37.0, 20))
-    @test abs(sum(mixed)) == 0.0
-    @test scale(mixed) ≈ 1480.0
+    # Either condition suffices, and the second is the one that carries a fit
+    # whose metric has been corrupted by a flat direction: measured on a
+    # saturated fit, `1/2 g'Bg` read 1.002 where the exact gap was 2.1e-15,
+    # while its last iteration gained nothing at all.
+    @test verdict(1.002, 0.0).converged_enough
+    @test !verdict(1.002, 0.093).converged_enough
 
-    # Bounded below by one, and defined for a route that reports no per-subject
-    # split at all.
-    @test scale(Float64[]) == 1.0
-    @test scale([0.0, 0.0]) == 1.0
+    # The tolerance is absolute, in nats. A log likelihood difference is a
+    # likelihood ratio, so it means the same thing at any N and needs no scale
+    # -- which is why nothing here divides by the objective.
+    @test verdict(2.0e-6; tol = 1.0e-6).converged_enough == false
+    @test verdict(2.0e-6; tol = 1.0e-5).converged_enough
+
+    # A run with neither quantity yet has `Inf` for both, so a fit that took no
+    # step cannot pass on an uninitialised number.
+    @test !verdict(Inf, Inf).converged_enough
+
+    # A NaN gradient is refused even with nothing left to gain: `Optim` can set
+    # its own flag on an earlier iterate, and `NaN <= tolerance` is false, so
+    # this is tested rather than inferred. One draw in ten reported convergence
+    # this way.
+    @test !verdict(1.0e-9; g = NaN).converged_enough
 end
 
-@testset "the gradient bar asks for a gradient per unit of objective" begin
-    bar = ContinuousTimeSEM._ctsem_gradient_tolerance
 
-    # Ten times the data is ten times the objective and ten times the gradient,
-    # so the bar grows with it and the same fit is judged the same way. That is
-    # what makes one tolerance usable on a 6-subject model and a 600-subject
-    # one.
-    @test bar(0.0, 10 * 1483.0) ≈ 10 * bar(0.0, 1483.0)
-
-    # Never relative to the gradient's own history, which was tried: a fit that
-    # starts somewhere terrible would then be judged by a bar as large as the
-    # gradient it started with. Stated as a property of a *bad* fit, because
-    # that is the case that matters -- a largest gradient of 2.7e4 at an
-    # objective of size 3870 must fail, and under a worst-gradient bar it
-    # passed.
-    @test 2.7e4 > bar(0.0, 3870.0)
-
-    # Bounded below, so a tiny objective does not get a bar of zero, and the
-    # absolute tolerance is a floor that is never overridden downward.
-    @test bar(0.0, 0.0) == bar(0.0, 1.0)
-    @test bar(1e-3, 1.0) == 1e-3
-    @test bar(1e-8, 1483.0) > 1e-8
-end
-
-@testset "the objective bar is in objective units, at materiality" begin
-    bar = ContinuousTimeSEM._ctsem_objective_tolerance
-
-    # Proportional to the value, so it means the same thing on a log likelihood
-    # of -30 and one of -3e6, and blind to the sign.
-    @test bar(2e6) ≈ 100 * bar(2e4)
-    # Never smaller than the bar for a scale of one, so a tiny objective does
-    # not get a tolerance of zero.
-    @test bar(0.0) == bar(1.0)
-    @test bar(1e-30) == bar(0.5)
-
-    # Between the arithmetic and the finding, with room on both sides: the
-    # overstep this guards against was worth 16 log likelihood units and the
-    # flat transform it must not flag is worth exactly zero. Deliberately not
-    # `sqrt(eps)`, which answers a different question -- a false positive here
-    # tells a user a converged fit is not a maximum.
-    @test bar(2000.0) > 2000.0 * sqrt(eps(Float64))
-    @test bar(2000.0) < 1.0
-end

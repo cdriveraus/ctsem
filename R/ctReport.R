@@ -365,10 +365,16 @@
         paste0("  (certification: ", certification$status, ")")
       else "  (not certified: no curvature was computed)")
     if (!is.null(e$iterations)) add("  iterations: ", e$iterations)
+    # The criterion first and the gradient second, in that order, because the
+    # criterion is the one in units a reader can act on: it is log likelihood
+    # still on the table, so 1e-8 is nothing and 10 is a different answer.
+    if (!is.null(e$predicted_gain) && is.finite(e$predicted_gain)) {
+      add("  log likelihood still available: ", .ctReportNum(e$predicted_gain),
+        if (!is.null(e$convergence_tolerance)) paste0("  (tolerance ",
+          .ctReportNum(e$convergence_tolerance), ")") else "")
+    }
     if (!is.null(e$gradient_norm)) {
-      add("  gradient norm: ", .ctReportNum(e$gradient_norm),
-        if (!is.null(e$gradient_tolerance)) paste0("  (tolerance ",
-          .ctReportNum(e$gradient_tolerance), ")") else "")
+      add("  gradient norm: ", .ctReportNum(e$gradient_norm))
     }
     if (isTRUE(e$stalled)) add("  stalled: TRUE  -- the line search stopped finding a step")
     if (isTRUE(e$saturated)) {

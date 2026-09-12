@@ -246,8 +246,18 @@
 # a reader can have either reading.
 #' @keywords internal
 .ctBackendGapTolerance <- function(fit, default = 1e-6) {
-  control <- fit$args$optimcontrol
-  value <- if (is.null(control)) NULL else control$gaptol
+  .ctBackendConvergeTol(fit$args$optimcontrol, default = default)
+}
+
+# The bar itself, from the controls rather than from a fit.
+#
+# `.ctBackendGapTolerance()` needs a fit and the optimiser needs the same number
+# before there is one, so the reading lives here and both ask it. One default in
+# one place: a second copy of `1e-6` is how a tolerance gets changed in one
+# reader and not the other.
+#' @keywords internal
+.ctBackendConvergeTol <- function(optimcontrol = list(), default = 1e-6) {
+  value <- if (is.null(optimcontrol)) NULL else optimcontrol$gaptol
   if (is.null(value)) return(default)
   value <- suppressWarnings(as.numeric(value)[1L])
   if (!is.finite(value) || value <= 0) return(default)
@@ -657,7 +667,6 @@
   if (!isTRUE(intoverstates)) return(0)
   if (isTRUE(optimcontrol$estonly)) return(0)
   if (identical(optimcontrol$certify, FALSE)) return(0)
-  bar <- suppressWarnings(as.numeric(
-    if (is.null(optimcontrol$gaptol)) 1e-6 else optimcontrol$gaptol)[1L])
+  bar <- .ctBackendConvergeTol(optimcontrol)
   if (!is.finite(bar) || bar <= 0) 0 else bar / 100
 }

@@ -3386,6 +3386,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # what `intoverstates = FALSE` means here -- that name is not in this
     # function's scope, and the argument it arrives as is.
     gap_tol = .ctBackendInnerGapTol(optimcontrol, is.null(objective)),
+    # The same bar the certification will use, so the optimiser's own verdict
+    # and the curvature's are the same question asked with different metrics
+    # rather than two different questions. `gap_tol` above is the stopping rule
+    # and aims inside it, at a hundredth.
+    converge_tol = .ctBackendConvergeTol(optimcontrol),
     verbose = verbose > 0L,
     # Overwrite one line in place when someone is watching, and print
     # occasional separate lines when the output is going to a file or a knitr
@@ -3861,16 +3866,26 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       # it was previously only obtainable by timing one evaluation and dividing.
       f_calls = if (is.null(result$f_calls)) NA_integer_ else as.integer(result$f_calls),
       g_calls = if (is.null(result$g_calls)) NA_integer_ else as.integer(result$g_calls),
-      # The gradient at the estimate, and the bar the optimizer stopped
-      # against -- a fraction of the worst gradient the run saw, which is the
-      # only gradient comparison that means the same thing on two models. It is
-      # not what `converged` reports: see `.ctBackendCertifiedVerdict()`.
-      # `converged` is one bit and a fit that stops just short of a tolerance
-      # looks the same as one that never moved; these are what tell them apart.
+      # What the fit still had to gain when it stopped, in log likelihood
+      # units, and the tolerance that was asked of it. This is the criterion --
+      # `1/2 g'Bg` under the optimiser's own metric -- and not the gradient,
+      # which is reported beside it because it is what a reader recognises and
+      # because a fit that stops just short looks the same as one that never
+      # moved unless both are visible. The exact version of the same quantity,
+      # where a Hessian was computed, is
+      # `fit$uncertainty$certification$gap`; see `.ctBackendCertifiedVerdict()`.
       gradient_norm = if (is.null(result$gradient_norm)) NA_real_ else
         as.numeric(result$gradient_norm),
-      gradient_tolerance = if (is.null(result$gradient_tolerance)) NA_real_ else
-        as.numeric(result$gradient_tolerance),
+      predicted_gain = if (is.null(result$predicted_gain)) NA_real_ else
+        as.numeric(result$predicted_gain),
+      convergence_tolerance = if (is.null(result$converge_tol)) NA_real_ else
+        as.numeric(result$converge_tol),
+      # What the final iteration actually gained. The second of the two ways a
+      # fit can satisfy the criterion, and the one that carries a fit whose
+      # metric has been corrupted by a flat direction -- see
+      # `_ctsem_optimise_verdict`.
+      last_gain = if (is.null(result$last_gain)) NA_real_ else
+        as.numeric(result$last_gain),
       # A parameter that reached the flat region of its transform, and which.
       # Invisible in the gradient -- a saturated transform reports a gradient
       # of zero, which passes every tolerance -- so without this the warning
