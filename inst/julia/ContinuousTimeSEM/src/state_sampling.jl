@@ -650,18 +650,8 @@ function _ctsem_state_pass!(ws, params::AbstractVector{T}, data::AbstractMatrix,
                 for i in 1:n
                     ws.state[i] += (ws.bufferQ.r[i] + pars.CINT[i]) * substep_dt
                 end
-                for j in 1:k, i in 1:k
-                    qfactor[i, j] = ws.bufferQ.out[indices[i], indices[j]]
-                end
-                _ctsem_lower_chol!(qfactor, k)
-                sqrt_h = sqrt(substep_dt)
-                for i in 1:k
-                    acc = zero(T)
-                    for j in 1:i
-                        acc += qfactor[i, j] * T(z[at + j])
-                    end
-                    ws.state[indices[i]] += sqrt_h * acc
-                end
+                _ctsem_add_process_noise!(ws.state, indices, qfactor,
+                    ws.bufferQ.out, z, at, k, sqrt(substep_dt), T)
                 at += k
                 continue
             end
@@ -676,29 +666,13 @@ function _ctsem_state_pass!(ws, params::AbstractVector{T}, data::AbstractMatrix,
                     ws.state, indices, ws.state_dim)
             end
 
-            # Deterministic part first, into scratch, because the noise reads
-            # the state it is added to only after the whole product is formed.
-            _matvec_mul!(ws.bufferQ.r, ws.discrete_ca.dDRIFT, ws.state,
-                ws.state_dim, ws.state_dim)
-            for i in 1:n
-                ws.state[i] = ws.bufferQ.r[i] + ws.discrete_ca.dINT[i]
-            end
-
+            _ctsem_deterministic_step!(ws, n)
             # Process noise, over the diffusing states only. Everything else is
             # a static coordinate whose covariance the filter propagates through
             # the transition alone, and which correspondingly gets no
             # innovation of its own here.
-            for j in 1:k, i in 1:k
-                qfactor[i, j] = ws.discrete_ca.dDIFFUSION[indices[i], indices[j]]
-            end
-            _ctsem_lower_chol!(qfactor, k)
-            for i in 1:k
-                acc = zero(T)
-                for j in 1:i
-                    acc += qfactor[i, j] * T(z[at + j])
-                end
-                ws.state[indices[i]] += acc
-            end
+            _ctsem_add_process_noise!(ws.state, indices, qfactor,
+                ws.discrete_ca.dDIFFUSION, z, at, k, one(T), T)
             at += k
         end
 

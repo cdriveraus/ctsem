@@ -180,6 +180,78 @@ end
     return nothing
 end
 
+
+"""
+    _ctsem_add_process_noise!(state, indices, qfactor, cov, z, offset, k, scale, T)
+
+Add one substep's process noise to `state`, over the diffusing coordinates
+`indices` only.
+
+`cov[indices[i], indices[j]]` is copied into `qfactor`, lower-Cholesky factored
+in place, and applied to `k` noise components read from `z` at `offset`. The
+increment is scaled by `scale` -- `sqrt(dt)` where `cov` is a rate (the Euler
+branches) and one where it already integrates the interval (the exponential
+branches).
+
+One routine because there were four, identical but for those three choices: the
+particle filter and the state-explicit pass, each in both branches. The
+arithmetic is a triangular product with an index offset, which is exactly the
+shape where a slip is silent -- the states stay finite, the trajectory stays
+plausible, and only the likelihood is wrong.
+
+Deliberately not `@inbounds`, though the loops are hot. Neither original
+carried it, nothing here measured that it helps, and the index that would run
+off the end is `offset + j` -- the state pass walks `at` through a supplied
+vector, so an overrun is exactly the case that should raise a BoundsError
+rather than read whatever is next in memory. Silence is the failure mode this
+whole routine exists to make less likely.
+
+The noise source is an offset into `z` rather than a callback so that both
+callers keep their existing storage: the particle filter refills `z[1:k]` per
+substep from its RNG and passes `offset = 0`, and the state pass walks a
+supplied vector and passes its running `at`. `T(z[...])` is what promotes a
+Float64 innovation to the working type on the AD path, and is an identity for
+the particle filter, which is already Float64.
+
+Everything else about the two remains different, and deliberately: what they
+carry (N particles against one realised trajectory), where the noise comes from
+(drawn against supplied, which is what makes the state pass differentiable), and
+what they accumulate (importance weights against a conditional log density).
+"""
+@inline function _ctsem_add_process_noise!(state, indices, qfactor,
+        cov, z, offset::Int, k::Int, scale, ::Type{T}) where {T}
+    for j in 1:k, i in 1:k
+        qfactor[i, j] = cov[indices[i], indices[j]]
+    end
+    _ctsem_lower_chol!(qfactor, k)
+    for i in 1:k
+        acc = zero(T)
+        for j in 1:i
+            acc += qfactor[i, j] * T(z[offset + j])
+        end
+        state[indices[i]] += scale * acc
+    end
+    return nothing
+end
+
+"""
+    _ctsem_deterministic_step!(ws, n)
+
+Advance the state by the discrete-time transition already in `ws.discrete_ca`.
+
+The deterministic half of a substep, into scratch first: the product has to be
+formed from the whole pre-step state before any of it is overwritten. Shared by
+the particle filter and the state-explicit pass, which wrote it out identically.
+"""
+@inline function _ctsem_deterministic_step!(ws, n::Int)
+    _matvec_mul!(ws.bufferQ.r, ws.discrete_ca.dDRIFT, ws.state,
+        ws.state_dim, ws.state_dim)
+    for i in 1:n
+        ws.state[i] = ws.bufferQ.r[i] + ws.discrete_ca.dINT[i]
+    end
+    return nothing
+end
+
 """
     _compute_discrete_time_form!(discrete_ca, buffer, DIFFUSIONcov, pars, Δt, exp_buffer, lyap_buffer)
 
