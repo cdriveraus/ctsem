@@ -25,8 +25,7 @@ ctModelUnlist<-function(ctmodelobj,
   return(out)
 }
 
-.ctModelDefaultFreePar <- function(matrix, row, col, continuoustime,
-  manifesttype = NULL){
+.ctModelDefaultFreePar <- function(matrix, row, col, continuoustime){
   transform <- 0
   multiplier <- 1
   meanscale <- 1
@@ -35,37 +34,6 @@ ctModelUnlist<-function(ctmodelobj,
 
   if(matrix %in% c('T0MEANS','MANIFESTMEANS','TDPREDEFFECT','CINT')) {
     meanscale <- 10
-    # ...except for a count, whose mean is a log rate.
-    #
-    # It sits inside `exp()`, so a raw unit step -- which is what the
-    # optimiser's first step is -- multiplies the Poisson rate by `exp(10)` =
-    # 22026, and every line search opens where the model overflows.
-    #
-    # This is load-bearing, and a start alone does not replace it. Measured on a
-    # 40-subject Poisson model, twenty random starts each, at the default
-    # starting values:
-    #
-    #   route       meanscale 10                meanscale 1
-    #   augmented   20/20, -1483.480            20/20, -1483.480
-    #   laplace      0/20, best -2104.7         20/20, -1471.584
-    #
-    # A data-informed intercept or a modest variance start rescues the augmented
-    # route at either scale, so it looked for a while as though the scale were
-    # compensating for a poor start. The laplace route says otherwise: there,
-    # nothing but the scale works.
-    #
-    # Binary and ordinal are *not* narrowed, and the difference is the link
-    # rather than an inconsistency. A logit saturates where a log overflows: at
-    # 10 per raw unit a logit reaches a probability of 0.99995, which costs
-    # gradient but stays finite. Measured the same way on the nats convergence
-    # criterion, binary was identical at widths 10, 3 and 1, and ordinal was
-    # worse as it narrowed -- reaching the best optimum 12, 10 and 2 times out
-    # of 20 -- because a wider scale covers more value-space per step. Censored
-    # (4) is Gaussian within limits, on the data's own scale.
-    if(identical(matrix, 'MANIFESTMEANS') && !is.null(manifesttype) &&
-      length(manifesttype) >= row && isTRUE(manifesttype[row] == 3)) {
-      meanscale <- 1
-    }
   }
   if(matrix %in% c('LAMBDA')) {
     offset <- 0.5
@@ -224,8 +192,7 @@ ctModelUnlist<-function(ctmodelobj,
             matrix=matrixname,
             row=rowi,
             col=coli,
-            continuoustime=ctm[['continuoustime']],
-            manifesttype=ctm[['manifesttype']])
+            continuoustime=ctm[['continuoustime']])
           if(wasfixed || is.na(pars$transform[parrow])) pars$transform[parrow] <- defaults$transform
           if(wasfixed || is.na(pars$sdscale[parrow])) pars$sdscale[parrow] <- defaults$sdscale
           pars$indvarying[parrow] <- as.logical(pars$indvarying[parrow])
@@ -428,8 +395,7 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
         matrix = ctspec$matrix[pi],
         row = ctspec$row[pi],
         col = ctspec$col[pi],
-        continuoustime = continuoustime,
-        manifesttype = ctm[['manifesttype']])$numeric
+        continuoustime = continuoustime)$numeric
       ctspec$transform[pi] <- defaults$transform
       ctspec$multiplier[pi] <- defaults$multiplier
       ctspec$meanscale[pi] <- defaults$meanscale
