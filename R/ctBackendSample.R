@@ -1490,7 +1490,13 @@ print.ctSampleDiagnostics <- function(x, ...) {
       loglik = if (length(subject_loglik)) sum(subject_loglik) else
         as.numeric(optimised$maximum_loglik),
       logposterior = as.numeric(optimised$maximum_loglik),
-      converged = TRUE, chunks = as.integer(optimised$chunks)),
+      # The placement optimisation's own verdict, not an assertion. This was
+      # hardcoded TRUE, which said "converged" about a run whose result was
+      # sitting right here unread -- and a sampler placed from a point the
+      # optimiser did not reach is exactly the case a reader wants to know
+      # about, because the metric is built there too.
+      converged = isTRUE(optimised$converged),
+      chunks = as.integer(optimised$chunks)),
     engine = model_spec$engine,
     args = list(backend = "julia",
       optimcontrol = optimcontrol, cores = cores, priors = priors,
@@ -1537,5 +1543,25 @@ print.ctSampleDiagnostics <- function(x, ...) {
   }
   out$identifiability <- .ctBackendIdentifiability(identhessian,
     .ctBackendRawParameterNames(out, npar), fit = out, at = theta)
+
+  # The rest of what a julia fit carries, from the optimisation that placed the
+  # sampler. These were on an optimised fit and absent here, so the same reader
+  # -- `ctReport()`, a GUI, `summary()` -- got a field on one route and NULL on
+  # the other, with nothing saying which. `test-julia-fit-shape.R` is what keeps
+  # them in step now; see its allowlists for the two that differ on purpose.
+  out$trace <- .ctBackendTrace(optimised$trace)
+  out$laplace <- .ctJuliaFitLaplaceBlock(model_spec, optimised)
+  # A collapsed population scale is a property of the model and the data, not
+  # of the estimator, so it is as true of a sampled fit as an optimised one --
+  # and it was reported only on the latter.
+  out$collapsedScales <- .ctBackendCollapsedScales(out)
+  # Likewise a flat direction. The sampled route already computed
+  # `$identifiability` above and then said nothing about it, so a fit knew it
+  # had an unidentified direction and never mentioned it.
+  #
+  # `$uncertainty$intervalcheck` is deliberately not passed: that check compares
+  # curvature-based standard errors against the reported interval, and a sampled
+  # fit's interval comes from draws instead, so there is nothing to compare.
+  .ctBackendIdentifyWarn(out$identifiability, out$collapsedScales, NULL)
   out
 }

@@ -3576,6 +3576,43 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   result
 }
 
+# What a fit records about a Laplace objective's inner solve.
+#
+# Both routes that build a `ctJuliaFit` need this and it is the same block for
+# each: the spec half (`nrandom`, `param`, `nlevels`, `levels`) describes the
+# model, and the run half (`linesearch`, `inner_converged`, ...) describes the
+# optimisation that produced the reported point -- which the sampled route also
+# has, because sampling begins by optimising to place the sampler and build its
+# metric.
+#
+# The inner solve is part of the objective, so its status is part of whether the
+# fit means anything: a subject whose mode did not converge contributes a term
+# that is not the integral it is supposed to approximate. Kept on the fit rather
+# than printed and discarded, and now kept there whichever route built the fit.
+#' @keywords internal
+.ctJuliaFitLaplaceBlock <- function(model_spec, result) {
+  if (is.null(model_spec$laplace)) return(NULL)
+  list(
+    nrandom = model_spec$laplace$nrandom,
+    param = model_spec$laplace$param,
+    nlevels = model_spec$laplace$nlevels,
+    levels = lapply(model_spec$laplace$levels, function(x)
+      list(name = x$name, param = x$param, nrandom = x$nrandom,
+        ngroups = x$ngroups)),
+    linesearch = if (is.null(result$linesearch)) NA_character_ else
+      as.character(result$linesearch),
+    inner_converged = isTRUE(result$inner_converged),
+    inner_iterations = as.integer(result$inner_iterations),
+    # Two different things. `hessian_repaired` is true if *any* Newton iterate
+    # for that unit needed its curvature shifted, which is ordinary behaviour
+    # for a nonlinear model on the way to a mode. `mode_repaired` is true if
+    # the curvature at the reported mode needed it, which is the one that says
+    # the approximation there is questionable.
+    hessian_repaired = as.logical(result$hessian_repaired),
+    mode_repaired = if (is.null(result$mode_repaired)) NA
+      else as.logical(result$mode_repaired))
+}
+
 .ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NULL, cores = 1L,
   optimcontrol = list(), verbose = 0L, fit = TRUE,
   priors = FALSE, intoverpop = "augmented", optimize = TRUE, chains = 4L,
@@ -4048,29 +4085,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     out$estimate$convergence_pending <- TRUE
   }
   if (!is.null(model_spec$laplace)) {
-    # The inner solve is part of the objective, so its status is part of
-    # whether the fit means anything. Kept on the fit rather than printed and
-    # discarded, since a subject whose mode did not converge contributes a term
-    # that is not the integral it is supposed to approximate.
-    out$laplace <- list(
-      nrandom = model_spec$laplace$nrandom,
-      param = model_spec$laplace$param,
-      nlevels = model_spec$laplace$nlevels,
-      levels = lapply(model_spec$laplace$levels, function(x)
-        list(name = x$name, param = x$param, nrandom = x$nrandom,
-          ngroups = x$ngroups)),
-      linesearch = if (is.null(result$linesearch)) NA_character_ else
-        as.character(result$linesearch),
-      inner_converged = isTRUE(result$inner_converged),
-      inner_iterations = as.integer(result$inner_iterations),
-      # Two different things. `hessian_repaired` is true if *any* Newton iterate
-      # for that unit needed its curvature shifted, which is ordinary behaviour
-      # for a nonlinear model on the way to a mode. `mode_repaired` is true if
-      # the curvature at the reported mode needed it, which is the one that
-      # says the approximation there is questionable.
-      hessian_repaired = as.logical(result$hessian_repaired),
-      mode_repaired = if (is.null(result$mode_repaired)) NA
-        else as.logical(result$mode_repaired))
+    out$laplace <- .ctJuliaFitLaplaceBlock(model_spec, result)
     if (!isTRUE(result$inner_converged)) {
       warning("The random-effect mode did not converge for every subject; ",
         "see fit$laplace$inner_converged.", call. = FALSE)
