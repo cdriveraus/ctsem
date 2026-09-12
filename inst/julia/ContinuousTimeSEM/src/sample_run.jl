@@ -242,6 +242,66 @@ const _ACCEPT_STEP = 0.05
 const _ACCEPT_MAX = 0.95
 const _ACCEPT_MAX_RAISES = 3
 
+"""
+    _sample_draws!(logdensity!, ws, rng, x, g, logp, eps, metric, ndraws,
+                   maxdepth, maxdelta, progress, callback)
+
+The post-warmup draw loop: `ndraws` NUTS transitions at a fixed step size and
+metric, recording the draw and its diagnostics.
+
+One loop rather than two. `_run_chain`'s sampling phase and the whole body of
+`_continue_chain` were line-for-line the same -- same `_nuts_transition!` call,
+same five field fills, same progress line, same forced final callback -- and
+differed only in which name held the metric. The two callers still differ in
+what they wrap around this, which is the part that carries meaning: `_run_chain`
+adapts first and reports the warmup it used, `_continue_chain` takes step size
+and metric as given so that the continuation is the same chain rather than a new
+one starting nearby.
+
+`logp` comes back in the returned tuple because the loop advances it and the
+caller's forced final callback has already been made here.
+"""
+function _sample_draws!(logdensity!, ws::_NUTSWorkspace, rng::AbstractRNG,
+    x::Vector{Float64}, g::Vector{Float64}, logp::Float64, eps::Float64,
+    metric::CTSEMMetric, ndraws::Int, maxdepth::Int, maxdelta::Float64,
+    progress::CTSEMProgress, callback::CTSEMCallback)
+
+    progress.label = "sampling"
+    progress.started = time()
+    ndim = length(x)
+    draws = Matrix{Float64}(undef, ndim, ndraws)
+    accept = Vector{Float64}(undef, ndraws)
+    divergent = Vector{Bool}(undef, ndraws)
+    depth = Vector{Int}(undef, ndraws)
+    energy = Vector{Float64}(undef, ndraws)
+    for iteration in 1:ndraws
+        step = _nuts_transition!(ws, logdensity!, metric, rng, x, g, logp, eps,
+            maxdepth, maxdelta)
+        logp = step.logp
+        @inbounds for j in 1:ndim
+            draws[j, iteration] = x[j]
+        end
+        accept[iteration] = step.accept
+        divergent[iteration] = step.divergent
+        depth[iteration] = step.depth
+        energy[iteration] = step.energy
+        if _due(progress)
+            _progress_line(progress, iteration, ndraws,
+                @sprintf("logp %11.2f", logp),
+                @sprintf("depth %4.1f", sum(view(depth, 1:iteration)) / iteration),
+                @sprintf("div %d", count(view(divergent, 1:iteration))))
+        end
+        _invoke_callback(callback, "sampling", iteration, ndraws, logp,
+            count(view(divergent, 1:iteration)))
+    end
+    # Forced: a rate-limited callback on a chain that finishes inside one
+    # interval would otherwise never report the finished state at all.
+    _invoke_callback(callback, "sampling", ndraws, ndraws, logp,
+        count(divergent); force=true)
+    return (draws=draws, accept=accept, divergent=divergent, depth=depth,
+        energy=energy, logp=logp)
+end
+
 function _run_chain(logdensity!, centre::Vector{Float64},
     metric::CTSEMMetric, rng::AbstractRNG,
     nwarmup::Int, ndraws::Int, maxdepth::Int, target_accept::Float64,
@@ -433,39 +493,10 @@ function _run_chain(logdensity!, centre::Vector{Float64},
     _invoke_callback(callback, "warmup", warmup_used, nwarmup, logp,
         warmup_divergent; force=true)
 
-    draws = Matrix{Float64}(undef, ndim, ndraws)
-    accept = Vector{Float64}(undef, ndraws)
-    divergent = Vector{Bool}(undef, ndraws)
-    depth = Vector{Int}(undef, ndraws)
-    energy = Vector{Float64}(undef, ndraws)
-    progress.label = "sampling"
-    progress.started = time()
-    for iteration in 1:ndraws
-        step = _nuts_transition!(ws, logdensity!, current, rng, x, g, logp, eps,
-            maxdepth, maxdelta)
-        logp = step.logp
-        @inbounds for j in 1:ndim
-            draws[j, iteration] = x[j]
-        end
-        accept[iteration] = step.accept
-        divergent[iteration] = step.divergent
-        depth[iteration] = step.depth
-        energy[iteration] = step.energy
-        if _due(progress)
-            _progress_line(progress, iteration, ndraws,
-                @sprintf("logp %11.2f", logp),
-                @sprintf("depth %4.1f", sum(view(depth, 1:iteration)) / iteration),
-                @sprintf("div %d", count(view(divergent, 1:iteration))))
-        end
-        _invoke_callback(callback, "sampling", iteration, ndraws, logp,
-            count(view(divergent, 1:iteration)))
-    end
-    # Forced for the same reason as the optimiser's final call: a rate-limited
-    # callback on a chain that finishes inside one interval would otherwise
-    # never report the finished state at all.
-    _invoke_callback(callback, "sampling", ndraws, ndraws, logp,
-        count(divergent); force=true)
-    return _ChainResult(draws, accept, divergent, depth, energy, eps,
+    sampled = _sample_draws!(logdensity!, ws, rng, x, g, logp, eps, current,
+        ndraws, maxdepth, maxdelta, progress, callback)
+    return _ChainResult(sampled.draws, sampled.accept, sampled.divergent,
+        sampled.depth, sampled.energy, eps,
         warmup_divergent, warmup_used, copy(x), current)
 end
 
@@ -485,38 +516,10 @@ function _continue_chain(logdensity!, ws::_NUTSWorkspace, rng::AbstractRNG,
     metric::CTSEMMetric, ndraws::Int, maxdepth::Int, maxdelta::Float64,
     progress::CTSEMProgress=CTSEMProgress(false),
     callback::CTSEMCallback=CTSEMCallback(nothing))
-    progress.label = "sampling"
-    progress.started = time()
-    ndim = length(x)
-    draws = Matrix{Float64}(undef, ndim, ndraws)
-    accept = Vector{Float64}(undef, ndraws)
-    divergent = Vector{Bool}(undef, ndraws)
-    depth = Vector{Int}(undef, ndraws)
-    energy = Vector{Float64}(undef, ndraws)
-    for iteration in 1:ndraws
-        step = _nuts_transition!(ws, logdensity!, metric, rng, x, g, logp, eps,
-            maxdepth, maxdelta)
-        logp = step.logp
-        @inbounds for j in 1:ndim
-            draws[j, iteration] = x[j]
-        end
-        accept[iteration] = step.accept
-        divergent[iteration] = step.divergent
-        depth[iteration] = step.depth
-        energy[iteration] = step.energy
-        if _due(progress)
-            _progress_line(progress, iteration, ndraws,
-                @sprintf("logp %11.2f", logp),
-                @sprintf("depth %4.1f", sum(view(depth, 1:iteration)) / iteration),
-                @sprintf("div %d", count(view(divergent, 1:iteration))))
-        end
-        _invoke_callback(callback, "sampling", iteration, ndraws, logp,
-            count(view(divergent, 1:iteration)))
-    end
-    _invoke_callback(callback, "sampling", ndraws, ndraws, logp,
-        count(divergent); force=true)
-    return _ChainResult(draws, accept, divergent, depth, energy, eps, 0, 0,
-        copy(x), metric)
+    sampled = _sample_draws!(logdensity!, ws, rng, x, g, logp, eps, metric,
+        ndraws, maxdepth, maxdelta, progress, callback)
+    return _ChainResult(sampled.draws, sampled.accept, sampled.divergent,
+        sampled.depth, sampled.energy, eps, 0, 0, copy(x), metric)
 end
 
 """
