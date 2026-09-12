@@ -533,6 +533,13 @@
 # `.ctOptimIdentifiedInverse()` returns NULL and inverts the trusted subspace.
 # Merging those error contracts would cost more than the four shared lines are
 # worth.
+#
+# The engine floors an information matrix at `1e-8` rather than this, in
+# `_bounded_inverse` (sample_nuts.jl). Deliberate rather than a fourth copy that
+# drifted: it builds the sampler's *metric*, where a direction wrongly called
+# flat costs only efficiency, against a reported covariance here, where it costs
+# a standard error. The looser bar belongs to the cheaper mistake. Do not
+# reconcile the two without reading both.
 #' @keywords internal
 .ctFlatDirectionRtol <- function() 1e-12
 

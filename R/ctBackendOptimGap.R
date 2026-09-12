@@ -222,6 +222,17 @@
       " log likelihood of this estimate"))
 }
 
+# The certification's number, in the shape `ctLaplaceCheck()` and
+# `ctParticleLik()` also report -- see R/ctFitGap.R for why one shape.
+#' @keywords internal
+.ctBackendCertifyGap <- function(gap, tolerance = 0.01) {
+  .ctFitGap("curvature", gap = if (is.null(gap)) NA_real_ else gap$gap,
+    tolerance = tolerance,
+    remedy = paste0("A gap above the bar means the optimiser stopped short; ",
+      "ctFit() continues from the curvature automatically unless ",
+      "optimcontrol$certify = FALSE."))
+}
+
 # The bar a fit has to clear, in objective units.
 #
 # Two candidate principles, and the binding one is not the obvious one.
@@ -287,6 +298,14 @@
     overshot = isTRUE(fit$estimate$overshot))
   list(status = verdict$status, certified = verdict$certified,
     reason = verdict$reason, tolerance = tolerance,
+    # The same `$verdict` shape `ctLaplaceCheck()` and `ctParticleLik()` report;
+    # see R/ctFitGap.R. Set here *and* in `.ctBackendCorrectResult()`, because
+    # the certification list is assembled in both. This one runs later, from the
+    # fit, and overwrites that one -- so a field added only there never reaches
+    # a reader, which is how the first attempt at this got a NULL. The two
+    # assemblies are not a drop-in merge: one takes an optimiser `result` and
+    # the other a fit.
+    verdict = .ctBackendCertifyGap(gap, tolerance),
     gap = gap$gap, lambda = gap$lambda,
     residual_gain = if (is.null(probe)) 0 else probe$gain,
     residual_length = if (is.null(probe)) 0 else probe$length,
@@ -462,6 +481,7 @@
     }
     certification <- .ctBackendCertify(gap, probe, tolerance = tolerance,
       saturated = isTRUE(result$saturated), overshot = isTRUE(result$overshot))
+    certification$verdict <- .ctBackendCertifyGap(gap, tolerance)
     certification$gap <- gap$gap
     certification$lambda <- gap$lambda
     certification$ntrusted <- gap$ntrusted

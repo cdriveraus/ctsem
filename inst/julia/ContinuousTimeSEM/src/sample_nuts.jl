@@ -186,6 +186,15 @@ Flooring the eigenvalues at `rtol` times the largest gives a metric that is
 merely uninformative in those directions rather than catastrophic. That is the
 right failure mode: the metric only ever affects efficiency, so a bad one costs
 time, while an infinite one costs the run.
+
+`rtol = 1e-8` here and `1e-12` on the R side (`.ctFlatDirectionRtol()`), which
+is the same operation -- invert a rank-deficient information matrix -- under a
+different consequence. There, a direction wrongly called flat drops out of a
+*reported* covariance and a standard error goes missing with it; here it is
+merely given a wide, uninformative momentum. The looser bar belongs to the
+cheaper mistake. Written down because the two constants sit an order of
+magnitude apart on the two sides of one fit, and that should be a decision
+rather than something the next reader discovers.
 """
 function _bounded_inverse(information::Symmetric{Float64}; rtol::Real=1e-8)
     n = size(information, 1)

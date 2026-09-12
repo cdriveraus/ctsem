@@ -154,7 +154,16 @@ ctLaplaceCheck <- function(fit, nodes = 5L, correction = TRUE, step = 1e-3,
     gap <- quadrature - laplacevalue
   }
 
-  out <- list(gap = gap, quadrature = quadrature, laplace = laplacevalue,
+  # `$verdict` is the same shape the curvature certification and
+  # `ctParticleLik()` report, so "how good is this approximation" has one answer
+  # shape whichever reference it was asked against. The fields beside it are
+  # unchanged; see R/ctFitGap.R.
+  verdict <- .ctFitGap("quadrature", gap = gap, nsubjects = nsubjects,
+    remedy = paste0("A gap that matters means the Laplace approximation is ",
+      "limiting the fit rather than the data; ctLaplaceCorrect() moves the ",
+      "estimate, and ctSample() avoids the approximation entirely."))
+  out <- list(verdict = verdict,
+    gap = gap, quadrature = quadrature, laplace = laplacevalue,
     gap_per_subject = gap / max(1L, nsubjects),
     nodes = as.integer(nodes), nsubjects = nsubjects)
   class(out) <- "ctLaplaceCheck"
@@ -195,8 +204,13 @@ print.ctLaplaceCheck <- function(x, ...) {
   cat("Laplace approximation check,", x$nodes, "quadrature nodes per effect\n")
   cat("  log marginal: laplace", format(x$laplace, digits = 8),
     " quadrature", format(x$quadrature, digits = 8), "\n")
-  cat("  gap:", format(x$gap, digits = 4), "log units over", x$nsubjects,
-    "subjects (", format(x$gap_per_subject, digits = 3), "each )\n")
+  # Through the shared formatter, so this comparison reads the same as the
+  # curvature certification's and ctParticleLik()'s. One question -- how far is
+  # the reported answer from a better one -- asked against three references and,
+  # until now, answered in three shapes. See R/ctFitGap.R.
+  if (!is.null(x$verdict)) print(x$verdict) else
+    cat("  gap:", format(x$gap, digits = 4), "log units over", x$nsubjects,
+      "subjects (", format(x$gap_per_subject, digits = 3), "each )\n")
   if (!is.null(x$parameters)) {
     worst <- x$parameters[order(-abs(x$parameters$delta_se)), ]
     cat("  largest first-order corrections, in standard errors:\n")
