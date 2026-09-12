@@ -371,7 +371,7 @@ mutable struct CTSEMLaplaceObjective{O} <: CTSEMOptimisable
 end
 
 function CTSEMLaplaceObjective(objective::CTSEMObjective, spec::CTSEMLaplaceSpec;
-    inner_maxiter::Integer=50, inner_tol::Real=1e-10)
+    inner_maxiter::Integer=_LAPLACE_INNER_MAXITER[], inner_tol::Real=1e-10)
     nsubjects = length(objective.subject_objectives)
     units = _laplace_build_units(spec, nsubjects)
     nunits = length(units.members)
@@ -403,7 +403,7 @@ single-level form and none of it needs sending.
 function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
     sd_index=Int[], cor_index=Int[], sd_scale=Float64[], level_nre=Int[],
     group=Int[], level_ngroups=Int[], level_covmatcode=Int[],
-    inner_maxiter::Integer=50, inner_tol::Real=1e-10)
+    inner_maxiter::Integer=_LAPLACE_INNER_MAXITER[], inner_tol::Real=1e-10)
     nsubjects = length(objective.subject_objectives)
     counts = isempty(level_nre) ? [length(re_index)] : Vector{Int}(Int.(level_nre))
     ngroups = isempty(level_ngroups) ? [nsubjects] : Vector{Int}(Int.(level_ngroups))
@@ -1225,6 +1225,56 @@ function _laplace_unit_objective_gradient(laplace::CTSEMLaplaceObjective, U::Int
     return (value=result.value - dot(u, u) / 2, gradient=inner)
 end
 
+"""
+Whether a unit's inner Newton starts from the mode the last evaluation left, or
+from the origin every time. Off, and see `_laplace_solve_unit_mode!` for why.
+"""
+const _LAPLACE_WARM_START = Ref(false)
+
+"""
+How many Newton iterations a unit's inner solve is allowed, by default.
+
+Fifty was the figure under the warm start, where it was a *continuation*
+budget: a unit that ran out carried its iterate into the next evaluation and
+went on from there, so the cap was per call and the solve had no cap at all.
+From the origin it is the whole solve, and one unit of the count model in
+`test-julia-count.R` needs 53 -- it stalled at `|dg/du|` 2.4e-3 on the fiftieth
+and reached 1.1e-12 three iterations later.
+"""
+const _LAPLACE_INNER_MAXITER = Ref(200)
+
+"""
+    ctsem_set_inner_maxiter!(n)
+
+Set the default inner Newton iteration budget. Returns the previous value.
+Objectives already built keep the budget they were built with.
+"""
+function ctsem_set_inner_maxiter!(n::Integer)
+    previous = _LAPLACE_INNER_MAXITER[]
+    _LAPLACE_INNER_MAXITER[] = Int(n)
+    return previous
+end
+
+export ctsem_set_inner_maxiter!
+
+"""
+    ctsem_set_warm_start!(warm)
+
+Start each unit's inner Newton from the retained mode (`true`) or from the
+origin (`false`, the default). Returns the previous setting.
+
+Here to measure what the warm start costs, not as a setting to fit with: it
+makes the objective depend on the order the points were visited in, which is
+what `_laplace_solve_unit_mode!` describes.
+"""
+function ctsem_set_warm_start!(warm::Bool)
+    previous = _LAPLACE_WARM_START[]
+    _LAPLACE_WARM_START[] = warm
+    return previous
+end
+
+export ctsem_set_warm_start!
+
 """Unit size at or above which the blocked curvature beats the dense one."""
 const _LAPLACE_BLOCK_THRESHOLD = Ref(14)
 
@@ -1422,25 +1472,43 @@ function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, slot::Integer=1)
     d = laplace.units.dims[U]
     aws = _laplace_workspace!(laplace, Float64, length(values), slot)
-    warm = _laplace_newton_unit_mode(laplace, U, values, Ls, aws,
-        copy(laplace.modes[U]), slot)
+    retained = _LAPLACE_WARM_START[] ? copy(laplace.modes[U]) : zeros(Float64, d)
+    started_warm = any(!iszero, retained)
+    warm = _laplace_newton_unit_mode(laplace, U, values, Ls, aws, retained, slot)
     best = warm
-    # The retained mode is a *warm start*, not part of the definition of the
-    # objective. If Newton reached the tolerance from it, the mode it found is
-    # the mode, and where the previous evaluation happened to leave the warm
-    # start cannot matter. If it did not, the value about to be returned does
-    # depend on that history -- and then the objective the outer optimizer sees
-    # is not a function of theta at all.
+    # The start is the origin, and that is not a detail of the iteration: it is
+    # what makes the value a function of theta.
     #
-    # That is not hypothetical. On a 40-subject model, an outer line search that
-    # visited a distant point left the modes stranded, and the *same* parameter
-    # vector then evaluated to -170856 where a fresh object gave -967. The
-    # optimizer stopped at its starting values and reported convergence.
+    # Newton warm-started from the mode the last evaluation left is the obvious
+    # economy, and it is sound exactly when `g_U` has one mode -- which it does
+    # for a linear-Gaussian model, where the integrand is Gaussian in `u` and
+    # the inner problem is concave. It is not, for a nonlinear one. Measured on
+    # a 50-subject model with a random `-log1p_exp(-param)` drift, at one fixed
+    # parameter vector, alternating with distant evaluations:
     #
-    # So a warm start that fails is retried from the origin, which is the same
-    # for every caller and always inside the support: u = 0 is the population
-    # mean. The better of the two is kept, so a cold retry can only help.
-    if !warm.converged && any(!iszero, laplace.modes[U])
+    #     from the origin   -3234.201758   every time, |dg/du| 4.1e-9
+    #     warm              -3234.201758
+    #     warm              -3387.582975   same theta, |dg/du| 4.4e-6
+    #     warm              -3354.568832
+    #
+    # Every warm value is a different stationary point and every one is worse.
+    # An outer optimiser handed that is not maximising a function: its own trace
+    # climbed to -3234.20 and the re-evaluation of that same minimizer returned
+    # -3349.14, and over eight seeded starts three reached the optimum, one
+    # stopped at a log likelihood of -1.5e7 with a gradient of 2.4e15. From the
+    # origin, eight of eight, all to -2959.05.
+    #
+    # The origin is the population mean, it is the same point for every caller
+    # and always inside the support, and it costs the inner iterations the warm
+    # start would have saved: 16% on a 200-subject linear-Gaussian fit where the
+    # warm start is safe -- identical estimate, identical outer iterations -- and
+    # less than nothing on the model above, where a poisoned mode costs the outer
+    # optimiser far more than the inner solve ever saved.
+    #
+    # `_LAPLACE_WARM_START` turns it back on, to measure that. When it is on, a
+    # warm start that fails is retried from the origin and the better of the two
+    # kept, which is the guard that used to stand here on its own.
+    if !warm.converged && started_warm
         cold = _laplace_newton_unit_mode(laplace, U, values, Ls, aws,
             zeros(Float64, d), slot)
         if cold.converged || (isfinite(cold.value) &&
@@ -1481,6 +1549,24 @@ sits comfortably inside all of that.
 """
 @inline _laplace_inner_tolerance(laplace::CTSEMLaplaceObjective, value::Real) =
     max(laplace.inner_tol, 1e-10 * (one(value) + abs(value)))
+
+"""
+    _laplace_stationary_gain(gradient, step)
+
+How much objective one Newton step was predicted to gain: `g' M^-1 g / 2`.
+
+`step` is `M^-1 g` and is already computed by the solve, so this costs a dot
+product. It is the quantity `_laplace_newton_unit_mode` needs when its line
+search comes back empty -- in the same units as the value, which is the only
+comparison that survives a reparameterisation of `u`. `Inf` when it is not
+finite, so an unusable number can never certify a mode.
+"""
+@inline function _laplace_stationary_gain(gradient::AbstractVector,
+        step::AbstractVector)
+    isempty(gradient) && return 0.0
+    gain = dot(gradient, step) / 2
+    isfinite(gain) ? abs(gain) : Inf
+end
 
 """
     _laplace_newton_unit_mode(laplace, U, values, Ls, aws, start, slot)
@@ -1554,10 +1640,28 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
             # the outer optimiser was offered nothing usable and stopped at its
             # starting values, six times in twenty random starts.
             #
+            # What separates the two is not whether a trial could be
+            # evaluated -- it is how much objective the step that failed was
+            # predicted to gain. `step` is `M^-1 g`, so `g'step/2` is exactly
+            # that, for a dot product, and it is in the units the value is in.
+            # Below the objective's own tolerance the line search is measuring
+            # roundoff, which is the case above; at `g'step/2` of 1e4 it is not,
+            # and calling that a mode hands the outer optimiser a Laplace term
+            # evaluated away from one. That is not a function of theta: the same
+            # parameter vector then evaluates differently depending on which
+            # trial points preceded it, the line search follows a surface that
+            # is not the objective, and the fit walks somewhere worse than it
+            # started. Measured on a 50-subject nonlinear-drift model: units
+            # flagged converged at `|dg/du|` of 4e7, an outer fit that ran from
+            # -4282 to -14192, and three correction restarts that could not
+            # recover it.
+            #
             # `inner_gradient` keeps what was actually reached, so a unit that
             # stopped four orders above the tolerance is visible in the
             # diagnostics rather than silently equated with one that did not.
-            converged = evaluable
+            converged = evaluable &&
+                _laplace_stationary_gain(current.gradient, step) <=
+                    _laplace_inner_tolerance(laplace, current.value)
             break
         end
     end

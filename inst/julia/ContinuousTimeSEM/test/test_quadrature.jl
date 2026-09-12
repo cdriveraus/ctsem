@@ -231,7 +231,29 @@ end
     # `delta` solves -H delta = grad(Q - T). At the Laplace estimate the Laplace
     # gradient is zero, so that gap gradient is the quadrature objective's own
     # gradient, and the step is an ordinary Newton step on it.
-    @test -(Symmetric(H) * correction.delta) ≈ correction.gap_gradient rtol = 1e-8
+    #
+    # In the directions H can resolve, and only there. This fixture drops three
+    # of five -- the Laplace is exact for it, so the gap gradient is 4e-13 and
+    # three coordinates are flat at the estimate -- and `delta` is deliberately
+    # zero along a dropped one. The bare identity therefore asserts that a
+    # numerically zero gap gradient happens to have no component in a dropped
+    # direction, which is a property of the last bit of the estimate rather than
+    # of the correction: it held here until an unrelated change in the inner
+    # solve moved the estimate along the flat ridge by 3%, at an identical log
+    # likelihood, and then it did not.
+    #
+    # What the correction promises is that what it did not solve is what H
+    # cannot see. H annihilates exactly that, so an error in any direction it
+    # *can* see survives this and is caught -- which is the identity, restricted
+    # to where it can hold.
+    residual = -(Symmetric(H) * correction.delta) .- correction.gap_gradient
+    @test maximum(abs, Symmetric(H) * residual) <
+        1e-8 * maximum(abs, correction.gap_gradient)
+    # And the bare identity wherever the fixture is fully identified, so this
+    # keeps its teeth if the fixture ever becomes so.
+    if correction.dropped_directions == 0
+        @test -(Symmetric(H) * correction.delta) ≈ correction.gap_gradient rtol = 1e-8
+    end
     # The gap gradient must be a derivative of the gap the same call reports.
     @test correction.gap ≈ correction.quadrature - correction.laplace rtol = 1e-12
 
