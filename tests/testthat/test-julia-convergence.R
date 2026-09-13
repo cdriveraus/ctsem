@@ -20,11 +20,31 @@
 #     with no individual differences behind it is the common case, and it is a
 #     finding rather than a fault.
 #
-# The engine now tells them apart by pulling the flagged coordinate back and
-# asking whether the objective improves -- at a maximum, nothing improves it.
-# See `_ctsem_overshot` in inst/julia/ContinuousTimeSEM/src/ctsem_backend.jl.
+# The engine now tells them apart by pulling coordinates back and asking
+# whether the objective improves -- at a maximum, nothing improves it. See
+# `_ctsem_overshot` in inst/julia/ContinuousTimeSEM/src/ctsem_backend.jl.
 #
-# Two fits of one small model, plus one gradient evaluation.
+# ## Every fit here starts from zeros
+#
+# It did not, and that made two of these tests assert a coin flip. `inits =
+# NULL` draws `rnorm(npar, 0, .01)` from whatever RNG state the preceding tests
+# left, and on this fixture the starting point decides which of two optima the
+# fit reaches. Over four seeded starts, with the diagonal metric and without:
+#
+#   start   with metric                  without
+#     1     -202.0846  certified         -202.2331  unidentified
+#     2     -202.2331  unidentified      -202.2331  certified
+#     3     -202.0846  certified         -202.2331  certified
+#     4     -202.0846  certified         -202.2331  certified
+#
+# So `expect_false(e$saturated)` failed on start 2, and the file's second test,
+# which asserted the opposite of it, failed on three starts of four. Both
+# passed in practice only because of where in the file they ran. From zeros --
+# the neutral start, not the one that passes -- every fit below is reproducible
+# to the digit.
+#
+# Three fits of one small model: the full fit is computed once and shared, and
+# the other two are the contrasts that make its assertions mean something.
 
 skip_on_cran()
 skip_on_32bit()
@@ -48,46 +68,63 @@ skip_on_32bit()
   n.manifest = 2, LAMBDA = matrix(c(1, 1), 2, 1), CINT = matrix(0),
   T0MEANS = matrix(0)))
 
-test_that("the optimiser reaches a maximum instead of collapsing a population scale", {
-  fit <- suppressWarnings(suppressMessages(ctFit(.jconv_data(), .jconv_model(),
-    backend = "julia", cores = 1, verbose = 0)))
+# Computed once each: three tests want the same start and two want the same
+# fit, and nothing here mutates either.
+.jconv_cache <- new.env(parent = emptyenv())
+
+# Zeros of the right length. `fit = FALSE` builds the parameter table without
+# optimising anything, which is where the count comes from.
+.jconv_zeros <- function() {
+  if (is.null(.jconv_cache$zeros)) {
+    spec <- suppressWarnings(suppressMessages(ctFit(.jconv_data(), .jconv_model(),
+      backend = "julia", fit = FALSE)))
+    .jconv_cache$zeros <- rep(0, ctsem:::.ctBackendNpar(spec))
+  }
+  .jconv_cache$zeros
+}
+
+# The full fit, computed once: fitting it twice was a minute spent reproducing
+# a number we already had.
+.jconv_fit <- function() {
+  if (is.null(.jconv_cache$fit)) {
+    .jconv_cache$fit <- suppressWarnings(suppressMessages(
+      ctFit(.jconv_data(), .jconv_model(), backend = "julia", cores = 1,
+        verbose = 0, inits = .jconv_zeros())))
+  }
+  .jconv_cache$fit
+}
+
+test_that("the optimiser reaches a maximum and says so", {
+  fit <- .jconv_fit()
   e <- fit$estimate
 
-  # This fixture used to end with its population standard deviation in the flat
-  # region of its own transform, and the file was built around explaining why
-  # that still counted as converged. It was not the data: it was the optimiser
-  # stepping in raw coordinates whose scales differ by a factor of ten, with
-  # only a scalar metric to go on. Measured over eight fits of this model,
-  # with the diagonal metric and without:
-  #
-  #                 best ll      saturated   certification
-  #   with metric   -202.0846        0/8     certified x8
-  #   without       -202.2331        8/8     unidentified x8
-  #
-  # So the collapse is now the contrast rather than the subject. Asserted
-  # directly, because a regression in the metric would bring it straight back
-  # and nothing else in this file would notice.
-  expect_false(e$saturated)
+  # The optimum, in nats. This is the assertion that guards the optimiser: the
+  # other basin on this fixture is -202.2331, so a change that sent the fit
+  # there fails here by 0.15 rather than by a flag that may or may not have
+  # tripped. -202.0846 from zeros, 265 iterations, reproducible.
+  expect_equal(e$loglik, -202.0846, tolerance = 1e-4)
+  expect_true(e$converged)
   expect_equal(fit$uncertainty$certification$status, "certified")
   expect_true(fit$uncertainty$certification$certified)
-  expect_true(e$converged)
+
+  # Nothing flat at this optimum, so nothing to overstep. Asserted from a
+  # pinned start, where it is a property of the estimate rather than of the
+  # draw that reached it.
+  expect_false(e$saturated)
+  expect_false(e$overshot)
+  expect_equal(e$overshoot_gain, 0)
 
   # The recorded number is the thing it claims to be, so the assertions around
   # it are not just the optimizer agreeing with itself.
   expect_equal(max(abs(e$gradient)), e$gradient_norm, tolerance = 1e-10)
 
   # With no flat direction left, the optimiser's own estimate of what remains
-  # is accurate rather than meaningless -- `1/2 g'Bg` is 8e-12 here against an
-  # exact gap of 3e-16, where on the saturated fit it read 1.002 against 2e-15.
+  # is accurate rather than meaningless -- `1/2 g'Bg` against an exact gap of
+  # 3.6e-13 here, where on a saturated fit it has read 1.002 against 2e-15.
   # That is the case `_ctsem_optimise_verdict`'s second condition exists for,
-  # and `test-backend-optimgap.R` keeps it under unit test now that a real fit
-  # no longer produces it.
+  # and `test-backend-optimgap.R` keeps it under unit test.
   expect_true(is.finite(e$predicted_gain))
   expect_lt(e$predicted_gain, e$convergence_tolerance)
-
-  # Nothing saturated, so nothing to overstep.
-  expect_false(e$overshot)
-  expect_equal(e$overshoot_gain, 0)
 
   # Rounding-scale negative eigenvalues are not saddles. A symmetric
   # eigendecomposition returns them for a direction whose true curvature is
@@ -96,42 +133,46 @@ test_that("the optimiser reaches a maximum instead of collapsing a population sc
   expect_equal(fit$identifiability$negative, 0L)
 })
 
-test_that("without the metric the same fit collapses its population scale", {
-  # The other half of the measurement above, and the reason the assertions in
-  # the previous test are worth making: the difference is the metric and not
-  # the model, the data or the seed.
-  fit <- suppressWarnings(suppressMessages(ctFit(.jconv_data(), .jconv_model(),
-    backend = "julia", cores = 1, verbose = 0,
+test_that("the fit is the same one without the diagonal metric", {
+  # What `optimcontrol$precondition = FALSE` is for, and the only claim about
+  # the metric this fixture actually supports.
+  #
+  # It used to claim more: that without the metric this fit collapses a
+  # population scale and comes back `unidentified`. From a pinned start it does
+  # not -- both routes reach -202.0846 and both certify, and the difference is
+  # 265 iterations against 344. The collapse the old test asserted was the
+  # random start landing in the other basin, which happens with the metric too
+  # (one start in four, above). Asserting it was asserting the draw.
+  #
+  # The iteration count is not asserted either. It is a real measurement and it
+  # is in the commit message, but pinning 265 <= 344 would fail on any
+  # legitimate change to the optimiser and teach whoever hit it nothing. What
+  # is worth holding is that switching the metric off still fits, and fits the
+  # same model rather than a differently conditioned approximation to it.
+  plain <- suppressWarnings(suppressMessages(ctFit(.jconv_data(), .jconv_model(),
+    backend = "julia", cores = 1, verbose = 0, inits = .jconv_zeros(),
     optimcontrol = list(precondition = FALSE))))
-  e <- fit$estimate
-  expect_true(e$saturated)
-  expect_true(any(grepl("^popsd_", e$saturated_parameters)))
-  # And it is still a maximum with an unidentified coordinate rather than a
-  # failed fit -- the distinction this file has always been about.
-  expect_false(e$overshot)
-  expect_true(e$converged)
-  expect_equal(fit$uncertainty$certification$status, "unidentified")
+  expect_equal(plain$estimate$loglik, .jconv_fit()$estimate$loglik,
+    tolerance = 1e-4)
+  expect_true(plain$estimate$converged)
 })
 
-test_that("a julia fit stopped early reports a large gradient and does not converge", {
-  # The contrast that makes the assertion above mean something: the flag is not
-  # simply TRUE everywhere.
+test_that("a julia fit stopped early does not converge, and says what is left", {
+  # The contrast that makes the assertions above mean something: the flag is
+  # not simply TRUE everywhere.
   #
   # One iteration, not two. `maxiter` caps a *stage*, and a fit the curvature
   # says is short is continued from a damped Newton step, so a cap of two now
   # reaches the optimum on many starts -- measured, it certified on some draws
-  # and not others, which is a flaky test rather than a weak optimiser. At one
-  # iteration the fit is decisively short: |g| around 7, an exact gap of 5e-3,
-  # and `notmaximum`.
+  # and not others, which is a flaky test rather than a weak optimiser.
   capped <- suppressWarnings(suppressMessages(ctFit(.jconv_data(), .jconv_model(),
-    backend = "julia", cores = 1, verbose = 0,
+    backend = "julia", cores = 1, verbose = 0, inits = .jconv_zeros(),
     optimcontrol = list(maxiter = 1, carefulfit = FALSE))))
   expect_false(capped$estimate$converged)
   # Stated as objective still available rather than as a large gradient. With
-  # the metric even one iteration brings the gradient to around 0.1, so "short"
-  # and "large gradient" have stopped being the same thing -- which is the
-  # reason the criterion moved to nats in the first place. The exact gap is
-  # 5e-3 here against a tolerance of 1e-6.
+  # the metric even one iteration brings the gradient down a long way, so
+  # "short" and "large gradient" have stopped being the same thing -- which is
+  # the reason the criterion moved to nats in the first place.
   cert <- capped$uncertainty$certification
   expect_true(cert$status %in% c("notmaximum", "suboptimal"))
   expect_gt(cert$gap, cert$tolerance)
@@ -139,15 +180,13 @@ test_that("a julia fit stopped early reports a large gradient and does not conve
     capped$estimate$gradient_norm, tolerance = 1e-10)
 })
 
-
 test_that("what the fit reports is what the curvature measured", {
   # The complaint: a fit could pass certification -- the optimum bounded within
   # `gaptol` of the estimate, no warning raised, the summary saying so -- and
   # still report `converged = FALSE`, because that field was the optimiser's
   # own gradient verdict and nothing ever revisited it. Two verdicts on one
   # fit, and the weaker one was the one a user reads.
-  fit <- suppressWarnings(suppressMessages(ctFit(.jconv_data(), .jconv_model(),
-    backend = "julia", cores = 1, verbose = 0)))
+  fit <- .jconv_fit()
   certification <- fit$uncertainty$certification
 
   # The precondition: something was measured. Without this the assertion below
