@@ -3026,6 +3026,30 @@ function _ctsem_optimise_trial(o::CTSEMLaplaceObjective, x, want_gradient::Bool,
     return (evaluated=evaluated, valid=valid)
 end
 
+"""
+A probe point on the laplace route, where finite is not the same as usable.
+
+The same predicate `_ctsem_optimise_trial` applies to a trial point, for the
+same reason: the Laplace term is defined at the mode, so a value computed where
+a unit's inner Newton did not reach one is not the objective. `_ctsem_overshot`
+compares probe values against the estimate's and reports an improvement as
+proof that the estimate is not a maximum -- so a number from a failed inner
+solve there does not merely add noise, it manufactures that proof.
+
+It is not hypothetical on this route: the probe deliberately evaluates far from
+the estimate, pulling coordinates to zero, which is exactly where a warm inner
+solve used to fail.
+"""
+function _ctsem_probe_value(o::CTSEMLaplaceObjective, x)
+    evaluated = try
+        ctsem_laplace_evaluate(o, x; gradient=false)
+    catch
+        nothing
+    end
+    evaluated === nothing && return -Inf
+    (evaluated.converged && isfinite(evaluated.value)) ? evaluated.value : -Inf
+end
+
 """The laplace route's own result fields, and no `row_loglik`.
 
 The integral is over a whole subject's trajectory, so a single row has no
