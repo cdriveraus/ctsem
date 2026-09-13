@@ -978,7 +978,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     progress::Bool=verbose, progress_label::AbstractString="optimise",
     progress_budget::Bool=false, progress_every::Real=0.0,
     gap_tol::Real=0.0, converge_tol::Real=1e-6,
-    precondition=nothing, initial_alpha::Real=1.0)
+    precondition=nothing, initial_alpha::Real=0.1)
     start_values = collect(start)
     invalid_objective = floatmax(eltype(start_values)) / 1e8
     gradient_limit = sqrt(floatmax(eltype(start_values)))

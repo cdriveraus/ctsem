@@ -3466,7 +3466,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     precondition = if (identical(optimcontrol$precondition, FALSE)) NULL else
       .ctJuliaVector(.ctJuliaParameterScale(model_spec,
         at = as.numeric(start), npar = length(as.numeric(start)))),
-    initial_alpha = if (is.null(optimcontrol$initial_alpha)) 1.0 else
+    initial_alpha = if (is.null(optimcontrol$initial_alpha)) .1 else
       as.numeric(optimcontrol$initial_alpha)[1L],
     verbose = verbose > 0L,
     # Overwrite one line in place when someone is watching, and print
