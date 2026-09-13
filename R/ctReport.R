@@ -380,12 +380,22 @@
     if (isTRUE(e$saturated)) {
       add("  transform flat at the estimate: ",
         paste(e$saturated_parameters, collapse = ", "))
-      # The two outcomes that share a zero gradient. TRUE is a failed fit;
-      # FALSE is a maximum with those coordinates unidentified.
-      add("  optimizer overstepped into it: ", isTRUE(e$overshot),
+    }
+    # Outside the saturation block, because the pullback probe no longer takes
+    # its coordinates from the saturation flag: a fit can overshoot into a
+    # degenerate corner with nothing flagged flat, and reporting that only
+    # under `saturated` is how it would go unmentioned.
+    if (isTRUE(e$overshot)) {
+      add("  optimizer overstepped: pulling back ",
+        paste(e$overshoot_parameters, collapse = ", "),
         if (isTRUE(is.finite(e$overshoot_gain)))
-          paste0("  (best pullback gains ", .ctReportNum(e$overshoot_gain), ")")
+          paste0(" gains ", .ctReportNum(e$overshoot_gain))
         else "")
+    } else if (isTRUE(e$saturated)) {
+      # The other half of a zero gradient: a maximum with those coordinates
+      # unidentified rather than a failed fit.
+      add("  optimizer overstepped into it: FALSE  -- no pullback improves ",
+        "the objective, so those coordinates are unidentified")
     }
     if (!is.null(e$linesearch)) add("  line search: ", e$linesearch)
     add("")

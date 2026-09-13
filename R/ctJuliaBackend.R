@@ -1480,8 +1480,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # vector deadlocks the JuliaConnectoR bridge, so "nothing saturated" arrives
 # as the single index 0. "Raw parameter 10" is not something a user can act
 # on; "rawcor_mm2__mm1" is, and it is usually the whole diagnosis.
-.ctJuliaSaturatedNames <- function(result, model_spec, npar) {
-  index <- suppressWarnings(as.integer(result$saturated_parameters))
+.ctJuliaSaturatedNames <- function(result, model_spec, npar,
+    field = "saturated_parameters") {
+  index <- suppressWarnings(as.integer(result[[field]]))
   index <- index[!is.na(index) & index >= 1L & index <= npar]
   if (!length(index)) return(character())
   names <- try(.ctBackendRawParameterNames(list(model_spec = model_spec), npar),
@@ -3458,6 +3459,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # rather than two different questions. `gap_tol` above is the stopping rule
     # and aims inside it, at a hundredth.
     converge_tol = .ctBackendConvergeTol(optimcontrol),
+    # Which directions the post-fit overshoot probe pulls back, or "off" to
+    # skip it. See `.ctBackendOvershootProbe()` for what the settings mean and
+    # `_ctsem_overshot` in the engine for what the probe costs.
+    overshoot_probe = .ctBackendOvershootProbe(optimcontrol),
     # How much a raw unit is worth in each coordinate, so a step means the same
     # amount of model everywhere. L-BFGS has only a scalar metric until secant
     # pairs accumulate, and a model whose transforms differ by a factor of ten
@@ -3861,7 +3866,14 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       # `fit$trace` and `fit$estimate$iterations`, both of which describe the
       # fit alone. Reported as test-julia-trace.R expecting 8 and seeing 10,
       # which is exactly `warmiter`.
-      warmed <- try(.ctJuliaOptimise(spec, start, optimcontrol = optimcontrol,
+      warmed <- try(.ctJuliaOptimise(spec,  start,
+        # No overshoot probe either, and for the same reason as the callback:
+        # this stage is a starting-value device and its convergence verdict is
+        # discarded -- only `minimizer` is read. The probe costs up to
+        # `4 * npar` value-only evaluations, which on a 50-subject laplace fit
+        # is about a fifth of a stage, so paying it for a verdict nobody reads
+        # doubled what the probe costs a default fit.
+        optimcontrol = utils::modifyList(optimcontrol, list(overshoot = "off")),
         maxiter = as.integer(warmiter),
         gradient = gradient, cores = cores, verbose = verbose,
         callback = NULL, progress_label = "prior warm-up",
@@ -4035,6 +4047,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       overshot = isTRUE(result$overshot),
       overshoot_gain = if (is.null(result$overshoot_gain)) NA_real_ else
         as.numeric(result$overshoot_gain),
+      # Which coordinates the pullback moved to establish that. The probe
+      # selects them by magnitude order rather than from the saturation flag,
+      # so this is its own list and can name a parameter that is not in
+      # `saturated_parameters` -- see `_ctsem_overshot` in the engine.
+      overshoot_parameters = .ctJuliaSaturatedNames(result, model_spec, npar,
+        "overshoot_parameters"),
       # Whether the first pass with priors ran, and how long it was allowed.
       carefulfit = warmiter >= 1, carefulfit_iterations = as.integer(warmiter),
       # Which line search produced the answer. "hagerzhang+backtracking" means
@@ -4087,12 +4105,14 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # the point passes every tolerance while not being a maximum at all. The
     # engine establishes that by pulling the coordinate back and finding the
     # objective improves -- `overshoot_gain` is by how much.
-    warning("The optimizer overstepped into a region where the transform of ",
-      paste(out$estimate$saturated_parameters, collapse = ", "),
-      " is flat to machine precision, and the objective improves by ",
-      signif(as.numeric(result$overshoot_gain), 3), " when that parameter is ",
-      "pulled back, so this is not a maximum. Treat this fit as failed and ",
-      "check the starting values. See fit$estimate$overshot.", call. = FALSE)
+    warning("The optimizer stopped where the objective improves by ",
+      signif(as.numeric(result$overshoot_gain), 3), " if raw parameter(s) ",
+      paste(out$estimate$overshoot_parameters, collapse = ", "),
+      " are pulled back toward zero, so this is not a maximum -- the usual ",
+      "cause is a transform that has gone flat, or a population scale that ",
+      "has collapsed and taken its correlations with it. Treat this fit as ",
+      "failed and check the starting values. See fit$estimate$overshot.",
+      call. = FALSE)
   } else if (!isTRUE(result$converged)) {
     # Held rather than raised. The gradient says where the optimizer stopped;
     # whether that is the optimum is a question about the curvature, and the

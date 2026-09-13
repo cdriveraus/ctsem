@@ -613,14 +613,115 @@ own answer for `CTSEMJointObjective`, unwrapping to the same `CTSEMObjective`.
 _ctsem_params(o::CTSEMObjective) = o.params
 
 """
+Which coordinates the overshoot probe pulls back.
+
+* `:magnitude` -- prefixes of the coordinates ordered by `|raw|`, pulled back
+  together. The default; see `_ctsem_overshot`.
+* `:saturation` -- each coordinate the saturation detector flagged, one at a
+  time. What this used to do, kept so the two can be compared.
+* `:off` -- no probe. `overshot` is then always false, and a fit that walked
+  into a flat region reports success, which is what the probe exists to stop.
+"""
+const _CTSEM_OVERSHOOT_PROBE = Ref(:magnitude)
+
+"""
+    ctsem_set_overshoot_probe!(mode)
+
+Set the overshoot probe to `:magnitude`, `:saturation` or `:off`. Returns the
+previous setting.
+"""
+function ctsem_set_overshoot_probe!(mode)
+    previous = _CTSEM_OVERSHOOT_PROBE[]
+    _CTSEM_OVERSHOOT_PROBE[] = _ctsem_overshoot_mode(mode)
+    return previous
+end
+
+"""
+    _ctsem_overshoot_mode(mode)
+
+`mode` as one of the three symbols, or an error naming them.
+
+Takes a string as well, because the R side passes one: a bare symbol does not
+survive the bridge and spelling it as `Symbol(...)` at each call site is one
+more place for `:magnitde` to be accepted silently.
+"""
+function _ctsem_overshoot_mode(mode)
+    symbol = mode isa Symbol ? mode : Symbol(mode)
+    symbol in (:magnitude, :saturation, :off) || throw(ArgumentError(
+        "overshoot probe must be :magnitude, :saturation or :off, got $(repr(mode))"))
+    return symbol
+end
+
+export ctsem_set_overshoot_probe!
+
+"""
+    _ctsem_probe_value(objective, x)
+
+The objective at a probe point, or `-Inf` where the route cannot use it.
+
+Untyped, because the fallback's contract is exactly "whatever answers
+`ctsem_evaluate`" -- which is what the probe called directly before, and what
+the mock objectives in `test_ctsem_backend.jl` supply. Anything that does not
+answer raises inside the `try` and is refused, `nothing` included.
+
+The laplace route overrides this: its value is only the objective at a mode, so
+a probe point whose inner solve did not converge has to be refused rather than
+compared. Without that the probe can be handed a number computed away from any
+mode, find it larger, and report a maximum as an overshoot.
+"""
+function _ctsem_probe_value(objective, x)
+    value = try
+        ctsem_evaluate(objective, x; gradient=false).value
+    catch
+        -Inf
+    end
+    isfinite(value) ? value : -Inf
+end
+
+"""
+    _ctsem_pullback_sets(minimizer)
+
+The coordinate sets the magnitude probe pulls back: every prefix of the
+coordinates sorted by `|raw|` descending.
+
+There is no threshold in that, which is the point. A *cutoff* on raw magnitude
+is the heuristic `ctsem_optimize`'s saturation note explains was abandoned,
+because an identity transform never goes flat however large its coordinate. An
+*ordering* by magnitude claims nothing about any coordinate -- it only decides
+what to try first, and the objective decides whether it was right. A coordinate
+wrongly included costs one evaluation.
+
+Every prefix rather than a geometric ladder, and that is measured rather than
+cautious. Two local optima of one 50-subject model, each with a population
+scale collapsed and its correlations following it out:
+
+    dataset 13   escaping set {6,9,10,11}   +62.2   prefix of size 4
+    dataset 12   escaping set {6,9,10}      +53.7   prefix of size 3
+
+A ladder of 1, 2, 4, 8 finds the first and jumps over the second. In both, an
+exhaustive search over every subset of the six population coordinates found
+nothing better than the prefix -- so the ordering is doing the work and the
+only question was how finely to sample it.
+
+`n` sets of `length(fractions)` evaluations, worst case, and it stops at the
+first improvement.
+"""
+function _ctsem_pullback_sets(minimizer)
+    n = length(minimizer)
+    n == 0 && return Vector{Int}[]
+    order = sortperm(collect(minimizer); by=abs, rev=true)
+    return [order[1:k] for k in 1:n]
+end
+
+"""
     _ctsem_overshot(objective, minimizer, saturated_parameters, value, tolerance)
 
-Whether the optimizer walked a saturated coordinate *past* an optimum, rather
-than stopping at one.
+Whether the optimizer walked *past* an optimum into a flat region, rather than
+stopping at one.
 
-Saturation -- a materialising transform gone flat, see
-`_ctsem_saturated_parameters` -- covers two outcomes that look identical from
-the gradient, because a flat transform reports zero gradient in both:
+A transform gone flat, or a population scale collapsed to zero, covers two
+outcomes that look identical from the gradient, because a flat transform
+reports zero gradient in both:
 
   1. The optimizer overstepped. Measured on a binary model: one L-BFGS
      iteration to raw 20.9, log likelihood -730.7 where the profile peak is
@@ -638,37 +739,67 @@ optimisation replications of a benchmark whose log likelihoods matched Stan's,
 scale and the correlation that goes with it.
 
 The two are told apart by asking the only question that separates them -- is
-this a maximum? At a maximum no move improves the objective. So each saturated
-coordinate is pulled back toward zero, into the region where its transform
-still responds, one at a time with everything else held. An improvement larger
-than `tolerance` means the reported point is not a maximum in that coordinate,
-which is case 1; no improvement is case 2.
+this a maximum? At a maximum no move improves the objective. So coordinates are
+pulled back toward zero, into the region where their transforms still respond,
+and an improvement larger than `tolerance` means the reported point is not a
+maximum, which is case 1; no improvement is case 2. The probe is
+self-validating in a way the saturation *flag* is not: a coordinate wrongly
+included costs one evaluation, because zeroing a well-estimated parameter makes
+the objective worse and nothing is reported.
 
-At most `length(fractions)` value-only evaluations per saturated coordinate,
-and none at all unless something saturated.
+## Why not one coordinate at a time
+
+Because the move out of a degenerate corner is not along a coordinate. Measured
+on a 50-subject model with three correlated random effects, at an optimum
+149 nats below the one two other starts reached, with the T0MEANS population
+scale collapsed to raw -15.6 and its correlation on the cap:
+
+    pulled back alone     popsd_T0m_eta1            -0.0001 to -771
+    pulled back alone     rawcor_drift__T0m_eta1      -18.7 to -657
+    the two flagged ones, together                    -18.7 to -2065
+    the four largest |raw|, together, to zero                 +62.2
+
+Every single-coordinate probe says maximum. It is not one: the scale and all
+three of its correlations have to come back at once, because a dimension with
+no variance leaves its correlations unconstrained, and any one of them alone
+still describes a degenerate covariance. Two of those four are what the
+saturation detector flags -- the other two have transforms that are merely
+unresponsive rather than flat -- so selecting the set from the flag cannot work
+either. See `_ctsem_pullback_sets` for what is selected instead.
+
+At most `length(fractions) * npar` value-only evaluations, once per fit, and it
+stops at the first set that improves -- so `gain` is a lower bound on what is
+left rather than the best pullback available. The question it answers is
+whether the estimate is a maximum, and any improvement settles that.
 """
 function _ctsem_overshot(objective, minimizer, saturated_parameters, value,
-        tolerance; fractions=(0.5, 0.25, 0.1, 0.0))
+        tolerance; fractions=(0.5, 0.25, 0.1, 0.0),
+        mode=_CTSEM_OVERSHOOT_PROBE[])
     gain = 0.0
-    (isempty(saturated_parameters) || !isfinite(value)) &&
-        return (overshot=false, gain=gain)
-    probe = collect(minimizer)
-    for p in saturated_parameters
-        (1 <= p <= length(probe)) || continue
-        keep = probe[p]
-        for f in fractions
-            probe[p] = f * keep
-            trial = try
-                ctsem_evaluate(objective, probe; gradient=false).value
-            catch
-                -Inf
-            end
-            isfinite(trial) && (gain = max(gain, trial - value))
-        end
-        probe[p] = keep
-        gain > tolerance && return (overshot=true, gain=gain)
+    empty_result = (overshot=false, gain=gain, coordinates=Int[])
+    (!isfinite(value) || isempty(minimizer)) && return empty_result
+    mode = _ctsem_overshoot_mode(mode)
+    mode === :off && return empty_result
+    sets = if mode === :saturation
+        [[p] for p in saturated_parameters if 1 <= p <= length(minimizer)]
+    else
+        _ctsem_pullback_sets(minimizer)
     end
-    return (overshot=gain > tolerance, gain=gain)
+    isempty(sets) && return empty_result
+    keep = collect(minimizer)
+    probe = collect(minimizer)
+    for set in sets
+        for f in fractions
+            for p in set; probe[p] = f * keep[p]; end
+            trial = _ctsem_probe_value(objective, probe)
+            isfinite(trial) && (gain = max(gain, trial - value))
+            if gain > tolerance
+                return (overshot=true, gain=gain, coordinates=sort(set))
+            end
+        end
+        for p in set; probe[p] = keep[p]; end
+    end
+    return (overshot=false, gain=gain, coordinates=Int[])
 end
 
 """
@@ -938,7 +1069,8 @@ correlations saturate together (`_laplace_saturated_parameters`).
 function _ctsem_optimise_verdict(objective, minimizer, start_values, value,
         gradient_norm, predicted_gain, last_gain, saturated_parameters,
         g_tol, converge_tol;
-        label::AbstractString="ctsem_optimize", verbose::Bool=false)
+        label::AbstractString="ctsem_optimize", verbose::Bool=false,
+        overshoot_probe=_CTSEM_OVERSHOOT_PROBE[])
     moved = isempty(minimizer) ? 0.0 : maximum(abs, minimizer .- start_values)
     saturated = !isempty(saturated_parameters)
     stalled = moved == 0 && (!isfinite(value) || gradient_norm > max(g_tol, 1e-6))
@@ -948,15 +1080,14 @@ function _ctsem_optimise_verdict(objective, minimizer, start_values, value,
     converged_enough = isfinite(value) && finite_gradient &&
         (predicted_gain <= converge_tol || last_gain <= converge_tol)
     overshoot = _ctsem_overshot(objective, minimizer, saturated_parameters,
-        value, converge_tol)
+        value, converge_tol; mode=overshoot_probe)
     overshot = overshoot.overshot
     verbose && stalled && println(_console(), label, ": the optimizer made no ",
         "progress from its starting values; reporting this as not converged")
-    verbose && overshot && println(_console(), label, ": raw parameter(s) ",
-        saturated_parameters, " have a materialising transform that is flat ",
-        "to machine precision at the estimate, and pulling one back improves ",
-        "the objective by ", overshoot.gain, ", so this is not a maximum; ",
-        "reporting this as not converged")
+    verbose && overshot && println(_console(), label, ": pulling raw ",
+        "parameter(s) ", overshoot.coordinates, " back toward zero improves ",
+        "the objective by ", overshoot.gain, ", so the estimate is not a ",
+        "maximum; reporting this as not converged")
     verbose && saturated && !overshot && println(_console(), label,
         ": raw parameter(s) ", saturated_parameters, " have a materialising ",
         "transform that is flat to machine precision at the estimate, but no ",
@@ -978,8 +1109,12 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     progress::Bool=verbose, progress_label::AbstractString="optimise",
     progress_budget::Bool=false, progress_every::Real=0.0,
     gap_tol::Real=0.0, converge_tol::Real=1e-6,
-    precondition=nothing, initial_alpha::Real=0.1)
+    precondition=nothing, initial_alpha::Real=0.1,
+    overshoot_probe=_CTSEM_OVERSHOOT_PROBE[])
     start_values = collect(start)
+    # Validated here rather than at the probe, which runs after the fit: a
+    # misspelled mode should cost nothing, not a whole optimisation.
+    overshoot_probe = _ctsem_overshoot_mode(overshoot_probe)
     invalid_objective = floatmax(eltype(start_values)) / 1e8
     gradient_limit = sqrt(floatmax(eltype(start_values)))
     label = _ctsem_optimise_label(objective)
@@ -1217,12 +1352,18 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # an unidentified parameter, and reading it as saturation would report
     # every such fit as failed.
     saturated_parameters = _ctsem_saturated_for(objective, minimizer)
+    # Before the verdict, because the verdict probes. A route's own result
+    # fields can be live per-run state -- the laplace route's `inner_converged`,
+    # `inner_iterations` and the rest are -- and every probe point overwrites
+    # them, so read after the probe they describe wherever it went last rather
+    # than the estimate.
+    result_extra = _ctsem_optimise_result_extra(objective, final, call_log)
     # And the verdict itself, which every route reaches the same way and in one
     # place: see `_ctsem_optimise_verdict`.
     verdict = _ctsem_optimise_verdict(objective, minimizer, start_values,
         final.value, gradient_norm, _ctsem_predicted_gain(directional),
         _ctsem_last_gain(trace), saturated_parameters, g_tol, converge_tol;
-        label=label, verbose=verbose)
+        label=label, verbose=verbose, overshoot_probe=overshoot_probe)
     saturated = verdict.saturated
     stalled = verdict.stalled
     finite_gradient = verdict.finite_gradient
@@ -1242,7 +1383,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         maximum_loglik=final.value,
         gradient=collect(final.gradient),
         subject_loglik=collect(final.subject_loglik),
-        _ctsem_optimise_result_extra(objective, final, call_log)...,
+        result_extra...,
         # The larger of the two: they agree unless the callback stopped the
         # run, in which case Optim's is the one that stopped being updated.
         iterations=max(Optim.iterations(result), seen_iterations[]),
@@ -1282,6 +1423,14 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # back, so a user can see whether it was 16 log units or 1e-13.
         overshot=overshot,
         overshoot_gain=overshoot.gain,
+        # Which coordinates the pullback moved. Not the same as
+        # `saturated_parameters` any more and no longer derivable from it: the
+        # probe selects by magnitude order, so the set that proved the estimate
+        # is not a maximum can include coordinates whose transform is merely
+        # unresponsive rather than flat. `0` means none, for the reason the
+        # saturated list gives.
+        overshoot_parameters=isempty(overshoot.coordinates) ? [0] :
+            overshoot.coordinates,
         # Which raw parameters, not just whether one did -- most of the
         # diagnostic value, and free once the derivatives are computed.
         #

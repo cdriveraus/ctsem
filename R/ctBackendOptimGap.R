@@ -275,6 +275,31 @@
   value
 }
 
+# Which directions the post-fit overshoot probe pulls back, from the controls.
+#
+# `"magnitude"` (the default) pulls back prefixes of the coordinates ordered by
+# |raw|, jointly; `"saturation"` pulls back each coordinate the saturation
+# detector flagged, one at a time, which is what this did before; `"off"` skips
+# it. See `_ctsem_overshot` in the engine for what each costs and catches.
+#
+# Off is a real option and not a footgun to be hidden: the probe costs up to
+# `4 * npar` value-only evaluations per optimisation stage, and on a large model
+# that is a visible fraction of the fit. What it buys is that a fit stopped in a
+# degenerate corner says so instead of reporting convergence.
+#' @keywords internal
+.ctBackendOvershootProbe <- function(optimcontrol = list(),
+    default = "magnitude") {
+  value <- if (is.null(optimcontrol)) NULL else optimcontrol$overshoot
+  if (is.null(value)) return(default)
+  value <- as.character(value)[1L]
+  allowed <- c("magnitude", "saturation", "off")
+  if (!value %in% allowed) {
+    stop("optimcontrol$overshoot must be one of ",
+      paste(allowed, collapse = ", "), ", not ", sQuote(value), call. = FALSE)
+  }
+  value
+}
+
 # The certification for one fit, at its own estimate, against one Hessian.
 #
 # The probe is what makes the flat directions safe to exclude from the gap:

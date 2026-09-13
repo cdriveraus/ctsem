@@ -141,10 +141,92 @@ ContinuousTimeSEM.ctsem_evaluate(m::_OvershotMock, x::AbstractVector;
     @test !out2.overshot
     @test out2.gain == 0.0
 
-    # Nothing flagged means nothing evaluated and nothing claimed.
+    # The saturation flag is not what selects the probe. The default probe
+    # orders coordinates by magnitude and never reads the flag, so an empty
+    # flag changes nothing about what it finds.
     out3 = ContinuousTimeSEM._ctsem_overshot(mock, [20.0], Int[], value, 1e-3)
-    @test !out3.overshot
-    @test out3.gain == 0.0
+    @test out3.overshot
+    @test out3.coordinates == [1]
+
+    # Under `:saturation` it is the flag, and an empty one means nothing
+    # evaluated and nothing claimed -- the behaviour the switch preserves.
+    previous = ContinuousTimeSEM.ctsem_set_overshoot_probe!(:saturation)
+    try
+        @test ContinuousTimeSEM._ctsem_overshot(mock, [20.0], [1], value, 1e-3).overshot
+        flagless = ContinuousTimeSEM._ctsem_overshot(mock, [20.0], Int[], value, 1e-3)
+        @test !flagless.overshot
+        @test flagless.gain == 0.0
+    finally
+        ContinuousTimeSEM.ctsem_set_overshoot_probe!(previous)
+    end
+
+    # And `:off` claims nothing whatever is handed to it.
+    previous = ContinuousTimeSEM.ctsem_set_overshoot_probe!(:off)
+    try
+        @test !ContinuousTimeSEM._ctsem_overshot(mock, [20.0], [1], value, 1e-3).overshot
+    finally
+        ContinuousTimeSEM.ctsem_set_overshoot_probe!(previous)
+    end
+    @test ContinuousTimeSEM._CTSEM_OVERSHOOT_PROBE[] === :magnitude
+end
+
+# The reason the probe is not one coordinate at a time. A degenerate corner is
+# left by moving a whole block together, and every single-coordinate move out of
+# one is worse than staying -- which is what a collapsed population scale and
+# its correlations look like, and what made the old probe report those fits as
+# maxima. See `_ctsem_overshot`.
+struct _JointMock end
+ContinuousTimeSEM.ctsem_evaluate(::_JointMock, x::AbstractVector;
+    gradient::Bool=true, contributions::Bool=false, gradient_method=:adjoint) =
+    (value = -(x[1] - x[2])^2 - 0.01 * sum(abs2, x), gradient = nothing)
+
+@testset "the move out of a degenerate corner is not along a coordinate" begin
+    mock = _JointMock()
+    estimate = [10.0, 10.0]
+    value = ContinuousTimeSEM.ctsem_evaluate(mock, estimate; gradient=false).value
+    @test value ≈ -2.0
+    # Either coordinate alone is far worse; both together gain 2.
+    @test ContinuousTimeSEM.ctsem_evaluate(mock, [0.0, 10.0]; gradient=false).value < -100
+    @test ContinuousTimeSEM.ctsem_evaluate(mock, [10.0, 0.0]; gradient=false).value < -100
+    @test ContinuousTimeSEM.ctsem_evaluate(mock, [0.0, 0.0]; gradient=false).value ≈ 0.0
+
+    out = ContinuousTimeSEM._ctsem_overshot(mock, estimate, [1], value, 1e-3)
+    @test out.overshot
+    @test out.coordinates == [1, 2]
+    # 1.5, not the 2.0 available at the origin: the probe stops at the first
+    # improvement, which here is the half-way pullback. The gain is a lower
+    # bound on what is left, and it is reported as one -- the question it
+    # answers is whether this is a maximum, and any improvement settles that.
+    @test out.gain ≈ 1.5 atol = 1e-8
+
+    # The old probe, on the same point, says maximum. Both coordinates are
+    # flagged, so this is not a matter of flagging the right one.
+    previous = ContinuousTimeSEM.ctsem_set_overshoot_probe!(:saturation)
+    try
+        singly = ContinuousTimeSEM._ctsem_overshot(mock, estimate, [1, 2], value, 1e-3)
+        @test !singly.overshot
+    finally
+        ContinuousTimeSEM.ctsem_set_overshoot_probe!(previous)
+    end
+end
+
+@testset "the pullback sets are magnitude-ordered prefixes" begin
+    sets = ContinuousTimeSEM._ctsem_pullback_sets([0.5, -9.0, 2.0, 0.1, -4.0])
+    # Ordered by |raw|: 2 (9), 5 (4), 3 (2), 1 (0.5), 4 (0.1).
+    @test length.(sets) == [1, 2, 3, 4, 5]
+    @test sets[1] == [2]
+    @test sets[2] == [2, 5]
+    @test sets[3] == [2, 5, 3]
+    @test sort(sets[5]) == [1, 2, 3, 4, 5]
+    # Every set is a prefix of the next. Every size is present, which is what
+    # a geometric ladder gave up and what dataset 12's escaping set of three
+    # needed -- see `_ctsem_pullback_sets`.
+    for i in 1:(length(sets) - 1)
+        @test sets[i] == sets[i + 1][1:length(sets[i])]
+    end
+    # One coordinate, and none.
+    @test ContinuousTimeSEM._ctsem_pullback_sets([3.0]) == [[1]]
+    @test isempty(ContinuousTimeSEM._ctsem_pullback_sets(Float64[]))
 end
 
 
@@ -152,9 +234,12 @@ end
 # against it is the objective still available, so these are about units and
 # about what the verdict refuses to look at, not about one model's numbers.
 #
-# `_ctsem_optimise_verdict` needs no objective here: `_ctsem_overshot` returns
-# before touching it when nothing saturated, so the rule can be exercised on its
-# own.
+# `_ctsem_optimise_verdict` needs no usable objective here. The probe does now
+# evaluate whatever it is handed -- it no longer returns early on an empty
+# saturation flag -- but `nothing` has no `ctsem_evaluate` method, so every
+# probe point is refused and no gain is claimed. That is the same guard a real
+# objective's non-finite point gets, exercised on the cheapest possible
+# objective, and it leaves the convergence rule testable on its own.
 @testset "convergence is judged on the objective still available" begin
     verdict(gain, last = Inf; g = 1.0e3, tol = 1.0e-6) =
         ContinuousTimeSEM._ctsem_optimise_verdict(nothing, [1.0], [0.0],
