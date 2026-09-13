@@ -530,31 +530,23 @@
       accepted <- list(par = est, value = value, alpha = 0)
     }
     # Tighten whatever ended the last stage, or the resume stops there again.
-    # Which one it was is not a guess: the result says how many iterations it
-    # ran and whether it met the criterion.
-    # `iterations` is the engine's own count, not Optim's, which stops being
-    # updated when a callback ends the run -- so this branch reads a number
-    # that means what it says even when the cheap rule stopped the stage.
+    # Which one it was is not a guess: `iterations` is the engine's own count,
+    # not Optim's, which stops being updated when a callback ends the run, and
+    # `stopped_by_gap` says outright whether the cheap rule was what stopped it.
     hitcap <- is.finite(maxiter) && maxiter > 0 &&
       as.integer(result$iterations) >= as.integer(maxiter)
-    if (hitcap) {
-      overrides$maxiter <- as.integer(min(4 * as.numeric(
-        .ctJuliaOr(overrides$maxiter, maxiter)), 1e6))
-    } else {
-      needed <- .ctBackendGapGradientTolerance(gap$lambda_min, npar, tolerance)
-      if (is.finite(needed)) {
-        current <- .ctJuliaOr(overrides$g_tol, gtol)
-        # Only ever tighter: a derivation that came out looser than the rule
-        # already in force would be licensing the stop that just failed.
-        overrides$g_tol <- min(needed, current)
-      }
-    }
+    overrides <- .ctBackendResumeOverrides(overrides, hitcap = hitcap,
+      stoppedbygap = isTRUE(result$stopped_by_gap),
+      lambda_min = gap$lambda_min, npar = npar, tolerance = tolerance,
+      maxiter = maxiter, gtol = gtol)
     if (verbose > 0) {
       message("Continuing from a Newton correction: predicted ",
         signif(gap$gap, 3), ", step gained ", signif(accepted$value - value, 3),
         if (hitcap) paste0(", iterations raised to ", overrides$maxiter) else
           paste0(", gradient tolerance tightened to ",
-            signif(overrides$g_tol, 3)))
+            signif(overrides$g_tol, 3),
+            if (identical(overrides$innergaptol, 0))
+              ", predicted-gain stop switched off" else ""))
     }
     resumed <- try(optimise(accepted$par, overrides), silent = TRUE)
     ok <- !inherits(resumed, "try-error") &&
@@ -577,10 +569,15 @@
       # says what was already tried.
       resume_maxiter = .ctJuliaOr(overrides$maxiter, maxiter),
       resume_gtol = .ctJuliaOr(overrides$g_tol, gtol),
+      # NA when it was left alone, which is the case where the stage ended at
+      # something other than the predicted-gain rule.
+      resume_innergaptol = .ctJuliaOr(overrides$innergaptol, NA_real_),
       # What stopped the resumed stage. A resume that returns after a couple of
       # iterations having met the optimiser's own criterion is the futile case:
       # the rule that was just shown to be inadequate is what ended it, and
-      # another correction would meet the same wall.
+      # another correction would meet the same wall. That is what switching the
+      # predicted-gain rule off above prevents; this is how a resume that still
+      # comes up short for some other reason says so.
       iterations = if (ok) as.integer(resumed$iterations) else NA_integer_,
       stopped_converged = if (ok) isTRUE(resumed$converged) else NA)
     # Never accept a resume that did not improve on what we had: the corrected
@@ -593,6 +590,63 @@
   }
   list(result = result, certification = certification, hessian = hessian,
     corrections = history, totals = totals, hessians = hessians)
+}
+
+# What to give the resumed stage, so that it does not stop where the last one
+# did.
+#
+# Separated from the loop above for the same reason as `.ctBackendDampedStep`:
+# the decision is branching on three numbers, and the cases worth pinning -- a
+# stage that ran out of iterations, one the cheap rule ended, one whose derived
+# bound is looser than the rule already in force -- are three lines each and
+# take no engine at all.
+#
+# There are three rules that can end a stage and each is answered in its own
+# terms.
+#
+# **The iteration cap.** Quadrupled, capped at 1e6. A stage that needed a
+# bigger budget once needs it again, which is why `overrides` is carried across
+# attempts rather than rebuilt.
+#
+# **The gradient bound.** Tightened to `.ctBackendGapGradientTolerance()`, the
+# gradient below which the gap cannot exceed the target -- and only ever
+# tightened, because a derivation that came out looser than the rule already in
+# force would be licensing the stop that just failed.
+#
+# **The predicted-gain rule.** Switched off, not tightened by some factor. The
+# proxy is `1/2 g'Bg` against the exact `1/2 g'H^-1 g`, and `B` is limited
+# memory, so no factor provably makes a second failure impossible -- picking
+# one would be fitting a constant to whichever model it was measured on. What
+# can be said is that on *this* model the proxy has just been shown wrong, so
+# it has forfeited its licence here; the resumed stage still has the gradient
+# bound, the cap, and the exact check that follows it.
+#
+# That last one was missing, and it is what made a second correction possible.
+# Measured on the one cell in 480 of `dev/simstudies/simstudy-gaptol.R` that
+# needed more than one: with the rule left in force both resumes ran a single
+# iteration and reported the optimiser's own criterion met -- the futile case
+# named where the history is recorded -- and the fit ended 2.9 log units low
+# and not converged. With it switched off the same fit takes one correction,
+# its resume runs 108 iterations for 2.9 log units, and it lands on the
+# log likelihood the default stopping rule reaches.
+#
+# The cap branch is exclusive: a stage that exhausted its iterations did not
+# stop at either tolerance, so neither is what needs loosening.
+#' @keywords internal
+.ctBackendResumeOverrides <- function(overrides = list(), hitcap = FALSE,
+  stoppedbygap = FALSE, lambda_min = NA_real_, npar = 1L, tolerance = 0.01,
+  maxiter = NA_integer_, gtol = 1e-8) {
+  if (isTRUE(hitcap)) {
+    overrides$maxiter <- as.integer(min(4 * as.numeric(
+      .ctJuliaOr(overrides$maxiter, maxiter)), 1e6))
+    return(overrides)
+  }
+  if (isTRUE(stoppedbygap)) overrides$innergaptol <- 0
+  needed <- .ctBackendGapGradientTolerance(lambda_min, npar, tolerance)
+  if (is.finite(needed)) {
+    overrides$g_tol <- min(needed, .ctJuliaOr(overrides$g_tol, gtol))
+  }
+  overrides
 }
 
 # Backtrack along an ascent direction until the objective actually increases.

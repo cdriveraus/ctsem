@@ -61,7 +61,7 @@ latent output rather than trimming to the real processes.}
   effects are modes estimated from each subject's whole record, so unlike an
   augmented fit -- whose carrier states are updated observation by
   observation -- there is no version of them from before a subject's later
-  data arrived. A message says so at the point of use.
+  data arrived. A message says so once per call.
 
   The modes are the ones the fit arrived at, and they stay fixed however
   this call changes the rows being filtered. Selecting subjects,
