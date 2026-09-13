@@ -258,6 +258,84 @@ test_that("the resumed gradient tolerance is the one that would close the gap", 
   expect_true(is.na(ctsem:::.ctBackendGapGradientTolerance(1, 0L, tol)))
 })
 
+test_that("the resume loosens the cap, or tightens both tolerances, never both", {
+  # A stage that exhausted its iterations did not stop at either tolerance, so
+  # neither is what needs changing -- and the budget it needed once it needs
+  # again, which is why the override is read back rather than recomputed.
+  capped <- ctsem:::.ctBackendResumeOverrides(list(), hitcap = TRUE,
+    stoppedbygap = TRUE, lambda_min = 1, npar = 2L, tolerance = 0.01,
+    maxiter = 1000L, gtol = 1e-8)
+  expect_equal(capped$maxiter, 4000L)
+  expect_null(capped$g_tol)
+  expect_null(capped$innergaptol)
+  expect_equal(ctsem:::.ctBackendResumeOverrides(capped, hitcap = TRUE,
+    maxiter = 1000L)$maxiter, 16000L)
+  # And it does not grow without bound.
+  expect_equal(ctsem:::.ctBackendResumeOverrides(list(maxiter = 5e5),
+    hitcap = TRUE, maxiter = 1000L)$maxiter, 1000000L)
+})
+
+test_that("the predicted-gain rule is switched off when it is what stopped the stage", {
+  # `1/2 g'Bg` against the exact `1/2 g'H^-1 g`, with `B` limited memory: no
+  # factor provably prevents a second failure, so the proxy loses its licence
+  # on this model rather than being scaled by a constant fitted to some other
+  # one. Zero, not merely smaller.
+  out <- ctsem:::.ctBackendResumeOverrides(list(), hitcap = FALSE,
+    stoppedbygap = TRUE, lambda_min = 1, npar = 2L, tolerance = 0.01,
+    maxiter = 1000L, gtol = 1e-8)
+  expect_identical(out$innergaptol, 0)
+
+  # Left alone when something else ended the stage: the rule is not the
+  # problem there, and switching it off would slow every later resume for a
+  # reason that did not apply.
+  other <- ctsem:::.ctBackendResumeOverrides(list(), hitcap = FALSE,
+    stoppedbygap = FALSE, lambda_min = 1, npar = 2L, tolerance = 0.01,
+    maxiter = 1000L, gtol = 1e-8)
+  expect_null(other$innergaptol)
+
+  # Once off, it stays off across attempts -- `overrides` is carried, and a
+  # rule relaxed on the second attempt would reopen the loop this closes.
+  expect_identical(ctsem:::.ctBackendResumeOverrides(out, hitcap = FALSE,
+    stoppedbygap = FALSE, lambda_min = 1, npar = 2L,
+    tolerance = 0.01)$innergaptol, 0)
+})
+
+test_that("the resumed gradient bound only ever tightens", {
+  loose <- ctsem:::.ctBackendResumeOverrides(list(), hitcap = FALSE,
+    stoppedbygap = FALSE, lambda_min = 1, npar = 2L, tolerance = 0.01,
+    maxiter = 1000L, gtol = 1e-8)
+  # The derivation for this curvature is far looser than the 1e-8 in force, and
+  # adopting it would license the stop that just failed.
+  expect_gt(ctsem:::.ctBackendGapGradientTolerance(1, 2L, 0.01), 1e-8)
+  expect_equal(loose$g_tol, 1e-8)
+
+  # A badly conditioned model derives something tighter, and that is taken.
+  tight <- ctsem:::.ctBackendResumeOverrides(list(), hitcap = FALSE,
+    stoppedbygap = FALSE, lambda_min = 1e-14, npar = 24L, tolerance = 1e-6,
+    maxiter = 1000L, gtol = 1e-8)
+  expect_equal(tight$g_tol,
+    ctsem:::.ctBackendGapGradientTolerance(1e-14, 24L, 1e-6))
+  expect_lt(tight$g_tol, 1e-8)
+
+  # Nothing to derive it from leaves the rule in force rather than inventing
+  # one: a model with no trusted curvature needs a different report.
+  none <- ctsem:::.ctBackendResumeOverrides(list(), hitcap = FALSE,
+    stoppedbygap = TRUE, lambda_min = 0, npar = 2L, tolerance = 0.01,
+    maxiter = 1000L, gtol = 1e-8)
+  expect_null(none$g_tol)
+  expect_identical(none$innergaptol, 0)
+})
+
+test_that("an innergaptol of zero reaches the optimiser as zero", {
+  # The override is only worth setting if `.ctBackendInnerGapTol()` honours it,
+  # and its own rule is that an explicit value wins -- including one that turns
+  # the rule off, which is otherwise what it returns when nothing will certify.
+  expect_equal(ctsem:::.ctBackendInnerGapTol(list(innergaptol = 0)), 0)
+  # And the default is unchanged by any of this.
+  expect_equal(ctsem:::.ctBackendInnerGapTol(list()),
+    ctsem:::.ctBackendConvergeTol(list()) / 100)
+})
+
 # --- the reasoning behind the two tolerances, and what verifies it ----------
 #
 # The choices here are not measurements. Which tolerance to stop an optimiser
