@@ -670,6 +670,31 @@
 # was meant to be -- the rare case where a fit genuinely stopped short, not the
 # normal route to precision.
 #
+# Rechecked on 480 fits under the preconditioner and the short first step --
+# `dev/simstudies/simstudy-gaptol.R`, four measurement types and both
+# intoverpop routes, paired on the same data and the same starting values, with
+# the constant swept over `bar/100`, `bar/10`, the bar itself and off. Scored on
+# objective calls, which is the deterministic half of the trade; the wall clock
+# there is not readable, because the four settings run back to back in one
+# worker with the default first, so it absorbs Julia's per-shape specialisation.
+#
+#   setting     median f_calls   cells landing >0.01 below the reference
+#   bar/100 (default)   32.0     0   (largest shortfall 1.3e-08)
+#   bar/10              31.5     0   (largest shortfall 1.4e-07)
+#   at the bar          30.5     1   (2.90 log units, 2 corrections, and it
+#                                     still reported not converged)
+#   off                 44.5     0
+#
+# Which is the same answer as the fixture, from the other side: moving the rule
+# out to the bar buys about 5% of the calls and puts a fit in sixty into exactly
+# the loop this constant exists to avoid -- proxy fails the exact check, two
+# Hessians and two resumed optimisations, and it lands 2.9 log units low
+# anyway. `bar/10` is safe and saves 1.5%, which is not a reason to move.
+#
+# The rule as a whole is worth having, incidentally: 32 calls against 44.5 with
+# it off, so it removes about 28% of the optimiser's work for a shortfall five
+# orders of magnitude inside the bar.
+#
 # The licence applies to the *default*, not to a request. Nothing will check a
 # stop when certification is off -- `estonly`, `certify = FALSE`, or the
 # state-explicit route, whose only curvature is the profile's -- and the proxy
