@@ -63,12 +63,19 @@
   as.integer(position)
 }
 
-# The chosen level, wrapped so `.ctBackendKalmanRaw` does not repeat its
-# message for every posterior draw of the same call.
-.ctBackendQuietLevel <- function(spec, randomEffects) {
-  if (is.null(spec$laplace)) return(randomEffects)
+# What a Laplace fit's trajectories are conditional on, for the calls that
+# return trajectories. Silent for every other kind of fit.
+.ctBackendLaplaceTrajectoryNote <- function(spec, randomEffects) {
+  if (is.null(spec$laplace)) return(invisible(NULL))
   if (is.null(randomEffects)) randomEffects <- spec$laplace$levels[[1L]]$name
-  structure(randomEffects, quiet = TRUE)
+  # Validates the name here rather than leaving a bad one to error further in,
+  # where the message would be about a level index.
+  .ctBackendLaplaceLevel(spec, randomEffects)
+  message("Laplace fit: trajectories are conditional on random effects ",
+    "estimated from each subject's whole record, so they are the smoothed ",
+    "equivalent rather than filtered. randomEffects='",
+    as.character(randomEffects), "'.")
+  invisible(NULL)
 }
 
 .ctBackendKalmanRaw <- function(fit, raw, subjectmatrices = TRUE,
@@ -89,19 +96,6 @@
   if (!is.null(spec$laplace)) {
     if (is.null(randomEffects)) randomEffects <- spec$laplace$levels[[1L]]$name
     from <- .ctBackendLaplaceLevel(spec, randomEffects)
-    # Said once per call rather than buried in the documentation, because the
-    # difference is easy to miss and changes what the picture means. An
-    # augmented fit's random effects are carrier *states*, updated observation
-    # by observation, so its filtered output shows an effect being learned. A
-    # Laplace mode is estimated from all of a subject's data at once, so these
-    # trajectories are the smoothed equivalent throughout -- there is no
-    # "before this subject's later data arrived" version of them.
-    if (!isTRUE(attr(randomEffects, "quiet"))) {
-      message("Laplace fit: trajectories are conditional on random effects ",
-        "estimated from each subject's whole record, so they are the smoothed ",
-        "equivalent rather than filtered. randomEffects='",
-        as.character(randomEffects), "'.")
-    }
     arguments$from_level <- as.integer(from)
     # Modes from the fit, not from whatever rows this call happens to filter
     # over. `.ctBackendKalmanSpec` attaches the fitted specification when it
@@ -308,7 +302,7 @@
 #'   effects are modes estimated from each subject's whole record, so unlike an
 #'   augmented fit -- whose carrier states are updated observation by
 #'   observation -- there is no version of them from before a subject's later
-#'   data arrived. A message says so at the point of use.
+#'   data arrived. A message says so once per call.
 #'
 #'   The modes are the ones the fit arrived at, and they stay fixed however
 #'   this call changes the rows being filtered. Selecting subjects,
@@ -334,6 +328,20 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
 
   spec <- .ctBackendKalmanSpec(fit, subjects = subjects, timestep = timestep,
     maxtime = maxtime, removeObs = removeObs)
+  # Said here, at the one entry point that returns trajectories, because the
+  # difference is easy to miss and changes what the picture means. An
+  # augmented fit's random effects are carrier *states*, updated observation by
+  # observation, so its filtered output shows an effect being learned. A
+  # Laplace mode is estimated from all of a subject's data at once, so these
+  # trajectories are the smoothed equivalent throughout -- there is no "before
+  # this subject's later data arrived" version of them.
+  #
+  # Not in `.ctBackendKalmanRaw`, where it used to be. Every julia fit runs a
+  # filter pass for its prior residuals, `ctLOO` runs one per fold and the
+  # summary runs one per posterior draw -- so a note about how to read a
+  # trajectory was printed by things that return no trajectory, and every
+  # Laplace fit said it whether or not anyone asked for a prediction.
+  .ctBackendLaplaceTrajectoryNote(spec, randomEffects)
   model <- .ctFitModelObject(fit)
   samples <- .ctBackendKalmanSamples(fit, pointest, nsamples, collapsefunc, ...)
 
@@ -356,9 +364,7 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
       # Every field this loop reads, and nothing else -- in particular not
       # `transition`, which nothing here or downstream looks at.
       fields = c("eta", "etacov", "y", "ycov", "llrow", "subject", "subject_loglik"),
-      # Said once per call, not once per posterior draw.
-      randomEffects = if (iteration == 1L) randomEffects else
-        .ctBackendQuietLevel(spec, randomEffects))
+      randomEffects = randomEffects)
     etaa[iteration, , , ] <- scores$eta
     etacova[iteration, , , , ] <- scores$etacov
     ya[iteration, , , ] <- scores$y

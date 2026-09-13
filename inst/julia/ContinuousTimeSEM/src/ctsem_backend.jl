@@ -1025,11 +1025,12 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # is exactly the one nobody thought to turn reporting on for.
     trace = CTSEMTrace(_ctsem_optimise_trace_keys(objective)...)
     watcher = CTSEMCallback(progress_callback)
-    # How far toward `g_tol` the gradient has come; see `CTSEMConvergence`. It
-    # is fed every iteration rather than every printed line, because the scale
-    # it interpolates on is the worst gradient the fit ever had and the
-    # printed lines are a time-sampled subset.
-    convergence = CTSEMConvergence(g_tol)
+    # How far this run has come toward the nearest of its stopping rules; see
+    # `CTSEMConvergence`. Fed every iteration rather than every printed line,
+    # because the scales it interpolates on are the worst gradient and the
+    # largest objective change the fit ever had, and the printed lines are a
+    # time-sampled subset.
+    convergence = CTSEMConvergence(g_tol, Int(maxiter))
     # An observer around the line search that runs; it changes nothing about
     # which one that is.
     directional = CTSEMDirectional(Optim.LineSearches.BackTracking())
@@ -1047,7 +1048,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         _record!(trace, latest.iteration, -latest.value, latest.g_norm,
             _ctsem_optimise_trace_values(objective)...)
         seen_iterations[] = max(seen_iterations[], Int(latest.iteration))
-        percent = _convergence_percent!(convergence, latest.g_norm)
+        percent = _convergence_percent!(convergence, latest.g_norm,
+            latest.value, Int(latest.iteration))
         if _due(reporter)
             # Never on a budget stage: its own fraction is exact, and an
             # estimate would replace a correct denominator with a guess.

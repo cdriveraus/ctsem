@@ -289,6 +289,39 @@ test_that("verbose reports the optimiser trace and the inner solve", {
   expect_true(any(grepl("logpost", emitted, fixed = TRUE)))
 })
 
+test_that("the note about smoothed trajectories is said where a trajectory is", {
+  skip_without_julia()
+  model <- .laplace_test_model()
+  dat <- .laplace_test_data(nsubjects = 8, nobs = 5)
+
+  note <- function(messages) sum(grepl("^Laplace fit: trajectories", messages))
+
+  # It used to be said by `.ctBackendKalmanRaw`, which is a filter pass rather
+  # than a trajectory: every julia fit runs one for its prior residuals,
+  # `ctLOO` runs one per fold and the summary runs one per posterior draw. So a
+  # note explaining how to read a picture was printed by every Laplace fit,
+  # whether or not anyone asked for a picture.
+  #
+  # `capture_messages` evaluates its argument in this frame, so the assignments
+  # below land here and the fit is reused.
+  expect_equal(note(capture_messages(fit <- suppressWarnings(ctFit(dat, model,
+    backend = "julia", intoverpop = "laplace",
+    optimcontrol = list(estonly = TRUE))))), 0L)
+  expect_equal(note(capture_messages(suppressWarnings(summary(fit)))), 0L)
+
+  # And said once -- not once per posterior draw -- by the two calls that do
+  # hand back trajectories.
+  expect_equal(note(capture_messages(ctPredict(fit, subjects = 1:2))), 1L)
+  expect_equal(note(capture_messages(ctKalmanArray(fit, subjects = 1:2))), 1L)
+
+  # Not at all for a fit whose random effects are carrier states, where the
+  # filtered output really is filtered.
+  augmented <- suppressMessages(suppressWarnings(ctFit(dat, model,
+    backend = "julia", intoverpop = TRUE,
+    optimcontrol = list(estonly = TRUE))))
+  expect_equal(note(capture_messages(ctPredict(augmented, subjects = 1:2))), 0L)
+})
+
 # --- subjects nested in studies ----------------------------------------------
 
 .laplace_nested_model <- function() {

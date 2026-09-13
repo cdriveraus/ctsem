@@ -3780,12 +3780,18 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # measurements below settled, and lets the cap do the work rather than also
   # loosening the tolerance.
   #
-  # It does not make fits faster. Measured over 800 fits across both engine
-  # routes and four measurement types, total iterations against a plain fit
+  # It costs nothing, and with a short first step it pays. Measured over
+  # 800 fits across both engine routes and four measurement types, back when
+  # the first step was a full unit alpha, total iterations against a plain fit
   # came to 0.91-1.14 at ten prior iterations, 1.09-1.50 at twenty and
-  # 1.47-1.64 at forty. The second stage does converge in fewer iterations --
-  # 40 to 26 on ordinal Laplace at a cap of twenty -- but not by enough to pay
-  # for the first stage.
+  # 1.47-1.64 at forty: the second stage converged in fewer iterations but not
+  # by enough to pay for the first. Repeated with the diagonal preconditioner
+  # and `initial_alpha = 0.1` over 240 paired fits -- same data and cell either
+  # way, `dev/simstudies/simstudy-carefulfit.R` on dev1 at 16 workers -- the
+  # second stage now takes about half the iterations, median 49 against 88 and
+  # 20 against 41, and median wall time is lower with the warm-up in five of
+  # the eight cells. A short first step is what a warm start compensates for,
+  # so the two changes are complementary rather than alternatives.
   #
   # What it buys is where the fit lands. Over those 800 fits the warmed start
   # was never worse in any cell, and three cells were better: an ordinal
@@ -3816,6 +3822,15 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   #
   # The prior pass pulls the start toward the prior mode, and past about ten
   # iterations that is what it hands the likelihood.
+  #
+  # Neither the preconditioner nor the shorter first step removes the need for
+  # it, which is the obvious thing to check and has been checked. Over the same
+  # 240 paired fits the warm-up was better in three pairs and worse in none --
+  # the largest loss from having it on was 3e-11 log units, and the three it
+  # won were 5.76, 1.30 and 0.57, each one a fit that collapsed to a
+  # random-effect sd of exactly zero without it against a truth of 0.5. One of
+  # those three also failed to converge. Conditioning and basin selection are
+  # different problems and the preconditioner only addresses the first.
   careful <- optimcontrol$carefulfit
   if (is.null(careful)) careful <- TRUE
   warmiter <- if (isTRUE(careful)) 10L else
