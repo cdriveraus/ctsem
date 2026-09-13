@@ -141,21 +141,98 @@ end
     end == ""
 end
 
-@testset "the convergence estimate is sgd.R's formula on this optimiser's rule" begin
+# One iteration of the estimate, the way the optimiser's callback feeds it.
+pct(c, g, v, i) = ContinuousTimeSEM._convergence_percent!(c, g, v, i)
+
+@testset "the convergence estimate is sgd.R's formula, on each stopping rule" begin
     # `sgd.R:405`:
     #   100 * (1 - log(current/tol) / log(worst/tol))
-    # with `worst` the running maximum. Same expression here, with the gradient
-    # norm in place of the log-posterior change because the gradient is what
-    # this optimiser stops on -- `f_tol` is 0 by default, so there is no
-    # log-posterior tolerance to interpolate against.
-    c = ContinuousTimeSEM.CTSEMConvergence(1e-8)
+    # with `worst` the running maximum. Same expression here, applied to each
+    # of the rules that can end the run and reported at the largest -- the fit
+    # stops at the first of them, so the nearest one is the answer.
     reference(cur, worst, tol) = 100 * (1 - log(cur / tol) / log(worst / tol))
+    # No cap, and an objective held constant, so the gradient is the only rule
+    # with anything to say.
+    c = ContinuousTimeSEM.CTSEMConvergence(1e-8)
     # The first value is the worst by definition, so the fit starts at zero.
-    @test ContinuousTimeSEM._convergence_percent!(c, 361.8) == 0.0
-    @test ContinuousTimeSEM._convergence_percent!(c, 0.6775) ≈
-        reference(0.6775, 361.8, 1e-8)
-    @test ContinuousTimeSEM._convergence_percent!(c, 1.423e-8) ≈
-        reference(1.423e-8, 361.8, 1e-8)
+    @test pct(c, 361.8, 1.0, 0) == 0.0
+    @test pct(c, 0.6775, 1.0, 1) ≈ reference(0.6775, 361.8, 1e-8)
+    @test pct(c, 1.423e-8, 1.0, 2) ≈ reference(1.423e-8, 361.8, 1e-8)
+end
+
+@testset "the objective change is measured against representability" begin
+    # The rule that actually ends these fits. `f_reltol` is 0, so Optim stops
+    # when the objective does not change at all -- a test against floating
+    # point, which is why `eps` is the target and why the change is relative:
+    # a log likelihood of 1e4 stops moving at an absolute change of about
+    # 1e-12 and one of 1e0 at about 1e-16.
+    reference(cur, worst, tol) = 100 * (1 - log(cur / tol) / log(worst / tol))
+    # A NaN gradient throughout and no cap, so nothing else contributes.
+    c = ContinuousTimeSEM.CTSEMConvergence(1e-8)
+    @test isnan(pct(c, NaN, 10000.0, 0))     # no previous value to difference
+    @test pct(c, NaN, 10000.5, 1) == 0.0     # relative change 5e-5, the worst
+    # Formed by the same subtractions the code performs, so the comparison is
+    # of the formula rather than of two roundings of it.
+    worst = abs(10000.5 - 10000.0) / 10000.5
+    reached = pct(c, NaN, 10000.5000005, 2)  # relative change 5e-11
+    @test reached ≈ reference(abs(10000.5000005 - 10000.5) / 10000.5000005,
+        worst, eps(Float64))
+    @test 0 < reached < 100
+    # An objective that stops moving at all is the criterion being met.
+    @test pct(c, NaN, 10000.5000005, 3) == 100.0
+end
+
+@testset "an objective that never moved is not a finished fit" begin
+    # A zero change is below every tolerance, so without a span to measure it
+    # against it would read as 100%. An optimiser that never left its starting
+    # values is what `stalled` reports, and this must not call it done.
+    c = ContinuousTimeSEM.CTSEMConvergence(1e-8)
+    pct(c, 500.0, 42.0, 0)
+    @test pct(c, 500.0, 42.0, 1) == 0.0
+    @test pct(c, 500.0, 42.0, 9) == 0.0
+end
+
+@testset "the estimate reaches 100% by the end of a real fit" begin
+    # The failure this replaced: the last line printed before a 3-latent,
+    # 200-subject fit finished said 57%, because the span it measured ran to a
+    # gradient tolerance the fit never came near. Replayed from that fit's own
+    # trace, every tenth iteration of its 163.
+    objective = [10317.9524178767, 10217.3078068983, 10193.9941406737,
+        10189.5725227199, 10182.5364050262, 10182.0478018210, 10181.5687317403,
+        10181.5553910265, 10181.5467725789, 10181.5466753965, 10181.5466101665,
+        10181.5466095434, 10181.5466095117, 10181.5466093666, 10181.5466093647,
+        10181.5466093554, 10181.5466093553, 10181.5466093549, 10181.5466093549]
+    gradient = [2151.92, 432.722, 369.166, 477.719, 96.8261, 51.8264, 35.4359,
+        29.8755, 4.63298, 3.77903, 0.110864, 0.0427213, 0.0425068, 0.0340242,
+        0.039661, 0.00582792, 0.00688205, 0.000867507, 0.00104081]
+    iteration = [0, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130,
+        140, 150, 160, 163]
+    c = ContinuousTimeSEM.CTSEMConvergence(1e-8, 1000)
+    seen = [pct(c, gradient[i], objective[i], iteration[i])
+            for i in eachindex(objective)]
+    @test seen[1] == 0.0
+    @test seen[end] == 100.0
+    @test all(diff(seen) .>= 0)
+    # And late rather than early: the estimate that replaced this one reads
+    # 90% only in the last sixth of the fit.
+    @test findfirst(>=(90.0), seen) > length(seen) - 5
+    # Not by way of the gradient, which is where the old reading stopped.
+    g = ContinuousTimeSEM.CTSEMConvergence(1e-8)
+    gradonly = [pct(g, gradient[i], 1.0, iteration[i]) for i in eachindex(gradient)]
+    @test gradonly[end] < 70
+end
+
+@testset "the iteration cap is a floor, not the measure" begin
+    # It can only raise the estimate: the other rules are normally well ahead
+    # of it, and a fit grinding toward the cap is the one case where nothing
+    # else has anything to promise.
+    c = ContinuousTimeSEM.CTSEMConvergence(1e-8, 100)
+    pct(c, 1e3, 42.0, 0)
+    @test pct(c, 1e3, 42.0, 40) == 40.0
+    # A cap of zero means "not known", and contributes nothing.
+    d = ContinuousTimeSEM.CTSEMConvergence(1e-8)
+    pct(d, 1e3, 42.0, 0)
+    @test pct(d, 1e3, 42.0, 40) == 0.0
 end
 
 @testset "a new worst rebases the scale rather than leaving the range" begin
@@ -163,13 +240,13 @@ end
     # the new baseline, so the reported number stays a fraction of a span that
     # actually contains the current value.
     c = ContinuousTimeSEM.CTSEMConvergence(1e-8)
-    ContinuousTimeSEM._convergence_percent!(c, 1.447)
-    ContinuousTimeSEM._convergence_percent!(c, 0.3)
-    @test c.worst == 1.447
+    pct(c, 1.447, 1.0, 0)
+    pct(c, 0.3, 1.0, 1)
+    @test c.worst_gradient == 1.447
     # Iteration 2 of the nearly-unidentified fit: the line search lengthens its
     # step and the gradient overshoots every value seen so far.
-    ContinuousTimeSEM._convergence_percent!(c, 3.387)
-    @test c.worst == 3.387
+    pct(c, 3.387, 1.0, 2)
+    @test c.worst_gradient == 3.387
     # Still in range, and still a percentage.
     @test 0 <= c.best <= 100
 end
@@ -183,7 +260,7 @@ end
     # The gradient trace of the two-latent fit's first six iterations, which
     # rises twice.
     seen = Float64[1.551, 1.043, 1.384, 0.7369, 1.074, 0.3661]
-    reported = [ContinuousTimeSEM._convergence_percent!(c, g) for g in seen]
+    reported = [pct(c, seen[i], 1.0, i - 1) for i in eachindex(seen)]
     @test all(diff(reported) .>= 0)
     # Held, not recomputed: iteration 3's 1.384 is worse than iteration 2's
     # 1.043, so the raw formula would have fallen there.
@@ -195,37 +272,39 @@ end
 
 @testset "the estimate is 100% at the criterion and needs no log of zero" begin
     c = ContinuousTimeSEM.CTSEMConvergence(1e-8)
-    ContinuousTimeSEM._convergence_percent!(c, 12.0)
-    @test ContinuousTimeSEM._convergence_percent!(c, 1e-8) == 100.0
+    pct(c, 12.0, 1.0, 0)
+    @test pct(c, 1e-8, 1.0, 1) == 100.0
     # A gradient that underflows to exactly zero is the normal end of a healthy
     # fit, and `log(0/tol)` would be -Inf. Reached before the logarithm.
     d = ContinuousTimeSEM.CTSEMConvergence(1e-8)
-    ContinuousTimeSEM._convergence_percent!(d, 12.0)
-    @test ContinuousTimeSEM._convergence_percent!(d, 0.0) == 100.0
+    pct(d, 12.0, 1.0, 0)
+    @test pct(d, 0.0, 1.0, 1) == 100.0
     # And past it, rather than beyond 100.
     e = ContinuousTimeSEM.CTSEMConvergence(1e-8)
-    ContinuousTimeSEM._convergence_percent!(e, 12.0)
-    @test ContinuousTimeSEM._convergence_percent!(e, 1e-14) == 100.0
+    pct(e, 12.0, 1.0, 0)
+    @test pct(e, 1e-14, 1.0, 1) == 100.0
 end
 
 @testset "no estimate is reported when there is nothing to estimate against" begin
-    # A NaN gradient is a fit in trouble, not a fit at 0%. `NaN` here means
-    # "say nothing", and `_progress_optimise` then prints no field at all --
-    # the failure this whole line exists to avoid is a plausible number.
+    # `NaN` here means "say nothing", and `_progress_optimise` then prints no
+    # field at all -- the failure this whole line exists to avoid is a
+    # plausible number.
     c = ContinuousTimeSEM.CTSEMConvergence(1e-8)
-    @test isnan(ContinuousTimeSEM._convergence_percent!(c, NaN))
-    @test isnan(ContinuousTimeSEM._convergence_percent!(c, Inf))
-    @test isnan(ContinuousTimeSEM._convergence_percent!(c, -1.0))
+    @test isnan(pct(c, NaN, NaN, 0))
+    @test isnan(pct(c, Inf, NaN, 1))
+    @test isnan(pct(c, -1.0, NaN, 2))
     # `g_tol = 0` asks for an exactly zero gradient, which no span can be
-    # measured against.
-    @test isnan(ContinuousTimeSEM._convergence_percent!(
-        ContinuousTimeSEM.CTSEMConvergence(0.0), 1.0))
+    # measured against; with a constant objective and no cap there is nothing
+    # else to report.
+    z = ContinuousTimeSEM.CTSEMConvergence(0.0)
+    @test isnan(pct(z, 1.0, 42.0, 0))
+    @test isnan(pct(z, 1.0, 42.0, 1))
     # A bad iteration does not destroy an estimate already earned.
     d = ContinuousTimeSEM.CTSEMConvergence(1e-8)
-    ContinuousTimeSEM._convergence_percent!(d, 100.0)
-    good = ContinuousTimeSEM._convergence_percent!(d, 1e-3)
-    @test isnan(ContinuousTimeSEM._convergence_percent!(d, NaN))
-    @test ContinuousTimeSEM._convergence_percent!(d, 1e-3) == good
+    pct(d, 100.0, 1.0, 0)
+    good = pct(d, 1e-3, 1.0, 1)
+    @test isnan(pct(d, NaN, NaN, 2))
+    @test pct(d, 1e-3, 1.0, 3) == good
 end
 
 @testset "the percentage appears on the line, labelled as an estimate" begin
