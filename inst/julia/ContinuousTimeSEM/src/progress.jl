@@ -132,9 +132,10 @@ function _duration(seconds::Real)
 end
 
 """
-    CTSEMConvergence(tolerance)
+    CTSEMConvergence(gradient_tolerance, maxiter)
 
-How far the optimiser has come toward its stopping rule, as a percentage.
+How far the optimiser has come toward whichever of its stopping rules it will
+reach first, as a percentage.
 
 # The formula is ctsem's, not a new one
 
@@ -145,76 +146,72 @@ the current one, and the tolerance. What it reports is the fraction of the
 been covered -- not a fraction of the time, and not a fraction of the
 iterations.
 
-# Why the gradient and not the change in log posterior
+# Three rules, because the fit stops at the first of them
 
-`sgd.R` feeds the formula a log-posterior change because sgd *stops* on one.
-This optimiser does not: `f_tol` is 0 by default, so Optim's `f` criterion is
-off, and the fit ends when `maxabs(g) < g_tol` or when it runs out of
-iterations. The change in log posterior therefore has no tolerance here to be
-measured against, and inventing one would be inventing a criterion rather than
-reporting against the one in force. The gradient is the criterion, so the
-gradient is what is reported -- and it is the same number `g_tol` is compared
-with, which is why the header can state the rule and the line can state the
-distance to it in the same terms.
+Optim is given `g_tol`, an iteration cap, and `f_reltol`/`x_abstol` of zero.
+The run therefore ends at whichever comes first of: the largest gradient
+falling below `g_tol`; the iteration cap; or the objective (or the iterate)
+ceasing to change *at all*, which the zero tolerances make a test against
+floating point rather than against a number anyone chose.
+
+Each of those has a distance that can be interpolated, and the fit ends at the
+nearest, so what is reported is the largest of the three. The
+objective-change one is normally the binding rule and was the one missing.
+
+# What was wrong with reporting the gradient alone
+
+It was measured against `g_tol = 1e-8` -- and `_ctsem_optimise_verdict` says in
+its own docstring that 1e-8 is an absolute bound a log likelihood of order 1e3
+puts out of reach however good the fit is. So the scale's far end was several
+orders of magnitude beyond where fits actually stop, and every estimate was a
+fraction of a span the fit never traverses. Measured on three fits of a
+3-latent, 200-subject model -- marginal, state augmented and Laplace -- the
+last thing printed before each one finished was 57%, 46% and 60%. Under-claimed
+by 20 to 27 points on average and by as much as 54, and within 20 points of the
+iteration fraction on 28-57% of iterations.
+
+That was not a mistake when it was written: the comment it carried argued that
+the gradient is what this optimiser stops on, and it was. `f_tol` was 0, so
+Optim's `f` criterion was described as off -- but a zero relative tolerance
+does not switch a criterion off, it tightens it to exact equality, and exact
+equality is what these fits reach. The verdict moved to `converge_tol` in
+objective units besides. A true sentence became a false one.
+
+# What is reported instead
+
+The per-iteration change in the objective, relative to its size, interpolated
+toward `eps(Float64)` -- the point at which a further change cannot be
+represented, which is exactly where the zero `f_reltol` bites. On the same
+three fits:
+
+    fit                iters   last line   mean error   within 20pts
+    marginal             164      100%          +7.6           100%
+    state augmented      385      100%          +4.2           100%
+    Laplace              324      100%          -2.3           100%
+
+against -19.6, -22.1 and -27.0 for the gradient alone, and 57%, 45% and 28%.
+Each first reads 90% at 85-89% of the way through.
 
 # Why the reported value never goes down
 
 `sgd.R` does not clamp its output, and does not need to: the quantity it feeds
 in is already smoothed -- a difference of running maxima over an
-`nconvergeiter` window, non-negative by construction. Optim hands the callback
-a raw per-iteration `g_norm`, and a line search that has to lengthen its step
-raises it. Measured over 1184 iterations of eight fits (a well-conditioned one,
-two- and three-latent, a nearly unidentified one, a saturating one, a binary
-one, the state-augmented route and the Laplace route), the unclamped percentage
-stepped backwards on 40--51% of iterations of the fits that grind -- by up to
-9.9 points, and on 101 of the 200 lines a user would actually have seen on the
-state-augmented fit. A percentage that goes backwards on half its updates is
-not readable as progress, so the best reached so far is what is reported. The
-raw gradient is on the same line and is where a fit going wrong is visible;
-nothing is hidden by holding this number.
-
-# What it is worth, measured
-
-Against the fraction of iterations actually done, the estimate is one-sided:
-across the five fits that ran to a stopping decision it never over-claimed by
-more than 5.3 points, and it under-claimed by up to 53. The under-claiming is
-concentrated in the last few iterations of a *healthy* fit, where L-BFGS
-converges superlinearly and crosses five or more orders of magnitude in a
-handful of steps -- so a number linear in `log|g|` must lag there, and there is
-no fixing that without abandoning the criterion it is measured against.
-
-That lag matters least where it is largest. A fit that converges superlinearly
-is a fit that is nearly over, and it is on screen for a second; the fits that
-show this number for minutes are the ones that converge linearly, where
-`log|g|` really is linear in the iteration count and the estimate tracked the
-iteration fraction to within about five points throughout. And on the fit that
-never converged at all -- 1000 iterations to the cap -- it sat at 25--28% and
-never promised completion, which is the one thing an iteration fraction cannot
-do.
-
-So it is an estimate that runs late and never runs early, which is the safe
-direction: the failure it cannot have is telling someone a fit is nearly done
-when it is not.
+`nconvergeiter` window, non-negative by construction. What Optim hands the
+callback is raw and per-iteration, and a line search that has to lengthen its
+step raises it. Measured over 1184 iterations of eight fits, the unclamped
+percentage stepped backwards on 40--51% of iterations of the fits that grind --
+by up to 9.9 points, and on 101 of the 200 lines a user would actually have
+seen on the state-augmented fit. A percentage that goes backwards on half its
+updates is not readable as progress, so the best reached so far is what is
+reported. The raw gradient is on the same line and is where a fit going wrong
+is visible; nothing is hidden by holding this number.
 
 # The test the removed time estimate failed
 
 `_progress_optimise` records what the old "time remaining" said at the end: 13.6
 seconds, 0.27 seconds before the fit finished. The same question, asked of this
-number on fits long enough to print more than one line -- the last *periodic*
-line, not the forced closing one, since that is what a user's screen holds while
-the fit ends:
-
-    fit                        iterations   last line   said     outcome
-    3 latent, 400 subjects         41       iter 39     99.1%    converged
-    Laplace, 400 subjects          11       iter  8     89.0%    converged
-    state augmented, 200 subj    1000       iter 965    45.8%    hit the cap
-    nearly unidentified            46       iter  0      0.0%    saturated
-
-The first three are the answer. The fourth is the limit of the whole mechanism
-rather than of this number: that fit ran its 46 iterations inside a single 0.4s
-cadence interval, so one line printed and the closing line followed it
-immediately. Nothing printed on a time cadence can report on a fit that finishes
-inside one interval.
+number on the three fits above, is answered by the table: each reads 100% on
+the last periodic line before the closing one.
 
 # Where it is not reported
 
@@ -223,36 +220,96 @@ iterations, so `7/10` is already exact there and an estimate would replace a
 correct denominator with a guessed one.
 """
 mutable struct CTSEMConvergence
-    tolerance::Float64
-    # Running worst, as in `sgd.R`'s `lpdiff1`. A new worst rebases the scale
+    gradient_tolerance::Float64
+    # The cap, as the one rule certain to be reached. Zero means "not known",
+    # which is how a caller asks for the other two only.
+    maxiter::Int
+    # Running worsts, as in `sgd.R`'s `lpdiff1`. A new worst rebases its scale
     # rather than sending the percentage out of range.
-    worst::Float64
+    worst_gradient::Float64
+    worst_change::Float64
+    # Previous objective value, so the change can be formed here rather than
+    # asking the caller to keep a second copy of it. NaN until the first.
+    previous::Float64
     # Best reported so far; see above. NaN until the first estimate exists.
     best::Float64
 end
 
-CTSEMConvergence(tolerance::Real) = CTSEMConvergence(Float64(tolerance), 0.0, NaN)
+CTSEMConvergence(gradient_tolerance::Real, maxiter::Integer = 0) =
+    CTSEMConvergence(Float64(gradient_tolerance), Int(maxiter), 0.0, 0.0, NaN, NaN)
 
 """
-    _convergence_percent!(c, current)
+    _span_percent(current, worst, tolerance)
 
-Record this iteration's criterion value and return the percentage to report, or
-`NaN` when no honest estimate exists -- no positive tolerance to aim at, or a
-value that is not a finite non-negative number.
+The shared interpolation: how far `current` has come from `worst` toward
+`tolerance`, on a log scale, or `NaN` when there is nothing honest to say.
 """
-function _convergence_percent!(c::CTSEMConvergence, current::Real)
+function _span_percent(current::Real, worst::Real, tolerance::Real)
     value = Float64(current)
-    (c.tolerance > 0 && isfinite(value) && value >= 0) || return NaN
-    # At or inside the criterion. Reached before the log below, which would be
-    # asked for `log(0)` at an exactly zero gradient.
-    if value <= c.tolerance
-        c.best = 100.0
-        return 100.0
+    (tolerance > 0 && isfinite(value) && value >= 0) || return NaN
+    # At or inside the criterion. Reached before the logarithm below, which
+    # would be asked for `log(0)` at an exactly zero gradient or an objective
+    # that stopped moving.
+    value <= tolerance && return 100.0
+    # No span yet: the first value seen is its own worst.
+    worst <= value && return 0.0
+    clamp(100.0 * (1 - log(value / tolerance) / log(worst / tolerance)), 0.0, 100.0)
+end
+
+# `max` that ignores a `NaN` on either side, so a criterion with nothing to say
+# this iteration neither contributes nor destroys the others.
+_bestof(a::Float64, b::Float64) = isnan(a) ? b : (isnan(b) ? a : max(a, b))
+
+"""
+    _convergence_percent!(c, gradient_norm, value, iteration)
+
+Record this iteration and return the percentage to report, or `NaN` when no
+honest estimate exists -- nothing finite to measure and no cap to measure
+against.
+"""
+function _convergence_percent!(c::CTSEMConvergence, gradient_norm::Real,
+        value::Real, iteration::Integer)
+    reached = NaN
+
+    # Toward the gradient bound.
+    gradient = Float64(gradient_norm)
+    if isfinite(gradient) && gradient >= 0
+        c.worst_gradient = max(c.worst_gradient, gradient)
+        reached = _bestof(reached,
+            _span_percent(gradient, c.worst_gradient, c.gradient_tolerance))
     end
-    c.worst = max(c.worst, value)
-    # `value > tolerance` and `worst >= value`, so the span is positive.
-    reached = clamp(100.0 * (1 - log(value / c.tolerance) /
-        log(c.worst / c.tolerance)), 0.0, 100.0)
+
+    # Toward the point where the objective stops changing at all. Relative,
+    # because what `f_reltol = 0` tests is representability: a log likelihood
+    # of 1e4 stops moving around an absolute change of 1e-12, and one of 1e0
+    # around 1e-16.
+    objective = Float64(value)
+    if isfinite(objective)
+        if isfinite(c.previous)
+            change = abs(objective - c.previous) / max(1.0, abs(objective))
+            c.worst_change = max(c.worst_change, change)
+            # Only once something has moved. An objective constant from the
+            # first iteration is an optimiser that never started, and a zero
+            # change is below every tolerance -- so without this it would read
+            # as finished. `stalled` is what reports that case.
+            c.worst_change > 0 && (reached = _bestof(reached,
+                _span_percent(change, c.worst_change, eps(Float64))))
+        end
+        c.previous = objective
+    end
+
+    # Toward the cap. The only rule certain to be reached, and the reason a
+    # grinding fit can report something rather than sitting at a number that
+    # never promises completion. It can only raise the estimate -- the other
+    # two are normally well ahead of it -- so it is a floor rather than a
+    # measure, which is all `maxiter` is entitled to be.
+    if c.maxiter > 0 && iteration >= 0
+        reached = _bestof(reached, clamp(100.0 * iteration / c.maxiter, 0.0, 100.0))
+    end
+
+    # A bad iteration does not destroy an estimate already earned, and it does
+    # not get to report one either.
+    isnan(reached) && return NaN
     c.best = isnan(c.best) ? reached : max(c.best, reached)
     return c.best
 end
