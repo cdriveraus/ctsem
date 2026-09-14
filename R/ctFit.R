@@ -432,7 +432,7 @@ T0VARredundancies <- function(ctm) {
 #' Useful for parsimony, or for speed in high dimensions, and not otherwise.
 #'
 #' Under \code{intoverpop='augmented'} the population covariance is
-#' \code{Sigma = L L'}, for a loading matrix \code{L} with one row per varying
+#' \eqn{\Sigma = L L^{\top}}, for a loading matrix \code{L} with one row per varying
 #' parameter and \code{poprank} columns, lower triangular in its first
 #' \code{poprank} rows: a basis effect loads on its own dimension and those
 #' before it, a regressed effect on all of them, and no regressed effect has
