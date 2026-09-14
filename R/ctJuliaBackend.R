@@ -2492,6 +2492,39 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   do.call(rbind, entries)
 }
 
+# The inner-solve settings, checked here rather than where they are used.
+#
+# They reach the engine as keyword arguments to `ctsem_laplace_objective`, and a
+# keyword the bridge marshals wrongly is a silent wrong answer rather than an
+# error -- `inner_maxiter` is an `Integer` on the Julia side and a bare R
+# numeric arrives as a Float64, which no method accepts.
+.ctJuliaLaplaceInner <- function(laplacecontrol) {
+  if (is.null(laplacecontrol) || !length(laplacecontrol)) return(list())
+  out <- list()
+  maxiter <- laplacecontrol$inner_maxiter
+  if (!is.null(maxiter)) {
+    maxiter <- suppressWarnings(as.integer(maxiter)[1L])
+    if (is.na(maxiter) || maxiter < 1L) {
+      stop("optimcontrol$laplace_inner_maxiter must be a positive integer.",
+        call. = FALSE)
+    }
+    out$inner_maxiter <- maxiter
+  }
+  tol <- laplacecontrol$inner_tol
+  if (!is.null(tol)) {
+    tol <- suppressWarnings(as.numeric(tol)[1L])
+    # Zero is refused rather than treated as "off": `f_reltol = 0` is exact
+    # equality on the outer side and that is what ends julia fits, so a zero
+    # here would be a tolerance no gradient reaches rather than no tolerance.
+    if (is.na(tol) || tol <= 0) {
+      stop("optimcontrol$laplace_inner_tol must be a positive number.",
+        call. = FALSE)
+    }
+    out$inner_tol <- tol
+  }
+  out
+}
+
 # `intoverpop` deliberately has no default. It selects which *model* is
 # prepared -- random effects as latent states, or integrated by Laplace -- and a
 # default meant a caller could omit it and silently get the other one. That is
@@ -2500,7 +2533,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # Making it mandatory turns that from a silent wrong answer into a stop at the
 # call site.
 .ctJuliaPrepare <- function(datalong, model, prepared_data = NULL, project = NULL,
-  priors = FALSE, intoverpop, optimize = TRUE, tipredMissingIncludeOutcome = TRUE) {
+  priors = FALSE, intoverpop, optimize = TRUE, tipredMissingIncludeOutcome = TRUE,
+  laplacecontrol = NULL) {
   # "none" prepares exactly as "laplace" does. The Laplace specification is what
   # *describes* the random effects -- which raw parameters vary, at which level,
   # with which population scale -- and that description is needed whether they
@@ -2580,6 +2614,14 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     # per-subject one, and the random effects are described alongside it.
     parameter_table <- .ctJuliaParameterTable(model)
     laplace <- .ctJuliaLaplaceSpec(model, parameter_table, prepared_data, dat)
+    # On the specification rather than passed at optimise time, because the
+    # inner tolerance changes the *value* the objective returns: two fits
+    # differing only in it are not the same function, and `.ctJuliaObjectiveKey`
+    # hashes `spec$laplace`, so putting them here is what stops the second one
+    # being handed the first one's cached objective. Absent unless a caller
+    # asked, so every existing model hashes exactly as it did.
+    inner <- .ctJuliaLaplaceInner(laplacecontrol)
+    if (length(inner)) laplace$inner <- inner
     if (!laplace$nrandom) {
       stop("intoverpop='", intoverpop, "' was requested but no parameters are marked ",
         "indvarying, so there is nothing to integrate over. Mark parameters as ",
@@ -2973,6 +3015,15 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       sd_scale = .ctJuliaVector(as.numeric(grab("sd_scale"))))
     if (length(grab("cor_index"))) {
       laplace_args$cor_index <- .ctJuliaVector(as.integer(grab("cor_index")))
+    }
+    # Absent unless the fit asked for them, so the engine's own defaults stay
+    # the defaults and a spec built before this existed is byte-for-byte as it
+    # was. `inner_maxiter` must cross as an integer; see .ctJuliaLaplaceInner().
+    if (!is.null(spec$laplace$inner$inner_maxiter)) {
+      laplace_args$inner_maxiter <- as.integer(spec$laplace$inner$inner_maxiter)
+    }
+    if (!is.null(spec$laplace$inner$inner_tol)) {
+      laplace_args$inner_tol <- as.numeric(spec$laplace$inner$inner_tol)
     }
     if (length(levels) > 1L) {
       # Concatenated innermost level first, split on the far side by the
@@ -3606,6 +3657,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         ngroups = x$ngroups)),
     linesearch = if (is.null(result$linesearch)) NA_character_ else
       as.character(result$linesearch),
+    # What the modes were actually solved with, which is not recoverable from
+    # `args$optimcontrol` alone: an unset name there means the engine default,
+    # and the engine default has changed once already.
+    inner_maxiter = .ctJuliaOr(model_spec$laplace$inner$inner_maxiter, 200L),
+    inner_tol = .ctJuliaOr(model_spec$laplace$inner$inner_tol, 1e-10),
     inner_converged = isTRUE(result$inner_converged),
     inner_iterations = as.integer(result$inner_iterations),
     # Two different things. `hessian_repaired` is true if *any* Newton iterate
@@ -3681,7 +3737,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # fallback between them in either direction.
   model_spec <- .ctJuliaPrepare(datalong, model, prepared_data = prepared_data,
     priors = priors, intoverpop = intoverpop, optimize = optimize,
-    tipredMissingIncludeOutcome = .ctJuliaOr(optimcontrol$tipredMissingIncludeOutcome, TRUE))
+    tipredMissingIncludeOutcome = .ctJuliaOr(optimcontrol$tipredMissingIncludeOutcome, TRUE),
+    laplacecontrol = list(inner_maxiter = optimcontrol$laplace_inner_maxiter,
+      inner_tol = optimcontrol$laplace_inner_tol))
   if (!is.null(model_spec$ti_missing) && nrow(model_spec$ti_missing)) {
     # The state-explicit route (`intoverstates=FALSE`) samples the latent
     # trajectory through a different objective (`CTSEMJointObjective`,

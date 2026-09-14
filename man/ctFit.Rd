@@ -227,6 +227,15 @@ the chosen backend does not have is refused by name before anything else
 happens; a value that describes what it already does is simply accepted, so
 \code{stochastic=FALSE} works on julia and \code{gradient='adjoint'} works on
 stan.
+With \code{intoverpop='laplace'}, \code{optimcontrol$laplace_inner_maxiter}
+(default 200) and \code{optimcontrol$laplace_inner_tol} (default 1e-10) tune
+the inner solve that finds each unit's random-effect mode, as distinct from
+every other stopping name here, which governs the outer optimiser. Raise the
+first when the fit reports that modes did not converge; the tolerance is an
+absolute bound on the inner gradient, floored at
+\code{1e-10 * (1 + abs(value))} so that it means something at any data size.
+Neither applies to \code{intoverpop='augmented'}, which has no inner solve.
+
 With \code{backend='julia'}, \code{optimcontrol$gradient} selects the
 gradient method: \code{'adjoint'} (reverse mode, the default) or
 \code{'forward'} (ForwardDiff). Both compute the same gradient; 'adjoint'

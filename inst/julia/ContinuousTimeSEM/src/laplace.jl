@@ -329,10 +329,10 @@ end
 
 A `CTSEMObjective` plus the hierarchy to integrate out of it.
 
-The inner modes are *state*, not output: they are retained between calls and
-warm-start the next evaluation's Newton solve. Across an outer optimizer's
-trajectory consecutive parameter vectors are close, so the inner solve usually
-converges in one or two steps after the first evaluation.
+The inner modes are retained between calls, but they do not start the next
+evaluation's Newton solve: that starts at the origin, so the value is a
+function of theta alone. See `_laplace_solve_unit_mode!`, and
+`ctsem_set_warm_start!` to retain them as starts and measure what that costs.
 """
 mutable struct CTSEMLaplaceObjective{O} <: CTSEMOptimisable
     objective::O
@@ -1459,7 +1459,8 @@ end
 """
     _laplace_solve_unit_mode!(laplace, U, values, Ls, slot)
 
-Newton's method on `g_U`, warm-started from the retained mode for unit `U`.
+Newton's method on `g_U`, from the origin -- or from the retained mode for
+unit `U` when `ctsem_set_warm_start!` has asked for that.
 
 `g_U` is a log likelihood minus a quadratic, so its curvature is negative
 definite near the mode and Newton is the right method; away from the mode, and
@@ -2214,8 +2215,8 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
     nsubjects = length(laplace.objective.subject_objectives)
     nunits = length(laplace.units.members)
 
-    # 1. Inner modes and the value at them, in primal arithmetic, warm-started
-    #    from the last call. Each subject's term is its own approximated log
+    # 1. Inner modes and the value at them, in primal arithmetic, each solved
+    #    from the origin. Each subject's term is its own approximated log
     #    marginal likelihood, which is the per-subject quantity that means the
     #    same thing here as `subject_loglik` does without random effects.
     #
@@ -3171,36 +3172,101 @@ for the reason `ctsem_laplace_optimize`'s `fg!` gives for rejecting such a
 point: a unit that has not reached its mode gives whatever its iteration
 stopped on, not the objective, so the difference is not a derivative of the
 objective either. The caller sees a non-finite Hessian and falls back.
+
+Before writing that `NaN`, the inner budget is raised and the point evaluated
+again -- see `_laplace_hessian_point`. A whole Hessian of `NaN` columns is not
+a usable fallback for anything, and the differencing points are `1e-4` from one
+where the modes were found, so a unit that merely ran out of iterations there
+will reach its mode given more. `retries` caps that at `4^retries` times the
+objective's own budget.
 """
 function ctsem_laplace_hessian(laplace::CTSEMLaplaceObjective, values::AbstractVector;
-    step::Real=1e-4)
+    step::Real=1e-4, retries::Integer=2)
     x = collect(Float64, values)
     n = length(x)
     H = zeros(Float64, n, n)
+    budget = laplace.inner_maxiter
     unconverged = Int[]
-    for j in 1:n
-        h = step * max(1.0, abs(x[j]))
-        plus = copy(x); plus[j] += h
-        minus = copy(x); minus[j] -= h
-        ep = ctsem_laplace_evaluate(laplace, plus; gradient=true)
-        em = ctsem_laplace_evaluate(laplace, minus; gradient=true)
-        if !(ep.converged && em.converged)
-            # The same predicate `fg!` applies to a trial point, applied to the
-            # two points this column is differenced from. A gradient at a
-            # not-quite-mode is a gradient of a different function, and one that
-            # converged to 1e-9 instead of 1e-10 is finite, so nothing
-            # downstream would notice. NaN makes the column visible to the
-            # non-finite fallback callers already have.
-            push!(unconverged, j)
-            H[:, j] .= NaN
-            continue
+    escalated = Int[]
+    worst = 0.0
+    units = 0
+    try
+        for j in 1:n
+            h = step * max(1.0, abs(x[j]))
+            plus = copy(x); plus[j] += h
+            minus = copy(x); minus[j] -= h
+            pp = _laplace_hessian_point(laplace, plus, budget, retries)
+            pm = _laplace_hessian_point(laplace, minus, budget, retries)
+            (pp.tries + pm.tries) > 0 && push!(escalated, j)
+            if !(pp.out.converged && pm.out.converged)
+                # The same predicate `fg!` applies to a trial point, applied to
+                # the two points this column is differenced from. A gradient at
+                # a not-quite-mode is a gradient of a different function, and
+                # one that converged to 1e-9 instead of 1e-10 is finite, so
+                # nothing downstream would notice. NaN makes the column visible
+                # to the non-finite fallback callers already have.
+                push!(unconverged, j)
+                worst = max(worst, pp.worst, pm.worst)
+                units = max(units, pp.units, pm.units)
+                H[:, j] .= NaN
+                continue
+            end
+            H[:, j] = (pp.out.gradient .- pm.out.gradient) ./ (2h)
         end
-        H[:, j] = (ep.gradient .- em.gradient) ./ (2h)
+    finally
+        # The budget is a field of a mutable objective the caller keeps, so an
+        # escalation that threw would otherwise be inherited by every later
+        # evaluation of it.
+        laplace.inner_maxiter = budget
     end
+    # A count, not a list of indices: on a model with a thousand parameters the
+    # list is the whole message and says no more than the count does.
+    isempty(escalated) || @info string("Laplace inner budget raised above ",
+        budget, " for ", length(escalated), " of ", n, " Hessian columns.")
     isempty(unconverged) || @warn string("Laplace inner solve did not converge ",
         "at the Hessian step for parameter ", join(unconverged, ", "),
-        "; those columns are NaN.")
+        "; those columns are NaN. ", units, " unit(s) short, worst inner ",
+        "gradient ", worst, " against a budget of ", budget * 4^retries,
+        " iterations.")
     return (H .+ transpose(H)) ./ 2
+end
+
+"""
+    _laplace_hessian_point(laplace, x, budget, retries)
+
+One of the two points a Hessian column is differenced from, evaluated with the
+inner budget raised rather than the column abandoned.
+
+Retried only while some unit actually *exhausted* its iterations. Every other
+way the inner solve reports failure is deterministic from a fixed start -- the
+start is the origin, so a repeat evaluation at the same `x` visits the same
+points and stops the same way -- and the retry would buy nothing but the cost
+of another pass. A unit that ran out of iterations is the one case where a
+larger budget changes the answer.
+
+Reports what it reached as well as whether it got there: `worst` is the largest
+inner gradient over units and `units` how many are still short, which is what
+tells a caller whether raising `inner_maxiter` would help. (R spells that
+optimcontrol name `laplace_inner_maxiter`; a bare dollar sign interpolates in a
+Julia docstring, which is why it is not written out here.)
+"""
+function _laplace_hessian_point(laplace::CTSEMLaplaceObjective,
+    x::AbstractVector, budget::Integer, retries::Integer)
+    capped() = any(>=(laplace.inner_maxiter), laplace.inner_iterations)
+    reached() = isempty(laplace.inner_gradient) ? 0.0 :
+        maximum(laplace.inner_gradient)
+    short() = count(!, laplace.inner_converged)
+    laplace.inner_maxiter = budget
+    out = ctsem_laplace_evaluate(laplace, x; gradient=true)
+    tries = 0
+    while !out.converged && capped() && tries < retries
+        tries += 1
+        laplace.inner_maxiter = budget * 4^tries
+        out = ctsem_laplace_evaluate(laplace, x; gradient=true)
+    end
+    result = (out=out, tries=tries, worst=reached(), units=short())
+    laplace.inner_maxiter = budget
+    return result
 end
 
 export ctsem_laplace_hessian
