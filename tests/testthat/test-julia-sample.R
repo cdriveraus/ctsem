@@ -642,3 +642,37 @@ test_that("intoverstates is refused on the stan path rather than ignored", {
   expect_error(ctGenerateFromFit(ctstantestfit, nsamples = 2,
     intoverstates = TRUE), "backend='julia'", fixed = TRUE)
 })
+
+test_that("a sampled fit's Hessian is not reused as curvature at its mean", {
+  skip_without_julia()
+  fit <- .sample_fixture()
+  sampled <- suppressWarnings(suppressMessages(
+    ctSample(fit, chains = 1, warmup = 40, draws = 40, cores = 1)))
+
+  # The exact Hessian a sampled fit carries was taken at the point the sampler
+  # was placed from, and `$estimate$raw` is the posterior mean -- a different
+  # point. `evaluated_at` is what says which, and it is what stops
+  # `.ctBackendHessian()` reusing the matrix for the mean.
+  at <- sampled$uncertainty$evaluated_at
+  expect_false(is.null(at))
+  expect_equal(as.numeric(at), as.numeric(sampled$estimate$laplace_raw))
+  # The premise: the two points really are different, or this guards nothing.
+  expect_false(isTRUE(all.equal(as.numeric(at),
+    as.numeric(sampled$estimate$raw), tolerance = 1e-8)))
+
+  stored <- sampled$uncertainty$hessian
+  # Asked about the point it was evaluated at, the cache answers with it.
+  expect_identical(.ctBackendHessian(sampled, as.numeric(at)), stored)
+  # Asked about the posterior mean, it must not: a guard written against
+  # `$estimate$raw` instead of `evaluated_at` passes here and returns curvature
+  # from the Laplace point, which is the defect this exists to prevent.
+  atmean <- .ctBackendHessian(sampled, as.numeric(sampled$estimate$raw))
+  expect_false(isTRUE(all.equal(atmean, stored, tolerance = 0)))
+
+  # And an optimised fit's Hessian *is* at its estimate, so the same guard
+  # reuses it there -- which is the saving the field exists to keep.
+  expect_equal(as.numeric(fit$uncertainty$evaluated_at),
+    as.numeric(fit$estimate$raw))
+  expect_identical(.ctBackendHessian(fit, as.numeric(fit$estimate$raw)),
+    fit$uncertainty$hessian)
+})
