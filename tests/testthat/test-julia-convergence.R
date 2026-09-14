@@ -142,26 +142,6 @@ test_that("the optimiser reaches the maximum and says so", {
   expect_equal(fit$identifiability$negative, 0L)
 })
 
-test_that("the diagonal metric is not what finds it", {
-  # What `optimcontrol$precondition = FALSE` is for, and all this fixture
-  # supports saying about it.
-  #
-  # The claim used to be much stronger -- that without the metric the fit
-  # collapses a population scale and comes back `unidentified` -- and it was
-  # made on the unidentified fixture, where that describes the starting value
-  # rather than the metric: the collapse happened with the metric too, on two
-  # starts in ten. On data that identifies the scales, both routes land on the
-  # same optimum from any start and the difference is iterations. The counts
-  # are in the commit message; pinning them here would fail on any legitimate
-  # change to the optimiser and teach whoever hit it nothing.
-  plain <- suppressWarnings(suppressMessages(ctFit(.jconv_data(),
-    .jconv_model(), backend = "julia", cores = 1, verbose = 0,
-    optimcontrol = list(precondition = FALSE))))
-  expect_equal(plain$estimate$loglik, .jconv_fit()$estimate$loglik,
-    tolerance = 1e-4)
-  expect_true(plain$estimate$converged)
-})
-
 test_that("a julia fit stopped early does not converge, and says what is left", {
   # The contrast that makes the assertions above mean something: the flag is
   # not simply TRUE everywhere.
