@@ -56,8 +56,8 @@ test_that("a linear model keeps one step per interval and the same fit", {
     cores = 1, inits = inits, verbose = 0))
   auto <- suppressMessages(ctFit(dat, .substep_linear_model(), backend = "julia",
     cores = 1, inits = inits, verbose = 0, nlcontrol = list(nsubsteps = "auto")))
-  expect_null(plain$estimate$substeps)
-  s <- auto$estimate$substeps
+  expect_null(plain$substeps)
+  s <- auto$substeps
   expect_true(s$finite)
   expect_equal(s$refined, 0L)
   expect_equal(s$intervals, 30L * 9L)
@@ -74,7 +74,7 @@ test_that("a nonlinear model gets refined intervals and a fit that runs", {
   auto <- suppressMessages(ctFit(dat, .substep_nonlinear_model(), backend = "julia",
     cores = 1, inits = c(0.1, -0.2), verbose = 0,
     nlcontrol = list(nsubsteps = "auto", substeptol = 0.02)))
-  s <- auto$estimate$substeps
+  s <- auto$substeps
   expect_true(s$finite)
   expect_gt(s$refined, 0L)
   expect_lte(s$max_substeps, 64L)

@@ -1,6 +1,6 @@
 # Does a stan fit that reports itself finished actually sit at an optimum?
 #
-# Nine julia test files assert `fit$estimate$converged`; nothing asserted any
+# Nine julia test files assert `fit$optim$converged`; nothing asserted any
 # stan-side equivalent, and the suite once passed for months while ordinary
 # fits were not converging, because nothing looked (review J11, J15/R8).
 #

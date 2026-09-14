@@ -1,5 +1,5 @@
 # backend='r' pinned, not left at 'auto'. This test characterises what the model recovers from one particular dataset, and 'auto' prefers the julia engine now, which generates different data for the same seed. The generator is not what is under test here.
-# Does `fit$estimate$converged` mean what it says?
+# Does `fit$optim$converged` mean what it says?
 #
 # The stan side has `test-stan-convergence.R`, which checks the same thing the
 # same way: the recorded gradient is the gradient at the reported estimate, it
@@ -106,34 +106,36 @@ skip_on_32bit()
 
 test_that("the optimiser reaches the maximum and says so", {
   fit <- .jconv_fit()
+  # `e` is what was estimated, `o` the run that found it.
   e <- fit$estimate
+  o <- fit$optim
 
   # The optimum, in nats, from whatever start the RNG supplies. Ten starts
   # reached this to within 6e-14, which is what makes it assertable without
   # pinning anything -- and what the old fixture could not offer.
   expect_equal(e$loglik, -251.8548, tolerance = 1e-4)
-  expect_true(e$converged)
+  expect_true(o$converged)
   expect_equal(fit$uncertainty$certification$status, "certified")
   expect_true(fit$uncertainty$certification$certified)
 
   # Nothing is sitting on a boundary here -- the population SDs are 0.30 and
   # 0.29 and the correlation is -0.011 -- so nothing is flat and there is
   # nothing to overstep. That is the property the old fixture lacked.
-  expect_false(e$saturated)
-  expect_false(e$overshot)
-  expect_equal(e$overshoot_gain, 0)
+  expect_false(o$saturated)
+  expect_false(o$overshot)
+  expect_equal(o$overshoot_gain, 0)
 
   # The recorded number is the thing it claims to be, so the assertions around
   # it are not just the optimizer agreeing with itself.
-  expect_equal(max(abs(e$gradient)), e$gradient_norm, tolerance = 1e-10)
+  expect_equal(max(abs(o$gradient)), o$gradient_norm, tolerance = 1e-10)
 
   # With no flat direction left, the optimiser's own estimate of what remains
   # is accurate rather than meaningless -- `1/2 g'Bg` against an exact gap of
   # 1e-13 here, where on a saturated fit it has read 1.002 against 2e-15. That
   # is the case `_ctsem_optimise_verdict`'s second condition exists for, and
   # `test-backend-optimgap.R` keeps it under unit test.
-  expect_true(is.finite(e$predicted_gain))
-  expect_lt(e$predicted_gain, e$convergence_tolerance)
+  expect_true(is.finite(o$predicted_gain))
+  expect_lt(o$predicted_gain, o$convergence_tolerance)
 
   # Rounding-scale negative eigenvalues are not saddles. A symmetric
   # eigendecomposition returns them for a direction whose true curvature is
@@ -159,7 +161,7 @@ test_that("the diagonal metric is not what finds it", {
     optimcontrol = list(precondition = FALSE))))
   expect_equal(plain$estimate$loglik, .jconv_fit()$estimate$loglik,
     tolerance = 1e-4)
-  expect_true(plain$estimate$converged)
+  expect_true(plain$optim$converged)
 })
 
 test_that("a julia fit stopped early does not converge, and says what is left", {
@@ -173,7 +175,7 @@ test_that("a julia fit stopped early does not converge, and says what is left", 
   capped <- suppressWarnings(suppressMessages(ctFit(.jconv_data(),
     .jconv_model(), backend = "julia", cores = 1, verbose = 0,
     optimcontrol = list(maxiter = 1, carefulfit = FALSE))))
-  expect_false(capped$estimate$converged)
+  expect_false(capped$optim$converged)
   # Stated as objective still available rather than as a large gradient. With
   # the metric even one iteration brings the gradient down a long way, so
   # "short" and "large gradient" have stopped being the same thing -- which is
@@ -181,8 +183,8 @@ test_that("a julia fit stopped early does not converge, and says what is left", 
   cert <- capped$uncertainty$certification
   expect_true(cert$status %in% c("notmaximum", "suboptimal"))
   expect_gt(cert$gap, cert$tolerance)
-  expect_equal(max(abs(capped$estimate$gradient)),
-    capped$estimate$gradient_norm, tolerance = 1e-10)
+  expect_equal(max(abs(capped$optim$gradient)),
+    capped$optim$gradient_norm, tolerance = 1e-10)
 })
 
 test_that("what the fit reports is what the curvature measured", {
@@ -202,10 +204,10 @@ test_that("what the fit reports is what the curvature measured", {
   # The one rule, on a real fit: converged iff the curvature says this is a
   # maximum. `unidentified` is a maximum with a coordinate the data does not
   # determine; the rest of the not-certified statuses are not maxima.
-  expect_equal(isTRUE(fit$estimate$converged),
+  expect_equal(isTRUE(fit$optim$converged),
     certification$status %in% c("certified", "unidentified"))
 
   # The held complaint is gone rather than left behind to be warned about by a
   # later call on the same fit.
-  expect_null(fit$estimate$convergence_pending)
+  expect_null(fit$optim$convergence_pending)
 })

@@ -31,7 +31,7 @@
 test_that("the trace is recorded even with reporting off", {
   skip_without_julia()
   fit <- .trace_fit()
-  trace <- fit$trace
+  trace <- fit$optim$trace
   expect_s3_class(trace, "data.frame")
   expect_gt(nrow(trace), 1L)
   expect_named(trace, c("iteration", "objective", "gradient_norm"))
@@ -59,10 +59,10 @@ test_that("the callback fires while the fit runs, rate limited, without verbose"
   expect_gt(length(seen$iterations), 0L)
   # Rate limited on time, so fewer calls than iterations on any fit that is not
   # pathologically slow.
-  expect_lte(length(seen$iterations), nrow(fit$trace))
+  expect_lte(length(seen$iterations), nrow(fit$optim$trace))
   # The last iteration is always reported, forced past the cadence, because a
   # fit finishing inside one interval would otherwise report nothing.
-  expect_equal(max(seen$iterations), fit$estimate$iterations)
+  expect_equal(max(seen$iterations), fit$optim$iterations)
 })
 
 test_that("a callback that errors is disabled and the fit survives", {
@@ -83,7 +83,7 @@ test_that("a callback that errors is disabled and the fit survives", {
       }
       invokeRestart("muffleWarning")
     })
-  expect_true(isTRUE(fit$estimate$converged))
+  expect_true(isTRUE(fit$optim$converged))
   expect_equal(fit$estimate$loglik, reference$estimate$loglik, tolerance = 1e-6)
   expect_false(is.null(warned))
   expect_match(warned, "deliberate")
@@ -108,8 +108,8 @@ test_that("the laplace route traces the inner solve as well", {
     optimcontrol = list(estonly = TRUE))))
   # A Laplace fit that stalls usually stalls in the inner solve, which the
   # outer objective alone does not show.
-  expect_true("inner_converged" %in% names(fit$trace))
-  expect_gt(nrow(fit$trace), 1L)
+  expect_true("inner_converged" %in% names(fit$optim$trace))
+  expect_gt(nrow(fit$optim$trace), 1L)
 })
 
 test_that("ctTracePlot draws, and refuses a fit with no trace", {
@@ -125,7 +125,7 @@ test_that("ctTracePlot draws, and refuses a fit with no trace", {
   expect_s3_class(result, "data.frame")
 
   bare <- fit
-  bare$trace <- NULL
+  bare$optim$trace <- NULL
   expect_error(ctTracePlot(bare), "no optimisation trace")
 })
 

@@ -1489,7 +1489,14 @@ print.ctSampleDiagnostics <- function(x, ...) {
     estimate = list(raw = theta,
       loglik = if (length(subject_loglik)) sum(subject_loglik) else
         as.numeric(optimised$maximum_loglik),
-      logposterior = as.numeric(optimised$maximum_loglik),
+      logposterior = as.numeric(optimised$maximum_loglik)),
+    # The run that placed the sampler, in the same object the optimising route
+    # puts its run in. What it describes is a different point from `$estimate$raw`
+    # -- that is the posterior mean -- which is exactly why the two are not one
+    # list: `$optim$converged` is a statement about the placement, and reading
+    # it as a statement about the sample is the confusion `$sample$converged`
+    # exists to prevent.
+    optim = list(
       # The placement optimisation's own verdict, not an assertion. This was
       # hardcoded TRUE, which said "converged" about a run whose result was
       # sitting right here unread -- and a sampler placed from a point the
@@ -1549,7 +1556,7 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # -- `ctReport()`, a GUI, `summary()` -- got a field on one route and NULL on
   # the other, with nothing saying which. `test-julia-fit-shape.R` is what keeps
   # them in step now; see its allowlists for the two that differ on purpose.
-  out$trace <- .ctBackendTrace(optimised$trace)
+  out$optim$trace <- .ctBackendTrace(optimised$trace)
   out$laplace <- .ctJuliaFitLaplaceBlock(model_spec, optimised)
   # A collapsed population scale is a property of the model and the data, not
   # of the estimator, so it is as true of a sampled fit as an optimised one --

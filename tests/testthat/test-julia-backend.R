@@ -409,7 +409,7 @@ test_that("Julia completes a full AnomAuth optimization", {
     savescores = FALSE, cores = 1))
   expect_s3_class(fit, "ctJuliaFit")
   expect_true(is.finite(fit$estimate$loglik))
-  expect_true(fit$estimate$converged)
+  expect_true(fit$optim$converged)
   # The stan fit of this model pins -2LL at 23415.929 (test-knownFits.R). On
   # the first run of this test the julia optimum matched that to 2e-9
   # relative, so the bound below is a regression pin with headroom rather than

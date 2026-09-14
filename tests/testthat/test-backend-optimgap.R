@@ -457,7 +457,7 @@ test_that("stopping is not certifying: the optimiser's verdict is not consulted"
 # --- the fit's own verdict ---------------------------------------------------
 
 .verdict_fit <- function(status, certified = FALSE, pending = TRUE) {
-  list(estimate = list(converged = FALSE, convergence_pending = pending),
+  list(optim = list(converged = FALSE, convergence_pending = pending),
     uncertainty = list(certification = list(status = status,
       certified = certified, reason = "because")))
 }
@@ -469,14 +469,14 @@ test_that("the curvature's verdict replaces the optimiser's, in both directions"
   # knew the curvature. Whichever way they disagree, the measurement wins.
   certified <- ctsem:::.ctBackendCertifiedVerdict(
     .verdict_fit("certified", certified = TRUE))
-  expect_true(certified$estimate$converged)
+  expect_true(certified$optim$converged)
   # And the held complaint is dropped rather than left to be warned about.
-  expect_null(certified$estimate$convergence_pending)
+  expect_null(certified$optim$convergence_pending)
 
   # The other direction: the optimiser was happy, the curvature is not.
   happy <- .verdict_fit("suboptimal", pending = FALSE)
-  happy$estimate$converged <- TRUE
-  expect_false(ctsem:::.ctBackendCertifiedVerdict(happy)$estimate$converged)
+  happy$optim$converged <- TRUE
+  expect_false(ctsem:::.ctBackendCertifiedVerdict(happy)$optim$converged)
 })
 
 test_that("converged says maximum, and the two findings that are not failures", {
@@ -492,7 +492,7 @@ test_that("converged says maximum, and the two findings that are not failures", 
   got <- vapply(names(expected), function(status)
     isTRUE(ctsem:::.ctBackendCertifiedVerdict(
       .verdict_fit(status, certified = identical(status, "certified"))
-    )$estimate$converged), logical(1))
+    )$optim$converged), logical(1))
   expect_equal(got, expected)
 })
 
@@ -500,12 +500,12 @@ test_that("a fit that certified nothing keeps the optimiser's verdict", {
   # `estonly`, or `certify = FALSE`: there is no better measurement, so there is
   # nothing to replace it with, and inventing one would be worse than the bit
   # the optimiser can honestly supply. `convergence_pending` is what says so.
-  bare <- list(estimate = list(converged = TRUE, convergence_pending = TRUE))
+  bare <- list(optim = list(converged = TRUE, convergence_pending = TRUE))
   kept <- ctsem:::.ctBackendCertifiedVerdict(bare)
-  expect_true(kept$estimate$converged)
-  expect_true(kept$estimate$convergence_pending)
+  expect_true(kept$optim$converged)
+  expect_true(kept$optim$convergence_pending)
   # An empty certification is the same case, not a verdict of FALSE.
-  empty <- list(estimate = list(converged = TRUE),
+  empty <- list(optim = list(converged = TRUE),
     uncertainty = list(certification = list(status = character(0))))
-  expect_true(ctsem:::.ctBackendCertifiedVerdict(empty)$estimate$converged)
+  expect_true(ctsem:::.ctBackendCertifiedVerdict(empty)$optim$converged)
 })

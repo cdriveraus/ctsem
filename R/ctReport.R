@@ -355,7 +355,9 @@
   add("")
 
   if (inherits(fit, "ctJuliaFit")) {
-    e <- fit$estimate
+    # The run, not the estimate: every field this block reads describes the
+    # optimisation rather than what it found.
+    e <- fit$optim
     add("Optimizer")
     # With what decided it. A bare TRUE/FALSE invites the next question, and
     # the answer is one field away.

@@ -67,11 +67,16 @@ suppressWarnings(suppressPackageStartupMessages(library(ctsem)))
 # and the reason is what a reader checks when this list grows.
 #
 # It is short because most of what used to be on this list was not a reason, it
-# was an omission: `$trace`, `$laplace` and `$collapsedScales` were on an
+# was an omission: `$optim$trace`, `$laplace` and `$collapsedScales` were on an
 # optimised fit and missing from a sampled one, and all three are computable on
 # both -- sampling begins by optimising, so the run they describe exists either
 # way.
-.SHAPE_OPTIMISED_ONLY <- character(0)
+.SHAPE_OPTIMISED_ONLY <- c(
+  # What nsubsteps='auto' decided. Only the optimising route chooses a mesh --
+  # the sampled route is handed one -- and it was optimised-only on
+  # `$estimate` for the same reason before it moved to top level.
+  "substeps"
+)
 
 .SHAPE_SAMPLED_ONLY <- c(
   # Chain diagnostics: R-hat, ESS, divergences, step sizes, tree depths. Its
@@ -82,25 +87,40 @@ suppressWarnings(suppressPackageStartupMessages(library(ctsem)))
 
 # `$estimate` sub-fields on the optimised route only.
 #
+# Short, now that `$estimate` is the estimate and not also the run: what used
+# to be most of this list is in `.SHAPE_OPTIM_OPTIMISED_ONLY` below.
+.SHAPE_ESTIMATE_OPTIMISED_ONLY <- c(
+  # A per-subject decomposition of the likelihood at a single point, which is
+  # what a posterior mean does not have.
+  "subject_loglik",
+  # State-explicit only, and only reachable from the optimising route.
+  "states", "innovations", "loglik_type")
+
+# `$optim` sub-fields on the optimised route only.
+#
 # These describe the optimiser run that produced the reported point. On a
 # sampled fit the reported point is a posterior *mean*, and the optimisation
 # that ran is the one that placed the sampler -- a different point. Carrying its
 # gradient beside a posterior mean would invite reading the two as belonging
 # together, which is worse than their absence. The placement run's own verdict
-# is on `$estimate$converged`, which is the part a reader needs.
-.SHAPE_ESTIMATE_OPTIMISED_ONLY <- c(
+# is on `$optim$converged`, which is the part a reader needs and which both
+# routes carry.
+.SHAPE_OPTIM_OPTIMISED_ONLY <- c(
   "gradient", "gradient_norm", "predicted_gain", "convergence_tolerance",
   "last_gain", "iterations", "stage_iterations", "f_calls", "g_calls",
   "linesearch", "stalled", "stopped_by_gap", "overshot", "overshoot_gain",
-  # Which coordinates the pullback probe moved, so the same kind of thing as the
-  # two above and optimised-only for the same reason. Added to the optimised
-  # constructor by the probe itself and not to this list, which is the omission
-  # the list exists to catch.
+  # Which coordinates the pullback probe moved, so the same kind of thing as
+  # the two above and optimised-only for the same reason.
   "overshoot_parameters",
   "saturated", "saturated_parameters", "carefulfit", "carefulfit_iterations",
-  "corrections", "hessian", "hessians", "substeps", "subject_loglik",
-  # State-explicit only, and only reachable from the optimising route.
-  "states", "innovations", "loglik_type")
+  # The curvature-correction stage, which only the optimising route runs:
+  # the matrix it computed, how many it computed, and the history.
+  "corrections", "hessian", "hessian_evaluations",
+  # State-explicit only: the profile curvature, which is on `$optim` rather
+  # than `$uncertainty` precisely because it is not one.
+  "hessian_profile")
+
+.SHAPE_OPTIM_SAMPLED_ONLY <- character(0)
 
 .SHAPE_ESTIMATE_SAMPLED_ONLY <- c(
   # The Laplace point the chain started from, kept so it can be told from the
@@ -183,15 +203,57 @@ test_that("the two routes agree on what $estimate carries", {
       paste(missing_from_optimised, collapse = ", ")))
 })
 
+test_that("the two routes agree on what $optim carries", {
+  skip_without_julia()
+  fits <- .shape_fits()
+  # Both routes optimise -- sampling begins by placing the sampler -- so both
+  # carry a `$optim`, and a field added to one constructor and not the other is
+  # the drift this file exists to catch. It caught `overshoot_parameters` once
+  # already, on `$estimate`, before the two objects were separated.
+  for (route in names(fits)) {
+    expect_false(is.null(fits[[route]]$optim), info = route)
+    expect_true(is.logical(fits[[route]]$optim$converged), info = route)
+  }
+  opt <- names(fits$optimised$optim)
+  smp <- names(fits$sampled$optim)
+  missing_from_sampled <- setdiff(setdiff(opt, smp), .SHAPE_OPTIM_OPTIMISED_ONLY)
+  missing_from_optimised <- setdiff(setdiff(smp, opt), .SHAPE_OPTIM_SAMPLED_ONLY)
+  expect_equal(missing_from_sampled, character(0),
+    info = paste("in optimised$optim but not sampled$optim:",
+      paste(missing_from_sampled, collapse = ", ")))
+  expect_equal(missing_from_optimised, character(0),
+    info = paste("in sampled$optim but not optimised$optim:",
+      paste(missing_from_optimised, collapse = ", ")))
+})
+
+test_that("$estimate holds the estimate and nothing about the run", {
+  skip_without_julia()
+  fits <- .shape_fits()
+  # The point of the split. Any name here that describes the search rather than
+  # what it found has landed in the wrong object -- which is how `$estimate`
+  # grew to thirty-five fields in the first place.
+  run_shaped <- c("converged", "convergence_pending", "convergence_tolerance",
+    "predicted_gain", "last_gain", "gradient", "gradient_norm", "iterations",
+    "stage_iterations", "f_calls", "g_calls", "chunks", "linesearch",
+    "stalled", "stopped_by_gap", "overshot", "overshoot_gain",
+    "overshoot_parameters", "saturated", "saturated_parameters", "carefulfit",
+    "carefulfit_iterations", "corrections", "hessians",
+    "hessian_evaluations", "hessian", "hessian_profile", "trace", "substeps")
+  for (route in names(fits)) {
+    expect_equal(intersect(names(fits[[route]]$estimate), run_shaped),
+      character(0), info = route)
+  }
+})
+
 test_that("a sampled fit reports the convergence of the run that placed it", {
   skip_without_julia()
   fits <- .shape_fits()
   # Was hardcoded TRUE, which said "converged" about a run whose result was
   # sitting unread two lines away. A sampler placed from a point the optimiser
   # did not reach is worth knowing about, because the metric is built there too.
-  expect_true(is.logical(fits$sampled$estimate$converged))
-  expect_length(fits$sampled$estimate$converged, 1L)
-  expect_false(is.na(fits$sampled$estimate$converged))
+  expect_true(is.logical(fits$sampled$optim$converged))
+  expect_length(fits$sampled$optim$converged, 1L)
+  expect_false(is.na(fits$sampled$optim$converged))
 })
 
 test_that("the laplace block is the same shape whichever route built it", {

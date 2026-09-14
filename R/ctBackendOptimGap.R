@@ -308,7 +308,7 @@
 # approach exists to remove.
 #' @keywords internal
 .ctBackendCertification <- function(fit, hessian, tolerance = 0.01) {
-  gradient <- as.numeric(fit$estimate$gradient)
+  gradient <- as.numeric(fit$optim$gradient)
   gap <- .ctBackendOptimGap(hessian, gradient)
   probe <- NULL
   if (isTRUE(gap$ok) && isTRUE(gap$residual_norm > 0)) {
@@ -319,8 +319,8 @@
     }
   }
   verdict <- .ctBackendCertify(gap, probe, tolerance = tolerance,
-    saturated = isTRUE(fit$estimate$saturated),
-    overshot = isTRUE(fit$estimate$overshot))
+    saturated = isTRUE(fit$optim$saturated),
+    overshot = isTRUE(fit$optim$overshot))
   list(status = verdict$status, certified = verdict$certified,
     reason = verdict$reason, tolerance = tolerance,
     # The same `$verdict` shape `ctLaplaceCheck()` and `ctParticleLik()` report;
@@ -368,13 +368,13 @@
   # can be, and a saturated coordinate defeats that bound without saying
   # anything against the maximum -- so the two statuses that are findings
   # rather than failures map to TRUE.
-  fit$estimate$converged <- certification$status %in%
+  fit$optim$converged <- certification$status %in%
     c("certified", "unidentified")
   # Superseded rather than answered: the optimizer's complaint was held for
   # this measurement, and the measurement has now been made. Leaving it would
   # make `.ctBackendCertifyWarn()` warn about a gradient on a fit whose
   # curvature already said better.
-  fit$estimate$convergence_pending <- NULL
+  fit$optim$convergence_pending <- NULL
   fit
 }
 
@@ -394,11 +394,11 @@
 #' @keywords internal
 .ctBackendCertifyWarn <- function(fit) {
   certification <- fit$uncertainty$certification
-  pending <- isTRUE(fit$estimate$convergence_pending)
+  pending <- isTRUE(fit$optim$convergence_pending)
   if (is.null(certification) || !length(certification$status)) {
     if (!pending) return(invisible(NULL))
     warning("The optimizer stopped without meeting its convergence criterion: ",
-      "largest gradient ", signif(as.numeric(fit$estimate$gradient_norm), 3),
+      "largest gradient ", signif(as.numeric(fit$optim$gradient_norm), 3),
       ". No curvature was computed, so how far this is from the optimum is ",
       "unknown -- fit without optimcontrol$estonly, or call ",
       "ctOptimUncertainty(), to have it certified.", call. = FALSE)

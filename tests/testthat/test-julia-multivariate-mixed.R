@@ -109,8 +109,8 @@ test_that("laplace and augmented agree on a multivariate mixed model", {
   laplace <- suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
     intoverpop = "laplace", optimcontrol = list(estonly = TRUE))))
 
-  expect_true(isTRUE(augmented$estimate$converged))
-  expect_true(isTRUE(laplace$estimate$converged))
+  expect_true(isTRUE(augmented$optim$converged))
+  expect_true(isTRUE(laplace$optim$converged))
   # The random effects are identity-transformed intercepts, so the Laplace
   # approximation is close to exact here and the two routes are integrating
   # essentially the same thing. A wide gap would mean one of them is not.
@@ -124,7 +124,7 @@ test_that("the Laplace correction handles more than one random effect", {
   m <- .mvmix_model()
   fit <- suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
     intoverpop = "laplace", optimcontrol = list(finishsamples = 100))))
-  skip_if_not(isTRUE(fit$estimate$converged), "fit did not converge")
+  skip_if_not(isTRUE(fit$optim$converged), "fit did not converge")
 
   # Two random effects per unit means the quadrature is a `nodes^2` product
   # rule over the block rather than a line of nodes, which is the part of the
