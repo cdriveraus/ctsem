@@ -679,6 +679,26 @@ function _ctsem_probe_value(objective, x)
 end
 
 """
+What multiples of its current value each coordinate in a pulled-back set is
+tried at.
+
+Contractions and reflections. Contraction is what a saturated coordinate needs
+-- raw 12.1 at 0.25 is raw 3.0, which is where that transform came back to life
+and gained 142 nats -- but it can only ever reach zero, and zero is not a
+neutral place to reach: it is correlation 0, drift -0.693 and sd 0.693,
+depending entirely on the transform. So the ladder goes past it.
+
+The negative rungs are there because a contraction cannot change a sign, and on
+one measured fit the escape needed a population correlation to go from -2.358
+to +0.327. `-1.0` is a pure reflection, which is the move a correlation pinned
+at +1 needs if it belongs at -1.
+
+Cheap either way: these are value-only evaluations, and more rungs buy a better
+ranking at linear cost. See `_ctsem_overshot` for what the ranking is for.
+"""
+const _CTSEM_PULLBACK_FRACTIONS = (0.5, 0.25, 0.1, 0.0, -0.1, -0.25, -0.5, -1.0)
+
+"""
     _ctsem_pullback_sets(minimizer)
 
 The coordinate sets the magnitude probe pulls back: every prefix of the
@@ -773,10 +793,10 @@ left rather than the best pullback available. The question it answers is
 whether the estimate is a maximum, and any improvement settles that.
 """
 function _ctsem_overshot(objective, minimizer, saturated_parameters, value,
-        tolerance; fractions=(0.5, 0.25, 0.1, 0.0),
+        tolerance; fractions=_CTSEM_PULLBACK_FRACTIONS,
         mode=_CTSEM_OVERSHOOT_PROBE[])
     gain = 0.0
-    empty_result = (overshot=false, gain=gain, coordinates=Int[])
+    empty_result = (overshot=false, gain=gain, coordinates=Int[], point=Float64[])
     (!isfinite(value) || isempty(minimizer)) && return empty_result
     mode = _ctsem_overshoot_mode(mode)
     mode === :off && return empty_result
@@ -788,19 +808,57 @@ function _ctsem_overshot(objective, minimizer, saturated_parameters, value,
     isempty(sets) && return empty_result
     keep = collect(minimizer)
     probe = collect(minimizer)
+    # No ranking of the points that did not improve. Ordering them by how
+    # little they lost is a proxy for nothing: the least bad candidate is the
+    # one that disturbed the estimate least, which makes it the likeliest to
+    # fall straight back into the basin a caller is trying to leave. What to do
+    # when nothing improves is decided by which coordinate is on a boundary,
+    # not by which near miss was nearest -- see `.ctBackendStallEscape()`.
     for set in sets
         for f in fractions
             for p in set; probe[p] = f * keep[p]; end
             trial = _ctsem_probe_value(objective, probe)
             isfinite(trial) && (gain = max(gain, trial - value))
             if gain > tolerance
-                return (overshot=true, gain=gain, coordinates=sort(set))
+                # The point as well as the verdict. It costs a copy and it is
+                # what a caller needs to *act* on an overshoot rather than only
+                # report it -- see `ctsem_pullback`.
+                return (overshot=true, gain=gain, coordinates=sort(set),
+                    point=copy(probe))
             end
         end
         for p in set; probe[p] = keep[p]; end
     end
-    return (overshot=false, gain=gain, coordinates=Int[])
+    return (overshot=false, gain=gain, coordinates=Int[], point=Float64[])
 end
+
+"""
+    ctsem_pullback(objective, values; tolerance, probe)
+
+The pulled-back point that improves on `values`, or nothing to report.
+
+`_ctsem_overshot` answers "is this a maximum" and finds an improving point on
+the way to saying no. This hands that point back, so a fit that stopped in a
+degenerate corner can be resumed from somewhere better instead of only being
+told it is stuck. The improvement is measured, not predicted, so a resume from
+here cannot start worse than it stopped.
+
+Returned as a named tuple rather than `nothing` for the empty case, because a
+zero-length vector deadlocks the R bridge: `found` is the flag to read.
+"""
+function ctsem_pullback(objective, values::AbstractVector; tolerance::Real=1e-6,
+        probe=_CTSEM_OVERSHOOT_PROBE[])
+    x = collect(Float64, values)
+    nothing_found = (found=false, gain=0.0, point=x, coordinates=[0])
+    current = _ctsem_probe_value(objective, x)
+    isfinite(current) || return nothing_found
+    out = _ctsem_overshot(objective, x, Int[], current, tolerance; mode=probe)
+    out.overshot && !isempty(out.point) || return nothing_found
+    return (found=true, gain=out.gain, point=collect(Float64, out.point),
+        coordinates=isempty(out.coordinates) ? [0] : out.coordinates)
+end
+
+export ctsem_pullback
 
 """
 A line search that records the directional derivative it is handed.
@@ -954,6 +1012,21 @@ function _ctsem_metric(precondition, n::Integer)
     Diagonal(scale .^ 2)
 end
 
+"""What the whole run has gained, and what its last `window` iterations did.
+
+Only for reporting: `_ctsem_stalled` computes both itself rather than calling
+these, so the rule and the message cannot drift apart on a rounding.
+"""
+function _ctsem_trace_progress(trace::CTSEMTrace)
+    values = get(trace.values, :objective, Float64[])
+    length(values) < 2 ? 0.0 : values[end] - values[1]
+end
+
+function _ctsem_window_gain(trace::CTSEMTrace, window::Integer)
+    values = get(trace.values, :objective, Float64[])
+    length(values) > window ? values[end] - values[end - window] : 0.0
+end
+
 """
 What the final iteration gained, in objective units.
 
@@ -967,6 +1040,177 @@ function _ctsem_last_gain(trace::CTSEMTrace)
     values = get(trace.values, :objective, Float64[])
     length(values) < 2 && return Inf
     abs(values[end] - values[end - 1])
+end
+
+"""
+    _ctsem_stalled(trace, window, fraction)
+
+Whether the last `window` iterations gained a negligible share of the progress
+the fit has made.
+
+Half of a conjunction, and deliberately the weak half. On its own it cannot
+tell a fit that is stuck from one that is converging slowly, and those want
+opposite treatment -- a slow fit should be left alone, because the estimate has
+to settle properly before its curvature is worth anything. So this only decides
+*when to look*, and `_ctsem_flat_coordinates` decides whether there is anything
+to find. A false positive here costs one cheap derivative pass.
+
+The share of progress made, rather than a number of nats or a share of what is
+predicted to remain. Nats are not comparable across models. What remains is
+estimated in flight by `1/2 g'Bg`, and that is the one quantity that goes wrong
+exactly here: measured on the fit this was written for it decayed nine orders
+and then bounced back two, because a direction going flat sends the gradient to
+zero and `B` to infinity together. Progress already made is neither, and it
+carries its own safety -- a fit that started near its optimum has little of it,
+so the bar is small and this cannot fire.
+
+`false` before there is a window to look at.
+"""
+function _ctsem_stalled(trace::CTSEMTrace, window::Integer, fraction::Real)
+    values = get(trace.values, :objective, Float64[])
+    window >= 1 || return false
+    length(values) > window || return false
+    progress = values[end] - values[1]
+    isfinite(progress) && progress > 0 || return false
+    gained = values[end] - values[end - window]
+    isfinite(gained) || return false
+    return gained <= fraction * progress
+end
+
+"""
+The conjunction that decides a fit has stopped for a reason, and the hysteresis
+that keeps it from asking the same question every iteration.
+
+`_ctsem_stalled` says the fit is not getting anywhere. `_ctsem_flat_coordinates`
+says whether a transform has gone flat, which is the structural reason a fit
+stops getting anywhere. Either alone is a mistake this codebase has already
+made: saturation alone reported 45 of 64 good fits as failures, because a
+population scale with no individual differences behind it saturates early and
+legitimately while the fit goes on to a perfectly good optimum; and a progress
+test alone cannot tell stuck from slow.
+
+When the progress test fires and nothing is flat, the fit is given more rope
+rather than asked again immediately: `cooldown` iterations of quiet, and the bar
+tightened by `tighten`, at most `tightenings` times so it cannot drift somewhere
+unprincipled. A fit that is merely slow therefore costs a handful of derivative
+passes over its whole run and is then left alone, which is what a long careful
+optimisation needs.
+
+## Stalled and flat is not enough
+
+It was, and `test_state_sampling.jl`'s count model over the joint density is
+why it is not. That fit *correctly* ends saturated: its drift arrives at raw
+-18.5 where `-log1p_exp` is flat, the objective is at its supremum there, and
+pulling the coordinate back finds nothing better. Stalled-and-flat is exactly
+what a fit looks like while it converges *into* a flat region, so the two
+halves alone stopped it before it arrived and turned a converged fit into a
+failed one.
+
+What separates them is already being computed: whether a pullback finds
+anything. The runaway drift this was built for gains 142 nats on the spot; the
+count model gains nothing. So the third condition is that there is somewhere
+better to go, and the fit is only stopped when all three hold -- which is also
+what makes stopping safe, because the point to resume from is in hand.
+
+A fit that is stalled and flat with nothing better nearby is treated as the
+slow case: cooldown and tighten. If it is nonetheless in the wrong place, the
+zero-and-refit escape after the fit is what finds out, because only a refit
+can.
+"""
+mutable struct CTSEMStallWatch
+    window::Int
+    fraction::Float64
+    cooldown::Int
+    tighten::Float64
+    tightenings_left::Int
+    quiet_until::Int
+    triggers::Int
+    flat::Vector{Int}
+    point::Vector{Float64}
+    gain::Float64
+end
+
+CTSEMStallWatch(; window::Integer=80, fraction::Real=1e-2, cooldown::Integer=30,
+    tighten::Real=0.1, tightenings::Integer=2) =
+    CTSEMStallWatch(Int(window), Float64(fraction), Int(cooldown),
+        Float64(tighten), Int(tightenings), 0, 0, Int[], Float64[], 0.0)
+
+"""
+    _ctsem_stall_verdict!(watch, trace, iteration, params, values, range, ratio)
+
+Whether to stop: the progress test fired *and* something is flat.
+
+Mutates `watch` with the hysteresis, and records which coordinates were flat so
+the caller can say what ended the run. `params === nothing`, or a range with
+nothing in it, means there is no transform layer to ask -- the conjunction can
+then never complete, which is the right answer rather than half of one.
+"""
+function _ctsem_stall_verdict!(watch::CTSEMStallWatch, trace::CTSEMTrace,
+        iteration::Integer, objective, params, values, range, ratio::Real;
+        tolerance::Real=1e-6)
+    watch.window >= 1 || return false
+    params === nothing && return false
+    iteration >= watch.quiet_until || return false
+    _ctsem_stalled(trace, watch.window, watch.fraction) || return false
+    watch.triggers += 1
+    # Two detectors, because neither sees what the other does.
+    # `_ctsem_flat_coordinates` measures a transform against its own live value
+    # and so is scale free, but it walks `regular_transforms` and the
+    # population scales and correlations are not in it. `_ctsem_saturated_for`
+    # is the route's own, and on the laplace route it is the only thing that
+    # knows a correlation has reached its cap -- which is exactly the state
+    # that stalled the fit this was measured on. Missing it meant the
+    # conjunction never fired on that fit at all.
+    # Guarded separately, not as one expression. A detector that cannot answer
+    # for this objective must not take the other one down with it: wrapping
+    # both in a single `try` meant one `MethodError` reported nothing flat
+    # anywhere, which is the failure mode that reads as "no problem found".
+    relative = try
+        _ctsem_flat_coordinates(params, values, range; ratio=ratio)
+    catch
+        Int[]
+    end
+    route = try
+        _ctsem_saturated_for(objective, values)
+    catch
+        Int[]
+    end
+    flat = sort!(unique(vcat(relative, route)))
+    if !isempty(flat)
+        # And the third condition: somewhere better to go. Without it a fit
+        # converging into a flat region is stopped before it arrives.
+        #
+        # The value is taken at `values` rather than from the trace's last row,
+        # even though the trace has one and this costs an evaluation. They are
+        # not the same point: the trace records completed iterations, and the
+        # point handed in here is the last one the objective accepted, which
+        # may be a line-search trial taken after that row was written. A gain
+        # measured against the wrong baseline is not a gain.
+        value = _ctsem_probe_value(objective, values)
+        out = if isfinite(value)
+            try
+                _ctsem_overshot(objective, values, flat, value, tolerance)
+            catch
+                nothing
+            end
+        else
+            nothing
+        end
+        if out !== nothing && out.overshot && !isempty(out.point)
+            watch.flat = flat
+            watch.point = collect(Float64, out.point)
+            watch.gain = Float64(out.gain)
+            return true
+        end
+    end
+    # Stalled with nothing flat, or flat with nothing better nearby: slow
+    # rather than stuck. Wait, and ask less readily next time.
+    watch.quiet_until = Int(iteration) + watch.cooldown
+    if watch.tightenings_left > 0
+        watch.tightenings_left -= 1
+        watch.fraction *= watch.tighten
+    end
+    return false
 end
 
 """
@@ -1110,7 +1354,10 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     progress_budget::Bool=false, progress_every::Real=0.0,
     gap_tol::Real=0.0, converge_tol::Real=1e-6,
     precondition=nothing, initial_alpha::Real=0.1,
-    overshoot_probe=_CTSEM_OVERSHOOT_PROBE[])
+    overshoot_probe=_CTSEM_OVERSHOOT_PROBE[],
+    stall_window::Integer=80, stall_fraction::Real=1e-2,
+    stall_cooldown::Integer=30, stall_tighten::Real=0.1,
+    stall_tightenings::Integer=2, stall_ratio::Real=1e-3)
     start_values = collect(start)
     # Validated here rather than at the probe, which runs after the fit: a
     # misspelled mode should cost nothing, not a whole optimisation.
@@ -1141,6 +1388,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         if G !== nothing
             G .= -evaluated.gradient
         end
+        # The point the callback will be asked about; see `current_x`.
+        copyto!(current_x, x)
         return F === nothing ? nothing : -evaluated.value
     end
     # A callback rather than Optim's `show_trace`, which prints one dense line
@@ -1158,7 +1407,10 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # The trace records every iteration whatever `verbose` says: it costs a
     # push onto a vector, and a fit that turns out to have gone somewhere odd
     # is exactly the one nobody thought to turn reporting on for.
-    trace = CTSEMTrace(_ctsem_optimise_trace_keys(objective)...)
+    # `predicted_gain` sits between the two fixed columns and the route's own,
+    # so `_ctsem_optimise_trace_keys` keeps naming only what a route adds.
+    trace = CTSEMTrace(:objective, :gradient_norm, :predicted_gain,
+        _ctsem_optimise_trace_keys(objective)[3:end]...)
     watcher = CTSEMCallback(progress_callback)
     # How far this run has come toward the nearest of its stopping rules; see
     # `CTSEMConvergence`. Fed every iteration rather than every printed line,
@@ -1178,9 +1430,20 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # run that ends any other way.
     seen_iterations = Ref(0)
     stopped_by_gap = Ref(false)
+    stopped_by_stall = Ref(false)
+    # Where the fit currently is. Optim's callback is handed convergence
+    # numbers, not the point they describe -- `extended_trace` would carry it
+    # but costs a copy of every iterate -- and the stall conjunction has to ask
+    # the transforms what they are doing *at this point*. `fg!` sees every
+    # trial, so the last one it accepted is recorded there and read here.
+    current_x = copy(start_values)
+    stall = CTSEMStallWatch(window=stall_window, fraction=stall_fraction,
+        cooldown=stall_cooldown, tighten=stall_tighten,
+        tightenings=stall_tightenings)
     watch = function (state)
         latest = state isa AbstractVector ? last(state) : state
         _record!(trace, latest.iteration, -latest.value, latest.g_norm,
+            _ctsem_predicted_gain(directional),
             _ctsem_optimise_trace_values(objective)...)
         seen_iterations[] = max(seen_iterations[], Int(latest.iteration))
         percent = _convergence_percent!(convergence, latest.g_norm,
@@ -1211,6 +1474,18 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # rule when this stopped too early.
         if gap_tol > 0 && _ctsem_predicted_gain(directional) < gap_tol
             stopped_by_gap[] = true
+            return true
+        end
+        # And stop when the fit has stopped getting anywhere *and* a transform
+        # has gone flat, which is the structural reason it stopped. Neither
+        # half is a stopping rule on its own -- see `_ctsem_stall_verdict!` for
+        # why, and for the cooldown that keeps a merely slow fit from being
+        # asked over and over.
+        if _ctsem_stall_verdict!(stall, trace, latest.iteration, objective,
+                _ctsem_params(objective), current_x,
+                _ctsem_saturation_range(objective, current_x), stall_ratio;
+                tolerance=converge_tol)
+            stopped_by_stall[] = true
             return true
         end
         return false
@@ -1370,6 +1645,15 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     converged_enough = verdict.converged_enough
     overshoot = verdict.overshoot
     overshot = verdict.overshot
+    verbose && stopped_by_stall[] && println(_console(), label, ": the last ",
+        stall.window, " iterations gained ",
+        _ctsem_window_gain(trace, stall.window), " against ",
+        _ctsem_trace_progress(trace), " gained over the run, and raw ",
+        "parameter(s) ", stall.flat, " have lost all but ", stall_ratio,
+        " of what their transform does when live, and pulling them back gains ",
+        stall.gain, " -- so the fit has stopped getting anywhere, this is why, ",
+        "and there is somewhere better to go. Stopping here rather than ",
+        "running to the iteration cap")
     verbose && !stalled && !(finite_gradient &&
         (Optim.g_converged(result) || converged_enough)) &&
         println(_console(), label, ": the optimizer stopped with an estimated ",
@@ -1394,6 +1678,21 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         f_calls=Optim.f_calls(result),
         g_calls=Optim.g_calls(result),
         stopped_by_gap=stopped_by_gap[],
+        # Whether the run ended because it stopped making progress rather than
+        # because it arrived. `f_calls` and `g_calls` undercount here for the
+        # same reason they do under `stopped_by_gap`: Optim stops updating them
+        # when a callback ends the run.
+        stopped_by_stall=stopped_by_stall[],
+        stall_window=Int(stall.window),
+        # Which coordinates were flat when it stopped, and how many times the
+        # progress test fired without finding one. `0` for none, for the reason
+        # `saturated_parameters` gives.
+        stall_parameters=isempty(stall.flat) ? [0] : stall.flat,
+        stall_triggers=stall.triggers,
+        # The point the in-flight probe found, so the caller resuming from it
+        # does not pay for the same ladder twice. Empty unless it stopped here.
+        stall_point=isempty(stall.point) ? Float64[0.0] : stall.point,
+        stall_gain=stall.gain,
         stalled=stalled,
         chunks=ctsem_max_chunks().max_chunks,
         chunk_timings=tuning === nothing ? Tuple{Int,Float64}[] : tuning.timings,

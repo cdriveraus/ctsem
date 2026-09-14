@@ -300,6 +300,85 @@
   value
 }
 
+# When the engine looks for a stalled fit, and how readily.
+#
+# The window is a number of iterations and the fraction is a share of the
+# progress the fit has already made -- not a number of nats, which are not
+# comparable across models, and not a share of what is predicted to remain,
+# which is the one quantity that goes wrong exactly here. See `_ctsem_stalled`
+# in the engine.
+#
+# This is only half of the test. Firing it costs a derivative pass over the
+# transforms, and the fit is stopped only if that finds one flat -- so the
+# fraction is deliberately loose, and it is the conjunction rather than this
+# bar that decides anything. See `_ctsem_stall_verdict!`.
+#
+# `stallwindow = 0` switches the whole check off.
+#' @keywords internal
+.ctBackendStallWindow <- function(optimcontrol = list(), default = 80L) {
+  value <- if (is.null(optimcontrol)) NULL else optimcontrol$stallwindow
+  if (is.null(value)) return(default)
+  value <- suppressWarnings(as.integer(value)[1L])
+  if (is.na(value) || value < 0L) default else value
+}
+
+#' @keywords internal
+.ctBackendStallFraction <- function(optimcontrol = list(), default = 1e-2) {
+  value <- if (is.null(optimcontrol)) NULL else optimcontrol$stallfraction
+  if (is.null(value)) return(default)
+  value <- suppressWarnings(as.numeric(value)[1L])
+  if (!is.finite(value) || value < 0) default else value
+}
+
+# Where to restart a fit that stopped on a boundary, or NULL if there is
+# nowhere better to go.
+#
+# The engine only stops a stage when its own probe has already found a better
+# point -- stalled, flat, *and* somewhere to go, all three -- so that point
+# comes back on the result and is used as it stands. Recomputing the ladder
+# here would cost `4 * npar` objective evaluations for an answer already in
+# hand, which on a laplace fit near a degenerate corner is a couple of minutes.
+#
+# The fallback is for a fit that finished normally and is nonetheless sitting
+# somewhere it should not be: zero the coordinates whose transforms have gone
+# flat and refit. That cannot be decided cheaply -- the zeroed point is
+# deliberately *worse* on the spot, 9.5 nats down on the fit it was measured
+# on, and a refit from it landed 7.2 nats up -- so it costs a fit and is off by
+# default. `optimcontrol$escapesaturated = TRUE` turns it on.
+#
+# Zeroing is not neutral and is not claimed to be: raw zero is a correlation of
+# 0 but a drift of -0.693 and an sd of 0.693. It is a starting value for a
+# refit, not an answer, and the refit is kept only if it wins.
+#' @keywords internal
+.ctBackendStallEscape <- function(result, optimcontrol, model_spec,
+    verbose = 0) {
+  npar <- length(as.numeric(result$minimizer))
+  point <- suppressWarnings(as.numeric(result$stall_point))
+  if (isTRUE(result$stopped_by_stall) && length(point) == npar &&
+      all(is.finite(point))) {
+    if (verbose > 0) {
+      message("Stopped on a boundary; pulling raw parameter(s) ",
+        paste(.ctJuliaSaturatedNames(list(p = result$stall_parameters),
+          model_spec, npar, "p"), collapse = ", "), " back gains ",
+        signif(as.numeric(result$stall_gain)[1L], 3), ", refitting from there")
+    }
+    return(point)
+  }
+  if (!isTRUE(optimcontrol$escapesaturated)) return(NULL)
+  flat <- suppressWarnings(as.integer(result$saturated_parameters))
+  flat <- flat[!is.na(flat) & flat >= 1L & flat <= npar]
+  if (!length(flat)) return(NULL)
+  from <- as.numeric(result$minimizer)
+  from[flat] <- 0
+  if (verbose > 0) {
+    message("Saturated with no pullback available; zeroing raw parameter(s) ",
+      paste(.ctJuliaSaturatedNames(list(p = result$saturated_parameters),
+        model_spec, npar, "p"), collapse = ", "),
+      " and refitting from there to see whether it beats this")
+  }
+  from
+}
+
 # The certification for one fit, at its own estimate, against one Hessian.
 #
 # The probe is what makes the flat directions safe to exclude from the gap:
@@ -775,12 +854,21 @@
 # orders of magnitude inside the bar.
 #
 # The licence applies to the *default*, not to a request. Nothing will check a
-# stop when certification is off -- `estonly`, `certify = FALSE`, or the
-# state-explicit route, whose only curvature is the profile's -- and the proxy
-# can stop but never certify, so defaulting it on there would be a fit that
-# quit early with nothing to say so. A caller who names `innergaptol` has asked
-# for exactly that and is given it: accepting the argument and ignoring it
-# would be worse than either answer.
+# stop when certification is off -- `certify = FALSE`, or the state-explicit
+# route, whose only curvature is the profile's -- and the proxy can stop but
+# never certify, so defaulting it on there would be a fit that quit early with
+# nothing to say so. A caller who names `innergaptol` has asked for exactly
+# that and is given it: accepting the argument and ignoring it would be worse
+# than either answer.
+#
+# `estonly` used to be in that list and is not. It asks for the estimate
+# without the uncertainty and correction phases, which is a statement about
+# what happens *after* the optimisation -- and it was silently changing the
+# optimisation too, so the same model fitted with and without it ran different
+# stopping rules and could stop in different places. Every other reading of
+# `estonly` in the package skips a post-fit step; this one did not, which is
+# the shape of the trap CLAUDE.md names. `certify = FALSE` stays, because that
+# one does say the curvature will not be computed.
 #' @keywords internal
 .ctBackendInnerGapTol <- function(optimcontrol = list(), intoverstates = TRUE) {
   explicit <- optimcontrol$innergaptol
@@ -789,7 +877,6 @@
     return(if (is.finite(value) && value >= 0) value else 0)
   }
   if (!isTRUE(intoverstates)) return(0)
-  if (isTRUE(optimcontrol$estonly)) return(0)
   if (identical(optimcontrol$certify, FALSE)) return(0)
   bar <- .ctBackendConvergeTol(optimcontrol)
   if (!is.finite(bar) || bar <= 0) 0 else bar / 100
