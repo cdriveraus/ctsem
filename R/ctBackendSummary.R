@@ -454,7 +454,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   arrays <- .ctBackendPopArrays(object, samples = samples, ...)
   popmeans <- .ctBackendPopMeanSamples(object, samples = samples)
   c(list(rawpars = samples, popmeans = popmeans$values,
-    loglik = object$estimate$loglik, gradient = object$estimate$gradient,
+    loglik = object$estimate$loglik, gradient = object$optim$gradient,
     subject_loglik = object$estimate$subject_loglik), arrays, subject)
 }
 

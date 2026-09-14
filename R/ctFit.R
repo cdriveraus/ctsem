@@ -601,7 +601,7 @@ T0VARredundancies <- function(ctm) {
 #' warming up at all -- because the prior pass pulls the start toward the prior
 #' mode and past about ten iterations that is what it hands the likelihood.
 #'
-#' \code{fit$estimate$carefulfit} records whether the pass ran, and
+#' \code{fit$optim$carefulfit} records whether the pass ran, and
 #' \code{$carefulfit_iterations} how long it was allowed.
 #' With \code{backend='julia'}, \code{optimcontrol$callback} is a function
 #' called while the fit runs, with \code{(iteration, total, objective,
@@ -610,7 +610,7 @@ T0VARredundancies <- function(ctm) {
 #' because a callback costs about half a millisecond through the Julia
 #' bridge, and always once more at the end. An error inside it disables it
 #' and warns, leaving the fit unaffected. If output after the fit is enough,
-#' \code{fit$trace} holds every iteration and \code{\link{ctTracePlot}}
+#' \code{fit$optim$trace} holds every iteration and \code{\link{ctTracePlot}}
 #' draws it.
 #' \code{backend='julia'} also finishes by estimating uncertainty, as the stan
 #' backend does, and reads the same \code{stanoptimis} control names for it:
@@ -710,7 +710,7 @@ T0VARredundancies <- function(ctm) {
 #' optimum, how nonlinear each observation interval is and refines only the intervals that need it;
 #' \code{substeptol} (default 0.01) is the largest acceptable linearisation error as a fraction of the
 #' predicted state standard deviation, and \code{maxsubsteps} (default 64) caps an interval.
-#' \code{maxtimestep} remains a ceiling on the step. The choice is reported in \code{fit$estimate$substeps}.
+#' \code{maxtimestep} remains a ceiling on the step. The choice is reported in \code{fit$substeps}.
 #' \code{transition = 'euler'} (julia backend, \code{intoverstates = FALSE} only) replaces the exponential
 #' step between substeps of the state-explicit path with plain Euler-Maruyama, for a reference that
 #' shares no approximation with the filter; it needs a fine \code{maxtimestep}. See also
@@ -1975,7 +1975,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     # information, recorded every iteration and handed back on the fit; for
     # genuinely live output, `optimcontrol$callback` is called while the fit
     # runs and can draw whatever it likes.
-    if(isTRUE(fit) && !identical(plot, FALSE) && !is.null(juliafit$trace)) {
+    if(isTRUE(fit) && !identical(plot, FALSE) && !is.null(juliafit$optim$trace)) {
       try(ctTracePlot(juliafit), silent=TRUE)
     }
     return(juliafit)

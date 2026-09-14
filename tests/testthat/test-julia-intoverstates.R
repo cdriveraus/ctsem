@@ -278,7 +278,7 @@ test_that("standard errors profile the states out, and the rest are refused", {
   npar <- length(fit$estimate$raw)
 
   # Kept on the fit rather than turned into intervals.
-  expect_equal(dim(fit$estimate$hessian_profile), c(npar, npar))
+  expect_equal(dim(fit$optim$hessian_profile), c(npar, npar))
   expect_null(fit$uncertainty)
   hessian <- ctsem:::.ctBackendHessian(fit, fit$estimate$raw)
   expect_equal(dim(hessian), c(npar, npar))

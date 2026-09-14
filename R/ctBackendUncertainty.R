@@ -451,7 +451,7 @@
   # it would be the fit's second most expensive step run twice for the same
   # answer. Only when the estimate has not moved since: `ctOptimUncertainty()`
   # can be called on a fit whose estimate came from somewhere else entirely.
-  stored <- fit$estimate$hessian
+  stored <- fit$optim$hessian
   if (!is.null(stored) && is.matrix(stored) &&
       nrow(stored) == length(est) && ncol(stored) == length(est) &&
       isTRUE(all.equal(as.numeric(fit$estimate$raw), as.numeric(est),

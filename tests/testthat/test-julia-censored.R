@@ -166,7 +166,7 @@ test_that("a censored model recovers what generated it", {
   fit <- suppressWarnings(suppressMessages(ctFit(.censored_data(nsubjects = 50,
     nobs = 10), .censored_model(), backend = "julia",
     intoverpop = "augmented", optimcontrol = list(estonly = TRUE))))
-  expect_true(isTRUE(fit$estimate$converged))
+  expect_true(isTRUE(fit$optim$converged))
   means <- summary(fit)$popmeans
   expect_equal(unname(means["drift_eta1", "mean"]), -0.4, tolerance = 0.35)
   expect_equal(unname(means["mm", "mean"]), 2.5, tolerance = 0.3)

@@ -130,8 +130,8 @@ test_that("Laplace and augmented agree where the integrand is exactly Gaussian",
   laplace <- .laplace_exact_fit()
   augmented <- .laplace_augmented_fit()
 
-  expect_true(laplace$estimate$converged)
-  expect_true(augmented$estimate$converged)
+  expect_true(laplace$optim$converged)
+  expect_true(augmented$optim$converged)
   # A random effect on an identity-transformed MANIFESTMEANS is the same model
   # either way, so this is an equality, not a comparison. The tolerance is set
   # by the two routes' different numerical offsets in building the population

@@ -144,7 +144,7 @@ test_that("a count model recovers what generated it, and laplace does it better"
     suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
       intoverpop = route, optimcontrol = list(estonly = TRUE))))
   })
-  for (route in names(fits)) expect_true(isTRUE(fits[[route]]$estimate$converged))
+  for (route in names(fits)) expect_true(isTRUE(fits[[route]]$optim$converged))
 
   got <- vapply(fits, function(f) {
     means <- summary(f)$popmeans

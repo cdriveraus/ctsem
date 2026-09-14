@@ -180,10 +180,10 @@ test_that("the check works when subjects are nested in studies", {
 test_that("the fit records how hard the optimizer worked", {
   skip_without_julia()
   fit <- .check_fit()
-  expect_false(isTRUE(fit$estimate$stalled))
-  expect_true(is.finite(fit$estimate$f_calls))
-  expect_gte(fit$estimate$f_calls, fit$estimate$iterations)
-  expect_true(is.finite(fit$estimate$g_calls))
+  expect_false(isTRUE(fit$optim$stalled))
+  expect_true(is.finite(fit$optim$f_calls))
+  expect_gte(fit$optim$f_calls, fit$optim$iterations)
+  expect_true(is.finite(fit$optim$g_calls))
 })
 
 # The first-order correction is `delta = -H^-1 g`, and on a model where Laplace
