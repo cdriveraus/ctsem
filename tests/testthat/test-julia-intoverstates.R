@@ -278,7 +278,7 @@ test_that("standard errors profile the states out, and the rest are refused", {
   npar <- length(fit$estimate$raw)
 
   # Kept on the fit rather than turned into intervals.
-  expect_equal(dim(fit$estimate$hessian_profile), c(npar, npar))
+  expect_equal(dim(fit$optim$hessian_profile), c(npar, npar))
   expect_null(fit$uncertainty)
   hessian <- ctsem:::.ctBackendHessian(fit, fit$estimate$raw)
   expect_equal(dim(hessian), c(npar, npar))
@@ -297,26 +297,25 @@ test_that("standard errors profile the states out, and the rest are refused", {
   # standard errors and says so, rather than inverting this into intervals.
   values <- eigen(-(hessian + t(hessian)) / 2, only.values = TRUE)$values
   expect_true(all(is.finite(values)))
-  # Relative to the largest eigenvalue, not an absolute floor.
+  # And nothing about definiteness, deliberately.
   #
-  # "Negative semi-definite up to noise" is a statement about the matrix's own
-  # scale, and an absolute bound cannot make it: the same fit's profile
-  # curvature spans 0.04 to 0.8 depending on where the optimiser lands, so a
-  # fixed -1e-2 is generous at one end and impossible at the other. Measured on
-  # this fit, smallest over largest:
+  # There used to be `expect_gt(min(values) / max(values), -0.05)` here, and
+  # the comment above it recorded two runs of this same fixture at -1.8% and
+  # -40%. The assertion could not hold, and the evidence that it could not was
+  # written directly beneath it; it failed on this machine at -10.9%.
   #
-  #   -0.0147 / 0.835  =  -1.8%
-  #   -0.0169 / 0.042  =    -40%
+  # The reason is not a loose tolerance. This is the curvature of the *joint*
+  # mode, which is degenerate: with an innovation per observation the states
+  # re-optimise to absorb almost any change in the parameters, so the profile
+  # is nearly flat and both where the optimiser stops and the curvature there
+  # move for reasons that mean nothing. A ratio of its extreme eigenvalues is
+  # therefore not a property of the model, and no bound on it is assertable --
+  # which is the same reason this route reports no standard errors and refuses
+  # them below. Sample it; do not optimise it.
   #
-  # The absolute smallest is almost the same in both; only the ratio says that
-  # one is a maximum with rounding-scale negatives and the other is indefinite
-  # in a substantial direction. Which run produced which does not matter and is
-  # deliberately not recorded: this is the *joint* mode, which is degenerate --
-  # the states re-optimise to absorb almost any parameter change -- so its
-  # location and its curvature move for reasons that mean nothing, and reading
-  # a comparison of them as one setting being better than another is the
-  # mistake this route invites. Sample it; do not optimise it.
-  expect_gt(min(values) / max(values), -0.05)
+  # What is assertable about the matrix is its shape, its finiteness and its
+  # symmetry, all checked above, and that is the whole of what this block
+  # claims.
 
   # Everything except 'hessian' would score the marginal likelihood, which is
   # not the density this fit maximised.

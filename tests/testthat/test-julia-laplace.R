@@ -130,8 +130,8 @@ test_that("Laplace and augmented agree where the integrand is exactly Gaussian",
   laplace <- .laplace_exact_fit()
   augmented <- .laplace_augmented_fit()
 
-  expect_true(laplace$estimate$converged)
-  expect_true(augmented$estimate$converged)
+  expect_true(laplace$optim$converged)
+  expect_true(augmented$optim$converged)
   # A random effect on an identity-transformed MANIFESTMEANS is the same model
   # either way, so this is an equality, not a comparison. The tolerance is set
   # by the two routes' different numerical offsets in building the population
@@ -972,4 +972,168 @@ test_that("optimising without integrating the random effects is refused", {
   expect_error(suppressWarnings(suppressMessages(
     ctFit(d, m, backend = "julia", cores = 1, intoverpop = "augmented",
       optimcontrol = list(estonly = TRUE)))), NA)
+})
+
+# --- the inner solve's own controls ------------------------------------------
+
+# A random effect on a NONLINEAR drift, which is what makes the inner problem
+# non-quadratic and so gives the inner Newton something to iterate on. On the
+# linear-Gaussian fixture above the integrand is Gaussian in `u`, Newton lands
+# on the mode in a single step, and `inner_maxiter = 1` already converges --
+# so every test below would pass there while exercising nothing.
+.laplace_nonlinear_model <- function() {
+  model <- suppressWarnings(suppressMessages(ctModel(
+    type = "ct", manifestNames = "Y1", latentNames = "eta1",
+    LAMBDA = matrix(1),
+    DRIFT = matrix("drift|-log1p_exp(-param)"),
+    T0MEANS = matrix(0), CINT = matrix(0), T0VAR = matrix(0.5),
+    MANIFESTMEANS = matrix("mmean"))))
+  model$pars$indvarying <- FALSE
+  model$pars$indvarying[model$pars$param %in% c("drift", "mmean")] <- TRUE
+  model
+}
+
+.laplace_nonlinear_data <- function(nsubjects = 40L, nobs = 7L) {
+  set.seed(20260914)
+  do.call(rbind, lapply(seq_len(nsubjects), function(i) {
+    b <- stats::rnorm(1, 1.0, 0.8)
+    d <- -exp(stats::rnorm(1, log(0.45), 0.35))
+    st <- stats::rnorm(1, 0, 0.5)
+    out <- numeric(nobs)
+    for (t in seq_len(nobs)) {
+      if (t > 1) st <- exp(d) * st + stats::rnorm(1, 0, 0.4)
+      out[t] <- st + b + stats::rnorm(1, 0, 0.3)
+    }
+    data.frame(id = i, time = seq_len(nobs) - 1, Y1 = out)
+  }))
+}
+
+test_that("the inner controls are julia-only and reach the engine", {
+  # No julia needed: this is the control-list vocabulary, checked before any
+  # data preparation happens.
+  expect_error(.ctFitCheckControls(
+    list(laplace_inner_maxiter = 400L, laplace_inner_tol = 1e-6), "julia"), NA)
+  # Refused by name on stan, which augments the latent state and has no inner
+  # solve at all -- rather than accepted and ignored, which is the shape of
+  # defect this registry exists to prevent.
+  expect_error(.ctFitCheckControls(list(laplace_inner_maxiter = 400L), "stan"),
+    "no such inner solve")
+  expect_error(.ctFitCheckControls(list(laplace_inner_tol = 1e-6), "stan"),
+    "no such inner solve")
+  expect_error(.ctFitCheckControls(list(laplace_inner_maxitr = 400L), "julia"),
+    "Unrecognised optimcontrol name")
+
+  expect_error(.ctJuliaLaplaceInner(list(inner_maxiter = 0)), "positive integer")
+  expect_error(.ctJuliaLaplaceInner(list(inner_maxiter = NA)), "positive integer")
+  # Zero is refused rather than read as "off". An absolute tolerance of zero is
+  # exact equality, which no inner gradient reaches, so accepting it would turn
+  # the criterion off by making it unmeetable -- the opposite of what a caller
+  # passing zero means.
+  expect_error(.ctJuliaLaplaceInner(list(inner_tol = 0)), "positive number")
+  expect_equal(.ctJuliaLaplaceInner(NULL), list())
+  expect_equal(.ctJuliaLaplaceInner(list()), list())
+  expect_equal(.ctJuliaLaplaceInner(list(inner_maxiter = 400)),
+    list(inner_maxiter = 400L))
+})
+
+test_that("the inner settings are part of the objective's identity", {
+  skip_without_julia()
+  model <- .laplace_test_model()
+  dat <- .laplace_test_data(nsubjects = 8, nobs = 5)
+
+  base <- .ctJuliaPrepare(dat, model, intoverpop = "laplace")
+  tuned <- .ctJuliaPrepare(dat, model, intoverpop = "laplace",
+    laplacecontrol = list(inner_maxiter = 400L, inner_tol = 1e-6))
+
+  # Absent unless asked for, so every existing model hashes exactly as it did
+  # and keeps whatever objective the cache already holds for it.
+  expect_null(base$laplace$inner)
+  expect_equal(tuned$laplace$inner,
+    list(inner_maxiter = 400L, inner_tol = 1e-6))
+  expect_equal(.ctJuliaObjectiveKey(base),
+    .ctJuliaObjectiveKey(.ctJuliaPrepare(dat, model, intoverpop = "laplace")))
+  # And separated once they are. The inner tolerance changes the *value* the
+  # objective returns, so two specifications differing only in it are not the
+  # same function -- without this the second would be handed the first's cached
+  # objective and silently return the first's likelihood, which is how
+  # `covmatcode` came to be in this key.
+  expect_false(identical(.ctJuliaObjectiveKey(base),
+    .ctJuliaObjectiveKey(tuned)))
+})
+
+test_that("a laplace fit reports the inner budget it was solved with", {
+  skip_without_julia()
+  model <- .laplace_test_model()
+  dat <- .laplace_test_data(nsubjects = 10, nobs = 5)
+
+  fit <- suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
+    intoverpop = "laplace", optimcontrol = list(estonly = TRUE))))
+  # Reported rather than left to be inferred from `args$optimcontrol`, where an
+  # unset name means "the engine default" and the engine default has already
+  # changed once -- 50 to 200, when the inner start moved to the origin.
+  expect_equal(fit$laplace$inner_maxiter, 200L)
+  expect_equal(fit$laplace$inner_tol, 1e-10)
+
+  tuned <- suppressWarnings(suppressMessages(ctFit(dat, model,
+    backend = "julia", intoverpop = "laplace",
+    optimcontrol = list(estonly = TRUE, laplace_inner_maxiter = 500L,
+      laplace_inner_tol = 1e-8))))
+  expect_equal(tuned$laplace$inner_maxiter, 500L)
+  expect_equal(tuned$laplace$inner_tol, 1e-8)
+  # A tolerance this far above the inner gradient the solve reaches anyway
+  # changes nothing about where the modes land, which is what makes the two
+  # fits comparable at all.
+  expect_equal(tuned$estimate$loglik, fit$estimate$loglik, tolerance = 1e-6)
+})
+
+test_that("the hessian raises the inner budget rather than returning NaN", {
+  skip_without_julia()
+  model <- .laplace_nonlinear_model()
+  dat <- .laplace_nonlinear_data()
+
+  fit <- suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
+    intoverpop = "laplace", optimcontrol = list(estonly = TRUE))))
+  skip_if_not(isTRUE(fit$laplace$inner_converged),
+    "fixture did not solve its modes")
+  # The fixture earns its place only if the inner solve needs iterating.
+  expect_gt(max(fit$laplace$inner_iterations), 2L)
+
+  module <- .ctJuliaModule(fit$model_spec$project)
+  objective <- .ctJuliaObjective(fit)
+  raw <- fit$estimate$raw
+  setbudget <- function(n) invisible(JuliaConnectoR::juliaCall("setfield!",
+    objective, as.symbol("inner_maxiter"), as.integer(n)))
+  getbudget <- function() as.integer(JuliaConnectoR::juliaCall("getfield",
+    objective, as.symbol("inner_maxiter")))
+  complete <- function(H) sum(apply(H, 2, function(cc) all(is.finite(cc))))
+
+  setbudget(200L)
+  full <- .ctBackendJuliaValue(module$ctsem_laplace_hessian(objective,
+    .ctJuliaVector(raw)))
+  expect_equal(complete(full), ncol(full))
+
+  # `retries = 0` is the behaviour before the escalation existed, and it is the
+  # measurement that says the escalation is doing the work rather than the
+  # starved budget having been sufficient all along. Every column NaN is not a
+  # fallback anyone can use: it is what a 571-subject fit reported after a
+  # lengthy exact-Hessian pass.
+  setbudget(2L)
+  bare <- .ctBackendJuliaValue(JuliaConnectoR::juliaCall(
+    "ContinuousTimeSEM.ctsem_laplace_hessian", objective, .ctJuliaVector(raw),
+    retries = 0L))
+  expect_equal(complete(bare), 0L)
+
+  setbudget(2L)
+  rescued <- suppressMessages(.ctBackendJuliaValue(
+    module$ctsem_laplace_hessian(objective, .ctJuliaVector(raw))))
+  expect_equal(complete(rescued), ncol(rescued))
+  # The same matrix, not merely a finite one. The differencing points are 1e-4
+  # from a point whose modes were found, so a unit that only ran out of
+  # iterations there reaches the same mode given more of them.
+  expect_equal(rescued, full, tolerance = 1e-8)
+
+  # The budget is a field of a mutable objective the caller keeps, and the
+  # escalation is undone whether or not the column succeeded.
+  expect_equal(getbudget(), 2L)
+  setbudget(200L)
 })

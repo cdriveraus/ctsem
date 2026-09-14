@@ -109,8 +109,8 @@ test_that("laplace and augmented agree on a multivariate mixed model", {
   laplace <- suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
     intoverpop = "laplace", optimcontrol = list(estonly = TRUE))))
 
-  expect_true(isTRUE(augmented$estimate$converged))
-  expect_true(isTRUE(laplace$estimate$converged))
+  expect_true(isTRUE(augmented$optim$converged))
+  expect_true(isTRUE(laplace$optim$converged))
   # The random effects are identity-transformed intercepts, so the Laplace
   # approximation is close to exact here and the two routes are integrating
   # essentially the same thing. A wide gap would mean one of them is not.
@@ -124,7 +124,7 @@ test_that("the Laplace correction handles more than one random effect", {
   m <- .mvmix_model()
   fit <- suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
     intoverpop = "laplace", optimcontrol = list(finishsamples = 100))))
-  skip_if_not(isTRUE(fit$estimate$converged), "fit did not converge")
+  skip_if_not(isTRUE(fit$optim$converged), "fit did not converge")
 
   # Two random effects per unit means the quadrature is a `nodes^2` product
   # rule over the block rather than a line of nodes, which is the part of the
@@ -132,10 +132,42 @@ test_that("the Laplace correction handles more than one random effect", {
   corrected <- suppressWarnings(ctLaplaceCorrect(fit, draws = "normal",
     nodes = 5, finishsamples = 100))
   expect_s3_class(corrected$laplace_correction, "ctLaplaceCorrection")
-  expect_equal(corrected$laplace_correction$check$dropped_directions, 0L)
   expect_true(all(is.finite(as.numeric(corrected$estimate$raw))))
+  check <- corrected$laplace_correction$check
+
+  # This fixture's random-intercept covariance is rank deficient, and the
+  # correction is expected to say so rather than to report 0.
+  #
+  # Two random CINTs on two latents, with LAMBDA fixed, MANIFESTMEANS fixed at
+  # zero and nothing else carrying a between-subject level: the population sd
+  # and correlation of the intercepts are not separately determined. The fit
+  # has two maxima and the random start decides which one it finds, measured
+  # over four runs of this same fixture:
+  #
+  #   interior   nweak 2  (popsd_cint1, rawcor_cint2__cint1)  dropped 2
+  #   boundary   nweak 1  (rawcor_cint2__cint1 at se exactly 0)  dropped 1
+  #
+  # So `dropped_directions == 0L` was false in every run, not occasionally --
+  # it asserted a property the model does not have. What is true either way is
+  # that the two reports agree: `.ctBackendIdentifiability()` counts the
+  # rank-deficient directions from the uncertainty Hessian and the correction
+  # counts them from the same information matrix, so a mismatch here means
+  # their thresholds have drifted apart, which is worth failing on.
+  expect_equal(as.integer(check$dropped_directions),
+    as.integer(fit$identifiability$nweak))
+
   # Identity-transformed intercepts again: there should be very little here to
   # correct, and a large correction would mean the recursion is not integrating
   # what the fit maximised.
-  expect_lt(max(abs(corrected$laplace_correction$check$parameters$delta_se)), 0.5)
+  #
+  # `na.rm`, as `print.ctLaplaceCheck()` uses on the same column, because
+  # `delta_se` is `delta / se` and is documented NA where `se` is 0 -- which
+  # is exactly the boundary maximum above. Without it this read NA >= 0.5 and
+  # failed for the one parameter the correction could not have scored anyway.
+  delta <- check$parameters$delta_se
+  expect_false(all(is.na(delta)))
+  expect_lt(max(abs(delta), na.rm = TRUE), 0.5)
+  # And an NA is only ever the zero-width case, never a correction that failed
+  # to compute: that is the contract `na.rm` above relies on.
+  expect_true(all(check$parameters$se[is.na(delta)] == 0))
 })

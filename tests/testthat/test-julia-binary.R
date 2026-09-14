@@ -140,7 +140,7 @@ test_that("a binary model recovers what generated it", {
     ctFit(.jbin_data(nsubjects = 50), .jbin_model(), backend = "julia",
       cores = 1, optimcontrol = list(estonly = TRUE))))
   est <- summary(fit)$popmeans
-  expect_true(isTRUE(fit$estimate$converged))
+  expect_true(isTRUE(fit$optim$converged))
   # Three binary indicators carry much less information than one continuous
   # one, so these are loose -- the point is that it lands near the truth rather
   # than at a transform boundary, which is what it used to do.
@@ -175,7 +175,7 @@ test_that("a saturated optimum is not reported as converged", {
     ctFit(d, m, backend = "julia", cores = 1, inits = rep(24, npar),
       optimcontrol = list(estonly = TRUE, maxiter = 1))))
   expect_gt(max(abs(fit$estimate$raw)), 20)
-  expect_false(isTRUE(fit$estimate$converged))
+  expect_false(isTRUE(fit$optim$converged))
 })
 
 # --- integration, found by exercising the package rather than the filter -----
@@ -236,7 +236,7 @@ test_that("mixed binary and gaussian indicators fit together", {
   fit <- suppressWarnings(suppressMessages(
     ctFit(.jbin_mixed_data(), .jbin_mixed(), backend = "julia", cores = 2,
       optimcontrol = list(estonly = TRUE))))
-  expect_true(isTRUE(fit$estimate$converged))
+  expect_true(isTRUE(fit$optim$converged))
   est <- summary(fit)$popmeans
   expect_equal(unname(est["drift_eta1", "mean"]), -0.3, tolerance = 0.2)
   expect_equal(unname(est["diff_eta1", "mean"]), 0.8, tolerance = 0.35)

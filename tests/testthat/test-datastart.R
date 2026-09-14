@@ -164,7 +164,7 @@ test_that("the derived start rescues a badly scaled fit", {
   off <- fit(FALSE)
   # Measured: 4565.60 against 4237.21, with the loadings running to -844 and
   # -1242 in the failing fit against generating values of 0.8 and 1.2.
-  expect_true(isTRUE(on_$estimate$converged))
+  expect_true(isTRUE(on_$optim$converged))
   expect_gt(as.numeric(on_$estimate$loglik), as.numeric(off$estimate$loglik) - 1)
   expect_lt(max(abs(on_$estimate$raw)), 10)
 })

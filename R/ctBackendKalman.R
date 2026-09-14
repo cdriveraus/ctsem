@@ -189,7 +189,8 @@
   }
 
   prepared <- .ctBackendAsModel(.ctJuliaPrepare(dat, model, project = spec$project,
-    intoverpop = .ctBackendIntOverPop(spec)))
+    intoverpop = .ctBackendIntOverPop(spec),
+    laplacecontrol = spec$laplace$inner))
   if (withhold) attr(prepared, "reportManifest") <- reported
 
   # A Laplace fit's random effects are conditional modes, and a mode is only
@@ -767,7 +768,8 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
   }
   spec <- .ctBackendSpec(fit)
   prepared <- .ctJuliaPrepare(datalong, .ctFitModelObject(fit),
-    project = spec$project, intoverpop = .ctBackendIntOverPop(spec))
+    project = spec$project, intoverpop = .ctBackendIntOverPop(spec),
+    laplacecontrol = spec$laplace$inner)
   # Carry across the two things that are properties of the *fit* rather than of
   # the data, and that re-preparation would otherwise silently drop: the prior
   # specification (a function of the model, and `priors` defaults to FALSE

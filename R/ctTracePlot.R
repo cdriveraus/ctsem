@@ -26,12 +26,12 @@
 #' @return The trace, invisibly.
 #'
 #' @details Available on the Julia backend, which records the trace during the
-#'   fit and returns it as \code{fit$trace}. For output while a fit is still
+#'   fit and returns it as \code{fit$optim$trace}. For output while a fit is still
 #'   running, see \code{optimcontrol$callback} in \code{\link{ctFit}}.
 #'
 #' @export
 ctTracePlot <- function(fit, which = NULL, ...) {
-  trace <- if (is.data.frame(fit)) fit else fit$trace
+  trace <- if (is.data.frame(fit)) fit else fit$optim$trace
   if (is.null(trace) || !nrow(trace)) {
     stop("This fit carries no optimisation trace. The Julia backend records ",
       "one; the Stan backend does not.", call. = FALSE)

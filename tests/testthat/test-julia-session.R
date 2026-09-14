@@ -85,8 +85,8 @@ test_that("a model and a data frame fit end to end", {
       intoverpop = if (route == "laplace") "laplace" else TRUE, cores = 1,
       optimcontrol = list(estonly = TRUE)))
     expect_s3_class(fit, "ctJuliaFit")
-    expect_true(isTRUE(fit$estimate$converged), label = route)
-    expect_false(isTRUE(fit$estimate$stalled), label = route)
+    expect_true(isTRUE(fit$optim$converged), label = route)
+    expect_false(isTRUE(fit$optim$stalled), label = route)
     expect_true(is.finite(fit$estimate$loglik), label = route)
     # The population mean of an identity-transformed MANIFESTMEANS is the one
     # parameter whose truth is known here without any transform bookkeeping.
@@ -127,8 +127,8 @@ test_that("a fit leaves the engine's chunk ceiling as it found it", {
   expect_equal(ceiling(), before)
   # And the tuner's answer is still recorded on the fit, which is what the
   # uncertainty phase reads instead of `cores`.
-  expect_true(is.numeric(fit$estimate$chunks) || is.integer(fit$estimate$chunks))
-  expect_lte(as.integer(fit$estimate$chunks), 2L)
+  expect_true(is.numeric(fit$optim$chunks) || is.integer(fit$optim$chunks))
+  expect_lte(as.integer(fit$optim$chunks), 2L)
 
   # A diagnostic must not reconfigure the session either.
   JuliaConnectoR::juliaEval("ContinuousTimeSEM.ctsem_set_max_chunks!(3)")

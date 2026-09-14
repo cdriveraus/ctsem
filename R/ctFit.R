@@ -200,7 +200,23 @@
     inert = function(v) isTRUE(v),
     msg = paste0("chooses whether the outcome informs julia's imputation of ",
       "missing TI predictors; stan imputes them as parameters of the joint ",
-      "posterior, so on stan it always does. Drop it"))
+      "posterior, so on stan it always does. Drop it")),
+
+  # -- julia only, and within julia only for intoverpop='laplace'. Prefixed
+  # because they tune the *inner* solve -- one Newton iteration per unit per
+  # outer evaluation -- and every other stopping name in this list is about the
+  # outer optimiser. There is no inner solve to tune on the augmented route,
+  # where the random effects are latent states, nor on stan, which has neither.
+  laplace_inner_maxiter = list(only = 'julia',
+    inert = function(v) FALSE,
+    msg = paste0("caps the Newton iterations each unit's random-effect mode ",
+      "is solved with, and stan has no such inner solve -- it augments the ",
+      "latent state instead. Drop it")),
+  laplace_inner_tol = list(only = 'julia',
+    inert = function(v) FALSE,
+    msg = paste0("is the gradient at which a unit's random-effect mode counts ",
+      "as found, and stan has no such inner solve -- it augments the latent ",
+      "state instead. Drop it"))
 )
 
 # Refuse a control-list name the chosen backend cannot honour, before any data
@@ -455,7 +471,7 @@ T0VARredundancies <- function(ctm) {
 #' Useful for parsimony, or for speed in high dimensions, and not otherwise.
 #'
 #' Under \code{intoverpop='augmented'} the population covariance is
-#' \code{Sigma = L L'}, for a loading matrix \code{L} with one row per varying
+#' \eqn{\Sigma = L L^{\top}}, for a loading matrix \code{L} with one row per varying
 #' parameter and \code{poprank} columns, lower triangular in its first
 #' \code{poprank} rows: a basis effect loads on its own dimension and those
 #' before it, a regressed effect on all of them, and no regressed effect has
@@ -566,6 +582,15 @@ T0VARredundancies <- function(ctm) {
 #' happens; a value that describes what it already does is simply accepted, so
 #' \code{stochastic=FALSE} works on julia and \code{gradient='adjoint'} works on
 #' stan.
+#' With \code{intoverpop='laplace'}, \code{optimcontrol$laplace_inner_maxiter}
+#' (default 200) and \code{optimcontrol$laplace_inner_tol} (default 1e-10) tune
+#' the inner solve that finds each unit's random-effect mode, as distinct from
+#' every other stopping name here, which governs the outer optimiser. Raise the
+#' first when the fit reports that modes did not converge; the tolerance is an
+#' absolute bound on the inner gradient, floored at
+#' \code{1e-10 * (1 + abs(value))} so that it means something at any data size.
+#' Neither applies to \code{intoverpop='augmented'}, which has no inner solve.
+#'
 #' With \code{backend='julia'}, \code{optimcontrol$gradient} selects the
 #' gradient method: \code{'adjoint'} (reverse mode, the default) or
 #' \code{'forward'} (ForwardDiff). Both compute the same gradient; 'adjoint'
@@ -615,7 +640,7 @@ T0VARredundancies <- function(ctm) {
 #' warming up at all -- because the prior pass pulls the start toward the prior
 #' mode and past about ten iterations that is what it hands the likelihood.
 #'
-#' \code{fit$estimate$carefulfit} records whether the pass ran, and
+#' \code{fit$optim$carefulfit} records whether the pass ran, and
 #' \code{$carefulfit_iterations} how long it was allowed.
 #' With \code{backend='julia'}, \code{optimcontrol$callback} is a function
 #' called while the fit runs, with \code{(iteration, total, objective,
@@ -624,7 +649,7 @@ T0VARredundancies <- function(ctm) {
 #' because a callback costs about half a millisecond through the Julia
 #' bridge, and always once more at the end. An error inside it disables it
 #' and warns, leaving the fit unaffected. If output after the fit is enough,
-#' \code{fit$trace} holds every iteration and \code{\link{ctTracePlot}}
+#' \code{fit$optim$trace} holds every iteration and \code{\link{ctTracePlot}}
 #' draws it.
 #' \code{backend='julia'} also finishes by estimating uncertainty, as the stan
 #' backend does, and reads the same \code{stanoptimis} control names for it:
@@ -724,7 +749,7 @@ T0VARredundancies <- function(ctm) {
 #' optimum, how nonlinear each observation interval is and refines only the intervals that need it;
 #' \code{substeptol} (default 0.01) is the largest acceptable linearisation error as a fraction of the
 #' predicted state standard deviation, and \code{maxsubsteps} (default 64) caps an interval.
-#' \code{maxtimestep} remains a ceiling on the step. The choice is reported in \code{fit$estimate$substeps}.
+#' \code{maxtimestep} remains a ceiling on the step. The choice is reported in \code{fit$substeps}.
 #' \code{transition = 'euler'} (julia backend, \code{intoverstates = FALSE} only) replaces the exponential
 #' step between substeps of the state-explicit path with plain Euler-Maruyama, for a reference that
 #' shares no approximation with the filter; it needs a fine \code{maxtimestep}. See also
@@ -1989,7 +2014,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     # information, recorded every iteration and handed back on the fit; for
     # genuinely live output, `optimcontrol$callback` is called while the fit
     # runs and can draw whatever it likes.
-    if(isTRUE(fit) && !identical(plot, FALSE) && !is.null(juliafit$trace)) {
+    if(isTRUE(fit) && !identical(plot, FALSE) && !is.null(juliafit$optim$trace)) {
       try(ctTracePlot(juliafit), silent=TRUE)
     }
     return(juliafit)

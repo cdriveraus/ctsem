@@ -244,6 +244,20 @@
   # describing the previous method would be worse than none.
   uncertaintyfit$intervalcheck <- .ctBackendIntervalCheck(uncertaintyfit$hessian,
     fit$estimate$se, names(fit$estimate$se))
+  # Where the curvature this call used was evaluated. `est` is this call's own
+  # point, which is not always the fit's: `ctOptimUncertainty()` can be handed
+  # an estimate from elsewhere.
+  #
+  # `evaluated_at`, and deliberately NOT `hessian_at`. R's `$` partial-matches
+  # on lists, so a sibling named `hessian_at` makes `x$hessian` resolve to it
+  # the moment `hessian` itself is absent -- handing a length-npar vector to
+  # every `is.null(fit$uncertainty$hessian)` guard in the package, which then
+  # takes the "no curvature" branch's opposite and treats a vector as a matrix.
+  # test-julia-laplace-check.R found it by doing exactly that: it removes the
+  # Hessian to check the refusal, and the refusal stopped firing. Nothing in
+  # `$uncertainty` may be a prefix-extension of another name there; the
+  # duplication ratchet asserts it.
+  if (!is.null(uncertaintyfit$hessian)) uncertaintyfit$evaluated_at <- as.numeric(est)
   fit$uncertainty <- uncertaintyfit
   # And the identifiability report, for the same reason: it is a statement
   # about the curvature this call just used. A fit made with `estonly = TRUE`
@@ -449,13 +463,22 @@
   # The convergence certification computed this matrix, at this estimate, on
   # the way out of the optimiser -- see `.ctBackendCorrectResult()`. Recomputing
   # it would be the fit's second most expensive step run twice for the same
-  # answer. Only when the estimate has not moved since: `ctOptimUncertainty()`
-  # can be called on a fit whose estimate came from somewhere else entirely.
-  stored <- fit$estimate$hessian
-  if (!is.null(stored) && is.matrix(stored) &&
+  # answer.
+  #
+  # Reused only when it was evaluated at the point being asked about, and
+  # `evaluated_at` is what says where that was. Comparing against
+  # `fit$estimate$raw` instead is the trap: it is the same point on an
+  # optimised fit and a different one on a sampled fit, whose Hessian is at the
+  # Laplace estimate while `$estimate$raw` is the posterior mean -- so a guard
+  # written that way passes exactly where it must not and returns curvature
+  # from somewhere else. A fit carrying a Hessian and no `evaluated_at` predates
+  # this and is not reused.
+  stored <- fit$uncertainty$hessian
+  at <- fit$uncertainty$evaluated_at
+  if (!is.null(stored) && is.matrix(stored) && !is.null(at) &&
       nrow(stored) == length(est) && ncol(stored) == length(est) &&
-      isTRUE(all.equal(as.numeric(fit$estimate$raw), as.numeric(est),
-        tolerance = 0))) {
+      length(at) == length(est) &&
+      isTRUE(all.equal(as.numeric(at), as.numeric(est), tolerance = 0))) {
     return(stored)
   }
   module <- .ctJuliaModule(.ctBackendSpec(fit)$project)

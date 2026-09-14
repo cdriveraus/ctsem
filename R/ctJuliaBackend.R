@@ -2492,6 +2492,39 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   do.call(rbind, entries)
 }
 
+# The inner-solve settings, checked here rather than where they are used.
+#
+# They reach the engine as keyword arguments to `ctsem_laplace_objective`, and a
+# keyword the bridge marshals wrongly is a silent wrong answer rather than an
+# error -- `inner_maxiter` is an `Integer` on the Julia side and a bare R
+# numeric arrives as a Float64, which no method accepts.
+.ctJuliaLaplaceInner <- function(laplacecontrol) {
+  if (is.null(laplacecontrol) || !length(laplacecontrol)) return(list())
+  out <- list()
+  maxiter <- laplacecontrol$inner_maxiter
+  if (!is.null(maxiter)) {
+    maxiter <- suppressWarnings(as.integer(maxiter)[1L])
+    if (is.na(maxiter) || maxiter < 1L) {
+      stop("optimcontrol$laplace_inner_maxiter must be a positive integer.",
+        call. = FALSE)
+    }
+    out$inner_maxiter <- maxiter
+  }
+  tol <- laplacecontrol$inner_tol
+  if (!is.null(tol)) {
+    tol <- suppressWarnings(as.numeric(tol)[1L])
+    # Zero is refused rather than treated as "off": `f_reltol = 0` is exact
+    # equality on the outer side and that is what ends julia fits, so a zero
+    # here would be a tolerance no gradient reaches rather than no tolerance.
+    if (is.na(tol) || tol <= 0) {
+      stop("optimcontrol$laplace_inner_tol must be a positive number.",
+        call. = FALSE)
+    }
+    out$inner_tol <- tol
+  }
+  out
+}
+
 # `intoverpop` deliberately has no default. It selects which *model* is
 # prepared -- random effects as latent states, or integrated by Laplace -- and a
 # default meant a caller could omit it and silently get the other one. That is
@@ -2500,7 +2533,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # Making it mandatory turns that from a silent wrong answer into a stop at the
 # call site.
 .ctJuliaPrepare <- function(datalong, model, prepared_data = NULL, project = NULL,
-  priors = FALSE, intoverpop, optimize = TRUE, tipredMissingIncludeOutcome = TRUE) {
+  priors = FALSE, intoverpop, optimize = TRUE, tipredMissingIncludeOutcome = TRUE,
+  laplacecontrol = NULL) {
   # "none" prepares exactly as "laplace" does. The Laplace specification is what
   # *describes* the random effects -- which raw parameters vary, at which level,
   # with which population scale -- and that description is needed whether they
@@ -2580,6 +2614,14 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     # per-subject one, and the random effects are described alongside it.
     parameter_table <- .ctJuliaParameterTable(model)
     laplace <- .ctJuliaLaplaceSpec(model, parameter_table, prepared_data, dat)
+    # On the specification rather than passed at optimise time, because the
+    # inner tolerance changes the *value* the objective returns: two fits
+    # differing only in it are not the same function, and `.ctJuliaObjectiveKey`
+    # hashes `spec$laplace`, so putting them here is what stops the second one
+    # being handed the first one's cached objective. Absent unless a caller
+    # asked, so every existing model hashes exactly as it did.
+    inner <- .ctJuliaLaplaceInner(laplacecontrol)
+    if (length(inner)) laplace$inner <- inner
     if (!laplace$nrandom) {
       stop("intoverpop='", intoverpop, "' was requested but no parameters are marked ",
         "indvarying, so there is nothing to integrate over. Mark parameters as ",
@@ -2973,6 +3015,15 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       sd_scale = .ctJuliaVector(as.numeric(grab("sd_scale"))))
     if (length(grab("cor_index"))) {
       laplace_args$cor_index <- .ctJuliaVector(as.integer(grab("cor_index")))
+    }
+    # Absent unless the fit asked for them, so the engine's own defaults stay
+    # the defaults and a spec built before this existed is byte-for-byte as it
+    # was. `inner_maxiter` must cross as an integer; see .ctJuliaLaplaceInner().
+    if (!is.null(spec$laplace$inner$inner_maxiter)) {
+      laplace_args$inner_maxiter <- as.integer(spec$laplace$inner$inner_maxiter)
+    }
+    if (!is.null(spec$laplace$inner$inner_tol)) {
+      laplace_args$inner_tol <- as.numeric(spec$laplace$inner$inner_tol)
     }
     if (length(levels) > 1L) {
       # Concatenated innermost level first, split on the far side by the
@@ -3692,6 +3743,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         ngroups = x$ngroups)),
     linesearch = if (is.null(result$linesearch)) NA_character_ else
       as.character(result$linesearch),
+    # What the modes were actually solved with, which is not recoverable from
+    # `args$optimcontrol` alone: an unset name there means the engine default,
+    # and the engine default has changed once already.
+    inner_maxiter = .ctJuliaOr(model_spec$laplace$inner$inner_maxiter, 200L),
+    inner_tol = .ctJuliaOr(model_spec$laplace$inner$inner_tol, 1e-10),
     inner_converged = isTRUE(result$inner_converged),
     inner_iterations = as.integer(result$inner_iterations),
     # Two different things. `hessian_repaired` is true if *any* Newton iterate
@@ -3767,7 +3823,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # fallback between them in either direction.
   model_spec <- .ctJuliaPrepare(datalong, model, prepared_data = prepared_data,
     priors = priors, intoverpop = intoverpop, optimize = optimize,
-    tipredMissingIncludeOutcome = .ctJuliaOr(optimcontrol$tipredMissingIncludeOutcome, TRUE))
+    tipredMissingIncludeOutcome = .ctJuliaOr(optimcontrol$tipredMissingIncludeOutcome, TRUE),
+    laplacecontrol = list(inner_maxiter = optimcontrol$laplace_inner_maxiter,
+      inner_tol = optimcontrol$laplace_inner_tol))
   if (!is.null(model_spec$ti_missing) && nrow(model_spec$ti_missing)) {
     # The state-explicit route (`intoverstates=FALSE`) samples the latent
     # trajectory through a different objective (`CTSEMJointObjective`,
@@ -3949,7 +4007,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       # drawing a live trace saw the counter restart, and
       # `max(seen$iterations)` reported this stage's cap rather than the fit's
       # iteration count. That broke the contract the callback shares with
-      # `fit$trace` and `fit$estimate$iterations`, both of which describe the
+      # `fit$optim$trace` and `fit$optim$iterations`, both of which describe the
       # fit alone. Reported as test-julia-trace.R expecting 8 and seeing 10,
       # which is exactly `warmiter`.
       warmed <- try(.ctJuliaOptimise(spec,  start,
@@ -4075,107 +4133,129 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # entry point, and `model_spec$data` (the long data.frame `.ctJuliaPrepare()`
   # kept) already covers what code inside this package needs from it, via
   # `.ctBackendSpec()`.
+  # Two objects, because `$estimate` held thirty-five fields of which about a
+  # third were the answer and the rest described the search for it. `$estimate`
+  # is now what was estimated -- the point, its precision, and the likelihood at
+  # it -- and `$optim` is the run: its counts, its verdicts, its trace.
+  #
+  # The split is along the line a reader already draws. Nothing in `$optim`
+  # changes if the same estimate is reached another way, and nothing in
+  # `$estimate` says whether to believe it. It also matches `$uncertainty`,
+  # `$laplace` and `$identifiability`, each a subobject named for one concern;
+  # `$estimate` was the one that had grown into a flat namespace instead, and
+  # its `overshoot_*`, `saturated_*` and `carefulfit_*` prefixes were already
+  # doing a subobject's work by hand.
+  #
+  # Those prefixes stay flat *within* `$optim` rather than nesting one level
+  # further. With two or three fields each a prefix carries it, and making
+  # `overshoot` a list would turn `if (fit$optim$overshot)` from a logical test
+  # into a truthy one -- which is a silent change of meaning, not a rename.
+  optim_run <- list(
+    converged = isTRUE(result$converged),
+    # The gradient at the reported point, and its norm. Run material: it says
+    # where the optimiser stopped, not what was estimated.
+    gradient = gradientvec,
+    iterations = as.integer(result$iterations),
+    # What `ctsem_tune_chunks!` measured as the best subject-chunk count
+    # within the `cores` ceiling. Carried onto the fit because the uncertainty
+    # phase reads it rather than re-deriving it from `cores`: the subject loop
+    # is not monotone in the chunk count, which is the whole reason the tuner
+    # exists.
+    chunks = if (is.null(result$chunks)) NA_integer_ else as.integer(result$chunks),
+    # Evaluation counts, because "how many times did it call the likelihood"
+    # is the first question about a fit that took longer than expected, and
+    # it was previously only obtainable by timing one evaluation and dividing.
+    f_calls = if (is.null(result$f_calls)) NA_integer_ else as.integer(result$f_calls),
+    g_calls = if (is.null(result$g_calls)) NA_integer_ else as.integer(result$g_calls),
+    # What the fit still had to gain when it stopped, in log likelihood
+    # units, and the tolerance that was asked of it. This is the criterion --
+    # `1/2 g'Bg` under the optimiser's own metric -- and not the gradient,
+    # which is reported beside it because it is what a reader recognises and
+    # because a fit that stops just short looks the same as one that never
+    # moved unless both are visible. The exact version of the same quantity,
+    # where a Hessian was computed, is
+    # `fit$uncertainty$certification$gap`; see `.ctBackendCertifiedVerdict()`.
+    gradient_norm = if (is.null(result$gradient_norm)) NA_real_ else
+      as.numeric(result$gradient_norm),
+    predicted_gain = if (is.null(result$predicted_gain)) NA_real_ else
+      as.numeric(result$predicted_gain),
+    convergence_tolerance = if (is.null(result$converge_tol)) NA_real_ else
+      as.numeric(result$converge_tol),
+    # What the final iteration actually gained. The second of the two ways a
+    # fit can satisfy the criterion, and the one that carries a fit whose
+    # metric has been corrupted by a flat direction -- see
+    # `_ctsem_optimise_verdict`.
+    last_gain = if (is.null(result$last_gain)) NA_real_ else
+      as.numeric(result$last_gain),
+    # A parameter that reached the flat region of its transform, and which.
+    # Invisible in the gradient -- a saturated transform reports a gradient
+    # of zero, which passes every tolerance -- so without this the warning
+    # below described such a fit by its gradient alone and read as though it
+    # had passed.
+    #
+    # `saturated` is a statement about identification, not about
+    # convergence: the usual cause is a population standard deviation with
+    # no individual differences behind it, which is a finding. `overshot` is
+    # the half of it that *is* a convergence failure -- the optimizer
+    # overstepped and the point is not a maximum -- and it is what
+    # `converged` is keyed on. See `_ctsem_overshot` in the engine.
+    saturated = isTRUE(result$saturated),
+    # 0 from the engine means "none"; never an empty vector, which deadlocks
+    # the bridge. Named where names are available, because "raw parameter 10"
+    # is not something a user can act on and "rawcor_mm2__mm1" is.
+    saturated_parameters = .ctJuliaSaturatedNames(result, model_spec, npar),
+    overshot = isTRUE(result$overshot),
+    overshoot_gain = if (is.null(result$overshoot_gain)) NA_real_ else
+      as.numeric(result$overshoot_gain),
+    # Which coordinates the pullback moved to establish that. The probe
+    # selects them by magnitude order rather than from the saturation flag,
+    # so this is its own list and can name a parameter that is not in
+    # `saturated_parameters` -- see `_ctsem_overshot` in the engine.
+    overshoot_parameters = .ctJuliaSaturatedNames(result, model_spec, npar,
+      "overshoot_parameters"),
+    # Whether the first pass with priors ran, and how long it was allowed.
+    carefulfit = warmiter >= 1, carefulfit_iterations = as.integer(warmiter),
+    # Which line search produced the answer. "hagerzhang+backtracking" means
+    # Hager-Zhang stopped short and the fit was finished by the fallback.
+    linesearch = if (is.null(result$linesearch)) NA_character_ else
+      as.character(result$linesearch),
+    stalled = isTRUE(result$stalled),
+    # Whether the cheap stopping rule ended the run, which is what makes
+    # `f_calls` and `g_calls` undercounts: Optim stops updating them when a
+    # callback stops it, and there is no second source for those two.
+    # `iterations` is taken from the engine's own count and is right either
+    # way. See `ctsem_optimize`.
+    stopped_by_gap = isTRUE(result$stopped_by_gap),
+    # And whether it ended because it had stopped making progress with a
+    # transform flat as the reason. Reported separately from `stopped_by_gap`
+    # because they mean opposite things: the gap rule stops a fit that has
+    # arrived, this one stops a fit that is not going to.
+    stopped_by_stall = isTRUE(result$stopped_by_stall),
+    stall_window = if (is.null(result$stall_window)) NA_integer_ else
+      as.integer(result$stall_window),
+    # Which coordinates had gone flat when it stopped, named rather than
+    # numbered, and how many times the progress half fired. More than one
+    # trigger means the fit stalled, was found to be merely slow, and was
+    # given more rope.
+    stall_parameters = .ctJuliaSaturatedNames(result, model_spec, npar,
+      "stall_parameters"),
+    stall_triggers = if (is.null(result$stall_triggers)) NA_integer_ else
+      as.integer(result$stall_triggers),
+    # How many times the fit was pulled off a boundary and refitted.
+    stall_escapes = if (is.null(result$stall_escapes)) 0L else
+      as.integer(result$stall_escapes),
+    # Every iteration, recorded whatever `verbose` said. It costs a push onto a
+    # vector in Julia and one transfer at the end, and the fit whose trace turns
+    # out to be worth looking at is exactly the one nobody thought to turn
+    # reporting on for. On `$optim` rather than at top level because it is the
+    # most purely run-shaped thing a fit carries.
+    trace = .ctBackendTrace(result$trace))
+
   out <- list(backend = "julia", model = model, model_spec = model_spec,
     estimate = list(raw = minimizer,
       loglik = loglik,
       logposterior = as.numeric(result$maximum_loglik),
-      gradient = gradientvec,
-      subject_loglik = result$subject_loglik, converged = isTRUE(result$converged),
-      iterations = as.integer(result$iterations),
-      # What `ctsem_tune_chunks!` measured as the best subject-chunk count
-      # within the `cores` ceiling. Carried onto the fit because the uncertainty
-      # phase reads it rather than re-deriving it from `cores`: the subject loop
-      # is not monotone in the chunk count, which is the whole reason the tuner
-      # exists.
-      chunks = if (is.null(result$chunks)) NA_integer_ else as.integer(result$chunks),
-      # Evaluation counts, because "how many times did it call the likelihood"
-      # is the first question about a fit that took longer than expected, and
-      # it was previously only obtainable by timing one evaluation and dividing.
-      f_calls = if (is.null(result$f_calls)) NA_integer_ else as.integer(result$f_calls),
-      g_calls = if (is.null(result$g_calls)) NA_integer_ else as.integer(result$g_calls),
-      # What the fit still had to gain when it stopped, in log likelihood
-      # units, and the tolerance that was asked of it. This is the criterion --
-      # `1/2 g'Bg` under the optimiser's own metric -- and not the gradient,
-      # which is reported beside it because it is what a reader recognises and
-      # because a fit that stops just short looks the same as one that never
-      # moved unless both are visible. The exact version of the same quantity,
-      # where a Hessian was computed, is
-      # `fit$uncertainty$certification$gap`; see `.ctBackendCertifiedVerdict()`.
-      gradient_norm = if (is.null(result$gradient_norm)) NA_real_ else
-        as.numeric(result$gradient_norm),
-      predicted_gain = if (is.null(result$predicted_gain)) NA_real_ else
-        as.numeric(result$predicted_gain),
-      convergence_tolerance = if (is.null(result$converge_tol)) NA_real_ else
-        as.numeric(result$converge_tol),
-      # What the final iteration actually gained. The second of the two ways a
-      # fit can satisfy the criterion, and the one that carries a fit whose
-      # metric has been corrupted by a flat direction -- see
-      # `_ctsem_optimise_verdict`.
-      last_gain = if (is.null(result$last_gain)) NA_real_ else
-        as.numeric(result$last_gain),
-      # A parameter that reached the flat region of its transform, and which.
-      # Invisible in the gradient -- a saturated transform reports a gradient
-      # of zero, which passes every tolerance -- so without this the warning
-      # below described such a fit by its gradient alone and read as though it
-      # had passed.
-      #
-      # `saturated` is a statement about identification, not about
-      # convergence: the usual cause is a population standard deviation with
-      # no individual differences behind it, which is a finding. `overshot` is
-      # the half of it that *is* a convergence failure -- the optimizer
-      # overstepped and the point is not a maximum -- and it is what
-      # `converged` is keyed on. See `_ctsem_overshot` in the engine.
-      saturated = isTRUE(result$saturated),
-      # 0 from the engine means "none"; never an empty vector, which deadlocks
-      # the bridge. Named where names are available, because "raw parameter 10"
-      # is not something a user can act on and "rawcor_mm2__mm1" is.
-      saturated_parameters = .ctJuliaSaturatedNames(result, model_spec, npar),
-      overshot = isTRUE(result$overshot),
-      overshoot_gain = if (is.null(result$overshoot_gain)) NA_real_ else
-        as.numeric(result$overshoot_gain),
-      # Which coordinates the pullback moved to establish that. The probe
-      # selects them by magnitude order rather than from the saturation flag,
-      # so this is its own list and can name a parameter that is not in
-      # `saturated_parameters` -- see `_ctsem_overshot` in the engine.
-      overshoot_parameters = .ctJuliaSaturatedNames(result, model_spec, npar,
-        "overshoot_parameters"),
-      # Whether the first pass with priors ran, and how long it was allowed.
-      carefulfit = warmiter >= 1, carefulfit_iterations = as.integer(warmiter),
-      # Which line search produced the answer. "hagerzhang+backtracking" means
-      # Hager-Zhang stopped short and the fit was finished by the fallback.
-      linesearch = if (is.null(result$linesearch)) NA_character_ else
-        as.character(result$linesearch),
-      stalled = isTRUE(result$stalled),
-      # Whether the cheap stopping rule ended the run, which is what makes
-      # `f_calls` and `g_calls` undercounts: Optim stops updating them when a
-      # callback stops it, and there is no second source for those two.
-      # `iterations` is taken from the engine's own count and is right either
-      # way. See `ctsem_optimize`.
-      stopped_by_gap = isTRUE(result$stopped_by_gap),
-      # And whether it ended because it had stopped making progress. Reported
-      # separately from `stopped_by_gap` because they mean opposite things: the
-      # gap rule stops a fit that has arrived, this one stops a fit that is not
-      # going to. A fit with this set is not converged, and `overshot` or the
-      # certification says what is wrong with it.
-      stopped_by_stall = isTRUE(result$stopped_by_stall),
-      stall_window = if (is.null(result$stall_window)) NA_integer_ else
-        as.integer(result$stall_window),
-      # Which coordinates had gone flat when it stopped. Named rather than
-      # numbered, as the saturated list is, because "raw parameter 2" is not
-      # something a user can act on.
-      stall_parameters = .ctJuliaSaturatedNames(result, model_spec, npar,
-        "stall_parameters"),
-      # How many times the progress half fired. More than one means the fit
-      # stalled, was found to be merely slow, and was given more rope.
-      stall_triggers = if (is.null(result$stall_triggers)) NA_integer_ else
-        as.integer(result$stall_triggers),
-      # How many times the fit was pulled off a flat transform and refitted.
-      stall_escapes = if (is.null(result$stall_escapes)) 0L else
-        as.integer(result$stall_escapes),
-      # What nsubsteps = 'auto' decided: intervals, how many were refined, the
-      # largest count, the total, and whether the fit was redone after the
-      # mesh moved at the optimum. NULL unless it was asked for.
-      substeps = substeps,
+      subject_loglik = result$subject_loglik,
       # State-explicit fits only. `states` is the trajectory at the
       # estimate, rows by latents, and `innovations` the standard normal
       # vector it was built from -- the same thing `ctGenerate` is handed,
@@ -4188,12 +4268,16 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       # be meaningless, and this is what says so.
       states = states, innovations = innovations,
       loglik_type = if (isTRUE(intoverstates)) "marginal" else "joint"),
+    optim = optim_run,
     engine = model_spec$engine,
-    # Every iteration, recorded whatever `verbose` said. It costs a push onto a
-    # vector in Julia and one transfer at the end, and the fit whose trace turns
-    # out to be worth looking at is exactly the one nobody thought to turn
-    # reporting on for.
-    trace = .ctBackendTrace(result$trace),
+    # What nsubsteps = 'auto' decided: intervals, how many were refined, the
+    # largest count, the total, and whether the fit was redone after the mesh
+    # moved at the optimum. NULL unless it was asked for.
+    #
+    # Top level rather than on `$optim`: the mesh is a property of how the
+    # likelihood is discretised, which prediction and the Kalman routes read
+    # too, and it would be there whether or not anything had been optimised.
+    substeps = substeps,
     args = list(backend = "julia",
       optimcontrol = optimcontrol, cores = cores, priors = priors,
       intoverpop = intoverpop, intoverstates = isTRUE(intoverstates)))
@@ -4204,7 +4288,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   if (isTRUE(result$stalled)) {
     warning("The optimizer made no progress from its starting values, and the ",
       "gradient there is not zero. Treat this fit as failed: check the starting ",
-      "values, and see fit$estimate$stalled.", call. = FALSE)
+      "values, and see fit$optim$stalled.", call. = FALSE)
   } else if (isTRUE(result$overshot)) {
     # Reported separately because the gradient says nothing useful here: the
     # coordinate's transform is flat, so the gradient underflows to zero and
@@ -4213,17 +4297,17 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # objective improves -- `overshoot_gain` is by how much.
     warning("The optimizer stopped where the objective improves by ",
       signif(as.numeric(result$overshoot_gain), 3), " if raw parameter(s) ",
-      paste(out$estimate$overshoot_parameters, collapse = ", "),
+      paste(out$optim$overshoot_parameters, collapse = ", "),
       " are pulled back toward zero, so this is not a maximum -- the usual ",
       "cause is a transform that has gone flat, or a population scale that ",
       "has collapsed and taken its correlations with it. Treat this fit as ",
-      "failed and check the starting values. See fit$estimate$overshot.",
+      "failed and check the starting values. See fit$optim$overshot.",
       call. = FALSE)
   } else if (!isTRUE(result$converged)) {
     # Held rather than raised. The gradient says where the optimizer stopped;
     # whether that is the optimum is a question about the curvature, and the
     # curvature is computed a few lines below. Raised there, or superseded.
-    out$estimate$convergence_pending <- TRUE
+    out$optim$convergence_pending <- TRUE
   }
   if (!is.null(model_spec$laplace)) {
     out$laplace <- .ctJuliaFitLaplaceBlock(model_spec, result)
@@ -4250,17 +4334,28 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # The Hessian goes on the fit so the uncertainty stage does not recompute
     # the same matrix at the same point, and the certification with it so a
     # fit made with `estonly` can still be told from one that was checked.
-    out$estimate$hessian <- correction$hessian
-    out$estimate$corrections <- correction$corrections
+    out$optim$corrections <- correction$corrections
     # Totals over every stage the fit ran, which is what these names should
     # always have meant. `stage_iterations` keeps the last stage's own count
     # for anyone reading a trace against it.
-    out$estimate$stage_iterations <- out$estimate$iterations
-    out$estimate$iterations <- as.integer(correction$totals[["iterations"]])
-    out$estimate$f_calls <- as.integer(correction$totals[["f_calls"]])
-    out$estimate$g_calls <- as.integer(correction$totals[["g_calls"]])
-    out$estimate$hessians <- correction$hessians
-    out$uncertainty <- list(certification = correction$certification)
+    out$optim$stage_iterations <- out$optim$iterations
+    out$optim$iterations <- as.integer(correction$totals[["iterations"]])
+    out$optim$f_calls <- as.integer(correction$totals[["f_calls"]])
+    out$optim$g_calls <- as.integer(correction$totals[["g_calls"]])
+    # A count of Hessians computed, which used to sit on `$estimate` as
+    # `hessians` -- an integer one letter away from the matrix beside it. Named
+    # for what it counts, and on `$optim` because it counts work the run did.
+    out$optim$hessian_evaluations <- correction$hessians
+    # The matrix goes where its consumers look, and `evaluated_at` is what makes
+    # that safe. See `.ctBackendHessian()`: every route now says which point
+    # its Hessian describes, rather than leaving a reader to assume
+    # `$estimate$raw` -- which is true here and false on a sampled fit, where
+    # the matrix is at the Laplace point and `$estimate$raw` is the posterior
+    # mean. `.ctBackendCorrectResult()` recomputes the curvature at the top of
+    # every attempt and only breaks out before resuming, so this matrix is
+    # always at the `minimizer` the fit reports.
+    out$uncertainty <- list(certification = correction$certification,
+      hessian = correction$hessian, evaluated_at = minimizer)
     out <- .ctBackendCertifiedVerdict(out)
   }
   class(out) <- c("ctJuliaFit", "ctFit")
@@ -4288,7 +4383,14 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   if (!isTRUE(intoverstates)) {
     profiled <- try(.ctBackendJointHessian(out, out$estimate$raw),
       silent = TRUE)
-    if (!inherits(profiled, "try-error")) out$estimate$hessian_profile <- profiled
+    # On `$optim`, not `$uncertainty`. A state-explicit fit deliberately has
+    # no `$uncertainty` at all -- that NULL is how a caller tells "nothing was
+    # computed" from "computed and here it is" -- and the whole point of the
+    # message below is that this matrix is *not* an uncertainty: intervals from
+    # a profile the states flatten would be numbers that look like standard
+    # errors and are not. It is curvature the run reached, so it goes with the
+    # run.
+    if (!inherits(profiled, "try-error")) out$optim$hessian_profile <- profiled
     message("No standard errors: an optimised intoverstates=FALSE fit has ",
       "only the profile curvature, which the states flatten. Use ",
       "optimize=FALSE to sample them, or intoverstates=TRUE.")
@@ -4357,7 +4459,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 print.ctJuliaFit <- function(x, ...) {
   cat("ctsem Julia fit\n")
   cat("  log likelihood:", format(x$estimate$loglik), "\n")
-  cat("  converged:", x$estimate$converged, " iterations:", x$estimate$iterations, "\n")
+  cat("  converged:", x$optim$converged, " iterations:", x$optim$iterations, "\n")
   # A sampled fit's headline is not the optimiser's. That optimisation ran only
   # to place the sampler and build its metric, so a fit whose chains never
   # agreed prints `converged: TRUE` on the line above and is still worthless.
