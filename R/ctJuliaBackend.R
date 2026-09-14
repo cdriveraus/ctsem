@@ -4242,15 +4242,16 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # `hessians` -- an integer one letter away from the matrix beside it. Named
     # for what it counts, and on `$optim` because it counts work the run did.
     out$optim$hessian_evaluations <- correction$hessians
-    # The matrix itself, on `$optim` beside the count of them and the profile
-    # one. NOT `$uncertainty$hessian`, which is a different claim: that slot
-    # holds whatever the uncertainty stage used, and the sampled route fills it
-    # with the metric the sampler was built from -- a matrix at the Laplace
-    # point, while `$estimate$raw` is the posterior mean. Putting the
-    # certification's matrix there would let `.ctBackendHessian()`'s cache
-    # guard pass on a sampled fit and hand back curvature from another point.
-    out$optim$hessian <- correction$hessian
-    out$uncertainty <- list(certification = correction$certification)
+    # The matrix goes where its consumers look, and `evaluated_at` is what makes
+    # that safe. See `.ctBackendHessian()`: every route now says which point
+    # its Hessian describes, rather than leaving a reader to assume
+    # `$estimate$raw` -- which is true here and false on a sampled fit, where
+    # the matrix is at the Laplace point and `$estimate$raw` is the posterior
+    # mean. `.ctBackendCorrectResult()` recomputes the curvature at the top of
+    # every attempt and only breaks out before resuming, so this matrix is
+    # always at the `minimizer` the fit reports.
+    out$uncertainty <- list(certification = correction$certification,
+      hessian = correction$hessian, evaluated_at = minimizer)
     out <- .ctBackendCertifiedVerdict(out)
   }
   class(out) <- c("ctJuliaFit", "ctFit")

@@ -1022,7 +1022,13 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
   out$estimate$raw <- as.numeric(colMeans(posterior))
   out$estimate$cov <- stats::cov(posterior)
   out$estimate$se <- sqrt(diag(out$estimate$cov))
+  # `evaluated_at` is the Laplace estimate, not `$estimate$raw`: the exact
+  # Hessian was taken at the point the sampler was placed from, and `$raw` is
+  # now the posterior mean. Saying so is what stops it being reused as
+  # curvature at the mean -- see `.ctBackendHessian()` -- and what lets a
+  # reader of the conditional SEs know which point they belong to.
   out$uncertainty <- list(method = "sampling", hessian = hessian,
+    evaluated_at = as.numeric(startvalues),
     settings = list(chains = chains, warmup = warmup, draws = draws,
       processes = FALSE))
 

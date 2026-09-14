@@ -113,9 +113,10 @@ suppressWarnings(suppressPackageStartupMessages(library(ctsem)))
   # the two above and optimised-only for the same reason.
   "overshoot_parameters",
   "saturated", "saturated_parameters", "carefulfit", "carefulfit_iterations",
-  # The curvature-correction stage, which only the optimising route runs:
-  # the matrix it computed, how many it computed, and the history.
-  "corrections", "hessian", "hessian_evaluations",
+  # The curvature-correction stage, which only the optimising route runs: how
+  # many Hessians it computed, and the history. The matrix itself is on
+  # `$uncertainty`, with `evaluated_at` saying where it was evaluated.
+  "corrections", "hessian_evaluations",
   # State-explicit only: the profile curvature, which is on `$optim` rather
   # than `$uncertainty` precisely because it is not one.
   "hessian_profile")
@@ -282,4 +283,44 @@ test_that("estimate slots a reader depends on are present on both", {
   expect_equal(length(fits$sampled$estimate$raw), npar)
   expect_equal(ncol(fits$sampled$estimate$rawposterior), npar)
   expect_equal(ncol(fits$optimised$estimate$rawposterior), npar)
+})
+
+test_that("nothing in $uncertainty is a prefix of a sibling there", {
+  skip_without_julia()
+  fits <- .shape_fits()
+  # R's `$` partial-matches on lists. An exact match always wins, so a prefix
+  # pair is harmless while both names are present -- `$estimate$raw` beside
+  # `rawposterior` has never been a problem. It becomes a hazard only where the
+  # SHORTER name is optional: with `hessian` removed and `hessian_at` left,
+  # `x$hessian` returned the evaluation vector instead of NULL, so every
+  # `is.null(fit$uncertainty$hessian)` guard took the wrong branch and handed a
+  # length-npar vector to code expecting a matrix. That is why the field is
+  # `evaluated_at`.
+  #
+  # Checked on `$uncertainty` alone, and that narrowness is the point. A
+  # blanket check over the whole fit fails on names that are fine: `model` and
+  # `model_spec` at top level, and `gradient`/`gradient_norm`,
+  # `saturated`/`saturated_parameters`, `carefulfit`/`carefulfit_iterations`
+  # in `$optim`, none of which is ever present without its partner.
+  # `$uncertainty$hessian` is the one field the package tests for absence and
+  # then indexes as a matrix, so it is the one slot where the rule must hold.
+  offenders <- function(nms) {
+    nms <- nms[nzchar(nms)]
+    out <- character(0)
+    for (a in nms) {
+      hit <- setdiff(nms[startsWith(nms, a)], a)
+      if (length(hit)) out <- c(out, paste0(a, " <- ", paste(hit, collapse = "/")))
+    }
+    out
+  }
+  for (route in names(fits)) {
+    nms <- names(fits[[route]]$uncertainty)
+    skip_if(is.null(nms), "no $uncertainty on this route")
+    expect_equal(offenders(nms), character(0), info = route)
+  }
+  # And the guard the naming protects still fires: remove the Hessian and the
+  # slot reads as absent rather than as its neighbour.
+  bare <- fits$optimised
+  bare$uncertainty$hessian <- NULL
+  expect_null(bare$uncertainty$hessian)
 })

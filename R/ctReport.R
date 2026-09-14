@@ -116,6 +116,17 @@
 .ctReportRawSE <- function(fit) {
   cov <- if (inherits(fit, "ctJuliaFit")) fit$uncertainty$cov else fit$stanfit$cov
   hess <- if (inherits(fit, "ctJuliaFit")) fit$uncertainty$hessian else fit$stanfit$uncertainty$hessian
+  # Only if it describes the point the marginal SEs describe. On a sampled fit
+  # the Hessian is at the Laplace estimate and the draws are around the
+  # posterior mean, so a ratio of the two was comparing curvature at one point
+  # with spread at another and calling the result a ridge diagnostic.
+  if (inherits(fit, "ctJuliaFit") && !is.null(hess)) {
+    at <- fit$uncertainty$evaluated_at
+    here <- suppressWarnings(as.numeric(.ctFitRawEstimate(fit)))
+    same <- !is.null(at) && length(at) == length(here) &&
+      isTRUE(all.equal(as.numeric(at), here, tolerance = 1e-8))
+    if (!same) hess <- NULL
+  }
 
   marginal <- NULL
   if (!is.null(cov) && is.matrix(cov)) marginal <- suppressWarnings(sqrt(diag(cov)))
