@@ -161,7 +161,23 @@
     inert = function(v) isTRUE(v),
     msg = paste0("chooses whether the outcome informs julia's imputation of ",
       "missing TI predictors; stan imputes them as parameters of the joint ",
-      "posterior, so on stan it always does. Drop it"))
+      "posterior, so on stan it always does. Drop it")),
+
+  # -- julia only, and within julia only for intoverpop='laplace'. Prefixed
+  # because they tune the *inner* solve -- one Newton iteration per unit per
+  # outer evaluation -- and every other stopping name in this list is about the
+  # outer optimiser. There is no inner solve to tune on the augmented route,
+  # where the random effects are latent states, nor on stan, which has neither.
+  laplace_inner_maxiter = list(only = 'julia',
+    inert = function(v) FALSE,
+    msg = paste0("caps the Newton iterations each unit's random-effect mode ",
+      "is solved with, and stan has no such inner solve -- it augments the ",
+      "latent state instead. Drop it")),
+  laplace_inner_tol = list(only = 'julia',
+    inert = function(v) FALSE,
+    msg = paste0("is the gradient at which a unit's random-effect mode counts ",
+      "as found, and stan has no such inner solve -- it augments the latent ",
+      "state instead. Drop it"))
 )
 
 # Refuse a control-list name the chosen backend cannot honour, before any data
@@ -527,6 +543,15 @@ T0VARredundancies <- function(ctm) {
 #' happens; a value that describes what it already does is simply accepted, so
 #' \code{stochastic=FALSE} works on julia and \code{gradient='adjoint'} works on
 #' stan.
+#' With \code{intoverpop='laplace'}, \code{optimcontrol$laplace_inner_maxiter}
+#' (default 200) and \code{optimcontrol$laplace_inner_tol} (default 1e-10) tune
+#' the inner solve that finds each unit's random-effect mode, as distinct from
+#' every other stopping name here, which governs the outer optimiser. Raise the
+#' first when the fit reports that modes did not converge; the tolerance is an
+#' absolute bound on the inner gradient, floored at
+#' \code{1e-10 * (1 + abs(value))} so that it means something at any data size.
+#' Neither applies to \code{intoverpop='augmented'}, which has no inner solve.
+#'
 #' With \code{backend='julia'}, \code{optimcontrol$gradient} selects the
 #' gradient method: \code{'adjoint'} (reverse mode, the default) or
 #' \code{'forward'} (ForwardDiff). Both compute the same gradient; 'adjoint'

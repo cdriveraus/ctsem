@@ -92,6 +92,11 @@ suppressWarnings(suppressPackageStartupMessages(library(ctsem)))
   "gradient", "gradient_norm", "predicted_gain", "convergence_tolerance",
   "last_gain", "iterations", "stage_iterations", "f_calls", "g_calls",
   "linesearch", "stalled", "stopped_by_gap", "overshot", "overshoot_gain",
+  # Which coordinates the pullback probe moved, so the same kind of thing as the
+  # two above and optimised-only for the same reason. Added to the optimised
+  # constructor by the probe itself and not to this list, which is the omission
+  # the list exists to catch.
+  "overshoot_parameters",
   "saturated", "saturated_parameters", "carefulfit", "carefulfit_iterations",
   "corrections", "hessian", "hessians", "substeps", "subject_loglik",
   # State-explicit only, and only reachable from the optimising route.
