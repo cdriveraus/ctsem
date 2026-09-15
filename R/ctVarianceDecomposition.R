@@ -521,6 +521,149 @@
 }
 
 
+# Laplace fits: one between column per level ----------------------------------
+#
+# A Laplace fit's random effects are not carrier states, so the carrier route
+# above sees nothing and would report a between person variance of zero for
+# every such model -- including every multilevel one, since a level above the
+# subject is the thing only Laplace can integrate out.
+#
+# What it has instead is a level-restricted trajectory. `randomEffects=` names
+# a level and means "this level and every level outside it", so for
+# `id = c('subject','study')` the three settings give a subject's own matrices,
+# the matrices its study shares, and the population's. Each subject therefore
+# has a time-averaged expected value at each level, and the differences between
+# successive levels are that level's own effect:
+#
+#     g_subject - g_study   the subject's departure from its study
+#     g_study   - g_pop     the study's departure from the population
+#
+# Those are orthogonal by construction -- each is a difference of successive
+# conditional means -- so their variances add, and `between` is their sum with
+# one column per level beside it. The variance of a level's deviation is taken
+# over the *units of that level*: over subjects for the innermost, over studies
+# for the next, which is what makes a study with more subjects in it count once.
+#
+# These are the fitted modes, so every level is shrunk toward the one outside
+# it, and the outer levels hardest because they have the fewest units. That is
+# the same caveat persons='estimated' carries on the augmented route and it is
+# the only thing on offer here: drawing a person would need a draw from each
+# level's own effect covariance, which the engine does not expose.
+.ctVarDecompLaplaceLevels <- function(fit) {
+  levels <- .ctBackendSpec(fit)$laplace$levels
+  vapply(levels, function(x) as.character(x$name)[1L], character(1L))
+}
+
+# Subject matrices built from `level` and every level outside it.
+.ctVarDecompLevelMatrices <- function(fit, level) {
+  scores <- .ctBackendKalmanRaw(fit, fit$estimate$raw, subjectmatrices = TRUE,
+    fields = "subject_loglik", randomEffects = level)
+  flat <- array(scores$subject_matrices,
+    dim = c(1L, dim(scores$subject_matrices)))
+  .ctBackendSubjectMatrices(fit, flat)
+}
+
+# Which unit of each level every subject belongs to.
+#
+# From `spec$data` rather than `.ctFitLongData()`, which carries the subject id
+# and not the levels above it.
+.ctVarDecompLevelUnits <- function(fit, levels) {
+  data <- as.data.frame(.ctBackendSpec(fit)$data, stringsAsFactors = FALSE)
+  subject <- .ctFitRowSubject(fit)
+  first <- match(seq_len(max(subject)), subject)
+  out <- lapply(levels, function(name) {
+    if (!name %in% names(data)) return(NULL)
+    as.character(data[[name]])[first]
+  })
+  names(out) <- levels
+  out
+}
+
+# One subject's matrices, pulled out of a level's subject-matrix arrays.
+.ctVarDecompLevelPerson <- function(matrices, si, nlatent) {
+  mats <- list()
+  for (name in .ctVarDecompNeeded) {
+    value <- matrices[[paste0('subj_', name)]]
+    if (is.null(value)) next
+    mats[[name]] <- array(value[1L, si, , ], dim = dim(value)[3:4])
+  }
+  .ctVarDecompTrim(mats, nlatent, augmented = FALSE)
+}
+
+.ctVarDecompLaplaceComponents <- function(fit, design, nlatent, latents, type,
+  scale, gh, continuoustime, nmanifest, subjects) {
+
+  levels <- .ctVarDecompLaplaceLevels(fit)
+  units <- .ctVarDecompLevelUnits(fit, levels)
+  # Innermost first, then each level outside it, then the population -- the
+  # order `randomEffects=` means, and the order the differences are taken in.
+  steps <- c(levels, 'population')
+  matrices <- lapply(steps, function(level) .ctVarDecompLevelMatrices(fit, level))
+  names(matrices) <- steps
+
+  nvar <- nmanifest + if (latents) nlatent else 0L
+  value <- lapply(steps, function(...) matrix(NA_real_, length(subjects), nvar))
+  names(value) <- steps
+  persondet <- matrix(NA_real_, length(subjects), nvar)
+  personstoch <- matrix(NA_real_, length(subjects), nvar)
+  personmeas <- matrix(0, length(subjects), nvar)
+
+  for (index in seq_along(subjects)) {
+    si <- subjects[index]
+    rows <- which(design$subject == si)
+    tdpreds <- if (!is.null(design$tdpreds))
+      design$tdpreds[rows, , drop = FALSE] else NULL
+    for (level in steps) {
+      mats <- .ctVarDecompLevelPerson(matrices[[level]], si, nlatent)
+      moments <- .ctVarDecompPersonMoments(mats, design$time[rows], tdpreds,
+        continuoustime)
+      for (vi in seq_len(nmanifest)) {
+        measured <- .ctVarDecompMeasurement(moments$linearmean[, vi],
+          moments$linearvar[, vi], type[vi], mats$MANIFESTcov[vi, vi], scale, gh)
+        value[[level]][index, vi] <- mean(measured$expected)
+        # The within person terms belong to the subject's own trajectory, so
+        # they are read from the innermost level and the outer passes only
+        # supply the level means.
+        if (identical(level, steps[1L])) {
+          persondet[index, vi] <- .ctVarDecompPopVar(measured$expected)
+          personstoch[index, vi] <- mean(measured$varmean)
+          personmeas[index, vi] <- mean(measured$condvar)
+        }
+      }
+      if (latents) for (li in seq_len(nlatent)) {
+        vi <- nmanifest + li
+        value[[level]][index, vi] <- mean(moments$latentmean[, li])
+        if (identical(level, steps[1L])) {
+          persondet[index, vi] <- .ctVarDecompPopVar(moments$latentmean[, li])
+          personstoch[index, vi] <- mean(moments$latentvar[, li])
+        }
+      }
+    }
+  }
+
+  # Each level's own deviation, and its variance over that level's units.
+  contribution <- matrix(0, length(levels), nvar,
+    dimnames = list(levels, NULL))
+  for (l in seq_along(levels)) {
+    deviation <- value[[steps[l]]] - value[[steps[l + 1L]]]
+    unit <- units[[levels[l]]]
+    for (vi in seq_len(nvar)) {
+      d <- deviation[, vi]
+      if (!is.null(unit)) d <- as.numeric(tapply(d, unit[subjects], mean))
+      contribution[l, vi] <- if (length(d) > 1L) stats::var(d) else 0
+    }
+  }
+
+  list(
+    between = colSums(contribution),
+    levels = contribution,
+    within.deterministic = colMeans(persondet),
+    within.stochastic = colMeans(personstoch),
+    within.measurement = colMeans(personmeas),
+    npersons = length(subjects))
+}
+
+
 # The simulation route --------------------------------------------------------
 #
 # For a model whose dynamics depend on the state there is no moment recursion to
@@ -788,6 +931,28 @@
 #'   refused by both routes, since turning a drawn state into an expected
 #'   observation then needs the measurement model re-materialised at every row.
 #'
+#'   \strong{Random effect levels.} A model with a grouping level above the
+#'   subject (\code{id = c('subject','study')} in \code{\link{ctModel}}) is
+#'   fitted with \code{intoverpop='laplace'}, and gets one
+#'   \code{between.<level>} column per level, each the variance of that
+#'   level's own departure from the level outside it. They are orthogonal by
+#'   construction and sum to \code{between}. Only the estimated (shrunk) route
+#'   is available for such a fit, and the outer levels are shrunk hardest
+#'   because they have the fewest units: on a 6-study, 30-subject example the
+#'   study level came back at 0.24 against a generating 0.62 and the subject
+#'   level at 0.03 against 0.22. Read those as lower bounds, and
+#'   \code{summary(fit)} for the population parameters themselves.
+#'
+#'   \strong{Designs.} Nothing here assumes a balanced one. Each person is
+#'   evaluated over their own observation times, so everyone measured at the
+#'   same occasions, everyone at their own, and subjects with different numbers
+#'   of occasions all work, as does an observation being missing -- a row still
+#'   has a model implied distribution whether or not its indicator was seen, so
+#'   every design row counts and the answer does not move with the missingness
+#'   pattern. Persons are weighted equally rather than by row count: the
+#'   estimand is over persons, so a frequently measured subject should not be a
+#'   larger share of the population than a rarely measured one.
+#'
 #'   \code{method='simulation'} checks, by generating twice, that the engine
 #'   draws a model's individually varying parameters rather than leaving every
 #'   simulated person at the population values, and refuses rather than
@@ -847,15 +1012,30 @@ ctVarianceDecomposition <- function(fit, method = c('auto', 'moment', 'simulatio
   latentNames <- model$latentNames[seq_len(nlatent)]
   type <- as.integer(model$manifesttype)
 
+  laplace <- .ctFitIsJulia(fit) && !is.null(.ctBackendSpec(fit)$laplace)
   if (identical(persons, 'auto')) {
-    persons <- if (.ctFitIsJulia(fit)) 'model' else 'estimated'
-    if (identical(persons, 'estimated')) {
+    persons <- if (.ctFitIsJulia(fit) && !laplace) 'model' else 'estimated'
+    if (laplace) {
+      message("persons='estimated' for this Laplace fit: its random effects ",
+        'are separate coordinates rather than carrier states, so a person ',
+        'cannot be materialised at a drawn one. The between person variance ',
+        'below is the spread of the estimated modes, which shrinkage ',
+        'attenuates -- the outer levels hardest, since they have the fewest ',
+        'units.')
+    } else if (identical(persons, 'estimated')) {
       message("persons='estimated' for this stan fit: drawing persons from the ",
         'population distribution needs the model matrices materialised at a ',
         'drawn set of random effects, which only the julia engine can do. The ',
         'between person variance below is therefore the spread of the ',
         'estimated subjects, which shrinkage attenuates.')
     }
+  }
+  if (identical(persons, 'model') && laplace) {
+    stop("persons='model' is not available for a Laplace fit: drawing a person ",
+      "needs a draw from each level's own random effect covariance, and the ",
+      'engine materialises matrices at a carrier state, which a Laplace fit ',
+      "has none of. Use persons='estimated', reading its between person ",
+      'variance as attenuated by shrinkage.', call. = FALSE)
   }
   if (identical(persons, 'model') && !.ctFitIsJulia(fit)) {
     stop("persons='model' needs a backend='julia' fit: it materialises the ",
@@ -882,6 +1062,10 @@ ctVarianceDecomposition <- function(fit, method = c('auto', 'moment', 'simulatio
     }
     .ctVarDecompSimulation(fit, design, nlatent, latents, type, scale,
       as.integer(npersons), as.integer(npaths), nmanifest, wanted)
+  } else if (laplace) {
+    gh <- if (identical(scale, 'response')) .ctVarDecompGaussHermite(quadpoints) else NULL
+    .ctVarDecompLaplaceComponents(fit, design, nlatent, latents, type, scale,
+      gh, continuoustime, nmanifest, wanted)
   } else {
     people <- if (.ctFitIsJulia(fit)) {
       .ctVarDecompJuliaPersons(fit, design, nlatent, persons,
@@ -902,6 +1086,13 @@ ctVarianceDecomposition <- function(fit, method = c('auto', 'moment', 'simulatio
     within.stochastic = components$within.stochastic,
     within.measurement = components$within.measurement,
     stringsAsFactors = FALSE)
+  # One column per random effect level, where there is more than one: with a
+  # single level it would repeat `between` under another name.
+  if (!is.null(components$levels) && nrow(components$levels) > 1L) {
+    for (l in rownames(components$levels)) {
+      out[[paste0('between.', l)]] <- components$levels[l, ]
+    }
+  }
   out$within <- out$within.deterministic + out$within.stochastic + out$within.measurement
   out$total <- out$between + out$within
   # A variable with no variance at all has no proportions, and NA says that
@@ -940,6 +1131,13 @@ print.ctVarianceDecomposition <- function(x, digits = 3L, ...) {
     within = round(x$prop.within, digits),
     of.which.measurement = round(x$within.measurement / x$within, digits))
   print(props, row.names = FALSE)
+  levelcols <- grep('^between\\.', names(x), value = TRUE)
+  if (length(levelcols)) {
+    cat('\nBetween person variance by level\n')
+    print(data.frame(variable = x$variable,
+      as.data.frame(lapply(as.data.frame(x)[levelcols], round, digits))),
+      row.names = FALSE)
+  }
   cat('\nComputed by the ', attr(x, 'method'), ' route',
     if (identical(attr(x, 'method'), 'simulation'))
       paste0(', ', attr(x, 'npaths'), ' paths per person') else '', '.\n', sep = '')

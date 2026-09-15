@@ -107,6 +107,28 @@ The decomposition is a nested law of total variance over the
   refused by both routes, since turning a drawn state into an expected
   observation then needs the measurement model re-materialised at every row.
 
+  \strong{Random effect levels.} A model with a grouping level above the
+  subject (\code{id = c('subject','study')} in \code{\link{ctModel}}) is
+  fitted with \code{intoverpop='laplace'}, and gets one
+  \code{between.<level>} column per level, each the variance of that
+  level's own departure from the level outside it. They are orthogonal by
+  construction and sum to \code{between}. Only the estimated (shrunk) route
+  is available for such a fit, and the outer levels are shrunk hardest
+  because they have the fewest units: on a 6-study, 30-subject example the
+  study level came back at 0.24 against a generating 0.62 and the subject
+  level at 0.03 against 0.22. Read those as lower bounds, and
+  \code{summary(fit)} for the population parameters themselves.
+
+  \strong{Designs.} Nothing here assumes a balanced one. Each person is
+  evaluated over their own observation times, so everyone measured at the
+  same occasions, everyone at their own, and subjects with different numbers
+  of occasions all work, as does an observation being missing -- a row still
+  has a model implied distribution whether or not its indicator was seen, so
+  every design row counts and the answer does not move with the missingness
+  pattern. Persons are weighted equally rather than by row count: the
+  estimand is over persons, so a frequently measured subject should not be a
+  larger share of the population than a rarely measured one.
+
   \code{method='simulation'} checks, by generating twice, that the engine
   draws a model's individually varying parameters rather than leaving every
   simulated person at the population values, and refuses rather than

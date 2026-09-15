@@ -332,6 +332,97 @@ test_that('the two backends decompose the same model the same way', {
   }
 })
 
+# Designs and levels ----------------------------------------------------------
+
+test_that('the decomposition holds together on any design shape', {
+  # Balanced, irregular, ragged and missing, on one fit each. What is checked is
+  # the identity and that nothing comes back NA -- the values differ between
+  # them because the fits do, and comparing them would be comparing fits.
+  shapes <- list(
+    balanced = lapply(1:10, function(i) 0:9),
+    irregular = lapply(1:10, function(i) sort(cumsum(c(0, stats::rexp(9, 1))))),
+    ragged = lapply(1:10, function(i) 0:(2 + i)))
+  set.seed(53)
+  traits <- stats::rnorm(10, 0, 0.35)
+  generating <- estmodel
+  generating$pars$indvarying <- FALSE
+
+  for (shape in names(shapes)) {
+    times <- shapes[[shape]]
+    dat <- do.call(rbind, lapply(seq_along(traits), function(i) {
+      m <- generating
+      m$matrices$CINT <- matrix(traits[i])
+      d <- suppressMessages(ctGenerate(m, n.subjects = 1, burnin = 15,
+        Tpoints = length(times[[i]]), backend = 'r'))
+      d <- as.data.frame(d)
+      d$time <- times[[i]]
+      d$id <- i
+      d
+    }))
+    if (identical(shape, 'balanced')) {
+      dat$Y1[seq(1, nrow(dat), by = 3)] <- NA   # and a third of it missing
+    }
+    f <- suppressWarnings(suppressMessages(ctFit(dat, estmodel,
+      backend = 'julia', cores = 1, verbose = 0)))
+    out <- suppressMessages(ctVarianceDecomposition(f, npersons = 60))
+    expect_equal(out$between + out$within, out$total, label = shape)
+    expect_false(anyNA(out$total))
+    expect_true(all(out$within.stochastic > 0))
+  }
+})
+
+test_that('a level above the subject gets its own between column', {
+  # Only intoverpop='laplace' can integrate out a level above the subject, and
+  # a Laplace fit has no carrier states -- which is exactly why this needs its
+  # own route: the carrier one would report a between person variance of zero
+  # for every multilevel model and say nothing.
+  set.seed(61)
+  generating <- estmodel
+  generating$pars$indvarying <- FALSE
+  ngroup <- 4L
+  groupeffect <- stats::rnorm(ngroup, 0, 0.5)
+  rows <- list()
+  unit <- 0L
+  for (g in seq_len(ngroup)) for (p in 1:4) {
+    unit <- unit + 1L
+    m <- generating
+    m$matrices$CINT <- matrix(groupeffect[g] + stats::rnorm(1, 0, 0.3))
+    d <- suppressMessages(ctGenerate(m, n.subjects = 1, burnin = 15,
+      Tpoints = 10, backend = 'r'))
+    d <- as.data.frame(d)
+    d$id <- unit
+    d$study <- g
+    rows[[unit]] <- d
+  }
+  dat <- do.call(rbind, rows)
+
+  model <- ctModel(type = 'ct', n.latent = 1, n.manifest = 1,
+    id = c('id', 'study'),
+    LAMBDA = matrix(1), DRIFT = matrix(-0.5), DIFFUSION = matrix(1),
+    MANIFESTVAR = matrix(0.4), CINT = matrix('cint1'), T0MEANS = matrix(0),
+    T0VAR = matrix(1), MANIFESTMEANS = matrix(0))
+  model$pars$indvarying <- model$pars$matrix == 'CINT'
+  model$pars$indvarying_study <- model$pars$matrix == 'CINT'
+  fit <- suppressWarnings(suppressMessages(ctFit(dat, model, backend = 'julia',
+    intoverpop = 'laplace', cores = 1, verbose = 0)))
+
+  out <- suppressMessages(ctVarianceDecomposition(fit))
+  expect_true(all(c('between.id', 'between.study') %in% names(out)))
+  # The levels are orthogonal by construction, so they add up to `between`.
+  expect_equal(out$between.id + out$between.study, out$between)
+  expect_equal(out$between + out$within, out$total)
+  expect_true(all(out$between.study >= 0))
+  expect_true(all(out$between.id >= 0))
+  # A between person variance that is actually there: the carrier route this
+  # replaces returned zero for the same fit.
+  expect_gt(min(out$between), 0)
+  # And the drawn route is refused by name rather than returning the modes
+  # under another label.
+  expect_error(ctVarianceDecomposition(fit, persons = 'model'),
+    'not available for a Laplace fit')
+  expect_message(ctVarianceDecomposition(fit), "persons='estimated'")
+})
+
 test_that('a stan fit works through the estimated route and refuses the drawn one', {
   skip_on_cran()
   skip_on_32bit()
