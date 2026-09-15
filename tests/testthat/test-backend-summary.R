@@ -417,27 +417,31 @@ test_that("summary reports fixed effects and system matrices, with intervals onl
   # does, and these assertions are about the point-estimate-only fit -- the
   # one whose summary must not print an interval it has not earned.
   #
-  # `innergaptol = 0` holds the optimiser's cheap stopping rule off, and it is
-  # load-bearing rather than tidying. What this test is about is what the
-  # *reporting* does with a fit that ran into a direction the data does not
-  # determine, and that is decided downstream by an eigenvalue of the
-  # information at whatever point the fit stopped -- `.ctBackendNullMass()`,
-  # against `.ctFlatDirectionRtol()`. The diffusion correlation here is on a
-  # flat ray: the fit walks out along it gaining nothing, -207.01897 to five
-  # decimals wherever it stops, and only how far it walked decides which side
-  # of that threshold the curvature lands. With the rule on it stops at raw
-  # -9.27 after 220 iterations and the direction reads as determined; with it
-  # off it reaches -14.46 after 278 and reads as undetermined. Same estimate,
-  # same likelihood, opposite diagnosis.
+  # Nothing pins where the optimiser stops, and that is the point of the
+  # fixture rather than an omission. The diffusion correlation here is on a
+  # flat ray -- the fit walks out along it gaining nothing, -207.01897 to five
+  # decimals anywhere from raw -6 to -20 -- so where it stops is settled by
+  # whichever stopping rule ends the run, and the estimate is the same fit
+  # either way.
   #
-  # So the rule is pinned here to hold that variable still, not because either
-  # answer is wrong. The sensitivity itself is worth knowing about: two
-  # detectors describe this coordinate and they can disagree --
-  # `identifiability$parameters` flags it from the transform in both cases,
-  # `intervalcheck$unidentified` from the curvature in only one -- which is
-  # exactly the split `.ctFlatDirectionRtol()`'s comment warns about.
+  # This used to decide the *diagnosis*, and that was the bug. The curvature
+  # along that ray is not a property of the model and the data: it is a residue
+  # of the transform's own derivative, falling from 1.6e-08 to 7.1e-16 of the
+  # largest eigenvalue and then turning negative from rounding, purely as a
+  # function of how far out the fit walked. With the predicted-gain rule on it
+  # stopped at raw -9.27 and the direction read as determined; with it off it
+  # reached -14.46 and read as undetermined. Same estimate, same likelihood,
+  # opposite answer -- and the passing version of this test was relying on the
+  # optimiser wandering far enough for an eigenvalue to underflow.
+  #
+  # `.ctOptimFlatDirectionScreen()` is why it no longer does: the eigenvalue
+  # picks candidates and the likelihood decides, against the likelihood-ratio
+  # bound. Measured on this fixture, the direction moves the log likelihood by
+  # 1.7e-05 from the earlier stopping point and 5.6e-10 from the later one,
+  # against a bar of 1.92 -- so both stop there, and every assertion below now
+  # holds at either. Leaving the stopping rule free is what tests that.
   fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0,
-    optimcontrol = list(estonly = TRUE, innergaptol = 0)))
+    optimcontrol = list(estonly = TRUE)))
 
   point <- summary(fit)
   expect_s3_class(point, "summary.ctStanFit")
@@ -485,6 +489,13 @@ test_that("summary reports fixed effects and system matrices, with intervals onl
   expect_true(is.na(unname(widths[flat])))
   expect_true(is.na(interval$popmeans[flat, "sd"]))
   expect_equal(uncertain$uncertainty$intervalcheck$unidentified, flat)
+  # And that it was dropped because the likelihood was measured flat along it,
+  # not because an eigenvalue happened to underflow at this stopping point.
+  # Without this a future change could restore the old accident and the
+  # assertions above would still pass.
+  measured <- uncertain$uncertainty$details$flatdirections
+  expect_equal(measured$n, 1L)
+  expect_lt(max(measured$change), measured$bar)
   # And the reader is told, in the note that is always there rather than in a
   # section that comes and goes.
   expect_match(interval$uncertaintyNote, "No curvature at the estimate along")

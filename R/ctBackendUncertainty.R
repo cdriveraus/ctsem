@@ -243,7 +243,10 @@
   # `ctOptimUncertainty()` call included -- a check that silently went on
   # describing the previous method would be worse than none.
   uncertaintyfit$intervalcheck <- .ctBackendIntervalCheck(uncertaintyfit$hessian,
-    fit$estimate$se, names(fit$estimate$se))
+    fit$estimate$se, names(fit$estimate$se),
+    # The null mass the covariance construction actually used, so the report
+    # and the intervals cannot disagree about which coordinates were dropped.
+    mass = uncertaintyfit$details$covariance$nullMass)
   # Where the curvature this call used was evaluated. `est` is this call's own
   # point, which is not always the fit's: `ctOptimUncertainty()` can be handed
   # an estimate from elsewhere.
