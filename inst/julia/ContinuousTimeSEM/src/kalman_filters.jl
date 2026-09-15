@@ -406,37 +406,22 @@ function _generate_binary!(gen, ws::ContinuousEKFWorkspace, pars, λ,
         draw = ηbar + sqrt(s2 + sd * sd) * T(gen.base[row, r])
         y = min(max(draw, lower), upper)
     elseif kind == CTSEM_OBS_COUNT
-        # The same inversion the ordinal branch does, over 0, 1, 2, ... rather
-        # than a fixed set of categories. Each term is the *marginal*
-        # probability of that count, with the state's own uncertainty
-        # integrated out, which is what makes one uniform enough and keeps the
-        # draw reproducible from `gen.base` alone.
+        # Inversion of the marginal over 0, 1, 2, ... where the rate is small
+        # enough for that to be both affordable and accurate, and the marginal's
+        # normal approximation where it is not. `_generate_count_marginal`
+        # carries the reasoning; the short of it is that a walk costing one
+        # quadrature per value cannot serve a rate of `exp(14)`, and an ordinary
+        # count model reaches that.
         #
-        # Capped, because a count is unbounded and the walk is linear in the
-        # value drawn. The cap scales with the marginal mean rather than being
-        # fixed: past it the accumulated mass is one to floating point, so
-        # exhausting the loop means `u` fell in a tail with no representable
-        # mass left and the last value is the honest answer.
-        #
-        # The dispersion widens the predictive being inverted, the same way it
-        # widens the variance the likelihood integrates over -- a draw from a
-        # narrower distribution than the model scores would make generate and
-        # fit disagree about what the model is.
+        # It takes the linear predictor's standard deviation and uses it for
+        # nothing but that, so the dispersion composes by widening the argument:
+        # it is another Gaussian contribution to the same scalar, exactly as it
+        # is in the likelihood's own quadrature. A draw from a narrower
+        # distribution than the model scores would make generate and fit
+        # disagree about what the model is.
         σc = _count_dispersion(thresholds, T)
-        sc = sqrt(s2 + σc * σc)
-        mean_rate = exp(min(ηbar + 4 * sc, T(_CTSEM_COUNT_MAX_LOG_RATE[])))
-        kmax = min(_CTSEM_COUNT_GENERATE_MAX[],
-            Int(ceil(mean_rate + 10 * sqrt(mean_rate) + 20)))
-        y = zero(T)
-        cumulative = zero(T)
-        @inbounds for k in 0:kmax
-            logZ, _, _ = _binary_moments(ηbar, sc, k, nodes, weights, (), kind)
-            cumulative += isfinite(logZ) ? exp(logZ) : zero(T)
-            y = T(k)
-            if u < cumulative
-                break
-            end
-        end
+        y = _generate_count_marginal(ηbar, sqrt(s2 + σc * σc), u,
+            T(gen.base[row, r]), nodes, weights)
     elseif kind == CTSEM_OBS_BINARY || isempty(thresholds)
         logZ, _, _ = _binary_moments(ηbar, s, one(T), nodes, weights, (),
             CTSEM_OBS_BINARY)
