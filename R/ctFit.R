@@ -1694,12 +1694,22 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   if(any(ctm$manifesttype %in% 4)) .ctDataCensored(datalong, ctm)
 
   if(any(ctm$manifesttype > 0)){ #if any non continuous variables, (with free parameters)...
-    # Censored variables are excluded: a censored observation is Gaussian
-    # within its limits, so its measurement standard deviation is the scale of
-    # the whole thing and has to stay free. Every other non-Gaussian type
-    # supplies its own randomness through the link and would be adding noise on
-    # top of noise.
-    deterministic <- which(ctm$manifesttype > 0 & ctm$manifesttype != 4)
+    # Binary and ordinal only. For those two a normal term on the linear
+    # predictor is not identified rather than merely unwanted: with a probit
+    # link E_e Phi(lambda'x + mu + e) is exactly Phi((lambda'x + mu)/sqrt(1+v)),
+    # so it is absorbed into the loadings and thresholds, and the logistic link
+    # differs only in that the absorption is approximate. Fixing it is the only
+    # coherent thing to do.
+    #
+    # Censored is excluded because that entry is the scale of the Gaussian
+    # inside the limits. Count is excluded because the Poisson's variance is
+    # locked to its mean, so the term is not absorbable anywhere: it shifts the
+    # mean by v/2, which MANIFESTMEANS takes, and multiplies the variance by a
+    # factor nothing else in the model can produce. It is the only parameter
+    # that moves a count's variance-to-mean ratio, and leaving it out does not
+    # make the data equidispersed -- it makes DIFFUSION absorb the difference,
+    # which is the parameter the model is usually for.
+    deterministic <- which(ctm$manifesttype %in% c(1L, 2L))
     errfix <- which(ctm$pars$matrix %in% 'MANIFESTVAR' &
         (ctm$pars$row %in% deterministic |
             ctm$pars$col %in% deterministic) &
@@ -1711,6 +1721,26 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
       ctm$pars$value[errfix] <- 1e-5
       ctm$pars[errfix,c('param','transform','multiplier','offset','meanscale','inneroffset','sdscale')] <- NA
       ctm$pars$indvarying[errfix] <- FALSE
+    }
+
+    # A count's dispersion is scalar: each count row is updated on its own,
+    # sequentially and conditionally independent of the others given the state,
+    # so there is no off-diagonal for it to be correlated through and the
+    # engine reads only the diagonal. A free off-diagonal would therefore be
+    # accepted here and ignored there, which is the failure this fixes rather
+    # than reports -- the cell has one right value and it is zero.
+    countrows <- which(ctm$manifesttype %in% 3L)
+    offfix <- which(ctm$pars$matrix %in% 'MANIFESTVAR' &
+        ctm$pars$row != ctm$pars$col &
+        (ctm$pars$row %in% countrows | ctm$pars$col %in% countrows) &
+        is.na(suppressWarnings(as.numeric(ctm$pars$value))))
+    if(length(offfix) > 0){
+      message('Fixing free off-diagonal MANIFESTVAR parameters for count ',
+        'indicators to zero -- a count is scored one row at a time, so it has ',
+        'no correlated measurement error.')
+      ctm$pars$value[offfix] <- 0
+      ctm$pars[offfix,c('param','transform','multiplier','offset','meanscale','inneroffset','sdscale')] <- NA
+      ctm$pars$indvarying[offfix] <- FALSE
     }
 
     # A *fixed* non-zero variance on a binary indicator is left alone by the
@@ -1804,11 +1834,11 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
       warning('MANIFESTVAR is fixed to a non-zero value for indicator',
         if(length(stated) > 1) 's ' else ' ',
         paste(ctm$manifestNames[ctm$pars$row[stated]], collapse=', '),
-        '. A binary, ordinal or count indicator gets its randomness from its ',
+        '. A binary or ordinal indicator gets its randomness from its ',
         'measurement link -- the Bernoulli link for binary, the cumulative ',
-        'logit for ordinal, the Poisson log link for a count -- so this adds ',
-        'measurement noise on top of it. Set it to 0 unless that is meant.',
-        call.=FALSE)
+        'logit for ordinal -- so this adds measurement noise on top of it, and ',
+        'is not separately identified from the loadings and thresholds. Set it ',
+        'to 0 unless that is meant.', call.=FALSE)
     }}
 
   ctm$modelmats <- .ctModelMatSetup(ctm) #slow!

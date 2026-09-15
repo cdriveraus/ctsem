@@ -417,13 +417,20 @@ function _generate_binary!(gen, ws::ContinuousEKFWorkspace, pars, λ,
         # fixed: past it the accumulated mass is one to floating point, so
         # exhausting the loop means `u` fell in a tail with no representable
         # mass left and the last value is the honest answer.
-        mean_rate = exp(min(ηbar + 4 * s, T(_CTSEM_COUNT_MAX_LOG_RATE[])))
+        #
+        # The dispersion widens the predictive being inverted, the same way it
+        # widens the variance the likelihood integrates over -- a draw from a
+        # narrower distribution than the model scores would make generate and
+        # fit disagree about what the model is.
+        σc = _count_dispersion(thresholds, T)
+        sc = sqrt(s2 + σc * σc)
+        mean_rate = exp(min(ηbar + 4 * sc, T(_CTSEM_COUNT_MAX_LOG_RATE[])))
         kmax = min(_CTSEM_COUNT_GENERATE_MAX[],
             Int(ceil(mean_rate + 10 * sqrt(mean_rate) + 20)))
         y = zero(T)
         cumulative = zero(T)
         @inbounds for k in 0:kmax
-            logZ, _, _ = _binary_moments(ηbar, s, k, nodes, weights, (), kind)
+            logZ, _, _ = _binary_moments(ηbar, sc, k, nodes, weights, (), kind)
             cumulative += isfinite(logZ) ? exp(logZ) : zero(T)
             y = T(k)
             if u < cumulative

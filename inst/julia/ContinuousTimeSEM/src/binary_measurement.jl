@@ -232,6 +232,53 @@ else rather than needing a second channel.
 end
 
 """
+    _count_dispersion(extras, ::Type{T})
+
+The log-scale dispersion a count row carries, from the same slot the ordinal
+thresholds and the censored limits use. Zero when the row carries nothing,
+which is the equidispersed Poisson.
+
+# Why this one does not enter the likelihood
+
+Every other extra is a parameter of `P(y | eta)`: a threshold moves the category
+boundaries, a censoring limit moves where the instrument saturates. This one is
+not. A count's dispersion is a Gaussian term *added to* the linear predictor, so
+`y | x` is a Poisson-lognormal mixture and the mixing is over exactly the scalar
+the quadrature already integrates:
+
+    eta = lam'x + mu + e,  e ~ N(0, s2)   =>   eta | x ~ N(lam'xhat + mu, lam'P lam + s2)
+
+So it joins the variance the rule integrates over, and `_category_loglikelihood`
+never sees it. That is also why the state update needs no new algebra:
+`cov(x, eta)` is still `P lam`, so the projection that lifts the scalar posterior
+back to the state holds with `lam'P lam + s2` in place of `lam'P lam` -- see
+`_ekf_binary_update!`.
+
+# Why a count gets one and a binary does not
+
+Not a preference: for a binary or an ordinal indicator this parameter is not
+identified. With a probit link the mixture is exact,
+
+    E_e Phi(lam'x + mu + e) = Phi((lam'x + mu) / sqrt(1 + s2))
+
+so the dispersion is absorbed into the loadings and thresholds and nothing in
+the data separates it from them; the logistic link differs only in that the
+absorption is approximate. A count has no such freedom, because the Poisson's
+variance is locked to its mean: the dispersion shifts the mean by `s2/2`, which
+MANIFESTMEANS absorbs, and multiplies the variance by a factor nothing else can
+produce. So it is identified, and it is the only parameter in the model that
+moves the variance-to-mean ratio.
+
+Returned raw rather than converted to `T`, for the reason `_censor_limits`
+gives: `T` is the predictor's type and converting truncates the derivative
+information the dispersion carries and the predictor does not.
+"""
+@inline function _count_dispersion(extras, ::Type{T}) where {T}
+    isempty(extras) && return zero(T)
+    return extras[1]
+end
+
+"""
 Largest linear predictor a count observation is allowed to reach.
 
 The Poisson rate is `exp(η)`, which overflows to `Inf` at `η = 710`, and an
@@ -686,6 +733,17 @@ sum here costs a handful of additions on a vector of length `K-1`.
         end
         return view(ws.thresholds, 1:3)
     end
+    # A count row carries its dispersion in the same slot and for the same
+    # reason: it is MANIFESTVAR's diagonal entry as a standard deviation, taken
+    # before `sdcovsqrt2cov` assembles the matrix so that the reverse pass can
+    # hand its cotangent straight back. A count is updated on its own,
+    # sequentially, so it is never correlated with another row and the
+    # off-diagonal it would otherwise need does not exist.
+    if row <= length(types) && types[row] == CTSEM_OBS_COUNT
+        isempty(ws.thresholds) && return view(ws.thresholds, 1:0)
+        @inbounds ws.thresholds[1] = pars.MANIFESTVAR[row, row]
+        return view(ws.thresholds, 1:1)
+    end
     hasproperty(pars, :THRESHOLDS) || return view(ws.thresholds, 1:0)
     (row <= length(types) && types[row] == 2) ||
         return view(ws.thresholds, 1:0)
@@ -730,6 +788,15 @@ function _ekf_binary_update!(ws, λ, μ, y::Real, n::Int, thresholds,
         ηbar += λ[i] * ws.state[i]
     end
     s2 = max(s2, zero(T))
+    # A count's dispersion is additive and Gaussian on this same scalar, so it
+    # joins the variance rather than the density -- see `_count_dispersion`.
+    # Everything below is unchanged by it: `c` is still the covariance between
+    # the state and the linear predictor and `s2` is still that predictor's
+    # variance, which is all the projection below uses.
+    if kind == CTSEM_OBS_COUNT
+        σ = _count_dispersion(thresholds, T)
+        s2 += σ * σ
+    end
     s = sqrt(s2)
 
     logZ, ηoffset, vpost = _binary_moments(ηbar, s, y, nodes, weights,
