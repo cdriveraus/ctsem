@@ -118,3 +118,108 @@ end
         end
     end
 end
+
+
+# A count is the one categorical kind with no upper bound, so the marginal walk
+# that serves the others cannot always serve it -- the walk costs one
+# quadrature per value, and past a rate of a few hundred every individual
+# marginal probability underflows, so it accumulates no mass at all. These are
+# the two regimes `_generate_count_marginal` splits into and the properties
+# that have to hold across both of them.
+@testset "count generation across both regimes" begin
+    nodes, weights = ContinuousTimeSEM._gauss_hermite(
+        ContinuousTimeSEM._CTSEM_BINARY_NODES[])
+    draw(etabar, s, z) = ContinuousTimeSEM._generate_count_marginal(etabar, s,
+        ContinuousTimeSEM._standard_normal_cdf(z), z, nodes, weights)
+
+    @testset "a rate past Int64 range is a number, not an InexactError" begin
+        # The reported bug: `Int(ceil(mean_rate + ...))` was evaluated before
+        # the `min` meant to cap it, so a rate of 3.3e22 threw from inside
+        # generation. Nothing here may throw, and nothing may come back `Inf`
+        # either -- an infinite draw takes the rest of the row's likelihood
+        # with it, which is a worse failure than the one reported.
+        for etabar in (30.0, 52.0, 200.0, 400.0), s in (0.0, 1.0, 20.0, 400.0)
+            for z in (-3.0, 0.0, 2.5)
+                y = draw(etabar, s, z)
+                @test isfinite(y)
+                @test y >= 0
+                @test y == round(y)
+            end
+        end
+    end
+
+    @testset "the walk has the marginal distribution" begin
+        # Where the walk runs it inverts the marginal exactly, so sweeping `z`
+        # over the standard normal and weighting by its density must reproduce
+        # each value's marginal probability -- which the quadrature reports
+        # independently as that value's own log marginal likelihood.
+        etabar, s = 1.5, 0.8
+        zs = range(-4.0, 4.0; length = 8001)
+        ys = [draw(etabar, s, z) for z in zs]
+        w = [exp(-z * z / 2) for z in zs]
+        w ./= sum(w)
+        for k in 0:8
+            empirical = sum(w[i] for i in eachindex(ys) if ys[i] == k; init = 0.0)
+            logZ, _, _ = ContinuousTimeSEM._binary_moments(etabar, s, float(k),
+                nodes, weights, (), ContinuousTimeSEM.CTSEM_OBS_COUNT)
+            @test empirical ≈ exp(logZ) atol = 5e-3
+        end
+    end
+
+    @testset "the closed form is the Poisson-lognormal quantile" begin
+        # Past the walk, the draw is the marginal's lognormal quantile matched
+        # to `E[y] = exp(etabar + s^2/2)` and `Var[y]/E[y]^2 = expm1(s^2) +
+        # 1/E[y]`. Those moments are written here rather than taken from the
+        # code under test, and the `1/E[y]` term is the Poisson's own share of
+        # the spread -- drop it and a draw at a small `s` comes out far too
+        # narrow, which is exactly the kind of error a posterior predictive
+        # check exists to detect and would instead be reporting.
+        for (etabar, s) in ((12.0, 1.0), (20.0, 2.0), (9.0, 0.05), (52.0, 3.0))
+            mean_y = exp(etabar + s^2 / 2)
+            relvar = expm1(s^2) + 1 / mean_y
+            sigma2 = log1p(relvar)
+            mu = log(mean_y) - sigma2 / 2
+            for z in (-2.0, -0.5, 0.0, 1.0, 2.5)
+                @test draw(etabar, s, z) ≈ round(exp(mu + sqrt(sigma2) * z)) rtol = 1e-10
+            end
+        end
+    end
+
+    @testset "the draw increases with the deviate, to within one count" begin
+        # Both regimes map `z` to `y` the same way -- increasing, through the
+        # marginal -- so this holds across the handover as well as within
+        # either side of it. It is what inverting a CDF means, and it is the
+        # property that says the two regimes agree where they meet: an earlier
+        # version that sampled the mixture in two stages rather than inverting
+        # it dropped by half the value at the seam, which no summary of the
+        # generated data would have shown as anything but a wrong model.
+        #
+        # One count of slack, not zero. The walk inverts the marginal exactly
+        # and the closed form inverts a lognormal matched to its first two
+        # moments, so at the single `z` where one hands over to the other they
+        # can disagree by a count -- measured at 82 against 81, and only in the
+        # one of these six cases whose marginal is heavy-tailed enough to reach
+        # the handover at all.
+        for (etabar, s) in ((1.5, 0.8), (2.2, 1.0), (6.0, 0.5), (6.2, 0.3),
+                (12.0, 1.0), (30.0, 2.0))
+            ys = [draw(etabar, s, z) for z in range(-4.0, 4.0; length = 2001)]
+            @test all(isfinite, ys)
+            @test maximum(ys[i] - ys[i + 1] for i in 1:(length(ys) - 1)) <= 1.0
+        end
+    end
+
+    @testset "log(y!) survives a count past Int64 range" begin
+        # The second conversion on the same road: `_log_factorial` counted in
+        # `Int`, so the likelihood of a saturated draw threw rather than
+        # evaluating Stirling on the float it already had.
+        @test ContinuousTimeSEM._log_factorial(0.0) == 0.0
+        @test ContinuousTimeSEM._log_factorial(5.0) ≈ log(120.0)
+        @test ContinuousTimeSEM._log_factorial(1e6) ≈ 1.2815518384658169e7 rtol = 1e-12
+        @test isfinite(ContinuousTimeSEM._log_factorial(3.8e90))
+        # And the count likelihood it feeds stays a log probability out there.
+        for y in (400.0, 1e6, 5e21, 3.8e90)
+            @test ContinuousTimeSEM._category_loglikelihood(50.0, y, (),
+                ContinuousTimeSEM.CTSEM_OBS_COUNT) <= 0
+        end
+    end
+end
