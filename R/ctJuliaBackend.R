@@ -295,6 +295,7 @@
 # "not running", which is the safe direction -- we then set the thread count,
 # which is a no-op when it was already right.
 .ctJuliaSessionRunning <- function() {
+  .ctJuliaCheckSession()
   if (!is.null(.ct_julia_cache$module)) return(TRUE)
   isTRUE(tryCatch({
     connection <- get("pkgLocal", envir = asNamespace("JuliaConnectoR"))$con
@@ -476,6 +477,9 @@ ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
   .ct_julia_cache$project <- project
   .ct_julia_cache$engine <- engineversion
   .ct_julia_cache$module <- JuliaConnectoR::juliaImport("ContinuousTimeSEM")
+  # Last, so the cache is only ever stamped with the session everything above it
+  # was built in.
+  .ct_julia_cache$session <- .ctJuliaSessionStamp()
   invisible(ctJuliaStatus())
 }
 
@@ -566,6 +570,126 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   }, error = function(e) NULL)
 }
 
+# Which Julia session the cache belongs to -------------------------------------
+#
+# Everything `.ct_julia_cache` holds is a handle into one Julia process: the
+# imported module, and every objective compiled under it. Nothing in ctsem ends
+# that process without clearing the cache too (see `.ctJuliaClearSession()`),
+# but plenty outside ctsem does -- a user or another package calling
+# `JuliaConnectoR::stopJulia()`, or Julia dying on its own. The handles then
+# name objects no running session holds, and the next call fails from inside the
+# bridge rather than here:
+#
+#     Evaluation in Julia failed. ... Object reference 195c50a34f0 could not be
+#     resolved
+#
+# when the module has since been re-imported into a replacement session, and
+#
+#     UndefVarError: `ContinuousTimeSEM` not defined in `Main`
+#
+# when it has not. Neither names ctsem, a model or a fit, and the fit is not the
+# problem: a `ctJuliaFit` carries no Julia handles at all -- only the plain R
+# `model_spec` that `.ctJuliaObjective()` builds from, which is why `summary()`
+# on the same object keeps working while anything needing live Julia does not.
+# That split was reported as a stored fit going stale, and it is not: a saved
+# and restored fit is fine, and the only stale thing is this cache.
+#
+# So the recovery is to notice and rebuild. The stamp is taken at setup and
+# compared by identity, so asking costs nothing and needs no round trip.
+.ctJuliaSessionStamp <- function() {
+  # `pkgLocal` rather than an exported predicate, for the reason
+  # `.ctJuliaCommunicator()` gives: JuliaConnectoR offers none, and a rename
+  # upstream should degrade to "no session" rather than error. `isOpen()` on a
+  # closed connection errors, which the tryCatch turns into the same answer.
+  tryCatch({
+    local_env <- get("pkgLocal", envir = asNamespace("JuliaConnectoR"))
+    connection <- local_env$con
+    if (is.null(connection) || !isOpen(connection)) return(NULL)
+    # The port as well as the connection: a connection object carries an
+    # external pointer, so comparing the port too means a replacement session
+    # would have to reuse both a freed address and the same port to pass for its
+    # predecessor.
+    list(connection = connection, port = local_env$port)
+  }, error = function(e) NULL)
+}
+
+# Drop what the departed session issued, without touching whatever is running
+# now.
+#
+# Not `.ctJuliaClearSession()`, which stops Julia: that is right when ctsem is
+# the one ending the session and wrong here, because the session this cache
+# belonged to has already gone and the one that replaced it may be mid-use.
+#
+# Collecting the proxies is half of it. The other half is that JuliaConnectoR
+# queues each finalized proxy's reference for a decrement it sends with the next
+# call -- and these references belong to a session that has gone, so that
+# decrement reaches whatever is running now and names a key it never issued.
+# It is sent inside JuliaConnectoR's own `try()`, so it cannot fail a call, but
+# it *prints*: about twenty-five lines of Julia stacktrace
+# (`MethodError: no method matching decrefcounts(::Nothing, ...)`, or a
+# `KeyError`) arriving from inside the next unrelated call. A recovery that
+# announces itself that way is no better than the failure it replaced, so the
+# queue is restored to what it held before the collection -- dropping exactly
+# the references this function orphaned, and keeping any that were already
+# waiting. The cost is those reference counts never being decremented in a
+# session that cannot be holding the objects anyway.
+#
+# `.ctJuliaClearSession()` avoids all of this by releasing before it stops, in
+# that order. The ordering is not available here, because we did not end the
+# session.
+.ctJuliaForgetSession <- function() {
+  .ct_julia_cache$module <- NULL
+  .ct_julia_cache$project <- NULL
+  .ct_julia_cache$engine <- NULL
+  .ct_julia_cache$session <- NULL
+  .ct_julia_cache$objectives <- new.env(parent = emptyenv())
+  .ct_julia_cache$layouts <- new.env(parent = emptyenv())
+  local_env <- tryCatch(get("pkgLocal", envir = asNamespace("JuliaConnectoR")),
+    error = function(e) NULL)
+  queued <- if (is.null(local_env)) NULL else local_env$finalizedRefs
+  # Two passes, as .ctJuliaClearSession(): the first frees the proxies, the
+  # second any proxy a finalizer from the first pass happened to drop.
+  gc(verbose = FALSE); gc(verbose = FALSE)
+  if (!is.null(local_env)) try(local_env$finalizedRefs <- queued, silent = TRUE)
+  invisible(NULL)
+}
+
+# Called before every read of cached session state, and idempotent.
+#
+# Three callers, because there are three ways in: `.ctJuliaModule()` reads the
+# module, `.ctJuliaCached()` reads an objective *before* the module is asked
+# for, and `.ctJuliaSessionRunning()` answers whether a session exists at all.
+# Checking in one of them would leave the others handing back dead handles.
+#
+# A stamp that could not be read is stored as NULL and then matches a session
+# that cannot be read either, so a JuliaConnectoR whose internals have moved
+# leaves this a no-op and the backend exactly as it behaved before. That is the
+# safe direction: the alternative -- distrusting an unreadable stamp -- would
+# invalidate the cache on every call and rebuild the engine forever.
+.ctJuliaCheckSession <- function() {
+  if (is.null(.ct_julia_cache$module)) return(invisible(FALSE))
+  if (identical(.ctJuliaSessionStamp(), .ct_julia_cache$session)) return(invisible(FALSE))
+  .ctJuliaForgetSession()
+  message("The julia session this model was compiled in has ended; rebuilding.")
+  invisible(TRUE)
+}
+
+# The objective cache, read and written only through these two.
+#
+# The read is where the staleness check has to happen: `.ctJuliaObjective()`
+# answers from the cache without ever asking for the module, so a check placed
+# only at the module would never see the call that fails.
+.ctJuliaCached <- function(key) {
+  .ctJuliaCheckSession()
+  if (!exists(key, envir = .ct_julia_cache$objectives, inherits = FALSE)) return(NULL)
+  get(key, envir = .ct_julia_cache$objectives, inherits = FALSE)
+}
+
+.ctJuliaCacheStore <- function(key, objective) {
+  assign(key, objective, envir = .ct_julia_cache$objectives)
+  objective
+}
+
 .ctJuliaTuneBridge <- function() {
   # `ctsem.julia.tunebridge = FALSE` leaves the socket exactly as JuliaConnectoR
   # opened it. It exists as an escape hatch and as the control arm for measuring
@@ -593,6 +717,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 }
 
 .ctJuliaModule <- function(project = NULL) {
+  .ctJuliaCheckSession()
   if (!is.null(.ct_julia_cache$module) && identical(project, .ct_julia_cache$project)) return(.ct_julia_cache$module)
   ctJuliaSetup(project = project)
   .ct_julia_cache$module
@@ -617,6 +742,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   .ct_julia_cache$module <- NULL
   .ct_julia_cache$project <- NULL
   .ct_julia_cache$engine <- NULL
+  .ct_julia_cache$session <- NULL
   .ct_julia_cache$objectives <- new.env(parent = emptyenv())
   .ct_julia_cache$layouts <- new.env(parent = emptyenv())
   # Two passes: the first frees the proxies, the second any proxy a finalizer
@@ -2859,9 +2985,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   stopifnot(inherits(object, "ctJuliaModel") || inherits(object, "ctJuliaFit"))
   spec <- if (inherits(object, "ctJuliaFit")) object$model_spec else object
   key <- .ctJuliaObjectiveKey(spec)
-  if (exists(key, envir = .ct_julia_cache$objectives, inherits = FALSE)) {
-    return(get(key, envir = .ct_julia_cache$objectives, inherits = FALSE))
-  }
+  cached <- .ctJuliaCached(key)
+  if (!is.null(cached)) return(cached)
   module <- .ctJuliaModule(spec$project)
   # Plain column vectors, not a DataFrame. The engine dropped DataFrames as a
   # dependency (it was its most expensive one and was used only as a row
@@ -3037,8 +3162,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     }
     objective <- do.call(module$ctsem_laplace_objective, laplace_args)
   }
-  assign(key, objective, envir = .ct_julia_cache$objectives)
-  objective
+  .ctJuliaCacheStore(key, objective)
 }
 
 # The state-explicit objective ------------------------------------------------
@@ -3076,14 +3200,12 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   npar <- max(1L, as.integer(npar)[1L])
   transition <- .ctJuliaOr(spec$transition, "exponential")
   key <- paste0(.ctJuliaObjectiveKey(spec), "|joint|", npar, "|", transition)
-  if (exists(key, envir = .ct_julia_cache$objectives, inherits = FALSE)) {
-    return(get(key, envir = .ct_julia_cache$objectives, inherits = FALSE))
-  }
+  cached <- .ctJuliaCached(key)
+  if (!is.null(cached)) return(cached)
   module <- .ctJuliaModule(spec$project)
   objective <- module$ctsem_joint_objective(.ctJuliaObjective(spec), npar,
     transition = transition)
-  assign(key, objective, envir = .ct_julia_cache$objectives)
-  objective
+  .ctJuliaCacheStore(key, objective)
 }
 
 # How many innovations this design needs, which is what the parameter vector is

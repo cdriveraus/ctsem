@@ -682,3 +682,75 @@ test_that("a PARS cell is transformed before row 1 of the state pass reads it", 
   expect_false(isTRUE(all.equal(as.numeric(a$value), as.numeric(cc$value),
     tolerance = 1e-6)))
 })
+
+# The Julia session the cache belongs to --------------------------------------
+#
+# Everything cached under `.ct_julia_cache` is a handle into one Julia process,
+# and nothing stops that process ending without ctsem's involvement: a user or
+# another package calling `JuliaConnectoR::stopJulia()`, or Julia dying. What
+# used to happen then was a raw bridge error -- "Object reference ... could not
+# be resolved", or `UndefVarError: ContinuousTimeSEM not defined` -- from
+# whatever the user called next, most visibly `ctGenerateFromFit()`. It reads
+# as a stored fit having gone stale, and it is not: a `ctJuliaFit` carries no
+# Julia handles, so the model rebuilds from its own plain R spec.
+
+test_that("a cache stamped with another Julia session is dropped rather than used", {
+  cache <- ctsem:::.ct_julia_cache
+  saved <- list(module = cache$module, project = cache$project,
+    engine = cache$engine, session = cache$session,
+    objectives = cache$objectives, layouts = cache$layouts)
+  withr::defer({
+    cache$module <- saved$module; cache$project <- saved$project
+    cache$engine <- saved$engine; cache$session <- saved$session
+    cache$objectives <- saved$objectives; cache$layouts <- saved$layouts
+  })
+
+  # A cache that believes it belongs to a session no longer reachable. The
+  # stamp is compared, not the module, so this needs no Julia at all.
+  cache$module <- new.env(parent = emptyenv())
+  cache$project <- "some/project"
+  cache$objectives <- new.env(parent = emptyenv())
+  assign("key", "a dead handle", envir = cache$objectives)
+  cache$session <- list(connection = NULL, port = -1L)
+
+  expect_message(expect_true(ctsem:::.ctJuliaCheckSession()), "has ended")
+  expect_null(cache$module)
+  expect_null(cache$session)
+  expect_length(ls(cache$objectives), 0L)
+  # Nothing to say on a cache that is empty, or on one whose stamp matches.
+  expect_silent(expect_false(ctsem:::.ctJuliaCheckSession()))
+})
+
+test_that("a model whose Julia session has ended is rebuilt, not reported as a dead reference", {
+  skip_without_julia()
+  model <- suppressWarnings(ctModel(
+    type = "ct", LAMBDA = diag(1),
+    DRIFT = matrix("drift", 1, 1), DIFFUSION = matrix("diffusion", 1, 1),
+    MANIFESTVAR = matrix("residual", 1, 1), MANIFESTMEANS = matrix(0, 1, 1),
+    T0VAR = matrix(1, 1, 1), T0MEANS = matrix(0, 1, 1)))
+  set.seed(4)
+  data <- data.frame(id = rep(1:3, each = 4), time = rep(0:3, 3),
+    Y1 = stats::rnorm(12, 0, .5))
+  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
+  raw <- rep(0, ctsem:::.ctBackendNpar(spec))
+
+  value <- suppressMessages(ctJuliaEvaluate(spec, raw, gradient = FALSE)$value)
+  expect_true(is.finite(as.numeric(value)))
+  cache <- ctsem:::.ct_julia_cache
+  expect_gt(length(ls(cache$objectives)), 0L)
+
+  # The session goes away underneath the cache, which is what a crash or
+  # somebody else's stopJulia() does. Nothing here holds the objective handle
+  # itself: a proxy kept in a local would be finalized against the replacement
+  # session later in the run, and that decrement prints a Julia stacktrace from
+  # inside whatever call happens to be next.
+  JuliaConnectoR::stopJulia()
+
+  expect_message(expect_true(ctsem:::.ctJuliaCheckSession()), "has ended")
+  expect_length(ls(cache$objectives), 0L)
+  # And the model rebuilds from its own spec, to the same likelihood -- which is
+  # what the reported failure could not do.
+  expect_equal(as.numeric(suppressMessages(
+    ctJuliaEvaluate(spec, raw, gradient = FALSE)$value)), as.numeric(value),
+    tolerance = 1e-10)
+})
