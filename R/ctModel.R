@@ -27,7 +27,12 @@
 #' default) is a continuous, Gaussian variable; 1 is binary, coded 0/1; 2 is
 #' ordinal, coded as consecutive integers from 1; 3 is a count, coded as
 #' non-negative integers and modelled as Poisson with a log link, so the latent
-#' process gives the log rate; 4 is censored, a Gaussian variable observed only
+#' process gives the log rate. A count keeps a free \code{MANIFESTVAR}
+#' diagonal, unlike a binary or ordinal variable: for a count that entry is a
+#' log-scale dispersion, making the observation Poisson-lognormal with variance
+#' \eqn{\mu + \mu^2(e^{\sigma^2}-1)} against the Poisson's \eqn{\mu}. Fix it
+#' to zero for the equidispersed Poisson. 4 is censored, a Gaussian variable
+#' observed only
 #' within \code{censormin} and \code{censormax}, with values at a limit
 #' contributing the probability of being there rather than a density.
 #' Non-Gaussian variables are supported by the julia backend only, and binary
