@@ -528,16 +528,20 @@ ctModelLatexMeasurementBlock <- function(ctmodel, matrixnames=TRUE,
   # integrates the categorical likelihood over the latent rather than matching
   # it to a normal, so there is nothing to put in this cell.
   diag(errorCov)[ordinal] <- '\\textrm{--}'
-  # A Poisson's variance is its mean, so the cell is the predicted rate itself
-  # rather than a free parameter -- there is nothing in MANIFESTVAR to show.
-  diag(errorCov)[count] <- paste0('\\hat{Y}_{',countIndex,'}(t)')
+  # A Poisson's variance is its mean, and a count's MANIFESTVAR diagonal is a
+  # log-scale dispersion rather than an additive error, so the cell is the
+  # marginal variance of the observation: the Poisson's own plus the log rate's.
+  # It collapses to the rate itself when the dispersion is zero.
+  diag(errorCov)[count] <- paste0('\\hat{Y}_{',countIndex,'}(t)+\\hat{Y}_{',
+    countIndex,'}(t)^{2}\\left(e^{\\Theta_{',countIndex,countIndex,
+    '}}-1\\right)')
   errorCovNote <- paste0(
     if(!diagonalErrorCov) paste0(" \\\\ 
 &\\textrm{Note: off-diagonal entries in }\\vect{\\Theta}\\textrm{ are shown as specified; binary diagonal entries are conditional approximations.}") else "",
     if(any(ordinal)) paste0(" \\\\ 
 &\\textrm{Note: ordinal observations carry no measurement error term -- the likelihood is integrated over }\\vect{\\eta}\\textrm{ directly.}") else "",
     if(any(count)) paste0(" \\\\ 
-&\\textrm{Note: count observations are Poisson with a log link -- the variance shown is the predicted rate rather than a free parameter, and the rate is the exponential of the linear predictor in }\\vect{\\eta}\\textrm{ .}") else "",
+&\\textrm{Note: count observations are Poisson with a log link, the rate being the exponential of the linear predictor in }\\vect{\\eta}\\textrm{. The }\\vect{\\Theta}\\textrm{ diagonal is a dispersion on that log scale rather than an additive error, so the observation is Poisson-lognormal and the variance shown is its marginal variance; at a dispersion of zero it is the rate itself.}") else "",
     if(any(censored)) paste0(" \\\\ 
 &\\textrm{Note: a censored observation is recorded as the value above clamped to its limits, so the equation gives the uncensored mean and observations pile up at censormin and censormax rather than passing them; the error term shown is real for this kind, unlike the others, and applies to }\\vect{\\eta}\\textrm{ .}") else "")
   errorLine <- paste0("\\parbox{10em}{\\centering{Observation\\linebreak error:}}

@@ -169,6 +169,11 @@ admits.
 @inline function _response_moments(ηbar::T, s2::T, kind::Int, thresholds) where {T}
     s2 = max(s2, zero(T))
     if kind == CTSEM_OBS_COUNT
+        # The dispersion is part of the log rate's spread, so it belongs here
+        # exactly as it does in the filter's update: what is reported has to be
+        # the moments of the distribution the likelihood actually integrated.
+        σc = _count_dispersion(thresholds, T)
+        s2 += σc * σc
         # A Poisson with a Gaussian log rate: the rate is log-normal, so both
         # moments are closed forms and no quadrature is needed. The variance is
         # the Poisson's own plus the rate's, `μ + μ²(e^{s²} - 1)`.

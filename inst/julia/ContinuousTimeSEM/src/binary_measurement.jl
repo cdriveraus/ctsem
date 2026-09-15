@@ -108,6 +108,44 @@ const _CTSEM_BINARY_NODES = Ref(21)
 const _CTSEM_BINARY_NEWTON = Ref(6)
 
 """
+Largest step the count mode solve may take in one iteration.
+
+Two rather than something larger because the bound only has to stop the
+overshoot, not reach the answer: the walk covers the remaining distance in
+`|log y - ηbar| / 2` capped steps and then converges quadratically, and the
+capped region is where the quadratic model is worthless anyway. It is never
+active near the solution, so the partials `_binary_moment_derivatives` takes
+through this loop are the unclamped ones.
+"""
+const _CTSEM_COUNT_MODE_MAX_STEP = Ref(2.0)
+
+"""
+Newton steps for a count's scalar mode, which needs more than the six a
+logistic does.
+
+Sized by measurement rather than by taste, over a 120-cell grid of `ηbar` in
+`(-3, 0, 1.11, 6, 10)`, predictor sd in `(0.3, 0.9, 2, 5)` and `y` in
+`(0, 1, 3, 20, 100, 5000)`, against the mode found by a bracketing solve --
+worst absolute error over the grid:
+
+    iterations      6         10         14         20
+    worst       5.5e-07    2.5e-14    2.5e-14    2.4e-14
+
+Fourteen rather than ten, which is where it lands, because the knee is what was
+measured and not a bound: the walk's length is set by how far `ηbar` sits from
+`log(y + 1/2)`, and a grid cannot be told that it has found the worst case.
+Fourteen also sits far enough past the knee that the cap is inactive at the last
+iterate, which is what makes the partials `_binary_moment_derivatives` takes
+through this loop the unclamped ones.
+
+The hard corner is a badly over-predicted zero -- `ηbar = 10`, `y = 0`, where
+the mode is eleven units below `ηbar` and the capped walk has to cover it. With
+the old `log y` start, which fell back to `ηbar` at `y = 0`, that cell was 4.8
+out at any iteration count this side of thirty.
+"""
+const _CTSEM_COUNT_NEWTON = Ref(14)
+
+"""
 Predicted variance below which the observation is treated as exact.
 
 The scalar update divides by `s²` once for the mean shift and twice for the
@@ -232,6 +270,53 @@ else rather than needing a second channel.
 end
 
 """
+    _count_dispersion(extras, ::Type{T})
+
+The log-scale dispersion a count row carries, from the same slot the ordinal
+thresholds and the censored limits use. Zero when the row carries nothing,
+which is the equidispersed Poisson.
+
+# Why this one does not enter the likelihood
+
+Every other extra is a parameter of `P(y | eta)`: a threshold moves the category
+boundaries, a censoring limit moves where the instrument saturates. This one is
+not. A count's dispersion is a Gaussian term *added to* the linear predictor, so
+`y | x` is a Poisson-lognormal mixture and the mixing is over exactly the scalar
+the quadrature already integrates:
+
+    eta = lam'x + mu + e,  e ~ N(0, s2)   =>   eta | x ~ N(lam'xhat + mu, lam'P lam + s2)
+
+So it joins the variance the rule integrates over, and `_category_loglikelihood`
+never sees it. That is also why the state update needs no new algebra:
+`cov(x, eta)` is still `P lam`, so the projection that lifts the scalar posterior
+back to the state holds with `lam'P lam + s2` in place of `lam'P lam` -- see
+`_ekf_binary_update!`.
+
+# Why a count gets one and a binary does not
+
+Not a preference: for a binary or an ordinal indicator this parameter is not
+identified. With a probit link the mixture is exact,
+
+    E_e Phi(lam'x + mu + e) = Phi((lam'x + mu) / sqrt(1 + s2))
+
+so the dispersion is absorbed into the loadings and thresholds and nothing in
+the data separates it from them; the logistic link differs only in that the
+absorption is approximate. A count has no such freedom, because the Poisson's
+variance is locked to its mean: the dispersion shifts the mean by `s2/2`, which
+MANIFESTMEANS absorbs, and multiplies the variance by a factor nothing else can
+produce. So it is identified, and it is the only parameter in the model that
+moves the variance-to-mean ratio.
+
+Returned raw rather than converted to `T`, for the reason `_censor_limits`
+gives: `T` is the predictor's type and converting truncates the derivative
+information the dispersion carries and the predictor does not.
+"""
+@inline function _count_dispersion(extras, ::Type{T}) where {T}
+    isempty(extras) && return zero(T)
+    return extras[1]
+end
+
+"""
 Largest linear predictor a count observation is allowed to reach.
 
 The Poisson rate is `exp(η)`, which overflows to `Inf` at `η = 710`, and an
@@ -240,22 +325,117 @@ information `Inf`, so Newton's step is `-Inf/Inf` and the mode solve returns
 NaN rather than walking back. Clamping the exponent keeps both finite and the
 step bounded, so a trial point out here is merely bad rather than poisonous.
 
-Two hundred rather than seven hundred so that the rate squares without
-overflowing as well. For real data it never binds: a rate of `exp(20)` is
-already half a billion events, and a parameter that reaches this is caught by
-the saturation guard long before.
+Two hundred rather than seven hundred so that the rate *cubes* without
+overflowing as well -- `_generate_count_marginal` needs `mean^2 exp(s^2)` for
+the marginal variance, and `exp(600)` is still representable where `exp(2100)`
+is not. For real data it never binds: a rate of `exp(20)` is already half a
+billion events, and a parameter that reaches this is caught by the saturation
+guard long before.
 """
 const _CTSEM_COUNT_MAX_LOG_RATE = Ref(200.0)
 
 """
 Hard ceiling on the count-generation walk.
 
-Generating a count inverts its marginal distribution one value at a time, so
-the work is linear in the value drawn. A rate large enough for this to bind is
-already far outside what these models are for, and an unbounded loop on a bad
-parameter draw is worse than a capped one.
+Generating a count inverts its distribution one value at a time, so the work is
+linear in the value drawn. `_ctsem_draw_count` hands over to a normal
+approximation at `_CTSEM_POISSON_NORMAL_RATE`, so its walk is already bounded
+by a rate of five hundred; this is the ceiling for the case that bound does not
+cover, a `u` in the last representable sliver below one.
+
+A term of that walk is one multiply and one add. `_generate_count_marginal`'s
+term is a whole Gauss-Hermite quadrature, some four hundred transcendentals, so
+it cannot afford anything like this many and has `_CTSEM_COUNT_WALK_MAX` of its
+own.
 """
 const _CTSEM_COUNT_GENERATE_MAX = Ref(100000)
+
+"""
+Values `_generate_count_marginal`'s walk will invert before giving up on it.
+
+Two thousand rather than `_CTSEM_COUNT_GENERATE_MAX`, because a term here costs
+a quadrature rather than a multiply -- the whole walk is about a millisecond,
+and it is run once per count observation per generated dataset, so a posterior
+predictive check pays it thousands of times over.
+
+The budget binds only in the upper tail: the walk stops as soon as it reaches
+`u`, so its ordinary cost is the value drawn, and a model whose counts run in
+the hundreds pays a few hundred terms for a typical draw and nothing like this.
+What it bounds is the draw that asks for a far-tail quantile of a
+heavy-tailed marginal, where the walk would otherwise run for a hundred
+thousand terms to arrive at a value the lognormal quantile gives in closed
+form.
+"""
+const _CTSEM_COUNT_WALK_MAX = Ref(2000)
+
+"""
+    _generate_count_marginal(etabar, s, u, z, nodes, weights)
+
+Draw one count from its *marginal* distribution `int Poisson(y | exp(eta))
+phi(eta; etabar, s^2) deta`, given a uniform `u` and the standard normal `z`
+it came from.
+
+This is the filter route's draw, where the state is uncertain and that
+uncertainty has to be integrated out before anything can be inverted -- unlike
+`_ctsem_draw_count`, which knows the state and inverts a plain Poisson.
+
+Two regimes, and which one a draw gets is settled by the arithmetic rather than
+by a bound computed in advance -- there is no rate threshold here to tune, and
+no count-sized quantity that has to survive a conversion to `Int`, which is
+what the reported `InexactError` was.
+
+Inverting the marginal costs one Gauss-Hermite quadrature *per value walked*,
+so it is affordable only while the count stays small. The walk therefore runs
+until one of three things happens: it reaches `u`, which is the exact answer
+and the common case; it runs past `_CTSEM_COUNT_WALK_MAX`; or the marginal
+probabilities underflow, which says the rate is large enough that no value the
+walk can still reach carries representable mass. The last of those needs no
+threshold: at a rate past about seven hundred `P(y = 0)` is already zero to
+floating point, so the walk knows on its second iteration that it is not the
+method for this cell.
+
+The other regime is the marginal's *lognormal* quantile, matched to its first
+two moments -- `E[y] = exp(etabar + s^2/2)` and `Var[y]/E[y]^2 = expm1(s^2) +
+1/E[y]`, the Poisson-lognormal result, with the second term carrying the
+Poisson's own share of the spread. Lognormal rather than normal because that is
+the shape the marginal actually has: a normal matched to the same moments is
+not merely inaccurate for a large `s`, it puts half its mass below zero once
+`s` passes one. And a quantile rather than a two-stage draw, because both
+regimes then map `z` to `y` the same way -- increasing, through the marginal --
+so the generated value stays monotone in the deviate that produced it and the
+two agree where they meet, instead of the value jumping down as one gave way to
+the other.
+
+The clamp at `_CTSEM_COUNT_MAX_LOG_RATE` keeps the moments finite for a
+parameter draw out where `exp(etabar)` is not: a saturated draw is then a large
+finite count, which plots and summarises as the nonsense it is, rather than an
+`Inf` that takes the rest of the row's likelihood with it.
+"""
+function _generate_count_marginal(etabar::T, s::T, u::T, z::T, nodes,
+    weights) where {T}
+    cumulative = zero(T)
+    @inbounds for k in 0:_CTSEM_COUNT_WALK_MAX[]
+        logZ, _, _ = _binary_moments(etabar, s, T(k), nodes, weights, (),
+            CTSEM_OBS_COUNT)
+        mass = isfinite(logZ) ? exp(logZ) : zero(T)
+        u < cumulative + mass && return T(k)
+        cumulative += mass
+        # Underflowed. Not "this value is improbable" -- `P(y = 0)` and
+        # `P(y = 1)` both rounding to zero means the whole low end of the
+        # distribution is unrepresentable, so the walk cannot arrive at `u`
+        # however long it runs, and carrying on would only buy the ceiling.
+        (mass == zero(T) && k > 0) && break
+    end
+    cap = T(_CTSEM_COUNT_MAX_LOG_RATE[])
+    s2 = min(s * s, cap)
+    log_mean = min(etabar + s2 / 2, cap)
+    # `1/E[y]` is the Poisson's contribution to the relative variance and the
+    # `expm1` the state's. Keeping both matters where they are comparable: drop
+    # the first and a draw at `s = 0.05` comes out 40% too narrow.
+    sigma2 = log1p(expm1(s2) + exp(-log_mean))
+    return max(zero(T),
+        round(exp(min(log_mean - sigma2 / 2 + sqrt(sigma2) * z, cap))))
+end
 
 """
     _log_factorial(y)
@@ -268,20 +448,26 @@ leaving it out would make counts incomparable with every other likelihood in
 the package. Computed rather than taken from SpecialFunctions, which the engine
 does not otherwise depend on; the observation is data, so this never needs a
 derivative.
+
+Kept in floating point throughout rather than counting in `Int`. A count is
+unbounded, so a value past `typemax(Int64)` is reachable -- from generation
+under a saturated rate, or from data someone hands us -- and there it is
+Stirling's series that is wanted, evaluated on the float. Converting first
+turned that into an `InexactError` from inside the likelihood, which named a
+number and nothing else.
 """
 @inline function _log_factorial(y::Real)
-    n = Int(round(y))
-    n <= 1 && return 0.0
-    if n < 16
+    x = float(round(y))
+    x <= 1 && return 0.0
+    if x < 16
         acc = 0.0
-        for i in 2:n
+        for i in 2:Int(x)
             acc += log(i)
         end
         return acc
     end
     # Stirling with the first two correction terms: better than 1e-12 relative
     # from n = 16 up, which is far finer than a constant offset needs.
-    x = float(n)
     return 0.5 * log(2 * pi * x) + x * log(x) - x +
         inv(12 * x) - inv(360 * x^3)
 end
@@ -390,17 +576,68 @@ the observation is nearly deterministic.
 """
 @inline function _binary_mode(ηbar::T, s2::T, y::Real, thresholds,
     kind::Int) where {T}
-    offset = zero(T)
     precision = inv(s2)
+    # A count is the one kind whose score and information are unbounded --
+    # `y - e^η` and `e^η` -- and plain Newton from zero is badly behaved on
+    # it. Where `e^ηbar` is small against `y` the first step is `y/e^ηbar`
+    # large, and from out there the iteration walks back about one unit at a
+    # time, because the curvature it divides by grows with the same
+    # exponential that made the step. Six iterations then stop a long way
+    # short: at `ηbar = 1.11`, `s = 0.9`, `y = 100` the mode is `4.56` and six
+    # iterations report `18.8`.
+    #
+    # Nothing errors when that happens. The quadrature is still a proper rule,
+    # it is merely centred somewhere the posterior has no mass, so the
+    # observation's likelihood comes back too small -- and more quadrature
+    # nodes barely help, which is what distinguishes this from an
+    # under-resolved integral. Measured against an independently computed
+    # Poisson-lognormal likelihood on 4000 observations, the total error was
+    # 7.3 log units at a predictor sd of 0.69, 273 at 0.9 and 1766 at 1.2;
+    # with the mode solved it is 0.0000, 0.0000 and 0.0017, the last being the
+    # 21-node rule's own error.
+    #
+    # Three changes fix it, all count-only so that no other kind's arithmetic
+    # moves.
+    #
+    # The start is the likelihood's own mode, `log(y + 1/2)`: by concavity the
+    # answer lies between that and `ηbar`, so this begins inside the bracket,
+    # and the first step from there is damped by an information of about `y`
+    # rather than inflated by a tiny one. The half is not cosmetic. `log y` is
+    # `-Inf` at `y = 0`, which would force the old start back exactly where the
+    # crawl is worst -- an over-predicted zero, `ηbar` large against `y` -- and
+    # a zero is the commonest observation there is in the floor-heavy count
+    # data this is for. Every one of the eight failures left by a `log y`
+    # start, over a 120-cell grid, was a `y = 0`, the worst of them 4.8 off.
+    #
+    # The step is capped, because a step that large means the quadratic model
+    # is worthless where it was taken -- which also keeps `e^η` away from
+    # overflow on the way.
+    #
+    # And a count gets its own iteration budget. Six is chosen for a logistic,
+    # whose score and information are bounded, and the capped walk a count can
+    # still need is longer than that; the budget is sized by measurement in
+    # `_CTSEM_COUNT_NEWTON`. It buys scalar evaluations against a 21-node rule
+    # per observation, so it is not a cost worth economising on either.
+    offset = zero(T)
+    iterations = _CTSEM_BINARY_NEWTON[]
+    if kind == CTSEM_OBS_COUNT
+        offset = log(T(y) + T(0.5)) - ηbar
+        iterations = _CTSEM_COUNT_NEWTON[]
+    end
     curvature = precision
-    @inbounds for _ in 1:_CTSEM_BINARY_NEWTON[]
+    @inbounds for _ in 1:iterations
         score, information = _category_score(ηbar + offset, y, thresholds, kind)
         # `-offset * precision`, not `-(η - ηbar) * precision`: the prior's
         # score is exact this way rather than a difference of two numbers of
         # order ηbar.
         gradient = -offset * precision + score
         curvature = precision + information
-        offset += gradient / curvature   # Newton on a concave objective
+        step = gradient / curvature   # Newton on a concave objective
+        if kind == CTSEM_OBS_COUNT
+            cap = T(_CTSEM_COUNT_MODE_MAX_STEP[])
+            step = min(max(step, -cap), cap)
+        end
+        offset += step
     end
     return (offset, curvature)
 end
@@ -686,6 +923,17 @@ sum here costs a handful of additions on a vector of length `K-1`.
         end
         return view(ws.thresholds, 1:3)
     end
+    # A count row carries its dispersion in the same slot and for the same
+    # reason: it is MANIFESTVAR's diagonal entry as a standard deviation, taken
+    # before `sdcovsqrt2cov` assembles the matrix so that the reverse pass can
+    # hand its cotangent straight back. A count is updated on its own,
+    # sequentially, so it is never correlated with another row and the
+    # off-diagonal it would otherwise need does not exist.
+    if row <= length(types) && types[row] == CTSEM_OBS_COUNT
+        isempty(ws.thresholds) && return view(ws.thresholds, 1:0)
+        @inbounds ws.thresholds[1] = pars.MANIFESTVAR[row, row]
+        return view(ws.thresholds, 1:1)
+    end
     hasproperty(pars, :THRESHOLDS) || return view(ws.thresholds, 1:0)
     (row <= length(types) && types[row] == 2) ||
         return view(ws.thresholds, 1:0)
@@ -730,6 +978,15 @@ function _ekf_binary_update!(ws, λ, μ, y::Real, n::Int, thresholds,
         ηbar += λ[i] * ws.state[i]
     end
     s2 = max(s2, zero(T))
+    # A count's dispersion is additive and Gaussian on this same scalar, so it
+    # joins the variance rather than the density -- see `_count_dispersion`.
+    # Everything below is unchanged by it: `c` is still the covariance between
+    # the state and the linear predictor and `s2` is still that predictor's
+    # variance, which is all the projection below uses.
+    if kind == CTSEM_OBS_COUNT
+        σ = _count_dispersion(thresholds, T)
+        s2 += σ * σ
+    end
     s = sqrt(s2)
 
     logZ, ηoffset, vpost = _binary_moments(ηbar, s, y, nodes, weights,

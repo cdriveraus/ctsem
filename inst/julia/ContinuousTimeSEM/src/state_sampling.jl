@@ -366,21 +366,102 @@ function _ctsem_draw_count(rate::T, u::T, z::T) where {T}
 end
 
 """
+    _ctsem_state_loglikelihood(eta, y, thresholds, kind)
+
+`log P(y | state)` for one non-Gaussian observation on the state-explicit path.
+
+The same density the filter integrates, at a state that is known rather than
+predicted -- so for every kind but one there is nothing left to integrate and
+this is `_category_loglikelihood` unchanged. The exception is a count carrying a
+dispersion: that term is not part of the state, so knowing the state does not
+remove it and `y | x` stays a Poisson-lognormal mixture. It is then the same
+scalar quadrature the filter uses, over the dispersion alone.
+"""
+@inline function _ctsem_state_loglikelihood(eta::T, y::Real, thresholds,
+    kind::Int) where {T}
+    if kind == CTSEM_OBS_COUNT
+        σc = _count_dispersion(thresholds, T)
+        if σc > zero(σc)
+            nodes, weights = _gauss_hermite(_CTSEM_BINARY_NODES[])
+            logZ, _, _ = _binary_moments(promote(eta, σc)..., y, nodes,
+                weights, (), kind)
+            return logZ
+        end
+    end
+    return _category_loglikelihood(eta, y, thresholds, kind)
+end
+
+"""
+    _ctsem_draw_count_dispersed(eta, sigma, u)
+
+One overdispersed count, inverted from its marginal over the dispersion.
+
+Capped the same way the filter's generator is and for the same reason: a count
+is unbounded and the walk is linear in the value drawn, so exhausting the loop
+means `u` fell in a tail with no representable mass left and the last value is
+the honest answer.
+"""
+function _ctsem_draw_count_dispersed(eta::T, sigma, u) where {T}
+    nodes, weights = _gauss_hermite(_CTSEM_BINARY_NODES[])
+    e, s = promote(eta, sigma)
+    mean_rate = exp(min(e + 4 * s, T(_CTSEM_COUNT_MAX_LOG_RATE[])))
+    # Clamped in floating point *before* the conversion, not after it.
+    # `_CTSEM_COUNT_GENERATE_MAX` is an `Int`, so `min(cap, Int(huge))`
+    # evaluates the conversion first and throws `InexactError` for any rate
+    # past `typemax(Int64)` -- reachable whenever `eta + 4 sigma` exceeds
+    # `log(typemax(Int64))`, 43.67, which a free dispersion makes easier to hit
+    # rather than harder because `sigma` widens that sum by design. Measured:
+    # `eta = 52, sigma = 0` threw on `Int64(3.83e22)`, `eta = 10, sigma = 9` on
+    # `Int64(9.50e19)`.
+    #
+    # Interim. This walk is being replaced by the two-stage draw the model
+    # actually describes -- a Gaussian for the dispersion, then a plain Poisson
+    # at the resulting rate -- which needs neither a ceiling nor a quadrature
+    # and is exact rather than capped. It was written as an inversion only
+    # because one standard normal per cell was all the generator carried, and
+    # that is a limit of the plumbing rather than of the model. Until then this
+    # stops a crash; it does not stop the walk from exhausting the cap and
+    # returning it as a draw when the rate is large.
+    kmax = Int(min(float(_CTSEM_COUNT_GENERATE_MAX[]),
+        ceil(mean_rate + 10 * sqrt(mean_rate) + 20)))
+    y = zero(T)
+    cumulative = zero(T)
+    @inbounds for k in 0:kmax
+        logZ, _, _ = _binary_moments(e, s, k, nodes, weights, (),
+            CTSEM_OBS_COUNT)
+        cumulative += isfinite(logZ) ? exp(logZ) : zero(T)
+        y = T(k)
+        u < cumulative && break
+    end
+    return y
+end
+
+"""
     _ctsem_draw_categorical(gen, eta, row, col, thresholds, kind)
 
 One non-Gaussian observation drawn from its conditional distribution given the
 state, through the standard normal the caller supplied for this cell.
 
-Inverting the *conditional* distribution, not the marginal one: the state is
-known here, so there is nothing to integrate and no quadrature is involved.
-That is the whole difference from `_generate_binary!`, which has to integrate
-the state's own uncertainty out before it can invert anything.
+Inverting the *conditional* distribution rather than the marginal one: the state
+is known here, so for every kind but one there is nothing to integrate and no
+quadrature is involved. That is the difference from `_generate_binary!`, which
+has to integrate the state's own uncertainty out before it can invert anything.
+The exception is an overdispersed count, whose dispersion survives knowing the
+state -- see `_ctsem_state_loglikelihood`, which scores what this draws.
 """
 function _ctsem_draw_categorical(gen::CTSEMStateGenerate, eta::T, row::Int,
     col::Int, thresholds, kind::Int) where {T}
     z = T(gen.base[row, col])
     u = _ctsem_normal_cdf(z)
     if kind == CTSEM_OBS_COUNT
+        # With a dispersion the conditional is a Poisson-lognormal, which needs
+        # two sources of randomness and has one deviate for this cell. So it is
+        # inverted from its own marginal instead -- the same walk the filter's
+        # generator does over the state's uncertainty, here over the dispersion
+        # -- which uses the single uniform and keeps the draw reproducible from
+        # `gen.base` alone.
+        σc = _count_dispersion(thresholds, T)
+        σc > zero(σc) && return _ctsem_draw_count_dispersed(eta, σc, u)
         return _ctsem_draw_count(exp(min(eta, T(_CTSEM_COUNT_MAX_LOG_RATE[]))),
             u, z)
     elseif kind == CTSEM_OBS_CENSORED
@@ -460,7 +541,7 @@ function _ctsem_state_row!(ws, pars, data::AbstractMatrix, col::Int,
         y = gen === nothing ? data[i, col] :
             _ctsem_draw_categorical(gen, pred[i], i, row, thresholds, kind)
         gen === nothing || (gen.out[i, row] = y)
-        contribution = _category_loglikelihood(pred[i], y, thresholds, kind)
+        contribution = _ctsem_state_loglikelihood(pred[i], y, thresholds, kind)
         # Generating, an unusable contribution is reported and stepped over:
         # the draw itself is valid whatever its density came out as, and the
         # remaining indicators in this row still have to be drawn. Evaluating,

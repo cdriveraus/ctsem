@@ -152,32 +152,43 @@ test_that("a count model recovers what generated it, and laplace does it better"
       drift = unname(means["drift_eta1", "mean"]))
   }, numeric(2))
 
-  # One tolerance for both routes is what this used to have, and it hid the
-  # result rather than testing it: the two do not have the same accuracy here
-  # and the difference is the point of having both.
-  #
-  # The laplace route integrates the random intercept; the augmented route
-  # carries it as a state through a linearised filter, which biases a nonlinear
-  # model -- the same shrinkage `test-julia-multivariate-mixed.R` records for a
-  # nonlinear sd, here on a Poisson intercept. Measured, both converged:
+  # This test used to assert that the laplace route was the more accurate of
+  # the two here, and record the gap:
   #
   #   route      mm (truth 1.2)      drift (truth -0.4)
   #   laplace    1.242   3.5% off    -0.402   0.5% off
   #   augmented  1.716    43% off    -0.219    45% off
   #
-  # So each route is asked for what it delivers, with room over the
-  # measurement, and the ordering is asserted separately because that is the
-  # claim worth defending: a tolerance that covered both would pass whichever
-  # way round they came out.
-  expect_equal(unname(got["mm", "laplace"]), 1.2, tolerance = 0.1)
-  expect_equal(unname(got["drift", "laplace"]), -0.4, tolerance = 0.1)
-  expect_equal(unname(got["mm", "augmented"]), 1.2, tolerance = 0.6)
-  expect_equal(unname(got["drift", "augmented"]), -0.4, tolerance = 0.6)
+  # attributing it to the augmented route carrying the random intercept as a
+  # state through a linearised filter. Almost all of it was the count mode
+  # solve instead. `_binary_mode` stopped six Newton steps short, which
+  # mis-centred the quadrature by an amount that grows with the linear
+  # predictor's variance -- and the augmented route's extra state is exactly an
+  # extra contribution to that variance, so it was the route being punished.
+  # With the mode solved, both converged:
+  #
+  #   route      mm (truth 1.2)      drift (truth -0.4)
+  #   laplace    1.198  0.17% off    -0.357   10.7% off
+  #   augmented  1.198  0.17% off    -0.357   10.7% off
+  #
+  # The remaining drift miss is this fixture's, not a route's: 40 subjects and
+  # 8 occasions, and both routes now find the same maximum. Note that laplace's
+  # old drift of -0.402 was luck rather than accuracy -- it moved too, and away
+  # from the generating value, because the likelihood it maximises changed.
+  #
+  # So the claim worth defending is no longer an ordering but an agreement, and
+  # it is asserted as one. A reappearance of the old gap fails on the second
+  # block below, not on a tolerance wide enough to hide it.
+  expect_equal(unname(got["mm", "laplace"]), 1.2, tolerance = 0.05)
+  expect_equal(unname(got["drift", "laplace"]), -0.4, tolerance = 0.15)
+  expect_equal(unname(got["mm", "augmented"]), 1.2, tolerance = 0.05)
+  expect_equal(unname(got["drift", "augmented"]), -0.4, tolerance = 0.15)
 
-  # The direction, which a pair of tolerances cannot state.
-  expect_lt(abs(got["mm", "laplace"] - 1.2), abs(got["mm", "augmented"] - 1.2))
-  expect_lt(abs(got["drift", "laplace"] + 0.4),
-    abs(got["drift", "augmented"] + 0.4))
+  # The two routes integrate the same random intercept two different ways, so
+  # on a model this size they should reach the same estimate. Elementwise, so a
+  # failure names the parameter that moved.
+  expect_equal(unname(got[, "laplace"]), unname(got[, "augmented"]),
+    tolerance = 1e-3)
 })
 
 test_that("the two routes agree on a count model", {
@@ -212,18 +223,24 @@ test_that("the two routes agree on a count model", {
   laplace <- fit("laplace")
   # The two routes integrate the same random effect differently, so the gap is
   # a real methodological difference and not noise: -1471.584 (laplace) against
-  # -1483.480 (augmented), 11.896 apart, 0.0080 relative. `expect_equal`
-  # tolerances are relative, so the old value of 1 permitted a difference of
-  # 1483 -- the two could have had nothing to do with each other and passed.
-  # 0.02 keeps 2.5x headroom over the measurement.
+  # The two were 11.896 apart, 0.0080 relative, when the count mode solve
+  # stopped short; the gap was that defect rather than a difference between the
+  # routes, and the augmented route carried more of it because its extra state
+  # adds to the linear predictor's variance. Measured now: -1466.970967283
+  # (augmented) against -1466.970967298 (laplace), 1.5e-08 apart and 1.0e-11
+  # relative.
+  #
+  # 1e-6 rather than anything tighter because two different integration routes
+  # reaching a maximum by different paths have no reason to agree to the last
+  # bit, and it is still four orders of magnitude below the gap this is here to
+  # catch.
   expect_equal(as.numeric(laplace$estimate$loglik),
-    as.numeric(augmented$estimate$loglik), tolerance = 0.02)
-  # And the laplace route is the better fit here, which is the direction the
-  # methodology predicts: it integrates the random effect rather than carrying
-  # it as a state through a linearised filter. A gap inside tolerance but the
-  # wrong way round would be worth knowing about.
-  expect_gt(as.numeric(laplace$estimate$loglik),
-    as.numeric(augmented$estimate$loglik))
+    as.numeric(augmented$estimate$loglik), tolerance = 1e-6)
+  # No ordering is asserted. It used to be -- laplace the better fit, as the
+  # methodology predicts for an integrated random effect against a linearised
+  # one -- and with the mode solved the two agree to 1.5e-08, which is optimiser
+  # noise and falls either way between runs. Asserting a direction across a gap
+  # that small tests the optimiser's last digit, not the methodology.
 })
 
 test_that("ctGenerate draws counts rather than continuous values", {
@@ -245,4 +262,203 @@ test_that("ctGenerate draws counts rather than continuous values", {
   expect_true(all(values >= 0))
   expect_true(all(abs(values - round(values)) < 1e-8))
   expect_gt(length(unique(values)), 1)
+})
+
+# ---------------------------------------------------------------------------
+# A count's dispersion: MANIFESTVAR's diagonal is a log-scale standard
+# deviation, so `y | x` is Poisson-lognormal rather than Poisson.
+
+# One count indicator whose linear predictor is a constant plus its dispersion:
+# T0VAR and DIFFUSION are zero, so the state contributes nothing and every row
+# is an independent draw from the same Poisson-lognormal. That makes the whole
+# model's likelihood something this file can compute from the definition.
+.count_iid_model <- function(mu = "mu", v = "v") {
+  m <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 1,
+    n.manifest = 1, manifestNames = "y", latentNames = "eta1",
+    manifesttype = 3L, LAMBDA = matrix(1), DRIFT = matrix(-0.5),
+    DIFFUSION = matrix(0), T0VAR = matrix(0), T0MEANS = matrix(0),
+    CINT = matrix(0), MANIFESTMEANS = matrix(mu), MANIFESTVAR = matrix(v),
+    Tpoints = 1)))
+  m$pars$indvarying <- FALSE
+  m
+}
+
+.count_iid_data <- function(n = 300, mu = 1.1, sigma = 0.7, seed = 99) {
+  set.seed(seed)
+  data.frame(id = seq_len(n), time = 0,
+    y = stats::rpois(n, exp(stats::rnorm(n, mu, sigma))))
+}
+
+# log P(y) for one observation under a Poisson-lognormal, by a fixed fine grid
+# over the linear predictor with log-sum-exp. Nothing here is shared with the
+# engine, which is the point: a comparison against the engine's own machinery
+# would agree with an inherited mistake.
+#
+# A grid rather than `integrate()`, which is the obvious choice and is not safe
+# over the range this has to cover. Checked against a 2e6-point version of this
+# same grid, `integrate()` over `mu +- 40 sigma` returned `-Inf` for `y = 400`
+# at `mu = 0, sigma = 2`, was 37 out at `mu = 2, sigma = 0.5`, and was 0.28 to
+# 0.46 out for `y` of 0, 1 and 5 at `mu = 6, sigma = 0.5` -- it misses a narrow
+# peak inside a wide interval, and gives no sign that it has. The window below
+# brackets both the prior and the likelihood's own mode at `log(y + 1/2)`, so
+# the peak is always inside it wherever it sits, and 50001 points agree with
+# 2000001 to 6.5e-11 over a grid of `mu` in (0, 2, 6), `sigma` in (0.5, 2, 5)
+# and `y` in (0, 1, 5, 50, 400, 5000).
+.pln_loglik <- function(y, mu, sigma, npoints = 50001) {
+  tab <- sort(unique(y))
+  lp <- vapply(tab, function(k) {
+    lo <- min(mu - 12 * sigma, log(k + 0.5) - 12)
+    hi <- max(mu + 12 * sigma, log(k + 0.5) + 12)
+    e <- seq(lo, hi, length.out = npoints)
+    lf <- k * e - exp(e) - lgamma(k + 1) - (e - mu)^2 / (2 * sigma^2) -
+      log(sigma * sqrt(2 * pi))
+    mx <- max(lf)
+    mx + log(sum(exp(lf - mx)) * (e[2] - e[1]))
+  }, numeric(1))
+  sum(lp[match(y, tab)])
+}
+
+test_that("a count keeps its measurement variance free, as its dispersion", {
+  # Binary and ordinal have theirs fixed to a deterministic value, because a
+  # normal term on the linear predictor is absorbed into their loadings and
+  # thresholds and is not identified. A count has no such freedom -- the
+  # Poisson's variance is locked to its mean -- so the parameter is identified
+  # and is left alone, with the same default as a Gaussian indicator's.
+  d <- .count_iid_data(n = 30)
+  free <- suppressWarnings(suppressMessages(ctFit(d, .count_iid_model(),
+    backend = "julia", fit = FALSE)))
+  fixed <- suppressWarnings(suppressMessages(ctFit(d,
+    .count_iid_model(v = 0), backend = "julia", fit = FALSE)))
+  expect_equal(max(free$parameter_table$parnumber, na.rm = TRUE),
+    max(fixed$parameter_table$parnumber, na.rm = TRUE) + 1)
+
+  # And a binary indicator in the same position does not keep one, so this is
+  # a count-specific decision rather than the gate having been removed.
+  b <- .count_iid_model()
+  b$manifesttype <- 1L
+  db <- d; db$y <- as.numeric(db$y > 3)
+  bfit <- suppressWarnings(suppressMessages(ctFit(db, b, backend = "julia",
+    fit = FALSE)))
+  expect_equal(max(bfit$parameter_table$parnumber, na.rm = TRUE),
+    max(fixed$parameter_table$parnumber, na.rm = TRUE))
+})
+
+test_that("a count's off-diagonal measurement covariance is fixed to zero", {
+  # Counts are applied one row at a time, conditionally independent given the
+  # state, so the engine reads only the diagonal. A free off-diagonal would be
+  # accepted here and ignored there.
+  m <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 1,
+    n.manifest = 2, manifestNames = c("c1", "c2"), latentNames = "eta1",
+    manifesttype = c(3L, 3L), LAMBDA = matrix(1, 2, 1), CINT = matrix(0),
+    T0MEANS = matrix(0), MANIFESTVAR = "auto", Tpoints = 4)))
+  m$pars$indvarying <- FALSE
+  d <- .count_data(nsubjects = 8, nobs = 4)
+  f <- suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
+    fit = FALSE)))
+  pt <- f$parameter_table
+  off <- pt[pt$matrix %in% "MANIFESTVAR" & pt$row != pt$col, ]
+  expect_true(nrow(off) > 0)
+  expect_true(all(is.na(off$parnumber)))
+  expect_equal(unname(as.numeric(off$value)), rep(0, nrow(off)))
+})
+
+test_that("a count's likelihood is the Poisson-lognormal one", {
+  skip_without_julia()
+  # The test this file said it did not have. Against a reference computed from
+  # the definition rather than against the engine's own quadrature, and over a
+  # range of predictor sd, because the error that prompted this was invisible
+  # below 0.5 and 1766 log units at 1.2.
+  d <- .count_iid_data()
+  h <- suppressWarnings(suppressMessages(ctFit(d, .count_iid_model(),
+    backend = "julia", fit = FALSE)))
+  pt <- h$parameter_table
+  pt <- pt[!is.na(pt$parnumber), ]
+  # The raw vector for a wanted (mu, sigma), by inverting each parameter's own
+  # transform as the model states it -- read rather than hardcoded, so this
+  # does not quietly test the wrong point if a default transform changes.
+  log1p_exp <- function(x) ifelse(x > 30, x, log1p(exp(x)))
+  rawfor <- function(target) {
+    vapply(seq_len(nrow(pt)), function(i) {
+      tfi <- pt$transform[i]
+      want <- target[[pt$param[i]]]
+      stats::uniroot(function(r) {
+        param <- rep(0, nrow(pt))
+        param[pt$parnumber[i]] <- r
+        eval(parse(text = tfi)) - want
+      }, c(-30, 30), extendInt = "yes", tol = 1e-12)$root
+    }, numeric(1))[order(pt$parnumber)]
+  }
+  # The last two points are the corner the mode solve failed in longest: the
+  # data are counts around `exp(1.1)`, so evaluating at `mu = 6` makes every
+  # observation a heavily over-predicted small one, which is where a start at
+  # `log y` rather than `log(y + 1/2)` left the mode as much as 4.8 out. The
+  # large sigma is the other half of it -- the error grew with the predictor's
+  # variance and was invisible below 0.5.
+  for (at in list(c(1.1, 0.3), c(1.1, 0.7), c(1.1, 1.2), c(6, 0.5), c(6, 2))) {
+    engine <- ctJuliaEvaluate(h, rawfor(list(mu = at[1], v = at[2])))$value
+    expect_equal(engine, .pln_loglik(d$y, at[1], at[2]), tolerance = 1e-5,
+      info = paste("mu", at[1], "predictor sd", at[2]))
+  }
+})
+
+test_that("the adjoint is right with a count dispersion present", {
+  skip_without_julia()
+  # Two latents, because a one-latent gradient test hid a symmetry bug in this
+  # same adjoint for months. The dispersion's cotangent is the new path: it
+  # reaches MANIFESTVAR through the predictor's variance rather than through
+  # the density, so nothing in the threshold machinery carries it.
+  m <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 2,
+    n.manifest = 2, manifestNames = c("c1", "c2"),
+    latentNames = c("eta1", "eta2"), manifesttype = c(3L, 3L),
+    LAMBDA = matrix(c(1, 0, 0, 1), 2, 2), MANIFESTVAR = "diag",
+    CINT = matrix(0, 2, 1), MANIFESTMEANS = matrix(c("m1", "m2"), 2, 1),
+    Tpoints = 6)))
+  m$pars$indvarying <- FALSE
+  set.seed(11)
+  n <- 20; tp <- 6
+  d <- data.frame(id = rep(seq_len(n), each = tp),
+    time = rep(seq_len(tp) - 1, times = n),
+    c1 = stats::rpois(n * tp, 4), c2 = stats::rpois(n * tp, 3))
+  h <- suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
+    intoverpop = "augmented", fit = FALSE)))
+  npar <- max(h$parameter_table$parnumber, na.rm = TRUE)
+  set.seed(3)
+  for (trial in 1:3) {
+    at <- stats::rnorm(npar, 0, 0.25)
+    adjoint <- as.numeric(ctJuliaEvaluate(h, at, gradient = TRUE,
+      gradient_method = "adjoint")$gradient)
+    forward <- as.numeric(ctJuliaEvaluate(h, at, gradient = TRUE,
+      gradient_method = "forward")$gradient)
+    expect_equal(adjoint, forward, tolerance = 1e-8)
+  }
+})
+
+test_that("generated counts have the dispersion's moments", {
+  skip_without_julia()
+  # Both generation routes, because they are separate code: the filter's
+  # marginal inversion and the state-explicit one, the latter being what a
+  # count model's `intoverstates='auto'` resolves to. A Poisson-lognormal has
+  # mean `exp(mu + v/2)` and variance `mean + mean^2 (e^v - 1)`, so a
+  # generator that dropped the dispersion would report a variance equal to its
+  # mean and fail on the ratio alone.
+  sigma <- 0.5
+  mu <- log(4)
+  gen <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 1,
+    n.manifest = 1, manifestNames = "y", latentNames = "eta1",
+    manifesttype = 3L, LAMBDA = matrix(1), DRIFT = matrix(-0.5),
+    DIFFUSION = matrix(0), T0VAR = matrix(0), T0MEANS = matrix(0),
+    CINT = matrix(0), MANIFESTMEANS = matrix(mu),
+    MANIFESTVAR = matrix(sigma), Tpoints = 5)))
+  wanted_mean <- exp(mu + sigma^2 / 2)
+  wanted_var <- wanted_mean + wanted_mean^2 * (exp(sigma^2) - 1)
+  for (ios in c(TRUE, FALSE)) {
+    set.seed(7)
+    d <- data.frame(ctGenerate(gen, n.subjects = 3000, Tpoints = 5,
+      backend = "julia", intoverstates = ios))
+    y <- d$y[!is.na(d$y)]
+    expect_equal(mean(y), wanted_mean, tolerance = 0.05,
+      info = paste("intoverstates", ios))
+    expect_equal(stats::var(y), wanted_var, tolerance = 0.12,
+      info = paste("intoverstates", ios))
+  }
 })
