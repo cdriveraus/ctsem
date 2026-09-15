@@ -457,6 +457,19 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
 # a sequence of independent one-step predictions. The standard normals are drawn
 # *here*, with R's RNG, so that `set.seed()` means what a user expects and the
 # two engines produce identical data for the same seed.
+#
+# One deviate per cell covers every manifest type but the count. A count given
+# its predictor is a Poisson, and given a dispersion a Poisson mixed over the
+# predictor, so the draw needs a second, independent source of randomness rather
+# than a second reading of the first -- reusing the one deviate for both stages
+# ties them together and comes out over-dispersed. The julia engine draws that
+# part from a stream of its own, seeded by the integer below, which is drawn
+# here with R's RNG for exactly the reason the normals are: `set.seed()` has to
+# govern the whole dataset, not most of it.
+#
+# `.Machine$integer.max` rather than anything wider because the engine splits
+# the seed into two 32-bit halves and a subject index, matching the particle
+# filter's streams.
 
 .ctBackendGenerate <- function(fit, raw, base, effects = NULL) {
   spec <- .ctBackendSpec(fit)
@@ -475,15 +488,16 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
   # to the effect draws they were supposed to come from -- mean |correlation|
   # 0.123 against a shuffled null of 0.087 -- while tracking the *mean* effect
   # across subjects at 0.965, which is the signature of modes.
+  seed <- sample.int(.Machine$integer.max, 1L)
   if (!is.null(effects)) {
     persubject <- .ctBackendJuliaValue(module$ctsem_laplace_subject_values(
       objective, raw, .ctJuliaNumericVector(as.numeric(effects))))
     return(.ctBackendJuliaValue(module$ctsem_generate(objective, raw,
-      JuliaConnectoR::juliaPut(base),
+      JuliaConnectoR::juliaPut(base), seed = seed,
       subject_values = JuliaConnectoR::juliaPut(persubject))))
   }
   .ctBackendJuliaValue(module$ctsem_generate(objective, raw,
-    JuliaConnectoR::juliaPut(base)))
+    JuliaConnectoR::juliaPut(base), seed = seed))
 }
 
 
@@ -518,7 +532,8 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
   arguments <- list(.ctJuliaObjective(fit),
     .ctJuliaNumericVector(as.numeric(raw)),
     .ctJuliaNumericVector(as.numeric(z)), JuliaConnectoR::juliaPut(base),
-    transition = .ctJuliaOr(spec$transition, "exponential"))
+    transition = .ctJuliaOr(spec$transition, "exponential"),
+    seed = sample.int(.Machine$integer.max, 1L))
   # A draw of the random effects, so each subject's trajectory is drawn at that
   # subject's own parameters rather than at the population vector. Only the
   # random-effect objective takes it; the plain one has no effects to place.

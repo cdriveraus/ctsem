@@ -406,22 +406,32 @@ function _generate_binary!(gen, ws::ContinuousEKFWorkspace, pars, λ,
         draw = ηbar + sqrt(s2 + sd * sd) * T(gen.base[row, r])
         y = min(max(draw, lower), upper)
     elseif kind == CTSEM_OBS_COUNT
-        # Inversion of the marginal over 0, 1, 2, ... where the rate is small
-        # enough for that to be both affordable and accurate, and the marginal's
-        # normal approximation where it is not. `_generate_count_marginal`
-        # carries the reasoning; the short of it is that a walk costing one
-        # quadrature per value cannot serve a rate of `exp(14)`, and an ordinary
-        # count model reaches that.
+        # A count's marginal `∫ Poisson(y | e^η) φ(η; ηbar, s²) dη` has no closed
+        # form, so it is drawn in the two stages that define it -- the linear
+        # predictor, then the count given it -- rather than by inverting it.
+        # Inverting was tried and is a bad trade: the walk costs a Gauss-Hermite
+        # quadrature per value, so an ordinary count of four hundred costs some
+        # ten thousand transcendentals, and past a rate of a few hundred every
+        # term underflows and it cannot arrive at an answer at all.
         #
-        # It takes the linear predictor's standard deviation and uses it for
-        # nothing but that, so the dispersion composes by widening the argument:
-        # it is another Gaussian contribution to the same scalar, exactly as it
-        # is in the likelihood's own quadrature. A draw from a narrower
-        # distribution than the model scores would make generate and fit
-        # disagree about what the model is.
+        # The dispersion is another Gaussian contribution to the same scalar, so
+        # here it is literally another term in the predictor's standard
+        # deviation. A draw from a narrower distribution than the model scores
+        # would make generate and fit disagree about what the model is.
+        #
+        # The Poisson's own noise is randomness the cell's deviate cannot
+        # supply: reusing `z` for both stages ties them comonotonically and adds
+        # their spreads linearly instead of in quadrature, measured 40% too wide
+        # at `s = 0.05`. Hence `gen.rng`, seeded in R. Both draws are taken
+        # whichever branch `_ctsem_draw_count` follows, so the stream advances
+        # by the same amount per observation regardless of the rate and a
+        # changed parameter cannot shift every later draw.
         σc = _count_dispersion(thresholds, T)
-        y = _generate_count_marginal(ηbar, sqrt(s2 + σc * σc), u,
-            T(gen.base[row, r]), nodes, weights)
+        η = ηbar + sqrt(s2 + σc * σc) * T(gen.base[row, r])
+        ucount = rand(gen.rng)
+        zcount = randn(gen.rng)
+        y = _ctsem_draw_count(exp(min(η, T(_CTSEM_COUNT_MAX_LOG_RATE[]))),
+            ucount, zcount)
     elseif kind == CTSEM_OBS_BINARY || isempty(thresholds)
         logZ, _, _ = _binary_moments(ηbar, s, one(T), nodes, weights, (),
             CTSEM_OBS_BINARY)

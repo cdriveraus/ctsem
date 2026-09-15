@@ -335,10 +335,11 @@ mutable struct CTSEMStateGenerate
     states::Matrix{Float64}
     llrow::Vector{Float64}
     offset::Int
+    rng::MersenneTwister
 end
 
 CTSEMStateGenerate(base, out, states, llrow) =
-    CTSEMStateGenerate(base, out, states, llrow, 0)
+    CTSEMStateGenerate(base, out, states, llrow, 0, MersenneTwister(0))
 
 """
     _ctsem_draw_count(rate, u, z)
@@ -392,34 +393,6 @@ scalar quadrature the filter uses, over the dispersion alone.
 end
 
 """
-    _ctsem_draw_count_dispersed(eta, sigma, u)
-
-One overdispersed count, inverted from its marginal over the dispersion.
-
-Capped the same way the filter's generator is and for the same reason: a count
-is unbounded and the walk is linear in the value drawn, so exhausting the loop
-means `u` fell in a tail with no representable mass left and the last value is
-the honest answer.
-"""
-function _ctsem_draw_count_dispersed(eta::T, sigma, u) where {T}
-    nodes, weights = _gauss_hermite(_CTSEM_BINARY_NODES[])
-    e, s = promote(eta, sigma)
-    mean_rate = exp(min(e + 4 * s, T(_CTSEM_COUNT_MAX_LOG_RATE[])))
-    kmax = min(_CTSEM_COUNT_GENERATE_MAX[],
-        Int(ceil(mean_rate + 10 * sqrt(mean_rate) + 20)))
-    y = zero(T)
-    cumulative = zero(T)
-    @inbounds for k in 0:kmax
-        logZ, _, _ = _binary_moments(e, s, k, nodes, weights, (),
-            CTSEM_OBS_COUNT)
-        cumulative += isfinite(logZ) ? exp(logZ) : zero(T)
-        y = T(k)
-        u < cumulative && break
-    end
-    return y
-end
-
-"""
     _ctsem_draw_categorical(gen, eta, row, col, thresholds, kind)
 
 One non-Gaussian observation drawn from its conditional distribution given the
@@ -438,15 +411,31 @@ function _ctsem_draw_categorical(gen::CTSEMStateGenerate, eta::T, row::Int,
     u = _ctsem_normal_cdf(z)
     if kind == CTSEM_OBS_COUNT
         # With a dispersion the conditional is a Poisson-lognormal, which needs
-        # two sources of randomness and has one deviate for this cell. So it is
-        # inverted from its own marginal instead -- the same walk the filter's
-        # generator does over the state's uncertainty, here over the dispersion
-        # -- which uses the single uniform and keeps the draw reproducible from
-        # `gen.base` alone.
+        # two sources of randomness where this cell's deviate is one. The second
+        # comes from `gen.rng`, seeded in R, which is what lets this be the two
+        # stages the distribution is actually defined by -- the predictor, then
+        # the count given it -- rather than a walk inverting the mixture. The
+        # walk that stood here cost a Gauss-Hermite quadrature per value and
+        # could not be sized without converting a rate of up to `exp(200)` to an
+        # `Int`, which is the `InexactError` this route inherited from the
+        # filter route's copy of it.
+        #
+        # Without a dispersion there is nothing to mix over: the conditional is
+        # a plain Poisson and the cell's own deviate is the whole of it, so the
+        # stream is not touched and an existing count model generates exactly
+        # what it generated before.
+        #
+        # The *density* a few lines up stays a quadrature over the dispersion,
+        # and that is not an inconsistency with drawing in two stages here.
+        # Generating gets to choose epsilon and then report the count it
+        # implies; scoring an observed count does not know which epsilon
+        # produced it and has to integrate over all of them.
         σc = _count_dispersion(thresholds, T)
-        σc > zero(σc) && return _ctsem_draw_count_dispersed(eta, σc, u)
-        return _ctsem_draw_count(exp(min(eta, T(_CTSEM_COUNT_MAX_LOG_RATE[]))),
-            u, z)
+        σc > zero(σc) || return _ctsem_draw_count(
+            exp(min(eta, T(_CTSEM_COUNT_MAX_LOG_RATE[]))), u, z)
+        η = eta + σc * z
+        return _ctsem_draw_count(exp(min(η, T(_CTSEM_COUNT_MAX_LOG_RATE[]))),
+            rand(gen.rng), randn(gen.rng))
     elseif kind == CTSEM_OBS_CENSORED
         lower, upper, sd = _censor_limits(thresholds, T)
         return min(max(eta + sd * z, lower), upper)
@@ -901,7 +890,7 @@ kind can happen here, because no observation ever moves a state.
 """
 function ctsem_generate_states(objective::CTSEMObjective,
     values::AbstractVecOrMat, z::AbstractVector, base::AbstractMatrix;
-    transition=:exponential)
+    transition=:exponential, seed::Integer=1)
     trans = _ctsem_transition(transition)
 
     sp = objective.params
@@ -934,6 +923,7 @@ function ctsem_generate_states(objective::CTSEMObjective,
 
     for (i, sub) in enumerate(subjects)
         gen.offset = layout.rowoffsets[i]
+        gen.rng = _ctsem_generate_rng(seed, i)
         persubject && copyto!(parameters, view(values, i, :))
         ws = _get_or_init_objective_workspace!(sub, Float64)
         loglik[i] = _ctsem_state_pass!(ws, parameters, sub.data, sub.timesteps,

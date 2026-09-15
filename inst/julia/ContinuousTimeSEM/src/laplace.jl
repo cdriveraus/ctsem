@@ -3415,7 +3415,7 @@ for (f, what) in ((:ctsem_joint_loglikelihood, "The state-explicit path"),
 end
 
 """
-    ctsem_generate(laplace, values, base; subject_values=nothing)
+    ctsem_generate(laplace, values, base; subject_values=nothing, seed=1)
 
 One posterior-predictive dataset from a Laplace fit.
 
@@ -3437,10 +3437,11 @@ different rows than the fit did needs the fitted modes, not modes re-solved
 against rows that may not condition on anything.
 """
 function ctsem_generate(laplace::CTSEMLaplaceObjective, values::AbstractVector,
-    base::AbstractMatrix; subject_values::Union{Nothing,AbstractMatrix}=nothing)
+    base::AbstractMatrix; subject_values::Union{Nothing,AbstractMatrix}=nothing,
+    seed::Integer=1)
     persubject = subject_values === nothing ?
         ctsem_laplace_subject_values(laplace, values) : subject_values
-    return ctsem_generate(laplace.objective, persubject, base)
+    return ctsem_generate(laplace.objective, persubject, base; seed=seed)
 end
 
 """
