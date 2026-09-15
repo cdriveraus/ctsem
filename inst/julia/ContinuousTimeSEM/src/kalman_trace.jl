@@ -1,4 +1,4 @@
-using LinearAlgebra
+using LinearAlgebra, Random
 
 ################################################################################
 # Per-row Kalman output
@@ -701,7 +701,14 @@ export CTSEMGenerateSpec, ctsem_generate
     CTSEMGenerateSpec(base, out, llrow)
 
 `base` and `out` are `nmanifest` by `nrows`, in the same layout as the observed
-data. `offset` is set by the driver before each subject's pass.
+data. `offset` and `rng` are set by the driver before each subject's pass.
+
+`base` holds one standard normal per cell, and that deviate is the *state's*:
+for a Gaussian row the innovation, for a censored one the draw before
+censoring, for a count the linear predictor. `rng` supplies the one thing a
+Gaussian model has no counterpart for -- a count's own Poisson noise given that
+predictor, which is a second source of randomness rather than a second use of
+the first. `_ctsem_generate_rng` says where it comes from.
 
 Missing entries are never generated: the generated dataset keeps the original
 missingness, because the point of it is comparison against the observations that
@@ -712,9 +719,36 @@ mutable struct CTSEMGenerateSpec
     out::Matrix{Float64}
     llrow::Vector{Float64}
     offset::Int
+    rng::MersenneTwister
 end
 
-CTSEMGenerateSpec(base, out, llrow) = CTSEMGenerateSpec(base, out, llrow, 0)
+CTSEMGenerateSpec(base, out, llrow) =
+    CTSEMGenerateSpec(base, out, llrow, 0, MersenneTwister(0))
+
+"""
+    _ctsem_generate_rng(seed, i)
+
+The generation stream for one subject, seeded from the two halves of `seed` and
+the subject index.
+
+A count is the one observation whose draw needs more randomness than the one
+standard normal per cell that `base` carries: its distribution given the state
+is a Poisson, and given a dispersion a Poisson mixed over the predictor, and
+those stages are independent rather than two readings of the same deviate. This
+is where the rest comes from, on both generation routes.
+
+`seed` is drawn in R with R's own generator, so `set.seed()` governs it exactly
+as it governs `base` and a generated dataset stays reproducible from the seed
+the user set. A stream per subject rather than one run through the whole
+dataset means no two `(seed, subject)` pairs share draws and the order subjects
+are visited in cannot change a result -- the same reasoning, and the same
+construction, as `_ctsem_particle_rng`.
+"""
+function _ctsem_generate_rng(seed::Integer, i::Integer)
+    s = UInt64(seed)
+    return MersenneTwister(UInt32[UInt32(s & 0xffffffff), UInt32(s >> 32),
+        UInt32(i)])
+end
 
 function _generate_row!(gen::CTSEMGenerateSpec, ws, factor, yv, predview, μv,
     observed::AbstractVector{Int}, obs_col::Int)
@@ -733,7 +767,7 @@ function _generate_row!(gen::CTSEMGenerateSpec, ws, factor, yv, predview, μv,
 end
 
 """
-    ctsem_generate(objective, values, base)
+    ctsem_generate(objective, values, base; seed=1)
 
 One posterior-predictive dataset.
 
@@ -746,7 +780,7 @@ data was missing), `llrow` (each row's log likelihood *of the generated
 data*) and `subject_loglik`.
 """
 function ctsem_generate(objective::CTSEMObjective, values::AbstractVecOrMat,
-    base::AbstractMatrix)
+    base::AbstractMatrix; seed::Integer=1)
 
     sp = objective.params
     subjects = objective.subject_objectives
@@ -768,6 +802,7 @@ function ctsem_generate(objective::CTSEMObjective, values::AbstractVecOrMat,
     offset = 0
     for (i, sub) in enumerate(subjects)
         generate.offset = offset
+        generate.rng = _ctsem_generate_rng(seed, i)
         persubject && copyto!(raw, view(values, i, :))
         loglik[i] = _extended_kalman_filter_continuous!(ws, raw, sub.data,
             collect(sub.timesteps), sp, sub.tdpreds, sub.tipreds, i, sub.max_timestep,
