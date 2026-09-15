@@ -263,3 +263,181 @@ test_that("ctGenerate draws counts rather than continuous values", {
   expect_true(all(abs(values - round(values)) < 1e-8))
   expect_gt(length(unique(values)), 1)
 })
+
+# ---------------------------------------------------------------------------
+# A count's dispersion: MANIFESTVAR's diagonal is a log-scale standard
+# deviation, so `y | x` is Poisson-lognormal rather than Poisson.
+
+# One count indicator whose linear predictor is a constant plus its dispersion:
+# T0VAR and DIFFUSION are zero, so the state contributes nothing and every row
+# is an independent draw from the same Poisson-lognormal. That makes the whole
+# model's likelihood something this file can compute from the definition.
+.count_iid_model <- function(mu = "mu", v = "v") {
+  m <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 1,
+    n.manifest = 1, manifestNames = "y", latentNames = "eta1",
+    manifesttype = 3L, LAMBDA = matrix(1), DRIFT = matrix(-0.5),
+    DIFFUSION = matrix(0), T0VAR = matrix(0), T0MEANS = matrix(0),
+    CINT = matrix(0), MANIFESTMEANS = matrix(mu), MANIFESTVAR = matrix(v),
+    Tpoints = 1)))
+  m$pars$indvarying <- FALSE
+  m
+}
+
+.count_iid_data <- function(n = 300, mu = 1.1, sigma = 0.7, seed = 99) {
+  set.seed(seed)
+  data.frame(id = seq_len(n), time = 0,
+    y = stats::rpois(n, exp(stats::rnorm(n, mu, sigma))))
+}
+
+# log P(y) for one observation under a Poisson-lognormal, by adaptive
+# quadrature over the linear predictor. Nothing here is shared with the engine,
+# which is the point: a comparison against the engine's own machinery would
+# agree with an inherited mistake.
+.pln_loglik <- function(y, mu, sigma) {
+  tab <- sort(unique(y))
+  lp <- vapply(tab, function(k) log(stats::integrate(function(e)
+    exp(k * e - exp(e) - lgamma(k + 1) - (e - mu)^2 / (2 * sigma^2)) /
+      (sigma * sqrt(2 * pi)),
+    mu - 40 * sigma, mu + 40 * sigma, subdivisions = 2000L,
+    rel.tol = 1e-12)$value), numeric(1))
+  sum(lp[match(y, tab)])
+}
+
+test_that("a count keeps its measurement variance free, as its dispersion", {
+  # Binary and ordinal have theirs fixed to a deterministic value, because a
+  # normal term on the linear predictor is absorbed into their loadings and
+  # thresholds and is not identified. A count has no such freedom -- the
+  # Poisson's variance is locked to its mean -- so the parameter is identified
+  # and is left alone, with the same default as a Gaussian indicator's.
+  d <- .count_iid_data(n = 30)
+  free <- suppressWarnings(suppressMessages(ctFit(d, .count_iid_model(),
+    backend = "julia", fit = FALSE)))
+  fixed <- suppressWarnings(suppressMessages(ctFit(d,
+    .count_iid_model(v = 0), backend = "julia", fit = FALSE)))
+  expect_equal(max(free$parameter_table$parnumber, na.rm = TRUE),
+    max(fixed$parameter_table$parnumber, na.rm = TRUE) + 1)
+
+  # And a binary indicator in the same position does not keep one, so this is
+  # a count-specific decision rather than the gate having been removed.
+  b <- .count_iid_model()
+  b$manifesttype <- 1L
+  db <- d; db$y <- as.numeric(db$y > 3)
+  bfit <- suppressWarnings(suppressMessages(ctFit(db, b, backend = "julia",
+    fit = FALSE)))
+  expect_equal(max(bfit$parameter_table$parnumber, na.rm = TRUE),
+    max(fixed$parameter_table$parnumber, na.rm = TRUE))
+})
+
+test_that("a count's off-diagonal measurement covariance is fixed to zero", {
+  # Counts are applied one row at a time, conditionally independent given the
+  # state, so the engine reads only the diagonal. A free off-diagonal would be
+  # accepted here and ignored there.
+  m <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 1,
+    n.manifest = 2, manifestNames = c("c1", "c2"), latentNames = "eta1",
+    manifesttype = c(3L, 3L), LAMBDA = matrix(1, 2, 1), CINT = matrix(0),
+    T0MEANS = matrix(0), MANIFESTVAR = "auto", Tpoints = 4)))
+  m$pars$indvarying <- FALSE
+  d <- .count_data(nsubjects = 8, nobs = 4)
+  f <- suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
+    fit = FALSE)))
+  pt <- f$parameter_table
+  off <- pt[pt$matrix %in% "MANIFESTVAR" & pt$row != pt$col, ]
+  expect_true(nrow(off) > 0)
+  expect_true(all(is.na(off$parnumber)))
+  expect_equal(unname(as.numeric(off$value)), rep(0, nrow(off)))
+})
+
+test_that("a count's likelihood is the Poisson-lognormal one", {
+  skip_without_julia()
+  # The test this file said it did not have. Against a reference computed from
+  # the definition rather than against the engine's own quadrature, and over a
+  # range of predictor sd, because the error that prompted this was invisible
+  # below 0.5 and 1766 log units at 1.2.
+  d <- .count_iid_data()
+  h <- suppressWarnings(suppressMessages(ctFit(d, .count_iid_model(),
+    backend = "julia", fit = FALSE)))
+  pt <- h$parameter_table
+  pt <- pt[!is.na(pt$parnumber), ]
+  # The raw vector for a wanted (mu, sigma), by inverting each parameter's own
+  # transform as the model states it -- read rather than hardcoded, so this
+  # does not quietly test the wrong point if a default transform changes.
+  log1p_exp <- function(x) ifelse(x > 30, x, log1p(exp(x)))
+  rawfor <- function(target) {
+    vapply(seq_len(nrow(pt)), function(i) {
+      tfi <- pt$transform[i]
+      want <- target[[pt$param[i]]]
+      stats::uniroot(function(r) {
+        param <- rep(0, nrow(pt))
+        param[pt$parnumber[i]] <- r
+        eval(parse(text = tfi)) - want
+      }, c(-30, 30), extendInt = "yes", tol = 1e-12)$root
+    }, numeric(1))[order(pt$parnumber)]
+  }
+  for (sigma in c(0.3, 0.7, 1.2)) {
+    engine <- ctJuliaEvaluate(h, rawfor(list(mu = 1.1, v = sigma)))$value
+    expect_equal(engine, .pln_loglik(d$y, 1.1, sigma), tolerance = 1e-5,
+      info = paste("predictor sd", sigma))
+  }
+})
+
+test_that("the adjoint is right with a count dispersion present", {
+  skip_without_julia()
+  # Two latents, because a one-latent gradient test hid a symmetry bug in this
+  # same adjoint for months. The dispersion's cotangent is the new path: it
+  # reaches MANIFESTVAR through the predictor's variance rather than through
+  # the density, so nothing in the threshold machinery carries it.
+  m <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 2,
+    n.manifest = 2, manifestNames = c("c1", "c2"),
+    latentNames = c("eta1", "eta2"), manifesttype = c(3L, 3L),
+    LAMBDA = matrix(c(1, 0, 0, 1), 2, 2), MANIFESTVAR = "diag",
+    CINT = matrix(0, 2, 1), MANIFESTMEANS = matrix(c("m1", "m2"), 2, 1),
+    Tpoints = 6)))
+  m$pars$indvarying <- FALSE
+  set.seed(11)
+  n <- 20; tp <- 6
+  d <- data.frame(id = rep(seq_len(n), each = tp),
+    time = rep(seq_len(tp) - 1, times = n),
+    c1 = stats::rpois(n * tp, 4), c2 = stats::rpois(n * tp, 3))
+  h <- suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
+    intoverpop = "augmented", fit = FALSE)))
+  npar <- max(h$parameter_table$parnumber, na.rm = TRUE)
+  set.seed(3)
+  for (trial in 1:3) {
+    at <- stats::rnorm(npar, 0, 0.25)
+    adjoint <- as.numeric(ctJuliaEvaluate(h, at, gradient = TRUE,
+      gradient_method = "adjoint")$gradient)
+    forward <- as.numeric(ctJuliaEvaluate(h, at, gradient = TRUE,
+      gradient_method = "forward")$gradient)
+    expect_equal(adjoint, forward, tolerance = 1e-8)
+  }
+})
+
+test_that("generated counts have the dispersion's moments", {
+  skip_without_julia()
+  # Both generation routes, because they are separate code: the filter's
+  # marginal inversion and the state-explicit one, the latter being what a
+  # count model's `intoverstates='auto'` resolves to. A Poisson-lognormal has
+  # mean `exp(mu + v/2)` and variance `mean + mean^2 (e^v - 1)`, so a
+  # generator that dropped the dispersion would report a variance equal to its
+  # mean and fail on the ratio alone.
+  sigma <- 0.5
+  mu <- log(4)
+  gen <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 1,
+    n.manifest = 1, manifestNames = "y", latentNames = "eta1",
+    manifesttype = 3L, LAMBDA = matrix(1), DRIFT = matrix(-0.5),
+    DIFFUSION = matrix(0), T0VAR = matrix(0), T0MEANS = matrix(0),
+    CINT = matrix(0), MANIFESTMEANS = matrix(mu),
+    MANIFESTVAR = matrix(sigma), Tpoints = 5)))
+  wanted_mean <- exp(mu + sigma^2 / 2)
+  wanted_var <- wanted_mean + wanted_mean^2 * (exp(sigma^2) - 1)
+  for (ios in c(TRUE, FALSE)) {
+    set.seed(7)
+    d <- data.frame(ctGenerate(gen, n.subjects = 3000, Tpoints = 5,
+      backend = "julia", intoverstates = ios))
+    y <- d$y[!is.na(d$y)]
+    expect_equal(mean(y), wanted_mean, tolerance = 0.05,
+      info = paste("intoverstates", ios))
+    expect_equal(stats::var(y), wanted_var, tolerance = 0.12,
+      info = paste("intoverstates", ios))
+  }
+})
