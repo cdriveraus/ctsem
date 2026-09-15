@@ -97,11 +97,16 @@ test_that("a T0VAR that stayed free still gets a per-subject T0VAR", {
 # non-T0MEANS cell adds a third row from RAWPOPVAR after the latents. Getting
 # that mapping wrong reads a plausible covariance out of the wrong matrix, so
 # it is checked directly, at a fixed raw vector, with no optimiser involved.
-test_that("T0cov takes the main latents from T0VAR and the population block from RAWPOPVAR", {
-  skip_on_cran()
-  skip_if_not_installed("rstan")
-
-  model <- suppressMessages(ctModel(type = "ct", n.latent = 2, n.manifest = 2,
+# One varying T0MEANS, whose state carries natural units, and one varying CINT,
+# which gets an appended carrier in raw units. That pair is what makes the
+# state-unit conversion visible: the two scales are 10 and 1, so a conversion
+# applied, omitted or doubled shows up differently in every cell of the block.
+#
+# A function rather than inline, because the julia test below has to run the
+# same fixture. Two copies of a model this specific would drift, and a
+# conversion test comparing two backends on two models is not one.
+.t0varred_popmodel <- function() {
+  suppressMessages(ctModel(type = "ct", n.latent = 2, n.manifest = 2,
     manifestNames = c("Y1", "Y2"), latentNames = c("eta1", "eta2"),
     LAMBDA = diag(2), MANIFESTVAR = diag(.2, 2),
     MANIFESTMEANS = matrix(0, 2, 1),
@@ -111,9 +116,20 @@ test_that("T0cov takes the main latents from T0VAR and the population block from
     CINT = matrix(c("b1||TRUE", 0), 2, 1),
     T0VAR = matrix(c("t0v11", 0, "t0v21", "t0v22"), 2, 2, byrow = TRUE),
     DRIFT = matrix(c("dr1", 0, 0, "dr2"), 2, 2)))
+}
+
+.t0varred_popdata <- function() {
   set.seed(4)
-  data <- data.frame(id = rep(1:8, each = 4), time = rep(0:3, 8),
+  data.frame(id = rep(1:8, each = 4), time = rep(0:3, 8),
     Y1 = stats::rnorm(32), Y2 = stats::rnorm(32))
+}
+
+test_that("T0cov takes the main latents from T0VAR and the population block from RAWPOPVAR", {
+  skip_on_cran()
+  skip_if_not_installed("rstan")
+
+  model <- .t0varred_popmodel()
+  data <- .t0varred_popdata()
 
   prep <- suppressMessages(suppressWarnings(
     ctFit(data, model, fit = FALSE, cores = 1L, verbose = 0L)))
@@ -261,4 +277,67 @@ test_that("only a subject level T0MEANS random effect disables T0VAR", {
   expect_identical(as.character(bothkept$param), "t0v22")
   expect_equal(bothout$pars$value[bothout$pars$matrix %in% "T0VAR"],
     out$pars$value[out$pars$matrix %in% "T0VAR"])
+})
+
+test_that("the julia engine places the population block with the same conversion", {
+  skip_without_julia()
+  skip_if_not_installed("rstan")
+
+  # The gap this closes. `a38202fd` moved the state-unit conversion to the line
+  # that writes the block and says "the two backends are now the same
+  # statement", with `_place_population_block!` doing on the engine side what
+  # `quad_form_diag(rawpopcov, popstatescale)` does in `ctsm.stan`. Until this,
+  # the test above was the only thing in the repo asserting that conversion at
+  # all, on either backend -- nothing else matches `popstatescale`,
+  # `population_scale` or `_place_population_block!`.
+  #
+  # `test-stan-julia-parity.R` already agrees the two backends' *likelihoods*
+  # for a T0MEANS-indvarying parameter with non-unit meanscale, and that is a
+  # different claim. The filter builds its own population block; the matrix a
+  # user reads is built again in `_ctsem_pack_matrices!`. An error there leaves
+  # the likelihood, the estimates and the gradients all correct and only what
+  # is reported wrong, which is the shape of the matsetup defect CLAUDE.md
+  # records and the reason a green likelihood parity run says nothing here.
+  model <- .t0varred_popmodel()
+  data <- .t0varred_popdata()
+
+  stan_spec <- suppressMessages(suppressWarnings(ctFit(data, model,
+    backend = "stan", fit = FALSE, priors = FALSE, cores = 1L, verbose = 0L)))
+  julia_spec <- suppressMessages(suppressWarnings(ctFit(data, model,
+    backend = "julia", fit = FALSE, priors = FALSE, cores = 1L, verbose = 0L)))
+
+  sf <- ctsem:::stan_reinitsf(ctsem:::stanmodels$ctsm, stan_spec$standata)
+  npar <- rstan::get_num_upars(sf)
+  # The two unconstrained vectors are the same vector, which is what lets one
+  # raw draw be pushed through both reporting paths. Asserted rather than
+  # assumed: if the parameter counts ever diverge, everything below compares
+  # two different points and would still mostly agree.
+  expect_equal(max(c(julia_spec$parameter_table$parnumber,
+    julia_spec$ti_effects$coefficient), na.rm = TRUE), npar)
+
+  set.seed(9)
+  raw <- stats::rnorm(npar, 0, .4)
+  grab <- function(x) if (length(dim(x)) == 3) x[1, , ] else drop(x)
+  stan_T0cov <- grab(rstan::constrain_pars(sf, raw)$pop_T0cov)
+
+  # `trim = FALSE`: trimming drops the appended carrier rows, which is exactly
+  # the half of the matrix this is about.
+  julia_T0cov <- suppressMessages(suppressWarnings(
+    ctsem:::ctBackendParMatrices(julia_spec, raw = raw, trim = FALSE)$T0cov))
+
+  expect_equal(dim(julia_T0cov), dim(stan_T0cov))
+  expect_equal(as.numeric(julia_T0cov), as.numeric(stan_T0cov), tolerance = 1e-8)
+
+  # And the population block specifically, so a failure says whether the
+  # disagreement is there or in the main latents' T0VAR.
+  popidx <- as.integer(stan_spec$standata$intoverpopindvaryingindex)
+  expect_equal(length(popidx), 2L)
+  expect_equal(julia_T0cov[popidx, popidx], stan_T0cov[popidx, popidx],
+    tolerance = 1e-8)
+  # Not by accident of both being zero, or of the scales both being 1: the
+  # block has to carry the 10 and the 1, so its two diagonal entries differ by
+  # about two orders of magnitude.
+  diagonal <- diag(julia_T0cov[popidx, popidx])
+  expect_true(all(diagonal > 0))
+  expect_gt(max(diagonal) / min(diagonal), 10)
 })
