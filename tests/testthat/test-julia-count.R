@@ -152,32 +152,43 @@ test_that("a count model recovers what generated it, and laplace does it better"
       drift = unname(means["drift_eta1", "mean"]))
   }, numeric(2))
 
-  # One tolerance for both routes is what this used to have, and it hid the
-  # result rather than testing it: the two do not have the same accuracy here
-  # and the difference is the point of having both.
-  #
-  # The laplace route integrates the random intercept; the augmented route
-  # carries it as a state through a linearised filter, which biases a nonlinear
-  # model -- the same shrinkage `test-julia-multivariate-mixed.R` records for a
-  # nonlinear sd, here on a Poisson intercept. Measured, both converged:
+  # This test used to assert that the laplace route was the more accurate of
+  # the two here, and record the gap:
   #
   #   route      mm (truth 1.2)      drift (truth -0.4)
   #   laplace    1.242   3.5% off    -0.402   0.5% off
   #   augmented  1.716    43% off    -0.219    45% off
   #
-  # So each route is asked for what it delivers, with room over the
-  # measurement, and the ordering is asserted separately because that is the
-  # claim worth defending: a tolerance that covered both would pass whichever
-  # way round they came out.
-  expect_equal(unname(got["mm", "laplace"]), 1.2, tolerance = 0.1)
-  expect_equal(unname(got["drift", "laplace"]), -0.4, tolerance = 0.1)
-  expect_equal(unname(got["mm", "augmented"]), 1.2, tolerance = 0.6)
-  expect_equal(unname(got["drift", "augmented"]), -0.4, tolerance = 0.6)
+  # attributing it to the augmented route carrying the random intercept as a
+  # state through a linearised filter. Almost all of it was the count mode
+  # solve instead. `_binary_mode` stopped six Newton steps short, which
+  # mis-centred the quadrature by an amount that grows with the linear
+  # predictor's variance -- and the augmented route's extra state is exactly an
+  # extra contribution to that variance, so it was the route being punished.
+  # With the mode solved, both converged:
+  #
+  #   route      mm (truth 1.2)      drift (truth -0.4)
+  #   laplace    1.198  0.17% off    -0.357   10.7% off
+  #   augmented  1.198  0.17% off    -0.357   10.7% off
+  #
+  # The remaining drift miss is this fixture's, not a route's: 40 subjects and
+  # 8 occasions, and both routes now find the same maximum. Note that laplace's
+  # old drift of -0.402 was luck rather than accuracy -- it moved too, and away
+  # from the generating value, because the likelihood it maximises changed.
+  #
+  # So the claim worth defending is no longer an ordering but an agreement, and
+  # it is asserted as one. A reappearance of the old gap fails on the second
+  # block below, not on a tolerance wide enough to hide it.
+  expect_equal(unname(got["mm", "laplace"]), 1.2, tolerance = 0.05)
+  expect_equal(unname(got["drift", "laplace"]), -0.4, tolerance = 0.15)
+  expect_equal(unname(got["mm", "augmented"]), 1.2, tolerance = 0.05)
+  expect_equal(unname(got["drift", "augmented"]), -0.4, tolerance = 0.15)
 
-  # The direction, which a pair of tolerances cannot state.
-  expect_lt(abs(got["mm", "laplace"] - 1.2), abs(got["mm", "augmented"] - 1.2))
-  expect_lt(abs(got["drift", "laplace"] + 0.4),
-    abs(got["drift", "augmented"] + 0.4))
+  # The two routes integrate the same random intercept two different ways, so
+  # on a model this size they should reach the same estimate. Elementwise, so a
+  # failure names the parameter that moved.
+  expect_equal(unname(got[, "laplace"]), unname(got[, "augmented"]),
+    tolerance = 1e-3)
 })
 
 test_that("the two routes agree on a count model", {
@@ -212,18 +223,24 @@ test_that("the two routes agree on a count model", {
   laplace <- fit("laplace")
   # The two routes integrate the same random effect differently, so the gap is
   # a real methodological difference and not noise: -1471.584 (laplace) against
-  # -1483.480 (augmented), 11.896 apart, 0.0080 relative. `expect_equal`
-  # tolerances are relative, so the old value of 1 permitted a difference of
-  # 1483 -- the two could have had nothing to do with each other and passed.
-  # 0.02 keeps 2.5x headroom over the measurement.
+  # The two were 11.896 apart, 0.0080 relative, when the count mode solve
+  # stopped short; the gap was that defect rather than a difference between the
+  # routes, and the augmented route carried more of it because its extra state
+  # adds to the linear predictor's variance. Measured now: -1466.970967283
+  # (augmented) against -1466.970967298 (laplace), 1.5e-08 apart and 1.0e-11
+  # relative.
+  #
+  # 1e-6 rather than anything tighter because two different integration routes
+  # reaching a maximum by different paths have no reason to agree to the last
+  # bit, and it is still four orders of magnitude below the gap this is here to
+  # catch.
   expect_equal(as.numeric(laplace$estimate$loglik),
-    as.numeric(augmented$estimate$loglik), tolerance = 0.02)
-  # And the laplace route is the better fit here, which is the direction the
-  # methodology predicts: it integrates the random effect rather than carrying
-  # it as a state through a linearised filter. A gap inside tolerance but the
-  # wrong way round would be worth knowing about.
-  expect_gt(as.numeric(laplace$estimate$loglik),
-    as.numeric(augmented$estimate$loglik))
+    as.numeric(augmented$estimate$loglik), tolerance = 1e-6)
+  # No ordering is asserted. It used to be -- laplace the better fit, as the
+  # methodology predicts for an integrated random effect against a linearised
+  # one -- and with the mode solved the two agree to 1.5e-08, which is optimiser
+  # noise and falls either way between runs. Asserting a direction across a gap
+  # that small tests the optimiser's last digit, not the methodology.
 })
 
 test_that("ctGenerate draws counts rather than continuous values", {
