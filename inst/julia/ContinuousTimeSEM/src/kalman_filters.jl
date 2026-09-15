@@ -406,30 +406,14 @@ function _generate_binary!(gen, ws::ContinuousEKFWorkspace, pars, λ,
         draw = ηbar + sqrt(s2 + sd * sd) * T(gen.base[row, r])
         y = min(max(draw, lower), upper)
     elseif kind == CTSEM_OBS_COUNT
-        # The same inversion the ordinal branch does, over 0, 1, 2, ... rather
-        # than a fixed set of categories. Each term is the *marginal*
-        # probability of that count, with the state's own uncertainty
-        # integrated out, which is what makes one uniform enough and keeps the
-        # draw reproducible from `gen.base` alone.
-        #
-        # Capped, because a count is unbounded and the walk is linear in the
-        # value drawn. The cap scales with the marginal mean rather than being
-        # fixed: past it the accumulated mass is one to floating point, so
-        # exhausting the loop means `u` fell in a tail with no representable
-        # mass left and the last value is the honest answer.
-        mean_rate = exp(min(ηbar + 4 * s, T(_CTSEM_COUNT_MAX_LOG_RATE[])))
-        kmax = min(_CTSEM_COUNT_GENERATE_MAX[],
-            Int(ceil(mean_rate + 10 * sqrt(mean_rate) + 20)))
-        y = zero(T)
-        cumulative = zero(T)
-        @inbounds for k in 0:kmax
-            logZ, _, _ = _binary_moments(ηbar, s, k, nodes, weights, (), kind)
-            cumulative += isfinite(logZ) ? exp(logZ) : zero(T)
-            y = T(k)
-            if u < cumulative
-                break
-            end
-        end
+        # Inversion of the marginal over 0, 1, 2, ... where the rate is small
+        # enough for that to be both affordable and accurate, and the marginal's
+        # normal approximation where it is not. `_generate_count_marginal`
+        # carries the reasoning; the short of it is that a walk costing one
+        # quadrature per value cannot serve a rate of `exp(14)`, and an ordinary
+        # count model reaches that.
+        y = _generate_count_marginal(ηbar, s, u, T(gen.base[row, r]), nodes,
+            weights)
     elseif kind == CTSEM_OBS_BINARY || isempty(thresholds)
         logZ, _, _ = _binary_moments(ηbar, s, one(T), nodes, weights, (),
             CTSEM_OBS_BINARY)

@@ -240,22 +240,117 @@ information `Inf`, so Newton's step is `-Inf/Inf` and the mode solve returns
 NaN rather than walking back. Clamping the exponent keeps both finite and the
 step bounded, so a trial point out here is merely bad rather than poisonous.
 
-Two hundred rather than seven hundred so that the rate squares without
-overflowing as well. For real data it never binds: a rate of `exp(20)` is
-already half a billion events, and a parameter that reaches this is caught by
-the saturation guard long before.
+Two hundred rather than seven hundred so that the rate *cubes* without
+overflowing as well -- `_generate_count_marginal` needs `mean^2 exp(s^2)` for
+the marginal variance, and `exp(600)` is still representable where `exp(2100)`
+is not. For real data it never binds: a rate of `exp(20)` is already half a
+billion events, and a parameter that reaches this is caught by the saturation
+guard long before.
 """
 const _CTSEM_COUNT_MAX_LOG_RATE = Ref(200.0)
 
 """
 Hard ceiling on the count-generation walk.
 
-Generating a count inverts its marginal distribution one value at a time, so
-the work is linear in the value drawn. A rate large enough for this to bind is
-already far outside what these models are for, and an unbounded loop on a bad
-parameter draw is worse than a capped one.
+Generating a count inverts its distribution one value at a time, so the work is
+linear in the value drawn. `_ctsem_draw_count` hands over to a normal
+approximation at `_CTSEM_POISSON_NORMAL_RATE`, so its walk is already bounded
+by a rate of five hundred; this is the ceiling for the case that bound does not
+cover, a `u` in the last representable sliver below one.
+
+A term of that walk is one multiply and one add. `_generate_count_marginal`'s
+term is a whole Gauss-Hermite quadrature, some four hundred transcendentals, so
+it cannot afford anything like this many and has `_CTSEM_COUNT_WALK_MAX` of its
+own.
 """
 const _CTSEM_COUNT_GENERATE_MAX = Ref(100000)
+
+"""
+Values `_generate_count_marginal`'s walk will invert before giving up on it.
+
+Two thousand rather than `_CTSEM_COUNT_GENERATE_MAX`, because a term here costs
+a quadrature rather than a multiply -- the whole walk is about a millisecond,
+and it is run once per count observation per generated dataset, so a posterior
+predictive check pays it thousands of times over.
+
+The budget binds only in the upper tail: the walk stops as soon as it reaches
+`u`, so its ordinary cost is the value drawn, and a model whose counts run in
+the hundreds pays a few hundred terms for a typical draw and nothing like this.
+What it bounds is the draw that asks for a far-tail quantile of a
+heavy-tailed marginal, where the walk would otherwise run for a hundred
+thousand terms to arrive at a value the lognormal quantile gives in closed
+form.
+"""
+const _CTSEM_COUNT_WALK_MAX = Ref(2000)
+
+"""
+    _generate_count_marginal(etabar, s, u, z, nodes, weights)
+
+Draw one count from its *marginal* distribution `int Poisson(y | exp(eta))
+phi(eta; etabar, s^2) deta`, given a uniform `u` and the standard normal `z`
+it came from.
+
+This is the filter route's draw, where the state is uncertain and that
+uncertainty has to be integrated out before anything can be inverted -- unlike
+`_ctsem_draw_count`, which knows the state and inverts a plain Poisson.
+
+Two regimes, and which one a draw gets is settled by the arithmetic rather than
+by a bound computed in advance -- there is no rate threshold here to tune, and
+no count-sized quantity that has to survive a conversion to `Int`, which is
+what the reported `InexactError` was.
+
+Inverting the marginal costs one Gauss-Hermite quadrature *per value walked*,
+so it is affordable only while the count stays small. The walk therefore runs
+until one of three things happens: it reaches `u`, which is the exact answer
+and the common case; it runs past `_CTSEM_COUNT_WALK_MAX`; or the marginal
+probabilities underflow, which says the rate is large enough that no value the
+walk can still reach carries representable mass. The last of those needs no
+threshold: at a rate past about seven hundred `P(y = 0)` is already zero to
+floating point, so the walk knows on its second iteration that it is not the
+method for this cell.
+
+The other regime is the marginal's *lognormal* quantile, matched to its first
+two moments -- `E[y] = exp(etabar + s^2/2)` and `Var[y]/E[y]^2 = expm1(s^2) +
+1/E[y]`, the Poisson-lognormal result, with the second term carrying the
+Poisson's own share of the spread. Lognormal rather than normal because that is
+the shape the marginal actually has: a normal matched to the same moments is
+not merely inaccurate for a large `s`, it puts half its mass below zero once
+`s` passes one. And a quantile rather than a two-stage draw, because both
+regimes then map `z` to `y` the same way -- increasing, through the marginal --
+so the generated value stays monotone in the deviate that produced it and the
+two agree where they meet, instead of the value jumping down as one gave way to
+the other.
+
+The clamp at `_CTSEM_COUNT_MAX_LOG_RATE` keeps the moments finite for a
+parameter draw out where `exp(etabar)` is not: a saturated draw is then a large
+finite count, which plots and summarises as the nonsense it is, rather than an
+`Inf` that takes the rest of the row's likelihood with it.
+"""
+function _generate_count_marginal(etabar::T, s::T, u::T, z::T, nodes,
+    weights) where {T}
+    cumulative = zero(T)
+    @inbounds for k in 0:_CTSEM_COUNT_WALK_MAX[]
+        logZ, _, _ = _binary_moments(etabar, s, T(k), nodes, weights, (),
+            CTSEM_OBS_COUNT)
+        mass = isfinite(logZ) ? exp(logZ) : zero(T)
+        u < cumulative + mass && return T(k)
+        cumulative += mass
+        # Underflowed. Not "this value is improbable" -- `P(y = 0)` and
+        # `P(y = 1)` both rounding to zero means the whole low end of the
+        # distribution is unrepresentable, so the walk cannot arrive at `u`
+        # however long it runs, and carrying on would only buy the ceiling.
+        (mass == zero(T) && k > 0) && break
+    end
+    cap = T(_CTSEM_COUNT_MAX_LOG_RATE[])
+    s2 = min(s * s, cap)
+    log_mean = min(etabar + s2 / 2, cap)
+    # `1/E[y]` is the Poisson's contribution to the relative variance and the
+    # `expm1` the state's. Keeping both matters where they are comparable: drop
+    # the first and a draw at `s = 0.05` comes out 40% too narrow.
+    sigma2 = log1p(expm1(s2) + exp(-log_mean))
+    return max(zero(T),
+        round(exp(min(log_mean - sigma2 / 2 + sqrt(sigma2) * z, cap))))
+end
 
 """
     _log_factorial(y)
@@ -268,20 +363,26 @@ leaving it out would make counts incomparable with every other likelihood in
 the package. Computed rather than taken from SpecialFunctions, which the engine
 does not otherwise depend on; the observation is data, so this never needs a
 derivative.
+
+Kept in floating point throughout rather than counting in `Int`. A count is
+unbounded, so a value past `typemax(Int64)` is reachable -- from generation
+under a saturated rate, or from data someone hands us -- and there it is
+Stirling's series that is wanted, evaluated on the float. Converting first
+turned that into an `InexactError` from inside the likelihood, which named a
+number and nothing else.
 """
 @inline function _log_factorial(y::Real)
-    n = Int(round(y))
-    n <= 1 && return 0.0
-    if n < 16
+    x = float(round(y))
+    x <= 1 && return 0.0
+    if x < 16
         acc = 0.0
-        for i in 2:n
+        for i in 2:Int(x)
             acc += log(i)
         end
         return acc
     end
     # Stirling with the first two correction terms: better than 1e-12 relative
     # from n = 16 up, which is far finer than a constant offset needs.
-    x = float(n)
     return 0.5 * log(2 * pi * x) + x * log(x) - x +
         inv(12 * x) - inv(360 * x^3)
 end
