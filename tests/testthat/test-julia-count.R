@@ -435,12 +435,28 @@ test_that("the adjoint is right with a count dispersion present", {
 
 test_that("generated counts have the dispersion's moments", {
   skip_without_julia()
-  # Both generation routes, because they are separate code: the filter's
-  # marginal inversion and the state-explicit one, the latter being what a
-  # count model's `intoverstates='auto'` resolves to. A Poisson-lognormal has
-  # mean `exp(mu + v/2)` and variance `mean + mean^2 (e^v - 1)`, so a
-  # generator that dropped the dispersion would report a variance equal to its
-  # mean and fail on the ratio alone.
+  # Both generation routes, because they are separate code: the filter's and
+  # the state-explicit one, the latter being what a count model's
+  # `intoverstates='auto'` resolves to. A Poisson-lognormal has mean
+  # `exp(mu + v/2)` and variance `mean + mean^2 (e^v - 1)`, so a generator that
+  # dropped the dispersion would report a variance equal to its mean and fail
+  # on the ratio alone.
+  #
+  # The tolerances are measured, not guessed, and they are Monte Carlo rather
+  # than anything about the draw. Over twelve seeds at 15000 observations each,
+  # relative error against the theoretical moments:
+  #
+  #   route                mean: max / typical    variance: max / typical
+  #   intoverstates=TRUE      0.0107 / 0.0052        0.0358 / 0.0157
+  #   intoverstates=FALSE     0.0110 / 0.0044        0.0351 / 0.0137
+  #
+  # So 0.05 and 0.12 are about 4.5x and 3.3x the worst seen. They were not
+  # tightened when the draw became exact -- two stages, a Gaussian for the
+  # dispersion and then a plain Poisson, rather than an inverted marginal --
+  # because the quadrature was never what these numbers were measuring. A
+  # sample variance of a heavy-tailed variable is, and 3.3x headroom on one is
+  # not somewhere to economise: tightening buys no sensitivity and buys a
+  # flaky test.
   sigma <- 0.5
   mu <- log(4)
   gen <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 1,
