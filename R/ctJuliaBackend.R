@@ -3477,6 +3477,16 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # A caller may hand in the objective to maximise. `intoverstates=FALSE` does,
   # passing the joint one over `[theta; z]`; everything below is unchanged by
   # that, because `ctsem_optimize` is typed on what the two have in common.
+  # Whether the caller brought its own, recorded *before* the default is
+  # filled in. Two stopping rules below are off for the state-explicit
+  # route and ask this question, and after the next line the argument is
+  # never NULL again -- so both of them read FALSE on every route, and both
+  # were therefore off everywhere rather than there. `gap_tol` was 0 for
+  # every fit in the package, and `stall_window` was 0, which is the whole
+  # check. Found by starting a laplace fit inside a flat transform: it ran
+  # 885 iterations, spent the last 300 of them with a predicted gain of
+  # 1e-8, and stopped 387 nats short with neither rule having fired once.
+  state_explicit <- !is.null(objective)
   if (is.null(objective)) objective <- .ctJuliaObjective(spec)
   module <- .ctJuliaModule(model_spec$project)
   # The shared optimcontrol vocabulary (see the table at the top of R/ctFit.R).
@@ -3503,8 +3513,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # `.ctBackendInnerGapTol()`, which is where that reasoning lives.
     # `objective` is supplied only by the state-explicit route, which is
     # what `intoverstates = FALSE` means here -- that name is not in this
-    # function's scope, and the argument it arrives as is.
-    gap_tol = .ctBackendInnerGapTol(optimcontrol, is.null(objective)),
+    # function's scope, and `state_explicit` above is how it is asked.
+    gap_tol = .ctBackendInnerGapTol(optimcontrol, !state_explicit),
     # The same bar the certification will use, so the optimiser's own verdict
     # and the curvature's are the same question asked with different metrics
     # rather than two different questions. `gap_tol` above is the stopping rule
@@ -3514,6 +3524,30 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # skip it. See `.ctBackendOvershootProbe()` for what the settings mean and
     # `_ctsem_overshot` in the engine for what the probe costs.
     overshoot_probe = .ctBackendOvershootProbe(optimcontrol),
+    # Stop a run that has stopped converging, rather than letting it grind to
+    # the iteration cap. See `.ctBackendStallWindow()` and `_ctsem_stalled`.
+    #
+    # Off on the state-explicit route, where `objective` is the joint target.
+    # Every premise the check rests on fails there: that mode is degenerate --
+    # the innovations re-optimise to absorb almost any parameter change -- so
+    # the objective is nearly flat everywhere, which makes the progress half
+    # meaningless, and a pullback can nearly always find something, which makes
+    # the third condition meaningless too. `.ctBackendInnerGapTol()` excludes
+    # the same route for the same reason, and `test-julia-intoverstates.R`
+    # measured what including it costs: the joint fit stopped somewhere else
+    # and its curvature came back indefinite in a substantial direction.
+    stall_window = if (state_explicit) 0L
+      else .ctBackendStallWindow(optimcontrol),
+    stall_fraction = .ctBackendStallFraction(optimcontrol),
+    # The hysteresis: a fit that stalls with nothing flat is slow rather than
+    # stuck, so it is left alone for a while and asked less readily after.
+    stall_cooldown = as.integer(.ctJuliaOr(optimcontrol$stallcooldown, 30L)),
+    stall_tighten = as.numeric(.ctJuliaOr(optimcontrol$stalltighten, 0.1)),
+    stall_tightenings = as.integer(.ctJuliaOr(optimcontrol$stalltightenings, 2L)),
+    # How much of its live responsiveness a transform has to have lost before
+    # it counts as the reason a fit stopped. Relative, because an absolute
+    # derivative floor means a different thing for every transform.
+    stall_ratio = as.numeric(.ctJuliaOr(optimcontrol$stallratio, 1e-3)),
     # How much a raw unit is worth in each coordinate, so a step means the same
     # amount of model everywhere. L-BFGS has only a scalar metric until secant
     # pairs accumulate, and a model whose transforms differ by a factor of ten
@@ -3609,19 +3643,82 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # `cores` is the ceiling; `ctsem_tune_chunks!` measures the count to use
   # within it, and the fit records what it picked. Restored afterwards so the
   # session does not carry this fit's ceiling into the next thing that runs.
-  result <- .ctBackendWithMaxChunks(cores, {
-    if (!is.null(model_spec$laplace)) {
-      # `gradient` selects how the *process* likelihood's gradient is taken and
-      # does not apply here: the Laplace objective's gradient is a forward sweep
-      # over that reverse pass regardless.
-      JuliaConnectoR::juliaGet(do.call(module$ctsem_laplace_optimize,
-        c(list(objective, .ctJuliaNumericVector(start)), common)))
-    } else {
-      JuliaConnectoR::juliaGet(do.call(module$ctsem_optimize,
-        c(list(objective, .ctJuliaNumericVector(start)), common,
-          list(gradient_method = gradient))))
+  # `damp` names coordinates whose first steps should be short. The metric is
+  # `Diagonal(scale^2)` standing in for the curvature, and a step is `P^-1 g`,
+  # so multiplying a coordinate's `scale` by 10 divides its step by 100. Used
+  # when refitting after an escape: the coordinate that was on a boundary is
+  # the one most likely to run straight back to it, and holding it still for a
+  # few iterations lets the rest of the model settle first. It is only the
+  # *initial* inverse Hessian, so L-BFGS overrides it as soon as it has secant
+  # pairs -- the damping costs nothing once there is curvature to learn.
+  optimise_once <- function(from, damp = integer()) {
+    args <- common
+    if (length(damp) && !is.null(args$precondition)) {
+      scale <- as.numeric(args$precondition)
+      damp <- damp[damp >= 1L & damp <= length(scale)]
+      if (length(damp)) {
+        scale[damp] <- scale[damp] * 10
+        args$precondition <- .ctJuliaVector(scale)
+      }
     }
-  })
+    .ctBackendWithMaxChunks(cores, {
+      if (!is.null(model_spec$laplace)) {
+        # `gradient` selects how the *process* likelihood's gradient is taken
+        # and does not apply here: the Laplace objective's gradient is a forward
+        # sweep over that reverse pass regardless.
+        JuliaConnectoR::juliaGet(do.call(module$ctsem_laplace_optimize,
+          c(list(objective, .ctJuliaNumericVector(from)), args)))
+      } else {
+        JuliaConnectoR::juliaGet(do.call(module$ctsem_optimize,
+          c(list(objective, .ctJuliaNumericVector(from)), args,
+            list(gradient_method = gradient))))
+      }
+    })
+  }
+  result <- optimise_once(start)
+  # A stage that stopped because it had stopped getting anywhere, with a
+  # transform flat as the reason, is the one case where there is somewhere
+  # better to go and we know where: pull the flat coordinates back and run
+  # again from there.
+  #
+  # Resuming rather than continuing, and that is not a detail. L-BFGS's
+  # curvature history describes the region the fit just left, so carrying it
+  # across a jump would feed the metric secant pairs from two different
+  # problems -- which is the same reason `.ctBackendCorrectResult()` resumes a
+  # fresh optimisation after its Newton step rather than nudging the old one.
+  #
+  # The jump is only ever taken on a *measured* improvement, so a resumed stage
+  # cannot start below where the last one stopped. `stallretries` caps the loop
+  # for the case where each escape lands somewhere that stalls again.
+  escapes <- 0L
+  maxescapes <- as.integer(.ctJuliaOr(optimcontrol$stallretries, 2L))
+  while (escapes < maxescapes) {
+    from <- .ctBackendStallEscape(result, optimcontrol, model_spec, verbose,
+      escapes = !state_explicit)
+    if (is.null(from)) break
+    escapes <- escapes + 1L
+    # Deliberately not damped. Holding the freed coordinate back with the
+    # metric was measured and it breaks the escape: after zeroing it the refit
+    # needs that coordinate to *travel* to where it belongs, and a step divided
+    # by 100 pins it near the value we just imposed. The fit then re-converges
+    # around a coordinate stuck in the wrong place -- -3721.05 against -2950.59
+    # on one fit, -2891.36 against -2883.16 on another, failing to converge in
+    # both. `optimise_once` keeps its `damp` argument because the
+    # measurement is worth being able to repeat.
+    resumed <- try(optimise_once(from), silent = TRUE)
+    if (inherits(resumed, "try-error")) break
+    # Only if it actually came out ahead. Neither route to `from` promises
+    # that: the pullback improves the objective on the spot but the stage that
+    # follows it is an optimisation like any other, and the zeroed point is
+    # deliberately *worse* on the spot -- 9.5 nats down on the fit this was
+    # measured on, from which a refit landed 7.2 nats up.
+    if (!is.finite(as.numeric(resumed$maximum_loglik)[1L]) ||
+        as.numeric(resumed$maximum_loglik)[1L] <
+          as.numeric(result$maximum_loglik)[1L]) break
+    resumed$stall_escapes <- escapes
+    result <- resumed
+  }
+  if (is.null(result$stall_escapes)) result$stall_escapes <- escapes
   # What the tuner settled on, when that is well short of what was asked for.
   .ctBackendReportChunks(cores, result$chunks)
   if (!is.null(failure)) {
@@ -4140,6 +4237,32 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # `iterations` is taken from the engine's own count and is right either
     # way. See `ctsem_optimize`.
     stopped_by_gap = isTRUE(result$stopped_by_gap),
+    # And whether it ended because it had stopped making progress with a
+    # transform flat as the reason. Reported separately from `stopped_by_gap`
+    # because they mean opposite things: the gap rule stops a fit that has
+    # arrived, this one stops a fit that is not going to.
+    stopped_by_stall = isTRUE(result$stopped_by_stall),
+    stall_window = if (is.null(result$stall_window)) NA_integer_ else
+      as.integer(result$stall_window),
+    # And the two stopping rules as the engine actually received them.
+    # Reported because both were once switched off for every fit in the
+    # package by one variable read a line too late, and nothing in the
+    # result said so: a rule that is not running looks exactly like a rule
+    # that never had cause to fire. See `state_explicit` in
+    # `.ctJuliaOptimise()`.
+    gap_tol = if (is.null(result$gap_tol)) NA_real_ else
+      as.numeric(result$gap_tol)[1L],
+    # Which coordinates had gone flat when it stopped, named rather than
+    # numbered, and how many times the progress half fired. More than one
+    # trigger means the fit stalled, was found to be merely slow, and was
+    # given more rope.
+    stall_parameters = .ctJuliaSaturatedNames(result, model_spec, npar,
+      "stall_parameters"),
+    stall_triggers = if (is.null(result$stall_triggers)) NA_integer_ else
+      as.integer(result$stall_triggers),
+    # How many times the fit was pulled off a boundary and refitted.
+    stall_escapes = if (is.null(result$stall_escapes)) 0L else
+      as.integer(result$stall_escapes),
     # Every iteration, recorded whatever `verbose` said. It costs a push onto a
     # vector in Julia and one transfer at the end, and the fit whose trace turns
     # out to be worth looking at is exactly the one nobody thought to turn

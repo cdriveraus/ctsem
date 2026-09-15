@@ -452,6 +452,97 @@ test_that("a direction with no curvature is projected out, not floored", {
   expect_equal(max(perturbed) / min(perturbed), 1, tolerance = 1e-5)
 })
 
+# Which flat directions are flat in the *likelihood*, not just in a
+# numerically differentiated approximation to it.
+#
+# The curvature along a direction the data does not determine is not a property
+# of the model and the data. Measured on a two-latent model fitted to noise,
+# walking one diffusion correlation out along its flat ray: the log likelihood
+# is -207.01897 at every raw value from -6 to -20, while the smallest relative
+# eigenvalue falls from 1.6e-08 to 7.1e-16 and then turns negative from
+# rounding. So which side of `.ctFlatDirectionRtol()` the direction landed on
+# was decided by where the optimiser stopped, and the same fit with its
+# predicted-gain rule on and off got opposite diagnoses.
+#
+# The screen asks the likelihood instead, against the likelihood-ratio bound
+# (Raue et al. 2009), which is a statistical quantity rather than a tolerance
+# on an approximation. Tested here on functions whose answer is known, because
+# the whole question is which functions it calls flat.
+test_that("a flat direction is confirmed against the likelihood, not the curvature", {
+  screen <- ctsem:::.ctOptimFlatDirectionScreen
+  at <- c(0, 0)
+  bar <- stats::qchisq(0.95, 1) / 2
+
+  # Genuinely flat along the second coordinate, and the curvature agrees.
+  flat <- screen(diag(c(1, 1e-14)), function(x) -0.5 * x[1]^2, at)
+  expect_equal(flat$flat, c(FALSE, TRUE))
+  expect_equal(flat$change[2], 0)
+  expect_equal(flat$bar, bar)
+
+  # A curvature that says flat where the likelihood is not. This is the case
+  # the screen exists to refuse, and refusing it is what makes the screen safe
+  # to act on: it can only ever remove a direction from the identified
+  # subspace, so a false positive here would invent a missing interval.
+  lying <- screen(diag(c(1, 1e-14)), function(x) -0.5 * sum(x^2), at)
+  expect_equal(lying$flat, c(FALSE, FALSE))
+  expect_gt(lying$change[2], bar)
+
+  # A direction the likelihood *rises* along is not flat -- it is one the
+  # optimiser has not finished with. It arrives as a candidate because a
+  # rounding-negative eigenvalue is below any threshold, and it must not be
+  # confirmed, which is why the change is measured as a magnitude rather than
+  # as a drop.
+  rising <- screen(diag(c(1, -1e-16)),
+    function(x) -0.5 * x[1]^2 + 3 * abs(x[2]), at)
+  expect_equal(rising$flat, c(FALSE, FALSE))
+  expect_gt(rising$change[2], bar)
+
+  # And the usual fit, which has no flat direction: nothing to ask about, so
+  # nothing is evaluated. This is what keeps the screen free on the fits that
+  # are the overwhelming majority -- it returns before the first call.
+  calls <- 0L
+  counted <- function(x) { calls <<- calls + 1L; -0.5 * sum(x^2) }
+  expect_null(screen(diag(c(1, 0.5)), counted, at))
+  expect_equal(calls, 0L)
+
+  # A point the model cannot evaluate is not evidence of flatness either.
+  broken <- screen(diag(c(1, 1e-14)),
+    function(x) if (abs(x[2]) > 1e-8) NaN else -0.5 * x[1]^2, at)
+  expect_equal(broken$flat, c(FALSE, FALSE))
+  expect_true(is.na(broken$change[2]))
+})
+
+test_that("the confirmed directions come out of the covariance, and only those", {
+  eig <- eigen(diag(c(1, 0.5)), symmetric = TRUE)
+  # The mask only ever removes. With none set this is the eigenvalue rule it
+  # has always been, which is what makes it safe to leave on everywhere.
+  plain <- ctsem:::.ctOptimIdentifiedInverse(diag(c(1, 0.5)))
+  expect_equal(plain$nnull, 0L)
+  masked <- ctsem:::.ctOptimIdentifiedInverse(diag(c(1, 0.5)), eig = eig,
+    flat = c(FALSE, TRUE))
+  expect_equal(masked$nnull, 1L)
+  expect_equal(masked$nullMass, c(0, 1))
+
+  # And `ctOptimCovFromHessian()` takes the projection branch on measured
+  # evidence even where the eigenvalue alone would have let `solve()` through.
+  # That ordering matters for the reason the existing comment there gives:
+  # whether `solve()` succeeds on a nearly singular matrix is settled by
+  # rounding, so a repair reached only on failure is reached only sometimes.
+  info <- diag(c(1, 1e-10))
+  loose <- suppressWarnings(suppressMessages(
+    ctsem:::ctOptimCovFromHessian(-info, warn = FALSE)))
+  expect_equal(attr(loose, 'ctOptimCovFromHessian')$method, 'solve')
+  confirmed <- ctsem:::.ctOptimFlatDirectionScreen(info,
+    function(x) -0.5 * x[1]^2, c(0, 0))
+  expect_true(any(confirmed$flat))
+  screened <- suppressWarnings(suppressMessages(
+    ctsem:::ctOptimCovFromHessian(-info, warn = FALSE, screen = confirmed)))
+  diagnostics <- attr(screened, 'ctOptimCovFromHessian')
+  expect_equal(diagnostics$method, 'nullprojection')
+  expect_equal(diagnostics$profileFlatDirections, 1L)
+  expect_lt(max(diagnostics$profileChange), diagnostics$profileBar)
+})
+
 test_that("an interval wider than the curvature supports is detected and named", {
   info <- .leaky_information()
   parnames <- c('drift', 'diffusion', 'popsd')

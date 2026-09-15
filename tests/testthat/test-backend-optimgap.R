@@ -420,12 +420,18 @@ test_that("the optimiser aims inside the bar, so a correction stays exceptional"
 test_that("a loose stop is only used where something will check it", {
   # The coupling that makes the proxy safe: it can stop but not certify, so
   # with no certification running there is nothing to catch a stop that was too
-  # early. Off in each of the three cases where the check does not run, and the
+  # early. Off in each of the two cases where the check does not run, and the
   # certification's own tolerance otherwise -- not a second number.
   expect_equal(ctsem:::.ctBackendInnerGapTol(list()), 1e-8)
-  expect_equal(ctsem:::.ctBackendInnerGapTol(list(estonly = TRUE)), 0)
   expect_equal(ctsem:::.ctBackendInnerGapTol(list(certify = FALSE)), 0)
   expect_equal(ctsem:::.ctBackendInnerGapTol(list(), intoverstates = FALSE), 0)
+  # `estonly` is not one of them, and this asserts that rather than assuming
+  # it. It asks for the estimate without the uncertainty and correction phases,
+  # which is a statement about what happens *after* the optimisation -- and
+  # while it was in the list the same model fitted with and without it ran
+  # different stopping rules and could stop in different places. Every other
+  # reading of `estonly` in the package skips a post-fit step.
+  expect_equal(ctsem:::.ctBackendInnerGapTol(list(estonly = TRUE)), 1e-8)
   # An explicit value wins, including zero and including where the default
   # would be off: the licence is a rule about what to do unasked, and a caller
   # who names the argument has asked. Accepting it and ignoring it would be the
@@ -434,12 +440,66 @@ test_that("a loose stop is only used where something will check it", {
   expect_equal(ctsem:::.ctBackendInnerGapTol(list(innergaptol = 0)), 0)
   expect_equal(ctsem:::.ctBackendInnerGapTol(
     list(innergaptol = 0.5, certify = FALSE)), 0.5)
-  expect_equal(ctsem:::.ctBackendInnerGapTol(
-    list(innergaptol = 0.5, estonly = TRUE)), 0.5)
   # And a nonsense value is off rather than an error: this decides how hard an
   # optimiser works, and refusing to fit over it would be the wrong trade.
   expect_equal(ctsem:::.ctBackendInnerGapTol(list(gaptol = -1)), 0)
   expect_equal(ctsem:::.ctBackendInnerGapTol(list(innergaptol = NA)), 0)
+})
+
+# Where a stage that stopped short is resumed from, decided without a fit.
+#
+# Two routes to a point and they are not interchangeable. The in-flight stall
+# check finds one while the optimiser is still running, and can only fire on a
+# run that presents a stalled window. A fit that climbs steadily and then stops
+# dead -- a line search that finds nothing, which is how most short fits end --
+# never presents one, and for that case the post-fit probe has already found an
+# improving point by the time the result is assembled. Both were measured on
+# the same model from two starting values inside a flat transform: the first
+# recovered 387 nats, the second 169, and neither covered the other's case.
+test_that("a stage that stopped short is resumed from the better point", {
+  base <- list(minimizer = c(1, 2, 3), stall_point = c(0, 0, 0),
+    overshoot_point = c(0, 0, 0), overshoot_gain = 5,
+    overshoot_parameters = 1L, stall_parameters = 1L)
+
+  # The in-flight route: the engine stopped here and brought the point with it.
+  stalled <- modifyList(base, list(stopped_by_stall = TRUE,
+    stall_point = c(0.5, 2, 3)))
+  expect_equal(ctsem:::.ctBackendStallEscape(stalled, list(), NULL), c(0.5, 2, 3))
+
+  # The post-fit route: it stopped for its own reasons, and its own probe says
+  # the point it stopped at is not a maximum.
+  overshot <- modifyList(base, list(stopped_by_stall = FALSE, overshot = TRUE,
+    overshoot_point = c(0.25, 2, 3)))
+  expect_equal(ctsem:::.ctBackendStallEscape(overshot, list(), NULL),
+    c(0.25, 2, 3))
+
+  # A fit with nothing wrong with it is left where it is. This is the case that
+  # runs on almost every fit in the package, so it is the one that has to be
+  # free.
+  fine <- modifyList(base, list(stopped_by_stall = FALSE, overshot = FALSE))
+  expect_null(ctsem:::.ctBackendStallEscape(fine, list(), NULL))
+
+  # `[0]` and `[0.0]` are the engine's "none" sentinels, because a zero-length
+  # vector deadlocks the R bridge. A one-element point is not a point for a
+  # three-parameter model and must not be read as one.
+  sentinel <- modifyList(base, list(stopped_by_stall = TRUE,
+    stall_point = 0, overshot = TRUE, overshoot_point = 0))
+  expect_null(ctsem:::.ctBackendStallEscape(sentinel, list(), NULL))
+
+  # Nor is a point with a non-finite entry, which is what a probe that ran off
+  # the edge of the objective hands back.
+  broken <- modifyList(base, list(stopped_by_stall = FALSE, overshot = TRUE,
+    overshoot_point = c(0.25, NaN, 3)))
+  expect_null(ctsem:::.ctBackendStallEscape(broken, list(), NULL))
+
+  # And nothing escapes on the state-explicit route, whatever the probe found.
+  # The joint mode is degenerate -- the innovations re-optimise to absorb
+  # almost any parameter change -- so a pullback can nearly always find
+  # something and "not a maximum" stops carrying information.
+  expect_null(ctsem:::.ctBackendStallEscape(overshot, list(), NULL,
+    escapes = FALSE))
+  expect_null(ctsem:::.ctBackendStallEscape(stalled, list(), NULL,
+    escapes = FALSE))
 })
 
 test_that("stopping is not certifying: the optimiser's verdict is not consulted", {
