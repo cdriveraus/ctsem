@@ -588,13 +588,12 @@
     if (!.ctVarDecompCarrierIsDrawn(fit, layout, carrier, raw, base, augmented,
       nrows, design)) {
       stop("method='simulation' cannot give this model a between person ",
-        'variance: the engine\'s state generation leaves every individually ',
-        'varying parameter at its population value, so every simulated person ',
-        'would be the same person and the between term would come out at zero ',
-        'without anything having failed. Checked by generating twice rather ',
-        'than assumed. Use method=\'moment\' if the dynamics allow it -- and if ',
-        'they do not, there is no route here for this model yet.',
-        call. = FALSE)
+        "variance: this build's engine leaves every individually varying ",
+        'parameter at its population value while generating states, so every ',
+        'simulated person would be the same person and the between term would ',
+        'come out at zero without anything having failed. Checked by ',
+        'generating twice rather than assumed. Use method=\'moment\' if the ',
+        'dynamics allow it.', call. = FALSE)
     }
   }
 
@@ -679,13 +678,20 @@
 
 # Does the engine's state generation actually draw the carrier states?
 #
-# Asked rather than assumed, and asked of the engine rather than of the model,
-# because the answer is not visible in the specification: an augmented fit
-# carries a perfectly good carrier block in T0VAR and the state pass applies a
-# zero factor to it, so every generated subject gets the population parameters.
-# Generating with the carrier entries of the initial draw set far from zero and
-# seeing whether the carrier state moves is one extra pass and settles it. If
-# the engine is changed to draw them, this starts returning TRUE on its own.
+# It does, since `_ctsem_t0_factor!` -- before that the state pass built its
+# initial factor from T0VAR alone, whose carrier entries are zero because the
+# augmentation puts a random effect's spread in RAWPOPVAR, and so every
+# generated subject got the population parameters. Generation is what this
+# function asks about; the same factor is what a sampled `intoverstates=FALSE`
+# fit draws its states through. This is the consumer side
+# guard against that returning: the failure is a between person variance of
+# zero with nothing having errored, which no amount of reading the
+# specification would reveal. Two generation passes with the carrier entries of
+# the initial draw far apart settle it.
+#
+# `test-julia-intoverstates.R` asserts the engine side invariant directly, that
+# the state path's initial factor squares to the covariance the filter carries.
+# This stays because it is what makes the refusal above honest at run time.
 .ctVarDecompCarrierIsDrawn <- function(fit, layout, carrier, raw, base,
   augmented, nrows, design) {
   probe <- function(value) {
@@ -782,11 +788,10 @@
 #'   refused by both routes, since turning a drawn state into an expected
 #'   observation then needs the measurement model re-materialised at every row.
 #'
-#'   \code{method='simulation'} currently has no between person variance to
-#'   report for a model with individually varying parameters: the engine's
-#'   state generation leaves every such parameter at its population value, so
-#'   every simulated person is the same person. That is checked by generating
-#'   twice and refused, rather than returned as a zero.
+#'   \code{method='simulation'} checks, by generating twice, that the engine
+#'   draws a model's individually varying parameters rather than leaving every
+#'   simulated person at the population values, and refuses rather than
+#'   returning a between person variance of zero if it does not.
 #'
 #' @return A data frame of class \code{ctVarianceDecomposition}, one row per
 #'   variable, with columns \code{variable}, \code{type}, \code{between},

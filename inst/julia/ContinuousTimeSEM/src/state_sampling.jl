@@ -210,8 +210,13 @@ step earlier: it builds `M` from the standard deviations on the diagonal and
 the constrained correlation square root, then returns `M M'`. So this is not an
 approximation of that covariance nor a re-factorisation of it -- it is the
 factor the covariance was built from, which means a state drawn through it has
-exactly the covariance the filter would have carried, and a zero standard
+exactly the covariance `sdcovsqrt2cov` would have formed, and a zero standard
 deviation gives a zero row rather than a failed Cholesky.
+
+That is the covariance the filter carries only when the model has no population
+block. Where one exists the filter writes it over the carrier states' rows and
+columns afterwards, so an initial state belongs to `_ctsem_t0_factor!`
+(kalman_filters.jl) and not to this function.
 
 Reading it out of `sdcovsqrt2cov!`'s own scratch buffer would work today and
 would break silently the first time that function reuses the buffer.
@@ -654,9 +659,12 @@ function _ctsem_state_pass!(ws, params::AbstractVector{T}, data::AbstractMatrix,
     scratch = Vector{T}(undef, m)
     gaussian = Vector{Int}(undef, m)
 
-    # Initial state: T0MEANS plus the T0VAR factor applied to the first block
-    # of innovations.
-    _ctsem_sdcor_factor!(factor, pars.T0VAR, ws.bufferQ, ws.state_dim)
+    # Initial state: T0MEANS plus the initial covariance's factor applied to the
+    # first block of innovations. Through `_ctsem_t0_factor!` rather than
+    # straight from T0VAR, so that a model carrying random effects as augmented
+    # states draws them -- see that function for what building it from T0VAR
+    # alone silently did.
+    _ctsem_t0_factor!(factor, ws, pars, all_params)
     at = zoffset
     @inbounds for i in 1:n
         acc = T(pars.T0MEANS[i])

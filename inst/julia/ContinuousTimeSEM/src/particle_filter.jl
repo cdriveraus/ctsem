@@ -273,8 +273,12 @@ function _ctsem_particle_subject!(sub, sp, x::Vector{Float64}, N::Int, nsubsteps
     varsum = 0.0
     ess_min = Inf
 
-    # Initial particles: T0MEANS + the T0VAR factor applied to standard normals.
-    _ctsem_sdcor_factor!(factor, pars.T0VAR, ws.bufferQ, ws.state_dim)
+    # Initial particles: T0MEANS + the initial covariance's factor applied to
+    # standard normals. `_ctsem_t0_factor!`, not T0VAR's own factor, is what
+    # makes the claim at the top of this file true: a random effect carried as
+    # an augmented state has its spread in RAWPOPVAR, and built from T0VAR alone
+    # every particle started that coordinate at the population mean.
+    _ctsem_t0_factor!(factor, ws, pars, all_params)
     @inbounds for p in 1:N
         randn!(rng, view(z, 1:n))
         for i in 1:n

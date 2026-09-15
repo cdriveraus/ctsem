@@ -206,13 +206,31 @@ test_that('simulation and moment agree on a model both can do', {
   expect_equal(simulated$between + simulated$within, simulated$total)
 })
 
+test_that('simulation and moment agree on a model with random effects', {
+  # The harder half of the comparison above, and the one that exercises the
+  # engine actually drawing the carrier states: with random effects there is a
+  # between person term for the two routes to disagree about.
+  set.seed(23)
+  moment <- ctVarianceDecomposition(fit, method = 'moment', npersons = 600)
+  simulated <- ctVarianceDecomposition(fit, method = 'simulation',
+    npersons = 120, npaths = 30)
+  expect_equal(simulated$within.measurement, moment$within.measurement)
+  expect_equal(simulated$within.stochastic, moment$within.stochastic,
+    tolerance = 0.05)
+  expect_equal(simulated$between, moment$between, tolerance = 0.15)
+  expect_equal(simulated$total, moment$total, tolerance = 0.05)
+  # The point of the comparison: a between person variance that is actually
+  # there. Before the engine drew the carrier states this came out at zero
+  # while the moment route reported the real value, so what is checked is that
+  # the two agree *and* that what they agree on is not zero. Scaled by the
+  # moment route rather than given an absolute floor, which would depend on
+  # whatever popsd this fixture's fit happens to land on -- 0.049 here, and a
+  # floor of 0.1 guessed from another one is how this line first failed.
+  expect_gt(min(moment$between), 1e-3)
+  expect_gt(min(simulated$between), 0.5 * min(moment$between))
+})
+
 test_that('simulation refuses what it cannot answer', {
-  # A fit with individually varying parameters: the engine leaves them at their
-  # population value while generating, so every drawn person would be the same
-  # person. Checked by generating twice, and refused rather than reported as a
-  # between person variance of zero.
-  expect_error(ctVarianceDecomposition(fit, method = 'simulation'),
-    'between person variance')
   expect_error(ctVarianceDecomposition(fixedfit, method = 'simulation',
     npaths = 1), 'npaths must be at least 2')
   expect_error(ctVarianceDecomposition(fixedfit, method = 'simulation',

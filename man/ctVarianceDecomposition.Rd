@@ -107,11 +107,10 @@ The decomposition is a nested law of total variance over the
   refused by both routes, since turning a drawn state into an expected
   observation then needs the measurement model re-materialised at every row.
 
-  \code{method='simulation'} currently has no between person variance to
-  report for a model with individually varying parameters: the engine's
-  state generation leaves every such parameter at its population value, so
-  every simulated person is the same person. That is checked by generating
-  twice and refused, rather than returned as a zero.
+  \code{method='simulation'} checks, by generating twice, that the engine
+  draws a model's individually varying parameters rather than leaving every
+  simulated person at the population values, and refuses rather than
+  returning a between person variance of zero if it does not.
 }
 \examples{
 \donttest{

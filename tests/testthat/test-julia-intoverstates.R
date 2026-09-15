@@ -410,3 +410,101 @@ test_that("sampling the joint density gives a posterior over both", {
   expect_true(all(is.finite(fit$estimate$states)))
   expect_identical(fit$estimate$loglik_type, "joint")
 })
+
+# The initial covariance, where a random effect is a carrier state ------------
+#
+# Three places build the initial state distribution: the filter
+# (`_apply_population_block!`), the summary (`_place_population_block!`), and
+# the state path and particle filter, which need a *factor* of it rather than
+# the covariance itself. The third used to build that factor from T0VAR alone,
+# which is wrong for exactly the models this file is about: an `intoverpop=
+# 'augmented'` model puts a random effect's spread in RAWPOPVAR and leaves the
+# carrier entries of T0VAR at zero, so every subject started at the population
+# mean.
+#
+# Nothing errored when it did. The joint density simply did not depend on the
+# carrier innovations -- their gradient was exactly the prior's -- so sampling
+# through this route, which is the only thing this route is for, carried no
+# individual differences at all, and generation through it produced subjects
+# that were all the same person. These are the three symptoms, checked directly
+# rather than through anything downstream.
+
+test_that('the state path draws the carrier states of an augmented model', {
+  skip_without_julia()
+
+  set.seed(31)
+  model <- ctModel(type = 'ct', n.latent = 1, n.manifest = 1,
+    LAMBDA = matrix(1), DRIFT = matrix(-0.5), DIFFUSION = matrix(1),
+    MANIFESTVAR = matrix(0.4), CINT = matrix('cint1'), T0MEANS = matrix(0),
+    T0VAR = matrix(1), MANIFESTMEANS = matrix(0))
+  model$pars$indvarying <- model$pars$matrix == 'CINT'
+  generating <- model
+  generating$pars$indvarying <- FALSE
+  data <- do.call(rbind, lapply(1:12, function(i) {
+    m <- generating
+    m$matrices$CINT <- matrix(stats::rnorm(1, 0, 0.4))
+    d <- suppressMessages(ctGenerate(m, n.subjects = 1, burnin = 10,
+      Tpoints = 12, backend = 'r'))
+    d[, 'id'] <- i
+    d
+  }))
+  fit <- suppressWarnings(suppressMessages(ctFit(data, model, backend = 'julia',
+    cores = 1, verbose = 0)))
+
+  layout <- ctsem:::.ctBackendStateLayout(fit)
+  augmented <- as.integer(layout$nlatent)
+  nlatent <- ctsem:::.ctFitNlatent(fit)
+  expect_gt(augmented, nlatent)
+  carrier <- (nlatent + 1L):augmented
+  raw <- fit$estimate$raw
+  rows <- length(ctsem:::.ctFitRowSubject(fit))
+  base <- matrix(0, 1L, rows)
+
+  # (1) The factor the state path applies squares to the covariance the filter
+  # and the summary carry. Recovered column by column: with every innovation at
+  # zero the initial state is T0MEANS, so setting one to one and differencing
+  # gives that column of the factor.
+  states <- function(z) {
+    matrix(as.numeric(ctsem:::.ctBackendGenerateStates(fit, raw, z, base)$states),
+      augmented, rows)[, 1L]
+  }
+  zero <- rep(0, layout$ndim)
+  baseline <- states(zero)
+  factor <- vapply(seq_len(augmented), function(j) {
+    z <- zero
+    z[layout$zoffsets[1L] + j] <- 1
+    states(z) - baseline
+  }, numeric(augmented))
+  t0cov <- suppressMessages(
+    ctsem:::ctBackendParMatrices(fit, trim = FALSE))$T0cov
+  expect_equal(factor %*% t(factor), t0cov)
+  # And the carrier block of it is not zero, which is the whole point.
+  expect_gt(t0cov[carrier[1L], carrier[1L]], 0)
+
+  # (2) The carrier innovations reach the joint density. Their gradient was
+  # exactly the prior's own -z, to the last bit, which is what a coordinate the
+  # likelihood cannot see looks like.
+  set.seed(4)
+  z <- stats::rnorm(layout$ndim)
+  gradient <- as.numeric(
+    ctsem:::.ctBackendJointDensity(fit, raw, z, gradient = TRUE)$gradient)
+  gz <- gradient[length(raw) + seq_len(layout$ndim)]
+  carrierz <- layout$zoffsets + carrier
+  expect_gt(max(abs(gz[carrierz] + z[carrierz])), 1e-6)
+
+  # (3) Generated data carries individual differences, and the two generation
+  # routes agree about how much. The filter route was always right; the state
+  # route reported about a third of it.
+  subject <- ctsem:::.ctFitRowSubject(fit)
+  spread <- function(gen) {
+    mean(apply(gen$generated$Y, 1L, function(y)
+      stats::var(as.numeric(tapply(y, subject, mean, na.rm = TRUE)))))
+  }
+  set.seed(5)
+  filtered <- spread(suppressMessages(ctGenerateFromFit(fit, nsamples = 20,
+    cores = 1)))
+  set.seed(5)
+  explicit <- spread(suppressMessages(ctGenerateFromFit(fit, nsamples = 20,
+    cores = 1, intoverstates = FALSE)))
+  expect_equal(explicit, filtered, tolerance = 0.25)
+})
