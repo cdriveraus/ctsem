@@ -216,16 +216,13 @@ test_that("the view guard keeps every reference value and cuts only the tail", {
       nout = v$nout, maxout = v$max, n = v$n)), fixed = TRUE))
 })
 
-test_that("the view guard leaves a merely wide model alone, and obeys its option", {
+test_that("the view guard leaves a merely wide model alone", {
   set.seed(12)
   # Wide, but not pathologically so: within `slack`, so nothing is cut. A guard
   # that engaged here would be changing ordinary plots rather than saving
-  # extreme ones.
+  # extreme ones, which is the line between this and a new default.
   expect_null(ctsem:::.ctPlotView(rnorm(4000, 0, 3), rnorm(200))$limits)
-  # Off by option, even for a case it would otherwise cut.
-  withr::local_options(ctsem.plotview = FALSE)
-  expect_null(ctsem:::.ctPlotView(c(rlnorm(4000, 2, 0.6), 9e5),
-    rlnorm(200, 2, 0.6))$limits)
+  expect_null(ctsem:::.ctPlotView(rlnorm(4000, 2, 0.6), rlnorm(200, 2, 0.6))$limits)
 })
 
 test_that("clamping moves a band to the edge and filtering removes it", {
