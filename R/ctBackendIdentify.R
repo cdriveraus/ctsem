@@ -471,8 +471,19 @@
 # smaller half of a two-coordinate ridge and 1.0 where the flat direction was
 # a coordinate axis.
 #' @keywords internal
+# `mass` is the per-coordinate share of the dropped subspace, when the caller
+# already has it. `nullmass` is the threshold it is compared against; the two
+# names sit next to each other because one is the measurement and the other the
+# bar. Supplied by `.ctBackendUncertainty()` from the covariance the intervals
+# were actually built from, so this report names the same coordinates that
+# construction dropped. Recomputing it here instead would answer a different
+# question the moment the two disagree -- and they do disagree, because the
+# covariance now also drops directions the likelihood was *measured* flat along
+# rather than only those whose eigenvalue underflowed. See
+# `.ctOptimFlatDirectionScreen()`.
 .ctBackendIntervalCheck <- function(hessian, se, parnames = NULL,
-  threshold = 100, rtol = .ctFlatDirectionRtol(), nullmass = 1e-3) {
+  threshold = 100, rtol = .ctFlatDirectionRtol(), nullmass = 1e-3,
+  mass = NULL) {
   empty <- list(threshold = threshold, nflagged = 0L, parameters = character(),
     nullmass = nullmass, nunidentified = 0L, unidentified = character(),
     table = data.frame(param = character(), se = numeric(),
@@ -492,7 +503,9 @@
   # rather than counted as a ratio of infinity and reported twice.
   curvature <- ifelse(diagonal > 0, 1 / sqrt(diagonal), NA_real_)
   ratio <- se / curvature
-  mass <- .ctBackendNullMass(information, rtol = rtol)
+  supplied <- suppressWarnings(as.numeric(mass))
+  mass <- if (length(supplied) == n && !all(is.na(supplied))) supplied else
+    .ctBackendNullMass(information, rtol = rtol)
   table <- data.frame(param = as.character(parnames), se = se,
     curvature_se = curvature, ratio = ratio, nullmass = mass,
     stringsAsFactors = FALSE)

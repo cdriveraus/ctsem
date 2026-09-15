@@ -210,6 +210,217 @@ ContinuousTimeSEM.ctsem_evaluate(::_JointMock, x::AbstractVector;
     end
 end
 
+# One free drift and one free diffusion, with the transforms that matter here:
+# `-log1p_exp` saturates in one direction and not the other, and `log1p_exp`
+# does the reverse. Built locally rather than borrowed from
+# `test_adjoint_gradient_validation.jl`, which has the same shape -- a fixture
+# reached across files makes a test depend on the suite's include order, and
+# that is the defect `test-julia-convergence.R` was rewritten to remove.
+function _backend_saturating_parameters()
+    matrices = Symbol[]; rows = Int[]; cols = Int[]
+    parnumber = Union{Missing,Int}[]; value = Union{Missing,Float64}[]
+    transform = Union{Missing,String}[]
+    add!(name, i, j, v, pn, tf) = begin
+        push!(matrices, name); push!(rows, i); push!(cols, j)
+        push!(parnumber, pn); push!(value, v); push!(transform, tf)
+    end
+    add!(:DRIFT, 1, 1, missing, 1, "-log1p_exp(param[1])")
+    add!(:JAx, 1, 1, missing, 1, "-log1p_exp(param[1])")
+    add!(:DIFFUSION, 1, 1, missing, 2, "log1p_exp(param[2])")
+    add!(:CINT, 1, 1, 0.0, missing, missing)
+    add!(:LAMBDA, 1, 1, 1.0, missing, missing)
+    add!(:Jy, 1, 1, 1.0, missing, missing)
+    add!(:MANIFESTMEANS, 1, 1, 0.0, missing, missing)
+    add!(:MANIFESTVAR, 1, 1, 0.3, missing, missing)
+    add!(:T0VAR, 1, 1, 0.5, missing, missing)
+    add!(:T0MEANS, 1, 1, 0.0, missing, missing)
+    add!(:PARS, 1, 1, 0.0, missing, missing)
+    df = DataFrame(matrix=matrices, row=rows, col=cols, parnumber=parnumber,
+        value=value, transform=transform)
+    ekf_from_data_frame(df)
+end
+
+# The relative flatness measure, on a real parameter object rather than a mock,
+# because what it has to get right is a *transform* -- and the fixture's drift
+# is `-log1p_exp(param[1])`, which is exactly the shape that stalled the fit
+# this was written for.
+@testset "flatness is measured against a transform's own live value" begin
+    sp = _backend_saturating_parameters()
+    ratios(v) = ContinuousTimeSEM._ctsem_flat_ratios(sp, v, eachindex(v))
+
+    # At the origin every ratio is 1 by construction: that is the reference.
+    at_zero = ratios([0.0, 0.0])
+    @test all(isapprox(r, 1.0; atol=1e-12) for r in values(at_zero))
+
+    # Run the drift out to where its transform dies and the ratio collapses,
+    # while the diffusion's, which has not moved, stays at one. An absolute
+    # floor cannot make that distinction without knowing which transform it is
+    # looking at.
+    #
+    # Negative, not positive. `-log1p_exp(param)` has derivative
+    # `-sigmoid(param)`, which goes to zero as `param` goes to *minus*
+    # infinity and to one as it grows -- so raw -12 is the dead end and raw +12
+    # is the live one, where the ratio is 2 rather than small. Which direction
+    # a transform dies in is exactly what a magnitude rule cannot know and this
+    # measure does not need to.
+    far = ratios([-12.0, 0.0])
+    @test far[1] < 1e-4
+    @test isapprox(far[2], 1.0; atol=1e-12)
+    @test ratios([12.0, 0.0])[1] > 1
+
+    @test ContinuousTimeSEM._ctsem_flat_coordinates(sp, [-12.0, 0.0],
+        eachindex([12.0, 0.0]); ratio=1e-3) == [1]
+    @test isempty(ContinuousTimeSEM._ctsem_flat_coordinates(sp, [12.0, 0.0],
+        eachindex([12.0, 0.0]); ratio=1e-3))
+end
+
+# A mock whose maximum is exactly where the flat coordinate sits, so nothing a
+# pullback can reach is better. This is `test_state_sampling.jl`'s count model
+# in miniature: a fit converging *into* a flat region, which stalled-and-flat
+# alone stopped before it arrived.
+struct _AtPeakMock end
+ContinuousTimeSEM.ctsem_evaluate(::_AtPeakMock, x::AbstractVector;
+    gradient::Bool=true, contributions::Bool=false, gradient_method=:adjoint) =
+    (value = -sum(abs2, x .- [-12.0, 0.0]), gradient = nothing)
+
+# The conjunction and its hysteresis. Three conditions, and the third is the
+# one an earlier version lacked.
+@testset "a fit is stopped only when there is somewhere better to go" begin
+    sp = _backend_saturating_parameters()
+    trace = ContinuousTimeSEM.CTSEMTrace(:objective, :gradient_norm)
+    # The flat tail has to be longer than the window, or the window reaches
+    # back into the climb and the progress test correctly declines to fire.
+    climb = collect(range(-1000.0, -1.0; length = 121))
+    for (i, v) in enumerate(vcat(climb, fill(-1.0, 100)))
+        ContinuousTimeSEM._record!(trace, i, v, 1.0)
+    end
+    @test ContinuousTimeSEM._ctsem_stalled(trace, 80, 1e-2)
+    watch() = ContinuousTimeSEM.CTSEMStallWatch(window=80, fraction=1e-2,
+        cooldown=30, tighten=0.1, tightenings=2)
+
+    # Stalled, nothing flat: slow rather than stuck. Not stopped, and asked
+    # less readily next time.
+    w = watch()
+    before = w.fraction
+    @test !ContinuousTimeSEM._ctsem_stall_verdict!(w, trace, 221, _AtPeakMock(),
+        sp, [0.0, 0.0], 1:2, 1e-3)
+    @test w.triggers == 1
+    @test w.fraction == before * 0.1
+    @test w.quiet_until == 251
+
+    # Inside the cooldown it does not even look.
+    @test !ContinuousTimeSEM._ctsem_stall_verdict!(w, trace, 240, _AtPeakMock(),
+        sp, [0.0, 0.0], 1:2, 1e-3)
+    @test w.triggers == 1
+
+    # Tightening is capped, so the bar cannot walk away to nothing.
+    for iteration in (251, 300, 400, 500)
+        ContinuousTimeSEM._ctsem_stall_verdict!(w, trace, iteration,
+            _AtPeakMock(), sp, [0.0, 0.0], 1:2, 1e-3)
+    end
+    @test w.fraction >= before * 0.01 - 1e-18
+
+    # Stalled AND flat, but the objective is at its supremum there: still not
+    # stopped. Without this the count model over the joint density -- whose
+    # drift arrives at raw -18.5 on a flat transform and is a genuine maximum
+    # -- was stopped before it arrived and reported as a failed fit.
+    peak = watch()
+    @test !ContinuousTimeSEM._ctsem_stall_verdict!(peak, trace, 221,
+        _AtPeakMock(), sp, [-12.0, 0.0], 1:2, 1e-3)
+    @test isempty(peak.flat)
+    @test peak.quiet_until == 251          # treated as the slow case
+
+    # Stalled, flat, and somewhere better: stopped, with the coordinate named
+    # and the point to resume from in hand.
+    stuck = watch()
+    @test ContinuousTimeSEM._ctsem_stall_verdict!(stuck, trace, 221,
+        _OvershotMock(1.0), sp, [-12.0, 0.0], 1:2, 1e-3)
+    @test stuck.flat == [1]
+    @test length(stuck.point) == 2
+    @test stuck.gain > 0
+    # The point is a pullback of the flat coordinate, not of everything.
+    @test stuck.point[2] == 0.0
+    @test abs(stuck.point[1]) < 12.0
+
+    # No parameter object is not half a conjunction.
+    idle = watch()
+    @test !ContinuousTimeSEM._ctsem_stall_verdict!(idle, trace, 221,
+        _OvershotMock(1.0), nothing, [-12.0, 0.0], 1:2, 1e-3)
+end
+
+# `ctsem_pullback` is what a caller acts on. The mock's maximum is at the
+# origin and the estimate is out at [10, 10], where no single coordinate
+# improves and both together do -- the degenerate-corner shape.
+@testset "the pullback hands back a point, or says there is none" begin
+    mock = _JointMock()
+    out = ContinuousTimeSEM.ctsem_pullback(mock, [10.0, 10.0]; tolerance=1e-3)
+    @test out.found
+    @test out.point == [5.0, 5.0]
+    @test out.coordinates == [1, 2]
+    @test out.gain > 1
+
+    # At a maximum there is nothing to hand back, and the point it returns is
+    # the one it was given rather than a half-formed candidate.
+    at_peak = ContinuousTimeSEM.ctsem_pullback(mock, [0.0, 0.0]; tolerance=1e-3)
+    @test !at_peak.found
+    @test at_peak.point == [0.0, 0.0]
+end
+
+# The ladder reaches past zero. A contraction cannot change a sign, and one
+# measured escape needed a population correlation to go from -2.358 to +0.327.
+@testset "the pullback fractions include reflections" begin
+    fractions = ContinuousTimeSEM._CTSEM_PULLBACK_FRACTIONS
+    @test any(f -> f < 0, fractions)
+    @test -1.0 in fractions          # a pure sign flip
+    @test 0.0 in fractions
+    @test issorted(fractions; rev=true)
+end
+
+# The stall rule, on the shape it was written for. A trace rather than a fit,
+# because what the rule reads is a sequence of objective values and the whole
+# question is which sequences it calls stalled -- a fit would take a quarter of
+# an hour to produce one of them.
+@testset "a run that has stopped converging is stalled" begin
+    trace_of(values) = begin
+        t = ContinuousTimeSEM.CTSEMTrace(:objective, :gradient_norm)
+        for (i, v) in enumerate(values)
+            ContinuousTimeSEM._record!(t, i, v, 1.0)
+        end
+        t
+    end
+    stalled(values, window = 80, fraction = 1e-5) =
+        ContinuousTimeSEM._ctsem_stalled(trace_of(values), window, fraction)
+
+    # The measured fit: 4749 nats climbed, then eighty iterations that moved
+    # 0.0155. Its own numbers, so a change to the rule that stopped catching
+    # this fails here rather than in a quarter of an hour of wall clock.
+    climb = collect(range(-8470.0, -3721.05; length = 241))
+    plateau = collect(range(-3721.04874, -3721.03329; length = 80))
+    @test stalled(vcat(climb, plateau))
+    # And not while it was still climbing: at iteration 240 the window covers
+    # the climb, whose share is 7.9e-3.
+    @test !stalled(climb)
+
+    # A run still gaining a real share of its own progress is not stalled,
+    # however small the absolute numbers are.
+    @test !stalled(collect(range(-1000.0, 0.0; length = 300)))
+
+    # Fewer rows than the window: nothing to say yet.
+    @test !stalled(collect(1.0:50.0))
+
+    # No progress at all leaves the share undefined rather than zero, and this
+    # is not the rule that catches it -- `stalled` in the verdict is, which is
+    # why the guard is here and not a division.
+    @test !stalled(fill(-5.0, 200))
+
+    # Off, by the control the R side exposes as `optimcontrol$stallwindow = 0`.
+    @test !stalled(vcat(climb, plateau), 0)
+
+    # The window is what it says: the same plateau is not stalled when the rule
+    # is asked to look further back than the plateau is long.
+    @test !stalled(vcat(climb, plateau), 200)
+end
+
 @testset "the pullback sets are magnitude-ordered prefixes" begin
     sets = ContinuousTimeSEM._ctsem_pullback_sets([0.5, -9.0, 2.0, 0.1, -4.0])
     # Ordered by |raw|: 2 (9), 5 (4), 3 (2), 1 (0.5), 4 (0.1).

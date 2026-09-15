@@ -229,13 +229,33 @@ still does something to the likelihood.
 """
 function _ctsem_saturated_parameters(sp::EKFParameters, values::AbstractVector{T},
         range; threshold::Real=_CTSEM_TRANSFORM_FLOOR[]) where {T<:Real}
-    isempty(range) && return Int[]
+    best = _ctsem_transform_derivatives(sp, values, range)
+    flagged = [pn for (pn, derivative) in best if derivative < threshold]
+    sort!(flagged)
+    return flagged
+end
+
+"""
+    _ctsem_transform_derivatives(sp, values, range)
+
+How much each raw coordinate in `range` still moves the cells it materialises,
+as `index => |d cell / d raw|`, largest cell deciding.
+
+Split out of `_ctsem_saturated_parameters` because two questions are asked of
+the same measurement and neither should own the loop: whether a derivative is
+flat in absolute terms, which is what the reported `saturated` flag means, and
+whether it has collapsed *relative to what that transform does when it is live*,
+which is what `_ctsem_flat_ratios` asks.
+"""
+function _ctsem_transform_derivatives(sp::EKFParameters, values::AbstractVector{T},
+        range) where {T<:Real}
+    best = Dict{Int,T}()
+    isempty(range) && return best
     D = ForwardDiff.Dual{Nothing,T,1}
     scratch = Vector{D}(undef, length(values))
     @inbounds for i in eachindex(values)
         scratch[i] = D(values[i], ForwardDiff.Partials((zero(T),)))
     end
-    best = Dict{Int,T}()
     tf_idx = 0
     @inbounds for idx in eachindex(sp.mutables)
         sp.mutables[idx] || continue
@@ -248,7 +268,54 @@ function _ctsem_saturated_parameters(sp::EKFParameters, values::AbstractVector{T
         scratch[pn] = _seed_dual(scratch[pn], base, false)
         best[pn] = haskey(best, pn) ? max(best[pn], derivative) : derivative
     end
-    flagged = [pn for (pn, derivative) in best if derivative < threshold]
+    return best
+end
+
+"""
+    _ctsem_flat_ratios(sp, values, range)
+
+Each coordinate's derivative at `values` as a share of the same derivative with
+every coordinate at zero: `index => d(values) / d(0)`.
+
+The absolute floor the reported flag uses cannot serve as an in-flight gate,
+and the reason is the one `ctsem_optimize`'s saturation note already gives for
+raw-magnitude cutoffs -- it means a different thing for every transform. A
+drift's `-log1p_exp(-x)` has derivative 0.5 at zero and 5.5e-6 at raw 12.1, so
+it has lost five orders and is doing nothing; an identity transform has
+derivative 1 wherever it sits, and a `meanscale` of 10 has 10. Measured against
+its own live value the first is 1.1e-5 and the other two are exactly 1, so a
+single bar means the same thing for all of them -- which no absolute one does.
+
+Zero as the reference point, rather than the transform's maximum: it is where
+every ctsem transform is in its responsive range by construction (it is the
+centre of the prior), it costs one more pass of the same loop, and it needs no
+search. A transform that is *steeper* away from zero simply reports a ratio
+above one and can never be flagged, which is the right answer for it.
+"""
+function _ctsem_flat_ratios(sp::EKFParameters, values::AbstractVector{T},
+        range) where {T<:Real}
+    here = _ctsem_transform_derivatives(sp, values, range)
+    isempty(here) && return Dict{Int,T}()
+    live = _ctsem_transform_derivatives(sp, zeros(T, length(values)), range)
+    ratios = Dict{Int,T}()
+    for (pn, d) in here
+        reference = get(live, pn, zero(T))
+        (isfinite(reference) && reference > 0) || continue
+        isfinite(d) || continue
+        ratios[pn] = d / reference
+    end
+    return ratios
+end
+
+"""
+    _ctsem_flat_coordinates(sp, values, range; ratio)
+
+Which coordinates have lost all but `ratio` of what their transform does when
+live. The in-flight half of the stall conjunction; see `_ctsem_flat_ratios`.
+"""
+function _ctsem_flat_coordinates(sp::EKFParameters, values::AbstractVector{T},
+        range; ratio::Real=1e-3) where {T<:Real}
+    flagged = [pn for (pn, r) in _ctsem_flat_ratios(sp, values, range) if r < ratio]
     sort!(flagged)
     return flagged
 end

@@ -212,10 +212,16 @@ skip_if(.Platform$OS.type == "windows" && R.version$major %in% 4 &&
     testthat::expect_true(is.finite(summary(f)$loglik))
     # A fit that never moved reports the gradient at the neutral raw start,
     # which was 126 on the stan path for this design. Measured here: 0.046.
-    testthat::expect_true(max(abs(est$gradient)) < 1)
+    #
+    # `f$optim`, not `est`: the gradient describes the search rather than what
+    # it found, and moved with the rest of the run when the two objects were
+    # split. It read as NULL here and `abs(NULL)` is an error rather than a
+    # failed comparison, which is why this surfaced as an error in a test whose
+    # subject is time-varying effects.
+    testthat::expect_true(max(abs(f$optim$gradient)) < 1)
     # ...and raw estimates of exactly zero. Measured here: 4.15.
     testthat::expect_true(max(abs(est$raw)) > 1)
-    # `est$converged` is deliberately NOT asserted, and re-adding it will
+    # `f$optim$converged` is deliberately NOT asserted, and re-adding it will
     # fail. On this design the julia optimiser stops at its 1000-iteration
     # cap with a gradient norm of 0.0459 against a tolerance of 0.0018, and
     # says so in a warning. Whether that cap should be higher for a

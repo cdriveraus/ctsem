@@ -224,15 +224,142 @@ ctOptimSafeCov <- function(cov, ridge=1e-8){
 # this line. A direction between the two tolerances is inverted as usual --
 # its variance is genuinely enormous, which is the truth about it -- and
 # `.ctBackendIntervalCheck()` is what says so.
-.ctOptimIdentifiedInverse <- function(info, rtol=.ctFlatDirectionRtol()){
+# Which flagged directions the likelihood is actually flat along.
+#
+# The curvature at the estimate is a local quadratic approximation, and on a
+# direction the data does not determine it is measuring the wrong thing: the
+# eigenvalue there is not a property of the model and the data, it is a
+# residue of the transform's own derivative at whatever raw value the
+# optimiser happened to stop at. Measured on a two-latent model fitted to
+# noise, walking one diffusion correlation out along its flat ray: the log
+# likelihood is -207.01897 at every raw value from -6 to -20, while the
+# smallest relative eigenvalue falls from 1.6e-08 to 7.1e-16 and then turns
+# negative from rounding. Whether that direction was reported as determined
+# was therefore decided by where the optimiser stopped on a ray along which
+# the likelihood is constant -- two runs of the same fit, one with the
+# predicted-gain stopping rule on and one off, gave opposite diagnoses.
+#
+# So the eigenvalue selects candidates and the likelihood decides. This is the
+# profile-likelihood criterion (Raue et al. 2009): a direction is not
+# identified when the likelihood does not change along it, and the scale for
+# "does not change" is the likelihood-ratio bound, `qchisq(1-alpha, 1) / 2` --
+# 1.92 at 95% -- rather than a tolerance on a differentiated approximation.
+# That bar is a statistical quantity, invariant to reparameterisation, and
+# comparable across models, which no `rtol` on an eigenvalue is. The
+# sloppy-model literature (Gutenkunst et al. 2007) is the general reason to
+# expect no threshold to work: eigenvalue spectra are typically spread over
+# many orders with no gap to cut at.
+#
+# Deliberately one-sided, and that is the whole of what makes it safe to act
+# on. Walking a direction without re-optimising the other parameters is a
+# slice, not a profile: if the likelihood stays flat we have *exhibited* a
+# curve along which it is constant, which is non-identification and needs no
+# further argument; if it rises we have learned nothing, because the flat
+# manifold may be curved and a profile would have followed it. So a candidate
+# that fails this test is left exactly as it was.
+#
+# Two further gates, both about not doing damage:
+#
+#   * candidates come from `rtol = 1e-8`, which is
+#     `.ctBackendIdentifiability()`'s threshold -- so this can only ever act on
+#     a direction the package is *already* telling the user is unidentified.
+#     It aligns the covariance with that verdict; it cannot invent a new one.
+#   * with no candidate it returns `NULL` before evaluating anything, so a fit
+#     with no flat direction -- the usual fit -- pays nothing and is unchanged.
+#
+# `lengths` are in raw parameter units, where ctsem's coordinates are
+# standardised by construction, and are the same ladder
+# `.ctBackendOptimGapProbe()` walks for the sibling question ("does anything
+# *improve* along here"). `maxdirections` caps the cost on a model with many
+# flat directions, where the ones with the least curvature are the ones worth
+# asking about.
+#
+# The change is measured as `abs`, not as a drop. A direction along which the
+# likelihood *rises* is not flat -- it is a direction the optimiser has not
+# finished with -- and on a far-out flat ray the smallest eigenvalue goes
+# negative from rounding, so those arrive here as candidates and must not be
+# confirmed.
+.ctOptimFlatDirectionScreen <- function(info, lpgFunc, est,
+  rtol=1e-8, bar=stats::qchisq(0.95, 1) / 2, lengths=c(0.25, 1, 4),
+  maxdirections=20L){
+  if(is.null(info) || is.null(lpgFunc) || is.null(est)) return(NULL)
+  if(!is.function(lpgFunc)) return(NULL)
+  info <- as.matrix(info)
+  n <- nrow(info)
+  if(!n || n != ncol(info) || length(est) != n) return(NULL)
+  if(!all(is.finite(info))) return(NULL)
   info <- (info + t(info)) / 2
   eig <- try(eigen(info, symmetric=TRUE), silent=TRUE)
   if('try-error' %in% class(eig)) return(NULL)
   values <- eig$values
   scale <- max(values)
   if(!is.finite(scale) || scale <= 0) return(NULL)
+  candidates <- which(values <= rtol * scale)
+  if(!length(candidates)) return(NULL)
+  # Smallest curvature first, so the cap keeps the directions the question is
+  # really about.
+  candidates <- candidates[order(values[candidates])]
+  if(length(candidates) > maxdirections) candidates <- candidates[seq_len(maxdirections)]
+  base <- try(as.numeric(lpgFunc(est))[1L], silent=TRUE)
+  if('try-error' %in% class(base) || !is.finite(base)) return(NULL)
+  flat <- rep(FALSE, n)
+  change <- rep(NA_real_, n)
+  # Counted rather than timed. What this costs is a number of likelihood
+  # evaluations, which is the same on any machine and under any load; a wall
+  # clock here would measure the box. One for the base point, then up to
+  # `2 * length(lengths)` per candidate, fewer for every candidate that leaves
+  # the ladder early.
+  evaluations <- 1L
+  for(k in candidates){
+    v <- eig$vectors[, k]
+    worst <- 0
+    usable <- TRUE
+    for(len in lengths){
+      for(direction in c(1, -1)){
+        trial <- try(as.numeric(lpgFunc(est + direction * len * v))[1L],
+          silent=TRUE)
+        evaluations <- evaluations + 1L
+        if('try-error' %in% class(trial) || !is.finite(trial)){
+          usable <- FALSE
+          break
+        }
+        worst <- max(worst, abs(trial - base))
+        # Past the bar the direction is refused, and no further displacement
+        # can un-refuse it. Worth the early exit rather than completing the
+        # ladder: on the laplace route every one of these is an inner mode
+        # solve per subject, and the candidates that are *not* flat are exactly
+        # the ones a longer walk would spend the most on.
+        if(worst >= bar) break
+      }
+      if(!usable || worst >= bar) break
+    }
+    # A point the model cannot evaluate is not evidence of flatness.
+    if(!usable) next
+    change[k] <- worst
+    flat[k] <- worst < bar
+  }
+  list(eig=eig, flat=flat, change=change, bar=bar, rtol=rtol,
+    candidates=candidates, lengths=lengths, base=base,
+    evaluations=evaluations)
+}
+
+#
+# `eig` and `flat` come from `.ctOptimFlatDirectionScreen()` when the caller
+# ran it: the decomposition so it is not taken twice, and a mask of directions
+# the likelihood was measured to be flat along. `flat` can only *remove*
+# directions from the kept subspace, never add one, so with it absent or all
+# FALSE this is exactly the eigenvalue rule it has always been.
+.ctOptimIdentifiedInverse <- function(info, rtol=.ctFlatDirectionRtol(),
+  eig=NULL, flat=NULL){
+  info <- (info + t(info)) / 2
+  if(is.null(eig)) eig <- try(eigen(info, symmetric=TRUE), silent=TRUE)
+  if('try-error' %in% class(eig)) return(NULL)
+  values <- eig$values
+  scale <- max(values)
+  if(!is.finite(scale) || scale <= 0) return(NULL)
   threshold <- rtol * scale
   keep <- values > threshold
+  if(!is.null(flat) && length(flat) == length(keep)) keep <- keep & !flat
   if(!any(keep)) return(NULL)
   vectors <- eig$vectors[, keep, drop=FALSE]
   cov <- vectors %*% (t(vectors) / values[keep])
@@ -258,7 +385,7 @@ ctOptimSafeCov <- function(cov, ridge=1e-8){
 }
 
 ctOptimCovFromHessian <- function(hess, ridge=1e-8, rtol=.ctFlatDirectionRtol(), warn=TRUE,
-  context='Hessian'){
+  context='Hessian', screen=NULL){
   hess <- (hess + t(hess)) / 2
   info <- -hess
   infoEig <- try(eigen(info, symmetric=TRUE, only.values=TRUE), silent=TRUE)
@@ -314,6 +441,20 @@ ctOptimCovFromHessian <- function(hess, ridge=1e-8, rtol=.ctFlatDirectionRtol(),
   # hundred, because one of them fell into this branch and the other did not.
   nullPresent <- is.finite(minInfoEig) && is.finite(maxInfoEig) &&
     maxInfoEig > 0 && minInfoEig <= rtol * maxInfoEig
+  # And the same decision on measured rather than approximated evidence. A
+  # direction the likelihood is flat along has to be projected out whether or
+  # not its eigenvalue has underflowed yet, for the reason the paragraph above
+  # gives about `solve()`: otherwise which answer a reader gets is settled by
+  # where the optimiser stopped along that direction rather than by the data.
+  # See `.ctOptimFlatDirectionScreen()`.
+  profileFlat <- if(is.null(screen$flat)) 0L else sum(screen$flat)
+  if(profileFlat > 0L) {
+    nullPresent <- TRUE
+    repairSteps <- c(repairSteps, paste0(profileFlat,
+      ' direction(s) measured flat in the likelihood, within ',
+      signif(screen$bar, 3), ' log units over displacements of ',
+      paste(signif(screen$lengths, 3), collapse='/')))
+  }
 
   rawcov <- if(nullPresent) {
     repairSteps <- c(repairSteps, paste0(
@@ -370,7 +511,8 @@ ctOptimCovFromHessian <- function(hess, ridge=1e-8, rtol=.ctFlatDirectionRtol(),
     # covariance is singular by construction -- that is what it is for -- so
     # `chol()` cannot succeed on it and asking would send every such matrix to
     # the generalized inverse below.
-    projected <- .ctOptimIdentifiedInverse(info, rtol=rtol)
+    projected <- .ctOptimIdentifiedInverse(info, rtol=rtol,
+      eig=screen$eig, flat=screen$flat)
     if(!is.null(projected)) {
       cov <- projected$cov
       covReady <- TRUE
@@ -456,6 +598,15 @@ ctOptimCovFromHessian <- function(hess, ridge=1e-8, rtol=.ctFlatDirectionRtol(),
     # Per coordinate, so a caller can ask which reported spreads the
     # projection removed rather than only how many directions it dropped.
     nullMass=nullMass,
+    # How many of those directions were dropped because the likelihood was
+    # measured flat along them rather than because their eigenvalue had
+    # underflowed, and by how much the likelihood moved when they were walked.
+    # Separated because they are different evidence: the first is a statement
+    # about the data, the second about arithmetic.
+    profileFlatDirections=profileFlat,
+    profileChange=if(is.null(screen$flat)) numeric() else
+      screen$change[screen$flat],
+    profileBar=if(is.null(screen)) NA_real_ else screen$bar,
     minInfoEigenFinal=minInfoEigenFinal,
     usedNearPD=usedNearPD,
     usedGinv=usedGinv,
@@ -1202,7 +1353,35 @@ ctOptimComputeUncertainty <- function(est, standata, sm, lpgFunc,
       hessian_result <- processHessianMatrices(hess1, hess2, verbose, matsetup)
       hess <- hessian_result$hess
     }
-    cov <- ctOptimCovFromHessian(hess, ridge=control$ridge)
+    # Which of the flat directions in this curvature the likelihood is really
+    # flat along, measured rather than inferred from the eigenvalue. Costs
+    # nothing on a fit with no flat direction -- the screen returns before
+    # evaluating anything -- and is what keeps the answer from depending on
+    # where along such a direction the optimiser stopped. See
+    # `.ctOptimFlatDirectionScreen()`.
+    #
+    # Only on the curvature routes. `opg`, `sandwich` and `bootstrap` build
+    # their matrix from score contributions rather than from the likelihood's
+    # own second derivatives, so walking the likelihood along an eigenvector of
+    # *that* is not the question this answers.
+    #
+    # `control$flatScreen = FALSE` turns it off, the same shape as
+    # `analyticHessian`: a caller who wants the eigenvalue rule on its own --
+    # to reproduce an older result, or to measure what this is worth -- has
+    # asked for it, and accepting the argument and ignoring it would be worse
+    # than either answer.
+    screen <- if(identical(control$flatScreen, FALSE)) NULL else
+      .ctOptimFlatDirectionScreen(-(hess + t(hess)) / 2, lpgFunc, est)
+    cov <- ctOptimCovFromHessian(hess, ridge=control$ridge, screen=screen)
+    if(!is.null(screen) && any(screen$flat)) {
+      method_details$flatdirections <- list(
+        n = sum(screen$flat), bar = screen$bar, lengths = screen$lengths,
+        candidates = length(screen$candidates),
+        evaluations = screen$evaluations,
+        change = screen$change[screen$flat],
+        eigenvalue = screen$eig$values[screen$flat] /
+          max(screen$eig$values))
+    }
     covavailable <- TRUE
   }
   
