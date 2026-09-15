@@ -108,6 +108,44 @@ const _CTSEM_BINARY_NODES = Ref(21)
 const _CTSEM_BINARY_NEWTON = Ref(6)
 
 """
+Largest step the count mode solve may take in one iteration.
+
+Two rather than something larger because the bound only has to stop the
+overshoot, not reach the answer: the walk covers the remaining distance in
+`|log y - ηbar| / 2` capped steps and then converges quadratically, and the
+capped region is where the quadratic model is worthless anyway. It is never
+active near the solution, so the partials `_binary_moment_derivatives` takes
+through this loop are the unclamped ones.
+"""
+const _CTSEM_COUNT_MODE_MAX_STEP = Ref(2.0)
+
+"""
+Newton steps for a count's scalar mode, which needs more than the six a
+logistic does.
+
+Sized by measurement rather than by taste, over a 120-cell grid of `ηbar` in
+`(-3, 0, 1.11, 6, 10)`, predictor sd in `(0.3, 0.9, 2, 5)` and `y` in
+`(0, 1, 3, 20, 100, 5000)`, against the mode found by a bracketing solve --
+worst absolute error over the grid:
+
+    iterations      6         10         14         20
+    worst       5.5e-07    2.5e-14    2.5e-14    2.4e-14
+
+Fourteen rather than ten, which is where it lands, because the knee is what was
+measured and not a bound: the walk's length is set by how far `ηbar` sits from
+`log(y + 1/2)`, and a grid cannot be told that it has found the worst case.
+Fourteen also sits far enough past the knee that the cap is inactive at the last
+iterate, which is what makes the partials `_binary_moment_derivatives` takes
+through this loop the unclamped ones.
+
+The hard corner is a badly over-predicted zero -- `ηbar = 10`, `y = 0`, where
+the mode is eleven units below `ηbar` and the capped walk has to cover it. With
+the old `log y` start, which fell back to `ηbar` at `y = 0`, that cell was 4.8
+out at any iteration count this side of thirty.
+"""
+const _CTSEM_COUNT_NEWTON = Ref(14)
+
+"""
 Predicted variance below which the observation is treated as exact.
 
 The scalar update divides by `s²` once for the mean shift and twice for the
@@ -437,17 +475,68 @@ the observation is nearly deterministic.
 """
 @inline function _binary_mode(ηbar::T, s2::T, y::Real, thresholds,
     kind::Int) where {T}
-    offset = zero(T)
     precision = inv(s2)
+    # A count is the one kind whose score and information are unbounded --
+    # `y - e^η` and `e^η` -- and plain Newton from zero is badly behaved on
+    # it. Where `e^ηbar` is small against `y` the first step is `y/e^ηbar`
+    # large, and from out there the iteration walks back about one unit at a
+    # time, because the curvature it divides by grows with the same
+    # exponential that made the step. Six iterations then stop a long way
+    # short: at `ηbar = 1.11`, `s = 0.9`, `y = 100` the mode is `4.56` and six
+    # iterations report `18.8`.
+    #
+    # Nothing errors when that happens. The quadrature is still a proper rule,
+    # it is merely centred somewhere the posterior has no mass, so the
+    # observation's likelihood comes back too small -- and more quadrature
+    # nodes barely help, which is what distinguishes this from an
+    # under-resolved integral. Measured against an independently computed
+    # Poisson-lognormal likelihood on 4000 observations, the total error was
+    # 7.3 log units at a predictor sd of 0.69, 273 at 0.9 and 1766 at 1.2;
+    # with the mode solved it is 0.0000, 0.0000 and 0.0017, the last being the
+    # 21-node rule's own error.
+    #
+    # Three changes fix it, all count-only so that no other kind's arithmetic
+    # moves.
+    #
+    # The start is the likelihood's own mode, `log(y + 1/2)`: by concavity the
+    # answer lies between that and `ηbar`, so this begins inside the bracket,
+    # and the first step from there is damped by an information of about `y`
+    # rather than inflated by a tiny one. The half is not cosmetic. `log y` is
+    # `-Inf` at `y = 0`, which would force the old start back exactly where the
+    # crawl is worst -- an over-predicted zero, `ηbar` large against `y` -- and
+    # a zero is the commonest observation there is in the floor-heavy count
+    # data this is for. Every one of the eight failures left by a `log y`
+    # start, over a 120-cell grid, was a `y = 0`, the worst of them 4.8 off.
+    #
+    # The step is capped, because a step that large means the quadratic model
+    # is worthless where it was taken -- which also keeps `e^η` away from
+    # overflow on the way.
+    #
+    # And a count gets its own iteration budget. Six is chosen for a logistic,
+    # whose score and information are bounded, and the capped walk a count can
+    # still need is longer than that; the budget is sized by measurement in
+    # `_CTSEM_COUNT_NEWTON`. It buys scalar evaluations against a 21-node rule
+    # per observation, so it is not a cost worth economising on either.
+    offset = zero(T)
+    iterations = _CTSEM_BINARY_NEWTON[]
+    if kind == CTSEM_OBS_COUNT
+        offset = log(T(y) + T(0.5)) - ηbar
+        iterations = _CTSEM_COUNT_NEWTON[]
+    end
     curvature = precision
-    @inbounds for _ in 1:_CTSEM_BINARY_NEWTON[]
+    @inbounds for _ in 1:iterations
         score, information = _category_score(ηbar + offset, y, thresholds, kind)
         # `-offset * precision`, not `-(η - ηbar) * precision`: the prior's
         # score is exact this way rather than a difference of two numbers of
         # order ηbar.
         gradient = -offset * precision + score
         curvature = precision + information
-        offset += gradient / curvature   # Newton on a concave objective
+        step = gradient / curvature   # Newton on a concave objective
+        if kind == CTSEM_OBS_COUNT
+            cap = T(_CTSEM_COUNT_MODE_MAX_STEP[])
+            step = min(max(step, -cap), cap)
+        end
+        offset += step
     end
     return (offset, curvature)
 end
