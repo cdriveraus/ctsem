@@ -599,7 +599,8 @@
   module <- .ctJuliaModule(spec$project)
   objective <- .ctJuliaObjective(fit)
   estimate <- .ctJuliaNumericVector(as.numeric(fit$estimate$raw))
-  levels <- max(1L, length(spec$laplace$levels))
+  structure <- .ctSpecRandomEffectLevels(spec)
+  levels <- max(1L, length(structure))
   rows <- list()
   for (l in seq_len(levels)) {
     covariance <- try(.ctBackendJuliaValue(module$ctsem_laplace_popcov(
@@ -607,9 +608,8 @@
     if (inherits(covariance, "try-error")) next
     covariance <- as.matrix(covariance)
     sds <- sqrt(abs(diag(covariance)))
-    name <- if (!is.null(spec$laplace$levels) &&
-        !is.null(spec$laplace$levels[[l]]$name)) {
-      as.character(spec$laplace$levels[[l]]$name)
+    name <- if (l <= length(structure) && !is.null(structure[[l]]$name)) {
+      as.character(structure[[l]]$name)
     } else as.character(l)
     collapsed <- which(sds <= tolerance)
     if (length(collapsed)) {

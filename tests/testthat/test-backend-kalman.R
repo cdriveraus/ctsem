@@ -528,3 +528,56 @@ test_that("prediction warns for an intoverstates=FALSE julia fit, as Stan's does
   expect_warning(suppressMessages(ctKalman(fit, subjects = 1)),
     "system noise represents prior")
 })
+
+# How the fit represents and integrates its random effects -------------------
+#
+# Three methods, two representations. 'augmented' carries every varying
+# parameter as a latent state; 'laplace' and 'none' both keep them as separate
+# coordinates and prepare identically, differing only in whether the effects
+# are then integrated out or sampled -- which is why the description lives in
+# `spec$laplace` for both and why the presence of that field cannot say which
+# method was used. Deriving the method from it reported every sampled fit as
+# 'laplace'.
+
+test_that('the integration method is read from the fit rather than guessed', {
+  skip_without_julia()
+  set.seed(83)
+  generating <- ctModel(type = 'ct', n.latent = 1, n.manifest = 1,
+    LAMBDA = matrix(1), DRIFT = matrix(-0.5), DIFFUSION = matrix(1),
+    MANIFESTVAR = matrix(0.4), CINT = matrix(0), T0MEANS = matrix(0),
+    T0VAR = matrix(1), MANIFESTMEANS = matrix(0))
+  dat <- do.call(rbind, lapply(1:8, function(i) {
+    m <- generating
+    m$matrices$CINT <- matrix(stats::rnorm(1, 0, 0.4))
+    d <- as.data.frame(suppressMessages(ctGenerate(m, n.subjects = 1,
+      burnin = 10, Tpoints = 8, backend = 'r')))
+    d$id <- i
+    d
+  }))
+  model <- ctModel(type = 'ct', n.latent = 1, n.manifest = 1,
+    LAMBDA = matrix(1), DRIFT = matrix(-0.5), DIFFUSION = matrix(1),
+    MANIFESTVAR = matrix(0.4), CINT = matrix('cint1'), T0MEANS = matrix(0),
+    T0VAR = matrix(1), MANIFESTMEANS = matrix(0))
+  model$pars$indvarying <- model$pars$matrix == 'CINT'
+
+  cases <- list(
+    augmented = list(intoverpop = TRUE, optimize = TRUE),
+    laplace = list(intoverpop = 'laplace', optimize = TRUE),
+    none = list(intoverpop = FALSE, optimize = FALSE))
+
+  for (nm in names(cases)) {
+    args <- c(list(datalong = dat, model = model, backend = 'julia', cores = 1,
+      verbose = 0, fit = FALSE), cases[[nm]])
+    prepared <- suppressWarnings(suppressMessages(do.call(ctFit, args)))
+    spec <- ctsem:::.ctBackendSpec(prepared)
+    expect_equal(ctsem:::.ctBackendIntOverPop(spec), nm, label = nm)
+    # And the representation, which two of the three share.
+    expect_equal(ctsem:::.ctSpecEffectsAreCoordinates(spec), nm != 'augmented',
+      label = nm)
+    # The structure reads the same whichever way the effects are handled.
+    levels <- ctsem:::.ctFitRandomEffectLevels(prepared)
+    expect_length(levels, 1L)
+    expect_equal(levels[[1L]]$params, 'cint1', label = nm)
+    expect_equal(levels[[1L]]$nunits, 8L, label = nm)
+  }
+})

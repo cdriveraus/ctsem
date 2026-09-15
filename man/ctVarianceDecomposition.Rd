@@ -109,7 +109,8 @@ The decomposition is a nested law of total variance over the
 
   \strong{Random effect levels.} A model with a grouping level above the
   subject (\code{id = c('subject','study')} in \code{\link{ctModel}}) is
-  fitted with \code{intoverpop='laplace'}, and gets one
+  fitted with \code{intoverpop='laplace'} -- or sampled, which prepares the
+  same description and is handled the same way here -- and gets one
   \code{between.<level>} column per level, each the variance of that
   level's own departure from the level outside it. They are orthogonal by
   construction and sum to \code{between}. Only the estimated (shrunk) route

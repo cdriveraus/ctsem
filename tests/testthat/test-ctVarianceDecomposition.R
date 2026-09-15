@@ -371,6 +371,53 @@ test_that('the decomposition holds together on any design shape', {
   }
 })
 
+test_that('the two representations of individual differences agree', {
+  # The test that would have caught the Laplace gap in one line, and the reason
+  # `fit_intoverpop()` exists: the same model, the same data, the same
+  # individual differences, described in two places that share no field. Read
+  # only one of them and the other returns a between person variance of zero --
+  # which is what a model with no individual differences correctly returns, so
+  # nothing about the number looks wrong.
+  #
+  # Compared at persons='estimated' on both sides, since that is the only route
+  # a Laplace fit has: both are then the fitted modes and the same quantity.
+  fits <- fit_intoverpop(datalong = datalong, model = estmodel, cores = 1,
+    verbose = 0)
+  augmented <- suppressMessages(
+    ctVarianceDecomposition(fits$augmented, persons = 'estimated'))
+  laplace <- suppressMessages(
+    ctVarianceDecomposition(fits$laplace, persons = 'estimated'))
+
+  expect_gt(min(augmented$between), 0)
+  expect_gt(min(laplace$between), 0)
+  for (part in c('between', 'within.deterministic', 'within.stochastic',
+    'within.measurement', 'total')) {
+    expect_equal(laplace[[part]], augmented[[part]], tolerance = 0.2,
+      label = paste('laplace', part))
+  }
+})
+
+test_that('the random effect structure reads the same from either representation', {
+  # The accessor the decomposition now asks instead of looking for carrier
+  # states, over both representations and over a model that has none.
+  fits <- fit_intoverpop(datalong = datalong, model = estmodel, cores = 1,
+    verbose = 0)
+  for (rep in names(fits)) {
+    levels <- ctsem:::.ctFitRandomEffectLevels(fits[[rep]])
+    expect_length(levels, 1L)
+    expect_equal(levels[[1L]]$params, 'cint1', label = rep)
+    expect_equal(levels[[1L]]$nunits, nsub, label = rep)
+    expect_equal(levels[[1L]]$units, seq_len(nsub), label = rep)
+    expect_true(ctsem:::.ctFitHasRandomEffects(fits[[rep]]), label = rep)
+  }
+  # No individual differences is an empty answer, not an unreadable one -- the
+  # distinction the Laplace failure turned on.
+  expect_length(ctsem:::.ctFitRandomEffectLevels(fixedfit), 0L)
+  expect_false(ctsem:::.ctFitHasRandomEffects(fixedfit))
+  # And a stan fit answers the same question.
+  expect_true(ctsem:::.ctFitHasRandomEffects(ctstantestfit))
+})
+
 test_that('a level above the subject gets its own between column', {
   # Only intoverpop='laplace' can integrate out a level above the subject, and
   # a Laplace fit has no carrier states -- which is exactly why this needs its
@@ -419,7 +466,7 @@ test_that('a level above the subject gets its own between column', {
   # And the drawn route is refused by name rather than returning the modes
   # under another label.
   expect_error(ctVarianceDecomposition(fit, persons = 'model'),
-    'not available for a Laplace fit')
+    'separate coordinates')
   expect_message(ctVarianceDecomposition(fit), "persons='estimated'")
 })
 

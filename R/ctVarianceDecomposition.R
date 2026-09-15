@@ -306,6 +306,18 @@
 .ctVarDecompJuliaPersons <- function(fit, design, nlatent, source, npersons,
   subjects) {
   carrier <- .ctVarDecompCarrier(fit, nlatent)
+  # The model says it has individual differences and this route cannot see
+  # them. Refused rather than returned, because what it would return is a
+  # between person variance of zero, which is what a model with no individual
+  # differences correctly returns -- so nothing downstream could tell the two
+  # apart. This is the guard the Laplace representation walked straight past
+  # before it had a route of its own.
+  if (!length(carrier) && .ctFitHasRandomEffects(fit)) {
+    stop('This fit declares individually varying parameters and they are not ',
+      'carried as latent states, so the carrier route cannot see them and ',
+      'would report a between person variance of zero. This is a bug rather ',
+      'than a limitation of the model -- please report the fit.', call. = FALSE)
+  }
   tipreds <- if (length(.ctFitModelObject(fit)$TIpredNames))
     .ctFitTIpredData(fit) else NULL
   tipredrow <- function(si) if (!is.null(tipreds)) as.numeric(tipreds[si, ]) else NULL
@@ -549,11 +561,6 @@
 # the same caveat persons='estimated' carries on the augmented route and it is
 # the only thing on offer here: drawing a person would need a draw from each
 # level's own effect covariance, which the engine does not expose.
-.ctVarDecompLaplaceLevels <- function(fit) {
-  levels <- .ctBackendSpec(fit)$laplace$levels
-  vapply(levels, function(x) as.character(x$name)[1L], character(1L))
-}
-
 # Subject matrices built from `level` and every level outside it.
 .ctVarDecompLevelMatrices <- function(fit, level) {
   scores <- .ctBackendKalmanRaw(fit, fit$estimate$raw, subjectmatrices = TRUE,
@@ -561,22 +568,6 @@
   flat <- array(scores$subject_matrices,
     dim = c(1L, dim(scores$subject_matrices)))
   .ctBackendSubjectMatrices(fit, flat)
-}
-
-# Which unit of each level every subject belongs to.
-#
-# From `spec$data` rather than `.ctFitLongData()`, which carries the subject id
-# and not the levels above it.
-.ctVarDecompLevelUnits <- function(fit, levels) {
-  data <- as.data.frame(.ctBackendSpec(fit)$data, stringsAsFactors = FALSE)
-  subject <- .ctFitRowSubject(fit)
-  first <- match(seq_len(max(subject)), subject)
-  out <- lapply(levels, function(name) {
-    if (!name %in% names(data)) return(NULL)
-    as.character(data[[name]])[first]
-  })
-  names(out) <- levels
-  out
 }
 
 # One subject's matrices, pulled out of a level's subject-matrix arrays.
@@ -593,8 +584,10 @@
 .ctVarDecompLaplaceComponents <- function(fit, design, nlatent, latents, type,
   scale, gh, continuoustime, nmanifest, subjects) {
 
-  levels <- .ctVarDecompLaplaceLevels(fit)
-  units <- .ctVarDecompLevelUnits(fit, levels)
+  structure <- .ctFitRandomEffectLevels(fit)
+  levels <- vapply(structure, function(x) x$name, character(1L))
+  units <- lapply(structure, function(x) x$units)
+  names(units) <- levels
   # Innermost first, then each level outside it, then the population -- the
   # order `randomEffects=` means, and the order the differences are taken in.
   steps <- c(levels, 'population')
@@ -933,7 +926,8 @@
 #'
 #'   \strong{Random effect levels.} A model with a grouping level above the
 #'   subject (\code{id = c('subject','study')} in \code{\link{ctModel}}) is
-#'   fitted with \code{intoverpop='laplace'}, and gets one
+#'   fitted with \code{intoverpop='laplace'} -- or sampled, which prepares the
+#'   same description and is handled the same way here -- and gets one
 #'   \code{between.<level>} column per level, each the variance of that
 #'   level's own departure from the level outside it. They are orthogonal by
 #'   construction and sum to \code{between}. Only the estimated (shrunk) route
@@ -999,10 +993,12 @@ ctVarianceDecomposition <- function(fit, method = c('auto', 'moment', 'simulatio
       'trajectories from the engine, which the stan path has no entry point ',
       'for. Refit with backend=\'julia\'.', call. = FALSE)
   }
-  if (identical(method, 'simulation') && !is.null(.ctBackendSpec(fit)$laplace)) {
-    stop("method='simulation' is not available for a Laplace fit: its random ",
-      'effects are not carrier states, so there is no part of the innovation ',
-      'draw that pins a person while its path is redrawn.', call. = FALSE)
+  if (identical(method, 'simulation') && .ctFitIsJulia(fit) &&
+      .ctSpecEffectsAreCoordinates(.ctBackendSpec(fit))) {
+    stop("method='simulation' is not available when the random effects are ",
+      'separate coordinates: they are not carrier states, so there is no part ',
+      'of the innovation draw that pins a person while its path is redrawn.',
+      call. = FALSE)
   }
 
   model <- .ctFitModelObject(fit)
@@ -1012,16 +1008,24 @@ ctVarianceDecomposition <- function(fit, method = c('auto', 'moment', 'simulatio
   latentNames <- model$latentNames[seq_len(nlatent)]
   type <- as.integer(model$manifesttype)
 
-  laplace <- .ctFitIsJulia(fit) && !is.null(.ctBackendSpec(fit)$laplace)
+  # Whether the random effects are separate coordinates, which is true of
+  # `intoverpop='laplace'` and of `intoverpop='none'` -- the route a sampled fit
+  # with random effects takes. Both need the level route below; they differ in
+  # whether a subject's effect is a mode or a draw, which the message names.
+  coordinates <- .ctFitIsJulia(fit) &&
+    .ctSpecEffectsAreCoordinates(.ctBackendSpec(fit))
+  method_used <- if (coordinates) .ctBackendIntOverPop(.ctBackendSpec(fit)) else NA_character_
   if (identical(persons, 'auto')) {
-    persons <- if (.ctFitIsJulia(fit) && !laplace) 'model' else 'estimated'
-    if (laplace) {
-      message("persons='estimated' for this Laplace fit: its random effects ",
-        'are separate coordinates rather than carrier states, so a person ',
-        'cannot be materialised at a drawn one. The between person variance ',
-        'below is the spread of the estimated modes, which shrinkage ',
-        'attenuates -- the outer levels hardest, since they have the fewest ',
-        'units.')
+    persons <- if (.ctFitIsJulia(fit) && !coordinates) 'model' else 'estimated'
+    if (coordinates) {
+      sampled <- identical(method_used, 'none')
+      message("persons='estimated' for this intoverpop='", method_used,
+        "' fit: its random effects are separate coordinates rather than ",
+        'carrier states, so a person cannot be materialised at a drawn one. ',
+        'The between person variance below is the spread of the estimated ',
+        if (sampled) 'effects.' else paste0('modes, which shrinkage ',
+          'attenuates -- the outer levels hardest, since they have the ',
+          'fewest units.'))
     } else if (identical(persons, 'estimated')) {
       message("persons='estimated' for this stan fit: drawing persons from the ",
         'population distribution needs the model matrices materialised at a ',
@@ -1030,12 +1034,12 @@ ctVarianceDecomposition <- function(fit, method = c('auto', 'moment', 'simulatio
         'estimated subjects, which shrinkage attenuates.')
     }
   }
-  if (identical(persons, 'model') && laplace) {
-    stop("persons='model' is not available for a Laplace fit: drawing a person ",
+  if (identical(persons, 'model') && coordinates) {
+    stop("persons='model' is not available when the random effects are ",
+      "separate coordinates (intoverpop='laplace' or 'none'): drawing a person ",
       "needs a draw from each level's own random effect covariance, and the ",
-      'engine materialises matrices at a carrier state, which a Laplace fit ',
-      "has none of. Use persons='estimated', reading its between person ",
-      'variance as attenuated by shrinkage.', call. = FALSE)
+      'engine materialises matrices at a carrier state, which such a fit has ',
+      "none of. Use persons='estimated'.", call. = FALSE)
   }
   if (identical(persons, 'model') && !.ctFitIsJulia(fit)) {
     stop("persons='model' needs a backend='julia' fit: it materialises the ",
@@ -1062,7 +1066,7 @@ ctVarianceDecomposition <- function(fit, method = c('auto', 'moment', 'simulatio
     }
     .ctVarDecompSimulation(fit, design, nlatent, latents, type, scale,
       as.integer(npersons), as.integer(npaths), nmanifest, wanted)
-  } else if (laplace) {
+  } else if (coordinates) {
     gh <- if (identical(scale, 'response')) .ctVarDecompGaussHermite(quadpoints) else NULL
     .ctVarDecompLaplaceComponents(fit, design, nlatent, latents, type, scale,
       gh, continuoustime, nmanifest, wanted)

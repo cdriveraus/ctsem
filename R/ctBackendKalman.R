@@ -51,9 +51,9 @@
 # implied by the population parameters alone. The rule is the same one
 # `_laplace_restrict_levels` applies, stated once here in the user's terms.
 .ctBackendLaplaceLevel <- function(spec, effects) {
-  laplace <- spec$laplace
-  if (is.null(laplace)) return(1L)
-  names <- vapply(laplace$levels, function(x) x$name, character(1))
+  if (is.null(spec$laplace)) return(1L)
+  names <- vapply(.ctSpecRandomEffectLevels(spec), function(x) x$name,
+    character(1))
   if (identical(effects, "population")) return(length(names) + 1L)
   position <- match(effects, names)
   if (is.na(position)) {
@@ -67,14 +67,19 @@
 # return trajectories. Silent for every other kind of fit.
 .ctBackendLaplaceTrajectoryNote <- function(spec, randomEffects) {
   if (is.null(spec$laplace)) return(invisible(NULL))
-  if (is.null(randomEffects)) randomEffects <- spec$laplace$levels[[1L]]$name
+  if (is.null(randomEffects)) randomEffects <- .ctSpecRandomEffectLevels(spec)[[1L]]$name
   # Validates the name here rather than leaving a bad one to error further in,
   # where the message would be about a level index.
   .ctBackendLaplaceLevel(spec, randomEffects)
-  message("Laplace fit: trajectories are conditional on random effects ",
-    "estimated from each subject's whole record, so they are the smoothed ",
-    "equivalent rather than filtered. randomEffects='",
-    as.character(randomEffects), "'.")
+  # A Laplace fit's effects are conditional modes; a 'none' fit samples them,
+  # and calling a draw a mode would be a different claim about the same number.
+  sampled <- identical(.ctBackendIntOverPop(spec), "none")
+  message(if (sampled) "Sampled random effects: " else "Laplace fit: ",
+    "trajectories are conditional on random effects ",
+    if (sampled) "drawn for each subject" else
+      "estimated from each subject's whole record",
+    ", so they are the smoothed equivalent rather than filtered. ",
+    "randomEffects='", as.character(randomEffects), "'.")
   invisible(NULL)
 }
 
@@ -94,7 +99,7 @@
   # on the augmented route at all, which is what the branch is for; everything
   # else about the call is shared and used to be written out twice.
   if (!is.null(spec$laplace)) {
-    if (is.null(randomEffects)) randomEffects <- spec$laplace$levels[[1L]]$name
+    if (is.null(randomEffects)) randomEffects <- .ctSpecRandomEffectLevels(spec)[[1L]]$name
     from <- .ctBackendLaplaceLevel(spec, randomEffects)
     arguments$from_level <- as.integer(from)
     # Modes from the fit, not from whatever rows this call happens to filter
@@ -117,12 +122,38 @@
   result
 }
 
+# Whether this fit's random effects are separate coordinates rather than
+# augmented latent states.
+#
+# `spec$laplace` is named after one of the two methods that use it and is built
+# for both: `.ctJuliaPrepare()` prepares 'none' exactly as it prepares
+# 'laplace', because what that structure holds is the *description* of the
+# random effects -- which raw parameters vary, at which level, with which
+# population scale -- and that description is needed whether they are then
+# integrated out or sampled. So the presence of the field says how the effects
+# are represented and not what the fit did with them, and the two questions
+# have to be asked separately.
+.ctSpecEffectsAreCoordinates <- function(spec) !is.null(spec$laplace)
+
 # How a fit integrates its random effects, so that re-preparing a specification
 # keeps doing what the fit did. `.ctJuliaPrepare` defaults to "augmented",
 # which for a Laplace fit is not a slower path to the same answer -- it is a
 # different model, with the random effects carried as latent states.
+#
+# Read from the specification rather than derived from it. Deriving gave
+# "laplace" for every fit carrying the structure above, which includes every
+# `intoverpop='none'` fit -- the NUTS-over-parameters-and-effects route a
+# sampled fit with random effects takes (`ctFit(optimize=FALSE)`, see the table
+# in R/ctFit.R). Nothing breaks today, because 'none' and 'laplace' prepare
+# identically and differ only in what happens afterwards, so re-preparing one
+# as the other rebuilds the same structure. It is correct by coincidence
+# though, and this function's whole job is to say what the fit did.
 .ctBackendIntOverPop <- function(spec) {
-  if (!is.null(spec$laplace)) "laplace" else "augmented"
+  recorded <- spec$intoverpop
+  if (!is.null(recorded) && nzchar(as.character(recorded)[1L])) {
+    return(as.character(recorded)[1L])
+  }
+  if (.ctSpecEffectsAreCoordinates(spec)) "laplace" else "augmented"
 }
 
 # Rebuild the prepared specification over the subjects, times and observations a
@@ -782,6 +813,113 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
   if (ncol(values) == length(model$TIpredNames)) colnames(values) <- model$TIpredNames
   values
 }
+
+# What varies between units in this fit, however it is represented ------------
+#
+# ctsem has two representations of individual differences and they share no
+# field. `intoverpop='augmented'` carries each varying parameter as a latent
+# state and describes the set in `spec$random_effects`; `'laplace'` keeps them
+# as separate coordinates, describes them in `spec$laplace$levels`, and leaves
+# `spec$random_effects` empty. A stan fit is always the augmented kind and
+# describes itself through `standata` instead.
+#
+# A consumer that knows one representation and not the other does not fail on
+# the other. It reports a model with no individual differences in it -- which is
+# a legitimate model, so the answer looks like an answer. That is how
+# ctVarianceDecomposition() came to return a between person variance of exactly
+# zero for every Laplace fit, which is every multilevel model, while the
+# information sat unread in `spec$laplace$levels`.
+#
+# So the question "what varies, between which units" is answered once, here,
+# and the three representations differ only inside this function. Returns a list
+# of levels, innermost first, each with
+#
+#   name    the id column that indexes the level
+#   units   which unit of this level each subject belongs to, one entry per
+#           subject -- `seq_len(nsubjects)` at the subject level
+#   nunits  how many units the level has
+#   params  the parameters that vary at it
+#
+# and an empty list when the model declares no individual differences at all.
+# That emptiness is a statement about the model rather than about what this
+# function could find, which is the distinction the failure above turned on:
+# `.ctFitHasRandomEffects()` below is what a caller should ask before trusting a
+# between-unit number it computed some other way.
+# The julia layer of it. `spec` is a prepared specification, not a fit, which is
+# what the call sites inside the backend have to hand.
+#
+# `labels` is left NULL at the subject level here: naming a subject needs the
+# id map, which belongs to the fit. `.ctFitRandomEffectLevels()` fills it.
+.ctSpecRandomEffectLevels <- function(spec, idname = NULL) {
+  if (!is.null(spec$laplace) && length(spec$laplace$levels)) {
+    return(lapply(spec$laplace$levels, function(level) {
+      # `group` is one entry per subject, saying which unit of this level that
+      # subject is in; `labels` is one entry per unit, the identifier the user
+      # wrote. Both are built where the hierarchy is read (R/ctJuliaBackend.R),
+      # so nothing downstream has to reconstruct either from the data -- which
+      # is what the two call sites that used to do it got wrong in different
+      # ways.
+      list(name = as.character(level$name)[1L],
+        units = as.integer(level$group),
+        nunits = as.integer(level$ngroups)[1L],
+        params = as.character(level$param),
+        labels = if (is.null(level$labels)) NULL else as.character(level$labels))
+    }))
+  }
+  effects <- spec$random_effects
+  if (is.null(effects) || !length(effects) || !NROW(effects)) return(list())
+  params <- unique(as.character(effects$param[effects$type %in% "sd"]))
+  params <- params[!is.na(params)]
+  if (!length(params)) return(list())
+  n <- length(spec$subject_starts)
+  list(list(name = idname, units = seq_len(n), nunits = n, params = params,
+    labels = NULL))
+}
+
+.ctFitRandomEffectLevels <- function(fit) {
+  idname <- .ctFitModelObject(fit)$subjectIDname
+
+  # Selected by what the object *is*, not by the absence of a julia field.
+  # `.ctFitIsJulia()` asks for `$model_spec`, which a prepared model from
+  # `ctFit(fit = FALSE)` does not have -- it *is* the specification -- so that
+  # test sent every prepared model down the stan branch, where `getparnames()`
+  # fails and the answer came back as "no random effects". Which is this
+  # function's whole failure mode, reintroduced inside it.
+  levels <- if (inherits(fit, 'ctStanFit')) {
+    varying <- tryCatch(getparnames(fit, subjvariationonly = TRUE),
+      error = function(e) character())
+    if (!length(varying)) list() else {
+      n <- as.integer(fit$standata$nsubjects)
+      list(list(name = idname, units = seq_len(n), nunits = n,
+        params = as.character(varying), labels = NULL))
+    }
+  } else {
+    spec <- .ctBackendSpec(fit)
+    # An empty answer has to mean "this model declares no individual
+    # differences", so anything this cannot read says so instead of agreeing.
+    if (is.null(spec$parameter_table)) {
+      stop('Cannot read the random effect structure of this object: it is ',
+        'neither a stan fit nor a prepared julia specification.', call. = FALSE)
+    }
+    .ctSpecRandomEffectLevels(spec, idname = idname)
+  }
+
+  # The innermost level's units are the subjects, so its labels are their ids.
+  if (length(levels) && is.null(levels[[1L]]$labels)) {
+    map <- try(.ctFitIdMap(fit), silent = TRUE)
+    if (!inherits(map, "try-error") && nrow(map) == levels[[1L]]$nunits) {
+      levels[[1L]]$labels <- as.character(map$original)
+    }
+  }
+  levels
+}
+
+# Does this fit declare individual differences at all?
+#
+# The question worth asking before reporting a between-unit quantity computed
+# some other way: an empty answer here is a statement about the model, where
+# "I found no carrier states" is a statement about one representation.
+.ctFitHasRandomEffects <- function(fit) length(.ctFitRandomEffectLevels(fit)) > 0L
 
 # A copy of the fit re-prepared against a different long data frame. This is
 # what lets ctPredictTIP() build its covariate grid: it constructs a dataset of
