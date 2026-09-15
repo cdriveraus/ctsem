@@ -526,6 +526,17 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
     module$ctsem_state_dimension(.ctJuliaObjective(fit))))
 }
 
+# Where each subject's innovations sit inside the vector
+# `.ctBackendGenerateStates()` takes. Zero-based offsets, and the first
+# `nlatent` entries of a subject's block are its initial state draw -- which is
+# what lets a caller pin a person and redraw only its path.
+.ctBackendStateLayout <- function(fit) {
+  spec <- .ctBackendSpec(fit)
+  module <- .ctJuliaModule(spec$project)
+  layout <- .ctBackendJuliaValue(module$ctsem_state_layout(.ctJuliaObjective(fit)))
+  lapply(layout, as.numeric)
+}
+
 .ctBackendGenerateStates <- function(fit, raw, z, base, effects = NULL) {
   spec <- .ctBackendSpec(fit)
   module <- .ctJuliaModule(spec$project)

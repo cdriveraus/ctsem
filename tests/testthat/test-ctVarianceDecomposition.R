@@ -84,6 +84,20 @@ estmodel$pars$indvarying[estmodel$pars$matrix == 'CINT'] <- TRUE
 
 fit <- ctFit(datalong, estmodel, backend = 'julia', cores = 1, verbose = 0)
 
+# A model whose DRIFT depends on the state, for the two routes' refusals and
+# for the simulation route itself.
+nonlinearmodel <- ctModel(type = 'ct', n.latent = 1, n.manifest = 1,
+  PARS = c('drift1'),
+  LAMBDA = matrix(1), DRIFT = matrix('drift1 * exp(eta1 * 0.01)'),
+  DIFFUSION = matrix(1), MANIFESTVAR = matrix(0.4), CINT = matrix(0),
+  T0MEANS = matrix(0), T0VAR = matrix(1), MANIFESTMEANS = matrix(0))
+
+# The same model with the random effect removed. Both routes can do this one,
+# which is what lets them be checked against each other.
+fixedmodel <- estmodel
+fixedmodel$pars$indvarying <- FALSE
+fixedfit <- ctFit(datalong, fixedmodel, backend = 'julia', cores = 1, verbose = 0)
+
 
 test_that('the four components sum to the total and none is negative', {
   for (source in c('model', 'estimated')) {
@@ -150,26 +164,76 @@ test_that('estimated persons are shrunk relative to drawn ones', {
 })
 
 test_that('a model with no random effects has no between person variance', {
-  fixedmodel <- estmodel
-  fixedmodel$pars$indvarying <- FALSE
-  fixed <- ctFit(datalong, fixedmodel, backend = 'julia', cores = 1, verbose = 0)
-  out <- ctVarianceDecomposition(fixed, persons = 'model', npersons = 20)
+  out <- ctVarianceDecomposition(fixedfit, persons = 'model', npersons = 20)
   # Every person has the same parameters and the same design, so the only
   # remaining source of between person variance is a design that differs, and
   # this one does not.
   expect_equal(out$between, rep(0, nrow(out)))
 })
 
-test_that('a state dependent model is refused rather than linearised', {
-  nonlinear <- ctModel(type = 'ct', n.latent = 1, n.manifest = 1,
-    PARS = c('drift1'),
-    LAMBDA = matrix(1), DRIFT = matrix('drift1 * exp(eta1 * 0.01)'),
-    DIFFUSION = matrix(1), MANIFESTVAR = matrix(0.4), CINT = matrix(0),
-    T0MEANS = matrix(0), T0VAR = matrix(1), MANIFESTMEANS = matrix(0))
-  nonlinearfit <- ctFit(datalong[datalong[, 'id'] <= 6, ], nonlinear,
+test_that('a state dependent model is refused by the moment route', {
+  nonlinearfit <- ctFit(datalong[datalong[, 'id'] <= 6, ], nonlinearmodel,
     backend = 'julia', cores = 1, verbose = 0)
-  expect_error(ctVarianceDecomposition(nonlinearfit),
+  expect_error(ctVarianceDecomposition(nonlinearfit, method = 'moment'),
     'depend on the latent state')
+  # and the default picks the route that can answer.
+  auto <- ctVarianceDecomposition(nonlinearfit, method = 'auto', npaths = 4)
+  expect_equal(attr(auto, 'method'), 'simulation')
+})
+
+
+# The simulation route --------------------------------------------------------
+#
+# The check that matters is against the moment route on a model both can do.
+# They share the estimand and nothing else: one propagates moments through
+# expm(), the other draws trajectories in the engine and takes sample moments
+# over them, so agreement is evidence about both rather than about neither.
+
+test_that('simulation and moment agree on a model both can do', {
+  set.seed(19)
+  moment <- ctVarianceDecomposition(fixedfit, method = 'moment')
+  simulated <- ctVarianceDecomposition(fixedfit, method = 'simulation',
+    npaths = 400)
+  expect_equal(attr(simulated, 'method'), 'simulation')
+  expect_equal(simulated$within.measurement, moment$within.measurement)
+  expect_equal(simulated$within.stochastic, moment$within.stochastic,
+    tolerance = 0.05)
+  expect_equal(simulated$total, moment$total, tolerance = 0.05)
+  # Neither the process nor the design gives this model a between person
+  # difference, and both routes have to say so.
+  expect_equal(moment$between, rep(0, nrow(moment)))
+  expect_lt(max(simulated$between), 1e-8)
+  expect_equal(simulated$between + simulated$within, simulated$total)
+})
+
+test_that('simulation refuses what it cannot answer', {
+  # A fit with individually varying parameters: the engine leaves them at their
+  # population value while generating, so every drawn person would be the same
+  # person. Checked by generating twice, and refused rather than reported as a
+  # between person variance of zero.
+  expect_error(ctVarianceDecomposition(fit, method = 'simulation'),
+    'between person variance')
+  expect_error(ctVarianceDecomposition(fixedfit, method = 'simulation',
+    npaths = 1), 'npaths must be at least 2')
+  expect_error(ctVarianceDecomposition(fixedfit, method = 'simulation',
+    persons = 'estimated'), "persons='model'")
+  expect_error(ctVarianceDecomposition(ctstantestfit, method = 'simulation'),
+    "needs a backend='julia' fit")
+})
+
+test_that('the simulation route runs a state dependent model', {
+  nonlinearfixed <- nonlinearmodel
+  nonlinearfixed$pars$indvarying <- FALSE
+  nonlinearfit <- ctFit(datalong, nonlinearfixed, backend = 'julia', cores = 1,
+    verbose = 0)
+  out <- ctVarianceDecomposition(nonlinearfit, npaths = 50)
+  expect_equal(attr(out, 'method'), 'simulation')
+  expect_equal(out$between + out$within, out$total)
+  expect_true(all(out$within.stochastic > 0))
+  expect_equal(out$within.measurement[out$type == 'latent'], 0)
+  # The evaluation point is not reported because there is not one, and the
+  # printed output has to say so rather than leave it implied.
+  expect_output(print(out), 'drawn trajectories')
 })
 
 
@@ -228,6 +292,27 @@ test_that('a time dependent predictor shows up as deterministic within variance'
   expect_equal(out$between + out$within, out$total)
 })
 
+
+test_that('the two backends decompose the same model the same way', {
+  # Only when CTSEM_TEST_STAN asks for it, as the rest of this suite does: the
+  # stan fit is the expensive half. What it checks is the one thing the two
+  # paths do differently -- stan reads the subject matrices the filter saved and
+  # falls back to pop_ for the rest, julia materialises each person at its
+  # carrier vector -- so agreement here is about those two routes rather than
+  # about the decomposition, which is shared.
+  skip_if(!identical(test_backends(), c('julia', 'stan')),
+    'set CTSEM_TEST_STAN to compare the backends')
+  fits <- fit_backends(datalong = datalong, model = estmodel, cores = 1,
+    verbose = 0)
+  julia <- ctVarianceDecomposition(fits$julia, persons = 'estimated')
+  stan <- suppressMessages(ctVarianceDecomposition(fits$stan, persons = 'estimated'))
+  parts <- c('between', 'within.deterministic', 'within.stochastic',
+    'within.measurement', 'total')
+  for (part in parts) {
+    expect_equal(stan[[part]], julia[[part]], tolerance = 0.05,
+      label = paste0('stan ', part))
+  }
+})
 
 test_that('a stan fit works through the estimated route and refuses the drawn one', {
   skip_on_cran()

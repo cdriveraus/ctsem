@@ -77,8 +77,8 @@ generation completely.
 
 using LinearAlgebra, DiffResults
 
-export ctsem_state_dimension, ctsem_joint_loglikelihood, ctsem_joint_evaluate,
-    ctsem_generate_states
+export ctsem_state_dimension, ctsem_state_layout, ctsem_joint_loglikelihood,
+    ctsem_joint_evaluate, ctsem_generate_states
 
 """
 Poisson rate above which a count is drawn from its normal approximation rather
@@ -304,6 +304,36 @@ back; nothing on this side has an RNG.
 """
 ctsem_state_dimension(objective::CTSEMObjective) =
     _ctsem_state_layout(objective).ndim
+
+"""
+    ctsem_state_layout(objective)
+
+Where each subject's innovations sit inside the vector `ctsem_generate_states`
+takes, so that a caller can hold part of a draw fixed and redraw the rest.
+
+Returns `ndim` (the whole length, as `ctsem_state_dimension` reports it),
+`nlatent` (the augmented state dimension), `ndiffusion`, and the zero-based
+`zoffsets` and `rowoffsets` of each subject's block. Subject `i` owns the
+entries from `zoffsets[i] + 1`, and the first `nlatent` of those are its
+initial state draw: the pass forms `T0MEANS + factor * z` from them, `factor`
+being the T0VAR factor, before any innovation is used.
+
+That is what a caller needs to draw one person and several paths for it. An
+individually varying parameter is carried as a state with no drift and no
+diffusion, so pinning the carrier entries of a subject's initial block and
+redrawing everything after them gives the same person a second trajectory.
+Holding those entries fixed pins the carrier *values* only when T0VAR has no
+covariance between the dynamic states and the carriers, since the factor is
+triangular; the caller is responsible for checking that, and
+ctVarianceDecomposition() in the R package does.
+"""
+function ctsem_state_layout(objective::CTSEMObjective)
+    layout = _ctsem_state_layout(objective)
+    return (ndim = layout.ndim, nlatent = layout.nlatent,
+        ndiffusion = layout.ndiffusion, nmanifest = layout.nmanifest,
+        nrows = layout.nrows, zoffsets = layout.zoffsets,
+        rowoffsets = layout.rowoffsets)
+end
 
 
 ################################################################################

@@ -2526,6 +2526,15 @@ ctsem_state_dimension(laplace::CTSEMLaplaceObjective) =
     ctsem_state_dimension(laplace.objective)
 
 """
+    ctsem_state_layout(laplace)
+
+The inner objective's layout. A Laplace fit's random effects are not carrier
+states, so the innovation vector describes the dynamic states alone.
+"""
+ctsem_state_layout(laplace::CTSEMLaplaceObjective) =
+    ctsem_state_layout(laplace.objective)
+
+"""
     ctsem_generate_states(laplace, values, z, base; effects, subject_values)
 
 One dataset with each subject's trajectory drawn from *its own* model.

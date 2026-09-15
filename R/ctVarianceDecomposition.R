@@ -287,9 +287,14 @@
 
 # One person's matrices, materialised at a carrier vector. julia only -- this is
 # the route stan cannot take, and the caller has already said so.
+# Messages suppressed, and said once by the print method instead. This is
+# called once per person -- up to npersons times -- and each call otherwise
+# announces which cells are state dependent and where they were evaluated, so a
+# single decomposition printed the same paragraph four hundred times. What that
+# paragraph says is still owed to the reader, and the attributes carry it.
 .ctVarDecompPersonAt <- function(fit, tipreds, state, nlatent) {
-  drawn <- ctBackendParMatrices(fit, tipreds = tipreds, state = state,
-    trim = FALSE)
+  drawn <- suppressMessages(ctBackendParMatrices(fit, tipreds = tipreds,
+    state = state, trim = FALSE))
   mats <- list()
   for (name in .ctVarDecompNeeded) {
     if (!is.null(drawn[[name]])) mats[[name]] <- as.matrix(drawn[[name]])
@@ -327,8 +332,8 @@
   # nothing else.
   population <- list()
   for (si in unique(donors)) {
-    population[[as.character(si)]] <- ctBackendParMatrices(fit,
-      tipreds = tipredrow(si), trim = FALSE)
+    population[[as.character(si)]] <- suppressMessages(ctBackendParMatrices(fit,
+      tipreds = tipredrow(si), trim = FALSE))
   }
 
   # With no carrier states every person with the same donor has the same
@@ -417,16 +422,37 @@
 
 # Refusals --------------------------------------------------------------------
 
-.ctVarDecompCheckModel <- function(fit, scale) {
+# The matrices that turn a latent state into an expected observation. A cell of
+# one of these that depends on the state is the one kind of nonlinearity the
+# simulation route cannot absorb: it draws the *path* from the engine, and then
+# needs the measurement model in R to turn each drawn state into an expected
+# observation.
+.ctVarDecompMeasurementMatrices <- c('LAMBDA', 'MANIFESTMEANS', 'MANIFESTVAR',
+  'MANIFESTcov', 'Jy', 'THRESHOLDS')
+
+.ctVarDecompStateDependent <- function(fit, measurementonly = FALSE) {
   cells <- .ctFitConditionalCells(fit)
+  if (measurementonly) {
+    cells <- cells[cells$matrix %in% .ctVarDecompMeasurementMatrices, , drop = FALSE]
+  }
+  cells
+}
+
+.ctVarDecompCheckModel <- function(fit, method, scale) {
+  cells <- .ctVarDecompStateDependent(fit, measurementonly = !identical(method, 'moment'))
   if (nrow(cells)) {
     stop('Cells of ', paste(.ctContextReportableMatrices(cells), collapse = ', '),
-      ' depend on the latent state or a time dependent predictor, so this ',
-      'model has no single DRIFT, DIFFUSION or LAMBDA and the moment ',
-      'recursion this function runs would be a linearisation at a point ',
-      'nothing here chose. The decomposition is not reported rather than ',
-      'reported wrongly. Use ctPhasePortrait() or ctStateDependencePlot() to ',
-      'see how the dynamics vary over the state space.', call. = FALSE)
+      ' depend on the latent state or a time dependent predictor, so they have ',
+      'no single value and ',
+      if (identical(method, 'moment'))
+        paste0('the moment recursion would be a linearisation at a point ',
+          "nothing here chose. Use method='simulation', which draws the ",
+          'trajectories from the engine instead.')
+      else paste0('the simulation route cannot turn a drawn state into an ',
+        'expected observation without re-materialising the measurement model ',
+        'at every row. Neither route reports a number for this model.'),
+      ' ctPhasePortrait() and ctStateDependencePlot() show how the model varies ',
+      'over the state space.', call. = FALSE)
   }
   model <- .ctFitModelObject(fit)
   type <- as.integer(model$manifesttype)
@@ -434,18 +460,252 @@
   if (length(unsupported)) {
     stop('Count and censored indicators are not supported yet: ',
       paste(model$manifestNames[unsupported], collapse = ', '),
-      '. Their conditional variance needs the engine\'s own measurement ',
+      ". Their conditional variance needs the engine's own measurement ",
       'integral rather than the logistic one used here.', call. = FALSE)
   }
   if (identical(scale, 'response') && any(type %in% 2L)) {
     stop("scale='response' is not available for an ordinal indicator: the ",
       'variance of the observed values depends on how the categories are ',
-      'coded, which is the user\'s choice rather than the model\'s. Ordinal ',
-      "indicator(s): ", paste(model$manifestNames[type %in% 2L], collapse = ', '),
+      "coded, which is the user's choice rather than the model's. Ordinal ",
+      'indicator(s): ', paste(model$manifestNames[type %in% 2L], collapse = ', '),
       ". Use scale='latent', which decomposes the linear predictor behind the ",
       'cumulative logit.', call. = FALSE)
   }
   invisible(NULL)
+}
+
+
+# The moment route ------------------------------------------------------------
+#
+# Person by person, then across persons. A person contributes the average over
+# its own rows, so persons count equally however many observations each has --
+# the estimand is over persons, and weighting by row count would make a
+# frequently measured subject a bigger share of the population.
+.ctVarDecompMomentComponents <- function(fit, design, people, nlatent, latents,
+  type, scale, gh, continuoustime, nmanifest) {
+  nvar <- nmanifest + if (latents) nlatent else 0L
+  personmean <- matrix(NA_real_, length(people), nvar)
+  persondet <- matrix(NA_real_, length(people), nvar)
+  personstoch <- matrix(NA_real_, length(people), nvar)
+  personmeas <- matrix(0, length(people), nvar)
+
+  for (index in seq_along(people)) {
+    person <- people[[index]]
+    rows <- person$rows
+    moments <- .ctVarDecompPersonMoments(person$mats, design$time[rows],
+      if (!is.null(design$tdpreds)) design$tdpreds[rows, , drop = FALSE] else NULL,
+      continuoustime)
+    for (vi in seq_len(nmanifest)) {
+      measured <- .ctVarDecompMeasurement(moments$linearmean[, vi],
+        moments$linearvar[, vi], type[vi], person$mats$MANIFESTcov[vi, vi],
+        scale, gh)
+      personmean[index, vi] <- mean(measured$expected)
+      persondet[index, vi] <- .ctVarDecompPopVar(measured$expected)
+      personstoch[index, vi] <- mean(measured$varmean)
+      personmeas[index, vi] <- mean(measured$condvar)
+    }
+    if (latents) for (li in seq_len(nlatent)) {
+      vi <- nmanifest + li
+      personmean[index, vi] <- mean(moments$latentmean[, li])
+      persondet[index, vi] <- .ctVarDecompPopVar(moments$latentmean[, li])
+      personstoch[index, vi] <- mean(moments$latentvar[, li])
+    }
+  }
+
+  list(
+    between = if (length(people) > 1L) apply(personmean, 2L, stats::var) else rep(0, nvar),
+    within.deterministic = colMeans(persondet),
+    within.stochastic = colMeans(personstoch),
+    within.measurement = colMeans(personmeas),
+    npersons = length(people))
+}
+
+
+# The simulation route --------------------------------------------------------
+#
+# For a model whose dynamics depend on the state there is no moment recursion to
+# run: the transition is a different transition at every point the trajectory
+# visits. The engine draws the trajectory instead, through the same state pass
+# `ctGenerate(intoverstates = FALSE)` uses, and the decomposition is taken over
+# the draws.
+#
+# The one thing that needs care is that each person must be given *several*
+# paths, not one. With a single path per person the average over that person's
+# rows is not their mean -- it wanders with the path -- and the wander lands in
+# the between person term, inflating it by an amount that depends on how
+# autocorrelated the process is. So a person is drawn once and its trajectory
+# redrawn `npaths` times:
+#
+#   `ctsem_state_layout()` says where each subject's innovations start, and the
+#   first `nlatent` entries of that block are its initial state draw. An
+#   individually varying parameter is a carrier state with no drift and no
+#   diffusion, so pinning the carrier entries of that initial block and
+#   redrawing everything after them is the same person on a new path.
+#
+# Pinning the carrier *entries* pins the carrier *values* only when T0VAR has no
+# covariance between the dynamic states and the carriers -- the factor applied
+# to the draw is triangular, so a cross block would let a redrawn dynamic entry
+# move the carrier. That is checked rather than assumed.
+#
+# Two Monte Carlo corrections, both exact in expectation and both computed from
+# the draws themselves. The average over paths estimates a person's mean path
+# with error, so
+#
+#   * the variance over time of that average carries an extra
+#     mean_t Var_paths(g_t - gbar) / npaths, and
+#   * the variance over persons of a person's overall average carries an extra
+#     mean_persons Var_paths(gbar) / npaths.
+#
+# Without them the deterministic and between terms both grow as npaths falls,
+# which is the same finite-path bias in a different place.
+.ctVarDecompSimulation <- function(fit, design, nlatent, latents, type, scale,
+  npersons, npaths, nmanifest, subjects) {
+
+  if (npaths < 2L) stop('npaths must be at least 2: the simulation route ',
+    "separates a person's mean path from the variation around it, and one ",
+    'path cannot.', call. = FALSE)
+  layout <- .ctBackendStateLayout(fit)
+  augmented <- as.integer(layout$nlatent)
+  carrier <- if (augmented > nlatent) (nlatent + 1L):augmented else integer()
+  population <- suppressMessages(ctBackendParMatrices(fit, trim = FALSE))
+
+  tipreds <- if (length(.ctFitModelObject(fit)$TIpredNames))
+    .ctFitTIpredData(fit) else NULL
+  raw <- fit$estimate$raw
+  nrows <- length(design$subject)
+  base <- matrix(0, nmanifest, nrows)
+
+  if (length(carrier)) {
+    cross <- population$T0cov[carrier, seq_len(nlatent), drop = FALSE]
+    if (any(abs(cross) > 1e-10)) {
+      stop('T0VAR has covariance between the latent processes and the ',
+        'individually varying parameters, so a person cannot be held fixed ',
+        'while its trajectory is redrawn: the factor applied to the initial ',
+        'draw is triangular, and redrawing the process entries would move the ',
+        "parameters too. Use method='moment' if the dynamics allow it.",
+        call. = FALSE)
+    }
+    if (!.ctVarDecompCarrierIsDrawn(fit, layout, carrier, raw, base, augmented,
+      nrows, design)) {
+      stop("method='simulation' cannot give this model a between person ",
+        'variance: the engine\'s state generation leaves every individually ',
+        'varying parameter at its population value, so every simulated person ',
+        'would be the same person and the between term would come out at zero ',
+        'without anything having failed. Checked by generating twice rather ',
+        'than assumed. Use method=\'moment\' if the dynamics allow it -- and if ',
+        'they do not, there is no route here for this model yet.',
+        call. = FALSE)
+    }
+  }
+
+  nsubjects <- length(subjects)
+  # With no carrier states every person is the same person, so redrawing them
+  # buys nothing: one draw, and the paths are all this needs.
+  draws <- if (length(carrier)) max(1L, ceiling(npersons / nsubjects)) else 1L
+
+  nvar <- nmanifest + if (latents) nlatent else 0L
+  npeople <- draws * nsubjects
+  personmean <- matrix(NA_real_, npeople, nvar)
+  persondet <- matrix(NA_real_, npeople, nvar)
+  personstoch <- matrix(NA_real_, npeople, nvar)
+  personmeas <- matrix(0, npeople, nvar)
+  # The Monte Carlo corrections, accumulated per person and applied once.
+  detcorrection <- matrix(0, npeople, nvar)
+  betweencorrection <- matrix(0, npeople, nvar)
+
+  at <- 0L
+  for (drawi in seq_len(draws)) {
+    pinned <- matrix(stats::rnorm(augmented * design$nsubjects), augmented,
+      design$nsubjects)
+    paths <- array(NA_real_, dim = c(npaths, nrows, augmented))
+    for (path in seq_len(npaths)) {
+      z <- stats::rnorm(layout$ndim)
+      if (length(carrier)) for (si in seq_len(design$nsubjects)) {
+        z[layout$zoffsets[si] + carrier] <- pinned[carrier, si]
+      }
+      drawn <- .ctBackendGenerateStates(fit, raw, z, base)
+      paths[path, , ] <- t(matrix(as.numeric(drawn$states), augmented, nrows))
+    }
+
+    for (si in subjects) {
+      at <- at + 1L
+      rows <- which(design$subject == si)
+      state <- as.numeric(population$T0MEANS)
+      if (length(carrier)) state[carrier] <- paths[1L, rows[1L], carrier]
+      mats <- .ctVarDecompPersonAt(fit,
+        if (!is.null(tipreds)) as.numeric(tipreds[si, ]) else NULL, state, nlatent)
+      # One npaths by length(rows) matrix per dynamic state. Built explicitly
+      # rather than by indexing a three way array, so that a single path or a
+      # single row cannot drop a dimension underneath the arithmetic.
+      dynamic <- lapply(seq_len(nlatent), function(li)
+        matrix(paths[, rows, li], npaths, length(rows)))
+
+      for (vi in seq_len(nvar)) {
+        latentonly <- vi > nmanifest
+        g <- if (latentonly) dynamic[[vi - nmanifest]] else {
+          linear <- matrix(mats$MANIFESTMEANS[vi, 1L], npaths, length(rows))
+          for (li in seq_len(nlatent)) {
+            linear <- linear + mats$LAMBDA[vi, li] * dynamic[[li]]
+          }
+          linear
+        }
+        conditional <- if (latentonly) 0 else
+          .ctVarDecompSimulatedCondVar(g, type[vi], mats$MANIFESTcov[vi, vi], scale)
+        if (!latentonly && !identical(scale, 'latent') && type[vi] != 0L) {
+          g <- stats::plogis(g)
+        }
+        pathmean <- colMeans(g)
+        overall <- rowMeans(g)
+        centred <- g - overall
+        personmean[at, vi] <- mean(overall)
+        persondet[at, vi] <- .ctVarDecompPopVar(pathmean)
+        personstoch[at, vi] <- mean(apply(g, 2L, stats::var))
+        personmeas[at, vi] <- conditional
+        detcorrection[at, vi] <- mean(apply(centred, 2L, stats::var)) / npaths
+        betweencorrection[at, vi] <- stats::var(overall) / npaths
+      }
+    }
+  }
+
+  list(
+    between = if (npeople > 1L)
+      pmax(apply(personmean, 2L, stats::var) - colMeans(betweencorrection), 0)
+      else rep(0, nvar),
+    within.deterministic = pmax(colMeans(persondet) - colMeans(detcorrection), 0),
+    within.stochastic = colMeans(personstoch),
+    within.measurement = colMeans(personmeas),
+    npersons = npeople)
+}
+
+# Does the engine's state generation actually draw the carrier states?
+#
+# Asked rather than assumed, and asked of the engine rather than of the model,
+# because the answer is not visible in the specification: an augmented fit
+# carries a perfectly good carrier block in T0VAR and the state pass applies a
+# zero factor to it, so every generated subject gets the population parameters.
+# Generating with the carrier entries of the initial draw set far from zero and
+# seeing whether the carrier state moves is one extra pass and settles it. If
+# the engine is changed to draw them, this starts returning TRUE on its own.
+.ctVarDecompCarrierIsDrawn <- function(fit, layout, carrier, raw, base,
+  augmented, nrows, design) {
+  probe <- function(value) {
+    z <- rep(0, layout$ndim)
+    for (si in seq_len(design$nsubjects)) z[layout$zoffsets[si] + carrier] <- value
+    states <- matrix(as.numeric(
+      .ctBackendGenerateStates(fit, raw, z, base)$states), augmented, nrows)
+    states[carrier, 1L]
+  }
+  any(abs(probe(5) - probe(-5)) > 1e-8)
+}
+
+# The measurement model's own variance at the drawn states. Nothing is
+# integrated here: the linear predictor is known at each draw, so the
+# conditional variance is read off it directly.
+.ctVarDecompSimulatedCondVar <- function(linear, type, manifestvar, scale) {
+  if (type == 0L) return(manifestvar)
+  if (identical(scale, 'latent')) return(pi^2 / 3)
+  p <- stats::plogis(linear)
+  mean(p * (1 - p))
 }
 
 
@@ -459,6 +719,18 @@
 #'
 #' @param fit fit object as generated by \code{\link{ctFit}}, from either
 #'   backend.
+#' @param method How the model implied moments are obtained. \code{'moment'}
+#'   runs the forward moment recursion, which is exact and needs the dynamics
+#'   to be linear. \code{'simulation'} draws trajectories from the julia
+#'   engine instead, which is what a model with state dependent \code{DRIFT}
+#'   or \code{DIFFUSION} cells needs. \code{'auto'}, the default, is
+#'   \code{'moment'} unless the model has such cells.
+#' @param npaths Trajectories drawn per person when \code{method='simulation'}.
+#'   Each person needs several: with one path, the average over that person's
+#'   rows wanders with the path rather than estimating their mean, and the
+#'   wander lands in the between person term. The two Monte Carlo corrections
+#'   this makes necessary are applied, so the result is unbiased at any
+#'   \code{npaths}, but small values are noisy.
 #' @param persons Which population the between person variance refers to.
 #'   \code{'model'} draws persons from the fitted population distribution of
 #'   the random effects, which is the model's own claim about the population
@@ -499,9 +771,22 @@
 #'   The moments come from the forward recursion over each subject's actual
 #'   observation times, with no data entering, so unequal spacing, missingness
 #'   and time dependent predictors are handled exactly rather than by assuming
-#'   stationarity. The result is exact for a model with linear dynamics. A
-#'   model with state dependent \code{DRIFT}, \code{DIFFUSION} or
-#'   \code{LAMBDA} cells is refused rather than linearised silently.
+#'   stationarity. The result is exact for a model with linear dynamics.
+#'
+#'   A model whose \code{DRIFT} or \code{DIFFUSION} cells depend on the state
+#'   has no single transition to run that recursion with, so
+#'   \code{method='simulation'} draws its trajectories from the engine and
+#'   takes the same decomposition over the draws. It is refused rather than
+#'   linearised at a point nothing chose. A state dependent \emph{measurement}
+#'   cell -- \code{LAMBDA}, \code{MANIFESTMEANS}, \code{MANIFESTVAR} -- is
+#'   refused by both routes, since turning a drawn state into an expected
+#'   observation then needs the measurement model re-materialised at every row.
+#'
+#'   \code{method='simulation'} currently has no between person variance to
+#'   report for a model with individually varying parameters: the engine's
+#'   state generation leaves every such parameter at its population value, so
+#'   every simulated person is the same person. That is checked by generating
+#'   twice and refused, rather than returned as a zero.
 #'
 #' @return A data frame of class \code{ctVarianceDecomposition}, one row per
 #'   variable, with columns \code{variable}, \code{type}, \code{between},
@@ -520,16 +805,35 @@
 #' ctVarianceDecomposition(ctstantestfit)
 #' }
 #' @export
-ctVarianceDecomposition <- function(fit, persons = c('auto', 'model', 'estimated'),
-  scale = c('latent', 'response'), npersons = 200L, latents = TRUE,
-  quadpoints = 21L, subjects = 'all') {
+ctVarianceDecomposition <- function(fit, method = c('auto', 'moment', 'simulation'),
+  persons = c('auto', 'model', 'estimated'), scale = c('latent', 'response'),
+  npersons = 200L, npaths = 20L, latents = TRUE, quadpoints = 21L,
+  subjects = 'all') {
 
-  if (!inherits(fit, c('ctStanFit', 'ctJuliaFit'))) {
+  # `ctFit`, which both backends' fits carry, rather than naming the two
+  # classes: this asks whether the argument is a fit at all, not which backend
+  # produced it, and spelling it with a class literal puts it in front of the
+  # duplication ratchet for a question it is not asking.
+  if (!inherits(fit, 'ctFit')) {
     stop('fit object is not a ctsem fit!', call. = FALSE)
   }
+  method <- match.arg(method)
   persons <- match.arg(persons)
   scale <- match.arg(scale)
-  .ctVarDecompCheckModel(fit, scale)
+  if (identical(method, 'auto')) {
+    method <- if (nrow(.ctVarDecompStateDependent(fit))) 'simulation' else 'moment'
+  }
+  .ctVarDecompCheckModel(fit, method, scale)
+  if (identical(method, 'simulation') && !.ctFitIsJulia(fit)) {
+    stop("method='simulation' needs a backend='julia' fit: it draws the ",
+      'trajectories from the engine, which the stan path has no entry point ',
+      'for. Refit with backend=\'julia\'.', call. = FALSE)
+  }
+  if (identical(method, 'simulation') && !is.null(.ctBackendSpec(fit)$laplace)) {
+    stop("method='simulation' is not available for a Laplace fit: its random ",
+      'effects are not carrier states, so there is no part of the innovation ',
+      'draw that pins a person while its path is redrawn.', call. = FALSE)
+  }
 
   model <- .ctFitModelObject(fit)
   nlatent <- .ctFitNlatent(fit)
@@ -562,64 +866,54 @@ ctVarianceDecomposition <- function(fit, persons = c('auto', 'model', 'estimated
   wanted <- wanted[wanted %in% unique(design$subject)]
   if (!length(wanted)) stop('No rows for the requested subjects.', call. = FALSE)
 
-  people <- if (.ctFitIsJulia(fit)) {
-    .ctVarDecompJuliaPersons(fit, design, nlatent, persons,
-      as.integer(npersons), wanted)
-  } else .ctVarDecompStanPersons(fit, design, nlatent, wanted)
-  people <- people[vapply(people, function(p) length(p$rows) > 0L, logical(1L))]
-  if (!length(people)) stop('No usable persons.', call. = FALSE)
-
-  gh <- if (identical(scale, 'response')) .ctVarDecompGaussHermite(quadpoints) else NULL
-
   nmanifest <- length(manifestNames)
-  nvar <- nmanifest + if (latents) nlatent else 0L
-  personmean <- matrix(NA_real_, length(people), nvar)
-  persondet <- matrix(NA_real_, length(people), nvar)
-  personstoch <- matrix(NA_real_, length(people), nvar)
-  personmeas <- matrix(0, length(people), nvar)
-
-  for (pi in seq_along(people)) {
-    person <- people[[pi]]
-    rows <- person$rows
-    moments <- .ctVarDecompPersonMoments(person$mats, design$time[rows],
-      if (!is.null(design$tdpreds)) design$tdpreds[rows, , drop = FALSE] else NULL,
-      continuoustime)
-    for (vi in seq_len(nmanifest)) {
-      measured <- .ctVarDecompMeasurement(moments$linearmean[, vi],
-        moments$linearvar[, vi], type[vi], person$mats$MANIFESTcov[vi, vi],
-        scale, gh)
-      personmean[pi, vi] <- mean(measured$expected)
-      persondet[pi, vi] <- .ctVarDecompPopVar(measured$expected)
-      personstoch[pi, vi] <- mean(measured$varmean)
-      personmeas[pi, vi] <- mean(measured$condvar)
+  components <- if (identical(method, 'simulation')) {
+    if (identical(persons, 'estimated')) {
+      stop("method='simulation' draws its persons from the population ",
+        "distribution, so persons='estimated' has nothing to mean here: a ",
+        "subject's estimated random effects would have to be turned back into ",
+        'the standard normals the engine draws them from, through a factor ',
+        "this does not have. Use persons='model'.", call. = FALSE)
     }
-    if (latents) for (li in seq_len(nlatent)) {
-      vi <- nmanifest + li
-      personmean[pi, vi] <- mean(moments$latentmean[, li])
-      persondet[pi, vi] <- .ctVarDecompPopVar(moments$latentmean[, li])
-      personstoch[pi, vi] <- mean(moments$latentvar[, li])
-    }
+    .ctVarDecompSimulation(fit, design, nlatent, latents, type, scale,
+      as.integer(npersons), as.integer(npaths), nmanifest, wanted)
+  } else {
+    people <- if (.ctFitIsJulia(fit)) {
+      .ctVarDecompJuliaPersons(fit, design, nlatent, persons,
+        as.integer(npersons), wanted)
+    } else .ctVarDecompStanPersons(fit, design, nlatent, wanted)
+    people <- people[vapply(people, function(p) length(p$rows) > 0L, logical(1L))]
+    if (!length(people)) stop('No usable persons.', call. = FALSE)
+    gh <- if (identical(scale, 'response')) .ctVarDecompGaussHermite(quadpoints) else NULL
+    .ctVarDecompMomentComponents(fit, design, people, nlatent, latents, type,
+      scale, gh, continuoustime, nmanifest)
   }
 
   out <- data.frame(
     variable = c(manifestNames, if (latents) latentNames),
     type = c(rep('manifest', nmanifest), if (latents) rep('latent', nlatent)),
-    between = if (length(people) > 1L) apply(personmean, 2L, stats::var) else rep(0, nvar),
-    within.deterministic = colMeans(persondet),
-    within.stochastic = colMeans(personstoch),
-    within.measurement = colMeans(personmeas),
+    between = components$between,
+    within.deterministic = components$within.deterministic,
+    within.stochastic = components$within.stochastic,
+    within.measurement = components$within.measurement,
     stringsAsFactors = FALSE)
   out$within <- out$within.deterministic + out$within.stochastic + out$within.measurement
   out$total <- out$between + out$within
+  # A variable with no variance at all has no proportions, and NA says that
+  # where 0/0 would print NaN. A constant auxiliary state is the case: a
+  # higher order model's carried coordinate contributes nothing to anything.
   for (part in c('between', 'within.deterministic', 'within.stochastic',
     'within.measurement', 'within')) {
-    out[[paste0('prop.', part)]] <- out[[part]] / out$total
+    out[[paste0('prop.', part)]] <- ifelse(out$total > 0,
+      out[[part]] / out$total, NA_real_)
   }
   rownames(out) <- NULL
 
+  attr(out, 'method') <- method
   attr(out, 'persons') <- persons
   attr(out, 'scale') <- scale
-  attr(out, 'npersons') <- length(people)
+  attr(out, 'npersons') <- components$npersons
+  attr(out, 'npaths') <- if (identical(method, 'simulation')) as.integer(npaths)
   attr(out, 'continuoustime') <- continuoustime
   class(out) <- c('ctVarianceDecomposition', 'data.frame')
   out
@@ -641,7 +935,10 @@ print.ctVarianceDecomposition <- function(x, digits = 3L, ...) {
     within = round(x$prop.within, digits),
     of.which.measurement = round(x$within.measurement / x$within, digits))
   print(props, row.names = FALSE)
-  cat('\nBetween person variance refers to ',
+  cat('\nComputed by the ', attr(x, 'method'), ' route',
+    if (identical(attr(x, 'method'), 'simulation'))
+      paste0(', ', attr(x, 'npaths'), ' paths per person') else '', '.\n', sep = '')
+  cat('Between person variance refers to ',
     if (identical(attr(x, 'persons'), 'model'))
       paste0(attr(x, 'npersons'), ' persons drawn from the fitted population distribution')
     else paste0('the ', attr(x, 'npersons'),
@@ -649,6 +946,12 @@ print.ctVarianceDecomposition <- function(x, digits = 3L, ...) {
     '.\n', sep = '')
   cat('Within person variance is over each person\'s own observation times; ',
     'the deterministic part is the mean path moving.\n', sep = '')
+  if (identical(attr(x, 'method'), 'simulation')) {
+    cat('The dynamics are integrated along drawn trajectories rather than ',
+      'evaluated at one state, so no evaluation point is reported; the ',
+      'measurement model does not depend on the state, which was checked.\n',
+      sep = '')
+  }
   if (identical(attr(x, 'scale'), 'latent')) {
     cat("Non-Gaussian indicators are decomposed on the latent response scale ",
       '(measurement variance pi^2/3).\n', sep = '')
