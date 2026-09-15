@@ -368,6 +368,105 @@ end
 
 # The ladder reaches past zero. A contraction cannot change a sign, and one
 # measured escape needed a population correlation to go from -2.358 to +0.327.
+# A pinned objective: the primitive a profile point and an escape attempt share.
+#
+# It has to hold the coordinate *and* keep being the objective it wraps. The
+# second half is the one that can break silently: the laplace route overrides
+# most of the optimisable protocol -- its own trial predicate, trace columns and
+# verbose report -- and a wrapper that let any of that fall back to the generic
+# default would still run, still converge, and quietly stop refusing points
+# whose inner Newton had not converged.
+# A `CTSEMOptimisable`, because that is what `ctsem_pin` requires and the
+# requirement is the point: the wrapper forwards the whole optimisable
+# protocol, so anything it can wrap has to have one.
+struct _PinMock <: ContinuousTimeSEM.CTSEMOptimisable
+    seen::Vector{Vector{Float64}}
+end
+_PinMock() = _PinMock(Vector{Float64}[])
+function ContinuousTimeSEM.ctsem_evaluate(m::_PinMock, x::AbstractVector;
+        gradient::Bool=true, contributions::Bool=false, gradient_method=:adjoint)
+    push!(m.seen, collect(Float64, x))
+    value = -sum(abs2, x) / 2
+    # `row_loglik` and `subject_loglik` because the result assembly reads both
+    # -- the filter routes decompose the likelihood by row and by subject, and
+    # this mock has neither, so they are empty rather than absent. The full set
+    # `ctsem_optimize` reads off a final evaluation is value, gradient,
+    # row_loglik and subject_loglik.
+    return (value = value, gradient = gradient ? -collect(Float64, x) : nothing,
+        row_loglik = Float64[], subject_loglik = Float64[])
+end
+ContinuousTimeSEM._ctsem_params(::_PinMock) = nothing
+# No transforms behind this mock, so nothing can saturate. Defined because the
+# generic `_ctsem_saturated_for` would go looking for `EKFParameters`, and
+# because the pinned wrapper forwards this rather than rebuilding it -- which
+# is what the forwarding is for.
+ContinuousTimeSEM._ctsem_saturated_for(::_PinMock, minimizer) = Int[]
+
+@testset "a pinned objective holds its coordinates and stays itself" begin
+    inner = _PinMock()
+    pinned = ContinuousTimeSEM.ctsem_pin(inner, [2], [5.0])
+
+    # The inner objective is evaluated at the pinned value whatever the
+    # optimiser hands in, so the pin cannot be walked past.
+    out = ContinuousTimeSEM.ctsem_evaluate(pinned, [1.0, -3.0])
+    @test inner.seen[end] == [1.0, 5.0]
+    @test out.value ≈ -(1.0^2 + 5.0^2) / 2
+
+    # And the gradient comes back zero there, which is what actually holds it:
+    # L-BFGS builds its direction from gradients and secant pairs, and a
+    # coordinate contributing zero to both keeps what it started with.
+    @test out.gradient[1] ≈ -1.0
+    @test out.gradient[2] == 0.0
+
+    # A gradient-free evaluation is not given one.
+    @test ContinuousTimeSEM.ctsem_evaluate(pinned, [1.0, -3.0];
+        gradient=false).gradient === nothing
+
+    # The probe path expands too, or the pullback would measure the objective
+    # at a point the fit can never reach.
+    @test ContinuousTimeSEM._ctsem_probe_value(pinned, [1.0, -3.0]) ≈
+        ContinuousTimeSEM._ctsem_probe_value(inner, [1.0, 5.0])
+
+    # A pinned coordinate is out of the saturation range: it cannot saturate or
+    # overshoot, because it cannot move, and leaving it in would let the
+    # pullback report a gain from moving something this objective holds still.
+    @test ContinuousTimeSEM._ctsem_saturation_range(pinned, [0.0, 0.0]) == [1]
+    @test collect(ContinuousTimeSEM._ctsem_saturation_range(inner, [0.0, 0.0])) == [1, 2]
+
+    # The route's own methods are forwarded rather than reimplemented. The
+    # label is the one thing deliberately changed, so a progress line says
+    # which stage this is.
+    @test occursin("pinned", ContinuousTimeSEM._ctsem_optimise_label(pinned))
+    @test ContinuousTimeSEM._ctsem_params(pinned) === ContinuousTimeSEM._ctsem_params(inner)
+
+    # Validated at construction, not at the first evaluation: a misspelled
+    # index should cost nothing rather than a whole optimisation that pinned
+    # the wrong coordinate.
+    @test_throws ArgumentError ContinuousTimeSEM.ctsem_pin(inner, [1, 1], [0.0, 0.0])
+    @test_throws ArgumentError ContinuousTimeSEM.ctsem_pin(inner, [1], [0.0, 1.0])
+    @test_throws ArgumentError ContinuousTimeSEM.ctsem_pin(inner, [1], [NaN])
+    @test_throws ArgumentError ContinuousTimeSEM.ctsem_pin(inner, [0], [0.0])
+end
+
+@testset "a pinned optimisation is a profile point" begin
+    # The definition: maximise over everything else with one coordinate fixed.
+    # The constrained maximum is below the free one and the gap is what the
+    # profile reports -- here exactly `p^2 / 2`, because the coordinates are
+    # independent in this objective.
+    inner = _PinMock()
+    for at in (0.5, 1.0, 2.0)
+        pinned = ContinuousTimeSEM.ctsem_pin(inner, [2], [at])
+        result = ContinuousTimeSEM.ctsem_optimize(pinned, [0.0, 0.0];
+            maxiter=200, verbose=false, progress=false)
+        best = collect(Float64, result.minimizer)
+        # The free coordinate finds its own optimum...
+        @test isapprox(best[1], 0.0; atol=1e-6)
+        # ...and the drop from the free maximum is the pinned coordinate's own
+        # contribution, which is what a profile measures.
+        @test isapprox(result.maximum_loglik, -at^2 / 2; atol=1e-6)
+    end
+end
+
 @testset "the pullback fractions include reflections" begin
     fractions = ContinuousTimeSEM._CTSEM_PULLBACK_FRACTIONS
     @test any(f -> f < 0, fractions)

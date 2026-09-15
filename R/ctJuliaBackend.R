@@ -3651,8 +3651,19 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # few iterations lets the rest of the model settle first. It is only the
   # *initial* inverse Hessian, so L-BFGS overrides it as soon as it has secant
   # pairs -- the damping costs nothing once there is curvature to learn.
-  optimise_once <- function(from, damp = integer()) {
+  # `pin` holds coordinates still while the rest of the model re-optimises
+  # around them -- `list(index = , value = )`, or NULL for an ordinary stage.
+  # See `ctsem_pin` in the engine for why that is not the same as resuming from
+  # a displaced point, and `.ctBackendStallEscape()` for what uses it.
+  optimise_once <- function(from, damp = integer(), pin = NULL) {
     args <- common
+    held <- !is.null(pin) && length(pin$index)
+    target <- objective
+    if (held) {
+      target <- module$ctsem_pin(objective,
+        .ctJuliaVector(as.integer(pin$index)),
+        .ctJuliaNumericVector(as.numeric(pin$value)))
+    }
     if (length(damp) && !is.null(args$precondition)) {
       scale <- as.numeric(args$precondition)
       damp <- damp[damp >= 1L & damp <= length(scale)]
@@ -3661,19 +3672,38 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         args$precondition <- .ctJuliaVector(scale)
       }
     }
-    .ctBackendWithMaxChunks(cores, {
-      if (!is.null(model_spec$laplace)) {
+    out <- .ctBackendWithMaxChunks(cores, {
+      # A pinned objective is a wrapper and not a `CTSEMLaplaceObjective`, so
+      # it goes through the generic entry point. Nothing is lost by that:
+      # `ctsem_laplace_optimize` only picks the gradient method before handing
+      # over, and the wrapper forwards every route-specific method -- including
+      # the trial predicate that refuses a point whose inner Newton did not
+      # converge.
+      if (!is.null(model_spec$laplace) && !held) {
         # `gradient` selects how the *process* likelihood's gradient is taken
         # and does not apply here: the Laplace objective's gradient is a forward
         # sweep over that reverse pass regardless.
         JuliaConnectoR::juliaGet(do.call(module$ctsem_laplace_optimize,
-          c(list(objective, .ctJuliaNumericVector(from)), args)))
+          c(list(target, .ctJuliaNumericVector(from)), args)))
       } else {
         JuliaConnectoR::juliaGet(do.call(module$ctsem_optimize,
-          c(list(objective, .ctJuliaNumericVector(from)), args,
+          c(list(target, .ctJuliaNumericVector(from)), args,
             list(gradient_method = gradient))))
       }
     })
+    # The pinned entries are restored rather than trusted. They cannot move in
+    # exact arithmetic -- their gradient is zero and so is their contribution
+    # to every secant pair -- but that is a different claim from having
+    # verified they did not, and everything downstream reads `minimizer` as the
+    # point the objective was evaluated at.
+    if (held) {
+      values <- as.numeric(out$minimizer)
+      keep <- as.integer(pin$index)
+      inside <- keep >= 1L & keep <= length(values)
+      values[keep[inside]] <- as.numeric(pin$value)[inside]
+      out$minimizer <- values
+    }
+    out
   }
   result <- optimise_once(start)
   # A stage that stopped because it had stopped getting anywhere, with a
@@ -3705,7 +3735,37 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # on one fit, -2891.36 against -2883.16 on another, failing to converge in
     # both. `optimise_once` keeps its `damp` argument because the
     # measurement is worth being able to repeat.
-    resumed <- try(optimise_once(from), silent = TRUE)
+    # Pin, re-optimise, then release: hold the coordinates that were moved to
+    # get here at their displaced values while the rest of the model
+    # accommodates them, and only then let go.
+    #
+    # Off by default, because it was measured and it is worse. From a drift raw
+    # of 8 inside its own flat transform: -2950.5929 pinned against -2939.0339
+    # free, both converged, and -2950.59 is the same basin the damped-step
+    # experiment fell into. From raw 12 the two agree.
+    #
+    # The reason is worth keeping, because the idea is a reasonable one. The
+    # point this resumes from is already a *measured* improvement -- the
+    # pullback probe found it by evaluating there -- so the free resume starts
+    # somewhere good and gets the rest of the way on its own. Pinning adds a
+    # constraint that is not needed, and the rest of the model then settles
+    # into a configuration adapted to the held value that releasing does not
+    # undo. Holding a coordinate still helps when the model will not go
+    # somewhere on its own; here it already will.
+    #
+    # Kept reachable rather than deleted so the measurement can be repeated,
+    # and because the same primitive under `ctProfile()` is what a profile
+    # point is -- see `ctsem_pin` in the engine.
+    coordinates <- attr(from, "coordinates")
+    resumed <- if (isTRUE(optimcontrol$escapepin) && length(coordinates)) {
+      inside <- coordinates >= 1L & coordinates <= length(from)
+      coordinates <- coordinates[inside]
+      staged <- try(optimise_once(from,
+        pin = list(index = coordinates, value = from[coordinates])),
+        silent = TRUE)
+      if (inherits(staged, "try-error")) staged else
+        try(optimise_once(as.numeric(staged$minimizer)), silent = TRUE)
+    } else try(optimise_once(from), silent = TRUE)
     if (inherits(resumed, "try-error")) break
     # Only if it actually came out ahead. Neither route to `from` promises
     # that: the pullback improves the objective on the spot but the stage that
