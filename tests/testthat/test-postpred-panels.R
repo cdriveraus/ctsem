@@ -171,3 +171,74 @@ test_that("the default panel set includes both, and each is skippable (stan)", {
     ctPostPredPlots(f, panels = "calibration")))
   expect_false(any(grepl("MeanTrajectory|LaggedCovariance", names(cal))))
 })
+
+
+# The extreme-predictive guard (R/ctPlotView.R). A posterior predictive can be
+# orders of magnitude wider than the data, and one draw in that tail otherwise
+# sets the axis for the whole panel. The tests that matter are that it does
+# nothing at all to an ordinary fit, that what it cuts it reports, and that the
+# reference values it exists to protect are never the thing cut.
+
+test_that("the view guard does nothing to an ordinary fit", {
+  skip_on_cran()
+  withr::local_pdf(NULL)
+  set.seed(3)
+  f <- suppressMessages(ctGenerateFromFit(ctstantestfit, nsamples = 20, cores = 1))
+  d <- ctPostPredData(f, nsamples = 20)
+  # Nothing to cut: a fit whose model tails sit a little outside its data is
+  # left exactly as it was, which is what `slack` is for.
+  expect_null(ctsem:::.ctPlotViews(d, "value", "obsValue"))
+  # And with no views, every consumer is the identity rather than a no-op that
+  # still rebuilds the table differently.
+  expect_identical(ctsem:::.ctPlotViewClamp(d, NULL, c("value")), d)
+  expect_identical(ctsem:::.ctPlotViewFilter(d, NULL, "value"), d)
+  expect_null(ctsem:::.ctPlotViewNote(NULL))
+})
+
+test_that("the view guard keeps every reference value and cuts only the tail", {
+  # A model column spanning four orders of magnitude against data that does
+  # not: the shape a count with a wide linear predictor produces.
+  set.seed(11)
+  model <- c(rlnorm(4000, 2, 0.6), 4e5, 9e5)
+  data <- rlnorm(200, 2, 0.6)
+  v <- ctsem:::.ctPlotView(model, data)
+  expect_false(is.null(v$limits))
+  # The reference values are inside the view. This is the property the guard
+  # exists to preserve -- clipping the data would misrepresent the comparison
+  # rather than compress it.
+  expect_gte(min(data), v$limits[1])
+  expect_lte(max(data), v$limits[2])
+  # What it cut, it counted, and the reach it reports is the real extreme.
+  expect_gt(v$nout, 0)
+  expect_equal(v$max, 9e5)
+  expect_true(grepl("900,000", ctsem:::.ctPlotViewNote(
+    data.table::data.table(variable = "Y1", lo = v$limits[1], hi = v$limits[2],
+      nout = v$nout, maxout = v$max, n = v$n)), fixed = TRUE))
+})
+
+test_that("the view guard leaves a merely wide model alone, and obeys its option", {
+  set.seed(12)
+  # Wide, but not pathologically so: within `slack`, so nothing is cut. A guard
+  # that engaged here would be changing ordinary plots rather than saving
+  # extreme ones.
+  expect_null(ctsem:::.ctPlotView(rnorm(4000, 0, 3), rnorm(200))$limits)
+  # Off by option, even for a case it would otherwise cut.
+  withr::local_options(ctsem.plotview = FALSE)
+  expect_null(ctsem:::.ctPlotView(c(rlnorm(4000, 2, 0.6), 9e5),
+    rlnorm(200, 2, 0.6))$limits)
+})
+
+test_that("clamping moves a band to the edge and filtering removes it", {
+  views <- data.table::data.table(variable = "Y1", lo = 0, hi = 100,
+    nout = 1L, maxout = 5000, n = 10L)
+  dt <- data.table::data.table(variable = "Y1", value = c(-20, 50, 5000))
+  # Clamp keeps every row, so a point whose band runs off the axis keeps its
+  # point; filter removes the row, which is what a density needs so the tail is
+  # not piled onto the boundary as a spike the model does not have.
+  expect_equal(ctsem:::.ctPlotViewClamp(dt, views, "value")$value, c(0, 50, 100))
+  expect_equal(ctsem:::.ctPlotViewFilter(dt, views, "value")$value, 50)
+  # A variable with no view is untouched by either.
+  other <- data.table::data.table(variable = "Y2", value = c(-20, 5000))
+  expect_equal(ctsem:::.ctPlotViewClamp(other, views, "value")$value, c(-20, 5000))
+  expect_equal(ctsem:::.ctPlotViewFilter(other, views, "value")$value, c(-20, 5000))
+})
