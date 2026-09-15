@@ -165,13 +165,33 @@ ctStateDependencePlot <- function(fit, along = 1, extent = "data", gridsize = 25
   if (!isTRUE(plot)) return(values)
 
   cell <- lower <- upper <- middle <- NULL
-  ggplot2::ggplot(values, ggplot2::aes(x = along)) +
+
+  # A poorly identified cell can have a draw band orders of magnitude wider
+  # than its own median, which makes every cell in the facet unreadable for the
+  # sake of one. Same guard as the posterior predictive panels, with the median
+  # as the thing that must stay visible rather than observed data -- there is no
+  # data here, and a band far wider than its median is exactly the case where
+  # the median is what the reader needs. See R/ctPlotView.R.
+  vplot <- data.table::as.data.table(values)
+  views <- .ctPlotViews(vplot, c('lower', 'upper'), 'middle', by = 'cell')
+  vsub <- NULL
+  if(!is.null(views)){
+    vplot <- .ctPlotViewClamp(vplot, views, c('lower', 'upper', 'middle'),
+      by = 'cell')
+    vsub <- .ctPlotViewNote(views)
+  }
+
+  ggplot2::ggplot(vplot, ggplot2::aes(x = along)) +
     ggplot2::geom_ribbon(ggplot2::aes(ymin = lower, ymax = upper), alpha = 0.2) +
     ggplot2::geom_line(ggplot2::aes(y = middle), linewidth = 0.7) +
     ggplot2::facet_wrap(~cell, scales = "free_y") +
     ggplot2::labs(x = latentNames[along], y = "Parameter value",
       title = paste0("Matrix cells as functions of ", latentNames[along]),
       subtitle = paste0("Other processes held at ", resolved$label,
-        ". Ribbon: ", probs[1L] * 100, "-", probs[3L] * 100, "% of draws.")) +
-    ggplot2::theme_minimal()
+        ". Ribbon: ", probs[1L] * 100, "-", probs[3L] * 100, "% of draws."),
+      caption = if(is.null(vsub)) NULL else
+        paste(strwrap(vsub, width = 105), collapse = "\n")) +
+    ggplot2::theme_minimal() +
+    ggplot2::theme(plot.caption = ggplot2::element_text(hjust = 0,
+      size = ggplot2::rel(.75), colour = "grey25"))
 }

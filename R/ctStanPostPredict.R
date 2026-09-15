@@ -140,11 +140,13 @@
   'like any other quantity -- but the observed side is evaluated at the point ',
   'estimate, so it carries no parameter uncertainty while the generated side does.')
 
-.ctPostPredCaption <- function(g, key, notes, interval, ndraws, hasll = FALSE) {
+.ctPostPredCaption <- function(g, key, notes, interval, ndraws, hasll = FALSE,
+  extra = NULL) {
   if (!isTRUE(notes)) return(g)
   txt <- .ctPostPredNotes(interval, ndraws)[[key]]
   if (is.null(txt)) return(g)
   if (hasll) txt <- paste0(txt, .ctPostPredLLNote)
+  if (!is.null(extra)) txt <- paste0(txt, extra)
   g + labs(caption = paste(strwrap(txt, width = 105), collapse = '\n')) +
     theme(plot.caption = element_text(hjust = 0, size = rel(.75),
       colour = 'grey25', margin = margin(t = 6)))
@@ -645,11 +647,18 @@ ctPostPredPlots <- function(fit, panels = 'all', variables = NULL,
   obs[, Outside := is.finite(obsValue) & (obsValue > hi | obsValue < lo)]
   obs[, Rank := rank(med, ties.method = 'first'), by = variable]
 
+  # Which variables have a predictive wide enough to make a shared axis
+  # useless, and by how much -- see R/ctPlotView.R. Computed once over the
+  # generated values against the observed ones, so every panel that draws a
+  # value axis cuts it the same way and the panels stay comparable with each
+  # other. NULL, and nothing below changes, for an ordinary fit.
+  views <- .ctPlotViews(dat, 'value', 'obsValue')
+
   gglist <- list()
   llpanels <- c('Density','MeanTrajectory','PredictedVsObserved',
     'IntervalCoverage','PIT','CalibrationByInterval','CalibrationBySubject')
-  cap <- function(g, key) .ctPostPredCaption(g, key, notes, interval, ndraws,
-    hasll = hasll && key %in% llpanels)
+  cap <- function(g, key, extra = NULL) .ctPostPredCaption(g, key, notes,
+    interval, ndraws, hasll = hasll && key %in% llpanels, extra = extra)
 
   # -- structure ----------------------------------------------------------
 
@@ -657,6 +666,10 @@ ctPostPredPlots <- function(fit, panels = 'all', variables = NULL,
     dd <- rbind(
       dat[, .(value = value, variable, DataType = 'Model')],
       obs[, .(value = obsValue, variable, DataType = 'Observed')])
+    # Filtered rather than clamped: a density has to be estimated on the values
+    # it is drawn over, and clamping the tail onto the boundary would put a
+    # spike there that the model does not have.
+    dd <- .ctPlotViewFilter(dd, views, 'value')
     g <- ggplot(dd[is.finite(value)], aes(x = value, colour = DataType, fill = DataType)) +
       geom_density(alpha = .25, linewidth = .8) +
       scale_colour_manual(name = '', values = .ctPostPredCols) +
@@ -664,7 +677,7 @@ ctPostPredPlots <- function(fit, panels = 'all', variables = NULL,
       facet_wrap(vars(variable), scales = 'free') +
       theme_bw() + labs(x = 'Value', y = 'Density') +
       theme(legend.position = 'bottom')
-    gglist$Density <- cap(g, 'Density')
+    gglist$Density <- cap(g, 'Density', .ctPlotViewNote(views))
   }
 
   if('MeanTrajectory' %in% panels){
@@ -727,6 +740,11 @@ ctPostPredPlots <- function(fit, panels = 'all', variables = NULL,
 
       tjs <- merge(merge(bemp, bmean, by = c('variable','Bin')), bobs,
         by = c('variable','Bin'))
+      # Clamped rather than filtered: every bin keeps its point, and a band
+      # running past the axis is drawn running past it. Dropping a bin would
+      # take its observed mean with it, which is the one thing the panel is for.
+      tjs <- .ctPlotViewClamp(tjs, views,
+        c('MeanLo','MeanMid','MeanHi','ObsLo','ObsHi'))
       setorder(tjs, variable, TimeMid)
       g <- ggplot(tjs, aes(x = TimeMid)) +
         geom_ribbon(aes(ymin = ObsLo, ymax = ObsHi,
@@ -750,7 +768,7 @@ ctPostPredPlots <- function(fit, panels = 'all', variables = NULL,
             min(bemp$n), '-', max(bemp$n), ' observations each')) +
         theme(legend.position = 'bottom',
           plot.subtitle = element_text(size = rel(.8), colour = 'grey30'))
-      gglist$MeanTrajectory <- cap(g, 'MeanTrajectory')
+      gglist$MeanTrajectory <- cap(g, 'MeanTrajectory', .ctPlotViewNote(views))
     }
   }
 
@@ -825,6 +843,11 @@ ctPostPredPlots <- function(fit, panels = 'all', variables = NULL,
   if('PredictedVsObserved' %in% panels){
     pv <- obs[is.finite(med)]
     pv[, DataType := ifelse(Outside, 'Observed, outside interval', 'Observed')]
+    # Clamped, for the same reason as the trajectory bands. `Outside` was
+    # decided against the true interval before this, so an observation keeps
+    # its colour even where the interval it was judged against runs off the
+    # axis: cutting the view changes what is visible, never what was tested.
+    pv <- .ctPlotViewClamp(pv, views, c('lo','med','hi'))
     g <- ggplot(pv, aes(x = Rank)) +
       geom_ribbon(aes(ymin = lo, ymax = hi, fill = 'Model interval'), alpha = .3) +
       geom_line(aes(y = med, colour = 'Model median'), linewidth = .7) +
@@ -838,7 +861,8 @@ ctPostPredPlots <- function(fit, panels = 'all', variables = NULL,
       theme_bw() +
       labs(x = 'Observations, ordered by predicted median', y = 'Value') +
       theme(legend.position = 'bottom')
-    gglist$PredictedVsObserved <- cap(g, 'PredictedVsObserved')
+    gglist$PredictedVsObserved <- cap(g, 'PredictedVsObserved',
+      .ctPlotViewNote(views))
   }
 
   if('IntervalCoverage' %in% panels){
