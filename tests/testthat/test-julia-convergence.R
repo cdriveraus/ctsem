@@ -237,6 +237,26 @@ test_that("a julia fit stopped early does not converge, and says what is left", 
 # never loses on any sample, which is by construction -- the loop keeps a
 # resumed stage only on a measured improvement.
 #
+# What the escape is worth when a sample does strand the fit is larger than the
+# seed 3 row suggests, and it is not only about the answer. Seed 5, same start:
+#
+#   escape available     164 s   229 iterations  0.72 s/it   -770.1258
+#   escape unavailable  3153 s   437 iterations  7.21 s/it   -974.9147
+#
+# Both report `converged = TRUE`. The second is 204.8 log units short and took
+# nineteen times as long to get there, with 1516 function calls against 437
+# gradients -- a line search thrashing against a curvature model that predicted
+# gains of 1e5 where the step delivered tens.
+#
+# The ten-fold difference in cost per iteration is the part worth keeping in
+# mind, because it is not incidental. A drift raw of 8 is almost no mean
+# reversion, so each subject's trajectory runs away and its conditional mode
+# sits far from the origin -- and the inner Newton solve starts at the origin
+# every time, by design, so that distance is paid on every evaluation. Being
+# stuck in the flat corner makes the fit expensive as well as wrong, and
+# leaving it makes both better at once. Seed 5 is not used as the fixture
+# because its control arm takes fifty minutes.
+#
 # So the invariant is asserted and the demonstration is recorded. Seed 3 is
 # used *because* it is a sample where the corner strands the fit. If the
 # demonstration goes red, re-run the sweep before touching the number: "no
