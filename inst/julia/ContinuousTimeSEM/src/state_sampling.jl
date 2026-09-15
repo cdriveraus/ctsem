@@ -405,8 +405,25 @@ function _ctsem_draw_count_dispersed(eta::T, sigma, u) where {T}
     nodes, weights = _gauss_hermite(_CTSEM_BINARY_NODES[])
     e, s = promote(eta, sigma)
     mean_rate = exp(min(e + 4 * s, T(_CTSEM_COUNT_MAX_LOG_RATE[])))
-    kmax = min(_CTSEM_COUNT_GENERATE_MAX[],
-        Int(ceil(mean_rate + 10 * sqrt(mean_rate) + 20)))
+    # Clamped in floating point *before* the conversion, not after it.
+    # `_CTSEM_COUNT_GENERATE_MAX` is an `Int`, so `min(cap, Int(huge))`
+    # evaluates the conversion first and throws `InexactError` for any rate
+    # past `typemax(Int64)` -- reachable whenever `eta + 4 sigma` exceeds
+    # `log(typemax(Int64))`, 43.67, which a free dispersion makes easier to hit
+    # rather than harder because `sigma` widens that sum by design. Measured:
+    # `eta = 52, sigma = 0` threw on `Int64(3.83e22)`, `eta = 10, sigma = 9` on
+    # `Int64(9.50e19)`.
+    #
+    # Interim. This walk is being replaced by the two-stage draw the model
+    # actually describes -- a Gaussian for the dispersion, then a plain Poisson
+    # at the resulting rate -- which needs neither a ceiling nor a quadrature
+    # and is exact rather than capped. It was written as an inversion only
+    # because one standard normal per cell was all the generator carried, and
+    # that is a limit of the plumbing rather than of the model. Until then this
+    # stops a crash; it does not stop the walk from exhausting the cap and
+    # returning it as a draw when the rate is large.
+    kmax = Int(min(float(_CTSEM_COUNT_GENERATE_MAX[]),
+        ceil(mean_rate + 10 * sqrt(mean_rate) + 20)))
     y = zero(T)
     cumulative = zero(T)
     @inbounds for k in 0:kmax
