@@ -113,6 +113,22 @@ suppressWarnings(suppressPackageStartupMessages(library(ctsem)))
   # the two above and optimised-only for the same reason.
   "overshoot_parameters",
   "saturated", "saturated_parameters", "carefulfit", "carefulfit_iterations",
+  # The two stopping rules the run was given and what they did with it: whether
+  # it was stopped for having stopped getting anywhere, which coordinates were
+  # flat when that happened, how many times the progress test fired, and how
+  # many times the run was pulled off a boundary and resumed. `stopped_by_gap`
+  # above is the sibling of `stopped_by_stall` and optimised-only for the same
+  # reason -- all of it describes one optimiser run, and on a sampled fit the
+  # run that happened placed the sampler rather than produced the reported
+  # point.
+  #
+  # `stall_window` and `gap_tol` are the settings rather than the outcomes, and
+  # they are reported at all because a rule that was switched off is otherwise
+  # indistinguishable from one that never had cause to fire -- which is how
+  # both of them came to be off for every fit in the package without anything
+  # going red.
+  "stopped_by_stall", "stall_window", "gap_tol", "stall_parameters",
+  "stall_triggers", "stall_escapes",
   # The curvature-correction stage, which only the optimising route runs: how
   # many Hessians it computed, and the history. The matrix itself is on
   # `$uncertainty`, with `evaluated_at` saying where it was evaluated.

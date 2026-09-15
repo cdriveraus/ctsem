@@ -416,8 +416,28 @@ test_that("summary reports fixed effects and system matrices, with intervals onl
   # estonly: ctFit() now finishes with ctOptimUncertainty() as the Stan path
   # does, and these assertions are about the point-estimate-only fit -- the
   # one whose summary must not print an interval it has not earned.
+  #
+  # `innergaptol = 0` holds the optimiser's cheap stopping rule off, and it is
+  # load-bearing rather than tidying. What this test is about is what the
+  # *reporting* does with a fit that ran into a direction the data does not
+  # determine, and that is decided downstream by an eigenvalue of the
+  # information at whatever point the fit stopped -- `.ctBackendNullMass()`,
+  # against `.ctFlatDirectionRtol()`. The diffusion correlation here is on a
+  # flat ray: the fit walks out along it gaining nothing, -207.01897 to five
+  # decimals wherever it stops, and only how far it walked decides which side
+  # of that threshold the curvature lands. With the rule on it stops at raw
+  # -9.27 after 220 iterations and the direction reads as determined; with it
+  # off it reaches -14.46 after 278 and reads as undetermined. Same estimate,
+  # same likelihood, opposite diagnosis.
+  #
+  # So the rule is pinned here to hold that variable still, not because either
+  # answer is wrong. The sensitivity itself is worth knowing about: two
+  # detectors describe this coordinate and they can disagree --
+  # `identifiability$parameters` flags it from the transform in both cases,
+  # `intervalcheck$unidentified` from the curvature in only one -- which is
+  # exactly the split `.ctFlatDirectionRtol()`'s comment warns about.
   fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0,
-    optimcontrol = list(estonly = TRUE)))
+    optimcontrol = list(estonly = TRUE, innergaptol = 0)))
 
   point <- summary(fit)
   expect_s3_class(point, "summary.ctStanFit")

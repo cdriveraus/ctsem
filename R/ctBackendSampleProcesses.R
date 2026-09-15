@@ -42,7 +42,10 @@
   seed = 1L, verbose = FALSE, progress = .ctVerboseOn(verbose)) {
 
   if (!.ctBackendCanWarm() || chains < 2L) return(NULL)
-  if (!inherits(fit, "ctJuliaFit")) return(NULL)
+  # `.ctFitIsJulia()`, not the class literal: the named predicate is the one
+  # place this question is spelled, and `test-duplication-ratchet.R` counts
+  # the spellings that are not. Brought down here because the file was open.
+  if (!.ctFitIsJulia(fit)) return(NULL)
 
   # Threads left over after one process per chain. A worker's own subject split
   # then uses them, which is the same nesting the in-process path does, except

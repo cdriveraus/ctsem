@@ -253,6 +253,15 @@ test_that("a fit over the joint density runs and carries its trajectory", {
   expect_identical(fit$estimate$loglik_type, "joint")
   expect_identical(fit$args$resolved$intoverstates, FALSE)
   expect_true(is.finite(fit$estimate$loglik))
+  # And both of the optimiser's stopping rules are off here, which is what
+  # makes this route different from the marginal one and is asserted on that
+  # side too -- see test-julia-convergence.R, and the line that once had both
+  # of them off everywhere. The joint mode is degenerate: the innovations
+  # re-optimise to absorb almost any parameter change, so a near-flat objective
+  # makes the stall check's progress half meaningless, and there is no
+  # curvature to certify against for the gap rule to aim inside.
+  expect_equal(fit$optim$stall_window, 0L)
+  expect_equal(fit$optim$gap_tol, 0)
 })
 
 test_that("standard errors profile the states out, and the rest are refused", {

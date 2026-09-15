@@ -3477,6 +3477,16 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # A caller may hand in the objective to maximise. `intoverstates=FALSE` does,
   # passing the joint one over `[theta; z]`; everything below is unchanged by
   # that, because `ctsem_optimize` is typed on what the two have in common.
+  # Whether the caller brought its own, recorded *before* the default is
+  # filled in. Two stopping rules below are off for the state-explicit
+  # route and ask this question, and after the next line the argument is
+  # never NULL again -- so both of them read FALSE on every route, and both
+  # were therefore off everywhere rather than there. `gap_tol` was 0 for
+  # every fit in the package, and `stall_window` was 0, which is the whole
+  # check. Found by starting a laplace fit inside a flat transform: it ran
+  # 885 iterations, spent the last 300 of them with a predicted gain of
+  # 1e-8, and stopped 387 nats short with neither rule having fired once.
+  state_explicit <- !is.null(objective)
   if (is.null(objective)) objective <- .ctJuliaObjective(spec)
   module <- .ctJuliaModule(model_spec$project)
   # The shared optimcontrol vocabulary (see the table at the top of R/ctFit.R).
@@ -3503,8 +3513,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # `.ctBackendInnerGapTol()`, which is where that reasoning lives.
     # `objective` is supplied only by the state-explicit route, which is
     # what `intoverstates = FALSE` means here -- that name is not in this
-    # function's scope, and the argument it arrives as is.
-    gap_tol = .ctBackendInnerGapTol(optimcontrol, is.null(objective)),
+    # function's scope, and `state_explicit` above is how it is asked.
+    gap_tol = .ctBackendInnerGapTol(optimcontrol, !state_explicit),
     # The same bar the certification will use, so the optimiser's own verdict
     # and the curvature's are the same question asked with different metrics
     # rather than two different questions. `gap_tol` above is the stopping rule
@@ -3526,8 +3536,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # the same route for the same reason, and `test-julia-intoverstates.R`
     # measured what including it costs: the joint fit stopped somewhere else
     # and its curvature came back indefinite in a substantial direction.
-    stall_window = if (is.null(objective)) .ctBackendStallWindow(optimcontrol)
-      else 0L,
+    stall_window = if (state_explicit) 0L
+      else .ctBackendStallWindow(optimcontrol),
     stall_fraction = .ctBackendStallFraction(optimcontrol),
     # The hysteresis: a fit that stalls with nothing flat is slow rather than
     # stuck, so it is left alone for a while and asked less readily after.
@@ -3683,7 +3693,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   escapes <- 0L
   maxescapes <- as.integer(.ctJuliaOr(optimcontrol$stallretries, 2L))
   while (escapes < maxescapes) {
-    from <- .ctBackendStallEscape(result, optimcontrol, model_spec, verbose)
+    from <- .ctBackendStallEscape(result, optimcontrol, model_spec, verbose,
+      escapes = !state_explicit)
     if (is.null(from)) break
     escapes <- escapes + 1L
     # Deliberately not damped. Holding the freed coordinate back with the
@@ -4233,6 +4244,14 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     stopped_by_stall = isTRUE(result$stopped_by_stall),
     stall_window = if (is.null(result$stall_window)) NA_integer_ else
       as.integer(result$stall_window),
+    # And the two stopping rules as the engine actually received them.
+    # Reported because both were once switched off for every fit in the
+    # package by one variable read a line too late, and nothing in the
+    # result said so: a rule that is not running looks exactly like a rule
+    # that never had cause to fire. See `state_explicit` in
+    # `.ctJuliaOptimise()`.
+    gap_tol = if (is.null(result$gap_tol)) NA_real_ else
+      as.numeric(result$gap_tol)[1L],
     # Which coordinates had gone flat when it stopped, named rather than
     # numbered, and how many times the progress half fired. More than one
     # trigger means the fit stalled, was found to be merely slow, and was

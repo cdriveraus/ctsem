@@ -1730,6 +1730,16 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # saturated list gives.
         overshoot_parameters=isempty(overshoot.coordinates) ? [0] :
             overshoot.coordinates,
+        # And where it went to prove it. The probe has already paid for this
+        # point -- it is the trial that beat the estimate -- so handing it back
+        # lets a caller resume from somewhere measurably better for no further
+        # evaluations, rather than only being told the estimate is not a
+        # maximum. Used by `.ctBackendStallEscape()`.
+        #
+        # `[0.0]` rather than `Float64[]` for the reason `saturated_parameters`
+        # gives: a zero-length vector deadlocks the R bridge. A real point is
+        # `length(minimizer)` long, which is how the caller tells them apart.
+        overshoot_point=isempty(overshoot.point) ? Float64[0.0] : overshoot.point,
         # Which raw parameters, not just whether one did -- most of the
         # diagnostic value, and free once the derivatives are computed.
         #

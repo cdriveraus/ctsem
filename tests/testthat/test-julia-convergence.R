@@ -144,6 +144,42 @@ test_that("the optimiser reaches the maximum and says so", {
   expect_equal(fit$identifiability$negative, 0L)
 })
 
+# Both of the optimiser's own stopping rules were switched off for every fit in
+# the package by a single line, and no test saw it. `.ctJuliaOptimise()` fills
+# in a default objective and then asked `is.null(objective)` to decide whether
+# the caller had brought one -- which is FALSE from that line onwards, so both
+# rules took the state-explicit branch on every route. `gap_tol` was 0, meaning
+# nothing stopped a fit whose next step was predicted to gain 1e-8, and
+# `stall_window` was 0, which is the whole stall check.
+#
+# Nothing failed. A rule that is switched off is indistinguishable, from the
+# outside, from a rule that never had cause to fire -- which is exactly how the
+# post-merge check on the stall work read "never fires on any test fit" as good
+# news. So the settings are now reported on the fit and asserted here: this is
+# the fit-free half, and it costs one read of a fit two other tests already
+# made.
+test_that("the stopping rules a marginal fit runs are the ones it asked for", {
+  skip_without_julia()
+  o <- .jconv_fit()$optim
+  # The marginal route certifies, so both rules are live at their defaults.
+  expect_equal(o$stall_window, .ctBackendStallWindow(list()))
+  expect_gt(o$stall_window, 0L)
+  expect_equal(o$gap_tol, .ctBackendInnerGapTol(list(), intoverstates = TRUE))
+  expect_gt(o$gap_tol, 0)
+  # And a caller who turns one off gets it off, which is the other half of
+  # showing the argument reaches the engine rather than a default doing so.
+  off <- suppressWarnings(suppressMessages(ctFit(.jconv_data(), .jconv_model(),
+    backend = "julia", cores = 1, verbose = 0,
+    optimcontrol = list(stallwindow = 0L, innergaptol = 0, maxiter = 5L))))
+  expect_equal(off$optim$stall_window, 0L)
+  expect_equal(off$optim$gap_tol, 0)
+  # And a fit that arrives under its own power is not escaped from. The escape
+  # runs only on a stage that stalled or that its own probe says is not a
+  # maximum, so a healthy fit pays nothing for it -- the other half of the
+  # claim the flat-transform test below makes.
+  expect_equal(o$stall_escapes, 0L)
+})
+
 test_that("a julia fit stopped early does not converge, and says what is left", {
   # The contrast that makes the assertions above mean something: the flag is
   # not simply TRUE everywhere.
@@ -165,6 +201,103 @@ test_that("a julia fit stopped early does not converge, and says what is left", 
   expect_gt(cert$gap, cert$tolerance)
   expect_equal(max(abs(capped$optim$gradient)),
     capped$optim$gradient_norm, tolerance = 1e-10)
+})
+
+# Does any of this recover anything, or does it only report?
+#
+# Everything above asks what the optimiser says about where it stopped. This
+# asks whether it stops somewhere better, and it needs an extreme starting
+# value to ask it: from an ordinary start this model fits without incident, so
+# a guard that only ever runs on healthy fits can be switched off for a year
+# without anything going red. That is not hypothetical. Both of the
+# optimiser's stopping rules were off for every fit in the package, for months,
+# and the suite was green the whole time -- which is what the test above this
+# one exists to stop happening again, and what this one exists to make
+# meaningful.
+#
+# The start puts `drift` at raw 8, inside its own transform's flat region:
+# `-log1p_exp(-param)` has a derivative of 3.4e-4 there against 0.5 at zero, so
+# the gradient the optimiser sees in that coordinate is three orders down on
+# what the rest of the model gives it. The fit climbs, stops, and reports that
+# it converged -- at a point its own pullback probe can beat by 215 nats.
+#
+# Measured on this fixture, 25 subjects and 25 timepoints, local machine:
+#
+#   escape unavailable   -1021.1986   22 s
+#   escape available      -805.8592   39 s, one escape
+#
+# The control arm turns the *probe* off rather than the escape, because the
+# probe is what finds the point: with it off there is nothing to escape to.
+# It is also why the worse arm still reports `converged = TRUE` -- `overshot`
+# is one of the three things that can falsify that flag, and turning the probe
+# off removes it. A converged fit 215 nats low is the failure this is about.
+#
+# `estonly` so the comparison is of the optimisation alone: the correction and
+# uncertainty phases can move an estimate too, and they are not what is under
+# test here.
+.jconv_flat_data <- function(nsubjects = 25L, ntimes = 25L) {
+  set.seed(13)
+  baseline <- stats::rnorm(nsubjects, 2, 2)
+  t0m <- stats::rnorm(nsubjects, baseline / 2, 1)
+  effect <- -log1p(exp(-stats::rnorm(nsubjects, baseline / 2, 0.5)))
+  rows <- lapply(seq_len(nsubjects), function(i) {
+    gm <- suppressMessages(ctModel(silent = TRUE, Tpoints = ntimes,
+      LAMBDA = matrix(1), DRIFT = c(effect[i]), T0MEANS = c(t0m[i]),
+      DIFFUSION = c(0.5), MANIFESTVAR = 0.5, T0VAR = c(0),
+      CINT = c(baseline[i]), MANIFESTMEANS = 0))
+    d <- suppressMessages(data.frame(ctGenerate(ctmodelobj = gm,
+      n.subjects = 1, burnin = 0, dtmean = 1, logdtsd = 0)))
+    d$id <- i
+    d
+  })
+  do.call(rbind, rows)
+}
+
+# Individually varying, nonlinear drift: the transform is the point, and
+# `intoverpop = 'laplace'` is the route whose population scales and
+# correlations the relative-flatness detector cannot see on its own.
+.jconv_flat_model <- function() suppressMessages(ctModel(silent = TRUE,
+  type = "ct", CINT = "cint", MANIFESTMEANS = 0, LAMBDA = matrix(1),
+  DRIFT = "drift|-log1p_exp(-param)|TRUE"))
+
+test_that("a fit started inside a flat transform gets back out of it", {
+  skip_without_julia()
+  data <- .jconv_flat_data()
+  model <- .jconv_flat_model()
+  # Which raw coordinate `drift` is, without paying for a fit to find out.
+  spec <- suppressWarnings(suppressMessages(ctFit(data, model,
+    backend = "julia", intoverpop = "laplace", fit = FALSE)))
+  npar <- .ctBackendNpar(spec)
+  names <- .ctBackendRawParameterNames(list(model_spec = spec), npar)
+  drift <- which(names == "drift")
+  expect_length(drift, 1L)
+
+  inits <- rep(0, npar)
+  inits[drift] <- 8
+  # The transform is genuinely flat there, which is the premise of the whole
+  # test rather than an incidental detail.
+  expect_lt((1 / (1 + exp(8))) / 0.5, 1e-3)
+
+  fit_from <- function(...) suppressWarnings(suppressMessages(
+    ctFit(datalong = data, model = model, backend = "julia", cores = 1,
+      verbose = 0, intoverpop = "laplace", inits = inits,
+      optimcontrol = list(estonly = TRUE, ...))))
+  stuck <- fit_from(overshoot = "off", stallwindow = 0L)
+  free <- fit_from()
+
+  expect_true(is.finite(stuck$estimate$loglik))
+  expect_true(is.finite(free$estimate$loglik))
+  # The whole claim, in one line: the same model, the same data and the same
+  # starting values land somewhere materially better. 215 nats when measured;
+  # a hundred is the bar, so a change that costs most of the effect fails here
+  # rather than silently halving it.
+  expect_gt(free$estimate$loglik - stuck$estimate$loglik, 100)
+  # And by the route this is supposed to take, not by luck.
+  expect_gte(free$optim$stall_escapes, 1L)
+  expect_true(isTRUE(free$optim$converged))
+  # The control really did have nothing to escape with, so the difference is
+  # the escape rather than a second optimisation from anywhere at all.
+  expect_equal(stuck$optim$stall_escapes, 0L)
 })
 
 test_that("what the fit reports is what the curvature measured", {

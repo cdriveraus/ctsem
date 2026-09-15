@@ -34,7 +34,15 @@ test_that("the trace is recorded even with reporting off", {
   trace <- fit$optim$trace
   expect_s3_class(trace, "data.frame")
   expect_gt(nrow(trace), 1L)
-  expect_named(trace, c("iteration", "objective", "gradient_norm"))
+  expect_named(trace, c("iteration", "objective", "gradient_norm",
+    "predicted_gain"))
+  # `predicted_gain` is `1/2 g'Bg` off the line search, per iteration. It is
+  # here because a fit that has stopped converging says so in this column long
+  # before it says so anywhere else -- and because reading it afterwards is the
+  # only way to tell a run that was closing on its tolerance from one that was
+  # oscillating just above it. `Inf` until a line search has run.
+  expect_true(all(trace$predicted_gain >= 0))
+  expect_true(any(is.finite(trace$predicted_gain)))
   # `verbose = 0` above: the fit whose trace turns out to be worth reading is
   # the one nobody thought to turn reporting on for.
   expect_true(all(diff(trace$iteration) > 0))

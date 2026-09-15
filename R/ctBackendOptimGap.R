@@ -351,7 +351,13 @@
 # refit, not an answer, and the refit is kept only if it wins.
 #' @keywords internal
 .ctBackendStallEscape <- function(result, optimcontrol, model_spec,
-    verbose = 0) {
+    verbose = 0, escapes = TRUE) {
+  # `escapes = FALSE` on the state-explicit route, where the joint mode is
+  # degenerate: the innovations re-optimise to absorb almost any parameter
+  # change, so a pullback can nearly always find something and "not a maximum"
+  # stops being informative. The same reason the two stopping rules are off
+  # there -- see `.ctJuliaOptimise()`.
+  if (!isTRUE(escapes)) return(NULL)
   npar <- length(as.numeric(result$minimizer))
   point <- suppressWarnings(as.numeric(result$stall_point))
   if (isTRUE(result$stopped_by_stall) && length(point) == npar &&
@@ -361,6 +367,32 @@
         paste(.ctJuliaSaturatedNames(list(p = result$stall_parameters),
           model_spec, npar, "p"), collapse = ", "), " back gains ",
         signif(as.numeric(result$stall_gain)[1L], 3), ", refitting from there")
+    }
+    return(point)
+  }
+  # A stage that ended *without* stalling and without converging, whose own
+  # post-fit probe found a better point. That probe runs at the end of every
+  # fit and has already paid for the point, so resuming from it costs nothing
+  # extra -- and `overshot` is one of the three things that make `converged`
+  # false, so this only ever fires on a fit that has already failed.
+  #
+  # The in-flight check cannot cover this case and is not meant to. It asks
+  # whether the last `stallwindow` iterations got anywhere, so a fit that
+  # climbs steadily and then stops dead -- a line search that finds nothing,
+  # which is how most of these end -- never presents a stalled window at all.
+  # Measured on a laplace fit started at drift raw 12, inside its own flat
+  # transform: 188 iterations, not converged, 169 nats short, and the progress
+  # test never fired once.
+  point <- suppressWarnings(as.numeric(result$overshoot_point))
+  if (isTRUE(result$overshot) && length(point) == npar &&
+      all(is.finite(point))) {
+    if (verbose > 0) {
+      message("Stopped somewhere that is not a maximum; pulling raw ",
+        "parameter(s) ", paste(.ctJuliaSaturatedNames(
+          list(p = result$overshoot_parameters), model_spec, npar, "p"),
+          collapse = ", "), " back gains ",
+        signif(as.numeric(result$overshoot_gain)[1L], 3),
+        ", refitting from there")
     }
     return(point)
   }
