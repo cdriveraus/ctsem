@@ -1791,20 +1791,24 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
         'indicative.')
     }
 
-    binaryrows <- which(ctm$pars$matrix %in% 'MANIFESTVAR' &
-        ctm$pars$row %in% which(ctm$manifesttype > 0) &
+    # `deterministic` rather than every non-Gaussian type, so that censored is
+    # excluded here too: its MANIFESTVAR entry is the standard deviation of the
+    # Gaussian inside the limits, so a fixed non-zero value there is the model
+    # working as specified rather than a mistake to warn about.
+    linkrows <- which(ctm$pars$matrix %in% 'MANIFESTVAR' &
+        ctm$pars$row %in% deterministic &
         ctm$pars$row == ctm$pars$col)
-    stated <- binaryrows[!is.na(ctm$pars$value[binaryrows]) &
-        abs(ctm$pars$value[binaryrows]) > 1e-4]
+    stated <- linkrows[!is.na(ctm$pars$value[linkrows]) &
+        abs(ctm$pars$value[linkrows]) > 1e-4]
     if(length(stated)){
-      warning('MANIFESTVAR is fixed to a non-zero value for categorical indicator',
+      warning('MANIFESTVAR is fixed to a non-zero value for indicator',
         if(length(stated) > 1) 's ' else ' ',
         paste(ctm$manifestNames[ctm$pars$row[stated]], collapse=', '),
-        '. A categorical indicator gets its randomness from its measurement ',
-        'link -- the Bernoulli link for binary, the cumulative logit for ',
-        'ordinal -- so ',
-        'this adds measurement noise on top of it. Set it to 0 unless that is ',
-        'meant.', call.=FALSE)
+        '. A binary, ordinal or count indicator gets its randomness from its ',
+        'measurement link -- the Bernoulli link for binary, the cumulative ',
+        'logit for ordinal, the Poisson log link for a count -- so this adds ',
+        'measurement noise on top of it. Set it to 0 unless that is meant.',
+        call.=FALSE)
     }}
 
   ctm$modelmats <- .ctModelMatSetup(ctm) #slow!
