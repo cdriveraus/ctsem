@@ -289,17 +289,32 @@ test_that("ctGenerate draws counts rather than continuous values", {
     y = stats::rpois(n, exp(stats::rnorm(n, mu, sigma))))
 }
 
-# log P(y) for one observation under a Poisson-lognormal, by adaptive
-# quadrature over the linear predictor. Nothing here is shared with the engine,
-# which is the point: a comparison against the engine's own machinery would
-# agree with an inherited mistake.
-.pln_loglik <- function(y, mu, sigma) {
+# log P(y) for one observation under a Poisson-lognormal, by a fixed fine grid
+# over the linear predictor with log-sum-exp. Nothing here is shared with the
+# engine, which is the point: a comparison against the engine's own machinery
+# would agree with an inherited mistake.
+#
+# A grid rather than `integrate()`, which is the obvious choice and is not safe
+# over the range this has to cover. Checked against a 2e6-point version of this
+# same grid, `integrate()` over `mu +- 40 sigma` returned `-Inf` for `y = 400`
+# at `mu = 0, sigma = 2`, was 37 out at `mu = 2, sigma = 0.5`, and was 0.28 to
+# 0.46 out for `y` of 0, 1 and 5 at `mu = 6, sigma = 0.5` -- it misses a narrow
+# peak inside a wide interval, and gives no sign that it has. The window below
+# brackets both the prior and the likelihood's own mode at `log(y + 1/2)`, so
+# the peak is always inside it wherever it sits, and 50001 points agree with
+# 2000001 to 6.5e-11 over a grid of `mu` in (0, 2, 6), `sigma` in (0.5, 2, 5)
+# and `y` in (0, 1, 5, 50, 400, 5000).
+.pln_loglik <- function(y, mu, sigma, npoints = 50001) {
   tab <- sort(unique(y))
-  lp <- vapply(tab, function(k) log(stats::integrate(function(e)
-    exp(k * e - exp(e) - lgamma(k + 1) - (e - mu)^2 / (2 * sigma^2)) /
-      (sigma * sqrt(2 * pi)),
-    mu - 40 * sigma, mu + 40 * sigma, subdivisions = 2000L,
-    rel.tol = 1e-12)$value), numeric(1))
+  lp <- vapply(tab, function(k) {
+    lo <- min(mu - 12 * sigma, log(k + 0.5) - 12)
+    hi <- max(mu + 12 * sigma, log(k + 0.5) + 12)
+    e <- seq(lo, hi, length.out = npoints)
+    lf <- k * e - exp(e) - lgamma(k + 1) - (e - mu)^2 / (2 * sigma^2) -
+      log(sigma * sqrt(2 * pi))
+    mx <- max(lf)
+    mx + log(sum(exp(lf - mx)) * (e[2] - e[1]))
+  }, numeric(1))
   sum(lp[match(y, tab)])
 }
 
@@ -373,10 +388,16 @@ test_that("a count's likelihood is the Poisson-lognormal one", {
       }, c(-30, 30), extendInt = "yes", tol = 1e-12)$root
     }, numeric(1))[order(pt$parnumber)]
   }
-  for (sigma in c(0.3, 0.7, 1.2)) {
-    engine <- ctJuliaEvaluate(h, rawfor(list(mu = 1.1, v = sigma)))$value
-    expect_equal(engine, .pln_loglik(d$y, 1.1, sigma), tolerance = 1e-5,
-      info = paste("predictor sd", sigma))
+  # The last two points are the corner the mode solve failed in longest: the
+  # data are counts around `exp(1.1)`, so evaluating at `mu = 6` makes every
+  # observation a heavily over-predicted small one, which is where a start at
+  # `log y` rather than `log(y + 1/2)` left the mode as much as 4.8 out. The
+  # large sigma is the other half of it -- the error grew with the predictor's
+  # variance and was invisible below 0.5.
+  for (at in list(c(1.1, 0.3), c(1.1, 0.7), c(1.1, 1.2), c(6, 0.5), c(6, 2))) {
+    engine <- ctJuliaEvaluate(h, rawfor(list(mu = at[1], v = at[2])))$value
+    expect_equal(engine, .pln_loglik(d$y, at[1], at[2]), tolerance = 1e-5,
+      info = paste("mu", at[1], "predictor sd", at[2]))
   }
 })
 
