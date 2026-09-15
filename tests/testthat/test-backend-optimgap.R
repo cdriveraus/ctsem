@@ -464,14 +464,23 @@ test_that("a stage that stopped short is resumed from the better point", {
   # The in-flight route: the engine stopped here and brought the point with it.
   stalled <- modifyList(base, list(stopped_by_stall = TRUE,
     stall_point = c(0.5, 2, 3)))
-  expect_equal(ctsem:::.ctBackendStallEscape(stalled, list(), NULL), c(0.5, 2, 3))
+  escaped <- ctsem:::.ctBackendStallEscape(stalled, list(), NULL)
+  expect_equal(as.numeric(escaped), c(0.5, 2, 3))
+  # Which coordinates were moved rides along on the point, because the caller
+  # that pins them needs to know and every other caller does not.
+  expect_equal(attr(escaped, "coordinates"), 1L)
 
   # The post-fit route: it stopped for its own reasons, and its own probe says
   # the point it stopped at is not a maximum.
   overshot <- modifyList(base, list(stopped_by_stall = FALSE, overshot = TRUE,
     overshoot_point = c(0.25, 2, 3)))
-  expect_equal(ctsem:::.ctBackendStallEscape(overshot, list(), NULL),
-    c(0.25, 2, 3))
+  escaped <- ctsem:::.ctBackendStallEscape(overshot, list(), NULL)
+  expect_equal(as.numeric(escaped), c(0.25, 2, 3))
+  expect_equal(attr(escaped, "coordinates"), 1L)
+  # The engine's `0` sentinel for "none" is dropped rather than reaching a pin
+  # as a coordinate index.
+  none <- ctsem:::.ctBackendEscapeCoordinates(c(1, 2, 3), 0L, 3L)
+  expect_length(attr(none, "coordinates"), 0L)
 
   # A fit with nothing wrong with it is left where it is. This is the case that
   # runs on almost every fit in the package, so it is the one that has to be

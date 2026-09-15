@@ -281,7 +281,7 @@ ctOptimSafeCov <- function(cov, ridge=1e-8){
 # confirmed.
 .ctOptimFlatDirectionScreen <- function(info, lpgFunc, est,
   rtol=1e-8, bar=stats::qchisq(0.95, 1) / 2, lengths=c(0.25, 1, 4),
-  maxdirections=20L){
+  maxdirections=20L, tolerance=1e-6){
   if(is.null(info) || is.null(lpgFunc) || is.null(est)) return(NULL)
   if(!is.function(lpgFunc)) return(NULL)
   info <- as.matrix(info)
@@ -310,18 +310,33 @@ ctOptimSafeCov <- function(cov, ridge=1e-8){
   # `2 * length(lengths)` per candidate, fewer for every candidate that leaves
   # the ladder early.
   evaluations <- 1L
+  # The other half of what these evaluations are worth, and it used to be
+  # thrown away. A candidate direction along which the likelihood *rises* says
+  # the estimate is not a maximum, and the point that proved it is already paid
+  # for -- so it is kept, with its sign, rather than collapsed into the
+  # magnitude that decides flatness. `_ctsem_overshot` in the engine asks the
+  # same question of a different set of directions (magnitude-ordered
+  # coordinate prefixes), so this one can find what that one does not look at.
+  gain <- 0
+  gainpoint <- NULL
+  gaindirection <- NA_integer_
   for(k in candidates){
     v <- eig$vectors[, k]
     worst <- 0
     usable <- TRUE
     for(len in lengths){
       for(direction in c(1, -1)){
-        trial <- try(as.numeric(lpgFunc(est + direction * len * v))[1L],
-          silent=TRUE)
+        trialpoint <- est + direction * len * v
+        trial <- try(as.numeric(lpgFunc(trialpoint))[1L], silent=TRUE)
         evaluations <- evaluations + 1L
         if('try-error' %in% class(trial) || !is.finite(trial)){
           usable <- FALSE
           break
+        }
+        if(trial - base > gain){
+          gain <- trial - base
+          gainpoint <- trialpoint
+          gaindirection <- k
         }
         worst <- max(worst, abs(trial - base))
         # Past the bar the direction is refused, and no further displacement
@@ -338,9 +353,15 @@ ctOptimSafeCov <- function(cov, ridge=1e-8){
     change[k] <- worst
     flat[k] <- worst < bar
   }
+  # `gain` is only reported when it is larger than the optimiser's own
+  # convergence tolerance: a rise of 1e-12 along a flat direction is the
+  # arithmetic, not a better point.
+  found <- is.finite(gain) && gain > tolerance && !is.null(gainpoint)
   list(eig=eig, flat=flat, change=change, bar=bar, rtol=rtol,
     candidates=candidates, lengths=lengths, base=base,
-    evaluations=evaluations)
+    evaluations=evaluations,
+    gain=if(found) gain else 0, point=if(found) gainpoint else NULL,
+    direction=if(found) gaindirection else NA_integer_)
 }
 
 #
@@ -1373,6 +1394,14 @@ ctOptimComputeUncertainty <- function(est, standata, sm, lpgFunc,
     screen <- if(identical(control$flatScreen, FALSE)) NULL else
       .ctOptimFlatDirectionScreen(-(hess + t(hess)) / 2, lpgFunc, est)
     cov <- ctOptimCovFromHessian(hess, ridge=control$ridge, screen=screen)
+    # A point better than the estimate, found while asking a different
+    # question. Reported whether or not anything was confirmed flat: it says
+    # the fit is not at a maximum, which is a more serious finding than
+    # anything else this stage produces.
+    if(!is.null(screen) && screen$gain > 0) {
+      method_details$notmaximum <- list(gain = screen$gain,
+        point = screen$point, direction = screen$direction)
+    }
     if(!is.null(screen) && any(screen$flat)) {
       method_details$flatdirections <- list(
         n = sum(screen$flat), bar = screen$bar, lengths = screen$lengths,

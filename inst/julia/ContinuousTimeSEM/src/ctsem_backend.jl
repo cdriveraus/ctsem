@@ -976,6 +976,153 @@ function _ctsem_optimise_trial(o::CTSEMOptimisable, x, want_gradient::Bool,
 end
 
 """
+    CTSEMPinnedObjective(objective, index, value)
+
+`objective` with the coordinates in `index` held at `value`.
+
+A profile point and an escape attempt are the same operation, which is why this
+exists once and has two callers. Both fix a coordinate somewhere other than
+where the optimiser left it and re-optimise everything else; the difference is
+only what the answer is used for. Profiling reads the constrained maximum as a
+statement about identification; escaping releases the coordinate afterwards and
+keeps the result if it beats where the fit was.
+
+Pinning is what separates this from resuming a fit from a displaced point,
+which the escape loop already does. An unpinned resume can slide straight back
+down the direction it was pushed along -- measured on this package at -3721.05
+against -2950.59 -- because nothing stops the coordinate returning to the basin
+while the rest of the model stays put. Holding it still forces the other
+parameters to accommodate the displaced value first, and only then is it let
+go.
+
+The parameter vector keeps its full length and the pinned entries are
+overwritten on the way in, rather than optimising a shorter vector. Every index
+in the engine -- `matsetup` rows, transform lookups, saturation and pullback
+coordinate sets, the preconditioner -- is positional in the full vector, so a
+reduced vector would need all of them remapped, and a missed one would not
+error. It would return a number.
+
+The gradient comes back zero in the pinned entries, which is what actually
+holds them: L-BFGS builds its direction from gradients and secant pairs, and a
+coordinate contributing zero to both keeps whatever it started with. The caller
+should still overwrite the pinned entries of the minimizer, because "cannot
+move in exact arithmetic" is not the same claim as "did not move".
+"""
+struct CTSEMPinnedObjective{O} <: CTSEMOptimisable
+    objective::O
+    index::Vector{Int}
+    value::Vector{Float64}
+end
+
+"""
+    ctsem_pin(objective, index, value)
+
+`objective` with `index` pinned at `value`; see `CTSEMPinnedObjective`.
+
+Validated here rather than at the first evaluation: a misspelled index should
+cost nothing, not a whole optimisation that silently pinned the wrong
+coordinate.
+"""
+function ctsem_pin(objective::CTSEMOptimisable, index::AbstractVector,
+        value::AbstractVector)
+    idx = collect(Int, index)
+    val = collect(Float64, value)
+    length(idx) == length(val) ||
+        throw(ArgumentError("ctsem_pin: index and value must be the same length"))
+    allunique(idx) ||
+        throw(ArgumentError("ctsem_pin: each coordinate may be pinned only once"))
+    all(isfinite, val) ||
+        throw(ArgumentError("ctsem_pin: a pinned value must be finite"))
+    all(>=(1), idx) ||
+        throw(ArgumentError("ctsem_pin: coordinates are 1-based"))
+    return CTSEMPinnedObjective(objective, idx, val)
+end
+
+export ctsem_pin
+
+"""The trial point as the inner objective sees it: pinned entries restored."""
+function _ctsem_pin_expand(p::CTSEMPinnedObjective, x::AbstractVector)
+    y = collect(x)
+    @inbounds for (position, i) in enumerate(p.index)
+        1 <= i <= length(y) || continue
+        y[i] = p.value[position]
+    end
+    return y
+end
+
+"""An evaluation with the pinned coordinates' gradient entries removed."""
+function _ctsem_pin_project(p::CTSEMPinnedObjective, evaluated)
+    evaluated === nothing && return nothing
+    hasproperty(evaluated, :gradient) || return evaluated
+    gradient = evaluated.gradient
+    gradient === nothing && return evaluated
+    g = collect(gradient)
+    @inbounds for i in p.index
+        1 <= i <= length(g) || continue
+        g[i] = zero(eltype(g))
+    end
+    return merge(evaluated, (gradient=g,))
+end
+
+# Everything else is the inner objective's. The laplace route overrides most of
+# this protocol -- its own trial validity, its own trace columns, its own
+# verbose report -- and wrapping it must not quietly return any of that to the
+# generic default. In particular `_ctsem_optimise_trial` is forwarded rather
+# than reimplemented, so a pinned laplace fit still refuses a point whose inner
+# Newton did not converge.
+_ctsem_optimise_label(p::CTSEMPinnedObjective) =
+    string(_ctsem_optimise_label(p.objective), " (pinned)")
+_ctsem_optimise_setup!(p::CTSEMPinnedObjective) = _ctsem_optimise_setup!(p.objective)
+_ctsem_optimise_log(p::CTSEMPinnedObjective, verbose::Bool) =
+    _ctsem_optimise_log(p.objective, verbose)
+_ctsem_optimise_trace_keys(p::CTSEMPinnedObjective) =
+    _ctsem_optimise_trace_keys(p.objective)
+_ctsem_optimise_trace_values(p::CTSEMPinnedObjective) =
+    _ctsem_optimise_trace_values(p.objective)
+_ctsem_optimise_progress_extra(p::CTSEMPinnedObjective) =
+    _ctsem_optimise_progress_extra(p.objective)
+_ctsem_optimise_verbose_shape(p::CTSEMPinnedObjective) =
+    _ctsem_optimise_verbose_shape(p.objective)
+_ctsem_optimise_verbose_report(p::CTSEMPinnedObjective, log) =
+    _ctsem_optimise_verbose_report(p.objective, log)
+_ctsem_optimise_result_extra(p::CTSEMPinnedObjective, final, log) =
+    _ctsem_optimise_result_extra(p.objective, final, log)
+_ctsem_params(p::CTSEMPinnedObjective) = _ctsem_params(p.objective)
+
+"""
+A pinned coordinate cannot saturate, overshoot or stall, because it cannot
+move. Leaving it in the range would let the pullback probe pick it up and
+report a gain from moving something this objective is holding still.
+"""
+_ctsem_saturation_range(p::CTSEMPinnedObjective, minimizer) =
+    [i for i in _ctsem_saturation_range(p.objective, minimizer) if !(i in p.index)]
+
+"""
+Forwarded rather than left to the generic default, which would rebuild the
+answer from `_ctsem_params` and the range. The laplace route overrides this and
+its override is not reconstructible from those: it is the only thing that knows
+a population correlation has reached its cap, which is exactly the state that
+stalled the fit the stall check was written for. Falling back here would have
+lost that silently on every pinned laplace stage.
+"""
+_ctsem_saturated_for(p::CTSEMPinnedObjective, minimizer) =
+    [i for i in _ctsem_saturated_for(p.objective, minimizer) if !(i in p.index)]
+
+function _ctsem_optimise_trial(p::CTSEMPinnedObjective, x, want_gradient::Bool,
+        gradient_method, limit::Real, log)
+    trial = _ctsem_optimise_trial(p.objective, _ctsem_pin_expand(p, x),
+        want_gradient, gradient_method, limit, log)
+    return (evaluated=_ctsem_pin_project(p, trial.evaluated), valid=trial.valid)
+end
+
+_ctsem_probe_value(p::CTSEMPinnedObjective, x) =
+    _ctsem_probe_value(p.objective, _ctsem_pin_expand(p, x))
+
+ctsem_evaluate(p::CTSEMPinnedObjective, x::AbstractVector; kwargs...) =
+    _ctsem_pin_project(p, ctsem_evaluate(p.objective, _ctsem_pin_expand(p, x);
+        kwargs...))
+
+"""
     _ctsem_metric(precondition, n)
 
 A diagonal metric for L-BFGS, or `nothing` to leave it alone.

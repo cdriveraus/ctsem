@@ -368,7 +368,7 @@
           model_spec, npar, "p"), collapse = ", "), " back gains ",
         signif(as.numeric(result$stall_gain)[1L], 3), ", refitting from there")
     }
-    return(point)
+    return(.ctBackendEscapeCoordinates(point, result$stall_parameters, npar))
   }
   # A stage that ended *without* stalling and without converging, whose own
   # post-fit probe found a better point. That probe runs at the end of every
@@ -394,7 +394,8 @@
         signif(as.numeric(result$overshoot_gain)[1L], 3),
         ", refitting from there")
     }
-    return(point)
+    return(.ctBackendEscapeCoordinates(point,
+      result$overshoot_parameters, npar))
   }
   if (!isTRUE(optimcontrol$escapesaturated)) return(NULL)
   flat <- suppressWarnings(as.integer(result$saturated_parameters))
@@ -408,7 +409,23 @@
         model_spec, npar, "p"), collapse = ", "),
       " and refitting from there to see whether it beats this")
   }
-  from
+  .ctBackendEscapeCoordinates(from, flat, npar)
+}
+
+# Which coordinates the escape moved, carried on the point it returns.
+#
+# An attribute rather than a second return value because every caller of
+# `.ctBackendStallEscape()` wants the point and only one wants this, and
+# because `NULL` for "no point" is the contract that decides whether to escape
+# at all. `0` is the engine's "none" sentinel -- a zero-length vector deadlocks
+# the R bridge -- so it is dropped here rather than reaching the pin as a
+# coordinate index.
+#' @keywords internal
+.ctBackendEscapeCoordinates <- function(point, coordinates, npar) {
+  index <- suppressWarnings(as.integer(coordinates))
+  index <- index[!is.na(index) & index >= 1L & index <= npar]
+  attr(point, "coordinates") <- unique(index)
+  point
 }
 
 # The certification for one fit, at its own estimate, against one Hessian.
