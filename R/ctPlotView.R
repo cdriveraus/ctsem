@@ -25,19 +25,19 @@
 #      left exactly as it was. This is a guard for a few extreme cases, not a
 #      new default.
 #   3. It reports itself. A caller that cuts a view without saying so has
-#      quietly changed what the reader is looking at.
+#      quietly changed what the reader is looking at, so the caption names the
+#      variable, how much is off the axis and how far it reaches. That is the
+#      whole of what a reader needs: the tail becomes a number rather than an
+#      unreadable axis, and nothing is hidden by cutting the view.
 #
 # Callers cut the view per facet, by filtering or clamping their own data,
 # rather than by setting a scale transformation: one transformation applies to
 # a whole plot, while `scales = 'free'` lets each facet keep its own range, and
 # a variable needing compression usually sits beside one that does not.
 #
-# `options(ctsem.plotview = FALSE)` turns the whole thing off, for anyone who
-# would rather see the untrimmed axis.
-
-
-# Whether the guard is active at all.
-.ctPlotViewOn <- function() isTRUE(getOption('ctsem.plotview', TRUE))
+# Internal throughout. There is no switch for it and it is not part of the API:
+# it engages only where the untrimmed panel was unreadable, and it says in the
+# caption what it did, so there is nothing for a caller to have to manage.
 
 
 #' @noRd
@@ -51,7 +51,6 @@
 .ctPlotView <- function(values, keep = numeric(0), trim = c(.005, .995),
   slack = 5){
   none <- list(limits = NULL, nout = 0L, max = NA_real_, n = 0L)
-  if(!.ctPlotViewOn()) return(none)
   v <- values[is.finite(values)]
   k <- keep[is.finite(keep)]
   if(length(v) < 2) return(none)
@@ -80,7 +79,7 @@
 #' is exactly the case where the median is what the reader needs to see.
 .ctPlotViews <- function(dt, valuecols = 'value', refcol = 'obsValue',
   by = 'variable'){
-  if(!.ctPlotViewOn() || !nrow(dt) || !by %in% names(dt)) return(NULL)
+  if(!nrow(dt) || !by %in% names(dt)) return(NULL)
   valuecols <- intersect(valuecols, names(dt))
   if(!length(valuecols)) return(NULL)
   g <- as.character(dt[[by]])
@@ -114,8 +113,7 @@
   # central estimate, and a caption that named data there would be wrong.
   paste0(' Axis cut back to the 0.5-99.5% range of the model, and to whatever ',
     'it is compared against, because the rest is far wider than that: ',
-    paste(bits, collapse = '; '),
-    '. Set options(ctsem.plotview = FALSE) for the untrimmed axis.')
+    paste(bits, collapse = '; '), '.')
 }
 
 
