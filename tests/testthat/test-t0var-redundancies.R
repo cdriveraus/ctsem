@@ -133,18 +133,34 @@ test_that("T0cov takes the main latents from T0VAR and the population block from
   T0cov <- grab(cp$pop_T0cov)
   popcov <- grab(cp$rawpopcov)
 
-  # The population block is the constructed RAWPOPVAR, and no conversion
-  # happens here.
+  # The population block is the constructed RAWPOPVAR with the state-unit
+  # conversion applied, once, at the line that places it.
   #
   # Each state has a scale: 10 for a varying T0MEANS, whose state carries
   # natural units, and 1 for an appended carrier, which keeps raw units
   # because the augmentation writes its T0MEANS with the identity transform
-  # and the cell reading the state does the scaling. Those factors are applied
-  # inside the population standard deviation -- in the diagonal element's own
-  # transform -- so rawpopcov is already in state units and T0cov's block
-  # equals it outright. They used to be applied here instead, to T0cov's rows
-  # and columns after construction, which is why the two backends disagreed
-  # about pop_T0VAR and why this block used to differ by 100, 10 and 1.
+  # and the cell reading the state does the scaling.
+  #
+  # `rawpopcov`, `rawpopcorr` and `rawpopcovchol` are all on the raw parameter
+  # scale -- a vector called raw holds raw units for every entry -- and
+  # `ctsm.stan` converts where it writes the block:
+  #
+  #     T0cov[idx, idx] = quad_form_diag(rawpopcov, popstatescale)
+  #
+  # with `_place_population_block!` doing the same in the engine, so the two
+  # backends are one statement. That is `a38202fd`, and this is the stan-side
+  # assertion of it.
+  #
+  # It used to be the other way: the factor folded into `rawpopsd`, which buys
+  # the row and column scaling free through sd_i sd_j corr_ij and costs the
+  # meaning of the parameter -- generated quantities then divided it back out
+  # to report popsd, and a test needed a scale vector to divide by. Two
+  # compensations for one convenience. This test was written against that
+  # convention and kept asserting it afterwards, so it read `T0cov`'s block as
+  # equal to `rawpopcov` outright and failed by exactly the conversion: 100 on
+  # the varying T0MEANS' variance, 10 on its covariance with the carrier, 1 on
+  # the carrier's own. The comment that stood here explained the old design as
+  # though it were current, which is the more expensive half of being stale.
   ms <- sdat$matsetup
   mv <- sdat$matvalues
   t0meansrows <- which(ms[, 7] == .t0varred_T0MEANS_slot & ms[, 2] == 1L)
@@ -155,7 +171,16 @@ test_that("T0cov takes the main latents from T0VAR and the population block from
   expect_equal(scale[1], 10, tolerance = 1e-8)   # eta1's T0MEANS
   expect_equal(scale[2], 1, tolerance = 1e-8)    # b1's carrier
   block <- popcov[seq_along(popidx), seq_along(popidx), drop = FALSE]
-  expect_equal(T0cov[popidx, popidx], block, tolerance = 1e-12)
+  # `outer`, not `diag(scale) %*% block %*% diag(scale)`: the two agree here
+  # and `diag()` of a length-one scale would build an identity matrix instead
+  # of a 1x1 one, so the elementwise form is right whatever `popidx` holds.
+  expect_equal(T0cov[popidx, popidx], block * outer(scale, scale),
+    tolerance = 1e-12)
+  # And the conversion is applied once, not twice: scaling the block a second
+  # time cannot also match. Without this the assertion above is satisfied by
+  # any number of conversions as long as the test applies the same number.
+  expect_false(isTRUE(all.equal(T0cov[popidx, popidx],
+    block * outer(scale, scale)^2, tolerance = 1e-12)))
   # The correlation is what a user reads and is scale free, so it must match
   # regardless of the units above.
   expect_equal(cov2cor(T0cov[popidx, popidx]), cov2cor(block),
