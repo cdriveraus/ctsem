@@ -28,6 +28,20 @@ binary chain then reverses after it, from the true prior. Ordering the other way
 would have meant teaching `_reverse_update!` about a preceding step.
 """
 
+"""
+The variance a count row's dispersion contributes to `b`, zero for every other
+kind.
+
+Both loops of the reverse pass recompute `b` from the record rather than storing
+it, so both need this and neither can be the one that remembers.
+"""
+@inline function _count_variance(record, j::Int, ::Type{T}) where {T}
+    record.kinds[j] == CTSEM_OBS_COUNT || return zero(T)
+    τ = record.thresholds[j]
+    isempty(τ) && return zero(T)
+    return T(τ[1] * τ[1])
+end
+
 """One row's binary observations, and the state they were applied to."""
 mutable struct CTSEMBinaryRecord{T}
     rows::Vector{Int}         # manifest indices, in application order
@@ -122,6 +136,7 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
             b += λ[i] * c[i]
             a += λ[i] * x[i]
         end
+        b += _count_variance(record, j, T)
         b > T(_CTSEM_MIN_VARIANCE[]) || continue
         g = _binary_moment_derivatives(a, b, record.y[j], record.thresholds[j],
             record.kinds[j])
@@ -148,6 +163,7 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
             b += λ[i] * c[i]
             a += λ[i] * x0[i]
         end
+        b += _count_variance(record, j, T)
         τ = record.thresholds[j]
         row = record.rows[j]
         if !(b > T(_CTSEM_MIN_VARIANCE[]))
@@ -164,7 +180,13 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
                 θ̄ca.LAMBDA[row, i] += score * x0[i]
             end
             θ̄ca.MANIFESTMEANS[row] += score
-            if !isempty(τ)
+            # A count's extra is excluded: it is not a parameter of
+            # `_category_loglikelihood` at all -- see `_count_dispersion` -- so
+            # differentiating that against it gives zero, and the `else` below
+            # would then write the zero into a THRESHOLDS matrix a count model
+            # has no reason to have. Its cotangent rides `b`, which is
+            # degenerate here.
+            if !isempty(τ) && record.kinds[j] != CTSEM_OBS_COUNT
                 dτ = ForwardDiff.gradient(
                     t -> _category_loglikelihood(a, record.y[j], t,
                         record.kinds[j]),
@@ -242,10 +264,18 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
         abar += logZbar * dlogZ_da + mbar * dm_da + vbar * dv_da
         bbar += logZbar * dlogZ_db + mbar * dm_db + vbar * dv_db
 
+        # A count's dispersion enters only through `b`, so its cotangent is
+        # `bbar` times `d b/d σ = 2σ` and nothing else moves: `b`'s own flow to
+        # LAMBDA and to P below is unaltered, because the term `b` gained
+        # depends on neither.
+        if record.kinds[j] == CTSEM_OBS_COUNT && !isempty(τ)
+            @inbounds θ̄ca.MANIFESTVAR[row, row] += bbar * T(2) * τ[1]
+        end
+
         # Thresholds, when this observation has any. THRESHOLDS holds gaps and
         # the forward pass cumulates them, so the cotangent on gap `i` is the
         # sum of the cotangents on every threshold at or after it.
-        if !isempty(τ)
+        if !isempty(τ) && record.kinds[j] != CTSEM_OBS_COUNT
             Jτ = _binary_threshold_derivatives(a, b, record.y[j], τ,
                 record.kinds[j])
             if record.kinds[j] == CTSEM_OBS_CENSORED

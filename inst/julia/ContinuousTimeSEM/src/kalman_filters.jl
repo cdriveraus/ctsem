@@ -412,8 +412,16 @@ function _generate_binary!(gen, ws::ContinuousEKFWorkspace, pars, λ,
         # carries the reasoning; the short of it is that a walk costing one
         # quadrature per value cannot serve a rate of `exp(14)`, and an ordinary
         # count model reaches that.
-        y = _generate_count_marginal(ηbar, s, u, T(gen.base[row, r]), nodes,
-            weights)
+        #
+        # It takes the linear predictor's standard deviation and uses it for
+        # nothing but that, so the dispersion composes by widening the argument:
+        # it is another Gaussian contribution to the same scalar, exactly as it
+        # is in the likelihood's own quadrature. A draw from a narrower
+        # distribution than the model scores would make generate and fit
+        # disagree about what the model is.
+        σc = _count_dispersion(thresholds, T)
+        y = _generate_count_marginal(ηbar, sqrt(s2 + σc * σc), u,
+            T(gen.base[row, r]), nodes, weights)
     elseif kind == CTSEM_OBS_BINARY || isempty(thresholds)
         logZ, _, _ = _binary_moments(ηbar, s, one(T), nodes, weights, (),
             CTSEM_OBS_BINARY)
