@@ -336,6 +336,72 @@ test_that('the two backends decompose the same model the same way', {
   }
 })
 
+# Resolved over time ----------------------------------------------------------
+#
+# The aggregate is a window average, and for a process that has not settled the
+# split it averages is not the split at any particular occasion. `times=`
+# evaluates every person on one common grid instead.
+
+test_that('times= resolves the decomposition over the window', {
+  grid <- c(0, 1, 2, 5, 10, 19)
+  out <- ctVarianceDecomposition(fit, times = grid, npersons = 300)
+
+  expect_true('time' %in% names(out))
+  expect_equal(nrow(out), length(grid) * 2L)     # two variables
+  expect_equal(sort(unique(out$time)), grid)
+  # There is no deterministic term at an instant: it is the variance of the
+  # mean path *over* time.
+  expect_false('within.deterministic' %in% names(out))
+  expect_equal(out$between + out$within, out$total)
+
+  # Each row must be about the variable it names. A transpose in the flattening
+  # gives a table where every row still sums and none of them is, which is how
+  # this was first written.
+  expect_true(all(out$within.measurement[out$type == 'latent'] == 0))
+  expect_true(all(out$within.measurement[out$type == 'manifest'] > 0))
+
+  # T0MEANS is fixed, so at the first occasion every person starts in the same
+  # place and there is no between person variance at all; it accumulates as the
+  # trajectories separate toward their own asymptotes.
+  # Stated without a magnitude. The claim is that the split changes across the
+  # window, and how far it gets depends on this fixture's popsd and occasion
+  # count -- a floor read off some other fixture is how the first three
+  # versions of this file failed.
+  first <- out[out$time == min(grid) & out$variable == 'eta1', ]
+  last <- out[out$time == max(grid) & out$variable == 'eta1', ]
+  expect_equal(first$between, 0)
+  expect_gt(last$between, 0)
+  expect_gt(last$prop.between, first$prop.between)
+  # and it is monotone here, which is what a relaxation looks like.
+  series <- out$between[out$variable == 'eta1'][order(unique(out$time))]
+  expect_true(all(diff(series) >= 0))
+})
+
+test_that('the two modes agree about the part they share', {
+  # The stochastic term is a mean over occasions either way, so evaluating it
+  # on the design's own times and averaging must give the window average. The
+  # between term is not comparable -- one is the variance of a time average,
+  # the other a time series of variances -- which is the whole reason both
+  # exist.
+  set.seed(31)
+  aggregate <- ctVarianceDecomposition(fit, npersons = 300)
+  set.seed(31)
+  resolved <- ctVarianceDecomposition(fit, times = 'asdata', npersons = 300)
+  bytime <- tapply(resolved$within.stochastic[resolved$variable == 'eta1'],
+    resolved$time[resolved$variable == 'eta1'], mean)
+  expect_equal(mean(bytime),
+    aggregate$within.stochastic[aggregate$variable == 'eta1'],
+    tolerance = 1e-8)
+  expect_equal(unique(resolved$time), sort(unique(datalong[, 'time'])))
+})
+
+test_that('times= refuses what it has no grid for', {
+  expect_error(ctVarianceDecomposition(fit, times = c(0, 1),
+    method = 'simulation'), 'no common grid')
+  expect_error(ctVarianceDecomposition(fit, times = numeric()), 'empty')
+})
+
+
 # Designs and levels ----------------------------------------------------------
 
 test_that('the decomposition holds together on any design shape', {

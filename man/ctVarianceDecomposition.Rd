@@ -9,6 +9,7 @@ ctVarianceDecomposition(
   method = c("auto", "moment", "simulation"),
   persons = c("auto", "model", "estimated"),
   scale = c("latent", "response"),
+  times = NULL,
   npersons = 200L,
   npaths = 20L,
   latents = TRUE,
@@ -42,6 +43,16 @@ linear predictor behind the logit (\code{'latent'}, the default, with a
 measurement variance of \eqn{\pi^2/3}) or the observed response
 (\code{'response'}, integrating the link over each row's own normal
 marginal). The two coincide for a Gaussian indicator.}
+
+\item{times}{If given, decompose at each of these times rather than
+averaging over the window: a numeric vector, or \code{'asdata'} for the
+observed occasions. Every person is evaluated on the one grid, which is
+what makes a variance across persons at a given time mean anything. The
+result gains a \code{time} column and loses
+\code{within.deterministic} -- that term is the variance of the mean path
+\emph{over} time, so it exists only in the average. Not available with
+\code{method='simulation'} or with time dependent predictors, neither of
+which has values on a grid of its own.}
 
 \item{npersons}{Number of persons to draw when \code{persons='model'}.}
 
@@ -123,6 +134,16 @@ The decomposition is a nested law of total variance over the
   retained 97 per cent (five subjects each). \code{persons='model'} draws
   from each level's own fitted covariance instead and is not shrunk, which
   is why it is the default.
+
+  \strong{When the split changes over the window.} The columns above are
+  averages over each person's occasions, and for a process that has not
+  settled they average a split that is genuinely different at different
+  times. \code{within.deterministic} is the flag that this is happening --
+  it is the mean path moving -- and \code{times=} is how to look. On a
+  fixture whose \code{T0MEANS} is fixed, so that every person starts in the
+  same place, the between person share of an indicator's variance runs from
+  zero at the first occasion to 20 per cent by the twentieth, against a
+  window average of 17 per cent that describes no occasion in particular.
 
   \strong{Designs.} Nothing here assumes a balanced one. Each person is
   evaluated over their own observation times, so everyone measured at the

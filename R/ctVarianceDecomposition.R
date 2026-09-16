@@ -640,44 +640,57 @@
 # anything; a level's between term uses the sample variance over that level's
 # units, which is an estimate of a population variance.
 .ctVarDecompMomentComponents <- function(fit, design, persons, levels, nlatent,
-  latents, type, scale, gh, continuoustime, nmanifest) {
+  latents, type, scale, gh, continuoustime, nmanifest, times = NULL) {
+
+  # `times` turns the window average into a decomposition at each point on a
+  # common grid. Every person is then evaluated at the same times rather than
+  # at their own rows, which is what makes a variance across persons at a given
+  # time mean anything.
+  #
+  # There is no deterministic term in that form, and its absence is the point
+  # rather than an omission: that term *is* the variance of the mean path over
+  # t, so it exists only because the aggregate averages across the window. At
+  # one instant a person's mean path is a number, not a spread.
+  bytime <- !is.null(times)
+  ntime <- if (bytime) length(times) else 1L
+  collapse <- function(x) if (bytime) x else mean(x)
 
   nvar <- nmanifest + if (latents) nlatent else 0L
   nsteps <- if (length(levels)) length(levels) + 1L else 1L
   value <- lapply(seq_len(nsteps), function(...)
-    matrix(NA_real_, length(persons), nvar))
+    array(NA_real_, c(length(persons), nvar, ntime)))
   persondet <- matrix(NA_real_, length(persons), nvar)
-  personstoch <- matrix(NA_real_, length(persons), nvar)
-  personmeas <- matrix(0, length(persons), nvar)
+  personstoch <- array(NA_real_, c(length(persons), nvar, ntime))
+  personmeas <- array(0, c(length(persons), nvar, ntime))
 
   for (index in seq_along(persons)) {
     person <- persons[[index]]
     rows <- person$rows
-    tdpreds <- if (!is.null(design$tdpreds))
+    at <- if (bytime) times else design$time[rows]
+    tdpreds <- if (!bytime && !is.null(design$tdpreds))
       design$tdpreds[rows, , drop = FALSE] else NULL
     for (s in seq_len(nsteps)) {
       mats <- person$mats[[s]]
-      moments <- .ctVarDecompPersonMoments(mats, design$time[rows], tdpreds,
-        continuoustime)
+      moments <- .ctVarDecompPersonMoments(mats, at, tdpreds, continuoustime)
       for (vi in seq_len(nmanifest)) {
         measured <- .ctVarDecompMeasurement(moments$linearmean[, vi],
           moments$linearvar[, vi], type[vi], mats$MANIFESTcov[vi, vi], scale, gh)
-        value[[s]][index, vi] <- mean(measured$expected)
+        value[[s]][index, vi, ] <- collapse(measured$expected)
         # The within person terms belong to the person's own trajectory, so
         # they come from the innermost step; the outer ones only supply the
         # level means that the between terms are differences of.
         if (s == 1L) {
-          persondet[index, vi] <- .ctVarDecompPopVar(measured$expected)
-          personstoch[index, vi] <- mean(measured$varmean)
-          personmeas[index, vi] <- mean(measured$condvar)
+          if (!bytime) persondet[index, vi] <- .ctVarDecompPopVar(measured$expected)
+          personstoch[index, vi, ] <- collapse(measured$varmean)
+          personmeas[index, vi, ] <- collapse(measured$condvar)
         }
       }
       if (latents) for (li in seq_len(nlatent)) {
         vi <- nmanifest + li
-        value[[s]][index, vi] <- mean(moments$latentmean[, li])
+        value[[s]][index, vi, ] <- collapse(moments$latentmean[, li])
         if (s == 1L) {
-          persondet[index, vi] <- .ctVarDecompPopVar(moments$latentmean[, li])
-          personstoch[index, vi] <- mean(moments$latentvar[, li])
+          if (!bytime) persondet[index, vi] <- .ctVarDecompPopVar(moments$latentmean[, li])
+          personstoch[index, vi, ] <- collapse(moments$latentvar[, li])
         }
       }
     }
@@ -686,25 +699,33 @@
   # Each level's own departure from the level outside it, varied over that
   # level's units so that a study with more subjects in it still counts once.
   contribution <- if (!length(levels)) NULL else {
-    out <- matrix(0, length(levels), nvar, dimnames = list(levels, NULL))
+    out <- array(0, c(length(levels), nvar, ntime),
+      dimnames = list(levels, NULL, NULL))
     for (l in seq_along(levels)) {
-      deviation <- value[[l]] - value[[l + 1L]]
       unit <- vapply(persons, function(p) as.numeric(p$unit[l]), numeric(1L))
-      for (vi in seq_len(nvar)) {
-        d <- as.numeric(tapply(deviation[, vi], unit, mean))
-        out[l, vi] <- if (length(d) > 1L) stats::var(d) else 0
+      for (ti in seq_len(ntime)) for (vi in seq_len(nvar)) {
+        d <- as.numeric(tapply(value[[l]][, vi, ti] - value[[l + 1L]][, vi, ti],
+          unit, mean))
+        out[l, vi, ti] <- if (length(d) > 1L) stats::var(d) else 0
       }
     }
     out
   }
 
-  list(
-    between = if (is.null(contribution)) rep(0, nvar) else colSums(contribution),
-    levels = contribution,
-    within.deterministic = colMeans(persondet),
-    within.stochastic = colMeans(personstoch),
-    within.measurement = colMeans(personmeas),
-    npersons = length(persons))
+  flat <- function(x) if (bytime) x else as.numeric(x)
+  between <- if (is.null(contribution)) array(0, c(nvar, ntime)) else
+    apply(contribution, c(2L, 3L), sum)
+  out <- list(
+    between = flat(matrix(between, nvar, ntime)),
+    levels = if (is.null(contribution)) NULL else
+      if (bytime) contribution else matrix(contribution, length(levels), nvar,
+        dimnames = list(levels, NULL)),
+    within.stochastic = flat(apply(personstoch, c(2L, 3L), mean)),
+    within.measurement = flat(apply(personmeas, c(2L, 3L), mean)),
+    npersons = length(persons), times = times)
+  # The deterministic term is the variance over t and has no per-instant form.
+  if (!bytime) out$within.deterministic <- colMeans(persondet)
+  out
 }
 
 
@@ -938,6 +959,15 @@
 #'   measurement variance of \eqn{\pi^2/3}) or the observed response
 #'   (\code{'response'}, integrating the link over each row's own normal
 #'   marginal). The two coincide for a Gaussian indicator.
+#' @param times If given, decompose at each of these times rather than
+#'   averaging over the window: a numeric vector, or \code{'asdata'} for the
+#'   observed occasions. Every person is evaluated on the one grid, which is
+#'   what makes a variance across persons at a given time mean anything. The
+#'   result gains a \code{time} column and loses
+#'   \code{within.deterministic} -- that term is the variance of the mean path
+#'   \emph{over} time, so it exists only in the average. Not available with
+#'   \code{method='simulation'} or with time dependent predictors, neither of
+#'   which has values on a grid of its own.
 #' @param npersons Number of persons to draw when \code{persons='model'}.
 #' @param latents If TRUE, also decompose the latent processes, which have no
 #'   measurement component.
@@ -992,6 +1022,16 @@
 #'   from each level's own fitted covariance instead and is not shrunk, which
 #'   is why it is the default.
 #'
+#'   \strong{When the split changes over the window.} The columns above are
+#'   averages over each person's occasions, and for a process that has not
+#'   settled they average a split that is genuinely different at different
+#'   times. \code{within.deterministic} is the flag that this is happening --
+#'   it is the mean path moving -- and \code{times=} is how to look. On a
+#'   fixture whose \code{T0MEANS} is fixed, so that every person starts in the
+#'   same place, the between person share of an indicator's variance runs from
+#'   zero at the first occasion to 20 per cent by the twentieth, against a
+#'   window average of 17 per cent that describes no occasion in particular.
+#'
 #'   \strong{Designs.} Nothing here assumes a balanced one. Each person is
 #'   evaluated over their own observation times, so everyone measured at the
 #'   same occasions, everyone at their own, and subjects with different numbers
@@ -1026,7 +1066,7 @@
 #' @export
 ctVarianceDecomposition <- function(fit, method = c('auto', 'moment', 'simulation'),
   persons = c('auto', 'model', 'estimated'), scale = c('latent', 'response'),
-  npersons = 200L, npaths = 20L, latents = TRUE, quadpoints = 21L,
+  times = NULL, npersons = 200L, npaths = 20L, latents = TRUE, quadpoints = 21L,
   subjects = 'all') {
 
   # `ctFit`, which both backends' fits carry, rather than naming the two
@@ -1088,6 +1128,23 @@ ctVarianceDecomposition <- function(fit, method = c('auto', 'moment', 'simulatio
   }
 
   design <- .ctVarDecompDesign(fit)
+  if (!is.null(times)) {
+    if (identical(method, 'simulation')) {
+      stop("times= is not available for method='simulation': the drawn ",
+        'trajectories are over the observed rows, so there is no common grid ',
+        'to evaluate every person on.', call. = FALSE)
+    }
+    if (!is.null(design$tdpreds)) {
+      stop('times= is not available for a model with time dependent ',
+        'predictors: a grid of times carries no predictor values, and ',
+        'evaluating one person at another one\'s would not be that person. ',
+        'Drop times= for the window average over the observed design.',
+        call. = FALSE)
+    }
+    times <- if (identical(as.character(times)[1L], 'asdata'))
+      sort(unique(design$time)) else sort(as.numeric(times))
+    if (length(times) < 1L) stop('times= is empty.', call. = FALSE)
+  }
   wanted <- if (identical(subjects, 'all')) seq_len(design$nsubjects) else
     as.integer(subjects)
   wanted <- wanted[wanted %in% unique(design$subject)]
@@ -1120,31 +1177,48 @@ ctVarianceDecomposition <- function(fit, method = c('auto', 'moment', 'simulatio
     if (!length(people)) stop('No usable persons.', call. = FALSE)
     gh <- if (identical(scale, 'response')) .ctVarDecompGaussHermite(quadpoints) else NULL
     .ctVarDecompMomentComponents(fit, design, people, levels, nlatent, latents,
-      type, scale, gh, continuoustime, nmanifest)
+      type, scale, gh, continuoustime, nmanifest, times = times)
   }
 
-  out <- data.frame(
-    variable = c(manifestNames, if (latents) latentNames),
-    type = c(rep('manifest', nmanifest), if (latents) rep('latent', nlatent)),
-    between = components$between,
-    within.deterministic = components$within.deterministic,
-    within.stochastic = components$within.stochastic,
-    within.measurement = components$within.measurement,
-    stringsAsFactors = FALSE)
+  variables <- c(manifestNames, if (latents) latentNames)
+  kinds <- c(rep('manifest', nmanifest), if (latents) rep('latent', nlatent))
+  bytime <- !is.null(times)
+  parts <- if (bytime) c('between', 'within.stochastic', 'within.measurement')
+    else c('between', 'within.deterministic', 'within.stochastic',
+      'within.measurement')
+
+  out <- if (!bytime) {
+    data.frame(variable = variables, type = kinds, stringsAsFactors = FALSE)
+  } else {
+    # One row per (time, variable), times varying slowest so that each block of
+    # the printed frame is one instant.
+    data.frame(time = rep(times, each = length(variables)),
+      variable = rep(variables, length(times)),
+      type = rep(kinds, length(times)), stringsAsFactors = FALSE)
+  }
+  # `components[[part]]` is variables by times, and the frame above runs
+  # variables fastest within a time, so column major order is already the row
+  # order -- transposing it interleaves the two and produces a table where
+  # every row sums correctly and no row is about the variable it names.
+  for (part in parts) {
+    out[[part]] <- if (bytime) as.numeric(components[[part]]) else
+      components[[part]]
+  }
   # One column per random effect level, where there is more than one: with a
   # single level it would repeat `between` under another name.
-  if (!is.null(components$levels) && nrow(components$levels) > 1L) {
-    for (l in rownames(components$levels)) {
-      out[[paste0('between.', l)]] <- components$levels[l, ]
+  if (!is.null(components$levels) && dim(components$levels)[1L] > 1L) {
+    for (l in dimnames(components$levels)[[1L]]) {
+      out[[paste0('between.', l)]] <- if (bytime)
+        as.numeric(components$levels[l, , , drop = TRUE]) else
+        components$levels[l, ]
     }
   }
-  out$within <- out$within.deterministic + out$within.stochastic + out$within.measurement
+  out$within <- rowSums(as.data.frame(out[setdiff(parts, 'between')]))
   out$total <- out$between + out$within
   # A variable with no variance at all has no proportions, and NA says that
   # where 0/0 would print NaN. A constant auxiliary state is the case: a
   # higher order model's carried coordinate contributes nothing to anything.
-  for (part in c('between', 'within.deterministic', 'within.stochastic',
-    'within.measurement', 'within')) {
+  for (part in c(parts, 'within')) {
     out[[paste0('prop.', part)]] <- ifelse(out$total > 0,
       out[[part]] / out$total, NA_real_)
   }
@@ -1156,6 +1230,7 @@ ctVarianceDecomposition <- function(fit, method = c('auto', 'moment', 'simulatio
   attr(out, 'npersons') <- components$npersons
   attr(out, 'npaths') <- if (identical(method, 'simulation')) as.integer(npaths)
   attr(out, 'continuoustime') <- continuoustime
+  attr(out, 'bytime') <- bytime
   class(out) <- c('ctVarianceDecomposition', 'data.frame')
   out
 }
@@ -1165,6 +1240,22 @@ ctVarianceDecomposition <- function(fit, method = c('auto', 'moment', 'simulatio
 print.ctVarianceDecomposition <- function(x, digits = 3L, ...) {
   cat('Model implied variance decomposition\n\n')
   table <- as.data.frame(x)
+  if (isTRUE(attr(x, 'bytime'))) {
+    show <- c('time', 'variable', 'between', 'within.stochastic',
+      'within.measurement', 'total', 'prop.between')
+    numeric <- vapply(table[show], is.numeric, logical(1L))
+    table[show][numeric] <- lapply(table[show][numeric], round, digits)
+    print(table[, show], row.names = FALSE)
+    cat('\nAt one time point there is no deterministic within person term: it ',
+      'is the variance of the mean path over time, so it exists only in the ',
+      'window average. Call without times= for that.\n', sep = '')
+    cat('Between person variance refers to ',
+      if (identical(attr(x, 'persons'), 'model'))
+        paste0(attr(x, 'npersons'), ' persons drawn from the fitted population distribution')
+      else paste0('the ', attr(x, 'npersons'),
+        ' estimated subjects, attenuated by shrinkage'), '.\n', sep = '')
+    return(invisible(x))
+  }
   show <- c('variable', 'type', 'between', 'within.deterministic',
     'within.stochastic', 'within.measurement', 'total')
   numeric <- vapply(table[show], is.numeric, logical(1L))
