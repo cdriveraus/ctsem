@@ -700,4 +700,94 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
     expect_false(any(m$pars$TI1_effect[beta]))
   })
 
+  # A parameter the user declared in `PARS` is the only cell carrying its own
+  # label, and that cell looks exactly like the mean row `addpar()` writes:
+  # matrix `PARS`, `param` the label, `transform` 'param'. An exclusion clause
+  # written to skip the latter therefore skipped the former too and the cell
+  # lookup came back empty -- `Internal error: no cell found for regressed
+  # random effect df11`. Nothing added during the loop is in `m$pars` yet, so
+  # the row index bound is the whole of what is needed.
+  poprank_model_pars <- function() {
+    m <- suppressMessages(ctModel(type = 'ct', n.latent = 1, n.manifest = 1,
+      LAMBDA = matrix(1), manifestNames = 'Y1', latentNames = 'eta',
+      PARS = matrix('df11', 1, 1),
+      DRIFT = matrix('dr11|-log1p_exp(param)'),
+      DIFFUSION = matrix('log1p_exp(df11)'),
+      CINT = matrix(0), MANIFESTMEANS = matrix(0),
+      MANIFESTVAR = matrix('mv|log1p_exp(param)'),
+      T0MEANS = matrix(0), T0VAR = matrix(1)))
+    m$pars$indvarying <- FALSE
+    m$pars$indvarying[!is.na(m$pars$param) &
+        m$pars$param %in% c('dr11', 'df11')] <- TRUE
+    m
+  }
+
+  test_that('a PARS-declared random effect is found and rewritten under poprank', {
+    m <- poprank_model_pars()
+    pars <- prepared_pars(m)
+    spec <- ctsem:::.ctPopRegressionSpec(pars, 'auto')
+    expect_equal(spec$basis, 'dr11')
+    expect_equal(spec$regressed, 'df11')
+
+    m$pars <- pars
+    m <- ctsem:::.ctPopRegressionDemote(m, spec)
+    m <- ctsem:::.ctModelIntOverPop(m)
+    m <- ctsem:::.ctPopRegressionRewrite(m, spec)
+    spec <- m$popregression
+
+    # The driven cell is the user's own PARS cell, and it is the one rewritten.
+    expect_equal(spec$cells$matrix, 'PARS')
+    expect_equal(spec$coefficients$coefficient, 'beta_df11_dr11')
+    driven <- which(m$pars$matrix %in% spec$cells$matrix[1] &
+        m$pars$row == spec$cells$row[1] & m$pars$col == spec$cells$col[1])
+    expect_length(driven, 1L)
+    expect_match(m$pars$param[driven],
+      sprintf('^\\(df11 \\+ beta_df11_dr11 \\* state\\[%d\\]\\)$',
+        spec$coefficients$state[1]))
+    expect_false(m$pars$indvarying[driven])
+
+    # ... and the mean and the coefficient exist as parameters of their own,
+    # distinct from the cell they drive.
+    mean <- which(m$pars$matrix %in% 'PARS' & m$pars$param %in% 'df11')
+    expect_length(mean, 1L)
+    expect_false(mean %in% driven)
+    expect_length(which(m$pars$param %in% 'beta_df11_dr11'), 1L)
+  })
+
+  test_that('a model with a PARS-declared random effect builds under poprank', {
+    skip_without_julia()
+    dat <- poprank_data()
+    m <- poprank_model_pars()
+    auto <- suppressWarnings(suppressMessages(ctFit(datalong = dat, model = m,
+      backend = 'julia', fit = FALSE, intoverpop = 'augmented', cores = 1L)))
+    expect_equal(auto$model$popregression$route, 'augmented')
+    expect_equal(auto$model$popregression$cells$matrix, 'PARS')
+
+    # The reduction is real: rank 1 over two effects drops the coordinates the
+    # full covariance would have had.
+    none <- suppressWarnings(suppressMessages(ctFit(datalong = dat, model = m,
+      backend = 'julia', fit = FALSE, intoverpop = 'augmented',
+      poprank = NA, cores = 1L)))
+    expect_lt(ctsem:::.ctBackendNpar(auto), ctsem:::.ctBackendNpar(none))
+  })
+
+  # The `'parameters'` route reaches the same cell by the same lookup, so it
+  # gets the same declaration.
+  test_that('a PARS-declared random effect is rewritten on the parameters route', {
+    m <- poprank_model_pars()
+    pars <- prepared_pars(m)
+    spec <- ctsem:::.ctPopRegressionSpec(pars, 'auto', augmented = FALSE)
+    m$pars <- pars
+    m <- ctsem:::.ctPopRegressionDemote(m, spec)
+    m <- ctsem:::.ctPopRegressionRewriteParameters(m, spec)
+    spec <- m$popregression
+    expect_equal(spec$route, 'parameters')
+    expect_equal(spec$cells$matrix, 'PARS')
+    driven <- which(m$pars$matrix %in% spec$cells$matrix[1] &
+        m$pars$row == spec$cells$row[1] & m$pars$col == spec$cells$col[1])
+    expect_length(driven, 1L)
+    expect_equal(m$pars$param[driven], '(df11 + beta_df11_dr11 * dr11)')
+    expect_length(which(m$pars$param %in% 'beta_df11_dr11'), 1L)
+  })
+
 }

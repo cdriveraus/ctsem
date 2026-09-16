@@ -551,6 +551,7 @@
 
   coefficients <- list()
   drivencells <- list()
+  nbefore <- nrow(m$pars)
   for (p in spec$regressed) {
     # TI-predictor effects follow the parameter's *mean*, which is where they
     # already acted: a TI effect shifts a subject's raw parameter value, and
@@ -576,11 +577,11 @@
       state = as.integer(stateof), row.names = NULL, stringsAsFactors = FALSE)
     predictor <- paste0('(', p, ' + ',
       paste0(betas, ' * state[', stateof, ']', collapse = ' + '), ')')
-    cells <- which(!is.na(m$pars$param) & m$pars$param %in% p &
-        !(m$pars$matrix %in% 'PARS' & m$pars$param %in% p &
-            m$pars$transform %in% 'param'))
+    cells <- which(!is.na(m$pars$param) & m$pars$param %in% p)
     # The rows just added carry the same label, so exclude anything added here.
-    cells <- cells[cells <= nrow(m$pars)]
+    # `addpar()` accumulates into `newpars` and appends after the loop, so
+    # nothing added here is in `m$pars` yet and `nbefore` is what says so.
+    cells <- cells[cells <= nbefore]
     if (!length(cells)) {
       stop('Internal error: no cell found for regressed random effect ', p, '.',
         call. = FALSE)
