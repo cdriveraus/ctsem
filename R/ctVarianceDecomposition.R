@@ -223,20 +223,22 @@
 
 # Person sources --------------------------------------------------------------
 #
-# A person is a set of model matrices plus the design rows to evaluate them
-# over. Two sources, and on a julia fit they share a body: an individually
-# varying parameter is carried as a latent state with no drift and no
-# diffusion, so a person *is* a carrier vector, and `ctBackendParMatrices()`
-# materialises that person's matrices at it -- applying every transform through
-# the same engine code the likelihood uses, rather than reimplementing one
-# here. persons='model' draws the carrier vector from the population
-# distribution (the carrier block of the augmented T0MEANS and T0cov, shifted
-# by that person's time independent predictors); persons='estimated' reads each
-# subject's own carrier values off the filter instead.
+# Everything below produces the same thing, so that one body computes the
+# decomposition from it:
 #
-# Each person is given an observed subject's design, so the occasions, spacing,
-# missingness and time dependent predictor values stay the ones the fit was
-# built on. For persons='model' the donor subject is sampled with replacement.
+#   persons  a list, each entry a person's design `rows`, the `unit` of each
+#            random effect level they belong to, and `mats` -- their model
+#            matrices with the effects of each level and every level outside it
+#            in turn, innermost first, the last entry being the population's
+#   levels   the level names, innermost first, possibly none
+#
+# A level's own contribution is then the difference between successive entries
+# of `mats`, which is what makes the between person variance a sum over levels
+# and what makes the three representations interchangeable here. It also takes
+# the design out of the between term: two persons measured at different
+# occasions have different time-averaged expected values even with identical
+# parameters, and subtracting the population value at that same design removes
+# it rather than reporting it as an individual difference.
 
 # Trim the augmented state out of one person's matrices.
 #
@@ -287,11 +289,11 @@
 
 # One person's matrices, materialised at a carrier vector. julia only -- this is
 # the route stan cannot take, and the caller has already said so.
+#
 # Messages suppressed, and said once by the print method instead. This is
 # called once per person -- up to npersons times -- and each call otherwise
 # announces which cells are state dependent and where they were evaluated, so a
-# single decomposition printed the same paragraph four hundred times. What that
-# paragraph says is still owed to the reader, and the attributes carry it.
+# single decomposition printed the same paragraph four hundred times.
 .ctVarDecompPersonAt <- function(fit, tipreds, state, nlatent) {
   drawn <- suppressMessages(ctBackendParMatrices(fit, tipreds = tipreds,
     state = state, trim = FALSE))
@@ -302,109 +304,6 @@
   .ctVarDecompTrim(mats, nlatent, augmented = TRUE)
 }
 
-# Persons for a julia fit: one carrier vector each, drawn or estimated.
-.ctVarDecompJuliaPersons <- function(fit, design, nlatent, source, npersons,
-  subjects) {
-  carrier <- .ctVarDecompCarrier(fit, nlatent)
-  # The model says it has individual differences and this route cannot see
-  # them. Refused rather than returned, because what it would return is a
-  # between person variance of zero, which is what a model with no individual
-  # differences correctly returns -- so nothing downstream could tell the two
-  # apart. This is the guard the Laplace representation walked straight past
-  # before it had a route of its own.
-  if (!length(carrier) && .ctFitHasRandomEffects(fit)) {
-    stop('This fit declares individually varying parameters and they are not ',
-      'carried as latent states, so the carrier route cannot see them and ',
-      'would report a between person variance of zero. This is a bug rather ',
-      'than a limitation of the model -- please report the fit.', call. = FALSE)
-  }
-  tipreds <- if (length(.ctFitModelObject(fit)$TIpredNames))
-    .ctFitTIpredData(fit) else NULL
-  tipredrow <- function(si) if (!is.null(tipreds)) as.numeric(tipreds[si, ]) else NULL
-
-  donors <- if (identical(source, 'model'))
-    subjects[sample.int(length(subjects), npersons, replace = TRUE)] else subjects
-
-  # The subject's own carrier values, for persons='estimated'. These are what
-  # the filter has learned about that subject, so they are shrunk toward the
-  # population mean -- which is the whole difference between the two sources.
-  #
-  # Only the carrier block of `subj_T0MEANS` is read. Its dynamic rows are the
-  # *smoothed* initial state rather than the model's T0MEANS, so starting a
-  # marginal recursion there would begin each person at a data-informed point
-  # while still carrying the full prior T0 covariance -- counting the initial
-  # spread twice, and reporting it as the mean path moving. The dynamic rows
-  # come from the materialised matrices below instead.
-  estimated <- if (identical(source, 'estimated') && length(carrier)) {
-    .ctVarDecompSubjectMatrices(fit)$subj_T0MEANS
-  }
-
-  # One population fetch per donor subject actually used: the augmented T0
-  # block depends on the parameters and on that subject's predictors, and on
-  # nothing else.
-  population <- list()
-  for (si in unique(donors)) {
-    population[[as.character(si)]] <- suppressMessages(ctBackendParMatrices(fit,
-      tipreds = tipredrow(si), trim = FALSE))
-  }
-
-  # With no carrier states every person with the same donor has the same
-  # matrices, so they are materialised once per donor rather than once per
-  # person -- a model with no random effects would otherwise pay npersons
-  # engine round trips to compute one answer npersons times.
-  materialised <- list()
-  lapply(seq_along(donors), function(index) {
-    si <- donors[index]
-    base <- population[[as.character(si)]]
-    state <- as.numeric(base$T0MEANS)
-    if (length(carrier)) {
-      if (identical(source, 'model')) {
-        root <- .ctVarDecompCholesky(base$T0cov[carrier, carrier, drop = FALSE])
-        state[carrier] <- state[carrier] +
-          as.numeric(root %*% stats::rnorm(length(carrier)))
-      } else state[carrier] <- as.numeric(estimated[1L, si, carrier, 1L])
-    } else {
-      key <- as.character(si)
-      if (is.null(materialised[[key]])) {
-        materialised[[key]] <<- .ctVarDecompPersonAt(fit, tipredrow(si), state,
-          nlatent)
-      }
-      return(list(mats = materialised[[key]],
-        rows = which(design$subject == si)))
-    }
-    list(mats = .ctVarDecompPersonAt(fit, tipredrow(si), state, nlatent),
-      rows = which(design$subject == si))
-  })
-}
-
-# Persons for a stan fit: the subject matrices the filter saved, falling back to
-# the population matrix.
-#
-# The fallback is not a guess. Stan allocates a per-subject array for a matrix
-# exactly when that matrix's specification varies by subject (the
-# `savesubjectmatrices && (sum(whenmat[..]) || statedep[..])` gate in
-# R/ctModelWriter.R), so a matrix with no `subj_` entry is one that is the same
-# for everyone and `pop_` is its value. Reading `subj_` alone left LAMBDA and
-# the measurement matrices missing for every model that does not vary them.
-.ctVarDecompStanPersons <- function(fit, design, nlatent, subjects) {
-  extracted <- .ctVarDecompSubjectMatrices(fit)
-  lapply(subjects, function(si) {
-    mats <- list()
-    for (name in .ctVarDecompNeeded) {
-      value <- extracted[[paste0('subj_', name)]]
-      if (!is.null(value)) {
-        mats[[name]] <- array(value[1L, si, , ], dim = dim(value)[3:4])
-        next
-      }
-      value <- extracted[[paste0('pop_', name)]]
-      if (is.null(value)) next
-      mats[[name]] <- array(value[1L, , ], dim = dim(value)[2:3])
-    }
-    list(mats = .ctVarDecompTrim(mats, nlatent, augmented = FALSE),
-      rows = which(design$subject == si))
-  })
-}
-
 # A square root of a covariance block that may be singular -- a parameter with
 # no random effect has a zero row and column, and chol() refuses those.
 .ctVarDecompCholesky <- function(cov) {
@@ -412,6 +311,247 @@
   e <- eigen(cov, symmetric = TRUE)
   values <- pmax(e$values, 0)
   e$vectors %*% diag(sqrt(values), nrow = length(values))
+}
+
+# One subject's matrices, pulled out of a level's subject-matrix arrays.
+.ctVarDecompFromArrays <- function(matrices, si, nlatent, augmented = FALSE,
+  fallback = NULL) {
+  mats <- list()
+  for (name in .ctVarDecompNeeded) {
+    value <- matrices[[paste0('subj_', name)]]
+    if (!is.null(value)) {
+      mats[[name]] <- array(value[1L, si, , ], dim = dim(value)[3:4])
+      next
+    }
+    # Stan allocates a per-subject array for a matrix exactly when that
+    # matrix's specification varies by subject (the `savesubjectmatrices &&
+    # (sum(whenmat[..]) || statedep[..])` gate in R/ctModelWriter.R), so a
+    # matrix with no `subj_` entry is one that is the same for everyone and
+    # `pop_` is its value. Reading `subj_` alone left LAMBDA and the
+    # measurement matrices missing for every model that does not vary them.
+    value <- (if (is.null(fallback)) matrices else fallback)[[paste0('pop_', name)]]
+    if (is.null(value)) next
+    mats[[name]] <- array(value[1L, , ], dim = dim(value)[2:3])
+  }
+  .ctVarDecompTrim(mats, nlatent, augmented = augmented)
+}
+
+
+# The model's own initial state, not the filter's estimate of it.
+#
+# `subj_T0MEANS` carries the *smoothed* initial state in its dynamic rows on
+# both julia representations -- measured at sd 0.91 across subjects for a model
+# that fixes T0MEANS at zero. Starting a marginal recursion there while also
+# carrying the full prior T0 covariance counts the initial spread twice and
+# reports it as the mean path moving: on one fixture it made the deterministic
+# within person term eight times what the other representation gave.
+#
+# The augmented route never had the problem, because it materialises a person's
+# matrices at their carrier vector rather than reading them off the filter. This
+# is the same correction for the route that does read them. Stan is unaffected:
+# it saves a per-subject matrix only where the specification varies by subject,
+# so a fixed T0MEANS falls back to `pop_T0MEANS`, which is the model's.
+.ctVarDecompModelT0 <- function(fit, levels) {
+  varying <- unique(unlist(lapply(levels, function(x) x$params)))
+  pars <- .ctFitModelObject(fit)$pars
+  t0pars <- if (is.null(pars)) character() else
+    as.character(pars$param[pars$matrix %in% 'T0MEANS'])
+  list(population = suppressMessages(ctBackendParMatrices(fit, trim = FALSE))$T0MEANS,
+    varies = any(varying %in% t0pars))
+}
+
+# Augmented fits: a person is a carrier vector --------------------------------
+#
+# An individually varying parameter is carried as a latent state with no drift
+# and no diffusion, so a person *is* a carrier vector and
+# `ctBackendParMatrices()` materialises their matrices at it, applying every
+# transform through the same engine code the likelihood uses rather than
+# reimplementing one here. persons='model' draws the vector from the population
+# distribution (the carrier block of the augmented T0MEANS and T0cov, shifted
+# by that person's time independent predictors); persons='estimated' reads each
+# subject's own carrier values off the filter instead.
+.ctVarDecompCarrierPersons <- function(fit, design, nlatent, source, npersons,
+  subjects, levels) {
+  carrier <- .ctVarDecompCarrier(fit, nlatent)
+  # The model says it has individual differences and this route cannot see
+  # them. Refused rather than returned, because what it would return is a
+  # between person variance of zero, which is what a model with no individual
+  # differences correctly returns -- so nothing downstream could tell the two
+  # apart.
+  if (!length(carrier) && length(levels)) {
+    stop('This fit declares individually varying parameters and they are ',
+      'neither carrier states nor separate coordinates, so no route here can ',
+      'see them and the between person variance would come out at zero. This ',
+      'is a bug rather than a limitation of the model -- please report the fit.',
+      call. = FALSE)
+  }
+  tipreds <- if (length(.ctFitModelObject(fit)$TIpredNames))
+    .ctFitTIpredData(fit) else NULL
+  tipredrow <- function(si) if (!is.null(tipreds)) as.numeric(tipreds[si, ]) else NULL
+
+  donors <- if (identical(source, 'model') && length(carrier))
+    subjects[sample.int(length(subjects), npersons, replace = TRUE)] else subjects
+
+  estimated <- if (identical(source, 'estimated') && length(carrier)) {
+    .ctVarDecompSubjectMatrices(fit)$subj_T0MEANS
+  }
+
+  # One population fetch per donor subject actually used: the augmented T0
+  # block depends on the parameters and on that subject's predictors, and on
+  # nothing else. The population matrices are the outer step for every person
+  # with that donor, so they are materialised once too.
+  population <- list()
+  outer <- list()
+  for (si in unique(donors)) {
+    key <- as.character(si)
+    population[[key]] <- suppressMessages(ctBackendParMatrices(fit,
+      tipreds = tipredrow(si), trim = FALSE))
+    outer[[key]] <- .ctVarDecompPersonAt(fit, tipredrow(si),
+      as.numeric(population[[key]]$T0MEANS), nlatent)
+  }
+
+  lapply(seq_along(donors), function(index) {
+    si <- donors[index]
+    key <- as.character(si)
+    base <- population[[key]]
+    state <- as.numeric(base$T0MEANS)
+    inner <- if (!length(carrier)) outer[[key]] else {
+      if (identical(source, 'model')) {
+        root <- .ctVarDecompCholesky(base$T0cov[carrier, carrier, drop = FALSE])
+        state[carrier] <- state[carrier] +
+          as.numeric(root %*% stats::rnorm(length(carrier)))
+      } else state[carrier] <- as.numeric(estimated[1L, si, carrier, 1L])
+      .ctVarDecompPersonAt(fit, tipredrow(si), state, nlatent)
+    }
+    list(rows = which(design$subject == si), unit = index,
+      mats = if (length(levels)) list(inner, outer[[key]]) else list(inner))
+  })
+}
+
+
+# Coordinate fits: a person is an effect vector -------------------------------
+#
+# `intoverpop='laplace'` and `intoverpop='none'` keep the random effects as
+# coordinates rather than states, so there is no carrier to materialise at.
+# What the engine offers instead is `subject_values`: one raw parameter vector
+# per subject, which `ctsem_kalman` uses in place of the fitted ones. A level's
+# own contribution to that vector is the difference between the values built
+# from level l outward and from level l+1 outward, and it is nonzero only at
+# that level's `re_index` -- checked below rather than assumed.
+#
+# So persons='estimated' uses those differences as they are, the fitted modes,
+# and persons='model' replaces each with a draw from the level's own population
+# covariance. The draw is per *unit*: every subject in a study shares its study
+# effect. Cost is one engine call per level per redraw, whatever the number of
+# persons, because a whole set of subjects is materialised at once.
+.ctVarDecompCoordinatePersons <- function(fit, design, nlatent, source,
+  npersons, subjects, levels) {
+  spec <- .ctBackendSpec(fit)
+  module <- .ctJuliaModule(spec$project)
+  objective <- .ctJuliaObjective(fit)
+  raw <- .ctJuliaNumericVector(as.numeric(fit$estimate$raw))
+  nlevels <- length(levels)
+  structure <- .ctFitRandomEffectLevels(fit)
+
+  values <- lapply(seq_len(nlevels + 1L), function(l)
+    as.matrix(.ctBackendJuliaValue(module$ctsem_laplace_subject_values(
+      objective, raw, from_level = as.integer(l)))))
+
+  # Each level's contribution, and where it sits in the raw vector.
+  contribution <- lapply(seq_len(nlevels), function(l) values[[l]] - values[[l + 1L]])
+  position <- lapply(seq_len(nlevels), function(l) {
+    declared <- as.integer(spec$laplace$levels[[l]]$re_index)
+    found <- which(apply(abs(contribution[[l]]) > 1e-10, 2L, any))
+    # An effect that is estimated at exactly zero moves nothing, so `found` can
+    # be a subset of `declared`; the other way round would mean the level
+    # shifts a parameter it does not declare, and this route would be placing
+    # draws in the wrong coordinates.
+    if (length(setdiff(found, declared))) {
+      stop("The random effects of level '", levels[l], "' move raw parameters ",
+        paste(setdiff(found, declared), collapse = ', '), ' that the level ',
+        'does not declare, so a drawn effect cannot be placed. This is a bug ',
+        '-- please report the fit.', call. = FALSE)
+    }
+    declared
+  })
+
+  draws <- if (identical(source, 'model'))
+    max(1L, ceiling(npersons / length(subjects))) else 1L
+  roots <- if (identical(source, 'model')) lapply(seq_len(nlevels), function(l)
+    .ctVarDecompCholesky(as.matrix(.ctBackendJuliaValue(
+      module$ctsem_laplace_popcov(objective, raw, as.integer(l)))))) else NULL
+
+  # The initial state comes from the model rather than from the filter's
+  # estimate of it; see .ctVarDecompModelT0(). Where T0MEANS itself varies by
+  # person there is no single value and each person's own is materialised,
+  # which costs an engine call per person rather than one in total.
+  t0 <- .ctVarDecompModelT0(fit, structure)
+
+  persons <- list()
+  for (drawi in seq_len(draws)) {
+    # The values at each step, innermost first. Built outward-in so that step s
+    # carries the effects of level s and everything outside it, which is what
+    # `randomEffects=` means and what the differencing below expects.
+    step <- vector('list', nlevels + 1L)
+    step[[nlevels + 1L]] <- values[[nlevels + 1L]]
+    for (l in rev(seq_len(nlevels))) {
+      shift <- if (identical(source, 'estimated')) contribution[[l]] else {
+        units <- structure[[l]]$units
+        perunit <- matrix(stats::rnorm(structure[[l]]$nunits * ncol(roots[[l]])),
+          structure[[l]]$nunits)
+        drawn <- perunit %*% t(roots[[l]])
+        out <- matrix(0, nrow(values[[l]]), ncol(values[[l]]))
+        out[, position[[l]]] <- drawn[units, , drop = FALSE]
+        out
+      }
+      step[[l]] <- step[[l + 1L]] + shift
+    }
+    matrices <- lapply(step, function(v) .ctVarDecompLevelMatrices(fit, v))
+    for (si in subjects) {
+      mats <- lapply(seq_along(matrices), function(s) {
+        m <- .ctVarDecompFromArrays(matrices[[s]], si, nlatent)
+        m$T0MEANS <- if (t0$varies) {
+          suppressMessages(ctBackendParMatrices(fit, raw = step[[s]][si, ],
+            trim = FALSE))$T0MEANS[seq_len(nlatent), , drop = FALSE]
+        } else t0$population[seq_len(nlatent), , drop = FALSE]
+        m
+      })
+      persons[[length(persons) + 1L]] <- list(
+        rows = which(design$subject == si),
+        unit = vapply(structure, function(x) x$units[si], integer(1L)) +
+          (drawi - 1L) * vapply(structure, function(x) x$nunits, integer(1L)),
+        mats = mats)
+    }
+  }
+  persons
+}
+
+# Subject matrices at supplied per-subject parameter vectors.
+.ctVarDecompLevelMatrices <- function(fit, subjectvalues) {
+  spec <- .ctBackendSpec(fit)
+  module <- .ctJuliaModule(spec$project)
+  scores <- .ctBackendJuliaValue(module$ctsem_kalman(.ctJuliaObjective(fit),
+    .ctJuliaNumericVector(as.numeric(fit$estimate$raw)),
+    from_level = 1L, subject_matrices = TRUE,
+    fields = .ctJuliaVector('subject_loglik'),
+    subject_values = JuliaConnectoR::juliaPut(subjectvalues)))
+  flat <- array(scores$subject_matrices, dim = c(1L, dim(scores$subject_matrices)))
+  .ctBackendSubjectMatrices(fit, flat)
+}
+
+
+# Stan fits: the subject matrices the filter saved -----------------------------
+.ctVarDecompStanPersons <- function(fit, design, nlatent, subjects, levels) {
+  extracted <- .ctVarDecompSubjectMatrices(fit)
+  population <- .ctVarDecompFromArrays(
+    extracted[vapply(names(extracted), function(n) grepl('^pop_', n), logical(1L))],
+    1L, nlatent)
+  lapply(seq_along(subjects), function(index) {
+    si <- subjects[index]
+    inner <- .ctVarDecompFromArrays(extracted, si, nlatent)
+    list(rows = which(design$subject == si), unit = index,
+      mats = if (length(levels)) list(inner, population) else list(inner))
+  })
 }
 
 
@@ -489,135 +629,44 @@
 
 # The moment route ------------------------------------------------------------
 #
-# Person by person, then across persons. A person contributes the average over
-# its own rows, so persons count equally however many observations each has --
-# the estimand is over persons, and weighting by row count would make a
-# frequently measured subject a bigger share of the population.
-.ctVarDecompMomentComponents <- function(fit, design, people, nlatent, latents,
-  type, scale, gh, continuoustime, nmanifest) {
-  nvar <- nmanifest + if (latents) nlatent else 0L
-  personmean <- matrix(NA_real_, length(people), nvar)
-  persondet <- matrix(NA_real_, length(people), nvar)
-  personstoch <- matrix(NA_real_, length(people), nvar)
-  personmeas <- matrix(0, length(people), nvar)
+# One body over whatever the person source produced, which is why the three
+# representations of individual differences do not each need their own.
+#
+# A person contributes the average over its own rows, so persons count equally
+# however many observations each has -- the estimand is over persons, and
+# weighting by row count would make a frequently measured subject a bigger
+# share of the population. The time term uses the population variance over that
+# person's rows, because those rows are the design rather than a sample from
+# anything; a level's between term uses the sample variance over that level's
+# units, which is an estimate of a population variance.
+.ctVarDecompMomentComponents <- function(fit, design, persons, levels, nlatent,
+  latents, type, scale, gh, continuoustime, nmanifest) {
 
-  for (index in seq_along(people)) {
-    person <- people[[index]]
+  nvar <- nmanifest + if (latents) nlatent else 0L
+  nsteps <- if (length(levels)) length(levels) + 1L else 1L
+  value <- lapply(seq_len(nsteps), function(...)
+    matrix(NA_real_, length(persons), nvar))
+  persondet <- matrix(NA_real_, length(persons), nvar)
+  personstoch <- matrix(NA_real_, length(persons), nvar)
+  personmeas <- matrix(0, length(persons), nvar)
+
+  for (index in seq_along(persons)) {
+    person <- persons[[index]]
     rows <- person$rows
-    moments <- .ctVarDecompPersonMoments(person$mats, design$time[rows],
-      if (!is.null(design$tdpreds)) design$tdpreds[rows, , drop = FALSE] else NULL,
-      continuoustime)
-    for (vi in seq_len(nmanifest)) {
-      measured <- .ctVarDecompMeasurement(moments$linearmean[, vi],
-        moments$linearvar[, vi], type[vi], person$mats$MANIFESTcov[vi, vi],
-        scale, gh)
-      personmean[index, vi] <- mean(measured$expected)
-      persondet[index, vi] <- .ctVarDecompPopVar(measured$expected)
-      personstoch[index, vi] <- mean(measured$varmean)
-      personmeas[index, vi] <- mean(measured$condvar)
-    }
-    if (latents) for (li in seq_len(nlatent)) {
-      vi <- nmanifest + li
-      personmean[index, vi] <- mean(moments$latentmean[, li])
-      persondet[index, vi] <- .ctVarDecompPopVar(moments$latentmean[, li])
-      personstoch[index, vi] <- mean(moments$latentvar[, li])
-    }
-  }
-
-  list(
-    between = if (length(people) > 1L) apply(personmean, 2L, stats::var) else rep(0, nvar),
-    within.deterministic = colMeans(persondet),
-    within.stochastic = colMeans(personstoch),
-    within.measurement = colMeans(personmeas),
-    npersons = length(people))
-}
-
-
-# Laplace fits: one between column per level ----------------------------------
-#
-# A Laplace fit's random effects are not carrier states, so the carrier route
-# above sees nothing and would report a between person variance of zero for
-# every such model -- including every multilevel one, since a level above the
-# subject is the thing only Laplace can integrate out.
-#
-# What it has instead is a level-restricted trajectory. `randomEffects=` names
-# a level and means "this level and every level outside it", so for
-# `id = c('subject','study')` the three settings give a subject's own matrices,
-# the matrices its study shares, and the population's. Each subject therefore
-# has a time-averaged expected value at each level, and the differences between
-# successive levels are that level's own effect:
-#
-#     g_subject - g_study   the subject's departure from its study
-#     g_study   - g_pop     the study's departure from the population
-#
-# Those are orthogonal by construction -- each is a difference of successive
-# conditional means -- so their variances add, and `between` is their sum with
-# one column per level beside it. The variance of a level's deviation is taken
-# over the *units of that level*: over subjects for the innermost, over studies
-# for the next, which is what makes a study with more subjects in it count once.
-#
-# These are the fitted modes, so every level is shrunk toward the one outside
-# it, and the outer levels hardest because they have the fewest units. That is
-# the same caveat persons='estimated' carries on the augmented route and it is
-# the only thing on offer here: drawing a person would need a draw from each
-# level's own effect covariance, which the engine does not expose.
-# Subject matrices built from `level` and every level outside it.
-.ctVarDecompLevelMatrices <- function(fit, level) {
-  scores <- .ctBackendKalmanRaw(fit, fit$estimate$raw, subjectmatrices = TRUE,
-    fields = "subject_loglik", randomEffects = level)
-  flat <- array(scores$subject_matrices,
-    dim = c(1L, dim(scores$subject_matrices)))
-  .ctBackendSubjectMatrices(fit, flat)
-}
-
-# One subject's matrices, pulled out of a level's subject-matrix arrays.
-.ctVarDecompLevelPerson <- function(matrices, si, nlatent) {
-  mats <- list()
-  for (name in .ctVarDecompNeeded) {
-    value <- matrices[[paste0('subj_', name)]]
-    if (is.null(value)) next
-    mats[[name]] <- array(value[1L, si, , ], dim = dim(value)[3:4])
-  }
-  .ctVarDecompTrim(mats, nlatent, augmented = FALSE)
-}
-
-.ctVarDecompLaplaceComponents <- function(fit, design, nlatent, latents, type,
-  scale, gh, continuoustime, nmanifest, subjects) {
-
-  structure <- .ctFitRandomEffectLevels(fit)
-  levels <- vapply(structure, function(x) x$name, character(1L))
-  units <- lapply(structure, function(x) x$units)
-  names(units) <- levels
-  # Innermost first, then each level outside it, then the population -- the
-  # order `randomEffects=` means, and the order the differences are taken in.
-  steps <- c(levels, 'population')
-  matrices <- lapply(steps, function(level) .ctVarDecompLevelMatrices(fit, level))
-  names(matrices) <- steps
-
-  nvar <- nmanifest + if (latents) nlatent else 0L
-  value <- lapply(steps, function(...) matrix(NA_real_, length(subjects), nvar))
-  names(value) <- steps
-  persondet <- matrix(NA_real_, length(subjects), nvar)
-  personstoch <- matrix(NA_real_, length(subjects), nvar)
-  personmeas <- matrix(0, length(subjects), nvar)
-
-  for (index in seq_along(subjects)) {
-    si <- subjects[index]
-    rows <- which(design$subject == si)
     tdpreds <- if (!is.null(design$tdpreds))
       design$tdpreds[rows, , drop = FALSE] else NULL
-    for (level in steps) {
-      mats <- .ctVarDecompLevelPerson(matrices[[level]], si, nlatent)
+    for (s in seq_len(nsteps)) {
+      mats <- person$mats[[s]]
       moments <- .ctVarDecompPersonMoments(mats, design$time[rows], tdpreds,
         continuoustime)
       for (vi in seq_len(nmanifest)) {
         measured <- .ctVarDecompMeasurement(moments$linearmean[, vi],
           moments$linearvar[, vi], type[vi], mats$MANIFESTcov[vi, vi], scale, gh)
-        value[[level]][index, vi] <- mean(measured$expected)
-        # The within person terms belong to the subject's own trajectory, so
-        # they are read from the innermost level and the outer passes only
-        # supply the level means.
-        if (identical(level, steps[1L])) {
+        value[[s]][index, vi] <- mean(measured$expected)
+        # The within person terms belong to the person's own trajectory, so
+        # they come from the innermost step; the outer ones only supply the
+        # level means that the between terms are differences of.
+        if (s == 1L) {
           persondet[index, vi] <- .ctVarDecompPopVar(measured$expected)
           personstoch[index, vi] <- mean(measured$varmean)
           personmeas[index, vi] <- mean(measured$condvar)
@@ -625,8 +674,8 @@
       }
       if (latents) for (li in seq_len(nlatent)) {
         vi <- nmanifest + li
-        value[[level]][index, vi] <- mean(moments$latentmean[, li])
-        if (identical(level, steps[1L])) {
+        value[[s]][index, vi] <- mean(moments$latentmean[, li])
+        if (s == 1L) {
           persondet[index, vi] <- .ctVarDecompPopVar(moments$latentmean[, li])
           personstoch[index, vi] <- mean(moments$latentvar[, li])
         }
@@ -634,26 +683,28 @@
     }
   }
 
-  # Each level's own deviation, and its variance over that level's units.
-  contribution <- matrix(0, length(levels), nvar,
-    dimnames = list(levels, NULL))
-  for (l in seq_along(levels)) {
-    deviation <- value[[steps[l]]] - value[[steps[l + 1L]]]
-    unit <- units[[levels[l]]]
-    for (vi in seq_len(nvar)) {
-      d <- deviation[, vi]
-      if (!is.null(unit)) d <- as.numeric(tapply(d, unit[subjects], mean))
-      contribution[l, vi] <- if (length(d) > 1L) stats::var(d) else 0
+  # Each level's own departure from the level outside it, varied over that
+  # level's units so that a study with more subjects in it still counts once.
+  contribution <- if (!length(levels)) NULL else {
+    out <- matrix(0, length(levels), nvar, dimnames = list(levels, NULL))
+    for (l in seq_along(levels)) {
+      deviation <- value[[l]] - value[[l + 1L]]
+      unit <- vapply(persons, function(p) as.numeric(p$unit[l]), numeric(1L))
+      for (vi in seq_len(nvar)) {
+        d <- as.numeric(tapply(deviation[, vi], unit, mean))
+        out[l, vi] <- if (length(d) > 1L) stats::var(d) else 0
+      }
     }
+    out
   }
 
   list(
-    between = colSums(contribution),
+    between = if (is.null(contribution)) rep(0, nvar) else colSums(contribution),
     levels = contribution,
     within.deterministic = colMeans(persondet),
     within.stochastic = colMeans(personstoch),
     within.measurement = colMeans(personmeas),
-    npersons = length(subjects))
+    npersons = length(persons))
 }
 
 
@@ -930,12 +981,16 @@
 #'   same description and is handled the same way here -- and gets one
 #'   \code{between.<level>} column per level, each the variance of that
 #'   level's own departure from the level outside it. They are orthogonal by
-#'   construction and sum to \code{between}. Only the estimated (shrunk) route
-#'   is available for such a fit, and the outer levels are shrunk hardest
-#'   because they have the fewest units: on a 6-study, 30-subject example the
-#'   study level came back at 0.24 against a generating 0.62 and the subject
-#'   level at 0.03 against 0.22. Read those as lower bounds, and
-#'   \code{summary(fit)} for the population parameters themselves.
+#'   construction and sum to \code{between}.
+#'
+#'   \code{persons='estimated'} reads each level's fitted modes, which are
+#'   shrunk toward the level outside them by an amount that follows the
+#'   information per unit rather than the number of units: on a 6-study,
+#'   30-subject example the subject level retained 52 per cent of the
+#'   population standard deviation (ten occasions each) while the study level
+#'   retained 97 per cent (five subjects each). \code{persons='model'} draws
+#'   from each level's own fitted covariance instead and is not shrunk, which
+#'   is why it is the default.
 #'
 #'   \strong{Designs.} Nothing here assumes a balanced one. Each person is
 #'   evaluated over their own observation times, so everyone measured at the
@@ -1014,32 +1069,15 @@ ctVarianceDecomposition <- function(fit, method = c('auto', 'moment', 'simulatio
   # whether a subject's effect is a mode or a draw, which the message names.
   coordinates <- .ctFitIsJulia(fit) &&
     .ctSpecEffectsAreCoordinates(.ctBackendSpec(fit))
-  method_used <- if (coordinates) .ctBackendIntOverPop(.ctBackendSpec(fit)) else NA_character_
   if (identical(persons, 'auto')) {
-    persons <- if (.ctFitIsJulia(fit) && !coordinates) 'model' else 'estimated'
-    if (coordinates) {
-      sampled <- identical(method_used, 'none')
-      message("persons='estimated' for this intoverpop='", method_used,
-        "' fit: its random effects are separate coordinates rather than ",
-        'carrier states, so a person cannot be materialised at a drawn one. ',
-        'The between person variance below is the spread of the estimated ',
-        if (sampled) 'effects.' else paste0('modes, which shrinkage ',
-          'attenuates -- the outer levels hardest, since they have the ',
-          'fewest units.'))
-    } else if (identical(persons, 'estimated')) {
+    persons <- if (.ctFitIsJulia(fit)) 'model' else 'estimated'
+    if (identical(persons, 'estimated')) {
       message("persons='estimated' for this stan fit: drawing persons from the ",
         'population distribution needs the model matrices materialised at a ',
         'drawn set of random effects, which only the julia engine can do. The ',
         'between person variance below is therefore the spread of the ',
         'estimated subjects, which shrinkage attenuates.')
     }
-  }
-  if (identical(persons, 'model') && coordinates) {
-    stop("persons='model' is not available when the random effects are ",
-      "separate coordinates (intoverpop='laplace' or 'none'): drawing a person ",
-      "needs a draw from each level's own random effect covariance, and the ",
-      'engine materialises matrices at a carrier state, which such a fit has ',
-      "none of. Use persons='estimated'.", call. = FALSE)
   }
   if (identical(persons, 'model') && !.ctFitIsJulia(fit)) {
     stop("persons='model' needs a backend='julia' fit: it materialises the ",
@@ -1056,6 +1094,8 @@ ctVarianceDecomposition <- function(fit, method = c('auto', 'moment', 'simulatio
   if (!length(wanted)) stop('No rows for the requested subjects.', call. = FALSE)
 
   nmanifest <- length(manifestNames)
+  levels <- vapply(.ctFitRandomEffectLevels(fit), function(x) x$name,
+    character(1L))
   components <- if (identical(method, 'simulation')) {
     if (identical(persons, 'estimated')) {
       stop("method='simulation' draws its persons from the population ",
@@ -1066,20 +1106,21 @@ ctVarianceDecomposition <- function(fit, method = c('auto', 'moment', 'simulatio
     }
     .ctVarDecompSimulation(fit, design, nlatent, latents, type, scale,
       as.integer(npersons), as.integer(npaths), nmanifest, wanted)
-  } else if (coordinates) {
-    gh <- if (identical(scale, 'response')) .ctVarDecompGaussHermite(quadpoints) else NULL
-    .ctVarDecompLaplaceComponents(fit, design, nlatent, latents, type, scale,
-      gh, continuoustime, nmanifest, wanted)
   } else {
-    people <- if (.ctFitIsJulia(fit)) {
-      .ctVarDecompJuliaPersons(fit, design, nlatent, persons,
-        as.integer(npersons), wanted)
-    } else .ctVarDecompStanPersons(fit, design, nlatent, wanted)
+    people <- if (!.ctFitIsJulia(fit)) {
+      .ctVarDecompStanPersons(fit, design, nlatent, wanted, levels)
+    } else if (coordinates) {
+      .ctVarDecompCoordinatePersons(fit, design, nlatent, persons,
+        as.integer(npersons), wanted, levels)
+    } else {
+      .ctVarDecompCarrierPersons(fit, design, nlatent, persons,
+        as.integer(npersons), wanted, levels)
+    }
     people <- people[vapply(people, function(p) length(p$rows) > 0L, logical(1L))]
     if (!length(people)) stop('No usable persons.', call. = FALSE)
     gh <- if (identical(scale, 'response')) .ctVarDecompGaussHermite(quadpoints) else NULL
-    .ctVarDecompMomentComponents(fit, design, people, nlatent, latents, type,
-      scale, gh, continuoustime, nmanifest)
+    .ctVarDecompMomentComponents(fit, design, people, levels, nlatent, latents,
+      type, scale, gh, continuoustime, nmanifest)
   }
 
   out <- data.frame(

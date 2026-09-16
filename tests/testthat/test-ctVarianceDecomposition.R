@@ -202,7 +202,11 @@ test_that('simulation and moment agree on a model both can do', {
   # Neither the process nor the design gives this model a between person
   # difference, and both routes have to say so.
   expect_equal(moment$between, rep(0, nrow(moment)))
-  expect_lt(max(simulated$between), 1e-8)
+  # The moment route gets exactly zero -- the model declares no levels, so
+  # there is nothing to take a variance over. The simulation route estimates
+  # the same zero from draws, so it is small rather than exact, and how small
+  # depends on how many draws preceded it.
+  expect_lt(max(simulated$between), 0.01 * min(simulated$total))
   expect_equal(simulated$between + simulated$within, simulated$total)
 })
 
@@ -390,11 +394,37 @@ test_that('the two representations of individual differences agree', {
 
   expect_gt(min(augmented$between), 0)
   expect_gt(min(laplace$between), 0)
+  # Not "close": the same. Both representations are routed through one body
+  # over the same person structure, so at persons='estimated' -- where neither
+  # draws anything -- every component is identical. It was the between term
+  # differing by two thirds that started this.
   for (part in c('between', 'within.deterministic', 'within.stochastic',
     'within.measurement', 'total')) {
-    expect_equal(laplace[[part]], augmented[[part]], tolerance = 0.2,
+    expect_equal(laplace[[part]], augmented[[part]], tolerance = 1e-6,
       label = paste('laplace', part))
   }
+})
+
+test_that('drawing persons agrees across representations too', {
+  # The same comparison with both sides drawing from their own fitted
+  # population covariance rather than reading modes. Looser, because the two
+  # draw independently, but it is the route the default takes.
+  fits <- fit_intoverpop(datalong = datalong, model = estmodel, cores = 1,
+    verbose = 0)
+  drawn <- lapply(fits, function(f) {
+    set.seed(29)
+    suppressMessages(ctVarianceDecomposition(f, persons = 'model',
+      npersons = 800))
+  })
+  for (part in c('between', 'within.stochastic', 'within.measurement',
+    'total')) {
+    expect_equal(drawn$laplace[[part]], drawn$augmented[[part]],
+      tolerance = 0.12, label = paste('drawn', part))
+  }
+  # And drawing is not shrunk, so it exceeds what the modes give.
+  estimated <- suppressMessages(
+    ctVarianceDecomposition(fits$laplace, persons = 'estimated'))
+  expect_gt(min(drawn$laplace$between), min(estimated$between))
 })
 
 test_that('the random effect structure reads the same from either representation', {
@@ -463,11 +493,17 @@ test_that('a level above the subject gets its own between column', {
   # A between person variance that is actually there: the carrier route this
   # replaces returned zero for the same fit.
   expect_gt(min(out$between), 0)
-  # And the drawn route is refused by name rather than returning the modes
-  # under another label.
-  expect_error(ctVarianceDecomposition(fit, persons = 'model'),
-    'separate coordinates')
-  expect_message(ctVarianceDecomposition(fit), "persons='estimated'")
+  # The drawn route works here too, and is not shrunk: a level's modes are
+  # pulled toward the level outside them, and drawing from that level's own
+  # fitted covariance is not. The subject level is where it shows, since a
+  # study aggregates several subjects and is better determined than any of
+  # them -- shrinkage follows the information per unit, not the unit count.
+  drawn <- suppressMessages(ctVarianceDecomposition(fit, persons = 'model',
+    npersons = 400))
+  expect_true(all(c('between.id', 'between.study') %in% names(drawn)))
+  expect_equal(drawn$between.id + drawn$between.study, drawn$between)
+  expect_equal(drawn$between + drawn$within, drawn$total)
+  expect_gt(min(drawn$between.id), min(out$between.id))
 })
 
 test_that('a stan fit works through the estimated route and refuses the drawn one', {

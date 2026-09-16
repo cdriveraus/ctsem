@@ -113,12 +113,16 @@ The decomposition is a nested law of total variance over the
   same description and is handled the same way here -- and gets one
   \code{between.<level>} column per level, each the variance of that
   level's own departure from the level outside it. They are orthogonal by
-  construction and sum to \code{between}. Only the estimated (shrunk) route
-  is available for such a fit, and the outer levels are shrunk hardest
-  because they have the fewest units: on a 6-study, 30-subject example the
-  study level came back at 0.24 against a generating 0.62 and the subject
-  level at 0.03 against 0.22. Read those as lower bounds, and
-  \code{summary(fit)} for the population parameters themselves.
+  construction and sum to \code{between}.
+
+  \code{persons='estimated'} reads each level's fitted modes, which are
+  shrunk toward the level outside them by an amount that follows the
+  information per unit rather than the number of units: on a 6-study,
+  30-subject example the subject level retained 52 per cent of the
+  population standard deviation (ten occasions each) while the study level
+  retained 97 per cent (five subjects each). \code{persons='model'} draws
+  from each level's own fitted covariance instead and is not shrunk, which
+  is why it is the default.
 
   \strong{Designs.} Nothing here assumes a balanced one. Each person is
   evaluated over their own observation times, so everyone measured at the
