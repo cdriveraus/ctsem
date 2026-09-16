@@ -137,35 +137,47 @@ import(graphics)
 import(methods)
 import(stats)
 importFrom(Deriv,Simplify)
-importFrom(Rcpp,cpp_object_initializer)
-importFrom(Rcpp,evalCpp)
-importFrom(RcppParallel,CxxFlags)
-importFrom(RcppParallel,RcppParallelLibs)
-importFrom(cOde,jacobianSymb)
-importFrom(cOde,prodSymb)
+importFrom(Rcpp,
+  cpp_object_initializer,
+  evalCpp
+)
+importFrom(RcppParallel,
+  CxxFlags,
+  RcppParallelLibs
+)
+importFrom(cOde,
+  jacobianSymb,
+  prodSymb
+)
 importFrom(data.table,data.table)
 importFrom(mize,mize)
 importFrom(parallelly,makeClusterPSOCK)
-importFrom(plyr,aaply)
-importFrom(plyr,alply)
-importFrom(plyr,round_any)
-importFrom(rstan,As.mcmc.list)
-importFrom(rstan,constrain_pars)
-importFrom(rstan,get_num_upars)
-importFrom(rstan,get_sampler_params)
-importFrom(rstan,log_prob)
-importFrom(rstan,monitor)
-importFrom(rstan,sampling)
-importFrom(rstan,stan_model)
-importFrom(rstan,stanc)
-importFrom(rstan,unconstrain_pars)
+importFrom(plyr,
+  aaply,
+  alply,
+  round_any
+)
+importFrom(rstan,
+  As.mcmc.list,
+  constrain_pars,
+  get_num_upars,
+  get_sampler_params,
+  log_prob,
+  monitor,
+  sampling,
+  stan_model,
+  stanc,
+  unconstrain_pars
+)
 importFrom(rstantools,rstan_config)
 importFrom(splines,bs)
 importFrom(tibble,tibble)
 importFrom(tools,texi2pdf)
-importFrom(utils,as.relistable)
-importFrom(utils,capture.output)
-importFrom(utils,head)
-importFrom(utils,relist)
-importFrom(utils,tail)
+importFrom(utils,
+  as.relistable,
+  capture.output,
+  head,
+  relist,
+  tail
+)
 useDynLib(ctsem, .registration = TRUE)
