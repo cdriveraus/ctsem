@@ -77,8 +77,8 @@ generation completely.
 
 using LinearAlgebra, DiffResults
 
-export ctsem_state_dimension, ctsem_joint_loglikelihood, ctsem_joint_evaluate,
-    ctsem_generate_states
+export ctsem_state_dimension, ctsem_state_layout, ctsem_joint_loglikelihood,
+    ctsem_joint_evaluate, ctsem_generate_states
 
 """
 Poisson rate above which a count is drawn from its normal approximation rather
@@ -210,8 +210,13 @@ step earlier: it builds `M` from the standard deviations on the diagonal and
 the constrained correlation square root, then returns `M M'`. So this is not an
 approximation of that covariance nor a re-factorisation of it -- it is the
 factor the covariance was built from, which means a state drawn through it has
-exactly the covariance the filter would have carried, and a zero standard
+exactly the covariance `sdcovsqrt2cov` would have formed, and a zero standard
 deviation gives a zero row rather than a failed Cholesky.
+
+That is the covariance the filter carries only when the model has no population
+block. Where one exists the filter writes it over the carrier states' rows and
+columns afterwards, so an initial state belongs to `_ctsem_t0_factor!`
+(kalman_filters.jl) and not to this function.
 
 Reading it out of `sdcovsqrt2cov!`'s own scratch buffer would work today and
 would break silently the first time that function reuses the buffer.
@@ -304,6 +309,36 @@ back; nothing on this side has an RNG.
 """
 ctsem_state_dimension(objective::CTSEMObjective) =
     _ctsem_state_layout(objective).ndim
+
+"""
+    ctsem_state_layout(objective)
+
+Where each subject's innovations sit inside the vector `ctsem_generate_states`
+takes, so that a caller can hold part of a draw fixed and redraw the rest.
+
+Returns `ndim` (the whole length, as `ctsem_state_dimension` reports it),
+`nlatent` (the augmented state dimension), `ndiffusion`, and the zero-based
+`zoffsets` and `rowoffsets` of each subject's block. Subject `i` owns the
+entries from `zoffsets[i] + 1`, and the first `nlatent` of those are its
+initial state draw: the pass forms `T0MEANS + factor * z` from them, `factor`
+being the T0VAR factor, before any innovation is used.
+
+That is what a caller needs to draw one person and several paths for it. An
+individually varying parameter is carried as a state with no drift and no
+diffusion, so pinning the carrier entries of a subject's initial block and
+redrawing everything after them gives the same person a second trajectory.
+Holding those entries fixed pins the carrier *values* only when T0VAR has no
+covariance between the dynamic states and the carriers, since the factor is
+triangular; the caller is responsible for checking that, and
+ctVarianceDecomposition() in the R package does.
+"""
+function ctsem_state_layout(objective::CTSEMObjective)
+    layout = _ctsem_state_layout(objective)
+    return (ndim = layout.ndim, nlatent = layout.nlatent,
+        ndiffusion = layout.ndiffusion, nmanifest = layout.nmanifest,
+        nrows = layout.nrows, zoffsets = layout.zoffsets,
+        rowoffsets = layout.rowoffsets)
+end
 
 
 ################################################################################
@@ -624,9 +659,12 @@ function _ctsem_state_pass!(ws, params::AbstractVector{T}, data::AbstractMatrix,
     scratch = Vector{T}(undef, m)
     gaussian = Vector{Int}(undef, m)
 
-    # Initial state: T0MEANS plus the T0VAR factor applied to the first block
-    # of innovations.
-    _ctsem_sdcor_factor!(factor, pars.T0VAR, ws.bufferQ, ws.state_dim)
+    # Initial state: T0MEANS plus the initial covariance's factor applied to the
+    # first block of innovations. Through `_ctsem_t0_factor!` rather than
+    # straight from T0VAR, so that a model carrying random effects as augmented
+    # states draws them -- see that function for what building it from T0VAR
+    # alone silently did.
+    _ctsem_t0_factor!(factor, ws, pars, all_params)
     at = zoffset
     @inbounds for i in 1:n
         acc = T(pars.T0MEANS[i])

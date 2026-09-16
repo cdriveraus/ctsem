@@ -607,6 +607,42 @@ function ctsem_kalman(objective::CTSEMObjective, values::AbstractVecOrMat;
         loglik[i] = value
         if isfinite(value)
             _kalman_smooth!(trace, ws, offset + 1, nobs)
+            # Re-materialise at the smoothed state before recording.
+            #
+            # The row loop runs the predict group at the *start* of a row, from
+            # the state before that row's update, so when the pass ends
+            # `ws.pars` holds every state-dependent cell computed one
+            # observation short: a carrier state's CINT came out at the value
+            # the filter held going into the last row, not the one it held
+            # after it. Measured on a 20-subject, 25-occasion fit, that made
+            # ctSubjectPars() report each subject's parameter at a regression
+            # slope of 0.983 against the fully informed estimate -- and the
+            # shortfall is one observation, so it is far larger for a design
+            # with few occasions per subject.
+            #
+            # It also made the recorded matrices disagree with each other:
+            # `_ctsem_subject_matrices` overwrites T0MEANS with the smoothed
+            # state below, so the state was fully informed while every cell
+            # computed *from* that state was not. Both come from the smoothed
+            # state now.
+            #
+            # A carrier has no drift and no diffusion, so its smoothed value is
+            # its fully updated one; for a genuinely dynamic state the smoothed
+            # value at the first row is the state the T0 matrices describe,
+            # which is the point the recorded matrices are labelled with.
+            @inbounds for k in 1:n
+                ws.state[k] = trace.eta[_CTSEM_KALMAN_SMOOTH, offset + 1, k]
+            end
+            let all_params = getdata(ws.pars),
+                ctx = CTSEMRowContext(ws.state, ws.pars, view(sub.tdpreds, :, 1),
+                    sub.tipreds, sub.timesteps[1], zero(Float64), i, 1)
+                apply_complex_transforms_at_indices!(all_params,
+                    ws.predict_param_indices, sp.predict_transforms, ctx)
+                apply_complex_transforms_at_indices!(all_params,
+                    ws.td_param_indices, sp.td_transforms, ctx)
+                apply_complex_transforms_at_indices!(all_params,
+                    ws.update_param_indices, sp.update_transforms, ctx)
+            end
             # getdata(ws.pars), not ws.all_params: the filter copies the
             # materialized vector into the ComponentArray once and every
             # state-dependent transform writes there afterwards, so

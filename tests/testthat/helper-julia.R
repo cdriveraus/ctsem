@@ -109,6 +109,44 @@ fit_backends <- function(..., backends = test_backends(), stanargs = list()) {
   out
 }
 
+# ---------------------------------------------------------------------------
+# Fitting one model under both representations of individual differences
+#
+# `fit_backends()` above guards the stan/julia fork. This guards the larger one
+# inside julia: `intoverpop='augmented'` carries every varying parameter as a
+# latent state, `'laplace'` keeps them as separate coordinates, and the two
+# share no field of the specification -- `spec$random_effects` for one,
+# `spec$laplace$levels` for the other.
+#
+# A function that reads one and not the other does not error on the other. It
+# reports a model with no individual differences, which is a legitimate model,
+# so the wrong answer is shaped exactly like a right one. That is how
+# ctVarianceDecomposition() came to return a between person variance of zero for
+# every Laplace fit -- and it is why a reporting function that says anything
+# about individual differences should be run through this and compared, rather
+# than tested on whichever representation its author happened to use.
+#
+# Only 'laplace' can carry a level above the subject, so a model with one is
+# fitted that way alone and this helper is not the tool for it.
+
+#' Fit the same model under each representation of individual differences.
+#'
+#' Arguments go to `ctFit()` unchanged, minus `intoverpop` and `backend`.
+#' Returns a named list, `$augmented` and `$laplace`.
+fit_intoverpop <- function(..., representations = c("augmented", "laplace")) {
+  args <- list(...)
+  if (!is.null(args$intoverpop)) stop("fit_intoverpop() chooses intoverpop")
+  if (!is.null(args$backend)) stop("fit_intoverpop() is julia only")
+  out <- list()
+  for (rep in representations) {
+    a <- args
+    a$intoverpop <- rep
+    a$backend <- "julia"
+    out[[rep]] <- do.call(ctsem::ctFit, a)
+  }
+  out
+}
+
 # The summary sections both backends build, and that mean the same thing on
 # each. `parmatrices` is deliberately not here: it is compared by the tests
 # that care, row by matrix/row/col, because its row *order* differs between

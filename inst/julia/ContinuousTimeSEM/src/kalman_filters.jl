@@ -699,6 +699,67 @@ about what a fit had estimated. One placement, two callers.
 end
 
 """
+    _ctsem_t0_factor!(dest, ws, pars, all_params)
+
+The factor `M` with `M M'` the initial covariance the filter carries, written
+to `dest`.
+
+Which is not a factor of `sdcovsqrt2cov(T0VAR)` whenever the model has a
+population block. `_apply_population_block!` above drops the carrier states'
+rows and columns of that covariance and writes the population one over them,
+and T0VAR's own carrier entries are *zero* -- the augmentation puts a random
+effect's spread in RAWPOPVAR, not in T0VAR. So a factor built from T0VAR alone
+gives every carrier state a variance of zero, and every subject starts at the
+population mean.
+
+Nothing failed when it did. The state-explicit pass and the particle filter
+both built their factor that way, so for an `intoverpop='augmented'` model the
+joint density did not depend on the carrier innovations at all -- their
+gradient was exactly the prior's. `intoverstates=false` is the route for
+fitting by *sampling*, the joint mode being degenerate, so what that cost was a
+sampler that carried no individual differences and wandered in one flat
+direction per subject per effect. The particle filter reported the likelihood
+of a model it had not been given, while its own docstring said those
+coordinates rode along.
+
+This is the factor twin of `_place_population_block!`, and it lives beside it
+for the reason that function's docstring gives about its own two callers: the
+filter and the summary once built the initial covariance their own ways, and
+that is how they came to disagree about what a fit had estimated. Three ways
+was one too many.
+
+With no population block this is exactly `_ctsem_sdcor_factor!` and nothing
+changes -- deliberately, so a model with no random effects keeps the
+seed-for-seed generation it already had. With one, the covariance is built the
+way the filter builds it and then factored, `_ctsem_lower_chol!` being the
+semi-definite factorisation a carrier state with no diffusion of its own needs.
+"""
+@inline function _ctsem_t0_factor!(dest, ws, pars, all_params)
+    if isempty(ws.population_indices)
+        return _ctsem_sdcor_factor!(dest, pars.T0VAR, ws.bufferQ, ws.state_dim)
+    end
+    n = _val(ws.state_dim)
+    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.T0VAR, ws.covmatcode,
+        ws.state_dim)
+    @inbounds for j in 1:n, i in 1:n
+        dest[i, j] = ws.bufferQ.out[i, j]
+    end
+    _copy_lower_to_upper!(dest, ws.state_dim)
+    _place_population_block!(dest, all_params, ws.population_indices,
+        ws.population_range, ws.population_covmatcode, ws.population_scale,
+        ws.population_buffer)
+    _ctsem_lower_chol!(dest, n)
+    # `_ctsem_lower_chol!` writes only the lower triangle, and both callers
+    # multiply by the whole matrix. Left alone, the upper triangle still holds
+    # the covariance this was built from and would be read as part of the
+    # factor.
+    @inbounds for j in 2:n, i in 1:(j - 1)
+        dest[i, j] = zero(eltype(dest))
+    end
+    return dest
+end
+
+"""
     _extended_kalman_filter_continuous!(ws, params, data, timesteps, sp, tdpreds,
                                         tipreds, subject, max_timestep, trace,
                                         generate)

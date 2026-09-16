@@ -35,8 +35,7 @@
   laplace <- fit$model_spec$laplace
   if (is.null(laplace) || is.null(laplace$levels)) return(NULL)
   if (length(laplace$levels) != 1L) return(.ctBackendEffectIndexNested(fit))
-  level <- laplace$levels[[1L]]
-  parameters <- as.character(level$param)
+  parameters <- .ctSpecRandomEffectLevels(fit$model_spec)[[1L]]$params
   if (!length(parameters)) return(NULL)
   subjects <- fit$model_spec$subject_starts
   nsubjects <- if (is.null(subjects)) 0L else length(subjects)
@@ -74,13 +73,14 @@
   subject <- as.integer(layout$first_member)
   nmembers <- as.integer(layout$nmembers)
 
+  structure <- .ctSpecRandomEffectLevels(fit$model_spec)
   parameter <- vapply(seq_along(within), function(i) {
-    pars <- as.character(laplace$levels[[level_index[i]]]$param)
+    pars <- structure[[level_index[i]]]$params
     if (within[i] >= 1L && within[i] <= length(pars)) pars[within[i]] else
       paste0("effect", within[i])
   }, character(1))
   levelname <- vapply(level_index, function(l) {
-    nm <- laplace$levels[[l]]$name
+    nm <- structure[[l]]$name
     if (is.null(nm) || !nzchar(nm)) paste0("level", l) else as.character(nm)
   }, character(1))
 
@@ -102,33 +102,30 @@
     parameter = parameter, label = label, stringsAsFactors = FALSE)
 }
 
-# The grouping identifier a block's members share, when the fit kept the column.
+# The grouping identifier a block's members share.
+#
+# Read off the level structure rather than looked up in the data. The
+# specification already carries both halves -- `units`, which unit of a level
+# each subject is in, and `labels`, the identifier the user wrote for each unit
+# -- and reconstructing them here meant guessing which column of `spec$data`
+# held the subject id, which is what once left every group labelled NA. One
+# fewer place that has to know how a hierarchy is stored.
 #' @keywords internal
 .ctBackendGroupIds <- function(fit, laplace, levelname, subject, nmembers) {
   out <- rep(NA_character_, length(subject))
-  # `.ctBackendSpec(fit)$data`, not the top-level `fit$data`: the latter is now
-  # the sentinel-cleaned `standata` structure (for `$data`/`$standata` parity
-  # with a stan fit, see R/ctFit.R) and no longer a data.frame with the user's
-  # original column names. `model_spec$data` is the long data.frame
-  # `.ctJuliaPrepare()` kept for exactly this kind of lookup and is unaffected
-  # by that change.
-  d <- .ctBackendSpec(fit)$data
-  if (is.null(d)) return(out)
-  # The subject identifier is not always called `id`: a nested model names its
-  # levels, and the first level's name *is* the subject column. Looking only
-  # for `id` is what left every group labelled NA.
-  idname <- if (length(laplace$levels)) laplace$levels[[1L]]$name else NULL
-  idcol <- if (!is.null(d$id)) d$id else
-    if (!is.null(idname) && idname %in% names(d)) d[[idname]] else NULL
-  if (is.null(idcol)) return(out)
+  structure <- .ctSpecRandomEffectLevels(fit$model_spec)
+  if (!length(structure)) return(out)
+  names(structure) <- vapply(structure, function(x) x$name, character(1))
   for (l in unique(levelname)) {
-    if (!l %in% names(d)) next
-    # First appearance order, which is how the engine numbers subjects.
-    firstrow <- match(unique(idcol), idcol)
-    bysubject <- as.character(d[[l]][firstrow])
+    level <- structure[[l]]
+    if (is.null(level) || is.null(level$labels)) next
+    # A block's members share a unit, so the first member's unit names it.
     take <- levelname == l & nmembers > 1L & subject >= 1L &
-      subject <= length(bysubject)
-    out[take] <- bysubject[subject[take]]
+      subject <= length(level$units)
+    if (!any(take)) next
+    unit <- level$units[subject[take]]
+    out[take] <- ifelse(unit >= 1L & unit <= length(level$labels),
+      level$labels[unit], NA_character_)
   }
   out
 }
