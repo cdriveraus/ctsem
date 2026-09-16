@@ -33,5 +33,21 @@ setwd(rprojroot::find_root(rprojroot::has_file("DESCRIPTION")))
 roxygen2::roxygenise(
   load_code = function(p) pkgload::load_all(p, compile = FALSE, quiet = TRUE)$env)
 
+# Whatever the installed roxygen2 writes is what gets committed, including the
+# `Config/roxygen2/version` field it maintains in DESCRIPTION and any change of
+# layout a new version brings -- 8.1.0 groups `importFrom` by package where
+# 8.0.0 wrote one line per function. Nothing here pins a version and nothing
+# should: reverting a reformat to keep a diff small leaves the generated files
+# disagreeing with the tool that generates them, and the next session
+# regenerates it again.
+#
+# So the check below is about content, not layout. When a version change makes
+# the diff large, compare what NAMESPACE *means* rather than reading it:
+# parseNamespaceFile() on both, exports and S3methods as sets, and importFrom
+# expanded to (package, symbol) pairs first -- the two layouts give a different
+# number of entries for the same imports, so comparing entries reports a
+# difference that is not there.
+
 cat("\nCheck `git diff NAMESPACE` before committing.",
-  "\nAn unexpected export() line means a stray @export tag in R/, not a roxygen bug.\n")
+  "\nAn unexpected export() line means a stray @export tag in R/, not a roxygen bug.",
+  "\nA wholesale change of layout is a roxygen version change: commit it.\n")
