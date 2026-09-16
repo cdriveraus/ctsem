@@ -218,11 +218,51 @@ test_that("subject matrices match Stan's, and only the varying ones vary", {
   # Stan only stores the matrices that can vary, so this list is short by
   # construction -- but it must contain the ones this model varies.
   expect_true(all(c("subj_T0MEANS", "subj_DRIFT", "subj_CINT") %in% compared))
+
+  # The matrices a carrier state is *computed from* no longer agree, and that
+  # is the point rather than a tolerance to widen.
+  #
+  # Both backends record a subject's matrices at the end of its pass, and both
+  # then overwrite T0MEANS with the smoothed state while leaving every cell
+  # derived from that state where the forward pass left it -- one observation
+  # short, since the transforms run at the *start* of a row from the state
+  # before that row's update. Stan's writer says so in as many words:
+  # "t0means updated, other pars as per final time point" (R/ctModelWriter.R).
+  # So the two agreed because julia mirrored stan, which is what makes a parity
+  # check blind to an inherited mistake.
+  #
+  # julia re-materialises at the smoothed state now. The evidence that this is
+  # the right target rather than merely a different one: ctSubjectPars() on an
+  # augmented fit and on the Laplace fit of the same data -- a filtered carrier
+  # against a per-subject Newton solve, sharing no code -- went from a
+  # regression slope of 0.926 to exactly 1. Stan is the one behind; it is
+  # deprecated, and fixing it means changing the generated program.
+  #
+  # The shortfall is one observation, so it is worst where there are fewest:
+  # this fixture has four occasions per subject.
+  behind <- c("subj_DRIFT", "subj_CINT", "subj_asymDIFFUSIONcov", "subj_asymCINT")
   for (name in compared) {
     expect_equal(dim(extracted[[name]]), dim(stan[[name]]), info = name)
+    if (name %in% behind) next
     expect_equal(as.numeric(extracted[[name]]), as.numeric(stan[[name]]),
       tolerance = 1e-6, info = name)
   }
+
+  # What replaces the comparison for those: the returned object has to be
+  # consistent with itself. A carrier state has no drift and no diffusion, so
+  # the CINT reported beside it must be the CINT that state implies -- which is
+  # exactly what was false while the two came from different rows.
+  nlatent <- fit$model_spec$nlatent
+  carrier <- (nlatent + 1L):fit$model_spec$nlatent_augmented
+  population <- suppressMessages(ctsem:::ctBackendParMatrices(fit, trim = FALSE))
+  implied <- vapply(seq_len(dim(extracted$subj_CINT)[2]), function(si) {
+    state <- as.numeric(population$T0MEANS)
+    state[carrier] <- extracted$subj_T0MEANS[1, si, carrier, 1]
+    as.numeric(suppressMessages(ctsem:::ctBackendParMatrices(fit, state = state,
+      trim = FALSE))$CINT)[seq_len(nlatent)]
+  }, numeric(nlatent))
+  expect_equal(as.numeric(t(implied)),
+    as.numeric(extracted$subj_CINT[1, , , 1]), tolerance = 1e-5)
 
   # LAMBDA is fixed in this model, so it cannot differ between subjects; DRIFT
   # has an individually varying cross effect, so it must.
