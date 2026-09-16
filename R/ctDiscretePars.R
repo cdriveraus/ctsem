@@ -66,15 +66,16 @@ ctStanParnames <- ctRawParnames
 #'@param nsamples Number of samples from the stanfit to use for plotting. Higher values will
 #'increase smoothness / accuracy, at cost of plotting speed. Values greater than the total
 #'number of samples will be set to total samples.
-#'@param observational What a "one unit change in process c" is taken to bring
+#'@param impulseType What a "one unit change in process c" is taken to bring
 #'with it. Every variant is \code{dtDRIFT(t) \%*\% C} for a different companion
 #'matrix \code{C}, whose column c says what else moves.
 #'\describe{
-#'  \item{\code{FALSE}, \code{'experimental'}}{\code{C = I}. Nothing else
-#'    moves, because the change was imposed. This is the \emph{partial}
-#'    regression \code{E[x(t+u)|x(t)]}, and the only variant that is a property
-#'    of the dynamics alone.}
-#'  \item{\code{TRUE}, \code{'observational'}}{\code{C = Sigma diag(Sigma)^-1}
+#'  \item{\code{'unit'} (the default)}{\code{C = I}. An impulse of one unit
+#'    (one standard deviation when \code{standardise=TRUE}) is applied to
+#'    process c alone and nothing else moves, because the change was imposed.
+#'    This is the \emph{partial} regression \code{E[x(t+u)|x(t)]}, and the
+#'    only variant that is a property of the dynamics alone.}
+#'  \item{\code{'observed'}}{\code{C = Sigma diag(Sigma)^-1}
 #'    with \code{Sigma = asymDIFFUSIONcov}. Process c is \emph{observed} one
 #'    unit above expectation and the others are not held fixed, so they move by
 #'    \code{Sigma_rc/Sigma_cc}. This is the \emph{simple} regression -- what
@@ -89,11 +90,21 @@ ctStanParnames <- ctRawParnames
 #'}
 #'The companion matrices are asymmetric, and must be: a one unit move in a
 #'wide-spread process implies more movement in a narrow one than the reverse.
-#'\code{'observational'} and \code{'shock'} use different covariance matrices
+#'\code{'observed'} and \code{'shock'} use different covariance matrices
 #'because they ask different questions, and coincide only under isotropic decay
 #'with no cross effects.
-#'@param standardise Logical. If TRUE, output is standardised according to expected total within subject variance, given by the
-#'asymDIFFUSIONcov matrix.
+#'@param observational Deprecated. Use \code{impulseType}: \code{FALSE} is
+#'\code{'unit'} and \code{TRUE} is \code{'observed'}.
+#'@param standardise Logical, \code{FALSE} by default. If \code{TRUE}, report
+#'the effect of a one standard deviation change in process c as a change in r's
+#'own standard deviations, taking both scales from the stationary within
+#'subject covariance \code{asymDIFFUSIONcov}. That makes effects between
+#'processes on different scales comparable, and is what \code{\link{ctNetwork}}
+#'reports by default. \code{FALSE} leaves the effects in the processes' own
+#'units, so \code{impulseType='unit', standardise=FALSE} is the bare
+#'\code{expm(DRIFT*t)}. A system with no stationary variance has nothing to
+#'standardise by, and those draws are returned as NaN with a message. The plot
+#'title states which scale was used either way.
 #'@param cov Logical. If TRUE, covariances are returned instead of regression coefficients.
 #'@param plot Logical. If TRUE, ggplots output using \code{\link{ctDiscreteParsPlot}}
 #'instead of returning output.
@@ -130,12 +141,13 @@ ctStanParnames <- ctRawParnames
 #'print(g)
 #'@details
 #'Two of these combinations are quantities you may already know under other
-#'names. \code{observational=FALSE} is the discrete time autoregression and
-#'cross-lagged matrix, \code{expm(DRIFT*t)}. \code{observational=TRUE} with
-#'\code{standardise=TRUE} is the model implied \emph{cross-correlation
-#'function}, \code{Cor(x_r(t+u), x_c(t))} -- the model's counterpart to the
-#'empirical autocorrelations \code{\link{ctACF}} computes from the data, and
-#'equal to the latent correlation matrix at \code{t=0}.
+#'names. \code{impulseType='unit'} with \code{standardise=FALSE} is the
+#'discrete time autoregression and cross-lagged matrix, \code{expm(DRIFT*t)}.
+#'\code{impulseType='observed'} with \code{standardise=TRUE} is the model
+#'implied \emph{cross-correlation function},
+#'\code{Cor(x_r(t+u), x_c(t))} -- the model's counterpart to the empirical
+#'autocorrelations \code{\link{ctACF}} computes from the data, and equal to
+#'the latent correlation matrix at \code{t=0}.
 #'
 #'If plot=TRUE, the function will return a ggplot2 object
 #'(and hence needs to be printed if intended to display within a loop).
@@ -144,8 +156,9 @@ ctStanParnames <- ctRawParnames
 #'@export
 ctDiscretePars<-function(fit, subjects='popmean',
   times=seq(from=0,to=10,by=.1),
-  nsamples=200,observational=FALSE,standardise=FALSE,
-  cov=FALSE, plot=FALSE,cores=2,state=NULL,method='linearise',..., ctstanfitobj){
+  nsamples=200,impulseType='unit',standardise=FALSE,
+  cov=FALSE, plot=FALSE,cores=2,state=NULL,method='linearise',...,
+  ctstanfitobj, observational){
 
   if(missing(fit)){
     if(missing(ctstanfitobj)) stop('fit must be supplied')
@@ -154,6 +167,18 @@ ctDiscretePars<-function(fit, subjects='popmean',
   } else if(!missing(ctstanfitobj)) {
     stop('Use only one of fit or deprecated ctstanfitobj')
   }
+
+  # `observational` said what the *design* was; `impulseType` says what the
+  # companion matrix does, which is what actually varies and what the two
+  # non-logical values never fitted into. The logical still resolves.
+  if(!missing(observational)){
+    if(!missing(impulseType)) stop(call.=FALSE,
+      'Use only one of impulseType or deprecated observational')
+    warning(call.=FALSE, "observational is deprecated, use impulseType='",
+      .ctCompanionType(observational), "'")
+    impulseType <- observational
+  }
+  impulseType <- .ctCompanionType(impulseType)
 
   method <- match.arg(method, c('linearise','simulate'))
 
@@ -167,14 +192,16 @@ ctDiscretePars<-function(fit, subjects='popmean',
     ctmS <- .ctFitModelObject(fit)
     if(!ctmS$continuoustime) stop(call.=FALSE,
       "method='simulate' is for continuous time models.")
+    if(standardise) .ctContextStandardiseMessage(fit)
     out <- .ctDiscreteParsSimulate(fit, times=times,
       state=if(is.null(state)) 'asymptotic' else state, nsamples=nsamples,
-      observational=observational, standardise=standardise)
+      impulseType=impulseType, standardise=standardise)
     times <- attr(out,'times')
     dimnames(out) <- list(Sample=seq_len(dim(out)[1]), Subject='popmean',
       `Time interval`=times, row=ctmS$latentNames, col=ctmS$latentNames)
-    attributes(out)$observational <- observational
+    attributes(out)$impulseType <- impulseType
     attributes(out)$cov <- FALSE
+    attributes(out)$standardise <- standardise
     attributes(out)$method <- 'simulate'
     out <- .ctContextAttach(out, fit)
     if(plot) out <- ctDiscreteParsPlot(out, ...)
@@ -211,6 +238,15 @@ ctDiscretePars<-function(fit, subjects='popmean',
   e<-do.call(ctExtract,c(list(fit,subjectMatrices = subjects[1]!='popmean',cores=cores,
     nsamples = min(nsamples,.ctFitNsamples(fit)),
     subjects=extractSubjects),stateArgs))
+
+  # A fit with no stationary variance to standardise by says so and carries on,
+  # rather than returning a block of NaN. Same fallback as ctNetwork(), same
+  # wording.
+  if(standardise && is.null(e$pop_asymDIFFUSIONcov)){
+    message('standardise=TRUE needs a stationary variance to standardise by, ',
+      'and this fit has none; reporting unstandardised regressions.')
+    standardise <- FALSE
+  }
 
   nsubjects <- dim(e$subj_DRIFT)[2]
   if(is.null(nsubjects)) nsubjects=1
@@ -258,14 +294,16 @@ ctDiscretePars<-function(fit, subjects='popmean',
   .ctContextMessage(fit, stateLabel,
     paste0("expm(DRIFT*t) is therefore the transition of the model linearised ",
       "there, not the nonlinear system's own interval regression."))
+  if(standardise) .ctContextStandardiseMessage(fit, stateLabel)
 
-  out <- ctDiscreteParsDrift(ctpars,times, observational, standardise, cov=cov,discreteInput = ctm$continuoustime==FALSE)
+  out <- ctDiscreteParsDrift(ctpars,times, impulseType, standardise, cov=cov,discreteInput = ctm$continuoustime==FALSE)
 
   dimnames(out)<- list(Sample=samples, Subject=subjects,
     `Time interval`=times, row=latentNames, col=latentNames)
 
-  attributes(out)$observational <- observational
+  attributes(out)$impulseType <- impulseType
   attributes(out)$cov <- cov
+  attributes(out)$standardise <- standardise
   attributes(out)$method <- 'linearise'
   attributes(out)$stateLabel <- stateLabel
   out <- .ctContextAttach(out, fit)
@@ -284,7 +322,7 @@ ctStanDiscretePars <- ctDiscretePars
 
 
 
-ctDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=FALSE,
+ctDiscreteParsDrift<-function(ctpars,times, impulseType,  standardise,cov=FALSE,
   types='dtDRIFT',discreteInput=FALSE, quiet=FALSE){
 
   nl=dim(ctpars$DRIFT)[3]
@@ -302,7 +340,7 @@ ctDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=FALS
 
 
   nonstationary <- 0L
-  companionType <- .ctCompanionType(observational)
+  companionType <- .ctCompanionType(impulseType)
 
   if('dtDRIFT' %in% types){
     ctpars$dtDRIFT <- array(NA, dim=c(dim(ctpars$DRIFT)[1],max(unlist(nsubs)),length(times),dim(ctpars$DRIFT)[3:4]))
@@ -323,7 +361,7 @@ ctDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=FALS
         for(ti in 1:length(times)){
           if(!discreteInput) ctpars$dtDRIFT[i,j,ti,,] <- expm::expm(as.matrix(ctpars$DRIFT[i,min(j,nsubs$DRIFT),,] * times[ti]))
           if(discreteInput) ctpars$dtDRIFT[i,j,ti,,] <- mpow(as.matrix(ctpars$DRIFT[i,min(j,nsubs$DRIFT),,]),times[ti])
-          if(!identical(companionType,'experimental')){
+          if(!identical(companionType,'unit')){
             # Every variant is dtDRIFT %*% C; only the companion matrix C
             # differs. See R/ctCompanionShock.R for what each one means.
             C <- .ctCompanionMatrix(companionType,
@@ -427,8 +465,21 @@ ctDiscreteParsPlot<- function(x,indices='all',
 
   if(!is.null(title)){
     if(title %in% 'auto'){
+      # Whether the curves are in standard deviations or in the processes' own
+      # units is not recoverable from the picture, and the two differ by a
+      # factor per process pair. NULL for an object made before the attribute
+      # existed, where the scale is unknown and is better not claimed.
+      # `observational` is read as a fallback for the same reason.
+      std <- attributes(x)$standardise
+      impulse <- attributes(x)$impulseType
+      if(is.null(impulse)) impulse <- attributes(x)$observational
+      # An object old enough to carry neither is the default, which is what it
+      # would have been computed with.
+      if(is.null(impulse)) impulse <- 'unit'
       title= paste0('Temporal ',ifelse(attributes(x)$cov,'covariance','regressions'),
-        ' | ',ifelse(attributes(x)$observational,'correlated','independent'), ' shock of 1.0')
+        ' | ', .ctCompanionLabel(impulse, std),
+        if(isTRUE(std)) ', standardised' else
+          if(isFALSE(std)) ', unstandardised' else '')
     }
   }else title=title
 

@@ -43,7 +43,8 @@ showUncertainty is TRUE.}
 when \code{doDynamics=TRUE}. Arguments matching
 \code{ctDiscreteParsPlot} are automatically routed to the plot call.
 Internally controlled arguments \code{fit}, \code{ctstanfitobj}, \code{plot},
-\code{subjects}, \code{observational}, \code{x}, \code{quantiles}, and
+\code{subjects}, \code{impulseType} (and its deprecated spelling
+\code{observational}), \code{x}, \code{quantiles}, and
 \code{splitSubjects} are ignored if supplied.}
 
 \item{showUncertainty}{A logical value indicating whether to plot the uncertainty of the predictions. Default is TRUE.}

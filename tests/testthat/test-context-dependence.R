@@ -219,7 +219,7 @@ test_that('a non-stationary standardisation returns NaN rather than aborting', {
     DIFFUSIONcov = array(diag(2), dim = c(1, 2, 2)),
     asymDIFFUSIONcov = array(c(-1, 0, 0, -1), dim = c(1, 2, 2)))
   expect_message(
-    out <- ctsem:::ctDiscreteParsDrift(pars, times = 1, observational = FALSE,
+    out <- ctsem:::ctDiscreteParsDrift(pars, times = 1, impulseType = 'unit',
       standardise = TRUE, quiet = FALSE),
     'no stationary variance')
   expect_true(all(is.nan(out)))
@@ -302,22 +302,23 @@ test_that('each companion matrix is what it claims to be', {
   companion <- function(type) ctsem:::.ctCompanionMatrix(type, diffusion,
     stationary, 2)
 
-  # experimental: nothing else moves.
-  expect_equal(companion('experimental'), diag(2))
-  # observational: the conditional expectation under the STATE covariance.
-  expect_equal(companion('observational'),
+  # unit: nothing else moves. .ctCompanionMatrix() takes a resolved name, so
+  # the old spellings are .ctCompanionType()'s business and not tested here.
+  expect_equal(companion('unit'), diag(2))
+  # 'observed': the conditional expectation under the STATE covariance.
+  expect_equal(companion('observed'),
     stationary %*% diag(1 / diag(stationary)))
   # shock: the conditional expectation under the INNOVATION covariance.
   expect_equal(companion('shock'), diffusion %*% diag(1 / diag(diffusion)))
   # These are different questions and must give different answers whenever the
   # state and innovation correlations differ.
-  expect_false(isTRUE(all.equal(companion('observational'), companion('shock'))))
+  expect_false(isTRUE(all.equal(companion('observed'), companion('shock'))))
 
   # Every one has a unit diagonal -- "process c moves by one unit" -- and is
   # asymmetric, because E[x_2|x_1=1] and E[x_1|x_2=1] are different numbers
   # unless the variances match. A correlation matrix is symmetric and so can
   # never be any of these.
-  for (type in c('observational', 'shock')) {
+  for (type in c('observed', 'shock')) {
     expect_equal(diag(companion(type)), c(1, 1))
     expect_false(isTRUE(all.equal(companion(type), t(companion(type)))))
   }
@@ -333,9 +334,32 @@ test_that('each companion matrix is what it claims to be', {
 })
 
 test_that('the historical logical argument still selects the right two', {
-  expect_equal(ctsem:::.ctCompanionType(FALSE), 'experimental')
-  expect_equal(ctsem:::.ctCompanionType(TRUE), 'observational')
+  expect_equal(ctsem:::.ctCompanionType(FALSE), 'unit')
+  expect_equal(ctsem:::.ctCompanionType(TRUE), 'observed')
   expect_equal(ctsem:::.ctCompanionType('shock'), 'shock')
+  # And the pre-3.12.0 names, which a saved object and a deprecated
+  # observational= both still arrive with.
+  expect_equal(ctsem:::.ctCompanionType('experimental'), 'unit')
+  expect_equal(ctsem:::.ctCompanionType('observational'), 'observed')
+})
+
+test_that('observational= is accepted, deprecated, and refused alongside impulseType', {
+  utils::data('ctstantestfit', package = 'ctsem', envir = environment())
+  expect_warning(out <- suppressMessages(ctDiscretePars(ctstantestfit,
+    times = c(0, 1), nsamples = 3, observational = TRUE)),
+    "impulseType='observed'")
+  expect_equal(attributes(out)$impulseType, 'observed')
+  expect_error(ctDiscretePars(ctstantestfit, times = 1, observational = TRUE,
+    impulseType = 'shock'), 'only one of')
+
+  # ctNetwork shares the argument and therefore shares the deprecation.
+  m <- ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
+    manifestNames = c('y1', 'y2'), latentNames = c('a', 'b'), LAMBDA = diag(2),
+    DRIFT = matrix(c(-1, 0, .5, -2), 2, 2, byrow = TRUE),
+    DIFFUSION = matrix(c(1, 0, .3, 1), 2, 2, byrow = TRUE))
+  expect_warning(net <- ctNetwork(m, dt = 1, quiet = TRUE, observational = TRUE),
+    "impulseType='observed'")
+  expect_equal(attributes(net)$impulseType, 'observed')
 })
 
 test_that('ctDiscreteParsDrift applies the companion matrix it was asked for', {
@@ -350,16 +374,16 @@ test_that('ctDiscreteParsDrift applies the companion matrix it was asked for', {
   transition <- as.matrix(Matrix::expm(drift * 1.5))
 
   for (type in ctsem:::.ctCompanionTypes) {
-    got <- ctsem:::ctDiscreteParsDrift(pars, times = 1.5, observational = type,
+    got <- ctsem:::ctDiscreteParsDrift(pars, times = 1.5, impulseType = type,
       standardise = FALSE, quiet = TRUE)
     expect_equal(got[1, 1, 1, , ],
       transition %*% ctsem:::.ctCompanionMatrix(type, diffusion, stationary, 2),
       ignore_attr = TRUE)
   }
 
-  # Standardising composes on top: S^-1 (dtA C) S. For 'observational' that is
+  # Standardising composes on top: S^-1 (dtA C) S. For 'observed' that is
   # the standardised simple regression, S^-1 dtA S R.
-  std <- ctsem:::ctDiscreteParsDrift(pars, times = 1.5, observational = TRUE,
+  std <- ctsem:::ctDiscreteParsDrift(pars, times = 1.5, impulseType = 'observed',
     standardise = TRUE, quiet = TRUE)
   expect_equal(std[1, 1, 1, , ],
     solve(scales) %*% transition %*% scales %*% cov2cor(stationary),
@@ -370,16 +394,16 @@ test_that('a process with no diffusion gets no companions rather than NaN', {
   pars <- list(DRIFT = array(matrix(c(-.4, .1, 0, -.3), 2, 2), dim = c(1, 2, 2)),
     DIFFUSIONcov = array(matrix(c(1, 0, 0, 0), 2, 2), dim = c(1, 2, 2)),
     asymDIFFUSIONcov = array(matrix(c(1, .5, .5, 4), 2, 2), dim = c(1, 2, 2)))
-  out <- ctsem:::ctDiscreteParsDrift(pars, times = 1, observational = 'shock',
+  out <- ctsem:::ctDiscreteParsDrift(pars, times = 1, impulseType = 'shock',
     standardise = FALSE, quiet = TRUE)
   expect_true(all(is.finite(out)))
 })
 
-# observational + standardise is the model implied cross-correlation function,
+# impulseType='observed' + standardise is the model implied cross-correlation
 # Cor(x_r(t+u), x_c(t)) -- the counterpart to what ctACF computes from data.
 # Verified against a simulated series separately; pinned here algebraically so
 # it runs in milliseconds.
-test_that('observational and standardise together give the cross-correlation', {
+test_that('observed impulses and standardise give the cross-correlation', {
   drift <- matrix(c(-.4, .15, .05, -.3), 2, 2)
   diffusion <- matrix(c(1, 1.6, 1.6, 16), 2, 2)
   stationary <- matrix(solve(kronecker(diag(2), drift) + kronecker(drift, diag(2)),
@@ -389,7 +413,7 @@ test_that('observational and standardise together give the cross-correlation', {
     asymDIFFUSIONcov = array(stationary, dim = c(1, 2, 2)))
 
   for (lag in c(0, 1.5, 4)) {
-    got <- ctsem:::ctDiscreteParsDrift(pars, times = lag, observational = TRUE,
+    got <- ctsem:::ctDiscreteParsDrift(pars, times = lag, impulseType = 'observed',
       standardise = TRUE, quiet = TRUE)[1, 1, 1, , ]
     # Cor(x_r(t+u), x_c(t)) = [dtA %*% Sigma]_rc / (sd_r sd_c)
     sdv <- sqrt(diag(stationary))
@@ -399,7 +423,98 @@ test_that('observational and standardise together give the cross-correlation', {
   }
 
   # At lag zero that is just the latent correlation matrix.
-  at0 <- ctsem:::ctDiscreteParsDrift(pars, times = 0, observational = TRUE,
+  at0 <- ctsem:::ctDiscreteParsDrift(pars, times = 0, impulseType = 'observed',
     standardise = TRUE, quiet = TRUE)[1, 1, 1, , ]
   expect_equal(at0, cov2cor(stationary), ignore_attr = TRUE)
+})
+# ctDiscretePars(standardise=) ------------------------------------------------
+#
+# standardise=TRUE is the default from 3.12.0, so what it divides by is now
+# load bearing for anyone who calls the function at all. The continuous time
+# algebra is pinned above; this is the discrete time counterpart, which uses a
+# different stationary variance (X = A X A' + Q rather than the continuous
+# Lyapunov solution) and would be silently wrong if the same solve were used
+# for both.
+test_that('a discrete time model standardises by the discrete stationary variance', {
+  A <- matrix(c(.6, .15, .1, .4), 2, 2)
+  Q <- matrix(c(1, .3, .3, 4), 2, 2)
+  # vec(A X A') = (A kron A) vec(X), so X = (I - A kron A)^-1 vec(Q).
+  stationary <- matrix(solve(diag(4) - kronecker(A, A), as.vector(Q)), 2, 2)
+  expect_equal(stationary, A %*% stationary %*% t(A) + Q)
+
+  pars <- list(DRIFT = array(A, dim = c(1, 2, 2)),
+    DIFFUSIONcov = array(Q, dim = c(1, 2, 2)),
+    asymDIFFUSIONcov = array(stationary, dim = c(1, 2, 2)))
+  scales <- diag(sqrt(diag(stationary)))
+
+  for (step in c(0, 1, 3)) {
+    powered <- diag(2)
+    for (i in seq_len(step)) powered <- powered %*% A
+    got <- ctsem:::ctDiscreteParsDrift(pars, times = step, impulseType = 'unit',
+      standardise = TRUE, discreteInput = TRUE, quiet = TRUE)[1, 1, 1, , ]
+    expect_equal(got, solve(scales) %*% powered %*% scales, ignore_attr = TRUE)
+  }
+
+  # And 'observed' + standardise is the cross-correlation function here too,
+  # equal to the latent correlation matrix at lag zero.
+  at0 <- ctsem:::ctDiscreteParsDrift(pars, times = 0, impulseType = 'observed',
+    standardise = TRUE, discreteInput = TRUE, quiet = TRUE)[1, 1, 1, , ]
+  expect_equal(at0, stats::cov2cor(stationary), ignore_attr = TRUE)
+  at2 <- ctsem:::ctDiscreteParsDrift(pars, times = 2, impulseType = 'observed',
+    standardise = TRUE, discreteInput = TRUE, quiet = TRUE)[1, 1, 1, , ]
+  sdv <- sqrt(diag(stationary))
+  expect_equal(at2, (A %*% A %*% stationary) / outer(sdv, sdv), ignore_attr = TRUE)
+})
+
+test_that('the scale and the impulse are recorded, and the title states them', {
+  utils::data('ctstantestfit', package = 'ctsem', envir = environment())
+  # Same draws either way, so the two are comparable element by element.
+  set.seed(1)
+  std <- suppressMessages(ctDiscretePars(ctstantestfit, times = c(0, 1),
+    nsamples = 5, standardise = TRUE))
+  set.seed(1)
+  raw <- suppressMessages(ctDiscretePars(ctstantestfit, times = c(0, 1),
+    nsamples = 5))
+
+  expect_true(attributes(std)$standardise)
+  # Unstandardised is still the default, so the plain call is the raw one.
+  expect_false(attributes(raw)$standardise)
+  expect_equal(attributes(raw)$impulseType, 'unit')
+
+  # A zero interval is the identity on either scale: S^-1 I S = I.
+  expect_equal(unname(drop(std[1, 1, 1, , ])), unname(drop(raw[1, 1, 1, , ])),
+    tolerance = 1e-10)
+  # And at a nonzero interval the default is not the raw transition, so the
+  # argument is actually reaching the computation.
+  expect_false(isTRUE(all.equal(std[, , 2, , ], raw[, , 2, , ])))
+
+  titled <- ctDiscreteParsPlot(std, indices = 'AR')
+  expect_match(titled$labels$title, 'impulse of 1 SD to one process')
+  expect_match(titled$labels$title, 'standardised')
+  untitled <- ctDiscreteParsPlot(raw, indices = 'AR')
+  expect_match(untitled$labels$title, 'impulse of 1 to one process')
+  expect_match(untitled$labels$title, 'unstandardised')
+})
+
+test_that('standardising a context dependent system says the scale is local', {
+  stub <- function(parname, matrix) structure(list(
+    standata = list(nlatent = 2L),
+    setup = list(matsetup = data.frame(parname = c(parname, 'd22'),
+      row = 1:2, col = 1:2, matrix = c(matrix, 3L)))),
+    class = c('ctStanFit', 'ctFit'))
+
+  # DRIFT feeds asymDIFFUSIONcov, so the divisor is a linearisation too.
+  note <- ctsem:::.ctContextStandardiseNote(stub('param*state[1]', 3L), 'the mean')
+  expect_match(note, 'DRIFT')
+  expect_match(note, 'the mean')
+  expect_match(note, 'standardise=FALSE')
+
+  # LAMBDA does not: the latent stationary variance does not depend on it, so
+  # saying the standardisation is compromised there would be false.
+  expect_null(ctsem:::.ctContextStandardiseNote(stub('param*state[1]', 2L)))
+
+  # A carrier reference is an individual difference, not a context.
+  expect_null(ctsem:::.ctContextStandardiseNote(stub('param*state[9]', 3L)))
+  # And a linear model says nothing.
+  expect_null(ctsem:::.ctContextStandardiseNote(stub('d11', 3L)))
 })

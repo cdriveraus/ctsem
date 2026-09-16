@@ -9,12 +9,13 @@ ctNetwork(
   dt = 1,
   state = NULL,
   standardise = TRUE,
-  observational = FALSE,
+  impulseType = "unit",
   threshold = 0,
   networks = c("temporal", "contemporaneous"),
   plot = FALSE,
   quiet = FALSE,
-  ...
+  ...,
+  observational
 )
 }
 \arguments{
@@ -40,9 +41,10 @@ deviation units of the processes themselves, using
 comparable. Falls back to FALSE, with a message, when the system has no
 stationary variance to standardise by.}
 
-\item{observational}{What a one unit change in a process brings with it; see
-\code{\link{ctDiscretePars}}, whose argument this is. \code{FALSE} (the
-default) is the partial regression, a property of the dynamics alone.}
+\item{impulseType}{What a one unit change in a process brings with it; see
+\code{\link{ctDiscretePars}}, whose argument this is. \code{'unit'} (the
+default) is an impulse of one to that process alone -- the partial
+regression, and a property of the dynamics alone.}
 
 \item{threshold}{Edges with \code{abs(weight)} at or below this are dropped
 from \code{$edges} and from any plot. The matrices are never thresholded.}
@@ -58,6 +60,8 @@ instead of the result.}
 
 \item{...}{Passed to \code{\link{ctSummaryMatrices}} when \code{x} is a fit,
 and to \code{\link{ctNetworkPlot}} when \code{plot=TRUE}.}
+
+\item{observational}{Deprecated. Use \code{impulseType}.}
 }
 \value{
 A list of class \code{ctNetwork}:
@@ -74,7 +78,7 @@ A list of class \code{ctNetwork}:
     \code{innovation}}{The matrices the networks were derived from, so every
     number above can be checked.}
 }
-With attributes \code{dt}, \code{standardise}, \code{observational},
+With attributes \code{dt}, \code{standardise}, \code{impulseType},
   \code{threshold}, \code{networks}, \code{continuoustime}, \code{source},
   \code{stateLabel} (the evaluation point, for a fit) and
   \code{stateDependent} (the cells with no single value, or \code{NULL}).
@@ -98,7 +102,7 @@ Three networks over the latent processes, plus the measurement model:
     \code{[i,j]} is the effect of process \code{j} now on process \code{i}
     one interval later, so an edge runs from the column to the row. This is
     \code{\link{ctDiscretePars}} at a single interval, and shares its
-    \code{observational} and \code{standardise} arguments.}
+    \code{impulseType} and \code{standardise} arguments.}
   \item{\code{contemporaneous}}{Partial correlations of the innovation
     covariance accumulated over \code{dt},
     \code{Q(dt) = int_0^dt expm(DRIFT s) DIFFUSIONcov t(expm(DRIFT s)) ds}.
