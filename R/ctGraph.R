@@ -379,7 +379,7 @@
 #'     \code{[i,j]} is the effect of process \code{j} now on process \code{i}
 #'     one interval later, so an edge runs from the column to the row. This is
 #'     \code{\link{ctDiscretePars}} at a single interval, and shares its
-#'     \code{observational} and \code{standardise} arguments.}
+#'     \code{impulseType} and \code{standardise} arguments.}
 #'   \item{\code{contemporaneous}}{Partial correlations of the innovation
 #'     covariance accumulated over \code{dt},
 #'     \code{Q(dt) = int_0^dt expm(DRIFT s) DIFFUSIONcov t(expm(DRIFT s)) ds}.
@@ -441,9 +441,11 @@
 #'   anything but the default is an error on a stan fit rather than being
 #'   quietly ignored. Irrelevant to a linear model, and to an unfitted
 #'   specification.
-#' @param observational What a one unit change in a process brings with it; see
-#'   \code{\link{ctDiscretePars}}, whose argument this is. \code{FALSE} (the
-#'   default) is the partial regression, a property of the dynamics alone.
+#' @param impulseType What a one unit change in a process brings with it; see
+#'   \code{\link{ctDiscretePars}}, whose argument this is. \code{'unit'} (the
+#'   default) is an impulse of one to that process alone -- the partial
+#'   regression, and a property of the dynamics alone.
+#' @param observational Deprecated. Use \code{impulseType}.
 #' @param threshold Edges with \code{abs(weight)} at or below this are dropped
 #'   from \code{$edges} and from any plot. The matrices are never thresholded.
 #' @param networks Which networks appear in \code{$edges} and in the plot. Any
@@ -469,7 +471,7 @@
 #'     \code{innovation}}{The matrices the networks were derived from, so every
 #'     number above can be checked.}
 #' }
-#' With attributes \code{dt}, \code{standardise}, \code{observational},
+#' With attributes \code{dt}, \code{standardise}, \code{impulseType},
 #'   \code{threshold}, \code{networks}, \code{continuoustime}, \code{source},
 #'   \code{stateLabel} (the evaluation point, for a fit) and
 #'   \code{stateDependent} (the cells with no single value, or \code{NULL}).
@@ -495,9 +497,18 @@
 #'
 #' @export
 ctNetwork <- function(x, dt = 1, state = NULL, standardise = TRUE,
-  observational = FALSE, threshold = 0,
+  impulseType = 'unit', threshold = 0,
   networks = c('temporal', 'contemporaneous'), plot = FALSE,
-  quiet = FALSE, ...){
+  quiet = FALSE, ..., observational){
+
+  if(!missing(observational)){
+    if(!missing(impulseType)) stop(call. = FALSE,
+      'Use only one of impulseType or deprecated observational')
+    warning(call. = FALSE, "observational is deprecated, use impulseType='",
+      .ctCompanionType(observational), "'")
+    impulseType <- observational
+  }
+  impulseType <- .ctCompanionType(impulseType)
 
   if(length(dt) != 1 || !is.finite(dt) || dt <= 0) stop(call. = FALSE,
     'dt must be a single positive number. ctNetworkPlot() takes a vector of them.')
@@ -520,13 +531,13 @@ ctNetwork <- function(x, dt = 1, state = NULL, standardise = TRUE,
   }
 
   # The temporal network goes through ctDiscreteParsDrift() rather than a local
-  # expm() call, so that `observational` and `standardise` mean exactly what
+  # expm() call, so that `impulseType` and `standardise` mean exactly what
   # they mean everywhere else in the package, with one implementation.
   as4d <- function(mat) array(mat, dim = c(1, 1, dim(mat)))
   ctpars <- list(DRIFT = as4d(inputs$DRIFT), DIFFUSIONcov = as4d(inputs$DIFFUSIONcov),
     asymDIFFUSIONcov = as4d(if(is.null(inputs$asymDIFFUSIONcov))
       inputs$DIFFUSIONcov else inputs$asymDIFFUSIONcov))
-  temporal <- ctDiscreteParsDrift(ctpars, times = dt, observational = observational,
+  temporal <- ctDiscreteParsDrift(ctpars, times = dt, impulseType = impulseType,
     standardise = standardise, cov = FALSE, discreteInput = !inputs$continuoustime,
     quiet = TRUE)
   temporal <- matrix(temporal[1, 1, 1, , ], nrow(inputs$DRIFT),
@@ -564,7 +575,7 @@ ctNetwork <- function(x, dt = 1, state = NULL, standardise = TRUE,
 
   attributes(out)$dt <- dt
   attributes(out)$standardise <- standardise
-  attributes(out)$observational <- observational
+  attributes(out)$impulseType <- impulseType
   attributes(out)$threshold <- threshold
   attributes(out)$networks <- networks
   attributes(out)$continuoustime <- inputs$continuoustime

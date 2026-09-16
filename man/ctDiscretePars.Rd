@@ -10,7 +10,7 @@ ctDiscretePars(
   subjects = "popmean",
   times = seq(from = 0, to = 10, by = 0.1),
   nsamples = 200,
-  observational = FALSE,
+  impulseType = "unit",
   standardise = FALSE,
   cov = FALSE,
   plot = FALSE,
@@ -18,7 +18,8 @@ ctDiscretePars(
   state = NULL,
   method = "linearise",
   ...,
-  ctstanfitobj
+  ctstanfitobj,
+  observational
 )
 }
 \arguments{
@@ -34,15 +35,16 @@ object is a discrete time model, these should be positive integers.}
 increase smoothness / accuracy, at cost of plotting speed. Values greater than the total
 number of samples will be set to total samples.}
 
-\item{observational}{What a "one unit change in process c" is taken to bring
+\item{impulseType}{What a "one unit change in process c" is taken to bring
 with it. Every variant is \code{dtDRIFT(t) \%*\% C} for a different companion
 matrix \code{C}, whose column c says what else moves.
 \describe{
- \item{\code{FALSE}, \code{'experimental'}}{\code{C = I}. Nothing else
-   moves, because the change was imposed. This is the \emph{partial}
-   regression \code{E[x(t+u)|x(t)]}, and the only variant that is a property
-   of the dynamics alone.}
- \item{\code{TRUE}, \code{'observational'}}{\code{C = Sigma diag(Sigma)^-1}
+ \item{\code{'unit'} (the default)}{\code{C = I}. An impulse of one unit
+   (one standard deviation when \code{standardise=TRUE}) is applied to
+   process c alone and nothing else moves, because the change was imposed.
+   This is the \emph{partial} regression \code{E[x(t+u)|x(t)]}, and the
+   only variant that is a property of the dynamics alone.}
+ \item{\code{'observed'}}{\code{C = Sigma diag(Sigma)^-1}
    with \code{Sigma = asymDIFFUSIONcov}. Process c is \emph{observed} one
    unit above expectation and the others are not held fixed, so they move by
    \code{Sigma_rc/Sigma_cc}. This is the \emph{simple} regression -- what
@@ -57,12 +59,20 @@ matrix \code{C}, whose column c says what else moves.
 }
 The companion matrices are asymmetric, and must be: a one unit move in a
 wide-spread process implies more movement in a narrow one than the reverse.
-\code{'observational'} and \code{'shock'} use different covariance matrices
+\code{'observed'} and \code{'shock'} use different covariance matrices
 because they ask different questions, and coincide only under isotropic decay
 with no cross effects.}
 
-\item{standardise}{Logical. If TRUE, output is standardised according to expected total within subject variance, given by the
-asymDIFFUSIONcov matrix.}
+\item{standardise}{Logical, \code{FALSE} by default. If \code{TRUE}, report
+the effect of a one standard deviation change in process c as a change in r's
+own standard deviations, taking both scales from the stationary within
+subject covariance \code{asymDIFFUSIONcov}. That makes effects between
+processes on different scales comparable, and is what \code{\link{ctNetwork}}
+reports by default. \code{FALSE} leaves the effects in the processes' own
+units, so \code{impulseType='unit', standardise=FALSE} is the bare
+\code{expm(DRIFT*t)}. A system with no stationary variance has nothing to
+standardise by, and those draws are returned as NaN with a message. The plot
+title states which scale was used either way.}
 
 \item{cov}{Logical. If TRUE, covariances are returned instead of regression coefficients.}
 
@@ -94,6 +104,9 @@ uses \code{nsamples} posterior draws with a small default.}
 \item{...}{additional plotting arguments to control \code{\link{ctDiscreteParsPlot}}}
 
 \item{ctstanfitobj}{Deprecated. Use \code{fit}.}
+
+\item{observational}{Deprecated. Use \code{impulseType}: \code{FALSE} is
+\code{'unit'} and \code{TRUE} is \code{'observed'}.}
 }
 \description{
 Calculate model implied regressions for a sequence of time intervals (if ct) or steps (if dt) based on
@@ -102,12 +115,13 @@ a ctStanFit object, for specified subjects. Wrap with print() when used inside f
 }
 \details{
 Two of these combinations are quantities you may already know under other
-names. \code{observational=FALSE} is the discrete time autoregression and
-cross-lagged matrix, \code{expm(DRIFT*t)}. \code{observational=TRUE} with
-\code{standardise=TRUE} is the model implied \emph{cross-correlation
-function}, \code{Cor(x_r(t+u), x_c(t))} -- the model's counterpart to the
-empirical autocorrelations \code{\link{ctACF}} computes from the data, and
-equal to the latent correlation matrix at \code{t=0}.
+names. \code{impulseType='unit'} with \code{standardise=FALSE} is the
+discrete time autoregression and cross-lagged matrix, \code{expm(DRIFT*t)}.
+\code{impulseType='observed'} with \code{standardise=TRUE} is the model
+implied \emph{cross-correlation function},
+\code{Cor(x_r(t+u), x_c(t))} -- the model's counterpart to the empirical
+autocorrelations \code{\link{ctACF}} computes from the data, and equal to
+the latent correlation matrix at \code{t=0}.
 
 If plot=TRUE, the function will return a ggplot2 object
 (and hence needs to be printed if intended to display within a loop).

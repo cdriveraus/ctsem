@@ -317,6 +317,44 @@
   invisible(note)
 }
 
+# The matrices the standardiser is built from.
+#
+# Standardising divides by the stationary standard deviations implied by
+# asymDIFFUSIONcov, which solves the (continuous or discrete) Lyapunov equation
+# in DRIFT and DIFFUSION -- JAx being DRIFT's jacobian, which is what the solve
+# uses once a cell depends on the state.
+.ctContextStandardiserMatrices <- c('DRIFT', 'JAx', 'DIFFUSION', 'DIFFUSIONcov',
+  'asymDIFFUSIONcov')
+
+# Standardising a state dependent system is a second linearisation, on top of
+# the one the reported matrix already is, and it is the one a reader is least
+# likely to have in mind: the divisor is not the process's spread, it is the
+# spread the system would settle to if it stayed linear at this point forever.
+# Two evaluation points can therefore give curves of different heights from
+# identical dynamics. Silent for a linear model, and silent for a model whose
+# nonlinearity is nowhere near the dynamics -- a state dependent LAMBDA does
+# not move the latent stationary variance.
+.ctContextStandardiseNote <- function(fit, label = NULL) {
+  cells <- try(.ctFitConditionalCells(fit), silent = TRUE)
+  if (inherits(cells, 'try-error') || is.null(cells) || !nrow(cells)) return(NULL)
+  hit <- cells[cells$matrix %in% .ctContextStandardiserMatrices, , drop = FALSE]
+  if (!nrow(hit)) return(NULL)
+  paste0('standardise=TRUE divides by the stationary standard deviations from ',
+    'asymDIFFUSIONcov, and cells of ',
+    paste0(.ctContextReportableMatrices(hit), collapse = ', '),
+    " depend on the context, so that is the linearised system's spread",
+    if (!is.null(label)) paste0(' at ', label) else '',
+    " rather than the nonlinear system's own. The scale moves with the ",
+    "evaluation point; standardise=FALSE reports the processes' own units.")
+}
+
+# Emit it, for the entry points that standardise.
+.ctContextStandardiseMessage <- function(fit, label = NULL) {
+  note <- .ctContextStandardiseNote(fit, label)
+  if (!is.null(note)) message(note)
+  invisible(note)
+}
+
 # Attach the cells to a returned object so a caller can act on them
 # programmatically rather than by parsing a message.
 .ctContextAttach <- function(x, fit) {

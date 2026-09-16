@@ -147,7 +147,7 @@
 # when standardising, by sd_c otherwise. Both reduce exactly to the linearised
 # answer for a linear model, whichever companion matrix is in use -- the
 # scalings cancel in the same way.
-.ctNonlinearShockSpec <- function(mats, nlatent, observational, standardise,
+.ctNonlinearShockSpec <- function(mats, nlatent, impulseType, standardise,
   magnitude = 1) {
 
   index <- seq_len(nlatent)
@@ -155,7 +155,7 @@
   if (any(!is.finite(variance)) || any(variance < 0)) return(NULL)
   sdv <- sqrt(variance + 1e-10)
 
-  companion <- .ctCompanionMatrix(.ctCompanionType(observational),
+  companion <- .ctCompanionMatrix(.ctCompanionType(impulseType),
     mats$DIFFUSIONcov, mats$asymDIFFUSIONcov, nlatent)
   if (is.null(companion)) return(NULL)
   # Column c: a shock of one sd_c in process c, times the companion ratios, so
@@ -180,7 +180,7 @@
 # stated rather than silently inherited from a plotting argument sized for a
 # cheap computation.
 .ctDiscreteParsSimulate <- function(fit, times, state = 'asymptotic',
-  nsamples = 10, maxstep = 0.1, quiet = FALSE, observational = FALSE,
+  nsamples = 10, maxstep = 0.1, quiet = FALSE, impulseType = 'unit',
   standardise = FALSE, magnitude = 1) {
 
   if (!inherits(fit, 'ctJuliaFit')) stop(call. = FALSE,
@@ -210,7 +210,7 @@
     # moves with them rather than being fixed from the point estimate.
     mats <- suppressMessages(ctBackendParMatrices(fit, raw = draws[draw, ],
       state = start, trim = FALSE))
-    spec <- .ctNonlinearShockSpec(mats, nlatent, observational, standardise,
+    spec <- .ctNonlinearShockSpec(mats, nlatent, impulseType, standardise,
       magnitude)
     if (is.null(spec)) { nonstationary <- nonstationary + 1L; next }
     response <- .ctNonlinearImpulseResponse(fit, start, times, maxstep = maxstep,
@@ -251,7 +251,7 @@
 # It also does away with the fabricated data: covariate values go to the engine
 # directly as `tipreds`, so nothing depends on a pseudo-subject at all.
 .ctPredictTIPDynamics <- function(fit, tipredIndex, values, times, ntipred,
-  nsamples = 5, latentNames, quiet = FALSE, observational = FALSE,
+  nsamples = 5, latentNames, quiet = FALSE, impulseType = 'unit',
   standardise = FALSE) {
 
   draws <- .ctBackendRawSamples(fit)
@@ -282,7 +282,7 @@
     for (draw in seq_len(nsamples)) {
       mats <- suppressMessages(ctBackendParMatrices(fit, raw = draws[draw, ],
         state = state, tipreds = tipreds, trim = FALSE))
-      spec <- .ctNonlinearShockSpec(mats, nlatent, observational, standardise)
+      spec <- .ctNonlinearShockSpec(mats, nlatent, impulseType, standardise)
       if (is.null(spec)) next
       response <- .ctNonlinearImpulseResponse(fit, state, times,
         tipreds = tipreds, raw = draws[draw, ], shock = spec$shock)
@@ -294,8 +294,9 @@
 
   dimnames(out) <- list(Sample = seq_len(nsamples), Subject = seq_along(values),
     `Time interval` = times, row = latentNames, col = latentNames)
-  attributes(out)$observational <- observational
+  attributes(out)$impulseType <- .ctCompanionType(impulseType)
   attributes(out)$cov <- FALSE
+  attributes(out)$standardise <- standardise
   attributes(out)$method <- 'simulate'
   out
 }

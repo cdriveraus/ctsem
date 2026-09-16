@@ -770,7 +770,7 @@
     dp <- suppressMessages(ctDiscretePars(fit, times = times, plot = FALSE,
       nsamples = ctx$nsamples, cores = ctx$cores))
     dpo <- suppressMessages(try(ctDiscretePars(fit, times = times, plot = FALSE,
-      nsamples = ctx$nsamples, cores = ctx$cores, observational = TRUE), silent = TRUE))
+      nsamples = ctx$nsamples, cores = ctx$cores, impulseType = 'observed'), silent = TRUE))
     .ctReportPdf(file.path(ctx$folder, f), {
       print(ctDiscreteParsPlot(dp, quantiles = ctx$quantiles,
         title = "Effect of an intervention on a latent"))

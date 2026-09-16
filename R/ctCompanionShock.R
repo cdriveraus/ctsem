@@ -3,15 +3,16 @@
 # Every version of the model implied regression is the same calculation --
 # dtDRIFT(u) %*% C -- differing only in the companion matrix C, whose column c
 # says what else moves when process c moves by one unit. Writing them this way
-# makes the choice explicit and keeps one code path:
+# makes the choice explicit and keeps one code path. These are the values of
+# the user-facing `impulseType` argument:
 #
-#   'experimental'  C = I. Nothing else moves, because the change was imposed.
+#   'unit'          C = I. Nothing else moves, because the change was imposed.
 #                   This is the partial regression E[x(t+u) | x(t)]: the whole
 #                   state is conditioned on, so nothing is left to average over
 #                   and the answer is the transition matrix itself. It is the
 #                   only variant that is a property of the dynamics alone.
 #
-#   'observational' C = Sigma diag(Sigma)^-1, Sigma the stationary state
+#   'observed'      C = Sigma diag(Sigma)^-1, Sigma the stationary state
 #                   covariance (asymDIFFUSIONcov). We *observe* process c one
 #                   unit above its expectation and do not hold the others
 #                   fixed, so they come along by E[x_r | x_c = 1] =
@@ -40,7 +41,7 @@
 # the reverse. A correlation matrix is symmetric, so it cannot be any of these,
 # which is why using one was wrong whenever the processes differed in scale.
 #
-# 'observational' and 'shock' use *different covariance matrices* because they
+# 'observed' and 'shock' use *different covariance matrices* because they
 # ask different questions. How states covary in the long run is not how one
 # innovation relates to another; they coincide only under isotropic decay with
 # no cross effects.
@@ -53,14 +54,36 @@
 # correlation matrix at t = 0. Nothing further is missing from the family;
 # `cov=TRUE` changes the output type rather than the interpretation.
 
-.ctCompanionTypes <- c("experimental", "observational", "shock", "orthogonal")
+.ctCompanionTypes <- c("unit", "observed", "shock", "orthogonal")
 
-# `observational` accepts the historical logical as well as a name.
-.ctCompanionType <- function(observational) {
-  if (is.logical(observational)) {
-    return(if (isTRUE(observational)) "observational" else "experimental")
+# Accepted but not advertised: the pre-3.12.0 vocabulary, which named the first
+# two after the design that would produce them rather than after what the
+# column of C does. Kept because `observational=` is deprecated rather than
+# removed, and because a saved object carries the old string.
+.ctCompanionAliases <- c(experimental = "unit", observational = "observed")
+
+# Resolves `impulseType`, the historical `observational` logical, and the old
+# names, to one of .ctCompanionTypes.
+.ctCompanionType <- function(impulseType) {
+  if (is.logical(impulseType)) {
+    return(if (isTRUE(impulseType)) "observed" else "unit")
   }
-  match.arg(as.character(observational)[1L], .ctCompanionTypes)
+  x <- as.character(impulseType)[1L]
+  if (x %in% names(.ctCompanionAliases)) return(unname(.ctCompanionAliases[x]))
+  match.arg(x, .ctCompanionTypes)
+}
+
+# How to describe each one in a figure title or a printed line, given whether
+# the units are standard deviations. One place, so a plot and a print cannot
+# describe the same object differently.
+.ctCompanionLabel <- function(type, standardise = NULL) {
+  type <- .ctCompanionType(type)
+  mag <- if (isTRUE(standardise)) '1 SD' else '1'
+  switch(type,
+    unit = paste0('impulse of ', mag, ' to one process'),
+    observed = paste0('observed change of ', mag, ' in one process, others follow'),
+    shock = paste0('system noise shock of ', mag, ' in one process'),
+    orthogonal = paste0('orthogonalised shock of ', mag))
 }
 
 # Regression of every process on process c, from a covariance matrix:
@@ -81,7 +104,7 @@
 
 #' The companion matrix for one interpretation of a unit change
 #'
-#' @param type One of .ctCompanionTypes.
+#' @param type One of .ctCompanionTypes, already resolved by .ctCompanionType().
 #' @param diffusion DIFFUSIONcov, the innovation covariance.
 #' @param asymdiffusion asymDIFFUSIONcov, the stationary state covariance.
 #' @return nlatent by nlatent matrix, or NULL when the type cannot be formed
@@ -91,11 +114,11 @@
   # Validated here as well as in .ctCompanionType: the branches below end in a
   # fall-through, so an unrecognised name would silently return the last one.
   type <- match.arg(type, .ctCompanionTypes)
-  if (identical(type, "experimental")) return(diag(nlatent))
+  if (identical(type, "unit")) return(diag(nlatent))
 
-  if (identical(type, "observational")) {
+  if (identical(type, "observed")) {
     variance <- diag(as.matrix(asymdiffusion)[seq_len(nlatent), seq_len(nlatent), drop = FALSE])
-    # No stationary covariance, no observational interpretation: there is no
+    # No stationary covariance, no observed-change interpretation: there is no
     # distribution of states for the companions to be an expectation over.
     if (any(!is.finite(variance)) || any(variance < 0)) return(NULL)
     return(.ctCovarianceRegression(asymdiffusion, nlatent))

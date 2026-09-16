@@ -495,7 +495,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   mats <- c(names(mats$base), names(mats$asymptotic), names(mats$extra))
   if (isTRUE(continuoustime)) {
     d <- list(DRIFT = e$pop_DRIFT)
-    dd <- ctDiscreteParsDrift(d, timeinterval, observational = FALSE, standardise = FALSE,
+    dd <- ctDiscreteParsDrift(d, timeinterval, impulseType = 'unit', standardise = FALSE,
       cov = FALSE, quiet = TRUE)
     e$pop_dtDRIFT <- array(dd, dim = dim(dd)[-2:-3])
     mats <- c(mats, "dtDRIFT")

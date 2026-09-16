@@ -287,7 +287,8 @@ ctStanKalman <- ctKalmanArray
 #' when \code{doDynamics=TRUE}. Arguments matching
 #' \code{ctDiscreteParsPlot} are automatically routed to the plot call.
 #' Internally controlled arguments \code{fit}, \code{ctstanfitobj}, \code{plot},
-#' \code{subjects}, \code{observational}, \code{x}, \code{quantiles}, and
+#' \code{subjects}, \code{impulseType} (and its deprecated spelling
+#' \code{observational}), \code{x}, \code{quantiles}, and
 #' \code{splitSubjects} are ignored if supplied.
 #' @param showUncertainty A logical value indicating whether to plot the uncertainty of the predictions. Default is TRUE.
 #' @param TIPvalues An nvalue * nTIpred numeric matrix specifying the fixed values for each time independent predictor effect to plot. 
@@ -312,7 +313,7 @@ ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',doDynamics=T
   if(length(dynamicsControl) > 0 && (is.null(names(dynamicsControl)) || any(names(dynamicsControl) == ''))){
     stop('dynamicsControl must be a named list')
   }
-  dynamicsControl[names(dynamicsControl) %in% c('fit','ctstanfitobj','plot','subjects','observational','x',
+  dynamicsControl[names(dynamicsControl) %in% c('fit','ctstanfitobj','plot','subjects','observational','impulseType','x',
     'quantiles','splitSubjects')] <- NULL
   dynamicsPlotControl <- dynamicsControl[names(dynamicsControl) %in% names(formals(ctDiscreteParsPlot))]
   dynamicsControl <- dynamicsControl[!names(dynamicsControl) %in% names(dynamicsPlotControl)]
@@ -414,7 +415,7 @@ ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',doDynamics=T
               ntipred = length(ctmb$TIpredNames),
               nsamples = if(!is.null(dynamicsControl$nsamples)) dynamicsControl$nsamples else 5,
               latentNames = ctmb$latentNames,
-              observational = !typei %in% 'Independent',
+              impulseType = if(typei %in% 'Independent') 'unit' else 'observed',
               standardise = isTRUE(dynamicsControl$standardise),
               quiet = tipi > 1 || !typei %in% 'Independent')
           } else {
@@ -422,7 +423,7 @@ ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',doDynamics=T
             fit=sf,
             plot=FALSE,
             subjects=(tipi-1)*nrow(TIPvalues) + 1:nrow(TIPvalues),
-            observational = !typei %in% 'Independent'))
+            impulseType = if(typei %in% 'Independent') 'unit' else 'observed'))
           ctd=do.call(ctDiscretePars, discreteParsArgs)
           }
           if(showUncertainty) ctdQuantiles <- discreteTimeQuantiles else ctdQuantiles <- c(.5,.5,.5)

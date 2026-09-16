@@ -215,7 +215,7 @@ test_that('the covariate dynamics panel is built from each level\'s own state', 
   expect_true(diff(range(median[, 3, 1, 1])) > 1e-6)
 })
 
-test_that('every observational and standardise combination reduces when linear', {
+test_that('every impulseType and standardise combination reduces when linear', {
   # Correlated diffusion and unequal process scales: the case that exposes a
   # correlation being used where a regression coefficient belongs. Both earlier
   # test models have diagonal diffusion and never exercise the companion path.
@@ -231,12 +231,12 @@ test_that('every observational and standardise combination reduces when linear',
   # exponentiating its drift are the same calculation whichever companion
   # matrix is applied, so any of these failing means the two paths disagree
   # about what was asked for.
-  for (observational in ctsem:::.ctCompanionTypes) for (standardise in c(FALSE, TRUE)) {
+  for (impulseType in ctsem:::.ctCompanionTypes) for (standardise in c(FALSE, TRUE)) {
     simulated <- suppressMessages(ctDiscretePars(correlated, times = times,
-      method = 'simulate', nsamples = 3, observational = observational,
+      method = 'simulate', nsamples = 3, impulseType = impulseType,
       standardise = standardise))
     linearised <- suppressMessages(ctDiscretePars(correlated, times = times,
-      nsamples = 3, observational = observational, standardise = standardise))
+      nsamples = 3, impulseType = impulseType, standardise = standardise))
     expect_equal(apply(simulated, c(3, 4, 5), stats::median),
       apply(linearised, c(3, 4, 5), stats::median), tolerance = 1e-9)
   }
