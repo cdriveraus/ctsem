@@ -441,36 +441,44 @@ NULL
 # nonlinear models it is a poor one -- T0 is often nowhere near where the data
 # lives. These resolve the shorthands a caller can pass instead.
 #
-# Everything here returns the *augmented* state vector the engine indexes, with
-# carrier entries left at their population values: 'mean' and 'asymptotic' are
-# statements about where the dynamic processes are, and moving a carrier would
-# silently change which parameter values the matrices were built from.
+# Everything here returns the dynamic processes alone -- never the carrier
+# states an intoverpop model appends to them. 'mean' and 'asymptotic' are
+# statements about where the processes are, and a carrier is not a process: it
+# holds an individually varying parameter, so its value belongs to the
+# parameter vector the matrices are being built from. The engine fills those
+# entries itself, per parameter vector; see `ctsem_parameter_matrices`.
+#
+# Handing them on instead was a real defect rather than a hypothetical one.
+# These vectors are resolved once, from the point estimate, and then reused
+# across posterior draws, so every draw was materialised with the point
+# estimate's individually varying parameters. Any cell reading one came back
+# identical for every draw, and the uncertainty band around it was zero wide
+# with nothing said.
 
 .ctContextStateOptions <- c("T0MEANS", "mean", "asymptotic")
 
-# The population T0MEANS at engine (augmented) length, used both as the default
-# and as the padding for a shorter supplied state.
+# The population T0MEANS over the dynamic processes, the default evaluation
+# point.
 .ctContextBaseState <- function(fit, tipreds = NULL) {
   # suppressMessages: this is a lookup on the way to choosing an evaluation
   # point, not a report of one, and the note belongs to the caller's choice.
-  as.numeric(suppressMessages(
+  base <- as.numeric(suppressMessages(
     ctBackendParMatrices(fit, tipreds = tipreds, trim = FALSE))$T0MEANS[, 1])
+  base[seq_len(.ctFitNlatent(fit))]
 }
 
-.ctContextPadState <- function(fit, state, tipreds = NULL) {
-  base <- .ctContextBaseState(fit, tipreds)
+# A supplied evaluation point: one entry per latent process, and no more. An
+# augmented-length vector is no longer a second accepted spelling of the same
+# request -- there is nothing a caller can say about a carrier that the
+# parameter vector does not already say.
+.ctContextDynamicState <- function(fit, state) {
   state <- as.numeric(state)
-  if (length(state) == length(base)) return(state)
   nlatent <- .ctFitNlatent(fit)
   if (length(state) != nlatent) {
-    stop("state must have ", nlatent, " entries (one per latent process)",
-      if (length(base) != nlatent) paste0(", or ", length(base),
-        " for the augmented state the filter uses") else "",
-      "; got ", length(state), ".", call. = FALSE)
+    stop("state must have ", nlatent, " entries (one per latent process); got ",
+      length(state), ".", call. = FALSE)
   }
-  # Carrier entries keep their population values: see the header.
-  base[seq_len(nlatent)] <- state
-  base
+  state
 }
 
 # Mean smoothed latent state over every row of every subject.
@@ -480,7 +488,10 @@ NULL
 # plots.
 .ctContextMeanState <- function(fit) {
   smoothed <- suppressMessages(ctKalmanArray(fit, pointest = TRUE)$etasmooth)
-  .ctContextPadState(fit, apply(smoothed, 3L, mean, na.rm = TRUE))
+  # The array may carry the augmented states; take the processes off the front
+  # of it rather than asking .ctContextDynamicState to accept both lengths.
+  .ctContextDynamicState(fit,
+    apply(smoothed, 3L, mean, na.rm = TRUE)[seq_len(.ctFitNlatent(fit))])
 }
 
 # The system's own fixed point: the state at which the deterministic change is
@@ -507,14 +518,14 @@ NULL
       drift <- drift - diag(nlatent)
       jacobian <- jacobian - diag(nlatent)
     }
-    residual <- as.numeric(drift %*% x[seq_len(nlatent)]) + cint
+    residual <- as.numeric(drift %*% x) + cint
     if (max(abs(residual)) < tolerance) return(x)
     step <- try(solve(jacobian, residual), silent = TRUE)
     if (inherits(step, "try-error")) {
       stop("No asymptotic state: the system is singular at the current iterate. ",
         "Use state='mean' or supply a state.", call. = FALSE)
     }
-    x[seq_len(nlatent)] <- x[seq_len(nlatent)] - step
+    x <- x - step
   }
   stop("No asymptotic state found in ", maxiter, " iterations -- the system may ",
     "have no stable fixed point. Use state='mean' or supply a state.", call. = FALSE)
@@ -548,7 +559,8 @@ NULL
 
 #' Resolve a state argument to an evaluation point
 #'
-#' @return list(state = NULL or numeric at engine length, label = character).
+#' @return list(state = NULL or numeric, one entry per latent process; label =
+#'   character).
 #'   A NULL state means "the engine's own default", which is T0MEANS.
 #' @noRd
 .ctResolveState <- function(fit, state = NULL, tipreds = NULL) {
@@ -565,5 +577,5 @@ NULL
     return(list(state = .ctContextAsymptoticState(fit, tipreds = tipreds),
       label = "the system's asymptotic (fixed point) state"))
   }
-  list(state = .ctContextPadState(fit, state, tipreds), label = "the supplied state")
+  list(state = .ctContextDynamicState(fit, state), label = "the supplied state")
 }

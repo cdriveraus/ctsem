@@ -343,7 +343,7 @@ test_that("state-dependent cells are named and follow the state they are given",
   expect_equal(nrow(augmented$DRIFT), spec$nlatent_augmented)
   expect_equal(nrow(at_default$DRIFT), spec$nlatent)
 
-  moved <- ctBackendParMatrices(fit, state = rep(1, spec$nlatent_augmented))
+  moved <- ctBackendParMatrices(fit, filterstate = rep(1, spec$nlatent_augmented))
   expect_false(isTRUE(all.equal(at_default$DRIFT, moved$DRIFT)))
   # A cell with no state dependence must not move.
   expect_equal(at_default$LAMBDA, moved$LAMBDA)
@@ -393,12 +393,12 @@ test_that("ctBackendParMatrices runs predict before update, so an update-group c
   # whether the predict group (which writes PARS from state[2]) ran before
   # the update group (which reads PARS[1,1] into MANIFESTVAR) -- exactly the
   # ordering this function must get right.
-  matrices <- ctBackendParMatrices(fit, state = c(t0, pars_val))
+  matrices <- ctBackendParMatrices(fit, filterstate = c(t0, pars_val))
   expect_equal(unname(matrices$MANIFESTVAR[1, 1]), pars_val, tolerance = 1e-10)
 
   # And it has to actually move with PARS, or a bug that just returned a
   # constant would pass the check above too.
-  other <- ctBackendParMatrices(fit, state = c(t0, pars_val * 3))
+  other <- ctBackendParMatrices(fit, filterstate = c(t0, pars_val * 3))
   expect_false(isTRUE(all.equal(unname(matrices$MANIFESTVAR[1, 1]),
     unname(other$MANIFESTVAR[1, 1]))))
 })

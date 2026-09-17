@@ -9,6 +9,7 @@ ctBackendParMatrices(
   raw = NULL,
   tipreds = NULL,
   state = NULL,
+  filterstate = NULL,
   time = 0,
   dt = 0,
   trim = TRUE
@@ -23,8 +24,17 @@ ctBackendParMatrices(
 \item{tipreds}{Time-independent predictor values for the subject to
 materialise. Defaults to all zero, i.e. the population values.}
 
-\item{state}{Latent state at which to evaluate state-dependent cells.
-Defaults to \code{T0MEANS}.}
+\item{state}{Latent state at which to evaluate state-dependent cells: one
+entry per latent process. Defaults to the population \code{T0MEANS}. The
+carrier states an \code{intoverpop} model appends hold the individually
+varying parameters and are not part of this -- they always come from
+\code{raw}, so a cell reading one still varies across posterior draws when
+a state is supplied.}
+
+\item{filterstate}{A whole state vector as the filter carries it, carriers
+included, for reporting one person's matrices at a state that person's own
+random effects produced. Mutually exclusive with \code{state}, which is
+what a caller choosing an evaluation point wants.}
 
 \item{time, dt}{Time and time interval passed to state-dependent expressions
 that use them.}

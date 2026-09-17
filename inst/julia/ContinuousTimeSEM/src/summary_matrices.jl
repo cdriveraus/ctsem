@@ -209,6 +209,15 @@ Materialize every model matrix for one or many raw parameter vectors.
 one per sample -- and the returned `Matrix{Float64}` is `size` by `nsamples`,
 with `size` and the block offsets given by `ctsem_parameter_layout`.
 
+`state` is the evaluation point for state-dependent cells, given as the dynamic
+processes -- the leading entries of the filter's state vector. Anything shorter
+than the full state vector is filled out from the column's own `T0MEANS`, so
+the carrier states that represent individually varying parameters always follow
+the parameter vector being materialised. A full-length vector still overwrites
+them, which is what reporting one person's matrices at a state that person's
+own random effects produced needs; the R side spells that `filterstate=` and
+the evaluation point `state=`, so the two cannot be confused for each other.
+
 `rows` selects flat positions to return, and exists because of what happens
 *after* this function: JuliaConnectoR moves about 1 MB/s, and a caller wanting
 two cells of a 5-node quadrature was paying for the whole 82-by-1000 array five
@@ -246,7 +255,23 @@ function ctsem_parameter_matrices(objective::CTSEMObjective, values::AbstractMat
         _materialize_all_params!(all_params, subject_values, sp)
         pars = ComponentVector(all_params, sp.parameter_axis)
 
-        current = isempty(state) ? Vector{Float64}(vec(pars.T0MEANS)) : Vector{Float64}(state)
+        # `state` names where the real processes are, and nothing else. The
+        # entries past them are carriers: an individually varying parameter is
+        # represented as a latent state with no dynamics, so a cell reading one
+        # *is* that parameter, and its value belongs to the column being
+        # materialised rather than to the caller. Taking a whole state vector
+        # from outside pinned those cells to whichever parameter vector built
+        # that vector, so a posterior swept through here reported one draw's
+        # dynamics for every draw -- zero width uncertainty, no error. Building
+        # from this column's own T0MEANS and overwriting only what was supplied
+        # makes that unreachable, and lets a caller pass the dynamic processes
+        # alone, which is the only part it has any business choosing.
+        current = Vector{Float64}(vec(pars.T0MEANS))
+        if !isempty(state)
+            length(state) <= length(current) || throw(DimensionMismatch(
+                "state has $(length(state)) entries; the model has $(length(current))"))
+            copyto!(current, 1, state, 1, length(state))
+        end
         tdzero = zeros(Float64, ntdpred)
         context = CTSEMRowContext(current, pars, tdzero, ti, Float64(time), Float64(dt), 1, 1)
         # All three groups, in filter order, so every Jacobian block is current.

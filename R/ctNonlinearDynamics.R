@@ -62,7 +62,7 @@
 #' Deterministic trajectory of the (possibly nonlinear) system
 #'
 #' @param fit A ctJuliaFit.
-#' @param state Starting state, at engine (augmented) length.
+#' @param state Starting state, one entry per latent process.
 #' @param times Times at which to report the state. Must start at 0.
 #' @param tipreds Time independent predictor values, or NULL for population.
 #' @param maxstep Largest integration substep.

@@ -258,7 +258,7 @@ test_that("subject matrices match Stan's, and only the varying ones vary", {
   implied <- vapply(seq_len(dim(extracted$subj_CINT)[2]), function(si) {
     state <- as.numeric(population$T0MEANS)
     state[carrier] <- extracted$subj_T0MEANS[1, si, carrier, 1]
-    as.numeric(suppressMessages(ctsem:::ctBackendParMatrices(fit, state = state,
+    as.numeric(suppressMessages(ctsem:::ctBackendParMatrices(fit, filterstate = state,
       trim = FALSE))$CINT)[seq_len(nlatent)]
   }, numeric(nlatent))
   expect_equal(as.numeric(t(implied)),

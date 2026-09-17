@@ -236,7 +236,7 @@
 # one transfer but a list element by element, and per-sample calls were the
 # single largest avoidable cost measured in this backend.
 .ctBackendParMatricesFlat <- function(fit, raw, tipreds = NULL, state = NULL,
-  time = 0, dt = 0, rows = NULL) {
+  filterstate = NULL, time = 0, dt = 0, rows = NULL) {
   raw <- if (is.matrix(raw)) raw else matrix(as.numeric(raw), ncol = 1L)
   storage.mode(raw) <- "double"
   spec <- .ctBackendSpec(fit)
@@ -246,7 +246,25 @@
   # Optional keywords are passed only when non-empty: JuliaConnectoR hangs
   # marshalling a zero-length vector.
   if (length(tipreds)) arguments$tipreds <- .ctJuliaVector(as.numeric(tipreds))
-  if (length(state)) arguments$state <- .ctJuliaVector(as.numeric(state))
+  # Two different requests, and they were one argument until a posterior was
+  # swept through it. `state` asks for an evaluation point in the process
+  # space, so it is one entry per latent process and the engine takes
+  # everything after them -- the carrier states holding individually varying
+  # parameters -- from the parameter vector it is materialising. `filterstate`
+  # asks for the matrices at a state vector the filter actually carried, whose
+  # carriers are that subject's own random effects and are meant to be used.
+  #
+  # Conflated, the first silently became the second: an evaluation point is
+  # resolved once, from the point estimate, and reused across draws, so every
+  # draw reported the point estimate's individually varying parameters and
+  # every uncertainty band around such a cell was zero wide.
+  if (length(state) && length(filterstate)) {
+    stop("Pass state= (a point in the process space) or filterstate= (a whole ",
+      "filter state, carriers included), not both.", call. = FALSE)
+  }
+  point <- if (length(filterstate)) as.numeric(filterstate) else
+    if (length(state)) .ctContextDynamicState(fit, state) else NULL
+  if (length(point)) arguments$state <- .ctJuliaVector(point)
   # `rows` selects flat positions engine-side. The materialization is under
   # 0.02 s either way; what this saves is the bridge, which moves about 1 MB/s
   # and does not care that 98% of what it is carrying will be dropped on
@@ -315,8 +333,16 @@
 #' @param raw Raw parameter vector. Defaults to the fitted estimate.
 #' @param tipreds Time-independent predictor values for the subject to
 #'   materialise. Defaults to all zero, i.e. the population values.
-#' @param state Latent state at which to evaluate state-dependent cells.
-#'   Defaults to \code{T0MEANS}.
+#' @param state Latent state at which to evaluate state-dependent cells: one
+#'   entry per latent process. Defaults to the population \code{T0MEANS}. The
+#'   carrier states an \code{intoverpop} model appends hold the individually
+#'   varying parameters and are not part of this -- they always come from
+#'   \code{raw}, so a cell reading one still varies across posterior draws when
+#'   a state is supplied.
+#' @param filterstate A whole state vector as the filter carries it, carriers
+#'   included, for reporting one person's matrices at a state that person's own
+#'   random effects produced. Mutually exclusive with \code{state}, which is
+#'   what a caller choosing an evaluation point wants.
 #' @param time,dt Time and time interval passed to state-dependent expressions
 #'   that use them.
 #' @param trim Report matrices over the real latent processes (the default), as
@@ -335,7 +361,7 @@
 #' }
 #' @keywords internal
 ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
-  time = 0, dt = 0, trim = TRUE) {
+  filterstate = NULL, time = 0, dt = 0, trim = TRUE) {
   if (is.null(raw)) {
     raw <- fit$estimate$raw
     if (is.null(raw)) stop("raw must be supplied for a fit without an estimate.", call. = FALSE)
@@ -343,7 +369,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   layout <- .ctBackendSummaryLayout(fit)
   spec <- .ctBackendSpec(fit)
   flat <- .ctBackendParMatricesFlat(fit, raw, tipreds = tipreds, state = state,
-    time = time, dt = dt)
+    filterstate = filterstate, time = time, dt = dt)
   out <- lapply(seq_along(layout$matrix), function(index) {
     value <- matrix(
       flat[layout$offset[index] + seq_len(layout$nrow[index] * layout$ncol[index]), 1L],
@@ -363,7 +389,8 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   # the sentence also names *which* cells are conditional -- which the
   # stateDependent attribute gives programmatically and nothing gave in prose.
   .ctContextMessage(fit,
-    if (is.null(state)) .ctContextPopLabel else "the supplied state")
+    if (is.null(state) && is.null(filterstate)) .ctContextPopLabel else
+      "the supplied state")
   out
 }
 

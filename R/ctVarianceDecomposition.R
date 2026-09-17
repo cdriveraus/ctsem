@@ -295,8 +295,10 @@
 # announces which cells are state dependent and where they were evaluated, so a
 # single decomposition printed the same paragraph four hundred times.
 .ctVarDecompPersonAt <- function(fit, tipreds, state, nlatent) {
+  # filterstate=, not state=: the carrier entries are this person's random
+  # effects and are the whole point of materialising here.
   drawn <- suppressMessages(ctBackendParMatrices(fit, tipreds = tipreds,
-    state = state, trim = FALSE))
+    filterstate = state, trim = FALSE))
   mats <- list()
   for (name in .ctVarDecompNeeded) {
     if (!is.null(drawn[[name]])) mats[[name]] <- as.matrix(drawn[[name]])

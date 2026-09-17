@@ -143,11 +143,68 @@ test_that('the summary names the point, and does not name Jacobian blocks', {
   expect_false(grepl('JAx', note, fixed = TRUE))
 })
 
-test_that('a supplied state is validated and padded', {
+test_that('a supplied state is one entry per latent process', {
   expect_error(suppressMessages(ctSummaryMatrices(nonlinearFit(), state = c(1, 2, 3, 4, 5))),
     'must have 2 entries')
   expect_length(ctsem:::.ctResolveState(nonlinearFit(), 'mean')$state,
     length(ctsem:::.ctContextBaseState(nonlinearFit())))
+})
+
+# An individually varying parameter is carried as a latent state with no
+# dynamics, so a cell reading it is written from the state vector rather than
+# from the parameter vector directly. An evaluation point that carried those
+# entries pinned them to whatever raw vector built it, so every draw of a
+# posterior swept through here reported the same value for such a cell -- and
+# every uncertainty band around it was zero wide, with no error and no warning.
+#
+# Fit-free on purpose: nothing asked here needs an estimate, only the
+# materialisation, so this runs in seconds and would have caught the defect.
+carrierModel <- function() .ctTestFit('carrier', function() {
+  skip_without_julia()
+  datalong <- .ctTestData(7, matrix(c(.5, 0, 0, .4), 2, 2), nsubjects = 10,
+    Tpoints = 6)
+  model <- suppressMessages(ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
+    manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
+    LAMBDA = diag(2), DRIFT = matrix(c('d11', 'd21', 0, 'd22'), 2, 2),
+    CINT = matrix(c('c1', 'c2'), 2, 1), MANIFESTMEANS = matrix(0, 2, 1),
+    MANIFESTVAR = diag(.2, 2), DIFFUSION = matrix(c('df1', 0, 0, 'df2'), 2, 2)))
+  model$pars$indvarying <- FALSE
+  model$pars$indvarying[model$pars$matrix == 'DRIFT' & model$pars$row == 2 &
+      model$pars$col == 2] <- TRUE
+  suppressMessages(ctFit(datalong, model, backend = 'julia', fit = FALSE,
+    cores = 1, verbose = 0))
+})
+
+test_that('a carrier cell follows raw whether or not a state is supplied', {
+  fit <- carrierModel()
+  expect_true(ctModelIsNonlinear(fit))
+
+  set.seed(4)
+  npar <- ctsem:::.ctBackendNpar(fit)
+  raw1 <- rnorm(npar, 0, .3)
+  raw2 <- rnorm(npar, 0, .3)
+  drift <- function(raw, ...) suppressMessages(
+    ctBackendParMatrices(fit, raw = raw, trim = FALSE, ...))$DRIFT
+
+  # DRIFT[2,2] is the individually varying parameter and DRIFT[1,1] is not, so
+  # the two draws must differ in both, at the default point and at a supplied
+  # one. This is the regression: DRIFT[2,2] used to be identical across draws
+  # the moment a state was passed.
+  state <- c(.3, -.2)
+  expect_false(isTRUE(all.equal(drift(raw1, state = state)[2, 2],
+    drift(raw2, state = state)[2, 2])))
+  expect_false(isTRUE(all.equal(drift(raw1, state = state)[1, 1],
+    drift(raw2, state = state)[1, 1])))
+
+  # And no cell of this model depends on where the processes are, so naming a
+  # point must not change any of it -- the state argument moves the dynamic
+  # processes and nothing else.
+  expect_equal(drift(raw1, state = state), drift(raw1))
+  expect_equal(drift(raw2, state = state), drift(raw2))
+
+  # A state at the augmented length is refused rather than quietly overwriting
+  # the carriers, which is how the defect reached the engine.
+  expect_error(drift(raw1, state = rep(0, 5)), 'must have 2 entries')
 })
 
 test_that("method='simulate' reduces exactly to the linearised answer when linear", {
