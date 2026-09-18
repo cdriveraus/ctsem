@@ -1815,12 +1815,13 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     latentsd = latentsdpoint, digits = digits, chains = chains)
   if (!is.null(thresholds)) {
     out$thresholds <- thresholds
-    out$thresholdsNote <- paste0("Cumulated and shifted by MANIFESTMEANS, so ",
-      "these are the thresholds on the latent scale; the threshold_ rows ",
-      "above are the gaps that are estimated.",
-      if (!is.null(thresholds$sdunits)) paste0(" sdunits is the threshold in ",
-        "stationary sd of the process it measures -- an item only ",
-        "discriminates where its thresholds fall inside that range.") else "")
+    out$thresholdsNote <- paste0("Where each category boundary sits on the ",
+      "latent process: 'y1 2|3' is the point above which y1 is answered 3 ",
+      "rather than 2. The threshold_ rows in the population means are the ",
+      "estimated gaps between these, which is what keeps them ordered.",
+      if (!is.null(thresholds$inSD)) paste0(" inSD is the same boundary in ",
+        "stationary sd of that process, so an item whose boundaries all lie ",
+        "beyond about +/-2 never leaves its middle categories.") else "")
   }
 
   logposterior <- object$estimate$logposterior
