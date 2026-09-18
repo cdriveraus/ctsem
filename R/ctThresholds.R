@@ -213,3 +213,82 @@ NULL
   }
   invisible(NULL)
 }
+
+#' Ordinal thresholds, cumulated and put on the latent scale.
+#'
+#' The free parameters are gaps (see the file header), and a gap is not a
+#' quantity anyone wants to read: `threshold_y1_2` is the distance from the
+#' first threshold to the second, the first is fixed at zero, and the location
+#' of the whole set is in MANIFESTMEANS. So the numbers in `popmeans` cannot be
+#' compared to the latent process, to each other across items, or to anything a
+#' reader knows. Three steps recover the thresholds themselves:
+#'
+#'   1. cumulate the row, which is what the engine does
+#'      (`_ordinal_thresholds!` in binary_measurement.jl);
+#'   2. subtract MANIFESTMEANS, because the link is
+#'      `inv_logit(tau_k - (LAMBDA eta + MANIFESTMEANS))`, so the location
+#'      lives on the manifest side;
+#'   3. divide by the loading, to get from the linear predictor's units to the
+#'      latent process's own.
+#'
+#' Done per draw rather than on the summarised gaps, so the intervals are the
+#' intervals of the cumulated quantity rather than a delta method on it.
+#'
+#' Step 3 needs the item to load on exactly one latent. Where it loads on
+#' several there is no single scale to express a threshold in, and those rows
+#' are left in linear predictor units with the scaled column NA -- the same
+#' refusal `ctDiscretePars()` makes for a standardisation it cannot compute.
+#'
+#' @param latentsd Point estimate of each latent's stationary standard
+#' deviation, from the parmatrices collapse, or NULL. Only the scaled column
+#' uses it, and that column is the one that answers "does this item
+#' discriminate across the range the process actually covers".
+#' @noRd
+.ctThresholdSummary <- function(object, flat, layout, latentsd = NULL,
+  digits = 3, chains = NULL) {
+  model <- .ctFitModelObject(object)
+  ordinal <- which(model$manifesttype %in% 2L)
+  if (!length(ordinal)) return(NULL)
+
+  arrays <- .ctBackendPopArraysFromFlat(flat, layout, .ctBackendSpec(object))
+  gaps <- arrays$pop_THRESHOLDS
+  location <- arrays$pop_MANIFESTMEANS
+  loadings <- arrays$pop_LAMBDA
+  if (is.null(gaps) || is.null(location) || is.null(loadings)) return(NULL)
+
+  ndraws <- dim(gaps)[1L]
+  values <- list()
+  scaled <- numeric(0)
+  for (i in ordinal) {
+    k <- min(max(model$ncategories[i] - 1L, 0L), dim(gaps)[3L])
+    if (k < 1L) next
+    g <- matrix(gaps[, i, seq_len(k)], nrow = ndraws)
+    # Cumulated by a loop rather than apply(): with one free gap apply() hands
+    # back a vector and the transpose that fixes the general case breaks this
+    # one, silently, in the shape of the result.
+    tau <- g
+    if (k > 1L) for (j in 2:k) tau[, j] <- tau[, j - 1L] + g[, j]
+    tau <- tau - location[, i, 1L]
+
+    lambda <- matrix(loadings[, i, ], nrow = ndraws)
+    carried <- which(colMeans(abs(lambda)) > 1e-8)
+    if (length(carried) == 1L) tau <- tau / lambda[, carried]
+
+    for (j in seq_len(k)) {
+      name <- paste0(model$manifestNames[i], "_", j)
+      values[[name]] <- tau[, j]
+      scaled[name] <- if (length(carried) == 1L && !is.null(latentsd) &&
+          carried <= length(latentsd) && is.finite(latentsd[carried]) &&
+          latentsd[carried] > 0)
+        mean(tau[, j]) / latentsd[carried] else NA_real_
+    }
+  }
+  if (!length(values)) return(NULL)
+
+  out <- .ctBackendSampleSummary(do.call(cbind, values), digits = digits,
+    chains = chains)
+  # Dropped rather than filled with NA when no item could be scaled: a column
+  # of NA reads as a failed computation, and nothing was attempted.
+  if (any(is.finite(scaled))) out$sdunits <- round(scaled[rownames(out)], digits)
+  out
+}

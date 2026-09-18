@@ -1761,7 +1761,8 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
           ctm$pars$value))))
 
     if(length(errfix) > 0){
-      message('Fixing any free MANIFESTVAR parameters for binary / ordinal indicators to deterministic calculation')
+      message('MANIFESTVAR fixed to 0 for binary / ordinal indicators: the ',
+        'measurement link already carries the randomness.')
       ctm$pars$value[errfix] <- 1e-5
       ctm$pars[errfix,c('param','transform','multiplier','offset','meanscale','inneroffset','sdscale')] <- NA
       ctm$pars$indvarying[errfix] <- FALSE
@@ -1845,16 +1846,13 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     # worse -- the linearised estimate is unstable rather than uniformly low,
     # which is why single-dataset comparisons looked so different from each
     # other.
-    if(backend %in% 'julia'){
-      message('Binary and ordinal indicators are integrated rather than ',
-        'linearised on this backend: the observation is taken against the ',
-        'predicted state by quadrature, so DRIFT and DIFFUSION are estimated ',
-        'without the linearisation bias the stan path carries.')
-      if(any(ctm$manifesttype %in% 2)) message(
-        'Ordinal thresholds are reported as the first threshold followed by ',
-        'the gap to each subsequent one, which is what keeps them ordered; ',
-        'cumulate them to read the thresholds themselves.')
-    } else {
+    # Nothing is said for the julia backend. That it integrates rather than
+    # linearises is a property of the engine the user cannot act on, and the
+    # threshold parameterisation is now reported readably by summary()'s
+    # Ordinal thresholds section rather than explained at every fit. The stan
+    # warning below stays because it is a caution about estimates being
+    # unreliable, which is actionable.
+    if(!backend %in% 'julia'){
       message('Binary indicators use a linearised (moment-matched Gaussian) ',
         'measurement update on the stan backend, which makes DRIFT and ',
         'especially DIFFUSION unreliable for a latent seen only through them. ',
