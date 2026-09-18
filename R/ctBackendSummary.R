@@ -1694,12 +1694,6 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     out$tipredsNote <- "Approximate (linearised) effects on the transformed parameters."
   }
 
-  # The stationary standard deviations, kept from the parmatrices collapse so
-  # that the thresholds section can express a threshold in them without a
-  # second collapse of every matrix. NULL when parmatrices was not asked for,
-  # which drops that one column rather than the whole section.
-  latentsdpoint <- NULL
-
   if (isTRUE(parmatrices)) {
     # One materialization, five collapses -- not five calls to
     # .ctBackendSummaryMatrices(), each of which would ask the engine for the
@@ -1747,13 +1741,6 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     # reference, which does.
     out$parmatNote <- .ctContextNote(.ctFitConditionalCells(object),
       .ctContextPopLabel, .ctContextRemedy(object))
-
-    asym <- collapsed$Mean$asymDIFFUSIONcov
-    if (!is.null(asym) && is.matrix(asym)) {
-      variances <- diag(asym)
-      latentsdpoint <- ifelse(is.finite(variances) & variances > 0,
-        sqrt(variances), NA_real_)
-    }
   }
 
   if (length(constrained$randomeffectlevels) > 1L) {
@@ -1811,16 +1798,14 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   # Immediately after the parameters it re-expresses, because the `threshold_`
   # rows above are gaps and are not readable on their own -- which is the whole
   # reason this section exists.
-  thresholds <- .ctThresholdSummary(object, flat, layout,
-    latentsd = latentsdpoint, digits = digits, chains = chains)
+  thresholds <- .ctThresholdSummary(object, flat, layout, digits = digits,
+    chains = chains)
   if (!is.null(thresholds)) {
     out$thresholds <- thresholds
     out$thresholdsNote <- paste0("Where each category boundary sits on the ",
       "latent process: 'y1 2|3' is the point above which y1 is answered 3 ",
       "rather than 2. The threshold_ rows in the population means are the ",
-      "estimated gaps between these, which is what keeps them ordered.",
-      if (!is.null(thresholds$inSD)) paste0(" inSD divides by the process's ",
-        "stationary standard deviation.") else "")
+      "estimated gaps between these, which is what keeps them ordered.")
   }
 
   logposterior <- object$estimate$logposterior
