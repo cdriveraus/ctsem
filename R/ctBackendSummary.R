@@ -1819,9 +1819,8 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
       "latent process: 'y1 2|3' is the point above which y1 is answered 3 ",
       "rather than 2. The threshold_ rows in the population means are the ",
       "estimated gaps between these, which is what keeps them ordered.",
-      if (!is.null(thresholds$inSD)) paste0(" inSD is the same boundary in ",
-        "stationary sd of that process, so an item whose boundaries all lie ",
-        "beyond about +/-2 never leaves its middle categories.") else "")
+      if (!is.null(thresholds$inSD)) paste0(" inSD divides by the process's ",
+        "stationary standard deviation.") else "")
   }
 
   logposterior <- object$estimate$logposterior
