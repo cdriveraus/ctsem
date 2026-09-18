@@ -477,6 +477,8 @@ summaryCtStanFitLabel <- function(x){
     parmatrices = 'System Matrices',
     popsd = 'Random-effects standard deviations',
     popmeans = 'Fixed-effects / Population means',
+    thresholds = 'Ordinal thresholds',
+    thresholdsNote = 'Note',
     popNote = 'Note',
     loglik = 'Log likelihood',
     npars = 'Number of parameters',

@@ -1694,6 +1694,12 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     out$tipredsNote <- "Approximate (linearised) effects on the transformed parameters."
   }
 
+  # The stationary standard deviations, kept from the parmatrices collapse so
+  # that the thresholds section can express a threshold in them without a
+  # second collapse of every matrix. NULL when parmatrices was not asked for,
+  # which drops that one column rather than the whole section.
+  latentsdpoint <- NULL
+
   if (isTRUE(parmatrices)) {
     # One materialization, five collapses -- not five calls to
     # .ctBackendSummaryMatrices(), each of which would ask the engine for the
@@ -1741,6 +1747,13 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     # reference, which does.
     out$parmatNote <- .ctContextNote(.ctFitConditionalCells(object),
       .ctContextPopLabel, .ctContextRemedy(object))
+
+    asym <- collapsed$Mean$asymDIFFUSIONcov
+    if (!is.null(asym) && is.matrix(asym)) {
+      variances <- diag(asym)
+      latentsdpoint <- ifelse(is.finite(variances) & variances > 0,
+        sqrt(variances), NA_real_)
+    }
   }
 
   if (length(constrained$randomeffectlevels) > 1L) {
@@ -1794,6 +1807,21 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   out$popNote <- paste0("Population values on the transformed scale. ",
     "Covariance parameters appear in sd / unconstrained correlation form; ",
     "see System Matrices (or ctSummaryMatrices()) for cor/cov.")
+
+  # Immediately after the parameters it re-expresses, because the `threshold_`
+  # rows above are gaps and are not readable on their own -- which is the whole
+  # reason this section exists.
+  thresholds <- .ctThresholdSummary(object, flat, layout,
+    latentsd = latentsdpoint, digits = digits, chains = chains)
+  if (!is.null(thresholds)) {
+    out$thresholds <- thresholds
+    out$thresholdsNote <- paste0("Cumulated and shifted by MANIFESTMEANS, so ",
+      "these are the thresholds on the latent scale; the threshold_ rows ",
+      "above are the gaps that are estimated.",
+      if (!is.null(thresholds$sdunits)) paste0(" sdunits is the threshold in ",
+        "stationary sd of the process it measures -- an item only ",
+        "discriminates where its thresholds fall inside that range.") else "")
+  }
 
   logposterior <- object$estimate$logposterior
   if (is.null(logposterior)) logposterior <- object$estimate$loglik
