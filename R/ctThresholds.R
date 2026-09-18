@@ -275,7 +275,7 @@ NULL
     if (length(carried) == 1L) tau <- tau / lambda[, carried]
 
     for (j in seq_len(k)) {
-      name <- paste0(model$manifestNames[i], "_", j)
+      name <- paste0(model$manifestNames[i], " ", j, "|", j + 1L)
       values[[name]] <- tau[, j]
       scaled[name] <- if (length(carried) == 1L && !is.null(latentsd) &&
           carried <= length(latentsd) && is.finite(latentsd[carried]) &&
@@ -289,6 +289,6 @@ NULL
     chains = chains)
   # Dropped rather than filled with NA when no item could be scaled: a column
   # of NA reads as a failed computation, and nothing was attempted.
-  if (any(is.finite(scaled))) out$sdunits <- round(scaled[rownames(out)], digits)
+  if (any(is.finite(scaled))) out$inSD <- round(scaled[rownames(out)], digits)
   out
 }
