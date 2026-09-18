@@ -236,15 +236,17 @@ NULL
 #'
 #' Step 3 needs the item to load on exactly one latent. Where it loads on
 #' several there is no single scale to express a threshold in, and those rows
-#' are left in linear predictor units with the scaled column NA -- the same
-#' refusal `ctDiscretePars()` makes for a standardisation it cannot compute.
+#' are left in linear predictor units.
 #'
-#' @param latentsd Point estimate of each latent's stationary standard
-#' deviation, from the parmatrices collapse, or NULL. Only the scaled column
-#' uses it, and that column is the one that answers "does this item
-#' discriminate across the range the process actually covers".
+#' The thresholds themselves are all this reports. A column expressing them in
+#' the process's own spread was tried and removed: dividing by the stationary
+#' sd is a z-score only for a process centred at zero, and the obvious repair
+#' -- centring on `asymCINT` -- puts `-DRIFT^-1 CINT` into a number read at a
+#' glance, which is unbounded as the process slows, absent for a
+#' non-stationary system, and a linearisation wherever DRIFT depends on the
+#' state. Neither version is a diagnostic, so there is none.
 #' @noRd
-.ctThresholdSummary <- function(object, flat, layout, latentsd = NULL,
+.ctThresholdSummary <- function(object, flat, layout,
   digits = 3, chains = NULL) {
   model <- .ctFitModelObject(object)
   ordinal <- which(model$manifesttype %in% 2L)
@@ -258,7 +260,6 @@ NULL
 
   ndraws <- dim(gaps)[1L]
   values <- list()
-  scaled <- numeric(0)
   for (i in ordinal) {
     k <- min(max(model$ncategories[i] - 1L, 0L), dim(gaps)[3L])
     if (k < 1L) next
@@ -275,20 +276,11 @@ NULL
     if (length(carried) == 1L) tau <- tau / lambda[, carried]
 
     for (j in seq_len(k)) {
-      name <- paste0(model$manifestNames[i], " ", j, "|", j + 1L)
-      values[[name]] <- tau[, j]
-      scaled[name] <- if (length(carried) == 1L && !is.null(latentsd) &&
-          carried <= length(latentsd) && is.finite(latentsd[carried]) &&
-          latentsd[carried] > 0)
-        mean(tau[, j]) / latentsd[carried] else NA_real_
+      values[[paste0(model$manifestNames[i], " ", j, "|", j + 1L)]] <- tau[, j]
     }
   }
   if (!length(values)) return(NULL)
 
-  out <- .ctBackendSampleSummary(do.call(cbind, values), digits = digits,
+  .ctBackendSampleSummary(do.call(cbind, values), digits = digits,
     chains = chains)
-  # Dropped rather than filled with NA when no item could be scaled: a column
-  # of NA reads as a failed computation, and nothing was attempted.
-  if (any(is.finite(scaled))) out$inSD <- round(scaled[rownames(out)], digits)
-  out
 }
