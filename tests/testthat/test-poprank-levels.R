@@ -184,3 +184,57 @@ test_that("a loading prior is scaled so the implied variance does not track rank
   expect_equal(unique(prior$scale[match(study$load_index, prior$index)]),
     1 / sqrt(2))
 })
+
+test_that("a reduced level's gradient matches finite differences", {
+  # The one that matters. The seeded gradient assembly writes the population
+  # factor's derivative through `X = L \ dL`, which needs L square; a reduced
+  # level's loading is k by rank, and a square padded L with zero columns is
+  # exactly singular. The first version of this feature shipped that, so every
+  # gradient evaluation threw SingularException inside a per-unit loop and came
+  # back as "bad trial point" -- a fit that crawled rather than one that failed.
+  # Nothing short of differencing the objective would have caught it.
+  d <- levelframe(nstudy = 5L, nperson = 6L, nburst = 3L)
+  for (pr in list(NA, c(study = 1), c(subject = 2, study = 1))) {
+    args <- list(d, levelmodel(), backend = "julia", intoverpop = "laplace",
+      cores = 2, optimcontrol = list(estonly = TRUE, maxiter = 3))
+    if (!identical(pr, NA)) args$poprank <- pr
+    fit <- suppressMessages(suppressWarnings(do.call(ctFit, args)))
+    at <- as.numeric(fit$estimate$raw)
+    with_gradient <- ctsem:::.ctBackendLpgFunc(fit, gradient = TRUE)
+    value_only <- ctsem:::.ctBackendLpgFunc(fit, gradient = FALSE)
+    analytic <- as.numeric(attr(with_gradient(at), "gradient"))
+    expect_true(all(is.finite(analytic)))
+    # 1e-4, not smaller. Every perturbation re-solves the profiled inner modes,
+    # so the difference quotient carries that solve's own noise and a shorter
+    # step makes the comparison worse rather than sharper -- measured best
+    # agreement on this engine is around 1e-4 to 3e-4.
+    numeric <- vapply(seq_along(at), function(i) {
+      h <- 1e-4 * max(1, abs(at[[i]]))
+      up <- lo <- at
+      up[[i]] <- up[[i]] + h
+      lo[[i]] <- lo[[i]] - h
+      (value_only(up) - value_only(lo)) / (2 * h)
+    }, numeric(1))
+    relative <- abs(analytic - numeric) /
+      pmax(1, abs(analytic), abs(numeric))
+    # Loose enough for that noise and nowhere near loose enough to pass a
+    # broken gradient: the defect this guards against made the seeded assembly
+    # throw, so the comparison was not close, it was absent.
+    expect_lt(stats::median(relative), 1e-4)
+    expect_lt(max(relative), 1e-2)
+  }
+})
+
+test_that("a reduced level's block spans its rank, not its effect count", {
+  # What makes a reduced level cheap rather than merely smaller to describe.
+  # The deviation is L u, so a block of width k with k - rank zero columns is
+  # mathematically fine and costs k^3 per block in the curvature regardless of
+  # the rank asked for.
+  d <- levelframe()
+  full <- levelspec(d)
+  reduced <- levelspec(d, poprank = c(subject = 2, study = 1))
+  latent <- function(spec) vapply(spec$laplace$levels, function(lv)
+    as.integer(if (is.null(lv$rank)) length(lv$re_index) else lv$rank), integer(1))
+  expect_equal(latent(full), c(3L, 9L, 9L))
+  expect_equal(latent(reduced), c(3L, 2L, 1L))
+})

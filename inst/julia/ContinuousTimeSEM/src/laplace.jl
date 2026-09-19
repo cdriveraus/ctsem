@@ -183,8 +183,20 @@ end
 has random effects."""
 isreducedrank(level::CTSEMLaplaceLevel) = level.rank < length(level.re_index)
 
-"""Number of random effects carried by one level."""
+"""Number of model parameters this level moves."""
 nrandomeffects(level::CTSEMLaplaceLevel) = length(level.re_index)
+
+"""
+Dimensions this level's latent block spans.
+
+The same as `nrandomeffects` for an ordinary level and equal to the rank for a
+reduced one, and keeping the two apart is the whole of what makes a reduced
+level cheap. They were one number until a rank could differ from an effect
+count, and every site that used it meant one or the other: `re_index[p]` is
+indexed by the parameter count, `u[offset + q]` by the block dimension. A site
+that takes the wrong one still runs and still returns a number.
+"""
+nlatent(level::CTSEMLaplaceLevel) = level.rank
 
 """
     CTSEMLaplaceSpec(levels)
@@ -210,6 +222,12 @@ end
 nrandomeffects(spec::CTSEMLaplaceSpec) = sum(nrandomeffects(l) for l in spec.levels; init=0)
 
 nlevels(spec::CTSEMLaplaceSpec) = length(spec.levels)
+
+"""Total latent dimensions across every level, per subject."""
+nlatent(spec::CTSEMLaplaceSpec) = sum(nlatent(l) for l in spec.levels; init=0)
+
+"""True when any level's covariance spans fewer dimensions than it has effects."""
+hasreducedrank(spec::CTSEMLaplaceSpec) = any(isreducedrank, spec.levels)
 
 """
     CTSEMLaplaceBlock(offset, size, members, level, ancestors)
@@ -317,7 +335,9 @@ function _laplace_build_units(spec::CTSEMLaplaceSpec, nsubjects::Integer)
         offsets[U] = [zeros(Int, nlev) for _ in eachindex(members[U])]
         for (m, i) in enumerate(members[U])
             for l in 1:nlev
-                k = nrandomeffects(levels[l])
+                # Latent dimensions, not parameters: this is how wide the
+                # block is in `u`.
+                k = nlatent(levels[l])
                 key = (l, levels[l].group[i])
                 slot = get(seen, key, -1)
                 if slot < 0
@@ -339,7 +359,7 @@ function _laplace_build_units(spec::CTSEMLaplaceSpec, nsubjects::Integer)
         blocklevel = Dict{Int,Int}()
         for (m, i) in enumerate(members[U])
             for l in 1:nlev
-                k = nrandomeffects(levels[l])
+                k = nlatent(levels[l])
                 k == 0 && continue
                 off = offsets[U][m][l]
                 push!(get!(owners, off, Int[]), m)
@@ -362,7 +382,7 @@ function _laplace_build_units(spec::CTSEMLaplaceSpec, nsubjects::Integer)
             m = members_here[1]
             ancestors = Int[]
             for outer in (l + 1):nlev
-                nrandomeffects(levels[outer]) == 0 && continue
+                nlatent(levels[outer]) == 0 && continue
                 push!(ancestors, position[offsets[U][m][outer]])
             end
             push!(blocks[U], CTSEMLaplaceBlock(off, sizes[off], members_here, l,
@@ -679,7 +699,7 @@ covariance rather than the sign of one entry.
 function _laplace_poploading(values::AbstractVector{T}, level::CTSEMLaplaceLevel) where {T}
     k = nrandomeffects(level)
     r = level.rank
-    L = zeros(T, k, k)
+    L = zeros(T, k, r)
     counter = 0
     @inbounds for q in 1:r
         for p in q:k
@@ -792,12 +812,15 @@ function _laplace_member_values!(shifted::AbstractVector, values::AbstractVector
     @inbounds for l in eachindex(spec.levels)
         level = spec.levels[l]
         k = nrandomeffects(level)
-        k == 0 && continue
+        r = nlatent(level)
+        (k == 0 || r == 0) && continue
         base = offsets[l]
         L = Ls[l]
+        # `p` walks the parameters this level moves, `q` the dimensions of its
+        # block. They are the same number only for a full-rank level.
         for p in 1:k
             acc = zero(S)
-            for q in 1:k
+            for q in 1:r
                 acc += L[p, q] * u[base + q]
             end
             shifted[level.re_index[p]] += acc
@@ -1281,10 +1304,11 @@ function _laplace_unit_loglik_gradient(laplace::CTSEMLaplaceObjective, U::Intege
         for l in eachindex(spec.levels)
             level = spec.levels[l]
             k = nrandomeffects(level)
-            k == 0 && continue
+            r = nlatent(level)
+            (k == 0 || r == 0) && continue
             base = offsets[l]
             L = Ls[l]
-            for q in 1:k
+            for q in 1:r
                 acc = zero(T)
                 for pp in 1:k
                     acc += L[pp, q] * gradient[level.re_index[pp]]
@@ -2013,6 +2037,13 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
     M::CTSEMBlockMatrix{Float64}, factors, elim, slot::Integer=1)
 
     spec = laplace.spec
+    # Unreachable while `ctsem_laplace_evaluate` routes a reduced spec to the
+    # nested gradient, and an error rather than an assumption because what it
+    # would otherwise do is a singular solve inside a per-unit loop, whose
+    # failure looks like a bad trial point.
+    hasreducedrank(spec) && throw(ArgumentError(
+        "the seeded gradient assembly needs a square population factor; a " *
+        "reduced-rank level has none. Use nested_gradient=true."))
     units = laplace.units
     blocks = units.blocks[U]
     npar = length(values)
@@ -2127,10 +2158,15 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
     for (b, block) in enumerate(blocks)
         l = block.level
         rho = spec.levels[l].re_index
+        # `block.size` is the block's width in `u`; `length(rho)` is how many
+        # parameters the level moves. Equal for a full-rank level and not
+        # otherwise, so the accumulator is built in parameter space and `L'`
+        # brings it back to block space.
         k = block.size
+        kpar = length(rho)
         k == 0 && continue
-        acc = zeros(Float64, k)
-        for m in block.members, p in 1:k
+        acc = zeros(Float64, kpar)
+        for m in block.members, p in 1:kpar
             acc[p] += Pm[rho[p], m]
         end
         contribution = transpose(Ls[l]) * acc
@@ -2177,11 +2213,11 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
     Gb = Vector{Vector{Float64}}(undef, length(blocks))
     Fb = Vector{Vector{Float64}}(undef, length(blocks))
     for (b, block) in enumerate(blocks)
-        k = block.size
         rho = spec.levels[block.level].re_index
-        Gb[b] = zeros(Float64, k)
-        Fb[b] = zeros(Float64, k)
-        for m in block.members, p in 1:k
+        kpar = length(rho)
+        Gb[b] = zeros(Float64, kpar)
+        Fb[b] = zeros(Float64, kpar)
+        for m in block.members, p in 1:kpar
             Gb[b][p] += llvm[rho[p], m] + (Pm[rho[p], m] + Bsm[rho[p], m]) / 2
             Fb[b][p] += llvm[rho[p], m]
         end
@@ -2196,11 +2232,14 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
             for (b, block) in enumerate(blocks)
                 k = block.size
                 if block.level == l && k > 0
+                    kpar = length(spec.levels[l].re_index)
                     ub = [uhat[block.offset + q] for q in 1:k]
                     sb = [s[block.offset + q] for q in 1:k]
+                    # `dL` is parameter-by-block, so both shifts land in
+                    # parameter space where `Gb` and `Fb` live.
                     shift = dL[l][t] * ub
                     sshift = dL[l][t] * sb
-                    for p in 1:k
+                    for p in 1:kpar
                         total += Gb[b][p] * shift[p] + Fb[b][p] * sshift[p] / 2
                     end
                     KB = Cdiag[b] * (Matrix{Float64}(LinearAlgebra.I, k, k) .- M.diag[b])
@@ -2253,7 +2292,8 @@ function _laplace_level_chol_derivatives(values::AbstractVector{Float64},
         level = spec.levels[l]
         positions = _laplace_level_positions(spec, l)
         k = length(level.re_index)
-        if isempty(positions) || k == 0
+        r = nlatent(level)
+        if isempty(positions) || k == 0 || r == 0
             out[l] = Matrix{Float64}[]
             continue
         end
@@ -2265,7 +2305,7 @@ function _laplace_level_chol_derivatives(values::AbstractVector{Float64},
             return vec(_laplace_popchol(v, level))
         end
         J = ForwardDiff.jacobian(chol_of, values[positions])
-        out[l] = [Matrix{Float64}(reshape(collect(view(J, :, t)), k, k))
+        out[l] = [Matrix{Float64}(reshape(collect(view(J, :, t)), k, r))
                   for t in eachindex(positions)]
     end
     return out
@@ -2309,6 +2349,18 @@ implicit mode dependence included.
 """
 function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     gradient::Bool=true, contributions::Bool=false, nested_gradient::Bool=false)
+    # The seeded assembly writes the population factor's own derivative terms
+    # through `X = L \\ dL`, which needs `L` square and invertible. A reduced
+    # level's loading is `k x rank`, so there is no such `X` -- and a padded
+    # square `L` with zero columns is exactly singular, which throws rather
+    # than quietly misreporting, which is the only reason this was found.
+    #
+    # Forced here rather than at the optimizer, so every caller is covered:
+    # the Hessian, the sampler and any direct call get the same treatment as a
+    # fit. The nested route takes the derivative of the whole per-unit term and
+    # needs no such identity, so it is correct at any rank; `test_laplace.jl`
+    # already checks the two against each other at one, two and three levels.
+    nested_gradient = nested_gradient || hasreducedrank(laplace.spec)
     theta = collect(Float64, values)
     _laplace_check_indices(laplace, length(theta))
     nsubjects = length(laplace.objective.subject_objectives)
@@ -2678,7 +2730,7 @@ function _laplace_restrict_levels(laplace::CTSEMLaplaceObjective, U::Integer,
     units = laplace.units
     for (m, _) in enumerate(units.members[U])
         for l in 1:min(from_level - 1, nlevels(laplace.spec))
-            k = nrandomeffects(laplace.spec.levels[l])
+            k = nlatent(laplace.spec.levels[l])
             k == 0 && continue
             base = units.offsets[U][m][l]
             @inbounds for q in 1:k
@@ -2947,12 +2999,15 @@ function ctsem_laplace_modes(laplace::CTSEMLaplaceObjective, values::AbstractVec
     spec = laplace.spec
     lv = spec.levels[level]
     k = nrandomeffects(lv)
+    # `z` lives in the block's own space and `raw` in the parameter space the
+    # loading maps it to; for a reduced level those have different widths.
+    r = nlatent(lv)
     Ls = _laplace_popchols(theta, spec)
     L = Ls[level]
     ngroups = lv.ngroups
-    z = zeros(Float64, ngroups, k)
+    z = zeros(Float64, ngroups, r)
     raw = zeros(Float64, ngroups, k)
-    zsd = zeros(Float64, ngroups, k)
+    zsd = zeros(Float64, ngroups, r)
     rawsd = zeros(Float64, ngroups, k)
     filled = falses(ngroups)
     for U in eachindex(laplace.units.members)
@@ -2983,9 +3038,9 @@ function ctsem_laplace_modes(laplace::CTSEMLaplaceObjective, values::AbstractVec
             # vector, not one per subject, so it is written once.
             filled[g] && continue
             filled[g] = true
-            k == 0 && continue
+            (k == 0 || r == 0) && continue
             base = laplace.units.offsets[U][m][level]
-            slice = (base + 1):(base + k)
+            slice = (base + 1):(base + r)
             zi = u[slice]
             z[g, :] = zi
             raw[g, :] = L * zi
