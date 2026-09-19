@@ -452,6 +452,71 @@ identically, not just numerically, which is why the fast path can stay.
 end
 
 """
+    _censored_moments(ηbar, s, y, thresholds)
+
+`(logZ, mean - ηbar, variance)` for a censored observation, in closed form.
+
+A censored row is a Gaussian observation of a Gaussian state, so everything
+the filter wants about it can be written down. The other kinds need quadrature
+because a logistic or a Poisson likelihood against a Gaussian prior has no
+elementary integral; this one does, and integrating it numerically was only
+ever costing accuracy. Measured against the closed form, the 21 node rule was
+1.1e-02 out at a predicted sd of 5 and 7.4e-02 at 20 -- the worst of the four
+kinds, on the one where no approximation was needed at all.
+
+Write `V = sd^2 + s^2` for the variance of the observation `y* = η + ε`, which
+is what is actually observed or known to lie beyond a limit.
+
+*Inside the limits* the observation is `y` itself. Its density is
+`N(y; ηbar, sqrt(V))`, and the posterior is the usual precision-weighted
+combination: the mean moves `s^2/V` of the way from the prior to the
+observation and the variance is `s^2 sd^2 / V`.
+
+*At a limit* only `y* <= lower` (or `y* >= upper`) is known. Then `(η, y*)` is
+jointly Gaussian with covariance `s^2`, so conditioning on a one-sided event in
+`y*` gives the truncated-normal moments through that covariance. With `b` the
+standardised distance to the limit, on the side the mass is, and `lambda` the
+inverse Mills ratio at `b`:
+
+    logZ      = log Phi(b)
+    mean      = ηbar -/+ (s^2 / sqrt(V)) lambda
+    variance  = s^2 - (s^4 / V) (b lambda + lambda^2)
+
+`b lambda + lambda^2` is one minus the truncated variance of a standard normal,
+and it is the one place here that cancels: both terms grow like `b^2` while
+their sum tends to one. At `b = -40` that is three digits of sixteen, which is
+where deep censoring lives and is comfortably enough.
+
+Nothing special is needed for a zero measurement standard deviation, which the
+formulas reduce to a noiseless observation, or for an infinite limit on one
+side, which `_censored_at` never reports as censored.
+"""
+@inline function _censored_moments(ηbar::T, s::T, y::Real, thresholds) where {T}
+    lower, upper, sd = _censor_limits(thresholds, T)
+    s2 = s * s
+    V = sd * sd + s2
+    rootV = sqrt(V)
+    atlower = _censored_at(y, lower, false)
+    atupper = _censored_at(y, upper, true)
+    if !atlower && !atupper
+        deviation = y - ηbar
+        z = deviation / rootV
+        logZ = -z * z / 2 - log(rootV) - log(sqrt(2 * T(pi)))
+        return (logZ, deviation * s2 / V, s2 * sd * sd / V)
+    end
+    # The standardised distance to the limit, signed so that the mass the
+    # observation reports always lies below `b`. The upper case is the lower
+    # one in `-η`, which flips the mean shift and leaves the variance alone.
+    b = atlower ? (lower - ηbar) / rootV : (ηbar - upper) / rootV
+    logZ = _norm_logcdf(b)
+    lambda = _mills(b)
+    shift = (s2 / rootV) * lambda
+    offset = atlower ? -shift : shift
+    variance = s2 - (s2 * s2 / V) * (b * lambda + lambda * lambda)
+    return (logZ, offset, max(variance, zero(variance)))
+end
+
+"""
     _mode_start(ηbar, y, thresholds, kind)
 
 Where the mode iteration begins, as an offset from `ηbar`: the prior mean moved
@@ -464,10 +529,10 @@ the distance it has to cover is then set by the prior rather than by the
 likelihood. Projecting first does that part in closed form and leaves a
 distance the logistic sets, which is a few units whatever `s` is.
 
-Every kind, in one place. The count case has had such a start since its own
-mode solve was fixed, and ordinal and binary got one when the same failure was
-found there; censored is included because its likelihood has a mode too and
-there was never a reason for it to be the exception.
+Every kind that reaches the iteration, in one place. The count case has had
+such a start since its own mode solve was fixed, and ordinal and binary got one
+when the same failure was found there. Censored is absent because it does not
+come here at all: it is solved in closed form by `_censored_moments`.
 
 Written as branches on the observation rather than as a `clamp` against
 infinities, so that no infinity meets a dual number: an infinite partial times
@@ -479,14 +544,6 @@ a zero is the NaN that travels silently.
         # finite, which is the commonest observation in floor-heavy count data
         # and the corner a bare `log y` start sent back to `ηbar`.
         return log(T(y) + T(0.5)) - ηbar
-    end
-    if kind == CTSEM_OBS_CENSORED
-        lower, upper, _ = _censor_limits(thresholds, T)
-        # At a limit the mass is beyond it; inside, the Gaussian likelihood's
-        # mode is the observation itself.
-        _censored_at(y, lower, false) && return min(zero(T), lower - ηbar)
-        _censored_at(y, upper, true) && return max(zero(T), upper - ηbar)
-        return T(y) - ηbar
     end
     if kind == CTSEM_OBS_ORDINAL && !isempty(thresholds)
         n = length(thresholds)
@@ -787,6 +844,10 @@ re-centring turns that into `∫h(η)dη ≈ √2σ̂ Σ wᵢ exp(tᵢ²) h(η̂
         return (_category_loglikelihood(ηbar, y, thresholds, kind),
             zero(T), zero(T))
     end
+    # A censored row is Gaussian on Gaussian and has a closed form, so it never
+    # reaches the rule below. See `_censored_moments`.
+    kind == CTSEM_OBS_CENSORED &&
+        return _censored_moments(ηbar, s, y, thresholds)
     mode_offset, curvature = _binary_mode(ηbar, s2, y, thresholds, kind)
     scale = sqrt(T(2) / curvature)
 
