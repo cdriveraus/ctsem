@@ -2037,13 +2037,6 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
     M::CTSEMBlockMatrix{Float64}, factors, elim, slot::Integer=1)
 
     spec = laplace.spec
-    # Unreachable while `ctsem_laplace_evaluate` routes a reduced spec to the
-    # nested gradient, and an error rather than an assumption because what it
-    # would otherwise do is a singular solve inside a per-unit loop, whose
-    # failure looks like a bad trial point.
-    hasreducedrank(spec) && throw(ArgumentError(
-        "the seeded gradient assembly needs a square population factor; a " *
-        "reduced-rank level has none. Use nested_gradient=true."))
     units = laplace.units
     blocks = units.blocks[U]
     npar = length(values)
@@ -2097,14 +2090,23 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
         k = block.size
         k == 0 && continue
         # Diagonal term. tr(C[b,b] A[b,b]) = tr(W H) with W = L C[b,b] L', so a
-        # Cholesky of W turns the trace into k pure second directional
-        # derivatives whose directions live in parameter space.
-        W = _laplace_symmetrise(L * Cdiag[b] * transpose(L))
-        F = cholesky(Symmetric(W); check=false)
-        issuccess(F) || return false
-        Q = Matrix(F.L)
-        for r in 1:k
-            dir = scatter(l, Q[:, r])
+        # factor of W turns the trace into pure second directional derivatives
+        # whose directions live in parameter space.
+        #
+        # The factor is taken of `C[b,b]`, not of `W`. `W` is parameters by
+        # parameters with the rank of the block, so for a reduced level it is
+        # singular and a Cholesky of it simply fails -- which returned `false`
+        # here and sent every reduced fit to the nested gradient by the silent
+        # fallback. `C[b,b]` is block by block and positive definite whatever
+        # the rank, and `W = (L Cc)(L Cc)'` exactly, so `Q = L Cc` has one
+        # column per block dimension, which is the number of directions the
+        # trace needs. At full rank this is the same factorisation of the same
+        # matrix, reached without forming it.
+        FC = cholesky(Symmetric(_laplace_symmetrise(Cdiag[b])); check=false)
+        issuccess(FC) || return false
+        Q = L * Matrix(FC.L)
+        for j in 1:k
+            dir = scatter(l, Q[:, j])
             pass = sweep(block.members, dir, dir, 2)
             pass.ok || return false
             # The second-order sweep is where this fails when it fails: it is a
@@ -2129,8 +2131,13 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
         for (t, a) in enumerate(block.ancestors)
             la = blocks[a].level
             V = Ls[la] * transpose(Ccoup[b][t]) * transpose(L)
-            for q in 1:k
-                e = zeros(Float64, k); e[q] = 1.0
+            # `e` walks this level's *parameters*, which is what `scatter`
+            # indexes and what `V`'s columns are. Equal to the block width at
+            # full rank and larger than it otherwise, so sizing `e` by the
+            # block read past its end for a reduced level.
+            kparl = length(spec.levels[l].re_index)
+            for q in 1:kparl
+                e = zeros(Float64, kparl); e[q] = 1.0
                 pass = sweep(block.members, scatter(l, e), scatter(la, V[:, q]), 2)
                 pass.ok || return false
                 all(isfinite, pass.d12) || return false
@@ -2205,6 +2212,77 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
         out[j] += acc
     end
 
+    # The explicit trace terms, written against `dL` rather than against
+    # `X = L \ dL`.
+    #
+    # The `X` form needs no sweeps at all and is kept wherever it is valid, but
+    # it exists only for a square `L`: it rewrites `tr(C L' H dL)` as
+    # `tr(C L' H L X)`, which is the same thing only because `L X = dL` has a
+    # solution. A reduced level's `L` is parameters by rank, so it has none.
+    #
+    # The other way round, each of the three traces is
+    # `<H_{b,x} L_x C[x,b], dL_b>` for `x` over the block, its ancestors and
+    # its descendants: one Frobenius product per population parameter against a
+    # matrix that does not depend on which parameter it is. `H_{b,x} L_x` is a
+    # directional second derivative along a *parameter*-space direction, which
+    # is what one order-1 sweep along a column of `L_x` returns -- so this costs
+    # one sweep per level dimension rather than one per level parameter.
+    #
+    # `H_{b,x}` runs over the members depending on both blocks, which under
+    # strict nesting is the members of whichever is inner.
+    nlev = length(spec.levels)
+    needV = hasreducedrank(spec)
+    levelsweeps = Vector{Vector{Matrix{Float64}}}(undef, nlev)
+    if needV
+        for l in 1:nlev
+            rl = nlatent(spec.levels[l])
+            levelsweeps[l] = Vector{Matrix{Float64}}(undef, rl)
+            for q in 1:rl
+                pass = sweep(1:nmem, scatter(l, Ls[l][:, q]), zerodir, 1)
+                pass.ok || return false
+                all(isfinite, pass.d1c) || return false
+                levelsweeps[l][q] = pass.d1c
+            end
+        end
+    end
+
+    # `H_{target,partner} L_partner`, in the target level's parameter rows,
+    # summed over the given members.
+    HLmatrix = function (targetlevel::Int, partnerlevel::Int, memberset)
+        rho = spec.levels[targetlevel].re_index
+        rp = nlatent(spec.levels[partnerlevel])
+        acc = zeros(Float64, length(rho), rp)
+        for q in 1:rp
+            D = levelsweeps[partnerlevel][q]
+            @inbounds for m in memberset, pp in eachindex(rho)
+                acc[pp, q] += D[rho[pp], m]
+            end
+        end
+        return acc
+    end
+
+    V = Vector{Matrix{Float64}}(undef, length(blocks))
+    if needV
+        for (b, block) in enumerate(blocks)
+            V[b] = zeros(Float64,
+                length(spec.levels[block.level].re_index), block.size)
+        end
+        for (b, block) in enumerate(blocks)
+            block.size == 0 && continue
+            V[b] .+= HLmatrix(block.level, block.level, block.members) * Cdiag[b]
+            # A coupling moves both ends: this block's factor against the
+            # ancestor, and the ancestor's factor against this block. Both run
+            # over this block's members, it being the inner of the two.
+            for (tt, a) in enumerate(block.ancestors)
+                blocks[a].size == 0 && continue
+                V[b] .+= HLmatrix(block.level, blocks[a].level, block.members) *
+                    transpose(Ccoup[b][tt])
+                V[a] .+= HLmatrix(blocks[a].level, block.level, block.members) *
+                    Ccoup[b][tt]
+            end
+        end
+    end
+
     # The population parameters move every member's v through L, and move psi
     # through L explicitly. A[b,b] = I - M.diag[b] and A[b,a] = -M.coupling[b][t]
     # give the curvature blocks with no further sweeps, and writing each trace
@@ -2227,7 +2305,7 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
         isempty(dL[l]) && continue
         levelpositions = _laplace_level_positions(spec, l)
         for (t, j) in enumerate(levelpositions)
-            X = Ls[l] \ dL[l][t]
+            X = needV ? zeros(Float64, 0, 0) : Ls[l] \ dL[l][t]
             total = 0.0
             for (b, block) in enumerate(blocks)
                 k = block.size
@@ -2242,6 +2320,11 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
                     for p in 1:kpar
                         total += Gb[b][p] * shift[p] + Fb[b][p] * sshift[p] / 2
                     end
+                    if needV
+                        for x in axes(V[b], 1), y in axes(V[b], 2)
+                            total += V[b][x, y] * dL[l][t][x, y]
+                        end
+                    else
                     KB = Cdiag[b] * (Matrix{Float64}(LinearAlgebra.I, k, k) .- M.diag[b])
                     for x in 1:k, y in 1:k
                         total += KB[x, y] * X[y, x]
@@ -2253,8 +2336,10 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
                             total += X[y, x] * Z[y, x]
                         end
                     end
+                    end
                 end
                 # tr(C[a,b] A[b,a] X): an ancestor's factor moving.
+                if !needV
                 for (tt, a) in enumerate(block.ancestors)
                     blocks[a].level == l || continue
                     ka = blocks[a].size
@@ -2262,6 +2347,7 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
                     for x in 1:ka, y in 1:ka
                         total += Z[x, y] * X[y, x]
                     end
+                end
                 end
             end
             out[j] += total
@@ -2349,18 +2435,6 @@ implicit mode dependence included.
 """
 function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     gradient::Bool=true, contributions::Bool=false, nested_gradient::Bool=false)
-    # The seeded assembly writes the population factor's own derivative terms
-    # through `X = L \\ dL`, which needs `L` square and invertible. A reduced
-    # level's loading is `k x rank`, so there is no such `X` -- and a padded
-    # square `L` with zero columns is exactly singular, which throws rather
-    # than quietly misreporting, which is the only reason this was found.
-    #
-    # Forced here rather than at the optimizer, so every caller is covered:
-    # the Hessian, the sampler and any direct call get the same treatment as a
-    # fit. The nested route takes the derivative of the whole per-unit term and
-    # needs no such identity, so it is correct at any rank; `test_laplace.jl`
-    # already checks the two against each other at one, two and three levels.
-    nested_gradient = nested_gradient || hasreducedrank(laplace.spec)
     theta = collect(Float64, values)
     _laplace_check_indices(laplace, length(theta))
     nsubjects = length(laplace.objective.subject_objectives)

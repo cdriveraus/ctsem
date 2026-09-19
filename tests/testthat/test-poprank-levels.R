@@ -238,3 +238,34 @@ test_that("a reduced level's block spans its rank, not its effect count", {
   expect_equal(latent(full), c(3L, 9L, 9L))
   expect_equal(latent(reduced), c(3L, 2L, 1L))
 })
+
+test_that("a reduced fit does not silently fall back to the nested gradient", {
+  # The seeded assembly returns `false` on a failed factorization and the
+  # caller quietly recomputes the whole gradient by the nested route. That is
+  # correct and several times slower, and from outside it is indistinguishable
+  # from the seeded route having worked: the numbers agree with finite
+  # differences either way, because the fallback is what produced them. An
+  # earlier version of this feature failed on every gradient for exactly that
+  # reason and the finite-difference tests above all passed.
+  #
+  # Cost is the one place the difference shows from R. A reduced model has
+  # fewer parameters than the full-rank one it is reduced from, so its gradient
+  # should not be *slower*; the fallback made it about five times slower. The
+  # bar is set at three times to leave room for a loaded machine while still
+  # catching that.
+  d <- levelframe(nstudy = 4L, nperson = 5L, nburst = 3L)
+  elapsed <- function(...) {
+    args <- list(d, levelmodel(), backend = "julia", intoverpop = "laplace",
+      cores = 2, optimcontrol = list(estonly = TRUE, maxiter = 3))
+    fit <- suppressMessages(suppressWarnings(do.call(ctFit, c(args, list(...)))))
+    at <- as.numeric(fit$estimate$raw)
+    gradient <- ctsem:::.ctBackendLpgFunc(fit, gradient = TRUE)
+    invisible(gradient(at))
+    start <- Sys.time()
+    for (i in 1:3) invisible(gradient(at))
+    as.numeric(difftime(Sys.time(), start, units = "secs")) / 3
+  }
+  full <- elapsed()
+  reduced <- elapsed(poprank = c(subject = 2, study = 1))
+  expect_lt(reduced, 3 * full)
+})
