@@ -141,20 +141,20 @@ test_that('every categorical kind integrates to an independent reference', {
     }
   }
 
-  ## ---- censored: Gaussian on a Gaussian, so the reference is closed form and
-  ## no quadrature is involved in it at all.
+  ## ---- censored: Gaussian on a Gaussian, so the engine solves it in closed
+  ## form and the reference is closed form too. The tolerance is at machine
+  ## precision on purpose: it asserts that the analytic path is the one being
+  ## taken, and would fail immediately if a censored row ever fell back to the
+  ## quadrature, which was 7.4e-02 out at the last of these.
   limits <- c(-2, 2, 1)                      # lower, upper, measurement sd
-  for (case in list(list(s = 2, tol = 1e-4), list(s = 5, tol = 5e-2),
-    list(s = 10, tol = 1e-1))) {
-    total <- sqrt(1 + case$s^2)
+  for (s in c(0.5, 2, 5, 10, 20)) {
+    total <- sqrt(1 + s^2)
     for (etabar in c(-6, 0, 6)) for (y in c(-2, 0, 2)) {
       want <- if (y == -2) stats::pnorm(-2, etabar, total, log.p = TRUE) else
         if (y == 2) stats::pnorm(2, etabar, total, lower.tail = FALSE,
           log.p = TRUE) else stats::dnorm(y, etabar, total, log = TRUE)
-      expect_equal(logp(etabar, case$s, y, limits, 4), want,
-        tolerance = case$tol,
-        info = paste0('censored s = ', case$s, ', etabar = ', etabar,
-          ', y = ', y))
+      expect_equal(logp(etabar, s, y, limits, 4), want, tolerance = 1e-12,
+        info = paste0('censored s = ', s, ', etabar = ', etabar, ', y = ', y))
     }
   }
 
