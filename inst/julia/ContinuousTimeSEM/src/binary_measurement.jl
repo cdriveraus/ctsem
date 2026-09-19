@@ -120,6 +120,19 @@ through this loop are the unclamped ones.
 const _CTSEM_COUNT_MODE_MAX_STEP = Ref(2.0)
 
 """
+Largest step the binary or ordinal mode solve may take.
+
+Absolute rather than scaled by the prior, because `_mode_start` puts the
+iteration inside the category's own band and what is left to cover from there
+is a property of the logistic, not of the prior: the mode of an end category
+sits roughly `2log(s)` past the threshold and an interior one inside its band.
+Two units per step reaches either within the iteration budget, and near the
+solution the Newton step is far below the cap, so it never binds where the
+quadratic model is worth trusting.
+"""
+const _CTSEM_MODE_MAX_STEP = Ref(2.0)
+
+"""
 Newton steps for a count's scalar mode, which needs more than the six a
 logistic does.
 
@@ -468,6 +481,45 @@ identically, not just numerically, which is why the fast path can stay.
 end
 
 """
+    _mode_start(ηbar, y, thresholds, kind)
+
+Where the mode iteration begins, as an offset from `ηbar`: the prior mean
+projected onto the observed category's own band.
+
+The count case has had a likelihood-side start since its own mode solve was
+fixed, and this is the same argument for every other kind. Starting at `ηbar`
+is starting wherever the prior happens to be, which for an observation the
+predicted state makes improbable is arbitrarily far from the answer, in the
+region where the log likelihood is asymptotically linear and Newton has no
+curvature to divide by. Projecting onto the band does the long part of the
+journey in closed form and leaves the iteration a distance set by the logistic
+rather than by the prior.
+
+Written as branches on the category rather than as a `clamp` against `±Inf`, so
+that no infinity meets a dual number: an `Inf` partial times a zero is the NaN
+that travels silently.
+"""
+@inline function _mode_start(ηbar::T, y::Real, thresholds, kind::Int) where {T}
+    if kind == CTSEM_OBS_ORDINAL && !isempty(thresholds)
+        n = length(thresholds)
+        k = Int(y)
+        k <= 1 && return min(zero(T), thresholds[1] - ηbar)
+        k > n && return max(zero(T), thresholds[n] - ηbar)
+        lo = thresholds[k - 1] - ηbar
+        hi = thresholds[k] - ηbar
+        return min(max(zero(T), lo), hi)
+    end
+    if kind == CTSEM_OBS_BINARY || isempty(thresholds)
+        # The binary cut is at zero, so the band is `(0, Inf)` for a one and
+        # `(-Inf, 0)` for a zero.
+        return y > 0.5 ? max(zero(T), -ηbar) : min(zero(T), -ηbar)
+    end
+    # Censored carries limits rather than thresholds in that slot, and a count
+    # sets its own start below.
+    return zero(T)
+end
+
+"""
     _binary_mode(ηbar, s2, y, thresholds, kind)
 
 `(mode - ηbar, curvature)` of `log N(η; ηbar, s²) + log P(y | η)`.
@@ -480,10 +532,13 @@ that matter. When the prior is tight the mode sits a hair from `ηbar`, and
 
 Strictly concave -- the prior contributes `-1/s²` and the observation a
 non-positive term, since both the Bernoulli likelihood and a difference of
-logistic CDFs are log-concave -- so Newton from the prior mean converges
-quickly and cannot diverge. The score is bounded by one in absolute value,
-which bounds the step and keeps this well behaved even when `s` is large and
-the observation is nearly deterministic.
+logistic CDFs are log-concave. Concavity makes the mode unique; it does not on
+its own make undamped Newton find it, and the argument that used to stand here
+-- that a score bounded by one bounds the step -- had the implication
+backwards. A Newton step is `gradient / curvature`, so a bounded score with a
+*vanishing* information is the dangerous combination, not a safe one: it is
+what makes the step `±s²`. See `_mode_start` and `_CTSEM_MODE_MAX_STEP` for
+the start and the damping that do bound it.
 """
 @inline function _binary_mode(ηbar::T, s2::T, y::Real, thresholds,
     kind::Int) where {T}
@@ -529,13 +584,57 @@ the observation is nearly deterministic.
     # still need is longer than that; the budget is sized by measurement in
     # `_CTSEM_COUNT_NEWTON`. It buys scalar evaluations against a 21-node rule
     # per observation, so it is not a cost worth economising on either.
-    offset = zero(T)
+    offset = _mode_start(ηbar, y, thresholds, kind)
     iterations = _CTSEM_BINARY_NEWTON[]
     if kind == CTSEM_OBS_COUNT
         offset = log(T(y) + T(0.5)) - ηbar
         iterations = _CTSEM_COUNT_NEWTON[]
     end
     curvature = precision
+    # The step needs a cap for every kind, not only for counts, and the reason
+    # is the same one written out above in different clothes: a Newton step is
+    # `gradient / curvature`, and where the likelihood contributes no curvature
+    # the only curvature left is the prior's `1/s²`, so the step is the
+    # gradient times `s²`.
+    #
+    # A logistic score is bounded by one -- that is what made it look safe --
+    # but boundedness is exactly the problem here rather than a protection. An
+    # ordinal category the predicted state makes improbable has a log
+    # likelihood that is asymptotically linear in `η`: score about ±1,
+    # information decaying to zero. So the first step from `ηbar` is about
+    # `±s²`, which is 100 at `s = 10`, and from out there the score has flipped
+    # sign and the next step is about twice as long the other way. The
+    # iteration oscillates instead of converging, and it does not matter how
+    # many iterations it is given.
+    #
+    # Nothing errors. The rule is still a proper quadrature, centred a hundred
+    # units from where the posterior has its mass and scaled by `√(2s²)`, so
+    # the category's probability comes back wrong by whatever the far tail
+    # happens to contribute. Measured against an independent adaptive
+    # integration, ordinal `K = 9` with thresholds spanning ±3: at `s = 10`,
+    # `ηbar = 0`, categories 2 and 8 were **24 log units** out, while the
+    # interior categories the mode solve did reach were correct to 3e-6. More
+    # quadrature nodes barely touch it, which is what distinguishes this from
+    # an under-resolved integral -- the same tell the count case above carries.
+    #
+    # Capping restores the monotone walk concavity already guarantees: the
+    # posterior is log-concave, so a damped step cannot pass the mode and every
+    # iteration improves. The cap is in units of the prior standard deviation
+    # rather than absolute, because that is the scale the mode can genuinely be
+    # displaced by -- for a diffuse prior the mode sits about `2log(s)` beyond
+    # the band edge -- and a fixed cap would either crawl when `s` is large or
+    # bind near the solution when it is small.
+    stepcap = if kind == CTSEM_OBS_COUNT
+        T(_CTSEM_COUNT_MODE_MAX_STEP[])
+    elseif kind == CTSEM_OBS_BINARY || kind == CTSEM_OBS_ORDINAL
+        T(_CTSEM_MODE_MAX_STEP[])
+    else
+        # Censored. Gaussian inside the limits, where undamped Newton is exact
+        # in a single step and a cap would only slow it down; a normal tail
+        # beyond them, whose hazard rises with distance instead of flattening,
+        # so the vanishing information behind the capped step never arises.
+        T(Inf)
+    end
     @inbounds for _ in 1:iterations
         score, information = _category_score(ηbar + offset, y, thresholds, kind)
         # `-offset * precision`, not `-(η - ηbar) * precision`: the prior's
@@ -544,10 +643,7 @@ the observation is nearly deterministic.
         gradient = -offset * precision + score
         curvature = precision + information
         step = gradient / curvature   # Newton on a concave objective
-        if kind == CTSEM_OBS_COUNT
-            cap = T(_CTSEM_COUNT_MODE_MAX_STEP[])
-            step = min(max(step, -cap), cap)
-        end
+        step = min(max(step, -stepcap), stepcap)
         offset += step
     end
     return (offset, curvature)
