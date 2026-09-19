@@ -347,6 +347,20 @@
       index <- c(index, as.integer(level$cor_index))
       scale <- c(scale, rep(1, length(level$cor_index)))
     }
+    # A reduced level carries loadings instead, and they need a prior of their
+    # own rather than the scales' -- a row of `L` contributes its squared norm
+    # to that parameter's population variance, so `rank` independent
+    # `normal(0, 1)` loadings would imply a variance of `rank` rather than of
+    # 1, and the same nominal prior would mean something different at every
+    # rank. Scaling by `1/sqrt(rank)` keeps the implied population variance at
+    # 1 whatever rank was asked for, which is what makes a rank a restriction
+    # on shape rather than an accidental change of scale.
+    if (length(level$load_index)) {
+      rank <- as.integer(if (is.null(level$rank)) 1L else level$rank)[1L]
+      if (!is.finite(rank) || rank < 1L) rank <- 1L
+      index <- c(index, as.integer(level$load_index))
+      scale <- c(scale, rep(1 / sqrt(rank), length(level$load_index)))
+    }
   }
 
   ntipredeffects <- as.integer(standata$ntipredeffects)[1L]

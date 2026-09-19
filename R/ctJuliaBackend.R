@@ -1682,6 +1682,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     for (level in laplace$levels) {
       used[[paste0("'", level$name, "' population scales")]] <- as.integer(level$sd_index)
       used[[paste0("'", level$name, "' correlations")]] <- as.integer(level$cor_index)
+      used[[paste0("'", level$name, "' loadings")]] <- as.integer(level$load_index)
       used[[paste0("'", level$name, "' varying parameters")]] <- as.integer(level$re_index)
     }
   }
@@ -1707,6 +1708,32 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 .ctJuliaLevelColumn <- function(model, level) {
   if (level == 1L) return("indvarying")
   paste0("indvarying_", model$groupIDnames[level - 1L])
+}
+
+# The rank asked of one level's population covariance, or `k` when nothing was
+# asked. `model$laplacerank` is a named integer vector, one entry per level
+# name, written by `ctFit()` from the `poprank` argument.
+#
+# Clamped to `k` rather than refused when it exceeds the number of effects: a
+# rank at or above `k` is the unrestricted covariance, which is what the user
+# asking for it means, and refusing a model that merely has fewer varying
+# parameters than the number they typed would be pedantry. Below 1 is refused,
+# because a rank of zero is "no variation at this level" and is said by
+# removing the effects, not by restricting them.
+.ctJuliaLevelRank <- function(model, name, k) {
+  spec <- model[['laplacerank']]
+  if (is.null(spec) || !length(spec) || k == 0L) return(as.integer(k))
+  value <- if (!is.null(names(spec)) && name %in% names(spec))
+    spec[[name]] else NA
+  value <- suppressWarnings(as.integer(value))
+  if (!length(value) || is.na(value)) return(as.integer(k))
+  if (value < 1L) {
+    stop("poprank for level '", name, "' is ", value,
+      ". A rank below 1 is not a restricted covariance, it is no variation at ",
+      "that level -- say that by removing the level's random effects.",
+      call. = FALSE)
+  }
+  as.integer(min(value, k))
 }
 
 # The matching sdscale column. One value per id element, so a level scales its
@@ -1885,19 +1912,29 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       }
     }
     k <- length(lv_varying)
-    noff <- as.integer(k * (k - 1L) / 2L)
+    rank <- .ctJuliaLevelRank(model, hierarchy[[l]]$name, k)
+    reduced <- rank < k
+    # A level is described one way or the other, never both: scales and
+    # correlations at full rank, a loading matrix below it. Allocating the
+    # unused set anyway would leave parameters in the vector that nothing
+    # reads, which the optimiser would then wander along.
+    nsd <- if (reduced) 0L else as.integer(k)
+    noff <- if (reduced) 0L else as.integer(k * (k - 1L) / 2L)
+    nload <- if (reduced) as.integer(k * rank - rank * (rank - 1L) / 2L) else 0L
     levels[[l]] <- list(
       name = hierarchy[[l]]$name,
       re_index = as.integer(lv_varying),
-      sd_index = if (k) as.integer(cursor + seq_len(k)) else integer(),
-      cor_index = if (noff) as.integer(cursor + k + seq_len(noff)) else integer(),
+      sd_index = if (nsd) as.integer(cursor + seq_len(nsd)) else integer(),
+      cor_index = if (noff) as.integer(cursor + nsd + seq_len(noff)) else integer(),
+      load_index = if (nload) as.integer(cursor + seq_len(nload)) else integer(),
+      rank = as.integer(rank),
       sd_scale = as.numeric(lv_scale),
       param = .ctJuliaLaplaceNames(table, lv_varying),
       nrandom = as.integer(k),
       group = as.integer(hierarchy[[l]]$group),
       ngroups = as.integer(hierarchy[[l]]$ngroups),
       labels = hierarchy[[l]]$labels)
-    cursor <- cursor + k + noff
+    cursor <- cursor + nsd + noff + nload
   }
 
   total <- sum(vapply(levels, function(x) x$nrandom, integer(1)))
@@ -3136,10 +3173,23 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     grab <- function(field) unlist(lapply(levels, function(x) x[[field]]), use.names = FALSE)
     laplace_args <- list(objective,
       re_index = .ctJuliaVector(as.integer(grab("re_index"))),
-      sd_index = .ctJuliaVector(as.integer(grab("sd_index"))),
       sd_scale = .ctJuliaVector(as.numeric(grab("sd_scale"))))
+    # Guarded like `cor_index`, and for the same reason: a model whose every
+    # level is reduced has no population scales at all, and a zero-length
+    # vector deadlocks the bridge rather than arriving empty.
+    if (length(grab("sd_index"))) {
+      laplace_args$sd_index <- .ctJuliaVector(as.integer(grab("sd_index")))
+    }
     if (length(grab("cor_index"))) {
       laplace_args$cor_index <- .ctJuliaVector(as.integer(grab("cor_index")))
+    }
+    # Sent only when some level is actually reduced, so a model that asked for
+    # nothing crosses exactly as it did before this existed.
+    ranks <- as.integer(vapply(levels, function(x)
+      if (is.null(x$rank)) x$nrandom else x$rank, integer(1)))
+    if (any(ranks < as.integer(vapply(levels, function(x) x$nrandom, integer(1))))) {
+      laplace_args$level_rank <- .ctJuliaVector(ranks)
+      laplace_args$load_index <- .ctJuliaVector(as.integer(grab("load_index")))
     }
     # Absent unless the fit asked for them, so the engine's own defaults stay
     # the defaults and a spec built before this existed is byte-for-byte as it

@@ -103,37 +103,85 @@ no packing anywhere.
     uses, in `sdcovsqrt2cov`'s own encoding -- 0 the row-normalised correlation
     square root, 1 a factor, 2 Fisher z inside a matrix exponential. Per level
     because each level's population covariance is its own matrix.
+  * `rank`: how many dimensions this level's population covariance spans.
+    Equal to `k` for the ordinary full-rank level, in which case `sd_index` and
+    `cor_index` describe it as above and `load_index` is empty. Below `k` it is
+    a reduced-rank level: `load_index` holds the `k*rank - rank*(rank-1)/2`
+    entries of a `k x rank` loading matrix in column-major lower-triangular
+    order, `sd_index` and `cor_index` are empty, and the covariance is
+    `L * L'`.
+
+    A reduced level keeps a `k`-dimensional latent block rather than a
+    `rank`-dimensional one, and that is deliberate. The deviation a unit
+    contributes is `L * u` for `u ~ N(0, I)` (see `_laplace_member_values!`),
+    so the `k - rank` columns of `L` that are zero make those coordinates of
+    `u` invisible to the likelihood. Their inner mode is the origin and their
+    inner curvature is exactly the prior identity, so they integrate out
+    against it contributing nothing -- no singular covariance is ever formed
+    and nothing is inverted that cannot be. The cost is `k - rank` wasted
+    coordinates per unit; the alternative, resizing every block, would touch
+    the offsets, the ancestor sets and the curvature factorisation, where the
+    same number means both "parameters this level moves" and "dimensions its
+    block spans" and separating the two silently is how a wrong answer gets
+    made here.
 """
 struct CTSEMLaplaceLevel
     re_index::Vector{Int}
     sd_index::Vector{Int}
     cor_index::Vector{Int}
+    load_index::Vector{Int}
     sd_scale::Vector{Float64}
     group::Vector{Int}
     ngroups::Int
     covmatcode::Int
+    rank::Int
 
     function CTSEMLaplaceLevel(re_index, sd_index, cor_index, sd_scale, group,
-        ngroups::Integer; covmatcode::Integer=0)
+        ngroups::Integer; covmatcode::Integer=0, rank::Integer=-1,
+        load_index=Int[])
         re = Vector{Int}(collect(re_index))
         sd = Vector{Int}(collect(sd_index))
         cor = Vector{Int}(collect(cor_index))
+        load = Vector{Int}(collect(load_index))
         scale = Vector{Float64}(collect(sd_scale))
         grp = Vector{Int}(collect(group))
         k = length(re)
-        length(sd) == k ||
-            throw(DimensionMismatch("one population scale parameter per random effect is required"))
+        # A negative rank means "not stated", which is the full-rank level every
+        # caller before this argument existed builds.
+        r = rank < 0 ? k : Int(rank)
+        (r >= 0 && r <= k) || throw(ArgumentError(
+            "rank must lie in 0:$(k) for a level with $(k) random effects, got $(r)"))
         length(scale) == k ||
             throw(DimensionMismatch("one sdscale per random effect is required"))
-        expected = div(k * (k - 1), 2)
-        length(cor) == expected || throw(DimensionMismatch(
-            "expected $(expected) correlation parameters for $(k) random effects, got $(length(cor))"))
+        if r < k
+            expected = k * r - div(r * (r - 1), 2)
+            length(load) == expected || throw(DimensionMismatch(
+                "expected $(expected) loading parameters for rank $(r) over $(k) random effects, got $(length(load))"))
+            # Refused rather than ignored: a level carrying both descriptions
+            # would leave which one the covariance came from decided by the
+            # order of two branches, which is the kind of thing that stays
+            # wrong for months because both produce a perfectly ordinary matrix.
+            (isempty(sd) && isempty(cor)) || throw(ArgumentError(
+                "a reduced-rank level is described by load_index alone; sd_index and cor_index must be empty"))
+        else
+            length(sd) == k ||
+                throw(DimensionMismatch("one population scale parameter per random effect is required"))
+            expected = div(k * (k - 1), 2)
+            length(cor) == expected || throw(DimensionMismatch(
+                "expected $(expected) correlation parameters for $(k) random effects, got $(length(cor))"))
+            isempty(load) || throw(ArgumentError(
+                "load_index applies to a reduced-rank level only; this level is full rank"))
+        end
         allunique(re) || throw(ArgumentError("random-effect parameter indices must be distinct within a level"))
         isempty(grp) || (minimum(grp) >= 1 && maximum(grp) <= ngroups) ||
             throw(ArgumentError("group ids must lie in 1:ngroups"))
-        return new(re, sd, cor, scale, grp, Int(ngroups), Int(covmatcode))
+        return new(re, sd, cor, load, scale, grp, Int(ngroups), Int(covmatcode), r)
     end
 end
+
+"""True when this level's population covariance spans fewer dimensions than it
+has random effects."""
+isreducedrank(level::CTSEMLaplaceLevel) = level.rank < length(level.re_index)
 
 """Number of random effects carried by one level."""
 nrandomeffects(level::CTSEMLaplaceLevel) = length(level.re_index)
@@ -403,6 +451,7 @@ single-level form and none of it needs sending.
 function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
     sd_index=Int[], cor_index=Int[], sd_scale=Float64[], level_nre=Int[],
     group=Int[], level_ngroups=Int[], level_covmatcode=Int[],
+    level_rank=Int[], load_index=Int[],
     inner_maxiter::Integer=_LAPLACE_INNER_MAXITER[], inner_tol::Real=1e-10)
     nsubjects = length(objective.subject_objectives)
     counts = isempty(level_nre) ? [length(re_index)] : Vector{Int}(Int.(level_nre))
@@ -425,19 +474,37 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
     length(codes) == length(counts) || throw(DimensionMismatch(
         "level_covmatcode must hold one construction code per level"))
 
+    # One rank per level, defaulting to that level's own `k`, which is the
+    # full-rank description every caller before this existed sends.
+    ranks = if isempty(level_rank)
+        copy(counts)
+    else
+        Vector{Int}(Int.(level_rank))
+    end
+    length(ranks) == length(counts) || throw(DimensionMismatch(
+        "level_rank must hold one rank per level"))
+
     levels = CTSEMLaplaceLevel[]
-    re_at = 0; cor_at = 0
+    # Four cursors rather than one reused for two things: a reduced level
+    # consumes loadings and no scales or correlations, so the scale cursor and
+    # the effect cursor stop advancing together the moment one level is reduced.
+    re_at = 0; sd_at = 0; cor_at = 0; load_at = 0
     for l in eachindex(counts)
         k = counts[l]
-        ncor = div(k * (k - 1), 2)
+        r = ranks[l]
+        reduced = r < k
+        ncor = reduced ? 0 : div(k * (k - 1), 2)
+        nsd = reduced ? 0 : k
+        nload = reduced ? k * r - div(r * (r - 1), 2) : 0
         push!(levels, CTSEMLaplaceLevel(
             Int.(re_index[(re_at + 1):(re_at + k)]),
-            Int.(sd_index[(re_at + 1):(re_at + k)]),
+            Int.(sd_index[(sd_at + 1):(sd_at + nsd)]),
             Int.(cor_index[(cor_at + 1):(cor_at + ncor)]),
             Float64.(sd_scale[(re_at + 1):(re_at + k)]),
             groups[((l - 1) * nsubjects + 1):(l * nsubjects)],
-            ngroups[l]; covmatcode=codes[l]))
-        re_at += k; cor_at += ncor
+            ngroups[l]; covmatcode=codes[l], rank=r,
+            load_index=Int.(load_index[(load_at + 1):(load_at + nload)])))
+        re_at += k; sd_at += nsd; cor_at += ncor; load_at += nload
     end
     return CTSEMLaplaceObjective(objective, CTSEMLaplaceSpec(levels);
         inner_maxiter=inner_maxiter, inner_tol=inner_tol)
@@ -527,7 +594,8 @@ function _laplace_check_indices(laplace::CTSEMLaplaceObjective, npar::Integer)
     for (l, level) in enumerate(laplace.spec.levels)
         for (what, index) in (("varying parameter", level.re_index),
                               ("population scale", level.sd_index),
-                              ("correlation", level.cor_index))
+                              ("correlation", level.cor_index),
+                              ("loading", level.load_index))
             isempty(index) && continue
             maximum(index) <= npar || throw(ArgumentError(string(
                 "level ", l, " references ", what, " ", maximum(index),
@@ -558,6 +626,7 @@ used to spell the code=0 route out by hand, and so silently ignored the model's
 function _laplace_popchol(values::AbstractVector{T}, level::CTSEMLaplaceLevel) where {T}
     k = nrandomeffects(level)
     k == 0 && return zeros(T, 0, 0)
+    isreducedrank(level) && return _laplace_poploading(values, level)
     scales = Vector{T}(undef, k)
     @inbounds for j in 1:k
         raw = values[level.sd_index[j]]
@@ -590,6 +659,35 @@ function _laplace_popchol(values::AbstractVector{T}, level::CTSEMLaplaceLevel) w
     buffer = _make_square_buffer(T, k)
     _sdcovsqrt2cov_uncached!(buffer, base, level.covmatcode, Val(k))
     return Matrix(cholesky(Symmetric(buffer.out, :L)).L)
+end
+
+"""
+    _laplace_poploading(values, level)
+
+A reduced-rank level's factor: `k x k`, with the loading in its first `rank`
+columns and zeros in the rest, so that `L * L'` is the population covariance
+and `L * u` is the deviation for `u ~ N(0, I)`.
+
+The zero columns are what let the block stay `k`-dimensional; see the note on
+`rank` in `CTSEMLaplaceLevel`. No Cholesky is taken, because there is nothing
+to decompose -- the parameters *are* the factor, which is also why they need no
+positivity transform and no correlation cap. `sd_scale` multiplies a row, so a
+level still scales its own spread exactly as the full-rank form does, and a
+loading is signed: negating a whole column leaves `L * L'` alone, so read the
+covariance rather than the sign of one entry.
+"""
+function _laplace_poploading(values::AbstractVector{T}, level::CTSEMLaplaceLevel) where {T}
+    k = nrandomeffects(level)
+    r = level.rank
+    L = zeros(T, k, k)
+    counter = 0
+    @inbounds for q in 1:r
+        for p in q:k
+            counter += 1
+            L[p, q] = values[level.load_index[counter]] * level.sd_scale[p]
+        end
+    end
+    return L
 end
 
 """Every level's Cholesky factor, innermost first."""
@@ -2135,7 +2233,8 @@ end
 
 """Raw positions of one level's population parameters, scales then correlations."""
 _laplace_level_positions(spec::CTSEMLaplaceSpec, l::Integer) =
-    vcat(spec.levels[l].sd_index, spec.levels[l].cor_index)
+    isreducedrank(spec.levels[l]) ? copy(spec.levels[l].load_index) :
+        vcat(spec.levels[l].sd_index, spec.levels[l].cor_index)
 
 """
     _laplace_level_chol_derivatives(values, spec)

@@ -145,14 +145,21 @@
   if (!is.null(laplace) && length(laplace$levels)) {
     for (l in seq_along(laplace$levels)) {
       level <- laplace$levels[[l]]
-      if (!length(level$sd_index)) next
+      # A reduced level has loadings where a full-rank one has scales and
+      # correlations. Skipping it because `sd_index` is empty would quietly
+      # exclude the level most likely to be weakly identified -- the reduction
+      # was asked for precisely because that level has few groups -- so its
+      # loadings go in as the block's coordinates instead.
+      loadings <- as.integer(.ctJuliaOr(level$load_index, integer()))
+      if (!length(level$sd_index) && !length(loadings)) next
       blocks[[length(blocks) + 1L]] <- list(
         route = "laplace", level = as.integer(l),
         name = as.character(.ctJuliaOr(level$name, l))[1L],
-        sd_index = as.integer(level$sd_index),
-        cor_index = as.integer(level$cor_index),
+        sd_index = if (length(loadings)) loadings else as.integer(level$sd_index),
+        cor_index = if (length(loadings)) integer() else as.integer(level$cor_index),
         param = as.character(level$param),
-        state = seq_along(level$sd_index))
+        reduced = length(loadings) > 0L,
+        state = seq_along(if (length(loadings)) loadings else level$sd_index))
     }
   }
   blocks
