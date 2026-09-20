@@ -1937,6 +1937,27 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     cursor <- cursor + nsd + noff + nload
   }
 
+  # A level's population covariance has to be determined by that level's
+  # groups, and nothing downstream will say so: the fit converges, reports
+  # standard errors, and the numbers look like numbers. Integrative work runs
+  # into this from the outside in -- a study level has as many groups as there
+  # are studies, and thirteen of them cannot determine an eighteen-parameter
+  # covariance however well the subjects below them are measured.
+  #
+  # Counted, not judged: the message says what the ratio is and what the lever
+  # is, because how much regularisation a prior is doing is the user's call.
+  for (lv in levels) {
+    npop <- length(lv$sd_index) + length(lv$cor_index) + length(lv$load_index)
+    if (npop > lv$ngroups && lv$ngroups > 0L) {
+      message("Level '", lv$name, "': ", npop, " population parameters over ",
+        lv$ngroups, " groups. That covariance is not determined by this ",
+        "level alone -- the prior is carrying the rest. ",
+        if (length(lv$load_index)) "Lower its poprank," else
+          "Use poprank for this level,",
+        " or give it fewer varying parameters.")
+    }
+  }
+
   total <- sum(vapply(levels, function(x) x$nrandom, integer(1)))
   list(
     levels = levels,
@@ -3992,6 +4013,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     inner_maxiter = .ctJuliaOr(model_spec$laplace$inner$inner_maxiter, 200L),
     inner_tol = .ctJuliaOr(model_spec$laplace$inner$inner_tol, 1e-10),
     inner_converged = isTRUE(result$inner_converged),
+    gradient_fallbacks = if (is.null(result$gradient_fallbacks)) NA_integer_ else
+      as.integer(result$gradient_fallbacks)[1L],
     inner_iterations = as.integer(result$inner_iterations),
     # Two different things. `hessian_repaired` is true if *any* Newton iterate
     # for that unit needed its curvature shifted, which is ordinary behaviour

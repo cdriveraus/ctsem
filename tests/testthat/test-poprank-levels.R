@@ -269,3 +269,44 @@ test_that("a reduced fit does not silently fall back to the nested gradient", {
   reduced <- elapsed(poprank = c(subject = 2, study = 1))
   expect_lt(reduced, 3 * full)
 })
+
+test_that("a level whose covariance outnumbers its groups says so", {
+  # Integrative work hits this from the outside in: a study level has as many
+  # groups as there are studies, and a covariance with more parameters than
+  # that is carried by the prior rather than by the data. Nothing downstream
+  # says so -- the fit converges and reports standard errors either way.
+  d <- levelframe(nstudy = 5L, nperson = 6L, nburst = 3L)
+  # 9 study effects at full rank is 9 + 36 = 45 parameters over 5 studies.
+  # `ctFit` directly rather than the `levelspec` helper: that one wraps the
+  # call in `suppressMessages`, which muffles the message before any handler
+  # out here can see it.
+  messages <- character()
+  withCallingHandlers(
+    ctFit(d, levelmodel(), backend = "julia", intoverpop = "laplace",
+      cores = 2, fit = FALSE),
+    message = function(m) {
+      messages <<- c(messages, conditionMessage(m))
+      invokeRestart("muffleMessage")
+    })
+  study <- grep("Level 'study'", messages, value = TRUE)
+  expect_gt(length(study), 0L)
+  skip_if(length(study) == 0L, "no level message seen")
+  expect_match(study[[1]], "population parameters over 5 groups")
+  expect_match(study[[1]], "poprank")
+  # The burst level has thousands of groups for six parameters and must not.
+  expect_equal(length(grep("Level 'burst'", messages)), 0L)
+})
+
+test_that("the gradient fallback count reaches the fit", {
+  # The seeded assembly falls back to the nested route on a failed
+  # factorization, silently, because the answer is right either way. A
+  # reduced-rank level once failed on every gradient and the only symptom was
+  # a slow fit.
+  d <- levelframe(nstudy = 4L, nperson = 4L, nburst = 3L)
+  fit <- suppressMessages(suppressWarnings(ctFit(d, levelmodel(),
+    backend = "julia", intoverpop = "laplace", cores = 2,
+    poprank = c(subject = 2, study = 1),
+    optimcontrol = list(estonly = TRUE, maxiter = 3))))
+  expect_false(is.null(fit$laplace$gradient_fallbacks))
+  expect_equal(fit$laplace$gradient_fallbacks, 0L)
+})

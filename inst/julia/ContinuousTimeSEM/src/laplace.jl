@@ -2125,26 +2125,51 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
             end
         end
         # Cross terms with each ancestor, twice over as the trace requires.
-        # tr(C[a,b] A[b,a]) = tr(V H) with V = L_a C[a,b] L_b', which has
-        # absorbed *both* Cholesky factors -- so the first direction is a bare
-        # basis vector, and applying L to it again would count it twice.
+        # `tr(C[a,b] A[b,a]) = tr(V H)` with `V = L_a C[a,b] L_b'`, and there
+        # are two ways to spell that trace as directional derivatives.
+        #
+        # Over *parameters*: `V` absorbs both factors, so the first direction is
+        # a bare basis vector and the second is `V`'s matching column. One sweep
+        # per parameter of this level.
+        #
+        # Over *dimensions*: `tr(V H) = tr(C[a,b] L_b' H L_a)`, so sweeping
+        # along the two loadings' own columns and weighting by `C[a,b]` gives
+        # the same number in `rank_b * rank_a` sweeps. The two are equal by
+        # linearity -- expand `V[:,q] = sum_j L_a[:,j] sum_i C[a,b][j,i] L_b[q,i]`
+        # and collect over `q`.
+        #
+        # Neither dominates. A subject block of 18 parameters at rank 6 under a
+        # rank-1 study is 6 sweeps against 18; a burst block of 6 parameters at
+        # rank 3 under a rank-6 subject is 18 against 6. So the cheaper one is
+        # chosen per pair, which at full rank is always the parameter form
+        # because `rank == kpar` there and `rank^2 >= rank`.
+        kparl = length(spec.levels[l].re_index)
         for (t, a) in enumerate(block.ancestors)
             la = blocks[a].level
-            V = Ls[la] * transpose(Ccoup[b][t]) * transpose(L)
-            # `e` walks this level's *parameters*, which is what `scatter`
-            # indexes and what `V`'s columns are. Equal to the block width at
-            # full rank and larger than it otherwise, so sizing `e` by the
-            # block read past its end for a reduced level.
-            kparl = length(spec.levels[l].re_index)
-            for q in 1:kparl
-                e = zeros(Float64, kparl); e[q] = 1.0
-                pass = sweep(block.members, scatter(l, e), scatter(la, V[:, q]), 2)
+            nb = block.size
+            na = blocks[a].size
+            accumulate = function (pass, weight)
                 pass.ok || return false
                 all(isfinite, pass.d12) || return false
                 @inbounds for (c, m) in enumerate(block.members)
                     for tt in 1:npar
-                        Pm[tt, m] += 2 * pass.d12[tt, c]
+                        Pm[tt, m] += weight * pass.d12[tt, c]
                     end
+                end
+                return true
+            end
+            if nb * na < kparl
+                Cab = transpose(Ccoup[b][t])          # C[a,b], rank_a by rank_b
+                for i in 1:nb, j in 1:na
+                    accumulate(sweep(block.members, scatter(l, L[:, i]),
+                        scatter(la, Ls[la][:, j]), 2), 2 * Cab[j, i]) || return false
+                end
+            else
+                V = Ls[la] * transpose(Ccoup[b][t]) * transpose(L)
+                for q in 1:kparl
+                    e = zeros(Float64, kparl); e[q] = 1.0
+                    accumulate(sweep(block.members, scatter(l, e),
+                        scatter(la, V[:, q]), 2), 2.0) || return false
                 end
             end
         end
@@ -3306,7 +3331,15 @@ _ctsem_optimise_result_extra(o::CTSEMLaplaceObjective, final, log) = (
         maximum(o.inner_gradient),
     inner_iterations=copy(o.inner_iterations),
     hessian_repaired=copy(o.hessian_repaired),
-    mode_repaired=copy(o.mode_repaired))
+    mode_repaired=copy(o.mode_repaired),
+    # How many gradients were computed twice. The seeded assembly returns
+    # `false` on a failed factorization and the caller silently recomputes the
+    # whole thing by the nested route, which is correct and much slower -- and
+    # invisible, because the answer is right either way. A reduced-rank level
+    # once failed on *every* gradient for a structural reason and the only
+    # symptom was a fit that crawled. Counted already for the verbose report;
+    # carried out here so a caller can see it without asking for one.
+    gradient_fallbacks=_CTSEM_LAPLACE_FALLBACKS[])
 
 """
 What is about to be fitted: the sizes that decide what the fit will cost.
