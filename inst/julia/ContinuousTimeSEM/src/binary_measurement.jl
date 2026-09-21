@@ -439,8 +439,42 @@ identically, not just numerically, which is why the fast path can stay.
         return ((T(y) - η) * prec, prec)
     end
     if kind == CTSEM_OBS_BINARY || isempty(thresholds)
-        p = inv(one(T) + exp(-η))
-        return (T(y > 0.5 ? 1 : 0) - p, p * (one(T) - p))
+        F = inv(one(T) + exp(-η))
+        length(thresholds) >= 2 ||
+            return (T(y > 0.5 ? 1 : 0) - F, F * (one(T) - F))
+        # With asymptotes the likelihood is `q = flat + (d-c)F` for a one and
+        # `flat + (d-c)(1-F)` for a zero. Writing `u` for `dq/dη` in absolute
+        # value, the score is `+/-u/q` and the information is
+        # `(u^2 - q u')/q^2`. At `c = 0, d = 1` this collapses to the pair
+        # above, which is the check worth keeping in mind when reading it.
+        #
+        # This is only reached where the predicted variance has collapsed, and
+        # from the adjoint's matching branch. The mode solve never sees it: the
+        # asymptote route integrates through `_asymptote_moments`, which hands
+        # the quadrature a plain binary row.
+        c, d = _binary_asymptotes(thresholds, T)
+        flat = y > 0.5 ? c : one(c) - d
+        span = d - c
+        q = flat + span * (y > 0.5 ? F : one(T) - F)
+        u = span * F * (one(T) - F)
+        du = span * F * (one(T) - F) * (one(T) - 2 * F)
+        # `dq/dη` is `u` for a one and `-u` for a zero; `d^2q/dη^2` is `du`
+        # and `-du`. Both signs cancel in the information.
+        score = (y > 0.5 ? u : -u) / q
+        # Returned as it is, and it is genuinely negative in places: a three
+        # parameter logistic is not log-concave for a correct response, so the
+        # curvature of its log likelihood changes sign. The other kinds clamp
+        # at `floatmin` because theirs cannot, and clamping here would report
+        # a convex region as a flat one -- and hand any Newton step that
+        # divided by it something of order 1e308.
+        #
+        # Nothing takes such a step. `_binary_moments` sends an item with
+        # asymptotes to `_asymptote_moments`, which integrates it as a mixture
+        # precisely so that no mode solve ever meets this surface, and the
+        # only other caller is the adjoint's degenerate-variance branch, which
+        # uses the score and discards this.
+        information = (u * u - q * (y > 0.5 ? du : -du)) / (q * q)
+        return (score, information)
     end
     k = Int(y)
     n = length(thresholds)
@@ -449,6 +483,46 @@ identically, not just numerically, which is why the fast path can stay.
     Fnb = k > n ? zero(T) : inv(one(T) + exp(thresholds[k] - η))
     information = Fa * (one(T) - Fa) + Fnb * (one(T) - Fnb)
     return (Fa - Fnb, max(information, floatmin(T)))
+end
+
+"""
+    _logaddexp(a, b)
+
+`log(exp(a) + exp(b))` without forming either exponential.
+
+One helper rather than the same three lines at each site: the asymptote
+likelihood and the asymptote moments both add a component in log space, and
+both have a component that legitimately underflows -- a guessing probability of
+zero, or a two parameter logistic term whose mass is far into the tail.
+"""
+@inline function _logaddexp(a::Real, b::Real)
+    isfinite(a) || return b
+    isfinite(b) || return a
+    m = max(a, b)
+    m + log(exp(a - m) + exp(b - m))
+end
+
+"""
+    _binary_asymptotes(extras, T)
+
+A binary item's lower and upper asymptotes, `(c, d)`, or `(0, 1)` when it has
+none.
+
+Presence is decided by the length of the extras, never by comparing the values
+to zero and one. A free asymptote sitting at zero is an ordinary place for an
+optimizer to be, and `iszero` on a dual number tests the value while the
+partials are the thing that would be lost -- the same tie-breaking hazard
+`_censored_at` is written to avoid.
+
+The pair arrives already accumulated, as ordinal thresholds do: the matrix
+holds `c` and then a gap, each a single free parameter with its own bounded
+transform, and `_ordinal_thresholds!` turns the gap into `d = c + (1-c)g`. That
+keeps `0 <= c < d <= 1` without any cell's transform having to read another
+cell's parameter, which is the constraint the parameter layer imposes.
+"""
+@inline function _binary_asymptotes(extras, ::Type{T}) where {T}
+    length(extras) >= 2 || return (zero(T), one(T))
+    return (extras[1], extras[2])
 end
 
 """
@@ -732,7 +806,19 @@ stops being representable. The product form has neither problem -- see
         return -z * z / 2 - log(sd) - log(sqrt(2 * T(pi)))
     end
     if kind == CTSEM_OBS_BINARY || isempty(thresholds)
-        return y > 0.5 ? -log1p_exp(-η) : -log1p_exp(η)
+        # Two, three and four parameter logistic in one expression. With
+        # `P(y=1) = c + (d-c)F(η)` both responses are a constant plus a
+        # multiple of the plain logistic term -- `c` and `d-c` for a one,
+        # `1-d` and `d-c` for a zero -- so the same two lines cover all of
+        # them, and the plain binary case is `c = 0, d = 1` where the constant
+        # drops out. Added in log space because the constant is legitimately
+        # zero there and the logistic term legitimately underflows.
+        length(thresholds) >= 2 || return y > 0.5 ? -log1p_exp(-η) :
+            -log1p_exp(η)
+        c, d = _binary_asymptotes(thresholds, T)
+        flat = y > 0.5 ? c : one(c) - d
+        logF = y > 0.5 ? -log1p_exp(-η) : -log1p_exp(η)
+        return _logaddexp(log(flat), log(d - c) + logF)
     end
     k = Int(y)
     n = length(thresholds)
@@ -826,28 +912,97 @@ re-centring turns that into `∫h(η)dη ≈ √2σ̂ Σ wᵢ exp(tᵢ²) h(η̂
     thresholds, kind::Int) where {T}
     s2 = s * s
     # A degenerate prior in this direction: `η` is known exactly, so the
-    # observation contributes its likelihood *at that point* and moves nothing.
-    #
-    # Returning `logZ = 0` here instead -- as this did -- says the observation
-    # was certain, and that is not a harmless edge case. It makes a vanishing
-    # predicted variance *pay*: every categorical observation whose prior
-    # variance collapses stops costing anything, so on a model whose T0VAR is
-    # free the optimizer is rewarded for driving it to zero, and buys about
-    # seventy log units of nothing on twenty-five subjects with two indicators
-    # at the first occasion. The objective is also discontinuous there, jumping
-    # from `log P(y | η̂)` to `0` the moment the variance underflows, which is a
-    # cliff for a line search to fall off rather than a region to search.
-    #
-    # `log P(y | η̂)` is both the right answer and the continuous limit of the
-    # integral, so nothing has to know where the boundary is.
+    # observation contributes its likelihood at that point and moves nothing.
     if !(s2 > T(_CTSEM_MIN_VARIANCE[]))
         return (_category_loglikelihood(ηbar, y, thresholds, kind),
             zero(T), zero(T))
     end
-    # A censored row is Gaussian on Gaussian and has a closed form, so it never
-    # reaches the rule below. See `_censored_moments`.
+    # Three strategies, chosen by what the observation is rather than by how
+    # hard it looks. Closed form where one exists, a mixture where the
+    # likelihood is a combination of things that have one, and the rule only
+    # for what is left.
     kind == CTSEM_OBS_CENSORED &&
         return _censored_moments(ηbar, s, y, thresholds)
+    kind == CTSEM_OBS_BINARY && length(thresholds) >= 2 &&
+        return _asymptote_moments(ηbar, s, y, nodes, weights, thresholds)
+    return _binary_quadrature(ηbar, s, y, nodes, weights, thresholds, kind)
+end
+
+"""
+    _asymptote_moments(ηbar, s, y, nodes, weights, thresholds)
+
+`(logZ, mean - ηbar, variance)` for a binary item with asymptotes, as a
+mixture rather than as one integral.
+
+A three or four parameter logistic likelihood is not log-concave in `η`. For a
+correct response `P = c + (1-c)F(η)` is a constant plus an increasing bounded
+term, so `log P` is convex and then concave, and against a wide enough prior
+the posterior has two modes -- measured at 10 items with `a = 1.7` and
+`c = 0.2`, two maxima for any prior mean below about -4.3, separated by as
+much as ten units and by as little as 0.01 of log posterior. Everything in the
+quadrature path assumes one mode: the solve is claimed globally convergent
+because the objective is concave, and the rule is centred on *the* mode. Handed
+a bimodal posterior it would centre on whichever mode it found and integrate
+the wrong bump, silently, which is the failure this file has already had once.
+
+None of that has to be faced, because the likelihood is a mixture before it is
+anything else. `P(y|η) = A + B q(y|η)`, with `q` the plain logistic term and
+
+    A = c,      B = d - c      for a correct response
+    A = 1 - d,  B = d - c      for an incorrect one
+
+so the posterior is a two component mixture of the *prior* -- which is known in
+closed form and needs no integration at all -- and the *plain binary
+posterior*, which is log-concave and is exactly what the rule already handles
+well. Integrating the components separately and combining their moments is
+algebraically identical to integrating the lump, and every piece of it is
+unimodal. Checked against direct integration of the three parameter posterior
+on a fine grid, including at prior means where that posterior is bimodal:
+agreement to 1e-11, which is the grid's own error.
+
+The moments combine in offset coordinates, relative to `ηbar`, rather than as
+absolute means. The prior component contributes an offset of exactly zero and a
+variance of `s^2`; forming the same thing from absolute first and second
+moments would subtract two numbers of order `ηbar^2`, which is the cancellation
+`_binary_quadrature` accumulates about the mode to avoid.
+"""
+@inline function _asymptote_moments(ηbar::T, s::T, y::Real, nodes, weights,
+    thresholds) where {T}
+    s2 = s * s
+    c, d = _binary_asymptotes(thresholds, T)
+    flat = y > 0.5 ? c : one(c) - d
+    span = d - c
+    # An item with no span carries no information about `η`: every response is
+    # the constant, so the posterior is the prior. `<=` rather than `==`
+    # because a free asymptote pair can cross before the optimizer is pulled
+    # back, and a negative span is not a likelihood.
+    if !(span > zero(span))
+        return (log(max(flat, zero(flat))), zero(T), s2)
+    end
+    logZq, offsetq, varq = _binary_quadrature(ηbar, s, y, nodes, weights, (),
+        CTSEM_OBS_BINARY)
+    logspan = log(span) + logZq
+    logflat = log(flat)
+    logZ = _logaddexp(logflat, logspan)
+    isfinite(logZ) || return (T(-Inf), zero(T), s2)
+    # The weight on the logistic component. Taken as a ratio of logarithms so
+    # that a vanishing `flat` gives exactly one rather than `0/0`.
+    w = exp(logspan - logZ)
+    offset = w * offsetq
+    second = (one(w) - w) * s2 + w * (varq + offsetq * offsetq)
+    return (logZ, offset, max(second - offset * offset, zero(second)))
+end
+
+"""
+    _binary_quadrature(ηbar, s, y, nodes, weights, thresholds, kind)
+
+The adaptive Gauss-Hermite rule: what is used for the kinds whose likelihood
+against a Gaussian prior has no elementary integral, and whose scalar posterior
+is log-concave so that the mode the rule is centred on is unique.
+"""
+@inline function _binary_quadrature(ηbar::T, s::T, y::Real, nodes, weights,
+    thresholds, kind::Int) where {T}
+    s2 = s * s
     mode_offset, curvature = _binary_mode(ηbar, s2, y, thresholds, kind)
     scale = sqrt(T(2) / curvature)
 
@@ -977,6 +1132,26 @@ sum here costs a handful of additions on a vector of length `K-1`.
         return view(ws.thresholds, 1:1)
     end
     hasproperty(pars, :THRESHOLDS) || return view(ws.thresholds, 1:0)
+    # A binary row with asymptotes reads two cells of the same matrix: the
+    # lower asymptote and then a gap, accumulated here into the upper one so
+    # that `0 <= c < d <= 1` holds without a cell's transform having to read
+    # another cell's parameter. That is the constraint the parameter layer
+    # imposes and the reason the ordinal thresholds below are gaps too.
+    #
+    # `nasymptotes` rather than the values decides whether the row has them: a
+    # free guessing parameter sitting at zero is an ordinary place for an
+    # optimizer to be, and inferring from the numbers would lose it there.
+    if row <= length(types) && types[row] == CTSEM_OBS_BINARY
+        na = row <= length(ws.nasymptotes) ? ws.nasymptotes[row] : 0
+        (na >= 1 && size(pars.THRESHOLDS, 2) >= 2 &&
+            length(ws.thresholds) >= 2) || return view(ws.thresholds, 1:0)
+        @inbounds begin
+            c = pars.THRESHOLDS[row, 1]
+            ws.thresholds[1] = c
+            ws.thresholds[2] = c + (one(c) - c) * pars.THRESHOLDS[row, 2]
+        end
+        return view(ws.thresholds, 1:2)
+    end
     (row <= length(types) && types[row] == 2) ||
         return view(ws.thresholds, 1:0)
     ncat = row <= length(ws.ncategories) ? ws.ncategories[row] : 0

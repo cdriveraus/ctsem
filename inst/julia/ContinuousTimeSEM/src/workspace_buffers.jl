@@ -114,6 +114,7 @@ struct ContinuousEKFWorkspace{T, N, M, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF
     # parameter. Empty means every variable is Gaussian.
     manifesttype::Vector{Int}
     ncategories::Vector{Int}
+    nasymptotes::Vector{Int}
     # Scratch for one ordinal variable's cumulated thresholds. Length is the
     # widest THRESHOLDS row in the model, zero when there is no such matrix.
     thresholds::Vector{T}
@@ -237,6 +238,7 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
     ll_buffer = zeros(T, m)
     manifesttype = isdefined(sp, :manifesttype) ? copy(sp.manifesttype) : Int[]
     ncategories = isdefined(sp, :ncategories) ? copy(sp.ncategories) : Int[]
+    nasymptotes = isdefined(sp, :nasymptotes) ? copy(sp.nasymptotes) : Int[]
     censormin = isdefined(sp, :censormin) ? copy(sp.censormin) : Float64[]
     censormax = isdefined(sp, :censormax) ? copy(sp.censormax) : Float64[]
     # At least three, because a censored row borrows this same scratch to carry
@@ -276,6 +278,7 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
         ll_buffer,
         manifesttype,
         ncategories,
+        nasymptotes,
         thresholds,
         censormin,
         censormax,

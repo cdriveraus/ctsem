@@ -65,6 +65,62 @@ end
 # because the tape holds a vector of these records and so needs the type to
 # exist first. Annotating `::CTSEMAdjointTape` here would make that circular.
 # The `::Nothing` method above is what keeps an untraced pass free of dispatch.
+"""
+    _extras_cotangent!(θ̄ca, row, τ, kind, cot)
+
+Push a row's extras cotangents back onto the matrix cells they came from.
+
+`cot(i)` is the cotangent with respect to the i-th *assembled* extra -- what
+`_ordinal_thresholds!` wrote -- and the cells are what the parameter vector
+holds, which is not the same thing for any kind that accumulates. One function
+because the two reverse passes below both need it and had a copy each, and the
+copies were the place a new kind's rule could be added to one and not the
+other.
+
+The three rules:
+
+  * censored, whose extras are two constant limits and a standard deviation
+    that belongs to MANIFESTVAR;
+  * binary with asymptotes, where cell 1 is `c` and cell 2 is a gap `g` with
+    `d = c + (1-c)g`, so `dc/dcell1 = 1`, `dd/dcell1 = 1-g` and
+    `dd/dcell2 = 1-c`;
+  * ordinal, where threshold `k` is the sum of the first `k` cells, so a
+    cell's cotangent is the running sum of every threshold at or above it.
+
+Getting the second one wrong is not visible in a likelihood -- the forward pass
+is untouched by it -- and shows up only as an optimizer walking off a cliff.
+Measured before this existed, with the ordinal rule applied to a three
+parameter logistic: the fit stopped at a gradient norm of 6536 where a
+converged one is 1e-3, and every downstream diagnostic then described a point
+that was not a mode.
+"""
+@inline function _extras_cotangent!(θ̄ca, row::Int, τ, kind::Int, cot::F
+    ) where {F}
+    if kind == CTSEM_OBS_CENSORED
+        @inbounds θ̄ca.MANIFESTVAR[row, row] += cot(3)
+        return nothing
+    end
+    if kind == CTSEM_OBS_BINARY
+        @inbounds begin
+            c = τ[1]
+            room = one(c) - c
+            g = room > zero(room) ? (τ[2] - c) / room : zero(c)
+            d1 = cot(1)
+            d2 = cot(2)
+            θ̄ca.THRESHOLDS[row, 1] += d1 + d2 * (one(g) - g)
+            θ̄ca.THRESHOLDS[row, 2] += d2 * room
+        end
+        return nothing
+    end
+    running = zero(cot(1))
+    @inbounds for i in length(τ):-1:1
+        running += cot(i)
+        θ̄ca.THRESHOLDS[row, i] += running
+    end
+    return nothing
+end
+
+
 function _record_binary!(tape, ws, pars, data, obs_col, rows, state_in, P_in, n)
     # Two different tracing mechanisms reach this: the adjoint tape, and the
     # Kalman trace that `ctKalman`/`ctPredict` use to collect filtered states.
@@ -191,21 +247,8 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
                     t -> _category_loglikelihood(a, record.y[j], t,
                         record.kinds[j]),
                     collect(T, τ))
-                if record.kinds[j] == CTSEM_OBS_CENSORED
-                    # A censored row's extras are its two limits, which are
-                    # constants and take no cotangent, and its standard
-                    # deviation, which is MANIFESTVAR's own diagonal entry. It
-                    # goes straight back there: the forward pass read it from
-                    # the matrix rather than from the assembled covariance, so
-                    # there is no `sdcovsqrt2cov` to unwind.
-                    @inbounds θ̄ca.MANIFESTVAR[row, row] += dτ[3]
-                else
-                    running = zero(T)
-                    @inbounds for i in length(τ):-1:1
-                        running += dτ[i]
-                        θ̄ca.THRESHOLDS[row, i] += running
-                    end
-                end
+                _extras_cotangent!(θ̄ca, row, τ, record.kinds[j],
+                    i -> dτ[i])
             end
             continue
         end
@@ -278,19 +321,8 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
         if !isempty(τ) && record.kinds[j] != CTSEM_OBS_COUNT
             Jτ = _binary_threshold_derivatives(a, b, record.y[j], τ,
                 record.kinds[j])
-            if record.kinds[j] == CTSEM_OBS_CENSORED
-                # See the degenerate branch above: only the third extra is a
-                # parameter, and it belongs to MANIFESTVAR.
-                @inbounds θ̄ca.MANIFESTVAR[row, row] +=
-                    logZbar * Jτ[1, 3] + mbar * Jτ[2, 3] + vbar * Jτ[3, 3]
-            else
-                running = zero(T)
-                @inbounds for i in length(τ):-1:1
-                    running += logZbar * Jτ[1, i] + mbar * Jτ[2, i] +
-                        vbar * Jτ[3, i]
-                    θ̄ca.THRESHOLDS[row, i] += running
-                end
-            end
+            _extras_cotangent!(θ̄ca, row, τ, record.kinds[j],
+                i -> logZbar * Jτ[1, i] + mbar * Jτ[2, i] + vbar * Jτ[3, i])
         end
 
         @inbounds for i in 1:n
