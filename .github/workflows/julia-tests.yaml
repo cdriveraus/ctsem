@@ -140,7 +140,32 @@ jobs:
             jl <- d[grepl("^test-(julia|backend|stan-julia)", d$file), , drop = FALSE]
             cat(sprintf("TIER2 shard %d julia files=%d pass=%d skip=%d\n",
                 n, length(unique(jl$file)), sum(jl$passed), sum(jl$skipped)))
-            if (sum(d$failed) + sum(d$error) > 0) stop("test failures")
+            # Say which file and which assertion, in annotations. GitHub
+            # serves a failed run log only to someone who can write to the
+            # repository, so `stop("test failures")` on its own told a reader
+            # nothing at all -- one shard of this tier went red and the only
+            # published word about it was that string, which cost a full local
+            # reproduction of 23 files to turn into a file name. Tier 1 has
+            # reported this way since it was written; this is the same thing.
+            bad <- which(d$failed > 0 | d$error > 0)
+            if (length(bad)) {
+              # Ten is all GitHub serves, and the summary below has to be one
+              # of them, so the detail stops short of that.
+              shown <- 0
+              for (i in bad) {
+                for (e in r[[i]]$results) {
+                  if (!inherits(e, c("expectation_failure", "expectation_error"))) next
+                  if (shown >= 8) next
+                  shown <- shown + 1
+                  cat(sprintf("::error title=%s::%s :: %s\n", d$file[i], d$test[i],
+                      substr(gsub("[\r\n]+", " ", conditionMessage(e)), 1, 700)))
+                }
+              }
+              cat(sprintf("::error title=Tier 2 shard %d::%d failed and %d errored in: %s\n",
+                  n, sum(d$failed), sum(d$error),
+                  paste(unique(d$file[bad]), collapse = " ")))
+              stop("test failures")
+            }
             # The failure mode this tier exists to catch is not a red suite, it
             # is a green one that ran nothing. Every shard so far has drawn
             # julia files, but the split is by cost and nothing guarantees it,
