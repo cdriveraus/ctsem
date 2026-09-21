@@ -201,7 +201,7 @@ function _quadrature_children(blocks::Vector{CTSEMLaplaceBlock})
 end
 
 """
-    _quadrature_leaf_rule!(laplace, U, theta, Ls, b, u, aws, slot)
+    _quadrature_leaf_rule!(laplace, U, theta, Ls, b, u, aws)
 
 The conditional mode and scale for a leaf block, with its ancestors held at
 whatever `u` currently says.
@@ -219,7 +219,7 @@ Returns `(ok, centre, scale, logdetscale)` with `scale * scale' = M^-1`.
 """
 function _quadrature_leaf_rule!(laplace::CTSEMLaplaceObjective, U::Integer,
     theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, b::Integer,
-    u::Vector{Float64}, aws, slot::Integer)
+    u::Vector{Float64}, aws)
     block = laplace.units.blocks[U][b]
     k = block.size
     columns = (block.offset + 1):(block.offset + k)
@@ -237,7 +237,7 @@ function _quadrature_leaf_rule!(laplace::CTSEMLaplaceObjective, U::Integer,
     # block alone -- differentiating it gives the block's curvature.
     loglik_gradient = function (z)
         S = eltype(z)
-        ws = _laplace_workspace!(laplace, S, length(theta), slot)
+        ws = _laplace_workspace!(laplace, S, length(theta))
         work = convert(Vector{S}, u)
         @inbounds for (t, c) in enumerate(columns); work[c] = z[t]; end
         result = _laplace_unit_loglik_gradient(laplace, U, convert(Vector{S}, theta),
@@ -272,7 +272,7 @@ function _quadrature_leaf_rule!(laplace::CTSEMLaplaceObjective, U::Integer,
 end
 
 """
-    _quadrature_block(laplace, U, theta, Ls, b, u, context, aws, slot)
+    _quadrature_block(laplace, U, theta, Ls, b, u, context, aws)
 
 Block `b`'s contribution to its unit's log marginal: its own coordinates
 integrated, and whatever sits beneath it recursed into.
@@ -283,7 +283,7 @@ and unread, because a member reads only the blocks on its own path.
 """
 function _quadrature_block(laplace::CTSEMLaplaceObjective, U::Integer,
     theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, b::Integer,
-    u::Vector{Float64}, context, aws, slot::Integer)
+    u::Vector{Float64}, context, aws)
     blocks = laplace.units.blocks[U]
     block = blocks[b]
     k = block.size
@@ -292,7 +292,7 @@ function _quadrature_block(laplace::CTSEMLaplaceObjective, U::Integer,
     leaf = isempty(children)
 
     rule = if leaf
-        _quadrature_leaf_rule!(laplace, U, theta, Ls, b, u, aws, slot)
+        _quadrature_leaf_rule!(laplace, U, theta, Ls, b, u, aws)
     else
         # An outer block keeps the joint mode, and takes its scale from the
         # *eliminated* diagonal the block factorization already produced: the
@@ -330,7 +330,7 @@ function _quadrature_block(laplace::CTSEMLaplaceObjective, U::Integer,
         else
             for c in children
                 inner += _quadrature_block(laplace, U, theta, Ls, c, u, context,
-                    aws, slot)
+                    aws)
             end
         end
         terms[j] = isfinite(inner) ? inner - dot(z, z) / 2 + logweights[j] : -Inf
@@ -412,10 +412,35 @@ function ctsem_laplace_quadrature(laplace::CTSEMLaplaceObjective,
     # engine's contract is that an evaluation reports NaN, and a throw inside a
     # spawned task escapes as a `TaskFailedException` that kills whatever loop
     # is above it, so it is caught here rather than left to every caller.
+    # Errors that can only mean the code is wrong, however deep they arrive.
+    _quadrature_is_bug(err) = err isa MethodError || err isa UndefVarError ||
+        err isa BoundsError || err isa TypeError ||
+        (err isa TaskFailedException && _quadrature_is_bug(err.task.result))
+
     run = function (c)
         try
-            _quadrature_chunk!(laplace, theta, Ls, ranges[c], unit_term, nodes, c)
+            _quadrature_chunk!(laplace, theta, Ls, ranges[c], unit_term, nodes)
         catch err
+            # Numerical failures become NaN; bugs do not.
+            #
+            # This catch is here for a trial point the model cannot evaluate --
+            # a parameter vector whose matrix exponential scaling step takes
+            # `ceil(Int, NaN)` and throws rather than returning a non-finite
+            # number. Converting *that* to NaN is the engine's contract.
+            #
+            # It caught a `MethodError` too, and that is a different thing
+            # entirely. When the worker pool removed the `slot` argument from
+            # the unit functions, two call sites here kept passing one; every
+            # chunk raised `MethodError`, every chunk was marked failed, and
+            # `ctLaplaceCheck` reported a NaN gap that read exactly like a
+            # quadrature that could not be computed for this model. Nothing
+            # errored, nothing warned, and the only reason it was found is that
+            # a test asserted the result was finite.
+            #
+            # So the errors that mean "this code is wrong" are rethrown. A
+            # `TaskFailedException` from a nested region is unwrapped first,
+            # because the pool may have spawned inside the chunk.
+            _quadrature_is_bug(err) && rethrow()
             err isa InterruptException && rethrow()
             failed[c] = true
         end
@@ -435,7 +460,7 @@ function ctsem_laplace_quadrature(laplace::CTSEMLaplaceObjective,
 end
 
 """
-    _quadrature_chunk!(laplace, theta, Ls, units, unit_term, nodes, slot)
+    _quadrature_chunk!(laplace, theta, Ls, units, unit_term, nodes)
 
 One chunk of the unit loop, writing each unit's term into `unit_term`.
 
@@ -444,8 +469,8 @@ spawned task becomes a NaN evaluation rather than an escaping exception.
 """
 function _quadrature_chunk!(laplace::CTSEMLaplaceObjective, theta::Vector{Float64},
     Ls::Vector{Matrix{Float64}}, units, unit_term::Vector{Float64},
-    nodes::Integer, slot::Integer)
-    aws = _laplace_workspace!(laplace, Float64, length(theta), slot)
+    nodes::Integer)
+    aws = _laplace_workspace!(laplace, Float64, length(theta))
     for U in units
         blocks = laplace.units.blocks[U]
         if isempty(blocks)
@@ -455,9 +480,9 @@ function _quadrature_chunk!(laplace::CTSEMLaplaceObjective, theta::Vector{Float6
                 Ls, Float64[], aws).value
             continue
         end
-        _laplace_solve_unit_mode!(laplace, U, theta, Ls, slot)
+        _laplace_solve_unit_mode!(laplace, U, theta, Ls)
         mode = copy(laplace.modes[U])
-        M = _laplace_unit_curvature(laplace, U, theta, Ls, mode, slot)
+        M = _laplace_unit_curvature(laplace, U, theta, Ls, mode)
         factorization = _laplace_factor_repaired!(M, blocks)
         factorization.ok ||
             error("the inner curvature could not be factorized")
@@ -468,7 +493,7 @@ function _quadrature_chunk!(laplace::CTSEMLaplaceObjective, theta::Vector{Float6
         total = 0.0
         for root in tree.roots
             total += _quadrature_block(laplace, U, theta, Ls, root, u, context,
-                aws, slot)
+                aws)
         end
         isfinite(total) || error("quadrature produced a non-finite unit term")
         unit_term[U] = total
