@@ -433,12 +433,34 @@ ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
   # `.ctJuliaAgreed()`), and skipped entirely -- no prompt, no network -- when
   # the environment already loads, which is the ordinary case after the first
   # session on a machine.
+  loadfail <- NULL
   ready <- tryCatch({
     JuliaConnectoR::juliaEval("using ContinuousTimeSEM")
     TRUE
-  }, error = function(e) FALSE)
+  }, error = function(e) { loadfail <<- conditionMessage(e); FALSE })
 
   if (!ready) {
+    # Tell a short environment from a broken engine, because the two need
+    # opposite things from the reader and this code used to say the first
+    # whatever had happened. A docstring error in the engine -- which fails at
+    # load and nowhere earlier -- came out as "dependencies not installed, and
+    # consent was not given", which is wrong about the cause, wrong about the
+    # remedy, and sends the user to install packages that are already there.
+    #
+    # Julia names a missing package the same way in both shapes it can arrive:
+    # directly, when the engine's own environment is empty, and nested inside a
+    # "Failed to precompile ContinuousTimeSEM" when a dependency of the engine
+    # is what is absent. So the presence of that phrase is what identifies the
+    # case instantiating can fix, and its absence identifies the case it cannot.
+    missing <- !is.null(loadfail) && grepl(
+      "not found in current path|not found in|does not seem to be installed",
+      loadfail)
+    if (!is.null(loadfail) && !missing) {
+      stop("The julia engine failed to load. This is not a missing ",
+        "dependency -- installing packages will not help.\n",
+        "  environment: ", env_dir, "\n",
+        "Julia reported:\n", loadfail, call. = FALSE)
+    }
     agreed <- .ctJuliaAgreed(agree, paste0(
       "The julia backend needs to install the vendored engine's Julia package ",
       "dependencies, which are not yet present.\n",
@@ -446,7 +468,9 @@ ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
       "  This downloads packages from the Julia package registry."))
     if (!agreed) {
       stop("The julia backend needs its Julia package dependencies installed, ",
-        "and consent was not given.\n", .ctJuliaDeclined(), call. = FALSE)
+        "and consent was not given.\n", .ctJuliaDeclined(),
+        if (is.null(loadfail)) "" else paste0("\nJulia reported:\n", loadfail),
+        call. = FALSE)
     }
 
     # `Pkg.instantiate()` precompiles the environment, and then `using` precompiles
