@@ -103,25 +103,30 @@ function ExpmCovScratch{T,D}() where {T,D}
         mk(), mk(), Ref(0), Ref(1))
 end
 
-const _EXPM_COV_SCRATCH = Dict{Tuple{DataType,Int,Int},Any}()
-const _EXPM_COV_LOCK = ReentrantLock()
-
-# Keyed by thread as well as shape, so each thread works in its own buffers, and
-# the first-use insertion is locked: without that, two threads reaching a new
-# shape at once race on the Dict. The read is unlocked, which is safe only
-# because an entry is never replaced once written -- a thread either sees
-# `nothing` and takes the lock, or sees a fully constructed struct.
+# Held in *task*-local storage, keyed by shape.
+#
+# This was keyed by `Threads.threadid()`, which is only as good as the
+# assumption that a task stays on the thread it started on. It does not: a task
+# can migrate at any yield point, and once tasks outnumber threads -- which
+# nesting `@spawn` inside a chunk task does immediately -- two live tasks share
+# a thread id and therefore share these buffers. The symptom is a wrong
+# *gradient* with a right value, differing between two runs of the same input,
+# because the corruption lands in intermediate matrices rather than in anything
+# that is checked. It took a lock around the sweep to prove that was where it
+# was coming from.
+#
+# Task-local storage removes the assumption rather than patching it: nothing is
+# shared, so nothing has to be reasoned about, and no future parallel site can
+# reintroduce this by forgetting to pass a slot. The struct is built once per
+# task per shape and dies with the task, so the cost is one allocation per
+# chunk, not one per call.
 function _expm_cov_scratch(::Type{T}, ::Val{d}) where {T,d}
-    key = (T, d, Threads.threadid())
-    sc = get(_EXPM_COV_SCRATCH, key, nothing)
+    store = task_local_storage()
+    key = (:expm_cov_scratch, T, d)
+    sc = get(store, key, nothing)
     if sc === nothing
-        lock(_EXPM_COV_LOCK) do
-            sc = get(_EXPM_COV_SCRATCH, key, nothing)
-            if sc === nothing
-                sc = ExpmCovScratch{T,d}()
-                _EXPM_COV_SCRATCH[key] = sc
-            end
-        end
+        sc = ExpmCovScratch{T,d}()
+        store[key] = sc
     end
     return sc::ExpmCovScratch{T,d}
 end

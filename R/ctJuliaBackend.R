@@ -1682,6 +1682,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     for (level in laplace$levels) {
       used[[paste0("'", level$name, "' population scales")]] <- as.integer(level$sd_index)
       used[[paste0("'", level$name, "' correlations")]] <- as.integer(level$cor_index)
+      used[[paste0("'", level$name, "' loadings")]] <- as.integer(level$load_index)
       used[[paste0("'", level$name, "' varying parameters")]] <- as.integer(level$re_index)
     }
   }
@@ -1707,6 +1708,32 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 .ctJuliaLevelColumn <- function(model, level) {
   if (level == 1L) return("indvarying")
   paste0("indvarying_", model$groupIDnames[level - 1L])
+}
+
+# The rank asked of one level's population covariance, or `k` when nothing was
+# asked. `model$laplacerank` is a named integer vector, one entry per level
+# name, written by `ctFit()` from the `poprank` argument.
+#
+# Clamped to `k` rather than refused when it exceeds the number of effects: a
+# rank at or above `k` is the unrestricted covariance, which is what the user
+# asking for it means, and refusing a model that merely has fewer varying
+# parameters than the number they typed would be pedantry. Below 1 is refused,
+# because a rank of zero is "no variation at this level" and is said by
+# removing the effects, not by restricting them.
+.ctJuliaLevelRank <- function(model, name, k) {
+  spec <- model[['laplacerank']]
+  if (is.null(spec) || !length(spec) || k == 0L) return(as.integer(k))
+  value <- if (!is.null(names(spec)) && name %in% names(spec))
+    spec[[name]] else NA
+  value <- suppressWarnings(as.integer(value))
+  if (!length(value) || is.na(value)) return(as.integer(k))
+  if (value < 1L) {
+    stop("poprank for level '", name, "' is ", value,
+      ". A rank below 1 is not a restricted covariance, it is no variation at ",
+      "that level -- say that by removing the level's random effects.",
+      call. = FALSE)
+  }
+  as.integer(min(value, k))
 }
 
 # The matching sdscale column. One value per id element, so a level scales its
@@ -1885,19 +1912,56 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       }
     }
     k <- length(lv_varying)
-    noff <- as.integer(k * (k - 1L) / 2L)
+    rank <- .ctJuliaLevelRank(model, hierarchy[[l]]$name, k)
+    reduced <- rank < k
+    # A level is described one way or the other, never both: scales and
+    # correlations at full rank, a loading matrix below it. Allocating the
+    # unused set anyway would leave parameters in the vector that nothing
+    # reads, which the optimiser would then wander along.
+    nsd <- if (reduced) 0L else as.integer(k)
+    noff <- if (reduced) 0L else as.integer(k * (k - 1L) / 2L)
+    nload <- if (reduced) as.integer(k * rank - rank * (rank - 1L) / 2L) else 0L
     levels[[l]] <- list(
       name = hierarchy[[l]]$name,
       re_index = as.integer(lv_varying),
-      sd_index = if (k) as.integer(cursor + seq_len(k)) else integer(),
-      cor_index = if (noff) as.integer(cursor + k + seq_len(noff)) else integer(),
+      sd_index = if (nsd) as.integer(cursor + seq_len(nsd)) else integer(),
+      cor_index = if (noff) as.integer(cursor + nsd + seq_len(noff)) else integer(),
+      load_index = if (nload) as.integer(cursor + seq_len(nload)) else integer(),
+      rank = as.integer(rank),
       sd_scale = as.numeric(lv_scale),
       param = .ctJuliaLaplaceNames(table, lv_varying),
       nrandom = as.integer(k),
       group = as.integer(hierarchy[[l]]$group),
       ngroups = as.integer(hierarchy[[l]]$ngroups),
       labels = hierarchy[[l]]$labels)
-    cursor <- cursor + k + noff
+    cursor <- cursor + nsd + noff + nload
+  }
+
+  # What a level's groups cannot support is *rank*, not parameter count.
+  #
+  # The sufficient statistic for a level's covariance is the scatter of its
+  # groups' deviations, whose rank is at most the number of groups. A
+  # covariance of rank r is estimable when r <= ngroups and degenerate above
+  # it: at full rank with more varying parameters than groups the unrestricted
+  # MLE *is* that singular scatter matrix.
+  #
+  # The parameter count is not the test, and an earlier version of this message
+  # used it and was wrong. Eighteen loadings over thirteen groups sounds
+  # hopeless and is not: a rank-1 covariance says the deviations lie on a line,
+  # and thirteen points determine a line in eighteen dimensions comfortably.
+  # Simulated at k=18, n=13, the estimated loading correlates 0.99 with the
+  # truth and the Hessian is positive definite in all eighteen directions with
+  # a condition number of 19. Parameters tied together by a low-rank structure
+  # are not independent things to estimate.
+  for (lv in levels) {
+    rank <- as.integer(if (is.null(lv$rank)) lv$nrandom else lv$rank)
+    if (lv$ngroups > 0L && rank > lv$ngroups) {
+      message("Level '", lv$name, "': a rank-", rank, " covariance over ",
+        lv$ngroups, " groups. The scatter of ", lv$ngroups,
+        " deviations has rank at most ", lv$ngroups,
+        ", so this one is degenerate at its maximum. Set poprank for this ",
+        "level to ", lv$ngroups, " or below.")
+    }
   }
 
   total <- sum(vapply(levels, function(x) x$nrandom, integer(1)))
@@ -3136,10 +3200,23 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     grab <- function(field) unlist(lapply(levels, function(x) x[[field]]), use.names = FALSE)
     laplace_args <- list(objective,
       re_index = .ctJuliaVector(as.integer(grab("re_index"))),
-      sd_index = .ctJuliaVector(as.integer(grab("sd_index"))),
       sd_scale = .ctJuliaVector(as.numeric(grab("sd_scale"))))
+    # Guarded like `cor_index`, and for the same reason: a model whose every
+    # level is reduced has no population scales at all, and a zero-length
+    # vector deadlocks the bridge rather than arriving empty.
+    if (length(grab("sd_index"))) {
+      laplace_args$sd_index <- .ctJuliaVector(as.integer(grab("sd_index")))
+    }
     if (length(grab("cor_index"))) {
       laplace_args$cor_index <- .ctJuliaVector(as.integer(grab("cor_index")))
+    }
+    # Sent only when some level is actually reduced, so a model that asked for
+    # nothing crosses exactly as it did before this existed.
+    ranks <- as.integer(vapply(levels, function(x)
+      if (is.null(x$rank)) x$nrandom else x$rank, integer(1)))
+    if (any(ranks < as.integer(vapply(levels, function(x) x$nrandom, integer(1))))) {
+      laplace_args$level_rank <- .ctJuliaVector(ranks)
+      laplace_args$load_index <- .ctJuliaVector(as.integer(grab("load_index")))
     }
     # Absent unless the fit asked for them, so the engine's own defaults stay
     # the defaults and a spec built before this existed is byte-for-byte as it
@@ -3732,7 +3809,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   if (!is.null(callback)) {
     if (!is.function(callback)) {
       stop("optimcontrol$callback must be a function of (iteration, total, ",
-        "objective, gradient_norm).", call. = FALSE)
+        "objective, gradient_norm), optionally taking the current point as a ",
+        "fifth argument.", call. = FALSE)
     }
     # Caught here rather than in the engine, because an error thrown out of an
     # R callback does not reach the engine at all: it aborts before a reply is
@@ -3744,10 +3822,18 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # The message is stored rather than warned immediately: `options(warn = 2)`
     # would turn the warning into exactly the error this exists to prevent.
     alive <- TRUE
+    # The engine always sends the current point as a fifth value. A callback
+    # written before that existed takes four arguments, so it is called with
+    # four: handing it a fifth would turn an addition into a breaking change.
+    # `...` counts as accepting it, since such a function can ask for it.
+    fmls <- names(formals(callback))
+    wants_pars <- length(fmls) >= 5L || "..." %in% fmls
     common$progress_callback <- function(iteration, total, objective,
-      gradient_norm) {
+      gradient_norm, parameters) {
       if (alive) {
-        tryCatch(callback(iteration, total, objective, gradient_norm),
+        tryCatch(if (wants_pars)
+            callback(iteration, total, objective, gradient_norm, parameters)
+          else callback(iteration, total, objective, gradient_norm),
           error = function(e) {
             alive <<- FALSE
             failure <<- conditionMessage(e)
@@ -3942,6 +4028,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     inner_maxiter = .ctJuliaOr(model_spec$laplace$inner$inner_maxiter, 200L),
     inner_tol = .ctJuliaOr(model_spec$laplace$inner$inner_tol, 1e-10),
     inner_converged = isTRUE(result$inner_converged),
+    gradient_fallbacks = if (is.null(result$gradient_fallbacks)) NA_integer_ else
+      as.integer(result$gradient_fallbacks)[1L],
     inner_iterations = as.integer(result$inner_iterations),
     # Two different things. `hessian_repaired` is true if *any* Newton iterate
     # for that unit needed its curvature shifted, which is ordinary behaviour

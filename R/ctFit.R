@@ -513,6 +513,37 @@ T0VARredundancies <- function(ctm) {
 #' likelihood units. So off the augmented route it has to be asked for
 #' explicitly, and the message then says which of the two it is doing.
 #'
+#' Under \code{'laplace'} the rank is stated \strong{per level} and applies to
+#' each level's own population covariance. One unnamed number applies to every
+#' level; a named vector names the levels it restricts and leaves the rest at
+#' full rank, so \code{poprank=c(study=2)} describes 13 studies with two
+#' dimensions and touches neither the subject nor the burst level. The names are
+#' the \code{id} elements, and an unknown one is an error rather than a silent
+#' no-op. \code{'auto'} keeps the meaning it has on the augmented route and is
+#' resolved once per level: each level's rank becomes the number of \emph{its}
+#' effects that reach the observation mean, so a level carrying only
+#' mean-affecting effects is left at full rank. It still has to be asked for,
+#' because under \code{'laplace'} those coordinates are identified and dropping
+#' them is an approximation rather than a repair.
+#'
+#' The mechanism differs too, and it is why the per-level form exists. On the
+#' augmented route a reduced rank rewrites the model into basis effects and
+#' regressions on them, which works from \code{pars$indvarying} and so reaches
+#' the innermost level alone -- and a regressed effect written as
+#' \code{(p + beta * b)} inherits \emph{every} level's deviation of \code{b}
+#' through one coefficient, tying levels together. Under \code{'laplace'} the
+#' restriction is applied where the covariance is built instead: level \code{l}
+#' with \code{k} varying parameters and rank \code{r} gets a \code{k} by
+#' \code{r} loading matrix \code{L}, contributing \code{k*r - r*(r-1)/2}
+#' parameters in place of \code{k} scales and \code{k*(k-1)/2} correlations,
+#' and its covariance is \code{L \%*\% t(L)}. Each level has its own \code{L}
+#' and they stay independent. A loading is signed and its sign is arbitrary --
+#' negating a column of \code{L} leaves the covariance alone -- so read the
+#' standard deviations and correlations \code{summary()} reports rather than a
+#' single loading. They are named \code{poploading_<parameter>_dim<j>.<level>}
+#' to keep them distinct from the \code{popsd_} and \code{rawcor_} of a
+#' full-rank level, which are a different quantity.
+#'
 #' May also be stated on the model, as \code{model$poprank <- 2}; an argument
 #' here wins over that.
 #' @param intoverpop how to handle declared individual differences. If 'auto',
@@ -649,13 +680,23 @@ T0VARredundancies <- function(ctm) {
 #' \code{$carefulfit_iterations} how long it was allowed.
 #' With \code{backend='julia'}, \code{optimcontrol$callback} is a function
 #' called while the fit runs, with \code{(iteration, total, objective,
-#' gradient_norm)}. It is for a front end that wants to draw progress live:
-#' the engine calls it on a time cadence rather than once per iteration,
-#' because a callback costs about half a millisecond through the Julia
-#' bridge, and always once more at the end. An error inside it disables it
-#' and warns, leaving the fit unaffected. If output after the fit is enough,
-#' \code{fit$optim$trace} holds every iteration and \code{\link{ctTracePlot}}
-#' draws it.
+#' gradient_norm, parameters)}, where \code{parameters} is the raw vector the
+#' reported objective and gradient describe. A callback declaring only the
+#' first four is called with four, so one written before \code{parameters}
+#' existed keeps working.
+#'
+#' It serves two purposes. The first is a front end drawing progress live: the
+#' engine calls it on a time cadence rather than once per iteration, because a
+#' callback costs about half a millisecond through the Julia bridge, and always
+#' once more at the end. The second is checkpointing. Nothing is written until
+#' \code{ctFit} returns, so a long fit that is interrupted leaves nothing
+#' behind; writing \code{parameters} from the callback and passing them back as
+#' \code{inits} resumes from where it stopped. The optimizer's own history does
+#' not survive that, so a resumed fit restarts its quasi-Newton approximation.
+#'
+#' An error inside the callback disables it and warns, leaving the fit
+#' unaffected. If output after the fit is enough, \code{fit$optim$trace} holds
+#' every iteration and \code{\link{ctTracePlot}} draws it.
 #' \code{backend='julia'} also finishes by estimating uncertainty, as the stan
 #' backend does, and reads the same \code{stanoptimis} control names for it:
 #' \code{uncertainty} (default \code{'hessian'}), \code{uncertaintyDraws},
@@ -1587,8 +1628,76 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # argument was left at its default.
   if(!poprankexplicit && !is.null(ctm[['poprank']])) poprank <- ctm[['poprank']]
 
+  # Under `laplace` a rank restricts each level's population covariance where
+  # that covariance is actually built -- in the engine, as a loading matrix --
+  # rather than by rewriting the model into a basis and a set of regressions.
+  # Two reasons it has to be done that way here and not the augmented way.
+  #
+  # It reaches every level. The rewrite works from `pars$indvarying`, which is
+  # the innermost level alone, so on a burst/subject/study model it can restrict
+  # the burst covariance and cannot touch the study one -- and the study level,
+  # with the fewest groups, is the one that needs it.
+  #
+  # And it does not entangle the levels. A regressed effect is written into its
+  # cell as `(p + beta * b)`, so if the basis effect `b` also varies at another
+  # level then `p` inherits *that* level's deviation of `b` through the same
+  # `beta`. One coefficient tying two levels together is not the model anyone
+  # asked for, and nothing about the resulting fit would look wrong.
+  #
+  # A loading matrix per level has neither problem: each level's deviation is
+  # `L_level * u_level` with its own `u`, and the levels stay independent.
+  laplacerank <- NULL
+  if(identical(intoverpopmethod,'laplace') && poprankexplicit &&
+      !(length(poprank)==1 && is.na(poprank))){
+    if(!identical(backend,'julia')) stop("poprank requires backend='julia'.", call.=FALSE)
+    levelnames <- c(ctm$subjectIDname, ctm$groupIDnames)
+    autorank <- is.character(poprank) && any(poprank %in% 'auto')
+    if(autorank){
+      # `'auto'` keeps the meaning it has on the augmented route -- how many of
+      # that level's effects reach the observation mean -- resolved once per
+      # level rather than once for the model. Under laplace those coordinates
+      # are identified, so it is an approximation asked for rather than a
+      # repair, which is why it is never the default here.
+      levelcolumns <- c('indvarying', if(length(ctm$groupIDnames))
+        paste0('indvarying_', ctm$groupIDnames))
+      counted <- vapply(levelcolumns, function(cc){
+        roles <- .ctPopEffectRoles(ctm$pars, column=cc)
+        if(!nrow(roles)) NA_integer_ else as.integer(sum(roles$mean))
+      }, integer(1L))
+      counted[!is.na(counted) & counted < 1L] <- NA_integer_
+      laplacerank <- stats::setNames(counted, levelnames)
+      laplacerank <- laplacerank[!is.na(laplacerank)]
+      if(!length(laplacerank)) laplacerank <- NULL
+      ctm$laplacerank <- laplacerank
+    }
+    value <- if(autorank) integer() else suppressWarnings(as.integer(poprank))
+    if(!autorank && any(is.na(value))) stop("poprank must be whole numbers.", call.=FALSE)
+    # Names decide, not length. `poprank=c(study=2)` is one element *and*
+    # names a level, and reading it as "2 everywhere" because it is length one
+    # would silently reduce every level while looking like it had done what was
+    # asked -- which is what the first version of this did.
+    if(autorank){
+      NULL  # resolved above, one rank per level
+    } else if(is.null(names(poprank))){
+      if(length(value)!=1L) stop(
+        "a poprank per level must be named, one entry per level: ",
+        paste(levelnames, collapse=', '), call.=FALSE)
+      laplacerank <- stats::setNames(rep(value, length(levelnames)), levelnames)
+    } else {
+      if(any(!nzchar(names(poprank)))) stop(
+        "every entry of a per-level poprank must name its level: ",
+        paste(levelnames, collapse=', '), call.=FALSE)
+      unknown <- setdiff(names(poprank), levelnames)
+      if(length(unknown)) stop("poprank names no level called ",
+        paste(unknown, collapse=', '), ". The levels are ",
+        paste(levelnames, collapse=', '), ".", call.=FALSE)
+      laplacerank <- stats::setNames(value, names(poprank))
+    }
+    ctm$laplacerank <- laplacerank
+  }
+
   popregression <- NULL
-  if(!(length(poprank)==1 && is.na(poprank))){
+  if(is.null(laplacerank) && !(length(poprank)==1 && is.na(poprank))){
     if(!identical(backend,'julia')){
       if(poprankexplicit) stop("poprank requires backend='julia'.", call.=FALSE)
     } else if(!intoverpop && !identical(intoverpopmethod,'laplace') &&
@@ -1983,8 +2092,8 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   argsresolved$intoverpop <- intoverpopmethod
   # The rank actually used, not the argument: 'auto' resolves to a number, and a
   # model the restriction did not apply to reports NA whatever was asked for.
-  argsresolved$poprank <- if(is.null(popregression)) NA_integer_ else
-    as.integer(popregression$rank)
+  argsresolved$poprank <- if(!is.null(laplacerank)) laplacerank else
+    if(is.null(popregression)) NA_integer_ else as.integer(popregression$rank)
   argsresolved$priors <- as.logical(priors)
   argsresolved$optimize <- isTRUE(optimize)
   argsresolved$intoverstates <- isTRUE(intoverstates)

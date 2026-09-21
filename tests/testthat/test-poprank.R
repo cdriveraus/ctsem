@@ -150,11 +150,22 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
     expect_match(message_one, 'approximation', fixed = TRUE)
   })
 
-  # Under laplace and 'none' there are no carrier states, so the basis effects
-  # move into PARS and the regressed cells reference them as parameters. No
-  # engine change: the laplace spec builds re_index from the parameter table's
-  # indvarying entries, so a PARS row is eligible exactly as the original cell
-  # was, and the route simply sees fewer random effects.
+  # The same restriction on both routes, reached two different ways, and the
+  # coordinates differ because of it.
+  #
+  # On the augmented route there are carrier states, so a reduced rank rewrites
+  # the model: basis effects move into PARS and the regressed cells reference
+  # them, giving `beta_<regressed>_<basis>` coefficients.
+  #
+  # Under laplace the restriction is applied where the covariance is built, as
+  # a loading matrix per level, giving `poploading_<parameter>_dim<j>`. That is
+  # what lets it reach a level above the innermost one, which the rewrite
+  # cannot -- and it keeps the levels independent, which the rewrite also
+  # cannot, since a regressed cell written as `(p + beta * b)` inherits every
+  # level's deviation of `b` through the one coefficient.
+  #
+  # Same rank either way, so the parameter count is the same; only the
+  # coordinates change.
   test_that('poprank restricts the laplace and none routes too, when asked', {
     dat <- poprank_data()
     prepared <- function(iop, ...) {
@@ -169,7 +180,13 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
       expect_equal(ctsem:::.ctBackendNpar(auto), 5L)
       names <- ctsem:::.ctBackendRawParameterNames(list(model_spec = auto),
         ctsem:::.ctBackendNpar(auto))
-      expect_true('beta_df11_dr11' %in% names)
+      if (identical(iop, 'augmented')) {
+        expect_true('beta_df11_dr11' %in% names)
+      } else {
+        expect_true(any(grepl('^poploading_', names)))
+      }
+      # Either way the reduced effect keeps neither a spread of its own nor a
+      # correlation, which is the whole content of the restriction.
       expect_false(any(c('popsd_df11', 'rawcor_df11__dr11') %in% names))
     }
   })

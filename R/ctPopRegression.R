@@ -102,10 +102,14 @@
 # cross-cell label references appear as `PARS[r,c]`, and must not yet have been
 # through `.ctModelIntOverPop()`, which clears `indvarying` on the cells it
 # rewrites into state references.
-.ctPopEffectRoles <- function(pars) {
+.ctPopEffectRoles <- function(pars, column = 'indvarying') {
   pars <- .ctModelCleanctspec(pars)
   free <- !is.na(pars$param) & is.na(pars$value)
-  varying <- free & !is.na(pars$indvarying) & pars$indvarying
+  # `column` is the level's own flag: `indvarying` for the innermost level and
+  # `indvarying_<idname>` for each one above it. Absent means no effects at
+  # that level, which is a level with nothing to restrict rather than an error.
+  flag <- if (column %in% names(pars)) pars[[column]] else rep(FALSE, nrow(pars))
+  varying <- free & !is.na(flag) & flag
   labels <- unique(as.character(pars$param[varying]))
   # A rewritten cell (`state[3]`, `PARS[1,1] * 2`) is not a label.
   labels <- labels[!grepl('[][]', labels)]

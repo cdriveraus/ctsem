@@ -144,3 +144,41 @@ test_that("a callback that is not a function is refused before fitting", {
       cores = 1, optimcontrol = list(estonly = TRUE, callback = "nope"))),
     "must be a function")
 })
+
+test_that("the callback carries the point its numbers describe", {
+  skip_without_julia()
+  seen <- list()
+  fit <- .trace_fit(callback = function(iteration, total, objective,
+      gradnorm, parameters) {
+    seen[[length(seen) + 1L]] <<- parameters
+  })
+  npar <- length(fit$estimate$raw)
+  expect_gt(length(seen), 0L)
+  expect_true(all(vapply(seen, is.numeric, logical(1))))
+  expect_equal(unique(vapply(seen, length, integer(1))), npar)
+  # The forced call at the end reports the minimizer, so the last point the
+  # callback saw is the fit's answer. That equality is what makes the callback
+  # usable as a checkpoint: nothing is written until `ctFit` returns, so an
+  # interrupted fit has only what the callback kept.
+  expect_equal(seen[[length(seen)]], as.numeric(fit$estimate$raw))
+})
+
+test_that("a checkpointed point restarts the fit where it stopped", {
+  skip_without_julia()
+  last <- NULL
+  stopped <- suppressWarnings(suppressMessages(ctFit(.trace_data(),
+    .trace_model(), backend = "julia", cores = 2, verbose = 0,
+    optimcontrol = list(estonly = TRUE, maxiter = 3,
+      callback = function(iteration, total, objective, gradnorm, parameters) {
+        last <<- parameters
+      }))))
+  expect_false(is.null(last))
+  resumed <- suppressWarnings(suppressMessages(ctFit(.trace_data(),
+    .trace_model(), backend = "julia", cores = 2, verbose = 0, inits = last,
+    optimcontrol = list(estonly = TRUE, maxiter = 3))))
+  # Resuming from the recorded point starts at the objective the interrupted
+  # fit reached, rather than back at the beginning.
+  expect_gte(resumed$optim$trace$objective[1L],
+    stopped$optim$trace$objective[nrow(stopped$optim$trace)] - 1e-6)
+  expect_gte(resumed$estimate$logposterior, stopped$estimate$logposterior - 1e-6)
+})

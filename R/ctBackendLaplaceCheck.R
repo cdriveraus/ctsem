@@ -295,6 +295,24 @@ print.ctLaplaceCheck <- function(x, ...) {
       if (length(sd_index) && length(varying) == length(sd_index)) {
         names[sd_index] <- paste0("popsd_", varying, suffix)
       }
+      # A reduced level has loadings instead, and they are neither a spread
+      # nor a correlation: `poploading_<parameter>_<dimension>`. Naming them
+      # `popsd_` because they sit where the scales used to would be the kind
+      # of plausible mislabelling that survives review.
+      load_index <- as.integer(level$load_index)
+      if (length(load_index) && length(varying)) {
+        rank <- as.integer(if (is.null(level$rank)) length(varying) else level$rank)
+        k <- length(varying)
+        slot <- 0L
+        for (q in seq_len(rank)) {
+          for (p in seq(q, k)) {
+            slot <- slot + 1L
+            if (slot > length(load_index)) break
+            names[load_index[slot]] <- paste0("poploading_", varying[p],
+              "_dim", q, suffix)
+          }
+        }
+      }
       cor_index <- as.integer(level$cor_index)
       if (length(cor_index) && length(varying) > 1L) {
         pairs <- which(lower.tri(matrix(0, length(varying), length(varying))),

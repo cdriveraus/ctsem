@@ -171,6 +171,37 @@ removing them is an approximation that on one 250-subject design cost 48 log
 likelihood units. So off the augmented route it has to be asked for
 explicitly, and the message then says which of the two it is doing.
 
+Under \code{'laplace'} the rank is stated \strong{per level} and applies to
+each level's own population covariance. One unnamed number applies to every
+level; a named vector names the levels it restricts and leaves the rest at
+full rank, so \code{poprank=c(study=2)} describes 13 studies with two
+dimensions and touches neither the subject nor the burst level. The names are
+the \code{id} elements, and an unknown one is an error rather than a silent
+no-op. \code{'auto'} keeps the meaning it has on the augmented route and is
+resolved once per level: each level's rank becomes the number of \emph{its}
+effects that reach the observation mean, so a level carrying only
+mean-affecting effects is left at full rank. It still has to be asked for,
+because under \code{'laplace'} those coordinates are identified and dropping
+them is an approximation rather than a repair.
+
+The mechanism differs too, and it is why the per-level form exists. On the
+augmented route a reduced rank rewrites the model into basis effects and
+regressions on them, which works from \code{pars$indvarying} and so reaches
+the innermost level alone -- and a regressed effect written as
+\code{(p + beta * b)} inherits \emph{every} level's deviation of \code{b}
+through one coefficient, tying levels together. Under \code{'laplace'} the
+restriction is applied where the covariance is built instead: level \code{l}
+with \code{k} varying parameters and rank \code{r} gets a \code{k} by
+\code{r} loading matrix \code{L}, contributing \code{k*r - r*(r-1)/2}
+parameters in place of \code{k} scales and \code{k*(k-1)/2} correlations,
+and its covariance is \code{L \%*\% t(L)}. Each level has its own \code{L}
+and they stay independent. A loading is signed and its sign is arbitrary --
+negating a column of \code{L} leaves the covariance alone -- so read the
+standard deviations and correlations \code{summary()} reports rather than a
+single loading. They are named \code{poploading_<parameter>_dim<j>.<level>}
+to keep them distinct from the \code{popsd_} and \code{rawcor_} of a
+full-rank level, which are a different quantity.
+
 May also be stated on the model, as \code{model$poprank <- 2}; an argument
 here wins over that.}
 
@@ -289,13 +320,23 @@ mode and past about ten iterations that is what it hands the likelihood.
 \code{$carefulfit_iterations} how long it was allowed.
 With \code{backend='julia'}, \code{optimcontrol$callback} is a function
 called while the fit runs, with \code{(iteration, total, objective,
-gradient_norm)}. It is for a front end that wants to draw progress live:
-the engine calls it on a time cadence rather than once per iteration,
-because a callback costs about half a millisecond through the Julia
-bridge, and always once more at the end. An error inside it disables it
-and warns, leaving the fit unaffected. If output after the fit is enough,
-\code{fit$optim$trace} holds every iteration and \code{\link{ctTracePlot}}
-draws it.
+gradient_norm, parameters)}, where \code{parameters} is the raw vector the
+reported objective and gradient describe. A callback declaring only the
+first four is called with four, so one written before \code{parameters}
+existed keeps working.
+
+It serves two purposes. The first is a front end drawing progress live: the
+engine calls it on a time cadence rather than once per iteration, because a
+callback costs about half a millisecond through the Julia bridge, and always
+once more at the end. The second is checkpointing. Nothing is written until
+\code{ctFit} returns, so a long fit that is interrupted leaves nothing
+behind; writing \code{parameters} from the callback and passing them back as
+\code{inits} resumes from where it stopped. The optimizer's own history does
+not survive that, so a resumed fit restarts its quasi-Newton approximation.
+
+An error inside the callback disables it and warns, leaving the fit
+unaffected. If output after the fit is enough, \code{fit$optim$trace} holds
+every iteration and \code{\link{ctTracePlot}} draws it.
 \code{backend='julia'} also finishes by estimating uncertainty, as the stan
 backend does, and reads the same \code{stanoptimis} control names for it:
 \code{uncertainty} (default \code{'hessian'}), \code{uncertaintyDraws},

@@ -103,40 +103,100 @@ no packing anywhere.
     uses, in `sdcovsqrt2cov`'s own encoding -- 0 the row-normalised correlation
     square root, 1 a factor, 2 Fisher z inside a matrix exponential. Per level
     because each level's population covariance is its own matrix.
+  * `rank`: how many dimensions this level's population covariance spans.
+    Equal to `k` for the ordinary full-rank level, in which case `sd_index` and
+    `cor_index` describe it as above and `load_index` is empty. Below `k` it is
+    a reduced-rank level: `load_index` holds the `k*rank - rank*(rank-1)/2`
+    entries of a `k x rank` loading matrix in column-major lower-triangular
+    order, `sd_index` and `cor_index` are empty, and the covariance is
+    `L * L'`.
+
+    A reduced level keeps a `k`-dimensional latent block rather than a
+    `rank`-dimensional one, and that is deliberate. The deviation a unit
+    contributes is `L * u` for `u ~ N(0, I)` (see `_laplace_member_values!`),
+    so the `k - rank` columns of `L` that are zero make those coordinates of
+    `u` invisible to the likelihood. Their inner mode is the origin and their
+    inner curvature is exactly the prior identity, so they integrate out
+    against it contributing nothing -- no singular covariance is ever formed
+    and nothing is inverted that cannot be. The cost is `k - rank` wasted
+    coordinates per unit; the alternative, resizing every block, would touch
+    the offsets, the ancestor sets and the curvature factorisation, where the
+    same number means both "parameters this level moves" and "dimensions its
+    block spans" and separating the two silently is how a wrong answer gets
+    made here.
 """
 struct CTSEMLaplaceLevel
     re_index::Vector{Int}
     sd_index::Vector{Int}
     cor_index::Vector{Int}
+    load_index::Vector{Int}
     sd_scale::Vector{Float64}
     group::Vector{Int}
     ngroups::Int
     covmatcode::Int
+    rank::Int
 
     function CTSEMLaplaceLevel(re_index, sd_index, cor_index, sd_scale, group,
-        ngroups::Integer; covmatcode::Integer=0)
+        ngroups::Integer; covmatcode::Integer=0, rank::Integer=-1,
+        load_index=Int[])
         re = Vector{Int}(collect(re_index))
         sd = Vector{Int}(collect(sd_index))
         cor = Vector{Int}(collect(cor_index))
+        load = Vector{Int}(collect(load_index))
         scale = Vector{Float64}(collect(sd_scale))
         grp = Vector{Int}(collect(group))
         k = length(re)
-        length(sd) == k ||
-            throw(DimensionMismatch("one population scale parameter per random effect is required"))
+        # A negative rank means "not stated", which is the full-rank level every
+        # caller before this argument existed builds.
+        r = rank < 0 ? k : Int(rank)
+        (r >= 0 && r <= k) || throw(ArgumentError(
+            "rank must lie in 0:$(k) for a level with $(k) random effects, got $(r)"))
         length(scale) == k ||
             throw(DimensionMismatch("one sdscale per random effect is required"))
-        expected = div(k * (k - 1), 2)
-        length(cor) == expected || throw(DimensionMismatch(
-            "expected $(expected) correlation parameters for $(k) random effects, got $(length(cor))"))
+        if r < k
+            expected = k * r - div(r * (r - 1), 2)
+            length(load) == expected || throw(DimensionMismatch(
+                "expected $(expected) loading parameters for rank $(r) over $(k) random effects, got $(length(load))"))
+            # Refused rather than ignored: a level carrying both descriptions
+            # would leave which one the covariance came from decided by the
+            # order of two branches, which is the kind of thing that stays
+            # wrong for months because both produce a perfectly ordinary matrix.
+            (isempty(sd) && isempty(cor)) || throw(ArgumentError(
+                "a reduced-rank level is described by load_index alone; sd_index and cor_index must be empty"))
+        else
+            length(sd) == k ||
+                throw(DimensionMismatch("one population scale parameter per random effect is required"))
+            expected = div(k * (k - 1), 2)
+            length(cor) == expected || throw(DimensionMismatch(
+                "expected $(expected) correlation parameters for $(k) random effects, got $(length(cor))"))
+            isempty(load) || throw(ArgumentError(
+                "load_index applies to a reduced-rank level only; this level is full rank"))
+        end
         allunique(re) || throw(ArgumentError("random-effect parameter indices must be distinct within a level"))
         isempty(grp) || (minimum(grp) >= 1 && maximum(grp) <= ngroups) ||
             throw(ArgumentError("group ids must lie in 1:ngroups"))
-        return new(re, sd, cor, scale, grp, Int(ngroups), Int(covmatcode))
+        return new(re, sd, cor, load, scale, grp, Int(ngroups), Int(covmatcode), r)
     end
 end
 
-"""Number of random effects carried by one level."""
+"""True when this level's population covariance spans fewer dimensions than it
+has random effects."""
+isreducedrank(level::CTSEMLaplaceLevel) = level.rank < length(level.re_index)
+
+"""Number of model parameters this level moves."""
 nrandomeffects(level::CTSEMLaplaceLevel) = length(level.re_index)
+
+"""
+Dimensions this level's latent block spans.
+
+The same as `nrandomeffects` for an ordinary level and equal to the rank for a
+reduced one, and keeping the two apart is the whole of what makes a reduced
+level cheap. They were one number until a rank could differ from an effect
+count, and every site that used it meant one or the other: `re_index[p]` is
+indexed by the parameter count, `u[offset + q]` by the block dimension. A site
+that takes the wrong one still runs and still returns a number.
+"""
+nlatent(level::CTSEMLaplaceLevel) = level.rank
 
 """
     CTSEMLaplaceSpec(levels)
@@ -162,6 +222,12 @@ end
 nrandomeffects(spec::CTSEMLaplaceSpec) = sum(nrandomeffects(l) for l in spec.levels; init=0)
 
 nlevels(spec::CTSEMLaplaceSpec) = length(spec.levels)
+
+"""Total latent dimensions across every level, per subject."""
+nlatent(spec::CTSEMLaplaceSpec) = sum(nlatent(l) for l in spec.levels; init=0)
+
+"""True when any level's covariance spans fewer dimensions than it has effects."""
+hasreducedrank(spec::CTSEMLaplaceSpec) = any(isreducedrank, spec.levels)
 
 """
     CTSEMLaplaceBlock(offset, size, members, level, ancestors)
@@ -269,7 +335,9 @@ function _laplace_build_units(spec::CTSEMLaplaceSpec, nsubjects::Integer)
         offsets[U] = [zeros(Int, nlev) for _ in eachindex(members[U])]
         for (m, i) in enumerate(members[U])
             for l in 1:nlev
-                k = nrandomeffects(levels[l])
+                # Latent dimensions, not parameters: this is how wide the
+                # block is in `u`.
+                k = nlatent(levels[l])
                 key = (l, levels[l].group[i])
                 slot = get(seen, key, -1)
                 if slot < 0
@@ -291,7 +359,7 @@ function _laplace_build_units(spec::CTSEMLaplaceSpec, nsubjects::Integer)
         blocklevel = Dict{Int,Int}()
         for (m, i) in enumerate(members[U])
             for l in 1:nlev
-                k = nrandomeffects(levels[l])
+                k = nlatent(levels[l])
                 k == 0 && continue
                 off = offsets[U][m][l]
                 push!(get!(owners, off, Int[]), m)
@@ -314,7 +382,7 @@ function _laplace_build_units(spec::CTSEMLaplaceSpec, nsubjects::Integer)
             m = members_here[1]
             ancestors = Int[]
             for outer in (l + 1):nlev
-                nrandomeffects(levels[outer]) == 0 && continue
+                nlatent(levels[outer]) == 0 && continue
                 push!(ancestors, position[offsets[U][m][outer]])
             end
             push!(blocks[U], CTSEMLaplaceBlock(off, sizes[off], members_here, l,
@@ -403,6 +471,7 @@ single-level form and none of it needs sending.
 function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
     sd_index=Int[], cor_index=Int[], sd_scale=Float64[], level_nre=Int[],
     group=Int[], level_ngroups=Int[], level_covmatcode=Int[],
+    level_rank=Int[], load_index=Int[],
     inner_maxiter::Integer=_LAPLACE_INNER_MAXITER[], inner_tol::Real=1e-10)
     nsubjects = length(objective.subject_objectives)
     counts = isempty(level_nre) ? [length(re_index)] : Vector{Int}(Int.(level_nre))
@@ -425,19 +494,37 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
     length(codes) == length(counts) || throw(DimensionMismatch(
         "level_covmatcode must hold one construction code per level"))
 
+    # One rank per level, defaulting to that level's own `k`, which is the
+    # full-rank description every caller before this existed sends.
+    ranks = if isempty(level_rank)
+        copy(counts)
+    else
+        Vector{Int}(Int.(level_rank))
+    end
+    length(ranks) == length(counts) || throw(DimensionMismatch(
+        "level_rank must hold one rank per level"))
+
     levels = CTSEMLaplaceLevel[]
-    re_at = 0; cor_at = 0
+    # Four cursors rather than one reused for two things: a reduced level
+    # consumes loadings and no scales or correlations, so the scale cursor and
+    # the effect cursor stop advancing together the moment one level is reduced.
+    re_at = 0; sd_at = 0; cor_at = 0; load_at = 0
     for l in eachindex(counts)
         k = counts[l]
-        ncor = div(k * (k - 1), 2)
+        r = ranks[l]
+        reduced = r < k
+        ncor = reduced ? 0 : div(k * (k - 1), 2)
+        nsd = reduced ? 0 : k
+        nload = reduced ? k * r - div(r * (r - 1), 2) : 0
         push!(levels, CTSEMLaplaceLevel(
             Int.(re_index[(re_at + 1):(re_at + k)]),
-            Int.(sd_index[(re_at + 1):(re_at + k)]),
+            Int.(sd_index[(sd_at + 1):(sd_at + nsd)]),
             Int.(cor_index[(cor_at + 1):(cor_at + ncor)]),
             Float64.(sd_scale[(re_at + 1):(re_at + k)]),
             groups[((l - 1) * nsubjects + 1):(l * nsubjects)],
-            ngroups[l]; covmatcode=codes[l]))
-        re_at += k; cor_at += ncor
+            ngroups[l]; covmatcode=codes[l], rank=r,
+            load_index=Int.(load_index[(load_at + 1):(load_at + nload)])))
+        re_at += k; sd_at += nsd; cor_at += ncor; load_at += nload
     end
     return CTSEMLaplaceObjective(objective, CTSEMLaplaceSpec(levels);
         inner_maxiter=inner_maxiter, inner_tol=inner_tol)
@@ -527,7 +614,8 @@ function _laplace_check_indices(laplace::CTSEMLaplaceObjective, npar::Integer)
     for (l, level) in enumerate(laplace.spec.levels)
         for (what, index) in (("varying parameter", level.re_index),
                               ("population scale", level.sd_index),
-                              ("correlation", level.cor_index))
+                              ("correlation", level.cor_index),
+                              ("loading", level.load_index))
             isempty(index) && continue
             maximum(index) <= npar || throw(ArgumentError(string(
                 "level ", l, " references ", what, " ", maximum(index),
@@ -558,6 +646,7 @@ used to spell the code=0 route out by hand, and so silently ignored the model's
 function _laplace_popchol(values::AbstractVector{T}, level::CTSEMLaplaceLevel) where {T}
     k = nrandomeffects(level)
     k == 0 && return zeros(T, 0, 0)
+    isreducedrank(level) && return _laplace_poploading(values, level)
     scales = Vector{T}(undef, k)
     @inbounds for j in 1:k
         raw = values[level.sd_index[j]]
@@ -590,6 +679,35 @@ function _laplace_popchol(values::AbstractVector{T}, level::CTSEMLaplaceLevel) w
     buffer = _make_square_buffer(T, k)
     _sdcovsqrt2cov_uncached!(buffer, base, level.covmatcode, Val(k))
     return Matrix(cholesky(Symmetric(buffer.out, :L)).L)
+end
+
+"""
+    _laplace_poploading(values, level)
+
+A reduced-rank level's factor: `k x k`, with the loading in its first `rank`
+columns and zeros in the rest, so that `L * L'` is the population covariance
+and `L * u` is the deviation for `u ~ N(0, I)`.
+
+The zero columns are what let the block stay `k`-dimensional; see the note on
+`rank` in `CTSEMLaplaceLevel`. No Cholesky is taken, because there is nothing
+to decompose -- the parameters *are* the factor, which is also why they need no
+positivity transform and no correlation cap. `sd_scale` multiplies a row, so a
+level still scales its own spread exactly as the full-rank form does, and a
+loading is signed: negating a whole column leaves `L * L'` alone, so read the
+covariance rather than the sign of one entry.
+"""
+function _laplace_poploading(values::AbstractVector{T}, level::CTSEMLaplaceLevel) where {T}
+    k = nrandomeffects(level)
+    r = level.rank
+    L = zeros(T, k, r)
+    counter = 0
+    @inbounds for q in 1:r
+        for p in q:k
+            counter += 1
+            L[p, q] = values[level.load_index[counter]] * level.sd_scale[p]
+        end
+    end
+    return L
 end
 
 """Every level's Cholesky factor, innermost first."""
@@ -694,12 +812,15 @@ function _laplace_member_values!(shifted::AbstractVector, values::AbstractVector
     @inbounds for l in eachindex(spec.levels)
         level = spec.levels[l]
         k = nrandomeffects(level)
-        k == 0 && continue
+        r = nlatent(level)
+        (k == 0 || r == 0) && continue
         base = offsets[l]
         L = Ls[l]
+        # `p` walks the parameters this level moves, `q` the dimensions of its
+        # block. They are the same number only for a full-rank level.
         for p in 1:k
             acc = zero(S)
-            for q in 1:k
+            for q in 1:r
                 acc += L[p, q] * u[base + q]
             end
             shifted[level.re_index[p]] += acc
@@ -1183,10 +1304,11 @@ function _laplace_unit_loglik_gradient(laplace::CTSEMLaplaceObjective, U::Intege
         for l in eachindex(spec.levels)
             level = spec.levels[l]
             k = nrandomeffects(level)
-            k == 0 && continue
+            r = nlatent(level)
+            (k == 0 || r == 0) && continue
             base = offsets[l]
             L = Ls[l]
-            for q in 1:k
+            for q in 1:r
                 acc = zero(T)
                 for pp in 1:k
                     acc += L[pp, q] * gradient[level.re_index[pp]]
@@ -1968,14 +2090,23 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
         k = block.size
         k == 0 && continue
         # Diagonal term. tr(C[b,b] A[b,b]) = tr(W H) with W = L C[b,b] L', so a
-        # Cholesky of W turns the trace into k pure second directional
-        # derivatives whose directions live in parameter space.
-        W = _laplace_symmetrise(L * Cdiag[b] * transpose(L))
-        F = cholesky(Symmetric(W); check=false)
-        issuccess(F) || return false
-        Q = Matrix(F.L)
-        for r in 1:k
-            dir = scatter(l, Q[:, r])
+        # factor of W turns the trace into pure second directional derivatives
+        # whose directions live in parameter space.
+        #
+        # The factor is taken of `C[b,b]`, not of `W`. `W` is parameters by
+        # parameters with the rank of the block, so for a reduced level it is
+        # singular and a Cholesky of it simply fails -- which returned `false`
+        # here and sent every reduced fit to the nested gradient by the silent
+        # fallback. `C[b,b]` is block by block and positive definite whatever
+        # the rank, and `W = (L Cc)(L Cc)'` exactly, so `Q = L Cc` has one
+        # column per block dimension, which is the number of directions the
+        # trace needs. At full rank this is the same factorisation of the same
+        # matrix, reached without forming it.
+        FC = cholesky(Symmetric(_laplace_symmetrise(Cdiag[b])); check=false)
+        issuccess(FC) || return false
+        Q = L * Matrix(FC.L)
+        for j in 1:k
+            dir = scatter(l, Q[:, j])
             pass = sweep(block.members, dir, dir, 2)
             pass.ok || return false
             # The second-order sweep is where this fails when it fails: it is a
@@ -1994,21 +2125,56 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
             end
         end
         # Cross terms with each ancestor, twice over as the trace requires.
-        # tr(C[a,b] A[b,a]) = tr(V H) with V = L_a C[a,b] L_b', which has
-        # absorbed *both* Cholesky factors -- so the first direction is a bare
-        # basis vector, and applying L to it again would count it twice.
+        # `tr(C[a,b] A[b,a]) = tr(V H)` with `V = L_a C[a,b] L_b'`, and there
+        # are two ways to spell that trace as directional derivatives.
+        #
+        # Over *parameters*: `V` absorbs both factors, so the first direction is
+        # a bare basis vector and the second is `V`'s matching column. One sweep
+        # per parameter of this level.
+        #
+        # Over *dimensions*: `tr(V H) = tr(C[a,b] L_b' H L_a)`, so sweeping
+        # along the two loadings' own columns and weighting by `C[a,b]` gives
+        # the same number in `rank_b * rank_a` sweeps. The two are equal by
+        # linearity -- expand `V[:,q] = sum_j L_a[:,j] sum_i C[a,b][j,i] L_b[q,i]`
+        # and collect over `q`.
+        #
+        # Neither dominates. A subject block of 18 parameters at rank 6 under a
+        # rank-1 study is 6 sweeps against 18; a burst block of 6 parameters at
+        # rank 3 under a rank-6 subject is 18 against 6. So the cheaper one is
+        # chosen per pair, which at full rank is always the parameter form
+        # because `rank == kpar` there and `rank^2 >= rank`.
+        kparl = length(spec.levels[l].re_index)
         for (t, a) in enumerate(block.ancestors)
             la = blocks[a].level
-            V = Ls[la] * transpose(Ccoup[b][t]) * transpose(L)
-            for q in 1:k
-                e = zeros(Float64, k); e[q] = 1.0
-                pass = sweep(block.members, scatter(l, e), scatter(la, V[:, q]), 2)
+            nb = block.size
+            na = blocks[a].size
+            accumulate = function (pass, weight)
                 pass.ok || return false
                 all(isfinite, pass.d12) || return false
                 @inbounds for (c, m) in enumerate(block.members)
                     for tt in 1:npar
-                        Pm[tt, m] += 2 * pass.d12[tt, c]
+                        Pm[tt, m] += weight * pass.d12[tt, c]
                     end
+                end
+                return true
+            end
+            if nb * na < kparl
+                Cab = transpose(Ccoup[b][t])          # C[a,b], rank_a by rank_b
+                for i in 1:nb, j in 1:na
+                    accumulate(sweep(block.members, scatter(l, L[:, i]),
+                        scatter(la, Ls[la][:, j]), 2), 2 * Cab[j, i]) || return false
+                end
+            else
+                # `Vcross`, not `V`: the explicit terms below use a `V` of
+                # their own at this function's scope, and this assignment would
+                # land on it. Harmless only because that one is reallocated
+                # before it is read -- a reordering, or lifting this loop into
+                # a closure, makes it a silent wrong answer.
+                Vcross = Ls[la] * transpose(Ccoup[b][t]) * transpose(L)
+                for q in 1:kparl
+                    e = zeros(Float64, kparl); e[q] = 1.0
+                    accumulate(sweep(block.members, scatter(l, e),
+                        scatter(la, Vcross[:, q]), 2), 2.0) || return false
                 end
             end
         end
@@ -2029,10 +2195,15 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
     for (b, block) in enumerate(blocks)
         l = block.level
         rho = spec.levels[l].re_index
+        # `block.size` is the block's width in `u`; `length(rho)` is how many
+        # parameters the level moves. Equal for a full-rank level and not
+        # otherwise, so the accumulator is built in parameter space and `L'`
+        # brings it back to block space.
         k = block.size
+        kpar = length(rho)
         k == 0 && continue
-        acc = zeros(Float64, k)
-        for m in block.members, p in 1:k
+        acc = zeros(Float64, kpar)
+        for m in block.members, p in 1:kpar
             acc[p] += Pm[rho[p], m]
         end
         contribution = transpose(Ls[l]) * acc
@@ -2071,6 +2242,77 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
         out[j] += acc
     end
 
+    # The explicit trace terms, written against `dL` rather than against
+    # `X = L \ dL`.
+    #
+    # The `X` form needs no sweeps at all and is kept wherever it is valid, but
+    # it exists only for a square `L`: it rewrites `tr(C L' H dL)` as
+    # `tr(C L' H L X)`, which is the same thing only because `L X = dL` has a
+    # solution. A reduced level's `L` is parameters by rank, so it has none.
+    #
+    # The other way round, each of the three traces is
+    # `<H_{b,x} L_x C[x,b], dL_b>` for `x` over the block, its ancestors and
+    # its descendants: one Frobenius product per population parameter against a
+    # matrix that does not depend on which parameter it is. `H_{b,x} L_x` is a
+    # directional second derivative along a *parameter*-space direction, which
+    # is what one order-1 sweep along a column of `L_x` returns -- so this costs
+    # one sweep per level dimension rather than one per level parameter.
+    #
+    # `H_{b,x}` runs over the members depending on both blocks, which under
+    # strict nesting is the members of whichever is inner.
+    nlev = length(spec.levels)
+    needV = hasreducedrank(spec)
+    levelsweeps = Vector{Vector{Matrix{Float64}}}(undef, nlev)
+    if needV
+        for l in 1:nlev
+            rl = nlatent(spec.levels[l])
+            levelsweeps[l] = Vector{Matrix{Float64}}(undef, rl)
+            for q in 1:rl
+                pass = sweep(1:nmem, scatter(l, Ls[l][:, q]), zerodir, 1)
+                pass.ok || return false
+                all(isfinite, pass.d1c) || return false
+                levelsweeps[l][q] = pass.d1c
+            end
+        end
+    end
+
+    # `H_{target,partner} L_partner`, in the target level's parameter rows,
+    # summed over the given members.
+    HLmatrix = function (targetlevel::Int, partnerlevel::Int, memberset)
+        rho = spec.levels[targetlevel].re_index
+        rp = nlatent(spec.levels[partnerlevel])
+        acc = zeros(Float64, length(rho), rp)
+        for q in 1:rp
+            D = levelsweeps[partnerlevel][q]
+            @inbounds for m in memberset, pp in eachindex(rho)
+                acc[pp, q] += D[rho[pp], m]
+            end
+        end
+        return acc
+    end
+
+    V = Vector{Matrix{Float64}}(undef, length(blocks))
+    if needV
+        for (b, block) in enumerate(blocks)
+            V[b] = zeros(Float64,
+                length(spec.levels[block.level].re_index), block.size)
+        end
+        for (b, block) in enumerate(blocks)
+            block.size == 0 && continue
+            V[b] .+= HLmatrix(block.level, block.level, block.members) * Cdiag[b]
+            # A coupling moves both ends: this block's factor against the
+            # ancestor, and the ancestor's factor against this block. Both run
+            # over this block's members, it being the inner of the two.
+            for (tt, a) in enumerate(block.ancestors)
+                blocks[a].size == 0 && continue
+                V[b] .+= HLmatrix(block.level, blocks[a].level, block.members) *
+                    transpose(Ccoup[b][tt])
+                V[a] .+= HLmatrix(blocks[a].level, block.level, block.members) *
+                    Ccoup[b][tt]
+            end
+        end
+    end
+
     # The population parameters move every member's v through L, and move psi
     # through L explicitly. A[b,b] = I - M.diag[b] and A[b,a] = -M.coupling[b][t]
     # give the curvature blocks with no further sweeps, and writing each trace
@@ -2079,11 +2321,11 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
     Gb = Vector{Vector{Float64}}(undef, length(blocks))
     Fb = Vector{Vector{Float64}}(undef, length(blocks))
     for (b, block) in enumerate(blocks)
-        k = block.size
         rho = spec.levels[block.level].re_index
-        Gb[b] = zeros(Float64, k)
-        Fb[b] = zeros(Float64, k)
-        for m in block.members, p in 1:k
+        kpar = length(rho)
+        Gb[b] = zeros(Float64, kpar)
+        Fb[b] = zeros(Float64, kpar)
+        for m in block.members, p in 1:kpar
             Gb[b][p] += llvm[rho[p], m] + (Pm[rho[p], m] + Bsm[rho[p], m]) / 2
             Fb[b][p] += llvm[rho[p], m]
         end
@@ -2093,18 +2335,26 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
         isempty(dL[l]) && continue
         levelpositions = _laplace_level_positions(spec, l)
         for (t, j) in enumerate(levelpositions)
-            X = Ls[l] \ dL[l][t]
+            X = needV ? zeros(Float64, 0, 0) : Ls[l] \ dL[l][t]
             total = 0.0
             for (b, block) in enumerate(blocks)
                 k = block.size
                 if block.level == l && k > 0
+                    kpar = length(spec.levels[l].re_index)
                     ub = [uhat[block.offset + q] for q in 1:k]
                     sb = [s[block.offset + q] for q in 1:k]
+                    # `dL` is parameter-by-block, so both shifts land in
+                    # parameter space where `Gb` and `Fb` live.
                     shift = dL[l][t] * ub
                     sshift = dL[l][t] * sb
-                    for p in 1:k
+                    for p in 1:kpar
                         total += Gb[b][p] * shift[p] + Fb[b][p] * sshift[p] / 2
                     end
+                    if needV
+                        for x in axes(V[b], 1), y in axes(V[b], 2)
+                            total += V[b][x, y] * dL[l][t][x, y]
+                        end
+                    else
                     KB = Cdiag[b] * (Matrix{Float64}(LinearAlgebra.I, k, k) .- M.diag[b])
                     for x in 1:k, y in 1:k
                         total += KB[x, y] * X[y, x]
@@ -2116,8 +2366,10 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
                             total += X[y, x] * Z[y, x]
                         end
                     end
+                    end
                 end
                 # tr(C[a,b] A[b,a] X): an ancestor's factor moving.
+                if !needV
                 for (tt, a) in enumerate(block.ancestors)
                     blocks[a].level == l || continue
                     ka = blocks[a].size
@@ -2125,6 +2377,7 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
                     for x in 1:ka, y in 1:ka
                         total += Z[x, y] * X[y, x]
                     end
+                end
                 end
             end
             out[j] += total
@@ -2135,7 +2388,8 @@ end
 
 """Raw positions of one level's population parameters, scales then correlations."""
 _laplace_level_positions(spec::CTSEMLaplaceSpec, l::Integer) =
-    vcat(spec.levels[l].sd_index, spec.levels[l].cor_index)
+    isreducedrank(spec.levels[l]) ? copy(spec.levels[l].load_index) :
+        vcat(spec.levels[l].sd_index, spec.levels[l].cor_index)
 
 """
     _laplace_level_chol_derivatives(values, spec)
@@ -2154,7 +2408,8 @@ function _laplace_level_chol_derivatives(values::AbstractVector{Float64},
         level = spec.levels[l]
         positions = _laplace_level_positions(spec, l)
         k = length(level.re_index)
-        if isempty(positions) || k == 0
+        r = nlatent(level)
+        if isempty(positions) || k == 0 || r == 0
             out[l] = Matrix{Float64}[]
             continue
         end
@@ -2166,7 +2421,7 @@ function _laplace_level_chol_derivatives(values::AbstractVector{Float64},
             return vec(_laplace_popchol(v, level))
         end
         J = ForwardDiff.jacobian(chol_of, values[positions])
-        out[l] = [Matrix{Float64}(reshape(collect(view(J, :, t)), k, k))
+        out[l] = [Matrix{Float64}(reshape(collect(view(J, :, t)), k, r))
                   for t in eachindex(positions)]
     end
     return out
@@ -2579,7 +2834,7 @@ function _laplace_restrict_levels(laplace::CTSEMLaplaceObjective, U::Integer,
     units = laplace.units
     for (m, _) in enumerate(units.members[U])
         for l in 1:min(from_level - 1, nlevels(laplace.spec))
-            k = nrandomeffects(laplace.spec.levels[l])
+            k = nlatent(laplace.spec.levels[l])
             k == 0 && continue
             base = units.offsets[U][m][l]
             @inbounds for q in 1:k
@@ -2848,12 +3103,15 @@ function ctsem_laplace_modes(laplace::CTSEMLaplaceObjective, values::AbstractVec
     spec = laplace.spec
     lv = spec.levels[level]
     k = nrandomeffects(lv)
+    # `z` lives in the block's own space and `raw` in the parameter space the
+    # loading maps it to; for a reduced level those have different widths.
+    r = nlatent(lv)
     Ls = _laplace_popchols(theta, spec)
     L = Ls[level]
     ngroups = lv.ngroups
-    z = zeros(Float64, ngroups, k)
+    z = zeros(Float64, ngroups, r)
     raw = zeros(Float64, ngroups, k)
-    zsd = zeros(Float64, ngroups, k)
+    zsd = zeros(Float64, ngroups, r)
     rawsd = zeros(Float64, ngroups, k)
     filled = falses(ngroups)
     for U in eachindex(laplace.units.members)
@@ -2884,9 +3142,9 @@ function ctsem_laplace_modes(laplace::CTSEMLaplaceObjective, values::AbstractVec
             # vector, not one per subject, so it is written once.
             filled[g] && continue
             filled[g] = true
-            k == 0 && continue
+            (k == 0 || r == 0) && continue
             base = laplace.units.offsets[U][m][level]
-            slice = (base + 1):(base + k)
+            slice = (base + 1):(base + r)
             zi = u[slice]
             z[g, :] = zi
             raw[g, :] = L * zi
@@ -3078,7 +3336,15 @@ _ctsem_optimise_result_extra(o::CTSEMLaplaceObjective, final, log) = (
         maximum(o.inner_gradient),
     inner_iterations=copy(o.inner_iterations),
     hessian_repaired=copy(o.hessian_repaired),
-    mode_repaired=copy(o.mode_repaired))
+    mode_repaired=copy(o.mode_repaired),
+    # How many gradients were computed twice. The seeded assembly returns
+    # `false` on a failed factorization and the caller silently recomputes the
+    # whole thing by the nested route, which is correct and much slower -- and
+    # invisible, because the answer is right either way. A reduced-rank level
+    # once failed on *every* gradient for a structural reason and the only
+    # symptom was a fit that crawled. Counted already for the verbose report;
+    # carried out here so a caller can see it without asking for one.
+    gradient_fallbacks=_CTSEM_LAPLACE_FALLBACKS[])
 
 """
 What is about to be fitted: the sizes that decide what the fit will cost.
