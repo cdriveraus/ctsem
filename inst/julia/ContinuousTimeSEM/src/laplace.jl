@@ -1286,7 +1286,7 @@ block is structurally zero rather than merely small.
 """
 function _laplace_unit_loglik_gradient(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T},
-    aws, positions, slot::Int=0) where {T}
+    aws, positions, slot::Int=0, nslots::Int=1) where {T}
     spec = laplace.spec
     units = laplace.units
     members = units.members[U]
@@ -1322,7 +1322,7 @@ function _laplace_unit_loglik_gradient(laplace::CTSEMLaplaceObjective, U::Intege
         return loglik
     end
 
-    width = _LAPLACE_MEMBER_WIDTH[]
+    width = max(nslots, 1)
     pos = collect(positions)
     npos = length(pos)
     if width <= 1 || slot <= 0 || npos < 2 * width
@@ -1339,7 +1339,6 @@ function _laplace_unit_loglik_gradient(laplace::CTSEMLaplaceObjective, U::Intege
     end
 
     ntask = min(width, npos)
-    stride = max(_LAPLACE_NCHUNKS[], 1)
     inners = [zeros(T, length(u)) for _ in 1:ntask]
     totals = [zero(T) for _ in 1:ntask]
     bad = [zero(T) for _ in 1:ntask]
@@ -1350,7 +1349,7 @@ function _laplace_unit_loglik_gradient(laplace::CTSEMLaplaceObjective, U::Intege
             # a name this closure assigns that is also a local of the enclosing
             # function would be shared by every task.
             local ws_slot, ws, grad, acc_inner, tot, idx, m, loglik
-            ws_slot = stride * (tk - 1) + slot
+            ws_slot = Int(slot) + tk - 1
             ws = _laplace_workspace!(laplace, T, length(values), ws_slot)
             grad = Vector{T}(undef, length(values))
             acc_inner = inners[tk]
@@ -1396,9 +1395,9 @@ exactly the coupling that makes the study a single integration unit.
 """
 function _laplace_unit_objective_gradient(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T},
-    aws, slot::Int=0) where {T}
+    aws, slot::Int=0, nslots::Int=1) where {T}
     result = _laplace_unit_loglik_gradient(laplace, U, values, Ls, u, aws,
-        eachindex(laplace.units.members[U]), slot)
+        eachindex(laplace.units.members[U]), slot, nslots)
     isfinite(result.value) || return result
     inner = result.gradient
     @inbounds for a in eachindex(u)
@@ -1429,7 +1428,7 @@ barrier and no reasoning about which blocks share members.
 
 Each task takes its own workspace slot, not its own thread: a task can migrate
 at any yield point. Slots are strided by the chunk count so they cannot collide
-with another chunk's own -- see `_LAPLACE_NCHUNKS`.
+with another chunk's own -- the caller hands down a band of them.
 
 1 disables it and is the behaviour before this existed.
 """
@@ -1441,8 +1440,42 @@ ctsem_laplace_diag() = _LAPLACE_DIAG[]
 ctsem_laplace_diag_reset!() = (_LAPLACE_DIAG[] = 0)
 export ctsem_laplace_diag, ctsem_laplace_diag_reset!
 
-"""How many chunks the unit loop is using, so inner tasks can stride past them."""
-const _LAPLACE_NCHUNKS = Ref(1)
+"""
+    _laplace_band(runner, slot, nslots)
+
+Slots this call owns, as a base and a count.
+
+The member runners never invent a slot. They divide the band their caller hands
+them, and the caller is whoever sized `laplace.workspaces` -- which is not
+always the fit objective. `quadrature.jl` sizes it to its chunk count;
+`sample_density.jl` gives each chain a contiguous block so no two chains reach
+the same adjoint workspace; `sample_run.jl` sizes it to chains times threads
+per chain. Deriving slots from a global chunk count instead, as an earlier
+version did, indexed past the vector on the quadrature route and could collide
+with another chain's block on the sampling one -- and the fit tuner *pins* the
+width for the rest of the session, so a fit followed by a sample was enough.
+
+`nslots = 1` is the default and means serial, which is what every caller that
+does not budget for member tasks gets.
+"""
+
+"""
+Refuse a band that runs off the end of the workspace vector.
+
+Cheap, and it catches the one mistake this scheme can still make: a caller that
+sizes `laplace.workspaces` for itself and then asks for member tasks it has not
+budgeted for. Silently it would be a `BoundsError` deep inside a task, which
+`.ctBackendLpgFunc` converts into a large finite penalty -- a bad point rather
+than a bug.
+"""
+@inline function _laplace_check_band(laplace, slot::Integer, nslots::Integer)
+    have = length(laplace.workspaces)
+    Int(slot) + Int(nslots) - 1 <= have || error(
+        "laplace: slots $(slot)..$(Int(slot) + Int(nslots) - 1) asked for, " *
+        "$(have) exist. The caller that sizes `laplace.workspaces` must " *
+        "budget for the member tasks it requests.")
+    return nothing
+end
 
 """Set how many tasks a sweep's member loop may use. See `_LAPLACE_MEMBER_WIDTH`."""
 function ctsem_set_member_width!(n::Integer)
@@ -1585,7 +1618,7 @@ derived; `ctsem_set_block_threshold!` moves it.
 """
 function _laplace_unit_curvature(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T},
-    slot::Integer=1) where {T}
+    slot::Integer=1, nslots::Int=1) where {T}
     blocks = laplace.units.blocks[U]
     base = collect(u)
     if length(blocks) <= 1 || length(u) < _LAPLACE_BLOCK_THRESHOLD[]
@@ -1644,8 +1677,7 @@ function _laplace_unit_curvature(laplace::CTSEMLaplaceObjective, U::Integer,
     # per subject, which the member axis cannot touch at all, and its outermost
     # is a single block spanning every member, which the block axis cannot touch
     # -- so neither axis alone is enough and the choice is per level.
-    width = _LAPLACE_MEMBER_WIDTH[]
-    stride = max(_LAPLACE_NCHUNKS[], 1)
+    width = max(Int(nslots), 1)
     at = 1
     while at <= length(blocks)
         stop = at
@@ -1656,7 +1688,7 @@ function _laplace_unit_curvature(laplace::CTSEMLaplaceObjective, U::Integer,
         if width <= 1 || length(here) < 2
             # One block, or no width to spend: let the member loop have it.
             for b in here
-                fill_block!(b, Int(slot), width <= 1 ? 0 : Int(slot))
+                fill_block!(b, Int(slot), width)
             end
         else
             ntask = min(width, length(here))
@@ -1665,7 +1697,7 @@ function _laplace_unit_curvature(laplace::CTSEMLaplaceObjective, U::Integer,
                     local bb
                     bb = first(here) + tk - 1
                     while bb <= last(here)
-                        fill_block!(bb, stride * (tk - 1) + Int(slot), 0)
+                        fill_block!(bb, Int(slot) + tk - 1, 1)
                         bb += ntask
                     end
                 end
@@ -1740,12 +1772,15 @@ shifted until it is and the unit flagged as repaired, and a step that does not
 improve `g_U` is halved before the iteration gives up.
 """
 function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
-    values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, slot::Integer=1)
+    values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, slot::Integer=1,
+    nslots::Int=1)
     d = laplace.units.dims[U]
     aws = _laplace_workspace!(laplace, Float64, length(values), slot)
+    _laplace_check_band(laplace, slot, nslots)
     retained = _LAPLACE_WARM_START[] ? copy(laplace.modes[U]) : zeros(Float64, d)
     started_warm = any(!iszero, retained)
-    warm = _laplace_newton_unit_mode(laplace, U, values, Ls, aws, retained, slot)
+    warm = _laplace_newton_unit_mode(laplace, U, values, Ls, aws, retained,
+        slot, nslots)
     best = warm
     # The start is the origin, and that is not a detail of the iteration: it is
     # what makes the value a function of theta.
@@ -1781,7 +1816,7 @@ function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
     # kept, which is the guard that used to stand here on its own.
     if !warm.converged && started_warm
         cold = _laplace_newton_unit_mode(laplace, U, values, Ls, aws,
-            zeros(Float64, d), slot)
+            zeros(Float64, d), slot, nslots)
         if cold.converged || (isfinite(cold.value) &&
                 (!isfinite(best.value) || cold.value > best.value))
             best = cold
@@ -1840,7 +1875,7 @@ finite, so an unusable number can never certify a mode.
 end
 
 """
-    _laplace_newton_unit_mode(laplace, U, values, Ls, aws, start, slot)
+    _laplace_newton_unit_mode(laplace, U, values, Ls, aws, start, slot, nslots)
 
 Newton on `g_U` from one given starting point, reporting what happened rather
 than writing anything back.
@@ -1850,18 +1885,18 @@ twice from different starts -- see the cold retry there.
 """
 function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws,
-    start::Vector{Float64}, slot::Integer)
+    start::Vector{Float64}, slot::Integer, nslots::Int=1)
     d = laplace.units.dims[U]
     u = start
     repaired = false
     converged = false
     iterations = 0
     current = _laplace_unit_objective_gradient(laplace, U, values, Ls, u, aws,
-        Int(slot))
+        Int(slot), nslots)
     if !isfinite(current.value) && any(!iszero, u)
         fill!(u, 0.0)
         current = _laplace_unit_objective_gradient(laplace, U, values, Ls, u, aws,
-            Int(slot))
+            Int(slot), nslots)
     end
     for iteration in 1:laplace.inner_maxiter
         iterations = iteration
@@ -1885,7 +1920,7 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
         for _ in 1:20
             candidate = u .+ scale .* step
             trial = _laplace_unit_objective_gradient(laplace, U, values, Ls,
-                candidate, aws, Int(slot))
+                candidate, aws, Int(slot), nslots)
             evaluable |= isfinite(trial.value)
             if isfinite(trial.value) && trial.value >= current.value - 1e-12
                 u = candidate
@@ -1983,9 +2018,9 @@ constant appears here whatever the unit's size.
 """
 function _laplace_unit_term(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T},
-    aws, slot::Integer=1) where {T}
+    aws, slot::Integer=1, nslots::Int=1) where {T}
     inner = _laplace_unit_objective_gradient(laplace, U, values, Ls, u, aws,
-        Int(slot))
+        Int(slot), nslots)
     isfinite(inner.value) || return inner.value
     isempty(u) && return inner.value
     M = _laplace_unit_curvature(laplace, U, values, Ls, u, slot)
@@ -2067,8 +2102,8 @@ Run `body(c, m, ws_slot)` for every member, on at most `_LAPLACE_MEMBER_WIDTH`
 tasks. Serial when the width is 1 or there is little to divide, in which case
 every call uses the caller's own slot and nothing is spawned.
 """
-function _laplace_run_members(body, members, slot::Integer, width::Int=0)
-    width = width > 0 ? width : _LAPLACE_MEMBER_WIDTH[]
+function _laplace_run_members(body, members, slot::Integer, nslots::Int=1)
+    width = max(Int(nslots), 1)
     nm = length(members)
     if width <= 1 || nm < 2 * width
         @inbounds for (c, m) in enumerate(members)
@@ -2077,13 +2112,12 @@ function _laplace_run_members(body, members, slot::Integer, width::Int=0)
         return true
     end
     ntask = min(width, nm)
-    stride = max(_LAPLACE_NCHUNKS[], 1)
     # One flag per task, written only by that task: a shared `Bool` set by
     # several tasks is a race even when every writer writes the same value.
     oks = fill(true, ntask)
     Threads.@sync for tk in 1:ntask
         Threads.@spawn begin
-            ws_slot = stride * (tk - 1) + slot
+            ws_slot = Int(slot) + tk - 1
             c = tk
             while c <= nm
                 if !body(c, members[c], ws_slot)
@@ -2122,7 +2156,7 @@ direction and leaves `d12` empty.
 function _laplace_unit_seeded_gradient(laplace::CTSEMLaplaceObjective, U::Integer,
     values::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64},
     members, d1::Vector{Float64}, d2::Vector{Float64}, order::Integer,
-    slot::Integer=1, member_width::Int=0)
+    slot::Integer=1, nslots::Int=1)
 
     spec = laplace.spec
     units = laplace.units
@@ -2155,7 +2189,7 @@ function _laplace_unit_seeded_gradient(laplace::CTSEMLaplaceObjective, U::Intege
             end
             return true
         end
-        _laplace_run_members(one_member!, members, slot, member_width) || return failure
+        _laplace_run_members(one_member!, members, slot, nslots) || return failure
         return (ok=true, d0=d0, d1c=d1c, d12=empty)
     end
 
@@ -2191,7 +2225,7 @@ function _laplace_unit_seeded_gradient(laplace::CTSEMLaplaceObjective, U::Intege
         end
         return true
     end
-    _laplace_run_members(one_member!, members, slot, member_width) || return failure
+    _laplace_run_members(one_member!, members, slot, nslots) || return failure
     return (ok=true, d0=d0, d1c=d1c, d12=d12)
 end
 
@@ -2230,7 +2264,8 @@ back rather than proceed on a partial answer.
 function _laplace_seeded_unit_gradient!(out::Vector{Float64},
     laplace::CTSEMLaplaceObjective, U::Integer, values::Vector{Float64},
     Ls::Vector{Matrix{Float64}}, dL::Vector{Vector{Matrix{Float64}}},
-    M::CTSEMBlockMatrix{Float64}, factors, elim, slot::Integer=1)
+    M::CTSEMBlockMatrix{Float64}, factors, elim, slot::Integer=1,
+    nslots::Int=1)
 
     spec = laplace.spec
     units = laplace.units
@@ -2284,17 +2319,18 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
     # members has its small Cholesky factored once per task. Both are nothing
     # beside one subject sweep.
     run_by_member! = function (body)
-        width = _LAPLACE_MEMBER_WIDTH[]
+        local width, ntask, oks
+        width = max(Int(nslots), 1)
         if width <= 1 || nmem < 2 * width
-            return body(collect(1:nmem), slot)
+            return body(collect(1:nmem), Int(slot))
         end
         ntask = min(width, nmem)
-        stride = max(_LAPLACE_NCHUNKS[], 1)
         oks = fill(true, ntask)
         Threads.@sync for tk in 1:ntask
             Threads.@spawn begin
+                local mine
                 mine = collect(tk:ntask:nmem)
-                oks[tk] = body(mine, stride * (tk - 1) + slot)
+                oks[tk] = body(mine, Int(slot) + tk - 1)
             end
         end
         return all(oks)
@@ -2779,8 +2815,15 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
     # so it is the same control the non-Laplace path uses.
     nchunks = _ctsem_nchunks(nunits)
     # Grow the per-chunk workspace stores serially, before anything is spawned.
-    _LAPLACE_NCHUNKS[] = nchunks
-    while length(laplace.workspaces) < nchunks * _LAPLACE_MEMBER_WIDTH[]
+    # Slot bands. This function sizes `laplace.workspaces`, so this function is
+    # what decides how many slots each chunk may divide: chunk `c` owns
+    # `band(c) ... band(c) + width - 1`, and hands that to anything below it
+    # that can spend the width. Nothing downstream invents a slot, which is why
+    # the routes that size this vector themselves -- quadrature, and the
+    # sampler's per-chain blocks -- are unaffected by any of it.
+    width = max(_LAPLACE_MEMBER_WIDTH[], 1)
+    band = c -> (c - 1) * width + 1
+    while length(laplace.workspaces) < nchunks * width
         push!(laplace.workspaces, Dict{Any,Any}())
     end
     # Cost-weighted rather than contiguous. A unit's cost is roughly its
@@ -2792,19 +2835,20 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
     chunk_ok = fill(true, nchunks)
     chunk_bad = fill(NaN, nchunks)
     run_primal = function (c)
-        aws = _laplace_workspace!(laplace, Float64, length(theta), c)
+        aws = _laplace_workspace!(laplace, Float64, length(theta), band(c))
         @inbounds for U in ranges[c]
-            _laplace_solve_unit_mode!(laplace, U, theta, Ls, c)
+            _laplace_solve_unit_mode!(laplace, U, theta, Ls, band(c), width)
             u = laplace.modes[U]
             blocks = laplace.units.blocks[U]
             M = isempty(u) ? CTSEMBlockMatrix(Float64, blocks) :
-                _laplace_unit_curvature(laplace, U, theta, Ls, u, c)
+                _laplace_unit_curvature(laplace, U, theta, Ls, u, band(c), width)
             fac = _laplace_factor_repaired!(M, blocks)
             laplace.mode_repaired[U] = fac.repaired
             ok, logdetM, factors, coupling = fac.ok, fac.logdet, fac.factors, fac.coupling
             primal_curvature[U] = (factors, coupling)
             primal_matrices[U] = M
-            inner = _laplace_unit_objective_gradient(laplace, U, theta, Ls, u, aws, c)
+            inner = _laplace_unit_objective_gradient(laplace, U, theta, Ls, u, aws,
+                band(c), width)
             term = if !isfinite(inner.value) || isempty(u)
                 inner.value
             elseif ok
@@ -2872,7 +2916,8 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
             @inbounds for U in ranges[c]
                 factors, elim = primal_curvature[U]
                 if !_laplace_seeded_unit_gradient!(partials[c], laplace, U, theta,
-                        Ls, dLlevels, primal_matrices[U], factors, elim, c)
+                        Ls, dLlevels, primal_matrices[U], factors, elim,
+                        band(c), width)
                     chunk_ok[c] = false
                     return nothing
                 end
@@ -3200,8 +3245,15 @@ function _laplace_primal_curvature(laplace::CTSEMLaplaceObjective,
     # `laplace.modes[U]`, `laplace.mode_repaired[U]` -- so the only sharing was
     # the workspace, and a slot per chunk removes it.
     nchunks = _ctsem_nchunks(nunits)
-    _LAPLACE_NCHUNKS[] = nchunks
-    while length(laplace.workspaces) < nchunks * _LAPLACE_MEMBER_WIDTH[]
+    # Slot bands. This function sizes `laplace.workspaces`, so this function is
+    # what decides how many slots each chunk may divide: chunk `c` owns
+    # `band(c) ... band(c) + width - 1`, and hands that to anything below it
+    # that can spend the width. Nothing downstream invents a slot, which is why
+    # the routes that size this vector themselves -- quadrature, and the
+    # sampler's per-chain blocks -- are unaffected by any of it.
+    width = max(_LAPLACE_MEMBER_WIDTH[], 1)
+    band = c -> (c - 1) * width + 1
+    while length(laplace.workspaces) < nchunks * width
         push!(laplace.workspaces, Dict{Any,Any}())
     end
     ranges = nchunks > 1 ?
@@ -3210,11 +3262,11 @@ function _laplace_primal_curvature(laplace::CTSEMLaplaceObjective,
 
     run = function (c)
         @inbounds for U in ranges[c]
-            _laplace_solve_unit_mode!(laplace, U, theta, Ls, c)
+            _laplace_solve_unit_mode!(laplace, U, theta, Ls, band(c), width)
             u = laplace.modes[U]
             blocks = laplace.units.blocks[U]
             M = isempty(u) ? CTSEMBlockMatrix(Float64, blocks) :
-                _laplace_unit_curvature(laplace, U, theta, Ls, u, c)
+                _laplace_unit_curvature(laplace, U, theta, Ls, u, band(c), width)
             fac = _laplace_factor_repaired!(M, blocks)
             laplace.mode_repaired[U] = fac.repaired
             out[U] = (fac.factors, fac.coupling)
