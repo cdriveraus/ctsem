@@ -1608,8 +1608,13 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # Its own cadence, so passing a callback with `verbose = 0` -- the
         # obvious combination for a front end that draws rather than prints --
         # still reports.
+        # The point comes with the numbers. Without it a caller can watch a
+        # multi-hour fit and still have nothing to restart from when it is
+        # interrupted, because nothing is written until the fit returns --
+        # which has cost a run here. `current_x` is the last accepted trial,
+        # the same point the reported objective and gradient describe.
         _invoke_callback(watcher, latest.iteration, Int(maxiter),
-            -latest.value, latest.g_norm)
+            -latest.value, latest.g_norm, current_x)
         # Stop when the step just taken was predicted to gain less objective
         # than asked for. The predicted gain of the *next* step is not knowable
         # here, and the last one is the standard stand-in: a quasi-Newton
@@ -1732,7 +1737,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # finishes inside one interval would otherwise never fire at all, and the
     # final state is the one a live plot most needs.
     _invoke_callback(watcher, Optim.iterations(result), Int(maxiter),
-        final.value, gradient_norm; force=true)
+        final.value, gradient_norm, minimizer; force=true)
     # A saturated transform reports a zero gradient, and a zero gradient is
     # indistinguishable from an optimum.
     #

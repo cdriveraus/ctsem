@@ -320,13 +320,23 @@ mode and past about ten iterations that is what it hands the likelihood.
 \code{$carefulfit_iterations} how long it was allowed.
 With \code{backend='julia'}, \code{optimcontrol$callback} is a function
 called while the fit runs, with \code{(iteration, total, objective,
-gradient_norm)}. It is for a front end that wants to draw progress live:
-the engine calls it on a time cadence rather than once per iteration,
-because a callback costs about half a millisecond through the Julia
-bridge, and always once more at the end. An error inside it disables it
-and warns, leaving the fit unaffected. If output after the fit is enough,
-\code{fit$optim$trace} holds every iteration and \code{\link{ctTracePlot}}
-draws it.
+gradient_norm, parameters)}, where \code{parameters} is the raw vector the
+reported objective and gradient describe. A callback declaring only the
+first four is called with four, so one written before \code{parameters}
+existed keeps working.
+
+It serves two purposes. The first is a front end drawing progress live: the
+engine calls it on a time cadence rather than once per iteration, because a
+callback costs about half a millisecond through the Julia bridge, and always
+once more at the end. The second is checkpointing. Nothing is written until
+\code{ctFit} returns, so a long fit that is interrupted leaves nothing
+behind; writing \code{parameters} from the callback and passing them back as
+\code{inits} resumes from where it stopped. The optimizer's own history does
+not survive that, so a resumed fit restarts its quasi-Newton approximation.
+
+An error inside the callback disables it and warns, leaving the fit
+unaffected. If output after the fit is enough, \code{fit$optim$trace} holds
+every iteration and \code{\link{ctTracePlot}} draws it.
 \code{backend='julia'} also finishes by estimating uncertainty, as the stan
 backend does, and reads the same \code{stanoptimis} control names for it:
 \code{uncertainty} (default \code{'hessian'}), \code{uncertaintyDraws},

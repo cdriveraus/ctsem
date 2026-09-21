@@ -3821,10 +3821,18 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # The message is stored rather than warned immediately: `options(warn = 2)`
     # would turn the warning into exactly the error this exists to prevent.
     alive <- TRUE
+    # The engine always sends the current point as a fifth value. A callback
+    # written before that existed takes four arguments, so it is called with
+    # four: handing it a fifth would turn an addition into a breaking change.
+    # `...` counts as accepting it, since such a function can ask for it.
+    fmls <- names(formals(callback))
+    wants_pars <- length(fmls) >= 5L || "..." %in% fmls
     common$progress_callback <- function(iteration, total, objective,
-      gradient_norm) {
+      gradient_norm, parameters) {
       if (alive) {
-        tryCatch(callback(iteration, total, objective, gradient_norm),
+        tryCatch(if (wants_pars)
+            callback(iteration, total, objective, gradient_norm, parameters)
+          else callback(iteration, total, objective, gradient_norm),
           error = function(e) {
             alive <<- FALSE
             failure <<- conditionMessage(e)
