@@ -55,9 +55,6 @@ CovCache{T,D}() where {T,D} = CovCache{T,D}(
     [zeros(T, D, D) for _ in 1:_COVCACHE_SLOTS],
     [zeros(T, D, D) for _ in 1:_COVCACHE_SLOTS], Ref(0), Ref(1))
 
-const _COVCACHE = Dict{Tuple{DataType,Int,Int,Int},Any}()
-const _COVCACHE_LOCK = ReentrantLock()
-
 # The construction in force is part of the key. Without it an entry built under
 # one route is served under the other, which a switch mid-session -- every
 # comparison test and benchmark here -- turns into a wrong answer with no
@@ -67,17 +64,20 @@ const _COVCACHE_LOCK = ReentrantLock()
 # two constructions and stopped being enough the moment there were three: a
 # code-0 entry would have been served to a code-1 call, which is the same
 # failure one level down.
+#
+# In task-local storage, not a global keyed by thread. See the matching comment
+# in `_expm_cov_scratch`: a task can migrate between threads, so a thread id
+# does not identify a private buffer. The reuse that pays here is within one
+# task's run -- the same DIFFUSION matrix across that chunk's subjects and rows
+# -- and that is exactly what a task-local cache keeps. Across calls the
+# parameters have moved and every entry would miss anyway.
 function _covcache(::Type{T}, ::Val{d}, code::Int) where {T,d}
-    key = (T, d, Threads.threadid(), code)
-    c = get(_COVCACHE, key, nothing)
+    store = task_local_storage()
+    key = (:covcache, T, d, code)
+    c = get(store, key, nothing)
     if c === nothing
-        lock(_COVCACHE_LOCK) do
-            c = get(_COVCACHE, key, nothing)
-            if c === nothing
-                c = CovCache{T,d}()
-                _COVCACHE[key] = c
-            end
-        end
+        c = CovCache{T,d}()
+        store[key] = c
     end
     return c::CovCache{T,d}
 end

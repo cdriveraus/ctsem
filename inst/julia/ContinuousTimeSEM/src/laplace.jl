@@ -2165,11 +2165,16 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
                         scatter(la, Ls[la][:, j]), 2), 2 * Cab[j, i]) || return false
                 end
             else
-                V = Ls[la] * transpose(Ccoup[b][t]) * transpose(L)
+                # `Vcross`, not `V`: the explicit terms below use a `V` of
+                # their own at this function's scope, and this assignment would
+                # land on it. Harmless only because that one is reallocated
+                # before it is read -- a reordering, or lifting this loop into
+                # a closure, makes it a silent wrong answer.
+                Vcross = Ls[la] * transpose(Ccoup[b][t]) * transpose(L)
                 for q in 1:kparl
                     e = zeros(Float64, kparl); e[q] = 1.0
                     accumulate(sweep(block.members, scatter(l, e),
-                        scatter(la, V[:, q]), 2), 2.0) || return false
+                        scatter(la, Vcross[:, q]), 2), 2.0) || return false
                 end
             end
         end
