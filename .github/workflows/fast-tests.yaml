@@ -66,17 +66,15 @@ jobs:
           # The action's `packages` default (`deps::., any::sessioninfo`) is
           # concatenated with this, so the dependencies arrive either way.
           #
-          # roxygen2 is pinned, not `any::`. Its output format changes between
-          # versions -- 8.1.0 rewrote every multi-symbol `importFrom()` into a
-          # multi-line form -- so a check that regenerates man/ and NAMESPACE
-          # and diffs the result compares this runner's roxygen2 against the
-          # one that produced the committed files. With `any::` that check
-          # fails on formatting the day a new roxygen2 reaches CRAN, whatever
-          # is in the repository, and says only that man/ has drifted. It did:
-          # 8.1.0 shipped, and no run of this workflow had ever got past the
-          # step. The version below is `Config/roxygen2/version` in
-          # DESCRIPTION, and the step asserts the two still agree.
-          extra-packages: any::testthat, any::pkgload, roxygen2@8.0.0, any::rprojroot
+          # roxygen2 is NOT pinned, and the pin is why the documentation step
+          # below was red for a fortnight: the repository regenerated under
+          # 8.1.0 while the workflow still asked for 8.0.0, so the step
+          # compared two output formats and called the difference drift. A pin
+          # only chooses which version of that argument to have, because it
+          # goes stale the next time anyone documents locally. The step
+          # compares content rather than layout instead, so any roxygen2 will
+          # do -- including one released tomorrow that wraps lines differently.
+          extra-packages: any::testthat, any::pkgload, any::roxygen2, any::rprojroot
           needs: check
 
       # The three Stan models are the whole cost of building this package.
@@ -126,17 +124,13 @@ jobs:
       # so. Seven seconds here.
       - name: Documentation is regenerated
         run: |
-          Rscript -e '
-            v <- unname(read.dcf("DESCRIPTION")[1, "Config/roxygen2/version"])
-            i <- as.character(packageVersion("roxygen2"))
-            cat("roxygen2", i, "installed, DESCRIPTION records", v, "\n")
-            if (!identical(i, v)) stop("these must match or this step compares ",
-              "two roxygen2 output formats and reports it as documentation ",
-              "drift. Either pin roxygen2@", v, " in extra-packages above, or ",
-              "regenerate with ", i, " and commit DESCRIPTION with man/.")'
           Rscript dev/document.R
-          git --no-pager diff --stat -- man NAMESPACE
-          git diff --exit-code -- man NAMESPACE
+          # Content, not layout. A `git diff` here fails whenever the runner's
+          # roxygen2 wraps a line differently from the one that produced the
+          # committed files, which is not something a user of this package can
+          # be affected by; dev/check-documentation.R asks whether the help
+          # pages still say what the sources say, and explains why.
+          Rscript dev/check-documentation.R
 
       # NOT_CRAN pinned to 'false' in the job env above, and no Julia
       # installed: this is the CRAN configuration. Every julia test must skip,
