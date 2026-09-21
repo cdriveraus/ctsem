@@ -314,8 +314,19 @@ end
 """Current chunk cap, and the thread count it is resolved against."""
 ctsem_max_chunks() = (max_chunks=_CTSEM_MAX_CHUNKS[], nthreads=Threads.nthreads())
 
+"""Temporary, for the oversubscription experiment: let chunks exceed threads."""
+const _CTSEM_ALLOW_OVERSUBSCRIBE = Ref(false)
+function ctsem_allow_oversubscribe!(b::Bool)
+    _CTSEM_ALLOW_OVERSUBSCRIBE[] = b
+    return b
+end
+export ctsem_allow_oversubscribe!
+
 @inline function _ctsem_nchunks(nsubjects::Int)
     requested = _CTSEM_MAX_CHUNKS[]
+    if _CTSEM_ALLOW_OVERSUBSCRIBE[] && requested > 0
+        return max(1, min(requested, nsubjects))
+    end
     available = requested == 0 ? Threads.nthreads() : min(requested, Threads.nthreads())
     return max(1, min(available, nsubjects))
 end
