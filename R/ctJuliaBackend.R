@@ -3809,7 +3809,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   if (!is.null(callback)) {
     if (!is.function(callback)) {
       stop("optimcontrol$callback must be a function of (iteration, total, ",
-        "objective, gradient_norm).", call. = FALSE)
+        "objective, gradient_norm), optionally taking the current point as a ",
+        "fifth argument.", call. = FALSE)
     }
     # Caught here rather than in the engine, because an error thrown out of an
     # R callback does not reach the engine at all: it aborts before a reply is
