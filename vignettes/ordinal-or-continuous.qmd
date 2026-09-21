@@ -143,11 +143,10 @@ ordinalfit <- ctFit(d[, c('id', 'time', 'y1', 'y2')], ordinalmodel,
   backend = 'julia', cores = 1)
 ```
 
-Nothing is said about `MANIFESTVAR`. The cumulative logit already supplies the
-randomness, so a residual variance on top of it is not identified, and
-`ctFit()` fixes the whole matrix itself and says so -- including the
-off-diagonal, which the default leaves free as a correlated measurement error
-between the two items. Setting it to zero by hand changes nothing.
+Nothing is said about `MANIFESTVAR`. Its default is diagonal, and the
+cumulative logit already supplies the randomness, so a residual variance on
+top of it is not identified -- `ctFit()` fixes those entries itself and says
+so. Setting them to zero by hand changes nothing.
 
 `summary()` reports the thresholds on the latent scale, one row per category
 boundary:
