@@ -179,6 +179,23 @@ struct EKFParameters{RT,PT,UT,TT,AX,FV}
         population_scale=Float64[],
         affine_dim::Int=0,
     )
+        # Every argument from `ti_parameter_indices` on is optional and
+        # positional, so inserting a field shifts every caller that passes the
+        # ones after it -- silently, because the types are compatible either
+        # way: `Vector{Int}([0.0])` succeeds, so a censoring limit of zero
+        # becomes an asymptote count. `nasymptotes` was inserted ahead of these
+        # two and that is exactly what happened, and the only symptom was
+        # generated data clamped at the wrong limit.
+        #
+        # R builds both limits as n.manifest length vectors or neither, so
+        # unequal lengths mean the arguments did not land where the caller
+        # meant them to.
+        length(censormin) == length(censormax) || throw(ArgumentError(
+            "censormin and censormax have lengths $(length(censormin)) and " *
+            "$(length(censormax)); they are per-manifest vectors and must " *
+            "match. A mismatch usually means the optional positional " *
+            "arguments are one slot out."))
+
         regular_transforms_tuple = Tuple(regular_transforms)
         predict_transforms_tuple = Tuple(predict_transforms)
         update_transforms_tuple = Tuple(update_transforms)

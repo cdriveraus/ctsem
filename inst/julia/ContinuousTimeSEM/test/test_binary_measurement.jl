@@ -127,7 +127,25 @@ end
             # d/deta [ -(eta-etabar)^2/(2s^2) + log P(y|eta) ] = 0 at the mode:
             # the prior's score, -(eta-etabar)/s^2 = -offset/s^2, plus the
             # observation's score, must cancel.
-            @test (-offset / s2 + score) ≈ 0.0 atol = 1e-8
+            #
+            # Asserted the way the solve stops -- on the objective one more
+            # Newton step is predicted to gain -- and not on the raw gradient,
+            # which is what this line used to do. A gradient bound asks for a
+            # number of digits that depends on the curvature, so the same mode
+            # passes it at one prior sd and fails it at another: at `atol =
+            # 1e-8` three of the seven cases here failed on gradients of
+            # around 5e-7, at which the mode is placed to better than 1e-6 and
+            # the quadrature it positions is nowhere near that accurate.
+            gradient = -offset / s2 + score
+            @test ContinuousTimeSEM._newton_gain(gradient,
+                gradient / curvature) <=
+                ContinuousTimeSEM._mode_tolerance(
+                    ContinuousTimeSEM._mode_objective(etabar, 1 / s2, offset,
+                        y, thresholds, kind))
+            # And the same thing said as a distance, which is what a reader
+            # wants to know and which the rule above does not state: one more
+            # Newton step would move the mode by less than this.
+            @test abs(gradient / curvature) < 1e-5
             # Curvature is the prior's precision plus the observed information,
             # by construction (`_binary_mode`'s own docstring): checked as an
             # identity independent of the dense reference above.
