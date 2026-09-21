@@ -105,9 +105,10 @@ processes. What would settle it is the scatter/gather barrier a process split
 needs on every gradient -- not a scaling ceiling that turned out to be the
 measuring machine.
 
-Nothing needs deciding by the caller either way: `workspace_slot` on
-`ctsem_sample_density!` is present exactly when chains are running concurrently,
-and a chain given a block of slots chunks its units inside it.
+Nothing needs deciding by the caller either way. A chain is an item of a
+pool region, so it holds a band of workspace slots and the unit loop inside it
+spends whatever that band holds; the arithmetic that used to be written out
+here is now a property of `_laplace_parallel`.
 
 Splitting units across *processes* rather than threads is a different question
 and the answer differs by phase. Sampling does on the order of `draws x
@@ -664,14 +665,9 @@ function _run_chains(nchains::Int, parallel::Bool, seed::Integer,
         _progress_done(reporter, closing)
         return nothing
     end
-    if parallel
-        Threads.@sync for c in 1:nchains
-            Threads.@spawn runner(c)
-        end
-    else
-        for c in 1:nchains
-            runner(c)
-        end
+    _laplace_parallel(1:nchains) do c
+        runner(c)
+        return true
     end
     return results
 end
@@ -808,18 +804,12 @@ function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     # Grown before anything is spawned: a concurrent push! onto the shared
     # workspace vector is a race, and one chain per slot is the whole reason
     # chains can run at all.
-    parallel = nchains > 1 && Threads.nthreads() > 1
-    # Chains first, then the unit loop with whatever threads remain. Two chains
-    # on ten threads previously used two; they now take five apiece. Bounded by
-    # `ctsem_set_max_chunks!` as well, so `cores` still caps the total.
-    per_chain = parallel ?
-        max(1, min(ctsem_max_chunks().max_chunks,
-                   Threads.nthreads() ÷ nchains)) : 1
-    if parallel
-        while length(laplace.workspaces) < nchains * per_chain
-            push!(laplace.workspaces, Dict{Any,Any}())
-        end
-    end
+    # Chains first, then the unit loop with whatever the pool has left. That
+    # split is no longer computed here: a chain is an item of a pool region, so
+    # it receives a band and the unit loop inside it spends what that band
+    # holds. `cores` caps the total because the pool is sized from it.
+    per_chain = max(1, _laplace_ensure_pool!(laplace) ÷ max(nchains, 1))
+    parallel = nchains > 1 && per_chain >= 1 && Threads.nthreads() > 1
     verbose && println(_console(), "Sampling: ", nchains, " chain(s), ", ctsem_sample_dimension(sampler),
         " dimensions (", sampler.npar, " population + ",
         ctsem_sample_dimension(sampler) - sampler.npar, " effects), ",
@@ -838,8 +828,7 @@ function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     centre = ctsem_sample_start(sampler, start)
     run = _sample_to_target(
         c -> ((g, x) -> ctsem_sample_density!(g, sampler, x;
-            workspace_slot=parallel ? (c - 1) * per_chain + 1 : nothing,
-            workspace_chunks=per_chain)),
+            )),
         centre, metric, nchains, parallel, seed, nwarmup, ndraws, Int(maxdepth),
         Float64(target_accept), Float64(maxdelta), Float64(init_scale),
         adapt_metric, adapt, Float64(settle_tol), Float64(min_ess),

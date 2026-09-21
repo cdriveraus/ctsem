@@ -1,18 +1,29 @@
-# Workspace slots are handed down as a band, and every route budgets its own.
+# The parallel width must not change the answer, and must not leak between
+# routes.
 #
-# The Laplace unit functions can divide a unit's members across tasks, and each
-# task needs its own adjoint workspace. Those come from `laplace.workspaces`,
-# which is sized by whichever route is driving: the fit objective sizes it to
-# chunks times member width, `quadrature.jl` to its chunk count, and
-# `sample_density.jl` gives each chain a contiguous block so no two chains can
-# reach the same workspace.
+# The Laplace path divides work on two nested axes -- units, and the members
+# inside one unit -- and every task needs an adjoint workspace of its own.
+# Those come from `laplace.workspaces`, indexed by a slot. A task holds a
+# contiguous *band* of slots and lends disjoint sub-bands to anything it
+# spawns, so two live tasks can never name the same one.
 #
-# So a slot may only ever be taken from the band the caller hands down. An
-# earlier version derived slots from a global chunk count instead, which the
-# fit tuner *pins* for the rest of the session -- so a fit followed by a
-# `ctLaplaceCheck()` asked for slots the quadrature route had never budgeted.
-# Nothing in the suite caught it, because the quadrature tests fit on one core
-# and so never set a width above one. Hence this file.
+# Two things went wrong before that band was ambient rather than computed, and
+# this file exists for both.
+#
+# The width leaked between routes. Slots were derived from the global chunk
+# count, which the fit tuner *pins* for the rest of the session, so a fit
+# followed by a `ctLaplaceCheck()` asked for slots the quadrature route had
+# never budgeted. Nothing in the suite caught it, because the quadrature tests
+# fit on one core and so never set a width above one.
+#
+# And the width changed the answer. A missing band at one call site left a
+# whole phase serial; a shared local in a closure had two tasks writing one
+# variable. Neither errored -- the first was merely slow, the second surfaced
+# once as a `BoundsError` inside a spawned task, which the objective wrapper
+# turns into a large finite penalty, so the optimiser sees a bad point rather
+# than a bug. The assertion that catches both is that the gradient is the same
+# serially and in parallel: the pool partitions members, so each worker's
+# columns are summed in the same order whatever the width.
 
 .band_model <- function() {
   m <- suppressWarnings(suppressMessages(ctModel(
@@ -40,45 +51,48 @@
   d
 }
 
-test_that("a fit that pins a member width leaves other routes working", {
+test_that("the parallel width does not change the objective or its gradient", {
+  skip_without_julia()
+  fit <- suppressWarnings(suppressMessages(ctFit(.band_data(), .band_model(),
+    backend = "julia", intoverpop = "laplace", cores = 4, verbose = 0,
+    optimcontrol = list(estonly = TRUE, maxiter = 3))))
+
+  at <- as.numeric(fit$estimate$raw)
+  lpg <- ctsem:::.ctBackendLpgFunc(fit, gradient = TRUE)
+  set_width <- function(n) JuliaConnectoR::juliaCall(
+    "ContinuousTimeSEM.ctsem_set_max_chunks!", as.integer(n))
+  original <- as.integer(JuliaConnectoR::juliaEval(
+    "ContinuousTimeSEM.ctsem_max_chunks().max_chunks"))
+  on.exit(set_width(original), add = TRUE)
+
+  set_width(1L)
+  serial <- lpg(at)
+  set_width(4L)
+  wide <- lpg(at)
+
+  # Tight, and not `tolerance = 1e-6`. A difference at this size is a slot
+  # collision or a shared local, not rounding -- see the header. The members a
+  # worker owns are summed in their own order, so the last bit can move where
+  # the partition does, and no more than that.
+  expect_equal(as.numeric(wide), as.numeric(serial), tolerance = 1e-12)
+  expect_equal(as.numeric(attr(wide, "gradient")),
+    as.numeric(attr(serial, "gradient")), tolerance = 1e-10)
+  expect_true(all(is.finite(attr(serial, "gradient"))))
+})
+
+test_that("a fit's pool width leaves the other routes working", {
   skip_without_julia()
   fit <- suppressWarnings(suppressMessages(ctFit(.band_data(), .band_model(),
     backend = "julia", intoverpop = "laplace", cores = 4, verbose = 0,
     optimcontrol = list(estonly = TRUE, maxiter = 3))))
   expect_true(is.finite(as.numeric(fit$estimate$loglik)))
 
-  # The fit's tuner pins both numbers for the session. This is the state the
-  # quadrature route below then inherits, and the whole point of the test.
-  width <- as.integer(JuliaConnectoR::juliaEval(
-    "ContinuousTimeSEM._LAPLACE_MEMBER_WIDTH[]"))
-  expect_gte(width, 1L)
-
-  # The quadrature route sizes `laplace.workspaces` to its own chunk count and
-  # budgets no member tasks, so it must run serially whatever the fit pinned.
-  # Before the band was passed explicitly this either indexed past the vector
-  # or took a slot another chunk was using.
+  # The quadrature route claims its own band out of the pool the fit sized,
+  # rather than inheriting a count it never budgeted for. Before the pool this
+  # either indexed past the workspace vector or took a slot another chunk was
+  # using.
   chk <- suppressWarnings(suppressMessages(
     ctLaplaceCheck(fit, nodes = 3L, correction = FALSE)))
   expect_s3_class(chk, "ctLaplaceCheck")
   expect_true(all(is.finite(unlist(chk[vapply(chk, is.numeric, logical(1))]))))
-})
-
-test_that("asking for slots the caller never budgeted is refused, loudly", {
-  skip_without_julia()
-  # The guard exists because the failure it replaces is a `BoundsError` inside a
-  # spawned task, which `.ctBackendLpgFunc` turns into a large finite penalty --
-  # the optimiser then sees a bad point rather than a bug.
-  msg <- tryCatch({
-    JuliaConnectoR::juliaEval(
-      "let lp = nothing
-         try
-           ContinuousTimeSEM._laplace_check_band((workspaces = [Dict{Any,Any}()],), 1, 4)
-           \"no error\"
-         catch e
-           sprint(showerror, e)
-         end
-       end")
-  }, error = function(e) conditionMessage(e))
-  expect_match(as.character(msg), "slots 1\\.\\.4 asked for, 1 exist",
-    fixed = FALSE)
 })

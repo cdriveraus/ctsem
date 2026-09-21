@@ -382,9 +382,10 @@ function ctsem_laplace_quadrature(laplace::CTSEMLaplaceObjective,
     Ls = _laplace_popchols(theta, laplace.spec)
 
     nchunks = _ctsem_nchunks(nunits)
-    while length(laplace.workspaces) < nchunks
-        push!(laplace.workspaces, Dict{Any,Any}())
-    end
+    # The pool sizes the scratch store, not this function, and its workers carry
+    # their own slot -- so the unit functions below need nothing passed to them,
+    # and a nested region gets a sub-budget rather than the whole pool again.
+    _laplace_ensure_pool!(laplace)
     ranges = _ctsem_chunk_assignment(_laplace_unit_weights(laplace), nchunks)
     failed = fill(false, nchunks)
 
@@ -420,12 +421,9 @@ function ctsem_laplace_quadrature(laplace::CTSEMLaplaceObjective,
         end
         return nothing
     end
-    if nchunks <= 1
-        run(1)
-    else
-        Threads.@sync for c in 1:nchunks
-            Threads.@spawn run(c)
-        end
+    _laplace_parallel(1:nchunks) do c
+        run(c)
+        return true
     end
     if any(failed)
         return contributions ? (value=NaN, subject_loglik=unit_term) :

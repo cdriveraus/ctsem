@@ -126,8 +126,7 @@ is disjoint, so those gradients are written straight into `gradient`; only the
 `ndim`.
 """
 function ctsem_sample_density!(gradient::Vector{Float64}, sampler::CTSEMSampler,
-    x::AbstractVector{Float64}; workspace_slot::Union{Nothing,Integer}=nothing,
-    workspace_chunks::Integer=1)
+    x::AbstractVector{Float64})
     length(gradient) == sampler.ndim ||
         throw(DimensionMismatch("gradient must have $(sampler.ndim) entries"))
     length(x) == sampler.ndim ||
@@ -152,27 +151,18 @@ function ctsem_sample_density!(gradient::Vector{Float64}, sampler::CTSEMSampler,
     end
 
     fill!(gradient, 0.0)
-    # `workspace_slot` is where a *chain*'s block of workspaces begins, and
-    # `workspace_chunks` is how many it owns. Chains are the better parallel
-    # axis -- they share nothing and scale flat, where the unit loop scales
-    # about twofold -- so chains are filled first and the unit loop takes
-    # whatever threads are left over.
+    # Chains are the better parallel axis -- they share nothing and scale
+    # flat, where the unit loop scales about twofold -- so chains are filled
+    # first and the unit loop spends what the chain's band has left.
     #
-    # A block per chain rather than a slot per chain is what makes that
-    # possible. Both axes index the same workspace vector, so one slot each
-    # forced every chain to run its unit loop serially: two chains on ten
-    # threads used two of them and left eight idle. Disjoint blocks let a chain
-    # chunk inside its own without any chance of two chains reaching for the
-    # same adjoint workspace, which is the corruption this indexing exists to
-    # prevent.
-    parallel = workspace_slot === nothing
-    nchunks = parallel ? _ctsem_nchunks(nunits) :
-        max(1, min(Int(workspace_chunks), nunits))
-    slots = parallel ? (1:nchunks) :
-        (Int(workspace_slot):(Int(workspace_slot) + nchunks - 1))
-    while length(laplace.workspaces) < maximum(slots)
-        push!(laplace.workspaces, Dict{Any,Any}())
-    end
+    # The pool does this. A chain is an item of the region one level out, so
+    # it already holds a band of its own and splits it here; two chains can
+    # never reach the same adjoint workspace because their bands are disjoint
+    # by construction rather than by arithmetic written out here. What this
+    # used to say about blocks per chain is now a property of
+    # `_laplace_parallel`, and the parameters that carried it are gone.
+    _laplace_ensure_pool!(laplace)
+    nchunks = max(1, min(_laplace_slots()[2], nunits))
     # Keyed on the chunk count, not on which axis produced it: a chain with a
     # block of workspaces splits its units exactly as the unit-parallel path
     # does.
@@ -184,12 +174,11 @@ function ctsem_sample_density!(gradient::Vector{Float64}, sampler::CTSEMSampler,
     chunk_ok = fill(true, nchunks)
 
     run = function (c)
-        slot = first(slots) + c - 1
-        aws = _laplace_workspace!(laplace, Float64, npar, slot)
+        aws = _laplace_workspace!(laplace, Float64, npar)
         # Per slot, not per subject: several chains filter the *same* subject at
         # the same time, where the unit loop never does, so the workspace cached
         # on the subject would be shared and silently corrupted.
-        ekf = _laplace_ekf_workspace!(laplace, Float64, slot)
+        ekf = _laplace_ekf_workspace!(laplace, Float64)
         gsub = Vector{Float64}(undef, npar)
         shifted = Vector{Float64}(undef, npar)
         gtheta = chunk_theta[c]
@@ -258,12 +247,9 @@ function ctsem_sample_density!(gradient::Vector{Float64}, sampler::CTSEMSampler,
         return nothing
     end
 
-    if nchunks <= 1
-        run(1)
-    else
-        Threads.@sync for c in 1:nchunks
-            Threads.@spawn run(c)
-        end
+    _laplace_parallel(1:nchunks) do c
+        run(c)
+        return true
     end
 
     @inbounds for c in 1:nchunks
@@ -284,11 +270,10 @@ end
 Allocating form, for tests and for one-off checks.
 """
 function ctsem_sample_density(sampler::CTSEMSampler, x::AbstractVector;
-    workspace_slot::Union{Nothing,Integer}=nothing,
-    workspace_chunks::Integer=1)
+    )
     g = zeros(Float64, sampler.ndim)
     value = ctsem_sample_density!(g, sampler, collect(Float64, x);
-        workspace_slot=workspace_slot, workspace_chunks=workspace_chunks)
+        )
     return (value=value, gradient=g)
 end
 
