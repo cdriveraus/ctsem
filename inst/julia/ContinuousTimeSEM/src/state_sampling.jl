@@ -475,7 +475,12 @@ function _ctsem_draw_categorical(gen::CTSEMStateGenerate, eta::T, row::Int,
         lower, upper, sd = _censor_limits(thresholds, T)
         return min(max(eta + sd * z, lower), upper)
     elseif kind == CTSEM_OBS_BINARY || isempty(thresholds)
-        return u < inv(one(T) + exp(-eta)) ? one(T) : zero(T)
+        # `(0, 1)` when the item has no asymptotes, so this is the plain
+        # Bernoulli draw; with them it is the three or four parameter response
+        # probability, which generation has to honour or the data would come
+        # from a different model than the one that is fitted to it.
+        c, d = _binary_asymptotes(thresholds, T)
+        return u < c + (d - c) * inv(one(T) + exp(-eta)) ? one(T) : zero(T)
     end
     # Cumulative logit, the same identity `_category_loglikelihood` evaluates:
     # P(y <= k) is the logistic CDF at `thresholds[k] - eta`. The thresholds

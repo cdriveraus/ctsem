@@ -33,6 +33,36 @@
 #' @noRd
 NULL
 
+#' Check and normalise the asymptotes argument.
+#'
+#' How many asymptotes each binary variable estimates: 0 for the two parameter
+#' logistic ctsem has always fitted, 1 for a lower asymptote (three parameter,
+#' the guessing probability) and 2 for both (four parameter).
+#'
+#' A count per variable rather than a logical, because the three cases are
+#' nested and an integer says which without a second argument. Zeroed for
+#' every non-binary variable for the reason `.ctCheckNcategories` zeroes its
+#' own: nothing downstream should have to remember to ignore it.
+#' @noRd
+.ctCheckAsymptotes <- function(asymptotes, manifesttype, manifestNames) {
+  n <- length(manifesttype)
+  if (is.null(asymptotes)) return(rep(0L, n))
+  if (length(asymptotes) == 1L) asymptotes <- rep(asymptotes, n)
+  if (length(asymptotes) != n) stop('asymptotes must have one entry per ',
+    'manifest variable (', n, '), or be a single value', call. = FALSE)
+  asymptotes <- as.integer(asymptotes)
+  asymptotes[is.na(asymptotes)] <- 0L
+  if (any(!asymptotes %in% 0:2)) stop('asymptotes must be 0 (two parameter ',
+    'logistic), 1 (three parameter -- a lower asymptote) or 2 (four ',
+    'parameter -- both)', call. = FALSE)
+  wrong <- asymptotes > 0 & !manifesttype %in% 1L
+  if (any(wrong)) stop('asymptotes apply to binary indicators (manifesttype ',
+    '1) only. Check: ', paste(manifestNames[wrong], collapse = ', '),
+    call. = FALSE)
+  asymptotes[!manifesttype %in% 1L] <- 0L
+  asymptotes
+}
+
 #' Check and normalise the ncategories argument.
 #' @noRd
 .ctCheckNcategories <- function(ncategories, manifesttype, manifestNames) {
@@ -65,13 +95,30 @@ NULL
 #' variable needs. Variables with fewer categories leave their trailing cells
 #' fixed at zero and the engine never reads them, which is what lets ordinal
 #' variables with different category counts share one rectangular matrix.
+#' @param asymptotes Per variable, as `.ctCheckAsymptotes` returns it. A
+#' binary variable with any takes the first two columns: its lower asymptote
+#' and then a gap, so that the engine can form `d = c + (1-c)g` and keep
+#' `0 <= c < d <= 1` without a cell's transform reading another cell's
+#' parameter. That is the same restriction the ordinal gaps exist for, and the
+#' same matrix, rather than a second one shaped like it.
 #' @noRd
-.ctThresholdMatrix <- function(ncategories, manifesttype, manifestNames) {
+.ctThresholdMatrix <- function(ncategories, manifesttype, manifestNames,
+  asymptotes = NULL) {
   n <- length(manifesttype)
-  ncol <- max(ncategories) - 1L
+  if (is.null(asymptotes)) asymptotes <- rep(0L, n)
+  ncol <- max(c(ncategories - 1L, ifelse(asymptotes > 0L, 2L, 0L)))
   out <- matrix(0, n, ncol,
     dimnames = list(manifestNames, paste0('threshold', seq_len(ncol))))
   for (i in seq_len(n)) {
+    if (asymptotes[i] > 0L) {
+      # Column 1 is the lower asymptote and column 2 the gap to the upper one.
+      # A three parameter model fixes the gap at 1, which makes the upper
+      # asymptote exactly 1 and costs the engine nothing to evaluate.
+      out[i, 1] <- paste0('asymptote_', manifestNames[i])
+      out[i, 2] <- if (asymptotes[i] >= 2L)
+        paste0('asymptotegap_', manifestNames[i]) else 1
+      next
+    }
     if (!manifesttype[i] %in% 2) next
     # Column 1 stays at its initialised zero: see the file header. The location
     # lives in MANIFESTMEANS, so the ambiguous model -- both free, neither

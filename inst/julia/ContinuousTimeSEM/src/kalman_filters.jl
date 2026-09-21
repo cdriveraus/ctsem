@@ -433,9 +433,15 @@ function _generate_binary!(gen, ws::ContinuousEKFWorkspace, pars, λ,
         y = _ctsem_draw_count(exp(min(η, T(_CTSEM_COUNT_MAX_LOG_RATE[]))),
             ucount, zcount)
     elseif kind == CTSEM_OBS_BINARY || isempty(thresholds)
-        logZ, _, _ = _binary_moments(ηbar, s, one(T), nodes, weights, (),
-            CTSEM_OBS_BINARY)
-        p = isfinite(logZ) ? exp(logZ) : inv(one(T) + exp(-ηbar))
+        # `thresholds` rather than `()`: an item with asymptotes has them in
+        # there, and passing an empty slot would draw from the two parameter
+        # marginal while the likelihood scored the three parameter one. The
+        # fallback goes through the likelihood for the same reason.
+        logZ, _, _ = _binary_moments(ηbar, s, one(T), nodes, weights,
+            thresholds, CTSEM_OBS_BINARY)
+        p = isfinite(logZ) ? exp(logZ) :
+            exp(_category_loglikelihood(ηbar, one(T), thresholds,
+                CTSEM_OBS_BINARY))
         y = u < p ? one(T) : zero(T)
     else
         # Walk the categories accumulating marginal mass until it passes `u`.

@@ -2928,6 +2928,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       as.integer(model$manifesttype),
     ncategories = if (is.null(model$ncategories)) integer(0) else
       as.integer(model$ncategories),
+    nasymptotes = if (is.null(model$asymptotes)) integer(0) else
+      as.integer(model$asymptotes),
     censormin = if (is.null(model$censormin)) numeric(0) else
       as.numeric(model$censormin),
     censormax = if (is.null(model$censormax)) numeric(0) else
@@ -3152,6 +3154,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   }
   if (any(spec$manifesttype %in% 2)) {
     arguments$ncategories <- .ctJuliaVector(as.integer(spec$ncategories))
+  }
+  if (length(spec$nasymptotes) && any(spec$nasymptotes > 0)) {
+    arguments$nasymptotes <- .ctJuliaVector(as.integer(spec$nasymptotes))
   }
   if (any(spec$manifesttype %in% 4)) {
     arguments$censormin <- .ctJuliaVector(as.numeric(spec$censormin))

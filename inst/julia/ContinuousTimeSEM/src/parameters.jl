@@ -73,6 +73,14 @@ struct EKFParameters{RT,PT,UT,TT,AX,FV}
     # THRESHOLDS and ignores the rest, so variables with different numbers of
     # categories can share one rectangular matrix.
     ncategories::Vector{Int}
+    # Asymptote count per manifest variable, read only by the binary ones: 0
+    # for a plain two parameter logistic, 1 when the lower asymptote is
+    # estimated (three parameter) and 2 when both are (four parameter). It
+    # says whether that row's THRESHOLDS cells are its asymptotes, which is a
+    # property of the model rather than of the values, so it cannot be
+    # recovered by looking at them -- a guessing parameter of zero is an
+    # ordinary place for an optimizer to be.
+    nasymptotes::Vector{Int}
     # Censoring limits per manifest variable, read only by the censored ones.
     # Known constants rather than parameters: a scale's floor and ceiling are
     # properties of the instrument, not things the data can inform. Empty means
@@ -161,6 +169,7 @@ struct EKFParameters{RT,PT,UT,TT,AX,FV}
         continuous_time::Bool=true,
         manifesttype=Int[],
         ncategories=Int[],
+        nasymptotes=Int[],
         censormin=Float64[],
         censormax=Float64[],
         covmatcode::Int=0,
@@ -205,6 +214,7 @@ struct EKFParameters{RT,PT,UT,TT,AX,FV}
             continuous_time,
             Vector{Int}(manifesttype),
             Vector{Int}(ncategories),
+            Vector{Int}(nasymptotes),
             Vector{Float64}(censormin),
             Vector{Float64}(censormax),
             covmatcode,

@@ -392,6 +392,11 @@ column vectors, one entry per model-matrix cell.
   * `ncategories` — number of categories per manifest variable. Read only for
     the ordinal ones, which take their thresholds from the first
     `ncategories - 1` columns of `THRESHOLDS`.
+  * `nasymptotes` — how many asymptotes a binary variable estimates: `0` for a
+    two parameter logistic, `1` for a three parameter one (a lower asymptote,
+    the guessing probability) and `2` for a four parameter one. A variable
+    with any takes them from the first two columns of `THRESHOLDS`, as the
+    lower asymptote and then a gap.
   * `continuous_time` — `false` for a discrete-time model, whose DRIFT, CINT and
     DIFFUSION are already the one-step quantities.
 
@@ -404,7 +409,8 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
     predicttransform, updatetransform, tdtransform;
     ti_parameter=Int[], ti_predictor=Int[], ti_coefficient=Int[],
     diffusion_state_indices=Int[], continuous_time::Bool=true,
-    manifesttype=Int[], ncategories=Int[], censormin=Float64[],
+    manifesttype=Int[], ncategories=Int[], nasymptotes=Int[],
+    censormin=Float64[],
     censormax=Float64[], covmatcode::Int=0, population_indices=Int[],
     population_covmatcode::Union{Nothing,Integer}=nothing,
     population_scale=Float64[], affine_dim::Int=0)
@@ -504,6 +510,7 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
         fixed_positions, fixed_values, Int.(ti_parameter),
         Int.(ti_predictor), Int.(ti_coefficient), Int.(diffusion_state_indices),
         continuous_time, Int.(manifesttype), Int.(ncategories),
+        Int.(nasymptotes),
         Float64.(censormin), Float64.(censormax), covmatcode,
         Int.(population_indices), population_range,
         population_covmatcode === nothing ? covmatcode :

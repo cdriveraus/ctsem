@@ -43,6 +43,14 @@
 #' censored on one side only leaves the other infinite. Unlike thresholds these
 #' are known constants rather than parameters -- a scale's floor and ceiling are
 #' properties of the instrument, and the data cannot inform them.
+#' @param asymptotes n.manifest length integer vector for binary indicators:
+#' 0 (the default) for the two parameter logistic, where the response
+#' probability runs from 0 to 1; 1 to estimate a lower asymptote, the
+#' three parameter model's guessing probability; 2 to estimate both, the four
+#' parameter model. Ignored for every other indicator type. The asymptotes
+#' appear in \code{THRESHOLDS} as \code{asymptote_<name>} and, when both are
+#' free, \code{asymptotegap_<name>}, the latter being the gap from the lower
+#' asymptote to the upper as a proportion of the room left.
 #' @param ncategories n.manifest length integer vector, giving the number of
 #' categories of each ordinal manifest variable and ignored for the others.
 #' Required when any \code{manifesttype} is 2, because the model has to know how
@@ -237,6 +245,7 @@
 
 ctModel<-function(LAMBDA, type='ct',n.manifest = 'auto', n.latent='auto', Tpoints=NULL, 
   manifestNames='auto', manifesttype=rep(0,nrow(LAMBDA)), ncategories=NULL,
+  asymptotes=NULL,
   censormin=NULL, censormax=NULL,
   latentNames='auto', id='id',time='time', silent=FALSE,
   T0VAR="auto", T0MEANS="auto", MANIFESTMEANS="auto", MANIFESTVAR="diag", 
@@ -536,11 +545,13 @@ ctModel<-function(LAMBDA, type='ct',n.manifest = 'auto', n.latent='auto', Tpoint
   censormax <- censorlimits$max
   THRESHOLDS <- NULL
   ncategories <- .ctCheckNcategories(ncategories, manifesttype, manifestNames)
-  if(any(manifesttype %in% 2)){
+  asymptotes <- .ctCheckAsymptotes(asymptotes, manifesttype, manifestNames)
+  if(any(manifesttype %in% 2) || any(asymptotes > 0)){
     # The first threshold is fixed at zero and the location lives in
     # MANIFESTMEANS -- see `.ctThresholdMatrix()`. Nothing to warn about
     # afterwards, because the pair can no longer both be free.
-    THRESHOLDS <- .ctThresholdMatrix(ncategories, manifesttype, manifestNames)
+    THRESHOLDS <- .ctThresholdMatrix(ncategories, manifesttype, manifestNames,
+      asymptotes)
   }
   
   
@@ -554,7 +565,8 @@ ctModel<-function(LAMBDA, type='ct',n.manifest = 'auto', n.latent='auto', Tpoint
     `DIFFUSION`=DIFFUSION, `TDPREDEFFECT`=TDPREDEFFECT, `TDPREDMEANS`=TDPREDMEANS, `TDPREDVAR`=TDPREDVAR, `PARS`=PARS, 
      `id`=id, `time`=time, `manifesttype`=manifesttype,
      `censormin`=censormin, `censormax`=censormax,
-     `ncategories`=ncategories, `THRESHOLDS`=THRESHOLDS)
+     `ncategories`=ncategories, `asymptotes`=asymptotes,
+     `THRESHOLDS`=THRESHOLDS)
   
   
   

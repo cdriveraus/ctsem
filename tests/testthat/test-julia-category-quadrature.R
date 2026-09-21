@@ -236,3 +236,194 @@ test_that('the mode solve reaches a stationary point for every kind', {
     }
   }
 })
+
+test_that('binary asymptotes reduce to plain binary and match direct integration', {
+  skip_on_cran()
+  skip_without_julia()
+  ctJuliaSetup()
+
+  # A three or four parameter logistic likelihood is not log-concave for a
+  # correct response, so its scalar posterior can have two modes -- measured at
+  # a prior mean below about -4.3 with c = 0.2. The quadrature path assumes one
+  # mode and would centre on whichever it found. `_asymptote_moments` avoids
+  # the question rather than answering it: `P(y|eta) = A + B q(y|eta)` is a
+  # mixture of the prior and the plain logistic posterior, both unimodal, so
+  # the components are integrated apart and their moments combined.
+  #
+  # Two things have to hold. Without asymptotes nothing may change, and with
+  # them the mixture must agree with integrating the lump -- including where
+  # the lump is bimodal, which is the case the whole construction is for.
+  JuliaConnectoR::juliaEval('
+    function _ctsem_test_bin(etabar, s, y, extras)
+      M = ContinuousTimeSEM
+      nd, wt = M._gauss_hermite(M._CTSEM_BINARY_NODES[])
+      lz, off, v = M._binary_moments(etabar, s, y, nd, wt, extras,
+        M.CTSEM_OBS_BINARY)
+      [lz, off, v]
+    end')
+  moments <- function(etabar, s, y, extras)
+    JuliaConnectoR::juliaCall('_ctsem_test_bin', etabar, s, y, extras)
+
+  for (etabar in c(-4, -1, 0, 2, 5)) for (s in c(0.3, 1, 3, 10))
+    for (y in c(0, 1)) {
+      expect_equal(moments(etabar, s, y, c(0, 1)),
+        moments(etabar, s, y, numeric(0)), tolerance = 1e-10,
+        info = paste0('reduction at etabar = ', etabar, ', s = ', s))
+    }
+
+  # P(y=1) = c + (d-c) plogis(eta), integrated directly on a grid fine enough
+  # to resolve it and wide enough to hold the prior.
+  direct <- function(etabar, s, y, cc, dd) {
+    e <- seq(etabar - 16 * s, etabar + 16 * s, length.out = 200001)
+    w <- e[2] - e[1]
+    p <- cc + (dd - cc) * stats::plogis(e)
+    f <- (if (y == 1) p else 1 - p) * stats::dnorm(e, etabar, s)
+    Z <- sum(f) * w
+    mu <- sum(e * f) * w / Z
+    c(log(Z), mu - etabar, sum(e * e * f) * w / Z - mu^2)
+  }
+  # The starred rows are prior means where the posterior has two modes.
+  cases <- list(
+    list(-4.7, 1, 1, 0.20, 1.00),      # bimodal
+    list(-12,  2, 1, 0.20, 1.00),      # bimodal, modes ten units apart
+    list(0,    1, 1, 0.20, 1.00),
+    list(0,    1, 0, 0.20, 1.00),
+    list(2,    2, 1, 0.25, 0.90),      # 4PL
+    list(-6,   2, 0, 0.15, 0.85),      # 4PL, incorrect response
+    list(0,  0.5, 1, 0.35, 1.00))
+  for (cs in cases) {
+    got <- moments(cs[[1]], cs[[2]], cs[[3]], c(cs[[4]], cs[[5]]))
+    want <- direct(cs[[1]], cs[[2]], cs[[3]], cs[[4]], cs[[5]])
+    # Loose enough for the plain binary rule's own error at these predictor
+    # sds, which the mixture inherits and does not add to.
+    expect_equal(got, want, tolerance = 1e-4,
+      info = paste0('etabar = ', cs[[1]], ', s = ', cs[[2]], ', y = ', cs[[3]],
+        ', c = ', cs[[4]], ', d = ', cs[[5]]))
+  }
+})
+
+test_that('the asymptote score is the derivative of the asymptote likelihood', {
+  skip_on_cran()
+  skip_without_julia()
+  ctJuliaSetup()
+
+  # The pair has to describe the same function: the adjoint's
+  # degenerate-variance branch takes the score from here while the forward pass
+  # takes the value from there, and a mismatch between them is a wrong gradient
+  # with a right likelihood.
+  #
+  # The information is deliberately not clamped for this kind. It is genuinely
+  # negative where the likelihood is convex, which is what non-log-concavity
+  # means, and reporting that as a floor would be reporting a convex region as
+  # a flat one.
+  JuliaConnectoR::juliaEval('
+    function _ctsem_test_ll(eta, y, extras)
+      ContinuousTimeSEM._category_loglikelihood(eta, y, extras, 1) end
+    function _ctsem_test_sc(eta, y, extras)
+      s, i = ContinuousTimeSEM._category_score(eta, y, extras, 1); [s, i] end')
+  ll <- function(e, y, ex) JuliaConnectoR::juliaCall('_ctsem_test_ll', e, y, ex)
+  sc <- function(e, y, ex) JuliaConnectoR::juliaCall('_ctsem_test_sc', e, y, ex)
+
+  h <- 1e-4
+  sawnegative <- FALSE
+  for (cc in c(0, 0.15, 0.3)) for (dd in c(0.85, 1))
+    for (e in c(-3, -1, 0, 1, 3)) for (y in c(0, 1)) {
+      ex <- c(cc, dd)
+      got <- sc(e, y, ex)
+      expect_equal(got[1], (ll(e + h, y, ex) - ll(e - h, y, ex)) / (2 * h),
+        tolerance = 1e-5, info = paste0('score c=', cc, ' d=', dd, ' eta=', e))
+      expect_equal(got[2],
+        -(ll(e + h, y, ex) - 2 * ll(e, y, ex) + ll(e - h, y, ex)) / h^2,
+        tolerance = 1e-4,
+        info = paste0('information c=', cc, ' d=', dd, ' eta=', e))
+      if (got[2] < 0) sawnegative <- TRUE
+    }
+  # If this stops being true the grid has drifted away from the convex region
+  # and the test is no longer exercising what it was written for.
+  expect_true(sawnegative)
+
+  for (e in c(-6, -2, 0, 2, 6)) for (y in c(0, 1))
+    expect_equal(ll(e, y, c(0, 1)), ll(e, y, numeric(0)), tolerance = 1e-14)
+})
+
+test_that('the gradient of a binary model with asymptotes matches finite differences', {
+  skip_on_cran()
+  skip_without_julia()
+
+  # The forward pass and the reverse pass are separate code, and a reverse pass
+  # can be wrong while every likelihood in the package is right. That is what
+  # happened here: the adjoint mapped an asymptote's cotangent back onto its
+  # parameter cell with the rule the ordinal thresholds use -- a reverse
+  # cumulative sum, correct when threshold k is a sum of gaps and wrong when
+  # `d = c + (1-c)g`. Nothing in the likelihood tests could see it. The fit
+  # stopped at a gradient norm of 6536, where a converged one is 1e-3, and the
+  # diagnostics then reported the guessing parameter as unidentified with
+  # negative curvature -- a description of a point that was not a mode, which
+  # reads exactly like the identification problem the three parameter model is
+  # known for. With the mapping corrected the same fit converges, the Hessian
+  # is negative definite, and the guessing parameter comes back at 0.199
+  # (sd 0.008) against a generating 0.20.
+  #
+  # So: every kind whose parameters reach the engine through the extras slot
+  # needs a finite difference check on the *gradient*, not only on the value.
+  nit <- 5
+  nm <- paste0('y', seq_len(nit))
+  loadings <- rep(1.3, nit)
+  difficulty <- seq(-1.2, 1.2, length.out = nit)
+  gen <- ctModel(type = 'ct', n.latent = 1, n.manifest = nit,
+    manifestNames = nm, latentNames = 'eta', manifesttype = rep(1L, nit),
+    asymptotes = rep(1L, nit), LAMBDA = matrix(loadings, nit, 1),
+    DRIFT = matrix(-0.5), DIFFUSION = matrix(1.3), T0VAR = matrix(1.3),
+    T0MEANS = matrix(0), CINT = matrix(0),
+    MANIFESTMEANS = matrix(-loadings * difficulty, nit, 1),
+    MANIFESTVAR = diag(0, nit), Tpoints = 5)
+  fixed <- gen$pars$matrix %in% 'THRESHOLDS' & gen$pars$col == 1
+  gen$pars$value[fixed] <- 0.2
+  gen$pars$param[fixed] <- NA
+  gen$pars$transform[fixed] <- NA
+  set.seed(5)
+  d <- data.frame(ctGenerate(gen, n.subjects = 30, Tpoints = 5, dtmean = 0.8,
+    backend = 'julia'))
+
+  JuliaConnectoR::juliaEval('
+    function _ctsem_test_value(obj, x)
+      ContinuousTimeSEM.ctsem_adjoint_gradient(obj, x).value end
+    function _ctsem_test_grad(obj, x)
+      collect(ContinuousTimeSEM.ctsem_adjoint_gradient(obj, x).gradient) end')
+
+  for (asym in c(0L, 1L, 2L)) {
+    model <- ctModel(type = 'ct', n.latent = 1, n.manifest = nit,
+      manifestNames = nm, latentNames = 'eta', manifesttype = rep(1L, nit),
+      asymptotes = if (asym == 0L) NULL else rep(asym, nit),
+      LAMBDA = matrix(c(1, paste0('a_', nm[-1])), nit, 1),
+      CINT = matrix(0), T0MEANS = matrix(0), MANIFESTVAR = diag(0, nit))
+    model$pars$indvarying <- FALSE
+    # One shared asymptote, which is both the usual way to make it estimable
+    # and the case where a wrong cotangent is summed over items rather than
+    # cancelling.
+    if (asym >= 1L) model$pars$param[model$pars$matrix %in% 'THRESHOLDS' &
+        model$pars$col == 1 & !is.na(model$pars$param)] <- 'guess'
+    if (asym >= 2L) model$pars$param[model$pars$matrix %in% 'THRESHOLDS' &
+        model$pars$col == 2 & !is.na(model$pars$param)] <- 'upper'
+
+    fit <- ctFit(d[, c('id', 'time', nm)], model, backend = 'julia', cores = 1,
+      optimcontrol = list(maxiter = 1), priors = TRUE)
+    objective <- .ctJuliaObjective(fit)
+    # Away from the optimum on purpose: at a mode every gradient is near zero
+    # and agrees with anything.
+    set.seed(1)
+    at <- as.numeric(fit$estimate$raw) +
+      stats::rnorm(length(fit$estimate$raw), 0, 0.3)
+    analytic <- JuliaConnectoR::juliaCall('_ctsem_test_grad', objective, at)
+    step <- 1e-5
+    numeric <- vapply(seq_along(at), function(i) {
+      up <- at; up[i] <- up[i] + step
+      down <- at; down[i] <- down[i] - step
+      (JuliaConnectoR::juliaCall('_ctsem_test_value', objective, up) -
+          JuliaConnectoR::juliaCall('_ctsem_test_value', objective, down)) /
+        (2 * step)
+    }, numeric(1))
+    expect_equal(analytic, numeric, tolerance = 1e-5,
+      info = paste0('asymptotes = ', asym))
+  }
+})

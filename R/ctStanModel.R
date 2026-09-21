@@ -25,7 +25,8 @@ ctModelUnlist<-function(ctmodelobj,
   return(out)
 }
 
-.ctModelDefaultFreePar <- function(matrix, row, col, continuoustime){
+.ctModelDefaultFreePar <- function(matrix, row, col, continuoustime,
+  param = NULL){
   transform <- 0
   multiplier <- 1
   meanscale <- 1
@@ -44,14 +45,38 @@ ctModelUnlist<-function(ctmodelobj,
   # they take the same positive transform the variances use. At a raw value of
   # zero a gap is log(2)*2 = 1.39, which is a sane spacing on a logit scale.
   if(matrix %in% c('THRESHOLDS')) {
-    # Column 1 is fixed at zero by `.ctThresholdMatrix()`, so this applies to
-    # nothing a model estimates; it is kept so the column has a coherent default
-    # if anything ever frees it.
-    if(col == 1) meanscale <- 10
-    if(col > 1) {
-      transform <- 1
-      meanscale <- 2
-      multiplier <- 2
+    # A binary indicator's asymptotes share this matrix with the ordinal
+    # thresholds and need the opposite kind of transform -- bounded in (0, 1)
+    # rather than positive and unbounded -- so the two are told apart here.
+    #
+    # By the parameter's name rather than by the manifest's type, because the
+    # type is not in scope at either call site and the alternative is
+    # threading a vector through both for one branch. `.ctThresholdMatrix()`
+    # writes these names, so the discriminator is ctsem's own rather than
+    # something a user supplies by accident; a cell a user chooses to call
+    # `asymptote_x` gets a proportion's transform, which is what that name
+    # asks for.
+    asym <- !is.null(param) && grepl('^asymptote', param)
+    if(asym) {
+      # A proportion. The inner offsets set where a raw zero lands, which is
+      # what the prior and the optimizer's start both see: a guessing
+      # probability of 0.18 rather than a coin flip, and an upper asymptote
+      # near one rather than halfway down. Neither bounds anything -- the
+      # whole of (0, 1) stays reachable.
+      transform <- 3
+      multiplier <- 1
+      meanscale <- 1
+      inneroffset <- if(grepl('^asymptotegap', param)) 3 else -1.5
+    } else {
+      # Column 1 is fixed at zero by `.ctThresholdMatrix()`, so this applies to
+      # nothing a model estimates; it is kept so the column has a coherent
+      # default if anything ever frees it.
+      if(col == 1) meanscale <- 10
+      if(col > 1) {
+        transform <- 1
+        meanscale <- 2
+        multiplier <- 2
+      }
     }
   }
 
@@ -192,7 +217,8 @@ ctModelUnlist<-function(ctmodelobj,
             matrix=matrixname,
             row=rowi,
             col=coli,
-            continuoustime=ctm[['continuoustime']])
+            continuoustime=ctm[['continuoustime']],
+            param=parsed$param)
           if(wasfixed || is.na(pars$transform[parrow])) pars$transform[parrow] <- defaults$transform
           if(wasfixed || is.na(pars$sdscale[parrow])) pars$sdscale[parrow] <- defaults$sdscale
           pars$indvarying[parrow] <- as.logical(pars$indvarying[parrow])
@@ -395,7 +421,8 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
         matrix = ctspec$matrix[pi],
         row = ctspec$row[pi],
         col = ctspec$col[pi],
-        continuoustime = continuoustime)$numeric
+        continuoustime = continuoustime,
+        param = ctspec$param[pi])$numeric
       ctspec$transform[pi] <- defaults$transform
       ctspec$multiplier[pi] <- defaults$multiplier
       ctspec$meanscale[pi] <- defaults$meanscale
@@ -634,6 +661,10 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
     # only thing that ever has to be tested before reading it.
     ncategories=if(is.null(ctmodelobj$ncategories))
       rep(0L, n.manifest) else as.integer(ctmodelobj$ncategories),
+    # Zero for everything that is not a binary variable estimating an
+    # asymptote, for the same reason: one test before anything reads it.
+    asymptotes=if(is.null(ctmodelobj$asymptotes))
+      rep(0L, n.manifest) else as.integer(ctmodelobj$asymptotes),
     # Infinite for every non-censored variable, so a limit cannot apply where
     # it was not asked for.
     censormin=if(is.null(ctmodelobj$censormin))
