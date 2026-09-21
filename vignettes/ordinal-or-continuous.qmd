@@ -16,14 +16,8 @@ vignette: >
 ---
 
 ```{r setup, include = FALSE}
-knitr::opts_chunk$set(
-  collapse = TRUE,
-  comment = "#>",
-  fig.width = 7,
-  fig.height = 4,
-  message = FALSE,
-  warning = FALSE
-)
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7,
+  fig.height = 4, message = FALSE, warning = FALSE)
 ```
 
 ```{r libs}
@@ -42,26 +36,29 @@ simulated we can also fit the uncategorised latent states, which gives a
 ceiling: whatever that fit fails to recover is due to the design and the
 sample, not to categorisation.
 
-# Data
+Code that only generates or draws is folded throughout; unfold it if you want
+to reproduce the figures.
 
-Two Ornstein-Uhlenbeck processes with one item each. `eta1` affects `eta2` and
-not the reverse, and the innovations correlate, so the pair has both a cross
-effect and a contemporaneous association.
+# The data
+
+Two Ornstein-Uhlenbeck processes, one five point item each. `eta1` affects
+`eta2` and not the reverse, the innovations correlate at 0.4, and four
+thresholds at $\pm1$ and $\pm2.8$ cut each process into categories.
 
 ```{r data}
+#| code-fold: true
 DRIFT <- matrix(c(-0.5, 0,
                   0.3, -0.5), 2, 2, byrow = TRUE)   # eta1 -> eta2 is 0.3
-diffsd <- 2.2                                       # innovation sd, both
-diffcor <- 0.4                                      # innovation correlation
+diffsd <- 2.2
+diffcor <- 0.4
+thresholds <- c(-2.8, -1.0, 1.0, 2.8)
 
-# covmattransform='z' makes the off-diagonal of a covariance matrix exactly
-# atanh(correlation) and the diagonal a standard deviation, so the generating
-# values can be written down rather than solved for.
+# covmattransform='z' makes a covariance matrix's off-diagonal exactly
+# atanh(correlation), so the generating values can be written down.
 zmat <- function(sd1, sd2, r) matrix(c(sd1, 0, atanh(r), sd2), 2, 2, byrow = TRUE)
 
-# Stationary covariance, solving A S + S A' + Q = 0. Starting T0VAR here makes
-# every occasion a draw from the same distribution, so one pair of standard
-# deviations describes the whole series.
+# Stationary covariance, solving A S + S A' + Q = 0, used for T0VAR so that
+# every occasion is a draw from the same distribution.
 Q <- diag(diffsd, 2) %*% matrix(c(1, diffcor, diffcor, 1), 2) %*% diag(diffsd, 2)
 S <- matrix(solve(kronecker(diag(2), DRIFT) + kronecker(DRIFT, diag(2)),
   -as.vector(Q)), 2, 2)
@@ -85,21 +82,18 @@ set.seed(2)
 d <- data.frame(ctGenerate(gen, n.subjects = 150, Tpoints = 30, dtmean = 0.7,
   backend = 'julia'))
 
-# The cumulative logit: the response is in category k or below when the state
-# plus a logistic disturbance falls below threshold tau_k. Four thresholds give
-# five categories.
-thresholds <- c(-2.8, -1.0, 1.0, 2.8)
+# The cumulative logit: the response falls in category k or below when the
+# state plus a logistic disturbance is below threshold k.
 ordinalise <- function(eta)
   1 + rowSums(outer(eta + rlogis(length(eta)), thresholds, '>'))
-
 set.seed(502)
 d$y1 <- ordinalise(d$eta1)
 d$y2 <- ordinalise(d$eta2)
 ```
 
 One subject. The line is the latent process, the dotted lines are the
-thresholds, and the points are the recorded answers, placed at the middle of
-the band each category stands for:
+thresholds, and the points are the recorded answers at the middle of the band
+each category stands for:
 
 ```{r overlay, fig.height = 4}
 #| code-fold: true
@@ -119,9 +113,8 @@ ggplot(s, aes(time)) +
 ```
 
 The points follow the line, but only to the resolution of the bands, and they
-cross a threshold slightly early or late depending on the disturbance. Both
-items should use the full scale, with no category so rare that it carries
-nothing:
+cross a threshold early or late depending on the disturbance. Both items use
+the whole scale, with no category so rare that it carries nothing:
 
 ```{r categoryuse, fig.height = 2.4}
 #| code-fold: true
@@ -130,6 +123,66 @@ freq <- rbind(data.frame(item = 'y1', category = factor(d$y1)),
 
 ggplot(freq, aes(category)) + geom_bar() + facet_wrap(~item) +
   theme_bw() + labs(x = NULL, y = NULL)
+```
+
+# Fitting it as ordinal
+
+This is the whole of it. Two arguments do the work: `manifesttype = 2` asks
+for the cumulative logit, and `ncategories` says how many thresholds to
+estimate, which the model has to know before it sees the data.
+
+```{r ordinalfit}
+ordinalmodel <- ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
+  manifestNames = c('y1', 'y2'), latentNames = c('eta1', 'eta2'),
+  manifesttype = c(2, 2),             # ordinal
+  ncategories = c(5, 5),              # five point scale
+  LAMBDA = diag(1, 2),
+  CINT = matrix(0, 2, 1), T0MEANS = matrix(0, 2, 1),
+  MANIFESTVAR = diag(0, 2))           # the logit supplies the noise
+
+ordinalfit <- ctFit(d[, c('id', 'time', 'y1', 'y2')], ordinalmodel,
+  backend = 'julia', cores = 1)
+```
+
+`MANIFESTVAR` is zero because the cumulative logit already carries the
+randomness; `ctFit()` fixes it for you if you leave it free.
+
+`summary()` reports the thresholds on the latent scale, one row per category
+boundary:
+
+```{r thresholds}
+summary(ordinalfit)$thresholds
+```
+
+Those are recovered against generating values of −2.8, −1, 1 and 2.8.
+
+# Fitting it as continuous, and the ceiling
+
+The Gaussian version is the same call with `manifesttype = 0`, no
+`ncategories`, and a free residual variance per item instead of thresholds.
+The ceiling fit is that same Gaussian model applied to the uncategorised
+states, which is only possible because the data are simulated.
+
+```{r otherfits}
+#| code-fold: true
+gaussianmodel <- ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
+  manifestNames = c('y1', 'y2'), latentNames = c('eta1', 'eta2'),
+  LAMBDA = diag(1, 2), CINT = matrix(0, 2, 1), T0MEANS = matrix(0, 2, 1),
+  MANIFESTVAR = matrix(c('mvar_y1', 0, 0, 'mvar_y2'), 2, 2))
+
+# The ceiling data are the latent states themselves, so there is no
+# measurement error to estimate: leaving it free puts a parameter on the
+# boundary at zero and the fit reports a direction it cannot identify.
+ceilingmodel <- ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
+  manifestNames = c('c1', 'c2'), latentNames = c('eta1', 'eta2'),
+  LAMBDA = diag(1, 2), CINT = matrix(0, 2, 1), T0MEANS = matrix(0, 2, 1),
+  MANIFESTVAR = diag(0, 2))
+ceilingdata <- setNames(d[, c('id', 'time', 'eta1', 'eta2')],
+  c('id', 'time', 'c1', 'c2'))
+
+gaussianfit <- ctFit(d[, c('id', 'time', 'y1', 'y2')], gaussianmodel,
+  backend = 'julia', cores = 1)
+ceilingfit <- ctFit(ceilingdata, ceilingmodel, backend = 'julia', cores = 1)
 ```
 
 # What should and should not agree
@@ -154,76 +207,30 @@ invariant to rescaling the latent processes.
   a rate of reversion does not change when the process is measured in other
   units.
 * *The diffusion correlation*, being a correlation.
-* *The standardised cross effect*, the effect expressed in stationary standard
+* *The standardised cross effect*, the effect in stationary standard
   deviations, $\tilde{a}_{21} = a_{21}\,\text{sd}(\eta_1)/\text{sd}(\eta_2)$.
 
 **Not expected to agree**
 
 * *The raw cross effect* `drift_eta2_eta1`, whose unit is `eta2` per unit of
-  `eta1` per unit time. It moves when either scale moves. Note that this is
-  already true between the two processes within a single fit: `eta2` is the
-  more variable of the two because it accumulates `eta1`, so the same effect
-  takes different numbers on differently scaled processes.
-* *`DIFFUSION` and `T0VAR` on their own*, and the residual variances, which are
-  in latent units or in answer-code units respectively.
-* *`MANIFESTMEANS`*, which is a location on the latent scale in the Gaussian
-  fit and the first threshold's counterpart in the ordinal one.
+  `eta1` per unit time. Note this is already true between the two processes
+  within a single fit: `eta2` is the more variable because it accumulates
+  `eta1`, so the same effect takes different numbers on differently scaled
+  processes.
+* *`DIFFUSION` and `T0VAR` on their own*, and the residual variances.
+* *`MANIFESTMEANS`*, a location on the latent scale in the Gaussian fit and
+  the thresholds' anchor in the ordinal one.
 
-Only the ordinal fit's scale has a meaning outside the questionnaire, so where
-the raw quantities differ it is the ordinal fit that should be reported.
-
-# Fitting both ways
-
-The two observed-data models differ only in the measurement part: the Gaussian
-model estimates a residual variance per item, the ordinal model estimates
-thresholds instead.
-
-```{r models}
-buildmodel <- function(type, ncat = 0, names = c('y1', 'y2'),
-  residual = type != 2) {
-  mvar <- diag(0, 2)
-  if (residual) diag(mvar) <- paste0('mvar_', names)
-  m <- ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
-    manifestNames = names, latentNames = c('eta1', 'eta2'),
-    manifesttype = rep(type, 2), ncategories = rep(ncat, 2),
-    LAMBDA = diag(1, 2), CINT = matrix(0, 2, 1), T0MEANS = matrix(0, 2, 1),
-    MANIFESTVAR = mvar)
-  m$pars$indvarying <- FALSE
-  m
-}
-
-ceilingdata <- setNames(d[, c('id', 'time', 'eta1', 'eta2')],
-  c('id', 'time', 'c1', 'c2'))
-
-fits <- list(
-  # residual = FALSE because the ceiling data are the latent states themselves:
-  # there is no measurement error to estimate, and leaving the parameter free
-  # puts it on the boundary at zero, where the likelihood is flat and the fit
-  # reports a direction it cannot identify.
-  uncategorised = ctFit(ceilingdata,
-    buildmodel(0, names = c('c1', 'c2'), residual = FALSE),
-    backend = 'julia', cores = 1),
-  gaussian = ctFit(d[, c('id', 'time', 'y1', 'y2')], buildmodel(0),
-    backend = 'julia', cores = 1),
-  ordinal = ctFit(d[, c('id', 'time', 'y1', 'y2')], buildmodel(2, ncat = 5),
-    backend = 'julia', cores = 1))
-```
-
-`ctDiscretePars()` converts the estimated `DRIFT` into the regressions implied
-at each time interval, which is the readable form of the dynamics.
-Autoregressions are on the diagonal, cross effects off it:
-
-```{r dynamics, fig.height = 4.6}
-ctDiscretePars(fits$ordinal, times = seq(0, 6, .1), standardise = TRUE,
-  plot = TRUE, indices = 'all', cores = 1)
-```
+Only the ordinal fit's scale means anything outside the questionnaire, so
+where the raw quantities differ it is the ordinal fit to report.
 
 # Comparison
 
-The standardised cross effect over time, from the three fits and from the
-generating parameters:
+`ctDiscretePars()` turns each fit's `DRIFT` into the regressions it implies at
+every time interval. Standardised, those are comparable across the three:
 
 ```{r crosscurve}
+#| code-fold: true
 times <- seq(0, 6, .1)
 
 crosscurve <- function(fit, label) {
@@ -233,16 +240,12 @@ crosscurve <- function(fit, label) {
 }
 
 curves <- rbind(
-  crosscurve(fits$uncategorised, 'uncategorised (ceiling)'),
-  crosscurve(fits$gaussian, 'gaussian on the codes'),
-  crosscurve(fits$ordinal, 'ordinal'),
+  crosscurve(ceilingfit, 'uncategorised (ceiling)'),
+  crosscurve(gaussianfit, 'gaussian on the codes'),
+  crosscurve(ordinalfit, 'ordinal'),
   data.frame(time = times, model = 'truth', value = sapply(times,
     function(u) expm::expm(DRIFT * u)[2, 1] * latentsd[1] / latentsd[2])))
 
-```
-
-```{r crosscurveplot}
-#| code-fold: true
 ggplot(curves, aes(time, value, colour = model, linetype = model)) +
   geom_line(linewidth = .9) + theme_bw() +
   theme(legend.position = 'bottom') +
@@ -251,36 +254,36 @@ ggplot(curves, aes(time, value, colour = model, linetype = model)) +
 ```
 
 The auto effect and the diffusion correlation come from
-`summary(fit)$parmatrices`, which contains `DIFFUSIONcov`, the innovation
-covariance, and `asymDIFFUSIONcov`, the stationary covariance implied by the
-model:
+`summary(fit)$parmatrices`, which carries `DIFFUSIONcov`, the innovation
+covariance, and `asymDIFFUSIONcov`, the stationary covariance the model
+implies:
 
 ```{r table}
+#| code-fold: true
 comparable <- function(fit, label) {
-  s <- summary(fit)
-  pm <- s$parmatrices
+  pm <- summary(fit)$parmatrices
   cell <- function(mat, i, j) pm$Mean[pm$matrix == mat & pm$row == i & pm$col == j]
   data.frame(model = label,
-    drift_eta1 = s$popmeans['drift_eta1', 'mean'],
+    drift_eta1 = summary(fit)$popmeans['drift_eta1', 'mean'],
     latentsd1 = sqrt(cell('asymDIFFUSIONcov', 1, 1)),
     diffcor = cell('DIFFUSIONcov', 1, 2) /
       sqrt(cell('DIFFUSIONcov', 1, 1) * cell('DIFFUSIONcov', 2, 2)))
 }
 
 out <- rbind(
-  comparable(fits$uncategorised, 'uncategorised (ceiling)'),
-  comparable(fits$gaussian, 'gaussian on the codes'),
-  comparable(fits$ordinal, 'ordinal'),
+  comparable(ceilingfit, 'uncategorised (ceiling)'),
+  comparable(gaussianfit, 'gaussian on the codes'),
+  comparable(ordinalfit, 'ordinal'),
   data.frame(model = 'truth', drift_eta1 = DRIFT[1, 1],
     latentsd1 = latentsd[1], diffcor = diffcor))
 cbind(out[1], round(out[-1], 3))
 ```
 
 `latentsd1` is in answer-code units for the Gaussian fit and in logits for the
-ordinal fit, so the two columns are not comparable with each other. The
-ordinal one *is* comparable with the truth, though, because the link fixes its
-units: it is an estimate of a real quantity rather than a convention, and
-recovering it is a check worth making before reading anything else.
+ordinal fit, so the two fitted columns are not comparable with each other. The
+ordinal one *is* comparable with the truth, because the link fixes its units:
+it estimates a real quantity rather than a convention, and checking it is
+worth doing before reading anything else.
 
 Categorisation costs little here. That is expected under the assumptions used:
 categorisation is a monotone transformation plus noise that is independent
@@ -288,4 +291,3 @@ across items and occasions given the latent state, and `MANIFESTVAR` in the
 Gaussian model absorbs that noise. The Gaussian model still gets the latent
 scale wrong, which is why the raw cross effect cannot be read across the two
 fits, but the scale-invariant quantities are recovered.
-
