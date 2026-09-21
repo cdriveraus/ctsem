@@ -1,0 +1,230 @@
+---
+title: "Item response models over time"
+format:
+  html:
+    toc: true
+    code-fold: false
+    embed-resources: true
+    self-contained-math: true
+execute:
+  message: false
+  warning: false
+vignette: >
+  %\VignetteIndexEntry{Item response models over time}
+  %\VignetteEngine{quarto::html}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7,
+  fig.height = 4, message = FALSE, warning = FALSE)
+```
+
+```{r libs}
+library(ctsem)
+library(ggplot2)
+```
+
+A binary item measured repeatedly is an item response model whose latent
+ability moves. ctsem fits the two, three and four parameter logistic forms
+with `manifesttype = 1`, and the parameters map onto ones already in the
+model:
+
+| IRT | ctsem | notes |
+|---|---|---|
+| discrimination $a$ | `LAMBDA` | free loading |
+| difficulty $b$ | `MANIFESTMEANS` | enters as $-ab$ |
+| guessing $c$ | `asymptotes = 1` | lower asymptote |
+| upper asymptote $d$ | `asymptotes = 2` | also frees $c$ |
+
+So the two parameter model needs no special argument at all, and `asymptotes`
+adds the other two. Ordinal items are in the measurement models vignette; this
+one is about binary items and what has to be held fixed to estimate them.
+
+# The response curves
+
+$P(y=1 \mid \eta) = c + (d-c)\,\text{logit}^{-1}(a(\eta - b))$. The three forms
+differ only in where the curve starts and stops:
+
+```{r curves, fig.height = 3.4}
+eta <- seq(-4, 4, length.out = 300)
+curve3 <- function(a, b, c, d, lab) data.frame(eta = eta, lab = lab,
+  p = c + (d - c) / (1 + exp(-a * (eta - b))))
+
+ggplot(rbind(
+  curve3(1.5, 0, 0,    1,    '2PL'),
+  curve3(1.5, 0, 0.25, 1,    '3PL: guessing 0.25'),
+  curve3(1.5, 0, 0.25, 0.9,  '4PL: and a ceiling of 0.9')),
+  aes(eta, p, colour = lab)) +
+  geom_hline(yintercept = c(0, 1), linewidth = .3, colour = 'grey80') +
+  geom_line(linewidth = 1) +
+  scale_y_continuous(limits = c(0, 1)) +
+  theme_bw() + theme(legend.position = 'bottom') +
+  labs(x = 'latent ability', y = 'P(correct)', colour = NULL)
+```
+
+The guessing parameter lifts the floor: someone far below the item's
+difficulty still answers correctly a quarter of the time. The upper asymptote
+lowers the ceiling, for items even able people sometimes miss.
+
+# What has to be fixed
+
+The latent process needs a **scale** and a **location**, as in any factor
+model, and the logistic link supplies neither. Multiply the process by $k$ and
+divide every discrimination by $k$ and the linear predictor is unchanged, so
+the likelihood cannot tell them apart.
+
+There are two ways to pin the scale and they are the same model:
+
+* **fix one loading** at 1 and let `DIFFUSION` be free, or
+* **fix `DIFFUSION`** at 1 and let every loading be free.
+
+What you cannot do is fix the latent *variance*, because in continuous time it
+is not a parameter: the stationary variance is $\text{DIFFUSION}^2/(2|\text{DRIFT}|)$,
+so constraining it would mean constraining a function of two things the model
+is estimating. Pick one of the two above instead.
+
+For the location, leave `CINT` and `T0MEANS` at zero and let `MANIFESTMEANS`
+carry the difficulties. Freeing both ends is the same redundancy again.
+
+`MANIFESTVAR` must be zero: the logistic link already supplies the
+randomness, and `ctFit()` fixes it for you if you leave it free.
+
+# Simulating and fitting
+
+Ten items with varying discriminations, 250 people, 8 occasions, guessing at
+0.20.
+
+```{r generate}
+nitem <- 10
+items <- paste0('y', seq_len(nitem))
+a <- seq(0.9, 1.9, length.out = nitem)     # discriminations
+b <- seq(-1.6, 1.6, length.out = nitem)    # difficulties
+guess <- 0.20
+
+gen <- ctModel(type = 'ct', n.latent = 1, n.manifest = nitem,
+  manifestNames = items, latentNames = 'eta',
+  manifesttype = rep(1, nitem), asymptotes = rep(1, nitem),
+  LAMBDA = matrix(a, nitem, 1), MANIFESTMEANS = matrix(-a * b, nitem, 1),
+  DRIFT = matrix(-0.4), DIFFUSION = matrix(1.2), T0VAR = matrix(1.342),
+  T0MEANS = matrix(0), CINT = matrix(0), MANIFESTVAR = diag(0, nitem),
+  Tpoints = 8)
+
+# The guessing probability is THRESHOLDS column 1. Fixing it to generate from
+# a known value; in a model being fitted it is left free.
+lower <- gen$pars$matrix == 'THRESHOLDS' & gen$pars$col == 1
+gen$pars$value[lower] <- guess
+gen$pars$param[lower] <- NA
+gen$pars$transform[lower] <- NA
+
+set.seed(7)
+d <- data.frame(ctGenerate(gen, n.subjects = 250, Tpoints = 8, dtmean = 0.9,
+  backend = 'julia'))
+```
+
+The floor is visible in the data. An item far above someone's ability is still
+answered correctly about `c` of the time, where a 2PL would go to zero:
+
+```{r floor, fig.height = 3.2}
+hardest <- d[[items[nitem]]]
+ggplot(data.frame(p = c(mean(hardest), guess +
+    (1 - guess) * mean(plogis(a[nitem] * (rnorm(1e5, 0, 1.342) - b[nitem]))),
+  mean(plogis(a[nitem] * (rnorm(1e5, 0, 1.342) - b[nitem])))),
+  lab = factor(c('observed', '3PL expected', '2PL would give'),
+    levels = c('observed', '3PL expected', '2PL would give'))),
+  aes(lab, p, fill = lab)) +
+  geom_col(width = .6, show.legend = FALSE) +
+  geom_text(aes(label = sprintf('%.2f', p)), vjust = -0.4) +
+  scale_y_continuous(limits = c(0, 0.45)) +
+  theme_bw() + labs(x = NULL, y = 'P(correct), hardest item')
+```
+
+Fitting needs one line changed between the three models — `asymptotes`.
+
+```{r fit}
+irtmodel <- function(asymptotes = NULL) {
+  m <- ctModel(type = 'ct', n.latent = 1, n.manifest = nitem,
+    manifestNames = items, latentNames = 'eta',
+    manifesttype = rep(1, nitem), asymptotes = asymptotes,
+    # Scale: the first loading is fixed at 1 and DIFFUSION is free.
+    LAMBDA = matrix(c(1, paste0('a_', items[-1])), nitem, 1),
+    # Location: the latent is centred, so MANIFESTMEANS are the difficulties.
+    CINT = matrix(0), T0MEANS = matrix(0),
+    MANIFESTVAR = diag(0, nitem))
+  m$pars$indvarying <- FALSE
+  # One guessing parameter for the whole test. Per item is possible and much
+  # harder to estimate; sharing is the usual starting point.
+  if (!is.null(asymptotes)) m$pars$param[m$pars$matrix == 'THRESHOLDS' &
+      m$pars$col == 1 & !is.na(m$pars$param)] <- 'guess'
+  m
+}
+
+fit2 <- ctFit(d[, c('id', 'time', items)], irtmodel(),
+  backend = 'julia', cores = 1, priors = TRUE)
+fit3 <- ctFit(d[, c('id', 'time', items)], irtmodel(rep(1, nitem)),
+  backend = 'julia', cores = 1, priors = TRUE)
+```
+
+```{r compare}
+data.frame(model = c('2PL', '3PL'),
+  loglik = round(c(fit2$estimate$loglik, fit3$estimate$loglik), 1),
+  npars = c(length(fit2$estimate$raw), length(fit3$estimate$raw)),
+  guess = c(NA, round(summary(fit3)$popmeans['guess', 'mean'], 3)),
+  guess_sd = c(NA, round(summary(fit3)$popmeans['guess', 'sd'], 3)))
+```
+
+The guessing parameter is recovered with a usable standard error, and the
+three parameter model fits better for the one extra parameter.
+
+# Reading the dynamics
+
+The point of fitting these over time is the process, not the items.
+`ctDiscretePars()` gives the autoregression of ability across intervals:
+
+```{r dynamics, fig.height = 3.6}
+ctDiscretePars(fit3, times = seq(0, 8, .1), plot = TRUE, indices = 'AR',
+  cores = 1)
+```
+
+# Four parameters, and when to stop
+
+`asymptotes = 2` frees the ceiling as well. It is reported as a gap: the model
+estimates how far the upper asymptote sits from the lower one as a proportion
+of the room left, so that $0 \le c < d \le 1$ holds without either parameter
+having to know the other's value.
+
+```{r fourpl}
+m4 <- irtmodel(rep(2, nitem))
+m4$pars$param[m4$pars$matrix == 'THRESHOLDS' & m4$pars$col == 2 &
+    !is.na(m4$pars$param)] <- 'uppergap'
+fit4 <- ctFit(d[, c('id', 'time', items)], m4, backend = 'julia', cores = 1,
+  priors = TRUE)
+round(summary(fit4)$popmeans[c('guess', 'uppergap'), ], 3)
+```
+
+These data were generated with no ceiling, so the four parameter model is
+fitting one that is not there — worth seeing, because it is the usual
+situation. Asymptotes are weakly informed even in cross-sectional item
+response modelling with large samples, and here the dynamics compete for the
+same information. Three practical points:
+
+* **Share the asymptote across items** unless you have a reason and the data
+  to do otherwise.
+* **Use `priors = TRUE`.** The default prior puts the guessing probability
+  near 0.18 and the ceiling near 1, which is where they belong when the data
+  are quiet about them.
+* **Check the fit converged** rather than reading the estimate. A guessing
+  parameter reported without a standard error, or alongside a warning about
+  curvature, is a stopping point rather than an answer.
+
+# Summary
+
+* A free loading on a binary indicator is already a 2PL; `asymptotes = 1` and
+  `2` add the third and fourth parameters.
+* Fix either one loading or `DIFFUSION` to set the latent scale. The
+  stationary variance cannot be fixed directly, being
+  $\text{DIFFUSION}^2/(2|\text{DRIFT}|)$.
+* Keep `CINT` and `T0MEANS` at zero so `MANIFESTMEANS` are the difficulties,
+  and leave `MANIFESTVAR` at zero.
+* Share asymptotes across items and fit with priors; treat an asymptote
+  without a standard error as not estimated.
