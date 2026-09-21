@@ -350,10 +350,23 @@ function ctsem_tune_chunks!(evaluate; ceiling::Integer=0, verbose::Bool=false)
     limit = limit <= 0 ? Threads.nthreads() : min(limit, Threads.nthreads())
     if limit <= 1
         _CTSEM_MAX_CHUNKS[] = 1
-        return (chunks=1, timings=[(1, NaN)])
+        _LAPLACE_MEMBER_WIDTH[] = 1
+        return (chunks=1, width=1, timings=[(1, 1, NaN)])
     end
     previous = _CTSEM_MAX_CHUNKS[]
-    timings = Tuple{Int,Float64}[]
+    previous_width = _LAPLACE_MEMBER_WIDTH[]
+    # Each candidate spends the whole budget: `n` chunks of units, each dividing
+    # a unit's members `limit / n` ways, so `n * width <= limit` always and the
+    # ceiling the caller asked for is what runs. `n = limit` is the old
+    # behaviour, chunks only; `n = 1` is members only.
+    #
+    # Both ends matter and neither dominates. A unit's innermost level is one
+    # block per subject, which only chunks can spread; its outermost is a single
+    # block over every member, which only the member axis can. And where units
+    # are few and unequal -- thirteen studies, the largest 18.4% of the rows --
+    # chunks alone cap the speedup at 5.4x however many cores are given.
+    width_for = n -> max(1, limit ÷ max(n, 1))
+    timings = Tuple{Int,Int,Float64}[]
     best_chunks = 1
     best_time = Inf
     misses = 0
@@ -391,7 +404,8 @@ function ctsem_tune_chunks!(evaluate; ceiling::Integer=0, verbose::Bool=false)
         end
         for n in candidates
             _CTSEM_MAX_CHUNKS[] = n
-            evaluate()                       # warm this chunk count's workspaces
+            _LAPLACE_MEMBER_WIDTH[] = width_for(n)
+            evaluate()                       # warm this setting's workspaces
             elapsed = Inf
             slowest = 0.0
             for _ in 1:repeats
@@ -402,9 +416,9 @@ function ctsem_tune_chunks!(evaluate; ceiling::Integer=0, verbose::Bool=false)
             if repeats > 1 && elapsed > 0
                 noise = max(noise, (slowest - elapsed) / elapsed)
             end
-            push!(timings, (n, elapsed))
-            verbose && println(_console(), "Chunk tuning: ", n, " chunk(s) ",
-                round(elapsed; digits=4), " s")
+            push!(timings, (n, width_for(n), elapsed))
+            verbose && println(_console(), "Chunk tuning: ", n, " chunk(s) x ",
+                width_for(n), " member task(s) ", round(elapsed; digits=4), " s")
             # `1 - noise`, not a fixed 0.95. Splitting a small model's subject
             # loop finely is close to free either way, so the ladder was picking
             # between candidates that differ by less than the timing varies:
@@ -431,11 +445,15 @@ function ctsem_tune_chunks!(evaluate; ceiling::Integer=0, verbose::Bool=false)
     catch err
         err isa InterruptException && rethrow()
         _CTSEM_MAX_CHUNKS[] = previous
+        _LAPLACE_MEMBER_WIDTH[] = previous_width
         rethrow()
     end
     _CTSEM_MAX_CHUNKS[] = best_chunks
-    verbose && println(_console(), "Chunk tuning: using ", best_chunks, " chunk(s) of at most ", limit)
-    return (chunks=best_chunks, timings=timings)
+    _LAPLACE_MEMBER_WIDTH[] = width_for(best_chunks)
+    verbose && println(_console(), "Chunk tuning: using ", best_chunks,
+        " chunk(s) x ", width_for(best_chunks), " member task(s), ",
+        best_chunks * width_for(best_chunks), " of at most ", limit)
+    return (chunks=best_chunks, width=width_for(best_chunks), timings=timings)
 end
 
 export ctsem_tune_chunks!
