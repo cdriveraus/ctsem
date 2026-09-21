@@ -137,15 +137,17 @@ ordinalmodel <- ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
   manifesttype = c(2, 2),             # ordinal
   ncategories = c(5, 5),              # five point scale
   LAMBDA = diag(1, 2),
-  CINT = matrix(0, 2, 1), T0MEANS = matrix(0, 2, 1),
-  MANIFESTVAR = diag(0, 2))           # the logit supplies the noise
+  CINT = matrix(0, 2, 1), T0MEANS = matrix(0, 2, 1))
 
 ordinalfit <- ctFit(d[, c('id', 'time', 'y1', 'y2')], ordinalmodel,
   backend = 'julia', cores = 1)
 ```
 
-`MANIFESTVAR` is zero because the cumulative logit already carries the
-randomness; `ctFit()` fixes it for you if you leave it free.
+Nothing is said about `MANIFESTVAR`. The cumulative logit already supplies the
+randomness, so a residual variance on top of it is not identified, and
+`ctFit()` fixes the whole matrix itself and says so -- including the
+off-diagonal, which the default leaves free as a correlated measurement error
+between the two items. Setting it to zero by hand changes nothing.
 
 `summary()` reports the thresholds on the latent scale, one row per category
 boundary:
