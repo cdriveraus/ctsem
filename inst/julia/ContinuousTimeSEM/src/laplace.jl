@@ -850,30 +850,26 @@ function _laplace_subject_values(values::AbstractVector{T}, spec::CTSEMLaplaceSp
     return shifted
 end
 
-"""
-The worker pool.
-
-Everything in this file that runs in parallel runs on one pool of at most
-`cores` workers, and a worker's identity is *ambient*: it lives in task-local
-storage as a base slot and a budget, and `_laplace_parallel` splits that budget
-among the workers it claims. Nothing is passed down and so nothing can be
-dropped on the way.
-
-That is the point. The previous arrangement threaded a slot and a count through
-eight functions as two separate arguments with independent defaults. A caller
-could supply half of a band, and the half whose absence is *safe* -- the count,
-whose default means "run serially" -- is the one that got dropped. Twice. It
-cost 4.6x down to 1.2x on the primal, with the answer correct throughout, so no
-test could report it. An ambient budget cannot be half-supplied, and a caller
-that forgets to touch it inherits its parent's, which is always within bounds.
-
-Nesting is bounded by construction: a region hands each worker `budget / nw`,
-so the workers alive at any moment never outnumber the pool however deep the
-nesting goes. That is also the `cores` ceiling the caller asked for, held by
-arithmetic rather than by a tuner multiplying two numbers and hoping.
-"""
-const _LAPLACE_POOL_SIZE = Ref(1)
-
+# The worker pool.
+#
+# Everything in this file that runs in parallel runs on one pool of at most
+# `cores` workers, and a worker's identity is *ambient*: it lives in task-local
+# storage as a base slot and a budget, and `_laplace_parallel` splits that budget
+# among the workers it claims. Nothing is passed down and so nothing can be
+# dropped on the way.
+#
+# That is the point. The previous arrangement threaded a slot and a count through
+# eight functions as two separate arguments with independent defaults. A caller
+# could supply half of a band, and the half whose absence is *safe* -- the count,
+# whose default means "run serially" -- is the one that got dropped. Twice. It
+# cost 4.6x down to 1.2x on the primal, with the answer correct throughout, so no
+# test could report it. An ambient budget cannot be half-supplied, and a caller
+# that forgets to touch it inherits its parent's, which is always within bounds.
+#
+# Nesting is bounded by construction: a region hands each worker `budget / nw`,
+# so the workers alive at any moment never outnumber the pool however deep the
+# nesting goes. That is also the `cores` ceiling the caller asked for, held by
+# arithmetic rather than by a tuner multiplying two numbers and hoping.
 """Workers the pool may use: the `cores` ceiling, capped by the threads there are."""
 @inline function _laplace_pool_size()
     requested = _CTSEM_MAX_CHUNKS[]
@@ -881,14 +877,47 @@ const _LAPLACE_POOL_SIZE = Ref(1)
         min(requested, Threads.nthreads()))
 end
 
-"""This task's slot band: where its scratch lives, and how many workers it may claim."""
+"""
+This task's slot band: where its scratch lives, and how many workers it may
+claim.
+
+**The default is one, and deriving it from a global instead was a bug.** An
+earlier version defaulted to the last pool size any fit had set, so an entry
+point that did not call `_laplace_ensure_pool!` -- `_laplace_unit_hessian` on a
+freshly constructed objective, for one -- inherited a width of three against a
+workspace vector of length one and indexed past it, inside a spawned task,
+where it surfaced as a `TaskFailedException` wrapping a `BoundsError`. That is
+precisely the failure the pool exists to make impossible, reintroduced by the
+one global left in it.
+
+So a task with no band of its own runs serially. Forgetting to ensure the pool
+now costs speed and cannot cost correctness, and `_laplace_ensure_pool!` sets
+the band as well as sizing the vector, so the outermost caller gets the whole
+pool and everything under it inherits a share.
+"""
 @inline function _laplace_slots()
-    return get(task_local_storage(), :ctsem_slots,
-        (1, _LAPLACE_POOL_SIZE[]))::Tuple{Int,Int}
+    return get(task_local_storage(), :ctsem_slots, (1, 1))::Tuple{Int,Int}
 end
 
 """The slot this task's scratch lives in."""
 @inline _laplace_slot() = _laplace_slots()[1]
+
+"""
+Refuse a slot the store does not have, by name.
+
+Restoring a guard that was removed as "unnecessary under the pool". It was not:
+the thing it catches is an arithmetic error in the claim, and the pool moved
+that arithmetic rather than removing it. Without this the failure is a
+`BoundsError` inside a spawned task, wrapped in a `TaskFailedException`, with
+nothing in it naming the pool.
+"""
+@inline function _laplace_check_slot(laplace::CTSEMLaplaceObjective, slot::Integer)
+    1 <= slot <= length(laplace.workspaces) && return nothing
+    error("laplace worker pool: slot $slot asked for, " *
+          "$(length(laplace.workspaces)) exist. The caller reached a parallel " *
+          "region without `_laplace_ensure_pool!`, or claimed more workers " *
+          "than its band holds.")
+end
 
 """
     _laplace_ensure_pool!(laplace)
@@ -899,10 +928,19 @@ outermost one.
 """
 function _laplace_ensure_pool!(laplace::CTSEMLaplaceObjective)
     n = _laplace_pool_size()
-    _LAPLACE_POOL_SIZE[] = n
     while length(laplace.workspaces) < n
         push!(laplace.workspaces, Dict{Any,Any}())
     end
+    # The band too, not just the store -- but only if this task does not
+    # already have one. Every entry point calls this, and some of them are
+    # reached from inside a parallel region: `_laplace_unit_hessian` is called
+    # both directly and from the curvature's dense route. A worker that reset
+    # its band to the whole pool here would claim slots its siblings are
+    # holding, which is the collision this whole structure exists to prevent.
+    # So the outermost caller sets the band and everything under it inherits a
+    # share.
+    haskey(task_local_storage(), :ctsem_slots) ||
+        task_local_storage(:ctsem_slots, (1, n))
     return n
 end
 
@@ -1032,6 +1070,7 @@ function _laplace_workspace!(laplace::CTSEMLaplaceObjective, ::Type{T},
     # threads at any yield point, so thread-indexed mutable scratch is a race
     # rather than an optimisation -- the same reason `_get_or_init_adjoint_
     # workspaces!` hands one workspace to each chunk.
+    _laplace_check_slot(laplace, slot)
     store = laplace.workspaces[slot]
     key = (T, Int(nvalues))
     cached = get(store, key, nothing)
@@ -1065,6 +1104,7 @@ two live tasks can name the same one.
 """
 function _laplace_scratch_vector!(laplace::CTSEMLaplaceObjective, ::Type{V},
     n::Integer, tag::Symbol, slot::Integer=_laplace_slot()) where {V}
+    _laplace_check_slot(laplace, slot)
     store = laplace.workspaces[slot]
     key = (tag, V, Int(n))
     cached = get(store, key, nothing)
@@ -1086,6 +1126,7 @@ unit's random-effect dimension and as wide as one block.
 function _laplace_scratch_matrix!(laplace::CTSEMLaplaceObjective, ::Type{V},
     nrow::Integer, ncol::Integer, tag::Symbol,
     slot::Integer=_laplace_slot()) where {V}
+    _laplace_check_slot(laplace, slot)
     store = laplace.workspaces[slot]
     key = (tag, V, Int(nrow), Int(ncol))
     cached = get(store, key, nothing)
@@ -1111,6 +1152,7 @@ allocating one costs that plus the collector.
 """
 function _laplace_scratch_levels!(laplace::CTSEMLaplaceObjective, ::Type{S},
     Ls::Vector{<:AbstractMatrix}, tag::Symbol) where {S}
+    _laplace_check_slot(laplace, _laplace_slot())
     store = laplace.workspaces[_laplace_slot()]
     key = (tag, S, size.(Ls))
     cached = get(store, key, nothing)
@@ -1141,6 +1183,7 @@ so one per chunk covers all of them.
 """
 function _laplace_ekf_workspace!(laplace::CTSEMLaplaceObjective, ::Type{T},
     slot::Integer=_laplace_slot()) where {T}
+    _laplace_check_slot(laplace, slot)
     store = laplace.workspaces[slot]
     key = (:ekf_workspace, T)
     cached = get(store, key, nothing)
@@ -1267,6 +1310,7 @@ total held is the unit count rather than units times workers.
 """
 function _laplace_scratch_blockmatrix!(laplace::CTSEMLaplaceObjective, ::Type{T},
     U::Integer, blocks::Vector{CTSEMLaplaceBlock}, tag::Symbol) where {T}
+    _laplace_check_slot(laplace, _laplace_slot())
     store = laplace.workspaces[_laplace_slot()]
     key = (tag, T, Int(U))
     cached = get(store, key, nothing)
@@ -1857,8 +1901,17 @@ what makes it a usable reference for the tests that check the block assembly
 and the block factorization.
 """
 function _laplace_unit_hessian(laplace::CTSEMLaplaceObjective, U::Integer,
-    values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T},
-    slot::Integer=1) where {T}
+    values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T}
+    ) where {T}
+    # An entry point in its own right: tests and the dense curvature route both
+    # reach it directly, and it divides inside. `_laplace_ensure_pool!` is a
+    # no-op for a task that already holds a band, so calling it here is right
+    # whether this is the outermost call or one worker of an outer region.
+    #
+    # The `slot::Integer=1` that used to sit here was doing nothing at all --
+    # the body takes the ambient slot -- and an argument accepted and ignored is
+    # worse than no argument, because a caller reads it as a promise.
+    _laplace_ensure_pool!(laplace)
     d = length(u)
     d == 0 && return zeros(T, 0, 0)
     inner_of = function (uu)

@@ -329,7 +329,7 @@ end
             # block matrix, so it is densified before comparing.
             blocks = laplace.units.blocks[U]
             curvature = ContinuousTimeSEM._laplace_unit_curvature(
-                laplace, U, theta, Ls, u, 1)
+                laplace, U, theta, Ls, u)
             blocked = ContinuousTimeSEM._laplace_block_dense(curvature, blocks,
                 laplace.units.dims[U])
             reference = -ContinuousTimeSEM._laplace_unit_hessian(laplace, U, theta, Ls, u)
