@@ -305,6 +305,21 @@ test_that("a julia fit stopped early does not converge, and says what is left", 
 
 test_that("a fit started inside a flat transform gets back out of it", {
   skip_without_julia()
+  # 210 s, against about 2 for everything else in this file, and it is in the
+  # slow tier because no cheaper reproduction exists rather than because nobody
+  # looked. What was searched, with the prior floor on and off each time:
+  # 10x10, 12x12 and 15x15 over six seeds; 25x8, 25x10, 25x12, 20x10 and 30x8;
+  # and both engine fixtures over eight population-scale settings. Not one
+  # floors a unit's curvature. Where a smaller fixture does show the escape
+  # firing it fires with the floor off too -- an ordinary local optimum the
+  # escape already handled, not this. `maxiter` is already bounded below at 250
+  # for the same reason; uncapped this is 1180 s.
+  #
+  # Worth revisiting: a fixture that reaches a near-singular unit curvature
+  # deliberately rather than by luck would make this cheap and would make the
+  # floor testable on demand. See
+  # `CT-SEM/review/LAPLACE-singular-unit-curvature-2026-09-22.md`.
+  skip_unless_slow("the flat-transform escape")
   data <- .jconv_flat_data()
   model <- .jconv_flat_model()
   # Which raw coordinate `drift` is, without paying for a fit to find out.
