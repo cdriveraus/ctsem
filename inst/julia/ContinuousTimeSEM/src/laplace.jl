@@ -436,6 +436,11 @@ mutable struct CTSEMLaplaceObjective{O} <: CTSEMOptimisable
     # generating parameters that happened for twelve subjects while every one of
     # their final curvatures was fine.
     mode_repaired::Vector{Bool}
+    # Whether the prior floor bound for this unit at the last evaluation; see
+    # `_laplace_prior_floor_logdet`. Not a fault -- a legitimately wide
+    # posterior is floored too -- but the reported term is a bound rather than
+    # the Laplace value there, and nothing else says so.
+    logdet_floored::Vector{Bool}
 end
 
 function CTSEMLaplaceObjective(objective::CTSEMObjective, spec::CTSEMLaplaceSpec;
@@ -447,7 +452,7 @@ function CTSEMLaplaceObjective(objective::CTSEMObjective, spec::CTSEMLaplaceSpec
         [zeros(Float64, units.dims[U]) for U in 1:nunits],
         Int(inner_maxiter), Float64(inner_tol), [Dict{Any,Any}()],
         zeros(Int, nunits), zeros(Float64, nunits), falses(nunits), falses(nunits),
-        falses(nunits))
+        falses(nunits), falses(nunits))
 end
 
 """
@@ -2425,6 +2430,86 @@ function _laplace_dual_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
 end
 
 """
+Whether the approximating Gaussian may claim more volume than the prior.
+
+On by default. `ctsem_set_prior_floor!(false)` restores the unfloored Laplace,
+which is what the measurements comparing the two are made against.
+"""
+const _LAPLACE_PRIOR_FLOOR = Ref(true)
+
+"""
+    ctsem_set_prior_floor!(on)
+
+Turn the prior floor on `_laplace_prior_floor_logdet` describes on or off.
+Returns the previous setting.
+"""
+function ctsem_set_prior_floor!(on::Bool)
+    previous = _LAPLACE_PRIOR_FLOOR[]
+    _LAPLACE_PRIOR_FLOOR[] = on
+    return previous
+end
+export ctsem_set_prior_floor!
+
+"""
+    _laplace_prior_floor_logdet(logdetM)
+
+`logdet(M)` floored at zero: the approximating Gaussian may not claim more
+volume than the prior it is approximating.
+
+# Why the unfloored term is unbounded
+
+In the standardised metric `u ~ N(0, I)` and `g_U(u) = log L_U(u) - u'u/2`, so
+
+    integral exp(g_U) du = (2pi)^(d/2) E_{u~N(0,I)}[L_U(u)] <= (2pi)^(d/2) sup_u L_U(u)
+
+For fixed data `L_U` is bounded in `u`, so the *exact* term is finite always.
+The Laplace term is not: it is `g_U(uhat) - logdet(M)/2` with
+`M = -d2 log L/du du + I`, and `-logdet(M)/2 -> +inf` as an eigenvalue of `M`
+goes to zero. So the surrogate diverges where the truth does not, and an
+optimiser maximising it is not solving a well posed problem -- measured on a
+25-subject model with a random `-log1p_exp(-param)` drift: one unit's smallest
+eigenvalue at 2.6e-6 against 664 for its largest, a term 3.1 nats above every
+neighbour within 1e-7 of theta, an outer gradient of 1.7e10 that is the true
+derivative of a diverging quantity, and an estimate 26.7 nats *above* the
+honest optimum. See `CT-SEM/review/LAPLACE-singular-unit-curvature-2026-09-22.md`.
+
+# Why zero is the floor, and not a tuned constant
+
+The mass the approximation claims is `L(uhat) exp(-uhat'uhat/2) (2pi)^(d/2) /
+sqrt(det M)`, and the bound above caps the truth at `sup L (2pi)^(d/2)`. Since
+`L(uhat) <= sup L` and `exp(-uhat'uhat/2) <= 1`, requiring `det M >= 1` is
+sufficient for the approximation to respect that cap. `det M >= 1` is
+`logdet M >= 0`, which is this.
+
+The floor therefore has a meaning rather than a calibration: `M >= I` is
+exactly "the likelihood is concave in `u`", because the `I` is the prior's own
+curvature. Where the likelihood is concave -- every well behaved unit -- the
+floor is inactive and nothing changes. It binds only where the approximation is
+extrapolating a local convexity across a range the prior forbids. Measured on
+the model above: at the honest optimum the smallest eigenvalue over all 25
+units is 1.122 and no unit is floored; at the spurious one seven units are
+below 0.5 and one is at 2.6e-6.
+
+# What it does not claim
+
+Not that the floored term is closer to the truth, and not that it is a bound on
+it -- only that it obeys the same upper bound the exact integral does, so it
+cannot diverge, and that where it binds the reported term is a bound rather
+than the Laplace value. `ctLaplaceCheck()` measures the remaining gap against
+quadrature, which is the question "how good is this approximation" and is not
+this function's to answer.
+
+`max` rather than a smoothed one: the term is `C0` at the crossing, with a kink
+where a line search is no worse off than at any other kink, against a jump of
+several nats where it is not floored. A smooth blend would need a width, which
+is the calibration this avoids.
+"""
+@inline function _laplace_prior_floor_logdet(logdetM::T) where {T}
+    _LAPLACE_PRIOR_FLOOR[] || return logdetM
+    return max(logdetM, zero(T))
+end
+
+"""
     _laplace_unit_term(laplace, U, values, Ls, u, aws)
 
 `g_U(u) - logdet(-d2 g_U/du du) / 2`: unit `U`'s contribution to the
@@ -2444,7 +2529,7 @@ function _laplace_unit_term(laplace::CTSEMLaplaceObjective, U::Integer,
     M = _laplace_unit_curvature(laplace, U, values, Ls, u)
     ok, logdetM, _, _ = _laplace_block_factor(M, laplace.units.blocks[U])
     ok || return T(NaN)
-    return inner.value - logdetM / 2
+    return inner.value - _laplace_prior_floor_logdet(logdetM) / 2
 end
 
 ################################################################################
@@ -3268,10 +3353,12 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
             b0 = _laplace_mark()
             inner = _laplace_unit_objective_gradient(laplace, U, theta, Ls, u, aws)
             _laplace_charge!(_LAPLACE_BYTES_OBJ, b0)
+            laplace.logdet_floored[U] =
+                ok && _LAPLACE_PRIOR_FLOOR[] && logdetM < 0
             term = if !isfinite(inner.value) || isempty(u)
                 inner.value
             elseif ok
-                inner.value - logdetM / 2
+                inner.value - _laplace_prior_floor_logdet(logdetM) / 2
             else
                 NaN
             end
@@ -3330,6 +3417,16 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
         fill!(chunk_ok, true)
         run_gradient = function (c)
             @inbounds for U in ranges[c]
+                # A floored unit is differentiated whole; see
+                # `_laplace_floored_unit_gradient!`.
+                if laplace.logdet_floored[U]
+                    if !_laplace_floored_unit_gradient!(partials[c], laplace, U,
+                            theta, Ls, dLlevels)
+                        chunk_ok[c] = false
+                        return nothing
+                    end
+                    continue
+                end
                 factors, elim = primal_curvature[U]
                 local bg
                 bg = _laplace_mark()
@@ -3383,6 +3480,93 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
     end
     return (value=value, gradient=grad, subject_loglik=subject_loglik,
         converged=all(laplace.inner_converged))
+end
+
+"""
+    _laplace_floored_unit_gradient!(out, laplace, U, values, Ls, dL)
+
+The gradient of one floored unit's term.
+
+Where the prior floor binds, the term is `g_U(uhat)` and carries no `logdet`,
+so two things follow and both of them simplify this. The derivative of
+`logdet` is not part of the gradient -- and the seeded assembly's trace terms
+*are* that derivative, taken from the selected inverse of a curvature the floor
+has just declared untrustworthy. And `dg_U/du = 0` at the mode, so by the
+envelope theorem the mode's own movement contributes nothing either: what is
+left is the partial derivative at fixed `uhat`.
+
+That is one reverse sweep per member and the `dL/dtheta` chain, against the
+`k + 1` sweeps and the selected inverse the seeded route needs -- cheaper than
+the path it replaces rather than dearer. Differentiating the term with
+ForwardDiff instead is correct and was measured: it costs `O(npar * k)` sweeps
+per unit, and since the floor binds at *every* iteration while the optimiser is
+in that region, it turned a fit of seconds into 350-480s.
+
+# The chain
+
+`_laplace_member_values!` builds member `m`'s parameter vector as
+
+    shifted = values;  shifted[re_index[p]] += sum_q L_l[p, q] u[base_l + q]
+
+so with `grad = d loglik_m / d shifted` from the reverse sweep,
+
+    d loglik_m / d theta_t  =  grad[t]
+        + sum_l sum_p grad[re_index[p]] sum_q (dL_l[p, q] / d theta_t) u[base_l + q]
+
+The first term is every parameter's direct appearance, the TI coefficients
+included, because those are entries of `shifted` and the sweep has already
+accounted for them. The second is the only other route theta takes into the
+term at fixed `u`: through the population Cholesky that scales the random
+effects. `-u'u/2` is constant at fixed `u` and contributes nothing.
+"""
+function _laplace_floored_unit_gradient!(out::Vector{Float64},
+    laplace::CTSEMLaplaceObjective, U::Integer, values::Vector{Float64},
+    Ls::Vector{Matrix{Float64}}, dL::Vector{Vector{Matrix{Float64}}})
+    spec = laplace.spec
+    units = laplace.units
+    members = units.members[U]
+    u = laplace.modes[U]
+    npar = length(values)
+    aws = _laplace_workspace!(laplace, Float64, npar)
+    grad = Vector{Float64}(undef, npar)
+    shift = Vector{Float64}(undef, npar)
+    @inbounds for m in eachindex(members)
+        i = members[m]
+        offsets = units.offsets[U][m]
+        shifted = _laplace_member_values!(shift, values, spec, Ls, u, offsets)
+        loglik = _laplace_subject_value_gradient!(grad,
+            laplace.objective.subject_objectives[i], aws, shifted)
+        isfinite(loglik) || return false
+        all(isfinite, grad) || return false
+        for t in 1:npar
+            out[t] += grad[t]
+        end
+        for l in eachindex(spec.levels)
+            level = spec.levels[l]
+            k = nrandomeffects(level)
+            r = nlatent(level)
+            (k == 0 || r == 0) && continue
+            positions = _laplace_level_positions(spec, l)
+            isempty(positions) && continue
+            base = offsets[l]
+            dLl = dL[l]
+            for t in eachindex(positions)
+                dLt = dLl[t]
+                acc = 0.0
+                for pp in 1:k
+                    gp = grad[level.re_index[pp]]
+                    iszero(gp) && continue
+                    inner = 0.0
+                    for q in 1:r
+                        inner += dLt[pp, q] * u[base + q]
+                    end
+                    acc += gp * inner
+                end
+                out[positions[t]] += acc
+            end
+        end
+    end
+    return true
 end
 
 """
@@ -3914,6 +4098,7 @@ ctsem_laplace_diagnostics(laplace::CTSEMLaplaceObjective) = (
     converged=copy(laplace.inner_converged),
     hessian_repaired=copy(laplace.hessian_repaired),
     mode_repaired=copy(laplace.mode_repaired),
+    logdet_floored=copy(laplace.logdet_floored),
 )
 
 export ctsem_laplace_diagnostics
@@ -3946,6 +4131,7 @@ function _ctsem_optimise_setup!(o::CTSEMLaplaceObjective)
     fill!(o.inner_converged, false)
     fill!(o.hessian_repaired, false)
     fill!(o.mode_repaired, false)
+    fill!(o.logdet_floored, false)
     return nothing
 end
 
@@ -4131,6 +4317,12 @@ function _ctsem_optimise_verbose_report(o::CTSEMLaplaceObjective,
         log.rejected_gradient, " for the gradient; ",
         _CTSEM_LAPLACE_FALLBACKS[],
         " gradient(s) fell back to the nested route")
+    nfloored = count(o.logdet_floored)
+    nfloored > 0 && println(_console(), "Laplace: the prior floor bound for ",
+        nfloored, "/", length(o.logdet_floored), " unit(s) at the last ",
+        "evaluation -- their posterior is wider than the prior in some ",
+        "direction, so the term reported for them is a bound rather than the ",
+        "Laplace value. ctLaplaceCheck() measures the gap.")
     println(_console(), "Laplace: inner modes ",
         count(o.inner_converged), "/", length(o.inner_converged),
         " converged, max |dg/dz| ",

@@ -202,6 +202,65 @@ end
     @test isapprox(result.value, reference_total; rtol=1e-9)
 end
 
+@testset "the prior floor is the prior's own volume, and switchable" begin
+    # `logdet(M) >= 0` is `det(M) >= 1`, which is the condition under which the
+    # approximating Gaussian claims no more volume than the prior. Above it the
+    # term is untouched; below it the term is the bound.
+    @test ContinuousTimeSEM._laplace_prior_floor_logdet(2.5) == 2.5
+    @test ContinuousTimeSEM._laplace_prior_floor_logdet(0.0) == 0.0
+    @test ContinuousTimeSEM._laplace_prior_floor_logdet(-3.0) == 0.0
+    previous = ctsem_set_prior_floor!(false)
+    try
+        @test ContinuousTimeSEM._laplace_prior_floor_logdet(-3.0) == -3.0
+    finally
+        ctsem_set_prior_floor!(previous)
+    end
+    @test ContinuousTimeSEM._laplace_prior_floor_logdet(-3.0) == 0.0
+end
+
+@testset "the prior floor is inactive where the likelihood is concave in u" begin
+    # `M = -d2 loglik/du du + I`, the `I` being the standard normal prior on
+    # the random effects, so a likelihood concave in `u` puts every eigenvalue
+    # at or above 1 and the floor cannot bind. A linear-Gaussian integrand is
+    # concave everywhere and the Laplace is exact for it, which makes this the
+    # case where the floor has to change nothing whatever.
+    laplace, values = _fresh_linear()
+    floored = ctsem_laplace_evaluate(laplace, values; gradient=true)
+    diagnostics = ctsem_laplace_diagnostics(laplace)
+    @test !any(diagnostics.logdet_floored)
+
+    previous = ctsem_set_prior_floor!(false)
+    local bare
+    try
+        bare = ctsem_laplace_evaluate(laplace, values; gradient=true)
+    finally
+        ctsem_set_prior_floor!(previous)
+    end
+    # Equality, not a tolerance: where the floor does not bind it is not
+    # approximately the same computation, it is the same computation.
+    @test floored.value == bare.value
+    @test floored.gradient == bare.gradient
+end
+
+@testset "a floored unit's gradient is the gradient of its floored term" begin
+    # The floored term drops `logdet`, so its derivative drops the trace terms
+    # the seeded assembly builds from the selected inverse -- and by the
+    # envelope theorem, `dg_U/du = 0` at the mode, the mode's own movement
+    # drops out too. What is left is the partial at fixed `uhat`, which is what
+    # `_laplace_floored_unit_gradient!` computes. The nested route
+    # differentiates the term itself and is this file's oracle elsewhere, so
+    # the two must agree wherever the floor binds.
+    #
+    # Asserted on every unit of the nonlinear fixture rather than only the
+    # floored ones: where nothing is floored this is the ordinary seeded
+    # agreement, and the point is that one branch does not disturb the other.
+    laplace, values = _fresh_nonlinear()
+    seeded = ctsem_laplace_evaluate(laplace, values; gradient=true)
+    nested = ctsem_laplace_evaluate(laplace, values; gradient=true,
+        nested_gradient=true)
+    @test isapprox(seeded.gradient, nested.gradient; rtol=1e-8, atol=1e-10)
+end
+
 @testset "the inner mode is a mode" begin
     laplace, values = _fresh_linear()
     ctsem_laplace_evaluate(laplace, values; gradient=false)
