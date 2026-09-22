@@ -242,6 +242,41 @@ end
     return destination
 end
 
+# Gathering copies, for the rows a record keeps.
+#
+# `view(pars.LAMBDA, o, 1:n)` with `o` a *vector* of indices builds a SubArray
+# that is not strided, and unlike a range-indexed view it does not stay on the
+# stack: line-level tracking put 96 KB per 300 subject evaluations on one of
+# these, and there are four per row. The view existed only to avoid
+# materialising `pars.LAMBDA[o, 1:n]`, which is the right instinct -- copying
+# straight out of the parent with the index achieves it without the view.
+@inline function _tape_gather!(destination::Vector{T}, source, rows) where {T}
+    resize!(destination, length(rows))
+    @inbounds for k in eachindex(rows)
+        destination[k] = source[rows[k]]
+    end
+    return destination
+end
+
+@inline function _tape_gather!(destination::Matrix{T}, source, rows, ncol::Int) where {T}
+    size(destination) == (length(rows), ncol) ||
+        return T[source[rows[k], j] for k in eachindex(rows), j in 1:ncol]
+    @inbounds for j in 1:ncol, k in eachindex(rows)
+        destination[k, j] = source[rows[k], j]
+    end
+    return destination
+end
+
+@inline function _tape_gather_square!(destination::Matrix{T}, source, rows) where {T}
+    m = length(rows)
+    size(destination) == (m, m) ||
+        return T[source[rows[i], rows[j]] for i in 1:m, j in 1:m]
+    @inbounds for j in 1:m, i in 1:m
+        destination[i, j] = source[rows[i], rows[j]]
+    end
+    return destination
+end
+
 ################################################################################
 # Recording hooks
 ################################################################################
@@ -387,10 +422,10 @@ function _record_update!(tape::CTSEMAdjointTape{T}, ws, pars, data, obs_col::Int
     # matrix only to copy it and throw it away, and this runs once per row.
     _tape_fill!(record.state_in, state_in)
     record.P_in = _tape_fill!(record.P_in, P_in)
-    record.Lambda = _tape_fill!(record.Lambda, view(pars.LAMBDA, o, 1:n))
-    _tape_fill!(record.manifestmeans, view(pars.MANIFESTMEANS, o))
-    record.H = _tape_fill!(record.H, view(pars.Jy, o, 1:n))
-    record.R = _tape_fill!(record.R, view(ws.bufferΘ.out, o, o))
+    record.Lambda = _tape_gather!(record.Lambda, pars.LAMBDA, o, n)
+    _tape_gather!(record.manifestmeans, pars.MANIFESTMEANS, o)
+    record.H = _tape_gather!(record.H, pars.Jy, o, n)
+    record.R = _tape_gather_square!(record.R, ws.bufferΘ.out, o)
     resize!(record.y, length(o))
     @inbounds for j in eachindex(o)
         record.y[j] = T(data[o[j], obs_col])
@@ -1075,6 +1110,10 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
                     end
                 end
             end
+            # Still fresh per call. The obvious reuse -- `aws.covsqrt_scratch`
+            # -- is consumed by the pullback on the next line, so this needs a
+            # buffer of its own on the workspace. 48 KB per 300 subject
+            # evaluations, so it is real but small beside the rest.
             t0var_bar = zeros(T, n, n)
             _sdcovsqrt2cov_pullback!(t0var_bar, tape.inits[index].T0VAR, _symmetrized(P̄), n;
                 scratch=aws.covsqrt_scratch, covmatcode=aws.sp.covmatcode)

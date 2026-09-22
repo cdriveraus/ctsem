@@ -146,23 +146,31 @@ function _materialize_all_params!(all_params::AbstractVector, values::AbstractVe
         nmut == ntf || throw(DimensionMismatch("Number of mutable positions must match number of regular transforms"))
     end
 
-    # `map` over the tuple, then scatter, rather than indexing it with a
-    # runtime counter.
+    # A return-type assertion, and deliberately *not* `map` over the tuple.
     #
-    # `regular_transforms` is a *heterogeneous* tuple of closures, so its
-    # `eltype` is `Function` and `sp.regular_transforms[tf_idx]` has no
-    # concrete type: calling it is a dynamic dispatch, once per mutable
-    # parameter per evaluation, and the result is boxed. Line-level tracking
-    # put 144 KB per 300 subject evaluations on that one line.
+    # `regular_transforms` is a heterogeneous tuple, so `[tf_idx]` with a
+    # runtime index has no concrete type: the call is a dynamic dispatch and
+    # its result is boxed on the way into `all_params`. Asserting the result
+    # type removes the box, which is the allocation, and leaves the dispatch,
+    # which is cheap beside a subject filter.
     #
-    # `map` over a tuple is unrolled, so each call is dispatched statically,
-    # and the result is a homogeneous tuple that a runtime index can address
-    # for free.
-    vals = map(f -> f(values), sp.regular_transforms)
+    # `map` over the tuple removes the dispatch as well and is the obvious
+    # move -- on a six-transform fixture it measured 37% better. It is wrong.
+    # Julia unrolls `map` over a tuple only to 32 elements and takes a generic
+    # path beyond, which allocates once *per element*: 1 allocation at n = 16
+    # and 231 at n = 228. The affect model has 228 mutable parameters, so the
+    # fixture was below the threshold and the win was an artefact of measuring
+    # a model smaller than the real one.
+    #
+    # The structural answer is to keep the transforms out of the type
+    # altogether -- a `Vector` rather than a tuple field -- which would also
+    # stop `EKFParameters` being a fresh type per model, and with it the
+    # per-model recompilation. That is a larger change than this one.
+    P = eltype(all_params)
     tf_idx = 1
     @inbounds for idx in eachindex(sp.mutables)
         if sp.mutables[idx]
-            all_params[idx] = vals[tf_idx]
+            all_params[idx] = sp.regular_transforms[tf_idx](values)::P
             tf_idx += 1
         end
     end
