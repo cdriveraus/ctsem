@@ -3530,6 +3530,10 @@ function _laplace_floored_unit_gradient!(out::Vector{Float64},
     aws = _laplace_workspace!(laplace, Float64, npar)
     grad = Vector{Float64}(undef, npar)
     shift = Vector{Float64}(undef, npar)
+    # Once per level, not once per member per level: `_laplace_level_positions`
+    # allocates, and it depends on the spec alone.
+    levelpositions = [_laplace_level_positions(spec, l)
+                      for l in eachindex(spec.levels)]
     @inbounds for m in eachindex(members)
         i = members[m]
         offsets = units.offsets[U][m]
@@ -3546,7 +3550,7 @@ function _laplace_floored_unit_gradient!(out::Vector{Float64},
             k = nrandomeffects(level)
             r = nlatent(level)
             (k == 0 || r == 0) && continue
-            positions = _laplace_level_positions(spec, l)
+            positions = levelpositions[l]
             isempty(positions) && continue
             base = offsets[l]
             dLl = dL[l]
