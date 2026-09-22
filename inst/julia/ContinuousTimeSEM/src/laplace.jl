@@ -1369,11 +1369,20 @@ is flushed within the subject here too.
 function _laplace_subject_value_gradient!(gradient::AbstractVector{T},
     subject_objective, aws, values::AbstractVector{T};
     ekf_workspace=nothing) where {T}
-    # `ekf_workspace` overrides the one cached on the subject. See
-    # `_laplace_ekf_workspace!`: the cached one is shared between tasks that
-    # filter the same subject, which only a sampler does.
-    ws = ekf_workspace === nothing ?
-        _get_or_init_objective_workspace!(subject_objective, T) : ekf_workspace
+    # `aws.ekf_ws` rather than the subject's own cached workspace, and
+    # `ekf_workspace` overrides both.
+    #
+    # A workspace depends only on the shared `EKFParameters` and the element
+    # type, never on the subject, so the adjoint workspace's is the right one
+    # for every subject this task filters -- and being a field of a typed struct
+    # it arrives here *concrete*, where the accessor hands back an abstract
+    # `ContinuousEKFWorkspace{T}` and makes the forward call below a dynamic
+    # dispatch. It is also per task, where the subject's cached one is shared
+    # between tasks that filter the same subject, which only a sampler does.
+    #
+    # An override must have the same type for the same reason, and it does: the
+    # sampler builds it from the same `params` and the same `T`.
+    ws = ekf_workspace === nothing ? aws.ekf_ws : ekf_workspace::typeof(aws.ekf_ws)
     tape = _tape_reset!(aws.tape)
     resize!(aws.tipreds, length(subject_objective.tipreds))
     copyto!(aws.tipreds, subject_objective.tipreds)

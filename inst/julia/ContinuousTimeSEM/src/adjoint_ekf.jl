@@ -1114,7 +1114,8 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
             # the pullback on the next line consumes.
             t0var_bar = _rs(aws.reverse_scratch.t0var_bar, n, n)
             fill!(t0var_bar, zero(T))
-            _sdcovsqrt2cov_pullback!(t0var_bar, tape.inits[index].T0VAR, _symmetrized(P̄), n;
+            sym = _symmetrize_into!(_rs(aws.reverse_scratch.sym, n, n), P̄)
+            _sdcovsqrt2cov_pullback!(t0var_bar, tape.inits[index].T0VAR, sym, n;
                 scratch=aws.covsqrt_scratch, covmatcode=aws.sp.covmatcode)
             @inbounds for j in 1:n, i in 1:n
                 θ̄ca.T0VAR[i, j] += t0var_bar[i, j]

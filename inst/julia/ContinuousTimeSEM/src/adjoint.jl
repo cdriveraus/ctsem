@@ -26,7 +26,7 @@ lookups are evaluated through. `tipreds` is the one genuinely per-subject
 field, refreshed by `ctsem_adjoint_gradient` before each subject's reverse
 pass.
 """
-mutable struct CTSEMAdjointWorkspace{T,SP,LB,FB}
+mutable struct CTSEMAdjointWorkspace{T,SP,LB,FB,WS}
     sp::SP
     n::Int
     m::Int
@@ -108,6 +108,24 @@ mutable struct CTSEMAdjointWorkspace{T,SP,LB,FB}
     # the temporaries come from here rather than from the heap.
     reverse_scratch::CTSEMReverseScratch{T}
     tape::CTSEMAdjointTape{T}
+    # The forward filter's own workspace, held here so that its *type* is known
+    # where the reverse pass calls the forward.
+    #
+    # `_init_continuous_ekf_workspace` takes the state and manifest dimensions
+    # from the model at run time, so its result type is not inferable from
+    # `(T, sp)` and any accessor returning it hands back an abstract
+    # `ContinuousEKFWorkspace{T}`. Calling the forward filter with that is a
+    # dynamic dispatch, and a dynamic dispatch puts its `struct` arguments on
+    # the heap to pass them: one boxed `EKFParameters` and two boxed scalars per
+    # subject evaluation, 288 of the 448 bytes that remained after the rest of
+    # this pass.
+    #
+    # Making it a *type parameter* of this workspace fixes it at construction,
+    # where the concrete type is in hand. This object is already built per task
+    # and per element type, which is exactly the granularity the filter
+    # workspace needs, and the constructor built one anyway to read the
+    # dimensions off.
+    ekf_ws::WS
 end
 
 function CTSEMAdjointWorkspace(::Type{T}, sp::EKFParameters, nvalues::Integer,
@@ -146,7 +164,8 @@ function CTSEMAdjointWorkspace(::Type{T}, sp::EKFParameters, nvalues::Integer,
     defer_frechet = isempty(sp.ti_parameter_indices) && !groups_write_jax
 
     frechet_buffer = ExpFrechetBuffer{T}(n)
-    return CTSEMAdjointWorkspace{T,typeof(sp),typeof(lyap_buffer),typeof(frechet_buffer)}(
+    return CTSEMAdjointWorkspace{T,typeof(sp),typeof(lyap_buffer),
+        typeof(frechet_buffer),typeof(ws)}(
         sp, n, m, _val(ws.affine_buffer.dim),
         collect(ws.diffusion_state_indices),
         predict_indices, update_indices, td_indices,
@@ -175,6 +194,7 @@ function CTSEMAdjointWorkspace(::Type{T}, sp::EKFParameters, nvalues::Integer,
         CTSEMReverseScratch(T, n, m, length(ws.diffusion_state_indices),
             _val(ws.affine_buffer.dim)),
         CTSEMAdjointTape(T, group_relevant),
+        ws,
     )
 end
 
