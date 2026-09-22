@@ -909,6 +909,13 @@ function _reverse_update!(x̄::Vector{T}, P̄::Matrix{T}, Θ̄::Matrix{T}, θ̄c
     end
     copyto!(ỹ, record.manifestmeans)
     _ctsem_mulvec!(ỹ, Λ, x, one(T), one(T))                     # ỹ = Λ x + μ
+    # The seven broadcasts in this function were rewritten as @inbounds loops
+    # once, on the evidence of a profile that put 9% of the gradient in
+    # `_setindex!` and 4% in a `==` whose callers were broadcast's aliasing
+    # check and its CartesianIndices iterator. Measured on dev1 over three runs
+    # at one and ten threads: 1.5% on a one-latent model and nothing at all on
+    # five or twelve latents. Most of that self time is not broadcast. Reverted,
+    # and recorded here so it is not rediscovered.
     ỹ .= record.y .- ỹ
     _ctsem_mulvec!(α, Sinv, ỹ)
     _ctsem_mul!(G, PHt, Sinv)
