@@ -294,6 +294,9 @@ records what reading them instead was measured to cost.
 function ctsem_sample_metric(sampler::CTSEMSampler, values::AbstractVector;
     hessian::Union{Nothing,AbstractMatrix}=nothing, regularize::Real=1e-8)
     laplace = sampler.laplace
+    # An entry point, and on an objective this session may never have evaluated
+    # -- see `ctsem_sample_start`.
+    _laplace_ensure_pool!(laplace)
     theta = collect(Float64, values)[1:sampler.npar]
     ranges = UnitRange{Int}[]
     covariances = Matrix{Float64}[]
@@ -372,11 +375,22 @@ function ctsem_sample_metric(sampler::CTSEMSampler, values::AbstractVector;
         u = laplace.modes[U]
         Cdiag = try
             M = isempty(u) ? CTSEMBlockMatrix(Float64, blocks) :
-                _laplace_unit_curvature(laplace, U, theta, Ls, u, 1)
+                _laplace_unit_curvature(laplace, U, theta, Ls, u)
             fac = _laplace_factor_repaired!(M, blocks)
             fac.ok ? first(_laplace_selected_inverse(fac.factors, fac.coupling, blocks)) :
                 nothing
         catch err
+            # A curvature that cannot be formed or factorized is a fact about
+            # this parameter vector, and falling back to an identity metric for
+            # the block is the right response. A `MethodError` is not that: it
+            # means this code is wrong, and it arrived here once -- when the
+            # worker pool removed the `slot` argument this call kept passing,
+            # every unit's metric silently became the identity. The sampler
+            # still produced a valid posterior, just a far worse-mixing one,
+            # which is the kind of failure no assertion on the draws would
+            # find.
+            (err isa MethodError || err isa UndefVarError ||
+                err isa TypeError) && rethrow()
             err isa InterruptException && rethrow()
             nothing
         end
