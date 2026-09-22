@@ -247,8 +247,23 @@ end
     # *can* see survives this and is caught -- which is the identity, restricted
     # to where it can hold.
     residual = -(Symmetric(H) * correction.delta) .- correction.gap_gradient
+    # With an absolute floor, because a purely relative bound here compares two
+    # quantities that are both rounding error. This fixture's gap gradient is
+    # 4e-13 -- the Laplace is exact for it, which is the point of the fixture --
+    # so `1e-8` of it is 4e-21, and the left side is the product of a curvature
+    # with a residual of order 1e-25. It duly failed at 9.3e-21 against 4.4e-21
+    # when the worker pool changed the order a sum is accumulated in, which is
+    # not an error in the correction by any reading.
+    #
+    # The floor is five orders below the gap gradient, so where that gradient
+    # means anything the relative term is the one that binds and this changes
+    # nothing; and five orders above the arithmetic noise, so the assertion
+    # stops being a coin toss on the last bits. A real violation of the
+    # identity is many orders larger than either: the `dropped_directions == 0`
+    # branch below tests the same claim at `rtol = 1e-8` wherever the fixture
+    # is identified.
     @test maximum(abs, Symmetric(H) * residual) <
-        1e-8 * maximum(abs, correction.gap_gradient)
+        max(1e-8 * maximum(abs, correction.gap_gradient), 1e-16)
     # And the bare identity wherever the fixture is fully identified, so this
     # keeps its teeth if the fixture ever becomes so.
     if correction.dropped_directions == 0
