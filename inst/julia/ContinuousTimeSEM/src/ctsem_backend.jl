@@ -335,14 +335,29 @@ end
 Pick the chunk count that is actually fastest for this model, and pin it.
 
 `cores` is a *ceiling*, not an instruction. Splitting the subject loop wider is
-not free and it is not even monotone: the reverse sweep allocates on the order
-of ten thousand small arrays per subject, and above roughly ten million
-allocations a second the allocator, not the arithmetic, is what the threads are
-queueing for. Measured on a 23-core machine, one 24-row subject of a
-one-latent, one-indicator model runs **3.7x slower on 23 threads than on one**,
-while the same code on a twenty-latent model runs 2.7x *faster*. Both are the
-same subject loop; what differs is how much arithmetic sits between two
-allocations.
+not free and it is not even monotone, and how far from monotone depends on the
+model: a one-subject, one-latent evaluation once measured **3.7x slower on 23
+threads than on one**, where a twenty-latent one ran 2.7x faster. What differs
+is how much arithmetic sits between two allocations, so the ratio moves
+whenever either side of that does.
+
+It has moved. The reverse sweep used to allocate on the order of ten thousand
+small arrays per subject and the collector was what the threads queued for;
+after the allocation work it is about one per subject evaluation. Measured on
+dev1 (23 cores, idle), 200 subjects of 24 rows, mean seconds per summed
+gradient over thirty repeats, before and after that work:
+
+                     1 thread        10 threads       MB/gradient   GC at 10
+  1 latent    0.0186 -> 0.0172   0.0092 -> 0.0075    1.8 -> 0.1    14% -> 0%
+  5 latent    0.0730 -> 0.0684   0.0125 -> 0.0099    4.8 -> 0.2    10% -> 0%
+  12 latent   0.3628 -> 0.3235   0.0426 -> 0.0342   19.1 -> 0.3    29% -> 0%
+
+So roughly a fifth off a ten-thread gradient, a tenth off a serial one, and
+1-to-10 scaling from 8.5x to 9.5x on the twelve-latent model. The wider point
+for this function is the last column and the spread behind it: the *minimum*
+time barely moved, because a fast iteration was one with no collection in it,
+while the mean and its run-to-run spread moved a lot. A tuner timing candidates
+was measuring the collector as much as the division.
 
 So the count cannot be chosen from `cores` alone, and it cannot be derived from
 the model shape without a constant nobody has measured for the machine in
