@@ -1872,7 +1872,16 @@ function _laplace_unit_loglik_gradient(laplace::CTSEMLaplaceObjective, U::Intege
     _laplace_partition(laplace, npos) do mine, _w
         local ws, grad, shift, acc, tot, i, loglik, slot
         slot = _laplace_slot()
-        ws = _laplace_workspace!(laplace, T, length(values))
+        # `::typeof(aws)` and not a bare fetch. `_laplace_workspace!` cannot
+        # promise a concrete type -- the filter workspace's dimensions come
+        # from the model at run time, so the best it can say is
+        # `CTSEMAdjointWorkspace{T}` -- and calling `one!` with an abstractly
+        # typed workspace is a dynamic dispatch per member, which boxes the
+        # log likelihood it returns. `aws` is this function's own argument and
+        # therefore concrete, and every slot's workspace for the same `T` and
+        # the same objective has the same type, so naming it costs nothing and
+        # throws loudly if that ever stops being true.
+        ws = _laplace_workspace!(laplace, T, length(values))::typeof(aws)
         grad = _laplace_scratch_vector!(laplace, T, length(values), :loglik_grad)
         shift = _laplace_scratch_vector!(laplace, T, length(values), :loglik_shift)
         acc = _laplace_scratch_vector!(laplace, T, length(u), :primal_inner)

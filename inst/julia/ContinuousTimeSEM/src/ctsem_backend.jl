@@ -239,7 +239,16 @@ function CTSEMObjective(params::EKFParameters, subject_starts::AbstractVector,
     end
     # Copy each subject once. This avoids R proxy/view lifetime issues and makes
     # the objective safe to retain in a Julia session.
-    objects = Any[
+    #
+    # A plain comprehension, not `Any[...]`. Every per-subject call in the
+    # package goes through this vector, and an `Any` element type makes each of
+    # them a dynamic dispatch -- which boxes the log likelihood coming back and
+    # the `EKFParameters` going in, on every subject of every evaluation. The
+    # comprehension narrows to the concrete subject type whenever the subjects
+    # agree, which is every model whose subjects share a substep rule and none
+    # of whose TI predictor cells are sampled; where they do not agree it
+    # widens on its own and nothing is worse than it was.
+    objects = [
         ContinuousEKFObjective(params, Matrix(view(data, :, r)), collect(view(timesteps, r));
             tdpreds=Matrix(view(tdpred_data, :, r)),
             # A subject absent from `by_subject` (i.e. every model with no
