@@ -91,6 +91,30 @@ mutable struct CTSEMAdjointWorkspace{T,SP,LB,FB,WS}
     # group's reverse *zeroes* that cell's cotangent, so it is the one thing
     # that can consume an outstanding Frechet contribution mid-tape.
     groups_write_jax::Bool
+    # The same question for MANIFESTVAR, and for the same reason: a deferred
+    # covariance pullback has not reached `theta_bar` yet, so a group that
+    # consumes and zeroes those cells mid-tape must flush it first.
+    groups_write_manifestvar::Bool
+    # The deferred MANIFESTVAR pullback: the accumulated measurement-covariance
+    # cotangent, and the matrix it was accumulated against.
+    #
+    # `sdcovsqrt2cov`'s reverse is linear in the cotangent and costs O(m^3) plus
+    # a correlation square root, and the tape calls it once per observed row --
+    # 20% of a summed gradient on a five-indicator model, measured on dev1. The
+    # matrix is the same on every one of those rows unless something writes it,
+    # so the cotangents can be summed and pushed back once. Comparing the matrix
+    # to decide costs O(m^2), which is the same trade `_covcache` makes in the
+    # forward.
+    mvar_bar::Matrix{T}
+    mvar_mat::Matrix{T}
+    mvar_pending::Bool
+    # The same for DIFFUSION, which the prediction reverse pushes back once per
+    # substep rather than once per row -- so on a model with substeps there is
+    # even more of it to batch.
+    groups_write_diffusion::Bool
+    dvar_bar::Matrix{T}
+    dvar_mat::Matrix{T}
+    dvar_pending::Bool
     # Flat `all_params` positions belonging to the JAx component.
     jax_positions::Vector{Int}
     # Workspace and outputs for `my_exp_frechet!`, so a flush allocates
@@ -161,6 +185,12 @@ function CTSEMAdjointWorkspace(::Type{T}, sp::EKFParameters, nvalues::Integer,
     jax_set = Set(jax_positions)
     groups_write_jax = any(i -> i in jax_set,
         Iterators.flatten((predict_indices, td_indices, update_indices)))
+    mvar_set = Set(_ctsem_component_positions(sp, :MANIFESTVAR))
+    groups_write_manifestvar = any(i -> i in mvar_set,
+        Iterators.flatten((predict_indices, td_indices, update_indices)))
+    dvar_set = Set(_ctsem_component_positions(sp, :DIFFUSION))
+    groups_write_diffusion = any(i -> i in dvar_set,
+        Iterators.flatten((predict_indices, td_indices, update_indices)))
     defer_frechet = isempty(sp.ti_parameter_indices) && !groups_write_jax
 
     frechet_buffer = ExpFrechetBuffer{T}(n)
@@ -188,7 +218,10 @@ function CTSEMAdjointWorkspace(::Type{T}, sp::EKFParameters, nvalues::Integer,
         [zeros(T, n, n) for _ in 1:_CTSEM_FRECHET_TABLE],
         [zeros(T, n, n) for _ in 1:_CTSEM_FRECHET_TABLE],
         zeros(T, n, n),
-        defer_frechet, groups_write_jax, jax_positions,
+        defer_frechet, groups_write_jax, groups_write_manifestvar,
+        zeros(T, m, m), zeros(T, m, m), false,
+        groups_write_diffusion, zeros(T, n, n), zeros(T, n, n), false,
+        jax_positions,
         frechet_buffer, zeros(T, n, n), zeros(T, n, n), ExpTable(T, n),
         CTSEMCovSqrtScratch(T, max(n, m)),
         CTSEMReverseScratch(T, n, m, length(ws.diffusion_state_indices),
@@ -208,8 +241,21 @@ than by arithmetic on the axis, so it stays correct whatever order the R-side
 parameter table happens to list matrices in.
 """
 function _ctsem_jax_positions(sp::EKFParameters)
+    return _ctsem_component_positions(sp, :JAx)
+end
+
+"""
+    _ctsem_component_positions(sp, name)
+
+The flat `all_params` positions belonging to one model matrix.
+
+Found by marking that component through a `ComponentVector` view rather than by
+arithmetic on the axis, so a change to the layout cannot leave this returning a
+stale range.
+"""
+function _ctsem_component_positions(sp::EKFParameters, name::Symbol)
     marker = ComponentVector(zeros(Int, length(sp.mutables)), sp.parameter_axis)
-    marker.JAx .= 1
+    getproperty(marker, name) .= 1
     return findall(!iszero, getdata(marker))
 end
 

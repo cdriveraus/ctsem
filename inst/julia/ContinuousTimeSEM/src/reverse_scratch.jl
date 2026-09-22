@@ -58,7 +58,6 @@ struct CTSEMReverseScratch{T}
     nn3::Matrix{T}
     nn4::Matrix{T}
     nn5::Matrix{T}
-    nn6::Matrix{T}
     kk4::Matrix{T}
     kk5::Matrix{T}
     kk6::Matrix{T}
@@ -101,7 +100,7 @@ function CTSEMReverseScratch(::Type{T}, n::Int, m::Int, k::Int, naff::Int=k) whe
         v(m), v(m), v(m), v(m), v(m), v(n),
         z(n, n), z(n, n), z(n, m), z(m, m), z(m, m),
         z(n, n), z(n, n), v(n), z(k, k), z(k, k), z(k, k), z(n, n), z(n, n),
-        z(n, n), z(n, n), z(k, k), z(k, k), z(k, k),
+        z(n, n), z(k, k), z(k, k), z(k, k),
         z(k, k), z(k, k), z(k, k), z(k, k),
         v(k), v(k), v(n),
         z(naff, naff), v(naff), v(naff), zeros(Int, max(n, k, naff)),

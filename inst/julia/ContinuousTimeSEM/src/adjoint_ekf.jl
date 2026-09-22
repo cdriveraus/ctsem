@@ -640,7 +640,6 @@ function _reverse_predict!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
     nn2        = _rs(sc.nn2, n, n)
     scaled     = _rs(sc.nn4, n, n)
     Qc_bar     = _rs(sc.nn5, n, n)
-    diffusion_bar = _rs(sc.nn6, n, n)
     Ad         = _rs(sc.kk1, k, k)
     JAxd       = _rs(sc.kk2, k, k)
     Qb         = _rs(sc.kk3, k, k)
@@ -768,12 +767,7 @@ function _reverse_predict!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
     @inbounds for j in 1:k, i in 1:k
         Qc_bar[dyn[i], dyn[j]] = Qcd_bar[i, j]
     end
-    fill!(diffusion_bar, zero(T))
-    _sdcovsqrt2cov_pullback!(diffusion_bar, record.DIFFUSION, Qc_bar, n;
-        scratch=aws.covsqrt_scratch, covmatcode=aws.sp.covmatcode)
-    @inbounds for j in 1:n, i in 1:n
-        θ̄ca.DIFFUSION[i, j] += diffusion_bar[i, j]
-    end
+    _defer_diffusion!(aws, record.DIFFUSION, Qc_bar, θ̄ca, n)
 
     copyto!(x̄, x̄_new)
     copyto!(P̄, P̄_new)
@@ -1050,18 +1044,12 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
             # puts a group between every pair of prediction substeps in an
             # otherwise entirely linear model.
             aws.groups_write_jax && _flush_frechet!(aws)
+            aws.groups_write_manifestvar && _flush_manifestvar!(aws, θ̄ca, m)
+            aws.groups_write_diffusion && _flush_diffusion!(aws, θ̄ca, n)
             _reverse_group!(θ̄, x̄, tape.groups[index], sp, aws)
         elseif kind === :theta
-            # `mm1` is `_reverse_update!` scratch, and nothing is live in it
-            # between tape entries; a fresh `zeros` here was one heap object
-            # per observed row.
-            manifestvar_bar = aws.reverse_scratch.mm1
-            fill!(manifestvar_bar, zero(T))
-            _sdcovsqrt2cov_pullback!(manifestvar_bar, tape.thetas[index].MANIFESTVAR, Θ̄, m;
-                scratch=aws.covsqrt_scratch, covmatcode=aws.sp.covmatcode)
-            @inbounds for j in 1:m, i in 1:m
-                θ̄ca.MANIFESTVAR[i, j] += manifestvar_bar[i, j]
-            end
+            # Deferred rather than pushed back here; see `_defer_manifestvar!`.
+            _defer_manifestvar!(aws, tape.thetas[index].MANIFESTVAR, Θ̄, θ̄ca, m)
             fill!(Θ̄, zero(T))
         elseif kind === :init
             @inbounds for i in 1:n
@@ -1125,8 +1113,96 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
             throw(ArgumentError("adjoint: unknown tape entry $(kind)"))
         end
     end
+    _flush_manifestvar!(aws, θ̄ca, m)
+    _flush_diffusion!(aws, θ̄ca, n)
 
     return θ̄
+end
+
+"""
+    _defer_manifestvar!(aws, mat, cov_bar, theta_bar_ca, m)
+
+Hold this row's measurement-covariance cotangent instead of pushing it back.
+
+`sdcovsqrt2cov`'s reverse is linear in the cotangent, so rows sharing a
+MANIFESTVAR can sum their cotangents and pay for one pullback rather than one
+each. Whether they share it is asked of the matrix itself rather than assumed
+from the model: a state-dependent MANIFESTVAR changes between rows, and the
+tape stores each row's own copy, so the comparison is exact and costs O(m^2)
+against a pullback's O(m^3) plus a correlation square root.
+
+The batch is released by `_flush_manifestvar!`, which the tape walk calls when
+the matrix changes, before a transform group that writes MANIFESTVAR cells
+(that group's reverse zeroes those cotangents, so a contribution arriving after
+it would be attributed to the raw parameter instead of through the transform),
+and at the end of the subject.
+"""
+function _defer_manifestvar!(aws, mat, cov_bar, θ̄ca, m::Int)
+    if aws.mvar_pending && _ctsem_same_matrix(aws.mvar_mat, mat, m)
+        @inbounds for j in 1:m, i in 1:m
+            aws.mvar_bar[i, j] += cov_bar[i, j]
+        end
+        return nothing
+    end
+    _flush_manifestvar!(aws, θ̄ca, m)
+    @inbounds for j in 1:m, i in 1:m
+        aws.mvar_mat[i, j] = mat[i, j]
+        aws.mvar_bar[i, j] = cov_bar[i, j]
+    end
+    aws.mvar_pending = true
+    return nothing
+end
+
+"""
+    _defer_diffusion!(aws, mat, cov_bar, theta_bar_ca, n)
+
+`_defer_manifestvar!` for DIFFUSION, and the same argument applies with more
+force: the prediction reverse runs once per *substep*, so a model with a
+substep mesh pushes the same matrix back several times per row.
+"""
+function _defer_diffusion!(aws, mat, cov_bar, θ̄ca, n::Int)
+    if aws.dvar_pending && _ctsem_same_matrix(aws.dvar_mat, mat, n)
+        @inbounds for j in 1:n, i in 1:n
+            aws.dvar_bar[i, j] += cov_bar[i, j]
+        end
+        return nothing
+    end
+    _flush_diffusion!(aws, θ̄ca, n)
+    @inbounds for j in 1:n, i in 1:n
+        aws.dvar_mat[i, j] = mat[i, j]
+        aws.dvar_bar[i, j] = cov_bar[i, j]
+    end
+    aws.dvar_pending = true
+    return nothing
+end
+
+"""Push back whatever `_defer_diffusion!` is holding, if anything."""
+function _flush_diffusion!(aws, θ̄ca, n::Int)
+    aws.dvar_pending || return nothing
+    aws.dvar_pending = false
+    _sdcovsqrt2cov_pullback!(θ̄ca.DIFFUSION, aws.dvar_mat, aws.dvar_bar, n;
+        scratch=aws.covsqrt_scratch, covmatcode=aws.sp.covmatcode)
+    return nothing
+end
+
+"""Push back whatever `_defer_manifestvar!` is holding, if anything."""
+function _flush_manifestvar!(aws, θ̄ca, m::Int)
+    aws.mvar_pending || return nothing
+    aws.mvar_pending = false
+    # Straight into the cotangent: the pullback accumulates rather than
+    # overwrites, and writes only the lower triangle and the diagonal, which is
+    # exactly what the intermediate buffer used to be copied for.
+    _sdcovsqrt2cov_pullback!(θ̄ca.MANIFESTVAR, aws.mvar_mat, aws.mvar_bar, m;
+        scratch=aws.covsqrt_scratch, covmatcode=aws.sp.covmatcode)
+    return nothing
+end
+
+"""Elementwise equality over the leading `d` by `d` block."""
+@inline function _ctsem_same_matrix(a::AbstractMatrix, b::AbstractMatrix, d::Int)
+    @inbounds for j in 1:d, i in 1:d
+        a[i, j] == b[i, j] || return false
+    end
+    return true
 end
 
 """
