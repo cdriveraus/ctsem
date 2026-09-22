@@ -900,6 +900,14 @@ here runs the work itself rather than waiting for a resource that a task
 downstream of it may be holding. There is no cycle to deadlock on.
 """
 function _laplace_slot_try_acquire()
+    # An unlocked peek first. This reads a length while another task may be
+    # pushing or popping, so the answer can be stale -- and both ways of being
+    # wrong are harmless. A false "empty" costs a helper this region did not
+    # have to take; a false "non-empty" still takes the lock and rechecks.
+    # What it buys is the common case: once the pool is exhausted, every region
+    # below asks and is refused, and those refusals should not serialise on a
+    # lock.
+    isempty(_LAPLACE_FREE) && return nothing
     lock(_LAPLACE_FREE_LOCK) do
         isempty(_LAPLACE_FREE) ? nothing : pop!(_LAPLACE_FREE)
     end
@@ -1121,6 +1129,24 @@ function _laplace_parallel(f, items)
     n = length(items)
     n == 0 && return true
     n == 1 && return f(@inbounds items[1]) !== false
+
+    # Ask for one helper before building anything a lone worker would not need.
+    #
+    # The shared counter, the failure flag and the task vector are three heap
+    # allocations and two atomic operations *per item*, and a region with no
+    # helper needs none of them -- it is a plain loop. That distinction was
+    # missing in the first version of this, which routed the alone case through
+    # the same machinery: measured on a thirteen-study model it cost 6% at one
+    # worker and 32% at five, which is the whole of this design's overhead and
+    # none of its purpose.
+    first_slot = _laplace_slot_try_acquire()
+    if first_slot === nothing
+        @inbounds for i in 1:n
+            f(items[i]) === false && return false
+        end
+        return true
+    end
+
     next = Threads.Atomic{Int}(0)
     # `Atomic`, not a plain `Bool`: several workers may set it, and a shared
     # `Bool` written by several tasks is a race even when they all write the
@@ -1141,21 +1167,30 @@ function _laplace_parallel(f, items)
     # `n - 1` because this task is a worker too. Leaving the rest of the pool
     # alone matters: regions nested inside these items need slots, and a loop
     # that grabbed everything would starve them.
-    while length(helpers) < n - 1
-        slot = _laplace_slot_try_acquire()
-        slot === nothing && break
-        push!(helpers, Threads.@spawn begin
+    # The slot goes in as an *argument*, so each task captures its own value.
+    # A `while` loop reassigning one `slot` variable and closing over it would
+    # give every task the same binding -- the last one written -- which is the
+    # closure-rebinding trap this file has been caught by twice before, and
+    # here it would hand one workspace to several workers.
+    start_worker = function (mine::Int)
+        Threads.@spawn begin
             task_local_storage(:ctsem_pool_worker, true)
-            task_local_storage(:ctsem_slot, slot)
+            task_local_storage(:ctsem_slot, mine)
             try
                 _laplace_pull!(f, items, n, next, failed)
             finally
                 # As soon as the queue is empty, not at the end of the region.
                 # That timing is what lets a finished worker's slot reach the
                 # unit that is still going.
-                _laplace_slot_release(slot)
+                _laplace_slot_release(mine)
             end
-        end)
+        end
+    end
+    push!(helpers, start_worker(first_slot))
+    while length(helpers) < n - 1
+        slot = _laplace_slot_try_acquire()
+        slot === nothing && break
+        push!(helpers, start_worker(slot))
     end
     # The caller works too, on the slot it already holds, so the region always
     # completes even when the pool is empty.
