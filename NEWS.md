@@ -4,6 +4,8 @@
 
 ### 3.12.0 (development)
 
+- `ctFit()` now applies ctsem's `normal(0,1)` raw priors to the random effect correlations by default, `priors='randomCorr'`. `priors=TRUE` for priors on every parameter and `priors=FALSE` for none, as before. Julia backend only; `backend='stan'` is unchanged.
+- Covariance matrices are now parameterised by a matrix logarithm rather than a correlation square root, so every positive definite matrix is reachable. Use `mymodel$covmattransform='rawcorr'` for the previous parameterisation, which a comparison against stan or a stored fit needs.
 - New `backend='julia'` option for `ctFit()`, using a Julia extended-Kalman-filter engine with a hand-written reverse-mode adjoint for the gradient. `ctJuliaInstall()` supplies whatever is missing -- the bridge package, Julia itself, and the engine's dependencies -- asking before it downloads anything. The engine ships inside ctsem, so no repository access is needed.
 -Describe intoverpop and poprank!
 - `poprank` may now be set per grouping level under `intoverpop='laplace'`, as `poprank=c(study=2)`, restricting that level's population covariance to a loading matrix of the given rank.

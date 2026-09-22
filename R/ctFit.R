@@ -718,6 +718,33 @@ T0VARredundancies <- function(ctm) {
 #' @param inits either character string 'optimize, NULL, or vector of (unconstrained)
 #' parameter start values, as returned by the rstan function \code{rstan::unconstrain_pars}, or the parameter values
 #' found in a ctsem fit object \code{myfit$stanfit$rawest} (or \code{$rawposterior}) for instance.
+#' @param priors \code{'randomCorr'} (the default), \code{TRUE} or
+#' \code{FALSE}. \code{TRUE} adds ctsem's \code{normal(0,1)} raw-scale prior
+#' to every parameter, making the fit maximum a posteriori. \code{FALSE} uses
+#' none. \code{'randomCorr'} applies that prior to the random-effect
+#' correlations only -- at every level of a hierarchy -- and leaves everything
+#' else, the population standard deviations included, to the likelihood.
+#'
+#' The default is \code{'randomCorr'} because those coordinates are the ones
+#' where unbounded maximum likelihood is ill-posed rather than merely
+#' uncertain. A correlation is bounded and its coordinate is not, so every
+#' construction mapping one to the other flattens near the limit; along a
+#' direction the data do not determine, the coordinate walks until it
+#' saturates, and the fit then reports convergence because nothing is moving.
+#' Because these constructions couple each coordinate to the whole matrix, one
+#' such direction removes the curvature from every correlation, so a summary
+#' can report \code{NA} for correlations the data determine perfectly well.
+#'
+#' The prior is weak where it applies. Under the default
+#' \code{covmattransform='z'} a \code{normal(0,1)} on the coordinate implies
+#' a correlation prior of standard deviation 0.64 at two dimensions and 0.56 at
+#' thirty, still placing six per cent of its mass beyond 0.9 in absolute value.
+#' It bounds the walk without ruling anything out.
+#'
+#' \code{'randomCorr'} is a \code{backend='julia'} feature: the generated Stan
+#' model builds its priors in and cannot express a subset. Asking for it with
+#' \code{backend='stan'} is an error; leaving the default and using that
+#' backend quietly gets \code{FALSE}, as before.
 #' @param cores number of cpu cores to use. A positive integer, or 'maxneeded' for
 #' as many as available minus one (capped at the number of chains on the stan
 #' backend, uncapped on julia, whose parallelism is over subject chunks). Defaults
@@ -1095,7 +1122,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   fit=TRUE, intoverpop='auto', poprank='auto', sameInitialTimes=FALSE, stationary=FALSE,plot=FALSE,  derrind=NA,
   optimize=TRUE,  optimcontrol=list(),
   backend=c('stan','julia'),
-  nlcontrol = list(), nopriors=NA, priors=FALSE, chains=2,
+  nlcontrol = list(), nopriors=NA, priors='randomCorr', chains=2,
   cores=getOption("mc.cores", 2L),
   inits=NULL,
   compileArgs=list(),
@@ -1194,6 +1221,36 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     priors <- !nopriors
   }
 
+  # `priors` is a logical everywhere below this, and on the stan path, because
+  # that is what every existing branch and both `as.integer`/`as.logical`
+  # coercions expect. The scope rides alongside it rather than replacing it.
+  #
+  # 'randomCorr' is the default: a prior on the random-effect correlations and
+  # nothing else. Those are the coordinates where unbounded maximum likelihood
+  # is ill-posed rather than merely uncertain -- a correlation is bounded, its
+  # coordinate is not, and along a direction the data do not determine the
+  # coordinate walks until the transform saturates. Measured on a 4x4
+  # population covariance with 50 subjects: coordinates at 118, a fit
+  # reporting convergence because nothing was moving, and every correlation in
+  # the summary `NA`, including the ones the data determine. See
+  # `.ctBackendRandomCorrPriorSpec`.
+  priorscope <- if(is.character(priors)) match.arg(priors, 'randomCorr') else
+    if(isTRUE(priors)) 'all' else 'none'
+  if(!is.character(priors) && !is.logical(priors)) stop(
+    "priors must be TRUE, FALSE, or 'randomCorr'", call.=FALSE)
+  # The generated Stan model builds its priors in, so a subset of coordinates
+  # is not expressible there. Asking for one explicitly is refused by name;
+  # arriving at one only because it is the default falls back to stan's own
+  # previous behaviour rather than failing a call the user did not make.
+  if(priorscope %in% 'randomCorr' && !backend %in% 'julia'){
+    if(!missing(priors)) stop("priors='randomCorr' applies a prior to a subset ",
+      "of coordinates, which the generated Stan model cannot express. Use ",
+      "priors=TRUE or priors=FALSE with backend='stan', or backend='julia'.",
+      call.=FALSE)
+    priorscope <- 'none'
+  }
+  priors <- !priorscope %in% 'none'
+
   if(any(!is.na(derrind))) warning('derrind argment is deprecated, computed automatically now')
 
   datalong <- data.frame(datalong)
@@ -1257,13 +1314,17 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     }
   }
 
+  if(optimize && priorscope %in% 'randomCorr') message(
+    "Maximum likelihood estimation requested, with priors on the ",
+    "random-effect correlations. priors=FALSE for none, TRUE for all.")
   if(optimize && !priors) message("Maximum likelihood estimation requested")
   # `optimcontrol$is` is refused above, so it is NULL by the time we get here
   # and the importance-sampling wording this used to choose is unreachable.
   # Importance sampling is now `optimcontrol$uncertainty='is'`, which runs
   # after optimization rather than instead of it, so the estimation this
   # message describes is a posteriori either way.
-  if(optimize && priors) message("Maximum a posteriori estimation requested")
+  if(optimize && priorscope %in% 'all') message(
+    "Maximum a posteriori estimation requested")
   # Naming stan here was wrong for half the fits it described: with
   # backend='julia' the engine runs its own NUTS over the joint posterior of
   # parameters and random effects, and a user reading "Stan's NUTS sampler" on a
@@ -2126,7 +2187,8 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
           'augmented'
     juliafit <- .ctFitJuliaBackend(datalong=datalong, model=ctm, prepared_data=standata, inits=inits,
       cores=cores, optimcontrol=optimcontrol,
-      verbose=verbose, fit=fit, priors=priors, optimize=optimize,
+      verbose=verbose, fit=fit, priors=priors, priorscope=priorscope,
+      optimize=optimize,
       chains=chains, iter=iter, control=control,
       intoverpop=juliaintoverpop, intoverstates=intoverstates)
     # Replaces whatever narrower `$args` the julia backend built internally

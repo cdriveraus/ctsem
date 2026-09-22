@@ -565,8 +565,14 @@ test_that("Stan and Julia's actual optimizers converge to the same fit for TD/TI
     ))
   }
 
+  # `priors = FALSE` on both sides. This test compares two implementations of
+  # the same likelihood, so the objective has to be the same one: julia now
+  # defaults to a prior on the random-effect correlations and the generated
+  # Stan model cannot express that subset, so leaving the default would compare
+  # a posterior against a likelihood. It did, before this line: the log
+  # likelihoods came out 0.24 apart and the raw estimates by up to 1.57.
   jf <- suppressMessages(ctFit(data, model = model, backend = "julia",
-    verbose = 0))
+    priors = FALSE, verbose = 0))
   sf <- suppressMessages(ctFit(data, model = model, backend = "stan",
     optimcontrol = list(carefulfit = FALSE, stochastic = FALSE),
     optimize = TRUE, verbose = 0, savescores = FALSE, cores = 1))
