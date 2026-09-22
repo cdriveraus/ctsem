@@ -24,7 +24,7 @@ ctFit(
   backend = c("stan", "julia"),
   nlcontrol = list(),
   nopriors = NA,
-  priors = FALSE,
+  priors = "randomCorr",
   chains = 2,
   cores = getOption("mc.cores", 2L),
   inits = NULL,
@@ -377,7 +377,33 @@ shares no approximation with the filter; it needs a fine \code{maxtimestep}. See
 
 \item{nopriors}{deprecated, use priors argument. logical. If TRUE, any priors are disabled -- sometimes desirable for optimization.}
 
-\item{priors}{if TRUE, priors are included in computations, otherwise specified priors are ignored.}
+\item{priors}{\code{'randomCorr'} (the default), \code{TRUE} or
+\code{FALSE}. \code{TRUE} adds ctsem's \code{normal(0,1)} raw-scale prior
+to every parameter, making the fit maximum a posteriori. \code{FALSE} uses
+none. \code{'randomCorr'} applies that prior to the random-effect
+correlations only -- at every level of a hierarchy -- and leaves everything
+else, the population standard deviations included, to the likelihood.
+
+The default is \code{'randomCorr'} because those coordinates are the ones
+where unbounded maximum likelihood is ill-posed rather than merely
+uncertain. A correlation is bounded and its coordinate is not, so every
+construction mapping one to the other flattens near the limit; along a
+direction the data do not determine, the coordinate walks until it
+saturates, and the fit then reports convergence because nothing is moving.
+Because these constructions couple each coordinate to the whole matrix, one
+such direction removes the curvature from every correlation, so a summary
+can report \code{NA} for correlations the data determine perfectly well.
+
+The prior is weak where it applies. Under the default
+\code{covmattransform='z'} a \code{normal(0,1)} on the coordinate implies
+a correlation prior of standard deviation 0.64 at two dimensions and 0.56 at
+thirty, still placing six per cent of its mass beyond 0.9 in absolute value.
+It bounds the walk without ruling anything out.
+
+\code{'randomCorr'} is a \code{backend='julia'} feature: the generated Stan
+model builds its priors in and cannot express a subset. Asking for it with
+\code{backend='stan'} is an error; leaving the default and using that
+backend quietly gets \code{FALSE}, as before.}
 
 \item{chains}{\strong{Deprecated} -- use \code{sampleControl$chains}. Still
 honoured, with a warning.}

@@ -326,6 +326,87 @@
 # `.ctBackendLaplacePriorSpec` reproduces `.ctBackendPriorSpec` exactly when
 # there is one level, and `test-julia-laplace.R` asserts that rather than
 # trusting it.
+#' The random-effect correlations alone, as a prior spec.
+#'
+#' What `priors = 'randomCorr'` builds, and the default: the random-effect
+#' covariance block -- standard deviations and correlations, at every level of
+#' a hierarchy. Every other coordinate is left to the likelihood; these are the
+#' ones where unbounded maximum likelihood is not merely uncertain but
+#' ill-posed.
+#'
+#' A correlation is bounded and its coordinate is not, so every construction
+#' that maps one to the other flattens as the correlation approaches its
+#' limit. Along a direction the data do not determine, the objective is flat,
+#' a quasi-Newton step is `gradient / curvature` with both underflowing, and
+#' the coordinate walks. Measured on a 4x4 population covariance with 50
+#' subjects and no prior: coordinates reached 118 under `covmattransform='z'`
+#' and 970 under `'rawcorr'` on a related model, where the correlation they
+#' produce is 1 to within rounding. The fit then reports convergence, because
+#' nothing is moving, and the curvature is gone -- not only along the flat
+#' direction but along every correlation, since these constructions couple
+#' each coordinate to the whole matrix. Every correlation came back `NA`,
+#' including the ones the data determine perfectly well.
+#'
+#' The same N(0,1) the other coordinates would get, which on the correlation
+#' scale under `'z'` is close to flat: measured over dimensions 2 to 30, an
+#' implied correlation sd of 0.64 falling only to 0.56, with 6 per cent of the
+#' mass still beyond 0.9 in absolute value at 30x30. It bounds the walk
+#' without ruling anything out. That stability across dimension is a property
+#' of `'z'`; under `'rawcorr'` the same prior tightens to an sd of 0.21 by
+#' 30x30, which would be a real shrink rather than a guard rail.
+#'
+#' The standard deviations are deliberately not included, and the cost of
+#' leaving them out is known rather than assumed. Under `intoverpop='augmented'`
+#' an sd is not separately identified from its correlations -- only their
+#' products are -- so a correlation prior alone leaves a partly flat surface:
+#' measured on a 4x4 block with 50 subjects, 1039 iterations and four warnings
+#' against 462 and none when the sds were penalised too.
+#'
+#' Those warnings are nonetheless the right outcome. They report a real
+#' property of the model, and they name the remedy, which is
+#' `intoverpop='laplace'` rather than a prior. A prior on the sds removes the
+#' warnings by regularising a variance, which hides the non-identification
+#' instead of resolving it, and changes a variance estimate on every model
+#' that has random effects. A guard rail on a coordinate that would otherwise
+#' walk off a flat direction is a smaller claim than that, and it is the whole
+#' of what this default is for.
+#' @noRd
+.ctBackendRandomCorrPriorSpec <- function(standata, laplace, npar) {
+  if (is.null(standata)) {
+    stop("priors='randomCorr' needs the prepared model data; this fit was ",
+      "built without it.", call. = FALSE)
+  }
+  .ctBackendRejectLaplacePriors(standata)
+  index <- integer(0)
+  if (!is.null(laplace)) {
+    # One block per level of the hierarchy, each with its own sds and
+    # correlations.
+    for (level in laplace$levels) {
+      if (length(level$cor_index)) index <- c(index, as.integer(level$cor_index))
+    }
+  } else {
+    # The single-level layout, whose blocks are counted rather than indexed:
+    # the population means, then the random-effect sds, then their
+    # correlations. Only the last block is wanted, so the first two are
+    # stepped over.
+    nparams <- as.integer(standata$nparams)[1L]
+    nindvarying <- as.integer(standata$nindvarying)[1L]
+    noffdiagonals <- as.integer(standata$nindvaryingoffdiagonals)[1L]
+    if (is.na(nparams)) nparams <- 0L
+    if (is.na(nindvarying)) nindvarying <- 0L
+    if (is.na(noffdiagonals)) noffdiagonals <- 0L
+    if (nindvarying > 1L && noffdiagonals > 0L) {
+      index <- nparams + nindvarying + seq_len(noffdiagonals)
+    }
+  }
+  index <- index[index >= 1L & index <= npar]
+  # A model with no random effects, or with one varying parameter, has no
+  # correlations and therefore no priors. That is not a failure: it is the
+  # likelihood on its own, which is what it was before this default existed.
+  if (!length(index)) return(NULL)
+  list(index = as.integer(index), scale = rep(1, length(index)), weight = 1)
+}
+
 .ctBackendLaplacePriorSpec <- function(standata, laplace, npar) {
   if (is.null(standata)) {
     stop("priors=TRUE needs the prepared model data; this fit was built without it.",

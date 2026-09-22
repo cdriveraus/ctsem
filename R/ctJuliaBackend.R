@@ -2748,7 +2748,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # call site.
 .ctJuliaPrepare <- function(datalong, model, prepared_data = NULL, project = NULL,
   priors = FALSE, intoverpop, optimize = TRUE, tipredMissingIncludeOutcome = TRUE,
-  laplacecontrol = NULL) {
+  laplacecontrol = NULL, priorscope = NULL) {
   # "none" prepares exactly as "laplace" does. The Laplace specification is what
   # *describes* the random effects -- which raw parameters vary, at which level,
   # with which population scale -- and that description is needed whether they
@@ -2882,7 +2882,12 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   npar <- .ctBackendNpar(list(parameter_table = parameter_table,
     laplace = laplace, ti_effects = ti_effects, ti_missing = ti_missing))
   .ctJuliaCheckLayout(parameter_table, laplace, ti_effects, npar, ti_missing = ti_missing)
-  prior_spec <- if (!isTRUE(priors)) NULL else if (!is.null(laplace)) {
+  # `priors` is TRUE/FALSE for every coordinate; `priorscope` narrows it. The
+  # two are separate because everything downstream of here, and the stan path
+  # beside it, reads `priors` as a logical.
+  prior_spec <- if (identical(priorscope, "randomCorr")) {
+    .ctBackendRandomCorrPriorSpec(prepared_data, laplace, npar)
+  } else if (!isTRUE(priors)) NULL else if (!is.null(laplace)) {
     .ctBackendLaplacePriorSpec(prepared_data, laplace, npar)
   } else .ctBackendPriorSpec(prepared_data, npar)
   list(
@@ -4072,12 +4077,14 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 
 .ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NULL, cores = 1L,
   optimcontrol = list(), verbose = 0L, fit = TRUE,
-  priors = FALSE, intoverpop = "augmented", optimize = TRUE, chains = 4L,
+  priors = FALSE, priorscope = NULL,
+  intoverpop = "augmented", optimize = TRUE, chains = 4L,
   iter = 2000L, control = list(), intoverstates = TRUE) {
   .ctJuliaInterruptSafe(.ctFitJuliaBackendImpl(datalong = datalong,
     model = model, prepared_data = prepared_data, inits = inits, cores = cores,
     optimcontrol = optimcontrol,
-    verbose = verbose, fit = fit, priors = priors, intoverpop = intoverpop,
+    verbose = verbose, fit = fit, priors = priors, priorscope = priorscope,
+    intoverpop = intoverpop,
     optimize = optimize, chains = chains, iter = iter, control = control,
     intoverstates = intoverstates))
 }
@@ -4086,7 +4093,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 .ctFitJuliaBackendImpl <- function(datalong, model, prepared_data = NULL,
   inits = NULL, cores = 1L,
   optimcontrol = list(), verbose = 0L, fit = TRUE,
-  priors = FALSE, intoverpop = "augmented", optimize = TRUE, chains = 4L,
+  priors = FALSE, priorscope = NULL,
+  intoverpop = "augmented", optimize = TRUE, chains = 4L,
   iter = 2000L, control = list(), intoverstates = TRUE) {
   # The engine environment and a session restart are ctJuliaSetup()'s own
   # `project` and `force = TRUE`; the per-fit copies of both were a second
@@ -4132,7 +4140,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # is the longer-tested path, not because it is faster; there is no silent
   # fallback between them in either direction.
   model_spec <- .ctJuliaPrepare(datalong, model, prepared_data = prepared_data,
-    priors = priors, intoverpop = intoverpop, optimize = optimize,
+    priors = priors, priorscope = priorscope, intoverpop = intoverpop,
+    optimize = optimize,
     tipredMissingIncludeOutcome = .ctJuliaOr(optimcontrol$tipredMissingIncludeOutcome, TRUE),
     laplacecontrol = list(inner_maxiter = optimcontrol$laplace_inner_maxiter,
       inner_tol = optimcontrol$laplace_inner_tol))
