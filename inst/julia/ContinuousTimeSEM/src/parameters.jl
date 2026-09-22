@@ -28,6 +28,38 @@ enough that any likelihood it reaches is absurd on sight.
 const UNSET_PARAMETER = 99999.0
 
 """
+    _group_regular_transforms(transforms, mutables)
+
+Group the regular transforms by template type.
+
+Returns `(groups, cells, tf)`: a tuple with one `Vector` of same-typed closures
+per distinct template, and for each group the `all_params` position each member
+writes and the position it held in the original order.
+
+Groups are ordered by the template's type name so that two models using the same
+templates produce the *same* tuple type whatever order their cells appear in --
+which is the whole point, since that type is what `EKFParameters` is
+parameterised by.
+"""
+function _group_regular_transforms(transforms::Vector{Any}, mutables::BitVector)
+    cells = findall(mutables)
+    length(cells) == length(transforms) || throw(DimensionMismatch(
+        "$(length(transforms)) regular transforms for $(length(cells)) mutable " *
+        "positions; they are produced one per mutable cell"))
+    types = unique(typeof.(transforms))
+    sort!(types; by = string)
+    groups = Any[]
+    gcells = Vector{Int}[]
+    gtf = Vector{Int}[]
+    for T in types
+        members = [k for k in eachindex(transforms) if typeof(transforms[k]) === T]
+        push!(groups, T[transforms[k] for k in members])
+        push!(gcells, Int[cells[k] for k in members])
+        push!(gtf, Int[k for k in members])
+    end
+    return (Tuple(groups), gcells, gtf)
+end
+"""
     EKFParameters
 
 Container for parameter metadata used by the continuous-time EKF routines.
@@ -36,13 +68,37 @@ The fields describe which flattened parameter positions are mutable or fixed,
 which transforms should be applied before filtering, and the `ComponentArray`
 axis used to view the flattened parameter vector as named model matrices.
 """
-struct EKFParameters{RT,PT,UT,TT,AX,FV}
+
+# The regular transforms are held twice, and the second is the one the hot
+# loops read.
+#
+# `regular_transforms` is a `Vector{Any}`: it keeps the original order for the
+# handful of cold callers that want it, and holds no type information, so it
+# does not put one entry per free cell into `EKFParameters`'s own type. That
+# tuple was what made two models differing in template order or parameter count
+# different types, and a new model type costs seconds of specialisation on its
+# first evaluation while the same type costs nothing.
+#
+# `regular_groups` is a small tuple with one `Vector{T}` per *distinct template
+# type*. Indexing one gives a concrete type, so the transform call is a static
+# dispatch and nothing is boxed -- which erasing the tuple on its own would have
+# lost, at 4% on every subject evaluation. And the tuple's type now depends only
+# on the set of templates, which is a handful across every model ctsem writes,
+# so essentially all models share one specialisation.
+#
+# `regular_group_cells` and `regular_group_tf` carry, per group member, where its
+# result belongs in `all_params` and which position it held in the original
+# order -- the latter because the reverse pass indexes its supports that way.
+struct EKFParameters{RG,PT,UT,TT,AX,FV}
     mutables::BitVector
     transform_indices::Vector{Bool}
     predict_transforms_indices::Vector{Bool}
     update_transforms_indices::Vector{Bool}
     td_transforms_indices::Vector{Bool}
-    regular_transforms::RT
+    regular_transforms::Vector{Any}
+    regular_groups::RG
+    regular_group_cells::Vector{Vector{Int}}
+    regular_group_tf::Vector{Vector{Int}}
     predict_transforms::PT
     update_transforms::UT
     td_transforms::TT
@@ -196,7 +252,9 @@ struct EKFParameters{RT,PT,UT,TT,AX,FV}
             "match. A mismatch usually means the optional positional " *
             "arguments are one slot out."))
 
-        regular_transforms_tuple = Tuple(regular_transforms)
+        regular_vector = Vector{Any}(collect(regular_transforms))
+        regular_groups, regular_group_cells, regular_group_tf =
+            _group_regular_transforms(regular_vector, BitVector(mutables))
         predict_transforms_tuple = Tuple(predict_transforms)
         update_transforms_tuple = Tuple(update_transforms)
         td_transforms_tuple = Tuple(td_transforms)
@@ -204,7 +262,7 @@ struct EKFParameters{RT,PT,UT,TT,AX,FV}
 
         # Creation of the EKFParameters struct with the appropriate types for each field
         return new{
-            typeof(regular_transforms_tuple),
+            typeof(regular_groups),
             typeof(predict_transforms_tuple),
             typeof(update_transforms_tuple),
             typeof(td_transforms_tuple),
@@ -216,7 +274,10 @@ struct EKFParameters{RT,PT,UT,TT,AX,FV}
             Vector{Bool}(predict_transforms_indices),
             Vector{Bool}(update_transforms_indices),
             Vector{Bool}(td_transforms_indices),
-            regular_transforms_tuple,
+            regular_vector,
+            regular_groups,
+            regular_group_cells,
+            regular_group_tf,
             predict_transforms_tuple,
             update_transforms_tuple,
             td_transforms_tuple,

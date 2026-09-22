@@ -188,14 +188,38 @@ while every other gate still passed.
 function _ctsem_regular_pullback!(subject_values_bar::AbstractVector,
     all_params_bar::AbstractVector, subject_values::AbstractVector,
     sp::EKFParameters, supports::AbstractVector{Vector{Int}}, scratch::AbstractVector)
-    tf_idx = 0
-    @inbounds for idx in eachindex(sp.mutables)
-        sp.mutables[idx] || continue
-        tf_idx += 1
-        cotangent = all_params_bar[idx]
+    _regular_pullback_groups!(subject_values_bar, all_params_bar, subject_values,
+        sp.regular_groups, sp.regular_group_cells, sp.regular_group_tf,
+        supports, scratch, 1)
+    return subject_values_bar
+end
+
+# Grouped for the same reason the forward pass is -- see
+# `_apply_regular_groups!` -- and it matters more here, since this runs once per
+# index in each cell's support rather than once per cell. Cells are visited in
+# template order rather than in cell order, so the terms landing on one raw
+# coordinate are summed in a different order than before; nothing else about the
+# result changes.
+@inline _regular_pullback_groups!(subject_values_bar, all_params_bar,
+    subject_values, ::Tuple{}, cells, tfs, supports, scratch, g::Int) = nothing
+
+@inline function _regular_pullback_groups!(subject_values_bar, all_params_bar,
+    subject_values, groups::Tuple, cells, tfs, supports, scratch, g::Int)
+    _regular_pullback_group!(subject_values_bar, all_params_bar, subject_values,
+        groups[1], cells[g], tfs[g], supports, scratch)
+    return _regular_pullback_groups!(subject_values_bar, all_params_bar,
+        subject_values, Base.tail(groups), cells, tfs, supports, scratch, g + 1)
+end
+
+function _regular_pullback_group!(subject_values_bar::AbstractVector,
+    all_params_bar::AbstractVector, subject_values::AbstractVector,
+    group::Vector{F}, cells::Vector{Int}, tfs::Vector{Int},
+    supports::AbstractVector{Vector{Int}}, scratch::AbstractVector) where {F}
+    @inbounds for k in eachindex(group)
+        cotangent = all_params_bar[cells[k]]
         iszero(cotangent) && continue
-        transform = sp.regular_transforms[tf_idx]
-        support = supports[tf_idx]
+        transform = group[k]
+        support = supports[tfs[k]]
         if length(support) > 1
             for pn in support
                 scratch[pn] = _seed_dual(scratch[pn], subject_values[pn], false)
@@ -209,7 +233,7 @@ function _ctsem_regular_pullback!(subject_values_bar::AbstractVector,
             subject_values_bar[pn] += cotangent * derivative
         end
     end
-    return subject_values_bar
+    return nothing
 end
 
 @inline _seed_dual(::D, value, seed::Bool) where {D<:ForwardDiff.Dual} =

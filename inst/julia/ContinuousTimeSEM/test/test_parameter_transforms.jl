@@ -25,7 +25,8 @@ using ForwardDiff
         AbstractFloat[10.0, 20.0],
     )
 
-    @test sp.regular_transforms isa Tuple
+    @test sp.regular_transforms isa Vector
+    @test sp.regular_groups isa Tuple
     @test sp.fixed_values isa Vector{Float64}
 
     all_params = zeros(4)

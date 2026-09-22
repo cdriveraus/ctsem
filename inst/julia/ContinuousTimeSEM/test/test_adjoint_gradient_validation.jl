@@ -397,8 +397,9 @@ end
     # fault, and still throws -- that is the half of the old one-parameter
     # assertion worth keeping, and the pullback would otherwise push this
     # cell's cotangent onto a parameter that never materialised it. Built as
-    # its own tiny spec because `regular_transforms` is a Tuple, so the
-    # closures of an existing spec cannot be swapped out.
+    # its own tiny spec because the transforms are grouped by type into the
+    # spec's own type parameter, so the closures of an existing spec cannot be
+    # swapped out.
     misrendered = _adjoint_test_dataframe(
         drift=[-0.5;;], jax=[-0.5;;], cint=[0.0;;], diffusion=[0.2;;],
         lambda=[1.0;;], jy=[1.0;;], manifestmeans=[0.0;;], manifestvar=[0.3;;],

@@ -138,8 +138,8 @@ end
 
 Materialize the full transformed parameter vector for an EKF evaluation.
 
-Mutable parameters are produced by `sp.regular_transforms(values)`, and fixed
-values from `sp` are copied into their fixed positions.
+Mutable parameters are produced by the transforms in `sp.regular_groups`, and
+fixed values from `sp` are copied into their fixed positions.
 """
 function _materialize_all_params!(all_params::AbstractVector, values::AbstractVector, sp::EKFParameters)
     @boundscheck begin
@@ -151,36 +151,44 @@ function _materialize_all_params!(all_params::AbstractVector, values::AbstractVe
         nmut == ntf || throw(DimensionMismatch("Number of mutable positions must match number of regular transforms"))
     end
 
-    # A return-type assertion, and deliberately *not* `map` over the tuple.
-    #
-    # `regular_transforms` is a heterogeneous tuple, so `[tf_idx]` with a
-    # runtime index has no concrete type: the call is a dynamic dispatch and
-    # its result is boxed on the way into `all_params`. Asserting the result
-    # type removes the box, which is the allocation, and leaves the dispatch,
-    # which is cheap beside a subject filter.
-    #
-    # `map` over the tuple removes the dispatch as well and is the obvious
-    # move -- on a six-transform fixture it measured 37% better. It is wrong.
-    # Julia unrolls `map` over a tuple only to 32 elements and takes a generic
-    # path beyond, which allocates once *per element*: 1 allocation at n = 16
-    # and 231 at n = 228. The affect model has 228 mutable parameters, so the
-    # fixture was below the threshold and the win was an artefact of measuring
-    # a model smaller than the real one.
-    #
-    # The structural answer is to keep the transforms out of the type
-    # altogether -- a `Vector` rather than a tuple field -- which would also
-    # stop `EKFParameters` being a fresh type per model, and with it the
-    # per-model recompilation. That is a larger change than this one.
-    P = eltype(all_params)
-    tf_idx = 1
-    @inbounds for idx in eachindex(sp.mutables)
-        if sp.mutables[idx]
-            all_params[idx] = sp.regular_transforms[tf_idx](values)::P
-            tf_idx += 1
-        end
-    end
+    _apply_regular_groups!(all_params, values, sp.regular_groups,
+        sp.regular_group_cells, 1)
     map_fixed_values!(all_params, sp.fixed_indices, sp.fixed_values)
     return all_params
+end
+
+"""
+    _apply_regular_groups!(all_params, values, groups, cells, g)
+
+Run one group of same-typed regular transforms per tuple element, recursing so
+each element is reached with its type known.
+
+Walking `sp.regular_transforms` instead is a dynamic dispatch per cell and a box
+per result, because a heterogeneous container indexed at runtime has no concrete
+element type. The obvious repairs are both worse: asserting the result type
+removes the box but leaves the dispatch, and `map` over a tuple of transforms
+unrolls only to 32 elements -- beyond that it takes a generic path that
+allocates once *per element*, 231 allocations on the 228-parameter model whose
+six-transform miniature had measured 37% faster.
+
+Grouping by template type is what removes both. `group` here is a
+`Vector{F}` with `F` concrete, so `group[k]` is a static dispatch into
+specialised code, and the recursion is over the number of distinct templates --
+a handful in any ctsem model -- rather than over the number of cells.
+"""
+@inline _apply_regular_groups!(all_params, values, ::Tuple{}, cells, g::Int) = nothing
+@inline function _apply_regular_groups!(all_params, values, groups::Tuple, cells, g::Int)
+    _apply_regular_group!(all_params, values, groups[1], cells[g])
+    return _apply_regular_groups!(all_params, values, Base.tail(groups), cells, g + 1)
+end
+
+function _apply_regular_group!(all_params::AbstractVector, values::AbstractVector,
+    group::Vector{F}, cells::Vector{Int}) where {F}
+    P = eltype(all_params)
+    @inbounds for k in eachindex(group)
+        all_params[cells[k]] = group[k](values)::P
+    end
+    return nothing
 end
 
 """

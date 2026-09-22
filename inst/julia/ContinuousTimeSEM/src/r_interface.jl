@@ -121,10 +121,11 @@ paid again for the next model.
 
 Rewriting `param[3]` to `param[i]` under a closure over `i` collapses that. All
 cells sharing a *template* now share one type and differ only in a field, so a
-model is typed by which templates it uses and how many free parameters it has,
-not by which index each one happens to read. The engine's own transforms come
-from a handful of templates, so a second model of the same shape reuses the
-first one's compiled code.
+model is typed by which templates it uses, and -- since `EKFParameters` groups
+its regular transforms by type rather than holding one tuple entry per cell --
+not by how many cells use each or which index they read. The engine's own
+transforms come from a handful of templates, so a second model reuses the
+first one's compiled code even when its size and layout differ.
 
 Almost every regular transform reads exactly one free parameter, so there is
 exactly one index to lift out. The exception is a T0MEANS or T0VAR cell

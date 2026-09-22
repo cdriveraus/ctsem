@@ -67,7 +67,7 @@ end
 
     sp = ekf_from_data_frame(df)
 
-    @test sp.regular_transforms isa Tuple
+    @test sp.regular_transforms isa Vector
     @test sp.predict_transforms isa Tuple
     @test sp.update_transforms isa Tuple
     @test sp.fixed_values isa Vector{Float64}
