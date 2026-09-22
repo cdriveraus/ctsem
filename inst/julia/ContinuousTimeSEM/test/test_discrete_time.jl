@@ -12,6 +12,10 @@
 # independent check of a hand-written adjoint), and the recorded times play no
 # part, which is the property that distinguishes discrete from continuous.
 
+# `_adjoint_cross_effect_2d_parameters` is shared with the adjoint tests.
+isdefined(@__MODULE__, :_adjoint_cross_effect_2d_parameters) ||
+    include(joinpath(@__DIR__, "adjoint_fixtures.jl"))
+
 function _discrete_setup(; times=[0.0, 1.0, 2.0, 3.0, 4.0], continuous=false)
     cells = [
         (:T0MEANS, 1, 1, 1, missing, "param[1]", missing, missing),

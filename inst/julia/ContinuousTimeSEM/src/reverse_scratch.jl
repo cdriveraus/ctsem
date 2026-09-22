@@ -79,6 +79,11 @@ struct CTSEMReverseScratch{T}
     av1::Vector{T}
     av2::Vector{T}
     piv::Vector{Int}
+    # --- T0VAR cotangent, sized (n, n) ------------------------------------
+    # Its own slot rather than a shared one: it is live across
+    # `_sdcovsqrt2cov_pullback!`, which consumes `covsqrt_scratch`, and it is
+    # read out after that call returns.
+    t0var_bar::Matrix{T}
 end
 
 function CTSEMReverseScratch(::Type{T}, n::Int, m::Int, k::Int, naff::Int=k) where {T}
@@ -94,7 +99,8 @@ function CTSEMReverseScratch(::Type{T}, n::Int, m::Int, k::Int, naff::Int=k) whe
         z(n, n), z(n, n), z(k, k), z(k, k), z(k, k),
         z(k, k), z(k, k), z(k, k), z(k, k),
         v(k), v(k), v(n),
-        z(naff, naff), v(naff), v(naff), zeros(Int, max(n, k, naff)))
+        z(naff, naff), v(naff), v(naff), zeros(Int, max(n, k, naff)),
+        z(n, n))
 end
 
 """The leading `r x c` block of a scratch buffer, as a view."""

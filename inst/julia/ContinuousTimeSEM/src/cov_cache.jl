@@ -31,6 +31,7 @@ ctsem_cov_cache(on::Bool) = ctsem_cov_cache!(on)
 ctsem_cov_cache() = _CTSEM_COV_CACHE[]
 
 const _COVCACHE_SLOTS = 8
+const _COVCACHE_TLS_KEY = :ctsem_covcaches
 const _COVCACHE_CALLS = Ref(0)
 const _COVCACHE_MISSES = Ref(0)
 
@@ -49,11 +50,13 @@ struct CovCache{T,D}
     outs::Vector{Matrix{T}}
     nslots::Base.RefValue{Int}
     nextslot::Base.RefValue{Int}
+    # Which construction this table's entries were built under; see below.
+    code::Int
 end
 
-CovCache{T,D}() where {T,D} = CovCache{T,D}(
+CovCache{T,D}(code::Int) where {T,D} = CovCache{T,D}(
     [zeros(T, D, D) for _ in 1:_COVCACHE_SLOTS],
-    [zeros(T, D, D) for _ in 1:_COVCACHE_SLOTS], Ref(0), Ref(1))
+    [zeros(T, D, D) for _ in 1:_COVCACHE_SLOTS], Ref(0), Ref(1), code)
 
 # The construction in force is part of the key. Without it an entry built under
 # one route is served under the other, which a switch mid-session -- every
@@ -71,15 +74,34 @@ CovCache{T,D}() where {T,D} = CovCache{T,D}(
 # task's run -- the same DIFFUSION matrix across that chunk's subjects and rows
 # -- and that is exactly what a task-local cache keeps. Across calls the
 # parameters have moved and every entry would miss anyway.
+#
+# One task-local *list* of tables under a plain `Symbol`, scanned by type and
+# code, rather than one entry per `(T, d, code)` key. The key was the obvious
+# form and it allocated: a tuple holding a `Type` is not `isbits`, so every
+# lookup built it on the heap -- 144 KB per gradient, for a function whose
+# whole purpose is to avoid work. A `Symbol` is already a heap object and
+# passing it costs nothing.
+#
+# The scan is over the tables one task has built, which is one per element
+# type, dimension and construction actually used -- a handful -- and each step
+# is a type test. That is cheaper than the allocation it replaces, let alone
+# than the construction either one is in front of.
 function _covcache(::Type{T}, ::Val{d}, code::Int) where {T,d}
     store = task_local_storage()
-    key = (:covcache, T, d, code)
-    c = get(store, key, nothing)
-    if c === nothing
-        c = CovCache{T,d}()
-        store[key] = c
+    caches = get(store, _COVCACHE_TLS_KEY, nothing)
+    if caches === nothing
+        caches = Vector{Any}()
+        store[_COVCACHE_TLS_KEY] = caches
     end
-    return c::CovCache{T,d}
+    list = caches::Vector{Any}
+    for e in list
+        if e isa CovCache{T,d} && e.code == code
+            return e
+        end
+    end
+    c = CovCache{T,d}(code)
+    push!(list, c)
+    return c
 end
 
 # The whole of `mat` is the key: the diagonal carries the standard deviations

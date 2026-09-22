@@ -6,8 +6,9 @@
 # `test_laplace.jl` is twelve, almost all of it Julia compiling the nested dual
 # types the exact outer gradient needs.
 #
-# Nothing in the suite depends on running in one process: each file builds the
-# models it uses. So the files can run side by side, and the wall clock drops to
+# A file that uses another file's fixture includes it when it is not already
+# defined, so each process has what it needs. So the files can run side by side,
+# and the wall clock drops to
 # roughly the longest file plus its compilation. Cost is that each process
 # compiles what it touches, so this is a win for a whole-suite run and a loss
 # for a single file -- use `Pkg.test()` for one file.
