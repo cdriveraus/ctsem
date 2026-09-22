@@ -1813,7 +1813,13 @@ function _laplace_unit_loglik_gradient(laplace::CTSEMLaplaceObjective, U::Intege
 
     pos = collect(positions)
     npos = length(pos)
-    if _laplace_pool_width() <= 1 || npos < 2
+    # "Is anyone free", not "is the pool wide". Those differ whenever the pool
+    # is fully committed above this call -- which is the normal state of a
+    # nested region -- and asking the wrong one takes the parallel path with no
+    # helpers: four per-slot arrays allocated, a partition entered, a single
+    # worker doing all of it, and the reduction run anyway. Measured at 43% on
+    # a thirteen-study model at five workers.
+    if _laplace_pool_width() <= 1 || npos < 2 || isempty(_LAPLACE_FREE)
         # The caller may lend its accumulator. This vector is the whole unit's
         # random-effect dimension in dual arithmetic -- about 144 KB on two
         # hundred subjects -- and the curvature allocates one per block per
@@ -3342,27 +3348,35 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
     # nothing is shared but the read-only parameter vector. Chunk count comes
     # from `ctsem_set_max_chunks!`, which is what the R side sets from `cores`,
     # so it is the same control the non-Laplace path uses.
-    nchunks = _ctsem_nchunks(nunits)
-    # Grow the per-chunk workspace stores serially, before anything is spawned.
-    # Slot bands. This function sizes `laplace.workspaces`, so this function is
-    # what decides how many slots each chunk may divide: chunk `c` owns
-    # `(c-1)*width+1` upward for `width` slots, and hands that band to anything
-    # below it that can spend it. Nothing downstream invents a slot, which is why
-    # the routes that size this vector themselves -- quadrature, and the
-    # sampler's per-chain blocks -- are unaffected by any of it.
+    # One piece per unit, and deliberately *not* one per worker.
+    #
+    # `_ctsem_nchunks` returns `min(max_chunks, nunits)`, which ties the number
+    # of pieces to the size of the pool. That is the wrong coupling and it is
+    # worst exactly where balance matters most: with thirteen studies and five
+    # workers it makes five pieces, each holding two or three studies, so every
+    # worker takes one piece and there is nothing left to steal. A worker that
+    # draws three small studies finishes and idles while the one holding the
+    # big study grinds, and no amount of dynamic pulling can help because the
+    # queue is empty.
+    #
+    # Pieces are for balance and workers are for hardware, so they are sized
+    # separately. One unit each is the natural grain here -- units are the
+    # outermost thing the integral factorises over, so they are independent by
+    # construction -- and `_laplace_parallel` hands them out as workers come
+    # free. Cost-weighted chunking is no longer needed for the same reason: the
+    # queue does the balancing, and it does it against what the work actually
+    # cost rather than against an estimate of it.
+    nchunks = nunits
+    ranges = [U:U for U in 1:nunits]
     _laplace_ensure_pool!(laplace)
-    # Written out rather than held in a closure. `width` is captured by the
-    # per-chunk worker either way, and a captured variable that a closure also
-    # reads is the shape Julia boxes -- which turns every call that takes it
-    # into a dynamic one. Two integers are not worth a closure.
-    # Cost-weighted rather than contiguous. A unit's cost is roughly its
-    # observations times its members -- the members enter twice, once through
-    # the sweeps and once through the block count -- and with studies of
-    # different sizes an equal-count split leaves one chunk holding most of the
-    # work while the rest wait at the barrier.
-    ranges = _ctsem_chunk_assignment(_laplace_unit_weights(laplace), nchunks)
-    chunk_ok = fill(true, nchunks)
-    chunk_bad = fill(NaN, nchunks)
+    # Per *slot*, not per piece. Pieces are now one per unit so that the queue
+    # can balance, and a model whose units are subjects has thousands of them;
+    # anything sized by the piece count would then allocate thousands of
+    # vectors per evaluation. Workers are bounded by the pool, so keying on the
+    # slot bounds this whatever the granularity becomes.
+    nslot = _laplace_pool_width()
+    chunk_ok = fill(true, nslot)
+    chunk_bad = fill(NaN, nslot)
     run_primal = function (c)
         aws = _laplace_workspace!(laplace, Float64, length(theta))
         @inbounds for U in ranges[c]
@@ -3392,8 +3406,8 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
                 NaN
             end
             if !isfinite(term)
-                chunk_ok[c] = false
-                chunk_bad[c] = term
+                chunk_ok[_laplace_slot()] = false
+                chunk_bad[_laplace_slot()] = term
                 return nothing
             end
             unit_loglik[U] = term
@@ -3413,7 +3427,7 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
         run_primal(c)
         return true
     end
-    @inbounds for c in 1:nchunks
+    @inbounds for c in 1:nslot
         chunk_ok[c] || return (value=chunk_bad[c],
             gradient=gradient ? fill(NaN, length(theta)) : nothing,
             subject_loglik=subject_loglik, converged=all(laplace.inner_converged))
@@ -3442,16 +3456,17 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
         # One accumulator per chunk rather than one shared vector: the unit
         # contributions are a sum, and summing per chunk and then across chunks
         # is the same sum in a different order.
-        partials = [zeros(Float64, length(theta)) for _ in 1:nchunks]
+        partials = [zeros(Float64, length(theta)) for _ in 1:nslot]
         fill!(chunk_ok, true)
         run_gradient = function (c)
             @inbounds for U in ranges[c]
                 factors, elim = primal_curvature[U]
                 local bg
                 bg = _laplace_mark()
-                if !_laplace_seeded_unit_gradient!(partials[c], laplace, U, theta,
+                if !_laplace_seeded_unit_gradient!(partials[_laplace_slot()],
+                        laplace, U, theta,
                         Ls, dLlevels, primal_matrices[U], factors, elim)
-                    chunk_ok[c] = false
+                    chunk_ok[_laplace_slot()] = false
                     return nothing
                 end
                 # A sweep can return success and still have accumulated a
@@ -3469,8 +3484,8 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
                 # only the primal, so it is a genuinely different route rather
                 # than a retry.
                 _laplace_charge!(_LAPLACE_BYTES_GRAD, bg)
-                if !all(isfinite, partials[c])
-                    chunk_ok[c] = false
+                if !all(isfinite, partials[_laplace_slot()])
+                    chunk_ok[_laplace_slot()] = false
                     return nothing
                 end
             end
@@ -3482,8 +3497,8 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
         end
         ok = all(chunk_ok)
         if ok
-            for c in 1:nchunks
-                grad .+= partials[c]
+            for w in 1:nslot
+                grad .+= partials[w]
             end
             _ctsem_log_prior_gradient!(grad, laplace.objective, theta)
         else
