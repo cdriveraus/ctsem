@@ -145,6 +145,37 @@ test_that("Laplace and augmented agree where the integrand is exactly Gaussian",
   # routes can agree on the likelihood to eight digits while sitting at
   # different points on it. The log likelihood is the claim being made.
 
+  # The population covariance is the exception, and it is here as a control on
+  # the categorical routes rather than as a claim about this one. With a
+  # Gaussian indicator the moment-matched update is the exact conditional, so
+  # both routes marginalise the random effect exactly and the population scale
+  # has to come out the same; with an ordinal indicator it does not, and the
+  # augmented objective loses almost all its information about that scale --
+  # 0.066 log units between a population sd of 0.7 and one of 1900, against
+  # 40.2 for laplace on the same data. Measured 2026-09-22. So a future change
+  # that made *these* two disagree would mean the loss had reached the Gaussian
+  # path, where there is no approximation to blame it on.
+  #
+  # `.ctBackendRawPopCov` rather than `summary()$popsd`, because the laplace fit
+  # draws finish samples and the augmented one is `estonly`, so their `popsd`
+  # means differ by sampling noise (0.869 against 0.852 here) and would be
+  # comparing two different quantities. The raw covariance is a deterministic
+  # function of each point estimate.
+  #
+  # The tolerance is deliberately loose. The two land 3% apart in sd on this
+  # fixture while agreeing on the likelihood to nine digits -- the ridge the
+  # paragraph above describes, at 30 subjects and 6 occasions -- so a tight
+  # bound here would be pinning the optimiser's stopping point. 20% still
+  # separates agreement from the failure this guards against by three orders of
+  # magnitude.
+  lcov <- .ctBackendRawPopCov(laplace)
+  acov <- .ctBackendRawPopCov(augmented)
+  expect_equal(length(lcov), 1L)
+  expect_equal(length(acov), 1L)
+  expect_equal(lcov[[1]]$param, acov[[1]]$param)
+  expect_equal(as.vector(lcov[[1]]$cov), as.vector(acov[[1]]$cov),
+    tolerance = 0.2)
+
   expect_true(laplace$laplace$inner_converged)
   expect_false(any(laplace$laplace$hessian_repaired))
 })

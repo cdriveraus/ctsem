@@ -363,7 +363,8 @@
 #' against 462 and none when the sds were penalised too.
 #'
 #' Those warnings are nonetheless the right outcome. They report a real
-#' property of the model, and they name the remedy, which is
+#' property of the augmented objective -- not of the model, which laplace fits
+#' from the same data -- and they name the remedy, which is
 #' `intoverpop='laplace'` rather than a prior. A prior on the sds removes the
 #' warnings by regularising a variance, which hides the non-identification
 #' instead of resolving it, and changes a variance estimate on every model
