@@ -877,30 +877,49 @@ end
         min(requested, Threads.nthreads()))
 end
 
-"""
-This task's slot band: where its scratch lives, and how many workers it may
-claim.
 
-**The default is one, and deriving it from a global instead was a bug.** An
-earlier version defaulted to the last pool size any fit had set, so an entry
-point that did not call `_laplace_ensure_pool!` -- `_laplace_unit_hessian` on a
-freshly constructed objective, for one -- inherited a width of three against a
-workspace vector of length one and indexed past it, inside a spawned task,
-where it surfaced as a `TaskFailedException` wrapping a `BoundsError`. That is
-precisely the failure the pool exists to make impossible, reintroduced by the
-one global left in it.
+# Free workspace slots, as a stack behind a lock.
+#
+# A lock and a `Vector{Int}` rather than anything cleverer: acquisition happens
+# a handful of times per parallel region, against subject filters that take
+# milliseconds, so contention is irrelevant and being obviously correct is not.
+const _LAPLACE_FREE_LOCK = ReentrantLock()
+const _LAPLACE_FREE = Int[]
 
-So a task with no band of its own runs serially. Forgetting to ensure the pool
-now costs speed and cannot cost correctness, and `_laplace_ensure_pool!` sets
-the band as well as sizing the vector, so the outermost caller gets the whole
-pool and everything under it inherits a share.
+"""The pool size the free stack was built for; 0 until it is built."""
+const _LAPLACE_POOL_N = Ref(0)
+
 """
-@inline function _laplace_slots()
-    return get(task_local_storage(), :ctsem_slots, (1, 1))::Tuple{Int,Int}
+    _laplace_slot_try_acquire()
+
+A free slot, or `nothing` if none is free *right now*.
+
+Never blocks, and that is the whole safety argument. A region always makes
+progress on the slot its own task already holds, so a caller that gets nothing
+here runs the work itself rather than waiting for a resource that a task
+downstream of it may be holding. There is no cycle to deadlock on.
+"""
+function _laplace_slot_try_acquire()
+    lock(_LAPLACE_FREE_LOCK) do
+        isempty(_LAPLACE_FREE) ? nothing : pop!(_LAPLACE_FREE)
+    end
 end
 
-"""The slot this task's scratch lives in."""
-@inline _laplace_slot() = _laplace_slots()[1]
+"""Hand a slot back. Called as soon as a worker runs out of items, not at the
+end of the region -- see `_laplace_parallel` for why that timing is the point."""
+function _laplace_slot_release(slot::Int)
+    lock(_LAPLACE_FREE_LOCK) do
+        push!(_LAPLACE_FREE, slot)
+    end
+    return nothing
+end
+
+"""How wide the pool is. An upper bound for sizing per-slot storage, never a
+promise that this many workers are available."""
+@inline _laplace_pool_width() = max(1, _laplace_pool_size())
+
+"""The slot this task's scratch lives in. Slot 1 unless a pool worker set it."""
+@inline _laplace_slot() = get(task_local_storage(), :ctsem_slot, 1)::Int
 
 """
 Whether this task was handed its band by a parallel region, rather than taking
@@ -952,7 +971,7 @@ function _laplace_ensure_pool!(laplace::CTSEMLaplaceObjective)
     # outermost task grows the vector, so there is no concurrent `push!` on it
     # -- which would be a data race on the backing array while its siblings are
     # indexing it.
-    _laplace_is_worker() && return _laplace_slots()[2]
+    _laplace_is_worker() && return _laplace_pool_width()
     n = _laplace_pool_size()
     while length(laplace.workspaces) < n
         push!(laplace.workspaces, Dict{Any,Any}())
@@ -966,31 +985,34 @@ function _laplace_ensure_pool!(laplace::CTSEMLaplaceObjective)
     # band -- in one direction a band wider than the store, which
     # `_laplace_check_slot` then refused. Being a worker is the thing actually
     # being asked about, so it is what gets recorded.
-    task_local_storage(:ctsem_slots, (1, n))
+    task_local_storage(:ctsem_slot, 1)
+    # Slot 1 belongs to this task, the root of the evaluation; the rest are the
+    # pool.
+    #
+    # **Rebuilt only when the pool size changes**, and that condition is the
+    # whole of the correctness argument. "Only a non-worker reaches here, so no
+    # helper can hold a slot" was the first version and it is false: the root
+    # task is not a worker, and it runs items itself, so an item whose body
+    # opens a nested region brings the root back through here *while its own
+    # helpers are still holding slots*. Refilling then hands the same slot to
+    # two tasks, which surfaces as two subject evaluations sharing one adjoint
+    # tape -- a `BoundsError` indexing a record vector, from inside a spawned
+    # task, with nothing in it naming the pool.
+    #
+    # Slots come back through a `finally`, so the stack is full again between
+    # evaluations and there is nothing to reclaim.
+    if _LAPLACE_POOL_N[] != n
+        lock(_LAPLACE_FREE_LOCK) do
+            empty!(_LAPLACE_FREE)
+            for slot in n:-1:2
+                push!(_LAPLACE_FREE, slot)
+            end
+            _LAPLACE_POOL_N[] = n
+        end
+    end
     return n
 end
 
-"""
-    _laplace_claim(n, budget)
-
-How many workers to claim for `n` items, leaving the rest for the axis below.
-
-One worker per item looks right and is not. Thirteen studies on twenty cores
-takes thirteen workers, leaves seven idle, and gives the loop below nothing --
-which is exactly the arrangement that capped this objective at 5x however many
-cores it was given. Maximising `nw * (budget / nw)` instead spends the whole
-budget, here as ten workers of two.
-"""
-function _laplace_claim(n::Int, budget::Int)
-    best, bestuse = 1, 0
-    @inbounds for nw in 1:min(n, budget)
-        use = nw * (budget ÷ nw)
-        if use > bestuse || (use == bestuse && nw > best)
-            best, bestuse = nw, use
-        end
-    end
-    return best
-end
 
 """
     _laplace_partition(f, laplace, n)
@@ -1024,18 +1046,38 @@ function _laplace_partition(f, laplace::CTSEMLaplaceObjective, n::Int)
     # are the only things that spawn, so putting it here makes the omission
     # unrepresentable rather than merely detected.
     _laplace_ensure_pool!(laplace)
-    base, budget = _laplace_slots()
-    if budget <= 1 || n == 1
-        return f(1:1:n, 1) !== false
+    n == 1 && return f(1:1:1, 1) !== false
+    # Take what is idle, then divide among what was actually taken. The count
+    # is discovered rather than computed, so nothing here has to know what an
+    # item costs -- see `_laplace_parallel` for the argument.
+    #
+    # Slots are held for the whole region here, unlike there, because each
+    # worker gets a fixed stride and works to completion. It is the *choice* of
+    # how many workers that has become dynamic, not the division among them.
+    slots = Int[]
+    while length(slots) < n - 1
+        slot = _laplace_slot_try_acquire()
+        slot === nothing && break
+        push!(slots, slot)
     end
-    nw = min(budget, n)
-    share = max(budget ÷ nw, 1)
+    nw = length(slots) + 1
+    nw == 1 && return f(1:1:n, 1) !== false
     oks = fill(true, nw)
-    Threads.@sync for w in 1:nw
-        Threads.@spawn begin
-            task_local_storage(:ctsem_pool_worker, true)
-            task_local_storage(:ctsem_slots, (base + (w - 1) * share, share))
-            oks[w] = f(w:nw:n, w) !== false
+    try
+        Threads.@sync begin
+            for (k, slot) in enumerate(slots)
+                Threads.@spawn begin
+                    task_local_storage(:ctsem_pool_worker, true)
+                    task_local_storage(:ctsem_slot, slot)
+                    oks[k + 1] = f((k + 1):nw:n, k + 1) !== false
+                end
+            end
+            # The caller takes a stride too, on the slot it already holds.
+            oks[1] = f(1:nw:n, 1) !== false
+        end
+    finally
+        for slot in slots
+            _laplace_slot_release(slot)
         end
     end
     return all(oks)
@@ -1078,42 +1120,61 @@ end into a named error rather than a `BoundsError` inside a task.
 function _laplace_parallel(f, items)
     n = length(items)
     n == 0 && return true
-    base, budget = _laplace_slots()
-    if budget <= 1 || n == 1
-        @inbounds for i in 1:n
-            f(items[i]) === false && return false
-        end
-        return true
-    end
-    nw = _laplace_claim(n, budget)
-    if nw <= 1
-        @inbounds for i in 1:n
-            f(items[i]) === false && return false
-        end
-        return true
-    end
-    share = max(budget ÷ nw, 1)
+    n == 1 && return f(@inbounds items[1]) !== false
     next = Threads.Atomic{Int}(0)
-    # One flag per worker, written only by that worker: a shared `Bool` set by
-    # several tasks is a race even when every writer writes the same value.
-    oks = fill(true, nw)
-    Threads.@sync for w in 1:nw
-        Threads.@spawn begin
-            local i, mine
+    # `Atomic`, not a plain `Bool`: several workers may set it, and a shared
+    # `Bool` written by several tasks is a race even when they all write the
+    # same value.
+    failed = Threads.Atomic{Bool}(false)
+    helpers = Task[]
+    # Whatever is idle right now, and never wait for it.
+    #
+    # This is the whole change from a computed band. Nothing here predicts how
+    # much work an item is, because nothing needs to: a worker that draws a
+    # cheap item runs out of items, releases its slot, and the workers still
+    # inside an expensive one pick it up at their next region. A study that
+    # turns out to sit in an awkward part of the parameter space ends up with
+    # more of the pool for exactly as long as it deserves it, and the cost
+    # model that used to decide this in advance -- and was wrong by about a
+    # factor of two on the thirteen-study affect model -- is gone.
+    #
+    # `n - 1` because this task is a worker too. Leaving the rest of the pool
+    # alone matters: regions nested inside these items need slots, and a loop
+    # that grabbed everything would starve them.
+    while length(helpers) < n - 1
+        slot = _laplace_slot_try_acquire()
+        slot === nothing && break
+        push!(helpers, Threads.@spawn begin
             task_local_storage(:ctsem_pool_worker, true)
-            task_local_storage(:ctsem_slots, (base + (w - 1) * share, share))
-            while true
-                i = Threads.atomic_add!(next, 1) + 1
-                i > n && break
-                mine = @inbounds items[i]
-                if f(mine) === false
-                    oks[w] = false
-                    break
-                end
+            task_local_storage(:ctsem_slot, slot)
+            try
+                _laplace_pull!(f, items, n, next, failed)
+            finally
+                # As soon as the queue is empty, not at the end of the region.
+                # That timing is what lets a finished worker's slot reach the
+                # unit that is still going.
+                _laplace_slot_release(slot)
             end
+        end)
+    end
+    # The caller works too, on the slot it already holds, so the region always
+    # completes even when the pool is empty.
+    _laplace_pull!(f, items, n, next, failed)
+    foreach(wait, helpers)
+    return !failed[]
+end
+
+"""Pull items off the shared counter until they run out or one fails."""
+@inline function _laplace_pull!(f, items, n::Int, next, failed)
+    while !failed[]
+        i = Threads.atomic_add!(next, 1) + 1
+        i > n && break
+        if f(@inbounds items[i]) === false
+            failed[] = true
+            break
         end
     end
-    return all(oks)
+    return nothing
 end
 
 """
@@ -1717,7 +1778,7 @@ function _laplace_unit_loglik_gradient(laplace::CTSEMLaplaceObjective, U::Intege
 
     pos = collect(positions)
     npos = length(pos)
-    if _laplace_slots()[2] <= 1 || npos < 2
+    if _laplace_pool_width() <= 1 || npos < 2
         # The caller may lend its accumulator. This vector is the whole unit's
         # random-effect dimension in dual arithmetic -- about 144 KB on two
         # hundred subjects -- and the curvature allocates one per block per
@@ -1740,36 +1801,56 @@ function _laplace_unit_loglik_gradient(laplace::CTSEMLaplaceObjective, U::Intege
     # A reduction, not per-member columns: every member of a block adds into
     # that block's slice of `u`, which is exactly the coupling that makes the
     # unit one integral. So each worker keeps its own and they are summed after.
-    budget = _laplace_slots()[2]
-    inners = [zeros(T, length(u)) for _ in 1:budget]
-    totals = [zero(T) for _ in 1:budget]
-    bad = [zero(T) for _ in 1:budget]
-    okk = fill(true, budget)
-    _laplace_partition(laplace, npos) do mine, w
-        local ws, grad, shift, acc, tot, i, loglik
+    # Keyed by the slot a worker holds, not by a dense worker index, and
+    # taken from per-slot scratch rather than allocated here.
+    #
+    # Two things follow. The worker count no longer has to be known before the
+    # region starts, which is what lets it be whatever the pool can spare. And
+    # the accumulators stop being built per call: this used to allocate one
+    # vector of the unit's whole random-effect dimension per worker, every
+    # time, which is the shape of allocation the rest of this file spent a
+    # night removing.
+    #
+    # `fill(false, ...)` and not `falses`: a `BitVector` packs eight flags to a
+    # byte, so two workers setting different slots would read-modify-write the
+    # same word and one would be lost.
+    width = _laplace_pool_width()
+    used = fill(false, width)
+    totals = zeros(T, width)
+    bad = zeros(T, width)
+    okk = fill(true, width)
+    _laplace_partition(laplace, npos) do mine, _w
+        local ws, grad, shift, acc, tot, i, loglik, slot
+        slot = _laplace_slot()
         ws = _laplace_workspace!(laplace, T, length(values))
         grad = _laplace_scratch_vector!(laplace, T, length(values), :loglik_grad)
         shift = _laplace_scratch_vector!(laplace, T, length(values), :loglik_shift)
-        acc = inners[w]
+        acc = _laplace_scratch_vector!(laplace, T, length(u), :primal_inner)
+        fill!(acc, zero(T))
+        used[slot] = true
         tot = zero(T)
         for i in mine
             loglik = one!(pos[i], ws, grad, shift, acc)
             if !isfinite(loglik)
-                okk[w] = false
-                bad[w] = loglik
+                okk[slot] = false
+                bad[slot] = loglik
                 return false
             end
             tot += loglik
         end
-        totals[w] = tot
+        totals[slot] = tot
         return true
     end
-    @inbounds for w in 1:budget
+    @inbounds for w in 1:width
         okk[w] || return (value=bad[w], gradient=fill(T(NaN), length(u)))
     end
-    inner = inners[1]
-    @inbounds for w in 2:budget, a in eachindex(inner)
-        inner[a] += inners[w][a]
+    inner = into === nothing ? zeros(T, length(u)) : fill!(into, zero(T))
+    @inbounds for w in 1:width
+        used[w] || continue
+        acc = _laplace_scratch_vector!(laplace, T, length(u), :primal_inner, w)
+        for j in eachindex(inner)
+            inner[j] += acc[j]
+        end
     end
     return (value=sum(totals), gradient=inner)
 end

@@ -806,18 +806,16 @@ function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     # Grown before anything is spawned: a concurrent push! onto the shared
     # workspace vector is a race, and one chain per slot is the whole reason
     # chains can run at all.
-    # Chains first, then the unit loop with whatever the pool has left. That
-    # split is no longer computed here: a chain is an item of a pool region, so
-    # it receives a band and the unit loop inside it spends what that band
-    # holds. `cores` caps the total because the pool is sized from it.
-    per_chain = max(1, _laplace_ensure_pool!(laplace) ÷ max(nchains, 1))
-    parallel = nchains > 1 && per_chain >= 1 && Threads.nthreads() > 1
+    # Chains and the loops inside them draw from one pool. There is no split to
+    # report because there is no longer a split: a chain takes a worker, and
+    # whatever workers are idle at any moment go to whichever chain's subject
+    # loop asks next. Saying "N threads each" would be a promise nothing makes.
+    width = _laplace_ensure_pool!(laplace)
+    parallel = nchains > 1 && Threads.nthreads() > 1
     verbose && println(_console(), "Sampling: ", nchains, " chain(s), ", ctsem_sample_dimension(sampler),
         " dimensions (", sampler.npar, " population + ",
         ctsem_sample_dimension(sampler) - sampler.npar, " effects), ",
-        parallel ? (per_chain > 1 ?
-            string(per_chain, " threads each") : "one thread each") :
-            "unit-parallel", ", metric in ",
+        width, " worker(s) shared, metric in ",
         length(metric.ranges), " block(s)")
 
     # Which metric blocks warmup may re-estimate. The population block always
