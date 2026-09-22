@@ -844,8 +844,13 @@ function _reverse_update!(x̄::Vector{T}, P̄::Matrix{T}, Θ̄::Matrix{T}, θ̄c
     # `_CTSEM_SMALL_CHOLESKY` LAPACK's blocking earns its lock back, and using a
     # different factorization from the forward's is itself a way for the reverse
     # to decline an `S` the forward accepted.
-    F = m <= _CTSEM_SMALL_CHOLESKY[] ? _ctsem_cholesky(mm2, m) :
-        cholesky!(mm2, check=false)
+    # One return type from both branches -- see the forward's copy of this in
+    # `kalman_filters.jl` for why the `Union` cost what it did.
+    F = if m <= _CTSEM_SMALL_CHOLESKY[]
+        _ctsem_cholesky(mm2, m)
+    else
+        CTSEMCholesky(mm2, m, issuccess(cholesky!(mm2, check=false)))
+    end
     if issuccess(F)
         @inbounds for j in 1:m
             column = view(Sinv, :, j)

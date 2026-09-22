@@ -295,7 +295,7 @@ function _ekf_update_observed!(ws::ContinuousEKFWorkspace, pars,
     end
 
     factor = _ekf_masked_update_step!(ws, pars, data, obs_col, gaussian, generate)
-    factor === nothing && return nothing
+    issuccess(factor) || return nothing
     return binary_loglik + _kalman_loglikelihood_cholesky!(
         view(ws.ll_buffer, 1:length(gaussian)),
         factor, view(ws.ỹ, 1:length(gaussian)), log2π_const)
@@ -566,9 +566,35 @@ function _ekf_masked_update_step!(ws::ContinuousEKFWorkspace, pars,
     # observed row, and `potrf` on a matrix this size is almost entirely the
     # process-global lock OpenBLAS takes to get its scratch buffer -- which is
     # what stopped the subject loop from threading.
-    factor = m <= _CTSEM_SMALL_CHOLESKY[] ? _ctsem_cholesky(Sv, m) :
-        cholesky!(Sv, check=false)
-    issuccess(factor) || return nothing
+    # One return type from both branches, and that is the whole point.
+    #
+    # The two used to be `CTSEMCholesky` and LAPACK's `Cholesky`, so the
+    # ternary's value was a `Union` of two non-isbits structs and every
+    # observed row boxed one. Line-level allocation tracking put 120 KB per 300
+    # subject evaluations here and the same again on the reverse's copy of this
+    # ternary -- together about a quarter of what a subject evaluation
+    # allocates, for a branch that is not even taken by default, since
+    # `_CTSEM_SMALL_CHOLESKY` is `typemax` unless someone sets it.
+    #
+    # Both routes factor `Sv` in place into its upper triangle, so wrapping
+    # LAPACK's result in the same struct is a relabelling rather than a
+    # conversion -- no copy, and the `ldiv!`/`rdiv!` methods below read `.U`
+    # either way.
+    factor = if m <= _CTSEM_SMALL_CHOLESKY[]
+        _ctsem_cholesky(Sv, m)
+    else
+        CTSEMCholesky(Sv, m, issuccess(cholesky!(Sv, check=false)))
+    end
+    # No early `return nothing`. The factor already carries whether it
+    # succeeded, and returning `nothing` on one path made this function's
+    # return type `Union{Nothing,CTSEMCholesky}` -- so the struct was boxed on
+    # the way out of *every* observed row, successful or not. Line-level
+    # tracking put 120 KB per 300 subject evaluations on the `return factor`
+    # below, which is the tell: the cost was at the boundary, not inside.
+    #
+    # The caller checks `issuccess` instead, which is the same question asked
+    # of a value that is always the same type.
+    issuccess(factor) || return factor
 
     # Data generation, if asked for: draw this row's observation from its own
     # prior predictive and carry on as though it had been read. Taken here
