@@ -73,6 +73,50 @@ end
     end
 end
 
+@testset "the density does not depend on how widely it is divided" begin
+    # The density loop divides over *subjects*, and several subjects of one unit
+    # write the same entries: every level above the innermost is shared by the
+    # subjects under it, and `theta` is shared by all of them. Each worker
+    # therefore accumulates privately and adds its buffer in under a lock, and
+    # this is the assertion that the accumulation is actually private.
+    #
+    # Against the ForwardDiff reference rather than against itself, because two
+    # widths of the same wrong reduction would agree. The reference knows
+    # nothing about workers.
+    original = ContinuousTimeSEM.ctsem_max_chunks().max_chunks
+    try
+        for (label, fresh) in (
+            ("one unit, several subjects", _fresh_linear),
+            ("two levels", _fresh_twolevel),
+            ("three levels", _fresh_threelevel))
+            laplace, values = fresh()
+            sampler = ContinuousTimeSEM.ctsem_sampler(laplace, length(values))
+            x = ContinuousTimeSEM.ctsem_sample_start(sampler, values)
+            for a in (sampler.npar + 1):sampler.ndim
+                x[a] = 0.35 * sin(1.7a)
+            end
+            reference = ForwardDiff.gradient(z -> _sampler_reference(sampler, z), x)
+
+            ContinuousTimeSEM.ctsem_set_max_chunks!(1)
+            gserial = zeros(sampler.ndim)
+            vserial = ContinuousTimeSEM.ctsem_sample_density!(gserial, sampler, x)
+
+            for width in (2, 4, 8)
+                ContinuousTimeSEM.ctsem_set_max_chunks!(width)
+                g = zeros(sampler.ndim)
+                v = ContinuousTimeSEM.ctsem_sample_density!(g, sampler, x)
+                @test v ≈ vserial rtol = 1e-12
+                @test g ≈ gserial rtol = 1e-10
+                @test g ≈ reference rtol = 1e-8
+            end
+            @test vserial ≈ _sampler_reference(sampler, x) rtol = 1e-12
+            @test gserial ≈ reference rtol = 1e-8
+        end
+    finally
+        ContinuousTimeSEM.ctsem_set_max_chunks!(original)
+    end
+end
+
 
 # `CTSEMLaplaceObjective`'s inner modes are retained state, warm-started
 # across calls (laplace.jl's own docstring on the struct, and

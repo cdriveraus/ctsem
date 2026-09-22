@@ -903,6 +903,16 @@ end
 @inline _laplace_slot() = _laplace_slots()[1]
 
 """
+Whether this task was handed its band by a parallel region, rather than taking
+the whole pool as the outermost caller.
+
+Set only by `_laplace_parallel` and `_laplace_partition`, on the tasks they
+spawn, and never cleared -- a task is one or the other for its whole life.
+"""
+@inline _laplace_is_worker() =
+    get(task_local_storage(), :ctsem_pool_worker, false)::Bool
+
+"""
 Refuse a slot the store does not have, by name.
 
 Restoring a guard that was removed as "unnecessary under the pool". It was not:
@@ -922,25 +932,41 @@ end
 """
     _laplace_ensure_pool!(laplace)
 
-Fix the pool size and make sure there is a scratch store per worker. Called at
-the top of every entry point, because every entry point is allowed to be the
-outermost one.
+Fix the pool size and make sure there is a scratch store per worker.
+
+Called by `_laplace_parallel` and `_laplace_partition`, which are the only two
+things that spawn and so the only two that need the store. It used to be the
+responsibility of every entry point instead, and three of them did not do it;
+each was a slot past the end of a store nothing had sized, and each cost a
+suite run to find. A few entry points still call it directly, which is
+harmless -- it is idempotent -- and says at the top of the function what state
+the rest of it assumes.
+
+Idempotent, and a no-op for a pool worker: a worker returns the band it was
+lent and never touches the store, so only the outermost task ever grows the
+vector and there is no concurrent `push!` on an array its siblings are
+indexing.
 """
 function _laplace_ensure_pool!(laplace::CTSEMLaplaceObjective)
+    # A worker returns the band it was lent and touches nothing. Only the
+    # outermost task grows the vector, so there is no concurrent `push!` on it
+    # -- which would be a data race on the backing array while its siblings are
+    # indexing it.
+    _laplace_is_worker() && return _laplace_slots()[2]
     n = _laplace_pool_size()
     while length(laplace.workspaces) < n
         push!(laplace.workspaces, Dict{Any,Any}())
     end
-    # The band too, not just the store -- but only if this task does not
-    # already have one. Every entry point calls this, and some of them are
-    # reached from inside a parallel region: `_laplace_unit_hessian` is called
-    # both directly and from the curvature's dense route. A worker that reset
-    # its band to the whole pool here would claim slots its siblings are
-    # holding, which is the collision this whole structure exists to prevent.
-    # So the outermost caller sets the band and everything under it inherits a
-    # share.
-    haskey(task_local_storage(), :ctsem_slots) ||
-        task_local_storage(:ctsem_slots, (1, n))
+    # The band too, not just the store. Reached only by a non-worker, which is
+    # the outermost task by definition, so it takes the whole pool.
+    #
+    # "Has a band already" was the first test for that and is wrong: a band set
+    # on the main task stays there for the rest of the session, so a later call
+    # with a different `cores` sized the store to the new pool and kept the old
+    # band -- in one direction a band wider than the store, which
+    # `_laplace_check_slot` then refused. Being a worker is the thing actually
+    # being asked about, so it is what gets recorded.
+    task_local_storage(:ctsem_slots, (1, n))
     return n
 end
 
@@ -967,7 +993,7 @@ function _laplace_claim(n::Int, budget::Int)
 end
 
 """
-    _laplace_partition(f, n)
+    _laplace_partition(f, laplace, n)
 
 Call `f(mine, w)` once per worker, with a disjoint stride of `1:n` and the
 worker's own index, so a reduction can keep one accumulator per worker and sum
@@ -981,8 +1007,23 @@ Unlike `_laplace_parallel` this spends the whole budget on one axis, because
 the members of a unit are the finest axis there is -- there is nothing below
 for a sub-budget to buy.
 """
-function _laplace_partition(f, n::Int)
+function _laplace_partition(f, laplace::CTSEMLaplaceObjective, n::Int)
     n <= 0 && return true
+    # Sizing the store is this function's job, not its callers'.
+    #
+    # It used to be "called at the top of every entry point", and three entry
+    # points did not: `_laplace_unit_hessian`, `ctsem_sample_start` and
+    # `ctsem_sample_metric`, each of which is reached on an objective this
+    # session may never have evaluated -- `ctSample()` on a reloaded fit builds
+    # a fresh one. The band lives on the task and the store lives on the
+    # object, so a task carrying a band from an earlier object spawned workers
+    # that indexed past this one's empty store. Each was found by a separate
+    # forty-minute suite run.
+    #
+    # Spawning is the only thing that needs the store, and these two functions
+    # are the only things that spawn, so putting it here makes the omission
+    # unrepresentable rather than merely detected.
+    _laplace_ensure_pool!(laplace)
     base, budget = _laplace_slots()
     if budget <= 1 || n == 1
         return f(1:1:n, 1) !== false
@@ -992,6 +1033,7 @@ function _laplace_partition(f, n::Int)
     oks = fill(true, nw)
     Threads.@sync for w in 1:nw
         Threads.@spawn begin
+            task_local_storage(:ctsem_pool_worker, true)
             task_local_storage(:ctsem_slots, (base + (w - 1) * share, share))
             oks[w] = f(w:nw:n, w) !== false
         end
@@ -1000,7 +1042,7 @@ function _laplace_partition(f, n::Int)
 end
 
 """
-    _laplace_parallel(f, items)
+    _laplace_parallel(f, laplace, items)
 
 Run `f(item)` for every item, on the pool, and report whether all succeeded.
 
@@ -1012,6 +1054,26 @@ rest of the pool idle.
 A budget of one runs serially, and so does a single item -- which is what makes
 nesting free: the innermost regions of a saturated pool cost nothing but a
 branch.
+"""
+function _laplace_parallel(f, laplace::CTSEMLaplaceObjective, items)
+    _laplace_ensure_pool!(laplace)      # see `_laplace_partition`
+    return _laplace_parallel(f, items)
+end
+
+"""
+    _laplace_parallel(f, items)
+
+The same, for a region whose caller has already sized the store.
+
+One caller: the chain runner in `sample_run.jl`, which is generic over a
+density closure and has no objective to hand -- deliberately, since that is
+what lets it run the same chains for the marginal and the state-explicit
+targets. `ctsem_sample_marginal` sizes the store before any chain starts, so
+the region below is never the outermost one.
+
+This is the hole the objective argument closes everywhere else, kept open here
+on purpose and watched by `_laplace_check_slot`, which turns a slot past the
+end into a named error rather than a `BoundsError` inside a task.
 """
 function _laplace_parallel(f, items)
     n = length(items)
@@ -1038,6 +1100,7 @@ function _laplace_parallel(f, items)
     Threads.@sync for w in 1:nw
         Threads.@spawn begin
             local i, mine
+            task_local_storage(:ctsem_pool_worker, true)
             task_local_storage(:ctsem_slots, (base + (w - 1) * share, share))
             while true
                 i = Threads.atomic_add!(next, 1) + 1
@@ -1682,7 +1745,7 @@ function _laplace_unit_loglik_gradient(laplace::CTSEMLaplaceObjective, U::Intege
     totals = [zero(T) for _ in 1:budget]
     bad = [zero(T) for _ in 1:budget]
     okk = fill(true, budget)
-    _laplace_partition(npos) do mine, w
+    _laplace_partition(laplace, npos) do mine, w
         local ws, grad, shift, acc, tot, i, loglik
         ws = _laplace_workspace!(laplace, T, length(values))
         grad = _laplace_scratch_vector!(laplace, T, length(values), :loglik_grad)
@@ -2053,7 +2116,7 @@ function _laplace_unit_curvature(laplace::CTSEMLaplaceObjective, U::Integer,
         while stop < length(blocks) && blocks[stop + 1].level == blocks[at].level
             stop += 1
         end
-        _laplace_parallel(at:stop) do b
+        _laplace_parallel(laplace, at:stop) do b
             fill_block!(b)
         end
         at = stop + 1
@@ -2451,14 +2514,14 @@ struct _LaplaceSeedInner end
 struct _LaplaceSeedOuter end
 
 """
-    _laplace_run_members(body, members)
+    _laplace_run_members(body, laplace, members)
 
 Run `body(c, m)` for every member, over whatever the calling task's pool band
 holds. Serial when that band is one slot wide or there is little to divide, in
 which case every call uses the caller's own slot and nothing is spawned.
 """
-function _laplace_run_members(body, members)
-    return _laplace_parallel(1:length(members)) do c
+function _laplace_run_members(body, laplace::CTSEMLaplaceObjective, members)
+    return _laplace_parallel(laplace, 1:length(members)) do c
         body(c, @inbounds members[c])
     end
 end
@@ -2546,7 +2609,7 @@ function _laplace_unit_seeded_gradient_(laplace::CTSEMLaplaceObjective, U::Integ
             end
             return true
         end
-        _laplace_run_members(one_member!, members) || return failure
+        _laplace_run_members(one_member!, laplace, members) || return failure
         return (ok=true, d0=d0, d1c=d1c, d12=_LAPLACE_NO_MATRIX)
     end
 
@@ -2585,7 +2648,7 @@ function _laplace_unit_seeded_gradient_(laplace::CTSEMLaplaceObjective, U::Integ
         end
         return true
     end
-    _laplace_run_members(one_member!, members) || return failure
+    _laplace_run_members(one_member!, laplace, members) || return failure
     return (ok=true, d0=d0, d1c=d1c, d12=d12)
 end
 
@@ -2679,7 +2742,7 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
     # many members has its small Cholesky factored once per worker. Both are
     # nothing beside one subject sweep.
     run_by_member! = function (body)
-        return _laplace_partition(nmem) do mine, _w
+        return _laplace_partition(laplace, nmem) do mine, _w
             body(collect(mine))
         end
     end
@@ -3230,7 +3293,7 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
         end
         return nothing
     end
-    _laplace_parallel(1:nchunks) do c
+    _laplace_parallel(laplace, 1:nchunks) do c
         run_primal(c)
         return true
     end
@@ -3297,7 +3360,7 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
             end
             return nothing
         end
-        _laplace_parallel(1:nchunks) do c
+        _laplace_parallel(laplace, 1:nchunks) do c
             run_gradient(c)
             return true
         end
@@ -3625,7 +3688,7 @@ function _laplace_primal_curvature(laplace::CTSEMLaplaceObjective,
         end
         return nothing
     end
-    _laplace_parallel(1:nchunks) do c
+    _laplace_parallel(laplace, 1:nchunks) do c
         run(c)
         return true
     end

@@ -665,6 +665,8 @@ function _run_chains(nchains::Int, parallel::Bool, seed::Integer,
         _progress_done(reporter, closing)
         return nothing
     end
+    # No objective here -- see the two-argument method. The store is sized by
+    # `ctsem_sample_marginal` before any chain starts.
     _laplace_parallel(1:nchains) do c
         runner(c)
         return true

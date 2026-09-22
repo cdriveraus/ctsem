@@ -446,7 +446,7 @@ function ctsem_laplace_quadrature(laplace::CTSEMLaplaceObjective,
         end
         return nothing
     end
-    _laplace_parallel(1:nchunks) do c
+    _laplace_parallel(laplace, 1:nchunks) do c
         run(c)
         return true
     end

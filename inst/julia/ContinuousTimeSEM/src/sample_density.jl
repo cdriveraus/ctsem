@@ -82,6 +82,13 @@ struct CTSEMSampler{L}
     # parameters -- the ones `L_l` depends on, and so the only ones with a
     # gradient contribution through the shift.
     positions::Vector{Vector{Int}}
+    # Every subject of every unit, flattened, as parallel `(unit, member)`
+    # vectors. The density loop divides over *this*, not over units: a sampled
+    # model is frequently one study, and a unit axis then leaves every core but
+    # one idle. Built once here because the alternative is rebuilding it on
+    # every leapfrog step.
+    flat_unit::Vector{Int}
+    flat_member::Vector{Int}
 end
 
 function ctsem_sampler(laplace::CTSEMLaplaceObjective, npar::Integer)
@@ -99,7 +106,14 @@ function ctsem_sampler(laplace::CTSEMLaplaceObjective, npar::Integer)
     end
     positions = [_laplace_level_positions(laplace.spec, l)
                  for l in eachindex(laplace.spec.levels)]
-    return CTSEMSampler(laplace, npar, nunits, udims, uoffsets, at, positions)
+    flat_unit = Int[]
+    flat_member = Int[]
+    for U in 1:nunits, m in eachindex(units.members[U])
+        push!(flat_unit, U)
+        push!(flat_member, m)
+    end
+    return CTSEMSampler(laplace, npar, nunits, udims, uoffsets, at, positions,
+        flat_unit, flat_member)
 end
 
 """Total dimension sampled: population parameters plus every unit's effects."""
@@ -119,11 +133,25 @@ likelihood is not finite, which a sampler must treat as a rejection rather than
 an error: a leapfrog trajectory routinely steps somewhere the filter cannot
 evaluate, and throwing there would end the chain instead of the trajectory.
 
-Parallel over units, with the same cost-weighted chunking and the same
-`ctsem_set_max_chunks!` ceiling the Laplace path uses. Each unit's latent block
-is disjoint, so those gradients are written straight into `gradient`; only the
-`theta` part needs a per-chunk accumulator, and it is `npar` long rather than
-`ndim`.
+Parallel over *subjects*, under the same `ctsem_set_max_chunks!` ceiling the
+Laplace path uses.
+
+Over units is what this did before, and it does not work: a sampled model is
+often a single study, and there is then one unit and nothing to divide.
+Measured on dev1 with 20 threads, one unit of 60 subjects, the same chain took
+8.16 ms per leapfrog step on one core and 8.81 on twenty -- no speedup at all,
+where the Laplace objective on the same shape gets 5.19x from dividing the same
+subjects. The unit axis is the right one only when there are units to spare.
+
+The price is that several subjects of one unit contribute to the *same* entries
+of the gradient: the innermost level's block belongs to one subject, but every
+level above it is shared by all the subjects under it, and `theta` is shared by
+everyone. So each worker accumulates into a full-length buffer of its own and
+adds it in once, under a lock, at the end of its chunk -- one acquisition per
+worker per density call, against thousands of subject filters.
+
+The standard normal prior on the effects is per unit, not per subject, so it
+stays on the calling task above the loop.
 """
 function ctsem_sample_density!(gradient::Vector{Float64}, sampler::CTSEMSampler,
     x::AbstractVector{Float64})
@@ -151,51 +179,57 @@ function ctsem_sample_density!(gradient::Vector{Float64}, sampler::CTSEMSampler,
     end
 
     fill!(gradient, 0.0)
-    # Chains are the better parallel axis -- they share nothing and scale
-    # flat, where the unit loop scales about twofold -- so chains are filled
-    # first and the unit loop spends what the chain's band has left.
-    #
-    # The pool does this. A chain is an item of the region one level out, so
-    # it already holds a band of its own and splits it here; two chains can
-    # never reach the same adjoint workspace because their bands are disjoint
-    # by construction rather than by arithmetic written out here. What this
-    # used to say about blocks per chain is now a property of
-    # `_laplace_parallel`, and the parameters that carried it are gone.
+    # A chain is an item of the region one level out, so it already holds a
+    # band of its own and splits it here; two chains can never reach the same
+    # adjoint workspace because their bands are disjoint by construction.
     _laplace_ensure_pool!(laplace)
-    nchunks = max(1, min(_laplace_slots()[2], nunits))
-    # Keyed on the chunk count, not on which axis produced it: a chain with a
-    # block of workspaces splits its units exactly as the unit-parallel path
-    # does.
-    ranges = nchunks > 1 ?
-        _ctsem_chunk_assignment(_laplace_unit_weights(laplace), nchunks) :
-        [1:nunits]
-    chunk_value = zeros(Float64, nchunks)
-    chunk_theta = [zeros(Float64, npar) for _ in 1:nchunks]
-    chunk_ok = fill(true, nchunks)
 
-    run = function (c)
+    # The standard normal prior on each unit's effects. Per unit, so it runs
+    # here rather than inside the subject loop, and it touches each entry of
+    # `gradient` exactly once.
+    prior = 0.0
+    @inbounds for U in 1:nunits
+        for a in _sample_urange(sampler, U)
+            prior -= x[a] * x[a] / 2
+            gradient[a] -= x[a]
+        end
+    end
+
+    nsub = length(sampler.flat_unit)
+    reduction = ReentrantLock()
+    shared_total = Ref(0.0)
+
+    run = function (mine, _w)
         aws = _laplace_workspace!(laplace, Float64, npar)
         # Per slot, not per subject: several chains filter the *same* subject at
         # the same time, where the unit loop never does, so the workspace cached
         # on the subject would be shared and silently corrupted.
         ekf = _laplace_ekf_workspace!(laplace, Float64)
-        gsub = Vector{Float64}(undef, npar)
-        shifted = Vector{Float64}(undef, npar)
-        gtheta = chunk_theta[c]
+        gsub = _laplace_scratch_vector!(laplace, Float64, npar, :sample_gsub)
+        shifted = _laplace_scratch_vector!(laplace, Float64, npar, :sample_shift)
+        # This worker's whole contribution, added in once at the end. Full
+        # length because subjects of one unit share every level above the
+        # innermost, and all of them share `theta`.
+        # `wacc`, not `acc`: the level loop below already has a scalar `acc`,
+        # and a closure assigning a name the enclosing function also has is how
+        # this engine loses a gradient silently.
+        wacc = _laplace_scratch_vector!(laplace, Float64, sampler.ndim, :sample_acc)
+        fill!(wacc, 0.0)
+        gtheta = wacc
         total = 0.0
-        @inbounds for U in ranges[c]
-            members = laplace.units.members[U]
-            urange = _sample_urange(sampler, U)
-            uview = view(x, urange)
-            for (m, i) in enumerate(members)
+        @inbounds begin
+            for s in mine
+                U = sampler.flat_unit[s]
+                m = sampler.flat_member[s]
+                i = laplace.units.members[U][m]
+                uview = view(x, _sample_urange(sampler, U))
                 offsets = laplace.units.offsets[U][m]
                 _laplace_member_values!(shifted, theta, spec, Ls, uview, offsets)
                 loglik = _laplace_subject_value_gradient!(gsub,
                     laplace.objective.subject_objectives[i], aws, shifted;
                     ekf_workspace=ekf)
                 if !isfinite(loglik)
-                    chunk_ok[c] = false
-                    return nothing
+                    return false
                 end
                 total += loglik
                 # `shifted = theta + sum_l L_l u`, so every parameter picks up
@@ -216,7 +250,7 @@ function ctsem_sample_density!(gradient::Vector{Float64}, sampler::CTSEMSampler,
                         for p in 1:k
                             acc += L[p, q] * gsub[re[p]]
                         end
-                        gradient[sampler.uoffsets[U] + base + q] += acc
+                        wacc[sampler.uoffsets[U] + base + q] += acc
                     end
                     # ...and the scale and correlation parameters pick it up a
                     # second time, through `L` depending on them. Written as
@@ -237,28 +271,18 @@ function ctsem_sample_density!(gradient::Vector{Float64}, sampler::CTSEMSampler,
                     end
                 end
             end
-            # The standard normal prior on this unit's effects.
-            for a in urange
-                total -= x[a] * x[a] / 2
-                gradient[a] -= x[a]
+        end
+        Base.@lock reduction begin
+            shared_total[] += total
+            @inbounds for a in 1:sampler.ndim
+                gradient[a] += wacc[a]
             end
         end
-        chunk_value[c] = total
-        return nothing
-    end
-
-    _laplace_parallel(1:nchunks) do c
-        run(c)
         return true
     end
 
-    @inbounds for c in 1:nchunks
-        chunk_ok[c] || return -Inf
-    end
-    value = sum(chunk_value)
-    @inbounds for c in 1:nchunks, t in 1:npar
-        gradient[t] += chunk_theta[c][t]
-    end
+    _laplace_partition(run, laplace, nsub) || return -Inf
+    value = prior + shared_total[]
     value += _ctsem_log_prior(laplace.objective, theta)
     _ctsem_log_prior_gradient!(view(gradient, 1:npar), laplace.objective, theta)
     return isfinite(value) ? value : -Inf
@@ -291,6 +315,13 @@ from an optimised fit rather than from a random draw.
 """
 function ctsem_sample_start(sampler::CTSEMSampler, values::AbstractVector;
     use_modes::Bool=true)
+    # An entry point: the objective here is routinely a *different* one from
+    # any this session has evaluated -- `ctSample()` on a reloaded fit builds a
+    # fresh one -- and its workspace store is empty until this sizes it. The
+    # band lives on the task and the store lives on the object, so arriving
+    # with a band from some earlier object and no store of this one's is
+    # exactly the mismatch `_laplace_check_slot` refuses.
+    _laplace_ensure_pool!(sampler.laplace)
     x = zeros(Float64, sampler.ndim)
     copyto!(view(x, 1:sampler.npar), view(collect(Float64, values), 1:sampler.npar))
     use_modes || return x
