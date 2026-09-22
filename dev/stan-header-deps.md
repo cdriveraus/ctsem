@@ -82,3 +82,47 @@ package DLL actually relinks) instead of being silently reused.
 Actually run this, both directions, before trusting a change here again --
 this file exists because the first version of the fix looked right, passed
 a read of the mechanism, and still did nothing.
+
+## The Makevars mtime, and why it must not move
+
+Appending the rules above has a side effect that costs a full stan recompile
+roughly every second RStudio build, and it is not visible from `make`.
+
+`rstantools:::.add_stanfile()` only writes `src/Makevars`/`Makevars.win` when
+the new content differs from what is on disk. Before the rules existed the
+file was byte-identical to rstantools' template on every configure run, so it
+was never rewritten and its mtime never moved. With the rules appended it
+always differs, so `rstan_config()` rewrites it on every single install --
+same bytes afterwards, new mtime.
+
+That matters because of `pkgbuild`, which is what devtools, roxygen and
+RStudio's build all go through:
+
+```r
+pkgbuild:::headers(path)     # dir(src, "^Makevars.*$"), dir(src, "\\.h.*$"), inst/include
+pkgbuild:::needs_clean(path) # max(mtime(headers)) > mtime(src/<pkg>.dll)
+pkgbuild::compile_dll(path)  # install_min(..., args = if (needs_clean(path)) "--preclean")
+```
+
+`src/Makevars*` counts as a *header*. So a configure run that leaves the
+Makevars newer than `src/ctsem.dll` makes the next `compile_dll()` pass
+`--preclean`, which runs `shlib-clean` (`rm -f $(OBJECTS)`, from
+`share/make/winshlib.mk` -- objects only, the dll is left behind), and every
+stan object is rebuilt from scratch. The cycle is self-sustaining: an install
+whose `make` has nothing to do does not relink the dll, so the Makevars
+rewritten by that same install's configure step is left newer than it.
+
+Observed here as: `src/` holding a fresh `RcppExports.o`, no
+`stanExports_*.o` at all, and a `ctsem.dll` several days old.
+
+Fixed by snapshotting the Makevars with `cp -p` before `rstan_config()` runs
+and restoring its mtime with `touch -r` afterwards when the final bytes are
+unchanged (`cmp -s`). Both halves are in `configure` and `configure.win`.
+Content still decides everything -- a genuinely changed build configuration
+gets a new mtime and does rebuild. Degrades safely: if `cmp` or `touch -r` is
+missing the file just keeps its new mtime, which is the behaviour this block
+replaced.
+
+To check it, run `sh configure.win` (with `R_HOME` set) two or three times and
+confirm `src/Makevars.win`'s mtime does not move after the first, and that
+`pkgbuild:::needs_clean(".")` stays `FALSE`.
