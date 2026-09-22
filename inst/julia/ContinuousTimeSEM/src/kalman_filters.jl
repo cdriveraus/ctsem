@@ -249,19 +249,20 @@ function _ekf_update_observed!(ws::ContinuousEKFWorkspace, pars,
     if n_observed == m_full
         observed = 1:m_full
     else
-        # `observed` (which manifest rows are present) necessarily allocates
-        # here -- its length varies row to row, so it cannot be a workspace
-        # field sized once at construction -- but everything downstream of it
-        # uses views into existing workspace buffers instead of allocating
-        # fresh matrices (see `_ekf_masked_update_step!`).
-        observed = Vector{Int}(undef, n_observed)
+        # A view of the workspace's row buffer. The length varies row to
+        # row, but the ceiling is the manifest dimension, so a fixed buffer
+        # and a count give the same thing without allocating. The adjoint tape
+        # copies these indices into its own record rather than keeping the
+        # array, so reusing the buffer cannot reach backwards into a recorded
+        # row -- which is the only thing that would make this unsafe.
         idx = 0
         @inbounds for i in 1:m_full
             if _ctsem_observed(data[i, obs_col])
                 idx += 1
-                observed[idx] = i
+                ws.observed_buf[idx] = i
             end
         end
+        observed = view(ws.observed_buf, 1:n_observed)
     end
 
     # Binary rows first, on the predicted covariance, then the Gaussian ones
@@ -303,11 +304,23 @@ end
 """Whether manifest variable `i` is integrated rather than filtered linearly."""
 @inline _ekf_is_categorical(types, i::Int) = i <= length(types) && types[i] > 0
 
-"""Which of `observed` are categorical. Empty when the model has none."""
+"""Which of `observed` are categorical. Empty when the model has none.
+
+Always a view of the same buffer, including when it is empty: returning a
+`Vector{Int}` on one branch and a view on the other would make the return type
+a union at a call that runs once per row, where it used to be concrete.
+"""
 @inline function _ekf_binary_subset(ws::ContinuousEKFWorkspace, observed)
     types = ws.manifesttype
-    isempty(types) && return Int[]
-    return Int[i for i in observed if _ekf_is_categorical(types, i)]
+    isempty(types) && return view(ws.binary_buf, 1:0)
+    n = 0
+    @inbounds for i in observed
+        if _ekf_is_categorical(types, i)
+            n += 1
+            ws.binary_buf[n] = i
+        end
+    end
+    return view(ws.binary_buf, 1:n)
 end
 
 """Which of `observed` are Gaussian. `observed` itself when none are not."""
@@ -322,7 +335,14 @@ end
         end
     end
     any_categorical || return observed
-    return Int[i for i in observed if !_ekf_is_categorical(types, i)]
+    n = 0
+    @inbounds for i in observed
+        if !_ekf_is_categorical(types, i)
+            n += 1
+            ws.gaussian_buf[n] = i
+        end
+    end
+    return view(ws.gaussian_buf, 1:n)
 end
 
 """

@@ -153,6 +153,20 @@ struct ContinuousEKFWorkspace{T, N, M, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF
     # because the two blocks are different sets and the Lyapunov solve wants
     # its own: see `affine_dim` in `EKFParameters`.
     affine_buffer::AFBUF
+
+    # Row scratch for the observed-subset indices: which manifest rows this
+    # row has, and the categorical and Gaussian parts of that. One row is
+    # live at a time within a subject filter, and a workspace belongs to one
+    # task, so one buffer each is enough. Fixed length, used through a view
+    # of the part that is filled -- the count varies row to row but the
+    # ceiling does not, which is what the old comment here missed when it
+    # said a workspace field could not hold this. Half the rows of a real ESM
+    # dataset are partially observed (32,468 of 64,784 on the thirteen-study
+    # affect model), so this ran on every other row of every evaluation.
+    observed_buf::Vector{Int}
+    binary_buf::Vector{Int}
+    gaussian_buf::Vector{Int}
+
 end
 
 """
@@ -289,5 +303,8 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
         sp.population_scale,
         population_buffer,
         affine_buffer,
+        Vector{Int}(undef, m),
+        Vector{Int}(undef, m),
+        Vector{Int}(undef, m),
     )
 end
