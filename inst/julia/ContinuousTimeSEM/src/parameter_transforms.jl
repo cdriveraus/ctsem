@@ -39,16 +39,21 @@ function apply_complex_transforms_at_indices!(
     context::CTSEMRowContext,
 )
     @boundscheck length(indices) == length(transforms) || throw(DimensionMismatch("Transform indices/functions mismatch"))
+    # Asserted for the same reason as in `map_parameters!`: the transform
+    # collection has an abstract element type, so the call is a dynamic
+    # dispatch and its result would be boxed on the way into `all_params`.
+    P = eltype(all_params)
     @inbounds for k in eachindex(indices)
-        all_params[indices[k]] = transforms[k](context)
+        all_params[indices[k]] = transforms[k](context)::P
     end
     return all_params
 end
 
 function apply_complex_transforms_at_indices!(all_params, indices, transforms, state, pars)
     @boundscheck length(indices) == length(transforms) || throw(DimensionMismatch("Transform indices/functions mismatch"))
+    P = eltype(all_params)
     @inbounds for k in eachindex(indices)
-        all_params[indices[k]] = transforms[k](state, pars)
+        all_params[indices[k]] = transforms[k](state, pars)::P
     end
     return all_params
 end
