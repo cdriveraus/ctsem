@@ -412,10 +412,6 @@ function ctsem_laplace_quadrature(laplace::CTSEMLaplaceObjective,
     # engine's contract is that an evaluation reports NaN, and a throw inside a
     # spawned task escapes as a `TaskFailedException` that kills whatever loop
     # is above it, so it is caught here rather than left to every caller.
-    # Errors that can only mean the code is wrong, however deep they arrive.
-    _quadrature_is_bug(err) = err isa MethodError || err isa UndefVarError ||
-        err isa BoundsError || err isa TypeError ||
-        (err isa TaskFailedException && _quadrature_is_bug(err.task.result))
 
     run = function (c)
         try
@@ -440,8 +436,7 @@ function ctsem_laplace_quadrature(laplace::CTSEMLaplaceObjective,
             # So the errors that mean "this code is wrong" are rethrown. A
             # `TaskFailedException` from a nested region is unwrapped first,
             # because the pool may have spawned inside the chunk.
-            _quadrature_is_bug(err) && rethrow()
-            err isa InterruptException && rethrow()
+            _ctsem_must_propagate(err) && rethrow()
             failed[c] = true
         end
         return nothing

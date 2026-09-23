@@ -586,3 +586,42 @@ end
 end
 
 
+
+# A trial point that throws for a numerical reason is rejected. One that throws
+# because the code is wrong must not be: a caught `MethodError` once turned a
+# refactor into a NaN quadrature gap and an identity sampler metric, and the
+# same catch sat around every optimiser trial point.
+struct _ThrowMock <: ContinuousTimeSEM.CTSEMOptimisable
+    err::Any
+end
+ContinuousTimeSEM.ctsem_evaluate(m::_ThrowMock, x::AbstractVector; kwargs...) =
+    throw(m.err)
+
+@testset "a trial point rejects numerical failures and rethrows bugs" begin
+    trial(err) = ContinuousTimeSEM._ctsem_optimise_trial(_ThrowMock(err),
+        [0.0], true, :adjoint, 1e10, nothing)
+
+    numerical = trial(DomainError(-1.0, "log of a negative"))
+    @test numerical.evaluated === nothing
+    @test numerical.valid == false
+    @test trial(ArgumentError("matrix is not positive definite")).valid == false
+
+    @test_throws MethodError trial(MethodError(+, ("a",)))
+    @test_throws UndefVarError trial(UndefVarError(:nowhere))
+    @test_throws BoundsError trial(BoundsError([1], 2))
+    @test_throws InterruptException trial(InterruptException())
+
+    # From a spawned region the error arrives wrapped, and the wrapper is not
+    # what decides.
+    task = @task throw(MethodError(+, ("a",)))
+    schedule(task)
+    wrapped = try
+        wait(task)
+        nothing
+    catch err
+        err
+    end
+    @test wrapped isa TaskFailedException
+    @test ContinuousTimeSEM._ctsem_must_propagate(wrapped)
+    @test !ContinuousTimeSEM._ctsem_must_propagate(DomainError(-1.0))
+end

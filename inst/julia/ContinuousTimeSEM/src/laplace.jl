@@ -4395,7 +4395,8 @@ function _ctsem_optimise_trial(o::CTSEMLaplaceObjective, x, want_gradient::Bool,
     evaluated = try
         ctsem_laplace_evaluate(o, x; gradient=want_gradient,
             nested_gradient=(Symbol(gradient_method) === :nested))
-    catch
+    catch err
+        _ctsem_must_propagate(err) && rethrow()
         nothing
     end
     value = evaluated === nothing ? NaN : evaluated.value
@@ -4446,7 +4447,8 @@ solve used to fail.
 function _ctsem_probe_value(o::CTSEMLaplaceObjective, x)
     evaluated = try
         ctsem_laplace_evaluate(o, x; gradient=false)
-    catch
+    catch err
+        _ctsem_must_propagate(err) && rethrow()
         nothing
     end
     evaluated === nothing && return -Inf
