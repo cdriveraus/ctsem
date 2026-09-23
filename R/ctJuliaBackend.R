@@ -4600,6 +4600,18 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # because they mean opposite things: the gap rule stops a fit that has
     # arrived, this one stops a fit that is not going to.
     stopped_by_stall = isTRUE(result$stopped_by_stall),
+    # The batch sizes the run grew through, and the iteration each began at;
+    # 0 when it did not batch (too few subjects, a prior, or the route has no
+    # subset). See `_ctsem_batch_plan` in the engine.
+    batch_sizes = if (is.null(result$batch_sizes)) 0L else
+      as.integer(result$batch_sizes),
+    batch_iterations = if (is.null(result$batch_iterations)) 0L else
+      as.integer(result$batch_iterations),
+    # Newton steps on the exact Hessian after L-BFGS handed over; 0 when there
+    # was no finish (the Hessian is not cheap on this route, or the run ended
+    # some other way).
+    newton_steps = if (is.null(result$newton_steps)) 0L else
+      as.integer(result$newton_steps),
     stall_window = if (is.null(result$stall_window)) NA_integer_ else
       as.integer(result$stall_window),
     # And the two stopping rules as the engine actually received them.

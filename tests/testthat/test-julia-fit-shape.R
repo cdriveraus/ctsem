@@ -252,6 +252,7 @@ test_that("$estimate holds the estimate and nothing about the run", {
   run_shaped <- c("converged", "convergence_pending", "convergence_tolerance",
     "predicted_gain", "last_gain", "gradient", "gradient_norm", "iterations",
     "stage_iterations", "f_calls", "g_calls", "chunks", "linesearch",
+    "batch_sizes", "batch_iterations", "newton_steps",
     "stalled", "stopped_by_gap", "overshot", "overshoot_gain",
     "overshoot_parameters", "saturated", "saturated_parameters", "carefulfit",
     "carefulfit_iterations", "corrections", "hessians",
