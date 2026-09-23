@@ -302,3 +302,29 @@ Return whether two ordinary matrices are close enough to share an exponential.
 @inline _can_reuse_same_exponential(A::AbstractMatrix, B::AbstractMatrix) = _isapprox_matrix_noalloc(A, B)
 @inline _can_reuse_same_exponential(A::AbstractMatrix, B::AbstractMatrix, dim::Val{d}) where {d} =
     _isapprox_matrix_noalloc(A, B, dim, dim)
+
+
+"""
+    _ctsem_must_propagate(err)
+
+Whether an exception caught while evaluating a trial point must be rethrown
+rather than converted into an invalid-point sentinel.
+
+The catches around trial evaluations exist for facts about a parameter vector:
+a curvature that will not factorize, a matrix exponential whose scaling step
+takes `ceil(Int, NaN)`. The engine's contract is that such a point reports NaN
+or is rejected. These are not that. `MethodError`, `UndefVarError`,
+`UndefKeywordError`, `BoundsError` and `TypeError` mean the code is wrong --
+when the worker pool dropped the `slot` argument, two callers kept passing it,
+and their catches turned the `MethodError` into a NaN quadrature gap and an
+identity sampler metric, with nothing reported. An `InterruptException` is the
+user stopping the run. A `TaskFailedException` or `CompositeException` from a
+spawned region is unwrapped, since the error that matters is inside it.
+"""
+function _ctsem_must_propagate(err)
+    err isa TaskFailedException && return _ctsem_must_propagate(err.task.result)
+    err isa CompositeException && return any(_ctsem_must_propagate, err.exceptions)
+    return err isa MethodError || err isa UndefVarError ||
+        err isa UndefKeywordError || err isa BoundsError || err isa TypeError ||
+        err isa InterruptException
+end
