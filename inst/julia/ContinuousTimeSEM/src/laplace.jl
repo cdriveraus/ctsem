@@ -411,8 +411,6 @@ mutable struct CTSEMLaplaceObjective{O} <: CTSEMOptimisable
     modes::Vector{Vector{Float64}}
     inner_maxiter::Int
     inner_tol::Float64
-    # The relative floor under `inner_tol`; see `_laplace_inner_tolerance`.
-    inner_floor::Float64
     # Adjoint workspaces: one dictionary per chunk of the unit loop, each
     # mapping a scalar type to its workspace. The engine's own cache lives on
     # the CTSEMObjective and holds one type at a time, which would thrash badly
@@ -441,15 +439,13 @@ mutable struct CTSEMLaplaceObjective{O} <: CTSEMOptimisable
 end
 
 function CTSEMLaplaceObjective(objective::CTSEMObjective, spec::CTSEMLaplaceSpec;
-    inner_maxiter::Integer=_LAPLACE_INNER_MAXITER[], inner_tol::Real=1e-10,
-    inner_floor::Real=_LAPLACE_INNER_FLOOR[])
+    inner_maxiter::Integer=_LAPLACE_INNER_MAXITER[], inner_tol::Real=1e-10)
     nsubjects = length(objective.subject_objectives)
     units = _laplace_build_units(spec, nsubjects)
     nunits = length(units.members)
     return CTSEMLaplaceObjective{typeof(objective)}(objective, spec, units,
         [zeros(Float64, units.dims[U]) for U in 1:nunits],
-        Int(inner_maxiter), Float64(inner_tol), Float64(inner_floor),
-        [Dict{Any,Any}()],
+        Int(inner_maxiter), Float64(inner_tol), [Dict{Any,Any}()],
         zeros(Int, nunits), zeros(Float64, nunits), falses(nunits), falses(nunits),
         falses(nunits))
 end
@@ -476,8 +472,7 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
     sd_index=Int[], cor_index=Int[], sd_scale=Float64[], level_nre=Int[],
     group=Int[], level_ngroups=Int[], level_covmatcode=Int[],
     level_rank=Int[], load_index=Int[],
-    inner_maxiter::Integer=_LAPLACE_INNER_MAXITER[], inner_tol::Real=1e-10,
-    inner_floor::Real=_LAPLACE_INNER_FLOOR[])
+    inner_maxiter::Integer=_LAPLACE_INNER_MAXITER[], inner_tol::Real=1e-10)
     nsubjects = length(objective.subject_objectives)
     counts = isempty(level_nre) ? [length(re_index)] : Vector{Int}(Int.(level_nre))
     ngroups = isempty(level_ngroups) ? [nsubjects] : Vector{Int}(Int.(level_ngroups))
@@ -532,8 +527,7 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
         re_at += k; sd_at += nsd; cor_at += ncor; load_at += nload
     end
     return CTSEMLaplaceObjective(objective, CTSEMLaplaceSpec(levels);
-        inner_maxiter=inner_maxiter, inner_tol=inner_tol,
-        inner_floor=inner_floor)
+        inner_maxiter=inner_maxiter, inner_tol=inner_tol)
 end
 
 """Positional convenience form, for single-level calls written in Julia."""
@@ -2035,60 +2029,6 @@ and reached 1.1e-12 three iterations later.
 const _LAPLACE_INNER_MAXITER = Ref(200)
 
 """
-The default relative floor under the inner gradient tolerance, as a fraction of
-`1 + |value|`. See `_laplace_inner_tolerance` for what it bounds and
-`ctsem_set_inner_floor!` for what loosening it buys.
-"""
-const _LAPLACE_INNER_FLOOR = Ref(1e-10)
-
-"""
-    ctsem_set_inner_floor!(f)
-
-Set the default relative floor under the inner gradient tolerance. Returns the
-previous value; objectives already built keep the floor they were built with.
-
-The floor decides whether a unit's mode solve takes one Newton step or two, and
-that is the whole of what it costs: the line search accepts the full step every
-time, so a solve is one member sweep at the origin plus one per step. On a
-model whose random effects enter through a transform -- every realistic DRIFT --
-the first step leaves `|dg/du|` around 5e-6 and the second drives it to 6e-15,
-which is ten million times tighter than the default floor asks for and buys a
-third sweep over every member of every unit.
-
-Measured on dev1, fitting a 200-subject one-latent model simulated from known
-parameters, run to convergence from the same start, each setting twice in both
-orders. `d par` is against the fit at the default floor:
-
-                 200 units of 1              20 units of 10
-    floor     speedup  sweeps   max d par   speedup  sweeps   max d par
-    1e-10       1.00    1.00        -         1.00    1.00        -
-    1e-9        1.03    0.96      3.7e-7      0.97    1.02      1.1e-6
-    1e-8        1.11    0.88      2.5e-6      1.11    0.88      2.2e-6
-    1e-7        1.17    0.82      6.0e-5      1.18    0.82      4.9e-5
-
-So about a ninth of a fit for a sixth decimal place, and the same on both
-shapes. Two things to hold onto before reaching for it. The estimates move --
-by nothing that matters statistically, on parameters whose standard errors here
-are around 0.05, but they move. And a looser floor puts a small discontinuity
-into the objective wherever a unit flips between one step and two, which the
-outer optimiser feels as a different path: the 1e-9 row above took 59 outer
-iterations where the default took 55, and came out *slower* on one shape. The
-effect at 1e-9 is smaller than that path noise; at 1e-8 it is not.
-
-The default stays at 1e-10, which is what every released version has done.
-"""
-function ctsem_set_inner_floor!(f::Real)
-    previous = _LAPLACE_INNER_FLOOR[]
-    _LAPLACE_INNER_FLOOR[] = Float64(f)
-    return previous
-end
-
-"""The default relative floor under the inner gradient tolerance."""
-ctsem_inner_floor() = _LAPLACE_INNER_FLOOR[]
-
-export ctsem_set_inner_floor!, ctsem_inner_floor
-
-"""
     ctsem_set_inner_maxiter!(n)
 
 Set the default inner Newton iteration budget. Returns the previous value.
@@ -2464,12 +2404,33 @@ of order 1e3. The outer gradient's error is first order, about `ε` times a
 cross-derivative of order ten, so 1e-7 at the same `ε`; the outer tolerance
 this feeds is `1e-6 * |value|`, around 1e-3 here, so that is four orders of
 margin. A relative floor of `1e-10` with the absolute one kept underneath it
-sits comfortably inside all of that -- so comfortably that loosening it is worth
-about a ninth of a fit; `ctsem_set_inner_floor!` has the measurement and the
-reasons to be careful.
+sits comfortably inside all of that.
+
+So comfortably that it is worth knowing what loosening it would buy, since the
+floor is the only lever on the mode solve's cost: it decides whether a unit
+takes one Newton step or two, and the line search accepts the full step every
+time, so a solve is one member sweep at the origin plus one per step. Where the
+random effects enter through a transform, the first step leaves `|dg/du|`
+around 5e-6 and the second drives it to 6e-15 -- ten million times past what is
+asked -- for a third sweep over every member of every unit.
+
+Measured on dev1, fitting a 200-subject one-latent model simulated from known
+parameters to convergence, each setting twice in both orders, at 200 units of
+one subject and at 20 units of ten. Speedup, then sweeps, then the largest
+parameter change against the fit at the default:
+
+    1e-9    1.03  0.96  3.7e-7      1e-8    1.11  0.88  2.5e-6
+    1e-7    1.17  0.82  6.0e-5
+
+About a ninth of a fit for a sixth decimal place. Not taken: the estimates move,
+and a looser floor puts a discontinuity into the objective wherever a unit flips
+between one step and two, which the outer optimiser feels as a different path --
+at 1e-9 that path effect is larger than the saving and one shape came out
+slower. Recorded here rather than made a setting, so that the next person to
+look at the mode solve has the number.
 """
 @inline _laplace_inner_tolerance(laplace::CTSEMLaplaceObjective, value::Real) =
-    max(laplace.inner_tol, laplace.inner_floor * (one(value) + abs(value)))
+    max(laplace.inner_tol, 1e-10 * (one(value) + abs(value)))
 
 """
     _laplace_stationary_gain(gradient, step)
