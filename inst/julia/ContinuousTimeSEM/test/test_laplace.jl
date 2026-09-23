@@ -422,8 +422,20 @@ end
         nested = ctsem_laplace_evaluate(laplace, values; gradient=true,
             nested_gradient=true)
         @test isapprox(seeded.gradient, nested.gradient; rtol=1e-8, atol=1e-10)
+        # Halfway along the continuation from the total floor: the value is the
+        # average of the two terms and the gradient is still exact.
+        ctsem_set_prior_floor_mode!(:eigen; threshold=1.0, blend=0.5)
+        half = ctsem_laplace_evaluate(laplace, values; gradient=true)
+        halfnested = ctsem_laplace_evaluate(laplace, values; gradient=true,
+            nested_gradient=true)
+        @test isapprox(half.gradient, halfnested.gradient; rtol=1e-8, atol=1e-10)
+        ctsem_set_prior_floor_mode!(:eigen; threshold=1.0, blend=1.0)
+        whole = ctsem_laplace_evaluate(laplace, values; gradient=false)
+        ctsem_set_prior_floor_mode!(:total)
+        tot = ctsem_laplace_evaluate(laplace, values; gradient=false)
+        @test isapprox(half.value, (whole.value + tot.value) / 2; rtol=1e-12)
     finally
-        ctsem_set_prior_floor_mode!(previous; threshold=1.0)
+        ctsem_set_prior_floor_mode!(previous; threshold=1.0, blend=1.0)
     end
     @test ContinuousTimeSEM._LAPLACE_EIGEN_THRESHOLD[] == 1.0
     @test_throws ArgumentError ctsem_set_prior_floor_mode!(:eigen; threshold=0.0)

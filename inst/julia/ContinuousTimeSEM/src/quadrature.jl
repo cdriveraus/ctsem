@@ -724,3 +724,96 @@ function ctsem_laplace_refine(laplace::CTSEMLaplaceObjective,
         converged=Optim.converged(result),
         nodes=Int(nodes))
 end
+
+################################################################################
+# Clipped-curvature quadrature along the soft directions (value only, prototype)
+################################################################################
+
+"""
+    ctsem_laplace_soft_quadrature_unit(laplace, values, U; nodes=5, ndirs=1,
+                                        tau=0.0, recenter=true)
+
+One unit's log marginal likelihood by a Gauss-Hermite rule along the unit's
+softest directions and Laplace in the rest. Value only, and a measurement
+prototype: see `CT-SEM/review/LAPLACE-eigenwise-floor-2026-09-23.md`, second
+addendum. Reads the modes of the last `ctsem_laplace_evaluate` at `values`.
+
+In the eigenbasis `M = V Lambda V'` at the mode:
+
+  * the `ndirs` smallest directions, and any other with `lambda < tau`, get
+    `nodes` points at the *clipped* scale `1/sqrt(max(lambda, 1))` -- never
+    wider than the prior, which is what `ctsem_laplace_quadrature`'s
+    `M^(-1/2)` scaling gets wrong at a near-singular unit;
+  * at each such node the remaining coordinates are moved to their conditional
+    mode (`recenter`, Newton) and integrated by Laplace with their conditional
+    curvature, clipped the same way. Without the recentring the rule misses the
+    ridge a nonlinear effect bends the integrand along, and does worse than one
+    node; without the clip, a conditional curvature that collapses at a far node
+    produces a spike of several nats.
+
+`nodes = 1`, `ndirs = 0`, `tau = 1` is exactly the eigenwise floor at `c = 1`.
+Uses `_ctsem_symeig` and `_ctsem_cholesky` throughout (no LAPACK); a rule of
+`n` nodes costs about `n` conditional Newton solves of a few steps, each a
+curvature of the unit, so `n` times the primal work of one unit.
+"""
+function ctsem_laplace_soft_quadrature_unit(laplace::CTSEMLaplaceObjective,
+    values::AbstractVector, U::Integer; nodes::Integer=5, ndirs::Integer=1,
+    tau::Real=0.0, recenter::Bool=true)
+    theta = collect(Float64, values)
+    _laplace_ensure_pool!(laplace)
+    Ls = _laplace_popchols(theta, laplace.spec)
+    aws = _laplace_workspace!(laplace, Float64, length(theta))
+    uhat = copy(laplace.modes[U])
+    d = length(uhat)
+    blocks = laplace.units.blocks[U]
+    gof(u) = _laplace_unit_objective_gradient(laplace, U, theta, Ls, u, aws)
+    Mof(u) = _laplace_block_dense(_laplace_unit_curvature(laplace, U, theta, Ls, u),
+        blocks, d)
+    d == 0 && return gof(uhat).value
+    E = _ctsem_symeig(Mof(uhat))
+    soft = sort(unique(vcat(collect(1:min(Int(ndirs), d)),
+        findall(<(tau), E.values))))
+    stiff = setdiff(1:d, soft)
+    ns, nh = length(soft), length(stiff)
+    Vs, Vh = E.vectors[:, soft], E.vectors[:, stiff]
+    lsoft = max.(E.values[soft], 1.0)
+    xs, ws = _gauss_hermite(nodes)
+
+    # log int exp(g(ubase + Vh z)) dz by Laplace at the conditional mode, with
+    # the conditional curvature clipped at the prior's.
+    stiff_part = function (ubase::Vector{Float64})
+        local z, r, gz, Mz, F, ez, lam, uu
+        nh == 0 && return gof(ubase).value
+        z = zeros(nh)
+        if recenter
+            for _ in 1:50
+                r = gof(ubase .+ Vh * z)
+                gz = transpose(Vh) * r.gradient
+                maximum(abs, gz) < laplace.inner_tol && break
+                Mz = transpose(Vh) * Mof(ubase .+ Vh * z) * Vh
+                F = _ctsem_cholesky(Matrix(_laplace_symmetrise(Mz)), nh)
+                issuccess(F) || break
+                z .+= F \ gz
+            end
+        end
+        uu = ubase .+ Vh * z
+        ez = _ctsem_symeig(transpose(Vh) * Mof(uu) * Vh)
+        lam = recenter ? max.(ez.values, 1.0) : E.values[stiff]
+        return gof(uu).value - sum(log, lam; init=0.0) / 2
+    end
+    terms = Float64[]
+    for idx in Iterators.product(ntuple(_ -> 1:Int(nodes), ns)...)
+        x = Float64[xs[i] for i in idx]
+        v = stiff_part(uhat .+ Vs * (sqrt(2) .* x ./ sqrt.(lsoft)))
+        push!(terms, isfinite(v) ?
+            v + sum(log(ws[i]) + xs[i]^2 for i in idx; init=0.0) : -Inf)
+    end
+    peak = maximum(terms)
+    isfinite(peak) || return NaN
+    # Per soft direction sqrt(2/lambda~) from the change of variable against the
+    # sqrt(pi) the weights carry and the (2 pi)^(-1/2) of the density.
+    return peak + log(sum(exp.(terms .- peak))) - sum(log, lsoft; init=0.0) / 2 -
+        ns * log(pi) / 2
+end
+
+export ctsem_laplace_soft_quadrature_unit

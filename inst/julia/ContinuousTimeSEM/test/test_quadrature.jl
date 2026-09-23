@@ -342,4 +342,37 @@ end
     Hn = C._ctsem_cholesky(copy(near), 2)
     @test isapprox(C._quadrature_clipped_scale(Hn, 2).scale, C._ctsem_cholesky_uinv(Hn);
         atol=1e-8)
+
+@testset "the soft-direction rule: one node is the eigenwise floor, and Gaussians are exact" begin
+    C = ContinuousTimeSEM
+    # A Gaussian integrand with M >= I: the rule is exact whatever its nodes.
+    laplace, values = _fresh_linear()
+    reference = ctsem_laplace_evaluate(laplace, values; gradient=false,
+        contributions=true)
+    for U in eachindex(laplace.units.members)
+        term = sum(reference.subject_loglik[laplace.units.members[U]])
+        for n in (1, 3, 5)
+            @test isapprox(ctsem_laplace_soft_quadrature_unit(laplace, values, U;
+                nodes=n, ndirs=1), term; atol=1e-8)
+        end
+    end
+    # One node, no forced direction, soft below one: the eigenwise floor at
+    # c = 1, unit by unit, with and without recentring.
+    laplace, values = _fresh_nonlinear()
+    previous = ctsem_set_prior_floor_mode!(:eigen; threshold=1.0, blend=1.0)
+    local eigen
+    try
+        eigen = ctsem_laplace_evaluate(laplace, values; gradient=false,
+            contributions=true)
+    finally
+        ctsem_set_prior_floor_mode!(previous)
+    end
+    ctsem_laplace_evaluate(laplace, values; gradient=false)
+    for U in eachindex(laplace.units.members)
+        term = sum(eigen.subject_loglik[laplace.units.members[U]])
+        for recenter in (false, true)
+            @test isapprox(ctsem_laplace_soft_quadrature_unit(laplace, values, U;
+                nodes=1, ndirs=0, tau=1.0, recenter=recenter), term; atol=1e-10)
+        end
+    end
 end

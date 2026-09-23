@@ -2723,6 +2723,13 @@ directions their Laplace value and clips only the near-singular ones.
 const _LAPLACE_EIGEN_THRESHOLD = Ref(1.0)
 
 """
+Weight `a` on the eigenwise term against the total floor's, for continuation:
+`(1 - a) max(logdet M, 0) + a sum log max(lambda, c)`. One is the eigenwise
+floor alone and the default. Measurement only.
+"""
+const _LAPLACE_EIGEN_BLEND = Ref(1.0)
+
+"""
     ctsem_set_prior_floor_mode!(mode; maxdim, threshold)
 
 `:total` floors each unit's `logdet(M)` at zero, which is the default and what
@@ -2732,16 +2739,22 @@ single near-singular direction while its other eigenvalues keep the total
 positive. Experimental and off by default: it is an estimator change. Units
 wider than `maxdim` keep the total floor. `threshold = c` in `(0, 1]` clips at
 `c` rather than one, `sum_i log(max(lambda_i, c))`; it is kept until set again.
+`blend = a` in `[0, 1]` uses `(1 - a) max(logdet, 0) + a phi`, a continuation
+path from the total floor (`a = 0`) to the eigenwise one (`a = 1`, the
+default); also kept until set again.
 Only consulted while `ctsem_set_prior_floor!` has the floor on. Returns the
 previous mode.
 """
 function ctsem_set_prior_floor_mode!(mode::Symbol;
     maxdim::Integer=_LAPLACE_EIGEN_MAXDIM[],
-    threshold::Real=_LAPLACE_EIGEN_THRESHOLD[])
+    threshold::Real=_LAPLACE_EIGEN_THRESHOLD[],
+    blend::Real=_LAPLACE_EIGEN_BLEND[])
     mode in (:total, :eigen) ||
         throw(ArgumentError("prior floor mode must be :total or :eigen"))
     0 < threshold <= 1 ||
         throw(ArgumentError("threshold must lie in (0, 1]"))
+    0 <= blend <= 1 || throw(ArgumentError("blend must lie in [0, 1]"))
+    _LAPLACE_EIGEN_BLEND[] = Float64(blend)
     previous = _LAPLACE_FLOOR_EIGEN[] ? :eigen : :total
     _LAPLACE_FLOOR_EIGEN[] = mode === :eigen
     _LAPLACE_EIGEN_MAXDIM[] = Int(maxdim)
@@ -2872,7 +2885,37 @@ function _laplace_floored_logdet(M::CTSEMBlockMatrix{T},
     (_LAPLACE_PRIOR_FLOOR[] && _LAPLACE_FLOOR_EIGEN[]) ||
         return _laplace_prior_floor_logdet(logdetM)
     clip = _laplace_eigen_clip(M, blocks, logdetM)
-    return clip === nothing ? logdetM : clip.phi
+    clip === nothing && return logdetM
+    a = _LAPLACE_EIGEN_BLEND[]
+    a == 1 && return clip.phi
+    return a * clip.phi + (1 - a) * max(logdetM, zero(T))
+end
+
+"""
+    _laplace_blend_clip(clip, logdetM, factors, elim, blocks)
+
+The clip record for `_LAPLACE_EIGEN_BLEND = a < 1`: value
+`a phi + (1 - a) max(logdetM, 0)`, and the selected entries of
+`a C~ + (1 - a) C_total`, where `C_total` is `inv(M)` when the total floor does
+not bind and zero when it does. Both terms are linear in the fixed `C` the
+seeded assembly contracts, so the blend is exact.
+"""
+function _laplace_blend_clip(clip, logdetM::Float64, factors, elim,
+    blocks::Vector{CTSEMLaplaceBlock})
+    a = _LAPLACE_EIGEN_BLEND[]
+    Cdiag = [a .* d for d in clip.Cdiag]
+    Ccoup = [[a .* c for c in row] for row in clip.Ccoup]
+    if logdetM >= 0
+        Sd, Sc = _laplace_selected_inverse(factors, elim, blocks)
+        for b in eachindex(Cdiag)
+            Cdiag[b] .+= (1 - a) .* Sd[b]
+            for t in eachindex(Ccoup[b]); Ccoup[b][t] .+= (1 - a) .* Sc[b][t]; end
+        end
+    end
+    allclipped = all(d -> all(iszero, d), Cdiag) &&
+        all(row -> all(c -> all(iszero, c), row), Ccoup)
+    return (phi=a * clip.phi + (1 - a) * max(logdetM, 0.0), allclipped=allclipped,
+        Cdiag=Cdiag, Ccoup=Ccoup, fallback=false)
 end
 
 """
@@ -3791,6 +3834,10 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
                 # Floored in the eigenwise sense means any direction clipped;
                 # a unit too wide to decompose keeps the total floor's flag.
                 laplace.logdet_floored[U] = clip.fallback ? logdetM < 0 : true
+                if !clip.fallback && _LAPLACE_EIGEN_BLEND[] < 1
+                    clip = _laplace_blend_clip(clip, logdetM, factors, coupling,
+                        blocks)
+                end
                 clip.fallback || (primal_clips[U] = clip)
             end
             term = if !isfinite(inner.value) || isempty(u)
