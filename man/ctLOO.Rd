@@ -16,7 +16,7 @@ ctLOO(
   refit = TRUE,
   casewiseApproximation = FALSE,
   method = c("kfold", "psis"),
-  ndraws = 300
+  ndraws = 500
 )
 }
 \arguments{
@@ -117,13 +117,15 @@ approximation, without refitting, at one of two levels:
   group in a multilevel one, since subjects sharing a group effect are not
   independent given the population parameters. Population parameter draws
   come from the fit's normal approximation (\code{fit$estimate$cov}, so the
-  fit must carry one), are importance corrected to the Laplace posterior, and
-  are weighted by each unit's Laplace marginal to remove it.
+  fit must carry one) widened by a factor of 1.5, are importance corrected
+  to the Laplace posterior, and are weighted by each unit's Laplace marginal
+  to remove it.
   \item \code{subjectwise = FALSE}: leave one row out, conditional on the
   estimated population parameters and integrating over each unit's random
   effects, drawn from the Gaussian the Laplace approximation fits at their
-  mode. This is pointwise leave-one-out of the filter's one-step-ahead terms
-  -- each row's density given the rows before it -- not exact time series
+  mode, widened by a factor of 1.5. This is pointwise leave-one-out of the
+  filter's one-step-ahead terms -- each row's density given the rows before
+  it -- not exact time series
   leave-one-out, and it does not propagate uncertainty in the population
   parameters.
 }

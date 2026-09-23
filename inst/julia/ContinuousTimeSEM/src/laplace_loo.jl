@@ -69,9 +69,9 @@ function _laplace_unit_of_subject(laplace::CTSEMLaplaceObjective)
 end
 
 """
-    ctsem_laplace_effect_draws(laplace, values, ndraws; seed)
+    ctsem_laplace_effect_draws(laplace, values, ndraws; seed, scale)
 
-Draws of every unit's random effects from `N(uhat_U, M_U^{-1})` at the
+Draws of every unit's random effects from `N(uhat_U, scale^2 M_U^{-1})` at the
 population parameters `values`, and each data row's log likelihood at each.
 
 `uhat_U` is the unit's inner mode and `M_U` its curvature there -- the same
@@ -93,10 +93,11 @@ Returns
   not be used,
 - `unit`: the unit each subject belongs to.
 
-`seed` makes the draws reproducible from the R side's own seed.
+`seed` makes the draws reproducible from the R side's own seed. `scale` widens
+the proposal; see the R side (`.ctBackendLOOPsis`) for why it is above one.
 """
 function ctsem_laplace_effect_draws(laplace::CTSEMLaplaceObjective,
-    values::AbstractVector, ndraws::Integer; seed::Integer=1)
+    values::AbstractVector, ndraws::Integer; seed::Integer=1, scale::Real=1.0)
     theta = collect(Float64, values)
     _laplace_check_indices(laplace, length(theta))
     _laplace_ensure_pool!(laplace)
@@ -135,11 +136,11 @@ function ctsem_laplace_effect_draws(laplace::CTSEMLaplaceObjective,
             end
             continue
         end
-        halflogdet = sum(log, diag(F.L))
+        halflogdet = sum(log, diag(F.L)) + d * log(scale)
         constant = -d / 2 * log(2pi)
         for s in 1:ndraws
             zs = view(z, slice, s)
-            u = uhat .+ F.L * zs
+            u = uhat .+ scale .* (F.L * zs)
             effects[slice, s] .= u
             logq[U, s] = constant - halflogdet - dot(zs, zs) / 2
             logprior[U, s] = constant - dot(u, u) / 2

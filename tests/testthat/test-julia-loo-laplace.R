@@ -142,6 +142,8 @@ test_that("PSIS leave-one-subject-out matches the exact integral over the popula
 
   set.seed(4)
   psis <- suppressWarnings(ctLOO(fit, method = "psis", ndraws = 1000))
+  set.seed(4)
+  more <- suppressWarnings(ctLOO(fit, method = "psis", ndraws = 4000))
   expect_s3_class(psis, "ctLOOpsis")
   expect_equal(nrow(psis$pointwise), 16L)
   expect_equal(psis$ndropped, 0L)
@@ -160,10 +162,14 @@ test_that("PSIS leave-one-subject-out matches the exact integral over the popula
   exact <- vapply(seq_len(16), function(i)
     lse(terms$value) - lse(terms$value - terms$unit_loglik[i, ]), numeric(1))
 
-  # Absolute, elementwise: the largest per-subject error, then the total.
-  expect_lt(max(abs(psis$pointwise$elpd_loo - exact)), 0.02)
-  expect_lt(abs(psis$elpd_loo - sum(exact)), 0.1)
+  # Absolute and elementwise, at two draw counts: a wrong estimator can sit
+  # close to the answer at one count, but its error does not shrink with more
+  # draws. Measured worst errors were 0.016-0.038 at 1000 and 0.007 at 4000.
+  expect_lt(max(abs(psis$pointwise$elpd_loo - exact)), 0.06)
+  expect_lt(max(abs(more$pointwise$elpd_loo - exact)), 0.02)
+  expect_lt(abs(more$elpd_loo - sum(exact)), 0.15)
   expect_true(all(psis$pointwise$pareto_k < 0.7))
+  expect_true(all(more$pointwise$pareto_k < 0.7))
   # And it is not the plug-in: integrating over the population is worse than
   # scoring at the estimate, by an amount that is not Monte Carlo noise.
   expect_lt(psis$elpd_loo, sum(.lool_unit_terms(fit)$unit_loglik) - 0.5)
@@ -177,6 +183,9 @@ test_that("PSIS leave-one-row-out matches a grid over each subject's intercept",
   set.seed(5)
   psis <- suppressWarnings(ctLOO(fit, method = "psis", subjectwise = FALSE,
     ndraws = 1000))
+  set.seed(5)
+  more <- suppressWarnings(ctLOO(fit, method = "psis", subjectwise = FALSE,
+    ndraws = 4000))
   expect_identical(psis$level, "row")
   expect_equal(nrow(psis$pointwise), nrow(ctsem:::.ctBackendSpec(fit)$data))
 
@@ -208,8 +217,13 @@ test_that("PSIS leave-one-row-out matches a grid over each subject's intercept",
     lse(total) - lse(total - ll[r, ])
   }, numeric(1))
 
-  expect_lt(max(abs(psis$pointwise$elpd_loo - exact[psis$pointwise$row])), 0.01)
+  # Two draw counts, as above. Measured worst errors 0.035-0.045 at 1000 and
+  # 0.020 at 4000. With an unwidened proposal the worst row stayed near 0.06 at
+  # both, with Pareto k up to 0.86: that is the failure this would catch.
+  expect_lt(max(abs(psis$pointwise$elpd_loo - exact[psis$pointwise$row])), 0.08)
+  expect_lt(max(abs(more$pointwise$elpd_loo - exact[more$pointwise$row])), 0.04)
   expect_true(all(psis$pointwise$pareto_k < 0.7))
+  expect_true(all(more$pointwise$pareto_k < 0.7))
 })
 
 test_that("PSIS is refused by name where it does not apply", {

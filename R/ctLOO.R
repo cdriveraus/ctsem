@@ -66,13 +66,15 @@
 #'   group in a multilevel one, since subjects sharing a group effect are not
 #'   independent given the population parameters. Population parameter draws
 #'   come from the fit's normal approximation (\code{fit$estimate$cov}, so the
-#'   fit must carry one), are importance corrected to the Laplace posterior, and
-#'   are weighted by each unit's Laplace marginal to remove it.
+#'   fit must carry one) widened by a factor of 1.5, are importance corrected
+#'   to the Laplace posterior, and are weighted by each unit's Laplace marginal
+#'   to remove it.
 #'   \item \code{subjectwise = FALSE}: leave one row out, conditional on the
 #'   estimated population parameters and integrating over each unit's random
 #'   effects, drawn from the Gaussian the Laplace approximation fits at their
-#'   mode. This is pointwise leave-one-out of the filter's one-step-ahead terms
-#'   -- each row's density given the rows before it -- not exact time series
+#'   mode, widened by a factor of 1.5. This is pointwise leave-one-out of the
+#'   filter's one-step-ahead terms -- each row's density given the rows before
+#'   it -- not exact time series
 #'   leave-one-out, and it does not propagate uncertainty in the population
 #'   parameters.
 #' }
@@ -106,7 +108,7 @@
 ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
   subjectwise = ifelse(length(unique(.ctFitRowSubject(fit))) >= folds, TRUE, FALSE),
   keepfirstobs = FALSE, leaveOutN = NA, refit = TRUE, casewiseApproximation = FALSE,
-  method = c("kfold", "psis"), ndraws = 300) {
+  method = c("kfold", "psis"), ndraws = 500) {
 
   method <- match.arg(method)
   if (identical(method, "psis")) {
@@ -603,7 +605,7 @@ ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
 # Pareto-smoothed importance sampling over draws the Laplace approximation
 # already describes, after bigIRT's `looIRT`. Two levels:
 #
-#   units  Leave one unit out. Population draws theta_s ~ q = N(est, cov) are
+#   units  Leave one unit out. Population draws theta_s ~ q = N(est, s^2 cov) are
 #          corrected to the Laplace posterior, lp_s - log q_s, and unit i is
 #          removed by dividing by its marginal: log r_is = lp_s - log q_s -
 #          ll_is. elpd_i = log sum_s w_is exp(ll_is) with w the smoothed,
@@ -612,11 +614,24 @@ ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
 #          theta, and "leave one subject out" of one would need that subject's
 #          marginal given its group mates, which the ratio trick cannot give.
 #   rows   Leave one row out at the estimate. Each unit's effects are drawn
-#          from N(uhat_U, M_U^-1) and corrected to p(u | y) by
+#          from N(uhat_U, s^2 M_U^-1) and corrected to p(u | y) by
 #          log v_s = g_U(u_s) - log q(u_s), g_U being the unit's rows plus its
 #          standard normal prior; row r is removed by log r_s = log v_s -
 #          llrow_rs. The llrow are one-step-ahead terms, so this is pointwise
 #          LOO of the filter's factorisation, not exact time-series LOO.
+#
+# Both proposals are widened by `scale` = 1.5, and that is derived rather than
+# tuned. The ratio for point i targets the posterior without i, whose precision
+# is the full posterior's P less i's contribution c. With a proposal of
+# precision P / scale^2 the ratios have finite variance only while
+# 2 (P - c) > P / scale^2: at scale 1 that fails for any point carrying half
+# the posterior's information, which a subject's first observation of a random
+# intercept easily does. At 1.5 the bound is c < 0.78 P. Measured against the
+# exact oracles in test-julia-loo-laplace.R (16 subjects, two free parameters,
+# local machine): at scale 1 the worst row's error stayed near 0.06 from 1000
+# to 4000 draws with Pareto k up to 0.86 -- bias, not noise; at 1.5 it halved
+# with each quadrupling (0.045, 0.020) and k stayed below 0.1. Scale 2 was no
+# better than 1.5 at the unit level.
 
 .ctLogSumExp <- function(x) {
   top <- max(x)
@@ -634,7 +649,7 @@ ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
     nrow = nrow(logratios)), k = as.numeric(loo::pareto_k_values(smoothed)))
 }
 
-.ctBackendLOOPsis <- function(fit, subjectwise, ndraws, cores) {
+.ctBackendLOOPsis <- function(fit, subjectwise, ndraws, cores, scale = 1.5) {
   if (!requireNamespace("loo", quietly = TRUE)) {
     stop("method = 'psis' needs the loo package: install.packages('loo').",
       call. = FALSE)
@@ -646,9 +661,9 @@ ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
   spec <- .ctBackendSpec(fit)
   est <- as.numeric(fit$estimate$raw)
   .ctBackendWithMaxChunks(cores, if (isTRUE(subjectwise)) {
-    .ctBackendLOOPsisUnits(fit, spec, est, ndraws)
+    .ctBackendLOOPsisUnits(fit, spec, est, ndraws, scale)
   } else {
-    .ctBackendLOOPsisRows(fit, spec, est, ndraws)
+    .ctBackendLOOPsisRows(fit, spec, est, ndraws, scale)
   })
 }
 
@@ -670,7 +685,7 @@ ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
   out
 }
 
-.ctBackendLOOPsisUnits <- function(fit, spec, est, ndraws) {
+.ctBackendLOOPsisUnits <- function(fit, spec, est, ndraws, scale) {
   covariance <- fit$estimate$cov
   if (is.null(covariance)) {
     stop("method = 'psis' with subjectwise = TRUE draws from the fit's normal ",
@@ -686,8 +701,9 @@ ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
   }
   npar <- length(est)
   z <- matrix(stats::rnorm(npar * ndraws), npar, ndraws)
-  draws <- est + (eig$vectors %*% (sqrt(eig$values) * z))
-  logq <- -npar / 2 * log(2 * pi) - sum(log(eig$values)) / 2 - colSums(z^2) / 2
+  draws <- est + scale * (eig$vectors %*% (sqrt(eig$values) * z))
+  logq <- -npar / 2 * log(2 * pi) - sum(log(eig$values)) / 2 - npar * log(scale) -
+    colSums(z^2) / 2
 
   terms <- .ctBackendLaplaceUnitTerms(spec, draws)
   keep <- is.finite(terms$value) & terms$converged &
@@ -732,13 +748,13 @@ ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
       "to the Laplace posterior."))
 }
 
-.ctBackendLOOPsisRows <- function(fit, spec, est, ndraws) {
+.ctBackendLOOPsisRows <- function(fit, spec, est, ndraws, scale) {
   module <- .ctJuliaModule(spec$project)
   model <- .ctFitModelObject(fit)
   seed <- sample.int(.Machine$integer.max, 1L)
   res <- .ctBackendJuliaValue(module$ctsem_laplace_effect_draws(
     .ctJuliaObjective(fit), .ctJuliaNumericVector(est), as.integer(ndraws),
-    seed = as.integer(seed)))
+    seed = as.integer(seed), scale = as.numeric(scale)))
   llrow <- matrix(as.numeric(res$llrow), ncol = ndraws)      # rows x draws
   logq <- matrix(as.numeric(res$logq), ncol = ndraws)        # units x draws
   logprior <- matrix(as.numeric(res$logprior), ncol = ndraws)
