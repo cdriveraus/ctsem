@@ -112,26 +112,28 @@ test_that("the objective cache distinguishes censoring from its absence", {
   # table and the data but not the measurement type handed a Gaussian model
   # built after a censored one on the same data the censored objective, and
   # returned its likelihood.
-  d <- .censored_data(nsubjects = 6, nobs = 5)
+  d <- .censored_data(nsubjects = 6, nobs = 5, lower = 1, upper = 4)
   prep <- function(m) suppressWarnings(suppressMessages(ctFit(d, m,
     backend = "julia", intoverpop = "augmented", fit = FALSE, cores = 1L)))
-  gaussian <- .censored_model()
+  gaussian <- .censored_model(lower = 1, upper = 4)
   gaussian$manifesttype[] <- 0L
   gaussian$censormin[] <- -Inf
   gaussian$censormax[] <- Inf
-  specs <- list(censored = prep(.censored_model(lower = 0, upper = 5)),
-    lower = prep(.censored_model(lower = -0.5, upper = 5)),
-    upper = prep(.censored_model(lower = 0, upper = 5.5)),
+  specs <- list(censored = prep(.censored_model(lower = 1, upper = 4)),
+    lower = prep(.censored_model(lower = 0.5, upper = 4)),
+    upper = prep(.censored_model(lower = 1, upper = 4.5)),
     gaussian = prep(gaussian))
   expect_identical(specs$censored$parameter_table, specs$gaussian$parameter_table)
 
   keys <- vapply(specs, .ctJuliaObjectiveKey, character(1))
   expect_equal(anyDuplicated(keys), 0L)
-  expect_identical(.ctJuliaObjectiveKey(prep(.censored_model())),
+  expect_identical(.ctJuliaObjectiveKey(prep(.censored_model(lower = 1, upper = 4))),
     keys[["censored"]])
 
   # And the symptom itself: evaluated in turn in one session, each is its own
-  # likelihood.
+  # likelihood. Moving a limit no observation sits at leaves the likelihood
+  # where it was, so the data must have observations at both.
+  expect_true(any(d$y == 1) && any(d$y == 4))
   npar <- max(specs$censored$parameter_table$parnumber, na.rm = TRUE)
   at <- rep(0.1, npar)
   values <- vapply(specs, function(s) ctJuliaEvaluate(s, at)$value, numeric(1))
