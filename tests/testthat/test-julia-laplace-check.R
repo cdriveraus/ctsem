@@ -227,3 +227,62 @@ test_that("a correction is not invented along directions the data cannot identif
   expect_true(all(as.numeric(result$delta) == 0))
   expect_equal(as.integer(result$dropped_directions), length(fit$estimate$raw))
 })
+
+# Weak data for a nonlinear random effect: 40 subjects, six waves, a random
+# `-log1p_exp` drift beside random T0MEANS and CINT, simulated here rather than
+# by ctGenerate. At the raw vector below -- where a total-floor fit of these data
+# converged -- subject 4's inner curvature has eigenvalues (8.5e-4, 14.9, 79.0):
+# the likelihood has gone convex in one direction, almost exactly cancelling the
+# prior. Its exact log marginal is -9.5832, by a one-dimensional trapezoid over
+# that direction with the other two recentred at every node, and by a 3-D
+# brute-force grid (both agree to 1e-4).
+.check_weak_data <- function(seed = 2L, nsubjects = 40L, ntimes = 6L) {
+  set.seed(seed)
+  baseline <- stats::rnorm(nsubjects, 2, 2)
+  start <- stats::rnorm(nsubjects, baseline / 2, 1)
+  drift <- -log1p(exp(-stats::rnorm(nsubjects, 1 + (baseline - 2) / 2, 1)))
+  rows <- lapply(seq_len(nsubjects), function(i) {
+    a <- drift[i]; decay <- exp(a)
+    intercept <- (baseline[i] / a) * (decay - 1)
+    innovation <- sqrt(0.25 * (exp(2 * a) - 1) / (2 * a))
+    latent <- numeric(ntimes); latent[1] <- start[i]
+    for (t in seq_len(ntimes - 1L)) {
+      latent[t + 1L] <- decay * latent[t] + intercept +
+        stats::rnorm(1, 0, innovation)
+    }
+    data.frame(id = i, time = seq_len(ntimes) - 1L,
+      Y1 = latent + stats::rnorm(ntimes, 0, 0.5))
+  })
+  do.call(rbind, rows)
+}
+
+test_that("a near-singular unit is scored near its exact integral", {
+  skip_without_julia()
+  model <- suppressMessages(ctModel(silent = TRUE, type = "ct", CINT = "cint",
+    MANIFESTMEANS = 0, LAMBDA = matrix(1),
+    DRIFT = "drift|-log1p_exp(-param)|TRUE"))
+  spec <- suppressWarnings(suppressMessages(ctFit(.check_weak_data(), model,
+    backend = "julia", intoverpop = "laplace", fit = FALSE)))
+  module <- ctsem:::.ctJuliaModule(spec$project)
+  objective <- ctsem:::.ctJuliaObjective(spec)
+  raw <- ctsem:::.ctJuliaNumericVector(c(0.127421404395785, 2.72694414423615,
+    -1.14068954877124, -1.61124260961682, 0.181949396643791, -0.379492126290006,
+    1.2518601566922, -0.261116183475529, 0.501589410182815, 0.472211311761145,
+    0.16969291528676))
+  exact <- -9.5832
+  laplace <- JuliaConnectoR::juliaGet(module$ctsem_laplace_evaluate(objective,
+    raw, gradient = FALSE, contributions = TRUE))
+  quadrature <- JuliaConnectoR::juliaGet(module$ctsem_laplace_quadrature(
+    objective, raw, nodes = 5L, contributions = TRUE))
+  # The fit's own term over-credits this unit by three nats; that is why it is
+  # the case to test.
+  expect_gt(as.numeric(laplace$subject_loglik)[4] - exact, 2.5)
+  # Scaled by the unclipped curvature the rule scattered its nodes thirty prior
+  # standard deviations out and read +1.4 here; clipped, it finds the mass.
+  expect_lt(abs(as.numeric(quadrature$subject_loglik)[4] - exact), 0.1)
+  # And a unit whose curvature is at least the prior's is still one the rule
+  # and the Laplace term agree on to its own accuracy.
+  others <- setdiff(seq_along(quadrature$subject_loglik), 4L)
+  expect_lt(max(abs(as.numeric(quadrature$subject_loglik)[others] -
+    as.numeric(laplace$subject_loglik)[others])), 1)
+})

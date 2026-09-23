@@ -122,7 +122,33 @@ end
         laplace, values = fresh()
         reference = ctsem_laplace_evaluate(laplace, values; gradient=false).value
         single = ctsem_laplace_quadrature(laplace, values; nodes=1).value
-        @test (label, isapprox(single, reference; rtol=1e-10)) == (label, true)
+        # The node scale is clipped at the prior's curvature, block by block on
+        # the eliminated precisions. The three-level fixture's outermost effect
+        # is on DRIFT, and there two study blocks come out at 0.9949 and 0.9973:
+        # at one node each is scored as if it were 1, so the one-node rule is the
+        # Laplace value less half the log of each clipped eigenvalue. Computed
+        # here from the factorization with LinearAlgebra's own eigvals, which
+        # shares nothing with the rule's clipping. The two-level fixture is
+        # Gaussian, clips nothing, and the correction is exactly zero.
+        C = ContinuousTimeSEM
+        theta = collect(Float64, values)
+        Ls = C._laplace_popchols(theta, laplace.spec)
+        correction = 0.0
+        for U in eachindex(laplace.units.members)
+            blocks = laplace.units.blocks[U]
+            fac = C._laplace_factor_repaired!(C._laplace_unit_curvature(laplace, U,
+                theta, Ls, laplace.modes[U]), blocks)
+            for (b, F) in enumerate(fac.factors)
+                blocks[b].size == 0 && continue
+                Lf = Matrix(F.L)
+                lam = eigvals(Symmetric(Lf * transpose(Lf)))
+                correction += sum(log, min.(lam, 1.0)) / 2
+            end
+        end
+        label == "two levels" && @test correction == 0
+        label == "three levels" && @test correction < -1e-3
+        @test (label, isapprox(single, reference + correction; rtol=1e-10)) ==
+            (label, true)
         # `nodes = 1` forces `sum over blocks of logdet(scale) = -logdet(M)/2`,
         # and that sum telescopes only if each outer block is scaled by its
         # curvature *after* its descendants are eliminated. The marginal
@@ -290,4 +316,30 @@ end
     detour = collect(Float64, values); detour[2] += 3.0; detour[5] += 2.5
     ctsem_laplace_quadrature(laplace, detour; nodes=5)
     @test ctsem_laplace_quadrature(laplace, values; nodes=5).value ≈ first rtol = 1e-10
+end
+
+@testset "node scaling is clipped at the prior's curvature, and only there" begin
+    C = ContinuousTimeSEM
+    # Every eigenvalue above one: the Cholesky scale, bit for bit.
+    Q = [cos(0.4) -sin(0.4); sin(0.4) cos(0.4)]
+    concave = Q * Diagonal([6.0, 1.5]) * transpose(Q)
+    F = C._ctsem_cholesky(copy(concave), 2)
+    rule = C._quadrature_clipped_scale(F, 2)
+    @test !rule.clipped
+    @test rule.scale == C._ctsem_cholesky_uinv(F)
+    @test rule.logdetscale == -logdet(F) / 2
+    # One eigenvalue at 1e-3: scaled as if it were one, never wider than the prior.
+    convex = Q * Diagonal([6.0, 1e-3]) * transpose(Q)
+    G = C._ctsem_cholesky(copy(convex), 2)
+    clipped = C._quadrature_clipped_scale(G, 2)
+    @test clipped.clipped
+    target = Q * Diagonal([6.0, 1.0]) * transpose(Q)
+    @test clipped.scale * transpose(clipped.scale) ≈ inv(target) rtol = 1e-10
+    @test clipped.logdetscale ≈ -log(6.0) / 2 rtol = 1e-10
+    # Continuous across the switch: just below one, the clipped scale is the
+    # unclipped one to the size of the gap.
+    near = Q * Diagonal([6.0, 1 - 1e-9]) * transpose(Q)
+    Hn = C._ctsem_cholesky(copy(near), 2)
+    @test isapprox(C._quadrature_clipped_scale(Hn, 2).scale, C._ctsem_cholesky_uinv(Hn);
+        atol=1e-8)
 end
