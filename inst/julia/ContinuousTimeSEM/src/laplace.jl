@@ -3611,9 +3611,18 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
     # the specialised single-level version used to do by hand.
     if !nested_gradient
         dLlevels = _laplace_level_chol_derivatives(theta, laplace.spec)
-        # One accumulator per chunk rather than one shared vector: the unit
-        # contributions are a sum, and summing per chunk and then across chunks
+        # One accumulator per slot rather than one shared vector: the unit
+        # contributions are a sum, and summing per slot and then across slots
         # is the same sum in a different order.
+        #
+        # Indexed by `_laplace_slot()` in *both* branches below, never by the
+        # piece `c`. There are `nunits` pieces and `nslot` accumulators, so a
+        # piece index past the pool width reads beyond the end of `partials`
+        # -- under `@inbounds` that is not a BoundsError but a garbage array
+        # handed to the floored gradient, and the process dies with
+        # EXCEPTION_ACCESS_VIOLATION and no message on the R side. It also
+        # races: piece `c` and the worker holding slot `c` would share one
+        # accumulator.
         partials = [zeros(Float64, length(theta)) for _ in 1:nslot]
         fill!(chunk_ok, true)
         run_gradient = function (c)
@@ -3621,9 +3630,10 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
                 # A floored unit is differentiated whole; see
                 # `_laplace_floored_unit_gradient!`.
                 if laplace.logdet_floored[U]
-                    if !_laplace_floored_unit_gradient!(partials[c], laplace, U,
+                    if !_laplace_floored_unit_gradient!(
+                            partials[_laplace_slot()], laplace, U,
                             theta, Ls, dLlevels)
-                        chunk_ok[c] = false
+                        chunk_ok[_laplace_slot()] = false
                         return nothing
                     end
                     continue
