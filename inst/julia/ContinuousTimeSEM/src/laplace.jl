@@ -3673,8 +3673,12 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
             run_gradient(c)
             return true
         end
-        ok = all(chunk_ok)
-        if ok
+        # Not `ok`: `run_primal` assigns that name, and a closure binds an
+        # enclosing local rather than shadowing it, so a function-level `ok`
+        # here made every concurrent unit share one boxed `ok` between its
+        # factorization and its term.
+        gradient_ok = all(chunk_ok)
+        if gradient_ok
             for w in 1:nslot
                 grad .+= partials[w]
             end
