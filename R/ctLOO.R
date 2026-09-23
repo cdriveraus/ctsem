@@ -628,10 +628,10 @@ ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
 # the posterior's information, which a subject's first observation of a random
 # intercept easily does. At 1.5 the bound is c < 0.78 P. Measured against the
 # exact oracles in test-julia-loo-laplace.R (16 subjects, two free parameters,
-# local machine): at scale 1 the worst row's error stayed near 0.06 from 1000
-# to 4000 draws with Pareto k up to 0.86 -- bias, not noise; at 1.5 it halved
-# with each quadrupling (0.045, 0.020) and k stayed below 0.1. Scale 2 was no
-# better than 1.5 at the unit level.
+# local machine, six seeds): at scale 1 the row-level rms error at 4000 draws
+# was 0.010-0.019 with Pareto k up to 0.81; at 1.5 it was 0.004-0.008 with k
+# below 0, about half its value at 1000 draws. Scale 2 was no better than 1.5
+# at the unit level.
 
 .ctLogSumExp <- function(x) {
   top <- max(x)

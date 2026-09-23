@@ -162,10 +162,13 @@ test_that("PSIS leave-one-subject-out matches the exact integral over the popula
   exact <- vapply(seq_len(16), function(i)
     lse(terms$value) - lse(terms$value - terms$unit_loglik[i, ]), numeric(1))
 
-  # Absolute and elementwise, at two draw counts: a wrong estimator can sit
-  # close to the answer at one count, but its error does not shrink with more
-  # draws. Measured worst errors were 0.016-0.038 at 1000 and 0.007 at 4000.
-  expect_lt(max(abs(psis$pointwise$elpd_loo - exact)), 0.06)
+  # Absolute, at two draw counts: a wrong estimator can sit close to the answer
+  # at one count, but its error does not shrink with more draws. Over six seeds
+  # the root mean square error was 0.005-0.022 at 1000 draws and 0.001-0.006 at
+  # 4000, the worst unit 0.009 at 4000.
+  rms <- function(x) sqrt(mean(x^2))
+  expect_lt(rms(psis$pointwise$elpd_loo - exact), 0.04)
+  expect_lt(rms(more$pointwise$elpd_loo - exact), 0.01)
   expect_lt(max(abs(more$pointwise$elpd_loo - exact)), 0.02)
   expect_lt(abs(more$elpd_loo - sum(exact)), 0.15)
   expect_true(all(psis$pointwise$pareto_k < 0.7))
@@ -217,11 +220,14 @@ test_that("PSIS leave-one-row-out matches a grid over each subject's intercept",
     lse(total) - lse(total - ll[r, ])
   }, numeric(1))
 
-  # Two draw counts, as above. Measured worst errors 0.035-0.045 at 1000 and
-  # 0.020 at 4000. With an unwidened proposal the worst row stayed near 0.06 at
-  # both, with Pareto k up to 0.86: that is the failure this would catch.
-  expect_lt(max(abs(psis$pointwise$elpd_loo - exact[psis$pointwise$row])), 0.08)
-  expect_lt(max(abs(more$pointwise$elpd_loo - exact[more$pointwise$row])), 0.04)
+  # Two draw counts, as above. Over six seeds the root mean square error was
+  # 0.011-0.016 at 1000 draws and 0.004-0.008 at 4000, the worst row 0.037 at
+  # 4000. (Unwidened, the rms at 4000 was 0.010-0.019 with Pareto k to 0.81.)
+  rms <- function(x) sqrt(mean(x^2))
+  error <- function(x) x$pointwise$elpd_loo - exact[x$pointwise$row]
+  expect_lt(rms(error(psis)), 0.025)
+  expect_lt(rms(error(more)), 0.01)
+  expect_lt(max(abs(error(more))), 0.06)
   expect_true(all(psis$pointwise$pareto_k < 0.7))
   expect_true(all(more$pointwise$pareto_k < 0.7))
 })
