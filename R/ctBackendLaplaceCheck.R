@@ -30,9 +30,19 @@
 #'
 #' The quadrature is adaptive in the usual sense: it is centred at each
 #' subject's inner mode and scaled by the inverse of the inner curvature there,
-#' both of which the fit has already computed. With \code{nodes = 1} it
-#' reproduces the Laplace value exactly, which is what makes the comparison
-#' meaningful -- the two are integrating the same thing by different rules.
+#' both of which the fit has already computed. The curvature's eigenvalues are
+#' clipped from below at one, the prior's own curvature, before scaling: where
+#' the likelihood has gone convex in the random effects an unclipped rule puts
+#' its nodes far outside the prior and misses the mass it is meant to measure
+#' (1.8 nats too high on average on near-singular units in simulation, 0.06
+#' clipped). Where every eigenvalue is at least one nothing changes.
+#'
+#' The gap is quadrature minus the fit's own Laplace term, the quantity the fit
+#' maximised. With \code{nodes = 1} that gap is zero wherever the curvature is
+#' at least the prior's, which is what makes the comparison meaningful -- the
+#' two are integrating the same thing by different rules. On a unit with an
+#' eigenvalue below one it is not zero even at one node: the one-point clipped
+#' rule is the eigenwise-floored term, below the fit's.
 #'
 #' The correction is a single Newton step, \code{delta = solve(-hessian,
 #' gradient of (quadrature - laplace))}, evaluated at the estimate. Read it
