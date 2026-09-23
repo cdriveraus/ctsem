@@ -27,6 +27,23 @@
 #' Skip unless a live Julia session is available (and this is not CRAN).
 #'
 #' The CRAN check comes first because the julia probe starts a Julia process.
+#' A test too expensive for every push.
+#'
+#' `CTSEM_SLOW_TESTS=true` runs it. `julia-tests.yaml` sets that on its
+#' scheduled and manually dispatched runs only, so the cost is paid weekly and
+#' on demand rather than per push.
+#'
+#' The bar for using this is high and it is not "this test is slow". It is: the
+#' behaviour cannot be reproduced any cheaper, and that has been *looked for*
+#' rather than assumed. Every use should say in a comment what was tried --
+#' otherwise the next person shrinks the fixture, the test gets fast, and
+#' nobody notices it stopped testing anything.
+skip_unless_slow <- function(what = "this test") {
+  testthat::skip_if(
+    !identical(tolower(trimws(Sys.getenv("CTSEM_SLOW_TESTS", ""))), "true"),
+    paste0(what, " takes minutes; set CTSEM_SLOW_TESTS=true to run it"))
+}
+
 skip_without_julia <- function() {
   testthat::skip_on_cran()
   testthat::skip_if_not_installed("JuliaConnectoR")

@@ -263,6 +263,14 @@ test_that("a julia fit stopped early does not converge, and says what is left", 
 # sample strands it any more" is a finding about the optimiser, not a stale
 # constant, and it is the second time it has happened here.
 #
+# Twenty-five and twenty-five, and the size is not incidental: the failure this
+# test reproduces lives in this realisation and was not found in any smaller
+# one. Searched, with the prior floor on and off each time -- 10x10, 12x12 and
+# 15x15 over six seeds, and 25x8, 25x10, 25x12, 20x10, 30x8 -- and no unit's
+# curvature is ever floored in any of them. Where a smaller fixture does show
+# the escape firing it fires identically with the floor off, so it is an
+# ordinary local optimum the escape already handled and not this at all.
+# Shrinking the fixture makes the test cheap by deleting what it tests.
 .jconv_flat_data <- function(seed = 3L, nsubjects = 25L, ntimes = 25L) {
   set.seed(seed)
   baseline <- stats::rnorm(nsubjects, 2, 2)
@@ -297,6 +305,21 @@ test_that("a julia fit stopped early does not converge, and says what is left", 
 
 test_that("a fit started inside a flat transform gets back out of it", {
   skip_without_julia()
+  # 210 s, against about 2 for everything else in this file, and it is in the
+  # slow tier because no cheaper reproduction exists rather than because nobody
+  # looked. What was searched, with the prior floor on and off each time:
+  # 10x10, 12x12 and 15x15 over six seeds; 25x8, 25x10, 25x12, 20x10 and 30x8;
+  # and both engine fixtures over eight population-scale settings. Not one
+  # floors a unit's curvature. Where a smaller fixture does show the escape
+  # firing it fires with the floor off too -- an ordinary local optimum the
+  # escape already handled, not this. `maxiter` is already bounded below at 250
+  # for the same reason; uncapped this is 1180 s.
+  #
+  # Worth revisiting: a fixture that reaches a near-singular unit curvature
+  # deliberately rather than by luck would make this cheap and would make the
+  # floor testable on demand. See
+  # `CT-SEM/review/LAPLACE-singular-unit-curvature-2026-09-22.md`.
+  skip_unless_slow("the flat-transform escape")
   data <- .jconv_flat_data()
   model <- .jconv_flat_model()
   # Which raw coordinate `drift` is, without paying for a fit to find out.
@@ -313,10 +336,23 @@ test_that("a fit started inside a flat transform gets back out of it", {
   # test rather than an incidental detail.
   expect_lt((1 / (1 + exp(8))) / 0.5, 1e-3)
 
+  # `maxiter` bounded, and 250 is a measured value rather than a round one.
+  # Under it the fit never reaches the bad point at all: at 60 and at 120 both
+  # configurations escape to -755 and the test passes whether or not the prior
+  # floor is there, which is a test that cannot fail. At 250 the floor-less fit
+  # converges onto the spurious maximum at its own 232nd iteration and stalls
+  # there, which is the thing being tested. Above it nothing changes except the
+  # cost: uncapped, the control fit exhausts 1000 iterations to reach the same
+  # verdict and the test takes 1180 s instead of 170.
   fit_from <- function(...) suppressWarnings(suppressMessages(
     ctFit(datalong = data, model = model, backend = "julia", cores = 1,
       verbose = 0, intoverpop = "laplace", inits = inits,
-      optimcontrol = list(estonly = TRUE, ...))))
+      optimcontrol = list(estonly = TRUE, maxiter = 250L, ...))))
+  # With no escape available this one does not converge, it runs out of
+  # iterations: the prior floor removed the spurious maximum it used to stop
+  # dead on, so nothing stops it early and nothing gets it out either. That is
+  # the control condition working, not a fault, and it is why `maxiter` is
+  # bounded above.
   stuck <- fit_from(overshoot = "off", stallwindow = 0L)
   free <- fit_from()
 
@@ -331,9 +367,10 @@ test_that("a fit started inside a flat transform gets back out of it", {
   # or not this particular sample needed rescuing -- and it is what would catch
   # an escape that started accepting worse points.
   expect_gte(free$estimate$loglik, stuck$estimate$loglik - 1e-6)
-  # And the demonstration, on the sample chosen for it. 25.99 measured; ten is
+  # And the demonstration, on the sample chosen for it. 29.48 measured; ten is
   # the bar, so losing most of the effect fails here rather than passing
-  # quietly.
+  # quietly. Without the prior floor this is 0.000 and the fit converges,
+  # wrongly, 26.7 nats short -- which is what the floor is for.
   expect_gt(free$estimate$loglik - stuck$estimate$loglik, 10)
   # And by the route this is supposed to take, not by luck.
   expect_gte(free$optim$stall_escapes, 1L)

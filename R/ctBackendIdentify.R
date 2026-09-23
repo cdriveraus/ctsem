@@ -366,6 +366,20 @@
 # plus the interval note ran past that, so the end of the warning was cut off
 # mid-word, which is worse than either version. Still one function, so there
 # is still one place per element to change.
+# Both wordings name `intoverpop='augmented'`, and the full one says outright
+# that this is the objective's property rather than the model's, because the
+# difference is large and the earlier text did not carry it. Measured on one
+# ordinal model, 50 subjects and 20 occasions, by fitting each route and then
+# evaluating each objective at both points: the augmented objective separates a
+# population sd of 0.7 from one of 1900 by 0.066 log units, and the laplace
+# objective separates the same two points by 40.2. So the data holds the
+# information and the augmented route does not use it -- and augmented does
+# faintly prefer the runaway, which is why this is not an optimiser message.
+# With Gaussian indicators the two routes agree exactly (-4245.781 both), so
+# what saturates is the categorical link: once the prior sd exceeds the
+# threshold spacing the predicted category probabilities stop moving with it,
+# and nothing pays for a wider population. `log|Sigma|` under laplace is
+# explicit and never goes through the link.
 #' @keywords internal
 .ctIdentifyAdvice <- function(partition, brief = FALSE) {
   lines <- character()
@@ -384,6 +398,7 @@
       if (length(partition$partners) == 1L) " with " else "s with ",
       if (length(partition$partners))
         paste(partition$partners, collapse = ", ") else "each other",
+      " under intoverpop='augmented'",
       if (pairs > 1L) "; only the covariances are. " else
         "; only the covariance is. ",
       "intoverpop='laplace' identifies ",
@@ -397,12 +412,14 @@
       if (length(partition$partners)) paste0(
         "the other individually varying parameters (",
         paste(partition$partners, collapse = ", "), ")") else "each other",
-      ": only the covariances they generate are, and those the data ",
-      "determines. Reported sds and correlations for these parameters trade ",
-      "off along a ridge and will not repeat between runs. ",
-      "intoverpop='laplace' identifies the ", if (many) "sds" else "sd",
-      " separately, because there each subject's own random effect enters ",
-      "that subject's likelihood."))
+      " under intoverpop='augmented': only the covariances they generate ",
+      "are, and those the data determines. Reported sds and correlations for ",
+      "these parameters trade off along a ridge and will not repeat between ",
+      "runs. This is a property of the augmented objective rather than of the ",
+      "model or the data: intoverpop='laplace' identifies the ",
+      if (many) "sds" else "sd",
+      " separately from the same data, because there each subject's own ",
+      "random effect enters that subject's likelihood."))
   }
   if (length(partition$structural)) {
     lines <- c(lines, if (brief) paste0("Not estimable as the model stands: ",

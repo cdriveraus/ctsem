@@ -25,6 +25,9 @@ on:
     branches: [juliaFit, master, main]
   pull_request:
     branches: [juliaFit, master, main]
+  # The slow tier, below, runs on these two events only.
+  schedule:
+    - cron: '0 3 * * 2'
   workflow_dispatch:
 
 name: julia-tests
@@ -55,6 +58,12 @@ jobs:
       CTSEM_JULIA_AGREE: 'yes'
       CTSEM_SHARD: ${{ matrix.shard }}
       CTSEM_SHARDS: '4'
+      # Tests that cannot be reproduced cheaply, gated by `skip_unless_slow()`.
+      # Weekly and on demand, not per push: one of them is 210 s on its own,
+      # against about 2 s for the rest of its file. A push run skips them and
+      # says so, which is not the same as not having them -- the skip message
+      # names the variable.
+      CTSEM_SLOW_TESTS: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'true' || 'false' }}
     steps:
       - uses: actions/checkout@v5
 

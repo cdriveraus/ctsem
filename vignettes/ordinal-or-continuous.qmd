@@ -42,8 +42,9 @@ to reproduce the figures.
 # The data
 
 Two Ornstein-Uhlenbeck processes, one five point item each. `eta1` affects
-`eta2` and not the reverse, the innovations correlate at 0.4, and four
-thresholds at $\pm1$ and $\pm2.8$ cut each process into categories.
+`eta2` and not the reverse, the innovations correlate at 0.4, people differ
+moderately in where their processes sit, and four thresholds at $\pm1$ and
+$\pm2.8$ cut each process into categories.
 
 ```{r data}
 #| code-fold: true
@@ -86,6 +87,14 @@ d <- data.frame(ctGenerate(gen, n.subjects = 150, Tpoints = 30, dtmean = 0.7,
 # state plus a logistic disturbance is below threshold k.
 ordinalise <- function(eta)
   1 + rowSums(outer(eta + rlogis(length(eta)), thresholds, '>'))
+# Moderate individual differences: each person's process sits a little high or
+# low. Added to the states rather than to the responses, so the uncategorised
+# fit below sees the same differences the categorised ones do.
+set.seed(3)
+shift <- matrix(stats::rnorm(150 * 2, 0, 0.8), 150, 2)
+d$eta1 <- d$eta1 + shift[d$id, 1]
+d$eta2 <- d$eta2 + shift[d$id, 2]
+
 set.seed(502)
 d$y1 <- ordinalise(d$eta1)
 d$y2 <- ordinalise(d$eta2)
@@ -136,17 +145,37 @@ ordinalmodel <- ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
   manifestNames = c('y1', 'y2'), latentNames = c('eta1', 'eta2'),
   manifesttype = c(2, 2),             # ordinal
   ncategories = c(5, 5),              # five point scale
-  LAMBDA = diag(1, 2),
-  CINT = matrix(0, 2, 1), T0MEANS = matrix(0, 2, 1))
+  LAMBDA = diag(1, 2))
 
 ordinalfit <- ctFit(d[, c('id', 'time', 'y1', 'y2')], ordinalmodel,
   backend = 'julia', cores = 1)
 ```
 
-Nothing is said about `MANIFESTVAR`. Its default is diagonal, and the
-cumulative logit already supplies the randomness, so a residual variance on
-top of it is not identified -- `ctFit()` fixes those entries itself and says
-so. Setting them to zero by hand changes nothing.
+Everything else is left at its default, and the defaults are the ones you
+want. `CINT` is already zero, so the process mean lives in `T0MEANS`, which is
+freely estimated and individually varying -- as is `MANIFESTMEANS`, giving
+each person their own level and their own item locations. `MANIFESTVAR` is
+diagonal by default and `ctFit()` fixes it for a binary or ordinal indicator
+anyway, since the cumulative logit already supplies the randomness and a
+residual variance on top of it is not identified.
+
+## `ncategories` when the indicators are mixed
+
+`ncategories` takes one entry per manifest variable, or a single value for all
+of them, and only the ordinal entries are read. For a model with a Gaussian, an
+ordinal and a binary indicator, all three of these are the same thing:
+
+```{r ncatmixed, eval = FALSE}
+ncategories = c(NA, 5, NA)    # NA where it does not apply
+ncategories = c(0, 5, 0)      # or zero
+ncategories = 5               # or one value, since the rest are ignored
+```
+
+`NA` is the clearest of the three, because it says the number is not merely
+zero but meaningless for that variable. Whatever you pass for a non-ordinal
+variable is overwritten with zero. Omitting the argument entirely while any
+variable is ordinal is an error that names the variables, because the model
+has to know how many thresholds to estimate before it sees the data.
 
 `summary()` reports the thresholds on the latent scale, one row per category
 boundary:
@@ -168,16 +197,14 @@ states, which is only possible because the data are simulated.
 #| code-fold: true
 gaussianmodel <- ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
   manifestNames = c('y1', 'y2'), latentNames = c('eta1', 'eta2'),
-  LAMBDA = diag(1, 2), CINT = matrix(0, 2, 1), T0MEANS = matrix(0, 2, 1),
-  MANIFESTVAR = matrix(c('mvar_y1', 0, 0, 'mvar_y2'), 2, 2))
+  LAMBDA = diag(1, 2))
 
-# The ceiling data are the latent states themselves, so there is no
-# measurement error to estimate: leaving it free puts a parameter on the
-# boundary at zero and the fit reports a direction it cannot identify.
+# The ceiling data are the latent states themselves, so MANIFESTVAR is fixed
+# at zero: there is no measurement error to estimate, and leaving it free puts
+# a parameter on the boundary where the likelihood is flat.
 ceilingmodel <- ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
   manifestNames = c('c1', 'c2'), latentNames = c('eta1', 'eta2'),
-  LAMBDA = diag(1, 2), CINT = matrix(0, 2, 1), T0MEANS = matrix(0, 2, 1),
-  MANIFESTVAR = diag(0, 2))
+  LAMBDA = diag(1, 2), MANIFESTVAR = diag(0, 2))
 ceilingdata <- setNames(d[, c('id', 'time', 'eta1', 'eta2')],
   c('id', 'time', 'c1', 'c2'))
 
@@ -286,9 +313,16 @@ ordinal one *is* comparable with the truth, because the link fixes its units:
 it estimates a real quantity rather than a convention, and checking it is
 worth doing before reading anything else.
 
-Categorisation costs little here. That is expected under the assumptions used:
-categorisation is a monotone transformation plus noise that is independent
-across items and occasions given the latent state, and `MANIFESTVAR` in the
-Gaussian model absorbs that noise. The Gaussian model still gets the latent
-scale wrong, which is why the raw cross effect cannot be read across the two
-fits, but the scale-invariant quantities are recovered.
+The ordinal fit tracks the ceiling closely on both comparable quantities. The
+Gaussian fit does not: it understates the diffusion correlation by about a
+seventh and overstates the reversion rate by a similar amount, where the
+ordinal fit is within a few per cent of the ceiling on each.
+
+Categorisation is a monotone transformation plus noise that is independent
+across items and occasions given the latent state, and a Gaussian residual can
+absorb a good deal of that -- which is why the gap is a modest bias rather
+than a broken fit, and why an earlier version of this vignette, fitted to data
+with no individual differences, found almost no cost at all. Add differences
+between people and the approximation has more to do, and does it less well.
+The scale-invariant quantities survive in both fits; how accurately is a
+question about the design.
