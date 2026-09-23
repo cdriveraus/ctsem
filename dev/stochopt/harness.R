@@ -72,15 +72,24 @@ out <- list(model = MODEL, seed = SEED, npar = npar,
 
 # ---- baseline: the engine optimiser as a fit runs it, then the certification
 # Hessian every fit computes
-base <- optimise()
-h <- timed(ctsem:::.ctBackendHessianAt(spec, base$x))
-Hb <- h$value
-gb <- JuliaConnectoR::juliaGet(SO("evalgrad")(
-  JuliaConnectoR::juliaCall("StochOpt.Ledger", 1L), obj, jv(base$x)))
-gapb <- if (!is.null(Hb)) ctsem:::.ctBackendOptimGap(Hb, as.numeric(gb[[2]])) else NULL
-base$hess_secs <- h$secs
-base$final_gain <- if (!is.null(gapb)) gapb$gap else NA
-base$trace <- base$trace  # kept: predicted gain per iteration
+# Cached per model and seed: the baseline does not depend on the prototype,
+# and on the laplace model it is most of a run.
+BASECACHE <- Sys.getenv("STOCHOPT_BASECACHE", file.path(HERE, "basecache"))
+dir.create(BASECACHE, showWarnings = FALSE, recursive = TRUE)
+basefile <- file.path(BASECACHE, sprintf("%s-%d.rds", MODEL, SEED))
+if (file.exists(basefile)) {
+  base <- readRDS(basefile)
+} else {
+  base <- optimise()
+  h <- timed(ctsem:::.ctBackendHessianAt(spec, base$x))
+  Hb <- h$value
+  gb <- JuliaConnectoR::juliaGet(SO("evalgrad")(
+    JuliaConnectoR::juliaCall("StochOpt.Ledger", 1L), obj, jv(base$x)))
+  gapb <- if (!is.null(Hb)) ctsem:::.ctBackendOptimGap(Hb, as.numeric(gb[[2]])) else NULL
+  base$hess_secs <- h$secs
+  base$final_gain <- if (!is.null(gapb)) gapb$gap else NA
+  saveRDS(base, basefile)
+}
 out$baseline <- base
 cat(sprintf("BASE it=%d %.1fs + hess %.1fs f=%.6f gain=%.2g\n", base$iterations,
   base$secs, base$hess_secs, base$f, base$final_gain)); flush(stdout())
@@ -104,7 +113,7 @@ if (PHASE == "endgame") {
       if (v$curv == "bhhh" && N < 2 * npar) next
       eg <- timed(JuliaConnectoR::juliaGet(SO("endgame")(obj, jv(s1$x),
         curvature = JuliaConnectoR::juliaEval(paste0(":", v$curv)),
-        submax = as.integer(.ctsemOr(v$submax) %||% 0L))))
+        submax = if (is.null(v$submax)) 0L else as.integer(v$submax))))
       e <- eg$value
       rec <- list(tau = tau, curvature = v$curv, submax = .ctsemOr(v$submax),
         stage1_secs = s1$secs, stage1_iterations = s1$iterations,
@@ -112,7 +121,7 @@ if (PHASE == "endgame") {
         f = e$f, iterations = e$iterations, refreshes = e$refreshes,
         final_gain = e$final_gain, extra_step = e$extra_step,
         grad = e$grad, value = e$value, hess = e$hess, scores = e$scores,
-        engine_secs = e$seconds)
+        engine_secs = e$seconds, x = unlist(e$x))
       runs[[length(runs) + 1L]] <- rec
       cat(sprintf("EG tau=%g %-6s %s it=%d refresh=%d df=%.2e gain=%.2g %.1f+%.1fs (base %.1f+%.1f)\n",
         tau, v$curv, e$status, e$iterations, e$refreshes, e$f - base$f,
@@ -120,6 +129,33 @@ if (PHASE == "endgame") {
     }
   }
   out$endgame <- runs
+}
+
+if (PHASE == "pbatch") {
+  runs <- list()
+  sym <- function(s) JuliaConnectoR::juliaEval(paste0(":", s))
+  for (grow in c(TRUE, FALSE)) for (theta in if (grow) c(0.25, 0.5) else 1) {
+    pb <- timed(JuliaConnectoR::juliaGet(SO("pbatch")(obj, jv(start),
+      theta = theta, grow = grow, tol_switch = 0.1)))
+    p <- pb$value
+    eg <- timed(JuliaConnectoR::juliaGet(SO("endgame")(obj, jv(p$x),
+      curvature = sym("chord"))))
+    e <- eg$value
+    rec <- list(grow = grow, theta = theta, pb_status = p$status,
+      pb_iterations = p$iterations, final_batch = p$final_batch,
+      growth = unlist(p$growth)[-1], sizes = unlist(p$sizes)[-1],
+      pb_grad = p$grad, pb_value = p$value, pb_scores = p$scores,
+      pb_secs = pb$secs, eg_status = e$status, eg_iterations = e$iterations,
+      f = e$f, final_gain = e$final_gain, eg_grad = e$grad,
+      eg_value = e$value, eg_hess = e$hess, eg_secs = eg$secs, x = unlist(e$x))
+    runs[[length(runs) + 1L]] <- rec
+    cat(sprintf("PB grow=%s theta=%g %s it=%d batch=%d sizes=[%s] scores=%.1f val=%.1f %.1fs | EG %s it=%d df=%.2e gain=%.2g %.1fs (base %.1f+%.1f)\n",
+      grow, theta, p$status, p$iterations, p$final_batch,
+      paste(unlist(p$sizes)[-1], collapse = ","), p$scores, p$value, pb$secs,
+      e$status, e$iterations, e$f - base$f, e$final_gain, eg$secs,
+      base$secs, base$hess_secs)); flush(stdout())
+  }
+  out$pbatch <- runs
 }
 
 dir.create(OUT, showWarnings = FALSE, recursive = TRUE)
