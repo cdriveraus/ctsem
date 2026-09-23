@@ -27,7 +27,7 @@ if (inherits(f, "try-error")) {
 cert <- f$uncertainty$certification
 row <- data.frame(label = LABEL, model = MODEL, seed = SEED, secs = secs,
   loglik = as.numeric(f$estimate$loglik)[1],
-  converged = isTRUE(f$estimate$converged),
+  converged = isTRUE(f$optim$converged),
   iterations = as.integer(.subset2(f$optim, "iterations")),
   newton = if (is.null(f$optim$newton_steps)) NA else as.integer(f$optim$newton_steps),
   batch = paste(f$optim$batch_sizes, collapse = ","),
