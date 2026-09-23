@@ -376,3 +376,45 @@ end
         end
     end
 end
+
+@testset "the gated soft term hands off smoothly and is exact where it should be" begin
+    C = ContinuousTimeSEM
+    @test C._laplace_soft_weight(0.1, 0.2, 0.7) == 1.0
+    @test C._laplace_soft_weight(0.9, 0.2, 0.7) == 0.0
+    @test C._laplace_soft_weight(0.45, 0.2, 0.7) ≈ 0.5
+    # Concave everywhere: the gate accepts every unit and the term is Laplace.
+    laplace, values = _fresh_linear()
+    reference = ctsem_laplace_evaluate(laplace, values; gradient=false,
+        contributions=true)
+    for U in eachindex(laplace.units.members)
+        g = ctsem_laplace_gated_unit_term(laplace, values, U)
+        @test !g.flagged
+        @test g.value ≈ sum(reference.subject_loglik[laplace.units.members[U]]) rtol = 1e-12
+        # and the one-step rule is exact on a Gaussian integrand
+        @test isapprox(ctsem_laplace_soft_quadrature_unit(laplace, values, U;
+            nodes=3, ndirs=1, newton_steps=1), g.value; atol=1e-8)
+    end
+    # A mildly convex unit inside a band placed around it: flagged, its
+    # smallest eigenvalue placed by inverse iteration, and the blend is what it
+    # says it is.
+    laplace = ctsem_laplace_objective(_LAPLACE_NONLINEAR_OBJECTIVE, [1, 2], [5, 6],
+        [7], [1.0, 1.0])
+    values = [0.1, -2.0, -0.2, 0.05, -0.25, 2.0, 0.0]
+    ctsem_laplace_evaluate(laplace, values; gradient=false)
+    Ls = C._laplace_popchols(values, laplace.spec)
+    lams = [eigmin(Symmetric(C._laplace_block_dense(C._laplace_unit_curvature(laplace,
+        U, values, Ls, laplace.modes[U]), laplace.units.blocks[U], 2))) for U in 1:5]
+    U = argmin(lams)
+    g = ctsem_laplace_gated_unit_term(laplace, values, U; lo=lams[U] - 0.1,
+        hi=lams[U] + 0.1, nodes=3, newton_steps=1)
+    @test g.flagged
+    @test isapprox(g.lambda_min, lams[U]; rtol=1e-10)
+    @test 0 < g.weight < 1
+    soft = ctsem_laplace_soft_quadrature_unit(laplace, values, U; nodes=3, ndirs=1,
+        newton_steps=1)
+    @test isfinite(soft)
+    ungated = ctsem_laplace_gated_unit_term(laplace, values, U; lo=lams[U] - 0.3,
+        hi=lams[U] - 0.2)
+    @test !ungated.flagged
+    @test isapprox(g.value, ungated.value + g.weight * (soft - ungated.value); rtol=1e-12)
+end
