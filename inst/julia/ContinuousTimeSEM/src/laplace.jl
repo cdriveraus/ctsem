@@ -441,6 +441,11 @@ mutable struct CTSEMLaplaceObjective{O} <: CTSEMOptimisable
     # posterior is floored too -- but the reported term is a bound rather than
     # the Laplace value there, and nothing else says so.
     logdet_floored::Vector{Bool}
+    # The parameter vector of the last evaluation, so that report-time
+    # diagnostics (`ctsem_laplace_conditioning`) describe the same point the
+    # modes and flags above do. A copy the evaluation already made; nothing is
+    # computed from it per evaluation.
+    last_values::Vector{Float64}
 end
 
 function CTSEMLaplaceObjective(objective::CTSEMObjective, spec::CTSEMLaplaceSpec;
@@ -452,7 +457,7 @@ function CTSEMLaplaceObjective(objective::CTSEMObjective, spec::CTSEMLaplaceSpec
         [zeros(Float64, units.dims[U]) for U in 1:nunits],
         Int(inner_maxiter), Float64(inner_tol), [Dict{Any,Any}()],
         zeros(Int, nunits), zeros(Float64, nunits), falses(nunits), falses(nunits),
-        falses(nunits), falses(nunits))
+        falses(nunits), falses(nunits), Float64[])
 end
 
 """
@@ -2711,23 +2716,36 @@ unit curvature is `O(d^3)` and fills in what the block elimination keeps sparse.
 const _LAPLACE_EIGEN_MAXDIM = Ref(64)
 
 """
-    ctsem_set_prior_floor_mode!(mode; maxdim)
+The eigenwise floor's clip level `c` in `sum_i log(max(lambda_i, c))`. One is
+the prior's own curvature and the default; below one it leaves mildly convex
+directions their Laplace value and clips only the near-singular ones.
+"""
+const _LAPLACE_EIGEN_THRESHOLD = Ref(1.0)
+
+"""
+    ctsem_set_prior_floor_mode!(mode; maxdim, threshold)
 
 `:total` floors each unit's `logdet(M)` at zero, which is the default and what
 every fit so far has used. `:eigen` clips each eigenvalue of `M` at one instead,
 `sum_i log(max(lambda_i, 1))`, which removes the credit a unit collects from a
 single near-singular direction while its other eigenvalues keep the total
 positive. Experimental and off by default: it is an estimator change. Units
-wider than `maxdim` keep the total floor. Only consulted while
-`ctsem_set_prior_floor!` has the floor on. Returns the previous mode.
+wider than `maxdim` keep the total floor. `threshold = c` in `(0, 1]` clips at
+`c` rather than one, `sum_i log(max(lambda_i, c))`; it is kept until set again.
+Only consulted while `ctsem_set_prior_floor!` has the floor on. Returns the
+previous mode.
 """
 function ctsem_set_prior_floor_mode!(mode::Symbol;
-    maxdim::Integer=_LAPLACE_EIGEN_MAXDIM[])
+    maxdim::Integer=_LAPLACE_EIGEN_MAXDIM[],
+    threshold::Real=_LAPLACE_EIGEN_THRESHOLD[])
     mode in (:total, :eigen) ||
         throw(ArgumentError("prior floor mode must be :total or :eigen"))
+    0 < threshold <= 1 ||
+        throw(ArgumentError("threshold must lie in (0, 1]"))
     previous = _LAPLACE_FLOOR_EIGEN[] ? :eigen : :total
     _LAPLACE_FLOOR_EIGEN[] = mode === :eigen
     _LAPLACE_EIGEN_MAXDIM[] = Int(maxdim)
+    _LAPLACE_EIGEN_THRESHOLD[] = Float64(threshold)
     return previous
 end
 export ctsem_set_prior_floor_mode!
@@ -2737,21 +2755,22 @@ export ctsem_set_prior_floor_mode!
     _laplace_deepvalue(ForwardDiff.value(x))
 
 """
-    _laplace_exceeds_identity(M, blocks)
+    _laplace_exceeds_identity(M, blocks, shift = 1)
 
-Whether `M - I` is positive definite, i.e. every eigenvalue of `M` exceeds one
-and the log likelihood is strictly concave in `u` at the mode. One more block
+Whether `M - shift I` is positive definite, i.e. every eigenvalue of `M`
+exceeds `shift`; at one, the log likelihood is strictly concave in `u` at the
+mode. One more block
 elimination with `M`'s own sparsity, so it costs what the factorization already
 did and fills in nothing. A `false` is conservative -- the factorization also
 refuses a nearly singular `M - I` -- and the caller then takes the exact
 eigenwise route, which gives the same number there.
 """
 function _laplace_exceeds_identity(M::CTSEMBlockMatrix{T},
-    blocks::Vector{CTSEMLaplaceBlock}) where {T}
+    blocks::Vector{CTSEMLaplaceBlock}, shift::Real=1.0) where {T}
     shifted = CTSEMBlockMatrix{T}([copy(d) for d in M.diag],
         [[copy(c) for c in row] for row in M.coupling])
     for d in shifted.diag
-        for i in axes(d, 1); d[i, i] -= one(T); end
+        for i in axes(d, 1); d[i, i] -= shift; end
     end
     ok, _, _, _ = _laplace_block_factor(shifted, blocks)
     return ok
@@ -2760,16 +2779,17 @@ end
 """
     _laplace_eigen_clip(M, blocks, logdetM)
 
-The eigenwise prior floor for one unit: `nothing` when every eigenvalue of `M`
-exceeds one (nothing to clip, and `logdetM` stands), otherwise a named tuple
-with
+The eigenwise prior floor for one unit, at clip level
+`c = _LAPLACE_EIGEN_THRESHOLD` (one by default): `nothing` when every eigenvalue
+of `M` exceeds `c` (nothing to clip, and `logdetM` stands), otherwise a named
+tuple with
 
-  * `phi`, `sum_i log(max(lambda_i, 1))`, in `M`'s element type;
-  * `allclipped`, true when no eigenvalue exceeds one, so the term is `g_U(uhat)`
-    alone and `_laplace_floored_unit_gradient!` is its exact gradient;
-  * `Cdiag`, `Ccoup`, the entries of `C~ = sum_{lambda_i > 1} v_i v_i' / lambda_i`
+  * `phi`, `sum_i log(max(lambda_i, c))`, in `M`'s element type;
+  * `allclipped`, true when no eigenvalue exceeds `c`, so the term is `g_U(uhat)`
+    less a constant and `_laplace_floored_unit_gradient!` is its exact gradient;
+  * `Cdiag`, `Ccoup`, the entries of `C~ = sum_{lambda_i > c} v_i v_i' / lambda_i`
     in `M`'s sparsity pattern, laid out as `_laplace_selected_inverse` lays out
-    `inv(M)`. `d phi / dM = C~` away from the kinks at `lambda_i = 1`, so the
+    `inv(M)`. `d phi / dM = C~` away from the kinks at `lambda_i = c`, so the
     seeded assembly takes these in place of the selected inverse for the trace
     terms, and keeps the true inverse for the mode's own movement;
   * `fallback`, true when the unit is wider than `_LAPLACE_EIGEN_MAXDIM`, in
@@ -2789,7 +2809,8 @@ are Schur complements, whose product is `det M` but whose eigenvalues are not
 """
 function _laplace_eigen_clip(M::CTSEMBlockMatrix{T},
     blocks::Vector{CTSEMLaplaceBlock}, logdetM::T) where {T}
-    _laplace_exceeds_identity(M, blocks) && return nothing
+    level = _LAPLACE_EIGEN_THRESHOLD[]
+    _laplace_exceeds_identity(M, blocks, level) && return nothing
     d = sum(b.size for b in blocks; init=0)
     if d > _LAPLACE_EIGEN_MAXDIM[]
         return (phi=max(logdetM, zero(T)), allclipped=logdetM < 0,
@@ -2806,7 +2827,10 @@ function _laplace_eigen_clip(M::CTSEMBlockMatrix{T},
     Ct = zeros(Float64, d, d)
     allclipped = true
     @inbounds for i in 1:d
-        E.values[i] > 1 || continue
+        if !(E.values[i] > level)
+            phi += log(level)
+            continue
+        end
         allclipped = false
         # `v' M v` in `T`: lambda_i, with its first derivative.
         q = zero(T)
@@ -3670,6 +3694,7 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
     gradient::Bool=true, contributions::Bool=false, nested_gradient::Bool=false)
     theta = collect(Float64, values)
     _laplace_check_indices(laplace, length(theta))
+    laplace.last_values = theta
     nsubjects = length(laplace.objective.subject_objectives)
     nunits = length(laplace.units.members)
 
@@ -4526,19 +4551,86 @@ function ctsem_laplace_modes(laplace::CTSEMLaplaceObjective, values::AbstractVec
         iterations=copy(laplace.inner_iterations))
 end
 
+"""Smallest eigenvalue of `M` below which a unit is reported near-singular."""
+const _LAPLACE_NEAR_SINGULAR = 0.05
+
+"""
+    ctsem_laplace_conditioning(laplace)
+
+How each unit's inner curvature `M = -d2 log L/du du + I` stands against the
+prior's own, at the last evaluation's parameters and modes.
+
+`M >= I` is the likelihood being concave in `u`, where the Laplace term is
+well founded. An eigenvalue below one is a direction where it has gone convex:
+mildly, which the Gaussian at that curvature still integrates well, or nearly
+to zero, where the Gaussian extrapolates across a range the prior forbids and
+the term is several nats too high. That second case is invisible otherwise --
+the total prior floor does not engage while the other eigenvalues keep
+`logdet M` positive, and an optimiser can park a unit exactly at `logdet = 0`
+-- so it is counted here. See
+`CT-SEM/review/LAPLACE-eigenwise-floor-2026-09-23.md`.
+
+Report-time only, and it changes nothing: it rebuilds each unit's curvature
+once, tests `M - I` with the block factorization (no fill-in), and
+decomposes densely only the units that fail that test and are no wider than
+`_LAPLACE_EIGEN_MAXDIM`. Returns
+
+  * `min_eigenvalue`, per unit: the smallest eigenvalue where the test
+    failed, `Inf` where it passed (every eigenvalue above one, not computed),
+    and `NaN` for a failed unit too wide to decompose;
+  * `below_one`, units with an eigenvalue below one (undecomposed failures
+    included);
+  * `near_singular`, units whose smallest eigenvalue is below 0.05.
+"""
+function ctsem_laplace_conditioning(laplace::CTSEMLaplaceObjective)
+    nunits = length(laplace.units.members)
+    mins = fill(Inf, nunits)
+    theta = laplace.last_values
+    if length(theta) != 0
+        _laplace_ensure_pool!(laplace)
+        Ls = _laplace_popchols(theta, laplace.spec)
+        for U in 1:nunits
+            u = laplace.modes[U]
+            isempty(u) && continue
+            blocks = laplace.units.blocks[U]
+            M = _laplace_unit_curvature(laplace, U, theta, Ls, u)
+            all(d -> all(isfinite, d), M.diag) || (mins[U] = NaN; continue)
+            _laplace_exceeds_identity(M, blocks) && continue
+            d = length(u)
+            if d > _LAPLACE_EIGEN_MAXDIM[]
+                mins[U] = NaN
+                continue
+            end
+            mins[U] = _ctsem_symeig(_laplace_block_dense(M, blocks, d)).values[1]
+        end
+    end
+    return (min_eigenvalue=mins,
+        below_one=count(x -> isnan(x) || x < 1, mins),
+        near_singular=count(x -> x < _LAPLACE_NEAR_SINGULAR, mins))
+end
+
+export ctsem_laplace_conditioning
+
 """
     ctsem_laplace_diagnostics(laplace)
 
-Inner-solve status from the last evaluation, per subject.
+Inner-solve status from the last evaluation, per subject, with the curvature
+conditioning `ctsem_laplace_conditioning` reports.
 """
-ctsem_laplace_diagnostics(laplace::CTSEMLaplaceObjective) = (
-    iterations=copy(laplace.inner_iterations),
-    max_gradient=copy(laplace.inner_gradient),
-    converged=copy(laplace.inner_converged),
-    hessian_repaired=copy(laplace.hessian_repaired),
-    mode_repaired=copy(laplace.mode_repaired),
-    logdet_floored=copy(laplace.logdet_floored),
-)
+function ctsem_laplace_diagnostics(laplace::CTSEMLaplaceObjective)
+    conditioning = ctsem_laplace_conditioning(laplace)
+    return (
+        iterations=copy(laplace.inner_iterations),
+        max_gradient=copy(laplace.inner_gradient),
+        converged=copy(laplace.inner_converged),
+        hessian_repaired=copy(laplace.hessian_repaired),
+        mode_repaired=copy(laplace.mode_repaired),
+        logdet_floored=copy(laplace.logdet_floored),
+        min_eigenvalue=conditioning.min_eigenvalue,
+        below_one=conditioning.below_one,
+        near_singular=conditioning.near_singular,
+    )
+end
 
 export ctsem_laplace_diagnostics
 
@@ -4707,6 +4799,9 @@ _ctsem_optimise_result_extra(o::CTSEMLaplaceObjective, final, log) = (
     inner_iterations=copy(o.inner_iterations),
     hessian_repaired=copy(o.hessian_repaired),
     mode_repaired=copy(o.mode_repaired),
+    # At the final evaluation, which is the one just made at the minimizer;
+    # flat rather than nested so it crosses the bridge as plain fields.
+    unit_min_eigenvalue=ctsem_laplace_conditioning(o).min_eigenvalue,
     # How many gradients were computed twice. The seeded assembly returns
     # `false` on a failed factorization and the caller silently recomputes the
     # whole thing by the nested route, which is correct and much slower -- and
@@ -4770,6 +4865,16 @@ function _ctsem_optimise_verbose_report(o::CTSEMLaplaceObjective,
         isempty(o.inner_gradient) ? 0.0 : maximum(o.inner_gradient),
         ", curvature repaired at the mode for ", count(o.mode_repaired),
         " unit(s) (", count(o.hessian_repaired), " somewhere on the way)")
+    conditioning = ctsem_laplace_conditioning(o)
+    if conditioning.below_one > 0
+        finite = filter(isfinite, conditioning.min_eigenvalue)
+        println(_console(), "Laplace: ", conditioning.below_one, "/",
+            length(conditioning.min_eigenvalue),
+            " unit(s) with curvature below the prior's, ",
+            conditioning.near_singular, " near-singular",
+            isempty(finite) ? "" : string(" (smallest eigenvalue ",
+                round(minimum(finite); sigdigits=3), ")"))
+    end
     return nothing
 end
 

@@ -395,6 +395,74 @@ end
     @test isapprox(eigenwise.gradient, total.gradient; rtol=1e-13)
 end
 
+@testset "the eigenwise floor at a threshold below one" begin
+    C = ContinuousTimeSEM
+    laplace, values = _fresh_nonlinear_two()
+    blocks = laplace.units.blocks[1]
+    Q = [cos(0.3) -sin(0.3); sin(0.3) cos(0.3)]
+    dense = Q * Diagonal([8.0, 0.25]) * transpose(Q)
+    M = C._laplace_block_of(dense, blocks)
+    _, logdetM, _, _ = C._laplace_block_factor(M, blocks)
+    previous = ctsem_set_prior_floor_mode!(:eigen; threshold=0.5)
+    local clip, above, seeded, nested
+    try
+        # 1/4 is clipped to 1/2; 8 is kept.
+        clip = C._laplace_eigen_clip(M, blocks, logdetM)
+        @test isapprox(clip.phi, log(8.0) + log(0.5); rtol=1e-12)
+        # Every eigenvalue above 1/2: the fast path, and the plain logdet.
+        above = C._laplace_eigen_clip(C._laplace_block_of(
+            Q * Diagonal([8.0, 0.6]) * transpose(Q), blocks), blocks, log(4.8))
+        @test above === nothing
+        # A clip level just under unit 3's smallest eigenvalue of 0.956 would
+        # leave it alone; one just over clips it, and the seeded gradient is
+        # still the nested one.
+        ctsem_set_prior_floor_mode!(:eigen; threshold=0.99)
+        seeded = ctsem_laplace_evaluate(laplace, values; gradient=true)
+        @test count(laplace.logdet_floored) >= 1
+        nested = ctsem_laplace_evaluate(laplace, values; gradient=true,
+            nested_gradient=true)
+        @test isapprox(seeded.gradient, nested.gradient; rtol=1e-8, atol=1e-10)
+    finally
+        ctsem_set_prior_floor_mode!(previous; threshold=1.0)
+    end
+    @test ContinuousTimeSEM._LAPLACE_EIGEN_THRESHOLD[] == 1.0
+    @test_throws ArgumentError ctsem_set_prior_floor_mode!(:eigen; threshold=0.0)
+    @test ContinuousTimeSEM._LAPLACE_FLOOR_EIGEN[] == false
+end
+
+@testset "curvature conditioning is reported at report time and changes nothing" begin
+    C = ContinuousTimeSEM
+    # Concave everywhere: every unit passes the `M - I` test, nothing is
+    # decomposed, nothing is reported.
+    laplace, values = _fresh_linear()
+    ctsem_laplace_evaluate(laplace, values; gradient=false)
+    cond = ctsem_laplace_conditioning(laplace)
+    @test all(==(Inf), cond.min_eigenvalue)
+    @test cond.below_one == 0 && cond.near_singular == 0
+    # Mildly convex: some unit has an eigenvalue below one, none near zero,
+    # and what is reported is that unit's exact smallest eigenvalue.
+    laplace, values = _fresh_nonlinear_two()
+    first = ctsem_laplace_evaluate(laplace, values; gradient=true)
+    flags = copy(laplace.logdet_floored)
+    diagnostics = ctsem_laplace_diagnostics(laplace)
+    @test diagnostics.below_one >= 1
+    @test diagnostics.near_singular == 0
+    Ls = C._laplace_popchols(values, laplace.spec)
+    for U in eachindex(laplace.units.members)
+        isfinite(diagnostics.min_eigenvalue[U]) || continue
+        u = laplace.modes[U]
+        dense = C._laplace_block_dense(C._laplace_unit_curvature(laplace, U,
+            values, Ls, u), laplace.units.blocks[U], length(u))
+        @test isapprox(diagnostics.min_eigenvalue[U],
+            eigmin(Symmetric(dense)); rtol=1e-10)
+    end
+    # Asking changes nothing: the next evaluation is the same computation.
+    @test laplace.logdet_floored == flags
+    again = ctsem_laplace_evaluate(laplace, values; gradient=true)
+    @test again.value == first.value
+    @test isapprox(again.gradient, first.gradient; rtol=1e-13)
+end
+
 @testset "the eigenwise floor on a two-level unit decomposes it whole" begin
     # Two subjects and their study per unit, dimension 5, with one of the
     # subject effects on the nonlinear `-log1p_exp` entry. The unit's

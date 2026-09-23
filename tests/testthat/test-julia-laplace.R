@@ -1168,3 +1168,64 @@ test_that("the hessian raises the inner budget rather than returning NaN", {
   expect_equal(getbudget(), 2L)
   setbudget(200L)
 })
+
+# Weak data for a nonlinear random effect: 40 subjects, six waves, a random
+# `-log1p_exp` drift beside random T0MEANS and CINT. The subjects are simulated
+# here, not by ctGenerate, whose draw stream moves under unrelated commits.
+.laplace_weak_data <- function(seed = 2L, nsubjects = 40L, ntimes = 6L) {
+  set.seed(seed)
+  baseline <- stats::rnorm(nsubjects, 2, 2)
+  start <- stats::rnorm(nsubjects, baseline / 2, 1)
+  drift <- -log1p(exp(-stats::rnorm(nsubjects, 1 + (baseline - 2) / 2, 1)))
+  rows <- lapply(seq_len(nsubjects), function(i) {
+    a <- drift[i]; decay <- exp(a)
+    intercept <- (baseline[i] / a) * (decay - 1)
+    innovation <- sqrt(0.25 * (exp(2 * a) - 1) / (2 * a))
+    latent <- numeric(ntimes); latent[1] <- start[i]
+    for (t in seq_len(ntimes - 1L)) {
+      latent[t + 1L] <- decay * latent[t] + intercept +
+        stats::rnorm(1, 0, innovation)
+    }
+    data.frame(id = i, time = seq_len(ntimes) - 1L,
+      Y1 = latent + stats::rnorm(ntimes, 0, 0.5))
+  })
+  do.call(rbind, rows)
+}
+
+test_that("near-singular random-effect curvature is reported, and changes nothing", {
+  skip_without_julia()
+  model <- suppressMessages(ctModel(silent = TRUE, type = "ct", CINT = "cint",
+    MANIFESTMEANS = 0, LAMBDA = matrix(1),
+    DRIFT = "drift|-log1p_exp(-param)|TRUE"))
+  spec <- suppressWarnings(suppressMessages(ctFit(.laplace_weak_data(), model,
+    backend = "julia", intoverpop = "laplace", fit = FALSE)))
+  module <- .ctJuliaModule(spec$project)
+  objective <- .ctJuliaObjective(spec)
+  # Where a total-floor fit of these data converged: one unit parked at
+  # eigenvalues (8.5e-4, 14.9, 79.0), logdet = 0 to ten digits, which is where
+  # the total prior floor lets the optimiser rest while the unit's Laplace term
+  # is 3.1 nats above its exact integral.
+  raw <- c(0.127421404395785, 2.72694414423615, -1.14068954877124,
+    -1.61124260961682, 0.181949396643791, -0.379492126290006, 1.2518601566922,
+    -0.261116183475529, 0.501589410182815, 0.472211311761145, 0.16969291528676)
+  first <- module$ctsem_laplace_evaluate(objective, .ctJuliaVector(raw),
+    gradient = TRUE)
+  cond <- .ctJuliaLaplaceConditioning(JuliaConnectoR::juliaGet(
+    module$ctsem_laplace_conditioning(objective))$min_eigenvalue)
+  expect_gte(cond$near_singular, 1L)
+  expect_gt(cond$below_one, cond$near_singular)
+  expect_lt(min(cond$min_eigenvalue), 0.01)
+  # Report-time only: asking changes neither the value nor the gradient.
+  again <- module$ctsem_laplace_evaluate(objective, .ctJuliaVector(raw),
+    gradient = TRUE)
+  expect_identical(.ctBackendJuliaValue(again$value),
+    .ctBackendJuliaValue(first$value))
+  expect_equal(as.numeric(.ctBackendJuliaValue(again$gradient)),
+    as.numeric(.ctBackendJuliaValue(first$gradient)), tolerance = 1e-12)
+
+  # And a concave case reports nothing, on the fit and in its print.
+  fit <- .laplace_exact_fit()
+  expect_equal(fit$laplace$conditioning$below_one, 0L)
+  expect_equal(fit$laplace$conditioning$near_singular, 0L)
+  expect_false(any(grepl("near-singular", capture.output(print(fit)))))
+})
