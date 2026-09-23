@@ -342,6 +342,7 @@ end
     Hn = C._ctsem_cholesky(copy(near), 2)
     @test isapprox(C._quadrature_clipped_scale(Hn, 2).scale, C._ctsem_cholesky_uinv(Hn);
         atol=1e-8)
+end
 
 @testset "the soft-direction rule: one node is the eigenwise floor, and Gaussians are exact" begin
     C = ContinuousTimeSEM
