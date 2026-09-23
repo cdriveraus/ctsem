@@ -261,6 +261,38 @@ end
     @test isapprox(seeded.gradient, nested.gradient; rtol=1e-8, atol=1e-10)
 end
 
+@testset "a floored unit past the pool width is accumulated in its own slot" begin
+    # The test above floors nothing: its random effect is on T0MEANS, where the
+    # integrand stays log-concave. On the drift it floors every unit, which is
+    # what reaches the floored branch at all.
+    #
+    # And past the pool width, which is what matters. The gradient is summed
+    # into one accumulator per pool slot, while the subject loop is cut into
+    # one piece per unit, so a floored unit indexing by its piece rather than
+    # its slot reads beyond the accumulators. Under `@inbounds` that is not a
+    # BoundsError: it killed the process with EXCEPTION_ACCESS_VIOLATION, and
+    # R, waiting on the socket, hung with no message. A pool of one makes every
+    # unit after the first such a unit, whatever the machine's thread count.
+    original = ctsem_max_chunks().max_chunks
+    try
+        for chunks in (1, 2)
+            ctsem_set_max_chunks!(chunks)
+            laplace = ctsem_laplace_objective(_LAPLACE_NONLINEAR_OBJECTIVE,
+                [2], [5], Int[], [1.0])
+            values = [0.1, 0.4, -0.2, 0.05, -1.0]
+            seeded = ctsem_laplace_evaluate(laplace, values; gradient=true)
+            floored = findall(laplace.logdet_floored)
+            @test any(>(ContinuousTimeSEM._laplace_pool_width()), floored)
+            nested = ctsem_laplace_evaluate(laplace, values; gradient=true,
+                nested_gradient=true)
+            @test all(isfinite, seeded.gradient)
+            @test isapprox(seeded.gradient, nested.gradient; rtol=1e-8, atol=1e-10)
+        end
+    finally
+        ctsem_set_max_chunks!(original)
+    end
+end
+
 @testset "the inner mode is a mode" begin
     laplace, values = _fresh_linear()
     ctsem_laplace_evaluate(laplace, values; gradient=false)
