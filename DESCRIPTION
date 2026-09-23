@@ -73,6 +73,7 @@ Suggests:
     devtools,
     tinytex,
     lme4,
+    loo,
     shiny,
     gridExtra,
     collapse,
