@@ -510,6 +510,86 @@ end
     @test isapprox(seeded.gradient, nested.gradient; rtol=1e-8, atol=1e-10)
 end
 
+@testset "the gated rule: value, and its gradient against nested and differences" begin
+    C = ContinuousTimeSEM
+    # Units 1, 2, 4, 5 have smallest eigenvalues 1.16 to 1.17 at this point and
+    # unit 3 has 0.956, so the three bands below put nothing, one unit, and one
+    # unit fully soft plus four inside the ramp (with lambda above one, so the
+    # node scale moves with lambda too).
+    laplace, values = _fresh_nonlinear_two()
+    ctsem_set_prior_floor_mode!(:total)
+    total = ctsem_laplace_evaluate(laplace, values; gradient=true)
+    for (label, lo, hi, nflag) in (("above the band", 0.2, 0.7, 0),
+                                   ("inside the ramp", 0.8, 1.1, 1),
+                                   ("below the ramp", 1.0, 1.2, 5))
+        previous = ctsem_set_prior_floor_mode!(:gated; lo=lo, hi=hi)
+        local seeded, nested, reference, prototype
+        try
+            seeded = ctsem_laplace_evaluate(laplace, values; gradient=true)
+            @test (label, C._CTSEM_LAPLACE_GATED_UNITS[]) == (label, nflag)
+            nested = ctsem_laplace_evaluate(laplace, values; gradient=true,
+                nested_gradient=true)
+            reference = _value_finite_difference(laplace, values)
+        finally
+            ctsem_set_prior_floor_mode!(previous; lo=0.2, hi=0.7)
+        end
+        # The value-only prototype computes the same rule by a separate route.
+        ctsem_laplace_evaluate(laplace, values; gradient=false)
+        prototype = sum(ctsem_laplace_gated_unit_term(laplace, values, U; lo=lo,
+            hi=hi, nodes=3, newton_steps=1).value
+            for U in eachindex(laplace.units.members))
+        @test (label, isapprox(seeded.value, prototype; rtol=1e-10)) == (label, true)
+        if nflag == 0
+            @test seeded.value == total.value
+            @test isapprox(seeded.gradient, total.gradient; rtol=1e-13)
+        else
+            @test (label, seeded.value != total.value) == (label, true)
+        end
+        @test (label, isapprox(seeded.gradient, nested.gradient; rtol=1e-8,
+            atol=1e-10)) == (label, true)
+        @test (label, norm(seeded.gradient - reference) / norm(reference) < 1e-5) ==
+            (label, true)
+    end
+end
+
+@testset "the gated rule on a two-level unit" begin
+    C = ContinuousTimeSEM
+    laplace = ctsem_laplace_objective(_LAPLACE_NONLINEAR_OBJECTIVE;
+        re_index=[1, 2, 4], sd_index=[5, 6, 8], cor_index=[7],
+        sd_scale=[1.0, 1.0, 1.0], level_nre=[2, 1],
+        group=vcat(1:5, [1, 1, 2, 2, 3]), level_ngroups=[5, 3])
+    values = [0.1, -2.0, -0.2, 0.05, -0.25, 1.0, 0.0, 0.5]
+    previous = ctsem_set_prior_floor_mode!(:gated; lo=0.3, hi=1.1)
+    local seeded, nested, reference
+    try
+        seeded = ctsem_laplace_evaluate(laplace, values; gradient=true)
+        @test C._CTSEM_LAPLACE_GATED_UNITS[] >= 1
+        nested = ctsem_laplace_evaluate(laplace, values; gradient=true,
+            nested_gradient=true)
+        reference = _value_finite_difference(laplace, values)
+    finally
+        ctsem_set_prior_floor_mode!(previous; lo=0.2, hi=0.7)
+    end
+    @test isapprox(seeded.gradient, nested.gradient; rtol=1e-8, atol=1e-10)
+    @test norm(seeded.gradient - reference) / norm(reference) < 1e-5
+    @test C._LAPLACE_FLOOR_GATED[] == false
+end
+
+@testset "first-order eigen-quantities are the derivatives they claim" begin
+    C = ContinuousTimeSEM
+    A0 = [3.0 0.4 0.1; 0.4 1.2 -0.3; 0.1 -0.3 0.5]
+    dA = [0.2 -0.1 0.3; -0.1 0.4 0.05; 0.3 0.05 -0.2]
+    lam(t) = C._laplace_eig_first_order(A0 .+ t .* dA).values[1]
+    vec1(t) = C._laplace_eig_first_order(A0 .+ t .* dA).vectors[:, 1]
+    clipped(t) = C._laplace_clip_first_order(A0 .+ t .* dA)
+    h = 1e-6
+    sgn(v) = v .* sign(v[1])
+    @test ForwardDiff.derivative(lam, 0.0) ≈ (lam(h) - lam(-h)) / (2h) rtol = 1e-6
+    @test ForwardDiff.derivative(t -> sgn(vec1(t)), 0.0) ≈
+        (sgn(vec1(h)) - sgn(vec1(-h))) ./ (2h) rtol = 1e-5
+    @test ForwardDiff.derivative(clipped, 0.0) ≈ (clipped(h) - clipped(-h)) ./ (2h) rtol = 1e-5
+end
+
 @testset "the inner mode is a mode" begin
     laplace, values = _fresh_linear()
     ctsem_laplace_evaluate(laplace, values; gradient=false)

@@ -2742,21 +2742,30 @@ wider than `maxdim` keep the total floor. `threshold = c` in `(0, 1]` clips at
 `blend = a` in `[0, 1]` uses `(1 - a) max(logdet, 0) + a phi`, a continuation
 path from the total floor (`a = 0`) to the eigenwise one (`a = 1`, the
 default); also kept until set again.
+`:gated` is the gated soft-direction rule (see `_laplace_gated_term`), with its
+hand-off band `lo` to `hi` (default 0.2 to 0.7), kept until set again; it takes
+no `threshold` or `blend`.
 Only consulted while `ctsem_set_prior_floor!` has the floor on. Returns the
 previous mode.
 """
 function ctsem_set_prior_floor_mode!(mode::Symbol;
     maxdim::Integer=_LAPLACE_EIGEN_MAXDIM[],
     threshold::Real=_LAPLACE_EIGEN_THRESHOLD[],
-    blend::Real=_LAPLACE_EIGEN_BLEND[])
-    mode in (:total, :eigen) ||
-        throw(ArgumentError("prior floor mode must be :total or :eigen"))
+    blend::Real=_LAPLACE_EIGEN_BLEND[],
+    lo::Real=_LAPLACE_GATE_LO[], hi::Real=_LAPLACE_GATE_HI[])
+    mode in (:total, :eigen, :gated) ||
+        throw(ArgumentError("prior floor mode must be :total, :eigen or :gated"))
     0 < threshold <= 1 ||
         throw(ArgumentError("threshold must lie in (0, 1]"))
     0 <= blend <= 1 || throw(ArgumentError("blend must lie in [0, 1]"))
+    0 < lo < hi || throw(ArgumentError("the gate needs 0 < lo < hi"))
     _LAPLACE_EIGEN_BLEND[] = Float64(blend)
-    previous = _LAPLACE_FLOOR_EIGEN[] ? :eigen : :total
+    previous = _LAPLACE_FLOOR_GATED[] ? :gated :
+        _LAPLACE_FLOOR_EIGEN[] ? :eigen : :total
     _LAPLACE_FLOOR_EIGEN[] = mode === :eigen
+    _LAPLACE_FLOOR_GATED[] = mode === :gated
+    _LAPLACE_GATE_LO[] = Float64(lo)
+    _LAPLACE_GATE_HI[] = Float64(hi)
     _LAPLACE_EIGEN_MAXDIM[] = Int(maxdim)
     _LAPLACE_EIGEN_THRESHOLD[] = Float64(threshold)
     return previous
@@ -2891,6 +2900,220 @@ function _laplace_floored_logdet(M::CTSEMBlockMatrix{T},
     return a * clip.phi + (1 - a) * max(logdetM, zero(T))
 end
 
+################################################################################
+# The gated soft-direction rule, as a floor mode with an exact gradient
+################################################################################
+#
+# `ctsem_set_prior_floor_mode!(:gated)`. A unit whose inner curvature `M` has
+# every eigenvalue above `hi` keeps the total-floored Laplace term, and pays one
+# extra block elimination (`M - hi I`) to be told so. A unit below it gets
+#
+#     T = T_total + w(lambda_1) (T_soft - T_total)
+#
+# with `w` a C1 smoothstep from one below `lo` to zero at `hi`, and `T_soft` a
+# 3-point Gauss-Hermite rule along the smallest eigenvector `v_1` at the
+# prior's scale, the other coordinates moved at each node by one Newton step
+# with that node's own conditional curvature (clipped at one) and integrated by
+# Laplace there. Measured against an exact reference on 16 weak-data configs:
+# mean |error| 0.03 to 0.06 per eigenvalue class, where the total floor is off
+# by +2.7 on near-singular units; see
+# `CT-SEM/review/LAPLACE-eigenwise-floor-2026-09-23.md`, third to fifth addenda.
+#
+# The gradient of a flagged unit is ForwardDiff over that unit's term alone,
+# with the inner mode's first derivative from `_laplace_dual_unit_mode` (the
+# implicit function theorem, exactly as the nested oracle has it) and the
+# eigen-quantities differentiated to first order from the primal decomposition:
+# eigenvalues as `v' dM v`, the soft eigenvector by the standard perturbation
+# sum, and the clipped conditional curvatures by the Daleckii-Krein divided
+# differences, which stay finite across a near-degenerate pair on the same side
+# of the clip. The cost is confined to flagged units: every other unit goes
+# through the seeded assembly unchanged, and above the gate the gradient is the
+# `:total` one exactly.
+#
+# Scope. Dense, so units wider than `_LAPLACE_EIGEN_MAXDIM` keep `T_total`
+# (counted in `_CTSEM_LAPLACE_GATED_FALLBACK`). Multilevel units no wider than
+# that are handled whole. A unit whose two smallest eigenvalues are within a
+# relative 1e-3 of each other also keeps `T_total`: the soft direction is not
+# defined there, and a rule that chose one would be discontinuous in theta. On
+# the weak-data study the smallest gap was 0.24.
+
+"""Band of the gated rule's hand-off: flagged below `hi`, fully soft below `lo`."""
+const _LAPLACE_GATE_LO = Ref(0.2)
+const _LAPLACE_GATE_HI = Ref(0.7)
+"""Whether the gated soft-direction rule is the floor; see `ctsem_set_prior_floor_mode!`."""
+const _LAPLACE_FLOOR_GATED = Ref(false)
+"""Units the gated rule flagged at the last primal evaluation, and units it could
+not treat (too wide, or a degenerate soft pair) and left at `T_total`."""
+const _CTSEM_LAPLACE_GATED_UNITS = Ref(0)
+const _CTSEM_LAPLACE_GATED_FALLBACK = Ref(0)
+
+"""
+    _laplace_eig_first_order(A)
+
+Eigenvalues and eigenvectors of a symmetric matrix, exact to first order in
+the dual parts of `A`: the decomposition of the primal part, then
+`dlambda_i = v_i' dA v_i` and `dv_i = sum_{k != i} v_k (v_k' dA v_i) /
+(lambda_i - lambda_k)`. For a `Float64` matrix this is `_ctsem_symeig`.
+"""
+function _laplace_eig_first_order(A::AbstractMatrix{T}) where {T}
+    n = size(A, 1)
+    A0 = [Float64(_laplace_deepvalue(A[i, j])) for i in 1:n, j in 1:n]
+    E = _ctsem_symeig(A0)
+    T === Float64 && return (values=E.values, vectors=E.vectors, primal=E)
+    D = A .- A0
+    V = E.vectors
+    Dt = transpose(V) * D * V
+    values = [E.values[i] + Dt[i, i] for i in 1:n]
+    vectors = Matrix{T}(undef, n, n)
+    for i in 1:n
+        col = convert(Vector{T}, V[:, i])
+        for k in 1:n
+            k == i && continue
+            col = col .+ V[:, k] .* (Dt[k, i] / (E.values[i] - E.values[k]))
+        end
+        vectors[:, i] = col
+    end
+    return (values=values, vectors=vectors, primal=E)
+end
+
+"""
+    _laplace_clip_first_order(B)
+
+`V max(Lambda, 1) V'` for symmetric `B`, exact to first order in its dual
+parts by Daleckii-Krein: in the primal eigenbasis the derivative's `(i, j)`
+entry is `(f(l_i) - f(l_j)) / (l_i - l_j)` times `(V' dB V)_ij`, with `f'` on
+the diagonal and wherever the pair coincides. No division by a small gap.
+"""
+function _laplace_clip_first_order(B::AbstractMatrix{T}) where {T}
+    n = size(B, 1)
+    B0 = [Float64(_laplace_deepvalue(B[i, j])) for i in 1:n, j in 1:n]
+    E = _ctsem_symeig(B0)
+    V = E.vectors
+    l = E.values
+    f(x) = max(x, 1.0)
+    fp(x) = x > 1.0 ? 1.0 : 0.0
+    Dt = transpose(V) * (B .- B0) * V
+    C = Matrix{T}(undef, n, n)
+    @inbounds for j in 1:n, i in 1:n
+        coef = (i == j || abs(l[i] - l[j]) <= 1e-12 * max(1.0, abs(l[i]))) ?
+            fp(l[i]) : (f(l[i]) - f(l[j])) / (l[i] - l[j])
+        C[i, j] = coef * Dt[i, j] + (i == j ? f(l[i]) : 0.0)
+    end
+    return V * C * transpose(V)
+end
+
+@inline function _laplace_smoothstep_weight(lambda, lo::Real, hi::Real)
+    lp = _laplace_deepvalue(lambda)
+    lp <= lo && return one(lambda)
+    lp >= hi && return zero(lambda)
+    s = (lambda - lo) / (hi - lo)
+    return 1 - (3 * s^2 - 2 * s^3)
+end
+
+"""
+    _laplace_gated_term(laplace, U, values, Ls, u, aws; M, logdetM, inner)
+
+Unit `U`'s term under the gated rule, generic in the element type: returns
+`(value, flagged)`. `T_total` where the gate accepts the unit or it cannot be
+treated; see the section comment above. `M`, `logdetM` and `inner` may be
+passed when the caller already has them at `u`.
+"""
+function _laplace_gated_term(laplace::CTSEMLaplaceObjective, U::Integer,
+    values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T},
+    aws; M=nothing, logdetM=nothing, inner=nothing) where {T}
+    blocks = laplace.units.blocks[U]
+    inner === nothing &&
+        (inner = _laplace_unit_objective_gradient(laplace, U, values, Ls, u, aws))
+    g = inner.value
+    (isfinite(g) && !isempty(u)) || return (value=g, flagged=false)
+    M === nothing && (M = _laplace_unit_curvature(laplace, U, values, Ls, u))
+    if logdetM === nothing
+        ok, logdetM, _, _ = _laplace_block_factor(M, blocks)
+        ok || return (value=T(NaN), flagged=false)
+    end
+    total = g - max(logdetM, zero(logdetM)) / 2
+    lo, hi = _LAPLACE_GATE_LO[], _LAPLACE_GATE_HI[]
+    _laplace_exceeds_identity(M, blocks, hi) && return (value=total, flagged=false)
+    d = length(u)
+    d > _LAPLACE_EIGEN_MAXDIM[] && return (value=total, flagged=false)
+    dense = _laplace_block_dense(M, blocks, d)
+    E = _laplace_eig_first_order(dense)
+    lam = E.primal.values
+    if d > 1 && (lam[2] - lam[1]) <= 1e-3 * max(abs(lam[2]), 1.0)
+        return (value=total, flagged=false)
+    end
+    lam1 = E.values[1]
+    w = _laplace_smoothstep_weight(lam1, lo, hi)
+    iszero(_laplace_deepvalue(w)) && return (value=total, flagged=true)
+    v1 = E.vectors[:, 1]
+    # The other directions as an orthonormal basis of v1's complement, by
+    # Gram-Schmidt from the primal eigenvectors. Everything below depends on
+    # that subspace only, not on the basis, so a degenerate pair among the
+    # stiff directions costs nothing here.
+    Vh = Matrix{T}(undef, d, d - 1)
+    for k in 2:d
+        c = convert(Vector{T}, E.primal.vectors[:, k])
+        c = c .- v1 .* sum(v1 .* c)
+        for j in 1:(k - 2)
+            c = c .- Vh[:, j] .* sum(Vh[:, j] .* c)
+        end
+        Vh[:, k - 1] = c ./ sqrt(sum(c .* c))
+    end
+    lam1c = max(lam1, one(lam1))
+    xs, ws = _gauss_hermite(3)
+    terms = Vector{T}(undef, length(xs))
+    for j in eachindex(xs)
+        x = xs[j]
+        local h
+        if abs(x) < 1e-12 || d == 1
+            if d == 1
+                ub = u .+ (sqrt(2) * x / sqrt(lam1c)) .* v1
+                h = abs(x) < 1e-12 ? g :
+                    _laplace_unit_objective_gradient(laplace, U, values, Ls, ub, aws).value
+            else
+                Bc = _laplace_clip_first_order(transpose(Vh) * dense * Vh)
+                F = _ctsem_cholesky(Matrix(_laplace_symmetrise(Bc)), d - 1)
+                h = g - logdet(F) / 2
+            end
+        else
+            ub = u .+ (sqrt(2) * x / sqrt(lam1c)) .* v1
+            r = _laplace_unit_objective_gradient(laplace, U, values, Ls, ub, aws)
+            Mb = _laplace_block_dense(_laplace_unit_curvature(laplace, U, values,
+                Ls, ub), blocks, d)
+            Bc = _laplace_clip_first_order(transpose(Vh) * Mb * Vh)
+            F = _ctsem_cholesky(Matrix(_laplace_symmetrise(Bc)), d - 1)
+            issuccess(F) || return (value=T(NaN), flagged=true)
+            z = F \ (transpose(Vh) * r.gradient)
+            h = _laplace_unit_objective_gradient(laplace, U, values, Ls,
+                ub .+ Vh * z, aws).value - logdet(F) / 2
+        end
+        terms[j] = h + log(ws[j]) + x^2
+    end
+    peak = maximum(t -> Float64(_laplace_deepvalue(t)), terms)
+    isfinite(peak) || return (value=T(NaN), flagged=true)
+    soft = peak + log(sum(exp.(terms .- peak))) - log(lam1c) / 2 - log(pi) / 2
+    return (value=total + w * (soft - total), flagged=true)
+end
+
+"""
+    _laplace_gated_unit_gradient(laplace, U, theta, curvature)
+
+The exact gradient of a flagged unit's gated term: ForwardDiff over the term,
+the inner mode's first derivative from `_laplace_dual_unit_mode`.
+"""
+function _laplace_gated_unit_gradient(laplace::CTSEMLaplaceObjective, U::Integer,
+    theta::Vector{Float64}, curvature)
+    uhat = laplace.modes[U]
+    term_of = function (x)
+        S = eltype(x)
+        wsd = _laplace_workspace!(laplace, S, length(x))
+        Lsd = _laplace_popchols(x, laplace.spec)
+        ud = _laplace_dual_unit_mode(laplace, U, x, Lsd, uhat, curvature, wsd)
+        return _laplace_gated_term(laplace, U, x, Lsd, ud, wsd).value
+    end
+    return ForwardDiff.gradient(term_of, theta)
+end
+
 """
     _laplace_blend_clip(clip, logdetM, factors, elim, blocks)
 
@@ -2938,6 +3161,10 @@ function _laplace_unit_term(laplace::CTSEMLaplaceObjective, U::Integer,
     M = _laplace_unit_curvature(laplace, U, values, Ls, u)
     ok, logdetM, _, _ = _laplace_block_factor(M, laplace.units.blocks[U])
     ok || return T(NaN)
+    if _LAPLACE_PRIOR_FLOOR[] && _LAPLACE_FLOOR_GATED[]
+        return _laplace_gated_term(laplace, U, values, Ls, u, aws; M=M,
+            logdetM=logdetM, inner=inner).value
+    end
     return inner.value -
         _laplace_floored_logdet(M, laplace.units.blocks[U], logdetM) / 2
 end
@@ -3766,6 +3993,8 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
     # apply -- which is every unit under the default total floor.
     eigen_floor = _LAPLACE_PRIOR_FLOOR[] && _LAPLACE_FLOOR_EIGEN[]
     primal_clips = Vector{Any}(nothing, nunits)
+    gated_floor = _LAPLACE_PRIOR_FLOOR[] && _LAPLACE_FLOOR_GATED[]
+    primal_gated = fill(false, nunits)
     unit_loglik = zeros(Float64, nunits)
     subject_loglik = zeros(Float64, nsubjects)
     value = 0.0
@@ -3849,6 +4078,16 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
             else
                 NaN
             end
+            if gated_floor && ok && !fac.repaired && !isempty(u) &&
+                    isfinite(inner.value)
+                local gated
+                gated = _laplace_gated_term(laplace, U, theta, Ls, u, aws; M=M,
+                    logdetM=logdetM, inner=inner)
+                if gated.flagged
+                    term = gated.value
+                    primal_gated[U] = true
+                end
+            end
             if !isfinite(term)
                 chunk_ok[_laplace_slot()] = false
                 chunk_bad[_laplace_slot()] = term
@@ -3878,6 +4117,7 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
             converged=all(laplace.inner_converged))
     end
     value = sum(unit_loglik) + _ctsem_log_prior(laplace.objective, theta)
+    gated_floor && (_CTSEM_LAPLACE_GATED_UNITS[] = count(primal_gated))
 
     gradient || return (value=value, gradient=nothing,
         subject_loglik=subject_loglik, unit_loglik=unit_loglik,
@@ -3917,6 +4157,17 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
             @inbounds for U in ranges[c]
                 # A floored unit is differentiated whole; see
                 # `_laplace_floored_unit_gradient!`.
+                if primal_gated[U]
+                    local gg
+                    gg = _laplace_gated_unit_gradient(laplace, U, theta,
+                        primal_curvature[U])
+                    if !all(isfinite, gg)
+                        chunk_ok[_laplace_slot()] = false
+                        return nothing
+                    end
+                    partials[_laplace_slot()] .+= gg
+                    continue
+                end
                 local clip
                 clip = primal_clips[U]
                 if laplace.logdet_floored[U] && (clip === nothing || clip.allclipped)
