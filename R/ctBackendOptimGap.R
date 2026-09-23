@@ -620,7 +620,14 @@
   hessians <- 0L
   for (attempt in seq_len(max(0L, as.integer(maxtries)) + 1L)) {
     est <- as.numeric(result$minimizer)[seq_len(npar)]
-    hessian <- .ctBackendHessianAt(spec, est, gradient = gradient)
+    # The engine's Newton finish ends on the exact Hessian at its minimizer and
+    # hands it back, so the first round certifies on that rather than paying
+    # for the same matrix again. Any later round is at a new point.
+    carried <- if (attempt == 1L) result$hessian else NULL
+    hessian <- if (is.matrix(carried) && nrow(carried) == npar &&
+      ncol(carried) == npar && all(is.finite(carried))) {
+      carried
+    } else .ctBackendHessianAt(spec, est, gradient = gradient)
     if (is.null(hessian)) break
     # Counted, because a Hessian is `ceil(npar / chunksize)` sweeps and is the
     # price of certifying at all -- paid once here and reused by the

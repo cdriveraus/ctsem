@@ -81,6 +81,8 @@ include("adjoint.jl")
 include("summary_matrices.jl")
 include("kalman_trace.jl")
 include("laplace.jl")
+# After laplace.jl: the batch subsets both the marginal and the laplace objective.
+include("optimiser.jl")
 include("quadrature.jl")
 # After quadrature.jl: the binary measurement update integrates the
 # observation with the Gauss-Hermite rule defined there.

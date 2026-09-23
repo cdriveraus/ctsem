@@ -1,0 +1,475 @@
+# The optimiser `ctsem_optimize` drives.
+#
+# Written here rather than taken from Optim because two of Optim's defaults,
+# combined with what the engine passes it, were costing most of every fit, and
+# because what comes next -- a batch that grows under the optimiser, and a
+# Newton finish -- needs control no library interface offers.
+#
+# The two defaults, both measured on dev1 against the models in
+# `dev/stochopt/models.R`:
+#
+# * `InitialStatic(alpha = 0.1, scaled = true)` caps EVERY iteration's trial step
+#   at 0.1 raw units (LineSearches' initialguess.jl: alpha = min(0.1, |s|)/|s|),
+#   not only the first. L-BFGS never tried its own unit step until it was
+#   already within 0.1 of the optimum.
+# * Supplying a preconditioner switches off the secant rescaling of the initial
+#   inverse Hessian (Optim's l_bfgs.jl: `scaleinvH0 = P === nothing`), so H0 was
+#   the bare transform metric, which does not grow with the data while the
+#   curvature does. The line search then backtracked on most iterations: 863
+#   objective calls for 280 iterations on a 1000-subject panel.
+#
+# Here the metric sets the SHAPE of H0 and the secant ratio sets its SCALE,
+# `H0 = gamma D^-1` with `gamma = s'y / y'D^-1 y`, and only the first step (no
+# curvature history yet) is shortened. The same panel: 25 iterations to a
+# predicted gain of 0.1 against the engine's 280 to its stop.
+
+using Random
+
+"""The state an iteration callback sees, shaped like the Optim state it replaced."""
+struct CTSEMIterate
+    iteration::Int
+    value::Float64
+    g_norm::Float64
+end
+
+"""What `_ctsem_lbfgs` returns: the point and the reasons it stopped."""
+struct CTSEMLBFGSResult
+    minimizer::Vector{Float64}
+    minimum::Float64
+    gradient::Vector{Float64}
+    iterations::Int
+    f_calls::Int
+    g_calls::Int
+    g_converged::Bool
+    f_converged::Bool
+    x_converged::Bool
+    linesearch_failed::Bool
+    stopped_by_callback::Bool
+    batch_sizes::Vector{Int}
+    batch_iterations::Vector{Int}
+end
+
+"""Curvature pairs for the two-loop recursion, on the MINIMISED objective."""
+mutable struct CTSEMLBFGSMemory
+    S::Vector{Vector{Float64}}
+    Y::Vector{Vector{Float64}}
+    rho::Vector{Float64}
+    m::Int
+end
+CTSEMLBFGSMemory(m::Integer) = CTSEMLBFGSMemory(Vector{Float64}[],
+    Vector{Float64}[], Float64[], Int(m))
+
+function _ctsem_lbfgs_push!(M::CTSEMLBFGSMemory, s::Vector{Float64},
+        y::Vector{Float64})
+    sy = dot(s, y)
+    # A pair that is not a curvature (sy <= 0, possible after an Armijo step
+    # with no curvature condition) would break positive definiteness; skip it.
+    sy > 1e-12 * norm(s) * norm(y) || return false
+    push!(M.S, s); push!(M.Y, y); push!(M.rho, 1 / sy)
+    if length(M.S) > M.m
+        popfirst!(M.S); popfirst!(M.Y); popfirst!(M.rho)
+    end
+    true
+end
+
+_ctsem_lbfgs_reset!(M::CTSEMLBFGSMemory) =
+    (empty!(M.S); empty!(M.Y); empty!(M.rho); M)
+
+# H * q for the inverse-Hessian approximation, with `dinv` the metric's inverse
+# diagonal (all ones for no metric). With no pairs, returns `h0 * D^-1 q`.
+function _ctsem_lbfgs_hmul(M::CTSEMLBFGSMemory, q::AbstractVector, h0::Float64,
+        dinv::Vector{Float64})
+    k = length(M.S)
+    k == 0 && return h0 .* dinv .* q
+    r = collect(Float64, q)
+    a = Vector{Float64}(undef, k)
+    @inbounds for i in k:-1:1
+        a[i] = M.rho[i] * dot(M.S[i], r)
+        r .-= a[i] .* M.Y[i]
+    end
+    y = M.Y[k]
+    gamma = dot(M.S[k], y) / sum(i -> y[i]^2 * dinv[i], eachindex(y))
+    r .= gamma .* dinv .* r
+    @inbounds for i in 1:k
+        b = M.rho[i] * dot(M.Y[i], r)
+        r .+= (a[i] - b) .* M.S[i]
+    end
+    r
+end
+
+"""
+    _ctsem_lbfgs(fg!, x0; ...)
+
+L-BFGS with Armijo backtracking, minimising through `fg!(F, G, x)` -- the same
+closure contract Optim's `only_fg!` used: `G === nothing` asks for the value
+alone, `F === nothing` for the gradient alone, and an invalid trial point comes
+back as a huge value with a zero gradient.
+
+`callback(state::CTSEMIterate)` is called at iteration 0 and after every
+accepted step, and stops the run by returning `true`. `directional` receives the
+directional derivative `g's` of each step taken, which is what
+`_ctsem_predicted_gain` reads.
+
+`batch`, when given, is a `CTSEMBatch` whose `fg!` and `scores` replace the
+full-data ones while it is smaller than the data; see `_ctsem_batch_step!`.
+"""
+function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
+        metric=nothing, initial_alpha::Real=0.1, maxiter::Integer=1000,
+        g_tol::Real=1e-8, f_tol::Real=0.0, x_tol::Real=0.0,
+        callback=nothing, directional=nothing, batch=nothing,
+        c1::Real=1e-4, maxbacktrack::Integer=40)
+    n = length(x0)
+    x = collect(Float64, x0)
+    dinv = metric === nothing ? ones(n) : begin
+        d = collect(Float64, diag(metric))
+        [isfinite(v) && v > 0 ? 1 / v : 1.0 for v in d]
+    end
+    M = CTSEMLBFGSMemory(memory)
+    G = zeros(n)
+    fcalls = 0; gcalls = 0
+    sizes = Int[]; its = Int[]
+    # The objective in force: the full one, or the current batch.
+    evaluate!(F, Gout, y) = batch === nothing ? fg!(F, Gout, y) :
+        _ctsem_batch_fg!(batch, F, Gout, y)
+    f = evaluate!(0.0, G, x); fcalls += 1; gcalls += 1
+    stopped = callback !== nothing &&
+        callback(CTSEMIterate(0, f, maximum(abs, G; init=0.0))) === true
+    # Length `initial_alpha` in the metric's norm: a short first step when
+    # there is no curvature history, measured so that a unit means the same
+    # amount of model in every coordinate.
+    metric_norm(v) = sqrt(sum(i -> v[i]^2 * dinv[i], eachindex(v)))
+    h0 = Float64(initial_alpha) / max(metric_norm(G), eps())
+    iteration = 0
+    gconv = maximum(abs, G; init=0.0) <= g_tol
+    fconv = false; xconv = false; lsfail = false
+    retried = false
+    while !stopped && !gconv && iteration < maxiter
+        s = -_ctsem_lbfgs_hmul(M, G, h0, dinv)
+        dphi = dot(G, s)
+        if !(dphi < 0) || !isfinite(dphi)
+            # Not a descent direction: the memory has gone bad. Start it again.
+            isempty(M.S) && (lsfail = true; break)
+            _ctsem_lbfgs_reset!(M); h0 = Float64(initial_alpha) / max(metric_norm(G), eps())
+            continue
+        end
+        # The first trial carries the gradient too: most steps are accepted
+        # whole, and then the iteration has cost one gradient and nothing else.
+        alpha = 1.0
+        xn = x .+ s
+        Gn = similar(G)
+        fn = evaluate!(0.0, Gn, xn); fcalls += 1; gcalls += 1
+        have_gradient = true
+        accepted = isfinite(fn) && fn <= f + c1 * alpha * dphi
+        k = 0
+        while !accepted && k < maxbacktrack
+            k += 1
+            # Quadratic interpolation of phi(alpha), safeguarded to [0.1, 0.5].
+            denom = 2 * (fn - f - dphi * alpha)
+            trial = isfinite(fn) && denom > 0 ? -dphi * alpha^2 / denom : 0.5alpha
+            alpha = clamp(trial, 0.1alpha, 0.5alpha)
+            xn = x .+ alpha .* s
+            fn = evaluate!(0.0, nothing, xn); fcalls += 1
+            have_gradient = false
+            accepted = isfinite(fn) && fn <= f + c1 * alpha * dphi
+        end
+        if !accepted
+            # A stale memory is the usual cause; drop it once, then give up.
+            if !retried && !isempty(M.S)
+                retried = true
+                _ctsem_lbfgs_reset!(M)
+                h0 = Float64(initial_alpha) / max(metric_norm(G), eps())
+                continue
+            end
+            lsfail = true
+            break
+        end
+        retried = false
+        if !have_gradient
+            evaluate!(nothing, Gn, xn); gcalls += 1
+        end
+        directional === nothing || (directional.dphi0 = alpha * dphi)
+        step = xn .- x
+        iteration += 1
+        fconv = abs(fn - f) <= f_tol * abs(fn)
+        xconv = maximum(abs, step; init=0.0) <= x_tol
+        _ctsem_lbfgs_push!(M, step, Gn .- G)
+        x = xn; f = fn; G = Gn
+        gconv = maximum(abs, G; init=0.0) <= g_tol
+        stopped = callback !== nothing &&
+            callback(CTSEMIterate(iteration, f, maximum(abs, G; init=0.0))) === true
+        # A growing batch changes the objective under the optimiser. The
+        # curvature pairs are kept -- the batch objective is scaled to the full
+        # data, so they estimate the same curvature -- but no pair spans the
+        # change, and the value and gradient are re-read on the new batch. Once
+        # it is the whole data the batch steps aside and the caller's own
+        # objective is used from then on.
+        if batch !== nothing && !stopped &&
+                _ctsem_batch_step!(batch, x, G, q -> _ctsem_lbfgs_hmul(M, q, h0, dinv), iteration)
+            if _ctsem_batch_full(batch)
+                sizes = batch.sizes; its = batch.iterations
+                batch = nothing
+            end
+            f = evaluate!(0.0, G, x); fcalls += 1; gcalls += 1
+            gconv = maximum(abs, G; init=0.0) <= g_tol
+        end
+        (fconv && f_tol > 0) && break
+        (xconv && x_tol > 0) && break
+    end
+    if batch !== nothing
+        sizes = batch.sizes; its = batch.iterations
+    end
+    CTSEMLBFGSResult(x, f, G, iteration, fcalls, gcalls, gconv, fconv, xconv,
+        lsfail, stopped, sizes, its)
+end
+
+# ------------------------------------------------------------------ batches
+#
+# Progressive batching over independent units. Units are permuted once and the
+# batch is always a prefix of that permutation, so growing it ADDS units: within
+# a stage the objective is deterministic and the line search is ordinary. The
+# batch objective is scaled to the full data, (N/n) * loglik_batch, so curvature
+# pairs from a small batch estimate the full curvature and the memory survives
+# growth.
+#
+# Growth is decided in the optimiser's own metric and in objective units. With
+# H the inverse-Hessian approximation and G the scaled batch gradient, a step
+# predicts a gain of G'HG/2, and E[G'HG] = G'HG + tr(H Cov G). When the noise
+# term reaches `theta` times the predicted gain, the batch cannot tell which way
+# is up, and it grows by the factor that would bring the ratio back to `theta`
+# (Byrd, Chin, Nocedal & Wu 2012's norm test, in this metric). A model with too
+# few units to batch never starts one, so it is plain L-BFGS by construction.
+#
+# Only for objectives with no prior and no sampled TI predictor: both are
+# global terms that must not be scaled with the likelihood. A prior pass
+# (carefulfit) is ten iterations and gains nothing from batching anyway.
+
+mutable struct CTSEMBatch{O}
+    full::O
+    stage::Any
+    perm::Vector{Int}
+    m::Int
+    nunits::Int
+    nsubjects::Int
+    theta::Float64
+    fg!::Any              # (objective, F, G, x) -> F, the caller's trial path
+    sizes::Vector{Int}
+    iterations::Vector{Int}
+    scores::Union{Nothing,Matrix{Float64}}
+end
+
+_ctsem_nunits(o::CTSEMObjective) = length(o.subject_objectives)
+_ctsem_nunits(o) = 0
+_ctsem_batch_nsubjects(o::CTSEMObjective) = length(o.subject_objectives)
+
+"""A CTSEMObjective over some of its subjects; the subject objectives are self-contained."""
+_ctsem_subset_objective(o::CTSEMObjective, idx::AbstractVector{<:Integer}) =
+    CTSEMObjective(o.params, o.subject_objectives[idx], nothing,
+        o.prior_index, o.prior_scale, o.prior_weight,
+        o.ti_missing_parameter, o.ti_missing_mu, o.ti_missing_sigma)
+_ctsem_subset_objective(o, idx) = nothing
+
+_ctsem_batchable(o::CTSEMObjective) =
+    (isempty(o.prior_index) || o.prior_weight == 0) && isempty(o.ti_missing_parameter)
+_ctsem_batchable(o::CTSEMLaplaceObjective) = _ctsem_batchable(o.objective)
+_ctsem_batchable(o) = false
+
+# Laplace: whole UNITS (outer-level groups). Every evaluation path goes
+# units.members[U] -> subject_objectives[i], so restricting `units` restricts
+# the objective and the full subject list underneath is never touched for an
+# excluded unit. Pairing the full spec with a subset *objective* instead would
+# silently misassign groups: `_laplace_build_units` reads `group[i]` for the
+# first n subjects without checking the length.
+function _ctsem_subset_objective(L::CTSEMLaplaceObjective, keep::AbstractVector{<:Integer})
+    u = L.units
+    units = CTSEMLaplaceUnits(u.members[keep], u.offsets[keep], u.dims[keep],
+        u.blocks[keep])
+    n = length(keep)
+    CTSEMLaplaceObjective{typeof(L.objective)}(L.objective, L.spec, units,
+        [zeros(units.dims[U]) for U in 1:n], L.inner_maxiter, L.inner_tol,
+        [Dict{Any,Any}() for _ in eachindex(L.workspaces)], zeros(Int, n),
+        zeros(n), falses(n), falses(n), falses(n), falses(n))
+end
+_ctsem_nunits(o::CTSEMLaplaceObjective) = length(o.units.members)
+_ctsem_batch_nsubjects(o::CTSEMLaplaceObjective) = sum(length, o.units.members; init=0)
+
+"""
+    _ctsem_batch_plan(objective; theta, n0, rng)
+
+A batch for `objective`, or `nothing` when it cannot or should not batch: a
+route with no subset, a prior or sampled TI predictor, or too few units -- a
+first batch of at least 20 units and a quarter of the data at most.
+"""
+function _ctsem_batch_plan(objective, fg!; theta::Real=0.25, n0::Integer=0,
+        rng=Random.MersenneTwister(20260923))
+    _ctsem_batchable(objective) || return nothing
+    NU = _ctsem_nunits(objective)
+    m = n0 > 0 ? Int(n0) : max(20, cld(NU, 32))
+    m > NU ÷ 4 && return nothing
+    perm = randperm(rng, NU)
+    stage = _ctsem_subset_objective(objective, sort(perm[1:m]))
+    stage === nothing && return nothing
+    CTSEMBatch(objective, stage, perm, m, NU, _ctsem_batch_nsubjects(objective),
+        Float64(theta), fg!, [m], [0], nothing)
+end
+
+_ctsem_batch_full(b::CTSEMBatch) = b.m >= b.nunits
+_ctsem_batch_scale(b::CTSEMBatch) = b.nsubjects / _ctsem_batch_nsubjects(b.stage)
+
+# The stage objective's trial, scaled to the full data. No prior to separate:
+# `_ctsem_batchable` refused any objective that has one.
+function _ctsem_batch_fg!(b::CTSEMBatch, F, G, x)
+    v = b.fg!(b.stage, F, G, x)
+    c = _ctsem_batch_scale(b)
+    G === nothing || (G .*= c)
+    v === nothing ? nothing : v * c
+end
+
+"""
+    _ctsem_batch_step!(batch, x, G, hmul, iteration)
+
+Apply the growth test at `x`, where `G` is the scaled batch gradient (of the
+minimised objective) and `hmul` applies the current inverse-Hessian
+approximation. Grows the batch and returns `true` when the noise of the
+predicted gain exceeds `theta` times the gain; `false` otherwise.
+"""
+function _ctsem_batch_step!(b::CTSEMBatch, x, G, hmul, iteration)
+    _ctsem_batch_full(b) && return false
+    S = try
+        Matrix{Float64}(ctsem_subject_gradients(b.stage, collect(Float64, x)).scores)
+    catch
+        nothing
+    end
+    grow = false
+    newm = b.m
+    if S === nothing || !all(isfinite, S)
+        # No spread to read: the batch is not telling us anything reliable.
+        grow = true; newm = min(b.nunits, 2b.m)
+    else
+        n = size(S, 1)
+        d = hmul(G)
+        gain = 0.5 * dot(G, d)
+        Sbar = vec(sum(S; dims=1)) ./ n
+        acc = 0.0
+        for i in 1:n
+            di = S[i, :] .- Sbar
+            acc += dot(di, hmul(di))
+        end
+        V = acc / max(n - 1, 1)
+        c = _ctsem_batch_scale(b)
+        noise = 0.5 * c^2 * n * (1 - b.m / b.nunits) * V
+        if !(gain > 0) || noise > b.theta * gain
+            grow = true
+            factor = gain > 0 ? noise / (b.theta * gain) : 2.0
+            newm = min(b.nunits, max(2b.m, ceil(Int, b.m * min(factor, 1e6))))
+        end
+    end
+    grow || return false
+    b.m = newm
+    b.stage = newm >= b.nunits ? b.full :
+        _ctsem_subset_objective(b.full, sort(b.perm[1:newm]))
+    push!(b.sizes, newm); push!(b.iterations, iteration)
+    true
+end
+
+# ------------------------------------------------------------------ Newton finish
+#
+# Once L-BFGS has come close -- its predicted gain below `switch` -- a damped
+# Newton iteration on the exact Hessian finishes in a handful of steps what
+# L-BFGS would take tens or hundreds to polish, and the exact Hessian at the
+# final point is the one the certification needs anyway, so it is returned for
+# reuse rather than computed again. Only where a Hessian is cheap: the marginal
+# route's forward-over-adjoint Hessian is a few gradients (6 on a 1000-subject
+# panel, dev1); the laplace route's is finite differences, 2p gradients, and
+# there L-BFGS to the end is faster (measured: 0.6x with the finish, 1.3-1.9x
+# without).
+
+_ctsem_cheap_hessian(::CTSEMObjective) = true
+_ctsem_cheap_hessian(::Any) = false
+
+"""
+    _ctsem_newton_finish(objective, x, fg!; tol, maxit, contraction)
+
+Damped Newton from `x` on the minimised objective behind `fg!`, with the exact
+Hessian refreshed when the predicted gain is not contracting by `contraction`
+per step. Returns the point, its value and gradient, the Hessian of the
+MAXIMISED objective at the final point (or `nothing`), the steps taken, and the
+predicted gain there.
+"""
+function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
+        maxit::Integer=30, contraction::Real=0.25, callback=nothing,
+        iteration0::Integer=0)
+    x = collect(Float64, x0); f = f0; G = collect(Float64, G0)
+    hess(y) = try
+        H = Matrix{Float64}(ctsem_hessian(objective, y))
+        all(isfinite, H) ? -H : nothing       # of the minimised objective
+    catch
+        nothing
+    end
+    H = hess(x)
+    H === nothing && return (x=x, f=f, G=G, hessian=nothing, steps=0,
+        gain=Inf, hessians=1, fcalls=0, gcalls=0)
+    hessians = 1; fcalls = 0; gcalls = 0
+    steps = 0; mu = 0.0; prevgain = Inf; gain = Inf
+    function newton(H, G, mu)
+        E = eigen(Symmetric(H))
+        lmax = maximum(abs, E.values; init=0.0)
+        lmax > 0 || return nothing
+        floor = 1e-8 * lmax
+        c = E.vectors' * G
+        keep = E.values .> floor
+        undamped = 0.5 * sum(abs2.(c[keep]) ./ E.values[keep]; init=0.0)
+        lam = max.(E.values, floor) .+ mu * lmax
+        (step=-(E.vectors * (c ./ lam)), gain=undamped)
+    end
+    at_x = true    # whether H was evaluated at the current x
+    while steps < maxit
+        nt = newton(H, G, mu)
+        nt === nothing && break
+        gain = nt.gain
+        gain < tol && break
+        dphi = dot(G, nt.step)
+        alpha = 1.0
+        xn = x .+ nt.step
+        fn = fg!(0.0, nothing, xn); fcalls += 1
+        k = 0
+        while !(isfinite(fn) && fn <= f + 1e-4 * alpha * dphi) && k < 30
+            k += 1; alpha /= 2
+            xn = x .+ alpha .* nt.step
+            fn = fg!(0.0, nothing, xn); fcalls += 1
+        end
+        if !(isfinite(fn) && fn <= f + 1e-4 * alpha * dphi)
+            if !at_x
+                H = hess(x); hessians += 1; at_x = true
+                H === nothing && break
+            else
+                mu = mu == 0 ? 1e-4 : 10mu
+                mu > 1e2 && break
+            end
+            continue
+        end
+        Gn = similar(G)
+        fg!(nothing, Gn, xn); gcalls += 1
+        x = xn; f = fn; G = Gn; steps += 1; at_x = false
+        mu = alpha == 1 ? mu / 10 : mu
+        mu < 1e-8 && (mu = 0.0)
+        callback === nothing || callback(CTSEMIterate(iteration0 + steps, f,
+            maximum(abs, G; init=0.0)))
+        if gain / prevgain > contraction && steps > 1
+            H = hess(x); hessians += 1; at_x = true
+            H === nothing && break
+            prevgain = Inf
+        else
+            prevgain = gain
+        end
+    end
+    # The certification's Hessian: at the final point, exactly.
+    if !at_x
+        H = hess(x); hessians += 1
+    end
+    if H !== nothing
+        nt = newton(H, G, 0.0)
+        gain = nt === nothing ? Inf : nt.gain
+    end
+    (x=x, f=f, G=G, hessian=H === nothing ? nothing : -H, steps=steps,
+     gain=gain, hessians=hessians, fcalls=fcalls, gcalls=gcalls)
+end

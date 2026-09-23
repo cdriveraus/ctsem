@@ -1539,7 +1539,9 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     overshoot_probe=_CTSEM_OVERSHOOT_PROBE[],
     stall_window::Integer=80, stall_fraction::Real=1e-2,
     stall_cooldown::Integer=30, stall_tighten::Real=0.1,
-    stall_tightenings::Integer=2, stall_ratio::Real=1e-3)
+    stall_tightenings::Integer=2, stall_ratio::Real=1e-3,
+    batch::Bool=false, batch_theta::Real=0.25,
+    newton::Bool=false, newton_switch::Real=0.1, newton_maxit::Integer=30)
     start_values = collect(start)
     # Validated here rather than at the probe, which runs after the fit: a
     # misspelled mode should cost nothing, not a whole optimisation.
@@ -1554,12 +1556,14 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # `evaluated`, not `result`: see `ctsem_laplace_optimize`. A closure's
     # assignment binds to the enclosing local of the same name, and the outer
     # Optim result below is called `result`.
-    fg! = function (F, G, x)
+    # Over whichever objective is in force: the fit's own, or a batch of its
+    # units (see `_ctsem_batch_plan`), which is the same route over fewer.
+    trial_fg! = function (target, F, G, x)
         # The route decides what a usable trial point is: see
         # `_ctsem_optimise_trial`. On the laplace route a finite value at a
         # point whose inner Newton did not converge is *not* usable, because the
         # objective is only defined at the mode.
-        trial = _ctsem_optimise_trial(objective, x, G !== nothing,
+        trial = _ctsem_optimise_trial(target, x, G !== nothing,
             gradient_method, gradient_limit, call_log)
         evaluated = trial.evaluated
         valid = trial.valid
@@ -1574,6 +1578,19 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         copyto!(current_x, x)
         return F === nothing ? nothing : -evaluated.value
     end
+    fg! = (F, G, x) -> trial_fg!(objective, F, G, x)
+    # A batch only where it can mean something: a route with a subset, no
+    # prior or sampled TI predictor, and enough units. Otherwise `nothing`,
+    # and the run below is ordinary L-BFGS on the whole data.
+    batcher = batch ? _ctsem_batch_plan(objective, trial_fg!; theta=batch_theta) :
+        nothing
+    batching() = batcher !== nothing && !_ctsem_batch_full(batcher)
+    # The cheap rule's threshold. With a Newton finish to come, L-BFGS hands
+    # over as soon as its predicted gain is below `newton_switch`; the finish
+    # then takes it to `gap_tol` on the exact curvature.
+    finishing = newton && gap_tol > 0 && _ctsem_cheap_hessian(objective)
+    handover = finishing ? max(Float64(gap_tol), Float64(newton_switch)) :
+        Float64(gap_tol)
     # A callback rather than Optim's `show_trace`, which prints one dense line
     # per iteration whatever the model costs -- thousands on a fast one, and on
     # a slow one nothing for minutes. The objective and the gradient norm are
@@ -1659,7 +1676,10 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # own scaling, so this is not the invariant decrement. The exact check
         # after the fit is what certifies, and what resumes with a tightened
         # rule when this stopped too early.
-        if gap_tol > 0 && _ctsem_predicted_gain(directional) < gap_tol
+        # Neither rule while a batch is still growing: its objective is not the
+        # fit's, and a batch that has gone quiet is a batch about to grow.
+        batching() && return false
+        if handover > 0 && _ctsem_predicted_gain(directional) < handover
             stopped_by_gap[] = true
             return true
         end
@@ -1677,9 +1697,6 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         end
         return false
     end
-    options = Optim.Options(iterations=Int(maxiter), g_tol=g_tol,
-        f_reltol=f_tol, x_abstol=x_tol, show_trace=false, store_trace=false,
-        callback=watch, extended_trace=false)
     # See `ctsem_tune_chunks!`: the subject loop is not monotone in the chunk
     # count, so the count is measured on this model rather than taken from
     # `cores`.
@@ -1719,12 +1736,12 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # relative to the optimum is now measured exactly after the fit, in
     # objective units, and the fit continues when it matters.
     linesearch = "backtracking"
-    result = Optim.optimize(Optim.only_fg!(fg!), start_values,
-        Optim.LBFGS(m=Int(lbfgs_memory),
-            alphaguess=Optim.LineSearches.InitialStatic(
-                alpha=Float64(initial_alpha), scaled=true),
-            linesearch=directional,
-            P=_ctsem_metric(precondition, length(start_values))), options)
+    # See optimiser.jl for why this is not Optim any more.
+    result = _ctsem_lbfgs(fg!, start_values; memory=Int(lbfgs_memory),
+        metric=_ctsem_metric(precondition, length(start_values)),
+        initial_alpha=Float64(initial_alpha), maxiter=Int(maxiter),
+        g_tol=g_tol, f_tol=f_tol, x_tol=x_tol, callback=watch,
+        directional=directional, batch=batcher)
     # No rescue stage. The one that stood here existed because Hager-Zhang can
     # run out of line search and return the iterate it had reached while Optim
     # reports a finished optimisation -- measured on a binary model: two
@@ -1741,8 +1758,26 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # a way to be surprised rather than a safety net.
     # Before the final evaluation, so what it reports is the run rather than
     # the extra call: see `_ctsem_optimise_verbose_report`.
+    minimizer = collect(result.minimizer)
+    # The Newton finish, when L-BFGS handed over by the cheap rule. Recorded in
+    # the trace like any other iteration, with the exact predicted gain.
+    finish = nothing
+    if finishing && stopped_by_gap[]
+        record = function (state)
+            _record!(trace, state.iteration, -state.value, state.g_norm, NaN,
+                _ctsem_optimise_trace_values(objective)...)
+            seen_iterations[] = max(seen_iterations[], Int(state.iteration))
+            return false
+        end
+        finish = _ctsem_newton_finish(objective, minimizer, result.minimum,
+            result.gradient, fg!; tol=gap_tol, maxit=newton_maxit,
+            callback=record, iteration0=result.iterations)
+        minimizer = collect(finish.x)
+        # The finish's own gain replaces L-BFGS's metric proxy: it is the exact
+        # decrement, which is what the verdict below should be judging.
+        directional.dphi0 = -2 * finish.gain
+    end
     verbose && _ctsem_optimise_verbose_report(objective, call_log)
-    minimizer = collect(Optim.minimizer(result))
     final = ctsem_evaluate(objective, minimizer; gradient=true,
         contributions=true, gradient_method=gradient_method)
 
@@ -1757,7 +1792,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # `Optim.iterations` describes that second run alone, which can be fewer
     # than the user already watched go past. The closing line closes what was
     # on screen.
-    iterations = max(reporter.shown, Optim.iterations(result))
+    iterations = max(reporter.shown, result.iterations +
+        (finish === nothing ? 0 : finish.steps))
     # Running out of iterations is a different outcome from converging, and the
     # closing line used to report both as a bare count. On a stage whose cap is
     # the plan (`budget`) reaching it is not news; anywhere else it is the one
@@ -1771,7 +1807,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # Forced, whatever the cadence says: a rate-limited callback on a fit that
     # finishes inside one interval would otherwise never fire at all, and the
     # final state is the one a live plot most needs.
-    _invoke_callback(watcher, Optim.iterations(result), Int(maxiter),
+    _invoke_callback(watcher, iterations, Int(maxiter),
         final.value, gradient_norm, minimizer; force=true)
     # A saturated transform reports a zero gradient, and a zero gradient is
     # indistinguishable from an optimum.
@@ -1842,7 +1878,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         "and there is somewhere better to go. Stopping here rather than ",
         "running to the iteration cap")
     verbose && !stalled && !(finite_gradient &&
-        (Optim.g_converged(result) || converged_enough)) &&
+        (result.g_converged || converged_enough)) &&
         println(_console(), label, ": the optimizer stopped with an estimated ",
             _ctsem_predicted_gain(directional), " log likelihood still ",
             "available and ", _ctsem_last_gain(trace),
@@ -1857,13 +1893,26 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         result_extra...,
         # The larger of the two: they agree unless the callback stopped the
         # run, in which case Optim's is the one that stopped being updated.
-        iterations=max(Optim.iterations(result), seen_iterations[]),
+        iterations=max(iterations, seen_iterations[]),
         # Left as Optim reports them, and undercounted for the same reason when
         # the run was stopped by the callback -- there is no second source for
         # these, and inventing one would be worse than a number whose limit is
         # written down. `stopped_by_gap` is what says the run is such a case.
-        f_calls=Optim.f_calls(result),
-        g_calls=Optim.g_calls(result),
+        f_calls=result.f_calls + (finish === nothing ? 0 : finish.fcalls),
+        g_calls=result.g_calls + (finish === nothing ? 0 : finish.gcalls),
+        # The batch sizes the run grew through and the iterations it grew at,
+        # `[0]` when it did not batch -- never empty, for the bridge's sake.
+        batch_sizes=isempty(result.batch_sizes) ? [0] : result.batch_sizes,
+        batch_iterations=isempty(result.batch_iterations) ? [0] :
+            result.batch_iterations,
+        # The Newton finish: how many steps, and the exact Hessian of the
+        # objective at `minimizer` it ended on -- the certification's matrix,
+        # handed over so it is not computed twice. `[0.0;;]` when there was no
+        # finish (a 1x1 zero, since an empty matrix would hang the bridge).
+        newton_steps=finish === nothing ? 0 : finish.steps,
+        newton_hessians=finish === nothing ? 0 : finish.hessians,
+        hessian=(finish === nothing || finish.hessian === nothing) ?
+            zeros(1, 1) : finish.hessian,
         stopped_by_gap=stopped_by_gap[],
         # Whether the run ended because it stopped making progress rather than
         # because it arrived. `f_calls` and `g_calls` undercount here for the
@@ -1905,7 +1954,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # and `saturated_parameters`. Keying convergence on saturation made the
         # flag false on two thirds of good fits; see `_ctsem_overshot`.
         converged=!stalled && !overshot && finite_gradient &&
-            (Optim.g_converged(result) || converged_enough),
+            (result.g_converged || converged_enough),
         saturated=saturated,
         # The pullback verdict and its margin. `overshot` is the half of
         # saturation that is a convergence failure; `overshoot_gain` is how
@@ -1940,9 +1989,9 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # moment its result crossed back to R. 0 means none; any other entry is
         # a raw parameter index.
         saturated_parameters=isempty(saturated_parameters) ? [0] : saturated_parameters,
-        g_converged=Optim.g_converged(result),
-        f_converged=Optim.f_converged(result),
-        x_converged=Optim.x_converged(result),
+        g_converged=result.g_converged,
+        f_converged=result.f_converged,
+        x_converged=result.x_converged,
         trace=_trace_result(trace),
     )
 end

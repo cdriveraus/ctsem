@@ -3825,6 +3825,15 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # pairs accumulate, and a model whose transforms differ by a factor of ten
     # hands it a problem conditioned ten times worse than it needs to be. See
     # `.ctJuliaParameterScale()` and `_ctsem_metric` in the engine.
+    # Start on a subset of the subjects and grow it as the optimiser needs
+    # more data, and finish with Newton steps on the exact Hessian where that
+    # is a few gradients' worth. Both decide for themselves whether they apply
+    # -- a route without a subset, a prior, too few subjects, an expensive
+    # Hessian -- and are plain L-BFGS otherwise. See optimiser.jl. Off on the
+    # state-explicit route, whose target is not a sum over subjects and whose
+    # joint mode is not an estimate.
+    batch = !state_explicit && !identical(optimcontrol$batch, FALSE),
+    newton = !state_explicit && !identical(optimcontrol$newton, FALSE),
     precondition = if (identical(optimcontrol$precondition, FALSE)) NULL else
       .ctJuliaVector(.ctJuliaParameterScale(model_spec,
         at = as.numeric(start), npar = length(as.numeric(start)))),
