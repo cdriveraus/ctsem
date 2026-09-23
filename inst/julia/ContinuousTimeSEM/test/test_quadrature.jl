@@ -418,3 +418,14 @@ end
     @test !ungated.flagged
     @test isapprox(g.value, ungated.value + g.weight * (soft - ungated.value); rtol=1e-12)
 end
+
+@testset "the gated objective is the Laplace value where nothing is flagged" begin
+    laplace, values = _fresh_linear()
+    reference = ctsem_laplace_evaluate(laplace, values; gradient=false)
+    gated = ctsem_laplace_gated_value(laplace, values)
+    @test gated.flagged == 0
+    @test gated.value ≈ reference.value rtol = 1e-12
+    fit = ctsem_laplace_refine_gated(laplace, values; maxiter=3)
+    @test fit.evaluations > 0
+    @test fit.maximum_loglik >= gated.value - 1e-8
+end

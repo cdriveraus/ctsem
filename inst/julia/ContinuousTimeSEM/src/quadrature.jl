@@ -911,3 +911,84 @@ function ctsem_laplace_gated_unit_term(laplace::CTSEMLaplaceObjective,
 end
 
 export ctsem_laplace_gated_unit_term
+
+"""
+    ctsem_laplace_gated_value(laplace, values; lo=0.2, hi=0.7, nodes=3,
+                              newton_steps=1)
+
+The log marginal likelihood with every unit's term replaced by
+`ctsem_laplace_gated_unit_term`, plus the prior. One ordinary evaluation under
+the total floor places the modes; units the `M - hi I` gate accepts keep their
+term. Value only; measurement prototype.
+"""
+function ctsem_laplace_gated_value(laplace::CTSEMLaplaceObjective,
+    values::AbstractVector; lo::Real=0.2, hi::Real=0.7, nodes::Integer=3,
+    newton_steps::Integer=1)
+    theta = collect(Float64, values)
+    base = ctsem_laplace_evaluate(laplace, theta; gradient=false)
+    isfinite(base.value) || return (value=NaN, flagged=0)
+    total = _ctsem_log_prior(laplace.objective, theta)
+    flagged = 0
+    for U in eachindex(laplace.units.members)
+        g = ctsem_laplace_gated_unit_term(laplace, theta, U; lo=lo, hi=hi,
+            nodes=nodes, newton_steps=newton_steps)
+        isfinite(g.value) || return (value=NaN, flagged=flagged)
+        flagged += g.flagged
+        total += g.value
+    end
+    return (value=total, flagged=flagged)
+end
+
+"""
+    ctsem_laplace_refine_gated(laplace, values; lo, hi, nodes, newton_steps,
+                               maxiter=1000, step=1e-4, g_tol=1e-5)
+
+`ctsem_laplace_refine`'s central-difference L-BFGS, against
+`ctsem_laplace_gated_value` instead of the quadrature. Returns the minimizer,
+the maximised value, iteration and objective-evaluation counts, and the count
+of flagged units at the end. Measurement prototype: `2 npar` evaluations per
+gradient.
+"""
+function ctsem_laplace_refine_gated(laplace::CTSEMLaplaceObjective,
+    values::AbstractVector; lo::Real=0.2, hi::Real=0.7, nodes::Integer=3,
+    newton_steps::Integer=1, maxiter::Integer=1000, step::Real=1e-4,
+    g_tol::Real=1e-5, verbose::Bool=false)
+    start = collect(Float64, values)
+    invalid = floatmax(Float64) / 1e8
+    calls = Ref(0)
+    objective = function (x)
+        calls[] += 1
+        value = try
+            ctsem_laplace_gated_value(laplace, x; lo=lo, hi=hi, nodes=nodes,
+                newton_steps=newton_steps).value
+        catch err
+            err isa InterruptException && rethrow()
+            NaN
+        end
+        return isfinite(value) ? -value : invalid
+    end
+    gradient! = function (G, x)
+        for j in eachindex(x)
+            h = step * max(1.0, abs(x[j]))
+            plus = copy(x); plus[j] += h
+            minus = copy(x); minus[j] -= h
+            G[j] = (objective(plus) - objective(minus)) / (2h)
+        end
+        return G
+    end
+    options = Optim.Options(iterations=Int(maxiter), g_tol=g_tol,
+        show_trace=verbose, store_trace=false)
+    # Backtracking rather than Optim's default Hager-Zhang, which can give up
+    # without saying so; the objective here has a C1 kink-free hand-off but a
+    # finite-difference gradient, so a robust line search is the safer one.
+    result = Optim.optimize(objective, gradient!, start,
+        Optim.LBFGS(linesearch=Optim.LineSearches.BackTracking()), options)
+    minimizer = collect(Optim.minimizer(result))
+    final = ctsem_laplace_gated_value(laplace, minimizer; lo=lo, hi=hi,
+        nodes=nodes, newton_steps=newton_steps)
+    return (minimizer=minimizer, maximum_loglik=final.value,
+        flagged=final.flagged, iterations=Optim.iterations(result),
+        evaluations=calls[], converged=Optim.converged(result))
+end
+
+export ctsem_laplace_gated_value, ctsem_laplace_refine_gated
