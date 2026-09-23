@@ -2644,14 +2644,38 @@ sqrt(det M)`, and the bound above caps the truth at `sup L (2pi)^(d/2)`. Since
 sufficient for the approximation to respect that cap. `det M >= 1` is
 `logdet M >= 0`, which is this.
 
-The floor therefore has a meaning rather than a calibration: `M >= I` is
+The floor therefore has a meaning rather than a calibration. `M >= I` is
 exactly "the likelihood is concave in `u`", because the `I` is the prior's own
-curvature. Where the likelihood is concave -- every well behaved unit -- the
-floor is inactive and nothing changes. It binds only where the approximation is
-extrapolating a local convexity across a range the prior forbids. Measured on
-the model above: at the honest optimum the smallest eigenvalue over all 25
-units is 1.122 and no unit is floored; at the spurious one seven units are
-below 0.5 and one is at 2.6e-6.
+curvature, and it implies `det M >= 1` -- so where the likelihood is concave,
+every well behaved unit, this floor is inactive and nothing changes.
+
+The converse does not hold, and what is implemented is the weaker condition.
+`logdet M >= 0` is a statement about the product of the eigenvalues, so with
+`d > 1` one eigenvalue can go to zero while the others are large enough to keep
+the total positive: the floor then does not engage, and that direction still
+contributes `-log(lambda_small)/2`. What this bounds is the *divergence*: the
+term can no longer exceed `g_U(uhat)`, so the surrogate is bounded above. What
+it does not remove is the credit `sum_{lambda_i > 1} log(lambda_i) / 2 -
+logdet(M) / 2` that a unit collects by letting one direction go convex, up to
+`sum_{lambda_i > 1} log(lambda_i) / 2`. Clipping eigenvalue by eigenvalue,
+`sum_i log(max(lambda_i, 1))`, is the version that is inactive exactly when
+`M >= I`; `ctsem_set_prior_floor_mode!(:eigen)` selects it, and
+`_laplace_eigen_clip` implements it. See
+`CT-SEM/review/LAPLACE-eigenwise-floor-2026-09-23.md` for when the difference
+matters.
+
+Measured on the model above: at the honest optimum the smallest eigenvalue over
+all 25 units is 1.122, so neither floor binds; at the spurious one seven units
+are below 0.5 and one is at 2.6e-6, and 1e-8 away on the other side that unit
+sits at eigenvalues (664, 5.4, 1.2e-3), `logdet = +1.47`, where this floor does
+not engage and the eigenwise one removes 3.4 nats.
+
+With this floor on, the spike becomes a kink the optimiser can still climb to.
+On the same model with six observations per subject, converged fits leave
+units at eigenvalues like (8.5e-4, 14.9, 79.0), `logdet = -2.5e-10`: the
+smallest eigenvalue pushed to exactly `1 / prod(others)`, the top of the floor.
+Each such unit is 2.2 to 3.1 nats above its exact integral, where the eigenwise
+term is 0.3 to 0.7 below it.
 
 # What it does not claim
 
@@ -2670,6 +2694,161 @@ is the calibration this avoids.
 @inline function _laplace_prior_floor_logdet(logdetM::T) where {T}
     _LAPLACE_PRIOR_FLOOR[] || return logdetM
     return max(logdetM, zero(T))
+end
+
+"""
+Which prior floor applies while the floor is on: `false` floors the unit's
+total `logdet(M)` at zero (the default), `true` clips each eigenvalue of `M` at
+one. See `_laplace_prior_floor_logdet` and `_laplace_eigen_clip`.
+"""
+const _LAPLACE_FLOOR_EIGEN = Ref(false)
+
+"""
+Largest unit dimension the eigenwise floor decomposes densely. A unit above it
+keeps the total floor, because a dense eigendecomposition of a block-sparse
+unit curvature is `O(d^3)` and fills in what the block elimination keeps sparse.
+"""
+const _LAPLACE_EIGEN_MAXDIM = Ref(64)
+
+"""
+    ctsem_set_prior_floor_mode!(mode; maxdim)
+
+`:total` floors each unit's `logdet(M)` at zero, which is the default and what
+every fit so far has used. `:eigen` clips each eigenvalue of `M` at one instead,
+`sum_i log(max(lambda_i, 1))`, which removes the credit a unit collects from a
+single near-singular direction while its other eigenvalues keep the total
+positive. Experimental and off by default: it is an estimator change. Units
+wider than `maxdim` keep the total floor. Only consulted while
+`ctsem_set_prior_floor!` has the floor on. Returns the previous mode.
+"""
+function ctsem_set_prior_floor_mode!(mode::Symbol;
+    maxdim::Integer=_LAPLACE_EIGEN_MAXDIM[])
+    mode in (:total, :eigen) ||
+        throw(ArgumentError("prior floor mode must be :total or :eigen"))
+    previous = _LAPLACE_FLOOR_EIGEN[] ? :eigen : :total
+    _LAPLACE_FLOOR_EIGEN[] = mode === :eigen
+    _LAPLACE_EIGEN_MAXDIM[] = Int(maxdim)
+    return previous
+end
+export ctsem_set_prior_floor_mode!
+
+@inline _laplace_deepvalue(x::Real) = x
+@inline _laplace_deepvalue(x::ForwardDiff.Dual) =
+    _laplace_deepvalue(ForwardDiff.value(x))
+
+"""
+    _laplace_exceeds_identity(M, blocks)
+
+Whether `M - I` is positive definite, i.e. every eigenvalue of `M` exceeds one
+and the log likelihood is strictly concave in `u` at the mode. One more block
+elimination with `M`'s own sparsity, so it costs what the factorization already
+did and fills in nothing. A `false` is conservative -- the factorization also
+refuses a nearly singular `M - I` -- and the caller then takes the exact
+eigenwise route, which gives the same number there.
+"""
+function _laplace_exceeds_identity(M::CTSEMBlockMatrix{T},
+    blocks::Vector{CTSEMLaplaceBlock}) where {T}
+    shifted = CTSEMBlockMatrix{T}([copy(d) for d in M.diag],
+        [[copy(c) for c in row] for row in M.coupling])
+    for d in shifted.diag
+        for i in axes(d, 1); d[i, i] -= one(T); end
+    end
+    ok, _, _, _ = _laplace_block_factor(shifted, blocks)
+    return ok
+end
+
+"""
+    _laplace_eigen_clip(M, blocks, logdetM)
+
+The eigenwise prior floor for one unit: `nothing` when every eigenvalue of `M`
+exceeds one (nothing to clip, and `logdetM` stands), otherwise a named tuple
+with
+
+  * `phi`, `sum_i log(max(lambda_i, 1))`, in `M`'s element type;
+  * `allclipped`, true when no eigenvalue exceeds one, so the term is `g_U(uhat)`
+    alone and `_laplace_floored_unit_gradient!` is its exact gradient;
+  * `Cdiag`, `Ccoup`, the entries of `C~ = sum_{lambda_i > 1} v_i v_i' / lambda_i`
+    in `M`'s sparsity pattern, laid out as `_laplace_selected_inverse` lays out
+    `inv(M)`. `d phi / dM = C~` away from the kinks at `lambda_i = 1`, so the
+    seeded assembly takes these in place of the selected inverse for the trace
+    terms, and keeps the true inverse for the mode's own movement;
+  * `fallback`, true when the unit is wider than `_LAPLACE_EIGEN_MAXDIM`, in
+    which case `phi` is the total floor and nothing else is filled.
+
+Generic in the element type because the nested route differentiates it. The
+eigenvectors come from the primal part and are held fixed, and `v' M v` then
+carries `lambda_i`'s exact first derivative `v' dM v` at a simple eigenvalue.
+First order only: a second derivative through this would miss the
+eigenvectors' own movement.
+
+Dense, and deliberately not per block. The eigenvalues of a block-sparse `M`
+are not the eigenvalues of its blocks, nor of its eliminated diagonals: those
+are Schur complements, whose product is `det M` but whose eigenvalues are not
+`M`'s. So a multilevel unit is decomposed whole, and only up to
+`_LAPLACE_EIGEN_MAXDIM`.
+"""
+function _laplace_eigen_clip(M::CTSEMBlockMatrix{T},
+    blocks::Vector{CTSEMLaplaceBlock}, logdetM::T) where {T}
+    _laplace_exceeds_identity(M, blocks) && return nothing
+    d = sum(b.size for b in blocks; init=0)
+    if d > _LAPLACE_EIGEN_MAXDIM[]
+        return (phi=max(logdetM, zero(T)), allclipped=logdetM < 0,
+            Cdiag=Matrix{Float64}[], Ccoup=Vector{Matrix{Float64}}[],
+            fallback=true)
+    end
+    dense = _laplace_block_dense(M, blocks, d)
+    primal = Matrix{Float64}(undef, d, d)
+    @inbounds for j in 1:d, i in 1:d
+        primal[i, j] = Float64(_laplace_deepvalue(dense[i, j]))
+    end
+    E = _ctsem_symeig(primal)
+    phi = zero(T)
+    Ct = zeros(Float64, d, d)
+    allclipped = true
+    @inbounds for i in 1:d
+        E.values[i] > 1 || continue
+        allclipped = false
+        # `v' M v` in `T`: lambda_i, with its first derivative.
+        q = zero(T)
+        for c in 1:d, r in 1:d
+            q += E.vectors[r, i] * dense[r, c] * E.vectors[c, i]
+        end
+        phi += log(q)
+        for c in 1:d, r in 1:d
+            Ct[r, c] += E.vectors[r, i] * E.vectors[c, i] / E.values[i]
+        end
+    end
+    sel = _laplace_block_of(Ct, blocks)
+    return (phi=phi, allclipped=allclipped, Cdiag=sel.diag, Ccoup=sel.coupling,
+        fallback=false)
+end
+
+"""
+    _laplace_psd_factor(C)
+
+`Q` with `Q Q' = C` for a symmetric positive *semi*definite `C`, one column
+per positive eigenvalue. The clipped `C~` is singular wherever a direction was
+clipped, so the Cholesky the ordinary route takes of `C[b,b]` would fail there.
+"""
+function _laplace_psd_factor(C::AbstractMatrix{Float64})
+    E = _ctsem_symeig(C)
+    top = maximum(abs, E.values; init=0.0)
+    keep = findall(>(size(C, 1) * eps(Float64) * top), E.values)
+    return E.vectors[:, keep] .* transpose(sqrt.(E.values[keep]))
+end
+
+"""
+    _laplace_floored_logdet(M, blocks, logdetM)
+
+The `logdet` a unit's term uses under the current floor setting: unfloored,
+the total floor, or the eigenwise one.
+"""
+function _laplace_floored_logdet(M::CTSEMBlockMatrix{T},
+    blocks::Vector{CTSEMLaplaceBlock}, logdetM::T) where {T}
+    (_LAPLACE_PRIOR_FLOOR[] && _LAPLACE_FLOOR_EIGEN[]) ||
+        return _laplace_prior_floor_logdet(logdetM)
+    clip = _laplace_eigen_clip(M, blocks, logdetM)
+    return clip === nothing ? logdetM : clip.phi
 end
 
 """
@@ -2692,7 +2871,8 @@ function _laplace_unit_term(laplace::CTSEMLaplaceObjective, U::Integer,
     M = _laplace_unit_curvature(laplace, U, values, Ls, u)
     ok, logdetM, _, _ = _laplace_block_factor(M, laplace.units.blocks[U])
     ok || return T(NaN)
-    return inner.value - _laplace_prior_floor_logdet(logdetM) / 2
+    return inner.value -
+        _laplace_floored_logdet(M, laplace.units.blocks[U], logdetM) / 2
 end
 
 ################################################################################
@@ -2935,7 +3115,7 @@ back rather than proceed on a partial answer.
 function _laplace_seeded_unit_gradient!(out::Vector{Float64},
     laplace::CTSEMLaplaceObjective, U::Integer, values::Vector{Float64},
     Ls::Vector{Matrix{Float64}}, dL::Vector{Vector{Matrix{Float64}}},
-    M::CTSEMBlockMatrix{Float64}, factors, elim)
+    M::CTSEMBlockMatrix{Float64}, factors, elim; clipped=nothing)
 
     spec = laplace.spec
     units = laplace.units
@@ -2960,7 +3140,15 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
     end
 
     bsi = _laplace_mark()
-    Cdiag, Ccoup = _laplace_selected_inverse(factors, elim, blocks)
+    # Under the eigenwise floor the trace terms differentiate
+    # `sum log max(lambda, 1)`, whose derivative in `M` is the clipped `C~`
+    # rather than `inv(M)`; `_laplace_eigen_clip` supplies its selected entries.
+    # The true inverse still carries the mode's own movement, through `s` below
+    # -- `duhat/dtheta = inv(M) B` is the implicit function theorem and has
+    # nothing to do with the floor.
+    Cdiag, Ccoup = clipped === nothing ?
+        _laplace_selected_inverse(factors, elim, blocks) :
+        (clipped.Cdiag, clipped.Ccoup)
     _laplace_charge!(_LAPLACE_BYTES_SELINV, bsi)
     # The selected inverse of the curvature is where a badly conditioned unit
     # first shows, and every sweep below is scaled by it.
@@ -3047,9 +3235,14 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
         # column per block dimension, which is the number of directions the
         # trace needs. At full rank this is the same factorisation of the same
         # matrix, reached without forming it.
-        FC = cholesky(Symmetric(_laplace_symmetrise(Cdiag[b])); check=false)
-        issuccess(FC) || (_LAPLACE_DIAG[] = 11; return false)
-        Q = L * Matrix(FC.L)
+        if clipped === nothing
+            FC = cholesky(Symmetric(_laplace_symmetrise(Cdiag[b])); check=false)
+            issuccess(FC) || (_LAPLACE_DIAG[] = 11; return false)
+            Q = L * Matrix(FC.L)
+        else
+            # `C~[b,b]` is only semidefinite: clipped directions are null.
+            Q = L * _laplace_psd_factor(_laplace_symmetrise(Cdiag[b]))
+        end
         # One sweep per direction, and it stays that way. This is the only site
         # whose sweep count grows with the number of random effects -- 100k
         # member-sweeps against 100 for every other site on a single-level
@@ -3080,7 +3273,7 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
         # The first probe of this used the one-latent fixture and reported 1.8x,
         # which is why the measurement above names its model. See
         # `review/LAPLACE-where-the-time-goes-2026-09-23.md`.
-        for j in 1:k
+        for j in 1:size(Q, 2)
             dir = scatter(l, Q[:, j])
             pass = sweep_at(subsA, dir, dir, 2)
             pass.ok || (_LAPLACE_DIAG[] = 12; return false)
@@ -3501,6 +3694,10 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
     # the factors would cost more than keeping them. Block form, so this is
     # kilobytes per unit rather than the megabytes a dense one would be.
     primal_matrices = Vector{CTSEMBlockMatrix{Float64}}(undef, nunits)
+    # The eigenwise floor's per-unit record, `nothing` wherever it does not
+    # apply -- which is every unit under the default total floor.
+    eigen_floor = _LAPLACE_PRIOR_FLOOR[] && _LAPLACE_FLOOR_EIGEN[]
+    primal_clips = Vector{Any}(nothing, nunits)
     unit_loglik = zeros(Float64, nunits)
     subject_loglik = zeros(Float64, nsubjects)
     value = 0.0
@@ -3562,8 +3759,19 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
             _laplace_charge!(_LAPLACE_BYTES_OBJ, b0)
             laplace.logdet_floored[U] =
                 ok && _LAPLACE_PRIOR_FLOOR[] && logdetM < 0
+            local clip
+            clip = (eigen_floor && ok && !isempty(u) && isfinite(inner.value)) ?
+                _laplace_eigen_clip(M, blocks, logdetM) : nothing
+            if clip !== nothing
+                # Floored in the eigenwise sense means any direction clipped;
+                # a unit too wide to decompose keeps the total floor's flag.
+                laplace.logdet_floored[U] = clip.fallback ? logdetM < 0 : true
+                clip.fallback || (primal_clips[U] = clip)
+            end
             term = if !isfinite(inner.value) || isempty(u)
                 inner.value
+            elseif ok && clip !== nothing
+                inner.value - clip.phi / 2
             elseif ok
                 inner.value - _laplace_prior_floor_logdet(logdetM) / 2
             else
@@ -3637,7 +3845,9 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
             @inbounds for U in ranges[c]
                 # A floored unit is differentiated whole; see
                 # `_laplace_floored_unit_gradient!`.
-                if laplace.logdet_floored[U]
+                local clip
+                clip = primal_clips[U]
+                if laplace.logdet_floored[U] && (clip === nothing || clip.allclipped)
                     if !_laplace_floored_unit_gradient!(
                             partials[_laplace_slot()], laplace, U,
                             theta, Ls, dLlevels)
@@ -3651,7 +3861,8 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
                 bg = _laplace_mark()
                 if !_laplace_seeded_unit_gradient!(partials[_laplace_slot()],
                         laplace, U, theta,
-                        Ls, dLlevels, primal_matrices[U], factors, elim)
+                        Ls, dLlevels, primal_matrices[U], factors, elim;
+                        clipped=clip)
                     chunk_ok[_laplace_slot()] = false
                     return nothing
                 end
