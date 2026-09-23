@@ -819,20 +819,22 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   })
 }
 
-.ctJuliaObjectiveKey <- function(spec) {
+# The identity of a cached objective: the digest of every value the builder
+# sends to Julia, as `.ctJuliaObjectiveInputs` assembles them, plus the engine
+# and project that receive them.
+#
+# Derived rather than listed. The key used to name spec fields one at a time,
+# and three times a field the builder read was missing from it -- the random
+# effect integration, `covmatcode`, and then `manifesttype` with the censoring
+# limits -- and each time a model built after another on the same data was
+# handed the earlier objective and silently returned the earlier likelihood.
+# Hashing the builder's own inputs means a new argument is in the key the
+# moment it is sent, and a spec field nothing sends cannot split the cache.
+.ctJuliaObjectiveKey <- function(spec, inputs = .ctJuliaObjectiveInputs(spec)) {
   if (!requireNamespace("digest", quietly = TRUE)) {
     stop("Julia objective caching requires the suggested package digest.", call. = FALSE)
   }
-  digest::digest(list(spec$parameter_table, spec$subject_starts, spec$times,
-    spec$manifest_data, spec$tdpred_data, spec$tipred_data,
-    spec$ti_effects, spec$priors, spec$max_timestep, spec$project, spec$engine,
-    # Two fits differing only in how random effects are integrated share every
-    # field above and are not the same objective. Nor do two differing only in
-    # the covariance construction: without `covmatcode` here, a 'z' model built
-    # after a 'rawcorr' one was handed the earlier objective and silently
-    # returned the earlier likelihood.
-    spec$intoverpop, spec$laplace, spec$covmatcode),
-    algo = "sha256")
+  digest::digest(list(inputs, spec$project, spec$engine), algo = "sha256")
 }
 
 .ctJuliaSubjectStarts <- function(ids) {
@@ -2831,9 +2833,10 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     # On the specification rather than passed at optimise time, because the
     # inner tolerance changes the *value* the objective returns: two fits
     # differing only in it are not the same function, and `.ctJuliaObjectiveKey`
-    # hashes `spec$laplace`, so putting them here is what stops the second one
-    # being handed the first one's cached objective. Absent unless a caller
-    # asked, so every existing model hashes exactly as it did.
+    # hashes what the objective is built from, so putting them here is what
+    # stops the second one being handed the first one's cached objective.
+    # Absent unless a caller asked, so every existing model hashes exactly as
+    # it did.
     inner <- .ctJuliaLaplaceInner(laplacecontrol)
     if (length(inner)) laplace$inner <- inner
     if (!laplace$nrandom) {
@@ -3076,13 +3079,30 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   codes[[tf]]
 }
 
-.ctJuliaObjective <- function(object) {
-  stopifnot(inherits(object, "ctJuliaModel") || inherits(object, "ctJuliaFit"))
-  spec <- if (inherits(object, "ctJuliaFit")) object$model_spec else object
-  key <- .ctJuliaObjectiveKey(spec)
-  cached <- .ctJuliaCached(key)
-  if (!is.null(cached)) return(cached)
-  module <- .ctJuliaModule(spec$project)
+# How an input crosses the bridge, marked on the input so that
+# `.ctJuliaObjectiveInputs` stays pure R and can be hashed without a Julia
+# session. A vector goes through `.ctJuliaVector`, so a length-one one stays a
+# vector; a matrix through `juliaPut`; anything unmarked crosses as it is, which
+# is right for the scalar keywords.
+.ctJuliaAsVector <- function(x) structure(list(x), class = "ctJuliaVectorInput")
+.ctJuliaAsPut <- function(x) structure(list(x), class = "ctJuliaPutInput")
+.ctJuliaMarshal <- function(x) {
+  if (inherits(x, "ctJuliaVectorInput")) return(.ctJuliaVector(x[[1L]]))
+  if (inherits(x, "ctJuliaPutInput")) return(JuliaConnectoR::juliaPut(x[[1L]]))
+  x
+}
+
+# Everything the objective is built from, as R values: the arguments of
+# `ekf_from_columns`, of `ctsem_objective`, and of `ctsem_laplace_objective`
+# without the objective it wraps (NULL when there is no Laplace layer).
+#
+# The objective reads the spec here and nowhere else, and
+# `.ctJuliaObjectiveKey` hashes the result, so the two cannot disagree about
+# what makes one objective different from another. Keep it that way: a spec
+# field that shapes the objective but reaches Julia other than through this
+# list is a field the cache cannot see.
+.ctJuliaObjectiveInputs <- function(spec) {
+  V <- .ctJuliaAsVector
   # Plain column vectors, not a DataFrame. The engine dropped DataFrames as a
   # dependency (it was its most expensive one and was used only as a row
   # container here), so absent entries arrive as sentinels -- 0 for parnumber,
@@ -3097,23 +3117,23 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # they have entries: JuliaConnectoR hangs marshalling an empty vector, so a
   # model with no TI predictors must not send one at all.
   arguments <- list(
-    .ctJuliaVector(as.character(table$matrix)),
-    .ctJuliaVector(as.integer(table$row)),
-    .ctJuliaVector(as.integer(table$col)),
-    .ctJuliaVector(.ctJuliaNoNA(as.integer(table$parnumber), 0L)),
-    .ctJuliaVector(.ctJuliaNoNA(as.numeric(table$value), NaN)),
-    .ctJuliaVector(.ctJuliaNoNA(as.character(table$transform), "")),
-    .ctJuliaVector(.ctJuliaNoNA(as.character(table$predicttransform), "")),
-    .ctJuliaVector(.ctJuliaNoNA(as.character(table$updatetransform), "")),
-    .ctJuliaVector(.ctJuliaNoNA(as.character(table$tdtransform), "")))
+    V(as.character(table$matrix)),
+    V(as.integer(table$row)),
+    V(as.integer(table$col)),
+    V(.ctJuliaNoNA(as.integer(table$parnumber), 0L)),
+    V(.ctJuliaNoNA(as.numeric(table$value), NaN)),
+    V(.ctJuliaNoNA(as.character(table$transform), "")),
+    V(.ctJuliaNoNA(as.character(table$predicttransform), "")),
+    V(.ctJuliaNoNA(as.character(table$updatetransform), "")),
+    V(.ctJuliaNoNA(as.character(table$tdtransform), "")))
   if (nrow(effects)) {
-    arguments$ti_parameter <- .ctJuliaVector(as.integer(effects$parameter))
-    arguments$ti_predictor <- .ctJuliaVector(as.integer(effects$predictor))
-    arguments$ti_coefficient <- .ctJuliaVector(as.integer(effects$coefficient))
+    arguments$ti_parameter <- V(as.integer(effects$parameter))
+    arguments$ti_predictor <- V(as.integer(effects$predictor))
+    arguments$ti_coefficient <- V(as.integer(effects$coefficient))
   }
   if (length(spec$dynamic_state_indices)) {
     arguments$diffusion_state_indices <-
-      .ctJuliaVector(as.integer(spec$dynamic_state_indices))
+      V(as.integer(spec$dynamic_state_indices))
   }
   arguments$continuous_time <- isTRUE(spec$continuoustime)
   # How many leading states are genuine dynamics rather than the static
@@ -3163,7 +3183,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
         !nrow(popeffects)) numeric() else
       as.numeric(popeffects$scale[popeffects$type %in% "sd"])
     if (length(popscale) && any(popscale != 1)) {
-      arguments$population_scale <- .ctJuliaVector(popscale)
+      arguments$population_scale <- V(popscale)
     }
   }
   if (any(table$matrix %in% "RAWPOPVAR")) {
@@ -3172,85 +3192,78 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
         !nrow(popeffects)) integer() else
       as.integer(popeffects$row[popeffects$type %in% "sd"])
     if (length(popindices)) {
-      arguments$population_indices <- .ctJuliaVector(popindices)
+      arguments$population_indices <- V(popindices)
     }
   }
   # Only when something is actually binary: an empty vector lets the engine
   # skip the branch, and a zero-length vector deadlocks the bridge, so the two
   # reasons to omit it agree.
   if (any(spec$manifesttype > 0)) {
-    arguments$manifesttype <- .ctJuliaVector(as.integer(spec$manifesttype))
+    arguments$manifesttype <- V(as.integer(spec$manifesttype))
   }
   if (any(spec$manifesttype %in% 2)) {
-    arguments$ncategories <- .ctJuliaVector(as.integer(spec$ncategories))
+    arguments$ncategories <- V(as.integer(spec$ncategories))
   }
   if (length(spec$nasymptotes) && any(spec$nasymptotes > 0)) {
-    arguments$nasymptotes <- .ctJuliaVector(as.integer(spec$nasymptotes))
+    arguments$nasymptotes <- V(as.integer(spec$nasymptotes))
   }
   if (any(spec$manifesttype %in% 4)) {
-    arguments$censormin <- .ctJuliaVector(as.numeric(spec$censormin))
-    arguments$censormax <- .ctJuliaVector(as.numeric(spec$censormax))
+    arguments$censormin <- V(as.numeric(spec$censormin))
+    arguments$censormax <- V(as.numeric(spec$censormax))
   }
-  # A model shape Julia has not seen mints new closure types for its transform
-  # expressions, and the whole filter specialises again for them -- tens of
-  # seconds, once, and indistinguishable from a hang if nothing says so. The
-  # engine is asked first so the message comes before the wait rather than
-  # after it.
-  .ctJuliaAnnounceCompilation(module, table)
-  params <- do.call(module$ekf_from_columns, arguments)
   # .ctJuliaVector, not juliaPut, for the vectors: JuliaConnectoR marshals a
   # length-one R vector as a *scalar*, so a single-subject model would hand the
   # objective constructor an Int where it wants an AbstractVector. That never
   # showed up while every caller was a whole fitted dataset; ctPredict() on one
   # subject is a caller where it does.
-  objective_args <- list(params, .ctJuliaVector(spec$subject_starts),
-    .ctJuliaVector(spec$times), JuliaConnectoR::juliaPut(spec$manifest_data),
-    JuliaConnectoR::juliaPut(spec$tdpred_data), JuliaConnectoR::juliaPut(spec$tipred_data),
-    .ctJuliaSubstepArgument(spec$max_timestep))
+  objective_args <- list(V(spec$subject_starts),
+    V(spec$times), .ctJuliaAsPut(spec$manifest_data),
+    .ctJuliaAsPut(spec$tdpred_data), .ctJuliaAsPut(spec$tipred_data),
+    .ctJuliaSubstepInput(spec$max_timestep))
   if (!is.null(spec$priors) && length(spec$priors$index)) {
-    objective_args$prior_index <- .ctJuliaVector(spec$priors$index)
-    objective_args$prior_scale <- .ctJuliaVector(spec$priors$scale)
+    objective_args$prior_index <- V(spec$priors$index)
+    objective_args$prior_scale <- V(spec$priors$scale)
     objective_args$prior_weight <- spec$priors$weight
   }
   # Sampled TI-predictor values, one entry per missing cell -- omitted
   # entirely (not sent as empty vectors) for every model with none, which is
   # what keeps that the zero-cost path on the Julia side too.
   if (!is.null(spec$ti_missing) && nrow(spec$ti_missing)) {
-    objective_args$ti_missing_subject <- .ctJuliaVector(as.integer(spec$ti_missing$subject))
-    objective_args$ti_missing_predictor <- .ctJuliaVector(as.integer(spec$ti_missing$predictor))
-    objective_args$ti_missing_parameter <- .ctJuliaVector(as.integer(spec$ti_missing$parameter))
-    objective_args$ti_missing_mu <- .ctJuliaVector(as.numeric(spec$ti_missing$mu))
-    objective_args$ti_missing_sigma <- .ctJuliaVector(as.numeric(spec$ti_missing$sigma))
+    objective_args$ti_missing_subject <- V(as.integer(spec$ti_missing$subject))
+    objective_args$ti_missing_predictor <- V(as.integer(spec$ti_missing$predictor))
+    objective_args$ti_missing_parameter <- V(as.integer(spec$ti_missing$parameter))
+    objective_args$ti_missing_mu <- V(as.numeric(spec$ti_missing$mu))
+    objective_args$ti_missing_sigma <- V(as.numeric(spec$ti_missing$sigma))
   }
-  objective <- do.call(module$ctsem_objective, objective_args)
   # The Laplace route wraps the ordinary objective rather than replacing it:
   # the process likelihood, the parameter layer and the TI-predictor effects
   # are all still the same code, evaluated per subject at a shifted parameter
   # vector. Only zero-length index vectors are withheld, because JuliaConnectoR
   # deadlocks marshalling one -- `cor_index` is empty whenever a model has a
   # single random effect.
+  laplace_args <- NULL
   if (!is.null(spec$laplace)) {
     levels <- spec$laplace$levels
     grab <- function(field) unlist(lapply(levels, function(x) x[[field]]), use.names = FALSE)
-    laplace_args <- list(objective,
-      re_index = .ctJuliaVector(as.integer(grab("re_index"))),
-      sd_scale = .ctJuliaVector(as.numeric(grab("sd_scale"))))
+    laplace_args <- list(
+      re_index = V(as.integer(grab("re_index"))),
+      sd_scale = V(as.numeric(grab("sd_scale"))))
     # Guarded like `cor_index`, and for the same reason: a model whose every
     # level is reduced has no population scales at all, and a zero-length
     # vector deadlocks the bridge rather than arriving empty.
     if (length(grab("sd_index"))) {
-      laplace_args$sd_index <- .ctJuliaVector(as.integer(grab("sd_index")))
+      laplace_args$sd_index <- V(as.integer(grab("sd_index")))
     }
     if (length(grab("cor_index"))) {
-      laplace_args$cor_index <- .ctJuliaVector(as.integer(grab("cor_index")))
+      laplace_args$cor_index <- V(as.integer(grab("cor_index")))
     }
     # Sent only when some level is actually reduced, so a model that asked for
     # nothing crosses exactly as it did before this existed.
     ranks <- as.integer(vapply(levels, function(x)
       if (is.null(x$rank)) x$nrandom else x$rank, integer(1)))
     if (any(ranks < as.integer(vapply(levels, function(x) x$nrandom, integer(1))))) {
-      laplace_args$level_rank <- .ctJuliaVector(ranks)
-      laplace_args$load_index <- .ctJuliaVector(as.integer(grab("load_index")))
+      laplace_args$level_rank <- V(ranks)
+      laplace_args$load_index <- V(as.integer(grab("load_index")))
     }
     # Absent unless the fit asked for them, so the engine's own defaults stay
     # the defaults and a spec built before this existed is byte-for-byte as it
@@ -3265,16 +3278,42 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       # Concatenated innermost level first, split on the far side by the
       # per-level counts. Flat vectors because the bridge marshals those and
       # not nested structures.
-      laplace_args$level_nre <- .ctJuliaVector(as.integer(vapply(levels,
+      laplace_args$level_nre <- V(as.integer(vapply(levels,
         function(x) x$nrandom, integer(1))))
-      laplace_args$group <- .ctJuliaVector(as.integer(grab("group")))
-      laplace_args$level_ngroups <- .ctJuliaVector(as.integer(vapply(levels,
+      laplace_args$group <- V(as.integer(grab("group")))
+      laplace_args$level_ngroups <- V(as.integer(vapply(levels,
         function(x) x$ngroups, integer(1))))
     }
-    objective <- do.call(module$ctsem_laplace_objective, laplace_args)
+  }
+  list(ekf = arguments, objective = objective_args, laplace = laplace_args)
+}
+
+.ctJuliaObjective <- function(object) {
+  stopifnot(inherits(object, "ctJuliaModel") || inherits(object, "ctJuliaFit"))
+  spec <- if (inherits(object, "ctJuliaFit")) object$model_spec else object
+  inputs <- .ctJuliaObjectiveInputs(spec)
+  key <- .ctJuliaObjectiveKey(spec, inputs)
+  cached <- .ctJuliaCached(key)
+  if (!is.null(cached)) return(cached)
+  module <- .ctJuliaModule(spec$project)
+  marshal <- function(args) lapply(args, .ctJuliaMarshal)
+  # A model shape Julia has not seen mints new closure types for its transform
+  # expressions, and the whole filter specialises again for them -- tens of
+  # seconds, once, and indistinguishable from a hang if nothing says so. The
+  # engine is asked first so the message comes before the wait rather than
+  # after it.
+  .ctJuliaAnnounceCompilation(module,
+    as.data.frame(spec$parameter_table, stringsAsFactors = FALSE))
+  params <- do.call(module$ekf_from_columns, marshal(inputs$ekf))
+  objective <- do.call(module$ctsem_objective,
+    c(list(params), marshal(inputs$objective)))
+  if (!is.null(inputs$laplace)) {
+    objective <- do.call(module$ctsem_laplace_objective,
+      c(list(objective), marshal(inputs$laplace)))
   }
   .ctJuliaCacheStore(key, objective)
 }
+
 
 # The state-explicit objective ------------------------------------------------
 #
@@ -3669,8 +3708,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 # or a mesh -- one substep count per row of the data -- as an integer vector.
 # `.ctJuliaVector` keeps a one-row mesh a vector rather than the scalar
 # JuliaConnectoR would make of it.
-.ctJuliaSubstepArgument <- function(rule) {
-  if (is.integer(rule) || length(rule) > 1L) .ctJuliaVector(as.integer(rule)) else as.numeric(rule)[1L]
+.ctJuliaSubstepInput <- function(rule) {
+  if (is.integer(rule) || length(rule) > 1L) .ctJuliaAsVector(as.integer(rule)) else as.numeric(rule)[1L]
 }
 
 # Choose the substep mesh for `spec` at the parameter values `values`, and
