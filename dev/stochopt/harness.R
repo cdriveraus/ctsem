@@ -52,9 +52,10 @@ timed <- function(expr) {
   list(value = v, secs = proc.time()[["elapsed"]] - t0)
 }
 
-optimise <- function(innergaptol = NULL) {
+optimise <- function(innergaptol = NULL, precondition = NULL) {
   oc <- list()
   if (!is.null(innergaptol)) oc$innergaptol <- innergaptol
+  if (!is.null(precondition)) oc$precondition <- precondition
   r <- timed(ctsem:::.ctJuliaOptimise(spec, start, optimcontrol = oc))
   res <- r$value
   list(secs = r$secs, x = as.numeric(res$minimizer)[seq_len(npar)],
@@ -88,11 +89,17 @@ if (file.exists(basefile)) {
   gapb <- if (!is.null(Hb)) ctsem:::.ctBackendOptimGap(Hb, as.numeric(gb[[2]])) else NULL
   base$hess_secs <- h$secs
   base$final_gain <- if (!is.null(gapb)) gapb$gap else NA
+  # the same optimiser without its diagonal preconditioner
+  base$noP <- optimise(precondition = FALSE)
   saveRDS(base, basefile)
 }
 out$baseline <- base
-cat(sprintf("BASE it=%d %.1fs + hess %.1fs f=%.6f gain=%.2g\n", base$iterations,
-  base$secs, base$hess_secs, base$f, base$final_gain)); flush(stdout())
+cat(sprintf("BASE it=%d %.1fs + hess %.1fs f=%.6f gain=%.2g | noP it=%d %.1fs f=%.6f\n",
+  base$iterations, base$secs, base$hess_secs, base$f, base$final_gain,
+  base$noP$iterations, base$noP$secs, base$noP$f)); flush(stdout())
+metric <- ctsem:::.ctJuliaParameterScale(spec, at = start, npar = npar)
+metric <- if (is.null(metric)) rep(1, npar) else metric^2
+metric[!is.finite(metric) | metric <= 0] <- 1
 
 out$prim <- JuliaConnectoR::juliaGet(SO("primitive_times")(obj, jv(base$x), 3L))
 cat("PRIM", paste(names(out$prim), signif(unlist(out$prim), 3)), "\n"); flush(stdout())
@@ -104,7 +111,7 @@ if (PHASE == "endgame") {
     list(curv = "exact"), list(curv = "chord"),
     list(curv = "subset", submax = max(20L, ceiling(N / 8))),
     list(curv = "bhhh"))
-  for (tau in c(1, 1e-1, 1e-2)) {
+  for (tau in c(1, 1e-1)) {
     s1 <- optimise(innergaptol = tau)
     cat(sprintf("STAGE1 tau=%g it=%d %.1fs f=%.6f\n", tau, s1$iterations,
       s1$secs, s1$f)); flush(stdout())
@@ -134,14 +141,16 @@ if (PHASE == "endgame") {
 if (PHASE == "pbatch") {
   runs <- list()
   sym <- function(s) JuliaConnectoR::juliaEval(paste0(":", s))
+  for (usemetric in c(FALSE, TRUE))
   for (grow in c(TRUE, FALSE)) for (theta in if (grow) c(0.25, 0.5) else 1) {
     pb <- timed(JuliaConnectoR::juliaGet(SO("pbatch")(obj, jv(start),
-      theta = theta, grow = grow, tol_switch = 0.1)))
+      theta = theta, grow = grow, tol_switch = 0.1,
+      metric = jv(if (usemetric) metric else rep(1, npar)))))
     p <- pb$value
     eg <- timed(JuliaConnectoR::juliaGet(SO("endgame")(obj, jv(p$x),
       curvature = sym("chord"))))
     e <- eg$value
-    rec <- list(grow = grow, theta = theta, pb_status = p$status,
+    rec <- list(metric = usemetric, grow = grow, theta = theta, pb_status = p$status,
       pb_iterations = p$iterations, final_batch = p$final_batch,
       growth = unlist(p$growth)[-1], sizes = unlist(p$sizes)[-1],
       pb_grad = p$grad, pb_value = p$value, pb_scores = p$scores,
@@ -149,8 +158,8 @@ if (PHASE == "pbatch") {
       f = e$f, final_gain = e$final_gain, eg_grad = e$grad,
       eg_value = e$value, eg_hess = e$hess, eg_secs = eg$secs, x = unlist(e$x))
     runs[[length(runs) + 1L]] <- rec
-    cat(sprintf("PB grow=%s theta=%g %s it=%d batch=%d sizes=[%s] scores=%.1f val=%.1f %.1fs | EG %s it=%d df=%.2e gain=%.2g %.1fs (base %.1f+%.1f)\n",
-      grow, theta, p$status, p$iterations, p$final_batch,
+    cat(sprintf("PB metric=%s grow=%s theta=%g %s it=%d batch=%d sizes=[%s] scores=%.1f val=%.1f %.1fs | EG %s it=%d df=%.2e gain=%.2g %.1fs (base %.1f+%.1f)\n",
+      usemetric, grow, theta, p$status, p$iterations, p$final_batch,
       paste(unlist(p$sizes)[-1], collapse = ","), p$scores, p$value, pb$secs,
       e$status, e$iterations, e$f - base$f, e$final_gain, eg$secs,
       base$secs, base$hess_secs)); flush(stdout())

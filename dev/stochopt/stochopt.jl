@@ -324,16 +324,25 @@ end
 
 # H*q for the inverse Hessian of the NEGATIVE objective (so a positive
 # definite metric); `h0` is the initial scaling when memory is empty.
-function hmul(M::LBFGSMemory, q::AbstractVector, h0::Float64)
+#
+# `d` is an optional diagonal metric (the engine's transform-derived
+# preconditioner, squared). Optim, given a preconditioner, stops rescaling the
+# initial inverse Hessian, so its H0 is the bare metric however far that is
+# from the curvature the data imply -- which grows with the data and the metric
+# does not. Here the metric sets the SHAPE of H0 and the usual secant ratio,
+# in that metric, sets its scale: H0 = gamma D^-1, gamma = s'y / y'D^-1 y.
+function hmul(M::LBFGSMemory, q::AbstractVector, h0::Float64,
+    d::AbstractVector=Float64[])
     k = length(M.S)
-    k == 0 && return h0 .* q
+    dinv(v) = isempty(d) ? v : v ./ d
+    k == 0 && return h0 .* dinv(q)
     q = copy(q)
     a = zeros(k); rho = [1 / dot(M.Y[i], M.S[i]) for i in 1:k]
     for i in k:-1:1
         a[i] = rho[i] * dot(M.S[i], q); q .-= a[i] .* M.Y[i]
     end
-    gamma = dot(M.S[k], M.Y[k]) / dot(M.Y[k], M.Y[k])
-    r = gamma .* q
+    gamma = dot(M.S[k], M.Y[k]) / dot(M.Y[k], dinv(M.Y[k]))
+    r = gamma .* dinv(q)
     for i in 1:k
         b = rho[i] * dot(M.Y[i], r); r .+= (a[i] - b) .* M.S[i]
     end
@@ -362,7 +371,9 @@ full data throughout.
 """
 function pbatch(o, x0::AbstractVector; n0::Integer=0, theta::Real=0.5,
     memory::Integer=10, tol_switch::Real=1e-1, maxit::Integer=2000,
-    grow::Bool=true, rng=Random.default_rng(), c1=1e-4)
+    grow::Bool=true, rng=Random.default_rng(), c1=1e-4,
+    metric::AbstractVector=Float64[])
+    dm = isempty(metric) ? Float64[] : collect(Float64, metric)
     N = nsubjects(o)
     NU = nunits(o)
     led = Ledger(N)
@@ -378,13 +389,15 @@ function pbatch(o, x0::AbstractVector; n0::Integer=0, theta::Real=0.5,
     f = evalvalue_scaled(led, so, x, N)
     G = ev.G
     M = LBFGSMemory(memory)
-    h0 = 0.1 / max(norm(G), 1e-12)          # first step of length 0.1
+    # first step of length 0.1, measured in the metric
+    gnorm(G) = isempty(dm) ? norm(G) : sqrt(sum(G .^ 2 ./ dm))
+    h0 = 0.1 / max(gnorm(G), 1e-12)
     history = Tuple{Int,Int}[]               # (iteration, batch size) at growth
     status = "maxit"
     it = 0
     for k in 1:maxit
         it = k
-        d = hmul(M, G, h0)                   # ascent direction
+        d = hmul(M, G, h0, dm)               # ascent direction
         gain = 0.5 * dot(G, d)
         if m < NU
             # noise of the predicted gain from the per-unit spread
@@ -392,7 +405,7 @@ function pbatch(o, x0::AbstractVector; n0::Integer=0, theta::Real=0.5,
             acc = 0.0
             for i in 1:ev.n
                 di = ev.S[i, :] .- Sbar
-                acc += dot(di, hmul(M, di, h0))
+                acc += dot(di, hmul(M, di, h0, dm))
             end
             V = acc / max(ev.n - 1, 1)                   # per-unit, unscaled
             scale = (N / ev.nsub)^2 * ev.n * (1 - m / NU)  # Cov(G) = scale * V-ish
@@ -426,7 +439,7 @@ function pbatch(o, x0::AbstractVector; n0::Integer=0, theta::Real=0.5,
         if !ok
             # a stale memory is the usual cause; drop it once before giving up
             if !isempty(M.S)
-                empty!(M.S); empty!(M.Y); h0 = 0.1 / max(norm(G), 1e-12)
+                empty!(M.S); empty!(M.Y); h0 = 0.1 / max(gnorm(G), 1e-12)
                 continue
             end
             status = m < NU ? "linesearch (grow)" : "linesearch"
