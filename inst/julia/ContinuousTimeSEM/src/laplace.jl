@@ -3050,6 +3050,36 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
         FC = cholesky(Symmetric(_laplace_symmetrise(Cdiag[b])); check=false)
         issuccess(FC) || (_LAPLACE_DIAG[] = 11; return false)
         Q = L * Matrix(FC.L)
+        # One sweep per direction, and it stays that way. This is the only site
+        # whose sweep count grows with the number of random effects -- 100k
+        # member-sweeps against 100 for every other site on a single-level
+        # model -- so it is where the eye goes, and the obvious move is to seed
+        # all `k` directions into one pass as `k` partials on each tag, reading
+        # the diagonal of the block that comes back.
+        #
+        # Built and measured. It is correct -- the whole suite passes, oracles
+        # included -- and it is slower. A width-`W` nested dual costs `(1 + W)^2`
+        # components per scalar operation against `4W` for `W` separate passes,
+        # and `(1 + W)^2 - 4W = (W - 1)^2`, so the wide pass always does more
+        # arithmetic. Whether that matters depends on how much of a pass is
+        # arithmetic rather than tape and control flow, and that depends on the
+        # subject. Timing this engine's own filter at both widths, on dev1:
+        #
+        #                  1 latent, 5 rows      3 latents, 24 rows
+        #     W = 2              1.63x                   1.18x
+        #     W = 3              1.80                    1.01
+        #     W = 4              1.87                    0.97
+        #     W = 6              1.80                    0.79
+        #
+        # On a toy subject the fixed per-pass cost dominates and the wide pass
+        # wins by most of a factor of two; on a subject the size anyone fits,
+        # the arithmetic dominates and it loses from three directions up. End to
+        # end on a 3-latent, 100-subject model the widened version ran 3.6%,
+        # 2.5%, 13.8% and 17.7% slower at one, two, four and six random effects.
+        #
+        # The first probe of this used the one-latent fixture and reported 1.8x,
+        # which is why the measurement above names its model. See
+        # `review/LAPLACE-where-the-time-goes-2026-09-23.md`.
         for j in 1:k
             dir = scatter(l, Q[:, j])
             pass = sweep_at(subsA, dir, dir, 2)
