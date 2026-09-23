@@ -16,7 +16,7 @@ fitit <- function(d) {
 }
 # warm-up on a small slice so compilation is not in the timing
 ids <- unique(P$d$id)
-invisible(try(fitit(P$d[P$d$id %in% ids[seq_len(min(length(ids), 10))], ]), silent = TRUE))
+invisible(try(fitit(P$d[P$d$id %in% ids[seq_len(min(length(ids), 100))], ]), silent = TRUE))
 cat("WARM\n"); flush(stdout())
 t0 <- proc.time()[["elapsed"]]
 f <- try(fitit(P$d), silent = TRUE)

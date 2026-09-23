@@ -239,9 +239,21 @@ end
 # (Byrd, Chin, Nocedal & Wu 2012's norm test, in this metric). A model with too
 # few units to batch never starts one, so it is plain L-BFGS by construction.
 #
-# Only for objectives with no prior and no sampled TI predictor: both are
-# global terms that must not be scaled with the likelihood. A prior pass
-# (carefulfit) is ten iterations and gains nothing from batching anyway.
+# The prior is a global term and must not be scaled with the likelihood, so it
+# is separated out: scaled = (N/n) (batch - prior) + prior, and likewise for the
+# gradient. Both routes add exactly `_ctsem_log_prior` of the marginal
+# objective to their value, and their score rows each carry 1/n of its
+# gradient, which is what makes the separation exact. (ctFit's default
+# `priors = 'randomCorr'` puts a prior on random-effect correlations even in a
+# maximum likelihood fit, so refusing a prior would refuse every model with
+# random effects.) A sampled TI predictor's imputation density is also global
+# but is not attributable per subject, so that one still disables batching.
+#
+# In a batch stage the gradient comes from the score sweep itself -- the rows
+# sum to it -- so the growth test costs nothing beyond the gradient. Taking
+# the gradient from the ordinary trial and the rows from a second sweep, as a
+# first version here did, doubled every batch iteration (tripled on laplace,
+# where the score sweep costs two gradients) and made batching a loss.
 
 mutable struct CTSEMBatch{O}
     full::O
@@ -254,7 +266,8 @@ mutable struct CTSEMBatch{O}
     fg!::Any              # (objective, F, G, x) -> F, the caller's trial path
     sizes::Vector{Int}
     iterations::Vector{Int}
-    scores::Union{Nothing,Matrix{Float64}}
+    scores::Union{Nothing,Matrix{Float64}}   # rows at `scores_x`, from the last gradient
+    scores_x::Vector{Float64}
 end
 
 _ctsem_nunits(o::CTSEMObjective) = length(o.subject_objectives)
@@ -268,8 +281,7 @@ _ctsem_subset_objective(o::CTSEMObjective, idx::AbstractVector{<:Integer}) =
         o.ti_missing_parameter, o.ti_missing_mu, o.ti_missing_sigma)
 _ctsem_subset_objective(o, idx) = nothing
 
-_ctsem_batchable(o::CTSEMObjective) =
-    (isempty(o.prior_index) || o.prior_weight == 0) && isempty(o.ti_missing_parameter)
+_ctsem_batchable(o::CTSEMObjective) = isempty(o.ti_missing_parameter)
 _ctsem_batchable(o::CTSEMLaplaceObjective) = _ctsem_batchable(o.objective)
 _ctsem_batchable(o) = false
 
@@ -290,6 +302,8 @@ function _ctsem_subset_objective(L::CTSEMLaplaceObjective, keep::AbstractVector{
         zeros(n), falses(n), falses(n), falses(n), falses(n))
 end
 _ctsem_nunits(o::CTSEMLaplaceObjective) = length(o.units.members)
+_ctsem_prior_objective(o::CTSEMObjective) = o
+_ctsem_prior_objective(o::CTSEMLaplaceObjective) = o.objective
 _ctsem_batch_nsubjects(o::CTSEMLaplaceObjective) = sum(length, o.units.members; init=0)
 
 """
@@ -309,19 +323,44 @@ function _ctsem_batch_plan(objective, fg!; theta::Real=0.25, n0::Integer=0,
     stage = _ctsem_subset_objective(objective, sort(perm[1:m]))
     stage === nothing && return nothing
     CTSEMBatch(objective, stage, perm, m, NU, _ctsem_batch_nsubjects(objective),
-        Float64(theta), fg!, [m], [0], nothing)
+        Float64(theta), fg!, [m], [0], nothing, Float64[])
 end
 
 _ctsem_batch_full(b::CTSEMBatch) = b.m >= b.nunits
 _ctsem_batch_scale(b::CTSEMBatch) = b.nsubjects / _ctsem_batch_nsubjects(b.stage)
 
-# The stage objective's trial, scaled to the full data. No prior to separate:
-# `_ctsem_batchable` refused any objective that has one.
+# The stage objective on the minimised scale, with its likelihood scaled to the
+# full data and its prior left whole. A value alone goes through the caller's
+# trial, which decides validity; a gradient comes from the score sweep, whose
+# rows the growth test then reads at the same point.
+const _CTSEM_BATCH_INVALID = floatmax(Float64) / 1e8
+
 function _ctsem_batch_fg!(b::CTSEMBatch, F, G, x)
-    v = b.fg!(b.stage, F, G, x)
     c = _ctsem_batch_scale(b)
-    G === nothing || (G .*= c)
-    v === nothing ? nothing : v * c
+    po = _ctsem_prior_objective(b.full)
+    xv = collect(Float64, x)
+    prior = _ctsem_log_prior(po, xv)
+    if G === nothing
+        v = b.fg!(b.stage, F, nothing, x)
+        v === nothing && return nothing
+        v >= _CTSEM_BATCH_INVALID && return v
+        return -(c * (-v - prior) + prior)
+    end
+    r = try
+        ctsem_subject_gradients(b.stage, xv)
+    catch
+        nothing
+    end
+    if r === nothing || !isfinite(r.value) || !all(isfinite, r.scores)
+        fill!(G, 0.0); b.scores = nothing
+        return F === nothing ? nothing : _CTSEM_BATCH_INVALID
+    end
+    S = Matrix{Float64}(r.scores)
+    gprior = _ctsem_log_prior_gradient!(zeros(length(xv)), po, xv)
+    g = vec(sum(S; dims=1))
+    G .= -(c .* (g .- gprior) .+ gprior)
+    b.scores = S; b.scores_x = xv
+    F === nothing ? nothing : -(c * (r.value - prior) + prior)
 end
 
 """
@@ -334,7 +373,10 @@ predicted gain exceeds `theta` times the gain; `false` otherwise.
 """
 function _ctsem_batch_step!(b::CTSEMBatch, x, G, hmul, iteration)
     _ctsem_batch_full(b) && return false
-    S = try
+    # The rows from the gradient just taken at `x`; a fresh sweep only if the
+    # last gradient was somewhere else (it is not, on the path through
+    # `_ctsem_lbfgs`, which always ends an iteration with a gradient at `x`).
+    S = b.scores !== nothing && b.scores_x == x ? b.scores : try
         Matrix{Float64}(ctsem_subject_gradients(b.stage, collect(Float64, x)).scores)
     catch
         nothing
