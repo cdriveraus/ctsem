@@ -167,6 +167,32 @@ if (PHASE == "pbatch") {
   out$pbatch <- runs
 }
 
+if (PHASE == "lbfgsonly") {
+  # No Newton endgame: the prototype L-BFGS run to a tight predicted gain, then
+  # the one certification Hessian every fit pays. For routes where a Hessian
+  # is many gradients (laplace: finite differences), this is the candidate.
+  runs <- list()
+  for (usemetric in c(FALSE, TRUE)) for (grow in c(TRUE, FALSE)) {
+    pb <- timed(JuliaConnectoR::juliaGet(SO("pbatch")(obj, jv(start),
+      theta = 0.25, grow = grow, tol_switch = 1e-6, maxit = 3000L,
+      metric = jv(if (usemetric) metric else rep(1, npar)))))
+    p <- pb$value
+    h <- timed(ctsem:::.ctBackendHessianAt(spec, unlist(p$x)))
+    g <- JuliaConnectoR::juliaGet(SO("evalgrad")(
+      JuliaConnectoR::juliaCall("StochOpt.Ledger", 1L), obj, jv(unlist(p$x))))
+    gap <- ctsem:::.ctBackendOptimGap(h$value, as.numeric(g[[2]]))
+    f <- as.numeric(g[[1]])
+    rec <- list(metric = usemetric, grow = grow, status = p$status,
+      iterations = p$iterations, sizes = unlist(p$sizes)[-1], secs = pb$secs,
+      hess_secs = h$secs, f = f, gap = gap$gap, x = unlist(p$x))
+    runs[[length(runs) + 1L]] <- rec
+    cat(sprintf("LO metric=%s grow=%s %s it=%d %.1fs + hess %.1fs df=%.2e gap=%.2g (base %.1f+%.1f)\n",
+      usemetric, grow, p$status, p$iterations, pb$secs, h$secs, f - base$f,
+      gap$gap, base$secs, base$hess_secs)); flush(stdout())
+  }
+  out$lbfgsonly <- runs
+}
+
 dir.create(OUT, showWarnings = FALSE, recursive = TRUE)
 saveRDS(out, file.path(OUT, sprintf("%s-%s-%d.rds", PHASE, MODEL, SEED)))
 cat("SAVED\n")
