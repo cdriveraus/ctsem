@@ -52,10 +52,17 @@
   control$progress <- FALSE
   control$restarts <- 0L
   table <- data.frame(start = seq_len(n), logposterior = NA_real_,
-    converged = NA, iterations = NA_integer_, stringsAsFactors = FALSE)
+    converged = NA, iterations = NA_integer_, error = NA_character_,
+    stringsAsFactors = FALSE)
   results <- vector("list", n)
   record <- function(i, r) {
-    if (is.null(r) || !length(r) || is.null(r$maximum_loglik)) return()
+    if (is.null(r) || !length(r) || is.null(r$maximum_loglik)) {
+      # Kept, not dropped: a restart that fails silently is how a pool that
+      # could not run any of them went unnoticed.
+      table$error[i] <<- if (!is.null(attr(r, "error"))) attr(r, "error") else
+        "no result"
+      return()
+    }
     results[[i]] <<- r
     table$logposterior[i] <<- as.numeric(r$maximum_loglik)[1L]
     table$converged[i] <<- isTRUE(r$converged)
@@ -78,7 +85,17 @@
         error = function(e) NULL))
       for (i in seq_len(n)) {
         if (!is.null(jobs[[i]])) record(i, tryCatch(future::value(jobs[[i]]),
-          error = function(e) NULL))
+          error = function(e) structure(list(), error = conditionMessage(e))))
+      }
+      # None ran in the workers -- a worker that loaded a different ctsem
+      # build than this session, for one -- so run them here rather than
+      # report five failures as a result.
+      if (all(is.na(table$logposterior))) {
+        message("Restarts could not run in worker processes (",
+          table$error[1L], "); running them in this session.")
+        table$error <- NA_character_
+        for (i in seq_len(n)) record(i, .ctBackendRestartOne(spec, starts[[i]],
+          control, gradient))
       }
     } else {
       for (i in seq_len(n)) record(i, .ctBackendRestartOne(spec, starts[[i]],
