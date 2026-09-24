@@ -1782,6 +1782,28 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # The finish's own gain replaces L-BFGS's metric proxy: it is the exact
         # decrement, which is what the verdict below should be judging.
         directional.dphi0 = -2 * finish.gain
+        if finish.hessian === nothing
+            # No usable Hessian -- measured on a censored model, whose exact
+            # Hessian comes back non-finite -- so no finish either. L-BFGS
+            # carries on from where it handed over, to the ordinary stopping
+            # rule, rather than the fit ending 0.01 nats short.
+            handover = Float64(gap_tol)
+            stopped_by_gap[] = false
+            resumed = _ctsem_lbfgs(fg!, minimizer; memory=Int(lbfgs_memory),
+                metric=_ctsem_metric(precondition, length(start_values)),
+                initial_alpha=Float64(initial_alpha),
+                maxiter=max(0, Int(maxiter) - result.iterations),
+                g_tol=g_tol, f_tol=f_tol, x_tol=x_tol, callback=watch,
+                directional=directional, iteration0=result.iterations)
+            result = CTSEMLBFGSResult(resumed.minimizer, resumed.minimum,
+                resumed.gradient, result.iterations + resumed.iterations,
+                result.f_calls + resumed.f_calls, result.g_calls + resumed.g_calls,
+                resumed.g_converged, resumed.f_converged, resumed.x_converged,
+                resumed.linesearch_failed, resumed.stopped_by_callback,
+                result.batch_sizes, result.batch_iterations)
+            minimizer = collect(result.minimizer)
+            finish = nothing
+        end
     end
     verbose && _ctsem_optimise_verbose_report(objective, call_log)
     final = ctsem_evaluate(objective, minimizer; gradient=true,

@@ -123,7 +123,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         metric=nothing, initial_alpha::Real=0.1, maxiter::Integer=1000,
         g_tol::Real=1e-8, f_tol::Real=0.0, x_tol::Real=0.0,
         callback=nothing, directional=nothing, batch=nothing,
-        c1::Real=1e-4, maxbacktrack::Integer=40)
+        c1::Real=1e-4, maxbacktrack::Integer=40, iteration0::Integer=0)
     n = length(x0)
     x = collect(Float64, x0)
     dinv = metric === nothing ? ones(n) : begin
@@ -138,7 +138,9 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
     evaluate!(F, Gout, y) = batch === nothing ? fg!(F, Gout, y) :
         _ctsem_batch_fg!(batch, F, Gout, y)
     f = evaluate!(0.0, G, x); fcalls += 1; gcalls += 1
-    stopped = callback !== nothing &&
+    # Iteration 0 only on a run that is a run of its own; a continuation's
+    # starting point is the last row its predecessor already recorded.
+    stopped = callback !== nothing && iteration0 == 0 &&
         callback(CTSEMIterate(0, f, maximum(abs, G; init=0.0))) === true
     # Length `initial_alpha` in the metric's norm: a short first step when
     # there is no curvature history, measured so that a unit means the same
@@ -151,6 +153,15 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
     retried = false
     while !stopped && !gconv && iteration < maxiter
         s = -_ctsem_lbfgs_hmul(M, G, h0, dinv)
+        # With no curvature pairs the step is the metric's alone, and at a start
+        # where the transforms are flat the metric says a raw unit is worth
+        # almost nothing -- so 0.1 in model units is an enormous raw step. One
+        # raw unit at most, then: a long first step is how a fit once went from
+        # raw 0 to raw 20.9 and ended where every transform is flat.
+        if isempty(M.S)
+            len = norm(s)
+            len > 1 && (s .*= 1 / len)
+        end
         dphi = dot(G, s)
         if !(dphi < 0) || !isfinite(dphi)
             # Not a descent direction: the memory has gone bad. Start it again.
@@ -201,8 +212,8 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         _ctsem_lbfgs_push!(M, step, Gn .- G)
         x = xn; f = fn; G = Gn
         gconv = maximum(abs, G; init=0.0) <= g_tol
-        stopped = callback !== nothing &&
-            callback(CTSEMIterate(iteration, f, maximum(abs, G; init=0.0))) === true
+        stopped = callback !== nothing && callback(CTSEMIterate(
+            iteration0 + iteration, f, maximum(abs, G; init=0.0))) === true
         # A growing batch changes the objective under the optimiser. The
         # curvature pairs are kept -- the batch objective is scaled to the full
         # data, so they estimate the same curvature -- but no pair spans the
