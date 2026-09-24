@@ -556,35 +556,54 @@
   invisible(NULL)
 }
 
-# What a not-a-maximum verdict tells a user: which parameters the rising
-# direction runs through, and what usually fixes it. The parameters are those
-# carrying at least a third of the direction's largest component, at most
-# four. A direction through the random-effect covariance -- scales,
-# correlations, loadings -- is almost always the data not determining that
-# covariance (a correlation drifting towards +-1, or a scale trading off against
-# a correlation), and the remedies are the model's: a lower `poprank`, a fixed
-# or more strongly regularised correlation, fewer random effects.
+# What a not-a-maximum verdict tells a user: which parameters the likelihood
+# still rises along, and what they are doing there -- read off the ascent
+# direction (the most negative curvature, signed by the gradient) and the
+# current raw values, rather than a stock remedy. The parameters are those
+# carrying at least a third of the direction's largest component, at most four.
+# Two readings are specific enough to say out loud, because each points at the
+# model rather than the optimiser: a random-effect sd whose raw value is
+# falling (the data may not support that random effect), and a random-effect
+# correlation moving away from zero (heading for +-1, where two effects act as
+# one -- the one case a lower poprank describes).
 #' @keywords internal
 .ctBackendNotMaximumMessage <- function(fit, certification) {
   v <- as.numeric(certification$negative_vector)
-  names <- .ctBackendRawParameterNames(fit, length(v))
+  npar <- length(v)
+  names <- .ctBackendRawParameterNames(fit, npar)
+  gradient <- as.numeric(fit$optim$gradient)
+  raw <- as.numeric(fit$estimate$raw)
+  if (length(gradient) >= npar && sum(gradient[seq_len(npar)] * v) < 0) v <- -v
   size <- abs(v)
-  top <- order(size, decreasing = TRUE)
-  top <- top[size[top] >= max(size) / 3][seq_len(min(4L, sum(size >= max(size) / 3)))]
-  involved <- names[top]
-  covariance <- grepl("^(popsd_|rawcor_|poploading_)", involved)
+  keep <- which(size >= max(size) / 3)
+  keep <- keep[order(size[keep], decreasing = TRUE)][seq_len(min(4L, length(keep)))]
+  involved <- names[keep]
+  readings <- character()
+  for (k in seq_along(keep)) {
+    i <- keep[k]; name <- involved[k]
+    if (startsWith(name, "popsd_") && v[i] < 0) {
+      readings <- c(readings, paste0("the sd of ", sub("^popsd_", "", name),
+        " is shrinking towards zero, so the data may not support that random ",
+        "effect"))
+    } else if (startsWith(name, "rawcor_") && length(raw) >= i &&
+        is.finite(raw[i]) && sign(v[i]) == sign(raw[i]) && raw[i] != 0) {
+      pair <- strsplit(sub("^rawcor_", "", name), "__", fixed = TRUE)[[1L]]
+      readings <- c(readings, paste0("the correlation between ",
+        paste(pair, collapse = " and "), " is heading towards ",
+        if (raw[i] > 0) "+1" else "-1", ", where the two random effects act as ",
+        "one (a lower poprank)"))
+    }
+  }
   restarts <- fit$optim$restarts
   tried <- if (is.data.frame(restarts) && nrow(restarts))
     paste0(" ", nrow(restarts), " random restart",
       if (nrow(restarts) > 1L) "s" else "", " found nothing better.") else ""
-  paste0("This fit is not a maximum: the likelihood still rises along a ",
-    "direction through ", paste(involved, collapse = ", "), ".", tried,
-    if (any(covariance)) paste0(" That direction is in the random-effect ",
-      "covariance, which usually means the data do not determine it: consider ",
-      "poprank = 1, a fixed or more strongly regularised correlation, or fewer ",
-      "random effects.") else
+  paste0("This fit is not a maximum: the likelihood still rises along ",
+    paste(involved, collapse = ", "), ".",
+    if (length(readings)) paste0(" ", toupper(substr(readings[1L], 1L, 1L)),
+      substring(paste(readings, collapse = "; "), 2L), ".") else
       " Those parameters may not be separately determined by the data.",
-    " See fit$uncertainty$certification.")
+    tried, " See fit$uncertainty$certification.")
 }
 
 # The curvature at one point, from the spec rather than from a fit.

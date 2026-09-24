@@ -4535,7 +4535,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     correction <- correct(result)
     result <- correction$result
   }
-  # Random restarts, only for a fit that is still not converged -- see
+  # Random restarts, when asked for, only for a fit still not converged -- see
   # R/ctBackendRestarts.R for when they run and when they deliberately do not
   # (supplied inits or a set maxiter: the fit asked for). Not the prior retry
   # an earlier version had, which carefulfit made redundant; this is for a
