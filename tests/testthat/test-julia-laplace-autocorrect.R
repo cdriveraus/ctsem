@@ -267,3 +267,33 @@ test_that("a correction that cannot be evaluated warns and keeps the fit", {
   expect_false(out$laplace$correction$applied)
   expect_equal(out$estimate$raw, bad$estimate$raw)
 })
+
+test_that("a gap with no ascent step still reports the quadrature log likelihood", {
+  skip_without_julia()
+  fits <- .ac_fits("nonlinear")
+  # A Hessian with no negative direction: the objective is not concave along
+  # any of them, so every direction is dropped and nothing moves -- the shape
+  # of AnomAuth's spurious optimum, where the Laplace Hessian was indefinite.
+  convex <- fits$off
+  convex$uncertainty$hessian <- -convex$uncertainty$hessian
+  out <- .ctLaplaceAutoCorrect(convex)
+  corr <- out$laplace$correction
+  expect_identical(corr$status, "no_gain")
+  expect_false(corr$applied)
+  expect_equal(corr$dropped_directions, length(convex$estimate$raw))
+  expect_equal(out$estimate$raw, convex$estimate$raw)
+  expect_identical(out$estimate$loglik_method, "quadrature")
+  expect_equal(out$estimate$logposterior,
+    .ac_quadrature(out, convex$estimate$raw), tolerance = 1e-8)
+  expect_equal(out$estimate$loglik_laplace, convex$estimate$loglik)
+  expect_equal(out$estimate$rawposterior, convex$estimate$rawposterior)
+  # The print line for this case is keyed on a gap of a nat or more.
+  printed <- capture.output(print(out))
+  expect_identical(any(grepl("no quadrature step improved", printed)),
+    isTRUE(abs(corr$gap_reported) >= 1))
+  # The same line when the gap is large, which this fixture's is not.
+  big <- out
+  big$laplace$correction$gap_reported <- -27.3
+  expect_true(any(grepl("exceeds the quadrature value by 27.3",
+    capture.output(print(big)))))
+})

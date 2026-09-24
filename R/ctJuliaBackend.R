@@ -4967,6 +4967,15 @@ print.ctJuliaFit <- function(x, ...) {
       " standard errors, log likelihood ", format(corr$loglik_laplace, digits = 8),
       " -> ", format(corr$loglik_quadrature, digits = 8),
       ". See fit$laplace$correction.\n", sep = "")
+  } else if (!isTRUE(corr$applied) &&
+      isTRUE(abs(as.numeric(.ctJuliaOr(corr$gap_reported, 0))[1L]) >= 1)) {
+    # Not moved, and the approximation is still off by a nat or more here: the
+    # AnomAuth case, a Laplace optimum the quadrature objective does not have.
+    cat("  Laplace log likelihood ", format(corr$loglik_laplace, digits = 8),
+      if (corr$gap_reported < 0) " exceeds" else " falls short of",
+      " the quadrature value by ", format(abs(corr$gap_reported), digits = 3),
+      " here and no quadrature step improved on it; the log likelihood ",
+      "reported is the quadrature one. See fit$laplace$correction.\n", sep = "")
   }
   # One line, only when there is something to say. A reported interval much
   # wider than the curvature at the estimate supports is not visible anywhere

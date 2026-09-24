@@ -294,15 +294,21 @@ to 0.01 in total -- every model whose random effects enter linearly, where
 Laplace is exact -- nothing else is done and the fit is unchanged. Otherwise
 the estimate takes up to three Newton steps on the quadrature objective, each
 costing \code{2 * npar} quadrature evaluations and accepted only if that
-objective rises, stopping early once a step moves no parameter by a tenth of
-a standard error. When it applies, \code{fit$estimate$raw} is the corrected point,
-\code{fit$estimate$loglik} is the quadrature log likelihood there (the
-Laplace value is kept in \code{fit$estimate$loglik_laplace}), and the
-posterior draws are recentred on it without being reshaped: the covariance
-is still the Laplace curvature at \code{fit$uncertainty$evaluated_at}.
+objective rises, never along a direction where the Hessian is not negative,
+and stopping early once a step moves no parameter by a tenth of a standard
+error. Wherever the screen finds a gap, \code{fit$estimate$loglik} is the
+quadrature log likelihood at the reported estimate, whether or not a step
+was accepted (the Laplace value is kept in
+\code{fit$estimate$loglik_laplace}, and \code{loglik_method} says which);
+a Laplace optimum the quadrature objective does not share otherwise reports
+a log likelihood it does not have. When a step is accepted,
+\code{fit$estimate$raw} is the corrected point and the posterior draws are
+recentred on it without being reshaped: the covariance is still the Laplace
+curvature at \code{fit$uncertainty$evaluated_at}.
 \code{fit$laplace$correction} records the screen, the step and any
-directions too weakly identified to step along, and \code{print(fit)} says
-so when the estimate moved by a tenth of a standard error or more.
+directions too weakly identified or not concave to step along, and
+\code{print(fit)} says so when the estimate moved by a tenth of a standard
+error or more, or when it could not move and the gap is a nat or more.
 \code{laplace_correct = FALSE} gives the uncorrected Laplace fit. Not applied
 to sampled fits, to \code{intoverstates = FALSE}, or with \code{estonly},
 which skips the Hessian it needs; asking for it there is refused.

@@ -656,8 +656,15 @@ answer and the right one here: a first-order correction along a direction the
 data does not identify is not estimable, and reporting zero for it is honest
 where reporting 3e+08 is not. `dropped_directions` on the result says when it
 happened rather than leaving it to be inferred.
+
+`ascent = true` also drops every direction along which `H` is not negative --
+the objective is not concave there, so `-H \\ gap` along it is a step
+*down*. The default correction needs that: on the AnomAuth real-data model the
+Laplace optimum's Hessian had two positive eigenvalues (a saddle or kink the
+optimiser stopped at), and the unguarded step went away from the better
+optimum while the line search accepted it.
 """
-function _correction_step(H::Symmetric, gap::AbstractVector)
+function _correction_step(H::Symmetric, gap::AbstractVector; ascent::Bool=false)
     n = length(gap)
     n == 0 && return (Float64[], 0)
     decomposition = try
@@ -673,7 +680,7 @@ function _correction_step(H::Symmetric, gap::AbstractVector)
     projected = transpose(decomposition.vectors) * gap
     dropped = 0
     for i in eachindex(lambda)
-        if abs(lambda[i]) <= tolerance
+        if abs(lambda[i]) <= tolerance || (ascent && lambda[i] >= 0)
             projected[i] = 0.0
             dropped += 1
         else
@@ -752,7 +759,8 @@ before says there is nothing for it to do:
   2. **Step.** `delta = (-H)^-1 grad Q`, with `grad Q` the central difference
      of the gap plus the Laplace gradient (zero at an optimum, one adjoint
      sweep to include), solved along the directions `H` identifies
-     (`_correction_step`). Accepted only if the quadrature objective rises,
+     (`_correction_step`), and never along a direction where `H` is not
+     negative. Accepted only if the quadrature objective rises,
      halving up to `halvings` times, Armijo on the first-order gain.
   3. **Repeat**, up to `maxsteps`, keeping `H` as the metric (it is not
      recomputed; the caller's standard errors were built from it), until the
@@ -860,7 +868,7 @@ function ctsem_laplace_autocorrect(laplace::CTSEMLaplaceObjective,
             fill(NaN, npar)
         end
         g .+= lg
-        delta, dropped = _correction_step(H, g)
+        delta, dropped = _correction_step(H, g; ascent=true)
         if !all(isfinite, delta)
             status = k == 1 ? "nonfinite_step" : status
             break

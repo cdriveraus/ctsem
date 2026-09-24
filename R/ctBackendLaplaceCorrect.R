@@ -487,7 +487,33 @@ print.ctLaplaceCorrection <- function(x, ...) {
     hessian_at = if (usable) "laplace_estimate" else "none",
     seconds = c(screen = as.numeric(res$screen_seconds),
       total = as.numeric(res$seconds)))
-  if (!identical(status, "corrected") || !all(is.finite(newest))) {
+  moved <- identical(status, "corrected") && all(is.finite(newest))
+  # The log likelihood is the quadrature one wherever the screen found a gap,
+  # whether or not a step was accepted. On AnomAuth's spurious optimum no step
+  # raised the quadrature objective, and the Laplace value left on the fit was
+  # 17 nats above the true optimum's while its quadrature value was 10 below:
+  # the reported number is what makes such a fit comparable, so it cannot wait
+  # on the estimate moving.
+  units <- as.numeric(res$quadrature_units)
+  quadrature_ok <- status %in% c("corrected", "no_gain", "no_hessian") &&
+    is.finite(as.numeric(res$quadrature)) && all(is.finite(units))
+  if (quadrature_ok) {
+    record$loglik_quadrature <- sum(units)
+    record$logposterior_quadrature <- as.numeric(res$quadrature)
+    record$logposterior_laplace <- as.numeric(res$laplace)
+    # Quadrature minus Laplace at the point the fit now reports.
+    record$gap_reported <- as.numeric(res$quadrature) - as.numeric(res$laplace)
+    fit$estimate$loglik_laplace <- record$loglik_laplace
+    fit$estimate$loglik <- record$loglik_quadrature
+    fit$estimate$logposterior <- record$logposterior_quadrature
+    subjects <- as.numeric(res$quadrature_subjects)
+    if (length(subjects) == length(fit$estimate$subject_loglik) &&
+        all(is.finite(subjects))) {
+      fit$estimate$subject_loglik <- subjects
+    }
+    fit$estimate$loglik_method <- "quadrature"
+  }
+  if (!moved) {
     fit$laplace$correction <- record
     return(fit)
   }
@@ -495,21 +521,9 @@ print.ctLaplaceCorrection <- function(x, ...) {
   # Laplace curvature's shape -- recentred, not reshaped, which is what
   # `draws='imis'` in ctLaplaceCorrect() is for.
   record$applied <- TRUE
-  record$loglik_quadrature <- sum(as.numeric(res$quadrature_units))
-  record$logposterior_quadrature <- as.numeric(res$quadrature)
-  record$logposterior_laplace <- as.numeric(res$laplace)
   record$material <- isTRUE(max(abs(delta_se), na.rm = TRUE) >= control$material)
   record$draws <- "recentred"
   fit$estimate$raw <- newest
-  fit$estimate$loglik_laplace <- record$loglik_laplace
-  fit$estimate$loglik <- record$loglik_quadrature
-  fit$estimate$logposterior <- record$logposterior_quadrature
-  subjects <- as.numeric(res$quadrature_subjects)
-  if (length(subjects) == length(fit$estimate$subject_loglik) &&
-      all(is.finite(subjects))) {
-    fit$estimate$subject_loglik <- subjects
-  }
-  fit$estimate$loglik_method <- "quadrature"
   post <- fit$estimate$rawposterior
   if (!is.null(post) && ncol(post) == npar) {
     fit$estimate$rawposterior <- sweep(post, 2L, delta, "+")
