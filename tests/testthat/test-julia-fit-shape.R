@@ -112,6 +112,10 @@ suppressWarnings(suppressPackageStartupMessages(library(ctsem)))
   # Which coordinates the pullback probe moved, so the same kind of thing as
   # the two above and optimised-only for the same reason.
   "overshoot_parameters",
+  # What the optimiser's batching and Newton finish did: descriptions of one
+  # optimiser run, like the stall fields below.
+  "batch_sizes", "batch_iterations", "newton_steps", "newton_hessians",
+  "newton_subset_hessians",
   "saturated", "saturated_parameters", "carefulfit", "carefulfit_iterations",
   # The two stopping rules the run was given and what they did with it: whether
   # it was stopped for having stopped getting anywhere, which coordinates were
@@ -252,8 +256,8 @@ test_that("$estimate holds the estimate and nothing about the run", {
   run_shaped <- c("converged", "convergence_pending", "convergence_tolerance",
     "predicted_gain", "last_gain", "gradient", "gradient_norm", "iterations",
     "stage_iterations", "f_calls", "g_calls", "chunks", "linesearch",
-    "batch_sizes", "batch_iterations", "newton_steps",
-    "stalled", "stopped_by_gap", "overshot", "overshoot_gain",
+    "batch_sizes", "batch_iterations", "newton_steps", "newton_hessians",
+    "newton_subset_hessians", "stalled", "stopped_by_gap", "overshot", "overshoot_gain",
     "overshoot_parameters", "saturated", "saturated_parameters", "carefulfit",
     "carefulfit_iterations", "corrections", "hessians",
     "hessian_evaluations", "hessian", "hessian_profile", "trace", "substeps")

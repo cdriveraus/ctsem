@@ -1769,8 +1769,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     finish = nothing
     if finishing && stopped_by_gap[]
         record = function (state)
-            _record!(trace, state.iteration, -state.value, state.g_norm, NaN,
-                _ctsem_optimise_trace_values(objective)...)
+            _record!(trace, state.iteration, -state.value, state.g_norm,
+                state.gain, _ctsem_optimise_trace_values(objective)...)
             seen_iterations[] = max(seen_iterations[], Int(state.iteration))
             return false
         end

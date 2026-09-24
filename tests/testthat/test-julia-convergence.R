@@ -184,13 +184,14 @@ test_that("a julia fit stopped early does not converge, and says what is left", 
   # The contrast that makes the assertions above mean something: the flag is
   # not simply TRUE everywhere.
   #
-  # One iteration, not two. `maxiter` caps a *stage*, and a fit the curvature
-  # says is short is continued from a damped Newton step, so a cap of two now
-  # reaches the optimum on many starts -- measured, it certified on some draws
-  # and not others, which is a flaky test rather than a weak optimiser.
+  # One iteration, and no correction. `maxiter` caps a *stage*, and a fit the
+  # curvature says is short is continued from a damped Newton step with a
+  # raised cap -- which, since the optimiser stopped capping every step at 0.1,
+  # reaches the optimum from a single iteration. `gapretries = 0` is what keeps
+  # a stopped-early fit stopped early.
   capped <- suppressWarnings(suppressMessages(ctFit(.jconv_data(),
     .jconv_model(), backend = "julia", cores = 1, verbose = 0,
-    optimcontrol = list(maxiter = 1, carefulfit = FALSE))))
+    optimcontrol = list(maxiter = 1, carefulfit = FALSE, gapretries = 0L))))
   expect_false(capped$optim$converged)
   # Stated as objective still available rather than as a large gradient. With
   # the metric even one iteration brings the gradient down a long way, so

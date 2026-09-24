@@ -25,12 +25,18 @@
 
 using Random
 
-"""The state an iteration callback sees, shaped like the Optim state it replaced."""
+"""
+The state an iteration callback sees, shaped like the Optim state it replaced,
+plus the predicted gain of the step that produced it where the step knows it
+exactly (a Newton step does; an L-BFGS step leaves it to `CTSEMDirectional`).
+"""
 struct CTSEMIterate
     iteration::Int
     value::Float64
     g_norm::Float64
+    gain::Float64
 end
+CTSEMIterate(iteration, value, g_norm) = CTSEMIterate(iteration, value, g_norm, NaN)
 
 """What `_ctsem_lbfgs` returns: the point and the reasons it stopped."""
 struct CTSEMLBFGSResult
@@ -506,16 +512,23 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
     exact_at_x = curvature !== :subset
     fcalls = 0; gcalls = 0
     steps = 0; mu = 0.0; prevgain = Inf; gain = Inf
+    # The gain the undamped step predicts, flat directions included at their
+    # floored curvature. Judging convergence over the trusted directions alone
+    # stopped the finish at the start of a nearly flat ray: on a fixture with a
+    # diffusion correlation flat below raw -6, 3.5e-6 nats short of the point a
+    # profile then found, so the estimate was not the maximum. A truly flat
+    # direction has no gradient and adds nothing; a nearly flat one is walked
+    # while the step still promises more than `tol`, as L-BFGS used to.
     function newton(H, G, mu)
         E = eigen(Symmetric(H))
         lmax = maximum(abs, E.values; init=0.0)
         lmax > 0 || return nothing
         floor = 1e-8 * lmax
         c = E.vectors' * G
-        keep = E.values .> floor
-        undamped = 0.5 * sum(abs2.(c[keep]) ./ E.values[keep]; init=0.0)
-        lam = max.(E.values, floor) .+ mu * lmax
-        (step=-(E.vectors * (c ./ lam)), gain=undamped)
+        floored = max.(E.values, floor)
+        gain = 0.5 * sum(abs2.(c) ./ floored; init=0.0)
+        lam = floored .+ mu * lmax
+        (step=-(E.vectors * (c ./ lam)), gain=gain)
     end
     at_x = exact_at_x    # whether H is the exact Hessian at the current x
     while steps < maxit
@@ -549,7 +562,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         mu = alpha == 1 ? mu / 10 : mu
         mu < 1e-8 && (mu = 0.0)
         callback === nothing || callback(CTSEMIterate(iteration0 + steps, f,
-            maximum(abs, G; init=0.0)))
+            maximum(abs, G; init=0.0), gain))
         # Only the exact variant refreshes on slow contraction; the chord and
         # the subset keep their matrix, which is the point of them. A step
         # that fails outright still gets the exact Hessian (above).
@@ -591,7 +604,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         fg!(nothing, Gn, xn); gcalls += 1
         x = xn; f = fn; G = Gn; steps += 1; at_x = false
         callback === nothing || callback(CTSEMIterate(iteration0 + steps, f,
-            maximum(abs, G; init=0.0)))
+            maximum(abs, G; init=0.0), gain))
     end
     (x=x, f=f, G=G, hessian=H === nothing ? nothing : -H, steps=steps,
      gain=gain, full_hessians=full_hessians, subset_hessians=subset_hessians,
