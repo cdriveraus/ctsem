@@ -435,31 +435,76 @@ _ctsem_cheap_hessian(::CTSEMObjective) = true
 _ctsem_cheap_hessian(::Any) = false
 
 """
-    _ctsem_newton_finish(objective, x, fg!; tol, maxit, contraction)
+    _ctsem_newton_finish(objective, x, fg!; tol, maxit, curvature, contraction)
 
-Damped Newton from `x` on the minimised objective behind `fg!`, with the exact
-Hessian refreshed when the predicted gain is not contracting by `contraction`
-per step. Returns the point, its value and gradient, the Hessian of the
-MAXIMISED objective at the final point (or `nothing`), the steps taken, and the
-predicted gain there.
+Damped Newton from `x` on the minimised objective behind `fg!`. What the
+steps are taken against is `curvature`:
+
+- `:exact`  the exact Hessian, refreshed whenever the predicted gain is not
+  contracting by `contraction` per step;
+- `:chord`  the exact Hessian at `x`, kept for every step (the chord, or
+  simplified Newton, method: linear convergence at the rate the Hessian
+  changes between `x` and the optimum, which from a hand-over within ~0.1
+  nats is fast);
+- `:subset` the likelihood Hessian of a random `subset` share of the units
+  (at least `subset_min`), scaled up to the data, with the prior's curvature
+  kept whole -- a chord Hessian at a fraction of the cost.
+
+Whatever the steps used, a failed line search is answered with the exact
+Hessian, and the run always ends with the exact Hessian at the final point,
+which is the certification's matrix and is returned for it. Returns the point,
+its value and gradient, that Hessian of the MAXIMISED objective (or `nothing`),
+the steps taken, the predicted gain, and how many full and subset Hessians
+were formed.
 """
 function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         maxit::Integer=30, contraction::Real=0.25, callback=nothing,
-        iteration0::Integer=0)
+        iteration0::Integer=0, curvature::Symbol=:exact,
+        subset::Real=0.125, subset_min::Integer=200,
+        rng=Random.MersenneTwister(20260924))
+    curvature in (:exact, :chord, :subset) || throw(ArgumentError(
+        "newton curvature must be exact, chord or subset, got $(curvature)"))
     x = collect(Float64, x0); f = f0; G = collect(Float64, G0)
-    hess(y) = try
-        H = Matrix{Float64}(ctsem_hessian(objective, y))
-        all(isfinite, H) ? -H : nothing       # of the minimised objective
+    full_hessians = 0; subset_hessians = 0
+    hessof(o, y) = try
+        H = Matrix{Float64}(ctsem_hessian(o, y))
+        all(isfinite, H) ? H : nothing
     catch err
         # A point the model cannot evaluate is no data; code that is wrong is
         # an error, and an interrupt stops the fit (`_ctsem_must_propagate`).
         _ctsem_must_propagate(err) && rethrow()
         nothing
     end
-    H = hess(x)
+    # Of the minimised objective, as every step below expects.
+    # `local`: an assignment to `H` in a closure would rebind the H below.
+    hess(y) = (full_hessians += 1; local Hx = hessof(objective, y);
+        Hx === nothing ? nothing : -Hx)
+    NU = _ctsem_nunits(objective)
+    m = min(NU, max(Int(subset_min), ceil(Int, subset * NU)))
+    sub = (curvature === :subset && 2m <= NU) ?
+        _ctsem_subset_objective(objective, sort(randperm(rng, NU)[1:m])) : nothing
+    function subhess(y)
+        sub === nothing && return hess(y)
+        subset_hessians += 1
+        Hs = hessof(sub, y)
+        Hs === nothing && return hess(y)
+        # The prior's curvature is diagonal and global: take it out of the
+        # subset's, scale the likelihood part, and put it back once.
+        po = _ctsem_prior_objective(objective)
+        Hp = zeros(length(y))
+        for k in eachindex(po.prior_index)
+            Hp[po.prior_index[k]] -= po.prior_weight / po.prior_scale[k]^2
+        end
+        local c = _ctsem_batch_nsubjects(objective) / _ctsem_batch_nsubjects(sub)
+        -(c .* (Hs .- Diagonal(Hp)) .+ Diagonal(Hp))
+    end
+    step_hessian(y) = curvature === :subset ? subhess(y) : hess(y)
+    H = step_hessian(x)
     H === nothing && return (x=x, f=f, G=G, hessian=nothing, steps=0,
-        gain=Inf, hessians=1, fcalls=0, gcalls=0)
-    hessians = 1; fcalls = 0; gcalls = 0
+        gain=Inf, full_hessians=full_hessians, subset_hessians=subset_hessians,
+        fcalls=0, gcalls=0)
+    exact_at_x = curvature !== :subset
+    fcalls = 0; gcalls = 0
     steps = 0; mu = 0.0; prevgain = Inf; gain = Inf
     function newton(H, G, mu)
         E = eigen(Symmetric(H))
@@ -472,7 +517,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         lam = max.(E.values, floor) .+ mu * lmax
         (step=-(E.vectors * (c ./ lam)), gain=undamped)
     end
-    at_x = true    # whether H was evaluated at the current x
+    at_x = exact_at_x    # whether H is the exact Hessian at the current x
     while steps < maxit
         nt = newton(H, G, mu)
         nt === nothing && break
@@ -490,7 +535,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         end
         if !(isfinite(fn) && fn <= f + 1e-4 * alpha * dphi)
             if !at_x
-                H = hess(x); hessians += 1; at_x = true
+                H = hess(x); at_x = true
                 H === nothing && break
             else
                 mu = mu == 0 ? 1e-4 : 10mu
@@ -505,8 +550,11 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         mu < 1e-8 && (mu = 0.0)
         callback === nothing || callback(CTSEMIterate(iteration0 + steps, f,
             maximum(abs, G; init=0.0)))
-        if gain / prevgain > contraction && steps > 1
-            H = hess(x); hessians += 1; at_x = true
+        # Only the exact variant refreshes on slow contraction; the chord and
+        # the subset keep their matrix, which is the point of them. A step
+        # that fails outright still gets the exact Hessian (above).
+        if curvature === :exact && gain / prevgain > contraction && steps > 1
+            H = hess(x); at_x = true
             H === nothing && break
             prevgain = Inf
         else
@@ -515,12 +563,13 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
     end
     # The certification's Hessian: at the final point, exactly.
     if !at_x
-        H = hess(x); hessians += 1
+        H = hess(x)
     end
     if H !== nothing
         nt = newton(H, G, 0.0)
         gain = nt === nothing ? Inf : nt.gain
     end
     (x=x, f=f, G=G, hessian=H === nothing ? nothing : -H, steps=steps,
-     gain=gain, hessians=hessians, fcalls=fcalls, gcalls=gcalls)
+     gain=gain, full_hessians=full_hessians, subset_hessians=subset_hessians,
+     fcalls=fcalls, gcalls=gcalls)
 end

@@ -1545,7 +1545,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     stall_cooldown::Integer=30, stall_tighten::Real=0.1,
     stall_tightenings::Integer=2, stall_ratio::Real=1e-3,
     batch::Bool=false, batch_theta::Real=0.25,
-    newton::Bool=false, newton_switch::Real=0.1, newton_maxit::Integer=30)
+    newton::Bool=false, newton_switch::Real=0.1, newton_maxit::Integer=30,
+    newton_curvature=:exact)
     start_values = collect(start)
     # Validated here rather than at the probe, which runs after the fit: a
     # misspelled mode should cost nothing, not a whole optimisation.
@@ -1775,7 +1776,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         end
         finish = _ctsem_newton_finish(objective, minimizer, result.minimum,
             result.gradient, fg!; tol=gap_tol, maxit=newton_maxit,
-            callback=record, iteration0=result.iterations)
+            callback=record, iteration0=result.iterations,
+            curvature=Symbol(newton_curvature))
         minimizer = collect(finish.x)
         # The finish's own gain replaces L-BFGS's metric proxy: it is the exact
         # decrement, which is what the verdict below should be judging.
@@ -1914,7 +1916,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # handed over so it is not computed twice. `[0.0;;]` when there was no
         # finish (a 1x1 zero, since an empty matrix would hang the bridge).
         newton_steps=finish === nothing ? 0 : finish.steps,
-        newton_hessians=finish === nothing ? 0 : finish.hessians,
+        newton_hessians=finish === nothing ? 0 : finish.full_hessians,
+        newton_subset_hessians=finish === nothing ? 0 : finish.subset_hessians,
         hessian=(finish === nothing || finish.hessian === nothing) ?
             zeros(1, 1) : finish.hessian,
         stopped_by_gap=stopped_by_gap[],
