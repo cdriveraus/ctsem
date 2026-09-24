@@ -745,27 +745,6 @@
       if (!is.null(escaped) && escaped$value > accepted$value) {
         accepted <- escaped
       } else escaped <- NULL
-      # Nothing worth having in either direction: the trusted subspace predicts
-      # less than the tolerance and the negative curvature, walked out to three
-      # raw units, delivers less. That is a slowly rising ridge, not a saddle
-      # with somewhere to go, and a resume would spend its whole budget on it
-      # (1000 iterations for 0.017 nats on the fixture above). Stop where the
-      # fit is -- the step is below the tolerance by construction, and moving
-      # the estimate without its gradient would leave the result inconsistent
-      # -- and let the certification report what it is.
-      # The bar is not `tolerance`, which is the certification's precision
-      # (1e-6 by default): whether to spend a stage is a question on the scale
-      # of a likelihood difference worth having, and 1e-3 nats over three raw
-      # units is flat by any reading (the fixture's probe found 2e-4).
-      flat <- max(tolerance, 1e-3)
-      if (gap$gap < flat && accepted$value - value < flat) {
-        history[[length(history) + 1L]] <- list(attempt = attempt,
-          predicted = gap$gap, step_gain = accepted$value - value,
-          ratio = NA_real_, achievable = best,
-          total_gain = accepted$value - value, alpha = accepted$alpha,
-          resumed = FALSE, escaped = !is.null(escaped), flat_ascent = TRUE)
-        break
-      }
     }
     # Tighten whatever ended the last stage, or the resume stops there again.
     # Which one it was is not a guess: `iterations` is the engine's own count,
