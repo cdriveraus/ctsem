@@ -1152,15 +1152,15 @@ test_that("the hessian raises the inner budget rather than returning NaN", {
   # starved budget having been sufficient all along. Every column NaN is not a
   # fallback anyone can use: it is what a 571-subject fit reported after a
   # lengthy exact-Hessian pass.
-  # Short of the full set rather than none: how many columns a budget of two
-  # happens to solve depends on where the estimate lands (seven of them, since
-  # the optimiser changed), and the claim is only that the starved budget is
-  # not enough on its own.
-  setbudget(2L)
+  # A budget of one. How many columns two iterations happen to solve depends
+  # on where the estimate lands -- none at the old optimiser's estimate, all
+  # seven at the new one's -- whereas one Newton iteration from the origin
+  # cannot reach a mode that is not at the origin.
+  setbudget(1L)
   bare <- .ctBackendJuliaValue(JuliaConnectoR::juliaCall(
     "ContinuousTimeSEM.ctsem_laplace_hessian", objective, .ctJuliaVector(raw),
     retries = 0L))
-  expect_lt(complete(bare), ncol(bare))
+  expect_equal(complete(bare), 0L)
 
   setbudget(2L)
   rescued <- suppressMessages(.ctBackendJuliaValue(

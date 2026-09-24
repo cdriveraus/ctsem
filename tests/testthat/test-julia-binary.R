@@ -171,9 +171,14 @@ test_that("a saturated optimum is not reported as converged", {
     T0MEANS = matrix(0), CINT = matrix(0), MANIFESTMEANS = matrix(0)))
   m$pars$indvarying <- FALSE
   npar <- sum(is.na(m$pars$value) & !is.na(m$pars$param))
+  # No iteration: the verdict on the saturated start itself. Given one, the
+  # optimiser leaves raw 24 -- the overshoot probe proves it is not a maximum
+  # and hands back a better point, and the fit resumes from there, ending near
+  # raw 1.6 still (correctly) not converged -- which is the right behaviour
+  # and not what this test is about.
   fit <- suppressWarnings(suppressMessages(
     ctFit(d, m, backend = "julia", cores = 1, inits = rep(24, npar),
-      optimcontrol = list(estonly = TRUE, maxiter = 1))))
+      optimcontrol = list(estonly = TRUE, maxiter = 0))))
   expect_gt(max(abs(fit$estimate$raw)), 20)
   expect_false(isTRUE(fit$optim$converged))
 })
