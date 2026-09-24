@@ -726,17 +726,24 @@ function ctsem_laplace_refine(laplace::CTSEMLaplaceObjective,
 end
 
 ################################################################################
-# Clipped-curvature quadrature along the soft directions (value only, prototype)
+# Reference implementation of the gated floor's value
 ################################################################################
+#
+# The `:gated` floor (`_laplace_gated_term` in laplace.jl) is generic in its
+# element type because its gradient differentiates it. These two functions
+# compute the same rule in plain Float64, written separately and first, and
+# `test_laplace.jl` holds the floor's value to them. They are not on any
+# fitting path.
 
 """
-    ctsem_laplace_soft_quadrature_unit(laplace, values, U; nodes=5, ndirs=1,
-                                        tau=0.0, recenter=true)
+    _laplace_soft_rule_unit(laplace, values, U; nodes=5, ndirs=1, tau=0.0,
+                            recenter=true, newton_steps=0)
 
 One unit's log marginal likelihood by a Gauss-Hermite rule along the unit's
-softest directions and Laplace in the rest. Value only, and a measurement
-prototype: see `CT-SEM/review/LAPLACE-eigenwise-floor-2026-09-23.md`, second
-addendum. Reads the modes of the last `ctsem_laplace_evaluate` at `values`.
+softest directions and Laplace in the rest. Value only: the reference the
+gated floor is tested against; see
+`CT-SEM/review/LAPLACE-eigenwise-floor-2026-09-23.md`, second and third
+addenda. Reads the modes of the last `ctsem_laplace_evaluate` at `values`.
 
 In the eigenbasis `M = V Lambda V'` at the mode:
 
@@ -757,12 +764,12 @@ logdet from the last curvature evaluated: `k` gradients, `k` curvatures and one
 value per node. `k = 1` at 3 nodes is the cheap rule of the third addendum.
 The middle node of an odd rule sits at the mode and costs nothing.
 
-`nodes = 1`, `ndirs = 0`, `tau = 1` is exactly the eigenwise floor at `c = 1`.
+`nodes = 1`, `ndirs = 0`, `tau = 1` is `g(uhat) - sum log max(lambda, 1) / 2`.
 Uses `_ctsem_symeig` and `_ctsem_cholesky` throughout (no LAPACK); a rule of
 `n` nodes costs about `n` conditional Newton solves of a few steps, each a
 curvature of the unit, so `n` times the primal work of one unit.
 """
-function ctsem_laplace_soft_quadrature_unit(laplace::CTSEMLaplaceObjective,
+function _laplace_soft_rule_unit(laplace::CTSEMLaplaceObjective,
     values::AbstractVector, U::Integer; nodes::Integer=5, ndirs::Integer=1,
     tau::Real=0.0, recenter::Bool=true, newton_steps::Integer=0)
     theta = collect(Float64, values)
@@ -835,7 +842,6 @@ function ctsem_laplace_soft_quadrature_unit(laplace::CTSEMLaplaceObjective,
         ns * log(pi) / 2
 end
 
-export ctsem_laplace_soft_quadrature_unit
 
 """
     _laplace_soft_weight(lambda, lo, hi)
@@ -849,13 +855,12 @@ function _laplace_soft_weight(lambda::Real, lo::Real, hi::Real)
 end
 
 """
-    ctsem_laplace_gated_unit_term(laplace, values, U; lo=0.2, hi=0.7, nodes=3,
+    _laplace_gated_unit_reference(laplace, values, U; lo=0.2, hi=0.7, nodes=3,
                                   newton_steps=1, solves=5)
 
 `T = T_total + w(lambda_min) (T_soft - T_total)` for one unit, value only, at the
 modes of the last `ctsem_laplace_evaluate` at `values` under the total floor.
-A measurement prototype: see the third addendum of
-`CT-SEM/review/LAPLACE-eigenwise-floor-2026-09-23.md`.
+The Float64 reference for `_laplace_gated_term`; see the section comment.
 
 The gate is exact and costs no likelihood sweep: `M - hi I` is block-factored
 (the same elimination as `M`'s own, no fill-in), and a unit it accepts returns
@@ -867,7 +872,7 @@ soft rule.
 
 Returns `(value, weight, lambda_min, flagged)`.
 """
-function ctsem_laplace_gated_unit_term(laplace::CTSEMLaplaceObjective,
+function _laplace_gated_unit_reference(laplace::CTSEMLaplaceObjective,
     values::AbstractVector, U::Integer; lo::Real=0.2, hi::Real=0.7,
     nodes::Integer=3, newton_steps::Integer=1, solves::Integer=5)
     theta = collect(Float64, values)
@@ -904,91 +909,9 @@ function ctsem_laplace_gated_unit_term(laplace::CTSEMLaplaceObjective,
     end
     w = _laplace_soft_weight(lambda, lo, hi)
     w == 0 && return (value=total, weight=0.0, lambda_min=lambda, flagged=true)
-    soft = ctsem_laplace_soft_quadrature_unit(laplace, theta, U; nodes=nodes,
+    soft = _laplace_soft_rule_unit(laplace, theta, U; nodes=nodes,
         ndirs=1, tau=0.0, recenter=true, newton_steps=newton_steps)
     return (value=total + w * (soft - total), weight=w, lambda_min=lambda,
         flagged=true)
 end
 
-export ctsem_laplace_gated_unit_term
-
-"""
-    ctsem_laplace_gated_value(laplace, values; lo=0.2, hi=0.7, nodes=3,
-                              newton_steps=1)
-
-The log marginal likelihood with every unit's term replaced by
-`ctsem_laplace_gated_unit_term`, plus the prior. One ordinary evaluation under
-the total floor places the modes; units the `M - hi I` gate accepts keep their
-term. Value only; measurement prototype.
-"""
-function ctsem_laplace_gated_value(laplace::CTSEMLaplaceObjective,
-    values::AbstractVector; lo::Real=0.2, hi::Real=0.7, nodes::Integer=3,
-    newton_steps::Integer=1)
-    theta = collect(Float64, values)
-    base = ctsem_laplace_evaluate(laplace, theta; gradient=false)
-    isfinite(base.value) || return (value=NaN, flagged=0)
-    total = _ctsem_log_prior(laplace.objective, theta)
-    flagged = 0
-    for U in eachindex(laplace.units.members)
-        g = ctsem_laplace_gated_unit_term(laplace, theta, U; lo=lo, hi=hi,
-            nodes=nodes, newton_steps=newton_steps)
-        isfinite(g.value) || return (value=NaN, flagged=flagged)
-        flagged += g.flagged
-        total += g.value
-    end
-    return (value=total, flagged=flagged)
-end
-
-"""
-    ctsem_laplace_refine_gated(laplace, values; lo, hi, nodes, newton_steps,
-                               maxiter=1000, step=1e-4, g_tol=1e-5)
-
-`ctsem_laplace_refine`'s central-difference L-BFGS, against
-`ctsem_laplace_gated_value` instead of the quadrature. Returns the minimizer,
-the maximised value, iteration and objective-evaluation counts, and the count
-of flagged units at the end. Measurement prototype: `2 npar` evaluations per
-gradient.
-"""
-function ctsem_laplace_refine_gated(laplace::CTSEMLaplaceObjective,
-    values::AbstractVector; lo::Real=0.2, hi::Real=0.7, nodes::Integer=3,
-    newton_steps::Integer=1, maxiter::Integer=1000, step::Real=1e-4,
-    g_tol::Real=1e-5, verbose::Bool=false)
-    start = collect(Float64, values)
-    invalid = floatmax(Float64) / 1e8
-    calls = Ref(0)
-    objective = function (x)
-        calls[] += 1
-        value = try
-            ctsem_laplace_gated_value(laplace, x; lo=lo, hi=hi, nodes=nodes,
-                newton_steps=newton_steps).value
-        catch err
-            err isa InterruptException && rethrow()
-            NaN
-        end
-        return isfinite(value) ? -value : invalid
-    end
-    gradient! = function (G, x)
-        for j in eachindex(x)
-            h = step * max(1.0, abs(x[j]))
-            plus = copy(x); plus[j] += h
-            minus = copy(x); minus[j] -= h
-            G[j] = (objective(plus) - objective(minus)) / (2h)
-        end
-        return G
-    end
-    options = Optim.Options(iterations=Int(maxiter), g_tol=g_tol,
-        show_trace=verbose, store_trace=false)
-    # Backtracking rather than Optim's default Hager-Zhang, which can give up
-    # without saying so; the objective here has a C1 kink-free hand-off but a
-    # finite-difference gradient, so a robust line search is the safer one.
-    result = Optim.optimize(objective, gradient!, start,
-        Optim.LBFGS(linesearch=Optim.LineSearches.BackTracking()), options)
-    minimizer = collect(Optim.minimizer(result))
-    final = ctsem_laplace_gated_value(laplace, minimizer; lo=lo, hi=hi,
-        nodes=nodes, newton_steps=newton_steps)
-    return (minimizer=minimizer, maximum_loglik=final.value,
-        flagged=final.flagged, iterations=Optim.iterations(result),
-        evaluations=calls[], converged=Optim.converged(result))
-end
-
-export ctsem_laplace_gated_value, ctsem_laplace_refine_gated

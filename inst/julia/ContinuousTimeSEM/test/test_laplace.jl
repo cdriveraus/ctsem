@@ -298,8 +298,9 @@ end
 
 # Two random effects on the nonlinear fixture, T0MEANS and the `-log1p_exp`
 # PARS entry, at a point where one unit's smallest eigenvalue is 0.956 while its
-# logdet is +0.116: the total floor does not engage there and the eigenwise one
-# does. Raw 6 and 7 are the second scale and the correlation.
+# logdet is +0.116: the total floor does not engage there although the unit's
+# likelihood is convex in one direction. Raw 6 and 7 are the second scale and
+# the correlation.
 _fresh_nonlinear_two() = (ctsem_laplace_objective(_LAPLACE_NONLINEAR_OBJECTIVE,
     [1, 2], [5, 6], [7], [1.0, 1.0]), [0.1, -2.0, -0.2, 0.05, -0.25, 2.0, 0.0])
 
@@ -314,132 +315,6 @@ _fresh_nonlinear_two() = (ctsem_laplace_objective(_LAPLACE_NONLINEAR_OBJECTIVE,
         @test norm(A * E.vectors - E.vectors * Diagonal(E.values)) < 1e-12 * scale * n
         @test norm(transpose(E.vectors) * E.vectors - I) < 1e-12 * n
     end
-end
-
-@testset "the eigenwise floor clips eigenvalues, not their product" begin
-    C = ContinuousTimeSEM
-    laplace, _ = _fresh_nonlinear_two()
-    blocks = laplace.units.blocks[1]
-    @test sum(b.size for b in blocks) == 2
-    # Eigenvalues 8 and 1/4: logdet = log 2 > 0, so the total floor leaves the
-    # term alone and the small direction still earns -log(1/4)/2.
-    Q = [cos(0.3) -sin(0.3); sin(0.3) cos(0.3)]
-    dense = Q * Diagonal([8.0, 0.25]) * transpose(Q)
-    M = C._laplace_block_of(dense, blocks)
-    ok, logdetM, _, _ = C._laplace_block_factor(M, blocks)
-    @test ok && isapprox(logdetM, log(2.0); rtol=1e-12)
-    @test !C._laplace_exceeds_identity(M, blocks)
-    clip = C._laplace_eigen_clip(M, blocks, logdetM)
-    @test isapprox(clip.phi, log(8.0); rtol=1e-12)
-    @test !clip.allclipped && !clip.fallback
-    @test isapprox(clip.Cdiag[1], Q[:, 1] * transpose(Q[:, 1]) / 8; atol=1e-14)
-    # Every eigenvalue above one: nothing to clip, and the fast path stands.
-    big = C._laplace_block_of(Q * Diagonal([8.0, 1.5]) * transpose(Q), blocks)
-    @test C._laplace_exceeds_identity(big, blocks)
-    @test C._laplace_eigen_clip(big, blocks, log(12.0)) === nothing
-    # The first derivative through duals is `tr(C~ dM)`.
-    E = Symmetric([0.3 -0.7; -0.7 0.2])
-    phi_at(t) = begin
-        Mt = C._laplace_block_of(dense .+ t .* E, blocks)
-        _, ld, _, _ = C._laplace_block_factor(Mt, blocks)
-        c = C._laplace_eigen_clip(Mt, blocks, ld)
-        c === nothing ? ld : c.phi
-    end
-    @test isapprox(ForwardDiff.derivative(phi_at, 0.0),
-        tr(clip.Cdiag[1] * E); rtol=1e-10)
-    h = 1e-6
-    @test isapprox(ForwardDiff.derivative(phi_at, 0.0),
-        (phi_at(h) - phi_at(-h)) / (2h); rtol=1e-6)
-end
-
-@testset "the eigenwise floor's seeded gradient is the gradient of its value" begin
-    laplace, values = _fresh_nonlinear_two()
-    @test ctsem_set_prior_floor_mode!(:total) === :total
-    total = ctsem_laplace_evaluate(laplace, values; gradient=true)
-    @test !any(ctsem_laplace_diagnostics(laplace).logdet_floored)
-    previous = ctsem_set_prior_floor_mode!(:eigen)
-    local seeded, nested, reference, clipped
-    try
-        seeded = ctsem_laplace_evaluate(laplace, values; gradient=true)
-        clipped = count(ctsem_laplace_diagnostics(laplace).logdet_floored)
-        nested = ctsem_laplace_evaluate(laplace, values; gradient=true,
-            nested_gradient=true)
-        reference = _value_finite_difference(laplace, values)
-    finally
-        ctsem_set_prior_floor_mode!(previous)
-    end
-    # The point was chosen for it: clipping is active, and it costs.
-    @test clipped >= 1
-    @test seeded.value < total.value
-    @test isapprox(seeded.gradient, nested.gradient; rtol=1e-8, atol=1e-10)
-    @test norm(seeded.gradient - reference) / norm(reference) < 1e-6
-    # And the mode switch really was restored.
-    again = ctsem_laplace_evaluate(laplace, values; gradient=true)
-    @test again.value == total.value
-    @test isapprox(again.gradient, total.gradient; rtol=1e-13)
-end
-
-@testset "the eigenwise floor is inactive where the likelihood is concave" begin
-    laplace, values = _fresh_linear()
-    total = ctsem_laplace_evaluate(laplace, values; gradient=true)
-    previous = ctsem_set_prior_floor_mode!(:eigen)
-    local eigenwise
-    try
-        eigenwise = ctsem_laplace_evaluate(laplace, values; gradient=true)
-    finally
-        ctsem_set_prior_floor_mode!(previous)
-    end
-    @test !any(ctsem_laplace_diagnostics(laplace).logdet_floored)
-    @test eigenwise.value == total.value
-    # Not bitwise, for the reason given in the total floor's version above.
-    @test isapprox(eigenwise.gradient, total.gradient; rtol=1e-13)
-end
-
-@testset "the eigenwise floor at a threshold below one" begin
-    C = ContinuousTimeSEM
-    laplace, values = _fresh_nonlinear_two()
-    blocks = laplace.units.blocks[1]
-    Q = [cos(0.3) -sin(0.3); sin(0.3) cos(0.3)]
-    dense = Q * Diagonal([8.0, 0.25]) * transpose(Q)
-    M = C._laplace_block_of(dense, blocks)
-    _, logdetM, _, _ = C._laplace_block_factor(M, blocks)
-    previous = ctsem_set_prior_floor_mode!(:eigen; threshold=0.5)
-    local clip, above, seeded, nested
-    try
-        # 1/4 is clipped to 1/2; 8 is kept.
-        clip = C._laplace_eigen_clip(M, blocks, logdetM)
-        @test isapprox(clip.phi, log(8.0) + log(0.5); rtol=1e-12)
-        # Every eigenvalue above 1/2: the fast path, and the plain logdet.
-        above = C._laplace_eigen_clip(C._laplace_block_of(
-            Q * Diagonal([8.0, 0.6]) * transpose(Q), blocks), blocks, log(4.8))
-        @test above === nothing
-        # A clip level just under unit 3's smallest eigenvalue of 0.956 would
-        # leave it alone; one just over clips it, and the seeded gradient is
-        # still the nested one.
-        ctsem_set_prior_floor_mode!(:eigen; threshold=0.99)
-        seeded = ctsem_laplace_evaluate(laplace, values; gradient=true)
-        @test count(laplace.logdet_floored) >= 1
-        nested = ctsem_laplace_evaluate(laplace, values; gradient=true,
-            nested_gradient=true)
-        @test isapprox(seeded.gradient, nested.gradient; rtol=1e-8, atol=1e-10)
-        # Halfway along the continuation from the total floor: the value is the
-        # average of the two terms and the gradient is still exact.
-        ctsem_set_prior_floor_mode!(:eigen; threshold=1.0, blend=0.5)
-        half = ctsem_laplace_evaluate(laplace, values; gradient=true)
-        halfnested = ctsem_laplace_evaluate(laplace, values; gradient=true,
-            nested_gradient=true)
-        @test isapprox(half.gradient, halfnested.gradient; rtol=1e-8, atol=1e-10)
-        ctsem_set_prior_floor_mode!(:eigen; threshold=1.0, blend=1.0)
-        whole = ctsem_laplace_evaluate(laplace, values; gradient=false)
-        ctsem_set_prior_floor_mode!(:total)
-        tot = ctsem_laplace_evaluate(laplace, values; gradient=false)
-        @test isapprox(half.value, (whole.value + tot.value) / 2; rtol=1e-12)
-    finally
-        ctsem_set_prior_floor_mode!(previous; threshold=1.0, blend=1.0)
-    end
-    @test ContinuousTimeSEM._LAPLACE_EIGEN_THRESHOLD[] == 1.0
-    @test_throws ArgumentError ctsem_set_prior_floor_mode!(:eigen; threshold=0.0)
-    @test ContinuousTimeSEM._LAPLACE_FLOOR_EIGEN[] == false
 end
 
 @testset "curvature conditioning is reported at report time and changes nothing" begin
@@ -475,41 +350,6 @@ end
     @test isapprox(again.gradient, first.gradient; rtol=1e-13)
 end
 
-@testset "the eigenwise floor on a two-level unit decomposes it whole" begin
-    # Two subjects and their study per unit, dimension 5, with one of the
-    # subject effects on the nonlinear `-log1p_exp` entry. The unit's
-    # eigenvalues are not its blocks' eigenvalues, so this is where a per-block
-    # shortcut would show.
-    C = ContinuousTimeSEM
-    laplace = ctsem_laplace_objective(_LAPLACE_NONLINEAR_OBJECTIVE;
-        re_index=[1, 2, 4], sd_index=[5, 6, 8], cor_index=[7],
-        sd_scale=[1.0, 1.0, 1.0], level_nre=[2, 1],
-        group=vcat(1:5, [1, 1, 2, 2, 3]), level_ngroups=[5, 3])
-    values = [0.1, -2.0, -0.2, 0.05, -0.25, 1.0, 0.0, 0.5]
-    previous = ctsem_set_prior_floor_mode!(:eigen)
-    local seeded, nested, partial
-    try
-        seeded = ctsem_laplace_evaluate(laplace, values; gradient=true)
-        # At least one unit is clipped in some directions and not others, so
-        # the seeded route rather than the floored one is what is compared.
-        Ls = C._laplace_popchols(values, laplace.spec)
-        partial = 0
-        for U in eachindex(laplace.units.members)
-            blocks = laplace.units.blocks[U]
-            M = C._laplace_unit_curvature(laplace, U, values, Ls, laplace.modes[U])
-            ok, ld, _, _ = C._laplace_block_factor(M, blocks)
-            clip = C._laplace_eigen_clip(M, blocks, ld)
-            partial += clip !== nothing && !clip.allclipped && length(blocks) > 1
-        end
-        nested = ctsem_laplace_evaluate(laplace, values; gradient=true,
-            nested_gradient=true)
-    finally
-        ctsem_set_prior_floor_mode!(previous)
-    end
-    @test partial >= 1
-    @test isapprox(seeded.gradient, nested.gradient; rtol=1e-8, atol=1e-10)
-end
-
 @testset "the gated rule: value, and its gradient against nested and differences" begin
     C = ContinuousTimeSEM
     # Units 1, 2, 4, 5 have smallest eigenvalues 1.16 to 1.17 at this point and
@@ -517,25 +357,21 @@ end
     # unit fully soft plus four inside the ramp (with lambda above one, so the
     # node scale moves with lambda too).
     laplace, values = _fresh_nonlinear_two()
-    ctsem_set_prior_floor_mode!(:total)
+    @test laplace.floor === :total
     total = ctsem_laplace_evaluate(laplace, values; gradient=true)
     for (label, lo, hi, nflag) in (("above the band", 0.2, 0.7, 0),
                                    ("inside the ramp", 0.8, 1.1, 1),
                                    ("below the ramp", 1.0, 1.2, 5))
-        previous = ctsem_set_prior_floor_mode!(:gated; lo=lo, hi=hi)
-        local seeded, nested, reference, prototype
-        try
-            seeded = ctsem_laplace_evaluate(laplace, values; gradient=true)
-            @test (label, C._CTSEM_LAPLACE_GATED_UNITS[]) == (label, nflag)
-            nested = ctsem_laplace_evaluate(laplace, values; gradient=true,
-                nested_gradient=true)
-            reference = _value_finite_difference(laplace, values)
-        finally
-            ctsem_set_prior_floor_mode!(previous; lo=0.2, hi=0.7)
-        end
-        # The value-only prototype computes the same rule by a separate route.
+        gated, _ = _fresh_nonlinear_two()
+        ctsem_set_laplace_floor!(gated, :gated; lo=lo, hi=hi)
+        seeded = ctsem_laplace_evaluate(gated, values; gradient=true)
+        @test (label, gated.gated_units) == (label, nflag)
+        nested = ctsem_laplace_evaluate(gated, values; gradient=true,
+            nested_gradient=true)
+        reference = _value_finite_difference(gated, values)
+        # The Float64 reference computes the same rule by a separate route.
         ctsem_laplace_evaluate(laplace, values; gradient=false)
-        prototype = sum(ctsem_laplace_gated_unit_term(laplace, values, U; lo=lo,
+        prototype = sum(C._laplace_gated_unit_reference(laplace, values, U; lo=lo,
             hi=hi, nodes=3, newton_steps=1).value
             for U in eachindex(laplace.units.members))
         @test (label, isapprox(seeded.value, prototype; rtol=1e-10)) == (label, true)
@@ -559,20 +395,36 @@ end
         sd_scale=[1.0, 1.0, 1.0], level_nre=[2, 1],
         group=vcat(1:5, [1, 1, 2, 2, 3]), level_ngroups=[5, 3])
     values = [0.1, -2.0, -0.2, 0.05, -0.25, 1.0, 0.0, 0.5]
-    previous = ctsem_set_prior_floor_mode!(:gated; lo=0.3, hi=1.1)
-    local seeded, nested, reference
-    try
-        seeded = ctsem_laplace_evaluate(laplace, values; gradient=true)
-        @test C._CTSEM_LAPLACE_GATED_UNITS[] >= 1
-        nested = ctsem_laplace_evaluate(laplace, values; gradient=true,
-            nested_gradient=true)
-        reference = _value_finite_difference(laplace, values)
-    finally
-        ctsem_set_prior_floor_mode!(previous; lo=0.2, hi=0.7)
-    end
+    ctsem_set_laplace_floor!(laplace, :gated; lo=0.3, hi=1.1)
+    seeded = ctsem_laplace_evaluate(laplace, values; gradient=true)
+    @test laplace.gated_units >= 1
+    nested = ctsem_laplace_evaluate(laplace, values; gradient=true,
+        nested_gradient=true)
+    reference = _value_finite_difference(laplace, values)
     @test isapprox(seeded.gradient, nested.gradient; rtol=1e-8, atol=1e-10)
     @test norm(seeded.gradient - reference) / norm(reference) < 1e-5
-    @test C._LAPLACE_FLOOR_GATED[] == false
+end
+
+@testset "the floor belongs to the objective, not the session" begin
+    # Two objectives over the same model: setting one to :gated leaves the
+    # other at :total, value and gradient, and a fresh objective starts at
+    # :total whatever was done before it.
+    gated, values = _fresh_nonlinear_two()
+    plain, _ = _fresh_nonlinear_two()
+    before = ctsem_laplace_evaluate(plain, values; gradient=true)
+    previous = ctsem_set_laplace_floor!(gated, :gated; lo=0.8, hi=1.1)
+    @test previous == (floor=:total, lo=0.2, hi=0.7)
+    g = ctsem_laplace_evaluate(gated, values; gradient=true)
+    after = ctsem_laplace_evaluate(plain, values; gradient=true)
+    @test g.value != before.value
+    @test after.value == before.value
+    @test isapprox(after.gradient, before.gradient; rtol=1e-13)
+    fresh, _ = _fresh_nonlinear_two()
+    @test fresh.floor === :total
+    @test ctsem_laplace_evaluate(fresh, values; gradient=false).value == before.value
+    @test_throws ArgumentError ctsem_set_laplace_floor!(plain, :eigen)
+    @test_throws ArgumentError ctsem_set_laplace_floor!(plain, :gated; lo=0.7, hi=0.2)
+    @test ctsem_laplace_diagnostics(gated).floor === :gated
 end
 
 @testset "first-order eigen-quantities are the derivatives they claim" begin
