@@ -82,6 +82,15 @@
 #' 0.7 flags a unit or row whose estimate is unreliable; K fold is then the
 #' better tool for it.
 #'
+#' \strong{Both methods cross-validate the Laplace objective.} A Laplace fit's
+#' estimate is corrected by quadrature by default
+#' (\code{optimcontrol$laplace_correct}, see \code{\link{ctFit}}). The folds are
+#' refits of the Laplace objective, scored by it, and are not corrected -- each
+#' would need its own Hessian and quadrature gradient -- so the in-sample side,
+#' the folds' starting point and the PSIS proposal all use the Laplace optimum,
+#' \code{fit$laplace$correction$laplace_estimate}, rather than the corrected
+#' estimate. \code{scoring} says so when the fit was corrected.
+#'
 #' @return For \code{method = 'kfold'}, a list with \code{foldrows},
 #'   \code{foldpars}, \code{insampleLogLikRow}, \code{LogLikRowFolds},
 #'   \code{outsampleLogLikRow}, \code{insampleLogLik}, \code{outsampleLogLik}
@@ -428,7 +437,15 @@ ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
   rowsubject <- .ctFitRowSubject(fit)
   ndatapoints <- length(rowsubject)
   subjects <- unique(rowsubject)
-  est <- as.numeric(fit$estimate$raw)
+  # The Laplace optimum, not a quadrature-corrected estimate. Every fold is a
+  # refit of the Laplace objective and is scored by it, so the in-sample side
+  # has to be that objective's optimum too: a corrected full-data estimate
+  # against uncorrected folds would compare two different estimators. The
+  # folds are not corrected themselves -- each would need a Hessian and
+  # `2 * npar` quadrature evaluations -- so what is cross-validated is the
+  # Laplace-approximated model, and `scoring` says so.
+  est <- .ctLaplaceOptimum(fit)
+  corrected <- .ctLaplaceIsCorrected(fit)
 
   message("Using ", cores, "/", parallel::detectCores(), " available CPU cores")
   samplerows <- .ctBackendLOOFolds(rowsubject, folds, subjectwise, keepfirstobs,
@@ -595,6 +612,10 @@ ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
     } else if (withheld) {
       "rows at random effect modes from the fold's training rows"
     } else "rows at random effect modes from the full data"
+    if (corrected) {
+      out$scoring <- paste0(out$scoring, "; Laplace optimum, not the fit's ",
+        "quadrature-corrected estimate, and folds are not corrected")
+    }
   }
   out
 }
@@ -659,7 +680,9 @@ ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
     stop("ndraws must be a whole number of at least 50.", call. = FALSE)
   }
   spec <- .ctBackendSpec(fit)
-  est <- as.numeric(fit$estimate$raw)
+  # The Laplace posterior is what the draws are corrected to, so they are
+  # centred at its mode; see `.ctBackendLOO()` for the same choice.
+  est <- .ctLaplaceOptimum(fit)
   .ctBackendWithMaxChunks(cores, if (isTRUE(subjectwise)) {
     .ctBackendLOOPsisUnits(fit, spec, est, ndraws, scale)
   } else {

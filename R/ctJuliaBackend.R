@@ -4231,6 +4231,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # Before `.ctJuliaPrepare()` deliberately -- the opt-in restart ends the
   # process, and nothing prepared here may be alive across that.
   .ctBackendResolveThreads(cores, report = isTRUE(fit))
+  # Resolved, and refused by name where it cannot apply, before anything is
+  # prepared or fitted. See `.ctLaplaceAutoCorrect()`.
+  correctlaplace <- .ctLaplaceCorrectResolve(optimcontrol, intoverpop = intoverpop,
+    optimize = optimize, intoverstates = intoverstates)
   gradient <- .ctJuliaOr(optimcontrol$gradient, "adjoint")
   if (!gradient %in% c("forward", "adjoint")) stop("gradient must be 'forward' or 'adjoint'", call. = FALSE)
   # 'adjoint' selects the Julia engine's reverse-mode gradient. Its cost is
@@ -4866,6 +4870,21 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       verbose = verbose)
   }
 
+  # The quadrature correction, last of the post-optimiser stages: after the
+  # certification has converged the Laplace objective and after the uncertainty
+  # stage has built the Hessian it steps against, which it reuses rather than
+  # computing another. Before the constrained draws below, so that they are
+  # built once from the recentred draws. See `.ctLaplaceAutoCorrect()`.
+  if (!is.null(out$laplace) && isTRUE(intoverstates)) {
+    if (isTRUE(correctlaplace)) {
+      out <- .ctLaplaceAutoCorrect(out, cores = cores, verbose = verbose)
+    } else {
+      out$laplace$correction <- list(status = if (isTRUE(optimcontrol$estonly) &&
+        !isFALSE(optimcontrol$laplace_correct)) "estonly" else "off",
+        applied = FALSE)
+    }
+  }
+
   # The draws pushed through the model's transforms, once, exactly as the Stan
   # path stores `stanfit$transformedpars` at fit time. Every summary, extract
   # and system-matrix collapse reads this rather than asking the engine again.
@@ -4901,8 +4920,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # `fit`/`at` let it tell a random-effect block trading its scale off against
   # its correlations -- where the covariances are determined, and fixing a
   # value throws them away -- from a direction the data says nothing about.
+  # `at` is where that curvature was evaluated, which after the Laplace
+  # correction is the Laplace optimum and not the reported estimate.
   out$identifiability <- .ctBackendIdentifiability(out$uncertainty$hessian,
-    rawnames, fit = out, at = out$estimate$raw)
+    rawnames, fit = out,
+    at = .ctJuliaOr(out$uncertainty$evaluated_at, out$estimate$raw))
   # `$uncertainty$intervalcheck` is attached by `.ctBackendUncertainty()`, so
   # it describes whichever method ran; it is only warned about here. A separate
   # question from identifiability: a direction can be flat enough to ruin every
@@ -4935,6 +4957,16 @@ print.ctJuliaFit <- function(x, ...) {
       cat("  ", paste(utils::head(x$sample$diagnosis, 3), collapse = "; "),
         ". See fit$sample.\n", sep = "")
     }
+  }
+  # The quadrature correction, only when it moved the estimate by a tenth of a
+  # standard error or more.
+  corr <- x$laplace$correction
+  if (isTRUE(corr$applied) && isTRUE(corr$material)) {
+    cat("  Laplace estimate corrected by quadrature: up to ",
+      format(max(abs(corr$delta_se), na.rm = TRUE), digits = 2),
+      " standard errors, log likelihood ", format(corr$loglik_laplace, digits = 8),
+      " -> ", format(corr$loglik_quadrature, digits = 8),
+      ". See fit$laplace$correction.\n", sep = "")
   }
   # One line, only when there is something to say. A reported interval much
   # wider than the curvature at the estimate supports is not visible anywhere

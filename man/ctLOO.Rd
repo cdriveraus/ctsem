@@ -132,6 +132,15 @@ approximation, without refitting, at one of two levels:
 Draws whose inner mode solve fails are dropped and counted. A Pareto k above
 0.7 flags a unit or row whose estimate is unreliable; K fold is then the
 better tool for it.
+
+\strong{Both methods cross-validate the Laplace objective.} A Laplace fit's
+estimate is corrected by quadrature by default
+(\code{optimcontrol$laplace_correct}, see \code{\link{ctFit}}). The folds are
+refits of the Laplace objective, scored by it, and are not corrected -- each
+would need its own Hessian and quadrature gradient -- so the in-sample side,
+the folds' starting point and the PSIS proposal all use the Laplace optimum,
+\code{fit$laplace$correction$laplace_estimate}, rather than the corrected
+estimate. \code{scoring} says so when the fit was corrected.
 }
 \examples{
 \donttest{

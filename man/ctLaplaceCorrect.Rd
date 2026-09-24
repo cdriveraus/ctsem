@@ -109,6 +109,15 @@ corrected draws are carried by a few points and the interval should not be
 trusted. When that happens the approximation is too far from the target to
 repair by reweighting, and \code{\link{ctSample}} is the answer rather than
 this.
+
+Laplace fits are now corrected when they are fitted, by default
+(\code{optimcontrol$laplace_correct}, see \code{\link{ctFit}}): the estimate
+moves and the draws are recentred exactly as \code{draws='normal'} does here.
+On such a fit (\code{fit$laplace$correction$applied}) this function refuses
+anything that would apply the step a second time. \code{draws='imis'} is
+still available there, and redraws around the corrected estimate without
+moving it. To correct by hand instead, refit with
+\code{laplace_correct = FALSE}.
 }
 \examples{
 \dontrun{

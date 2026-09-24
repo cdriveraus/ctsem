@@ -60,6 +60,15 @@
 #' repair by reweighting, and \code{\link{ctSample}} is the answer rather than
 #' this.
 #'
+#' Laplace fits are now corrected when they are fitted, by default
+#' (\code{optimcontrol$laplace_correct}, see \code{\link{ctFit}}): the estimate
+#' moves and the draws are recentred exactly as \code{draws='normal'} does here.
+#' On such a fit (\code{fit$laplace$correction$applied}) this function refuses
+#' anything that would apply the step a second time. \code{draws='imis'} is
+#' still available there, and redraws around the corrected estimate without
+#' moving it. To correct by hand instead, refit with
+#' \code{laplace_correct = FALSE}.
+#'
 #' @param fit A \code{ctJuliaFit} fitted with \code{intoverpop='laplace'}, with
 #'   uncertainty already computed -- the correction needs the Hessian and the
 #'   proposal needs the covariance.
@@ -140,13 +149,32 @@ ctLaplaceCorrect <- function(fit, draws = c("normal", "imis", "keep"),
   est <- as.numeric(fit$estimate$raw)
   npar <- length(est)
 
+  # A fit the default correction (optimcontrol$laplace_correct) already moved
+  # must not be moved again by the same step. What is still worth asking for
+  # there is the shape, so draws='imis' redraws around the corrected estimate
+  # and leaves it where it is; anything that would move the estimate or only
+  # recentre the draws is refused, because that is what was already done.
+  already <- .ctLaplaceIsCorrected(fit)
+  if (already) {
+    if (!identical(draws, "imis") ||
+        (!missing(correct_estimate) && isTRUE(correct_estimate))) {
+      stop("This fit was already corrected by quadrature when it was fitted ",
+        "(fit$laplace$correction), so ctLaplaceCorrect() would apply the step ",
+        "twice. Use draws='imis' to redraw around the corrected estimate, or ",
+        "refit with optimcontrol$laplace_correct = FALSE to correct by hand.",
+        call. = FALSE)
+    }
+    correct_estimate <- FALSE
+  }
+
   # The check does the correction arithmetic and the reporting, and it already
   # handles the chunk-count restore, nested groupings, and the near-singular
   # directions it refuses to correct along. Repeating any of that here would be
-  # a second implementation of it.
-  check <- ctLaplaceCheck(fit, nodes = nodes, correction = TRUE,
+  # a second implementation of it. On an already-corrected fit only its gap is
+  # needed, which is one quadrature evaluation rather than `2 * npar`.
+  check <- ctLaplaceCheck(fit, nodes = nodes, correction = !already,
     cores = cores, verbose = verbose)
-  if (is.null(check$corrected)) {
+  if (isTRUE(correct_estimate) && is.null(check$corrected)) {
     stop("The correction could not be formed; see the warning from ",
       "ctLaplaceCheck.", call. = FALSE)
   }
@@ -303,4 +331,195 @@ print.ctLaplaceCorrection <- function(x, ...) {
     cat("  estimate left at the uncorrected point; draws redrawn only\n")
   }
   invisible(x)
+}
+
+# The correction every Laplace fit gets by default ---------------------------
+#
+# `optimcontrol$laplace_correct` (default TRUE) runs `ctsem_laplace_autocorrect`
+# at the end of an optimised `intoverpop='laplace'` fit: after the optimiser,
+# after the curvature certification and its Newton continuation have converged
+# the Laplace objective, and after the uncertainty stage has built the fit's
+# Hessian and draws. It computes no Hessian of its own -- the step's metric is
+# the one the standard errors came from, at the point it was evaluated -- and
+# pays in tiers, each skipped when the one before finds nothing:
+#
+#   screen  one quadrature evaluation: the per-unit gap summed in absolute
+#           value. Where every unit's likelihood is quadratic in its effects
+#           Laplace is exact, the gap is rounding, and the fit is left
+#           untouched to the bit.
+#   step    `2 * npar` quadrature evaluations for the gradient, then a line
+#           search on the quadrature objective. Accepted only on an increase.
+#   repeat  up to `maxsteps` (3), same metric, until the predicted gain is
+#           small or a step moved no parameter by `step_tol` (0.1) of its
+#           standard error. On a 40-subject random-DRIFT fixture one step
+#           took 80% of the quadrature objective's gain and three took 99%;
+#           see review/LAPLACE-default-correction-2026-09-24.md.
+#
+# What moves when it applies, and what deliberately does not:
+#
+#   fit$estimate$raw             the corrected point
+#   fit$estimate$loglik          the quadrature log likelihood there (and
+#                                `logposterior`, `subject_loglik` with it);
+#                                `loglik_laplace` keeps the Laplace value at
+#                                the Laplace optimum, `loglik_method` says which
+#   fit$estimate$rawposterior    shifted by the step: recentred, not reshaped
+#   fit$estimate$cov, $se        unchanged -- the Laplace curvature, at
+#                                `fit$uncertainty$evaluated_at`
+#   fit$laplace$correction       what was done, and where
+.ctLaplaceCorrectDefaults <- list(nodes = 5L, tolerance = 0.01, maxsteps = 3L,
+  gain_tol = 1e-3, step_tol = 0.1, step = 1e-3, material = 0.1)
+
+# Whether this fit is corrected, refusing by name a request that cannot apply.
+# FALSE is accepted anywhere, since it describes what every other route does.
+.ctLaplaceCorrectResolve <- function(optimcontrol, intoverpop, optimize,
+  intoverstates) {
+  value <- optimcontrol$laplace_correct
+  explicit <- !is.null(value)
+  if (explicit && !(is.logical(value) && length(value) == 1L && !is.na(value))) {
+    stop("optimcontrol$laplace_correct must be TRUE or FALSE.", call. = FALSE)
+  }
+  if (explicit && isFALSE(value)) return(FALSE)
+  why <- if (!identical(as.character(intoverpop)[1L], "laplace")) {
+    paste0("applies to intoverpop='laplace' only; with intoverpop='",
+      intoverpop, "' there is no Laplace term to correct")
+  } else if (!isTRUE(optimize)) {
+    paste0("corrects an optimised estimate, and a sampled fit ",
+      "(optimize=FALSE) has none to move")
+  } else if (!isTRUE(intoverstates)) {
+    paste0("corrects the marginal Laplace estimate, which an ",
+      "intoverstates=FALSE fit does not make")
+  } else if (isTRUE(optimcontrol$estonly)) {
+    "steps against the fit's Hessian, which optimcontrol$estonly skips"
+  } else NULL
+  if (is.null(why)) return(TRUE)
+  if (explicit) {
+    stop("optimcontrol$laplace_correct ", why, ". Drop it.", call. = FALSE)
+  }
+  FALSE
+}
+
+# The raw estimate the Laplace objective was maximised at: the fit's estimate,
+# unless the default correction moved it. Anything that is about the Laplace
+# objective itself -- cross-validating it, importance sampling its posterior --
+# reads this rather than `fit$estimate$raw`.
+.ctLaplaceOptimum <- function(fit) {
+  corr <- fit$laplace$correction
+  if (isTRUE(corr$applied) &&
+      length(corr$laplace_estimate) == length(fit$estimate$raw)) {
+    return(as.numeric(corr$laplace_estimate))
+  }
+  as.numeric(fit$estimate$raw)
+}
+
+# Whether the default correction moved this fit's estimate.
+.ctLaplaceIsCorrected <- function(fit) isTRUE(fit$laplace$correction$applied)
+
+.ctLaplaceAutoCorrect <- function(fit, cores = 1L, verbose = 0L,
+  control = .ctLaplaceCorrectDefaults) {
+  est <- as.numeric(fit$estimate$raw)
+  npar <- length(est)
+  hessian <- fit$uncertainty$hessian
+  at <- fit$uncertainty$evaluated_at
+  usable <- is.matrix(hessian) && nrow(hessian) == npar &&
+    ncol(hessian) == npar && length(at) == npar &&
+    isTRUE(all.equal(as.numeric(at), est, tolerance = 0))
+  # A 1x1 NaN rather than an empty matrix: an empty one deadlocks the bridge,
+  # and the engine reads any size mismatch as "no Hessian".
+  if (!usable) hessian <- matrix(NaN, 1L, 1L)
+  failed <- function(phrase) {
+    warning("Laplace correction skipped: ", phrase, ". The uncorrected fit is ",
+      "returned; see fit$laplace$correction.", call. = FALSE)
+    fit$laplace$correction <- list(status = "failed", applied = FALSE,
+      message = phrase, nodes = as.integer(control$nodes))
+    fit
+  }
+  # The standard errors scale the stopping rule; never an empty vector across
+  # the bridge, so an absent one is a vector of NaN, which the engine ignores.
+  se <- as.numeric(fit$estimate$se)
+  if (length(se) != npar) se <- rep(NaN, npar)
+  se[!is.finite(se)] <- NaN
+  chunks <- suppressWarnings(as.integer(fit$optim$chunks)[1L])
+  if (is.na(chunks) || chunks < 1L) chunks <- max(1L, as.integer(cores)[1L])
+  if (verbose > 0) message("Laplace correction: quadrature screen (",
+    control$nodes, " nodes)")
+  res <- try(.ctBackendWithMaxChunks(chunks, JuliaConnectoR::juliaGet(
+    .ctJuliaModule(fit$model_spec$project)$ctsem_laplace_autocorrect(
+      .ctJuliaObjective(fit), .ctJuliaNumericVector(est),
+      JuliaConnectoR::juliaPut(as.matrix(hessian)),
+      nodes = as.integer(control$nodes), step = as.numeric(control$step),
+      tolerance = as.numeric(control$tolerance),
+      maxsteps = as.integer(control$maxsteps),
+      gain_tol = as.numeric(control$gain_tol),
+      scale = .ctJuliaNumericVector(se),
+      step_tol = as.numeric(control$step_tol)))), silent = TRUE)
+  if (inherits(res, "try-error")) {
+    return(failed("the quadrature could not be evaluated"))
+  }
+  status <- as.character(res$status)
+  if (identical(status, "quadrature_failed")) {
+    return(failed("the quadrature was not finite at the estimate"))
+  }
+  if (identical(status, "nonfinite_step")) {
+    return(failed("the correction step was not finite"))
+  }
+  steps <- as.integer(res$steps)
+  newest <- as.numeric(res$estimate)
+  delta <- newest - est
+  delta_se <- if (length(se) == npar) ifelse(se > 0, delta / se, NA_real_) else
+    rep(NA_real_, npar)
+  names(delta) <- names(delta_se) <- names(fit$estimate$se)
+  record <- list(status = status, applied = FALSE,
+    nodes = as.integer(res$nodes), tolerance = as.numeric(res$tolerance),
+    # sum over units of |quadrature - Laplace| at the Laplace optimum, and the
+    # signed total the fit's log likelihood was off by there.
+    screen = as.numeric(res$screen), gap = as.numeric(res$gap_start),
+    laplace_estimate = est,
+    loglik_laplace = as.numeric(fit$estimate$loglik),
+    steps = steps,
+    predicted_gain = if (steps > 0L) as.numeric(res$predicted)[seq_len(steps)] else
+      numeric(0),
+    alpha = if (steps > 0L) as.numeric(res$alpha)[seq_len(steps)] else numeric(0),
+    first_delta = as.numeric(res$first_delta),
+    delta = delta, delta_se = delta_se,
+    dropped_directions = as.integer(res$dropped_directions),
+    # Where the step's metric was evaluated: the Laplace optimum, whose
+    # Hessian the standard errors also come from.
+    hessian_at = if (usable) "laplace_estimate" else "none",
+    seconds = c(screen = as.numeric(res$screen_seconds),
+      total = as.numeric(res$seconds)))
+  if (!identical(status, "corrected") || !all(is.finite(newest))) {
+    fit$laplace$correction <- record
+    return(fit)
+  }
+  # Applied. The draws are moved by the step and not redrawn, so they keep the
+  # Laplace curvature's shape -- recentred, not reshaped, which is what
+  # `draws='imis'` in ctLaplaceCorrect() is for.
+  record$applied <- TRUE
+  record$loglik_quadrature <- sum(as.numeric(res$quadrature_units))
+  record$logposterior_quadrature <- as.numeric(res$quadrature)
+  record$logposterior_laplace <- as.numeric(res$laplace)
+  record$material <- isTRUE(max(abs(delta_se), na.rm = TRUE) >= control$material)
+  record$draws <- "recentred"
+  fit$estimate$raw <- newest
+  fit$estimate$loglik_laplace <- record$loglik_laplace
+  fit$estimate$loglik <- record$loglik_quadrature
+  fit$estimate$logposterior <- record$logposterior_quadrature
+  subjects <- as.numeric(res$quadrature_subjects)
+  if (length(subjects) == length(fit$estimate$subject_loglik) &&
+      all(is.finite(subjects))) {
+    fit$estimate$subject_loglik <- subjects
+  }
+  fit$estimate$loglik_method <- "quadrature"
+  post <- fit$estimate$rawposterior
+  if (!is.null(post) && ncol(post) == npar) {
+    fit$estimate$rawposterior <- sweep(post, 2L, delta, "+")
+  }
+  if (!is.null(fit$uncertainty)) {
+    fit$uncertainty$details$laplace_correction <- list(
+      draws = paste0("recentred on the corrected estimate; the covariance is ",
+        "the Laplace curvature at fit$uncertainty$evaluated_at"),
+      nodes = record$nodes)
+  }
+  fit$laplace$correction <- record
+  fit
 }
