@@ -231,10 +231,12 @@
     msg = paste0("is the gradient at which a unit's random-effect mode counts ",
       "as found, and stan has no such inner solve -- it augments the latent ",
       "state instead. Drop it")),
-  # The Laplace term's prior floor. 'total' is what every fit does, so it is
-  # accepted anywhere; anything else is julia and intoverpop='laplace' only.
+  # The Laplace term's prior floor, julia and intoverpop='laplace' only. 'total'
+  # used to be accepted anywhere because it was what every fit did; since the
+  # default became 'gated' neither value describes a stan fit, so both are
+  # refused there.
   laplace_floor = list(only = 'julia',
-    inert = function(v) identical(as.character(v)[1L], "total"),
+    inert = function(v) FALSE,
     msg = paste0("chooses how julia's Laplace term treats a unit whose ",
       "likelihood is convex in its random effects, and stan has no Laplace ",
       "term -- it augments the latent state instead. Drop it"))
@@ -645,16 +647,19 @@ T0VARredundancies <- function(ctm) {
 #'
 #' Also with \code{intoverpop='laplace'}, \code{optimcontrol$laplace_floor}
 #' chooses how a subject whose likelihood has gone convex in its random effects
-#' is scored. \code{'total'}, the default, floors the log determinant of each
-#' subject's inner curvature at zero. \code{'gated'} (experimental) scores a
-#' subject whose curvature has an eigenvalue below 0.7 by a three-point
-#' quadrature along that direction instead, handing off smoothly to the default
-#' between 0.2 and 0.7; on weak simulated data it removed the several-nat
-#' over-credit the default gives such subjects, at about twice their cost. The
-#' choice is recorded in \code{fit$laplace$floor} and every post-fit function
-#' that rebuilds the objective (\code{ctLaplaceCheck}, \code{ctKalman},
-#' \code{ctLOO}) uses it. \code{fit$laplace$conditioning} reports how many
-#' subjects have such curvature at the estimate, whichever floor was used.
+#' is scored. \code{'gated'}, the default, scores a subject whose curvature has
+#' an eigenvalue below 0.7 by a three-point quadrature along that direction,
+#' handing off smoothly between 0.2 and 0.7 to \code{'total'}, which floors the
+#' log determinant of each subject's inner curvature at zero. On weak simulated
+#' data \code{'gated'} removed the several-nat over-credit \code{'total'} gives
+#' such subjects, at about twice their cost, and costs nothing where no subject
+#' is flagged. \code{'total'} remains selectable. The choice is recorded in
+#' \code{fit$laplace$floor} and every post-fit function that rebuilds the
+#' objective (\code{ctLaplaceCheck}, \code{ctKalman}, \code{ctLOO}) uses it; a
+#' fit saved before \code{'gated'} became the default records no floor, and is
+#' rebuilt under the \code{'total'} it was fitted with.
+#' \code{fit$laplace$conditioning} reports how many subjects have such
+#' curvature at the estimate, whichever floor was used.
 #'
 #' With \code{backend='julia'}, \code{optimcontrol$gradient} selects the
 #' gradient method: \code{'adjoint'} (reverse mode, the default) or

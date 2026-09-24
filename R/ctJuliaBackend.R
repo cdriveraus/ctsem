@@ -2738,8 +2738,13 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     }
     out$inner_tol <- tol
   }
-  # Recorded only when it is not the default, so that every model that asked
-  # for nothing hashes, and so builds, exactly as it did.
+  # Recorded whenever it is given, default included. An absent floor is the
+  # historical meaning, 'total': a specification written before the default
+  # became 'gated' carries none, and every route that rebuilds an objective
+  # from it must keep scoring it the way it was fitted. So the default is
+  # resolved at the fit's entry point (`.ctFitJuliaBackendImpl`), never here --
+  # the rebuild sites pass `spec$laplace$inner` back through this function, and
+  # a default filled in here would silently move a stored fit to 'gated'.
   floor <- laplacecontrol$floor
   if (!is.null(floor)) {
     floor <- as.character(floor)[1L]
@@ -2747,10 +2752,13 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       stop("optimcontrol$laplace_floor must be 'total' or 'gated'.",
         call. = FALSE)
     }
-    if (floor != "total") out$floor <- floor
+    out$floor <- floor
   }
   out
 }
+
+# The floor a new intoverpop='laplace' fit uses when none is asked for.
+.ctJuliaLaplaceFloorDefault <- "gated"
 
 # `intoverpop` deliberately has no default. It selects which *model* is
 # prepared -- random effects as latent states, or integrated by Laplace -- and a
@@ -2770,9 +2778,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   intoverpop <- match.arg(as.character(intoverpop)[1L],
     c("augmented", "laplace", "none"))
   # The floor is a property of the Laplace term, so any other route refuses it
-  # by name rather than accepting it and doing something else.
+  # by name rather than accepting it and doing something else. Either value:
+  # 'total' is no longer what every fit does, so it is not inert elsewhere.
   if (!is.null(laplacecontrol$floor) &&
-      !identical(as.character(laplacecontrol$floor)[1L], "total") &&
       !identical(intoverpop, "laplace")) {
     stop("optimcontrol$laplace_floor applies to intoverpop='laplace' only; ",
       "with intoverpop='", intoverpop, "' there is no Laplace term to floor. ",
@@ -3295,10 +3303,13 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       laplace_args$inner_tol <- as.numeric(spec$laplace$inner$inner_tol)
     }
     # The floor goes on the objective, not the session, so a gated fit leaves
-    # every other objective -- and every later fit -- on the default.
-    if (!is.null(spec$laplace$inner$floor)) {
-      laplace_args$floor <- as.character(spec$laplace$inner$floor)
-    }
+    # every other objective -- and every later fit -- as it was. Always sent,
+    # so the cache key (a hash of these inputs) sees the floor the objective is
+    # actually built with: a default 'gated' and an explicit one hash alike, and
+    # an absent floor -- a specification from before 'gated' was the default --
+    # is built, and keyed, as the 'total' it was fitted under.
+    laplace_args$floor <- as.character(.ctJuliaOr(spec$laplace$inner$floor,
+      "total"))[1L]
     if (length(levels) > 1L) {
       # Concatenated innermost level first, split on the far side by the
       # per-level counts. Flat vectors because the bridge marshals those and
@@ -4243,7 +4254,13 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     tipredMissingIncludeOutcome = .ctJuliaOr(optimcontrol$tipredMissingIncludeOutcome, TRUE),
     laplacecontrol = list(inner_maxiter = optimcontrol$laplace_inner_maxiter,
       inner_tol = optimcontrol$laplace_inner_tol,
-      floor = optimcontrol$laplace_floor))
+      # The default is resolved here, at the one place a *new* fit is
+      # specified, and only for the route that has a Laplace term: every
+      # rebuild of an existing specification passes its own `inner` instead,
+      # where an absent floor means the 'total' it was fitted under.
+      floor = if (identical(as.character(intoverpop)[1L], "laplace"))
+        .ctJuliaOr(optimcontrol$laplace_floor, .ctJuliaLaplaceFloorDefault)
+        else optimcontrol$laplace_floor))
   if (!is.null(model_spec$ti_missing) && nrow(model_spec$ti_missing)) {
     # The state-explicit route (`intoverstates=FALSE`) samples the latent
     # trajectory through a different objective (`CTSEMJointObjective`,
