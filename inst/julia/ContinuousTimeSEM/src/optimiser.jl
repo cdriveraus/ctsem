@@ -561,13 +561,37 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             prevgain = gain
         end
     end
-    # The certification's Hessian: at the final point, exactly.
-    if !at_x
-        H = hess(x)
-    end
-    if H !== nothing
+    # The certification's Hessian: at the final point, exactly. A kept or a
+    # subset Hessian judges the gain against itself, so the loop above can
+    # stop where the exact curvature still predicts more than `tol`; then the
+    # finish carries on with the exact Hessian until it agrees. Otherwise the
+    # certification would find the point unfinished and resume L-BFGS with its
+    # stopping rule switched off -- measured: 1045 iterations to the cap on a
+    # 30-subject model the exact finish closes in 10 steps.
+    for _ in 1:5
+        if !at_x
+            H = hess(x); at_x = true
+        end
+        H === nothing && break
         nt = newton(H, G, 0.0)
         gain = nt === nothing ? Inf : nt.gain
+        (nt === nothing || gain < tol || steps >= maxit + 5) && break
+        dphi = dot(G, nt.step)
+        alpha = 1.0
+        xn = x .+ nt.step
+        fn = fg!(0.0, nothing, xn); fcalls += 1
+        k = 0
+        while !(isfinite(fn) && fn <= f + 1e-4 * alpha * dphi) && k < 30
+            k += 1; alpha /= 2
+            xn = x .+ alpha .* nt.step
+            fn = fg!(0.0, nothing, xn); fcalls += 1
+        end
+        (isfinite(fn) && fn <= f + 1e-4 * alpha * dphi) || break
+        Gn = similar(G)
+        fg!(nothing, Gn, xn); gcalls += 1
+        x = xn; f = fn; G = Gn; steps += 1; at_x = false
+        callback === nothing || callback(CTSEMIterate(iteration0 + steps, f,
+            maximum(abs, G; init=0.0)))
     end
     (x=x, f=f, G=G, hessian=H === nothing ? nothing : -H, steps=steps,
      gain=gain, full_hessians=full_hessians, subset_hessians=subset_hessians,
