@@ -129,6 +129,10 @@
     residual = residual, residual_norm = sqrt(sum(residual^2)),
     ntrusted = sum(keep), nflat = sum(!keep & !split$negative),
     nnegative = sum(split$negative),
+    # The direction the point is not a maximum along -- the most negative
+    # curvature -- so a report can say which parameters it runs through.
+    negative_vector = if (any(split$negative))
+      split$vectors[, which.min(split$values)] else NULL,
     # The smallest curvature still trusted, which is what sets how tight a
     # gradient has to be before the gap can be under a given tolerance.
     lambda_min = if (length(values)) min(values) else NA_real_, ok = TRUE)
@@ -463,6 +467,7 @@
     residual_gain = if (is.null(probe)) 0 else probe$gain,
     residual_length = if (is.null(probe)) 0 else probe$length,
     ntrusted = gap$ntrusted, nflat = gap$nflat, nnegative = gap$nnegative,
+    negative_vector = gap$negative_vector,
     # The displacement the gap predicts, kept so a caller can try it without
     # decomposing the Hessian again.
     step = gap$step)
@@ -541,9 +546,45 @@
       call. = FALSE)
     return(invisible(NULL))
   }
+  if (identical(certification$status, "notmaximum") &&
+      length(certification$negative_vector)) {
+    warning(.ctBackendNotMaximumMessage(fit, certification), call. = FALSE)
+    return(invisible(NULL))
+  }
   warning("This fit is not certified as converged: ", certification$reason,
     ". See fit$uncertainty$certification.", call. = FALSE)
   invisible(NULL)
+}
+
+# What a not-a-maximum verdict tells a user: which parameters the rising
+# direction runs through, and what usually fixes it. The parameters are those
+# carrying at least a third of the direction's largest component, at most
+# four. A direction through the random-effect covariance -- scales,
+# correlations, loadings -- is almost always the data not determining that
+# covariance (a correlation drifting towards +-1, or a scale trading off against
+# a correlation), and the remedies are the model's: a lower `poprank`, a fixed
+# or more strongly regularised correlation, fewer random effects.
+#' @keywords internal
+.ctBackendNotMaximumMessage <- function(fit, certification) {
+  v <- as.numeric(certification$negative_vector)
+  names <- .ctBackendRawParameterNames(fit, length(v))
+  size <- abs(v)
+  top <- order(size, decreasing = TRUE)
+  top <- top[size[top] >= max(size) / 3][seq_len(min(4L, sum(size >= max(size) / 3)))]
+  involved <- names[top]
+  covariance <- grepl("^(popsd_|rawcor_|poploading_)", involved)
+  restarts <- fit$optim$restarts
+  tried <- if (is.data.frame(restarts) && nrow(restarts))
+    paste0(" ", nrow(restarts), " random restart",
+      if (nrow(restarts) > 1L) "s" else "", " found nothing better.") else ""
+  paste0("This fit is not a maximum: the likelihood still rises along a ",
+    "direction through ", paste(involved, collapse = ", "), ".", tried,
+    if (any(covariance)) paste0(" That direction is in the random-effect ",
+      "covariance, which usually means the data do not determine it: consider ",
+      "poprank = 1, a fixed or more strongly regularised correlation, or fewer ",
+      "random effects.") else
+      " Those parameters may not be separately determined by the data.",
+    " See fit$uncertainty$certification.")
 }
 
 # The curvature at one point, from the spec rather than from a fit.
@@ -647,6 +688,7 @@
     certification$ntrusted <- gap$ntrusted
     certification$nflat <- gap$nflat
     certification$nnegative <- gap$nnegative
+    certification$negative_vector <- gap$negative_vector
     certification$residual_gain <- if (is.null(probe)) 0 else probe$gain
     certification$tolerance <- tolerance
     # Continue for either reason the curvature gives. `suboptimal` is objective

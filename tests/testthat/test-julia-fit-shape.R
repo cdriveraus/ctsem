@@ -115,7 +115,7 @@ suppressWarnings(suppressPackageStartupMessages(library(ctsem)))
   # What the optimiser's batching and Newton finish did: descriptions of one
   # optimiser run, like the stall fields below.
   "batch_sizes", "batch_iterations", "newton_steps", "newton_hessians",
-  "newton_subset_hessians",
+  "newton_subset_hessians", "restarts", "restarts_cancelled",
   "saturated", "saturated_parameters", "carefulfit", "carefulfit_iterations",
   # The two stopping rules the run was given and what they did with it: whether
   # it was stopped for having stopped getting anywhere, which coordinates were
@@ -257,7 +257,7 @@ test_that("$estimate holds the estimate and nothing about the run", {
     "predicted_gain", "last_gain", "gradient", "gradient_norm", "iterations",
     "stage_iterations", "f_calls", "g_calls", "chunks", "linesearch",
     "batch_sizes", "batch_iterations", "newton_steps", "newton_hessians",
-    "newton_subset_hessians", "stalled", "stopped_by_gap", "overshot", "overshoot_gain",
+    "newton_subset_hessians", "restarts", "restarts_cancelled", "stalled", "stopped_by_gap", "overshot", "overshoot_gain",
     "overshoot_parameters", "saturated", "saturated_parameters", "carefulfit",
     "carefulfit_iterations", "corrections", "hessians",
     "hessian_evaluations", "hessian", "hessian_profile", "trace", "substeps")

@@ -4469,6 +4469,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     substeps <- remesh(start[seq_len(npar)])
     if (!is.null(jointobjective)) start <- c(start[seq_len(npar)], numeric(nstate))
   }
+  optimise_started <- proc.time()[["elapsed"]]
   result <- .ctJuliaOptimise(model_spec, start, optimcontrol = optimcontrol,
     gradient = gradient, cores = cores, verbose = verbose,
     callback = optimcontrol$callback, objective = jointobjective)
@@ -4495,33 +4496,52 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # states flatten, so there is nothing to certify against -- the same reason
   # that route reports no standard errors.
   correction <- NULL
-  if (isTRUE(intoverstates) && !isTRUE(optimcontrol$estonly) &&
-      !identical(optimcontrol$certify, FALSE)) {
-    correction <- .ctBackendCorrectResult(result, model_spec, npar,
-      tolerance = .ctJuliaOr(optimcontrol$gaptol, 1e-6),
-      maxtries = .ctJuliaOr(optimcontrol$gapretries, 2L),
-      gradient = gradient, verbose = verbose,
-      maxiter = .ctJuliaOr(optimcontrol$maxiter, 1000L),
-      gtol = .ctJuliaOr(optimcontrol$g_tol, 1e-8),
-      optimise = function(from, overrides = list()) .ctJuliaOptimise(model_spec,
-        if (is.null(jointobjective)) from else c(from, numeric(nstate)),
-        optimcontrol = utils::modifyList(optimcontrol, overrides),
-        gradient = gradient, cores = cores,
-        verbose = verbose, callback = optimcontrol$callback,
-        objective = jointobjective))
+  certifying <- isTRUE(intoverstates) && !isTRUE(optimcontrol$estonly) &&
+    !identical(optimcontrol$certify, FALSE)
+  correct <- function(r) .ctBackendCorrectResult(r, model_spec, npar,
+    tolerance = .ctJuliaOr(optimcontrol$gaptol, 1e-6),
+    maxtries = .ctJuliaOr(optimcontrol$gapretries, 2L),
+    gradient = gradient, verbose = verbose,
+    maxiter = .ctJuliaOr(optimcontrol$maxiter, 1000L),
+    gtol = .ctJuliaOr(optimcontrol$g_tol, 1e-8),
+    optimise = function(from, overrides = list()) .ctJuliaOptimise(model_spec,
+      if (is.null(jointobjective)) from else c(from, numeric(nstate)),
+      optimcontrol = utils::modifyList(optimcontrol, overrides),
+      gradient = gradient, cores = cores,
+      verbose = verbose, callback = optimcontrol$callback,
+      objective = jointobjective))
+  if (certifying) {
+    correction <- correct(result)
     result <- correction$result
   }
-  # There is deliberately no second, after-the-fact prior restart here.
-  #
-  # An earlier version retried a non-converged fit from a full prior
-  # optimisation. `carefulfit` above makes that redundant: it warms every fit
-  # from the priors already, and over 720 fits at a cap of ten it converged
-  # 240 out of 240 in each condition, so the retry had nothing left to rescue.
-  # What it did instead was move answers. A fit deliberately capped at one
-  # iteration from supplied starting values came back from raw 24 at raw 12.8 --
-  # not the fit that was asked for, and reported without comment. Two
-  # mechanisms for one job, where the second can only act in cases the first
-  # did not fix, is a way to be surprised rather than a safety net.
+  # Random restarts, only for a fit that is still not converged -- see
+  # R/ctBackendRestarts.R for when they run and when they deliberately do not
+  # (supplied inits or a set maxiter: the fit asked for). Not the prior retry
+  # an earlier version had, which carefulfit made redundant; this is for a
+  # likelihood with more than one basin, where the start decides.
+  restarts <- NULL
+  nrestarts <- if (is.null(jointobjective)) .ctBackendRestartsWanted(result,
+    if (is.null(correction)) NULL else correction$certification, optimcontrol,
+    inits, intoverstates) else 0L
+  if (nrestarts > 0L) {
+    reporting <- verbose > 0L || .ctProgressConsole()
+    elapsed <- proc.time()[["elapsed"]] - optimise_started
+    if (reporting) message("Not converged; trying ", nrestarts,
+      " random restarts. Esc or Ctrl-C stops them and keeps this fit.")
+    restarts <- .ctBackendRestarts(model_spec, start[seq_len(npar)], npar,
+      nrestarts, optimcontrol, gradient,
+      # Worker processes cost 30-60 s to start, which a small fit does not
+      # repay; they are for fits that took a while themselves.
+      cores = if (elapsed > 30) cores else 1L,
+      current = as.numeric(result$maximum_loglik)[1L], report = reporting)
+    if (!is.null(restarts$best)) {
+      result <- restarts$best
+      if (certifying) {
+        correction <- correct(result)
+        result <- correction$result
+      }
+    }
+  }
   # The engine maximises the log posterior, so its `maximum_loglik` is the log
   # posterior and the per-subject objectives (which carry no prior term) sum to
   # the log likelihood. Without priors the two are the same number; with them
@@ -4775,6 +4795,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         ". This usually means the level has too few groups to identify that ",
         "correlation. See fit$laplace$boundary.", call. = FALSE)
     }
+  }
+  if (!is.null(restarts)) {
+    # One row per random start: its log posterior, whether it converged, and
+    # which (if any) replaced the first fit.
+    out$optim$restarts <- restarts$table
+    out$optim$restarts_cancelled <- isTRUE(restarts$cancelled)
   }
   if (!is.null(correction)) {
     # The Hessian goes on the fit so the uncertainty stage does not recompute

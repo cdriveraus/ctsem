@@ -124,6 +124,14 @@
     inert = function(v) isFALSE(v),
     msg = paste0("switches off the julia optimiser's Newton finish on the exact ",
       "Hessian. The stan path has no equivalent")),
+  restarts = list(only = 'julia',
+    inert = function(v) isTRUE(all(v == 0)),
+    msg = paste0("sets how many random restarts a julia fit tries when it has ",
+      "not converged. The stan path has no equivalent")),
+  restartsd = list(only = 'julia',
+    inert = function(v) TRUE,
+    msg = paste0("sets the spread of the julia route's random restarts. The ",
+      "stan path has no equivalent")),
   initial_alpha = list(only = 'julia',
     inert = function(v) isTRUE(all(v == 1)),
     msg = paste0("scales the julia optimiser's first trial step, which is of ",
@@ -629,7 +637,8 @@ T0VARredundancies <- function(ctm) {
 #' the stall-and-restart pass (\code{stallretries}, \code{stalltol});
 #' \code{backend='julia'} alone has \code{gradient}, \code{datastart},
 #' \code{callback}, \code{saveEffects}, \code{progress}, \code{batch},
-#' \code{newton} and \code{tipredMissingIncludeOutcome}. A \emph{value} asking for a capability
+#' \code{newton}, \code{restarts}, \code{restartsd} and
+#' \code{tipredMissingIncludeOutcome}. A \emph{value} asking for a capability
 #' the chosen backend does not have is refused by name before anything else
 #' happens; a value that describes what it already does is simply accepted, so
 #' \code{stochastic=FALSE} works on julia and \code{gradient='adjoint'} works on
@@ -697,6 +706,17 @@ T0VARredundancies <- function(ctm) {
 #' same optimum; set either to \code{FALSE} to switch it off.
 #' \code{fit$optim$batch_sizes} and \code{fit$optim$newton_steps} record what
 #' ran.
+#'
+#' A julia fit that has still not converged after its corrections -- typically
+#' a likelihood with more than one basin, where the start decides -- tries
+#' \code{optimcontrol$restarts} (default 5) random restarts, each from the
+#' fit's own start plus normal noise of sd \code{optimcontrol$restartsd}
+#' (default 1) on the raw scale, and keeps the best if it is better. They run
+#' in worker processes when \code{cores > 1} and the fit took more than 30
+#' seconds, and in this session otherwise; Esc or Ctrl-C stops them and keeps
+#' the fit as it was. Not when \code{inits} or \code{optimcontrol$maxiter}
+#' were supplied, and \code{restarts = 0} switches them off.
+#' \code{fit$optim$restarts} records each start.
 #'
 #' \code{optimcontrol$carefulfit} works for \code{backend='julia'} as it does
 #' for Stan: when \code{priors=FALSE}, a rough first pass is run \emph{with}
