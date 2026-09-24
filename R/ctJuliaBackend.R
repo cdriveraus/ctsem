@@ -2738,8 +2738,13 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     }
     out$inner_tol <- tol
   }
-  # Recorded only when it is not the default, so that every model that asked
-  # for nothing hashes, and so builds, exactly as it did.
+  # Recorded whenever it is given, default included. An absent floor is the
+  # historical meaning, 'total': a specification written before the default
+  # became 'gated' carries none, and every route that rebuilds an objective
+  # from it must keep scoring it the way it was fitted. So the default is
+  # resolved at the fit's entry point (`.ctFitJuliaBackendImpl`), never here --
+  # the rebuild sites pass `spec$laplace$inner` back through this function, and
+  # a default filled in here would silently move a stored fit to 'gated'.
   floor <- laplacecontrol$floor
   if (!is.null(floor)) {
     floor <- as.character(floor)[1L]
@@ -2747,10 +2752,13 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       stop("optimcontrol$laplace_floor must be 'total' or 'gated'.",
         call. = FALSE)
     }
-    if (floor != "total") out$floor <- floor
+    out$floor <- floor
   }
   out
 }
+
+# The floor a new intoverpop='laplace' fit uses when none is asked for.
+.ctJuliaLaplaceFloorDefault <- "gated"
 
 # `intoverpop` deliberately has no default. It selects which *model* is
 # prepared -- random effects as latent states, or integrated by Laplace -- and a
@@ -2770,9 +2778,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   intoverpop <- match.arg(as.character(intoverpop)[1L],
     c("augmented", "laplace", "none"))
   # The floor is a property of the Laplace term, so any other route refuses it
-  # by name rather than accepting it and doing something else.
+  # by name rather than accepting it and doing something else. Either value:
+  # 'total' is no longer what every fit does, so it is not inert elsewhere.
   if (!is.null(laplacecontrol$floor) &&
-      !identical(as.character(laplacecontrol$floor)[1L], "total") &&
       !identical(intoverpop, "laplace")) {
     stop("optimcontrol$laplace_floor applies to intoverpop='laplace' only; ",
       "with intoverpop='", intoverpop, "' there is no Laplace term to floor. ",
@@ -3295,10 +3303,13 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       laplace_args$inner_tol <- as.numeric(spec$laplace$inner$inner_tol)
     }
     # The floor goes on the objective, not the session, so a gated fit leaves
-    # every other objective -- and every later fit -- on the default.
-    if (!is.null(spec$laplace$inner$floor)) {
-      laplace_args$floor <- as.character(spec$laplace$inner$floor)
-    }
+    # every other objective -- and every later fit -- as it was. Always sent,
+    # so the cache key (a hash of these inputs) sees the floor the objective is
+    # actually built with: a default 'gated' and an explicit one hash alike, and
+    # an absent floor -- a specification from before 'gated' was the default --
+    # is built, and keyed, as the 'total' it was fitted under.
+    laplace_args$floor <- as.character(.ctJuliaOr(spec$laplace$inner$floor,
+      "total"))[1L]
     if (length(levels) > 1L) {
       # Concatenated innermost level first, split on the far side by the
       # per-level counts. Flat vectors because the bridge marshals those and
@@ -4220,6 +4231,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # Before `.ctJuliaPrepare()` deliberately -- the opt-in restart ends the
   # process, and nothing prepared here may be alive across that.
   .ctBackendResolveThreads(cores, report = isTRUE(fit))
+  # Resolved, and refused by name where it cannot apply, before anything is
+  # prepared or fitted. See `.ctLaplaceAutoCorrect()`.
+  correctlaplace <- .ctLaplaceCorrectResolve(optimcontrol, intoverpop = intoverpop,
+    optimize = optimize, intoverstates = intoverstates)
   gradient <- .ctJuliaOr(optimcontrol$gradient, "adjoint")
   if (!gradient %in% c("forward", "adjoint")) stop("gradient must be 'forward' or 'adjoint'", call. = FALSE)
   # 'adjoint' selects the Julia engine's reverse-mode gradient. Its cost is
@@ -4243,7 +4258,13 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     tipredMissingIncludeOutcome = .ctJuliaOr(optimcontrol$tipredMissingIncludeOutcome, TRUE),
     laplacecontrol = list(inner_maxiter = optimcontrol$laplace_inner_maxiter,
       inner_tol = optimcontrol$laplace_inner_tol,
-      floor = optimcontrol$laplace_floor))
+      # The default is resolved here, at the one place a *new* fit is
+      # specified, and only for the route that has a Laplace term: every
+      # rebuild of an existing specification passes its own `inner` instead,
+      # where an absent floor means the 'total' it was fitted under.
+      floor = if (identical(as.character(intoverpop)[1L], "laplace"))
+        .ctJuliaOr(optimcontrol$laplace_floor, .ctJuliaLaplaceFloorDefault)
+        else optimcontrol$laplace_floor))
   if (!is.null(model_spec$ti_missing) && nrow(model_spec$ti_missing)) {
     # The state-explicit route (`intoverstates=FALSE`) samples the latent
     # trajectory through a different objective (`CTSEMJointObjective`,
@@ -4875,6 +4896,21 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       verbose = verbose)
   }
 
+  # The quadrature correction, last of the post-optimiser stages: after the
+  # certification has converged the Laplace objective and after the uncertainty
+  # stage has built the Hessian it steps against, which it reuses rather than
+  # computing another. Before the constrained draws below, so that they are
+  # built once from the recentred draws. See `.ctLaplaceAutoCorrect()`.
+  if (!is.null(out$laplace) && isTRUE(intoverstates)) {
+    if (isTRUE(correctlaplace)) {
+      out <- .ctLaplaceAutoCorrect(out, cores = cores, verbose = verbose)
+    } else {
+      out$laplace$correction <- list(status = if (isTRUE(optimcontrol$estonly) &&
+        !isFALSE(optimcontrol$laplace_correct)) "estonly" else "off",
+        applied = FALSE)
+    }
+  }
+
   # The draws pushed through the model's transforms, once, exactly as the Stan
   # path stores `stanfit$transformedpars` at fit time. Every summary, extract
   # and system-matrix collapse reads this rather than asking the engine again.
@@ -4910,8 +4946,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # `fit`/`at` let it tell a random-effect block trading its scale off against
   # its correlations -- where the covariances are determined, and fixing a
   # value throws them away -- from a direction the data says nothing about.
+  # `at` is where that curvature was evaluated, which after the Laplace
+  # correction is the Laplace optimum and not the reported estimate.
   out$identifiability <- .ctBackendIdentifiability(out$uncertainty$hessian,
-    rawnames, fit = out, at = out$estimate$raw)
+    rawnames, fit = out,
+    at = .ctJuliaOr(out$uncertainty$evaluated_at, out$estimate$raw))
   # `$uncertainty$intervalcheck` is attached by `.ctBackendUncertainty()`, so
   # it describes whichever method ran; it is only warned about here. A separate
   # question from identifiability: a direction can be flat enough to ruin every
@@ -4944,6 +4983,25 @@ print.ctJuliaFit <- function(x, ...) {
       cat("  ", paste(utils::head(x$sample$diagnosis, 3), collapse = "; "),
         ". See fit$sample.\n", sep = "")
     }
+  }
+  # The quadrature correction, only when it moved the estimate by a tenth of a
+  # standard error or more.
+  corr <- x$laplace$correction
+  if (isTRUE(corr$applied) && isTRUE(corr$material)) {
+    cat("  Laplace estimate corrected by quadrature: up to ",
+      format(max(abs(corr$delta_se), na.rm = TRUE), digits = 2),
+      " standard errors, log likelihood ", format(corr$loglik_laplace, digits = 8),
+      " -> ", format(corr$loglik_quadrature, digits = 8),
+      ". See fit$laplace$correction.\n", sep = "")
+  } else if (!isTRUE(corr$applied) &&
+      isTRUE(abs(as.numeric(.ctJuliaOr(corr$gap_reported, 0))[1L]) >= 1)) {
+    # Not moved, and the approximation is still off by a nat or more here: the
+    # AnomAuth case, a Laplace optimum the quadrature objective does not have.
+    cat("  Laplace log likelihood ", format(corr$loglik_laplace, digits = 8),
+      if (corr$gap_reported < 0) " exceeds" else " falls short of",
+      " the quadrature value by ", format(abs(corr$gap_reported), digits = 3),
+      " here and no quadrature step improved on it; the log likelihood ",
+      "reported is the quadrature one. See fit$laplace$correction.\n", sep = "")
   }
   # One line, only when there is something to say. A reported interval much
   # wider than the curvature at the estimate supports is not visible anywhere

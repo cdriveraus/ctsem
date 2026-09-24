@@ -46,7 +46,9 @@ A list with \code{gap} (quadrature minus Laplace log marginal at the
   \code{correction} is \code{TRUE}, a \code{parameters} data frame with one
   row per raw parameter giving \code{estimate}, \code{delta},
   \code{corrected}, \code{se} and \code{delta_se}. With \code{refine} it also
-  carries \code{refined}.
+  carries \code{refined}. \code{at} says whether the estimate checked was the
+  Laplace optimum (\code{'laplace'}) or already quadrature-corrected
+  (\code{'corrected'}).
 
   \code{dropped_directions} counts the directions of the information matrix
   too weakly identified to correct along, which are reported as zero rather
@@ -84,6 +86,16 @@ against the standard errors: \code{delta / se} well below one says the
 approximation is not what limits the answer, and near or above one says the
 point estimate is approximation-limited and the interval will not cover
 whatever width it has.
+
+Every Laplace fit is now corrected this way by default when it is fitted
+(\code{optimcontrol$laplace_correct}, see \code{\link{ctFit}}), so on such a
+fit this check is made at the corrected estimate, which is not a Laplace
+optimum: the correction reported is then the \emph{further} Newton step on
+the quadrature objective from there, with the Laplace gradient included, and
+\code{at} on the result is \code{'corrected'}. A small further step says the
+default correction got there; a large one says one step was not enough. On
+a fit made with \code{laplace_correct = FALSE}, or one saved before the
+default existed, it is the first step, as before.
 
 Nested groupings are handled. A group's integral does not factor over its
 members, but it does factor \emph{conditionally} -- given the group effect
