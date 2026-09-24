@@ -659,6 +659,9 @@
     g_calls = as.numeric(.ctJuliaOr(r$g_calls, 0)))
   totals <- stage_counts(result)
   hessians <- 0L
+  # Set when a resume was futile: the loop goes round once more so that the
+  # Hessian and certification describe the point it ended at, then stops.
+  settled <- FALSE
   for (attempt in seq_len(max(0L, as.integer(maxtries)) + 1L)) {
     est <- as.numeric(result$minimizer)[seq_len(npar)]
     # The engine's Newton finish ends on the exact Hessian at its minimizer and
@@ -701,6 +704,7 @@
     # where it gives little the resumed stage with a tightened rule is what
     # moves off the saddle.
     if (!certification$status %in% c("suboptimal", "notmaximum")) break
+    if (settled) break
     if (attempt > as.integer(maxtries) || is.null(optimise)) break
 
     # Damped, and accepted only on an increase that is actually observed and
@@ -810,14 +814,17 @@
     # again buys hours for nothing (the same fixture: 1000 iterations for
     # 0.017, then a cap of 4000, on a laplace model where that is minutes per
     # hundred). A tenth of a nat is a likelihood-ratio statistic of 0.2, below
-    # anything inference reads. The fit keeps what it has and the
-    # certification reports it.
+    # anything inference reads. No further resume -- but the loop goes round
+    # once more, so the Hessian and the certification are those of the point
+    # the fit now has. Breaking here left them describing the point before the
+    # resume, and a stale Hessian certified the new point and hid a flat
+    # direction the identifiability report used to name.
     cap <- as.integer(.ctJuliaOr(overrides$maxiter, maxiter))
     if (is.finite(cap) && cap > 0 &&
         as.integer(resumed$iterations) >= cap &&
         as.numeric(resumed$maximum_loglik)[1L] - value < max(tolerance, 0.1)) {
       history[[length(history)]]$futile <- TRUE
-      break
+      settled <- TRUE
     }
   }
   list(result = result, certification = certification, hessian = hessian,
