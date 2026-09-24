@@ -611,12 +611,20 @@ the distance to the generating value.
 `hessian` is the outer Hessian at `values`, as `ctsem_laplace_hessian` returns
 it; it is taken as an argument rather than recomputed because the caller
 computing standard errors has already paid for it.
+
+`laplace_gradient = true` adds the Laplace objective's own gradient at `values`
+to the gap gradient, so the step is a Newton step on the quadrature objective
+from a point that is *not* a Laplace optimum -- a fit already moved by
+`ctsem_laplace_autocorrect`. There `grad(Q - T)` alone is not `grad Q`.
 """
 function ctsem_laplace_correction(laplace::CTSEMLaplaceObjective,
     values::AbstractVector, hessian::AbstractMatrix; nodes::Integer=5,
-    step::Real=1e-3)
+    step::Real=1e-3, laplace_gradient::Bool=false)
     theta = collect(Float64, values)
     gap = _quadrature_gap_gradient(laplace, theta, nodes, step)
+    if laplace_gradient
+        gap .+= ctsem_laplace_evaluate(laplace, theta; gradient=true).gradient
+    end
     H = Symmetric((hessian .+ transpose(hessian)) ./ 2)
     delta, dropped = _correction_step(H, gap)
     quadrature = ctsem_laplace_quadrature(laplace, theta; nodes=nodes).value
@@ -648,8 +656,15 @@ answer and the right one here: a first-order correction along a direction the
 data does not identify is not estimable, and reporting zero for it is honest
 where reporting 3e+08 is not. `dropped_directions` on the result says when it
 happened rather than leaving it to be inferred.
+
+`ascent = true` also drops every direction along which `H` is not negative --
+the objective is not concave there, so `-H \\ gap` along it is a step
+*down*. The default correction needs that: on the AnomAuth real-data model the
+Laplace optimum's Hessian had two positive eigenvalues (a saddle or kink the
+optimiser stopped at), and the unguarded step went away from the better
+optimum while the line search accepted it.
 """
-function _correction_step(H::Symmetric, gap::AbstractVector)
+function _correction_step(H::Symmetric, gap::AbstractVector; ascent::Bool=false)
     n = length(gap)
     n == 0 && return (Float64[], 0)
     decomposition = try
@@ -665,7 +680,7 @@ function _correction_step(H::Symmetric, gap::AbstractVector)
     projected = transpose(decomposition.vectors) * gap
     dropped = 0
     for i in eachindex(lambda)
-        if abs(lambda[i]) <= tolerance
+        if abs(lambda[i]) <= tolerance || (ascent && lambda[i] >= 0)
             projected[i] = 0.0
             dropped += 1
         else
@@ -724,6 +739,194 @@ function ctsem_laplace_refine(laplace::CTSEMLaplaceObjective,
         converged=Optim.converged(result),
         nodes=Int(nodes))
 end
+
+"""
+    ctsem_laplace_autocorrect(laplace, values, hessian; nodes=5, step=1e-3,
+        tolerance=0.01, maxsteps=3, halvings=5, gain_tol=1e-3, scale=nothing,
+        step_tol=0.1)
+
+The correction a Laplace fit gets by default, from its optimum `values` and the
+outer Hessian already computed there. Three stages, each skipped when the one
+before says there is nothing for it to do:
+
+  1. **Screen.** One quadrature evaluation. The per-unit gap
+     `sum_U |Q_U - T_U|` at `values` is compared with `tolerance`. A unit whose
+     log likelihood is quadratic in its effects integrates to the same value
+     under both rules, so a model with no effect entering nonlinearly stops
+     here -- `status = "exact"` -- having paid one evaluation and not `2 npar`.
+     The absolute per-unit sum rather than the net gap, so opposite errors on
+     two units cannot cancel into a pass.
+  2. **Step.** `delta = (-H)^-1 grad Q`, with `grad Q` the central difference
+     of the gap plus the Laplace gradient (zero at an optimum, one adjoint
+     sweep to include), solved along the directions `H` identifies
+     (`_correction_step`), and never along a direction where `H` is not
+     negative. Accepted only if the quadrature objective rises,
+     halving up to `halvings` times, Armijo on the first-order gain.
+  3. **Repeat**, up to `maxsteps`, keeping `H` as the metric (it is not
+     recomputed; the caller's standard errors were built from it), until the
+     predicted gain `g'delta / 2` falls below `gain_tol`, or until a step
+     taken moved no coordinate by `step_tol` or more of its `scale` (the
+     standard errors, when given; entries that are not positive and finite
+     are ignored). The second rule is the cheap one: it stops without paying
+     for another gradient, because the steps shrink and a step that small is
+     not one anybody reading the estimate would notice.
+
+Returns the point it ended at, the quadrature value and per-unit terms there,
+the Laplace value there, the first step (which is what `ctLaplaceCheck`
+reports), the steps taken, and `status`: `"exact"`, `"corrected"`,
+`"no_gain"` (no scaling of the first step raised the quadrature objective, so
+nothing moved), `"nonfinite_step"`, `"quadrature_failed"`. A failure never
+throws: it is reported, and the point returned is `values`.
+"""
+function ctsem_laplace_autocorrect(laplace::CTSEMLaplaceObjective,
+    values::AbstractVector, hessian::AbstractMatrix; nodes::Integer=5,
+    step::Real=1e-3, tolerance::Real=0.01, maxsteps::Integer=3,
+    halvings::Integer=5, gain_tol::Real=1e-3, scale=nothing,
+    step_tol::Real=0.1)
+    theta0 = collect(Float64, values)
+    npar = length(theta0)
+    started = time_ns()
+    seconds() = (time_ns() - started) / 1e9
+    quad = function (x; contributions=false)
+        try
+            ctsem_laplace_quadrature(laplace, x; nodes=nodes,
+                contributions=contributions)
+        catch err
+            _ctsem_must_propagate(err) && rethrow()
+            (value=NaN, subject_loglik=Float64[])
+        end
+    end
+    lap = function (x)
+        try
+            ctsem_laplace_evaluate(laplace, x; gradient=false)
+        catch err
+            _ctsem_must_propagate(err) && rethrow()
+            (value=NaN, unit_loglik=Float64[], subject_loglik=Float64[])
+        end
+    end
+    # Which unit each subject belongs to, so a unit's quadrature term can be
+    # spread over its members the way `ctsem_laplace_evaluate` spreads its own.
+    members = laplace.units.members
+    nsubjects = length(laplace.objective.subject_objectives)
+    unit_of = zeros(Int, nsubjects)
+    for U in eachindex(members), i in members[U]
+        unit_of[i] = U
+    end
+    spread(units) = [unit_of[i] > 0 ?
+        units[unit_of[i]] / length(members[unit_of[i]]) : 0.0 for i in 1:nsubjects]
+
+    q0 = quad(theta0; contributions=true)
+    l0 = lap(theta0)
+    screen = (isfinite(q0.value) && isfinite(l0.value) &&
+        length(q0.subject_loglik) == length(l0.unit_loglik)) ?
+        sum(abs, q0.subject_loglik .- l0.unit_loglik) : NaN
+    screen_seconds = seconds()
+    # Never an empty vector in the result: a zero-length array deadlocks the
+    # JuliaConnectoR bridge on the way back. A failed or skipped field is a
+    # single NaN, and `steps` says how many entries of `predicted` and `alpha`
+    # are real.
+    nunits = length(members)
+    orfill(v, n) = length(v) == n ? v : fill(NaN, n)
+    result(status, x, q, l, first_delta, dropped, steps, predicted, alpha) = (
+        status=status, estimate=x, delta=x .- theta0,
+        first_delta=first_delta, dropped_directions=dropped,
+        quadrature=q.value,
+        quadrature_units=orfill(q.subject_loglik, nunits),
+        quadrature_subjects=spread(orfill(q.subject_loglik, nunits)),
+        laplace=l.value,
+        quadrature_start=q0.value, laplace_start=l0.value,
+        gap_start=q0.value - l0.value, screen=screen, tolerance=Float64(tolerance),
+        steps=steps, predicted=isempty(predicted) ? [NaN] : predicted,
+        alpha=isempty(alpha) ? [NaN] : alpha,
+        screen_seconds=screen_seconds, seconds=seconds(), nodes=Int(nodes))
+    none = Float64[]
+    if !isfinite(screen)
+        return result("quadrature_failed", theta0, q0, l0, zeros(npar), 0, 0,
+            none, none)
+    end
+    if screen <= tolerance
+        return result("exact", theta0, q0, l0, zeros(npar), 0, 0, none, none)
+    end
+    if size(hessian) != (npar, npar) || !all(isfinite, hessian)
+        return result("no_hessian", theta0, q0, l0, zeros(npar), 0, 0, none,
+            none)
+    end
+    H = Symmetric((hessian .+ transpose(hessian)) ./ 2)
+    x = copy(theta0)
+    Q = q0.value
+    first_delta = zeros(npar)
+    dropped = 0
+    predicted = Float64[]
+    alpha = Float64[]
+    status = "corrected"
+    for k in 1:max(1, Int(maxsteps))
+        g = _quadrature_gap_gradient(laplace, x, nodes, step)
+        lg = try
+            ctsem_laplace_evaluate(laplace, x; gradient=true).gradient
+        catch err
+            _ctsem_must_propagate(err) && rethrow()
+            fill(NaN, npar)
+        end
+        g .+= lg
+        delta, dropped = _correction_step(H, g; ascent=true)
+        if !all(isfinite, delta)
+            status = k == 1 ? "nonfinite_step" : status
+            break
+        end
+        k == 1 && (first_delta = copy(delta))
+        gain = dot(g, delta)
+        if !(gain / 2 >= gain_tol)
+            # Nothing left worth a step. On the first round this is a fit the
+            # screen passed only on the value: the gap is there but flat.
+            k == 1 && (status = "no_gain")
+            break
+        end
+        t = 1.0
+        accepted = false
+        xn = x
+        Qn = Q
+        for h in 0:max(0, Int(halvings))
+            xn = x .+ t .* delta
+            Qn = quad(xn).value
+            if isfinite(Qn) && Qn >= Q + 1e-4 * t * gain
+                accepted = true
+                break
+            end
+            t /= 2
+        end
+        if !accepted
+            k == 1 && (status = "no_gain")
+            break
+        end
+        push!(predicted, gain / 2)
+        push!(alpha, t)
+        x = xn
+        Q = Qn
+        if scale !== nothing && length(scale) == npar
+            moved = 0.0
+            for j in 1:npar
+                sj = Float64(scale[j])
+                (isfinite(sj) && sj > 0) || continue
+                moved = max(moved, abs(t * delta[j]) / sj)
+            end
+            moved < step_tol && break
+        end
+    end
+    steps = length(alpha)
+    if steps == 0
+        return result(status, theta0, q0, l0, first_delta, dropped, 0,
+            predicted, alpha)
+    end
+    q = quad(x; contributions=true)
+    l = lap(x)
+    if !isfinite(q.value)
+        return result("quadrature_failed", theta0, q0, l0, first_delta,
+            dropped, 0, predicted, alpha)
+    end
+    return result("corrected", x, q, l, first_delta, dropped, steps, predicted,
+        alpha)
+end
+export ctsem_laplace_autocorrect
 
 ################################################################################
 # Reference implementation of the gated floor's value

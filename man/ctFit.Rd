@@ -269,16 +269,49 @@ Neither applies to \code{intoverpop='augmented'}, which has no inner solve.
 
 Also with \code{intoverpop='laplace'}, \code{optimcontrol$laplace_floor}
 chooses how a subject whose likelihood has gone convex in its random effects
-is scored. \code{'total'}, the default, floors the log determinant of each
-subject's inner curvature at zero. \code{'gated'} (experimental) scores a
-subject whose curvature has an eigenvalue below 0.7 by a three-point
-quadrature along that direction instead, handing off smoothly to the default
-between 0.2 and 0.7; on weak simulated data it removed the several-nat
-over-credit the default gives such subjects, at about twice their cost. The
-choice is recorded in \code{fit$laplace$floor} and every post-fit function
-that rebuilds the objective (\code{ctLaplaceCheck}, \code{ctKalman},
-\code{ctLOO}) uses it. \code{fit$laplace$conditioning} reports how many
-subjects have such curvature at the estimate, whichever floor was used.
+is scored. \code{'gated'}, the default, scores a subject whose curvature has
+an eigenvalue below 0.7 by a three-point quadrature along that direction,
+handing off smoothly between 0.2 and 0.7 to \code{'total'}, which floors the
+log determinant of each subject's inner curvature at zero. On weak simulated
+data \code{'gated'} removed the several-nat over-credit \code{'total'} gives
+such subjects, at about twice their cost, and costs nothing where no subject
+is flagged. \code{'total'} remains selectable. The choice is recorded in
+\code{fit$laplace$floor} and every post-fit function that rebuilds the
+objective (\code{ctLaplaceCheck}, \code{ctKalman}, \code{ctLOO}) uses it; a
+fit saved before \code{'gated'} became the default records no floor, and is
+rebuilt under the \code{'total'} it was fitted with.
+\code{fit$laplace$conditioning} reports how many subjects have such
+curvature at the estimate, whichever floor was used.
+
+Also with \code{intoverpop='laplace'}, \code{optimcontrol$laplace_correct}
+(default \code{TRUE}) corrects the fitted estimate for the Laplace
+approximation's error, by the adaptive Gauss-Hermite quadrature of
+\code{\link{ctLaplaceCheck}} (5 nodes per random effect). It runs last, after
+the optimiser, the convergence certification and the standard errors, and it
+reuses their Hessian rather than computing another. One quadrature
+evaluation first compares the two rules subject by subject; where they agree
+to 0.01 in total -- every model whose random effects enter linearly, where
+Laplace is exact -- nothing else is done and the fit is unchanged. Otherwise
+the estimate takes up to three Newton steps on the quadrature objective, each
+costing \code{2 * npar} quadrature evaluations and accepted only if that
+objective rises, never along a direction where the Hessian is not negative,
+and stopping early once a step moves no parameter by a tenth of a standard
+error. Wherever the screen finds a gap, \code{fit$estimate$loglik} is the
+quadrature log likelihood at the reported estimate, whether or not a step
+was accepted (the Laplace value is kept in
+\code{fit$estimate$loglik_laplace}, and \code{loglik_method} says which);
+a Laplace optimum the quadrature objective does not share otherwise reports
+a log likelihood it does not have. When a step is accepted,
+\code{fit$estimate$raw} is the corrected point and the posterior draws are
+recentred on it without being reshaped: the covariance is still the Laplace
+curvature at \code{fit$uncertainty$evaluated_at}.
+\code{fit$laplace$correction} records the screen, the step and any
+directions too weakly identified or not concave to step along, and
+\code{print(fit)} says so when the estimate moved by a tenth of a standard
+error or more, or when it could not move and the gap is a nat or more.
+\code{laplace_correct = FALSE} gives the uncorrected Laplace fit. Not applied
+to sampled fits, to \code{intoverstates = FALSE}, or with \code{estonly},
+which skips the Hessian it needs; asking for it there is refused.
 
 With \code{backend='julia'}, \code{optimcontrol$gradient} selects the
 gradient method: \code{'adjoint'} (reverse mode, the default) or

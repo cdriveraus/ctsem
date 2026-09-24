@@ -261,8 +261,11 @@ test_that("a near-singular unit is scored near its exact integral", {
   model <- suppressMessages(ctModel(silent = TRUE, type = "ct", CINT = "cint",
     MANIFESTMEANS = 0, LAMBDA = matrix(1),
     DRIFT = "drift|-log1p_exp(-param)|TRUE"))
+  # 'total' pinned: the over-credit asserted below is that floor's, and the
+  # default 'gated' floor removes it.
   spec <- suppressWarnings(suppressMessages(ctFit(.check_weak_data(), model,
-    backend = "julia", intoverpop = "laplace", fit = FALSE)))
+    backend = "julia", intoverpop = "laplace", fit = FALSE,
+    optimcontrol = list(laplace_floor = "total"))))
   module <- ctsem:::.ctJuliaModule(spec$project)
   objective <- ctsem:::.ctJuliaObjective(spec)
   raw <- ctsem:::.ctJuliaNumericVector(c(0.127421404395785, 2.72694414423615,

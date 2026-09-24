@@ -1244,17 +1244,23 @@ test_that("near-singular random-effect curvature is reported, and changes nothin
 test_that("laplace_floor is validated, refused by name where it cannot apply", {
   # No julia needed: control vocabulary and validation.
   expect_error(.ctFitCheckControls(list(laplace_floor = "gated"), "julia"), NA)
-  expect_error(.ctFitCheckControls(list(laplace_floor = "total"), "stan"), NA)
+  # Neither value describes a stan fit now that 'total' is not the default.
+  expect_error(.ctFitCheckControls(list(laplace_floor = "total"), "stan"),
+    "no Laplace term")
   expect_error(.ctFitCheckControls(list(laplace_floor = "gated"), "stan"),
     "no Laplace term")
+  # Recorded whenever given, default included: an absent floor is reserved for
+  # the historical 'total' of a specification that predates the field.
   expect_equal(.ctJuliaLaplaceInner(list(floor = "gated")), list(floor = "gated"))
-  # The default is recorded as nothing, so a model that asked for it hashes as
-  # one that asked for nothing.
-  expect_equal(.ctJuliaLaplaceInner(list(floor = "total")), list())
+  expect_equal(.ctJuliaLaplaceInner(list(floor = "total")), list(floor = "total"))
+  expect_equal(.ctJuliaLaplaceInner(list()), list())
   expect_error(.ctJuliaLaplaceInner(list(floor = "eigen")), "'total' or 'gated'")
   expect_error(.ctJuliaPrepare(.laplace_test_data(nsubjects = 4, nobs = 3),
     .laplace_test_model(), intoverpop = "augmented",
     laplacecontrol = list(floor = "gated")), "intoverpop='laplace' only")
+  expect_error(.ctJuliaPrepare(.laplace_test_data(nsubjects = 4, nobs = 3),
+    .laplace_test_model(), intoverpop = "augmented",
+    laplacecontrol = list(floor = "total")), "intoverpop='laplace' only")
 })
 
 # The objective's own floor, read from the engine.
@@ -1278,18 +1284,21 @@ test_that("a gated fit carries its floor to post-fit routes, and leaves the sess
   fitwith <- function(...) suppressWarnings(suppressMessages(ctFit(dat, model,
     backend = "julia", intoverpop = "laplace", inits = inits,
     optimcontrol = list(estonly = TRUE, maxiter = 5L, ...))))
-  before <- fitwith()
-  gated <- fitwith(laplace_floor = "gated")
-  after <- fitwith()
+  # 'total' pinned on the fits either side of the default one: what is tested
+  # is that a gated objective leaves a later 'total' fit alone.
+  before <- fitwith(laplace_floor = "total")
+  gated <- fitwith()
+  after <- fitwith(laplace_floor = "total")
 
   expect_equal(before$laplace$floor, "total")
   expect_equal(gated$laplace$floor, "gated")
+  expect_equal(gated$model_spec$laplace$inner$floor, "gated")
   expect_true(is.integer(gated$laplace$gated_units))
   expect_equal(.laplace_objective_floor(.ctJuliaObjective(gated)), "gated")
 
-  # A default fit after a gated one in the same session is still the default:
-  # the same estimate and log likelihood as the one before it, and its
-  # objective is on :total.
+  # A 'total' fit after a gated one in the same session is still 'total': the
+  # same estimate and log likelihood as the one before it, and its objective
+  # is on :total.
   expect_equal(after$laplace$floor, "total")
   expect_equal(.laplace_objective_floor(.ctJuliaObjective(after)), "total")
   # Equal rather than identical: with more than one thread the units are summed
@@ -1318,4 +1327,49 @@ test_that("a gated fit carries its floor to post-fit routes, and leaves the sess
   expect_equal(.laplace_objective_floor(.ctJuliaObjective(kspec)), "gated")
   k <- suppressWarnings(suppressMessages(ctKalman(gated, subjects = 1:2)))
   expect_false(is.null(k))
+
+  # A fit saved before the floor was recorded carries none, and was fitted
+  # under 'total'. Absent means that historical meaning on every route that
+  # rebuilds the objective, not the new default.
+  legacy <- gated
+  legacy$model_spec$laplace$inner$floor <- NULL
+  expect_equal(.laplace_objective_floor(.ctJuliaObjective(legacy)), "total")
+  lspec <- ctsem:::.ctBackendKalmanSpec(legacy)
+  expect_null(lspec$laplace$inner$floor)
+  expect_equal(.laplace_objective_floor(.ctJuliaObjective(lspec)), "total")
+  lcheck <- suppressWarnings(ctLaplaceCheck(legacy, nodes = 3L, correction = FALSE))
+  expect_equal(lcheck$laplace, under(before, legacy$estimate$raw), tolerance = 1e-10)
+})
+
+test_that("the default floor and an explicit 'gated' build and cache the same objective", {
+  skip_without_julia()
+  model <- suppressMessages(ctModel(silent = TRUE, type = "ct", CINT = "cint",
+    MANIFESTMEANS = 0, LAMBDA = matrix(1),
+    DRIFT = "drift|-log1p_exp(-param)|TRUE"))
+  dat <- .laplace_weak_data()
+  specwith <- function(...) suppressWarnings(suppressMessages(ctFit(dat, model,
+    backend = "julia", intoverpop = "laplace", fit = FALSE,
+    optimcontrol = list(...))))
+  default <- specwith()
+  gated <- specwith(laplace_floor = "gated")
+  total <- specwith(laplace_floor = "total")
+  expect_equal(default$laplace$inner$floor, "gated")
+  # The key hashes what the builder sends, and the builder always sends the
+  # floor, so the default and the explicit value share one cached objective.
+  expect_equal(.ctJuliaObjectiveInputs(default)$laplace$floor, "gated")
+  expect_identical(.ctJuliaObjectiveKey(default), .ctJuliaObjectiveKey(gated))
+  expect_false(identical(.ctJuliaObjectiveKey(default), .ctJuliaObjectiveKey(total)))
+  # And a specification with no floor is keyed, and built, as 'total'.
+  legacy <- default
+  legacy$laplace$inner$floor <- NULL
+  expect_equal(.ctJuliaObjectiveInputs(legacy)$laplace$floor, "total")
+  expect_identical(.ctJuliaObjectiveKey(legacy), .ctJuliaObjectiveKey(total))
+  # Sampling the effects (intoverpop = FALSE, which the backend prepares as
+  # 'none') has no Laplace term to floor, so no default is recorded.
+  none <- suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
+    intoverpop = FALSE, optimize = FALSE, fit = FALSE)))
+  expect_null(none$laplace$inner$floor)
+  expect_error(suppressMessages(ctFit(dat, model, backend = "julia",
+    intoverpop = FALSE, optimize = FALSE, fit = FALSE,
+    optimcontrol = list(laplace_floor = "gated"))), "intoverpop='laplace' only")
 })

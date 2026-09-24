@@ -51,6 +51,16 @@
 #' point estimate is approximation-limited and the interval will not cover
 #' whatever width it has.
 #'
+#' Every Laplace fit is now corrected this way by default when it is fitted
+#' (\code{optimcontrol$laplace_correct}, see \code{\link{ctFit}}), so on such a
+#' fit this check is made at the corrected estimate, which is not a Laplace
+#' optimum: the correction reported is then the \emph{further} Newton step on
+#' the quadrature objective from there, with the Laplace gradient included, and
+#' \code{at} on the result is \code{'corrected'}. A small further step says the
+#' default correction got there; a large one says one step was not enough. On
+#' a fit made with \code{laplace_correct = FALSE}, or one saved before the
+#' default existed, it is the first step, as before.
+#'
 #' Nested groupings are handled. A group's integral does not factor over its
 #' members, but it does factor \emph{conditionally} -- given the group effect
 #' the members are independent -- so the rule recurses over the same block tree
@@ -79,7 +89,9 @@
 #'   \code{correction} is \code{TRUE}, a \code{parameters} data frame with one
 #'   row per raw parameter giving \code{estimate}, \code{delta},
 #'   \code{corrected}, \code{se} and \code{delta_se}. With \code{refine} it also
-#'   carries \code{refined}.
+#'   carries \code{refined}. \code{at} says whether the estimate checked was the
+#'   Laplace optimum (\code{'laplace'}) or already quadrature-corrected
+#'   (\code{'corrected'}).
 #'
 #'   \code{dropped_directions} counts the directions of the information matrix
 #'   too weakly identified to correct along, which are reported as zero rather
@@ -140,6 +152,12 @@ ctLaplaceCheck <- function(fit, nodes = 5L, correction = TRUE, step = 1e-3,
       call. = FALSE)
   }
   do_correction <- isTRUE(correction) && !is.null(hessian)
+  # A fit the default correction already moved is not at a Laplace optimum, so
+  # the gap gradient alone is not the quadrature objective's gradient there:
+  # the Laplace gradient is added, and `delta` is a further step from the
+  # corrected point rather than the step the fit has already taken. The metric
+  # is still the fit's Hessian, which is at the Laplace optimum.
+  corrected <- .ctLaplaceIsCorrected(fit)
 
   if (do_correction) {
     # `ctsem_laplace_correction` makes this same quadrature and Laplace
@@ -151,7 +169,8 @@ ctLaplaceCheck <- function(fit, nodes = 5L, correction = TRUE, step = 1e-3,
     result <- JuliaConnectoR::juliaGet(module$ctsem_laplace_correction(
       objective, .ctJuliaNumericVector(est),
       JuliaConnectoR::juliaPut(as.matrix(hessian)),
-      nodes = as.integer(nodes), step = as.numeric(step)))
+      nodes = as.integer(nodes), step = as.numeric(step),
+      laplace_gradient = corrected))
     quadrature <- as.numeric(result$quadrature)
     laplacevalue <- as.numeric(result$laplace)
     gap <- as.numeric(result$gap)
@@ -175,7 +194,8 @@ ctLaplaceCheck <- function(fit, nodes = 5L, correction = TRUE, step = 1e-3,
   out <- list(verdict = verdict,
     gap = gap, quadrature = quadrature, laplace = laplacevalue,
     gap_per_subject = gap / max(1L, nsubjects),
-    nodes = as.integer(nodes), nsubjects = nsubjects)
+    nodes = as.integer(nodes), nsubjects = nsubjects,
+    at = if (corrected) "corrected" else "laplace")
   class(out) <- "ctLaplaceCheck"
 
   if (!do_correction) return(out)
@@ -212,6 +232,10 @@ ctLaplaceCheck <- function(fit, nodes = 5L, correction = TRUE, step = 1e-3,
 #' @export
 print.ctLaplaceCheck <- function(x, ...) {
   cat("Laplace approximation check,", x$nodes, "quadrature nodes per effect\n")
+  if (identical(x$at, "corrected")) {
+    cat("  at the fit's quadrature-corrected estimate; corrections are further ",
+      "steps from it\n", sep = "")
+  }
   cat("  log marginal: laplace", format(x$laplace, digits = 8),
     " quadrature", format(x$quadrature, digits = 8), "\n")
   # Through the shared formatter, so this comparison reads the same as the
