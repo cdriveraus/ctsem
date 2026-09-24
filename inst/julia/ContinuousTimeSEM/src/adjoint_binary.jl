@@ -243,7 +243,7 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
             # has no reason to have. Its cotangent rides `b`, which is
             # degenerate here.
             if !isempty(τ) && record.kinds[j] != CTSEM_OBS_COUNT
-                dτ = ForwardDiff.gradient(
+                dτ = _ctsem_nested_gradient(
                     t -> _category_loglikelihood(a, record.y[j], t,
                         record.kinds[j]),
                     collect(T, τ))

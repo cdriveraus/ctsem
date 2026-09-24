@@ -195,12 +195,42 @@ test_that("the gradient is right when most observations are at a limit", {
   expect_equal(adjoint, differenced, tolerance = 1e-5)
 })
 
+test_that("the exact Hessian of a censored model exists and is right", {
+  skip_without_julia()
+  # `ctsem_hessian` differentiates the adjoint gradient, and the censored
+  # measurement update inside it takes a jacobian of its own. Nested like that,
+  # ForwardDiff threw DualMismatchError on this model -- the inner tag ranked
+  # below the outer -- so every censored fit had no Hessian: no Newton finish,
+  # and nothing for the certification or the standard errors. Against central
+  # differences of the adjoint gradient, elementwise.
+  d <- .censored_data(lower = 2.4, upper = 2.6)
+  m <- .censored_model(lower = 2.4, upper = 2.6)
+  handle <- suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
+    intoverpop = "augmented", fit = FALSE)))
+  npar <- max(handle$parameter_table$parnumber, na.rm = TRUE)
+  set.seed(2)
+  at <- stats::rnorm(npar, 0, 0.25)
+  hessian <- .ctBackendHessianAt(handle, at)
+  expect_false(is.null(hessian))
+  expect_true(all(is.finite(hessian)))
+  gradient <- function(x) as.numeric(ctJuliaEvaluate(handle, x, gradient = TRUE)$gradient)
+  eps <- 1e-5
+  differenced <- vapply(seq_len(npar), function(j) {
+    up <- at; up[j] <- up[j] + eps
+    down <- at; down[j] <- down[j] - eps
+    (gradient(up) - gradient(down)) / (2 * eps)
+  }, numeric(npar))
+  expect_equal(hessian, differenced, tolerance = 1e-5)
+})
+
 test_that("a censored model recovers what generated it", {
   skip_without_julia()
   fit <- suppressWarnings(suppressMessages(ctFit(.censored_data(nsubjects = 50,
     nobs = 10), .censored_model(), backend = "julia",
     intoverpop = "augmented", optimcontrol = list(estonly = TRUE))))
   expect_true(isTRUE(fit$optim$converged))
+  # The Newton finish ran, which needs the exact Hessian above.
+  expect_gt(fit$optim$newton_steps, 0L)
   means <- summary(fit)$popmeans
   expect_equal(unname(means["drift_eta1", "mean"]), -0.4, tolerance = 0.35)
   expect_equal(unname(means["mm", "mean"]), 2.5, tolerance = 0.3)
