@@ -94,16 +94,9 @@ subset_objective(o::CT.CTSEMObjective, idx::AbstractVector{<:Integer}) =
 # so restricting `units` restricts the objective; the full subject list stays
 # in the wrapped objective and is never touched for excluded units. Pairing the
 # full spec with a *subset objective* instead would silently misassign groups.
-function subset_objective(L::CT.CTSEMLaplaceObjective, keep::AbstractVector{<:Integer})
-    u = L.units
-    units = CT.CTSEMLaplaceUnits(u.members[keep], u.offsets[keep], u.dims[keep],
-        u.blocks[keep])
-    n = length(keep)
-    CT.CTSEMLaplaceObjective{typeof(L.objective)}(L.objective, L.spec, units,
-        [zeros(units.dims[U]) for U in 1:n], L.inner_maxiter, L.inner_tol,
-        [Dict{Any,Any}() for _ in eachindex(L.workspaces)], zeros(Int, n),
-        zeros(n), falses(n), falses(n), falses(n), falses(n))
-end
+# The engine's own, which is kept in step with the struct.
+subset_objective(L::CT.CTSEMLaplaceObjective, keep::AbstractVector{<:Integer}) =
+    CT._ctsem_subset_objective(L, keep)
 subset_objective(o, idx) = nothing   # joint objective: not subsettable here
 
 # Units, not subjects, are what a Laplace subset draws; for a single-level

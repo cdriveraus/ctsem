@@ -308,15 +308,38 @@ _ctsem_batchable(o) = false
 # excluded unit. Pairing the full spec with a subset *objective* instead would
 # silently misassign groups: `_laplace_build_units` reads `group[i]` for the
 # first n subjects without checking the length.
+#
+# Built field by field by name rather than positionally: the struct gains
+# fields (the floor mode and its gate did, after this was first written, and a
+# positional call then fails on every batched laplace fit). Per-unit and per-run
+# state starts fresh, as the constructor starts it; every other field is the
+# full objective's, shared. A field this does not know that looks per-unit is
+# refused rather than copied at the wrong length.
 function _ctsem_subset_objective(L::CTSEMLaplaceObjective, keep::AbstractVector{<:Integer})
     u = L.units
     units = CTSEMLaplaceUnits(u.members[keep], u.offsets[keep], u.dims[keep],
         u.blocks[keep])
     n = length(keep)
-    CTSEMLaplaceObjective{typeof(L.objective)}(L.objective, L.spec, units,
-        [zeros(units.dims[U]) for U in 1:n], L.inner_maxiter, L.inner_tol,
-        [Dict{Any,Any}() for _ in eachindex(L.workspaces)], zeros(Int, n),
-        zeros(n), falses(n), falses(n), falses(n), falses(n))
+    NU = length(u.members)
+    fresh = Dict{Symbol,Any}(
+        :units => units,
+        :modes => [zeros(units.dims[U]) for U in 1:n],
+        :workspaces => [Dict{Any,Any}() for _ in eachindex(L.workspaces)],
+        :inner_iterations => zeros(Int, n), :inner_gradient => zeros(n),
+        :inner_converged => falses(n), :hessian_repaired => falses(n),
+        :mode_repaired => falses(n), :logdet_floored => falses(n),
+        # per-run: where the objective was last evaluated, and a counter
+        :last_values => Float64[], :gated_units => 0)
+    args = map(fieldnames(typeof(L))) do name
+        haskey(fresh, name) && return fresh[name]
+        v = getfield(L, name)
+        if v isa AbstractVector && NU > 1 && length(v) == NU
+            error("_ctsem_subset_objective: CTSEMLaplaceObjective field `$(name)` ",
+                "has one entry per unit and is not known here; add it to `fresh`.")
+        end
+        v
+    end
+    typeof(L)(args...)
 end
 _ctsem_nunits(o::CTSEMLaplaceObjective) = length(o.units.members)
 _ctsem_prior_objective(o::CTSEMObjective) = o
