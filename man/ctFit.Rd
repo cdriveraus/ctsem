@@ -267,6 +267,19 @@ absolute bound on the inner gradient, floored at
 \code{1e-10 * (1 + abs(value))} so that it means something at any data size.
 Neither applies to \code{intoverpop='augmented'}, which has no inner solve.
 
+Also with \code{intoverpop='laplace'}, \code{optimcontrol$laplace_floor}
+chooses how a subject whose likelihood has gone convex in its random effects
+is scored. \code{'total'}, the default, floors the log determinant of each
+subject's inner curvature at zero. \code{'gated'} (experimental) scores a
+subject whose curvature has an eigenvalue below 0.7 by a three-point
+quadrature along that direction instead, handing off smoothly to the default
+between 0.2 and 0.7; on weak simulated data it removed the several-nat
+over-credit the default gives such subjects, at about twice their cost. The
+choice is recorded in \code{fit$laplace$floor} and every post-fit function
+that rebuilds the objective (\code{ctLaplaceCheck}, \code{ctKalman},
+\code{ctLOO}) uses it. \code{fit$laplace$conditioning} reports how many
+subjects have such curvature at the estimate, whichever floor was used.
+
 With \code{backend='julia'}, \code{optimcontrol$gradient} selects the
 gradient method: \code{'adjoint'} (reverse mode, the default) or
 \code{'forward'} (ForwardDiff). Both compute the same gradient; 'adjoint'

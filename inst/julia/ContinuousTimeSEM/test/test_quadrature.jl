@@ -343,3 +343,79 @@ end
     @test isapprox(C._quadrature_clipped_scale(Hn, 2).scale, C._ctsem_cholesky_uinv(Hn);
         atol=1e-8)
 end
+
+@testset "the soft-direction reference rule is exact for a Gaussian, and one node is the clipped Laplace" begin
+    C = ContinuousTimeSEM
+    # A Gaussian integrand with M >= I: the rule is exact whatever its nodes.
+    laplace, values = _fresh_linear()
+    reference = ctsem_laplace_evaluate(laplace, values; gradient=false,
+        contributions=true)
+    for U in eachindex(laplace.units.members)
+        term = sum(reference.subject_loglik[laplace.units.members[U]])
+        for n in (1, 3, 5)
+            @test isapprox(C._laplace_soft_rule_unit(laplace, values, U;
+                nodes=n, ndirs=1), term; atol=1e-8)
+        end
+    end
+    # One node, no forced direction, soft below one: g(uhat) - sum log max(l, 1) / 2,
+    # computed here from the curvature with LinearAlgebra's eigvals.
+    laplace, values = _fresh_nonlinear()
+    ctsem_laplace_evaluate(laplace, values; gradient=false)
+    theta = collect(Float64, values)
+    Ls = C._laplace_popchols(theta, laplace.spec)
+    aws = C._laplace_workspace!(laplace, Float64, length(theta))
+    for U in eachindex(laplace.units.members)
+        u = laplace.modes[U]
+        g = C._laplace_unit_objective_gradient(laplace, U, theta, Ls, u, aws).value
+        lam = eigvals(Symmetric(C._laplace_block_dense(C._laplace_unit_curvature(
+            laplace, U, theta, Ls, u), laplace.units.blocks[U], length(u))))
+        term = g - sum(log, max.(lam, 1.0)) / 2
+        for recenter in (false, true)
+            @test isapprox(C._laplace_soft_rule_unit(laplace, values, U;
+                nodes=1, ndirs=0, tau=1.0, recenter=recenter), term; atol=1e-10)
+        end
+    end
+end
+
+@testset "the gated soft term hands off smoothly and is exact where it should be" begin
+    C = ContinuousTimeSEM
+    @test C._laplace_soft_weight(0.1, 0.2, 0.7) == 1.0
+    @test C._laplace_soft_weight(0.9, 0.2, 0.7) == 0.0
+    @test C._laplace_soft_weight(0.45, 0.2, 0.7) ≈ 0.5
+    # Concave everywhere: the gate accepts every unit and the term is Laplace.
+    laplace, values = _fresh_linear()
+    reference = ctsem_laplace_evaluate(laplace, values; gradient=false,
+        contributions=true)
+    for U in eachindex(laplace.units.members)
+        g = C._laplace_gated_unit_reference(laplace, values, U)
+        @test !g.flagged
+        @test g.value ≈ sum(reference.subject_loglik[laplace.units.members[U]]) rtol = 1e-12
+        # and the one-step rule is exact on a Gaussian integrand
+        @test isapprox(C._laplace_soft_rule_unit(laplace, values, U;
+            nodes=3, ndirs=1, newton_steps=1), g.value; atol=1e-8)
+    end
+    # A mildly convex unit inside a band placed around it: flagged, its
+    # smallest eigenvalue placed by inverse iteration, and the blend is what it
+    # says it is.
+    laplace = ctsem_laplace_objective(_LAPLACE_NONLINEAR_OBJECTIVE, [1, 2], [5, 6],
+        [7], [1.0, 1.0])
+    values = [0.1, -2.0, -0.2, 0.05, -0.25, 2.0, 0.0]
+    ctsem_laplace_evaluate(laplace, values; gradient=false)
+    Ls = C._laplace_popchols(values, laplace.spec)
+    lams = [eigmin(Symmetric(C._laplace_block_dense(C._laplace_unit_curvature(laplace,
+        U, values, Ls, laplace.modes[U]), laplace.units.blocks[U], 2))) for U in 1:5]
+    U = argmin(lams)
+    g = C._laplace_gated_unit_reference(laplace, values, U; lo=lams[U] - 0.1,
+        hi=lams[U] + 0.1, nodes=3, newton_steps=1)
+    @test g.flagged
+    @test isapprox(g.lambda_min, lams[U]; rtol=1e-10)
+    @test 0 < g.weight < 1
+    soft = C._laplace_soft_rule_unit(laplace, values, U; nodes=3, ndirs=1,
+        newton_steps=1)
+    @test isfinite(soft)
+    ungated = C._laplace_gated_unit_reference(laplace, values, U; lo=lams[U] - 0.3,
+        hi=lams[U] - 0.2)
+    @test !ungated.flagged
+    @test isapprox(g.value, ungated.value + g.weight * (soft - ungated.value); rtol=1e-12)
+end
+
