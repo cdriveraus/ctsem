@@ -186,6 +186,31 @@ test_that("the damped step backtracks as far as the arithmetic allows", {
   expect_gt(stepped$achievable, 0)
 })
 
+test_that("at a saddle the ascent is looked for along the negative curvature", {
+  # f(x, y) = x^2/2 - y^2/2 has a saddle at the origin: a maximum in y, a
+  # minimum in x. The Newton step over the trusted subspace (y) has nothing to
+  # offer there, which is how a rank-deficient laplace fit sat in the
+  # correction loop for hours; the ascent is along x, and the side the gradient
+  # leans to is the one to try first.
+  saddle <- function(p) 0.5 * p[1L]^2 - 0.5 * p[2L]^2
+  hessian <- diag(c(1, -1))
+  at <- c(0.01, 0)
+  step <- ctsem:::.ctBackendNegativeCurvatureStep(saddle, at, hessian,
+    gradient = c(0.01, 0), value = saddle(at))
+  expect_false(is.null(step))
+  expect_gt(step$value, saddle(at))
+  expect_gt(step$par[1L], at[1L])          # uphill, on the gradient's side
+  expect_equal(step$par[2L], 0)
+
+  # At a maximum there is no negative curvature, so nothing is proposed and the
+  # objective is never called.
+  called <- 0
+  bowl <- function(p) { called <<- called + 1; -sum(p^2) }
+  expect_null(ctsem:::.ctBackendNegativeCurvatureStep(bowl, c(0, 0),
+    -diag(2), gradient = c(0, 0), value = 0))
+  expect_equal(called, 0)
+})
+
 test_that("a direction that offers nothing is refused, and says how much", {
   falling <- function(x) -abs(x[1L])
   stepped <- ctsem:::.ctBackendDampedStep(falling, at = 0, step = 1,

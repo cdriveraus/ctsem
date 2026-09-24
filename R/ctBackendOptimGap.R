@@ -129,6 +129,10 @@
     residual = residual, residual_norm = sqrt(sum(residual^2)),
     ntrusted = sum(keep), nflat = sum(!keep & !split$negative),
     nnegative = sum(split$negative),
+    # The direction the point is not a maximum along -- the most negative
+    # curvature -- so a report can say which parameters it runs through.
+    negative_vector = if (any(split$negative))
+      split$vectors[, which.min(split$values)] else NULL,
     # The smallest curvature still trusted, which is what sets how tight a
     # gradient has to be before the gap can be under a given tolerance.
     lambda_min = if (length(values)) min(values) else NA_real_, ok = TRUE)
@@ -463,6 +467,7 @@
     residual_gain = if (is.null(probe)) 0 else probe$gain,
     residual_length = if (is.null(probe)) 0 else probe$length,
     ntrusted = gap$ntrusted, nflat = gap$nflat, nnegative = gap$nnegative,
+    negative_vector = gap$negative_vector,
     # The displacement the gap predicts, kept so a caller can try it without
     # decomposing the Hessian again.
     step = gap$step)
@@ -541,9 +546,45 @@
       call. = FALSE)
     return(invisible(NULL))
   }
+  if (identical(certification$status, "notmaximum") &&
+      length(certification$negative_vector)) {
+    warning(.ctBackendNotMaximumMessage(fit, certification), call. = FALSE)
+    return(invisible(NULL))
+  }
   warning("This fit is not certified as converged: ", certification$reason,
     ". See fit$uncertainty$certification.", call. = FALSE)
   invisible(NULL)
+}
+
+# What a not-a-maximum verdict tells a user: which parameters the rising
+# direction runs through, and what usually fixes it. The parameters are those
+# carrying at least a third of the direction's largest component, at most
+# four. A direction through the random-effect covariance -- scales,
+# correlations, loadings -- is almost always the data not determining that
+# covariance (a correlation drifting towards +-1, or a scale trading off against
+# a correlation), and the remedies are the model's: a lower `poprank`, a fixed
+# or more strongly regularised correlation, fewer random effects.
+#' @keywords internal
+.ctBackendNotMaximumMessage <- function(fit, certification) {
+  v <- as.numeric(certification$negative_vector)
+  names <- .ctBackendRawParameterNames(fit, length(v))
+  size <- abs(v)
+  top <- order(size, decreasing = TRUE)
+  top <- top[size[top] >= max(size) / 3][seq_len(min(4L, sum(size >= max(size) / 3)))]
+  involved <- names[top]
+  covariance <- grepl("^(popsd_|rawcor_|poploading_)", involved)
+  restarts <- fit$optim$restarts
+  tried <- if (is.data.frame(restarts) && nrow(restarts))
+    paste0(" ", nrow(restarts), " random restart",
+      if (nrow(restarts) > 1L) "s" else "", " found nothing better.") else ""
+  paste0("This fit is not a maximum: the likelihood still rises along a ",
+    "direction through ", paste(involved, collapse = ", "), ".", tried,
+    if (any(covariance)) paste0(" That direction is in the random-effect ",
+      "covariance, which usually means the data do not determine it: consider ",
+      "poprank = 1, a fixed or more strongly regularised correlation, or fewer ",
+      "random effects.") else
+      " Those parameters may not be separately determined by the data.",
+    " See fit$uncertainty$certification.")
 }
 
 # The curvature at one point, from the spec rather than from a fit.
@@ -618,6 +659,9 @@
     g_calls = as.numeric(.ctJuliaOr(r$g_calls, 0)))
   totals <- stage_counts(result)
   hessians <- 0L
+  # Set when a resume was futile: the loop goes round once more so that the
+  # Hessian and certification describe the point it ended at, then stops.
+  settled <- FALSE
   for (attempt in seq_len(max(0L, as.integer(maxtries)) + 1L)) {
     est <- as.numeric(result$minimizer)[seq_len(npar)]
     # The engine's Newton finish ends on the exact Hessian at its minimizer and
@@ -647,6 +691,7 @@
     certification$ntrusted <- gap$ntrusted
     certification$nflat <- gap$nflat
     certification$nnegative <- gap$nnegative
+    certification$negative_vector <- gap$negative_vector
     certification$residual_gain <- if (is.null(probe)) 0 else probe$gain
     certification$tolerance <- tolerance
     # Continue for either reason the curvature gives. `suboptimal` is objective
@@ -659,6 +704,7 @@
     # where it gives little the resumed stage with a tightened rule is what
     # moves off the saddle.
     if (!certification$status %in% c("suboptimal", "notmaximum")) break
+    if (settled) break
     if (attempt > as.integer(maxtries) || is.null(optimise)) break
 
     # Damped, and accepted only on an increase that is actually observed and
@@ -688,6 +734,21 @@
         achievable = best, total_gain = NA_real_, alpha = NA_real_,
         resumed = FALSE)
       accepted <- list(par = est, value = value, alpha = 0)
+    }
+    # At a saddle the Newton step above has nothing to offer: it lives in the
+    # trusted subspace, where the point is already a maximum. The ascent is
+    # along the negative curvature, so look there directly -- measured on a
+    # rank-deficient two-random-effect laplace fixture, the Newton step gained
+    # its predicted 2.2e-7 and the resumed L-BFGS then crept 0.02 nats in 1000
+    # iterations along the same direction while a maximum 2 nats higher sat in
+    # the other basin. Kept only if it beats the Newton step.
+    escaped <- NULL
+    if (identical(certification$status, "notmaximum")) {
+      escaped <- .ctBackendNegativeCurvatureStep(value_at, est, hessian,
+        as.numeric(result$gradient)[seq_len(npar)], value)
+      if (!is.null(escaped) && escaped$value > accepted$value) {
+        accepted <- escaped
+      } else escaped <- NULL
     }
     # Tighten whatever ended the last stage, or the resume stops there again.
     # Which one it was is not a guess: `iterations` is the engine's own count,
@@ -739,7 +800,8 @@
       # predicted-gain rule off above prevents; this is how a resume that still
       # comes up short for some other reason says so.
       iterations = if (ok) as.integer(resumed$iterations) else NA_integer_,
-      stopped_converged = if (ok) isTRUE(resumed$converged) else NA)
+      stopped_converged = if (ok) isTRUE(resumed$converged) else NA,
+      escaped = !is.null(escaped))
     # Never accept a resume that did not improve on what we had: the corrected
     # point is already better than the estimate, so the fit can only move
     # forward here.
@@ -747,6 +809,23 @@
       totals <- totals + stage_counts(resumed)
       result <- resumed
     } else break
+    # A resume that used its whole budget and gained less than a tenth of a
+    # nat is on a ridge, not short of iterations: raising the cap and going
+    # again buys hours for nothing (the same fixture: 1000 iterations for
+    # 0.017, then a cap of 4000, on a laplace model where that is minutes per
+    # hundred). A tenth of a nat is a likelihood-ratio statistic of 0.2, below
+    # anything inference reads. No further resume -- but the loop goes round
+    # once more, so the Hessian and the certification are those of the point
+    # the fit now has. Breaking here left them describing the point before the
+    # resume, and a stale Hessian certified the new point and hid a flat
+    # direction the identifiability report used to name.
+    cap <- as.integer(.ctJuliaOr(overrides$maxiter, maxiter))
+    if (is.finite(cap) && cap > 0 &&
+        as.integer(resumed$iterations) >= cap &&
+        as.numeric(resumed$maximum_loglik)[1L] - value < max(tolerance, 0.1)) {
+      history[[length(history)]]$futile <- TRUE
+      settled <- TRUE
+    }
   }
   list(result = result, certification = certification, hessian = hessian,
     corrections = history, totals = totals, hessians = hessians)
@@ -823,6 +902,31 @@
 # model it was measured on. Acceptance is Armijo at 1e-4 rather than any
 # increase, so a rounding error is not recorded as a correction.
 #' @keywords internal
+# The best point along the most negative curvature of the information, or NULL.
+#
+# A unit eigenvector, both signs -- the gradient's sign first, since along a
+# saddle direction the gradient component says which way is up -- over a ladder
+# of lengths in raw units. The ladder stops at 3: every ctsem transform is
+# nearly flat a few units from its centre, and a longer probe measures the
+# transform's plateau rather than the likelihood. Only the value is evaluated.
+#' @keywords internal
+.ctBackendNegativeCurvatureStep <- function(value_at, at, hessian, gradient,
+  value, ladder = c(0.03, 0.1, 0.3, 1, 3)) {
+  split <- .ctBackendInformationSplit(hessian)
+  if (is.null(split) || !any(split$negative)) return(NULL)
+  direction <- split$vectors[, which.min(split$values)]
+  first <- if (sum(gradient * direction) >= 0) 1 else -1
+  best <- NULL
+  for (sign in c(first, -first)) for (length in ladder) {
+    point <- at + sign * length * direction
+    got <- value_at(point)
+    if (is.finite(got) && got > value && (is.null(best) || got > best$value)) {
+      best <- list(par = point, value = got, alpha = sign * length)
+    }
+  }
+  best
+}
+
 .ctBackendDampedStep <- function(value_at, at, step, value, directional,
   c1 = 1e-4) {
   achievable <- 0

@@ -122,9 +122,20 @@ test_that("the Laplace correction handles more than one random effect", {
   skip_without_julia()
   d <- .mvmix_data()
   m <- .mvmix_model()
-  fit <- suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
-    intoverpop = "laplace", optimcontrol = list(finishsamples = 100))))
-  skip_if_not(isTRUE(fit$optim$converged), "fit did not converge")
+  # The fixture has two maxima (see below) plus, from some starts, a ridge
+  # rising slowly towards the boundary one, where the fit correctly reports
+  # not converged. Which a start reaches depends on the platform's arithmetic:
+  # the start after `.mvmix_data()` converged on dev1 and stopped on the ridge
+  # on the Windows machine. This test is about the correction, not the basin,
+  # so it takes the first of three seeded starts that converges.
+  fit <- NULL
+  for (seed in 1:3) {
+    set.seed(seed)
+    fit <- suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
+      intoverpop = "laplace", optimcontrol = list(finishsamples = 100))))
+    if (isTRUE(fit$optim$converged)) break
+  }
+  skip_if_not(isTRUE(fit$optim$converged), "no start converged")
 
   # Two random effects per unit means the quadrature is a `nodes^2` product
   # rule over the block rather than a line of nodes, which is the part of the

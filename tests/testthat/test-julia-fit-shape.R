@@ -115,7 +115,7 @@ suppressWarnings(suppressPackageStartupMessages(library(ctsem)))
   # What the optimiser's batching and Newton finish did: descriptions of one
   # optimiser run, like the stall fields below.
   "batch_sizes", "batch_iterations", "newton_steps", "newton_hessians",
-  "newton_subset_hessians",
+  "newton_subset_hessians", "restarts", "restarts_cancelled",
   "saturated", "saturated_parameters", "carefulfit", "carefulfit_iterations",
   # The two stopping rules the run was given and what they did with it: whether
   # it was stopped for having stopped getting anywhere, which coordinates were
@@ -257,7 +257,7 @@ test_that("$estimate holds the estimate and nothing about the run", {
     "predicted_gain", "last_gain", "gradient", "gradient_norm", "iterations",
     "stage_iterations", "f_calls", "g_calls", "chunks", "linesearch",
     "batch_sizes", "batch_iterations", "newton_steps", "newton_hessians",
-    "newton_subset_hessians", "stalled", "stopped_by_gap", "overshot", "overshoot_gain",
+    "newton_subset_hessians", "restarts", "restarts_cancelled", "stalled", "stopped_by_gap", "overshot", "overshoot_gain",
     "overshoot_parameters", "saturated", "saturated_parameters", "carefulfit",
     "carefulfit_iterations", "corrections", "hessians",
     "hessian_evaluations", "hessian", "hessian_profile", "trace", "substeps")
@@ -285,8 +285,11 @@ test_that("the laplace block is the same shape whichever route built it", {
   for (route in names(fits)) {
     expect_false(is.null(fits[[route]]$laplace), info = route)
   }
-  expect_equal(sort(setdiff(names(fits$optimised$laplace), "boundary")),
-    sort(names(fits$sampled$laplace)))
+  # Optimised only: `boundary` (a correlation capped at the optimum) and
+  # `correction` (the quadrature correction every optimised laplace fit now
+  # gets, or its status when it was off -- see `.ctLaplaceAutoCorrect()`).
+  expect_equal(sort(setdiff(names(fits$optimised$laplace),
+    c("boundary", "correction"))), sort(names(fits$sampled$laplace)))
 })
 
 test_that("estimate slots a reader depends on are present on both", {
