@@ -328,3 +328,49 @@ function _ctsem_must_propagate(err)
         err isa UndefKeywordError || err isa BoundsError || err isa TypeError ||
         err isa InterruptException
 end
+
+
+"""
+Differentiation nested inside code that may itself be differentiated.
+
+ForwardDiff decides which of two tags is the outer one by `tagcount`: a
+`@generated` function that numbers a tag type from a counter when that type is
+first compiled. The numbers therefore follow compilation order -- across the
+package image and the session -- and not nesting. Nothing guarantees that an
+inner tag outranks the outer one, and when it does not, the two meet in a
+conversion and ForwardDiff throws `DualMismatchError`.
+
+Measured on a censored model: `ctsem_hessian` differentiates the adjoint
+gradient, whose measurement update takes its own jacobian of the quadrature
+(`_binary_moment_derivatives`), and it threw exactly that when the censored
+row's standard deviation -- an outer dual, since MANIFESTVAR is differentiated
+-- was converted into the inner dual type. The Hessian was unavailable for
+every censored fit, so certification and standard errors had none. The
+forward-over-forward Hessian, which nests nothing, was finite and agreed with
+finite differences. Why the numbers came out inverted for that model and not
+for binary or ordinal ones was not established; the fix does not depend on it.
+
+An inner differentiation uses this tag. Its number is above any ordinary tag's,
+and rises by one for each level of dual nesting in its input, so it is inner to
+everything it can be nested in, whatever was compiled when.
+"""
+struct CTSEMNestedTag end
+
+_ctsem_dual_depth(::Type) = 0
+_ctsem_dual_depth(::Type{ForwardDiff.Dual{T,V,N}}) where {T,V,N} =
+    1 + _ctsem_dual_depth(V)
+
+ForwardDiff.tagcount(::Type{ForwardDiff.Tag{CTSEMNestedTag,V}}) where {V} =
+    (typemax(UInt) >> 1) + UInt(_ctsem_dual_depth(V))
+
+_ctsem_nested_tag(x::AbstractArray) = ForwardDiff.Tag{CTSEMNestedTag,eltype(x)}()
+
+"""`ForwardDiff.jacobian(f, x)` under `CTSEMNestedTag`; see there."""
+_ctsem_nested_jacobian(f, x::AbstractArray) = ForwardDiff.jacobian(f, x,
+    ForwardDiff.JacobianConfig(f, x, ForwardDiff.Chunk(x), _ctsem_nested_tag(x)),
+    Val{false}())
+
+"""`ForwardDiff.gradient(f, x)` under `CTSEMNestedTag`; see there."""
+_ctsem_nested_gradient(f, x::AbstractArray) = ForwardDiff.gradient(f, x,
+    ForwardDiff.GradientConfig(f, x, ForwardDiff.Chunk(x), _ctsem_nested_tag(x)),
+    Val{false}())

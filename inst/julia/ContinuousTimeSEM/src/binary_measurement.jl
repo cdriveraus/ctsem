@@ -1276,7 +1276,8 @@ function _binary_moment_derivatives(ηbar::T, s2::T, y::Real,
     value = triple(at)
     isfinite(value[1]) || return (T(-Inf), value[2], value[3],
         zero(T), zero(T), one(T), zero(T), zero(T), one(T))
-    J = ForwardDiff.jacobian(triple, at)
+    # Nested: this runs inside the adjoint, which `ctsem_hessian` differentiates.
+    J = _ctsem_nested_jacobian(triple, at)
     return (value[1], value[2], value[3],
         J[1, 1], J[1, 2], J[2, 1], J[2, 2], J[3, 1], J[3, 2])
 end
@@ -1306,7 +1307,7 @@ function _binary_threshold_derivatives(ηbar::T, s2::T, y::Real,
     end
     at = collect(T, thresholds)
     isfinite(triple(at)[1]) || return zeros(T, 3, k)
-    return ForwardDiff.jacobian(triple, at)
+    return _ctsem_nested_jacobian(triple, at)
 end
 
 """
