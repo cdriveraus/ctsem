@@ -689,6 +689,42 @@
         resumed = FALSE)
       accepted <- list(par = est, value = value, alpha = 0)
     }
+    # At a saddle the Newton step above has nothing to offer: it lives in the
+    # trusted subspace, where the point is already a maximum. The ascent is
+    # along the negative curvature, so look there directly -- measured on a
+    # rank-deficient two-random-effect laplace fixture, the Newton step gained
+    # its predicted 2.2e-7 and the resumed L-BFGS then crept 0.02 nats in 1000
+    # iterations along the same direction while a maximum 2 nats higher sat in
+    # the other basin. Kept only if it beats the Newton step.
+    escaped <- NULL
+    if (identical(certification$status, "notmaximum")) {
+      escaped <- .ctBackendNegativeCurvatureStep(value_at, est, hessian,
+        as.numeric(result$gradient)[seq_len(npar)], value)
+      if (!is.null(escaped) && escaped$value > accepted$value) {
+        accepted <- escaped
+      } else escaped <- NULL
+      # Nothing worth having in either direction: the trusted subspace predicts
+      # less than the tolerance and the negative curvature, walked out to three
+      # raw units, delivers less. That is a slowly rising ridge, not a saddle
+      # with somewhere to go, and a resume would spend its whole budget on it
+      # (1000 iterations for 0.017 nats on the fixture above). Stop where the
+      # fit is -- the step is below the tolerance by construction, and moving
+      # the estimate without its gradient would leave the result inconsistent
+      # -- and let the certification report what it is.
+      # The bar is not `tolerance`, which is the certification's precision
+      # (1e-6 by default): whether to spend a stage is a question on the scale
+      # of a likelihood difference worth having, and 1e-3 nats over three raw
+      # units is flat by any reading (the fixture's probe found 2e-4).
+      flat <- max(tolerance, 1e-3)
+      if (gap$gap < flat && accepted$value - value < flat) {
+        history[[length(history) + 1L]] <- list(attempt = attempt,
+          predicted = gap$gap, step_gain = accepted$value - value,
+          ratio = NA_real_, achievable = best,
+          total_gain = accepted$value - value, alpha = accepted$alpha,
+          resumed = FALSE, escaped = !is.null(escaped), flat_ascent = TRUE)
+        break
+      }
+    }
     # Tighten whatever ended the last stage, or the resume stops there again.
     # Which one it was is not a guess: `iterations` is the engine's own count,
     # not Optim's, which stops being updated when a callback ends the run, and
@@ -739,7 +775,8 @@
       # predicted-gain rule off above prevents; this is how a resume that still
       # comes up short for some other reason says so.
       iterations = if (ok) as.integer(resumed$iterations) else NA_integer_,
-      stopped_converged = if (ok) isTRUE(resumed$converged) else NA)
+      stopped_converged = if (ok) isTRUE(resumed$converged) else NA,
+      escaped = !is.null(escaped))
     # Never accept a resume that did not improve on what we had: the corrected
     # point is already better than the estimate, so the fit can only move
     # forward here.
@@ -747,6 +784,20 @@
       totals <- totals + stage_counts(resumed)
       result <- resumed
     } else break
+    # A resume that used its whole budget and gained less than a tenth of a
+    # nat is on a ridge, not short of iterations: raising the cap and going
+    # again buys hours for nothing (the same fixture: 1000 iterations for
+    # 0.017, then a cap of 4000, on a laplace model where that is minutes per
+    # hundred). A tenth of a nat is a likelihood-ratio statistic of 0.2, below
+    # anything inference reads. The fit keeps what it has and the
+    # certification reports it.
+    cap <- as.integer(.ctJuliaOr(overrides$maxiter, maxiter))
+    if (is.finite(cap) && cap > 0 &&
+        as.integer(resumed$iterations) >= cap &&
+        as.numeric(resumed$maximum_loglik)[1L] - value < max(tolerance, 0.1)) {
+      history[[length(history)]]$futile <- TRUE
+      break
+    }
   }
   list(result = result, certification = certification, hessian = hessian,
     corrections = history, totals = totals, hessians = hessians)
@@ -823,6 +874,31 @@
 # model it was measured on. Acceptance is Armijo at 1e-4 rather than any
 # increase, so a rounding error is not recorded as a correction.
 #' @keywords internal
+# The best point along the most negative curvature of the information, or NULL.
+#
+# A unit eigenvector, both signs -- the gradient's sign first, since along a
+# saddle direction the gradient component says which way is up -- over a ladder
+# of lengths in raw units. The ladder stops at 3: every ctsem transform is
+# nearly flat a few units from its centre, and a longer probe measures the
+# transform's plateau rather than the likelihood. Only the value is evaluated.
+#' @keywords internal
+.ctBackendNegativeCurvatureStep <- function(value_at, at, hessian, gradient,
+  value, ladder = c(0.03, 0.1, 0.3, 1, 3)) {
+  split <- .ctBackendInformationSplit(hessian)
+  if (is.null(split) || !any(split$negative)) return(NULL)
+  direction <- split$vectors[, which.min(split$values)]
+  first <- if (sum(gradient * direction) >= 0) 1 else -1
+  best <- NULL
+  for (sign in c(first, -first)) for (length in ladder) {
+    point <- at + sign * length * direction
+    got <- value_at(point)
+    if (is.finite(got) && got > value && (is.null(best) || got > best$value)) {
+      best <- list(par = point, value = got, alpha = sign * length)
+    }
+  }
+  best
+}
+
 .ctBackendDampedStep <- function(value_at, at, step, value, directional,
   c1 = 1e-4) {
   achievable <- 0
