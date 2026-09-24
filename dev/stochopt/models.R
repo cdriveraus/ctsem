@@ -3,6 +3,7 @@
 # depends on ctGenerate's draw stream.
 #
 #   panel    2 latents, 4 indicators, random CINTs, N=1000, T=15   augmented
+#   panel5k  the same with N=5000 (demonstration of batching and finish)
 #   long     3 latents, 3 indicators, N=1, T=1500, full DRIFT         filter
 #   ordinal  1 latent, 3 ordinal indicators, random CINT, N=300, T=10 laplace
 #   nonlin   1 latent cubic drift, 2 indicators, N=100, T=30           EKF
@@ -73,13 +74,13 @@ linear_model <- function(nlat, nman, LAMspec, re = TRUE, fulldrift = TRUE) {
 
 make_problem <- function(model, seed) {
   set.seed(seed)
-  if (model %in% c("panel", "small")) {
-    N <- if (model == "panel") 1000 else 30
-    TT <- if (model == "panel") 15 else 10
+  if (model %in% c("panel", "panel5k", "small")) {
+    N <- switch(model, panel = 1000, panel5k = 5000, small = 30)
+    TT <- if (model == "small") 10 else 15
     drift <- matrix(c(-0.5, 0.2, -0.1, -0.4), 2)
     sims <- sim_linear(N, TT, drift, matrix(c(0.8, 0.2, 0, 0.6), 2),
       c(0.3, -0.2), c(0.5, 0.4), diag(1, 2))
-    if (model == "panel") {
+    if (model != "small") {
       LAM <- matrix(c(1, 0.8, 0, 0, 0, 0, 1, 1.2), 4, 2)
       d <- measure(sims, LAM, 0.5)
       m <- linear_model(2, 4, matrix(c(1, "l21", 0, 0, 0, 0, 1, "l42"), 4, 2))
