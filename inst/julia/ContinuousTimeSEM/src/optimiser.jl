@@ -348,7 +348,10 @@ function _ctsem_batch_fg!(b::CTSEMBatch, F, G, x)
     end
     r = try
         ctsem_subject_gradients(b.stage, xv)
-    catch
+    catch err
+        # A point the model cannot evaluate is no data; code that is wrong is
+        # an error, and an interrupt stops the fit (`_ctsem_must_propagate`).
+        _ctsem_must_propagate(err) && rethrow()
         nothing
     end
     if r === nothing || !isfinite(r.value) || !all(isfinite, r.scores)
@@ -378,7 +381,10 @@ function _ctsem_batch_step!(b::CTSEMBatch, x, G, hmul, iteration)
     # `_ctsem_lbfgs`, which always ends an iteration with a gradient at `x`).
     S = b.scores !== nothing && b.scores_x == x ? b.scores : try
         Matrix{Float64}(ctsem_subject_gradients(b.stage, collect(Float64, x)).scores)
-    catch
+    catch err
+        # A point the model cannot evaluate is no data; code that is wrong is
+        # an error, and an interrupt stops the fit (`_ctsem_must_propagate`).
+        _ctsem_must_propagate(err) && rethrow()
         nothing
     end
     grow = false
@@ -444,7 +450,10 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
     hess(y) = try
         H = Matrix{Float64}(ctsem_hessian(objective, y))
         all(isfinite, H) ? -H : nothing       # of the minimised objective
-    catch
+    catch err
+        # A point the model cannot evaluate is no data; code that is wrong is
+        # an error, and an interrupt stops the fit (`_ctsem_must_propagate`).
+        _ctsem_must_propagate(err) && rethrow()
         nothing
     end
     H = hess(x)
