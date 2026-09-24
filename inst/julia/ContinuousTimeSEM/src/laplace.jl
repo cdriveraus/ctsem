@@ -2892,11 +2892,18 @@ function _laplace_gated_term(laplace::CTSEMLaplaceObjective, U::Integer,
     g = inner.value
     (isfinite(g) && !isempty(u)) || return (value=g, flagged=false)
     M === nothing && (M = _laplace_unit_curvature(laplace, U, values, Ls, u))
+    # A curvature that does not factor at the mode -- the inner solve stopped
+    # at a point that is not a strict maximum, the primal repaired it, and the
+    # repaired Laplace term is unbounded there -- is scored by the soft rule
+    # alone (its smallest eigenvalue is below `lo`, so the weight is one). The
+    # early returns below then report `flagged = false` with a NaN, and the
+    # caller keeps its own term, as it did before this branch existed.
+    indefinite = false
     if logdetM === nothing
         ok, logdetM, _, _ = _laplace_block_factor(M, blocks)
-        ok || return (value=T(NaN), flagged=false)
+        ok || (indefinite = true)
     end
-    total = g - max(logdetM, zero(logdetM)) / 2
+    total = indefinite ? T(NaN) : g - max(logdetM, zero(logdetM)) / 2
     lo, hi = laplace.gate_lo, laplace.gate_hi
     _laplace_exceeds_identity(M, blocks, hi) && return (value=total, flagged=false)
     d = length(u)
@@ -2957,6 +2964,7 @@ function _laplace_gated_term(laplace::CTSEMLaplaceObjective, U::Integer,
     peak = maximum(t -> Float64(_laplace_deepvalue(t)), terms)
     isfinite(peak) || return (value=T(NaN), flagged=true)
     soft = peak + log(sum(exp.(terms .- peak))) - log(lam1c) / 2 - log(pi) / 2
+    indefinite && return (value=soft, flagged=true)
     return (value=total + w * (soft - total), flagged=true)
 end
 
@@ -2969,11 +2977,28 @@ the inner mode's first derivative from `_laplace_dual_unit_mode`.
 function _laplace_gated_unit_gradient(laplace::CTSEMLaplaceObjective, U::Integer,
     theta::Vector{Float64}, curvature)
     uhat = laplace.modes[U]
+    # A repaired unit's factors are of a shifted curvature, which is not the
+    # implicit function theorem's matrix; take the mode's derivative from the
+    # unshifted one's eigendecomposition instead (it is nonsingular wherever
+    # the mode moves smoothly, whatever its signature).
+    dense_inverse = nothing
+    if laplace.mode_repaired[U]
+        Ls0 = _laplace_popchols(theta, laplace.spec)
+        E = _ctsem_symeig(_laplace_block_dense(_laplace_unit_curvature(laplace, U,
+            theta, Ls0, uhat), laplace.units.blocks[U], length(uhat)))
+        dense_inverse = E.vectors * Diagonal(1 ./ E.values) * transpose(E.vectors)
+    end
     term_of = function (x)
         S = eltype(x)
         wsd = _laplace_workspace!(laplace, S, length(x))
         Lsd = _laplace_popchols(x, laplace.spec)
-        ud = _laplace_dual_unit_mode(laplace, U, x, Lsd, uhat, curvature, wsd)
+        ud = if dense_inverse === nothing
+            _laplace_dual_unit_mode(laplace, U, x, Lsd, uhat, curvature, wsd)
+        else
+            u0 = convert(Vector{S}, uhat)
+            u0 .+ dense_inverse * _laplace_unit_objective_gradient(laplace, U, x,
+                Lsd, u0, wsd).gradient
+        end
         return _laplace_gated_term(laplace, U, x, Lsd, ud, wsd).value
     end
     return ForwardDiff.gradient(term_of, theta)
@@ -3884,11 +3909,16 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
             else
                 NaN
             end
-            if gated_floor && ok && !fac.repaired && !isempty(u) &&
-                    isfinite(inner.value)
+            if gated_floor && ok && !isempty(u) && isfinite(inner.value)
                 local gated
-                gated = _laplace_gated_term(laplace, U, theta, Ls, u, aws; M=M,
-                    logdetM=logdetM, inner=inner)
+                # The factorization shifted a repaired `M` in place, so the
+                # gated term gets the curvature afresh and factors it itself.
+                gated = fac.repaired ?
+                    _laplace_gated_term(laplace, U, theta, Ls, u, aws;
+                        M=_laplace_unit_curvature(laplace, U, theta, Ls, u),
+                        inner=inner) :
+                    _laplace_gated_term(laplace, U, theta, Ls, u, aws; M=M,
+                        logdetM=logdetM, inner=inner)
                 if gated.flagged
                     term = gated.value
                     primal_gated[U] = true
