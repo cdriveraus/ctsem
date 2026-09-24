@@ -3850,6 +3850,19 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # pairs accumulate, and a model whose transforms differ by a factor of ten
     # hands it a problem conditioned ten times worse than it needs to be. See
     # `.ctJuliaParameterScale()` and `_ctsem_metric` in the engine.
+    # Start on a subset of the subjects and grow it as the optimiser needs
+    # more data, and finish with Newton steps on the exact Hessian where that
+    # is a few gradients' worth. Both decide for themselves whether they apply
+    # -- a route without a subset, a prior, too few subjects, an expensive
+    # Hessian -- and are plain L-BFGS otherwise. See optimiser.jl. Off on the
+    # state-explicit route, whose target is not a sum over subjects and whose
+    # joint mode is not an estimate.
+    batch = !state_explicit && !identical(optimcontrol$batch, FALSE),
+    newton = !state_explicit && !identical(optimcontrol$newton, FALSE),
+    # `newton` may also name what the finish's steps are taken against --
+    # 'exact', 'chord' or 'subset'; see `_ctsem_newton_finish`.
+    newton_curvature = if (is.character(optimcontrol$newton))
+      as.character(optimcontrol$newton)[1L] else "exact",
     precondition = if (identical(optimcontrol$precondition, FALSE)) NULL else
       .ctJuliaVector(.ctJuliaParameterScale(model_spec,
         at = as.numeric(start), npar = length(as.numeric(start)))),
@@ -4638,6 +4651,24 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # because they mean opposite things: the gap rule stops a fit that has
     # arrived, this one stops a fit that is not going to.
     stopped_by_stall = isTRUE(result$stopped_by_stall),
+    # The batch sizes the run grew through, and the iteration each began at;
+    # 0 when it did not batch (too few subjects, a prior, or the route has no
+    # subset). See `_ctsem_batch_plan` in the engine.
+    batch_sizes = if (is.null(result$batch_sizes)) 0L else
+      as.integer(result$batch_sizes),
+    batch_iterations = if (is.null(result$batch_iterations)) 0L else
+      as.integer(result$batch_iterations),
+    # Newton steps on the exact Hessian after L-BFGS handed over; 0 when there
+    # was no finish (the Hessian is not cheap on this route, or the run ended
+    # some other way).
+    newton_steps = if (is.null(result$newton_steps)) 0L else
+      as.integer(result$newton_steps),
+    # Full and subset Hessians the finish formed, the final (certification)
+    # one included: that one is handed over and not formed again.
+    newton_hessians = if (is.null(result$newton_hessians)) 0L else
+      as.integer(result$newton_hessians),
+    newton_subset_hessians = if (is.null(result$newton_subset_hessians)) 0L
+      else as.integer(result$newton_subset_hessians),
     stall_window = if (is.null(result$stall_window)) NA_integer_ else
       as.integer(result$stall_window),
     # And the two stopping rules as the engine actually received them.

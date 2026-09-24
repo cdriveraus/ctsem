@@ -252,8 +252,8 @@ What is left is a capability one backend has and the other does not.
 \code{lproughnesstarget}, \code{stochasticTolAdjust}, \code{parsteps}) and
 the stall-and-restart pass (\code{stallretries}, \code{stalltol});
 \code{backend='julia'} alone has \code{gradient}, \code{datastart},
-\code{callback}, \code{saveEffects}, \code{progress} and
-\code{tipredMissingIncludeOutcome}. A \emph{value} asking for a capability
+\code{callback}, \code{saveEffects}, \code{progress}, \code{batch},
+\code{newton} and \code{tipredMissingIncludeOutcome}. A \emph{value} asking for a capability
 the chosen backend does not have is refused by name before anything else
 happens; a value that describes what it already does is simply accepted, so
 \code{stochastic=FALSE} works on julia and \code{gradient='adjoint'} works on
@@ -310,6 +310,17 @@ and converges twice in four either way, decided by the jitter on the
 parameters this does not set rather than by the derived ones. Supplied
 \code{inits} are never overridden, and \code{optimcontrol$datastart =
 FALSE} restores the fixed start.
+
+With \code{backend='julia'}, the optimiser starts on a random subset of the
+subjects and grows it as the fit needs more data (\code{optimcontrol$batch},
+default \code{TRUE}), and finishes with Newton steps on the exact Hessian
+once it is close (\code{optimcontrol$newton}, default \code{TRUE}). Each
+applies only where it pays: batching needs at least 80 subjects (or
+top-level groups), and the Newton finish is skipped under
+\code{intoverpop='laplace'}, where the Hessian is expensive. Both reach the
+same optimum; set either to \code{FALSE} to switch it off.
+\code{fit$optim$batch_sizes} and \code{fit$optim$newton_steps} record what
+ran.
 
 \code{optimcontrol$carefulfit} works for \code{backend='julia'} as it does
 for Stan: when \code{priors=FALSE}, a rough first pass is run \emph{with}

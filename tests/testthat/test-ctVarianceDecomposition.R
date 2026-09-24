@@ -460,13 +460,15 @@ test_that('the two representations of individual differences agree', {
 
   expect_gt(min(augmented$between), 0)
   expect_gt(min(laplace$between), 0)
-  # Not "close": the same. Both representations are routed through one body
-  # over the same person structure, so at persons='estimated' -- where neither
-  # draws anything -- every component is identical. It was the between term
-  # differing by two thirds that started this.
+  # The same body over the same person structure, so at persons='estimated'
+  # -- where neither draws anything -- the components differ only as far as
+  # the two fits' estimates do. Those are separate optimisations, each stopped
+  # by its own rule (the augmented one finishes with Newton steps, the laplace
+  # one does not), and agree to about 5e-6 relative. It was the between term
+  # differing by two thirds that started this, so 1e-4 still says 'the same'.
   for (part in c('between', 'within.deterministic', 'within.stochastic',
     'within.measurement', 'total')) {
-    expect_equal(laplace[[part]], augmented[[part]], tolerance = 1e-6,
+    expect_equal(laplace[[part]], augmented[[part]], tolerance = 1e-4,
       label = paste('laplace', part))
   }
 })
