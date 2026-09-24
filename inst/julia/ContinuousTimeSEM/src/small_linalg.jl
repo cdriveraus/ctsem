@@ -350,3 +350,65 @@ end
     end
     return C
 end
+
+"""
+    _ctsem_symeig(A)
+
+Eigenvalues (ascending) and orthonormal eigenvectors of a small symmetric
+`Float64` matrix, by cyclic Jacobi rotations -- for the same reason as the
+Cholesky above: LAPACK's `syevr` takes the process-global lock, and this is
+called from inside the threaded unit loop.
+
+Reads `A` as symmetric through both triangles averaged, and does not modify it.
+Cyclic Jacobi converges quadratically once the off-diagonal is small, and is
+accurate to a few ulps of the largest eigenvalue in *absolute* terms, which is
+all its one caller (the eigenwise prior floor, where only eigenvalues near 1
+matter) needs. Cost is about `6 n^3` flops per sweep and typically 5 to 8
+sweeps, so it is for the dimension of one unit's random effects, not a model's.
+"""
+function _ctsem_symeig(A::AbstractMatrix{Float64}; maxsweeps::Integer=60)
+    n = size(A, 1)
+    a = Matrix{Float64}(undef, n, n)
+    @inbounds for j in 1:n, i in 1:n
+        a[i, j] = (A[i, j] + A[j, i]) / 2
+    end
+    V = Matrix{Float64}(LinearAlgebra.I, n, n)
+    scale = 0.0
+    @inbounds for j in 1:n, i in 1:n
+        scale += a[i, j]^2
+    end
+    tol = (eps(Float64) * sqrt(scale))^2
+    @inbounds for _ in 1:maxsweeps
+        off = 0.0
+        for q in 2:n, p in 1:(q - 1)
+            off += a[p, q]^2
+        end
+        off <= tol && break
+        for q in 2:n, p in 1:(q - 1)
+            apq = a[p, q]
+            iszero(apq) && continue
+            theta = (a[q, q] - a[p, p]) / (2 * apq)
+            t = (theta >= 0 ? 1.0 : -1.0) / (abs(theta) + sqrt(theta^2 + 1))
+            c = 1 / sqrt(t^2 + 1)
+            s = t * c
+            for k in 1:n
+                akp = a[k, p]; akq = a[k, q]
+                a[k, p] = c * akp - s * akq
+                a[k, q] = s * akp + c * akq
+            end
+            for k in 1:n
+                apk = a[p, k]; aqk = a[q, k]
+                a[p, k] = c * apk - s * aqk
+                a[q, k] = s * apk + c * aqk
+            end
+            for k in 1:n
+                vkp = V[k, p]; vkq = V[k, q]
+                V[k, p] = c * vkp - s * vkq
+                V[k, q] = s * vkp + c * vkq
+            end
+        end
+    end
+    values = [a[i, i] for i in 1:n]
+    order = sortperm(values)
+    return (values=values[order], vectors=V[:, order])
+end

@@ -2,7 +2,7 @@
 % Please edit documentation in R/ctLOO.R
 \name{ctLOO}
 \alias{ctLOO}
-\title{K fold cross validation for ctStanFit objects}
+\title{Cross validation for ctsem fits: K fold by refitting, or PSIS for Laplace fits}
 \usage{
 ctLOO(
   fit,
@@ -14,40 +14,68 @@ ctLOO(
   keepfirstobs = FALSE,
   leaveOutN = NA,
   refit = TRUE,
-  casewiseApproximation = FALSE
+  casewiseApproximation = FALSE,
+  method = c("kfold", "psis"),
+  ndraws = 500
 )
 }
 \arguments{
 \item{fit}{ctStanfit object}
 
-\item{folds}{Number of cross validation splits to use -- 10 folds implies that the 
+\item{folds}{Number of cross validation splits to use -- 10 folds implies that the
 model is re-fit 10 times, each time to a data set with 1/10 of the observations randomly removed.}
 
 \item{cores}{Number of processor cores to use.}
 
-\item{parallelFolds}{compute folds in parallel or use cores to finish single folds faster. 
+\item{parallelFolds}{compute folds in parallel or use cores to finish single folds faster.
 parallelFolds will use folds times as much memory.}
 
 \item{tol}{tolerance for optimisation of refitted samples, can generally be more relaxed than the tolerance used for fitting initially.}
 
-\item{subjectwise}{drop random subjects instead of data rows?}
+\item{subjectwise}{drop random subjects instead of data rows? With
+\code{method = 'psis'} this chooses the level instead -- leave one subject
+(unit) out when \code{TRUE}, the default there, and leave one row out when
+\code{FALSE}.}
 
 \item{keepfirstobs}{do not drop first observation (more stable estimates)}
 
-\item{leaveOutN}{if a positive integer is given, the folds argument is ignored and 
-instead the folds are calculated by leaving out every Nth row from the data when fitting. 
+\item{leaveOutN}{if a positive integer is given, the folds argument is ignored and
+instead the folds are calculated by leaving out every Nth row from the data when fitting.
 Leaving 2 out would result in 3 folds (starting at rows 1,2,3), each containing one third of the data.}
 
-\item{refit}{if FALSE, do not optimise parameters for the new data set, 
+\item{refit}{if FALSE, do not optimise parameters for the new data set,
 just compute the likelihoods etc from the original parameters}
 
 \item{casewiseApproximation}{if TRUE, use a bootstrapped gradient contributions approach to approximate the cross validation parameters -- much faster but less reliable.}
+
+\item{method}{\code{'kfold'} (the default) refits the model once per fold.
+\code{'psis'} is refit-free Pareto-smoothed importance sampling
+leave-one-out, available only for \code{backend = 'julia'} fits with
+\code{intoverpop = 'laplace'}, and refused for any other fit; it needs the
+\pkg{loo} package. The K-fold arguments \code{folds}, \code{parallelFolds},
+\code{tol}, \code{keepfirstobs}, \code{leaveOutN}, \code{refit} and
+\code{casewiseApproximation} mean nothing to it and are refused if given.}
+
+\item{ndraws}{Number of importance sampling draws for \code{method = 'psis'}.}
 }
 \value{
-list
+For \code{method = 'kfold'}, a list with \code{foldrows},
+  \code{foldpars}, \code{insampleLogLikRow}, \code{LogLikRowFolds},
+  \code{outsampleLogLikRow}, \code{insampleLogLik}, \code{outsampleLogLik}
+  and entropy and standard deviation summaries. An \code{intoverpop =
+  'laplace'} fit adds \code{insampleLogLikSubject},
+  \code{outsampleLogLikSubject} and \code{scoring}, naming what was scored
+  (see Details). For \code{method = 'psis'}, an object of class
+  \code{ctLOOpsis}: \code{elpd_loo}, \code{se_elpd_loo}, \code{p_loo},
+  \code{looic}, \code{pointwise} (a data frame of \code{elpd_loo},
+  \code{lpd}, \code{p_loo} and \code{pareto_k} per unit or row),
+  \code{n_high_k}, \code{ndraws}, \code{ndropped}, \code{proposal_k} (the
+  Pareto k of the correction from proposal to Laplace posterior: one value at
+  the unit level, one per unit at the row level), \code{level} and
+  \code{note}.
 }
 \description{
-K fold cross validation for ctStanFit objects
+Cross validation for ctsem fits: K fold by refitting, or PSIS for Laplace fits
 }
 \details{
 Works for \code{backend='julia'} fits as well as stan ones. There,
@@ -63,9 +91,55 @@ backend's optimizer restarts from a flat direction. On a weakly identified
 model, or one where withholding a fold leaves a parameter poorly determined,
 two folds -- or two backends -- can converge to noticeably different raw
 parameters for a similar likelihood.
+
+\strong{K fold on an \code{intoverpop = 'laplace'} fit.} The random effects
+are integrated out, so what is scored depends on the fold type. With row
+folds, a held-out row is scored with each subject's random effects at their
+mode given the fold's \emph{training} rows, at the fold's parameters -- the
+held-out row never informs the mode it is scored at. With subject folds a
+held-out subject's rows are not scored at all: the out-of-sample quantity is
+the subject's Laplace marginal likelihood at the fold's parameters,
+returned as \code{outsampleLogLikSubject}, and \code{outsampleLogLikRow} is
+\code{NA} because the marginal does not decompose into rows. In a multilevel
+model a subject's marginal is conditional on the rest of its outermost group,
+as the difference of that group's marginal with and without the held-out
+subjects; several subjects of one group held out together share that joint
+value evenly. \code{insampleLogLik} is correspondingly the Laplace marginal at
+the estimate for subject folds, and the sum of the rows at the full-data
+modes for row folds.
+
+\strong{\code{method = 'psis'}.} Pareto-smoothed importance sampling
+(Vehtari, Gelman and Gabry, 2017) over draws built from the Laplace
+approximation, without refitting, at one of two levels:
+\itemize{
+  \item \code{subjectwise = TRUE}: leave one unit out, where a unit is the
+  outermost level of random effect -- a subject in a one-level model, a
+  group in a multilevel one, since subjects sharing a group effect are not
+  independent given the population parameters. Population parameter draws
+  come from the fit's normal approximation (\code{fit$estimate$cov}, so the
+  fit must carry one) widened by a factor of 1.5, are importance corrected
+  to the Laplace posterior, and are weighted by each unit's Laplace marginal
+  to remove it.
+  \item \code{subjectwise = FALSE}: leave one row out, conditional on the
+  estimated population parameters and integrating over each unit's random
+  effects, drawn from the Gaussian the Laplace approximation fits at their
+  mode, widened by a factor of 1.5. This is pointwise leave-one-out of the
+  filter's one-step-ahead terms -- each row's density given the rows before
+  it -- not exact time series
+  leave-one-out, and it does not propagate uncertainty in the population
+  parameters.
+}
+Draws whose inner mode solve fails are dropped and counted. A Pareto k above
+0.7 flags a unit or row whose estimate is unreliable; K fold is then the
+better tool for it.
 }
 \examples{
-\donttest{ 
+\donttest{
 ctLOO(ctstantestfit)
 }
+}
+\references{
+Vehtari, A., Gelman, A. and Gabry, J. (2017). Practical Bayesian
+  model evaluation using leave-one-out cross-validation and WAIC.
+  \emph{Statistics and Computing}, 27, 1413--1432.
 }

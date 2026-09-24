@@ -3466,6 +3466,12 @@ from `_laplace_dual_mode`.
 
 The gradient differentiates the complete per-subject term, log determinant and
 implicit mode dependence included.
+
+`unit_loglik` is each unit's own term -- the approximated log marginal
+likelihood of all its members jointly. `subject_loglik` spreads that evenly
+over the members, which is exact only when a unit is one subject; anything that
+needs a marginal per independent block (leave-one-unit-out, for one) reads
+`unit_loglik`.
 """
 function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     gradient::Bool=true, contributions::Bool=false, nested_gradient::Bool=false)
@@ -3588,12 +3594,14 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
     @inbounds for c in 1:nslot
         chunk_ok[c] || return (value=chunk_bad[c],
             gradient=gradient ? fill(NaN, length(theta)) : nothing,
-            subject_loglik=subject_loglik, converged=all(laplace.inner_converged))
+            subject_loglik=subject_loglik, unit_loglik=unit_loglik,
+            converged=all(laplace.inner_converged))
     end
     value = sum(unit_loglik) + _ctsem_log_prior(laplace.objective, theta)
 
     gradient || return (value=value, gradient=nothing,
-        subject_loglik=subject_loglik, converged=all(laplace.inner_converged))
+        subject_loglik=subject_loglik, unit_loglik=unit_loglik,
+        converged=all(laplace.inner_converged))
 
     # 3. The gradient, by a number of seeded reverse sweeps proportional to a
     #    unit's members rather than to the parameter count.
@@ -3673,8 +3681,12 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
             run_gradient(c)
             return true
         end
-        ok = all(chunk_ok)
-        if ok
+        # Not `ok`: `run_primal` assigns that name, and a closure binds an
+        # enclosing local rather than shadowing it, so a function-level `ok`
+        # here made every concurrent unit share one boxed `ok` between its
+        # factorization and its term.
+        gradient_ok = all(chunk_ok)
+        if gradient_ok
             for w in 1:nslot
                 grad .+= partials[w]
             end
@@ -3691,7 +3703,7 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
         grad .= _laplace_nested_gradient(laplace, theta, Ls, primal_curvature)
     end
     return (value=value, gradient=grad, subject_loglik=subject_loglik,
-        converged=all(laplace.inner_converged))
+        unit_loglik=unit_loglik, converged=all(laplace.inner_converged))
 end
 
 """
@@ -4405,7 +4417,8 @@ function _ctsem_optimise_trial(o::CTSEMLaplaceObjective, x, want_gradient::Bool,
     evaluated = try
         ctsem_laplace_evaluate(o, x; gradient=want_gradient,
             nested_gradient=(Symbol(gradient_method) === :nested))
-    catch
+    catch err
+        _ctsem_must_propagate(err) && rethrow()
         nothing
     end
     value = evaluated === nothing ? NaN : evaluated.value
@@ -4456,7 +4469,8 @@ solve used to fail.
 function _ctsem_probe_value(o::CTSEMLaplaceObjective, x)
     evaluated = try
         ctsem_laplace_evaluate(o, x; gradient=false)
-    catch
+    catch err
+        _ctsem_must_propagate(err) && rethrow()
         nothing
     end
     evaluated === nothing && return -Inf

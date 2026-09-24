@@ -389,9 +389,7 @@ function ctsem_sample_metric(sampler::CTSEMSampler, values::AbstractVector;
             # still produced a valid posterior, just a far worse-mixing one,
             # which is the kind of failure no assertion on the draws would
             # find.
-            (err isa MethodError || err isa UndefVarError ||
-                err isa TypeError) && rethrow()
-            err isa InterruptException && rethrow()
+            _ctsem_must_propagate(err) && rethrow()
             nothing
         end
         for (b, block) in enumerate(blocks)

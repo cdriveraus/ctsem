@@ -93,6 +93,8 @@ include("binary_measurement.jl")
 # kernels the filter integrates.
 include("state_sampling.jl")
 include("particle_filter.jl")
+# After particle_filter.jl, which brings in Random for the effect draws.
+include("laplace_loo.jl")
 include("sample_density.jl")
 include("sample_nuts.jl")
 include("sample_adapt.jl")

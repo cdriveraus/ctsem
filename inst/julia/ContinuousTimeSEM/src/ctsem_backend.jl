@@ -999,7 +999,10 @@ function _ctsem_optimise_trial(o::CTSEMOptimisable, x, want_gradient::Bool,
     evaluated = try
         ctsem_evaluate(o, x; gradient=want_gradient,
             gradient_method=gradient_method)
-    catch
+    catch err
+        # A point the model cannot evaluate is invalid; code that is wrong is
+        # an error, and an interrupt stops the fit (`_ctsem_must_propagate`).
+        _ctsem_must_propagate(err) && rethrow()
         nothing
     end
     valid = evaluated !== nothing && isfinite(evaluated.value)
@@ -1372,7 +1375,8 @@ function _ctsem_stall_verdict!(watch::CTSEMStallWatch, trace::CTSEMTrace,
         out = if isfinite(value)
             try
                 _ctsem_overshot(objective, values, flat, value, tolerance)
-            catch
+            catch err
+                _ctsem_must_propagate(err) && rethrow()
                 nothing
             end
         else
