@@ -724,3 +724,194 @@ function ctsem_laplace_refine(laplace::CTSEMLaplaceObjective,
         converged=Optim.converged(result),
         nodes=Int(nodes))
 end
+
+################################################################################
+# Reference implementation of the gated floor's value
+################################################################################
+#
+# The `:gated` floor (`_laplace_gated_term` in laplace.jl) is generic in its
+# element type because its gradient differentiates it. These two functions
+# compute the same rule in plain Float64, written separately and first, and
+# `test_laplace.jl` holds the floor's value to them. They are not on any
+# fitting path.
+
+"""
+    _laplace_soft_rule_unit(laplace, values, U; nodes=5, ndirs=1, tau=0.0,
+                            recenter=true, newton_steps=0)
+
+One unit's log marginal likelihood by a Gauss-Hermite rule along the unit's
+softest directions and Laplace in the rest. Value only: the reference the
+gated floor is tested against; see
+`CT-SEM/review/LAPLACE-eigenwise-floor-2026-09-23.md`, second and third
+addenda. Reads the modes of the last `ctsem_laplace_evaluate` at `values`.
+
+In the eigenbasis `M = V Lambda V'` at the mode:
+
+  * the `ndirs` smallest directions, and any other with `lambda < tau`, get
+    `nodes` points at the *clipped* scale `1/sqrt(max(lambda, 1))` -- never
+    wider than the prior, which is what `ctsem_laplace_quadrature`'s
+    `M^(-1/2)` scaling gets wrong at a near-singular unit;
+  * at each such node the remaining coordinates are moved to their conditional
+    mode (`recenter`, Newton) and integrated by Laplace with their conditional
+    curvature, clipped the same way. Without the recentring the rule misses the
+    ridge a nonlinear effect bends the integrand along, and does worse than one
+    node; without the clip, a conditional curvature that collapses at a far node
+    produces a spike of several nats.
+
+`newton_steps = k > 0` replaces the converged recentring by `k` Newton steps,
+each with the node's own conditional curvature, and takes the conditional
+logdet from the last curvature evaluated: `k` gradients, `k` curvatures and one
+value per node. `k = 1` at 3 nodes is the cheap rule of the third addendum.
+The middle node of an odd rule sits at the mode and costs nothing.
+
+`nodes = 1`, `ndirs = 0`, `tau = 1` is `g(uhat) - sum log max(lambda, 1) / 2`.
+Uses `_ctsem_symeig` and `_ctsem_cholesky` throughout (no LAPACK); a rule of
+`n` nodes costs about `n` conditional Newton solves of a few steps, each a
+curvature of the unit, so `n` times the primal work of one unit.
+"""
+function _laplace_soft_rule_unit(laplace::CTSEMLaplaceObjective,
+    values::AbstractVector, U::Integer; nodes::Integer=5, ndirs::Integer=1,
+    tau::Real=0.0, recenter::Bool=true, newton_steps::Integer=0)
+    theta = collect(Float64, values)
+    _laplace_ensure_pool!(laplace)
+    Ls = _laplace_popchols(theta, laplace.spec)
+    aws = _laplace_workspace!(laplace, Float64, length(theta))
+    uhat = copy(laplace.modes[U])
+    d = length(uhat)
+    blocks = laplace.units.blocks[U]
+    gof(u) = _laplace_unit_objective_gradient(laplace, U, theta, Ls, u, aws)
+    Mof(u) = _laplace_block_dense(_laplace_unit_curvature(laplace, U, theta, Ls, u),
+        blocks, d)
+    d == 0 && return gof(uhat).value
+    E = _ctsem_symeig(Mof(uhat))
+    soft = sort(unique(vcat(collect(1:min(Int(ndirs), d)),
+        findall(<(tau), E.values))))
+    stiff = setdiff(1:d, soft)
+    ns, nh = length(soft), length(stiff)
+    Vs, Vh = E.vectors[:, soft], E.vectors[:, stiff]
+    lsoft = max.(E.values[soft], 1.0)
+    xs, ws = _gauss_hermite(nodes)
+
+    # log int exp(g(ubase + Vh z)) dz by Laplace at the conditional mode, with
+    # the conditional curvature clipped at the prior's.
+    stiff_part = function (ubase::Vector{Float64})
+        local z, r, gz, Mz, F, ez, lam, uu
+        nh == 0 && return gof(ubase).value
+        z = zeros(nh)
+        if recenter && newton_steps > 0
+            lam = max.(E.values[stiff], 1.0)
+            maximum(abs, ubase .- uhat) < 1e-12 &&
+                return gof(uhat).value - sum(log, lam; init=0.0) / 2
+            for _ in 1:Int(newton_steps)
+                r = gof(ubase .+ Vh * z)
+                ez = _ctsem_symeig(transpose(Vh) * Mof(ubase .+ Vh * z) * Vh)
+                lam = max.(ez.values, 1.0)
+                z .+= ez.vectors * ((transpose(ez.vectors) *
+                    (transpose(Vh) * r.gradient)) ./ lam)
+            end
+            return gof(ubase .+ Vh * z).value - sum(log, lam; init=0.0) / 2
+        end
+        if recenter
+            for _ in 1:50
+                r = gof(ubase .+ Vh * z)
+                gz = transpose(Vh) * r.gradient
+                maximum(abs, gz) < laplace.inner_tol && break
+                Mz = transpose(Vh) * Mof(ubase .+ Vh * z) * Vh
+                F = _ctsem_cholesky(Matrix(_laplace_symmetrise(Mz)), nh)
+                issuccess(F) || break
+                z .+= F \ gz
+            end
+        end
+        uu = ubase .+ Vh * z
+        ez = _ctsem_symeig(transpose(Vh) * Mof(uu) * Vh)
+        lam = recenter ? max.(ez.values, 1.0) : E.values[stiff]
+        return gof(uu).value - sum(log, lam; init=0.0) / 2
+    end
+    terms = Float64[]
+    for idx in Iterators.product(ntuple(_ -> 1:Int(nodes), ns)...)
+        x = Float64[xs[i] for i in idx]
+        v = stiff_part(uhat .+ Vs * (sqrt(2) .* x ./ sqrt.(lsoft)))
+        push!(terms, isfinite(v) ?
+            v + sum(log(ws[i]) + xs[i]^2 for i in idx; init=0.0) : -Inf)
+    end
+    peak = maximum(terms)
+    isfinite(peak) || return NaN
+    # Per soft direction sqrt(2/lambda~) from the change of variable against the
+    # sqrt(pi) the weights carry and the (2 pi)^(-1/2) of the density.
+    return peak + log(sum(exp.(terms .- peak))) - sum(log, lsoft; init=0.0) / 2 -
+        ns * log(pi) / 2
+end
+
+
+"""
+    _laplace_soft_weight(lambda, lo, hi)
+
+The C1 hand-off from the soft rule to the Laplace term: one below `lo`, zero
+above `hi`, and `1 - (3 s^2 - 2 s^3)` between, with `s = (lambda - lo)/(hi - lo)`.
+"""
+function _laplace_soft_weight(lambda::Real, lo::Real, hi::Real)
+    s = clamp((lambda - lo) / (hi - lo), 0.0, 1.0)
+    return 1 - (3 * s^2 - 2 * s^3)
+end
+
+"""
+    _laplace_gated_unit_reference(laplace, values, U; lo=0.2, hi=0.7, nodes=3,
+                                  newton_steps=1, solves=5)
+
+`T = T_total + w(lambda_min) (T_soft - T_total)` for one unit, value only, at the
+modes of the last `ctsem_laplace_evaluate` at `values` under the total floor.
+The Float64 reference for `_laplace_gated_term`; see the section comment.
+
+The gate is exact and costs no likelihood sweep: `M - hi I` is block-factored
+(the same elimination as `M`'s own, no fill-in), and a unit it accepts returns
+`T_total` untouched. Only a flagged unit places `lambda_min`: by the engine's
+own symmetric eigensolver for a unit up to `_LAPLACE_EIGEN_MAXDIM`, else by
+`solves` steps of inverse iteration on the factor of `M` from a fixed start,
+which converges at the eigengap's rate. Only a unit with `w > 0` evaluates the
+soft rule.
+
+Returns `(value, weight, lambda_min, flagged)`.
+"""
+function _laplace_gated_unit_reference(laplace::CTSEMLaplaceObjective,
+    values::AbstractVector, U::Integer; lo::Real=0.2, hi::Real=0.7,
+    nodes::Integer=3, newton_steps::Integer=1, solves::Integer=5)
+    theta = collect(Float64, values)
+    _laplace_ensure_pool!(laplace)
+    Ls = _laplace_popchols(theta, laplace.spec)
+    aws = _laplace_workspace!(laplace, Float64, length(theta))
+    u = laplace.modes[U]
+    blocks = laplace.units.blocks[U]
+    inner = _laplace_unit_objective_gradient(laplace, U, theta, Ls, u, aws)
+    isempty(u) && return (value=inner.value, weight=0.0, lambda_min=Inf, flagged=false)
+    M = _laplace_unit_curvature(laplace, U, theta, Ls, u)
+    ok, logdetM, _, _ = _laplace_block_factor(M, blocks)
+    ok || return (value=NaN, weight=0.0, lambda_min=NaN, flagged=false)
+    total = inner.value - max(logdetM, 0.0) / 2
+    _laplace_exceeds_identity(M, blocks, hi) &&
+        return (value=total, weight=0.0, lambda_min=Inf, flagged=false)
+    d = length(u)
+    dense = _laplace_block_dense(M, blocks, d)
+    lambda = if d <= _LAPLACE_EIGEN_MAXDIM[]
+        # A small unit is decomposed outright: no likelihood sweep either way,
+        # and inverse iteration converges only as fast as the eigengap allows
+        # -- five solves placed every unit of the weak-data fixture, where the
+        # eigenvalue ratio is under 0.4, and were 4% off on a unit whose two
+        # eigenvalues are 0.956 and 1.175.
+        _ctsem_symeig(dense).values[1]
+    else
+        F = _ctsem_cholesky(copy(dense), d)
+        x = fill(1 / sqrt(d), d)
+        for _ in 1:Int(solves)
+            y = F \ x
+            x = y ./ sqrt(sum(abs2, y))
+        end
+        sum(x .* (dense * x))
+    end
+    w = _laplace_soft_weight(lambda, lo, hi)
+    w == 0 && return (value=total, weight=0.0, lambda_min=lambda, flagged=true)
+    soft = _laplace_soft_rule_unit(laplace, theta, U; nodes=nodes,
+        ndirs=1, tau=0.0, recenter=true, newton_steps=newton_steps)
+    return (value=total + w * (soft - total), weight=w, lambda_min=lambda,
+        flagged=true)
+end
+

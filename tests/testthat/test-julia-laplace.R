@@ -1168,3 +1168,143 @@ test_that("the hessian raises the inner budget rather than returning NaN", {
   expect_equal(getbudget(), 2L)
   setbudget(200L)
 })
+
+# Weak data for a nonlinear random effect: 40 subjects, six waves, a random
+# `-log1p_exp` drift beside random T0MEANS and CINT. The subjects are simulated
+# here, not by ctGenerate, whose draw stream moves under unrelated commits.
+.laplace_weak_data <- function(seed = 2L, nsubjects = 40L, ntimes = 6L) {
+  set.seed(seed)
+  baseline <- stats::rnorm(nsubjects, 2, 2)
+  start <- stats::rnorm(nsubjects, baseline / 2, 1)
+  drift <- -log1p(exp(-stats::rnorm(nsubjects, 1 + (baseline - 2) / 2, 1)))
+  rows <- lapply(seq_len(nsubjects), function(i) {
+    a <- drift[i]; decay <- exp(a)
+    intercept <- (baseline[i] / a) * (decay - 1)
+    innovation <- sqrt(0.25 * (exp(2 * a) - 1) / (2 * a))
+    latent <- numeric(ntimes); latent[1] <- start[i]
+    for (t in seq_len(ntimes - 1L)) {
+      latent[t + 1L] <- decay * latent[t] + intercept +
+        stats::rnorm(1, 0, innovation)
+    }
+    data.frame(id = i, time = seq_len(ntimes) - 1L,
+      Y1 = latent + stats::rnorm(ntimes, 0, 0.5))
+  })
+  do.call(rbind, rows)
+}
+
+test_that("near-singular random-effect curvature is reported, and changes nothing", {
+  skip_without_julia()
+  model <- suppressMessages(ctModel(silent = TRUE, type = "ct", CINT = "cint",
+    MANIFESTMEANS = 0, LAMBDA = matrix(1),
+    DRIFT = "drift|-log1p_exp(-param)|TRUE"))
+  spec <- suppressWarnings(suppressMessages(ctFit(.laplace_weak_data(), model,
+    backend = "julia", intoverpop = "laplace", fit = FALSE)))
+  module <- .ctJuliaModule(spec$project)
+  objective <- .ctJuliaObjective(spec)
+  # Where a total-floor fit of these data converged: one unit parked at
+  # eigenvalues (8.5e-4, 14.9, 79.0), logdet = 0 to ten digits, which is where
+  # the total prior floor lets the optimiser rest while the unit's Laplace term
+  # is 3.1 nats above its exact integral.
+  raw <- c(0.127421404395785, 2.72694414423615, -1.14068954877124,
+    -1.61124260961682, 0.181949396643791, -0.379492126290006, 1.2518601566922,
+    -0.261116183475529, 0.501589410182815, 0.472211311761145, 0.16969291528676)
+  first <- module$ctsem_laplace_evaluate(objective, .ctJuliaVector(raw),
+    gradient = TRUE)
+  cond <- .ctJuliaLaplaceConditioning(JuliaConnectoR::juliaGet(
+    module$ctsem_laplace_conditioning(objective))$min_eigenvalue)
+  expect_gte(cond$near_singular, 1L)
+  expect_gt(cond$below_one, cond$near_singular)
+  expect_lt(min(cond$min_eigenvalue), 0.01)
+  # Report-time only: asking changes neither the value nor the gradient.
+  again <- module$ctsem_laplace_evaluate(objective, .ctJuliaVector(raw),
+    gradient = TRUE)
+  expect_identical(.ctBackendJuliaValue(again$value),
+    .ctBackendJuliaValue(first$value))
+  expect_equal(as.numeric(.ctBackendJuliaValue(again$gradient)),
+    as.numeric(.ctBackendJuliaValue(first$gradient)), tolerance = 1e-12)
+
+  # And a concave case reports nothing, on the fit and in its print.
+  fit <- .laplace_exact_fit()
+  expect_equal(fit$laplace$conditioning$below_one, 0L)
+  expect_equal(fit$laplace$conditioning$near_singular, 0L)
+  expect_false(any(grepl("near-singular", capture.output(print(fit)))))
+})
+
+test_that("laplace_floor is validated, refused by name where it cannot apply", {
+  # No julia needed: control vocabulary and validation.
+  expect_error(.ctFitCheckControls(list(laplace_floor = "gated"), "julia"), NA)
+  expect_error(.ctFitCheckControls(list(laplace_floor = "total"), "stan"), NA)
+  expect_error(.ctFitCheckControls(list(laplace_floor = "gated"), "stan"),
+    "no Laplace term")
+  expect_equal(.ctJuliaLaplaceInner(list(floor = "gated")), list(floor = "gated"))
+  # The default is recorded as nothing, so a model that asked for it hashes as
+  # one that asked for nothing.
+  expect_equal(.ctJuliaLaplaceInner(list(floor = "total")), list())
+  expect_error(.ctJuliaLaplaceInner(list(floor = "eigen")), "'total' or 'gated'")
+  expect_error(.ctJuliaPrepare(.laplace_test_data(nsubjects = 4, nobs = 3),
+    .laplace_test_model(), intoverpop = "augmented",
+    laplacecontrol = list(floor = "gated")), "intoverpop='laplace' only")
+})
+
+# The objective's own floor, read from the engine.
+.laplace_objective_floor <- function(objective) {
+  JuliaConnectoR::juliaCall("String", JuliaConnectoR::juliaCall("getfield",
+    objective, as.symbol("floor")))
+}
+
+test_that("a gated fit carries its floor to post-fit routes, and leaves the session alone", {
+  skip_without_julia()
+  model <- suppressMessages(ctModel(silent = TRUE, type = "ct", CINT = "cint",
+    MANIFESTMEANS = 0, LAMBDA = matrix(1),
+    DRIFT = "drift|-log1p_exp(-param)|TRUE"))
+  dat <- .laplace_weak_data()
+  # From the total-floor estimate of these data (see the conditioning test),
+  # where one subject is near-singular and the two floors differ; a few
+  # iterations are enough, since what is tested is where the floor goes.
+  inits <- c(0.127421404395785, 2.72694414423615, -1.14068954877124,
+    -1.61124260961682, 0.181949396643791, -0.379492126290006, 1.2518601566922,
+    -0.261116183475529, 0.501589410182815, 0.472211311761145, 0.16969291528676)
+  fitwith <- function(...) suppressWarnings(suppressMessages(ctFit(dat, model,
+    backend = "julia", intoverpop = "laplace", inits = inits,
+    optimcontrol = list(estonly = TRUE, maxiter = 5L, ...))))
+  before <- fitwith()
+  gated <- fitwith(laplace_floor = "gated")
+  after <- fitwith()
+
+  expect_equal(before$laplace$floor, "total")
+  expect_equal(gated$laplace$floor, "gated")
+  expect_true(is.integer(gated$laplace$gated_units))
+  expect_equal(.laplace_objective_floor(.ctJuliaObjective(gated)), "gated")
+
+  # A default fit after a gated one in the same session is still the default:
+  # the same estimate and log likelihood as the one before it, and its
+  # objective is on :total.
+  expect_equal(after$laplace$floor, "total")
+  expect_equal(.laplace_objective_floor(.ctJuliaObjective(after)), "total")
+  # Equal rather than identical: with more than one thread the units are summed
+  # per worker slot, assigned at run time, so the last bit moves between runs.
+  expect_equal(after$estimate$loglik, before$estimate$loglik, tolerance = 1e-10)
+  expect_equal(as.numeric(after$estimate$raw), as.numeric(before$estimate$raw),
+    tolerance = 1e-8)
+
+  # The two floors really are different objectives. At the starting point one
+  # subject is near-singular, and the gated objective scores it by its rule;
+  # the fit then moves, and at its estimate the two may agree.
+  module <- .ctJuliaModule(gated$model_spec$project)
+  under <- function(fit, at) .ctBackendJuliaValue(module$ctsem_laplace_evaluate(
+    .ctJuliaObjective(fit), .ctJuliaVector(as.numeric(at)), gradient = FALSE)$value)
+  expect_gt(under(after, inits) - under(gated, inits), 1)
+  expect_gte(as.integer(JuliaConnectoR::juliaCall("getfield",
+    .ctJuliaObjective(gated), as.symbol("gated_units"))), 1L)
+
+  # ctLaplaceCheck evaluates the fit's own term, which is the gated one.
+  check <- suppressWarnings(ctLaplaceCheck(gated, nodes = 3L, correction = FALSE))
+  expect_equal(check$laplace, under(gated, gated$estimate$raw), tolerance = 1e-10)
+
+  # ctKalman re-prepares the specification, and the floor goes with it.
+  kspec <- ctsem:::.ctBackendKalmanSpec(gated)
+  expect_equal(kspec$laplace$inner$floor, "gated")
+  expect_equal(.laplace_objective_floor(.ctJuliaObjective(kspec)), "gated")
+  k <- suppressWarnings(suppressMessages(ctKalman(gated, subjects = 1:2)))
+  expect_false(is.null(k))
+})

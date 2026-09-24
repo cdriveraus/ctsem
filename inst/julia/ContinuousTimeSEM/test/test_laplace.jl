@@ -1,4 +1,4 @@
-using DataFrames, ForwardDiff, LinearAlgebra
+using DataFrames, ForwardDiff, LinearAlgebra, Random
 
 # Laplace-approximate marginal likelihood for subject-level random effects.
 #
@@ -237,9 +237,12 @@ end
         ctsem_set_prior_floor!(previous)
     end
     # Equality, not a tolerance: where the floor does not bind it is not
-    # approximately the same computation, it is the same computation.
+    # approximately the same computation, it is the same computation. Except
+    # in the gradient's last bit: units are summed per worker slot and which
+    # worker takes which unit is decided at run time, so with more than one
+    # thread two evaluations of the same thing differ there (measured, at -t 2).
     @test floored.value == bare.value
-    @test floored.gradient == bare.gradient
+    @test isapprox(floored.gradient, bare.gradient; rtol=1e-13)
 end
 
 @testset "a floored unit's gradient is the gradient of its floored term" begin
@@ -291,6 +294,152 @@ end
     finally
         ctsem_set_max_chunks!(original)
     end
+end
+
+# Two random effects on the nonlinear fixture, T0MEANS and the `-log1p_exp`
+# PARS entry, at a point where one unit's smallest eigenvalue is 0.956 while its
+# logdet is +0.116: the total floor does not engage there although the unit's
+# likelihood is convex in one direction. Raw 6 and 7 are the second scale and
+# the correlation.
+_fresh_nonlinear_two() = (ctsem_laplace_objective(_LAPLACE_NONLINEAR_OBJECTIVE,
+    [1, 2], [5, 6], [7], [1.0, 1.0]), [0.1, -2.0, -0.2, 0.05, -0.25, 2.0, 0.0])
+
+@testset "the hand-written symmetric eigensolver matches LAPACK" begin
+    rng = MersenneTwister(3)
+    for n in (1, 2, 3, 6, 12)
+        A = randn(rng, n, n); A = A + transpose(A)
+        A[1, :] .*= 100; A[:, 1] .*= 100
+        E = ContinuousTimeSEM._ctsem_symeig(A)
+        scale = maximum(abs, A)
+        @test isapprox(E.values, eigvals(Symmetric(A)); atol=1e-12 * scale)
+        @test norm(A * E.vectors - E.vectors * Diagonal(E.values)) < 1e-12 * scale * n
+        @test norm(transpose(E.vectors) * E.vectors - I) < 1e-12 * n
+    end
+end
+
+@testset "curvature conditioning is reported at report time and changes nothing" begin
+    C = ContinuousTimeSEM
+    # Concave everywhere: every unit passes the `M - I` test, nothing is
+    # decomposed, nothing is reported.
+    laplace, values = _fresh_linear()
+    ctsem_laplace_evaluate(laplace, values; gradient=false)
+    cond = ctsem_laplace_conditioning(laplace)
+    @test all(==(Inf), cond.min_eigenvalue)
+    @test cond.below_one == 0 && cond.near_singular == 0
+    # Mildly convex: some unit has an eigenvalue below one, none near zero,
+    # and what is reported is that unit's exact smallest eigenvalue.
+    laplace, values = _fresh_nonlinear_two()
+    first = ctsem_laplace_evaluate(laplace, values; gradient=true)
+    flags = copy(laplace.logdet_floored)
+    diagnostics = ctsem_laplace_diagnostics(laplace)
+    @test diagnostics.below_one >= 1
+    @test diagnostics.near_singular == 0
+    Ls = C._laplace_popchols(values, laplace.spec)
+    for U in eachindex(laplace.units.members)
+        isfinite(diagnostics.min_eigenvalue[U]) || continue
+        u = laplace.modes[U]
+        dense = C._laplace_block_dense(C._laplace_unit_curvature(laplace, U,
+            values, Ls, u), laplace.units.blocks[U], length(u))
+        @test isapprox(diagnostics.min_eigenvalue[U],
+            eigmin(Symmetric(dense)); rtol=1e-10)
+    end
+    # Asking changes nothing: the next evaluation is the same computation.
+    @test laplace.logdet_floored == flags
+    again = ctsem_laplace_evaluate(laplace, values; gradient=true)
+    @test again.value == first.value
+    @test isapprox(again.gradient, first.gradient; rtol=1e-13)
+end
+
+@testset "the gated rule: value, and its gradient against nested and differences" begin
+    C = ContinuousTimeSEM
+    # Units 1, 2, 4, 5 have smallest eigenvalues 1.16 to 1.17 at this point and
+    # unit 3 has 0.956, so the three bands below put nothing, one unit, and one
+    # unit fully soft plus four inside the ramp (with lambda above one, so the
+    # node scale moves with lambda too).
+    laplace, values = _fresh_nonlinear_two()
+    @test laplace.floor === :total
+    total = ctsem_laplace_evaluate(laplace, values; gradient=true)
+    for (label, lo, hi, nflag) in (("above the band", 0.2, 0.7, 0),
+                                   ("inside the ramp", 0.8, 1.1, 1),
+                                   ("below the ramp", 1.0, 1.2, 5))
+        gated, _ = _fresh_nonlinear_two()
+        ctsem_set_laplace_floor!(gated, :gated; lo=lo, hi=hi)
+        seeded = ctsem_laplace_evaluate(gated, values; gradient=true)
+        @test (label, gated.gated_units) == (label, nflag)
+        nested = ctsem_laplace_evaluate(gated, values; gradient=true,
+            nested_gradient=true)
+        reference = _value_finite_difference(gated, values)
+        # The Float64 reference computes the same rule by a separate route.
+        ctsem_laplace_evaluate(laplace, values; gradient=false)
+        prototype = sum(C._laplace_gated_unit_reference(laplace, values, U; lo=lo,
+            hi=hi, nodes=3, newton_steps=1).value
+            for U in eachindex(laplace.units.members))
+        @test (label, isapprox(seeded.value, prototype; rtol=1e-10)) == (label, true)
+        if nflag == 0
+            @test seeded.value == total.value
+            @test isapprox(seeded.gradient, total.gradient; rtol=1e-13)
+        else
+            @test (label, seeded.value != total.value) == (label, true)
+        end
+        @test (label, isapprox(seeded.gradient, nested.gradient; rtol=1e-8,
+            atol=1e-10)) == (label, true)
+        @test (label, norm(seeded.gradient - reference) / norm(reference) < 1e-5) ==
+            (label, true)
+    end
+end
+
+@testset "the gated rule on a two-level unit" begin
+    C = ContinuousTimeSEM
+    laplace = ctsem_laplace_objective(_LAPLACE_NONLINEAR_OBJECTIVE;
+        re_index=[1, 2, 4], sd_index=[5, 6, 8], cor_index=[7],
+        sd_scale=[1.0, 1.0, 1.0], level_nre=[2, 1],
+        group=vcat(1:5, [1, 1, 2, 2, 3]), level_ngroups=[5, 3])
+    values = [0.1, -2.0, -0.2, 0.05, -0.25, 1.0, 0.0, 0.5]
+    ctsem_set_laplace_floor!(laplace, :gated; lo=0.3, hi=1.1)
+    seeded = ctsem_laplace_evaluate(laplace, values; gradient=true)
+    @test laplace.gated_units >= 1
+    nested = ctsem_laplace_evaluate(laplace, values; gradient=true,
+        nested_gradient=true)
+    reference = _value_finite_difference(laplace, values)
+    @test isapprox(seeded.gradient, nested.gradient; rtol=1e-8, atol=1e-10)
+    @test norm(seeded.gradient - reference) / norm(reference) < 1e-5
+end
+
+@testset "the floor belongs to the objective, not the session" begin
+    # Two objectives over the same model: setting one to :gated leaves the
+    # other at :total, value and gradient, and a fresh objective starts at
+    # :total whatever was done before it.
+    gated, values = _fresh_nonlinear_two()
+    plain, _ = _fresh_nonlinear_two()
+    before = ctsem_laplace_evaluate(plain, values; gradient=true)
+    previous = ctsem_set_laplace_floor!(gated, :gated; lo=0.8, hi=1.1)
+    @test previous == (floor=:total, lo=0.2, hi=0.7)
+    g = ctsem_laplace_evaluate(gated, values; gradient=true)
+    after = ctsem_laplace_evaluate(plain, values; gradient=true)
+    @test g.value != before.value
+    @test after.value == before.value
+    @test isapprox(after.gradient, before.gradient; rtol=1e-13)
+    fresh, _ = _fresh_nonlinear_two()
+    @test fresh.floor === :total
+    @test ctsem_laplace_evaluate(fresh, values; gradient=false).value == before.value
+    @test_throws ArgumentError ctsem_set_laplace_floor!(plain, :eigen)
+    @test_throws ArgumentError ctsem_set_laplace_floor!(plain, :gated; lo=0.7, hi=0.2)
+    @test ctsem_laplace_diagnostics(gated).floor === :gated
+end
+
+@testset "first-order eigen-quantities are the derivatives they claim" begin
+    C = ContinuousTimeSEM
+    A0 = [3.0 0.4 0.1; 0.4 1.2 -0.3; 0.1 -0.3 0.5]
+    dA = [0.2 -0.1 0.3; -0.1 0.4 0.05; 0.3 0.05 -0.2]
+    lam(t) = C._laplace_eig_first_order(A0 .+ t .* dA).values[1]
+    vec1(t) = C._laplace_eig_first_order(A0 .+ t .* dA).vectors[:, 1]
+    clipped(t) = C._laplace_clip_first_order(A0 .+ t .* dA)
+    h = 1e-6
+    sgn(v) = v .* sign(v[1])
+    @test ForwardDiff.derivative(lam, 0.0) ≈ (lam(h) - lam(-h)) / (2h) rtol = 1e-6
+    @test ForwardDiff.derivative(t -> sgn(vec1(t)), 0.0) ≈
+        (sgn(vec1(h)) - sgn(vec1(-h))) ./ (2h) rtol = 1e-5
+    @test ForwardDiff.derivative(clipped, 0.0) ≈ (clipped(h) - clipped(-h)) ./ (2h) rtol = 1e-5
 end
 
 @testset "the inner mode is a mode" begin

@@ -2738,6 +2738,17 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     }
     out$inner_tol <- tol
   }
+  # Recorded only when it is not the default, so that every model that asked
+  # for nothing hashes, and so builds, exactly as it did.
+  floor <- laplacecontrol$floor
+  if (!is.null(floor)) {
+    floor <- as.character(floor)[1L]
+    if (is.na(floor) || !floor %in% c("total", "gated")) {
+      stop("optimcontrol$laplace_floor must be 'total' or 'gated'.",
+        call. = FALSE)
+    }
+    if (floor != "total") out$floor <- floor
+  }
   out
 }
 
@@ -2758,6 +2769,15 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # with it, so they must not differ in how the model is built.
   intoverpop <- match.arg(as.character(intoverpop)[1L],
     c("augmented", "laplace", "none"))
+  # The floor is a property of the Laplace term, so any other route refuses it
+  # by name rather than accepting it and doing something else.
+  if (!is.null(laplacecontrol$floor) &&
+      !identical(as.character(laplacecontrol$floor)[1L], "total") &&
+      !identical(intoverpop, "laplace")) {
+    stop("optimcontrol$laplace_floor applies to intoverpop='laplace' only; ",
+      "with intoverpop='", intoverpop, "' there is no Laplace term to floor. ",
+      "Drop it.", call. = FALSE)
+  }
   dat <- data.frame(datalong)
   dat <- dat[order(dat[[model$subjectIDname]], dat[[model$timeName]]), , drop = FALSE]
   .ctJuliaValidateTIConstancy(dat, model)
@@ -3273,6 +3293,11 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     }
     if (!is.null(spec$laplace$inner$inner_tol)) {
       laplace_args$inner_tol <- as.numeric(spec$laplace$inner$inner_tol)
+    }
+    # The floor goes on the objective, not the session, so a gated fit leaves
+    # every other objective -- and every later fit -- on the default.
+    if (!is.null(spec$laplace$inner$floor)) {
+      laplace_args$floor <- as.character(spec$laplace$inner$floor)
     }
     if (length(levels) > 1L) {
       # Concatenated innermost level first, split on the far side by the
@@ -4100,6 +4125,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # and the engine default has changed once already.
     inner_maxiter = .ctJuliaOr(model_spec$laplace$inner$inner_maxiter, 200L),
     inner_tol = .ctJuliaOr(model_spec$laplace$inner$inner_tol, 1e-10),
+    # The floor the objective was built with; post-fit routes rebuild the
+    # objective from the same specification, so they use it too.
+    floor = as.character(.ctJuliaOr(model_spec$laplace$inner$floor, "total")),
+    gated_units = if (is.null(result$gated_units)) NA_integer_ else
+      as.integer(result$gated_units),
     inner_converged = isTRUE(result$inner_converged),
     gradient_fallbacks = if (is.null(result$gradient_fallbacks)) NA_integer_ else
       as.integer(result$gradient_fallbacks)[1L],
@@ -4111,7 +4141,23 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # the approximation there is questionable.
     hessian_repaired = as.logical(result$hessian_repaired),
     mode_repaired = if (is.null(result$mode_repaired)) NA
-      else as.logical(result$mode_repaired))
+      else as.logical(result$mode_repaired),
+    conditioning = .ctJuliaLaplaceConditioning(result$unit_min_eigenvalue))
+}
+
+# How each unit's inner curvature stands against the prior's, at the estimate.
+# An eigenvalue below one is a direction where the likelihood has gone convex
+# in the random effects; mildly is harmless, but near zero the Laplace term
+# over-credits that unit by several nats and nothing else shows it. `Inf` is a
+# unit whose every eigenvalue exceeds one (not computed), `NaN` one too wide to
+# decompose. See ctsem_laplace_conditioning in the engine.
+#' @keywords internal
+.ctJuliaLaplaceConditioning <- function(mins) {
+  if (is.null(mins)) return(NULL)
+  mins <- as.numeric(mins)
+  list(min_eigenvalue = mins,
+    below_one = sum(is.nan(mins) | mins < 1),
+    near_singular = sum(!is.nan(mins) & mins < 0.05))
 }
 
 .ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NULL, cores = 1L,
@@ -4183,7 +4229,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     optimize = optimize,
     tipredMissingIncludeOutcome = .ctJuliaOr(optimcontrol$tipredMissingIncludeOutcome, TRUE),
     laplacecontrol = list(inner_maxiter = optimcontrol$laplace_inner_maxiter,
-      inner_tol = optimcontrol$laplace_inner_tol))
+      inner_tol = optimcontrol$laplace_inner_tol,
+      floor = optimcontrol$laplace_floor))
   if (!is.null(model_spec$ti_missing) && nrow(model_spec$ti_missing)) {
     # The state-explicit route (`intoverstates=FALSE`) samples the latent
     # trajectory through a different objective (`CTSEMJointObjective`,
@@ -4845,6 +4892,12 @@ print.ctJuliaFit <- function(x, ...) {
   # wider than the curvature at the estimate supports is not visible anywhere
   # in the numbers themselves -- it was found once only by fitting the same
   # data twice -- so it is said here, where a single fit is looked at.
+  cond <- x$laplace$conditioning
+  if (!is.null(cond) && isTRUE(cond$near_singular > 0L)) {
+    cat("  ", cond$near_singular, " of ", length(cond$min_eigenvalue),
+      " unit(s) with near-singular random-effect curvature; their Laplace ",
+      "terms are too high. See fit$laplace$conditioning.\n", sep = "")
+  }
   ivc <- x$uncertainty$intervalcheck
   if (!is.null(ivc) && isTRUE(ivc$nflagged > 0L)) {
     cat("  ", ivc$nflagged, " interval(s) far wider than the curvature supports: ",
