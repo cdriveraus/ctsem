@@ -1156,10 +1156,13 @@ test_that("the hessian raises the inner budget rather than returning NaN", {
   # on where the estimate lands -- none at the old optimiser's estimate, all
   # seven at the new one's -- whereas one Newton iteration from the origin
   # cannot reach a mode that is not at the origin.
+  # Cold: a warm start from the estimate's own modes (the default) reaches
+  # every mode in a budget this small, which is what it is for and not what
+  # this test measures.
   setbudget(1L)
   bare <- .ctBackendJuliaValue(JuliaConnectoR::juliaCall(
     "ContinuousTimeSEM.ctsem_laplace_hessian", objective, .ctJuliaVector(raw),
-    retries = 0L))
+    retries = 0L, warm = FALSE))
   expect_equal(complete(bare), 0L)
 
   setbudget(2L)

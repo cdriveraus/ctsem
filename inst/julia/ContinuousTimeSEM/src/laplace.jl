@@ -5075,13 +5075,46 @@ a usable fallback for anything, and the differencing points are `1e-4` from one
 where the modes were found, so a unit that merely ran out of iterations there
 will reach its mode given more. `retries` caps that at `4^retries` times the
 objective's own budget.
+
+`warm` (the default) starts every differencing point's inner modes from the
+modes at `values`, solved there from the origin first, rather than from the
+origin. It is the one place a warm start is sound: every point is `1e-4` from
+the same base, so the start is fixed and the objective does not depend on the
+order points are visited in -- which is what `_laplace_solve_unit_mode!`
+refuses a warm start for elsewhere. Measured on dev1: warm and cold Hessians
+agree to 1e-8 relative or better, standard errors to 2e-8, including on the
+nonlinear fixture whose inner problem is multimodal away from the mode; inner
+iterations fall from 3.0-3.7 to 2.0 per unit, the Hessian 1.3-1.6x faster on
+ordinal and nonlinear models and unchanged on a linear-Gaussian one, which
+already needed two. `warm = false` is the behaviour before, which the
+inner-budget escalation test needs.
 """
 function ctsem_laplace_hessian(laplace::CTSEMLaplaceObjective, values::AbstractVector;
-    step::Real=1e-4, retries::Integer=2)
+    step::Real=1e-4, retries::Integer=2, warm::Bool=true)
     x = collect(Float64, values)
     n = length(x)
     H = zeros(Float64, n, n)
     budget = laplace.inner_maxiter
+    base = nothing
+    if warm
+        # The modes at `x`, from the origin, which every differencing point
+        # then starts from.
+        previous = ctsem_set_warm_start!(false)
+        try
+            ctsem_laplace_evaluate(laplace, x; gradient=false)
+        finally
+            ctsem_set_warm_start!(previous)
+        end
+        base = deepcopy(laplace.modes)
+    end
+    function restore!()
+        base === nothing && return nothing
+        for U in eachindex(base)
+            laplace.modes[U] = copy(base[U])
+        end
+        return nothing
+    end
+    previous = ctsem_set_warm_start!(warm)
     unconverged = Int[]
     escalated = Int[]
     worst = 0.0
@@ -5091,7 +5124,9 @@ function ctsem_laplace_hessian(laplace::CTSEMLaplaceObjective, values::AbstractV
             h = step * max(1.0, abs(x[j]))
             plus = copy(x); plus[j] += h
             minus = copy(x); minus[j] -= h
+            restore!()
             pp = _laplace_hessian_point(laplace, plus, budget, retries)
+            restore!()
             pm = _laplace_hessian_point(laplace, minus, budget, retries)
             (pp.tries + pm.tries) > 0 && push!(escalated, j)
             if !(pp.out.converged && pm.out.converged)
@@ -5112,8 +5147,9 @@ function ctsem_laplace_hessian(laplace::CTSEMLaplaceObjective, values::AbstractV
     finally
         # The budget is a field of a mutable objective the caller keeps, so an
         # escalation that threw would otherwise be inherited by every later
-        # evaluation of it.
+        # evaluation of it; the warm-start switch is global, and the same.
         laplace.inner_maxiter = budget
+        ctsem_set_warm_start!(previous)
     end
     # A count, not a list of indices: on a model with a thousand parameters the
     # list is the whole message and says no more than the count does.
