@@ -52,7 +52,7 @@ end
 What one gradient costs at a point 1e-4 away from x, cold (from the origin) and
 warm (from x's modes), minimum of `reps`; plus the mean inner iterations.
 """
-function point_costs(L, values; reps::Integer=3)
+function point_costs(L, values, reps::Integer=3)
     x = collect(Float64, values)
     CT.ctsem_evaluate(L, x; gradient=false)
     base = deepcopy(L.modes)
