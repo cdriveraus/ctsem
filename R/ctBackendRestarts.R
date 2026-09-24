@@ -11,12 +11,14 @@
 # decides which one the optimiser reaches. A rank-deficient two-random-effect
 # laplace fixture (test-julia-multivariate-mixed.R) stops on a ridge 2 nats
 # below a maximum in the other basin; nothing local reaches it, and a handful
-# of dispersed starts does. Kept moderate -- five starts at sd 1 by default --
-# and spread over processes when there are cores to spare.
+# of dispersed starts might. Off unless asked for (optimcontrol$restarts = n),
+# sd 1 by default, and spread over processes when there are cores to spare.
 
 .ctBackendRestartsWanted <- function(result, certification, optimcontrol,
   inits, intoverstates) {
-  n <- suppressWarnings(as.integer(.ctJuliaOr(optimcontrol$restarts, 5L))[1L])
+  # Opt-in: each restart is a whole optimisation, which on a slow laplace fit
+  # is minutes, and on the fixture below five of them found nothing better.
+  n <- suppressWarnings(as.integer(.ctJuliaOr(optimcontrol$restarts, 0L))[1L])
   if (!isTRUE(n >= 1L)) return(0L)
   if (!isTRUE(intoverstates)) return(0L)
   if (!is.null(inits) || !is.null(optimcontrol$maxiter)) return(0L)

@@ -748,15 +748,16 @@ T0VARredundancies <- function(ctm) {
 #' \code{fit$optim$batch_sizes} and \code{fit$optim$newton_steps} record what
 #' ran.
 #'
-#' A julia fit that has still not converged after its corrections -- typically
-#' a likelihood with more than one basin, where the start decides -- tries
-#' \code{optimcontrol$restarts} (default 5) random restarts, each from the
-#' fit's own start plus normal noise of sd \code{optimcontrol$restartsd}
-#' (default 1) on the raw scale, and keeps the best if it is better. They run
+#' \code{optimcontrol$restarts = n} (default 0, off) gives a julia fit that has
+#' still not converged after its corrections -- typically a likelihood with
+#' more than one basin, where the start decides -- \code{n} random restarts,
+#' each from the fit's own start plus normal noise of sd
+#' \code{optimcontrol$restartsd} (default 1) on the raw scale, and keeps the
+#' best if it is better. Each is a whole optimisation. They run
 #' in worker processes when \code{cores > 1} and the fit took more than 30
 #' seconds, and in this session otherwise; Esc or Ctrl-C stops them and keeps
 #' the fit as it was. Not when \code{inits} or \code{optimcontrol$maxiter}
-#' were supplied, and \code{restarts = 0} switches them off.
+#' were supplied.
 #' \code{fit$optim$restarts} records each start.
 #'
 #' \code{optimcontrol$carefulfit} works for \code{backend='julia'} as it does
