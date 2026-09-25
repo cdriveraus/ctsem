@@ -235,11 +235,12 @@ test_that("a model with no Tpoints and no datastruct says what is missing", {
     regexp = 'no design to generate over')
 })
 
-test_that("a julia fit is refused for the reason that is actually true", {
+test_that("a julia fit is generated from through the model it was given", {
   skip_without_julia()
-  # It does not carry the unaugmented model, only the form .ctModelIntOverPop()
-  # produced, and re-preparing from that would augment it twice and renumber
-  # the raw vector the prior indices refer to.
+  # A julia fit used to be refused: it carried only the form
+  # .ctModelIntOverPop() produced, and re-preparing from that would augment it
+  # twice and renumber the raw vector the prior indices refer to. It now keeps
+  # the model it was given, and this reads that one.
   model <- suppressWarnings(ctModel(type = 'ct', n.latent = 1, n.manifest = 1,
     Tpoints = 5, LAMBDA = matrix(1), DRIFT = matrix('drift'),
     DIFFUSION = matrix('diff'), MANIFESTVAR = matrix('mvar'),
@@ -249,10 +250,44 @@ test_that("a julia fit is refused for the reason that is actually true", {
   fit <- suppressMessages(suppressWarnings(ctFit(data, model, backend = 'julia',
     verbose = 0)))
 
-  expect_error(ctGenerateFromPriors(fit), regexp = 'does not carry')
-  # And the way past it works.
-  expect_s3_class(ctsem:::.ctFitModelObject(fit), 'ctStanModel')
-  ok <- suppressMessages(suppressWarnings(ctGenerateFromPriors(model,
+  out <- suppressMessages(suppressWarnings(ctsem:::.ctGenerateFromPriors(fit,
+    nsamples = 2, cores = 1, backend = 'julia')))
+  # The fit's design, not the model's balanced default of n.subjects = 20.
+  expect_equal(dim(out$Y), c(2L, nrow(data), 1L))
+  expect_true(all(is.finite(out$Y)))
+
+  # Without the model it was given there is only the augmented form, and the
+  # refusal names the way past it -- which works.
+  old <- fit
+  old[c('modelbase', 'ctstanmodelbase')] <- NULL
+  expect_error(ctsem:::.ctGenerateFromPriors(old), regexp = 'does not carry')
+  ok <- suppressMessages(suppressWarnings(ctsem:::.ctGenerateFromPriors(model,
     n.subjects = 4, nsamples = 2, cores = 1)))
   expect_equal(dim(ok$Y)[1], 2L)
+})
+
+test_that("a fit made with less than the full prior warns rather than refusing", {
+  skip_on_cran()
+  # It used to be refused -- 'Priors disabled, cannot sample from prior!'. That
+  # belonged to the route that fitted the model to an empty dataset, which had
+  # nothing to optimise without a prior. The draws come from the model's full
+  # prior whatever the fit used, so a fit with less is generated from, and the
+  # difference is said.
+  #
+  # As a fit made now records it -- `priorscope` beside the logical ctFit()
+  # reduced it to -- and as one made before `priorscope` was recorded, which has
+  # only the logical. `ctstantestfit` is the second kind.
+  fit <- ctstantestfit
+  fit$args$resolved$priors <- fit$args$input$priors <- FALSE
+  expect_null(fit$args$input$priorscope)
+  expect_warning(out <- suppressMessages(ctsem:::.ctGenerateFromPriors(fit,
+    nsamples = 2, cores = 1, backend = 'stan')), regexp = 'priors=FALSE')
+  expect_equal(dim(out$Y)[1:2], c(2L, nrow(ctsem:::.ctFitLongData(fit))))
+  fit$args$input$priorscope <- 'none'
+  expect_warning(suppressMessages(ctsem:::.ctGenerateFromPriors(fit,
+    nsamples = 2, cores = 1, backend = 'stan')), regexp = 'priors=FALSE')
+
+  # A fit with the full prior is what the draws describe, so it says nothing.
+  expect_no_warning(suppressMessages(ctsem:::.ctGenerateFromPriors(ctstantestfit,
+    nsamples = 2, cores = 1, backend = 'stan')), message = 'specified with')
 })
