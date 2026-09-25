@@ -159,6 +159,9 @@ test_that("the prior warm-up runs under the default priors, and the fit says wha
   expect_true(default$optim$carefulfit)
   expect_true(is.na(default$optim$carefulfit_skipped))
   expect_gte(default$optim$carefulfit_iterations, 1L)
+  # Ten iterations of L-BFGS and no more: the Newton finish would carry the
+  # pass on to the prior mode, which is what the cap is for preventing.
+  expect_lte(default$optim$carefulfit_iterations, 10L)
   # And it moved the start: the same seed without the warm-up begins elsewhere.
   expect_false(isTRUE(all.equal(default$optim$trace$objective[1],
     off$optim$trace$objective[1])))
@@ -172,9 +175,10 @@ test_that("the prior warm-up runs under the default priors, and the fit says wha
   given <- fitwith(inits = default$estimate$raw, optimcontrol = list(estonly = TRUE))
   expect_false(given$optim$carefulfit)
   expect_match(given$optim$carefulfit_skipped, 'starting values')
-  # A number is the cap.
+  # A number is the cap, and what is recorded is what ran within it.
   short <- fitwith(optimcontrol = list(estonly = TRUE, carefulfit = 2))
   expect_true(short$optim$carefulfit)
+  expect_lte(short$optim$carefulfit_iterations, 2L)
 })
 
 test_that("an unrecognised optimcontrol name is refused on both backends", {

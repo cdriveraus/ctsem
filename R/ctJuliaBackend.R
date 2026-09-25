@@ -4503,7 +4503,20 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         # `4 * npar` value-only evaluations, which on a 50-subject laplace fit
         # is about a fifth of a stage, so paying it for a verdict nobody reads
         # doubled what the probe costs a default fit.
-        optimcontrol = utils::modifyList(optimcontrol, list(overshoot = "off")),
+        #
+        # Nor the Newton finish, nor batching, so that the stage is the one the
+        # cap was measured on: ten iterations of L-BFGS over all the data. Both
+        # arrived with the engine's own optimiser (f2ab4796), after every
+        # measurement above. The finish runs whenever L-BFGS stops by the gap
+        # rule, and runs on to the prior mode -- 6 L-BFGS iterations and then 18
+        # Newton steps on the ten-subject fixture in
+        # test-backend-controlsurface.R -- which is the long prior pass the cap
+        # exists to prevent. A batch would make the pass a warm start from a
+        # subset of the subjects, which measured worse than no warm-up at all
+        # (116 of 120 converged against 117, and a random-effect sd of 2.3 for a
+        # truth of 0.5).
+        optimcontrol = utils::modifyList(optimcontrol,
+          list(overshoot = "off", newton = FALSE, batch = FALSE)),
         maxiter = as.integer(warmiter),
         gradient = gradient, cores = cores, verbose = verbose,
         callback = NULL, progress_label = "prior warm-up",
