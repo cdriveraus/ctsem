@@ -357,7 +357,11 @@ test_that("the measurement model is re-evaluated at the updated state", {
   data <- .kalman_indvarmeans_data()
   expect_true(all(model$pars$indvarying[model$pars$matrix == "MANIFESTMEANS"]))
 
-  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
+  # No priors, so ctJuliaEvaluate() below is the likelihood the trace reports.
+  # The default 'randomCorr' puts a prior on the two intercepts' correlation,
+  # and the evaluated objective would then be a posterior.
+  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
+    priors = FALSE))
   npar <- max(spec$parameter_table$parnumber, na.rm = TRUE)
   set.seed(8)
   raw <- stats::rnorm(npar, 0, .3)
