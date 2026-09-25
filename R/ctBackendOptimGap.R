@@ -773,12 +773,15 @@
 # on a Laplace fit sent the certification to a method that does not exist:
 # the call raised a MethodError inside a `try`, the Hessian came back NULL,
 # and the correction loop stopped without a word -- on its first round
-# whenever the optimiser's finish had handed back no Hessian. Measured on
-# `test-julia-laplace.R`'s 30-subject fixture with `maxiter = 3`: no Hessian,
-# no correction, and a fit 60 nats short (-247.90), where `'adjoint'` took two
-# corrections to the optimum (-187.68). The Laplace route therefore takes
-# `ctsem_hessian` whatever `gradient` says, and so does the sampler's metric
-# on the same spec (`.ctBackendHessian()`).
+# whenever the optimiser's finish had handed back no Hessian, so with no
+# verdict to continue on. Measured on `test-julia-laplace.R`'s 30-subject
+# fixture with `maxiter = 3`: no Hessian at all, where `'adjoint'` computed
+# one. (What the loop then does is the verdict's: in one session `'adjoint'`
+# continued to the optimum 60 nats higher, in a fresh one it stopped on
+# `notstationary` -- inferred, not verified, to be the inner modes the
+# Laplace Hessian warm-starts from.) The Laplace route
+# therefore takes `ctsem_hessian` whatever `gradient` says, and so does the
+# sampler's metric on the same spec (`.ctBackendHessian()`).
 #' @keywords internal
 .ctBackendHessianFunction <- function(spec, gradient = "adjoint") {
   if (!is.null(spec$laplace)) return("ctsem_hessian")
