@@ -178,7 +178,31 @@ test_that("a profile separates a determined parameter from one on a flat ray", {
   fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0,
     optimcontrol = list(estonly = TRUE)))
 
-  out <- ctFitProfile(fit, parameters = c("auto1", "diff_eta2_eta1"), points = 6L)
+  # Wrapped in suppressWarnings(): $better legitimately fires on this exact
+  # fixture (see below), and the warning it raises is expected, not silence
+  # this test needs to check for.
+  out <- suppressWarnings(ctFitProfile(fit,
+    parameters = c("auto1", "diff_eta2_eta1"), points = 6L))
+
+  # Routing profile points through the fit's own pipeline (`.ctJuliaOptimise()`
+  # with the fit's controls, not the engine's bare defaults) makes a
+  # constrained reoptimisation as capable as the fit itself -- which, on this
+  # exact fixture, finds that the original run was not quite at a maximum: a
+  # perturbed start a profile point begins from can trigger the same stall
+  # escape a fit itself relies on, from a trajectory the fit's own start never
+  # took. Measured here: +1.17 log-likelihood units while profiling `auto1`,
+  # unchanged by giving the original fit random restarts, so it is a property
+  # of this flat-ray fixture's landscape rather than of the escape being
+  # nondeterministic. `$better` exists precisely to catch this rather than
+  # silently report crossings around the wrong point, so this refits from the
+  # point it names -- exactly what the warning tells a caller to do -- and
+  # profiles that instead, which is what the rest of this test needs a genuine
+  # maximum for.
+  if (!is.null(out$better)) {
+    fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0,
+      inits = out$better$point, optimcontrol = list(estonly = TRUE)))
+    out <- ctFitProfile(fit, parameters = c("auto1", "diff_eta2_eta1"), points = 6L)
+  }
 
   # The fit was at a maximum, so no constrained point beat it. This is the
   # check that makes the rest of the output mean anything: a profile computed
@@ -188,6 +212,13 @@ test_that("a profile separates a determined parameter from one on a flat ray", {
   expect_gt(nrow(out$profile), 6L)
   # Every point is a constrained maximum, so none may exceed the free one.
   expect_true(all(out$profile$drop > -1e-6))
+
+  # The base is evaluated directly at the estimate (ctJuliaEvaluate()), not by
+  # an optimisation capped at one iteration -- so it is exactly the fit's own
+  # objective value there, `$logposterior` (`$loglik` would be the wrong
+  # quantity to drop the profile's points against whenever priors are on; see
+  # the comment in ctFitProfile()).
+  expect_equal(out$base, fit$estimate$logposterior)
 
   flat <- out$summary[out$summary$parameter == "diff_eta2_eta1", ]
   expect_equal(flat$verdict, "structurally non-identifiable")
@@ -208,4 +239,59 @@ test_that("a profile separates a determined parameter from one on a flat ray", {
   expect_equal(ordinary$flat, "")
   expect_true(is.finite(ordinary$lower))
   expect_lt(ordinary$lower, ordinary$estimate)
+})
+
+test_that("a profile of a simple identified parameter routes through the fit's own pipeline", {
+  skip_without_julia()
+  # `.ctFitProfilePoint()` used to call the engine's optimiser directly, with
+  # none of the fit's own `optimcontrol` -- no transform-scale metric, no
+  # batching, no Newton finish, the gap rule off -- and took the base value
+  # from an optimisation capped at one iteration rather than an evaluation.
+  # Compared directly against that implementation on this exact fixture (the
+  # pre-fix R/ctFitProfile.R sourced into its own environment, parented on the
+  # ctsem namespace, so both versions could be called in the same session):
+  # the two agree to numerical noise (crossing limits within 1e-10 of each
+  # other, base identical to machine precision) and the fixed version ran
+  # faster (5.4 s against 8.5 s) -- routing through the fit's own batching and
+  # Newton finish rather than plain L-BFGS, not merely matching it. The
+  # hardcoded limits below are what that comparison found; the tolerance is
+  # far looser than the measured agreement, to allow for engine changes that
+  # are not this one.
+  times <- c(0, .6, 1.3, 2.1, 3.0, 3.8)
+  drift <- -0.7; diffusion <- 0.5
+  set.seed(7)
+  data <- do.call(rbind, lapply(seq_len(40), function(i) {
+    state <- stats::rnorm(1, 0, .6)
+    y <- numeric(length(times))
+    for (t in seq_along(times)) {
+      if (t > 1) {
+        dt <- times[t] - times[t - 1]
+        state <- exp(drift * dt) * state +
+          stats::rnorm(1, 0, diffusion * sqrt((1 - exp(2 * drift * dt)) / (-2 * drift)))
+      }
+      y[t] <- state + stats::rnorm(1, 0, .3) + 1.1
+    }
+    data.frame(id = i, time = times, Y1 = y)
+  }))
+  model <- suppressWarnings(ctModel(type = "ct", LAMBDA = matrix(1, 1, 1),
+    DRIFT = matrix("drift", 1, 1), DIFFUSION = matrix("diff", 1, 1),
+    MANIFESTVAR = matrix("mvar", 1, 1),
+    MANIFESTMEANS = matrix("mmean||FALSE", 1, 1),
+    T0VAR = matrix("t0v", 1, 1), T0MEANS = matrix(0, 1, 1),
+    CINT = matrix(0, 1, 1)))
+  fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0,
+    optimcontrol = list(estonly = TRUE)))
+
+  out <- ctFitProfile(fit, parameters = "drift", points = 8L)
+  # A cleanly identified parameter on a well conditioned fit: the fit's own
+  # estimate stands up to the fuller rigor a profile point now gets.
+  expect_null(out$better)
+  # The base is the fit's own objective value at the estimate, exactly --
+  # ctFitProfile() no longer takes it from a one-iteration-capped optimisation.
+  expect_equal(out$base, fit$estimate$logposterior)
+
+  row <- out$summary[out$summary$parameter == "drift", ]
+  expect_equal(row$verdict, "identifiable")
+  expect_equal(row$lower, 0.2363984, tolerance = 1e-3)
+  expect_equal(row$upper, 0.5372844, tolerance = 1e-3)
 })

@@ -49,6 +49,27 @@ test_that("nsubsteps = 'auto' is refused outside the julia backend and outside '
     nlcontrol = list(nsubsteps = 3)), "NULL or 'auto'")
 })
 
+test_that("nsubsteps = 'auto' is refused with intoverpop = 'laplace' until the engine has a method", {
+  # Reproduced directly on unfixed code: `.ctJuliaAutoSubsteps()` hands
+  # `ctsem_auto_substeps` (substep_mesh.jl) whichever objective the route
+  # built -- the Laplace wrapper here -- and that function has a method for
+  # the plain `CTSEMObjective` only. A one-latent model with one indvarying
+  # `drift`, `intoverpop='laplace'` and `nlcontrol=list(nsubsteps='auto')`
+  # reached
+  #   MethodError: no method matching ctsem_auto_substeps(::
+  #   ContinuousTimeSEM.CTSEMLaplaceObjective{...}, ...)
+  # rather than a mesh. Refused by name instead, before a Julia session even
+  # has to start (`.ctJuliaUnsupported()` runs first), so this needs no
+  # `skip_without_julia()` of its own; the file-level skip above still applies
+  # for consistency with the rest of the file.
+  model <- .substep_linear_model()
+  model$pars$indvarying[model$pars$param %in% "drift"] <- TRUE
+  dat <- .substep_data(nsub = 4, nrow = 3, nonlinear = FALSE)
+  expect_error(ctFit(dat, model, backend = "julia", intoverpop = "laplace",
+    nlcontrol = list(nsubsteps = "auto")),
+    "nsubsteps.*'auto'.*intoverpop.*'laplace'")
+})
+
 test_that("a linear model keeps one step per interval and the same fit", {
   dat <- .substep_data(nonlinear = FALSE)
   inits <- c(0.1, -0.2)
