@@ -1257,10 +1257,10 @@ test_that("laplace_floor is validated, refused by name where it cannot apply", {
   expect_error(.ctJuliaLaplaceInner(list(floor = "eigen")), "'total' or 'gated'")
   expect_error(.ctJuliaPrepare(.laplace_test_data(nsubjects = 4, nobs = 3),
     .laplace_test_model(), intoverpop = "augmented",
-    laplacecontrol = list(floor = "gated")), "intoverpop='laplace' only")
+    laplacecontrol = list(floor = "gated")), "no Laplace term to floor")
   expect_error(.ctJuliaPrepare(.laplace_test_data(nsubjects = 4, nobs = 3),
     .laplace_test_model(), intoverpop = "augmented",
-    laplacecontrol = list(floor = "total")), "intoverpop='laplace' only")
+    laplacecontrol = list(floor = "total")), "no Laplace term to floor")
 })
 
 # The objective's own floor, read from the engine.
@@ -1365,11 +1365,22 @@ test_that("the default floor and an explicit 'gated' build and cache the same ob
   expect_equal(.ctJuliaObjectiveInputs(legacy)$laplace$floor, "total")
   expect_identical(.ctJuliaObjectiveKey(legacy), .ctJuliaObjectiveKey(total))
   # Sampling the effects (intoverpop = FALSE, which the backend prepares as
-  # 'none') has no Laplace term to floor, so no default is recorded.
-  none <- suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
-    intoverpop = FALSE, optimize = FALSE, fit = FALSE)))
-  expect_null(none$laplace$inner$floor)
-  expect_error(suppressMessages(ctFit(dat, model, backend = "julia",
-    intoverpop = FALSE, optimize = FALSE, fit = FALSE,
-    optimcontrol = list(laplace_floor = "gated"))), "intoverpop='laplace' only")
+  # 'none') still has a Laplace term: the sampler is placed, and its metric
+  # built, by optimising the Laplace objective of this same specification. So
+  # it gets the same default. It used to record none, which that objective is
+  # built as -- 'total'.
+  samplewith <- function(...) suppressWarnings(suppressMessages(ctFit(dat,
+    model, backend = "julia", intoverpop = FALSE, optimize = FALSE, fit = FALSE,
+    optimcontrol = list(...))))
+  none <- samplewith()
+  expect_equal(none$laplace$inner$floor, "gated")
+  expect_equal(.ctJuliaObjectiveInputs(none)$laplace$floor, "gated")
+  # And a floor asked for there is honoured, not refused.
+  expect_equal(samplewith(laplace_floor = "total")$laplace$inner$floor, "total")
+  # Rebuilding the specification -- ctKalman over some subjects, prediction on
+  # other data -- passes the recorded floor back in with the recorded route, so
+  # 'none' has to accept it there too.
+  rebuilt <- .ctJuliaPrepare(dat, model, intoverpop = "none",
+    laplacecontrol = none$laplace$inner)
+  expect_equal(rebuilt$laplace$inner$floor, "gated")
 })

@@ -2757,7 +2757,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   out
 }
 
-# The floor a new intoverpop='laplace' fit uses when none is asked for.
+# The floor a new intoverpop='laplace' or 'none' fit uses when none is asked
+# for.
 .ctJuliaLaplaceFloorDefault <- "gated"
 
 # `intoverpop` deliberately has no default. It selects which *model* is
@@ -2777,14 +2778,17 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # with it, so they must not differ in how the model is built.
   intoverpop <- match.arg(as.character(intoverpop)[1L],
     c("augmented", "laplace", "none"))
-  # The floor is a property of the Laplace term, so any other route refuses it
-  # by name rather than accepting it and doing something else. Either value:
+  # The floor is a property of the Laplace term, so a route without one refuses
+  # it by name rather than accepting it and doing something else. Either value:
   # 'total' is no longer what every fit does, so it is not inert elsewhere.
+  # 'none' has a Laplace term even though it samples the effects: its sampler
+  # is placed, and its metric built, by optimising the Laplace objective.
   if (!is.null(laplacecontrol$floor) &&
-      !identical(intoverpop, "laplace")) {
-    stop("optimcontrol$laplace_floor applies to intoverpop='laplace' only; ",
-      "with intoverpop='", intoverpop, "' there is no Laplace term to floor. ",
-      "Drop it.", call. = FALSE)
+      !intoverpop %in% c("laplace", "none")) {
+    stop("optimcontrol$laplace_floor applies to intoverpop='laplace', and to ",
+      "sampling with intoverpop=FALSE, which places its sampler on the Laplace ",
+      "fit; with intoverpop='", intoverpop, "' there is no Laplace term to ",
+      "floor. Drop it.", call. = FALSE)
   }
   dat <- data.frame(datalong)
   dat <- dat[order(dat[[model$subjectIDname]], dat[[model$timeName]]), , drop = FALSE]
@@ -4259,10 +4263,13 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     laplacecontrol = list(inner_maxiter = optimcontrol$laplace_inner_maxiter,
       inner_tol = optimcontrol$laplace_inner_tol,
       # The default is resolved here, at the one place a *new* fit is
-      # specified, and only for the route that has a Laplace term: every
+      # specified, and only for the routes that have a Laplace term: every
       # rebuild of an existing specification passes its own `inner` instead,
-      # where an absent floor means the 'total' it was fitted under.
-      floor = if (identical(as.character(intoverpop)[1L], "laplace"))
+      # where an absent floor means the 'total' it was fitted under. 'none'
+      # is one of them: it samples the random effects, but places the sampler
+      # and builds its metric by optimising the Laplace objective of this same
+      # specification.
+      floor = if (as.character(intoverpop)[1L] %in% c("laplace", "none"))
         .ctJuliaOr(optimcontrol$laplace_floor, .ctJuliaLaplaceFloorDefault)
         else optimcontrol$laplace_floor))
   if (!is.null(model_spec$ti_missing) && nrow(model_spec$ti_missing)) {
