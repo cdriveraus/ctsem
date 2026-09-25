@@ -784,7 +784,7 @@ ctStanModel <- ctModelConvertOMX
 # So on the julia backend, when optimising, 'auto' takes laplace whenever any
 # of those holds, and augmented otherwise. Stan has one route and keeps it.
 .ctIntOverPopAuto <- function(model, backend = 'julia', optimize = TRUE,
-  intoverstates = TRUE, nsubsteps = NULL){
+  intoverstates = TRUE){
   choose <- function(route, reason, announce = FALSE)
     list(route = route, reason = reason, announce = announce)
   # Sampling integrates nothing: the effects are sampled with the rest.
@@ -806,13 +806,6 @@ ctStanModel <- ctModelConvertOMX
   why <- .ctPopFilterNonlinearity(model)
   if(is.null(why)) return(choose('augmented',
     'every individual difference enters a mean affinely, with Gaussian indicators'))
-  # Measured, not assumed: `ctsem_auto_substeps` has a method for the plain
-  # objective only, so a laplace fit with an automatic mesh dies on a
-  # MethodError before the first iteration. Keeping the route that runs, and
-  # saying so, beats choosing the one that does not.
-  if(identical(nsubsteps, 'auto')) return(choose('augmented', paste0(why,
-    ", but nlcontrol$nsubsteps='auto' is not available with 'laplace'"),
-    announce = TRUE))
   choose('laplace', why, announce = TRUE)
 }
 

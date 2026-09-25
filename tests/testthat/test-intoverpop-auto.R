@@ -135,11 +135,10 @@ test_that("the routes 'auto' does not change", {
   # MANIFESTVAR with intoverstates = FALSE before it gets that far.
   expect_identical(ctsem:::.ctIntOverPopAuto(drift, backend = "julia",
     intoverstates = FALSE)$route, "augmented")
-  # The automatic substep mesh has no laplace method, so 'auto' keeps the route
-  # that runs and says why.
-  r <- .auto_resolve(drift, nlcontrol = list(nsubsteps = "auto"))
-  expect_identical(r$route, "augmented")
-  expect_match(r$said, "intoverpop='auto' kept 'augmented'", fixed = TRUE)
+  # The automatic substep mesh does not change the route: the laplace route
+  # chooses its mesh at the random-effect modes.
+  expect_identical(.auto_resolve(drift,
+    nlcontrol = list(nsubsteps = "auto"))$route, "laplace")
   # T0VAR cannot vary on any route -- the flag is cleared with a message -- so
   # a flag there alone does not send the model to laplace.
   t0 <- .auto_model(character(0), LAMBDA = matrix(1))

@@ -586,9 +586,7 @@ T0VARredundancies <- function(ctm) {
 #' one that enters an expression in another cell, or any varying parameter
 #' with a non-Gaussian indicator. It says so in one line, and
 #' \code{fit$args$resolved$intoverpopreason} records why either route was
-#' taken. The exception is \code{nlcontrol$nsubsteps='auto'}, which 'laplace'
-#' does not support, so 'auto' keeps 'augmented' there and says that too.
-#' Everywhere else it is 'augmented', which is exact and cheapest for a
+#' taken. Everywhere else it is 'augmented', which is exact and cheapest for a
 #' random effect that shifts a mean with Gaussian indicators.
 #' \code{intoverpop='augmented'} keeps the previous behaviour.
 #' if TRUE, integrates over population distribution of parameters rather than full sampling.
@@ -1636,13 +1634,12 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
       # An outer level resolves to 'laplace' silently, as it always has: there
       # is one route for that model, not a choice between two.
       auto <- .ctIntOverPopAuto(ctm, backend = backend, optimize = optimize,
-        intoverstates = intoverstates, nsubsteps = nlcontrol$nsubsteps)
+        intoverstates = intoverstates)
       intoverpopmethod <- auto$route
       intoverpopreason <- auto$reason
       intoverpop <- identical(auto$route, 'augmented')
-      if(isTRUE(auto$announce)) message("intoverpop='auto' ",
-        if(identical(auto$route, 'laplace')) "chose 'laplace'" else
-          "kept 'augmented'", ": ", auto$reason, ".")
+      if(isTRUE(auto$announce)) message("intoverpop='auto' chose 'laplace': ",
+        auto$reason, ".")
     } else {
       intoverpopmethod <- intoverpop
       intoverpop <- identical(intoverpopmethod,'augmented')
@@ -2311,8 +2308,12 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   argsresolved$intoverstates <- isTRUE(intoverstates)
 
   if(backend %in% 'julia') {
+    # The resolved route rather than the logical `intoverpop`, which cannot
+    # say 'laplace': 'auto' can resolve there, and the refusal of
+    # intoverstates=FALSE with laplace reads this argument.
     .ctJuliaUnsupported(ctm, optimize=optimize, priors=priors,
-      intoverpop=intoverpop, gendata=gendata,
+      intoverpop=if(identical(intoverpopmethod, 'laplace')) 'laplace' else
+        intoverpop, gendata=gendata,
       stanmodeltext=stanmodeltext, compileArgs=compileArgs,
       forcerecompile=forcerecompile, intoverstates=intoverstates,
       optimcontrol=optimcontrol)

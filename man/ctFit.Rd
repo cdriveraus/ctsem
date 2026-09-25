@@ -90,9 +90,7 @@ MANIFESTMEANS, CINT, T0MEANS or TDPREDEFFECT whose transform is not affine,
 one that enters an expression in another cell, or any varying parameter
 with a non-Gaussian indicator. It says so in one line, and
 \code{fit$args$resolved$intoverpopreason} records why either route was
-taken. The exception is \code{nlcontrol$nsubsteps='auto'}, which 'laplace'
-does not support, so 'auto' keeps 'augmented' there and says that too.
-Everywhere else it is 'augmented', which is exact and cheapest for a
+taken. Everywhere else it is 'augmented', which is exact and cheapest for a
 random effect that shifts a mean with Gaussian indicators.
 \code{intoverpop='augmented'} keeps the previous behaviour.
 if TRUE, integrates over population distribution of parameters rather than full sampling.
