@@ -65,23 +65,36 @@ alongside the parameters in \code{fit$estimate$states}.
 With \code{backend='julia'} that route is exact -- no Gaussian
 assumption is made about the state anywhere, where the filter's update
 for a binary, ordinal or count indicator is an assumed-density
-projection. Pair it with \code{optimize=FALSE}: sampling the joint
-density gives the posterior of parameters and states together, while
-\code{optimize=TRUE} gives its joint mode, whose variance parameters
-are biased downward. Standard errors for an optimised fit come from the
-Hessian with the states profiled out, and \code{uncertainty} is
-restricted to \code{'hessian'} for that reason.
+projection. Use it with \code{optimize=FALSE}: sampling the joint
+density gives the posterior of parameters and states together.
+\code{optimize=TRUE} is refused, because the joint mode is degenerate --
+the states re-optimise to absorb almost any change in the parameters --
+and is not an estimate. \code{optimcontrol$estonly=TRUE} returns it
+anyway, with no standard errors; the profile curvature is kept at
+\code{fit$optim$hessian_profile}.
 Generally recommended to set TRUE unless using non-gaussian measurement model.}
 
 \item{binomial}{Deprecated. Logical indicating the use of binary rather than Gaussian data, as with IRT analyses.
-This now sets \code{intoverstates = FALSE} and the \code{manifesttype} of every indicator to 1, for binary.}
+This now sets the \code{manifesttype} of every indicator to 1, for binary.}
 
 \item{fit}{If TRUE, fit specified model using Stan, if FALSE, return stan model object without fitting.}
 
 \item{intoverpop}{how to handle declared individual differences. If 'auto',
 set to TRUE if optimizing and FALSE if using hmc -- except when a grouping
 level above the subject varies (see \code{id} in \code{\link{ctModel}}),
-which only 'laplace' can integrate out, so 'auto' resolves to that.
+which only 'laplace' can integrate out, so 'auto' resolves to that. With
+\code{backend='julia'} and \code{optimize=TRUE}, 'auto' also resolves to
+'laplace' wherever the augmented filter is measurably the wrong estimator:
+a varying parameter in DRIFT, DIFFUSION, MANIFESTVAR or LAMBDA, one in
+MANIFESTMEANS, CINT, T0MEANS or TDPREDEFFECT whose transform is not affine,
+one that enters an expression in another cell, or any varying parameter
+with a non-Gaussian indicator. It says so in one line, and
+\code{fit$args$resolved$intoverpopreason} records why either route was
+taken. The exception is \code{nlcontrol$nsubsteps='auto'}, which 'laplace'
+does not support, so 'auto' keeps 'augmented' there and says that too.
+Everywhere else it is 'augmented', which is exact and cheapest for a
+random effect that shifts a mean with Gaussian indicators.
+\code{intoverpop='augmented'} keeps the previous behaviour.
 if TRUE, integrates over population distribution of parameters rather than full sampling.
 Allows for optimization of non-linearities and random effects, via state expansion.
 'augmented' names that state-expansion method explicitly. Individual
@@ -373,10 +386,14 @@ were supplied.
 \code{fit$optim$restarts} records each start.
 
 \code{optimcontrol$carefulfit} works for \code{backend='julia'} as it does
-for Stan: when \code{priors=FALSE}, a rough first pass is run \emph{with}
-ctsem's \code{normal(0,1)} raw priors to obtain starting values, and the
-likelihood is then maximised from there. It defaults to \code{TRUE}, capped
-at 10 iterations, and is skipped when \code{inits} are supplied. Set
+for Stan: a rough first pass is run \emph{with} ctsem's \code{normal(0,1)}
+raw priors on every coordinate to obtain starting values, and the fit's own
+objective is then maximised from there. That is the fit under
+\code{priors=FALSE} and under the default \code{priors='randomCorr'}, whose
+prior on the random-effect correlations does nothing to place the rest of
+the vector; with \code{priors=TRUE} the fit already has those priors and the
+pass is skipped. It defaults to \code{TRUE}, capped at 10 iterations, and is
+skipped when \code{inits} are supplied. Set
 \code{optimcontrol$carefulfit = FALSE} to switch it off or to a number to
 choose the cap.
 
@@ -390,8 +407,9 @@ pass is not a safer one -- a cap of 20 scored 0.550 and 7.99, worse than not
 warming up at all -- because the prior pass pulls the start toward the prior
 mode and past about ten iterations that is what it hands the likelihood.
 
-\code{fit$optim$carefulfit} records whether the pass ran, and
-\code{$carefulfit_iterations} how long it was allowed.
+\code{fit$optim$carefulfit} records whether the pass ran and supplied the
+starting values, \code{$carefulfit_iterations} how many iterations it ran,
+and \code{$carefulfit_skipped} why, when it did not.
 With \code{backend='julia'}, \code{optimcontrol$callback} is a function
 called while the fit runs, with \code{(iteration, total, objective,
 gradient_norm, parameters)}, where \code{parameters} is the raw vector the
