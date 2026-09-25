@@ -219,9 +219,13 @@
     dat[setdiff(seq_len(nrow(dat)), keep), model$manifestNames] <- NA
   }
 
-  prepared <- .ctBackendAsModel(.ctJuliaPrepare(dat, model, project = spec$project,
-    intoverpop = .ctBackendIntOverPop(spec),
-    laplacecontrol = spec$laplace$inner))
+  # With the fit's integration step. Re-preparing put a mesh from
+  # `nsubsteps = 'auto'` back to the maxtimestep rule, so every prediction that
+  # selected subjects or interpolated a grid -- ctPredict()'s defaults do both
+  # -- was integrated more coarsely than the fit.
+  prepared <- .ctBackendAsModel(.ctJuliaCarrySubsteps(.ctJuliaPrepare(dat, model,
+    project = spec$project, intoverpop = .ctBackendIntOverPop(spec),
+    laplacecontrol = spec$laplace$inner), spec, .ctFitRawEstimate(fit)))
   if (withhold) attr(prepared, "reportManifest") <- reported
 
   # A Laplace fit's random effects are conditional modes, and a mode is only
@@ -937,12 +941,12 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
   # Carry across the two things that are properties of the *fit* rather than of
   # the data, and that re-preparation would otherwise silently drop: the prior
   # specification (a function of the model, and `priors` defaults to FALSE
-  # here) and the integration step. Prediction does not notice either, but
-  # cross-validation re-optimises against a re-prepared specification, and a
-  # refit that quietly lost its priors or its step size would not be the same
-  # model.
+  # here) and the integration step. Cross-validation re-optimises against a
+  # re-prepared specification, and a refit that quietly lost its priors or its
+  # step size would not be the same model. A step chosen by
+  # `nsubsteps = 'auto'` is a count per fitted row, and goes only with those
+  # rows: ctPredictTIP()'s pseudo-subjects are none of them.
   prepared$priors <- spec$priors
-  prepared$max_timestep <- spec$max_timestep
-  fit$model_spec <- prepared
+  fit$model_spec <- .ctJuliaCarrySubsteps(prepared, spec, .ctFitRawEstimate(fit))
   fit
 }

@@ -3775,6 +3775,54 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   list(spec = spec, summary = summary)
 }
 
+# The fitted specification's integration step, carried onto `spec`: the same
+# model re-prepared over other rows, as prediction and cross-validation do.
+# Re-preparing gives back the maxtimestep rule, which applies to any rows. A
+# mesh from `nsubsteps = 'auto'` does not: it is one count per row of the data
+# it was chosen for. Dropped, the filter went back to the rule on intervals the
+# fit had refined; copied across whole, it handed one subject's counts to
+# another, or failed in the engine when the row counts differed.
+#
+# So when every row here is a row the fit had, each keeps the count the fit
+# used, and the fit's own filter is reproduced exactly. Choosing again need
+# not reproduce it: the fit chose its mesh at an earlier optimum, before a
+# refit or a correction moved the estimate it reports. Anything else gets the
+# mesh the fit would choose for these rows at `values`, its estimate.
+.ctJuliaCarrySubsteps <- function(spec, fitted, values) {
+  if (!is.integer(fitted$max_timestep)) {
+    spec$max_timestep <- fitted$max_timestep
+    return(spec)
+  }
+  if (is.null(spec$substeps)) return(spec)
+  rows <- .ctJuliaFittedRows(spec, fitted)
+  if (!is.null(rows)) {
+    spec$max_timestep <- fitted$max_timestep[rows]
+    return(spec)
+  }
+  .ctJuliaAutoSubsteps(spec, as.numeric(values)[seq_len(.ctBackendNpar(spec))])$spec
+}
+
+# For each row of `spec`, the row of `fitted` it is, or NULL unless every row
+# has one. Matched a whole subject at a time: a count belongs to the interval
+# ending at its row, so a row is the fitted one only if the row before it is
+# too, and a subject with a row added or missing matches nowhere.
+.ctJuliaFittedRows <- function(spec, fitted) {
+  idname <- spec$model$subjectIDname
+  bysubject <- function(s) {
+    ids <- as.character(s$data[[idname]])
+    split(seq_along(ids), factor(ids, levels = unique(ids)))
+  }
+  new <- bysubject(spec)
+  old <- bysubject(fitted)
+  if (!length(new) || !all(names(new) %in% names(old))) return(NULL)
+  rows <- lapply(names(new), function(s) {
+    if (identical(as.numeric(fitted$times[old[[s]]]),
+      as.numeric(spec$times[new[[s]]]))) old[[s]]
+  })
+  if (any(vapply(rows, is.null, logical(1L)))) return(NULL)
+  unlist(rows, use.names = FALSE)
+}
+
 .ctJuliaSubstepMessage <- function(s) {
   if (!isTRUE(s$finite)) return("Substeps: likelihood not finite at the starting values; maxtimestep rule kept.")
   paste0("Substeps: ", s$refined, " of ", s$intervals, " intervals refined, max ", s$max_substeps,
