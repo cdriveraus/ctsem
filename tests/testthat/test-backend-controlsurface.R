@@ -4,8 +4,10 @@
 # decides -- a value asking for a missing capability is refused by name, a value
 # describing what the backend already does is accepted.
 #
-# None of these needs Julia or a fit -- the checks run before any data
-# preparation -- so this file is deliberately cheap and always runs.
+# All but one of these run without Julia or a fit -- the checks run before any
+# data preparation -- so this file is deliberately cheap and always runs. The
+# exception fits a ten-subject model, because what it checks is that a value
+# reaches the loop it caps, and is guarded by skip_without_julia().
 
 suppressWarnings(suppressPackageStartupMessages(library(ctsem)))
 
@@ -43,7 +45,8 @@ test_that("stanoptimis() takes the shared stopping rules, with defaults that cha
 
 test_that("a stan-only capability is refused on julia when the value asks for it", {
   # The julia optimiser is L-BFGS over the full data: no stochastic gradient
-  # phase, and no stall-and-restart.
+  # phase, and no gradient bar for calling a fit stalled -- it judges a stall
+  # by its progress.
   expect_error(.cs_fit(backend = 'julia', optimcontrol = list(stochastic = TRUE)),
     "optimcontrol\\$stochastic asks for stochastic gradient descent")
   expect_error(.cs_fit(backend = 'julia', optimcontrol = list(nsubsets = 4)),
@@ -52,10 +55,8 @@ test_that("a stan-only capability is refused on julia when the value asks for it
     "optimcontrol\\$carefulfit")
   expect_error(.cs_fit(backend = 'julia', optimcontrol = list(parsteps = 1L)),
     "optimcontrol\\$parsteps")
-  expect_error(.cs_fit(backend = 'julia', optimcontrol = list(stallretries = 5)),
-    "optimcontrol\\$carefulfit")
   expect_error(.cs_fit(backend = 'julia', optimcontrol = list(stalltol = 1)),
-    "optimcontrol\\$carefulfit")
+    "optimcontrol\\$stallwindow")
   expect_error(.cs_fit(backend = 'julia', optimcontrol = list(lproughnesstarget = .3)),
     "optimcontrol\\$lproughnesstarget")
   expect_error(.cs_fit(backend = 'julia', optimcontrol = list(stochasticTolAdjust = 10)),
@@ -64,10 +65,10 @@ test_that("a stan-only capability is refused on julia when the value asks for it
 
 test_that("a value describing what the backend already does is accepted", {
   # stochastic=FALSE is the deterministic optimiser julia already runs;
-  # nsubsets=1 and subsamplesize=1 are no split and no subset; parsteps=c() and
-  # stallretries=0 ask for no stepwise pass and no retry.
+  # nsubsets=1 and subsamplesize=1 are no split and no subset; parsteps=c() asks
+  # for no stepwise pass.
   expect_type(.cs_fit(backend = 'julia', optimcontrol = list(stochastic = FALSE,
-    nsubsets = 1, subsamplesize = 1, parsteps = c(), stallretries = 0)), 'list')
+    nsubsets = 1, subsamplesize = 1, parsteps = c())), 'list')
   # Stan's autodiff is reverse mode, so 'adjoint' is a true description of it;
   # 'forward' names a second gradient only the julia engine has.
   expect_type(.cs_fit(backend = 'stan', optimcontrol = list(gradient = 'adjoint',
@@ -89,6 +90,50 @@ test_that("a julia-only capability is refused on stan when the value asks for it
   expect_error(.cs_fit(backend = 'stan',
     optimcontrol = list(tipredMissingIncludeOutcome = FALSE)),
     "optimcontrol\\$tipredMissingIncludeOutcome")
+})
+
+test_that("stallretries is one name, and both backends take it", {
+  # It was in the capability split twice, stan-only and julia-only, and a list
+  # lookup returns the first entry: julia refused every value but 0 with stan's
+  # message, and stan accepted it and then dropped it with the julia-only names
+  # on the way to stanoptimis(), which restarted twice whatever was asked.
+  split <- ctsem:::.ctOptimcontrolSplit()
+  expect_equal(anyDuplicated(names(split)), 0L)
+  expect_length(intersect(ctsem:::.ctOptimcontrolShared, names(split)), 0L)
+  for(be in c('stan','julia')){
+    expect_type(.cs_fit(backend = be, optimcontrol = list(stallretries = 1L)), 'list')
+  }
+  # What ctFit() hands stanoptimis() on the stan path, bound there by name.
+  tostan <- ctsem:::.ctOptimcontrolForStan(list(stallretries = 1L, tol = 1e-6))
+  expect_equal(tostan$stallretries, 1L)
+  expect_true('stallretries' %in% names(formals(stanoptimis)))
+})
+
+test_that("stallretries is the cap on the julia escape loop", {
+  skip_without_julia()
+  # An escape that always has somewhere to go -- back to where the stage
+  # stopped, which a resumed stage cannot do worse than -- so the loop runs
+  # until the cap stops it, and the escapes offered are the cap it read.
+  offered <- 0L
+  testthat::local_mocked_bindings(.ctBackendStallEscape = function(result, ...) {
+    offered <<- offered + 1L
+    as.numeric(result$minimizer)
+  }, .package = 'ctsem')
+  set.seed(1)
+  dat <- do.call(rbind, lapply(1:10, function(i) {
+    eta <- as.numeric(stats::filter(stats::rnorm(6), 0.6, method = 'recursive'))
+    data.frame(id = i, time = 0:5, Y1 = eta + stats::rnorm(6, 0, .5))
+  }))
+  escapes <- function(n) {
+    offered <<- 0L
+    fit <- suppressWarnings(suppressMessages(ctFit(dat, .cs_model(),
+      backend = 'julia', cores = 1, verbose = 0,
+      optimcontrol = list(stallretries = n, estonly = TRUE, carefulfit = FALSE))))
+    c(offered = offered, recorded = fit$optim$stall_escapes)
+  }
+  expect_equal(escapes(1L), c(offered = 1L, recorded = 1L))
+  # Above the default of 2, so it is the value that stops the loop.
+  expect_equal(escapes(3L), c(offered = 3L, recorded = 3L))
 })
 
 test_that("an unrecognised optimcontrol name is refused on both backends", {

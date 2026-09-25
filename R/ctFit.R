@@ -39,10 +39,15 @@
 .ctOptimcontrolInert <- c('init','priors','plot','verbose','cores','matsetup',
   'standata','sm','is')
 
-# Honoured by both backends, with the same meaning.
+# Honoured by both backends, with the same meaning. `stallretries` is how many
+# times a fit that stopped short of a maximum is tried again, with each
+# backend's own retry: stan restarts from fresh random values, julia pulls the
+# flat coordinates back and refits. It used to be listed below twice, stan-only
+# and julia-only, and a list lookup returns the first -- so julia refused it
+# with stan's message and stan dropped it with the julia-only names.
 .ctOptimcontrolShared <- c('tol','g_tol','x_tol','maxiter','lbfgs_memory',
   'initsd','carefulfit','estonly','finishsamples','uncertainty',
-  'uncertaintyDraws','uncertaintyControl')
+  'uncertaintyDraws','uncertaintyControl','stallretries')
 
 # What is left after the vocabulary above is a genuine capability difference: a
 # phase or a hook one backend has and the other does not. Each such name is
@@ -86,16 +91,11 @@
     inert = function(v) length(v) == 0L,
     msg = paste0("holds parameters at zero during a stepwise stan ",
       "optimisation, which the julia optimiser has no step for. Drop it")),
-  stallretries = list(only = 'stan',
-    inert = function(v) isTRUE(all(v == 0)),
-    msg = paste0("restarts the stan optimizer from fresh values when it stops ",
-      "short of a maximum; the julia backend warms every fit from the priors ",
-      "instead. Use optimcontrol$carefulfit")),
   stalltol = list(only = 'stan',
     inert = function(v) FALSE,
     msg = paste0("is the gradient at which stan calls a fit stalled and ",
-      "restarts it, and the julia backend has no such retry. Use ",
-      "optimcontrol$carefulfit")),
+      "restarts it; the julia backend judges a stall by its progress instead. ",
+      "Use optimcontrol$stallwindow")),
 
   # -- julia only.
   gradient = list(only = 'julia',
@@ -182,11 +182,6 @@
     msg = paste0("asks the julia route to hold the escaped coordinates still ",
       "while the rest of the model re-optimises around them before releasing ",
       "them, and the stan path has no such mechanism. Drop it")),
-  stallretries = list(only = 'julia',
-    inert = function(v) isTRUE(all(v == 2)),
-    msg = paste0("caps how often a stalled julia fit is pulled off a flat ",
-      "transform and refitted, and the stan path has no such mechanism. ",
-      "Drop it")),
   stallcooldown = list(only = 'julia',
     inert = function(v) isTRUE(all(v == 30)),
     msg = paste0("sets how long the julia stall check waits after finding a ",
@@ -631,7 +626,8 @@ T0VARredundancies <- function(ctm) {
 #' step), \code{maxiter}, and \code{lbfgs_memory} for how many curvature pairs
 #' L-BFGS keeps. \code{initsd} is the sd of the random start on both.
 #' \code{estonly}, \code{carefulfit}, \code{finishsamples}, \code{uncertainty},
-#' \code{uncertaintyDraws} and \code{uncertaintyControl} also work on both.
+#' \code{uncertaintyDraws} and \code{uncertaintyControl} also work on both, and
+#' so does \code{stallretries}, with each backend's own retry (see below).
 #'
 #' The \emph{defaults} are each backend's own, and are mirror images: stan stops
 #' on the objective (\code{tol = 1e-8}, \code{g_tol} off), julia on the gradient
@@ -642,7 +638,7 @@ T0VARredundancies <- function(ctm) {
 #' \code{backend='stan'} alone has the stochastic-gradient optimizer
 #' (\code{stochastic}, \code{nsubsets}, \code{subsamplesize},
 #' \code{lproughnesstarget}, \code{stochasticTolAdjust}, \code{parsteps}) and
-#' the stall-and-restart pass (\code{stallretries}, \code{stalltol});
+#' the gradient bar at which it restarts a stalled fit (\code{stalltol});
 #' \code{backend='julia'} alone has \code{gradient}, \code{datastart},
 #' \code{callback}, \code{saveEffects}, \code{progress}, \code{batch},
 #' \code{newton}, \code{restarts}, \code{restartsd} and
@@ -805,13 +801,18 @@ T0VARredundancies <- function(ctm) {
 #' \code{finishsamples}, and \code{uncertaintyControl}. Set
 #' \code{optimcontrol$estonly = TRUE} for point estimates only.
 #'
-#' \code{optimcontrol$stallretries} and \code{optimcontrol$stalltol} govern what happens
-#' when the stan optimizer stops somewhere that is not a maximum. A rough likelihood can
-#' leave it unable to find any improving step, which it reports as convergence -- returning
-#' the starting values with the uncertainty computed about them. The gradient where it
-#' stopped separates the two cases by orders of magnitude, so the fit is restarted from
-#' fresh values (twice by default) when it exceeds \code{stalltol} per data point, and warns
-#' if it still ends up there.
+#' \code{optimcontrol$stallretries} (default 2 on both backends) caps how often a
+#' fit that stopped somewhere that is not a maximum is tried again, and each
+#' backend tries in its own way; 0 turns the retry off on either.
+#' On stan, a rough likelihood can leave the optimizer unable to find any
+#' improving step, which it reports as convergence -- returning the starting
+#' values with the uncertainty computed about them. The gradient where it stopped
+#' separates the two cases by orders of magnitude, so the fit is restarted from
+#' fresh random values when it exceeds \code{optimcontrol$stalltol} per data
+#' point, and warns if it still ends up there.
+#' On julia, a fit that stalled on a flat transform, or that its own probe finds
+#' is not a maximum, has the flat coordinates pulled back and is refitted from
+#' there, and the refit is kept only if it improves the objective.
 #'
 #' @param nopriors deprecated, use priors argument. logical. If TRUE, any priors are disabled -- sometimes desirable for optimization.
 #' @param priors if TRUE, priors are included in computations, otherwise specified priors are ignored.

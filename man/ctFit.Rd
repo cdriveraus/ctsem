@@ -239,7 +239,8 @@ Stopping rules, honoured by both: \code{tol} (the objective stops changing),
 step), \code{maxiter}, and \code{lbfgs_memory} for how many curvature pairs
 L-BFGS keeps. \code{initsd} is the sd of the random start on both.
 \code{estonly}, \code{carefulfit}, \code{finishsamples}, \code{uncertainty},
-\code{uncertaintyDraws} and \code{uncertaintyControl} also work on both.
+\code{uncertaintyDraws} and \code{uncertaintyControl} also work on both, and
+so does \code{stallretries}, with each backend's own retry (see below).
 
 The \emph{defaults} are each backend's own, and are mirror images: stan stops
 on the objective (\code{tol = 1e-8}, \code{g_tol} off), julia on the gradient
@@ -250,7 +251,7 @@ What is left is a capability one backend has and the other does not.
 \code{backend='stan'} alone has the stochastic-gradient optimizer
 (\code{stochastic}, \code{nsubsets}, \code{subsamplesize},
 \code{lproughnesstarget}, \code{stochasticTolAdjust}, \code{parsteps}) and
-the stall-and-restart pass (\code{stallretries}, \code{stalltol});
+the gradient bar at which it restarts a stalled fit (\code{stalltol});
 \code{backend='julia'} alone has \code{gradient}, \code{datastart},
 \code{callback}, \code{saveEffects}, \code{progress}, \code{batch},
 \code{newton}, \code{restarts}, \code{restartsd} and
@@ -413,13 +414,18 @@ backend does, and reads the same \code{stanoptimis} control names for it:
 \code{finishsamples}, and \code{uncertaintyControl}. Set
 \code{optimcontrol$estonly = TRUE} for point estimates only.
 
-\code{optimcontrol$stallretries} and \code{optimcontrol$stalltol} govern what happens
-when the stan optimizer stops somewhere that is not a maximum. A rough likelihood can
-leave it unable to find any improving step, which it reports as convergence -- returning
-the starting values with the uncertainty computed about them. The gradient where it
-stopped separates the two cases by orders of magnitude, so the fit is restarted from
-fresh values (twice by default) when it exceeds \code{stalltol} per data point, and warns
-if it still ends up there.}
+\code{optimcontrol$stallretries} (default 2 on both backends) caps how often a
+fit that stopped somewhere that is not a maximum is tried again, and each
+backend tries in its own way; 0 turns the retry off on either.
+On stan, a rough likelihood can leave the optimizer unable to find any
+improving step, which it reports as convergence -- returning the starting
+values with the uncertainty computed about them. The gradient where it stopped
+separates the two cases by orders of magnitude, so the fit is restarted from
+fresh random values when it exceeds \code{optimcontrol$stalltol} per data
+point, and warns if it still ends up there.
+On julia, a fit that stalled on a flat transform, or that its own probe finds
+is not a maximum, has the flat coordinates pulled back and is refitted from
+there, and the refit is kept only if it improves the objective.}
 
 \item{backend}{Either 'stan' (the default) or 'julia'. The julia backend is a
 separate maximum-likelihood engine with the same model definitions and the
