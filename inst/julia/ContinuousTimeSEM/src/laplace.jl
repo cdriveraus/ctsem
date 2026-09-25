@@ -4317,6 +4317,53 @@ end
 export ctsem_laplace_subject_values
 
 """
+    ctsem_auto_substeps(laplace, values; tol, max_substeps, passes, floor_rule, fallback)
+
+The substep mesh for a Laplace objective, with each subject measured at its
+conditional random-effect modes at `values`.
+
+A mesh is measured along the state path the filter takes, and on this route
+that path depends on the random effects: a subject is filtered at the
+population vector shifted by `L u`. Every evaluation of the Laplace term takes
+its value and its curvature at the inner mode, so that is where the
+linearisation has to be accurate, and that is where the mesh is measured. The
+effects at zero would measure the population's system instead, which for a
+subject whose effect is not small is a different path -- with a varying
+manifest mean, the filter moves the latent state to absorb the subject's
+offset -- and not one the fit ever evaluates.
+
+The modes are solved under the mesh the objective already carries, since no
+other exists before one is chosen; the R side chooses again at the optimum,
+where that mesh is the fit's own. A unit whose inner problem is not finite is
+measured at the origin, the population vector, and if the filter is not finite
+there either, `finite` says so as it does for any objective. The solve leaves
+its modes in `laplace.modes`, as `ctsem_laplace_subject_values` does.
+
+The keywords, and what is returned, are the `CTSEMObjective` method's. Each
+subject's shifted vector is one row of the matrix that method takes, before
+TI-predictor effects, which the filter adds exactly as it does in the fit.
+"""
+function ctsem_auto_substeps(laplace::CTSEMLaplaceObjective, values::AbstractVector;
+    kwargs...)
+    theta = collect(Float64, values)
+    _laplace_check_indices(laplace, length(theta))
+    Ls = _laplace_popchols(theta, laplace.spec)
+    units = laplace.units
+    # NaN, not undef: a subject no unit reached would filter as not finite
+    # rather than at whatever the allocation held.
+    shifted = fill(NaN, length(laplace.objective.subject_objectives), length(theta))
+    for U in eachindex(units.members)
+        solved = _laplace_solve_unit_mode!(laplace, U, theta, Ls)
+        u = isfinite(solved.value) ? solved.u : zeros(Float64, units.dims[U])
+        for (m, i) in enumerate(units.members[U])
+            shifted[i, :] = _laplace_member_values(theta, laplace.spec, Ls, u,
+                units.offsets[U][m])
+        end
+    end
+    return ctsem_auto_substeps(laplace.objective, shifted; kwargs...)
+end
+
+"""
     ctsem_state_dimension(laplace)
 
 How many innovations the design needs. That does not depend on how the random

@@ -146,3 +146,38 @@ end
     expected = 3 * 1 + sum(mesh[t] for t in eachindex(mesh) if (t - 1) % 5 != 0)
     @test ContinuousTimeSEM.ctsem_state_dimension(obj) == expected
 end
+
+# The Laplace route filters each subject at the population vector shifted by its
+# random effects, and every evaluation of the Laplace term does so at the modes,
+# so that is where its mesh is measured. Shared with `test_laplace.jl`; see
+# `laplace_fixtures.jl`.
+isdefined(@__MODULE__, :_LAPLACE_LINEAR_OBJECTIVE) ||
+    include(joinpath(@__DIR__, "laplace_fixtures.jl"))
+
+@testset "a Laplace objective is measured with each subject at its modes" begin
+    laplace, θ = _fresh_nonlinear()
+    obj = laplace.objective
+    nsub = length(obj.subject_objectives)
+    # The fixture is only mildly nonlinear; a tight tolerance makes it refine,
+    # so what is compared below is not the floor on both sides.
+    tol = 1e-4
+    out = ContinuousTimeSEM.ctsem_auto_substeps(laplace, θ; tol=tol)
+    @test out.finite
+    @test length(out.mesh) == sum(length(s.timesteps) for s in obj.subject_objectives)
+    @test out.refined > 0
+    # The plain objective with each subject at its own vector, built from the
+    # modes `ctsem_laplace_modes` reports on the raw scale rather than from the
+    # shift the method applies itself.
+    modes = ContinuousTimeSEM.ctsem_laplace_modes(laplace, θ)
+    persubject = repeat(transpose(θ), nsub)
+    for i in 1:nsub, (j, p) in enumerate(modes.parameter)
+        persubject[i, p] += modes.raw[modes.group[i], j]
+    end
+    @test out.mesh == ContinuousTimeSEM.ctsem_auto_substeps(obj, persubject; tol=tol).mesh
+    # A matrix whose rows are all the same vector is the vector form, and a
+    # matrix needs a row for every subject.
+    @test ContinuousTimeSEM.ctsem_auto_substeps(obj, repeat(transpose(θ), nsub); tol=tol).mesh ==
+        ContinuousTimeSEM.ctsem_auto_substeps(obj, θ; tol=tol).mesh
+    @test_throws DimensionMismatch ContinuousTimeSEM.ctsem_auto_substeps(obj,
+        persubject[1:(nsub - 1), :]; tol=tol)
+end

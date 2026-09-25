@@ -446,7 +446,8 @@ the integration is nested within an Euler like loop.
 Smaller values may offer greater accuracy, but are slower and not always necessary. Given the exponential integration,
 linear model elements are fit exactly with only a single step.
 \code{nsubsteps = 'auto'} (julia backend only) instead measures, at the starting values and again at the
-optimum, how nonlinear each observation interval is and refines only the intervals that need it;
+optimum, how nonlinear each observation interval is and refines only the intervals that need it
+(under \code{intoverpop = 'laplace'}, with each subject at its random-effect modes);
 \code{substeptol} (default 0.01) is the largest acceptable linearisation error as a fraction of the
 predicted state standard deviation, and \code{maxsubsteps} (default 64) caps an interval.
 \code{maxtimestep} remains a ceiling on the step. The choice is reported in \code{fit$substeps}.
