@@ -4358,8 +4358,16 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # model's raw layout. `.ctBackendLaplacePriorSpec` refuses shapes it cannot
   # map rather than mis-assigning priors across levels, so this is allowed to
   # fail and simply leave the fit unwarmed.
+  #
+  # The warm-up has its own prior scope, N(0,1) on every raw coordinate -- the
+  # spec `priors = TRUE` builds -- whatever the fit's own priors are. It used
+  # to borrow the fit's: it ran only when `priors` was FALSE, which was right
+  # while the scopes were all or none, and since `priors = 'randomCorr'`
+  # became the julia default (4b2dbf05, 2026-09-22) resolved to TRUE on every
+  # default fit, so the stage was skipped there while `$optim$carefulfit`
+  # reported that it ran. A prior on the random-effect correlations alone does
+  # nothing to place the rest of the vector, which is what this stage is for.
   warmspec <- function() {
-    if (isTRUE(priors) || is.null(prepared_data)) return(NULL)
     spec <- model_spec
     spec$priors <- try(if (!is.null(model_spec$laplace))
       .ctBackendLaplacePriorSpec(prepared_data, model_spec$laplace, npar)
@@ -4426,23 +4434,55 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # random-effect sd of exactly zero without it against a truth of 0.5. One of
   # those three also failed to converge. Conditioning and basin selection are
   # different problems and the preconditioner only addresses the first.
+  #
+  # Provenance of the cap of ten, since it is a measured constant and the
+  # measurements were on one family: a one-latent continuous-time model with a
+  # random CINT (population sd 0.5, DRIFT -0.3, DIFFUSION 0.8), 60 subjects x
+  # 10 occasions, Gaussian, binary, ordinal and mixed indicators, on both the
+  # augmented and the laplace route, fitted with `priors = FALSE`
+  # (dev/simstudies/simstudy-individual-differences.R and
+  # simstudy-carefulfit.R). Nothing with more than one random effect, an
+  # effect on DRIFT or a variance, or an outer level, and all of it before the
+  # default became 'randomCorr'. A change to the cap is a bench run, not an
+  # edit.
   careful <- optimcontrol$carefulfit
   if (is.null(careful)) careful <- TRUE
   warmiter <- if (isTRUE(careful)) 10L else
     if (is.numeric(careful) && length(careful) == 1L && careful >= 1)
       as.integer(careful) else 0L
-  # `stanoptimis` turns `carefulfit` off when starting values were supplied,
-  # since the point of the pass is to produce some. Overriding a starting value
-  # the caller chose would be worse than surprising.
-  if (!is.null(inits) && !identical(inits, "random")) warmiter <- 0L
-  # And not at all on the state-explicit target. The warm-up exists to place
-  # the *population* parameters from the priors; the innovations already
-  # start at their own prior mode, and running a second optimisation over
-  # the whole extended vector to rediscover that would cost as much as the
-  # fit it is warming.
-  if (!isTRUE(intoverstates)) warmiter <- 0L
-  if (warmiter >= 1) {
+  # What the warm-up did, recorded from what executed rather than from what was
+  # asked for: a stage whose builder returned NULL looks exactly like one that
+  # ran unless the fit says which. `warmskip` is why not, NA when it ran and
+  # its point became the start; `warmran` iterations it took.
+  warmskip <- NA_character_
+  warmran <- 0L
+  # The fit's own prior scope, as `.ctJuliaPrepare()` read it: a NULL scope is
+  # the logical `priors` alone.
+  fitscope <- if (identical(priorscope, "randomCorr")) "randomCorr" else
+    if (isTRUE(priors)) "all" else "none"
+  if (warmiter < 1L) {
+    warmskip <- "switched off by optimcontrol$carefulfit"
+  } else if (!is.null(inits) && !identical(inits, "random")) {
+    # `stanoptimis` turns `carefulfit` off when starting values were supplied,
+    # since the point of the pass is to produce some. Overriding a starting
+    # value the caller chose would be worse than surprising.
+    warmskip <- "starting values were supplied"
+  } else if (!isTRUE(intoverstates)) {
+    # And not at all on the state-explicit target. The warm-up exists to place
+    # the *population* parameters from the priors; the innovations already
+    # start at their own prior mode, and running a second optimisation over
+    # the whole extended vector to rediscover that would cost as much as the
+    # fit it is warming.
+    warmskip <- "intoverstates=FALSE"
+  } else if (identical(fitscope, "all")) {
+    # The fit is the posterior under exactly these priors, so a warm-up under
+    # them would be the first ten iterations of the fit itself.
+    warmskip <- "priors=TRUE: the fit already has these priors"
+  } else if (is.null(prepared_data)) {
+    warmskip <- "no prepared data to build the priors from"
+  } else {
     spec <- warmspec()
+    if (is.null(spec)) warmskip <- "the priors do not map onto this model's layout"
     if (!is.null(spec)) {
       # No callback here, deliberately. This stage is a starting-value device,
       # not the fit: it optimises a *different* objective (the posterior rather
@@ -4472,9 +4512,13 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         progress_budget = TRUE), silent = TRUE)
       # A warm start is only a starting value: if it produced numbers the fit
       # can use, use them, and otherwise start where we would have anyway.
-      if (!inherits(warmed, "try-error")) {
+      if (inherits(warmed, "try-error")) {
+        warmskip <- "the warm-up failed"
+      } else {
+        warmran <- as.integer(.ctJuliaOr(warmed$iterations, 0L))[1L]
         values <- as.numeric(warmed$minimizer)
-        if (length(values) == npar && all(is.finite(values))) start <- values
+        if (length(values) == npar && all(is.finite(values))) start <- values else
+          warmskip <- "the warm-up returned no usable point"
       }
     }
   }
@@ -4681,8 +4725,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # `saturated_parameters` -- see `_ctsem_overshot` in the engine.
     overshoot_parameters = .ctJuliaSaturatedNames(result, model_spec, npar,
       "overshoot_parameters"),
-    # Whether the first pass with priors ran, and how long it was allowed.
-    carefulfit = warmiter >= 1, carefulfit_iterations = as.integer(warmiter),
+    # Whether the prior warm-up ran and its point became the start, how many
+    # iterations it ran, and why not when it did not -- all from what
+    # executed. It used to be `warmiter >= 1`, what was asked for, and so
+    # reported TRUE on every default fit while the stage was being skipped.
+    carefulfit = is.na(warmskip), carefulfit_iterations = warmran,
+    carefulfit_skipped = warmskip,
     # Which line search produced the answer. "hagerzhang+backtracking" means
     # Hager-Zhang stopped short and the fit was finished by the fallback.
     linesearch = if (is.null(result$linesearch)) NA_character_ else
@@ -4700,8 +4748,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # arrived, this one stops a fit that is not going to.
     stopped_by_stall = isTRUE(result$stopped_by_stall),
     # The batch sizes the run grew through, and the iteration each began at;
-    # 0 when it did not batch (too few subjects, a prior, or the route has no
-    # subset). See `_ctsem_batch_plan` in the engine.
+    # 0 when it did not batch (too few subjects or groups, a sampled TI
+    # predictor, or a route with no subset). A prior does not prevent it: the
+    # engine scales the likelihood part of a batch and leaves the prior whole
+    # (`_ctsem_batchable` is `isempty(ti_missing_parameter)`). See
+    # `_ctsem_batch_plan` in the engine.
     batch_sizes = if (is.null(result$batch_sizes)) 0L else
       as.integer(result$batch_sizes),
     batch_iterations = if (is.null(result$batch_iterations)) 0L else

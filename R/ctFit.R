@@ -761,10 +761,14 @@ T0VARredundancies <- function(ctm) {
 #' \code{fit$optim$restarts} records each start.
 #'
 #' \code{optimcontrol$carefulfit} works for \code{backend='julia'} as it does
-#' for Stan: when \code{priors=FALSE}, a rough first pass is run \emph{with}
-#' ctsem's \code{normal(0,1)} raw priors to obtain starting values, and the
-#' likelihood is then maximised from there. It defaults to \code{TRUE}, capped
-#' at 10 iterations, and is skipped when \code{inits} are supplied. Set
+#' for Stan: a rough first pass is run \emph{with} ctsem's \code{normal(0,1)}
+#' raw priors on every coordinate to obtain starting values, and the fit's own
+#' objective is then maximised from there. That is the fit under
+#' \code{priors=FALSE} and under the default \code{priors='randomCorr'}, whose
+#' prior on the random-effect correlations does nothing to place the rest of
+#' the vector; with \code{priors=TRUE} the fit already has those priors and the
+#' pass is skipped. It defaults to \code{TRUE}, capped at 10 iterations, and is
+#' skipped when \code{inits} are supplied. Set
 #' \code{optimcontrol$carefulfit = FALSE} to switch it off or to a number to
 #' choose the cap.
 #'
@@ -778,8 +782,9 @@ T0VARredundancies <- function(ctm) {
 #' warming up at all -- because the prior pass pulls the start toward the prior
 #' mode and past about ten iterations that is what it hands the likelihood.
 #'
-#' \code{fit$optim$carefulfit} records whether the pass ran, and
-#' \code{$carefulfit_iterations} how long it was allowed.
+#' \code{fit$optim$carefulfit} records whether the pass ran and supplied the
+#' starting values, \code{$carefulfit_iterations} how many iterations it ran,
+#' and \code{$carefulfit_skipped} why, when it did not.
 #' With \code{backend='julia'}, \code{optimcontrol$callback} is a function
 #' called while the fit runs, with \code{(iteration, total, objective,
 #' gradient_norm, parameters)}, where \code{parameters} is the raw vector the

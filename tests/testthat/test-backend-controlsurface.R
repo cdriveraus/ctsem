@@ -4,10 +4,10 @@
 # decides -- a value asking for a missing capability is refused by name, a value
 # describing what the backend already does is accepted.
 #
-# All but one of these run without Julia or a fit -- the checks run before any
+# All but two of these run without Julia or a fit -- the checks run before any
 # data preparation -- so this file is deliberately cheap and always runs. The
-# exception fits a ten-subject model, because what it checks is that a value
-# reaches the loop it caps, and is guarded by skip_without_julia().
+# exceptions fit a ten-subject model, because what they check is that a value
+# reaches the stage it controls, and are guarded by skip_without_julia().
 
 suppressWarnings(suppressPackageStartupMessages(library(ctsem)))
 
@@ -134,6 +134,47 @@ test_that("stallretries is the cap on the julia escape loop", {
   expect_equal(escapes(1L), c(offered = 1L, recorded = 1L))
   # Above the default of 2, so it is the value that stops the loop.
   expect_equal(escapes(3L), c(offered = 3L, recorded = 3L))
+})
+
+test_that("the prior warm-up runs under the default priors, and the fit says what ran", {
+  skip_without_julia()
+  # The default is priors = 'randomCorr', a prior on the random-effect
+  # correlations alone. The warm-up used to borrow the fit's prior scope, so it
+  # was skipped on every default fit while `$optim$carefulfit` reported that it
+  # had run -- a stage whose builder returned NULL looked like one that ran.
+  # This model has two random effects (T0MEANS and MANIFESTMEANS by default),
+  # so the default prior is not empty.
+  set.seed(1)
+  dat <- do.call(rbind, lapply(1:10, function(i) {
+    eta <- as.numeric(stats::filter(stats::rnorm(6), 0.6, method = 'recursive'))
+    data.frame(id = i, time = 0:5, Y1 = eta + stats::rnorm(1) + stats::rnorm(6, 0, .5))
+  }))
+  fitwith <- function(...) {
+    set.seed(3)
+    suppressWarnings(suppressMessages(ctFit(dat, .cs_model(), backend = 'julia',
+      cores = 1, verbose = 0, ...)))
+  }
+  default <- fitwith(optimcontrol = list(estonly = TRUE))
+  off <- fitwith(optimcontrol = list(estonly = TRUE, carefulfit = FALSE))
+  expect_true(default$optim$carefulfit)
+  expect_true(is.na(default$optim$carefulfit_skipped))
+  expect_gte(default$optim$carefulfit_iterations, 1L)
+  # And it moved the start: the same seed without the warm-up begins elsewhere.
+  expect_false(isTRUE(all.equal(default$optim$trace$objective[1],
+    off$optim$trace$objective[1])))
+  expect_false(off$optim$carefulfit)
+  expect_equal(off$optim$carefulfit_iterations, 0L)
+  expect_match(off$optim$carefulfit_skipped, 'switched off')
+  # Skipped, and saying why, where the pass has nothing to add or is not wanted.
+  map <- fitwith(priors = TRUE, optimcontrol = list(estonly = TRUE))
+  expect_false(map$optim$carefulfit)
+  expect_match(map$optim$carefulfit_skipped, 'priors=TRUE', fixed = TRUE)
+  given <- fitwith(inits = default$estimate$raw, optimcontrol = list(estonly = TRUE))
+  expect_false(given$optim$carefulfit)
+  expect_match(given$optim$carefulfit_skipped, 'starting values')
+  # A number is the cap.
+  short <- fitwith(optimcontrol = list(estonly = TRUE, carefulfit = 2))
+  expect_true(short$optim$carefulfit)
 })
 
 test_that("an unrecognised optimcontrol name is refused on both backends", {
