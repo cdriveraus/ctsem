@@ -612,8 +612,9 @@ T0VARredundancies <- function(ctm) {
 #' engine, so there is no point at which R could draw anything while it runs.
 #' For genuinely live output use \code{optimcontrol$callback}.
 #' @param derrind deprecated, latents involved in dynamic error calculations are determined automatically now.
-#' @param optimize if TRUE, use \code{\link{stanoptimis}} function for maximum a posteriori / importance sampling estimates,
+#' @param optimize if TRUE, use \code{\link{stanoptimis}} function for maximum a posteriori estimates,
 #' otherwise use the HMC sampler from Stan, which is (much) slower, but generally more robust for complex individual differences.
+#' Importance sampling is a separate, opt-in uncertainty method on top of the optimized estimate; see \code{\link{ctOptimUncertainty}}.
 #' When \code{optimize=FALSE}, the stored point estimate (\code{stanfit$rawest}) is the per-parameter
 #' median of the posterior draws; the julia backend's sampled point estimate (see \code{\link{ctSample}})
 #' is the per-parameter mean instead.

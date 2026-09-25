@@ -4294,9 +4294,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   #       20       1490   39.1   s     0.168 s
   #
   # 'adjoint' is faster at every size measured, and the margin grows without
-  # bound with the parameter count. 'forward' remains the default because it
-  # is the longer-tested path, not because it is faster; there is no silent
-  # fallback between them in either direction.
+  # bound with the parameter count, which is why it is the default; 'forward'
+  # stays available by name for anyone who wants ForwardDiff specifically. No
+  # silent fallback between them in either direction.
   model_spec <- .ctJuliaPrepare(datalong, model, prepared_data = prepared_data,
     priors = priors, priorscope = priorscope, intoverpop = intoverpop,
     optimize = optimize,

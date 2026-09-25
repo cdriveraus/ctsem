@@ -24,10 +24,12 @@
 # exported with a documented structure that scripts read.
 #
 # Deliberately does not invent a verdict where the package never had one. Only
-# the curvature route states a tolerance (0.01 log likelihood, see
-# `.ctBackendCertify`); for the other two `tolerance` is NA and
-# `exceeds_tolerance` is NA with it. Reporting "immaterial" against a bar nobody
-# chose would be worse than reporting the number and saying no bar is set.
+# the curvature route states a tolerance (1e-6 log likelihood by default,
+# `optimcontrol$gaptol`, passed to `.ctBackendCertify` as `tolerance`; that
+# function's own default of 0.01 is never reached from a real fit); for the
+# other two `tolerance` is NA and `exceeds_tolerance` is NA with it. Reporting
+# "immaterial" against a bar nobody chose would be worse than reporting the
+# number and saying no bar is set.
 
 #' A comparison between a fit's own answer and a more accurate one
 #'
