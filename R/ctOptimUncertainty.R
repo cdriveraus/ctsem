@@ -258,12 +258,53 @@ ctOptimSafeCov <- function(cov, ridge=1e-8){
 # manifold may be curved and a profile would have followed it. So a candidate
 # that fails this test is left exactly as it was.
 #
-# Two further gates, both about not doing damage:
+# ## Following a curved ridge, and why one side settles it
 #
-#   * candidates come from `rtol = 1e-8`, which is
-#     `.ctBackendIdentifiability()`'s threshold -- so this can only ever act on
-#     a direction the package is *already* telling the user is unidentified.
-#     It aligns the covariance with that verdict; it cannot invent a new one.
+# The straight slice is where the answer used to depend on where the optimiser
+# stopped. Measured on `test-stan-julia-parity.R`'s fixture -- six subjects, ten
+# population correlations along one ridge -- at five stopping points on the
+# same ridge, 4.4e-04 nats apart from first to last: the straight walk's worst
+# drop at four raw units was 17.8, 19.9, 5.6, 2.1 and 0.68 nats. The ridge is
+# flat throughout -- the optimiser walked six raw units along it for those
+# 4.4e-04 -- but it is curved in raw coordinates, so a straight line leaves it,
+# and how fast depends on where on it you start.
+#
+# So a rung that has dropped past the bar is followed back to the ridge before
+# it is judged: up to `corrections` Newton steps in the directions the
+# curvature does trust, with the Hessian already decomposed and the gradient at
+# the rung, each kept only if it improves. The corrected point is still at the
+# same displacement along the candidate direction -- the step is orthogonal to
+# it -- and it is a point the model evaluated, so the profile at that
+# displacement is at least as high. A corrected rung within the bar is
+# therefore evidence of the same one-sided kind, and a rung the correction does
+# not bring back is refused as before. On the fixture's earliest stopping
+# point the four-unit rung's 2.51-nat drop came back to 1.39 in one step.
+#
+# And a side at a time: one side flat through the whole ladder exhibits a
+# curve of constant likelihood running four raw units from the estimate, which
+# is conclusive whatever the other side does -- the same reading
+# `ctFitProfile()` gives a profile, one flat side being structural
+# non-identification. Requiring both sides refused the fixture's earliest
+# stopping point, whose ridge runs one way from where it stopped.
+#
+# ## Candidates
+#
+#   * curvature below `rtol = 1e-7` of the sharpest direction, ten times the
+#     identifiability report's own eigenvalue rule. Because curvature along a
+#     flat ray decays with where the optimiser stopped, that rule saw the
+#     fixture's ridge at 1.7e-08, 4.1e-09, 1.2e-09, 6.8e-11 and 4.5e-12 over the
+#     five stopping points -- above its 1e-8 at the first, so nothing was named
+#     there -- while the fixture's first identified direction held at 1.2e-06
+#     at every one. 1e-7 sits in that gap. Healthy fits cost nothing: on four
+#     fits built as the test fixtures are (test-julia-convergence.R's,
+#     test-julia-laplace.R's exact one, a 40-subject nonlinear Laplace fit,
+#     and test-backend-summary.R's default one) the smallest relative
+#     curvature was 9.6e-05 or more, apart from the last one's own flat
+#     direction.
+#     What this changes is that the report can now name a direction the
+#     eigenvalue rule missed -- it names what the likelihood confirms, see
+#     `.ctBackendIdentifiability()` -- and that such a direction leaves the
+#     covariance as the rest do.
 #   * with no candidate it returns `NULL` before evaluating anything, so a fit
 #     with no flat direction -- the usual fit -- pays nothing and is unchanged.
 #
@@ -280,8 +321,8 @@ ctOptimSafeCov <- function(cov, ridge=1e-8){
 # negative from rounding, so those arrive here as candidates and must not be
 # confirmed.
 .ctOptimFlatDirectionScreen <- function(info, lpgFunc, est,
-  rtol=1e-8, bar=stats::qchisq(0.95, 1) / 2, lengths=c(0.25, 1, 4),
-  maxdirections=20L, tolerance=1e-6){
+  rtol=1e-7, bar=stats::qchisq(0.95, 1) / 2, lengths=c(0.25, 1, 4),
+  maxdirections=20L, tolerance=1e-6, corrections=2L){
   if(is.null(info) || is.null(lpgFunc) || is.null(est)) return(NULL)
   if(!is.function(lpgFunc)) return(NULL)
   info <- as.matrix(info)
@@ -300,16 +341,56 @@ ctOptimSafeCov <- function(cov, ridge=1e-8){
   # really about.
   candidates <- candidates[order(values[candidates])]
   if(length(candidates) > maxdirections) candidates <- candidates[seq_len(maxdirections)]
-  base <- try(as.numeric(lpgFunc(est))[1L], silent=TRUE)
-  if('try-error' %in% class(base) || !is.finite(base)) return(NULL)
+  # The value and, where the caller's function carries one, the gradient: the
+  # correction below needs it and the evaluation has already paid for it.
+  evaluate <- function(x){
+    out <- try(lpgFunc(x), silent=TRUE)
+    if('try-error' %in% class(out)) return(list(value=NA_real_, gradient=NULL))
+    list(value=suppressWarnings(as.numeric(out)[1L]),
+      gradient=attr(out, 'gradient'))
+  }
+  base <- evaluate(est)$value
+  if(!isTRUE(is.finite(base))) return(NULL)
   flat <- rep(FALSE, n)
   change <- rep(NA_real_, n)
   # Counted rather than timed. What this costs is a number of likelihood
   # evaluations, which is the same on any machine and under any load; a wall
   # clock here would measure the box. One for the base point, then up to
-  # `2 * length(lengths)` per candidate, fewer for every candidate that leaves
-  # the ladder early.
+  # `length(lengths)` per side per candidate plus the corrections, fewer for
+  # every side that leaves the ladder early or settles the question.
   evaluations <- 1L
+  # The directions a correction may move in: every one the curvature trusts,
+  # which excludes the candidate being walked and every other candidate, whose
+  # near-zero curvature would turn a gradient into an enormous step.
+  trusted <- values > rtol * scale
+  basis <- eig$vectors[, trusted, drop=FALSE]
+  curvature <- values[trusted]
+  # Newton steps from a rung back towards the ridge, each accepted only if it
+  # improves, and no further once the drop is inside the bar.
+  correct <- function(point, value, gradient){
+    used <- 0L
+    for(i in seq_len(corrections)){
+      if(!ncol(basis) || base - value < bar) break
+      g <- suppressWarnings(as.numeric(gradient))
+      if(length(g) != n || !all(is.finite(g))) break
+      step <- as.numeric(basis %*% (crossprod(basis, g) / curvature))
+      if(!all(is.finite(step)) || !any(step != 0)) break
+      moved <- FALSE
+      for(alpha in c(1, 0.5, 0.25, 0.125)){
+        trial <- evaluate(point + alpha * step)
+        used <- used + 1L
+        if(isTRUE(is.finite(trial$value)) && trial$value > value){
+          point <- point + alpha * step
+          value <- trial$value
+          gradient <- trial$gradient
+          moved <- TRUE
+          break
+        }
+      }
+      if(!moved) break
+    }
+    list(point=point, value=value, evaluations=used)
+  }
   # The other half of what these evaluations are worth, and it used to be
   # thrown away. A candidate direction along which the likelihood *rises* says
   # the estimate is not a maximum, and the point that proved it is already paid
@@ -320,38 +401,54 @@ ctOptimSafeCov <- function(cov, ridge=1e-8){
   gain <- 0
   gainpoint <- NULL
   gaindirection <- NA_integer_
+  better <- function(value, point, k){
+    if(value - base > gain){
+      gain <<- value - base
+      gainpoint <<- point
+      gaindirection <<- k
+    }
+  }
   for(k in candidates){
     v <- eig$vectors[, k]
-    worst <- 0
-    usable <- TRUE
-    for(len in lengths){
-      for(direction in c(1, -1)){
+    sides <- c(NA_real_, NA_real_)
+    for(side in 1:2){
+      direction <- c(1, -1)[side]
+      worst <- 0
+      usable <- TRUE
+      for(len in lengths){
         trialpoint <- est + direction * len * v
-        trial <- try(as.numeric(lpgFunc(trialpoint))[1L], silent=TRUE)
+        trial <- evaluate(trialpoint)
         evaluations <- evaluations + 1L
-        if('try-error' %in% class(trial) || !is.finite(trial)){
+        # A point the model cannot evaluate is not evidence of flatness, so
+        # this side says nothing.
+        if(!isTRUE(is.finite(trial$value))){
           usable <- FALSE
           break
         }
-        if(trial - base > gain){
-          gain <- trial - base
-          gainpoint <- trialpoint
-          gaindirection <- k
+        value <- trial$value
+        better(value, trialpoint, k)
+        if(base - value >= bar){
+          followed <- correct(trialpoint, value, trial$gradient)
+          evaluations <- evaluations + followed$evaluations
+          value <- followed$value
+          better(value, followed$point, k)
         }
-        worst <- max(worst, abs(trial - base))
-        # Past the bar the direction is refused, and no further displacement
-        # can un-refuse it. Worth the early exit rather than completing the
+        worst <- max(worst, abs(value - base))
+        # Past the bar this side is refused, and no further displacement can
+        # un-refuse it. Worth the early exit rather than completing the
         # ladder: on the laplace route every one of these is an inner mode
         # solve per subject, and the candidates that are *not* flat are exactly
         # the ones a longer walk would spend the most on.
         if(worst >= bar) break
       }
-      if(!usable || worst >= bar) break
+      if(!usable) next
+      sides[side] <- worst
+      # One flat side settles it; see above.
+      if(worst < bar) break
     }
-    # A point the model cannot evaluate is not evidence of flatness.
-    if(!usable) next
-    change[k] <- worst
-    flat[k] <- worst < bar
+    if(all(is.na(sides))) next
+    change[k] <- min(sides, na.rm=TRUE)
+    flat[k] <- change[k] < bar
   }
   # `gain` is only reported when it is larger than the optimiser's own
   # convergence tolerance: a rise of 1e-12 along a flat direction is the
@@ -1402,14 +1499,20 @@ ctOptimComputeUncertainty <- function(est, standata, sm, lpgFunc,
       method_details$notmaximum <- list(gain = screen$gain,
         point = screen$point, direction = screen$direction)
     }
-    if(!is.null(screen) && any(screen$flat)) {
+    # Kept whenever the screen asked anything, flat or not, so a reader can
+    # tell "asked, and nothing was flat" from "never asked". The vectors are
+    # the confirmed directions themselves -- at most `maxdirections` columns --
+    # because the identifiability report names what this confirmed, and a
+    # direction is only nameable by its loadings.
+    if(!is.null(screen)) {
       method_details$flatdirections <- list(
         n = sum(screen$flat), bar = screen$bar, lengths = screen$lengths,
-        candidates = length(screen$candidates),
+        rtol = screen$rtol, candidates = length(screen$candidates),
         evaluations = screen$evaluations,
         change = screen$change[screen$flat],
         eigenvalue = screen$eig$values[screen$flat] /
-          max(screen$eig$values))
+          max(screen$eig$values),
+        vectors = screen$eig$vectors[, screen$flat, drop = FALSE])
     }
     covavailable <- TRUE
   }
@@ -1791,6 +1894,11 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' Floored, that number leaks into the parameters the data \emph{does}
 #' determine, and by an amount rounding decides: it can differ by a factor of a
 #' hundred between two fits that reach the same optimum.
+#' A direction with little curvature along which the likelihood itself is
+#' measured flat -- within the likelihood-ratio bar of 1.92 over four raw
+#' units on one side, following the ridge where it curves -- is treated the
+#' same way whether or not its curvature has yet decayed to negligible, since
+#' that depends on where along such a ridge the optimiser stopped.
 #' \code{$uncertainty$cov} records which directions were dropped, and
 #' \code{fit$identifiability} names the parameters.
 #'

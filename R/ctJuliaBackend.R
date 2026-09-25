@@ -4954,10 +4954,13 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # its correlations -- where the covariances are determined, and fixing a
   # value throws them away -- from a direction the data says nothing about.
   # `at` is where that curvature was evaluated, which after the Laplace
-  # correction is the Laplace optimum and not the reported estimate.
+  # correction is the Laplace optimum and not the reported estimate. `screen`
+  # is the likelihood's verdict along that curvature's flat directions, from
+  # the same point; see `.ctBackendIdentifiability()`.
   out$identifiability <- .ctBackendIdentifiability(out$uncertainty$hessian,
     rawnames, fit = out,
-    at = .ctJuliaOr(out$uncertainty$evaluated_at, out$estimate$raw))
+    at = .ctJuliaOr(out$uncertainty$evaluated_at, out$estimate$raw),
+    screen = out$uncertainty$details$flatdirections)
   # `$uncertainty$intervalcheck` is attached by `.ctBackendUncertainty()`, so
   # it describes whichever method ran; it is only warned about here. A separate
   # question from identifiability: a direction can be flat enough to ruin every
