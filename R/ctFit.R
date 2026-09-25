@@ -577,7 +577,19 @@ T0VARredundancies <- function(ctm) {
 #' @param intoverpop how to handle declared individual differences. If 'auto',
 #' set to TRUE if optimizing and FALSE if using hmc -- except when a grouping
 #' level above the subject varies (see \code{id} in \code{\link{ctModel}}),
-#' which only 'laplace' can integrate out, so 'auto' resolves to that.
+#' which only 'laplace' can integrate out, so 'auto' resolves to that. With
+#' \code{backend='julia'} and \code{optimize=TRUE}, 'auto' also resolves to
+#' 'laplace' wherever the augmented filter is measurably the wrong estimator:
+#' a varying parameter in DRIFT, DIFFUSION, MANIFESTVAR or LAMBDA, one in
+#' MANIFESTMEANS, CINT, T0MEANS or TDPREDEFFECT whose transform is not affine,
+#' one that enters an expression in another cell, or any varying parameter
+#' with a non-Gaussian indicator. It says so in one line, and
+#' \code{fit$args$resolved$intoverpopreason} records why either route was
+#' taken. The exception is \code{nlcontrol$nsubsteps='auto'}, which 'laplace'
+#' does not support, so 'auto' keeps 'augmented' there and says that too.
+#' Everywhere else it is 'augmented', which is exact and cheapest for a
+#' random effect that shifts a mean with Gaussian indicators.
+#' \code{intoverpop='augmented'} keeps the previous behaviour.
 #' if TRUE, integrates over population distribution of parameters rather than full sampling.
 #' Allows for optimization of non-linearities and random effects, via state expansion.
 #' 'augmented' names that state-expansion method explicitly. Individual
@@ -1592,19 +1604,23 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # route reaches the backend with an unaugmented model and every existing
   # `if(intoverpop)` keeps meaning what it meant.
   intoverpopmethod <- 'none'
+  # Why 'auto' went the way it did, kept for `fit$args$resolved`; NA when the
+  # route was named.
+  intoverpopreason <- NA_character_
   if(is.character(intoverpop)){
     intoverpop <- match.arg(intoverpop[1], c('auto','augmented','laplace'))
     if(intoverpop %in% 'auto'){
-      intoverpop <- isTRUE(optimize) && .ctAnyVarying(ctm)
-      # The augmented layout gives a carrier state to every `indvarying` cell
-      # and knows nothing about the columns a grouping level uses, so a model
-      # with effects above the subject has one route rather than two and 'auto'
-      # has to take it. Resolving to 'augmented' here would silently fit a
-      # model without the study effect that was asked for.
-      if(intoverpop && .ctAnyVarying(ctm, .ctOuterVaryingColumns(ctm))){
-        intoverpopmethod <- 'laplace'
-        intoverpop <- FALSE
-      }
+      # See `.ctIntOverPopAuto()` for the rule and the measurements behind it.
+      # An outer level resolves to 'laplace' silently, as it always has: there
+      # is one route for that model, not a choice between two.
+      auto <- .ctIntOverPopAuto(ctm, backend = backend, optimize = optimize,
+        intoverstates = intoverstates, nsubsteps = nlcontrol$nsubsteps)
+      intoverpopmethod <- auto$route
+      intoverpopreason <- auto$reason
+      intoverpop <- identical(auto$route, 'augmented')
+      if(isTRUE(auto$announce)) message("intoverpop='auto' ",
+        if(identical(auto$route, 'laplace')) "chose 'laplace'" else
+          "kept 'augmented'", ": ", auto$reason, ".")
     } else {
       intoverpopmethod <- intoverpop
       intoverpop <- identical(intoverpopmethod,'augmented')
@@ -2263,6 +2279,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   argsresolved$backend <- backend
   argsresolved$cores <- cores
   argsresolved$intoverpop <- intoverpopmethod
+  argsresolved$intoverpopreason <- intoverpopreason
   # The rank actually used, not the argument: 'auto' resolves to a number, and a
   # model the restriction did not apply to reports NA whatever was asked for.
   argsresolved$poprank <- if(!is.null(laplacerank)) laplacerank else

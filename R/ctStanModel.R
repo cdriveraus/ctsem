@@ -754,3 +754,206 @@ ctStanModel <- ctModelConvertOMX
   cols <- .ctVaryingColumns(model)
   cols[-1L]
 }
+
+
+# --- which route intoverpop = 'auto' takes -----------------------------------
+
+# `intoverpop = 'auto'` is resolved here and nowhere else, so that the rule and
+# the reason it gives are one thing. It returns the route -- 'augmented',
+# 'laplace', or 'none' for "nothing is integrated" -- the reason in a phrase,
+# and whether ctFit() should say which it chose.
+#
+# The augmented route carries each random effect as a static latent state and
+# lets the ordinary filter integrate it. That is exact, and the cheapest route
+# there is, when the effect shifts a mean affinely and the indicators are
+# Gaussian. Where either fails it is measurably the wrong estimator, and no
+# optimiser recovers what its objective has lost:
+#
+#   * an effect on DRIFT (a nonlinear cell, 200 subjects x 12 occasions)
+#     recovered 0.66 of the population sd where laplace recovered 1.00, with
+#     the linear effects in the same model unmoved (memory note
+#     augmented-shrinks-nonlinear-random-effects, review/POPCOV-separation);
+#   * with ordinal indicators the augmented objective separates a population
+#     sd of 0.7 from one of 1900 by 0.07 log units where laplace has 40, on a
+#     linear MANIFESTMEANS effect (augmented-objective-flat-in-popsd-
+#     categorical);
+#   * an effect on a variance cell is identified only through its
+#     correlations with the others (review/RANDOMEFFECTS-partial-
+#     identification-2026-09-07.md).
+#
+# So on the julia backend, when optimising, 'auto' takes laplace whenever any
+# of those holds, and augmented otherwise. Stan has one route and keeps it.
+.ctIntOverPopAuto <- function(model, backend = 'julia', optimize = TRUE,
+  intoverstates = TRUE, nsubsteps = NULL){
+  choose <- function(route, reason, announce = FALSE)
+    list(route = route, reason = reason, announce = announce)
+  # Sampling integrates nothing: the effects are sampled with the rest.
+  if(!isTRUE(optimize)) return(choose('none',
+    'optimize=FALSE samples the individual differences'))
+  if(!.ctAnyVarying(model)) return(choose('none', 'no parameter varies'))
+  # The augmented layout gives a carrier state to every `indvarying` cell and
+  # knows nothing about the columns a grouping level uses, so a model with
+  # effects above the subject has one route, whatever the backend -- stan then
+  # refuses it by name.
+  if(.ctAnyVarying(model, .ctOuterVaryingColumns(model))) return(choose(
+    'laplace', 'a grouping level above the subject varies'))
+  if(!identical(backend, 'julia')) return(choose('augmented',
+    "backend='stan' integrates individual differences by state augmentation only"))
+  # The state-explicit target replaces the likelihood the Laplace route wraps,
+  # so the two do not compose (`.ctJuliaJointObjective()` refuses it).
+  if(!isTRUE(intoverstates)) return(choose('augmented',
+    'intoverstates=FALSE composes with the augmented route only'))
+  why <- .ctPopFilterNonlinearity(model)
+  if(is.null(why)) return(choose('augmented',
+    'every individual difference enters a mean affinely, with Gaussian indicators'))
+  # Measured, not assumed: `ctsem_auto_substeps` has a method for the plain
+  # objective only, so a laplace fit with an automatic mesh dies on a
+  # MethodError before the first iteration. Keeping the route that runs, and
+  # saying so, beats choosing the one that does not.
+  if(identical(nsubsteps, 'auto')) return(choose('augmented', paste0(why,
+    ", but nlcontrol$nsubsteps='auto' is not available with 'laplace'"),
+    announce = TRUE))
+  choose('laplace', why, announce = TRUE)
+}
+
+# Matrices where an individually varying parameter is not linear-Gaussian in
+# the filter. DRIFT and LAMBDA multiply the state, so a carrier state enters as
+# a product and the filter linearises it. The variance matrices DIFFUSION,
+# MANIFESTVAR and T0VAR set a covariance: the observation mean's Jacobian with
+# respect to such a carrier is zero, so the update never moves it. Those are
+# `.ctPopVarianceMatrices()`, beside the reduced-rank machinery that asks the
+# same question of the same cells.
+.ctPopNonlinearMatrices <- function() c('DRIFT', 'LAMBDA')
+
+# Matrices whose cells shift a mean, where a varying parameter is exactly what
+# the augmented filter integrates -- as long as its transform is affine.
+.ctPopAffineMatrices <- function() c('MANIFESTMEANS', 'CINT', 'T0MEANS',
+  'TDPREDEFFECT')
+
+# Is a cell's transform affine in its raw parameter?
+#
+# Read before `ctModelTransformsToNum()` has turned the text into a code, so
+# both forms arrive here. A code is the family of `tformshapes()`: 0 is
+# `offset + multiplier * (param * meanscale + inneroffset)`, affine; 1 to 5
+# are log1p_exp, exp, the logistic, the cube and log1p, none of them. Text --
+# the default transforms as ctModel() writes them (`param * 10`), or a user's
+# own -- is evaluated over a grid and asked whether its second differences
+# vanish, which is exact for any affine function and fails for every
+# nonlinear one on that grid. Text that does not evaluate is not called
+# affine: the cost of calling an affine effect nonlinear is a slower route
+# that reaches the same answer, and the cost of the reverse is a biased one.
+.ctTransformAffine <- function(transform){
+  if(length(transform) != 1L || is.na(transform)) return(TRUE)
+  text <- trimws(as.character(transform))
+  if(!nzchar(text)) return(TRUE)
+  code <- suppressWarnings(as.numeric(text))
+  if(!is.na(code)) return(code == 0)
+  param <- seq(-3, 3, by = 0.25)
+  y <- tryCatch(suppressWarnings(eval(parse(text = text),
+    list(param = param), environment(.ctTransformAffine))),
+    error = function(e) NULL)
+  if(!is.numeric(y)) return(FALSE)
+  if(length(y) == 1L) y <- rep(y, length(param))
+  if(length(y) != length(param) || !all(is.finite(y))) return(FALSE)
+  all(abs(diff(y, differences = 2L)) <= 1e-8 * max(1, abs(y)))
+}
+
+# The first reason, as a phrase, that an individually varying parameter of
+# `model` is not linear and Gaussian in the filter, or NULL when every one is.
+#
+# Read from `model$pars` as the user wrote it, before `ctModelStatesAndPARS()`
+# has rewritten latent names into `state[i]`, so both spellings are looked
+# for. A varying label counts through every cell it reaches: its own cells,
+# and every cell whose expression names it -- directly, or through the PARS
+# cell holding it, followed transitively as `.ctPopEffectRoles()` does. Only
+# a bare reference from a mean cell keeps it linear; any other expression is
+# counted as nonlinear without trying to prove otherwise, for the reason
+# given at `.ctTransformAffine()`.
+#
+# The subject level only: a varying outer level has already decided the
+# route. And not T0VAR, although its cells are variance cells like the
+# others: `.ctModelCleanctspec()` clears individual variation on T0VAR on
+# every route ('Individual variation in T0VAR parameters not possible,
+# removed'), so such a flag never reaches either fit, and routing on it would
+# send a model whose only flag is on T0VAR to laplace, which then refuses it
+# for having nothing to integrate.
+.ctPopFilterNonlinearity <- function(model){
+  pars <- model$pars
+  matrixname <- as.character(pars$matrix)
+  text <- as.character(pars$param)
+  text[is.na(text)] <- ''
+  flagged <- .ctVaryingRows(model, 'indvarying') & !matrixname %in% 'T0VAR' &
+    nzchar(text)
+  if(!any(flagged)) return(NULL)
+  cells <- function(rows) paste(unique(matrixname[rows]), collapse = ' and ')
+  # A label repeated across cells is one parameter (ctsem's equality
+  # constraint), and it varies wherever it sits once any of its cells is
+  # flagged -- so every free cell carrying a varying label is one of its own.
+  home <- which(flagged | (text %in% text[flagged] & is.na(pars$value)))
+
+  hit <- home[matrixname[home] %in% .ctPopNonlinearMatrices()]
+  if(length(hit)) return(paste0('individual variation on ', cells(hit),
+    ' is nonlinear in the filter'))
+  hit <- home[matrixname[home] %in% .ctPopVarianceMatrices()]
+  if(length(hit)) return(paste0('individual variation on ', cells(hit),
+    ' is only partially identified by the filter'))
+  transform <- if(is.null(pars$transform)) rep(NA, nrow(pars)) else pars$transform
+  hit <- home[matrixname[home] %in% c(.ctPopAffineMatrices(), 'PARS') &
+      !vapply(home, function(ri) .ctTransformAffine(transform[ri]), logical(1L))]
+  if(length(hit)) return(paste0('the transform of ', text[hit[1L]], ' in ',
+    matrixname[hit[1L]], ' is not affine'))
+
+  # Cells whose expression depends on a latent state, in either spelling.
+  statepatterns <- c('state\\[', vapply(as.character(model$latentNames),
+    .ctPopLabelPattern, character(1L)))
+  statedependent <- Reduce(`|`, lapply(statepatterns, grepl, x = text),
+    rep(FALSE, length(text)))
+  parsref <- function(ri) sprintf('PARS\\[\\s*%d\\s*,\\s*%d\\s*\\]',
+    as.integer(pars$row[ri]), as.integer(pars$col[ri]))
+  labels <- unique(text[home])
+  labels <- labels[grepl('^[A-Za-z.][A-Za-z0-9._]*$', labels)]
+  for(label in labels){
+    own <- which(text == label & is.na(pars$value))
+    # What refers to this label: its name, and each PARS cell holding it.
+    patterns <- c(.ctPopLabelPattern(label),
+      vapply(own[matrixname[own] %in% 'PARS'], parsref, character(1L)))
+    seen <- character(0)
+    while(length(patterns)){
+      pattern <- patterns[1L]
+      patterns <- patterns[-1L]
+      if(pattern %in% seen) next
+      seen <- c(seen, pattern)
+      refs <- setdiff(grep(pattern, text), own)
+      # A named cell with a value is fixed, not a reference that carries the
+      # effect anywhere.
+      refs <- refs[is.na(pars$value[refs])]
+      for(ri in refs){
+        if(matrixname[ri] %in% 'PARS'){
+          # An expression in PARS reaches the model only through what refers
+          # to that cell in turn.
+          patterns <- c(patterns, parsref(ri))
+          next
+        }
+        if(matrixname[ri] %in% .ctPopNonlinearMatrices())
+          return(paste0('individual variation on ', label, ' reaches ',
+            matrixname[ri], ', which is nonlinear in the filter'))
+        if(matrixname[ri] %in% .ctPopVarianceMatrices())
+          return(paste0('individual variation on ', label, ' reaches ',
+            matrixname[ri], ', which the filter only partially identifies'))
+        if(statedependent[ri]) return(paste0('individual variation on ',
+          label, ' enters a state-dependent expression in ', matrixname[ri]))
+        # What is left is a mean cell. A bare `PARS[r,c]` there is a copy of
+        # the parameter, affine if its own transform is (checked above); the
+        # label itself is one of `own` and never arrives here.
+        if(!grepl(paste0('^\\s*', pattern, '\\s*$'), text[ri]))
+          return(paste0('individual variation on ', label,
+            ' enters an expression in ', matrixname[ri]))
+      }
+    }
+  }
+
+  mt <- suppressWarnings(as.integer(model$manifesttype))
+  if(length(mt) && any(mt != 0L, na.rm = TRUE)) return(paste0(
+    'individual variation reaches the data through non-Gaussian indicators'))
+  NULL
+}
