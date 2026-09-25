@@ -1014,18 +1014,15 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     failures <- c(failures,
       "intoverstates=FALSE together with intoverpop='laplace'")
   }
-  # `nlcontrol$nsubsteps = 'auto'` together with `intoverpop = 'laplace'` is
-  # refused too, but not here, and not on `intoverpop` at all: this function is
-  # called twice from `ctFit()` (ctFit.R), and neither call can ask this
-  # question. The first runs before `nlcontrol` is attached to the model, so
-  # `model$nlcontrol$nsubsteps` reads NULL even when the caller asked for
-  # `'auto'`. By the second, `ctFit()` has already turned `intoverpop` into the
+  # A refusal that depends on `nlcontrol`, or on which random-effect route was
+  # taken, cannot live here: this function is called twice from `ctFit()`
+  # (ctFit.R), and neither call can ask. The first runs before `nlcontrol` is
+  # attached to the model, so `model$nlcontrol` reads NULL whatever the caller
+  # set. By the second, `ctFit()` has already turned `intoverpop` into the
   # plain logical that drives augmentation everywhere downstream (TRUE only for
   # `'augmented'`), so a `'laplace'` route and a `'none'` route are both FALSE
-  # here and indistinguishable from this argument alone. The refusal instead
-  # sits beside `.ctJuliaAutoSubsteps()`'s own call site in
-  # `.ctFitJuliaBackendImpl()`, where the prepared `model_spec` can be asked
-  # directly with `.ctBackendIntOverPop()`.
+  # here. Ask the prepared `model_spec` in `.ctFitJuliaBackendImpl()` instead,
+  # with `.ctBackendIntOverPop()`.
   # `optimize=FALSE` is supported now: the engine has its own No-U-Turn sampler,
   # and which target it samples is decided by `intoverpop`. See
   # `.ctJuliaSampleFit`.
@@ -4414,27 +4411,6 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     stop("This model has no free parameters, so there is nothing to optimise. ",
       "Free a parameter, or use fit = FALSE to prepare the model without ",
       "fitting it.", call. = FALSE)
-  }
-  # `.ctJuliaAutoSubsteps()` hands the engine whichever objective the route
-  # built -- the Laplace wrapper on this route -- to `ctsem_auto_substeps`
-  # (substep_mesh.jl), which has a method for the plain `CTSEMObjective` only.
-  # Reproduced: a one-latent model with one indvarying T0MEANS,
-  # `intoverpop='laplace'`, `nlcontrol=list(nsubsteps='auto')`, reaches a Julia
-  # `MethodError: no method matching ctsem_auto_substeps(::
-  # CTSEMLaplaceObjective, ...)` rather than a mesh. Refused by name here,
-  # where `model_spec` is the prepared specification and
-  # `.ctBackendIntOverPop()` can ask it directly rather than trust an argument
-  # whose meaning changes between this function's two call sites (see the note
-  # in `.ctJuliaUnsupported()`). It sits before any work -- the start, the
-  # prior warm-up -- rather than beside the call it guards, so a refused fit
-  # costs nothing. `'none'` is not a reachable value here: it arises only on
-  # the `optimize=FALSE` route, which has returned above.
-  if (!is.null(model_spec$substeps) &&
-      .ctBackendIntOverPop(model_spec) %in% "laplace") {
-    stop("Julia backend v1 does not support: nlcontrol$nsubsteps='auto' ",
-      "together with intoverpop='laplace' (ctsem_auto_substeps has no ",
-      "method yet for the Laplace objective). Give a numeric ",
-      "nlcontrol$maxtimestep instead.", call. = FALSE)
   }
   start <- .ctJuliaInitialValues(npar, inits,
     initsd = .ctJuliaOr(optimcontrol$initsd, .01), spec = model_spec)
