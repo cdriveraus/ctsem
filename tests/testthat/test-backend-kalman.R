@@ -138,7 +138,11 @@ test_that("ctKalmanArray matches Stan through the whole R path", {
   stan_fit <- suppressMessages(ctFit(data, model, backend = "stan", optimize = TRUE,
     optimcontrol = list(carefulfit = FALSE, stochastic = FALSE, finishsamples = 10),
     cores = 1, verbose = 0))
-  julia_fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
+  # 'augmented' by name: this compares the filters at one raw vector, and stan
+  # has only the augmented route, while 'auto' takes laplace for this model's
+  # DRIFT random effect.
+  julia_fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0,
+    intoverpop = "augmented"))
   # Compare the filters, not the optimizers: run both at Stan's estimate.
   julia_fit$estimate$raw <- stan_fit$stanfit$rawest
 
@@ -175,7 +179,9 @@ test_that("ctPredict interpolates a time grid the same way Stan does", {
   stan_fit <- suppressMessages(ctFit(data, model, backend = "stan", optimize = TRUE,
     optimcontrol = list(carefulfit = FALSE, stochastic = FALSE, finishsamples = 10),
     cores = 1, verbose = 0))
-  julia_fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
+  # Augmented by name, for the reason given in the ctKalmanArray test above.
+  julia_fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0,
+    intoverpop = "augmented"))
   julia_fit$estimate$raw <- stan_fit$stanfit$rawest
 
   stan <- suppressMessages(ctPredict(stan_fit, subjects = 4, timestep = .3))
@@ -205,7 +211,10 @@ test_that("subject matrices match Stan's, and only the varying ones vary", {
   skip_without_julia()
   model <- .kalman_indvar_model()
   data <- .kalman_indvar_data()
-  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
+  # Augmented by name: compared with stan's subject matrices, and 'auto'
+  # takes laplace for this model's random DRIFT.
+  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
+    intoverpop = "augmented"))
   npar <- max(c(spec$parameter_table$parnumber, spec$ti_effects$coefficient),
     na.rm = TRUE)
   set.seed(8)

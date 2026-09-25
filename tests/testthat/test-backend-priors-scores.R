@@ -98,8 +98,10 @@ test_that("Stan and Julia agree with priors=TRUE, with random effects and a TI p
   model <- .prior_full_model()
   data <- .prior_full_data()
 
+  # 'augmented' by name: the comparison is with stan's layout, which is the
+  # augmented one, and 'auto' takes laplace for this model's DRIFT effect.
   julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
-    priors = TRUE))
+    priors = TRUE, intoverpop = "augmented"))
   npar <- max(c(julia_spec$parameter_table$parnumber, julia_spec$ti_effects$coefficient),
     na.rm = TRUE)
   set.seed(8)
@@ -225,9 +227,12 @@ test_that("per-subject scores sum to the gradient, with and without priors", {
   model <- .prior_full_model()
   data <- .prior_full_data()
 
+  # The augmented route by name: it is the one whose summed gradient takes the
+  # per-subject shortcuts described at the top of this file, and whose raw
+  # vector `parameter_table` and `ti_effects` account for.
   for (priors in c(FALSE, TRUE)) {
     spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
-      priors = priors))
+      priors = priors, intoverpop = "augmented"))
     npar <- max(c(spec$parameter_table$parnumber, spec$ti_effects$coefficient),
       na.rm = TRUE)
     set.seed(8)
@@ -254,7 +259,12 @@ test_that("score-based uncertainty methods work for backend fits", {
     time = c(0, .5, 1.2, 2), Y1 = stats::rnorm(4, 0, .5), Y2 = stats::rnorm(4, 0, .5),
     group = rep(stats::rnorm(1), 4))))
 
-  fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
+  # Augmented by name: this is about the score methods, and on the laplace
+  # route 'auto' now takes for this model's random DRIFT the fit dies in its
+  # Hessian (inner solves unconverged at the Hessian steps) before any score
+  # method is reached.
+  fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0,
+    intoverpop = "augmented"))
   for (method in c("opg", "sandwich", "bootstrap")) {
     updated <- suppressWarnings(suppressMessages(
       ctOptimUncertainty(fit, uncertainty = method, finishsamples = 50, verbose = 0)))

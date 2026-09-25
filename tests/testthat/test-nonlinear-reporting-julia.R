@@ -171,8 +171,10 @@ carrierModel <- function() .ctTestFit('carrier', function() {
   model$pars$indvarying <- FALSE
   model$pars$indvarying[model$pars$matrix == 'DRIFT' & model$pars$row == 2 &
       model$pars$col == 2] <- TRUE
+  # 'augmented' by name: the carrier state is that route's, and 'auto' takes
+  # laplace for a DRIFT random effect.
   suppressMessages(ctFit(datalong, model, backend = 'julia', fit = FALSE,
-    cores = 1, verbose = 0))
+    cores = 1, verbose = 0, intoverpop = 'augmented'))
 })
 
 test_that('a carrier cell follows raw whether or not a state is supplied', {

@@ -402,8 +402,10 @@ test_that("Stan and Julia agree for a moderate-dimensional model mixing both kin
     Y1 = c(0, .1, .2, .1, 0, -.1), Y2 = c(0, -.1, .1, .2, .1, 0))
   stan_spec <- suppressMessages(ctFit(data, model, backend = "stan", fit = FALSE, priors = FALSE))
   stan_fit <- .compiled_stan_fit(stan_spec)
+  # Augmented by name: the comparison is with stan's augmented layout, and
+  # 'auto' takes laplace for this model's random DRIFT.
   julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
-    priors = FALSE))
+    priors = FALSE, intoverpop = "augmented"))
   expect_equal(julia_spec$nlatent_augmented, 5L)
   expect_equal(julia_spec$dynamic_state_indices, 1:2)
 
@@ -571,8 +573,10 @@ test_that("Stan and Julia's actual optimizers converge to the same fit for TD/TI
   # Stan model cannot express that subset, so leaving the default would compare
   # a posterior against a likelihood. It did, before this line: the log
   # likelihoods came out 0.24 apart and the raw estimates by up to 1.57.
+  # Augmented by name: stan has that route only, and 'auto' takes laplace for
+  # this model's random DRIFT, whose objective is a different function.
   jf <- suppressMessages(ctFit(data, model = model, backend = "julia",
-    priors = FALSE, verbose = 0))
+    priors = FALSE, verbose = 0, intoverpop = "augmented"))
   sf <- suppressMessages(ctFit(data, model = model, backend = "stan",
     optimcontrol = list(carefulfit = FALSE, stochastic = FALSE),
     optimize = TRUE, verbose = 0, savescores = FALSE, cores = 1))

@@ -175,8 +175,12 @@ test_that("a profile separates a determined parameter from one on a flat ray", {
     CINT = matrix(0, 2, 1),
     DRIFT = matrix(c("auto1", "cross12", "cross21", "auto2"), 2, 2,
       byrow = TRUE)))
+  # `carefulfit = FALSE`, as in test-backend-summary.R: the prior warm-up
+  # takes this fixture to a better maximum (-205.83 certified, against
+  # -207.02), where an estonly run stops short, and this block needs the fit
+  # at a maximum with the flat ray described above.
   fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0,
-    optimcontrol = list(estonly = TRUE)))
+    optimcontrol = list(estonly = TRUE, carefulfit = FALSE)))
 
   out <- ctFitProfile(fit, parameters = c("auto1", "diff_eta2_eta1"), points = 6L)
 

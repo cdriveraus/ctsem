@@ -46,7 +46,9 @@ test_that("Julia pop_* arrays match Stan's constrained parameters", {
   model <- .summary_model()
   data <- .summary_data()
 
-  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
+  # Augmented by name: compared with stan, or about carrier states, and 'auto' takes laplace for this model's random DRIFT.
+  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
+    intoverpop = "augmented"))
   npar <- max(c(spec$parameter_table$parnumber, spec$ti_effects$coefficient), na.rm = TRUE)
   set.seed(8)
   raw <- stats::rnorm(npar, 0, .3)
@@ -135,7 +137,9 @@ test_that("every covmattransform means the same thing on both backends", {
   for (transform in names(wanted)) {
     model <- .summary_model()
     model$covmattransform <- transform
-    spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
+    # Augmented by name: compared with stan, or about carrier states, and 'auto' takes laplace for this model's random DRIFT.
+    spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
+      intoverpop = "augmented"))
     stan_spec <- suppressMessages(ctFit(data, model, backend = "stan",
       fit = FALSE))
     expect_equal(as.integer(spec$covmatcode), wanted[[transform]],
@@ -325,7 +329,9 @@ test_that("state-dependent cells are named and follow the state they are given",
   skip_without_julia()
   model <- .summary_model()
   data <- .summary_data()
-  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
+  # Augmented by name: compared with stan, or about carrier states, and 'auto' takes laplace for this model's random DRIFT.
+  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
+    intoverpop = "augmented"))
   npar <- max(c(spec$parameter_table$parnumber, spec$ti_effects$coefficient), na.rm = TRUE)
   set.seed(8)
   raw <- stats::rnorm(npar, 0, .3)
@@ -384,7 +390,10 @@ test_that("ctBackendParMatrices runs predict before update, so an update-group c
   model <- .m("PARS[1,1]")
   set.seed(11)
   dat <- data.frame(id = 1:8, time = 0, Y1 = stats::rnorm(8, t0, 1))
-  spec <- suppressMessages(ctFit(dat, model, backend = "julia", fit = FALSE))
+  # Augmented by name: the filter state passed below carries PARS as a
+  # carrier, and 'auto' takes laplace for a varying parameter in MANIFESTVAR.
+  spec <- suppressMessages(ctFit(dat, model, backend = "julia", fit = FALSE,
+    intoverpop = "augmented"))
   npar <- max(spec$parameter_table$parnumber, na.rm = TRUE)
   fit <- .summary_pointfit(spec, model, rep(-0.5, npar), "julia")
 
@@ -440,8 +449,13 @@ test_that("summary reports fixed effects and system matrices, with intervals onl
   # 1.7e-05 from the earlier stopping point and 5.6e-10 from the later one,
   # against a bar of 1.92 -- so both stop there, and every assertion below now
   # holds at either. Leaving the stopping rule free is what tests that.
+  #
+  # `carefulfit = FALSE` keeps the fixture where it was measured. The prior
+  # warm-up takes this noise fit to a better maximum -- -205.83 certified,
+  # against -207.02 -- where an estonly run stops short of converging, and
+  # this block is about how a converged fit with a flat ray is reported.
   fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0,
-    optimcontrol = list(estonly = TRUE)))
+    optimcontrol = list(estonly = TRUE, carefulfit = FALSE)))
 
   point <- summary(fit)
   expect_s3_class(point, "summary.ctStanFit")

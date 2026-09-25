@@ -156,7 +156,10 @@ test_that("Julia reuses the canonical raw transform for shared parameters", {
   data <- data.frame(id = rep(1:2, each = 2), time = rep(0:1, 2),
     Y1 = 0, Y2 = 0)
 
-  prepared <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
+  # Augmented by name: the parameter table this reads is that route's, and
+  # 'auto' takes laplace for a varying parameter shared with DRIFT.
+  prepared <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
+    intoverpop = "augmented"))
   d11 <- subset(prepared$parameter_table,
     matrix == "DRIFT" & row == 1L & col == 1L)
   d22 <- subset(prepared$parameter_table,
@@ -565,7 +568,9 @@ test_that("a PARS cell is transformed before row 1's update group reads it", {
   set.seed(11)
   dat <- data.frame(id = 1:8, time = 0, Y1 = stats::rnorm(8, t0, 1))
 
-  specA <- suppressMessages(ctFit(dat, .m("PARS[1,1]"), backend = "julia", fit = FALSE))
+  # Augmented by name, all three: the PARS carrier is that route's.
+  specA <- suppressMessages(ctFit(dat, .m("PARS[1,1]"), backend = "julia", fit = FALSE,
+    intoverpop = "augmented"))
   ptab <- specA$parameter_table
   npar <- max(ptab$parnumber, na.rm = TRUE)
 
@@ -580,7 +585,8 @@ test_that("a PARS cell is transformed before row 1's update group reads it", {
   raw <- rep(-.5, npar)
   raw[ptab$parnumber[augmented]] <- .4
 
-  specB <- suppressMessages(ctFit(dat, .m("0.4"), backend = "julia", fit = FALSE))
+  specB <- suppressMessages(ctFit(dat, .m("0.4"), backend = "julia", fit = FALSE,
+    intoverpop = "augmented"))
   expect_equal(npar, max(specB$parameter_table$parnumber, na.rm = TRUE))
 
   a <- ctJuliaEvaluate(specA, raw, gradient = FALSE)$value
@@ -591,7 +597,8 @@ test_that("a PARS cell is transformed before row 1's update group reads it", {
 
   # And the cell has to matter, or the equality above would also hold on a
   # model whose MANIFESTVAR never varied.
-  specC <- suppressMessages(ctFit(dat, .m("1.2"), backend = "julia", fit = FALSE))
+  specC <- suppressMessages(ctFit(dat, .m("1.2"), backend = "julia", fit = FALSE,
+    intoverpop = "augmented"))
   cc <- ctJuliaEvaluate(specC, raw, gradient = FALSE)$value
   expect_false(isTRUE(all.equal(as.numeric(a), as.numeric(cc), tolerance = 1e-6)))
 })
