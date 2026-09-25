@@ -2779,10 +2779,12 @@ end
 #
 # `floor = :gated` on the objective (`ctsem_set_laplace_floor!`, or from R
 # `optimcontrol$laplace_floor = 'gated'`). A unit whose inner curvature `M` has
-# every eigenvalue above `hi` keeps the total-floored Laplace term, and pays one
-# extra block elimination (`M - hi I`) to be told so. A unit below it gets
+# every eigenvalue above `hi` keeps the plain Laplace term, unfloored, and pays
+# one extra block elimination (`M - hi I`) to be told so -- its eigenvalues
+# bound the term, and flooring it put a corner at logdet 0 that fits climbed to
+# and stalled on (see `_laplace_gated_term`). A unit below it gets
 #
-#     T = T_total + w(lambda_1) (T_soft - T_total)
+#     T = T_lap + w(lambda_1) (T_soft - T_lap)
 #
 # with `w` a C1 smoothstep from one below `lo` to zero at `hi`, and `T_soft` a
 # 3-point Gauss-Hermite rule along the smallest eigenvector `v_1` at the
@@ -2802,7 +2804,7 @@ end
 # differences, which stay finite across a near-degenerate pair on the same side
 # of the clip. The cost is confined to flagged units: every other unit goes
 # through the seeded assembly unchanged, and above the gate the gradient is the
-# `:total` one exactly.
+# unfloored Laplace one, which is `:total`'s wherever `logdet(M) >= 0`.
 #
 # Scope. Dense, so units wider than `_LAPLACE_EIGEN_MAXDIM` keep `T_total`.
 # Multilevel units no wider than
@@ -2879,9 +2881,23 @@ end
     _laplace_gated_term(laplace, U, values, Ls, u, aws; M, logdetM, inner)
 
 Unit `U`'s term under the gated rule, generic in the element type: returns
-`(value, flagged)`. `T_total` where the gate accepts the unit or it cannot be
-treated; see the section comment above. `M`, `logdetM` and `inner` may be
-passed when the caller already has them at `u`.
+`(value, flagged, floor)`. `M`, `logdetM` and `inner` may be passed when the
+caller already has them at `u`.
+
+`floor` says whether the unit still needs the total floor. Only the explicit
+fallbacks do -- a unit wider than `_LAPLACE_EIGEN_MAXDIM` or with a degenerate
+soft pair, where no eigenvalue is known. Everywhere else the eigenvalue is, and
+it makes the floor unnecessary: above the band (`lambda_min >= hi`) the plain
+Laplace term is bounded by `-d log(hi) / 2` and accurate there (+0.015 nats on
+units with eigenvalues in 0.7 to 1, against the exact reference), and inside
+the band it is blended with the soft rule, which is bounded by construction.
+
+Flooring those units anyway was a kink. A unit with every eigenvalue in (hi,
+1) has `logdet(M) < 0`, and `max(logdet, 0)` turns its term into a corner the
+optimiser climbs to and then cannot leave: measured on AnomAuth (800 subjects)
+from its spurious Laplace maximum, 69 to 77 units sat on it at once and L-BFGS
+stopped with |g| = 144 and no ascent step, the continuation then spending an
+hour at zero gain.
 """
 function _laplace_gated_term(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T},
@@ -2890,7 +2906,7 @@ function _laplace_gated_term(laplace::CTSEMLaplaceObjective, U::Integer,
     inner === nothing &&
         (inner = _laplace_unit_objective_gradient(laplace, U, values, Ls, u, aws))
     g = inner.value
-    (isfinite(g) && !isempty(u)) || return (value=g, flagged=false)
+    (isfinite(g) && !isempty(u)) || return (value=g, flagged=false, floor=true)
     M === nothing && (M = _laplace_unit_curvature(laplace, U, values, Ls, u))
     # A curvature that does not factor at the mode -- the inner solve stopped
     # at a point that is not a strict maximum, the primal repaired it, and the
@@ -2903,20 +2919,24 @@ function _laplace_gated_term(laplace::CTSEMLaplaceObjective, U::Integer,
         ok, logdetM, _, _ = _laplace_block_factor(M, blocks)
         ok || (indefinite = true)
     end
+    # `total` only for the fallbacks, which have no eigenvalue to go on;
+    # `lap`, unfloored, wherever there is one. See the docstring.
     total = indefinite ? T(NaN) : g - max(logdetM, zero(logdetM)) / 2
+    lap = indefinite ? T(NaN) : g - logdetM / 2
     lo, hi = laplace.gate_lo, laplace.gate_hi
-    _laplace_exceeds_identity(M, blocks, hi) && return (value=total, flagged=false)
+    _laplace_exceeds_identity(M, blocks, hi) &&
+        return (value=lap, flagged=false, floor=false)
     d = length(u)
-    d > _LAPLACE_EIGEN_MAXDIM[] && return (value=total, flagged=false)
+    d > _LAPLACE_EIGEN_MAXDIM[] && return (value=total, flagged=false, floor=true)
     dense = _laplace_block_dense(M, blocks, d)
     E = _laplace_eig_first_order(dense)
     lam = E.primal.values
     if d > 1 && (lam[2] - lam[1]) <= 1e-3 * max(abs(lam[2]), 1.0)
-        return (value=total, flagged=false)
+        return (value=total, flagged=false, floor=true)
     end
     lam1 = E.values[1]
     w = _laplace_smoothstep_weight(lam1, lo, hi)
-    iszero(_laplace_deepvalue(w)) && return (value=total, flagged=true)
+    iszero(_laplace_deepvalue(w)) && return (value=lap, flagged=true, floor=false)
     v1 = E.vectors[:, 1]
     # The other directions as an orthonormal basis of v1's complement, by
     # Gram-Schmidt from the primal eigenvectors. Everything below depends on
@@ -2954,7 +2974,7 @@ function _laplace_gated_term(laplace::CTSEMLaplaceObjective, U::Integer,
                 Ls, ub), blocks, d)
             Bc = _laplace_clip_first_order(transpose(Vh) * Mb * Vh)
             F = _ctsem_cholesky(Matrix(_laplace_symmetrise(Bc)), d - 1)
-            issuccess(F) || return (value=T(NaN), flagged=true)
+            issuccess(F) || return (value=T(NaN), flagged=true, floor=false)
             z = F \ (transpose(Vh) * r.gradient)
             h = _laplace_unit_objective_gradient(laplace, U, values, Ls,
                 ub .+ Vh * z, aws).value - logdet(F) / 2
@@ -2962,10 +2982,10 @@ function _laplace_gated_term(laplace::CTSEMLaplaceObjective, U::Integer,
         terms[j] = h + log(ws[j]) + x^2
     end
     peak = maximum(t -> Float64(_laplace_deepvalue(t)), terms)
-    isfinite(peak) || return (value=T(NaN), flagged=true)
+    isfinite(peak) || return (value=T(NaN), flagged=true, floor=false)
     soft = peak + log(sum(exp.(terms .- peak))) - log(lam1c) / 2 - log(pi) / 2
-    indefinite && return (value=soft, flagged=true)
-    return (value=total + w * (soft - total), flagged=true)
+    indefinite && return (value=soft, flagged=true, floor=false)
+    return (value=lap + w * (soft - lap), flagged=true, floor=false)
 end
 
 """
@@ -3922,6 +3942,14 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
                 if gated.flagged
                     term = gated.value
                     primal_gated[U] = true
+                    # Scored by the gated rule, not floored: the diagnostics
+                    # count `logdet_floored` as "the term is a bound".
+                    laplace.logdet_floored[U] = false
+                elseif !gated.floor && !fac.repaired
+                    # Cleared by the gate: plain Laplace, no floor, and so the
+                    # ordinary seeded gradient rather than the floored one.
+                    term = inner.value - logdetM / 2
+                    laplace.logdet_floored[U] = false
                 end
             end
             if !isfinite(term)
