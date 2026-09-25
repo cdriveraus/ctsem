@@ -234,10 +234,11 @@
     msg = paste0("is the gradient at which a unit's random-effect mode counts ",
       "as found, and stan has no such inner solve -- it augments the latent ",
       "state instead. Drop it")),
-  # The Laplace term's prior floor, julia and intoverpop='laplace' only. 'total'
-  # used to be accepted anywhere because it was what every fit did; since the
-  # default became 'gated' neither value describes a stan fit, so both are
-  # refused there.
+  # The Laplace term's prior floor, julia only: intoverpop='laplace', and
+  # sampling with intoverpop=FALSE, whose sampler is placed on the Laplace fit.
+  # 'total' used to be accepted anywhere because it was what every fit did;
+  # since the default became 'gated' neither value describes a stan fit, so
+  # both are refused there.
   laplace_floor = list(only = 'julia',
     inert = function(v) FALSE,
     msg = paste0("chooses how julia's Laplace term treats a unit whose ",
@@ -670,7 +671,10 @@ T0VARredundancies <- function(ctm) {
 #' fit saved before \code{'gated'} became the default records no floor, and is
 #' rebuilt under the \code{'total'} it was fitted with.
 #' \code{fit$laplace$conditioning} reports how many subjects have such
-#' curvature at the estimate, whichever floor was used.
+#' curvature at the estimate, whichever floor was used. The floor, and its
+#' default, apply too when sampling with \code{intoverpop=FALSE}: the random
+#' effects are then sampled rather than integrated, but the sampler is placed,
+#' and its metric built, from the Laplace fit.
 #'
 #' Also with \code{intoverpop='laplace'}, \code{optimcontrol$laplace_correct}
 #' (default \code{TRUE}) corrects the fitted estimate for the Laplace

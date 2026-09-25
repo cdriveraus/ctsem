@@ -283,7 +283,10 @@ objective (\code{ctLaplaceCheck}, \code{ctKalman}, \code{ctLOO}) uses it; a
 fit saved before \code{'gated'} became the default records no floor, and is
 rebuilt under the \code{'total'} it was fitted with.
 \code{fit$laplace$conditioning} reports how many subjects have such
-curvature at the estimate, whichever floor was used.
+curvature at the estimate, whichever floor was used. The floor, and its
+default, apply too when sampling with \code{intoverpop=FALSE}: the random
+effects are then sampled rather than integrated, but the sampler is placed,
+and its metric built, from the Laplace fit.
 
 Also with \code{intoverpop='laplace'}, \code{optimcontrol$laplace_correct}
 (default \code{TRUE}) corrects the fitted estimate for the Laplace
