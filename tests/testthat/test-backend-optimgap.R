@@ -426,6 +426,20 @@ test_that("the bar is set by the diagnostics, not by what an inference needs", {
   expect_lt(ctsem:::.ctBackendGapTolerance(list()), 0.005)
 })
 
+test_that("the bar is read from wherever the fit keeps its controls", {
+  # `ctFit()` stores them under `$args$resolved` and `$args$input`. The
+  # backend's own `$args`, which a fit carries while it is being built, and a
+  # stored fit from before that split keep them at the top -- the only place
+  # this used to look, so a finished fit was re-certified at the default.
+  asked <- function(tol) list(optimcontrol = list(gaptol = tol))
+  tolerance <- function(args) ctsem:::.ctBackendGapTolerance(list(args = args))
+  expect_equal(tolerance(list(input = asked(1e-4), resolved = asked(1e-3))), 1e-3)
+  expect_equal(tolerance(list(input = asked(1e-4))), 1e-4)
+  expect_equal(tolerance(asked(1e-5)), 1e-5)
+  expect_equal(tolerance(list(input = list(optimcontrol = list()),
+    resolved = list(optimcontrol = list()))), 1e-6)
+})
+
 test_that("the optimiser aims inside the bar, so a correction stays exceptional", {
   # If the optimiser targeted the bar itself, every fit whose limited-memory
   # proxy is slightly optimistic would fail the check and take a correction --

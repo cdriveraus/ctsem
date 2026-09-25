@@ -259,9 +259,20 @@
 # So the diagnostics set the bar, at 1e-06, and the estimate gets far better
 # precision than it needs as a side effect. `lambda` goes out beside the gap so
 # a reader can have either reading.
+#
+# The controls are read from wherever the fit keeps them. `ctFit()` stores them
+# under `$args$resolved` and `$args$input`; the backend's own `$args` -- what a
+# fit carries while it is being built, and what a stored fit from before that
+# split has -- keeps them at the top. Reading only the top found nothing once
+# `ctFit()` had returned, so `ctOptimUncertainty(fit)` re-certified every fit
+# at the default, whatever `gaptol` it was fitted with.
 #' @keywords internal
 .ctBackendGapTolerance <- function(fit, default = 1e-6) {
-  .ctBackendConvergeTol(fit$args$optimcontrol, default = default)
+  args <- fit$args
+  optimcontrol <- args$resolved$optimcontrol
+  if (is.null(optimcontrol)) optimcontrol <- args$input$optimcontrol
+  if (is.null(optimcontrol)) optimcontrol <- args$optimcontrol
+  .ctBackendConvergeTol(optimcontrol, default = default)
 }
 
 # The bar itself, from the controls rather than from a fit.

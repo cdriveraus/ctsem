@@ -381,6 +381,21 @@ test_that("a fit started inside a flat transform gets back out of it", {
   expect_equal(stuck$optim$stall_escapes, 0L)
 })
 
+test_that("a later ctOptimUncertainty() certifies at the gaptol the fit asked for", {
+  skip_without_julia()
+  # The tolerance was read from the top of `fit$args`, where only the backend's
+  # own copy of the controls is -- the one a fit carries while it is being
+  # built. `ctFit()` then stores them as `$args$input` and `$args$resolved`, so
+  # certification inside the fit used `gaptol` and every later call used the
+  # default of 1e-6.
+  fit <- suppressWarnings(suppressMessages(ctFit(.jconv_data(), .jconv_model(),
+    backend = "julia", cores = 1, verbose = 0,
+    optimcontrol = list(gaptol = 1e-3, estonly = TRUE))))
+  fit <- suppressWarnings(suppressMessages(ctOptimUncertainty(fit,
+    uncertainty = "hessian", finishsamples = 50, verbose = 0)))
+  expect_equal(fit$uncertainty$certification$tolerance, 1e-3)
+})
+
 test_that("what the fit reports is what the curvature measured", {
   # The complaint: a fit could pass certification -- the optimum bounded within
   # `gaptol` of the estimate, no warning raised, the summary saying so -- and
