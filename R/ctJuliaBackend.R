@@ -3784,7 +3784,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 .ctJuliaOptimise <- function(model_spec, start, optimcontrol = list(),
   gradient = "adjoint", cores = 1L, verbose = 0L, maxiter = NULL,
   callback = NULL, objective = NULL, progress_label = NULL,
-  progress_budget = FALSE) {
+  progress_budget = FALSE, pin = NULL) {
   spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
   # A caller may hand in the objective to maximise. `intoverstates=FALSE` does,
   # passing the joint one over `[theta; z]`; everything below is unchanged by
@@ -3989,7 +3989,18 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # around them -- `list(index = , value = )`, or NULL for an ordinary stage.
   # See `ctsem_pin` in the engine for why that is not the same as resuming from
   # a displaced point, and `.ctBackendStallEscape()` for what uses it.
-  optimise_once <- function(from, damp = integer(), pin = NULL) {
+  #
+  # `pin` is also this function's own top-level argument, for a caller that
+  # wants every stage pinned -- `ctFitProfile()` fixes one coordinate at a
+  # profile point and needs the batching, the metric and the stall escapes the
+  # fit itself gets around it, not a bare call to the engine's optimiser.
+  # `default_pin` carries that value in rather than writing `pin = pin` below:
+  # a formal argument cannot default to a same-named enclosing variable of the
+  # same name without evaluating itself, which raises "promise already under
+  # evaluation". Every internal call below that does not name its own `pin`
+  # -- the first stage and an ordinary resume alike -- inherits it this way.
+  default_pin <- pin
+  optimise_once <- function(from, damp = integer(), pin = default_pin) {
     args <- common
     held <- !is.null(pin) && length(pin$index)
     target <- objective
@@ -4094,9 +4105,18 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     resumed <- if (isTRUE(optimcontrol$escapepin) && length(coordinates)) {
       inside <- coordinates >= 1L & coordinates <= length(from)
       coordinates <- coordinates[inside]
-      staged <- try(optimise_once(from,
-        pin = list(index = coordinates, value = from[coordinates])),
-        silent = TRUE)
+      # Merged with `default_pin` rather than replacing it: naming `pin=`
+      # explicitly here would otherwise drop a caller's top-level pin for the
+      # one stage that happens to pass its own, and a profile point's fixed
+      # coordinate must stay fixed through an escape too. The plain branch
+      # below needs no such merge -- `optimise_once(from)` already falls back
+      # to `default_pin` on its own.
+      escape_pin <- list(
+        index = c(if (length(default_pin$index)) as.integer(default_pin$index),
+          coordinates),
+        value = c(if (length(default_pin$index)) as.numeric(default_pin$value),
+          from[coordinates]))
+      staged <- try(optimise_once(from, pin = escape_pin), silent = TRUE)
       if (inherits(staged, "try-error")) staged else
         try(optimise_once(as.numeric(staged$minimizer)), silent = TRUE)
     } else try(optimise_once(from), silent = TRUE)
