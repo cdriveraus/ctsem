@@ -266,8 +266,12 @@
   # about the curvature this call just used. A fit made with `estonly = TRUE`
   # and finished later by `ctOptimUncertainty()` carried none at all, so
   # nothing named the parameter whose interval had no width.
+  # `screen` is what the likelihood said along the flat directions of that same
+  # curvature, so the report names what was measured flat and not only what
+  # the eigenvalue has decayed far enough to call flat at this stopping point.
   fit$identifiability <- .ctBackendIdentifiability(uncertaintyfit$hessian,
-    names(fit$estimate$se), fit = fit, at = fit$estimate$raw)
+    names(fit$estimate$se), fit = fit, at = fit$estimate$raw,
+    screen = uncertaintyfit$details$flatdirections)
   # What the curvature says about convergence, which a gradient cannot: the
   # objective still available under the local quadratic approximation, over the
   # subspace whose curvature the data supports, plus a measurement of what the
@@ -600,8 +604,10 @@
   # nested over the adjoint gradient and refused such a model outright; the
   # reverse pass covers it now (see the note beside `gradient <-` in
   # `.ctFitJuliaBackendImpl`), so neither method is singled out for it any
-  # more and this just follows what the fit itself used.
-  hessian_fn_name <- if (identical(gradient, "forward")) "ctsem_hessian_forward" else "ctsem_hessian"
+  # more and this just follows what the fit itself used -- except on the
+  # Laplace route, which has no forward method: see
+  # `.ctBackendHessianFunction()`.
+  hessian_fn_name <- .ctBackendHessianFunction(.ctBackendSpec(fit), gradient)
   # A user whose cached engine environment predates this function has no such
   # function, and that is a silent fallback rather than an error: the engine
   # environment is keyed on a hash of the engine's source, so it refreshes

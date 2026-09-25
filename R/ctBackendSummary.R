@@ -1850,7 +1850,8 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
       "Predicted objective still available at this estimate: ",
       signif(certification$gap, 3), " (joint displacement ",
       signif(certification$lambda, 3),
-      " in the information metric). Status: ", certification$status,
+      " in the information metric). Status: ",
+      .ctBackendCertificationStatus(certification),
       ". Exact value: fit$uncertainty$certification$gap.")
   }
   # Named for what they are. "Number of samples" on an optimised fit meant the
