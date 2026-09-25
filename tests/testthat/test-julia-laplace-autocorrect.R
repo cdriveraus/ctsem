@@ -186,8 +186,16 @@ test_that("the post-hoc functions do not apply the correction twice", {
   # On the uncorrected fit both work as they always did.
   offcheck <- ctLaplaceCheck(fits$off, nodes = 5L)
   expect_identical(offcheck$at, "laplace")
-  expect_equal(offcheck$parameters$delta, on$laplace$correction$first_delta,
-    tolerance = 1e-6)
+  # The same step, up to the Laplace gradient the optimiser stopped at: the
+  # check takes `(-H)^-1 grad(Q - L)`, which assumes that gradient is zero, and
+  # the correction's first step is Newton on the quadrature objective, which
+  # adds `(-H)^-1 grad L`. So compare with that term put back rather than hope
+  # it is small -- measured 1.6e-6 on this fixture, identity to 1e-17.
+  hessian <- fits$off$uncertainty$hessian
+  leftover <- as.numeric(solve(-(hessian + t(hessian)) / 2,
+    as.numeric(fits$off$optim$gradient)))
+  expect_equal(offcheck$parameters$delta + leftover,
+    on$laplace$correction$first_delta, tolerance = 1e-8)
   handcorrected <- ctLaplaceCorrect(fits$off, finishsamples = 50)
   expect_s3_class(handcorrected$laplace_correction, "ctLaplaceCorrection")
 })
