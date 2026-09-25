@@ -306,18 +306,30 @@
   optimcontrol[setdiff(names(optimcontrol), drop)]
 }
 
-#' Update a ctStanFit object
+#' Update a fit to new data, or to the current version of ctsem
 #'
-#' Either to include different data, or because you have upgraded ctsem and the internal data structure has changed.
+#' Either to include different data, or because you have upgraded ctsem and
+#' the internal data structure has changed. Works on a fit from either backend.
 #'
-#' @param oldfit fit object to be upgraded
-#' @param data replacement long format data object
-#' @param recompile whether to force a recompile -- safer but slower and usually unnecessary.
-#' @param refit if TRUE, refits the model using the old estimates as a starting point. Only applicable for
-#' optimized fits, not sampling.
+#' The fit is rebuilt from its own call: the arguments it was made with are
+#' passed to \code{\link{ctFit}} again, with the model it was given and, unless
+#' \code{data} is supplied, the data it was fitted to. Arguments in \code{...}
+#' replace the fit's own.
+#'
+#' @param oldfit fit object to be updated, from \code{\link{ctFit}} with either
+#' backend.
+#' @param data replacement long format data object. If not supplied, the data
+#' the fit was made with.
+#' @param recompile whether to force a recompile of the Stan model -- safer but
+#' slower and usually unnecessary. Stan fits only.
+#' @param refit if TRUE, refits the model using the old estimates as a starting
+#' point. Only applicable for optimized fits, not sampling. If FALSE, the old
+#' fit is returned with its data and model specification replaced; its
+#' estimates, and everything computed from them when it was fitted, are left
+#' as they were.
 #' @param ... extra arguments to pass to ctFit
 #'
-#' @return updated ctStanFit object.
+#' @return updated fit object, of the same class as \code{oldfit}.
 #' @aliases ctStanFitUpdate
 #' @export
 #'
@@ -326,14 +338,42 @@
 
 ctFitUpdate <- function(oldfit, data=NA, recompile=FALSE,refit=FALSE,...){
 
-  if(!refit) message('Trying to do a quick update -- if there are problems, try with refit=TRUE for more robustness')
+  julia <- inherits(oldfit, 'ctJuliaFit')
+  if(julia && isTRUE(recompile)) stop("recompile applies to the compiled ",
+    "program of a stan fit, and a julia fit has none. Drop it.", call.=FALSE)
+  # The model as the caller wrote it. Not `.ctFitModelObject()`, which is that
+  # model after preparation and cannot be prepared a second time.
+  if(is.null(oldfit$ctstanmodelbase)) stop("This fit does not carry the model ",
+    "it was built from, which julia fits made before ctFitUpdate() supported ",
+    "them do not, so it cannot be rebuilt. Fit again from its estimate with ",
+    "the model you passed to ctFit(): ctFit(datalong, model, inits = ",
+    "fit$estimate$raw, backend = 'julia').", call.=FALSE)
 
   dots <- list(...)
+  sampled <- if(julia) !is.null(oldfit$sample) else
+    length(oldfit$stanfit$stanfit@sim) > 0
+  if(sampled && refit){
+    message('A sampled fit is not refitted; updating it with refit=FALSE')
+    refit <- FALSE
+  }
+  if(!refit) message('Trying to do a quick update -- if there are problems, try with refit=TRUE for more robustness')
+  # Kept, the estimates are coordinates of the backend that made them.
+  if(!refit && !is.null(dots$backend) &&
+      !identical(as.character(dots$backend)[1L], if(julia) 'julia' else 'stan'))
+    stop("A fit updated with refit=FALSE keeps its estimates, which belong to ",
+      "the backend that made them. Use refit=TRUE to fit on another backend.",
+      call.=FALSE)
+
   # `$args$input` -- the literal call, still carrying 'auto'/'maxneeded' and
   # whatever else was unresolved -- not `$args$resolved`, which would freeze
   # this refit at whatever a previous 'auto' happened to route to instead of
-  # letting it re-route against the new data or overrides in `...`.
-  args <- as.list(oldfit$args$input)
+  # letting it re-route against the new data or overrides in `...`. A fit made
+  # by 3.11.1 or earlier keeps its call in `$args` itself, and reading only
+  # `$input` replayed every argument of such a fit at its default -- the
+  # priors it was estimated with among them -- when bringing an old fit up to
+  # date is what this function is for.
+  args <- as.list(if(!is.null(oldfit$args$input)) oldfit$args$input else
+    oldfit$args)
   # That capture is the calling environment rather than the literal call, so a
   # defaulted argument is in it and `do.call()` below hands it back looking as
   # though the caller had typed it. For `poprank` that is the difference
@@ -342,36 +382,79 @@ ctFitUpdate <- function(oldfit, data=NA, recompile=FALSE,refit=FALSE,...){
   # default 'auto' made this function fail on every stan fit, the documented
   # example included. The capture recorded the distinction next to the value;
   # use it, before the `...` overrides, so a rank passed here still counts as
-  # asked for. The flag itself goes: it is a local of `ctFit()`, not an
-  # argument of it, and would only fall into `...`.
+  # asked for.
   if(!isTRUE(args$poprankexplicit)) args$poprank <- NULL
-  args$poprankexplicit <- NULL
+  # `priors` is captured after ctFit() has reduced it to a logical, so the julia
+  # default, 'randomCorr', reads TRUE there -- and TRUE replayed is a prior on
+  # every coordinate, a different estimator. `priorscope` beside it still says
+  # which. 'all' and 'none' are what TRUE and FALSE mean, and a stan fit never
+  # records 'randomCorr'.
+  if(identical(args$priorscope, 'randomCorr')) args$priors <- 'randomCorr'
+  # `iter`, `chains` and `control` are captured as what they resolved to, so
+  # replayed they read as the deprecated spellings and draw that warning at a
+  # caller who never used them. When `sampleControl` alone resolves to the
+  # same settings they add nothing, and are left out.
+  sampling <- c('iter', 'chains', 'control')
+  if(isTRUE(all.equal(.ctSampleControlResolve(args$sampleControl),
+      args[sampling]))) args[sampling] <- NULL
+  # Only ctFit()'s arguments are replayed. The capture also holds its locals
+  # (`datavars`, `priorscope`, `poprankexplicit`), `nopriors`, whose effect
+  # `priors` already carries, and arguments since removed -- `vb`, which every
+  # 3.11.1 fit carries and ctFit() now refuses by name. Anything else was the
+  # caller's own `...`, which only stan's sampler reads, and a fit refitted
+  # here was optimised, so nothing ever read it.
+  args <- args[intersect(names(args),
+    setdiff(names(formals(ctFit)), c('...', 'nopriors')))]
   for(n in names(dots)){
     args[[n]] <- dots[[n]]
   }
-  if(length(oldfit$stanfit$stanfit@sim) > 0) refit=FALSE
   args$fit <- refit
-  args$inits <- oldfit$stanfit$rawest
+  args$inits <- .ctFitRawEstimate(oldfit)
   args$model <- oldfit$ctstanmodelbase
   args$ctstanmodel <- NULL
-
-  newargs <- as.list(args(ctFit))
-  for(argi in names(args)){
-    if(argi %in% names(args)) newargs[[argi]] <- args[[argi]] else message(argi, ' is no longer a valid argument, dropping...')
-  }
-
-
-  if(length(data==1)) args$datalong <- standatatolong(oldfit$standata,origstructure = TRUE,ctm=oldfit$ctstanmodelbase)
-  if(length(data) > 1) args$datalong <- data
+  # The data the fit was made with, unless replacement data is given. (This was
+  # `length(data==1)`, which is TRUE for any data set, so the old data was
+  # rebuilt on every call and then discarded whenever new data was supplied.)
+  newdata <- !is.null(data) && !(is.atomic(data) && length(data) == 1L &&
+    is.na(data))
+  args$datalong <- if(newdata) data else .ctFitLongData(oldfit)
   newfit <- do.call(ctFit,args)
+  if(refit) return(newfit)
 
-  if(!refit){
-    oldfit$standata <- newfit$standata
+  if(julia){
+    # A prepared julia model is its own specification, carrying the call, the
+    # prepared data and the model beside it; a fit keeps those apart.
+    spec <- unclass(newfit)
+    spec[c('args', 'standata', 'ctstanmodelbase')] <- NULL
+    # `nlcontrol$nsubsteps = 'auto'` leaves the fit with a mesh: one substep
+    # count per row of the data it was chosen for, at the estimate. The same
+    # rows keep it; other rows get the one the fit would have chosen for them
+    # at the same estimate.
+    if(is.integer(oldfit$model_spec$max_timestep) && !is.null(spec$substeps)){
+      if(newdata) spec <- .ctJuliaAutoSubsteps(spec,
+        .ctFitRawEstimate(oldfit)[seq_len(.ctBackendNpar(spec))])$spec else
+        spec$max_timestep <- oldfit$model_spec$max_timestep
+    }
+    oldfit$model_spec <- spec
+    oldfit$model <- spec$model
+  } else {
     if(oldfit$ctstanmodel$recompile || recompile) oldfit$stanmodel <- rstan::stan_model(model_code = newfit$stanmodeltext) else
       oldfit$stanmodel <- stanmodels$ctsm
   }
-  if(refit) oldfit <- newfit
-  return(oldfit)
+  oldfit$standata <- newfit$standata
+  oldfit$data <- .ctStandataNA(newfit$standata)
+  oldfit
+}
+
+# The prepared data as a fit reports it in `$data`: `standata` with the 99999
+# missing-value sentinel replaced by NA. The `$tipreds` line is a no-op --
+# that is not a field of the list, and the time-invariant predictors in
+# `$tipredsdata` keep their sentinel in both copies -- and is kept only because
+# every fit's `$data` has been built with it.
+.ctStandataNA <- function(standata){
+  standata$Y[standata$Y==99999] <- NA
+  standata$tipreds[standata$tipreds==99999] <- NA
+  standata
 }
 
 #' @export
@@ -2300,21 +2383,25 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     # returns the prepared model spec then, unclassed by `$args` before, and
     # assigning a list element to it here does not disturb its class.
     juliafit$args <- list(input = args, resolved = argsresolved)
+    # The model as the caller wrote it, as a stan fit carries it and under the
+    # same name. `$model` is not that: it is what the engine ran, after
+    # `.ctModelIntOverPop()` and the rest of the preparation above, and handing
+    # it back to ctFit() prepares it a second time -- which errors on the
+    # augmented route. ctFitUpdate() rebuilds a fit from this one.
+    juliafit$ctstanmodelbase <- ctstanmodel
     # `$data`/`$standata` mean the same thing on both backends: `$standata` is
     # the prepared data with the 99999 missing-value sentinel intact, `$data`
-    # is the same thing with that sentinel replaced by `NA` in `$Y` (and,
-    # replicating the stan path exactly -- see the identical two lines below --
-    # a no-op attempt at `$tipreds`, which is not a field of this list; the
-    # real time-invariant predictor data lives in `$tipredsdata` and keeps its
-    # sentinel in both copies). `standata` was already computed above,
+    # is the same thing with that sentinel replaced by `NA` (see
+    # `.ctStandataNA()`). `standata` was already computed above,
     # unconditionally, before backend dispatch -- .ctPrepareData() runs for julia
     # too, purely to prepare `prepared_data` for `.ctFitJuliaBackend()` -- so
     # attaching it here costs nothing further and is not a second computation.
-    standataout <- standata
-    standataout$Y[standataout$Y==99999] <- NA
-    standataout$tipreds[standataout$tipreds==99999] <- NA
     juliafit$standata <- standata
-    juliafit$data <- standataout
+    # Not on a prepared model (`fit = FALSE`). That object *is* the
+    # specification, and its own `$data` is the long data frame every julia
+    # accessor reads through `.ctBackendSpec()`; replacing it with the prepared
+    # list left ctKalman() on a subset of subjects finding no subjects at all.
+    if(isTRUE(fit)) juliafit$data <- .ctStandataNA(standata)
     # `plot` draws the trace *after* the fit here, not during it.
     #
     # The Stan path can plot live because it writes sample files a second
@@ -2485,10 +2572,7 @@ install.packages("rstan", repos = c("https://mc-stan.org/r-packages/", getOption
     # if(is.na(STAN_NUM_THREADS)) Sys.unsetenv('STAN_NUM_THREADS') else Sys.setenv(STAN_NUM_THREADS = STAN_NUM_THREADS) #reset sys env
   } # end if fit==TRUE
   #convert missings back to NA's for data output
-  standataout<-standata
-  standataout$Y[standataout$Y==99999] <- NA
-  standataout$tipreds[standataout$tipreds==99999] <- NA
-  # standataout <- utils::relist((standataout),skeleton=standata)
+  standataout <- .ctStandataNA(standata)
 
   setup=list(recompile=recompile,idmap=standata$idmap,matsetup=ctm$modelmats$matsetup,matvalues=ctm$modelmats$matvalues,
     popsetup=ctm$modelmats$matsetup[.ctMatsetupFreeRows(ctm$modelmats$matsetup),],

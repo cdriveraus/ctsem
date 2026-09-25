@@ -3,27 +3,40 @@
 \name{ctFitUpdate}
 \alias{ctFitUpdate}
 \alias{ctStanFitUpdate}
-\title{Update a ctStanFit object}
+\title{Update a fit to new data, or to the current version of ctsem}
 \usage{
 ctFitUpdate(oldfit, data = NA, recompile = FALSE, refit = FALSE, ...)
 }
 \arguments{
-\item{oldfit}{fit object to be upgraded}
+\item{oldfit}{fit object to be updated, from \code{\link{ctFit}} with either
+backend.}
 
-\item{data}{replacement long format data object}
+\item{data}{replacement long format data object. If not supplied, the data
+the fit was made with.}
 
-\item{recompile}{whether to force a recompile -- safer but slower and usually unnecessary.}
+\item{recompile}{whether to force a recompile of the Stan model -- safer but
+slower and usually unnecessary. Stan fits only.}
 
-\item{refit}{if TRUE, refits the model using the old estimates as a starting point. Only applicable for
-optimized fits, not sampling.}
+\item{refit}{if TRUE, refits the model using the old estimates as a starting
+point. Only applicable for optimized fits, not sampling. If FALSE, the old
+fit is returned with its data and model specification replaced; its
+estimates, and everything computed from them when it was fitted, are left
+as they were.}
 
 \item{...}{extra arguments to pass to ctFit}
 }
 \value{
-updated ctStanFit object.
+updated fit object, of the same class as \code{oldfit}.
 }
 \description{
-Either to include different data, or because you have upgraded ctsem and the internal data structure has changed.
+Either to include different data, or because you have upgraded ctsem and
+the internal data structure has changed. Works on a fit from either backend.
+}
+\details{
+The fit is rebuilt from its own call: the arguments it was made with are
+passed to \code{\link{ctFit}} again, with the model it was given and, unless
+\code{data} is supplied, the data it was fitted to. Arguments in \code{...}
+replace the fit's own.
 }
 \examples{
 newfit <- ctFitUpdate(ctstantestfit,refit=FALSE)
