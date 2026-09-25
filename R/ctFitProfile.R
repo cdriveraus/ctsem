@@ -112,8 +112,26 @@ ctFitProfile <- function(fit, parameters = NULL, points = 8L, step = NULL,
     stop("ctFitProfile() needs a fit from backend = 'julia'.", call. = FALSE)
   }
   spec <- fit$model_spec
-  module <- .ctJuliaModule(spec$project)
-  objective <- .ctJuliaObjective(fit)
+  # Priming rather than unused: the same cached engine objective every point
+  # below re-fetches (`.ctJuliaOptimise()` calls `.ctJuliaObjective()` itself,
+  # and the base value below evaluates it through the fit directly), fetched
+  # once here so a model shape Julia has not compiled for announces itself
+  # before the loop rather than partway through it.
+  invisible(.ctJuliaObjective(fit))
+  # The fit's own resolved controls, the way `.ctBackendGapTolerance()` reads
+  # them: a profile point used to run on the engine's bare defaults -- no
+  # transform-scale metric, no batching, no Newton finish, the gap rule off --
+  # so a point could land somewhere the fit itself never would, and could take
+  # far more iterations getting there. `certify = FALSE` is added on top: a
+  # profile point is a constrained optimum and nothing certifies it afterwards
+  # (see `.ctFitProfilePoint`), so the optimiser's cheap stopping rule should
+  # not assume a Hessian will close the rest of the gap the way it may for the
+  # fit itself.
+  optimcontrol <- utils::modifyList(.ctFitProfileOptimcontrol(fit),
+    list(certify = FALSE))
+  gradient <- .ctJuliaOr(optimcontrol$gradient, "adjoint")
+  cores <- suppressWarnings(as.integer(fit$args$resolved$cores)[1L])
+  if (!length(cores) || is.na(cores) || cores < 1L) cores <- 1L
   estimate <- as.numeric(fit$estimate$raw)
   npar <- length(estimate)
   names <- .ctBackendRawParameterNames(fit, npar)
@@ -133,12 +151,15 @@ ctFitProfile <- function(fit, parameters = NULL, points = 8L, step = NULL,
   # correlation, a flat 0.5 crossed the bar on point one and reported the limit
   # off one interpolation.
   steps <- .ctFitProfileSteps(step, fit, npar)
-  # The base value is measured here rather than read off the fit. `$loglik` is
-  # the likelihood and the objective may be the posterior; a profile whose
-  # drops are taken against a different quantity from the one being maximised
-  # would report crossings that are not crossings.
-  base <- .ctFitProfilePoint(module, objective, estimate, integer(), numeric(),
-    estimate, maxiter, 0L)
+  # The base value is evaluated directly at the estimate (`ctJuliaEvaluate()`),
+  # not by an optimisation capped at one iteration as this used to do: nothing
+  # is pinned, so nothing needs optimising, and an evaluate cannot take a step
+  # a real fit would not have. `$loglik` is the likelihood and the objective
+  # may be the posterior (`$logposterior`); a profile whose drops are taken
+  # against a different quantity from the one being maximised would report
+  # crossings that are not crossings.
+  base <- .ctFitProfilePoint(fit, spec, optimcontrol, gradient, cores,
+    estimate, integer(), numeric(), maxiter)
   if (!is.finite(base$value)) {
     stop("ctFitProfile(): the objective is not finite at the estimate.",
       call. = FALSE)
@@ -160,8 +181,8 @@ ctFitProfile <- function(fit, parameters = NULL, points = 8L, step = NULL,
         at <- at + side * size
         start <- from
         start[k] <- at
-        got <- .ctFitProfilePoint(module, objective, start, k, at, estimate,
-          maxiter, verbose)
+        got <- .ctFitProfilePoint(fit, spec, optimcontrol, gradient, cores,
+          start, k, at, maxiter)
         drop <- base$value - got$value
         rows[[length(rows) + 1L]] <- data.frame(
           parameter = names[k], index = k, side = side, value = at,
@@ -352,29 +373,65 @@ ctFitProfile <- function(fit, parameters = NULL, points = 8L, step = NULL,
 #' @keywords internal
 .ctFitProfileStep <- function() 0.5
 
-# One constrained optimum: `index` pinned at `value`, everything else free.
-#
-# `index = integer()` evaluates the unpinned objective at `start`, which is how
-# the base value is taken -- the same code path, so the base and the points
-# cannot come from two different quantities.
+# The fit's own optimcontrol, read the way `.ctBackendGapTolerance()` reads it
+# for the same reason: `ctFit()` stores it under `$args$resolved` and
+# `$args$input`, and the backend's own `$args` -- what a fit carries while it
+# is being built, and what a stored fit from before that split has -- keeps it
+# at the top. Reading only the top found nothing once `ctFit()` had returned,
+# which is `ctFitProfile()`'s only caller.
 #' @keywords internal
-.ctFitProfilePoint <- function(module, objective, start, index, value, estimate,
-  maxiter, verbose) {
-  target <- objective
-  if (length(index)) {
-    target <- module$ctsem_pin(objective, .ctJuliaVector(as.integer(index)),
-      .ctJuliaNumericVector(as.numeric(value)))
+.ctFitProfileOptimcontrol <- function(fit) {
+  args <- fit$args
+  optimcontrol <- args$resolved$optimcontrol
+  if (is.null(optimcontrol)) optimcontrol <- args$input$optimcontrol
+  if (is.null(optimcontrol)) optimcontrol <- args$optimcontrol
+  if (is.null(optimcontrol)) list() else as.list(optimcontrol)
+}
+
+# One constrained optimum: `index` pinned at `value`, everything else free --
+# or, when `index` is empty, the objective evaluated at `start` with nothing
+# pinned, which is how the base value is taken (see `ctFitProfile()`); the
+# same evaluation `.ctJuliaOptimise()`'s pinned points are optimised against,
+# so the base and the points cannot come from two different quantities.
+#
+# Routed through `.ctJuliaOptimise()` with the fit's own resolved
+# `optimcontrol`, rather than a bare `module$ctsem_optimize()` call on engine
+# defaults: a profile point used to be optimised with none of the fit's
+# controls -- no transform-scale metric, no batching, no Newton finish, the
+# gap rule off -- so a point could land somewhere, and take however long
+# getting there, that the fit itself never would. The pin is
+# `.ctJuliaOptimise()`'s own pin path (`optimise_once(from, damp, pin)`),
+# exposed as its `pin` argument, which keeps the metric, the batching and the
+# stall escapes in play around the fixed coordinate exactly as they are for
+# the fit. Profile points are never certified afterwards (`ctFitProfile()`
+# sets `optimcontrol$certify = FALSE`), and `$better` is what stands in for
+# certification here: a constrained point that beats the unconstrained
+# estimate is the one failure a profile can still catch.
+#' @keywords internal
+.ctFitProfilePoint <- function(fit, spec, optimcontrol, gradient, cores,
+  start, index, value, maxiter) {
+  if (!length(index)) {
+    out <- try(ctJuliaEvaluate(fit, pars = as.numeric(start), gradient = FALSE,
+      gradient_method = gradient), silent = TRUE)
+    if (inherits(out, "try-error") || !length(out$value)) {
+      return(list(value = NA_real_, par = start, iterations = NA_integer_))
+    }
+    return(list(value = as.numeric(out$value)[1L], par = start,
+      iterations = 0L))
   }
-  out <- try(JuliaConnectoR::juliaGet(module$ctsem_optimize(target,
-    .ctJuliaNumericVector(as.numeric(start)),
-    maxiter = as.integer(if (length(index)) maxiter else 1L),
-    verbose = FALSE, progress = FALSE, gradient_method = "adjoint")),
+  out <- try(.ctJuliaOptimise(spec, as.numeric(start),
+    optimcontrol = optimcontrol, gradient = gradient, cores = cores,
+    maxiter = as.integer(maxiter), verbose = 0L,
+    pin = list(index = as.integer(index), value = as.numeric(value))),
     silent = TRUE)
   if (inherits(out, "try-error")) {
     return(list(value = NA_real_, par = start, iterations = NA_integer_))
   }
   par <- as.numeric(out$minimizer)
-  if (length(index)) par[index] <- as.numeric(value)
+  # Restored rather than trusted, as `.ctJuliaOptimise()`'s own pin path
+  # already does internally -- defensive here too, since a caller must be able
+  # to rely on the pinned coordinate reading back exactly.
+  par[index] <- as.numeric(value)
   list(value = as.numeric(out$maximum_loglik)[1L], par = par,
     iterations = as.integer(.ctJuliaOr(out$iterations, NA_integer_)))
 }
