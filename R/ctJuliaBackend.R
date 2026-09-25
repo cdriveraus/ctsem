@@ -3755,8 +3755,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 # Choose the substep mesh for `spec` at the parameter values `values`, and
 # return the spec carrying it together with a summary. The engine measures how
 # nonlinear each interval was (substep_mesh.jl); a linear model comes back with
-# the floor and no filter pass. A non-finite likelihood at `values` leaves the
-# spec as it was, and the summary says so.
+# the floor and no filter pass. On the Laplace route each subject is measured
+# at its random-effect modes at `values`, the point the Laplace term evaluates
+# (laplace.jl). A non-finite likelihood at `values` leaves the spec as it was,
+# and the summary says so.
 .ctJuliaAutoSubsteps <- function(spec, values) {
   module <- .ctJuliaModule(spec$project)
   objective <- .ctJuliaObjective(structure(spec, class = c("ctJuliaModel", "ctFitModel")))
