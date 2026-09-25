@@ -174,8 +174,10 @@ add("Then every cell's own control, per model: the spread of its minimum over th
   "comparable machine; much above 1.3 says some ran contended.\n")
 k <- d[is.finite(d$ctrl_min) & !d$variant %in% "control", ]
 if (nrow(k)) {
-  agg <- do.call(rbind, lapply(split(k, list(k$label, k$model), drop = TRUE), function(x)
-    data.frame(label = x$label[1], model = x$model[1], cells = nrow(x),
+  # By route as well: the augmented and Laplace objectives of one model are
+  # different computations and cost different amounts.
+  agg <- do.call(rbind, lapply(split(k, list(k$label, k$model, k$route), drop = TRUE), function(x)
+    data.frame(label = x$label[1], model = x$model[1], route = x$route[1], cells = nrow(x),
       min = fmt(min(x$ctrl_min), 3), median = fmt(stats::median(x$ctrl_min), 3),
       max = fmt(max(x$ctrl_min), 3), ratio = f2(max(x$ctrl_min) / min(x$ctrl_min)),
       load_fit_start = if (any(is.finite(x$load1_fit_start))) paste(f2(range(

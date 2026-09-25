@@ -4,6 +4,7 @@
 #   bash dev/optimbench/ship.sh <commit-or-branch> <label>
 #   bash dev/optimbench/ship.sh --harness [<commit-or-branch>]   (default: optimbench)
 #   bash dev/optimbench/ship.sh --init                           (once: the standing tree)
+#   bash dev/optimbench/ship.sh --standing [<commit-or-branch>]  (move it; default juliaFit)
 #
 # Run it from any worktree of the ctsem repository: they share its refs, so any
 # branch or commit of any job is visible from any of them.
@@ -79,6 +80,13 @@ case "${1:-}" in
     rm -f "$bundle"
     ssh "$host" "bash ~/dev/ctsem-bench-bundles/receive.sh init dev/ctsem-bench-bundles/init.bundle ${BENCH_SRC_DONOR:-}"
     ;;
+  --standing)
+    rev="${2:-juliaFit}"
+    sha="$(git -C "$repo" rev-parse --verify "$rev^{commit}")"
+    ref="$(ref_for "$rev" "$sha")"
+    b="$(send "$ref" "$sha" "standing-${sha:0:8}")"
+    ssh "$host" "bash ~/dev/ctsem-bench-bundles/receive.sh standing $sha $b"
+    ;;
   --harness)
     rev="${2:-optimbench}"
     sha="$(git -C "$repo" rev-parse --verify "$rev^{commit}")"
@@ -87,7 +95,7 @@ case "${1:-}" in
     ssh "$host" "bash ~/dev/ctsem-bench-bundles/receive.sh harness $sha $b"
     ;;
   ""|-*)
-    echo "usage: ship.sh <commit-or-branch> <label> | --harness [rev] | --init" >&2; exit 1 ;;
+    echo "usage: ship.sh <commit-or-branch> <label> | --harness [rev] | --standing [rev] | --init" >&2; exit 1 ;;
   *)
     rev="$1"; label="${2:?usage: ship.sh <commit-or-branch> <label>}"
     case "$label" in *[!A-Za-z0-9._-]*) echo "label may hold only letters, digits, . _ -" >&2; exit 1 ;; esac

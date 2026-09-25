@@ -45,43 +45,48 @@ write_grid <- function(name, parts, header) {
   cat(name, ":", nrow(g), "cells ->", f, "\n")
 }
 
-gated <- c("gA1", "gA10", "gA14", "gB1", "gB2", "gB8", "gC1", "gC2", "gC8")
+# The baseline covers every family at the build's defaults, with few seeds:
+# 2 default starts per cell, 3 for the gated-gaps configs, and of those the
+# gaps note's worst and one typical config per family (A14/A1, B8/B2, C2/C8,
+# D3/D1, N1/N3). Cut from the first design to keep dev1 time down: the second
+# cf data set, the third cf seed, seeds 4-5 and configs A10, B1, C1, N2, N4,
+# the third fixture and regime seeds, the second AnomAuth default seed, and
+# the reference checks outside one config per family. Fast families first, so
+# a first summary exists while the slow ones run; the three control cells sit
+# at the start, the middle and the end of the launch order.
+gated <- c("gA1", "gA14", "gB2", "gB8", "gC2", "gC8")
 binary <- c("gD1", "gD3")
-nested <- paste0("gN", 1:4)
+nested <- c("gN1", "gN3")
 anom <- c("anomS1", "anomS2")
-hist <- c(gated, binary, nested, anom)
+hist <- c("gA1", "gB2", "gC2", "gD1", "gN1", "anomS1")
 
-# The baseline: every cell family once, at the build's defaults. Fast families
-# first, so a first summary exists while the slow ones run; the three control
-# cells sit at the start, the middle and the end of the launch order.
 write_grid("baseline", list(
   control(1),
-  # carefulfit / gaptol design: two data sets, both routes, 3 default starts,
-  # with and without the priors that switch the warm-up off at this build.
-  cells(paste0("cf_", c("gaussian", "binary", "ordinal", "mixed")), c("1", "2"),
-    c("augmented", "laplace"), seeds(3), c("default", "priorsFALSE")),
-  # gated-gaps configs: 5 default starts each (the note's default path).
-  cells(gated, "cfg", "laplace", seeds(5), "default"),
-  cells(binary, "cfg", "laplace", seeds(5), "default"),
+  # carefulfit / gaptol design: both routes, with and without the priors that
+  # switch the warm-up off at this build.
+  cells(paste0("cf_", c("gaussian", "binary", "ordinal", "mixed")), "1",
+    c("augmented", "laplace"), seeds(2), c("default", "priorsFALSE")),
+  cells(gated, "cfg", "laplace", seeds(3), "default"),
+  cells(binary, "cfg", "laplace", seeds(3), "default"),
   # test fixtures
-  cells("acnonlin", "cfg", "laplace", seeds(3), "default"),
-  cells("mvmix", "cfg", c("laplace", "augmented"), seeds(3), "default"),
+  cells("acnonlin", "cfg", "laplace", seeds(2), "default"),
+  cells("mvmix", "cfg", c("laplace", "augmented"), seeds(2), "default"),
   control(2),
-  cells("jflat", "cfg", "laplace", c("stored:flatdrift8", seeds(3)), "default"),
-  cells(nested, "cfg", "laplace", seeds(5), "default"),
+  cells("jflat", "cfg", "laplace", c("stored:flatdrift8", seeds(1)), "default"),
+  cells(nested, "cfg", "laplace", seeds(3), "default"),
   # stochopt regimes, each on its own route
-  cells(c("small", "nonlin", "long", "bigp", "panel"), "1", "augmented", seeds(3), "default"),
-  cells("ordinal", "1", "laplace", seeds(3), "default"),
+  cells(c("small", "nonlin", "long", "bigp", "panel"), "1", "augmented", seeds(2), "default"),
+  cells("ordinal", "1", "laplace", seeds(2), "default"),
   # AnomAuth S1 and S2 from the default path and from the stored spurious maxima
-  cells(anom, "cfg", "laplace", seeds(3), "default"),
+  cells(anom, "cfg", "laplace", seeds(1), "default"),
   cell("anomS1", "cfg", "laplace", "stored:anomS1_spurious", "default"),
   cell("anomS2", "cfg", "laplace", "stored:anomS2_spurious", "default"),
-  # the reference at each config's best-known point, which must reproduce
+  # the reference at a config's best-known point, which must reproduce
   # references.csv (a check of data, model, prior term and reference code)
   do.call(rbind, lapply(hist, function(m) cell(m, "cfg", "laplace",
     paste0("stored:hist_", m), "evalonly"))),
   control(3)),
-  "baseline grid: every family at the build's defaults (make_grid.R)")
+  "baseline grid: every family at the build's defaults, few seeds (make_grid.R)")
 
 # A quick grid to check a build and the harness end to end in a few minutes.
 write_grid("smoke", list(control(1),

@@ -82,7 +82,8 @@ echo "GRID $grid"
 echo "harness $harness_sha (copied from $src)"
 echo "label $label parallel $par results $out"
 echo "build $BENCH_LIB: $(tr '\n' ' ' < "$BENCH_LIB/BENCH_BUILD" 2>/dev/null || echo 'no BENCH_BUILD')"
-echo "start $(date -Is) on $(hostname), $(nproc) cpus, load $(cat /proc/loadavg)"
+# nproc --all: plain nproc honours OMP_NUM_THREADS, set to 1 above.
+echo "start $(date -Is) on $(hostname), $(nproc --all) cpus, load $(cat /proc/loadavg)"
 echo "busiest processes at start:"
 ps -eo user,pid,etime,pcpu,comm --sort=-pcpu | head -8
 [ -f "$BENCH_LIB/ctsem/DESCRIPTION" ] || { echo "no build installed at $BENCH_LIB"; exit 1; }

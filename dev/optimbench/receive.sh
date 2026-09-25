@@ -116,6 +116,25 @@ case "${1:?usage: receive.sh init|build|harness ...}" in
     verify_load "$lib"
     echo "BUILD $label = $sha in $lib"
     ;;
+  standing)
+    # Move the standing clone to a newer commit (normally juliaFit's tip) and
+    # reinstall it. Its src/ is kept when the Stan inputs are unchanged, and
+    # its objects are deleted so they rebuild when they are not.
+    sha="${2:?sha}"; bundle="${3:-}"
+    fetch "$bundle"
+    git -C "$BENCH" cat-file -e "$sha^{commit}"
+    before="$(stan_inputs "$BENCH")"
+    git -C "$BENCH" checkout -q --detach "$sha"
+    if [ "$(stan_inputs "$BENCH")" != "$before" ]; then
+      echo "inst/stan or inst/include changed: removing the Stan objects so they rebuild"
+      rm -f "$BENCH"/src/*.o "$BENCH"/src/*.so
+    fi
+    install_to "$BENCH" "$HOME/dev/ctsemlib-bench-standing"
+    printf 'label=standing\nsha=%s\ndate=%s\n' "$sha" "$(date -Is)" \
+      > "$HOME/dev/ctsemlib-bench-standing/BENCH_BUILD"
+    verify_load "$HOME/dev/ctsemlib-bench-standing"
+    echo "STANDING at $sha"
+    ;;
   harness)
     sha="${2:?sha}"; bundle="${3:-}"
     fetch "$bundle"
