@@ -1061,13 +1061,15 @@ end
     _laplace_gated_unit_reference(laplace, values, U; lo=0.2, hi=0.7, nodes=3,
                                   newton_steps=1, solves=5)
 
-`T = T_total + w(lambda_min) (T_soft - T_total)` for one unit, value only, at the
+`T = T_lap + w(lambda_min) (T_soft - T_lap)` for one unit, value only, at the
 modes of the last `ctsem_laplace_evaluate` at `values` under the total floor.
+`T_lap` is the unfloored Laplace term: a unit with an eigenvalue to go on needs
+no floor, see `_laplace_gated_term`.
 The Float64 reference for `_laplace_gated_term`; see the section comment.
 
 The gate is exact and costs no likelihood sweep: `M - hi I` is block-factored
 (the same elimination as `M`'s own, no fill-in), and a unit it accepts returns
-`T_total` untouched. Only a flagged unit places `lambda_min`: by the engine's
+`T_lap` untouched. Only a flagged unit places `lambda_min`: by the engine's
 own symmetric eigensolver for a unit up to `_LAPLACE_EIGEN_MAXDIM`, else by
 `solves` steps of inverse iteration on the factor of `M` from a fixed start,
 which converges at the eigengap's rate. Only a unit with `w > 0` evaluates the
@@ -1089,9 +1091,9 @@ function _laplace_gated_unit_reference(laplace::CTSEMLaplaceObjective,
     M = _laplace_unit_curvature(laplace, U, theta, Ls, u)
     ok, logdetM, _, _ = _laplace_block_factor(M, blocks)
     ok || return (value=NaN, weight=0.0, lambda_min=NaN, flagged=false)
-    total = inner.value - max(logdetM, 0.0) / 2
+    lap = inner.value - logdetM / 2
     _laplace_exceeds_identity(M, blocks, hi) &&
-        return (value=total, weight=0.0, lambda_min=Inf, flagged=false)
+        return (value=lap, weight=0.0, lambda_min=Inf, flagged=false)
     d = length(u)
     dense = _laplace_block_dense(M, blocks, d)
     lambda = if d <= _LAPLACE_EIGEN_MAXDIM[]
@@ -1111,10 +1113,10 @@ function _laplace_gated_unit_reference(laplace::CTSEMLaplaceObjective,
         sum(x .* (dense * x))
     end
     w = _laplace_soft_weight(lambda, lo, hi)
-    w == 0 && return (value=total, weight=0.0, lambda_min=lambda, flagged=true)
+    w == 0 && return (value=lap, weight=0.0, lambda_min=lambda, flagged=true)
     soft = _laplace_soft_rule_unit(laplace, theta, U; nodes=nodes,
         ndirs=1, tau=0.0, recenter=true, newton_steps=newton_steps)
-    return (value=total + w * (soft - total), weight=w, lambda_min=lambda,
+    return (value=lap + w * (soft - lap), weight=w, lambda_min=lambda,
         flagged=true)
 end
 
