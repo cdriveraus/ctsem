@@ -408,6 +408,16 @@
   list(index = as.integer(index), scale = rep(1, length(index)), weight = 1)
 }
 
+# What `priors = TRUE` builds on the Laplace route: a standard
+# `normal(0, 1)` on every raw coordinate the loop below reaches -- each
+# level's random-effect sds, its correlations, and, for a reduced-rank level,
+# its loadings instead of the scales (see the comment at `load_index` below
+# for why those are scaled by `1 / sqrt(rank)` rather than left at 1). Time
+# independent predictor effects get their own scale from `standata`, not this
+# one. One of the seven leverage constants that move where a fit ends
+# (`review/OPTIM-consolidation-plan-2026-09-25.md` Appendix B) --
+# `priors = 'randomCorr'`, `.ctBackendRandomCorrPriorSpec` above, is the
+# narrower default that applies the same N(0,1) to the correlations alone.
 .ctBackendLaplacePriorSpec <- function(standata, laplace, npar) {
   if (is.null(standata)) {
     stop("priors=TRUE needs the prepared model data; this fit was built without it.",

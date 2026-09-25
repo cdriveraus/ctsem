@@ -3893,6 +3893,15 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     precondition = if (identical(optimcontrol$precondition, FALSE)) NULL else
       .ctJuliaVector(.ctJuliaParameterScale(model_spec,
         at = as.numeric(start), npar = length(as.numeric(start)))),
+    # The line search's first step, in the metric's own norm (see
+    # `_ctsem_lbfgs` in optimiser.jl). Guards against a first step landing deep
+    # inside a flat transform before any curvature has been learned -- a full
+    # unit step from a cold start is what walks a saturating coordinate straight
+    # to its plateau. One of the seven constants that move where a fit ends
+    # (`review/OPTIM-consolidation-plan-2026-09-25.md` Appendix B), measured on
+    # flat-transform starts and recorded in
+    # `review/LAPLACE-optimise-heuristics-survey-2026-09-25.md` section 3; not
+    # yet measured on categorical or multilevel models.
     initial_alpha = if (is.null(optimcontrol$initial_alpha)) .1 else
       as.numeric(optimcontrol$initial_alpha)[1L],
     verbose = verbose > 0L,
