@@ -585,8 +585,10 @@
   # `ctsem_hessian`: a model with a sampled (missing) TI predictor value
   # forces exactly this (see `.ctFitJuliaBackendImpl`), because
   # `ctsem_hessian` nests over the adjoint gradient, which refuses such a
-  # model outright rather than silently omitting its cotangent.
-  hessian_fn_name <- if (identical(gradient, "forward")) "ctsem_hessian_forward" else "ctsem_hessian"
+  # model outright rather than silently omitting its cotangent. Not on the
+  # Laplace route, which has no forward method: see
+  # `.ctBackendHessianFunction()`.
+  hessian_fn_name <- .ctBackendHessianFunction(.ctBackendSpec(fit), gradient)
   # A user whose cached engine environment predates this function has no such
   # function, and that is a silent fallback rather than an error: the engine
   # environment is keyed on a hash of the engine's source, so it refreshes

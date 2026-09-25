@@ -1180,6 +1180,35 @@ test_that("the hessian raises the inner budget rather than returning NaN", {
   setbudget(200L)
 })
 
+test_that("gradient = 'forward' still certifies and continues a Laplace fit", {
+  skip_without_julia()
+  # `ctsem_hessian_forward` has no method for the Laplace objective, and on
+  # this route `gradient` chooses nothing about differentiation. Asking for
+  # 'forward' sent the certification's Hessian there: a MethodError inside a
+  # `try`, a NULL Hessian, and a correction loop that stopped without a word.
+  # Measured on this fixture from zero with three iterations: no Hessian, no
+  # correction, 60 nats short and not converged, where 'adjoint' took two
+  # corrections to the optimum.
+  spec <- suppressWarnings(suppressMessages(ctFit(.laplace_test_data(),
+    .laplace_test_model(), backend = "julia", intoverpop = "laplace",
+    fit = FALSE)))
+  npar <- .ctBackendNpar(spec)
+  at <- rep(0.1, npar)
+  forward <- .ctBackendHessianAt(spec, at, gradient = "forward")
+  expect_true(is.matrix(forward))
+  expect_equal(forward, .ctBackendHessianAt(spec, at, gradient = "adjoint"))
+
+  fit <- suppressWarnings(suppressMessages(ctFit(.laplace_test_data(),
+    .laplace_test_model(), backend = "julia", intoverpop = "laplace",
+    inits = rep(0, npar), optimcontrol = list(gradient = "forward",
+      maxiter = 3L, laplace_correct = FALSE, finishsamples = 50))))
+  # Three iterations cannot reach the optimum, so this converges only if the
+  # certification computed its curvature and continued from it.
+  expect_gte(fit$optim$hessian_evaluations, 1L)
+  expect_gte(length(fit$optim$corrections), 1L)
+  expect_true(isTRUE(fit$optim$converged))
+})
+
 # Weak data for a nonlinear random effect: 40 subjects, six waves, a random
 # `-log1p_exp` drift beside random T0MEANS and CINT. The subjects are simulated
 # here, not by ctGenerate, whose draw stream moves under unrelated commits.

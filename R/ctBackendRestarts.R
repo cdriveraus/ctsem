@@ -23,8 +23,12 @@
   if (!isTRUE(intoverstates)) return(0L)
   if (!is.null(inits) || !is.null(optimcontrol$maxiter)) return(0L)
   if (!is.null(certification)) {
+    # `saturated`, or `unidentified` on a certification made before the rename:
+    # a maximum with a coordinate the data does not determine.
     if (isTRUE(certification$certified) ||
-        identical(certification$status, "unidentified")) return(0L)
+        identical(.ctBackendCertificationStatus(certification), "saturated")) {
+      return(0L)
+    }
   } else if (isTRUE(result$converged)) return(0L)
   n
 }

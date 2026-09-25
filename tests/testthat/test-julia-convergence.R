@@ -52,11 +52,13 @@
 # behaves from a start we chose is a fixture that is hiding something, and the
 # hidden thing here was the model.
 #
-# What went with it is the only place in the suite where `unidentified` came
-# from a real fit. That status is still covered, deterministically and without
-# a fit: `test-ctidentify.R` and `test-ctOptimUncertainty.R` drive
-# `.ctBackendIntervalCheck()` from information matrices directly, which is
-# where the behaviour actually lives.
+# What went with it is the only place in the suite where the `saturated`
+# certification status (`unidentified` until 2026-09-25) came from a real fit.
+# That status is still covered, deterministically and without a fit, by
+# `test-backend-optimgap.R`; and the coordinates reported with no width,
+# `.ctBackendIntervalCheck()`'s `$unidentified`, by `test-ctidentify.R` and
+# `test-ctOptimUncertainty.R` from information matrices directly, which is
+# where that behaviour actually lives.
 #
 # The fixture below is the same model over data that has the individual
 # differences it asks for, drawn independently for the two manifests so the
@@ -411,10 +413,10 @@ test_that("what the fit reports is what the curvature measured", {
   expect_true(is.finite(certification$gap))
 
   # The one rule, on a real fit: converged iff the curvature says this is a
-  # maximum. `unidentified` is a maximum with a coordinate the data does not
+  # maximum. `saturated` is a maximum with a coordinate the data does not
   # determine; the rest of the not-certified statuses are not maxima.
   expect_equal(isTRUE(fit$optim$converged),
-    certification$status %in% c("certified", "unidentified"))
+    certification$status %in% c("certified", "saturated"))
 
   # The held complaint is gone rather than left behind to be warned about by a
   # later call on the same fit.
