@@ -91,13 +91,21 @@
 #' \code{fit$laplace$correction$laplace_estimate}, rather than the corrected
 #' estimate. \code{scoring} says so when the fit was corrected.
 #'
+#' \strong{A fold's estimate is never certified.} Whatever the route, a refit
+#' fold is optimised with \code{optimcontrol$certify = FALSE}: certifying and
+#' correcting a fold the way the full fit is would cost each fold its own
+#' Hessian, which is the expense K-fold exists to avoid. \code{scoring} says so
+#' for any refit (\code{refit = TRUE}, the default, and not
+#' \code{casewiseApproximation}), on both routes.
+#'
 #' @return For \code{method = 'kfold'}, a list with \code{foldrows},
 #'   \code{foldpars}, \code{insampleLogLikRow}, \code{LogLikRowFolds},
 #'   \code{outsampleLogLikRow}, \code{insampleLogLik}, \code{outsampleLogLik}
-#'   and entropy and standard deviation summaries. An \code{intoverpop =
-#'   'laplace'} fit adds \code{insampleLogLikSubject},
-#'   \code{outsampleLogLikSubject} and \code{scoring}, naming what was scored
-#'   (see Details). For \code{method = 'psis'}, an object of class
+#'   and entropy and standard deviation summaries. \code{scoring} is added
+#'   whenever the folds were refit, naming what was scored and that they are
+#'   uncertified (see Details); an \code{intoverpop = 'laplace'} fit also adds
+#'   \code{insampleLogLikSubject} and \code{outsampleLogLikSubject}. For
+#'   \code{method = 'psis'}, an object of class
 #'   \code{ctLOOpsis}: \code{elpd_loo}, \code{se_elpd_loo}, \code{p_loo},
 #'   \code{looic}, \code{pointwise} (a data frame of \code{elpd_loo},
 #'   \code{lpd}, \code{p_loo} and \code{pareto_k} per unit or row),
@@ -504,9 +512,20 @@ ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
         # and as `optimcontrol$tol` does in ctFit(): the objective tolerance.
         # It used to be handed to the engine's gradient criterion instead, so
         # the same argument relaxed two different things depending on backend.
+        #
+        # `certify = FALSE` is explicit rather than inherited, because a fold
+        # is never certified or corrected after this call (see the comment at
+        # the top of this function) -- that is deliberate, but the fit's own
+        # optimcontrol does not say so, so a fold used to inherit whatever
+        # `certify` the full fit was made with. That reached
+        # `.ctBackendInnerGapTol()`, which aims the optimiser's cheap stopping
+        # rule inside the certification tolerance only because something will
+        # spend a Hessian closing the rest of the gap; nothing does that for a
+        # fold, so the rule should not assume it.
         result <- try(.ctJuliaOptimise(trainingfit$model_spec, start,
           optimcontrol = utils::modifyList(
-            as.list(fit$args$resolved$optimcontrol), list(tol = tol)),
+            as.list(fit$args$resolved$optimcontrol),
+            list(tol = tol, certify = FALSE)),
           cores = cores),
           silent = TRUE)
         if (inherits(result, "try-error")) return(NULL)
@@ -616,6 +635,19 @@ ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
       out$scoring <- paste0(out$scoring, "; Laplace optimum, not the fit's ",
         "quadrature-corrected estimate, and folds are not corrected")
     }
+  }
+  # Whichever route, a fold that was actually refit was refit with
+  # `certify = FALSE` (see the call above): its estimate is not
+  # curvature-certified, corrected, or checked against a better point the way
+  # the full fit's is -- each fold would need its own Hessian, and folds exist
+  # to be cheap. `scoring` is where a laplace fit already reports what a fold
+  # does not get; an augmented fit's folds get the same caveat and this is the
+  # only place a user reads it.
+  if (isTRUE(refit) && !isTRUE(casewiseApproximation)) {
+    uncertified <- paste0("folds are refit with optimcontrol$certify = FALSE ",
+      "and are not curvature-certified or corrected")
+    out$scoring <- if (is.null(out$scoring)) uncertified else
+      paste0(out$scoring, "; ", uncertified)
   }
   out
 }

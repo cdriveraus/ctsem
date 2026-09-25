@@ -1014,6 +1014,18 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     failures <- c(failures,
       "intoverstates=FALSE together with intoverpop='laplace'")
   }
+  # `nlcontrol$nsubsteps = 'auto'` together with `intoverpop = 'laplace'` is
+  # refused too, but not here, and not on `intoverpop` at all: this function is
+  # called twice from `ctFit()` (ctFit.R), and neither call can ask this
+  # question. The first runs before `nlcontrol` is attached to the model, so
+  # `model$nlcontrol$nsubsteps` reads NULL even when the caller asked for
+  # `'auto'`. By the second, `ctFit()` has already turned `intoverpop` into the
+  # plain logical that drives augmentation everywhere downstream (TRUE only for
+  # `'augmented'`), so a `'laplace'` route and a `'none'` route are both FALSE
+  # here and indistinguishable from this argument alone. The refusal instead
+  # sits beside `.ctJuliaAutoSubsteps()`'s own call site in
+  # `.ctFitJuliaBackendImpl()`, where the prepared `model_spec` can be asked
+  # directly with `.ctBackendIntOverPop()`.
   # `optimize=FALSE` is supported now: the engine has its own No-U-Turn sampler,
   # and which target it samples is decided by `intoverpop`. See
   # `.ctJuliaSampleFit`.
@@ -3777,6 +3789,54 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   list(spec = spec, summary = summary)
 }
 
+# The fitted specification's integration step, carried onto `spec`: the same
+# model re-prepared over other rows, as prediction and cross-validation do.
+# Re-preparing gives back the maxtimestep rule, which applies to any rows. A
+# mesh from `nsubsteps = 'auto'` does not: it is one count per row of the data
+# it was chosen for. Dropped, the filter went back to the rule on intervals the
+# fit had refined; copied across whole, it handed one subject's counts to
+# another, or failed in the engine when the row counts differed.
+#
+# So when every row here is a row the fit had, each keeps the count the fit
+# used, and the fit's own filter is reproduced exactly. Choosing again need
+# not reproduce it: the fit chose its mesh at an earlier optimum, before a
+# refit or a correction moved the estimate it reports. Anything else gets the
+# mesh the fit would choose for these rows at `values`, its estimate.
+.ctJuliaCarrySubsteps <- function(spec, fitted, values) {
+  if (!is.integer(fitted$max_timestep)) {
+    spec$max_timestep <- fitted$max_timestep
+    return(spec)
+  }
+  if (is.null(spec$substeps)) return(spec)
+  rows <- .ctJuliaFittedRows(spec, fitted)
+  if (!is.null(rows)) {
+    spec$max_timestep <- fitted$max_timestep[rows]
+    return(spec)
+  }
+  .ctJuliaAutoSubsteps(spec, as.numeric(values)[seq_len(.ctBackendNpar(spec))])$spec
+}
+
+# For each row of `spec`, the row of `fitted` it is, or NULL unless every row
+# has one. Matched a whole subject at a time: a count belongs to the interval
+# ending at its row, so a row is the fitted one only if the row before it is
+# too, and a subject with a row added or missing matches nowhere.
+.ctJuliaFittedRows <- function(spec, fitted) {
+  idname <- spec$model$subjectIDname
+  bysubject <- function(s) {
+    ids <- as.character(s$data[[idname]])
+    split(seq_along(ids), factor(ids, levels = unique(ids)))
+  }
+  new <- bysubject(spec)
+  old <- bysubject(fitted)
+  if (!length(new) || !all(names(new) %in% names(old))) return(NULL)
+  rows <- lapply(names(new), function(s) {
+    if (identical(as.numeric(fitted$times[old[[s]]]),
+      as.numeric(spec$times[new[[s]]]))) old[[s]]
+  })
+  if (any(vapply(rows, is.null, logical(1L)))) return(NULL)
+  unlist(rows, use.names = FALSE)
+}
+
 .ctJuliaSubstepMessage <- function(s) {
   if (!isTRUE(s$finite)) return("Substeps: likelihood not finite at the starting values; maxtimestep rule kept.")
   paste0("Substeps: ", s$refined, " of ", s$intervals, " intervals refined, max ", s$max_substeps,
@@ -3786,7 +3846,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 .ctJuliaOptimise <- function(model_spec, start, optimcontrol = list(),
   gradient = "adjoint", cores = 1L, verbose = 0L, maxiter = NULL,
   callback = NULL, objective = NULL, progress_label = NULL,
-  progress_budget = FALSE) {
+  progress_budget = FALSE, pin = NULL) {
   spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
   # A caller may hand in the objective to maximise. `intoverstates=FALSE` does,
   # passing the joint one over `[theta; z]`; everything below is unchanged by
@@ -3883,6 +3943,15 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     precondition = if (identical(optimcontrol$precondition, FALSE)) NULL else
       .ctJuliaVector(.ctJuliaParameterScale(model_spec,
         at = as.numeric(start), npar = length(as.numeric(start)))),
+    # The line search's first step, in the metric's own norm (see
+    # `_ctsem_lbfgs` in optimiser.jl). Guards against a first step landing deep
+    # inside a flat transform before any curvature has been learned -- a full
+    # unit step from a cold start is what walks a saturating coordinate straight
+    # to its plateau. One of the seven constants that move where a fit ends
+    # (`review/OPTIM-consolidation-plan-2026-09-25.md` Appendix B), measured on
+    # flat-transform starts and recorded in
+    # `review/LAPLACE-optimise-heuristics-survey-2026-09-25.md` section 3; not
+    # yet measured on categorical or multilevel models.
     initial_alpha = if (is.null(optimcontrol$initial_alpha)) .1 else
       as.numeric(optimcontrol$initial_alpha)[1L],
     verbose = verbose > 0L,
@@ -3991,7 +4060,18 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # around them -- `list(index = , value = )`, or NULL for an ordinary stage.
   # See `ctsem_pin` in the engine for why that is not the same as resuming from
   # a displaced point, and `.ctBackendStallEscape()` for what uses it.
-  optimise_once <- function(from, damp = integer(), pin = NULL) {
+  #
+  # `pin` is also this function's own top-level argument, for a caller that
+  # wants every stage pinned -- `ctFitProfile()` fixes one coordinate at a
+  # profile point and needs the batching, the metric and the stall escapes the
+  # fit itself gets around it, not a bare call to the engine's optimiser.
+  # `default_pin` carries that value in rather than writing `pin = pin` below:
+  # a formal argument cannot default to a same-named enclosing variable of the
+  # same name without evaluating itself, which raises "promise already under
+  # evaluation". Every internal call below that does not name its own `pin`
+  # -- the first stage and an ordinary resume alike -- inherits it this way.
+  default_pin <- pin
+  optimise_once <- function(from, damp = integer(), pin = default_pin) {
     args <- common
     held <- !is.null(pin) && length(pin$index)
     target <- objective
@@ -4096,9 +4176,18 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     resumed <- if (isTRUE(optimcontrol$escapepin) && length(coordinates)) {
       inside <- coordinates >= 1L & coordinates <= length(from)
       coordinates <- coordinates[inside]
-      staged <- try(optimise_once(from,
-        pin = list(index = coordinates, value = from[coordinates])),
-        silent = TRUE)
+      # Merged with `default_pin` rather than replacing it: naming `pin=`
+      # explicitly here would otherwise drop a caller's top-level pin for the
+      # one stage that happens to pass its own, and a profile point's fixed
+      # coordinate must stay fixed through an escape too. The plain branch
+      # below needs no such merge -- `optimise_once(from)` already falls back
+      # to `default_pin` on its own.
+      escape_pin <- list(
+        index = c(if (length(default_pin$index)) as.integer(default_pin$index),
+          coordinates),
+        value = c(if (length(default_pin$index)) as.numeric(default_pin$value),
+          from[coordinates]))
+      staged <- try(optimise_once(from, pin = escape_pin), silent = TRUE)
       if (inherits(staged, "try-error")) staged else
         try(optimise_once(as.numeric(staged$minimizer)), silent = TRUE)
     } else try(optimise_once(from), silent = TRUE)
@@ -4255,9 +4344,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   #       20       1490   39.1   s     0.168 s
   #
   # 'adjoint' is faster at every size measured, and the margin grows without
-  # bound with the parameter count. 'forward' remains the default because it
-  # is the longer-tested path, not because it is faster; there is no silent
-  # fallback between them in either direction.
+  # bound with the parameter count, which is why it is the default; 'forward'
+  # stays available by name for anyone who wants ForwardDiff specifically. No
+  # silent fallback between them in either direction.
   model_spec <- .ctJuliaPrepare(datalong, model, prepared_data = prepared_data,
     priors = priors, priorscope = priorscope, intoverpop = intoverpop,
     optimize = optimize,
@@ -4325,6 +4414,27 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     stop("This model has no free parameters, so there is nothing to optimise. ",
       "Free a parameter, or use fit = FALSE to prepare the model without ",
       "fitting it.", call. = FALSE)
+  }
+  # `.ctJuliaAutoSubsteps()` hands the engine whichever objective the route
+  # built -- the Laplace wrapper on this route -- to `ctsem_auto_substeps`
+  # (substep_mesh.jl), which has a method for the plain `CTSEMObjective` only.
+  # Reproduced: a one-latent model with one indvarying T0MEANS,
+  # `intoverpop='laplace'`, `nlcontrol=list(nsubsteps='auto')`, reaches a Julia
+  # `MethodError: no method matching ctsem_auto_substeps(::
+  # CTSEMLaplaceObjective, ...)` rather than a mesh. Refused by name here,
+  # where `model_spec` is the prepared specification and
+  # `.ctBackendIntOverPop()` can ask it directly rather than trust an argument
+  # whose meaning changes between this function's two call sites (see the note
+  # in `.ctJuliaUnsupported()`). It sits before any work -- the start, the
+  # prior warm-up -- rather than beside the call it guards, so a refused fit
+  # costs nothing. `'none'` is not a reachable value here: it arises only on
+  # the `optimize=FALSE` route, which has returned above.
+  if (!is.null(model_spec$substeps) &&
+      .ctBackendIntOverPop(model_spec) %in% "laplace") {
+    stop("Julia backend v1 does not support: nlcontrol$nsubsteps='auto' ",
+      "together with intoverpop='laplace' (ctsem_auto_substeps has no ",
+      "method yet for the Laplace objective). Give a numeric ",
+      "nlcontrol$maxtimestep instead.", call. = FALSE)
   }
   start <- .ctJuliaInitialValues(npar, inits,
     initsd = .ctJuliaOr(optimcontrol$initsd, .01), spec = model_spec)

@@ -329,10 +329,12 @@
 #' The random-effect correlations alone, as a prior spec.
 #'
 #' What `priors = 'randomCorr'` builds, and the default: the random-effect
-#' covariance block -- standard deviations and correlations, at every level of
-#' a hierarchy. Every other coordinate is left to the likelihood; these are the
-#' ones where unbounded maximum likelihood is not merely uncertain but
-#' ill-posed.
+#' correlations only, at every level of a hierarchy -- not their standard
+#' deviations, which the likelihood alone determines poorly enough to warrant
+#' a warning but not, on their own, the walk a correlation coordinate is
+#' capable of (see below). Every other coordinate is left to the likelihood;
+#' the correlations are the ones where unbounded maximum likelihood is not
+#' merely uncertain but ill-posed.
 #'
 #' A correlation is bounded and its coordinate is not, so every construction
 #' that maps one to the other flattens as the correlation approaches its
@@ -408,6 +410,16 @@
   list(index = as.integer(index), scale = rep(1, length(index)), weight = 1)
 }
 
+# What `priors = TRUE` builds on the Laplace route: a standard
+# `normal(0, 1)` on every raw coordinate the loop below reaches -- each
+# level's random-effect sds, its correlations, and, for a reduced-rank level,
+# its loadings instead of the scales (see the comment at `load_index` below
+# for why those are scaled by `1 / sqrt(rank)` rather than left at 1). Time
+# independent predictor effects get their own scale from `standata`, not this
+# one. One of the seven leverage constants that move where a fit ends
+# (`review/OPTIM-consolidation-plan-2026-09-25.md` Appendix B) --
+# `priors = 'randomCorr'`, `.ctBackendRandomCorrPriorSpec` above, is the
+# narrower default that applies the same N(0,1) to the correlations alone.
 .ctBackendLaplacePriorSpec <- function(standata, laplace, npar) {
   if (is.null(standata)) {
     stop("priors=TRUE needs the prepared model data; this fit was built without it.",
@@ -582,10 +594,13 @@
   }
   module <- .ctJuliaModule(.ctBackendSpec(fit)$project)
   # `gradient='forward'` selects `ctsem_hessian_forward` instead of
-  # `ctsem_hessian`: a model with a sampled (missing) TI predictor value
-  # forces exactly this (see `.ctFitJuliaBackendImpl`), because
-  # `ctsem_hessian` nests over the adjoint gradient, which refuses such a
-  # model outright rather than silently omitting its cotangent.
+  # `ctsem_hessian`, whichever the caller asked `optimcontrol$gradient` for
+  # (default 'adjoint'; see `.ctFitJuliaBackendImpl`). A sampled (missing) TI
+  # predictor value used to force 'forward' here, because `ctsem_hessian`
+  # nested over the adjoint gradient and refused such a model outright; the
+  # reverse pass covers it now (see the note beside `gradient <-` in
+  # `.ctFitJuliaBackendImpl`), so neither method is singled out for it any
+  # more and this just follows what the fit itself used.
   hessian_fn_name <- if (identical(gradient, "forward")) "ctsem_hessian_forward" else "ctsem_hessian"
   # A user whose cached engine environment predates this function has no such
   # function, and that is a silent fallback rather than an error: the engine
