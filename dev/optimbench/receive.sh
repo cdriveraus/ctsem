@@ -38,7 +38,7 @@ install_to() {
   [ -f "$lib/ctsem/DESCRIPTION" ] || { echo "install left no ctsem in $lib"; exit 1; }
   # Zero when the copied objects were reused; a Stan rebuild shows as several.
   local n
-  n="$(grep -c 'g++\|gcc' "$lib/install.log" || true)"
+  n="$(grep -c '^g++ \|^gcc ' "$lib/install.log" || true)"
   echo "compiler invocations during install: $n"
 }
 
