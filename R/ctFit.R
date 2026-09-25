@@ -467,15 +467,16 @@ T0VARredundancies <- function(ctm) {
 #' With \code{backend='julia'} that route is exact -- no Gaussian
 #' assumption is made about the state anywhere, where the filter's update
 #' for a binary, ordinal or count indicator is an assumed-density
-#' projection. Pair it with \code{optimize=FALSE}: sampling the joint
-#' density gives the posterior of parameters and states together, while
-#' \code{optimize=TRUE} gives its joint mode, whose variance parameters
-#' are biased downward. Standard errors for an optimised fit come from the
-#' Hessian with the states profiled out, and \code{uncertainty} is
-#' restricted to \code{'hessian'} for that reason.
+#' projection. Use it with \code{optimize=FALSE}: sampling the joint
+#' density gives the posterior of parameters and states together.
+#' \code{optimize=TRUE} is refused, because the joint mode is degenerate --
+#' the states re-optimise to absorb almost any change in the parameters --
+#' and is not an estimate. \code{optimcontrol$estonly=TRUE} returns it
+#' anyway, with no standard errors; the profile curvature is kept at
+#' \code{fit$optim$hessian_profile}.
 #' Generally recommended to set TRUE unless using non-gaussian measurement model.
 #' @param binomial Deprecated. Logical indicating the use of binary rather than Gaussian data, as with IRT analyses.
-#' This now sets \code{intoverstates = FALSE} and the \code{manifesttype} of every indicator to 1, for binary.
+#' This now sets the \code{manifesttype} of every indicator to 1, for binary.
 #' @param fit If TRUE, fit specified model using Stan, if FALSE, return stan model object without fitting.
 #' @param poprank Rank of the population covariance of the individually
 #' varying parameters.
@@ -1503,10 +1504,9 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     warning('binomial argument is deprecated -- set manifesttype in the model object to 1 for binary indicators instead. It has set manifesttype=1 for every indicator.', call.=FALSE)
     # It used to set `intoverstates <- FALSE` as well, which is a leftover from
     # when binary data meant sampling the latent states rather than integrating
-    # them. The very next check warns that `intoverstates=TRUE` is required for
-    # sensible optimization -- so the documented shortcut put a user straight
-    # into the state the code itself calls unreliable, under the default
-    # `optimize=TRUE`. Setting `manifesttype` directly never did that, and the
+    # them. The very next check refuses `intoverstates=FALSE` with
+    # `optimize=TRUE` -- so the documented shortcut would now put a user
+    # straight into an error, under the default `optimize=TRUE`. Setting `manifesttype` directly never did that, and the
     # linearised measurement handles binary indicators with the filter intact:
     # on a three-indicator model it recovers a generating drift of -0.3 as
     # -0.279 and a diffusion of 0.8 as 0.681, both intervals containing the
@@ -1519,6 +1519,28 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     message('HMC sampling requested, but priors disabled -- are you sure? consider setting priors=TRUE')
     # !priors <- FALSE
   }
+  # `intoverstates=FALSE` with `optimize=TRUE` maximises the joint density of
+  # the parameters and the innovations that build the states, and that mode is
+  # degenerate rather than merely biased: with an innovation per observation
+  # the states re-optimise to absorb almost any change in the parameters, so
+  # the profile is nearly flat -- its largest eigenvalue measured 0.05 on 15
+  # subjects x 6 rows, against 22.8 for a well-determined count parameter --
+  # and a joint fit reports a better log likelihood and a better conditioned
+  # Hessian for changes that mean nothing. Sampling the same density is sound,
+  # which is what the route is for, so this is refused and points there.
+  #
+  # `estonly` is the way through for someone who wants the mode regardless;
+  # the warnings below still say what it does. Not for `fit=FALSE`, which
+  # optimises nothing and returns the prepared model, whose joint density is a
+  # fair thing to evaluate. A property of the estimator rather than of a
+  # backend, so it stands for both.
+  if(isTRUE(optimize) && !isTRUE(intoverstates) && isTRUE(fit) &&
+      !isTRUE(optimcontrol$estonly)) stop(
+    'optimize=TRUE with intoverstates=FALSE maximises over the latent states, ',
+    'and that joint mode is degenerate rather than an estimate. Use ',
+    'optimize=FALSE to sample the states, or intoverstates=TRUE to integrate ',
+    'them out. optimcontrol$estonly=TRUE returns the joint mode anyway, ',
+    'without standard errors.', call.=FALSE)
   # Maximising over the states rather than integrating them out biases the
   # variance parameters downward -- a variance whose own realisations are
   # being chosen at the same time can always be made to look smaller -- so
