@@ -175,6 +175,10 @@
   # reachable -- it is the only way to compare the two on a real model.
   needsHessian <- uncertainty %in% c("hessian", "sandwich", "bootstrap", "is") ||
     (uncertainty == "surrogate" && is.null(control$initialCov))
+  # What the fit already knows about its curvature, kept before
+  # `fit$uncertainty` is replaced below: the Hessian the certification decided
+  # on, where it was evaluated, and that certification.
+  stored <- fit$uncertainty
   hessian <- if (needsHessian && !identical(control$analyticHessian, FALSE)) {
     .ctBackendHessian(fit, est, verbose = verbose)
   } else NULL
@@ -260,7 +264,17 @@
   # Hessian to check the refusal, and the refusal stopped firing. Nothing in
   # `$uncertainty` may be a prefix-extension of another name there; the
   # duplication ratchet asserts it.
-  if (!is.null(uncertaintyfit$hessian)) uncertaintyfit$evaluated_at <- as.numeric(est)
+  #
+  # The stored matrix, when it was the one used, keeps the point it was
+  # evaluated at: the optimiser's finish may have taken it at the hand-over, a
+  # hundredth of a standard error or less from `est`, and saying `est` would
+  # claim more than was measured.
+  reused <- !is.null(stored$hessian) && !is.null(uncertaintyfit$hessian) &&
+    identical(uncertaintyfit$hessian, stored$hessian)
+  if (!is.null(uncertaintyfit$hessian)) {
+    uncertaintyfit$evaluated_at <- if (reused && length(stored$evaluated_at))
+      as.numeric(stored$evaluated_at) else as.numeric(est)
+  }
   fit$uncertainty <- uncertaintyfit
   # And the identifiability report, for the same reason: it is a statement
   # about the curvature this call just used. A fit made with `estonly = TRUE`
@@ -276,8 +290,19 @@
   # objective still available under the local quadratic approximation, over the
   # subspace whose curvature the data supports, plus a measurement of what the
   # excluded directions hold. See R/ctBackendOptimGap.R.
-  fit$uncertainty$certification <- .ctBackendCertification(fit,
-    uncertaintyfit$hessian, tolerance = .ctBackendGapTolerance(fit))
+  #
+  # Once per fit. The certification made on the way out of the optimiser was
+  # decided on this same matrix, with the engine's own probe, so it is kept;
+  # computing it again here with another evaluator, and overwriting it, is what
+  # this stage used to do. Only a matrix from elsewhere -- a fit certified with
+  # none (`estonly`), an estimate moved since -- is certified here.
+  fit$uncertainty$certification <- if (reused &&
+      length(stored$certification$status)) {
+    stored$certification
+  } else {
+    .ctBackendCertification(fit, uncertaintyfit$hessian,
+      tolerance = .ctBackendGapTolerance(fit))
+  }
   # And `converged` with it: a fit finished here had only the engine's verdict
   # until this call, and that verdict is what this one replaces.
   fit <- .ctBackendCertifiedVerdict(fit)
@@ -575,27 +600,22 @@
   # A state-explicit fit maximised a different object, so its curvature is a
   # different object too. See `.ctBackendJointHessian`.
   if (isFALSE(fit$args$resolved$intoverstates)) return(.ctBackendJointHessian(fit, est))
-  # The convergence certification computed this matrix, at this estimate, on
-  # the way out of the optimiser -- see `.ctBackendCorrectResult()`. Recomputing
-  # it would be the fit's second most expensive step run twice for the same
-  # answer.
+  # The optimiser's finish formed this matrix on the way out, and the
+  # certification decided on it -- see `.ctBackendCorrectResult()`.
+  # Recomputing it would be the fit's second most expensive step run twice for
+  # the same answer.
   #
-  # Reused only when it was evaluated at the point being asked about, and
-  # `evaluated_at` is what says where that was. Comparing against
+  # Reused only when it describes the point being asked about: evaluated there,
+  # or within a hundredth of a standard error of it (`.ctBackendStoredHessian()`),
+  # and `evaluated_at` is what says where it was. Comparing against
   # `fit$estimate$raw` instead is the trap: it is the same point on an
   # optimised fit and a different one on a sampled fit, whose Hessian is at the
   # Laplace estimate while `$estimate$raw` is the posterior mean -- so a guard
   # written that way passes exactly where it must not and returns curvature
   # from somewhere else. A fit carrying a Hessian and no `evaluated_at` predates
   # this and is not reused.
-  stored <- fit$uncertainty$hessian
-  at <- fit$uncertainty$evaluated_at
-  if (!is.null(stored) && is.matrix(stored) && !is.null(at) &&
-      nrow(stored) == length(est) && ncol(stored) == length(est) &&
-      length(at) == length(est) &&
-      isTRUE(all.equal(as.numeric(at), as.numeric(est), tolerance = 0))) {
-    return(stored)
-  }
+  stored <- .ctBackendStoredHessian(fit, est)
+  if (!is.null(stored)) return(stored)
   module <- .ctJuliaModule(.ctBackendSpec(fit)$project)
   # `gradient='forward'` selects `ctsem_hessian_forward` instead of
   # `ctsem_hessian`, whichever the caller asked `optimcontrol$gradient` for

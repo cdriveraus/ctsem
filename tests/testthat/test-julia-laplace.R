@@ -1211,6 +1211,26 @@ test_that("gradient = 'forward' still gives a Laplace fit's certification its cu
   expect_gte(fit$optim$hessian_evaluations, 1L)
 })
 
+test_that("a Laplace fit ends on one Hessian, the one the optimiser's finish took", {
+  skip_without_julia()
+  # A Laplace Hessian is 2 npar gradients. The finish takes one where L-BFGS
+  # stops, keeps it for its steps, and hands it to the certification and the
+  # standard errors, which form no other. Before 2026-09-25 no finish ran on
+  # this route and R formed the certification's Hessian itself, so the engine
+  # reported none.
+  fit <- suppressWarnings(suppressMessages(ctFit(.laplace_test_data(),
+    .laplace_test_model(), backend = "julia", intoverpop = "laplace",
+    optimcontrol = list(laplace_correct = FALSE, finishsamples = 50))))
+  expect_equal(fit$optim$newton_hessians, 1L)
+  expect_equal(fit$optim$hessian_evaluations, 1L)
+  expect_length(fit$optim$corrections, 0L)
+  expect_equal(fit$uncertainty$certification$status, "certified")
+  # Where it was taken, and that it describes the estimate the fit reports.
+  expect_lte(fit$optim$hessian_distance, .ctBackendHessianReuse())
+  expect_identical(.ctBackendHessian(fit, as.numeric(fit$estimate$raw)),
+    fit$uncertainty$hessian)
+})
+
 # Weak data for a nonlinear random effect: 40 subjects, six waves, a random
 # `-log1p_exp` drift beside random T0MEANS and CINT. The subjects are simulated
 # here, not by ctGenerate, whose draw stream moves under unrelated commits.

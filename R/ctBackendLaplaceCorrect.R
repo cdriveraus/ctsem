@@ -419,10 +419,10 @@ print.ctLaplaceCorrection <- function(x, ...) {
   est <- as.numeric(fit$estimate$raw)
   npar <- length(est)
   hessian <- fit$uncertainty$hessian
-  at <- fit$uncertainty$evaluated_at
-  usable <- is.matrix(hessian) && nrow(hessian) == npar &&
-    ncol(hessian) == npar && length(at) == npar &&
-    isTRUE(all.equal(as.numeric(at), est, tolerance = 0))
+  # The curvature at the estimate: evaluated there, or within a hundredth of a
+  # standard error, where the optimiser's finish keeps the Hessian it took at
+  # the hand-over (see `.ctBackendStoredHessian()`).
+  usable <- !is.null(.ctBackendStoredHessian(fit, est))
   # A 1x1 NaN rather than an empty matrix: an empty one deadlocks the bridge,
   # and the engine reads any size mismatch as "no Hessian".
   if (!usable) hessian <- matrix(NaN, 1L, 1L)
