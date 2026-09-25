@@ -99,13 +99,13 @@ test_that("an update that keeps the estimates keeps their backend", {
 # Refusals that need no julia session --------------------------------------
 
 test_that("a julia fit refuses recompile by name", {
-  fit <- structure(list(ctstanmodelbase = ctstantestfit$ctstanmodelbase),
+  fit <- structure(list(modelbase = ctstantestfit$ctstanmodelbase),
     class = c("ctJuliaFit", "ctFit"))
   expect_error(ctFitUpdate(fit, recompile = TRUE), "recompile")
 })
 
 test_that("a julia fit without the model it was built from says how to refit", {
-  # What a julia fit made before fits carried `$ctstanmodelbase` looks like
+  # What a julia fit made before fits carried `$modelbase` looks like
   # to this function. Its `$model` is the prepared form, which ctFit() cannot
   # prepare again, so the only way on is the model the user still has.
   fit <- structure(list(estimate = list(raw = 0)),
@@ -162,9 +162,17 @@ test_that("a julia fit without the model it was built from says how to refit", {
 test_that("a julia fit carries the model it was given", {
   skip_without_julia()
   fits <- .update_fits()
-  for (fit in fits) expect_identical(fit$ctstanmodelbase, .update_model())
-  # And the model it runs is not that one: handing this back to ctFit()
-  # would prepare it a second time.
+  for (fit in fits) {
+    expect_identical(ctsem:::.ctFitBaseModel(fit), .update_model())
+    # And every reader of the model the fit runs still gets that one. Stored
+    # as `$ctstanmodelbase`, the stan fit's name, it was what `fit$ctstanmodel`
+    # returned on a julia fit -- `$` matches a unique prefix -- and
+    # prediction was re-prepared from the unprepared model.
+    expect_null(fit$ctstanmodel)
+    expect_identical(ctsem:::.ctFitModelObject(fit), fit$model_spec$model)
+  }
+  # Which is not the model it was given: handing that back to ctFit() would
+  # prepare it a second time.
   expect_gt(nrow(fits$optimised$model$pars), nrow(.update_model()$pars))
 })
 
@@ -177,7 +185,7 @@ test_that("a prepared julia model keeps the data frame its accessors read", {
   expect_s3_class(spec$data, "data.frame")
   expect_equal(unique(spec$data$id), unique(data$id))
   expect_equal(nrow(spec$data), nrow(data))
-  expect_identical(spec$ctstanmodelbase, .update_model())
+  expect_identical(ctsem:::.ctFitBaseModel(spec), .update_model())
 })
 
 test_that("a julia fit updates without refitting, unchanged", {

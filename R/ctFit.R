@@ -343,7 +343,8 @@ ctFitUpdate <- function(oldfit, data=NA, recompile=FALSE,refit=FALSE,...){
     "program of a stan fit, and a julia fit has none. Drop it.", call.=FALSE)
   # The model as the caller wrote it. Not `.ctFitModelObject()`, which is that
   # model after preparation and cannot be prepared a second time.
-  if(is.null(oldfit$ctstanmodelbase)) stop("This fit does not carry the model ",
+  basemodel <- .ctFitBaseModel(oldfit)
+  if(is.null(basemodel)) stop("This fit does not carry the model ",
     "it was built from, which julia fits made before ctFitUpdate() supported ",
     "them do not, so it cannot be rebuilt. Fit again from its estimate with ",
     "the model you passed to ctFit(): ctFit(datalong, model, inits = ",
@@ -410,7 +411,7 @@ ctFitUpdate <- function(oldfit, data=NA, recompile=FALSE,refit=FALSE,...){
   }
   args$fit <- refit
   args$inits <- .ctFitRawEstimate(oldfit)
-  args$model <- oldfit$ctstanmodelbase
+  args$model <- basemodel
   args$ctstanmodel <- NULL
   # The data the fit was made with, unless replacement data is given. (This was
   # `length(data==1)`, which is TRUE for any data set, so the old data was
@@ -425,7 +426,7 @@ ctFitUpdate <- function(oldfit, data=NA, recompile=FALSE,refit=FALSE,...){
     # A prepared julia model is its own specification, carrying the call, the
     # prepared data and the model beside it; a fit keeps those apart.
     spec <- unclass(newfit)
-    spec[c('args', 'standata', 'ctstanmodelbase')] <- NULL
+    spec[c('args', 'standata', 'modelbase')] <- NULL
     # `nlcontrol$nsubsteps = 'auto'` leaves the fit with a mesh: one substep
     # count per row of the data it was chosen for, at the estimate. The same
     # rows keep it; other rows get the one the fit would have chosen for them
@@ -2383,12 +2384,13 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     # returns the prepared model spec then, unclassed by `$args` before, and
     # assigning a list element to it here does not disturb its class.
     juliafit$args <- list(input = args, resolved = argsresolved)
-    # The model as the caller wrote it, as a stan fit carries it and under the
-    # same name. `$model` is not that: it is what the engine ran, after
-    # `.ctModelIntOverPop()` and the rest of the preparation above, and handing
-    # it back to ctFit() prepares it a second time -- which errors on the
-    # augmented route. ctFitUpdate() rebuilds a fit from this one.
-    juliafit$ctstanmodelbase <- ctstanmodel
+    # The model as the caller wrote it, which a stan fit carries as
+    # `$ctstanmodelbase`. `$model` is not that: it is what the engine ran,
+    # after `.ctModelIntOverPop()` and the rest of the preparation above, and
+    # handing it back to ctFit() prepares it a second time -- which errors on
+    # the augmented route. ctFitUpdate() rebuilds a fit from this one. Read it
+    # through `.ctFitBaseModel()`, which says why the name differs.
+    juliafit$modelbase <- ctstanmodel
     # `$data`/`$standata` mean the same thing on both backends: `$standata` is
     # the prepared data with the 99999 missing-value sentinel intact, `$data`
     # is the same thing with that sentinel replaced by `NA` (see
