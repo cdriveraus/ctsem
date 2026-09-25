@@ -312,18 +312,29 @@ test_that("ctPostPredict() runs on a julia backend fit", {
   expect_true(all(vapply(plots, function(p) inherits(p, "ggplot"), logical(1))))
 })
 
-test_that("ctGenerateFromPriors() refuses a julia backend fit with an informative message", {
+test_that("ctGenerateFromPriors() generates over a julia backend fit's own design", {
   skip_without_julia()
-  # The reason changed when this function stopped fitting. It is no longer that
-  # a julia fit lacks stan fit structures -- it is that a julia fit does not
-  # carry the unaugmented model, only the form .ctModelIntOverPop() produced,
-  # and re-preparing from that would augment it twice. The message says to pass
-  # the model, which is all this ever wanted.
+  # A julia fit used to be refused, because it carried only the form
+  # .ctModelIntOverPop() produced, and re-preparing from that would augment it
+  # twice. It now keeps the model it was given, so it is unwrapped as a stan
+  # fit is: that model, over the fit's own subjects and times.
   model <- .generate_model()
   data <- .generate_data()
   fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
-  expect_error(ctGenerateFromPriors(fit), regexp = "does not carry")
-  expect_error(ctGenerateFromPriors(fit), regexp = "Pass the model instead")
+  # The julia default is a prior on the random-effect correlations only, and
+  # the draws use every parameter's prior, so that is said.
+  expect_warning(out <- suppressMessages(ctsem:::.ctGenerateFromPriors(fit,
+    nsamples = 3, cores = 1, backend = "julia")), regexp = "randomCorr")
+  expect_equal(dim(out$Y), c(3L, nrow(data), 1L))
+  expect_true(all(is.finite(out$Y)))
+
+  # A julia fit made before fits kept their model has only the augmented form,
+  # and is still refused, with the way past it.
+  old <- fit
+  old[c("modelbase", "ctstanmodelbase")] <- NULL
+  expect_null(ctsem:::.ctFitBaseModel(old))
+  expect_error(ctsem:::.ctGenerateFromPriors(old), regexp = "does not carry")
+  expect_error(ctsem:::.ctGenerateFromPriors(old), regexp = "Pass the model instead")
 })
 
 # Generation on the Laplace random-effect route (intoverpop='laplace') ------

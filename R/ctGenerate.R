@@ -63,45 +63,29 @@ ctModeltoNumeric <- function(ctmodelobj){
 
   backend <- match.arg(backend)
 
-  # A julia fit is refused for one specific reason, and it is no longer the old
-  # one about stan fit structures: it does not carry the model it was built
-  # from. `$ctstanmodelbase` is absent, `$args$input$model` is NULL, and what
-  # `.ctFitModelObject()` finds is the model after .ctModelIntOverPop() has
-  # augmented it -- 18 parameter rows against the 8 the user wrote. Re-preparing
-  # from that would augment it again and quietly renumber the raw vector the
-  # prior indices refer to, which is worse than saying so.
-  #
-  # The model is all this wants, so pass it.
-  if(inherits(cts, 'ctJuliaFit')) stop(
-    'ctGenerateFromPriors() needs the model, and a julia fit does not carry ',
-    'the unaugmented model it was built from -- only the augmented form the ',
-    'engine runs, which cannot be prepared again. Pass the model instead: ',
-    'ctGenerateFromPriors(mymodel), adding datastruct if you want the design ',
-    "this fit used rather than a default one. backend='julia' is about which ",
-    'engine generates the data and is available either way.',
-    call.=FALSE)
-
   # A fit is unwrapped to the two things this needs -- the model it was built
-  # from, and the design to generate over. `$ctstanmodelbase` is the model as
-  # the user wrote it; `$ctstanmodel`, which .ctFitModelObject() returns and
-  # every other backend-agnostic caller wants, is that model after
-  # .ctModelIntOverPop() has augmented it. Handing the augmented one back to
-  # ctFit() below augments it a second time -- measured on ctstantestfit, 28
-  # parameter rows against 82 -- and it does not survive that.
-  if('ctStanFit' %in% class(cts)){
-    # Three places, in order, because a fit made before `$args$resolved`
-    # existed has only the other two -- and `ctstantestfit`, the fit every
-    # example on this page uses, is one of them.
-    priors <- cts$args$resolved$priors
-    if(is.null(priors)) priors <- cts$args$priors
-    if(is.null(priors) && !is.null(cts$standata$priors)) priors <- as.logical(cts$standata$priors)
-    datastruct <- standatatolong(cts$standata, origstructure=TRUE, ctm=cts$ctstanmodelbase)
-
-    cts <- cts$ctstanmodelbase
-
-  } else priors<-TRUE
-
-  if(!is.null(priors) && !as.logical(priors)) stop('Priors disabled, cannot sample from prior!')
+  # from, and the design to generate over. The model is the one the user passed
+  # to ctFit(), which `.ctFitBaseModel()` returns for either backend. What
+  # `.ctFitModelObject()` returns, and every other backend-agnostic caller
+  # wants, is that model after .ctModelIntOverPop() has augmented it. Handing
+  # the augmented one back to ctFit() below augments it a second time --
+  # measured on ctstantestfit, 28 parameter rows against 82 -- and renumbers
+  # the raw vector the prior indices refer to. A julia fit made before fits
+  # carried their model has only the augmented form, so it is refused, with
+  # the way past it.
+  if(inherits(cts, c('ctStanFit', 'ctJuliaFit'))){
+    fit <- cts
+    cts <- .ctFitBaseModel(fit)
+    if(is.null(cts)) stop(
+      'This fit does not carry the model it was built from -- julia fits made ',
+      'before fits kept it do not -- and the augmented form it runs cannot be ',
+      'prepared again. Pass the model instead: ctGenerateFromPriors(mymodel), ',
+      'adding datastruct if you want the design this fit used rather than a ',
+      "default one. backend='julia' is about which engine generates the data ",
+      'and is available either way.', call.=FALSE)
+    datastruct <- .ctFitLongData(fit)
+    .ctPriorScopeWarning(fit)
+  }
 
   # A model on its own is enough to ask what its prior implies. `datastruct`
   # says which subjects and times to generate for; a fit brought one, and
@@ -229,6 +213,36 @@ ctModeltoNumeric <- function(ctmodelobj){
   # `datapoints` and dim 2 `samples`, which is the wrong way round and
   # contradicted the @return text directly above.
   list(Y = ppf$generated$Y, llrow = ppf$generated$llrow)
+}
+
+# Says so when the fit had less than the full prior the draws come from.
+#
+# The draws always use every parameter's prior -- `.ctGenerateFromPriors()`
+# prepares with `priors = TRUE` whatever the fit used -- because that is what a
+# prior predictive is. A fit made with less used to be refused. That belonged to
+# the route this replaced, which fitted the model to an empty dataset and so had
+# nothing to optimise without a prior; drawing directly has no such need.
+#
+# `priorscope` says which prior the fit had. `priors` alone cannot, because
+# ctFit() reduces the julia default 'randomCorr' to TRUE. A fit made before
+# `priorscope` was recorded has only the logical: under `$args$resolved`, as
+# `ctstantestfit` has it; in `$args` itself for a fit saved by 3.11.1; or,
+# failing both, in the prepared data.
+.ctPriorScopeWarning <- function(fit){
+  scope <- fit$args$input$priorscope
+  if(is.null(scope)){
+    priors <- fit$args$resolved$priors
+    if(is.null(priors)) priors <- fit$args$priors
+    if(is.null(priors) && !is.null(fit$standata$priors))
+      priors <- as.logical(fit$standata$priors)
+    scope <- if(is.null(priors) || isTRUE(as.logical(priors))) 'all' else 'none'
+  }
+  if(!scope %in% 'all') warning('This fit was specified with ',
+    if(scope %in% 'randomCorr') paste0("priors='randomCorr', a prior on the ",
+      'random-effect correlations only') else 'priors=FALSE',
+    '; these datasets draw every parameter from the prior the model specifies.',
+    call.=FALSE)
+  invisible(scope)
 }
 
 # ctsem's prior over the raw parameters, sampled directly.
