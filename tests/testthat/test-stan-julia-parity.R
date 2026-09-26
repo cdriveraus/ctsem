@@ -661,17 +661,23 @@ test_that("Stan and Julia's actual optimizers converge to the same fit for TD/TI
 
 test_that("which directions are named does not depend on how far the optimiser walked", {
   skip_without_julia()
-  # The fit above stops after a 1000-iteration resume that walks this fixture's
-  # ridge. Stopped without it -- the first stage alone, 74 iterations and
-  # 4.4e-04 lower in log likelihood on the same ridge -- the curvature along
-  # the ridge had decayed only to 1.7e-08 of the sharpest, above
-  # the 1e-8 the report used to require, so nothing was named; stopped part way
-  # along, nine of the ten were, because the tenth correlation's loading
-  # drifted from 0.19 to 0.28 across an absolute bar of 0.25. So any change to
-  # when a resume stops changed which parameters this fixture compared across
-  # backends. The likelihood screen names the same set at every stopping point.
+  # The fit above walks this fixture's ridge to a certified point. Stopped part
+  # way -- as the first stage alone once did, 74 iterations and 4.4e-04 lower
+  # in log likelihood on the same ridge -- the curvature along the ridge had
+  # decayed only to 1.7e-08 of the sharpest, above the 1e-8 the report used to
+  # require, so nothing was named; stopped further along, nine of the ten
+  # were, because the tenth correlation's loading drifted from 0.19 to 0.28
+  # across an absolute bar of 0.25. So any change to when a fit stops changed
+  # which parameters this fixture compared across backends. The likelihood
+  # screen names the same set at every stopping point.
+  #
+  # The early point is the first stage with a looser stopping rule and no
+  # resume, 4.2e-04 lower. `gapretries = 0` alone stopped there until the
+  # finish began handing an early hand-over back to L-BFGS (2026-09-26): the
+  # first stage now walks the ridge itself and certifies where the resumes
+  # used to end.
   full <- .parity_julia_fit()
-  early <- .parity_julia_fit(list(gapretries = 0L))
+  early <- .parity_julia_fit(list(innergaptol = 1e-4, gapretries = 0L))
   # Two different stopping points, or this compares a fit with itself.
   expect_lt(early$optim$iterations, full$optim$iterations)
   expect_gt(max(abs(early$estimate$raw - full$estimate$raw)), 0.5)
