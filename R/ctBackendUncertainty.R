@@ -130,8 +130,14 @@
 .ctBackendUncertaintySupported <- c("hessian", "surrogate", "is", "opg",
   "sandwich", "bootstrap")
 
+# `lpg` builds the log posterior the curvature, the flat-direction screen and
+# the draws are scored against, as `lpg(fit, gradient = )`; the fit's own
+# objective unless a caller brings another. The Laplace continuation does
+# (`.ctLaplaceContinue()`): its estimate maximises the quadrature objective,
+# and scoring the flat screen or an importance-sampling proposal against the
+# Laplace one would describe a different function from the one reported.
 .ctBackendUncertainty <- function(fit, uncertainty, draws, finishsamples,
-  cores, control, verbose) {
+  cores, control, verbose, lpg = .ctBackendLpgFunc) {
 
   if (!uncertainty %in% .ctBackendUncertaintySupported) {
     stop("uncertainty='", uncertainty, "' is not available for backend='",
@@ -163,7 +169,7 @@
     stop("The fit has no finite raw parameter estimate to work from.", call. = FALSE)
   }
   shape <- .ctBackendDataShape(fit)
-  lpgFunc <- .ctBackendLpgFunc(fit)
+  lpgFunc <- lpg(fit)
 
   # `cores` here means engine threads, not R processes: the Julia engine splits
   # its own subject loop, so each log-probability evaluation is parallel and
@@ -264,7 +270,7 @@
   juliaImis <- .ctImisProposalDefaults('julia')
   drawn <- .ctOptimDrawSamples(uncertaintyfit, draws = draws, control = control,
     est = est, finishsamples = finishsamples,
-    lpg = .ctBackendLpgFunc(fit, gradient = FALSE), verbose = verbose,
+    lpg = lpg(fit, gradient = FALSE), verbose = verbose,
     scaleInit = juliaImis$scaleInit, tailScale = juliaImis$tailScale)
   samples <- drawn$samples
   uncertaintyfit <- drawn$uncertaintyfit

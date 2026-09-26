@@ -5168,9 +5168,14 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # certification has converged the Laplace objective and after the uncertainty
   # stage has built the Hessian it steps against, which it reuses rather than
   # computing another. Before the constrained draws below, so that they are
-  # built once from the recentred draws. See `.ctLaplaceAutoCorrect()`.
+  # built once from the recentred draws. See `.ctLaplaceContinue()` for
+  # `laplace_correct = 'quadrature'`, the default, which replaces the
+  # covariance and draws with its own when it reaches its fixed point, and
+  # `.ctLaplaceAutoCorrect()` for `'step'`.
   if (!is.null(out$laplace) && isTRUE(intoverstates)) {
-    if (isTRUE(correctlaplace)) {
+    if (identical(correctlaplace, "quadrature")) {
+      out <- .ctLaplaceContinue(out, cores = cores, verbose = verbose)
+    } else if (identical(correctlaplace, "step")) {
       out <- .ctLaplaceAutoCorrect(out, cores = cores, verbose = verbose)
     } else {
       out$laplace$correction <- list(status = if (isTRUE(optimcontrol$estonly) &&
@@ -5261,8 +5266,11 @@ print.ctJuliaFit <- function(x, ...) {
   # standard error or more.
   corr <- x$laplace$correction
   if (isTRUE(corr$applied) && isTRUE(corr$material)) {
-    cat("  Laplace estimate corrected by quadrature: up to ",
-      format(max(abs(corr$delta_se), na.rm = TRUE), digits = 2),
+    cat("  Laplace estimate ", if (identical(corr$method, "quadrature"))
+        paste0("continued on the quadrature objective",
+          if (!identical(corr$continuation, "converged")) ", short of its fixed point")
+      else "corrected by quadrature",
+      ": up to ", format(max(abs(corr$delta_se), na.rm = TRUE), digits = 2),
       " standard errors, log likelihood ", format(corr$loglik_laplace, digits = 8),
       " -> ", format(corr$loglik_quadrature, digits = 8),
       ". See fit$laplace$correction.\n", sep = "")
@@ -5275,6 +5283,9 @@ print.ctJuliaFit <- function(x, ...) {
       " the quadrature value by ", format(abs(corr$gap_reported), digits = 3),
       " here and no quadrature step improved on it; the log likelihood ",
       "reported is the quadrature one. See fit$laplace$correction.\n", sep = "")
+  } else if (identical(corr$status, "too_wide")) {
+    cat("  Laplace estimate not corrected: every subject or group has more than ",
+      corr$maxdim, " random effects. See fit$laplace$correction.\n", sep = "")
   }
   # One line, only when there is something to say. A reported interval much
   # wider than the curvature at the estimate supports is not visible anywhere
