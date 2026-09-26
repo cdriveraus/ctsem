@@ -492,13 +492,25 @@ end
 #   more than `_CTSEM_HESSIAN_REUSE_SE` standard errors: one Hessian per fit in
 #   the common case.
 #
+# The early hand-over is on L-BFGS's own predicted gain, a proxy that after a
+# few iterations knows little of the curvature, so the finish checks it: a first
+# step on the exact Hessian that does not contract the predicted gain by
+# `contraction` is a point outside Newton's region, and the finish hands back to
+# L-BFGS, which runs on to its own stopping rule before the finish runs again.
+# Measured on the noise fixture of test-backend-summary.R from the prior
+# warm-up's start: L-BFGS handed over at its third iteration on a proxy of
+# 0.024 with an exact gain of 0.94 there, and the finish spent its cap of 30
+# steps and 13 Hessians walking 4.7 nats to a point it still called unfinished.
+#
 # Provenance: the hand-over at a predicted gain of 0.1, the cap of 30 steps and
 # the contraction of 0.25 that triggers a refresh were set when this optimiser
 # replaced Optim's (92499af5, 2026-09-24), on the seven regimes of
 # `dev/stochopt/models.R` (panel, panel5k, long, ordinal Laplace, nonlin, small,
-# bigp), and have not been swept since. The eigenvalue floor at 1e-8 of the
-# largest and the Levenberg start at 1e-4 are the usual safeguards, not tuned.
-# The consolidation plan's Appendix B has the list.
+# bigp), and have not been swept since; the hand-back reuses the contraction
+# rather than adding a constant. The eigenvalue floor at 1e-8 of the largest,
+# for the directions the certification does not trust, and the Levenberg start
+# at 1e-4 are the usual safeguards, not tuned. The consolidation plan's Appendix
+# B has the list.
 
 _ctsem_cheap_hessian(::CTSEMObjective) = true
 _ctsem_cheap_hessian(::Any) = false
@@ -743,6 +755,12 @@ flat-direction probe (`_ctsem_flat_probe`) at the final point.
 and the probe, with no step, no refresh and no ladder, for a point the optimiser
 left without a finish (`ctsem_endgame`).
 
+`handback = true` is for a hand-over L-BFGS made on its own predicted gain
+rather than at its stopping rule: when the first step does not contract the
+predicted gain by `contraction`, the point is outside Newton's region and the
+finish returns there, with `handback` set and no final Hessian, for L-BFGS to
+go on from.
+
 `value_at(y)`, the maximised objective or `-Inf` for the ladder and the probe,
 defaults to the route's own predicate (`_ctsem_probe_value`); `fg!` is the
 optimiser's trial path, for the steps.
@@ -751,8 +769,9 @@ Returns the point and its value and gradient (minimised); the Hessian of the
 MAXIMISED objective, or `nothing`, with `hessian_at` and `distance`; the steps
 taken, including escapes, and the predicted gain at the end; the full and
 subset Hessians formed and the calls made; the saddle record (`escapes`,
-`saddle`, `ladder_tried`, `ladder_gain`); the probe record; and the history of
-the steps, one entry each (`kind` is "newton", "exact" or "saddle").
+`saddle`, `ladder_tried`, `ladder_gain`); the probe record; whether it handed
+back (`handback`); and the history of the steps, one entry each (`kind` is
+"newton", "exact" or "saddle").
 """
 function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         maxit::Integer=30, contraction::Real=0.25, callback=nothing,
@@ -762,7 +781,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         probe::Bool=true, reuse_se::Real=_CTSEM_HESSIAN_REUSE_SE,
         flat_rtol::Real=_CTSEM_FLAT_RTOL, negative::Real=_CTSEM_NEGATIVE_RTOL,
         ladder=_CTSEM_SADDLE_LADDER, probe_lengths=_CTSEM_FLAT_PROBE_LENGTHS,
-        max_escapes::Integer=3, value_at=nothing)
+        max_escapes::Integer=3, value_at=nothing, handback::Bool=false)
     curvature in (:exact, :chord, :subset) || throw(ArgumentError(
         "newton curvature must be exact, chord or subset, got $(curvature)"))
     valueof = value_at === nothing ? (y -> _ctsem_probe_value(objective, y)) :
@@ -851,11 +870,24 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
     # the log posterior by less than 1e-4: inferred to be this, from those
     # numbers. At a saddle proper the gradient along that direction is zero
     # either way, and the ladder below is what leaves it.
+    #
+    # And a direction the certification trusts -- curvature above `flat_rtol`
+    # of the largest, `_ctsem_information_split`'s rule -- is taken at its own
+    # curvature however small, so the finish closes the gap the certification
+    # will measure; only the rest are floored. Floored as well, a trusted
+    # direction below 1e-8 of the largest was walked at a fraction of its
+    # Newton step, gaining a few percent of the missing likelihood a step: on
+    # AnomAuth S1 (bench, default start) a random-effect sd on a ray toward
+    # zero, at relative curvature 9e-11 and a Newton step of 0.25 raw units,
+    # took 35 chord steps of 1e-7 nats each against a gap of 1.1e-5, and the
+    # certification resumed the fit twice for it: 21 Hessians.
     function newton(Hm, Gv, mu)
         local E = eigen(Symmetric(Hm))
         local lmax = maximum(abs, E.values; init=0.0)
         lmax > 0 || return nothing
-        local floored = max.(abs.(E.values), 1e-8 * lmax)
+        local top = maximum(E.values)
+        local floored = [top > 0 && v > flat_rtol * top ? v :
+            max(abs(v), 1e-8 * lmax) for v in E.values]
         local c = E.vectors' * Gv
         local g = 0.5 * sum(abs2.(c) ./ floored; init=0.0)
         local lam = floored .+ mu * lmax
@@ -868,12 +900,13 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
     exact = curvature !== :subset       # `H` is the exact Hessian at `hat`
     steps = 0; escapes = 0; gain = Inf
     saddle = false; ladder_tried = false; ladder_gain = 0.0
+    firstgain = Inf; handed = false
     if H === nothing
         return (x=x, f=f, G=G, hessian=nothing, hessian_at=hat, distance=NaN,
             steps=0, gain=Inf, full_hessians=full_hessians,
             subset_hessians=subset_hessians, fcalls=0, gcalls=0, escapes=0,
             saddle=false, ladder_tried=false, ladder_gain=0.0,
-            probe=_ctsem_no_probe(), history=history)
+            probe=_ctsem_no_probe(), history=history, handback=false)
     end
     at_x = exact                        # `H` is the exact Hessian at `x`
     while true                          # once, and again after each escape
@@ -887,6 +920,15 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
                 converged = true
                 break
             end
+            # The check `handback` asks for, once: in Newton's region the first
+            # step contracts the predicted gain, which is here the hand-over
+            # Hessian's prediction at the point the step reached.
+            if handback && steps == 1 && escapes == 0 &&
+                    gain > contraction * firstgain
+                handed = true
+                break
+            end
+            steps == 0 && (firstgain = gain)
             trial = search(nt.step, dot(G, nt.step))
             if !trial.ok
                 if !at_x
@@ -908,6 +950,15 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             # Only the exact variant refreshes on slow contraction; the chord
             # and the subset keep their matrix, which is the point of them. A
             # step that fails outright still gets the exact Hessian (above).
+            #
+            # Also after a step that was on a fresh one, where slow contraction
+            # means the quadratic model does not hold rather than a stale
+            # matrix. Stopping the refreshes there was measured and it is worse:
+            # on the noise fixture of test-backend-summary.R from twelve random
+            # starts (cores = 1), 68 Hessians in all against 222, and four fits
+            # left on the ridge at -210.13, three of them notstationary, that
+            # the refreshed steps had climbed off -- to -207.02 twice, -207.29
+            # and -205.83.
             if curvature === :exact && gain / prevgain > contraction && steps > 1
                 H = hess(x); hat = copy(x); exact = true; at_x = true
                 H === nothing && break
@@ -916,6 +967,13 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
                 prevgain = gain
             end
         end
+        # Handed back: the point the step reached, and no final Hessian, since
+        # L-BFGS goes on from here and the finish runs again where it stops.
+        handed && return (x=x, f=f, G=G, hessian=nothing, hessian_at=hat,
+            distance=NaN, steps=steps, gain=gain, full_hessians=full_hessians,
+            subset_hessians=subset_hessians, fcalls=fcalls, gcalls=gcalls,
+            escapes=0, saddle=false, ladder_tried=false, ladder_gain=0.0,
+            probe=_ctsem_no_probe(), history=history, handback=true)
         H === nothing && break
         # The final Hessian. A chord Hessian the steps converged on, taken
         # within `reuse_se` standard errors of here, is kept: the exact one at
@@ -1008,7 +1066,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
      distance=distance, steps=steps, gain=gain, full_hessians=full_hessians,
      subset_hessians=subset_hessians, fcalls=fcalls, gcalls=gcalls,
      escapes=escapes, saddle=saddle, ladder_tried=ladder_tried,
-     ladder_gain=ladder_gain, probe=probed, history=history)
+     ladder_gain=ladder_gain, probe=probed, history=history, handback=false)
 end
 
 """

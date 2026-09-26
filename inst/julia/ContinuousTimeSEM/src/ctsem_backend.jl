@@ -1582,8 +1582,10 @@ will read what it returns, which adds the flat-direction probe and, on a route
 whose Hessian is expensive (Laplace), is what the finish runs for at all;
 `newton_curvature` is `:auto` (the route's own, `_ctsem_finish_curvature`),
 `:exact`, `:chord` or `:subset`; `newton_switch` is the predicted gain at which
-L-BFGS hands over where a Hessian is cheap; `newton_reuse` and `flat_rtol` are
-the finish's rules, passed from R so one number serves both sides. The stall
+L-BFGS hands over where a Hessian is cheap, and a finish whose first step shows
+that hand-over was early gives the point back to L-BFGS, which runs on to its
+own stopping rule before the finish runs again; `newton_reuse` and `flat_rtol`
+are the finish's rules, passed from R so one number serves both sides. The stall
 watch's `stall_carried` and `stall_alone` are set only on a stage resumed after
 a certification (see `CTSEMStallWatch`).
 
@@ -1861,13 +1863,19 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # certification asks `ctsem_endgame` for its numbers. Recorded in the trace
     # like any other iteration, with the exact predicted gain.
     finish = nothing
-    if finishing && stop_reason in ("gap", "linesearch", "gradient", "progress")
-        record = function (state)
-            _record!(trace, state.iteration, -state.value, state.g_norm,
-                state.gain, _ctsem_optimise_trace_values(objective)...)
-            seen_iterations[] = max(seen_iterations[], Int(state.iteration))
-            return false
-        end
+    # What a finish that gave the point back to L-BFGS had spent, carried into
+    # the totals below: its steps, Hessians and calls, and its history.
+    spent = (steps=Ref(0), fcalls=Ref(0), gcalls=Ref(0), hessians=Ref(0),
+        subset=Ref(0), history=(kind=String[], gain=Float64[], alpha=Float64[],
+        value=Float64[]))
+    handed_back = false
+    record = function (state)
+        _record!(trace, state.iteration, -state.value, state.g_norm,
+            state.gain, _ctsem_optimise_trace_values(objective)...)
+        seen_iterations[] = max(seen_iterations[], Int(state.iteration))
+        return false
+    end
+    while finishing && stop_reason in ("gap", "linesearch", "gradient", "progress")
         # From the full objective. A batch still short of the data when L-BFGS
         # stopped -- a line search can fail inside one -- left its own value
         # and gradient in the result.
@@ -1876,38 +1884,61 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         if batcher !== nothing && !_ctsem_batch_full(batcher)
             f0 = fg!(0.0, G0, minimizer)
         end
+        # A hand-over on L-BFGS's proxy rather than at its stopping rule, which
+        # the finish checks with its first step (`handback`).
+        early = handover > gap_tol
         finish = _ctsem_newton_finish(objective, minimizer, f0, G0, fg!;
             tol=gap_tol, maxit=newton_maxit, callback=record,
-            iteration0=result.iterations, curvature=finish_curvature,
-            probe=certify, reuse_se=newton_reuse, flat_rtol=flat_rtol)
+            iteration0=result.iterations + spent.steps[],
+            curvature=finish_curvature, probe=certify, reuse_se=newton_reuse,
+            flat_rtol=flat_rtol, handback=early)
         minimizer = collect(finish.x)
         # The finish's own gain replaces L-BFGS's metric proxy: it is the exact
         # decrement, which is what the verdict below should be judging.
         directional.dphi0 = -2 * finish.gain
-        if finish.hessian === nothing && handover > gap_tol
-            # No usable Hessian -- measured on a censored model, whose exact
-            # Hessian comes back non-finite -- so no finish either. L-BFGS
-            # carries on from where it handed over, to the ordinary stopping
-            # rule, rather than the fit ending 0.01 nats short.
-            handover = Float64(gap_tol)
-            stopped_by_gap[] = false
-            resumed = _ctsem_lbfgs(fg!, minimizer; memory=Int(lbfgs_memory),
-                metric=_ctsem_metric(precondition, length(start_values)),
-                initial_alpha=Float64(initial_alpha),
-                maxiter=max(0, Int(maxiter) - result.iterations),
-                g_tol=g_tol, f_tol=f_tol, x_tol=x_tol, callback=watch,
-                directional=directional, iteration0=result.iterations)
-            result = CTSEMLBFGSResult(resumed.minimizer, resumed.minimum,
-                resumed.gradient, result.iterations + resumed.iterations,
-                result.f_calls + resumed.f_calls, result.g_calls + resumed.g_calls,
-                resumed.g_converged, resumed.f_converged, resumed.x_converged,
-                resumed.linesearch_failed, resumed.stopped_by_callback,
-                result.batch_sizes, result.batch_iterations)
-            minimizer = collect(result.minimizer)
-            finish = nothing
-            stop_reason = reason_for(result)
-        end
+        (early && (finish.handback || finish.hessian === nothing)) || break
+        # L-BFGS carries on from where the finish left the point, to the
+        # ordinary stopping rule, rather than the fit ending short: either the
+        # hand-over was early (`handback`), or there is no usable Hessian --
+        # measured on a censored model, whose exact Hessian comes back
+        # non-finite -- and so no finish either, then or after.
+        again = finish.handback
+        handed_back |= again
+        spent.steps[] += finish.steps
+        spent.fcalls[] += finish.fcalls
+        spent.gcalls[] += finish.gcalls
+        spent.hessians[] += finish.full_hessians
+        spent.subset[] += finish.subset_hessians
+        append!(spent.history.kind, finish.history.kind)
+        append!(spent.history.gain, finish.history.gain)
+        append!(spent.history.alpha, finish.history.alpha)
+        append!(spent.history.value, finish.history.value)
+        finish = nothing
+        handover = Float64(gap_tol)
+        stopped_by_gap[] = false
+        resumed = _ctsem_lbfgs(fg!, minimizer; memory=Int(lbfgs_memory),
+            metric=_ctsem_metric(precondition, length(start_values)),
+            initial_alpha=Float64(initial_alpha),
+            maxiter=max(0, Int(maxiter) - result.iterations - spent.steps[]),
+            g_tol=g_tol, f_tol=f_tol, x_tol=x_tol, callback=watch,
+            directional=directional, iteration0=result.iterations + spent.steps[])
+        result = CTSEMLBFGSResult(resumed.minimizer, resumed.minimum,
+            resumed.gradient, result.iterations + resumed.iterations,
+            result.f_calls + resumed.f_calls, result.g_calls + resumed.g_calls,
+            resumed.g_converged, resumed.f_converged, resumed.x_converged,
+            resumed.linesearch_failed, resumed.stopped_by_callback,
+            result.batch_sizes, result.batch_iterations)
+        minimizer = collect(result.minimizer)
+        stop_reason = reason_for(result)
+        again || break
     end
+    # The finish's totals, a finish that handed back included.
+    newton_steps = spent.steps[] + (finish === nothing ? 0 : finish.steps)
+    newton_history = finish === nothing ? spent.history :
+        (kind=vcat(spent.history.kind, finish.history.kind),
+         gain=vcat(spent.history.gain, finish.history.gain),
+         alpha=vcat(spent.history.alpha, finish.history.alpha),
+         value=vcat(spent.history.value, finish.history.value))
     verbose && _ctsem_optimise_verbose_report(objective, call_log)
     final = ctsem_evaluate(objective, minimizer; gradient=true,
         contributions=true, gradient_method=gradient_method)
@@ -1923,8 +1954,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # `Optim.iterations` describes that second run alone, which can be fewer
     # than the user already watched go past. The closing line closes what was
     # on screen.
-    iterations = max(reporter.shown, result.iterations +
-        (finish === nothing ? 0 : finish.steps))
+    iterations = max(reporter.shown, result.iterations + newton_steps)
     # Running out of iterations is a different outcome from converging, and the
     # closing line used to report both as a bare count. On a stage whose cap is
     # the plan (`budget`) reaching it is not news; anywhere else it is the one
@@ -2035,8 +2065,10 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # the run was stopped by the callback -- there is no second source for
         # these, and inventing one would be worse than a number whose limit is
         # written down. `stopped_by_gap` is what says the run is such a case.
-        f_calls=result.f_calls + (finish === nothing ? 0 : finish.fcalls),
-        g_calls=result.g_calls + (finish === nothing ? 0 : finish.gcalls),
+        f_calls=result.f_calls + spent.fcalls[] +
+            (finish === nothing ? 0 : finish.fcalls),
+        g_calls=result.g_calls + spent.gcalls[] +
+            (finish === nothing ? 0 : finish.gcalls),
         # The batch sizes the run grew through and the iterations it grew at,
         # `[0]` when it did not batch -- never empty, for the bridge's sake.
         batch_sizes=isempty(result.batch_sizes) ? [0] : result.batch_sizes,
@@ -2047,9 +2079,15 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # certification's matrix, handed over so it is not computed twice.
         # `[0.0;;]` when there was no finish (a 1x1 zero, since an empty matrix
         # would hang the bridge).
-        newton_steps=finish === nothing ? 0 : finish.steps,
-        newton_hessians=finish === nothing ? 0 : finish.full_hessians,
-        newton_subset_hessians=finish === nothing ? 0 : finish.subset_hessians,
+        newton_steps=newton_steps,
+        newton_hessians=spent.hessians[] +
+            (finish === nothing ? 0 : finish.full_hessians),
+        newton_subset_hessians=spent.subset[] +
+            (finish === nothing ? 0 : finish.subset_hessians),
+        # Whether a finish found the hand-over early and gave the point back to
+        # L-BFGS (see `_ctsem_newton_finish`); its steps and Hessians are in the
+        # counts above.
+        newton_handback=handed_back,
         hessian=(finish === nothing || finish.hessian === nothing) ?
             zeros(1, 1) : finish.hessian,
         # Where that Hessian was evaluated, and how far `minimizer` is from
@@ -2081,14 +2119,14 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # "exact" or "saddle"), predicted gain, step length (a signed raw length
         # for an escape) and the objective after it. `newton_steps` says how
         # many entries are real; with none, one placeholder, for the bridge.
-        newton_history_kind=(finish === nothing || isempty(finish.history.kind)) ?
-            ["none"] : finish.history.kind,
-        newton_history_gain=(finish === nothing || isempty(finish.history.gain)) ?
-            [NaN] : finish.history.gain,
-        newton_history_alpha=(finish === nothing || isempty(finish.history.alpha)) ?
-            [NaN] : finish.history.alpha,
-        newton_history_value=(finish === nothing || isempty(finish.history.value)) ?
-            [NaN] : finish.history.value,
+        newton_history_kind=isempty(newton_history.kind) ? ["none"] :
+            newton_history.kind,
+        newton_history_gain=isempty(newton_history.gain) ? [NaN] :
+            newton_history.gain,
+        newton_history_alpha=isempty(newton_history.alpha) ? [NaN] :
+            newton_history.alpha,
+        newton_history_value=isempty(newton_history.value) ? [NaN] :
+            newton_history.value,
         # Why L-BFGS stopped: "gap", "stall", "progress", "linesearch",
         # "gradient", "tolerance", "cap" or "other".
         stop_reason=stop_reason,
