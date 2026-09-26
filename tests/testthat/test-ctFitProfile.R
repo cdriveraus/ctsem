@@ -161,10 +161,11 @@ test_that("plotting a profile draws a panel per parameter without complaint", {
 
 test_that("a profile separates a determined parameter from one on a flat ray", {
   skip_without_julia()
-  # The same noise fixture `test-backend-summary.R` uses, and for the same
-  # reason: a two-latent model fitted to noise puts one diffusion correlation
-  # on a ray along which the likelihood is exactly constant -- -207.01897 at
-  # every raw value from -6 to -20 -- while the other parameters are ordinary.
+  # The same noise fixture `test-backend-summary.R` uses, at the same point:
+  # its maximum, -205.827, which a default fit reaches and certifies (see the
+  # comment there for the lower one, -207.019, where unwarmed runs stopped).
+  # One diffusion correlation is on a ray along which the likelihood is flat
+  # to about 1e-10, while the other parameters are ordinary.
   set.seed(5)
   data <- do.call(rbind, lapply(1:30, function(i) data.frame(id = i,
     time = c(0, .5, 1.5, 2.4, 3.5), Y1 = stats::rnorm(5, 0, .5),
@@ -175,38 +176,21 @@ test_that("a profile separates a determined parameter from one on a flat ray", {
     CINT = matrix(0, 2, 1),
     DRIFT = matrix(c("auto1", "cross12", "cross21", "auto2"), 2, 2,
       byrow = TRUE)))
-  # `carefulfit = FALSE`, as in test-backend-summary.R: the prior warm-up
-  # takes this fixture to a better maximum (-205.83 certified, against
-  # -207.02), where an estonly run stops short, and this block needs the fit
-  # at a maximum with the flat ray described above.
+  # Profiled from an estonly fit started at the certified maximum, so every
+  # step is the default rather than half a standard error the flat direction
+  # does not have. Routing profile points through the fit's own pipeline makes
+  # each constrained reoptimisation as capable as the fit itself, and from the
+  # old stopping point, -207.019, one of them found +1.17 log-likelihood units
+  # -- which is how that point was found not to be the maximum. `$better`
+  # exists to catch exactly that; here it must stay empty.
+  # It warns twice, about the flat ray by name -- the Hessian repair and the
+  # identifiability report -- which is the finding checked field by field below.
+  fitted <- suppressWarnings(suppressMessages(ctFit(data, model,
+    backend = "julia", verbose = 0)))
+  expect_identical(fitted$uncertainty$certification$status, "certified")
   fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0,
-    optimcontrol = list(estonly = TRUE, carefulfit = FALSE)))
-
-  # Wrapped in suppressWarnings(): $better legitimately fires on this exact
-  # fixture (see below), and the warning it raises is expected, not silence
-  # this test needs to check for.
-  out <- suppressWarnings(ctFitProfile(fit,
-    parameters = c("auto1", "diff_eta2_eta1"), points = 6L))
-
-  # Routing profile points through the fit's own pipeline (`.ctJuliaOptimise()`
-  # with the fit's controls, not the engine's bare defaults) makes a
-  # constrained reoptimisation as capable as the fit itself -- which, on this
-  # exact fixture, finds that the original run was not quite at a maximum: a
-  # perturbed start a profile point begins from can trigger the same stall
-  # escape a fit itself relies on, from a trajectory the fit's own start never
-  # took. Measured here: +1.17 log-likelihood units while profiling `auto1`,
-  # unchanged by giving the original fit random restarts, so it is a property
-  # of this flat-ray fixture's landscape rather than of the escape being
-  # nondeterministic. `$better` exists precisely to catch this rather than
-  # silently report crossings around the wrong point, so this refits from the
-  # point it names -- exactly what the warning tells a caller to do -- and
-  # profiles that instead, which is what the rest of this test needs a genuine
-  # maximum for.
-  if (!is.null(out$better)) {
-    fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0,
-      inits = out$better$point, optimcontrol = list(estonly = TRUE)))
-    out <- ctFitProfile(fit, parameters = c("auto1", "diff_eta2_eta1"), points = 6L)
-  }
+    inits = fitted$estimate$raw, optimcontrol = list(estonly = TRUE)))
+  out <- ctFitProfile(fit, parameters = c("auto1", "diff_eta2_eta1"), points = 6L)
 
   # The fit was at a maximum, so no constrained point beat it. This is the
   # check that makes the rest of the output mean anything: a profile computed

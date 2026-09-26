@@ -422,40 +422,32 @@ test_that("summary reports fixed effects and system matrices, with intervals onl
     MANIFESTVAR = diag(c(.1, .1)), MANIFESTMEANS = matrix(0, 2, 1),
     T0MEANS = matrix(0, 2, 1), CINT = matrix(0, 2, 1),
     DRIFT = matrix(c("auto1", "cross12", "cross21", "auto2"), 2, 2, byrow = TRUE)))
-  # estonly: ctFit() now finishes with ctOptimUncertainty() as the Stan path
-  # does, and these assertions are about the point-estimate-only fit -- the
-  # one whose summary must not print an interval it has not earned.
+  # The fixture at its maximum. Fitted to noise, this model has at least two:
+  # -207.019, where runs from the old unwarmed start stopped, and -205.827,
+  # which the prior warm-up reaches and a profile through the fit's own
+  # pipeline confirms. What a flat ray looks like in the report is only a
+  # question at a maximum, so it is asked at the second, which a default fit
+  # reaches and certifies.
   #
-  # Nothing pins where the optimiser stops, and that is the point of the
-  # fixture rather than an omission. The diffusion correlation here is on a
-  # flat ray -- the fit walks out along it gaining nothing, -207.01897 to five
-  # decimals anywhere from raw -6 to -20 -- so where it stops is settled by
-  # whichever stopping rule ends the run, and the estimate is the same fit
-  # either way.
-  #
-  # This used to decide the *diagnosis*, and that was the bug. The curvature
-  # along that ray is not a property of the model and the data: it is a residue
-  # of the transform's own derivative, falling from 1.6e-08 to 7.1e-16 of the
-  # largest eigenvalue and then turning negative from rounding, purely as a
-  # function of how far out the fit walked. With the predicted-gain rule on it
-  # stopped at raw -9.27 and the direction read as determined; with it off it
-  # reached -14.46 and read as undetermined. Same estimate, same likelihood,
-  # opposite answer -- and the passing version of this test was relying on the
-  # optimiser wandering far enough for an eigenvalue to underflow.
-  #
-  # `.ctOptimFlatDirectionScreen()` is why it no longer does: the eigenvalue
-  # picks candidates and the likelihood decides, against the likelihood-ratio
-  # bound. Measured on this fixture, the direction moves the log likelihood by
-  # 1.7e-05 from the earlier stopping point and 5.6e-10 from the later one,
-  # against a bar of 1.92 -- so both stop there, and every assertion below now
-  # holds at either. Leaving the stopping rule free is what tests that.
-  #
-  # `carefulfit = FALSE` keeps the fixture where it was measured. The prior
-  # warm-up takes this noise fit to a better maximum -- -205.83 certified,
-  # against -207.02 -- where an estonly run stops short of converging, and
-  # this block is about how a converged fit with a flat ray is reported.
+  # One diffusion correlation is on a flat ray there: its raw coordinate sits
+  # near -15 and the log likelihood moves by about 1e-10 along the direction,
+  # against a bar of 1.92. The curvature along such a ray is a residue of the
+  # transform's own derivative rather than a property of the model and the
+  # data -- how small it reads depends on how far out the fit walked -- which
+  # is why the diagnosis is not left to an eigenvalue:
+  # `.ctOptimFlatDirectionScreen()` lets the eigenvalue pick candidates and the
+  # likelihood decide, against the likelihood-ratio bound.
+  # It warns twice, about the flat ray by name -- the Hessian repair and the
+  # identifiability report -- which is the finding checked field by field below.
+  fitted <- suppressWarnings(suppressMessages(ctFit(data, model,
+    backend = "julia", verbose = 0)))
+  expect_identical(fitted$uncertainty$certification$status, "certified")
+  # estonly: ctFit() finishes with ctOptimUncertainty() as the Stan path does,
+  # and the first assertions are about the point-estimate-only fit -- the one
+  # whose summary must not print an interval it has not earned. Started at the
+  # maximum, so it is the same point.
   fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0,
-    optimcontrol = list(estonly = TRUE, carefulfit = FALSE)))
+    inits = fitted$estimate$raw, optimcontrol = list(estonly = TRUE)))
 
   point <- summary(fit)
   expect_s3_class(point, "summary.ctStanFit")
