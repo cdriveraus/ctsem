@@ -34,13 +34,34 @@
 # forward accumulation the adjoint's own value comes from, in the same order,
 # so this changes no number; `test-backend-uncertainty.R` asserts the two
 # values bitwise rather than leaving that to be assumed.
+#
+# `gradient = FALSE` also carries a `'batch'` attribute: a function of a draws
+# matrix (rows are draws, as `imis_is`'s own `x_new` is shaped) returning one
+# log probability per row in a single bridge call, through the engine's
+# `ctsem_evaluate_batch`. `imis_is` reads it when present instead of its
+# per-draw `vapply` loop (see IS-importance-sampling-2026-09-06.md s1): the
+# per-draw loop's cost is almost entirely the bridge round trip rather than the
+# arithmetic -- about 41 ms per call measured there, independent of what the
+# call computes -- so collapsing 1000 calls into one is most of the cost of
+# `uncertainty = 'is'`. There is no batch form for `gradient = TRUE`: nothing
+# in this package asks for a batch of gradients, and `ctsem_evaluate_batch`
+# does not compute one.
+#
+# Deliberately not wrapped in a `try()` the way the per-draw closure below is.
+# A single bad proposal draw cannot make this throw -- `ctsem_evaluate_batch`
+# is a loop over `_ctsem_probe_value` on the engine side, and that already
+# turns a point the model cannot evaluate, or a laplace inner solve that does
+# not converge, into `-Inf` for that column without raising -- so an error out
+# of the bridge call here means the call itself was malformed (a shape
+# mismatch, a disconnected engine), which should surface rather than be read
+# as one more rejected draw.
 .ctBackendLpgFunc <- function(fit, gradient = TRUE) {
   if (!inherits(fit, "ctJuliaFit")) {
     stop("Unsupported fit class for backend uncertainty.", call. = FALSE)
   }
   wantgrad <- isTRUE(gradient)
   evaluate <- function(parm) ctJuliaEvaluate(fit, parm, gradient = wantgrad)
-  function(parm) {
+  fn <- function(parm) {
     result <- try(evaluate(as.numeric(parm)), silent = TRUE)
     failed <- inherits(result, "try-error")
     value <- if (failed) NaN else as.numeric(result$value)[1L]
@@ -59,6 +80,34 @@
     if (wantgrad) attributes(value) <- list(gradient = grad)
     value
   }
+  if (!wantgrad) {
+    module <- .ctJuliaModule(fit$model_spec$project)
+    objective <- .ctJuliaObjective(fit)
+    attr(fn, "batch") <- function(draws) {
+      draws <- as.matrix(draws)
+      # The engine takes columns as draws; `imis_is`'s `x_new` (and every
+      # other caller here) has rows as draws, the ordinary R convention for a
+      # sample matrix. Transposed once per batch rather than asking every
+      # caller to remember the engine's orientation.
+      values <- t(draws)
+      # Not an unconditional `JuliaConnectoR::juliaGet()`: a plain
+      # `Vector{Float64}` -- what `ctsem_evaluate_batch` returns -- comes back
+      # already converted to an R numeric, and `juliaGet()` on that throws
+      # ("no applicable method"), where the functions elsewhere in this file
+      # that return a NamedTuple (`.ctBackendHessian`, `.ctBackendJointHessian`)
+      # need it. `.ctBackendJuliaValue()` is the existing guard for exactly
+      # this -- unwrap a `JuliaProxy`, pass anything else through.
+      out <- as.numeric(.ctBackendJuliaValue(
+        module$ctsem_evaluate_batch(objective, values)))
+      # Same sentinel as the per-draw closure above, and for the same reason:
+      # a proposal the model cannot evaluate gets a finite, negligible weight
+      # rather than an infinite or NaN one reaching `imis_is`'s log-weight
+      # arithmetic.
+      out[!is.finite(out)] <- -1e100
+      out
+    }
+  }
+  fn
 }
 
 # The two counts `ctOptimCheckUncertaintyData` needs. The Julia spec has no
@@ -198,28 +247,21 @@
   #
   # Two arguments carry what is genuinely this backend's:
   #
-  #   `scaleInit = 1.5`, `tailScale = 1.2` -- wider than the curvature says. The
-  #   proposal starts from the Hessian covariance, which on a modest sample is
-  #   *narrower* than the posterior -- the very thing importance sampling is
-  #   being asked to correct -- and a proposal narrower than its target cannot
-  #   correct it, because the region carrying the missing mass is never visited.
-  #   This was 1.1, and returned standard errors within 10% of the Hessian's
-  #   where the posterior was up to twice as wide. Left at 1.5 after a second
-  #   measurement disagreed: on a 400-subject model stan's 1.1 measures better at
-  #   every evaluation count, but the reasoning above was measured on a
-  #   40-subject one, where the posterior really is wider than the curvature.
-  #   That is evidence one constant cannot serve both sample sizes, not evidence
-  #   against this one -- and the small-sample case is the only setting in which
-  #   importance sampling beats the exact Hessian at all, so the default stays
-  #   where the case for the method lives.
+  #   `scaleInit`/`tailScale` at julia's own value rather than stan's -- see
+  #   `.ctImisProposalDefaults()` for the measurements behind the two numbers
+  #   and why one constant does not serve both.
   #
   #   `lpg` value-only, not `lpgFunc`: `imis_is` reads the log probability and
   #   nothing else, so the reverse pass `lpgFunc` computes per draw was being
-  #   discarded by the `vapply` that collects it.
+  #   discarded by the `vapply` that collects it. Value-only is also what
+  #   carries the `'batch'` attribute (see `.ctBackendLpgFunc()`), so
+  #   `uncertainty = 'is'` evaluates a whole proposal batch in one bridge call
+  #   rather than one per draw.
+  juliaImis <- .ctImisProposalDefaults('julia')
   drawn <- .ctOptimDrawSamples(uncertaintyfit, draws = draws, control = control,
     est = est, finishsamples = finishsamples,
     lpg = .ctBackendLpgFunc(fit, gradient = FALSE), verbose = verbose,
-    scaleInit = 1.5, tailScale = 1.2)
+    scaleInit = juliaImis$scaleInit, tailScale = juliaImis$tailScale)
   samples <- drawn$samples
   uncertaintyfit <- drawn$uncertaintyfit
   control <- drawn$control
