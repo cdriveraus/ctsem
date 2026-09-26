@@ -644,12 +644,12 @@ print.ctLaplaceCorrection <- function(x, ...) {
 #            warning, keeping the rejected point, as bigIRT does.
 #   Hessian  of the hybrid at the final point, its nodes placed there: central
 #            differences of the exact gradient, as the Laplace Hessian is
-#            taken. Where the rounds reached the fixed point, covariance and
-#            draws come from it, not from the Laplace curvature at another
-#            point. Where they stopped short, the estimate is not stationary on
-#            that objective and its Hessian need not be concave, so the fit's
-#            own uncertainty stays and its draws are recentred, as the step
-#            correction's are; the continuation's certification is recorded.
+#            taken, and only where the rounds reached the fixed point; the
+#            covariance and draws then come from it, not from the Laplace
+#            curvature at another point. Where they stopped short, the
+#            estimate is not stationary on that objective and its Hessian need
+#            not be concave, so none is taken: the fit's own uncertainty stays
+#            and its draws are recentred, as the step correction's are.
 #
 # What moves when it applies: `fit$estimate$raw` is the continuation's
 # estimate; `loglik`, `logposterior` and `subject_loglik` the quadrature values
@@ -915,6 +915,18 @@ print.ctLaplaceCorrection <- function(x, ...) {
     return(fit)
   }
   tol <- .ctBackendGapTolerance(fit)
+  # What the continuation cost, in the engine's own counts: whole-objective
+  # values and gradients, placements of the rule, and the member likelihood
+  # values and reverse sweeps they took.
+  counts <- function() {
+    after <- get(module$ctsem_laplace_continuation_info(cont))
+    c(values = as.integer(after$value_calls),
+      gradients = as.integer(after$gradient_calls),
+      placements = as.integer(after$recentres),
+      member_values = as.numeric(after$member_values),
+      member_sweeps = as.numeric(after$member_sweeps),
+      refused = as.integer(after$refused))
+  }
   run <- try(.ctLaplaceContinueRun(module, cont, est, basis$basis, tol,
     control = control, verbose = verbose), silent = TRUE)
   if (inherits(run, "try-error")) {
@@ -960,16 +972,31 @@ print.ctLaplaceCorrection <- function(x, ...) {
     record$logposterior_quadrature <- as.numeric(start$quadrature)
     record$gap_reported <- as.numeric(start$quadrature) - as.numeric(start$laplace)
     fit <- report_quadrature(fit, start)
+    record$evaluations <- counts()
     record$seconds <- c(screen = screen_seconds, total = seconds())
     fit$laplace$correction <- record
     return(fit)
   }
   x <- run$x
-  if (verbose > 0) message("Laplace continuation: Hessian (", 2L * npar,
-    " gradients)")
-  hc <- try(matrix(as.numeric(.ctBackendJuliaValue(
-    module$ctsem_laplace_continuation_hessian(cont, .ctJuliaNumericVector(x)))),
-    npar, npar), silent = TRUE)
+  # The continuation's own curvature only where it reached its fixed point.
+  # Stopped short, the estimate is not stationary on the objective the Hessian
+  # is of, and on gated-gaps A14 that Hessian had two directions of positive
+  # curvature: ten parameters would have reported no interval, and the fit
+  # `converged: FALSE`, where the Laplace curvature at the fit's optimum gives
+  # them all one. So a continuation that stopped short keeps the fit's
+  # uncertainty and recentres its draws, as the step correction does, and
+  # takes no Hessian at all: its 2 npar gradients are the largest single cost
+  # of a correction on wide blocks, and `stationarity` in the record already
+  # says how far from stationary the estimate is.
+  reached <- identical(run$status, "converged")
+  hc <- NULL
+  if (reached) {
+    if (verbose > 0) message("Laplace continuation: Hessian (", 2L * npar,
+      " gradients)")
+    hc <- try(matrix(as.numeric(.ctBackendJuliaValue(
+      module$ctsem_laplace_continuation_hessian(cont, .ctJuliaNumericVector(x)))),
+      npar, npar), silent = TRUE)
+  }
   final <- get(module$ctsem_laplace_continuation_evaluate(cont,
     .ctJuliaNumericVector(x), gradient = TRUE))
   record$status <- "continued"
@@ -990,7 +1017,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
   record$objective <- as.numeric(final$value)
   fit$estimate$raw <- x
   fit <- report_quadrature(fit, info)
-  usable <- !inherits(hc, "try-error") && all(is.finite(hc))
+  usable <- reached && !inherits(hc, "try-error") && all(is.finite(hc))
   method <- .ctJuliaOr(fit$uncertainty$settings$method, "hessian")
   # Present even when empty: `$` partial-matches, and without it
   # `correction$hessian` would answer with `hessian_at`.
@@ -1015,17 +1042,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
     record$certification <- certification
     record$hessian <- hc
   }
-  # The continuation's own curvature only where it reached its fixed point.
-  # Stopped short, the estimate is not stationary on the objective the Hessian
-  # is of, and on gated-gaps A14 that Hessian had two directions of positive
-  # curvature: ten parameters would have reported no interval, and the fit
-  # `converged: FALSE`, where the Laplace curvature at the fit's optimum gives
-  # them all one.
-  # So a continuation that stopped short keeps the fit's uncertainty and
-  # recentres its draws, as the step correction does; its own certification
-  # stays in the record.
-  own <- usable && identical(run$status, "converged") &&
-    identical(method, "hessian")
+  own <- usable && identical(method, "hessian")
   record$hessian_at <- if (own) "estimate" else "laplace_estimate"
   if (own) {
     settings <- fit$uncertainty$settings
@@ -1058,13 +1075,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
         nodes = record$nodes)
     }
   }
-  after <- get(module$ctsem_laplace_continuation_info(cont))
-  record$evaluations <- c(values = as.integer(after$value_calls),
-    gradients = as.integer(after$gradient_calls),
-    placements = as.integer(after$recentres),
-    member_values = as.numeric(after$member_values),
-    member_sweeps = as.numeric(after$member_sweeps),
-    refused = as.integer(after$refused))
+  record$evaluations <- counts()
   record$seconds <- c(screen = screen_seconds, total = seconds())
   fit$laplace$correction <- record
   fit
