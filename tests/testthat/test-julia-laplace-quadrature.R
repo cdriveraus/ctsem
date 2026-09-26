@@ -1,6 +1,6 @@
-# The quadrature continuation, `optimcontrol$laplace_correct = 'continue'`
-# (`.ctLaplaceContinue()` in R/ctBackendLaplaceCorrect.R, laplace_continuation.jl
-# in the engine), beside the step correction it may replace.
+# The quadrature correction, `optimcontrol$laplace_correct = 'quadrature'` and
+# the default (`.ctLaplaceContinue()` in R/ctBackendLaplaceCorrect.R,
+# laplace_continuation.jl in the engine), beside the step correction.
 #
 # What is pinned here: that a model on which Laplace is exact is left alone to
 # the bit; that on a nonlinear one the continuation lands at the optimum of the
@@ -8,7 +8,7 @@
 # Nelder-Mead, sharing nothing with the continuation but the model -- closer
 # than the step correction does; that what the fit then reports is the
 # continuation's own (estimate, quadrature log likelihood, covariance from its
-# Hessian, certification); that 'step' and TRUE are one thing; that the guard
+# Hessian, certification); that it is what the default does; that the guard
 # reverts; and that each request that cannot apply is refused by name.
 
 # A random effect on an identity-transformed MANIFESTMEANS: Laplace is exact.
@@ -81,10 +81,12 @@
         intoverpop = "laplace", cores = 1,
         optimcontrol = list(finishsamples = 100, laplace_correct = correct)))
     }
-    fits <- list(off = fitwith(FALSE), continue = fitwith("continue"))
+    fits <- list(off = fitwith(FALSE), quadrature = fitwith("quadrature"))
     if (!identical(which, "linear")) {
+      # Asked for by name: the step correction is what the default is
+      # compared against.
       fits$step <- fitwith("step")
-      fits$default <- fitwith(TRUE)
+      fits$default <- fitwith(NULL)
     }
     assign(key, fits, envir = .lc_cache)
   }
@@ -131,39 +133,46 @@
 test_that("a model on which Laplace is exact is screened and left alone", {
   skip_without_julia()
   fits <- .lc_fits("linear")
-  corr <- fits$continue$laplace$correction
-  expect_identical(corr$method, "continue")
+  corr <- fits$quadrature$laplace$correction
+  expect_identical(corr$method, "quadrature")
   expect_identical(corr$status, "exact")
   expect_false(corr$applied)
   expect_lt(corr$screen, corr$tolerance)
   expect_identical(corr$flagged, 0L)
   # Bit for bit: nothing but the record differs from the uncorrected fit.
-  expect_identical(fits$continue$estimate$raw, fits$off$estimate$raw)
-  expect_identical(fits$continue$estimate$loglik, fits$off$estimate$loglik)
-  expect_identical(fits$continue$estimate$cov, fits$off$estimate$cov)
-  expect_identical(fits$continue$estimate$rawposterior, fits$off$estimate$rawposterior)
-  expect_null(fits$continue$estimate$loglik_method)
+  expect_identical(fits$quadrature$estimate$raw, fits$off$estimate$raw)
+  expect_identical(fits$quadrature$estimate$loglik, fits$off$estimate$loglik)
+  expect_identical(fits$quadrature$estimate$cov, fits$off$estimate$cov)
+  expect_identical(fits$quadrature$estimate$rawposterior, fits$off$estimate$rawposterior)
+  expect_null(fits$quadrature$estimate$loglik_method)
 })
 
-test_that("'step' and TRUE are one correction, and the fit-time one is the post-hoc one", {
+test_that("the default is the quadrature correction, and the fit-time one is the post-hoc one", {
   skip_without_julia()
   fits <- .lc_fits("nonlinear")
-  expect_identical(fits$step$estimate$raw, fits$default$estimate$raw)
-  expect_identical(fits$step$estimate$cov, fits$default$estimate$cov)
-  expect_identical(fits$step$estimate$rawposterior, fits$default$estimate$rawposterior)
-  expect_identical(fits$step$estimate$loglik, fits$default$estimate$loglik)
+  expect_identical(fits$default$laplace$correction$method, "quadrature")
+  expect_identical(fits$quadrature$estimate$raw, fits$default$estimate$raw)
+  expect_identical(fits$quadrature$estimate$cov, fits$default$estimate$cov)
+  expect_identical(fits$quadrature$estimate$rawposterior,
+    fits$default$estimate$rawposterior)
+  expect_identical(fits$quadrature$estimate$loglik, fits$default$estimate$loglik)
   expect_identical(fits$step$laplace$correction$method, "step")
-  # The step the fit took is `.ctLaplaceAutoCorrect()` applied to the
-  # uncorrected fit, exactly.
+  # What the fit did is `.ctLaplaceContinue()` applied to the uncorrected fit,
+  # exactly, and the same holds for the step.
+  posthoc <- .ctLaplaceContinue(fits$off)
+  expect_identical(posthoc$estimate$raw, fits$quadrature$estimate$raw)
+  expect_identical(posthoc$estimate$loglik, fits$quadrature$estimate$loglik)
   posthoc <- .ctLaplaceAutoCorrect(fits$off)
   expect_identical(posthoc$estimate$raw, fits$step$estimate$raw)
   expect_identical(posthoc$estimate$loglik, fits$step$estimate$loglik)
+  # And the post-hoc functions will not apply a correction a second time.
+  expect_error(ctLaplaceCorrect(fits$default), "already corrected")
 })
 
 test_that("the continuation lands at the exact marginal's optimum, closer than the step", {
   skip_without_julia()
   fits <- .lc_fits("nonlinear")
-  cont <- fits$continue; step <- fits$step; off <- fits$off
+  cont <- fits$quadrature; step <- fits$step; off <- fits$off
   corr <- cont$laplace$correction
   expect_identical(corr$status, "continued")
   expect_true(corr$applied)
@@ -196,7 +205,7 @@ test_that("the continuation lands at the exact marginal's optimum, closer than t
 test_that("what a continued fit reports is the continuation's own", {
   skip_without_julia()
   fits <- .lc_fits("nonlinear")
-  cont <- fits$continue; off <- fits$off
+  cont <- fits$quadrature; off <- fits$off
   corr <- cont$laplace$correction
   x <- as.numeric(cont$estimate$raw)
   # The quadrature log likelihood at the estimate, every unit by the rule with
@@ -243,7 +252,7 @@ test_that("what a continued fit reports is the continuation's own", {
 test_that("ctLaplaceCheck agrees with a continued fit and refines by continuing", {
   skip_without_julia()
   fits <- .lc_fits("nonlinear")
-  cont <- fits$continue; off <- fits$off
+  cont <- fits$quadrature; off <- fits$off
   # At the continuation's estimate the further first-order step is small but
   # not zero, and it should not be: the check steps towards the maximum of the
   # quadrature VALUE with its nodes re-placed at every point, and the
@@ -288,20 +297,21 @@ test_that("requests that cannot apply are refused by name", {
   resolve <- function(oc, intoverpop = "laplace", optimize = TRUE,
     intoverstates = TRUE) .ctLaplaceCorrectResolve(oc, intoverpop, optimize,
       intoverstates)
-  expect_identical(resolve(list()), "step")
-  expect_identical(resolve(list(laplace_correct = TRUE)), "step")
+  expect_identical(resolve(list()), "quadrature")
+  expect_identical(resolve(list(laplace_correct = TRUE)), "quadrature")
   expect_identical(resolve(list(laplace_correct = "step")), "step")
-  expect_identical(resolve(list(laplace_correct = "continue")), "continue")
+  expect_identical(resolve(list(laplace_correct = "quadrature")), "quadrature")
   expect_false(resolve(list(laplace_correct = FALSE)))
-  expect_error(resolve(list(laplace_correct = "yes")), "'step' or 'continue'")
-  expect_error(resolve(list(laplace_correct = c("step", "continue"))),
-    "'step' or 'continue'")
-  expect_error(resolve(list(laplace_correct = "continue"), intoverpop = "augmented"),
+  expect_error(resolve(list(laplace_correct = "yes")), "'step' or 'quadrature'")
+  expect_error(resolve(list(laplace_correct = "continue")), "'step' or 'quadrature'")
+  expect_error(resolve(list(laplace_correct = c("step", "quadrature"))),
+    "'step' or 'quadrature'")
+  expect_error(resolve(list(laplace_correct = "quadrature"), intoverpop = "augmented"),
     "intoverpop='laplace' only")
-  expect_error(resolve(list(laplace_correct = "continue"), optimize = FALSE),
+  expect_error(resolve(list(laplace_correct = "quadrature"), optimize = FALSE),
     "sampled fit")
-  expect_error(resolve(list(laplace_correct = "continue", estonly = TRUE)), "estonly")
-  expect_error(.ctFitCheckControls(list(laplace_correct = "continue"), "stan"),
+  expect_error(resolve(list(laplace_correct = "quadrature", estonly = TRUE)), "estonly")
+  expect_error(.ctFitCheckControls(list(laplace_correct = "quadrature"), "stan"),
     "laplace_correct")
 })
 
@@ -339,7 +349,7 @@ test_that("a continuation whose fixed-node model misleads it does not walk downh
   set.seed(1)
   fit <- suppressWarnings(suppressMessages(ctFit(.lc_a14_data(), model,
     backend = "julia", intoverpop = "laplace", cores = 1,
-    optimcontrol = list(finishsamples = 100, laplace_correct = "continue"))))
+    optimcontrol = list(finishsamples = 100))))
   corr <- fit$laplace$correction
   tol <- .ctLaplaceContinueDefaults$value_tol
   expect_true(corr$status %in% c("continued", "no_gain"))

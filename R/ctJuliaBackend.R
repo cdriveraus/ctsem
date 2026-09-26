@@ -5097,11 +5097,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # certification has converged the Laplace objective and after the uncertainty
   # stage has built the Hessian it steps against, which it reuses rather than
   # computing another. Before the constrained draws below, so that they are
-  # built once from the recentred draws. See `.ctLaplaceAutoCorrect()`, and
-  # `.ctLaplaceContinue()` for `laplace_correct = 'continue'`, which replaces
-  # the covariance and draws with its own and says so.
+  # built once from the recentred draws. See `.ctLaplaceContinue()` for
+  # `laplace_correct = 'quadrature'`, the default, which replaces the
+  # covariance and draws with its own when it reaches its fixed point, and
+  # `.ctLaplaceAutoCorrect()` for `'step'`.
   if (!is.null(out$laplace) && isTRUE(intoverstates)) {
-    if (identical(correctlaplace, "continue")) {
+    if (identical(correctlaplace, "quadrature")) {
       out <- .ctLaplaceContinue(out, cores = cores, verbose = verbose)
     } else if (identical(correctlaplace, "step")) {
       out <- .ctLaplaceAutoCorrect(out, cores = cores, verbose = verbose)
@@ -5192,7 +5193,7 @@ print.ctJuliaFit <- function(x, ...) {
   # standard error or more.
   corr <- x$laplace$correction
   if (isTRUE(corr$applied) && isTRUE(corr$material)) {
-    cat("  Laplace estimate ", if (identical(corr$method, "continue"))
+    cat("  Laplace estimate ", if (identical(corr$method, "quadrature"))
         paste0("continued on the quadrature objective",
           if (!identical(corr$continuation, "converged")) ", short of its fixed point")
       else "corrected by quadrature",

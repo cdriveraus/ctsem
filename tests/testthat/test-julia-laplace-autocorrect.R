@@ -1,6 +1,9 @@
-# The quadrature correction every Laplace fit gets by default
-# (`optimcontrol$laplace_correct`; `.ctLaplaceAutoCorrect()` in
-# R/ctBackendLaplaceCorrect.R, `ctsem_laplace_autocorrect` in the engine).
+# The step correction, `optimcontrol$laplace_correct = 'step'`
+# (`.ctLaplaceAutoCorrect()` in R/ctBackendLaplaceCorrect.R,
+# `ctsem_laplace_autocorrect` in the engine). The fits here ask for it by
+# name, because this file tests it: the default, 'quadrature', is tested in
+# test-julia-laplace-quadrature.R, and what holds for any correction (the
+# post-hoc functions, cross-validation) is asserted there for the default too.
 #
 # What is pinned here: that a model on which Laplace is exact is left alone to
 # the bit, that a nonlinear one is moved towards the quadrature optimum and
@@ -79,7 +82,8 @@
         intoverpop = "laplace", cores = 1,
         optimcontrol = list(finishsamples = 100, ...)))
     }
-    assign(key, list(on = fitwith(), off = fitwith(laplace_correct = FALSE)),
+    assign(key, list(on = fitwith(laplace_correct = "step"),
+      off = fitwith(laplace_correct = FALSE)),
       envir = .ac_cache)
   }
   get(key, envir = .ac_cache, inherits = FALSE)
@@ -229,8 +233,10 @@ test_that("requests that cannot apply are refused by name", {
   resolve <- function(oc, intoverpop = "laplace", optimize = TRUE,
     intoverstates = TRUE) .ctLaplaceCorrectResolve(oc, intoverpop, optimize,
       intoverstates)
-  # The resolved method: TRUE and the default are the step correction.
-  expect_identical(resolve(list()), "step")
+  # The resolved method: TRUE and the default are the quadrature correction,
+  # and the step is asked for by name.
+  expect_identical(resolve(list()), "quadrature")
+  expect_identical(resolve(list(laplace_correct = "step")), "step")
   expect_false(resolve(list(laplace_correct = FALSE)))
   expect_error(resolve(list(laplace_correct = "yes")), "TRUE or FALSE")
   expect_error(resolve(list(laplace_correct = NA)), "TRUE or FALSE")

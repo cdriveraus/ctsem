@@ -367,8 +367,8 @@ print.ctLaplaceCorrection <- function(x, ...) {
 #                                `fit$uncertainty$evaluated_at`
 #   fit$laplace$correction       what was done, and where
 #
-# `'continue'` runs a different stage in the same place: see
-# `.ctLaplaceContinue()` below. `TRUE` means `'step'`.
+# `'quadrature'`, the default, runs a different stage in the same place: see
+# `.ctLaplaceContinue()` below.
 #
 # Provenance of the constants (Appendix B of
 # review/OPTIM-consolidation-plan-2026-09-25.md):
@@ -394,25 +394,27 @@ print.ctLaplaceCorrection <- function(x, ...) {
 .ctLaplaceCorrectDefaults <- list(nodes = 5L, tolerance = 0.01, maxsteps = 3L,
   gain_tol = 1e-3, step_tol = 0.1, step = 1e-3, material = 0.1)
 
-# Which correction this fit gets -- FALSE, "step" or "continue" -- refusing by
-# name a request that cannot apply. FALSE is accepted anywhere, since it
-# describes what every other route does. TRUE, and the default, are "step":
-# the continuation is chosen explicitly until the comparison the plan asks for
-# says it should be the default (review/OPTIM-consolidation-plan-2026-09-25.md
-# section 10).
+# Which correction this fit gets -- FALSE, "step" or "quadrature" -- refusing
+# by name a request that cannot apply. FALSE is accepted anywhere, since it
+# describes what every other route does. TRUE, and the default, are
+# "quadrature", the continuation: on the known-broken cases of
+# review/OPTIM-consolidation-plan-2026-09-25.md section 10 it ended higher in
+# exact log likelihood than the step correction on 9 of 11 and level on the
+# other 2, and never below the Laplace optimum, where the step correction
+# ended 1.4 nats below it on the gated-gaps A14 config.
 .ctLaplaceCorrectResolve <- function(optimcontrol, intoverpop, optimize,
   intoverstates) {
   value <- optimcontrol$laplace_correct
   explicit <- !is.null(value)
   valid <- (is.logical(value) && length(value) == 1L && !is.na(value)) ||
     (is.character(value) && length(value) == 1L &&
-      value %in% c("step", "continue"))
+      value %in% c("step", "quadrature"))
   if (explicit && !valid) {
     stop("optimcontrol$laplace_correct must be TRUE or FALSE, or 'step' or ",
-      "'continue'.", call. = FALSE)
+      "'quadrature'.", call. = FALSE)
   }
   if (explicit && isFALSE(value)) return(FALSE)
-  method <- if (is.character(value)) value else "step"
+  method <- if (is.character(value)) value else "quadrature"
   why <- if (!identical(as.character(intoverpop)[1L], "laplace")) {
     paste0("applies to intoverpop='laplace' only; with intoverpop='",
       intoverpop, "' there is no Laplace term to correct")
@@ -572,10 +574,11 @@ print.ctLaplaceCorrection <- function(x, ...) {
   fit
 }
 
-# The quadrature continuation (`optimcontrol$laplace_correct = 'continue'`) --
+# The quadrature continuation (`optimcontrol$laplace_correct = 'quadrature'`,
+# the default) --
 #
 # Where `'step'` takes up to three Newton steps on the quadrature objective by
-# finite differences, `'continue'` climbs it: from the Laplace optimum, with the
+# finite differences, `'quadrature'` climbs it: from the Laplace optimum, with the
 # engine's own optimiser, on an objective whose nodes are held fixed so that
 # its gradient is exact (the Fisher identity; see laplace_continuation.jl), in
 # rounds between which the nodes are re-placed. bigIRT's `laplaceRefine` is the
@@ -848,7 +851,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
   failed <- function(phrase) {
     warning("Laplace continuation skipped: ", phrase, ". The uncorrected fit is ",
       "returned; see fit$laplace$correction.", call. = FALSE)
-    fit$laplace$correction <- list(method = "continue", status = "failed",
+    fit$laplace$correction <- list(method = "quadrature", status = "failed",
       applied = FALSE, message = phrase, nodes = as.integer(control$nodes))
     fit
   }
@@ -866,7 +869,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
     soft_maxdirs = as.integer(control$soft_maxdirs)), silent = TRUE)
   if (inherits(cont, "try-error")) return(failed("the quadrature could not be evaluated"))
   start <- get(module$ctsem_laplace_continuation_info(cont))
-  record <- list(method = "continue", status = "exact", applied = FALSE,
+  record <- list(method = "quadrature", status = "exact", applied = FALSE,
     nodes = as.integer(start$nodes), tolerance = as.numeric(start$tolerance),
     screen = as.numeric(start$screen), gap = as.numeric(start$gap),
     laplace_estimate = est, loglik_laplace = as.numeric(fit$estimate$loglik),

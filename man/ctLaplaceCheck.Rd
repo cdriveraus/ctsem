@@ -31,7 +31,7 @@ is skipped when uncertainty was not computed.}
 
 \item{refine}{Continue the fit on the quadrature objective rather than
 correcting linearly: the continuation \code{optimcontrol$laplace_correct =
-'continue'} runs at fit time (see \code{\link{ctFit}}), from this fit's
+'quadrature'} runs at fit time (see \code{\link{ctFit}}), from this fit's
 estimate, with its Hessian as the starting metric. Its gradient is exact,
 so it costs a few quadrature gradients per round rather than the
 \code{2 * npar} quadrature evaluations per gradient the finite-difference
