@@ -816,6 +816,78 @@ end
     @test exact.hessian_at == exact.x
 end
 
+@testset "a direction the certification trusts is stepped at its own curvature" begin
+    # Maximised: one stiff direction and one at relative curvature 1e-10 --
+    # trusted by the certification's rule (above 1e-12) and below the finish's
+    # floor (1e-8) -- with a quarter of a unit to go along it, as a random-effect
+    # sd on a ray toward zero had on AnomAuth S1. Floored, each chord step went
+    # a hundredth of the way and gained a fiftieth of the gap, and the finish ran
+    # out of steps; at its own curvature the first step closes it, and the
+    # Hessian is kept, since a quarter of a unit is a four-hundredth of a
+    # standard error there.
+    f = p -> -0.5e6 * p[1]^2 - 0.5e-4 * (p[2] - 0.25)^2
+    trusted = _endgame_run(_endgame_mock(f), [0.0, 0.0]; curvature = :chord)
+    @test trusted.steps <= 2
+    @test trusted.x[2] ≈ 0.25 atol = 1e-8
+    @test trusted.full_hessians == 1
+    @test trusted.gain < 1e-8
+    # Below the certification's rule the direction is flat, the probe's to
+    # measure, and the step along it is still floored: a relative curvature of
+    # 1e-14 moves the estimate by nothing a step could see.
+    g = p -> -0.5e6 * p[1]^2 - 0.5e-8 * (p[2] - 0.25)^2
+    flat = _endgame_run(_endgame_mock(g), [0.0, 0.0]; curvature = :chord)
+    @test abs(flat.x[2]) < 1e-6
+end
+
+@testset "the chord follows a curvature that decays along its walk" begin
+    # Maximised: one stiff direction and an exponential tail, the shape of a
+    # random-effect sd on a ray toward zero -- the likelihood rises without
+    # bound in raw units and the curvature decays with it, so every Hessian is
+    # stale one step later. At the curvature of the hand-over each chord step
+    # was shorter than the last and the finish ran out of steps, then formed
+    # exact Hessians to finish (seven in the stage on AnomAuth S1); the
+    # secant along each slow step keeps the steps the length the ray needs.
+    b = 1e-4
+    f = p -> -0.5e4 * p[1]^2 - b * exp(2 * p[2])
+    m = _endgame_mock(f)
+    out = _endgame_run(m, [0.0, 0.0]; curvature = :chord, probe = false)
+    @test out.gain < 1e-8
+    @test out.steps < 30
+    @test out.full_hessians <= 2
+    @test m.hessians[] == out.full_hessians
+    # Walked as far as the tolerance needs: what is left along the ray is the
+    # objective's own remaining gain, b exp(2 p2).
+    @test b * exp(2 * out.x[2]) < 1e-7
+    # The secant itself: exact along the step for a quadratic, and nothing
+    # changed when the step measures no positive curvature.
+    H = [4.0 1.0; 1.0 3.0]
+    s = [1.0, 0.0]
+    @test ContinuousTimeSEM._ctsem_secant_along(H, s, [2.0, 7.0])[1, 1] ≈ 2.0
+    @test ContinuousTimeSEM._ctsem_secant_along(H, s, [2.0, 7.0])[2, 2] == 3.0
+    @test ContinuousTimeSEM._ctsem_secant_along(H, s, [-1.0, 0.0]) === H
+end
+
+@testset "a first step that does not contract hands the point back" begin
+    # A quadratic whose Hessian is reported a hundred times too large, as the
+    # curvature at a point outside Newton's region misleads: the first step goes
+    # a hundredth of the way, the gain predicted there has barely contracted,
+    # and a finish asked to check (`handback`) gives the point back after it.
+    c = [1.0, -2.0]
+    f = p -> -0.5 * sum(abs2, p .- c)
+    wrong = p -> -100.0 * Matrix{Float64}(I, 2, 2)
+    back = _endgame_run(_endgame_mock(f; h = wrong), [4.0, 3.0]; handback = true)
+    @test back.handback
+    @test back.steps == 1
+    @test back.hessian === nothing
+    @test -back.f > f([4.0, 3.0])
+    # Not asked, the same finish walks on; with the right curvature the first
+    # step closes the gap and there is nothing to hand back.
+    @test !_endgame_run(_endgame_mock(f; h = wrong), [4.0, 3.0]).handback
+    right = _endgame_run(_endgame_mock(f), [4.0, 3.0]; handback = true)
+    @test !right.handback
+    @test maximum(abs, right.x .- c) < 1e-8
+end
+
 @testset "the finish probes the directions its Hessian does not trust" begin
     # A direction with no curvature at the estimate and a live gradient, which
     # the gap cannot see: stepping along it gains, so the certification must
@@ -926,6 +998,33 @@ end
         progress=false, verbose=false, overshoot_probe=:off)
     @test bare.newton_steps >= 1
     @test !bare.probe_ran
+end
+
+@testset "ctsem_optimize goes back to L-BFGS when the hand-over was early" begin
+    # The quadratic with the hundredfold Hessian, and the switch set so high
+    # that L-BFGS hands over after its first iteration: the finish hands back,
+    # L-BFGS runs to its own stopping rule, and the finish runs again there.
+    # Everything either finish did is counted.
+    c = [1.0, -2.0]
+    f = p -> -0.5 * sum(abs2, p .- c)
+    m = _endgame_mock(f; h = p -> -100.0 * Matrix{Float64}(I, 2, 2))
+    r = ContinuousTimeSEM.ctsem_optimize(m, [4.0, 3.0]; maxiter=200,
+        tune_chunks=false, gap_tol=1e-8, newton=true, newton_switch=1e6,
+        certify=false, progress=false, verbose=false, overshoot_probe=:off)
+    @test r.newton_handback
+    @test maximum(abs, r.minimizer .- c) < 1e-6
+    @test r.newton_steps >= 1
+    @test length(r.newton_history_kind) == r.newton_steps
+    @test r.newton_hessians == m.hessians[] == 2
+    @test r.iterations > r.newton_steps
+    @test r.stop_reason in ("gap", "gradient", "linesearch")
+    # With the Hessian right, the early hand-over is borne out and kept.
+    kept = ContinuousTimeSEM.ctsem_optimize(_endgame_mock(f), [4.0, 3.0];
+        maxiter=200, tune_chunks=false, gap_tol=1e-8, newton=true,
+        newton_switch=1e6, certify=false, progress=false, verbose=false,
+        overshoot_probe=:off)
+    @test !kept.newton_handback
+    @test maximum(abs, kept.minimizer .- c) < 1e-8
 end
 
 # Shared with `test_laplace.jl`; see `laplace_fixtures.jl`.
