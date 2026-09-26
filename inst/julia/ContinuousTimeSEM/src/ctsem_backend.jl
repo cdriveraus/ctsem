@@ -1486,6 +1486,37 @@ function _ctsem_stall_verdict!(watch::CTSEMStallWatch, trace::CTSEMTrace,
 end
 
 """
+Below this `|raw|` on every coordinate the end-of-run overshoot probe is not
+run (`_ctsem_overshoot_skippable`).
+
+The probe asks whether pulling coordinates back toward zero improves the fit,
+which is how a fit that stepped into a transform's flat region is told from one
+at a maximum; a coordinate that is already near zero is not where a standard
+transform goes flat. Measured on the optimiser bench at juliaFit 908b068d (dev1,
+2026-09-26; review/bench/2026-09-26-baseline.md): of 102 end-of-run probes on
+94 fits, the 77 at end points with every coordinate below 2 found nothing, and
+the two that found a gain were at 6.0 and 10.6. A probe that finds nothing
+changes no verdict, so skipping those moves no end point; the probe cost 3% to
+38% of a fit on the cells measured with it off.
+
+Not skipped while the saturation detector flags anything, whatever the
+magnitude: a custom transform can be flat near zero (`exp(20 * param)` at raw
+-1) where none of the standard ones is.
+"""
+const _CTSEM_OVERSHOOT_MIN_RAW = 2.0
+
+"""
+    _ctsem_overshoot_skippable(minimizer, saturated_parameters)
+
+Whether the end-of-run overshoot probe can be skipped: nothing flagged as
+saturated, and every coordinate finite and below `_CTSEM_OVERSHOOT_MIN_RAW`
+in magnitude.
+"""
+_ctsem_overshoot_skippable(minimizer, saturated_parameters) =
+    isempty(saturated_parameters) && !isempty(minimizer) &&
+    all(x -> abs(x) < _CTSEM_OVERSHOOT_MIN_RAW, minimizer)
+
+"""
     _ctsem_optimise_verdict(objective, minimizer, start_values, value, gradient_norm,
                             predicted_gain, last_gain, saturated_parameters,
                             g_tol, converge_tol; label, verbose)
@@ -1575,7 +1606,8 @@ two together cover what neither does alone.
 The overshoot bar is the same `converge_tol`, for the same reason: what
 `_ctsem_overshot` measures is an objective gain, so it belongs against an
 objective tolerance. One number, one unit, two uses it is dimensionally entitled
-to.
+to. The probe is not run where every coordinate is small and nothing is
+flagged; see `_CTSEM_OVERSHOOT_MIN_RAW`.
 
 `saturated_parameters` arrives as an argument because the routes detect it
 differently: the marginal and joint ones ask `_ctsem_saturated_parameters` over
@@ -1595,8 +1627,10 @@ function _ctsem_optimise_verdict(objective, minimizer, start_values, value,
     # step cannot pass here on an uninitialised number.
     converged_enough = isfinite(value) && finite_gradient &&
         (predicted_gain <= converge_tol || last_gain <= converge_tol)
-    overshoot = _ctsem_overshot(objective, minimizer, saturated_parameters,
-        value, converge_tol; mode=overshoot_probe)
+    overshoot = _ctsem_overshoot_skippable(minimizer, saturated_parameters) ?
+        (overshot=false, gain=0.0, coordinates=Int[], point=Float64[]) :
+        _ctsem_overshot(objective, minimizer, saturated_parameters,
+            value, converge_tol; mode=overshoot_probe)
     overshot = overshoot.overshot
     verbose && stalled && println(_console(), label, ": the optimizer made no ",
         "progress from its starting values; reporting this as not converged")

@@ -384,9 +384,12 @@
 # it. See `_ctsem_overshot` in the engine for what each costs and catches.
 #
 # Off is a real option and not a footgun to be hidden: the probe costs up to
-# `4 * npar` value-only evaluations per optimisation stage, and on a large model
-# that is a visible fraction of the fit. What it buys is that a fit stopped in a
-# degenerate corner says so instead of reporting convergence.
+# `8 * npar` value-only evaluations per optimisation stage (one per pullback
+# fraction per prefix), and on a large model that is a visible fraction of the
+# fit -- 3% to 38% on the optimiser bench. What it buys is that a fit stopped in
+# a degenerate corner says so instead of reporting convergence. The engine
+# skips it where every coordinate is small and nothing is flagged
+# (`_CTSEM_OVERSHOOT_MIN_RAW`), which is where it never found anything.
 #' @keywords internal
 .ctBackendOvershootProbe <- function(optimcontrol = list(),
     default = "magnitude") {
@@ -450,7 +453,7 @@
 # The engine only stops a stage when its own probe has already found a better
 # point -- stalled, flat, *and* somewhere to go, all three -- so that point
 # comes back on the result and is used as it stands. Recomputing the ladder
-# here would cost `4 * npar` objective evaluations for an answer already in
+# here would cost `8 * npar` objective evaluations for an answer already in
 # hand, which on a laplace fit near a degenerate corner is a couple of minutes.
 #
 # The fallback is for a fit that finished normally and is nonetheless sitting
