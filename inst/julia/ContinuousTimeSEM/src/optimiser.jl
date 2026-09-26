@@ -943,6 +943,22 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             nt === nothing && break
             gain = nt.gain
             if gain < tol
+                # On the exact variant a gap is closed when the Hessian here
+                # says so. One from an earlier point can call it closed on a
+                # plateau that is still rising, and the steps then stopped:
+                # test-julia-particle.R's linear fit, from a saddle, reached a
+                # plateau where drift runs to minus infinity, converged there
+                # on a two-step-old Hessian, and was certified at -39.879 on
+                # 6.4e-7 of predicted gain after a capped check of five steps
+                # whose gains grew. The exact profile over drift rises from
+                # there to -25.189 at the boundary, and steps on a fresh
+                # Hessian climb it. So the steps go on under the budget.
+                if curvature === :exact && !at_x
+                    H = hess(x); Hs = H; hat = copy(x); exact = true; at_x = true
+                    H === nothing && break
+                    prevgain = Inf
+                    continue
+                end
                 converged = true
                 break
             end
