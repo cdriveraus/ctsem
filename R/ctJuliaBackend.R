@@ -3980,6 +3980,16 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # Hessian is then the certification's, not an extra one. Not on a budget
     # stage (the prior warm-up, whose verdict nobody reads), nor where nothing
     # certifies -- `estonly`, `certify = FALSE`, the state-explicit route.
+    #
+    # A certificate without the Hessian for the doors that need no standard
+    # errors (conjugate gradients on Hessian-vector products, plan P8) was
+    # considered and not built, because those doors form no Hessian to save:
+    # folds and profile points pass `certify = FALSE`, which zeroes `gap_tol`
+    # and with it the finish; `estonly` forms none on the Laplace route and on
+    # the augmented only the finish's exact ones, which its Newton steps need
+    # (optimiser bench at juliaFit 908b068d, dev1: no Hessian in any Laplace
+    # estonly cell). Restarts form one each, as the finish's metric; they are
+    # opt-in and run only for a fit that did not certify.
     certify = !state_explicit && !isTRUE(optimcontrol$estonly) &&
       !identical(optimcontrol$certify, FALSE) && !isTRUE(progress_budget),
     # The endgame's two rules, passed from here so one number serves the
