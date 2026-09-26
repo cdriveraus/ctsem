@@ -771,6 +771,23 @@ end
     @test stuck.x == [0.0, 0.0]
 end
 
+@testset "negative curvature does not starve the step that closes the gap" begin
+    # Maximised: -(x - 3)^2/2 + y^2/2 - y^4/4, from beside the saddle in y with
+    # three units still to go in x -- a gap of 4.5 in the trusted direction.
+    # Flooring the negative curvature made the y part of the step 1e8 times too
+    # long; the line search shrank the whole step to tame it, so the x part
+    # shrank too, and the chord, which keeps its Hessian, did the same every
+    # step. Taken at the size of its curvature, the first step is whole.
+    m = _endgame_mock(p -> -0.5 * (p[1] - 3)^2 + 0.5 * p[2]^2 - 0.25 * p[2]^4)
+    out = _endgame_run(m, [0.0, 0.05]; curvature = :chord)
+    @test out.history.alpha[1] == 1.0
+    @test abs(out.x[1] - 3) < 1e-6
+    @test abs(abs(out.x[2]) - 1) < 1e-3
+    @test -out.f ≈ 0.25 atol = 1e-7
+    @test out.escapes == 0
+    @test out.steps < 20
+end
+
 @testset "a chord finish keeps its Hessian when the steps moved the estimate little" begin
     # Maximised: a quartic bowl, so the curvature changes with the point and a
     # Hessian from elsewhere is not the one here. Standard errors near one.

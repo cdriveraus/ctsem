@@ -839,11 +839,23 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
     # profile then found, so the estimate was not the maximum. A truly flat
     # direction has no gradient and adds nothing; a nearly flat one is walked
     # while the step still promises more than `tol`, as L-BFGS used to.
+    #
+    # A direction of negative curvature is taken at the size of its curvature,
+    # not at the floor (the saddle-free Newton step): downhill along it by a
+    # length the curvature can justify. Floored, its component was up to 1e8
+    # times too long, the line search shrank the whole step to tame it, and the
+    # trusted directions' part of the step -- the part that closes the gap --
+    # shrank with it; the chord never refreshes, so every later step did the
+    # same. On gated-gaps config B8 (bench, seed 1) seven chord steps from a
+    # point 10.8 nats short, with one direction of negative curvature, moved
+    # the log posterior by less than 1e-4: inferred to be this, from those
+    # numbers. At a saddle proper the gradient along that direction is zero
+    # either way, and the ladder below is what leaves it.
     function newton(Hm, Gv, mu)
         local E = eigen(Symmetric(Hm))
         local lmax = maximum(abs, E.values; init=0.0)
         lmax > 0 || return nothing
-        local floored = max.(E.values, 1e-8 * lmax)
+        local floored = max.(abs.(E.values), 1e-8 * lmax)
         local c = E.vectors' * Gv
         local g = 0.5 * sum(abs2.(c) ./ floored; init=0.0)
         local lam = floored .+ mu * lmax

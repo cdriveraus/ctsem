@@ -965,9 +965,12 @@
 # still gains: continuing along it walked AnomAuth S1 from its good optimum into
 # the spurious basin (decision 1 of review/OPTIM-consolidation-plan-2026-09-25).
 # And a saddle the finish already tried to leave along its negative curvature
-# and could not: the resumed optimiser would start where the finish converged
-# and hand the same point back, and on a Laplace fit each such round is a
-# Hessian.
+# and could not, with nothing else left -- the gap over the trusted directions
+# within tolerance: the resumed optimiser would start where the finish
+# converged and hand the same point back, and on a Laplace fit each such round
+# is a Hessian. A saddle with the gap still open is resumed like any point short
+# of its optimum; gated-gaps config B8 (bench, seed 1) was stopped 10.8 nats
+# short when this rule did not ask.
 #
 # `maxtries` is small on purpose: a point still short after two resumes needs a
 # different start, which is a decision for whoever runs the fit.
@@ -1021,7 +1024,8 @@
     if (!status %in% c("suboptimal", "notmaximum")) break
     if (attempt > as.integer(maxtries) || is.null(optimise)) break
     if (identical(status, "notmaximum") && !isTRUE(result$overshot) &&
-        isTRUE(result$newton_ladder_tried)) {
+        isTRUE(result$newton_ladder_tried) &&
+        isTRUE(is.finite(gap$gap) && gap$gap <= tolerance)) {
       break
     }
     value <- as.numeric(result$maximum_loglik)[1L]

@@ -352,6 +352,16 @@ test_that("a flat direction that still gains stops, and so does a saddle the fin
   ctsem:::.ctBackendCorrectResult(saddle, spec = list(), npar = 2L,
     tolerance = 1e-6, optimise = once)
   expect_equal(resumed, 1L)
+  # And a tried saddle with the gap in its trusted directions still open is
+  # resumed too: it is short of its optimum, whatever the negative curvature
+  # says. Gated-gaps config B8 was stopped 10.8 nats short without this.
+  open <- .fake_result(diag(c(1, -1)), c(0, 2), value = -100,
+    newton_saddle = TRUE, newton_ladder_tried = TRUE)
+  resumed <- 0L
+  out <- ctsem:::.ctBackendCorrectResult(open, spec = list(), npar = 2L,
+    tolerance = 1e-6, maxtries = 1L, optimise = once)
+  expect_equal(resumed, 1L)
+  expect_equal(out$corrections[[1L]]$status, "notmaximum")
 })
 
 test_that("the probe the finish ran is what the certification reads", {
