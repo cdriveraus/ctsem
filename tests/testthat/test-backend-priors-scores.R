@@ -282,19 +282,14 @@ test_that("score-based uncertainty methods work for backend fits", {
     time = c(0, .5, 1.2, 2), Y1 = stats::rnorm(4, 0, .5), Y2 = stats::rnorm(4, 0, .5),
     group = rep(stats::rnorm(1), 4))))
 
-  # Augmented by name, until the engine is fixed. On the laplace route 'auto'
-  # takes for this model's random DRIFT, the fit dies in its Hessian ("Could
-  # not construct covariance from Hessian") before any score method is
-  # reached. The cause is in the objective: one subject's inner mode sits
-  # where its own DRIFT is singular -- the symmetric cross effect makes
-  # a1 * a2 - c^2 cross zero -- and the engine discretises by formulas that
-  # divide by it, the intercept as J^-1 (e^{J dt} - I) c and the process noise
-  # from the Lyapunov solution. Rounding is amplified without bound there, the
-  # inner Newton climbs the resulting spike, and the Hessian's differencing
-  # points 1e-4 away land on it. The true likelihood is smooth through that
-  # point; once the discretisation is, this should take the default route.
-  fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0,
-    intoverpop = "augmented"))
+  # The default route, laplace for this model's random DRIFT. One subject's
+  # inner mode sits where its own DRIFT is singular -- the symmetric cross
+  # effect takes a1 * a2 - c^2 through zero -- which the discretisation's
+  # closed forms divide by. The fit died in its Hessian there until the engine
+  # took those intervals as series (`series_discretization.jl`), so this is
+  # also the end-to-end check that it now fits through that point.
+  fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
+  expect_false(is.null(fit$laplace))
   for (method in c("opg", "sandwich", "bootstrap")) {
     updated <- suppressWarnings(suppressMessages(
       ctOptimUncertainty(fit, uncertainty = method, finishsamples = 50, verbose = 0)))
