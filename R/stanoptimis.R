@@ -875,8 +875,15 @@ imis_is <- function(parlp,
   n_batch       = 1000,
   target_ess    = 100,
   max_iter      = 10,
-  scale_init    = 1.5,
-  tail_scale    = 1.2,
+  # Every real caller (.ctOptimImisDraws(), .ctOptimDrawSamples()) passes its
+  # own scale explicitly; see .ctImisProposalDefaults() in
+  # R/ctOptimUncertainty.R, one named source rather than this pair drifting
+  # from it. These two are what a bare call -- a dev script, or the
+  # reproduction in IS-importance-sampling-2026-09-06.md -- gets: the wider,
+  # more conservative julia value, on the reasoning that costs more
+  # evaluations rather than one that can quietly under-cover.
+  scale_init    = .ctImisProposalDefaults('julia')$scaleInit,
+  tail_scale    = .ctImisProposalDefaults('julia')$tailScale,
   df            = Inf,
   ridge         = 1e-8,
   finishsamples = 1000,
@@ -987,14 +994,25 @@ imis_is <- function(parlp,
   
   
   
+  # A batch-capable density evaluates the whole draw matrix in one call rather
+  # than one call per draw -- see `.ctBackendLpgFunc()`'s `'batch'` attribute,
+  # which is what `uncertainty = 'is'` on the julia backend hands in here. Read
+  # once outside the loop: `attr()` is cheap, but the point is that `parlp`
+  # itself does not change iteration to iteration, so neither does the answer.
+  # Stan's own densities carry no such attribute, so this is exactly today's
+  # per-draw loop there.
+  batchlp <- attr(parlp, 'batch')
+
   ## ── main loop ─────────────────────────────────────────────────────────
   for (it in 0:max_iter) {
-    
+
     x_new <- draw_mix(n_batch)
-    
+
     ## ---------- log-p with interrupt guard -----------------------------
     log_p_new <- {
-      if (!is.null(cl) && length(cl) > 1) {
+      if (!is.null(batchlp)) {
+        as.numeric(batchlp(x_new))
+      } else if (!is.null(cl) && length(cl) > 1) {
         parallel::clusterExport(cl, "x_new", envir = environment())
         unlist(parallel::parLapply(
           cl, seq_len(nrow(x_new)), \(i) parlp(x_new[i, ])), FALSE)
