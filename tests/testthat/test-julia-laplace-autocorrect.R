@@ -275,7 +275,12 @@ test_that("a correction that cannot be evaluated warns and keeps the fit", {
   skip_without_julia()
   fits <- .ac_fits("nonlinear")
   bad <- fits$off
-  bad$estimate$raw[1] <- 1e8
+  # raw[1] is the drift, `-log1p_exp(-param)`, so -Inf is a drift of -Inf,
+  # where the quadrature is not finite. It was 1e8, a drift of exactly zero,
+  # which failed only because the closed-form discretisation divided by it; a
+  # random walk now evaluates like any other model (see
+  # `series_discretization.jl` in the engine).
+  bad$estimate$raw[1] <- -Inf
   expect_warning(out <- .ctLaplaceAutoCorrect(bad), "Laplace correction skipped")
   expect_identical(out$laplace$correction$status, "failed")
   expect_false(out$laplace$correction$applied)
