@@ -1311,18 +1311,6 @@ function _binary_threshold_derivatives(ηbar::T, s2::T, y::Real,
 end
 
 """
-Unconstrained magnitude past which ctsem's transforms are numerically flat.
-
-`log1p_exp(2x)` and friends saturate once `exp(-2|x|)` underflows relative to
-one, which is around `|x| = 18`; twenty gives a little room without reaching
-into any region a real estimate occupies. Nothing ctsem parameterises has a
-meaningful value out there -- a drift of `-1e-9` and a drift of `-1e-15` are
-the same model -- so a fit that lands beyond it has stopped for arithmetic
-reasons rather than statistical ones.
-"""
-const _CTSEM_SATURATION = Ref(20.0)
-
-"""
     _standard_normal_cdf(z)
 
 Φ(z), by the Zelen & Severo rational approximation (A&S 26.2.17).

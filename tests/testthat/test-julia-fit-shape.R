@@ -115,7 +115,7 @@ suppressWarnings(suppressPackageStartupMessages(library(ctsem)))
   # What the optimiser's batching and Newton finish did: descriptions of one
   # optimiser run, like the stall fields below.
   "batch_sizes", "batch_iterations", "newton_steps", "newton_hessians",
-  "newton_subset_hessians", "restarts", "restarts_cancelled",
+  "newton_subset_hessians", "newton_escapes", "restarts", "restarts_cancelled",
   "saturated", "saturated_parameters", "carefulfit", "carefulfit_iterations",
   # Why the prior warm-up did not run, when it did not. The sampled route has
   # no warm-up, so none of the three is on it.
@@ -137,9 +137,10 @@ suppressWarnings(suppressPackageStartupMessages(library(ctsem)))
   "stopped_by_stall", "stall_window", "gap_tol", "stall_parameters",
   "stall_triggers", "stall_escapes",
   # The curvature-correction stage, which only the optimising route runs: how
-  # many Hessians it computed, and the history. The matrix itself is on
-  # `$uncertainty`, with `evaluated_at` saying where it was evaluated.
-  "corrections", "hessian_evaluations",
+  # many Hessians it computed, the history, and how far the estimate is from
+  # where its Hessian was evaluated. The matrix itself is on `$uncertainty`,
+  # with `evaluated_at` saying where it was evaluated.
+  "corrections", "hessian_evaluations", "hessian_distance",
   # State-explicit only: the profile curvature, which is on `$optim` rather
   # than `$uncertainty` precisely because it is not one.
   "hessian_profile")
@@ -260,10 +261,11 @@ test_that("$estimate holds the estimate and nothing about the run", {
     "predicted_gain", "last_gain", "gradient", "gradient_norm", "iterations",
     "stage_iterations", "f_calls", "g_calls", "chunks", "linesearch",
     "batch_sizes", "batch_iterations", "newton_steps", "newton_hessians",
-    "newton_subset_hessians", "restarts", "restarts_cancelled", "stalled", "stopped_by_gap", "overshot", "overshoot_gain",
+    "newton_subset_hessians", "newton_escapes", "restarts", "restarts_cancelled", "stalled", "stopped_by_gap", "overshot", "overshoot_gain",
     "overshoot_parameters", "saturated", "saturated_parameters", "carefulfit",
     "carefulfit_iterations", "carefulfit_skipped", "corrections", "hessians",
-    "hessian_evaluations", "hessian", "hessian_profile", "trace", "substeps")
+    "hessian_evaluations", "hessian_distance", "hessian", "hessian_profile",
+    "trace", "substeps")
   for (route in names(fits)) {
     expect_equal(intersect(names(fits[[route]]$estimate), run_shaped),
       character(0), info = route)

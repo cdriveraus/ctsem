@@ -896,31 +896,21 @@ end
 export ctsem_pullback
 
 """
-A line search that records the directional derivative it is handed.
+The directional derivative `g'p` of the last step taken, which `_ctsem_lbfgs`
+writes as it accepts each step and the Newton finish overwrites with its own
+exact decrement. For a quasi-Newton direction `-dphi0 / 2` is the improvement
+that step was predicted to make, in objective units -- a stopping rule on the
+quantity that matters, for no arithmetic at all.
 
-`LineSearches` receives `dphi0 = g'p` as its last positional argument, every
-iteration, because it needs it to test the Wolfe conditions. For a quasi-Newton
-direction `-dphi0 / 2` is the improvement that step was predicted to make, in
-objective units -- so observing it here gives a stopping rule on the quantity
-that matters, for no arithmetic at all.
-
-Deliberately an observer: it forwards every call unchanged, so which line
-search actually runs is unaffected and `linesearch` still reports what it
-always did.
+It used to wrap Optim's line search and read `dphi0` off its arguments; since
+the optimiser became ctsem's own (optimiser.jl) nothing called the wrapped
+search, and it carried an unused `BackTracking` until 2026-09-25.
 """
-mutable struct CTSEMDirectional{LS}
-    inner::LS
+mutable struct CTSEMDirectional
     dphi0::Float64
 end
 
-CTSEMDirectional(inner) = CTSEMDirectional(inner, NaN)
-
-function (ls::CTSEMDirectional)(args...)
-    # Last positional argument in both of LineSearches' call forms.
-    last = args[end]
-    ls.dphi0 = last isa Real ? Float64(last) : NaN
-    ls.inner(args...)
-end
+CTSEMDirectional() = CTSEMDirectional(NaN)
 
 """The improvement the last accepted step was predicted to make, or `Inf`."""
 function _ctsem_predicted_gain(ls::CTSEMDirectional)
@@ -1250,12 +1240,19 @@ carries its own safety -- a fit that started near its optimum has little of it,
 so the bar is small and this cannot fire.
 
 `false` before there is a window to look at.
+
+`carried` is progress made by earlier stages of the same fit. A resumed stage
+starts where the last one stopped, so its own trace shows none, and without
+this the share is undefined and the test can never fire -- which is how a
+resume after a Newton correction came to run its whole 1000 iterations at no
+gain (AnomAuth, 800 subjects: 57 minutes).
 """
-function _ctsem_stalled(trace::CTSEMTrace, window::Integer, fraction::Real)
+function _ctsem_stalled(trace::CTSEMTrace, window::Integer, fraction::Real;
+        carried::Real=0.0)
     values = get(trace.values, :objective, Float64[])
     window >= 1 || return false
     length(values) > window || return false
-    progress = values[end] - values[1]
+    progress = values[end] - values[1] + carried
     isfinite(progress) && progress > 0 || return false
     gained = values[end] - values[end - window]
     isfinite(gained) || return false
@@ -1301,6 +1298,33 @@ A fit that is stalled and flat with nothing better nearby is treated as the
 slow case: cooldown and tighten. If it is nonetheless in the wrong place, the
 zero-and-refit escape after the fit is what finds out, because only a refit
 can.
+
+## A resumed stage may stop on progress alone
+
+`alone = true`, which `.ctBackendCorrectResult()` sets on a stage it resumes
+because the certification found the point short of a maximum. There "stuck
+versus slow" is exactly the question left, and the hysteresis above is what
+answers it: once the bar has been tightened `tightenings` times and the stage
+still has not cleared it, it is stuck, and it stops (`exhausted`). With the
+defaults that is stalled at a share of 1e-2 of the fit's progress, again at
+1e-3 thirty iterations on, and at 1e-4 thirty after that. Nothing new is tuned:
+the window, the share, the cooldown and the tightening are the ones every fit
+already runs under, and `carried` (see `_ctsem_stalled`) is what gives a
+resumed stage a progress to take a share of. This is the one no-progress rule
+for a resume; it replaced switching the predicted-gain stop off and
+quadrupling the cap, which is how a resume on AnomAuth came to run for hours.
+
+## Provenance
+
+The window of 80 iterations, the share of 1e-2, the cooldown of 30, the
+tightening by 0.1 at most twice, and the flat ratio of 1e-3 that
+`ctsem_optimize` passes to `_ctsem_flat_coordinates` were set by hand on the
+flat-transform fixtures the watch was built for (fcae6459, 2026-09-14): a drift
+started inside `-log1p_exp`'s flat region, now the slow tier of
+`test-julia-convergence.R`, and `test_state_sampling.jl`'s count model for the
+case the conjunction must leave alone. No sweep over any of them is on record,
+and none has been checked on categorical or multilevel models (the
+consolidation plan's Appendix B).
 """
 mutable struct CTSEMStallWatch
     window::Int
@@ -1313,81 +1337,99 @@ mutable struct CTSEMStallWatch
     flat::Vector{Int}
     point::Vector{Float64}
     gain::Float64
+    carried::Float64
+    alone::Bool
+    exhausted::Bool
 end
 
 CTSEMStallWatch(; window::Integer=80, fraction::Real=1e-2, cooldown::Integer=30,
-    tighten::Real=0.1, tightenings::Integer=2) =
+    tighten::Real=0.1, tightenings::Integer=2, carried::Real=0.0,
+    alone::Bool=false) =
     CTSEMStallWatch(Int(window), Float64(fraction), Int(cooldown),
-        Float64(tighten), Int(tightenings), 0, 0, Int[], Float64[], 0.0)
+        Float64(tighten), Int(tightenings), 0, 0, Int[], Float64[], 0.0,
+        Float64(carried), alone, false)
 
 """
     _ctsem_stall_verdict!(watch, trace, iteration, params, values, range, ratio)
 
-Whether to stop: the progress test fired *and* something is flat.
+Whether to stop: the progress test fired *and* something is flat -- or, on a
+resumed stage (`watch.alone`), the progress test fired at its tightest bar.
 
 Mutates `watch` with the hysteresis, and records which coordinates were flat so
 the caller can say what ended the run. `params === nothing`, or a range with
 nothing in it, means there is no transform layer to ask -- the conjunction can
-then never complete, which is the right answer rather than half of one.
+then never complete, which is the right answer rather than half of one; a
+resumed stage can still stop on progress alone.
 """
 function _ctsem_stall_verdict!(watch::CTSEMStallWatch, trace::CTSEMTrace,
         iteration::Integer, objective, params, values, range, ratio::Real;
         tolerance::Real=1e-6)
     watch.window >= 1 || return false
-    params === nothing && return false
+    params === nothing && !watch.alone && return false
     iteration >= watch.quiet_until || return false
-    _ctsem_stalled(trace, watch.window, watch.fraction) || return false
+    _ctsem_stalled(trace, watch.window, watch.fraction;
+        carried=watch.carried) || return false
     watch.triggers += 1
-    # Two detectors, because neither sees what the other does.
-    # `_ctsem_flat_coordinates` measures a transform against its own live value
-    # and so is scale free, but it walks `regular_transforms` and the
-    # population scales and correlations are not in it. `_ctsem_saturated_for`
-    # is the route's own, and on the laplace route it is the only thing that
-    # knows a correlation has reached its cap -- which is exactly the state
-    # that stalled the fit this was measured on. Missing it meant the
-    # conjunction never fired on that fit at all.
-    # Guarded separately, not as one expression. A detector that cannot answer
-    # for this objective must not take the other one down with it: wrapping
-    # both in a single `try` meant one `MethodError` reported nothing flat
-    # anywhere, which is the failure mode that reads as "no problem found".
-    relative = try
-        _ctsem_flat_coordinates(params, values, range; ratio=ratio)
-    catch
-        Int[]
-    end
-    route = try
-        _ctsem_saturated_for(objective, values)
-    catch
-        Int[]
-    end
-    flat = sort!(unique(vcat(relative, route)))
-    if !isempty(flat)
-        # And the third condition: somewhere better to go. Without it a fit
-        # converging into a flat region is stopped before it arrives.
-        #
-        # The value is taken at `values` rather than from the trace's last row,
-        # even though the trace has one and this costs an evaluation. They are
-        # not the same point: the trace records completed iterations, and the
-        # point handed in here is the last one the objective accepted, which
-        # may be a line-search trial taken after that row was written. A gain
-        # measured against the wrong baseline is not a gain.
-        value = _ctsem_probe_value(objective, values)
-        out = if isfinite(value)
-            try
-                _ctsem_overshot(objective, values, flat, value, tolerance)
-            catch err
-                _ctsem_must_propagate(err) && rethrow()
+    if params !== nothing
+        # Two detectors, because neither sees what the other does.
+        # `_ctsem_flat_coordinates` measures a transform against its own live
+        # value and so is scale free, but it walks `regular_transforms` and the
+        # population scales and correlations are not in it.
+        # `_ctsem_saturated_for` is the route's own, and on the laplace route it
+        # is the only thing that knows a correlation has reached its cap --
+        # which is exactly the state that stalled the fit this was measured on.
+        # Missing it meant the conjunction never fired on that fit at all.
+        # Guarded separately, not as one expression. A detector that cannot
+        # answer for this objective must not take the other one down with it:
+        # wrapping both in a single `try` meant one `MethodError` reported
+        # nothing flat anywhere, which is the failure mode that reads as "no
+        # problem found".
+        relative = try
+            _ctsem_flat_coordinates(params, values, range; ratio=ratio)
+        catch
+            Int[]
+        end
+        route = try
+            _ctsem_saturated_for(objective, values)
+        catch
+            Int[]
+        end
+        flat = sort!(unique(vcat(relative, route)))
+        if !isempty(flat)
+            # And the third condition: somewhere better to go. Without it a fit
+            # converging into a flat region is stopped before it arrives.
+            #
+            # The value is taken at `values` rather than from the trace's last
+            # row, even though the trace has one and this costs an evaluation.
+            # They are not the same point: the trace records completed
+            # iterations, and the point handed in here is the last one the
+            # objective accepted, which may be a line-search trial taken after
+            # that row was written. A gain measured against the wrong baseline
+            # is not a gain.
+            value = _ctsem_probe_value(objective, values)
+            out = if isfinite(value)
+                try
+                    _ctsem_overshot(objective, values, flat, value, tolerance)
+                catch err
+                    _ctsem_must_propagate(err) && rethrow()
+                    nothing
+                end
+            else
                 nothing
             end
-        else
-            nothing
+            if out !== nothing && out.overshot && !isempty(out.point)
+                watch.flat = flat
+                watch.point = collect(Float64, out.point)
+                watch.gain = Float64(out.gain)
+                return true
+            end
         end
-        if out !== nothing && out.overshot && !isempty(out.point)
-            watch.flat = flat
-            watch.point = collect(Float64, out.point)
-            watch.gain = Float64(out.gain)
-            return true
-        end
+    end
+    # On a resumed stage, stalled at the tightest bar the hysteresis allows:
+    # stuck, not slow. See `CTSEMStallWatch`.
+    if watch.alone && watch.tightenings_left == 0
+        watch.exhausted = true
+        return true
     end
     # Stalled with nothing flat, or flat with nothing better nearby: slow
     # rather than stuck. Wait, and ask less readily next time.
@@ -1437,8 +1479,8 @@ way it failed the last one.
 ## The criterion is not a gradient
 
 `converge_tol` is in *nats*, and what is compared against it is
-`predicted_gain` -- `1/2 g' B g` from the L-BFGS metric, read off the line
-search by `CTSEMDirectional`. Both sides are objective differences, which is the
+`predicted_gain` -- `1/2 g' B g` from the L-BFGS metric, recorded by the line
+search in `CTSEMDirectional`. Both sides are objective differences, which is the
 only comparison here that survives its own units.
 
 A gradient does not. Under a reparameterisation `theta -> A theta` it becomes
@@ -1529,7 +1571,26 @@ function _ctsem_optimise_verdict(objective, minimizer, start_values, value,
         overshot=overshot)
 end
 
-"""Optimize a prepared likelihood entirely within Julia using L-BFGS."""
+"""
+    ctsem_optimize(objective, start; ...)
+
+Optimize a prepared likelihood entirely within Julia: L-BFGS, then, where the
+route has one, the endgame (`_ctsem_newton_finish`).
+
+The endgame's controls: `newton` turns it on; `certify` says a certification
+will read what it returns, which adds the flat-direction probe and, on a route
+whose Hessian is expensive (Laplace), is what the finish runs for at all;
+`newton_curvature` is `:auto` (the route's own, `_ctsem_finish_curvature`),
+`:exact`, `:chord` or `:subset`; `newton_switch` is the predicted gain at which
+L-BFGS hands over where a Hessian is cheap; `newton_reuse` and `flat_rtol` are
+the finish's rules, passed from R so one number serves both sides. The stall
+watch's `stall_carried` and `stall_alone` are set only on a stage resumed after
+a certification (see `CTSEMStallWatch`).
+
+Provenance of the defaults: the stall watch's constants are documented at
+`CTSEMStallWatch`, the batching's at `_ctsem_batch_plan`, and the finish's
+hand-over (0.1) and step cap (30) at the head of the endgame in optimiser.jl.
+"""
 function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     maxiter::Integer=1000, g_tol::Real=1e-8, f_tol::Real=0.0,
     x_tol::Real=0.0, verbose::Bool=false, gradient_method=:adjoint,
@@ -1544,9 +1605,12 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     stall_window::Integer=80, stall_fraction::Real=1e-2,
     stall_cooldown::Integer=30, stall_tighten::Real=0.1,
     stall_tightenings::Integer=2, stall_ratio::Real=1e-3,
+    stall_carried::Real=0.0, stall_alone::Bool=false,
     batch::Bool=false, batch_theta::Real=0.25,
     newton::Bool=false, newton_switch::Real=0.1, newton_maxit::Integer=30,
-    newton_curvature=:exact)
+    newton_curvature=:auto, certify::Bool=false,
+    newton_reuse::Real=_CTSEM_HESSIAN_REUSE_SE,
+    flat_rtol::Real=_CTSEM_FLAT_RTOL)
     start_values = collect(start)
     # Validated here rather than at the probe, which runs after the fit: a
     # misspelled mode should cost nothing, not a whole optimisation.
@@ -1585,16 +1649,26 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     end
     fg! = (F, G, x) -> trial_fg!(objective, F, G, x)
     # A batch only where it can mean something: a route with a subset, no
-    # prior or sampled TI predictor, and enough units. Otherwise `nothing`,
-    # and the run below is ordinary L-BFGS on the whole data.
+    # sampled TI predictor, and enough units (a prior is separated out and does
+    # not stop it; see `_ctsem_batch_plan`). Otherwise `nothing`, and the run
+    # below is ordinary L-BFGS on the whole data.
     batcher = batch ? _ctsem_batch_plan(objective, trial_fg!; theta=batch_theta) :
         nothing
     batching() = batcher !== nothing && !_ctsem_batch_full(batcher)
-    # The cheap rule's threshold. With a Newton finish to come, L-BFGS hands
-    # over as soon as its predicted gain is below `newton_switch`; the finish
-    # then takes it to `gap_tol` on the exact curvature.
-    finishing = newton && gap_tol > 0 && _ctsem_cheap_hessian(objective)
-    handover = finishing ? max(Float64(gap_tol), Float64(newton_switch)) :
+    # The endgame (`_ctsem_newton_finish`), on a route that has one. Where a
+    # Hessian costs a few gradients it runs whenever there is a stopping rule
+    # for it to finish, and L-BFGS hands over as soon as its predicted gain is
+    # below `newton_switch`. Where it costs `2 npar` gradients (Laplace) it
+    # runs only when a certification will read it, and L-BFGS runs to its own
+    # rule first: the finish's Hessian is then the one the certification would
+    # have formed anyway, rather than an extra one.
+    cheap = _ctsem_cheap_hessian(objective)
+    route_curvature = _ctsem_finish_curvature(objective)
+    finish_curvature = Symbol(newton_curvature) === :auto ? route_curvature :
+        Symbol(newton_curvature)
+    finishing = newton && gap_tol > 0 && route_curvature !== nothing &&
+        (certify || cheap)
+    handover = finishing && cheap ? max(Float64(gap_tol), Float64(newton_switch)) :
         Float64(gap_tol)
     # A callback rather than Optim's `show_trace`, which prints one dense line
     # per iteration whatever the model costs -- thousands on a fast one, and on
@@ -1622,9 +1696,9 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # largest objective change the fit ever had, and the printed lines are a
     # time-sampled subset.
     convergence = CTSEMConvergence(g_tol, Int(maxiter))
-    # An observer around the line search that runs; it changes nothing about
-    # which one that is.
-    directional = CTSEMDirectional(Optim.LineSearches.BackTracking())
+    # Where the line search records each accepted step's directional
+    # derivative, and the finish its exact decrement.
+    directional = CTSEMDirectional()
     # Optim's own `iterations`, `f_calls` and `g_calls` do not survive a
     # callback stop: measured on a two-latent model, four runs that stopped
     # after 4, 8 and 10 iterations all reported 1 iteration and 2 gradient
@@ -1635,6 +1709,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     seen_iterations = Ref(0)
     stopped_by_gap = Ref(false)
     stopped_by_stall = Ref(false)
+    stopped_by_progress = Ref(false)
     # Where the fit currently is. Optim's callback is handed convergence
     # numbers, not the point they describe -- `extended_trace` would carry it
     # but costs a copy of every iterate -- and the stall conjunction has to ask
@@ -1643,7 +1718,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     current_x = copy(start_values)
     stall = CTSEMStallWatch(window=stall_window, fraction=stall_fraction,
         cooldown=stall_cooldown, tighten=stall_tighten,
-        tightenings=stall_tightenings)
+        tightenings=stall_tightenings, carried=stall_carried, alone=stall_alone)
     watch = function (state)
         latest = state isa AbstractVector ? last(state) : state
         _record!(trace, latest.iteration, -latest.value, latest.g_norm,
@@ -1697,7 +1772,11 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
                 _ctsem_params(objective), current_x,
                 _ctsem_saturation_range(objective, current_x), stall_ratio;
                 tolerance=converge_tol)
-            stopped_by_stall[] = true
+            # Stuck on progress alone (a resumed stage) or stalled and flat
+            # with somewhere better to go: different findings, and only the
+            # second hands back a point to resume from.
+            stall.exhausted ? (stopped_by_progress[] = true) :
+                (stopped_by_stall[] = true)
             return true
         end
         return false
@@ -1756,33 +1835,56 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # that stall backtracking converged every one.
     #
     # A stop that is short for any other reason is not the line search's
-    # problem to solve twice: the certification measures what the estimate
-    # still has to gain, and `.ctBackendCorrectResult()` continues the fit from
-    # a damped Newton step with a tightened stopping rule. Two mechanisms for
-    # one job, where the second can only act in cases the first did not fix, is
-    # a way to be surprised rather than a safety net.
+    # problem to solve twice: the finish below takes Newton steps on the
+    # curvature, and the certification after the fit measures what the estimate
+    # still has to gain and resumes this optimiser when it falls short. Two
+    # mechanisms for one job, where the second can only act in cases the first
+    # did not fix, is a way to be surprised rather than a safety net.
     # Before the final evaluation, so what it reports is the run rather than
     # the extra call: see `_ctsem_optimise_verbose_report`.
     minimizer = collect(result.minimizer)
-    # The Newton finish, when L-BFGS handed over by the cheap rule. Recorded in
-    # the trace like any other iteration, with the exact predicted gain.
+    # Why L-BFGS stopped, in one word, since the finish depends on it and the
+    # certification reads it.
+    reason_for(r) = stopped_by_gap[] ? "gap" : stopped_by_stall[] ? "stall" :
+        stopped_by_progress[] ? "progress" :
+        r.linesearch_failed ? "linesearch" :
+        r.g_converged ? "gradient" :
+        ((r.f_converged && f_tol > 0) || (r.x_converged && x_tol > 0)) ?
+            "tolerance" :
+        r.iterations >= Int(maxiter) ? "cap" : "other"
+    stop_reason = reason_for(result)
+    # The endgame, after every stop that means "as far as L-BFGS goes" -- the
+    # cheap rule, a line search with nowhere to go, a gradient already at its
+    # bar, a resumed stage that stopped gaining. Not after the iteration cap,
+    # which is the caller's budget and may be far from any optimum, nor after a
+    # stall, which hands back a point to resume from instead: for those the
+    # certification asks `ctsem_endgame` for its numbers. Recorded in the trace
+    # like any other iteration, with the exact predicted gain.
     finish = nothing
-    if finishing && stopped_by_gap[]
+    if finishing && stop_reason in ("gap", "linesearch", "gradient", "progress")
         record = function (state)
             _record!(trace, state.iteration, -state.value, state.g_norm,
                 state.gain, _ctsem_optimise_trace_values(objective)...)
             seen_iterations[] = max(seen_iterations[], Int(state.iteration))
             return false
         end
-        finish = _ctsem_newton_finish(objective, minimizer, result.minimum,
-            result.gradient, fg!; tol=gap_tol, maxit=newton_maxit,
-            callback=record, iteration0=result.iterations,
-            curvature=Symbol(newton_curvature))
+        # From the full objective. A batch still short of the data when L-BFGS
+        # stopped -- a line search can fail inside one -- left its own value
+        # and gradient in the result.
+        f0 = result.minimum
+        G0 = collect(Float64, result.gradient)
+        if batcher !== nothing && !_ctsem_batch_full(batcher)
+            f0 = fg!(0.0, G0, minimizer)
+        end
+        finish = _ctsem_newton_finish(objective, minimizer, f0, G0, fg!;
+            tol=gap_tol, maxit=newton_maxit, callback=record,
+            iteration0=result.iterations, curvature=finish_curvature,
+            probe=certify, reuse_se=newton_reuse, flat_rtol=flat_rtol)
         minimizer = collect(finish.x)
         # The finish's own gain replaces L-BFGS's metric proxy: it is the exact
         # decrement, which is what the verdict below should be judging.
         directional.dphi0 = -2 * finish.gain
-        if finish.hessian === nothing
+        if finish.hessian === nothing && handover > gap_tol
             # No usable Hessian -- measured on a censored model, whose exact
             # Hessian comes back non-finite -- so no finish either. L-BFGS
             # carries on from where it handed over, to the ordinary stopping
@@ -1803,6 +1905,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
                 result.batch_sizes, result.batch_iterations)
             minimizer = collect(result.minimizer)
             finish = nothing
+            stop_reason = reason_for(result)
         end
     end
     verbose && _ctsem_optimise_verbose_report(objective, call_log)
@@ -1905,6 +2008,12 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         stall.gain, " -- so the fit has stopped getting anywhere, this is why, ",
         "and there is somewhere better to go. Stopping here rather than ",
         "running to the iteration cap")
+    verbose && stopped_by_progress[] && println(_console(), label, ": the last ",
+        stall.window, " iterations gained ", _ctsem_window_gain(trace, stall.window),
+        ", under ", stall.fraction, " of the ", _ctsem_trace_progress(trace) +
+        stall.carried, " the fit has gained, at the tightest bar -- a resumed ",
+        "stage that has stopped getting anywhere; stopping rather than running ",
+        "to the iteration cap")
     verbose && !stalled && !(finite_gradient &&
         (result.g_converged || converged_enough)) &&
         println(_console(), label, ": the optimizer stopped with an estimated ",
@@ -1933,16 +2042,59 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         batch_sizes=isempty(result.batch_sizes) ? [0] : result.batch_sizes,
         batch_iterations=isempty(result.batch_iterations) ? [0] :
             result.batch_iterations,
-        # The Newton finish: how many steps, and the exact Hessian of the
-        # objective at `minimizer` it ended on -- the certification's matrix,
-        # handed over so it is not computed twice. `[0.0;;]` when there was no
-        # finish (a 1x1 zero, since an empty matrix would hang the bridge).
+        # The endgame (`_ctsem_newton_finish`): how many steps, escapes from a
+        # saddle included, and the Hessian of the objective it ended on -- the
+        # certification's matrix, handed over so it is not computed twice.
+        # `[0.0;;]` when there was no finish (a 1x1 zero, since an empty matrix
+        # would hang the bridge).
         newton_steps=finish === nothing ? 0 : finish.steps,
         newton_hessians=finish === nothing ? 0 : finish.full_hessians,
         newton_subset_hessians=finish === nothing ? 0 : finish.subset_hessians,
         hessian=(finish === nothing || finish.hessian === nothing) ?
             zeros(1, 1) : finish.hessian,
+        # Where that Hessian was evaluated, and how far `minimizer` is from
+        # there in the standard errors it implies: a chord Hessian the steps
+        # converged on within `newton_reuse` of a standard error is kept as the
+        # final one. `[0.0]` and `NaN` when there is no Hessian.
+        hessian_evaluated_at=(finish === nothing || finish.hessian === nothing) ?
+            [0.0] : finish.hessian_at,
+        hessian_distance=(finish === nothing || finish.hessian === nothing) ?
+            NaN : finish.distance,
+        # The saddle record: whether the final point still has a direction of
+        # negative curvature, whether the ladder was tried at it, how many
+        # escapes the ladder made on the way, and what they gained.
+        newton_saddle=finish === nothing ? false : finish.saddle,
+        newton_ladder_tried=finish === nothing ? false : finish.ladder_tried,
+        newton_escapes=finish === nothing ? 0 : finish.escapes,
+        newton_escape_gain=finish === nothing ? 0.0 : finish.ladder_gain,
+        # What the directions the final Hessian does not trust are worth, by
+        # the route's own predicate: the probe `.ctBackendCertify()` reads.
+        # `probe_ran` false and a `[0.0]` direction when there was nothing to
+        # probe, or no certification asked for one.
+        probe_ran=finish !== nothing && !isempty(finish.probe.direction),
+        probe_gain=finish === nothing ? 0.0 : finish.probe.gain,
+        probe_length=finish === nothing ? 0.0 : finish.probe.length,
+        probe_longest=finish === nothing ? 0.0 : finish.probe.longest,
+        probe_direction=(finish === nothing || isempty(finish.probe.direction)) ?
+            [0.0] : finish.probe.direction,
+        # One entry per step the finish took, in order: its kind ("newton",
+        # "exact" or "saddle"), predicted gain, step length (a signed raw length
+        # for an escape) and the objective after it. `newton_steps` says how
+        # many entries are real; with none, one placeholder, for the bridge.
+        newton_history_kind=(finish === nothing || isempty(finish.history.kind)) ?
+            ["none"] : finish.history.kind,
+        newton_history_gain=(finish === nothing || isempty(finish.history.gain)) ?
+            [NaN] : finish.history.gain,
+        newton_history_alpha=(finish === nothing || isempty(finish.history.alpha)) ?
+            [NaN] : finish.history.alpha,
+        newton_history_value=(finish === nothing || isempty(finish.history.value)) ?
+            [NaN] : finish.history.value,
+        # Why L-BFGS stopped: "gap", "stall", "progress", "linesearch",
+        # "gradient", "tolerance", "cap" or "other".
+        stop_reason=stop_reason,
         stopped_by_gap=stopped_by_gap[],
+        # A resumed stage stopped on progress alone; see `CTSEMStallWatch`.
+        stopped_by_progress=stopped_by_progress[],
         # Whether the run ended because it stopped making progress rather than
         # because it arrived. `f_calls` and `g_calls` undercount here for the
         # same reason they do under `stopped_by_gap`: Optim stops updating them

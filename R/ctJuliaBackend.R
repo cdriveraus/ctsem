@@ -3843,7 +3843,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 .ctJuliaOptimise <- function(model_spec, start, optimcontrol = list(),
   gradient = "adjoint", cores = 1L, verbose = 0L, maxiter = NULL,
   callback = NULL, objective = NULL, progress_label = NULL,
-  progress_budget = FALSE, pin = NULL) {
+  progress_budget = FALSE, pin = NULL, carried = NULL) {
   spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
   # A caller may hand in the objective to maximise. `intoverstates=FALSE` does,
   # passing the joint one over `[theta; z]`; everything below is unchanged by
@@ -3925,18 +3925,35 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # hands it a problem conditioned ten times worse than it needs to be. See
     # `.ctJuliaParameterScale()` and `_ctsem_metric` in the engine.
     # Start on a subset of the subjects and grow it as the optimiser needs
-    # more data, and finish with Newton steps on the exact Hessian where that
-    # is a few gradients' worth. Both decide for themselves whether they apply
-    # -- a route without a subset, a prior, too few subjects, an expensive
-    # Hessian -- and are plain L-BFGS otherwise. See optimiser.jl. Off on the
+    # more data, and finish with the endgame: Newton steps, the final Hessian,
+    # an escape from a saddle and the flat-direction probe, all in the engine
+    # (`_ctsem_newton_finish` in optimiser.jl). Batching decides for itself
+    # whether it applies -- a route without a subset, a sampled TI predictor,
+    # too few subjects -- and is plain L-BFGS otherwise. Off on the
     # state-explicit route, whose target is not a sum over subjects and whose
     # joint mode is not an estimate.
     batch = !state_explicit && !identical(optimcontrol$batch, FALSE),
     newton = !state_explicit && !identical(optimcontrol$newton, FALSE),
     # `newton` may also name what the finish's steps are taken against --
-    # 'exact', 'chord' or 'subset'; see `_ctsem_newton_finish`.
+    # 'exact', 'chord' or 'subset'; otherwise the route's own, the exact
+    # Hessian where it is a few gradients and the chord where it is `2 npar`
+    # (Laplace). See `_ctsem_newton_finish`.
     newton_curvature = if (is.character(optimcontrol$newton))
-      as.character(optimcontrol$newton)[1L] else "exact",
+      as.character(optimcontrol$newton)[1L] else "auto",
+    # Whether a certification will read what the endgame returns. It adds the
+    # flat-direction probe, and on the Laplace route, whose Hessian costs `2
+    # npar` gradients, it is what the endgame runs for at all: the finish's
+    # Hessian is then the certification's, not an extra one. Not on a budget
+    # stage (the prior warm-up, whose verdict nobody reads), nor where nothing
+    # certifies -- `estonly`, `certify = FALSE`, the state-explicit route.
+    certify = !state_explicit && !isTRUE(optimcontrol$estonly) &&
+      !identical(optimcontrol$certify, FALSE) && !isTRUE(progress_budget),
+    # The endgame's two rules, passed from here so one number serves the
+    # engine and R: how far a Hessian may have been taken from the estimate and
+    # still be its curvature (`.ctBackendHessianReuse()`), and the relative
+    # curvature below which a direction is flat (`.ctFlatDirectionRtol()`).
+    newton_reuse = .ctBackendHessianReuse(),
+    flat_rtol = .ctFlatDirectionRtol(),
     precondition = if (identical(optimcontrol$precondition, FALSE)) NULL else
       .ctJuliaVector(.ctJuliaParameterScale(model_spec,
         at = as.numeric(start), npar = length(as.numeric(start)))),
@@ -4042,6 +4059,15 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   if (!is.null(optimcontrol$lbfgs_memory)) {
     common$lbfgs_memory <- as.integer(optimcontrol$lbfgs_memory)[1L]
   }
+  # A stage resumed after a certification found the point short of a maximum
+  # (`.ctBackendCorrectResult()`): the progress the fit made before it, so its
+  # stall watch has a progress to take a share of, and leave to stop on
+  # progress alone once the watch's hysteresis is spent. Every other rule is the
+  # first stage's. See `CTSEMStallWatch` in the engine.
+  if (!is.null(carried)) {
+    common$stall_carried <- max(0, as.numeric(carried)[1L], na.rm = TRUE)
+    common$stall_alone <- TRUE
+  }
   # `cores` is the ceiling; `ctsem_tune_chunks!` measures the count to use
   # within it, and the fit records what it picked. Restored afterwards so the
   # session does not carry this fit's ceiling into the next thing that runs.
@@ -4128,7 +4154,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # curvature history describes the region the fit just left, so carrying it
   # across a jump would feed the metric secant pairs from two different
   # problems -- which is the same reason `.ctBackendCorrectResult()` resumes a
-  # fresh optimisation after its Newton step rather than nudging the old one.
+  # fresh optimisation rather than nudging the old one.
   #
   # The jump is only ever taken on a *measured* improvement, so a resumed stage
   # cannot start below where the last one stopped. `stallretries` caps the loop
@@ -4671,18 +4697,17 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   correction <- NULL
   certifying <- isTRUE(intoverstates) && !isTRUE(optimcontrol$estonly) &&
     !identical(optimcontrol$certify, FALSE)
+  # A resume runs under the fit's own controls, with only the progress the fit
+  # has made carried in (see `.ctBackendCorrectResult()`).
   correct <- function(r) .ctBackendCorrectResult(r, model_spec, npar,
     tolerance = .ctJuliaOr(optimcontrol$gaptol, 1e-6),
     maxtries = .ctJuliaOr(optimcontrol$gapretries, 2L),
     gradient = gradient, verbose = verbose,
-    maxiter = .ctJuliaOr(optimcontrol$maxiter, 1000L),
-    gtol = .ctJuliaOr(optimcontrol$g_tol, 1e-8),
-    optimise = function(from, overrides = list()) .ctJuliaOptimise(model_spec,
+    optimise = function(from, carried = 0) .ctJuliaOptimise(model_spec,
       if (is.null(jointobjective)) from else c(from, numeric(nstate)),
-      optimcontrol = utils::modifyList(optimcontrol, overrides),
-      gradient = gradient, cores = cores,
+      optimcontrol = optimcontrol, gradient = gradient, cores = cores,
       verbose = verbose, callback = optimcontrol$callback,
-      objective = jointobjective))
+      objective = jointobjective, carried = carried))
   if (certifying) {
     correction <- correct(result)
     result <- correction$result
@@ -4858,9 +4883,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       as.integer(result$batch_sizes),
     batch_iterations = if (is.null(result$batch_iterations)) 0L else
       as.integer(result$batch_iterations),
-    # Newton steps on the exact Hessian after L-BFGS handed over; 0 when there
-    # was no finish (the Hessian is not cheap on this route, or the run ended
-    # some other way).
+    # Steps the endgame took after L-BFGS handed over, escapes from a saddle
+    # included; 0 when there was no finish (nothing certifies on the Laplace
+    # route, or the run ended on its cap or a stall).
     newton_steps = if (is.null(result$newton_steps)) 0L else
       as.integer(result$newton_steps),
     # Full and subset Hessians the finish formed, the final (certification)
@@ -4869,6 +4894,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       as.integer(result$newton_hessians),
     newton_subset_hessians = if (is.null(result$newton_subset_hessians)) 0L
       else as.integer(result$newton_subset_hessians),
+    # How many times the finish left a saddle along its negative curvature.
+    newton_escapes = if (is.null(result$newton_escapes)) 0L else
+      as.integer(result$newton_escapes),
     stall_window = if (is.null(result$stall_window)) NA_integer_ else
       as.integer(result$stall_window),
     # And the two stopping rules as the engine actually received them.
@@ -4996,18 +5024,28 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     out$optim$g_calls <- as.integer(correction$totals[["g_calls"]])
     # A count of Hessians computed, which used to sit on `$estimate` as
     # `hessians` -- an integer one letter away from the matrix beside it. Named
-    # for what it counts, and on `$optim` because it counts work the run did.
+    # for what it counts, and on `$optim` because it counts work the run did:
+    # the ones the engine's finish formed over every stage, and any the
+    # certification had to ask for where no finish ran.
     out$optim$hessian_evaluations <- correction$hessians
+    # How far the reported estimate is from where that Hessian was evaluated,
+    # in the standard errors it implies: 0 when it is exactly there, and at
+    # most `.ctBackendHessianReuse()` when the finish kept the Hessian it took
+    # at the hand-over.
+    out$optim$hessian_distance <- correction$distance
     # The matrix goes where its consumers look, and `evaluated_at` is what makes
-    # that safe. See `.ctBackendHessian()`: every route now says which point
+    # that safe. See `.ctBackendStoredHessian()`: every route says which point
     # its Hessian describes, rather than leaving a reader to assume
-    # `$estimate$raw` -- which is true here and false on a sampled fit, where
+    # `$estimate$raw` -- which is close here and false on a sampled fit, where
     # the matrix is at the Laplace point and `$estimate$raw` is the posterior
-    # mean. `.ctBackendCorrectResult()` recomputes the curvature at the top of
-    # every attempt and only breaks out before resuming, so this matrix is
-    # always at the `minimizer` the fit reports.
+    # mean. `.ctBackendCorrectResult()` recertifies at the top of every
+    # attempt and only breaks out before resuming, so this matrix describes the
+    # `minimizer` the fit reports: evaluated there, or within a hundredth of a
+    # standard error of it.
     out$uncertainty <- list(certification = correction$certification,
-      hessian = correction$hessian, evaluated_at = minimizer)
+      hessian = correction$hessian,
+      evaluated_at = if (is.null(correction$evaluated_at)) minimizer else
+        as.numeric(correction$evaluated_at))
     out <- .ctBackendCertifiedVerdict(out)
   }
   class(out) <- c("ctJuliaFit", "ctFit")

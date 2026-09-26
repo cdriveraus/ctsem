@@ -363,12 +363,18 @@ FALSE} restores the fixed start.
 
 With \code{backend='julia'}, the optimiser starts on a random subset of the
 subjects and grows it as the fit needs more data (\code{optimcontrol$batch},
-default \code{TRUE}), and finishes with Newton steps on the exact Hessian
-once it is close (\code{optimcontrol$newton}, default \code{TRUE}). Each
-applies only where it pays: batching needs at least 80 subjects (or
-top-level groups), and the Newton finish is skipped under
-\code{intoverpop='laplace'}, where the Hessian is expensive. Both reach the
-same optimum; set either to \code{FALSE} to switch it off.
+default \code{TRUE}), and finishes with Newton steps once it is close
+(\code{optimcontrol$newton}, default \code{TRUE}). The finish ends on the
+Hessian the convergence check and the standard errors use, tries the
+direction of negative curvature when it has stopped at a saddle, and checks
+what the directions with no curvature are worth. Batching needs at least 80
+subjects (or top-level groups). Under \code{intoverpop='laplace'}, where a
+Hessian costs \code{2 * npar} gradients, the finish runs only when the fit
+is certified, and reuses the one Hessian it takes for its steps. When the
+check still finds the fit short of a maximum, the optimiser is resumed
+under the same rules, at most \code{optimcontrol$gapretries} times (default
+2), and a resumed stage that stops gaining is stopped. Set \code{batch} or
+\code{newton} to \code{FALSE} to switch either off.
 \code{fit$optim$batch_sizes} and \code{fit$optim$newton_steps} record what
 ran.
 

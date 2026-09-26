@@ -109,27 +109,6 @@ test_that("a gap above tolerance says how far, in log likelihood", {
   expect_false(verdict$certified)
 })
 
-test_that("the probe reports the best actual gain, and zero when there is none", {
-  # A likelihood rising along the direction: the probe has to find it and say
-  # how far it went, because that number is what a norm of the gradient cannot
-  # give.
-  rising <- function(x) 3 * x[2L]
-  found <- ctsem:::.ctBackendOptimGapProbe(rising, at = c(0, 0),
-    direction = c(0, 1), value = 0)
-  expect_equal(found$gain, 12)      # the longest step, 4, times 3
-  expect_equal(found$length, 4)
-  falling <- function(x) -3 * x[2L]
-  none <- ctsem:::.ctBackendOptimGapProbe(falling, at = c(0, 0),
-    direction = c(0, 1), value = 0)
-  expect_equal(none$gain, 0)
-  # A direction of length zero is nothing to probe, not an error.
-  expect_equal(ctsem:::.ctBackendOptimGapProbe(rising, c(0, 0), c(0, 0), 0)$gain, 0)
-  # An objective that cannot be evaluated there is a step not taken, not a
-  # failed certification.
-  broken <- function(x) stop("no")
-  expect_equal(ctsem:::.ctBackendOptimGapProbe(broken, c(0, 0), c(0, 1), 0)$gain, 0)
-})
-
 test_that("a flat direction that still gains says what the probe measured", {
   # AnomAuth S1 from default starts, in miniature: a flat direction along one
   # population sd whose probe gains 5.5e-05 at a quarter of a unit and less
@@ -137,20 +116,10 @@ test_that("a flat direction that still gains says what the probe measured", {
   # within the probe did not mean a maximum on S2, which had 1.6 exact nats
   # further out -- and what changes is that the reader is told what was seen:
   # which parameters, how much, at what length, and how far the probe looked.
-  bump <- function(x) if (x[2L] <= 0.25) 2.2e-4 * x[2L] else
-    5.5e-5 - 1e-5 * (x[2L] - 0.25)
-  probe <- ctsem:::.ctBackendOptimGapProbe(bump, at = c(0, 0),
-    direction = c(0, 3), value = 0)
-  expect_equal(probe$gain, 5.5e-5)
-  expect_equal(probe$length, 0.25)
-  expect_equal(probe$longest, 4)
-  expect_equal(probe$direction, c(0, 1))
-  # The longest length is the longest the objective could be evaluated at, not
-  # the longest asked for: a probe that failed at 4 looked no further than 1.
-  short <- ctsem:::.ctBackendOptimGapProbe(function(x)
-    if (x[2L] > 2) stop("no") else bump(x), c(0, 0), c(0, 1), 0)
-  expect_equal(short$longest, 1)
-
+  # The probe itself is the engine's now (`_ctsem_flat_probe`, tested in
+  # test_ctsem_backend.jl); these are its numbers for that bump.
+  probe <- list(gain = 5.5e-5, length = 0.25, longest = 4,
+    direction = c(0, 1), ok = TRUE)
   gap <- ctsem:::.ctBackendOptimGap(-diag(c(4, 0)), c(1e-9, 3))
   verdict <- ctsem:::.ctBackendCertify(gap, probe, tolerance = 1e-6,
     parnames = c("drift", "popsd_cint"))
@@ -223,199 +192,195 @@ test_that("a gap is never reported through fixed-point rounding", {
   expect_match(note, "0.000191")
 })
 
-test_that("the damped step backtracks as far as the arithmetic allows", {
-  # The case that refused a correction in a real fit: an ascent direction whose
-  # step is far too long, because the trusted curvature spans nine orders and
-  # the Newton step is 50 units in coordinates where the parameters are order
-  # one. A four-rung ladder stopped at 1/8, which still overshot; 1/16 improved.
-  # Nothing here is tuned to that fit -- the floor is the objective's own
-  # resolution, so a differently conditioned model simply takes a different
-  # number of rungs.
-  #
-  # A quadratic with its optimum a sixteenth of the way along the step.
-  peak <- 1 / 16
-  objective <- function(x) -100 * (x[1L] - peak)^2
-  stepped <- ctsem:::.ctBackendDampedStep(objective, at = 0, step = 1,
-    value = objective(0), directional = 2 * 100 * peak^2)
-  expect_false(is.null(stepped$accepted))
-  expect_lte(stepped$accepted$alpha, 0.125)
-  expect_gt(stepped$accepted$value, objective(0))
-  expect_gt(stepped$achievable, 0)
+# --- where a Hessian may be reused -------------------------------------------
+#
+# The engine's finish keeps the Hessian it took at the hand-over when its steps
+# moved the estimate less than a hundredth of a standard error, and says where
+# it was taken. Everything that reuses a stored Hessian asks the same question
+# with the same arithmetic, which is what these pin.
+
+test_that("distance is measured in the standard errors the Hessian implies", {
+  # One dimension: information 4, standard error a half, so a move of 0.005 is
+  # a hundredth of one.
+  expect_equal(ctsem:::.ctBackendHessianDistance(matrix(-4, 1, 1), 0, 0.005),
+    0.01)
+  expect_equal(ctsem:::.ctBackendHessianDistance(matrix(-4, 1, 1), 0.3, 0.3), 0)
+  # The largest over the coordinates, each against its own standard error: a
+  # correlated information, whose inverse is the covariance a fit reports.
+  info <- matrix(c(4, 1, 1, 25), 2, 2)
+  se <- sqrt(diag(solve(info)))
+  d <- c(0.01, -0.02)
+  expect_equal(ctsem:::.ctBackendHessianDistance(-info, c(0, 0), d),
+    max(abs(d) / se))
+  # A coordinate the trusted curvature says nothing about has no standard
+  # error there, so moving it at all is infinitely far -- and not moving it
+  # costs nothing.
+  flat <- -diag(c(4, 0))
+  expect_equal(ctsem:::.ctBackendHessianDistance(flat, c(0, 0), c(0, 1e-9)), Inf)
+  expect_equal(ctsem:::.ctBackendHessianDistance(flat, c(0, 0), c(0.005, 0)),
+    0.01)
+  # A matrix that cannot be decomposed describes nothing.
+  expect_equal(ctsem:::.ctBackendHessianDistance(matrix(NA_real_, 1, 1), 0, 1),
+    Inf)
+  expect_equal(ctsem:::.ctBackendHessianReuse(), 0.01)
 })
 
-test_that("at a saddle the ascent is looked for along the negative curvature", {
-  # f(x, y) = x^2/2 - y^2/2 has a saddle at the origin: a maximum in y, a
-  # minimum in x. The Newton step over the trusted subspace (y) has nothing to
-  # offer there, which is how a rank-deficient laplace fit sat in the
-  # correction loop for hours; the ascent is along x, and the side the gradient
-  # leans to is the one to try first.
-  saddle <- function(p) 0.5 * p[1L]^2 - 0.5 * p[2L]^2
-  hessian <- diag(c(1, -1))
-  at <- c(0.01, 0)
-  step <- ctsem:::.ctBackendNegativeCurvatureStep(saddle, at, hessian,
-    gradient = c(0.01, 0), value = saddle(at))
-  expect_false(is.null(step))
-  expect_gt(step$value, saddle(at))
-  expect_gt(step$par[1L], at[1L])          # uphill, on the gradient's side
-  expect_equal(step$par[2L], 0)
-
-  # At a maximum there is no negative curvature, so nothing is proposed and the
-  # objective is never called.
-  called <- 0
-  bowl <- function(p) { called <<- called + 1; -sum(p^2) }
-  expect_null(ctsem:::.ctBackendNegativeCurvatureStep(bowl, c(0, 0),
-    -diag(2), gradient = c(0, 0), value = 0))
-  expect_equal(called, 0)
+test_that("a stored Hessian is reused within a hundredth of a standard error, and no further", {
+  fit <- list(uncertainty = list(hessian = matrix(-4, 1, 1), evaluated_at = 1))
+  stored <- fit$uncertainty$hessian
+  expect_identical(ctsem:::.ctBackendStoredHessian(fit, 1), stored)
+  expect_identical(ctsem:::.ctBackendStoredHessian(fit, 1.004), stored)
+  expect_null(ctsem:::.ctBackendStoredHessian(fit, 1.006))
+  # A posterior mean a tenth of a standard error from the Laplace point is
+  # somewhere else, which is the case `evaluated_at` exists for.
+  expect_null(ctsem:::.ctBackendStoredHessian(fit, 1.05))
+  # A Hessian that does not say where it was taken predates the field and is
+  # not reused; nor is one of the wrong size.
+  expect_null(ctsem:::.ctBackendStoredHessian(
+    list(uncertainty = list(hessian = stored)), 1))
+  expect_null(ctsem:::.ctBackendStoredHessian(fit, c(1, 1)))
 })
 
-test_that("a direction that offers nothing is refused, and says how much", {
-  falling <- function(x) -abs(x[1L])
-  stepped <- ctsem:::.ctBackendDampedStep(falling, at = 0, step = 1,
-    value = 0, directional = 1)
-  expect_null(stepped$accepted)
-  expect_equal(stepped$achievable, 0)
-  # A direction that is not an ascent direction is not stepped along at all:
-  # the curvature said this cannot help, so the objective is never called.
-  called <- 0
-  counted <- function(x) { called <<- called + 1; 0 }
-  expect_null(ctsem:::.ctBackendDampedStep(counted, 0, 1, 0, -1)$accepted)
-  expect_equal(called, 0)
+# --- the resume rule ----------------------------------------------------------
+#
+# `.ctBackendCorrectResult()` certifies what the engine's finish handed back and
+# decides one thing: whether to resume. Fake results and a fake optimiser, so
+# the rule is tested without an engine.
+
+.fake_result <- function(hessian, gradient, value, x = c(0, 0), ...) {
+  utils::modifyList(list(minimizer = x, gradient = gradient,
+    maximum_loglik = value, hessian = hessian, hessian_evaluated_at = x,
+    hessian_distance = 0, probe_ran = FALSE, probe_gain = 0, probe_length = 0,
+    probe_longest = 0, probe_direction = 0, newton_hessians = 1L,
+    iterations = 10L, f_calls = 12L, g_calls = 11L,
+    trace = list(objective = c(value - 5, value))), list(...))
+}
+
+test_that("a fit short of its optimum is resumed under its own rules, with its progress carried", {
+  # A gap of one nat: the finish did not close it (a line search that ran out,
+  # say), so the certification says suboptimal.
+  short <- .fake_result(-diag(c(4, 25)), c(2, 5), value = -100)
+  done <- .fake_result(-diag(c(4, 25)), c(0, 0), value = -99, x = c(0.5, 0.2))
+  seen <- list()
+  optimise <- function(from, carried) {
+    seen[[length(seen) + 1L]] <<- list(from = from, carried = carried)
+    done
+  }
+  out <- ctsem:::.ctBackendCorrectResult(short, spec = list(), npar = 2L,
+    tolerance = 1e-6, maxtries = 2L, optimise = optimise)
+  # Once, from where it stopped, carrying the five nats the fit had made -- and
+  # nothing else: no tolerance tightened, no cap raised, no rule switched off.
+  expect_length(seen, 1L)
+  expect_equal(seen[[1L]]$from, c(0, 0))
+  expect_equal(seen[[1L]]$carried, 5)
+  expect_identical(out$result, done)
+  expect_equal(out$certification$status, "certified")
+  expect_length(out$corrections, 1L)
+  expect_true(out$corrections[[1L]]$resumed)
+  expect_equal(out$corrections[[1L]]$status, "suboptimal")
+  # Work over both stages, and the Hessians both finishes formed.
+  expect_equal(out$hessians, 2L)
+  expect_equal(unname(out$totals[["iterations"]]), 20)
+  # The matrix the fit keeps is the one the last certification decided on,
+  # with where it was evaluated.
+  expect_identical(out$hessian, done$hessian)
+  expect_equal(out$evaluated_at, c(0.5, 0.2))
 })
 
-test_that("an increase the objective cannot represent is not a correction", {
-  # Armijo alone does not rule this out, and a first draft of this test assumed
-  # it did: sufficient increase scales with the step, so an increase of 1e-14
-  # satisfies it once alpha is around 1e-10. Accepting that spends a resumed
-  # optimisation on a point indistinguishable from the one it started at, so
-  # acceptance also requires the increase to exceed the objective's resolution.
-  crumbs <- function(x) if (x[1L] > 0) -2705 + 1e-20 else -2705
-  stepped <- ctsem:::.ctBackendDampedStep(crumbs, at = 0, step = 1,
-    value = -2705, directional = 1)
-  expect_null(stepped$accepted)
-  expect_equal(stepped$achievable, 1e-20)
-  # An increase that is representable and Armijo-sufficient is taken, at
-  # whatever length it first holds.
-  real <- function(x) if (x[1L] > 0) -2705 + 1e-3 else -2705
-  taken <- ctsem:::.ctBackendDampedStep(real, at = 0, step = 1, value = -2705,
-    directional = 1)
-  expect_false(is.null(taken$accepted))
-  expect_equal(taken$accepted$value, -2705 + 1e-3)
+test_that("a resume that does not improve is not taken", {
+  short <- .fake_result(-diag(c(4, 25)), c(2, 5), value = -100)
+  worse <- .fake_result(-diag(c(4, 25)), c(0, 0), value = -101)
+  out <- ctsem:::.ctBackendCorrectResult(short, spec = list(), npar = 2L,
+    tolerance = 1e-6, optimise = function(from, carried) worse)
+  expect_identical(out$result, short)
+  expect_equal(out$certification$status, "suboptimal")
+  expect_false(out$corrections[[1L]]$resumed)
 })
 
-test_that("the ladder terminates on an objective that never improves", {
-  # No rung count bounds this loop, so the floor has to. An objective that is
-  # flat everywhere must still return, and in a bounded number of calls.
-  # Flat *at the value*: a first draft of this returned 0 against a baseline of
-  # -2705, which is an improvement of 2705 and was accepted on the first rung --
-  # the test failing rather than passing for the wrong reason.
-  called <- 0
-  flat <- function(x) { called <<- called + 1; -2705 }
-  stepped <- ctsem:::.ctBackendDampedStep(flat, at = 0, step = 1, value = -2705,
-    directional = 0.0436)
-  expect_null(stepped$accepted)
-  # log2(alpha * directional / (|value| * eps)) rungs, which is about 50 here
-  # and can never be unbounded: each halving doubles the distance to the floor.
-  expect_lt(called, 80)
-  expect_gt(called, 10)
+test_that("rounds are capped, and a certified fit takes none", {
+  short <- .fake_result(-diag(c(4, 25)), c(2, 5), value = -100)
+  calls <- 0L
+  again <- function(from, carried) {
+    calls <<- calls + 1L
+    .fake_result(-diag(c(4, 25)), c(2, 5), value = -100 + calls)
+  }
+  out <- ctsem:::.ctBackendCorrectResult(short, spec = list(), npar = 2L,
+    tolerance = 1e-6, maxtries = 2L, optimise = again)
+  expect_equal(calls, 2L)
+  expect_length(out$corrections, 2L)
+  calls <- 0L
+  none <- ctsem:::.ctBackendCorrectResult(short, spec = list(), npar = 2L,
+    tolerance = 1e-6, maxtries = 0L, optimise = again)
+  expect_equal(calls, 0L)
+  expect_equal(none$certification$status, "suboptimal")
+  fine <- .fake_result(-diag(c(4, 25)), c(0, 0), value = -100)
+  kept <- ctsem:::.ctBackendCorrectResult(fine, spec = list(), npar = 2L,
+    tolerance = 1e-6, optimise = again)
+  expect_equal(calls, 0L)
+  expect_equal(kept$certification$status, "certified")
+  expect_length(kept$corrections, 0L)
 })
 
-test_that("the resumed gradient tolerance is the one that would close the gap", {
-  # `gap <= n |g|_inf^2 / (2 lambda_min)` over the trusted subspace, so a
-  # gradient at the derived tolerance cannot leave a gap above the target. Both
-  # directions asserted: the derivation, and the bound it claims.
-  tol <- 0.01; npar <- 24L; lambda_min <- 6.573e-06
-  derived <- ctsem:::.ctBackendGapGradientTolerance(lambda_min, npar, tol)
-  expect_equal(derived, sqrt(2 * tol * lambda_min / npar))
-  expect_lte(npar * derived^2 / (2 * lambda_min), tol * (1 + 1e-12))
-
-  # A worse-conditioned model needs a tighter gradient for the same gap, which
-  # is the whole reason the tolerance cannot be a constant: this is the measured
-  # curvature of a real fit, nine orders below its own largest.
-  expect_lt(derived, ctsem:::.ctBackendGapGradientTolerance(1, npar, tol))
-
-  # Nothing to derive it from is NA, not a number: a model with no trusted
-  # curvature needs a different report, not a tighter tolerance.
-  expect_true(is.na(ctsem:::.ctBackendGapGradientTolerance(0, npar, tol)))
-  expect_true(is.na(ctsem:::.ctBackendGapGradientTolerance(NA_real_, npar, tol)))
-  expect_true(is.na(ctsem:::.ctBackendGapGradientTolerance(1, 0L, tol)))
+test_that("a flat direction that still gains stops, and so does a saddle the finish could not leave", {
+  never <- function(from, carried) stop("resumed")
+  # `notstationary` stops: continuing along the probe's direction walked
+  # AnomAuth S1 from its good optimum into the spurious basin.
+  flatgain <- .fake_result(-diag(c(4, 0)), c(0, 3), value = -100,
+    probe_ran = TRUE, probe_gain = 0.5, probe_length = 1, probe_longest = 4,
+    probe_direction = c(0, 1))
+  out <- ctsem:::.ctBackendCorrectResult(flatgain, spec = list(), npar = 2L,
+    tolerance = 1e-6, optimise = never)
+  expect_equal(out$certification$status, "notstationary")
+  expect_equal(out$certification$residual_gain, 0.5)
+  expect_length(out$corrections, 0L)
+  # A saddle whose negative curvature the finish already tried, and found
+  # nothing along: the optimiser resumed from there would hand the same point
+  # back, and on a Laplace fit each such round is a Hessian.
+  saddle <- .fake_result(diag(c(1, -1)), c(0, 0), value = -100,
+    newton_saddle = TRUE, newton_ladder_tried = TRUE)
+  stuck <- ctsem:::.ctBackendCorrectResult(saddle, spec = list(), npar = 2L,
+    tolerance = 1e-6, optimise = never)
+  expect_equal(stuck$certification$status, "notmaximum")
+  expect_length(stuck$corrections, 0L)
+  # Without that record the saddle is resumed, as any point short of a maximum.
+  resumed <- 0L
+  once <- function(from, carried) {
+    resumed <<- resumed + 1L
+    .fake_result(-diag(c(1, 1)), c(0, 0), value = -99)
+  }
+  saddle$newton_ladder_tried <- FALSE
+  ctsem:::.ctBackendCorrectResult(saddle, spec = list(), npar = 2L,
+    tolerance = 1e-6, optimise = once)
+  expect_equal(resumed, 1L)
+  # And a tried saddle with the gap in its trusted directions still open is
+  # resumed too: it is short of its optimum, whatever the negative curvature
+  # says. Gated-gaps config B8 was stopped 10.8 nats short without this.
+  open <- .fake_result(diag(c(1, -1)), c(0, 2), value = -100,
+    newton_saddle = TRUE, newton_ladder_tried = TRUE)
+  resumed <- 0L
+  out <- ctsem:::.ctBackendCorrectResult(open, spec = list(), npar = 2L,
+    tolerance = 1e-6, maxtries = 1L, optimise = once)
+  expect_equal(resumed, 1L)
+  expect_equal(out$corrections[[1L]]$status, "notmaximum")
 })
 
-test_that("the resume loosens the cap, or tightens both tolerances, never both", {
-  # A stage that exhausted its iterations did not stop at either tolerance, so
-  # neither is what needs changing -- and the budget it needed once it needs
-  # again, which is why the override is read back rather than recomputed.
-  capped <- ctsem:::.ctBackendResumeOverrides(list(), hitcap = TRUE,
-    stoppedbygap = TRUE, lambda_min = 1, npar = 2L, tolerance = 0.01,
-    maxiter = 1000L, gtol = 1e-8)
-  expect_equal(capped$maxiter, 4000L)
-  expect_null(capped$g_tol)
-  expect_null(capped$innergaptol)
-  expect_equal(ctsem:::.ctBackendResumeOverrides(capped, hitcap = TRUE,
-    maxiter = 1000L)$maxiter, 16000L)
-  # And it does not grow without bound.
-  expect_equal(ctsem:::.ctBackendResumeOverrides(list(maxiter = 5e5),
-    hitcap = TRUE, maxiter = 1000L)$maxiter, 1000000L)
-})
-
-test_that("the predicted-gain rule is switched off when it is what stopped the stage", {
-  # `1/2 g'Bg` against the exact `1/2 g'H^-1 g`, with `B` limited memory: no
-  # factor provably prevents a second failure, so the proxy loses its licence
-  # on this model rather than being scaled by a constant fitted to some other
-  # one. Zero, not merely smaller.
-  out <- ctsem:::.ctBackendResumeOverrides(list(), hitcap = FALSE,
-    stoppedbygap = TRUE, lambda_min = 1, npar = 2L, tolerance = 0.01,
-    maxiter = 1000L, gtol = 1e-8)
-  expect_identical(out$innergaptol, 0)
-
-  # Left alone when something else ended the stage: the rule is not the
-  # problem there, and switching it off would slow every later resume for a
-  # reason that did not apply.
-  other <- ctsem:::.ctBackendResumeOverrides(list(), hitcap = FALSE,
-    stoppedbygap = FALSE, lambda_min = 1, npar = 2L, tolerance = 0.01,
-    maxiter = 1000L, gtol = 1e-8)
-  expect_null(other$innergaptol)
-
-  # Once off, it stays off across attempts -- `overrides` is carried, and a
-  # rule relaxed on the second attempt would reopen the loop this closes.
-  expect_identical(ctsem:::.ctBackendResumeOverrides(out, hitcap = FALSE,
-    stoppedbygap = FALSE, lambda_min = 1, npar = 2L,
-    tolerance = 0.01)$innergaptol, 0)
-})
-
-test_that("the resumed gradient bound only ever tightens", {
-  loose <- ctsem:::.ctBackendResumeOverrides(list(), hitcap = FALSE,
-    stoppedbygap = FALSE, lambda_min = 1, npar = 2L, tolerance = 0.01,
-    maxiter = 1000L, gtol = 1e-8)
-  # The derivation for this curvature is far looser than the 1e-8 in force, and
-  # adopting it would license the stop that just failed.
-  expect_gt(ctsem:::.ctBackendGapGradientTolerance(1, 2L, 0.01), 1e-8)
-  expect_equal(loose$g_tol, 1e-8)
-
-  # A badly conditioned model derives something tighter, and that is taken.
-  tight <- ctsem:::.ctBackendResumeOverrides(list(), hitcap = FALSE,
-    stoppedbygap = FALSE, lambda_min = 1e-14, npar = 24L, tolerance = 1e-6,
-    maxiter = 1000L, gtol = 1e-8)
-  expect_equal(tight$g_tol,
-    ctsem:::.ctBackendGapGradientTolerance(1e-14, 24L, 1e-6))
-  expect_lt(tight$g_tol, 1e-8)
-
-  # Nothing to derive it from leaves the rule in force rather than inventing
-  # one: a model with no trusted curvature needs a different report.
-  none <- ctsem:::.ctBackendResumeOverrides(list(), hitcap = FALSE,
-    stoppedbygap = TRUE, lambda_min = 0, npar = 2L, tolerance = 0.01,
-    maxiter = 1000L, gtol = 1e-8)
-  expect_null(none$g_tol)
-  expect_identical(none$innergaptol, 0)
-})
-
-test_that("an innergaptol of zero reaches the optimiser as zero", {
-  # The override is only worth setting if `.ctBackendInnerGapTol()` honours it,
-  # and its own rule is that an explicit value wins -- including one that turns
-  # the rule off, which is otherwise what it returns when nothing will certify.
-  expect_equal(ctsem:::.ctBackendInnerGapTol(list(innergaptol = 0)), 0)
-  # And the default is unchanged by any of this.
-  expect_equal(ctsem:::.ctBackendInnerGapTol(list()),
-    ctsem:::.ctBackendConvergeTol(list()) / 100)
+test_that("the probe the finish ran is what the certification reads", {
+  # The engine's numbers go straight into the verdict: no probe of R's own.
+  gaining <- .fake_result(-diag(c(4, 0)), c(1e-9, 3), value = -100,
+    probe_ran = TRUE, probe_gain = 5.5e-5, probe_length = 0.25,
+    probe_longest = 4, probe_direction = c(0, 1))
+  out <- ctsem:::.ctBackendCorrectResult(gaining, spec = list(), npar = 2L,
+    tolerance = 1e-6, maxtries = 0L)
+  expect_equal(out$certification$status, "notstationary")
+  expect_equal(out$certification$residual_length, 0.25)
+  expect_equal(out$certification$residual_longest, 4)
+  # A probe that did not run is no gain measured.
+  quiet <- .fake_result(-diag(c(4, 0)), c(1e-9, 3), value = -100)
+  expect_equal(ctsem:::.ctBackendCorrectResult(quiet, spec = list(), npar = 2L,
+    tolerance = 1e-6, maxtries = 0L)$certification$status, "certified")
+  # And the engine's "none" sentinels are not read as a direction.
+  expect_null(ctsem:::.ctBackendProbeFields(list(probe_ran = TRUE,
+    probe_gain = 1, probe_direction = 0), 2L))
 })
 
 # --- the reasoning behind the two tolerances, and what verifies it ----------
