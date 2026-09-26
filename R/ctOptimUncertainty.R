@@ -2095,9 +2095,18 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' \code{cores} means R worker processes on stan and engine threads on julia
 #' (see below). The IMIS proposal defaults also differ:
 #' \code{imisScaleInit = 1.1} and \code{imisTailScale = 1.1} on stan against
-#' \code{1.5} and \code{1.2} on julia, which was measured -- a proposal no
-#' wider than the Hessian covariance cannot correct a posterior wider than it.
-#' Set them explicitly to compare the backends on this method.
+#' \code{1.5} and \code{1.2} on julia. Both are measured, on different
+#' regimes: the narrower pair costs fewer evaluations to reach the target
+#' effective sample size on a well-identified fit, and the wider pair is what
+#' a small-sample posterior genuinely wider than the Hessian curvature needs
+#' to be seen at all -- a proposal no wider than the curvature cannot correct
+#' a posterior wider than it -- which is the setting the julia default was
+#' raised for. Set them explicitly to compare the two. On either backend, a
+#' proposal covariance with a raw direction the data does not identify -- an
+#' individually varying parameter with no individual differences behind it is
+#' the usual cause -- is sampled in the identified subspace only, holding that
+#' direction at the estimate rather than manufacturing an importance weight
+#' for a density that is not one; see \code{uncertainty='is'} below.
 #'
 #' Transformed-parameter summaries are refreshed on stan and not on julia,
 #' which has no parameter-matrix reconstruction through
@@ -2112,9 +2121,22 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' curvature-based approximation would discard it.
 #' @param uncertainty Uncertainty approximation. \code{'hessian'} uses the
 #' finite-difference Hessian, \code{'surrogate'} fits a local quadratic
-#' surrogate around the optimum, \code{'is'} uses Hessian-based importance
-#' sampling and computes uncertainty from the weighted importance-sampling
-#' distribution, \code{'bootstrap'} uses one-step score bootstrap draws with
+#' surrogate around the optimum, \code{'is'} runs adaptive importance sampling
+#' (IMIS) against the fitted log posterior from a proposal built on the
+#' Hessian covariance, in the whitened eigen-coordinates of whichever
+#' directions that covariance has curvature in when it is rank deficient,
+#' holding the rest at the estimate. It costs at least an order of magnitude
+#' more log-probability evaluations than \code{'hessian'} even when it
+#' converges quickly (each batch of proposal draws is one bridge call rather
+#' than one per draw, but the draws themselves are not free), and its case is
+#' a small-sample posterior whose true width the curvature at the optimum
+#' understates -- typically a variance or a nonlinear parameter with few
+#' subjects or groups -- rather than a routine alternative to \code{'hessian'}
+#' (\code{control$imisScaleInit}/\code{imisTailScale} below were measured on
+#' such a case). \code{\link{ctSample}} checks that case directly, by genuine
+#' posterior draws rather than a reweighted approximation, and is the
+#' reference to compare against before reading \code{'is'} on a new model as
+#' more than a curiosity. \code{'bootstrap'} uses one-step score bootstrap draws with
 #' Hessian bread, \code{'fullbootstrap'} resamples subjects and fully
 #' re-optimizes each sample from the original maximum likelihood or MAP
 #' estimate using mize L-BFGS, \code{'sandwich'} uses Hessian bread with score
