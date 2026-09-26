@@ -223,8 +223,9 @@ For genuinely live output use \code{optimcontrol$callback}.}
 
 \item{derrind}{deprecated, latents involved in dynamic error calculations are determined automatically now.}
 
-\item{optimize}{if TRUE, use \code{\link{stanoptimis}} function for maximum a posteriori / importance sampling estimates,
+\item{optimize}{if TRUE, use \code{\link{stanoptimis}} function for maximum a posteriori estimates,
 otherwise use the HMC sampler from Stan, which is (much) slower, but generally more robust for complex individual differences.
+Importance sampling is a separate, opt-in uncertainty method on top of the optimized estimate; see \code{\link{ctOptimUncertainty}}.
 When \code{optimize=FALSE}, the stored point estimate (\code{stanfit$rawest}) is the per-parameter
 median of the posterior draws; the julia backend's sampled point estimate (see \code{\link{ctSample}})
 is the per-parameter mean instead.}
@@ -351,12 +352,18 @@ FALSE} restores the fixed start.
 
 With \code{backend='julia'}, the optimiser starts on a random subset of the
 subjects and grows it as the fit needs more data (\code{optimcontrol$batch},
-default \code{TRUE}), and finishes with Newton steps on the exact Hessian
-once it is close (\code{optimcontrol$newton}, default \code{TRUE}). Each
-applies only where it pays: batching needs at least 80 subjects (or
-top-level groups), and the Newton finish is skipped under
-\code{intoverpop='laplace'}, where the Hessian is expensive. Both reach the
-same optimum; set either to \code{FALSE} to switch it off.
+default \code{TRUE}), and finishes with Newton steps once it is close
+(\code{optimcontrol$newton}, default \code{TRUE}). The finish ends on the
+Hessian the convergence check and the standard errors use, tries the
+direction of negative curvature when it has stopped at a saddle, and checks
+what the directions with no curvature are worth. Batching needs at least 80
+subjects (or top-level groups). Under \code{intoverpop='laplace'}, where a
+Hessian costs \code{2 * npar} gradients, the finish runs only when the fit
+is certified, and reuses the one Hessian it takes for its steps. When the
+check still finds the fit short of a maximum, the optimiser is resumed
+under the same rules, at most \code{optimcontrol$gapretries} times (default
+2), and a resumed stage that stops gaining is stopped. Set \code{batch} or
+\code{newton} to \code{FALSE} to switch either off.
 \code{fit$optim$batch_sizes} and \code{fit$optim$newton_steps} record what
 ran.
 
@@ -445,7 +452,8 @@ the integration is nested within an Euler like loop.
 Smaller values may offer greater accuracy, but are slower and not always necessary. Given the exponential integration,
 linear model elements are fit exactly with only a single step.
 \code{nsubsteps = 'auto'} (julia backend only) instead measures, at the starting values and again at the
-optimum, how nonlinear each observation interval is and refines only the intervals that need it;
+optimum, how nonlinear each observation interval is and refines only the intervals that need it
+(under \code{intoverpop = 'laplace'}, with each subject at its random-effect modes);
 \code{substeptol} (default 0.01) is the largest acceptable linearisation error as a fraction of the
 predicted state standard deviation, and \code{maxsubsteps} (default 64) caps an interval.
 \code{maxtimestep} remains a ceiling on the step. The choice is reported in \code{fit$substeps}.

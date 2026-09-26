@@ -521,24 +521,13 @@ test_that("Stan and Julia agree for 3 original (not just augmented) latents", {
   expect_equal(as.numeric(julia_value$gradient), as.numeric(attributes(stan_value)$gradient), tolerance = 1e-7)
 })
 
-test_that("Stan and Julia's actual optimizers converge to the same fit for TD/TI + individual differences", {
-  skip_without_julia()
-  skip_if_not_installed("rstan")
-
-  # Every other test here checks log_prob/gradient agreement at one fixed
-  # raw-parameter point -- necessary but not sufficient, since that's exactly
-  # what the T0-SD meanscale bug could still pass (both backends reached the
-  # *same maximum likelihood* from *different* raw parameters; a fixed-point
-  # check at either backend's own optimum wouldn't by itself reveal that
-  # unless you specifically evaluated at the *other* backend's point, as the
-  # investigation that found it had to do). This test instead runs each
-  # backend's own real optimizer (ctsem_optimize's Optim.LBFGS for Julia,
-  # Stan's L-BFGS) on the combined TD/TI-predictor + both-kinds-of-
-  # individual-differences model from the "moderate-dimensional" test above,
-  # and checks that they land on matching loglik *and* matching raw
-  # parameters -- the actual end-to-end guarantee a fixed point can't give.
-  # Data is deliberately minimal (6 subjects, 4 waves) to keep this fast;
-  # this model shape has standata$recompile==0, so no C++ compile is needed.
+# The combined TD/TI-predictor + both-kinds-of-individual-differences model
+# from the "moderate-dimensional" test above, over deliberately minimal data (6
+# subjects, 4 waves) to keep it fast; this model shape has
+# standata$recompile==0, so no C++ compile is needed. The seed is set here, so
+# a fit made right after calling this draws the same starting values every
+# time.
+.parity_optimiser_fixture <- function() {
   model <- suppressWarnings(ctModel(
     type = "ct", n.latent = 2, LAMBDA = diag(1, 2),
     MANIFESTVAR = diag(c(.1, .1)), MANIFESTMEANS = matrix(0, 2, 1),
@@ -564,17 +553,59 @@ test_that("Stan and Julia's actual optimizers converge to the same fit for TD/TI
       group = rep(rnorm(1), length(times))
     ))
   }
+  list(model = model, data = data)
+}
 
-  # `priors = FALSE` on both sides. This test compares two implementations of
-  # the same likelihood, so the objective has to be the same one: julia now
-  # defaults to a prior on the random-effect correlations and the generated
-  # Stan model cannot express that subset, so leaving the default would compare
-  # a posterior against a likelihood. It did, before this line: the log
-  # likelihoods came out 0.24 apart and the raw estimates by up to 1.57.
-  jf <- suppressMessages(ctFit(data, model = model, backend = "julia",
-    priors = FALSE, verbose = 0))
-  sf <- suppressMessages(ctFit(data, model = model, backend = "stan",
-    optimcontrol = list(carefulfit = FALSE, stochastic = FALSE),
+# The julia fit of that fixture, made once and shared by the two tests below;
+# nothing here mutates it.
+#
+# `priors = FALSE`. The first test compares two implementations of the same
+# likelihood, so the objective has to be the same one: julia now defaults to a
+# prior on the random-effect correlations and the generated Stan model cannot
+# express that subset, so leaving the default would compare a posterior against
+# a likelihood. It did, before this line: the log likelihoods came out 0.24
+# apart and the raw estimates by up to 1.57.
+.parity_fit_cache <- new.env(parent = emptyenv())
+.parity_julia_fit <- function(optimcontrol = list()) {
+  key <- paste0("fit:", paste(names(optimcontrol), unlist(optimcontrol),
+    sep = "=", collapse = ";"))
+  if (!exists(key, envir = .parity_fit_cache, inherits = FALSE)) {
+    fixture <- .parity_optimiser_fixture()
+    assign(key, suppressWarnings(suppressMessages(ctFit(fixture$data,
+      model = fixture$model, backend = "julia", priors = FALSE, verbose = 0,
+      optimcontrol = optimcontrol))), envir = .parity_fit_cache)
+  }
+  get(key, envir = .parity_fit_cache, inherits = FALSE)
+}
+
+# The parameters of the directions the likelihood itself was measured flat
+# along, which is what the identifiability report names whatever the curvature
+# at the stopping point says. See `.ctBackendIdentifiability()`.
+.parity_flat_by_screen <- function(fit) {
+  flat <- Filter(function(d) identical(d$evidence, "likelihood"),
+    fit$identifiability$directions)
+  as.character(unique(unlist(lapply(flat, `[[`, "parameters"))))
+}
+
+test_that("Stan and Julia's actual optimizers converge to the same fit for TD/TI + individual differences", {
+  skip_without_julia()
+  skip_if_not_installed("rstan")
+
+  # Every other test here checks log_prob/gradient agreement at one fixed
+  # raw-parameter point -- necessary but not sufficient, since that's exactly
+  # what the T0-SD meanscale bug could still pass (both backends reached the
+  # *same maximum likelihood* from *different* raw parameters; a fixed-point
+  # check at either backend's own optimum wouldn't by itself reveal that
+  # unless you specifically evaluated at the *other* backend's point, as the
+  # investigation that found it had to do). This test instead runs each
+  # backend's own real optimizer (ctsem_optimize's Optim.LBFGS for Julia,
+  # Stan's L-BFGS) on the fixture above, and checks that they land on matching
+  # loglik *and* matching raw parameters -- the actual end-to-end guarantee a
+  # fixed point can't give.
+  fixture <- .parity_optimiser_fixture()
+  jf <- .parity_julia_fit()
+  sf <- suppressMessages(ctFit(fixture$data, model = fixture$model,
+    backend = "stan", optimcontrol = list(carefulfit = FALSE, stochastic = FALSE),
     optimize = TRUE, verbose = 0, savescores = FALSE, cores = 1))
 
   # The loglik is the claim that holds whatever the identifiability: both
@@ -585,18 +616,25 @@ test_that("Stan and Julia's actual optimizers converge to the same fit for TD/TI
 
   # The raw parameters, EXCEPT the directions this fixture cannot identify.
   # 6 subjects and 4 waves do not pin 10 population correlations among 5
-  # random effects: the julia fit's own `identifiability` reports one flat
-  # direction with condition 3.19e11 and names exactly those ten, and the
-  # population covariance at stan's own point has a smallest eigenvalue of
-  # 8.75e-10 against a largest of 170. Along a flat direction two optimisers
-  # with different stopping rules stop in different places -- measured at about
-  # 0.3 in the raw coordinates -- and that is not a disagreement about the
-  # model. Everything the data does pin agrees to 1.1e-04.
+  # random effects: walking the julia fit's flattest direction moves its
+  # likelihood by well under the 1.92-nat bar over four raw units, and the
+  # direction names exactly those ten; the population covariance at stan's own
+  # point has a smallest eigenvalue of 8.75e-10 against a largest of 170. Along
+  # a flat direction two optimisers with different stopping rules stop in
+  # different places -- measured at about 0.3 in the raw coordinates -- and
+  # that is not a disagreement about the model. Everything the data does pin
+  # agrees to 1.1e-04.
   #
-  # Taken from the fit rather than written out here, so this tightens by itself
-  # if the fixture ever becomes identified. Stan carries no `identifiability`,
-  # hence the julia side supplies the set for both.
-  weak <- jf$identifiability$parameters
+  # The directions flat by the likelihood screen, and not the ones whose
+  # curvature has decayed past a threshold: that decays with where the
+  # optimiser stopped along the ridge, and so did which of the ten were named
+  # (see the next test). Taken from the fit rather than written out here, so
+  # this tightens by itself if the fixture ever becomes identified. Stan
+  # carries no `identifiability`, hence the julia side supplies the set for
+  # both.
+  weak <- .parity_flat_by_screen(jf)
+  # Everything the report names, it names on that evidence here.
+  expect_setequal(as.character(jf$identifiability$parameters), weak)
   # The SAME naming function the fit used, not a second one that happens to
   # describe the same parameters. `.ctBackendParameterNames()` calls a
   # population correlation `popcorr_B2__B1` and `.ctBackendRawParameterNames()`
@@ -619,6 +657,31 @@ test_that("Stan and Julia's actual optimizers converge to the same fit for TD/TI
 
   expect_equal(jf$estimate$raw[keep], sf$stanfit$rawest[keep],
     tolerance = 1e-2)
+})
+
+test_that("which directions are named does not depend on how far the optimiser walked", {
+  skip_without_julia()
+  # The fit above stops after a 1000-iteration resume that walks this fixture's
+  # ridge. Stopped without it -- the first stage alone, 74 iterations and
+  # 4.4e-04 lower in log likelihood on the same ridge -- the curvature along
+  # the ridge had decayed only to 1.7e-08 of the sharpest, above
+  # the 1e-8 the report used to require, so nothing was named; stopped part way
+  # along, nine of the ten were, because the tenth correlation's loading
+  # drifted from 0.19 to 0.28 across an absolute bar of 0.25. So any change to
+  # when a resume stops changed which parameters this fixture compared across
+  # backends. The likelihood screen names the same set at every stopping point.
+  full <- .parity_julia_fit()
+  early <- .parity_julia_fit(list(gapretries = 0L))
+  # Two different stopping points, or this compares a fit with itself.
+  expect_lt(early$optim$iterations, full$optim$iterations)
+  expect_gt(max(abs(early$estimate$raw - full$estimate$raw)), 0.5)
+
+  named <- as.character(full$identifiability$parameters)
+  expect_gt(length(named), 0L)
+  expect_setequal(as.character(early$identifiability$parameters), named)
+  # On the likelihood's evidence at both.
+  expect_setequal(.parity_flat_by_screen(early), named)
+  expect_setequal(.parity_flat_by_screen(full), named)
 })
 
 test_that("Julia's adjoint gradient matches its forward gradient and Stan", {

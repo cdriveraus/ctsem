@@ -60,6 +60,21 @@
   stop("The fit does not carry the model it was built from.", call. = FALSE)
 }
 
+# The model as the caller passed it to ctFit(), before any of the preparation
+# that `.ctFitModelObject()`'s model has been through -- the one a fit can be
+# rebuilt from. NULL for a julia fit made before fits carried it.
+#
+# A julia fit keeps it as `$modelbase`, not under the stan fit's name, because
+# `$` matches a unique prefix. A julia fit has no `$ctstanmodel`, so with a
+# `$ctstanmodelbase` beside its other fields every `fit$ctstanmodel` read
+# returned the unprepared model instead of NULL -- the first line of
+# `.ctFitModelObject()` among them, which moved prediction off the prepared
+# model without an error.
+.ctFitBaseModel <- function(fit) {
+  if (inherits(fit, c('ctJuliaFit', 'ctJuliaModel'))) fit[['modelbase']] else
+    fit[['ctstanmodelbase']]
+}
+
 .ctFitNsubjects <- function(fit) {
   if (!is.null(fit$standata$subject)) return(length(unique(fit$standata$subject)))
   length(.ctBackendSpec(fit)$subject_starts)
@@ -1835,7 +1850,8 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
       "Predicted objective still available at this estimate: ",
       signif(certification$gap, 3), " (joint displacement ",
       signif(certification$lambda, 3),
-      " in the information metric). Status: ", certification$status,
+      " in the information metric). Status: ",
+      .ctBackendCertificationStatus(certification),
       ". Exact value: fit$uncertainty$certification$gap.")
   }
   # Named for what they are. "Number of samples" on an optimised fit meant the

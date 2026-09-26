@@ -15,8 +15,14 @@ test_that("restarts are opt-in, and only for a fit that is not converged", {
   # are left alone; so is a state-explicit fit.
   expect_equal(wanted(list(), list(certified = TRUE, status = "certified"),
     ask, NULL, TRUE), 0L)
+  expect_equal(wanted(list(), list(certified = FALSE, status = "saturated"),
+    ask, NULL, TRUE), 0L)
+  # The same status under its name before 2026-09-25, as a stored fit has it.
   expect_equal(wanted(list(), list(certified = FALSE, status = "unidentified"),
     ask, NULL, TRUE), 0L)
+  # A flat direction that still gains is not a maximum, so it does get them.
+  expect_equal(wanted(list(), list(certified = FALSE, status = "notstationary"),
+    ask, NULL, TRUE), 5L)
   expect_equal(wanted(list(converged = FALSE), notmax, ask, NULL, FALSE), 0L)
   # The user chose the start or capped the iterations: a non-converged fit is
   # then the fit that was asked for, and moving it would change the answer.

@@ -499,8 +499,8 @@ end
     # DRIFT's identifiability, which "a count model fits over the joint
     # density" below already owns. The two got entangled by accident: with
     # DRIFT free (`_joint_setup`'s default), the joint (state-explicit) mode
-    # drives it toward -log1p_exp's saturation boundary (`_CTSEM_SATURATION[]
-    # = 20.0` in `binary_measurement.jl`) *regardless of sample size* --
+    # drives it toward -log1p_exp's saturation boundary (a raw magnitude of
+    # about 20, where the transform is flat) *regardless of sample size* --
     # confirmed by sweeping nsubjects/nobs from 4x5 up to 12x10 and seven
     # seeds at 4x5, all landing DRIFT's raw coordinate at -17 to -19, bar one
     # seed that happened to land at -0.4. That is the same bias the count

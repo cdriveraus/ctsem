@@ -147,7 +147,13 @@ test_that("a nonlinear random effect is corrected towards the quadrature optimum
   # said to be at the Laplace optimum, and the draws are the uncorrected fit's
   # moved by the step.
   expect_equal(as.matrix(on$estimate$cov), as.matrix(off$estimate$cov))
-  expect_equal(as.numeric(on$uncertainty$evaluated_at), corr$laplace_estimate)
+  # At the Laplace optimum: where the uncorrected fit's Hessian was taken, which
+  # is the optimum or within a hundredth of a standard error of it when the
+  # optimiser's finish kept the Hessian it took at the hand-over.
+  expect_equal(as.numeric(on$uncertainty$evaluated_at),
+    as.numeric(off$uncertainty$evaluated_at))
+  expect_lte(.ctBackendHessianDistance(on$uncertainty$hessian,
+    on$uncertainty$evaluated_at, corr$laplace_estimate), .ctBackendHessianReuse())
   shift <- on$estimate$rawposterior - off$estimate$rawposterior
   expect_equal(unname(shift), matrix(corr$delta, nrow(shift), ncol(shift),
     byrow = TRUE), tolerance = 1e-10)

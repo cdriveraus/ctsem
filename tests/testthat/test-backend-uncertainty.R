@@ -102,6 +102,39 @@ test_that("Julia fits get Hessian uncertainty matching Stan's", {
   expect_true(all(c("2.5%", "97.5%") %in% colnames(summarised$popmeans)))
 })
 
+test_that("a fit is certified once, and the uncertainty stage keeps that certification", {
+  skip_without_julia()
+  # The uncertainty stage used to certify every fit again, with an evaluator of
+  # its own, and overwrite what the correction loop had decided on the same
+  # Hessian (review/OPTIM-consolidation-plan-2026-09-25.md, 2k item 9). Counted
+  # rather than inferred: before the change this fit certified once more here.
+  calls <- 0L
+  real <- .ctBackendCertification
+  testthat::local_mocked_bindings(.ctBackendCertification = function(...) {
+    calls <<- calls + 1L
+    real(...)
+  })
+  model <- .backend_uncertainty_model()
+  data <- .backend_uncertainty_data()
+  fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
+  expect_equal(calls, 0L)
+  expect_equal(fit$uncertainty$certification$status, "certified")
+  # A later call at the same estimate reuses the matrix, and so the verdict.
+  again <- suppressWarnings(suppressMessages(ctOptimUncertainty(fit,
+    uncertainty = "hessian", finishsamples = 50, verbose = 0)))
+  expect_equal(calls, 0L)
+  expect_identical(again$uncertainty$certification,
+    fit$uncertainty$certification)
+  # A fit made without one (`estonly`) is certified here, once.
+  bare <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0,
+    optimcontrol = list(estonly = TRUE)))
+  expect_null(bare$uncertainty$certification)
+  done <- suppressWarnings(suppressMessages(ctOptimUncertainty(bare,
+    uncertainty = "hessian", finishsamples = 50, verbose = 0)))
+  expect_equal(calls, 1L)
+  expect_equal(done$uncertainty$certification$status, "certified")
+})
+
 test_that("the Hessian is exact, and agrees with the finite difference it replaces", {
   skip_without_julia()
 

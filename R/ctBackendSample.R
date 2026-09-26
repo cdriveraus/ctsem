@@ -456,11 +456,15 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
   }
 
   # The joint posterior over parameters and effects, started from the fit's own
-  # estimate and metered by its curvature -- the sampler would otherwise
-  # recompute that Hessian, at 2n gradient evaluations it need not spend.
-  # `ctSample()` samples a Laplace fit and this is the target it is the exact
-  # counterpart of; `ctFit(optimize = FALSE)` reaches the same runner with
-  # whichever target its `intoverpop` and `intoverstates` chose.
+  # estimate. The passed Hessian is a fallback for the joint route, not the
+  # metric itself: `_conditional_population_covariance` (sample_nuts.jl) always
+  # recomputes the population block fresh, by central differences of the joint
+  # gradient at `2 * npar` evaluations, because that is the conditional
+  # curvature the joint metric needs and the marginal Hessian passed in is the
+  # wrong matrix for it; the fit's Hessian is used only if that difference is
+  # not finite. `ctSample()` samples a Laplace fit and this is the target it is
+  # the exact counterpart of; `ctFit(optimize = FALSE)` reaches the same runner
+  # with whichever target its `intoverpop` and `intoverstates` chose.
   target <- .ctBackendSampleTarget(estimate = as.numeric(fit$estimate$raw),
     npar = length(fit$estimate$raw), hessian = fit$uncertainty$hessian)
   .ctBackendSampleRun(fit, target, chains = chains, warmup = warmup,
