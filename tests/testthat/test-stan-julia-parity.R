@@ -402,8 +402,10 @@ test_that("Stan and Julia agree for a moderate-dimensional model mixing both kin
     Y1 = c(0, .1, .2, .1, 0, -.1), Y2 = c(0, -.1, .1, .2, .1, 0))
   stan_spec <- suppressMessages(ctFit(data, model, backend = "stan", fit = FALSE, priors = FALSE))
   stan_fit <- .compiled_stan_fit(stan_spec)
+  # Augmented by name: the comparison is with stan's augmented layout, and
+  # 'auto' takes laplace for this model's random DRIFT.
   julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
-    priors = FALSE))
+    priors = FALSE, intoverpop = "augmented"))
   expect_equal(julia_spec$nlatent_augmented, 5L)
   expect_equal(julia_spec$dynamic_state_indices, 1:2)
 
@@ -565,6 +567,9 @@ test_that("Stan and Julia agree for 3 original (not just augmented) latents", {
 # express that subset, so leaving the default would compare a posterior against
 # a likelihood. It did, before this line: the log likelihoods came out 0.24
 # apart and the raw estimates by up to 1.57.
+#
+# Augmented by name: stan has that route only, and 'auto' takes laplace for
+# this model's random DRIFT, whose objective is a different function.
 .parity_fit_cache <- new.env(parent = emptyenv())
 .parity_julia_fit <- function(optimcontrol = list()) {
   key <- paste0("fit:", paste(names(optimcontrol), unlist(optimcontrol),
@@ -573,7 +578,7 @@ test_that("Stan and Julia agree for 3 original (not just augmented) latents", {
     fixture <- .parity_optimiser_fixture()
     assign(key, suppressWarnings(suppressMessages(ctFit(fixture$data,
       model = fixture$model, backend = "julia", priors = FALSE, verbose = 0,
-      optimcontrol = optimcontrol))), envir = .parity_fit_cache)
+      intoverpop = "augmented", optimcontrol = optimcontrol))), envir = .parity_fit_cache)
   }
   get(key, envir = .parity_fit_cache, inherits = FALSE)
 }

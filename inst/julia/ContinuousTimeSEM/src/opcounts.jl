@@ -13,7 +13,10 @@ the O(n^3) kernel it sits beside, so they stay on.
 `_ctsem_expm` routes through `my_exp!` (those at or below
 `_CTSEM_SMALL_CHOLESKY`); `frechet` counts the blocks themselves, whichever
 exponential they reach. `lyap_schur` counts factorisations actually performed,
-not solves against cached factors.
+not solves against cached factors. `series_intercept` and `series_noise` count
+evaluations of the series kernels in `series_discretization.jl`, forward or
+recomputed by a pullback alike; they stay at zero unless some interval was
+short against a pivot of the drift.
 
 A threaded subject loop increments these racily, so the counts are then lower
 bounds. Read them from a single-threaded run when the exact number matters.
@@ -27,6 +30,8 @@ const _CTSEM_OPCOUNT = (
     lyap_cache_hit = Ref(0),
     lyap_cache_miss = Ref(0),
     frechet = Ref(0),
+    series_intercept = Ref(0),
+    series_noise = Ref(0),
 )
 
 """Zero every operation counter."""

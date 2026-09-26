@@ -46,7 +46,9 @@ test_that("Julia pop_* arrays match Stan's constrained parameters", {
   model <- .summary_model()
   data <- .summary_data()
 
-  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
+  # Augmented by name: compared with stan, or about carrier states, and 'auto' takes laplace for this model's random DRIFT.
+  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
+    intoverpop = "augmented"))
   npar <- max(c(spec$parameter_table$parnumber, spec$ti_effects$coefficient), na.rm = TRUE)
   set.seed(8)
   raw <- stats::rnorm(npar, 0, .3)
@@ -135,7 +137,9 @@ test_that("every covmattransform means the same thing on both backends", {
   for (transform in names(wanted)) {
     model <- .summary_model()
     model$covmattransform <- transform
-    spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
+    # Augmented by name: compared with stan, or about carrier states, and 'auto' takes laplace for this model's random DRIFT.
+    spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
+      intoverpop = "augmented"))
     stan_spec <- suppressMessages(ctFit(data, model, backend = "stan",
       fit = FALSE))
     expect_equal(as.integer(spec$covmatcode), wanted[[transform]],
@@ -325,7 +329,9 @@ test_that("state-dependent cells are named and follow the state they are given",
   skip_without_julia()
   model <- .summary_model()
   data <- .summary_data()
-  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
+  # Augmented by name: compared with stan, or about carrier states, and 'auto' takes laplace for this model's random DRIFT.
+  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
+    intoverpop = "augmented"))
   npar <- max(c(spec$parameter_table$parnumber, spec$ti_effects$coefficient), na.rm = TRUE)
   set.seed(8)
   raw <- stats::rnorm(npar, 0, .3)
@@ -347,6 +353,30 @@ test_that("state-dependent cells are named and follow the state they are given",
   expect_false(isTRUE(all.equal(at_default$DRIFT, moved$DRIFT)))
   # A cell with no state dependence must not move.
   expect_equal(at_default$LAMBDA, moved$LAMBDA)
+})
+
+test_that("on the default route a random DRIFT effect is not reported as state dependence", {
+  skip_without_julia()
+  model <- .summary_model()
+  data <- .summary_data()
+  # The same model on its default route, laplace: the random effects are
+  # coordinates of the parameter vector rather than carrier states, so no cell
+  # depends on where the processes are and the reported DRIFT is the
+  # population one, with its varying cross effect at the population mean.
+  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
+  expect_false(is.null(spec$laplace))
+  set.seed(8)
+  raw <- stats::rnorm(ctsem:::.ctBackendNpar(spec), 0, .3)
+  fit <- .summary_pointfit(spec, model, raw, "julia")
+  at_default <- ctBackendParMatrices(fit)
+  statedep <- attr(at_default, "stateDependent")
+  expect_true(is.null(statedep) || nrow(statedep) == 0L)
+  expect_equal(nrow(at_default$DRIFT), 2L)
+  tab <- spec$parameter_table
+  cross <- tab$parnumber[tab$matrix == "DRIFT" & tab$row == 2 & tab$col == 1]
+  expect_equal(unname(at_default$DRIFT[2, 1]), raw[cross])
+  moved <- ctBackendParMatrices(fit, filterstate = c(1, 1))
+  expect_equal(at_default$DRIFT, moved$DRIFT)
 })
 
 # J9/F1: `ctsem_parameter_matrices` (summary_matrices.jl) is an independent,
@@ -384,7 +414,10 @@ test_that("ctBackendParMatrices runs predict before update, so an update-group c
   model <- .m("PARS[1,1]")
   set.seed(11)
   dat <- data.frame(id = 1:8, time = 0, Y1 = stats::rnorm(8, t0, 1))
-  spec <- suppressMessages(ctFit(dat, model, backend = "julia", fit = FALSE))
+  # Augmented by name: the filter state passed below carries PARS as a
+  # carrier, and 'auto' takes laplace for a varying parameter in MANIFESTVAR.
+  spec <- suppressMessages(ctFit(dat, model, backend = "julia", fit = FALSE,
+    intoverpop = "augmented"))
   npar <- max(spec$parameter_table$parnumber, na.rm = TRUE)
   fit <- .summary_pointfit(spec, model, rep(-0.5, npar), "julia")
 
@@ -403,6 +436,31 @@ test_that("ctBackendParMatrices runs predict before update, so an update-group c
     unname(other$MANIFESTVAR[1, 1]))))
 })
 
+test_that("on the default route a varying PARS read by MANIFESTVAR reports its value", {
+  skip_without_julia()
+  .m <- function(manifestvar) suppressWarnings(ctModel(
+    type = "ct", LAMBDA = diag(1), PARS = matrix("mvp||TRUE", 1, 1),
+    DRIFT = matrix("drift", 1, 1), DIFFUSION = matrix("diffusion", 1, 1),
+    MANIFESTVAR = matrix(manifestvar, 1, 1), MANIFESTMEANS = matrix(0, 1, 1),
+    T0VAR = matrix(1, 1, 1), T0MEANS = matrix(1.5, 1, 1)))
+  model <- .m("PARS[1,1]")
+  set.seed(11)
+  dat <- data.frame(id = 1:8, time = 0, Y1 = stats::rnorm(8, 1.5, 1))
+  # Laplace, where the varying PARS is an ordinary coordinate rather than a
+  # carrier state: MANIFESTVAR has to report the value that coordinate holds.
+  spec <- suppressMessages(ctFit(dat, model, backend = "julia", fit = FALSE))
+  expect_false(is.null(spec$laplace))
+  tab <- spec$parameter_table
+  mvp <- tab$parnumber[tab$matrix == "PARS"][1]
+  raw <- rep(-0.5, ctsem:::.ctBackendNpar(spec))
+  raw[mvp] <- 0.4
+  matrices <- ctBackendParMatrices(.summary_pointfit(spec, model, raw, "julia"))
+  expect_equal(unname(matrices$MANIFESTVAR[1, 1]), 0.4, tolerance = 1e-10)
+  raw[mvp] <- 1.2
+  other <- ctBackendParMatrices(.summary_pointfit(spec, model, raw, "julia"))
+  expect_equal(unname(other$MANIFESTVAR[1, 1]), 1.2, tolerance = 1e-10)
+})
+
 test_that("summary reports fixed effects and system matrices, with intervals only when earned", {
   skip_without_julia()
   set.seed(5)
@@ -413,35 +471,34 @@ test_that("summary reports fixed effects and system matrices, with intervals onl
     MANIFESTVAR = diag(c(.1, .1)), MANIFESTMEANS = matrix(0, 2, 1),
     T0MEANS = matrix(0, 2, 1), CINT = matrix(0, 2, 1),
     DRIFT = matrix(c("auto1", "cross12", "cross21", "auto2"), 2, 2, byrow = TRUE)))
-  # estonly: ctFit() now finishes with ctOptimUncertainty() as the Stan path
-  # does, and these assertions are about the point-estimate-only fit -- the
-  # one whose summary must not print an interval it has not earned.
+  # The fixture at a maximum. Fitted to noise, this model has more than one,
+  # -205.827 and -207.019 among them, and which one a fit reaches depends on
+  # its path: the default fit reached -205.827 before the endgame moved into
+  # the engine and has reached -207.019 since, converged and certified both
+  # times. What a flat ray looks like in the report is a question at any
+  # maximum, so it is asked at the one a default fit certifies;
+  # `test-ctFitProfile.R` is where the higher is found.
   #
-  # Nothing pins where the optimiser stops, and that is the point of the
-  # fixture rather than an omission. The diffusion correlation here is on a
-  # flat ray -- the fit walks out along it gaining nothing, -207.01897 to five
-  # decimals anywhere from raw -6 to -20 -- so where it stops is settled by
-  # whichever stopping rule ends the run, and the estimate is the same fit
-  # either way.
-  #
-  # This used to decide the *diagnosis*, and that was the bug. The curvature
-  # along that ray is not a property of the model and the data: it is a residue
-  # of the transform's own derivative, falling from 1.6e-08 to 7.1e-16 of the
-  # largest eigenvalue and then turning negative from rounding, purely as a
-  # function of how far out the fit walked. With the predicted-gain rule on it
-  # stopped at raw -9.27 and the direction read as determined; with it off it
-  # reached -14.46 and read as undetermined. Same estimate, same likelihood,
-  # opposite answer -- and the passing version of this test was relying on the
-  # optimiser wandering far enough for an eigenvalue to underflow.
-  #
-  # `.ctOptimFlatDirectionScreen()` is why it no longer does: the eigenvalue
-  # picks candidates and the likelihood decides, against the likelihood-ratio
-  # bound. Measured on this fixture, the direction moves the log likelihood by
-  # 1.7e-05 from the earlier stopping point and 5.6e-10 from the later one,
-  # against a bar of 1.92 -- so both stop there, and every assertion below now
-  # holds at either. Leaving the stopping rule free is what tests that.
+  # One diffusion correlation is on a flat ray at both: its raw coordinate sits
+  # far out on its transform (past -15 at the higher, -7.4 at the lower), and
+  # the log likelihood moves along the direction by far less than the bar of
+  # 1.92 -- about 1e-10 at the higher, 7e-4 at the lower. The curvature along
+  # such a ray is a residue of the transform's own derivative rather than a
+  # property of the model and the data -- how small it reads depends on how
+  # far out the fit walked -- which is why the diagnosis is not left to an
+  # eigenvalue: `.ctOptimFlatDirectionScreen()` lets the eigenvalue pick
+  # candidates and the likelihood decide, against the likelihood-ratio bound.
+  # It warns twice, about the flat ray by name -- the Hessian repair and the
+  # identifiability report -- which is the finding checked field by field below.
+  fitted <- suppressWarnings(suppressMessages(ctFit(data, model,
+    backend = "julia", verbose = 0)))
+  expect_identical(fitted$uncertainty$certification$status, "certified")
+  # estonly: ctFit() finishes with ctOptimUncertainty() as the Stan path does,
+  # and the first assertions are about the point-estimate-only fit -- the one
+  # whose summary must not print an interval it has not earned. Started at the
+  # maximum, so it is the same point.
   fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0,
-    optimcontrol = list(estonly = TRUE)))
+    inits = fitted$estimate$raw, optimcontrol = list(estonly = TRUE)))
 
   point <- summary(fit)
   expect_s3_class(point, "summary.ctStanFit")

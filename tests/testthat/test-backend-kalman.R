@@ -138,7 +138,11 @@ test_that("ctKalmanArray matches Stan through the whole R path", {
   stan_fit <- suppressMessages(ctFit(data, model, backend = "stan", optimize = TRUE,
     optimcontrol = list(carefulfit = FALSE, stochastic = FALSE, finishsamples = 10),
     cores = 1, verbose = 0))
-  julia_fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
+  # 'augmented' by name: this compares the filters at one raw vector, and stan
+  # has only the augmented route, while 'auto' takes laplace for this model's
+  # DRIFT random effect.
+  julia_fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0,
+    intoverpop = "augmented"))
   # Compare the filters, not the optimizers: run both at Stan's estimate.
   julia_fit$estimate$raw <- stan_fit$stanfit$rawest
 
@@ -175,7 +179,9 @@ test_that("ctPredict interpolates a time grid the same way Stan does", {
   stan_fit <- suppressMessages(ctFit(data, model, backend = "stan", optimize = TRUE,
     optimcontrol = list(carefulfit = FALSE, stochastic = FALSE, finishsamples = 10),
     cores = 1, verbose = 0))
-  julia_fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
+  # Augmented by name, for the reason given in the ctKalmanArray test above.
+  julia_fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0,
+    intoverpop = "augmented"))
   julia_fit$estimate$raw <- stan_fit$stanfit$rawest
 
   stan <- suppressMessages(ctPredict(stan_fit, subjects = 4, timestep = .3))
@@ -205,7 +211,10 @@ test_that("subject matrices match Stan's, and only the varying ones vary", {
   skip_without_julia()
   model <- .kalman_indvar_model()
   data <- .kalman_indvar_data()
-  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
+  # Augmented by name: compared with stan's subject matrices, and 'auto'
+  # takes laplace for this model's random DRIFT.
+  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
+    intoverpop = "augmented"))
   npar <- max(c(spec$parameter_table$parnumber, spec$ti_effects$coefficient),
     na.rm = TRUE)
   set.seed(8)
@@ -266,6 +275,27 @@ test_that("subject matrices match Stan's, and only the varying ones vary", {
 
   # LAMBDA is fixed in this model, so it cannot differ between subjects; DRIFT
   # has an individually varying cross effect, so it must.
+  for (i in seq_len(2)) for (j in seq_len(2)) {
+    expect_equal(stats::sd(extracted$subj_LAMBDA[1, , i, j]), 0, tolerance = 1e-12)
+  }
+  expect_true(stats::sd(extracted$subj_DRIFT[1, , 2, 1]) > 1e-6)
+  expect_true(stats::sd(extracted$subj_DRIFT[1, , 1, 1]) < 1e-12)
+})
+
+test_that("on the default route only the varying subject matrices vary", {
+  skip_without_julia()
+  model <- .kalman_indvar_model()
+  data <- .kalman_indvar_data()
+  # The default route for this model's random DRIFT is laplace, which has no
+  # carrier states and no stan counterpart, so what carries over from the test
+  # above is its last claim: a cell with a random effect differs between
+  # subjects, and a fixed one does not.
+  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
+  expect_false(is.null(spec$laplace))
+  set.seed(8)
+  raw <- stats::rnorm(ctsem:::.ctBackendNpar(spec), 0, .3)
+  fit <- .kalman_pointfit(spec, spec$model, raw)
+  extracted <- ctExtract(fit, subjectMatrices = TRUE)
   for (i in seq_len(2)) for (j in seq_len(2)) {
     expect_equal(stats::sd(extracted$subj_LAMBDA[1, , i, j]), 0, tolerance = 1e-12)
   }

@@ -80,11 +80,15 @@ mutable struct DiscretizationCache{T}
     lyap_Q::Matrix{T}
     lyap_out::Matrix{T}
     lyap_valid::Bool
+    # The Lyapunov operator's conditioning at `lyap_JAx`, which decides whether
+    # the noise takes the series route (see `series_discretization.jl`). Kept
+    # with the solution because a hit skips the factorization it is read from.
+    lyap_conditioning::Float64
 end
 
 function DiscretizationCache(::Type{T}, n::Int, k::Int) where {T}
     return DiscretizationCache{T}(ExpTable(T, n),
-        zeros(T, k, k), zeros(T, k, k), zeros(T, k, k), false)
+        zeros(T, k, k), zeros(T, k, k), zeros(T, k, k), false, 0.0)
 end
 
 """
@@ -121,7 +125,7 @@ end
 @inline _exp_cache_lookup(::Nothing, JAx, Δt, n::Int) = 0
 @inline _exp_cache_store!(::Nothing, JAx, Δt, out, n::Int) = nothing
 @inline _lyap_cache_hit(::Nothing, JAx, Q, k::Int) = false
-@inline _lyap_cache_store!(::Nothing, JAx, Q, out, k::Int) = nothing
+@inline _lyap_cache_store!(::Nothing, JAx, Q, out, k::Int, conditioning) = nothing
 
 """
 The table slot holding `exp(JAx * Δt)`, or 0 on a miss.
@@ -172,10 +176,12 @@ end
     return hit
 end
 
-@inline function _lyap_cache_store!(cache::DiscretizationCache, JAx, Q, out, k::Int)
+@inline function _lyap_cache_store!(cache::DiscretizationCache, JAx, Q, out, k::Int,
+    conditioning)
     _copy_block!(cache.lyap_JAx, JAx, k, k)
     _copy_block!(cache.lyap_Q, Q, k, k)
     _copy_block!(cache.lyap_out, out, k, k)
+    cache.lyap_conditioning = conditioning
     cache.lyap_valid = true
     return nothing
 end
@@ -350,8 +356,26 @@ function _compute_discrete_time_form!(discrete_ca, buffer, DIFFUSIONcov, pars, �
     # prediction substep (Profile.Allocs, dev1).
     _solve_square_system!(affine_buffer.intermediate, affine_buffer.s,
         affine_buffer.piv, affine_buffer.dim)
-    @inbounds for i in 1:naff
-        discrete_ca.dINT[i] = affine_buffer.s[i]
+    # The solve divides by J's pivots, which the factorization has just left on
+    # the diagonal. Where the smallest is small against the interval the result
+    # has lost its digits, and the integral is taken as a series instead; see
+    # `series_discretization.jl`.
+    series = discretization_buffer.series
+    series.intercept = _series_needed(
+        _series_min_pivot(affine_buffer.intermediate, naff), Δt)
+    if series.intercept
+        Phi = _series_intercept!(series, pars.JAx, Δt, naff)
+        @inbounds for i in 1:naff
+            acc = zero(eltype(discrete_ca.dINT))
+            for j in 1:naff
+                acc += Phi[i, j] * affine_buffer.r[j]
+            end
+            discrete_ca.dINT[i] = acc
+        end
+    else
+        @inbounds for i in 1:naff
+            discrete_ca.dINT[i] = affine_buffer.s[i]
+        end
     end
 
     @inbounds for j in 1:kdim, i in 1:kdim
@@ -365,10 +389,25 @@ function _compute_discrete_time_form!(discrete_ca, buffer, DIFFUSIONcov, pars, �
     # is overwritten immediately below, so the cache has to copy it now.
     if _lyap_cache_hit(cache, dynamic_jacobian, diffusion_buffer.intermediate, kdim)
         _copy_block!(diffusion_buffer.out, cache.lyap_out, kdim, kdim)
+        conditioning = cache.lyap_conditioning
     else
         my_lyap!(diffusion_buffer.out, dynamic_jacobian, diffusion_buffer.intermediate, lyap_buffer)
+        conditioning = _series_lyap_conditioning(lyap_buffer)
         _lyap_cache_store!(cache, dynamic_jacobian, diffusion_buffer.intermediate,
-            diffusion_buffer.out, kdim)
+            diffusion_buffer.out, kdim, conditioning)
+    end
+    # `X - A X A'` cancels two terms of size |X|, which grows as the operator's
+    # smallest eigenvalue sum over the interval shrinks; there the integral is
+    # taken as a series instead, as for the intercept above.
+    series.noise = _series_needed(conditioning, Δt)
+    if series.noise
+        V = _series_noise!(series, dynamic_jacobian, diffusion_buffer.intermediate,
+            Δt, kdim)
+        @inbounds for j in 1:kdim, i in 1:kdim
+            discrete_ca.dDIFFUSION[diffusion_state_indices[i], diffusion_state_indices[j]] =
+                V[i, j]
+        end
+        return
     end
     @inbounds for r in 1:kdim, i in 1:kdim
         value = zero(eltype(diffusion_buffer.intermediate))

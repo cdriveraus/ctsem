@@ -551,15 +551,16 @@ T0VARredundancies <- function(ctm) {
 #' With \code{backend='julia'} that route is exact -- no Gaussian
 #' assumption is made about the state anywhere, where the filter's update
 #' for a binary, ordinal or count indicator is an assumed-density
-#' projection. Pair it with \code{optimize=FALSE}: sampling the joint
-#' density gives the posterior of parameters and states together, while
-#' \code{optimize=TRUE} gives its joint mode, whose variance parameters
-#' are biased downward. Standard errors for an optimised fit come from the
-#' Hessian with the states profiled out, and \code{uncertainty} is
-#' restricted to \code{'hessian'} for that reason.
+#' projection. Use it with \code{optimize=FALSE}: sampling the joint
+#' density gives the posterior of parameters and states together.
+#' \code{optimize=TRUE} is refused, because the joint mode is degenerate --
+#' the states re-optimise to absorb almost any change in the parameters --
+#' and is not an estimate. \code{optimcontrol$estonly=TRUE} returns it
+#' anyway, with no standard errors; the profile curvature is kept at
+#' \code{fit$optim$hessian_profile}.
 #' Generally recommended to set TRUE unless using non-gaussian measurement model.
 #' @param binomial Deprecated. Logical indicating the use of binary rather than Gaussian data, as with IRT analyses.
-#' This now sets \code{intoverstates = FALSE} and the \code{manifesttype} of every indicator to 1, for binary.
+#' This now sets the \code{manifesttype} of every indicator to 1, for binary.
 #' @param fit If TRUE, fit specified model using Stan, if FALSE, return stan model object without fitting.
 #' @param poprank Rank of the population covariance of the individually
 #' varying parameters.
@@ -661,7 +662,17 @@ T0VARredundancies <- function(ctm) {
 #' @param intoverpop how to handle declared individual differences. If 'auto',
 #' set to TRUE if optimizing and FALSE if using hmc -- except when a grouping
 #' level above the subject varies (see \code{id} in \code{\link{ctModel}}),
-#' which only 'laplace' can integrate out, so 'auto' resolves to that.
+#' which only 'laplace' can integrate out, so 'auto' resolves to that. With
+#' \code{backend='julia'} and \code{optimize=TRUE}, 'auto' also resolves to
+#' 'laplace' wherever the augmented filter is measurably the wrong estimator:
+#' a varying parameter in DRIFT, DIFFUSION, MANIFESTVAR or LAMBDA, one in
+#' MANIFESTMEANS, CINT, T0MEANS or TDPREDEFFECT whose transform is not affine,
+#' one that enters an expression in another cell, or any varying parameter
+#' with a non-Gaussian indicator. It says so in one line, and
+#' \code{fit$args$resolved$intoverpopreason} records why either route was
+#' taken. Everywhere else it is 'augmented', which is exact and cheapest for a
+#' random effect that shifts a mean with Gaussian indicators.
+#' \code{intoverpop='augmented'} keeps the previous behaviour.
 #' if TRUE, integrates over population distribution of parameters rather than full sampling.
 #' Allows for optimization of non-linearities and random effects, via state expansion.
 #' 'augmented' names that state-expansion method explicitly. Individual
@@ -876,10 +887,14 @@ T0VARredundancies <- function(ctm) {
 #' \code{fit$optim$restarts} records each start.
 #'
 #' \code{optimcontrol$carefulfit} works for \code{backend='julia'} as it does
-#' for Stan: when \code{priors=FALSE}, a rough first pass is run \emph{with}
-#' ctsem's \code{normal(0,1)} raw priors to obtain starting values, and the
-#' likelihood is then maximised from there. It defaults to \code{TRUE}, capped
-#' at 10 iterations, and is skipped when \code{inits} are supplied. Set
+#' for Stan: a rough first pass is run \emph{with} ctsem's \code{normal(0,1)}
+#' raw priors on every coordinate to obtain starting values, and the fit's own
+#' objective is then maximised from there. That is the fit under
+#' \code{priors=FALSE} and under the default \code{priors='randomCorr'}, whose
+#' prior on the random-effect correlations does nothing to place the rest of
+#' the vector; with \code{priors=TRUE} the fit already has those priors and the
+#' pass is skipped. It defaults to \code{TRUE}, capped at 10 iterations, and is
+#' skipped when \code{inits} are supplied. Set
 #' \code{optimcontrol$carefulfit = FALSE} to switch it off or to a number to
 #' choose the cap.
 #'
@@ -893,8 +908,9 @@ T0VARredundancies <- function(ctm) {
 #' warming up at all -- because the prior pass pulls the start toward the prior
 #' mode and past about ten iterations that is what it hands the likelihood.
 #'
-#' \code{fit$optim$carefulfit} records whether the pass ran, and
-#' \code{$carefulfit_iterations} how long it was allowed.
+#' \code{fit$optim$carefulfit} records whether the pass ran and supplied the
+#' starting values, \code{$carefulfit_iterations} how many iterations it ran,
+#' and \code{$carefulfit_skipped} why, when it did not.
 #' With \code{backend='julia'}, \code{optimcontrol$callback} is a function
 #' called while the fit runs, with \code{(iteration, total, objective,
 #' gradient_norm, parameters)}, where \code{parameters} is the raw vector the
@@ -1602,10 +1618,9 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     warning('binomial argument is deprecated -- set manifesttype in the model object to 1 for binary indicators instead. It has set manifesttype=1 for every indicator.', call.=FALSE)
     # It used to set `intoverstates <- FALSE` as well, which is a leftover from
     # when binary data meant sampling the latent states rather than integrating
-    # them. The very next check warns that `intoverstates=TRUE` is required for
-    # sensible optimization -- so the documented shortcut put a user straight
-    # into the state the code itself calls unreliable, under the default
-    # `optimize=TRUE`. Setting `manifesttype` directly never did that, and the
+    # them. The very next check refuses `intoverstates=FALSE` with
+    # `optimize=TRUE` -- so the documented shortcut would now put a user
+    # straight into an error, under the default `optimize=TRUE`. Setting `manifesttype` directly never did that, and the
     # linearised measurement handles binary indicators with the filter intact:
     # on a three-indicator model it recovers a generating drift of -0.3 as
     # -0.279 and a diffusion of 0.8 as 0.681, both intervals containing the
@@ -1618,6 +1633,28 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     message('HMC sampling requested, but priors disabled -- are you sure? consider setting priors=TRUE')
     # !priors <- FALSE
   }
+  # `intoverstates=FALSE` with `optimize=TRUE` maximises the joint density of
+  # the parameters and the innovations that build the states, and that mode is
+  # degenerate rather than merely biased: with an innovation per observation
+  # the states re-optimise to absorb almost any change in the parameters, so
+  # the profile is nearly flat -- its largest eigenvalue measured 0.05 on 15
+  # subjects x 6 rows, against 22.8 for a well-determined count parameter --
+  # and a joint fit reports a better log likelihood and a better conditioned
+  # Hessian for changes that mean nothing. Sampling the same density is sound,
+  # which is what the route is for, so this is refused and points there.
+  #
+  # `estonly` is the way through for someone who wants the mode regardless;
+  # the warnings below still say what it does. Not for `fit=FALSE`, which
+  # optimises nothing and returns the prepared model, whose joint density is a
+  # fair thing to evaluate. A property of the estimator rather than of a
+  # backend, so it stands for both.
+  if(isTRUE(optimize) && !isTRUE(intoverstates) && isTRUE(fit) &&
+      !isTRUE(optimcontrol$estonly)) stop(
+    'optimize=TRUE with intoverstates=FALSE maximises over the latent states, ',
+    'and that joint mode is degenerate rather than an estimate. Use ',
+    'optimize=FALSE to sample the states, or intoverstates=TRUE to integrate ',
+    'them out. optimcontrol$estonly=TRUE returns the joint mode anyway, ',
+    'without standard errors.', call.=FALSE)
   # Maximising over the states rather than integrating them out biases the
   # variance parameters downward -- a variance whose own realisations are
   # being chosen at the same time can always be made to look smaller -- so
@@ -1703,19 +1740,22 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # route reaches the backend with an unaugmented model and every existing
   # `if(intoverpop)` keeps meaning what it meant.
   intoverpopmethod <- 'none'
+  # Why 'auto' went the way it did, kept for `fit$args$resolved`; NA when the
+  # route was named.
+  intoverpopreason <- NA_character_
   if(is.character(intoverpop)){
     intoverpop <- match.arg(intoverpop[1], c('auto','augmented','laplace'))
     if(intoverpop %in% 'auto'){
-      intoverpop <- isTRUE(optimize) && .ctAnyVarying(ctm)
-      # The augmented layout gives a carrier state to every `indvarying` cell
-      # and knows nothing about the columns a grouping level uses, so a model
-      # with effects above the subject has one route rather than two and 'auto'
-      # has to take it. Resolving to 'augmented' here would silently fit a
-      # model without the study effect that was asked for.
-      if(intoverpop && .ctAnyVarying(ctm, .ctOuterVaryingColumns(ctm))){
-        intoverpopmethod <- 'laplace'
-        intoverpop <- FALSE
-      }
+      # See `.ctIntOverPopAuto()` for the rule and the measurements behind it.
+      # An outer level resolves to 'laplace' silently, as it always has: there
+      # is one route for that model, not a choice between two.
+      auto <- .ctIntOverPopAuto(ctm, backend = backend, optimize = optimize,
+        intoverstates = intoverstates)
+      intoverpopmethod <- auto$route
+      intoverpopreason <- auto$reason
+      intoverpop <- identical(auto$route, 'augmented')
+      if(isTRUE(auto$announce)) message("intoverpop='auto' chose 'laplace': ",
+        auto$reason, ".")
     } else {
       intoverpopmethod <- intoverpop
       intoverpop <- identical(intoverpopmethod,'augmented')
@@ -2374,6 +2414,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   argsresolved$backend <- backend
   argsresolved$cores <- cores
   argsresolved$intoverpop <- intoverpopmethod
+  argsresolved$intoverpopreason <- intoverpopreason
   # The rank actually used, not the argument: 'auto' resolves to a number, and a
   # model the restriction did not apply to reports NA whatever was asked for.
   argsresolved$poprank <- if(!is.null(laplacerank)) laplacerank else
@@ -2383,8 +2424,12 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   argsresolved$intoverstates <- isTRUE(intoverstates)
 
   if(backend %in% 'julia') {
+    # The resolved route rather than the logical `intoverpop`, which cannot
+    # say 'laplace': 'auto' can resolve there, and the refusal of
+    # intoverstates=FALSE with laplace reads this argument.
     .ctJuliaUnsupported(ctm, optimize=optimize, priors=priors,
-      intoverpop=intoverpop, gendata=gendata,
+      intoverpop=if(identical(intoverpopmethod, 'laplace')) 'laplace' else
+        intoverpop, gendata=gendata,
       stanmodeltext=stanmodeltext, compileArgs=compileArgs,
       forcerecompile=forcerecompile, intoverstates=intoverstates,
       optimcontrol=optimcontrol)
