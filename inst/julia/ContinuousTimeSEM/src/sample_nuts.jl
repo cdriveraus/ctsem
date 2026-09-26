@@ -332,8 +332,9 @@ function ctsem_sample_metric(sampler::CTSEMSampler, values::AbstractVector;
     # zero, and one last evaluated elsewhere has that elsewhere's modes.
     #
     # Both states are reached by ordinary use, because the objective a chain
-    # samples need not be the one that was optimised. `ctSample()` on a fit
-    # reloaded into a new session builds a fresh one. Worse, every chain of
+    # samples need not be the one that was optimised.
+    # `ctFitUncertainty(fit, uncertainty = 'sample')` on a fit reloaded into a
+    # new session builds a fresh one. Worse, every chain of
     # `ctFit(optimize = FALSE)` run as a process does: the worker pool is warmed
     # with one gradient at the *pre-optimisation start values*, deliberately, so
     # that the engine compiles while the optimisation it overlaps is still

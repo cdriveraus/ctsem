@@ -148,8 +148,9 @@
 # naming one backend and not the other is exactly the "accepted on one backend,
 # ignored on the other" trap. Hence one helper, called from every writer that
 # would otherwise leave them bare -- `.ctBackendUncertainty()`,
-# `ctOptimUncertainty()`, `ctLaplaceCorrect()` and `ctFit()`. `ctSample()` is
-# the exception and needs no call: it names its draws where it builds them and
+# `ctOptimUncertainty()`, `ctLaplaceCorrect()` and `ctFit()`.
+# `ctFitUncertainty(fit, uncertainty = 'sample')` is the exception and needs no
+# call: it names its draws where it builds them and
 # takes the covariance and the standard errors from that named matrix.
 #
 # Names are applied only when there is exactly one per column.

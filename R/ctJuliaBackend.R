@@ -72,8 +72,8 @@
 # console still cannot do it.
 #' @keywords internal
 .ctProgressOverwrite <- function(verbose = 0) {
-  # `verbose` is a level on the fitting paths and a flag on `ctSample()`; a
-  # flag means level one, which still overwrites.
+  # `verbose` is a level everywhere now, but some callers still pass a
+  # logical flag; a flag means level one, which still overwrites.
   level <- if (is.numeric(verbose) && length(verbose) == 1L && !is.na(verbose)) {
     verbose
   } else if (isTRUE(verbose)) 1 else 0
@@ -5157,7 +5157,21 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       "optimize=FALSE to sample them, or intoverstates=TRUE.")
   } else if (!isTRUE(optimcontrol$estonly)) {
     uncertainty <- .ctJuliaOr(optimcontrol$uncertainty, "hessian")
-    out <- ctOptimUncertainty(fit = out, uncertainty = uncertainty,
+    # One way to sample: `ctFit(optimize = FALSE)`, which places the sampler
+    # through this same pipeline before ever reaching this stage (see
+    # `.ctJuliaSampleFit()`, R/ctBackendSample.R). Asking for
+    # `uncertainty = 'sample'` here would mean sampling immediately after an
+    # ML/MAP optimisation that never wanted a metric built for it, on a fit
+    # whose `optimize = TRUE` the caller specifically chose -- refused by
+    # name rather than left to run two optimisations for one fit.
+    if (identical(uncertainty, "sample")) {
+      stop("optimcontrol$uncertainty = 'sample' is refused here: sampling ",
+        "needs its own placement, which optimize = TRUE does not run. Use ",
+        "ctFit(optimize = FALSE) to fit and sample together, or ",
+        "ctFitUncertainty(fit, 'sample') on this fit once it is made.",
+        call. = FALSE)
+    }
+    out <- ctFitUncertainty(fit = out, uncertainty = uncertainty,
       draws = .ctJuliaOr(optimcontrol$uncertaintyDraws, "auto"),
       finishsamples = .ctJuliaOr(optimcontrol$finishsamples, 1000L),
       cores = cores, control = .ctJuliaOr(optimcontrol$uncertaintyControl, list()),

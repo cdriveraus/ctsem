@@ -1070,9 +1070,10 @@ function _laplace_partition(f, laplace::CTSEMLaplaceObjective, n::Int)
     # It used to be "called at the top of every entry point", and three entry
     # points did not: `_laplace_unit_hessian`, `ctsem_sample_start` and
     # `ctsem_sample_metric`, each of which is reached on an objective this
-    # session may never have evaluated -- `ctSample()` on a reloaded fit builds
-    # a fresh one. The band lives on the task and the store lives on the
-    # object, so a task carrying a band from an earlier object spawned workers
+    # session may never have evaluated -- `ctFitUncertainty(fit, uncertainty =
+    # 'sample')` on a reloaded fit builds a fresh one. The band lives on the
+    # task and the store lives on the object, so a task carrying a band from
+    # an earlier object spawned workers
     # that indexed past this one's empty store. Each was found by a separate
     # forty-minute suite run.
     #

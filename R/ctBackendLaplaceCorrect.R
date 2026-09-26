@@ -57,8 +57,8 @@
 #' reports its own reliability, and a low effective sample size means the
 #' corrected draws are carried by a few points and the interval should not be
 #' trusted. When that happens the approximation is too far from the target to
-#' repair by reweighting, and \code{\link{ctSample}} is the answer rather than
-#' this.
+#' repair by reweighting, and \code{\link{ctFitUncertainty}} with
+#' \code{uncertainty = 'sample'} is the answer rather than this.
 #'
 #' Laplace fits are now corrected when they are fitted, by default
 #' (\code{optimcontrol$laplace_correct}, see \code{\link{ctFit}}): the estimate
@@ -109,7 +109,8 @@
 #'   correction.
 #'
 #' @seealso \code{\link{ctLaplaceCheck}} measures without applying.
-#'   \code{\link{ctSample}} removes the approximation instead of correcting it.
+#'   \code{\link{ctFitUncertainty}} (\code{uncertainty = 'sample'}) removes the
+#'   approximation instead of correcting it.
 #'
 #' @examples
 #' \dontrun{
@@ -235,15 +236,16 @@ ctLaplaceCorrect <- function(fit, draws = c("normal", "imis", "keep"),
       # Said plainly rather than left in a list nobody prints. A corrected
       # interval resting on a handful of effective draws is worse than the
       # uncorrected one, because it looks like it has been improved.
-      remedy = paste0("Treat the corrected interval as indicative. ctSample() ",
-        "samples the joint posterior directly and does not rely on the ",
-        "approximation being close."))
+      remedy = paste0("Treat the corrected interval as indicative. ",
+        "ctFitUncertainty(fit, 'sample') samples the joint posterior directly ",
+        "and does not rely on the approximation being close."))
     is_res <- drawn$is_res
     samples <- drawn$samples
     if (is.null(samples) || !nrow(samples)) {
       stop("Importance sampling returned no usable draws against the ",
         "quadrature posterior. The Laplace approximation is likely too far ",
-        "from the target to repair by reweighting; use ctSample() instead.",
+        "from the target to repair by reweighting; use ",
+        "ctFitUncertainty(fit, 'sample') instead.",
         call. = FALSE)
     }
     newcov <- drawn$cov

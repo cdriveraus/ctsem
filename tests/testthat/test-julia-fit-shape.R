@@ -14,15 +14,15 @@
 # catch is now structurally impossible: the two routes share one constructor
 # up to `$sample` and the few `$estimate` fields a posterior mean cannot carry.
 # This file is kept because "structurally impossible" is a claim worth a test,
-# not an assumption, and because `ctSample()`'s own field additions
-# (`$estimate$rawposterior`, `$uncertainty`, `$sample`) are a second assembler
-# `.ctBackendSampleAssemble()` that both routes now share and that this file
-# does not exercise directly.
+# not an assumption, and because `ctFitUncertainty(fit, 'sample')`'s own field
+# additions (`$estimate$rawposterior`, `$uncertainty`, `$sample`) are a second
+# assembler `.ctBackendSampleAssemble()` that both routes now share and that
+# this file does not exercise directly.
 #
-# (There is a third route, `ctSample()` on an *already optimised* fit, which
-# mutates that fit rather than building one and so cannot show a constructor
-# divergence -- which is why the comparison below is between the two `ctFit()`
-# routes and not against `ctSample()`.)
+# (There is a third route, `ctFitUncertainty(fit, 'sample')` on an *already
+# optimised* fit, which mutates that fit rather than building one and so
+# cannot show a constructor divergence -- which is why the comparison below
+# is between the two `ctFit()` routes and not against that one.)
 #
 # The allowlist below is the point -- a field that is legitimately on one
 # route only has to be named here, with a reason, rather than being absent
@@ -80,8 +80,9 @@ suppressWarnings(suppressPackageStartupMessages(library(ctsem)))
 # Empty now, on both sides. The sampled route places the sampler by running
 # `.ctJuliaOptimiseFit()` -- the same pipeline the optimising route runs -- and
 # hands *that* fit (not a second, bespoke one) to the same assembler
-# `ctSample()` uses (review/OPTIM-consolidation-plan-2026-09-25.md P5), so
-# every top-level field the placement computed, including `$substeps`, is
+# `ctFitUncertainty(fit, 'sample')` uses
+# (review/OPTIM-consolidation-plan-2026-09-25.md P5), so every top-level field
+# the placement computed, including `$substeps`, is
 # already on the sampled fit before the assembler adds `$sample`. What used to
 # be here was not a reason either time it shrank: `$optim$trace`, `$laplace`
 # and `$collapsedScales` were on an optimised fit and missing from a sampled

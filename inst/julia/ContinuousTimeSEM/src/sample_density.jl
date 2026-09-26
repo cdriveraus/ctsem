@@ -316,9 +316,10 @@ from an optimised fit rather than from a random draw.
 function ctsem_sample_start(sampler::CTSEMSampler, values::AbstractVector;
     use_modes::Bool=true)
     # An entry point: the objective here is routinely a *different* one from
-    # any this session has evaluated -- `ctSample()` on a reloaded fit builds a
-    # fresh one -- and its workspace store is empty until this sizes it. The
-    # band lives on the task and the store lives on the object, so arriving
+    # any this session has evaluated -- `ctFitUncertainty(fit, uncertainty =
+    # 'sample')` on a reloaded fit builds a fresh one -- and its workspace
+    # store is empty until this sizes it. The band lives on the task and the
+    # store lives on the object, so arriving
     # with a band from some earlier object and no store of this one's is
     # exactly the mismatch `_laplace_check_slot` refuses.
     _laplace_ensure_pool!(sampler.laplace)

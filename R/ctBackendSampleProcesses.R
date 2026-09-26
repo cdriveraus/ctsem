@@ -13,8 +13,9 @@
 # that has to run first anyway. Measured, workers warmed alongside a 39.8 s
 # optimisation were ready with 0.0 s of waiting.
 #
-# Each worker runs one chain through the ordinary `ctSample` path, so there is
-# no second sampler implementation to keep in step with the first. The parent
+# Each worker runs one chain through the ordinary
+# `ctFitUncertainty(fit, uncertainty = 'sample')` path, so there is no second
+# sampler implementation to keep in step with the first. The parent
 # pools the draws and recomputes R-hat and effective size over all of them,
 # through the same Julia routine the single-process path uses -- those are
 # properties of the whole run and cannot be averaged from per-chain values.
@@ -30,7 +31,7 @@
 #' @param cores Total threads to divide among the workers.
 #' @param handles Optional warmed pool from [.ctBackendWarmWorkers()]. When
 #'   absent the workers are started here and the compile is paid in full.
-#' @param control,saveEffects,seed,verbose As for [ctSample()].
+#' @param control,saveEffects,seed,verbose As for [ctFitUncertainty()].
 #' @param progress Report chain progress from the parent while the workers
 #'   run. Separate from `verbose` for the same reason `.ctBackendSampleEngine`
 #'   keeps the two apart -- see there.
@@ -83,9 +84,10 @@
 
   # Each chain runs in its own process, so its printed output sits in that
   # process's own stdout buffer and only reaches the parent -- all at once,
-  # after the fact -- when `future::value()` collects it. `ctSample(verbose =
-  # TRUE)` under `processes = TRUE` used to print nothing at all for exactly
-  # this reason: the reporting existed, in the worker, and had nowhere to go
+  # after the fact -- when `future::value()` collects it.
+  # `ctFitUncertainty(fit, uncertainty = 'sample', verbose = TRUE)` under
+  # `processes = TRUE` used to print nothing at all for exactly this reason:
+  # the reporting existed, in the worker, and had nowhere to go
   # until the run was already over.
   #
   # The fix is to report from the parent instead of hoping a worker's console
@@ -183,11 +185,11 @@
 # constraining a single chain's draws only to throw them away when the pool is
 # assembled is work nobody reads.
 #
-# It used to call `ctSample()`, which fixed the target as well as the code: the
-# joint entry, and a refusal for any fit without a Laplace spec. That is right
-# for `ctSample()`'s own callers and wrong for two of the three routes
-# `ctFit(optimize = FALSE)` can take, which is why the target now travels
-# explicitly.
+# It used to call `ctFitUncertainty(fit, uncertainty = 'sample')`, which fixed
+# the target as well as the code: the joint entry, and a refusal for any fit
+# without a Laplace spec. That is right for its own callers and wrong for two
+# of the three routes `ctFit(optimize = FALSE)` can take, which is why the
+# target now travels explicitly.
 #
 # `progress_file`, when given, replaces `control$callback` for this call: a
 # user's own callback is an R closure over the parent session (a plot device,

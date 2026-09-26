@@ -1,4 +1,5 @@
-# ctSample(): Hamiltonian sampling of a julia Laplace fit.
+# ctFitUncertainty(fit, uncertainty = 'sample'): Hamiltonian sampling of a
+# julia backend fit.
 #
 # The statistics of the sampler are tested in the engine suite, against
 # posteriors known in closed form. What is tested here is the R side of it: that
@@ -10,16 +11,24 @@
 # R-hat on takes minutes, which does not belong in a unit suite; the engine
 # tests carry the correctness argument.
 #
-# `ctSample(fit)` on the `.sample_fixture()` below -- an `intoverpop='laplace'`
-# maximum-likelihood fit -- now defaults to `target='auto'`, which is the
-# Laplace marginal (decision 5, review/OPTIM-consolidation-plan-2026-09-25.md):
-# population parameters only, no random effects in the sampled vector. Tests
-# that are specifically about the random effects -- their draws, their
-# summaries, `saveEffects`, generation at a sampled effect -- ask for
-# `target='joint'` explicitly, which is what removes the Laplace approximation
-# rather than sampling around it, and is what this file tested by default
-# before the route had a name. Everything else here is generic sampler
-# mechanics that holds under either target, and is left at the default.
+# `ctFitUncertainty(fit, 'sample')` on the `.sample_fixture()` below -- an
+# `intoverpop='laplace'` maximum-likelihood fit -- defaults to
+# `control$target='auto'`, which is the Laplace marginal (decision 5,
+# review/OPTIM-consolidation-plan-2026-09-25.md): population parameters only,
+# no random effects in the sampled vector. Tests that are specifically about
+# the random effects -- their draws, their summaries, `saveEffects`,
+# generation at a sampled effect -- ask for `control = list(target = 'joint')`
+# explicitly, which is what removes the Laplace approximation rather than
+# sampling around it, and is what this file tested by default before the
+# route had a name. Everything else here is generic sampler mechanics that
+# holds under either target, and is left at the default.
+#
+# The separate exported sampling function this file used to call was removed
+# (it was julia-only and never released); every call below that used to reach
+# it now reaches `ctFitUncertainty()` instead, with the same settings folded
+# into `control` -- `chains`, `warmup`, `draws`, `seed`, `saveEffects`,
+# `processes` and `target` are all entries of one list now, where that
+# function had them split across its own arguments and a separate list.
 
 .sample_fixture <- function(nsub = 12L, tp = 6L, seed = 31L) {
   set.seed(seed)
@@ -47,7 +56,8 @@ test_that("a sampled fit carries draws the summary machinery can read", {
   fit <- .sample_fixture()
   npar <- length(fit$estimate$raw)
   sampled <- suppressWarnings(suppressMessages(
-    ctSample(fit, chains = 2, warmup = 80, draws = 80, cores = 1)))
+    ctFitUncertainty(fit, uncertainty = "sample", cores = 1,
+      control = list(chains = 2, warmup = 80, draws = 80))))
 
   expect_s3_class(sampled, "ctJuliaFit")
   # And as a fit, not as a model spec: "ctFitModel" marks an unfitted handle,
@@ -80,11 +90,10 @@ test_that("the diagnostics come back per parameter and per chain", {
   fit <- .sample_fixture()
   npar <- length(fit$estimate$raw)
   # target='joint': this test asserts on the per-subject effect summaries
-  # below, which the marginal target -- the new default -- does not carry at
-  # all.
+  # below, which the marginal target -- the default -- does not carry at all.
   sampled <- suppressWarnings(suppressMessages(
-    ctSample(fit, chains = 2, warmup = 80, draws = 80, cores = 1,
-      target = "joint")))
+    ctFitUncertainty(fit, uncertainty = "sample", cores = 1,
+      control = list(chains = 2, warmup = 80, draws = 80, target = "joint"))))
   diagnostics <- sampled$sample
 
   expect_s3_class(diagnostics, "ctSampleDiagnostics")
@@ -139,16 +148,17 @@ test_that("the effects come back summarised, or in full when asked for", {
   # nsubjects x neffects x chains x draws numbers, and the bridge moves about
   # 1 MB/s.
   lean <- suppressWarnings(suppressMessages(
-    ctSample(fit, chains = 1, warmup = 60, draws = 60, cores = 1,
-      target = "joint")))
+    ctFitUncertainty(fit, uncertainty = "sample", cores = 1,
+      control = list(chains = 1, warmup = 60, draws = 60, target = "joint"))))
   expect_null(lean$sample$effects)
   expect_length(lean$sample$effect_mean, neffects)
   expect_length(lean$sample$effect_sd, neffects)
   expect_true(all(lean$sample$effect_sd > 0))
 
   full <- suppressWarnings(suppressMessages(
-    ctSample(fit, chains = 1, warmup = 60, draws = 60, cores = 1,
-      saveEffects = TRUE, target = "joint")))
+    ctFitUncertainty(fit, uncertainty = "sample", cores = 1,
+      control = list(chains = 1, warmup = 60, draws = 60, saveEffects = TRUE,
+        target = "joint"))))
   expect_equal(dim(full$sample$effects), c(60L, neffects))
   expect_true(all(is.finite(full$sample$effects)))
 })
@@ -171,7 +181,8 @@ test_that("a sampled fit keeps the exact Hessian it was built from", {
   # about its own R-hat and effective sample size and those are expected here.
   warnings <- character()
   sampled <- withCallingHandlers(suppressMessages(
-    ctSample(fit, chains = 1, warmup = 40, draws = 40, cores = 1)),
+    ctFitUncertainty(fit, uncertainty = "sample", cores = 1,
+      control = list(chains = 1, warmup = 40, draws = 40))),
     warning = function(w) {
       warnings <<- c(warnings, conditionMessage(w))
       invokeRestart("muffleWarning")
@@ -203,11 +214,13 @@ test_that("processes = TRUE reproduces the in-process draws to numerical noise",
   # warmup lets NUTS's chaos carry the difference to order 1 within a few
   # dozen transitions, which is why this stays at `warmup = 0`.
   inprocess <- suppressWarnings(suppressMessages(
-    ctSample(fit, chains = 2, warmup = 0, draws = 3, cores = 2, seed = 777,
-      processes = FALSE)))
+    ctFitUncertainty(fit, uncertainty = "sample", cores = 2,
+      control = list(chains = 2, warmup = 0, draws = 3, seed = 777,
+        processes = FALSE))))
   viaprocess <- suppressWarnings(suppressMessages(
-    ctSample(fit, chains = 2, warmup = 0, draws = 3, cores = 2, seed = 777,
-      processes = TRUE)))
+    ctFitUncertainty(fit, uncertainty = "sample", cores = 2,
+      control = list(chains = 2, warmup = 0, draws = 3, seed = 777,
+        processes = TRUE))))
 
   expect_false(isTRUE(inprocess$sample$processes))
   # If the workers could not be used -- in particular, a `future` worker
@@ -226,13 +239,21 @@ test_that("processes = TRUE reproduces the in-process draws to numerical noise",
     inprocess$estimate$rawposterior, tolerance = 1e-6)
 })
 
-test_that("ctSample refuses what it cannot sample", {
+test_that("ctFitUncertainty(fit, 'sample') refuses what it cannot sample", {
   skip_without_julia()
-  expect_error(ctSample(list()), "ctFit\\(backend='julia'\\)")
+  expect_error(ctFitUncertainty(list(), uncertainty = "sample"),
+    "backend='julia'")
 
-  # The augmented route carries the effects in the state, so there is no
-  # separate posterior over them and no Laplace curvature to build a metric
-  # from. Saying so beats sampling something else.
+  # A stan fit is refused by name, pointing at its own sampling entry point
+  # rather than at a julia-only error about model structure.
+  expect_error(ctFitUncertainty(ctstantestfit, uncertainty = "sample"),
+    "backend='stan'.*optimize.*FALSE")
+
+  # The augmented route has no separate posterior over the random effects --
+  # they are carried in the state, integrated by the filter -- so the joint
+  # target is refused by name. The marginal is not: it is the same augmented
+  # marginal `ctFit(optimize=FALSE, intoverpop=TRUE)` already samples, and
+  # `uncertainty = 'sample'` reaches it by the same route.
   set.seed(4)
   data <- do.call(rbind, lapply(1:8, function(i)
     data.frame(id = i, time = 0:4, Y1 = cumsum(stats::rnorm(5)) * 0.5)))
@@ -240,7 +261,15 @@ test_that("ctSample refuses what it cannot sample", {
     manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1))))
   augmented <- suppressWarnings(suppressMessages(ctFit(data, model,
     backend = "julia", cores = 1, optimcontrol = list(estonly = TRUE))))
-  expect_error(ctSample(augmented), "intoverpop='laplace'")
+  expect_error(ctFitUncertainty(augmented, uncertainty = "sample",
+    control = list(target = "joint")), "intoverpop = 'laplace'", fixed = TRUE)
+
+  marginal <- suppressWarnings(suppressMessages(ctFitUncertainty(augmented,
+    uncertainty = "sample", cores = 1,
+    control = list(chains = 1, warmup = 20, draws = 20))))
+  expect_s3_class(marginal, "ctJuliaFit")
+  expect_false(is.null(marginal$sample))
+  expect_null(marginal$sample$effects)
 })
 
 test_that("ctOptimUncertainty() refuses a sampled julia fit instead of silently discarding its posterior", {
@@ -252,9 +281,14 @@ test_that("ctOptimUncertainty() refuses a sampled julia fit instead of silently 
   # built from the curvature there. Wrong in a way nothing downstream would
   # notice, since the replacement is the same shape and a plausible size; see
   # review/J7-sampled-fit-support.md.
+  #
+  # Called by its 3.11.1 name deliberately, since this test is also what
+  # confirms that name still means exactly what it did once it became a thin
+  # wrapper over ctFitUncertainty().
   fit <- .sample_fixture()
   sampled <- suppressWarnings(suppressMessages(
-    ctSample(fit, chains = 2, warmup = 40, draws = 40, cores = 1)))
+    ctFitUncertainty(fit, uncertainty = "sample", cores = 1,
+      control = list(chains = 2, warmup = 40, draws = 40))))
   expect_false(is.null(sampled$sample))
   before <- sampled$estimate$rawposterior
 
@@ -269,7 +303,7 @@ test_that("ctOptimUncertainty() refuses a sampled julia fit instead of silently 
   # The refusal happens before anything is touched.
   expect_identical(sampled$estimate$rawposterior, before)
 
-  # The Laplace fit ctSample() started from is a genuinely optimized fit
+  # The Laplace fit this was sampled from is a genuinely optimized fit
   # (fit$sample is NULL there) -- unaffected by the new check, still works.
   expect_false(is.null(fit$estimate$raw))
   out <- ctOptimUncertainty(fit, uncertainty = "hessian", finishsamples = 20, cores = 1)
@@ -348,7 +382,8 @@ test_that("a sampled fit reports n_eff and Rhat where a ctStanFit does, and an o
   fit <- .sample_fixture()
   npar <- length(fit$estimate$raw)
   sampled <- suppressWarnings(suppressMessages(
-    ctSample(fit, chains = 2, warmup = 120, draws = 120, cores = 1)))
+    ctFitUncertainty(fit, uncertainty = "sample", cores = 1,
+      control = list(chains = 2, warmup = 120, draws = 120))))
   total <- 2L * 120L
 
   summarised <- suppressWarnings(summary(sampled))
@@ -398,7 +433,8 @@ test_that("a run too short to mix says so rather than returning quietly", {
   # few to mix. The assertion is on the verdict, not on a threshold being
   # crossed by a particular margin.
   broken <- suppressWarnings(suppressMessages(
-    ctSample(fit, chains = 2, warmup = 12, draws = 12, cores = 1)))
+    ctFitUncertainty(fit, uncertainty = "sample", cores = 1,
+      control = list(chains = 2, warmup = 12, draws = 12))))
   expect_false(isTRUE(broken$sample$converged))
   expect_gt(length(broken$sample$diagnosis), 0L)
   note <- suppressWarnings(summary(broken))$sampleNote
@@ -470,31 +506,34 @@ test_that("an effective-size target turns the draw count into a budget", {
   # `rhatTarget` is raised out of the way because this fixture is twelve
   # subjects and will not reach 1.01; what is under test is the stopping rule,
   # not whether a small fixture mixes.
-  met <- suppressWarnings(suppressMessages(ctSample(fit, chains = 2,
-    warmup = 100, draws = 200, cores = 1, processes = FALSE,
-    sampleControl = list(minESS = 0.5, rhatTarget = 100))))
+  met <- suppressWarnings(suppressMessages(ctFitUncertainty(fit,
+    uncertainty = "sample", cores = 1,
+    control = list(chains = 2, warmup = 100, draws = 200, processes = FALSE,
+      minESS = 0.5, rhatTarget = 100))))
   expect_lt(met$sample$draws, 200L)
   expect_gt(met$sample$draws, 0L)
 
   # `minESS = 0` is the off switch, and then it takes exactly what it was
   # asked for. Needed explicitly now that 200 is the default target -- a
   # default fit stops early, which is the point of it.
-  full <- suppressWarnings(suppressMessages(ctSample(fit, chains = 2,
-    warmup = 100, draws = 200, cores = 1, processes = FALSE,
-    sampleControl = list(minESS = 0))))
+  full <- suppressWarnings(suppressMessages(ctFitUncertainty(fit,
+    uncertainty = "sample", cores = 1,
+    control = list(chains = 2, warmup = 100, draws = 200, processes = FALSE,
+      minESS = 0))))
   expect_equal(full$sample$draws, 200L)
 
   # And the default is a target rather than an instruction: the twelve-subject
   # fixture will not reach min ESS 200 in 200 draws, so the budget is spent in
   # full and nothing is lost by the default being on.
-  default <- suppressWarnings(suppressMessages(ctSample(fit, chains = 2,
-    warmup = 100, draws = 200, cores = 1, processes = FALSE)))
+  default <- suppressWarnings(suppressMessages(ctFitUncertainty(fit,
+    uncertainty = "sample", cores = 1,
+    control = list(chains = 2, warmup = 100, draws = 200, processes = FALSE))))
   expect_lte(default$sample$draws, 200L)
 
   # The old spelling is refused with the new one named, rather than dropped by
   # `$` and silently ignored.
-  expect_error(ctSample(fit, sampleControl = list(minEss = 100)),
-    "did you mean minESS")
+  expect_error(ctFitUncertainty(fit, uncertainty = "sample",
+    control = list(minEss = 100)), "did you mean minESS")
 })
 
 test_that("a fixed stepsize is what every chain starts from", {
@@ -505,21 +544,24 @@ test_that("a fixed stepsize is what every chain starts from", {
   # so this is the one setting where the initial value *is* the value -- and
   # where each chain estimating its own showed up as chains that behaved
   # differently for no reason.
-  fixed <- suppressWarnings(suppressMessages(ctSample(fit, chains = 3,
-    warmup = 0, draws = 20, cores = 1, processes = FALSE,
-    sampleControl = list(stepsize = 0.05))))
+  fixed <- suppressWarnings(suppressMessages(ctFitUncertainty(fit,
+    uncertainty = "sample", cores = 1,
+    control = list(chains = 3, warmup = 0, draws = 20, processes = FALSE,
+      stepsize = 0.05))))
   expect_equal(fixed$sample$stepsize, rep(0.05, 3L))
 
   # Left unset, the chains estimate their own and need not agree; what is
   # asserted is only that the setting is not silently ignored.
-  free <- suppressWarnings(suppressMessages(ctSample(fit, chains = 3,
-    warmup = 0, draws = 20, cores = 1, processes = FALSE)))
+  free <- suppressWarnings(suppressMessages(ctFitUncertainty(fit,
+    uncertainty = "sample", cores = 1,
+    control = list(chains = 3, warmup = 0, draws = 20, processes = FALSE))))
   expect_false(isTRUE(all.equal(free$sample$stepsize, rep(0.05, 3L))))
 
   # And with warmup it is a starting point rather than the answer.
-  moved <- suppressWarnings(suppressMessages(ctSample(fit, chains = 2,
-    warmup = 60, draws = 20, cores = 1, processes = FALSE,
-    sampleControl = list(stepsize = 0.05))))
+  moved <- suppressWarnings(suppressMessages(ctFitUncertainty(fit,
+    uncertainty = "sample", cores = 1,
+    control = list(chains = 2, warmup = 60, draws = 20, processes = FALSE,
+      stepsize = 0.05))))
   expect_false(isTRUE(all.equal(moved$sample$stepsize, rep(0.05, 2L))))
 })
 
@@ -543,9 +585,10 @@ test_that("generation at given effects is exact and per-subject", {
   # target='joint': each of these reads fit$sample$effects, which only exists
   # under the joint target -- the marginal default has no random effect in
   # the sampled vector to save.
-  fit <- suppressWarnings(suppressMessages(ctSample(.sample_fixture(),
-    chains = 1, warmup = 60, draws = 60, cores = 1, saveEffects = TRUE,
-    target = "joint")))
+  fit <- suppressWarnings(suppressMessages(ctFitUncertainty(.sample_fixture(),
+    uncertainty = "sample", cores = 1,
+    control = list(chains = 1, warmup = 60, draws = 60, saveEffects = TRUE,
+      target = "joint"))))
   expect_false(is.null(fit$sample$effects))
 
   raw <- fit$estimate$raw
@@ -584,9 +627,10 @@ test_that("a sampled fit without saved effects says it fell back to modes", {
   # target='joint': each of these reads fit$sample$effects, which only exists
   # under the joint target -- the marginal default has no random effect in
   # the sampled vector to save.
-  fit <- suppressWarnings(suppressMessages(ctSample(.sample_fixture(),
-    chains = 1, warmup = 60, draws = 60, cores = 1, saveEffects = TRUE,
-    target = "joint")))
+  fit <- suppressWarnings(suppressMessages(ctFitUncertainty(.sample_fixture(),
+    uncertainty = "sample", cores = 1,
+    control = list(chains = 1, warmup = 60, draws = 60, saveEffects = TRUE,
+      target = "joint"))))
   # Silence is the failure mode: the draws are summarised by default, so
   # without a message a user asking for a posterior predictive would get one
   # conditioned on point estimates and no way to notice.
@@ -614,9 +658,10 @@ test_that("ctGenerateFromFit can resample the trajectory or mirror the fit", {
   # target='joint': each of these reads fit$sample$effects, which only exists
   # under the joint target -- the marginal default has no random effect in
   # the sampled vector to save.
-  fit <- suppressWarnings(suppressMessages(ctSample(.sample_fixture(),
-    chains = 1, warmup = 60, draws = 60, cores = 1, saveEffects = TRUE,
-    target = "joint")))
+  fit <- suppressWarnings(suppressMessages(ctFitUncertainty(.sample_fixture(),
+    uncertainty = "sample", cores = 1,
+    control = list(chains = 1, warmup = 60, draws = 60, saveEffects = TRUE,
+      target = "joint"))))
   expect_true(isTRUE(fit$args$resolved$intoverstates))
 
   generate <- function(io) {
@@ -647,9 +692,10 @@ test_that("the resampled trajectory is drawn at each subject's own parameters", 
   # target='joint': each of these reads fit$sample$effects, which only exists
   # under the joint target -- the marginal default has no random effect in
   # the sampled vector to save.
-  fit <- suppressWarnings(suppressMessages(ctSample(.sample_fixture(),
-    chains = 1, warmup = 60, draws = 60, cores = 1, saveEffects = TRUE,
-    target = "joint")))
+  fit <- suppressWarnings(suppressMessages(ctFitUncertainty(.sample_fixture(),
+    uncertainty = "sample", cores = 1,
+    control = list(chains = 1, warmup = 60, draws = 60, saveEffects = TRUE,
+      target = "joint"))))
   raw <- fit$estimate$raw
   nrows <- length(fit$model_spec$times)
   nsub <- length(fit$model_spec$subject_starts)
@@ -683,7 +729,8 @@ test_that("a sampled fit's Hessian is not reused as curvature at its mean", {
   skip_without_julia()
   fit <- .sample_fixture()
   sampled <- suppressWarnings(suppressMessages(
-    ctSample(fit, chains = 1, warmup = 40, draws = 40, cores = 1)))
+    ctFitUncertainty(fit, uncertainty = "sample", cores = 1,
+      control = list(chains = 1, warmup = 40, draws = 40))))
 
   # The exact Hessian a sampled fit carries was taken at the point the sampler
   # was placed from, and `$estimate$raw` is the posterior mean -- a different

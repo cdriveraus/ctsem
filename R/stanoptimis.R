@@ -11,9 +11,10 @@
 #' @return fit object with extra samples
 #' @aliases ctAddSamples
 #' @details These are pseudo-posterior draws from the fitted covariance, not
-#'   posterior draws from a sampler. \code{\link{ctSample}} is the latter --
-#'   Hamiltonian Monte Carlo from an optimized \code{ctJuliaFit} -- and is a
-#'   different object, not another route to this one.
+#'   posterior draws from a sampler. \code{\link{ctFitUncertainty}} with
+#'   \code{uncertainty = 'sample'} is the latter -- Hamiltonian Monte Carlo
+#'   from an optimized \code{ctJuliaFit} -- and is a different object, not
+#'   another route to this one.
 #'
 #'   Deprecated in favour of \code{ctOptimUncertainty(fit, uncertainty =
 #'   'stored', finishsamples = n)}, which draws from the same covariance for
@@ -27,7 +28,7 @@
 #'
 #'   \code{ctAddSamples} is the same function under its pre-3.11 name; both are
 #'   deprecated together.
-#' @seealso \code{\link{ctOptimUncertainty}}, \code{\link{ctSample}}
+#' @seealso \code{\link{ctOptimUncertainty}}, \code{\link{ctFitUncertainty}}
 #' @export
 #'
 #' @examples

@@ -37,15 +37,17 @@ ctChisqTest<-function(fit1,fit2){
   # "arguments imply differing number of rows", which names neither fit nor
   # says why. Checked and named here instead, for both backends: julia's
   # equivalent marker is `fit$sample` (set only by the routine
-  # `ctFit(optimize=FALSE)` and `ctSample()` share).
+  # `ctFit(optimize=FALSE)` and `ctFitUncertainty(fit, uncertainty = 'sample')`
+  # share).
   sampled <- function(fit) {
     if (inherits(fit, 'ctJuliaFit')) !is.null(fit$sample) else
       length(fit$stanfit$stanfit@sim) > 0
   }
   if (sampled(fit1) || sampled(fit2)) {
     stop("ctChisqTest() compares point estimates and needs an optimized fit ",
-      "for both models; a sampled fit (ctFit(optimize=FALSE) or ctSample()) ",
-      "has a posterior instead of a single objective value. Refit with ",
+      "for both models; a sampled fit (ctFit(optimize=FALSE) or ",
+      "ctFitUncertainty(fit, 'sample')) has a posterior instead of a single ",
+      "objective value. Refit with ",
       "optimize=TRUE, or compare sampled fits with ctLOO() instead.",
       call.=FALSE)
   }

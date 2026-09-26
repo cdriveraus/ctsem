@@ -1842,22 +1842,31 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   ctOptimUpdateTransformed(fit, samples=samples, cores=cores)
 }
 
-#' Update optimized ctsem uncertainty estimates
+#' Compute or sample a fit's uncertainty
 #'
 #' Recomputes the approximate raw-parameter uncertainty for an optimized
 #' \code{\link{ctFit}} object and refreshes the approximate raw-parameter
 #' samples. This is the entry point for both backends; \code{ctFit} itself
-#' calls it to finish an optimized fit.
+#' calls it to finish an optimized fit. \code{\link{ctOptimUncertainty}} is
+#' the previous name, kept for fits written against ctsem 3.11.1; the two are
+#' otherwise identical except that only this one offers
+#' \code{uncertainty = 'sample'}.
 #'
-#' The draws it writes to \code{$rawposterior} are \emph{pseudo-posterior}
-#' draws: a sample from a covariance fitted to the log-posterior surface around
-#' the optimum, not a sample from the posterior itself. \code{\link{ctSample}}
-#' is the other thing, genuine posterior draws by Hamiltonian Monte Carlo from
-#' an optimized \code{ctJuliaFit}. Everything downstream reads either from the
-#' same slot, so the difference is recorded rather than visible in the shape of
-#' the result: an optimized fit carries \code{$uncertainty$settings}, a sampled
-#' one carries \code{$sample}, and \code{ctOptimUncertainty} refuses a sampled
-#' fit rather than replacing its draws.
+#' Every method except \code{'sample'} writes \emph{pseudo-posterior} draws to
+#' \code{$rawposterior}: a sample from a covariance fitted to the
+#' log-posterior surface around the optimum, not a sample from the posterior
+#' itself, and the point estimate stays at the optimum throughout.
+#' \code{uncertainty = 'sample'} is the other thing, genuine posterior draws
+#' by Hamiltonian Monte Carlo, and it is the one method that moves the point
+#' estimate: \code{$estimate$raw} (or \code{$stanfit$rawest}) becomes the
+#' posterior mean, the way \code{ctFit(optimize = FALSE)} already reports a
+#' sampled fit. Everything downstream reads either kind of draw from the same
+#' slot, so the difference is recorded rather than visible in the shape of the
+#' result: a curvature-based fit carries \code{$uncertainty$settings}, a
+#' sampled one carries \code{$sample}, and every method except
+#' \code{'sample'} itself refuses a fit that already carries a posterior
+#' rather than replacing its draws with an approximation -- see
+#' \code{uncertainty = 'sample'} below for what re-sampling one does instead.
 #'
 #' To change only the number of draws, use \code{uncertainty='stored'}, which
 #' redraws from the covariance the fit already carries and evaluates no model.
@@ -1936,9 +1945,14 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' @param fit Optimized \code{ctStanFit} or \code{ctJuliaFit} object. For a
 #' \code{ctJuliaFit}, every \code{uncertainty} method except
 #' \code{'fullbootstrap'} is available; that one re-optimises each resample and
-#' so needs the model rebuilt rather than re-evaluated. A sampled fit of either
-#' backend is refused: it already carries a posterior, and replacing it with a
-#' curvature-based approximation would discard it.
+#' so needs the model rebuilt rather than re-evaluated. \code{uncertainty =
+#' 'sample'} needs \code{backend = 'julia'} specifically -- it is refused by
+#' name on a \code{ctStanFit}, which samples through \code{ctFit(backend =
+#' 'stan', optimize = FALSE)} instead. A sampled fit of either backend is
+#' refused by every \emph{other} method: it already carries a posterior, and
+#' replacing it with a curvature-based approximation would discard it.
+#' \code{uncertainty = 'sample'} may be run again on an already-sampled fit,
+#' to draw more, or differently, from where it now stands.
 #' @param uncertainty Uncertainty approximation. \code{'hessian'} uses the
 #' finite-difference Hessian, \code{'surrogate'} fits a local quadratic
 #' surrogate around the optimum, \code{'is'} uses Hessian-based importance
@@ -1957,6 +1971,29 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' log-probability evaluations, this one costs none -- and it warns if the
 #' fit's existing draws came from \code{'is'} or \code{'bootstrap'}, which
 #' normal draws from that covariance do not reproduce.
+#' \code{'sample'} draws from the genuine posterior by Hamiltonian Monte Carlo
+#' (the No-U-Turn sampler), through the same runner
+#' \code{ctFit(backend = 'julia', optimize = FALSE)} uses to fit and sample
+#' together -- \code{julia}-only, see \code{fit} above. Its settings are
+#' entries of \code{control} rather than \code{draws}/\code{finishsamples},
+#' which this method ignores: \code{chains} (default 4), \code{warmup} (500),
+#' \code{draws} (500), \code{seed}, \code{saveEffects} (FALSE, whether to keep
+#' every draw of every random effect rather than only their summary), and
+#' \code{processes} (TRUE, one R process per chain). \code{control$target}
+#' says which posterior: \code{'auto'} (the default) follows the fit's own
+#' route -- the Laplace marginal over population parameters for
+#' \code{intoverpop = 'laplace'} or \code{'augmented'}, the joint posterior
+#' over population parameters \emph{and} every subject's random effects for
+#' \code{intoverpop = 'none'}, which has no marginal to fall back to.
+#' \code{'marginal'}/\code{'joint'} ask for one explicitly regardless of
+#' route; \code{'joint'} on an ordinary \code{intoverpop = 'laplace'}
+#' maximum-likelihood fit is what removes the Laplace approximation exactly,
+#' at the cost of a dimension that grows with the subject count, and is
+#' refused by name on an \code{intoverpop = 'augmented'} fit, which has no
+#' separate random effect to sample jointly with the parameters. See
+#' \code{\link{ctJuliaSetup}} for the thread count that decides whether
+#' chains run concurrently, and \code{\link{ctFit}}'s \code{intoverpop} for
+#' what each route means.
 #' @param draws Approximate raw-parameter draw method. \code{'auto'} uses
 #' empirical draws for \code{uncertainty='bootstrap'} and
 #' \code{uncertainty='fullbootstrap'} and normal draws otherwise.
@@ -1978,7 +2015,11 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' it at its own thread count. Neither route changes what is computed, though
 #' both change the order things are summed in, so results are reproducible at
 #' \code{cores = 1} and agree to rounding above it.
-#' @param control List of method-specific options. Useful entries include
+#' @param control List of method-specific options. For \code{uncertainty =
+#' 'sample'} these are the sampler settings described under \code{uncertainty}
+#' above (\code{chains}, \code{warmup}, \code{draws}, \code{seed},
+#' \code{saveEffects}, \code{processes}, \code{target}); none of the entries
+#' below apply to it. For every other method, useful entries include
 #' \code{ridge}, \code{hessianStep}, \code{surrogateNpoints},
 #' \code{surrogateScale}, \code{surrogateProfile},
 #' \code{surrogateProfileTargetDrop}, \code{surrogateProfileMaxStep},
@@ -2032,23 +2073,52 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' @param verbose Integer controlling progress detail.
 #' @param ... Unused.
 #'
-#' @return The fit, of the class it came in as. The resolved method, draw
-#' strategy, sample count, cores, and non-internal controls are recorded in
+#' @return The fit, of the class it came in as. For every method except
+#' \code{'sample'}: the resolved method, draw strategy, sample count, cores,
+#' and non-internal controls are recorded in
 #' \code{fit$stanfit$uncertainty$settings} for a \code{ctStanFit} and in
 #' \code{fit$uncertainty$settings} for a \code{ctJuliaFit}; see the backend
-#' differences above for the other slots each writes.
-#' @seealso \code{\link{ctSample}} for genuine posterior draws by Hamiltonian
-#' Monte Carlo, rather than the pseudo-posterior draws from a covariance that
-#' this function produces. \code{\link{ctFitAddSamples}} is the deprecated
-#' stan-only predecessor of \code{uncertainty='stored'}.
+#' differences above for the other slots each writes. For
+#' \code{uncertainty = 'sample'}: a \code{ctJuliaFit} with
+#' \code{estimate$rawposterior} holding the draws and \code{$sample} holding
+#' the chain diagnostics (split R-hat and effective sample size per
+#' parameter, divergences, tree depths, step sizes, E-BFMI, \code{converged}
+#' and \code{diagnosis}, and \code{target} naming which posterior was
+#' sampled), exactly as \code{ctFit(optimize = FALSE)} returns.
+#' @seealso \code{\link{ctFitAddSamples}} is the deprecated stan-only
+#' predecessor of \code{uncertainty='stored'}. \code{\link{ctFit}} for
+#' \code{optimize = FALSE}, which reaches \code{uncertainty = 'sample'}
+#' through the same pipeline that placed the fit being sampled.
 #' @export
-ctOptimUncertainty <- function(fit,
+ctFitUncertainty <- function(fit,
   uncertainty=c('hessian','surrogate','is','bootstrap','fullbootstrap',
-    'sandwich','opg','stored'),
+    'sandwich','opg','stored','sample'),
   draws=c('auto','normal','empirical','imis'), finishsamples=NULL,
   cores=NULL, control=list(), verbose=0, ...){
   
   uncertainty <- match.arg(uncertainty)
+
+  # `'sample'` is a different kind of thing from the other eight methods --
+  # genuine posterior draws by Hamiltonian Monte Carlo, through the runner
+  # `ctFit(backend = 'julia', optimize = FALSE)` uses to fit and sample
+  # together -- so it is dispatched here, before any of the curvature-based
+  # machinery below, rather than threaded through it. Julia-only, refused by
+  # name rather than left to fail inside `ctOptimComputeUncertainty()`, which
+  # has no julia branch at all.
+  if(identical(uncertainty, 'sample')) {
+    if(!inherits(fit, 'ctJuliaFit')) {
+      stop("uncertainty='sample' draws by Hamiltonian Monte Carlo through ",
+        "the julia sampler; it is not available for a ctStanFit. Refit with ",
+        "backend='julia', or sample a stan fit with ctFit(backend='stan', ",
+        "optimize=FALSE).", call.=FALSE)
+    }
+    if(is.null(cores)) cores <- 1L
+    cores <- max(1L, suppressWarnings(as.integer(cores[1])))
+    if(is.na(cores)) cores <- 1L
+    return(.ctBackendUncertaintySample(fit, control=control, cores=cores,
+      verbose=verbose))
+  }
+
   draws <- match.arg(draws)
   # backend='julia' fits reach the same ctOptimComputeUncertainty() below,
   # through a log-probability/gradient function built from their own engine;
@@ -2057,8 +2127,9 @@ ctOptimUncertainty <- function(fit,
   if(inherits(fit, 'ctJuliaFit')) {
     # `fit$sample` (class "ctSampleDiagnostics") is set only by
     # `.ctBackendSampleAssemble()`, the routine shared by `ctFit(optimize =
-    # FALSE)` and `ctSample()` -- so it marks a julia fit built from real
-    # draws either way. Nothing below knows that: `.ctBackendUncertainty()`
+    # FALSE)` and `uncertainty = 'sample'` above -- so it marks a julia fit
+    # built from real draws either way. Nothing below knows that:
+    # `.ctBackendUncertainty()`
     # treats `fit$estimate$raw` as a point estimate, builds a Hessian or score
     # matrix around it, and overwrites `fit$estimate$rawposterior` with fresh
     # curvature-based draws. Run on a sampled fit that would silently discard
@@ -2068,11 +2139,12 @@ ctOptimUncertainty <- function(fit,
     # below already refuses the equivalent case (`fit$stanfit$stanfit@sim`
     # populated); this mirrors it for julia.
     if(!is.null(fit$sample)) {
-      stop("ctOptimUncertainty() applies to an optimized ctJuliaFit; this fit ",
-        "was sampled (ctFit(optimize = FALSE) or ctSample()) and already ",
-        "carries its posterior in fit$estimate$rawposterior. Read that ",
-        "directly, or refit with optimize = TRUE if a curvature-based ",
-        "approximation is what you want.", call.=FALSE)
+      stop("ctFitUncertainty() applies to an optimized ctJuliaFit; this fit ",
+        "was sampled (ctFit(optimize = FALSE) or uncertainty = 'sample') and ",
+        "already carries its posterior in fit$estimate$rawposterior. Read ",
+        "that directly, resample it with uncertainty = 'sample', or refit ",
+        "with optimize = TRUE if a curvature-based approximation is what you ",
+        "want.", call.=FALSE)
     }
     # `control$parsteps` is a `stanoptimis()` concept and nothing else: the
     # stan optimiser can hold a block of raw parameters at zero for an early
@@ -2111,7 +2183,7 @@ ctOptimUncertainty <- function(fit,
   # holding some other object about a class; what it needs to say is which
   # objects this does work on, since it works on both backends' fits.
   if(!'ctStanFit' %in% class(fit)) stop(
-    'ctOptimUncertainty() takes an optimized ctsem fit: a ctStanFit from ',
+    'ctFitUncertainty() takes an optimized ctsem fit: a ctStanFit from ',
     "ctFit(..., backend='stan') or a ctJuliaFit from ctFit(..., ",
     "backend='julia'). This object is neither.", call.=FALSE)
   if(length(fit$stanfit$stanfit@sim) > 0) {
@@ -2246,4 +2318,21 @@ ctOptimUncertainty <- function(fit,
   message('Computing posterior approximation with ', nrow(samples), ' samples')
   fit <- ctOptimUpdateTransformed(fit, samples=samples, cores=cores)
   fit
+}
+
+#' @describeIn ctFitUncertainty The name this function shipped under in ctsem
+#' 3.11.1, kept so that a call written against that release keeps meaning
+#' exactly what it did. Identical to \code{ctFitUncertainty} in every other
+#' respect; new code should prefer \code{ctFitUncertainty}, which is also
+#' where \code{uncertainty = 'sample'} is documented.
+#' @export
+ctOptimUncertainty <- function(fit,
+  uncertainty=c('hessian','surrogate','is','bootstrap','fullbootstrap',
+    'sandwich','opg','stored'),
+  draws=c('auto','normal','empirical','imis'), finishsamples=NULL,
+  cores=NULL, control=list(), verbose=0, ...){
+  uncertainty <- match.arg(uncertainty)
+  ctFitUncertainty(fit, uncertainty=uncertainty, draws=draws,
+    finishsamples=finishsamples, cores=cores, control=control,
+    verbose=verbose, ...)
 }

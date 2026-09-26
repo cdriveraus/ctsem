@@ -24,9 +24,10 @@ raw posterior. Deprecated in favour of \code{\link{ctOptimUncertainty}} with
 }
 \details{
 These are pseudo-posterior draws from the fitted covariance, not
-  posterior draws from a sampler. \code{\link{ctSample}} is the latter --
-  Hamiltonian Monte Carlo from an optimized \code{ctJuliaFit} -- and is a
-  different object, not another route to this one.
+  posterior draws from a sampler. \code{\link{ctFitUncertainty}} with
+  \code{uncertainty = 'sample'} is the latter -- Hamiltonian Monte Carlo
+  from an optimized \code{ctJuliaFit} -- and is a different object, not
+  another route to this one.
 
   Deprecated in favour of \code{ctOptimUncertainty(fit, uncertainty =
   'stored', finishsamples = n)}, which draws from the same covariance for
@@ -48,5 +49,5 @@ newfit <- ctOptimUncertainty(ctstantestfit, uncertainty = 'stored',
 }
 }
 \seealso{
-\code{\link{ctOptimUncertainty}}, \code{\link{ctSample}}
+\code{\link{ctOptimUncertainty}}, \code{\link{ctFitUncertainty}}
 }
