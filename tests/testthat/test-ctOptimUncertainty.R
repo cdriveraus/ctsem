@@ -715,3 +715,128 @@ test_that("imisScaleInit scales the whole proposal covariance, not its diagonal"
   unscaled <- run(Sigma, 1)
   expect_equal(unscaled$covariance, Sigma, tolerance = 0.1)
 })
+
+# IS-importance-sampling-2026-09-06.md: an importance sampler asked to sample a
+# raw direction with no curvature at all is asking it to sample a density that
+# is not one -- the weights have infinite variance and the effective sample
+# size never converges (measured there: 51,000 evaluations, ESS oscillating
+# between 1.1 and 64.8 against a target of 100, and standard errors of 873 and
+# 1214 on parameters the Hessian puts at 1.5 and 0.8). `.ctImisSubspace()` and
+# `.ctImisRun()` are the repair: run IMIS in the whitened eigen-coordinates of
+# the directions a covariance actually has curvature in, and hold the rest at
+# the estimate rather than sampling them at all.
+#
+# These tests are deterministic and need no fit: the target below is exactly
+# Gaussian in three dimensions and exactly flat in a fourth, which is what a
+# raw correlation with no identified individual differences behind it looks
+# like, and the closed form is the reference rather than a stored number.
+.imis_subspace_fixture <- function() {
+  Q <- qr.Q(qr(matrix(c(
+    0.5, -0.3, 0.7, 0.2, 0.6, 0.5, -0.2, -0.4,
+    -0.3, 0.7, 0.1, 0.6, 0.4, -0.4, 0.8, 0.1), 4, 4)))
+  eigvals <- c(4, 1.5, 0.6, 0) # the fourth direction: no curvature at all
+  info <- Q %*% diag(1 / ifelse(eigvals == 0, Inf, eigvals)) %*% t(Q)
+  info[!is.finite(info)] <- 0
+  # The covariance `.ctOptimIdentifiedInverse()` would hand back for this
+  # information matrix: zero variance along the null direction, the true
+  # covariance along the other three -- not a ridge-floored stand-in.
+  cov <- Q %*% diag(eigvals) %*% t(Q)
+  centre <- c(1.2, -0.5, 0.3, 2.0)
+  target <- function(x) -0.5 * as.numeric(t(x - centre) %*% info %*% (x - centre))
+  list(Q = Q, cov = cov, centre = centre, target = target)
+}
+
+test_that("a covariance with no flat direction is passed to imis_is unchanged", {
+  skip_if_not_installed('mvtnorm'); skip_if_not_installed('diagis')
+  skip_if_not_installed('gridExtra'); skip_if_not_installed('ggplot2')
+
+  fullrank <- diag(c(1, 2, 3, 4))
+  expect_null(ctsem:::.ctImisSubspace(fullrank))
+
+  target <- function(x) -0.5 * sum(x^2 / c(1, 2, 3, 4))
+  direct <- withr::with_seed(5, ctsem:::imis_is(target, mu_hat = rep(0, 4),
+    Sigma_hat = fullrank, max_iter = 2, scale_init = 1.5, tail_scale = 1.2,
+    df = Inf, target_ess = 1e9, n_batch = 200, cl = NA, finishsamples = 30,
+    verbose = FALSE, diag_plots = FALSE))
+  viarun <- withr::with_seed(5, ctsem:::.ctImisRun(target, centre = rep(0, 4),
+    cov = fullrank, max_iter = 2, scale_init = 1.5, tail_scale = 1.2,
+    df = Inf, target_ess = 1e9, n_batch = 200, cl = NA, finishsamples = 30,
+    verbose = FALSE, diag_plots = FALSE))
+  expect_identical(direct$full_theta, viarun$full_theta)
+  expect_null(attr(viarun, 'subspace'))
+})
+
+test_that("IMIS in the identified subspace holds the null direction at the estimate", {
+  skip_if_not_installed('mvtnorm'); skip_if_not_installed('diagis')
+  skip_if_not_installed('gridExtra'); skip_if_not_installed('ggplot2')
+
+  fx <- .imis_subspace_fixture()
+  subspace <- ctsem:::.ctImisSubspace(fx$cov)
+  expect_equal(subspace$k, 3L)
+  expect_equal(subspace$nnull, 1L)
+
+  result <- withr::with_seed(11, ctsem:::.ctImisRun(fx$target, centre = fx$centre,
+    cov = fx$cov, max_iter = 50, scale_init = 1.5, tail_scale = 1.2, df = Inf,
+    target_ess = 100, n_batch = 1000, cl = NA, finishsamples = 300,
+    verbose = FALSE, diag_plots = FALSE))
+  expect_equal(attr(result, 'subspace')$nnull, 1L)
+  expect_true(result$ess >= 100)
+  # Reached the target from far fewer evaluations than the unwhitened run
+  # needs on a genuinely flat direction (13x to 26x fewer, measured in the IS
+  # note); one iteration's worth (1000) here is generous rather than a tight
+  # bound, since the point is convergence, not the exact count.
+  expect_lte(nrow(result$full_theta), 2000L)
+
+  nulldir <- fx$Q[, 4]
+  # No draw ever moves off the affine subspace through `centre` that the three
+  # kept eigenvectors span -- not "small", exactly zero up to the eigenbasis's
+  # own floating-point orthogonality (~1e-15 at this scale).
+  offset <- sweep(result$full_theta, 2, fx$centre, '-')
+  expect_lt(max(abs(offset %*% nulldir)), 1e-8)
+  expect_lt(abs(as.numeric(t(nulldir) %*% result$covariance %*% nulldir)), 1e-8)
+  expect_equal(as.numeric(t(result$mean) %*% nulldir),
+    as.numeric(t(fx$centre) %*% nulldir), tolerance = 1e-8)
+
+  # And the three identified directions recover the true covariance -- the
+  # closed-form reference, not a second sampler's opinion of it.
+  Vid <- fx$Q[, 1:3]
+  expect_equal(t(Vid) %*% result$covariance %*% Vid, t(Vid) %*% fx$cov %*% Vid,
+    tolerance = 0.2)
+})
+
+test_that("whitening carries a density's 'batch' attribute through the map", {
+  skip_if_not_installed('mvtnorm'); skip_if_not_installed('diagis')
+  skip_if_not_installed('gridExtra'); skip_if_not_installed('ggplot2')
+
+  fx <- .imis_subspace_fixture()
+  calls_scalar <- 0L
+  calls_batch <- 0L
+  target <- function(x) { calls_scalar <<- calls_scalar + 1L; fx$target(x) }
+  attr(target, 'batch') <- function(X) {
+    calls_batch <<- calls_batch + 1L
+    apply(X, 1, fx$target)
+  }
+  result <- withr::with_seed(11, ctsem:::.ctImisRun(target, centre = fx$centre,
+    cov = fx$cov, max_iter = 5, scale_init = 1.5, tail_scale = 1.2, df = Inf,
+    # Unreachable, so every one of the six iterations (0:5) runs and the count
+    # is exact rather than "at least one".
+    target_ess = 1e9, n_batch = 50, cl = NA, finishsamples = 20,
+    verbose = FALSE, diag_plots = FALSE))
+  expect_identical(calls_scalar, 0L)
+  expect_identical(calls_batch, 6L)
+  expect_true(is.finite(result$ess))
+})
+
+test_that(".ctOptimImisDraws() reports which directions the subspace held", {
+  skip_if_not_installed('mvtnorm'); skip_if_not_installed('diagis')
+  skip_if_not_installed('gridExtra'); skip_if_not_installed('ggplot2')
+
+  fx <- .imis_subspace_fixture()
+  drawn <- withr::with_seed(11, ctsem:::.ctOptimImisDraws(fx$target,
+    centre = fx$centre, cov = fx$cov, finishsamples = 100,
+    remedy = "test remedy", nbatch = 1000, target_ess = 100, maxiter = 50,
+    scaleInit = 1.5, tailScale = 1.2, diagPlots = FALSE))
+  expect_equal(drawn$subspace$nnull, 1L)
+  expect_true(drawn$ess >= 100)
+  expect_equal(ncol(drawn$samples), 4L)
+})
