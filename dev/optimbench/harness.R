@@ -327,11 +327,21 @@ rec$instrumented <- c(
     REC$post$laplace_correct <- (REC$post$laplace_correct %||% 0) + .now() - t0
     r
   }),
-  ctOptimUncertainty = wrap("ctOptimUncertainty", function(orig) function(...) {
+  # The fit calls ctFitUncertainty since juliaFit 908b068d, and
+  # ctOptimUncertainty is then an alias that calls it, so the old name is
+  # wrapped only on a build without the new one (else its time counts twice).
+  # NA in `instrumented` is "deliberately not wrapped".
+  ctFitUncertainty = wrap("ctFitUncertainty", function(orig) function(...) {
     t0 <- .now(); r <- orig(...)
     REC$post$uncertainty <- (REC$post$uncertainty %||% 0) + .now() - t0
     r
   }),
+  ctOptimUncertainty = if (exists("ctFitUncertainty", envir = ns, inherits = FALSE)) NA else
+    wrap("ctOptimUncertainty", function(orig) function(...) {
+      t0 <- .now(); r <- orig(...)
+      REC$post$uncertainty <- (REC$post$uncertainty %||% 0) + .now() - t0
+      r
+    }),
   .ctBackendCorrectResult = wrap(".ctBackendCorrectResult", function(orig) function(...) {
     t0 <- .now(); r <- orig(...)
     REC$post$certification <- (REC$post$certification %||% 0) + .now() - t0
@@ -341,11 +351,15 @@ rec$instrumented <- c(
   # of its own objective. What it replaced is kept here -- the Laplace Hessian
   # at the Laplace optimum and the standard errors from it -- so section 5b can
   # say whether the replacement changed the standard errors.
+  # Timed too: it is the default correction since juliaFit 55caeeb7, and the
+  # fit calls it directly rather than through .ctLaplaceAutoCorrect.
   .ctLaplaceContinue = wrap(".ctLaplaceContinue", function(orig) function(fit, ...) {
     REC$continue <- list(hessian = fit$uncertainty$hessian,
       evaluated_at = as.numeric(fit$uncertainty$evaluated_at %||% NA_real_),
       raw = as.numeric(fit$estimate$raw), se = as.numeric(fit$estimate$se %||% NA_real_))
-    orig(fit, ...)
+    t0 <- .now(); r <- orig(fit, ...)
+    REC$post$laplace_correct <- (REC$post$laplace_correct %||% 0) + .now() - t0
+    r
   }),
   # Called only when the continuation's own Hessian becomes the fit's; its
   # `cont` is the continuation, placed at the final estimate, which 5b uses to
@@ -739,7 +753,7 @@ rec$row <- data.frame(
   nweak = .int1(rec$identifiability$nweak),
   warnings = length(warns), first_warning = if (length(warns)) substr(warns[1], 1, 200) else NA_character_,
   opcount_exp = .num1(rec$opcounts[["exp"]] %||% NA), opcount_frechet = .num1(rec$opcounts[["frechet"]] %||% NA),
-  instrumented = all(rec$instrumented),
+  instrumented = all(rec$instrumented, na.rm = TRUE),
   warm_dx = if (length(rec$warm$raw) && length(rec$warm$raw) == length(est)) .fin(max(abs(rec$warm$raw - est))) else NA_real_,
   warm_dll = .num1(rec$estimate$logposterior) - .num1(rec$warm$logposterior %||% NA),
   runs_overshot = sum(vapply(runs, function(r) isTRUE(r$overshot), logical(1))),
