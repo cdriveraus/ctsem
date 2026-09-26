@@ -282,6 +282,27 @@ test_that("subject matrices match Stan's, and only the varying ones vary", {
   expect_true(stats::sd(extracted$subj_DRIFT[1, , 1, 1]) < 1e-12)
 })
 
+test_that("on the default route only the varying subject matrices vary", {
+  skip_without_julia()
+  model <- .kalman_indvar_model()
+  data <- .kalman_indvar_data()
+  # The default route for this model's random DRIFT is laplace, which has no
+  # carrier states and no stan counterpart, so what carries over from the test
+  # above is its last claim: a cell with a random effect differs between
+  # subjects, and a fixed one does not.
+  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
+  expect_false(is.null(spec$laplace))
+  set.seed(8)
+  raw <- stats::rnorm(ctsem:::.ctBackendNpar(spec), 0, .3)
+  fit <- .kalman_pointfit(spec, spec$model, raw)
+  extracted <- ctExtract(fit, subjectMatrices = TRUE)
+  for (i in seq_len(2)) for (j in seq_len(2)) {
+    expect_equal(stats::sd(extracted$subj_LAMBDA[1, , i, j]), 0, tolerance = 1e-12)
+  }
+  expect_true(stats::sd(extracted$subj_DRIFT[1, , 2, 1]) > 1e-6)
+  expect_true(stats::sd(extracted$subj_DRIFT[1, , 1, 1]) < 1e-12)
+})
+
 test_that("removeObs withholds observations without withholding covariates", {
   skip_without_julia()
   model <- .kalman_linear_model()

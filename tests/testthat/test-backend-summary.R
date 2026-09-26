@@ -355,6 +355,30 @@ test_that("state-dependent cells are named and follow the state they are given",
   expect_equal(at_default$LAMBDA, moved$LAMBDA)
 })
 
+test_that("on the default route a random DRIFT effect is not reported as state dependence", {
+  skip_without_julia()
+  model <- .summary_model()
+  data <- .summary_data()
+  # The same model on its default route, laplace: the random effects are
+  # coordinates of the parameter vector rather than carrier states, so no cell
+  # depends on where the processes are and the reported DRIFT is the
+  # population one, with its varying cross effect at the population mean.
+  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
+  expect_false(is.null(spec$laplace))
+  set.seed(8)
+  raw <- stats::rnorm(ctsem:::.ctBackendNpar(spec), 0, .3)
+  fit <- .summary_pointfit(spec, model, raw, "julia")
+  at_default <- ctBackendParMatrices(fit)
+  statedep <- attr(at_default, "stateDependent")
+  expect_true(is.null(statedep) || nrow(statedep) == 0L)
+  expect_equal(nrow(at_default$DRIFT), 2L)
+  tab <- spec$parameter_table
+  cross <- tab$parnumber[tab$matrix == "DRIFT" & tab$row == 2 & tab$col == 1]
+  expect_equal(unname(at_default$DRIFT[2, 1]), raw[cross])
+  moved <- ctBackendParMatrices(fit, filterstate = c(1, 1))
+  expect_equal(at_default$DRIFT, moved$DRIFT)
+})
+
 # J9/F1: `ctsem_parameter_matrices` (summary_matrices.jl) is an independent,
 # hand-written copy of "apply predict, then td, then update, in that order"
 # -- the same block that drifted from the filter's own row 1 three times
@@ -410,6 +434,31 @@ test_that("ctBackendParMatrices runs predict before update, so an update-group c
   other <- ctBackendParMatrices(fit, filterstate = c(t0, pars_val * 3))
   expect_false(isTRUE(all.equal(unname(matrices$MANIFESTVAR[1, 1]),
     unname(other$MANIFESTVAR[1, 1]))))
+})
+
+test_that("on the default route a varying PARS read by MANIFESTVAR reports its value", {
+  skip_without_julia()
+  .m <- function(manifestvar) suppressWarnings(ctModel(
+    type = "ct", LAMBDA = diag(1), PARS = matrix("mvp||TRUE", 1, 1),
+    DRIFT = matrix("drift", 1, 1), DIFFUSION = matrix("diffusion", 1, 1),
+    MANIFESTVAR = matrix(manifestvar, 1, 1), MANIFESTMEANS = matrix(0, 1, 1),
+    T0VAR = matrix(1, 1, 1), T0MEANS = matrix(1.5, 1, 1)))
+  model <- .m("PARS[1,1]")
+  set.seed(11)
+  dat <- data.frame(id = 1:8, time = 0, Y1 = stats::rnorm(8, 1.5, 1))
+  # Laplace, where the varying PARS is an ordinary coordinate rather than a
+  # carrier state: MANIFESTVAR has to report the value that coordinate holds.
+  spec <- suppressMessages(ctFit(dat, model, backend = "julia", fit = FALSE))
+  expect_false(is.null(spec$laplace))
+  tab <- spec$parameter_table
+  mvp <- tab$parnumber[tab$matrix == "PARS"][1]
+  raw <- rep(-0.5, ctsem:::.ctBackendNpar(spec))
+  raw[mvp] <- 0.4
+  matrices <- ctBackendParMatrices(.summary_pointfit(spec, model, raw, "julia"))
+  expect_equal(unname(matrices$MANIFESTVAR[1, 1]), 0.4, tolerance = 1e-10)
+  raw[mvp] <- 1.2
+  other <- ctBackendParMatrices(.summary_pointfit(spec, model, raw, "julia"))
+  expect_equal(unname(other$MANIFESTVAR[1, 1]), 1.2, tolerance = 1e-10)
 })
 
 test_that("summary reports fixed effects and system matrices, with intervals only when earned", {

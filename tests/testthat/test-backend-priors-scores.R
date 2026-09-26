@@ -250,6 +250,29 @@ test_that("per-subject scores sum to the gradient, with and without priors", {
   }
 })
 
+test_that("per-subject scores sum to the gradient on the default route too", {
+  skip_without_julia()
+  model <- .prior_full_model()
+  data <- .prior_full_data()
+  # The default route for this model's random DRIFT is laplace, whose score
+  # rows are per unit and whose prior is separated out the same way.
+  for (priors in c(FALSE, TRUE)) {
+    spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
+      priors = priors))
+    expect_false(is.null(spec$laplace))
+    npar <- ctsem:::.ctBackendNpar(spec)
+    set.seed(8)
+    raw <- stats::rnorm(npar, 0, .3)
+    fit <- structure(list(model_spec = spec, backend = "julia"),
+      class = c("ctJuliaFit", "ctFit"))
+    scores <- ctsem:::.ctBackendScoreMatrix(fit, raw)
+    gradient <- ctJuliaEvaluate(spec, raw, gradient = TRUE)$gradient
+    expect_equal(dim(scores), c(length(spec$subject_starts), npar))
+    expect_equal(colSums(scores), gradient, tolerance = 1e-8)
+    expect_true(all(apply(scores, 1, function(row) any(row != 0))))
+  }
+})
+
 test_that("score-based uncertainty methods work for backend fits", {
   skip_without_julia()
   model <- .prior_full_model()

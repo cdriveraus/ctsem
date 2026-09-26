@@ -186,6 +186,31 @@ test_that("Julia reuses the canonical raw transform for shared parameters", {
     fixed = TRUE))
 })
 
+test_that("both drift diagonals keep their transform on the default route too", {
+  model <- suppressWarnings(ctModel(
+    type = "ct", n.latent = 2, LAMBDA = diag(2),
+    PARS = matrix("cross||TRUE", 1, 1),
+    DRIFT = matrix(c("d11", "PARS[1,1]", "d21", "d22"), 2, 2, byrow = TRUE),
+    DIFFUSION = diag(c(.2, .15)), MANIFESTVAR = diag(c(.1, .1)),
+    MANIFESTMEANS = matrix(0, 2, 1), T0VAR = diag(2), T0MEANS = matrix(0, 2, 1)
+  ))
+  data <- data.frame(id = rep(1:2, each = 2), time = rep(0:1, 2),
+    Y1 = 0, Y2 = 0)
+  # Laplace, where the varying PARS cell is a parameter rather than a carrier
+  # row, so it has a raw index of its own; the drift diagonals must still
+  # carry the drift transform, differing only in which raw parameter they read.
+  prepared <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
+  expect_false(is.null(prepared$laplace))
+  tab <- prepared$parameter_table
+  d11 <- subset(tab, matrix == "DRIFT" & row == 1L & col == 1L)
+  d22 <- subset(tab, matrix == "DRIFT" & row == 2L & col == 2L)
+  pars <- subset(tab, matrix == "PARS" & row == 1L & col == 1L)
+  expect_false(is.na(pars$parnumber))
+  expect_match(d22$transform, "log1p_exp", fixed = TRUE)
+  expect_equal(d22$transform, gsub(sprintf("param[%d]", d11$parnumber),
+    sprintf("param[%d]", d22$parnumber), d11$transform, fixed = TRUE))
+})
+
 test_that("Julia preparation retains missing manifest values", {
   model <- ctModel(type = "ct", LAMBDA = diag(1), DRIFT = matrix("drift", 1, 1),
     DIFFUSION = matrix("diffusion", 1, 1), MANIFESTVAR = matrix("residual", 1, 1),

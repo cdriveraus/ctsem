@@ -209,6 +209,48 @@ test_that('a carrier cell follows raw whether or not a state is supplied', {
   expect_error(drift(raw1, state = rep(0, 5)), 'must have 2 entries')
 })
 
+# The same model on its default route, laplace, where the random DRIFT effect
+# is a coordinate of the parameter vector rather than a carrier state.
+defaultDriftModel <- function() .ctTestFit('default-drift', function() {
+  skip_without_julia()
+  datalong <- .ctTestData(7, matrix(c(.5, 0, 0, .4), 2, 2), nsubjects = 10,
+    Tpoints = 6)
+  model <- suppressMessages(ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
+    manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
+    LAMBDA = diag(2), DRIFT = matrix(c('d11', 'd21', 0, 'd22'), 2, 2),
+    CINT = matrix(c('c1', 'c2'), 2, 1), MANIFESTMEANS = matrix(0, 2, 1),
+    MANIFESTVAR = diag(.2, 2), DIFFUSION = matrix(c('df1', 0, 0, 'df2'), 2, 2)))
+  model$pars$indvarying <- FALSE
+  model$pars$indvarying[model$pars$matrix == 'DRIFT' & model$pars$row == 2 &
+      model$pars$col == 2] <- TRUE
+  suppressMessages(ctFit(datalong, model, backend = 'julia', fit = FALSE,
+    cores = 1, verbose = 0))
+})
+
+test_that('on the default route a varying DRIFT cell follows raw, and no state moves it', {
+  fit <- defaultDriftModel()
+  expect_false(is.null(fit$laplace))
+  # Nothing here depends on where the processes are once the effect is not a
+  # state, so the model is linear.
+  expect_false(ctModelIsNonlinear(fit))
+
+  set.seed(4)
+  npar <- ctsem:::.ctBackendNpar(fit)
+  raw1 <- rnorm(npar, 0, .3)
+  raw2 <- rnorm(npar, 0, .3)
+  drift <- function(raw, ...) suppressMessages(
+    ctBackendParMatrices(fit, raw = raw, trim = FALSE, ...))$DRIFT
+  state <- c(.3, -.2)
+  expect_false(isTRUE(all.equal(drift(raw1, state = state)[2, 2],
+    drift(raw2, state = state)[2, 2])))
+  expect_false(isTRUE(all.equal(drift(raw1, state = state)[1, 1],
+    drift(raw2, state = state)[1, 1])))
+  expect_equal(drift(raw1, state = state), drift(raw1))
+  expect_equal(drift(raw2, state = state), drift(raw2))
+  # Two latent processes and nothing else: a state is two entries long.
+  expect_error(drift(raw1, state = rep(0, 3)), 'must have 2 entries')
+})
+
 test_that("method='simulate' reduces exactly to the linearised answer when linear", {
   linear <- linearFit()
   expect_false(ctModelIsNonlinear(linear))
