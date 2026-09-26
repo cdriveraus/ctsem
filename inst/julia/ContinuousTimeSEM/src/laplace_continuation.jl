@@ -1058,16 +1058,18 @@ unusable Hessian.
 
 `scheme = :forward` takes one gradient per column and one at `values`;
 `:central` two per column, as `ctsem_laplace_hessian` does. Forward by default
-because this Hessian is the correction's largest cost where units are wide --
-at five effects a unit, 502 of the 727 seconds a correction took beside a
-184-second fit (dev1, 8 threads, 150 subjects, dev/lapcontinue/highdim.R) --
+because this Hessian is the correction's largest cost where units are wide,
 and because the gradient is exact, so the only error forward differences add
-is the step's truncation. Measured against central differences on the
-optimiser bench's Laplace fits whose continuation reported this Hessian (32 fits
-of 9 models; review/bench/2026-09-26-baseline.md), the largest change in
-any standard error was 0.24%. The Laplace Hessian is no substitute: at the
-Laplace optimum or at the continuation's estimate it moved some standard error
-by more than 20% on three of the nine, by up to 69%.
+is the step's truncation. At five effects a unit (dev/lapcontinue/highdim.R,
+150 subjects, npar 27; dev1, 8 threads) the central Hessian took 243 s and the
+forward one 126 s, beside a 284-second correction and a 216-second fit, and
+no standard error moved by more than 0.1% (the lapcontinue job had measured
+502 s of a 727-second correction there, at an earlier build). On the optimiser
+bench's Laplace fits whose continuation reported this Hessian (32 fits of 9
+models; review/bench/2026-09-26-baseline.md) the largest change in any
+standard error was 0.24%. The Laplace Hessian is no substitute: at the Laplace
+optimum or at the continuation's estimate it moved some standard error by more
+than 20% on three of the nine, by up to 69%.
 """
 function ctsem_laplace_continuation_hessian(o::CTSEMLaplaceContinuation,
     values::AbstractVector; step::Real=1e-4, scheme=:forward)
