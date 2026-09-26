@@ -304,3 +304,54 @@ test_that("requests that cannot apply are refused by name", {
   expect_error(.ctFitCheckControls(list(laplace_correct = "continue"), "stan"),
     "laplace_correct")
 })
+
+# The gated-gaps A14 config (review/LAPLACE-gated-gaps-2026-09-24.md): 40
+# subjects of 6 waves, a random -log1p_exp DRIFT beside random T0MEANS and
+# CINT, so three effects per subject and the soft-direction rule. Its data
+# generator, copied from the gaps job's (dev/optimbench/cells.R, gg_genA).
+.lc_a14_data <- function(seed = 2L, nsub = 40L, ntimes = 6L, mu = 3, sdp = 2.5) {
+  set.seed(seed)
+  baseline <- stats::rnorm(nsub, 2, 2)
+  start <- stats::rnorm(nsub, baseline / 2, 1)
+  raw <- stats::rnorm(nsub, mu + (baseline - 2) / 2, sdp)
+  drift <- -log1p(exp(-raw))
+  do.call(rbind, lapply(seq_len(nsub), function(i) {
+    a <- drift[i]; decay <- exp(a)
+    intercept <- (baseline[i] / a) * (decay - 1)
+    innovation <- sqrt(0.25 * (exp(2 * a) - 1) / (2 * a))
+    latent <- numeric(ntimes); latent[1] <- start[i]
+    for (t in seq_len(ntimes - 1L)) latent[t + 1L] <- decay * latent[t] +
+      intercept + stats::rnorm(1, 0, innovation)
+    data.frame(id = i, time = seq_len(ntimes) - 1L,
+      Y1 = latent + stats::rnorm(ntimes, 0, 0.5))
+  }))
+}
+
+test_that("a continuation whose fixed-node model misleads it does not walk downhill", {
+  skip_without_julia()
+  # Slow because the failure needs the soft rule, so three effects a subject,
+  # and this is the data it was measured on. The fixture above has two effects,
+  # where the product rule applies, and passed under the old acceptance. A
+  # smaller version of this config was not tried.
+  skip_unless_slow("the A14 continuation (a 40-subject, three-effect Laplace fit)")
+  model <- suppressMessages(ctModel(silent = TRUE, type = "ct", CINT = "cint",
+    MANIFESTMEANS = 0, LAMBDA = matrix(1), DRIFT = "drift|-log1p_exp(-param)|TRUE"))
+  set.seed(1)
+  fit <- suppressWarnings(suppressMessages(ctFit(.lc_a14_data(), model,
+    backend = "julia", intoverpop = "laplace", cores = 1,
+    optimcontrol = list(finishsamples = 100, laplace_correct = "continue"))))
+  corr <- fit$laplace$correction
+  tol <- .ctLaplaceContinueDefaults$value_tol
+  expect_true(corr$status %in% c("continued", "no_gain"))
+  # Kept rounds used to be those that lowered the fixed-point residual alone:
+  # here it fell from 27.9 to 17.4 while the re-placed quadrature value fell by
+  # about 4.7 nats, and the estimate ended 4.9 exact nats below the Laplace
+  # optimum (exact -404.14 against -399.23). Now a kept round may not lower the
+  # value, and a run that ends lower than it began keeps the Laplace optimum.
+  expect_true(all(corr$trace$gain[corr$trace$kept] >= -tol))
+  if (identical(corr$status, "continued")) {
+    expect_gte(corr$guard$change, -tol)
+  } else {
+    expect_equal(fit$estimate$raw, corr$laplace_estimate)
+  }
+})
