@@ -663,9 +663,12 @@ print.ctLaplaceCorrection <- function(x, ...) {
 # fixture's residual fell by a factor of 0.3 to 0.7 a round, where the
 # one-level fixture's fell by 20 to 300). `attempts` (15) bounds the rounds a
 # trust region may reject. `radius` (1 se, doubling to at most `radius_max` =
-# 16 when a round ends on the boundary and the residual fell below a quarter
-# of its value, cut to a quarter of the step when a round is rejected) is the
-# textbook trust-region schedule, not a measured one. `maxiter`
+# 16 when a kept round ends on the boundary having gained at least three
+# quarters of what its model promised, cut to a quarter of the step when a
+# round is rejected) is the textbook trust-region schedule. Growing it on the
+# residual instead -- only when a round cut it to a quarter -- held gated-gaps
+# D3 at 0.25 se for six rounds whose gains matched their model's to 2%, and
+# the rounds ran out 0.7 exact nats short of the best-known point. `maxiter`
 # (100) caps one round; bigIRT's whole continuation took 30 to 60
 # evaluations. `guard` and `guard_per_subject` are bigIRT's max(50, N/2).
 # `value_tol` (1e-3 nats) is the step correction's `gain_tol`: a change in the
@@ -781,7 +784,10 @@ print.ctLaplaceCorrection <- function(x, ...) {
       kept <- kept + 1L
       x <- xn
       value <- as.numeric(placed$quadrature)
-      if (after < 0.25 * residual && isTRUE(round$boundary)) {
+      # Grown when the round ended on the boundary and the re-placed value
+      # rose by three quarters or more of what the fixed-node model promised:
+      # the model is right, and the region is what holds the rounds back.
+      if (isTRUE(round$boundary) && gain >= 0.75 * fixed) {
         radius <- min(2 * radius, as.numeric(control$radius_max))
       }
       residual <- after
