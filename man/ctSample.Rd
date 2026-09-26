@@ -15,11 +15,15 @@ ctSample(
   sampleControl = list(),
   verbose = FALSE,
   processes = TRUE,
-  control = list()
+  control = list(),
+  target = c("auto", "marginal", "joint")
 )
 }
 \arguments{
-\item{fit}{A \code{ctJuliaFit} made with \code{intoverpop='laplace'}.}
+\item{fit}{A \code{ctJuliaFit} made with \code{intoverpop='laplace'} or
+\code{'none'} -- a fit carrying the Laplace structure, whether or not it
+integrated the random effects with it. \code{intoverpop='augmented'} has
+no separate posterior over the effects to sample.}
 
 \item{chains}{Number of chains. Run concurrently when the Julia session has
 at least that many threads; see \code{\link{ctJuliaSetup}}.}
@@ -163,22 +167,35 @@ longer than many fits do.}
 
 \item{control}{\strong{Deprecated} -- use \code{sampleControl}. Still
 honoured, with a warning.}
+
+\item{target}{Which posterior to sample. \code{'auto'}, the default, is the
+fit's own route: the Laplace marginal over population parameters for
+\code{intoverpop='laplace'} (the same target \code{ctFit(optimize=FALSE)}
+samples for that route), and the joint posterior over parameters and
+effects for \code{intoverpop='none'}, which has no marginal to default to.
+\code{'marginal'} and \code{'joint'} ask for one explicitly regardless of
+the fit's route -- in particular, \code{target='joint'} on a Laplace
+\emph{maximum-likelihood} fit (\code{ctFit(optimize=TRUE,
+intoverpop='laplace')}) is what removes the Laplace approximation exactly,
+which used to be this function's only behaviour.}
 }
 \value{
 The fit, with \code{estimate$rawposterior} holding the draws and
   \code{$sample} holding the diagnostics: split R-hat and effective sample
   size per parameter, divergences, tree depths, step sizes and E-BFMI, plus
-  \code{converged} and \code{diagnosis} summarising them.
+  \code{converged} and \code{diagnosis} summarising them, and \code{target}
+  naming which posterior was sampled (\code{"marginal"} or \code{"joint"}).
   \code{estimate$raw} is set to the per-parameter posterior mean of the
   draws -- unlike \code{backend='stan'}'s sampled point estimate
   (\code{ctFit(..., optimize=FALSE)}'s \code{stanfit$rawest}), which is the
   per-parameter median.
 }
 \description{
-Draws from the joint posterior over population parameters and random effects
-by Hamiltonian Monte Carlo (the No-U-Turn sampler), starting from a fit made
-with \code{intoverpop='laplace'} and using that fit's curvature as the
-sampler's metric.
+Draws from the posterior of a julia backend fit by Hamiltonian Monte Carlo
+(the No-U-Turn sampler), starting from the fit and using its curvature as
+the sampler's metric. Which posterior is the fit's own target by default --
+see \code{target} -- and \code{ctFit(optimize=FALSE)} reaches the same
+targets by the same names, from the same starting pipeline.
 }
 \details{
 This is the exact counterpart of the Laplace approximation rather than a

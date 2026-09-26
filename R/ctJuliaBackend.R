@@ -4418,13 +4418,37 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # `.ctJuliaSampleFit`.
   if (!isTRUE(optimize)) {
     return(.ctJuliaSampleFit(model_spec, datalong = datalong, model = model,
-      inits = inits, cores = cores,
+      prepared_data = prepared_data, inits = inits, cores = cores,
       optimcontrol = optimcontrol, chains = chains, iter = iter,
-      control = control, priors = priors, intoverpop = intoverpop,
+      control = control, priors = priors, priorscope = priorscope,
+      intoverpop = intoverpop,
       gradient = gradient, verbose = verbose,
       intoverstates = intoverstates))
   }
+  return(.ctJuliaOptimiseFit(model_spec = model_spec, datalong = datalong,
+    model = model, prepared_data = prepared_data, inits = inits, cores = cores,
+    optimcontrol = optimcontrol, verbose = verbose, priors = priors,
+    priorscope = priorscope, intoverpop = intoverpop, intoverstates = intoverstates,
+    gradient = gradient, correctlaplace = correctlaplace))
+}
 
+# The optimising route's whole pipeline, from the starting values through the
+# certified estimate, its Hessian and the Laplace correction -- everything
+# `ctFit(backend = 'julia', optimize = TRUE)` does after `model_spec` is
+# prepared. Extracted so the sampler's placement (`.ctJuliaSampleFit()`,
+# R/ctBackendSample.R) can run the *same* pipeline rather than a bare
+# `.ctJuliaOptimise()` call: one fit constructor for both routes, per
+# review/OPTIM-consolidation-plan-2026-09-25.md P5. `intoverstates` here is
+# always TRUE for a placement call -- optimising the joint state density is
+# degenerate (state-explicit-generation.md) -- and `correctlaplace` is always
+# FALSE there, because the sampled target under `intoverpop = 'laplace'` is
+# the Laplace marginal itself, whose optimum is where to place the sampler,
+# not the quadrature-corrected point that answers a question the sampler is
+# not asking.
+#' @keywords internal
+.ctJuliaOptimiseFit <- function(model_spec, datalong, model, prepared_data,
+  inits, cores, optimcontrol, verbose, priors, priorscope, intoverpop,
+  intoverstates, gradient, correctlaplace) {
   npar <- .ctBackendNpar(model_spec)
   # A fully fixed model has nothing to maximise over. Without the zero above,
   # `max` warned and returned -Inf, and `rnorm(-Inf, ...)` then failed with
@@ -5175,7 +5199,9 @@ print.ctJuliaFit <- function(x, ...) {
   # to place the sampler and build its metric, so a fit whose chains never
   # agreed prints `converged: TRUE` on the line above and is still worthless.
   if (!is.null(x$sample)) {
-    cat("  sampled: ", x$sample$chains, " chains x ", x$sample$draws,
+    cat("  sampled: ", if (!is.null(x$sample$target))
+      paste0(x$sample$target, " posterior, ") else "",
+      x$sample$chains, " chains x ", x$sample$draws,
       " draws; chains converged: ",
       if (is.null(x$sample$converged) || is.na(x$sample$converged)) "unknown" else
         as.character(isTRUE(x$sample$converged)), "\n", sep = "")

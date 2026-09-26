@@ -551,7 +551,7 @@
 
   out <- .ctBackendSampleAssemble(fit, result, npar, keepeffects,
     as.integer(chains), warmup, ndraws, target$hessian,
-    target$estimate[seq_len(npar)])
+    target$estimate[seq_len(npar)], marginal = isTRUE(target$marginal))
   # Recorded after the fact because it changes nothing about the draws and
   # everything about how they were produced.
   out$uncertainty$settings$processes <- TRUE
