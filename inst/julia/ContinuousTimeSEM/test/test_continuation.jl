@@ -16,6 +16,11 @@ using ForwardDiff, LinearAlgebra
 #     rule is exact, as every rule of this family must be.
 #  4. Re-placing the nodes and putting them back restores the objective.
 #  5. A round never leaves its trust region.
+#  6. At its centre, on a Gaussian integrand, the soft rule's fixed-node
+#     gradient and Hessian are the marginal's -- which a stiff complement
+#     taken at one node gets wrong, although its value is exact.
+#  7. The stiff complement's rule has a standard normal's moments through
+#     degree four, cross moments included.
 
 isdefined(@__MODULE__, :_LAPLACE_LINEAR_OBJECTIVE) ||
     include(joinpath(@__DIR__, "laplace_fixtures.jl"))
@@ -181,4 +186,68 @@ end
     @test s.minimizer == est
     @test s.iterations == 0
     @test isfinite(s.start_gain)
+end
+
+@testset "at its centre the soft rule's gradient and curvature are the marginal's" begin
+    # With one soft direction, the two-effect subject blocks keep a stiff
+    # complement of one. Its value at the centre is exact on a Gaussian
+    # integrand whatever rule it gets; its derivatives are not. Held at a
+    # single node, the complement's log determinant drops out of the gradient
+    # and its covariance out of the curvature -- on the gated-gaps A14 config
+    # that gave the continuation standard errors 0.07 to 0.45 of Laplace's.
+    # Laplace is exact here, so its gradient and Hessian are the reference.
+    for (label, fresh) in (("one level", _fresh_linear),
+                           ("two levels", _fresh_twolevel))
+        laplace, values = fresh()
+        theta = collect(Float64, values)
+        o = ctsem_laplace_continuation(laplace, theta; tolerance=0.0,
+            product_maxdim=0, soft_maxdirs=1)
+        # A unit whose rule matches Laplace to the last bit has no gap and is
+        # not flagged; the rest carry the rule.
+        info = ctsem_laplace_continuation_info(o)
+        @test (label, info.nflagged > 0, info.soft_blocks > 0) == (label, true, true)
+        lap = ctsem_laplace_evaluate(laplace, theta; gradient=true)
+        hyb = ctsem_laplace_continuation_evaluate(o, theta; gradient=true)
+        @test (label, isapprox(hyb.value, lap.value; atol=1e-7)) == (label, true)
+        for j in eachindex(theta)
+            @test (label, j, isapprox(hyb.gradient[j], lap.gradient[j];
+                rtol=1e-6, atol=1e-8)) == (label, j, true)
+        end
+        H = ctsem_laplace_continuation_hessian(o, theta)
+        Hl = ctsem_laplace_hessian(laplace, theta)
+        for i in eachindex(theta), j in eachindex(theta)
+            @test (label, i, j, isapprox(H[i, j], Hl[i, j]; rtol=1e-4, atol=1e-6)) ==
+                (label, i, j, true)
+        end
+    end
+end
+
+@testset "the stiff complement's rule integrates the moments a derivative needs" begin
+    # The unscented transform's points are exact to degree three, which is
+    # every Gaussian integrand, but not for the cross moments of a
+    # two-dimensional complement; on the gated-gaps A14 config that left the
+    # fixed-node derivative 100 times the re-placed rule's. The product rule
+    # that replaced it: weights summing to one, and the moments through degree
+    # four of a standard normal, cross ones included.
+    rule = ContinuousTimeSEM._continuation_stiff_rule
+    @test rule(0, 5).logweights == [0.0]
+    for nh in (1, 2, 3)
+        r = rule(nh, 5)
+        w = exp.(r.logweights)
+        X = r.points
+        @test (nh, size(X)) == (nh, (nh, 5^nh))
+        @test (nh, isapprox(sum(w), 1.0; atol=1e-12)) == (nh, true)
+        moment(f) = sum(w[c] * f(X[:, c]) for c in eachindex(w))
+        for i in 1:nh
+            @test (nh, i, isapprox(moment(x -> x[i]), 0.0; atol=1e-12)) == (nh, i, true)
+            @test (nh, i, isapprox(moment(x -> x[i]^2), 1.0; atol=1e-12)) == (nh, i, true)
+            @test (nh, i, isapprox(moment(x -> x[i]^4), 3.0; atol=1e-10)) == (nh, i, true)
+            for j in (i + 1):nh
+                @test (nh, i, j, isapprox(moment(x -> x[i] * x[j]), 0.0; atol=1e-12)) ==
+                    (nh, i, j, true)
+                @test (nh, i, j, isapprox(moment(x -> x[i]^2 * x[j]^2), 1.0;
+                    atol=1e-10)) == (nh, i, j, true)
+            end
+        end
+    end
 end

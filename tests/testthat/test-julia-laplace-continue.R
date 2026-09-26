@@ -343,11 +343,13 @@ test_that("a continuation whose fixed-node model misleads it does not walk downh
   corr <- fit$laplace$correction
   tol <- .ctLaplaceContinueDefaults$value_tol
   expect_true(corr$status %in% c("continued", "no_gain"))
-  # Kept rounds used to be those that lowered the fixed-point residual alone:
-  # here it fell from 27.9 to 17.4 while the re-placed quadrature value fell by
-  # about 4.7 nats, and the estimate ended 4.9 exact nats below the Laplace
-  # optimum (exact -404.14 against -399.23). Now a kept round may not lower the
-  # value, and a run that ends lower than it began keeps the Laplace optimum.
+  # Kept rounds used to be those that lowered the fixed-point residual alone.
+  # Here that gave up 0.9 nats of re-placed value on the way to the fixed
+  # point, which is 0.84 exact nats below where the rounds now stop (-398.81
+  # against -397.97; Laplace -399.23); with the one-node stiff complement the
+  # soft rule had before, the estimate ended 4.9 exact nats below Laplace. Now
+  # a kept round may not lower the value, and a run that ends lower than it
+  # began keeps the Laplace optimum.
   expect_true(all(corr$trace$gain[corr$trace$kept] >= -tol))
   if (identical(corr$status, "continued")) {
     expect_gte(corr$guard$change, -tol)

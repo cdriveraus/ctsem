@@ -607,7 +607,11 @@ print.ctLaplaceCorrection <- function(x, ...) {
 #            is the nearer to the exact optimum: 0.07 of a standard error
 #            against 0.14 (the exact marginal by a dense grid; see
 #            test-julia-laplace-continue.R). bigIRT's refinement targets the
-#            same fixed point.
+#            same fixed point. It is not always the better point, which is
+#            why the rounds only approach it while the re-placed value holds
+#            (`accept`): where the two part, the estimate is the last point
+#            that did not lose value, status `stalled`, and the fit's
+#            certification says it is not stationary.
 #   accept   a round is kept when the fixed-point residual falls -- half the
 #            squared whitened gradient at the re-placed point, the Newton gain
 #            it predicts -- AND the quadrature value with the nodes re-placed
@@ -617,16 +621,17 @@ print.ctLaplaceCorrection <- function(x, ...) {
 #              - the value alone stalls short of the fixed point, because near
 #                it the re-placed value can fall along the score (by 2.6e-4
 #                against a promised +5e-5 on the 40-subject fixture);
-#              - the residual alone walks downhill. On the gated-gaps A14
-#                config (random drift, T0MEANS and CINT, so the soft rule) it
-#                fell from 27.9 to 17.4 over eight kept rounds while the
-#                re-placed value fell by about 4.7 nats, and the estimate ended
-#                4.9 exact nats below the Laplace optimum it started from. The
-#                soft rule was not wrong there -- re-placed at the end point it
-#                was within 0.14 nats of the exact reference summed over units,
-#                where Laplace was 4.0 off -- the fixed-node version of it was:
-#                the stiff complement's Gaussian is held at the curvature it
-#                was placed with, and away from the centre that over-credits.
+#              - the residual alone reaches a worse point. On the gated-gaps
+#                A14 config (random drift, T0MEANS and CINT: three effects a
+#                subject, so the soft rule) it took the residual from 1.3 to
+#                0.007 while the re-placed value fell by 0.9 nats, and ended
+#                at an exact log posterior of -398.81, where both conditions
+#                stop at -397.97 (Laplace -399.23, the step correction -400.60).
+#                Before `_continuation_stiff_rule` gave the soft rule's stiff
+#                complement a full product rule it was worse: the complement
+#                sat at one node, whose fixed-node gradient leaves out its log
+#                determinant, and the estimate ended 4.9 exact nats below the
+#                Laplace optimum.
 #   no worse the estimate is only reported if the re-placed value there is not
 #            below the value at the Laplace optimum by more than `value_tol`;
 #            otherwise the fit keeps the Laplace optimum (status `no_gain`),

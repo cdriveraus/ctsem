@@ -58,11 +58,13 @@ the product Gauss-Hermite rule, so at the centre the fixed rule and
 `ctsem_laplace_quadrature` agree to rounding. A wider one gets `nodes` points
 along each of its softest directions -- precision eigenvalues below `soft_tau`,
 at most `soft_maxdirs` of them and at least one -- at the prior-clipped scale,
-and one node in the stiff complement: at a leaf, the complement's conditional
-mode at that soft node, integrated by Laplace at its conditional precision; at
-an outer block, the joint mode, at the eliminated one. That is the gated floor's
-rule generalised past one direction; with every direction soft it is the
-product rule in the eigenbasis.
+and in the stiff complement the same product rule (`_continuation_stiff_rule`,
+which says why nothing cheaper will do), centred at a leaf on the complement's
+conditional mode at that soft node and scaled by its conditional precision
+there, at an outer block on the joint mode, scaled by the eliminated precision.
+So a soft rule costs `nodes^k` like a product rule; what it adds is the
+prior-clipped scale on its soft directions and a complement that follows its
+conditional mode along them.
 
 # Where the constants come from
 
@@ -73,7 +75,8 @@ a Laplace gradient is `k + 1` sweeps and a curvature. `soft_tau = 3.5` is the
 softcut the gated-gaps job's exact reference settled on
 (`CT-SEM/review/LAPLACE-gated-gaps-2026-09-24.md` 1d): a direction whose
 precision is below it can be non-Gaussian enough to matter. `soft_maxdirs = 2`
-bounds a soft rule at `nodes^2` nodes. None of these was tuned on a fit.
+bounds how many directions the complement's conditional mode is followed along.
+None of these was tuned on a fit.
 """
 
 using LinearAlgebra
@@ -214,9 +217,10 @@ end
 """
     _continuation_complement(fns, base, Vh, laplace)
 
-The stiff complement's conditional mode at one soft node, and the log
-determinant of its conditional precision there with the eigenvalues clipped at
-the prior's.
+The stiff complement's conditional mode at one soft node, and its conditional
+precision there with the eigenvalues clipped at the prior's: their log
+determinant, and the eigenvectors and clipped eigenvalues that scale the
+complement's nodes.
 
 Newton on `h` for `G(h) = g(base + Vh h)` from zero, with step halving and the
 precision's eigenvalues floored for the step, since the complement can go
@@ -228,11 +232,13 @@ made the gated-gaps job's first trapezoid rule chaotic in theta.
 function _continuation_complement(fns, base::Vector{Float64}, Vh::Matrix{Float64},
     laplace::CTSEMLaplaceObjective)
     nh = size(Vh, 2)
-    nh == 0 && return (h=Float64[], logdet=0.0)
+    nh == 0 && return (h=Float64[], logdet=0.0, vectors=zeros(0, 0),
+        values=Float64[])
     h = zeros(nh)
     z = copy(base)
     current = fns.value_gradient(z)
-    isfinite(current.value) || return (h=h, logdet=NaN)
+    isfinite(current.value) ||
+        return (h=h, logdet=NaN, vectors=zeros(nh, nh), values=fill(NaN, nh))
     for _ in 1:50
         gh = transpose(Vh) * current.gradient
         maximum(abs, gh) < _laplace_inner_tolerance(laplace, current.value) && break
@@ -253,8 +259,50 @@ function _continuation_complement(fns, base::Vector{Float64}, Vh::Matrix{Float64
         end
         accepted || break
     end
-    lam = max.(_ctsem_symeig(transpose(Vh) * fns.precision(z) * Vh).values, 1.0)
-    return (h=h, logdet=sum(log, lam; init=0.0))
+    E = _ctsem_symeig(transpose(Vh) * fns.precision(z) * Vh)
+    lam = max.(E.values, 1.0)
+    return (h=h, logdet=sum(log, lam; init=0.0), vectors=Matrix(E.vectors),
+        values=lam)
+end
+
+"""
+    _continuation_stiff_rule(nh, nodes)
+
+The rule a soft rule's stiff complement gets, in its whitened coordinates: the
+`nodes`-point Gauss-Hermite product in `nh` dimensions for the standard normal,
+as `(points, logweights)` with the weights summing to one. Built from
+`_gauss_hermite`, whose cache is locked, so a thread may call it.
+
+Why a full product rule. With the nodes held in the standardised effects, a
+stiff direction's derivative in `theta` is a weighted average of per-node
+scores that are large and cancel: the effect's posterior is narrow in `u`, so
+a population scale moves a node by many posterior widths. How well they cancel
+is how well the rule integrates, and two cheaper complements were measured on
+the gated-gaps A14 config (three effects a subject, one soft direction each):
+
+  - one node at the conditional mode. Its value is Laplace's, and right, but
+    held fixed it leaves the complement's log determinant out of the
+    derivative and its covariance out of the curvature: the continuation's
+    standard errors came out at 0.07 to 0.45 of Laplace's.
+  - the unscented transform's `2 nh + 1` points, exact to degree three and so
+    on any Gaussian integrand, but not for the cross moments of a
+    two-dimensional complement. At the Laplace optimum its derivative
+    disagreed with that of the rule re-placed at every point by up to 280
+    against 2.4, and the rounds stalled at once.
+"""
+function _continuation_stiff_rule(nh::Integer, nodes::Integer)
+    nh == 0 && return (points=zeros(0, 1), logweights=[0.0])
+    x, w = _gauss_hermite(nodes)
+    m = Int(nodes)^Int(nh)
+    points = Matrix{Float64}(undef, nh, m)
+    logweights = Vector{Float64}(undef, m)
+    for (col, index) in enumerate(Iterators.product(ntuple(_ -> 1:Int(nodes), Int(nh))...))
+        for (d, i) in enumerate(index)
+            points[d, col] = sqrt(2) * x[i]
+        end
+        logweights[col] = sum(log(w[i]) - log(pi) / 2 for i in index; init=0.0)
+    end
+    return (points=points, logweights=logweights)
 end
 
 """
@@ -317,26 +365,42 @@ function _continuation_block_rule(laplace::CTSEMLaplaceObjective, U::Integer,
         Vs = E.vectors[:, 1:nsoft]
         Vh = E.vectors[:, (nsoft + 1):k]
         lsoft = max.(lam[1:nsoft], 1.0)
-        stiff_logdet = sum(log, max.(lam[(nsoft + 1):k], 1.0); init=0.0)
+        lstiff = max.(lam[(nsoft + 1):k], 1.0)
         grid, lw = _gh_grid(nsoft, opts.nodes)
-        n = length(grid)
-        points = Matrix{Float64}(undef, k, n)
-        logweights = Vector{Float64}(undef, n)
-        for j in 1:n
+        stiff = _continuation_stiff_rule(k - nsoft, opts.nodes)
+        m = size(stiff.points, 2)
+        points = Matrix{Float64}(undef, k, length(grid) * m)
+        logweights = Vector{Float64}(undef, length(grid) * m)
+        col = 0
+        for j in eachindex(grid)
             base = centre .+ Vs * (sqrt(2) .* grid[j] ./ sqrt.(lsoft))
-            z, ld = if leaf
+            # Where the complement's nodes sit and the map from its whitened
+            # coordinates: at a leaf its conditional mode and precision at this
+            # soft node; at an outer block the joint mode and the eliminated
+            # precision, whose eigenvectors `Vh` already are.
+            mid, S, ld = if leaf
                 c = _continuation_complement(fns, base, Vh, laplace)
                 isfinite(c.logdet) || return nothing
-                (base .+ Vh * c.h, c.logdet)
+                (base .+ Vh * c.h, Vh * c.vectors * Diagonal(1 ./ sqrt.(c.values)),
+                 c.logdet)
             else
-                (base, stiff_logdet)
+                (base, Vh * Diagonal(1 ./ sqrt.(lstiff)), sum(log, lstiff; init=0.0))
             end
-            points[:, j] = z
-            logweights[j] = lw[j] - ld / 2 - dot(z, z) / 2
+            for i in 1:m
+                col += 1
+                xi = stiff.points[:, i]
+                z = mid .+ S * xi
+                points[:, col] = z
+                logweights[col] = lw[j] + stiff.logweights[i] - ld / 2 +
+                    dot(xi, xi) / 2 - dot(z, z) / 2
+            end
         end
         # Per soft direction `sqrt(2 / lambda~)` from the change of variable,
-        # and `(2 pi)^(-1/2)` from the prior's density; the complement's
-        # `(2 pi)^(nh/2)` from Laplace cancels the rest of that density.
+        # and `(2 pi)^(-1/2)` from the prior's density. A complement node is
+        # divided by the Gaussian it was placed by, `(2 pi)^(-nh/2) |P|^(1/2)
+        # exp(-xi'xi/2)`: the `|P|` and `xi'xi` sit in its log weight, and the
+        # `(2 pi)^(nh/2)` the division leaves cancels the rest of the prior's
+        # density.
         constant = nsoft * (log(2) - log(2 * pi)) / 2 - sum(log, lsoft; init=0.0) / 2
     end
     n = size(points, 2)
