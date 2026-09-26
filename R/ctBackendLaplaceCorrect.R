@@ -608,17 +608,30 @@ print.ctLaplaceCorrection <- function(x, ...) {
 #            against 0.14 (the exact marginal by a dense grid; see
 #            test-julia-laplace-continue.R). bigIRT's refinement targets the
 #            same fixed point.
-#   accept   a round is kept when the fixed-point residual falls: half the
-#            squared whitened gradient at the re-placed point, the Newton
-#            gain it predicts, below the value at the round's start. A round
-#            that raises it has taken the fixed-node model where it no longer
-#            describes the objective -- on the nested fixture the fixed-node
-#            value rose round after round while the re-placed one fell -- so
-#            its nodes go back and the radius shrinks to a quarter of the
-#            step. An acceptance on the re-placed VALUE was tried first and
-#            is wrong: near the fixed point that value can fall along the
-#            score (by 2.6e-4 against a promised +5e-5 on the fixture), and
-#            the rounds then stall short of the answer.
+#   accept   a round is kept when the fixed-point residual falls -- half the
+#            squared whitened gradient at the re-placed point, the Newton gain
+#            it predicts -- AND the quadrature value with the nodes re-placed
+#            there falls by no more than `value_tol`. Either failing, the
+#            round's nodes go back and the radius shrinks to a quarter of the
+#            step. Both conditions are measured, one at a time:
+#              - the value alone stalls short of the fixed point, because near
+#                it the re-placed value can fall along the score (by 2.6e-4
+#                against a promised +5e-5 on the 40-subject fixture);
+#              - the residual alone walks downhill. On the gated-gaps A14
+#                config (random drift, T0MEANS and CINT, so the soft rule) it
+#                fell from 27.9 to 17.4 over eight kept rounds while the
+#                re-placed value fell by about 4.7 nats, and the estimate ended
+#                4.9 exact nats below the Laplace optimum it started from. The
+#                soft rule was not wrong there -- re-placed at the end point it
+#                was within 0.14 nats of the exact reference summed over units,
+#                where Laplace was 4.0 off -- the fixed-node version of it was:
+#                the stiff complement's Gaussian is held at the curvature it
+#                was placed with, and away from the centre that over-credits.
+#   no worse the estimate is only reported if the re-placed value there is not
+#            below the value at the Laplace optimum by more than `value_tol`;
+#            otherwise the fit keeps the Laplace optimum (status `no_gain`),
+#            with the quadrature log likelihood there reported, as the step
+#            correction does when no step raises its objective.
 #   stop     when that residual is below the fit's certification tolerance,
 #            or after `rounds` kept rounds.
 #   guard    a continuation that moves the quadrature objective by more than
@@ -650,12 +663,15 @@ print.ctLaplaceCorrection <- function(x, ...) {
 # textbook trust-region schedule, not a measured one. `maxiter`
 # (100) caps one round; bigIRT's whole continuation took 30 to 60
 # evaluations. `guard` and `guard_per_subject` are bigIRT's max(50, N/2).
+# `value_tol` (1e-3 nats) is the step correction's `gain_tol`: a change in the
+# objective below it is not one to act on either way.
 # `rtol` (1e-8) is the identifiability report's: a direction the Laplace
 # curvature does not identify is held where the fit left it.
 .ctLaplaceContinueDefaults <- list(nodes = 5L, tolerance = 0.01,
   product_maxdim = 2L, soft_tau = 3.5, soft_maxdirs = 2L, rounds = 10L,
   attempts = 15L, radius = 1, radius_max = 16, maxiter = 100L,
-  material = 0.1, guard = 50, guard_per_subject = 0.5, rtol = 1e-8)
+  material = 0.1, guard = 50, guard_per_subject = 0.5, rtol = 1e-8,
+  value_tol = 1e-3)
 
 # The directions a round moves in: the Laplace curvature's identified ones,
 # each scaled to one of its standard errors, so the round's L-BFGS starts from
@@ -714,10 +730,11 @@ print.ctLaplaceCorrection <- function(x, ...) {
     module$ctsem_laplace_continuation_optimize(cont, .ctJuliaNumericVector(from),
       B, radius, maxiter = as.integer(control$maxiter), tol = as.numeric(tol),
       stationary_only = stationary))
-  row <- function(round, residual_after, keep, flagged) data.frame(
+  row <- function(round, residual_after, keep, flagged, gain = NA_real_) data.frame(
     round = attempts, radius = radius,
     residual = as.numeric(round$start_gain), residual_after = residual_after,
     fixed_gain = as.numeric(round$value) - as.numeric(round$start_value),
+    gain = gain,
     moved = as.numeric(round$moved), iterations = as.integer(round$iterations),
     f_calls = as.integer(round$f_calls), g_calls = as.integer(round$g_calls),
     kept = keep, flagged = as.integer(flagged))
@@ -746,13 +763,14 @@ print.ctLaplaceCorrection <- function(x, ...) {
     placed <- get(module[["ctsem_laplace_continuation_recentre!"]](cont,
       .ctJuliaNumericVector(xn)))
     after <- as.numeric(optimise(xn, stationary = TRUE)$start_gain)
-    keep <- is.finite(after) && is.finite(as.numeric(placed$quadrature)) &&
-      after < residual
-    rows[[length(rows) + 1L]] <- row(round, after, keep, placed$nflagged)
+    gain <- as.numeric(placed$quadrature) - value
+    keep <- is.finite(after) && is.finite(gain) && after < residual &&
+      gain >= -as.numeric(control$value_tol)
+    rows[[length(rows) + 1L]] <- row(round, after, keep, placed$nflagged, gain)
     if (verbose > 0L) {
       message(sprintf(paste0("Laplace continuation round %d: radius %.3g, ",
-        "residual %.3g -> %.3g, %s"), attempts, radius, residual, after,
-        if (keep) "kept" else "rejected"))
+        "residual %.3g -> %.3g, value %+.4g, %s"), attempts, radius, residual,
+        after, gain, if (keep) "kept" else "rejected"))
     }
     if (keep) {
       kept <- kept + 1L
@@ -903,10 +921,13 @@ print.ctLaplaceCorrection <- function(x, ...) {
   record$soft_blocks <- as.integer(info$soft_blocks)
   record$guard <- list(limit = limit, change = change,
     fired = !is.finite(change) || abs(change) > limit)
-  # The run moved nothing: no round was kept, or the guard reverts it. The
-  # quadrature log likelihood at the Laplace optimum is reported, as the step
-  # correction reports it when no step raised the objective.
-  moved <- run$rounds > 0L && any(run$x != est)
+  # The run moved nothing: no round was kept, the rounds ended lower on the
+  # objective than they began, or the guard reverts it. The quadrature log
+  # likelihood at the Laplace optimum is reported, as the step correction
+  # reports it when no step raised the objective.
+  worse <- is.finite(change) && change < -as.numeric(control$value_tol)
+  record$ended_lower <- worse
+  moved <- run$rounds > 0L && any(run$x != est) && !worse
   if (isTRUE(record$guard$fired) || !moved) {
     if (isTRUE(record$guard$fired)) {
       warning(sprintf(paste0("The Laplace continuation moved the quadrature ",

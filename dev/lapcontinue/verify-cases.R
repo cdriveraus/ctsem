@@ -21,7 +21,9 @@
 # ~/dev/ctsem-bench-data), so they are the rows the bench saw.
 #
 # Writes <outdir>/<case>.rds and appends one line per method to
-# <outdir>/summary.tsv. Correctness, not timing: seconds are recorded but are
+# <outdir>/summary.tsv. VERIFY_REUSE names an earlier run's <outdir>: a point
+# whose estimate is identical to one it scored reuses that reference, so a
+# rerun after a change to the continuation pays only for its new points. Correctness, not timing: seconds are recorded but are
 # only comparable within one run on one machine.
 args <- commandArgs(TRUE)
 TREE <- normalizePath(args[1], winslash = "/")
@@ -134,6 +136,20 @@ line_probe <- function(fit, x, direction, ts, floor = NULL) {
   }))
 }
 
+REUSE <- Sys.getenv("VERIFY_REUSE", "")
+reused_reference <- function(case, x) {
+  if (!nzchar(REUSE)) return(NULL)
+  f <- file.path(REUSE, paste0(case, ".rds"))
+  if (!file.exists(f)) return(NULL)
+  old <- readRDS(f)
+  for (nm in names(old$estimates)) {
+    y <- old$estimates[[nm]]
+    if (length(y) == length(x) && max(abs(y - x)) == 0 &&
+        !is.null(old$reference[[nm]])) return(old$reference[[nm]])
+  }
+  NULL
+}
+
 for (case in which) {
   cs <- CASES[[case]]
   if (is.null(cs)) { stamp("unknown case", case); next }
@@ -203,7 +219,9 @@ for (case in which) {
       x <- points[[nm]]
       same <- Filter(function(k) max(abs(points[[k]] - x)) == 0,
         names(rec$reference))
-      rec$reference[[nm]] <- if (length(same)) rec$reference[[same[1]]] else {
+      again <- reused_reference(case, x)
+      rec$reference[[nm]] <- if (length(same)) rec$reference[[same[1]]] else
+        if (!is.null(again)) again else {
         t0 <- now(); r <- reference(off, x); r$seconds <- now() - t0; r }
       r <- rec$reference[[nm]]
       line <- data.frame(case = case, method = nm,
