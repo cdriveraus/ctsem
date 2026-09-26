@@ -23,7 +23,13 @@
 # Writes <outdir>/<case>.rds and appends one line per method to
 # <outdir>/summary.tsv. VERIFY_REUSE names an earlier run's <outdir>: a point
 # whose estimate is identical to one it scored reuses that reference, so a
-# rerun after a change to the continuation pays only for its new points. Correctness, not timing: seconds are recorded but are
+# rerun after a change to the continuation pays only for its new points.
+# VERIFY_FITS names a directory of the uncorrected Laplace fits: a fit found
+# there is loaded rather than refitted, and one fitted is saved there. Neither
+# the fit nor the step correction runs any continuation code, so a run testing
+# a change to the continuation can reuse both. VERIFY_SKIP_CONTINUE=true leaves
+# the continuation out (a run that only makes the fits and their references),
+# VERIFY_SKIP_PROBE=true the gB8 line probe. Correctness, not timing: seconds are recorded but are
 # only comparable within one run on one machine.
 args <- commandArgs(TRUE)
 TREE <- normalizePath(args[1], winslash = "/")
@@ -137,6 +143,10 @@ line_probe <- function(fit, x, direction, ts, floor = NULL) {
 }
 
 REUSE <- Sys.getenv("VERIFY_REUSE", "")
+FITS <- Sys.getenv("VERIFY_FITS", "")
+if (nzchar(FITS)) dir.create(FITS, showWarnings = FALSE, recursive = TRUE)
+SKIP_CONTINUE <- identical(tolower(Sys.getenv("VERIFY_SKIP_CONTINUE", "")), "true")
+SKIP_PROBE <- identical(tolower(Sys.getenv("VERIFY_SKIP_PROBE", "")), "true")
 reused_reference <- function(case, x) {
   if (!nzchar(REUSE)) return(NULL)
   f <- file.path(REUSE, paste0(case, ".rds"))
@@ -179,12 +189,25 @@ for (case in which) {
       st <- bench_start(cs$start, npar, rawnames)
       inits <- st$inits; seed <- st$seed
     }
-    t0 <- now()
-    if (!is.null(seed)) set.seed(seed)
-    off <- suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
-      intoverpop = "laplace", cores = 1, inits = inits,
-      optimcontrol = list(laplace_correct = FALSE, finishsamples = 100))))
-    rec$fit_seconds <- now() - t0
+    saved <- if (nzchar(FITS)) file.path(FITS, paste0(case, "_fit.rds")) else ""
+    if (nzchar(saved) && file.exists(saved)) {
+      stored <- readRDS(saved)
+      off <- stored$fit
+      rec$fit_seconds <- stored$seconds
+      rec$fit_loaded <- saved
+      stamp("fit loaded from", saved)
+    } else {
+      t0 <- now()
+      if (!is.null(seed)) set.seed(seed)
+      off <- suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
+        intoverpop = "laplace", cores = 1, inits = inits,
+        optimcontrol = list(laplace_correct = FALSE, finishsamples = 100))))
+      rec$fit_seconds <- now() - t0
+      if (nzchar(saved)) {
+        saveRDS(list(fit = off, seconds = rec$fit_seconds), paste0(saved, ".tmp"))
+        file.rename(paste0(saved, ".tmp"), saved)
+      }
+    }
     rec$optim <- off$optim[intersect(names(off$optim), c("converged", "iterations",
       "f_calls", "g_calls", "stop_reason", "corrections", "hessian_evaluations",
       "stage_iterations", "saturated", "overshot"))]
@@ -196,23 +219,39 @@ for (case in which) {
     t0 <- now()
     step <- suppressWarnings(.ctLaplaceAutoCorrect(off))
     rec$step_seconds <- now() - t0
-    t0 <- now()
-    cont <- suppressWarnings(.ctLaplaceContinue(off, verbose = 1L))
-    rec$continue_seconds <- now() - t0
+    cont <- NULL
+    if (!SKIP_CONTINUE) {
+      t0 <- now()
+      cont <- suppressWarnings(.ctLaplaceContinue(off, verbose = 1L))
+      rec$continue_seconds <- now() - t0
+      rec$continue_record <- cont$laplace$correction
+    }
     rec$step_record <- step$laplace$correction
-    rec$continue_record <- cont$laplace$correction
-    stamp(sprintf("step %.0fs (%s), continue %.0fs (%s, %s, %d rounds)",
-      rec$step_seconds, step$laplace$correction$status, rec$continue_seconds,
-      cont$laplace$correction$status, cont$laplace$correction$continuation %||% "",
-      as.integer(cont$laplace$correction$rounds %||% 0L)))
+    stamp(sprintf("step %.0fs (%s)%s", rec$step_seconds,
+      step$laplace$correction$status, if (is.null(cont)) "" else
+        sprintf(", continue %.0fs (%s, %s, %d rounds)", rec$continue_seconds,
+          cont$laplace$correction$status,
+          cont$laplace$correction$continuation %||% "",
+          as.integer(cont$laplace$correction$rounds %||% 0L))))
     se <- as.numeric(off$estimate$se)
     best <- if (!is.null(cs$best)) bench_start(paste0("stored:", cs$best),
       length(off$estimate$raw), NULL)$inits else NULL
     points <- list(laplace = as.numeric(off$estimate$raw),
-      step = as.numeric(step$estimate$raw), continue = as.numeric(cont$estimate$raw))
-    fits <- list(laplace = off, step = step, continue = cont)
+      step = as.numeric(step$estimate$raw))
+    fits <- list(laplace = off, step = step)
+    if (!is.null(cont)) {
+      points$continue <- as.numeric(cont$estimate$raw)
+      fits$continue <- cont
+    }
     rec$estimates <- points
-    rec$se <- list(laplace = se, continue = as.numeric(cont$estimate$se))
+    rec$se <- list(laplace = se,
+      continue = if (!is.null(cont)) as.numeric(cont$estimate$se))
+    # Distances in the Laplace fit's standard errors, over the coordinates that
+    # have one: a saturated parameter reports an se near zero (5e-8 on gA14),
+    # and a distance divided by it measures nothing.
+    usable <- is.finite(se) & se > 1e-6
+    dist_se <- function(a, b) if (any(usable) && length(a) == length(b))
+      max(abs((a - b)[usable] / se[usable])) else NA_real_
     rec$best <- best
     rec$reference <- list()
     for (nm in names(points)) {
@@ -229,8 +268,8 @@ for (case in which) {
         logposterior = as.numeric(fits[[nm]]$estimate$logposterior),
         laplace = r$laplace, quad5 = r$quad5, exact = r$exact, kind = r$kind,
         best_known = if (!is.null(cs$best)) known$value[known$model == cs$model] else NA_real_,
-        dist_best_se = if (!is.null(best)) max(abs((x - best) / se)) else NA_real_,
-        dist_laplace_se = max(abs((x - points$laplace) / se)),
+        dist_best_se = if (!is.null(best)) dist_se(x, best) else NA_real_,
+        dist_laplace_se = dist_se(x, points$laplace),
         below_one = r$below_one, stringsAsFactors = FALSE)
       utils::write.table(line, file.path(OUT, "summary.tsv"), sep = "\t",
         append = file.exists(file.path(OUT, "summary.tsv")),
@@ -241,7 +280,8 @@ for (case in which) {
     }
     # gB8: why a resume stops. Along the Newton step the certification
     # predicts, the gated objective and the total-floor one side by side.
-    if (grepl("^gB8", case) && !is.null(off$uncertainty$certification$step)) {
+    if (!SKIP_PROBE && grepl("^gB8", case) &&
+        !is.null(off$uncertainty$certification$step)) {
       direction <- as.numeric(off$uncertainty$certification$step)
       if (length(direction) == length(points$laplace) && any(direction != 0)) {
         ts <- seq(-1, 1, length.out = 41)
