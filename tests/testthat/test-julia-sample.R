@@ -9,6 +9,17 @@
 # Deliberately small and short. A sample that mixes well enough to assert
 # R-hat on takes minutes, which does not belong in a unit suite; the engine
 # tests carry the correctness argument.
+#
+# `ctSample(fit)` on the `.sample_fixture()` below -- an `intoverpop='laplace'`
+# maximum-likelihood fit -- now defaults to `target='auto'`, which is the
+# Laplace marginal (decision 5, review/OPTIM-consolidation-plan-2026-09-25.md):
+# population parameters only, no random effects in the sampled vector. Tests
+# that are specifically about the random effects -- their draws, their
+# summaries, `saveEffects`, generation at a sampled effect -- ask for
+# `target='joint'` explicitly, which is what removes the Laplace approximation
+# rather than sampling around it, and is what this file tested by default
+# before the route had a name. Everything else here is generic sampler
+# mechanics that holds under either target, and is left at the default.
 
 .sample_fixture <- function(nsub = 12L, tp = 6L, seed = 31L) {
   set.seed(seed)
@@ -68,8 +79,12 @@ test_that("the diagnostics come back per parameter and per chain", {
   skip_without_julia()
   fit <- .sample_fixture()
   npar <- length(fit$estimate$raw)
+  # target='joint': this test asserts on the per-subject effect summaries
+  # below, which the marginal target -- the new default -- does not carry at
+  # all.
   sampled <- suppressWarnings(suppressMessages(
-    ctSample(fit, chains = 2, warmup = 80, draws = 80, cores = 1)))
+    ctSample(fit, chains = 2, warmup = 80, draws = 80, cores = 1,
+      target = "joint")))
   diagnostics <- sampled$sample
 
   expect_s3_class(diagnostics, "ctSampleDiagnostics")
@@ -116,11 +131,16 @@ test_that("the effects come back summarised, or in full when asked for", {
   neffects <- length(fit$model_spec$subject_starts) *
     length(fit$model_spec$laplace$re_index)
 
+  # target='joint': there is no random effect in the sampled vector at all
+  # under the marginal default, so `saveEffects` has nothing to save -- this
+  # test is specifically about that vector.
+  #
   # By default only the summary crosses the bridge: the draws themselves are
   # nsubjects x neffects x chains x draws numbers, and the bridge moves about
   # 1 MB/s.
   lean <- suppressWarnings(suppressMessages(
-    ctSample(fit, chains = 1, warmup = 60, draws = 60, cores = 1)))
+    ctSample(fit, chains = 1, warmup = 60, draws = 60, cores = 1,
+      target = "joint")))
   expect_null(lean$sample$effects)
   expect_length(lean$sample$effect_mean, neffects)
   expect_length(lean$sample$effect_sd, neffects)
@@ -128,7 +148,7 @@ test_that("the effects come back summarised, or in full when asked for", {
 
   full <- suppressWarnings(suppressMessages(
     ctSample(fit, chains = 1, warmup = 60, draws = 60, cores = 1,
-      saveEffects = TRUE)))
+      saveEffects = TRUE, target = "joint")))
   expect_equal(dim(full$sample$effects), c(60L, neffects))
   expect_true(all(is.finite(full$sample$effects)))
 })
@@ -520,8 +540,12 @@ test_that("a fixed stepsize is what every chain starts from", {
 # gap to test on. The per-subject exactness below is decisive instead.
 test_that("generation at given effects is exact and per-subject", {
   skip_without_julia()
+  # target='joint': each of these reads fit$sample$effects, which only exists
+  # under the joint target -- the marginal default has no random effect in
+  # the sampled vector to save.
   fit <- suppressWarnings(suppressMessages(ctSample(.sample_fixture(),
-    chains = 1, warmup = 60, draws = 60, cores = 1, saveEffects = TRUE)))
+    chains = 1, warmup = 60, draws = 60, cores = 1, saveEffects = TRUE,
+    target = "joint")))
   expect_false(is.null(fit$sample$effects))
 
   raw <- fit$estimate$raw
@@ -557,8 +581,12 @@ test_that("generation at given effects is exact and per-subject", {
 
 test_that("a sampled fit without saved effects says it fell back to modes", {
   skip_without_julia()
+  # target='joint': each of these reads fit$sample$effects, which only exists
+  # under the joint target -- the marginal default has no random effect in
+  # the sampled vector to save.
   fit <- suppressWarnings(suppressMessages(ctSample(.sample_fixture(),
-    chains = 1, warmup = 60, draws = 60, cores = 1, saveEffects = TRUE)))
+    chains = 1, warmup = 60, draws = 60, cores = 1, saveEffects = TRUE,
+    target = "joint")))
   # Silence is the failure mode: the draws are summarised by default, so
   # without a message a user asking for a posterior predictive would get one
   # conditioned on point estimates and no way to notice.
@@ -583,8 +611,12 @@ test_that("a sampled fit without saved effects says it fell back to modes", {
 # generating it.
 test_that("ctGenerateFromFit can resample the trajectory or mirror the fit", {
   skip_without_julia()
+  # target='joint': each of these reads fit$sample$effects, which only exists
+  # under the joint target -- the marginal default has no random effect in
+  # the sampled vector to save.
   fit <- suppressWarnings(suppressMessages(ctSample(.sample_fixture(),
-    chains = 1, warmup = 60, draws = 60, cores = 1, saveEffects = TRUE)))
+    chains = 1, warmup = 60, draws = 60, cores = 1, saveEffects = TRUE,
+    target = "joint")))
   expect_true(isTRUE(fit$args$resolved$intoverstates))
 
   generate <- function(io) {
@@ -612,8 +644,12 @@ test_that("ctGenerateFromFit can resample the trajectory or mirror the fit", {
 
 test_that("the resampled trajectory is drawn at each subject's own parameters", {
   skip_without_julia()
+  # target='joint': each of these reads fit$sample$effects, which only exists
+  # under the joint target -- the marginal default has no random effect in
+  # the sampled vector to save.
   fit <- suppressWarnings(suppressMessages(ctSample(.sample_fixture(),
-    chains = 1, warmup = 60, draws = 60, cores = 1, saveEffects = TRUE)))
+    chains = 1, warmup = 60, draws = 60, cores = 1, saveEffects = TRUE,
+    target = "joint")))
   raw <- fit$estimate$raw
   nrows <- length(fit$model_spec$times)
   nsub <- length(fit$model_spec$subject_starts)
@@ -677,4 +713,78 @@ test_that("a sampled fit's Hessian is not reused as curvature at its mean", {
     fit$uncertainty$evaluated_at, fit$estimate$raw), .ctBackendHessianReuse())
   expect_identical(.ctBackendHessian(fit, as.numeric(fit$estimate$raw)),
     fit$uncertainty$hessian)
+})
+
+# The placement pipeline: `ctFit(optimize = FALSE)` places the sampler through
+# the same stages `optimize = TRUE` runs -- start, prior warm-up, substep
+# mesh, the approach, the endgame's certification and its resume -- rather
+# than a bare, uncertified optimisation (section 2f,
+# review/OPTIM-consolidation-plan-2026-09-25.md). Before this, a start whose
+# curvature had the wrong sign in some direction reached the sampler's metric
+# exactly as it stood; certification is what a healthy `optimize = TRUE` fit
+# always had and a sampled one never did.
+test_that("a mixed-curvature start is certified before the sampler's metric is built", {
+  skip_without_julia()
+  # Same data-generating recipe as `.sample_fixture()`, reproduced rather than
+  # shared: this test also needs the bare `model_spec` (`fit = FALSE`) to
+  # verify its own precondition before trusting what placement does with it.
+  set.seed(31)
+  nsub <- 12L; tp <- 6L
+  data <- do.call(rbind, lapply(seq_len(nsub), function(i) {
+    intercept <- stats::rnorm(1, 0, 0.8)
+    state <- stats::rnorm(1, 0, 0.5)
+    y <- numeric(tp)
+    for (t in seq_len(tp)) {
+      state <- 0.75 * state + stats::rnorm(1, 0, 0.4)
+      y[t] <- state + intercept + stats::rnorm(1, 0, 0.3)
+    }
+    data.frame(id = i, time = seq_len(tp) - 1, Y1 = y)
+  }))
+  model <- suppressWarnings(suppressMessages(ctModel(type = "ct",
+    manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1))))
+  model$pars$indvarying <- FALSE
+  model$pars$indvarying[match(TRUE, model$pars$matrix == "MANIFESTMEANS")] <- TRUE
+
+  spec <- suppressWarnings(suppressMessages(ctFit(data, model,
+    backend = "julia", cores = 1, intoverpop = "laplace", priors = TRUE,
+    fit = FALSE)))
+  npar <- .ctBackendNpar(spec)
+  saddle <- rep(0, npar)
+  saddle[1] <- 6
+
+  # The precondition, checked directly rather than assumed: at this point the
+  # exact Hessian genuinely has both signs present (a direction the objective
+  # can still climb, alongside directions where it cannot), so certifying it
+  # is not a no-op. `.ctBackendEndgameAt()` forms the Hessian at an arbitrary
+  # point without optimising -- the same fit-free-assertion shape CLAUDE.md
+  # asks for a matsetup column move, applied here to a starting point instead.
+  before <- ctsem:::.ctBackendEndgameAt(spec, saddle)
+  skip_if(is.null(before), "engine could not evaluate the endgame at this point")
+  ev_before <- eigen(before$hessian, symmetric = TRUE, only.values = TRUE)$values
+  skip_if_not(any(ev_before > 1e-6) && any(ev_before < -1e-6),
+    "this start is no longer a mixed-curvature point on this engine version; pick a new one")
+
+  sampled <- suppressWarnings(suppressMessages(ctFit(data, model,
+    backend = "julia", cores = 1, intoverpop = "laplace", priors = TRUE,
+    optimize = FALSE, inits = saddle,
+    sampleControl = list(chains = 1, warmup = 20, draws = 20))))
+
+  # Certified, not merely run: the placement's own verdict, which is what
+  # `$optim$converged` reports on a sampled fit now (decision 5,
+  # review/OPTIM-consolidation-plan-2026-09-25.md) rather than the hardcoded
+  # `TRUE` it used to be. `$optim$hessian_evaluations` is on the fit at all
+  # only because the certification stage ran -- the bare `.ctJuliaOptimise()`
+  # call this replaced had no such field to report.
+  expect_true(isTRUE(sampled$optim$converged))
+  expect_false(is.null(sampled$optim$hessian_evaluations))
+  expect_gte(sampled$optim$hessian_evaluations, 1L)
+
+  # The decisive check: the metric handed to the sampler has no direction the
+  # objective can still climb. The starting point above did; this is what
+  # "certified away before the metric is built" means, not merely that the
+  # run finished.
+  ev_after <- eigen(sampled$uncertainty$hessian, symmetric = TRUE,
+    only.values = TRUE)$values
+  expect_true(all(is.finite(ev_after)))
+  expect_true(all(ev_after < 1e-6))
 })

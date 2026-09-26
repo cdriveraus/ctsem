@@ -311,3 +311,45 @@ test_that("the value-only log probability is the value the gradient route return
   expect_identical(as.numeric(valueonly(bad)), -1e100)
   expect_equal(attr(withgrad(bad), "gradient"), rep(0, npar))
 })
+
+test_that("the batch attribute reproduces the per-draw loop in one bridge call", {
+  skip_without_julia()
+
+  # `imis_is` reads a batch of proposal draws one at a time, `vapply(...,
+  # parlp(x_new[i, ]))`; `.ctBackendLpgFunc(fit, gradient=FALSE)`'s `'batch'`
+  # attribute is `ctsem_evaluate_batch` in one bridge call instead, and the two
+  # have to agree bitwise for importance-sampling weights built from one not to
+  # differ from weights built from the other.
+  fit <- suppressMessages(ctFit(.backend_uncertainty_data(),
+    .backend_uncertainty_model(), backend = "julia", verbose = 0))
+  valueonly <- ctsem:::.ctBackendLpgFunc(fit, gradient = FALSE)
+  batchfn <- attr(valueonly, "batch")
+  expect_true(is.function(batchfn))
+  # There is no batch form for gradient=TRUE: nothing reads a batch of
+  # gradients, and the engine function does not compute one.
+  expect_null(attr(ctsem:::.ctBackendLpgFunc(fit, gradient = TRUE), "batch"))
+
+  est <- as.numeric(fit$estimate$raw)
+  npar <- length(est)
+  set.seed(4)
+  draws <- rbind(est, matrix(est, nrow = 12, ncol = npar, byrow = TRUE) +
+      matrix(stats::rnorm(12 * npar, 0, .4), nrow = 12))
+  # A draw the model cannot evaluate, mixed in among ordinary ones -- exactly
+  # what a real proposal batch contains, and the case the -1e100 sentinel
+  # exists for.
+  draws[5L, 1L] <- NaN
+
+  from_batch <- as.numeric(batchfn(draws))
+  from_loop <- vapply(seq_len(nrow(draws)),
+    function(i) as.numeric(valueonly(draws[i, ])), numeric(1))
+  expect_identical(from_batch, from_loop)
+  expect_identical(from_batch[5L], -1e100)
+  expect_true(all(is.finite(from_batch)))
+
+  # `nrow(draws) == 1` is what `imis_is` never does (`n_batch` is always in
+  # the hundreds), but a batch of one is still a batch and must not be treated
+  # as an empty one -- ctsem_evaluate_batch()'s own guard is for zero columns,
+  # not one.
+  one <- batchfn(matrix(est, nrow = 1L))
+  expect_equal(as.numeric(one), as.numeric(valueonly(est)))
+})

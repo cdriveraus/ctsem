@@ -1,21 +1,32 @@
 # A julia fit is built in two places, and they have to agree on what a fit is.
 #
-# `.ctFitJuliaBackendImpl()` builds the object for `ctFit(optimize = TRUE)` and
-# `.ctJuliaSampleFit()` builds it for `ctFit(optimize = FALSE)`. Both assemble a
-# `c("ctJuliaFit", "ctFit")` list from scratch, independently, so a field added
-# to one is missing from the other and nothing says so -- the reader gets NULL
-# and takes whatever its own default is. `$collapsedScales` is that already: the
-# optimised path computes it and warns, and the sampled path does neither.
+# Until review/OPTIM-consolidation-plan-2026-09-25.md P5, `.ctFitJuliaBackendImpl()`
+# built the object for `ctFit(optimize = TRUE)` and `.ctJuliaSampleFit()` built a
+# second one for `ctFit(optimize = FALSE)`, from scratch, independently, so a
+# field added to one was missing from the other and nothing said so -- the
+# reader got NULL and took whatever its own default was. `$collapsedScales` was
+# that: the optimised path computed it and warned, and the sampled path did
+# neither.
 #
-# (There is a third route, `ctSample()`, which mutates an *existing* optimised
-# fit rather than building one. It therefore inherits whatever that fit had and
-# cannot show this divergence, which is why the comparison below is between the
-# two `ctFit()` routes and not against `ctSample()`.)
+# `.ctJuliaSampleFit()` now places the sampler by running
+# `.ctJuliaOptimiseFit()` -- the same pipeline `ctFit(optimize = TRUE)` runs --
+# and hands *that* fit to the assembler, so most of what this file used to
+# catch is now structurally impossible: the two routes share one constructor
+# up to `$sample` and the few `$estimate` fields a posterior mean cannot carry.
+# This file is kept because "structurally impossible" is a claim worth a test,
+# not an assumption, and because `ctSample()`'s own field additions
+# (`$estimate$rawposterior`, `$uncertainty`, `$sample`) are a second assembler
+# `.ctBackendSampleAssemble()` that both routes now share and that this file
+# does not exercise directly.
 #
-# This is the cheap half of fixing that: it does not merge the constructors, it
-# fails when they drift. The allowlist is the point -- a field that is
-# legitimately on one route only has to be named here, with a reason, rather
-# than being absent because someone forgot.
+# (There is a third route, `ctSample()` on an *already optimised* fit, which
+# mutates that fit rather than building one and so cannot show a constructor
+# divergence -- which is why the comparison below is between the two `ctFit()`
+# routes and not against `ctSample()`.)
+#
+# The allowlist below is the point -- a field that is legitimately on one
+# route only has to be named here, with a reason, rather than being absent
+# because someone forgot.
 
 suppressWarnings(suppressPackageStartupMessages(library(ctsem)))
 
@@ -66,17 +77,18 @@ suppressWarnings(suppressPackageStartupMessages(library(ctsem)))
 # Top-level fields that are legitimately on one route only. Each needs a reason,
 # and the reason is what a reader checks when this list grows.
 #
-# It is short because most of what used to be on this list was not a reason, it
-# was an omission: `$optim$trace`, `$laplace` and `$collapsedScales` were on an
-# optimised fit and missing from a sampled one, and all three are computable on
-# both -- sampling begins by optimising, so the run they describe exists either
-# way.
-.SHAPE_OPTIMISED_ONLY <- c(
-  # What nsubsteps='auto' decided. Only the optimising route chooses a mesh --
-  # the sampled route is handed one -- and it was optimised-only on
-  # `$estimate` for the same reason before it moved to top level.
-  "substeps"
-)
+# Empty now, on both sides. The sampled route places the sampler by running
+# `.ctJuliaOptimiseFit()` -- the same pipeline the optimising route runs -- and
+# hands *that* fit (not a second, bespoke one) to the same assembler
+# `ctSample()` uses (review/OPTIM-consolidation-plan-2026-09-25.md P5), so
+# every top-level field the placement computed, including `$substeps`, is
+# already on the sampled fit before the assembler adds `$sample`. What used to
+# be here was not a reason either time it shrank: `$optim$trace`, `$laplace`
+# and `$collapsedScales` were on an optimised fit and missing from a sampled
+# one merely because the two constructors had drifted, and `$substeps` was the
+# last of that shape -- the sampled route never re-chose a mesh, but nothing
+# stopped it reporting the one the placement chose.
+.SHAPE_OPTIMISED_ONLY <- character(0)
 
 .SHAPE_SAMPLED_ONLY <- c(
   # Chain diagnostics: R-hat, ESS, divergences, step sizes, tree depths. Its
@@ -87,63 +99,28 @@ suppressWarnings(suppressPackageStartupMessages(library(ctsem)))
 
 # `$estimate` sub-fields on the optimised route only.
 #
-# Short, now that `$estimate` is the estimate and not also the run: what used
-# to be most of this list is in `.SHAPE_OPTIM_OPTIMISED_ONLY` below.
-.SHAPE_ESTIMATE_OPTIMISED_ONLY <- c(
-  # A per-subject decomposition of the likelihood at a single point, which is
-  # what a posterior mean does not have.
-  "subject_loglik",
-  # State-explicit only, and only reachable from the optimising route.
-  "states", "innovations", "loglik_type")
+# Empty now: `subject_loglik`, `states`, `innovations` and `loglik_type` are
+# set by `.ctJuliaOptimiseFit()` regardless of route, so the placement fit
+# already carries them (NULL-valued where they do not apply) before
+# `.ctBackendSampleAssemble()` runs, the same way `$estimate$loglik` has
+# always described the placement point on a sampled fit rather than the
+# posterior mean that replaces it in `$raw`. `.SHAPE_ESTIMATE_SAMPLED_ONLY`
+# below is the only remaining asymmetry, and it is a real one: an optimised
+# fit has no comparable "point the chain started from" to report.
+.SHAPE_ESTIMATE_OPTIMISED_ONLY <- character(0)
 
 # `$optim` sub-fields on the optimised route only.
 #
-# These describe the optimiser run that produced the reported point. On a
-# sampled fit the reported point is a posterior *mean*, and the optimisation
-# that ran is the one that placed the sampler -- a different point. Carrying its
-# gradient beside a posterior mean would invite reading the two as belonging
-# together, which is worse than their absence. The placement run's own verdict
-# is on `$optim$converged`, which is the part a reader needs and which both
-# routes carry.
-.SHAPE_OPTIM_OPTIMISED_ONLY <- c(
-  "gradient", "gradient_norm", "predicted_gain", "convergence_tolerance",
-  "last_gain", "iterations", "stage_iterations", "f_calls", "g_calls",
-  "linesearch", "stalled", "stopped_by_gap", "overshot", "overshoot_gain",
-  # Which coordinates the pullback probe moved, so the same kind of thing as
-  # the two above and optimised-only for the same reason.
-  "overshoot_parameters",
-  # What the optimiser's batching and Newton finish did: descriptions of one
-  # optimiser run, like the stall fields below.
-  "batch_sizes", "batch_iterations", "newton_steps", "newton_hessians",
-  "newton_subset_hessians", "newton_escapes", "restarts", "restarts_cancelled",
-  "saturated", "saturated_parameters", "carefulfit", "carefulfit_iterations",
-  # Why the prior warm-up did not run, when it did not. The sampled route has
-  # no warm-up, so none of the three is on it.
-  "carefulfit_skipped",
-  # The two stopping rules the run was given and what they did with it: whether
-  # it was stopped for having stopped getting anywhere, which coordinates were
-  # flat when that happened, how many times the progress test fired, and how
-  # many times the run was pulled off a boundary and resumed. `stopped_by_gap`
-  # above is the sibling of `stopped_by_stall` and optimised-only for the same
-  # reason -- all of it describes one optimiser run, and on a sampled fit the
-  # run that happened placed the sampler rather than produced the reported
-  # point.
-  #
-  # `stall_window` and `gap_tol` are the settings rather than the outcomes, and
-  # they are reported at all because a rule that was switched off is otherwise
-  # indistinguishable from one that never had cause to fire -- which is how
-  # both of them came to be off for every fit in the package without anything
-  # going red.
-  "stopped_by_stall", "stall_window", "gap_tol", "stall_parameters",
-  "stall_triggers", "stall_escapes",
-  # The curvature-correction stage, which only the optimising route runs: how
-  # many Hessians it computed, the history, and how far the estimate is from
-  # where its Hessian was evaluated. The matrix itself is on `$uncertainty`,
-  # with `evaluated_at` saying where it was evaluated.
-  "corrections", "hessian_evaluations", "hessian_distance",
-  # State-explicit only: the profile curvature, which is on `$optim` rather
-  # than `$uncertainty` precisely because it is not one.
-  "hessian_profile")
+# Empty now, for the same reason as `.SHAPE_OPTIMISED_ONLY`: `$optim` is the
+# placement run's own `optim_run` list either way, not a summary rebuilt for
+# the sampled route, so every field the optimising route reports (gradient,
+# Newton and stall counts, the correction stage's Hessian count, and so on)
+# describes the run that placed the sampler on a sampled fit. That is a
+# reportable fact about the placement, not a claim about the posterior --
+# `$optim$converged` in particular is the placement's own verdict on both
+# routes, per decision 5 of review/OPTIM-consolidation-plan-2026-09-25.md,
+# and `$sample$converged` is the one that describes whether the chains agreed.
+.SHAPE_OPTIM_OPTIMISED_ONLY <- character(0)
 
 .SHAPE_OPTIM_SAMPLED_ONLY <- character(0)
 
@@ -290,11 +267,15 @@ test_that("the laplace block is the same shape whichever route built it", {
   for (route in names(fits)) {
     expect_false(is.null(fits[[route]]$laplace), info = route)
   }
-  # Optimised only: `boundary` (a correlation capped at the optimum) and
-  # `correction` (the quadrature correction every optimised laplace fit now
-  # gets, or its status when it was off -- see `.ctLaplaceAutoCorrect()`).
-  expect_equal(sort(setdiff(names(fits$optimised$laplace),
-    c("boundary", "correction"))), sort(names(fits$sampled$laplace)))
+  # `boundary` (a correlation capped at the optimum) and `correction` (the
+  # quadrature correction stage, or its "off" status -- see
+  # `.ctLaplaceAutoCorrect()`) both used to be optimised-only, because the
+  # sampled route called `.ctJuliaFitLaplaceBlock()` directly and never added
+  # what came after it. The placement now runs the same pipeline that does add
+  # them -- `laplace_correct` forced off, so `correction$status` is `"off"`
+  # rather than absent -- so the two are identical in shape.
+  expect_equal(sort(names(fits$optimised$laplace)),
+    sort(names(fits$sampled$laplace)))
 })
 
 test_that("estimate slots a reader depends on are present on both", {

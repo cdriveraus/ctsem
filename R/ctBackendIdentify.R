@@ -224,15 +224,26 @@
 # entry moving is a different problem, and then this reports nothing and the
 # complete-non-identification advice stands.
 
-# Which raw coordinates make up each level's population covariance block, and
-# how to materialise that covariance.
+# Which raw coordinates make up the population covariance block, and how to
+# materialise that covariance -- on the augmented route only.
 #
-# Both routes are described the same way because the identification question is
-# the same on both: the augmented route holds the scales and correlations in
-# `spec$random_effects` (they are cells of the RAWPOPVAR matrix), the
-# Laplace route in `spec$laplace$levels`. A block is one level's scales and
-# correlations together, because a scale is identified or not *jointly with the
-# correlations it multiplies*.
+# The finding is the augmented objective's, not the model's: the mechanism above
+# is the augmented filter's, which cannot update a variance cell's carrier. On
+# the Laplace route the likelihood depends on a level's scales and correlations
+# only through the covariance they build, so a flat direction that moves one of
+# its variances is that variance undetermined -- the complete case, and the
+# fix-or-remove advice is the right one. Classified as partial there, it was
+# reported under "intoverpop='augmented'" and advised to try the route it was
+# already on; that happened whenever a flat scale's correlations sat near zero,
+# since a cross-covariance through a zero correlation does not move with the
+# scale whatever the data say (AnomAuth S1 at its best-known point: the sds of
+# cint and drift, both flat, with the raw correlation between them at 8e-07). So
+# Laplace levels are not blocks.
+#
+# The augmented route holds the scales and correlations in
+# `spec$random_effects` (they are cells of the RAWPOPVAR matrix). A block is
+# the scales and correlations together, because a scale is identified or not
+# *jointly with the correlations it multiplies*.
 #' @keywords internal
 .ctIdentifyBlocks <- function(spec) {
   if (is.null(spec)) return(list())
@@ -249,47 +260,12 @@
       # augmented T0VAR and therefore in the population covariance.
       state = as.integer(sds$row))
   }
-  laplace <- spec$laplace
-  if (!is.null(laplace) && length(laplace$levels)) {
-    for (l in seq_along(laplace$levels)) {
-      level <- laplace$levels[[l]]
-      # A reduced level has loadings where a full-rank one has scales and
-      # correlations. Skipping it because `sd_index` is empty would quietly
-      # exclude the level most likely to be weakly identified -- the reduction
-      # was asked for precisely because that level has few groups -- so its
-      # loadings go in as the block's coordinates instead.
-      loadings <- as.integer(.ctJuliaOr(level$load_index, integer()))
-      if (!length(level$sd_index) && !length(loadings)) next
-      blocks[[length(blocks) + 1L]] <- list(
-        route = "laplace", level = as.integer(l),
-        name = as.character(.ctJuliaOr(level$name, l))[1L],
-        sd_index = if (length(loadings)) loadings else as.integer(level$sd_index),
-        cor_index = if (length(loadings)) integer() else as.integer(level$cor_index),
-        param = as.character(level$param),
-        reduced = length(loadings) > 0L,
-        state = seq_along(if (length(loadings)) loadings else level$sd_index))
-    }
-  }
   blocks
 }
 
 # The population covariance of one block at one raw vector.
 #' @keywords internal
 .ctIdentifyPopcov <- function(fit, block, values) {
-  spec <- .ctBackendSpec(fit)
-  if (identical(block$route, "laplace")) {
-    module <- .ctJuliaModule(spec$project)
-    objective <- .ctJuliaObjective(fit)
-    out <- lapply(seq_len(ncol(values)), function(column) {
-      value <- try(.ctBackendJuliaValue(module$ctsem_laplace_popcov(objective,
-        .ctJuliaNumericVector(as.numeric(values[, column])),
-        as.integer(block$level))), silent = TRUE)
-      if (inherits(value, "try-error")) return(NULL)
-      as.numeric(as.matrix(value))
-    })
-    if (any(vapply(out, is.null, logical(1)))) return(NULL)
-    return(matrix(unlist(out), ncol = ncol(values)))
-  }
   # The augmented route's population covariance is the carrier block of the
   # augmented model's T0cov, and `rows` keeps everything else off the bridge.
   layout <- try(.ctBackendSummaryLayout(fit), silent = TRUE)

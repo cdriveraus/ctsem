@@ -3747,6 +3747,32 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   out
 }
 
+# The work counters of an engine run, and the counts of runs a fit did not keep
+# added to the one it did: the stage a stall escape replaced, an escape that did
+# not come out ahead, the run before a substep refit. Each did its work, and the
+# fit's counts are the whole of what it ran, as the corrections' totals are
+# (`.ctBackendCorrectResult()`). They were the kept run's alone, which is what
+# the optimiser bench's own tally of engine runs showed. The kept run's own
+# iterations stay readable as `stage_iterations`, since its trace is the one
+# reported and is read against that count. `spent` is a run or its counts.
+.ctJuliaRunCounters <- c("iterations", "f_calls", "g_calls", "newton_steps",
+  "newton_hessians", "newton_subset_hessians")
+#' @keywords internal
+.ctJuliaRunCounts <- function(run) vapply(.ctJuliaRunCounters, function(k)
+  as.numeric(.ctJuliaOr(run[[k]], 0))[1L], numeric(1))
+#' @keywords internal
+.ctJuliaAddRunCounts <- function(kept, spent) {
+  if (!is.numeric(spent)) spent <- .ctJuliaRunCounts(spent)
+  if (!any(spent > 0)) return(kept)
+  if (is.null(kept$stage_iterations)) {
+    kept$stage_iterations <- as.integer(.ctJuliaOr(kept$iterations, 0L))[1L]
+  }
+  for (k in .ctJuliaRunCounters) {
+    kept[[k]] <- as.numeric(.ctJuliaOr(kept[[k]], 0))[1L] + spent[[k]]
+  }
+  kept
+}
+
 # Run the engine's optimizer over a prepared specification.
 #
 # Factored out of .ctFitJuliaBackend() because cross-validation re-optimises the
@@ -4161,6 +4187,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # for the case where each escape lands somewhere that stalls again.
   escapes <- 0L
   maxescapes <- as.integer(.ctJuliaOr(optimcontrol$stallretries, 2L))
+  # The work of every run the loop does not keep -- the stage an escape
+  # replaced, an escape that did not come out ahead, a pinned stage -- added to
+  # the kept run's counts after it (`.ctJuliaAddRunCounts()`).
+  spent <- .ctJuliaRunCounts(list())
   while (escapes < maxescapes) {
     from <- .ctBackendStallEscape(result, optimcontrol, model_spec, verbose,
       escapes = !state_explicit)
@@ -4211,8 +4241,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         value = c(if (length(default_pin$index)) as.numeric(default_pin$value),
           from[coordinates]))
       staged <- try(optimise_once(from, pin = escape_pin), silent = TRUE)
-      if (inherits(staged, "try-error")) staged else
+      if (inherits(staged, "try-error")) staged else {
+        spent <- spent + .ctJuliaRunCounts(staged)
         try(optimise_once(as.numeric(staged$minimizer)), silent = TRUE)
+      }
     } else try(optimise_once(from), silent = TRUE)
     if (inherits(resumed, "try-error")) break
     # Only if it actually came out ahead. Neither route to `from` promises
@@ -4222,11 +4254,16 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # measured on, from which a refit landed 7.2 nats up.
     if (!is.finite(as.numeric(resumed$maximum_loglik)[1L]) ||
         as.numeric(resumed$maximum_loglik)[1L] <
-          as.numeric(result$maximum_loglik)[1L]) break
+          as.numeric(result$maximum_loglik)[1L]) {
+      spent <- spent + .ctJuliaRunCounts(resumed)
+      break
+    }
+    spent <- spent + .ctJuliaRunCounts(result)
     resumed$stall_escapes <- escapes
     result <- resumed
   }
   if (is.null(result$stall_escapes)) result$stall_escapes <- escapes
+  result <- .ctJuliaAddRunCounts(result, spent)
   # What the tuner settled on, when that is well short of what was asked for.
   .ctBackendReportChunks(cores, result$chunks)
   if (!is.null(failure)) {
@@ -4418,13 +4455,37 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # `.ctJuliaSampleFit`.
   if (!isTRUE(optimize)) {
     return(.ctJuliaSampleFit(model_spec, datalong = datalong, model = model,
-      inits = inits, cores = cores,
+      prepared_data = prepared_data, inits = inits, cores = cores,
       optimcontrol = optimcontrol, chains = chains, iter = iter,
-      control = control, priors = priors, intoverpop = intoverpop,
+      control = control, priors = priors, priorscope = priorscope,
+      intoverpop = intoverpop,
       gradient = gradient, verbose = verbose,
       intoverstates = intoverstates))
   }
+  return(.ctJuliaOptimiseFit(model_spec = model_spec, datalong = datalong,
+    model = model, prepared_data = prepared_data, inits = inits, cores = cores,
+    optimcontrol = optimcontrol, verbose = verbose, priors = priors,
+    priorscope = priorscope, intoverpop = intoverpop, intoverstates = intoverstates,
+    gradient = gradient, correctlaplace = correctlaplace))
+}
 
+# The optimising route's whole pipeline, from the starting values through the
+# certified estimate, its Hessian and the Laplace correction -- everything
+# `ctFit(backend = 'julia', optimize = TRUE)` does after `model_spec` is
+# prepared. Extracted so the sampler's placement (`.ctJuliaSampleFit()`,
+# R/ctBackendSample.R) can run the *same* pipeline rather than a bare
+# `.ctJuliaOptimise()` call: one fit constructor for both routes, per
+# review/OPTIM-consolidation-plan-2026-09-25.md P5. `intoverstates` here is
+# always TRUE for a placement call -- optimising the joint state density is
+# degenerate (state-explicit-generation.md) -- and `correctlaplace` is always
+# FALSE there, because the sampled target under `intoverpop = 'laplace'` is
+# the Laplace marginal itself, whose optimum is where to place the sampler,
+# not the quadrature-corrected point that answers a question the sampler is
+# not asking.
+#' @keywords internal
+.ctJuliaOptimiseFit <- function(model_spec, datalong, model, prepared_data,
+  inits, cores, optimcontrol, verbose, priors, priorscope, intoverpop,
+  intoverstates, gradient, correctlaplace) {
   npar <- .ctBackendNpar(model_spec)
   # A fully fixed model has nothing to maximise over. Without the zero above,
   # `max` warned and returned -Inf, and `rnorm(-Inf, ...)` then failed with
@@ -4679,9 +4740,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     if (!identical(model_spec$max_timestep, before)) {
       substeps$refit <- TRUE
       restart <- if (is.null(jointobjective)) optimum else c(optimum, numeric(nstate))
-      result <- .ctJuliaOptimise(model_spec, restart, optimcontrol = optimcontrol,
-        gradient = gradient, cores = cores, verbose = verbose,
-        callback = optimcontrol$callback, objective = jointobjective)
+      first <- result
+      result <- .ctJuliaAddRunCounts(.ctJuliaOptimise(model_spec, restart,
+        optimcontrol = optimcontrol, gradient = gradient, cores = cores,
+        verbose = verbose, callback = optimcontrol$callback,
+        objective = jointobjective), first)
     }
   }
   if (!is.null(substeps)) message(.ctJuliaSubstepMessage(substeps))
@@ -5010,6 +5073,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     out$optim$restarts <- restarts$table
     out$optim$restarts_cancelled <- isTRUE(restarts$cancelled)
   }
+  # The kept run's own count, when the fit also ran one it did not keep -- a
+  # stall escape, a substep refit (`.ctJuliaAddRunCounts()`): `iterations`
+  # counts both, and the trace is the kept run's.
+  if (!is.null(result$stage_iterations)) {
+    out$optim$stage_iterations <- as.integer(result$stage_iterations)[1L]
+  }
   if (!is.null(correction)) {
     # The Hessian goes on the fit so the uncertainty stage does not recompute
     # the same matrix at the same point, and the certification with it so a
@@ -5017,8 +5086,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     out$optim$corrections <- correction$corrections
     # Totals over every stage the fit ran, which is what these names should
     # always have meant. `stage_iterations` keeps the last stage's own count
-    # for anyone reading a trace against it.
-    out$optim$stage_iterations <- out$optim$iterations
+    # for anyone reading a trace against it -- the kept run's, when a stall
+    # escape replaced the run before it (`.ctJuliaOptimise()`).
+    out$optim$stage_iterations <- as.integer(.ctJuliaOr(result$stage_iterations,
+      out$optim$iterations))[1L]
     out$optim$iterations <- as.integer(correction$totals[["iterations"]])
     out$optim$f_calls <- as.integer(correction$totals[["f_calls"]])
     out$optim$g_calls <- as.integer(correction$totals[["g_calls"]])
@@ -5180,7 +5251,9 @@ print.ctJuliaFit <- function(x, ...) {
   # to place the sampler and build its metric, so a fit whose chains never
   # agreed prints `converged: TRUE` on the line above and is still worthless.
   if (!is.null(x$sample)) {
-    cat("  sampled: ", x$sample$chains, " chains x ", x$sample$draws,
+    cat("  sampled: ", if (!is.null(x$sample$target))
+      paste0(x$sample$target, " posterior, ") else "",
+      x$sample$chains, " chains x ", x$sample$draws,
       " draws; chains converged: ",
       if (is.null(x$sample$converged) || is.na(x$sample$converged)) "unknown" else
         as.character(isTRUE(x$sample$converged)), "\n", sep = "")

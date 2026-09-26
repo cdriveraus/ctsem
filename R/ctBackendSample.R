@@ -4,9 +4,19 @@
 # mode. That is exact when the integrand is Gaussian in the random effects and
 # otherwise wrong by an amount that grows with the population scale, which tilts
 # the profile and shrinks the scale estimate -- `ctLaplaceCheck()` measures that
-# error and corrects it to first order. `ctSample()` removes it instead, by
-# sampling the joint posterior over population parameters *and* random effects
-# with no Gaussian assumption anywhere.
+# error and corrects it to first order. `ctSample(fit, target='joint')` removes
+# it instead, by sampling the joint posterior over population parameters *and*
+# random effects with no Gaussian assumption anywhere -- at the cost of a
+# dimension that grows with the subject count, where the marginal's does not.
+#
+# `target='auto'`, the default, samples the fit's *own* route instead: the
+# Laplace marginal for an `intoverpop='laplace'` fit (`npar` dimensions, the
+# same approximation the fit itself made, still with an exact posterior rather
+# than a Gaussian one for it) and the joint posterior for an
+# `intoverpop='none'` fit, which has no marginal to fall back to. Two entry
+# points reach the same targets by the same names: `ctFit(optimize=FALSE)`
+# picks the route from `intoverpop`, and `ctSample()` on the fit that produced
+# picks the same one unless told otherwise.
 #
 # It takes a fitted object rather than a model and data, and that is not merely
 # convenience. The fit supplies the starting point *and* the metric: the engine
@@ -151,10 +161,11 @@
 
 #' Sample the posterior of a julia backend fit
 #'
-#' Draws from the joint posterior over population parameters and random effects
-#' by Hamiltonian Monte Carlo (the No-U-Turn sampler), starting from a fit made
-#' with \code{intoverpop='laplace'} and using that fit's curvature as the
-#' sampler's metric.
+#' Draws from the posterior of a julia backend fit by Hamiltonian Monte Carlo
+#' (the No-U-Turn sampler), starting from the fit and using its curvature as
+#' the sampler's metric. Which posterior is the fit's own target by default --
+#' see \code{target} -- and \code{ctFit(optimize=FALSE)} reaches the same
+#' targets by the same names, from the same starting pipeline.
 #'
 #' This is the exact counterpart of the Laplace approximation rather than a
 #' replacement for it: where \code{\link{ctLaplaceCheck}} measures how wrong the
@@ -208,7 +219,20 @@
 #' quantities in the table, which is what \code{backend='stan'} reports and is
 #' deliberately robust rather than dramatic. Both cross 1.01 on the same runs.
 #'
-#' @param fit A \code{ctJuliaFit} made with \code{intoverpop='laplace'}.
+#' @param fit A \code{ctJuliaFit} made with \code{intoverpop='laplace'} or
+#'   \code{'none'} -- a fit carrying the Laplace structure, whether or not it
+#'   integrated the random effects with it. \code{intoverpop='augmented'} has
+#'   no separate posterior over the effects to sample.
+#' @param target Which posterior to sample. \code{'auto'}, the default, is the
+#'   fit's own route: the Laplace marginal over population parameters for
+#'   \code{intoverpop='laplace'} (the same target \code{ctFit(optimize=FALSE)}
+#'   samples for that route), and the joint posterior over parameters and
+#'   effects for \code{intoverpop='none'}, which has no marginal to default to.
+#'   \code{'marginal'} and \code{'joint'} ask for one explicitly regardless of
+#'   the fit's route -- in particular, \code{target='joint'} on a Laplace
+#'   \emph{maximum-likelihood} fit (\code{ctFit(optimize=TRUE,
+#'   intoverpop='laplace')}) is what removes the Laplace approximation exactly,
+#'   which used to be this function's only behaviour.
 #' @param chains Number of chains. Run concurrently when the Julia session has
 #'   at least that many threads; see \code{\link{ctJuliaSetup}}.
 #' @param warmup Warmup iterations per chain, used to adapt the step size and
@@ -346,7 +370,8 @@
 #' @return The fit, with \code{estimate$rawposterior} holding the draws and
 #'   \code{$sample} holding the diagnostics: split R-hat and effective sample
 #'   size per parameter, divergences, tree depths, step sizes and E-BFMI, plus
-#'   \code{converged} and \code{diagnosis} summarising them.
+#'   \code{converged} and \code{diagnosis} summarising them, and \code{target}
+#'   naming which posterior was sampled (\code{"marginal"} or \code{"joint"}).
 #'   \code{estimate$raw} is set to the per-parameter posterior mean of the
 #'   draws -- unlike \code{backend='stan'}'s sampled point estimate
 #'   (\code{ctFit(..., optimize=FALSE)}'s \code{stanfit$rawest}), which is the
@@ -381,7 +406,9 @@
 #' @export
 ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
   saveEffects = FALSE, seed = 20260828L, sampleControl = list(),
-  verbose = FALSE, processes = TRUE, control = list()) {
+  verbose = FALSE, processes = TRUE, control = list(),
+  target = c("auto", "marginal", "joint")) {
+  target <- match.arg(target)
   # `control` renamed to `sampleControl`, as on `ctFit()`, where the same list
   # had to be told apart from rstan's `control`. Still accepted, at the end of
   # the signature so that nobody's positional call quietly means something new,
@@ -422,12 +449,12 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
   .ctJuliaInterruptSafe(.ctSampleImpl(fit, chains = chains, warmup = warmup,
     draws = draws, cores = cores, saveEffects = saveEffects, seed = seed,
     control = sampleControl, verbose = verbose, processes = processes,
-    processes_named = "processes" %in% supplied))
+    processes_named = "processes" %in% supplied, target = target))
 }
 
 #' @keywords internal
 .ctSampleImpl <- function(fit, chains, warmup, draws, cores, saveEffects, seed,
-  control, verbose, processes, processes_named = FALSE) {
+  control, verbose, processes, processes_named = FALSE, target = "auto") {
 
   if (!inherits(fit, "ctJuliaFit")) {
     stop("ctSample applies to fits made with ctFit(backend='julia').", call. = FALSE)
@@ -455,19 +482,33 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
       "installed. Sampling in this session instead.")
   }
 
-  # The joint posterior over parameters and effects, started from the fit's own
-  # estimate. The passed Hessian is a fallback for the joint route, not the
-  # metric itself: `_conditional_population_covariance` (sample_nuts.jl) always
+  # `target='auto'` follows the fit's own route (`.ctBackendIntOverPop()`,
+  # R/ctBackendKalman.R): the marginal for `intoverpop='laplace'`, which used
+  # to be the joint one always, unconditionally, here (decision 5 of
+  # review/OPTIM-consolidation-plan-2026-09-25.md) -- and the joint posterior
+  # for `intoverpop='none'`, which has no marginal to fall back to and so
+  # already meant this either way. `target='marginal'`/`'joint'` override it
+  # regardless of the route, which is what removes the Laplace approximation
+  # from an ordinary Laplace *maximum-likelihood* fit on request.
+  route <- .ctBackendIntOverPop(fit$model_spec)
+  marginal <- switch(target,
+    marginal = TRUE,
+    joint = FALSE,
+    !identical(route, "none"))
+
+  # The passed Hessian is a fallback for the joint route, not the metric
+  # itself: `_conditional_population_covariance` (sample_nuts.jl) always
   # recomputes the population block fresh, by central differences of the joint
   # gradient at `2 * npar` evaluations, because that is the conditional
   # curvature the joint metric needs and the marginal Hessian passed in is the
   # wrong matrix for it; the fit's Hessian is used only if that difference is
-  # not finite. `ctSample()` samples a Laplace fit and this is the target it is
-  # the exact counterpart of; `ctFit(optimize = FALSE)` reaches the same runner
-  # with whichever target its `intoverpop` and `intoverstates` chose.
-  target <- .ctBackendSampleTarget(estimate = as.numeric(fit$estimate$raw),
-    npar = length(fit$estimate$raw), hessian = fit$uncertainty$hessian)
-  .ctBackendSampleRun(fit, target, chains = chains, warmup = warmup,
+  # not finite. `ctFit(optimize = FALSE)` reaches the same runner
+  # (`.ctBackendSampleRun()`) with whichever target its `intoverpop` and
+  # `intoverstates` chose, by the same names.
+  sampletarget <- .ctBackendSampleTarget(estimate = as.numeric(fit$estimate$raw),
+    npar = length(fit$estimate$raw), marginal = marginal,
+    hessian = fit$uncertainty$hessian)
+  .ctBackendSampleRun(fit, sampletarget, chains = chains, warmup = warmup,
     draws = draws, cores = cores, saveEffects = saveEffects, seed = seed,
     control = control, verbose = verbose, processes = processes)
 }
@@ -960,7 +1001,18 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
     settings <- .ctBackendSampleControl(control)
     target_ess <- max(.ctJuliaOr(settings$min_ess, 0),
       .ctJuliaOr(settings$mean_ess, 0))
-    message("Sampling: ", chains, " chain", if (chains == 1L) "" else "s",
+    # Which posterior this run draws from, said once here rather than left to
+    # be inferred from `$sample$target` after the fact: `ctSample()`'s default
+    # now depends on the fit's own route (decision 5,
+    # review/OPTIM-consolidation-plan-2026-09-25.md), so the two are no longer
+    # always the same thing a reader might remember from an earlier call.
+    targetlabel <- if (isTRUE(target$state_explicit))
+        "the joint posterior over parameters and the latent states"
+      else if (isTRUE(target$marginal))
+        "the marginal posterior over population parameters"
+      else "the joint posterior over population parameters and random effects"
+    message("Sampling ", targetlabel, ": ", chains, " chain",
+      if (chains == 1L) "" else "s",
       ", ", warmup, " warmup + ",
       if (target_ess > 0) paste0("up to ", draws) else draws,
       " draws each",
@@ -987,7 +1039,7 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
   .ctBackendSampleAssemble(fit, result, target$npar,
     isTRUE(saveEffects) && !isTRUE(target$marginal), as.integer(chains), warmup,
     as.integer(result$ndraws), target$hessian,
-    target$estimate[seq_len(target$npar)])
+    target$estimate[seq_len(target$npar)], marginal = isTRUE(target$marginal))
 }
 
 # Turn an engine sample result into a fit object.
@@ -1000,7 +1052,7 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
 # is the same, and was worth having in one place rather than two that drift.
 #' @keywords internal
 .ctBackendSampleAssemble <- function(fit, result, npar, saveEffects, chains,
-  warmup, draws, hessian, startvalues) {
+  warmup, draws, hessian, startvalues, marginal = FALSE) {
 
   # The row count is `ndim` when the effects were saved and `npar` when they
   # were not, so it is read off the result rather than assumed -- reshaping an
@@ -1049,6 +1101,12 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
     effect_mean = as.numeric(result$effect_mean),
     effect_sd = as.numeric(result$effect_sd),
     marginal = identical(as.integer(result$ndim), as.integer(result$npar)),
+    # Which posterior the caller asked for, in the vocabulary
+    # `ctSample(target=)` and `ctFit(optimize=FALSE)` share -- distinct from
+    # `marginal` above, which asks a narrower question (whether the sampled
+    # space was exactly `npar`-dimensional) that reads FALSE for both the
+    # `'none'` route and the state-explicit one alike.
+    target = if (isTRUE(marginal)) "marginal" else "joint",
     processes = FALSE,
     start = as.numeric(startvalues))
   if (length(out$sample$effect_mean)) {
@@ -1241,6 +1299,7 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
 print.ctSampleDiagnostics <- function(x, ...) {
   total <- x$chains * x$draws
   cat("ctsem Hamiltonian sample\n")
+  if (!is.null(x$target)) cat("  target: ", x$target, " posterior\n", sep = "")
   cat("  ", x$chains, " chains x ", x$draws, " draws (", x$warmup,
     " warmup discarded)\n", sep = "")
   cat("  divergent: ", x$divergent, " of ", total,
@@ -1295,6 +1354,22 @@ print.ctSampleDiagnostics <- function(x, ...) {
 # between a chain that starts well conditioned and one that spends its warmup
 # discovering what the model could have told it.
 #
+# That placement optimisation is `.ctJuliaOptimiseFit()` (R/ctJuliaBackend.R)
+# -- the same pipeline `ctFit(optimize=TRUE)` runs: start, prior warm-up,
+# substep mesh, the approach, the endgame's certification and its resume, and
+# opt-in restarts -- not a lesser one, and not a second fit constructor: the
+# placement fit it returns carries `$optim`, `$laplace`, `$uncertainty` and
+# `$identifiability` exactly as an optimised fit does, and
+# `.ctBackendSampleAssemble()` (shared with `ctSample()`) turns it into the
+# sampled fit by replacing only `$estimate$raw` and adding `$sample`. Its
+# Hessian is the endgame's own -- reused via `.ctBackendStoredHessian()`
+# inside `ctOptimUncertainty()` rather than recomputed here -- so the common
+# case costs one Hessian for the whole call, not one for the fit and a second
+# for the sampler. `laplace_correct` is forced off for the placement: the
+# target sampled under `'laplace'` is the Laplace marginal itself, so its
+# optimum, not the quadrature-corrected point, is where to place the sampler.
+# review/OPTIM-consolidation-plan-2026-09-25.md P5.
+#
 # What is optimised is always an *integrated* objective, never the joint one,
 # and that distinction matters more than it looks. Maximising over individual
 # random effects is not a defensible thing to do: the joint density of
@@ -1313,9 +1388,9 @@ print.ctSampleDiagnostics <- function(x, ...) {
 # approach used for the metric is deliberately not the one being sampled, and
 # it does not have to be.
 #' @keywords internal
-.ctJuliaSampleFit <- function(model_spec, datalong, model, inits, cores,
-  optimcontrol, chains, iter, control, priors, intoverpop,
-  gradient, verbose, intoverstates = TRUE) {
+.ctJuliaSampleFit <- function(model_spec, datalong, model, prepared_data,
+  inits, cores, optimcontrol, chains, iter, control, priors, priorscope,
+  intoverpop, gradient, verbose, intoverstates = TRUE) {
 
   # First, because everything after it takes minutes and this takes none.
   .ctBackendSampleCheckControl(control)
@@ -1329,8 +1404,6 @@ print.ctSampleDiagnostics <- function(x, ...) {
       "Free a parameter, or use fit = FALSE to prepare the model without ",
       "fitting it.", call. = FALSE)
   }
-  start <- .ctJuliaInitialValues(npar, inits,
-    initsd = .ctJuliaOr(optimcontrol$initsd, .01))
 
   # Stan's vocabulary, because these were Stan's arguments: `iter` counts warmup
   # and sampling together and warmup is half of it unless said otherwise.
@@ -1389,148 +1462,118 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # Whenever the progress line below it will be drawn, not only at `verbose`.
   #
   # Sampling begins with an optimisation, to place the sampler and build its
-  # metric, and that optimisation prints a progress line labelled "optimise".
-  # Without this sentence in front of it a user who asked for HMC watches an
-  # optimiser run and concludes the sampler never started -- which is exactly
-  # what was reported. The explanation costs one line and was previously hidden
-  # behind `verbose > 0`, which is not the default.
+  # metric, and that optimisation prints its own progress lines (warm-up,
+  # approach, endgame) exactly as `optimize=TRUE` does. Without this sentence
+  # in front of it a user who asked for HMC watches what looks like an
+  # ordinary fit and concludes the sampler never started -- which is exactly
+  # what was reported when the placement was a single bare call. The
+  # explanation costs one line and was previously hidden behind `verbose > 0`,
+  # which is not the default.
   announce <- verbose > 0L || .ctProgressConsole()
   if (announce) {
-    message("Sampling: optimising first, to place the sampler and build its ",
-      "metric. Sampling follows.")
+    message("Sampling: placing the sampler first, through the same pipeline ",
+      "an optimised fit runs (warm-up, mesh, endgame), which is also where ",
+      "its metric comes from. Sampling follows.")
   }
+
+  # The workers, started before the placement rather than after it. A worker
+  # costs 26-43 s of Julia startup and engine compilation, and the placement
+  # that has to run first anyway is where that cost belongs: measured, workers
+  # warmed alongside a 39.8 s optimisation were ready with 0.0 s of waiting.
+  # `ctSample()` starts from a fit that is already optimised and so has
+  # nothing to overlap, and pays the compile serially.
+  #
+  # Any finite point compiles the same code, so a pre-placement start is as
+  # good as the placement's own estimate for this -- only compilation is being
+  # bought here, not a value the chains will actually start from.
+  start0 <- .ctJuliaInitialValues(npar, inits,
+    initsd = .ctJuliaOr(optimcontrol$initsd, .01))
+  spec0 <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
+  processes <- isTRUE(.ctJuliaOr(control$processes, TRUE))
+  handles <- if (processes && chains > 1L && .ctBackendCanWarm()) {
+    .ctBackendWarmWorkers(spec0, workers = chains, values = start0)
+  } else NULL
+
+  # Placement: `.ctJuliaOptimiseFit()` (R/ctJuliaBackend.R) is the whole
+  # pipeline `ctFit(optimize=TRUE)` runs -- start, prior warm-up, substep
+  # mesh, the approach, the endgame's certification and its resume, restarts
+  # only if asked -- not a bare `.ctJuliaOptimise()` call. `intoverstates` is
+  # forced TRUE here regardless of what was asked: optimising the joint
+  # density of the parameters and the latent states is a category error, not
+  # a lesser estimate (`state-explicit-generation.md`) -- the joint mode is
+  # degenerate and not a place to start a sampler from. `laplace_correct` is
+  # forced off and `uncertainty` forced to `'hessian'`: the target sampled
+  # under `intoverpop='laplace'` is the Laplace marginal itself, so its
+  # optimum -- not the quadrature-corrected point, which answers a question
+  # the sampler is not asking -- is where to place it, and only the Hessian
+  # is needed here, not importance draws. `finishsamples = 2` (the least
+  # `ctOptimUncertainty()` accepts) for the same reason: it would otherwise
+  # draw a thousand Gaussian pseudo-posterior samples around the placement
+  # point only for `.ctBackendSampleAssemble()` to overwrite them with the
+  # real ones below.
+  placementcontrol <- utils::modifyList(optimcontrol,
+    list(laplace_correct = FALSE, uncertainty = "hessian", estonly = FALSE,
+      finishsamples = 2L))
+  placementfit <- .ctJuliaOptimiseFit(model_spec = model_spec, datalong = datalong,
+    model = model, prepared_data = prepared_data, inits = inits, cores = cores,
+    optimcontrol = placementcontrol, verbose = verbose, priors = priors,
+    priorscope = priorscope, intoverpop = intoverpop, intoverstates = TRUE,
+    gradient = gradient, correctlaplace = FALSE)
+
+  # The mesh the placement actually settled on, not the one this function was
+  # handed: `.ctJuliaOptimiseFit()`'s own automatic-substep stage may have
+  # remeshed it (`model_spec$substeps`), and the objective being sampled has
+  # to be the same model the placement was evaluated under.
+  placedspec <- placementfit$model_spec
+  # The metric's curvature: the fit's own certified Hessian, taken from
+  # `placementfit$uncertainty$hessian` rather than computed again here.
+  # `ctOptimUncertainty()` inside `.ctJuliaOptimiseFit()` already reused the
+  # endgame's Hessian through `.ctBackendStoredHessian()` when it still
+  # described the estimate, so this is the same matrix and the same one
+  # Hessian the placement fit reports -- not a second, sampler-only one.
+  theta <- as.numeric(placementfit$estimate$raw)
+  hessian <- placementfit$uncertainty$hessian
+
   # The state-explicit target, when asked for. This is the estimator the path
   # is really for: NUTS over the parameters *and* the states is the exact
   # posterior of both, with no Gaussian assumption about the state anywhere,
   # where optimising the same density gives its joint mode and the downward
   # bias in the variances that comes with maximising over what should be
   # integrated.
-  # The state-explicit sampler is placed from the *integrated* fit, not from
-  # the joint mode.
   #
-  # Optimising the joint density over parameters and states is the one thing
-  # this route must not do: that density has no interior maximum in the state
-  # directions, so its "mode" is wherever the optimiser stopped, and the
-  # curvature there is not a covariance. Measured on a 12-subject,
-  # 10-occasion model, the arrow Hessian at that point had **16 non-positive
-  # eigenvalues of 155**, which `_bounded_inverse` floors -- so the metric
-  # claimed a standard deviation of about 8.6 along sixteen directions in
-  # which the density increases. That is a worse start than no information.
-  #
-  # So the optimisation and the Hessian both come from the filter, with the
-  # states integrated out, which is a proper Laplace approximation of the
-  # parameter posterior: positive definite, npar x npar, and already what
-  # `intoverstates = TRUE` computes. The innovations then start at zero --
-  # their prior mode, and the trajectory the parameters alone imply -- and the
+  # The innovations join the vector after the placement, at zero -- their
+  # prior mode, and the trajectory the parameters alone imply -- and the
   # engine meters them at identity, which is exactly their prior scale since
-  # they are standardised. `nparameters` is what tells it where the parameters
-  # stop; see the metric note in `ctsem_sample_marginal`.
+  # they are standardised. `nparameters` (set inside `.ctBackendSampleEngine`)
+  # is what tells it where the parameters stop.
   jointobjective <- NULL
   nstate <- 0L
+  estimate <- theta
   if (!isTRUE(intoverstates)) {
-    jointobjective <- .ctJuliaJointObjective(model_spec, npar)
-    nstate <- .ctJuliaStateDimension(model_spec)
+    jointobjective <- .ctJuliaJointObjective(placedspec, npar)
+    nstate <- .ctJuliaStateDimension(placedspec)
+    estimate <- c(theta, numeric(nstate))
   }
-  # The workers, started before the optimisation rather than after it. A worker
-  # costs 26-43 s of Julia startup and engine compilation, and the optimisation
-  # that has to run first anyway is where that cost belongs: measured, workers
-  # warmed alongside a 39.8 s optimisation were ready with 0.0 s of waiting.
-  # This is the path `.ctBackendWarmWorkers()` was written for. `ctSample()`
-  # starts from a fit that is already optimised and so has nothing to overlap,
-  # and pays the compile serially.
-  #
-  # Any finite point compiles the same code, so the pre-optimisation start is as
-  # good as the estimate for this -- but only because `ctsem_sample_metric`
-  # re-solves the inner modes at the vector being sampled from. Until it did,
-  # this warm decided where every process-parallel chain of this path started:
-  # the worker's objective retains the modes of whatever it last evaluated, so
-  # the chains sampled with theta at the estimate and each subject's effects at
-  # the values that were modal for `start`, which put a real 100-subject fit's
-  # chains at a joint density of -1e5 and -4e14 against a mode of -5300.
-  spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
-  processes <- isTRUE(.ctJuliaOr(control$processes, TRUE))
-  handles <- if (processes && chains > 1L && .ctBackendCanWarm()) {
-    .ctBackendWarmWorkers(spec, workers = chains, values = start)
-  } else NULL
-
-  # `objective = NULL` even on the state route: the integrated objective is
-  # what is optimised, for the reason given where `jointobjective` is built.
-  optimised <- .ctJuliaOptimise(model_spec, start, optimcontrol = optimcontrol,
-    gradient = gradient, cores = cores, verbose = verbose)
-  estimate <- as.numeric(optimised$minimizer)
-
-  module <- .ctJuliaModule(model_spec$project)
-  # `spec`, not a bare list carrying `model_spec`: .ctBackendHessian() reaches
-  # the objective through .ctJuliaObjective(), which requires a classed
-  # ctJuliaModel/ctJuliaFit and errors on anything else. An unclassed list made
-  # that error every time, and .ctBackendHessian() catches its own errors and
-  # returns NULL -- so every sampled fit warned that the engine could not
-  # differentiate its gradient, when nothing had been asked of the engine at
-  # all. `spec` is the same object the objective is already cached under.
-  # The metric's curvature: the integrated parameter Hessian, on every route.
-  # The state route used to take the arrow-shaped joint Hessian at the joint
-  # mode instead, which is where its metric went wrong.
-  hessian <- try(.ctBackendHessian(spec, estimate, verbose = verbose,
-    gradient = gradient), silent = TRUE)
-  if (inherits(hessian, "try-error")) hessian <- NULL
-
-  # The innovations join the vector after the optimisation rather than before
-  # it, at zero: their prior mode, and the trajectory these parameters alone
-  # imply. The sampler moves them from there.
-  if (!is.null(jointobjective)) estimate <- c(estimate, numeric(nstate))
 
   joint <- identical(intoverpop, "none")
-
-  # The shell the assembler fills, matching what an optimised fit carries so
-  # that everything downstream reads a sampled fit the same way.
-  subject_loglik <- as.numeric(optimised$subject_loglik)
-  # The population block alone, as everywhere else: `estimate$raw` means the
-  # parameters on every fit, and the assembler overwrites it with the
-  # posterior mean of exactly those.
-  theta <- estimate[seq_len(npar)]
-  # `$data` is not set here: see the identical note in .ctFitJuliaBackendImpl()
-  # (R/ctJuliaBackend.R) -- ctFit.R attaches the sentinel-cleaned `standata`
-  # after this call returns, and `model_spec$data` already covers what code in
-  # this package needs from the verbatim long frame.
-  out <- list(backend = "julia", model = model, model_spec = model_spec,
-    estimate = list(raw = theta,
-      loglik = if (length(subject_loglik)) sum(subject_loglik) else
-        as.numeric(optimised$maximum_loglik),
-      logposterior = as.numeric(optimised$maximum_loglik)),
-    # The run that placed the sampler, in the same object the optimising route
-    # puts its run in. What it describes is a different point from `$estimate$raw`
-    # -- that is the posterior mean -- which is exactly why the two are not one
-    # list: `$optim$converged` is a statement about the placement, and reading
-    # it as a statement about the sample is the confusion `$sample$converged`
-    # exists to prevent.
-    optim = list(
-      # The placement optimisation's own verdict, not an assertion. This was
-      # hardcoded TRUE, which said "converged" about a run whose result was
-      # sitting right here unread -- and a sampler placed from a point the
-      # optimiser did not reach is exactly the case a reader wants to know
-      # about, because the metric is built there too.
-      converged = isTRUE(optimised$converged),
-      chunks = as.integer(optimised$chunks)),
-    engine = model_spec$engine,
-    args = list(backend = "julia",
-      optimcontrol = optimcontrol, cores = cores, priors = priors,
-      intoverpop = intoverpop, optimize = FALSE,
-      intoverstates = isTRUE(intoverstates)))
-  # "ctFit", not "ctFitModel": the latter marks an unfitted model spec
-  # (see .ctFitModelObject), and the optimised path gives its fits "ctFit".
-  # Nothing dispatches on either today, so this is consistency rather than a
-  # behaviour change.
-  class(out) <- c("ctJuliaFit", "ctFit")
   # What the runner needs to know, and all a worker needs to rebuild it: the
   # state-explicit route samples the trajectory alongside the parameters, so
   # `estimate` is longer than `npar` there and the objective is the joint one.
   target <- .ctBackendSampleTarget(estimate = estimate, npar = npar,
     marginal = !joint, state_explicit = !isTRUE(intoverstates),
     hessian = hessian, gradient = gradient)
-  out <- .ctBackendSampleRun(out, target, chains = chains, warmup = warmup,
+
+  # The same runner `ctSample()` reaches, and the same fit -- `placementfit`,
+  # not a second, bespoke list -- so `.ctBackendSampleAssemble()` carries
+  # forward every field `.ctJuliaOptimiseFit()` already computed (`$optim`,
+  # `$laplace`, `$uncertainty$certification`, `$identifiability`,
+  # `$collapsedScales`, `$transformedpars`) exactly as it does for an
+  # optimised fit handed to `ctSample()`. `test-julia-fit-shape.R` is what
+  # keeps that parity from drifting again.
+  out <- .ctBackendSampleRun(placementfit, target, chains = chains, warmup = warmup,
     draws = draws, cores = cores, saveEffects = saveEffects, seed = seed,
     control = control, verbose = verbose,
-    # On when someone is watching, matching the optimiser rather than
+    # On when someone is watching, matching the placement rather than
     # differing from it. The two run one after the other in this same call,
     # and having the first print progress by default while the second stayed
     # silent is what made a running sampler look like a finished
@@ -1538,44 +1581,33 @@ print.ctSampleDiagnostics <- function(x, ...) {
     # and nothing followed it for several minutes.
     progress = verbose > 0L || .ctProgressConsole(),
     processes = processes, handles = handles)
-  # The identifiability report is about the parameters, so it is given the
-  # parameter block's own curvature -- the profiled one on the state route,
-  # not the corner of the joint matrix, which describes the parameters at a
-  # trajectory held fixed.
-  identhessian <- hessian
+
+  # State-explicit only: the identifiability report is about the parameters,
+  # so it needs the curvature that lets the states respond to them -- the
+  # *profiled* joint Hessian, by the implicit-function theorem at this
+  # (theta, z=0) point -- not the plain marginal `placementfit` carries (the
+  # filter's own linearisation, which the state-explicit route exists to
+  # avoid depending on for the answer) and not the corner of the naive joint
+  # matrix either, which describes the parameters at a trajectory held fixed.
+  # Every other route keeps the identifiability `.ctJuliaOptimiseFit()`
+  # already computed and warned about at placement, which
+  # `.ctBackendSampleAssemble()` carried through unchanged above.
   if (!is.null(jointobjective)) {
+    module <- .ctJuliaModule(placedspec$project)
     identhessian <- try(matrix(as.numeric(.ctBackendJuliaValue(
       module$ctsem_joint_hessian(jointobjective,
         .ctJuliaNumericVector(estimate), profile = TRUE))),
       nrow = npar, ncol = npar), silent = TRUE)
     if (inherits(identhessian, "try-error")) identhessian <- NULL
     out$estimate$innovations <- estimate[npar + seq_len(nstate)]
-    out$estimate$states <- try(.ctJuliaJointStates(model_spec,
+    out$estimate$states <- try(.ctJuliaJointStates(placedspec,
       jointobjective, estimate), silent = TRUE)
     if (inherits(out$estimate$states, "try-error")) out$estimate$states <- NULL
     out$estimate$loglik_type <- "joint"
+    out$identifiability <- .ctBackendIdentifiability(identhessian,
+      .ctBackendRawParameterNames(out, npar), fit = out, at = theta)
+    out$collapsedScales <- .ctBackendCollapsedScales(out)
+    .ctBackendIdentifyWarn(out$identifiability, out$collapsedScales, NULL)
   }
-  out$identifiability <- .ctBackendIdentifiability(identhessian,
-    .ctBackendRawParameterNames(out, npar), fit = out, at = theta)
-
-  # The rest of what a julia fit carries, from the optimisation that placed the
-  # sampler. These were on an optimised fit and absent here, so the same reader
-  # -- `ctReport()`, a GUI, `summary()` -- got a field on one route and NULL on
-  # the other, with nothing saying which. `test-julia-fit-shape.R` is what keeps
-  # them in step now; see its allowlists for the two that differ on purpose.
-  out$optim$trace <- .ctBackendTrace(optimised$trace)
-  out$laplace <- .ctJuliaFitLaplaceBlock(model_spec, optimised)
-  # A collapsed population scale is a property of the model and the data, not
-  # of the estimator, so it is as true of a sampled fit as an optimised one --
-  # and it was reported only on the latter.
-  out$collapsedScales <- .ctBackendCollapsedScales(out)
-  # Likewise a flat direction. The sampled route already computed
-  # `$identifiability` above and then said nothing about it, so a fit knew it
-  # had an unidentified direction and never mentioned it.
-  #
-  # `$uncertainty$intervalcheck` is deliberately not passed: that check compares
-  # curvature-based standard errors against the reported interval, and a sampled
-  # fit's interval comes from draws instead, so there is nothing to compare.
-  .ctBackendIdentifyWarn(out$identifiability, out$collapsedScales, NULL)
   out
 }

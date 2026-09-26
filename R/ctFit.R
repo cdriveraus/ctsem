@@ -697,6 +697,18 @@ T0VARredundancies <- function(ctm) {
 #' model, and its dimension grows with the number of subjects rather than
 #' staying at the parameter count. \code{TRUE} and \code{FALSE} may be given
 #' in place of the character forms above.
+#'
+#' With \code{backend='julia'} and \code{optimize=FALSE}, the sampler is
+#' placed by running the same pipeline \code{optimize=TRUE} does on the
+#' integrated objective -- starting values, the prior warm-up, the substep
+#' mesh, the endgame's certification and its resume, restarts only if asked --
+#' never the joint density of parameters and random effects, which has no
+#' interior maximum and is not a place to start a chain from. That placed fit
+#' is then handed to the same runner \code{\link{ctSample}} uses, so the two
+#' are one pipeline: \code{intoverpop='laplace'} samples the Laplace marginal,
+#' \code{intoverpop='none'} (the \code{FALSE} route above) the joint posterior,
+#' and \code{\link{ctSample}}'s own \code{target} argument says which one a
+#' later call on the resulting fit repeats or overrides.
 #' @param sameInitialTimes if TRUE, include an empty observation for every subject that has no observation
 #' at the earliest observation time of the dataset. This ensures that the T0MEANS occurs for every subject at the same time,
 #' rather than just at the earliest observation for that subject. Important when modelling trends over time, age, etc.
