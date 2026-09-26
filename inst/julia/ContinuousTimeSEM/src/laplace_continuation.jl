@@ -1063,11 +1063,11 @@ at five effects a unit, 502 of the 727 seconds a correction took beside a
 184-second fit (dev1, 8 threads, 150 subjects, dev/lapcontinue/highdim.R) --
 and because the gradient is exact, so the only error forward differences add
 is the step's truncation. Measured against central differences on the
-optimiser bench's Laplace fits whose continuation reported this Hessian (32 fits,
-11 configurations; review/bench/2026-09-26-baseline.md), the largest change in
+optimiser bench's Laplace fits whose continuation reported this Hessian (32 fits
+of 9 models; review/bench/2026-09-26-baseline.md), the largest change in
 any standard error was 0.24%. The Laplace Hessian is no substitute: at the
 Laplace optimum or at the continuation's estimate it moved some standard error
-by more than 20% on three of the eleven, by up to 69%.
+by more than 20% on three of the nine, by up to 69%.
 """
 function ctsem_laplace_continuation_hessian(o::CTSEMLaplaceContinuation,
     values::AbstractVector; step::Real=1e-4, scheme=:forward)
