@@ -718,6 +718,26 @@ function _ctsem_saddle_ladder(value_at, x::AbstractVector, value::Real, split,
 end
 
 """
+    _ctsem_secant_along(H, s, y)
+
+`H` with its curvature along the step `s` replaced by the secant's, `s'y / s's`
+(`y` the change in gradient over the step), and every other direction's kept:
+a symmetric rank-one correction, which is what lets the chord's copy of its
+Hessian follow a curvature that changes along the direction it walks. Returned
+unchanged when the secant is not a positive, finite curvature -- noise, or a
+step into negative curvature, which the chord then keeps from its Hessian.
+"""
+function _ctsem_secant_along(H::AbstractMatrix, s::AbstractVector, y::AbstractVector)
+    ss = dot(s, s)
+    (isfinite(ss) && ss > 0) || return H
+    kappa = dot(s, y) / ss
+    (isfinite(kappa) && kappa > 0) || return H
+    current = dot(s, H * s) / ss
+    isfinite(current) || return H
+    H .+ ((kappa - current) / ss) .* (s * transpose(s))
+end
+
+"""
     _ctsem_newton_finish(objective, x, f, G, fg!; ...)
 
 The endgame, from `x` on the minimised objective behind `fg!` (`f` and `G` its
@@ -731,7 +751,8 @@ What the steps are taken against is `curvature`:
 - `:chord`  the exact Hessian at `x`, kept for every step (the chord, or
   simplified Newton, method: linear convergence at the rate the Hessian
   changes between `x` and the optimum, which from a hand-over this close is
-  fast);
+  fast), with the steps' copy of it corrected along any step that contracts
+  slowly by the secant curvature there (`_ctsem_secant_along`);
 - `:subset` the likelihood Hessian of a random `subset` share of the units
   (at least `subset_min`), scaled up to the data, with the prior's curvature
   kept whole -- a chord Hessian at a fraction of the cost.
@@ -896,6 +917,11 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
     report(g) = callback === nothing || callback(CTSEMIterate(iteration0 + steps,
         f, maximum(abs, G; init=0.0), g))
     H = step_hessian(x)
+    # What the steps are taken against: `H` itself, except that the chord
+    # corrects its copy along the direction it walks (see the refresh below),
+    # while `H`, exact where it was evaluated, is what the reuse test and the
+    # certification read.
+    Hs = H
     hat = copy(x)                       # where `H` was evaluated
     exact = curvature !== :subset       # `H` is the exact Hessian at `hat`
     steps = 0; escapes = 0; gain = Inf
@@ -913,7 +939,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         converged = false
         mu = 0.0; prevgain = Inf
         while take_steps && steps < maxit
-            nt = newton(H, G, mu)
+            nt = newton(Hs, G, mu)
             nt === nothing && break
             gain = nt.gain
             if gain < tol
@@ -932,7 +958,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             trial = search(nt.step, dot(G, nt.step))
             if !trial.ok
                 if !at_x
-                    H = hess(x); hat = copy(x); exact = true; at_x = true
+                    H = hess(x); Hs = H; hat = copy(x); exact = true; at_x = true
                     H === nothing && break
                 else
                     mu = mu == 0 ? 1e-4 : 10mu
@@ -942,6 +968,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             end
             Gn = similar(G)
             fg!(nothing, Gn, trial.x); gcalls += 1
+            dx = trial.x .- x; dg = Gn .- G
             x = trial.x; f = trial.f; G = Gn; steps += 1; at_x = false
             remember!("newton", gain, trial.alpha)
             mu = trial.alpha == 1 ? mu / 10 : mu
@@ -959,11 +986,23 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             # left on the ridge at -210.13, three of them notstationary, that
             # the refreshed steps had climbed off -- to -207.02 twice, -207.29
             # and -205.83.
-            if curvature === :exact && gain / prevgain > contraction && steps > 1
-                H = hess(x); hat = copy(x); exact = true; at_x = true
+            #
+            # The chord's refresh is a free one: its copy of the matrix takes
+            # the secant's curvature along the step it just took, which the
+            # gradients at both ends measure, and keeps the exact Hessian's
+            # everywhere else (`_ctsem_secant_along`). Without it the chord
+            # walked a ray whose curvature decays along it -- a random-effect sd
+            # heading toward zero -- at the curvature of where it started, every
+            # step shorter than the last: on AnomAuth S1 from its default start
+            # (bench, dev1), 30 chord steps for gains of 4e-5 down to 3e-7, then
+            # five exact Hessians to finish, seven in the stage.
+            slow = gain / prevgain > contraction && steps > 1
+            if curvature === :exact && slow
+                H = hess(x); Hs = H; hat = copy(x); exact = true; at_x = true
                 H === nothing && break
                 prevgain = Inf
             else
+                curvature === :chord && slow && (Hs = _ctsem_secant_along(Hs, dx, dg))
                 prevgain = gain
             end
         end
@@ -992,7 +1031,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             if !keep
                 for _ in 1:5
                     if !at_x
-                        H = hess(x); hat = copy(x); exact = true; at_x = true
+                        H = hess(x); Hs = H; hat = copy(x); exact = true; at_x = true
                     end
                     H === nothing && break
                     take_steps || break
@@ -1009,7 +1048,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
                 end
                 # A step on the last round leaves the Hessian one point behind.
                 if !at_x && H !== nothing
-                    H = hess(x); hat = copy(x); exact = true; at_x = true
+                    H = hess(x); Hs = H; hat = copy(x); exact = true; at_x = true
                 end
             end
         end
@@ -1039,7 +1078,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         steps += 1; escapes += 1
         remember!("saddle", NaN, tried.best.length)
         report(NaN)
-        H = hess(x); hat = copy(x); exact = true; at_x = true
+        H = hess(x); Hs = H; hat = copy(x); exact = true; at_x = true
         saddle = false; ladder_tried = false
         H === nothing && break
     end

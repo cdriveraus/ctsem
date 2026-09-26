@@ -839,6 +839,34 @@ end
     @test abs(flat.x[2]) < 1e-6
 end
 
+@testset "the chord follows a curvature that decays along its walk" begin
+    # Maximised: one stiff direction and an exponential tail, the shape of a
+    # random-effect sd on a ray toward zero -- the likelihood rises without
+    # bound in raw units and the curvature decays with it, so every Hessian is
+    # stale one step later. At the curvature of the hand-over each chord step
+    # was shorter than the last and the finish ran out of steps, then formed
+    # exact Hessians to finish (seven in the stage on AnomAuth S1); the
+    # secant along each slow step keeps the steps the length the ray needs.
+    b = 1e-4
+    f = p -> -0.5e4 * p[1]^2 - b * exp(2 * p[2])
+    m = _endgame_mock(f)
+    out = _endgame_run(m, [0.0, 0.0]; curvature = :chord, probe = false)
+    @test out.gain < 1e-8
+    @test out.steps < 30
+    @test out.full_hessians <= 2
+    @test m.hessians[] == out.full_hessians
+    # Walked as far as the tolerance needs: what is left along the ray is the
+    # objective's own remaining gain, b exp(2 p2).
+    @test b * exp(2 * out.x[2]) < 1e-7
+    # The secant itself: exact along the step for a quadratic, and nothing
+    # changed when the step measures no positive curvature.
+    H = [4.0 1.0; 1.0 3.0]
+    s = [1.0, 0.0]
+    @test ContinuousTimeSEM._ctsem_secant_along(H, s, [2.0, 7.0])[1, 1] ≈ 2.0
+    @test ContinuousTimeSEM._ctsem_secant_along(H, s, [2.0, 7.0])[2, 2] == 3.0
+    @test ContinuousTimeSEM._ctsem_secant_along(H, s, [-1.0, 0.0]) === H
+end
+
 @testset "a first step that does not contract hands the point back" begin
     # A quadratic whose Hessian is reported a hundred times too large, as the
     # curvature at a point outside Newton's region misleads: the first step goes
