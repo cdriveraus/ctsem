@@ -457,6 +457,8 @@ mutable struct CTSEMLaplaceObjective{O} <: CTSEMOptimisable
     gated_units::Int
 end
 
+# `gate_lo = 0.2` and `gate_hi = 0.7` are measured, not derived: see the
+# provenance paragraph at the gated rule's section further down.
 function CTSEMLaplaceObjective(objective::CTSEMObjective, spec::CTSEMLaplaceSpec;
     inner_maxiter::Integer=_LAPLACE_INNER_MAXITER[], inner_tol::Real=1e-10,
     floor=:total, gate_lo::Real=0.2, gate_hi::Real=0.7)
@@ -582,6 +584,13 @@ parameter space, not a numerical detail, so `ctsem_laplace_boundary` reports
 which coordinates are sitting on it and the R side warns naming them. A prior
 would also solve this, but it would change the estimator silently; a cap that
 announces itself does not.
+
+Provenance. A chosen value with no measurement on record: 0.99 is a round
+correlation at which the covariance still factorizes, not a number any fixture
+was tuned to. It moves where a fit ends whenever a correlation reaches it,
+which is why the optimisation plan's Appendix B lists it among the constants
+that decide an estimate
+(`CT-SEM/review/OPTIM-consolidation-plan-2026-09-25.md`).
 """
 const _LAPLACE_COR_CAP = Ref(5.2933)
 
@@ -2812,6 +2821,19 @@ end
 # relative 1e-3 of each other also keeps `T_total`: the soft direction is not
 # defined there, and a rule that chose one would be discontinuous in theta. On
 # the weak-data study the smallest gap was 0.24.
+#
+# Provenance of the constants, as Appendix B of
+# `CT-SEM/review/OPTIM-consolidation-plan-2026-09-25.md` sorts them. The band
+# (`lo = 0.2`, `hi = 0.7`) and its C1 hand-off, and the rule itself (3 nodes,
+# one Newton step for the complement at each), are measured rather than
+# derived, and they move where a fit ends. They were set on the weak-data
+# families A, B and C -- 40 subjects, a random drift beside random T0MEANS and
+# CINT (A), a random diffusion (B), a random measurement error (C) -- against
+# the exact per-unit reference (`LAPLACE-eigenwise-floor-2026-09-23.md`,
+# `LAPLACE-gated-gaps-2026-09-24.md` section 1). Categorical indicators
+# (family D) and nested units (family N) were only checked afterwards, and
+# the constants were not refitted there. The `1e-3` degenerate-pair gap is a
+# numerical guard, and `_LAPLACE_EIGEN_MAXDIM` a cost bound.
 
 
 """
