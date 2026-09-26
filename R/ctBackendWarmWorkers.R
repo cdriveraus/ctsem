@@ -302,8 +302,9 @@
 
 #' Release the warmed sampling worker pool
 #'
-#' \code{\link{ctSample}} and \code{ctFit(backend = 'julia', optimize = FALSE)}
-#' warm a pool of background R processes ahead of a multi-chain sample, each
+#' \code{\link{ctFitUncertainty}} with \code{uncertainty = 'sample'} and
+#' \code{ctFit(backend = 'julia', optimize = FALSE)} warm a pool of background
+#' R processes ahead of a multi-chain sample, each
 #' one compiled for the model's shape before its chain starts, so the compile
 #' cost overlaps the optimisation that runs first rather than being paid
 #' serially once sampling begins. That pool is deliberately left running
@@ -317,7 +318,7 @@
 #' the workers that sample is running in.
 #'
 #' @return \code{NULL}, invisibly.
-#' @seealso \code{\link{ctSample}}, \code{\link{ctJuliaSetup}}
+#' @seealso \code{\link{ctFitUncertainty}}, \code{\link{ctJuliaSetup}}
 #' @export
 ctJuliaWorkersStop <- function() {
   invisible(.ctBackendWarmStop(NULL))

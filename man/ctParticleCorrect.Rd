@@ -65,7 +65,8 @@ particle-filter evaluations, per iteration.}
 \item{maxiter}{\code{draws = 'imis'} only. Iteration cap.}
 
 \item{correct_estimate}{Move the point estimate to the importance-weighted
-posterior mean, as \code{ctSample} moves it to the posterior mean. When
+posterior mean, as \code{uncertainty = 'sample'} moves it to the posterior
+mean. When
 \code{FALSE} only the draws, covariance and standard errors change.}
 
 \item{cores}{Engine threads. The particle filter splits the subjects across
@@ -111,8 +112,9 @@ covariance, and the weights correct both the normal approximation and the
 filter's. The fit's own draws are not reused, because a proposal no wider
 than the curvature cannot correct a posterior wider than it. After
 \code{ctOptimUncertainty(uncertainty = 'is')}, a bootstrap, or
-\code{\link{ctSample}}, the fit's draws already sit on the filter posterior,
-so they are reused and the weight is the likelihood ratio alone. \code{draws
+\code{\link{ctFitUncertainty}} with \code{uncertainty = 'sample'}, the fit's
+draws already sit on the filter posterior, so they are reused and the
+weight is the likelihood ratio alone. \code{draws
 = 'imis'} draws afresh, adaptively, from a mixture that starts at the fit's
 covariance and moves toward the particle posterior, at one particle-filter
 evaluation per proposal draw; it is the same sampler

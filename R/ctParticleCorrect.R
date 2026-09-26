@@ -13,10 +13,10 @@
 # The density the draws came from is the one thing this has to get right, and
 # it depends on how the fit was finished. Curvature methods draw from a normal
 # around the estimate with the fit's covariance; `ctOptimUncertainty('is')`,
-# the bootstrap and `ctSample()` leave draws distributed as the filter posterior
-# itself. `.ctParticleProposal()` reads that off the fit's own record rather
-# than assuming, because assuming the wrong one gives weights that look fine
-# and describe nothing.
+# the bootstrap and `ctFitUncertainty(fit, uncertainty = 'sample')` leave draws
+# distributed as the filter posterior itself. `.ctParticleProposal()` reads
+# that off the fit's own record rather than assuming, because assuming the
+# wrong one gives weights that look fine and describe nothing.
 #
 # Two draw strategies, as in `ctLaplaceCorrect()`: one batch of weighted draws,
 # or the adaptive importance sampler the package already uses (`imis_is`,
@@ -63,8 +63,9 @@
 #' filter's. The fit's own draws are not reused, because a proposal no wider
 #' than the curvature cannot correct a posterior wider than it. After
 #' \code{ctOptimUncertainty(uncertainty = 'is')}, a bootstrap, or
-#' \code{\link{ctSample}}, the fit's draws already sit on the filter posterior,
-#' so they are reused and the weight is the likelihood ratio alone. \code{draws
+#' \code{\link{ctFitUncertainty}} with \code{uncertainty = 'sample'}, the fit's
+#' draws already sit on the filter posterior, so they are reused and the
+#' weight is the likelihood ratio alone. \code{draws
 #' = 'imis'} draws afresh, adaptively, from a mixture that starts at the fit's
 #' covariance and moves toward the particle posterior, at one particle-filter
 #' evaluation per proposal draw; it is the same sampler
@@ -111,7 +112,8 @@
 #'   particle-filter evaluations, per iteration.
 #' @param maxiter \code{draws = 'imis'} only. Iteration cap.
 #' @param correct_estimate Move the point estimate to the importance-weighted
-#'   posterior mean, as \code{ctSample} moves it to the posterior mean. When
+#'   posterior mean, as \code{uncertainty = 'sample'} moves it to the posterior
+#'   mean. When
 #'   \code{FALSE} only the draws, covariance and standard errors change.
 #' @param cores Engine threads. The particle filter splits the subjects across
 #'   them; its result does not depend on the count.
@@ -410,7 +412,8 @@ print.ctParticleCorrection <- function(x, ...) {
 # Which density the fit's draws came from, read off the fit's own record.
 # `ctOptimUncertainty()` writes `fit$uncertainty$draws` for every method,
 # `ctLaplaceCorrect()` and `ctParticleCorrect()` rewrite it when they replace
-# the draws, and `ctSample()` marks a sampled fit with `fit$sample`.
+# the draws, and `ctFitUncertainty(fit, uncertainty = 'sample')` marks a
+# sampled fit with `fit$sample`.
 .ctParticleProposal <- function(fit) {
   if (!is.null(fit$sample) || identical(fit$uncertainty$settings$method, "sampling")) {
     return("posterior")

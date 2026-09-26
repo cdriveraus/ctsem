@@ -35,7 +35,7 @@ survives serialisation.}
 \item{handles}{Optional warmed pool from [.ctBackendWarmWorkers()]. When
 absent the workers are started here and the compile is paid in full.}
 
-\item{control, saveEffects, seed, verbose}{As for [ctSample()].}
+\item{control, saveEffects, seed, verbose}{As for [ctFitUncertainty()].}
 
 \item{progress}{Report chain progress from the parent while the workers
 run. Separate from `verbose` for the same reason `.ctBackendSampleEngine`

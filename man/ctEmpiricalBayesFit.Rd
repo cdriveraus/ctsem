@@ -98,7 +98,7 @@ call uses the same backend. \code{ebUse='rawposterior'} needs each subject
 fit to carry posterior draws (the default for both backends' optimised fits,
 unless \code{optimcontrol$estonly=TRUE}), or a sampled fit
 (\code{optimize=FALSE}, or for \code{backend='julia'} a Laplace fit passed
-through \code{\link{ctSample}}).
+through \code{\link{ctFitUncertainty}} with \code{uncertainty = 'sample'}).
 }
 \examples{
 \donttest{

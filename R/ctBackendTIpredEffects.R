@@ -183,8 +183,9 @@
   }
 
   # Samples of the raw parameter vector: the posterior draws from
-  # ctOptimUncertainty()/ctSample() when present, otherwise the point estimate
-  # repeated -- the same fallback ctBackendParMatrices() and friends use.
+  # ctOptimUncertainty()/ctFitUncertainty(fit, 'sample') when present,
+  # otherwise the point estimate repeated -- the same fallback
+  # ctBackendParMatrices() and friends use.
   samples <- .ctBackendRawSamples(fit)
   niter <- nrow(samples)
   if (identical(nsamples, "all") || nsamples > niter) nsamples <- niter

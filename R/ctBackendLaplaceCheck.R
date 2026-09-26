@@ -107,9 +107,10 @@
 #'   by a near-singular curvature is how a meaningless correction gets a
 #'   plausible-looking number.
 #'
-#' @seealso \code{\link{ctSample}} removes the approximation instead of
-#'   measuring it, by sampling the joint posterior; much slower, and the right
-#'   answer when \code{delta_se} says a linear correction is not credible.
+#' @seealso \code{\link{ctFitUncertainty}} with \code{uncertainty = 'sample'}
+#'   removes the approximation instead of measuring it, by sampling the joint
+#'   posterior; much slower, and the right answer when \code{delta_se} says a
+#'   linear correction is not credible.
 #'
 #' @examples
 #' \dontrun{
@@ -203,7 +204,8 @@ ctLaplaceCheck <- function(fit, nodes = 5L, correction = TRUE, step = 1e-3,
   verdict <- .ctFitGap("quadrature", gap = gap, nsubjects = nsubjects,
     remedy = paste0("A gap that matters means the Laplace approximation is ",
       "limiting the fit rather than the data; ctLaplaceCorrect() moves the ",
-      "estimate, and ctSample() avoids the approximation entirely."))
+      "estimate, and ctFitUncertainty(fit, 'sample') avoids the approximation ",
+      "entirely."))
   out <- list(verdict = verdict,
     gap = gap, quadrature = quadrature, laplace = laplacevalue,
     gap_per_subject = gap / max(1L, nsubjects),

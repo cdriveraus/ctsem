@@ -116,8 +116,9 @@ ctEBrawMatrix <- function(fits, parnames, use=c('rawest','rawposterior')){
     # is the julia counterpart of ctStanRawSamples(): draws from
     # ctOptimUncertainty() by default (normal approximation, importance
     # sampling or a bootstrap depending on optimcontrol$uncertainty), or from
-    # ctSample()'s exact Hamiltonian posterior when the subject fit used
-    # optimize=FALSE. A subject fit with optimcontrol$estonly=TRUE (used for
+    # ctFitUncertainty(fit, uncertainty = 'sample')'s exact Hamiltonian
+    # posterior when the subject fit used optimize=FALSE. A subject fit with
+    # optimcontrol$estonly=TRUE (used for
     # ctEmpiricalBayesFit()'s first pass) has no posterior draws at all, which
     # is caught below rather than surfacing as a dimension mismatch.
     samples <- if(julia) fit$estimate$rawposterior else ctStanRawSamples(fit)
@@ -435,7 +436,7 @@ ctEBfitArgsOptimDefaults <- function(fitargs, stochastic=FALSE,
 #' fit to carry posterior draws (the default for both backends' optimised fits,
 #' unless \code{optimcontrol$estonly=TRUE}), or a sampled fit
 #' (\code{optimize=FALSE}, or for \code{backend='julia'} a Laplace fit passed
-#' through \code{\link{ctSample}}).
+#' through \code{\link{ctFitUncertainty}} with \code{uncertainty = 'sample'}).
 #'
 #' @param datalong Long format data containing multiple subjects.
 #' @param model Model object from \code{\link{ctModel}}. Time independent

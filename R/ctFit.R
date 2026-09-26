@@ -704,11 +704,12 @@ T0VARredundancies <- function(ctm) {
 #' mesh, the endgame's certification and its resume, restarts only if asked --
 #' never the joint density of parameters and random effects, which has no
 #' interior maximum and is not a place to start a chain from. That placed fit
-#' is then handed to the same runner \code{\link{ctSample}} uses, so the two
-#' are one pipeline: \code{intoverpop='laplace'} samples the Laplace marginal,
+#' is then handed to the same runner \code{\link{ctFitUncertainty}} uses for
+#' \code{uncertainty = 'sample'}, so the two are one pipeline:
+#' \code{intoverpop='laplace'} samples the Laplace marginal,
 #' \code{intoverpop='none'} (the \code{FALSE} route above) the joint posterior,
-#' and \code{\link{ctSample}}'s own \code{target} argument says which one a
-#' later call on the resulting fit repeats or overrides.
+#' and \code{\link{ctFitUncertainty}}'s own \code{control$target} entry says
+#' which one a later call on the resulting fit repeats or overrides.
 #' @param sameInitialTimes if TRUE, include an empty observation for every subject that has no observation
 #' at the earliest observation time of the dataset. This ensures that the T0MEANS occurs for every subject at the same time,
 #' rather than just at the earliest observation for that subject. Important when modelling trends over time, age, etc.
@@ -723,7 +724,7 @@ T0VARredundancies <- function(ctm) {
 #' otherwise use the HMC sampler from Stan, which is (much) slower, but generally more robust for complex individual differences.
 #' Importance sampling is a separate, opt-in uncertainty method on top of the optimized estimate; see \code{\link{ctOptimUncertainty}}.
 #' When \code{optimize=FALSE}, the stored point estimate (\code{stanfit$rawest}) is the per-parameter
-#' median of the posterior draws; the julia backend's sampled point estimate (see \code{\link{ctSample}})
+#' median of the posterior draws; the julia backend's sampled point estimate (see \code{\link{ctFitUncertainty}} with \code{uncertainty = 'sample'})
 #' is the per-parameter mean instead.
 #' @param optimcontrol list of parameters sent to \code{\link{stanoptimis}}
 #' governing optimization. It is the only optimizer control list: the julia
@@ -942,6 +943,10 @@ T0VARredundancies <- function(ctm) {
 #' \code{uncertainty} (default \code{'hessian'}), \code{uncertaintyDraws},
 #' \code{finishsamples}, and \code{uncertaintyControl}. Set
 #' \code{optimcontrol$estonly = TRUE} for point estimates only.
+#' \code{optimcontrol$uncertainty = 'sample'} is refused by name here: sampling
+#' needs its own placement, which \code{optimize=TRUE} does not run. Use
+#' \code{optimize=FALSE} to fit and sample together, or
+#' \code{\link{ctFitUncertainty}(fit, 'sample')} on this fit once it is made.
 #'
 #' \code{optimcontrol$stallretries} (default 2 on both backends) caps how often a
 #' fit that stopped somewhere that is not a maximum is tried again, and each
@@ -1012,7 +1017,8 @@ T0VARredundancies <- function(ctm) {
 #' separate maximum-likelihood engine with the same model definitions and the
 #' same summaries; it takes its own reverse-mode gradient, supports
 #' \code{intoverpop='laplace'} for random effects, and can be sampled afterwards
-#' with \code{\link{ctSample}}. It needs a working Julia -- see
+#' with \code{\link{ctFitUncertainty}} (\code{uncertainty = 'sample'}). It
+#' needs a working Julia -- see
 #' \code{\link{ctJuliaSetup}} and \code{\link{ctJuliaInstall}}.
 #' @param sampleControl Used when \code{optimize=FALSE}: a list holding
 #' everything about how to sample. \code{iter} (default 1000) counts warmup and
@@ -1031,9 +1037,10 @@ T0VARredundancies <- function(ctm) {
 #' (FALSE), and the effective-sample-size target that decides when a run stops:
 #' \code{minESS} (200, the size the worst parameter must reach),
 #' \code{rhatTarget} (1.01), \code{meanESS}, \code{maxDraws} and
-#' \code{settleTol} -- all documented in full under \code{sampleControl} in
-#' \code{\link{ctSample}}. A name the sampler does not read is an error rather
-#' than ignored, because a name the list drops silently costs a whole run.
+#' \code{settleTol} -- all documented in full under \code{control} in
+#' \code{\link{ctFitUncertainty}}. A name the sampler does not read is an error
+#' rather than ignored, because a name the list drops silently costs a whole
+#' run.
 #' Given \code{minESS} or \code{meanESS}, \code{iter} becomes the budget the
 #' run may take rather than the count it must: it stops as soon as the target
 #' is met.
@@ -1053,9 +1060,9 @@ T0VARredundancies <- function(ctm) {
 #' \code{maxdelta} (1000), \code{init_scale} (1), \code{adapt_metric} (FALSE), \code{adapt_effects} (FALSE),
 #' and the optional effective-sample-size target \code{minESS}, \code{meanESS}, \code{maxDraws},
 #' \code{rhatTarget} (1.01) and \code{settleTol} -- all documented in full under \code{control} in
-#' \code{\link{ctSample}} -- plus \code{warmup} (default half of \code{iter}), \code{seed} (default
-#' 20260828) and \code{processes} (default TRUE), which \code{\link{ctSample}} instead takes as
-#' separate named arguments.
+#' \code{\link{ctFitUncertainty}} -- plus \code{warmup} (default half of \code{iter}), \code{seed} (default
+#' 20260828) and \code{processes} (default TRUE), which \code{\link{ctFitUncertainty}} takes as
+#' \code{control} entries too.
 #' @param nlcontrol List of non-linear control parameters.
 #' \code{maxtimestep} must be a positive numeric,  specifying the largest time
 #' span covered by the numerical integration. The large default ensures that for each observation time interval,
