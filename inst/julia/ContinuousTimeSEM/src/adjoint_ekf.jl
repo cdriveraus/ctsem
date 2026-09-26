@@ -70,6 +70,13 @@ mutable struct CTSEMPredictRecord{T}
     affine::Vector{T}        # `r` in the derivation: the local affine correction
     dINT_dynamic::Vector{T}  # solved discrete intercept on the dynamic block
     dt::T
+    # Which pieces took the series route (`series_discretization.jl`), and the
+    # diffusion block the noise series integrated, which its pullback needs
+    # where the closed form needed only `Xlyap`. Empty until a substep uses
+    # it, so a model that never takes the series carries no extra storage.
+    series_intercept::Bool
+    series_noise::Bool
+    Qd::Matrix{T}
 end
 
 """One TD-predictor impulse."""
@@ -440,7 +447,7 @@ end
 _empty_predict_record(::Type{T}, n::Int, k::Int, naff::Int=k) where {T} =
     CTSEMPredictRecord{T}(zeros(T, n), zeros(T, n, n), zeros(T, n, n),
         zeros(T, n, n), zeros(T, n, n), zeros(T, n, n), zeros(T, k, k),
-        zeros(T, naff), zeros(T, naff), zero(T))
+        zeros(T, naff), zeros(T, naff), zero(T), false, false, zeros(T, 0, 0))
 
 """
 Snapshot the substep inputs, which `_ekf_predict_step!` overwrites.
@@ -482,6 +489,12 @@ function _record_predict!(tape::CTSEMAdjointTape{T}, ws, pars,
     _tape_fill!(record.affine, view(ws.affine_buffer.r, 1:naff))
     _tape_fill!(record.dINT_dynamic, view(ws.discrete_ca.dINT, 1:naff))
     record.dt = T(Δt)
+    series = ws.discretization_buffer.series
+    record.series_intercept = series.intercept
+    record.series_noise = series.noise
+    if series.noise
+        record.Qd = _tape_fill!(record.Qd, view(series.Q, 1:k, 1:k))
+    end
     _tape_push!(tape, :predict, index)
     return nothing
 end
@@ -596,6 +609,13 @@ Note `A` is the matrix exponential itself: this port sets `dDRIFT = eJAx`, so
 the discrete drift and the exponential are the same object and share one
 cotangent.
 
+Where a pivot was small against the interval the forward pass took either of
+two lines as the integral it is instead -- `dINT[1:naff] = Φ affine` with
+`Φ = ∫₀^dt e^{JAx s} ds`, and `dDIFF[D,D] = ∫₀^dt e^{JAx s} Qc e^{JAx' s} ds`
+-- and the record says which (`series_intercept`, `series_noise`). Neither
+reads `A`, so on those lines nothing reaches `Ā`; see
+`series_discretization.jl`.
+
 Two different sub-blocks appear, and conflating them was a bug. `D = dyn` is
 `diffusion_state_indices`, the states with their own diffusion; the Lyapunov
 solve and the `dDIFF` term live there. `1:naff` is the leading block of genuine
@@ -681,49 +701,77 @@ function _reverse_predict!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
     # `dDIFF_bar` is `Ps`, so `Ps` has to survive until `Qb` is taken from it.
 
     # --- dDIFF[D,D] = X - Ad X Ad'
-    X = record.Xlyap
     @inbounds for j in 1:k, i in 1:k
         Qb[i, j] = (Ps[dyn[i], dyn[j]] + Ps[dyn[j], dyn[i]]) / 2
     end
-    _ctsem_mulTN!(kk6, Ad, Qb)
-    _ctsem_mul!(X̄, kk6, Ad)
-    X̄ .= Qb .- X̄                                   # X̄ = Qb - Ad' Qb Ad
-    _ctsem_mul!(kk6, Qb, Ad)
-    _ctsem_mulNT!(Ād, kk6, X)
-    _ctsem_mulTN!(kk6, Qb, Ad)
-    _ctsem_mul!(Ād, kk6, X, one(T), one(T))
-    Ād .= .-Ād                                     # Ād = -(Qb Ad X' + Qb' Ad X)
-
-    # --- X = lyap(JAx[D,D], Qc[D,D])
     JAxd_bar = sc.kk7
     Qcd_bar = sc.kk8
-    _ctsem_lyap_pullback!(JAxd_bar, Qcd_bar, sc.kk9, sc.kk10, JAxd, X, X̄, lyap_buffer)
+    if record.series_noise
+        # --- dDIFF[D,D] = V(JAx[D,D], Qc[D,D], dt), the integral itself; see
+        # `series_discretization.jl`. It reads no exponential, so Ād is zero.
+        fill!(Ād, zero(T))
+        fill!(JAxd_bar, zero(T))
+        fill!(Qcd_bar, zero(T))
+        _series_noise!(sc.series, JAxd, record.Qd, record.dt, k)
+        _series_noise_pullback!(JAxd_bar, Qcd_bar, sc.series, k, Qb)
+    else
+        X = record.Xlyap
+        _ctsem_mulTN!(kk6, Ad, Qb)
+        _ctsem_mul!(X̄, kk6, Ad)
+        X̄ .= Qb .- X̄                                   # X̄ = Qb - Ad' Qb Ad
+        _ctsem_mul!(kk6, Qb, Ad)
+        _ctsem_mulNT!(Ād, kk6, X)
+        _ctsem_mulTN!(kk6, Qb, Ad)
+        _ctsem_mul!(Ād, kk6, X, one(T), one(T))
+        Ād .= .-Ād                                     # Ād = -(Qb Ad X' + Qb' Ad X)
 
-    # --- dINT[1:naff] = JAx[1:naff,1:naff] \ s   (s̄ = JAx⁻ᵀ dINT_bar, M̄ = -s̄ dINT')
-    # The affine block is a leading one, so everything below indexes directly
-    # with no gather, and its two outer products go straight into the full
-    # cotangents rather than through a sub-block that then has to be scattered.
-    @inbounds for i in 1:naff; s̄[i] = dINT_bar[i]; end
-    # `transpose(JAx) \ s̄` would be a LAPACK `getrf!`/`getrs!` pair, once per
-    # prediction substep, on a matrix of the dynamic-state size. At that size
-    # the call is mostly OpenBLAS's process-global buffer lock -- see
-    # `small_linalg.jl` -- so it goes through the engine's own LU instead.
-    @inbounds for j in 1:naff, i in 1:naff; aa1[i, j] = JAx[j, i]; end
-    _solve_square_system_generic!(aa1, s̄, sc.piv, naff)
-    @inbounds for j in 1:naff, i in 1:naff
-        JAx_bar[i, j] -= s̄[i] * record.dINT_dynamic[j]
+        # --- X = lyap(JAx[D,D], Qc[D,D])
+        _ctsem_lyap_pullback!(JAxd_bar, Qcd_bar, sc.kk9, sc.kk10, JAxd, X, X̄, lyap_buffer)
     end
 
-    # --- s = -affine + A affine, on the same leading block
-    @inbounds for i in 1:naff
-        acc = zero(T)
-        for q in 1:naff
-            acc += A[q, i] * s̄[q]
+    if record.series_intercept
+        # --- dINT[1:naff] = Phi affine, Phi = int_0^dt e^{JAx s} ds over the
+        # leading block, taken as a series; see `series_discretization.jl`.
+        # Like the noise series it reads no exponential, so nothing reaches Ā.
+        Phi = _series_intercept!(sc.series, JAx, record.dt, naff)
+        @inbounds for i in 1:naff
+            acc = zero(T)
+            for q in 1:naff
+                acc += Phi[q, i] * dINT_bar[q]
+            end
+            affine_bar[i] = acc
         end
-        affine_bar[i] = acc - s̄[i]
-    end
-    @inbounds for j in 1:naff, i in 1:naff
-        Ā[i, j] += s̄[i] * record.affine[j]
+        @inbounds for j in 1:naff, i in 1:naff
+            aa1[i, j] = dINT_bar[i] * record.affine[j]
+        end
+        _series_intercept_pullback!(JAx_bar, sc.series, naff, aa1)
+    else
+        # --- dINT[1:naff] = JAx[1:naff,1:naff] \ s   (s̄ = JAx⁻ᵀ dINT_bar, M̄ = -s̄ dINT')
+        # The affine block is a leading one, so everything below indexes directly
+        # with no gather, and its two outer products go straight into the full
+        # cotangents rather than through a sub-block that then has to be scattered.
+        @inbounds for i in 1:naff; s̄[i] = dINT_bar[i]; end
+        # `transpose(JAx) \ s̄` would be a LAPACK `getrf!`/`getrs!` pair, once per
+        # prediction substep, on a matrix of the dynamic-state size. At that size
+        # the call is mostly OpenBLAS's process-global buffer lock -- see
+        # `small_linalg.jl` -- so it goes through the engine's own LU instead.
+        @inbounds for j in 1:naff, i in 1:naff; aa1[i, j] = JAx[j, i]; end
+        _solve_square_system_generic!(aa1, s̄, sc.piv, naff)
+        @inbounds for j in 1:naff, i in 1:naff
+            JAx_bar[i, j] -= s̄[i] * record.dINT_dynamic[j]
+        end
+
+        # --- s = -affine + A affine, on the same leading block
+        @inbounds for i in 1:naff
+            acc = zero(T)
+            for q in 1:naff
+                acc += A[q, i] * s̄[q]
+            end
+            affine_bar[i] = acc - s̄[i]
+        end
+        @inbounds for j in 1:naff, i in 1:naff
+            Ā[i, j] += s̄[i] * record.affine[j]
+        end
     end
 
     # --- affine[i] = CINT[i] + Σⱼ (DRIFT[i,j] - JAx[i,j]) x[j]

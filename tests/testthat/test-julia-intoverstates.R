@@ -235,8 +235,12 @@ test_that("a fit over the joint density runs and carries its trajectory", {
     MANIFESTMEANS = matrix(c(0, 0, "cmean"), 3, 1), Tpoints = 8)))
   fitmodel$pars$indvarying <- FALSE
 
+  # `estonly`, because optimising the joint density is otherwise refused -- see
+  # "optimising the joint density is refused" below. That is the only way to a
+  # joint mode now, and this block is about what such a fit carries.
   fit <- suppressWarnings(suppressMessages(ctFit(data, fitmodel,
-    backend = "julia", intoverstates = FALSE, verbose = 0)))
+    backend = "julia", intoverstates = FALSE, verbose = 0,
+    optimcontrol = list(estonly = TRUE))))
 
   expect_s3_class(fit, "ctJuliaFit")
   npar <- length(fit$estimate$raw)
@@ -282,8 +286,11 @@ test_that("standard errors profile the states out, and the rest are refused", {
     MANIFESTVAR = matrix(0.3), MANIFESTMEANS = matrix("mmean"), Tpoints = 6)))
   fitmodel$pars$indvarying <- FALSE
 
+  # `estonly` does not skip the profile curvature: on this route that is the
+  # only curvature there is, and it is kept whatever `estonly` says.
   fit <- suppressWarnings(suppressMessages(ctFit(data, fitmodel,
-    backend = "julia", intoverstates = FALSE, verbose = 0)))
+    backend = "julia", intoverstates = FALSE, verbose = 0,
+    optimcontrol = list(estonly = TRUE))))
   npar <- length(fit$estimate$raw)
 
   # Kept on the fit rather than turned into intervals.
@@ -350,6 +357,49 @@ test_that("a free Gaussian measurement variance is called out, not left to fail"
       intoverstates = FALSE, verbose = 0,
       optimcontrol = list(estonly = TRUE)))),
     "unbounded")
+})
+
+test_that("optimising the joint density is refused unless estonly asks for it", {
+  skip_on_cran()
+  # The joint mode is degenerate -- the states re-optimise to absorb almost any
+  # change in the parameters -- so `optimize = TRUE` is refused rather than
+  # warned about, and points at sampling. A property of the estimator, checked
+  # before any backend work, so the stan route shows it without a compile.
+  # Simulated here rather than by ctGenerate, whose draw stream moves under
+  # unrelated commits.
+  set.seed(8)
+  data <- do.call(rbind, lapply(1:4, function(i) {
+    x <- stats::rnorm(1)
+    y <- numeric(5)
+    for (t in 1:5) {
+      x <- 0.7 * x + stats::rnorm(1, 0, 0.6)
+      y[t] <- x + stats::rnorm(1, 0, 0.5)
+    }
+    data.frame(id = i, time = 0:4, y1 = y)
+  }))
+  model <- suppressWarnings(suppressMessages(ctModel(type = "ct",
+    n.latent = 1, n.manifest = 1, manifestNames = "y1", latentNames = "eta1",
+    LAMBDA = matrix(1), T0MEANS = matrix(0), CINT = matrix(0),
+    MANIFESTVAR = matrix(0.3), MANIFESTMEANS = matrix("mmean"), Tpoints = 5)))
+  model$pars$indvarying <- FALSE
+  expect_error(suppressWarnings(suppressMessages(ctFit(data, model,
+    backend = "stan", intoverstates = FALSE, verbose = 0))),
+    "optimize=FALSE to sample the states", fixed = TRUE)
+  skip_without_julia()
+  expect_error(suppressWarnings(suppressMessages(ctFit(data, model,
+    backend = "julia", intoverstates = FALSE, verbose = 0))),
+    "optimize=FALSE to sample the states", fixed = TRUE)
+  # Preparing is not optimising: `fit = FALSE` returns the model, whose joint
+  # density is a fair thing to evaluate.
+  prepared <- suppressWarnings(suppressMessages(ctFit(data, model,
+    backend = "julia", intoverstates = FALSE, fit = FALSE)))
+  expect_s3_class(prepared, "ctJuliaModel")
+  # And `estonly` is the way through for someone who wants the mode anyway.
+  fit <- suppressWarnings(suppressMessages(ctFit(data, model,
+    backend = "julia", intoverstates = FALSE, verbose = 0,
+    optimcontrol = list(estonly = TRUE))))
+  expect_identical(fit$estimate$loglik_type, "joint")
+  expect_null(fit$uncertainty)
 })
 
 test_that("the Laplace random-effect route and sampled states are refused together", {

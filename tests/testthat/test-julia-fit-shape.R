@@ -117,6 +117,9 @@ suppressWarnings(suppressPackageStartupMessages(library(ctsem)))
   "batch_sizes", "batch_iterations", "newton_steps", "newton_hessians",
   "newton_subset_hessians", "newton_escapes", "restarts", "restarts_cancelled",
   "saturated", "saturated_parameters", "carefulfit", "carefulfit_iterations",
+  # Why the prior warm-up did not run, when it did not. The sampled route has
+  # no warm-up, so none of the three is on it.
+  "carefulfit_skipped",
   # The two stopping rules the run was given and what they did with it: whether
   # it was stopped for having stopped getting anywhere, which coordinates were
   # flat when that happened, how many times the progress test fired, and how
@@ -260,7 +263,7 @@ test_that("$estimate holds the estimate and nothing about the run", {
     "batch_sizes", "batch_iterations", "newton_steps", "newton_hessians",
     "newton_subset_hessians", "newton_escapes", "restarts", "restarts_cancelled", "stalled", "stopped_by_gap", "overshot", "overshoot_gain",
     "overshoot_parameters", "saturated", "saturated_parameters", "carefulfit",
-    "carefulfit_iterations", "corrections", "hessians",
+    "carefulfit_iterations", "carefulfit_skipped", "corrections", "hessians",
     "hessian_evaluations", "hessian_distance", "hessian", "hessian_profile",
     "trace", "substeps")
   for (route in names(fits)) {
