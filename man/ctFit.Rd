@@ -314,34 +314,53 @@ effects are then sampled rather than integrated, but the sampler is placed,
 and its metric built, from the Laplace fit.
 
 Also with \code{intoverpop='laplace'}, \code{optimcontrol$laplace_correct}
-(default \code{TRUE}) corrects the fitted estimate for the Laplace
-approximation's error, by the adaptive Gauss-Hermite quadrature of
-\code{\link{ctLaplaceCheck}} (5 nodes per random effect). It runs last, after
-the optimiser, the convergence certification and the standard errors, and it
-reuses their Hessian rather than computing another. One quadrature
-evaluation first compares the two rules subject by subject; where they agree
-to 0.01 in total -- every model whose random effects enter linearly, where
-Laplace is exact -- nothing else is done and the fit is unchanged. Otherwise
-the estimate takes up to three Newton steps on the quadrature objective, each
-costing \code{2 * npar} quadrature evaluations and accepted only if that
-objective rises, never along a direction where the Hessian is not negative,
-and stopping early once a step moves no parameter by a tenth of a standard
-error. Wherever the screen finds a gap, \code{fit$estimate$loglik} is the
-quadrature log likelihood at the reported estimate, whether or not a step
-was accepted (the Laplace value is kept in
-\code{fit$estimate$loglik_laplace}, and \code{loglik_method} says which);
-a Laplace optimum the quadrature objective does not share otherwise reports
-a log likelihood it does not have. When a step is accepted,
-\code{fit$estimate$raw} is the corrected point and the posterior draws are
-recentred on it without being reshaped: the covariance is still the Laplace
-curvature at \code{fit$uncertainty$evaluated_at}.
-\code{fit$laplace$correction} records the screen, the step and any
-directions too weakly identified or not concave to step along, and
-\code{print(fit)} says so when the estimate moved by a tenth of a standard
-error or more, or when it could not move and the gap is a nat or more.
-\code{laplace_correct = FALSE} gives the uncorrected Laplace fit. Not applied
-to sampled fits, to \code{intoverstates = FALSE}, or with \code{estonly},
-which skips the Hessian it needs; asking for it there is refused.
+corrects the fitted estimate for the Laplace approximation's error, by the
+adaptive Gauss-Hermite quadrature of \code{\link{ctLaplaceCheck}} (5 nodes
+per random effect). It runs last, after the optimiser, the convergence
+certification and the standard errors. One quadrature evaluation first
+compares the two rules subject by subject; where they agree to 0.01 in total
+-- every model whose random effects enter linearly, where Laplace is exact --
+nothing else is done and the fit is unchanged. Wherever the screen finds a
+gap, \code{fit$estimate$loglik} is the quadrature log likelihood at the
+reported estimate, whether or not the estimate moved (the Laplace value is
+kept in \code{fit$estimate$loglik_laplace}, and \code{loglik_method} says
+which); a Laplace optimum the quadrature objective does not share otherwise
+reports a log likelihood it does not have. \code{fit$laplace$correction}
+records what was done, and \code{print(fit)} says so when the estimate moved
+by a tenth of a standard error or more, or when it could not move and the
+gap is a nat or more.
+
+The default, \code{'quadrature'} (or \code{TRUE}), continues the fit on the
+quadrature objective. Only the subjects (or, with a grouping level, the
+groups) whose quadrature and Laplace values differ are integrated by
+quadrature, with its nodes held fixed so that its gradient is exact; everyone
+else keeps the Laplace term. The optimiser climbs that objective from the
+Laplace optimum in rounds, each confined to a region measured in the fit's
+standard errors, the nodes placed afresh after each, until the gradient with
+the nodes placed at the estimate -- the quadrature's own estimate of the
+exact score -- promises less than the certification tolerance. A round after
+which that gradient promises more than before, or after which the objective
+with its nodes placed afresh is lower, is undone and the region shrunk; when
+no round can do both, the correction stops short of that point, and
+\code{print(fit)} says so. A subject or group with k random effects costs
+\code{5^k} evaluations of its likelihood per gradient, so one with more
+than five keeps the Laplace term, and the fit says so. Where the rounds
+reach that point, the covariance and draws come from the Hessian of the
+quadrature objective there; where they stop short, the fit's own covariance
+stays and its draws are recentred on the estimate. A correction that moves
+the objective by more than \code{max(50, N/2)} nats is reverted to the
+Laplace optimum with a warning.
+
+\code{'step'} instead takes up to three Newton steps towards the quadrature
+optimum, each costing \code{2 * npar} quadrature evaluations and accepted
+only if the quadrature objective rises, never along a direction where the
+Hessian is not negative, and stopping once a step moves no parameter by a
+tenth of a standard error. Its covariance is the Laplace curvature at
+\code{fit$uncertainty$evaluated_at}, and its draws are recentred on the
+corrected point. \code{laplace_correct = FALSE} gives the uncorrected
+Laplace fit. Not applied to sampled fits, to \code{intoverstates = FALSE},
+or with \code{estonly}, which skips the Hessian it needs; asking for it
+there is refused.
 
 With \code{backend='julia'}, \code{optimcontrol$gradient} selects the
 gradient method: \code{'adjoint'} (reverse mode, the default) or

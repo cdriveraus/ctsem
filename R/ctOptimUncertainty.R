@@ -122,15 +122,171 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
 # one. That is a real difference in what the answer means, and none in how it is
 # computed, which is why only this part is shared.
 #
+# The IMIS proposal-inflation scale, named once. Before this it was written
+# four times: `.ctOptimDrawSamples()`'s own formal defaults (the stan path
+# reaches them by not overriding), `.ctOptimImisDraws()`'s own formal defaults
+# (also stan-shaped, and also unused -- both its callers pre-scale their own
+# proposal and pass `scaleInit = 1`), `.ctBackendUncertainty()`'s julia call
+# site, and `imis_is()`'s own formal defaults -- the last two matching each
+# other by coincidence rather than by reading from one place, which is exactly
+# the shape a later edit to one number and not the other drifts through
+# unnoticed.
+#
+# The two backend values are both deliberate and both measured, on different
+# regimes: 1.1 on a 400-subject fit's identified subspace beats 1.5 at every
+# evaluation count (2,000 evaluations to reach ESS 149.6 against 4,000 to reach
+# 112.9, `IS-importance-sampling-2026-09-06.md` s5), which is why stan, whose
+# models in the pass-3 benchmark are of that shape, uses it. 1.5/1.2 was raised
+# for a 40-subject model with a nonlinear or variance parameter, where the
+# posterior is genuinely wider than the Hessian curvature and a narrower
+# proposal cannot see the extra width at all (`.ctBackendUncertainty()`'s own
+# comment has the fuller account); whitening the null directions out does not
+# change that argument; it only stops a different, unrelated failure
+# (`.ctImisSubspace()`) from also being blamed on the scale. One number still
+# cannot serve both sample sizes, so this stays two named constants rather than
+# collapsing to one -- the point of naming them once is that this file is the
+# only place a change to either has to be made.
+#
+# A bare call to `imis_is()` (a dev script, or the reproduction in the IS note
+# itself) has no backend to ask, so its own formal defaults use the julia
+# value: the wider, more conservative proposal, on the reasoning that costs
+# more evaluations rather than the one that can quietly under-cover.
+.ctImisProposalDefaults <- function(backend = c('julia', 'stan')) {
+  backend <- match.arg(backend)
+  if (backend == 'stan') list(scaleInit = 1.1, tailScale = 1.1) else
+    list(scaleInit = 1.5, tailScale = 1.2)
+}
+
+# Which directions of a proposal covariance carry no information at all, by
+# the same test `.ctOptimIdentifiedInverse()` applies to an information matrix
+# and the same default tolerance, `.ctFlatDirectionRtol()` -- so the two agree
+# on what "rank deficient" means, even though one looks at a covariance's small
+# eigenvalues and the other at an information matrix's. That is the right
+# correspondence rather than a coincidence: a direction `.ctOptimIdentifiedInverse()`
+# projects out of the information contributes exactly zero variance to the
+# covariance it builds (`vectors %*% (t(vectors) / values[keep])`, summed over
+# kept directions only), so the same direction shows up here as a covariance
+# eigenvalue at or near zero, not as a large one -- there is no ridge-floored
+# covariance reaching this code any more (see `IS-importance-sampling-2026-09-06.md`
+# s2 for what one looked like before that was fixed).
+#
+# Returns NULL when nothing is dropped -- the ordinary fit, and the common
+# case -- so a caller pays for one extra `eigen()` and nothing else. That is
+# negligible next to what it is about to spend on `imis_is`.
+.ctImisSubspace <- function(cov, rtol = .ctFlatDirectionRtol()) {
+  cov <- as.matrix(cov)
+  cov <- (cov + t(cov)) / 2
+  eig <- try(eigen(cov, symmetric = TRUE), silent = TRUE)
+  if (inherits(eig, 'try-error')) return(NULL)
+  values <- eig$values
+  scale <- max(values)
+  if (!is.finite(scale) || scale <= 0) return(NULL)
+  keep <- values > rtol * scale
+  if (!any(keep) || all(keep)) return(NULL)
+  V <- eig$vectors[, keep, drop = FALSE]
+  d <- values[keep]
+  nullvectors <- eig$vectors[, !keep, drop = FALSE]
+  # Same convention as `.ctOptimIdentifiedInverse()`'s `nullParameters`: which
+  # coordinates a dropped direction loads on, not all of them.
+  loaded <- if (ncol(nullvectors)) which(apply(abs(nullvectors), 1, max) >= .25) else integer()
+  list(V = V, d = d, k = sum(keep), n = nrow(cov), nnull = sum(!keep),
+    nullEigenvalues = values[!keep], nullParameters = loaded)
+}
+
+# The affine map from a `subspace$k`-dimensional whitened coordinate `z` back
+# onto the raw parameters `subspace` was built from: `theta = centre + A %*% z`
+# with `A = V %*% diag(sqrt(d))`, so `z` has covariance `I` exactly when `theta`
+# has the covariance `.ctImisSubspace()` was handed (restricted to the kept
+# directions; a null direction gets no column in `A` at all, so it can never
+# move away from `centre`). Takes and returns a matrix with draws as ROWS,
+# `imis_is`'s own convention for `x_new`.
+.ctImisUnwhitenMatrix <- function(Z, centre, subspace) {
+  A <- sweep(subspace$V, 2, sqrt(subspace$d), '*')
+  sweep(as.matrix(Z) %*% t(A), 2, as.numeric(centre), '+')
+}
+
+# `lpg`, wrapped to take a whitened `z` and evaluate the original density at
+# the raw point it maps to. Carries `lpg`'s own `'batch'` attribute through the
+# same map -- see `.ctBackendLpgFunc()` -- so whitening does not silently
+# defeat the one-bridge-call route: without this, `imis_is` would find no
+# `'batch'` attribute on the wrapped closure and fall back to its per-draw
+# loop, which is the cost this whole repair exists to remove.
+.ctImisWhitenDensity <- function(lpg, centre, subspace) {
+  wrapped <- function(z) lpg(as.numeric(
+    .ctImisUnwhitenMatrix(matrix(z, nrow = 1L), centre, subspace)))
+  batchbase <- attr(lpg, 'batch')
+  if (!is.null(batchbase)) {
+    attr(wrapped, 'batch') <- function(Z) batchbase(.ctImisUnwhitenMatrix(Z, centre, subspace))
+  }
+  wrapped
+}
+
+# `imis_is()`'s own result, computed in whitened coordinates, mapped back onto
+# the raw parameters. `mean` and `covariance` are recomputed from the mapped
+# draws and the run's own final weights with the same `diagis` functions
+# `imis_is` used internally -- not transformed analytically -- so this does not
+# depend on separately re-deriving how a covariance moves under an affine map;
+# it just asks the same weighted moment for the same weights at the mapped
+# points. A weighted mean and variance are both affine-equivariant, so the two
+# routes agree exactly; recomputing is the one that cannot get the direction of
+# a transpose wrong.
+.ctImisUnwhitenResult <- function(result, centre, subspace) {
+  n <- length(centre)
+  raw <- function(Z) if (length(Z)) .ctImisUnwhitenMatrix(Z, centre, subspace) else
+    matrix(numeric(0), 0, n)
+  result$theta <- raw(result$theta)
+  result$full_theta <- raw(result$full_theta)
+  haveweights <- length(result$full_weights) > 0
+  result$mean <- if (haveweights)
+    as.numeric(diagis::weighted_mean(result$full_theta, result$full_weights)) else
+    rep(NA_real_, n)
+  result$covariance <- if (haveweights)
+    diagis::weighted_var(result$full_theta, result$full_weights) else
+    matrix(NA_real_, n, n)
+  result
+}
+
+# `imis_is()`, run in the identified subspace of `cov` when it is rank
+# deficient (see `.ctImisSubspace()`) and passed straight through otherwise.
+# Returns exactly what `imis_is()` returns -- a drop-in replacement at both of
+# its call sites -- with the subspace, if any was used, carried as the
+# `'subspace'` attribute rather than a new list field: nothing reads
+# `attr(is_res, ...)` today, so this cannot collide with an existing `$name`
+# read the way a new list field risks doing under R's partial matching (the
+# `$ctstanmodel`/`$ctstanmodelbase` incident is the reason to say this
+# explicitly rather than assume it).
+#
+# Sampling only the identified subspace is what removes the infinite-variance
+# weights a flat raw direction produces: measured on the 400-subject fit
+# `IS-importance-sampling-2026-09-06.md` is written against, 51,000 evaluations
+# that never reached an effective sample of 100 became 2,000 to 4,000 that did,
+# and the flat coordinate's reported spread went from 397 to exactly 0 rather
+# than from 0 to 397 by accident -- see `.ctImisUnwhitenMatrix()`: a null
+# direction has no column in the map at all.
+.ctImisRun <- function(lpg, centre, cov, rtol = .ctFlatDirectionRtol(), ...) {
+  centre <- as.numeric(centre)
+  cov <- as.matrix(cov)
+  subspace <- .ctImisSubspace(cov, rtol = rtol)
+  if (is.null(subspace)) return(imis_is(lpg, mu_hat = centre, Sigma_hat = cov, ...))
+  wrapped <- .ctImisWhitenDensity(lpg, centre, subspace)
+  whitened <- imis_is(wrapped, mu_hat = rep(0, subspace$k),
+    Sigma_hat = diag(subspace$k), ...)
+  result <- .ctImisUnwhitenResult(whitened, centre, subspace)
+  attr(result, 'subspace') <- subspace
+  result
+}
+
 # `cov` is the proposal covariance as the caller wants it used. A caller that
 # has already widened it passes `scaleInit = 1` rather than compounding two
 # scalings, which is what `ctLaplaceCorrect()` does.
 #' @keywords internal
 .ctOptimImisDraws <- function(lpg, centre, cov, finishsamples, remedy,
-  nbatch = 1000, target_ess = 100, maxiter = 50, scaleInit = 1.1,
-  tailScale = 1.1, df = Inf, verbose = 0, diagPlots = TRUE){
+  nbatch = 1000, target_ess = 100, maxiter = 50,
+  scaleInit = .ctImisProposalDefaults('stan')$scaleInit,
+  tailScale = .ctImisProposalDefaults('stan')$tailScale,
+  df = Inf, verbose = 0, diagPlots = TRUE){
 
-  is_res <- imis_is(lpg, mu_hat = centre, Sigma_hat = cov,
+  is_res <- .ctImisRun(lpg, centre = centre, cov = cov,
     cl = NA, n_batch = as.integer(nbatch), target_ess = target_ess,
     max_iter = as.integer(maxiter), scale_init = scaleInit,
     tail_scale = tailScale, df = df,
@@ -148,7 +304,7 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
 
   list(samples = samples, cov = cov_out,
     ess = if(is.null(is_res$ess)) NA_real_ else as.numeric(is_res$ess)[1L],
-    weighted = weighted, is_res = is_res)
+    weighted = weighted, is_res = is_res, subspace = attr(is_res, 'subspace'))
 }
 
 ctOptimSafeCov <- function(cov, ridge=1e-8){
@@ -1731,7 +1887,9 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 # @return list(samples, uncertaintyfit, control) -- `control` comes back
 #   because the defaults filled in here are what gets recorded in `$settings`.
 .ctOptimDrawSamples <- function(uncertaintyfit, draws, control, est,
-  finishsamples, lpg, verbose = 0, scaleInit = 1.1, tailScale = 1.1,
+  finishsamples, lpg, verbose = 0,
+  scaleInit = .ctImisProposalDefaults()$scaleInit,
+  tailScale = .ctImisProposalDefaults()$tailScale,
   df = Inf) {
 
   if (draws == 'empirical' && !is.null(uncertaintyfit$draws)) {
@@ -1754,7 +1912,13 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   if (is.null(control$isESS)) control$isESS <- 100
   if (is.null(control$isitersize)) control$isitersize <- 1000
 
-  is_res <- imis_is(lpg, mu_hat = est, Sigma_hat = uncertaintyfit$cov,
+  # `.ctImisRun()` runs in the identified subspace of `uncertaintyfit$cov` when
+  # it is rank deficient -- an individually varying parameter with no
+  # individual differences behind it, and its raw correlations, are the usual
+  # cause -- and passes straight through to `imis_is()` otherwise; see
+  # `IS-importance-sampling-2026-09-06.md`. `lpg` value-only carries the batch
+  # attribute `.ctBackendLpgFunc(fit, gradient=FALSE)` sets, whitened or not.
+  is_res <- .ctImisRun(lpg, centre = est, cov = uncertaintyfit$cov,
     max_iter = control$imisMaxIter, scale_init = control$imisScaleInit,
     tail_scale = control$imisTailScale, df = control$imisDf,
     target_ess = control$isESS, n_batch = control$isitersize, cl = NA,
@@ -1763,6 +1927,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
     # `verbose = 0`, so the one argument meant two things across the backends --
     # silence on julia, a page of output on stan.
     verbose = verbose > 0)
+  subspace <- attr(is_res, 'subspace')
 
   samples <- is_res$theta
   uncertaintyfit$proposal_cov <- uncertaintyfit$cov
@@ -1786,7 +1951,13 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   uncertaintyfit$details$importance_sampling <- list(ess = is_res$ess,
     df_used = is_res$df_used, weighted = weighted,
     covariance = if (weighted) 'weighted importance-sampling covariance' else
-      'unweighted covariance of the resampled draws')
+      'unweighted covariance of the resampled draws',
+    # NULL on the ordinary fit, where nothing was held. Positional in the raw
+    # parameter vector, as `.ctBackendIntervalCheck()`'s `nullParameters` is,
+    # because names are not attached to this vector until
+    # `.ctFitNameRawUncertainty()` runs, further down the caller.
+    subspace = if (is.null(subspace)) NULL else list(
+      nullDirections = subspace$nnull, heldParameters = subspace$nullParameters))
   .ctOptimImisReport(is_res, control$isESS, weighted)
 
   list(samples = samples, uncertaintyfit = uncertaintyfit, control = control)
@@ -1933,9 +2104,18 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' \code{cores} means R worker processes on stan and engine threads on julia
 #' (see below). The IMIS proposal defaults also differ:
 #' \code{imisScaleInit = 1.1} and \code{imisTailScale = 1.1} on stan against
-#' \code{1.5} and \code{1.2} on julia, which was measured -- a proposal no
-#' wider than the Hessian covariance cannot correct a posterior wider than it.
-#' Set them explicitly to compare the backends on this method.
+#' \code{1.5} and \code{1.2} on julia. Both are measured, on different
+#' regimes: the narrower pair costs fewer evaluations to reach the target
+#' effective sample size on a well-identified fit, and the wider pair is what
+#' a small-sample posterior genuinely wider than the Hessian curvature needs
+#' to be seen at all -- a proposal no wider than the curvature cannot correct
+#' a posterior wider than it -- which is the setting the julia default was
+#' raised for. Set them explicitly to compare the two. On either backend, a
+#' proposal covariance with a raw direction the data does not identify -- an
+#' individually varying parameter with no individual differences behind it is
+#' the usual cause -- is sampled in the identified subspace only, holding that
+#' direction at the estimate rather than manufacturing an importance weight
+#' for a density that is not one; see \code{uncertainty='is'} below.
 #'
 #' Transformed-parameter summaries are refreshed on stan and not on julia,
 #' which has no parameter-matrix reconstruction through
@@ -1955,9 +2135,22 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' to draw more, or differently, from where it now stands.
 #' @param uncertainty Uncertainty approximation. \code{'hessian'} uses the
 #' finite-difference Hessian, \code{'surrogate'} fits a local quadratic
-#' surrogate around the optimum, \code{'is'} uses Hessian-based importance
-#' sampling and computes uncertainty from the weighted importance-sampling
-#' distribution, \code{'bootstrap'} uses one-step score bootstrap draws with
+#' surrogate around the optimum, \code{'is'} runs adaptive importance sampling
+#' (IMIS) against the fitted log posterior from a proposal built on the
+#' Hessian covariance, in the whitened eigen-coordinates of whichever
+#' directions that covariance has curvature in when it is rank deficient,
+#' holding the rest at the estimate. It costs at least an order of magnitude
+#' more log-probability evaluations than \code{'hessian'} even when it
+#' converges quickly (each batch of proposal draws is one bridge call rather
+#' than one per draw, but the draws themselves are not free), and its case is
+#' a small-sample posterior whose true width the curvature at the optimum
+#' understates -- typically a variance or a nonlinear parameter with few
+#' subjects or groups -- rather than a routine alternative to \code{'hessian'}
+#' (\code{control$imisScaleInit}/\code{imisTailScale} below were measured on
+#' such a case). \code{\link{ctSample}} checks that case directly, by genuine
+#' posterior draws rather than a reweighted approximation, and is the
+#' reference to compare against before reading \code{'is'} on a new model as
+#' more than a curiosity. \code{'bootstrap'} uses one-step score bootstrap draws with
 #' Hessian bread, \code{'fullbootstrap'} resamples subjects and fully
 #' re-optimizes each sample from the original maximum likelihood or MAP
 #' estimate using mize L-BFGS, \code{'sandwich'} uses Hessian bread with score
@@ -2286,12 +2479,13 @@ ctFitUncertainty <- function(fit,
     }
   }
   
-  # `scaleInit`/`tailScale` at stan's own 1.1/1.1 rather than the julia 1.5/1.2.
-  # See `.ctOptimDrawSamples()` for why one constant does not serve both.
+  # `scaleInit`/`tailScale` at stan's own value rather than julia's -- see
+  # `.ctImisProposalDefaults()` for why one constant does not serve both.
+  stanImis <- .ctImisProposalDefaults('stan')
   drawn <- .ctOptimDrawSamples(uncertaintyfit, draws = draws, control = control,
     est = fit$stanfit$rawest, finishsamples = finishsamples,
     lpg = lpgsetup$lpg, verbose = verbose,
-    scaleInit = 1.1, tailScale = 1.1)
+    scaleInit = stanImis$scaleInit, tailScale = stanImis$tailScale)
   samples <- drawn$samples
   uncertaintyfit <- drawn$uncertaintyfit
   control <- drawn$control

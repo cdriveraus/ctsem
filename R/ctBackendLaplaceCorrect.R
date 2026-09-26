@@ -150,8 +150,9 @@ ctLaplaceCorrect <- function(fit, draws = c("normal", "imis", "keep"),
   est <- as.numeric(fit$estimate$raw)
   npar <- length(est)
 
-  # A fit the default correction (optimcontrol$laplace_correct) already moved
-  # must not be moved again by the same step. What is still worth asking for
+  # A fit the fit-time correction (optimcontrol$laplace_correct, either
+  # method) already moved must not be moved again: this would be a second
+  # correction of the same error. What is still worth asking for
   # there is the shape, so draws='imis' redraws around the corrected estimate
   # and leaves it where it is; anything that would move the estimate or only
   # recentre the draws is refused, because that is what was already done.
@@ -160,7 +161,7 @@ ctLaplaceCorrect <- function(fit, draws = c("normal", "imis", "keep"),
     if (!identical(draws, "imis") ||
         (!missing(correct_estimate) && isTRUE(correct_estimate))) {
       stop("This fit was already corrected by quadrature when it was fitted ",
-        "(fit$laplace$correction), so ctLaplaceCorrect() would apply the step ",
+        "(fit$laplace$correction), so ctLaplaceCorrect() would correct it ",
         "twice. Use draws='imis' to redraw around the corrected estimate, or ",
         "refit with optimcontrol$laplace_correct = FALSE to correct by hand.",
         call. = FALSE)
@@ -368,19 +369,55 @@ print.ctLaplaceCorrection <- function(x, ...) {
 #   fit$estimate$cov, $se        unchanged -- the Laplace curvature, at
 #                                `fit$uncertainty$evaluated_at`
 #   fit$laplace$correction       what was done, and where
+#
+# `'quadrature'`, the default, runs a different stage in the same place: see
+# `.ctLaplaceContinue()` below.
+#
+# Provenance of the constants (Appendix B of
+# review/OPTIM-consolidation-plan-2026-09-25.md):
+#
+#   nodes      5   the quadrature's own default since ctLaplaceCheck: enough to
+#                  locate the maximum in the cases tested, 9 to settle the
+#                  value (quadrature.jl's docstring measured the gap on one
+#                  40-subject dataset).
+#   tolerance  0.01 nats, the screen's pass mark, summed absolutely over units.
+#                  A tolerance in objective units rather than a measured value:
+#                  the linear fixture screens at 3e-14, so any model with a
+#                  nonlinear effect clears it by orders of magnitude.
+#   maxsteps   3   measured, on the 40-subject nonlinear fixture only: three
+#                  steps take 99% of the quadrature objective's gain and stop
+#                  0.1 se short of the refine optimum
+#                  (review/LAPLACE-default-correction-2026-09-24.md 3a).
+#   gain_tol   1e-3 nats predicted, and
+#   step_tol   0.1 se: the stopping rules, chosen so the next gradient is not
+#                  paid for; set on the same fixture.
+#   step       1e-3 raw, the finite-difference step of the gap gradient. Not
+#                  tuned; differences of the gap, which is smooth and small.
+#   material   0.1 se: when print() says the estimate moved. Presentation.
 .ctLaplaceCorrectDefaults <- list(nodes = 5L, tolerance = 0.01, maxsteps = 3L,
   gain_tol = 1e-3, step_tol = 0.1, step = 1e-3, material = 0.1)
 
-# Whether this fit is corrected, refusing by name a request that cannot apply.
-# FALSE is accepted anywhere, since it describes what every other route does.
+# Which correction this fit gets -- FALSE, "step" or "quadrature" -- refusing
+# by name a request that cannot apply. FALSE is accepted anywhere, since it
+# describes what every other route does. TRUE, and the default, are
+# "quadrature", the continuation: on the known-broken cases of
+# review/OPTIM-consolidation-plan-2026-09-25.md section 10 it ended higher in
+# exact log likelihood than the step correction on 9 of 11 and level on the
+# other 2, and never below the Laplace optimum, where the step correction
+# ended 1.4 nats below it on the gated-gaps A14 config.
 .ctLaplaceCorrectResolve <- function(optimcontrol, intoverpop, optimize,
   intoverstates) {
   value <- optimcontrol$laplace_correct
   explicit <- !is.null(value)
-  if (explicit && !(is.logical(value) && length(value) == 1L && !is.na(value))) {
-    stop("optimcontrol$laplace_correct must be TRUE or FALSE.", call. = FALSE)
+  valid <- (is.logical(value) && length(value) == 1L && !is.na(value)) ||
+    (is.character(value) && length(value) == 1L &&
+      value %in% c("step", "quadrature"))
+  if (explicit && !valid) {
+    stop("optimcontrol$laplace_correct must be TRUE or FALSE, or 'step' or ",
+      "'quadrature'.", call. = FALSE)
   }
   if (explicit && isFALSE(value)) return(FALSE)
+  method <- if (is.character(value)) value else "quadrature"
   why <- if (!identical(as.character(intoverpop)[1L], "laplace")) {
     paste0("applies to intoverpop='laplace' only; with intoverpop='",
       intoverpop, "' there is no Laplace term to correct")
@@ -393,7 +430,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
   } else if (isTRUE(optimcontrol$estonly)) {
     "steps against the fit's Hessian, which optimcontrol$estonly skips"
   } else NULL
-  if (is.null(why)) return(TRUE)
+  if (is.null(why)) return(method)
   if (explicit) {
     stop("optimcontrol$laplace_correct ", why, ". Drop it.", call. = FALSE)
   }
@@ -470,7 +507,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
   delta_se <- if (length(se) == npar) ifelse(se > 0, delta / se, NA_real_) else
     rep(NA_real_, npar)
   names(delta) <- names(delta_se) <- names(fit$estimate$se)
-  record <- list(status = status, applied = FALSE,
+  record <- list(method = "step", status = status, applied = FALSE,
     nodes = as.integer(res$nodes), tolerance = as.numeric(res$tolerance),
     # sum over units of |quadrature - Laplace| at the Laplace optimum, and the
     # signed total the fit's log likelihood was off by there.
@@ -536,6 +573,534 @@ print.ctLaplaceCorrection <- function(x, ...) {
         "the Laplace curvature at fit$uncertainty$evaluated_at"),
       nodes = record$nodes)
   }
+  fit$laplace$correction <- record
+  fit
+}
+
+# The quadrature continuation (`optimcontrol$laplace_correct = 'quadrature'`,
+# the default) --
+#
+# Where `'step'` takes up to three Newton steps on the quadrature objective by
+# finite differences, `'quadrature'` climbs it: from the Laplace optimum, with the
+# engine's own optimiser, on an objective whose nodes are held fixed so that
+# its gradient is exact (the Fisher identity; see laplace_continuation.jl), in
+# rounds between which the nodes are re-placed. bigIRT's `laplaceRefine` is the
+# model (../bigIRT/optimisation-review-2026-09.md, R3.4 and R3.5); what differs
+# here, and why, is in review/OPTIM-consolidation-plan-2026-09-25.md, section
+# 10.
+#
+#   screen   the rule at the Laplace optimum against Laplace, unit by unit, as
+#            `'step'` screens. A fit that passes is left untouched to the bit.
+#   flags    only the units the screen flags carry nodes: largest gap first,
+#            until what is left carries at most the screen's tolerance. Every
+#            other unit keeps its Laplace term and its exact gradient.
+#   rounds   each a trust region in the Laplace fit's own standard errors:
+#            the round's L-BFGS runs in the fit's identified directions,
+#            whitened by its curvature, so it starts from the Newton step the
+#            fit's Hessian implies and is confined to `radius` standard errors
+#            of the round's centre; then the nodes are re-placed where it
+#            ended.
+#   target   the FIXED POINT of that iteration: the estimate at which the
+#            gradient of the objective with its nodes placed there is zero.
+#            With the nodes held, that gradient is the quadrature's own
+#            estimate of the exact score -- a node-weighted average of the
+#            per-node scores -- so the fixed point solves the quadrature
+#            version of the exact likelihood equation. It is not the maximum
+#            of the quadrature VALUE with the nodes re-placed at every point
+#            (what the finite-difference refinement found), whose gradient
+#            also carries how the rule's error moves with its centre. The two
+#            differ by that term, and on the 40-subject fixture the fixed point
+#            is the nearer to the exact optimum: 0.07 of a standard error
+#            against 0.14 (the exact marginal by a dense grid; see
+#            test-julia-laplace-continue.R). bigIRT's refinement targets the
+#            same fixed point. It is not always the better point, which is
+#            why the rounds only approach it while the re-placed value holds
+#            (`accept`): where the two part, the estimate is the last point
+#            that did not lose value, status `stalled`, and the fit's
+#            certification says it is not stationary.
+#   accept   a round is kept when the fixed-point residual falls -- half the
+#            squared whitened gradient at the re-placed point, the Newton gain
+#            it predicts -- AND the quadrature value with the nodes re-placed
+#            there falls by no more than `value_tol`. Either failing, the
+#            round's nodes go back and the radius shrinks to a quarter of the
+#            step. Both conditions are measured, one at a time:
+#              - the value alone stalls short of the fixed point, because near
+#                it the re-placed value can fall along the score (by 2.6e-4
+#                against a promised +5e-5 on the 40-subject fixture);
+#              - the residual alone reaches a worse point. On the gated-gaps
+#                A14 config (random drift, T0MEANS and CINT: three effects a
+#                subject, so the soft rule) it took the residual from 1.3 to
+#                0.007 while the re-placed value fell by 0.9 nats, and ended
+#                at an exact log posterior of -398.81, where both conditions
+#                stop at -397.97 (Laplace -399.23, the step correction -400.60).
+#                Before `_continuation_stiff_rule` gave the soft rule's stiff
+#                complement a full product rule it was worse: the complement
+#                sat at one node, whose fixed-node gradient leaves out its log
+#                determinant, and the estimate ended 4.9 exact nats below the
+#                Laplace optimum.
+#   no worse the estimate is only reported if the re-placed value there is not
+#            below the value at the Laplace optimum by more than `value_tol`;
+#            otherwise the fit keeps the Laplace optimum (status `no_gain`),
+#            with the quadrature log likelihood there reported, as the step
+#            correction does when no step raises its objective.
+#   stop     when that residual is below the fit's certification tolerance,
+#            or after `rounds` kept rounds.
+#   guard    a continuation that moves the quadrature objective by more than
+#            max(50, N/2) nats is reverted to the Laplace optimum with a
+#            warning, keeping the rejected point, as bigIRT does.
+#   Hessian  of the hybrid at the final point, its nodes placed there: central
+#            differences of the exact gradient, as the Laplace Hessian is
+#            taken, and only where the rounds reached the fixed point; the
+#            covariance and draws then come from it, not from the Laplace
+#            curvature at another point. Where they stopped short, the
+#            estimate is not stationary on that objective and its Hessian need
+#            not be concave, so none is taken: the fit's own uncertainty stays
+#            and its draws are recentred, as the step correction's are.
+#
+# What moves when it applies: `fit$estimate$raw` is the continuation's
+# estimate; `loglik`, `logposterior` and `subject_loglik` the quadrature values
+# there (every unit by the rule, nodes placed there), with `loglik_laplace`
+# kept; `cov`, `se` and the draws, when the rounds converged, from the
+# continuation's Hessian, which is `fit$uncertainty$hessian` with
+# `evaluated_at` the new estimate, and whose certification is the fit's
+# (`hessian_at` in the record says which, as the step correction's does). `fit$laplace$correction` says what
+# ran.
+#
+# Provenance of the constants. `nodes`, `tolerance` and `material` are the
+# step correction's (see `.ctLaplaceCorrectDefaults`). `product_maxdim` (2),
+# `soft_tau` (3.5) and `soft_maxdirs` (2) are the engine's, explained in
+# laplace_continuation.jl. `rounds` (10) is twice bigIRT's cap of 5: its units
+# are flat, and a nested unit here holds its leaves' conditional modes fixed
+# with its nodes, so the iteration contracts more slowly there (the nested
+# fixture's residual fell by a factor of 0.3 to 0.7 a round, where the
+# one-level fixture's fell by 20 to 300). `attempts` (15) bounds the rounds a
+# trust region may reject. `radius` (1 se, doubling to at most `radius_max` =
+# 16 when a kept round ends on the boundary having gained at least three
+# quarters of what its model promised, cut to a quarter of the step when a
+# round is rejected) is the textbook trust-region schedule. Growing it on the
+# residual instead -- only when a round cut it to a quarter -- held gated-gaps
+# D3 at 0.25 se for six rounds whose gains matched their model's to 2%, and
+# the rounds ran out 0.7 exact nats short of the best-known point. `maxiter`
+# (100) caps one round; bigIRT's whole continuation took 30 to 60
+# evaluations. `guard` and `guard_per_subject` are bigIRT's max(50, N/2).
+# `value_tol` (1e-3 nats) is the step correction's `gain_tol`: a change in the
+# objective below it is not one to act on either way.
+# `rtol` (1e-8) is the identifiability report's: a direction the Laplace
+# curvature does not identify is held where the fit left it. `maxdim` (5) is
+# the widest unit the correction scores, explained with the engine's default.
+.ctLaplaceContinueDefaults <- list(nodes = 5L, tolerance = 0.01,
+  product_maxdim = 2L, soft_tau = 3.5, soft_maxdirs = 2L, rounds = 10L,
+  attempts = 15L, radius = 1, radius_max = 16, maxiter = 100L,
+  material = 0.1, guard = 50, guard_per_subject = 0.5, rtol = 1e-8,
+  value_tol = 1e-3, maxdim = 5L)
+
+# The directions a round moves in: the Laplace curvature's identified ones,
+# each scaled to one of its standard errors, so the round's L-BFGS starts from
+# that curvature and its trust region is measured in standard errors.
+#
+# Left out, and held where the fit left them: the directions the likelihood was
+# measured flat along (`flat`, the columns of
+# `fit$uncertainty$details$flatdirections$vectors`), and those whose curvature
+# is below `rtol` of the largest -- the identifiability report's two rules for
+# a direction the data do not identify. A direction of negative curvature is
+# kept, whitened by its magnitude: the quadrature objective may rise along it,
+# which is how a continuation leaves a saddle of the Laplace objective.
+.ctLaplaceContinueBasis <- function(hessian, flat = NULL,
+  rtol = .ctLaplaceContinueDefaults$rtol) {
+  information <- -(hessian + t(hessian)) / 2
+  n <- nrow(information)
+  projector <- diag(n)
+  measured <- 0L
+  if (is.matrix(flat) && nrow(flat) == n && ncol(flat) > 0L &&
+      all(is.finite(flat))) {
+    decomposition <- qr(flat)
+    q <- qr.Q(decomposition)[, seq_len(decomposition$rank), drop = FALSE]
+    projector <- projector - q %*% t(q)
+    measured <- decomposition$rank
+  }
+  kept <- projector %*% information %*% projector
+  e <- eigen((kept + t(kept)) / 2, symmetric = TRUE)
+  scale <- max(abs(e$values))
+  if (!is.finite(scale) || scale <= 0) return(NULL)
+  keep <- abs(e$values) > rtol * scale
+  basis <- e$vectors[, keep, drop = FALSE] %*%
+    diag(1 / sqrt(abs(e$values[keep])), nrow = sum(keep), ncol = sum(keep))
+  list(basis = basis, kept = sum(keep), frozen = n - sum(keep),
+    measured_flat = measured, negative = sum(e$values[keep] < 0))
+}
+
+# The rounds, shared by the fit (`.ctLaplaceContinue()`) and by
+# `ctLaplaceCheck(refine = TRUE)`. `cont` is the engine's continuation object,
+# placed at `est`; on return it is placed at the point returned. See the notes
+# above `.ctLaplaceContinueDefaults` for what a round is, what it aims at and
+# when one is kept. `residual` is half the squared whitened gradient with the
+# nodes placed at the point: the Newton gain it predicts, zero at the answer.
+.ctLaplaceContinueRun <- function(module, cont, est, basis, tol,
+  control = .ctLaplaceContinueDefaults, verbose = 0L) {
+  get <- JuliaConnectoR::juliaGet
+  x <- as.numeric(est)
+  start <- get(module$ctsem_laplace_continuation_info(cont))
+  value <- as.numeric(start$quadrature)
+  radius <- as.numeric(control$radius)
+  kept <- 0L
+  attempts <- 0L
+  status <- "rounds"
+  rows <- list()
+  B <- JuliaConnectoR::juliaPut(as.matrix(basis))
+  optimise <- function(from, stationary = FALSE) get(
+    module$ctsem_laplace_continuation_optimize(cont, .ctJuliaNumericVector(from),
+      B, radius, maxiter = as.integer(control$maxiter), tol = as.numeric(tol),
+      stationary_only = stationary))
+  row <- function(round, residual_after, keep, flagged, gain = NA_real_) data.frame(
+    round = attempts, radius = radius,
+    residual = as.numeric(round$start_gain), residual_after = residual_after,
+    fixed_gain = as.numeric(round$value) - as.numeric(round$start_value),
+    gain = gain,
+    moved = as.numeric(round$moved), iterations = as.integer(round$iterations),
+    f_calls = as.integer(round$f_calls), g_calls = as.integer(round$g_calls),
+    kept = keep, flagged = as.integer(flagged))
+  residual <- NA_real_
+  repeat {
+    if (kept >= control$rounds) { status <- "rounds"; break }
+    if (attempts >= control$attempts) { status <- "attempts"; break }
+    attempts <- attempts + 1L
+    round <- optimise(x)
+    residual <- as.numeric(round$start_gain)
+    if (isTRUE(round$stationary)) {
+      status <- "converged"
+      rows[[length(rows) + 1L]] <- row(round, NA_real_, FALSE, start$nflagged)
+      break
+    }
+    if (!is.finite(residual)) { status <- "failed"; break }
+    xn <- as.numeric(round$minimizer)
+    fixed <- as.numeric(round$value) - as.numeric(round$start_value)
+    if (!is.finite(fixed) || fixed <= 0) {
+      # The fixed-node model had a gradient to offer and no step along it: a
+      # line search that found no decrease. There is nothing to re-place for.
+      status <- "no_progress"
+      rows[[length(rows) + 1L]] <- row(round, NA_real_, FALSE, start$nflagged)
+      break
+    }
+    placed <- get(module[["ctsem_laplace_continuation_recentre!"]](cont,
+      .ctJuliaNumericVector(xn)))
+    after <- as.numeric(optimise(xn, stationary = TRUE)$start_gain)
+    gain <- as.numeric(placed$quadrature) - value
+    keep <- is.finite(after) && is.finite(gain) && after < residual &&
+      gain >= -as.numeric(control$value_tol)
+    rows[[length(rows) + 1L]] <- row(round, after, keep, placed$nflagged, gain)
+    if (verbose > 0L) {
+      message(sprintf(paste0("Laplace continuation round %d: radius %.3g, ",
+        "residual %.3g -> %.3g, value %+.4g, %s"), attempts, radius, residual,
+        after, gain, if (keep) "kept" else "rejected"))
+    }
+    if (keep) {
+      kept <- kept + 1L
+      x <- xn
+      value <- as.numeric(placed$quadrature)
+      # Grown when the round ended on the boundary and the re-placed value
+      # rose by three quarters or more of what the fixed-node model promised:
+      # the model is right, and the region is what holds the rounds back.
+      if (isTRUE(round$boundary) && gain >= 0.75 * fixed) {
+        radius <- min(2 * radius, as.numeric(control$radius_max))
+      }
+      residual <- after
+      if (after < tol) { status <- "converged"; break }
+    } else {
+      get(module[["ctsem_laplace_continuation_revert!"]](cont))
+      radius <- 0.25 * max(as.numeric(round$moved), 1e-12)
+      if (radius < 1e-3) { status <- "stalled"; break }
+    }
+  }
+  info <- get(module$ctsem_laplace_continuation_info(cont))
+  list(x = x, status = status, rounds = kept, attempts = attempts,
+    radius = radius, residual = residual,
+    trace = if (length(rows)) do.call(rbind, rows) else NULL,
+    start = start, info = info, value = value)
+}
+
+# A log-posterior function on the continuation's hybrid objective, in the
+# `lpgFunc` contract `.ctBackendUncertainty()` takes: see `.ctBackendLpgFunc()`,
+# whose guard it copies.
+.ctLaplaceContinueLpg <- function(module, cont) {
+  function(fit, gradient = TRUE) {
+    wantgrad <- isTRUE(gradient)
+    function(parm) {
+      result <- try(JuliaConnectoR::juliaGet(
+        module$ctsem_laplace_continuation_evaluate(cont,
+          .ctJuliaNumericVector(as.numeric(parm)), gradient = wantgrad)),
+        silent = TRUE)
+      failed <- inherits(result, "try-error") || !isTRUE(result$converged)
+      value <- if (failed) NaN else as.numeric(result$value)[1L]
+      grad <- if (failed || !wantgrad) NULL else as.numeric(result$gradient)
+      if (!is.finite(value) || (wantgrad && (is.null(grad) ||
+          length(grad) != length(parm) || any(!is.finite(grad))))) {
+        value <- -1e100
+        grad <- if (wantgrad) rep(0, length(parm)) else NULL
+      }
+      if (wantgrad) attributes(value) <- list(gradient = grad)
+      value
+    }
+  }
+}
+
+.ctLaplaceContinue <- function(fit, cores = 1L, verbose = 0L,
+  control = .ctLaplaceContinueDefaults) {
+  started <- proc.time()[["elapsed"]]
+  seconds <- function() proc.time()[["elapsed"]] - started
+  est <- as.numeric(fit$estimate$raw)
+  npar <- length(est)
+  nsubjects <- length(fit$model_spec$subject_starts)
+  module <- .ctJuliaModule(fit$model_spec$project)
+  get <- JuliaConnectoR::juliaGet
+  failed <- function(phrase) {
+    warning("Laplace continuation skipped: ", phrase, ". The uncorrected fit is ",
+      "returned; see fit$laplace$correction.", call. = FALSE)
+    fit$laplace$correction <- list(method = "quadrature", status = "failed",
+      applied = FALSE, message = phrase, nodes = as.integer(control$nodes))
+    fit
+  }
+  chunks <- suppressWarnings(as.integer(fit$optim$chunks)[1L])
+  if (is.na(chunks) || chunks < 1L) chunks <- max(1L, as.integer(cores)[1L])
+  previous <- .ctBackendSetMaxChunks(chunks)
+  on.exit(.ctBackendRestoreMaxChunks(previous), add = TRUE)
+  if (verbose > 0) message("Laplace continuation: quadrature screen (",
+    control$nodes, " nodes)")
+  cont <- try(module$ctsem_laplace_continuation(.ctJuliaObjective(fit),
+    .ctJuliaNumericVector(est), nodes = as.integer(control$nodes),
+    tolerance = as.numeric(control$tolerance),
+    product_maxdim = as.integer(control$product_maxdim),
+    soft_tau = as.numeric(control$soft_tau),
+    soft_maxdirs = as.integer(control$soft_maxdirs),
+    maxdim = as.integer(control$maxdim)), silent = TRUE)
+  if (inherits(cont, "try-error")) return(failed("the quadrature could not be evaluated"))
+  start <- get(module$ctsem_laplace_continuation_info(cont))
+  record <- list(method = "quadrature", status = "exact", applied = FALSE,
+    nodes = as.integer(start$nodes), tolerance = as.numeric(start$tolerance),
+    screen = as.numeric(start$screen), gap = as.numeric(start$gap),
+    laplace_estimate = est, loglik_laplace = as.numeric(fit$estimate$loglik),
+    flagged = as.integer(start$nflagged), units = as.integer(start$nunits),
+    rule_failures = as.integer(start$rule_failures),
+    wide = as.integer(start$nwide), maxdim = as.integer(start$maxdim))
+  screen_seconds <- seconds()
+  # Units wider than `maxdim` are not scored and keep the Laplace term (see
+  # laplace_continuation.jl for the measured cost). Said in one line, since
+  # the correction then covers less than the fit, or none of it.
+  if (record$wide > 0L) {
+    message(sprintf(paste0("Quadrature correction: %d of %d %s kept the ",
+      "Laplace term, having more than %d random effects."), record$wide,
+      record$units, if (record$units == nsubjects) "subjects" else "groups",
+      record$maxdim))
+  }
+  if (record$wide == record$units) {
+    record$status <- "too_wide"
+    record$seconds <- c(screen = screen_seconds, total = seconds())
+    fit$laplace$correction <- record
+    return(fit)
+  }
+  if (!is.finite(record$screen)) {
+    return(failed("the quadrature was not finite at the estimate"))
+  }
+  # Passed, as the step correction's screen passes: Laplace is exact here to
+  # the tolerance, and the fit is left alone to the bit.
+  if (record$screen <= record$tolerance) {
+    record$seconds <- c(screen = screen_seconds, total = seconds())
+    fit$laplace$correction <- record
+    return(fit)
+  }
+  # The quadrature log likelihood wherever the screen found a gap, as the step
+  # correction reports it, whether or not anything moves.
+  report_quadrature <- function(fit, info) {
+    units <- as.numeric(info$quadrature_units)
+    if (!all(is.finite(units))) return(fit)
+    fit$estimate$loglik_laplace <- record$loglik_laplace
+    fit$estimate$loglik <- sum(units)
+    fit$estimate$logposterior <- as.numeric(info$quadrature)
+    subjects <- as.numeric(info$quadrature_subjects)
+    if (length(subjects) == length(fit$estimate$subject_loglik) &&
+        all(is.finite(subjects))) fit$estimate$subject_loglik <- subjects
+    fit$estimate$loglik_method <- "quadrature"
+    fit
+  }
+  hessian <- .ctBackendStoredHessian(fit, est)
+  if (is.null(hessian) || !all(is.finite(hessian))) {
+    record$status <- "no_hessian"
+    record$loglik_quadrature <- sum(as.numeric(start$quadrature_units))
+    fit <- report_quadrature(fit, start)
+    fit$laplace$correction <- record
+    return(fit)
+  }
+  flat <- fit$uncertainty$details$flatdirections$vectors
+  basis <- .ctLaplaceContinueBasis(hessian, flat, rtol = control$rtol)
+  if (is.null(basis) || basis$kept < 1L) {
+    record$status <- "no_directions"
+    record$loglik_quadrature <- sum(as.numeric(start$quadrature_units))
+    fit <- report_quadrature(fit, start)
+    fit$laplace$correction <- record
+    return(fit)
+  }
+  tol <- .ctBackendGapTolerance(fit)
+  # What the continuation cost, in the engine's own counts: whole-objective
+  # values and gradients, placements of the rule, and the member likelihood
+  # values and reverse sweeps they took.
+  counts <- function() {
+    after <- get(module$ctsem_laplace_continuation_info(cont))
+    c(values = as.integer(after$value_calls),
+      gradients = as.integer(after$gradient_calls),
+      placements = as.integer(after$recentres),
+      member_values = as.numeric(after$member_values),
+      member_sweeps = as.numeric(after$member_sweeps),
+      refused = as.integer(after$refused))
+  }
+  run <- try(.ctLaplaceContinueRun(module, cont, est, basis$basis, tol,
+    control = control, verbose = verbose), silent = TRUE)
+  if (inherits(run, "try-error")) {
+    return(failed(paste0("a round could not be evaluated (",
+      trimws(as.character(run)), ")")))
+  }
+  info <- run$info
+  change <- as.numeric(info$quadrature) - as.numeric(start$quadrature)
+  limit <- max(control$guard, control$guard_per_subject * nsubjects)
+  record$rounds <- run$rounds
+  record$attempts <- run$attempts
+  record$radius <- run$radius
+  record$stationarity <- run$residual
+  record$trace <- run$trace
+  record$continuation <- run$status
+  record$frozen_directions <- as.integer(basis$frozen)
+  record$flagged <- as.integer(info$nflagged)
+  record$flagged_units <- as.integer(info$flagged)[seq_len(info$nflagged)]
+  record$bar <- as.numeric(info$bar)
+  record$residual <- as.numeric(info$residual)
+  record$soft_blocks <- as.integer(info$soft_blocks)
+  record$guard <- list(limit = limit, change = change,
+    fired = !is.finite(change) || abs(change) > limit)
+  # The run moved nothing: no round was kept, the rounds ended lower on the
+  # objective than they began, or the guard reverts it. The quadrature log
+  # likelihood at the Laplace optimum is reported, as the step correction
+  # reports it when no step raised the objective.
+  worse <- is.finite(change) && change < -as.numeric(control$value_tol)
+  record$ended_lower <- worse
+  moved <- run$rounds > 0L && any(run$x != est) && !worse
+  if (isTRUE(record$guard$fired) || !moved) {
+    if (isTRUE(record$guard$fired)) {
+      warning(sprintf(paste0("The Laplace continuation moved the quadrature ",
+        "objective by %.3g nats, which no approximation error of this size ",
+        "explains; the fit keeps the Laplace optimum, and the rejected point is ",
+        "fit$laplace$correction$rejected_estimate."), change), call. = FALSE)
+      record$rejected_estimate <- run$x
+      record$status <- "reverted"
+    } else {
+      record$status <- "no_gain"
+    }
+    record$loglik_quadrature <- sum(as.numeric(start$quadrature_units))
+    record$logposterior_quadrature <- as.numeric(start$quadrature)
+    record$gap_reported <- as.numeric(start$quadrature) - as.numeric(start$laplace)
+    fit <- report_quadrature(fit, start)
+    record$evaluations <- counts()
+    record$seconds <- c(screen = screen_seconds, total = seconds())
+    fit$laplace$correction <- record
+    return(fit)
+  }
+  x <- run$x
+  # The continuation's own curvature only where it reached its fixed point.
+  # Stopped short, the estimate is not stationary on the objective the Hessian
+  # is of, and on gated-gaps A14 that Hessian had two directions of positive
+  # curvature: ten parameters would have reported no interval, and the fit
+  # `converged: FALSE`, where the Laplace curvature at the fit's optimum gives
+  # them all one. So a continuation that stopped short keeps the fit's
+  # uncertainty and recentres its draws, as the step correction does, and
+  # takes no Hessian at all: its 2 npar gradients are the largest single cost
+  # of a correction on wide blocks, and `stationarity` in the record already
+  # says how far from stationary the estimate is.
+  reached <- identical(run$status, "converged")
+  hc <- NULL
+  if (reached) {
+    if (verbose > 0) message("Laplace continuation: Hessian (", 2L * npar,
+      " gradients)")
+    hc <- try(matrix(as.numeric(.ctBackendJuliaValue(
+      module$ctsem_laplace_continuation_hessian(cont, .ctJuliaNumericVector(x)))),
+      npar, npar), silent = TRUE)
+  }
+  final <- get(module$ctsem_laplace_continuation_evaluate(cont,
+    .ctJuliaNumericVector(x), gradient = TRUE))
+  record$status <- "continued"
+  record$applied <- TRUE
+  se <- as.numeric(fit$estimate$se)
+  delta <- x - est
+  delta_se <- if (length(se) == npar) ifelse(se > 0, delta / se, NA_real_) else
+    rep(NA_real_, npar)
+  names(delta) <- names(delta_se) <- names(fit$estimate$se)
+  record$delta <- delta
+  record$delta_se <- delta_se
+  record$material <- isTRUE(max(abs(delta_se), na.rm = TRUE) >= control$material)
+  record$loglik_quadrature <- sum(as.numeric(info$quadrature_units))
+  record$logposterior_quadrature <- as.numeric(info$quadrature)
+  record$gap_reported <- as.numeric(info$quadrature) - as.numeric(info$laplace)
+  # The objective the estimate maximises: the hybrid, whose unflagged units are
+  # Laplace. It differs from the quadrature value above by at most `residual`.
+  record$objective <- as.numeric(final$value)
+  fit$estimate$raw <- x
+  fit <- report_quadrature(fit, info)
+  usable <- reached && !inherits(hc, "try-error") && all(is.finite(hc))
+  method <- .ctJuliaOr(fit$uncertainty$settings$method, "hessian")
+  # Present even when empty: `$` partial-matches, and without it
+  # `correction$hessian` would answer with `hessian_at`.
+  record["hessian"] <- list(NULL)
+  if (usable) {
+    # The certification of the estimate on the objective it maximises: its
+    # gradient against its own Hessian, with the flat-direction probe walking
+    # the hybrid.
+    gradient <- as.numeric(final$gradient)
+    gap <- .ctBackendOptimGap(hc, gradient)
+    probe <- NULL
+    if (isTRUE(gap$ok) && isTRUE(gap$residual_norm > 0)) {
+      out <- try(get(module$ctsem_flat_probe(cont, .ctJuliaNumericVector(x),
+        .ctJuliaNumericVector(gap$residual))), silent = TRUE)
+      if (!inherits(out, "try-error")) probe <- .ctBackendProbeFields(out, npar)
+    }
+    parnames <- try(.ctBackendRawParameterNames(fit, npar), silent = TRUE)
+    if (inherits(parnames, "try-error")) parnames <- NULL
+    certification <- .ctBackendCertificationRecord(gap, probe, tolerance = tol,
+      saturated = isTRUE(fit$optim$saturated), overshot = FALSE,
+      parnames = parnames)
+    record$certification <- certification
+    record$hessian <- hc
+  }
+  own <- usable && identical(method, "hessian")
+  record$hessian_at <- if (own) "estimate" else "laplace_estimate"
+  if (own) {
+    settings <- fit$uncertainty$settings
+    finishsamples <- .ctJuliaOr(settings$finishsamples,
+      if (!is.null(fit$estimate$rawposterior)) nrow(fit$estimate$rawposterior) else 1000L)
+    fit$uncertainty <- list(hessian = hc, evaluated_at = x,
+      certification = certification)
+    fit <- .ctBackendUncertainty(fit, uncertainty = "hessian", draws = "normal",
+      finishsamples = finishsamples, cores = chunks,
+      control = .ctJuliaOr(settings$control, list()), verbose = verbose,
+      lpg = .ctLaplaceContinueLpg(module, cont))
+    record$draws <- "redrawn"
+    fit$uncertainty$details$laplace_correction <- list(
+      draws = paste0("normal draws about the continuation's estimate, from the ",
+        "Hessian of its quadrature objective there"),
+      nodes = record$nodes)
+  } else {
+    # Recentred, as the step correction does, when the continuation stopped
+    # short of its fixed point, has no Hessian to offer, or the fit's
+    # uncertainty did not come from one.
+    post <- fit$estimate$rawposterior
+    if (!is.null(post) && ncol(post) == npar) {
+      fit$estimate$rawposterior <- sweep(post, 2L, delta, "+")
+    }
+    record$draws <- "recentred"
+    if (!is.null(fit$uncertainty)) {
+      fit$uncertainty$details$laplace_correction <- list(
+        draws = paste0("recentred on the continuation's estimate; the ",
+          "covariance is the fit's own at fit$uncertainty$evaluated_at"),
+        nodes = record$nodes)
+    }
+  }
+  record$evaluations <- counts()
+  record$seconds <- c(screen = screen_seconds, total = seconds())
   fit$laplace$correction <- record
   fit
 }

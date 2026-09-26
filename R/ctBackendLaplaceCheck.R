@@ -76,11 +76,15 @@
 #'   \code{2 * npar} quadrature evaluations, and needs the fit's Hessian, so it
 #'   is skipped when uncertainty was not computed.
 #' @param step Finite-difference step for the gap gradient, on the raw scale.
-#' @param refine Refit against the quadrature objective rather than correcting
-#'   linearly. Much slower -- each gradient is another \code{2 * npar}
-#'   quadrature evaluations -- and worth it only when \code{delta / se} is
-#'   large enough that a linear correction is not credible.
-#' @param maxiter Iteration cap for \code{refine}.
+#' @param refine Continue the fit on the quadrature objective rather than
+#'   correcting linearly: the continuation \code{optimcontrol$laplace_correct =
+#'   'quadrature'} runs at fit time (see \code{\link{ctFit}}), from this fit's
+#'   estimate, with its Hessian as the starting metric. Its gradient is exact,
+#'   so it costs a few quadrature gradients per round rather than the
+#'   \code{2 * npar} quadrature evaluations per gradient the finite-difference
+#'   refinement this replaced cost, and it reports the point it reaches in
+#'   \code{refined}.
+#' @param maxiter Iteration cap for each round of \code{refine}.
 #' @param cores Engine threads for the quadrature.
 #' @param verbose Integer; 1 or more prints progress.
 #'
@@ -94,11 +98,14 @@
 #'   (\code{'corrected'}).
 #'
 #'   \code{dropped_directions} counts the directions of the information matrix
-#'   too weakly identified to correct along, which are reported as zero rather
-#'   than as the arbitrarily large step an unguarded solve would produce. On a
-#'   model where the Laplace approximation is already exact the gap gradient is
-#'   floating-point noise, and dividing that by a near-singular curvature is how
-#'   a meaningless correction gets a plausible-looking number.
+#'   the correction does not step along, whose correction is reported as zero
+#'   rather than as the arbitrarily large step an unguarded solve would
+#'   produce: exactly the directions \code{fit$identifiability} names, those
+#'   whose curvature is negligible or not positive and those the likelihood was
+#'   measured flat along. On a model where the Laplace approximation is
+#'   already exact the gap gradient is floating-point noise, and dividing that
+#'   by a near-singular curvature is how a meaningless correction gets a
+#'   plausible-looking number.
 #'
 #' @seealso \code{\link{ctFitUncertainty}} with \code{uncertainty = 'sample'}
 #'   removes the approximation instead of measuring it, by sampling the joint
@@ -175,6 +182,12 @@ ctLaplaceCheck <- function(fit, nodes = 5L, correction = TRUE, step = 1e-3,
     quadrature <- as.numeric(result$quadrature)
     laplacevalue <- as.numeric(result$laplace)
     gap <- as.numeric(result$gap)
+    # The step on the directions the fit identifies, with the fit's own
+    # identifiability rules, so that `dropped_directions` and `nweak` count
+    # the same directions. See `.ctLaplaceIdentifiedStep()`.
+    identified <- .ctLaplaceIdentifiedStep(hessian,
+      as.numeric(result$gap_gradient),
+      screen = fit$uncertainty$details$flatdirections)
   } else {
     if (verbose > 0) message("Quadrature at the estimate (", nodes, " nodes)")
     quadrature <- .ctBackendJuliaValue(module$ctsem_laplace_quadrature(
@@ -203,7 +216,7 @@ ctLaplaceCheck <- function(fit, nodes = 5L, correction = TRUE, step = 1e-3,
   if (!do_correction) return(out)
   covariance <- fit$estimate$cov
   se <- sqrt(abs(diag(as.matrix(covariance))))
-  delta <- as.numeric(result$delta)
+  delta <- identified$delta
   out$parameters <- data.frame(
     parameter = .ctBackendRawParameterNames(fit, length(est)),
     estimate = est, delta = delta, corrected = est + delta,
@@ -216,19 +229,70 @@ ctLaplaceCheck <- function(fit, nodes = 5L, correction = TRUE, step = 1e-3,
   # means "no estimable correction here", which is a different statement from
   # "the correction is zero", and the difference matters to anyone reading the
   # table to decide whether the estimate is approximation-limited.
-  out$dropped_directions <- if (is.null(result$dropped_directions)) 0L else
-    as.integer(result$dropped_directions)
+  out$dropped_directions <- identified$dropped
 
   if (refine) {
-    if (verbose > 0) message("Refitting against the quadrature objective")
-    refined <- JuliaConnectoR::juliaGet(module$ctsem_laplace_refine(
-      objective, .ctJuliaNumericVector(est), nodes = as.integer(nodes),
-      maxiter = as.integer(maxiter), verbose = verbose > 1L))
-    out$refined <- as.numeric(refined$minimizer)
-    out$refined_converged <- isTRUE(refined$converged)
+    if (verbose > 0) message("Continuing on the quadrature objective")
+    control <- .ctLaplaceContinueDefaults
+    control$nodes <- as.integer(nodes)
+    control$maxiter <- as.integer(maxiter)
+    cont <- module$ctsem_laplace_continuation(objective,
+      .ctJuliaNumericVector(est), nodes = as.integer(control$nodes),
+      tolerance = as.numeric(control$tolerance),
+      product_maxdim = as.integer(control$product_maxdim),
+      soft_tau = as.numeric(control$soft_tau),
+      soft_maxdirs = as.integer(control$soft_maxdirs),
+      maxdim = as.integer(control$maxdim))
+    basis <- .ctLaplaceContinueBasis(hessian,
+      fit$uncertainty$details$flatdirections$vectors, rtol = control$rtol)
+    run <- if (is.null(basis) || basis$kept < 1L) NULL else
+      .ctLaplaceContinueRun(module, cont, est, basis$basis,
+        .ctBackendGapTolerance(fit), control = control, verbose = verbose)
+    out$refined <- if (is.null(run)) est else run$x
+    out$refined_converged <- !is.null(run) && identical(run$status, "converged")
+    out$refined_status <- if (is.null(run)) "no_directions" else run$status
+    out$refined_loglik <- if (is.null(run)) NA_real_ else
+      sum(as.numeric(run$info$quadrature_units))
     out$parameters$refined <- out$refined
   }
   out
+}
+
+# The first-order correction's step on the directions the fit identifies.
+#
+# The engine solves `-H \ gap` along every direction the information matrix
+# does not drop at `sqrt(eps)` of its largest eigenvalue. The identifiability
+# report drops more -- a direction whose curvature is not positive, and one the
+# likelihood was measured flat along even though its curvature has not decayed
+# -- and the two counts were compared by a test that failed as soon as the
+# report learned to ask the likelihood. So the step is taken here, on the
+# complement of the directions `.ctBackendIdentifiability()` names from the
+# same Hessian and the same flat-direction screen, and `dropped` is their
+# number: `nweak` by construction.
+.ctLaplaceIdentifiedStep <- function(hessian, gradient, screen = NULL,
+  rtol = 1e-8) {
+  hessian <- as.matrix(hessian)
+  n <- nrow(hessian)
+  report <- .ctBackendIdentifiability(hessian, screen = screen, rtol = rtol,
+    vectors = TRUE)
+  information <- -(hessian + t(hessian)) / 2
+  projector <- diag(n)
+  if (length(report$directions)) {
+    flat <- do.call(cbind, lapply(report$directions, `[[`, "vector"))
+    decomposition <- qr(flat)
+    q <- qr.Q(decomposition)[, seq_len(decomposition$rank), drop = FALSE]
+    projector <- projector - q %*% t(q)
+  }
+  kept <- projector %*% information %*% projector
+  e <- eigen((kept + t(kept)) / 2, symmetric = TRUE)
+  scale <- max(abs(e$values))
+  keep <- if (is.finite(scale) && scale > 0) e$values > rtol * scale else
+    rep(FALSE, n)
+  v <- e$vectors[, keep, drop = FALSE]
+  delta <- if (any(keep)) as.numeric(v %*% ((t(v) %*% (projector %*% gradient)) /
+    e$values[keep])) else rep(0, n)
+  list(delta = delta, dropped = as.integer(n - sum(keep)),
+    nweak = as.integer(report$nweak))
 }
 
 #' @export

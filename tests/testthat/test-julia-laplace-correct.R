@@ -93,6 +93,29 @@ test_that("draws='keep' says the intervals no longer describe the estimate", {
   expect_equal(as.matrix(kept$estimate$cov), as.matrix(fit$estimate$cov))
 })
 
+test_that("draws='imis' samples against the quadrature posterior", {
+  skip_without_julia()
+  skip_if_not_installed('mvtnorm'); skip_if_not_installed('diagis')
+  skip_if_not_installed('gridExtra'); skip_if_not_installed('ggplot2')
+  fit <- .correct_fit()
+
+  set.seed(9)
+  corrected <- suppressWarnings(ctLaplaceCorrect(fit, draws = "imis", nodes = 5,
+    nbatch = 40, maxiter = 1L, target_ess = 20, finishsamples = 60))
+  expect_identical(corrected$laplace_correction$draws, "imis")
+  expect_true(is.finite(corrected$laplace_correction$ess) &&
+    corrected$laplace_correction$ess > 0)
+  expect_equal(nrow(corrected$estimate$rawposterior), 60L)
+  expect_equal(ncol(corrected$estimate$rawposterior), length(fit$estimate$raw))
+  expect_false(is.null(corrected$uncertainty$imis))
+  expect_equal(unname(corrected$estimate$se), unname(sqrt(diag(corrected$estimate$cov))))
+  # This fixture is exactly the case Laplace is exact for (see the file
+  # comment), so there is no flat direction to whiten here; the point of the
+  # test is that the shared IMIS core still runs end to end against the
+  # quadrature density through this entry point, not that whitening triggers.
+  expect_null(attr(corrected$uncertainty$imis, 'subspace'))
+})
+
 test_that("correct_estimate=FALSE leaves the point where it was", {
   skip_without_julia()
   fit <- .correct_fit()

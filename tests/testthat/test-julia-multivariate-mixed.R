@@ -128,11 +128,17 @@ test_that("the Laplace correction handles more than one random effect", {
   # the start after `.mvmix_data()` converged on dev1 and stopped on the ridge
   # on the Windows machine. This test is about the correction, not the basin,
   # so it takes the first of three seeded starts that converges.
+  #
+  # Fitted with laplace_correct = FALSE because the first half tests the
+  # post-hoc function, which refuses a fit the default correction already
+  # moved; the indicators are ordinal and binary, so here it does. The
+  # default fit, from the same start, is the second half.
   fit <- NULL
   for (seed in 1:3) {
     set.seed(seed)
     fit <- suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
-      intoverpop = "laplace", optimcontrol = list(finishsamples = 100))))
+      intoverpop = "laplace", optimcontrol = list(finishsamples = 100,
+        laplace_correct = FALSE))))
     if (isTRUE(fit$optim$converged)) break
   }
   skip_if_not(isTRUE(fit$optim$converged), "no start converged")
@@ -181,4 +187,27 @@ test_that("the Laplace correction handles more than one random effect", {
   # And an NA is only ever the zero-width case, never a correction that failed
   # to compute: that is the contract `na.rm` above relies on.
   expect_true(all(check$parameters$se[is.na(delta)] == 0))
+
+  # The default fit from the same start, whose quadrature correction is what a
+  # user gets: the same two-effect blocks, on the same product rule. The screen
+  # finds a gap (0.05 when measured), so the fit is continued -- up the
+  # quadrature objective, by little, and along the first-order step the check
+  # above computes independently by finite differences of the gap. Measured:
+  # one round, 0.016 se at most, cosine 1.000 with the check's step.
+  set.seed(seed)
+  default <- suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
+    intoverpop = "laplace", optimcontrol = list(finishsamples = 100))))
+  corr <- default$laplace$correction
+  expect_identical(corr$method, "quadrature")
+  expect_identical(corr$status, "continued")
+  expect_true(corr$applied)
+  expect_gte(corr$guard$change, -.ctLaplaceContinueDefaults$value_tol)
+  expect_equal(default$estimate$loglik, corr$loglik_quadrature)
+  moved <- as.numeric(corr$delta_se)
+  ok <- is.finite(moved) & is.finite(delta)
+  expect_lt(max(abs(moved[ok])), 0.5)
+  expect_gt(sum(moved[ok] * delta[ok]) /
+    sqrt(sum(moved[ok]^2) * sum(delta[ok]^2)), 0.9)
+  # And the post-hoc function refuses it, rather than correcting twice.
+  expect_error(ctLaplaceCorrect(default, draws = "normal"), "already corrected")
 })
