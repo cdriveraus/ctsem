@@ -120,12 +120,11 @@
   # the Hessian is at the Laplace estimate and the draws are around the
   # posterior mean, so a ratio of the two was comparing curvature at one point
   # with spread at another and calling the result a ridge diagnostic.
+  # "Describes" is `.ctBackendStoredHessian()`'s rule: evaluated there, or
+  # within a hundredth of a standard error of it.
   if (inherits(fit, "ctJuliaFit") && !is.null(hess)) {
-    at <- fit$uncertainty$evaluated_at
     here <- suppressWarnings(as.numeric(.ctFitRawEstimate(fit)))
-    same <- !is.null(at) && length(at) == length(here) &&
-      isTRUE(all.equal(as.numeric(at), here, tolerance = 1e-8))
-    if (!same) hess <- NULL
+    if (is.null(.ctBackendStoredHessian(fit, here))) hess <- NULL
   }
 
   marginal <- NULL
@@ -375,7 +374,8 @@
     certification <- fit$uncertainty$certification
     add("  converged: ", isTRUE(e$converged),
       if (!is.null(certification) && length(certification$status))
-        paste0("  (certification: ", certification$status, ")")
+        paste0("  (certification: ",
+          .ctBackendCertificationStatus(certification), ")")
       else "  (not certified: no curvature was computed)")
     if (!is.null(e$iterations)) add("  iterations: ", e$iterations)
     # The criterion first and the gradient second, in that order, because the

@@ -88,6 +88,12 @@ struct CTSEMReverseScratch{T}
     # read out after that call returns.
     t0var_bar::Matrix{T}
     sym::Matrix{T}
+    # --- the series discretisation's pullbacks, sized (n, n) ---------------
+    # Each pullback first recomputes its forward kernel into these tapes, from
+    # the inputs the predict record kept. Separate from the forward filter's
+    # buffer in `DiscretizationBuffer`, so the reverse pass never writes into
+    # the filter's workspace.
+    series::SeriesKernelBuffer{T}
 end
 
 function CTSEMReverseScratch(::Type{T}, n::Int, m::Int, k::Int, naff::Int=k) where {T}
@@ -104,7 +110,7 @@ function CTSEMReverseScratch(::Type{T}, n::Int, m::Int, k::Int, naff::Int=k) whe
         z(k, k), z(k, k), z(k, k), z(k, k),
         v(k), v(k), v(n),
         z(naff, naff), v(naff), v(naff), zeros(Int, max(n, k, naff)),
-        z(n, n), z(n, n))
+        z(n, n), z(n, n), SeriesKernelBuffer(T, max(n, k, naff)))
 end
 
 """The leading `r x c` block of a scratch buffer, as a view."""

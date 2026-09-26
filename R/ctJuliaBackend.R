@@ -1014,6 +1014,15 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     failures <- c(failures,
       "intoverstates=FALSE together with intoverpop='laplace'")
   }
+  # A refusal that depends on `nlcontrol`, or on which random-effect route was
+  # taken, cannot live here: this function is called twice from `ctFit()`
+  # (ctFit.R), and neither call can ask. The first runs before `nlcontrol` is
+  # attached to the model, so `model$nlcontrol` reads NULL whatever the caller
+  # set. By the second, `ctFit()` has already turned `intoverpop` into the
+  # plain logical that drives augmentation everywhere downstream (TRUE only for
+  # `'augmented'`), so a `'laplace'` route and a `'none'` route are both FALSE
+  # here. Ask the prepared `model_spec` in `.ctFitJuliaBackendImpl()` instead,
+  # with `.ctBackendIntOverPop()`.
   # `optimize=FALSE` is supported now: the engine has its own No-U-Turn sampler,
   # and which target it samples is decided by `intoverpop`. See
   # `.ctJuliaSampleFit`.
@@ -3738,6 +3747,32 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   out
 }
 
+# The work counters of an engine run, and the counts of runs a fit did not keep
+# added to the one it did: the stage a stall escape replaced, an escape that did
+# not come out ahead, the run before a substep refit. Each did its work, and the
+# fit's counts are the whole of what it ran, as the corrections' totals are
+# (`.ctBackendCorrectResult()`). They were the kept run's alone, which is what
+# the optimiser bench's own tally of engine runs showed. The kept run's own
+# iterations stay readable as `stage_iterations`, since its trace is the one
+# reported and is read against that count. `spent` is a run or its counts.
+.ctJuliaRunCounters <- c("iterations", "f_calls", "g_calls", "newton_steps",
+  "newton_hessians", "newton_subset_hessians")
+#' @keywords internal
+.ctJuliaRunCounts <- function(run) vapply(.ctJuliaRunCounters, function(k)
+  as.numeric(.ctJuliaOr(run[[k]], 0))[1L], numeric(1))
+#' @keywords internal
+.ctJuliaAddRunCounts <- function(kept, spent) {
+  if (!is.numeric(spent)) spent <- .ctJuliaRunCounts(spent)
+  if (!any(spent > 0)) return(kept)
+  if (is.null(kept$stage_iterations)) {
+    kept$stage_iterations <- as.integer(.ctJuliaOr(kept$iterations, 0L))[1L]
+  }
+  for (k in .ctJuliaRunCounters) {
+    kept[[k]] <- as.numeric(.ctJuliaOr(kept[[k]], 0))[1L] + spent[[k]]
+  }
+  kept
+}
+
 # Run the engine's optimizer over a prepared specification.
 #
 # Factored out of .ctFitJuliaBackend() because cross-validation re-optimises the
@@ -3755,8 +3790,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 # Choose the substep mesh for `spec` at the parameter values `values`, and
 # return the spec carrying it together with a summary. The engine measures how
 # nonlinear each interval was (substep_mesh.jl); a linear model comes back with
-# the floor and no filter pass. A non-finite likelihood at `values` leaves the
-# spec as it was, and the summary says so.
+# the floor and no filter pass. On the Laplace route each subject is measured
+# at its random-effect modes at `values`, the point the Laplace term evaluates
+# (laplace.jl). A non-finite likelihood at `values` leaves the spec as it was,
+# and the summary says so.
 .ctJuliaAutoSubsteps <- function(spec, values) {
   module <- .ctJuliaModule(spec$project)
   objective <- .ctJuliaObjective(structure(spec, class = c("ctJuliaModel", "ctFitModel")))
@@ -3775,6 +3812,54 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   list(spec = spec, summary = summary)
 }
 
+# The fitted specification's integration step, carried onto `spec`: the same
+# model re-prepared over other rows, as prediction and cross-validation do.
+# Re-preparing gives back the maxtimestep rule, which applies to any rows. A
+# mesh from `nsubsteps = 'auto'` does not: it is one count per row of the data
+# it was chosen for. Dropped, the filter went back to the rule on intervals the
+# fit had refined; copied across whole, it handed one subject's counts to
+# another, or failed in the engine when the row counts differed.
+#
+# So when every row here is a row the fit had, each keeps the count the fit
+# used, and the fit's own filter is reproduced exactly. Choosing again need
+# not reproduce it: the fit chose its mesh at an earlier optimum, before a
+# refit or a correction moved the estimate it reports. Anything else gets the
+# mesh the fit would choose for these rows at `values`, its estimate.
+.ctJuliaCarrySubsteps <- function(spec, fitted, values) {
+  if (!is.integer(fitted$max_timestep)) {
+    spec$max_timestep <- fitted$max_timestep
+    return(spec)
+  }
+  if (is.null(spec$substeps)) return(spec)
+  rows <- .ctJuliaFittedRows(spec, fitted)
+  if (!is.null(rows)) {
+    spec$max_timestep <- fitted$max_timestep[rows]
+    return(spec)
+  }
+  .ctJuliaAutoSubsteps(spec, as.numeric(values)[seq_len(.ctBackendNpar(spec))])$spec
+}
+
+# For each row of `spec`, the row of `fitted` it is, or NULL unless every row
+# has one. Matched a whole subject at a time: a count belongs to the interval
+# ending at its row, so a row is the fitted one only if the row before it is
+# too, and a subject with a row added or missing matches nowhere.
+.ctJuliaFittedRows <- function(spec, fitted) {
+  idname <- spec$model$subjectIDname
+  bysubject <- function(s) {
+    ids <- as.character(s$data[[idname]])
+    split(seq_along(ids), factor(ids, levels = unique(ids)))
+  }
+  new <- bysubject(spec)
+  old <- bysubject(fitted)
+  if (!length(new) || !all(names(new) %in% names(old))) return(NULL)
+  rows <- lapply(names(new), function(s) {
+    if (identical(as.numeric(fitted$times[old[[s]]]),
+      as.numeric(spec$times[new[[s]]]))) old[[s]]
+  })
+  if (any(vapply(rows, is.null, logical(1L)))) return(NULL)
+  unlist(rows, use.names = FALSE)
+}
+
 .ctJuliaSubstepMessage <- function(s) {
   if (!isTRUE(s$finite)) return("Substeps: likelihood not finite at the starting values; maxtimestep rule kept.")
   paste0("Substeps: ", s$refined, " of ", s$intervals, " intervals refined, max ", s$max_substeps,
@@ -3784,7 +3869,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 .ctJuliaOptimise <- function(model_spec, start, optimcontrol = list(),
   gradient = "adjoint", cores = 1L, verbose = 0L, maxiter = NULL,
   callback = NULL, objective = NULL, progress_label = NULL,
-  progress_budget = FALSE) {
+  progress_budget = FALSE, pin = NULL, carried = NULL) {
   spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
   # A caller may hand in the objective to maximise. `intoverstates=FALSE` does,
   # passing the joint one over `[theta; z]`; everything below is unchanged by
@@ -3866,21 +3951,47 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # hands it a problem conditioned ten times worse than it needs to be. See
     # `.ctJuliaParameterScale()` and `_ctsem_metric` in the engine.
     # Start on a subset of the subjects and grow it as the optimiser needs
-    # more data, and finish with Newton steps on the exact Hessian where that
-    # is a few gradients' worth. Both decide for themselves whether they apply
-    # -- a route without a subset, a prior, too few subjects, an expensive
-    # Hessian -- and are plain L-BFGS otherwise. See optimiser.jl. Off on the
+    # more data, and finish with the endgame: Newton steps, the final Hessian,
+    # an escape from a saddle and the flat-direction probe, all in the engine
+    # (`_ctsem_newton_finish` in optimiser.jl). Batching decides for itself
+    # whether it applies -- a route without a subset, a sampled TI predictor,
+    # too few subjects -- and is plain L-BFGS otherwise. Off on the
     # state-explicit route, whose target is not a sum over subjects and whose
     # joint mode is not an estimate.
     batch = !state_explicit && !identical(optimcontrol$batch, FALSE),
     newton = !state_explicit && !identical(optimcontrol$newton, FALSE),
     # `newton` may also name what the finish's steps are taken against --
-    # 'exact', 'chord' or 'subset'; see `_ctsem_newton_finish`.
+    # 'exact', 'chord' or 'subset'; otherwise the route's own, the exact
+    # Hessian where it is a few gradients and the chord where it is `2 npar`
+    # (Laplace). See `_ctsem_newton_finish`.
     newton_curvature = if (is.character(optimcontrol$newton))
-      as.character(optimcontrol$newton)[1L] else "exact",
+      as.character(optimcontrol$newton)[1L] else "auto",
+    # Whether a certification will read what the endgame returns. It adds the
+    # flat-direction probe, and on the Laplace route, whose Hessian costs `2
+    # npar` gradients, it is what the endgame runs for at all: the finish's
+    # Hessian is then the certification's, not an extra one. Not on a budget
+    # stage (the prior warm-up, whose verdict nobody reads), nor where nothing
+    # certifies -- `estonly`, `certify = FALSE`, the state-explicit route.
+    certify = !state_explicit && !isTRUE(optimcontrol$estonly) &&
+      !identical(optimcontrol$certify, FALSE) && !isTRUE(progress_budget),
+    # The endgame's two rules, passed from here so one number serves the
+    # engine and R: how far a Hessian may have been taken from the estimate and
+    # still be its curvature (`.ctBackendHessianReuse()`), and the relative
+    # curvature below which a direction is flat (`.ctFlatDirectionRtol()`).
+    newton_reuse = .ctBackendHessianReuse(),
+    flat_rtol = .ctFlatDirectionRtol(),
     precondition = if (identical(optimcontrol$precondition, FALSE)) NULL else
       .ctJuliaVector(.ctJuliaParameterScale(model_spec,
         at = as.numeric(start), npar = length(as.numeric(start)))),
+    # The line search's first step, in the metric's own norm (see
+    # `_ctsem_lbfgs` in optimiser.jl). Guards against a first step landing deep
+    # inside a flat transform before any curvature has been learned -- a full
+    # unit step from a cold start is what walks a saturating coordinate straight
+    # to its plateau. One of the seven constants that move where a fit ends
+    # (`review/OPTIM-consolidation-plan-2026-09-25.md` Appendix B), measured on
+    # flat-transform starts and recorded in
+    # `review/LAPLACE-optimise-heuristics-survey-2026-09-25.md` section 3; not
+    # yet measured on categorical or multilevel models.
     initial_alpha = if (is.null(optimcontrol$initial_alpha)) .1 else
       as.numeric(optimcontrol$initial_alpha)[1L],
     verbose = verbose > 0L,
@@ -3974,6 +4085,15 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   if (!is.null(optimcontrol$lbfgs_memory)) {
     common$lbfgs_memory <- as.integer(optimcontrol$lbfgs_memory)[1L]
   }
+  # A stage resumed after a certification found the point short of a maximum
+  # (`.ctBackendCorrectResult()`): the progress the fit made before it, so its
+  # stall watch has a progress to take a share of, and leave to stop on
+  # progress alone once the watch's hysteresis is spent. Every other rule is the
+  # first stage's. See `CTSEMStallWatch` in the engine.
+  if (!is.null(carried)) {
+    common$stall_carried <- max(0, as.numeric(carried)[1L], na.rm = TRUE)
+    common$stall_alone <- TRUE
+  }
   # `cores` is the ceiling; `ctsem_tune_chunks!` measures the count to use
   # within it, and the fit records what it picked. Restored afterwards so the
   # session does not carry this fit's ceiling into the next thing that runs.
@@ -3989,7 +4109,18 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # around them -- `list(index = , value = )`, or NULL for an ordinary stage.
   # See `ctsem_pin` in the engine for why that is not the same as resuming from
   # a displaced point, and `.ctBackendStallEscape()` for what uses it.
-  optimise_once <- function(from, damp = integer(), pin = NULL) {
+  #
+  # `pin` is also this function's own top-level argument, for a caller that
+  # wants every stage pinned -- `ctFitProfile()` fixes one coordinate at a
+  # profile point and needs the batching, the metric and the stall escapes the
+  # fit itself gets around it, not a bare call to the engine's optimiser.
+  # `default_pin` carries that value in rather than writing `pin = pin` below:
+  # a formal argument cannot default to a same-named enclosing variable of the
+  # same name without evaluating itself, which raises "promise already under
+  # evaluation". Every internal call below that does not name its own `pin`
+  # -- the first stage and an ordinary resume alike -- inherits it this way.
+  default_pin <- pin
+  optimise_once <- function(from, damp = integer(), pin = default_pin) {
     args <- common
     held <- !is.null(pin) && length(pin$index)
     target <- objective
@@ -4049,13 +4180,17 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # curvature history describes the region the fit just left, so carrying it
   # across a jump would feed the metric secant pairs from two different
   # problems -- which is the same reason `.ctBackendCorrectResult()` resumes a
-  # fresh optimisation after its Newton step rather than nudging the old one.
+  # fresh optimisation rather than nudging the old one.
   #
   # The jump is only ever taken on a *measured* improvement, so a resumed stage
   # cannot start below where the last one stopped. `stallretries` caps the loop
   # for the case where each escape lands somewhere that stalls again.
   escapes <- 0L
   maxescapes <- as.integer(.ctJuliaOr(optimcontrol$stallretries, 2L))
+  # The work of every run the loop does not keep -- the stage an escape
+  # replaced, an escape that did not come out ahead, a pinned stage -- added to
+  # the kept run's counts after it (`.ctJuliaAddRunCounts()`).
+  spent <- .ctJuliaRunCounts(list())
   while (escapes < maxescapes) {
     from <- .ctBackendStallEscape(result, optimcontrol, model_spec, verbose,
       escapes = !state_explicit)
@@ -4094,11 +4229,22 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     resumed <- if (isTRUE(optimcontrol$escapepin) && length(coordinates)) {
       inside <- coordinates >= 1L & coordinates <= length(from)
       coordinates <- coordinates[inside]
-      staged <- try(optimise_once(from,
-        pin = list(index = coordinates, value = from[coordinates])),
-        silent = TRUE)
-      if (inherits(staged, "try-error")) staged else
+      # Merged with `default_pin` rather than replacing it: naming `pin=`
+      # explicitly here would otherwise drop a caller's top-level pin for the
+      # one stage that happens to pass its own, and a profile point's fixed
+      # coordinate must stay fixed through an escape too. The plain branch
+      # below needs no such merge -- `optimise_once(from)` already falls back
+      # to `default_pin` on its own.
+      escape_pin <- list(
+        index = c(if (length(default_pin$index)) as.integer(default_pin$index),
+          coordinates),
+        value = c(if (length(default_pin$index)) as.numeric(default_pin$value),
+          from[coordinates]))
+      staged <- try(optimise_once(from, pin = escape_pin), silent = TRUE)
+      if (inherits(staged, "try-error")) staged else {
+        spent <- spent + .ctJuliaRunCounts(staged)
         try(optimise_once(as.numeric(staged$minimizer)), silent = TRUE)
+      }
     } else try(optimise_once(from), silent = TRUE)
     if (inherits(resumed, "try-error")) break
     # Only if it actually came out ahead. Neither route to `from` promises
@@ -4108,11 +4254,16 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # measured on, from which a refit landed 7.2 nats up.
     if (!is.finite(as.numeric(resumed$maximum_loglik)[1L]) ||
         as.numeric(resumed$maximum_loglik)[1L] <
-          as.numeric(result$maximum_loglik)[1L]) break
+          as.numeric(result$maximum_loglik)[1L]) {
+      spent <- spent + .ctJuliaRunCounts(resumed)
+      break
+    }
+    spent <- spent + .ctJuliaRunCounts(result)
     resumed$stall_escapes <- escapes
     result <- resumed
   }
   if (is.null(result$stall_escapes)) result$stall_escapes <- escapes
+  result <- .ctJuliaAddRunCounts(result, spent)
   # What the tuner settled on, when that is well short of what was asked for.
   .ctBackendReportChunks(cores, result$chunks)
   if (!is.null(failure)) {
@@ -4253,9 +4404,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   #       20       1490   39.1   s     0.168 s
   #
   # 'adjoint' is faster at every size measured, and the margin grows without
-  # bound with the parameter count. 'forward' remains the default because it
-  # is the longer-tested path, not because it is faster; there is no silent
-  # fallback between them in either direction.
+  # bound with the parameter count, which is why it is the default; 'forward'
+  # stays available by name for anyone who wants ForwardDiff specifically. No
+  # silent fallback between them in either direction.
   model_spec <- .ctJuliaPrepare(datalong, model, prepared_data = prepared_data,
     priors = priors, priorscope = priorscope, intoverpop = intoverpop,
     optimize = optimize,
@@ -4358,8 +4509,16 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # model's raw layout. `.ctBackendLaplacePriorSpec` refuses shapes it cannot
   # map rather than mis-assigning priors across levels, so this is allowed to
   # fail and simply leave the fit unwarmed.
+  #
+  # The warm-up has its own prior scope, N(0,1) on every raw coordinate -- the
+  # spec `priors = TRUE` builds -- whatever the fit's own priors are. It used
+  # to borrow the fit's: it ran only when `priors` was FALSE, which was right
+  # while the scopes were all or none, and since `priors = 'randomCorr'`
+  # became the julia default (4b2dbf05, 2026-09-22) resolved to TRUE on every
+  # default fit, so the stage was skipped there while `$optim$carefulfit`
+  # reported that it ran. A prior on the random-effect correlations alone does
+  # nothing to place the rest of the vector, which is what this stage is for.
   warmspec <- function() {
-    if (isTRUE(priors) || is.null(prepared_data)) return(NULL)
     spec <- model_spec
     spec$priors <- try(if (!is.null(model_spec$laplace))
       .ctBackendLaplacePriorSpec(prepared_data, model_spec$laplace, npar)
@@ -4426,23 +4585,55 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # random-effect sd of exactly zero without it against a truth of 0.5. One of
   # those three also failed to converge. Conditioning and basin selection are
   # different problems and the preconditioner only addresses the first.
+  #
+  # Provenance of the cap of ten, since it is a measured constant and the
+  # measurements were on one family: a one-latent continuous-time model with a
+  # random CINT (population sd 0.5, DRIFT -0.3, DIFFUSION 0.8), 60 subjects x
+  # 10 occasions, Gaussian, binary, ordinal and mixed indicators, on both the
+  # augmented and the laplace route, fitted with `priors = FALSE`
+  # (dev/simstudies/simstudy-individual-differences.R and
+  # simstudy-carefulfit.R). Nothing with more than one random effect, an
+  # effect on DRIFT or a variance, or an outer level, and all of it before the
+  # default became 'randomCorr'. A change to the cap is a bench run, not an
+  # edit.
   careful <- optimcontrol$carefulfit
   if (is.null(careful)) careful <- TRUE
   warmiter <- if (isTRUE(careful)) 10L else
     if (is.numeric(careful) && length(careful) == 1L && careful >= 1)
       as.integer(careful) else 0L
-  # `stanoptimis` turns `carefulfit` off when starting values were supplied,
-  # since the point of the pass is to produce some. Overriding a starting value
-  # the caller chose would be worse than surprising.
-  if (!is.null(inits) && !identical(inits, "random")) warmiter <- 0L
-  # And not at all on the state-explicit target. The warm-up exists to place
-  # the *population* parameters from the priors; the innovations already
-  # start at their own prior mode, and running a second optimisation over
-  # the whole extended vector to rediscover that would cost as much as the
-  # fit it is warming.
-  if (!isTRUE(intoverstates)) warmiter <- 0L
-  if (warmiter >= 1) {
+  # What the warm-up did, recorded from what executed rather than from what was
+  # asked for: a stage whose builder returned NULL looks exactly like one that
+  # ran unless the fit says which. `warmskip` is why not, NA when it ran and
+  # its point became the start; `warmran` iterations it took.
+  warmskip <- NA_character_
+  warmran <- 0L
+  # The fit's own prior scope, as `.ctJuliaPrepare()` read it: a NULL scope is
+  # the logical `priors` alone.
+  fitscope <- if (identical(priorscope, "randomCorr")) "randomCorr" else
+    if (isTRUE(priors)) "all" else "none"
+  if (warmiter < 1L) {
+    warmskip <- "switched off by optimcontrol$carefulfit"
+  } else if (!is.null(inits) && !identical(inits, "random")) {
+    # `stanoptimis` turns `carefulfit` off when starting values were supplied,
+    # since the point of the pass is to produce some. Overriding a starting
+    # value the caller chose would be worse than surprising.
+    warmskip <- "starting values were supplied"
+  } else if (!isTRUE(intoverstates)) {
+    # And not at all on the state-explicit target. The warm-up exists to place
+    # the *population* parameters from the priors; the innovations already
+    # start at their own prior mode, and running a second optimisation over
+    # the whole extended vector to rediscover that would cost as much as the
+    # fit it is warming.
+    warmskip <- "intoverstates=FALSE"
+  } else if (identical(fitscope, "all")) {
+    # The fit is the posterior under exactly these priors, so a warm-up under
+    # them would be the first ten iterations of the fit itself.
+    warmskip <- "priors=TRUE: the fit already has these priors"
+  } else if (is.null(prepared_data)) {
+    warmskip <- "no prepared data to build the priors from"
+  } else {
     spec <- warmspec()
+    if (is.null(spec)) warmskip <- "the priors do not map onto this model's layout"
     if (!is.null(spec)) {
       # No callback here, deliberately. This stage is a starting-value device,
       # not the fit: it optimises a *different* objective (the posterior rather
@@ -4463,7 +4654,20 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         # `4 * npar` value-only evaluations, which on a 50-subject laplace fit
         # is about a fifth of a stage, so paying it for a verdict nobody reads
         # doubled what the probe costs a default fit.
-        optimcontrol = utils::modifyList(optimcontrol, list(overshoot = "off")),
+        #
+        # Nor the Newton finish, nor batching, so that the stage is the one the
+        # cap was measured on: ten iterations of L-BFGS over all the data. Both
+        # arrived with the engine's own optimiser (f2ab4796), after every
+        # measurement above. The finish runs whenever L-BFGS stops by the gap
+        # rule, and runs on to the prior mode -- 6 L-BFGS iterations and then 18
+        # Newton steps on the ten-subject fixture in
+        # test-backend-controlsurface.R -- which is the long prior pass the cap
+        # exists to prevent. A batch would make the pass a warm start from a
+        # subset of the subjects, which measured worse than no warm-up at all
+        # (116 of 120 converged against 117, and a random-effect sd of 2.3 for a
+        # truth of 0.5).
+        optimcontrol = utils::modifyList(optimcontrol,
+          list(overshoot = "off", newton = FALSE, batch = FALSE)),
         maxiter = as.integer(warmiter),
         gradient = gradient, cores = cores, verbose = verbose,
         callback = NULL, progress_label = "prior warm-up",
@@ -4472,9 +4676,13 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         progress_budget = TRUE), silent = TRUE)
       # A warm start is only a starting value: if it produced numbers the fit
       # can use, use them, and otherwise start where we would have anyway.
-      if (!inherits(warmed, "try-error")) {
+      if (inherits(warmed, "try-error")) {
+        warmskip <- "the warm-up failed"
+      } else {
+        warmran <- as.integer(.ctJuliaOr(warmed$iterations, 0L))[1L]
         values <- as.numeric(warmed$minimizer)
-        if (length(values) == npar && all(is.finite(values))) start <- values
+        if (length(values) == npar && all(is.finite(values))) start <- values else
+          warmskip <- "the warm-up returned no usable point"
       }
     }
   }
@@ -4508,9 +4716,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     if (!identical(model_spec$max_timestep, before)) {
       substeps$refit <- TRUE
       restart <- if (is.null(jointobjective)) optimum else c(optimum, numeric(nstate))
-      result <- .ctJuliaOptimise(model_spec, restart, optimcontrol = optimcontrol,
-        gradient = gradient, cores = cores, verbose = verbose,
-        callback = optimcontrol$callback, objective = jointobjective)
+      first <- result
+      result <- .ctJuliaAddRunCounts(.ctJuliaOptimise(model_spec, restart,
+        optimcontrol = optimcontrol, gradient = gradient, cores = cores,
+        verbose = verbose, callback = optimcontrol$callback,
+        objective = jointobjective), first)
     }
   }
   if (!is.null(substeps)) message(.ctJuliaSubstepMessage(substeps))
@@ -4526,18 +4736,17 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   correction <- NULL
   certifying <- isTRUE(intoverstates) && !isTRUE(optimcontrol$estonly) &&
     !identical(optimcontrol$certify, FALSE)
+  # A resume runs under the fit's own controls, with only the progress the fit
+  # has made carried in (see `.ctBackendCorrectResult()`).
   correct <- function(r) .ctBackendCorrectResult(r, model_spec, npar,
     tolerance = .ctJuliaOr(optimcontrol$gaptol, 1e-6),
     maxtries = .ctJuliaOr(optimcontrol$gapretries, 2L),
     gradient = gradient, verbose = verbose,
-    maxiter = .ctJuliaOr(optimcontrol$maxiter, 1000L),
-    gtol = .ctJuliaOr(optimcontrol$g_tol, 1e-8),
-    optimise = function(from, overrides = list()) .ctJuliaOptimise(model_spec,
+    optimise = function(from, carried = 0) .ctJuliaOptimise(model_spec,
       if (is.null(jointobjective)) from else c(from, numeric(nstate)),
-      optimcontrol = utils::modifyList(optimcontrol, overrides),
-      gradient = gradient, cores = cores,
+      optimcontrol = optimcontrol, gradient = gradient, cores = cores,
       verbose = verbose, callback = optimcontrol$callback,
-      objective = jointobjective))
+      objective = jointobjective, carried = carried))
   if (certifying) {
     correction <- correct(result)
     result <- correction$result
@@ -4681,8 +4890,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # `saturated_parameters` -- see `_ctsem_overshot` in the engine.
     overshoot_parameters = .ctJuliaSaturatedNames(result, model_spec, npar,
       "overshoot_parameters"),
-    # Whether the first pass with priors ran, and how long it was allowed.
-    carefulfit = warmiter >= 1, carefulfit_iterations = as.integer(warmiter),
+    # Whether the prior warm-up ran and its point became the start, how many
+    # iterations it ran, and why not when it did not -- all from what
+    # executed. It used to be `warmiter >= 1`, what was asked for, and so
+    # reported TRUE on every default fit while the stage was being skipped.
+    carefulfit = is.na(warmskip), carefulfit_iterations = warmran,
+    carefulfit_skipped = warmskip,
     # Which line search produced the answer. "hagerzhang+backtracking" means
     # Hager-Zhang stopped short and the fit was finished by the fallback.
     linesearch = if (is.null(result$linesearch)) NA_character_ else
@@ -4700,15 +4913,18 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # arrived, this one stops a fit that is not going to.
     stopped_by_stall = isTRUE(result$stopped_by_stall),
     # The batch sizes the run grew through, and the iteration each began at;
-    # 0 when it did not batch (too few subjects, a prior, or the route has no
-    # subset). See `_ctsem_batch_plan` in the engine.
+    # 0 when it did not batch (too few subjects or groups, a sampled TI
+    # predictor, or a route with no subset). A prior does not prevent it: the
+    # engine scales the likelihood part of a batch and leaves the prior whole
+    # (`_ctsem_batchable` is `isempty(ti_missing_parameter)`). See
+    # `_ctsem_batch_plan` in the engine.
     batch_sizes = if (is.null(result$batch_sizes)) 0L else
       as.integer(result$batch_sizes),
     batch_iterations = if (is.null(result$batch_iterations)) 0L else
       as.integer(result$batch_iterations),
-    # Newton steps on the exact Hessian after L-BFGS handed over; 0 when there
-    # was no finish (the Hessian is not cheap on this route, or the run ended
-    # some other way).
+    # Steps the endgame took after L-BFGS handed over, escapes from a saddle
+    # included; 0 when there was no finish (nothing certifies on the Laplace
+    # route, or the run ended on its cap or a stall).
     newton_steps = if (is.null(result$newton_steps)) 0L else
       as.integer(result$newton_steps),
     # Full and subset Hessians the finish formed, the final (certification)
@@ -4717,6 +4933,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       as.integer(result$newton_hessians),
     newton_subset_hessians = if (is.null(result$newton_subset_hessians)) 0L
       else as.integer(result$newton_subset_hessians),
+    # How many times the finish left a saddle along its negative curvature.
+    newton_escapes = if (is.null(result$newton_escapes)) 0L else
+      as.integer(result$newton_escapes),
     stall_window = if (is.null(result$stall_window)) NA_integer_ else
       as.integer(result$stall_window),
     # And the two stopping rules as the engine actually received them.
@@ -4830,6 +5049,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     out$optim$restarts <- restarts$table
     out$optim$restarts_cancelled <- isTRUE(restarts$cancelled)
   }
+  # The kept run's own count, when the fit also ran one it did not keep -- a
+  # stall escape, a substep refit (`.ctJuliaAddRunCounts()`): `iterations`
+  # counts both, and the trace is the kept run's.
+  if (!is.null(result$stage_iterations)) {
+    out$optim$stage_iterations <- as.integer(result$stage_iterations)[1L]
+  }
   if (!is.null(correction)) {
     # The Hessian goes on the fit so the uncertainty stage does not recompute
     # the same matrix at the same point, and the certification with it so a
@@ -4837,25 +5062,37 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     out$optim$corrections <- correction$corrections
     # Totals over every stage the fit ran, which is what these names should
     # always have meant. `stage_iterations` keeps the last stage's own count
-    # for anyone reading a trace against it.
-    out$optim$stage_iterations <- out$optim$iterations
+    # for anyone reading a trace against it -- the kept run's, when a stall
+    # escape replaced the run before it (`.ctJuliaOptimise()`).
+    out$optim$stage_iterations <- as.integer(.ctJuliaOr(result$stage_iterations,
+      out$optim$iterations))[1L]
     out$optim$iterations <- as.integer(correction$totals[["iterations"]])
     out$optim$f_calls <- as.integer(correction$totals[["f_calls"]])
     out$optim$g_calls <- as.integer(correction$totals[["g_calls"]])
     # A count of Hessians computed, which used to sit on `$estimate` as
     # `hessians` -- an integer one letter away from the matrix beside it. Named
-    # for what it counts, and on `$optim` because it counts work the run did.
+    # for what it counts, and on `$optim` because it counts work the run did:
+    # the ones the engine's finish formed over every stage, and any the
+    # certification had to ask for where no finish ran.
     out$optim$hessian_evaluations <- correction$hessians
+    # How far the reported estimate is from where that Hessian was evaluated,
+    # in the standard errors it implies: 0 when it is exactly there, and at
+    # most `.ctBackendHessianReuse()` when the finish kept the Hessian it took
+    # at the hand-over.
+    out$optim$hessian_distance <- correction$distance
     # The matrix goes where its consumers look, and `evaluated_at` is what makes
-    # that safe. See `.ctBackendHessian()`: every route now says which point
+    # that safe. See `.ctBackendStoredHessian()`: every route says which point
     # its Hessian describes, rather than leaving a reader to assume
-    # `$estimate$raw` -- which is true here and false on a sampled fit, where
+    # `$estimate$raw` -- which is close here and false on a sampled fit, where
     # the matrix is at the Laplace point and `$estimate$raw` is the posterior
-    # mean. `.ctBackendCorrectResult()` recomputes the curvature at the top of
-    # every attempt and only breaks out before resuming, so this matrix is
-    # always at the `minimizer` the fit reports.
+    # mean. `.ctBackendCorrectResult()` recertifies at the top of every
+    # attempt and only breaks out before resuming, so this matrix describes the
+    # `minimizer` the fit reports: evaluated there, or within a hundredth of a
+    # standard error of it.
     out$uncertainty <- list(certification = correction$certification,
-      hessian = correction$hessian, evaluated_at = minimizer)
+      hessian = correction$hessian,
+      evaluated_at = if (is.null(correction$evaluated_at)) minimizer else
+        as.numeric(correction$evaluated_at))
     out <- .ctBackendCertifiedVerdict(out)
   }
   class(out) <- c("ctJuliaFit", "ctFit")
@@ -4954,10 +5191,13 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # its correlations -- where the covariances are determined, and fixing a
   # value throws them away -- from a direction the data says nothing about.
   # `at` is where that curvature was evaluated, which after the Laplace
-  # correction is the Laplace optimum and not the reported estimate.
+  # correction is the Laplace optimum and not the reported estimate. `screen`
+  # is the likelihood's verdict along that curvature's flat directions, from
+  # the same point; see `.ctBackendIdentifiability()`.
   out$identifiability <- .ctBackendIdentifiability(out$uncertainty$hessian,
     rawnames, fit = out,
-    at = .ctJuliaOr(out$uncertainty$evaluated_at, out$estimate$raw))
+    at = .ctJuliaOr(out$uncertainty$evaluated_at, out$estimate$raw),
+    screen = out$uncertainty$details$flatdirections)
   # `$uncertainty$intervalcheck` is attached by `.ctBackendUncertainty()`, so
   # it describes whichever method ran; it is only warned about here. A separate
   # question from identifiability: a direction can be flat enough to ruin every

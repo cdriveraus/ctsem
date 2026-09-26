@@ -62,10 +62,11 @@ leave-one-out, available only for \code{backend = 'julia'} fits with
 For \code{method = 'kfold'}, a list with \code{foldrows},
   \code{foldpars}, \code{insampleLogLikRow}, \code{LogLikRowFolds},
   \code{outsampleLogLikRow}, \code{insampleLogLik}, \code{outsampleLogLik}
-  and entropy and standard deviation summaries. An \code{intoverpop =
-  'laplace'} fit adds \code{insampleLogLikSubject},
-  \code{outsampleLogLikSubject} and \code{scoring}, naming what was scored
-  (see Details). For \code{method = 'psis'}, an object of class
+  and entropy and standard deviation summaries. \code{scoring} is added
+  whenever the folds were refit, naming what was scored and that they are
+  uncertified (see Details); an \code{intoverpop = 'laplace'} fit also adds
+  \code{insampleLogLikSubject} and \code{outsampleLogLikSubject}. For
+  \code{method = 'psis'}, an object of class
   \code{ctLOOpsis}: \code{elpd_loo}, \code{se_elpd_loo}, \code{p_loo},
   \code{looic}, \code{pointwise} (a data frame of \code{elpd_loo},
   \code{lpd}, \code{p_loo} and \code{pareto_k} per unit or row),
@@ -141,6 +142,13 @@ would need its own Hessian and quadrature gradient -- so the in-sample side,
 the folds' starting point and the PSIS proposal all use the Laplace optimum,
 \code{fit$laplace$correction$laplace_estimate}, rather than the corrected
 estimate. \code{scoring} says so when the fit was corrected.
+
+\strong{A fold's estimate is never certified.} Whatever the route, a refit
+fold is optimised with \code{optimcontrol$certify = FALSE}: certifying and
+correcting a fold the way the full fit is would cost each fold its own
+Hessian, which is the expense K-fold exists to avoid. \code{scoring} says so
+for any refit (\code{refit = TRUE}, the default, and not
+\code{casewiseApproximation}), on both routes.
 }
 \examples{
 \donttest{

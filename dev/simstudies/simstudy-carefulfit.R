@@ -11,6 +11,23 @@
 # What is scored is the population sd of the individual differences, against a
 # known truth of 0.5, and the log likelihood reached. A higher likelihood in
 # the wrong basin is still the wrong answer, so the sd is the primary outcome.
+#
+# The prior scope is a factor too, because the warm-up's gate once read it:
+# before the warm-up took its own prior scope, `priors = 'randomCorr'` (the
+# julia default) switched it off while the fit reported it had run. Set by
+# environment variables so one script runs against any tree:
+#
+#   CAREFULFIT_PRIORS   comma list of 'default' (priors not passed), 'FALSE',
+#                       'TRUE', 'randomCorr'           [default: default]
+#   CAREFULFIT_CAREFUL  comma list of TRUE, FALSE     [default: TRUE,FALSE]
+#   CAREFULFIT_NREP     replications per cell         [default: 30]
+#   CAREFULFIT_CORES    mclapply workers              [default: 16]
+#   CAREFULFIT_OUT      results file                  [default:
+#                       simstudy_carefulfit.rds]
+#
+# The model has one random effect, so `priors = 'randomCorr'` puts no prior
+# anywhere on it (there are no correlations) and its fit is the likelihood,
+# the same objective as `priors = FALSE`.
 
 # Run from the package root (Rscript dev/simstudies/<file>), or set CTSEM_TREE
 # to the package directory. Not part of the package build or its tests.
@@ -32,7 +49,12 @@ TRUE_CINTSD <- 0.5
 TAU <- c(-1.0, 0.4, 1.9)
 NSUB <- 60
 NOBS <- 10
-NREP <- 30
+NREP <- as.integer(Sys.getenv("CAREFULFIT_NREP", "30"))
+PRIORS <- strsplit(Sys.getenv("CAREFULFIT_PRIORS", "default"), ",")[[1]]
+CAREFUL <- as.logical(strsplit(Sys.getenv("CAREFULFIT_CAREFUL", "TRUE,FALSE"),
+  ",")[[1]])
+CORES <- as.integer(Sys.getenv("CAREFULFIT_CORES", "16"))
+OUT <- Sys.getenv("CAREFULFIT_OUT", "simstudy_carefulfit.rds")
 
 invlog <- function(x) 1 / (1 + exp(-x))
 drawcat <- function(eta, tau) {
@@ -117,16 +139,18 @@ one_cell <- function(job) {
   args <- list(datalong = d, ctstanmodel = m, cores = 1, backend = "julia",
     intoverpop = job$method,
     optimcontrol = list(estonly = TRUE, carefulfit = job$careful))
+  if (!identical(job$priors, "default")) args$priors <-
+    if (job$priors %in% c("TRUE", "FALSE")) as.logical(job$priors) else job$priors
   started <- Sys.time()
   f <- try(suppressWarnings(suppressMessages(do.call(ctFit, args))),
     silent = TRUE)
   secs <- as.numeric(difftime(Sys.time(), started, units = "secs"))
   base <- data.frame(seed = job$seed, measure = job$measure,
-    method = job$method, careful = job$careful, secs = secs,
-    stringsAsFactors = FALSE)
+    method = job$method, priors = job$priors, careful = job$careful,
+    secs = secs, stringsAsFactors = FALSE)
   fail <- cbind(base, drift = NA_real_, diffusion = NA_real_,
     cintsd = NA_real_, ll = NA_real_, iterations = NA_integer_,
-    converged = FALSE)
+    converged = FALSE, warmed = NA, warmiter = NA_integer_)
   if (inherits(f, "try-error")) return(fail)
   s <- try(summary(f), silent = TRUE)
   if (inherits(s, "try-error")) return(fail)
@@ -138,15 +162,23 @@ one_cell <- function(job) {
     diffusion = grab(pm, "diff_eta1"),
     cintsd = grab_sd(s),
     ll = ll[1],
-    iterations = as.integer(f$estimate$iterations)[1],
-    converged = isTRUE(f$estimate$converged))
+    # On `$optim` since the fit object was split into the estimate and the
+    # run; read from `$estimate` these were NULL, which scored every cell as
+    # unconverged and dropped them all from the tables below.
+    iterations = as.integer(f$optim$iterations)[1],
+    converged = isTRUE(f$optim$converged),
+    # What the warm-up did. Only trustworthy from the tree that records it from
+    # what executed; earlier trees reported the cap being set.
+    warmed = isTRUE(f$optim$carefulfit),
+    warmiter = as.integer(f$optim$carefulfit_iterations)[1])
 }
 
 jobs <- list()
 for (seed in seq_len(NREP)) for (measure in names(MEASURES))
-  for (method in c("augmented", "laplace")) for (careful in c(TRUE, FALSE))
-    jobs[[length(jobs) + 1L]] <- list(seed = seed, measure = measure,
-      method = method, careful = careful)
+  for (method in c("augmented", "laplace")) for (priors in PRIORS)
+    for (careful in CAREFUL)
+      jobs[[length(jobs) + 1L]] <- list(seed = seed, measure = measure,
+        method = method, priors = priors, careful = careful)
 set.seed(1); jobs <- jobs[sample.int(length(jobs))]
 cat("cells:", length(jobs), "\n"); flush(stdout())
 
@@ -157,28 +189,29 @@ results <- mclapply(jobs, function(j) {
     assign(".jl_ready", TRUE, envir = globalenv())
   }
   try(one_cell(j), silent = TRUE)
-}, mc.cores = 16, mc.preschedule = TRUE)
+}, mc.cores = CORES, mc.preschedule = TRUE)
 
 ok <- !vapply(results, function(x) inherits(x, "try-error"), logical(1))
 cat("completed:", sum(ok), "of", length(jobs), "in",
   round(as.numeric(difftime(Sys.time(), started, units = "mins")), 1),
   "minutes\n")
 res <- do.call(rbind, results[ok])
-saveRDS(res, "simstudy_carefulfit.rds")
+saveRDS(res, OUT)
 
 report <- function(what, truth) {
   cat("\n=== ", what, " (true ", truth, ") ===\n", sep = "")
   agg <- do.call(rbind, lapply(split(res, list(res$measure, res$method,
-    res$careful), drop = TRUE), function(g) {
+    res$priors, res$careful), drop = TRUE), function(g) {
       v <- g[[what]][g$converged & is.finite(g[[what]])]
       data.frame(measure = g$measure[1], method = g$method[1],
-        careful = g$careful[1], n = length(v), mean = mean(v),
+        priors = g$priors[1], careful = g$careful[1], warmed = sum(g$warmed),
+        n = length(v), mean = mean(v),
         bias = mean(v) - truth, rmse = sqrt(mean((v - truth)^2)),
         worst = if (length(v)) max(abs(v - truth)) else NA_real_,
         secs = stats::median(g$secs, na.rm = TRUE),
         iters = stats::median(g$iterations, na.rm = TRUE))
     }))
-  agg <- agg[order(agg$measure, agg$method, agg$careful), ]
+  agg <- agg[order(agg$measure, agg$method, agg$priors, agg$careful), ]
   print(agg, row.names = FALSE, digits = 3)
 }
 report("cintsd", TRUE_CINTSD)
@@ -186,20 +219,20 @@ report("drift", TRUE_DRIFT)
 report("diffusion", TRUE_DIFF)
 
 cat("\n=== convergence ===\n")
-print(with(res, table(measure, method, careful, converged)))
+print(with(res, table(measure, method, priors, careful, converged)))
 
 # Paired on the same data: the whole question is whether turning the warm-up
 # off changes where a *particular* fit lands, which an aggregate can hide.
 cat("\n=== paired, same seed and cell: careful minus plain ===\n")
-key <- paste(res$seed, res$measure, res$method)
 on <- res[res$careful, ]; off <- res[!res$careful, ]
-m <- merge(on, off, by = c("seed", "measure", "method"),
+m <- merge(on, off, by = c("seed", "measure", "method", "priors"),
   suffixes = c(".on", ".off"))
 m$dll <- m$ll.on - m$ll.off
 m$derr <- abs(m$cintsd.off - TRUE_CINTSD) - abs(m$cintsd.on - TRUE_CINTSD)
-pair <- do.call(rbind, lapply(split(m, list(m$measure, m$method), drop = TRUE),
+pair <- if (nrow(m)) do.call(rbind, lapply(split(m, list(m$measure, m$method,
+  m$priors), drop = TRUE),
   function(g) data.frame(measure = g$measure[1], method = g$method[1],
-    n = nrow(g),
+    priors = g$priors[1], n = nrow(g),
     ll_on_better = sum(g$dll > 0.01, na.rm = TRUE),
     ll_off_better = sum(g$dll < -0.01, na.rm = TRUE),
     max_ll_gain = max(g$dll, na.rm = TRUE),
@@ -209,12 +242,15 @@ pair <- do.call(rbind, lapply(split(m, list(m$measure, m$method), drop = TRUE),
     worst_off_err = max(abs(g$cintsd.off - TRUE_CINTSD), na.rm = TRUE),
     worst_on_err = max(abs(g$cintsd.on - TRUE_CINTSD), na.rm = TRUE),
     secs_on = stats::median(g$secs.on), secs_off = stats::median(g$secs.off))))
-print(pair, row.names = FALSE, digits = 3)
+if (!is.null(pair)) print(pair, row.names = FALSE, digits = 3)
 
 cat("\n=== the individual fits where they disagree most on cintsd ===\n")
-m$absdiff <- abs(m$cintsd.on - m$cintsd.off)
-worst <- m[order(-m$absdiff), c("seed", "measure", "method", "cintsd.on",
-  "cintsd.off", "ll.on", "ll.off", "converged.on", "converged.off")]
-print(utils::head(worst, 20), row.names = FALSE, digits = 4)
+if (nrow(m)) {
+  m$absdiff <- abs(m$cintsd.on - m$cintsd.off)
+  worst <- m[order(-m$absdiff), c("seed", "measure", "method", "priors",
+    "cintsd.on", "cintsd.off", "ll.on", "ll.off", "converged.on",
+    "converged.off")]
+  print(utils::head(worst, 20), row.names = FALSE, digits = 4)
+}
 
 cat("SIMDONE\n")

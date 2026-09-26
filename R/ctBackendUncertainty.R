@@ -224,6 +224,10 @@
   # reachable -- it is the only way to compare the two on a real model.
   needsHessian <- uncertainty %in% c("hessian", "sandwich", "bootstrap", "is") ||
     (uncertainty == "surrogate" && is.null(control$initialCov))
+  # What the fit already knows about its curvature, kept before
+  # `fit$uncertainty` is replaced below: the Hessian the certification decided
+  # on, where it was evaluated, and that certification.
+  stored <- fit$uncertainty
   hessian <- if (needsHessian && !identical(control$analyticHessian, FALSE)) {
     .ctBackendHessian(fit, est, verbose = verbose)
   } else NULL
@@ -302,20 +306,45 @@
   # Hessian to check the refusal, and the refusal stopped firing. Nothing in
   # `$uncertainty` may be a prefix-extension of another name there; the
   # duplication ratchet asserts it.
-  if (!is.null(uncertaintyfit$hessian)) uncertaintyfit$evaluated_at <- as.numeric(est)
+  #
+  # The stored matrix, when it was the one used, keeps the point it was
+  # evaluated at: the optimiser's finish may have taken it at the hand-over, a
+  # hundredth of a standard error or less from `est`, and saying `est` would
+  # claim more than was measured.
+  reused <- !is.null(stored$hessian) && !is.null(uncertaintyfit$hessian) &&
+    identical(uncertaintyfit$hessian, stored$hessian)
+  if (!is.null(uncertaintyfit$hessian)) {
+    uncertaintyfit$evaluated_at <- if (reused && length(stored$evaluated_at))
+      as.numeric(stored$evaluated_at) else as.numeric(est)
+  }
   fit$uncertainty <- uncertaintyfit
   # And the identifiability report, for the same reason: it is a statement
   # about the curvature this call just used. A fit made with `estonly = TRUE`
   # and finished later by `ctOptimUncertainty()` carried none at all, so
   # nothing named the parameter whose interval had no width.
+  # `screen` is what the likelihood said along the flat directions of that same
+  # curvature, so the report names what was measured flat and not only what
+  # the eigenvalue has decayed far enough to call flat at this stopping point.
   fit$identifiability <- .ctBackendIdentifiability(uncertaintyfit$hessian,
-    names(fit$estimate$se), fit = fit, at = fit$estimate$raw)
+    names(fit$estimate$se), fit = fit, at = fit$estimate$raw,
+    screen = uncertaintyfit$details$flatdirections)
   # What the curvature says about convergence, which a gradient cannot: the
   # objective still available under the local quadratic approximation, over the
   # subspace whose curvature the data supports, plus a measurement of what the
   # excluded directions hold. See R/ctBackendOptimGap.R.
-  fit$uncertainty$certification <- .ctBackendCertification(fit,
-    uncertaintyfit$hessian, tolerance = .ctBackendGapTolerance(fit))
+  #
+  # Once per fit. The certification made on the way out of the optimiser was
+  # decided on this same matrix, with the engine's own probe, so it is kept;
+  # computing it again here with another evaluator, and overwriting it, is what
+  # this stage used to do. Only a matrix from elsewhere -- a fit certified with
+  # none (`estonly`), an estimate moved since -- is certified here.
+  fit$uncertainty$certification <- if (reused &&
+      length(stored$certification$status)) {
+    stored$certification
+  } else {
+    .ctBackendCertification(fit, uncertaintyfit$hessian,
+      tolerance = .ctBackendGapTolerance(fit))
+  }
   # And `converged` with it: a fit finished here had only the engine's verdict
   # until this call, and that verdict is what this one replaces.
   fit <- .ctBackendCertifiedVerdict(fit)
@@ -371,10 +400,12 @@
 #' The random-effect correlations alone, as a prior spec.
 #'
 #' What `priors = 'randomCorr'` builds, and the default: the random-effect
-#' covariance block -- standard deviations and correlations, at every level of
-#' a hierarchy. Every other coordinate is left to the likelihood; these are the
-#' ones where unbounded maximum likelihood is not merely uncertain but
-#' ill-posed.
+#' correlations only, at every level of a hierarchy -- not their standard
+#' deviations, which the likelihood alone determines poorly enough to warrant
+#' a warning but not, on their own, the walk a correlation coordinate is
+#' capable of (see below). Every other coordinate is left to the likelihood;
+#' the correlations are the ones where unbounded maximum likelihood is not
+#' merely uncertain but ill-posed.
 #'
 #' A correlation is bounded and its coordinate is not, so every construction
 #' that maps one to the other flattens as the correlation approaches its
@@ -450,6 +481,16 @@
   list(index = as.integer(index), scale = rep(1, length(index)), weight = 1)
 }
 
+# What `priors = TRUE` builds on the Laplace route: a standard
+# `normal(0, 1)` on every raw coordinate the loop below reaches -- each
+# level's random-effect sds, its correlations, and, for a reduced-rank level,
+# its loadings instead of the scales (see the comment at `load_index` below
+# for why those are scaled by `1 / sqrt(rank)` rather than left at 1). Time
+# independent predictor effects get their own scale from `standata`, not this
+# one. One of the seven leverage constants that move where a fit ends
+# (`review/OPTIM-consolidation-plan-2026-09-25.md` Appendix B) --
+# `priors = 'randomCorr'`, `.ctBackendRandomCorrPriorSpec` above, is the
+# narrower default that applies the same N(0,1) to the correlations alone.
 .ctBackendLaplacePriorSpec <- function(standata, laplace, npar) {
   if (is.null(standata)) {
     stop("priors=TRUE needs the prepared model data; this fit was built without it.",
@@ -601,34 +642,34 @@
   # A state-explicit fit maximised a different object, so its curvature is a
   # different object too. See `.ctBackendJointHessian`.
   if (isFALSE(fit$args$resolved$intoverstates)) return(.ctBackendJointHessian(fit, est))
-  # The convergence certification computed this matrix, at this estimate, on
-  # the way out of the optimiser -- see `.ctBackendCorrectResult()`. Recomputing
-  # it would be the fit's second most expensive step run twice for the same
-  # answer.
+  # The optimiser's finish formed this matrix on the way out, and the
+  # certification decided on it -- see `.ctBackendCorrectResult()`.
+  # Recomputing it would be the fit's second most expensive step run twice for
+  # the same answer.
   #
-  # Reused only when it was evaluated at the point being asked about, and
-  # `evaluated_at` is what says where that was. Comparing against
+  # Reused only when it describes the point being asked about: evaluated there,
+  # or within a hundredth of a standard error of it (`.ctBackendStoredHessian()`),
+  # and `evaluated_at` is what says where it was. Comparing against
   # `fit$estimate$raw` instead is the trap: it is the same point on an
   # optimised fit and a different one on a sampled fit, whose Hessian is at the
   # Laplace estimate while `$estimate$raw` is the posterior mean -- so a guard
   # written that way passes exactly where it must not and returns curvature
   # from somewhere else. A fit carrying a Hessian and no `evaluated_at` predates
   # this and is not reused.
-  stored <- fit$uncertainty$hessian
-  at <- fit$uncertainty$evaluated_at
-  if (!is.null(stored) && is.matrix(stored) && !is.null(at) &&
-      nrow(stored) == length(est) && ncol(stored) == length(est) &&
-      length(at) == length(est) &&
-      isTRUE(all.equal(as.numeric(at), as.numeric(est), tolerance = 0))) {
-    return(stored)
-  }
+  stored <- .ctBackendStoredHessian(fit, est)
+  if (!is.null(stored)) return(stored)
   module <- .ctJuliaModule(.ctBackendSpec(fit)$project)
   # `gradient='forward'` selects `ctsem_hessian_forward` instead of
-  # `ctsem_hessian`: a model with a sampled (missing) TI predictor value
-  # forces exactly this (see `.ctFitJuliaBackendImpl`), because
-  # `ctsem_hessian` nests over the adjoint gradient, which refuses such a
-  # model outright rather than silently omitting its cotangent.
-  hessian_fn_name <- if (identical(gradient, "forward")) "ctsem_hessian_forward" else "ctsem_hessian"
+  # `ctsem_hessian`, whichever the caller asked `optimcontrol$gradient` for
+  # (default 'adjoint'; see `.ctFitJuliaBackendImpl`). A sampled (missing) TI
+  # predictor value used to force 'forward' here, because `ctsem_hessian`
+  # nested over the adjoint gradient and refused such a model outright; the
+  # reverse pass covers it now (see the note beside `gradient <-` in
+  # `.ctFitJuliaBackendImpl`), so neither method is singled out for it any
+  # more and this just follows what the fit itself used -- except on the
+  # Laplace route, which has no forward method: see
+  # `.ctBackendHessianFunction()`.
+  hessian_fn_name <- .ctBackendHessianFunction(.ctBackendSpec(fit), gradient)
   # A user whose cached engine environment predates this function has no such
   # function, and that is a silent fallback rather than an error: the engine
   # environment is keyed on a hash of the engine's source, so it refreshes

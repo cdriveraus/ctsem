@@ -302,18 +302,30 @@
   optimcontrol[setdiff(names(optimcontrol), drop)]
 }
 
-#' Update a ctStanFit object
+#' Update a fit to new data, or to the current version of ctsem
 #'
-#' Either to include different data, or because you have upgraded ctsem and the internal data structure has changed.
+#' Either to include different data, or because you have upgraded ctsem and
+#' the internal data structure has changed. Works on a fit from either backend.
 #'
-#' @param oldfit fit object to be upgraded
-#' @param data replacement long format data object
-#' @param recompile whether to force a recompile -- safer but slower and usually unnecessary.
-#' @param refit if TRUE, refits the model using the old estimates as a starting point. Only applicable for
-#' optimized fits, not sampling.
+#' The fit is rebuilt from its own call: the arguments it was made with are
+#' passed to \code{\link{ctFit}} again, with the model it was given and, unless
+#' \code{data} is supplied, the data it was fitted to. Arguments in \code{...}
+#' replace the fit's own.
+#'
+#' @param oldfit fit object to be updated, from \code{\link{ctFit}} with either
+#' backend.
+#' @param data replacement long format data object. If not supplied, the data
+#' the fit was made with.
+#' @param recompile whether to force a recompile of the Stan model -- safer but
+#' slower and usually unnecessary. Stan fits only.
+#' @param refit if TRUE, refits the model using the old estimates as a starting
+#' point. Only applicable for optimized fits, not sampling. If FALSE, the old
+#' fit is returned with its data and model specification replaced; its
+#' estimates, and everything computed from them when it was fitted, are left
+#' as they were.
 #' @param ... extra arguments to pass to ctFit
 #'
-#' @return updated ctStanFit object.
+#' @return updated fit object, of the same class as \code{oldfit}.
 #' @aliases ctStanFitUpdate
 #' @export
 #'
@@ -322,14 +334,43 @@
 
 ctFitUpdate <- function(oldfit, data=NA, recompile=FALSE,refit=FALSE,...){
 
-  if(!refit) message('Trying to do a quick update -- if there are problems, try with refit=TRUE for more robustness')
+  julia <- inherits(oldfit, 'ctJuliaFit')
+  if(julia && isTRUE(recompile)) stop("recompile applies to the compiled ",
+    "program of a stan fit, and a julia fit has none. Drop it.", call.=FALSE)
+  # The model as the caller wrote it. Not `.ctFitModelObject()`, which is that
+  # model after preparation and cannot be prepared a second time.
+  basemodel <- .ctFitBaseModel(oldfit)
+  if(is.null(basemodel)) stop("This fit does not carry the model ",
+    "it was built from, which julia fits made before ctFitUpdate() supported ",
+    "them do not, so it cannot be rebuilt. Fit again from its estimate with ",
+    "the model you passed to ctFit(): ctFit(datalong, model, inits = ",
+    "fit$estimate$raw, backend = 'julia').", call.=FALSE)
 
   dots <- list(...)
+  sampled <- if(julia) !is.null(oldfit$sample) else
+    length(oldfit$stanfit$stanfit@sim) > 0
+  if(sampled && refit){
+    message('A sampled fit is not refitted; updating it with refit=FALSE')
+    refit <- FALSE
+  }
+  if(!refit) message('Trying to do a quick update -- if there are problems, try with refit=TRUE for more robustness')
+  # Kept, the estimates are coordinates of the backend that made them.
+  if(!refit && !is.null(dots$backend) &&
+      !identical(as.character(dots$backend)[1L], if(julia) 'julia' else 'stan'))
+    stop("A fit updated with refit=FALSE keeps its estimates, which belong to ",
+      "the backend that made them. Use refit=TRUE to fit on another backend.",
+      call.=FALSE)
+
   # `$args$input` -- the literal call, still carrying 'auto'/'maxneeded' and
   # whatever else was unresolved -- not `$args$resolved`, which would freeze
   # this refit at whatever a previous 'auto' happened to route to instead of
-  # letting it re-route against the new data or overrides in `...`.
-  args <- as.list(oldfit$args$input)
+  # letting it re-route against the new data or overrides in `...`. A fit made
+  # by 3.11.1 or earlier keeps its call in `$args` itself, and reading only
+  # `$input` replayed every argument of such a fit at its default -- the
+  # priors it was estimated with among them -- when bringing an old fit up to
+  # date is what this function is for.
+  args <- as.list(if(!is.null(oldfit$args$input)) oldfit$args$input else
+    oldfit$args)
   # That capture is the calling environment rather than the literal call, so a
   # defaulted argument is in it and `do.call()` below hands it back looking as
   # though the caller had typed it. For `poprank` that is the difference
@@ -338,36 +379,79 @@ ctFitUpdate <- function(oldfit, data=NA, recompile=FALSE,refit=FALSE,...){
   # default 'auto' made this function fail on every stan fit, the documented
   # example included. The capture recorded the distinction next to the value;
   # use it, before the `...` overrides, so a rank passed here still counts as
-  # asked for. The flag itself goes: it is a local of `ctFit()`, not an
-  # argument of it, and would only fall into `...`.
+  # asked for.
   if(!isTRUE(args$poprankexplicit)) args$poprank <- NULL
-  args$poprankexplicit <- NULL
+  # `priors` is captured after ctFit() has reduced it to a logical, so the julia
+  # default, 'randomCorr', reads TRUE there -- and TRUE replayed is a prior on
+  # every coordinate, a different estimator. `priorscope` beside it still says
+  # which. 'all' and 'none' are what TRUE and FALSE mean, and a stan fit never
+  # records 'randomCorr'.
+  if(identical(args$priorscope, 'randomCorr')) args$priors <- 'randomCorr'
+  # `iter`, `chains` and `control` are captured as what they resolved to, so
+  # replayed they read as the deprecated spellings and draw that warning at a
+  # caller who never used them. When `sampleControl` alone resolves to the
+  # same settings they add nothing, and are left out.
+  sampling <- c('iter', 'chains', 'control')
+  if(isTRUE(all.equal(.ctSampleControlResolve(args$sampleControl),
+      args[sampling]))) args[sampling] <- NULL
+  # Only ctFit()'s arguments are replayed. The capture also holds its locals
+  # (`datavars`, `priorscope`, `poprankexplicit`), `nopriors`, whose effect
+  # `priors` already carries, and arguments since removed -- `vb`, which every
+  # 3.11.1 fit carries and ctFit() now refuses by name. Anything else was the
+  # caller's own `...`, which only stan's sampler reads, and a fit refitted
+  # here was optimised, so nothing ever read it.
+  args <- args[intersect(names(args),
+    setdiff(names(formals(ctFit)), c('...', 'nopriors')))]
   for(n in names(dots)){
     args[[n]] <- dots[[n]]
   }
-  if(length(oldfit$stanfit$stanfit@sim) > 0) refit=FALSE
   args$fit <- refit
-  args$inits <- oldfit$stanfit$rawest
-  args$model <- oldfit$ctstanmodelbase
+  args$inits <- .ctFitRawEstimate(oldfit)
+  args$model <- basemodel
   args$ctstanmodel <- NULL
-
-  newargs <- as.list(args(ctFit))
-  for(argi in names(args)){
-    if(argi %in% names(args)) newargs[[argi]] <- args[[argi]] else message(argi, ' is no longer a valid argument, dropping...')
-  }
-
-
-  if(length(data==1)) args$datalong <- standatatolong(oldfit$standata,origstructure = TRUE,ctm=oldfit$ctstanmodelbase)
-  if(length(data) > 1) args$datalong <- data
+  # The data the fit was made with, unless replacement data is given. (This was
+  # `length(data==1)`, which is TRUE for any data set, so the old data was
+  # rebuilt on every call and then discarded whenever new data was supplied.)
+  newdata <- !is.null(data) && !(is.atomic(data) && length(data) == 1L &&
+    is.na(data))
+  args$datalong <- if(newdata) data else .ctFitLongData(oldfit)
   newfit <- do.call(ctFit,args)
+  if(refit) return(newfit)
 
-  if(!refit){
-    oldfit$standata <- newfit$standata
+  if(julia){
+    # A prepared julia model is its own specification, carrying the call, the
+    # prepared data and the model beside it; a fit keeps those apart.
+    spec <- unclass(newfit)
+    spec[c('args', 'standata', 'modelbase')] <- NULL
+    # `nlcontrol$nsubsteps = 'auto'` leaves the fit with a mesh: one substep
+    # count per row of the data it was chosen for, at the estimate. The same
+    # rows keep it; other rows get the one the fit would have chosen for them
+    # at the same estimate.
+    if(is.integer(oldfit$model_spec$max_timestep) && !is.null(spec$substeps)){
+      if(newdata) spec <- .ctJuliaAutoSubsteps(spec,
+        .ctFitRawEstimate(oldfit)[seq_len(.ctBackendNpar(spec))])$spec else
+        spec$max_timestep <- oldfit$model_spec$max_timestep
+    }
+    oldfit$model_spec <- spec
+    oldfit$model <- spec$model
+  } else {
     if(oldfit$ctstanmodel$recompile || recompile) oldfit$stanmodel <- rstan::stan_model(model_code = newfit$stanmodeltext) else
       oldfit$stanmodel <- stanmodels$ctsm
   }
-  if(refit) oldfit <- newfit
-  return(oldfit)
+  oldfit$standata <- newfit$standata
+  oldfit$data <- .ctStandataNA(newfit$standata)
+  oldfit
+}
+
+# The prepared data as a fit reports it in `$data`: `standata` with the 99999
+# missing-value sentinel replaced by NA. The `$tipreds` line is a no-op --
+# that is not a field of the list, and the time-invariant predictors in
+# `$tipredsdata` keep their sentinel in both copies -- and is kept only because
+# every fit's `$data` has been built with it.
+.ctStandataNA <- function(standata){
+  standata$Y[standata$Y==99999] <- NA
+  standata$tipreds[standata$tipreds==99999] <- NA
+  standata
 }
 
 #' @export
@@ -467,15 +551,16 @@ T0VARredundancies <- function(ctm) {
 #' With \code{backend='julia'} that route is exact -- no Gaussian
 #' assumption is made about the state anywhere, where the filter's update
 #' for a binary, ordinal or count indicator is an assumed-density
-#' projection. Pair it with \code{optimize=FALSE}: sampling the joint
-#' density gives the posterior of parameters and states together, while
-#' \code{optimize=TRUE} gives its joint mode, whose variance parameters
-#' are biased downward. Standard errors for an optimised fit come from the
-#' Hessian with the states profiled out, and \code{uncertainty} is
-#' restricted to \code{'hessian'} for that reason.
+#' projection. Use it with \code{optimize=FALSE}: sampling the joint
+#' density gives the posterior of parameters and states together.
+#' \code{optimize=TRUE} is refused, because the joint mode is degenerate --
+#' the states re-optimise to absorb almost any change in the parameters --
+#' and is not an estimate. \code{optimcontrol$estonly=TRUE} returns it
+#' anyway, with no standard errors; the profile curvature is kept at
+#' \code{fit$optim$hessian_profile}.
 #' Generally recommended to set TRUE unless using non-gaussian measurement model.
 #' @param binomial Deprecated. Logical indicating the use of binary rather than Gaussian data, as with IRT analyses.
-#' This now sets \code{intoverstates = FALSE} and the \code{manifesttype} of every indicator to 1, for binary.
+#' This now sets the \code{manifesttype} of every indicator to 1, for binary.
 #' @param fit If TRUE, fit specified model using Stan, if FALSE, return stan model object without fitting.
 #' @param poprank Rank of the population covariance of the individually
 #' varying parameters.
@@ -577,7 +662,17 @@ T0VARredundancies <- function(ctm) {
 #' @param intoverpop how to handle declared individual differences. If 'auto',
 #' set to TRUE if optimizing and FALSE if using hmc -- except when a grouping
 #' level above the subject varies (see \code{id} in \code{\link{ctModel}}),
-#' which only 'laplace' can integrate out, so 'auto' resolves to that.
+#' which only 'laplace' can integrate out, so 'auto' resolves to that. With
+#' \code{backend='julia'} and \code{optimize=TRUE}, 'auto' also resolves to
+#' 'laplace' wherever the augmented filter is measurably the wrong estimator:
+#' a varying parameter in DRIFT, DIFFUSION, MANIFESTVAR or LAMBDA, one in
+#' MANIFESTMEANS, CINT, T0MEANS or TDPREDEFFECT whose transform is not affine,
+#' one that enters an expression in another cell, or any varying parameter
+#' with a non-Gaussian indicator. It says so in one line, and
+#' \code{fit$args$resolved$intoverpopreason} records why either route was
+#' taken. Everywhere else it is 'augmented', which is exact and cheapest for a
+#' random effect that shifts a mean with Gaussian indicators.
+#' \code{intoverpop='augmented'} keeps the previous behaviour.
 #' if TRUE, integrates over population distribution of parameters rather than full sampling.
 #' Allows for optimization of non-linearities and random effects, via state expansion.
 #' 'augmented' names that state-expansion method explicitly. Individual
@@ -612,8 +707,9 @@ T0VARredundancies <- function(ctm) {
 #' engine, so there is no point at which R could draw anything while it runs.
 #' For genuinely live output use \code{optimcontrol$callback}.
 #' @param derrind deprecated, latents involved in dynamic error calculations are determined automatically now.
-#' @param optimize if TRUE, use \code{\link{stanoptimis}} function for maximum a posteriori / importance sampling estimates,
+#' @param optimize if TRUE, use \code{\link{stanoptimis}} function for maximum a posteriori estimates,
 #' otherwise use the HMC sampler from Stan, which is (much) slower, but generally more robust for complex individual differences.
+#' Importance sampling is a separate, opt-in uncertainty method on top of the optimized estimate; see \code{\link{ctOptimUncertainty}}.
 #' When \code{optimize=FALSE}, the stored point estimate (\code{stanfit$rawest}) is the per-parameter
 #' median of the posterior draws; the julia backend's sampled point estimate (see \code{\link{ctSample}})
 #' is the per-parameter mean instead.
@@ -739,12 +835,18 @@ T0VARredundancies <- function(ctm) {
 #'
 #' With \code{backend='julia'}, the optimiser starts on a random subset of the
 #' subjects and grows it as the fit needs more data (\code{optimcontrol$batch},
-#' default \code{TRUE}), and finishes with Newton steps on the exact Hessian
-#' once it is close (\code{optimcontrol$newton}, default \code{TRUE}). Each
-#' applies only where it pays: batching needs at least 80 subjects (or
-#' top-level groups), and the Newton finish is skipped under
-#' \code{intoverpop='laplace'}, where the Hessian is expensive. Both reach the
-#' same optimum; set either to \code{FALSE} to switch it off.
+#' default \code{TRUE}), and finishes with Newton steps once it is close
+#' (\code{optimcontrol$newton}, default \code{TRUE}). The finish ends on the
+#' Hessian the convergence check and the standard errors use, tries the
+#' direction of negative curvature when it has stopped at a saddle, and checks
+#' what the directions with no curvature are worth. Batching needs at least 80
+#' subjects (or top-level groups). Under \code{intoverpop='laplace'}, where a
+#' Hessian costs \code{2 * npar} gradients, the finish runs only when the fit
+#' is certified, and reuses the one Hessian it takes for its steps. When the
+#' check still finds the fit short of a maximum, the optimiser is resumed
+#' under the same rules, at most \code{optimcontrol$gapretries} times (default
+#' 2), and a resumed stage that stops gaining is stopped. Set \code{batch} or
+#' \code{newton} to \code{FALSE} to switch either off.
 #' \code{fit$optim$batch_sizes} and \code{fit$optim$newton_steps} record what
 #' ran.
 #'
@@ -761,10 +863,14 @@ T0VARredundancies <- function(ctm) {
 #' \code{fit$optim$restarts} records each start.
 #'
 #' \code{optimcontrol$carefulfit} works for \code{backend='julia'} as it does
-#' for Stan: when \code{priors=FALSE}, a rough first pass is run \emph{with}
-#' ctsem's \code{normal(0,1)} raw priors to obtain starting values, and the
-#' likelihood is then maximised from there. It defaults to \code{TRUE}, capped
-#' at 10 iterations, and is skipped when \code{inits} are supplied. Set
+#' for Stan: a rough first pass is run \emph{with} ctsem's \code{normal(0,1)}
+#' raw priors on every coordinate to obtain starting values, and the fit's own
+#' objective is then maximised from there. That is the fit under
+#' \code{priors=FALSE} and under the default \code{priors='randomCorr'}, whose
+#' prior on the random-effect correlations does nothing to place the rest of
+#' the vector; with \code{priors=TRUE} the fit already has those priors and the
+#' pass is skipped. It defaults to \code{TRUE}, capped at 10 iterations, and is
+#' skipped when \code{inits} are supplied. Set
 #' \code{optimcontrol$carefulfit = FALSE} to switch it off or to a number to
 #' choose the cap.
 #'
@@ -778,8 +884,9 @@ T0VARredundancies <- function(ctm) {
 #' warming up at all -- because the prior pass pulls the start toward the prior
 #' mode and past about ten iterations that is what it hands the likelihood.
 #'
-#' \code{fit$optim$carefulfit} records whether the pass ran, and
-#' \code{$carefulfit_iterations} how long it was allowed.
+#' \code{fit$optim$carefulfit} records whether the pass ran and supplied the
+#' starting values, \code{$carefulfit_iterations} how many iterations it ran,
+#' and \code{$carefulfit_skipped} why, when it did not.
 #' With \code{backend='julia'}, \code{optimcontrol$callback} is a function
 #' called while the fit runs, with \code{(iteration, total, objective,
 #' gradient_norm, parameters)}, where \code{parameters} is the raw vector the
@@ -926,7 +1033,8 @@ T0VARredundancies <- function(ctm) {
 #' Smaller values may offer greater accuracy, but are slower and not always necessary. Given the exponential integration,
 #' linear model elements are fit exactly with only a single step.
 #' \code{nsubsteps = 'auto'} (julia backend only) instead measures, at the starting values and again at the
-#' optimum, how nonlinear each observation interval is and refines only the intervals that need it;
+#' optimum, how nonlinear each observation interval is and refines only the intervals that need it
+#' (under \code{intoverpop = 'laplace'}, with each subject at its random-effect modes);
 #' \code{substeptol} (default 0.01) is the largest acceptable linearisation error as a fraction of the
 #' predicted state standard deviation, and \code{maxsubsteps} (default 64) caps an interval.
 #' \code{maxtimestep} remains a ceiling on the step. The choice is reported in \code{fit$substeps}.
@@ -1486,10 +1594,9 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     warning('binomial argument is deprecated -- set manifesttype in the model object to 1 for binary indicators instead. It has set manifesttype=1 for every indicator.', call.=FALSE)
     # It used to set `intoverstates <- FALSE` as well, which is a leftover from
     # when binary data meant sampling the latent states rather than integrating
-    # them. The very next check warns that `intoverstates=TRUE` is required for
-    # sensible optimization -- so the documented shortcut put a user straight
-    # into the state the code itself calls unreliable, under the default
-    # `optimize=TRUE`. Setting `manifesttype` directly never did that, and the
+    # them. The very next check refuses `intoverstates=FALSE` with
+    # `optimize=TRUE` -- so the documented shortcut would now put a user
+    # straight into an error, under the default `optimize=TRUE`. Setting `manifesttype` directly never did that, and the
     # linearised measurement handles binary indicators with the filter intact:
     # on a three-indicator model it recovers a generating drift of -0.3 as
     # -0.279 and a diffusion of 0.8 as 0.681, both intervals containing the
@@ -1502,6 +1609,28 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     message('HMC sampling requested, but priors disabled -- are you sure? consider setting priors=TRUE')
     # !priors <- FALSE
   }
+  # `intoverstates=FALSE` with `optimize=TRUE` maximises the joint density of
+  # the parameters and the innovations that build the states, and that mode is
+  # degenerate rather than merely biased: with an innovation per observation
+  # the states re-optimise to absorb almost any change in the parameters, so
+  # the profile is nearly flat -- its largest eigenvalue measured 0.05 on 15
+  # subjects x 6 rows, against 22.8 for a well-determined count parameter --
+  # and a joint fit reports a better log likelihood and a better conditioned
+  # Hessian for changes that mean nothing. Sampling the same density is sound,
+  # which is what the route is for, so this is refused and points there.
+  #
+  # `estonly` is the way through for someone who wants the mode regardless;
+  # the warnings below still say what it does. Not for `fit=FALSE`, which
+  # optimises nothing and returns the prepared model, whose joint density is a
+  # fair thing to evaluate. A property of the estimator rather than of a
+  # backend, so it stands for both.
+  if(isTRUE(optimize) && !isTRUE(intoverstates) && isTRUE(fit) &&
+      !isTRUE(optimcontrol$estonly)) stop(
+    'optimize=TRUE with intoverstates=FALSE maximises over the latent states, ',
+    'and that joint mode is degenerate rather than an estimate. Use ',
+    'optimize=FALSE to sample the states, or intoverstates=TRUE to integrate ',
+    'them out. optimcontrol$estonly=TRUE returns the joint mode anyway, ',
+    'without standard errors.', call.=FALSE)
   # Maximising over the states rather than integrating them out biases the
   # variance parameters downward -- a variance whose own realisations are
   # being chosen at the same time can always be made to look smaller -- so
@@ -1587,19 +1716,22 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # route reaches the backend with an unaugmented model and every existing
   # `if(intoverpop)` keeps meaning what it meant.
   intoverpopmethod <- 'none'
+  # Why 'auto' went the way it did, kept for `fit$args$resolved`; NA when the
+  # route was named.
+  intoverpopreason <- NA_character_
   if(is.character(intoverpop)){
     intoverpop <- match.arg(intoverpop[1], c('auto','augmented','laplace'))
     if(intoverpop %in% 'auto'){
-      intoverpop <- isTRUE(optimize) && .ctAnyVarying(ctm)
-      # The augmented layout gives a carrier state to every `indvarying` cell
-      # and knows nothing about the columns a grouping level uses, so a model
-      # with effects above the subject has one route rather than two and 'auto'
-      # has to take it. Resolving to 'augmented' here would silently fit a
-      # model without the study effect that was asked for.
-      if(intoverpop && .ctAnyVarying(ctm, .ctOuterVaryingColumns(ctm))){
-        intoverpopmethod <- 'laplace'
-        intoverpop <- FALSE
-      }
+      # See `.ctIntOverPopAuto()` for the rule and the measurements behind it.
+      # An outer level resolves to 'laplace' silently, as it always has: there
+      # is one route for that model, not a choice between two.
+      auto <- .ctIntOverPopAuto(ctm, backend = backend, optimize = optimize,
+        intoverstates = intoverstates)
+      intoverpopmethod <- auto$route
+      intoverpopreason <- auto$reason
+      intoverpop <- identical(auto$route, 'augmented')
+      if(isTRUE(auto$announce)) message("intoverpop='auto' chose 'laplace': ",
+        auto$reason, ".")
     } else {
       intoverpopmethod <- intoverpop
       intoverpop <- identical(intoverpopmethod,'augmented')
@@ -2258,6 +2390,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   argsresolved$backend <- backend
   argsresolved$cores <- cores
   argsresolved$intoverpop <- intoverpopmethod
+  argsresolved$intoverpopreason <- intoverpopreason
   # The rank actually used, not the argument: 'auto' resolves to a number, and a
   # model the restriction did not apply to reports NA whatever was asked for.
   argsresolved$poprank <- if(!is.null(laplacerank)) laplacerank else
@@ -2267,8 +2400,12 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   argsresolved$intoverstates <- isTRUE(intoverstates)
 
   if(backend %in% 'julia') {
+    # The resolved route rather than the logical `intoverpop`, which cannot
+    # say 'laplace': 'auto' can resolve there, and the refusal of
+    # intoverstates=FALSE with laplace reads this argument.
     .ctJuliaUnsupported(ctm, optimize=optimize, priors=priors,
-      intoverpop=intoverpop, gendata=gendata,
+      intoverpop=if(identical(intoverpopmethod, 'laplace')) 'laplace' else
+        intoverpop, gendata=gendata,
       stanmodeltext=stanmodeltext, compileArgs=compileArgs,
       forcerecompile=forcerecompile, intoverstates=intoverstates,
       optimcontrol=optimcontrol)
@@ -2305,21 +2442,26 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     # returns the prepared model spec then, unclassed by `$args` before, and
     # assigning a list element to it here does not disturb its class.
     juliafit$args <- list(input = args, resolved = argsresolved)
+    # The model as the caller wrote it, which a stan fit carries as
+    # `$ctstanmodelbase`. `$model` is not that: it is what the engine ran,
+    # after `.ctModelIntOverPop()` and the rest of the preparation above, and
+    # handing it back to ctFit() prepares it a second time -- which errors on
+    # the augmented route. ctFitUpdate() rebuilds a fit from this one. Read it
+    # through `.ctFitBaseModel()`, which says why the name differs.
+    juliafit$modelbase <- ctstanmodel
     # `$data`/`$standata` mean the same thing on both backends: `$standata` is
     # the prepared data with the 99999 missing-value sentinel intact, `$data`
-    # is the same thing with that sentinel replaced by `NA` in `$Y` (and,
-    # replicating the stan path exactly -- see the identical two lines below --
-    # a no-op attempt at `$tipreds`, which is not a field of this list; the
-    # real time-invariant predictor data lives in `$tipredsdata` and keeps its
-    # sentinel in both copies). `standata` was already computed above,
+    # is the same thing with that sentinel replaced by `NA` (see
+    # `.ctStandataNA()`). `standata` was already computed above,
     # unconditionally, before backend dispatch -- .ctPrepareData() runs for julia
     # too, purely to prepare `prepared_data` for `.ctFitJuliaBackend()` -- so
     # attaching it here costs nothing further and is not a second computation.
-    standataout <- standata
-    standataout$Y[standataout$Y==99999] <- NA
-    standataout$tipreds[standataout$tipreds==99999] <- NA
     juliafit$standata <- standata
-    juliafit$data <- standataout
+    # Not on a prepared model (`fit = FALSE`). That object *is* the
+    # specification, and its own `$data` is the long data frame every julia
+    # accessor reads through `.ctBackendSpec()`; replacing it with the prepared
+    # list left ctKalman() on a subset of subjects finding no subjects at all.
+    if(isTRUE(fit)) juliafit$data <- .ctStandataNA(standata)
     # `plot` draws the trace *after* the fit here, not during it.
     #
     # The Stan path can plot live because it writes sample files a second
@@ -2490,10 +2632,7 @@ install.packages("rstan", repos = c("https://mc-stan.org/r-packages/", getOption
     # if(is.na(STAN_NUM_THREADS)) Sys.unsetenv('STAN_NUM_THREADS') else Sys.setenv(STAN_NUM_THREADS = STAN_NUM_THREADS) #reset sys env
   } # end if fit==TRUE
   #convert missings back to NA's for data output
-  standataout<-standata
-  standataout$Y[standataout$Y==99999] <- NA
-  standataout$tipreds[standataout$tipreds==99999] <- NA
-  # standataout <- utils::relist((standataout),skeleton=standata)
+  standataout <- .ctStandataNA(standata)
 
   setup=list(recompile=recompile,idmap=standata$idmap,matsetup=ctm$modelmats$matsetup,matvalues=ctm$modelmats$matvalues,
     popsetup=ctm$modelmats$matsetup[.ctMatsetupFreeRows(ctm$modelmats$matsetup),],

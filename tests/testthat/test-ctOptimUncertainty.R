@@ -543,6 +543,79 @@ test_that("the confirmed directions come out of the covariance, and only those",
   expect_lt(max(diagnostics$profileChange), diagnostics$profileBar)
 })
 
+# A ridge that is flat but curved in raw coordinates, which is what the
+# stan-julia parity fixture's ten correlations lie on. A straight slice leaves a
+# curved ridge, and how fast depends on where along it the optimiser stopped --
+# measured there at 17.8 nats at four raw units from one stopping point and 0.68
+# from another, 4.4e-04 nats higher on the same ridge. So a rung that drops past
+# the bar is followed back to the ridge before it is judged, and one flat side is
+# enough.
+#
+# f(x, y) = -(y - x^2 / 2)^2 is exactly flat along the parabola y = x^2 / 2 and
+# at the origin its curvature along x is exactly zero, so x is the candidate.
+# The straight walk to x = 4 drops 64 nats; one Newton step in y finds the
+# ridge again.
+.parabolic_ridge <- function(p) {
+  value <- -(p[2] - p[1]^2 / 2)^2
+  attr(value, 'gradient') <- c(2 * (p[2] - p[1]^2 / 2) * p[1],
+    -2 * (p[2] - p[1]^2 / 2))
+  value
+}
+
+test_that("a curved ridge is followed, and confirmed flat along it", {
+  info <- diag(c(0, 2))
+  bar <- stats::qchisq(0.95, 1) / 2
+  expect_gt(-as.numeric(.parabolic_ridge(c(4, 0))), bar)
+  found <- ctsem:::.ctOptimFlatDirectionScreen(info, .parabolic_ridge, c(0, 0))
+  flat <- which(found$flat)
+  expect_length(flat, 1L)
+  # The flat direction is the x axis.
+  expect_equal(abs(found$eig$vectors[, flat]), c(1, 0))
+  expect_lt(found$change[flat], bar)
+  # And a correction needs the gradient: the same function without one is a
+  # straight slice, which this ridge refuses.
+  bare <- ctsem:::.ctOptimFlatDirectionScreen(info,
+    function(p) as.numeric(.parabolic_ridge(p)), c(0, 0))
+  expect_false(any(bare$flat))
+  expect_gt(max(bare$change, na.rm = TRUE), bar)
+})
+
+test_that("one flat side settles it; a side that cannot be evaluated says nothing", {
+  bar <- stats::qchisq(0.95, 1) / 2
+  info <- diag(c(1, 1e-14))
+  # Flat for positive y, falling steeply for negative: a curve of constant
+  # likelihood runs four units out on one side, which is what non-identification
+  # needs. Which side the eigenvector points to is arbitrary, so the likelihood
+  # is flat on whichever the other one is not.
+  halfflat <- function(p) -0.5 * p[1]^2 - 10 * min(p[2], 0)^2
+  found <- ctsem:::.ctOptimFlatDirectionScreen(info, halfflat, c(0, 0))
+  expect_equal(found$flat, c(FALSE, TRUE))
+  expect_equal(found$change[2], 0)
+  # Steep on both sides is refused, whichever side comes first.
+  steep <- function(p) -0.5 * p[1]^2 - 10 * p[2]^2
+  expect_false(any(ctsem:::.ctOptimFlatDirectionScreen(info, steep,
+    c(0, 0))$flat))
+  # A side the model cannot evaluate is not evidence; the other side still is.
+  onesided <- function(p) if (p[2] < -1e-8) NaN else -0.5 * p[1]^2
+  found <- ctsem:::.ctOptimFlatDirectionScreen(info, onesided, c(0, 0))
+  expect_equal(found$flat, c(FALSE, TRUE))
+})
+
+test_that("candidates reach curvature a stopping point has not yet decayed", {
+  # The parity fixture's ridge sat at 1.7e-08 of the sharpest curvature at its
+  # earliest stopping point, above the eigenvalue rule's 1e-8, while its first
+  # identified direction held at 1.2e-06 everywhere. The gate is between them.
+  flatline <- function(p) -0.5 * p[1]^2
+  expect_true(ctsem:::.ctOptimFlatDirectionScreen(diag(c(1, 3e-8)),
+    flatline, c(0, 0))$flat[2])
+  # And what is above it costs nothing: nothing is evaluated.
+  calls <- 0L
+  counted <- function(p) { calls <<- calls + 1L; -0.5 * p[1]^2 }
+  expect_null(ctsem:::.ctOptimFlatDirectionScreen(diag(c(1, 3e-7)), counted,
+    c(0, 0)))
+  expect_equal(calls, 0L)
+})
+
 test_that("an interval wider than the curvature supports is detected and named", {
   info <- .leaky_information()
   parnames <- c('drift', 'diffusion', 'popsd')

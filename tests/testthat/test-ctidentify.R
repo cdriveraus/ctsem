@@ -212,6 +212,74 @@ test_that("the flat subspace is aggregated by subspace, not by name", {
   expect_true(all(unlist(perpoint) %in% result$parameters))
 })
 
+# A fit's report names what the likelihood measured flat, not only what the
+# curvature has decayed far enough to call flat at the point the optimiser
+# stopped. The stan-julia parity fixture's ridge of ten correlations sat at
+# 1.7e-08 of the sharpest curvature at its earliest stopping point, above the
+# eigenvalue rule's 1e-8, and was named at later points of the same ridge
+# 4.4e-04 nats higher; its tenth correlation's loading drifted from 0.19 to
+# 0.28 across them, either side of the absolute 0.25 that used to decide it.
+test_that("the report names what the likelihood measured flat, at any curvature", {
+  parnames <- c("a", "b", "c")
+  flatline <- function(p) -0.5 * p[1]^2 - 0.25 * p[3]^2
+  info <- diag(c(1, 3e-8, 0.5))
+  screen <- ctsem:::.ctOptimFlatDirectionScreen(info, flatline, numeric(3))
+  expect_equal(sum(screen$flat), 1L)
+
+  # The curvature alone names nothing: 3e-8 is above its 1e-8.
+  plain <- ctsem:::.ctBackendIdentifiability(-info, parnames)
+  expect_equal(plain$nweak, 0L)
+  # The likelihood's verdict does, raw or as the uncertainty stage stores it.
+  measured <- ctsem:::.ctBackendIdentifiability(-info, parnames,
+    screen = screen)
+  expect_equal(measured$nweak, 1L)
+  expect_identical(measured$parameters, "b")
+  expect_identical(measured$directions[[1]]$evidence, "likelihood")
+  expect_equal(measured$directions[[1]]$change, 0)
+  expect_equal(measured$screen$candidates, 1L)
+  stored <- list(n = 1L, bar = screen$bar, lengths = screen$lengths,
+    rtol = screen$rtol, candidates = length(screen$candidates),
+    evaluations = screen$evaluations, change = screen$change[screen$flat],
+    eigenvalue = screen$eig$values[screen$flat] / max(screen$eig$values),
+    vectors = screen$eig$vectors[, screen$flat, drop = FALSE])
+  fromfit <- ctsem:::.ctBackendIdentifiability(-info, parnames, screen = stored)
+  expect_identical(fromfit$parameters, "b")
+  expect_equal(fromfit$directions[[1]]$relative, 3e-8)
+  expect_equal(fromfit$screen$candidates, 1L)
+
+  # Below the eigenvalue rule and not confirmed -- the walk rose past the bar --
+  # it is still named, because a rise proves nothing; it says so.
+  steep <- function(p) -0.5 * sum(p^2)
+  curved <- diag(c(1, 1e-12, 0.5))
+  unconfirmed <- ctsem:::.ctOptimFlatDirectionScreen(curved, steep, numeric(3))
+  expect_false(any(unconfirmed$flat))
+  kept <- ctsem:::.ctBackendIdentifiability(-curved, parnames,
+    screen = unconfirmed)
+  expect_identical(kept$parameters, "b")
+  expect_identical(kept$directions[[1]]$evidence, "curvature")
+  expect_true(is.na(kept$directions[[1]]$change))
+
+  # Saturation is the reason when there is one, not the condition for naming.
+  saturatedfit <- list(optim = list(saturated_parameters = "b"))
+  reasoned <- ctsem:::.ctBackendIdentifiability(-info, parnames,
+    fit = saturatedfit, screen = screen)
+  expect_identical(reasoned$directions[[1]]$saturated, "b")
+  expect_identical(measured$directions[[1]]$saturated, character())
+})
+
+test_that("a direction names every coordinate carrying a share of it", {
+  # Ten coordinates along one flat direction, the smallest two at half the
+  # largest. An absolute loading of 0.25 dropped them; a share of the largest
+  # does not, however many coordinates the direction is spread over.
+  v <- c(0.4, 0.4, 0.4, 0.3, 0.3, 0.3, 0.3, 0.3, 0.2, 0.2)
+  v <- v / sqrt(sum(v^2))
+  expect_lt(min(abs(v)), 0.25)
+  information <- diag(10) - tcrossprod(v)
+  report <- ctsem:::.ctBackendIdentifiability(-information, paste0("p", 1:10))
+  expect_equal(report$nweak, 1L)
+  expect_setequal(report$parameters, paste0("p", 1:10))
+})
+
 test_that("the same advice is given after a fit as before one", {
   skip_without_julia()
   # `.ctBackendIdentifyWarn()` is the post-fit site and takes no model, so the
@@ -274,6 +342,29 @@ test_that("intoverpop='laplace' works from ctIdentify", {
   # 'augmented' is informed here.
   expect_length(result$partial, 0L)
   expect_false("popsd_diff_eta1" %in% result$parameters)
+})
+
+test_that("partial identification is a finding about the augmented route only", {
+  skip_without_julia()
+  # The mechanism is the augmented filter's -- a variance cell's carrier state
+  # the update never moves. On the Laplace route the likelihood sees a level's
+  # scales and correlations only through the covariance they build, so a flat
+  # direction there that moves a variance is that variance undetermined. A
+  # laplace fit whose flat sds had correlations near zero (AnomAuth S1) was
+  # classified partial all the same, since a cross-covariance through a zero
+  # correlation does not move with the scale, and was told it was under
+  # intoverpop='augmented' and that 'laplace' would identify it. So the
+  # classification has blocks on the augmented route and none on Laplace.
+  data <- .identify_data()
+  model <- .identify_varying_model()
+  augmented <- suppressMessages(ctFit(data, model, backend = "julia",
+    intoverpop = "augmented", fit = FALSE, cores = 1, verbose = 0))
+  laplace <- suppressMessages(ctFit(data, model, backend = "julia",
+    intoverpop = "laplace", fit = FALSE, cores = 1, verbose = 0))
+  blocks <- ctsem:::.ctIdentifyBlocks(augmented)
+  expect_length(blocks, 1L)
+  expect_identical(blocks[[1L]]$route, "augmented")
+  expect_length(ctsem:::.ctIdentifyBlocks(laplace), 0L)
 })
 
 test_that("the laplace specification agrees with the one ctFit builds", {

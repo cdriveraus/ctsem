@@ -279,16 +279,20 @@ likelihood (or posterior) over the parameters alone. Setting
 useful with non-Gaussian indicators, where `backend = 'julia'` can integrate
 the observation exactly rather than linearising it the way the filter does.
 
-Optimizing that model finds the *joint* mode of parameters and states
-together, which is not the same thing as the marginal maximum likelihood --
-variance parameters are biased downward, in the same way a random-effects
+Optimizing that model would find the *joint* mode of parameters and states
+together, which is not the marginal maximum likelihood and is not an estimate
+at all: with an innovation per observation the states re-optimise to absorb
+almost any change in the parameters, so the mode is degenerate, and its
+variance parameters are biased downward in the same way a random-effects
 model's variance is biased if the effects are treated as parameters to
-optimize rather than integrated out. Every uncertainty method above except
-`hessian` scores the marginal likelihood, which this fit did not maximise, so
-`ctOptimUncertainty()` refuses them for an `intoverstates = FALSE` fit.
-`hessian` still works because it profiles the enormous state block out of the
-curvature (`ctsem_joint_hessian(..., profile = TRUE)` in the julia engine) --
-but the profile can be close to flat, and on a model this small it is:
+optimize rather than integrated out. `ctFit()` therefore refuses
+`optimize = TRUE` with `intoverstates = FALSE`; `optimcontrol$estonly = TRUE`
+is the explicit way to ask for the mode anyway. Every uncertainty method above
+except `hessian` scores the marginal likelihood, which such a fit did not
+maximise, so `ctOptimUncertainty()` refuses them for it. `hessian` profiles
+the enormous state block out of the curvature
+(`ctsem_joint_hessian(..., profile = TRUE)` in the julia engine), and the
+profile can be close to flat -- on a model this small it is:
 
 ```{r state-explicit-optimize}
 count_gen <- ctModel(
@@ -310,7 +314,8 @@ count_fit_model$pars$indvarying <- FALSE
 
 state_explicit_opt <- ctFit(
   count_dat, count_fit_model, backend = "julia",
-  intoverstates = FALSE, optimize = TRUE, priors = TRUE, verbose = 0
+  intoverstates = FALSE, optimize = TRUE, priors = TRUE, verbose = 0,
+  optimcontrol = list(estonly = TRUE)
 )
 is.null(state_explicit_opt$estimate$se)
 ```
@@ -409,11 +414,11 @@ whatever `ctFit()`'s own default is for optimizing.
   to be stable, `fullbootstrap` (stan only) is the most literal and most
   expensive, and `is` turns the same curvature into an importance-sampling
   proposal.
-- `intoverstates = FALSE` narrows this to one route at optimize time
-  (`hessian`, profiling the state block out of the curvature) because
-  everything else would score an objective the fit did not maximise; sampling
-  instead of optimizing removes that restriction by sampling the states along
-  with the parameters.
+- `intoverstates = FALSE` is for sampling, which draws the states along with
+  the parameters. Optimizing it is refused unless `optimcontrol$estonly = TRUE`
+  asks for the joint mode, and that mode has only `hessian`, profiling the
+  state block out of the curvature, because everything else would score an
+  objective the fit did not maximise.
 - Priors change what the objective *is*, not just how confident the reported
   uncertainty looks: MAP and MLE for optimizing, a real posterior or a
   likelihood-only draw for sampling. The likelihood-only corner is the one to

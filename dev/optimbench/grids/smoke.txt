@@ -1,0 +1,8 @@
+# smoke grid: minutes, not a measurement (make_grid.R)
+#
+# id                           model        data route      start                    variant
+control.1                      panel        1    augmented  zeros                    control
+cf_gaussian.aug.d1.s1.default  cf_gaussian  1    augmented  default:1                default
+cf_gaussian.lap.d1.s1.default  cf_gaussian  1    laplace    default:1                default
+small.aug.d1.s1.default        small        1    augmented  default:1                default
+gA1.lap.cfg.s1.estonly         gA1          cfg  laplace    default:1                estonly

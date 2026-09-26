@@ -98,8 +98,10 @@ test_that("Stan and Julia agree with priors=TRUE, with random effects and a TI p
   model <- .prior_full_model()
   data <- .prior_full_data()
 
+  # 'augmented' by name: the comparison is with stan's layout, which is the
+  # augmented one, and 'auto' takes laplace for this model's DRIFT effect.
   julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
-    priors = TRUE))
+    priors = TRUE, intoverpop = "augmented"))
   npar <- max(c(julia_spec$parameter_table$parnumber, julia_spec$ti_effects$coefficient),
     na.rm = TRUE)
   set.seed(8)
@@ -225,9 +227,12 @@ test_that("per-subject scores sum to the gradient, with and without priors", {
   model <- .prior_full_model()
   data <- .prior_full_data()
 
+  # The augmented route by name: it is the one whose summed gradient takes the
+  # per-subject shortcuts described at the top of this file, and whose raw
+  # vector `parameter_table` and `ti_effects` account for.
   for (priors in c(FALSE, TRUE)) {
     spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
-      priors = priors))
+      priors = priors, intoverpop = "augmented"))
     npar <- max(c(spec$parameter_table$parnumber, spec$ti_effects$coefficient),
       na.rm = TRUE)
     set.seed(8)
@@ -245,6 +250,29 @@ test_that("per-subject scores sum to the gradient, with and without priors", {
   }
 })
 
+test_that("per-subject scores sum to the gradient on the default route too", {
+  skip_without_julia()
+  model <- .prior_full_model()
+  data <- .prior_full_data()
+  # The default route for this model's random DRIFT is laplace, whose score
+  # rows are per unit and whose prior is separated out the same way.
+  for (priors in c(FALSE, TRUE)) {
+    spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
+      priors = priors))
+    expect_false(is.null(spec$laplace))
+    npar <- ctsem:::.ctBackendNpar(spec)
+    set.seed(8)
+    raw <- stats::rnorm(npar, 0, .3)
+    fit <- structure(list(model_spec = spec, backend = "julia"),
+      class = c("ctJuliaFit", "ctFit"))
+    scores <- ctsem:::.ctBackendScoreMatrix(fit, raw)
+    gradient <- ctJuliaEvaluate(spec, raw, gradient = TRUE)$gradient
+    expect_equal(dim(scores), c(length(spec$subject_starts), npar))
+    expect_equal(colSums(scores), gradient, tolerance = 1e-8)
+    expect_true(all(apply(scores, 1, function(row) any(row != 0))))
+  }
+})
+
 test_that("score-based uncertainty methods work for backend fits", {
   skip_without_julia()
   model <- .prior_full_model()
@@ -254,7 +282,14 @@ test_that("score-based uncertainty methods work for backend fits", {
     time = c(0, .5, 1.2, 2), Y1 = stats::rnorm(4, 0, .5), Y2 = stats::rnorm(4, 0, .5),
     group = rep(stats::rnorm(1), 4))))
 
+  # The default route, laplace for this model's random DRIFT. One subject's
+  # inner mode sits where its own DRIFT is singular -- the symmetric cross
+  # effect takes a1 * a2 - c^2 through zero -- which the discretisation's
+  # closed forms divide by. The fit died in its Hessian there until the engine
+  # took those intervals as series (`series_discretization.jl`), so this is
+  # also the end-to-end check that it now fits through that point.
   fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
+  expect_false(is.null(fit$laplace))
   for (method in c("opg", "sandwich", "bootstrap")) {
     updated <- suppressWarnings(suppressMessages(
       ctOptimUncertainty(fit, uncertainty = method, finishsamples = 50, verbose = 0)))

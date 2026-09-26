@@ -19,9 +19,38 @@
 # information matrix, checkable, and it does not require deciding whether the
 # answer is sensible.
 
+# Which directions are named, and on what evidence.
+#
+# Two sources, and the report is their union. A direction the likelihood was
+# measured flat along -- `.ctOptimFlatDirectionScreen()`'s verdict, passed in
+# as `screen` -- is named whether or not its curvature has decayed below
+# `rtol` yet: on a flat ray the curvature at the estimate is a residue of
+# where the optimiser stopped, and a report that waited for it named a
+# six-subject fixture's ridge at one stopping point and not at another 4.4e-04
+# nats away. A direction below `rtol` is named whether or not the screen
+# confirmed it, because the screen is one-sided: a walk that rises proves
+# nothing, and dropping such a direction would be using it to declare
+# something identified. Each direction says which: `evidence` is "likelihood"
+# for the first, with the `change` the walk measured, and "curvature" for a
+# direction named by its eigenvalue alone.
+#
+# Saturation is a reason, not the condition. `saturated` lists the direction's
+# parameters whose transforms the optimiser reported flat -- empty when none
+# did, which is the usual case for a ridge between parameters. It used to take
+# a saturated coordinate for a fit to be told anything; see
+# R/ctBackendOptimGap.R for the status that is now called `saturated`.
+#
+# The parameters a direction names are those carrying at least `loading` of
+# its largest loading, by `.ctBackendLoadedCoordinates()` -- the rule the
+# convergence messages use -- rather than an absolute loading of 0.25. The
+# absolute bar is what named nine of the fixture's ten correlations at three
+# stopping points and ten at two: spread over ten coordinates a unit vector's
+# loadings sit near 0.32, and the tenth drifted from 0.19 to 0.28 as the
+# optimiser walked the ridge.
 #' @keywords internal
 .ctBackendIdentifiability <- function(hessian, parnames = NULL, rtol = 1e-8,
-  loading = 0.25, fit = NULL, at = NULL, metric = NULL, vectors = FALSE) {
+  loading = 1 / 3, fit = NULL, at = NULL, metric = NULL, vectors = FALSE,
+  screen = NULL) {
   empty <- list(nweak = 0L, condition = NA_real_, directions = list(),
     parameters = character())
   if (is.null(hessian)) return(empty)
@@ -40,25 +69,52 @@
   scale <- max(abs(values))
   if (!is.finite(scale) || scale <= 0) return(empty)
 
-  # A direction counts as unidentified when its curvature is negligible against
-  # the sharpest direction, or when it is negative -- a negative eigenvalue of
-  # the information matrix means the optimiser stopped somewhere that is not a
-  # maximum in that direction at all.
-  weak <- which(values <= rtol * scale)
-  directions <- lapply(weak, function(k) {
-    loadings <- decomposition$vectors[, k]
-    involved <- order(-abs(loadings))
-    involved <- involved[abs(loadings[involved]) >= loading]
-    if (!length(involved)) involved <- which.max(abs(loadings))
+  # Exact access: `ctIdentify()` passes a bare spec as `fit`, which has no
+  # `$optim` for `$` to find and possibly a longer name that `$` would match.
+  run <- if (is.list(fit)) fit[["optim"]] else NULL
+  saturated <- if (is.list(run))
+    as.character(.ctJuliaOr(run[["saturated_parameters"]], character())) else
+    character()
+  describe <- function(vector, eigenvalue, evidence, change) {
+    involved <- .ctBackendLoadedCoordinates(vector, share = loading)
+    if (!length(involved)) involved <- which.max(abs(vector))
     # The whole eigenvector, not only the loadings above the threshold. Two
     # things downstream need it: the partial-identification check below, which
     # asks whether a functional of the parameters changes along this direction,
     # and the aggregation in `ctIdentify()`, which asks how much of a
     # coordinate lies in the flat *subspace* rather than on one of its axes.
-    list(eigenvalue = values[k], relative = values[k] / scale,
-      parameters = parnames[involved], loadings = loadings[involved],
-      vector = loadings)
+    list(eigenvalue = eigenvalue, relative = eigenvalue / scale,
+      parameters = parnames[involved], loadings = vector[involved],
+      vector = vector, evidence = evidence, change = change,
+      saturated = intersect(parnames[involved], saturated))
+  }
+
+  # A direction counts as unidentified when its curvature is negligible against
+  # the sharpest direction, or when it is negative -- a negative eigenvalue of
+  # the information matrix means the optimiser stopped somewhere that is not a
+  # maximum in that direction at all -- or when the likelihood was measured
+  # flat along it.
+  weak <- which(values <= rtol * scale)
+  measured <- .ctIdentifyMeasuredFlat(screen, decomposition$vectors)
+  directions <- lapply(weak, function(k) {
+    hit <- measured$index %in% k
+    describe(decomposition$vectors[, k], values[k],
+      evidence = if (any(hit)) "likelihood" else "curvature",
+      change = if (any(hit)) measured$change[which(hit)[1L]] else NA_real_)
   })
+  # Confirmed flat and not below `rtol`: the directions the eigenvalue rule
+  # would have missed at this stopping point. Matched to this decomposition
+  # where one of its eigenvectors is the same direction, so the recorded
+  # curvature is this matrix's; otherwise described by the vector the screen
+  # walked, which is the direction the evidence is about.
+  for (m in seq_along(measured$change)) {
+    k <- measured$index[m]
+    if (!is.na(k) && k %in% weak) next
+    vector <- if (is.na(k)) measured$vectors[, m] else decomposition$vectors[, k]
+    eigenvalue <- if (is.na(k)) sum(vector * (information %*% vector)) else values[k]
+    directions[[length(directions) + 1L]] <- describe(vector, eigenvalue,
+      evidence = "likelihood", change = measured$change[m])
+  }
   # Which of those directions are a random-effect block trading its scale off
   # against its correlations -- partially rather than completely unidentified.
   # Only attempted when a caller supplies the model and the point, because it
@@ -74,8 +130,8 @@
   if (!isTRUE(vectors)) {
     directions <- lapply(directions, function(d) { d$vector <- NULL; d })
   }
-  list(
-    nweak = length(weak),
+  out <- list(
+    nweak = length(directions),
     condition = scale / max(min(values[values > 0], na.rm = TRUE), .Machine$double.xmin),
     # Negative *against the scale of the matrix*, not against zero. An
     # eigenvalue of -3e-16 where the largest is 9e5 is what a symmetric
@@ -87,6 +143,58 @@
     negative = sum(values < -rtol * scale),
     directions = directions,
     parameters = unique(unlist(lapply(directions, `[[`, "parameters"))))
+  # What the likelihood was asked, when it was: the bar, the ladder and the
+  # candidate gate the verdicts above were reached with, and what they cost.
+  # `[[` throughout, not `$`: the stored summary has an `eigenvalue` field and
+  # no `eig`, and `$eig` would partially match it.
+  if (is.list(screen)) {
+    own <- !is.null(screen[["eig"]])
+    out$screen <- list(bar = screen[["bar"]], lengths = screen[["lengths"]],
+      rtol = screen[["rtol"]],
+      candidates = if (own) length(screen[["candidates"]]) else
+        as.integer(screen[["candidates"]]),
+      evaluations = screen[["evaluations"]])
+  }
+  out
+}
+
+# The directions `.ctOptimFlatDirectionScreen()` measured flat, located in a
+# decomposition of the same curvature.
+#
+# `screen` is either the screen's own result or the summary the uncertainty
+# stage keeps of it (`fit$uncertainty$details$flatdirections`); both carry the
+# confirmed directions and the change each moved the likelihood by. Each is
+# matched to an eigenvector of `vectors` when one is the same direction -- the
+# usual case, since both decompose the same Hessian -- and left unmatched,
+# `NA`, otherwise: the surrogate route, say, stores a different matrix from
+# the one the screen walked.
+#' @keywords internal
+.ctIdentifyMeasuredFlat <- function(screen, vectors) {
+  none <- list(index = integer(), change = numeric(),
+    vectors = matrix(numeric(), nrow = nrow(vectors), ncol = 0L))
+  if (!is.list(screen) || is.null(vectors)) return(none)
+  # `[[`, not `$`: the summary has `eigenvalue` and no `eig`, and `$eig` would
+  # partially match it and read the summary as the screen's own result.
+  if (!is.null(screen[["eig"]])) {
+    # The screen's own result.
+    confirmed <- which(as.logical(screen[["flat"]]))
+    walked <- screen[["eig"]]$vectors[, confirmed, drop = FALSE]
+    change <- as.numeric(screen[["change"]][confirmed])
+  } else {
+    # The summary kept on a fit.
+    walked <- screen[["vectors"]]
+    change <- as.numeric(screen[["change"]])
+  }
+  if (is.null(walked) || !is.matrix(walked) || !ncol(walked) ||
+      nrow(walked) != nrow(vectors) || length(change) != ncol(walked)) {
+    return(none)
+  }
+  index <- vapply(seq_len(ncol(walked)), function(m) {
+    alignment <- abs(as.numeric(crossprod(vectors, walked[, m])))
+    best <- which.max(alignment)
+    if (length(best) && alignment[best] > 0.999) as.integer(best) else NA_integer_
+  }, integer(1))
+  list(index = index, change = change, vectors = walked)
 }
 
 # Partial against complete non-identification, and why the difference is worth
@@ -116,15 +224,26 @@
 # entry moving is a different problem, and then this reports nothing and the
 # complete-non-identification advice stands.
 
-# Which raw coordinates make up each level's population covariance block, and
-# how to materialise that covariance.
+# Which raw coordinates make up the population covariance block, and how to
+# materialise that covariance -- on the augmented route only.
 #
-# Both routes are described the same way because the identification question is
-# the same on both: the augmented route holds the scales and correlations in
-# `spec$random_effects` (they are cells of the RAWPOPVAR matrix), the
-# Laplace route in `spec$laplace$levels`. A block is one level's scales and
-# correlations together, because a scale is identified or not *jointly with the
-# correlations it multiplies*.
+# The finding is the augmented objective's, not the model's: the mechanism above
+# is the augmented filter's, which cannot update a variance cell's carrier. On
+# the Laplace route the likelihood depends on a level's scales and correlations
+# only through the covariance they build, so a flat direction that moves one of
+# its variances is that variance undetermined -- the complete case, and the
+# fix-or-remove advice is the right one. Classified as partial there, it was
+# reported under "intoverpop='augmented'" and advised to try the route it was
+# already on; that happened whenever a flat scale's correlations sat near zero,
+# since a cross-covariance through a zero correlation does not move with the
+# scale whatever the data say (AnomAuth S1 at its best-known point: the sds of
+# cint and drift, both flat, with the raw correlation between them at 8e-07). So
+# Laplace levels are not blocks.
+#
+# The augmented route holds the scales and correlations in
+# `spec$random_effects` (they are cells of the RAWPOPVAR matrix). A block is
+# the scales and correlations together, because a scale is identified or not
+# *jointly with the correlations it multiplies*.
 #' @keywords internal
 .ctIdentifyBlocks <- function(spec) {
   if (is.null(spec)) return(list())
@@ -141,47 +260,12 @@
       # augmented T0VAR and therefore in the population covariance.
       state = as.integer(sds$row))
   }
-  laplace <- spec$laplace
-  if (!is.null(laplace) && length(laplace$levels)) {
-    for (l in seq_along(laplace$levels)) {
-      level <- laplace$levels[[l]]
-      # A reduced level has loadings where a full-rank one has scales and
-      # correlations. Skipping it because `sd_index` is empty would quietly
-      # exclude the level most likely to be weakly identified -- the reduction
-      # was asked for precisely because that level has few groups -- so its
-      # loadings go in as the block's coordinates instead.
-      loadings <- as.integer(.ctJuliaOr(level$load_index, integer()))
-      if (!length(level$sd_index) && !length(loadings)) next
-      blocks[[length(blocks) + 1L]] <- list(
-        route = "laplace", level = as.integer(l),
-        name = as.character(.ctJuliaOr(level$name, l))[1L],
-        sd_index = if (length(loadings)) loadings else as.integer(level$sd_index),
-        cor_index = if (length(loadings)) integer() else as.integer(level$cor_index),
-        param = as.character(level$param),
-        reduced = length(loadings) > 0L,
-        state = seq_along(if (length(loadings)) loadings else level$sd_index))
-    }
-  }
   blocks
 }
 
 # The population covariance of one block at one raw vector.
 #' @keywords internal
 .ctIdentifyPopcov <- function(fit, block, values) {
-  spec <- .ctBackendSpec(fit)
-  if (identical(block$route, "laplace")) {
-    module <- .ctJuliaModule(spec$project)
-    objective <- .ctJuliaObjective(fit)
-    out <- lapply(seq_len(ncol(values)), function(column) {
-      value <- try(.ctBackendJuliaValue(module$ctsem_laplace_popcov(objective,
-        .ctJuliaNumericVector(as.numeric(values[, column])),
-        as.integer(block$level))), silent = TRUE)
-      if (inherits(value, "try-error")) return(NULL)
-      as.numeric(as.matrix(value))
-    })
-    if (any(vapply(out, is.null, logical(1)))) return(NULL)
-    return(matrix(unlist(out), ncol = ncol(values)))
-  }
   # The augmented route's population covariance is the carrier block of the
   # augmented model's T0cov, and `rows` keeps everything else off the bridge.
   layout <- try(.ctBackendSummaryLayout(fit), silent = TRUE)

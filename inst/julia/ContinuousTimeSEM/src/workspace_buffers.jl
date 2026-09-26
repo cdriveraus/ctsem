@@ -62,12 +62,16 @@ struct DiscretizationBuffer{T,D,EB}
     scratch::Matrix{T}
     exp_buffer::EB
     dim::Val{D}
+    # The series kernels for a pivot small against the interval, and the
+    # record of which of them the last discretisation used; see
+    # `series_discretization.jl`.
+    series::SeriesKernelBuffer{T}
 end
 
 function _make_discretization_buffer(::Type{T}, n::Int) where {T}
     dim = 2 * n
     return DiscretizationBuffer(zeros(T, dim, dim), zeros(T, dim, dim),
-        zeros(T, dim, dim), ExpBuffer{T}(dim), Val(dim))
+        zeros(T, dim, dim), ExpBuffer{T}(dim), Val(dim), SeriesKernelBuffer(T, n))
 end
 
 """

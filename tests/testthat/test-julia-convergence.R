@@ -52,11 +52,13 @@
 # behaves from a start we chose is a fixture that is hiding something, and the
 # hidden thing here was the model.
 #
-# What went with it is the only place in the suite where `unidentified` came
-# from a real fit. That status is still covered, deterministically and without
-# a fit: `test-ctidentify.R` and `test-ctOptimUncertainty.R` drive
-# `.ctBackendIntervalCheck()` from information matrices directly, which is
-# where the behaviour actually lives.
+# What went with it is the only place in the suite where the `saturated`
+# certification status (`unidentified` until 2026-09-25) came from a real fit.
+# That status is still covered, deterministically and without a fit, by
+# `test-backend-optimgap.R`; and the coordinates reported with no width,
+# `.ctBackendIntervalCheck()`'s `$unidentified`, by `test-ctidentify.R` and
+# `test-ctOptimUncertainty.R` from information matrices directly, which is
+# where that behaviour actually lives.
 #
 # The fixture below is the same model over data that has the individual
 # differences it asks for, drawn independently for the two manifests so the
@@ -178,6 +180,43 @@ test_that("the stopping rules a marginal fit runs are the ones it asked for", {
   # maximum, so a healthy fit pays nothing for it -- the other half of the
   # claim the flat-transform test below makes.
   expect_equal(o$stall_escapes, 0L)
+})
+
+test_that("a fit that reaches a rising plateau climbs it to the maximum", {
+  skip_without_julia()
+  # Random walks fitted with an OU model, from a start in a saddle region: the
+  # likelihood falls toward a plateau where drift runs to minus infinity
+  # (white noise, -39.8787) and rises from it, monotonically in the drift
+  # coordinate, to its maximum at the drift boundary (a random walk,
+  # -25.1894). The fixture of test-julia-particle.R. The finish once converged
+  # on the plateau on a Hessian from two steps back and was certified there on
+  # 6.4e-7 of predicted gain, 14.7 below the maximum; before that, a floored
+  # step along the plateau's negative curvature happened to jump off it. The
+  # claim is the maximum, whatever the path to it.
+  model <- suppressWarnings(ctModel(
+    type = "ct", LAMBDA = diag(1), DRIFT = matrix("drift", 1, 1),
+    DIFFUSION = matrix("diffusion", 1, 1), MANIFESTVAR = matrix(.3, 1, 1),
+    MANIFESTMEANS = matrix(0, 1, 1), T0VAR = matrix(1, 1, 1), T0MEANS = matrix(0, 1, 1)))
+  set.seed(4)
+  dat <- data.frame(id = rep(1:6, each = 5), time = rep(0:4, 6),
+    Y1 = as.vector(replicate(6, cumsum(rnorm(5, 0, .5)))))
+  fit_from <- function(start) suppressWarnings(suppressMessages(ctFit(dat, model,
+    backend = "julia", cores = 1, inits = start, verbose = 0)))
+  # The plateau's supremum, to show which side of it a fit ended on: the
+  # objective at drift raw -9, where the plateau is flat to six decimals.
+  spec <- suppressMessages(ctFit(dat, model, backend = "julia", fit = FALSE))
+  plateau <- max(vapply(seq(-1, 1, by = 0.01), function(s)
+    as.numeric(ctJuliaEvaluate(spec, c(-9, s), gradient = FALSE)$value),
+    numeric(1)))
+  expect_lt(plateau, -39.8)
+  # From the test's start, and from the point on the plateau the fit used to
+  # stop at: the maximum, and a verdict that says it is one.
+  for (start in list(c(0.1, -0.2), c(-4.204915, -0.161058))) {
+    fit <- fit_from(start)
+    expect_equal(fit$estimate$loglik, -25.1894, tolerance = 1e-4,
+      info = paste(start, collapse = " "))
+    expect_true(isTRUE(fit$optim$converged), info = paste(start, collapse = " "))
+  }
 })
 
 test_that("a julia fit stopped early does not converge, and says what is left", {
@@ -411,10 +450,10 @@ test_that("what the fit reports is what the curvature measured", {
   expect_true(is.finite(certification$gap))
 
   # The one rule, on a real fit: converged iff the curvature says this is a
-  # maximum. `unidentified` is a maximum with a coordinate the data does not
+  # maximum. `saturated` is a maximum with a coordinate the data does not
   # determine; the rest of the not-certified statuses are not maxima.
   expect_equal(isTRUE(fit$optim$converged),
-    certification$status %in% c("certified", "unidentified"))
+    certification$status %in% c("certified", "saturated"))
 
   # The held complaint is gone rather than left behind to be warned about by a
   # later call on the same fit.
