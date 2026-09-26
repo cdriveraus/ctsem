@@ -137,7 +137,11 @@ end
     ctsem_auto_substeps(objective, values; tol, max_substeps, passes, floor_rule)
 
 Choose a substep mesh for every row of `objective`'s data at the parameter
-values `values`.
+values `values`: one raw parameter vector used for every subject, or a matrix
+whose row `i` is subject `i`'s own. A row is what the filter is handed, so
+TI-predictor effects go on top of it exactly as they do in a fit. The matrix
+form is how a Laplace objective measures each subject at its random-effect
+modes; that method is in laplace.jl.
 
 Returns a NamedTuple: `mesh`, one `Int` per row in the order of the data (entry
 1 of each subject is unused); `intervals`, the number of observation intervals;
@@ -165,19 +169,23 @@ into `objective`; the caller passes it back as the `max_timestep` argument of
 `ctsem_objective`, which is how it also reaches everything built from the same
 specification later.
 """
-function ctsem_auto_substeps(objective::CTSEMObjective, values::AbstractVector;
+function ctsem_auto_substeps(objective::CTSEMObjective, values::AbstractVecOrMat;
     tol::Real=_CTSEM_SUBSTEP_TOL[], max_substeps::Integer=64, passes::Integer=4,
     floor_rule::Real=Inf, fallback=nothing)
     tol > 0 || throw(ArgumentError("tol must be positive"))
     max_substeps >= 1 || throw(ArgumentError("max_substeps must be at least 1"))
     floor_rule > 0 || throw(ArgumentError("floor_rule must be positive"))
     subjects = objective.subject_objectives
-    x = Vector{Float64}(values)
+    persubject = values isa AbstractMatrix
+    persubject && size(values, 1) != length(subjects) && throw(DimensionMismatch(
+        "one row of parameters per subject is required"))
+    x = persubject ? Vector{Float64}(undef, size(values, 2)) : Vector{Float64}(values)
     meshes = Vector{Vector{Int}}(undef, length(subjects))
     finite = true
     used = 0
     offset = 0
     for (i, sub) in enumerate(subjects)
+        persubject && copyto!(x, view(values, i, :))
         nrows = length(sub.timesteps)
         fb = fallback === nothing ? nothing :
             Int[Int(fallback[offset + t]) for t in 1:nrows]

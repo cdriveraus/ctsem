@@ -39,21 +39,34 @@
 # engine's own `_ctsem_overshot` answers its question the same way, by taking
 # the step and looking.
 #
-# ## Four outcomes, not two
+# ## Six outcomes, not two
 #
-#   certified      the gap is below tolerance and the excluded directions hold
-#                  no material likelihood
-#   suboptimal     the gap says the optimum is measurably above this estimate
+# In the order `.ctBackendCertify()` checks them, and the first that applies
+# wins -- except that a gap which is not a number is also `unknown`, found
+# after `saturated` because it is only read there.
+#
+#   unknown        the curvature could not be decomposed, or the gap is not a
+#                  number, so nothing is claimed either way
+#   notmaximum     the overshoot probe found better, or a direction has genuine
+#                  negative curvature: the point is a saddle whatever the gap
+#                  says
 #   notstationary  a flat direction with a live gradient: stepping along it
 #                  gains likelihood, so this is not a maximum, and the gap
 #                  cannot see it because that direction was excluded
-#   unidentified   a transform has saturated, where the gradient underflows to
+#   saturated      a transform has saturated, where the gradient underflows to
 #                  zero and the curvature with it, so no tolerance means
 #                  anything for that coordinate. The point is still a maximum
-#   notmaximum     a direction of genuine negative curvature, where the point
-#                  is a saddle whatever the gap says
+#   suboptimal     the gap says the optimum is measurably above this estimate
+#   certified      the gap is below tolerance and the excluded directions hold
+#                  no material likelihood
 #
-# `notstationary` and `unidentified` were one status, and they are not one
+# `saturated` was called `unidentified` until 2026-09-25. It never meant more
+# than a saturated transform -- a flat direction whose probe gains nothing is
+# `certified`, and `fit$identifiability` is what names it -- so the old word
+# claimed a verdict this status does not make. A stored fit may still carry it;
+# `.ctBackendCertificationStatus()` reads it as the new one.
+#
+# `notstationary` and `saturated` were one status, and they are not one
 # finding: the first is a fit nobody should use and the second is a fit with a
 # result in it -- a population scale with no individual differences behind it is
 # the usual cause, and reporting that as a failure to converge is the mistake
@@ -151,27 +164,91 @@
 # large one" without needing to know anything about the model. The best actual
 # improvement found is what is reported; a direction that gains nothing at any
 # of them holds nothing worth continuing for.
+#
+# Provenance: 0.25, 1 and 4 were chosen by that argument when the
+# certification came in (18a1872b), not measured -- no fixture or sweep on
+# record set them (plan of 2026-09-25, Appendix B). The flat screen,
+# `.ctOptimFlatDirectionScreen()`, walks the same ladder for the sibling
+# question.
+#
+# Besides the gain it returns what a reader needs to weigh it: the length that
+# gave it, the longest length the objective could be evaluated at, and the unit
+# direction, so a message can name the parameters it runs through. A gain of
+# 5.5e-05 at a quarter of a unit, found by a probe that looked no further than
+# four, says something different from a ridge, and the verdict alone could not
+# tell them apart.
 #' @keywords internal
 .ctBackendOptimGapProbe <- function(evaluate, at, direction, value,
   lengths = c(0.25, 1, 4)) {
   norm <- sqrt(sum(direction^2))
   if (!is.finite(norm) || norm <= 0) {
-    return(list(gain = 0, length = 0, ok = TRUE))
+    return(list(gain = 0, length = 0, longest = 0, direction = NULL, ok = TRUE))
   }
   unit <- direction / norm
   best <- 0
   bestlength <- 0
+  longest <- 0
   for (len in lengths) {
     probe <- try(evaluate(at + len * unit), silent = TRUE)
     if (inherits(probe, "try-error")) next
     probe <- as.numeric(probe)[1L]
     if (!is.finite(probe)) next
+    longest <- max(longest, len)
     if (probe - value > best) {
       best <- probe - value
       bestlength <- len
     }
   }
-  list(gain = best, length = bestlength, ok = TRUE)
+  list(gain = best, length = bestlength, longest = longest, direction = unit,
+    ok = TRUE)
+}
+
+# The parameters a direction runs through: those carrying at least `share` of
+# its largest component, largest first, at most `most` of them.
+#
+# One rule for the three places that describe a direction by its parameters --
+# the not-a-maximum and flat-gain messages below, and the identifiability
+# report -- so a direction is described the same way wherever it is named. A
+# share of the largest rather than an absolute loading: a unit vector spread
+# over ten coordinates has loadings near 0.32 and one over twenty near 0.22, so
+# an absolute bar of 0.25 names every coordinate of the first and none of the
+# second, and on a ridge whose loadings shift as the optimiser walks it the
+# same bar named ten parameters at one stopping point and nine at another.
+#' @keywords internal
+.ctBackendLoadedCoordinates <- function(vector, share = 1 / 3, most = Inf) {
+  size <- abs(as.numeric(vector))
+  if (!length(size) || !any(is.finite(size)) || max(size, na.rm = TRUE) <= 0) {
+    return(integer())
+  }
+  keep <- which(is.finite(size) & size >= share * max(size, na.rm = TRUE))
+  keep <- keep[order(size[keep], decreasing = TRUE)]
+  keep[seq_len(min(length(keep), most))]
+}
+
+# What a flat direction that still gains is worth, in the words a reader needs:
+# which parameters, how much, how far along, and how far the probe looked.
+#
+# The verdict itself stays `notstationary` -- a small gain that turns within the
+# probe did not mean a maximum on AnomAuth S2, which had 1.6 exact nats further
+# out -- so what changes is that the message says what was measured rather than
+# asserting more than that. `parnames` is optional; without it the direction is
+# described by its size alone.
+#' @keywords internal
+.ctBackendFlatGainReason <- function(probe, parnames = NULL) {
+  gain <- suppressWarnings(as.numeric(probe$gain)[1L])
+  at <- suppressWarnings(as.numeric(probe$length)[1L])
+  longest <- suppressWarnings(as.numeric(probe$longest)[1L])
+  involved <- character()
+  if (!is.null(parnames) && length(probe$direction) == length(parnames)) {
+    involved <- parnames[.ctBackendLoadedCoordinates(probe$direction, most = 4L)]
+  }
+  paste0("a flat direction",
+    if (length(involved)) paste0(" (", paste(involved, collapse = ", "), ")"),
+    " still gains ", signif(gain, 2),
+    if (isTRUE(at > 0)) paste0(" within ", signif(at, 3),
+      " raw units of the estimate"),
+    if (isTRUE(longest > 0)) paste0("; the probe looked no further than ",
+      signif(longest, 3)))
 }
 
 # The verdict, in the terms a reader needs.
@@ -179,9 +256,13 @@
 # `saturated` is the fit's own, not recomputed here: a saturated transform
 # reports a zero gradient and no curvature, so it passes every test in this
 # file for the wrong reason, and the fit already says so.
+#
+# `parnames`, when given, lets a `notstationary` reason name the parameters the
+# flat direction runs through. Everything else here is arithmetic on the gap
+# and the probe, which is what keeps it testable without a fit.
 #' @keywords internal
 .ctBackendCertify <- function(gap, probe = NULL, tolerance = 0.01,
-  saturated = FALSE, overshot = FALSE) {
+  saturated = FALSE, overshot = FALSE, parnames = NULL) {
   if (is.null(gap) || !isTRUE(gap$ok)) {
     return(list(status = "unknown", certified = FALSE,
       reason = "the curvature at the estimate could not be decomposed"))
@@ -200,12 +281,10 @@
   material <- is.finite(residual_gain) && residual_gain > tolerance
   if (material) {
     return(list(status = "notstationary", certified = FALSE,
-      reason = paste0("stepping along the directions with no curvature gains ",
-        signif(residual_gain, 3), " log likelihood, so the estimate is not ",
-        "stationary in a direction the data does not determine")))
+      reason = .ctBackendFlatGainReason(probe, parnames)))
   }
   if (isTRUE(saturated) && isTRUE(gap$nflat > 0L)) {
-    return(list(status = "unidentified", certified = FALSE,
+    return(list(status = "saturated", certified = FALSE,
       reason = paste0("a parameter transform has saturated, where the ",
         "gradient underflows to zero and the curvature with it, so no ",
         "tolerance here means anything for that coordinate. Nothing here says ",
@@ -329,6 +408,17 @@
 # bar that decides anything. See `_ctsem_stall_verdict!`.
 #
 # `stallwindow = 0` switches the whole check off.
+#
+# Provenance: the window of 80 iterations and the fraction of 1e-2 were set by
+# hand on the flat-transform fixtures the watch was built for (fcae6459,
+# 2026-09-14) -- a drift started inside `-log1p_exp`'s flat region, now the
+# slow tier of `test-julia-convergence.R`, and `test_state_sampling.jl`'s count
+# model for the case the conjunction must leave alone. No sweep over either is
+# on record, nor which other values were tried, and neither has been checked on
+# categorical or multilevel models (plan of 2026-09-25, Appendix B and 2i). The
+# watch's other four constants -- cooldown 30, tightening 0.1 at most twice,
+# flat ratio 1e-3 -- have the same provenance and are read inline in
+# `.ctJuliaOptimise()`.
 #' @keywords internal
 .ctBackendStallWindow <- function(optimcontrol = list(), default = 80L) {
   value <- if (is.null(optimcontrol)) NULL else optimcontrol$stallwindow
@@ -337,6 +427,8 @@
   if (is.na(value) || value < 0L) default else value
 }
 
+# The fraction's provenance is the window's, above: set by hand on the
+# flat-transform fixtures, not swept.
 #' @keywords internal
 .ctBackendStallFraction <- function(optimcontrol = list(), default = 1e-2) {
   value <- if (is.null(optimcontrol)) NULL else optimcontrol$stallfraction
@@ -461,10 +553,13 @@
         gap$residual, as.numeric(fit$estimate$logposterior)[1L])
     }
   }
+  parnames <- try(.ctBackendRawParameterNames(fit, length(gradient)),
+    silent = TRUE)
+  if (inherits(parnames, "try-error")) parnames <- NULL
   verdict <- .ctBackendCertify(gap, probe, tolerance = tolerance,
     saturated = isTRUE(fit$optim$saturated),
-    overshot = isTRUE(fit$optim$overshot))
-  list(status = verdict$status, certified = verdict$certified,
+    overshot = isTRUE(fit$optim$overshot), parnames = parnames)
+  out <- list(status = verdict$status, certified = verdict$certified,
     reason = verdict$reason, tolerance = tolerance,
     # The same `$verdict` shape `ctLaplaceCheck()` and `ctParticleLik()` report;
     # see R/ctFitGap.R. Set here *and* in `.ctBackendCorrectResult()`, because
@@ -474,14 +569,35 @@
     # assemblies are not a drop-in merge: one takes an optimiser `result` and
     # the other a fit.
     verdict = .ctBackendCertifyGap(gap, tolerance),
-    gap = gap$gap, lambda = gap$lambda,
-    residual_gain = if (is.null(probe)) 0 else probe$gain,
-    residual_length = if (is.null(probe)) 0 else probe$length,
-    ntrusted = gap$ntrusted, nflat = gap$nflat, nnegative = gap$nnegative,
-    negative_vector = gap$negative_vector,
-    # The displacement the gap predicts, kept so a caller can try it without
-    # decomposing the Hessian again.
-    step = gap$step)
+    gap = gap$gap, lambda = gap$lambda)
+  c(out, .ctBackendProbeRecord(probe, parnames),
+    list(ntrusted = gap$ntrusted, nflat = gap$nflat, nnegative = gap$nnegative,
+      negative_vector = gap$negative_vector,
+      # The displacement the gap predicts, kept so a caller can try it without
+      # decomposing the Hessian again.
+      step = gap$step))
+}
+
+# What the flat-direction probe measured, as certification fields.
+#
+# One assembly for both places a certification is built, so a field added here
+# reaches whichever of them wrote the certification a reader ends up with --
+# the note on `.ctBackendCertification()` above is about exactly that failure.
+# `residual_parameters` are the coordinates the probed direction runs through,
+# by `.ctBackendLoadedCoordinates()`'s rule, and `residual_direction` is the
+# unit vector itself, so a caller can profile along it.
+#' @keywords internal
+.ctBackendProbeRecord <- function(probe, parnames = NULL) {
+  if (is.null(probe)) {
+    return(list(residual_gain = 0, residual_length = 0, residual_longest = 0,
+      residual_direction = NULL, residual_parameters = character()))
+  }
+  direction <- probe$direction
+  involved <- if (!is.null(parnames) && length(direction) == length(parnames))
+    parnames[.ctBackendLoadedCoordinates(direction, most = 4L)] else character()
+  list(residual_gain = probe$gain, residual_length = probe$length,
+    residual_longest = .ctJuliaOr(probe$longest, 0),
+    residual_direction = direction, residual_parameters = involved)
 }
 
 # The verdict on the fit, once the curvature has been measured.
@@ -512,8 +628,8 @@
   # can be, and a saturated coordinate defeats that bound without saying
   # anything against the maximum -- so the two statuses that are findings
   # rather than failures map to TRUE.
-  fit$optim$converged <- certification$status %in%
-    c("certified", "unidentified")
+  fit$optim$converged <- .ctBackendCertificationStatus(certification) %in%
+    c("certified", "saturated")
   # Superseded rather than answered: the optimizer's complaint was held for
   # this measurement, and the measurement has now been made. Leaving it would
   # make `.ctBackendCertifyWarn()` warn about a gradient on a fit whose
@@ -522,16 +638,38 @@
   fit
 }
 
+# The certification status, with the spelling a stored fit may carry read as
+# the current one.
+#
+# `unidentified` became `saturated` on 2026-09-25, because a saturated
+# transform is all it ever meant (see the header of this file). A fit stored
+# before then still says `unidentified`, so every reader of the status goes
+# through here rather than comparing against a literal, and the two spellings
+# cannot be read two ways.
+#' @keywords internal
+.ctBackendCertificationStatus <- function(certification) {
+  status <- if (is.list(certification)) certification$status else NULL
+  if (!length(status)) return(character())
+  status <- as.character(status)[1L]
+  if (identical(status, "unidentified")) "saturated" else status
+}
+
 # The one convergence statement a fit makes.
 #
-# Three cases, and they are genuinely different things to tell a user:
+# Five cases, and they are genuinely different things to tell a user:
 #
-#   unidentified     the coordinate the data does not determine, once,
+#   saturated        the coordinate the data does not determine, once,
 #                    pointing at the identifiability report rather than
 #                    repeating it here.
 #   certified        nothing. The optimizer's own stopping rule was superseded
 #                    by a criterion it does not know about, and repeating its
 #                    complaint would send someone chasing a fit that is right.
+#   notstationary    what the flat-direction probe measured -- the parameters,
+#                    the gain, how far along it and how far the probe looked --
+#                    and what would settle it. The verdict is right and stays:
+#                    a small gain that turns within the probe did not mean a
+#                    maximum on AnomAuth S2. What it cannot do is tell a
+#                    5.5e-05 bump from a ridge, so it says what it saw.
 #   not certified    what the curvature says, in objective units, because that
 #                    is actionable where a gradient is not.
 #   no certification the gradient, and the fact that nothing checked further.
@@ -549,15 +687,24 @@
     return(invisible(NULL))
   }
   if (isTRUE(certification$certified)) return(invisible(NULL))
+  status <- .ctBackendCertificationStatus(certification)
   # A maximum with a coordinate the data does not determine is a finding, and
   # the finding is `fit$identifiability`'s to report. Warning "not converged"
   # here is what sent 45 of 64 good fits back to be re-run.
-  if (identical(certification$status, "unidentified")) {
+  if (identical(status, "saturated")) {
     warning("This fit is a maximum, but ", certification$reason, ".",
       call. = FALSE)
     return(invisible(NULL))
   }
-  if (identical(certification$status, "notmaximum") &&
+  if (identical(status, "notstationary")) {
+    involved <- as.character(certification$residual_parameters)
+    warning("Not converged: ", certification$reason, ". More iterations, ",
+      "other starts, or ctFitProfile() ",
+      if (length(involved)) paste0("on ", involved[1L]) else "along it",
+      " would say whether it keeps rising.", call. = FALSE)
+    return(invisible(NULL))
+  }
+  if (identical(status, "notmaximum") &&
       length(certification$negative_vector)) {
     warning(.ctBackendNotMaximumMessage(fit, certification), call. = FALSE)
     return(invisible(NULL))
@@ -585,9 +732,7 @@
   gradient <- as.numeric(fit$optim$gradient)
   raw <- as.numeric(fit$estimate$raw)
   if (length(gradient) >= npar && sum(gradient[seq_len(npar)] * v) < 0) v <- -v
-  size <- abs(v)
-  keep <- which(size >= max(size) / 3)
-  keep <- keep[order(size[keep], decreasing = TRUE)][seq_len(min(4L, length(keep)))]
+  keep <- .ctBackendLoadedCoordinates(v, most = 4L)
   involved <- names[keep]
   readings <- character()
   for (k in seq_along(keep)) {
@@ -617,6 +762,32 @@
     tried, " See fit$uncertainty$certification.")
 }
 
+# Which engine function gives the curvature of this spec's objective.
+#
+# `ctsem_hessian_forward` exists for one case, a sampled TI predictor value on
+# the augmented route, and has a method for the plain objective only. A Laplace
+# spec builds a `CTSEMLaplaceObjective`, whose only Hessian is `ctsem_hessian`
+# -- and on that route `gradient` does not choose how anything is
+# differentiated, since the Laplace gradient is a forward sweep over the
+# reverse pass either way (see `.ctJuliaOptimise()`). So `gradient = 'forward'`
+# on a Laplace fit sent the certification to a method that does not exist:
+# the call raised a MethodError inside a `try`, the Hessian came back NULL,
+# and the correction loop stopped without a word -- on its first round
+# whenever the optimiser's finish had handed back no Hessian, so with no
+# verdict to continue on. Measured on `test-julia-laplace.R`'s 30-subject
+# fixture with `maxiter = 3`: no Hessian at all, where `'adjoint'` computed
+# one. (What the loop then does is the verdict's: in one session `'adjoint'`
+# continued to the optimum 60 nats higher, in a fresh one it stopped on
+# `notstationary` -- inferred, not verified, to be the inner modes the
+# Laplace Hessian warm-starts from.) The Laplace route
+# therefore takes `ctsem_hessian` whatever `gradient` says, and so does the
+# sampler's metric on the same spec (`.ctBackendHessian()`).
+#' @keywords internal
+.ctBackendHessianFunction <- function(spec, gradient = "adjoint") {
+  if (!is.null(spec$laplace)) return("ctsem_hessian")
+  if (identical(gradient, "forward")) "ctsem_hessian_forward" else "ctsem_hessian"
+}
+
 # The curvature at one point, from the spec rather than from a fit.
 #
 # `.ctBackendHessian()` is the same call with a fit around it; this exists
@@ -629,8 +800,7 @@
   # thing for the same reason.
   spec <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
   module <- .ctJuliaModule(spec$project)
-  name <- if (identical(gradient, "forward")) "ctsem_hessian_forward" else
-    "ctsem_hessian"
+  name <- .ctBackendHessianFunction(spec, gradient)
   available <- isTRUE(tryCatch(is.function(module[[name]]),
     error = function(e) FALSE))
   if (!available) return(NULL)
@@ -678,6 +848,11 @@
   history <- list()
   hessian <- NULL
   certification <- NULL
+  # The raw coordinates by name, for a verdict that has to say which parameters
+  # a flat direction runs through. Positional names if that fails: a message
+  # naming `raw[7]` is worse than one naming the parameter and better than none.
+  parnames <- tryCatch(.ctBackendRawParameterNames(list(model_spec = spec), npar),
+    error = function(e) paste0("raw[", seq_len(npar), "]"))
   # Work done across every stage, not the last one's. `iterations`, `f_calls`
   # and `g_calls` come off whichever Optim run finished, so a fit that
   # optimised, corrected, resumed and corrected again reported the tail of that
@@ -713,8 +888,9 @@
       probe <- .ctBackendOptimGapProbe(value_at, est, gap$residual,
         as.numeric(result$maximum_loglik)[1L])
     }
-    certification <- .ctBackendCertify(gap, probe, tolerance = tolerance,
-      saturated = isTRUE(result$saturated), overshot = isTRUE(result$overshot))
+    certification <- c(.ctBackendCertify(gap, probe, tolerance = tolerance,
+      saturated = isTRUE(result$saturated), overshot = isTRUE(result$overshot),
+      parnames = parnames), .ctBackendProbeRecord(probe, parnames))
     certification$verdict <- .ctBackendCertifyGap(gap, tolerance)
     certification$gap <- gap$gap
     certification$lambda <- gap$lambda
@@ -722,7 +898,6 @@
     certification$nflat <- gap$nflat
     certification$nnegative <- gap$nnegative
     certification$negative_vector <- gap$negative_vector
-    certification$residual_gain <- if (is.null(probe)) 0 else probe$gain
     certification$tolerance <- tolerance
     # Continue for either reason the curvature gives. `suboptimal` is objective
     # left on the table; `notmaximum` is a direction of negative curvature,

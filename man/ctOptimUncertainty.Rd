@@ -183,6 +183,11 @@ back with no spread at all instead of a standard error of \code{1/ridge}.
 Floored, that number leaks into the parameters the data \emph{does}
 determine, and by an amount rounding decides: it can differ by a factor of a
 hundred between two fits that reach the same optimum.
+A direction with little curvature along which the likelihood itself is
+measured flat -- within the likelihood-ratio bar of 1.92 over four raw
+units on one side, following the ridge where it curves -- is treated the
+same way whether or not its curvature has yet decayed to negligible, since
+that depends on where along such a ridge the optimiser stopped.
 \code{$uncertainty$cov} records which directions were dropped, and
 \code{fit$identifiability} names the parameters.
 

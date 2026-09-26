@@ -375,7 +375,8 @@
     certification <- fit$uncertainty$certification
     add("  converged: ", isTRUE(e$converged),
       if (!is.null(certification) && length(certification$status))
-        paste0("  (certification: ", certification$status, ")")
+        paste0("  (certification: ",
+          .ctBackendCertificationStatus(certification), ")")
       else "  (not certified: no curvature was computed)")
     if (!is.null(e$iterations)) add("  iterations: ", e$iterations)
     # The criterion first and the gradient second, in that order, because the

@@ -1180,6 +1180,37 @@ test_that("the hessian raises the inner budget rather than returning NaN", {
   setbudget(200L)
 })
 
+test_that("gradient = 'forward' still gives a Laplace fit's certification its curvature", {
+  skip_without_julia()
+  # `ctsem_hessian_forward` has no method for the Laplace objective, and on
+  # this route `gradient` chooses nothing about differentiation. Asking for
+  # 'forward' sent the certification's Hessian there: a MethodError inside a
+  # `try`, a NULL Hessian, and a correction loop that ended before it had
+  # anything to certify -- so no verdict, and nothing to continue from.
+  spec <- suppressWarnings(suppressMessages(ctFit(.laplace_test_data(),
+    .laplace_test_model(), backend = "julia", intoverpop = "laplace",
+    fit = FALSE)))
+  npar <- .ctBackendNpar(spec)
+  at <- rep(0.1, npar)
+  forward <- .ctBackendHessianAt(spec, at, gradient = "forward")
+  expect_true(is.matrix(forward))
+  expect_equal(forward, .ctBackendHessianAt(spec, at, gradient = "adjoint"))
+
+  # Three iterations from zero: far enough out that the optimiser's finish
+  # hands back no Hessian, so the loop has to compute its own. Unfixed, it
+  # computed none. Whether the loop then continues is the verdict's business,
+  # not this test's, and at this point it is not stable: 'adjoint' continued to
+  # the optimum in one session and stopped on 'notstationary' in a fresh one,
+  # and two identical fits in one session stopped with different probes.
+  # Inferred, not verified, to come from the inner modes the Laplace Hessian
+  # warm-starts from.
+  fit <- suppressWarnings(suppressMessages(ctFit(.laplace_test_data(),
+    .laplace_test_model(), backend = "julia", intoverpop = "laplace",
+    inits = rep(0, npar), optimcontrol = list(gradient = "forward",
+      maxiter = 3L, laplace_correct = FALSE, finishsamples = 50))))
+  expect_gte(fit$optim$hessian_evaluations, 1L)
+})
+
 # Weak data for a nonlinear random effect: 40 subjects, six waves, a random
 # `-log1p_exp` drift beside random T0MEANS and CINT. The subjects are simulated
 # here, not by ctGenerate, whose draw stream moves under unrelated commits.

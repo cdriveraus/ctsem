@@ -79,7 +79,7 @@ test_that("a small gap with a live flat direction is not certified", {
   verdict <- ctsem:::.ctBackendCertify(out, probe = list(gain = 1.4),
     tolerance = 0.01)
   expect_equal(verdict$status, "notstationary")
-  expect_match(verdict$reason, "no curvature")
+  expect_match(verdict$reason, "a flat direction still gains 1.4", fixed = TRUE)
   # The same point with nothing to be had along that direction is certified:
   # a flat direction is not by itself a failure, it is a flat direction.
   quiet <- ctsem:::.ctBackendCertify(out, probe = list(gain = 0),
@@ -93,7 +93,7 @@ test_that("a saturated transform is never certified by a gradient that underflow
   # that, which is why it is consulted rather than recomputed.
   out <- ctsem:::.ctBackendOptimGap(-diag(c(4, 0)), c(1e-9, 0))
   expect_equal(ctsem:::.ctBackendCertify(out, probe = list(gain = 0),
-    tolerance = 0.01, saturated = TRUE)$status, "unidentified")
+    tolerance = 0.01, saturated = TRUE)$status, "saturated")
   expect_equal(ctsem:::.ctBackendCertify(out, probe = list(gain = 0),
     tolerance = 0.01, overshot = TRUE)$status, "notmaximum")
   expect_equal(ctsem:::.ctBackendCertify(out, probe = list(gain = 0),
@@ -128,6 +128,63 @@ test_that("the probe reports the best actual gain, and zero when there is none",
   # failed certification.
   broken <- function(x) stop("no")
   expect_equal(ctsem:::.ctBackendOptimGapProbe(broken, c(0, 0), c(0, 1), 0)$gain, 0)
+})
+
+test_that("a flat direction that still gains says what the probe measured", {
+  # AnomAuth S1 from default starts, in miniature: a flat direction along one
+  # population sd whose probe gains 5.5e-05 at a quarter of a unit and less
+  # further out. The verdict stays `notstationary` -- a small gain that turned
+  # within the probe did not mean a maximum on S2, which had 1.6 exact nats
+  # further out -- and what changes is that the reader is told what was seen:
+  # which parameters, how much, at what length, and how far the probe looked.
+  bump <- function(x) if (x[2L] <= 0.25) 2.2e-4 * x[2L] else
+    5.5e-5 - 1e-5 * (x[2L] - 0.25)
+  probe <- ctsem:::.ctBackendOptimGapProbe(bump, at = c(0, 0),
+    direction = c(0, 3), value = 0)
+  expect_equal(probe$gain, 5.5e-5)
+  expect_equal(probe$length, 0.25)
+  expect_equal(probe$longest, 4)
+  expect_equal(probe$direction, c(0, 1))
+  # The longest length is the longest the objective could be evaluated at, not
+  # the longest asked for: a probe that failed at 4 looked no further than 1.
+  short <- ctsem:::.ctBackendOptimGapProbe(function(x)
+    if (x[2L] > 2) stop("no") else bump(x), c(0, 0), c(0, 1), 0)
+  expect_equal(short$longest, 1)
+
+  gap <- ctsem:::.ctBackendOptimGap(-diag(c(4, 0)), c(1e-9, 3))
+  verdict <- ctsem:::.ctBackendCertify(gap, probe, tolerance = 1e-6,
+    parnames = c("drift", "popsd_cint"))
+  expect_equal(verdict$status, "notstationary")
+  expect_identical(verdict$reason, paste0("a flat direction (popsd_cint) ",
+    "still gains 5.5e-05 within 0.25 raw units of the estimate; the probe ",
+    "looked no further than 4"))
+
+  # And the warning a fit raises from it, which names what would settle it.
+  record <- ctsem:::.ctBackendProbeRecord(probe, c("drift", "popsd_cint"))
+  expect_identical(record$residual_parameters, "popsd_cint")
+  expect_equal(record$residual_longest, 4)
+  fit <- list(optim = list(converged = FALSE),
+    uncertainty = list(certification = c(verdict, record)))
+  expect_warning(ctsem:::.ctBackendCertifyWarn(fit), paste0("Not converged: ",
+    "a flat direction (popsd_cint) still gains 5.5e-05 within 0.25 raw units ",
+    "of the estimate; the probe looked no further than 4. More iterations, ",
+    "other starts, or ctFitProfile() on popsd_cint would say whether it keeps ",
+    "rising."), fixed = TRUE)
+})
+
+test_that("a direction is described by its largest loadings, in one rule", {
+  # A share of the largest loading, not an absolute bar: spread over ten
+  # coordinates a unit vector has loadings near 0.32, over twenty near 0.22,
+  # and an absolute 0.25 named all of the first and none of the second.
+  even <- rep(1 / sqrt(20), 20)
+  expect_length(ctsem:::.ctBackendLoadedCoordinates(even), 20L)
+  # Largest first, and a coordinate well under a third of the largest is left
+  # out.
+  expect_identical(ctsem:::.ctBackendLoadedCoordinates(c(0.1, -0.9, 0.4, 0.01)),
+    c(2L, 3L))
+  expect_identical(ctsem:::.ctBackendLoadedCoordinates(c(0.5, 0.5, 0.5, 0.5),
+    most = 2L), c(1L, 2L))
+  expect_length(ctsem:::.ctBackendLoadedCoordinates(numeric(3)), 0L)
 })
 
 test_that("a hessian that cannot be used says so rather than certifying", {
@@ -588,13 +645,15 @@ test_that("the curvature's verdict replaces the optimiser's, in both directions"
 })
 
 test_that("converged says maximum, and the two findings that are not failures", {
-  # `unidentified` is a maximum with a coordinate the data does not determine,
+  # `saturated` is a maximum with a coordinate the data does not determine,
   # which is a result and not a failure -- reporting it as a failure to
   # converge is what put `converged = FALSE` on 45 of 64 fits whose log
   # likelihoods matched stan's to the digit. `notstationary` is the other half
   # of what used to share that name, and it *is* a failure: stepping along the
   # direction gains likelihood, so the point is not a maximum at all.
-  expected <- c(certified = TRUE, unidentified = TRUE,
+  # `unidentified` is `saturated`'s name before 2026-09-25, and a stored fit
+  # still carries it.
+  expected <- c(certified = TRUE, saturated = TRUE, unidentified = TRUE,
     suboptimal = FALSE, notstationary = FALSE, notmaximum = FALSE,
     unknown = FALSE)
   got <- vapply(names(expected), function(status)
@@ -602,6 +661,34 @@ test_that("converged says maximum, and the two findings that are not failures", 
       .verdict_fit(status, certified = identical(status, "certified"))
     )$optim$converged), logical(1))
   expect_equal(got, expected)
+})
+
+test_that("a stored fit's 'unidentified' reads as 'saturated' everywhere", {
+  status <- ctsem:::.ctBackendCertificationStatus
+  expect_identical(status(list(status = "unidentified")), "saturated")
+  expect_identical(status(list(status = "saturated")), "saturated")
+  expect_identical(status(list(status = "certified")), "certified")
+  expect_identical(status(NULL), character())
+  expect_identical(status(list(status = character())), character())
+  # And the warning a stored fit raises is the finding's, not a failure's.
+  old <- .verdict_fit("unidentified")
+  old$uncertainty$certification$reason <- "a parameter transform has saturated"
+  expect_warning(ctsem:::.ctBackendCertifyWarn(old),
+    "This fit is a maximum, but a parameter transform has saturated.",
+    fixed = TRUE)
+})
+
+test_that("a Laplace spec is differentiated by ctsem_hessian whatever gradient says", {
+  # `ctsem_hessian_forward` has no method for the Laplace objective, and on that
+  # route `gradient` chooses nothing about differentiation. See
+  # test-julia-laplace.R for what asking for it used to cost a fit.
+  pick <- ctsem:::.ctBackendHessianFunction
+  expect_identical(pick(list(laplace = list(levels = list())), "forward"),
+    "ctsem_hessian")
+  expect_identical(pick(list(laplace = list(levels = list())), "adjoint"),
+    "ctsem_hessian")
+  expect_identical(pick(list(), "forward"), "ctsem_hessian_forward")
+  expect_identical(pick(list(), "adjoint"), "ctsem_hessian")
 })
 
 test_that("a fit that certified nothing keeps the optimiser's verdict", {
