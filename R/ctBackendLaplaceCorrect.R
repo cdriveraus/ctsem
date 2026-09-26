@@ -149,8 +149,9 @@ ctLaplaceCorrect <- function(fit, draws = c("normal", "imis", "keep"),
   est <- as.numeric(fit$estimate$raw)
   npar <- length(est)
 
-  # A fit the default correction (optimcontrol$laplace_correct) already moved
-  # must not be moved again by the same step. What is still worth asking for
+  # A fit the fit-time correction (optimcontrol$laplace_correct, either
+  # method) already moved must not be moved again: this would be a second
+  # correction of the same error. What is still worth asking for
   # there is the shape, so draws='imis' redraws around the corrected estimate
   # and leaves it where it is; anything that would move the estimate or only
   # recentre the draws is refused, because that is what was already done.
@@ -159,7 +160,7 @@ ctLaplaceCorrect <- function(fit, draws = c("normal", "imis", "keep"),
     if (!identical(draws, "imis") ||
         (!missing(correct_estimate) && isTRUE(correct_estimate))) {
       stop("This fit was already corrected by quadrature when it was fitted ",
-        "(fit$laplace$correction), so ctLaplaceCorrect() would apply the step ",
+        "(fit$laplace$correction), so ctLaplaceCorrect() would correct it ",
         "twice. Use draws='imis' to redraw around the corrected estimate, or ",
         "refit with optimcontrol$laplace_correct = FALSE to correct by hand.",
         call. = FALSE)
