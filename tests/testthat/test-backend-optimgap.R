@@ -287,6 +287,32 @@ test_that("a fit short of its optimum is resumed under its own rules, with its p
   expect_equal(out$evaluated_at, c(0.5, 0.2))
 })
 
+test_that("a run the fit does not keep is still counted in its work", {
+  # The stage a stall escape replaced, an escape that did not come out ahead,
+  # the run before a substep refit: each did its work, and the fit's counts are
+  # the whole of what it ran, as the corrections' totals are. They were the kept
+  # run's alone; the optimiser bench's tally of engine runs is what showed it.
+  kept <- list(iterations = 40L, f_calls = 90L, g_calls = 60L,
+    newton_steps = 2L, newton_hessians = 1L)
+  dropped <- list(iterations = 75L, f_calls = 200L, g_calls = 150L,
+    newton_steps = 3L, newton_hessians = 2L, newton_subset_hessians = 0L)
+  out <- ctsem:::.ctJuliaAddRunCounts(kept, dropped)
+  expect_equal(out$iterations, 115)
+  expect_equal(out$f_calls, 290)
+  expect_equal(out$g_calls, 210)
+  expect_equal(out$newton_steps, 5)
+  expect_equal(out$newton_hessians, 3)
+  # The kept run's own count stays readable, since its trace is the one the
+  # fit reports; a second dropped run adds to the totals and leaves it alone.
+  expect_equal(out$stage_iterations, 40L)
+  again <- ctsem:::.ctJuliaAddRunCounts(out,
+    ctsem:::.ctJuliaRunCounts(dropped))
+  expect_equal(again$iterations, 190)
+  expect_equal(again$stage_iterations, 40L)
+  # Nothing dropped, nothing changed.
+  expect_identical(ctsem:::.ctJuliaAddRunCounts(kept, list()), kept)
+})
+
 test_that("a resume that does not improve is not taken", {
   short <- .fake_result(-diag(c(4, 25)), c(2, 5), value = -100)
   worse <- .fake_result(-diag(c(4, 25)), c(0, 0), value = -101)

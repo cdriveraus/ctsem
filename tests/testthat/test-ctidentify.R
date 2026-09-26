@@ -344,6 +344,29 @@ test_that("intoverpop='laplace' works from ctIdentify", {
   expect_false("popsd_diff_eta1" %in% result$parameters)
 })
 
+test_that("partial identification is a finding about the augmented route only", {
+  skip_without_julia()
+  # The mechanism is the augmented filter's -- a variance cell's carrier state
+  # the update never moves. On the Laplace route the likelihood sees a level's
+  # scales and correlations only through the covariance they build, so a flat
+  # direction there that moves a variance is that variance undetermined. A
+  # laplace fit whose flat sds had correlations near zero (AnomAuth S1) was
+  # classified partial all the same, since a cross-covariance through a zero
+  # correlation does not move with the scale, and was told it was under
+  # intoverpop='augmented' and that 'laplace' would identify it. So the
+  # classification has blocks on the augmented route and none on Laplace.
+  data <- .identify_data()
+  model <- .identify_varying_model()
+  augmented <- suppressMessages(ctFit(data, model, backend = "julia",
+    intoverpop = "augmented", fit = FALSE, cores = 1, verbose = 0))
+  laplace <- suppressMessages(ctFit(data, model, backend = "julia",
+    intoverpop = "laplace", fit = FALSE, cores = 1, verbose = 0))
+  blocks <- ctsem:::.ctIdentifyBlocks(augmented)
+  expect_length(blocks, 1L)
+  expect_identical(blocks[[1L]]$route, "augmented")
+  expect_length(ctsem:::.ctIdentifyBlocks(laplace), 0L)
+})
+
 test_that("the laplace specification agrees with the one ctFit builds", {
   skip_without_julia()
   # The fallback added for the unprepared model must find the same random
