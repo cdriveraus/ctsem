@@ -310,7 +310,7 @@ ctOptimSafeCov <- function(cov, ridge=1e-8){
 #
 # `lengths` are in raw parameter units, where ctsem's coordinates are
 # standardised by construction, and are the same ladder
-# `.ctBackendOptimGapProbe()` walks for the sibling question ("does anything
+# engine's flat probe (`_ctsem_flat_probe`) walks for the sibling question ("does anything
 # *improve* along here"). `maxdirections` caps the cost on a model with many
 # flat directions, where the ones with the least curvature are the ones worth
 # asking about.

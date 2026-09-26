@@ -408,9 +408,9 @@ test_that("the gradient stays finite as a threshold gap closes", {
   # Down to -15, which is a gap of about 1e-13. Below that the *cumulated*
   # thresholds stop resolving the gap at all -- `tau + 1e-35` is `tau` -- and
   # the category between two numerically identical thresholds genuinely has
-  # probability zero. `_CTSEM_SATURATION` already reports a raw magnitude of 20
-  # as not converged, so the optimiser is told about that region rather than
-  # being expected to work in it.
+  # probability zero. The optimiser is not expected to work there: a transform
+  # whose derivative has gone flat is what the engine's saturation check
+  # (`_ctsem_saturated_parameters`) reports.
   for (raw in c(-5, -10, -15)) {
     at <- rep(0.1, npar)
     at[gappar] <- raw          # gaps of roughly 9e-5 down to 2e-13

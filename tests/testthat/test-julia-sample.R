@@ -669,10 +669,12 @@ test_that("a sampled fit's Hessian is not reused as curvature at its mean", {
   atmean <- .ctBackendHessian(sampled, as.numeric(sampled$estimate$raw))
   expect_false(isTRUE(all.equal(atmean, stored, tolerance = 0)))
 
-  # And an optimised fit's Hessian *is* at its estimate, so the same guard
-  # reuses it there -- which is the saving the field exists to keep.
-  expect_equal(as.numeric(fit$uncertainty$evaluated_at),
-    as.numeric(fit$estimate$raw))
+  # And an optimised fit's Hessian describes its estimate -- evaluated there,
+  # or within a hundredth of a standard error where the finish kept the
+  # Hessian it took at the hand-over -- so the same guard reuses it there,
+  # which is the saving the field exists to keep.
+  expect_lte(.ctBackendHessianDistance(fit$uncertainty$hessian,
+    fit$uncertainty$evaluated_at, fit$estimate$raw), .ctBackendHessianReuse())
   expect_identical(.ctBackendHessian(fit, as.numeric(fit$estimate$raw)),
     fit$uncertainty$hessian)
 })

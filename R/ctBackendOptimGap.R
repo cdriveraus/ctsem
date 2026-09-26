@@ -76,6 +76,16 @@
 # parameter has both a zero gradient and no curvature, so it lands in the
 # excluded subspace with nothing to report, and a certification that did not
 # ask would contradict the warning the fit already carries.
+#
+# ## Arithmetic in the engine, verdicts here
+#
+# The Hessian, the Newton steps, the escape from a saddle and the probe along
+# the flat directions are the engine's: its finish (`_ctsem_newton_finish`)
+# ends the optimiser's run on them and hands them back, so a fit is certified
+# without another engine call in the common case. What stays here is what is
+# cheap on a matrix and tested without an engine -- the gap, the split into
+# trusted and flat directions, the verdict and its words -- and the one
+# decision about what to do next (`.ctBackendCorrectResult()`).
 
 # Eigen-decomposition of the observed information, with the trusted subspace
 # marked.
@@ -156,20 +166,16 @@
 # A norm of the leftover gradient cannot answer this: it has the units the rest
 # of this file exists to avoid, and in a direction with no curvature the
 # quadratic model that would convert it into a likelihood is precisely the one
-# that does not hold. So step along it and look.
+# that does not hold. So step along it and look. The stepping is the engine's
+# (`_ctsem_flat_probe`, at 0.25, 1 and 4 raw units), through the route's own
+# predicate, so a Laplace point whose inner solve did not converge is refused
+# rather than compared -- which the R-side probe this replaced could not see.
 #
-# The step lengths are in raw parameter units, where ctsem's coordinates are
-# standardised by construction -- priors are normal(0,1) and each transform
-# carries its own scale -- so a quarter, one and four span "a small move" to "a
-# large one" without needing to know anything about the model. The best actual
-# improvement found is what is reported; a direction that gains nothing at any
-# of them holds nothing worth continuing for.
-#
-# Provenance: 0.25, 1 and 4 were chosen by that argument when the
-# certification came in (18a1872b), not measured -- no fixture or sweep on
-# record set them (plan of 2026-09-25, Appendix B). The flat screen,
-# `.ctOptimFlatDirectionScreen()`, walks the same ladder for the sibling
-# question.
+# A fit's certification reads the probe the optimiser's finish already ran
+# (`.ctBackendEndgameOf()`); this is for a certification assembled from a
+# Hessian R holds (`.ctBackendCertification()`). NULL when there was nothing to
+# probe or the engine could not, which `.ctBackendCertify()` reads as no gain
+# measured.
 #
 # Besides the gain it returns what a reader needs to weigh it: the length that
 # gave it, the longest length the objective could be evaluated at, and the unit
@@ -178,28 +184,29 @@
 # four, says something different from a ridge, and the verdict alone could not
 # tell them apart.
 #' @keywords internal
-.ctBackendOptimGapProbe <- function(evaluate, at, direction, value,
-  lengths = c(0.25, 1, 4)) {
-  norm <- sqrt(sum(direction^2))
-  if (!is.finite(norm) || norm <= 0) {
-    return(list(gain = 0, length = 0, longest = 0, direction = NULL, ok = TRUE))
-  }
-  unit <- direction / norm
-  best <- 0
-  bestlength <- 0
-  longest <- 0
-  for (len in lengths) {
-    probe <- try(evaluate(at + len * unit), silent = TRUE)
-    if (inherits(probe, "try-error")) next
-    probe <- as.numeric(probe)[1L]
-    if (!is.finite(probe)) next
-    longest <- max(longest, len)
-    if (probe - value > best) {
-      best <- probe - value
-      bestlength <- len
-    }
-  }
-  list(gain = best, length = bestlength, longest = longest, direction = unit,
+.ctBackendFlatProbe <- function(x, at, direction) {
+  direction <- as.numeric(direction)
+  size <- sqrt(sum(direction^2))
+  if (!is.finite(size) || size <= 0) return(NULL)
+  module <- .ctJuliaModule(.ctBackendSpec(x)$project)
+  out <- try(JuliaConnectoR::juliaGet(module$ctsem_flat_probe(
+    .ctJuliaObjective(x), .ctJuliaNumericVector(as.numeric(at)),
+    .ctJuliaNumericVector(direction))), silent = TRUE)
+  if (inherits(out, "try-error")) return(NULL)
+  .ctBackendProbeFields(out, length(direction))
+}
+
+# The probe's numbers off an engine result, in the shape `.ctBackendCertify()`
+# reads, or NULL when it did not run. The engine never sends an empty vector --
+# it would hang the bridge -- so `probe_ran` is what says there is a direction.
+#' @keywords internal
+.ctBackendProbeFields <- function(r, npar) {
+  if (!isTRUE(r$probe_ran)) return(NULL)
+  direction <- suppressWarnings(as.numeric(r$probe_direction))
+  if (length(direction) != npar || !all(is.finite(direction))) return(NULL)
+  list(gain = as.numeric(r$probe_gain)[1L],
+    length = as.numeric(r$probe_length)[1L],
+    longest = as.numeric(r$probe_longest)[1L], direction = direction,
     ok = TRUE)
 }
 
@@ -535,44 +542,52 @@
   point
 }
 
-# The certification for one fit, at its own estimate, against one Hessian.
+# The certification for one fit, at its own estimate, against a Hessian R holds.
 #
-# The probe is what makes the flat directions safe to exclude from the gap:
-# their gradient is stepped along and the objective measured, rather than a
-# norm being compared to a threshold that would carry the units this whole
-# approach exists to remove.
+# Used by the uncertainty stage when it could not reuse the certification the
+# fit was made with -- a Hessian from somewhere else, or a fit certified with
+# none (`estonly`). The probe is what makes the flat directions safe to exclude
+# from the gap: their gradient is stepped along and the objective measured,
+# rather than a norm being compared to a threshold that would carry the units
+# this whole approach exists to remove.
 #' @keywords internal
 .ctBackendCertification <- function(fit, hessian, tolerance = 0.01) {
   gradient <- as.numeric(fit$optim$gradient)
   gap <- .ctBackendOptimGap(hessian, gradient)
   probe <- NULL
   if (isTRUE(gap$ok) && isTRUE(gap$residual_norm > 0)) {
-    evaluate <- try(.ctBackendLpgFunc(fit, gradient = FALSE), silent = TRUE)
-    if (!inherits(evaluate, "try-error")) {
-      probe <- .ctBackendOptimGapProbe(evaluate, as.numeric(fit$estimate$raw),
-        gap$residual, as.numeric(fit$estimate$logposterior)[1L])
-    }
+    probe <- .ctBackendFlatProbe(fit, as.numeric(fit$estimate$raw),
+      gap$residual)
   }
   parnames <- try(.ctBackendRawParameterNames(fit, length(gradient)),
     silent = TRUE)
   if (inherits(parnames, "try-error")) parnames <- NULL
-  verdict <- .ctBackendCertify(gap, probe, tolerance = tolerance,
+  .ctBackendCertificationRecord(gap, probe, tolerance = tolerance,
     saturated = isTRUE(fit$optim$saturated),
     overshot = isTRUE(fit$optim$overshot), parnames = parnames)
+}
+
+# The certification list a fit carries, from the gap and the probe.
+#
+# One assembly for both places a certification is made -- the correction loop,
+# and the uncertainty stage when it cannot reuse that one -- so a field added
+# here reaches whichever made the certification a reader ends up with. There
+# were two assemblies until 2026-09-25, and a field added to one never reached
+# a reader of the other: the first attempt at `$verdict` got a NULL that way.
+#' @keywords internal
+.ctBackendCertificationRecord <- function(gap, probe, tolerance = 0.01,
+  saturated = FALSE, overshot = FALSE, parnames = NULL) {
+  verdict <- .ctBackendCertify(gap, probe, tolerance = tolerance,
+    saturated = saturated, overshot = overshot, parnames = parnames)
   out <- list(status = verdict$status, certified = verdict$certified,
     reason = verdict$reason, tolerance = tolerance,
     # The same `$verdict` shape `ctLaplaceCheck()` and `ctParticleLik()` report;
-    # see R/ctFitGap.R. Set here *and* in `.ctBackendCorrectResult()`, because
-    # the certification list is assembled in both. This one runs later, from the
-    # fit, and overwrites that one -- so a field added only there never reaches
-    # a reader, which is how the first attempt at this got a NULL. The two
-    # assemblies are not a drop-in merge: one takes an optimiser `result` and
-    # the other a fit.
+    # see R/ctFitGap.R.
     verdict = .ctBackendCertifyGap(gap, tolerance),
     gap = gap$gap, lambda = gap$lambda)
   c(out, .ctBackendProbeRecord(probe, parnames),
     list(ntrusted = gap$ntrusted, nflat = gap$nflat, nnegative = gap$nnegative,
-      negative_vector = gap$negative_vector,
+      lambda_min = gap$lambda_min, negative_vector = gap$negative_vector,
       # The displacement the gap predicts, kept so a caller can try it without
       # decomposing the Hessian again.
       step = gap$step))
@@ -790,9 +805,10 @@
 
 # The curvature at one point, from the spec rather than from a fit.
 #
-# `.ctBackendHessian()` is the same call with a fit around it; this exists
-# because the correction runs before there is a fit to pass, and both go
-# through the one engine entry point rather than two.
+# `.ctBackendHessian()` is the same call with a fit around it; this is for a
+# caller holding a spec and no fit. The certification no longer is one: its
+# Hessian comes from the engine's finish, or from `ctsem_endgame` where no
+# finish ran (`.ctBackendEndgameAt()`).
 #' @keywords internal
 .ctBackendHessianAt <- function(spec, est, gradient = "adjoint") {
   # Classed here because the spec reaches this point unclassed: `ctFit()`
@@ -811,370 +827,239 @@
   matrix(as.numeric(out), nrow = length(est), ncol = length(est))
 }
 
-# Certify the optimiser's result, and continue from a corrected point when it
-# falls short.
+# How far one point is from another, in the standard errors a Hessian implies.
 #
-# Returns the result to carry on with -- the original when nothing was wrong or
-# nothing could be improved -- plus the certification that decided, the Hessian
-# it decided on (so the uncertainty stage need not compute the same matrix
-# again), and a record of every correction attempted.
-#
-# `maxtries` is small on purpose. Each round costs a Hessian and an
-# optimisation, and a point that is still short after two corrections is not
-# going to be rescued by a third: what it needs is a different starting value,
-# which is a decision for whoever is running the fit.
+# The largest `|to[i] - from[i]| / se[i]`, with `se` the square root of the
+# diagonal of the inverse information over its trusted directions -- the
+# covariance a fit reports. A coordinate the trusted curvature says nothing
+# about has a standard error of zero there, so moving it at all is infinitely
+# far, which is the safe side for the one question this answers: whether a
+# Hessian evaluated at `from` still counts as the curvature at `to`. The engine
+# asks the same question with the same arithmetic (`_ctsem_hessian_distance`)
+# when its finish decides whether to keep the Hessian it took at the hand-over.
 #' @keywords internal
-.ctBackendCorrectResult <- function(result, spec, npar, tolerance = 0.01,
-  maxtries = 2L, gradient = "adjoint", optimise = NULL, maxiter = NA_integer_,
-  gtol = 1e-8, verbose = 0) {
-  # Carried across attempts: a stage that needed a bigger budget once needs it
-  # again, and a tolerance tightened once must not slacken on the next round.
-  overrides <- list()
+.ctBackendHessianDistance <- function(hessian, from, to,
+  rtol = .ctFlatDirectionRtol()) {
+  d <- as.numeric(to) - as.numeric(from)
+  if (!length(d) || all(d == 0)) return(0)
+  split <- .ctBackendInformationSplit(hessian, rtol = rtol)
+  if (is.null(split) || length(split$values) != length(d)) return(Inf)
+  vectors <- split$vectors[, split$trusted, drop = FALSE]
+  values <- split$values[split$trusted]
+  variance <- if (length(values)) rowSums(sweep(vectors^2, 2L, values, "/")) else
+    rep(0, length(d))
+  ratio <- ifelse(d == 0, 0, ifelse(variance > 0, abs(d) / sqrt(variance), Inf))
+  max(ratio)
+}
+
+# How far, in those standard errors, a Hessian may have been evaluated from a
+# point and still be the curvature there: a hundredth. The engine's finish
+# keeps the Hessian it took at the hand-over when its steps moved the estimate
+# less than this, and everything that reuses a stored Hessian asks the same
+# question (`.ctBackendStoredHessian()`), so one number serves both sides and
+# the engine is passed this one. Chosen, not measured: decision 3 of
+# review/OPTIM-consolidation-plan-2026-09-25.md, for the bench to test.
+#' @keywords internal
+.ctBackendHessianReuse <- function() 0.01
+
+# The fit's stored Hessian when it describes the curvature at `est`, else NULL.
+#
+# It does when it was evaluated at `est` exactly, or within
+# `.ctBackendHessianReuse()` standard errors of it by its own inverse: the
+# engine's finish keeps a Hessian taken at the hand-over as the final one when
+# its steps moved the estimate less than that, and says where it was taken in
+# `$uncertainty$evaluated_at`. Reading `evaluated_at` rather than assuming
+# `$estimate$raw` is what stops a sampled fit's Hessian, taken at the Laplace
+# estimate, being reused at its posterior mean -- a different point, and far
+# more than a hundredth of a standard error away.
+#' @keywords internal
+.ctBackendStoredHessian <- function(fit, est) {
+  stored <- fit$uncertainty$hessian
+  at <- fit$uncertainty$evaluated_at
+  est <- as.numeric(est)
+  if (is.null(stored) || !is.matrix(stored) || is.null(at) ||
+      nrow(stored) != length(est) || ncol(stored) != length(est) ||
+      length(at) != length(est)) {
+    return(NULL)
+  }
+  if (isTRUE(all.equal(as.numeric(at), est, tolerance = 0))) return(stored)
+  moved <- .ctBackendHessianDistance(stored, at, est)
+  if (isTRUE(moved <= .ctBackendHessianReuse())) stored else NULL
+}
+
+# The curvature's numbers from an optimiser result: the Hessian the engine's
+# finish ended on (`_ctsem_newton_finish`), where it was evaluated, how far the
+# estimate is from there in the standard errors it implies, and what the probe
+# along the untrusted directions found. NULL when the result carries no usable
+# Hessian -- a stage that ended on its iteration cap or a stall, where no finish
+# ran, or a finish that could not form one.
+#' @keywords internal
+.ctBackendEndgameOf <- function(result, npar) {
+  hessian <- result$hessian
+  if (!is.matrix(hessian) || nrow(hessian) != npar || ncol(hessian) != npar ||
+      !all(is.finite(hessian))) {
+    return(NULL)
+  }
+  at <- suppressWarnings(as.numeric(result$hessian_evaluated_at))
+  if (length(at) != npar || !all(is.finite(at))) {
+    at <- as.numeric(result$minimizer)[seq_len(npar)]
+  }
+  distance <- suppressWarnings(as.numeric(result$hessian_distance)[1L])
+  list(hessian = hessian, evaluated_at = at,
+    distance = if (length(distance) && is.finite(distance)) distance else 0,
+    probe = .ctBackendProbeFields(result, npar), hessians = 0L)
+}
+
+# The same numbers at a point the optimiser left without a finish: the engine's
+# `ctsem_endgame`, which forms the exact Hessian there and runs the probe, and
+# takes no step. Through the chunk wrapper like every engine run, with the
+# ceiling left as it is, so an instrument that counts engine runs counts this.
+#' @keywords internal
+.ctBackendEndgameAt <- function(spec, est, gradient = "adjoint") {
   spec <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
   module <- .ctJuliaModule(spec$project)
-  # The laplace objective when the model has one: `.ctJuliaObjective()` wraps
-  # the marginal objective for such a spec, so the curvature certified here is
-  # the curvature of what was actually maximised.
-  objective <- .ctJuliaObjective(spec)
-  value_at <- function(pars) {
-    # `ctJuliaEvaluate()`'s call, without needing a fit to hang it on.
-    out <- try(JuliaConnectoR::juliaGet(module$ctsem_evaluate(objective,
-      .ctJuliaNumericVector(as.numeric(pars)), gradient = FALSE,
-      contributions = FALSE, gradient_method = gradient)), silent = TRUE)
-    if (inherits(out, "try-error")) return(NA_real_)
-    value <- suppressWarnings(as.numeric(out$value)[1L])
-    if (!length(value)) NA_real_ else value
+  available <- isTRUE(tryCatch(is.function(module$ctsem_endgame),
+    error = function(e) FALSE))
+  if (!available) return(NULL)
+  est <- as.numeric(est)
+  npar <- length(est)
+  out <- try(.ctBackendWithMaxChunks(NA_integer_, JuliaConnectoR::juliaGet(
+    module$ctsem_endgame(.ctJuliaObjective(spec), .ctJuliaNumericVector(est),
+      gradient_method = gradient, flat_rtol = .ctFlatDirectionRtol()))),
+    silent = TRUE)
+  if (inherits(out, "try-error")) return(NULL)
+  hessian <- out$hessian
+  if (!is.matrix(hessian) || nrow(hessian) != npar || ncol(hessian) != npar ||
+      !all(is.finite(hessian))) {
+    return(NULL)
   }
+  list(hessian = hessian, evaluated_at = est, distance = 0,
+    probe = .ctBackendProbeFields(out, npar),
+    hessians = as.integer(.ctJuliaOr(out$newton_hessians, 1L)))
+}
+
+# Certify the optimiser's result, and resume the optimiser when the curvature
+# says it fell short.
+#
+# The numbers come from the engine. The finish that ended the optimiser's run
+# (`_ctsem_newton_finish`) hands back the Hessian it ended on, where that was
+# evaluated, and what the probe along the untrusted directions found, so this
+# certifies without another engine call in the common case; a run that ended
+# without a finish -- its iteration cap, a stall -- gets the same numbers from
+# `ctsem_endgame`, with no step taken. The arithmetic on them, the gap and the
+# verdict, stays here, where it is tested on plain matrices.
+#
+# What happens next is one rule. `suboptimal` or `notmaximum`, with rounds
+# left, resumes the optimiser from the point it reached, under the same rules as
+# the first stage, with the stall watch carrying the fit's progress so a
+# resumed stage that stops gaining is stopped (`CTSEMStallWatch` in the
+# engine). Nothing is switched off and no budget enlarged: the resumed stage's
+# own finish is what closes a gap. The rule this replaced resumed after its own
+# damped Newton step and negative-curvature step, on a Hessian formed again each
+# round, with the predicted-gain stop switched off, the gradient tolerance
+# tightened and the iteration cap quadrupled -- which on AnomAuth turned a
+# corner of the objective into hours, and from its stored spurious start did
+# not return in 1 h 47 min.
+#
+# Two cases stop instead of resuming. `notstationary`, a flat direction that
+# still gains: continuing along it walked AnomAuth S1 from its good optimum into
+# the spurious basin (decision 1 of review/OPTIM-consolidation-plan-2026-09-25).
+# And a saddle the finish already tried to leave along its negative curvature
+# and could not, with nothing else left -- the gap over the trusted directions
+# within tolerance: the resumed optimiser would start where the finish
+# converged and hand the same point back, and on a Laplace fit each such round
+# is a Hessian. A saddle with the gap still open is resumed like any point short
+# of its optimum; gated-gaps config B8 (bench, seed 1) was stopped 10.8 nats
+# short when this rule did not ask.
+#
+# `maxtries` is small on purpose: a point still short after two resumes needs a
+# different start, which is a decision for whoever runs the fit.
+#
+# Returns the result to carry on with, the certification that decided, the
+# Hessian it decided on with where it was evaluated and how far that is from the
+# estimate (so the uncertainty stage need not form the same matrix again), a
+# record of each resume, the counts over every stage, and how many Hessians
+# were formed.
+#' @keywords internal
+.ctBackendCorrectResult <- function(result, spec, npar, tolerance = 0.01,
+  maxtries = 2L, gradient = "adjoint", optimise = NULL, verbose = 0) {
+  spec <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
   history <- list()
-  hessian <- NULL
+  endgame <- NULL
   certification <- NULL
   # The raw coordinates by name, for a verdict that has to say which parameters
   # a flat direction runs through. Positional names if that fails: a message
   # naming `raw[7]` is worse than one naming the parameter and better than none.
   parnames <- tryCatch(.ctBackendRawParameterNames(list(model_spec = spec), npar),
     error = function(e) paste0("raw[", seq_len(npar), "]"))
-  # Work done across every stage, not the last one's. `iterations`, `f_calls`
-  # and `g_calls` come off whichever Optim run finished, so a fit that
-  # optimised, corrected, resumed and corrected again reported the tail of that
-  # and hid the cost of the rest. The totals are what a comparison between
-  # stopping rules has to be made on.
+  # Work done across every stage, not the last one's: a fit that optimised and
+  # resumed twice would otherwise report the tail of that and hide the rest.
   stage_counts <- function(r) c(
     iterations = as.numeric(.ctJuliaOr(r$iterations, 0)),
     f_calls = as.numeric(.ctJuliaOr(r$f_calls, 0)),
     g_calls = as.numeric(.ctJuliaOr(r$g_calls, 0)))
+  stage_hessians <- function(r) as.integer(.ctJuliaOr(r$newton_hessians, 0L))
   totals <- stage_counts(result)
-  hessians <- 0L
-  # Set when a resume was futile: the loop goes round once more so that the
-  # Hessian and certification describe the point it ended at, then stops.
-  settled <- FALSE
+  hessians <- stage_hessians(result)
+  # Where the fit started, so a resumed stage's stall watch measures its
+  # progress against the whole fit's rather than its own, which starts at zero.
+  started_at <- suppressWarnings(as.numeric(result$trace$objective)[1L])
+  if (!length(started_at) || !is.finite(started_at)) {
+    started_at <- as.numeric(result$maximum_loglik)[1L]
+  }
   for (attempt in seq_len(max(0L, as.integer(maxtries)) + 1L)) {
     est <- as.numeric(result$minimizer)[seq_len(npar)]
-    # The engine's Newton finish ends on the exact Hessian at its minimizer and
-    # hands it back, so the first round certifies on that rather than paying
-    # for the same matrix again. Any later round is at a new point.
-    carried <- if (attempt == 1L) result$hessian else NULL
-    hessian <- if (is.matrix(carried) && nrow(carried) == npar &&
-      ncol(carried) == npar && all(is.finite(carried))) {
-      carried
-    } else .ctBackendHessianAt(spec, est, gradient = gradient)
-    if (is.null(hessian)) break
-    # Counted, because a Hessian is `ceil(npar / chunksize)` sweeps and is the
-    # price of certifying at all -- paid once here and reused by the
-    # uncertainty stage, so a reader comparing arrangements needs to see it.
-    hessians <- hessians + 1L
-    gap <- .ctBackendOptimGap(hessian, as.numeric(result$gradient)[seq_len(npar)])
-    probe <- NULL
-    if (isTRUE(gap$ok) && isTRUE(gap$residual_norm > 0)) {
-      probe <- .ctBackendOptimGapProbe(value_at, est, gap$residual,
-        as.numeric(result$maximum_loglik)[1L])
+    endgame <- .ctBackendEndgameOf(result, npar)
+    if (is.null(endgame)) {
+      endgame <- .ctBackendEndgameAt(spec, est, gradient = gradient)
+      if (!is.null(endgame)) hessians <- hessians + endgame$hessians
     }
-    certification <- c(.ctBackendCertify(gap, probe, tolerance = tolerance,
-      saturated = isTRUE(result$saturated), overshot = isTRUE(result$overshot),
-      parnames = parnames), .ctBackendProbeRecord(probe, parnames))
-    certification$verdict <- .ctBackendCertifyGap(gap, tolerance)
-    certification$gap <- gap$gap
-    certification$lambda <- gap$lambda
-    certification$ntrusted <- gap$ntrusted
-    certification$nflat <- gap$nflat
-    certification$nnegative <- gap$nnegative
-    certification$negative_vector <- gap$negative_vector
-    certification$tolerance <- tolerance
-    # Continue for either reason the curvature gives. `suboptimal` is objective
-    # left on the table; `notmaximum` is a direction of negative curvature,
-    # which is a stronger reason to carry on and not a verdict to stop at --
-    # measured on a six-subject fixture, the cheap rule stopped at a point with
-    # a curvature of -0.327 and a log likelihood 0.3 worse than the same fit
-    # run on, and the loop declined to act because it only looked for
-    # `suboptimal`. The trusted subspace still gives an ascent direction, and
-    # where it gives little the resumed stage with a tightened rule is what
-    # moves off the saddle.
-    if (!certification$status %in% c("suboptimal", "notmaximum")) break
-    if (settled) break
+    if (is.null(endgame)) break
+    gap <- .ctBackendOptimGap(endgame$hessian,
+      as.numeric(result$gradient)[seq_len(npar)])
+    certification <- .ctBackendCertificationRecord(gap, endgame$probe,
+      tolerance = tolerance, saturated = isTRUE(result$saturated),
+      overshot = isTRUE(result$overshot), parnames = parnames)
+    status <- certification$status
+    if (!status %in% c("suboptimal", "notmaximum")) break
     if (attempt > as.integer(maxtries) || is.null(optimise)) break
-
-    # Damped, and accepted only on an increase that is actually observed and
-    # large enough to be one. `directional` is `g'd`, which is `2 * gap` for
-    # the Newton step over the trusted subspace, so the first-order gain at
-    # `alpha` is `alpha * directional`; halving stops when that falls below what
-    # the objective can represent, because succeeding there is indistinguishable
-    # from not trying. Derived from the arithmetic rather than from a rung
-    # count, which would be fitted to whichever model it was measured on.
+    if (identical(status, "notmaximum") && !isTRUE(result$overshot) &&
+        isTRUE(result$newton_ladder_tried) &&
+        isTRUE(is.finite(gap$gap) && gap$gap <= tolerance)) {
+      break
+    }
     value <- as.numeric(result$maximum_loglik)[1L]
-    directional <- sum(as.numeric(result$gradient)[seq_len(npar)] * gap$step)
-    stepped <- .ctBackendDampedStep(value_at, est, gap$step, value, directional)
-    accepted <- stepped$accepted
-    best <- stepped$achievable
-    if (is.null(accepted)) {
-      # The step predicted an improvement and no scaling of it delivered one,
-      # which says the quadratic model is wrong here rather than that the fit
-      # is finished. Recorded, because it is the interesting case.
-      #
-      # Then resume from where we are rather than stopping: at a saddle the
-      # trusted subspace can have nothing to offer while the point is still not
-      # a maximum, and the optimiser with a tightened rule is what leaves it.
-      # Stopping here because one step failed would be giving up for the wrong
-      # reason.
-      history[[length(history) + 1L]] <- list(attempt = attempt,
-        predicted = gap$gap, step_gain = NA_real_, ratio = NA_real_,
-        achievable = best, total_gain = NA_real_, alpha = NA_real_,
-        resumed = FALSE)
-      accepted <- list(par = est, value = value, alpha = 0)
-    }
-    # At a saddle the Newton step above has nothing to offer: it lives in the
-    # trusted subspace, where the point is already a maximum. The ascent is
-    # along the negative curvature, so look there directly -- measured on a
-    # rank-deficient two-random-effect laplace fixture, the Newton step gained
-    # its predicted 2.2e-7 and the resumed L-BFGS then crept 0.02 nats in 1000
-    # iterations along the same direction while a maximum 2 nats higher sat in
-    # the other basin. Kept only if it beats the Newton step.
-    escaped <- NULL
-    if (identical(certification$status, "notmaximum")) {
-      escaped <- .ctBackendNegativeCurvatureStep(value_at, est, hessian,
-        as.numeric(result$gradient)[seq_len(npar)], value)
-      if (!is.null(escaped) && escaped$value > accepted$value) {
-        accepted <- escaped
-      } else escaped <- NULL
-    }
-    # Tighten whatever ended the last stage, or the resume stops there again.
-    # Which one it was is not a guess: `iterations` is the engine's own count,
-    # not Optim's, which stops being updated when a callback ends the run, and
-    # `stopped_by_gap` says outright whether the cheap rule was what stopped it.
-    hitcap <- is.finite(maxiter) && maxiter > 0 &&
-      as.integer(result$iterations) >= as.integer(maxiter)
-    overrides <- .ctBackendResumeOverrides(overrides, hitcap = hitcap,
-      stoppedbygap = isTRUE(result$stopped_by_gap),
-      lambda_min = gap$lambda_min, npar = npar, tolerance = tolerance,
-      maxiter = maxiter, gtol = gtol)
     if (verbose > 0) {
-      message("Continuing from a Newton correction: predicted ",
-        signif(gap$gap, 3), ", step gained ", signif(accepted$value - value, 3),
-        if (hitcap) paste0(", iterations raised to ", overrides$maxiter) else
-          paste0(", gradient tolerance tightened to ",
-            signif(overrides$g_tol, 3),
-            if (identical(overrides$innergaptol, 0))
-              ", predicted-gain stop switched off" else ""))
+      message("Not yet a certified maximum (", status, ", predicted ",
+        signif(gap$gap, 3), "); resuming the optimiser")
     }
-    resumed <- try(optimise(accepted$par, overrides), silent = TRUE)
+    resumed <- try(optimise(est, max(0, value - started_at)), silent = TRUE)
     ok <- !inherits(resumed, "try-error") &&
       is.finite(as.numeric(resumed$maximum_loglik)[1L]) &&
       as.numeric(resumed$maximum_loglik)[1L] >= value
-    # `ratio` is the step's own gain over what the quadratic predicted, and
-    # nothing else: it exists to say whether the local quadratic could be
-    # trusted here, and measuring it after the resume answered a different
-    # question -- it read above one, because L-BFGS carries on improving past
-    # the quadratic's optimum. `total_gain` is what the pair were worth.
     history[[length(history) + 1L]] <- list(attempt = attempt,
-      predicted = gap$gap,
-      step_gain = accepted$value - value,
-      ratio = (accepted$value - value) / gap$gap,
-      achievable = best,
+      status = status, predicted = gap$gap,
       total_gain = if (ok) as.numeric(resumed$maximum_loglik)[1L] - value else
-        accepted$value - value,
-      alpha = accepted$alpha, resumed = ok,
-      # What the resumed stage was given, so a fit that still comes up short
-      # says what was already tried.
-      resume_maxiter = .ctJuliaOr(overrides$maxiter, maxiter),
-      resume_gtol = .ctJuliaOr(overrides$g_tol, gtol),
-      # NA when it was left alone, which is the case where the stage ended at
-      # something other than the predicted-gain rule.
-      resume_innergaptol = .ctJuliaOr(overrides$innergaptol, NA_real_),
-      # What stopped the resumed stage. A resume that returns after a couple of
-      # iterations having met the optimiser's own criterion is the futile case:
-      # the rule that was just shown to be inadequate is what ended it, and
-      # another correction would meet the same wall. That is what switching the
-      # predicted-gain rule off above prevents; this is how a resume that still
-      # comes up short for some other reason says so.
+        NA_real_,
+      resumed = ok,
       iterations = if (ok) as.integer(resumed$iterations) else NA_integer_,
-      stopped_converged = if (ok) isTRUE(resumed$converged) else NA,
-      escaped = !is.null(escaped))
-    # Never accept a resume that did not improve on what we had: the corrected
-    # point is already better than the estimate, so the fit can only move
-    # forward here.
-    if (ok) {
-      totals <- totals + stage_counts(resumed)
-      result <- resumed
-    } else break
-    # A resume that used its whole budget and gained less than a tenth of a
-    # nat is on a ridge, not short of iterations: raising the cap and going
-    # again buys hours for nothing (the same fixture: 1000 iterations for
-    # 0.017, then a cap of 4000, on a laplace model where that is minutes per
-    # hundred). A tenth of a nat is a likelihood-ratio statistic of 0.2, below
-    # anything inference reads. No further resume -- but the loop goes round
-    # once more, so the Hessian and the certification are those of the point
-    # the fit now has. Breaking here left them describing the point before the
-    # resume, and a stale Hessian certified the new point and hid a flat
-    # direction the identifiability report used to name.
-    cap <- as.integer(.ctJuliaOr(overrides$maxiter, maxiter))
-    if (is.finite(cap) && cap > 0 &&
-        as.integer(resumed$iterations) >= cap &&
-        as.numeric(resumed$maximum_loglik)[1L] - value < max(tolerance, 0.1)) {
-      history[[length(history)]]$futile <- TRUE
-      settled <- TRUE
-    }
+      # Why the resumed stage stopped, and whether it was the carried progress
+      # watch -- a resume that stopped gaining -- that stopped it.
+      stop_reason = if (ok) as.character(.ctJuliaOr(resumed$stop_reason,
+        NA_character_))[1L] else NA_character_,
+      stopped_progress = if (ok) isTRUE(resumed$stopped_by_progress) else NA)
+    # Never accept a resume that did not improve on what we had: the fit can
+    # only move forward here.
+    if (!ok) break
+    totals <- totals + stage_counts(resumed)
+    hessians <- hessians + stage_hessians(resumed)
+    result <- resumed
   }
-  list(result = result, certification = certification, hessian = hessian,
+  list(result = result, certification = certification,
+    hessian = if (is.null(endgame)) NULL else endgame$hessian,
+    evaluated_at = if (is.null(endgame)) NULL else endgame$evaluated_at,
+    distance = if (is.null(endgame)) NA_real_ else endgame$distance,
     corrections = history, totals = totals, hessians = hessians)
-}
-
-# What to give the resumed stage, so that it does not stop where the last one
-# did.
-#
-# Separated from the loop above for the same reason as `.ctBackendDampedStep`:
-# the decision is branching on three numbers, and the cases worth pinning -- a
-# stage that ran out of iterations, one the cheap rule ended, one whose derived
-# bound is looser than the rule already in force -- are three lines each and
-# take no engine at all.
-#
-# There are three rules that can end a stage and each is answered in its own
-# terms.
-#
-# **The iteration cap.** Quadrupled, capped at 1e6. A stage that needed a
-# bigger budget once needs it again, which is why `overrides` is carried across
-# attempts rather than rebuilt.
-#
-# **The gradient bound.** Tightened to `.ctBackendGapGradientTolerance()`, the
-# gradient below which the gap cannot exceed the target -- and only ever
-# tightened, because a derivation that came out looser than the rule already in
-# force would be licensing the stop that just failed.
-#
-# **The predicted-gain rule.** Switched off, not tightened by some factor. The
-# proxy is `1/2 g'Bg` against the exact `1/2 g'H^-1 g`, and `B` is limited
-# memory, so no factor provably makes a second failure impossible -- picking
-# one would be fitting a constant to whichever model it was measured on. What
-# can be said is that on *this* model the proxy has just been shown wrong, so
-# it has forfeited its licence here; the resumed stage still has the gradient
-# bound, the cap, and the exact check that follows it.
-#
-# That last one was missing, and it is what made a second correction possible.
-# Measured on the one cell in 480 of `dev/simstudies/simstudy-gaptol.R` that
-# needed more than one: with the rule left in force both resumes ran a single
-# iteration and reported the optimiser's own criterion met -- the futile case
-# named where the history is recorded -- and the fit ended 2.9 log units low
-# and not converged. With it switched off the same fit takes one correction,
-# its resume runs 108 iterations for 2.9 log units, and it lands on the
-# log likelihood the default stopping rule reaches.
-#
-# The cap branch is exclusive: a stage that exhausted its iterations did not
-# stop at either tolerance, so neither is what needs loosening.
-#' @keywords internal
-.ctBackendResumeOverrides <- function(overrides = list(), hitcap = FALSE,
-  stoppedbygap = FALSE, lambda_min = NA_real_, npar = 1L, tolerance = 0.01,
-  maxiter = NA_integer_, gtol = 1e-8) {
-  if (isTRUE(hitcap)) {
-    overrides$maxiter <- as.integer(min(4 * as.numeric(
-      .ctJuliaOr(overrides$maxiter, maxiter)), 1e6))
-    return(overrides)
-  }
-  if (isTRUE(stoppedbygap)) overrides$innergaptol <- 0
-  needed <- .ctBackendGapGradientTolerance(lambda_min, npar, tolerance)
-  if (is.finite(needed)) {
-    overrides$g_tol <- min(needed, .ctJuliaOr(overrides$g_tol, gtol))
-  }
-  overrides
-}
-
-# Backtrack along an ascent direction until the objective actually increases.
-#
-# Separated from the loop above so that it can be tested on a function rather
-# than on a fit: the ladder is arithmetic, and the cases worth pinning -- a step
-# far too long, a direction that offers nothing, an increase too small to be one
-# -- are constructed in two lines each and take no engine at all.
-#
-# `directional` is `g'd`, so the first-order gain at `alpha` is
-# `alpha * directional`. Halving stops once that falls below what the objective
-# can represent (`|f| * eps`), because succeeding below it is indistinguishable
-# from not trying; there is no rung count, which would be fitted to whichever
-# model it was measured on. Acceptance is Armijo at 1e-4 rather than any
-# increase, so a rounding error is not recorded as a correction.
-#' @keywords internal
-# The best point along the most negative curvature of the information, or NULL.
-#
-# A unit eigenvector, both signs -- the gradient's sign first, since along a
-# saddle direction the gradient component says which way is up -- over a ladder
-# of lengths in raw units. The ladder stops at 3: every ctsem transform is
-# nearly flat a few units from its centre, and a longer probe measures the
-# transform's plateau rather than the likelihood. Only the value is evaluated.
-#' @keywords internal
-.ctBackendNegativeCurvatureStep <- function(value_at, at, hessian, gradient,
-  value, ladder = c(0.03, 0.1, 0.3, 1, 3)) {
-  split <- .ctBackendInformationSplit(hessian)
-  if (is.null(split) || !any(split$negative)) return(NULL)
-  direction <- split$vectors[, which.min(split$values)]
-  first <- if (sum(gradient * direction) >= 0) 1 else -1
-  best <- NULL
-  for (sign in c(first, -first)) for (length in ladder) {
-    point <- at + sign * length * direction
-    got <- value_at(point)
-    if (is.finite(got) && got > value && (is.null(best) || got > best$value)) {
-      best <- list(par = point, value = got, alpha = sign * length)
-    }
-  }
-  best
-}
-
-.ctBackendDampedStep <- function(value_at, at, step, value, directional,
-  c1 = 1e-4) {
-  achievable <- 0
-  if (!is.finite(directional) || directional <= 0) {
-    return(list(accepted = NULL, achievable = achievable))
-  }
-  floor <- max(abs(value), 1) * .Machine$double.eps
-  alpha <- 1
-  while (alpha * directional > floor) {
-    got <- value_at(at + alpha * step)
-    if (is.finite(got)) {
-      achievable <- max(achievable, got - value)
-      # Armijo, and representable. Sufficient increase scales with the step,
-      # so at a small enough alpha an increase of 1e-14 satisfies it -- and
-      # accepting that spends a whole resumed optimisation on a point that is
-      # not distinguishable from where it started. The floor is the objective's
-      # own resolution, the same bound that ends the loop.
-      if (got - value >= c1 * alpha * directional && got - value > floor) {
-        return(list(accepted = list(par = at + alpha * step, value = got,
-          alpha = alpha), achievable = achievable))
-      }
-    }
-    alpha <- alpha / 2
-  }
-  list(accepted = NULL, achievable = achievable)
-}
-
-# The gradient tolerance that would have made this gap small enough.
-#
-# `gap = 1/2 g'H^-1 g` is at most `n |g|_inf^2 / (2 lambda_min)` over the
-# trusted subspace, so a gradient below `sqrt(2 tol lambda_min / n)` cannot
-# leave a gap above `tol`. Conservative -- it charges every coordinate the worst
-# direction's curvature -- and that is the right side to be on for a rule whose
-# job is to stop a resumed stage halting where the last one did.
-#
-# NA when there is no trusted curvature to derive it from, which is a model with
-# nothing to certify rather than one needing a tighter tolerance.
-#' @keywords internal
-.ctBackendGapGradientTolerance <- function(lambda_min, npar, tolerance) {
-  if (!isTRUE(is.finite(lambda_min)) || lambda_min <= 0 || npar < 1) {
-    return(NA_real_)
-  }
-  sqrt(2 * tolerance * lambda_min / npar)
 }
 
 # What the optimiser's own stopping rule is set to, and when it is on at all.

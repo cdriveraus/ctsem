@@ -1,4 +1,4 @@
-using DataFrames
+using DataFrames, ForwardDiff, LinearAlgebra, Random
 
 # Keep this test independent of filename order in runtests.jl.
 function _ctsem_backend_parameters(; manifest_variance=0.4, t0_variance=0.3)
@@ -624,4 +624,399 @@ ContinuousTimeSEM.ctsem_evaluate(m::_ThrowMock, x::AbstractVector; kwargs...) =
     @test wrapped isa TaskFailedException
     @test ContinuousTimeSEM._ctsem_must_propagate(wrapped)
     @test !ContinuousTimeSEM._ctsem_must_propagate(DomainError(-1.0))
+end
+
+
+# ------------------------------------------------------------------ the endgame
+#
+# The finish (`_ctsem_newton_finish`) on objectives whose shape is known, so each
+# property is asserted where it can only hold for the reason given. Several of
+# these moved here from R's test-backend-optimgap.R on 2026-09-25 with the steps
+# they tested -- the flat-direction probe, the ladder along negative curvature,
+# the damped step's line search -- which moved into the engine then.
+
+# The maximised objective, its gradient and its Hessian, each given, so a test
+# can hand the finish curvature that is wrong on purpose. Counts what the value
+# path and the Hessian cost.
+struct _EndgameMock <: ContinuousTimeSEM.CTSEMOptimisable
+    value::Function
+    gradient::Function
+    hessian::Function
+    calls::Base.RefValue{Int}
+    hessians::Base.RefValue{Int}
+end
+_endgame_mock(f; g = x -> ForwardDiff.gradient(f, x),
+    h = x -> ForwardDiff.hessian(f, x)) = _EndgameMock(f, g, h, Ref(0), Ref(0))
+function ContinuousTimeSEM.ctsem_evaluate(m::_EndgameMock, x::AbstractVector;
+        gradient::Bool=true, contributions::Bool=false, gradient_method=:adjoint)
+    m.calls[] += 1
+    y = collect(Float64, x)
+    return (value = m.value(y), gradient = gradient ? m.gradient(y) : nothing,
+        row_loglik = Float64[], subject_loglik = Float64[])
+end
+function ContinuousTimeSEM.ctsem_hessian(m::_EndgameMock, x::AbstractVector;
+        chunk::Integer=0)
+    m.hessians[] += 1
+    return Matrix{Float64}(m.hessian(collect(Float64, x)))
+end
+ContinuousTimeSEM._ctsem_params(::_EndgameMock) = nothing
+ContinuousTimeSEM._ctsem_saturated_for(::_EndgameMock, minimizer) = Int[]
+# A route whose Hessian is cheap and exact, so `ctsem_optimize` finishes on it
+# as it does on the marginal route.
+ContinuousTimeSEM._ctsem_finish_curvature(::_EndgameMock) = :exact
+ContinuousTimeSEM._ctsem_cheap_hessian(::_EndgameMock) = true
+
+# The finish from `x0`, on the optimiser's own trial path.
+function _endgame_run(m, x0; kwargs...)
+    fg! = ContinuousTimeSEM._ctsem_trial_closure(m, :adjoint)
+    x = collect(Float64, x0)
+    G = zeros(length(x))
+    f = fg!(0.0, G, x)
+    return ContinuousTimeSEM._ctsem_newton_finish(m, x, f, G, fg!; kwargs...)
+end
+
+@testset "the flat probe reports the best actual gain, and zero when there is none" begin
+    probe = ContinuousTimeSEM._ctsem_flat_probe
+    # A likelihood rising along the direction: the probe has to find it and say
+    # how far it went, because that number is what a norm of the gradient
+    # cannot give.
+    rising = x -> 3 * x[2]
+    found = probe(rising, [0.0, 0.0], 0.0, [0.0, 1.0])
+    @test found.gain == 12          # the longest step, 4, times 3
+    @test found.length == 4
+    @test probe(x -> -3 * x[2], [0.0, 0.0], 0.0, [0.0, 1.0]).gain == 0
+    # A direction of length zero is nothing to probe, not an error.
+    none = probe(rising, [0.0, 0.0], 0.0, [0.0, 0.0])
+    @test none.gain == 0
+    @test isempty(none.direction)
+    @test none.evaluations == 0
+    # A point the route refuses is a step not taken, not a failed
+    # certification.
+    @test probe(x -> -Inf, [0.0, 0.0], 0.0, [0.0, 1.0]).gain == 0
+end
+
+@testset "a flat direction that still gains says what the probe measured" begin
+    # AnomAuth S1 from default starts, in miniature: a gain of 5.5e-05 at a
+    # quarter of a unit and less further out. The length that gave it, the
+    # longest the objective could be evaluated at, and the unit direction are
+    # what the verdict's message reads (`.ctBackendFlatGainReason()` in R).
+    bump = x -> x[2] <= 0.25 ? 2.2e-4 * x[2] : 5.5e-5 - 1e-5 * (x[2] - 0.25)
+    out = ContinuousTimeSEM._ctsem_flat_probe(bump, [0.0, 0.0], 0.0, [0.0, 3.0])
+    @test out.gain ≈ 5.5e-5
+    @test out.length == 0.25
+    @test out.longest == 4
+    @test out.direction == [0.0, 1.0]
+    # The longest length is the longest the objective could be evaluated at,
+    # not the longest asked for: refused beyond 2, the probe looked no further
+    # than 1.
+    short = ContinuousTimeSEM._ctsem_flat_probe(x -> x[2] > 2 ? -Inf : bump(x),
+        [0.0, 0.0], 0.0, [0.0, 1.0])
+    @test short.longest == 1
+end
+
+@testset "at a saddle the ascent is looked for along the negative curvature" begin
+    # f(x, y) = x^2/2 - y^2/2, maximised, has a saddle at the origin: a maximum
+    # in y, a minimum in x. The Newton step over the trusted direction (y) has
+    # nothing to offer there, which is how a rank-deficient laplace fit sat in
+    # R's correction loop for hours; the ascent is along x, and the side the
+    # gradient leans to is the one to try first.
+    saddle = p -> 0.5 * p[1]^2 - 0.5 * p[2]^2
+    split = ContinuousTimeSEM._ctsem_information_split([-1.0 0.0; 0.0 1.0])
+    @test count(split.negative) == 1
+    at = [0.01, 0.0]
+    out = ContinuousTimeSEM._ctsem_saddle_ladder(saddle, at, saddle(at), split,
+        [0.01, 0.0])
+    @test out.best !== nothing
+    @test out.best.value > saddle(at)
+    @test out.best.point[1] > at[1]        # uphill, on the gradient's side
+    @test out.best.point[2] == 0.0
+    # At a maximum there is no negative curvature, so nothing is proposed and
+    # the objective is never called.
+    called = Ref(0)
+    bowl = p -> (called[] += 1; -sum(abs2, p))
+    none = ContinuousTimeSEM._ctsem_saddle_ladder(bowl, [0.0, 0.0], 0.0,
+        ContinuousTimeSEM._ctsem_information_split([2.0 0.0; 0.0 2.0]),
+        [0.0, 0.0])
+    @test none.best === nothing
+    @test called[] == 0
+end
+
+@testset "the finish at a saddle escapes along the negative curvature" begin
+    # Maximised: -x^2/2 + y^2/2 - y^4/4. The origin is a saddle (a minimum in y)
+    # with a zero gradient, so the Newton step has nothing to take and a
+    # gradient-based optimiser nowhere to go; the maxima are at y = +-1, a
+    # quarter above it.
+    m = _endgame_mock(p -> -0.5 * p[1]^2 + 0.5 * p[2]^2 - 0.25 * p[2]^4)
+    out = _endgame_run(m, [0.0, 0.0])
+    @test out.escapes == 1
+    @test -out.f ≈ 0.25 atol = 1e-10
+    @test abs(out.x[2]) ≈ 1.0 atol = 1e-6
+    # It ended on a maximum, so no saddle is left, and on the exact Hessian
+    # there: one at the start, one after the escape.
+    @test !out.saddle
+    @test out.full_hessians == 2
+    @test out.hessian_at == out.x
+    @test all(eigvals(Symmetric(-out.hessian)) .> 0)
+    @test "saddle" in out.history.kind
+
+    # A saddle the route will not let it leave -- every point off it refused,
+    # as a Laplace point is when a unit's inner solve fails -- ends there, and
+    # says the ladder was tried: a verdict the certification can read, rather
+    # than a point returned with a direction nobody looked along.
+    refused = y -> y[2] == 0 ? m.value(y) : -Inf
+    stuck = _endgame_run(m, [0.0, 0.0]; value_at = refused)
+    @test stuck.escapes == 0
+    @test stuck.saddle
+    @test stuck.ladder_tried
+    @test stuck.x == [0.0, 0.0]
+end
+
+@testset "negative curvature does not starve the step that closes the gap" begin
+    # Maximised: -(x - 3)^2/2 + y^2/2 - y^4/4, from beside the saddle in y with
+    # three units still to go in x -- a gap of 4.5 in the trusted direction.
+    # Flooring the negative curvature made the y part of the step 1e8 times too
+    # long; the line search shrank the whole step to tame it, so the x part
+    # shrank too, and the chord, which keeps its Hessian, did the same every
+    # step. Taken at the size of its curvature, the first step is whole.
+    m = _endgame_mock(p -> -0.5 * (p[1] - 3)^2 + 0.5 * p[2]^2 - 0.25 * p[2]^4)
+    out = _endgame_run(m, [0.0, 0.05]; curvature = :chord)
+    @test out.history.alpha[1] == 1.0
+    @test abs(out.x[1] - 3) < 1e-6
+    @test abs(abs(out.x[2]) - 1) < 1e-3
+    @test -out.f ≈ 0.25 atol = 1e-7
+    @test out.escapes == 0
+    @test out.steps < 20
+end
+
+@testset "a chord finish keeps its Hessian when the steps moved the estimate little" begin
+    # Maximised: a quartic bowl, so the curvature changes with the point and a
+    # Hessian from elsewhere is not the one here. Standard errors near one.
+    c = [0.3, -0.2, 0.5]
+    f = p -> -0.5 * sum(abs2, p .- c) - 0.1 * sum(q -> q^4, p .- c)
+    # From a thousandth of a standard error away: the chord's steps converge
+    # and move the estimate far less than a hundredth of one, so the Hessian
+    # taken at the hand-over is the final one, and says where it was taken.
+    m = _endgame_mock(f)
+    x0 = c .+ 1e-3
+    near = _endgame_run(m, x0; curvature = :chord)
+    @test near.full_hessians == 1
+    @test m.hessians[] == 1
+    @test near.hessian_at == x0
+    @test 0 < near.distance <= ContinuousTimeSEM._CTSEM_HESSIAN_REUSE_SE
+    @test near.gain < 1e-8
+    @test maximum(abs, near.x .- c) < 1e-8
+    # From a fifth of a standard error, the steps move it too far for the
+    # hand-over Hessian to stand, and the final one is exact at the estimate.
+    far = _endgame_run(_endgame_mock(f), c .+ 0.2; curvature = :chord)
+    @test far.full_hessians >= 2
+    @test far.hessian_at == far.x
+    @test far.distance == 0
+    # The exact finish never keeps one from elsewhere.
+    exact = _endgame_run(_endgame_mock(f), x0; curvature = :exact)
+    @test exact.hessian_at == exact.x
+end
+
+@testset "the finish probes the directions its Hessian does not trust" begin
+    # A direction with no curvature at the estimate and a live gradient, which
+    # the gap cannot see: stepping along it gains, so the certification must
+    # hear it. And no probe unless a certification asked for one.
+    f = p -> -0.5 * p[1]^2 + 1e-14 * p[2] + 8e-4 * p[2]^3
+    out = _endgame_run(_endgame_mock(f), [0.0, 0.0])
+    @test out.probe.length == 4
+    @test out.probe.gain ≈ f([0.0, 4.0]) - f([0.0, 0.0])
+    @test out.probe.direction ≈ [0.0, 1.0]
+    @test isempty(_endgame_run(_endgame_mock(f), [0.0, 0.0];
+        probe = false).probe.direction)
+end
+
+@testset "the finish's line search backtracks as far as the arithmetic allows" begin
+    # Curvature wrong by a factor of sixteen, as a trusted curvature spanning
+    # nine orders once made a Newton step fifty units long: the undamped step
+    # overshoots and the search has to halve four times. Nothing is tuned to
+    # that -- halving stops at the objective's own resolution, so a differently
+    # conditioned model simply takes a different number.
+    peak = 1 / 16
+    f = p -> -100 * (p[1] - peak)^2
+    m = _endgame_mock(f; h = p -> fill(-200 / 16, 1, 1))
+    out = _endgame_run(m, [0.0]; curvature = :chord)
+    @test out.history.kind[1] == "newton"
+    @test out.history.alpha[1] <= 0.125
+    @test -out.f > f([0.0])
+    @test out.x[1] ≈ peak atol = 1e-6
+end
+
+@testset "an increase the objective cannot represent is not a step" begin
+    # Armijo alone does not rule this out: sufficient increase scales with the
+    # step, so an increase of 1e-20 satisfies it once alpha is small enough, and
+    # taking it spends a step on a point no different from the one it left. The
+    # gradient and curvature here promise half a nat; the value gains nothing it
+    # can represent.
+    crumbs = _endgame_mock(p -> p[1] > 0 ? -2705.0 + 1e-20 : -2705.0;
+        g = p -> [1.0], h = p -> fill(-1.0, 1, 1))
+    out = _endgame_run(crumbs, [0.0]; curvature = :exact)
+    @test out.steps == 0
+    @test out.x == [0.0]
+    # And it ends on the objective's resolution, not on a rung count fitted to
+    # some model: a bounded number of evaluations.
+    @test crumbs.calls[] < 400
+    # A representable, Armijo-sufficient increase is taken.
+    real = _endgame_mock(p -> p[1] > 0 ? -2705.0 + 1e-3 : -2705.0;
+        g = p -> [1.0], h = p -> fill(-1.0, 1, 1))
+    taken = _endgame_run(real, [0.0]; curvature = :exact)
+    @test taken.steps >= 1
+    @test -taken.f == -2705.0 + 1e-3
+end
+
+# A resumed stage starts where the last one stopped, so its own trace shows no
+# progress and the share the watch asks for is undefined. Carrying the fit's
+# progress in fixes that, and on a resumed stage the watch may then stop on
+# progress alone, once the hysteresis every fit runs under is spent: stalled at
+# a share of 1e-2, of 1e-3 thirty iterations later, and of 1e-4 thirty after
+# that. It is the one rule for a resume that has stopped gaining: it replaced
+# resuming with the predicted-gain stop switched off and the cap quadrupled.
+@testset "a resumed stage stops on progress alone once its hysteresis is spent" begin
+    C = ContinuousTimeSEM
+    function first_stop(values; carried, alone = true)
+        watch = C.CTSEMStallWatch(window = 80, fraction = 1e-2, cooldown = 30,
+            tighten = 0.1, tightenings = 2, carried = carried, alone = alone)
+        t = C.CTSEMTrace(:objective, :gradient_norm)
+        for (i, v) in enumerate(values)
+            C._record!(t, i, v, 1.0)
+            C._ctsem_stall_verdict!(watch, t, i, nothing, nothing, Float64[],
+                nothing, 1e-3) && return (i, watch.exhausted)
+        end
+        return (0, watch.exhausted)
+    end
+    # AnomAuth's resume: flat at -2900.7749 for its whole budget, after a fit
+    # that had gained something before it.
+    ridge = fill(-2900.7749, 300)
+    @test first_stop(ridge; carried = 5.0) == (141, true)
+    # Without the carried progress the share is undefined and it never stops,
+    # which is the 57 minutes.
+    @test first_stop(ridge; carried = 0.0) == (0, false)
+    # A first stage keeps the conjunction: no transform layer, no stop.
+    @test first_stop(ridge; carried = 5.0, alone = false) == (0, false)
+    # A resume that is still gaining is left alone: 108 iterations for 2.9
+    # nats, the case switching the predicted-gain rule off was measured on.
+    @test first_stop(collect(range(-100.0, -97.1; length = 108));
+        carried = 50.0) == (0, false)
+end
+
+@testset "ctsem_optimize hands the endgame's numbers back" begin
+    # From beside the saddle above: L-BFGS converges into it (the gradient in y
+    # is exactly zero along y = 0) and hands over, and the finish escapes.
+    m = _endgame_mock(p -> -0.5 * p[1]^2 + 0.5 * p[2]^2 - 0.25 * p[2]^4)
+    r = ContinuousTimeSEM.ctsem_optimize(m, [0.5, 0.0]; maxiter=200,
+        tune_chunks=false, gap_tol=1e-8, newton=true, certify=true,
+        progress=false, verbose=false, overshoot_probe=:off)
+    @test r.newton_escapes == 1
+    @test abs(r.minimizer[2]) ≈ 1 atol = 1e-6
+    @test r.maximum_loglik ≈ 0.25 atol = 1e-10
+    @test !r.newton_saddle
+    @test size(r.hessian) == (2, 2)
+    @test r.hessian_evaluated_at == r.minimizer
+    @test r.hessian_distance == 0
+    @test r.stop_reason in ("gap", "gradient", "linesearch")
+    @test length(r.newton_history_kind) == r.newton_steps
+    @test "saddle" in r.newton_history_kind
+    # With nothing to certify, no probe; the steps are still taken where the
+    # Hessian is cheap, as they always were.
+    bare = ContinuousTimeSEM.ctsem_optimize(m, [0.5, 0.0]; maxiter=200,
+        tune_chunks=false, gap_tol=1e-8, newton=true, certify=false,
+        progress=false, verbose=false, overshoot_probe=:off)
+    @test bare.newton_steps >= 1
+    @test !bare.probe_ran
+end
+
+# Shared with `test_laplace.jl`; see `laplace_fixtures.jl`.
+isdefined(@__MODULE__, :_LAPLACE_LINEAR_OBJECTIVE) ||
+    include(joinpath(@__DIR__, "laplace_fixtures.jl"))
+
+# The nonlinear Laplace fixture's model -- a random initial level, a drift that
+# grows with the state, free diffusion and manifest mean -- over data simulated
+# from a process of that shape, fifty subjects of eight waves, so its optimum
+# is interior and determined in every direction. The shared linear fixture is
+# not, twice over: it frees T0MEANS, CINT and MANIFESTMEANS together, three
+# means of which the data determine two, and its deterministic sinusoids put
+# the optimum out along flat transforms (raw drift near 35, diffusion near -47).
+# There the floored Newton step walks a nearly flat ray far in raw units however
+# little it moves in standard errors -- measured on that fixture and on OU data
+# fitted by the same model: a thousandth of a standard error came back as a
+# second Hessian. Built on the shared nonlinear fixture's parameter object, so
+# no new model type is compiled.
+function _endgame_laplace_objective(; nsubjects=50, nobs=8, seed=20260925)
+    rng = Random.MersenneTwister(seed)
+    starts = Int[]; times = Float64[]; ys = Float64[]
+    a = -0.5; dt = 0.5; substeps = 20; h = dt / substeps
+    position = 1
+    for s in 1:nsubjects
+        push!(starts, position)
+        state = 0.5 + 0.8 * randn(rng) + 0.4 * randn(rng)
+        for t in 1:nobs
+            if t > 1
+                for _ in 1:substeps
+                    state += a * (1 + 0.15 * state) * state * h +
+                        0.3 * sqrt(h) * randn(rng)
+                end
+            end
+            push!(times, dt * (t - 1))
+            push!(ys, state + 0.2 + 0.3 * randn(rng))
+            position += 1
+        end
+    end
+    objective = ctsem_objective(_LAPLACE_NONLINEAR_OBJECTIVE.params, starts,
+        times, reshape(ys, 1, :))
+    return ctsem_laplace_objective(objective, [1], [5], Int[], [1.0])
+end
+
+@testset "a Laplace fit's finish ends on one Hessian when its steps are small" begin
+    # The Laplace Hessian is 2 npar warm-started gradients, so the finish takes
+    # one at the hand-over, reuses it for its steps (the chord) and keeps it as
+    # the final one when they moved the estimate less than a hundredth of a
+    # standard error. Deterministic below: from the optimum, and from the
+    # optimum moved along its best-determined direction by a thousandth of a
+    # standard error and by half of one.
+    laplace = _endgame_laplace_objective()
+    start = [0.5, -0.4, -1.0, 0.2, 0.0]
+    fit = ctsem_laplace_optimize(laplace, start; maxiter=500,
+        tune_chunks=false, gap_tol=1e-8, newton=true, certify=true,
+        progress=false)
+    @test fit.converged
+    @test fit.newton_hessians >= 1
+    @test size(fit.hessian) == (length(start), length(start))
+    @test length(fit.hessian_evaluated_at) == length(start)
+    @test fit.hessian_distance <= ContinuousTimeSEM._CTSEM_HESSIAN_REUSE_SE
+    best = collect(Float64, fit.minimizer)
+    split = ContinuousTimeSEM._ctsem_information_split(-fit.hessian)
+    # Interior and determined in every direction, or this tests something else.
+    @test all(split.trusted)
+    k = argmax(split.values)
+    along(amount) = best .+ (amount / sqrt(split.values[k])) .* split.vectors[:, k]
+    fg! = ContinuousTimeSEM._ctsem_trial_closure(laplace, :adjoint)
+    function finish_from(x0)
+        G = zeros(length(x0))
+        f = fg!(0.0, G, x0)
+        ContinuousTimeSEM._ctsem_newton_finish(laplace, x0, f, G, fg!;
+            curvature = :chord)
+    end
+    here = finish_from(best)
+    @test here.full_hessians == 1
+    @test here.hessian_at == best
+    @test here.distance <= ContinuousTimeSEM._CTSEM_HESSIAN_REUSE_SE
+    near = finish_from(along(1e-3))
+    @test near.steps >= 1
+    @test near.full_hessians == 1
+    @test near.hessian_at == along(1e-3)
+    @test 0 < near.distance <= ContinuousTimeSEM._CTSEM_HESSIAN_REUSE_SE
+    @test near.gain < 1e-8
+    far = finish_from(along(0.5))
+    @test far.full_hessians >= 2
+    @test far.hessian_at == far.x
+    @test far.distance == 0
+    # And without a certification to read it, the Laplace route runs no finish
+    # at all: its Hessian would be one nobody asked for.
+    bare = ctsem_laplace_optimize(_endgame_laplace_objective(), start;
+        maxiter=500, tune_chunks=false, gap_tol=1e-8, newton=true,
+        certify=false, progress=false)
+    @test bare.newton_hessians == 0
 end
