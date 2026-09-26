@@ -56,7 +56,7 @@ a small-sample posterior whose true width the curvature at the optimum
 understates -- typically a variance or a nonlinear parameter with few
 subjects or groups -- rather than a routine alternative to \code{'hessian'}
 (\code{control$imisScaleInit}/\code{imisTailScale} below were measured on
-such a case). \code{\link{ctSample}} checks that case directly, by genuine
+such a case). \code{'sample'} checks that case directly, by genuine
 posterior draws rather than a reweighted approximation, and is the
 reference to compare against before reading \code{'is'} on a new model as
 more than a curiosity. \code{'bootstrap'} uses one-step score bootstrap draws with
