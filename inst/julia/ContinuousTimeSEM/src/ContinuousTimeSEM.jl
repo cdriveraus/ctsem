@@ -84,6 +84,10 @@ include("laplace.jl")
 # After laplace.jl: the batch subsets both the marginal and the laplace objective.
 include("optimiser.jl")
 include("quadrature.jl")
+# After quadrature.jl: the continuation places its fixed rules with the leaf
+# rule and the Gauss-Hermite grids defined there, and drives them with
+# `ctsem_optimize` from ctsem_backend.jl and optimiser.jl.
+include("laplace_continuation.jl")
 # After quadrature.jl: the binary measurement update integrates the
 # observation with the Gauss-Hermite rule defined there.
 include("binary_measurement.jl")

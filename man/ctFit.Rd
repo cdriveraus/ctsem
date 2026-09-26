@@ -318,6 +318,26 @@ error or more, or when it could not move and the gap is a nat or more.
 \code{laplace_correct = FALSE} gives the uncorrected Laplace fit. Not applied
 to sampled fits, to \code{intoverstates = FALSE}, or with \code{estonly},
 which skips the Hessian it needs; asking for it there is refused.
+\code{TRUE} is the same as \code{'step'}, the correction just described.
+
+\code{laplace_correct = 'continue'} continues the fit on the quadrature
+objective instead of stepping towards it. After the same screen, only the
+subjects (or, with a grouping level, the groups) whose quadrature and
+Laplace values differ are integrated by quadrature, with the quadrature's
+nodes held fixed so that its gradient is exact; everyone else keeps the
+Laplace term. The engine's optimiser climbs that objective from the Laplace
+optimum in rounds, each confined to a region measured in the fit's standard
+errors, the nodes placed afresh after each, until the gradient with the
+nodes placed at the estimate -- the quadrature's own estimate of the exact
+score -- promises less than the certification tolerance. A round after
+which that gradient promises more than before is undone and the region
+shrunk. The estimate, log likelihood,
+covariance and draws are then the continuation's, the covariance from the
+Hessian of the objective the estimate maximises, and
+\code{fit$laplace$correction} records the rounds, the evaluations, the
+subjects or groups on quadrature, and the guard: a continuation that moves
+the objective by more than \code{max(50, N/2)} nats is reverted to the
+Laplace optimum with a warning.
 
 With \code{backend='julia'}, \code{optimcontrol$gradient} selects the
 gradient method: \code{'adjoint'} (reverse mode, the default) or

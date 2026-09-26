@@ -29,12 +29,16 @@ is skipped when uncertainty was not computed.}
 
 \item{step}{Finite-difference step for the gap gradient, on the raw scale.}
 
-\item{refine}{Refit against the quadrature objective rather than correcting
-linearly. Much slower -- each gradient is another \code{2 * npar}
-quadrature evaluations -- and worth it only when \code{delta / se} is
-large enough that a linear correction is not credible.}
+\item{refine}{Continue the fit on the quadrature objective rather than
+correcting linearly: the continuation \code{optimcontrol$laplace_correct =
+'continue'} runs at fit time (see \code{\link{ctFit}}), from this fit's
+estimate, with its Hessian as the starting metric. Its gradient is exact,
+so it costs a few quadrature gradients per round rather than the
+\code{2 * npar} quadrature evaluations per gradient the finite-difference
+refinement this replaced cost, and it reports the point it reaches in
+\code{refined}.}
 
-\item{maxiter}{Iteration cap for \code{refine}.}
+\item{maxiter}{Iteration cap for each round of \code{refine}.}
 
 \item{cores}{Engine threads for the quadrature.}
 
@@ -51,11 +55,14 @@ A list with \code{gap} (quadrature minus Laplace log marginal at the
   (\code{'corrected'}).
 
   \code{dropped_directions} counts the directions of the information matrix
-  too weakly identified to correct along, which are reported as zero rather
-  than as the arbitrarily large step an unguarded solve would produce. On a
-  model where the Laplace approximation is already exact the gap gradient is
-  floating-point noise, and dividing that by a near-singular curvature is how
-  a meaningless correction gets a plausible-looking number.
+  the correction does not step along, whose correction is reported as zero
+  rather than as the arbitrarily large step an unguarded solve would
+  produce: exactly the directions \code{fit$identifiability} names, those
+  whose curvature is negligible or not positive and those the likelihood was
+  measured flat along. On a model where the Laplace approximation is
+  already exact the gap gradient is floating-point noise, and dividing that
+  by a near-singular curvature is how a meaningless correction gets a
+  plausible-looking number.
 }
 \description{
 Recomputes a \code{backend='julia'}, \code{intoverpop='laplace'} fit's log
