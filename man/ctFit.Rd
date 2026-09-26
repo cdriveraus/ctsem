@@ -116,7 +116,19 @@ integrated over, so HMC targets the joint posterior over the population
 parameters and every subject's random effects. That is exact whatever the
 model, and its dimension grows with the number of subjects rather than
 staying at the parameter count. \code{TRUE} and \code{FALSE} may be given
-in place of the character forms above.}
+in place of the character forms above.
+
+With \code{backend='julia'} and \code{optimize=FALSE}, the sampler is
+placed by running the same pipeline \code{optimize=TRUE} does on the
+integrated objective -- starting values, the prior warm-up, the substep
+mesh, the endgame's certification and its resume, restarts only if asked --
+never the joint density of parameters and random effects, which has no
+interior maximum and is not a place to start a chain from. That placed fit
+is then handed to the same runner \code{\link{ctSample}} uses, so the two
+are one pipeline: \code{intoverpop='laplace'} samples the Laplace marginal,
+\code{intoverpop='none'} (the \code{FALSE} route above) the joint posterior,
+and \code{\link{ctSample}}'s own \code{target} argument says which one a
+later call on the resulting fit repeats or overrides.}
 
 \item{poprank}{Rank of the population covariance of the individually
 varying parameters.
