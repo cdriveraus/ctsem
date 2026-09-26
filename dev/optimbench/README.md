@@ -52,9 +52,14 @@ columns) and the rest the full record:
   this cell's own objective at raw zeros, timed inside Julia in three batches
   of about a quarter second each, after an untimed call that pays the
   compilation. No optimiser change can move it;
-- the wall seconds of a warm-up fit on a slice of the subjects (so compilation
-  is not in the timed fit), of the fit, and of its optimiser, certification,
-  uncertainty and Laplace-correction stages;
+- the wall seconds of a warm-up fit, which is the timed fit itself run once
+  first (same data, arguments, start and seed), so that no stage the timed fit
+  reaches compiles inside it, and whether the two fits agreed (`warm_dx`,
+  `warm_dll`); then of the fit, and of its optimiser, certification,
+  uncertainty and Laplace-correction stages. A warm-up on a slice of the
+  subjects capped at five iterations, what this was until 2026-09-26, left
+  every later stage to compile in the timed fit (gA1: 6.9 s at one build,
+  113 s at the next with identical counts);
 - **per stage**, from thin wrappers the harness puts in the namespace (they
   forward every argument untouched): each `.ctJuliaOptimise` call with its
   kind (`warmup`, `main`, `resume`, `restart`), caller, iterations, objective

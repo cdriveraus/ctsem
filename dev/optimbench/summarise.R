@@ -94,7 +94,12 @@ for (k in intersect(c("exact", "rescored", "logposterior", "loglik", "secs_fit",
   "ctrl2", "ctrl3", "cert_gap", "quad5", "quad5_gap", "newton_hessians",
   "newton_subset_hessians", "hessians_computed", "warm_iterations",
   "main_iterations", "resume_iterations", "load1_fit_start", "load1_fit_end",
-  "is_check_maxdiff", "unit_lambda_min"), names(d))) d[[k]] <- num(d[[k]])
+  "is_check_maxdiff", "unit_lambda_min", "warm_dx", "warm_dll", "runs_overshot",
+  "overshot_maxabs_min", "runs_maxabs_lt2", "maxabs_raw_max", "probe_secs",
+  "engine_runs", "probe_runs", "lapcorr_secs", "lapcorr_gradients", "cont_delta_se_max",
+  "hess_secs_central", "hess_secs_forward", "hess_secs_laplace_x", "se_rel_forward",
+  "se_rel_laplace_x", "se_rel_laplace_est", "se_rel_reported", "npar",
+  "secs_lapcorrect"), names(d))) d[[k]] <- num(d[[k]])
 done <- d$status %in% c("ok", "evalonly")
 
 # ---- scores ----------------------------------------------------------------------
@@ -196,6 +201,25 @@ if (nrow(w)) {
   tab(wt[wt$Freq > 0, ])
 }
 
+if ("warm_dx" %in% names(d)) {
+  add("## Did the warm-up fit and the timed fit agree\n")
+  add("Every fit cell fits twice in one session, the first time as its warm-up, so ",
+    "that the timed fit pays no first-call compilation. The two are the same fit ",
+    "and must end at the same point: `dx` is the largest raw difference between ",
+    "their estimates, `dll` the timed fit's log posterior minus the warm-up's, and ",
+    "`warm_s` / `s` the two fits' seconds.\n")
+  wf <- d[d$status %in% "ok" & is.finite(d$warm_dx), ]
+  if (nrow(wf)) {
+    add(sprintf("%d fit cells; %d end at the same point (dx < 1e-8), %d within 1e-4, %d further apart.\n",
+      nrow(wf), sum(wf$warm_dx < 1e-8), sum(wf$warm_dx >= 1e-8 & wf$warm_dx < 1e-4),
+      sum(wf$warm_dx >= 1e-4)))
+    x <- wf[wf$warm_dx >= 1e-8, ]
+    if (nrow(x)) tab(data.frame(label = x$label, id = x$id, dx = fmt(x$warm_dx, 2),
+      dll = fmt(x$warm_dll, 2), warm_s = f2(num(x$secs_warm), 1), s = f2(x$secs_fit, 1),
+      stringsAsFactors = FALSE))
+  }
+}
+
 add("## By model, route and variant\n")
 add("Medians over the cells of each group (seeds); `best` counts cells within 0.05 of ",
   "the group's best score; `worst` is the largest loss. `it` is iterations summed ",
@@ -217,6 +241,78 @@ if (nrow(ok)) {
       warm = sum(x$warmup_ran %in% TRUE), stringsAsFactors = FALSE)))
   agg$worst[agg$worst %in% c("Inf", "-Inf")] <- ""
   tab(agg[order(agg$label, agg$model, agg$route, agg$variant), ])
+}
+
+if ("runs_overshot" %in% names(d)) {
+  add("## The overshoot probe\n")
+  add("Every engine optimisation run ends on the overshoot probe (`_ctsem_overshot`), ",
+    "at the run's end point. Per cell: `runs` engine runs, `found` how many of their ",
+    "probes found a gain, `at` the smallest `max |raw|` of an end point where one did, ",
+    "`lt2` runs whose end point had every `|raw| < 2`, `maxraw` the largest `max |raw|` ",
+    "over the runs, `probed` the runs whose probe ran (the prior warm-up's is off), ",
+    "`probe_s` one probe at the estimate (timed after the fit), and `share` = ",
+    "probed x probe_s / fit seconds, the probe's estimated share of the fit.\n")
+  pc <- d[d$status %in% "ok" & !d$variant %in% "noprobe", ]
+  if (nrow(pc)) {
+    add(sprintf(paste0("%d fits, %d engine runs; %d runs found a gain, in %d cells; ",
+      "%d runs ended with every |raw| < 2, and %d of those found one.\n"), nrow(pc),
+      sum(pc$engine_runs, na.rm = TRUE), sum(pc$runs_overshot, na.rm = TRUE),
+      sum(pc$runs_overshot > 0, na.rm = TRUE), sum(pc$runs_maxabs_lt2, na.rm = TRUE),
+      sum(pc$runs_overshot > 0 & is.finite(pc$overshot_maxabs_min) & pc$overshot_maxabs_min < 2)))
+    pc <- pc[order(pc$model, pc$route, pc$variant, pc$id), ]
+    tab(data.frame(label = pc$label, id = pc$id, runs = f0(pc$engine_runs),
+      found = f0(pc$runs_overshot), at = f2(pc$overshot_maxabs_min, 2),
+      lt2 = f0(pc$runs_maxabs_lt2), maxraw = f2(pc$maxabs_raw_max, 2),
+      probed = f0(pc$probe_runs), probe_s = f2(pc$probe_secs, 2), s = f2(pc$secs_fit, 1),
+      share = f2(pc$probe_runs * pc$probe_secs / pc$secs_fit, 3), stringsAsFactors = FALSE))
+  }
+  np <- d[d$status %in% "ok" & d$variant %in% "noprobe", ]
+  if (nrow(np)) {
+    add("Paired with the probe off (`noprobe`, same cell otherwise): `ratio` is the ",
+      "fit seconds off over on, `d_score` the score off minus on, `dx` the largest raw ",
+      "difference between the two estimates.\n")
+    rows <- lapply(seq_len(nrow(np)), function(i) {
+      b <- d[d$status %in% "ok" & d$variant %in% "default" & d$label == np$label[i] &
+        d$model == np$model[i] & d$data == np$data[i] & d$route == np$route[i] &
+        d$start == np$start[i], ]
+      if (!nrow(b)) return(NULL)
+      rb <- raws[[b$key[1]]]; rn <- raws[[np$key[i]]]
+      data.frame(id = np$id[i], s_on = f2(b$secs_fit[1], 1), s_off = f2(np$secs_fit[i], 1),
+        ratio = f2(np$secs_fit[i] / b$secs_fit[1], 3),
+        d_score = fmt(np$score[i] - b$score[1], 2),
+        dx = if (length(rb) && length(rb) == length(rn)) fmt(max(abs(rb - rn)), 2) else "",
+        found_on = f0(b$runs_overshot[1]), stringsAsFactors = FALSE)
+    })
+    rows <- Filter(Negate(is.null), rows)
+    if (length(rows)) tab(do.call(rbind, rows))
+  }
+}
+
+if ("cont_hessian" %in% names(d)) {
+  add("## The quadrature continuation's Hessian\n")
+  add("Laplace fits whose quadrature continuation reached its fixed point and reported ",
+    "the Hessian of its own objective (central differences of the hybrid gradient, ",
+    "2 npar gradients). Against it, the largest relative difference in any standard ",
+    "error from: `fwd` the same Hessian by forward differences (npar + 1 gradients); ",
+    "`lap_x` the Laplace Hessian at the continuation's estimate; `lap_est` the Laplace ",
+    "Hessian the fit already held, at the Laplace optimum. `rep` checks the rule: the ",
+    "fit's reported standard errors against the same Hessian. `moved` is the ",
+    "continuation's largest move in Laplace standard errors; seconds are dev1's, ",
+    "taken after the fit, one after another; `corr_s` is the whole correction in the fit.\n")
+  ch <- d[d$status %in% "ok" & d$cont_hessian %in% TRUE, ]
+  cs <- d[d$status %in% "ok" & !is.na(d$lapcorr_status), ]
+  if (nrow(cs)) {
+    st <- as.data.frame(table(status = cs$lapcorr_status,
+      continuation = ifelse(is.na(cs$lapcorr_continuation), "", cs$lapcorr_continuation),
+      hessian = cs$cont_hessian), stringsAsFactors = FALSE)
+    tab(st[st$Freq > 0, ])
+  }
+  if (nrow(ch)) tab(data.frame(label = ch$label, id = ch$id, npar = f0(ch$npar),
+    moved = f2(ch$cont_delta_se_max, 2), fwd = fmt(ch$se_rel_forward, 2),
+    lap_x = fmt(ch$se_rel_laplace_x, 2), lap_est = fmt(ch$se_rel_laplace_est, 2),
+    rep = fmt(ch$se_rel_reported, 2), central_s = f2(ch$hess_secs_central, 1),
+    fwd_s = f2(ch$hess_secs_forward, 1), lap_x_s = f2(ch$hess_secs_laplace_x, 1),
+    corr_s = f2(ch$lapcorr_secs, 1), s = f2(ch$secs_fit, 1), stringsAsFactors = FALSE))
 }
 
 add("## Reference checks\n")

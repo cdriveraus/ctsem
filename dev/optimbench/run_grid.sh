@@ -75,8 +75,9 @@ refcap="${BENCH_REFCAP:-5400}"
 export BENCH_TIMEOUT="$cap" BENCH_REFCAP="$refcap"
 # The harness stops its own fit at `cap` and its references at `refcap`; this
 # is the backstop for a process stuck inside one Julia call, where R never gets
-# to check its own limit.
-hard=$((cap + refcap + 1800))
+# to check its own limit. Two fits' worth, since the warm-up is the fit itself
+# run once first (harness.R section 3).
+hard=$((2 * cap + refcap + 1800))
 
 echo "GRID $grid"
 echo "harness $harness_sha (copied from $src)"

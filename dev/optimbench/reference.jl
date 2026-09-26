@@ -213,3 +213,43 @@ function _bench_lgamma(x::Real)
     end
     return r + (isapprox(x, 0.5) ? log(sqrt(pi)) : 0.0)
 end
+
+# The quadrature continuation's Hessian by FORWARD differences of the hybrid's
+# exact gradient: `ctsem_laplace_continuation_hessian` (laplace_continuation.jl)
+# with the same steps, warm starts and restores, but one gradient per column
+# plus one at `values` instead of two per column. For the speed job's
+# comparison of the standard errors each gives (harness.R section 5b).
+# Untyped on purpose: an annotation naming CTSEMLaplaceContinuation would stop
+# this file from loading on a build without that type, and with it every
+# reference integral above.
+function bench_continuation_hessian_forward(o, values::AbstractVector; step::Real=1e-4)
+    x = collect(Float64, values)
+    n = length(x)
+    H = fill(NaN, n, n)
+    previous = ctsem_set_warm_start!(false)
+    try
+        ctsem_laplace_evaluate(o.rest, x; gradient=false)
+    finally
+        ctsem_set_warm_start!(previous)
+    end
+    base = deepcopy(o.rest.modes)
+    restore!() = (for U in eachindex(base); o.rest.modes[U] = copy(base[U]); end)
+    previous = ctsem_set_warm_start!(true)
+    try
+        restore!()
+        g0 = ctsem_laplace_continuation_evaluate(o, x; gradient=true)
+        g0.converged || return H
+        for j in 1:n
+            h = step * max(1.0, abs(x[j]))
+            plus = copy(x); plus[j] += h
+            restore!()
+            gp = ctsem_laplace_continuation_evaluate(o, plus; gradient=true)
+            gp.converged || continue
+            H[:, j] = (gp.gradient .- g0.gradient) ./ h
+        end
+    finally
+        ctsem_set_warm_start!(previous)
+        restore!()
+    end
+    return (H .+ transpose(H)) ./ 2
+end
