@@ -161,11 +161,14 @@ test_that("plotting a profile draws a panel per parameter without complaint", {
 
 test_that("a profile separates a determined parameter from one on a flat ray", {
   skip_without_julia()
-  # The same noise fixture `test-backend-summary.R` uses, at the same point:
-  # its maximum, -205.827, which a default fit reaches and certifies (see the
-  # comment there for the lower one, -207.019, where unwarmed runs stopped).
-  # One diffusion correlation is on a ray along which the likelihood is flat
-  # to about 1e-10, while the other parameters are ordinary.
+  # The same noise fixture `test-backend-summary.R` uses. Fitted to noise it
+  # has more than one local maximum, -205.827 and -207.019 among them, and
+  # which one a fit reaches depends on its path: the default fit reached
+  # -205.827 before the endgame moved into the engine and has reached -207.019
+  # since, converged and certified both times, because each is a maximum. At
+  # the higher, one diffusion correlation is on a ray along which the
+  # likelihood is flat to about 1e-10, while the other parameters are
+  # ordinary.
   set.seed(5)
   data <- do.call(rbind, lapply(1:30, function(i) data.frame(id = i,
     time = c(0, .5, 1.5, 2.4, 3.5), Y1 = stats::rnorm(5, 0, .5),
@@ -179,23 +182,37 @@ test_that("a profile separates a determined parameter from one on a flat ray", {
   # Profiled from an estonly fit started at the certified maximum, so every
   # step is the default rather than half a standard error the flat direction
   # does not have. Routing profile points through the fit's own pipeline makes
-  # each constrained reoptimisation as capable as the fit itself, and from the
-  # old stopping point, -207.019, one of them found +1.17 log-likelihood units
-  # -- which is how that point was found not to be the maximum. `$better`
-  # exists to catch exactly that; here it must stay empty.
+  # each constrained reoptimisation as capable as the fit itself, so from a
+  # lower maximum one of them lands in a higher basin -- +1.17 from -207.019
+  # -- and `$better` reports the point. Refitting from it is what a user does
+  # with that, and what this does, until the profile finds nothing higher.
   # It warns twice, about the flat ray by name -- the Hessian repair and the
   # identifiability report -- which is the finding checked field by field below.
   fitted <- suppressWarnings(suppressMessages(ctFit(data, model,
     backend = "julia", verbose = 0)))
   expect_identical(fitted$uncertainty$certification$status, "certified")
-  fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0,
-    inits = fitted$estimate$raw, optimcontrol = list(estonly = TRUE)))
-  out <- ctFitProfile(fit, parameters = c("auto1", "diff_eta2_eta1"), points = 6L)
+  refit <- function(from) suppressMessages(ctFit(data, model, backend = "julia",
+    verbose = 0, inits = from, optimcontrol = list(estonly = TRUE)))
+  profile <- function(fit) ctFitProfile(fit,
+    parameters = c("auto1", "diff_eta2_eta1"), points = 6L)
+  fit <- refit(fitted$estimate$raw)
+  out <- profile(fit)
+  for (round in 1:2) {
+    if (is.null(out$better)) break
+    # The point `$better` reports is worth what it says: a free fit from it
+    # ends at least that far above the base.
+    reached <- out$base + out$better$gain
+    fit <- refit(out$better$point)
+    expect_gt(fit$estimate$logposterior, reached - 1e-6)
+    out <- profile(fit)
+  }
 
-  # The fit was at a maximum, so no constrained point beat it. This is the
-  # check that makes the rest of the output mean anything: a profile computed
-  # around a point that is not the maximum describes the wrong point.
+  # At the highest maximum found for this fixture, no constrained point beat
+  # the fit. This is the check that makes the rest of the output mean
+  # anything: a profile computed around a point that is not the maximum
+  # describes the wrong point.
   expect_null(out$better)
+  expect_equal(fit$estimate$loglik, -205.827, tolerance = 1e-5)
   expect_equal(out$bar, stats::qchisq(0.95, 1) / 2)
   expect_gt(nrow(out$profile), 6L)
   # Every point is a constrained maximum, so none may exceed the free one.
