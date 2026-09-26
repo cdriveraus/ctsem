@@ -713,6 +713,50 @@ function _ctsem_probe_value(objective, x)
     isfinite(value) ? value : -Inf
 end
 
+export ctsem_evaluate_batch
+
+"""
+    ctsem_evaluate_batch(objective, values::AbstractMatrix)
+
+The objective's value at each column of `values`, with no gradient, in one
+bridge call.
+
+The batched counterpart of `_ctsem_probe_value`: a column the model cannot
+evaluate, or -- for a `CTSEMLaplaceObjective` -- whose inner Newton solve did
+not converge, comes back `-Inf` rather than raising, so a caller scanning many
+proposal points (an importance sampler's batch, a grid) can treat the whole
+column uniformly instead of catching an error per point. Dispatch is through
+the generic `ctsem_evaluate`, by way of `_ctsem_probe_value`, so
+`CTSEMObjective`, `CTSEMLaplaceObjective` and `CTSEMJointObjective` all work
+here without a batch method of their own -- add a route and this covers it
+too, the same way `_ctsem_probe_value` already does for the overshoot probe.
+
+This is `ctsem_particle_batch`'s shape without the particle filter: one number
+per column, nothing else. It exists for `imis_is` and similar scans that read
+only the value -- reading `ctsem_evaluate(...; gradient=true)` per draw and
+discarding the gradient measured at 3x the cost for nothing (see
+`.ctBackendLpgFunc` on the R side), and evaluating one draw per bridge round
+trip on top of that was the larger cost by far: about 41 ms per call over the
+JuliaConnectoR bridge on the machine this was measured on, almost independent
+of what the call computes, so 1000 draws cost 1000 round trips this collapses
+into one.
+
+`values` must have at least one column. An empty matrix must never cross the
+bridge -- JuliaConnectoR deadlocks marshalling a zero-length array in either
+direction, silently rather than with an error -- so a caller must never build
+one, and this refuses one that arrived anyway rather than returning an empty
+result the same hazard applies to on the way back.
+"""
+function ctsem_evaluate_batch(objective, values::AbstractMatrix)
+    ncol = size(values, 2)
+    ncol >= 1 || throw(ArgumentError("values must have at least one column"))
+    out = Vector{Float64}(undef, ncol)
+    @inbounds for j in 1:ncol
+        out[j] = _ctsem_probe_value(objective, Vector{Float64}(view(values, :, j)))
+    end
+    return out
+end
+
 """
 What multiples of its current value each coordinate in a pulled-back set is
 tried at.
