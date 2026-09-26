@@ -644,15 +644,21 @@ print.ctLaplaceCorrection <- function(x, ...) {
 #            warning, keeping the rejected point, as bigIRT does.
 #   Hessian  of the hybrid at the final point, its nodes placed there: central
 #            differences of the exact gradient, as the Laplace Hessian is
-#            taken. Covariance and draws come from it, not from the Laplace
-#            curvature at another point.
+#            taken. Where the rounds reached the fixed point, covariance and
+#            draws come from it, not from the Laplace curvature at another
+#            point. Where they stopped short, the estimate is not stationary on
+#            that objective and its Hessian need not be concave, so the fit's
+#            own uncertainty stays and its draws are recentred, as the step
+#            correction's are; the continuation's certification is recorded.
 #
 # What moves when it applies: `fit$estimate$raw` is the continuation's
 # estimate; `loglik`, `logposterior` and `subject_loglik` the quadrature values
 # there (every unit by the rule, nodes placed there), with `loglik_laplace`
-# kept; `cov`, `se` and the draws from the continuation's Hessian, which is
-# `fit$uncertainty$hessian` with `evaluated_at` the new estimate, and whose
-# certification is the fit's. `fit$laplace$correction` says what ran.
+# kept; `cov`, `se` and the draws, when the rounds converged, from the
+# continuation's Hessian, which is `fit$uncertainty$hessian` with
+# `evaluated_at` the new estimate, and whose certification is the fit's
+# (`hessian_at` in the record says which, as the step correction's does). `fit$laplace$correction` says what
+# ran.
 #
 # Provenance of the constants. `nodes`, `tolerance` and `material` are the
 # step correction's (see `.ctLaplaceCorrectDefaults`). `product_maxdim` (2),
@@ -982,11 +988,13 @@ print.ctLaplaceCorrection <- function(x, ...) {
   # The objective the estimate maximises: the hybrid, whose unflagged units are
   # Laplace. It differs from the quadrature value above by at most `residual`.
   record$objective <- as.numeric(final$value)
-  record$hessian_at <- "estimate"
   fit$estimate$raw <- x
   fit <- report_quadrature(fit, info)
   usable <- !inherits(hc, "try-error") && all(is.finite(hc))
   method <- .ctJuliaOr(fit$uncertainty$settings$method, "hessian")
+  # Present even when empty: `$` partial-matches, and without it
+  # `correction$hessian` would answer with `hessian_at`.
+  record["hessian"] <- list(NULL)
   if (usable) {
     # The certification of the estimate on the objective it maximises: its
     # gradient against its own Hessian, with the flat-direction probe walking
@@ -1007,7 +1015,19 @@ print.ctLaplaceCorrection <- function(x, ...) {
     record$certification <- certification
     record$hessian <- hc
   }
-  if (usable && identical(method, "hessian")) {
+  # The continuation's own curvature only where it reached its fixed point.
+  # Stopped short, the estimate is not stationary on the objective the Hessian
+  # is of, and on gated-gaps A14 that Hessian had two directions of positive
+  # curvature: ten parameters would have reported no interval, and the fit
+  # `converged: FALSE`, where the Laplace curvature at the fit's optimum gives
+  # them all one.
+  # So a continuation that stopped short keeps the fit's uncertainty and
+  # recentres its draws, as the step correction does; its own certification
+  # stays in the record.
+  own <- usable && identical(run$status, "converged") &&
+    identical(method, "hessian")
+  record$hessian_at <- if (own) "estimate" else "laplace_estimate"
+  if (own) {
     settings <- fit$uncertainty$settings
     finishsamples <- .ctJuliaOr(settings$finishsamples,
       if (!is.null(fit$estimate$rawposterior)) nrow(fit$estimate$rawposterior) else 1000L)
@@ -1023,8 +1043,9 @@ print.ctLaplaceCorrection <- function(x, ...) {
         "Hessian of its quadrature objective there"),
       nodes = record$nodes)
   } else {
-    # Recentred, as the step correction does, when the continuation has no
-    # Hessian to offer or the fit's uncertainty did not come from one.
+    # Recentred, as the step correction does, when the continuation stopped
+    # short of its fixed point, has no Hessian to offer, or the fit's
+    # uncertainty did not come from one.
     post <- fit$estimate$rawposterior
     if (!is.null(post) && ncol(post) == npar) {
       fit$estimate$rawposterior <- sweep(post, 2L, delta, "+")

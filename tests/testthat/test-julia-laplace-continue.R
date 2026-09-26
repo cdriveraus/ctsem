@@ -356,4 +356,15 @@ test_that("a continuation whose fixed-node model misleads it does not walk downh
   } else {
     expect_equal(fit$estimate$raw, corr$laplace_estimate)
   }
+  # The rounds stop short of the fixed point here. The continuation's Hessian
+  # at such a point had two directions of positive curvature, which left ten
+  # parameters with no interval and the fit `converged: FALSE`; so a
+  # continuation that stopped short keeps the fit's own uncertainty, at the
+  # Laplace optimum, and recentres its draws.
+  if (isTRUE(corr$applied) && !identical(corr$continuation, "converged")) {
+    expect_identical(corr$hessian_at, "laplace_estimate")
+    expect_identical(corr$draws, "recentred")
+    expect_equal(as.numeric(fit$uncertainty$evaluated_at),
+      as.numeric(corr$laplace_estimate))
+  }
 })

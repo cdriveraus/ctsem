@@ -815,14 +815,16 @@ T0VARredundancies <- function(ctm) {
 #' score -- promises less than the certification tolerance. A round after
 #' which that gradient promises more than before, or after which the
 #' quadrature objective with its nodes placed afresh is lower, is undone and
-#' the region shrunk; when no round can do both, the continuation stops short,
-#' and the certification says the estimate is not stationary. A subject or
-#' group with k random effects costs \code{5^k} evaluations of its likelihood
-#' per gradient. The estimate, log likelihood,
-#' covariance and draws are then the continuation's, the covariance from the
-#' Hessian of the continuation's objective at the estimate, and
-#' \code{fit$laplace$correction} records the rounds, the evaluations, the
-#' subjects or groups on quadrature, and the guard: a continuation that moves
+#' the region shrunk; when no round can do both, the continuation stops short
+#' of that point, and \code{print(fit)} says so. A subject or group with k
+#' random effects costs \code{5^k} evaluations of its likelihood per gradient.
+#' The estimate and log likelihood are then the continuation's, and so are the
+#' covariance and draws when it reached that point: the covariance from the
+#' Hessian of its objective at the estimate. When it stopped short, the fit's
+#' own covariance stays and its draws are recentred on the estimate, as for
+#' \code{'step'}. \code{fit$laplace$correction} records which, the rounds, the
+#' evaluations, the subjects or groups on quadrature, the continuation's own
+#' certification, and the guard: a continuation that moves
 #' the objective by more than \code{max(50, N/2)} nats is reverted to the
 #' Laplace optimum with a warning.
 #'
