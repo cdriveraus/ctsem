@@ -21,6 +21,7 @@ using ForwardDiff, LinearAlgebra
 #     taken at one node gets wrong, although its value is exact.
 #  7. The stiff complement's rule has a standard normal's moments through
 #     degree four, cross moments included.
+#  8. A unit wider than `maxdim` is left on Laplace, unscored.
 
 isdefined(@__MODULE__, :_LAPLACE_LINEAR_OBJECTIVE) ||
     include(joinpath(@__DIR__, "laplace_fixtures.jl"))
@@ -250,4 +251,21 @@ end
             end
         end
     end
+end
+
+@testset "a unit wider than maxdim is not scored and keeps its Laplace term" begin
+    laplace, values = _fresh_twolevel()
+    theta = collect(Float64, values)
+    # Each unit is a study (one effect) over two subjects (two effects each):
+    # three effects on every root-to-leaf path of its block tree.
+    @test ContinuousTimeSEM._continuation_unit_width(laplace, 1) == 3
+    o = ctsem_laplace_continuation(laplace, theta; tolerance=0.0, maxdim=2)
+    info = ctsem_laplace_continuation_info(o)
+    @test (info.nwide, info.nflagged, info.rule_failures) == (info.nunits, 0, 0)
+    lap = ctsem_laplace_evaluate(laplace, theta; gradient=true)
+    hyb = ctsem_laplace_continuation_evaluate(o, theta; gradient=true)
+    @test hyb.value == lap.value
+    @test isapprox(hyb.gradient, lap.gradient; rtol=1e-12, atol=1e-14)
+    @test ctsem_laplace_continuation_info(ctsem_laplace_continuation(laplace, theta;
+        tolerance=0.0, maxdim=3)).nwide == 0
 end

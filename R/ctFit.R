@@ -802,7 +802,8 @@ T0VARredundancies <- function(ctm) {
 #' with its nodes placed afresh is lower, is undone and the region shrunk; when
 #' no round can do both, the correction stops short of that point, and
 #' \code{print(fit)} says so. A subject or group with k random effects costs
-#' \code{5^k} evaluations of its likelihood per gradient. Where the rounds
+#' \code{5^k} evaluations of its likelihood per gradient, so one with more
+#' than five keeps the Laplace term, and the fit says so. Where the rounds
 #' reach that point, the covariance and draws come from the Hessian of the
 #' quadrature objective there; where they stop short, the fit's own covariance
 #' stays and its draws are recentred on the estimate. A correction that moves

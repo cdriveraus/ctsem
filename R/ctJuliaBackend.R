@@ -5210,6 +5210,9 @@ print.ctJuliaFit <- function(x, ...) {
       " the quadrature value by ", format(abs(corr$gap_reported), digits = 3),
       " here and no quadrature step improved on it; the log likelihood ",
       "reported is the quadrature one. See fit$laplace$correction.\n", sep = "")
+  } else if (identical(corr$status, "too_wide")) {
+    cat("  Laplace estimate not corrected: every subject or group has more than ",
+      corr$maxdim, " random effects. See fit$laplace$correction.\n", sep = "")
   }
   # One line, only when there is something to say. A reported interval much
   # wider than the curvature at the estimate supports is not visible anywhere

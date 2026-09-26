@@ -292,6 +292,25 @@ test_that("the guard reverts a continuation that moves the objective too far", {
   expect_identical(out$estimate$loglik_method, "quadrature")
 })
 
+test_that("a unit wider than the cap keeps its Laplace term, and the fit says so", {
+  skip_without_julia()
+  fits <- .lc_fits("linear")
+  # One effect a subject; a cap of none leaves every subject unscored.
+  narrow <- utils::modifyList(.ctLaplaceContinueDefaults, list(maxdim = 0L))
+  expect_message(out <- .ctLaplaceContinue(fits$off, control = narrow),
+    "kept the Laplace term, having more than 0 random effects")
+  corr <- out$laplace$correction
+  expect_identical(corr$status, "too_wide")
+  expect_false(corr$applied)
+  expect_identical(corr$wide, corr$units)
+  expect_identical(out$estimate$raw, fits$off$estimate$raw)
+  expect_identical(out$estimate$loglik, fits$off$estimate$loglik)
+  expect_true(any(grepl("not corrected: every subject or group has more than 0",
+    capture.output(print(out)))))
+  # Under the default cap nothing here is wide.
+  expect_identical(fits$quadrature$laplace$correction$wide, 0L)
+})
+
 test_that("requests that cannot apply are refused by name", {
   # No julia needed.
   resolve <- function(oc, intoverpop = "laplace", optimize = TRUE,

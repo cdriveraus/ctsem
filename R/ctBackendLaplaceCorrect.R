@@ -683,12 +683,13 @@ print.ctLaplaceCorrection <- function(x, ...) {
 # `value_tol` (1e-3 nats) is the step correction's `gain_tol`: a change in the
 # objective below it is not one to act on either way.
 # `rtol` (1e-8) is the identifiability report's: a direction the Laplace
-# curvature does not identify is held where the fit left it.
+# curvature does not identify is held where the fit left it. `maxdim` (5) is
+# the widest unit the correction scores, explained with the engine's default.
 .ctLaplaceContinueDefaults <- list(nodes = 5L, tolerance = 0.01,
   product_maxdim = 2L, soft_tau = 3.5, soft_maxdirs = 2L, rounds = 10L,
   attempts = 15L, radius = 1, radius_max = 16, maxiter = 100L,
   material = 0.1, guard = 50, guard_per_subject = 0.5, rtol = 1e-8,
-  value_tol = 1e-3)
+  value_tol = 1e-3, maxdim = 5L)
 
 # The directions a round moves in: the Laplace curvature's identified ones,
 # each scaled to one of its standard errors, so the round's L-BFGS starts from
@@ -866,7 +867,8 @@ print.ctLaplaceCorrection <- function(x, ...) {
     tolerance = as.numeric(control$tolerance),
     product_maxdim = as.integer(control$product_maxdim),
     soft_tau = as.numeric(control$soft_tau),
-    soft_maxdirs = as.integer(control$soft_maxdirs)), silent = TRUE)
+    soft_maxdirs = as.integer(control$soft_maxdirs),
+    maxdim = as.integer(control$maxdim)), silent = TRUE)
   if (inherits(cont, "try-error")) return(failed("the quadrature could not be evaluated"))
   start <- get(module$ctsem_laplace_continuation_info(cont))
   record <- list(method = "quadrature", status = "exact", applied = FALSE,
@@ -874,8 +876,24 @@ print.ctLaplaceCorrection <- function(x, ...) {
     screen = as.numeric(start$screen), gap = as.numeric(start$gap),
     laplace_estimate = est, loglik_laplace = as.numeric(fit$estimate$loglik),
     flagged = as.integer(start$nflagged), units = as.integer(start$nunits),
-    rule_failures = as.integer(start$rule_failures))
+    rule_failures = as.integer(start$rule_failures),
+    wide = as.integer(start$nwide), maxdim = as.integer(start$maxdim))
   screen_seconds <- seconds()
+  # Units wider than `maxdim` are not scored and keep the Laplace term (see
+  # laplace_continuation.jl for the measured cost). Said in one line, since
+  # the correction then covers less than the fit, or none of it.
+  if (record$wide > 0L) {
+    message(sprintf(paste0("Quadrature correction: %d of %d %s kept the ",
+      "Laplace term, having more than %d random effects."), record$wide,
+      record$units, if (record$units == nsubjects) "subjects" else "groups",
+      record$maxdim))
+  }
+  if (record$wide == record$units) {
+    record$status <- "too_wide"
+    record$seconds <- c(screen = screen_seconds, total = seconds())
+    fit$laplace$correction <- record
+    return(fit)
+  }
   if (!is.finite(record$screen)) {
     return(failed("the quadrature was not finite at the estimate"))
   }

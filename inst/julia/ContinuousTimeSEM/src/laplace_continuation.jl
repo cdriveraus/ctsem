@@ -77,6 +77,17 @@ softcut the gated-gaps job's exact reference settled on
 precision is below it can be non-Gaussian enough to matter. `soft_maxdirs = 2`
 bounds how many directions the complement's conditional mode is followed along.
 None of these was tuned on a fit.
+
+`maxdim = 5` is cost. A unit's rule costs `nodes^d` member evaluations per
+value and reverse sweeps per gradient, `d` the widest root-to-leaf path of its
+block tree, so each effect multiplies it by 5. Measured on dev1 at 8 threads,
+150 subjects of two latents (dev/lapcontinue/highdim.R): at `d = 4` the
+correction took 92 s beside a 343 s Laplace fit (the step correction 57 s), at
+`d = 5` 727 s beside 184 s (the step 579 s), two thirds of it the Hessian. At
+`d = 6` that is an hour, so the default stops at 5. A unit wider
+than `maxdim` is not scored and keeps its Laplace term (`wide` in the info):
+the step correction, the alternative, pays the same `nodes^d` per quadrature
+value, so falling back to it would save nothing.
 """
 
 using LinearAlgebra
@@ -146,6 +157,9 @@ mutable struct CTSEMLaplaceContinuation{L} <: CTSEMOptimisable
     product_maxdim::Int
     soft_tau::Float64
     soft_maxdirs::Int
+    maxdim::Int
+    # Units wider than `maxdim`: never scored, never flagged.
+    wide::Vector{Bool}
     # What the rule scored every unit at the centre, and what Laplace did.
     centre_quadrature::Vector{Float64}
     centre_laplace::Vector{Float64}
@@ -437,6 +451,20 @@ function _continuation_block_rule(laplace::CTSEMLaplaceObjective, U::Integer,
 end
 
 """
+    _continuation_unit_width(laplace, U)
+
+The number of effects on the widest root-to-leaf path of unit `U`'s block tree:
+the `d` whose `nodes^d` a rule over the unit costs per member.
+"""
+function _continuation_unit_width(laplace::CTSEMLaplaceObjective, U::Integer)
+    blocks = laplace.units.blocks[U]
+    isempty(blocks) && return 0
+    tree = _quadrature_children(blocks)
+    width(b) = blocks[b].size + maximum((width(c) for c in tree.children[b]); init=0)
+    return maximum((width(r) for r in tree.roots); init=0)
+end
+
+"""
     _continuation_unit_rule(laplace, U, theta, Ls, aws, opts)
 
 Unit `U`'s fixed rule at `theta` and its quadrature value there, placed as
@@ -489,7 +517,9 @@ function _continuation_place(laplace::CTSEMLaplaceObjective, theta::Vector{Float
     _continuation_warm_caches(laplace, opts.nodes, opts.soft_maxdirs)
     rules = Vector{Union{Nothing,CTSEMFixedUnitRule}}(nothing, nunits)
     values = fill(NaN, nunits)
+    wide = [_continuation_unit_width(laplace, U) > opts.maxdim for U in 1:nunits]
     _laplace_parallel(laplace, 1:nunits) do U
+        wide[U] && return true
         placed = try
             _continuation_unit_rule(laplace, U, theta, Ls,
                 _laplace_workspace!(laplace, Float64, length(theta)), opts)
@@ -508,7 +538,7 @@ function _continuation_place(laplace::CTSEMLaplaceObjective, theta::Vector{Float
         return true
     end
     return (rules=rules, quadrature=values, laplace=copy(lap.unit_loglik),
-        laplace_value=lap.value, converged=lap.converged)
+        laplace_value=lap.value, converged=lap.converged, wide=wide)
 end
 
 """
@@ -536,24 +566,27 @@ end
 
 """
     ctsem_laplace_continuation(laplace, values; nodes=5, tolerance=0.01,
-        product_maxdim=2, soft_tau=3.5, soft_maxdirs=2)
+        product_maxdim=2, soft_tau=3.5, soft_maxdirs=2, maxdim=5)
 
 The hybrid objective with its nodes placed at `values`. Every unit is scored by
 the rule there against its Laplace term, the units that differ are flagged
 (`_continuation_flags`), and those carry fixed nodes from then on while the
-rest keep their Laplace term. See the module docstring for the rule and the
-constants.
+rest keep their Laplace term. A unit wider than `maxdim` effects along any
+path of its block tree is not scored at all and keeps its Laplace term. See the
+module docstring for the rule and the constants.
 """
 function ctsem_laplace_continuation(laplace::CTSEMLaplaceObjective,
     values::AbstractVector; nodes::Integer=5, tolerance::Real=0.01,
-    product_maxdim::Integer=2, soft_tau::Real=3.5, soft_maxdirs::Integer=2)
+    product_maxdim::Integer=2, soft_tau::Real=3.5, soft_maxdirs::Integer=2,
+    maxdim::Integer=5)
     nodes >= 1 || throw(ArgumentError("need at least one quadrature node"))
     theta = collect(Float64, values)
     _laplace_check_indices(laplace, length(theta))
     nunits = length(laplace.units.members)
     o = CTSEMLaplaceContinuation{typeof(laplace)}(laplace, laplace, collect(1:nunits),
         Int[], CTSEMFixedUnitRule[], theta, Int(nodes), Float64(tolerance),
-        Int(product_maxdim), Float64(soft_tau), Int(soft_maxdirs),
+        Int(product_maxdim), Float64(soft_tau), Int(soft_maxdirs), Int(maxdim),
+        fill(false, nunits),
         fill(NaN, nunits), fill(NaN, nunits), fill(false, nunits), NaN, nothing,
         0, 0, 0, 0, 0, 0)
     _continuation_place!(o, theta)
@@ -599,11 +632,13 @@ end
 function _continuation_place!(o::CTSEMLaplaceContinuation, theta::Vector{Float64})
     laplace = o.laplace
     opts = (nodes=o.nodes, product_maxdim=o.product_maxdim, soft_tau=o.soft_tau,
+        maxdim=o.maxdim,
         soft_maxdirs=o.soft_maxdirs)
     placed = _continuation_place(laplace, theta, opts)
     nunits = length(laplace.units.members)
-    failed = [placed.rules[U] === nothing && !isempty(laplace.units.blocks[U])
-              for U in 1:nunits]
+    failed = [placed.rules[U] === nothing && !isempty(laplace.units.blocks[U]) &&
+              !placed.wide[U] for U in 1:nunits]
+    o.wide = placed.wide
     gaps = placed.quadrature .- placed.laplace
     flagged = sort!(union(o.flagged, _continuation_flags(gaps, o.tolerance)))
     # A unit flagged before whose rule could not be placed here keeps its
@@ -1088,6 +1123,7 @@ function ctsem_laplace_continuation_info(o::CTSEMLaplaceContinuation)
         laplace_units=copy(o.centre_laplace),
         laplace=sum(o.centre_laplace) + prior,
         rule_failures=count(o.rule_failed), soft_blocks=softblocks,
+        nwide=count(o.wide), maxdim=o.maxdim,
         evaluations_per_value=sum(r.evaluations for r in o.rules; init=0),
         value_calls=o.value_calls, gradient_calls=o.gradient_calls,
         member_values=o.member_values, member_sweeps=o.member_sweeps,
