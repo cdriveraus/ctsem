@@ -215,8 +215,10 @@ test_that("what a continued fit reports is the continuation's own", {
   expect_equal(cont$uncertainty$hessian, corr$hessian)
   expect_false(isTRUE(all.equal(as.matrix(cont$estimate$cov),
     as.matrix(off$estimate$cov))))
-  expect_equal(unname(as.matrix(cont$estimate$cov)),
-    unname(solve(-(corr$hessian + t(corr$hessian)) / 2)), tolerance = 1e-6)
+  # Values only: the covariance carries its construction's diagnostics as an
+  # attribute.
+  expect_equal(as.numeric(cont$estimate$cov),
+    as.numeric(solve(-(corr$hessian + t(corr$hessian)) / 2)), tolerance = 1e-6)
   expect_lt(max(abs(colMeans(cont$estimate$rawposterior) - x) /
     as.numeric(cont$estimate$se)), 0.5)
   expect_identical(corr$draws, "redrawn")
