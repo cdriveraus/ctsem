@@ -719,12 +719,12 @@ end
 """
     _laplace_poploading(values, level)
 
-A reduced-rank level's factor: `k x k`, with the loading in its first `rank`
-columns and zeros in the rest, so that `L * L'` is the population covariance
-and `L * u` is the deviation for `u ~ N(0, I)`.
+A reduced-rank level's factor: `k x rank`, the loading itself, so that
+`L * L'` is the population covariance and `L * u` is the deviation for
+`u ~ N(0, I)` of dimension `rank`.
 
-The zero columns are what let the block stay `k`-dimensional; see the note on
-`rank` in `CTSEMLaplaceLevel`. No Cholesky is taken, because there is nothing
+The block is `rank`-dimensional, not `k`, which is what makes a reduced level
+cheap; see `nlatent`. No Cholesky is taken, because there is nothing
 to decompose -- the parameters *are* the factor, which is also why they need no
 positivity transform and no correlation cap. `sd_scale` multiplies a row, so a
 level still scales its own spread exactly as the full-rank form does, and a
