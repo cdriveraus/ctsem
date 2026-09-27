@@ -313,6 +313,20 @@ default, apply too when sampling with \code{intoverpop=FALSE}: the random
 effects are then sampled rather than integrated, but the sampler is placed,
 and its metric built, from the Laplace fit.
 
+On either route, a julia fit with random effects measures how much of each
+random effect each subject's own data determine -- one minus the ratio of
+its posterior to its population variance, the complement of what population
+pharmacokinetics calls shrinkage -- at the estimate it reports.
+\code{fit$identifiability$effects} records it for every effect. An effect
+whose median over subjects is below 0.1 is named in a message, in
+\code{summary()} and in \code{\link{ctReport}}: its population standard
+deviation is poorly determined, and dropping its individual variation or
+observing each subject more often is the remedy. A population standard
+deviation estimated below the one every fit starts from is measured again
+at that starting value, since at a spread near zero the share is zero
+whatever the data say; it is that share which decides, so an effect whose
+variation the data rule out clearly is not reported as weakly informed.
+
 Also with \code{intoverpop='laplace'}, \code{optimcontrol$laplace_correct}
 corrects the fitted estimate for the Laplace approximation's error, by the
 adaptive Gauss-Hermite quadrature of \code{\link{ctLaplaceCheck}} (5 nodes

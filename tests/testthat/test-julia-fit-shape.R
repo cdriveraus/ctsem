@@ -187,6 +187,15 @@ test_that("a sampled fit reports its identifiability findings, not just stores t
     expect_true(is.numeric(f$identifiability$nweak) ||
       is.integer(f$identifiability$nweak))
   }
+  # The random-effect check, on both, saying where it was taken: on the
+  # sampled fit the estimate is now the posterior mean, and the check
+  # describes the optimum that placed the sampler.
+  opt <- fits$optimised$identifiability$effects
+  smp <- fits$sampled$identifiability$effects
+  expect_identical(opt$point, "at the estimate")
+  expect_identical(smp$point, "at the optimum that placed the sampler")
+  expect_equal(smp$values, fits$sampled$estimate$laplace_raw)
+  expect_identical(smp$table$effect, opt$table$effect)
 })
 
 test_that("the two routes agree on what $estimate carries", {

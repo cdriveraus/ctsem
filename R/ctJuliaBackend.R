@@ -5262,6 +5262,20 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # the data -- but a statement of which directions the data does not determine,
   # and therefore which reported intervals do not mean what they appear to.
   rawnames <- .ctBackendRawParameterNames(out, length(out$estimate$raw))
+  # First, how much of each random effect each subject's own data determine,
+  # at the estimate the fit reports -- after the quadrature correction, when
+  # that moved it. Put where `.ctBackendIdentifiability()` below finds it
+  # (`fit = out`), which carries it into the report, as every later rebuild
+  # of the report does. Not at the start, which was the plan, and not where
+  # the optimiser stopped: at the first the population sds are starting
+  # values, and the second is the Laplace optimum before the correction, which
+  # can sit where the approximation is least trustworthy; both are measured
+  # in R/ctBackendEffectInformation.R. Not on the state-explicit route, whose
+  # estimate is the joint optimum.
+  effectcheck <- if (isTRUE(intoverstates)) .ctEffectInformation(
+    out$model_spec, out$estimate$raw, point = "at the estimate") else NULL
+  if (!is.null(effectcheck)) out$identifiability <- list(effects = effectcheck)
+  .ctEffectMessage(effectcheck)
   # `fit`/`at` let it tell a random-effect block trading its scale off against
   # its correlations -- where the covariances are determined, and fixing a
   # value throws them away -- from a direction the data says nothing about.

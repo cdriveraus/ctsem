@@ -68,9 +68,10 @@ An object of class \code{ctIdentify} with \code{$parameters} (names
   \code{$structural} splitting those into the partially and completely
   unidentified, \code{$sometimes} (in a flat direction beyond that subspace
   at some points), \code{$rotating} (whether the basis of the flat subspace
-  turns between points), \code{$nweak}, \code{$condition}, and
-  \code{$starts} holding the per-point detail. Printing it summarises what
-  was found.
+  turns between points), \code{$nweak}, \code{$condition},
+  \code{$starts} holding the per-point detail, and \code{$effects}, the
+  random-effect information at a supplied \code{inits} (\code{NULL}
+  otherwise). Printing it summarises what was found.
 }
 \description{
 Reports the directions of the parameter space this data carries no
@@ -98,6 +99,15 @@ Requires the Julia backend, which is where the per-subject scores
   come from. The statistic has rank at most the number of subjects, so a
   model with more free parameters than subjects reports flat directions for
   that reason alone; the printed summary says when that applies.
+
+  How much of each random effect each subject's own data determine -- the
+  check \code{\link{ctFit}} makes at its estimate, stored as
+  \code{fit$identifiability$effects} -- is taken here only at a supplied
+  \code{inits}, such as a fit's \code{estimate$raw}. It depends on the
+  population standard deviations, which only a fit estimates: at the
+  default evaluation points it describes the starting values rather than
+  the data, and there it read a well identified random drift as less
+  informed than one the data barely inform.
 }
 \examples{
 \donttest{

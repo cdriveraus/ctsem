@@ -220,14 +220,24 @@
 #'   \code{$structural} splitting those into the partially and completely
 #'   unidentified, \code{$sometimes} (in a flat direction beyond that subspace
 #'   at some points), \code{$rotating} (whether the basis of the flat subspace
-#'   turns between points), \code{$nweak}, \code{$condition}, and
-#'   \code{$starts} holding the per-point detail. Printing it summarises what
-#'   was found.
+#'   turns between points), \code{$nweak}, \code{$condition},
+#'   \code{$starts} holding the per-point detail, and \code{$effects}, the
+#'   random-effect information at a supplied \code{inits} (\code{NULL}
+#'   otherwise). Printing it summarises what was found.
 #'
 #' @details Requires the Julia backend, which is where the per-subject scores
 #'   come from. The statistic has rank at most the number of subjects, so a
 #'   model with more free parameters than subjects reports flat directions for
 #'   that reason alone; the printed summary says when that applies.
+#'
+#'   How much of each random effect each subject's own data determine -- the
+#'   check \code{\link{ctFit}} makes at its estimate, stored as
+#'   \code{fit$identifiability$effects} -- is taken here only at a supplied
+#'   \code{inits}, such as a fit's \code{estimate$raw}. It depends on the
+#'   population standard deviations, which only a fit estimates: at the
+#'   default evaluation points it describes the starting values rather than
+#'   the data, and there it read a well identified random drift as less
+#'   informed than one the data barely inform.
 #'
 #' @seealso \code{\link{ctFit}} runs the equivalent check on a finished fit,
 #'   evaluated at the estimate and stored as \code{fit$identifiability}.
@@ -307,6 +317,12 @@ ctIdentify <- function(datalong, model, inits = NULL, nstart = 3L,
       call. = FALSE)
   }
   starts <- starts[usable]
+  # The random-effect information, at a supplied point only: it depends on
+  # the population sds, and at the default points those are the starting
+  # values' rather than estimates (see R/ctBackendEffectInformation.R).
+  effects <- if (!is.null(inits) && !identical(inits, "random"))
+    .ctEffectInformation(spec, points[[1L]], point = "at the supplied inits")
+    else NULL
 
   # Aggregated by subspace, not by name. `k` is the rank deficiency the data
   # has at every point, and the `k` flattest directions at each point span it;
@@ -357,7 +373,7 @@ ctIdentify <- function(datalong, model, inits = NULL, nstart = 3L,
     smallest = max(vapply(starts, function(s) s$relative[1L], numeric(1))),
     npar = npar, parnames = parnames, nstart = length(starts),
     nsubjects = nsubjects, rankLimited = isTRUE(nsubjects < npar),
-    priors = priors, starts = starts), class = "ctIdentify")
+    priors = priors, starts = starts, effects = effects), class = "ctIdentify")
 }
 
 #' @export
@@ -371,6 +387,17 @@ print.ctIdentify <- function(x, ...) {
   # from a merely weak one without trusting where this function put the line.
   cat("  Weakest direction carries ", signif(x$smallest, 2),
     " of the information of the strongest.\n", sep = "")
+  # Taken only at a supplied point; see ctIdentify()'s details.
+  effects <- x[["effects"]]
+  if (is.list(effects)) {
+    advice <- .ctEffectAdvice(effects)
+    if (length(advice)) {
+      writeLines(strwrap(advice, indent = 2, exdent = 2, width = 78))
+    } else {
+      cat("  Every random effect is informed by its own group's data at the ",
+        "supplied inits.\n", sep = "")
+    }
+  }
   if (!length(x$parameters) && !length(x$sometimes)) {
     cat("  No uninformed directions found: this data carries information about\n",
       "  every direction of this model. That is what identification looks like\n",

@@ -53,6 +53,14 @@
   screen = NULL) {
   empty <- list(nweak = 0L, condition = NA_real_, directions = list(),
     parameters = character())
+  # The random-effect information check (`.ctEffectInformation()`) is part of
+  # this report but is not a property of the Hessian: it is taken once, during
+  # the fit, and every later rebuild of the report from a new curvature --
+  # `ctFitUncertainty()`, the fit's own last step -- carries it forward rather
+  # than dropping it. `[[`, because `ctIdentify()` passes a bare spec as `fit`.
+  carried <- if (is.list(fit) && is.list(fit[["identifiability"]]))
+    fit[["identifiability"]][["effects"]] else NULL
+  if (!is.null(carried)) empty$effects <- carried
   if (is.null(hessian)) return(empty)
   hessian <- as.matrix(hessian)
   if (!all(is.finite(hessian)) || nrow(hessian) != ncol(hessian)) return(empty)
@@ -155,6 +163,7 @@
         as.integer(screen[["candidates"]]),
       evaluations = screen[["evaluations"]])
   }
+  if (!is.null(carried)) out$effects <- carried
   out
 }
 
