@@ -10,7 +10,7 @@ ctLaplaceCheck(
   correction = TRUE,
   step = 0.001,
   refine = FALSE,
-  maxiter = 50L,
+  maxiter = 5L,
   cores = NULL,
   verbose = 0L
 )
@@ -38,7 +38,9 @@ so it costs a few quadrature gradients per round rather than the
 refinement this replaced cost, and it reports the point it reaches in
 \code{refined}.}
 
-\item{maxiter}{Iteration cap for each round of \code{refine}.}
+\item{maxiter}{Iteration cap for each round of \code{refine}; the default
+is the one the fit-time correction uses, so that refining an uncorrected
+fit reaches the point the correction would have.}
 
 \item{cores}{Engine threads for the quadrature.}
 

@@ -190,24 +190,21 @@ test_that("the Laplace correction handles more than one random effect", {
 
   # The default fit from the same start, whose quadrature correction is what a
   # user gets: the same two-effect blocks, on the same product rule. The screen
-  # finds a gap (0.05 when measured), so the fit is continued -- up the
-  # quadrature objective, by little, and along the first-order step the check
-  # above computes independently by finite differences of the gap. Measured:
-  # one round, 0.016 se at most, cosine 1.000 with the check's step.
+  # finds a gap (0.03 when measured), but the gain the correction predicts
+  # from the Laplace optimum is 8e-5 nats, under `skip_gain`, so it is skipped:
+  # the estimate stays, and the log likelihood reported is the quadrature one.
+  # That agrees with the check above, whose own first-order step, computed
+  # independently by finite differences of the gap, is under a tenth of a
+  # standard error (measured 0.019).
   set.seed(seed)
   default <- suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
     intoverpop = "laplace", optimcontrol = list(finishsamples = 100))))
   corr <- default$laplace$correction
   expect_identical(corr$method, "quadrature")
-  expect_identical(corr$status, "continued")
-  expect_true(corr$applied)
-  expect_gte(corr$guard$change, -.ctLaplaceContinueDefaults$value_tol)
+  expect_identical(corr$status, "skipped")
+  expect_false(corr$applied)
+  expect_lt(corr$predicted_gain, corr$skip_gain)
   expect_equal(default$estimate$loglik, corr$loglik_quadrature)
-  moved <- as.numeric(corr$delta_se)
-  ok <- is.finite(moved) & is.finite(delta)
-  expect_lt(max(abs(moved[ok])), 0.5)
-  expect_gt(sum(moved[ok] * delta[ok]) /
-    sqrt(sum(moved[ok]^2) * sum(delta[ok]^2)), 0.9)
-  # And the post-hoc function refuses it, rather than correcting twice.
-  expect_error(ctLaplaceCorrect(default, draws = "normal"), "already corrected")
+  expect_identical(default$estimate$loglik_method, "quadrature")
+  expect_lt(max(abs(delta), na.rm = TRUE), 0.1)
 })
