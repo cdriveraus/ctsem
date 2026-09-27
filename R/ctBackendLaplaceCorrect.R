@@ -646,15 +646,18 @@ print.ctLaplaceCorrection <- function(x, ...) {
 #   skip     before any round: one gradient gives the gain the fixed-node
 #            model predicts from the Laplace optimum (the residual there);
 #            below `skip_gain` nothing moves (status `skipped`).
-#   stop     on predicted gain in nats, as the optimiser stops: when the
-#            residual is below `stop_gain` and the last kept round realised
-#            less than it (converged; a round that raised the re-placed
-#            objective by more is kept even if the residual rose); when the most a round
-#            can promise inside its region is below it (stalled: rejections
-#            have shrunk the region); or when a kept round raised the
-#            re-placed objective by less than it (stalled: the rounds are
-#            closing on the fixed point without gaining anything). `rounds`
-#            and `attempts` remain as backstops.
+#   stop     when that residual is below the fit's certification tolerance,
+#            or after `rounds` kept rounds or `attempts` rounds in all.
+#            `stop_gain` > 0 stops instead on predicted gain in nats: the
+#            residual below it once the last kept round realised less (a
+#            round raising the re-placed objective by more being kept even if
+#            the residual rose), a region shrunk until it promises less, or a
+#            kept round gaining less. It is off (0) by default: on the bench's
+#            paired grid (review/bench, quadcost 2026-09-27) it cut the
+#            correction's time to a quarter and gained up to 2.5 exact nats on
+#            gB8 and 0.7 on gC8, but lost 0.46 to 0.52 on gD3, 0.026 on gC2,
+#            0.031 on gN3 and 0.06 to 0.16 on the AnomAuth default starts
+#            against the rounds run to the tolerance.
 #   guard    a continuation that moves the quadrature objective by more than
 #            max(50, N/2) nats is reverted to the Laplace optimum with a
 #            warning, keeping the rejected point, as bigIRT does.
@@ -694,10 +697,10 @@ print.ctLaplaceCorrection <- function(x, ...) {
 # residual instead -- only when a round cut it to a quarter -- held gated-gaps
 # D3 at 0.25 se for six rounds whose gains matched their model's to 2%, and
 # the rounds ran out 0.7 exact nats short of the best-known point. `maxiter`
-# (5) caps one round's L-BFGS: a round is a step whose nodes are re-placed
-# after it, and its first iterations take nearly all of what its model
-# offers (gated-gaps A1, N1, C8: from 100 to 5 took their gradients from
-# 54, 52 and 90 to 34, 52 and 79 at end points within 0.04 exact nats).
+# (100) caps one round; bigIRT's whole continuation took 30 to 60
+# evaluations. Five is enough when `stop_gain` is on (gated-gaps A1, N1, C8:
+# gradients from 54, 52 and 90 to 34, 52 and 79, end points within 0.04
+# exact nats), not with the rounds run to the certification tolerance.
 # `guard` and `guard_per_subject` are bigIRT's max(50, N/2).
 # `skip_gain` (5e-3 nats) was set on the optimiser bench's default Laplace
 # cells (dev/lapcontinue/calibrate-cost.R, dev1, 2026-09-27, one start each,
@@ -706,8 +709,9 @@ print.ctLaplaceCorrection <- function(x, ...) {
 # 6e-6 to 4.9e-3 exact nats -- at most 1.7 times the prediction -- and moved
 # the estimate at most 0.075 se; the smallest prediction above it was jflat's
 # 0.07 (gain 0.078). It is also the gain of a whitened Newton step of 0.1 se,
-# the move `material` calls worth a line in print(). `stop_gain` is the same
-# bar: a round predicted to gain less is one the skip would have declined.
+# the move `material` calls worth a line in print(). On the paired grid the
+# twelve cells it skips kept their exact log likelihood to 0.005 nats at 0.05
+# to 0.24 of the correction's time.
 # `value_tol` (1e-3 nats) is the step correction's `gain_tol`: a change in the
 # objective below it is not one to act on either way.
 # `rtol` (1e-8) is the identifiability report's: a direction the Laplace
@@ -715,9 +719,9 @@ print.ctLaplaceCorrection <- function(x, ...) {
 # the widest unit the correction scores, explained with the engine's default.
 .ctLaplaceContinueDefaults <- list(nodes = 5L, tolerance = 0.01,
   product_maxdim = 2L, soft_tau = 3.5, soft_maxdirs = 2L, rounds = 10L,
-  attempts = 15L, radius = 1, radius_max = 16, maxiter = 5L,
+  attempts = 15L, radius = 1, radius_max = 16, maxiter = 100L,
   material = 0.1, guard = 50, guard_per_subject = 0.5, rtol = 1e-8,
-  value_tol = 1e-3, maxdim = 5L, stop_gain = 5e-3, skip_gain = 5e-3)
+  value_tol = 1e-3, maxdim = 5L, stop_gain = 0, skip_gain = 5e-3)
 
 # The directions a round moves in: the Laplace curvature's identified ones,
 # each scaled to one of its standard errors, so the round's L-BFGS starts from

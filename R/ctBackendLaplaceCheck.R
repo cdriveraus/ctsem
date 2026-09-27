@@ -84,9 +84,7 @@
 #'   \code{2 * npar} quadrature evaluations per gradient the finite-difference
 #'   refinement this replaced cost, and it reports the point it reaches in
 #'   \code{refined}.
-#' @param maxiter Iteration cap for each round of \code{refine}; the default
-#'   is the one the fit-time correction uses, so that refining an uncorrected
-#'   fit reaches the point the correction would have.
+#' @param maxiter Iteration cap for each round of \code{refine}.
 #' @param cores Engine threads for the quadrature.
 #' @param verbose Integer; 1 or more prints progress.
 #'
@@ -128,7 +126,7 @@
 #' }
 #' @export
 ctLaplaceCheck <- function(fit, nodes = 5L, correction = TRUE, step = 1e-3,
-  refine = FALSE, maxiter = 5L, cores = NULL, verbose = 0L) {
+  refine = FALSE, maxiter = 50L, cores = NULL, verbose = 0L) {
 
   if (!inherits(fit, "ctJuliaFit")) {
     stop("ctLaplaceCheck applies to backend='julia' fits.", call. = FALSE)

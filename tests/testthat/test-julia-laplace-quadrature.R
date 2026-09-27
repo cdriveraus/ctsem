@@ -179,9 +179,10 @@ test_that("the continuation lands at the exact marginal's optimum, closer than t
   expect_gte(corr$rounds, 1L)
   expect_identical(corr$continuation, "converged")
   # Converged means the gain the fixed-node model still predicts is under the
-  # bar the rounds stop on, in nats.
+  # bar the rounds stopped on, in nats: the certification tolerance, while
+  # `stop_gain` is off.
   expect_lt(corr$stationarity, corr$stop_gain)
-  expect_identical(corr$stop_gain, .ctLaplaceContinueDefaults$stop_gain)
+  expect_identical(corr$stop_gain, .ctBackendGapTolerance(off))
   expect_false(corr$guard$fired)
   expect_equal(corr$laplace_estimate, as.numeric(off$estimate$raw))
 
