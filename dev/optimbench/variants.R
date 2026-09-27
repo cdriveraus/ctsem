@@ -32,6 +32,11 @@ BENCH_VARIANTS <- list(
   # The optimiser alone: no certification, uncertainty or Laplace correction.
   estonly = list(optimcontrol = list(estonly = TRUE)),
 
+  # The overshoot probe off. Paired with `default` on the same cell, what the
+  # probe costs; and where no run's probe found a gain, the two must end at
+  # the same point, since the probe then changed no verdict.
+  noprobe = list(optimcontrol = list(overshoot = "off")),
+
   # No fit: evaluate the objective and the references at the start. Used with
   # a stored best-known point to check that a reference still reproduces.
   evalonly = list(fit = FALSE),

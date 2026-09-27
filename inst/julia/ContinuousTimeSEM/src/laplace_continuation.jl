@@ -1048,16 +1048,34 @@ function ctsem_laplace_continuation_optimize(o::CTSEMLaplaceContinuation,
 end
 
 """
-    ctsem_laplace_continuation_hessian(o, values; step=1e-4)
+    ctsem_laplace_continuation_hessian(o, values; step=1e-4, scheme=:forward)
 
-The Hessian of the hybrid at `values`, its nodes where they are: a central
-difference of its exact gradient, as `ctsem_laplace_hessian` takes the Laplace
-one, the Laplace part's inner modes warm-started from their modes at `values`
-for the reason given there. A column whose two points did not both evaluate is
-`NaN`, which the caller sees as an unusable Hessian.
+The Hessian of the hybrid at `values`, its nodes where they are: a finite
+difference of its exact gradient, the Laplace part's inner modes warm-started
+from their modes at `values` for the reason `ctsem_laplace_hessian` gives. A
+column whose points did not all evaluate is `NaN`, which the caller sees as an
+unusable Hessian.
+
+`scheme = :forward` takes one gradient per column and one at `values`;
+`:central` two per column, as `ctsem_laplace_hessian` does. Forward by default
+because this Hessian is the correction's largest cost where units are wide,
+and because the gradient is exact, so the only error forward differences add
+is the step's truncation. At five effects a unit (dev/lapcontinue/highdim.R,
+150 subjects, npar 27; dev1, 8 threads) the central Hessian took 243 s and the
+forward one 126 s, beside a 284-second correction and a 216-second fit, and
+no standard error moved by more than 0.1% (the lapcontinue job had measured
+502 s of a 727-second correction there, at an earlier build). On the optimiser
+bench's Laplace fits whose continuation reported this Hessian (32 fits of 9
+models; review/bench/2026-09-26-baseline.md) the largest change in any
+standard error was 0.24%. The Laplace Hessian is no substitute: at the Laplace
+optimum or at the continuation's estimate it moved some standard error by more
+than 20% on three of the nine, by up to 69%.
 """
 function ctsem_laplace_continuation_hessian(o::CTSEMLaplaceContinuation,
-    values::AbstractVector; step::Real=1e-4)
+    values::AbstractVector; step::Real=1e-4, scheme=:forward)
+    scheme = scheme isa Symbol ? scheme : Symbol(scheme)
+    scheme in (:forward, :central) || throw(ArgumentError(
+        "scheme must be :forward or :central, got " * repr(scheme)))
     x = collect(Float64, values)
     n = length(x)
     H = fill(NaN, n, n)
@@ -1071,16 +1089,30 @@ function ctsem_laplace_continuation_hessian(o::CTSEMLaplaceContinuation,
     restore!() = (for U in eachindex(base); o.rest.modes[U] = copy(base[U]); end)
     previous = ctsem_set_warm_start!(true)
     try
+        # The gradient at `values` itself, which the forward scheme differences
+        # every column against.
+        g0 = if scheme === :forward
+            restore!()
+            ctsem_laplace_continuation_evaluate(o, x; gradient=true)
+        else
+            nothing
+        end
+        g0 === nothing || g0.converged || return H
         for j in 1:n
             h = step * max(1.0, abs(x[j]))
             plus = copy(x); plus[j] += h
-            minus = copy(x); minus[j] -= h
             restore!()
             gp = ctsem_laplace_continuation_evaluate(o, plus; gradient=true)
-            restore!()
-            gm = ctsem_laplace_continuation_evaluate(o, minus; gradient=true)
-            (gp.converged && gm.converged) || continue
-            H[:, j] = (gp.gradient .- gm.gradient) ./ (2h)
+            if g0 !== nothing
+                gp.converged || continue
+                H[:, j] = (gp.gradient .- g0.gradient) ./ h
+            else
+                minus = copy(x); minus[j] -= h
+                restore!()
+                gm = ctsem_laplace_continuation_evaluate(o, minus; gradient=true)
+                (gp.converged && gm.converged) || continue
+                H[:, j] = (gp.gradient .- gm.gradient) ./ (2h)
+            end
         end
     finally
         ctsem_set_warm_start!(previous)

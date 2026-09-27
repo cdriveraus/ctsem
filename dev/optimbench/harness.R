@@ -21,14 +21,17 @@
 #   1. the data, read from the store (simulated and stored on first use);
 #   2. the contamination control: one gradient of this cell's objective at a
 #      fixed point (raw zeros), after one untimed evaluation, three times;
-#   3. a warm-up fit on a slice of the subjects, so compilation is not in the
-#      timed fit (BENCH_WARM);
+#   3. a warm-up fit, the timed fit itself run once first, so compilation is
+#      not in the timed fit (BENCH_WARM);
 #   4. the fit, from a freshly built objective, under set.seed(seed) when the
 #      start is default:<seed>, with every call to the optimiser, the Hessian
 #      and the post-fit stages recorded by thin wrappers in the namespace;
 #   5. the end point re-scored on a freshly built objective (cold inner modes);
 #      for Laplace cells the 5-node quadrature there (ctLaplaceCheck) and the
-#      exact reference where the cell's units allow one (BENCH_REF);
+#      exact reference where the cell's units allow one (BENCH_REF); where
+#      the quadrature continuation reported its own Hessian, that Hessian
+#      against cheaper ones (5b); and one overshoot probe at the end point,
+#      timed (5c);
 #   6. one .rds per cell in <outdir>, with a one-row data frame `row` of
 #      scalars for summarise.R and the full record beside it.
 #
@@ -40,6 +43,7 @@
 .int1 <- function(x) { v <- suppressWarnings(as.integer(x)); if (length(v)) v[1L] else NA_integer_ }
 .lgl1 <- function(x) if (is.null(x) || !length(x)) NA else isTRUE(as.logical(x[1L]))
 .chr1 <- function(x) if (is.null(x) || !length(x)) NA_character_ else as.character(x[1L])
+.fin <- function(x) if (length(x) == 1L && is.finite(x)) x else NA_real_
 .now <- function() proc.time()[["elapsed"]]
 .loadavg <- function() {
   if (!file.exists("/proc/loadavg")) return(rep(NA_real_, 3))
@@ -229,6 +233,7 @@ if (isTRUE(V$control_only)) {
 # stage that did not run.
 REC <- new.env()
 REC$stages <- list(); REC$runs <- list(); REC$hessians <- list(); REC$post <- list()
+REC$cont <- NULL; REC$continue <- NULL
 REC$current <- 0L
 wrap <- function(name, factory) {
   if (!exists(name, envir = ns, inherits = FALSE)) return(FALSE)
@@ -254,7 +259,8 @@ RESULT_KEYS <- c("iterations", "f_calls", "g_calls", "maximum_loglik", "converge
   "stopped_by_gap", "stopped_by_stall", "stalled", "overshot", "saturated",
   "predicted_gain", "last_gain", "gradient_norm", "newton_steps", "newton_hessians",
   "newton_subset_hessians", "batch_sizes", "batch_iterations", "stall_escapes",
-  "stall_triggers", "gap_tol", "linesearch", "chunks")
+  "stall_triggers", "gap_tol", "linesearch", "chunks", "overshoot_gain",
+  "stopped_by_stall", "stall_gain")
 rec$instrumented <- c(
   .ctJuliaOptimise = wrap(".ctJuliaOptimise", function(orig) function(...) {
     a <- list(...)
@@ -285,8 +291,16 @@ rec$instrumented <- c(
     t0 <- .now()
     r <- orig(chunks, expr)
     if (is.list(r) && !is.null(r$minimizer) && !is.null(r$iterations)) {
+      # Where the run's overshoot probe ran (it runs at the run's end point,
+      # the minimizer), and what it pulled back when it found a gain.
+      m <- suppressWarnings(as.numeric(r$minimizer))
+      op <- suppressWarnings(as.integer(r$overshoot_parameters))
+      op <- op[!is.na(op) & op >= 1L & op <= length(m)]
       REC$runs[[length(REC$runs) + 1L]] <- c(list(stage = REC$current,
-        secs = .now() - t0), scalars(r, RESULT_KEYS))
+        secs = .now() - t0, npar = length(m),
+        maxabs_raw = if (length(m) && all(is.finite(m))) max(abs(m)) else NA_real_,
+        overshoot_maxabs = if (length(op)) max(abs(m[op])) else NA_real_,
+        overshoot_n = length(op)), scalars(r, RESULT_KEYS))
     }
     r
   }),
@@ -313,31 +327,86 @@ rec$instrumented <- c(
     REC$post$laplace_correct <- (REC$post$laplace_correct %||% 0) + .now() - t0
     r
   }),
-  ctOptimUncertainty = wrap("ctOptimUncertainty", function(orig) function(...) {
+  # The fit calls ctFitUncertainty since juliaFit 908b068d, and
+  # ctOptimUncertainty is then an alias that calls it, so the old name is
+  # wrapped only on a build without the new one (else its time counts twice).
+  # NA in `instrumented` is "deliberately not wrapped".
+  ctFitUncertainty = wrap("ctFitUncertainty", function(orig) function(...) {
     t0 <- .now(); r <- orig(...)
     REC$post$uncertainty <- (REC$post$uncertainty %||% 0) + .now() - t0
     r
   }),
+  ctOptimUncertainty = if (exists("ctFitUncertainty", envir = ns, inherits = FALSE)) NA else
+    wrap("ctOptimUncertainty", function(orig) function(...) {
+      t0 <- .now(); r <- orig(...)
+      REC$post$uncertainty <- (REC$post$uncertainty %||% 0) + .now() - t0
+      r
+    }),
   .ctBackendCorrectResult = wrap(".ctBackendCorrectResult", function(orig) function(...) {
     t0 <- .now(); r <- orig(...)
     REC$post$certification <- (REC$post$certification %||% 0) + .now() - t0
     r
+  }),
+  # The quadrature continuation replaces the fit's uncertainty with the Hessian
+  # of its own objective. What it replaced is kept here -- the Laplace Hessian
+  # at the Laplace optimum and the standard errors from it -- so section 5b can
+  # say whether the replacement changed the standard errors.
+  # Timed too: it is the default correction since juliaFit 55caeeb7, and the
+  # fit calls it directly rather than through .ctLaplaceAutoCorrect.
+  .ctLaplaceContinue = wrap(".ctLaplaceContinue", function(orig) function(fit, ...) {
+    REC$continue <- list(hessian = fit$uncertainty$hessian,
+      evaluated_at = as.numeric(fit$uncertainty$evaluated_at %||% NA_real_),
+      raw = as.numeric(fit$estimate$raw), se = as.numeric(fit$estimate$se %||% NA_real_))
+    t0 <- .now(); r <- orig(fit, ...)
+    REC$post$laplace_correct <- (REC$post$laplace_correct %||% 0) + .now() - t0
+    r
+  }),
+  # Called only when the continuation's own Hessian becomes the fit's; its
+  # `cont` is the continuation, placed at the final estimate, which 5b uses to
+  # time that Hessian and its cheaper alternatives.
+  .ctLaplaceContinueLpg = wrap(".ctLaplaceContinueLpg", function(orig) function(module, cont) {
+    REC$cont <- cont
+    orig(module, cont)
   })
 )
 
 # ---- 3. warm-up ----------------------------------------------------------------------
+# The timed fit itself, run once first: same data, arguments, start and seed.
+# Until 2026-09-26 this was a fit on a slice of the subjects capped at
+# `maxiter = 5`, which reaches only the stages a five-iteration fit reaches, so
+# every later one -- the Newton finish, the certification, the quadrature
+# continuation -- compiled inside the timed fit, and which of them did changed
+# with the build: gA1 read 6.9 s at one build and 113 s at the next with
+# identical counts, and the same fit run twice in one session took 207.9 s and
+# then 7.4 s. Only the fit itself is guaranteed to reach exactly the stages the
+# timed fit will. It doubles a cell's fitting time. The two fits must also
+# agree, since nothing is meant to carry from one fit to the next, and the row
+# says whether they did (`warm_dx`, `warm_dll`). BENCH_WARM=0 skips it.
 if (WARM && isTRUE(V$fit)) {
   t0 <- .now()
   w <- tryCatch({
-    sl <- bench_slice(dat, P$idcol)
-    set.seed(1L)
-    suppressWarnings(suppressMessages(do.call(ctFit, fitargs(sl, S$inits,
-      list(maxiter = 5L)))))
-    "ok"
-  }, error = function(e) conditionMessage(e))
-  rec$warm <- list(secs = .now() - t0, result = w)
+    set.seed(S$seed)
+    setTimeLimit(elapsed = CAP, transient = TRUE)
+    wf <- suppressWarnings(suppressMessages(do.call(ctFit, fitargs(dat, S$inits))))
+    setTimeLimit()
+    list(result = "ok", raw = as.numeric(wf$estimate$raw),
+      loglik = .num1(wf$estimate$loglik), logposterior = .num1(wf$estimate$logposterior),
+      iterations = .int1(wf$optim$iterations), g_calls = .int1(wf$optim$g_calls))
+  }, error = function(e) { setTimeLimit(); list(result = conditionMessage(e)) })
+  rec$warm <- c(list(secs = .now() - t0), w)
   REC$stages <- list(); REC$runs <- list(); REC$hessians <- list(); REC$post <- list()
-  .stamp(sprintf("WARM %.1fs %s", rec$warm$secs, substr(w, 1, 120)))
+  REC$cont <- NULL; REC$continue <- NULL
+  .stamp(sprintf("WARM %.1fs %s", rec$warm$secs, substr(w$result, 1, 120)))
+  # A warm-up that ran out of time says the fit will too, and its Julia may
+  # still be computing with nobody to answer: stop it, as a timed-out fit is.
+  if (grepl("elapsed time limit", w$result)) {
+    rec$status <- "timeout"
+    rec$error <- paste0("warm-up fit: ", w$result)
+    save_rec()
+    if (is.finite(rec$julia_pid %||% NA)) try(tools::pskill(rec$julia_pid), silent = TRUE)
+    .stamp("DONE", CELL$id, rec$status)
+    quit(save = "no", status = 0)
+  }
 }
 fresh_objectives()
 
@@ -367,6 +436,7 @@ if (isTRUE(V$fit)) {
   rec$warnings <- warns; rec$messages <- msgs
   rec$stages <- REC$stages; rec$runs <- REC$runs; rec$hessian_calls <- REC$hessians
   rec$post_secs <- REC$post
+  rec$continue_before <- REC$continue
   if (inherits(fit, "error")) {
     rec$status <- if (grepl("elapsed time limit", conditionMessage(fit))) "timeout" else "error"
     rec$error <- paste0("fit: ", conditionMessage(fit))
@@ -525,6 +595,96 @@ if (DOREF && !is.null(est) && length(est) == npar && all(is.finite(est))) {
 }
 rec$refs <- refs
 
+# ---- 5b. the continuation's Hessian against cheaper ones --------------------------
+# Only where the quadrature continuation reached its fixed point and its own
+# Hessian became the fit's. Four curvatures: the continuation's (central
+# differences of the hybrid's exact gradient, 2 npar gradients: what the fit
+# reports), the same by forward differences (npar + 1), the Laplace Hessian at
+# the continuation's estimate (2 npar Laplace gradients), and the Laplace
+# Hessian the fit already held at the Laplace optimum (free). Standard errors
+# from each by one rule -- the inverse on the directions whose curvature is
+# above 1e-8 of the largest -- and each one's largest relative difference from
+# the continuation's. Timed here, outside the fit, one after another.
+bench_se <- function(H) {
+  if (!is.matrix(H) || any(!is.finite(H))) return(NULL)
+  I <- -(H + t(H)) / 2
+  e <- eigen(I, symmetric = TRUE)
+  keep <- e$values > 1e-8 * max(e$values)
+  if (!any(keep)) return(NULL)
+  V <- e$vectors[, keep, drop = FALSE]
+  list(se = sqrt(pmax(0, rowSums(sweep(V^2, 2, e$values[keep], "/")))),
+    negative = sum(e$values < -1e-8 * max(abs(e$values))), kept = sum(keep))
+}
+se_rel <- function(a, b) {
+  if (is.null(a) || is.null(b) || length(a$se) != length(b$se)) return(NA_real_)
+  ok <- b$se > 0 & is.finite(a$se) & is.finite(b$se)
+  if (!any(ok)) NA_real_ else max(abs(a$se[ok] / b$se[ok] - 1))
+}
+cse <- list()
+Hq <- if (!is.null(fit)) fit$laplace$correction$hessian else NULL
+if (!is.null(REC$cont) && is.matrix(Hq) && !is.null(REC$continue)) {
+  cse <- tryCatch({
+    setTimeLimit(elapsed = REFCAP, transient = TRUE)
+    x <- as.numeric(fit$estimate$raw)
+    out <- list(delta_se = suppressWarnings(as.numeric(fit$laplace$correction$delta_se)))
+    t0 <- .now()
+    Hc <- matrix(as.numeric(jget(jcall("ctsem_laplace_continuation_hessian", REC$cont,
+      jvec(x)))), npar, npar)
+    out$secs_central <- .now() - t0
+    out$central_repro <- max(abs(Hc - Hq))
+    t0 <- .now()
+    Hf <- tryCatch(matrix(as.numeric(jget(jcall("bench_continuation_hessian_forward",
+      REC$cont, jvec(x)))), npar, npar), error = function(e) NULL)
+    out$secs_forward <- .now() - t0
+    t0 <- .now()
+    Hlx <- tryCatch(ctsem:::.ctBackendHessianAt(fit$model_spec, x), error = function(e) NULL)
+    out$secs_laplace_x <- .now() - t0
+    Hl0 <- REC$continue$hessian
+    sq <- bench_se(Hq)
+    out$se <- list(quadrature = sq$se, forward = bench_se(Hf)$se,
+      laplace_x = bench_se(Hlx)$se, laplace_est = bench_se(Hl0)$se,
+      reported = as.numeric(fit$estimate$se %||% NA_real_),
+      reported_before = REC$continue$se)
+    out$negative <- c(quadrature = sq$negative %||% NA, forward = bench_se(Hf)$negative %||% NA,
+      laplace_x = bench_se(Hlx)$negative %||% NA, laplace_est = bench_se(Hl0)$negative %||% NA)
+    out$rel <- c(forward = se_rel(bench_se(Hf), sq), laplace_x = se_rel(bench_se(Hlx), sq),
+      laplace_est = se_rel(bench_se(Hl0), sq),
+      reported = se_rel(list(se = out$se$reported), sq))
+    out$hessians <- list(quadrature = Hq, forward = Hf, laplace_x = Hlx, laplace_est = Hl0)
+    out
+  }, error = function(e) list(error = conditionMessage(e)))
+  setTimeLimit()
+  .stamp(sprintf("CONTINUATION HESSIAN central %.1fs forward %.1fs laplace-at-x %.1fs; max rel se diff: forward %s laplace_x %s laplace_est %s %s",
+    cse$secs_central %||% NA, cse$secs_forward %||% NA, cse$secs_laplace_x %||% NA,
+    format(signif(cse$rel[["forward"]] %||% NA, 3)), format(signif(cse$rel[["laplace_x"]] %||% NA, 3)),
+    format(signif(cse$rel[["laplace_est"]] %||% NA, 3)),
+    if (!is.null(cse$error)) paste("ERROR", cse$error) else ""))
+}
+rec$continuation_se <- cse
+REC$cont <- NULL
+
+# ---- 5c. the overshoot probe's cost at the end point ------------------------------
+# What one run's verdict probe costs here: `ctsem_pullback` runs the same probe
+# (`_ctsem_overshot`, the default mode) at the estimate, plus one evaluation
+# there. Once per cell, outside the fit, on a fresh objective. Times the number
+# of engine runs it estimates the probe's share of the fit; the `noprobe`
+# variant measures that directly on a few cells.
+probe <- list()
+if (!is.null(fit) && length(est) == npar && all(is.finite(est))) {
+  probe <- tryCatch({
+    setTimeLimit(elapsed = REFCAP, transient = TRUE)
+    fresh_objectives()
+    obj <- ctsem:::.ctJuliaObjective(fit)
+    t0 <- .now()
+    pb <- jget(jcall("ctsem_pullback", obj, jvec(est), tolerance = 1e-6))
+    list(secs = .now() - t0, found = .lgl1(pb$found), gain = .num1(pb$gain))
+  }, error = function(e) list(error = conditionMessage(e)))
+  setTimeLimit()
+  .stamp(sprintf("PROBE at the estimate %.2fs, found %s", probe$secs %||% NA,
+    format(probe$found %||% NA)))
+}
+rec$probe <- probe
+
 # ---- the row ---------------------------------------------------------------------------
 st <- rec$stages %||% list()
 kinds <- vapply(st, function(s) s$kind, "")
@@ -593,7 +753,30 @@ rec$row <- data.frame(
   nweak = .int1(rec$identifiability$nweak),
   warnings = length(warns), first_warning = if (length(warns)) substr(warns[1], 1, 200) else NA_character_,
   opcount_exp = .num1(rec$opcounts[["exp"]] %||% NA), opcount_frechet = .num1(rec$opcounts[["frechet"]] %||% NA),
-  instrumented = all(rec$instrumented),
+  instrumented = all(rec$instrumented, na.rm = TRUE),
+  warm_dx = if (length(rec$warm$raw) && length(rec$warm$raw) == length(est)) .fin(max(abs(rec$warm$raw - est))) else NA_real_,
+  warm_dll = .num1(rec$estimate$logposterior) - .num1(rec$warm$logposterior %||% NA),
+  runs_overshot = sum(vapply(runs, function(r) isTRUE(r$overshot), logical(1))),
+  overshot_maxabs_min = .fin(suppressWarnings(min(vapply(runs, function(r)
+    if (isTRUE(r$overshot)) .num1(r$maxabs_raw) else NA_real_, 0), na.rm = TRUE))),
+  runs_maxabs_lt2 = sum(vapply(runs, function(r) isTRUE(.num1(r$maxabs_raw) < 2), logical(1))),
+  maxabs_raw_max = .fin(suppressWarnings(max(vapply(runs, function(r) .num1(r$maxabs_raw), 0),
+    na.rm = TRUE))),
+  # Runs whose verdict probed: not the prior warm-up's (it runs with the probe
+  # off), not one outside an optimiser stage, and none under `noprobe`.
+  probe_runs = if (identical(V$optimcontrol$overshoot, "off")) 0L else
+    sum(vapply(runs, function(r) { k <- .int1(r$stage)
+      is.finite(k) && k >= 1L && k <= length(st) && !identical(st[[k]]$kind, "warmup")
+    }, logical(1))),
+  probe_secs = .num1(probe$secs %||% NA), probe_found = .lgl1(probe$found),
+  lapcorr_continuation = .chr1(corr$continuation),
+  lapcorr_secs = .num1(corr$seconds["total"]), lapcorr_gradients = .num1(corr$evaluations["gradients"]),
+  cont_hessian = is.matrix(corr$hessian),
+  cont_delta_se_max = .fin(suppressWarnings(max(abs(as.numeric(cse$delta_se)), na.rm = TRUE))),
+  hess_secs_central = .num1(cse$secs_central %||% NA), hess_secs_forward = .num1(cse$secs_forward %||% NA),
+  hess_secs_laplace_x = .num1(cse$secs_laplace_x %||% NA),
+  se_rel_forward = .num1(cse$rel["forward"]), se_rel_laplace_x = .num1(cse$rel["laplace_x"]),
+  se_rel_laplace_est = .num1(cse$rel["laplace_est"]), se_rel_reported = .num1(cse$rel["reported"]),
   stringsAsFactors = FALSE)
 save_rec()
 .stamp("DONE", CELL$id, rec$status)

@@ -1,0 +1,23 @@
+# speedcheck grid: the speed job's build against the baseline at juliaFit 908b068d,
+# one seed of each cell the noprobe variant was paired on, plus gB2 (a continuation
+# that reports its own Hessian). Run with BENCH_REF=0: the check is the raw end
+# point and the standard errors, paired with the baseline's own cells.
+#
+control.1                               panel        1    augmented  zeros                    control
+cf_binary.aug.d1.s1.default             cf_binary    1    augmented  default:1                default
+cf_binary.lap.d1.s1.default             cf_binary    1    laplace    default:1                default
+cf_ordinal.aug.d1.s1.default            cf_ordinal   1    augmented  default:1                default
+cf_ordinal.lap.d1.s1.default            cf_ordinal   1    laplace    default:1                default
+gA14.lap.cfg.s1.default                 gA14         cfg  laplace    default:1                default
+gB2.lap.cfg.s1.default                  gB2          cfg  laplace    default:1                default
+gB8.lap.cfg.s1.default                  gB8          cfg  laplace    default:1                default
+gC2.lap.cfg.s1.default                  gC2          cfg  laplace    default:1                default
+gD1.lap.cfg.s1.default                  gD1          cfg  laplace    default:1                default
+acnonlin.lap.cfg.s1.default             acnonlin     cfg  laplace    default:1                default
+mvmix.lap.cfg.s1.default                mvmix        cfg  laplace    default:1                default
+mvmix.aug.cfg.s1.default                mvmix        cfg  augmented  default:1                default
+jflat.lap.cfg.s1.default                jflat        cfg  laplace    default:1                default
+bigp.aug.d1.s1.default                  bigp         1    augmented  default:1                default
+panel.aug.d1.s1.default                 panel        1    augmented  default:1                default
+ordinal.lap.d1.s1.default               ordinal      1    laplace    default:1                default
+anomS2.lap.cfg.s1.default               anomS2       cfg  laplace    default:1                default

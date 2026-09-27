@@ -336,6 +336,14 @@
 #' The first call downloads and precompiles those dependencies (roughly 120 MB
 #' and a minute or two); later calls in new sessions reuse them.
 #'
+#' Separately, the first fit of a model shape in each R session compiles code
+#' specialised to that model, so it takes longer than later fits of the same
+#' shape: on one Laplace model 85 seconds against 25 for every later fit, and
+#' the first quadrature correction a further 15 to 20 seconds. The precompiled
+#' engine cannot anticipate a model's own functions, so this is paid once per
+#' shape per session rather than once per fit; time a fit after one warm-up
+#' fit, not from a fresh session.
+#'
 #' If \pkg{JuliaConnectoR} or Julia itself is missing, this offers to install it
 #' rather than failing -- the same thing \code{\link{ctJuliaInstall}} does, which
 #' is the function to reach for when setting the backend up deliberately, or
@@ -3972,6 +3980,16 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # Hessian is then the certification's, not an extra one. Not on a budget
     # stage (the prior warm-up, whose verdict nobody reads), nor where nothing
     # certifies -- `estonly`, `certify = FALSE`, the state-explicit route.
+    #
+    # A certificate without the Hessian for the doors that need no standard
+    # errors (conjugate gradients on Hessian-vector products, plan P8) was
+    # considered and not built, because those doors form no Hessian to save:
+    # folds and profile points pass `certify = FALSE`, which zeroes `gap_tol`
+    # and with it the finish; `estonly` forms none on the Laplace route and on
+    # the augmented only the finish's exact ones, which its Newton steps need
+    # (optimiser bench at juliaFit 908b068d, dev1: no Hessian in any Laplace
+    # estonly cell). Restarts form one each, as the finish's metric; they are
+    # opt-in and run only for a fit that did not certify.
     certify = !state_explicit && !isTRUE(optimcontrol$estonly) &&
       !identical(optimcontrol$certify, FALSE) && !isTRUE(progress_budget),
     # The endgame's two rules, passed from here so one number serves the

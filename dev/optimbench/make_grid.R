@@ -62,10 +62,12 @@ hist <- c("gA1", "gB2", "gC2", "gD1", "gN1", "anomS1")
 
 write_grid("baseline", list(
   control(1),
-  # carefulfit / gaptol design: both routes, with and without the priors that
-  # switch the warm-up off at this build.
+  # carefulfit / gaptol design: both routes, with and without the prior
+  # warm-up. Until juliaFit 450dd2f8 it ran only under priors = FALSE, which
+  # is what the first baseline paired against; it runs by default now, so the
+  # pair is the default against `nocareful`.
   cells(paste0("cf_", c("gaussian", "binary", "ordinal", "mixed")), "1",
-    c("augmented", "laplace"), seeds(2), c("default", "priorsFALSE")),
+    c("augmented", "laplace"), seeds(2), c("default", "nocareful")),
   cells(gated, "cfg", "laplace", seeds(3), "default"),
   cells(binary, "cfg", "laplace", seeds(3), "default"),
   # test fixtures
@@ -85,6 +87,21 @@ write_grid("baseline", list(
   # references.csv (a check of data, model, prior term and reference code)
   do.call(rbind, lapply(hist, function(m) cell(m, "cfg", "laplace",
     paste0("stored:hist_", m), "evalonly"))),
+  # The speed job's factors (2026-09-26), one seed each, paired with the
+  # default cells above: the overshoot probe off, on one cell of every
+  # family whose fit is long enough to time; and the optimiser alone
+  # (`estonly`), which forms no certification Hessian, on both routes.
+  cells(c("cf_binary", "cf_ordinal"), "1", c("augmented", "laplace"),
+    seeds(1), "noprobe"),
+  cells(c("gA14", "gB8", "gC2", "gD1", "acnonlin", "jflat", "anomS2"), "cfg",
+    "laplace", seeds(1), "noprobe"),
+  cells("mvmix", "cfg", c("laplace", "augmented"), seeds(1), "noprobe"),
+  cells(c("bigp", "panel"), "1", "augmented", seeds(1), "noprobe"),
+  cells("ordinal", "1", "laplace", seeds(1), "noprobe"),
+  cells(c("cf_ordinal", "cf_mixed"), "1", c("augmented", "laplace"),
+    seeds(1), "estonly"),
+  cells(c("gA1", "gD1"), "cfg", "laplace", seeds(1), "estonly"),
+  cells("mvmix", "cfg", c("laplace", "augmented"), seeds(1), "estonly"),
   control(3)),
   "baseline grid: every family at the build's defaults, few seeds (make_grid.R)")
 

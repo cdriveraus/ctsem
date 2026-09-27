@@ -87,6 +87,15 @@ struct CTSEMSampler{L}
     # model is frequently one study, and a unit axis then leaves every core but
     # one idle. Built once here because the alternative is rebuilding it on
     # every leapfrog step.
+    #
+    # It costs nothing measurable serially, which was once suspected: a chain
+    # ran 16% slower on one core after this change (review/laplace-parallel-
+    # axis.md). One density call at a fixed point (dev1, one unit of 60
+    # subjects, 90 parameters, one worker) took 3.87 ms before the subject axis
+    # (c5c99649), 3.83 after it (4e962182) and 2.72 at 908b068d, where looping
+    # unit-major with one view per unit and accumulating straight into
+    # `gradient` also took 2.72; the same held in a 20-thread session with the
+    # chunk ceiling at one. The chain's 16% is not in the density.
     flat_unit::Vector{Int}
     flat_member::Vector{Int}
 end

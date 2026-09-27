@@ -20,8 +20,7 @@
 #   jflat                 tests/testthat/test-julia-convergence.R
 #
 # `bench_problem(model)` returns list(data = function(dataseed), model =
-# function(), routes = allowed routes, slice = function(d) warm-up subset,
-# idcols = id column(s)). Nothing in here touches the optimiser.
+# function(), routes = allowed routes, idcols = id column(s)). Nothing in here touches the optimiser.
 
 expmA <- function(A) as.matrix(Matrix::expm(A))
 
@@ -498,15 +497,6 @@ jflat_model <- function() suppressMessages(ctModel(silent = TRUE,
   DRIFT = "drift|-log1p_exp(-param)|TRUE"))
 
 # ---- the registry ----------------------------------------------------------------
-
-# Subset of the data a warm-up fit runs on: the first `k` groups at the top
-# level, so a nested model keeps whole studies and a single long series keeps a
-# prefix of its rows.
-bench_slice <- function(d, idcol, k = 12L, rows = 200L) {
-  ids <- unique(d[[idcol]])
-  if (length(ids) == 1L) return(d[seq_len(min(nrow(d), rows)), , drop = FALSE])
-  d[d[[idcol]] %in% ids[seq_len(min(length(ids), k))], , drop = FALSE]
-}
 
 bench_problem <- function(model) {
   fixed <- function(gen) function(dataseed) gen()  # config fixes its own data

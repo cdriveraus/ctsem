@@ -170,6 +170,21 @@ ContinuousTimeSEM.ctsem_evaluate(m::_OvershotMock, x::AbstractVector;
     @test ContinuousTimeSEM._CTSEM_OVERSHOOT_PROBE[] === :magnitude
 end
 
+# The end-of-run verdict skips the probe where every coordinate is small and
+# nothing is flagged (`_CTSEM_OVERSHOOT_MIN_RAW`). The mock peaks at zero and
+# the estimate sits at 1.5, so a probe WOULD find a gain there: what is tested
+# is that it is not asked, and that a flag or one large coordinate asks it.
+@testset "the end-of-run probe is skipped only where every coordinate is small" begin
+    mock = _OvershotMock(0.0)
+    verdict(x, flagged) = ContinuousTimeSEM._ctsem_optimise_verdict(mock, x,
+        zeros(length(x)), -sum(abs2, x), 1e-9, 1e-9, 0.0, flagged, 1e-8, 1e-6)
+    @test !verdict([1.5, -0.5], Int[]).overshot
+    @test verdict([1.5, -0.5], [1]).overshot
+    @test verdict([2.5, -0.5], Int[]).overshot
+    @test ContinuousTimeSEM._ctsem_overshoot_skippable([1.9, -1.9], Int[])
+    @test !ContinuousTimeSEM._ctsem_overshoot_skippable([NaN, 0.0], Int[])
+end
+
 # The reason the probe is not one coordinate at a time. A degenerate corner is
 # left by moving a whole block together, and every single-coordinate move out of
 # one is worse than staying -- which is what a collapsed population scale and
@@ -546,13 +561,15 @@ end
 #
 # `_ctsem_optimise_verdict` needs no usable objective here. The probe does now
 # evaluate whatever it is handed -- it no longer returns early on an empty
-# saturation flag -- but `nothing` has no `ctsem_evaluate` method, so every
-# probe point is refused and no gain is claimed. That is the same guard a real
-# objective's non-finite point gets, exercised on the cheapest possible
-# objective, and it leaves the convergence rule testable on its own.
+# saturation flag, and the estimate is put at raw 3 so that the magnitude gate
+# (`_CTSEM_OVERSHOOT_MIN_RAW`) does not skip it -- but `nothing` has no
+# `ctsem_evaluate` method, so every probe point is refused and no gain is
+# claimed. That is the same guard a real objective's non-finite point gets,
+# exercised on the cheapest possible objective, and it leaves the convergence
+# rule testable on its own.
 @testset "convergence is judged on the objective still available" begin
     verdict(gain, last = Inf; g = 1.0e3, tol = 1.0e-6) =
-        ContinuousTimeSEM._ctsem_optimise_verdict(nothing, [1.0], [0.0],
+        ContinuousTimeSEM._ctsem_optimise_verdict(nothing, [3.0], [0.0],
             -1483.0, g, gain, last, Int[], 1e-8, tol)
 
     # Below the tolerance is converged, above it is not -- and the gradient is

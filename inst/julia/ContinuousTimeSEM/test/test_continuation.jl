@@ -214,12 +214,26 @@ end
             @test (label, j, isapprox(hyb.gradient[j], lap.gradient[j];
                 rtol=1e-6, atol=1e-8)) == (label, j, true)
         end
-        H = ctsem_laplace_continuation_hessian(o, theta)
+        # Central differences, as the Laplace Hessian is taken, match it to the
+        # finite-difference error. The default forward scheme matches those to
+        # its own truncation, which is O(step) in absolute terms -- the third
+        # derivative times the step, whatever the size of the entry -- so it is
+        # held to a share of the matrix's scale rather than of each entry's:
+        # a small cross term can differ by more than 0.5% of itself, as one
+        # here does, where nothing a covariance reads moves.
+        H = ctsem_laplace_continuation_hessian(o, theta; scheme=:central)
         Hl = ctsem_laplace_hessian(laplace, theta)
         for i in eachindex(theta), j in eachindex(theta)
             @test (label, i, j, isapprox(H[i, j], Hl[i, j]; rtol=1e-4, atol=1e-6)) ==
                 (label, i, j, true)
         end
+        Hf = ctsem_laplace_continuation_hessian(o, theta)
+        scale = maximum(abs, H)
+        for i in eachindex(theta), j in eachindex(theta)
+            @test isapprox(Hf[i, j], H[i, j]; atol=1e-3 * scale)
+        end
+        @test_throws ArgumentError ctsem_laplace_continuation_hessian(o, theta;
+            scheme=:backward)
     end
 end
 
