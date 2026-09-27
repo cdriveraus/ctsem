@@ -4638,8 +4638,21 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # effect on DRIFT or a variance, or an outer level, and all of it before the
   # default became 'randomCorr'. A change to the cap is a bench run, not an
   # edit.
+  #
+  # On by default only when some indicator is not Gaussian (binary, ordinal,
+  # count or censored), Charles's decision of 2026-09-27. The benefits measured
+  # were on binary, ordinal and mixed measurement models -- on the simulation
+  # study, binary laplace fits were rescued in 18 of 30 data sets while the
+  # Gaussian, mixed and ordinal cells were unchanged -- and the one measured
+  # loss is Gaussian: on AnomAuth (random CINT and DRIFT, 800 subjects) the
+  # warmed start leads to a worse basin, 0.73 and 2.26 exact nats short on the
+  # bench's S1 and S2, where the unwarmed fit reaches the best known point
+  # (review/OPTIM-next-2026-09-27.md). TRUE or FALSE forces it either way.
   careful <- optimcontrol$carefulfit
-  if (is.null(careful)) careful <- TRUE
+  defaultcareful <- is.null(careful)
+  if (defaultcareful) {
+    careful <- any(as.integer(model_spec$manifesttype) != 0L)
+  }
   warmiter <- if (isTRUE(careful)) 10L else
     if (is.numeric(careful) && length(careful) == 1L && careful >= 1)
       as.integer(careful) else 0L
@@ -4654,7 +4667,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   fitscope <- if (identical(priorscope, "randomCorr")) "randomCorr" else
     if (isTRUE(priors)) "all" else "none"
   if (warmiter < 1L) {
-    warmskip <- "switched off by optimcontrol$carefulfit"
+    warmskip <- if (defaultcareful) "off by default: every indicator is Gaussian" else
+      "switched off by optimcontrol$carefulfit"
   } else if (!is.null(inits) && !identical(inits, "random")) {
     # `stanoptimis` turns `carefulfit` off when starting values were supplied,
     # since the point of the pass is to produce some. Overriding a starting
