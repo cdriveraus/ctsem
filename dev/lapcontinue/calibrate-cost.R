@@ -10,9 +10,10 @@
 # reference: a trapezoid over the soft directions for units of dimension <= 3,
 # importance sampling for the nested ones); then the correction applied post
 # hoc twice to that same fit, timed, with the skip off in both:
-#   old  stop_gain = 0: rounds stop on the fit's certification tolerance, or
-#        on running out of rounds or attempts, as at juliaFit c74b500e;
-#   new  the stopping rule on predicted gain in nats.
+#   old  stop_gain = 0 and 100 iterations a round: rounds stop on the fit's
+#        certification tolerance, or on running out of rounds or attempts, as
+#        at juliaFit c74b500e (plus one evaluation cache, which only saves);
+#   new  the defaults: the stopping rules on predicted gain in nats.
 # Writes <outdir>/calibrate.tsv, one line per case, and <outdir>/<case>.rds.
 # One Julia thread; the first case is run once untimed so that no timed
 # correction pays compilation.
@@ -61,9 +62,14 @@ reference <- function(fit, x) {
   sum(R) + prior
 }
 controls <- list(
-  old = utils::modifyList(.ctLaplaceContinueDefaults, list(skip_gain = 0, stop_gain = 0)),
+  old = utils::modifyList(.ctLaplaceContinueDefaults, list(skip_gain = 0,
+    stop_gain = 0, maxiter = 100L)),
   new = utils::modifyList(.ctLaplaceContinueDefaults, list(skip_gain = 0)))
 warmed <- FALSE
+# CAL_FITS names a directory where the Laplace fits are saved and, on a rerun,
+# loaded: the correction's rules can then be compared without refitting.
+FITS <- Sys.getenv("CAL_FITS", "")
+if (nzchar(FITS)) dir.create(FITS, showWarnings = FALSE, recursive = TRUE)
 for (case in which) {
   f <- file.path(OUT, paste0(case, ".rds"))
   if (file.exists(f)) { stamp("have", case); next }
@@ -77,11 +83,17 @@ for (case in which) {
     npar <- .ctBackendNpar(spec)
     rawnames <- suppressWarnings(.ctBackendRawParameterNames(list(model_spec = spec), npar))
     st <- bench_start(CASES[[case]], npar, rawnames)
-    t0 <- now(); set.seed(st$seed)
-    off <- suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
-      intoverpop = "laplace", cores = 1, inits = st$inits,
-      optimcontrol = list(laplace_correct = FALSE, finishsamples = 100))))
-    fit_secs <- now() - t0
+    saved <- if (nzchar(FITS)) file.path(FITS, paste0(case, "_fit.rds")) else ""
+    if (nzchar(saved) && file.exists(saved)) {
+      stored <- readRDS(saved); off <- stored$fit; fit_secs <- stored$secs
+    } else {
+      t0 <- now(); set.seed(st$seed)
+      off <- suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
+        intoverpop = "laplace", cores = 1, inits = st$inits,
+        optimcontrol = list(laplace_correct = FALSE, finishsamples = 100))))
+      fit_secs <- now() - t0
+      if (nzchar(saved)) saveRDS(list(fit = off, secs = fit_secs), saved)
+    }
     x0 <- as.numeric(off$estimate$raw)
     exact0 <- reference(off, x0)
     if (!warmed) {
