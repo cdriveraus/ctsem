@@ -647,7 +647,9 @@ print.ctLaplaceCorrection <- function(x, ...) {
 #            model predicts from the Laplace optimum (the residual there);
 #            below `skip_gain` nothing moves (status `skipped`).
 #   stop     on predicted gain in nats, as the optimiser stops: when the
-#            residual is below `stop_gain` (converged); when the most a round
+#            residual is below `stop_gain` and the last kept round realised
+#            less than it (converged; a round that raised the re-placed
+#            objective by more is kept even if the residual rose); when the most a round
 #            can promise inside its region is below it (stalled: rejections
 #            have shrunk the region); or when a kept round raised the
 #            re-placed objective by less than it (stalled: the rounds are
@@ -776,9 +778,9 @@ print.ctLaplaceCorrection <- function(x, ...) {
   status <- "rounds"
   rows <- list()
   B <- JuliaConnectoR::juliaPut(as.matrix(basis))
-  optimise <- function(from, stationary = FALSE) get(
+  optimise <- function(from, stationary = FALSE, tol = bar) get(
     module$ctsem_laplace_continuation_optimize(cont, .ctJuliaNumericVector(from),
-      B, radius, maxiter = as.integer(control$maxiter), tol = bar,
+      B, radius, maxiter = as.integer(control$maxiter), tol = tol,
       stationary_only = stationary))
   row <- function(round, residual_after, keep, flagged, gain = NA_real_) data.frame(
     round = attempts, radius = radius,
@@ -793,12 +795,21 @@ print.ctLaplaceCorrection <- function(x, ...) {
   # whether any round runs at all (`skip_gain`).
   residual <- as.numeric(optimise(x, stationary = TRUE)$start_gain)
   predicted <- residual
+  # What the last kept round raised the re-placed objective by; none yet.
+  realised <- 0
   if (!is.finite(residual)) {
     status <- "failed"
   } else if (residual < skip_gain) {
     status <- "skipped"
   } else repeat {
-    if (residual < bar) { status <- "converged"; break }
+    # The residual is a Newton gain in the Laplace fit's metric, and where the
+    # quadrature objective is flatter than that it understates what is left:
+    # gated-gaps C2 stopped at a residual of 0.003 with 0.1 exact nats still to
+    # gain. So a residual under the bar is converged only when the last round
+    # also realised less than it; while rounds keep realising more, they go
+    # on, each taking its step on the curvature its own L-BFGS measures.
+    rising <- stop_gain > 0 && realised >= stop_gain
+    if (residual < bar && !rising) { status <- "converged"; break }
     if (kept >= control$rounds) { status <- "rounds"; break }
     if (attempts >= control$attempts) { status <- "attempts"; break }
     # What the next round can promise inside its region: the Newton gain when
@@ -808,9 +819,13 @@ print.ctLaplaceCorrection <- function(x, ...) {
     # below it; before this, those rounds ran on until the attempts ran out.
     reach <- sqrt(2 * residual)
     promise <- if (reach <= radius) residual else radius * reach - radius^2 / 2
-    if (stop_gain > 0 && promise < stop_gain) { status <- "stalled"; break }
+    if (stop_gain > 0 && promise < stop_gain && !rising) {
+      status <- "stalled"; break
+    }
     attempts <- attempts + 1L
-    round <- optimise(x)
+    # Below the bar, the round's own tolerance goes below the residual, so
+    # that it takes its step rather than reporting itself stationary.
+    round <- optimise(x, tol = if (residual < bar) residual / 100 else bar)
     residual <- as.numeric(round$start_gain)
     if (isTRUE(round$stationary)) {
       status <- "converged"
@@ -831,14 +846,23 @@ print.ctLaplaceCorrection <- function(x, ...) {
       .ctJuliaNumericVector(xn)))
     after <- as.numeric(optimise(xn, stationary = TRUE)$start_gain)
     gain <- as.numeric(placed$quadrature) - value
-    keep <- is.finite(after) && is.finite(gain) && after < residual &&
-      gain >= -as.numeric(control$value_tol)
+    # Kept when the residual fell without the re-placed value falling, or --
+    # whatever the residual did -- when that value rose by more than the bar.
+    # On gated-gaps D3 two rounds that raised it by 0.087 and 0.020 were
+    # rejected for a residual that rose, the region shrank, and the rounds
+    # stopped 0.6 exact nats short. A kept rise is a rise in the objective the
+    # fit reports, so this cannot walk downhill, and each such round gains at
+    # least the bar, so it cannot cycle.
+    keep <- is.finite(after) && is.finite(gain) &&
+      ((after < residual && gain >= -as.numeric(control$value_tol)) ||
+        (stop_gain > 0 && gain > stop_gain))
     rows[[length(rows) + 1L]] <- row(round, after, keep, placed$nflagged, gain)
     if (verbose > 0L) {
       message(sprintf(paste0("Laplace continuation round %d: radius %.3g, ",
         "residual %.3g -> %.3g, value %+.4g, %s"), attempts, radius, residual,
         after, gain, if (keep) "kept" else "rejected"))
     }
+    realised <- if (keep) gain else 0
     if (keep) {
       kept <- kept + 1L
       x <- xn

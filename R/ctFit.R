@@ -810,9 +810,11 @@ T0VARredundancies <- function(ctm) {
 #' Laplace optimum in rounds, each confined to a region measured in the fit's
 #' standard errors, the nodes placed afresh after each, until the gradient with
 #' the nodes placed at the estimate -- the quadrature's own estimate of the
-#' exact score -- promises less than 0.005 nats. A round after which that
-#' gradient promises more than before, or after which the objective with its
-#' nodes placed afresh is lower, is undone and the region shrunk; when the
+#' exact score -- promises less than 0.005 nats and the last round gained less
+#' than that. A round after which the objective with its nodes placed afresh
+#' is lower, or after which that gradient promises more than before without
+#' the objective having risen by 0.005 nats, is undone and the region shrunk;
+#' when the
 #' region can promise no more than 0.005 nats, or a round gains less than that,
 #' the correction stops short of that point, and \code{print(fit)} says so.
 #' When the gain it predicts before any round is under 0.005 nats -- a move of
