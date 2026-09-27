@@ -21,9 +21,12 @@
 #
 # Both routes compute the same quantity, each from the object its own
 # objective already builds, at a point the caller names. One pass over the
-# subjects, serial, and no LAPACK: the Laplace side reuses the unit curvature
-# and its block factorization, and the augmented side's backward pass solves
-# through the engine's own Cholesky.
+# subjects, split over the pool exactly as an evaluation is, and no LAPACK:
+# the Laplace side reuses the unit curvature and its block factorization, and
+# the augmented side's backward pass solves through the engine's own Cholesky.
+# Parallel for the same reason the objectives are: a serial pass costs what a
+# threaded evaluation costs times the thread count, which at twenty cores was
+# the difference between a check worth running and one that is not.
 
 """
     ctsem_effect_information(objective, values)
@@ -78,67 +81,85 @@ function ctsem_effect_information(laplace::CTSEMLaplaceObjective,
     # The modes below are solved at `theta`, so the diagnostics that read
     # `last_values` describe the point they were left at.
     laplace.last_values = theta
-    for U in 1:nunits
-        d = laplace.units.dims[U]
-        d == 0 && continue
-        converged[U] = _laplace_solve_unit_mode!(laplace, U, theta, Ls).converged
-        u = laplace.modes[U]
-        blocks = laplace.units.blocks[U]
-        M = _laplace_unit_curvature(laplace, U, theta, Ls, u)
-        if !all(b -> all(isfinite, b), M.diag)
-            mins[U] = NaN
-            continue
-        end
-        # The smallest eigenvalue exactly as `ctsem_laplace_conditioning`
-        # takes it, and before the factorization below, which shifts the
-        # diagonal of a curvature it has to repair.
-        if !_laplace_exceeds_identity(M, blocks)
-            mins[U] = d > _LAPLACE_EIGEN_MAXDIM[] ? NaN :
-                _ctsem_symeig(_laplace_block_dense(M, blocks, d)).values[1]
-        end
-        factored = _laplace_factor_repaired!(M, blocks)
-        factored.ok || continue
-        e = zeros(Float64, d)
-        for (m, i) in enumerate(laplace.units.members[U])
-            for l in 1:nlev
-                lv = spec.levels[l]
-                k = nrandomeffects(lv)
-                L = Ls[l]
-                r = size(L, 2)
-                (k == 0 || r == 0) && continue
-                # An outer group's effect is one vector shared by its members,
-                # so it is computed once.
-                g = lv.group[i]
-                filled[l][g] && continue
-                filled[l][g] = true
-                base = laplace.units.offsets[U][m][l]
-                # The group's block of M^-1, a column at a time, as
-                # `ctsem_laplace_modes` takes it: never the whole inverse.
-                block = zeros(Float64, r, r)
-                for t in 1:r
-                    fill!(e, 0.0)
-                    e[base + t] = 1.0
-                    x = _laplace_block_solve(factored.factors, factored.coupling,
-                        blocks, e)
-                    for q in 1:r
-                        block[q, t] = x[base + q]
-                    end
-                end
-                for j in 1:k
-                    posterior = 0.0
-                    for a in 1:r, b in 1:r
-                        posterior += L[j, a] * block[a, b] * L[j, b]
-                    end
-                    population = popvar[l][j]
-                    determined[l][g, j] = population > 0 ?
-                        1 - posterior / population : NaN
-                end
-            end
-        end
+    # One unit per item, handed out by the pool as the objective's own loop
+    # hands them out. Every write below is to this unit's own entries: its
+    # slot of `mins` and `converged`, and the rows of `determined` for groups
+    # inside it -- a group of any level lies wholly within one unit, since the
+    # outermost level's groups are the units. `filled` is a Vector{Bool} and
+    # not a BitVector for the same reason: neighbouring bits of one word
+    # written from two tasks would race, neighbouring bytes do not.
+    _laplace_parallel(laplace, 1:nunits) do U
+        _effect_information_unit!(laplace, U, theta, Ls, determined, popvar,
+            filled, mins, converged)
+        return true
     end
     return (determined=determined, popvar=popvar, min_eigenvalue=mins,
         converged=converged,
         nrandom=[nrandomeffects(lv) for lv in spec.levels])
+end
+
+"""One unit's share of `ctsem_effect_information` on the Laplace route."""
+function _effect_information_unit!(laplace::CTSEMLaplaceObjective, U::Int,
+    theta::Vector{Float64}, Ls, determined, popvar, filled, mins, converged)
+    spec = laplace.spec
+    nlev = length(spec.levels)
+    d = laplace.units.dims[U]
+    d == 0 && return nothing
+    converged[U] = _laplace_solve_unit_mode!(laplace, U, theta, Ls).converged
+    u = laplace.modes[U]
+    blocks = laplace.units.blocks[U]
+    M = _laplace_unit_curvature(laplace, U, theta, Ls, u)
+    if !all(b -> all(isfinite, b), M.diag)
+        mins[U] = NaN
+        return nothing
+    end
+    # The smallest eigenvalue exactly as `ctsem_laplace_conditioning` takes
+    # it, and before the factorization below, which shifts the diagonal of a
+    # curvature it has to repair.
+    if !_laplace_exceeds_identity(M, blocks)
+        mins[U] = d > _LAPLACE_EIGEN_MAXDIM[] ? NaN :
+            _ctsem_symeig(_laplace_block_dense(M, blocks, d)).values[1]
+    end
+    factored = _laplace_factor_repaired!(M, blocks)
+    factored.ok || return nothing
+    e = zeros(Float64, d)
+    for (m, i) in enumerate(laplace.units.members[U])
+        for l in 1:nlev
+            lv = spec.levels[l]
+            k = nrandomeffects(lv)
+            L = Ls[l]
+            r = size(L, 2)
+            (k == 0 || r == 0) && continue
+            # An outer group's effect is one vector shared by its members, so
+            # it is computed once.
+            g = lv.group[i]
+            filled[l][g] && continue
+            filled[l][g] = true
+            base = laplace.units.offsets[U][m][l]
+            # The group's block of M^-1, a column at a time, as
+            # `ctsem_laplace_modes` takes it: never the whole inverse.
+            block = zeros(Float64, r, r)
+            for t in 1:r
+                fill!(e, 0.0)
+                e[base + t] = 1.0
+                x = _laplace_block_solve(factored.factors, factored.coupling,
+                    blocks, e)
+                for q in 1:r
+                    block[q, t] = x[base + q]
+                end
+            end
+            for j in 1:k
+                posterior = 0.0
+                for a in 1:r, b in 1:r
+                    posterior += L[j, a] * block[a, b] * L[j, b]
+                end
+                population = popvar[l][j]
+                determined[l][g, j] = population > 0 ?
+                    1 - posterior / population : NaN
+            end
+        end
+    end
+    return nothing
 end
 
 function ctsem_effect_information(objective::CTSEMObjective, values::AbstractVector)
@@ -152,26 +173,42 @@ function ctsem_effect_information(objective::CTSEMObjective, values::AbstractVec
     (k == 0 || nsub == 0) &&
         return (determined=determined, priorvar=priorvar, nrandom=k)
     raw = collect(Float64, values)
-    ws = _init_continuous_ekf_workspace(Float64, sp)
-    n = _val(ws.state_dim)
-    m = _val(ws.manifest_dim)
-    # One subject's rows at a time, so the trace is sized to the longest
-    # subject rather than to the data.
     maxrows = maximum(size(sub.data, 2) for sub in subjects)
-    trace = CTSEMKalmanTrace(Float64, n, m, maxrows, 1, length(sp.mutables))
-    for (i, sub) in enumerate(subjects)
-        nobs = size(sub.data, 2)
-        trace.offset = 0
-        trace.current_subject = 1
-        value = _extended_kalman_filter_continuous!(ws, raw, sub.data,
-            collect(sub.timesteps), sp, sub.tdpreds, sub.tipreds, i,
-            sub.max_timestep, trace)
-        isfinite(value) || continue
-        smoothed = _effect_smoothed_initial_cov(trace, nobs, n)
-        for (j, s) in enumerate(states)
-            prior = trace.etacov[_CTSEM_KALMAN_PRIOR, 1, s, s]
-            priorvar[i, j] = prior
-            determined[i, j] = prior > 0 ? 1 - smoothed[s, s] / prior : NaN
+    # Contiguous chunks of subjects, each owning its workspace and trace, as
+    # the objective splits its own subject loop (`_ctsem_nchunks`); each
+    # subject writes only its own row of the two outputs.
+    run = function (range)
+        ws = _init_continuous_ekf_workspace(Float64, sp)
+        n = _val(ws.state_dim)
+        m = _val(ws.manifest_dim)
+        # One subject's rows at a time, so the trace is sized to the longest
+        # subject rather than to the data.
+        trace = CTSEMKalmanTrace(Float64, n, m, maxrows, 1, length(sp.mutables))
+        for i in range
+            sub = subjects[i]
+            nobs = size(sub.data, 2)
+            trace.offset = 0
+            trace.current_subject = 1
+            value = _extended_kalman_filter_continuous!(ws, raw, sub.data,
+                collect(sub.timesteps), sp, sub.tdpreds, sub.tipreds, i,
+                sub.max_timestep, trace)
+            isfinite(value) || continue
+            smoothed = _effect_smoothed_initial_cov(trace, nobs, n)
+            for (j, s) in enumerate(states)
+                prior = trace.etacov[_CTSEM_KALMAN_PRIOR, 1, s, s]
+                priorvar[i, j] = prior
+                determined[i, j] = prior > 0 ? 1 - smoothed[s, s] / prior : NaN
+            end
+        end
+        return nothing
+    end
+    nchunks = _ctsem_nchunks(nsub)
+    if nchunks <= 1
+        run(1:nsub)
+    else
+        ranges = _ctsem_chunk_ranges(nsub, nchunks)
+        Threads.@sync for c in 1:nchunks
+            Threads.@spawn run(ranges[c])
         end
     end
     return (determined=determined, priorvar=priorvar, nrandom=k)
