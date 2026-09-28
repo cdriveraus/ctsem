@@ -743,29 +743,64 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 #
 # The internals are resolved before anything is read: if they have moved, the
 # answer is "not gone", which is how the backend behaved before this existed.
+#
+# The message is read here rather than by JuliaConnectoR's `readOutput`, whose
+# length read loops on `readBin` until it has four bytes -- forever, at end of
+# file. A process that dies mid-message leaves exactly that, and on Linux every
+# SIGTERM does: Julia prints its signal report to stderr on the way out, so
+# the socket holds a stderr marker, part or all of a message, then end of
+# file. Windows ends a process without a word, which is why this only hung on
+# Linux, where test-julia-backend.R's killed-session test spun at full CPU.
 .ctJuliaPeerGone <- function(connection) {
   jc <- tryCatch({
     ns <- asNamespace("JuliaConnectoR")
-    list(con = get("pkgLocal", envir = ns)$con,
-      stdout = get("STDOUT_INDICATOR", envir = ns),
-      stderr = get("STDERR_INDICATOR", envir = ns),
-      read = get("readOutput", envir = ns))
+    list(stdout = get("STDOUT_INDICATOR", envir = ns),
+      stderr = get("STDERR_INDICATOR", envir = ns))
   }, error = function(e) NULL)
   if (is.null(jc)) return(FALSE)
   repeat {
     waiting <- tryCatch(socketSelect(list(connection), timeout = 0),
       error = function(e) NA)
     if (!isTRUE(waiting)) return(FALSE)
-    first <- tryCatch(suppressWarnings(readBin(connection, "raw", 1L)),
-      error = function(e) raw(0))
-    if (!length(first)) return(TRUE)
+    first <- .ctJuliaReadBytes(connection, 1L)
+    if (is.null(first)) return(TRUE)
     stream <- if (identical(first, jc$stdout)) stdout() else
       if (identical(first, jc$stderr)) stderr() else NULL
-    # `readOutput` reads JuliaConnectoR's own connection, so it can finish the
-    # message only when that is the connection being asked about.
-    if (is.null(stream) || !identical(connection, jc$con)) return(TRUE)
-    jc$read(writeTo = stream)
+    if (is.null(stream)) return(TRUE)
+    # JuliaConnectoR's framing: a four-byte length, then the text.
+    len <- .ctJuliaReadBytes(connection, 4L)
+    if (is.null(len)) return(TRUE)
+    n <- readBin(len, "integer", size = 4L)
+    body <- if (n > 0L) .ctJuliaReadBytes(connection, n) else raw(0)
+    if (is.null(body)) return(TRUE)
+    output <- tryCatch(rawToChar(body), error = function(e) "")
+    # Escape sequences stripped as readOutput strips them.
+    output <- gsub("\033(?:[@-Z\\\\-_]|\\[[0-?]*[ -/]*[@-~])", "", output)
+    Encoding(output) <- "UTF-8"
+    cat(output, file = stream)
   }
+}
+
+# Exactly `n` bytes from a socket, or NULL at end of file. A read that returns
+# nothing is end of file when the socket says it is readable, and more still to
+# come when it is not -- given five seconds, since a live process finishes a
+# message it has started, and a stream silent partway through one is out of
+# step whichever it is.
+.ctJuliaReadBytes <- function(connection, n) {
+  out <- raw(0)
+  while (length(out) < n) {
+    got <- tryCatch(suppressWarnings(readBin(connection, "raw", n - length(out))),
+      error = function(e) raw(0))
+    if (!length(got)) {
+      if (!isTRUE(tryCatch(socketSelect(list(connection), timeout = 5),
+        error = function(e) FALSE))) return(NULL)
+      got <- tryCatch(suppressWarnings(readBin(connection, "raw", n - length(out))),
+        error = function(e) raw(0))
+      if (!length(got)) return(NULL)
+    }
+    out <- c(out, got)
+  }
+  out
 }
 
 # Refuse, by name, to call into a Julia process that has gone.
