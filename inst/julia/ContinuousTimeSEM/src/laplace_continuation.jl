@@ -1243,14 +1243,28 @@ end
 
 `d2L_l / d values[p] d values[q]` for every level `l` and every pair of its
 population parameters, indexed `[l][t][t2]` in the order
-`_laplace_level_positions` gives them: the derivative of
-`_laplace_level_chol_derivatives`, by the same construction differentiated
-once more. The inner jacobian is taken under the nested tag, as any
-differentiation inside another must be (`CTSEMNestedTag`).
+`_laplace_level_positions` gives them.
+
+One evaluation of `_laplace_popchol` per pair, in the nested dual the seeded
+sweeps use (`_LaplaceSeedOuter` over `_LaplaceSeedInner`, one partial each),
+seeded along the pair's two parameters: the coefficient of the product of
+the two nilpotents is the mixed second derivative, and the pure one when the
+two coincide. Not a nested jacobian of `_laplace_level_chol_derivatives`'s
+construction: that compiles the factor again for each count of population
+parameters, and on gD1 (local) took 2.95 s of the first Hessian where this
+takes 0.1 s, since this type's width never changes.
 """
 function _continuation_level_chol_second_derivatives(values::Vector{Float64},
     spec::CTSEMLaplaceSpec, positions::Vector{Vector{Int}})
+    e1 = ForwardDiff.Dual{_LaplaceSeedOuter}(
+        ForwardDiff.Dual{_LaplaceSeedInner}(0.0, 1.0),
+        ForwardDiff.Dual{_LaplaceSeedInner}(0.0, 0.0))
+    e2 = ForwardDiff.Dual{_LaplaceSeedOuter}(
+        ForwardDiff.Dual{_LaplaceSeedInner}(0.0, 0.0),
+        ForwardDiff.Dual{_LaplaceSeedInner}(1.0, 0.0))
+    E = typeof(e1)
     out = Vector{Vector{Vector{Matrix{Float64}}}}(undef, length(spec.levels))
+    v = Vector{E}(undef, length(values))
     for l in eachindex(spec.levels)
         level = spec.levels[l]
         pos = positions[l]
@@ -1261,18 +1275,20 @@ function _continuation_level_chol_second_derivatives(values::Vector{Float64},
             out[l] = Vector{Matrix{Float64}}[]
             continue
         end
-        chol_of = function (p)
-            v = convert(Vector{eltype(p)}, values)
-            @inbounds for (slot, position) in enumerate(pos)
-                v[position] = p[slot]
+        out[l] = [[zeros(k, r) for _ in 1:np] for _ in 1:np]
+        for t1 in 1:np, t2 in t1:np
+            @inbounds for i in eachindex(values)
+                v[i] = convert(E, values[i])
             end
-            return vec(_laplace_popchol(v, level))
+            v[pos[t1]] += e1
+            v[pos[t2]] += e2
+            L = _laplace_popchol(v, level)
+            D = out[l][t1][t2]
+            @inbounds for q in 1:r, p in 1:k
+                D[p, q] = ForwardDiff.partials(ForwardDiff.partials(L[p, q])[1])[1]
+            end
+            t1 == t2 || copyto!(out[l][t2][t1], D)
         end
-        first_of = p -> vec(_ctsem_nested_jacobian(chol_of, p))
-        J2 = ForwardDiff.jacobian(first_of, values[pos])
-        kr = k * r
-        out[l] = [[Matrix{Float64}(reshape(J2[((t1 - 1) * kr + 1):(t1 * kr), t2], k, r))
-                   for t2 in 1:np] for t1 in 1:np]
     end
     return out
 end

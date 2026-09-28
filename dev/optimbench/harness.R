@@ -629,13 +629,14 @@ if (!is.null(REC$cont) && is.matrix(Hq) && !is.null(REC$continue)) {
   cse <- tryCatch({
     setTimeLimit(elapsed = REFCAP, transient = TRUE)
     x <- as.numeric(fit$estimate$raw)
+    # Not `errors`: `cse$error` below would partial-match it.
     out <- list(delta_se = suppressWarnings(as.numeric(fit$laplace$correction$delta_se)),
-      errors = list())
+      scheme_failures = list())
     scheme <- function(name) {
       t0 <- .now()
       H <- tryCatch(matrix(as.numeric(jget(jcall("ctsem_laplace_continuation_hessian",
         REC$cont, jvec(x), scheme = name))), npar, npar),
-        error = function(e) { out$errors[[name]] <<- conditionMessage(e); NULL })
+        error = function(e) { out$scheme_failures[[name]] <<- conditionMessage(e); NULL })
       # A build without `scheme = "forward"` has the bench's own copy of it.
       if (is.null(H) && name == "forward") H <- tryCatch(matrix(as.numeric(jget(jcall(
         "bench_continuation_hessian_forward", REC$cont, jvec(x)))), npar, npar),
