@@ -9,7 +9,8 @@ ctJuliaEvaluate(
   pars = NULL,
   gradient = TRUE,
   contributions = FALSE,
-  gradient_method = c("adjoint", "forward")
+  gradient_method = c("adjoint", "forward"),
+  cores = 2L
 )
 }
 \arguments{
@@ -27,6 +28,13 @@ the same regardless of how many free parameters a model has, and is
 faster than "forward" at every model size measured, by a margin that
 grows with the parameter count. See \code{optimcontrol$gradient} in
 \code{ctFit}.}
+
+\item{cores}{Engine subject-chunk ceiling for this one evaluation, restored
+afterwards. This call used to run outside any ceiling, at the session's
+full thread width: harmless on its own, but it left the worker pool at
+full width behind it, which let unrelated later work -- an in-process
+sampler's chains among them -- run wider than its own \code{cores} asked
+for. See \code{.ctBackendWithMaxChunks()}.}
 }
 \value{
 A list containing log likelihood and, when requested, gradient.

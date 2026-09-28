@@ -42,7 +42,8 @@ and the check stops being able to say anything.}
 
 \item{intoverpop}{Integration approach, as for \code{\link{ctFit}}.}
 
-\item{cores}{Passed to the engine.}
+\item{cores}{Passed to the engine, and also the subject-chunk ceiling for
+every engine call this function makes, restored on exit.}
 
 \item{verbose}{Passed to the engine.}
 

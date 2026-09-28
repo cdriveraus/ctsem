@@ -28,11 +28,18 @@ its source rather than something selectable.}
 The engine splits its subject loop across them, and \code{ctFit}'s
 \code{cores} cannot exceed this count: Julia fixes it at process start, so
 setting it here takes effect only if no Julia session is running yet --
-pass \code{force = TRUE} to restart one. \code{NULL} leaves it to Julia's
-own default (one thread unless \code{JULIA_NUM_THREADS} is already set),
-which is why starting the engine before the first fit and then asking for
-\code{cores = 4} gives four chunks' worth of nothing. A fit that asks for
-more cores than the session has threads says so; see \code{\link{ctFit}}.}
+pass \code{force = TRUE} to restart one. \code{NULL} (the default) starts
+the session at two threads, unless \code{JULIA_NUM_THREADS} is already set
+-- by the user, by a cluster scheduler, or by an earlier \code{ctFit()}
+call's own \code{cores} -- in which case that wins. Two rather than one:
+anything that touches the engine before a fit does (\code{ctGenerate()},
+\code{ctIdentify()}, an explicit \code{ctJuliaSetup()}) starts the session,
+and \code{ctFit}'s own default is \code{cores = 2}, so a session left at
+Julia's native default of one thread could never honour a default fit's
+request without a restart. Ask for more explicitly when a benchmark
+harness or a script needs it before its first fit; a fit that then asks
+for still more than the session has threads says so; see
+\code{\link{ctFit}}.}
 
 \item{force}{Reconfigure an existing Julia session.}
 

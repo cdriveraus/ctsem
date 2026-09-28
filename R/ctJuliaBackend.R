@@ -419,11 +419,18 @@
 #'   The engine splits its subject loop across them, and \code{ctFit}'s
 #'   \code{cores} cannot exceed this count: Julia fixes it at process start, so
 #'   setting it here takes effect only if no Julia session is running yet --
-#'   pass \code{force = TRUE} to restart one. \code{NULL} leaves it to Julia's
-#'   own default (one thread unless \code{JULIA_NUM_THREADS} is already set),
-#'   which is why starting the engine before the first fit and then asking for
-#'   \code{cores = 4} gives four chunks' worth of nothing. A fit that asks for
-#'   more cores than the session has threads says so; see \code{\link{ctFit}}.
+#'   pass \code{force = TRUE} to restart one. \code{NULL} (the default) starts
+#'   the session at two threads, unless \code{JULIA_NUM_THREADS} is already set
+#'   -- by the user, by a cluster scheduler, or by an earlier \code{ctFit()}
+#'   call's own \code{cores} -- in which case that wins. Two rather than one:
+#'   anything that touches the engine before a fit does (\code{ctGenerate()},
+#'   \code{ctIdentify()}, an explicit \code{ctJuliaSetup()}) starts the session,
+#'   and \code{ctFit}'s own default is \code{cores = 2}, so a session left at
+#'   Julia's native default of one thread could never honour a default fit's
+#'   request without a restart. Ask for more explicitly when a benchmark
+#'   harness or a script needs it before its first fit; a fit that then asks
+#'   for still more than the session has threads says so; see
+#'   \code{\link{ctFit}}.
 #' @param force Reconfigure an existing Julia session.
 #' @param agree \code{TRUE} to consent to instantiating the engine's Julia
 #'   package dependencies without being asked, \code{FALSE} to refuse.
@@ -454,6 +461,17 @@ ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
     } else {
       Sys.setenv(JULIA_NUM_THREADS = as.character(threads))
     }
+  } else if (!.ctJuliaSessionRunning() &&
+      !nzchar(Sys.getenv("JULIA_NUM_THREADS", unset = ""))) {
+    # Charles's thread rule (2026-09-28): a session started by anything --
+    # not only an explicit ctJuliaSetup() call, since .ctJuliaModule() reaches
+    # here on the first touch of the engine from any function -- defaults to
+    # two threads rather than Julia's native one, so ctFit's own default
+    # `cores = 2` can be honoured without a restart. Two, not wider: this runs
+    # before any fit is known, so there is no request to size it to, and a
+    # session ctGenerate() or ctIdentify() starts must not silently claim a
+    # machine's whole width for work that may never need it.
+    Sys.setenv(JULIA_NUM_THREADS = "2")
   }
   .ctJuliaCheckAvailable()
   engineversion <- .ctJuliaEngineVersion()
@@ -3590,19 +3608,26 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 #'   faster than "forward" at every model size measured, by a margin that
 #'   grows with the parameter count. See \code{optimcontrol$gradient} in
 #'   \code{ctFit}.
+#' @param cores Engine subject-chunk ceiling for this one evaluation, restored
+#'   afterwards. This call used to run outside any ceiling, at the session's
+#'   full thread width: harmless on its own, but it left the worker pool at
+#'   full width behind it, which let unrelated later work -- an in-process
+#'   sampler's chains among them -- run wider than its own \code{cores} asked
+#'   for. See \code{.ctBackendWithMaxChunks()}.
 #' @return A list containing log likelihood and, when requested, gradient.
 #' @export
 ctJuliaEvaluate <- function(object, pars = NULL, gradient = TRUE, contributions = FALSE,
-  gradient_method = c("adjoint", "forward")) {
+  gradient_method = c("adjoint", "forward"), cores = 2L) {
   gradient_method <- match.arg(gradient_method)
   if (!inherits(object, c("ctJuliaModel", "ctJuliaFit"))) stop("object must be a ctJuliaModel or ctJuliaFit", call. = FALSE)
   if (is.null(pars)) {
     if (inherits(object, "ctJuliaFit")) pars <- object$estimate$raw else stop("pars must be supplied for a prepared ctJuliaModel", call. = FALSE)
   }
   module <- .ctJuliaModule(if (inherits(object, "ctJuliaFit")) object$model_spec$project else object$project)
-  result <- module$ctsem_evaluate(.ctJuliaObjective(object), .ctJuliaNumericVector(pars),
+  result <- .ctBackendWithMaxChunks(cores, module$ctsem_evaluate(
+    .ctJuliaObjective(object), .ctJuliaNumericVector(pars),
     gradient = isTRUE(gradient), contributions = isTRUE(contributions),
-    gradient_method = gradient_method)
+    gradient_method = gradient_method))
   JuliaConnectoR::juliaGet(result)
 }
 

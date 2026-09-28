@@ -584,12 +584,152 @@ test_that("the overwrite option overrides the detection in both directions", {
   # someone asks in, because the point of one rewritten line is that it stays
   # one line.
   withr::local_options(ctsem.progress.overwrite = NULL)
-  expect_equal(.ctProgressOverwrite(1), .ctProgressConsole())
+  # Not simply `.ctProgressConsole()` any more: RStudio can be a console that
+  # is watching (`.ctProgressConsole()` TRUE) and still not repaint a
+  # carriage-returned line, which is a fact about that one console rather than
+  # about whether anyone is watching -- see `.ctProgressOverwrite()`. This
+  # session is not RStudio, so the two answers agree here regardless; the
+  # point of writing it this way rather than pinning the pre-RStudio equality
+  # is that it stays correct if this test suite is ever run from inside one.
+  expect_equal(.ctProgressOverwrite(1),
+    .ctProgressConsole() && !ctsem:::.ctProgressRStudio())
   withr::local_options(ctsem.progress.overwrite = TRUE)
   expect_true(.ctProgressOverwrite(1))
   expect_false(.ctProgressOverwrite(2))   # verbose 2 keeps the history
   withr::local_options(ctsem.progress.overwrite = FALSE)
   expect_false(.ctProgressOverwrite(1))
+})
+
+test_that("RStudio gets whole lines, and the option still overrides it", {
+  # Charles reported (2026-09-28) that RStudio's console did not repaint an
+  # in-place update at all -- only each stage's closing line showed, for
+  # minutes at a time in between. `RSTUDIO` is set on every R process RStudio
+  # starts; mocked here since this session is not one.
+  withr::local_envvar(RSTUDIO = "1")
+  expect_true(ctsem:::.ctProgressRStudio())
+  withr::local_options(ctsem.progress.overwrite = NULL)
+  if (.ctProgressConsole()) expect_false(.ctProgressOverwrite(1))
+  # The option still settles it either way, unconditionally -- someone who
+  # knows their RStudio does handle it is not overruled by the default.
+  withr::local_options(ctsem.progress.overwrite = TRUE)
+  expect_true(.ctProgressOverwrite(1))
+  withr::local_options(ctsem.progress.overwrite = FALSE)
+  expect_false(.ctProgressOverwrite(1))
+})
+
+# Charles's thread rule (2026-09-28): a session started by anything defaults to
+# two threads, not Julia's native one, unless JULIA_NUM_THREADS, ctJuliaSetup
+# (threads=) or the user already said otherwise. His script's session had one
+# thread because ctGenerate() started it before the fit did, so the fit's own
+# `cores = 2` could not be honoured without a restart.
+test_that("a session this package starts on its own defaults to two threads", {
+  skip_without_julia()
+  ctsem:::.ctJuliaClearSession()
+  previous_env <- Sys.getenv("JULIA_NUM_THREADS", unset = NA)
+  on.exit({
+    if (is.na(previous_env)) Sys.unsetenv("JULIA_NUM_THREADS")
+    else Sys.setenv(JULIA_NUM_THREADS = previous_env)
+  }, add = TRUE)
+  Sys.unsetenv("JULIA_NUM_THREADS")
+  # `.ctJuliaModule()` is the one place every entry point -- a fit, ctGenerate,
+  # ctIdentify, a bare ctJuliaSetup() -- reaches on the first touch of the
+  # engine, and it is what starts the session here. Not ctGenerate() itself,
+  # which needs a model and data to build for a property that belongs to
+  # session start rather than to that function; the next test exercises it
+  # end to end.
+  suppressMessages(ctsem:::.ctJuliaModule())
+  expect_equal(as.integer(JuliaConnectoR::juliaEval("Threads.nthreads()")), 2L)
+})
+
+test_that("ctGenerate(backend = 'julia') before any fit still leaves cores = 2 fittable", {
+  skip_without_julia()
+  ctsem:::.ctJuliaClearSession()
+  previous_env <- Sys.getenv("JULIA_NUM_THREADS", unset = NA)
+  on.exit({
+    if (is.na(previous_env)) Sys.unsetenv("JULIA_NUM_THREADS")
+    else Sys.setenv(JULIA_NUM_THREADS = previous_env)
+  }, add = TRUE)
+  Sys.unsetenv("JULIA_NUM_THREADS")
+
+  m <- suppressWarnings(suppressMessages(ctModel(type = "ct",
+    manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1),
+    T0MEANS = matrix(0), CINT = matrix(0), T0VAR = matrix(0.5),
+    MANIFESTVAR = matrix(0.3), MANIFESTMEANS = matrix("mmean"))))
+  m$pars$indvarying <- FALSE
+  m$pars$indvarying[m$pars$param %in% "mmean"] <- TRUE
+  set.seed(2)
+  # The reproducer: generation touches the engine first, at its own default
+  # (cores = 2, but that is generate's own ceiling, not a thread request), and
+  # a fit's default cores = 2 must still be honoured afterwards without ctFit
+  # having to restart the session.
+  invisible(suppressWarnings(suppressMessages(
+    ctGenerate(m, n.subjects = 5, Tpoints = 4, backend = "julia"))))
+  expect_equal(as.integer(JuliaConnectoR::juliaEval("Threads.nthreads()")), 2L)
+
+  cache <- ctsem:::.ct_julia_cache
+  original <- cache$threads_reported
+  on.exit(cache$threads_reported <- original, add = TRUE)
+  cache$threads_reported <- NULL
+  dat <- suppressWarnings(suppressMessages(
+    ctGenerate(m, n.subjects = 12, Tpoints = 5, backend = "julia")))
+  seen <- character()
+  withCallingHandlers(
+    suppressWarnings(fit <- ctFit(dat, m, backend = "julia", cores = 2,
+      optimcontrol = list(estonly = TRUE))),
+    message = function(msg) {
+      seen <<- c(seen, conditionMessage(msg)); invokeRestart("muffleMessage")
+    })
+  expect_s3_class(fit, "ctJuliaFit")
+  # The regression: without the fix this reads "cores = 2 requested, 1 used".
+  expect_false(any(grepl("^cores = ", seen)))
+})
+
+# `.ctBackendWithMaxChunks()`/`.ctBackendSetMaxChunks()` is the ceiling every
+# engine call should run under; before this it wrapped the optimiser and the
+# uncertainty phase only. Mocked rather than measured live: neither
+# `ctJuliaEvaluate()` nor `ctIdentify()` reports back a chunk count the way a
+# fit does (`fit$optim$chunks`), so there is nothing external to read after
+# the call returns, and the property under test is which value reaches the
+# ceiling, not whether the ceiling changes anything about this small model's
+# answer.
+test_that("ctJuliaEvaluate() runs under the cores ceiling it is given", {
+  skip_without_julia()
+  recorded <- integer()
+  testthat::local_mocked_bindings(
+    .ctBackendSetMaxChunks = function(chunks) {
+      recorded <<- c(recorded, as.integer(chunks)); NA_integer_
+    },
+    .ctBackendRestoreMaxChunks = function(previous) invisible(NULL))
+  set.seed(6)
+  dat <- do.call(rbind, lapply(1:6, function(i)
+    data.frame(id = i, time = 0:4, Y1 = cumsum(stats::rnorm(5)) * .5)))
+  model <- suppressWarnings(suppressMessages(ctModel(type = "ct",
+    manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1))))
+  prepared <- suppressMessages(ctFit(dat, model, backend = "julia", fit = FALSE))
+  pars <- rep(0, ctsem:::.ctBackendNpar(prepared))
+  out <- ctJuliaEvaluate(prepared, pars = pars, cores = 3L)
+  expect_true(is.list(out))
+  expect_true(is.finite(out$value))
+  expect_true(3L %in% recorded)
+})
+
+test_that("ctIdentify() runs its engine calls under its own cores ceiling", {
+  skip_without_julia()
+  recorded <- integer()
+  testthat::local_mocked_bindings(
+    .ctBackendSetMaxChunks = function(chunks) {
+      recorded <<- c(recorded, as.integer(chunks)); NA_integer_
+    },
+    .ctBackendRestoreMaxChunks = function(previous) invisible(NULL))
+  set.seed(7)
+  dat <- do.call(rbind, lapply(1:6, function(i)
+    data.frame(id = i, time = 0:4, Y1 = cumsum(stats::rnorm(5)) * .5)))
+  model <- suppressWarnings(suppressMessages(ctModel(type = "ct",
+    manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1))))
+  out <- suppressWarnings(suppressMessages(ctIdentify(dat, model, nstart = 1L,
+    cores = 4L)))
+  expect_s3_class(out, "ctIdentify")
+  expect_true(4L %in% recorded)
 })
 
 test_that("sampleControl absorbs the deprecated iter, chains and control", {
