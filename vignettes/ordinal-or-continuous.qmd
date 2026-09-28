@@ -69,8 +69,8 @@ gen <- ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
   manifestNames = c('eta1', 'eta2'), latentNames = c('eta1', 'eta2'),
   LAMBDA = diag(1, 2), DRIFT = DRIFT,
   DIFFUSION = zmat(diffsd, diffsd, diffcor),
-  T0VAR = zmat(latentsd[1], latentsd[2], S[1, 2] / prod(latentsd)),
-  T0MEANS = matrix(0, 2, 1), CINT = matrix(0, 2, 1),
+  T0VAR = diag(1,2),
+  T0MEANS = matrix(1, 2, 1), CINT = matrix(0, 2, 1),
   MANIFESTMEANS = matrix(0, 2, 1),
   MANIFESTVAR = diag(1e-6, 2),          # no measurement error: manifest = state
   Tpoints = 30)
@@ -148,7 +148,7 @@ ordinalmodel <- ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
   LAMBDA = diag(1, 2))
 
 ordinalfit <- ctFit(d[, c('id', 'time', 'y1', 'y2')], ordinalmodel,
-  backend = 'julia', cores = 1)
+  backend = 'julia')
 ```
 
 Everything else is left at its default, and the defaults are the ones you
@@ -209,8 +209,8 @@ ceilingdata <- setNames(d[, c('id', 'time', 'eta1', 'eta2')],
   c('id', 'time', 'c1', 'c2'))
 
 gaussianfit <- ctFit(d[, c('id', 'time', 'y1', 'y2')], gaussianmodel,
-  backend = 'julia', cores = 1)
-ceilingfit <- ctFit(ceilingdata, ceilingmodel, backend = 'julia', cores = 1)
+  backend = 'julia')
+ceilingfit <- ctFit(ceilingdata, ceilingmodel, backend = 'julia')
 ```
 
 # What should and should not agree
@@ -262,7 +262,7 @@ every time interval. Standardised, those are comparable across the three:
 times <- seq(0, 6, .1)
 
 crosscurve <- function(fit, label) {
-  a <- ctDiscretePars(fit, times = times, standardise = TRUE, cores = 1)
+  a <- ctDiscretePars(fit, times = times, standardise = TRUE)
   data.frame(time = times, model = label,
     value = apply(a, c(3, 4, 5), median, na.rm = TRUE)[, 2, 1])
 }

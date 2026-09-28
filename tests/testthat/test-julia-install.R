@@ -189,9 +189,10 @@ test_that("ctJuliaSetup declines to instantiate the engine's Julia dependencies 
   # in this suite -- it is never reached at all, because the environment loads
   # on the first try. To exercise the consent gate this test has to simulate an
   # environment that does *not* yet load, and it does that with the smallest
-  # possible mock: every call to JuliaConnectoR::juliaEval() is real except the
-  # one ctJuliaSetup() uses to test readiness, which is made to report "not
-  # ready". Consent is explicitly declined (CTSEM_JULIA_AGREE="no"), so the
+  # possible mock: every call to ctsem's .ctJuliaEval() -- the one route
+  # ctJuliaSetup() evaluates Julia code by -- is real except the one it uses to
+  # test readiness, which is made to report "not ready". Consent is explicitly
+  # declined (CTSEM_JULIA_AGREE="no"), so the
   # function must stop before ever reaching Pkg.instantiate() -- this test
   # cannot itself trigger a download either way.
   skip_without_julia()
@@ -201,16 +202,16 @@ test_that("ctJuliaSetup declines to instantiate the engine's Julia dependencies 
   # Worded as Julia words a missing package, because only that failure reaches
   # the gate: any other is an engine that is broken, which installing cannot
   # fix, and ctJuliaSetup() says so instead of asking.
-  real_juliaEval <- JuliaConnectoR::juliaEval
+  real_juliaEval <- ctsem:::.ctJuliaEval
   testthat::local_mocked_bindings(
-    juliaEval = function(code, ...) {
-      if (identical(code, "using ContinuousTimeSEM")) {
+    .ctJuliaEval = function(expr) {
+      if (identical(expr, "using ContinuousTimeSEM")) {
         stop("simulated: ArgumentError: Package ContinuousTimeSEM not found in ",
           "current path.")
       }
-      real_juliaEval(code, ...)
+      real_juliaEval(expr)
     },
-    .package = "JuliaConnectoR")
+    .package = "ctsem")
 
   expect_error(ctJuliaSetup(), "consent was not given")
   expect_error(ctJuliaSetup(), "Julia package dependencies")
@@ -231,4 +232,44 @@ test_that("a missing package is told apart from a broken engine, in every wordin
     "LoadError: cannot document the following expression:",
     "LoadError: UndefVarError: `optimcontrol` not defined in `ContinuousTimeSEM`")
   for (m in broken) expect_false(ctsem:::.ctJuliaLoadFailIsMissing(m), label = m)
+})
+
+# What ctsem keeps under R_user_dir() is removed once outdated, as CRAN asks,
+# and never while it may still be in use.
+test_that("engine environments go once unused for a month, the current one never", {
+  root <- file.path(withr::local_tempdir(), "julia")
+  make <- function(name, days_ago) {
+    dir <- file.path(root, name)
+    dir.create(dir, recursive = TRUE)
+    writeLines("x", file.path(dir, "Project.toml"))
+    stamp <- file.path(dir, ".ctsem-last-used")
+    file.create(stamp)
+    Sys.setFileTime(stamp, Sys.time() - days_ago * 86400)
+    dir
+  }
+  current <- make("engine-current", 90)
+  stale <- make("engine-stale", 45)
+  recent <- make("engine-recent", 3)
+  halfcopied <- make("engine-stale-partial", 2)
+  other <- make("not-an-engine", 400)
+  ctsem:::.ctJuliaPruneEngines(current)
+  expect_true(dir.exists(current))
+  expect_false(dir.exists(stale))
+  expect_true(dir.exists(recent))
+  expect_false(dir.exists(halfcopied))
+  expect_true(dir.exists(other))
+  # Using one is what keeps it: the stamp is touched on every setup.
+  ctsem:::.ctJuliaTouchEngine(recent)
+  expect_lt(as.numeric(difftime(Sys.time(), file.mtime(file.path(recent,
+    ".ctsem-last-used")), units = "mins")), 5)
+})
+
+test_that("older ctsem-installed Julias go once a newer one is in", {
+  root <- file.path(withr::local_tempdir(), "julia")
+  for (name in c("julia-1.10.5", "julia-1.12.7", "julia-1.13.1", "julia-1.12.7-partial",
+    "something-else")) {
+    dir.create(file.path(root, name, "bin"), recursive = TRUE)
+  }
+  ctsem:::.ctJuliaPruneInstalls(file.path(root, "julia-1.12.7"))
+  expect_setequal(list.files(root), c("julia-1.12.7", "julia-1.13.1", "something-else"))
 })

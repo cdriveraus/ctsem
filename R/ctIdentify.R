@@ -63,7 +63,7 @@
   # wrapping one to look like the other would be the more fragile of the two.
   handle <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
   module <- .ctJuliaModule(spec$project)
-  result <- try(JuliaConnectoR::juliaGet(module$ctsem_subject_gradients(
+  result <- try(.ctJuliaGet(module$ctsem_subject_gradients(
     .ctJuliaObjective(handle), .ctJuliaVector(as.numeric(at)))), silent = TRUE)
   if (inherits(result, "try-error") || is.null(result$scores)) return(NULL)
   scores <- as.matrix(result$scores)
@@ -205,7 +205,8 @@
 #'   direction, so a model unidentified by its data looks fine with priors on
 #'   and the check stops being able to say anything.
 #' @param intoverpop Integration approach, as for \code{\link{ctFit}}.
-#' @param cores Passed to the engine.
+#' @param cores Passed to the engine, and also the subject-chunk ceiling for
+#'   every engine call this function makes, restored on exit.
 #' @param verbose Passed to the engine.
 #' @param rtol A direction counts as uninformed when the information along it
 #'   falls below this fraction of the best-informed direction's. The default
@@ -280,6 +281,15 @@ ctIdentify <- function(datalong, model, inits = NULL, nstart = 3L,
 
   spec <- .ctFitJuliaBackend(datalong, ctstanmodel, fit = FALSE,
     priors = priors, intoverpop = intoverpop, cores = cores, verbose = verbose)
+  # Under `cores` for the rest of this function, as the optimiser and the
+  # uncertainty phase are. Every point below is a separate engine call
+  # (`.ctIdentifyInformation()`'s per-subject scores, `.ctEffectInformation()`'s
+  # random-effect check), and none of them used to set a ceiling at all: a
+  # `cores = 1` call spread each one over the session's full thread width and
+  # left the pool that wide behind it, exactly the shape of bug fixed for the
+  # optimiser's own post-fit check in ce03ffc9.
+  previous_chunks <- .ctBackendSetMaxChunks(cores)
+  on.exit(.ctBackendRestoreMaxChunks(previous_chunks), add = TRUE)
   npar <- .ctBackendNpar(spec)
   if (!is.finite(npar) || npar < 1L) {
     stop("This model has no free parameters, so there is nothing to identify.",

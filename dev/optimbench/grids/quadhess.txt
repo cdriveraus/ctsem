@@ -1,0 +1,12 @@
+# quadhess grid: the quadrature continuation's Hessian by each scheme (harness
+# section 5b: exact, forward, central), on the Laplace cells whose continuation
+# forms one, and on ord4, the reported model. Run with BENCH_REF=0: the exact
+# reference integrals say nothing about a Hessian.
+#
+# id                                    model        data route      start                    variant
+ord4.lap.cfg.s1.default                 ord4         cfg  laplace    default:1                default
+gB2.lap.cfg.s1.default                  gB2          cfg  laplace    default:1                default
+acnonlin.lap.cfg.s1.default             acnonlin     cfg  laplace    default:1                default
+gD1.lap.cfg.s1.default                  gD1          cfg  laplace    default:1                default
+jflat.lap.cfg.s1.default                jflat        cfg  laplace    default:1                default
+gA14.lap.cfg.s1.default                 gA14         cfg  laplace    default:1                default

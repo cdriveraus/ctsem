@@ -740,7 +740,13 @@ computed once, so the two triangles differ only by floating-point association
 order; averaging them is free and keeps the matrix usable by a Cholesky.
 """
 function ctsem_hessian(objective::CTSEMObjective, values::AbstractVector;
-    chunk::Integer=0)
+    chunk::Integer=0, progress=nothing)
+    # `progress` is part of the generic curvature entry point's signature
+    # (`hessof` in optimiser.jl calls every method the same way) and unused
+    # here: this route is one ForwardDiff.jacobian call, not a loop of gradient
+    # evaluations to report through -- the case `progress` exists for is
+    # `ctsem_laplace_hessian`'s, where forming the Hessian genuinely takes
+    # minutes.
     x = collect(Float64, values)
     n = length(x)
     n == 0 && return zeros(Float64, 0, 0)
@@ -767,7 +773,10 @@ This is what `ctsem_sample_marginal`'s `hessian=` keyword should be given
 explicitly for such a model, since its own default calls `ctsem_hessian`.
 """
 function ctsem_hessian_forward(objective::CTSEMObjective, values::AbstractVector;
-    chunk::Integer=0)
+    chunk::Integer=0, progress=nothing)
+    # `progress` unused -- see `ctsem_hessian` above; accepted only so R's
+    # uniform call (either name, by `.ctBackendHessianFunction()`) does not
+    # need to know which method it reached.
     x = collect(Float64, values)
     n = length(x)
     n == 0 && return zeros(Float64, 0, 0)

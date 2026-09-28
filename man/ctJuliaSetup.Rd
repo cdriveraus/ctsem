@@ -28,11 +28,12 @@ its source rather than something selectable.}
 The engine splits its subject loop across them, and \code{ctFit}'s
 \code{cores} cannot exceed this count: Julia fixes it at process start, so
 setting it here takes effect only if no Julia session is running yet --
-pass \code{force = TRUE} to restart one. \code{NULL} leaves it to Julia's
-own default (one thread unless \code{JULIA_NUM_THREADS} is already set),
-which is why starting the engine before the first fit and then asking for
-\code{cores = 4} gives four chunks' worth of nothing. A fit that asks for
-more cores than the session has threads says so; see \code{\link{ctFit}}.}
+pass \code{force = TRUE} to restart one. \code{NULL}, the default, starts
+a session with as many threads as this R process may use
+(\code{parallelly::availableCores()}) unless \code{JULIA_NUM_THREADS} is
+set, and each fit uses only its \code{cores} of them. A number given here
+is also the ceiling for any call that sets none. A fit that asks for more
+cores than the session has threads says so; see \code{\link{ctFit}}.}
 
 \item{force}{Reconfigure an existing Julia session.}
 
@@ -67,6 +68,16 @@ the first quadrature correction a further 15 to 20 seconds. The precompiled
 engine cannot anticipate a model's own functions, so this is paid once per
 shape per session rather than once per fit; time a fit after one warm-up
 fit, not from a fresh session.
+
+Pressing Escape (or Ctrl-C) during a julia fit returns to the R prompt at
+once, and keeps the Julia session and everything it has compiled. Julia
+stops the interrupted work at its next iteration; work that has no
+iterations, such as compiling for a new model shape, finishes in the
+background. If it is still running when the next julia call starts, that
+call says so and waits, and Escape during that wait stops Julia outright.
+\code{\link{ctJuliaProcesses}} lists the Julia processes ctsem has running,
+including any left by R sessions that have ended, and
+\code{\link{ctJuliaKill}} stops them.
 
 If \pkg{JuliaConnectoR} or Julia itself is missing, this offers to install it
 rather than failing -- the same thing \code{\link{ctJuliaInstall}} does, which

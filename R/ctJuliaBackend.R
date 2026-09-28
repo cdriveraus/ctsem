@@ -63,13 +63,22 @@
 # anything is being watched, and the option below settles the cases this cannot
 # know about -- in both directions, which it previously did not.
 #
-# The RStudio case is why that matters. Its console renders each arriving chunk
-# as its own block, and while the engine printed to *stdout* while R messaged on
-# *stderr*, the two interleaved and the line could not survive: reported as
-# "extra line breaks". Both now arrive as messages on one stream, which removes
-# that cause -- so in-place is the default there too, and
-# `options(ctsem.progress.overwrite = FALSE)` is the way out if a particular
-# console still cannot do it.
+# The RStudio case is why the console/overwrite split above matters, and it
+# turned out to need its own answer. Sending both streams as messages fixed the
+# *interleaving* -- the engine's line and R's own no longer tore each other up
+# -- but Charles reported (2026-09-28) that the in-place updates did not render
+# at all there: only each stage's closing line appeared, for minutes at a time
+# in between. RStudio's console evidently does not repaint a carriage-returned
+# `message()` in place; it shows the next one only when a real newline arrives.
+# Verified from the symptom rather than from RStudio's source, since this
+# session cannot run RStudio itself -- `.ctProgressRStudio()` is intentionally
+# a small, named seam so that finding can be confirmed or reversed in one
+# place. Until then RStudio gets whole lines on the engine's own non-overwrite
+# cadence (five seconds; see `CTSEMProgress` in progress.jl), which is at least
+# visible, rather than in-place updates that were not.
+# `options(ctsem.progress.overwrite = )` still settles it explicitly in either
+# direction, checked first, so this default never overrides a choice someone
+# made.
 #' @keywords internal
 .ctProgressOverwrite <- function(verbose = 0) {
   # `verbose` is a level everywhere now, but some callers still pass a
@@ -81,8 +90,20 @@
   if (is.logical(option) && length(option) == 1L && !is.na(option)) {
     return(option && level < 2)
   }
-  .ctProgressConsole() && level < 2
+  .ctProgressConsole() && level < 2 && !.ctProgressRStudio()
 }
+
+# Is this session RStudio's own R process -- the one case known (see above)
+# where a console is watching (`.ctProgressConsole()` is TRUE) but cannot
+# repaint an in-place update. `Sys.getenv("RSTUDIO")` is what RStudio sets on
+# every R process it starts, console or Job or background; reached directly
+# rather than through the `rstudioapi` package so detecting this costs no
+# dependency. Not asked by `.ctProgressConsole()` itself: that function
+# answers "is anyone watching" and this answers a narrower "can that watcher's
+# console repaint a line", which is why `.ctProgressOverwrite()` is the only
+# reader.
+#' @keywords internal
+.ctProgressRStudio <- function() identical(Sys.getenv("RSTUDIO"), "1")
 
 #' Deliver an engine progress line as an R message
 #'
@@ -157,6 +178,25 @@
 .ctVerboseOn <- function(verbose) {
   isTRUE(verbose) ||
     (is.numeric(verbose) && length(verbose) == 1L && !is.na(verbose) && verbose > 0)
+}
+
+# Whether a stage should report itself at all: the same question
+# `.ctJuliaOptimise()`'s `reporting` asks for the main line -- explicit
+# verbosity, or something watching the console -- pulled out because the
+# engine's finish, the certification, the quadrature correction and the
+# uncertainty stage all ask it too, and used to each answer it slightly
+# differently (one gated strictly on `verbose > 0`, which is how a default fit
+# went twenty-two minutes without a word: see R/ctBackendLaplaceCorrect.R).
+#' @keywords internal
+.ctBackendReporting <- function(verbose) .ctVerboseOn(verbose) || .ctProgressConsole()
+
+# The progress line a post-optimisation stage reports through, or `NULL` when
+# nothing is watching -- the same sink and the same overwrite rule
+# `.ctJuliaOptimise()` builds for the main line, so a fit's progress reads as
+# one thing throughout rather than changing style between stages.
+#' @keywords internal
+.ctBackendProgressSink <- function(verbose) {
+  if (.ctBackendReporting(verbose)) .ctProgressSink(.ctProgressOverwrite(verbose)) else NULL
 }
 
 # `1m 04s`, `12.4s`, `2h 05m` -- the R-side twin of `_duration()` in
@@ -304,12 +344,11 @@
 }
 
 .ctJuliaCheckAvailable <- function() {
-  ok <- tryCatch(JuliaConnectoR::juliaSetupOk(), error = function(e) FALSE)
-  if (isTRUE(ok)) return(invisible(TRUE))
+  if (isTRUE(.ctJuliaStartable())) return(invisible(TRUE))
   # Same reasoning as .ctJuliaRequire(): ask, rather than end the session's work
   # with an instruction to install something and start again.
   if (isTRUE(tryCatch(.ctJuliaOfferJulia(), error = function(e) FALSE)) &&
-      isTRUE(tryCatch(JuliaConnectoR::juliaSetupOk(), error = function(e) FALSE))) {
+      isTRUE(.ctJuliaStartable())) {
     return(invisible(TRUE))
   }
   stop("Julia was not found, and backend='julia' needs it (", .ct_julia_minimum, " or newer).\n",
@@ -333,6 +372,20 @@
   grepl(paste("not found in current path", "not found in",
     "not found during precompilation", "does not seem to be installed",
     "failed to find source of parent package", sep = "|"), msg)
+}
+
+# Is there a Julia that a session could be started with? Without starting one:
+# `JuliaConnectoR::juliaSetupOk()`, which this used to ask, answers by starting
+# a session through JuliaConnectoR itself, bypassing the start in
+# R/ctJuliaBridge.R that names the version, records the process id and cannot be
+# left half-launched by Escape.
+.ctJuliaStartable <- function() {
+  if (nzchar(Sys.getenv("JULIACONNECTOR_SERVER", unset = ""))) return(TRUE)
+  wire <- .ctJuliaWire()
+  if (!is.null(wire) && !is.null(wire$pkgLocal$con)) return(TRUE)
+  bin <- tryCatch(.ctJuliaBin(), error = function(e) NULL)
+  if (is.null(bin)) return(FALSE)
+  .ctJuliaVersionOk(.ctJuliaCachedVersion(bin))
 }
 
 #' Configure the Julia engine used by ctsem
@@ -359,6 +412,16 @@
 #' shape per session rather than once per fit; time a fit after one warm-up
 #' fit, not from a fresh session.
 #'
+#' Pressing Escape (or Ctrl-C) during a julia fit returns to the R prompt at
+#' once, and keeps the Julia session and everything it has compiled. Julia
+#' stops the interrupted work at its next iteration; work that has no
+#' iterations, such as compiling for a new model shape, finishes in the
+#' background. If it is still running when the next julia call starts, that
+#' call says so and waits, and Escape during that wait stops Julia outright.
+#' \code{\link{ctJuliaProcesses}} lists the Julia processes ctsem has running,
+#' including any left by R sessions that have ended, and
+#' \code{\link{ctJuliaKill}} stops them.
+#'
 #' If \pkg{JuliaConnectoR} or Julia itself is missing, this offers to install it
 #' rather than failing -- the same thing \code{\link{ctJuliaInstall}} does, which
 #' is the function to reach for when setting the backend up deliberately, or
@@ -374,11 +437,12 @@
 #'   The engine splits its subject loop across them, and \code{ctFit}'s
 #'   \code{cores} cannot exceed this count: Julia fixes it at process start, so
 #'   setting it here takes effect only if no Julia session is running yet --
-#'   pass \code{force = TRUE} to restart one. \code{NULL} leaves it to Julia's
-#'   own default (one thread unless \code{JULIA_NUM_THREADS} is already set),
-#'   which is why starting the engine before the first fit and then asking for
-#'   \code{cores = 4} gives four chunks' worth of nothing. A fit that asks for
-#'   more cores than the session has threads says so; see \code{\link{ctFit}}.
+#'   pass \code{force = TRUE} to restart one. \code{NULL}, the default, starts
+#'   a session with as many threads as this R process may use
+#'   (\code{parallelly::availableCores()}) unless \code{JULIA_NUM_THREADS} is
+#'   set, and each fit uses only its \code{cores} of them. A number given here
+#'   is also the ceiling for any call that sets none. A fit that asks for more
+#'   cores than the session has threads says so; see \code{\link{ctFit}}.
 #' @param force Reconfigure an existing Julia session.
 #' @param agree \code{TRUE} to consent to instantiating the engine's Julia
 #'   package dependencies without being asked, \code{FALSE} to refuse.
@@ -408,6 +472,10 @@ ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
       }
     } else {
       Sys.setenv(JULIA_NUM_THREADS = as.character(threads))
+      # Asked for by name, so it is not ctsem's own default to replace -- even
+      # when it happens to equal the value `.ctJuliaProvision()` last set, which
+      # is all that function can compare.
+      .ct_julia_cache$threads_from_cores <- NULL
     }
   }
   .ctJuliaCheckAvailable()
@@ -431,9 +499,11 @@ ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
         recursive = TRUE)
       file.rename(staging, env_dir)
     }
+    .ctJuliaTouchEngine(env_dir)
+    .ctJuliaPruneEngines(env_dir)
   }
 
-  JuliaConnectoR::juliaEval("using Pkg, Logging")
+  .ctJuliaEval("using Pkg, Logging")
   # Quietly. `Pkg.activate()` announces itself, and the environment is ctsem's
   # own vendored one -- the first thing a user saw was
   # `Activating project at C:\Users\...\engine-4f87c9793c9f`, naming a cache
@@ -448,7 +518,7 @@ ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
   activate <- sprintf("Pkg.activate(%s; io=devnull)", .ctJuliaString(env_dir))
   silently <- function(code) paste0(
     "Logging.with_logger(Logging.NullLogger()) do; ", code, "; end")
-  JuliaConnectoR::juliaEval(silently(activate))
+  .ctJuliaEval(silently(activate))
 
   # `Pkg.instantiate()` is the network-touching step: it fetches whatever the
   # manifest lists that is not already in the user's Julia depot. Consent-gated
@@ -458,7 +528,7 @@ ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
   # session on a machine.
   loadfail <- NULL
   ready <- tryCatch({
-    JuliaConnectoR::juliaEval("using ContinuousTimeSEM")
+    .ctJuliaEval("using ContinuousTimeSEM")
     TRUE
   }, error = function(e) { loadfail <<- conditionMessage(e); FALSE })
 
@@ -502,7 +572,7 @@ ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
     quiet_instantiate <- paste0('withenv("JULIA_PKG_PRECOMPILE_AUTO" => "0") do; ',
       'Pkg.instantiate(io=devnull); end')
     instantiated <- tryCatch({
-      JuliaConnectoR::juliaEval(silently(paste0(activate, "; ", quiet_instantiate)))
+      .ctJuliaEval(silently(paste0(activate, "; ", quiet_instantiate)))
       TRUE
     }, error = function(e) FALSE)
     if (!instantiated) {
@@ -511,15 +581,30 @@ ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
       # back to a fresh resolve is better than refusing to run; the compat bounds
       # in Project.toml still apply.
       unlink(file.path(env_dir, "Manifest.toml"))
-      JuliaConnectoR::juliaEval(silently(paste0(activate,
+      .ctJuliaEval(silently(paste0(activate,
         "; Pkg.resolve(io=devnull); ", quiet_instantiate)))
     }
-    JuliaConnectoR::juliaEval("using ContinuousTimeSEM")
+    .ctJuliaEval("using ContinuousTimeSEM")
   }
   .ctJuliaTuneBridge()
+  # Where Escape asks a running call to stop, and which R process the engine
+  # should outlive by no more than a checkpoint; see R/ctJuliaBridge.R.
+  if (!is.null(.ct_julia_cache$interrupt_file)) {
+    try(.ctJuliaCall("ContinuousTimeSEM.ctsem_set_interrupt!",
+      .ct_julia_cache$interrupt_file, Sys.getpid()), silent = TRUE)
+  }
+  # The subject-chunk ceiling for a call that sets none. Every fit sets its own
+  # `cores`; without this, a session provisioned at the machine's width would
+  # make an uncapped call -- ctKalman(), ctJuliaEvaluate() -- that wide too.
+  # `threads` when asked for, and otherwise what `cores` defaults to.
+  cap <- if (!is.null(threads)) threads else getOption("mc.cores", 2L)
+  cap <- suppressWarnings(as.integer(cap)[1L])
+  if (!is.na(cap) && cap >= 1L) {
+    try(.ctJuliaCall("ContinuousTimeSEM.ctsem_set_max_chunks!", cap), silent = TRUE)
+  }
   .ct_julia_cache$project <- project
   .ct_julia_cache$engine <- engineversion
-  .ct_julia_cache$module <- JuliaConnectoR::juliaImport("ContinuousTimeSEM")
+  .ct_julia_cache$module <- .ctJuliaImport("ContinuousTimeSEM")
   # Last, so the cache is only ever stamped with the session everything above it
   # was built in.
   .ct_julia_cache$session <- .ctJuliaSessionStamp()
@@ -550,13 +635,13 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # first, so this reports on a new one rather than waiting on the old.
   version <- if (connectoR) {
     try(.ctJuliaCheckAlive(), silent = TRUE)
-    tryCatch(as.character(JuliaConnectoR::juliaEval("string(VERSION)")),
+    tryCatch(as.character(.ctJuliaEval("string(VERSION)")),
       error = function(e) NA_character_)
   } else NA_character_
   available <- !is.na(version)
   if (!available) version <- .ctJuliaBinVersion(julia_bin)
   threads <- if (available) {
-    tryCatch(as.integer(JuliaConnectoR::juliaEval("Threads.nthreads()")),
+    tryCatch(as.integer(.ctJuliaEval("Threads.nthreads()")),
       error = function(e) NA_integer_)
   } else NA_integer_
   list(available = available, connectoR = connectoR,
@@ -687,6 +772,15 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   .ct_julia_cache$project <- NULL
   .ct_julia_cache$engine <- NULL
   .ct_julia_cache$session <- NULL
+  # A reply owed by an interrupted call, and the restores queued behind it,
+  # belong to the session being forgotten (R/ctJuliaBridge.R).
+  .ct_julia_cache$inflight <- NULL
+  .ct_julia_cache$deferred <- NULL
+  .ctJuliaUnregister(.ct_julia_cache$pid)
+  .ct_julia_cache$pid <- NULL
+  .ct_julia_cache$pid_session <- NULL
+  if (!is.null(.ct_julia_cache$interrupt_file)) unlink(.ct_julia_cache$interrupt_file)
+  .ct_julia_cache$interrupt_file <- NULL
   .ct_julia_cache$objectives <- new.env(parent = emptyenv())
   .ct_julia_cache$layouts <- new.env(parent = emptyenv())
   local_env <- tryCatch(get("pkgLocal", envir = asNamespace("JuliaConnectoR")),
@@ -736,8 +830,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # So the socket is asked, without blocking. Nothing waiting is a live session
 # at rest. Something waiting is either end-of-file -- the process has gone --
 # or output a Julia task printed after the last call returned, which the next
-# call would have printed first; that is printed now instead, by
-# JuliaConnectoR's own reader, so the stream stays in step. Anything else
+# call would have printed first; that is printed now instead, so the stream
+# stays in step. Anything else
 # waiting between calls means the stream is already out of step, and a session
 # in that state is no more usable than a dead one.
 #
@@ -759,9 +853,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   }, error = function(e) NULL)
   if (is.null(jc)) return(FALSE)
   repeat {
-    waiting <- tryCatch(socketSelect(list(connection), timeout = 0),
-      error = function(e) NA)
-    if (!isTRUE(waiting)) return(FALSE)
+    if (!isTRUE(.ctSocketReadable(connection))) return(FALSE)
     first <- .ctJuliaReadBytes(connection, 1L)
     if (is.null(first)) return(TRUE)
     stream <- if (identical(first, jc$stdout)) stdout() else
@@ -803,6 +895,25 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   out
 }
 
+# Whether a socket has something to read, answered at once.
+#
+# `socketSelect(list(con), timeout = 0)` is not that on Windows: R's select
+# loop there waits out a fixed 200 ms interval before it consults the timeout,
+# so a socket with nothing waiting -- a live session at rest, the usual case --
+# costs 204 ms a call (R 4.6.0). The liveness check above runs as operations
+# come in, twice for some, so every Julia call there was 0.2-0.4 s slower and a
+# function making hundreds of them minutes slower: ctVarianceDecomposition's
+# test file went from 215 s to 45 minutes, both processes idle throughout.
+# Asking about writing on the same socket in the same call ends the wait at
+# once, since a connected socket with an empty send buffer is writable, and
+# leaves the read answer as it was -- a peer that has gone still reads as
+# readable, which is how the check finds it.
+.ctSocketReadable <- function(connection) {
+  ready <- tryCatch(socketSelect(list(connection, connection),
+    write = c(FALSE, TRUE), timeout = 0), error = function(e) NA)
+  ready[1L]
+}
+
 # Refuse, by name, to call into a Julia process that has gone.
 #
 # Both caches still pointing at it are cleared first -- ctsem's, and
@@ -811,6 +922,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # `stopJulia()` would write its goodbye into the dead socket first, which is
 # harmless and warns.
 .ctJuliaCheckAlive <- function() {
+  # Bytes waiting are expected while an interrupted call's reply is owed, and
+  # collecting that reply notices a process that has gone.
+  if (!is.null(.ct_julia_cache$inflight)) return(invisible(TRUE))
   connection <- tryCatch(get("pkgLocal",
     envir = asNamespace("JuliaConnectoR"))$con, error = function(e) NULL)
   if (is.null(connection) ||
@@ -859,7 +973,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   }
   communicator <- .ctJuliaCommunicator()
   if (is.null(communicator)) return(invisible(NA_integer_))
-  out <- tryCatch(as.integer(.ctBackendJuliaValue(JuliaConnectoR::juliaCall(
+  out <- tryCatch(as.integer(.ctBackendJuliaValue(.ctJuliaCall(
     "ContinuousTimeSEM.ctsem_tune_bridge!", communicator,
     quickack_interval = as.numeric(interval)))),
     error = function(e) NA_integer_)
@@ -889,10 +1003,19 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # from inside an unrelated later call. Order is the whole fix -- release, then
 # collect, then stop.
 .ctJuliaClearSession <- function() {
+  # A session still working on an interrupted call would not read the goodbye
+  # until that call ends, which may be a compile away; it is ended outright.
+  if (!is.null(.ct_julia_cache$inflight)) return(.ctJuliaKill())
   .ct_julia_cache$module <- NULL
   .ct_julia_cache$project <- NULL
   .ct_julia_cache$engine <- NULL
   .ct_julia_cache$session <- NULL
+  .ct_julia_cache$deferred <- NULL
+  .ctJuliaUnregister(.ct_julia_cache$pid)
+  .ct_julia_cache$pid <- NULL
+  .ct_julia_cache$pid_session <- NULL
+  if (!is.null(.ct_julia_cache$interrupt_file)) unlink(.ct_julia_cache$interrupt_file)
+  .ct_julia_cache$interrupt_file <- NULL
   .ct_julia_cache$objectives <- new.env(parent = emptyenv())
   .ct_julia_cache$layouts <- new.env(parent = emptyenv())
   # Two passes: the first frees the proxies, the second any proxy a finalizer
@@ -904,52 +1027,41 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   invisible(NULL)
 }
 
-# Julia's bridge is a request/response socket, and an interrupt does not reach
-# it. Pressing Escape between R sending a request and reading the reply leaves
-# that reply sitting unread: the connection is not merely interrupted, it is
-# *desynchronised*, and every later call reads the answer to the call before it.
-# Reported from a real session as "can't do any more fits" -- the whole R
-# session is unusable for ctsem until it is restarted.
+# What Escape during a fit leaves behind, one layer above the Julia session.
 #
-# Dropping the connection here costs the Julia session, and with it the engine's
-# compiled shapes, so the next fit pays a recompile. That is a far better trade
-# than an R session that silently returns the wrong answers, or refuses to fit
-# at all, until someone thinks to restart it.
+# The session itself needs nothing here any more: an interrupted call leaves
+# its reply owed rather than half read, and the next call collects it
+# (R/ctJuliaBridge.R), so the session and everything it compiled survive.
 #
-# The worker pool has to go the same way, and for the same reason one layer up.
-# A sampled fit runs its chains in `future::multisession` workers, and Escape
-# during one leaves two kinds of wreckage: the chains keep running, so every
-# worker is still busy when the next fit asks for one, and if the interrupt
-# landed while the parent was reading a worker's result then that socket is
-# desynchronised exactly as the Julia bridge is. Reported from a real session as
-# workers that "seem broken", after which sampling silently fell back to one
-# process for the rest of the session -- which is what the fallback is *for*,
-# but nobody asked for it and nothing said the pool was the reason.
-#
-# Dropping the pool costs each worker's compiled shapes, as dropping the Julia
-# session costs the parent's. Same trade, and it is not close: a recompile is
-# tens of seconds and an unusable pool lasts as long as the session.
+# The worker pool still has to go. A sampled fit runs its chains in
+# `future::multisession` workers, and Escape during one leaves two kinds of
+# wreckage: the chains keep running, so every worker is still busy when the
+# next fit asks for one, and if the interrupt landed while the parent was
+# reading a worker's result then that socket is desynchronised. Reported from a
+# real session as workers that "seem broken", after which sampling silently
+# fell back to one process for the rest of the session. Dropping the pool costs
+# each worker's compiled shapes; an unusable pool lasts as long as the session.
 #
 # `withCallingHandlers` rather than `tryCatch`: the handler runs and the
-# interrupt then carries on unwinding, so Escape still aborts the fit. It only
-# stops leaving wreckage behind.
+# interrupt then carries on unwinding, so Escape still aborts the fit.
 #
-# The same wrapper catches a Julia that died between two of the fit's calls.
-# JuliaConnectoR only warns when a write into its socket fails, and then waits
-# for a reply that cannot come, so the warning is the one moment left to say
-# so: `.ctJuliaCheckAlive()` confirms the process has gone and errors by name.
-# Matched on the call rather than the message, which is translated. A Julia
-# that dies while R is already waiting on it is out of reach from here; that
-# wait is JuliaConnectoR's.
+# Two further catches. JuliaConnectoR, on the paths it still handles itself,
+# ends Julia on Escape and returns NULL instead of passing the interrupt on; its
+# "Stopping Julia" message is noted, and the error that NULL then causes, or
+# the next call, stops the fit as an interrupt rather than letting it carry on
+# into a new session. And a Julia that died between two of the fit's calls:
+# JuliaConnectoR only warns when a write into its socket fails, so the warning
+# is the moment to say so -- matched on the call, since the message is
+# translated.
 #' @keywords internal
 .ctJuliaInterruptSafe <- function(expr) {
   withCallingHandlers(expr, interrupt = function(cnd) {
-    message("Interrupted. Restarting the Julia session and any sampling ",
-      "workers, because a half-finished request would leave every later fit ",
-      "in this session reading the wrong reply. The next fit will recompile ",
-      "the engine for its model shape.")
+    pool <- isNamespaceLoaded("future") &&
+      isTRUE(tryCatch(inherits(future::plan(), "multisession"), error = function(e) FALSE))
     try(.ctBackendWarmStop(NULL), silent = TRUE)
-    try(.ctJuliaClearSession(), silent = TRUE)
+    if (pool) message("Sampling workers stopped.")
+  }, message = .ctJuliaNoteSwallowed, error = function(cnd) {
+    .ctJuliaCheckSwallowed()
   }, warning = function(cnd) {
     call <- conditionCall(cnd)
     if (is.call(call) && identical(call[[1L]], as.name("writeBin"))) {
@@ -984,7 +1096,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 
 .ctJuliaNumericVector <- function(values) {
   values <- as.numeric(values)
-  if (!length(values)) return(JuliaConnectoR::juliaEval("Float64[]"))
+  if (!length(values)) return(.ctJuliaEval("Float64[]"))
   # JuliaConnectoR maps an R length-one numeric to a scalar, so a length-one
   # vector has to go across as a list to arrive as an AbstractVector. Every
   # other length must NOT: `juliaPut` marshals a plain numeric vector as a
@@ -995,8 +1107,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # which made every published Julia backend timing mostly JuliaConnectoR
   # rather than Julia. This function is called once per objective evaluation,
   # so it sits directly in the optimizer's inner loop.
-  if (length(values) == 1L) return(JuliaConnectoR::juliaPut(list(values)))
-  JuliaConnectoR::juliaPut(values)
+  if (length(values) == 1L) return(.ctJuliaPut(list(values)))
+  .ctJuliaPut(values)
 }
 
 # Replace NA with the sentinel the engine's column API expects. Done here rather
@@ -1016,8 +1128,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     stop("Internal error: an empty vector cannot be marshalled to Julia; ",
       "omit the argument instead.", call. = FALSE)
   }
-  if (length(values) == 1L) return(JuliaConnectoR::juliaPut(list(values)))
-  JuliaConnectoR::juliaPut(values)
+  if (length(values) == 1L) return(.ctJuliaPut(list(values)))
+  .ctJuliaPut(values)
 }
 
 # Raw starting values for the reduced-rank loadings, or NULL when the model has
@@ -1825,7 +1937,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 
 # The engine's correlation cap, read rather than duplicated.
 .ctJuliaCorrelationCap <- function() {
-  value <- try(JuliaConnectoR::juliaEval("ContinuousTimeSEM._LAPLACE_COR_CAP[]"),
+  value <- try(.ctJuliaEval("ContinuousTimeSEM._LAPLACE_COR_CAP[]"),
     silent = TRUE)
   if (inherits(value, "try-error")) 5.2933 else as.numeric(value)[1L]
 }
@@ -3268,7 +3380,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 .ctJuliaAsPut <- function(x) structure(list(x), class = "ctJuliaPutInput")
 .ctJuliaMarshal <- function(x) {
   if (inherits(x, "ctJuliaVectorInput")) return(.ctJuliaVector(x[[1L]]))
-  if (inherits(x, "ctJuliaPutInput")) return(JuliaConnectoR::juliaPut(x[[1L]]))
+  if (inherits(x, "ctJuliaPutInput")) return(.ctJuliaPut(x[[1L]]))
   x
 }
 
@@ -3576,20 +3688,27 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 #'   faster than "forward" at every model size measured, by a margin that
 #'   grows with the parameter count. See \code{optimcontrol$gradient} in
 #'   \code{ctFit}.
+#' @param cores Engine subject-chunk ceiling for this one evaluation, restored
+#'   afterwards. This call used to run outside any ceiling, at the session's
+#'   full thread width: harmless on its own, but it left the worker pool at
+#'   full width behind it, which let unrelated later work -- an in-process
+#'   sampler's chains among them -- run wider than its own \code{cores} asked
+#'   for. See \code{.ctBackendWithMaxChunks()}.
 #' @return A list containing log likelihood and, when requested, gradient.
 #' @export
 ctJuliaEvaluate <- function(object, pars = NULL, gradient = TRUE, contributions = FALSE,
-  gradient_method = c("adjoint", "forward")) {
+  gradient_method = c("adjoint", "forward"), cores = 2L) {
   gradient_method <- match.arg(gradient_method)
   if (!inherits(object, c("ctJuliaModel", "ctJuliaFit"))) stop("object must be a ctJuliaModel or ctJuliaFit", call. = FALSE)
   if (is.null(pars)) {
     if (inherits(object, "ctJuliaFit")) pars <- object$estimate$raw else stop("pars must be supplied for a prepared ctJuliaModel", call. = FALSE)
   }
   module <- .ctJuliaModule(if (inherits(object, "ctJuliaFit")) object$model_spec$project else object$project)
-  result <- module$ctsem_evaluate(.ctJuliaObjective(object), .ctJuliaNumericVector(pars),
+  result <- .ctBackendWithMaxChunks(cores, module$ctsem_evaluate(
+    .ctJuliaObjective(object), .ctJuliaNumericVector(pars),
     gradient = isTRUE(gradient), contributions = isTRUE(contributions),
-    gradient_method = gradient_method)
-  JuliaConnectoR::juliaGet(result)
+    gradient_method = gradient_method))
+  .ctJuliaGet(result)
 }
 
 #' @export
@@ -3689,9 +3808,14 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # Often the first call of an operation, ahead of anything that asks for the
   # module, so it is where a session that has died is noticed.
   .ctJuliaCheckAlive()
-  previous <- tryCatch(as.integer(.ctBackendJuliaValue(JuliaConnectoR::juliaEval(
+  # And the engine is loaded here rather than by the work inside the region:
+  # loading it sets the default ceiling, which would otherwise replace this one
+  # for the region's duration -- a ctExtract(cores = 8) on a fit restored into a
+  # new session would run at the default.
+  .ctJuliaModule(.ct_julia_cache$project)
+  previous <- tryCatch(as.integer(.ctBackendJuliaValue(.ctJuliaEval(
     "ContinuousTimeSEM.ctsem_max_chunks().max_chunks"))), error = function(e) NA_integer_)
-  try(JuliaConnectoR::juliaCall("ContinuousTimeSEM.ctsem_set_max_chunks!", chunks),
+  try(.ctJuliaCall("ContinuousTimeSEM.ctsem_set_max_chunks!", chunks),
     silent = TRUE)
   previous
 }
@@ -3699,8 +3823,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 .ctBackendRestoreMaxChunks <- function(previous) {
   previous <- suppressWarnings(as.integer(previous)[1L])
   if (!is.na(previous)) {
-    try(JuliaConnectoR::juliaCall("ContinuousTimeSEM.ctsem_set_max_chunks!",
-      previous), silent = TRUE)
+    # Deferred when Escape left a reply owed: this runs from `on.exit` as the
+    # interrupt unwinds, and must not wait for the interrupted call to end.
+    try(.ctJuliaCall("ContinuousTimeSEM.ctsem_set_max_chunks!",
+      previous, .defer = TRUE), silent = TRUE)
   }
   invisible(NULL)
 }
@@ -3714,11 +3840,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 # spelling this cannot parse is reported as unknown rather than guessed at.
 .ctBackendSessionThreads <- function() {
   if (.ctJuliaSessionRunning()) {
-    return(tryCatch(as.integer(JuliaConnectoR::juliaEval("Threads.nthreads()")),
+    return(tryCatch(as.integer(.ctJuliaEval("Threads.nthreads()")),
       error = function(e) NA_integer_))
   }
   existing <- Sys.getenv("JULIA_NUM_THREADS", unset = "")
-  if (!nzchar(existing)) return(1L)
+  if (!nzchar(existing)) return(.ctJuliaWidth())
   suppressWarnings(as.integer(sub(",.*$", "", existing))[1L])
 }
 
@@ -3740,28 +3866,25 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 # Resolve `cores` against that thread count, and never do it in silence.
 #
 # Julia fixes `Threads.nthreads()` at process start, so `cores` is a request
-# only an unstarted session can grant. Three situations, and the third is the
-# one this exists for:
+# only an unstarted session can grant. Three situations:
 #
-#   * No session yet and the thread count is ours to set -- set it, and the fit
-#     gets what it asked for.
+#   * No session yet and the thread count is ours to set -- provision it
+#     (`.ctJuliaProvision()`), at least `cores` wide.
 #   * No session yet but JULIA_NUM_THREADS was set deliberately, by
 #     ctJuliaSetup(threads=), by the user, or by a cluster scheduler -- that
 #     wins, and it may be narrower than `cores`.
 #   * A session is already running -- its count is fixed and cannot be raised.
 #
-# The third cost a whole benchmark pass. A harness that calls `ctJuliaSetup()`
-# once up front, to pay the engine load before timing anything, pins the session
-# to one thread; every later `cores = n` fit then ran on one subject chunk,
-# serially, and said nothing. It was caught only because the gradient counts for
-# `cores = 1` and `cores = 4` came back identical to the digit.
+# The third used to be the common one: a session started for a two-core fit, or
+# by a harness calling `ctJuliaSetup()` up front, ran every later `cores = n`
+# fit at its own width. Provisioning every session at the width this process
+# may use makes it rare -- it now takes a deliberately narrow session, or a
+# `cores` beyond the machine -- and when it happens it is said.
 #
 # `options(ctsem.julia.restart = TRUE)` opts in to fixing it rather than saying
-# it. Not the default, for two measured reasons: a restart discards the
-# session's compiled model shapes -- ~5 s to restart, plus ~15 s of
-# respecialisation on the next fit, on a one-latent model -- and `cores`
-# defaults to `getOption("mc.cores", 2)`, so a default fit would otherwise kill
-# and rebuild a deliberately narrow session nobody asked it to widen.
+# it. Not the default: a restart discards the session's compiled model shapes
+# -- ~5 s to restart, plus ~15 s of respecialisation on the next fit, on a
+# one-latent model -- and a narrow session is now one somebody chose.
 #
 # `threads` is a parameter so the gate can be exercised at a count the test
 # machine does not have to be restarted into. `report = FALSE` is `fit = FALSE`:
@@ -3774,17 +3897,13 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   restart <- isTRUE(report) && isTRUE(getOption("ctsem.julia.restart", FALSE))
   if (is.null(threads) && !.ctJuliaSessionRunning()) {
     existing <- Sys.getenv("JULIA_NUM_THREADS", unset = "")
-    # An existing value is respected unless *this* function set it for an
-    # earlier fit. Without that distinction a `cores=8` fit left the variable
-    # behind, and the next `ctFit(cores=2)` in a restarted session started
-    # eight threads while asking for two -- the subject loop still honoured
-    # `cores`, but the process held cores the user had not asked for. A value
-    # from ctJuliaSetup(threads=) or from the user's own environment is
-    # deliberate and still wins, unless the restart option says otherwise --
-    # there is no session to lose here, so honouring it costs nothing.
+    # A value from ctJuliaSetup(threads=) or from the user's own environment is
+    # deliberate and wins, unless the restart option says otherwise -- there
+    # is no session to lose here, so honouring `cores` costs nothing.
     ours <- nzchar(existing) &&
       identical(existing, .ct_julia_cache$threads_from_cores)
-    if (!nzchar(existing) || ours || restart) {
+    if (!nzchar(existing) || ours) return(invisible(.ctJuliaProvision(cores)))
+    if (restart) {
       Sys.setenv(JULIA_NUM_THREADS = as.character(cores))
       .ct_julia_cache$threads_from_cores <- as.character(cores)
       return(invisible(cores))
@@ -3858,7 +3977,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # finished, so the session is up and this is one cheap bridge call.
   if (is.null(threads)) {
     threads <- if (!.ctJuliaSessionRunning()) NA_integer_ else
-      tryCatch(as.integer(JuliaConnectoR::juliaEval("Threads.nthreads()")),
+      tryCatch(as.integer(.ctJuliaEval("Threads.nthreads()")),
         error = function(e) NA_integer_)
   }
   threads <- suppressWarnings(as.integer(threads)[1L])
@@ -3945,7 +4064,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # may find the filter not finite there on a stiff model; the mesh the fit was
   # found with is then its fallback.
   if (is.integer(spec$max_timestep)) arguments$fallback <- .ctJuliaVector(spec$max_timestep)
-  chosen <- JuliaConnectoR::juliaGet(do.call(module$ctsem_auto_substeps, arguments))
+  chosen <- .ctJuliaGet(do.call(module$ctsem_auto_substeps, arguments))
   summary <- list(intervals = as.integer(chosen$intervals), refined = as.integer(chosen$refined),
     max_substeps = as.integer(chosen$max_substeps), total = as.integer(chosen$total),
     passes = as.integer(chosen$passes), finite = isTRUE(chosen$finite),
@@ -4039,8 +4158,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # two of its elements need the same answer: `progress` runs the engine's
   # reporter and `progress_sink` says where its line goes. See the note on
   # `progress` at the foot of the list for why it is not simply `verbose`.
-  reporting <- isTRUE(.ctJuliaOr(optimcontrol$progress,
-    verbose > 0L || .ctProgressConsole()))
+  reporting <- isTRUE(.ctJuliaOr(optimcontrol$progress, .ctBackendReporting(verbose)))
   common <- list(
     maxiter = as.integer(.ctJuliaOr(maxiter, .ctJuliaOr(optimcontrol$maxiter, 1000L))),
     g_tol = .ctJuliaOr(optimcontrol$g_tol, 1e-8),
@@ -4300,10 +4418,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         # `gradient` selects how the *process* likelihood's gradient is taken
         # and does not apply here: the Laplace objective's gradient is a forward
         # sweep over that reverse pass regardless.
-        JuliaConnectoR::juliaGet(do.call(module$ctsem_laplace_optimize,
+        .ctJuliaGet(do.call(module$ctsem_laplace_optimize,
           c(list(target, .ctJuliaNumericVector(from)), args)))
       } else {
-        JuliaConnectoR::juliaGet(do.call(module$ctsem_optimize,
+        .ctJuliaGet(do.call(module$ctsem_optimize,
           c(list(target, .ctJuliaNumericVector(from)), args,
             list(gradient_method = gradient))))
       }
@@ -4951,7 +5069,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     if (is.null(correction)) NULL else correction$certification, optimcontrol,
     inits, intoverstates) else 0L
   if (nrestarts > 0L) {
-    reporting <- verbose > 0L || .ctProgressConsole()
+    reporting <- .ctBackendReporting(verbose)
     elapsed <- proc.time()[["elapsed"]] - optimise_started
     if (reporting) message("Not converged; trying ", nrestarts,
       " random restarts. Esc or Ctrl-C stops them and keeps this fit.")

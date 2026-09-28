@@ -114,6 +114,9 @@ _elapsed(p::CTSEMProgress) = time() - p.started
 
 """Should a line be printed now? True at most once per `every` seconds."""
 function _due(p::CTSEMProgress, force::Bool=false)
+    # Every reporting loop comes through here whether or not it prints, which
+    # makes it the place to notice that R has asked the call to stop.
+    _ctsem_interrupt_check()
     p.enabled || return false
     now = time()
     (force || now - p.last >= p.every) || return false
@@ -424,6 +427,65 @@ function _progress_optimise(p::CTSEMProgress, done::Integer, cap::Integer,
 end
 
 """
+    _progress_fraction(p, text)
+
+A short update for a bounded sub-task inside a larger stage -- forming a
+Hessian, screening quadrature units -- through the same line and sink as
+everything else.
+
+Unlike `_progress_optimise`, whose `cap` is a safety limit the run may never
+approach, the fraction behind `text` here is one the sub-task always reaches:
+so the caller writes it out in full (`"14 of 54 gradients"`) rather than this
+function withholding a denominator the way `_progress_optimise` does. The
+label and the elapsed time are added so the line reads as a continuation of
+the stage's own report rather than something new -- the reason a caller
+passes its `CTSEMProgress` here rather than printing on its own.
+"""
+function _progress_fraction(p::CTSEMProgress, text::AbstractString)
+    p.lines += 1
+    _emit(p, @sprintf("  %s %s | %8s", p.label, text, _duration(_elapsed(p))))
+    return nothing
+end
+
+"""
+    _ctsem_progress_reporter(progress, label, overwrite, sink, every)
+
+One `CTSEMProgress`, built the same way for every caller that takes this same
+five-keyword vocabulary (`ctsem_optimize`, `ctsem_endgame`,
+`ctsem_hessian_progress`) -- always a live struct, `enabled = progress`,
+never `nothing`. Two of those callers used to disagree on this: one built a
+real struct whatever `progress` said, the other built `nothing` when it was
+`false`. The difference was not cosmetic -- `_ctsem_hessian_progress` below
+has to skip building its closure when progress is off, and "off" meant two
+different things depending on which caller reached it. A single, deliberate
+answer here is what makes that check able to ask one question
+(`reporter.enabled`) instead of two (`=== nothing`, or `.enabled`).
+"""
+_ctsem_progress_reporter(progress::Bool, label::AbstractString, overwrite::Bool,
+    sink, every::Real) = CTSEMProgress(progress; label=label, overwrite=overwrite,
+        sink=sink, every=every)
+
+"""
+    _ctsem_hessian_progress(reporter)
+
+The `(done, total) -> nothing` callback `ctsem_hessian`'s (and
+`ctsem_laplace_hessian`'s) `progress` parameter expects, reporting through
+`reporter` on its own cadence via `_due`/`_progress_fraction` -- or `nothing`
+when there is nothing to report through, whether that is a literal `nothing`
+(a caller that never built a reporter at all) or a `CTSEMProgress` built
+disabled (`_ctsem_progress_reporter(false, ...)`). Shared by
+`_ctsem_newton_finish`'s own Hessian and by `ctsem_hessian_progress`, the
+standalone entry point for a caller with no finish or certification to borrow
+a reporter from.
+"""
+_ctsem_hessian_progress(reporter) = (reporter === nothing || !reporter.enabled) ?
+    nothing : function (done::Integer, total::Integer)
+        _due(reporter) && _progress_fraction(reporter,
+            @sprintf("hessian %d of %d gradients", done, total))
+        nothing
+    end
+
+"""
     _progress_break(p)
 
 End the current in-place line so something else can print on its own.
@@ -587,6 +649,8 @@ CTSEMTrace(keys::Symbol...) = CTSEMTrace(Int[],
 
 """Append one iteration. Values are positional, in the key order given."""
 function _record!(t::CTSEMTrace, iteration::Integer, values::Real...)
+    # Once per optimiser iteration, printed or not; see interrupt.jl.
+    _ctsem_interrupt_check()
     length(values) == length(t.keys) ||
         throw(ArgumentError("trace expects $(length(t.keys)) values"))
     push!(t.iteration, Int(iteration))
@@ -636,6 +700,7 @@ prints -- got nothing at all. A callback is a programmatic consumer and has no
 reason to depend on whether anything is being printed.
 """
 function _callback_due(cb::CTSEMCallback, force::Bool=false)
+    _ctsem_interrupt_check()
     cb.alive || return false
     now = time()
     (force || now - cb.last >= cb.every) || return false

@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.10.18">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+
+<title>Uncertainty in a Fitted ctsem Model</title>
+<style>
+
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: 1.5em;}
+div.column{flex: auto;}
+@media screen {
+div.columns{gap: min(4vw, 1.5em);}
+div.column{overflow-x: auto;}
+}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+width: 0.8em;
+margin: 0 0.8em 0.2em -1em;  vertical-align: middle;
+}
+
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+{ counter-reset: source-line 0; }
+pre.numberSource code > span
+{ position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+{ content: counter(source-line);
+position: relative; left: -1em; text-align: right; vertical-align: baseline;
+border: none; display: inline-block;
+-webkit-touch-callout: none; -webkit-user-select: none;
+-khtml-user-select: none; -moz-user-select: none;
+-ms-user-select: none; user-select: none;
+padding: 0 4px; width: 4em;
+}
+pre.numberSource { margin-left: 3em; padding-left: 4px; }
+div.sourceCode
+{ }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+</style>
+
+
+
+
+<style type="text/css">
+body {
+max-width: 50rem;
+margin: 2rem auto;
+padding: 0 1rem;
+font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+font-size: 16px;
+line-height: 1.55;
+color: #1f2328;
+background: #ffffff;
+}
+h1, h2, h3, h4 { line-height: 1.25; margin: 1.8em 0 0.6em; }
+h1.title { margin-top: 0.4em; }
+a { color: #0969da; }
+pre, code {
+font-family: ui-monospace, "Cascadia Mono", Consolas, "Liberation Mono", monospace;
+font-size: 0.87em;
+}
+pre {
+background: #f6f8fa;
+padding: 0.75em 1em;
+overflow-x: auto;
+border-radius: 4px;
+line-height: 1.4;
+}
+code { background: #f6f8fa; padding: 0.1em 0.3em; border-radius: 3px; }
+pre code { background: none; padding: 0; }
+details > summary { cursor: pointer; color: #57606a; margin: 0.5em 0; }
+img { max-width: 100%; height: auto; }
+figure { margin: 1.2em 0; }
+figcaption { color: #57606a; font-size: 0.9em; }
+table { border-collapse: collapse; margin: 1em 0; font-size: 0.93em; }
+th, td { border-bottom: 1px solid #d0d7de; padding: 0.3em 0.7em; text-align: left; }
+th { border-bottom-width: 2px; }
+blockquote { border-left: 3px solid #d0d7de; margin: 1em 0; padding-left: 1em; color: #57606a; }
+math[display="block"] { margin: 1em 0; overflow-x: auto; }
+nav#TOC, #TOC { border-left: 3px solid #d0d7de; padding-left: 1em; margin: 1.5em 0; }
+#TOC ul { list-style: none; padding-left: 1em; margin: 0.2em 0; }
+#TOC > ul { padding-left: 0; }
+.callout, .callout-note {
+border-left: 4px solid #0969da;
+background: #f6f8fa;
+padding: 0.6em 1em;
+margin: 1.2em 0;
+border-radius: 0 4px 4px 0;
+}
+</style>
+</head>
+
+<body>
+
+
+<header id="title-block-header">
+<h1 class="title">Uncertainty in a Fitted ctsem Model</h1>
+
+</header>
+
+<nav id="TOC" role="doc-toc">
+    <h2 id="toc-title">Table of contents</h2>
+   
+  <ul>
+  <li><a href="#the-two-routes" id="toc-the-two-routes">The two routes</a></li>
+  <li><a href="#a-small-model-fit-several-ways" id="toc-a-small-model-fit-several-ways">A small model, fit several ways</a>
+  <ul>
+  <li><a href="#sampling" id="toc-sampling">Sampling</a></li>
+  <li><a href="#optimizing" id="toc-optimizing">Optimizing</a></li>
+  </ul></li>
+  <li><a href="#the-bits-in-between" id="toc-the-bits-in-between">The bits in between</a>
+  <ul>
+  <li><a href="#the-state-explicit-path-has-one-route-not-seven" id="toc-the-state-explicit-path-has-one-route-not-seven">The state-explicit path has one route, not seven</a></li>
+  </ul></li>
+  <li><a href="#with-and-without-priors" id="toc-with-and-without-priors">With and without priors</a></li>
+  <li><a href="#summary" id="toc-summary">Summary</a></li>
+  </ul>
+</nav>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb1"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(ctsem)</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(ggplot2)</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">12</span>)</span></code></pre></div>
+</div>
+<p>Every <code>ctFit()</code> returns an estimate and a claim about how uncertain it is. Where that claim comes from depends on three choices, each of which changes what the resulting interval means:</p>
+<ul>
+<li><strong><code>optimize</code></strong>: sample the posterior (or likelihood) with HMC, or find its mode and approximate the curvature there.</li>
+<li><strong><code>priors</code></strong>: include ctsem’s weakly informative priors on the raw parameter scale, or leave them out.</li>
+<li><strong><code>uncertainty</code></strong>: for an optimized fit, which curvature-or-resampling approximation to use around the mode.</li>
+</ul>
+<p>This vignette works through all three, on both backends (<code>backend = &#39;stan&#39;</code> and <code>backend = &#39;julia&#39;</code>), using one small model fit many different ways so the intervals can be compared directly rather than described in the abstract.</p>
+<h2 id="the-two-routes">The two routes</h2>
+<p><strong>Sampling</strong> (<code>optimize = FALSE</code>) draws from the target density with HMC – Stan’s sampler for <code>backend = &#39;stan&#39;</code>, the julia engine’s own No-U-Turn sampler for <code>backend = &#39;julia&#39;</code>. Uncertainty is then just the spread of the draws: no curvature is computed and no normal approximation is assumed. This is the most trustworthy route and the slowest one.</p>
+<p><strong>Optimizing</strong> (<code>optimize = TRUE</code>, the default) finds the mode of the same target and reports a point estimate plus an approximation of the local curvature there. The approximation is cheap – one fit instead of thousands of gradient evaluations – but it is only as good as the normal approximation it rests on. It is a poor description of a posterior that is skewed, bounded, or multimodal, which variance-like parameters often are with few subjects.</p>
+<p>Both routes target the <em>same</em> density for a given setting of <code>priors</code>; they differ only in how they characterise it. The rest of this vignette compares them directly, then works through what sits between “one Hessian” and “full HMC,” and then through what changes when priors are switched off.</p>
+<h2 id="a-small-model-fit-several-ways">A small model, fit several ways</h2>
+<p>The model below is a single latent process observed with a fixed measurement scale, estimating a continuous-time intercept, drift, and diffusion. Ten subjects and eight time points keep every fit in this document fast, which also means several of the demonstrations below hit the small-sample problems this vignette is about – deliberately, since a model too well identified to show the difference between uncertainty methods would not make the point.</p>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb2"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>n_subjects <span class="ot">&lt;-</span> <span class="dv">8</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>tpoints <span class="ot">&lt;-</span> <span class="dv">8</span></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>gen_model <span class="ot">&lt;-</span> <span class="fu">ctModel</span>(</span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">type =</span> <span class="st">&quot;omx&quot;</span>,</span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">Tpoints =</span> tpoints,</span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">n.latent =</span> <span class="dv">1</span>,</span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">n.manifest =</span> <span class="dv">1</span>,</span>
+<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a>  <span class="at">LAMBDA =</span> <span class="fu">matrix</span>(<span class="dv">1</span>),</span>
+<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a>  <span class="at">T0MEANS =</span> <span class="fu">matrix</span>(<span class="dv">0</span>),</span>
+<span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a>  <span class="at">T0VAR =</span> <span class="fu">matrix</span>(<span class="fl">0.6</span>),</span>
+<span id="cb2-12"><a href="#cb2-12" aria-hidden="true" tabindex="-1"></a>  <span class="at">DRIFT =</span> <span class="fu">matrix</span>(<span class="sc">-</span><span class="fl">0.35</span>),</span>
+<span id="cb2-13"><a href="#cb2-13" aria-hidden="true" tabindex="-1"></a>  <span class="at">DIFFUSION =</span> <span class="fu">matrix</span>(<span class="fl">0.5</span>),</span>
+<span id="cb2-14"><a href="#cb2-14" aria-hidden="true" tabindex="-1"></a>  <span class="at">CINT =</span> <span class="fu">matrix</span>(<span class="fl">0.15</span>),</span>
+<span id="cb2-15"><a href="#cb2-15" aria-hidden="true" tabindex="-1"></a>  <span class="at">MANIFESTMEANS =</span> <span class="fu">matrix</span>(<span class="dv">0</span>),</span>
+<span id="cb2-16"><a href="#cb2-16" aria-hidden="true" tabindex="-1"></a>  <span class="at">MANIFESTVAR =</span> <span class="fu">matrix</span>(<span class="fl">0.25</span>)</span>
+<span id="cb2-17"><a href="#cb2-17" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb2-18"><a href="#cb2-18" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-19"><a href="#cb2-19" aria-hidden="true" tabindex="-1"></a>dat <span class="ot">&lt;-</span> <span class="fu">do.call</span>(rbind, <span class="fu">lapply</span>(<span class="fu">seq_len</span>(n_subjects), <span class="cf">function</span>(id) {</span>
+<span id="cb2-20"><a href="#cb2-20" aria-hidden="true" tabindex="-1"></a>  d <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(<span class="fu">ctGenerate</span>(</span>
+<span id="cb2-21"><a href="#cb2-21" aria-hidden="true" tabindex="-1"></a>    <span class="at">ctmodelobj =</span> gen_model,</span>
+<span id="cb2-22"><a href="#cb2-22" aria-hidden="true" tabindex="-1"></a>    <span class="at">n.subjects =</span> <span class="dv">1</span>,</span>
+<span id="cb2-23"><a href="#cb2-23" aria-hidden="true" tabindex="-1"></a>    <span class="at">burnin =</span> <span class="dv">0</span>,</span>
+<span id="cb2-24"><a href="#cb2-24" aria-hidden="true" tabindex="-1"></a>    <span class="at">dtmean =</span> <span class="fl">0.4</span>,</span>
+<span id="cb2-25"><a href="#cb2-25" aria-hidden="true" tabindex="-1"></a>    <span class="at">logdtsd =</span> <span class="fl">0.1</span></span>
+<span id="cb2-26"><a href="#cb2-26" aria-hidden="true" tabindex="-1"></a>  ))</span>
+<span id="cb2-27"><a href="#cb2-27" aria-hidden="true" tabindex="-1"></a>  d<span class="sc">$</span>id <span class="ot">&lt;-</span> id</span>
+<span id="cb2-28"><a href="#cb2-28" aria-hidden="true" tabindex="-1"></a>  d</span>
+<span id="cb2-29"><a href="#cb2-29" aria-hidden="true" tabindex="-1"></a>}))</span>
+<span id="cb2-30"><a href="#cb2-30" aria-hidden="true" tabindex="-1"></a>dat <span class="ot">&lt;-</span> dat[<span class="fu">order</span>(dat<span class="sc">$</span>id, dat<span class="sc">$</span>time), ]</span>
+<span id="cb2-31"><a href="#cb2-31" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-32"><a href="#cb2-32" aria-hidden="true" tabindex="-1"></a>fit_model <span class="ot">&lt;-</span> <span class="fu">ctModel</span>(</span>
+<span id="cb2-33"><a href="#cb2-33" aria-hidden="true" tabindex="-1"></a>  <span class="at">type =</span> <span class="st">&quot;ct&quot;</span>,</span>
+<span id="cb2-34"><a href="#cb2-34" aria-hidden="true" tabindex="-1"></a>  <span class="at">Tpoints =</span> tpoints,</span>
+<span id="cb2-35"><a href="#cb2-35" aria-hidden="true" tabindex="-1"></a>  <span class="at">n.latent =</span> <span class="dv">1</span>,</span>
+<span id="cb2-36"><a href="#cb2-36" aria-hidden="true" tabindex="-1"></a>  <span class="at">n.manifest =</span> <span class="dv">1</span>,</span>
+<span id="cb2-37"><a href="#cb2-37" aria-hidden="true" tabindex="-1"></a>  <span class="at">LAMBDA =</span> <span class="fu">matrix</span>(<span class="dv">1</span>),</span>
+<span id="cb2-38"><a href="#cb2-38" aria-hidden="true" tabindex="-1"></a>  <span class="at">MANIFESTMEANS =</span> <span class="fu">matrix</span>(<span class="dv">0</span>),</span>
+<span id="cb2-39"><a href="#cb2-39" aria-hidden="true" tabindex="-1"></a>  <span class="at">CINT =</span> <span class="fu">matrix</span>(<span class="st">&quot;cint&quot;</span>),</span>
+<span id="cb2-40"><a href="#cb2-40" aria-hidden="true" tabindex="-1"></a>  <span class="at">DRIFT =</span> <span class="fu">matrix</span>(<span class="st">&quot;drift&quot;</span>),</span>
+<span id="cb2-41"><a href="#cb2-41" aria-hidden="true" tabindex="-1"></a>  <span class="at">DIFFUSION =</span> <span class="fu">matrix</span>(<span class="st">&quot;diffusion&quot;</span>)</span>
+<span id="cb2-42"><a href="#cb2-42" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb2-43"><a href="#cb2-43" aria-hidden="true" tabindex="-1"></a><span class="co"># A fixed-effects model: no individual differences to estimate on top of the</span></span>
+<span id="cb2-44"><a href="#cb2-44" aria-hidden="true" tabindex="-1"></a><span class="co"># already small sample. ctModel() defaults T0MEANS and CINT to individually</span></span>
+<span id="cb2-45"><a href="#cb2-45" aria-hidden="true" tabindex="-1"></a><span class="co"># varying, which is realistic for most applications but adds population</span></span>
+<span id="cb2-46"><a href="#cb2-46" aria-hidden="true" tabindex="-1"></a><span class="co"># standard deviations and correlations this vignette does not need, and with</span></span>
+<span id="cb2-47"><a href="#cb2-47" aria-hidden="true" tabindex="-1"></a><span class="co"># eight subjects those are barely identified on their own -- confounding</span></span>
+<span id="cb2-48"><a href="#cb2-48" aria-hidden="true" tabindex="-1"></a><span class="co"># uncertainty about the individual-differences distribution with uncertainty</span></span>
+<span id="cb2-49"><a href="#cb2-49" aria-hidden="true" tabindex="-1"></a><span class="co"># about the drift this vignette is actually comparing.</span></span>
+<span id="cb2-50"><a href="#cb2-50" aria-hidden="true" tabindex="-1"></a>fit_model<span class="sc">$</span>pars<span class="sc">$</span>indvarying <span class="ot">&lt;-</span> <span class="cn">FALSE</span></span></code></pre></div>
+</div>
+<p>The two backends store an optimized fit’s point estimate and posterior draws in different places (<code>fit$stanfit$rawest</code> / <code>fit$stanfit$rawposterior</code> for <code>backend = &#39;stan&#39;</code>, <code>fit$estimate$raw</code> / <code>fit$estimate$rawposterior</code> for <code>backend = &#39;julia&#39;</code>). <code>summary()</code> and <code>ctExtract()</code> read either transparently and report on the usual constrained parameter scale, so the rest of this vignette uses those rather than the raw slots directly.</p>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb3"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>drift_interval <span class="ot">&lt;-</span> <span class="cf">function</span>(fit) {</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>  draws <span class="ot">&lt;-</span> <span class="fu">ctExtract</span>(fit)<span class="sc">$</span>pop_DRIFT[, <span class="dv">1</span>, <span class="dv">1</span>]</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">c</span>(<span class="at">mean =</span> <span class="fu">mean</span>(draws), <span class="fu">quantile</span>(draws, <span class="fu">c</span>(.<span class="dv">025</span>, .<span class="dv">975</span>)))</span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div>
+</div>
+<h3 id="sampling">Sampling</h3>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb4"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>stan_sample <span class="ot">&lt;-</span> <span class="fu">ctFit</span>(</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">datalong =</span> dat, <span class="at">model =</span> fit_model, <span class="at">backend =</span> <span class="st">&quot;stan&quot;</span>,</span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">cores =</span> <span class="dv">1</span>, <span class="at">priors =</span> <span class="cn">TRUE</span>, <span class="at">optimize =</span> <span class="cn">FALSE</span>,</span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">chains =</span> <span class="dv">1</span>, <span class="at">iter =</span> <span class="dv">400</span>, <span class="at">verbose =</span> <span class="dv">0</span></span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; SAMPLING FOR MODEL &#39;ctsm&#39; NOW (CHAIN 1).</span></span>
+<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: </span></span>
+<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Gradient evaluation took 0.000941 seconds</span></span>
+<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: 1000 transitions using 10 leapfrog steps per transition would take 9.41 seconds.</span></span>
+<span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Adjust your expectations accordingly!</span></span>
+<span id="cb4-12"><a href="#cb4-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: </span></span>
+<span id="cb4-13"><a href="#cb4-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: </span></span>
+<span id="cb4-14"><a href="#cb4-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration:   1 / 400 [  0%]  (Warmup)</span></span>
+<span id="cb4-15"><a href="#cb4-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration:  20 / 400 [  5%]  (Warmup)</span></span>
+<span id="cb4-16"><a href="#cb4-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration:  40 / 400 [ 10%]  (Warmup)</span></span>
+<span id="cb4-17"><a href="#cb4-17" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration:  60 / 400 [ 15%]  (Warmup)</span></span>
+<span id="cb4-18"><a href="#cb4-18" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration:  80 / 400 [ 20%]  (Warmup)</span></span>
+<span id="cb4-19"><a href="#cb4-19" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 100 / 400 [ 25%]  (Warmup)</span></span>
+<span id="cb4-20"><a href="#cb4-20" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 120 / 400 [ 30%]  (Warmup)</span></span>
+<span id="cb4-21"><a href="#cb4-21" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 140 / 400 [ 35%]  (Warmup)</span></span>
+<span id="cb4-22"><a href="#cb4-22" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 160 / 400 [ 40%]  (Warmup)</span></span>
+<span id="cb4-23"><a href="#cb4-23" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 180 / 400 [ 45%]  (Warmup)</span></span>
+<span id="cb4-24"><a href="#cb4-24" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 200 / 400 [ 50%]  (Warmup)</span></span>
+<span id="cb4-25"><a href="#cb4-25" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 201 / 400 [ 50%]  (Sampling)</span></span>
+<span id="cb4-26"><a href="#cb4-26" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 220 / 400 [ 55%]  (Sampling)</span></span>
+<span id="cb4-27"><a href="#cb4-27" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 240 / 400 [ 60%]  (Sampling)</span></span>
+<span id="cb4-28"><a href="#cb4-28" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 260 / 400 [ 65%]  (Sampling)</span></span>
+<span id="cb4-29"><a href="#cb4-29" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 280 / 400 [ 70%]  (Sampling)</span></span>
+<span id="cb4-30"><a href="#cb4-30" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 300 / 400 [ 75%]  (Sampling)</span></span>
+<span id="cb4-31"><a href="#cb4-31" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 320 / 400 [ 80%]  (Sampling)</span></span>
+<span id="cb4-32"><a href="#cb4-32" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 340 / 400 [ 85%]  (Sampling)</span></span>
+<span id="cb4-33"><a href="#cb4-33" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 360 / 400 [ 90%]  (Sampling)</span></span>
+<span id="cb4-34"><a href="#cb4-34" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 380 / 400 [ 95%]  (Sampling)</span></span>
+<span id="cb4-35"><a href="#cb4-35" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 400 / 400 [100%]  (Sampling)</span></span>
+<span id="cb4-36"><a href="#cb4-36" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: </span></span>
+<span id="cb4-37"><a href="#cb4-37" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:  Elapsed Time: 2.491 seconds (Warm-up)</span></span>
+<span id="cb4-38"><a href="#cb4-38" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:                2.096 seconds (Sampling)</span></span>
+<span id="cb4-39"><a href="#cb4-39" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:                4.587 seconds (Total)</span></span>
+<span id="cb4-40"><a href="#cb4-40" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:</span></span></code></pre></div>
+</div>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb5"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>julia_sample <span class="ot">&lt;-</span> <span class="fu">ctFit</span>(</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">datalong =</span> dat, <span class="at">model =</span> fit_model, <span class="at">backend =</span> <span class="st">&quot;julia&quot;</span>,</span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">cores =</span> <span class="dv">1</span>, <span class="at">priors =</span> <span class="cn">TRUE</span>, <span class="at">optimize =</span> <span class="cn">FALSE</span>,</span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">chains =</span> <span class="dv">1</span>, <span class="at">iter =</span> <span class="dv">250</span>, <span class="at">verbose =</span> <span class="dv">0</span></span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+</div>
+<p>With a single short chain each, these are quick demonstrations rather than publication-ready samples – raise <code>chains</code> and <code>iter</code> for real work. The drift interval from each:</p>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb6"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="fu">rbind</span>(<span class="at">stan =</span> <span class="fu">drift_interval</span>(stan_sample), <span class="at">julia =</span> <span class="fu">drift_interval</span>(julia_sample))</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;             mean      2.5%       97.5%</span></span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; stan  -0.6794117 -2.040637 -0.02921703</span></span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; julia -0.6471627 -1.789481 -0.01484925</span></span></code></pre></div>
+</div>
+<h3 id="optimizing">Optimizing</h3>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb7"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a>stan_map <span class="ot">&lt;-</span> <span class="fu">ctFit</span>(</span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">datalong =</span> dat, <span class="at">model =</span> fit_model, <span class="at">backend =</span> <span class="st">&quot;stan&quot;</span>,</span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">cores =</span> <span class="dv">1</span>, <span class="at">priors =</span> <span class="cn">TRUE</span>, <span class="at">optimize =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">optimcontrol =</span> <span class="fu">list</span>(<span class="at">stochastic =</span> <span class="cn">FALSE</span>, <span class="at">carefulfit =</span> <span class="cn">FALSE</span>, <span class="at">finishsamples =</span> <span class="dv">200</span>)</span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+</div>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb8"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>julia_map <span class="ot">&lt;-</span> <span class="fu">ctFit</span>(</span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">datalong =</span> dat, <span class="at">model =</span> fit_model, <span class="at">backend =</span> <span class="st">&quot;julia&quot;</span>,</span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">cores =</span> <span class="dv">1</span>, <span class="at">priors =</span> <span class="cn">TRUE</span>, <span class="at">optimize =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">optimcontrol =</span> <span class="fu">list</span>(<span class="at">finishsamples =</span> <span class="dv">200</span>), <span class="at">verbose =</span> <span class="dv">0</span></span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+</div>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb9"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="fu">rbind</span>(<span class="at">stan =</span> <span class="fu">drift_interval</span>(stan_map), <span class="at">julia =</span> <span class="fu">drift_interval</span>(julia_map))</span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;             mean      2.5%      97.5%</span></span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; stan  -0.7051033 -1.945421 -0.1221965</span></span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; julia -0.6670232 -2.018282 -0.1256228</span></span></code></pre></div>
+</div>
+<p>Each optimized fit above draws its <code>rawposterior</code> from a Hessian-based normal approximation by default (<code>uncertainty = &quot;hessian&quot;</code>) – the closest optimized-fit analogue to the sampling intervals above, but still an approximation around a single point rather than a description of the whole density. The next section is about what else can go in that approximation’s place.</p>
+<h2 id="the-bits-in-between">The bits in between</h2>
+<p>An optimized fit does not have to settle for the default Hessian approximation. <code>uncertainty</code> in <code>optimcontrol</code> (at fit time) or in <code>ctOptimUncertainty()</code> (after the fact, reusing the existing optimum) selects among several:</p>
+<ul>
+<li><code>hessian</code>: finite-difference (stan) or exact forward-mode (julia) curvature at the optimum, with normal draws. The default, and the cheapest.</li>
+<li><code>surrogate</code>: a local quadratic fit using gradient evaluations at points spread around the optimum (<code>max(4 * npars, 50)</code> by default). More stable than a single finite-difference Hessian when individual directions are noisy, still local.</li>
+<li><code>opg</code>: an information estimate from the variability of per-subject score contributions, with no Hessian involved. Included as a diagnostic; it tends to disagree with the others most exactly where the Hessian’s curvature information would have mattered.</li>
+<li><code>sandwich</code>: Hessian bread with score-covariance meat – a robust covariance more than a curvature approximation, useful as a misspecification check.</li>
+<li><code>bootstrap</code>: a one-step score bootstrap using the Hessian as bread. Much cheaper than refitting, but score-based methods need enough independent subject-level score rows to be stable; with few subjects, expect a warning and a wider, noisier interval.</li>
+<li><code>fullbootstrap</code>: resample subjects and fully re-optimize for each resample. The most literal bootstrap and the most expensive – for <code>backend = &#39;julia&#39;</code> it is the one method not available, because it needs the model rebuilt per resample rather than just re-evaluated at new data.</li>
+<li><code>is</code>: importance sampling using the Hessian as the proposal covariance, with uncertainty read from the resulting weighted sample.</li>
+</ul>
+<p>Every method except <code>fullbootstrap</code> works on both backends, reusing the same underlying <code>ctOptimComputeUncertainty()</code> machinery either way – the julia path supplies its own exact Hessian and per-subject scores to the same code rather than duplicating the numerics.</p>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb10"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>methods <span class="ot">&lt;-</span> <span class="fu">c</span>(<span class="st">&quot;hessian&quot;</span>, <span class="st">&quot;surrogate&quot;</span>, <span class="st">&quot;opg&quot;</span>, <span class="st">&quot;sandwich&quot;</span>, <span class="st">&quot;bootstrap&quot;</span>, <span class="st">&quot;is&quot;</span>)</span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>gallery <span class="ot">&lt;-</span> <span class="cf">function</span>(base_fit, backend_label) {</span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">do.call</span>(rbind, <span class="fu">lapply</span>(methods, <span class="cf">function</span>(m) {</span>
+<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a>    updated <span class="ot">&lt;-</span> <span class="fu">ctOptimUncertainty</span>(base_fit, <span class="at">uncertainty =</span> m, <span class="at">finishsamples =</span> <span class="dv">200</span>, <span class="at">cores =</span> <span class="dv">1</span>)</span>
+<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a>    <span class="fu">data.frame</span>(<span class="at">backend =</span> backend_label, <span class="at">method =</span> m, <span class="fu">t</span>(<span class="fu">drift_interval</span>(updated)))</span>
+<span id="cb10-7"><a href="#cb10-7" aria-hidden="true" tabindex="-1"></a>  }))</span>
+<span id="cb10-8"><a href="#cb10-8" aria-hidden="true" tabindex="-1"></a>}</span>
+<span id="cb10-9"><a href="#cb10-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-10"><a href="#cb10-10" aria-hidden="true" tabindex="-1"></a>uncertainty_table <span class="ot">&lt;-</span> <span class="fu">rbind</span>(<span class="fu">gallery</span>(stan_map, <span class="st">&quot;stan&quot;</span>), <span class="fu">gallery</span>(julia_map, <span class="st">&quot;julia&quot;</span>))</span>
+<span id="cb10-11"><a href="#cb10-11" aria-hidden="true" tabindex="-1"></a>uncertainty_table</span>
+<span id="cb10-12"><a href="#cb10-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    backend    method       mean     X2.5.      X97.5.</span></span>
+<span id="cb10-13"><a href="#cb10-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 1     stan   hessian -0.6467259 -1.900743 -0.15634341</span></span>
+<span id="cb10-14"><a href="#cb10-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 2     stan surrogate -0.6226321 -1.455180 -0.15943218</span></span>
+<span id="cb10-15"><a href="#cb10-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 3     stan       opg -0.7628163 -2.443340 -0.07837978</span></span>
+<span id="cb10-16"><a href="#cb10-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 4     stan  sandwich -0.7093890 -1.818714 -0.17067079</span></span>
+<span id="cb10-17"><a href="#cb10-17" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 5     stan bootstrap -0.6592181 -1.651801 -0.16349160</span></span>
+<span id="cb10-18"><a href="#cb10-18" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 6     stan        is -0.6528355 -1.965852 -0.07260034</span></span>
+<span id="cb10-19"><a href="#cb10-19" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 7    julia   hessian -0.6855775 -1.888978 -0.12655781</span></span>
+<span id="cb10-20"><a href="#cb10-20" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 8    julia surrogate -0.6178427 -1.496859 -0.16686149</span></span>
+<span id="cb10-21"><a href="#cb10-21" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 9    julia       opg -0.7888704 -2.681529 -0.06545956</span></span>
+<span id="cb10-22"><a href="#cb10-22" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 10   julia  sandwich -0.6580528 -1.792209 -0.19726800</span></span>
+<span id="cb10-23"><a href="#cb10-23" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 11   julia bootstrap -0.6400662 -1.510559 -0.17662848</span></span>
+<span id="cb10-24"><a href="#cb10-24" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 12   julia        is -0.6967849 -1.833016 -0.06876735</span></span></code></pre></div>
+</div>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb11"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="fu">ggplot</span>(uncertainty_table, <span class="fu">aes</span>(<span class="at">x =</span> method, <span class="at">y =</span> mean, <span class="at">ymin =</span> X2.<span class="fl">5.</span>, <span class="at">ymax =</span> X97.<span class="fl">5.</span>,</span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>                               <span class="at">colour =</span> backend)) <span class="sc">+</span></span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_pointrange</span>(<span class="at">position =</span> <span class="fu">position_dodge</span>(<span class="at">width =</span> <span class="fl">0.4</span>)) <span class="sc">+</span></span>
+<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme_bw</span>() <span class="sc">+</span></span>
+<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">labs</span>(<span class="at">x =</span> <span class="cn">NULL</span>, <span class="at">y =</span> <span class="st">&quot;drift, 95% interval&quot;</span>)</span></code></pre></div>
+<div class="cell-output-display">
+<div>
+<figure>
+<p><img role="img" src="data:image/png;base64,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" width="672"></p>
+</figure>
+</div>
+</div>
+</div>
+<p>With eight subjects the score-based methods (<code>opg</code>, <code>sandwich</code>, <code>bootstrap</code>) warn about too few independent score rows and show it: wider and less stable intervals than <code>hessian</code> or <code>surrogate</code>. That warning is informative rather than a bug in the demonstration – it is the method telling you its assumption does not hold here. <code>fullbootstrap</code> is shown separately because it is stan-only and slower even at a small resample count:</p>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb12"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a>stan_fullboot <span class="ot">&lt;-</span> <span class="fu">ctOptimUncertainty</span>(</span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>  stan_map, <span class="at">uncertainty =</span> <span class="st">&quot;fullbootstrap&quot;</span>, <span class="at">finishsamples =</span> <span class="dv">8</span>, <span class="at">cores =</span> <span class="dv">1</span>,</span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">control =</span> <span class="fu">list</span>(<span class="at">bootstrapTol =</span> <span class="fl">1e-3</span>)</span>
+<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb12-5"><a href="#cb12-5" aria-hidden="true" tabindex="-1"></a><span class="fu">drift_interval</span>(stan_fullboot)</span>
+<span id="cb12-6"><a href="#cb12-6" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;       mean       2.5%      97.5% </span></span>
+<span id="cb12-7"><a href="#cb12-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; -0.4843216 -1.0062734 -0.1108358</span></span></code></pre></div>
+</div>
+<h3 id="the-state-explicit-path-has-one-route-not-seven">The state-explicit path has one route, not seven</h3>
+<p>Everything above assumes <code>intoverstates = TRUE</code>, the default: a Kalman filter integrates the latent states out, and the fit’s objective is the marginal likelihood (or posterior) over the parameters alone. Setting <code>intoverstates = FALSE</code> instead makes the states part of what is estimated – useful with non-Gaussian indicators, where <code>backend = &#39;julia&#39;</code> can integrate the observation exactly rather than linearising it the way the filter does.</p>
+<p>Optimizing that model would find the <em>joint</em> mode of parameters and states together, which is not the marginal maximum likelihood and is not an estimate at all: with an innovation per observation the states re-optimise to absorb almost any change in the parameters, so the mode is degenerate, and its variance parameters are biased downward in the same way a random-effects model’s variance is biased if the effects are treated as parameters to optimize rather than integrated out. <code>ctFit()</code> therefore refuses <code>optimize = TRUE</code> with <code>intoverstates = FALSE</code>; <code>optimcontrol$estonly = TRUE</code> is the explicit way to ask for the mode anyway. Every uncertainty method above except <code>hessian</code> scores the marginal likelihood, which such a fit did not maximise, so <code>ctOptimUncertainty()</code> refuses them for it. <code>hessian</code> profiles the enormous state block out of the curvature (<code>ctsem_joint_hessian(..., profile = TRUE)</code> in the julia engine), and the profile can be close to flat – on a model this small it is:</p>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb13"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>count_gen <span class="ot">&lt;-</span> <span class="fu">ctModel</span>(</span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">type =</span> <span class="st">&quot;ct&quot;</span>, <span class="at">n.latent =</span> <span class="dv">1</span>, <span class="at">n.manifest =</span> <span class="dv">1</span>,</span>
+<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">manifestNames =</span> <span class="st">&quot;c1&quot;</span>, <span class="at">latentNames =</span> <span class="st">&quot;eta1&quot;</span>, <span class="at">manifesttype =</span> <span class="dv">3</span>L,</span>
+<span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">LAMBDA =</span> <span class="fu">matrix</span>(<span class="dv">1</span>), <span class="at">DRIFT =</span> <span class="fu">matrix</span>(<span class="sc">-</span><span class="fl">0.5</span>), <span class="at">DIFFUSION =</span> <span class="fu">matrix</span>(<span class="fl">0.7</span>),</span>
+<span id="cb13-5"><a href="#cb13-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">MANIFESTVAR =</span> <span class="fu">matrix</span>(<span class="dv">0</span>), <span class="at">T0VAR =</span> <span class="fu">matrix</span>(<span class="dv">1</span>), <span class="at">T0MEANS =</span> <span class="fu">matrix</span>(<span class="dv">0</span>),</span>
+<span id="cb13-6"><a href="#cb13-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">CINT =</span> <span class="fu">matrix</span>(<span class="dv">0</span>), <span class="at">MANIFESTMEANS =</span> <span class="fu">matrix</span>(<span class="dv">1</span>), <span class="at">Tpoints =</span> <span class="dv">6</span></span>
+<span id="cb13-7"><a href="#cb13-7" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb13-8"><a href="#cb13-8" aria-hidden="true" tabindex="-1"></a>count_dat <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(<span class="fu">ctGenerate</span>(count_gen, <span class="at">n.subjects =</span> <span class="dv">8</span>, <span class="at">Tpoints =</span> <span class="dv">6</span>, <span class="at">backend =</span> <span class="st">&quot;julia&quot;</span>))</span>
+<span id="cb13-9"><a href="#cb13-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-10"><a href="#cb13-10" aria-hidden="true" tabindex="-1"></a>count_fit_model <span class="ot">&lt;-</span> <span class="fu">ctModel</span>(</span>
+<span id="cb13-11"><a href="#cb13-11" aria-hidden="true" tabindex="-1"></a>  <span class="at">type =</span> <span class="st">&quot;ct&quot;</span>, <span class="at">n.latent =</span> <span class="dv">1</span>, <span class="at">n.manifest =</span> <span class="dv">1</span>,</span>
+<span id="cb13-12"><a href="#cb13-12" aria-hidden="true" tabindex="-1"></a>  <span class="at">manifestNames =</span> <span class="st">&quot;c1&quot;</span>, <span class="at">latentNames =</span> <span class="st">&quot;eta1&quot;</span>, <span class="at">manifesttype =</span> <span class="dv">3</span>L,</span>
+<span id="cb13-13"><a href="#cb13-13" aria-hidden="true" tabindex="-1"></a>  <span class="at">LAMBDA =</span> <span class="fu">matrix</span>(<span class="dv">1</span>), <span class="at">MANIFESTVAR =</span> <span class="fu">matrix</span>(<span class="dv">0</span>), <span class="at">T0MEANS =</span> <span class="fu">matrix</span>(<span class="dv">0</span>), <span class="at">CINT =</span> <span class="fu">matrix</span>(<span class="dv">0</span>),</span>
+<span id="cb13-14"><a href="#cb13-14" aria-hidden="true" tabindex="-1"></a>  <span class="at">MANIFESTMEANS =</span> <span class="fu">matrix</span>(<span class="st">&quot;cmean&quot;</span>), <span class="at">Tpoints =</span> <span class="dv">6</span></span>
+<span id="cb13-15"><a href="#cb13-15" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb13-16"><a href="#cb13-16" aria-hidden="true" tabindex="-1"></a>count_fit_model<span class="sc">$</span>pars<span class="sc">$</span>indvarying <span class="ot">&lt;-</span> <span class="cn">FALSE</span></span>
+<span id="cb13-17"><a href="#cb13-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-18"><a href="#cb13-18" aria-hidden="true" tabindex="-1"></a>state_explicit_opt <span class="ot">&lt;-</span> <span class="fu">ctFit</span>(</span>
+<span id="cb13-19"><a href="#cb13-19" aria-hidden="true" tabindex="-1"></a>  count_dat, count_fit_model, <span class="at">backend =</span> <span class="st">&quot;julia&quot;</span>,</span>
+<span id="cb13-20"><a href="#cb13-20" aria-hidden="true" tabindex="-1"></a>  <span class="at">intoverstates =</span> <span class="cn">FALSE</span>, <span class="at">optimize =</span> <span class="cn">TRUE</span>, <span class="at">priors =</span> <span class="cn">TRUE</span>, <span class="at">verbose =</span> <span class="dv">0</span>,</span>
+<span id="cb13-21"><a href="#cb13-21" aria-hidden="true" tabindex="-1"></a>  <span class="at">optimcontrol =</span> <span class="fu">list</span>(<span class="at">estonly =</span> <span class="cn">TRUE</span>)</span>
+<span id="cb13-22"><a href="#cb13-22" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb13-23"><a href="#cb13-23" aria-hidden="true" tabindex="-1"></a><span class="fu">is.null</span>(state_explicit_opt<span class="sc">$</span>estimate<span class="sc">$</span>se)</span>
+<span id="cb13-24"><a href="#cb13-24" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; [1] TRUE</span></span></code></pre></div>
+</div>
+<p><code>manifesttype = 3</code> is a Poisson-linked count indicator: eight subjects and six time points give the filter almost nothing to profile the state block down to, so the profiled Hessian returns no usable standard errors at all rather than merely wide ones. The documented way out is the same as the general sampling-versus-optimizing choice above, applied to the states as well as the parameters: fit with <code>optimize = FALSE</code> and let HMC sample the joint posterior of parameters and states together, with no Gaussian assumption about the states anywhere.</p>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb14"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a>state_explicit_samp <span class="ot">&lt;-</span> <span class="fu">ctFit</span>(</span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>  count_dat, count_fit_model, <span class="at">backend =</span> <span class="st">&quot;julia&quot;</span>,</span>
+<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">intoverstates =</span> <span class="cn">FALSE</span>, <span class="at">optimize =</span> <span class="cn">FALSE</span>, <span class="at">priors =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">chains =</span> <span class="dv">1</span>, <span class="at">iter =</span> <span class="dv">120</span>, <span class="at">verbose =</span> <span class="dv">0</span></span>
+<span id="cb14-5"><a href="#cb14-5" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb14-6"><a href="#cb14-6" aria-hidden="true" tabindex="-1"></a>state_explicit_samp<span class="sc">$</span>estimate<span class="sc">$</span>se</span>
+<span id="cb14-7"><a href="#cb14-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; drift_eta1  diff_eta1      cmean T0var_eta1 </span></span>
+<span id="cb14-8"><a href="#cb14-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 0.42578103 0.18533923 0.01694576 0.14216462</span></span>
+<span id="cb14-9"><a href="#cb14-9" aria-hidden="true" tabindex="-1"></a><span class="fu">dim</span>(state_explicit_samp<span class="sc">$</span>estimate<span class="sc">$</span>states)</span>
+<span id="cb14-10"><a href="#cb14-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; [1] 48  1</span></span></code></pre></div>
+</div>
+<p>The sampled fit reports finite standard errors from the draws directly, and <code>estimate$states</code> carries the sampled trajectory alongside the parameters – the whole reason to make the states explicit rather than let the filter integrate them away.</p>
+<h2 id="with-and-without-priors">With and without priors</h2>
+<p><code>priors = TRUE</code> adds ctsem’s raw-scale priors to the objective; <code>priors = FALSE</code> (the <code>ctFit()</code> default) leaves them out. Combined with <code>optimize</code>, that is four corners, and they mean four different things:</p>
+<table class="caption-top">
+<colgroup>
+<col style="width: 14%">
+<col style="width: 45%">
+<col style="width: 40%">
+</colgroup>
+<thead>
+<tr class="header">
+<th></th>
+<th><code>priors = TRUE</code></th>
+<th><code>priors = FALSE</code></th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>optimize = TRUE</code></td>
+<td>MAP: posterior mode, curvature around it</td>
+<td>MLE: likelihood maximum, curvature around it</td>
+</tr>
+<tr class="even">
+<td><code>optimize = FALSE</code></td>
+<td>full posterior draws</td>
+<td>likelihood-only draws – see below</td>
+</tr>
+</tbody>
+</table>
+<p>The first three corners are unremarkable and already shown above (<code>stan_map</code> / <code>julia_map</code> are MAP fits; an MLE fit is the same call with <code>priors = FALSE</code>; <code>stan_sample</code> / <code>julia_sample</code> are posterior draws). The fourth is the one users reach for without meaning to – <code>priors = FALSE, optimize = FALSE</code> – and both backends warn about it rather than refusing it outright:</p>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb15"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a>stan_lik_sample <span class="ot">&lt;-</span> <span class="fu">ctFit</span>(</span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">datalong =</span> dat, <span class="at">model =</span> fit_model, <span class="at">backend =</span> <span class="st">&quot;stan&quot;</span>,</span>
+<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">cores =</span> <span class="dv">1</span>, <span class="at">priors =</span> <span class="cn">FALSE</span>, <span class="at">optimize =</span> <span class="cn">FALSE</span>,</span>
+<span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">chains =</span> <span class="dv">1</span>, <span class="at">iter =</span> <span class="dv">200</span>, <span class="at">verbose =</span> <span class="dv">0</span></span>
+<span id="cb15-5"><a href="#cb15-5" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb15-6"><a href="#cb15-6" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb15-7"><a href="#cb15-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; SAMPLING FOR MODEL &#39;ctsm&#39; NOW (CHAIN 1).</span></span>
+<span id="cb15-8"><a href="#cb15-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: </span></span>
+<span id="cb15-9"><a href="#cb15-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Gradient evaluation took 0.001254 seconds</span></span>
+<span id="cb15-10"><a href="#cb15-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: 1000 transitions using 10 leapfrog steps per transition would take 12.54 seconds.</span></span>
+<span id="cb15-11"><a href="#cb15-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Adjust your expectations accordingly!</span></span>
+<span id="cb15-12"><a href="#cb15-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: </span></span>
+<span id="cb15-13"><a href="#cb15-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: </span></span>
+<span id="cb15-14"><a href="#cb15-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration:   1 / 200 [  0%]  (Warmup)</span></span>
+<span id="cb15-15"><a href="#cb15-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration:  20 / 200 [ 10%]  (Warmup)</span></span>
+<span id="cb15-16"><a href="#cb15-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration:  40 / 200 [ 20%]  (Warmup)</span></span>
+<span id="cb15-17"><a href="#cb15-17" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration:  60 / 200 [ 30%]  (Warmup)</span></span>
+<span id="cb15-18"><a href="#cb15-18" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration:  80 / 200 [ 40%]  (Warmup)</span></span>
+<span id="cb15-19"><a href="#cb15-19" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 100 / 200 [ 50%]  (Warmup)</span></span>
+<span id="cb15-20"><a href="#cb15-20" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 101 / 200 [ 50%]  (Sampling)</span></span>
+<span id="cb15-21"><a href="#cb15-21" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 120 / 200 [ 60%]  (Sampling)</span></span>
+<span id="cb15-22"><a href="#cb15-22" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 140 / 200 [ 70%]  (Sampling)</span></span>
+<span id="cb15-23"><a href="#cb15-23" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 160 / 200 [ 80%]  (Sampling)</span></span>
+<span id="cb15-24"><a href="#cb15-24" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 180 / 200 [ 90%]  (Sampling)</span></span>
+<span id="cb15-25"><a href="#cb15-25" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 200 / 200 [100%]  (Sampling)</span></span>
+<span id="cb15-26"><a href="#cb15-26" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: </span></span>
+<span id="cb15-27"><a href="#cb15-27" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:  Elapsed Time: 12.693 seconds (Warm-up)</span></span>
+<span id="cb15-28"><a href="#cb15-28" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:                25.038 seconds (Sampling)</span></span>
+<span id="cb15-29"><a href="#cb15-29" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:                37.731 seconds (Total)</span></span>
+<span id="cb15-30"><a href="#cb15-30" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:</span></span>
+<span id="cb15-31"><a href="#cb15-31" aria-hidden="true" tabindex="-1"></a><span class="fu">range</span>(stan_lik_sample<span class="sc">$</span>stanfit<span class="sc">$</span>rawposterior)</span>
+<span id="cb15-32"><a href="#cb15-32" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; [1] -13815.28 530755.12</span></span></code></pre></div>
+</div>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb16"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a>julia_lik_sample <span class="ot">&lt;-</span> <span class="fu">ctFit</span>(</span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">datalong =</span> dat, <span class="at">model =</span> fit_model, <span class="at">backend =</span> <span class="st">&quot;julia&quot;</span>,</span>
+<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">cores =</span> <span class="dv">1</span>, <span class="at">priors =</span> <span class="cn">FALSE</span>, <span class="at">optimize =</span> <span class="cn">FALSE</span>,</span>
+<span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">chains =</span> <span class="dv">1</span>, <span class="at">iter =</span> <span class="dv">150</span>, <span class="at">verbose =</span> <span class="dv">0</span></span>
+<span id="cb16-5"><a href="#cb16-5" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb16-6"><a href="#cb16-6" aria-hidden="true" tabindex="-1"></a><span class="fu">range</span>(julia_lik_sample<span class="sc">$</span>estimate<span class="sc">$</span>rawposterior)</span>
+<span id="cb16-7"><a href="#cb16-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; [1] -191.3552  394.4757</span></span></code></pre></div>
+</div>
+<p>Compare the raw-scale range here to the posterior sample earlier, which stayed within a couple of units of zero on the same raw scale. With no prior at all, the raw parameters have nothing constraining them outside what the likelihood itself identifies, and for a model and sample size this small that is not much. Run at these settings, the julia backend often names the mechanism directly, with a warning that some sampled parameter “reached the region where their transform is flat to machine precision… with no prior the posterior is improper there and the chains wander rather than mix” – suppressed from this rendering along with every other warning, but worth reading in full the first time it appears in an interactive session. The stan sampler shows the same problem less legibly: warm-up tends to take substantially longer with <code>priors = FALSE</code> than with <code>priors = TRUE</code> on this model, because the sampler is fighting geometry that a prior would have tamed, and the resulting draws are still not trustworthy afterward.</p>
+<p>None of this means <code>priors = FALSE</code> sampling is broken – it is sampling exactly what was asked for, the raw likelihood, and for a well identified model with enough data it is a legitimate route to a frequentist-flavoured posterior. It means that removing the prior removes the thing keeping the raw scale bounded, and a small or weakly identified model will show you that immediately rather than converging to something that merely looks plausible. <code>priors = TRUE</code> is the safer default for sampling for exactly this reason, whatever <code>ctFit()</code>’s own default is for optimizing.</p>
+<h2 id="summary">Summary</h2>
+<ul>
+<li>Sampling and optimizing target the same density for a given <code>priors</code> setting; they differ in whether the answer is a set of draws or a point plus a local approximation.</li>
+<li>Around an optimum, <code>uncertainty</code> chooses which approximation: <code>hessian</code> is the default and cheapest, <code>surrogate</code> is a more stable local alternative, <code>opg</code>/<code>sandwich</code>/<code>bootstrap</code> use per-subject scores and need enough subjects to be stable, <code>fullbootstrap</code> (stan only) is the most literal and most expensive, and <code>is</code> turns the same curvature into an importance-sampling proposal.</li>
+<li><code>intoverstates = FALSE</code> is for sampling, which draws the states along with the parameters. Optimizing it is refused unless <code>optimcontrol$estonly = TRUE</code> asks for the joint mode, and that mode has only <code>hessian</code>, profiling the state block out of the curvature, because everything else would score an objective the fit did not maximise.</li>
+<li>Priors change what the objective <em>is</em>, not just how confident the reported uncertainty looks: MAP and MLE for optimizing, a real posterior or a likelihood-only draw for sampling. The likelihood-only corner is the one to be careful with – it is supported, but a small or weakly identified model will show you exactly why priors are the default recommendation for sampling, by wandering.</li>
+</ul>
+
+
+
+
+
+</body></html>

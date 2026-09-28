@@ -37,3 +37,6 @@
 ^~
 ^ci-testenv$
 ^render\.log$
+^vignettes/.*\.qmd$
+^vignettes/.*_files$
+^vignettes/\.quarto$

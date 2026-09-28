@@ -802,15 +802,25 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         probe::Bool=true, reuse_se::Real=_CTSEM_HESSIAN_REUSE_SE,
         flat_rtol::Real=_CTSEM_FLAT_RTOL, negative::Real=_CTSEM_NEGATIVE_RTOL,
         ladder=_CTSEM_SADDLE_LADDER, probe_lengths=_CTSEM_FLAT_PROBE_LENGTHS,
-        max_escapes::Integer=3, value_at=nothing, handback::Bool=false)
+        max_escapes::Integer=3, value_at=nothing, handback::Bool=false,
+        reporter=nothing)
     curvature in (:exact, :chord, :subset) || throw(ArgumentError(
         "newton curvature must be exact, chord or subset, got $(curvature)"))
     valueof = value_at === nothing ? (y -> _ctsem_probe_value(objective, y)) :
         value_at
     x = collect(Float64, x0); f = Float64(f0); G = collect(Float64, G0)
     full_hessians = 0; subset_hessians = 0
+    # Reports a Hessian this finish forms as it goes, rather than leaving the
+    # caller's progress line frozen for as long as forming one takes -- up to
+    # 80s on the fixture that found this, all of it inside one `ctsem_hessian`
+    # call the line above had no way to see into. `nothing` when there is
+    # nothing to report through (see `_ctsem_hessian_progress`), which costs
+    # nothing: `ctsem_hessian`'s other methods ignore `progress` outright, and
+    # the Laplace one -- the slow case this exists for -- calls back only when
+    # it is not `nothing`.
+    hessian_progress = _ctsem_hessian_progress(reporter)
     hessof(o, y) = try
-        local Hy = Matrix{Float64}(ctsem_hessian(o, y))
+        local Hy = Matrix{Float64}(ctsem_hessian(o, y; progress=hessian_progress))
         all(isfinite, Hy) ? Hy : nothing
     catch err
         # A point the model cannot evaluate is no data; code that is wrong is
@@ -1149,7 +1159,8 @@ function _ctsem_trial_closure(objective, gradient_method)
 end
 
 """
-    ctsem_endgame(objective, values; gradient_method, flat_rtol, probe_lengths)
+    ctsem_endgame(objective, values; gradient_method, flat_rtol, probe_lengths,
+        progress, progress_overwrite, progress_sink, progress_label)
 
 The certification's numbers at a point the optimiser left without its finish --
 an iteration cap, a stall, a finish that could not form a Hessian -- so R can
@@ -1163,17 +1174,41 @@ formed: an empty matrix would hang the bridge, as would an empty probe
 direction, which is `[0.0]` when `probe_ran` is false. The counts are named as
 `ctsem_optimize` names its own, so whatever tallies engine runs counts this
 one too.
+
+This is exactly the path a certification takes when the optimiser stopped
+without a finish having run -- so on the Laplace route it is the whole `2 npar`
+gradient loop with nothing to show for it until it returns, the same freeze a
+finish already reports through `hessian_progress`. `progress`/`progress_sink`/
+`progress_overwrite`/`progress_label`/`progress_every` mirror `ctsem_optimize`'s
+own vocabulary, for the same `CTSEMProgress` and the same sink on the R side
+(`.ctBackendEndgameAt()`); `progress = false` (the default) reports nothing, as
+every caller before this did. `progress_every` is exposed mainly for a
+fit-free test to force a cadence the certification's own small models would
+not otherwise reach in the time they take.
 """
 function ctsem_endgame(objective::CTSEMOptimisable, values::AbstractVector;
         gradient_method=:adjoint, flat_rtol::Real=_CTSEM_FLAT_RTOL,
-        probe_lengths=_CTSEM_FLAT_PROBE_LENGTHS)
+        probe_lengths=_CTSEM_FLAT_PROBE_LENGTHS,
+        progress::Bool=false, progress_overwrite::Bool=true, progress_sink=nothing,
+        progress_label::AbstractString="certify", progress_every::Real=0.0)
     x = collect(Float64, values)
     fg! = _ctsem_trial_closure(objective, gradient_method)
     G = zeros(length(x))
     f = fg!(0.0, G, x)
+    reporter = _ctsem_progress_reporter(progress, progress_label,
+        progress_overwrite, progress_sink, progress_every)
     out = _ctsem_newton_finish(objective, x, f, G, fg!; take_steps=false,
         probe=true, curvature=:exact, flat_rtol=flat_rtol,
-        probe_lengths=collect(Float64, probe_lengths))
+        probe_lengths=collect(Float64, probe_lengths), reporter=reporter)
+    # Only when something was actually shown: a certification is usually fast
+    # (the cheap, non-Laplace Hessian is one chunked ForwardDiff call), and a
+    # "done" line for every one of those would be the paragraph this whole
+    # effort exists to avoid rather than the phrase. `reporter` is always a
+    # struct now (`_ctsem_progress_reporter`), so `.lines > 0` alone already
+    # implies it was enabled -- `_due` gates every increment on that -- but
+    # the explicit check says so rather than leaning on it.
+    reporter.enabled && reporter.lines > 0 &&
+        _progress_done(reporter, "hessian formed")
     probed = out.probe
     return (minimizer=x, maximum_loglik=-f, gradient=-G,
         hessian=out.hessian === nothing ? zeros(1, 1) : out.hessian,
@@ -1185,6 +1220,41 @@ function ctsem_endgame(objective::CTSEMOptimisable, values::AbstractVector;
 end
 
 export ctsem_endgame
+
+"""
+    ctsem_hessian_progress(objective, values; forward, chunk, progress,
+        progress_sink, progress_overwrite, progress_label, progress_every)
+
+`ctsem_hessian` (or, with `forward = true`, `ctsem_hessian_forward`), reporting
+through the same `CTSEMProgress`/`_progress_fraction` line
+`_ctsem_newton_finish`'s own Hessian already uses, for a caller with no
+enclosing optimiser or certification to lend it a reporter. Today that is only
+`.ctBackendHessian()` (R/ctBackendUncertainty.R), the standalone
+`ctFitUncertainty()`/certification Hessian reached outside any running fit: it
+used to build its own R-side rate limiter and a hand-written copy of this
+line's text, one more way of saying the same thing `ctsem_endgame` already
+says for the same reason (no finish to borrow a reporter from).
+
+The `progress*` keywords are `ctsem_optimize`/`ctsem_endgame`'s own vocabulary
+(`_ctsem_progress_reporter`); `progress = false`, the default, reports
+nothing, exactly as a bare `ctsem_hessian(objective, values)` call always has.
+`forward` selects `ctsem_hessian_forward` for the one route that needs it (a
+model with a sampled TI predictor value, forced to forward mode) -- a single
+ForwardDiff.hessian call, so `progress` is accepted and has nothing to report,
+same as calling that function directly.
+"""
+function ctsem_hessian_progress(objective, values::AbstractVector;
+        forward::Bool=false, chunk::Integer=0,
+        progress::Bool=false, progress_sink=nothing, progress_overwrite::Bool=true,
+        progress_label::AbstractString="hessian", progress_every::Real=0.0)
+    reporter = _ctsem_progress_reporter(progress, progress_label,
+        progress_overwrite, progress_sink, progress_every)
+    cb = _ctsem_hessian_progress(reporter)
+    forward ? ctsem_hessian_forward(objective, values; chunk=chunk, progress=cb) :
+        ctsem_hessian(objective, values; chunk=chunk, progress=cb)
+end
+
+export ctsem_hessian_progress
 
 """
     ctsem_flat_probe(objective, values, direction; lengths)

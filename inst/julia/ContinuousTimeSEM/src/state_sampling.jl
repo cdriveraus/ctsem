@@ -1334,7 +1334,14 @@ what a standard error needs. They are different objects for different callers,
 and neither is a default for the other.
 """
 function ctsem_hessian(o::CTSEMJointObjective, values::AbstractVector;
-    chunk::Integer=0)
+    chunk::Integer=0, progress=nothing)
+    # `progress` unused -- see `ctsem_hessian(objective::CTSEMObjective, ...)`
+    # in adjoint.jl. Accepted so the generic entry point `hessof` in
+    # optimiser.jl can call every method the same way without asking which
+    # route it dispatched to; the state-explicit route never reaches
+    # `_ctsem_newton_finish` in practice (`newton` is off there), but a
+    # signature that only sometimes accepts the argument is the trap this
+    # avoids.
     result = ctsem_joint_hessian(o, values; profile=false)
     result === nothing && throw(ArgumentError(
         "the joint Hessian was not finite at this point"))

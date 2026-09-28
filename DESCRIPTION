@@ -84,15 +84,17 @@ Suggests:
     diagis,
     pdftools,
     rstudioapi,
-    quarto,
+    R.rsp,
     qgraph,
     JuliaConnectoR,
     digest,
-    withr
+    withr,
+    ps
 VignetteBuilder: 
     knitr, 
-    quarto
-SystemRequirements: GNU make
+    R.rsp
+SystemRequirements: GNU make; Julia (>= 1.10), optional, for backend =
+    'julia' (ctJuliaInstall() can install it)
 NeedsCompilation: yes
 Biarch: true
 Config/roxygen2/version: 8.1.0
