@@ -1149,19 +1149,15 @@ print.ctLaplaceCorrection <- function(x, ...) {
   reached <- identical(run$status, "converged")
   hc <- NULL
   if (reached) {
-    # Measured at 18.8 of a 22-minute correction on the ordinal fixture that
-    # found this (screen plus one round: 4.8 min). Only a start and a done
-    # line -- not a live count -- because forming this Hessian is
-    # laplace_continuation.jl's own code, which another job is working on;
-    # this adds progress calls around that call rather than inside it. No
-    # gradient count in the text either, for the same reason: that job's exact
-    # Hessian is not necessarily `npar + 1` gradient evaluations any more, and
-    # a number this side does not compute is not this side's to print.
+    # By forward differences this Hessian was 18.8 minutes of a 22-minute
+    # correction on the ordinal fixture that found the silence; it is exact
+    # now (laplace_continuation.jl) and can still take minutes. A start and a
+    # done line around the call, since the engine reports no count from
+    # inside it; the sink reports at every verbosity that reports at all.
     if (!is.null(sink)) {
       sink(sprintf("Laplace continuation hessian | %8s",
         .ctDuration(seconds())), "update")
     }
-    if (verbose > 0) message("Laplace continuation: Hessian")
     hessian_started <- proc.time()[["elapsed"]]
     hc <- try(matrix(as.numeric(.ctBackendJuliaValue(
       module$ctsem_laplace_continuation_hessian(cont, .ctJuliaNumericVector(x)))),
