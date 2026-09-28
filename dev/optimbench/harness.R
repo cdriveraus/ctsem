@@ -595,16 +595,19 @@ if (DOREF && !is.null(est) && length(est) == npar && all(is.finite(est))) {
 }
 rec$refs <- refs
 
-# ---- 5b. the continuation's Hessian against cheaper ones --------------------------
+# ---- 5b. the continuation's Hessian, by each scheme --------------------------------
 # Only where the quadrature continuation reached its fixed point and its own
-# Hessian became the fit's. Four curvatures: the continuation's (central
-# differences of the hybrid's exact gradient, 2 npar gradients: what the fit
-# reports), the same by forward differences (npar + 1), the Laplace Hessian at
-# the continuation's estimate (2 npar Laplace gradients), and the Laplace
-# Hessian the fit already held at the Laplace optimum (free). Standard errors
-# from each by one rule -- the inverse on the directions whose curvature is
-# above 1e-8 of the largest -- and each one's largest relative difference from
-# the continuation's. Timed here, outside the fit, one after another.
+# Hessian became the fit's. The continuation's Hessian at the estimate by each
+# scheme the build has -- `exact` (the flagged units by the Louis identity,
+# the default since the quadhess job; NA on a build without it), `forward`
+# (npar + 1 hybrid gradients) and `central` (2 npar) -- then the Laplace
+# Hessian at the continuation's estimate (2 npar Laplace gradients) and the
+# one the fit already held at the Laplace optimum (free). Standard errors from
+# each by one rule -- the inverse on the directions whose curvature is above
+# 1e-8 of the largest -- and each one's largest relative difference from the
+# central scheme's; `reported` checks the fit's standard errors against its
+# own Hessian. Timed here, outside the fit, one after another, cheapest
+# first, each on its own so that one running out of time keeps the others.
 bench_se <- function(H) {
   if (!is.matrix(H) || any(!is.finite(H))) return(NULL)
   I <- -(H + t(H)) / 2
@@ -626,37 +629,52 @@ if (!is.null(REC$cont) && is.matrix(Hq) && !is.null(REC$continue)) {
   cse <- tryCatch({
     setTimeLimit(elapsed = REFCAP, transient = TRUE)
     x <- as.numeric(fit$estimate$raw)
-    out <- list(delta_se = suppressWarnings(as.numeric(fit$laplace$correction$delta_se)))
-    t0 <- .now()
-    Hc <- matrix(as.numeric(jget(jcall("ctsem_laplace_continuation_hessian", REC$cont,
-      jvec(x)))), npar, npar)
-    out$secs_central <- .now() - t0
-    out$central_repro <- max(abs(Hc - Hq))
-    t0 <- .now()
-    Hf <- tryCatch(matrix(as.numeric(jget(jcall("bench_continuation_hessian_forward",
-      REC$cont, jvec(x)))), npar, npar), error = function(e) NULL)
-    out$secs_forward <- .now() - t0
+    out <- list(delta_se = suppressWarnings(as.numeric(fit$laplace$correction$delta_se)),
+      errors = list())
+    scheme <- function(name) {
+      t0 <- .now()
+      H <- tryCatch(matrix(as.numeric(jget(jcall("ctsem_laplace_continuation_hessian",
+        REC$cont, jvec(x), scheme = name))), npar, npar),
+        error = function(e) { out$errors[[name]] <<- conditionMessage(e); NULL })
+      # A build without `scheme = "forward"` has the bench's own copy of it.
+      if (is.null(H) && name == "forward") H <- tryCatch(matrix(as.numeric(jget(jcall(
+        "bench_continuation_hessian_forward", REC$cont, jvec(x)))), npar, npar),
+        error = function(e) NULL)
+      out[[paste0("secs_", name)]] <<- if (is.null(H)) NA_real_ else .now() - t0
+      H
+    }
+    He <- scheme("exact")
+    out$exact_repro <- if (is.matrix(He)) max(abs(He - Hq)) else NA_real_
+    Hf <- scheme("forward")
+    Hc <- scheme("central")
     t0 <- .now()
     Hlx <- tryCatch(ctsem:::.ctBackendHessianAt(fit$model_spec, x), error = function(e) NULL)
     out$secs_laplace_x <- .now() - t0
     Hl0 <- REC$continue$hessian
+    sc <- bench_se(Hc)
     sq <- bench_se(Hq)
-    out$se <- list(quadrature = sq$se, forward = bench_se(Hf)$se,
-      laplace_x = bench_se(Hlx)$se, laplace_est = bench_se(Hl0)$se,
+    out$se <- list(central = sc$se, exact = bench_se(He)$se, forward = bench_se(Hf)$se,
+      quadrature = sq$se, laplace_x = bench_se(Hlx)$se, laplace_est = bench_se(Hl0)$se,
       reported = as.numeric(fit$estimate$se %||% NA_real_),
       reported_before = REC$continue$se)
-    out$negative <- c(quadrature = sq$negative %||% NA, forward = bench_se(Hf)$negative %||% NA,
+    out$negative <- c(central = sc$negative %||% NA, exact = bench_se(He)$negative %||% NA,
+      forward = bench_se(Hf)$negative %||% NA, quadrature = sq$negative %||% NA,
       laplace_x = bench_se(Hlx)$negative %||% NA, laplace_est = bench_se(Hl0)$negative %||% NA)
-    out$rel <- c(forward = se_rel(bench_se(Hf), sq), laplace_x = se_rel(bench_se(Hlx), sq),
-      laplace_est = se_rel(bench_se(Hl0), sq),
+    out$rel <- c(exact = se_rel(bench_se(He), sc), forward = se_rel(bench_se(Hf), sc),
+      laplace_x = se_rel(bench_se(Hlx), sc), laplace_est = se_rel(bench_se(Hl0), sc),
       reported = se_rel(list(se = out$se$reported), sq))
-    out$hessians <- list(quadrature = Hq, forward = Hf, laplace_x = Hlx, laplace_est = Hl0)
+    out$hessians <- list(quadrature = Hq, exact = He, forward = Hf, central = Hc,
+      laplace_x = Hlx, laplace_est = Hl0)
     out
   }, error = function(e) list(error = conditionMessage(e)))
   setTimeLimit()
-  .stamp(sprintf("CONTINUATION HESSIAN central %.1fs forward %.1fs laplace-at-x %.1fs; max rel se diff: forward %s laplace_x %s laplace_est %s %s",
-    cse$secs_central %||% NA, cse$secs_forward %||% NA, cse$secs_laplace_x %||% NA,
-    format(signif(cse$rel[["forward"]] %||% NA, 3)), format(signif(cse$rel[["laplace_x"]] %||% NA, 3)),
+  .stamp(sprintf(paste0("CONTINUATION HESSIAN exact %.1fs forward %.1fs central %.1fs ",
+    "laplace-at-x %.1fs; max rel se diff from central: exact %s forward %s laplace_x %s ",
+    "laplace_est %s %s"),
+    cse$secs_exact %||% NA, cse$secs_forward %||% NA, cse$secs_central %||% NA,
+    cse$secs_laplace_x %||% NA,
+    format(signif(cse$rel[["exact"]] %||% NA, 3)), format(signif(cse$rel[["forward"]] %||% NA, 3)),
+    format(signif(cse$rel[["laplace_x"]] %||% NA, 3)),
     format(signif(cse$rel[["laplace_est"]] %||% NA, 3)),
     if (!is.null(cse$error)) paste("ERROR", cse$error) else ""))
 }
@@ -774,7 +792,9 @@ rec$row <- data.frame(
   cont_hessian = is.matrix(corr$hessian),
   cont_delta_se_max = .fin(suppressWarnings(max(abs(as.numeric(cse$delta_se)), na.rm = TRUE))),
   hess_secs_central = .num1(cse$secs_central %||% NA), hess_secs_forward = .num1(cse$secs_forward %||% NA),
+  hess_secs_exact = .num1(cse$secs_exact %||% NA),
   hess_secs_laplace_x = .num1(cse$secs_laplace_x %||% NA),
+  se_rel_exact = .num1(cse$rel["exact"]),
   se_rel_forward = .num1(cse$rel["forward"]), se_rel_laplace_x = .num1(cse$rel["laplace_x"]),
   se_rel_laplace_est = .num1(cse$rel["laplace_est"]), se_rel_reported = .num1(cse$rel["reported"]),
   stringsAsFactors = FALSE)
