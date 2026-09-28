@@ -836,9 +836,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   }, error = function(e) NULL)
   if (is.null(jc)) return(FALSE)
   repeat {
-    waiting <- tryCatch(socketSelect(list(connection), timeout = 0),
-      error = function(e) NA)
-    if (!isTRUE(waiting)) return(FALSE)
+    if (!isTRUE(.ctSocketReadable(connection))) return(FALSE)
     first <- tryCatch(suppressWarnings(readBin(connection, "raw", 1L)),
       error = function(e) raw(0))
     if (!length(first)) return(TRUE)
@@ -849,6 +847,25 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     if (is.null(stream) || !identical(connection, jc$con)) return(TRUE)
     jc$read(writeTo = stream)
   }
+}
+
+# Whether a socket has something to read, answered at once.
+#
+# `socketSelect(list(con), timeout = 0)` is not that on Windows: R's select
+# loop there waits out a fixed 200 ms interval before it consults the timeout,
+# so a socket with nothing waiting -- a live session at rest, the usual case --
+# costs 204 ms a call (R 4.6.0). The liveness check above runs as operations
+# come in, twice for some, so every Julia call there was 0.2-0.4 s slower and a
+# function making hundreds of them minutes slower: ctVarianceDecomposition's
+# test file went from 215 s to 45 minutes, both processes idle throughout.
+# Asking about writing on the same socket in the same call ends the wait at
+# once, since a connected socket with an empty send buffer is writable, and
+# leaves the read answer as it was -- a peer that has gone still reads as
+# readable, which is how the check finds it.
+.ctSocketReadable <- function(connection) {
+  ready <- tryCatch(socketSelect(list(connection, connection),
+    write = c(FALSE, TRUE), timeout = 0), error = function(e) NA)
+  ready[1L]
 }
 
 # Refuse, by name, to call into a Julia process that has gone.

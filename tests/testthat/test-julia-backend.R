@@ -838,3 +838,38 @@ test_that("output Julia prints between calls is not taken for a session that has
   expect_output(ctsem:::.ctJuliaCheckAlive(), "printed after the call returned")
   expect_equal(JuliaConnectoR::juliaEval("1 + 1"), 2)
 })
+
+test_that("asking whether the bridge's socket has something to read does not wait", {
+  skip_on_cran()
+  # The liveness check asks this as every Julia operation comes in. Asked with
+  # `socketSelect(timeout = 0)` it waited out R's 200 ms select interval on
+  # Windows whenever nothing was waiting, which made every Julia call there
+  # 0.2-0.4 s slower. A bare socket pair, so no Julia is needed to ask.
+  server <- NULL
+  for (attempt in 1:20) {
+    port <- 40000L + ((Sys.getpid() + attempt * 7919L) %% 20000L)
+    server <- tryCatch(serverSocket(port), error = function(e) NULL)
+    if (!is.null(server)) break
+  }
+  skip_if(is.null(server), "no local port to listen on")
+  withr::defer(close(server))
+  client <- socketConnection("localhost", port, blocking = TRUE, open = "r+b")
+  withr::defer(try(close(client), silent = TRUE))
+  peer <- socketAccept(server, blocking = TRUE, open = "r+b")
+  withr::defer(try(close(peer), silent = TRUE))
+
+  elapsed <- system.time(for (i in 1:10) {
+    idle <- ctsem:::.ctSocketReadable(client)
+  })[["elapsed"]]
+  expect_false(idle)
+  # Ten asks, against two seconds for the wait this replaced.
+  expect_lt(elapsed, 1)
+  writeBin(as.raw(1:3), peer)
+  flush(peer)
+  expect_true(ctsem:::.ctSocketReadable(client))
+  invisible(readBin(client, "raw", 3L))
+  expect_false(ctsem:::.ctSocketReadable(client))
+  # A peer that has gone reads as readable, which is how the check finds it.
+  close(peer)
+  expect_true(ctsem:::.ctSocketReadable(client))
+})
