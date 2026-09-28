@@ -99,7 +99,7 @@
   out <- data.frame(pid = pids, alive = FALSE, name = NA_character_,
     ppid = NA_integer_, parent = NA_character_, created = NA_real_,
     cpu = NA_real_, rss_mb = NA_real_, os_threads = NA_integer_,
-    stringsAsFactors = FALSE)
+    connector = FALSE, stringsAsFactors = FALSE)
   if (!length(pids)) return(out)
   if (isTRUE(use_ps)) {
     for (i in seq_along(pids)) {
@@ -114,6 +114,10 @@
       out$cpu[i] <- safe(sum(ps::ps_cpu_times(h)[c("user", "system")]), NA_real_)
       out$rss_mb[i] <- safe(ps::ps_memory_info(h)[["rss"]] / 2^20, NA_real_)
       out$os_threads[i] <- safe(as.integer(ps::ps_num_threads(h)), NA_integer_)
+      # JuliaConnectoR's server script among the arguments. Readable on Linux
+      # and macOS; on Windows `ps` returns the executable alone.
+      out$connector[i] <- any(grepl("JuliaConnectoR.*main\\.jl",
+        safe(ps::ps_cmdline(h), character())))
     }
     return(out)
   }
@@ -202,7 +206,12 @@
 ctJuliaProcesses <- function(interval = 0.5) {
   candidates <- .ctProcList()
   reg <- .ctJuliaRegistry()
-  pids <- unique(c(reg$julia_pid, candidates$pid))
+  # This session's own engine is known without a record: the record can be
+  # missing (a record directory changed under a running session) and on Linux
+  # its parent is not R, since JuliaConnectoR's launching shell exits and the
+  # process is reparented.
+  own <- if (identical(.ctJuliaSessionStamp(), .ct_julia_cache$pid_session)) .ct_julia_cache$pid
+  pids <- unique(c(own, reg$julia_pid, candidates$pid))
   info <- .ctProcInfo(pids)
   info <- info[info$alive, , drop = FALSE]
   reg <- reg[reg$julia_pid %in% info$pid, , drop = FALSE]
@@ -221,7 +230,11 @@ ctJuliaProcesses <- function(interval = 0.5) {
   started <- info$created
   for (i in seq_len(nrow(info))) {
     k <- match(info$pid[i], reg$julia_pid)
-    if (!is.na(k)) {
+    if (identical(info$pid[i], own)) {
+      role[i] <- "this session"
+      r_pid[i] <- me
+      if (!is.na(k)) threads[i] <- reg$threads[k]
+    } else if (!is.na(k)) {
       r_pid[i] <- reg$r_pid[k]
       threads[i] <- reg$threads[k]
       if (is.na(started[i])) started[i] <- reg$started[k]
@@ -232,6 +245,8 @@ ctJuliaProcesses <- function(interval = 0.5) {
     } else if (.ctProcIsR(info$parent[i])) {
       r_pid[i] <- info$ppid[i]
       role[i] <- if (identical(info$ppid[i], me)) "this session" else "JuliaConnectoR, unrecorded"
+    } else if (isTRUE(info$connector[i])) {
+      role[i] <- "JuliaConnectoR, unrecorded"
     }
   }
   # A Julia started by one of those: a precompile, most often.

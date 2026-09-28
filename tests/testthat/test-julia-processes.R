@@ -58,6 +58,9 @@ test_that("an engine whose R session has ended is reported and stopped by defaul
   record <- read.dcf(file)
   record[, "r_pid"] <- gone_pid()
   write.dcf(record, file)
+  # And this session forgets it, as the ended one would have: its own engine is
+  # never an orphan, whatever a record says.
+  cache$pid <- NULL
   procs <- ctJuliaProcesses(interval = 0)
   expect_identical(procs$role[procs$pid == engine], "orphaned")
   cache$orphans_checked <- NULL
