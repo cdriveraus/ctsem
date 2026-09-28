@@ -342,7 +342,7 @@ conversion and ForwardDiff throws `DualMismatchError`.
 
 Measured on a censored model: `ctsem_hessian` differentiates the adjoint
 gradient, whose measurement update takes its own jacobian of the quadrature
-(`_binary_moment_derivatives`), and it threw exactly that when the censored
+(`_binary_moment_jacobian`), and it threw exactly that when the censored
 row's standard deviation -- an outer dual, since MANIFESTVAR is differentiated
 -- was converted into the inner dual type. The Hessian was unavailable for
 every censored fit, so certification and standard errors had none. The
@@ -365,10 +365,20 @@ ForwardDiff.tagcount(::Type{ForwardDiff.Tag{CTSEMNestedTag,V}}) where {V} =
 
 _ctsem_nested_tag(x::AbstractArray) = ForwardDiff.Tag{CTSEMNestedTag,eltype(x)}()
 
-"""`ForwardDiff.jacobian(f, x)` under `CTSEMNestedTag`; see there."""
+"""
+`ForwardDiff.jacobian(f, x)` under `CTSEMNestedTag`; see there.
+
+With `Val(N)`, the chunk is `N` wide, one chunk when `N` is `length(x)`. Without
+it the width is read from `length(x)` at run time, which builds the config's
+dual types on every call: measured at a sixth of an ordinal Laplace gradient,
+whose reverse pass takes one of these per observation.
+"""
 _ctsem_nested_jacobian(f, x::AbstractArray) = ForwardDiff.jacobian(f, x,
     ForwardDiff.JacobianConfig(f, x, ForwardDiff.Chunk(x), _ctsem_nested_tag(x)),
     Val{false}())
+_ctsem_nested_jacobian(f, x::AbstractArray, ::Val{N}) where {N} =
+    ForwardDiff.jacobian(f, x, ForwardDiff.JacobianConfig(f, x,
+        ForwardDiff.Chunk{N}(), _ctsem_nested_tag(x)), Val{false}())
 
 """`ForwardDiff.gradient(f, x)` under `CTSEMNestedTag`; see there."""
 _ctsem_nested_gradient(f, x::AbstractArray) = ForwardDiff.gradient(f, x,

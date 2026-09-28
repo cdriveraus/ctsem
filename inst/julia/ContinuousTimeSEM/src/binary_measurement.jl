@@ -700,21 +700,88 @@ backwards. A Newton step is `gradient / curvature`, so a bounded score with a
 what makes the step `±s²`. What bounds it is the line search below, which
 takes a step only when it improves the objective; `_mode_start` then shortens
 the journey rather than making it safe.
+
+# Under differentiation
+
+The iteration runs on the values alone, and the partials are recovered
+afterwards by `_mode_polish_steps(T)` undamped Newton steps in the caller's
+arithmetic from that mode -- the implicit function theorem, taken the way
+`_laplace_dual_unit_mode` takes it for a unit's inner mode. Iterating in dual
+arithmetic instead carried every partial through every trial of the line
+search, several of them per step, to arrive at the same derivative: at a mode
+the step's value part is zero and its dual part is exactly `-G_θ / G_offset`.
+The iteration is also steered by comparisons, which ForwardDiff breaks on the
+partials when the values tie (see `_censored_at`); on values alone it takes the
+same path whatever is being differentiated.
+
+A solve that used its whole budget has no mode to polish, and is iterated in
+the caller's arithmetic as it always was.
 """
 @inline function _binary_mode(ηbar::T, s2::T, y::Real, thresholds,
+    kind::Int) where {T}
+    if T <: ForwardDiff.Dual
+        base, _, converged = _binary_mode_solve(_primal(ηbar), _primal(s2), y,
+            map(_primal, thresholds), kind)
+        if converged
+            precision = inv(s2)
+            offset = convert(T, base)
+            for _ in 1:_mode_polish_steps(T)
+                score, information = _category_score(ηbar + offset, y,
+                    thresholds, kind)
+                offset += (score - offset * precision) /
+                    (precision + information)
+            end
+            _, information = _category_score(ηbar + offset, y, thresholds,
+                kind)
+            return (offset, precision + information)
+        end
+    end
+    offset, curvature, _ = _binary_mode_solve(ηbar, s2, y, thresholds, kind)
+    return (offset, curvature)
+end
+
+"""
+    _mode_polish_steps(T)
+
+Newton steps from an exact primal mode that make it exact in every partial `T`
+carries: the smallest `n` with `2^n` above its depth of dual nesting. Each step
+from an exact root squares the error, which starts as a sum of nilpotents, and
+a product of more of them than `T` has layers is zero.
+"""
+@inline function _mode_polish_steps(::Type{T}) where {T}
+    depth = _ctsem_dual_depth(T)
+    steps = 0
+    while (1 << steps) <= depth
+        steps += 1
+    end
+    return steps
+end
+
+"""
+    _binary_mode_solve(ηbar, s2, y, thresholds, kind)
+
+`(offset, curvature, converged)`: the damped Newton iteration `_binary_mode`
+describes, in whatever arithmetic its arguments carry. `converged` is false
+only when the iteration used its whole budget.
+"""
+@inline function _binary_mode_solve(ηbar::T, s2::T, y::Real, thresholds,
     kind::Int) where {T}
     precision = inv(s2)
     offset = _mode_start(ηbar, y, thresholds, kind)
     value = _mode_objective(ηbar, precision, offset, y, thresholds, kind)
     score, information = _category_score(ηbar + offset, y, thresholds, kind)
     curvature = precision + information
+    converged = false
     @inbounds for _ in 1:_CTSEM_MODE_MAXITER[]
         # `-offset * precision`, not `-(η - ηbar) * precision`: the prior's
         # score is exact this way rather than a difference of two numbers of
         # order ηbar.
         gradient = -offset * precision + score
         step = gradient / curvature
-        _newton_gain(gradient, step) <= _mode_tolerance(value) && break
+        if _newton_gain(gradient, step) <= _mode_tolerance(value)
+            converged = true
+            break
+        end
         # Concavity makes the Newton direction an ascent direction; it does not
         # make the Newton *step* an improvement, and that distinction is the
         # whole history of this function. An undamped step is
@@ -749,9 +816,12 @@ the journey rather than making it safe.
         # to gain has fallen below the objective's own roundoff. That is what
         # being at a mode looks like in floating point, and it is the
         # conclusion `_laplace_newton_unit_mode` reaches from the same evidence.
-        accepted || break
+        if !accepted
+            converged = true
+            break
+        end
     end
-    return (offset, curvature)
+    return (offset, curvature, converged)
 end
 
 """
@@ -1003,6 +1073,20 @@ is log-concave so that the mode the rule is centred on is unique.
 @inline function _binary_quadrature(ηbar::T, s::T, y::Real, nodes, weights,
     thresholds, kind::Int) where {T}
     s2 = s * s
+    # An interior ordinal category's log likelihood carries `log(1 - e^-gap)`,
+    # which does not depend on η: taken once here rather than at every node,
+    # and added in the same place `_category_loglikelihood` adds it, so the sum
+    # is the same to the last bit. A closed gap makes every node `-Inf`, which
+    # the loop below would report as exactly this.
+    k = kind == CTSEM_OBS_ORDINAL ? Int(y) : 0
+    interior = 1 < k <= length(thresholds)
+    G = promote_type(T, eltype(thresholds))
+    gapterm = zero(G)
+    if interior
+        gap = thresholds[k] - thresholds[k - 1]
+        gap > zero(gap) || return (T(-Inf), zero(T), s2)
+        gapterm = convert(G, log(-expm1(-gap)))
+    end
     mode_offset, curvature = _binary_mode(ηbar, s2, y, thresholds, kind)
     scale = sqrt(T(2) / curvature)
 
@@ -1046,10 +1130,14 @@ is log-concave so that the mode the rule is centred on is unique.
         t = T(nodes[i])
         centred = scale * t              # η - mode
         deviation = mode_offset + centred  # η - ηbar
+        η = ηbar + deviation
+        ll = interior ?
+            -log1p_exp(thresholds[k - 1] - η) - log1p_exp(η - thresholds[k]) +
+                gapterm :
+            _category_loglikelihood(η, y, thresholds, kind)
         # The `t²` undoes the rule's own kernel; the prior density is then
         # carried explicitly rather than folded into the nodes.
-        e = t * t - deviation * deviation * halfprec +
-            _category_loglikelihood(ηbar + deviation, y, thresholds, kind)
+        e = t * t - deviation * deviation * halfprec + ll
         if e > emax
             ratio = isfinite(emax) ? exp(emax - e) : zero(T)
             Z *= ratio
@@ -1230,11 +1318,14 @@ function _ekf_binary_update!(ws, λ, μ, y::Real, n::Int, thresholds,
 end
 
 """
-    _binary_moment_derivatives(ηbar, s2, y, thresholds, kind)
+    _binary_moment_jacobian(a, b, y, nodes, weights, thresholds, kind)
 
-`(logZ, m, v, dlogZ_da, dlogZ_db, dm_da, dm_db, dv_da, dv_db)` where `a = ηbar`
-and `b = s²`, and `m` is the posterior mean's *offset* from `a` -- see
-`_binary_moments` for why nothing here works with the mean itself.
+`(logZ, m, v, J)` at `ηbar = a` and `s² = b`, where `m` is the posterior mean's
+*offset* from `a` -- see `_binary_moments` for why nothing here works with the
+mean itself -- and `J` is their `3 x (2 + e)` Jacobian: rows `logZ`, `m`, `v`;
+columns `a`, `b`, and then each of the row's `e` extras the reverse pass
+differentiates (thresholds, asymptotes, censoring limits; none for a count,
+whose extra rides `b`).
 
 # Why this differentiates the quadrature rather than the moments
 
@@ -1253,61 +1344,56 @@ apart: on a one-observation model with a predicted sd near 2.6, the exact-moment
 derivative disagreed with a finite difference of the objective by 2%, which is
 not an error an optimiser should be asked to work around.
 
-So the rule is differentiated directly, in two dual components over a scalar
-loop. That is a small cost -- one extra evaluation of a 21-node logistic sum --
-and it is exactly consistent with the forward pass by construction, which is the
-property that matters here. Consistency beats elegance: a slightly-wrong
-gradient is worse than a slightly-expensive one.
+So the rule is differentiated directly, by forward mode over the scalar loop:
+exactly consistent with the forward pass by construction, which is the property
+that matters here.
+
+# One dual, one evaluation
+
+Every argument is seeded in the same nested dual and the values are read from
+its value part, so one evaluation of the rule gives everything. This replaced a
+pair of helpers, one for `(a, b)` and one for the extras, each evaluating the
+rule once plainly for its value and once in duals, which was four evaluations
+per observation per reverse pass where one serves.
 """
-function _binary_moment_derivatives(ηbar::T, s2::T, y::Real,
+function _binary_moment_jacobian(a::T, b::T, y::Real, nodes, weights,
     thresholds, kind::Int) where {T}
-    nodes, weights = _gauss_hermite(_CTSEM_BINARY_NODES[])
-    if s2 <= zero(T)
-        z = zero(T)
-        return (z, z, z, z, z, one(T), z, z, one(T))
+    extras = kind == CTSEM_OBS_COUNT ? 0 : length(thresholds)
+    if b <= zero(T)
+        J = zeros(T, 3, 2 + extras)
+        J[2, 1] = one(T)
+        J[3, 2] = one(T)
+        return (zero(T), zero(T), zero(T), J)
     end
-    triple = function (ab)
-        τ = _as_scalar_type(eltype(ab), thresholds)
-        logZ, m, v = _binary_moments(ab[1], sqrt(ab[2]), y, nodes, weights,
-            τ, kind)
-        return [logZ, m, v]
+    at = Vector{T}(undef, 2 + extras)
+    at[1] = a
+    at[2] = b
+    @inbounds for i in 1:extras
+        at[2 + i] = thresholds[i]
     end
-    at = [ηbar, s2]
-    value = triple(at)
-    isfinite(value[1]) || return (T(-Inf), value[2], value[3],
-        zero(T), zero(T), one(T), zero(T), zero(T), one(T))
+    held = Ref{NTuple{3,T}}()
     # Nested: this runs inside the adjoint, which `ctsem_hessian` differentiates.
-    J = _ctsem_nested_jacobian(triple, at)
-    return (value[1], value[2], value[3],
-        J[1, 1], J[1, 2], J[2, 1], J[2, 2], J[3, 1], J[3, 2])
-end
-
-"""
-    _binary_threshold_derivatives(ηbar, s2, y, thresholds, kind)
-
-`∂(logZ, m, v)/∂τ` as a `3 x length(thresholds)` matrix.
-
-Separate from `_binary_moment_derivatives` rather than folded into it so the
-binary and Gaussian paths pay nothing for ordinal support: this is called only
-when a variable actually has thresholds. Differentiating the quadrature rather
-than the exact moments, for the same reason given there -- the reverse pass has
-to differentiate the function the forward pass computed, not the one it
-approximates.
-"""
-function _binary_threshold_derivatives(ηbar::T, s2::T, y::Real,
-    thresholds, kind::Int) where {T}
-    k = length(thresholds)
-    (k == 0 || s2 <= zero(T)) && return zeros(T, 3, k)
-    nodes, weights = _gauss_hermite(_CTSEM_BINARY_NODES[])
-    s = sqrt(s2)
-    triple = function (τ)
-        D = eltype(τ)
-        logZ, m, v = _binary_moments(D(ηbar), D(s), y, nodes, weights, τ, kind)
-        return [logZ, m, v]
+    # The rule is evaluated once, so its value part is read as it goes by.
+    # `local`, and names of its own: a name the closure assigns that is also a
+    # local out here is the enclosing one, boxed, with every use of it
+    # dispatched at run time. The profile found exactly that here.
+    J = _ctsem_nested_jacobian(at, Val(2 + extras)) do x
+        local τ, ℓ, μ1, σ2
+        τ = extras == 0 ? _as_scalar_type(eltype(x), thresholds) : x[3:end]
+        ℓ, μ1, σ2 = _binary_moments(x[1], sqrt(x[2]), y, nodes, weights, τ,
+            kind)
+        held[] = (ForwardDiff.value(ℓ), ForwardDiff.value(μ1),
+            ForwardDiff.value(σ2))
+        return [ℓ, μ1, σ2]
+    end::Matrix{T}
+    logZ, m, v = held[]
+    if !isfinite(logZ)
+        fill!(J, zero(T))
+        J[2, 1] = one(T)
+        J[3, 2] = one(T)
+        return (T(-Inf), m, v, J)
     end
-    at = collect(T, thresholds)
-    isfinite(triple(at)[1]) || return zeros(T, 3, k)
-    return _ctsem_nested_jacobian(triple, at)
+    return (logZ, m, v, J)
 end
 
 """
