@@ -1324,9 +1324,10 @@ end
 `(logZ, m, v, J)` at `ηbar = a` and `s² = b`, where `m` is the posterior mean's
 *offset* from `a` -- see `_binary_moments` for why nothing here works with the
 mean itself -- and `J` is their `3 x (2 + e)` Jacobian: rows `logZ`, `m`, `v`;
-columns `a`, `b`, and then each of the row's `e` extras the reverse pass
-differentiates (thresholds, asymptotes, censoring limits; none for a count,
-whose extra rides `b`).
+columns `a`, `b`, and then each of the row's `e` extras (thresholds, asymptotes,
+censoring limits; none for a count, whose extra rides `b`). Only the extras the
+observation's likelihood reads are seeded (`_extras_read`); the other columns
+are zero, which is what they are.
 
 # Why this differentiates the quadrature rather than the moments
 
@@ -1356,21 +1357,28 @@ its value part, so one evaluation of the rule gives everything. This replaced a
 pair of helpers, one for `(a, b)` and one for the extras, each evaluating the
 rule once plainly for its value and once in duals, which was four evaluations
 per observation per reverse pass where one serves.
+
+The width matters as much as the count: under the seeded sweeps each number is
+already a dual of duals, so a dual of width `2 + e` over it is a struct of tens
+of floats, and on a four-threshold ordinal model (the bench's ord4) moving those
+was a fifth of the gradient at `e = 4`. An observation reads two thresholds at
+most.
 """
 function _binary_moment_jacobian(a::T, b::T, y::Real, nodes, weights,
     thresholds, kind::Int) where {T}
     extras = kind == CTSEM_OBS_COUNT ? 0 : length(thresholds)
+    J = zeros(T, 3, 2 + extras)
     if b <= zero(T)
-        J = zeros(T, 3, 2 + extras)
         J[2, 1] = one(T)
         J[3, 2] = one(T)
         return (zero(T), zero(T), zero(T), J)
     end
-    at = Vector{T}(undef, 2 + extras)
+    read = _extras_read(y, thresholds, kind)
+    at = Vector{T}(undef, 2 + length(read))
     at[1] = a
     at[2] = b
-    @inbounds for i in 1:extras
-        at[2 + i] = thresholds[i]
+    @inbounds for (c, i) in enumerate(read)
+        at[2 + c] = thresholds[i]
     end
     held = Ref{NTuple{3,T}}()
     # Nested: this runs inside the adjoint, which `ctsem_hessian` differentiates.
@@ -1378,9 +1386,12 @@ function _binary_moment_jacobian(a::T, b::T, y::Real, nodes, weights,
     # `local`, and names of its own: a name the closure assigns that is also a
     # local out here is the enclosing one, boxed, with every use of it
     # dispatched at run time. The profile found exactly that here.
-    J = _ctsem_nested_jacobian(at, Val(2 + extras)) do x
+    D = _ctsem_nested_jacobian(at, Val(2 + length(read))) do x
         local τ, ℓ, μ1, σ2
-        τ = extras == 0 ? _as_scalar_type(eltype(x), thresholds) : x[3:end]
+        τ = _as_scalar_type(eltype(x), thresholds)
+        @inbounds for (c, i) in enumerate(read)
+            τ[i] = x[2 + c]
+        end
         ℓ, μ1, σ2 = _binary_moments(x[1], sqrt(x[2]), y, nodes, weights, τ,
             kind)
         held[] = (ForwardDiff.value(ℓ), ForwardDiff.value(μ1),
@@ -1389,12 +1400,38 @@ function _binary_moment_jacobian(a::T, b::T, y::Real, nodes, weights,
     end::Matrix{T}
     logZ, m, v = held[]
     if !isfinite(logZ)
-        fill!(J, zero(T))
         J[2, 1] = one(T)
         J[3, 2] = one(T)
         return (T(-Inf), m, v, J)
     end
+    @inbounds for r in 1:3
+        J[r, 1] = D[r, 1]
+        J[r, 2] = D[r, 2]
+        for (c, i) in enumerate(read)
+            J[r, 2 + i] = D[r, 2 + c]
+        end
+    end
     return (logZ, m, v, J)
+end
+
+"""
+    _extras_read(y, thresholds, kind)
+
+The extras whose value an observation's likelihood depends on, as a range into
+`thresholds`: the thresholds bounding its category for an ordinal row, both
+asymptotes for a binary item with them, the standard deviation of a censored
+row (its limits are constants), and none for a count, whose extra enters
+through the predicted variance instead.
+"""
+@inline function _extras_read(y::Real, thresholds, kind::Int)
+    n = length(thresholds)
+    kind == CTSEM_OBS_COUNT && return 1:0
+    kind == CTSEM_OBS_CENSORED && return n >= 3 ? (3:3) : (1:0)
+    if kind == CTSEM_OBS_ORDINAL && n > 0
+        k = Int(y)
+        return clamp(k - 1, 1, n):clamp(k, 1, n)
+    end
+    return 1:n
 end
 
 """
