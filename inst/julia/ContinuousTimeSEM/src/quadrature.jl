@@ -106,12 +106,13 @@ function _gauss_hermite(m::Integer)
     key = Int(m)
     # Locked, following `_TRANSFORM_CACHE` in `r_interface.jl`. Only the
     # quadrature path warms this cache first; the binary measurement kernels
-    # (`binary_measurement.jl`, `kalman_filters.jl`, `kalman_trace.jl`) call it
-    # once per row from every threaded loop in the engine, so an ordinary fit
+    # reach it from every threaded loop in the engine, so an ordinary fit
     # with binary indicators can reach a cold cache from several threads at
     # once, and a concurrent `setindex!` during a rehash corrupts a `Dict`. A
-    # node count is built once per session and an uncontended lock is tens of
-    # nanoseconds.
+    # node count is built once per session. The kernels ask once per
+    # observation, and for them even the uncontended lock was a few percent of
+    # a pass, so they go through `_binary_rule`, which comes here only when
+    # the count changes.
     lock(_GH_CACHE_LOCK) do
         cached = get(_GH_CACHE, key, nothing)
         cached === nothing || return cached

@@ -225,7 +225,7 @@ admits.
                  (hashi ? b * φb : zero(T)))
         return (mean, max(second - mean * mean, zero(T)))
     end
-    nodes, weights = _gauss_hermite(_CTSEM_BINARY_NODES[])
+    nodes, weights = _binary_rule()
     s = sqrt(s2)
     if kind == CTSEM_OBS_BINARY || isempty(thresholds)
         # `exp(logZ)` is the marginal `P(y = 1)` -- the same integral the filter

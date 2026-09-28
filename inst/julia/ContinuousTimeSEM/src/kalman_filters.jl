@@ -275,9 +275,10 @@ function _ekf_update_observed!(ws::ContinuousEKFWorkspace, pars,
     # exactly what the Gaussian block saw, so `_reverse_update!` needed no
     # changes at all. The binary chain gets its own record, from the true prior.
     binary_rows = _ekf_binary_subset(ws, observed)
-    _record_binary!(trace, ws, pars, data, obs_col, binary_rows,
-        ws.state, ws.P_predict.data, _val(ws.state_dim))
-    binary_loglik = _ekf_binary_rows!(ws, pars, data, obs_col, observed, generate)
+    record = _record_binary!(trace, ws, pars, data, obs_col, binary_rows,
+        _val(ws.state_dim))
+    binary_loglik = _ekf_binary_rows!(ws, pars, data, obs_col, observed, generate,
+        record)
     binary_loglik === nothing && return nothing
     gaussian = _ekf_gaussian_subset(ws, observed)
 
@@ -346,11 +347,12 @@ end
 end
 
 """
-    _ekf_binary_rows!(ws, pars, data, obs_col, observed, generate)
+    _ekf_binary_rows!(ws, pars, data, obs_col, observed, generate, record)
 
 Apply every categorical observation in this row, one at a time, returning their
 total log marginal likelihood. Zero when the model has no categorical
-indicators, which is the branch every existing model takes.
+indicators, which is the branch every existing model takes. `record` is the
+row's binary record on a traced pass (`_record_binary!`), `nothing` otherwise.
 
 Several categorical indicators at one row are conditionally independent given
 the state, so applying them in sequence -- each an exact scalar update, with a
@@ -358,7 +360,8 @@ Gaussian projection between -- is both cheaper and more accurate than one joint
 linearisation.
 """
 function _ekf_binary_rows!(ws::ContinuousEKFWorkspace, pars,
-    data::AbstractMatrix, obs_col::Int, observed, generate=nothing)
+    data::AbstractMatrix, obs_col::Int, observed, generate=nothing,
+    record=nothing)
     T = eltype(ws.state)
     types = ws.manifesttype
     isempty(types) && return zero(T)
@@ -372,7 +375,7 @@ function _ekf_binary_rows!(ws::ContinuousEKFWorkspace, pars,
             _generate_binary!(generate, ws, pars, λ, i, obs_col, n, τ,
                 Int(types[i]))
         contribution = _ekf_binary_update!(ws, λ, pars.MANIFESTMEANS[i], y, n,
-            τ, Int(types[i]))
+            τ, Int(types[i]), record)
         isfinite(contribution) || return nothing
         total += contribution
     end
@@ -398,7 +401,7 @@ the way out and is not worth the confusion.
 function _generate_binary!(gen, ws::ContinuousEKFWorkspace, pars, λ,
     row::Int, obs_col::Int, n::Int, thresholds, kind::Int)
     T = eltype(ws.state)
-    nodes, weights = _gauss_hermite(_CTSEM_BINARY_NODES[])
+    nodes, weights = _binary_rule()
     P = ws.P_predict.data
     s2 = zero(T)
     ηbar = pars.MANIFESTMEANS[row]

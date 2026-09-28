@@ -103,6 +103,30 @@ least.
 """
 const _CTSEM_BINARY_NODES = Ref(21)
 
+# The rule `_binary_rule` hands out, with the node count it was built for.
+mutable struct _CTSEMBinaryRule
+    @atomic rule::Tuple{Int,Vector{Float64},Vector{Float64}}
+end
+const _CTSEM_BINARY_RULE = _CTSEMBinaryRule((0, Float64[], Float64[]))
+
+"""
+    _binary_rule()
+
+`_gauss_hermite(_CTSEM_BINARY_NODES[])` without taking its lock. Every
+categorical observation of every pass asks for this rule, and on ord4 (local)
+the uncontended lock alone was 2% of an ordinal gradient and 5% of a value.
+An atomic read of the rule last built, rebuilt through the locked cache when
+the node count has changed; the vectors are never written after they are built.
+"""
+@inline function _binary_rule()
+    cached = @atomic :acquire _CTSEM_BINARY_RULE.rule
+    m = _CTSEM_BINARY_NODES[]
+    cached[1] == m && return (cached[2], cached[3])
+    nodes, weights = _gauss_hermite(m)
+    @atomic :release _CTSEM_BINARY_RULE.rule = (m, nodes, weights)
+    return (nodes, weights)
+end
+
 
 """
 Iterations the scalar mode solve may take before giving up.
@@ -1250,17 +1274,19 @@ sum here costs a handful of additions on a vector of length `K-1`.
 end
 
 """
-    _ekf_binary_update!(ws, λ, μ, y, n, thresholds, kind)
+    _ekf_binary_update!(ws, λ, μ, y, n, thresholds, kind, record=nothing)
 
 One categorical observation, applied exactly in the scalar direction it informs.
 
 Returns the log marginal likelihood of the observation, or `-Inf` if the
-predicted state gives it no support.
+predicted state gives it no support. A traced pass passes its row's `record`
+(`_record_binary!`), and the moments then come with their Jacobian and are
+kept for the reverse pass (`_record_binary_step!`).
 """
 function _ekf_binary_update!(ws, λ, μ, y::Real, n::Int, thresholds,
-    kind::Int)
+    kind::Int, record=nothing)
     T = eltype(ws.state)
-    nodes, weights = _gauss_hermite(_CTSEM_BINARY_NODES[])
+    nodes, weights = _binary_rule()
 
     # c = P λ and s² = λ'Pλ, the predicted mean and variance of η.
     c = view(ws.bufferQ.r, 1:n)
@@ -1286,10 +1312,10 @@ function _ekf_binary_update!(ws, λ, μ, y::Real, n::Int, thresholds,
         σ = _count_dispersion(thresholds, T)
         s2 += σ * σ
     end
-    s = sqrt(s2)
-
-    logZ, ηoffset, vpost = _binary_moments(ηbar, s, y, nodes, weights,
-        thresholds, kind)
+    logZ, ηoffset, vpost = record === nothing ?
+        _binary_moments(ηbar, sqrt(s2), y, nodes, weights, thresholds, kind) :
+        _record_binary_step!(record, ws, c, ηbar, s2, y, nodes, weights,
+            thresholds, kind, n)
     isfinite(logZ) || return T(-Inf)
 
     # With no predicted variance in this direction the observation cannot move
