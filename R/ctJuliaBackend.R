@@ -320,6 +320,21 @@
     call. = FALSE)
 }
 
+# Does a failed `using ContinuousTimeSEM` say a package is not installed, which
+# instantiating fixes, rather than that the engine itself is broken? Julia names
+# a missing package directly when the engine's environment is empty, nested
+# inside "Failed to precompile ContinuousTimeSEM" when a dependency is absent,
+# and -- on a fresh depot under 1.12 -- as "failed to find source of parent
+# package" when the absent package is one with extensions. That last shape went
+# unrecognised, so a first fit on a new machine was told that installing would
+# not help, which is the opposite of the remedy. The phrases are Base's own,
+# from loading.jl.
+.ctJuliaLoadFailIsMissing <- function(msg) {
+  grepl(paste("not found in current path", "not found in",
+    "not found during precompilation", "does not seem to be installed",
+    "failed to find source of parent package", sep = "|"), msg)
+}
+
 #' Configure the Julia engine used by ctsem
 #'
 #' Prepares the copy of ContinuousTimeSEM.jl that ships inside this ctsem
@@ -455,14 +470,10 @@ ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
     # consent was not given", which is wrong about the cause, wrong about the
     # remedy, and sends the user to install packages that are already there.
     #
-    # Julia names a missing package the same way in both shapes it can arrive:
-    # directly, when the engine's own environment is empty, and nested inside a
-    # "Failed to precompile ContinuousTimeSEM" when a dependency of the engine
-    # is what is absent. So the presence of that phrase is what identifies the
-    # case instantiating can fix, and its absence identifies the case it cannot.
-    missing <- !is.null(loadfail) && grepl(
-      "not found in current path|not found in|does not seem to be installed",
-      loadfail)
+    # The presence of a missing-package phrase is what identifies the case
+    # instantiating can fix, and its absence identifies the case it cannot; see
+    # .ctJuliaLoadFailIsMissing.
+    missing <- !is.null(loadfail) && .ctJuliaLoadFailIsMissing(loadfail)
     if (!is.null(loadfail) && !missing) {
       stop("The julia engine failed to load. This is not a missing ",
         "dependency -- installing packages will not help.\n",
