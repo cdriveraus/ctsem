@@ -10,7 +10,7 @@ observation as an exact scalar conditioning:
     P ← P - c c' (1 - v/b)/b
 
 so the reverse is the differential of that, with the moment function's own
-partials supplied in closed form by `_binary_moment_derivatives`.
+partials supplied by `_binary_moment_jacobian`.
 
 # Why the record holds the prior rather than the intermediates
 
@@ -175,10 +175,15 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
     record::CTSEMBinaryRecord{T}, n::Int) where {T}
     k = length(record.rows)
     k == 0 && return nothing
+    nodes, weights = _gauss_hermite(_CTSEM_BINARY_NODES[])
 
-    # Forward replay, storing the state each observation was applied to.
+    # Forward replay, storing the state each observation was applied to and the
+    # moments' Jacobian there. The Jacobian carries the moments as its value
+    # part, so the replay's update and the reverse's derivatives come from one
+    # evaluation of the rule per observation.
     states = Vector{Vector{T}}(undef, k)
     covs = Vector{Matrix{T}}(undef, k)
+    moments = Vector{Tuple{T,T,Matrix{T}}}(undef, k)
     x = copy(record.state_in)
     P = copy(record.P_in)
     for j in 1:k
@@ -194,9 +199,10 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
         end
         b += _count_variance(record, j, T)
         b > T(_CTSEM_MIN_VARIANCE[]) || continue
-        g = _binary_moment_derivatives(a, b, record.y[j], record.thresholds[j],
-            record.kinds[j])
-        m, v = g[2], g[3]
+        _, m, v, J = _binary_moment_jacobian(a, b, record.y[j], nodes,
+            weights, record.thresholds[j], record.kinds[j])
+        moments[j] = (m, v, J)
+        j == k && break
         shift = m / b
         shrink = (one(T) - v / b) / b
         @inbounds for i in 1:n
@@ -252,11 +258,10 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
             end
             continue
         end
-        g = _binary_moment_derivatives(a, b, record.y[j], τ, record.kinds[j])
-        m, v = g[2], g[3]
-        dlogZ_da, dlogZ_db = g[4], g[5]
-        dm_da, dm_db = g[6], g[7]
-        dv_da, dv_db = g[8], g[9]
+        m, v, J = moments[j]
+        dlogZ_da, dlogZ_db = J[1, 1], J[1, 2]
+        dm_da, dm_db = J[2, 1], J[2, 2]
+        dv_da, dv_db = J[3, 1], J[3, 2]
         shift = m / b
         shrink = (one(T) - v / b) / b
 
@@ -319,10 +324,9 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
         # the forward pass cumulates them, so the cotangent on gap `i` is the
         # sum of the cotangents on every threshold at or after it.
         if !isempty(τ) && record.kinds[j] != CTSEM_OBS_COUNT
-            Jτ = _binary_threshold_derivatives(a, b, record.y[j], τ,
-                record.kinds[j])
             _extras_cotangent!(θ̄ca, row, τ, record.kinds[j],
-                i -> logZbar * Jτ[1, i] + mbar * Jτ[2, i] + vbar * Jτ[3, i])
+                i -> logZbar * J[1, 2 + i] + mbar * J[2, 2 + i] +
+                    vbar * J[3, 2 + i])
         end
 
         @inbounds for i in 1:n
