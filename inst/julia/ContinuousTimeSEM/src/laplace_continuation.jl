@@ -183,10 +183,16 @@ mutable struct CTSEMLaplaceContinuation{L} <: CTSEMOptimisable
     seconds_gradients::Float64
     seconds_placements::Float64
     seconds_hessian::Float64
-    # The last evaluation, at its point, for the placement it was made under:
-    # a round's first evaluation is at the point the previous round's
-    # stationarity check just evaluated. Cleared by every placement.
+    # The last evaluation with a gradient and the last without, each at its
+    # point, for the placement it was made under: a round's first evaluation
+    # is at the point the previous round's stationarity check just evaluated,
+    # and the uncertainty stage asks for the gradient at the estimate again
+    # after the certification's probe has taken values elsewhere. One slot for
+    # both let the probe's values evict that gradient, which was then paid
+    # twice: a whole gradient per converged correction, one of the seven
+    # ord4's took. Both cleared by every placement.
     cache::Any
+    value_cache::Any
 end
 
 """Gauss-Hermite grids a rule of these options can ask for, filled before any
@@ -602,7 +608,7 @@ function ctsem_laplace_continuation(laplace::CTSEMLaplaceObjective,
         Int(product_maxdim), Float64(soft_tau), Int(soft_maxdirs), Int(maxdim),
         fill(false, nunits),
         fill(NaN, nunits), fill(NaN, nunits), fill(false, nunits), NaN, nothing,
-        0, 0, 0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, nothing)
+        0, 0, 0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, nothing, nothing)
     _continuation_place!(o, theta)
     return o
 end
@@ -641,6 +647,7 @@ function ctsem_laplace_continuation_revert!(o::CTSEMLaplaceContinuation)
     end
     o.previous = nothing
     o.cache = nothing
+    o.value_cache = nothing
     return ctsem_laplace_continuation_info(o)
 end
 
@@ -674,6 +681,7 @@ function _continuation_place!(o::CTSEMLaplaceContinuation, theta::Vector{Float64
         sum(placed.quadrature[U] for U in flagged; init=0.0) + prior
     o.recentres += 1
     o.cache = nothing
+    o.value_cache = nothing
     o.seconds_placements += (time_ns() - started) / 1e9
     return o
 end
@@ -861,12 +869,15 @@ route. `unit_loglik` is every unit's term in the fit's unit order, and
 function ctsem_laplace_continuation_evaluate(o::CTSEMLaplaceContinuation,
     values::AbstractVector; gradient::Bool=true)
     theta = collect(Float64, values)
-    hit = o.cache
-    if hit !== nothing && hit.theta == theta && (!gradient || hit.result.gradient !== nothing)
-        return _continuation_copy(hit.result)
+    for hit in (o.cache, o.value_cache)
+        if hit !== nothing && hit.theta == theta &&
+                (!gradient || hit.result.gradient !== nothing)
+            return _continuation_copy(hit.result)
+        end
     end
     result = _continuation_evaluate(o, theta, gradient)
-    o.cache = (theta=theta, result=_continuation_copy(result))
+    entry = (theta=theta, result=_continuation_copy(result))
+    gradient ? (o.cache = entry) : (o.value_cache = entry)
     return result
 end
 
