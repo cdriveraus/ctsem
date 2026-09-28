@@ -259,7 +259,7 @@
   out <- .ctBackendSampleRun(fit, sampletarget, chains = chains, warmup = warmup,
     draws = draws, cores = cores, saveEffects = saveEffects, seed = seed,
     control = control, verbose = verbose,
-    progress = verbose > 0L || .ctProgressConsole(),
+    progress = .ctBackendReporting(verbose),
     processes = processes, handles = handles)
 
   # State-explicit only: the identifiability report is about the parameters,
@@ -1231,7 +1231,7 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # what was reported when the placement was a single bare call. The
   # explanation costs one line and was previously hidden behind `verbose > 0`,
   # which is not the default.
-  announce <- verbose > 0L || .ctProgressConsole()
+  announce <- .ctBackendReporting(verbose)
   if (announce) {
     message("Sampling: placing the sampler first, through the same pipeline ",
       "an optimised fit runs (warm-up, mesh, endgame), which is also where ",

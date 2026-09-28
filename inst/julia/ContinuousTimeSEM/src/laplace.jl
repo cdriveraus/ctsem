@@ -5285,9 +5285,15 @@ iterations fall from 3.0-3.7 to 2.0 per unit, the Hessian 1.3-1.6x faster on
 ordinal and nonlinear models and unchanged on a linear-Gaussian one, which
 already needed two. `warm = false` is the behaviour before, which the
 inner-budget escalation test needs.
+
+`progress`, when given, is called `(done, total)` after every column with the
+gradient evaluations completed so far out of `2n` -- this loop is the one
+place a finish or a certification can go quiet for minutes on a wide Laplace
+model, so the caller reports through it rather than this function printing
+anything itself; see `_progress_fraction` in progress.jl.
 """
 function ctsem_laplace_hessian(laplace::CTSEMLaplaceObjective, values::AbstractVector;
-    step::Real=1e-4, retries::Integer=2, warm::Bool=true)
+    step::Real=1e-4, retries::Integer=2, warm::Bool=true, progress=nothing)
     x = collect(Float64, values)
     n = length(x)
     H = zeros(Float64, n, n)
@@ -5326,6 +5332,11 @@ function ctsem_laplace_hessian(laplace::CTSEMLaplaceObjective, values::AbstractV
             restore!()
             pm = _laplace_hessian_point(laplace, minus, budget, retries)
             (pp.tries + pm.tries) > 0 && push!(escalated, j)
+            # Two gradients just finished, converged or not: a column this
+            # function gives up on (NaN, below) still cost the same two inner
+            # solves, so it counts here too or the reported total falls behind
+            # the real one.
+            progress !== nothing && progress(2j, 2n)
             if !(pp.out.converged && pm.out.converged)
                 # The same predicate `fg!` applies to a trial point, applied to
                 # the two points this column is differenced from. A gradient at
@@ -5458,9 +5469,12 @@ function ctsem_evaluate(laplace::CTSEMLaplaceObjective, values::AbstractVector;
         subject_loglik=result.subject_loglik)
 end
 
-"""The outer Hessian, for the generic curvature entry point."""
-ctsem_hessian(laplace::CTSEMLaplaceObjective, values::AbstractVector; chunk::Integer=0) =
-    ctsem_laplace_hessian(laplace, values)
+"""The outer Hessian, for the generic curvature entry point. `progress`, when
+given, reports the finite-difference loop's gradients as they finish -- see
+`ctsem_laplace_hessian`."""
+ctsem_hessian(laplace::CTSEMLaplaceObjective, values::AbstractVector;
+    chunk::Integer=0, progress=nothing) =
+    ctsem_laplace_hessian(laplace, values; progress=progress)
 
 """The gradient of the approximated log marginal likelihood."""
 function ctsem_adjoint_gradient(laplace::CTSEMLaplaceObjective, values::AbstractVector)

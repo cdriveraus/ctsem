@@ -63,13 +63,22 @@
 # anything is being watched, and the option below settles the cases this cannot
 # know about -- in both directions, which it previously did not.
 #
-# The RStudio case is why that matters. Its console renders each arriving chunk
-# as its own block, and while the engine printed to *stdout* while R messaged on
-# *stderr*, the two interleaved and the line could not survive: reported as
-# "extra line breaks". Both now arrive as messages on one stream, which removes
-# that cause -- so in-place is the default there too, and
-# `options(ctsem.progress.overwrite = FALSE)` is the way out if a particular
-# console still cannot do it.
+# The RStudio case is why the console/overwrite split above matters, and it
+# turned out to need its own answer. Sending both streams as messages fixed the
+# *interleaving* -- the engine's line and R's own no longer tore each other up
+# -- but Charles reported (2026-09-28) that the in-place updates did not render
+# at all there: only each stage's closing line appeared, for minutes at a time
+# in between. RStudio's console evidently does not repaint a carriage-returned
+# `message()` in place; it shows the next one only when a real newline arrives.
+# Verified from the symptom rather than from RStudio's source, since this
+# session cannot run RStudio itself -- `.ctProgressRStudio()` is intentionally
+# a small, named seam so that finding can be confirmed or reversed in one
+# place. Until then RStudio gets whole lines on the engine's own non-overwrite
+# cadence (five seconds; see `CTSEMProgress` in progress.jl), which is at least
+# visible, rather than in-place updates that were not.
+# `options(ctsem.progress.overwrite = )` still settles it explicitly in either
+# direction, checked first, so this default never overrides a choice someone
+# made.
 #' @keywords internal
 .ctProgressOverwrite <- function(verbose = 0) {
   # `verbose` is a level everywhere now, but some callers still pass a
@@ -81,8 +90,20 @@
   if (is.logical(option) && length(option) == 1L && !is.na(option)) {
     return(option && level < 2)
   }
-  .ctProgressConsole() && level < 2
+  .ctProgressConsole() && level < 2 && !.ctProgressRStudio()
 }
+
+# Is this session RStudio's own R process -- the one case known (see above)
+# where a console is watching (`.ctProgressConsole()` is TRUE) but cannot
+# repaint an in-place update. `Sys.getenv("RSTUDIO")` is what RStudio sets on
+# every R process it starts, console or Job or background; reached directly
+# rather than through the `rstudioapi` package so detecting this costs no
+# dependency. Not asked by `.ctProgressConsole()` itself: that function
+# answers "is anyone watching" and this answers a narrower "can that watcher's
+# console repaint a line", which is why `.ctProgressOverwrite()` is the only
+# reader.
+#' @keywords internal
+.ctProgressRStudio <- function() identical(Sys.getenv("RSTUDIO"), "1")
 
 #' Deliver an engine progress line as an R message
 #'
@@ -157,6 +178,25 @@
 .ctVerboseOn <- function(verbose) {
   isTRUE(verbose) ||
     (is.numeric(verbose) && length(verbose) == 1L && !is.na(verbose) && verbose > 0)
+}
+
+# Whether a stage should report itself at all: the same question
+# `.ctJuliaOptimise()`'s `reporting` asks for the main line -- explicit
+# verbosity, or something watching the console -- pulled out because the
+# engine's finish, the certification, the quadrature correction and the
+# uncertainty stage all ask it too, and used to each answer it slightly
+# differently (one gated strictly on `verbose > 0`, which is how a default fit
+# went twenty-two minutes without a word: see R/ctBackendLaplaceCorrect.R).
+#' @keywords internal
+.ctBackendReporting <- function(verbose) .ctVerboseOn(verbose) || .ctProgressConsole()
+
+# The progress line a post-optimisation stage reports through, or `NULL` when
+# nothing is watching -- the same sink and the same overwrite rule
+# `.ctJuliaOptimise()` builds for the main line, so a fit's progress reads as
+# one thing throughout rather than changing style between stages.
+#' @keywords internal
+.ctBackendProgressSink <- function(verbose) {
+  if (.ctBackendReporting(verbose)) .ctProgressSink(.ctProgressOverwrite(verbose)) else NULL
 }
 
 # `1m 04s`, `12.4s`, `2h 05m` -- the R-side twin of `_duration()` in
@@ -3585,19 +3625,26 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 #'   faster than "forward" at every model size measured, by a margin that
 #'   grows with the parameter count. See \code{optimcontrol$gradient} in
 #'   \code{ctFit}.
+#' @param cores Engine subject-chunk ceiling for this one evaluation, restored
+#'   afterwards. This call used to run outside any ceiling, at the session's
+#'   full thread width: harmless on its own, but it left the worker pool at
+#'   full width behind it, which let unrelated later work -- an in-process
+#'   sampler's chains among them -- run wider than its own \code{cores} asked
+#'   for. See \code{.ctBackendWithMaxChunks()}.
 #' @return A list containing log likelihood and, when requested, gradient.
 #' @export
 ctJuliaEvaluate <- function(object, pars = NULL, gradient = TRUE, contributions = FALSE,
-  gradient_method = c("adjoint", "forward")) {
+  gradient_method = c("adjoint", "forward"), cores = 2L) {
   gradient_method <- match.arg(gradient_method)
   if (!inherits(object, c("ctJuliaModel", "ctJuliaFit"))) stop("object must be a ctJuliaModel or ctJuliaFit", call. = FALSE)
   if (is.null(pars)) {
     if (inherits(object, "ctJuliaFit")) pars <- object$estimate$raw else stop("pars must be supplied for a prepared ctJuliaModel", call. = FALSE)
   }
   module <- .ctJuliaModule(if (inherits(object, "ctJuliaFit")) object$model_spec$project else object$project)
-  result <- module$ctsem_evaluate(.ctJuliaObjective(object), .ctJuliaNumericVector(pars),
+  result <- .ctBackendWithMaxChunks(cores, module$ctsem_evaluate(
+    .ctJuliaObjective(object), .ctJuliaNumericVector(pars),
     gradient = isTRUE(gradient), contributions = isTRUE(contributions),
-    gradient_method = gradient_method)
+    gradient_method = gradient_method))
   .ctJuliaGet(result)
 }
 
@@ -4048,8 +4095,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # two of its elements need the same answer: `progress` runs the engine's
   # reporter and `progress_sink` says where its line goes. See the note on
   # `progress` at the foot of the list for why it is not simply `verbose`.
-  reporting <- isTRUE(.ctJuliaOr(optimcontrol$progress,
-    verbose > 0L || .ctProgressConsole()))
+  reporting <- isTRUE(.ctJuliaOr(optimcontrol$progress, .ctBackendReporting(verbose)))
   common <- list(
     maxiter = as.integer(.ctJuliaOr(maxiter, .ctJuliaOr(optimcontrol$maxiter, 1000L))),
     g_tol = .ctJuliaOr(optimcontrol$g_tol, 1e-8),
@@ -4960,7 +5006,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     if (is.null(correction)) NULL else correction$certification, optimcontrol,
     inits, intoverstates) else 0L
   if (nrestarts > 0L) {
-    reporting <- verbose > 0L || .ctProgressConsole()
+    reporting <- .ctBackendReporting(verbose)
     elapsed <- proc.time()[["elapsed"]] - optimise_started
     if (reporting) message("Not converged; trying ", nrestarts,
       " random restarts. Esc or Ctrl-C stops them and keeps this fit.")
