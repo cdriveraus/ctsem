@@ -101,6 +101,8 @@ for (k in intersect(c("exact", "rescored", "logposterior", "loglik", "secs_fit",
   "hess_secs_exact", "se_rel_exact",
   "se_rel_laplace_x", "se_rel_laplace_est", "se_rel_reported", "npar",
   "secs_lapcorrect"), names(d))) d[[k]] <- num(d[[k]])
+# Written only by the harness since the quadhess job; absent from older results.
+for (k in c("hess_secs_exact", "se_rel_exact")) if (is.null(d[[k]])) d[[k]] <- NA_real_
 done <- d$status %in% c("ok", "evalonly")
 
 # ---- scores ----------------------------------------------------------------------

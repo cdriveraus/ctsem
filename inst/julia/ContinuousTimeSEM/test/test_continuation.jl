@@ -387,9 +387,14 @@ _fresh_2d2() = (ctsem_laplace_objective(_CONTINUATION_2D_OBJECTIVE, [1, 5],
     end
 end
 
-@testset "the exact Hessian is the derivative of the hybrid's gradient, on two states" begin
+@testset "the exact Hessian is the derivative of the hybrid's gradient" begin
+    # Two states, on the soft and the product rule; and units that nest, where
+    # an outer block's node carries its children's rules and the identity is
+    # applied at each level of the tree.
     for (label, fresh) in (("three effects, soft rule", _fresh_2d3),
-                           ("two effects, product rule", _fresh_2d2))
+                           ("two effects, product rule", _fresh_2d2),
+                           ("two levels", _fresh_twolevel),
+                           ("three levels", _fresh_threelevel))
         laplace, values = fresh()
         theta = collect(Float64, values)
         o = ctsem_laplace_continuation(laplace, theta; tolerance=0.0)
