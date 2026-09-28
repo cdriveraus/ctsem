@@ -158,3 +158,60 @@ test_that("the thread count a session will start with is read as Julia reads it"
   expect_identical(threads("auto"), "auto")
   expect_identical(threads("x"), NA_character_)
 })
+
+# A session is started with the threads this process may use, so any `cores` up
+# to that is honoured without a restart; a count somebody chose is left alone.
+test_that("a session nobody sized is provisioned at the width this process may use", {
+  cache <- ctsem:::.ct_julia_cache
+  previous <- cache$threads_from_cores
+  on.exit(cache$threads_from_cores <- previous, add = TRUE)
+  testthat::local_mocked_bindings(.ctJuliaWidth = function() 6L, .package = "ctsem")
+  provision <- function(value, cores = NA_integer_) withr::with_envvar(
+    c(JULIA_NUM_THREADS = value), {
+      got <- ctsem:::.ctJuliaProvision(cores)
+      c(got = as.character(got), env = Sys.getenv("JULIA_NUM_THREADS"))
+    })
+  cache$threads_from_cores <- NULL
+  expect_identical(provision(NA), c(got = "6", env = "6"))
+  # Wider when a call asks for more than the machine's default.
+  expect_identical(provision(NA, cores = 8L), c(got = "8", env = "8"))
+  # A count set deliberately wins, even a narrow one.
+  cache$threads_from_cores <- NULL
+  expect_identical(provision("3"), c(got = "3", env = "3"))
+  # One ctsem set itself is recomputed rather than obeyed.
+  cache$threads_from_cores <- "8"
+  expect_identical(provision("8"), c(got = "6", env = "6"))
+})
+
+test_that("a provisioned session holds a call that sets no ceiling to the default cores", {
+  skip_without_julia()
+  withr::local_envvar(JULIA_NUM_THREADS = NA)
+  # `mc.cores` is one of the limits availableCores() takes the least of, and it
+  # is also where `cores` gets its default; unset, the two part company.
+  withr::local_options(mc.cores = NULL)
+  cache <- ctsem:::.ct_julia_cache
+  cache$threads_from_cores <- NULL
+  ctsem:::.ctJuliaClearSession()
+  suppressMessages(ctJuliaSetup())
+  width <- ctsem:::.ctJuliaWidth()
+  state <- ctsem:::.ctJuliaGet(ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_max_chunks()"))
+  expect_equal(state$nthreads, width)
+  expect_equal(state$max_chunks, min(2L, width))
+  # Asking for threads makes them the ceiling as well.
+  suppressMessages(ctJuliaSetup(threads = 2L, force = TRUE))
+  state <- ctsem:::.ctJuliaGet(ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_max_chunks()"))
+  expect_equal(state$nthreads, 2L)
+  expect_equal(state$max_chunks, 2L)
+})
+
+test_that("threads asked for by name are kept, whatever ctsem last provisioned", {
+  skip_without_julia()
+  withr::local_envvar(JULIA_NUM_THREADS = NA)
+  cache <- ctsem:::.ct_julia_cache
+  # The value provisioning last set happens to be the one asked for here. It
+  # was taken for ctsem's own and widened to the machine: 24 threads for 2.
+  cache$threads_from_cores <- "2"
+  suppressMessages(ctJuliaSetup(threads = 2L, force = TRUE))
+  expect_identical(Sys.getenv("JULIA_NUM_THREADS"), "2")
+  expect_equal(as.integer(ctsem:::.ctJuliaEval("Threads.nthreads()")), 2L)
+})

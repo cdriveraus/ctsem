@@ -405,7 +405,10 @@
   }
   external <- nzchar(Sys.getenv("JULIACONNECTOR_SERVER", unset = ""))
   if (!started) {
-    if (!external) .ctJuliaAnnounce()
+    if (!external) {
+      .ctJuliaProvision()
+      .ctJuliaAnnounce()
+    }
     suspendInterrupts(withCallingHandlers(wire$ensure(), message = function(m) {
       if (!external && startsWith(conditionMessage(m), "Starting Julia")) {
         invokeRestart("muffleMessage")
@@ -415,12 +418,47 @@
   .ct_julia_cache$pid <- if (external) NULL else tryCatch(
     as.integer(.ctJuliaExchange(wire, "RConnector.mainevalcmd", list("getpid()"))),
     error = function(e) NULL)
+  .ct_julia_cache$pid_session <- .ctJuliaSessionStamp()
+  if (!is.null(.ct_julia_cache$interrupt_file)) unlink(.ct_julia_cache$interrupt_file)
   .ct_julia_cache$interrupt_file <- gsub("\\", "/",
     tempfile("ctsem-julia-interrupt-"), fixed = TRUE)
   .ctJuliaRegisterExit()
-  .ct_julia_cache$pid_session <- .ctJuliaSessionStamp()
-  if (!is.null(.ct_julia_cache$interrupt_file)) unlink(.ct_julia_cache$interrupt_file)
   invisible(TRUE)
+}
+
+# How many threads a session starts with ---------------------------------------
+#
+# Julia fixes its thread count when the process starts; a running process cannot
+# gain threads. A session started at two could therefore honour a later
+# `cores = 8` only by restarting, which discards every model shape it has
+# compiled. So a session is started with as many threads as this R process may
+# use, and each call is held to its own `cores` by the engine's chunk ceiling,
+# as it always was: the threads are there when asked for, idle when not.
+#
+# `parallelly::availableCores()` is "may use": every core on a desktop, the
+# allocation under Slurm, PBS or a cgroup limit, `mc.cores` when that is set,
+# and 2 under `R CMD check`. Measured on a 24-thread Windows desktop, a bare
+# Julia at 24 threads against 2: the same start time, 30 MB more memory, and no
+# CPU at all while idle.
+.ctJuliaWidth <- function() {
+  n <- tryCatch(suppressWarnings(as.integer(parallelly::availableCores())[1L]),
+    error = function(e) NA_integer_)
+  if (is.na(n) || n < 1L) 2L else n
+}
+
+# Set the thread count for a session about to start, unless someone chose it:
+# ctJuliaSetup(threads=), the user's environment and a scheduler all win. At
+# least `cores` wide when a call asks for more than the default. The value set
+# is remembered, so a later start can tell its own setting from a deliberate one.
+.ctJuliaProvision <- function(cores = NA_integer_) {
+  existing <- Sys.getenv("JULIA_NUM_THREADS", unset = "")
+  if (nzchar(existing) && !identical(existing, .ct_julia_cache$threads_from_cores)) {
+    return(invisible(suppressWarnings(as.integer(sub(",.*$", "", existing)))))
+  }
+  width <- max(.ctJuliaWidth(), suppressWarnings(as.integer(cores)[1L]), na.rm = TRUE)
+  Sys.setenv(JULIA_NUM_THREADS = as.character(width))
+  .ct_julia_cache$threads_from_cores <- as.character(width)
+  invisible(width)
 }
 
 # "Starting Julia 1.12.5 with 2 threads ...", in place of JuliaConnectoR's
