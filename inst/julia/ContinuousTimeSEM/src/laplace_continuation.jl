@@ -1072,35 +1072,54 @@ function ctsem_laplace_continuation_optimize(o::CTSEMLaplaceContinuation,
 end
 
 """
-    ctsem_laplace_continuation_hessian(o, values; step=1e-4, scheme=:forward)
+    ctsem_laplace_continuation_hessian(o, values; step=1e-4, scheme=:exact,
+        width=0)
 
-The Hessian of the hybrid at `values`, its nodes where they are: a finite
-difference of its exact gradient, the Laplace part's inner modes warm-started
-from their modes at `values` for the reason `ctsem_laplace_hessian` gives. A
-column whose points did not all evaluate is `NaN`, which the caller sees as an
+The Hessian of the hybrid at `values`, its nodes where they are.
+
+`scheme = :exact`, the default, takes the flagged units' part exactly, by the
+Louis identity over their fixed nodes, and the part the other units and the
+prior carry by central differences of that part's own gradient
+(`_continuation_exact_hessian`). Where the flagged part cannot be formed that
+way it falls back to `:forward`. `width` is the dual width of its sweeps, `0`
+to choose (`_continuation_hessian_width`); the result does not depend on it.
+
+`:forward` and `:central` difference the hybrid's exact gradient, the Laplace
+part's inner modes warm-started from their modes at `values` for the reason
+`ctsem_laplace_hessian` gives: `:forward` one gradient per column and one at
+`values`, `:central` two per column. They were the default until the exact
+scheme, forward last: a gradient of the hybrid costs a reverse sweep per
+member per node, so `npar + 1` of them are `npar + 1` sweeps per node, and at
+five effects a unit (dev/lapcontinue/highdim.R, 150 subjects, npar 27; dev1,
+8 threads) the forward Hessian took 126 s and the central one 243 s. On the
+optimiser bench's Laplace fits whose continuation reported this Hessian (32
+fits of 9 models; review/bench/2026-09-26-baseline.md) the forward scheme
+moved no standard error by more than 0.24% against the central one. The
+Laplace Hessian is no substitute: at the Laplace optimum or at the
+continuation's estimate it moved some standard error by more than 20% on
+three of the nine, by up to 69%.
+
+A column whose points did not all evaluate is `NaN`, under either difference
+scheme and in the exact scheme's differenced part, which the caller sees as an
 unusable Hessian.
-
-`scheme = :forward` takes one gradient per column and one at `values`;
-`:central` two per column, as `ctsem_laplace_hessian` does. Forward by default
-because this Hessian is the correction's largest cost where units are wide,
-and because the gradient is exact, so the only error forward differences add
-is the step's truncation. At five effects a unit (dev/lapcontinue/highdim.R,
-150 subjects, npar 27; dev1, 8 threads) the central Hessian took 243 s and the
-forward one 126 s, beside a 284-second correction and a 216-second fit, and
-no standard error moved by more than 0.1% (the lapcontinue job had measured
-502 s of a 727-second correction there, at an earlier build). On the optimiser
-bench's Laplace fits whose continuation reported this Hessian (32 fits of 9
-models; review/bench/2026-09-26-baseline.md) the largest change in any
-standard error was 0.24%. The Laplace Hessian is no substitute: at the Laplace
-optimum or at the continuation's estimate it moved some standard error by more
-than 20% on three of the nine, by up to 69%.
 """
 function ctsem_laplace_continuation_hessian(o::CTSEMLaplaceContinuation,
-    values::AbstractVector; step::Real=1e-4, scheme=:forward)
+    values::AbstractVector; step::Real=1e-4, scheme=:exact, width::Integer=0)
     scheme = scheme isa Symbol ? scheme : Symbol(scheme)
-    scheme in (:forward, :central) || throw(ArgumentError(
-        "scheme must be :forward or :central, got " * repr(scheme)))
+    scheme in (:exact, :forward, :central) || throw(ArgumentError(
+        "scheme must be :exact, :forward or :central, got " * repr(scheme)))
     x = collect(Float64, values)
+    if scheme === :exact
+        H = _continuation_exact_hessian(o, x; step=step, width=width)
+        H === nothing || return H
+        scheme = :forward
+    end
+    return _continuation_difference_hessian(o, x, step, scheme)
+end
+
+"""The `:forward` and `:central` schemes of `ctsem_laplace_continuation_hessian`."""
+function _continuation_difference_hessian(o::CTSEMLaplaceContinuation,
+    x::Vector{Float64}, step::Real, scheme::Symbol)
     n = length(x)
     H = fill(NaN, n, n)
     previous = ctsem_set_warm_start!(false)
@@ -1143,6 +1162,566 @@ function ctsem_laplace_continuation_hessian(o::CTSEMLaplaceContinuation,
         ctsem_set_warm_start!(previous)
         restore!()
     end
+    return (H .+ transpose(H)) ./ 2
+end
+
+# The exact Hessian
+#
+# A flagged unit's term is `Q(theta) = log sum_j exp(w_j + h_j(theta)) + c`
+# with the nodes held, so with `pi` the normalised node weights
+#
+#     d2Q/dtheta2 = sum_j pi_j d2h_j + sum_j pi_j (dh_j - dQ)(dh_j - dQ)'
+#
+# -- the Louis identity: the node-weighted mean of the per-node Hessians, plus
+# the node-weighted covariance of the per-node gradients, which are the Fisher
+# identity's scores that the gradient already takes. An outer block's `h_j` is
+# the sum of its children's rules as they were placed at node `j`, so the same
+# identity applies at every level of the unit's block tree, children first.
+#
+# A leaf's `h_j` is its members' log likelihoods at `theta + L(theta) u_j`. For
+# one member, with `s(theta)` that shifted vector, `g` and `Hs` the gradient and
+# Hessian of its log likelihood in `s`,
+#
+#     d2h/dtheta2 = J' Hs J + sum_p g_rho(p) d2(L u)_p/dtheta2,    J = ds/dtheta
+#
+# `J` is the identity plus, in the column of each population parameter, the
+# vector `dL u` placed at the level's `re_index`; the last term has entries
+# only between population parameters of one level. The filter never reads a
+# population parameter, so `Hs` is needed only over the others (`active`), and
+# it comes from one forward-over-reverse sweep: the member's value-and-gradient
+# with dual inputs, each seeded along one active parameter, `width` of them to
+# a sweep (`_continuation_member_hessian!`). Its value parts are the plain
+# sweep's, so the gradient comes with it, and a node costs
+# `ceil(active / width)` dual sweeps where differencing the gradient costs
+# `npar + 1` or `2 npar` plain ones.
+#
+# The units left to Laplace, and the prior, which that part carries, have no
+# exact Hessian in the engine: their term's gradient is itself built from
+# third derivatives at an inner mode. They are differenced as the Laplace fit
+# differences them, centrally, over those units alone (`ctsem_laplace_hessian`
+# on the subset objective), which is where every unit is when nothing is
+# flagged and nowhere much when most are.
+
+"""
+Which raw parameters a member's filter reads (`active`, the ones a sweep
+seeds) and which are population parameters (`pop`, reaching it only through
+`L(theta)`), with each level's `re_index` in the active numbering (`reloc`) and
+one `(level, position, parameter)` entry per population parameter that moves a
+member (`entries`). `nothing` when a random effect sits on a population
+parameter, which the assembly does not handle.
+"""
+function _continuation_hessian_layout(spec::CTSEMLaplaceSpec, npar::Integer,
+    positions::Vector{Vector{Int}}, dL)
+    pop = sort!(unique!(reduce(vcat, positions; init=Int[])))
+    active = Int[]
+    local_of = zeros(Int, npar)
+    for t in 1:npar
+        insorted(t, pop) && continue
+        push!(active, t)
+        local_of[t] = length(active)
+    end
+    reloc = Vector{Vector{Int}}(undef, length(spec.levels))
+    entries = Tuple{Int,Int,Int}[]
+    kmax = 0
+    for l in eachindex(spec.levels)
+        level = spec.levels[l]
+        reloc[l] = Int[local_of[t] for t in level.re_index]
+        any(iszero, reloc[l]) && return nothing
+        # A level whose `dL` is empty moves nothing (no effects, or no
+        # population parameters): `_continuation_member!` skips it too.
+        isempty(dL[l]) && continue
+        kmax = max(kmax, nrandomeffects(level))
+        for t in eachindex(positions[l])
+            push!(entries, (l, t, positions[l][t]))
+        end
+    end
+    return (active=active, pop=pop, reloc=reloc, entries=entries, kmax=kmax)
+end
+
+"""
+    _continuation_level_chol_second_derivatives(values, spec, positions)
+
+`d2L_l / d values[p] d values[q]` for every level `l` and every pair of its
+population parameters, indexed `[l][t][t2]` in the order
+`_laplace_level_positions` gives them: the derivative of
+`_laplace_level_chol_derivatives`, by the same construction differentiated
+once more. The inner jacobian is taken under the nested tag, as any
+differentiation inside another must be (`CTSEMNestedTag`).
+"""
+function _continuation_level_chol_second_derivatives(values::Vector{Float64},
+    spec::CTSEMLaplaceSpec, positions::Vector{Vector{Int}})
+    out = Vector{Vector{Vector{Matrix{Float64}}}}(undef, length(spec.levels))
+    for l in eachindex(spec.levels)
+        level = spec.levels[l]
+        pos = positions[l]
+        k = length(level.re_index)
+        r = nlatent(level)
+        np = length(pos)
+        if np == 0 || k == 0 || r == 0
+            out[l] = Vector{Matrix{Float64}}[]
+            continue
+        end
+        chol_of = function (p)
+            v = convert(Vector{eltype(p)}, values)
+            @inbounds for (slot, position) in enumerate(pos)
+                v[position] = p[slot]
+            end
+            return vec(_laplace_popchol(v, level))
+        end
+        first_of = p -> vec(_ctsem_nested_jacobian(chol_of, p))
+        J2 = ForwardDiff.jacobian(first_of, values[pos])
+        kr = k * r
+        out[l] = [[Matrix{Float64}(reshape(J2[((t1 - 1) * kr + 1):(t1 * kr), t2], k, r))
+                   for t2 in 1:np] for t1 in 1:np]
+    end
+    return out
+end
+
+"""
+One pool slot's buffers for the exact Hessian at dual type `S`, cached on the
+Laplace object like its other scratch: the member's dual input and gradient,
+its plain gradient `g` and active Hessian `Hs`, the `dL u` columns `C` and
+`V = Hs C`, and per level of the block tree the running node-weighted mean
+gradient, mean Hessian and gradient scatter, and the node's own gradient and
+Hessian. Nothing in the node loop allocates.
+"""
+struct CTSEMContinuationHessianScratch{S}
+    x::Vector{S}
+    gradient::Vector{S}
+    shift::Vector{Float64}
+    g::Vector{Float64}
+    Hs::Matrix{Float64}
+    C::Matrix{Float64}
+    V::Matrix{Float64}
+    delta::Vector{Float64}
+    mean::Vector{Vector{Float64}}
+    hess::Vector{Matrix{Float64}}
+    scatter::Vector{Matrix{Float64}}
+    gnode::Vector{Vector{Float64}}
+    hnode::Vector{Matrix{Float64}}
+    unit_gradient::Vector{Float64}
+    unit_hessian::Matrix{Float64}
+end
+
+function _continuation_hessian_scratch!(laplace::CTSEMLaplaceObjective, ::Type{S},
+    npar::Integer, layout, depth::Integer) where {S}
+    store = laplace.workspaces[_laplace_slot()]
+    na = length(layout.active)
+    ne = length(layout.entries)
+    key = (:cont_hessian, S, Int(npar), na, ne, layout.kmax, Int(depth))
+    cached = get(store, key, nothing)
+    cached === nothing || return cached::CTSEMContinuationHessianScratch{S}
+    n = Int(npar)
+    built = CTSEMContinuationHessianScratch{S}(Vector{S}(undef, n),
+        Vector{S}(undef, n), zeros(n), zeros(n), zeros(na, na),
+        zeros(layout.kmax, ne), zeros(na, ne), zeros(n),
+        [zeros(n) for _ in 1:depth], [zeros(n, n) for _ in 1:depth],
+        [zeros(n, n) for _ in 1:depth], [zeros(n) for _ in 1:depth],
+        [zeros(n, n) for _ in 1:depth], zeros(n), zeros(n, n))
+    store[key] = built
+    return built
+end
+
+"""
+    _continuation_member_hessian!(gnode, hnode, laplace, U, m, theta, Ls, dL, d2L,
+        layout, u, aws, sc)
+
+Member `m` of unit `U` at the fixed standardised effects `u`: adds its gradient
+in `theta` into `gnode` and its Hessian into `hnode`, and returns
+`(loglik, status)`. Status 1 is a node the gradient path skips (the value or
+the gradient not finite, as `_continuation_member!` reports it); 2 is a
+Hessian that cannot be formed here: a partial not finite where the gradient
+is, or a population parameter the filter reads after all.
+"""
+function _continuation_member_hessian!(gnode::Vector{Float64},
+    hnode::Matrix{Float64}, laplace::CTSEMLaplaceObjective, U::Integer,
+    m::Integer, theta::Vector{Float64}, Ls, dL, d2L, layout, u::Vector{Float64},
+    aws, sc::CTSEMContinuationHessianScratch{S}) where {S}
+    N = ForwardDiff.npartials(S)
+    spec = laplace.spec
+    units = laplace.units
+    offsets = units.offsets[U][m]
+    subject = laplace.objective.subject_objectives[units.members[U][m]]
+    npar = length(theta)
+    active = layout.active
+    na = length(active)
+    shifted = _laplace_member_values!(sc.shift, theta, spec, Ls, u, offsets)
+    x = sc.x
+    gd = sc.gradient
+    g = sc.g
+    Hs = sc.Hs
+    loglik = NaN
+    zero_seed = zero(ForwardDiff.Partials{N,Float64})
+    for lo in 0:N:(na - 1)
+        ncol = min(N, na - lo)
+        @inbounds for t in 1:npar
+            x[t] = S(shifted[t], zero_seed)
+        end
+        @inbounds for c in 1:ncol
+            t = active[lo + c]
+            x[t] = S(shifted[t], ForwardDiff.Partials{N,Float64}(
+                ntuple(q -> q == c ? 1.0 : 0.0, Val(N))))
+        end
+        ll = ForwardDiff.value(_laplace_subject_value_gradient!(gd, subject, aws, x))
+        isfinite(ll) || return (ll, 1)
+        if lo == 0
+            loglik = ll
+            @inbounds for t in 1:npar
+                g[t] = ForwardDiff.value(gd[t])
+            end
+            all(isfinite, g) || return (NaN, 1)
+            @inbounds for a in layout.pop
+                iszero(g[a]) || return (NaN, 2)
+            end
+        end
+        @inbounds for c in 1:ncol, r in 1:na
+            Hs[r, lo + c] = ForwardDiff.partials(gd[active[r]], c)
+        end
+    end
+    all(isfinite, Hs) || return (NaN, 2)
+    # dL u for every population parameter: `J`'s extra column, on the
+    # level's effects.
+    C = sc.C
+    entries = layout.entries
+    @inbounds for (e, (l, t, a)) in enumerate(entries)
+        level = spec.levels[l]
+        base = offsets[l]
+        D = dL[l][t]
+        for p in 1:nrandomeffects(level)
+            acc = 0.0
+            for q in 1:nlatent(level)
+                acc += D[p, q] * u[base + q]
+            end
+            C[p, e] = acc
+        end
+    end
+    # The gradient, J' g: what `_continuation_member!` adds.
+    @inbounds for t in 1:npar
+        gnode[t] += g[t]
+    end
+    @inbounds for (e, (l, t, a)) in enumerate(entries)
+        rho = spec.levels[l].re_index
+        acc = 0.0
+        for p in eachindex(rho)
+            acc += g[rho[p]] * C[p, e]
+        end
+        gnode[a] += acc
+    end
+    # J' Hs J, block by block: active with active, then each population
+    # parameter's column `V = Hs dL u` against the active parameters and, through
+    # its own `dL u`, against every other population parameter.
+    @inbounds for q in 1:na
+        tq = active[q]
+        for r in 1:na
+            hnode[active[r], tq] += Hs[r, q]
+        end
+    end
+    isempty(entries) && return (loglik, 0)
+    V = sc.V
+    @inbounds for (e, (l, t, a)) in enumerate(entries)
+        rl = layout.reloc[l]
+        for r in 1:na
+            acc = 0.0
+            for p in eachindex(rl)
+                acc += Hs[r, rl[p]] * C[p, e]
+            end
+            V[r, e] = acc
+            hnode[active[r], a] += acc
+            hnode[a, active[r]] += acc
+        end
+    end
+    @inbounds for (e2, (l2, t2, a2)) in enumerate(entries)
+        for (e1, (l1, t1, a1)) in enumerate(entries)
+            rl = layout.reloc[l1]
+            acc = 0.0
+            for p in eachindex(rl)
+                acc += C[p, e1] * V[rl[p], e2]
+            end
+            # The last term: the second derivative of `L u`, within a level.
+            if l1 == l2
+                level = spec.levels[l1]
+                rho = level.re_index
+                D2 = d2L[l1][t1][t2]
+                base = offsets[l1]
+                for p in eachindex(rho)
+                    inner = 0.0
+                    for q in 1:nlatent(level)
+                        inner += D2[p, q] * u[base + q]
+                    end
+                    acc += g[rho[p]] * inner
+                end
+            end
+            hnode[a1, a2] += acc
+        end
+    end
+    return (loglik, 0)
+end
+
+"""
+    _continuation_rule_hessian!(o, U, theta, Ls, dL, d2L, layout, rule, u, aws,
+        sc, depth)
+
+One block's log integral under its fixed rule at `theta`, with its gradient
+left in `sc.mean[depth]` and its Hessian in `sc.hess[depth]`: the Louis
+identity over the rule's nodes, the node weights normalised in one pass as
+`_continuation_rule_value` does, and the mean and scatter of the node
+gradients accumulated by West's weighted update, so that scores which are
+large and nearly equal -- a stiff direction's, see `_continuation_stiff_rule`
+-- do not cancel in a difference of two sums. Skips the nodes the gradient
+path skips, and fails a block whose child cannot be scored, as it does.
+Returns `(value, failed)`, `failed` meaning the Hessian cannot be formed.
+"""
+function _continuation_rule_hessian!(o::CTSEMLaplaceContinuation, U::Integer,
+    theta::Vector{Float64}, Ls, dL, d2L, layout, rule::CTSEMFixedRule,
+    u::Vector{Float64}, aws, sc::CTSEMContinuationHessianScratch, depth::Int)
+    laplace = o.laplace
+    block = laplace.units.blocks[U][rule.block]
+    k = block.size
+    columns = (block.offset + 1):(block.offset + k)
+    npar = length(theta)
+    n = size(rule.points, 2)
+    leaf = isempty(rule.children)
+    mean = sc.mean[depth]
+    hess = sc.hess[depth]
+    scatter = sc.scatter[depth]
+    gnode = sc.gnode[depth]
+    hnode = sc.hnode[depth]
+    delta = sc.delta
+    fill!(mean, 0.0)
+    fill!(hess, 0.0)
+    fill!(scatter, 0.0)
+    peak = -Inf
+    W = 0.0
+    for j in 1:n
+        @inbounds for (t, c) in enumerate(columns); u[c] = rule.points[t, j]; end
+        fill!(gnode, 0.0)
+        fill!(hnode, 0.0)
+        h = 0.0
+        ok = true
+        if leaf
+            for m in block.members
+                ll, status = _continuation_member_hessian!(gnode, hnode, laplace, U,
+                    m, theta, Ls, dL, d2L, layout, u, aws, sc)
+                status == 2 && return (value=NaN, failed=true)
+                if status == 1 || !isfinite(ll)
+                    ok = false
+                    break
+                end
+                h += ll
+            end
+        else
+            for child in rule.children[j]
+                r = _continuation_rule_hessian!(o, U, theta, Ls, dL, d2L, layout,
+                    child, u, aws, sc, depth + 1)
+                r.failed && return r
+                isfinite(r.value) || return (value=NaN, failed=false)
+                h += r.value
+                gnode .+= sc.mean[depth + 1]
+                hnode .+= sc.hess[depth + 1]
+            end
+        end
+        ok || continue
+        t = rule.logweights[j] + h
+        if t > peak
+            if isfinite(peak)
+                s = exp(peak - t)
+                W *= s
+                scatter .*= s
+            end
+            peak = t
+        end
+        w = exp(t - peak)
+        Wn = W + w
+        rho = w / Wn
+        f = w * (1 - rho)
+        @inbounds for a in 1:npar
+            delta[a] = gnode[a] - mean[a]
+        end
+        @inbounds for b in 1:npar
+            db = delta[b]
+            for a in 1:npar
+                scatter[a, b] += f * delta[a] * db
+                hess[a, b] += rho * (hnode[a, b] - hess[a, b])
+            end
+            mean[b] += rho * db
+        end
+        W = Wn
+    end
+    isfinite(peak) || return (value=NaN, failed=false)
+    invW = 1 / W
+    @inbounds for b in 1:npar, a in 1:npar
+        hess[a, b] += scatter[a, b] * invW
+    end
+    return (value=peak + log(W) + rule.constant, failed=false)
+end
+
+# Width `wide` has been run on a model of this shape in this session, so a
+# sweep at it compiles nothing (`_continuation_hessian_width`).
+const _CONTINUATION_WIDE_SEEN = Set{Any}()
+const _CONTINUATION_WIDE_LOCK = ReentrantLock()
+# Seconds of width-one sweeps above which a wider dual pays for its compile.
+const _CONTINUATION_WIDE_AFTER = Ref(30.0)
+
+"""
+    _continuation_hessian_width(o, theta, layout)
+
+How many directions one dual sweep of the exact Hessian carries.
+
+A sweep's cost grows much more slowly than its width: on the ordinal fixture
+of the bench cell ord4 (two latents, 30 rows, 17 active parameters; local
+machine, one thread) a plain sweep took 0.79 ms and a dual one 1.27 ms at
+width 1, 1.39 ms at 8, 1.87 ms at 12 and 2.81 ms at 17. But a width the model
+has not been swept at compiles the whole filter and its reverse pass again for
+that type, which there took 18 s at width 2, 26 s at 8 and 45 s at 17, while
+width one is the type the Laplace fit's own seeded sweeps compiled. So the
+width is ForwardDiff's chunk for the active count where one has already run
+on a model of this shape in this session, or where width one is forecast to
+take more than `_CONTINUATION_WIDE_AFTER[]` seconds (one timed sweep, times
+the sweeps the flagged rules need, over the workers), and one otherwise.
+"""
+function _continuation_hessian_width(o::CTSEMLaplaceContinuation,
+    theta::Vector{Float64}, layout)
+    na = length(layout.active)
+    wide = ForwardDiff.pickchunksize(max(na, 1))
+    (wide <= 1 || isempty(o.rules)) && return 1
+    key = (typeof(o.laplace.objective.params), wide)
+    lock(() -> key in _CONTINUATION_WIDE_SEEN, _CONTINUATION_WIDE_LOCK) && return wide
+    laplace = o.laplace
+    npar = length(theta)
+    S = ForwardDiff.Dual{_LaplaceSeedInner,Float64,1}
+    subject = laplace.objective.subject_objectives[laplace.units.members[o.rules[1].unit][1]]
+    aws = _laplace_workspace!(laplace, S, npar)
+    x = S[S(theta[t], ForwardDiff.Partials((t == layout.active[1] ? 1.0 : 0.0,)))
+          for t in 1:npar]
+    gd = similar(x)
+    best = Inf
+    for _ in 1:3
+        started = time_ns()
+        _laplace_subject_value_gradient!(gd, subject, aws, x)
+        best = min(best, (time_ns() - started) / 1e9)
+    end
+    sweeps = sum(r.evaluations for r in o.rules; init=0)
+    workers = min(_laplace_pool_width(), length(o.rules))
+    return best * na * sweeps / workers > _CONTINUATION_WIDE_AFTER[] ? wide : 1
+end
+
+"""
+    _continuation_flagged_hessian(o, theta; width=0)
+
+The flagged units' terms at `theta`, their summed gradient and their summed
+Hessian, exactly, in parallel over units; `nothing` when the Hessian cannot be
+formed this way (`_continuation_member_hessian!`'s status 2, or a unit that
+cannot be scored), so that the caller differences instead.
+"""
+function _continuation_flagged_hessian(o::CTSEMLaplaceContinuation,
+    theta::Vector{Float64}; width::Integer=0)
+    laplace = o.laplace
+    spec = laplace.spec
+    npar = length(theta)
+    isempty(o.rules) && return (values=Float64[], gradient=zeros(npar),
+        hessian=zeros(npar, npar), width=0)
+    Ls = _laplace_popchols(theta, spec)
+    dL = _laplace_level_chol_derivatives(theta, spec)
+    positions = Vector{Int}[_laplace_level_positions(spec, l) for l in eachindex(spec.levels)]
+    layout = _continuation_hessian_layout(spec, npar, positions, dL)
+    (layout === nothing || isempty(layout.active)) && return nothing
+    d2L = _continuation_level_chol_second_derivatives(theta, spec, positions)
+    _laplace_ensure_pool!(laplace)
+    _continuation_warm_caches(laplace, o.nodes, o.soft_maxdirs)
+    N = width > 0 ? Int(width) : _continuation_hessian_width(o, theta, layout)
+    out = _continuation_flagged_hessian(o, theta, Ls, dL, d2L, layout, Val(N))
+    if out !== nothing && N > 1
+        key = (typeof(laplace.objective.params), N)
+        lock(() -> push!(_CONTINUATION_WIDE_SEEN, key), _CONTINUATION_WIDE_LOCK)
+    end
+    return out
+end
+
+function _continuation_flagged_hessian(o::CTSEMLaplaceContinuation,
+    theta::Vector{Float64}, Ls, dL, d2L, layout, ::Val{N}) where {N}
+    laplace = o.laplace
+    S = ForwardDiff.Dual{_LaplaceSeedInner,Float64,N}
+    nf = length(o.rules)
+    npar = length(theta)
+    depth = length(laplace.spec.levels)
+    nslot = _laplace_pool_width()
+    gparts = [zeros(npar) for _ in 1:nslot]
+    hparts = [zeros(npar, npar) for _ in 1:nslot]
+    values = fill(NaN, nf)
+    good = fill(true, nslot)
+    _laplace_parallel(laplace, 1:nf) do f
+        # `local` throughout, as in `_continuation_flagged`.
+        local rule, U, aws, sc, u, total, failed, r, slot
+        slot = _laplace_slot()
+        rule = o.rules[f]
+        U = rule.unit
+        aws = _laplace_workspace!(laplace, S, npar)
+        sc = _continuation_hessian_scratch!(laplace, S, npar, layout, depth)
+        u = zeros(laplace.units.dims[U])
+        fill!(sc.unit_gradient, 0.0)
+        fill!(sc.unit_hessian, 0.0)
+        total = 0.0
+        failed = false
+        try
+            for root in rule.roots
+                r = _continuation_rule_hessian!(o, U, theta, Ls, dL, d2L, layout,
+                    root, u, aws, sc, 1)
+                if r.failed || !isfinite(r.value)
+                    failed = true
+                    break
+                end
+                total += r.value
+                sc.unit_gradient .+= sc.mean[1]
+                sc.unit_hessian .+= sc.hess[1]
+            end
+        catch err
+            _ctsem_must_propagate(err) && rethrow()
+            failed = true
+        end
+        if failed || !all(isfinite, sc.unit_gradient) || !all(isfinite, sc.unit_hessian)
+            good[slot] = false
+            return false
+        end
+        values[f] = total
+        gparts[slot] .+= sc.unit_gradient
+        hparts[slot] .+= sc.unit_hessian
+        return true
+    end
+    all(good) || return nothing
+    gradient = zeros(npar)
+    hessian = zeros(npar, npar)
+    for s in 1:nslot
+        gradient .+= gparts[s]
+        hessian .+= hparts[s]
+    end
+    # Dual sweeps, counted as the reverse sweeps they are.
+    o.member_sweeps += sum(r.evaluations for r in o.rules; init=0) *
+        cld(length(layout.active), N)
+    return (values=values, gradient=gradient, hessian=hessian, width=N)
+end
+
+"""
+    _continuation_exact_hessian(o, x; step=1e-4, width=0)
+
+The exact scheme of `ctsem_laplace_continuation_hessian`: the flagged units'
+part by `_continuation_flagged_hessian`, and the part the other units and the
+prior carry by `ctsem_laplace_hessian` on the subset objective that holds
+them, whose inner modes are put back as they were. `nothing` when the flagged
+part cannot be formed exactly.
+"""
+function _continuation_exact_hessian(o::CTSEMLaplaceContinuation, x::Vector{Float64};
+    step::Real=1e-4, width::Integer=0)
+    flagged = _continuation_flagged_hessian(o, x; width=width)
+    flagged === nothing && return nothing
+    saved = [copy(m) for m in o.rest.modes]
+    rest = try
+        ctsem_laplace_hessian(o.rest, x; step=step)
+    finally
+        for U in eachindex(saved)
+            o.rest.modes[U] = saved[U]
+        end
+    end
+    H = rest .+ flagged.hessian
     return (H .+ transpose(H)) ./ 2
 end
 
