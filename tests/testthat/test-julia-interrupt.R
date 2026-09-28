@@ -74,6 +74,17 @@ test_that("the engine stops at its next checkpoint once asked to", {
   expect_lt(elapsed, 30)
 })
 
+test_that("an argument that is itself a Julia call is sent before the call it is for", {
+  skip_without_julia()
+  ctJuliaSetup()
+  # Left as a promise, the inner call used to run while the outer request was
+  # half written, and both ends then waited on each other indefinitely.
+  expect_equal(ctsem:::.ctJuliaCall("sum", ctsem:::.ctJuliaPut(c(1, 2, 3))), 6)
+  # And through the engine module, as every fit calls it.
+  module <- ctsem:::.ctJuliaModule()
+  expect_equal(module$scalar_square(ctsem:::.ctJuliaEval("3.0")), 9)
+})
+
 test_that("an interrupt raised in Julia arrives as an interrupt, not an error", {
   skip_without_julia()
   ctJuliaSetup()

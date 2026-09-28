@@ -344,7 +344,10 @@
 # By process id, which the session reports when it starts. The connection is
 # closed afterwards; JuliaConnectoR's goodbye into a dead socket is harmless.
 .ctJuliaKill <- function() {
-  pid <- .ct_julia_cache$pid
+  # Only an id read from the connection still open; see .ctJuliaEnsureStarted().
+  pid <- if (identical(.ctJuliaSessionStamp(), .ct_julia_cache$pid_session)) {
+    .ct_julia_cache$pid
+  }
   .ctJuliaForgetSession()
   if (!is.null(pid) && !is.na(pid)) {
     try(tools::pskill(pid, tools::SIGKILL), silent = TRUE)
@@ -391,7 +394,15 @@
   started <- !is.null(wire$pkgLocal$con)
   # A session something else started -- JuliaConnectoR::juliaSetupOk() starts
   # one -- is adopted once: its process id and interrupt file are still needed.
-  if (started && !is.null(.ct_julia_cache$interrupt_file)) return(invisible(FALSE))
+  # Keyed on the connection itself, as the objective cache is: a process id
+  # read from a session that has since been replaced names a process that has
+  # gone, and Windows hands ids out again, so killing by it could end something
+  # else entirely.
+  current <- .ctJuliaSessionStamp()
+  if (started && !is.null(.ct_julia_cache$interrupt_file) &&
+      identical(current, .ct_julia_cache$pid_session)) {
+    return(invisible(FALSE))
+  }
   external <- nzchar(Sys.getenv("JULIACONNECTOR_SERVER", unset = ""))
   if (!started) {
     if (!external) .ctJuliaAnnounce()
@@ -407,6 +418,8 @@
   .ct_julia_cache$interrupt_file <- gsub("\\", "/",
     tempfile("ctsem-julia-interrupt-"), fixed = TRUE)
   .ctJuliaRegisterExit()
+  .ct_julia_cache$pid_session <- .ctJuliaSessionStamp()
+  if (!is.null(.ct_julia_cache$interrupt_file)) unlink(.ct_julia_cache$interrupt_file)
   invisible(TRUE)
 }
 

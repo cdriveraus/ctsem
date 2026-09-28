@@ -357,6 +357,13 @@
 #' shape per session rather than once per fit; time a fit after one warm-up
 #' fit, not from a fresh session.
 #'
+#' Pressing Escape (or Ctrl-C) during a julia fit returns to the R prompt at
+#' once, and keeps the Julia session and everything it has compiled. Julia
+#' stops the interrupted work at its next iteration; work that has no
+#' iterations, such as compiling for a new model shape, finishes in the
+#' background. If it is still running when the next julia call starts, that
+#' call says so and waits, and Escape during that wait stops Julia outright.
+#'
 #' If \pkg{JuliaConnectoR} or Julia itself is missing, this offers to install it
 #' rather than failing -- the same thing \code{\link{ctJuliaInstall}} does, which
 #' is the function to reach for when setting the backend up deliberately, or
@@ -434,6 +441,8 @@ ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
   .ctJuliaEval("using Pkg, Logging")
   # Quietly. `Pkg.activate()` announces itself, and the environment is ctsem's
   # own vendored one -- the first thing a user saw was
+    .ctJuliaTouchEngine(env_dir)
+    .ctJuliaPruneEngines(env_dir)
   # `Activating project at C:\Users\...\engine-4f87c9793c9f`, naming a cache
   # path, followed by a three-line Pkg warning recommending `Pkg.resolve()` on a
   # manifest they did not write. Alarming, and about a situation this code
@@ -714,6 +723,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   invisible(NULL)
 }
 
+  .ct_julia_cache$pid_session <- NULL
 # Called before every read of cached session state, and idempotent.
 #
 # Three callers, because there are three ways in: `.ctJuliaModule()` reads the
@@ -893,6 +903,11 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # What Escape during a fit leaves behind, one layer above the Julia session.
 #
 # The session itself needs nothing here any more: an interrupted call leaves
+  .ct_julia_cache$deferred <- NULL
+  .ct_julia_cache$pid <- NULL
+  .ct_julia_cache$pid_session <- NULL
+  if (!is.null(.ct_julia_cache$interrupt_file)) unlink(.ct_julia_cache$interrupt_file)
+  .ct_julia_cache$interrupt_file <- NULL
 # its reply owed rather than half read, and the next call collects it
 # (R/ctJuliaBridge.R), so the session and everything it compiled survive.
 #
