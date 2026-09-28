@@ -617,72 +617,15 @@ test_that("RStudio gets whole lines, and the option still overrides it", {
   expect_false(.ctProgressOverwrite(1))
 })
 
-# Charles's thread rule (2026-09-28): a session started by anything defaults to
-# two threads, not Julia's native one, unless JULIA_NUM_THREADS, ctJuliaSetup
-# (threads=) or the user already said otherwise. His script's session had one
-# thread because ctGenerate() started it before the fit did, so the fit's own
-# `cores = 2` could not be honoured without a restart.
-test_that("a session this package starts on its own defaults to two threads", {
-  skip_without_julia()
-  ctsem:::.ctJuliaClearSession()
-  previous_env <- Sys.getenv("JULIA_NUM_THREADS", unset = NA)
-  on.exit({
-    if (is.na(previous_env)) Sys.unsetenv("JULIA_NUM_THREADS")
-    else Sys.setenv(JULIA_NUM_THREADS = previous_env)
-  }, add = TRUE)
-  Sys.unsetenv("JULIA_NUM_THREADS")
-  # `.ctJuliaModule()` is the one place every entry point -- a fit, ctGenerate,
-  # ctIdentify, a bare ctJuliaSetup() -- reaches on the first touch of the
-  # engine, and it is what starts the session here. Not ctGenerate() itself,
-  # which needs a model and data to build for a property that belongs to
-  # session start rather than to that function; the next test exercises it
-  # end to end.
-  suppressMessages(ctsem:::.ctJuliaModule())
-  expect_equal(as.integer(JuliaConnectoR::juliaEval("Threads.nthreads()")), 2L)
-})
-
-test_that("ctGenerate(backend = 'julia') before any fit still leaves cores = 2 fittable", {
-  skip_without_julia()
-  ctsem:::.ctJuliaClearSession()
-  previous_env <- Sys.getenv("JULIA_NUM_THREADS", unset = NA)
-  on.exit({
-    if (is.na(previous_env)) Sys.unsetenv("JULIA_NUM_THREADS")
-    else Sys.setenv(JULIA_NUM_THREADS = previous_env)
-  }, add = TRUE)
-  Sys.unsetenv("JULIA_NUM_THREADS")
-
-  m <- suppressWarnings(suppressMessages(ctModel(type = "ct",
-    manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1),
-    T0MEANS = matrix(0), CINT = matrix(0), T0VAR = matrix(0.5),
-    MANIFESTVAR = matrix(0.3), MANIFESTMEANS = matrix("mmean"))))
-  m$pars$indvarying <- FALSE
-  m$pars$indvarying[m$pars$param %in% "mmean"] <- TRUE
-  set.seed(2)
-  # The reproducer: generation touches the engine first, at its own default
-  # (cores = 2, but that is generate's own ceiling, not a thread request), and
-  # a fit's default cores = 2 must still be honoured afterwards without ctFit
-  # having to restart the session.
-  invisible(suppressWarnings(suppressMessages(
-    ctGenerate(m, n.subjects = 5, Tpoints = 4, backend = "julia"))))
-  expect_equal(as.integer(JuliaConnectoR::juliaEval("Threads.nthreads()")), 2L)
-
-  cache <- ctsem:::.ct_julia_cache
-  original <- cache$threads_reported
-  on.exit(cache$threads_reported <- original, add = TRUE)
-  cache$threads_reported <- NULL
-  dat <- suppressWarnings(suppressMessages(
-    ctGenerate(m, n.subjects = 12, Tpoints = 5, backend = "julia")))
-  seen <- character()
-  withCallingHandlers(
-    suppressWarnings(fit <- ctFit(dat, m, backend = "julia", cores = 2,
-      optimcontrol = list(estonly = TRUE))),
-    message = function(msg) {
-      seen <<- c(seen, conditionMessage(msg)); invokeRestart("muffleMessage")
-    })
-  expect_s3_class(fit, "ctJuliaFit")
-  # The regression: without the fix this reads "cores = 2 requested, 1 used".
-  expect_false(any(grepl("^cores = ", seen)))
-})
+# Charles's thread rule (2026-09-28) was superseded (2026-09-28, "That max
+# cores init work supersedes other ideas, keep it"): a session now starts
+# provisioned wide (`parallelly::availableCores()`, `.ctJuliaProvision()` in
+# R/ctJuliaBridge.R) rather than defaulting to two threads, and every call is
+# held to its own `cores` by the engine's chunk ceiling, which `ctJuliaSetup()`
+# itself sets to `getOption("mc.cores", 2)` for a call that sets none -- see
+# CLAUDE.md, "Julia threads: provisioned wide, never more than the call's
+# `cores`". The two tests this file had for the two-thread default are gone
+# with it; the width and the default ceiling are julia-session's own to cover.
 
 # `.ctBackendWithMaxChunks()`/`.ctBackendSetMaxChunks()` is the ceiling every
 # engine call should run under; before this it wrapped the optimiser and the

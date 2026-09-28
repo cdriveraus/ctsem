@@ -1,7 +1,7 @@
 # The bench's problems: a simulator and a model builder per `model` key.
 #
-# Every simulator is its own code with its own seed and none calls ctGenerate,
-# whose draw stream moves under unrelated commits. Data are simulated once and
+# Every simulator is its own code with its own seed and none but ord4's calls
+# ctGenerate, whose draw stream moves under unrelated commits. Data are simulated once and
 # stored (see `bench_data()`), so every build a cell is run against sees the
 # same rows even if R's RNG or a helper used here were to change.
 #
@@ -18,6 +18,7 @@
 #   mvmix                 tests/testthat/test-julia-multivariate-mixed.R
 #                         (ctGenerate replaced as for cf_*)
 #   jflat                 tests/testthat/test-julia-convergence.R
+#   ord4                  a model reported on 2026-09-28 (see there)
 #
 # `bench_problem(model)` returns list(data = function(dataseed), model =
 # function(), routes = allowed routes, idcols = id column(s)). Nothing in here touches the optimiser.
@@ -496,6 +497,43 @@ jflat_model <- function() suppressMessages(ctModel(silent = TRUE,
   type = "ct", CINT = "cint", MANIFESTMEANS = 0, LAMBDA = matrix(1),
   DRIFT = "drift|-log1p_exp(-param)|TRUE"))
 
+# ---- a reported model ------------------------------------------------------------
+
+# ord4: the ordinal model whose default quadrature correction took 22 minutes
+# after a 5-minute fit, 18.8 of them the continuation's Hessian by forward
+# differences (2026-09-28). Two latents, two five-category ordinal indicators,
+# 50 subjects x 30 occasions, random T0MEANS and MANIFESTMEANS (k = 4 a
+# subject), which `auto` routes to laplace. Data as the report's script made
+# them, seeds included, and so through ctGenerate(backend = 'julia') -- the
+# one simulator here that calls it: the store keeps the first draw, so every
+# later build reads the same rows, but a fresh store at another build may not.
+ord4_data <- function() {
+  drift <- matrix(c(-0.5, 0, 0.3, -0.5), 2, 2, byrow = TRUE)
+  diffsd <- 2.2; diffcor <- 0.4; thresholds <- c(-2.8, -1.0, 1.0, 2.8)
+  zmat <- function(sd1, sd2, r) matrix(c(sd1, 0, atanh(r), sd2), 2, 2, byrow = TRUE)
+  gen <- suppressMessages(ctModel(type = "ct", n.latent = 2, n.manifest = 2,
+    manifestNames = c("eta1", "eta2"), latentNames = c("eta1", "eta2"),
+    LAMBDA = diag(1, 2), DRIFT = drift, DIFFUSION = zmat(diffsd, diffsd, diffcor),
+    T0VAR = diag(1, 2), T0MEANS = matrix(1, 2, 1), CINT = matrix(0, 2, 1),
+    MANIFESTMEANS = matrix(0, 2, 1), MANIFESTVAR = diag(1e-6, 2), Tpoints = 30,
+    silent = TRUE))
+  gen$covmattransform <- "z"
+  set.seed(2)
+  d <- data.frame(suppressMessages(ctGenerate(gen, n.subjects = 50, Tpoints = 30,
+    dtmean = 0.7, backend = "julia")))
+  ordinalise <- function(eta) 1 + rowSums(outer(eta + stats::rlogis(length(eta)),
+    thresholds, ">"))
+  set.seed(3)
+  shift <- matrix(stats::rnorm(150 * 2, 0, 0.8), 150, 2)
+  d$eta1 <- d$eta1 + shift[d$id, 1]; d$eta2 <- d$eta2 + shift[d$id, 2]
+  set.seed(502)
+  d$y1 <- ordinalise(d$eta1); d$y2 <- ordinalise(d$eta2)
+  d[, c("id", "time", "y1", "y2")]
+}
+ord4_model <- function() suppressMessages(ctModel(type = "ct", n.latent = 2,
+  n.manifest = 2, manifestNames = c("y1", "y2"), latentNames = c("eta1", "eta2"),
+  manifesttype = c(2, 2), ncategories = c(5, 5), LAMBDA = diag(1, 2), silent = TRUE))
+
 # ---- the registry ----------------------------------------------------------------
 
 bench_problem <- function(model) {
@@ -553,6 +591,8 @@ bench_problem <- function(model) {
     c("laplace", "augmented", "auto"), datafixed = TRUE))
   if (model == "jflat") return(mk(fixed(function() jflat_data()), jflat_model,
     c("laplace", "augmented", "auto"), datafixed = TRUE))
+  if (model == "ord4") return(mk(fixed(function() ord4_data()), ord4_model,
+    c("laplace", "auto"), datafixed = TRUE))
   stop("unknown bench model '", model, "'")
 }
 

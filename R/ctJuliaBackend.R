@@ -419,18 +419,12 @@
 #'   The engine splits its subject loop across them, and \code{ctFit}'s
 #'   \code{cores} cannot exceed this count: Julia fixes it at process start, so
 #'   setting it here takes effect only if no Julia session is running yet --
-#'   pass \code{force = TRUE} to restart one. \code{NULL} (the default) starts
-#'   the session at two threads, unless \code{JULIA_NUM_THREADS} is already set
-#'   -- by the user, by a cluster scheduler, or by an earlier \code{ctFit()}
-#'   call's own \code{cores} -- in which case that wins. Two rather than one:
-#'   anything that touches the engine before a fit does (\code{ctGenerate()},
-#'   \code{ctIdentify()}, an explicit \code{ctJuliaSetup()}) starts the session,
-#'   and \code{ctFit}'s own default is \code{cores = 2}, so a session left at
-#'   Julia's native default of one thread could never honour a default fit's
-#'   request without a restart. Ask for more explicitly when a benchmark
-#'   harness or a script needs it before its first fit; a fit that then asks
-#'   for still more than the session has threads says so; see
-#'   \code{\link{ctFit}}.
+#'   pass \code{force = TRUE} to restart one. \code{NULL}, the default, starts
+#'   a session with as many threads as this R process may use
+#'   (\code{parallelly::availableCores()}) unless \code{JULIA_NUM_THREADS} is
+#'   set, and each fit uses only its \code{cores} of them. A number given here
+#'   is also the ceiling for any call that sets none. A fit that asks for more
+#'   cores than the session has threads says so; see \code{\link{ctFit}}.
 #' @param force Reconfigure an existing Julia session.
 #' @param agree \code{TRUE} to consent to instantiating the engine's Julia
 #'   package dependencies without being asked, \code{FALSE} to refuse.
@@ -460,18 +454,11 @@ ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
       }
     } else {
       Sys.setenv(JULIA_NUM_THREADS = as.character(threads))
+      # Asked for by name, so it is not ctsem's own default to replace -- even
+      # when it happens to equal the value `.ctJuliaProvision()` last set, which
+      # is all that function can compare.
+      .ct_julia_cache$threads_from_cores <- NULL
     }
-  } else if (!.ctJuliaSessionRunning() &&
-      !nzchar(Sys.getenv("JULIA_NUM_THREADS", unset = ""))) {
-    # Charles's thread rule (2026-09-28): a session started by anything --
-    # not only an explicit ctJuliaSetup() call, since .ctJuliaModule() reaches
-    # here on the first touch of the engine from any function -- defaults to
-    # two threads rather than Julia's native one, so ctFit's own default
-    # `cores = 2` can be honoured without a restart. Two, not wider: this runs
-    # before any fit is known, so there is no request to size it to, and a
-    # session ctGenerate() or ctIdentify() starts must not silently claim a
-    # machine's whole width for work that may never need it.
-    Sys.setenv(JULIA_NUM_THREADS = "2")
   }
   .ctJuliaCheckAvailable()
   engineversion <- .ctJuliaEngineVersion()
@@ -494,13 +481,13 @@ ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
         recursive = TRUE)
       file.rename(staging, env_dir)
     }
+    .ctJuliaTouchEngine(env_dir)
+    .ctJuliaPruneEngines(env_dir)
   }
 
   .ctJuliaEval("using Pkg, Logging")
   # Quietly. `Pkg.activate()` announces itself, and the environment is ctsem's
   # own vendored one -- the first thing a user saw was
-    .ctJuliaTouchEngine(env_dir)
-    .ctJuliaPruneEngines(env_dir)
   # `Activating project at C:\Users\...\engine-4f87c9793c9f`, naming a cache
   # path, followed by a three-line Pkg warning recommending `Pkg.resolve()` on a
   # manifest they did not write. Alarming, and about a situation this code
@@ -591,6 +578,15 @@ ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
   if (!is.null(.ct_julia_cache$interrupt_file)) {
     try(.ctJuliaCall("ContinuousTimeSEM.ctsem_set_interrupt!",
       .ct_julia_cache$interrupt_file, Sys.getpid()), silent = TRUE)
+  }
+  # The subject-chunk ceiling for a call that sets none. Every fit sets its own
+  # `cores`; without this, a session provisioned at the machine's width would
+  # make an uncapped call -- ctKalman(), ctJuliaEvaluate() -- that wide too.
+  # `threads` when asked for, and otherwise what `cores` defaults to.
+  cap <- if (!is.null(threads)) threads else getOption("mc.cores", 2L)
+  cap <- suppressWarnings(as.integer(cap)[1L])
+  if (!is.na(cap) && cap >= 1L) {
+    try(.ctJuliaCall("ContinuousTimeSEM.ctsem_set_max_chunks!", cap), silent = TRUE)
   }
   .ct_julia_cache$project <- project
   .ct_julia_cache$engine <- engineversion
@@ -767,6 +763,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   .ct_julia_cache$inflight <- NULL
   .ct_julia_cache$deferred <- NULL
   .ct_julia_cache$pid <- NULL
+  .ct_julia_cache$pid_session <- NULL
   if (!is.null(.ct_julia_cache$interrupt_file)) unlink(.ct_julia_cache$interrupt_file)
   .ct_julia_cache$interrupt_file <- NULL
   .ct_julia_cache$objectives <- new.env(parent = emptyenv())
@@ -781,7 +778,6 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   invisible(NULL)
 }
 
-  .ct_julia_cache$pid_session <- NULL
 # Called before every read of cached session state, and idempotent.
 #
 # Three callers, because there are three ways in: `.ctJuliaModule()` reads the
@@ -947,6 +943,11 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   .ct_julia_cache$project <- NULL
   .ct_julia_cache$engine <- NULL
   .ct_julia_cache$session <- NULL
+  .ct_julia_cache$deferred <- NULL
+  .ct_julia_cache$pid <- NULL
+  .ct_julia_cache$pid_session <- NULL
+  if (!is.null(.ct_julia_cache$interrupt_file)) unlink(.ct_julia_cache$interrupt_file)
+  .ct_julia_cache$interrupt_file <- NULL
   .ct_julia_cache$objectives <- new.env(parent = emptyenv())
   .ct_julia_cache$layouts <- new.env(parent = emptyenv())
   # Two passes: the first frees the proxies, the second any proxy a finalizer
@@ -961,11 +962,6 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # What Escape during a fit leaves behind, one layer above the Julia session.
 #
 # The session itself needs nothing here any more: an interrupted call leaves
-  .ct_julia_cache$deferred <- NULL
-  .ct_julia_cache$pid <- NULL
-  .ct_julia_cache$pid_session <- NULL
-  if (!is.null(.ct_julia_cache$interrupt_file)) unlink(.ct_julia_cache$interrupt_file)
-  .ct_julia_cache$interrupt_file <- NULL
 # its reply owed rather than half read, and the next call collects it
 # (R/ctJuliaBridge.R), so the session and everything it compiled survive.
 #
@@ -3744,6 +3740,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # Often the first call of an operation, ahead of anything that asks for the
   # module, so it is where a session that has died is noticed.
   .ctJuliaCheckAlive()
+  # And the engine is loaded here rather than by the work inside the region:
+  # loading it sets the default ceiling, which would otherwise replace this one
+  # for the region's duration -- a ctExtract(cores = 8) on a fit restored into a
+  # new session would run at the default.
+  .ctJuliaModule(.ct_julia_cache$project)
   previous <- tryCatch(as.integer(.ctBackendJuliaValue(.ctJuliaEval(
     "ContinuousTimeSEM.ctsem_max_chunks().max_chunks"))), error = function(e) NA_integer_)
   try(.ctJuliaCall("ContinuousTimeSEM.ctsem_set_max_chunks!", chunks),
@@ -3775,7 +3776,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       error = function(e) NA_integer_))
   }
   existing <- Sys.getenv("JULIA_NUM_THREADS", unset = "")
-  if (!nzchar(existing)) return(1L)
+  if (!nzchar(existing)) return(.ctJuliaWidth())
   suppressWarnings(as.integer(sub(",.*$", "", existing))[1L])
 }
 
@@ -3797,28 +3798,25 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 # Resolve `cores` against that thread count, and never do it in silence.
 #
 # Julia fixes `Threads.nthreads()` at process start, so `cores` is a request
-# only an unstarted session can grant. Three situations, and the third is the
-# one this exists for:
+# only an unstarted session can grant. Three situations:
 #
-#   * No session yet and the thread count is ours to set -- set it, and the fit
-#     gets what it asked for.
+#   * No session yet and the thread count is ours to set -- provision it
+#     (`.ctJuliaProvision()`), at least `cores` wide.
 #   * No session yet but JULIA_NUM_THREADS was set deliberately, by
 #     ctJuliaSetup(threads=), by the user, or by a cluster scheduler -- that
 #     wins, and it may be narrower than `cores`.
 #   * A session is already running -- its count is fixed and cannot be raised.
 #
-# The third cost a whole benchmark pass. A harness that calls `ctJuliaSetup()`
-# once up front, to pay the engine load before timing anything, pins the session
-# to one thread; every later `cores = n` fit then ran on one subject chunk,
-# serially, and said nothing. It was caught only because the gradient counts for
-# `cores = 1` and `cores = 4` came back identical to the digit.
+# The third used to be the common one: a session started for a two-core fit, or
+# by a harness calling `ctJuliaSetup()` up front, ran every later `cores = n`
+# fit at its own width. Provisioning every session at the width this process
+# may use makes it rare -- it now takes a deliberately narrow session, or a
+# `cores` beyond the machine -- and when it happens it is said.
 #
 # `options(ctsem.julia.restart = TRUE)` opts in to fixing it rather than saying
-# it. Not the default, for two measured reasons: a restart discards the
-# session's compiled model shapes -- ~5 s to restart, plus ~15 s of
-# respecialisation on the next fit, on a one-latent model -- and `cores`
-# defaults to `getOption("mc.cores", 2)`, so a default fit would otherwise kill
-# and rebuild a deliberately narrow session nobody asked it to widen.
+# it. Not the default: a restart discards the session's compiled model shapes
+# -- ~5 s to restart, plus ~15 s of respecialisation on the next fit, on a
+# one-latent model -- and a narrow session is now one somebody chose.
 #
 # `threads` is a parameter so the gate can be exercised at a count the test
 # machine does not have to be restarted into. `report = FALSE` is `fit = FALSE`:
@@ -3831,17 +3829,13 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   restart <- isTRUE(report) && isTRUE(getOption("ctsem.julia.restart", FALSE))
   if (is.null(threads) && !.ctJuliaSessionRunning()) {
     existing <- Sys.getenv("JULIA_NUM_THREADS", unset = "")
-    # An existing value is respected unless *this* function set it for an
-    # earlier fit. Without that distinction a `cores=8` fit left the variable
-    # behind, and the next `ctFit(cores=2)` in a restarted session started
-    # eight threads while asking for two -- the subject loop still honoured
-    # `cores`, but the process held cores the user had not asked for. A value
-    # from ctJuliaSetup(threads=) or from the user's own environment is
-    # deliberate and still wins, unless the restart option says otherwise --
-    # there is no session to lose here, so honouring it costs nothing.
+    # A value from ctJuliaSetup(threads=) or from the user's own environment is
+    # deliberate and wins, unless the restart option says otherwise -- there
+    # is no session to lose here, so honouring `cores` costs nothing.
     ours <- nzchar(existing) &&
       identical(existing, .ct_julia_cache$threads_from_cores)
-    if (!nzchar(existing) || ours || restart) {
+    if (!nzchar(existing) || ours) return(invisible(.ctJuliaProvision(cores)))
+    if (restart) {
       Sys.setenv(JULIA_NUM_THREADS = as.character(cores))
       .ct_julia_cache$threads_from_cores <- as.character(cores)
       return(invisible(cores))

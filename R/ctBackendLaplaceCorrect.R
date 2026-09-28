@@ -661,12 +661,12 @@ print.ctLaplaceCorrection <- function(x, ...) {
 #   guard    a continuation that moves the quadrature objective by more than
 #            max(50, N/2) nats is reverted to the Laplace optimum with a
 #            warning, keeping the rejected point, as bigIRT does.
-#   Hessian  of the hybrid at the final point, its nodes placed there: forward
-#            differences of the exact gradient (npar + 1 gradients, half what
-#            the central differences the Laplace Hessian is taken by would
-#            cost, at no measured difference in any standard error; see
-#            `ctsem_laplace_continuation_hessian`), and only where the rounds
-#            reached the fixed point; the
+#   Hessian  of the hybrid at the final point, its nodes placed there: exact
+#            for the flagged units (the Louis identity over their fixed
+#            nodes, each node's Hessian by forward-over-reverse sweeps),
+#            central differences for the units left to Laplace and the prior
+#            (see `ctsem_laplace_continuation_hessian`), and only where the
+#            rounds reached the fixed point; the
 #            covariance and draws then come from it, not from the Laplace
 #            curvature at another point. Where they stopped short, the
 #            estimate is not stationary on that objective and its Hessian need
@@ -1143,9 +1143,9 @@ print.ctLaplaceCorrection <- function(x, ...) {
   # `converged: FALSE`, where the Laplace curvature at the fit's optimum gives
   # them all one. So a continuation that stopped short keeps the fit's
   # uncertainty and recentres its draws, as the step correction does, and
-  # takes no Hessian at all: its npar + 1 gradients are the largest single cost
-  # of a correction on wide blocks, and `stationarity` in the record already
-  # says how far from stationary the estimate is.
+  # takes no Hessian at all: on wide blocks that is a large share of a
+  # correction's cost, and `stationarity` in the record already says how far
+  # from stationary the estimate is.
   reached <- identical(run$status, "converged")
   hc <- NULL
   if (reached) {
@@ -1161,6 +1161,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
       sink(sprintf("Laplace continuation hessian | %8s",
         .ctDuration(seconds())), "update")
     }
+    if (verbose > 0) message("Laplace continuation: Hessian")
     hessian_started <- proc.time()[["elapsed"]]
     hc <- try(matrix(as.numeric(.ctBackendJuliaValue(
       module$ctsem_laplace_continuation_hessian(cont, .ctJuliaNumericVector(x)))),

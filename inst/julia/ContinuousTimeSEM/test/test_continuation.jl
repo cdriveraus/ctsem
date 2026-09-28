@@ -215,8 +215,9 @@ end
                 rtol=1e-6, atol=1e-8)) == (label, j, true)
         end
         # Central differences, as the Laplace Hessian is taken, match it to the
-        # finite-difference error. The default forward scheme matches those to
-        # its own truncation, which is O(step) in absolute terms -- the third
+        # finite-difference error. The exact scheme, the default, matches those
+        # entry by entry to their own error. The forward scheme matches them to
+        # its truncation, which is O(step) in absolute terms -- the third
         # derivative times the step, whatever the size of the entry -- so it is
         # held to a share of the matrix's scale rather than of each entry's:
         # a small cross term can differ by more than 0.5% of itself, as one
@@ -227,8 +228,13 @@ end
             @test (label, i, j, isapprox(H[i, j], Hl[i, j]; rtol=1e-4, atol=1e-6)) ==
                 (label, i, j, true)
         end
-        Hf = ctsem_laplace_continuation_hessian(o, theta)
+        He = ctsem_laplace_continuation_hessian(o, theta)
         scale = maximum(abs, H)
+        for i in eachindex(theta), j in eachindex(theta)
+            @test (label, i, j, isapprox(He[i, j], H[i, j]; rtol=1e-6,
+                atol=1e-7 * scale)) == (label, i, j, true)
+        end
+        Hf = ctsem_laplace_continuation_hessian(o, theta; scheme=:forward)
         for i in eachindex(theta), j in eachindex(theta)
             @test isapprox(Hf[i, j], H[i, j]; atol=1e-3 * scale)
         end
@@ -282,4 +288,144 @@ end
     @test isapprox(hyb.gradient, lap.gradient; rtol=1e-12, atol=1e-14)
     @test ctsem_laplace_continuation_info(ctsem_laplace_continuation(laplace, theta;
         tolerance=0.0, maxdim=3)).nwide == 0
+end
+
+# --- two states, for the exact Hessian ------------------------------------------
+#
+# The exact Hessian differentiates the reverse pass, and one latent hides whole
+# classes of reverse-pass error: a covariance cotangent that is a scalar is
+# symmetric whatever the code assumes. So two latents with coupled dynamics, a
+# random effect on a transformed DRIFT -- the integrand is not Gaussian, so
+# every unit carries a gap and is flagged -- and random CINT and T0MEANS on
+# different latents.
+#
+# Raw layout: 1-6 the model parameters, then the population scales, then the
+# correlations.
+if !isdefined(@__MODULE__, :_CONTINUATION_2D_OBJECTIVE)
+const _CONTINUATION_2D_OBJECTIVE = let
+    df = _laplace_test_dataframe(
+        drift=[-0.5 0.3; 0.1 -0.3], jax=[-0.5 0.3; 0.1 -0.3],
+        cint=[0.0; 0.0;;], diffusion=[0.3 0.0; 0.05 0.25],
+        lambda=[1.0 0.0; 0.0 1.0], jy=[1.0 0.0; 0.0 1.0],
+        manifestmeans=[0.0; 0.0;;], manifestvar=[0.2 0.0; 0.0 0.2],
+        t0var=[1.0 0.0; 0.0 1.0], t0means=[0.0; 0.0;;],
+        free=Dict(
+            (:DRIFT, 1, 1) => (1, "-log1p_exp(param[1])"),
+            (:JAx, 1, 1) => (1, "-log1p_exp(param[1])"),
+            (:DRIFT, 1, 2) => (2, "param[2]"),
+            (:JAx, 1, 2) => (2, "param[2]"),
+            (:CINT, 1, 1) => (3, "param[3]"),
+            (:DIFFUSION, 1, 1) => (4, "log1p_exp(param[4])"),
+            (:T0MEANS, 2, 1) => (5, "param[5]"),
+            (:MANIFESTMEANS, 2, 1) => (6, "param[6]"),
+        ),
+    )
+    starts, times, data = _laplace_test_data(6, 2; seed=7)
+    ctsem_objective(ekf_from_data_frame(df), starts, times, data)
+end
+end
+
+# Three effects a subject (DRIFT[1,1], CINT[1], T0MEANS[2]), so wider than the
+# product rule: scales 7-9, correlations 10-12.
+_fresh_2d3() = (ctsem_laplace_objective(_CONTINUATION_2D_OBJECTIVE, [1, 3, 5],
+    [7, 8, 9], [10, 11, 12], [1.0, 1.0, 1.0]),
+    [0.3, 0.2, 0.1, -0.5, 0.2, -0.1, 0.4, 0.3, 0.5, 0.2, -0.1, 0.15])
+# Two (DRIFT[1,1], T0MEANS[2]), on the product rule: scales 7-8, correlation 9.
+_fresh_2d2() = (ctsem_laplace_objective(_CONTINUATION_2D_OBJECTIVE, [1, 5],
+    [7, 8], [9], [1.0, 1.0]), [0.3, 0.2, 0.1, -0.5, 0.2, -0.1, 0.4, 0.5, 0.2])
+
+@testset "a member's exact Hessian at a node is forward mode's, cross terms included" begin
+    # The assembly `J' Hs J` plus the second derivative of `L u`, against
+    # forward-over-forward through the primal filter and the Cholesky factor,
+    # which shares none of that code. Every entry: the blocks between the
+    # population parameters and the rest are where an assembly error would
+    # sit, and they are not small here.
+    CT = ContinuousTimeSEM
+    laplace, values = _fresh_2d3()
+    theta = collect(Float64, values)
+    npar = length(theta)
+    spec = laplace.spec
+    Ls = CT._laplace_popchols(theta, spec)
+    dL = CT._laplace_level_chol_derivatives(theta, spec)
+    positions = Vector{Int}[CT._laplace_level_positions(spec, l) for l in eachindex(spec.levels)]
+    layout = CT._continuation_hessian_layout(spec, npar, positions, dL)
+    d2L = CT._continuation_level_chol_second_derivatives(theta, spec, positions)
+    @test layout.active == collect(1:6)
+    @test layout.pop == collect(7:12)
+    CT._laplace_ensure_pool!(laplace)
+    U, m = 2, 1
+    u = [0.7, -1.1, 0.4]
+    offsets = laplace.units.offsets[U][m]
+    subject = laplace.objective.subject_objectives[laplace.units.members[U][m]]
+    f = y -> subject(CT._laplace_member_values(y, spec, CT._laplace_popchols(y, spec),
+        u, offsets))
+    reference = ForwardDiff.hessian(f, theta,
+        ForwardDiff.HessianConfig(f, theta, ForwardDiff.Chunk{4}()))
+    gradient = ForwardDiff.gradient(f, theta)
+    scale = maximum(abs, reference)
+    pop, act = layout.pop, layout.active
+    @test maximum(abs, reference[pop, act]) > 1e-2 * scale
+    @test maximum(abs, reference[pop, pop]) > 1e-2 * scale
+    for width in (1, 2, 6)
+        S = ForwardDiff.Dual{CT._LaplaceSeedInner,Float64,width}
+        aws = CT._laplace_workspace!(laplace, S, npar)
+        sc = CT._continuation_hessian_scratch(laplace, S, npar, layout, 1)
+        g = zeros(npar)
+        H = zeros(npar, npar)
+        ll, status = CT._continuation_member_hessian!(g, H, laplace, U, m, theta, Ls,
+            dL, d2L, layout, u, aws, sc)
+        @test (width, status) == (width, 0)
+        @test (width, isapprox(ll, f(theta); rtol=1e-12)) == (width, true)
+        for i in 1:npar
+            @test (width, i, isapprox(g[i], gradient[i]; rtol=1e-10,
+                atol=1e-12 * maximum(abs, gradient))) == (width, i, true)
+        end
+        for i in 1:npar, j in 1:npar
+            @test (width, i, j, isapprox(H[i, j], reference[i, j]; rtol=1e-9,
+                atol=1e-11 * scale)) == (width, i, j, true)
+        end
+    end
+end
+
+@testset "the exact Hessian is the derivative of the hybrid's gradient" begin
+    # Two states, on the soft and the product rule; and units that nest, where
+    # an outer block's node carries its children's rules and the identity is
+    # applied at each level of the tree.
+    for (label, fresh) in (("three effects, soft rule", _fresh_2d3),
+                           ("two effects, product rule", _fresh_2d2),
+                           ("two levels", _fresh_twolevel),
+                           ("three levels", _fresh_threelevel))
+        laplace, values = fresh()
+        theta = collect(Float64, values)
+        o = ctsem_laplace_continuation(laplace, theta; tolerance=0.0)
+        info = ctsem_laplace_continuation_info(o)
+        # Every unit on its rule, so what is differenced is the prior alone and
+        # the reference below measures the exact part.
+        @test (label, info.nflagged) == (label, info.nunits)
+        x = theta .+ [0.02 * (-1)^j for j in eachindex(theta)]
+        He = ctsem_laplace_continuation_hessian(o, x)
+        @test (label, all(isfinite, He)) == (label, true)
+        # Its byproducts are the gradient path's.
+        flagged = ContinuousTimeSEM._continuation_flagged_hessian(o, x)
+        plain = ContinuousTimeSEM._continuation_flagged(o, x, true)
+        @test (label, isapprox(flagged.values, plain.values; rtol=1e-12)) == (label, true)
+        @test (label, isapprox(flagged.gradient, plain.gradient; rtol=1e-11)) ==
+            (label, true)
+        # Central differences at two steps, extrapolated: O(step^4).
+        Hc = ctsem_laplace_continuation_hessian(o, x; scheme=:central, step=1e-4)
+        Hr = (4 .* Hc .- ctsem_laplace_continuation_hessian(o, x; scheme=:central,
+            step=2e-4)) ./ 3
+        scale = maximum(abs, He)
+        for i in eachindex(x), j in eachindex(x)
+            @test (label, i, j, isapprox(He[i, j], Hr[i, j]; rtol=1e-7,
+                atol=1e-9 * scale)) == (label, i, j, true)
+        end
+        # A sweep's width changes nothing but rounding: a direction a sweep,
+        # two (several sweeps a node, the last one short), all at once.
+        for width in (1, 2, 5, 6)
+            Hw = ctsem_laplace_continuation_hessian(o, x; width=width)
+            @test (label, width, maximum(abs, Hw .- He) <= 1e-11 * scale) ==
+                (label, width, true)
+        end
+    end
 end

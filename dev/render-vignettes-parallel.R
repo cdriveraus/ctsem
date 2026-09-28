@@ -4,6 +4,14 @@
 # PSOCK cluster. Completed artifacts are then copied to dev/vignettes. In
 # RStudio, open this file, change interactive_cores if needed, and click
 # Source. From a terminal: Rscript dev/render-vignettes-parallel.R --cores 4
+#
+# Each vignette gets its OWN staged directory. Quarto creates a .quarto
+# scratch directory beside the input it is rendering and deletes it on the
+# way out, so two workers sharing one directory race: whoever finishes first
+# removes it under the others, and they die with "The process cannot access
+# the file because it is being used by another process (os error 32)" after
+# having rendered the document perfectly well. One directory per vignette is
+# the whole fix; do not consolidate them again.
 
 # Used only when this file is sourced interactively (for example, in RStudio).
 interactive_cores <- 10L
@@ -73,26 +81,121 @@ script_path <- find_script_path()
 package_root <- normalizePath(file.path(dirname(script_path), ".."), mustWork = TRUE)
 vignettes_dir <- file.path(package_root, "vignettes")
 output_dir <- file.path(package_root, "dev", "vignettes")
-run_dir <- tempfile("ctsem-vignettes-", tmpdir = tempdir())
-staged_vignettes_dir <- file.path(run_dir, "vignettes")
-staged_output_dir <- file.path(run_dir, "output")
 
-dir.create(staged_vignettes_dir, recursive = TRUE)
-source_entries <- list.files(vignettes_dir, all.files = TRUE, no.. = TRUE, full.names = TRUE)
-if (!all(file.copy(source_entries, staged_vignettes_dir, recursive = TRUE, copy.date = TRUE))) {
-  stop("Could not copy the vignette sources to the temporary render directory.", call. = FALSE)
+publish_files <- function(files, output_dir) {
+  if (!length(files)) {
+    return(invisible(NULL))
+  }
+  copied <- file.copy(files, output_dir, recursive = TRUE, overwrite = TRUE)
+  if (!all(copied)) {
+    warning("Could not copy to ", output_dir, ": ",
+            paste(basename(files[!copied]), collapse = ", "), call. = FALSE)
+  }
+  invisible(files[copied])
 }
-on.exit(unlink(run_dir, recursive = TRUE, force = TRUE), add = TRUE)
 
-vignettes <- list.files(
-  staged_vignettes_dir,
-  pattern = "\\.(qmd|rmd)$",
-  full.names = TRUE,
-  ignore.case = TRUE
-)
+# Renders one vignette in its own staged directory and returns where the
+# artifacts landed. Everything it prints, including knitr's progress and any
+# quarto error, goes to <name>.log in that directory.
+render_one <- function(vignette) {
+  work_dir <- dirname(vignette)
+  name <- tools::file_path_sans_ext(basename(vignette))
+  log_file <- file.path(work_dir, paste0(name, ".log"))
+  log_connection <- file(log_file, open = "wt")
+  sink(log_connection)
+  sink(log_connection, type = "message")
+  on.exit({
+    sink(type = "message")
+    sink()
+    close(log_connection)
+  }, add = TRUE)
 
-if (!length(vignettes)) {
-  stop("No .qmd or .Rmd vignettes were found in the temporary vignette copy.", call. = FALSE)
+  message("Rendering ", basename(vignette), " at ", format(Sys.time(), tz = "UTC"))
+  result <- tryCatch(
+    {
+      quarto::quarto_render(
+        input = vignette,
+        output_format = "html",
+        as_job = FALSE
+      )
+      list(vignette = vignette, success = TRUE, log_file = log_file, error = NA_character_)
+    },
+    error = function(error) {
+      message(conditionMessage(error))
+      list(vignette = vignette, success = FALSE, log_file = log_file,
+           error = conditionMessage(error))
+    }
+  )
+  message("Finished ", basename(vignette), " at ", format(Sys.time(), tz = "UTC"))
+
+  # The document may be on disk even when quarto exited non-zero, so report
+  # what exists rather than what the status code implies.
+  result$html_file <- file.path(work_dir, paste0(name, ".html"))
+  if (!file.exists(result$html_file)) {
+    result$html_file <- NA_character_
+  }
+  result
+}
+
+# Wrapped in a function so that on.exit actually runs: at the top level of a
+# sourced script it registers against nothing, which left temporary render
+# directories and PSOCK clusters behind on every interactive run.
+render_vignettes <- function(vignettes_dir, output_dir, requested_cores) {
+  run_dir <- tempfile("ctsem-vignettes-", tmpdir = tempdir())
+  on.exit(unlink(run_dir, recursive = TRUE, force = TRUE), add = TRUE)
+
+  source_entries <- list.files(vignettes_dir, all.files = TRUE, no.. = TRUE, full.names = TRUE)
+  names <- tools::file_path_sans_ext(basename(
+    grep("\\.(qmd|rmd)$", source_entries, value = TRUE, ignore.case = TRUE)
+  ))
+  if (!length(names)) {
+    stop("No .qmd or .Rmd vignettes were found in ", vignettes_dir, ".", call. = FALSE)
+  }
+
+  # One staged copy of the whole vignettes directory per vignette, so each
+  # render owns its .quarto scratch directory and its intermediate files.
+  vignettes <- vapply(names, function(name) {
+    work_dir <- file.path(run_dir, name)
+    dir.create(work_dir, recursive = TRUE)
+    if (!all(file.copy(source_entries, work_dir, recursive = TRUE, copy.date = TRUE))) {
+      stop("Could not copy the vignette sources to ", work_dir, ".", call. = FALSE)
+    }
+    matched <- list.files(work_dir, pattern = paste0("^", name, "\\.(qmd|rmd)$"),
+                          full.names = TRUE, ignore.case = TRUE)
+    normalizePath(matched[[1L]], winslash = "/", mustWork = TRUE)
+  }, character(1L), USE.NAMES = FALSE)
+
+  workers <- min(requested_cores, length(vignettes))
+  dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+
+  message(
+    "Staging vignette source and Quarto output in ", run_dir, ".\n",
+    "Rendering ", length(vignettes), " vignette(s) with ", workers, " worker(s)."
+  )
+
+  cluster <- parallel::makePSOCKcluster(workers, outfile = "")
+  on.exit(parallel::stopCluster(cluster), add = TRUE)
+  results <- parallel::parLapply(cluster, vignettes, render_one)
+
+  # Publish before reporting, and publish regardless of failures: a vignette
+  # that took twenty minutes should not be discarded because another one broke.
+  publish_files(vapply(results, `[[`, character(1L), "log_file"), output_dir)
+  rendered <- Filter(Negate(is.na), lapply(results, `[[`, "html_file"))
+  publish_files(unlist(rendered), output_dir)
+
+  for (result in results) {
+    status <- if (result$success) "OK" else if (!is.na(result$html_file)) "FAILED (html written)" else "FAILED"
+    message(status, ": ", basename(result$vignette),
+            " (log: ", file.path(output_dir, basename(result$log_file)), ")")
+  }
+
+  failures <- Filter(function(result) !result$success, results)
+  if (length(failures)) {
+    stop(length(failures), " vignette(s) failed; see their logs in ", output_dir, ".",
+         call. = FALSE)
+  }
+  message("Rendered vignettes are in ", output_dir)
+  invisible(results)
 }
 
 available_cores <- parallel::detectCores(logical = FALSE)
@@ -114,69 +217,4 @@ if (!is.numeric(requested_cores) || length(requested_cores) != 1L ||
   stop("The core count must be a positive integer.", call. = FALSE)
 }
 
-workers <- min(requested_cores, length(vignettes))
-dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
-dir.create(staged_output_dir, recursive = TRUE)
-
-publish_files <- function(files, output_dir) {
-  if (!length(files)) {
-    return(invisible(NULL))
-  }
-  if (!all(file.copy(files, output_dir, recursive = TRUE, overwrite = TRUE))) {
-    stop("Could not copy rendered vignette artifacts to ", output_dir, ".", call. = FALSE)
-  }
-}
-
-render_one <- function(vignette, output_dir) {
-  name <- tools::file_path_sans_ext(basename(vignette))
-  log_file <- file.path(output_dir, paste0(name, ".log"))
-  log_connection <- file(log_file, open = "wt")
-  sink(log_connection)
-  sink(log_connection, type = "message")
-  on.exit({
-    sink(type = "message")
-    sink()
-    close(log_connection)
-  }, add = TRUE)
-
-  message("Rendering ", basename(vignette), " at ", format(Sys.time(), tz = "UTC"))
-  result <- tryCatch(
-    {
-      quarto::quarto_render(
-        input = vignette,
-        output_format = "html",
-        quarto_args = c("--output-dir", output_dir),
-        as_job = FALSE
-      )
-      list(vignette = vignette, success = TRUE, log_file = log_file, error = NA_character_)
-    },
-    error = function(error) {
-      message(conditionMessage(error))
-      list(vignette = vignette, success = FALSE, log_file = log_file, error = conditionMessage(error))
-    }
-  )
-  message("Finished ", basename(vignette), " at ", format(Sys.time(), tz = "UTC"))
-  result
-}
-
-message(
-  "Staging vignette source and Quarto output in ", run_dir, ".\n",
-  "Rendering ", length(vignettes), " vignette(s) with ", workers, " worker(s)."
-)
-cluster <- parallel::makePSOCKcluster(workers, outfile = "")
-on.exit(parallel::stopCluster(cluster), add = TRUE)
-results <- parallel::parLapply(cluster, vignettes, render_one, output_dir = staged_output_dir)
-
-failures <- Filter(function(result) !result$success, results)
-publish_files(list.files(staged_output_dir, pattern = "\\.log$", full.names = TRUE), output_dir)
-for (result in results) {
-  status <- if (result$success) "OK" else "FAILED"
-  message(status, ": ", basename(result$vignette), " (log: ", file.path(output_dir, basename(result$log_file)), ")")
-}
-
-if (length(failures)) {
-  stop(length(failures), " vignette(s) failed; see their logs in ", output_dir, ".", call. = FALSE)
-}
-
-publish_files(list.files(staged_output_dir, all.files = TRUE, no.. = TRUE, full.names = TRUE), output_dir)
-message("Rendered vignettes are in ", output_dir)
+render_vignettes(vignettes_dir, output_dir, requested_cores)

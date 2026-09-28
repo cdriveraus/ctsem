@@ -28,18 +28,12 @@ its source rather than something selectable.}
 The engine splits its subject loop across them, and \code{ctFit}'s
 \code{cores} cannot exceed this count: Julia fixes it at process start, so
 setting it here takes effect only if no Julia session is running yet --
-pass \code{force = TRUE} to restart one. \code{NULL} (the default) starts
-the session at two threads, unless \code{JULIA_NUM_THREADS} is already set
--- by the user, by a cluster scheduler, or by an earlier \code{ctFit()}
-call's own \code{cores} -- in which case that wins. Two rather than one:
-anything that touches the engine before a fit does (\code{ctGenerate()},
-\code{ctIdentify()}, an explicit \code{ctJuliaSetup()}) starts the session,
-and \code{ctFit}'s own default is \code{cores = 2}, so a session left at
-Julia's native default of one thread could never honour a default fit's
-request without a restart. Ask for more explicitly when a benchmark
-harness or a script needs it before its first fit; a fit that then asks
-for still more than the session has threads says so; see
-\code{\link{ctFit}}.}
+pass \code{force = TRUE} to restart one. \code{NULL}, the default, starts
+a session with as many threads as this R process may use
+(\code{parallelly::availableCores()}) unless \code{JULIA_NUM_THREADS} is
+set, and each fit uses only its \code{cores} of them. A number given here
+is also the ceiling for any call that sets none. A fit that asks for more
+cores than the session has threads says so; see \code{\link{ctFit}}.}
 
 \item{force}{Reconfigure an existing Julia session.}
 
@@ -75,7 +69,6 @@ engine cannot anticipate a model's own functions, so this is paid once per
 shape per session rather than once per fit; time a fit after one warm-up
 fit, not from a fresh session.
 
-If \pkg{JuliaConnectoR} or Julia itself is missing, this offers to install it
 Pressing Escape (or Ctrl-C) during a julia fit returns to the R prompt at
 once, and keeps the Julia session and everything it has compiled. Julia
 stops the interrupted work at its next iteration; work that has no
@@ -83,6 +76,7 @@ iterations, such as compiling for a new model shape, finishes in the
 background. If it is still running when the next julia call starts, that
 call says so and waits, and Escape during that wait stops Julia outright.
 
+If \pkg{JuliaConnectoR} or Julia itself is missing, this offers to install it
 rather than failing -- the same thing \code{\link{ctJuliaInstall}} does, which
 is the function to reach for when setting the backend up deliberately, or
 from a script.
