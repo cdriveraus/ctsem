@@ -369,7 +369,7 @@ _fresh_2d2() = (ctsem_laplace_objective(_CONTINUATION_2D_OBJECTIVE, [1, 5],
     for width in (1, 2, 6)
         S = ForwardDiff.Dual{CT._LaplaceSeedInner,Float64,width}
         aws = CT._laplace_workspace!(laplace, S, npar)
-        sc = CT._continuation_hessian_scratch!(laplace, S, npar, layout, 1)
+        sc = CT._continuation_hessian_scratch(laplace, S, npar, layout, 1)
         g = zeros(npar)
         H = zeros(npar, npar)
         ll, status = CT._continuation_member_hessian!(g, H, laplace, U, m, theta, Ls,
