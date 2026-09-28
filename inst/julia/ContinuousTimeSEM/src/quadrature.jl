@@ -303,21 +303,7 @@ function _quadrature_leaf_rule!(laplace::CTSEMLaplaceObjective, U::Integer,
         return (value=result.value - dot(z, z) / 2,
             gradient=[result.gradient[c] for c in columns] .- z)
     end
-    # The log likelihood's gradient in this block alone, as a function of this
-    # block alone -- differentiating it gives the block's curvature.
-    loglik_gradient = function (z)
-        S = eltype(z)
-        ws = _laplace_workspace!(laplace, S, length(theta))
-        work = convert(Vector{S}, u)
-        @inbounds for (t, c) in enumerate(columns); work[c] = z[t]; end
-        result = _laplace_unit_loglik_gradient(laplace, U, convert(Vector{S}, theta),
-            [convert(Matrix{S}, L) for L in Ls], work, ws, members)
-        return [result.gradient[c] for c in columns]
-    end
-    precision_at = function (z)
-        A = ForwardDiff.jacobian(loglik_gradient, z)
-        return Matrix{Float64}(LinearAlgebra.I, k, k) .- _laplace_symmetrise(A)
-    end
+    precision_at = z -> _laplace_block_precision(laplace, U, theta, Ls, u, b, z)
 
     z = start === nothing ? Float64[u[c] for c in columns] : collect(Float64, start)
     current = inner(z)

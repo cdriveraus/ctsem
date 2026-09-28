@@ -213,8 +213,8 @@ end
 Block `b`'s own log integrand and its precision, as functions of the block's
 coordinates with the rest of `u` held where it is now: `value_gradient(z)` is
 its members' log likelihood less `z'z/2` and that function's gradient, and
-`precision(z)` is `I - d2 ll/dz dz`, dense -- the closures
-`_quadrature_leaf_rule!` builds for the same block.
+`precision(z)` is `I - d2 ll/dz dz`, dense (`_laplace_block_precision`) -- what
+`_quadrature_leaf_rule!` uses for the same block.
 """
 function _continuation_block_functions(laplace::CTSEMLaplaceObjective, U::Integer,
     theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, b::Integer,
@@ -232,19 +232,7 @@ function _continuation_block_functions(laplace::CTSEMLaplaceObjective, U::Intege
         return (value=r.value - dot(z, z) / 2,
             gradient=[r.gradient[c] for c in columns] .- z)
     end
-    loglik_gradient = function (z)
-        S = eltype(z)
-        ws = _laplace_workspace!(laplace, S, length(theta))
-        work = convert(Vector{S}, base)
-        @inbounds for (t, c) in enumerate(columns); work[c] = z[t]; end
-        r = _laplace_unit_loglik_gradient(laplace, U, convert(Vector{S}, theta),
-            [convert(Matrix{S}, L) for L in Ls], work, ws, members)
-        return [r.gradient[c] for c in columns]
-    end
-    precision = function (z)
-        A = ForwardDiff.jacobian(loglik_gradient, collect(Float64, z))
-        return Matrix{Float64}(LinearAlgebra.I, k, k) .- _laplace_symmetrise(A)
-    end
+    precision = z -> _laplace_block_precision(laplace, U, theta, Ls, base, b, z)
     return (value_gradient=value_gradient, precision=precision)
 end
 
