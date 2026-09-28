@@ -63,8 +63,7 @@
   # overlaps it, and usually nothing is left to wait for -- but a fast
   # optimisation finishes first, and then the parent sits silent for the
   # remainder of a 26-43 s compile with no indication of why.
-  pending <- sum(!vapply(handles, function(h)
-    is.null(h) || future::resolved(h), logical(1)))
+  pending <- sum(!vapply(handles, .ctBackendChainOver, logical(1)))
   if (isTRUE(progress) && pending > 0L) {
     message(pending, " of ", length(handles), " chain worker(s) still ",
       "compiling for this model shape.")
@@ -390,8 +389,7 @@
   emit <- .ctProgressSink(overwrite)
   shown <- NULL
   repeat {
-    resolved <- vapply(results, function(h) is.null(h) || future::resolved(h),
-      logical(1))
+    resolved <- vapply(results, .ctBackendChainOver, logical(1))
     for (k in seq_len(chains)) {
       info <- .ctBackendReadProgressFile(progress_files[k])
       if (is.null(info)) next
@@ -421,6 +419,19 @@
   emit("", "break")
   utils::flush.console()
   invisible(NULL)
+}
+
+# Whether a worker's future has finished, one way or the other.
+#
+# An error from `resolved()` counts as finished. It is one way `future` reports
+# a worker process that has gone, and the `value()` pass after the poll turns
+# that into a failed chain and a fallback to this session. Uncaught, it
+# abandoned the whole sample instead; read as "not yet", it would have kept the
+# poll waiting on a process that no longer exists.
+#' @keywords internal
+.ctBackendChainOver <- function(handle) {
+  is.null(handle) ||
+    isTRUE(tryCatch(future::resolved(handle), error = function(e) TRUE))
 }
 
 # What a chain sends home.

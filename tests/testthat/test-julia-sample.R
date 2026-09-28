@@ -519,6 +519,21 @@ test_that("the process-path progress line holds every chain on one line", {
   expect_match(narrow, "logp -5299, -5298, -5297, -5296", fixed = TRUE)
 })
 
+test_that("the process-path poll stops waiting on a worker that has gone", {
+  skip_if_not_installed("future")
+  # `resolved()` erroring is one way `future` reports a worker process that has
+  # died. The poll has to count that chain as over and let the `value()` pass
+  # after it report the failure, rather than stop the whole sample -- and
+  # rather than read it as "not yet", which waits forever.
+  testthat::local_mocked_bindings(
+    resolved = function(x, ...) stop("simulated: the worker process has gone"),
+    .package = "future")
+  gone <- structure(list(), class = "Future")
+  expect_null(ctsem:::.ctBackendReportProcesses(list(gone, gone),
+    tempfile(c("chain1_", "chain2_")), chains = 2L, interval = 0.01,
+    overwrite = FALSE))
+})
+
 test_that("an effective-size target turns the draw count into a budget", {
   skip_without_julia()
   fit <- .sample_fixture()

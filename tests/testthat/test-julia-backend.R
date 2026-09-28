@@ -786,3 +786,55 @@ test_that("a model whose Julia session has ended is rebuilt, not reported as a d
     ctJuliaEvaluate(spec, raw, gradient = FALSE)$value)), as.numeric(value),
     tolerance = 1e-10)
 })
+
+test_that("a call into a Julia process that has died errors by name, and the next starts afresh", {
+  skip_without_julia()
+  model <- suppressWarnings(ctModel(
+    type = "ct", LAMBDA = diag(1),
+    DRIFT = matrix("drift", 1, 1), DIFFUSION = matrix("diffusion", 1, 1),
+    MANIFESTVAR = matrix("residual", 1, 1), MANIFESTMEANS = matrix(0, 1, 1),
+    T0VAR = matrix(1, 1, 1), T0MEANS = matrix(0, 1, 1)))
+  set.seed(4)
+  data <- data.frame(id = rep(1:3, each = 4), time = rep(0:3, 3),
+    Y1 = stats::rnorm(12, 0, .5))
+  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
+  raw <- rep(0, ctsem:::.ctBackendNpar(spec))
+  value <- suppressMessages(ctJuliaEvaluate(spec, raw, gradient = FALSE)$value)
+
+  # Killed rather than stopped: nothing on R's side closes the socket, so it
+  # still reads as open, and the next call used to write into it and then wait
+  # for a reply for as long as the R session lasted.
+  bridge <- get("pkgLocal", envir = asNamespace("JuliaConnectoR"))
+  dead <- bridge$con
+  withr::defer(if (identical(bridge$con, dead)) {
+    suppressWarnings(try(JuliaConnectoR::stopJulia(), silent = TRUE))
+  })
+  tools::pskill(as.integer(JuliaConnectoR::juliaEval("getpid()")))
+  for (i in seq_len(100)) {
+    if (isTRUE(socketSelect(list(dead), timeout = 0.1))) break
+  }
+
+  # Asked of the check every call comes in through rather than of a call:
+  # with the module cached it makes no call into Julia of its own, so a guard
+  # that has stopped working fails here instead of hanging the suite. A time
+  # limit does not do that -- R does not check one inside JuliaConnectoR's
+  # read loop.
+  expect_error(ctsem:::.ctJuliaCheckSession(), "Julia session has ended")
+  expect_null(bridge$con)
+  skip_if(!is.null(bridge$con), "the dead session is still attached")
+  expect_equal(as.numeric(suppressMessages(
+    ctJuliaEvaluate(spec, raw, gradient = FALSE)$value)), as.numeric(value),
+    tolerance = 1e-10)
+})
+
+test_that("output Julia prints between calls is not taken for a session that has died", {
+  skip_without_julia()
+  # A task can print after the call that started it has returned. That leaves
+  # the socket readable exactly as a dead process does, and the guard above
+  # has to tell the two apart without losing the output or the stream's place.
+  invisible(JuliaConnectoR::juliaEval(
+    "@async (sleep(0.2); println(\"printed after the call returned\")); nothing"))
+  Sys.sleep(1)
+  expect_output(ctsem:::.ctJuliaCheckAlive(), "printed after the call returned")
+  expect_equal(JuliaConnectoR::juliaEval("1 + 1"), 2)
+})
