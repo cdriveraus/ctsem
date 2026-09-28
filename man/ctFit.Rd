@@ -313,6 +313,20 @@ default, apply too when sampling with \code{intoverpop=FALSE}: the random
 effects are then sampled rather than integrated, but the sampler is placed,
 and its metric built, from the Laplace fit.
 
+On either route, a julia fit with random effects measures how much of each
+random effect each subject's own data determine -- one minus the ratio of
+its posterior to its population variance, the complement of what population
+pharmacokinetics calls shrinkage -- at the estimate it reports.
+\code{fit$identifiability$effects} records it for every effect. An effect
+whose median over subjects is below 0.1 is named in a message, in
+\code{summary()} and in \code{\link{ctReport}}: its population standard
+deviation is poorly determined, and dropping its individual variation or
+observing each subject more often is the remedy. A population standard
+deviation estimated below the one every fit starts from is measured again
+at that starting value, since at a spread near zero the share is zero
+whatever the data say; it is that share which decides, so an effect whose
+variation the data rule out clearly is not reported as weakly informed.
+
 Also with \code{intoverpop='laplace'}, \code{optimcontrol$laplace_correct}
 corrects the fitted estimate for the Laplace approximation's error, by the
 adaptive Gauss-Hermite quadrature of \code{\link{ctLaplaceCheck}} (5 nodes
@@ -433,17 +447,22 @@ objective is then maximised from there. That is the fit under
 \code{priors=FALSE} and under the default \code{priors='randomCorr'}, whose
 prior on the random-effect correlations does nothing to place the rest of
 the vector; with \code{priors=TRUE} the fit already has those priors and the
-pass is skipped. It defaults to \code{TRUE}, capped at 10 iterations, and is
+pass is skipped. With \code{backend='julia'} it defaults to \code{TRUE} when
+any indicator is not Gaussian (\code{manifesttype} 1 to 4) and to
+\code{FALSE} when every indicator is, is capped at 10 iterations, and is
 skipped when \code{inits} are supplied. Set
-\code{optimcontrol$carefulfit = FALSE} to switch it off or to a number to
-choose the cap.
+\code{optimcontrol$carefulfit = TRUE} or \code{FALSE} to force it either
+way, or to a number to choose the cap.
 
 It does not make fits faster: measured over 800 fits, total iterations came
 to 0.91-1.14 times a plain fit at ten prior iterations, 1.09-1.50 at twenty
 and 1.47-1.64 at forty. It is on by default for where the fit lands rather
-than how quickly it gets there. Over 720 fits judged on a random-effect SD
-with a true value of 0.5, a cap of 10 gave an RMSE of 0.190 and a worst
-error of 0.547, against 0.478 and 6.73 with the pass switched off. A longer
+than how quickly it gets there, and only for non-Gaussian indicators because
+that is where the measured benefits were: on a Gaussian model whose random
+effects the data barely inform it has led the fit to a worse maximum. Over
+720 fits judged on a random-effect SD with a true value of 0.5, a cap of 10
+gave an RMSE of 0.190 and a worst error of 0.547, against 0.478 and 6.73
+with the pass switched off. A longer
 pass is not a safer one -- a cap of 20 scored 0.550 and 7.99, worse than not
 warming up at all -- because the prior pass pulls the start toward the prior
 mode and past about ten iterations that is what it hands the likelihood.

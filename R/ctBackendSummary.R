@@ -1782,9 +1782,18 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   popsdnote <- .ctBackendPopRegressionNote(.ctBackendSpec(object))
   popsdnote <- c(popsdnote,
     .ctBackendNotFiniteNote(out$popsd, "standard deviation"))
+  # The random effects the data barely inform, from the check the fit made
+  # at its estimate (R/ctBackendEffectInformation.R). Here because
+  # these are the spreads it qualifies; on a multilevel fit the note follows
+  # the per-level tables. `[[`: a fit made before the check has no `effects`.
+  identifiability <- object[["identifiability"]]
+  weak <- .ctEffectAdvice(if (is.list(identifiability))
+    identifiability[["effects"]] else NULL)
   if (length(popsdnote) && !is.null(out$popsd)) {
     out$popsdNote <- paste(popsdnote, collapse = " ")
   }
+  if (length(weak)) out$popsdNote <- paste(c(out$popsdNote, weak,
+    "See fit$identifiability$effects."), collapse = " ")
 
   fixed <- cells[!cells$randomeffect, , drop = FALSE]
   # A `poprank` fit's coefficients are free parameters, so without this they

@@ -535,8 +535,10 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   julia_bin <- .ctJuliaBin(julia_bin)
   if (!is.null(julia_bin)) Sys.setenv(JULIA_BINDIR = julia_bin)
   # A running session can be asked its own version; only a Julia that has never
-  # started needs a subprocess spawned to find out.
+  # started needs a subprocess spawned to find out. One that has died is let go
+  # first, so this reports on a new one rather than waiting on the old.
   version <- if (connectoR) {
+    try(.ctJuliaCheckAlive(), silent = TRUE)
     tryCatch(as.character(JuliaConnectoR::juliaEval("string(VERSION)")),
       error = function(e) NA_character_)
   } else NA_character_
@@ -698,12 +700,82 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # leaves this a no-op and the backend exactly as it behaved before. That is the
 # safe direction: the alternative -- distrusting an unreadable stamp -- would
 # invalidate the cache on every call and rebuild the engine forever.
+#
+# First, whether the process is still there at all -- before the early return,
+# because a session whose engine never loaded has no module and is still one
+# the next `juliaEval()` would write into.
 .ctJuliaCheckSession <- function() {
+  .ctJuliaCheckAlive()
   if (is.null(.ct_julia_cache$module)) return(invisible(FALSE))
   if (identical(.ctJuliaSessionStamp(), .ct_julia_cache$session)) return(invisible(FALSE))
   .ctJuliaForgetSession()
   message("The julia session this model was compiled in has ended; rebuilding.")
   invisible(TRUE)
+}
+
+# A Julia process that has gone, told apart from one that is only idle ---------
+#
+# A Julia that exits leaves R's end of the socket open. `isOpen()` still says
+# yes and the session stamp still matches, so the next call writes into the
+# socket, warns "problem writing to connection", and waits for a reply that
+# cannot come: JuliaConnectoR's read loop takes end-of-file for "nothing yet"
+# and spins at full CPU for as long as the R session lasts. Nothing errors, and
+# a suite run in that state hangs rather than fails.
+#
+# So the socket is asked, without blocking. Nothing waiting is a live session
+# at rest. Something waiting is either end-of-file -- the process has gone --
+# or output a Julia task printed after the last call returned, which the next
+# call would have printed first; that is printed now instead, by
+# JuliaConnectoR's own reader, so the stream stays in step. Anything else
+# waiting between calls means the stream is already out of step, and a session
+# in that state is no more usable than a dead one.
+#
+# The internals are resolved before anything is read: if they have moved, the
+# answer is "not gone", which is how the backend behaved before this existed.
+.ctJuliaPeerGone <- function(connection) {
+  jc <- tryCatch({
+    ns <- asNamespace("JuliaConnectoR")
+    list(con = get("pkgLocal", envir = ns)$con,
+      stdout = get("STDOUT_INDICATOR", envir = ns),
+      stderr = get("STDERR_INDICATOR", envir = ns),
+      read = get("readOutput", envir = ns))
+  }, error = function(e) NULL)
+  if (is.null(jc)) return(FALSE)
+  repeat {
+    waiting <- tryCatch(socketSelect(list(connection), timeout = 0),
+      error = function(e) NA)
+    if (!isTRUE(waiting)) return(FALSE)
+    first <- tryCatch(suppressWarnings(readBin(connection, "raw", 1L)),
+      error = function(e) raw(0))
+    if (!length(first)) return(TRUE)
+    stream <- if (identical(first, jc$stdout)) stdout() else
+      if (identical(first, jc$stderr)) stderr() else NULL
+    # `readOutput` reads JuliaConnectoR's own connection, so it can finish the
+    # message only when that is the connection being asked about.
+    if (is.null(stream) || !identical(connection, jc$con)) return(TRUE)
+    jc$read(writeTo = stream)
+  }
+}
+
+# Refuse, by name, to call into a Julia process that has gone.
+#
+# Both caches still pointing at it are cleared first -- ctsem's, and
+# JuliaConnectoR's connection -- so this errors once and the call after it
+# starts a new session rather than writing into the old socket.
+# `stopJulia()` would write its goodbye into the dead socket first, which is
+# harmless and warns.
+.ctJuliaCheckAlive <- function() {
+  connection <- tryCatch(get("pkgLocal",
+    envir = asNamespace("JuliaConnectoR"))$con, error = function(e) NULL)
+  if (is.null(connection) ||
+    !isTRUE(tryCatch(isOpen(connection), error = function(e) FALSE)) ||
+    !.ctJuliaPeerGone(connection)) {
+    return(invisible(TRUE))
+  }
+  .ctJuliaForgetSession()
+  suppressWarnings(try(JuliaConnectoR::stopJulia(), silent = TRUE))
+  stop("The Julia session has ended: its process is no longer running. ",
+    "Calling again starts a new one.", call. = FALSE)
 }
 
 # The objective cache, read and written only through these two.
@@ -815,6 +887,14 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # `withCallingHandlers` rather than `tryCatch`: the handler runs and the
 # interrupt then carries on unwinding, so Escape still aborts the fit. It only
 # stops leaving wreckage behind.
+#
+# The same wrapper catches a Julia that died between two of the fit's calls.
+# JuliaConnectoR only warns when a write into its socket fails, and then waits
+# for a reply that cannot come, so the warning is the one moment left to say
+# so: `.ctJuliaCheckAlive()` confirms the process has gone and errors by name.
+# Matched on the call rather than the message, which is translated. A Julia
+# that dies while R is already waiting on it is out of reach from here; that
+# wait is JuliaConnectoR's.
 #' @keywords internal
 .ctJuliaInterruptSafe <- function(expr) {
   withCallingHandlers(expr, interrupt = function(cnd) {
@@ -824,6 +904,11 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       "the engine for its model shape.")
     try(.ctBackendWarmStop(NULL), silent = TRUE)
     try(.ctJuliaClearSession(), silent = TRUE)
+  }, warning = function(cnd) {
+    call <- conditionCall(cnd)
+    if (is.call(call) && identical(call[[1L]], as.name("writeBin"))) {
+      .ctJuliaCheckAlive()
+    }
   })
 }
 
@@ -3555,6 +3640,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 .ctBackendSetMaxChunks <- function(chunks) {
   chunks <- suppressWarnings(as.integer(chunks)[1L])
   if (is.na(chunks) || chunks < 1L) return(NA_integer_)
+  # Often the first call of an operation, ahead of anything that asks for the
+  # module, so it is where a session that has died is noticed.
+  .ctJuliaCheckAlive()
   previous <- tryCatch(as.integer(.ctBackendJuliaValue(JuliaConnectoR::juliaEval(
     "ContinuousTimeSEM.ctsem_max_chunks().max_chunks"))), error = function(e) NA_integer_)
   try(JuliaConnectoR::juliaCall("ContinuousTimeSEM.ctsem_set_max_chunks!", chunks),
@@ -4638,8 +4726,21 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # effect on DRIFT or a variance, or an outer level, and all of it before the
   # default became 'randomCorr'. A change to the cap is a bench run, not an
   # edit.
+  #
+  # On by default only when some indicator is not Gaussian (binary, ordinal,
+  # count or censored), Charles's decision of 2026-09-27. The benefits measured
+  # were on binary, ordinal and mixed measurement models -- on the simulation
+  # study, binary laplace fits were rescued in 18 of 30 data sets while the
+  # Gaussian, mixed and ordinal cells were unchanged -- and the one measured
+  # loss is Gaussian: on AnomAuth (random CINT and DRIFT, 800 subjects) the
+  # warmed start leads to a worse basin, 0.73 and 2.26 exact nats short on the
+  # bench's S1 and S2, where the unwarmed fit reaches the best known point
+  # (review/OPTIM-next-2026-09-27.md). TRUE or FALSE forces it either way.
   careful <- optimcontrol$carefulfit
-  if (is.null(careful)) careful <- TRUE
+  defaultcareful <- is.null(careful)
+  if (defaultcareful) {
+    careful <- any(as.integer(model_spec$manifesttype) != 0L)
+  }
   warmiter <- if (isTRUE(careful)) 10L else
     if (is.numeric(careful) && length(careful) == 1L && careful >= 1)
       as.integer(careful) else 0L
@@ -4654,7 +4755,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   fitscope <- if (identical(priorscope, "randomCorr")) "randomCorr" else
     if (isTRUE(priors)) "all" else "none"
   if (warmiter < 1L) {
-    warmskip <- "switched off by optimcontrol$carefulfit"
+    warmskip <- if (defaultcareful) "off by default: every indicator is Gaussian" else
+      "switched off by optimcontrol$carefulfit"
   } else if (!is.null(inits) && !identical(inits, "random")) {
     # `stanoptimis` turns `carefulfit` off when starting values were supplied,
     # since the point of the pass is to produce some. Overriding a starting
@@ -5248,6 +5350,25 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # the data -- but a statement of which directions the data does not determine,
   # and therefore which reported intervals do not mean what they appear to.
   rawnames <- .ctBackendRawParameterNames(out, length(out$estimate$raw))
+  # First, how much of each random effect each subject's own data determine,
+  # at the estimate the fit reports -- after the quadrature correction, when
+  # that moved it. Put where `.ctBackendIdentifiability()` below finds it
+  # (`fit = out`), which carries it into the report, as every later rebuild
+  # of the report does. Not at the start, which was the plan, and not where
+  # the optimiser stopped: at the first the population sds are starting
+  # values, and the second is the Laplace optimum before the correction, which
+  # can sit where the approximation is least trustworthy; both are measured
+  # in R/ctBackendEffectInformation.R. Not on the state-explicit route, whose
+  # estimate is the joint optimum.
+  #
+  # Under the fit's `cores` ceiling, as the optimiser and the uncertainty phase
+  # are. Outside it, a `cores = 1` fit spread its check over every thread the
+  # session had, and left the worker pool at full width behind it.
+  effectcheck <- if (isTRUE(intoverstates)) .ctBackendWithMaxChunks(cores,
+    .ctEffectInformation(out$model_spec, out$estimate$raw,
+      point = "at the estimate")) else NULL
+  if (!is.null(effectcheck)) out$identifiability <- list(effects = effectcheck)
+  .ctEffectMessage(effectcheck)
   # `fit`/`at` let it tell a random-effect block trading its scale off against
   # its correlations -- where the covariances are determined, and fixing a
   # value throws them away -- from a direction the data says nothing about.

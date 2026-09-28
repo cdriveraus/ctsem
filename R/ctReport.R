@@ -445,6 +445,34 @@
       }
       add("")
     }
+    # How much of each random effect each subject's own data determine, from
+    # the check the fit made at its estimate (R/ctBackendEffectInformation.R).
+    # `[[`: a fit made before the check existed has none.
+    eff <- if (is.list(idf)) idf[["effects"]] else NULL
+    tab <- if (is.list(eff)) eff[["table"]] else NULL
+    if (is.data.frame(tab) && nrow(tab)) {
+      add("Random-effect information, ", eff[["point"]])
+      add("  raw sd: population sd on the raw scale; determined: median share ",
+        "of a group's effect its own data determine; at start spread: the same ",
+        "with a population sd below the starting spread raised to it; widened: ",
+        "share whose posterior is wider than the population")
+      reference <- tab[["reference"]]
+      if (is.null(reference)) reference <- NA_real_
+      shown <- data.frame(level = tab$level, effect = tab$effect,
+        `raw sd` = signif(tab$popsd, 3), determined = signif(tab$determined, 3),
+        `at start spread` = signif(reference, 3),
+        widened = signif(tab$widened, 3),
+        weak = ifelse(tab$weak %in% TRUE, "weak", ""), stringsAsFactors = FALSE,
+        check.names = FALSE)
+      L <<- c(L, .ctReportCapture(print(shown, row.names = FALSE)))
+      units <- eff[["units"]]
+      if (is.list(units) && !is.null(units[["n"]])) {
+        add("  Laplace units with curvature below the prior's: ",
+          units[["below_one"]], " of ", units[["n"]])
+      }
+      for (line in .ctEffectAdvice(eff)) add("  ", line)
+      add("")
+    }
     ivc <- fit$uncertainty$intervalcheck
     if (!is.null(ivc) && nrow(ivc$table)) {
       add("Reported interval against the curvature at the estimate")

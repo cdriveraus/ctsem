@@ -873,6 +873,12 @@
     evaluated_at = as.numeric(startvalues),
     settings = list(chains = chains, warmup = warmup, draws = draws,
       processes = FALSE))
+  # The same for the random-effect check the placement fit made "at the
+  # estimate": that estimate was the optimum, and the fit's estimate is now
+  # the posterior mean. Its `values` say exactly where; this says it in words.
+  if (!is.null(out$identifiability[["effects"]])) {
+    out$identifiability$effects$point <- "at the optimum that placed the sampler"
+  }
 
   out$sample <- list(
     chains = chains, warmup = warmup, draws = draws,

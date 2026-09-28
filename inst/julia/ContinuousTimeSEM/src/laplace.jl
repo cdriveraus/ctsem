@@ -719,12 +719,12 @@ end
 """
     _laplace_poploading(values, level)
 
-A reduced-rank level's factor: `k x k`, with the loading in its first `rank`
-columns and zeros in the rest, so that `L * L'` is the population covariance
-and `L * u` is the deviation for `u ~ N(0, I)`.
+A reduced-rank level's factor: `k x rank`, the loading itself, so that
+`L * L'` is the population covariance and `L * u` is the deviation for
+`u ~ N(0, I)` of dimension `rank`.
 
-The zero columns are what let the block stay `k`-dimensional; see the note on
-`rank` in `CTSEMLaplaceLevel`. No Cholesky is taken, because there is nothing
+The block is `rank`-dimensional, not `k`, which is what makes a reduced level
+cheap; see `nlatent`. No Cholesky is taken, because there is nothing
 to decompose -- the parameters *are* the factor, which is also why they need no
 positivity transform and no correlation cap. `sd_scale` multiplies a row, so a
 level still scales its own spread exactly as the full-rank form does, and a
@@ -1154,8 +1154,10 @@ The same, for a region whose caller has already sized the store.
 One caller: the chain runner in `sample_run.jl`, which is generic over a
 density closure and has no objective to hand -- deliberately, since that is
 what lets it run the same chains for the marginal and the state-explicit
-targets. `ctsem_sample_marginal` sizes the store before any chain starts, so
-the region below is never the outermost one.
+targets. It reaches here only when the caller passed `parallel = true`, which
+`ctsem_sample` does after sizing the store, so the region below is never the
+outermost one. `ctsem_sample_marginal` passes `false` and never reaches here:
+its chains share one objective, and run one after another.
 
 This is the hole the objective argument closes everywhere else, kept open here
 on purpose and watched by `_laplace_check_slot`, which turns a slot past the

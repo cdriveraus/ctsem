@@ -136,43 +136,80 @@ test_that("stallretries is the cap on the julia escape loop", {
   expect_equal(escapes(3L), c(offered = 3L, recorded = 3L))
 })
 
-test_that("the prior warm-up runs under the default priors, and the fit says what ran", {
+test_that("the prior warm-up runs by default only with a non-Gaussian indicator, and the fit says what ran", {
   skip_without_julia()
-  # The default is priors = 'randomCorr', a prior on the random-effect
-  # correlations alone. The warm-up used to borrow the fit's prior scope, so it
-  # was skipped on every default fit while `$optim$carefulfit` reported that it
-  # had run -- a stage whose builder returned NULL looked like one that ran.
-  # This model has two random effects (T0MEANS and MANIFESTMEANS by default),
-  # so the default prior is not empty.
+  # On by default only when some indicator is not Gaussian (2026-09-27): the
+  # measured benefits were on binary, ordinal and mixed measurement models,
+  # and on a Gaussian one (AnomAuth) it cost the fit its best maximum. TRUE or
+  # FALSE forces it either way.
+  #
+  # And it runs under the default priors, which is what the second half is
+  # for. The default is priors = 'randomCorr', a prior on the random-effect
+  # correlations alone; the warm-up used to borrow the fit's prior scope, so
+  # it was skipped on every default fit while `$optim$carefulfit` reported
+  # that it had run -- a stage whose builder returned NULL looked like one
+  # that ran. This model has two random effects (T0MEANS and MANIFESTMEANS by
+  # default), so the default prior is not empty.
   set.seed(1)
   dat <- do.call(rbind, lapply(1:10, function(i) {
     eta <- as.numeric(stats::filter(stats::rnorm(6), 0.6, method = 'recursive'))
     data.frame(id = i, time = 0:5, Y1 = eta + stats::rnorm(1) + stats::rnorm(6, 0, .5))
   }))
-  fitwith <- function(...) {
+  fitwith <- function(..., data = dat, model = .cs_model()) {
     set.seed(3)
-    suppressWarnings(suppressMessages(ctFit(dat, .cs_model(), backend = 'julia',
+    suppressWarnings(suppressMessages(ctFit(data, model, backend = 'julia',
       cores = 1, verbose = 0, ...)))
   }
+  # Every indicator Gaussian: off unless asked for, and the fit says why.
   default <- fitwith(optimcontrol = list(estonly = TRUE))
-  off <- fitwith(optimcontrol = list(estonly = TRUE, carefulfit = FALSE))
-  expect_true(default$optim$carefulfit)
-  expect_true(is.na(default$optim$carefulfit_skipped))
-  expect_gte(default$optim$carefulfit_iterations, 1L)
+  expect_false(default$optim$carefulfit)
+  expect_equal(default$optim$carefulfit_iterations, 0L)
+  expect_match(default$optim$carefulfit_skipped, 'every indicator is Gaussian')
+  on <- fitwith(optimcontrol = list(estonly = TRUE, carefulfit = TRUE))
+  expect_true(on$optim$carefulfit)
+  expect_true(is.na(on$optim$carefulfit_skipped))
+  expect_gte(on$optim$carefulfit_iterations, 1L)
   # Ten iterations of L-BFGS and no more: the Newton finish would carry the
   # pass on to the prior mode, which is what the cap is for preventing.
-  expect_lte(default$optim$carefulfit_iterations, 10L)
+  expect_lte(on$optim$carefulfit_iterations, 10L)
   # And it moved the start: the same seed without the warm-up begins elsewhere.
-  expect_false(isTRUE(all.equal(default$optim$trace$objective[1],
-    off$optim$trace$objective[1])))
+  expect_false(isTRUE(all.equal(on$optim$trace$objective[1],
+    default$optim$trace$objective[1])))
+  off <- fitwith(optimcontrol = list(estonly = TRUE, carefulfit = FALSE))
   expect_false(off$optim$carefulfit)
   expect_equal(off$optim$carefulfit_iterations, 0L)
   expect_match(off$optim$carefulfit_skipped, 'switched off')
-  # Skipped, and saying why, where the pass has nothing to add or is not wanted.
-  map <- fitwith(priors = TRUE, optimcontrol = list(estonly = TRUE))
+
+  # A binary indicator: on by default, and FALSE switches it off.
+  set.seed(2)
+  bdat <- do.call(rbind, lapply(1:10, function(i) {
+    eta <- as.numeric(stats::filter(stats::rnorm(8), 0.6, method = 'recursive'))
+    data.frame(id = i, time = 0:7, B1 = stats::rbinom(8, 1, stats::plogis(eta)))
+  }))
+  bmodel <- ctModel(type = 'ct', n.latent = 1, latentNames = 'eta1',
+    n.manifest = 1, manifestNames = 'B1', LAMBDA = matrix(1),
+    manifesttype = 1L, MANIFESTMEANS = matrix(0), MANIFESTVAR = matrix(0),
+    T0MEANS = matrix(0), CINT = matrix(0), silent = TRUE)
+  bmodel$pars$indvarying <- FALSE
+  binary <- fitwith(data = bdat, model = bmodel,
+    optimcontrol = list(estonly = TRUE))
+  expect_true(binary$optim$carefulfit)
+  expect_true(is.na(binary$optim$carefulfit_skipped))
+  expect_gte(binary$optim$carefulfit_iterations, 1L)
+  binaryoff <- fitwith(data = bdat, model = bmodel,
+    optimcontrol = list(estonly = TRUE, carefulfit = FALSE))
+  expect_false(binaryoff$optim$carefulfit)
+  expect_match(binaryoff$optim$carefulfit_skipped, 'switched off')
+
+  # Skipped, and saying why, where the pass has nothing to add or is not
+  # wanted. Asked for by name, because on this Gaussian model it is off by
+  # default and these are the reasons that override a request.
+  map <- fitwith(priors = TRUE, optimcontrol = list(estonly = TRUE,
+    carefulfit = TRUE))
   expect_false(map$optim$carefulfit)
   expect_match(map$optim$carefulfit_skipped, 'priors=TRUE', fixed = TRUE)
-  given <- fitwith(inits = default$estimate$raw, optimcontrol = list(estonly = TRUE))
+  given <- fitwith(inits = on$estimate$raw, optimcontrol = list(estonly = TRUE,
+    carefulfit = TRUE))
   expect_false(given$optim$carefulfit)
   expect_match(given$optim$carefulfit_skipped, 'starting values')
   # A number is the cap, and what is recorded is what ran within it.
