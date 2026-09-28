@@ -542,8 +542,8 @@
   # The population block alone: R-hat over every random effect as well would
   # cost more than it says, and the assembler reads only the first `npar`.
   # Not `diag`, which would shadow `base::diag` for the rest of the function.
-  pooldiag <- JuliaConnectoR::juliaGet(module$ctsem_sample_diagnostics(
-    JuliaConnectoR::juliaPut(pooled[seq_len(npar), , drop = FALSE]),
+  pooldiag <- .ctJuliaGet(module$ctsem_sample_diagnostics(
+    .ctJuliaPut(pooled[seq_len(npar), , drop = FALSE]),
     as.integer(chains)))
 
   result <- list(

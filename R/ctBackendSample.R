@@ -72,7 +72,7 @@
 #' @keywords internal
 .ctBackendEffectIndexNested <- function(fit) {
   laplace <- fit$model_spec$laplace
-  layout <- try(JuliaConnectoR::juliaGet(
+  layout <- try(.ctJuliaGet(
     .ctJuliaModule(fit$model_spec$project)$ctsem_laplace_effect_layout(
       .ctJuliaObjective(fit))), silent = TRUE)
   if (inherits(layout, "try-error") || is.null(layout$position)) return(NULL)
@@ -634,7 +634,7 @@
   # alternative is a user concluding the sampler is slow when it is running four
   # chains on one thread. Not said in a worker, which runs a single chain.
   if (chains > 1L) {
-    threads <- tryCatch(as.integer(JuliaConnectoR::juliaEval("Threads.nthreads()")),
+    threads <- tryCatch(as.integer(.ctJuliaEval("Threads.nthreads()")),
       error = function(e) NA_integer_)
     if (!is.na(threads) && threads < chains) {
       message("The Julia session has ", threads, " thread(s) and ", chains,
@@ -707,7 +707,7 @@
     arguments$gradient_method <- target$gradient
   }
   if (!is.null(target$hessian)) {
-    arguments$hessian <- JuliaConnectoR::juliaPut(as.matrix(target$hessian))
+    arguments$hessian <- .ctJuliaPut(as.matrix(target$hessian))
   }
   # How many of the sampled coordinates are model parameters. Only differs
   # from all of them on the state-explicit route, where the vector is
@@ -722,7 +722,7 @@
     module$ctsem_sample
 
   result <- .ctBackendWithMaxChunks(cores,
-    JuliaConnectoR::juliaGet(do.call(entry, arguments)))
+    .ctJuliaGet(do.call(entry, arguments)))
   if (!is.null(callback_failure)) {
     warning("The progress callback failed and was disabled after the first ",
       "error; sampling itself is unaffected. The error was: ",

@@ -452,7 +452,7 @@ print.ctParticleCorrection <- function(x, ...) {
   for (b in seq_along(starts)) {
     rows <- starts[b]:min(n, starts[b] + batch - 1L)
     values <- t(theta[rows, , drop = FALSE])
-    res <- JuliaConnectoR::juliaGet(module$ctsem_particle_batch(objective, values,
+    res <- .ctJuliaGet(module$ctsem_particle_batch(objective, values,
       particles = settings$particles, substeps = settings$substeps,
       transition = settings$transition, seed = seeds[rows]))
     out[[b]] <- data.frame(particle = as.numeric(res$particle), se = as.numeric(res$se),

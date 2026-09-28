@@ -189,7 +189,7 @@
   size <- sqrt(sum(direction^2))
   if (!is.finite(size) || size <= 0) return(NULL)
   module <- .ctJuliaModule(.ctBackendSpec(x)$project)
-  out <- try(JuliaConnectoR::juliaGet(module$ctsem_flat_probe(
+  out <- try(.ctJuliaGet(module$ctsem_flat_probe(
     .ctJuliaObjective(x), .ctJuliaNumericVector(as.numeric(at)),
     .ctJuliaNumericVector(direction))), silent = TRUE)
   if (inherits(out, "try-error")) return(NULL)
@@ -926,7 +926,7 @@
   if (!available) return(NULL)
   est <- as.numeric(est)
   npar <- length(est)
-  out <- try(.ctBackendWithMaxChunks(NA_integer_, JuliaConnectoR::juliaGet(
+  out <- try(.ctBackendWithMaxChunks(NA_integer_, .ctJuliaGet(
     module$ctsem_endgame(.ctJuliaObjective(spec), .ctJuliaNumericVector(est),
       gradient_method = gradient, flat_rtol = .ctFlatDirectionRtol()))),
     silent = TRUE)

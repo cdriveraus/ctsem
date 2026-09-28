@@ -112,7 +112,7 @@
       fitted <- .ctBackendJuliaValue(module$ctsem_laplace_subject_values(
         .ctJuliaObjective(source), .ctJuliaNumericVector(raw),
         from_level = as.integer(from)))
-      arguments$subject_values <- JuliaConnectoR::juliaPut(
+      arguments$subject_values <- .ctJuliaPut(
         fitted[subjects, , drop = FALSE])
     }
   }
@@ -528,11 +528,11 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
     persubject <- .ctBackendJuliaValue(module$ctsem_laplace_subject_values(
       objective, raw, .ctJuliaNumericVector(as.numeric(effects))))
     return(.ctBackendJuliaValue(module$ctsem_generate(objective, raw,
-      JuliaConnectoR::juliaPut(base), seed = seed,
-      subject_values = JuliaConnectoR::juliaPut(persubject))))
+      .ctJuliaPut(base), seed = seed,
+      subject_values = .ctJuliaPut(persubject))))
   }
   .ctBackendJuliaValue(module$ctsem_generate(objective, raw,
-    JuliaConnectoR::juliaPut(base), seed = seed))
+    .ctJuliaPut(base), seed = seed))
 }
 
 
@@ -577,7 +577,7 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
   module <- .ctJuliaModule(spec$project)
   arguments <- list(.ctJuliaObjective(fit),
     .ctJuliaNumericVector(as.numeric(raw)),
-    .ctJuliaNumericVector(as.numeric(z)), JuliaConnectoR::juliaPut(base),
+    .ctJuliaNumericVector(as.numeric(z)), .ctJuliaPut(base),
     transition = .ctJuliaOr(spec$transition, "exponential"),
     seed = sample.int(.Machine$integer.max, 1L))
   # A draw of the random effects, so each subject's trajectory is drawn at that

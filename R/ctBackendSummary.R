@@ -257,7 +257,7 @@
   storage.mode(raw) <- "double"
   spec <- .ctBackendSpec(fit)
   module <- .ctJuliaModule(spec$project)
-  arguments <- list(.ctJuliaObjective(fit), JuliaConnectoR::juliaPut(raw),
+  arguments <- list(.ctJuliaObjective(fit), .ctJuliaPut(raw),
     time = as.numeric(time)[1L], dt = as.numeric(dt)[1L])
   # Optional keywords are passed only when non-empty: JuliaConnectoR hangs
   # marshalling a zero-length vector.
@@ -294,7 +294,7 @@
 # already and only hands back a proxy for what it cannot; `juliaGet` errors on
 # the former, so ask for it only when there is something to fetch.
 .ctBackendJuliaValue <- function(x) {
-  if (inherits(x, "JuliaProxy")) JuliaConnectoR::juliaGet(x) else x
+  if (inherits(x, "JuliaProxy")) .ctJuliaGet(x) else x
 }
 
 # Which matrices carry a latent dimension, and on which side.
@@ -1164,7 +1164,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   # `ctsem_laplace_subject_values`: it is an approximation, and it is documented
   # as one wherever it surfaces.
   raw <- .ctBackendJuliaValue(module$ctsem_laplace_subject_values(objective,
-    JuliaConnectoR::juliaPut(as.matrix(draws)), estimate))
+    .ctJuliaPut(as.matrix(draws)), estimate))
   nsubjects <- length(spec$subject_starts)
   raw <- array(as.numeric(raw), dim = c(nrow(draws), nsubjects,
     length(fit$estimate$raw)))
@@ -1189,12 +1189,12 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   if (is.null(laplace) || !laplace$nrandom) return(NULL)
   module <- .ctJuliaModule(spec$project)
   objective <- .ctJuliaObjective(fit)
-  draws <- JuliaConnectoR::juliaPut(as.matrix(samples))
+  draws <- .ctJuliaPut(as.matrix(samples))
   out <- list()
   for (l in seq_along(laplace$levels)) {
     level <- laplace$levels[[l]]
     if (!level$nrandom) next
-    result <- JuliaConnectoR::juliaGet(module$ctsem_laplace_population(
+    result <- .ctJuliaGet(module$ctsem_laplace_population(
       objective, draws, as.integer(l)))
     parname <- .ctBackendParamLabel(level$param, level$re_index)
     out[[length(out) + 1L]] <- list(
