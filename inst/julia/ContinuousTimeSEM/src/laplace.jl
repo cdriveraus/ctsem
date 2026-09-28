@@ -3160,6 +3160,15 @@ end
 struct _LaplaceSeedInner end
 struct _LaplaceSeedOuter end
 
+"""The two seeds `(eps1, eps2)`, one per tag: `x + d1 * eps1 + d2 * eps2`
+carries the mixed second derivative along `d1` and `d2` as the coefficient of
+`eps1 * eps2`."""
+@inline _laplace_seed_pair() = (
+    ForwardDiff.Dual{_LaplaceSeedOuter}(ForwardDiff.Dual{_LaplaceSeedInner}(0.0, 1.0),
+        ForwardDiff.Dual{_LaplaceSeedInner}(0.0, 0.0)),
+    ForwardDiff.Dual{_LaplaceSeedOuter}(ForwardDiff.Dual{_LaplaceSeedInner}(0.0, 0.0),
+        ForwardDiff.Dual{_LaplaceSeedInner}(1.0, 0.0)))
+
 """
     _laplace_run_members(body, laplace, members)
 
@@ -3262,12 +3271,7 @@ function _laplace_unit_seeded_gradient_(laplace::CTSEMLaplaceObjective, U::Integ
 
     # Two independent nilpotents, one per tag, so the eps1*eps2 coefficient is
     # the mixed derivative directly rather than through a polarisation identity.
-    e1 = ForwardDiff.Dual{_LaplaceSeedOuter}(
-        ForwardDiff.Dual{_LaplaceSeedInner}(0.0, 1.0),
-        ForwardDiff.Dual{_LaplaceSeedInner}(0.0, 0.0))
-    e2 = ForwardDiff.Dual{_LaplaceSeedOuter}(
-        ForwardDiff.Dual{_LaplaceSeedInner}(0.0, 0.0),
-        ForwardDiff.Dual{_LaplaceSeedInner}(1.0, 0.0))
+    e1, e2 = _laplace_seed_pair()
     S = typeof(e1)
     d12 = _laplace_scratch_matrix!(laplace, Float64, npar, nm, :sweep_d12)
     # One member. Writes only column `c` of the three outputs, so members never
@@ -3830,6 +3834,53 @@ function _laplace_level_chol_derivatives(values::AbstractVector{Float64},
     return out
 end
 
+"""Row `p` of `D * u[base .+ (1:r)]`: a level's `dL` (or second derivative)
+against its effects in `u`, which is how one of its effects' shifts moves with
+that population parameter at fixed `u`."""
+@inline function _laplace_dLu(D::AbstractMatrix, p::Integer, u::AbstractVector,
+    base::Integer, r::Integer)
+    inner = 0.0
+    @inbounds for q in 1:r
+        inner += D[p, q] * u[base + q]
+    end
+    return inner
+end
+
+"""
+    _laplace_chol_chain!(out, grad, spec, dL, positions, u, offsets)
+
+Add into `out` the part of a member's gradient in `theta` that reaches the
+population parameters through `L(theta) u` at fixed `u`: for each level and
+each of its parameters (`positions`, `dL` in that order),
+`sum_p grad[re_index[p]] (dL u)_p`, `grad` being the member's gradient in its
+shifted parameters and `offsets` its places in `u`. The one statement of that
+chain rule: at the mode (`_laplace_floored_unit_gradient!`), at a quadrature
+node (`_continuation_member!`) and in the continuation's exact Hessian.
+"""
+function _laplace_chol_chain!(out::AbstractVector, grad::AbstractVector,
+    spec::CTSEMLaplaceSpec, dL, positions, u::AbstractVector, offsets)
+    @inbounds for l in eachindex(spec.levels)
+        level = spec.levels[l]
+        k = nrandomeffects(level)
+        r = nlatent(level)
+        (k == 0 || r == 0) && continue
+        pos = positions[l]
+        isempty(pos) && continue
+        base = offsets[l]
+        for t in eachindex(pos)
+            dLt = dL[l][t]
+            acc = 0.0
+            for pp in 1:k
+                gp = grad[level.re_index[pp]]
+                iszero(gp) && continue
+                acc += gp * _laplace_dLu(dLt, pp, u, base, r)
+            end
+            out[pos[t]] += acc
+        end
+    end
+    return out
+end
+
 
 """
     _laplace_unit_weights(laplace)
@@ -4209,30 +4260,7 @@ function _laplace_floored_unit_gradient!(out::Vector{Float64},
         for t in 1:npar
             out[t] += grad[t]
         end
-        for l in eachindex(spec.levels)
-            level = spec.levels[l]
-            k = nrandomeffects(level)
-            r = nlatent(level)
-            (k == 0 || r == 0) && continue
-            positions = levelpositions[l]
-            isempty(positions) && continue
-            base = offsets[l]
-            dLl = dL[l]
-            for t in eachindex(positions)
-                dLt = dLl[t]
-                acc = 0.0
-                for pp in 1:k
-                    gp = grad[level.re_index[pp]]
-                    iszero(gp) && continue
-                    inner = 0.0
-                    for q in 1:r
-                        inner += dLt[pp, q] * u[base + q]
-                    end
-                    acc += gp * inner
-                end
-                out[positions[t]] += acc
-            end
-        end
+        _laplace_chol_chain!(out, grad, spec, dL, levelpositions, u, offsets)
     end
     return true
 end
