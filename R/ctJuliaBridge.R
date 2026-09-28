@@ -68,6 +68,11 @@
   wire <- .ctJuliaWire()
   if (is.null(wire)) return(.ctJuliaCallFallback(name, ...))
   .ctJuliaCheckSwallowed()
+  # Evaluated before anything is written. An argument is often a Julia call of
+  # its own -- `.ctJuliaVector()` marshals through `.ctJuliaPut()` -- and left
+  # as a promise it ran when the argument list was being written, putting its
+  # request inside this one's. Both ends then waited for each other for good.
+  args <- list(...)
   if (!is.null(.ct_julia_cache$inflight)) {
     # A restore from an `on.exit` running while an interrupt unwinds. Its reply
     # is not needed, and waiting for the interrupted call here would hold up
@@ -75,13 +80,13 @@
     # the owed reply instead -- the order it would have run in anyway.
     if (isTRUE(.defer)) {
       .ct_julia_cache$deferred <- c(.ct_julia_cache$deferred,
-        list(list(name = name, args = list(...))))
+        list(list(name = name, args = args)))
       return(invisible(NULL))
     }
     .ctJuliaSettle(wire)
   }
   .ctJuliaEnsureStarted(wire)
-  result <- .ctJuliaExchange(wire, name, list(...))
+  result <- .ctJuliaExchange(wire, name, args)
   .ctJuliaReleaseRefs(wire)
   result
 }
@@ -138,6 +143,7 @@
 # Writing a request and reading a reply ---------------------------------------
 
 .ctJuliaExchange <- function(wire, name, args) {
+  force(args)
   con <- wire$pkgLocal$con
   failed <- FALSE
   withCallingHandlers(suspendInterrupts({
