@@ -703,7 +703,8 @@ the journey rather than making it safe.
 
 # Under differentiation
 
-The iteration runs on the values alone, and the partials are recovered
+The iteration runs on the values alone -- the observation's included, which
+the reverse pass carries in the caller's type -- and the partials are recovered
 afterwards by `_mode_polish_steps(T)` undamped Newton steps in the caller's
 arithmetic from that mode -- the implicit function theorem, taken the way
 `_laplace_dual_unit_mode` takes it for a unit's inner mode. Iterating in dual
@@ -720,8 +721,8 @@ the caller's arithmetic as it always was.
 @inline function _binary_mode(ηbar::T, s2::T, y::Real, thresholds,
     kind::Int) where {T}
     if T <: ForwardDiff.Dual
-        base, _, converged = _binary_mode_solve(_primal(ηbar), _primal(s2), y,
-            map(_primal, thresholds), kind)
+        base, _, converged = _binary_mode_solve(_primal(ηbar), _primal(s2),
+            _primal(y), map(_primal, thresholds), kind)
         if converged
             precision = inv(s2)
             offset = convert(T, base)
