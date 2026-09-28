@@ -867,19 +867,35 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 
 # Exactly `n` bytes from a socket, or NULL at end of file. A read that returns
 # nothing is end of file when the socket says it is readable, and more still to
-# come when it is not -- given five seconds, since a live process finishes a
-# message it has started, and a stream silent partway through one is out of
-# step whichever it is.
-.ctJuliaReadBytes <- function(connection, n) {
+# come when it is not -- for up to `wait` seconds of silence, after which the
+# stream is taken as out of step and NULL returned too.
+#
+# Five seconds suits the liveness check between calls, where nothing should
+# be arriving at all. It does not suit a read during a call: JuliaConnectoR
+# relays Julia's output from a task pinned to Julia's main thread, writing a
+# message's marker, length and text separately, so a message can stop after
+# its marker for as long as that thread is busy -- loading the engine's package
+# image, say, for longer than five seconds. The bridge waits with `Inf`, and
+# only the end of the stream ends the wait: a Julia that has died closes its
+# socket, which reads as readable and empty.
+.ctJuliaReadBytes <- function(connection, n, wait = 5) {
+  read <- function() tryCatch(suppressWarnings(readBin(connection, "raw", n - length(out))),
+    error = function(e) raw(0))
   out <- raw(0)
   while (length(out) < n) {
-    got <- tryCatch(suppressWarnings(readBin(connection, "raw", n - length(out))),
-      error = function(e) raw(0))
+    got <- read()
     if (!length(got)) {
-      if (!isTRUE(tryCatch(socketSelect(list(connection), timeout = 5),
-        error = function(e) FALSE))) return(NULL)
-      got <- tryCatch(suppressWarnings(readBin(connection, "raw", n - length(out))),
-        error = function(e) raw(0))
+      waited <- 0
+      repeat {
+        step <- min(1, wait - waited)
+        ready <- tryCatch(socketSelect(list(connection), timeout = step),
+          error = function(e) NA)
+        if (is.na(ready)) return(NULL)
+        if (isTRUE(ready)) break
+        waited <- waited + step
+        if (waited >= wait) return(NULL)
+      }
+      got <- read()
       if (!length(got)) return(NULL)
     }
     out <- c(out, got)
@@ -1099,8 +1115,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # which made every published Julia backend timing mostly JuliaConnectoR
   # rather than Julia. This function is called once per objective evaluation,
   # so it sits directly in the optimizer's inner loop.
-  if (length(values) == 1L) return(.ctJuliaPut(list(values)))
-  .ctJuliaPut(values)
+  .ctJuliaPut(if (length(values) == 1L) list(values) else values)
 }
 
 # Replace NA with the sentinel the engine's column API expects. Done here rather
@@ -1120,8 +1135,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     stop("Internal error: an empty vector cannot be marshalled to Julia; ",
       "omit the argument instead.", call. = FALSE)
   }
-  if (length(values) == 1L) return(.ctJuliaPut(list(values)))
-  .ctJuliaPut(values)
+  .ctJuliaPut(if (length(values) == 1L) list(values) else values)
 }
 
 # Raw starting values for the reduced-rank loadings, or NULL when the model has

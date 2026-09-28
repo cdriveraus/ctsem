@@ -281,18 +281,25 @@
 # call after its engine was killed read the first byte of one and hung. A
 # result or a callback is still read by JuliaConnectoR, whose element format is
 # its own; one cut off mid-message remains out of reach, and is far rarer.
+#
+# A pause partway through a message is not an ending, however long: the relay
+# stops after a message's marker whenever Julia's main thread is busy, and a
+# five-second limit on that once declared a session loading the engine dead
+# (`.ctJuliaReadBytes()`). Only the end of the stream is. The wait holds
+# interrupts, as JuliaConnectoR's readers always did, since Escape partway
+# through a message would leave the stream out of step.
 .ctJuliaTakeMessage <- function(wire, type, discard, name) {
   if (identical(type, wire$RESULT)) {
     value <- wire$readElement()
     return(list(kind = "result", value = if (discard) NULL else value))
   }
   if (identical(type, wire$FAIL)) {
-    message <- .ctJuliaReadText(wire$pkgLocal$con)
+    message <- .ctJuliaReadText(wire$pkgLocal$con, wait = Inf)
     if (is.null(message)) .ctJuliaLost(name)
     return(list(kind = "fail", message = message))
   }
   if (identical(type, wire$STDOUT) || identical(type, wire$STDERR)) {
-    output <- .ctJuliaReadOutput(wire$pkgLocal$con)
+    output <- .ctJuliaReadOutput(wire$pkgLocal$con, wait = Inf)
     if (is.null(output)) .ctJuliaLost(name)
     if (!discard) cat(output, file = if (identical(type, wire$STDOUT)) stdout() else stderr())
     return(NULL)
@@ -312,22 +319,24 @@
 }
 
 # A length-prefixed string as JuliaConnectoR frames one -- four bytes of length,
-# then the bytes -- or NULL if the stream ends first (`.ctJuliaReadBytes()`).
-.ctJuliaReadText <- function(connection) {
-  len <- .ctJuliaReadBytes(connection, 4L)
+# then the bytes -- or NULL if the stream ends first, or goes silent for `wait`
+# seconds (`.ctJuliaReadBytes()`).
+.ctJuliaReadText <- function(connection, wait = 5) {
+  len <- .ctJuliaReadBytes(connection, 4L, wait = wait)
   if (is.null(len)) return(NULL)
   n <- readBin(len, "integer", size = 4L)
-  body <- if (n > 0L) .ctJuliaReadBytes(connection, n) else raw(0)
+  body <- if (n > 0L) .ctJuliaReadBytes(connection, n, wait = wait) else raw(0)
   if (is.null(body)) return(NULL)
   text <- tryCatch(rawToChar(body), error = function(e) "")
   Encoding(text) <- "UTF-8"
   text
 }
 
-# The text of one relayed stdout or stderr message, or NULL if the stream ends
-# partway. Escape sequences are stripped, as JuliaConnectoR's readOutput does.
-.ctJuliaReadOutput <- function(connection) {
-  text <- .ctJuliaReadText(connection)
+# The text of one relayed stdout or stderr message, or NULL as for
+# `.ctJuliaReadText()`. Escape sequences are stripped, as JuliaConnectoR's
+# readOutput does.
+.ctJuliaReadOutput <- function(connection, wait = 5) {
+  text <- .ctJuliaReadText(connection, wait = wait)
   if (is.null(text)) return(NULL)
   gsub("\033(?:[@-Z\\\\-_]|\\[[0-?]*[ -/]*[@-~])", "", text)
 }
