@@ -62,6 +62,36 @@ cint_model <- function(names, type) {
   m$pars$indvarying <- m$pars$param %in% "cint"
   m
 }
+# A random drift `-log1p_exp(-raw)`, raw ~ N(1, 1), 40 subjects: the bench's
+# acnonlin data (dev/optimbench/cells.R, ac_data, seed 3) and gated-gaps config
+# A1 (gg_genA, seed 1), copied with their seeds.
+drift_data <- function() {
+  set.seed(3L)
+  drift <- -log1p(exp(-stats::rnorm(40L, 1, 1)))
+  do.call(rbind, lapply(seq_len(40L), function(i) {
+    a <- drift[i]; decay <- exp(a)
+    innovation <- sqrt(0.25 * (exp(2 * a) - 1) / (2 * a))
+    latent <- numeric(8L); latent[1] <- stats::rnorm(1, 0, 1)
+    for (t in seq_len(7L)) latent[t + 1L] <- decay * latent[t] + stats::rnorm(1, 0, innovation)
+    data.frame(id = i, time = seq_len(8L) - 1L, Y1 = latent + stats::rnorm(8L, 0, 0.3))
+  }))
+}
+drift_cint_data <- function(nsub = 40L, ntimes = 6L) {
+  set.seed(1L)
+  baseline <- stats::rnorm(nsub, 2, 2)
+  start <- stats::rnorm(nsub, baseline / 2, 1)
+  raw <- stats::rnorm(nsub, 1 + (baseline - 2) / 2, 1)
+  drift <- -log1p(exp(-raw))
+  do.call(rbind, lapply(seq_len(nsub), function(i) {
+    a <- drift[i]; decay <- exp(a)
+    intercept <- (baseline[i] / a) * (decay - 1)
+    innovation <- sqrt(0.25 * (exp(2 * a) - 1) / (2 * a))
+    latent <- numeric(ntimes); latent[1] <- start[i]
+    for (t in seq_len(ntimes - 1L)) latent[t + 1L] <- decay * latent[t] + intercept +
+      stats::rnorm(1, 0, innovation)
+    data.frame(id = i, time = seq_len(ntimes) - 1L, Y1 = latent + stats::rnorm(ntimes, 0, 0.5))
+  }))
+}
 # One latent, one indicator, a random drift kept negative by its transform:
 # with a fixed zero intercept and initial mean, or a free intercept and the
 # default (random) initial mean.
@@ -101,18 +131,18 @@ shapes <- list(
     data.frame(id = a$id, time = a$time, Y1 = a$eta + stats::rnorm(nrow(a), 0, 0.5),
       Y2 = b$eta + stats::rnorm(nrow(b), 0, 0.5))
   }),
-  # One latent, one indicator, individual differences in the drift.
+  # One latent, one indicator, individual differences in the drift. Here the
+  # data are not small, because a replay covers the paths its own fit took:
+  # a drift weakly informed by each subject's few observations is what sends
+  # the inner solve down the gated floor and the continuation through its
+  # rounds and, where it converges, its Hessian. Fitted on easy data none of
+  # that ran, and it compiled in the first real fit instead -- 61 s of it on
+  # the bench's gA1.
   drift_laplace = list(route = "laplace", model = function() drift_model(0),
-    data = function() {
-      d <- sim_latent(8, 6, drift = -0.4, cints = rep(0, 8))
-      data.frame(id = d$id, time = d$time, Y1 = d$eta + stats::rnorm(nrow(d), 0, 0.3))
-    }),
+    data = drift_data),
   # The same with a free intercept and the default random initial mean.
   drift_cint_laplace = list(route = "laplace", model = function() drift_model("cint"),
-    data = function() {
-      d <- sim_latent(8, 6, drift = -0.4, cints = rep(1, 8))
-      data.frame(id = d$id, time = d$time, Y1 = d$eta + stats::rnorm(nrow(d), 0, 0.5))
-    })
+    data = drift_cint_data)
 )
 only <- Sys.getenv("CTSEM_PRECOMPILE_SHAPES", "")
 if (nzchar(only)) shapes <- shapes[strsplit(only, ",", fixed = TRUE)[[1]]]
@@ -198,6 +228,8 @@ for (name in names(shapes)) {
   cache <- get(".ct_julia_cache", envir = ns)
   cache$objectives <- new.env(parent = emptyenv())
   rec$calls <- list(); rec$proxies <- list(); rec$on <- TRUE
+  # The starting values a user's `inits = NULL` fit draws, from a fixed seed.
+  set.seed(1)
   fit <- tryCatch(suppressWarnings(suppressMessages(ctFit(dat, model,
     backend = "julia", intoverpop = s$route, cores = 1L))),
     finally = rec$on <- FALSE)
