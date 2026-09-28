@@ -369,7 +369,7 @@ ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
 # them (`intoverpop = 'none'`) carries the same `spec$laplace` description, so
 # the structure's presence is not enough; see `.ctBackendIntOverPop`.
 .ctBackendIsLaplace <- function(fit) {
-  if (!inherits(fit, "ctJuliaFit") || !.ctFitIsJulia(fit)) return(FALSE)
+  if (!.ctFitIsJulia(fit)) return(FALSE)
   spec <- .ctBackendSpec(fit)
   !is.null(spec$laplace) && identical(.ctBackendIntOverPop(spec), "laplace")
 }

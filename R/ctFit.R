@@ -334,7 +334,7 @@
 
 ctFitUpdate <- function(oldfit, data=NA, recompile=FALSE,refit=FALSE,...){
 
-  julia <- inherits(oldfit, 'ctJuliaFit')
+  julia <- .ctFitIsJulia(oldfit)
   if(julia && isTRUE(recompile)) stop("recompile applies to the compiled ",
     "program of a stan fit, and a julia fit has none. Drop it.", call.=FALSE)
   # The model as the caller wrote it. Not `.ctFitModelObject()`, which is that

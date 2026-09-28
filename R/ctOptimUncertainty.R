@@ -2299,7 +2299,7 @@ ctFitUncertainty <- function(fit,
   # name rather than left to fail inside `ctOptimComputeUncertainty()`, which
   # has no julia branch at all.
   if(identical(uncertainty, 'sample')) {
-    if(!inherits(fit, 'ctJuliaFit')) {
+    if(!.ctFitIsJulia(fit)) {
       stop("uncertainty='sample' draws by Hamiltonian Monte Carlo through ",
         "the julia sampler; it is not available for a ctStanFit. Refit with ",
         "backend='julia', or sample a stan fit with ctFit(backend='stan', ",

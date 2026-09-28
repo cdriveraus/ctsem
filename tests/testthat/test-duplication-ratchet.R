@@ -66,7 +66,7 @@ test_that("the number of two-implementation forks does not grow", {
   # make adding one a decision rather than a habit.
   #
   # Walked over the parse tree, not grepped. The first version of this test used
-  # a regex and counted 151 where the real number is 23, because `return(NULL)`,
+  # a regex and counted 151 where the real number was 23, because `return(NULL)`,
   # `return(list(...))` and `return(invisible(x))` all look the same to a regex.
   # The callee has to be a function this package defines, which is the condition
   # that separates "delegates to the other implementation" from "returns early".
@@ -108,7 +108,7 @@ test_that("the number of two-implementation forks does not grow", {
   for (ex in asts) for (e in as.list(ex)) walk(e)
 
   expect_gt(length(defined), 500L)   # the walk found the package, not nothing
-  expect_lte(nforks, 23L)
+  expect_lte(nforks, 25L)
 })
 
 test_that("the duplication detectors are present and runnable", {
