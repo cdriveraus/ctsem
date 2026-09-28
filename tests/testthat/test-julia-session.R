@@ -136,6 +136,42 @@ test_that("a fit leaves the engine's chunk ceiling as it found it", {
   expect_equal(ceiling(), 3L)
 })
 
+# OpenBLAS keeps a pool of its own, which LinearAlgebra starts at half the
+# machine's hardware threads whatever Julia's thread count is, so the chunk
+# ceiling alone left a `cores = 1` fit free to run BLAS twelve wide. The engine
+# holds OpenBLAS to the ceiling, and a fit's restore of the ceiling puts it back.
+test_that("a fit at cores = 1 holds OpenBLAS to one thread, and puts it back", {
+  skip_without_julia()
+  state <- function() ctsem:::.ctJuliaGet(ctsem:::.ctJuliaEval(
+    "ContinuousTimeSEM.ctsem_max_chunks()"))
+  original <- state()$max_chunks
+  on.exit(ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_max_chunks!",
+    as.integer(original)), add = TRUE)
+  ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_max_chunks!", 2L)
+  before <- state()$blas_threads
+  skip_if(before < 2L,
+    "OpenBLAS started with one thread here, so holding it to one is not observable")
+
+  set.seed(9)
+  dat <- do.call(rbind, lapply(1:8, function(i)
+    data.frame(id = i, time = 0:4, Y1 = cumsum(stats::rnorm(5)) * .5)))
+  model <- suppressWarnings(suppressMessages(ctModel(type = "ct",
+    manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1))))
+  # Asked from inside the optimiser, through its callback, so what is read is
+  # the count the fit ran under rather than one set and reset around it.
+  during <- integer()
+  fit <- suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
+    cores = 1, optimcontrol = list(estonly = TRUE, callback = function(...) {
+      during <<- c(during, as.integer(ctsem:::.ctJuliaEval(
+        "ContinuousTimeSEM.LinearAlgebra.BLAS.get_num_threads()")))
+      NULL
+    }))))
+  expect_gt(length(during), 0L)
+  expect_true(all(during == 1L), label = paste(during, collapse = " "))
+  expect_equal(state()$max_chunks, 2L)
+  expect_equal(state()$blas_threads, before)
+})
+
 # `cores` is a ceiling, and `ctsem_tune_chunks!` may measure a much smaller
 # chunk count as fastest within it -- rightly, since the subject loop is not
 # monotone in the count. That was silent, so `ctFit(cores = 12)` could run on
@@ -617,15 +653,12 @@ test_that("RStudio gets whole lines, and the option still overrides it", {
   expect_false(.ctProgressOverwrite(1))
 })
 
-# Charles's thread rule (2026-09-28) was superseded (2026-09-28, "That max
-# cores init work supersedes other ideas, keep it"): a session now starts
-# provisioned wide (`parallelly::availableCores()`, `.ctJuliaProvision()` in
-# R/ctJuliaBridge.R) rather than defaulting to two threads, and every call is
-# held to its own `cores` by the engine's chunk ceiling, which `ctJuliaSetup()`
-# itself sets to `getOption("mc.cores", 2)` for a call that sets none -- see
-# CLAUDE.md, "Julia threads: provisioned wide, never more than the call's
-# `cores`". The two tests this file had for the two-thread default are gone
-# with it; the width and the default ceiling are julia-session's own to cover.
+# How wide a session starts, and the ceiling for a call that sets none, are
+# test-julia-interrupt.R's to cover: a session starts at the `cores` of the call
+# that starts it, at least `getOption("mc.cores", 2)`. Starting every session
+# at the machine's width was tried (2026-09-28) and reverted (2026-09-29),
+# because idle Julia threads spin whenever work is spawned -- see "How many
+# threads a session starts with" in R/ctJuliaBridge.R.
 
 # `.ctBackendWithMaxChunks()`/`.ctBackendSetMaxChunks()` is the ceiling every
 # engine call should run under; before this it wrapped the optimiser and the

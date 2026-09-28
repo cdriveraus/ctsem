@@ -438,11 +438,11 @@
 #'   \code{cores} cannot exceed this count: Julia fixes it at process start, so
 #'   setting it here takes effect only if no Julia session is running yet --
 #'   pass \code{force = TRUE} to restart one. \code{NULL}, the default, starts
-#'   a session with as many threads as this R process may use
-#'   (\code{parallelly::availableCores()}) unless \code{JULIA_NUM_THREADS} is
-#'   set, and each fit uses only its \code{cores} of them. A number given here
-#'   is also the ceiling for any call that sets none. A fit that asks for more
-#'   cores than the session has threads says so; see \code{\link{ctFit}}.
+#'   a session at \code{getOption("mc.cores", 2)} threads unless
+#'   \code{JULIA_NUM_THREADS} is set; a session started by a fit is instead as
+#'   wide as that fit's \code{cores}, if more. A number given here is also the
+#'   ceiling for any call that sets none. A fit that asks for more cores than
+#'   the session has threads says so; see \code{\link{ctFit}}.
 #' @param force Reconfigure an existing Julia session.
 #' @param agree \code{TRUE} to consent to instantiating the engine's Julia
 #'   package dependencies without being asked, \code{FALSE} to refuse.
@@ -593,11 +593,13 @@ ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
     try(.ctJuliaCall("ContinuousTimeSEM.ctsem_set_interrupt!",
       .ct_julia_cache$interrupt_file, Sys.getpid()), silent = TRUE)
   }
-  # The subject-chunk ceiling for a call that sets none. Every fit sets its own
-  # `cores`; without this, a session provisioned at the machine's width would
-  # make an uncapped call -- ctKalman(), ctJuliaEvaluate() -- that wide too.
-  # `threads` when asked for, and otherwise what `cores` defaults to.
-  cap <- if (!is.null(threads)) threads else getOption("mc.cores", 2L)
+  # The subject-chunk ceiling for a call that sets none, which holds OpenBLAS
+  # too. Every fit sets its own `cores`; without this, a session started for a
+  # `cores = 8` fit would make an uncapped call -- ctKalman(),
+  # ctJuliaEvaluate() -- that wide too, and OpenBLAS would keep the half of the
+  # machine LinearAlgebra gives it, in every worker process as well. `threads`
+  # when asked for, and otherwise what `cores` defaults to.
+  cap <- if (!is.null(threads)) threads else .ctJuliaDefaultCores()
   cap <- suppressWarnings(as.integer(cap)[1L])
   if (!is.na(cap) && cap >= 1L) {
     try(.ctJuliaCall("ContinuousTimeSEM.ctsem_set_max_chunks!", cap), silent = TRUE)
@@ -3836,7 +3838,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       error = function(e) NA_integer_))
   }
   existing <- Sys.getenv("JULIA_NUM_THREADS", unset = "")
-  if (!nzchar(existing)) return(.ctJuliaWidth())
+  if (!nzchar(existing)) return(.ctJuliaDefaultCores())
   suppressWarnings(as.integer(sub(",.*$", "", existing))[1L])
 }
 
@@ -3861,22 +3863,21 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 # only an unstarted session can grant. Three situations:
 #
 #   * No session yet and the thread count is ours to set -- provision it
-#     (`.ctJuliaProvision()`), at least `cores` wide.
+#     (`.ctJuliaProvision()`) at this call's `cores`.
 #   * No session yet but JULIA_NUM_THREADS was set deliberately, by
 #     ctJuliaSetup(threads=), by the user, or by a cluster scheduler -- that
 #     wins, and it may be narrower than `cores`.
 #   * A session is already running -- its count is fixed and cannot be raised.
 #
-# The third used to be the common one: a session started for a two-core fit, or
-# by a harness calling `ctJuliaSetup()` up front, ran every later `cores = n`
-# fit at its own width. Provisioning every session at the width this process
-# may use makes it rare -- it now takes a deliberately narrow session, or a
-# `cores` beyond the machine -- and when it happens it is said.
+# The third is the common one: a session is started as wide as the call that
+# started it and no wider, because idle threads cost CPU (see "How many threads
+# a session starts with" in R/ctJuliaBridge.R), so a later call asking for more
+# finds it short, and it is said.
 #
 # `options(ctsem.julia.restart = TRUE)` opts in to fixing it rather than saying
 # it. Not the default: a restart discards the session's compiled model shapes
 # -- ~5 s to restart, plus ~15 s of respecialisation on the next fit, on a
-# one-latent model -- and a narrow session is now one somebody chose.
+# one-latent model, and minutes on a Laplace model with ordinal indicators.
 #
 # `threads` is a parameter so the gate can be exercised at a count the test
 # machine does not have to be restarted into. `report = FALSE` is `fit = FALSE`:
@@ -3916,7 +3917,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     got <- tryCatch({
       suppressWarnings(ctJuliaSetup(project = project, threads = cores,
         force = TRUE))
+      # ctsem's choice rather than the caller's, so taken back as a provisioned
+      # width is: the next session is sized by the call that starts it.
       .ct_julia_cache$threads_from_cores <- as.character(cores)
+      .ctJuliaUnprovision()
       .ctBackendSessionThreads()
     }, error = function(e) NA_integer_)
     if (!is.na(got)) {

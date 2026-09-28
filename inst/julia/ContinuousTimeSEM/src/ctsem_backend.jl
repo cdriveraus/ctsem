@@ -305,6 +305,16 @@ ctsem_objective(params::EKFParameters, subject_starts, timesteps, data,
 """Cap on the number of chunks; 0 means "use `Threads.nthreads()`"."""
 const _CTSEM_MAX_CHUNKS = Ref(0)
 
+"""
+OpenBLAS's thread count when the session started, which LinearAlgebra sets to
+half the machine's hardware threads whatever `Threads.nthreads()` is. Read in
+`__init__`; 0 until then.
+"""
+const _CTSEM_BLAS_START = Ref(0)
+
+_ctsem_blas_start() = _CTSEM_BLAS_START[] > 0 ? _CTSEM_BLAS_START[] :
+    LinearAlgebra.BLAS.get_num_threads()
+
 export ctsem_set_max_chunks!, ctsem_max_chunks
 """
     ctsem_set_max_chunks!(n)
@@ -313,15 +323,27 @@ Limit how many chunks the subject loop is split into. `0` (the default) means
 use `Threads.nthreads()`, i.e. whatever the Julia process was started with.
 Setting `1` forces the serial path, which is what the threading tests compare
 against; the process-level thread count cannot be changed after startup.
+
+OpenBLAS is held to the same ceiling, never above the count it started with,
+and put back to that count by `0`. Its pool is separate from Julia's threads
+and was 12 wide on a 24-thread machine at every `cores`, so a `cores = 1` call
+could still run BLAS on twelve. The subject loop does not call BLAS, but the
+Hessians and population-level algebra around it do, and so does every worker
+process that runs a restart or a chain. The chunk tuner writes the ceiling
+directly and leaves this alone: BLAS follows what `cores` allows, not the chunk
+count the tuner found fastest for the subject loop.
 """
 function ctsem_set_max_chunks!(n::Integer)
     n >= 0 || throw(ArgumentError("max chunks must be non-negative"))
     _CTSEM_MAX_CHUNKS[] = Int(n)
+    start = _ctsem_blas_start()
+    LinearAlgebra.BLAS.set_num_threads(n == 0 ? start : min(Int(n), start))
     return Int(n)
 end
 
-"""Current chunk cap, and the thread count it is resolved against."""
-ctsem_max_chunks() = (max_chunks=_CTSEM_MAX_CHUNKS[], nthreads=Threads.nthreads())
+"""Current chunk cap, the thread count it is resolved against, and OpenBLAS's."""
+ctsem_max_chunks() = (max_chunks=_CTSEM_MAX_CHUNKS[], nthreads=Threads.nthreads(),
+    blas_threads=LinearAlgebra.BLAS.get_num_threads())
 
 @inline function _ctsem_nchunks(nsubjects::Int)
     requested = _CTSEM_MAX_CHUNKS[]

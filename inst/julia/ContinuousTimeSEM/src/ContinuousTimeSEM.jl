@@ -117,9 +117,12 @@ include("precompile_workload.jl")
 # The operation counters in opcounts.jl increment during the precompile
 # workload, and a `Ref` inside a `const` keeps whatever value it had when the
 # package image was written. Zero them so a session starts counting from its
-# own first evaluation, not from the workload's.
+# own first evaluation, not from the workload's. The OpenBLAS count is read
+# here for the same reason: it belongs to this session, not to the process that
+# wrote the image, and LinearAlgebra's own `__init__` has set it by now.
 function __init__()
     ctsem_reset_opcounts!()
+    _CTSEM_BLAS_START[] = LinearAlgebra.BLAS.get_num_threads()
     return nothing
 end
 

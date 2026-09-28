@@ -29,11 +29,11 @@ The engine splits its subject loop across them, and \code{ctFit}'s
 \code{cores} cannot exceed this count: Julia fixes it at process start, so
 setting it here takes effect only if no Julia session is running yet --
 pass \code{force = TRUE} to restart one. \code{NULL}, the default, starts
-a session with as many threads as this R process may use
-(\code{parallelly::availableCores()}) unless \code{JULIA_NUM_THREADS} is
-set, and each fit uses only its \code{cores} of them. A number given here
-is also the ceiling for any call that sets none. A fit that asks for more
-cores than the session has threads says so; see \code{\link{ctFit}}.}
+a session at \code{getOption("mc.cores", 2)} threads unless
+\code{JULIA_NUM_THREADS} is set; a session started by a fit is instead as
+wide as that fit's \code{cores}, if more. A number given here is also the
+ceiling for any call that sets none. A fit that asks for more cores than
+the session has threads says so; see \code{\link{ctFit}}.}
 
 \item{force}{Reconfigure an existing Julia session.}
 
