@@ -150,7 +150,8 @@ function ctsem_laplace_effect_draws(laplace::CTSEMLaplaceObjective,
     # rows are exactly the ones the filter reports.
     llrow = Matrix{Float64}(undef, 0, 0)
     for s in 1:ndraws
-        persubject = ctsem_laplace_subject_values(laplace, theta, view(effects, :, s))
+        persubject = _laplace_filter_values(laplace, theta;
+            effects=view(effects, :, s))
         trace = ctsem_kalman(laplace.objective, persubject; subject_matrices=false,
             fields=["llrow"])
         s == 1 && (llrow = fill(NaN, length(trace.llrow), ndraws))
