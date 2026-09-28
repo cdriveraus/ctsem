@@ -341,11 +341,18 @@ test_that("ctsem_hessian_progress reports the same way, for the caller with no f
   expect_true(any(grepl(paste0("of ", 2L * npar, " gradients"), seen)))
 
   # Reporting is a side channel, not a second computation: the same call with
-  # no reporter at all gives the identical matrix.
+  # no reporter at all gives the same matrix. `expect_equal()`, not
+  # `expect_identical()`: this call is not pinned to one chunk, and two
+  # separate invocations summing per-unit contributions over however many
+  # threads the session has can differ in the last bit or two from
+  # floating-point addition's own non-associativity -- observed here as
+  # "equal but not identical", on this direct call, which sets no thread or
+  # cores ceiling of its own. A real second computation would move far more
+  # than that.
   bare <- matrix(as.numeric(ctsem:::.ctBackendJuliaValue(
     module$ctsem_hessian_progress(objective, ctsem:::.ctJuliaNumericVector(est)))),
     npar, npar)
-  expect_identical(hessian, bare)
+  expect_equal(hessian, bare, tolerance = 1e-10)
 
   # And `.ctBackendHessian()` reaches this same function and the same numbers.
   # `estonly = TRUE` leaves the fit with no stored Hessian at all
