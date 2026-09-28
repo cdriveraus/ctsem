@@ -198,11 +198,15 @@ test_that("ctJuliaSetup declines to instantiate the engine's Julia dependencies 
   skip_if(interactive())
   withr::local_envvar(CTSEM_JULIA_AGREE = "no")
 
+  # Worded as Julia words a missing package, because only that failure reaches
+  # the gate: any other is an engine that is broken, which installing cannot
+  # fix, and ctJuliaSetup() says so instead of asking.
   real_juliaEval <- JuliaConnectoR::juliaEval
   testthat::local_mocked_bindings(
     juliaEval = function(code, ...) {
       if (identical(code, "using ContinuousTimeSEM")) {
-        stop("simulated: engine not yet instantiated")
+        stop("simulated: ArgumentError: Package ContinuousTimeSEM not found in ",
+          "current path.")
       }
       real_juliaEval(code, ...)
     },
