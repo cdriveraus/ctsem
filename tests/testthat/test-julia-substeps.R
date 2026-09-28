@@ -139,12 +139,12 @@ test_that("the Laplace mesh is measured with each subject at its random-effect m
   spec <- fit$model_spec
   est <- fit$estimate$raw[seq_len(ctsem:::.ctBackendNpar(spec))]
   # Each subject's raw vector at its modes: the population vector shifted by
-  # its effects, as the Laplace term filters it. With no TI predictors that is
-  # the same vector before their effects and after.
+  # its effects, as the Laplace term filters it -- before TI-predictor effects,
+  # which the plain filter below adds itself.
   module <- ctsem:::.ctJuliaModule(spec$project)
   persubject <- as.matrix(ctsem:::.ctBackendJuliaValue(
     module$ctsem_laplace_subject_values(ctsem:::.ctJuliaObjective(fit),
-      ctsem:::.ctJuliaNumericVector(est))))
+      ctsem:::.ctJuliaNumericVector(est), ti_effects = FALSE)))
   # Without its Laplace layer the specification is the plain filter, which
   # takes one vector for every subject: measure each subject at its own.
   plain <- spec

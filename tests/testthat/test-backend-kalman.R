@@ -655,3 +655,158 @@ test_that('the integration method is read from the fit rather than guessed', {
     expect_equal(levels[[1L]]$nunits, 8L, label = nm)
   }
 })
+
+# TI-predictor effects on the Laplace route -----------------------------------
+#
+# A Laplace subject is filtered at the population vector shifted by its random
+# effects, and the filter adds the subject's TI-predictor effects on top. A
+# filter handed a vector that already carries them applies them twice, and
+# nothing fails: the likelihood and the estimates do not come through these
+# consumers. Comparing the consumers with one another cannot see that when
+# they share the helper that builds the vector, so each is checked here
+# against values derived in R from the raw vector alone -- the TI effects added
+# by hand, the random-effect mode in closed form (with the effect on a manifest
+# mean the model is linear Gaussian in it), and the likelihood as a
+# multivariate normal.
+
+.kalman_ti_model <- function() {
+  model <- suppressMessages(ctModel(type = "ct", manifestNames = "Y1",
+    latentNames = "eta1", LAMBDA = matrix(1), DRIFT = matrix("drift"),
+    DIFFUSION = matrix("diffusion"), MANIFESTVAR = matrix(.3),
+    MANIFESTMEANS = matrix("mm"), T0VAR = matrix(1), T0MEANS = matrix(0),
+    CINT = matrix(0), TIpredNames = "TI1"))
+  model$pars$indvarying <- model$pars$param %in% "mm"
+  model
+}
+
+.kalman_ti_data <- function() {
+  set.seed(11)
+  ti <- seq(-1, 1, length.out = 10)
+  do.call(rbind, lapply(seq_along(ti), function(i) data.frame(id = i,
+    time = cumsum(c(0, stats::runif(5, .5, 1.5))),
+    Y1 = stats::rnorm(6, 2 * ti[i], .7), TI1 = ti[i])))
+}
+
+# Subject `i`'s manifest mean and log likelihood at standardised random effect
+# `u`, or at its mode when `u` is NULL. The engine supplies only population
+# quantities: the transforms, at a raw vector shifted here, and the effect's sd.
+.kalman_ti_reference <- function(fit, data, i, u = NULL) {
+  spec <- ctsem:::.ctBackendSpec(fit)
+  raw <- fit$estimate$raw
+  rows <- data$id == i
+  y <- data$Y1[rows]
+  time <- data$time[rows]
+  ti <- spec$ti_effects
+  own <- raw
+  own[ti$parameter] <- own[ti$parameter] + raw[ti$coefficient] * data$TI1[rows][1]
+  matrices <- function(v) suppressMessages(ctBackendParMatrices(fit, raw = v))
+  at <- matrices(own)
+  module <- ctsem:::.ctJuliaModule(spec$project)
+  sd <- sqrt(as.numeric(ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_popcov(
+    ctsem:::.ctJuliaObjective(fit), ctsem:::.ctJuliaNumericVector(raw), 1L))))
+  shifted <- own
+  index <- spec$laplace$levels[[1L]]$re_index
+  shifted[index] <- shifted[index] + sd
+  slope <- as.numeric(matrices(shifted)$MANIFESTMEANS - at$MANIFESTMEANS)
+
+  # The latent covariance at the observation times, for a one-state process
+  # starting at zero with no intercept.
+  a <- at$DRIFT[1, 1]
+  n <- length(time)
+  v <- at$T0cov[1, 1]
+  for (k in seq_len(n)[-1L]) {
+    growth <- exp(2 * a * (time[k] - time[k - 1L]))
+    v[k] <- growth * v[k - 1L] + at$DIFFUSIONcov[1, 1] * (growth - 1) / (2 * a)
+  }
+  latent <- outer(seq_len(n), seq_len(n), function(j, k)
+    exp(a * abs(time[k] - time[j])) * v[pmin(j, k)])
+  V <- at$LAMBDA[1, 1]^2 * latent + diag(at$MANIFESTcov[1, 1], n)
+  Vinv <- solve(V)
+  base <- as.numeric(at$MANIFESTMEANS)
+  if (is.null(u)) u <- slope * sum(Vinv %*% (y - base)) / (1 + slope^2 * sum(Vinv))
+  mean <- base + slope * u
+  residual <- y - mean
+  list(mean = mean, loglik = -0.5 * (n * log(2 * pi) +
+    as.numeric(determinant(V)$modulus) + sum(residual * (Vinv %*% residual))))
+}
+
+test_that("each Laplace filter consumer applies a subject's TI effects once", {
+  skip_without_julia()
+  data <- .kalman_ti_data()
+  spec <- suppressMessages(ctFit(data, .kalman_ti_model(), backend = "julia",
+    intoverpop = "laplace", fit = FALSE))
+  # Drift, diffusion and the mean all carry a TI1 effect, so a subject filtered
+  # at twice its effects is wrong in the dynamics as well as in the level.
+  expect_length(spec$ti_effects$parameter, 3L)
+  raw <- c(.3, -1, .1, .2, .2, -.2, .15)
+  expect_equal(ctsem:::.ctBackendNpar(spec), length(raw))
+  fit <- .kalman_pointfit(spec, spec$model, raw)
+  ids <- sort(unique(data$id))
+  atmode <- lapply(ids, function(i) .kalman_ti_reference(fit, data, i))
+  population <- lapply(ids, function(i) .kalman_ti_reference(fit, data, i, u = 0))
+  firstmean <- function(ref) vapply(ref, function(x) x$mean, numeric(1))
+  loglik <- function(ref) vapply(ref, function(x) x$loglik, numeric(1))
+
+  # The first-row prior mean and each subject's summed log likelihood. On the
+  # fit's own rows ctKalmanArray solves the modes in the engine. ctKalman
+  # rebuilds the rows it filters, even at timestep = 'asdata', and takes the
+  # modes from the fitted specification instead, which is the path every
+  # prediction takes.
+  fromarray <- function(...) {
+    k <- suppressMessages(ctKalmanArray(fit, ...))
+    list(first = as.numeric(k$yprior[1L, !duplicated(k$id), 1L]),
+      loglik = as.numeric(tapply(k$llrow[1L, ], k$id, sum)))
+  }
+  kalman <- function(...) {
+    k <- suppressMessages(ctKalman(fit, subjects = ids, ...))
+    prior <- k[k$Element == "yprior", ]
+    prior <- prior[order(prior$Subject, prior$Time), ]
+    rows <- k$Element == "llrow"
+    list(first = prior$value[!duplicated(prior$Subject)],
+      loglik = as.numeric(tapply(k$value[rows], k$Subject[rows], sum,
+        na.rm = TRUE)))
+  }
+  for (result in list(fromarray(), kalman(timestep = "asdata"),
+    kalman(timestep = 0.25))) {
+    expect_equal(result$first, firstmean(atmode), tolerance = 1e-6)
+    expect_equal(result$loglik, loglik(atmode), tolerance = 1e-6)
+  }
+  for (result in list(fromarray(randomEffects = "population"),
+    kalman(timestep = "asdata", randomEffects = "population"))) {
+    expect_equal(result$first, firstmean(population), tolerance = 1e-8)
+    expect_equal(result$loglik, loglik(population), tolerance = 1e-8)
+  }
+
+  # Generation with every deviate zero: the state starts at zero and stays
+  # there, so every generated row is the subject's manifest mean. At the modes,
+  # and at a given draw of the effects, on both generators.
+  rowsubject <- ctsem:::.ctFitRowSubject(fit)
+  zeros <- matrix(0, 1L, nrow(data))
+  nz <- ctsem:::.ctBackendStateDimension(fit)
+  bysubject <- function(Y) as.numeric(tapply(as.numeric(Y), rowsubject, mean))
+  spread <- function(Y) max(tapply(as.numeric(Y), rowsubject,
+    function(x) diff(range(x))))
+  filtered <- ctsem:::.ctBackendGenerate(fit, raw, zeros)$Y
+  expect_equal(bysubject(filtered), firstmean(atmode), tolerance = 1e-6)
+  expect_lt(spread(filtered), 1e-8)
+  states <- ctsem:::.ctBackendGenerateStates(fit, raw, numeric(nz), zeros)$Y
+  expect_equal(bysubject(states), firstmean(atmode), tolerance = 1e-6)
+  expect_lt(spread(states), 1e-8)
+  # One effect per unit, in unit order, which is the sampler's layout.
+  units <- ctsem:::.ctFitRandomEffectLevels(fit)[[1L]]$units
+  effects <- seq(-1.5, 1.2, length.out = max(units))
+  given <- vapply(ids, function(i) .kalman_ti_reference(fit, data, i,
+    u = effects[units[i]])$mean, numeric(1))
+  expect_equal(bysubject(ctsem:::.ctBackendGenerate(fit, raw, zeros,
+    effects = effects)$Y), given, tolerance = 1e-8)
+  expect_equal(bysubject(ctsem:::.ctBackendGenerateStates(fit, raw, numeric(nz),
+    zeros, effects = effects)$Y), given, tolerance = 1e-8)
+
+  # The effect draws behind leave-one-row-out, concentrated at the modes.
+  module <- ctsem:::.ctJuliaModule(spec$project)
+  draws <- ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_effect_draws(
+    ctsem:::.ctJuliaObjective(fit), ctsem:::.ctJuliaNumericVector(raw), 1L,
+    seed = 1L, scale = 1e-9))
+  expect_equal(as.numeric(tapply(as.numeric(draws$llrow), rowsubject, sum)),
+    loglik(atmode), tolerance = 1e-6)
+})

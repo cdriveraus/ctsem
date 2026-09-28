@@ -105,13 +105,14 @@
     # Modes from the fit, not from whatever rows this call happens to filter
     # over. `.ctBackendKalmanSpec` attaches the fitted specification when it
     # rebuilds; without one, this specification *is* the fit's and there is
-    # nothing to carry.
+    # nothing to carry. Before TI-predictor effects: the filter adds those
+    # itself, so vectors that carried them would have them twice.
     source <- attr(fit, "laplaceSource")
     if (!is.null(source)) {
       subjects <- attr(fit, "laplaceSubjects")
       fitted <- .ctBackendJuliaValue(module$ctsem_laplace_subject_values(
         .ctJuliaObjective(source), .ctJuliaNumericVector(raw),
-        from_level = as.integer(from)))
+        from_level = as.integer(from), ti_effects = FALSE))
       arguments$subject_values <- JuliaConnectoR::juliaPut(
         fitted[subjects, , drop = FALSE])
     }
@@ -523,16 +524,17 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
   # to the effect draws they were supposed to come from -- mean |correlation|
   # 0.123 against a shuffled null of 0.087 -- while tracking the *mean* effect
   # across subjects at 0.965, which is the signature of modes.
-  seed <- sample.int(.Machine$integer.max, 1L)
+  #
+  # The draw goes to the engine as it is, as it does for
+  # `.ctBackendGenerateStates()`, and each subject's vector is built there, so
+  # this side never has to know which form of that vector a filter takes. A
+  # vector with its TI-predictor effects already in it has them added twice.
+  arguments <- list(objective, raw, JuliaConnectoR::juliaPut(base),
+    seed = sample.int(.Machine$integer.max, 1L))
   if (!is.null(effects)) {
-    persubject <- .ctBackendJuliaValue(module$ctsem_laplace_subject_values(
-      objective, raw, .ctJuliaNumericVector(as.numeric(effects))))
-    return(.ctBackendJuliaValue(module$ctsem_generate(objective, raw,
-      JuliaConnectoR::juliaPut(base), seed = seed,
-      subject_values = JuliaConnectoR::juliaPut(persubject))))
+    arguments$effects <- .ctJuliaNumericVector(as.numeric(effects))
   }
-  .ctBackendJuliaValue(module$ctsem_generate(objective, raw,
-    JuliaConnectoR::juliaPut(base), seed = seed))
+  .ctBackendJuliaValue(do.call(module$ctsem_generate, arguments))
 }
 
 

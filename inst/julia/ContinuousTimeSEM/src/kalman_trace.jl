@@ -563,8 +563,10 @@ each subject's own model matrices.
 `values` is one raw parameter vector, used for every subject -- or a matrix
 whose row `i` is subject `i`'s own. The second form is what a Laplace fit needs,
 where each subject is filtered at its own realized parameters rather than at a
-shared population vector. The returned named tuple carries `eta`,
-`etacov`, `y`, `ycov` with leading dimension 1 = prior, 2 = updated, 3 =
+shared population vector. Either way a row is before TI-predictor effects,
+which the filter adds from each subject's predictors, as it does in a fit; a
+row that already carries them has them twice. The returned named tuple carries
+`eta`, `etacov`, `y`, `ycov` with leading dimension 1 = prior, 2 = updated, 3 =
 smoothed; `llrow`; `subject`; `subject_loglik`; `transition` (the interval
 Jacobian that reached each row, `nrows` by `n` by `n`); and, unless
 `subject_matrices=false`, a `size`-by-`nsubjects` matrix packed in the layout
