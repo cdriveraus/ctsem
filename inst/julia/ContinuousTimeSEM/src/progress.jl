@@ -424,6 +424,27 @@ function _progress_optimise(p::CTSEMProgress, done::Integer, cap::Integer,
 end
 
 """
+    _progress_fraction(p, text)
+
+A short update for a bounded sub-task inside a larger stage -- forming a
+Hessian, screening quadrature units -- through the same line and sink as
+everything else.
+
+Unlike `_progress_optimise`, whose `cap` is a safety limit the run may never
+approach, the fraction behind `text` here is one the sub-task always reaches:
+so the caller writes it out in full (`"14 of 54 gradients"`) rather than this
+function withholding a denominator the way `_progress_optimise` does. The
+label and the elapsed time are added so the line reads as a continuation of
+the stage's own report rather than something new -- the reason a caller
+passes its `CTSEMProgress` here rather than printing on its own.
+"""
+function _progress_fraction(p::CTSEMProgress, text::AbstractString)
+    p.lines += 1
+    _emit(p, @sprintf("  %s %s | %8s", p.label, text, _duration(_elapsed(p))))
+    return nothing
+end
+
+"""
     _progress_break(p)
 
 End the current in-place line so something else can print on its own.

@@ -918,7 +918,7 @@
 # takes no step. Through the chunk wrapper like every engine run, with the
 # ceiling left as it is, so an instrument that counts engine runs counts this.
 #' @keywords internal
-.ctBackendEndgameAt <- function(spec, est, gradient = "adjoint") {
+.ctBackendEndgameAt <- function(spec, est, gradient = "adjoint", verbose = 0) {
   spec <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
   module <- .ctJuliaModule(spec$project)
   available <- isTRUE(tryCatch(is.function(module$ctsem_endgame),
@@ -926,9 +926,19 @@
   if (!available) return(NULL)
   est <- as.numeric(est)
   npar <- length(est)
+  # A certification that forms its own Hessian is exactly the case a finish
+  # never ran for -- the optimiser stopped on its iteration cap or a stall --
+  # and on the Laplace route that Hessian is `2 * npar` gradients, the same
+  # slow loop as the finish's own (see `ctsem_laplace_hessian`). Reported
+  # through the same line and sink as everything else, at the same default
+  # verbosity, so it does not go quiet exactly where the finish's fix does not
+  # reach: this path bypasses the finish entirely.
+  reporting <- .ctBackendReporting(verbose)
   out <- try(.ctBackendWithMaxChunks(NA_integer_, JuliaConnectoR::juliaGet(
     module$ctsem_endgame(.ctJuliaObjective(spec), .ctJuliaNumericVector(est),
-      gradient_method = gradient, flat_rtol = .ctFlatDirectionRtol()))),
+      gradient_method = gradient, flat_rtol = .ctFlatDirectionRtol(),
+      progress = reporting, progress_overwrite = .ctProgressOverwrite(verbose),
+      progress_sink = .ctBackendProgressSink(verbose), progress_label = "certify"))),
     silent = TRUE)
   if (inherits(out, "try-error")) return(NULL)
   hessian <- out$hessian
@@ -1014,7 +1024,7 @@
     est <- as.numeric(result$minimizer)[seq_len(npar)]
     endgame <- .ctBackendEndgameOf(result, npar)
     if (is.null(endgame)) {
-      endgame <- .ctBackendEndgameAt(spec, est, gradient = gradient)
+      endgame <- .ctBackendEndgameAt(spec, est, gradient = gradient, verbose = verbose)
       if (!is.null(endgame)) hessians <- hessians + endgame$hessians
     }
     if (is.null(endgame)) break

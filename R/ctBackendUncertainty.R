@@ -690,8 +690,28 @@
   # against 0.78 s for the 2*npar gradient evaluations a finite difference
   # needs -- but an unexplained ten-second pause is worth a line of output.
   message("Computing exact Hessian")
+  # On the Laplace route -- `hessian_fn_name` is always "ctsem_hessian" there
+  # -- this is `ctsem_laplace_hessian`'s own `2 * npar` gradient loop, the same
+  # slow one the optimiser's finish reports through `hessian_progress`. This
+  # call reaches it from outside any fit's optimisation at all (a bare
+  # `ctFitUncertainty()`, or the certification's own re-derivation), so it gets
+  # its own sink here rather than borrowing one that only exists inside a
+  # running `ctsem_optimize()`. Rate-limited on this side: the callback arrives
+  # once per column with nothing throttling it in Julia, and a model with many
+  # parameters must not turn into a hundred printed lines.
+  sink <- .ctBackendRateLimited(.ctBackendProgressSink(verbose),
+    .ctProgressOverwrite(verbose))
+  progress <- if (is.null(sink)) NULL else function(done, total) {
+    sink(sprintf("hessian %d of %d gradients", as.integer(done),
+      as.integer(total)), "update")
+  }
   result <- try(.ctBackendJuliaValue(module[[hessian_fn_name]](
-    .ctJuliaObjective(fit), .ctJuliaVector(as.numeric(est)))), silent = TRUE)
+    .ctJuliaObjective(fit), .ctJuliaVector(as.numeric(est)),
+    progress = progress)), silent = TRUE)
+  # Ends the in-place line, if the loop ran long enough for one to be open,
+  # before anything else -- a warning below, or nothing at all -- prints on
+  # its own line right after it.
+  if (!is.null(sink)) sink("", "break")
   if (inherits(result, "try-error")) {
     warning("The engine could not differentiate its gradient here; ",
       "falling back to the finite-difference Hessian.", call. = FALSE)

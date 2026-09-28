@@ -765,8 +765,14 @@ print.ctLaplaceCorrection <- function(x, ...) {
 # when one is kept. `residual` is half the squared whitened gradient with the
 # nodes placed at the point: the Newton gain it predicts, zero at the answer.
 .ctLaplaceContinueRun <- function(module, cont, est, basis, tol,
-  control = .ctLaplaceContinueDefaults, verbose = 0L, skip_gain = 0) {
+  control = .ctLaplaceContinueDefaults, verbose = 0L, skip_gain = 0,
+  sink = NULL) {
   get <- JuliaConnectoR::juliaGet
+  # `.ctLaplaceContinue()` passes its own sink, so the rounds continue the
+  # same in-place line the screen started. `ctLaplaceCheck(refine = TRUE)`
+  # passes none, so one is built here -- both report at the same default
+  # verbosity rather than only when `verbose > 0`.
+  if (is.null(sink)) sink <- .ctBackendProgressSink(verbose)
   x <- as.numeric(est)
   # Every stopping decision is a predicted gain in nats against one bar:
   # `stop_gain`, or the fit's certification tolerance where `stop_gain` is 0,
@@ -861,10 +867,16 @@ print.ctLaplaceCorrection <- function(x, ...) {
       ((after < residual && gain >= -as.numeric(control$value_tol)) ||
         (stop_gain > 0 && gain > stop_gain))
     rows[[length(rows) + 1L]] <- row(round, after, keep, placed$nflagged, gain)
-    if (verbose > 0L) {
-      message(sprintf(paste0("Laplace continuation round %d: radius %.3g, ",
+    # At the same default verbosity as the rest of the correction: a round can
+    # run for minutes (Charles's ordinal fixture, 2026-09-28), and this used to
+    # print only at verbose > 0, so a default fit's screen showed nothing for
+    # the whole of it. Kept as one detailed line rather than split into a
+    # separate terse default and a separate detailed verbose>0 one -- it is
+    # already a phrase, not a paragraph.
+    if (!is.null(sink)) {
+      sink(sprintf(paste0("Laplace continuation round %d: radius %.3g, ",
         "residual %.3g -> %.3g, value %+.4g, %s"), attempts, radius, residual,
-        after, gain, if (keep) "kept" else "rejected"))
+        after, gain, if (keep) "kept" else "rejected"), "update")
     }
     realised <- if (keep) gain else 0
     if (keep) {
@@ -933,7 +945,22 @@ print.ctLaplaceCorrection <- function(x, ...) {
   nsubjects <- length(fit$model_spec$subject_starts)
   module <- .ctJuliaModule(fit$model_spec$project)
   get <- JuliaConnectoR::juliaGet
+  # The whole correction's progress line: the screen, each round and the final
+  # Hessian all report through this one sink, at the same default verbosity as
+  # the optimiser's own line, rather than only when `verbose > 0` -- which is
+  # how a 22-minute correction (screen plus one round 4.8 min, then the
+  # Hessian 18.8 min) printed nothing at all by default. One sink for the
+  # whole function, not one per phase, so a shorter later phrase does not
+  # leave the tail of a longer earlier one behind it when a line is
+  # overwritten in place.
+  sink <- .ctBackendProgressSink(verbose)
+  # Unconditional and registered before any early return below: whatever the
+  # last thing printed through `sink` was, this closes it so a warning or the
+  # ordinary R prompt does not land on the same line. Safe to call with
+  # nothing open -- `.ctProgressSink()`'s "break" is then a no-op.
+  if (!is.null(sink)) on.exit(sink("", "break"), add = TRUE)
   failed <- function(phrase) {
+    if (!is.null(sink)) sink("", "break")
     warning("Laplace continuation skipped: ", phrase, ". The uncorrected fit is ",
       "returned; see fit$laplace$correction.", call. = FALSE)
     fit$laplace$correction <- list(method = "quadrature", status = "failed",
@@ -944,8 +971,13 @@ print.ctLaplaceCorrection <- function(x, ...) {
   if (is.na(chunks) || chunks < 1L) chunks <- max(1L, as.integer(cores)[1L])
   previous <- .ctBackendSetMaxChunks(chunks)
   on.exit(.ctBackendRestoreMaxChunks(previous), add = TRUE)
-  if (verbose > 0) message("Laplace continuation: quadrature screen (",
-    control$nodes, " nodes)")
+  # `sink` is non-NULL exactly when `.ctBackendReporting(verbose)` is, which
+  # `verbose > 0` alone already satisfies -- so there is no separate case left
+  # for a bare `verbose > 0` to reach for a plainer `message()` here.
+  if (!is.null(sink)) {
+    sink(sprintf("Laplace continuation screen (%d nodes) | %8s",
+      control$nodes, .ctDuration(seconds())), "update")
+  }
   cont <- try(module$ctsem_laplace_continuation(.ctJuliaObjective(fit),
     .ctJuliaNumericVector(est), nodes = as.integer(control$nodes),
     tolerance = as.numeric(control$tolerance),
@@ -967,6 +999,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
   # laplace_continuation.jl for the measured cost). Said in one line, since
   # the correction then covers less than the fit, or none of it.
   if (record$wide > 0L) {
+    if (!is.null(sink)) sink("", "break")
     message(sprintf(paste0("Quadrature correction: %d of %d %s kept the ",
       "Laplace term, having more than %d random effects."), record$wide,
       record$units, if (record$units == nsubjects) "subjects" else "groups",
@@ -1033,7 +1066,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
       refused = as.integer(after$refused))
   }
   run <- try(.ctLaplaceContinueRun(module, cont, est, basis$basis, tol,
-    control = control, verbose = verbose,
+    control = control, verbose = verbose, sink = sink,
     skip_gain = as.numeric(.ctJuliaOr(control$skip_gain, 0))), silent = TRUE)
   if (inherits(run, "try-error")) {
     return(failed(paste0("a round could not be evaluated (",
@@ -1083,6 +1116,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
   moved <- run$rounds > 0L && any(run$x != est) && !worse
   if (isTRUE(record$guard$fired) || !moved) {
     if (isTRUE(record$guard$fired)) {
+      if (!is.null(sink)) sink("", "break")
       warning(sprintf(paste0("The Laplace continuation moved the quadrature ",
         "objective by %.3g nats, which no approximation error of this size ",
         "explains; the fit keeps the Laplace optimum, and the rejected point is ",
@@ -1115,11 +1149,23 @@ print.ctLaplaceCorrection <- function(x, ...) {
   reached <- identical(run$status, "converged")
   hc <- NULL
   if (reached) {
-    if (verbose > 0) message("Laplace continuation: Hessian (", npar + 1L,
-      " gradients)")
+    # Measured at 18.8 of a 22-minute correction on the ordinal fixture that
+    # found this (screen plus one round: 4.8 min). Only a start and a done
+    # line -- not a live count -- because forming this Hessian is
+    # laplace_continuation.jl's own code, which another job is working on;
+    # this adds progress calls around that call rather than inside it.
+    if (!is.null(sink)) {
+      sink(sprintf("Laplace continuation hessian (%d gradients) | %8s",
+        npar + 1L, .ctDuration(seconds())), "update")
+    }
+    hessian_started <- proc.time()[["elapsed"]]
     hc <- try(matrix(as.numeric(.ctBackendJuliaValue(
       module$ctsem_laplace_continuation_hessian(cont, .ctJuliaNumericVector(x)))),
       npar, npar), silent = TRUE)
+    if (!is.null(sink)) {
+      sink(sprintf("Laplace continuation hessian done in %s",
+        .ctDuration(proc.time()[["elapsed"]] - hessian_started)), "done")
+    }
   }
   final <- get(module$ctsem_laplace_continuation_evaluate(cont,
     .ctJuliaNumericVector(x), gradient = TRUE))
