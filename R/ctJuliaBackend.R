@@ -859,16 +859,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     stream <- if (identical(first, jc$stdout)) stdout() else
       if (identical(first, jc$stderr)) stderr() else NULL
     if (is.null(stream)) return(TRUE)
-    # JuliaConnectoR's framing: a four-byte length, then the text.
-    len <- .ctJuliaReadBytes(connection, 4L)
-    if (is.null(len)) return(TRUE)
-    n <- readBin(len, "integer", size = 4L)
-    body <- if (n > 0L) .ctJuliaReadBytes(connection, n) else raw(0)
-    if (is.null(body)) return(TRUE)
-    output <- tryCatch(rawToChar(body), error = function(e) "")
-    # Escape sequences stripped as readOutput strips them.
-    output <- gsub("\033(?:[@-Z\\\\-_]|\\[[0-?]*[ -/]*[@-~])", "", output)
-    Encoding(output) <- "UTF-8"
+    output <- .ctJuliaReadOutput(connection)
+    if (is.null(output)) return(TRUE)
     cat(output, file = stream)
   }
 }

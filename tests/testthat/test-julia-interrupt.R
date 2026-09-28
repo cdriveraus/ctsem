@@ -95,6 +95,25 @@ test_that("an interrupt raised in Julia arrives as an interrupt, not an error", 
   expect_equal(ctsem:::.ctJuliaEval("5"), 5)
 })
 
+test_that("an argument Julia cannot take leaves the connection usable", {
+  skip_without_julia()
+  ctJuliaSetup()
+  # Written a piece at a time, the call and its name reached the socket before
+  # the argument failed to translate, and Julia read the next request as the
+  # rest of this one. The request is now marshalled whole before any of it is
+  # sent.
+  expect_error(ctsem:::.ctJuliaCall("identity", new.env()), "environment")
+  expect_equal(ctsem:::.ctJuliaEval("1 + 1"), 2)
+})
+
+test_that("callbacks are answered, and one that fails does not take the session", {
+  skip_without_julia()
+  ctJuliaSetup()
+  expect_equal(ctsem:::.ctJuliaCall("map", function(x) x + 1, c(1, 2, 3)), c(2, 3, 4))
+  expect_error(ctsem:::.ctJuliaCall("map", function(x) stop("boom"), c(1, 2)), "boom")
+  expect_equal(ctsem:::.ctJuliaEval("2 + 2"), 4)
+})
+
 test_that("stopping Julia outright ends its process and the next call starts anew", {
   skip_without_julia()
   ctJuliaSetup()
