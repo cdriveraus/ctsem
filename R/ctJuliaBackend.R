@@ -199,26 +199,6 @@
   if (.ctBackendReporting(verbose)) .ctProgressSink(.ctProgressOverwrite(verbose)) else NULL
 }
 
-# A sink rate-limited to the engine's own cadence: 0.4s where a line is
-# overwritten in place, 5s otherwise (`CTSEMProgress`'s default in
-# progress.jl). For a progress source that calls back once per unit of work
-# with no rate limit of its own -- a Hessian column via JuliaConnectoR, a
-# quadrature round -- so a model large enough to have many units does not turn
-# one sink into a hundred printed lines. `"done"` and `"break"` are one-shot
-# closing events and always pass straight through.
-#' @keywords internal
-.ctBackendRateLimited <- function(sink, overwrite) {
-  if (is.null(sink)) return(NULL)
-  last <- -Inf
-  every <- if (isTRUE(overwrite)) 0.4 else 5
-  function(text, kind = "update") {
-    now <- proc.time()[["elapsed"]]
-    if (identical(kind, "update") && now - last < every) return(invisible(NULL))
-    last <<- now
-    sink(text, kind)
-  }
-}
-
 # `1m 04s`, `12.4s`, `2h 05m` -- the R-side twin of `_duration()` in
 # `progress.jl`. Needed on this side too because `.ctBackendReportProcesses`
 # formats an ETA from what a worker process wrote to a file, not from

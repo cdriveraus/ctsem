@@ -445,6 +445,44 @@ function _progress_fraction(p::CTSEMProgress, text::AbstractString)
 end
 
 """
+    _ctsem_progress_reporter(progress, label, overwrite, sink, every)
+
+One `CTSEMProgress`, built the same way for every caller that takes this same
+five-keyword vocabulary (`ctsem_optimize`, `ctsem_endgame`,
+`ctsem_hessian_progress`) -- always a live struct, `enabled = progress`,
+never `nothing`. Two of those callers used to disagree on this: one built a
+real struct whatever `progress` said, the other built `nothing` when it was
+`false`. The difference was not cosmetic -- `_ctsem_hessian_progress` below
+has to skip building its closure when progress is off, and "off" meant two
+different things depending on which caller reached it. A single, deliberate
+answer here is what makes that check able to ask one question
+(`reporter.enabled`) instead of two (`=== nothing`, or `.enabled`).
+"""
+_ctsem_progress_reporter(progress::Bool, label::AbstractString, overwrite::Bool,
+    sink, every::Real) = CTSEMProgress(progress; label=label, overwrite=overwrite,
+        sink=sink, every=every)
+
+"""
+    _ctsem_hessian_progress(reporter)
+
+The `(done, total) -> nothing` callback `ctsem_hessian`'s (and
+`ctsem_laplace_hessian`'s) `progress` parameter expects, reporting through
+`reporter` on its own cadence via `_due`/`_progress_fraction` -- or `nothing`
+when there is nothing to report through, whether that is a literal `nothing`
+(a caller that never built a reporter at all) or a `CTSEMProgress` built
+disabled (`_ctsem_progress_reporter(false, ...)`). Shared by
+`_ctsem_newton_finish`'s own Hessian and by `ctsem_hessian_progress`, the
+standalone entry point for a caller with no finish or certification to borrow
+a reporter from.
+"""
+_ctsem_hessian_progress(reporter) = (reporter === nothing || !reporter.enabled) ?
+    nothing : function (done::Integer, total::Integer)
+        _due(reporter) && _progress_fraction(reporter,
+            @sprintf("hessian %d of %d gradients", done, total))
+        nothing
+    end
+
+"""
     _progress_break(p)
 
 End the current in-place line so something else can print on its own.

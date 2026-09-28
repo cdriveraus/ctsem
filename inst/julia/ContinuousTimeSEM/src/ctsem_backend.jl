@@ -1760,8 +1760,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # going somewhere; they do not thereby want the chunk-tuning timings and
     # the model-shape summary that `verbose` also turns on. Separating them is
     # what lets progress be the default without making the default noisy.
-    reporter = CTSEMProgress(progress; label=progress_label,
-        overwrite=progress_overwrite, every=progress_every, sink=progress_sink)
+    reporter = _ctsem_progress_reporter(progress, progress_label,
+        progress_overwrite, progress_sink, progress_every)
     # The trace records every iteration whatever `verbose` says: it costs a
     # push onto a vector, and a fit that turns out to have gone somewhere odd
     # is exactly the one nobody thought to turn reporting on for.
