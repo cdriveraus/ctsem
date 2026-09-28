@@ -271,6 +271,17 @@
   .ct_julia_cache$inflight <- list(name = name, since = Sys.time())
   file <- .ct_julia_cache$interrupt_file
   if (!is.null(file)) try(file.create(file, showWarnings = FALSE), silent = TRUE)
+  # A checkpointed loop answers within a fraction of a second, and then there
+  # is nothing to say. Anything slower is work going on in the background --
+  # compiling, typically, which can take minutes -- and that is worth one line.
+  con <- tryCatch(get("pkgLocal", envir = asNamespace("JuliaConnectoR"))$con,
+    error = function(e) NULL)
+  answered <- !is.null(con) &&
+    isTRUE(tryCatch(socketSelect(list(con), timeout = 0.3), error = function(e) TRUE))
+  if (!answered) {
+    message("Julia is finishing the interrupted step in the background; the next ",
+      "julia call waits for it. ctJuliaKill(\"session\") stops it now.")
+  }
   invisible(NULL)
 }
 
@@ -378,6 +389,9 @@
     if (!is.null(env$inflight) && !is.null(env$pid)) {
       try(tools::pskill(env$pid, tools::SIGKILL), silent = TRUE)
     }
+    # Idle, it ends when JuliaConnectoR closes the socket; either way the
+    # record of it goes (ctJuliaProcesses()).
+    if (!is.null(env$pid)) try(.ctJuliaUnregister(env$pid), silent = TRUE)
   }, onexit = TRUE)
   .ct_julia_cache$exit_registered <- TRUE
   invisible(NULL)
@@ -415,14 +429,20 @@
       }
     }))
   }
-  .ct_julia_cache$pid <- if (external) NULL else tryCatch(
-    as.integer(.ctJuliaExchange(wire, "RConnector.mainevalcmd", list("getpid()"))),
+  identity <- if (external) NULL else tryCatch(as.integer(strsplit(as.character(
+    .ctJuliaExchange(wire, "RConnector.mainevalcmd",
+      list("string(getpid(), \" \", Threads.nthreads())"))), " ")[[1L]]),
     error = function(e) NULL)
+  .ct_julia_cache$pid <- if (length(identity) == 2L) identity[[1L]] else NULL
   .ct_julia_cache$pid_session <- .ctJuliaSessionStamp()
   if (!is.null(.ct_julia_cache$interrupt_file)) unlink(.ct_julia_cache$interrupt_file)
   .ct_julia_cache$interrupt_file <- gsub("\\", "/",
     tempfile("ctsem-julia-interrupt-"), fixed = TRUE)
   .ctJuliaRegisterExit()
+  # Written down, so ctJuliaProcesses() can tell this engine from any other
+  # Julia, and an R session that ends without cleaning up leaves a trace.
+  if (length(identity) == 2L) .ctJuliaRegister(identity[[1L]], identity[[2L]])
+  if (!external) .ctJuliaWarnOrphans()
   invisible(TRUE)
 }
 
