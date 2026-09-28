@@ -368,10 +368,9 @@ _ctsem_nested_tag(x::AbstractArray) = ForwardDiff.Tag{CTSEMNestedTag,eltype(x)}(
 """
 `ForwardDiff.jacobian(f, x)` under `CTSEMNestedTag`; see there.
 
-With `Val(N)`, the chunk is `N` wide, one chunk when `N` is `length(x)`. Without
-it the width is read from `length(x)` at run time, which builds the config's
-dual types on every call: measured at a sixth of an ordinal Laplace gradient,
-whose reverse pass takes one of these per observation.
+With `Val(N)` the chunk is `N` wide. Without it the width is read at run time
+and the config's dual types are built on every call: a sixth of an ordinal
+Laplace gradient, whose reverse pass takes one of these per observation.
 """
 _ctsem_nested_jacobian(f, x::AbstractArray) = ForwardDiff.jacobian(f, x,
     ForwardDiff.JacobianConfig(f, x, ForwardDiff.Chunk(x), _ctsem_nested_tag(x)),

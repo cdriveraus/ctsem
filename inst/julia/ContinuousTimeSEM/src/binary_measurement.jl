@@ -703,20 +703,12 @@ the journey rather than making it safe.
 
 # Under differentiation
 
-The iteration runs on the values alone -- the observation's included, which
-the reverse pass carries in the caller's type -- and the partials are recovered
-afterwards by `_mode_polish_steps(T)` undamped Newton steps in the caller's
-arithmetic from that mode -- the implicit function theorem, taken the way
-`_laplace_dual_unit_mode` takes it for a unit's inner mode. Iterating in dual
-arithmetic instead carried every partial through every trial of the line
-search, several of them per step, to arrive at the same derivative: at a mode
-the step's value part is zero and its dual part is exactly `-G_θ / G_offset`.
-The iteration is also steered by comparisons, which ForwardDiff breaks on the
-partials when the values tie (see `_censored_at`); on values alone it takes the
-same path whatever is being differentiated.
-
-A solve that used its whole budget has no mode to polish, and is iterated in
-the caller's arithmetic as it always was.
+The iteration runs on values alone (the observation's too, which the reverse
+pass carries as a dual), and the partials come from `_mode_polish_steps(T)`
+undamped Newton steps from that mode in the caller's arithmetic: the implicit
+function theorem, as `_laplace_dual_unit_mode` takes it. Iterating in duals
+carried every partial through every trial of the line search. A solve that used
+its whole budget is iterated in the caller's arithmetic, as before.
 """
 @inline function _binary_mode(ηbar::T, s2::T, y::Real, thresholds,
     kind::Int) where {T}
@@ -761,9 +753,8 @@ end
 """
     _binary_mode_solve(ηbar, s2, y, thresholds, kind)
 
-`(offset, curvature, converged)`: the damped Newton iteration `_binary_mode`
-describes, in whatever arithmetic its arguments carry. `converged` is false
-only when the iteration used its whole budget.
+`(offset, curvature, converged)`: the iteration `_binary_mode` describes, in
+the arithmetic of its arguments; not converged only when it used its budget.
 """
 @inline function _binary_mode_solve(ηbar::T, s2::T, y::Real, thresholds,
     kind::Int) where {T}
@@ -1074,11 +1065,9 @@ is log-concave so that the mode the rule is centred on is unique.
 @inline function _binary_quadrature(ηbar::T, s::T, y::Real, nodes, weights,
     thresholds, kind::Int) where {T}
     s2 = s * s
-    # An interior ordinal category's log likelihood carries `log(1 - e^-gap)`,
-    # which does not depend on η: taken once here rather than at every node,
-    # and added in the same place `_category_loglikelihood` adds it, so the sum
-    # is the same to the last bit. A closed gap makes every node `-Inf`, which
-    # the loop below would report as exactly this.
+    # An interior category's `log(1 - e^-gap)` does not depend on η: taken once,
+    # and added where `_category_loglikelihood` adds it, so the node sum is the
+    # same to the bit. A closed gap makes every node `-Inf`, reported as such.
     k = kind == CTSEM_OBS_ORDINAL ? Int(y) : 0
     interior = 1 < k <= length(thresholds)
     G = promote_type(T, eltype(thresholds))
@@ -1350,19 +1339,15 @@ So the rule is differentiated directly, by forward mode over the scalar loop:
 exactly consistent with the forward pass by construction, which is the property
 that matters here.
 
-# One dual, one evaluation
+# One dual, one evaluation, only what is read
 
-Every argument is seeded in the same nested dual and the values are read from
-its value part, so one evaluation of the rule gives everything. This replaced a
-pair of helpers, one for `(a, b)` and one for the extras, each evaluating the
-rule once plainly for its value and once in duals, which was four evaluations
-per observation per reverse pass where one serves.
-
-The width matters as much as the count: under the seeded sweeps each number is
-already a dual of duals, so a dual of width `2 + e` over it is a struct of tens
-of floats, and on a four-threshold ordinal model (the bench's ord4) moving those
-was a fifth of the gradient at `e = 4`. An observation reads two thresholds at
-most.
+Every seeded argument shares one nested dual, and the moments are its value
+part. This replaced two helpers that each evaluated the rule plainly and then
+in duals, four evaluations per observation per reverse pass where one serves.
+The width counts too: under the seeded sweeps each number is already a dual of
+duals, and seeding all four thresholds of the bench's ord4 put a fifth of its
+gradient's samples on the rule's entry; seeding the two read made it about
+1.2x faster (local).
 """
 function _binary_moment_jacobian(a::T, b::T, y::Real, nodes, weights,
     thresholds, kind::Int) where {T}
@@ -1382,10 +1367,8 @@ function _binary_moment_jacobian(a::T, b::T, y::Real, nodes, weights,
     end
     held = Ref{NTuple{3,T}}()
     # Nested: this runs inside the adjoint, which `ctsem_hessian` differentiates.
-    # The rule is evaluated once, so its value part is read as it goes by.
-    # `local`, and names of its own: a name the closure assigns that is also a
-    # local out here is the enclosing one, boxed, with every use of it
-    # dispatched at run time. The profile found exactly that here.
+    # `local`: a name the closure assigns that is also a local out here would be
+    # the enclosing one, boxed and dispatched at run time, as it once was here.
     D = _ctsem_nested_jacobian(at, Val(2 + length(read))) do x
         local τ, ℓ, μ1, σ2
         τ = _as_scalar_type(eltype(x), thresholds)
@@ -1417,11 +1400,9 @@ end
 """
     _extras_read(y, thresholds, kind)
 
-The extras whose value an observation's likelihood depends on, as a range into
-`thresholds`: the thresholds bounding its category for an ordinal row, both
-asymptotes for a binary item with them, the standard deviation of a censored
-row (its limits are constants), and none for a count, whose extra enters
-through the predicted variance instead.
+The extras an observation's likelihood reads, as a range into `thresholds`: an
+ordinal row's two bounding thresholds, both asymptotes, a censored row's
+standard deviation (its limits are constants), and none for a count.
 """
 @inline function _extras_read(y::Real, thresholds, kind::Int)
     n = length(thresholds)
