@@ -353,13 +353,26 @@
 # is the same correction for the route that does read them. Stan is unaffected:
 # it saves a per-subject matrix only where the specification varies by subject,
 # so a fixed T0MEANS falls back to `pop_T0MEANS`, which is the model's.
+#
+# T0MEANS varies by person when a TI predictor moves it, too, and then the
+# population value is nobody's.
 .ctVarDecompModelT0 <- function(fit, levels) {
   varying <- unique(unlist(lapply(levels, function(x) x$params)))
+  table <- .ctBackendSpec(fit)$parameter_table
+  shifted <- table$param[table$parnumber %in% .ctBackendSpec(fit)$ti_effects$parameter]
   pars <- .ctFitModelObject(fit)$pars
   t0pars <- if (is.null(pars)) character() else
     as.character(pars$param[pars$matrix %in% 'T0MEANS'])
   list(population = suppressMessages(ctBackendParMatrices(fit, trim = FALSE))$T0MEANS,
-    varies = any(varying %in% t0pars))
+    varies = any(c(varying, shifted) %in% t0pars))
+}
+
+# Subject `si`'s TI predictors as `ctBackendParMatrices()` takes them, or NULL
+# for a model with none.
+.ctVarDecompTIpredRow <- function(fit) {
+  tipreds <- if (length(.ctFitModelObject(fit)$TIpredNames))
+    .ctFitTIpredData(fit) else NULL
+  function(si) if (!is.null(tipreds)) as.numeric(tipreds[si, ]) else NULL
 }
 
 # Augmented fits: a person is a carrier vector --------------------------------
@@ -387,9 +400,7 @@
       'is a bug rather than a limitation of the model -- please report the fit.',
       call. = FALSE)
   }
-  tipreds <- if (length(.ctFitModelObject(fit)$TIpredNames))
-    .ctFitTIpredData(fit) else NULL
-  tipredrow <- function(si) if (!is.null(tipreds)) as.numeric(tipreds[si, ]) else NULL
+  tipredrow <- .ctVarDecompTIpredRow(fit)
 
   donors <- if (identical(source, 'model') && length(carrier))
     subjects[sample.int(length(subjects), npersons, replace = TRUE)] else subjects
@@ -436,7 +447,9 @@
 # `intoverpop='laplace'` and `intoverpop='none'` keep the random effects as
 # coordinates rather than states, so there is no carrier to materialise at.
 # What the engine offers instead is `subject_values`: one raw parameter vector
-# per subject, which `ctsem_kalman` uses in place of the fitted ones. A level's
+# per subject, which `ctsem_kalman` uses in place of the fitted ones. It is the
+# vector before TI-predictor effects, which the filter and
+# `ctBackendParMatrices()` each add from the subject's own predictors. A level's
 # own contribution to that vector is the difference between the values built
 # from level l outward and from level l+1 outward, and it is nonzero only at
 # that level's `re_index` -- checked below rather than assumed.
@@ -457,7 +470,7 @@
 
   values <- lapply(seq_len(nlevels + 1L), function(l)
     as.matrix(.ctBackendJuliaValue(module$ctsem_laplace_subject_values(
-      objective, raw, from_level = as.integer(l)))))
+      objective, raw, from_level = as.integer(l), ti_effects = FALSE))))
 
   # Each level's contribution, and where it sits in the raw vector.
   contribution <- lapply(seq_len(nlevels), function(l) values[[l]] - values[[l + 1L]])
@@ -488,6 +501,7 @@
   # person there is no single value and each person's own is materialised,
   # which costs an engine call per person rather than one in total.
   t0 <- .ctVarDecompModelT0(fit, structure)
+  tipredrow <- .ctVarDecompTIpredRow(fit)
 
   persons <- list()
   for (drawi in seq_len(draws)) {
@@ -514,7 +528,8 @@
         m <- .ctVarDecompFromArrays(matrices[[s]], si, nlatent)
         m$T0MEANS <- if (t0$varies) {
           suppressMessages(ctBackendParMatrices(fit, raw = step[[s]][si, ],
-            trim = FALSE))$T0MEANS[seq_len(nlatent), , drop = FALSE]
+            tipreds = tipredrow(si), trim = FALSE))$T0MEANS[seq_len(nlatent), ,
+            drop = FALSE]
         } else t0$population[seq_len(nlatent), , drop = FALSE]
         m
       })
@@ -536,7 +551,7 @@
     .ctJuliaNumericVector(as.numeric(fit$estimate$raw)),
     from_level = 1L, subject_matrices = TRUE,
     fields = .ctJuliaVector('subject_loglik'),
-    subject_values = JuliaConnectoR::juliaPut(subjectvalues)))
+    subject_values = .ctJuliaPut(subjectvalues)))
   flat <- array(scores$subject_matrices, dim = c(1L, dim(scores$subject_matrices)))
   .ctBackendSubjectMatrices(fit, flat)
 }

@@ -1232,7 +1232,25 @@ function _laplace_parallel(f, items)
     end
     # The caller works too, on the slot it already holds, so the region always
     # completes even when the pool is empty.
-    _laplace_pull!(f, items, n, next, failed)
+    #
+    # If the caller's share throws -- R asking the call to stop is the usual
+    # reason, from a chain's progress checkpoint (interrupt.jl) -- the helpers
+    # are told to stop and waited for before the exception goes on. Otherwise
+    # they outlive the call that spawned them: its reply reaches R, R removes
+    # the file they would have stopped at, and they sample on in the background
+    # alongside whatever R asks for next.
+    try
+        _laplace_pull!(f, items, n, next, failed)
+    catch
+        failed[] = true
+        for helper in helpers
+            try
+                wait(helper)
+            catch
+            end
+        end
+        rethrow()
+    end
     foreach(wait, helpers)
     return !failed[]
 end
@@ -4249,7 +4267,63 @@ function _laplace_nested_gradient(laplace::CTSEMLaplaceObjective,
 end
 
 """
-    ctsem_laplace_subject_values(laplace, values)
+    _laplace_shifted_values(laplace, theta, Ls, effect_of)
+
+Every subject's raw vector as a filter is handed it: the population vector
+shifted by the random effects of each unit the subject belongs to, and *not*
+by its TI-predictor effects. `effect_of(U)` returns unit `U`'s latent vector.
+
+This is the vector the Laplace term itself filters -- `_laplace_member_values`,
+then the filter, which adds TI-predictor effects on its first line -- so it is
+the one every other filtering consumer on this route must be handed as well:
+`ctsem_kalman`, `ctsem_generate`, `ctsem_generate_states`, the effect draws
+behind leave-one-row-out, the substep mesh. A filter handed the vector with TI
+effects already in it applies them a second time, and nothing fails: the
+likelihood, the estimates and the gradients never pass through here, only the
+trajectories, residuals and generated data do.
+
+So a subject's vector is built here and nowhere else. The one step taken after
+it is `_laplace_add_ti_effects`, for reporting what a subject's parameters are.
+
+A subject no unit reached is `NaN`, so it would filter as not finite rather
+than at whatever the allocation held.
+"""
+function _laplace_shifted_values(laplace::CTSEMLaplaceObjective,
+    theta::Vector{Float64}, Ls::Vector{<:AbstractMatrix}, effect_of)
+    units = laplace.units
+    out = fill(NaN, length(laplace.objective.subject_objectives), length(theta))
+    for U in eachindex(units.members)
+        u = effect_of(U)
+        for (m, i) in enumerate(units.members[U])
+            out[i, :] = _laplace_member_values(theta, laplace.spec, Ls, u,
+                units.offsets[U][m])
+        end
+    end
+    return out
+end
+
+"""
+    _laplace_add_ti_effects(laplace, shifted)
+
+`shifted`, one row per subject, with each subject's TI-predictor effects added
+by the filter's own `_materialize_subject_values!`: what that subject's raw
+parameters are, for pushing through the transforms and reporting. Never for
+handing to a filter, which adds them itself; see `_laplace_shifted_values`.
+"""
+function _laplace_add_ti_effects(laplace::CTSEMLaplaceObjective,
+    shifted::AbstractMatrix)
+    out = Matrix{Float64}(undef, size(shifted))
+    buffer = Float64[]
+    for (i, subject) in enumerate(laplace.objective.subject_objectives)
+        _materialize_subject_values!(buffer, view(shifted, i, :), subject.params,
+            subject.tipreds)
+        out[i, :] = buffer
+    end
+    return out
+end
+
+"""
+    ctsem_laplace_subject_values(laplace, values; from_level=1, ti_effects=true)
 
 Each subject's own raw parameter vector at the current inner modes: the
 population vector shifted by that subject's random effects, and then by its
@@ -4262,32 +4336,28 @@ caller is the R side's subject-parameter reporting, and a second, slightly
 different copy of "what parameters does this subject have" is exactly the kind
 of divergence that shows up as a summary disagreeing with the fit.
 
+`ti_effects = false` stops before the second shift and returns what a filter is
+handed instead, which is what the `subject_values` keyword of `ctsem_kalman`,
+`ctsem_generate` and `ctsem_generate_states` takes: the filter adds each
+subject's TI-predictor effects itself, so a vector that already carries them
+has them twice.
+
 Returns `nsubjects x length(values)`; push a row through the model's transforms
 to get that subject's parameter matrices.
 """
 function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
-    values::AbstractVector; from_level::Integer=1)
+    values::AbstractVector; from_level::Integer=1, ti_effects::Bool=true)
     theta = collect(Float64, values)
     Ls = _laplace_popchols(theta, laplace.spec)
-    nsubjects = length(laplace.objective.subject_objectives)
-    out = zeros(Float64, nsubjects, length(theta))
-    buffer = Float64[]
-    for U in eachindex(laplace.units.members)
+    shifted = _laplace_shifted_values(laplace, theta, Ls, function (U)
         _laplace_solve_unit_mode!(laplace, U, theta, Ls)
-        u = _laplace_restrict_levels(laplace, U, laplace.modes[U], from_level)
-        for (m, i) in enumerate(laplace.units.members[U])
-            shifted = _laplace_member_values(theta, laplace.spec, Ls, u,
-                laplace.units.offsets[U][m])
-            subject = laplace.objective.subject_objectives[i]
-            _materialize_subject_values!(buffer, shifted, subject.params, subject.tipreds)
-            out[i, :] = buffer
-        end
-    end
-    return out
+        return _laplace_restrict_levels(laplace, U, laplace.modes[U], from_level)
+    end)
+    return ti_effects ? _laplace_add_ti_effects(laplace, shifted) : shifted
 end
 
 """
-    ctsem_laplace_subject_values(laplace, values, effects)
+    ctsem_laplace_subject_values(laplace, values, effects; ti_effects=true)
 
 Each subject's own raw parameter vector at the random effects it is *given*,
 rather than at the conditional modes solved from the data.
@@ -4304,15 +4374,14 @@ unit order, and within a unit by block offset, exactly the layout
 `ctsem_laplace_effect_layout` reports and the sampler returns. Its length must
 be the total latent dimension over all units.
 
-Everything after the slicing is shared with the mode method -- the same
-`_laplace_popchols`, `_laplace_member_values` and
-`_materialize_subject_values!` -- so the two cannot drift in how a shifted
-parameter vector is built.
+Everything after the slicing is shared with the mode method, including what
+`ti_effects` means, so the two cannot drift in how a shifted parameter vector
+is built.
 
 Returns `nsubjects x length(values)`.
 """
 function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
-    values::AbstractVector, effects::AbstractVector)
+    values::AbstractVector, effects::AbstractVector; ti_effects::Bool=true)
     theta = collect(Float64, values)
     Ls = _laplace_popchols(theta, laplace.spec)
     units = laplace.units
@@ -4320,23 +4389,43 @@ function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
     length(effects) == total || throw(DimensionMismatch(string(
         "effects must have ", total, " entries for this design, got ",
         length(effects))))
-    nsubjects = length(laplace.objective.subject_objectives)
-    out = zeros(Float64, nsubjects, length(theta))
-    buffer = Float64[]
-    base = 0
-    for U in eachindex(units.members)
-        u = Vector{Float64}(view(effects, (base + 1):(base + units.dims[U])))
-        for (m, i) in enumerate(units.members[U])
-            shifted = _laplace_member_values(theta, laplace.spec, Ls, u,
-                units.offsets[U][m])
-            subject = laplace.objective.subject_objectives[i]
-            _materialize_subject_values!(buffer, shifted, subject.params,
-                subject.tipreds)
-            out[i, :] = buffer
-        end
-        base += units.dims[U]
+    starts = cumsum(units.dims) .- units.dims
+    shifted = _laplace_shifted_values(laplace, theta, Ls, U ->
+        Vector{Float64}(view(effects, (starts[U] + 1):(starts[U] + units.dims[U]))))
+    return ti_effects ? _laplace_add_ti_effects(laplace, shifted) : shifted
+end
+
+"""
+    _laplace_filter_values(laplace, values; from_level, effects, subject_values)
+
+The per-subject matrix a Laplace method hands the wrapped objective's filter:
+`subject_values` as the caller supplied it, else the vectors at `effects`, else
+at the conditional modes with the levels inside `from_level` left out. Always
+before TI-predictor effects (`_laplace_shifted_values`), including a supplied
+`subject_values`, which is why the R side asks for those with
+`ti_effects = false`.
+
+One function for all three filtering entry points, so that what a filter is
+handed on this route is decided once.
+"""
+function _laplace_filter_values(laplace::CTSEMLaplaceObjective,
+    values::AbstractVector; from_level::Integer=1,
+    effects::Union{Nothing,AbstractVector}=nothing,
+    subject_values::Union{Nothing,AbstractMatrix}=nothing)
+    if subject_values !== nothing
+        nsubjects = length(laplace.objective.subject_objectives)
+        size(subject_values, 1) == nsubjects || throw(ArgumentError(
+            "subject_values has $(size(subject_values, 1)) rows for " *
+            "$nsubjects subjects."))
+        size(subject_values, 2) == length(values) || throw(ArgumentError(
+            "subject_values has $(size(subject_values, 2)) columns for " *
+            "$(length(values)) parameters."))
+        return subject_values
     end
-    return out
+    effects === nothing ||
+        return ctsem_laplace_subject_values(laplace, values, effects; ti_effects=false)
+    return ctsem_laplace_subject_values(laplace, values; from_level=from_level,
+        ti_effects=false)
 end
 
 export ctsem_laplace_subject_values
@@ -4373,18 +4462,11 @@ function ctsem_auto_substeps(laplace::CTSEMLaplaceObjective, values::AbstractVec
     theta = collect(Float64, values)
     _laplace_check_indices(laplace, length(theta))
     Ls = _laplace_popchols(theta, laplace.spec)
-    units = laplace.units
-    # NaN, not undef: a subject no unit reached would filter as not finite
-    # rather than at whatever the allocation held.
-    shifted = fill(NaN, length(laplace.objective.subject_objectives), length(theta))
-    for U in eachindex(units.members)
+    shifted = _laplace_shifted_values(laplace, theta, Ls, function (U)
         solved = _laplace_solve_unit_mode!(laplace, U, theta, Ls)
-        u = isfinite(solved.value) ? solved.u : zeros(Float64, units.dims[U])
-        for (m, i) in enumerate(units.members[U])
-            shifted[i, :] = _laplace_member_values(theta, laplace.spec, Ls, u,
-                units.offsets[U][m])
-        end
-    end
+        return isfinite(solved.value) ? solved.u :
+            zeros(Float64, laplace.units.dims[U])
+    end)
     return ctsem_auto_substeps(laplace.objective, shifted; kwargs...)
 end
 
@@ -4416,8 +4498,9 @@ One dataset with each subject's trajectory drawn from *its own* model.
 `values` is the population parameter vector. `effects` is one draw of the
 random effects in the sampler's layout, from which each subject's own
 parameter vector is built; `subject_values` supplies those vectors directly
-instead. Given neither, each subject is put at its conditional mode, matching
-what `ctsem_generate` does.
+instead, before TI-predictor effects as `ctsem_kalman` takes them. Given
+neither, each subject is put at its conditional mode, matching what
+`ctsem_generate` does.
 
 The states are drawn afresh here -- from the process, at that subject's own
 parameters -- and never carried over from anything a fit sampled. What comes
@@ -4428,10 +4511,8 @@ function ctsem_generate_states(laplace::CTSEMLaplaceObjective,
     values::AbstractVector, z::AbstractVector, base::AbstractMatrix;
     effects::Union{Nothing,AbstractVector}=nothing,
     subject_values::Union{Nothing,AbstractMatrix}=nothing, kwargs...)
-    persubject = subject_values !== nothing ? subject_values :
-        effects !== nothing ?
-            ctsem_laplace_subject_values(laplace, values, effects) :
-            ctsem_laplace_subject_values(laplace, values)
+    persubject = _laplace_filter_values(laplace, values; effects=effects,
+        subject_values=subject_values)
     return ctsem_generate_states(laplace.objective, persubject, z, base; kwargs...)
 end
 
@@ -4490,22 +4571,17 @@ nothing left to condition on, so the mode collapses to zero and every subject
 silently reverts to the population parameters. The caller holds the fitted
 objective and can compute the modes against the data they were fitted to, so
 that is where they come from.
+
+Those rows are *before* TI-predictor effects --
+`ctsem_laplace_subject_values(fitted, values; ti_effects=false)` -- because the
+filter adds each subject's effects itself, from this objective's predictors,
+exactly as it does in the fit.
 """
 function ctsem_kalman(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     from_level::Integer=1, subject_matrices::Bool=true, fields=String[],
     subject_values::Union{Nothing,AbstractMatrix}=nothing)
-    persubject = if subject_values === nothing
-        ctsem_laplace_subject_values(laplace, values; from_level=from_level)
-    else
-        nsubjects = length(laplace.objective.subject_objectives)
-        size(subject_values, 1) == nsubjects || throw(ArgumentError(
-            "subject_values has $(size(subject_values, 1)) rows for " *
-            "$nsubjects subjects."))
-        size(subject_values, 2) == length(values) || throw(ArgumentError(
-            "subject_values has $(size(subject_values, 2)) columns for " *
-            "$(length(values)) parameters."))
-        subject_values
-    end
+    persubject = _laplace_filter_values(laplace, values; from_level=from_level,
+        subject_values=subject_values)
     return ctsem_kalman(laplace.objective, persubject;
         subject_matrices=subject_matrices, fields=fields)
 end
@@ -4639,10 +4715,12 @@ normal-approximation posterior puts its draws. It degrades for draws far from
 the estimate, which is also where the normal approximation the draws come from
 is itself least trustworthy.
 
+`ti_effects` means what it does for the other two methods.
+
 Returns `ndraws x nsubjects x npar`.
 """
 function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
-    draws::AbstractMatrix, thetahat::AbstractVector)
+    draws::AbstractMatrix, thetahat::AbstractVector; ti_effects::Bool=true)
     # The Jacobian is computed here rather than handed in: it is a vector of
     # matrices, and round-tripping one through the R bridge only to send it
     # straight back costs two marshalling steps for no gain.
@@ -4652,23 +4730,14 @@ function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
     nsubjects = length(laplace.objective.subject_objectives)
     centre = collect(Float64, thetahat)
     out = zeros(Float64, ndraws, nsubjects, npar)
-    buffer = Float64[]
     for s in 1:ndraws
         theta = collect(Float64, view(draws, s, :))
         Ls = _laplace_popchols(theta, laplace.spec)
         step = theta .- centre
-        for U in eachindex(laplace.units.members)
-            u = laplace.units.dims[U] == 0 ? Float64[] :
-                laplace.modes[U] .+ jacobians[U] * step
-            for (m, i) in enumerate(laplace.units.members[U])
-                shifted = _laplace_member_values(theta, laplace.spec, Ls, u,
-                    laplace.units.offsets[U][m])
-                subject = laplace.objective.subject_objectives[i]
-                _materialize_subject_values!(buffer, shifted, subject.params,
-                    subject.tipreds)
-                out[s, i, :] = buffer
-            end
-        end
+        shifted = _laplace_shifted_values(laplace, theta, Ls, U ->
+            laplace.units.dims[U] == 0 ? Float64[] :
+                laplace.modes[U] .+ jacobians[U] * step)
+        out[s, :, :] = ti_effects ? _laplace_add_ti_effects(laplace, shifted) : shifted
     end
     return out
 end
@@ -5461,7 +5530,7 @@ for (f, what) in ((:ctsem_joint_loglikelihood, "The state-explicit path"),
 end
 
 """
-    ctsem_generate(laplace, values, base; subject_values=nothing, seed=1)
+    ctsem_generate(laplace, values, base; effects=nothing, subject_values=nothing, seed=1)
 
 One posterior-predictive dataset from a Laplace fit.
 
@@ -5469,7 +5538,7 @@ Each subject is generated at its own realized parameters -- the population
 vector shifted by that subject's estimated random effects and TI-predictor
 effects -- rather than at the shared population vector, using exactly the
 per-subject values `ctsem_kalman(laplace, ...)` already computes for
-prediction (`ctsem_laplace_subject_values`). A Laplace random effect is a
+prediction (`_laplace_filter_values`). A Laplace random effect is a
 conditional mode estimated from the subject's whole record, not a fresh draw
 from the population distribution, so the individual difference in the
 generated data is the fitted one: this is the same smoothed-equivalent,
@@ -5477,16 +5546,18 @@ conditional-on-the-subject's-own-data quantity `ctsem_kalman(laplace, ...)`
 already reports for residuals and predictions on this route, not a new
 statistical convention introduced for generation.
 
-`subject_values` supplies those per-subject vectors instead of solving for
-them here, for the same reason `ctsem_kalman` takes it: a caller filtering
-different rows than the fit did needs the fitted modes, not modes re-solved
-against rows that may not condition on anything.
+`effects` is one draw of the random effects in the sampler's layout, for a fit
+that sampled them, as `ctsem_generate_states` takes it. `subject_values`
+supplies the per-subject vectors instead of solving for them here, before
+TI-predictor effects, for the same reason `ctsem_kalman` takes it: a caller
+filtering different rows than the fit did needs the fitted modes, not modes
+re-solved against rows that may not condition on anything.
 """
 function ctsem_generate(laplace::CTSEMLaplaceObjective, values::AbstractVector,
-    base::AbstractMatrix; subject_values::Union{Nothing,AbstractMatrix}=nothing,
-    seed::Integer=1)
-    persubject = subject_values === nothing ?
-        ctsem_laplace_subject_values(laplace, values) : subject_values
+    base::AbstractMatrix; effects::Union{Nothing,AbstractVector}=nothing,
+    subject_values::Union{Nothing,AbstractMatrix}=nothing, seed::Integer=1)
+    persubject = _laplace_filter_values(laplace, values; effects=effects,
+        subject_values=subject_values)
     return ctsem_generate(laplace.objective, persubject, base; seed=seed)
 end
 

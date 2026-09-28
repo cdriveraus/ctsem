@@ -407,7 +407,7 @@ ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
   storage.mode(draws) <- "double"
   module <- .ctJuliaModule(spec$project)
   res <- .ctBackendJuliaValue(module$ctsem_laplace_unit_terms(
-    .ctJuliaObjective(.ctBackendAsModel(spec)), JuliaConnectoR::juliaPut(draws)))
+    .ctJuliaObjective(.ctBackendAsModel(spec)), .ctJuliaPut(draws)))
   list(value = as.numeric(res$value),
     unit_loglik = matrix(as.numeric(res$unit_loglik), ncol = ncol(draws)),
     converged = as.logical(res$converged), unit = as.integer(res$unit))

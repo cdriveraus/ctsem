@@ -76,6 +76,13 @@ shape per session rather than once per fit; time a fit after one warm-up
 fit, not from a fresh session.
 
 If \pkg{JuliaConnectoR} or Julia itself is missing, this offers to install it
+Pressing Escape (or Ctrl-C) during a julia fit returns to the R prompt at
+once, and keeps the Julia session and everything it has compiled. Julia
+stops the interrupted work at its next iteration; work that has no
+iterations, such as compiling for a new model shape, finishes in the
+background. If it is still running when the next julia call starts, that
+call says so and waits, and Escape during that wait stops Julia outright.
+
 rather than failing -- the same thing \code{\link{ctJuliaInstall}} does, which
 is the function to reach for when setting the backend up deliberately, or
 from a script.

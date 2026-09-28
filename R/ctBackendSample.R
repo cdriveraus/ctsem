@@ -72,7 +72,7 @@
 #' @keywords internal
 .ctBackendEffectIndexNested <- function(fit) {
   laplace <- fit$model_spec$laplace
-  layout <- try(JuliaConnectoR::juliaGet(
+  layout <- try(.ctJuliaGet(
     .ctJuliaModule(fit$model_spec$project)$ctsem_laplace_effect_layout(
       .ctJuliaObjective(fit))), silent = TRUE)
   if (inherits(layout, "try-error") || is.null(layout$position)) return(NULL)
@@ -634,7 +634,7 @@
   # alternative is a user concluding the sampler is slow when it is running four
   # chains on one thread. Not said in a worker, which runs a single chain.
   if (chains > 1L) {
-    threads <- tryCatch(as.integer(JuliaConnectoR::juliaEval("Threads.nthreads()")),
+    threads <- tryCatch(as.integer(.ctJuliaEval("Threads.nthreads()")),
       error = function(e) NA_integer_)
     if (!is.na(threads) && threads < chains) {
       message("The Julia session has ", threads, " thread(s) and ", chains,
@@ -707,7 +707,7 @@
     arguments$gradient_method <- target$gradient
   }
   if (!is.null(target$hessian)) {
-    arguments$hessian <- JuliaConnectoR::juliaPut(as.matrix(target$hessian))
+    arguments$hessian <- .ctJuliaPut(as.matrix(target$hessian))
   }
   # How many of the sampled coordinates are model parameters. Only differs
   # from all of them on the state-explicit route, where the vector is
@@ -722,7 +722,7 @@
     module$ctsem_sample
 
   result <- .ctBackendWithMaxChunks(cores,
-    JuliaConnectoR::juliaGet(do.call(entry, arguments)))
+    .ctJuliaGet(do.call(entry, arguments)))
   if (!is.null(callback_failure)) {
     warning("The progress callback failed and was disabled after the first ",
       "error; sampling itself is unaffected. The error was: ",
@@ -1248,9 +1248,19 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # Any finite point compiles the same code, so a pre-placement start is as
   # good as the placement's own estimate for this -- only compilation is being
   # bought here, not a value the chains will actually start from.
+  #
+  # Any substep mesh does too, but the maxtimestep rule does not: the engine's
+  # subject objective is typed on its substep policy, a `Float64` rule or a
+  # per-row `Vector{Int}` mesh. Under `nsubsteps = 'auto'` the placement
+  # replaces the rule with a mesh and the chains filter with that, so a worker
+  # warmed at the rule compiled code no chain calls, then compiled the filter
+  # and its gradient again when its chain began. Ones are a valid mesh on any
+  # rows. Only a start where the likelihood is not finite keeps the rule, and
+  # pays that.
   start0 <- .ctJuliaInitialValues(npar, inits,
     initsd = .ctJuliaOr(optimcontrol$initsd, .01))
   spec0 <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
+  if (!is.null(spec0$substeps)) spec0$max_timestep <- rep(1L, length(spec0$times))
   handles <- if (processes && chains > 1L && .ctBackendCanWarm()) {
     .ctBackendWarmWorkers(spec0, workers = chains, values = start0)
   } else NULL

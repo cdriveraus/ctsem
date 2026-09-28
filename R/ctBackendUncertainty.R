@@ -760,7 +760,7 @@
       "which do not.", call. = FALSE)
   }
   module <- .ctJuliaModule(fit$model_spec$project)
-  result <- JuliaConnectoR::juliaGet(module$ctsem_subject_gradients(
+  result <- .ctJuliaGet(module$ctsem_subject_gradients(
     .ctJuliaObjective(fit), .ctJuliaVector(as.numeric(est))))
   scores <- as.matrix(result$scores)
   if (any(!is.finite(scores))) {

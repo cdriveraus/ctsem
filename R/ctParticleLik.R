@@ -76,7 +76,7 @@ ctParticleLik <- function(fit, particles = 2000, substeps = 20,
   objective <- .ctJuliaObjective(fit)
   values <- .ctJuliaNumericVector(as.numeric(fit$estimate$raw))
   runs <- lapply(seq_len(replicates), function(r) {
-    JuliaConnectoR::juliaGet(module$ctsem_particle_loglik(objective, values,
+    .ctJuliaGet(module$ctsem_particle_loglik(objective, values,
       particles = particles, substeps = substeps, transition = transition,
       seed = as.integer(seed)[1L] + r - 1L))
   })
@@ -87,7 +87,7 @@ ctParticleLik <- function(fit, particles = 2000, substeps = 20,
   # The filter's own per-row increments, at the same values, for the same rows.
   # `juliaCall` hands a plain numeric vector straight back; only the NamedTuple
   # above needs `juliaGet`.
-  filter_rows <- as.numeric(JuliaConnectoR::juliaCall(
+  filter_rows <- as.numeric(.ctJuliaCall(
     "ContinuousTimeSEM._ctsem_row_loglikelihood", objective, values))
   starts <- as.integer(spec$subject_starts)
   counts <- diff(c(starts, length(spec$times) + 1L))

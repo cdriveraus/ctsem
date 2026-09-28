@@ -481,10 +481,10 @@ print.ctLaplaceCorrection <- function(x, ...) {
   if (is.na(chunks) || chunks < 1L) chunks <- max(1L, as.integer(cores)[1L])
   if (verbose > 0) message("Laplace correction: quadrature screen (",
     control$nodes, " nodes)")
-  res <- try(.ctBackendWithMaxChunks(chunks, JuliaConnectoR::juliaGet(
+  res <- try(.ctBackendWithMaxChunks(chunks, .ctJuliaGet(
     .ctJuliaModule(fit$model_spec$project)$ctsem_laplace_autocorrect(
       .ctJuliaObjective(fit), .ctJuliaNumericVector(est),
-      JuliaConnectoR::juliaPut(as.matrix(hessian)),
+      .ctJuliaPut(as.matrix(hessian)),
       nodes = as.integer(control$nodes), step = as.numeric(control$step),
       tolerance = as.numeric(control$tolerance),
       maxsteps = as.integer(control$maxsteps),
@@ -767,7 +767,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
 .ctLaplaceContinueRun <- function(module, cont, est, basis, tol,
   control = .ctLaplaceContinueDefaults, verbose = 0L, skip_gain = 0,
   sink = NULL) {
-  get <- JuliaConnectoR::juliaGet
+  get <- .ctJuliaGet
   # `.ctLaplaceContinue()` passes its own sink, so the rounds continue the
   # same in-place line the screen started. `ctLaplaceCheck(refine = TRUE)`
   # passes none, so one is built here -- both report at the same default
@@ -787,7 +787,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
   attempts <- 0L
   status <- "rounds"
   rows <- list()
-  B <- JuliaConnectoR::juliaPut(as.matrix(basis))
+  B <- .ctJuliaPut(as.matrix(basis))
   optimise <- function(from, stationary = FALSE, tol = bar) get(
     module$ctsem_laplace_continuation_optimize(cont, .ctJuliaNumericVector(from),
       B, radius, maxiter = as.integer(control$maxiter), tol = tol,
@@ -918,7 +918,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
   function(fit, gradient = TRUE) {
     wantgrad <- isTRUE(gradient)
     function(parm) {
-      result <- try(JuliaConnectoR::juliaGet(
+      result <- try(.ctJuliaGet(
         module$ctsem_laplace_continuation_evaluate(cont,
           .ctJuliaNumericVector(as.numeric(parm)), gradient = wantgrad)),
         silent = TRUE)
@@ -944,7 +944,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
   npar <- length(est)
   nsubjects <- length(fit$model_spec$subject_starts)
   module <- .ctJuliaModule(fit$model_spec$project)
-  get <- JuliaConnectoR::juliaGet
+  get <- .ctJuliaGet
   # The whole correction's progress line: the screen, each round and the final
   # Hessian all report through this one sink, at the same default verbosity as
   # the optimiser's own line, rather than only when `verbose > 0` -- which is
@@ -1153,10 +1153,13 @@ print.ctLaplaceCorrection <- function(x, ...) {
     # found this (screen plus one round: 4.8 min). Only a start and a done
     # line -- not a live count -- because forming this Hessian is
     # laplace_continuation.jl's own code, which another job is working on;
-    # this adds progress calls around that call rather than inside it.
+    # this adds progress calls around that call rather than inside it. No
+    # gradient count in the text either, for the same reason: that job's exact
+    # Hessian is not necessarily `npar + 1` gradient evaluations any more, and
+    # a number this side does not compute is not this side's to print.
     if (!is.null(sink)) {
-      sink(sprintf("Laplace continuation hessian (%d gradients) | %8s",
-        npar + 1L, .ctDuration(seconds())), "update")
+      sink(sprintf("Laplace continuation hessian | %8s",
+        .ctDuration(seconds())), "update")
     }
     hessian_started <- proc.time()[["elapsed"]]
     hc <- try(matrix(as.numeric(.ctBackendJuliaValue(

@@ -114,6 +114,9 @@ _elapsed(p::CTSEMProgress) = time() - p.started
 
 """Should a line be printed now? True at most once per `every` seconds."""
 function _due(p::CTSEMProgress, force::Bool=false)
+    # Every reporting loop comes through here whether or not it prints, which
+    # makes it the place to notice that R has asked the call to stop.
+    _ctsem_interrupt_check()
     p.enabled || return false
     now = time()
     (force || now - p.last >= p.every) || return false
@@ -646,6 +649,8 @@ CTSEMTrace(keys::Symbol...) = CTSEMTrace(Int[],
 
 """Append one iteration. Values are positional, in the key order given."""
 function _record!(t::CTSEMTrace, iteration::Integer, values::Real...)
+    # Once per optimiser iteration, printed or not; see interrupt.jl.
+    _ctsem_interrupt_check()
     length(values) == length(t.keys) ||
         throw(ArgumentError("trace expects $(length(t.keys)) values"))
     push!(t.iteration, Int(iteration))
@@ -695,6 +700,7 @@ prints -- got nothing at all. A callback is a programmatic consumer and has no
 reason to depend on whether anything is being printed.
 """
 function _callback_due(cb::CTSEMCallback, force::Bool=false)
+    _ctsem_interrupt_check()
     cb.alive || return false
     now = time()
     (force || now - cb.last >= cb.every) || return false

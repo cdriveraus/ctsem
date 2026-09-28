@@ -63,7 +63,7 @@
   # wrapping one to look like the other would be the more fragile of the two.
   handle <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
   module <- .ctJuliaModule(spec$project)
-  result <- try(JuliaConnectoR::juliaGet(module$ctsem_subject_gradients(
+  result <- try(.ctJuliaGet(module$ctsem_subject_gradients(
     .ctJuliaObjective(handle), .ctJuliaVector(as.numeric(at)))), silent = TRUE)
   if (inherits(result, "try-error") || is.null(result$scores)) return(NULL)
   scores <- as.matrix(result$scores)
