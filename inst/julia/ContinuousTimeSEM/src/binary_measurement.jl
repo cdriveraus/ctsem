@@ -704,46 +704,50 @@ the journey rather than making it safe.
 # Under differentiation
 
 The iteration runs on values alone (the observation's too, which the reverse
-pass carries as a dual), and the partials come from `_mode_polish_steps(T)`
-undamped Newton steps from that mode in the caller's arithmetic: the implicit
-function theorem, as `_laplace_dual_unit_mode` takes it. Iterating in duals
-carried every partial through every trial of the line search. A solve that used
-its whole budget is iterated in the caller's arithmetic, as before.
+pass carries as a dual), and then `_mode_polish_steps(T)` undamped Newton steps
+from its mode, in the caller's arithmetic, take the mode to working precision
+and give its partials: the implicit function theorem, as
+`_laplace_dual_unit_mode` takes it. Every evaluation, differentiated or not,
+centres the rule on that same point, so the reverse pass differentiates exactly
+what the forward pass computed. Iterating in duals instead carried every
+partial through every trial of the line search. A solve that used its whole
+budget is iterated in the caller's arithmetic, as before.
 """
 @inline function _binary_mode(ηbar::T, s2::T, y::Real, thresholds,
     kind::Int) where {T}
-    if T <: ForwardDiff.Dual
-        base, _, converged = _binary_mode_solve(_primal(ηbar), _primal(s2),
-            _primal(y), map(_primal, thresholds), kind)
-        if converged
-            precision = inv(s2)
-            offset = convert(T, base)
-            for _ in 1:_mode_polish_steps(T)
-                score, information = _category_score(ηbar + offset, y,
-                    thresholds, kind)
-                offset += (score - offset * precision) /
-                    (precision + information)
-            end
-            _, information = _category_score(ηbar + offset, y, thresholds,
-                kind)
-            return (offset, precision + information)
-        end
+    τ = T <: ForwardDiff.Dual ? map(_primal, thresholds) : thresholds
+    base, curvature, converged = _binary_mode_solve(_primal(ηbar),
+        _primal(s2), _primal(y), τ, kind)
+    if !converged
+        T <: ForwardDiff.Dual || return (base, curvature)
+        offset, curvature, _ = _binary_mode_solve(ηbar, s2, y, thresholds,
+            kind)
+        return (offset, curvature)
     end
-    offset, curvature, _ = _binary_mode_solve(ηbar, s2, y, thresholds, kind)
-    return (offset, curvature)
+    precision = inv(s2)
+    offset = convert(T, base)
+    for _ in 1:_mode_polish_steps(T)
+        score, information = _category_score(ηbar + offset, y, thresholds,
+            kind)
+        offset += (score - offset * precision) / (precision + information)
+    end
+    _, information = _category_score(ηbar + offset, y, thresholds, kind)
+    return (offset, precision + information)
 end
 
 """
     _mode_polish_steps(T)
 
-Newton steps from an exact primal mode that make it exact in every partial `T`
-carries: the smallest `n` with `2^n` above its depth of dual nesting. Each step
-from an exact root squares the error, which starts as a sum of nilpotents, and
-a product of more of them than `T` has layers is zero.
+Newton steps from a converged mode: two, which take its value to working
+precision, or the smallest `n` with `2^n` above `T`'s depth of dual nesting if
+that is more, which makes every partial exact. Each step squares the error, a
+sum of nilpotents once the value is exact, and a product of more of them than
+`T` has layers is zero. The same count for every depth up to three is what
+keeps a plain evaluation's value and a differentiated one's value part equal.
 """
 @inline function _mode_polish_steps(::Type{T}) where {T}
     depth = _ctsem_dual_depth(T)
-    steps = 0
+    steps = 2
     while (1 << steps) <= depth
         steps += 1
     end
