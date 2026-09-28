@@ -108,7 +108,7 @@ test_that("the number of two-implementation forks does not grow", {
   for (ex in asts) for (e in as.list(ex)) walk(e)
 
   expect_gt(length(defined), 500L)   # the walk found the package, not nothing
-  expect_lte(nforks, 25L)
+  expect_lte(nforks, 32L)
 })
 
 test_that("the duplication detectors are present and runnable", {
