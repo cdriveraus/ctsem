@@ -99,8 +99,9 @@ test_that("an update that keeps the estimates keeps their backend", {
 # Refusals that need no julia session --------------------------------------
 
 test_that("a julia fit refuses recompile by name", {
-  fit <- structure(list(modelbase = ctstantestfit$ctstanmodelbase),
-    class = c("ctJuliaFit", "ctFit"))
+  # `model_spec`, not the class, is what marks a julia fit (.ctFitIsJulia).
+  fit <- structure(list(modelbase = ctstantestfit$ctstanmodelbase,
+    model_spec = list()), class = c("ctJuliaFit", "ctFit"))
   expect_error(ctFitUpdate(fit, recompile = TRUE), "recompile")
 })
 
@@ -108,7 +109,7 @@ test_that("a julia fit without the model it was built from says how to refit", {
   # What a julia fit made before fits carried `$modelbase` looks like
   # to this function. Its `$model` is the prepared form, which ctFit() cannot
   # prepare again, so the only way on is the model the user still has.
-  fit <- structure(list(estimate = list(raw = 0)),
+  fit <- structure(list(estimate = list(raw = 0), model_spec = list()),
     class = c("ctJuliaFit", "ctFit"))
   expect_error(ctFitUpdate(fit), "ctFit\\(datalong, model, inits = fit\\$estimate\\$raw")
 })
