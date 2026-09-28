@@ -113,7 +113,7 @@
       fitted <- .ctBackendJuliaValue(module$ctsem_laplace_subject_values(
         .ctJuliaObjective(source), .ctJuliaNumericVector(raw),
         from_level = as.integer(from), ti_effects = FALSE))
-      arguments$subject_values <- JuliaConnectoR::juliaPut(
+      arguments$subject_values <- .ctJuliaPut(
         fitted[subjects, , drop = FALSE])
     }
   }
@@ -529,7 +529,7 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
   # `.ctBackendGenerateStates()`, and each subject's vector is built there, so
   # this side never has to know which form of that vector a filter takes. A
   # vector with its TI-predictor effects already in it has them added twice.
-  arguments <- list(objective, raw, JuliaConnectoR::juliaPut(base),
+  arguments <- list(objective, raw, .ctJuliaPut(base),
     seed = sample.int(.Machine$integer.max, 1L))
   if (!is.null(effects)) {
     arguments$effects <- .ctJuliaNumericVector(as.numeric(effects))
@@ -579,7 +579,7 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
   module <- .ctJuliaModule(spec$project)
   arguments <- list(.ctJuliaObjective(fit),
     .ctJuliaNumericVector(as.numeric(raw)),
-    .ctJuliaNumericVector(as.numeric(z)), JuliaConnectoR::juliaPut(base),
+    .ctJuliaNumericVector(as.numeric(z)), .ctJuliaPut(base),
     transition = .ctJuliaOr(spec$transition, "exponential"),
     seed = sample.int(.Machine$integer.max, 1L))
   # A draw of the random effects, so each subject's trajectory is drawn at that

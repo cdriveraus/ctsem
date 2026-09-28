@@ -551,7 +551,7 @@
     .ctJuliaNumericVector(as.numeric(fit$estimate$raw)),
     from_level = 1L, subject_matrices = TRUE,
     fields = .ctJuliaVector('subject_loglik'),
-    subject_values = JuliaConnectoR::juliaPut(subjectvalues)))
+    subject_values = .ctJuliaPut(subjectvalues)))
   flat <- array(scores$subject_matrices, dim = c(1L, dim(scores$subject_matrices)))
   .ctBackendSubjectMatrices(fit, flat)
 }

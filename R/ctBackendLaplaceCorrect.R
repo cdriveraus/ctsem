@@ -481,10 +481,10 @@ print.ctLaplaceCorrection <- function(x, ...) {
   if (is.na(chunks) || chunks < 1L) chunks <- max(1L, as.integer(cores)[1L])
   if (verbose > 0) message("Laplace correction: quadrature screen (",
     control$nodes, " nodes)")
-  res <- try(.ctBackendWithMaxChunks(chunks, JuliaConnectoR::juliaGet(
+  res <- try(.ctBackendWithMaxChunks(chunks, .ctJuliaGet(
     .ctJuliaModule(fit$model_spec$project)$ctsem_laplace_autocorrect(
       .ctJuliaObjective(fit), .ctJuliaNumericVector(est),
-      JuliaConnectoR::juliaPut(as.matrix(hessian)),
+      .ctJuliaPut(as.matrix(hessian)),
       nodes = as.integer(control$nodes), step = as.numeric(control$step),
       tolerance = as.numeric(control$tolerance),
       maxsteps = as.integer(control$maxsteps),
@@ -766,7 +766,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
 # nodes placed at the point: the Newton gain it predicts, zero at the answer.
 .ctLaplaceContinueRun <- function(module, cont, est, basis, tol,
   control = .ctLaplaceContinueDefaults, verbose = 0L, skip_gain = 0) {
-  get <- JuliaConnectoR::juliaGet
+  get <- .ctJuliaGet
   x <- as.numeric(est)
   # Every stopping decision is a predicted gain in nats against one bar:
   # `stop_gain`, or the fit's certification tolerance where `stop_gain` is 0,
@@ -781,7 +781,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
   attempts <- 0L
   status <- "rounds"
   rows <- list()
-  B <- JuliaConnectoR::juliaPut(as.matrix(basis))
+  B <- .ctJuliaPut(as.matrix(basis))
   optimise <- function(from, stationary = FALSE, tol = bar) get(
     module$ctsem_laplace_continuation_optimize(cont, .ctJuliaNumericVector(from),
       B, radius, maxiter = as.integer(control$maxiter), tol = tol,
@@ -906,7 +906,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
   function(fit, gradient = TRUE) {
     wantgrad <- isTRUE(gradient)
     function(parm) {
-      result <- try(JuliaConnectoR::juliaGet(
+      result <- try(.ctJuliaGet(
         module$ctsem_laplace_continuation_evaluate(cont,
           .ctJuliaNumericVector(as.numeric(parm)), gradient = wantgrad)),
         silent = TRUE)
@@ -932,7 +932,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
   npar <- length(est)
   nsubjects <- length(fit$model_spec$subject_starts)
   module <- .ctJuliaModule(fit$model_spec$project)
-  get <- JuliaConnectoR::juliaGet
+  get <- .ctJuliaGet
   failed <- function(phrase) {
     warning("Laplace continuation skipped: ", phrase, ". The uncorrected fit is ",
       "returned; see fit$laplace$correction.", call. = FALSE)

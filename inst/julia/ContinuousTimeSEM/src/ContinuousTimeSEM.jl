@@ -48,6 +48,8 @@ end
 # Includes
 # First, so that `using Printf` is in scope for every file that reports.
 include("progress.jl")
+# Checked from progress.jl's per-iteration hooks.
+include("interrupt.jl")
 include("small_linalg.jl")
 include("opcounts.jl")
 include("parameters.jl")

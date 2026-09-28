@@ -92,7 +92,8 @@ Suggests:
 VignetteBuilder: 
     knitr, 
     quarto
-SystemRequirements: GNU make
+SystemRequirements: GNU make; Julia (>= 1.10), optional, for backend =
+    'julia' (ctJuliaInstall() can install it)
 NeedsCompilation: yes
 Biarch: true
 Config/roxygen2/version: 8.1.0

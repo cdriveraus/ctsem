@@ -80,15 +80,11 @@
   workers <- min(as.integer(n), as.integer(cores))
   cancelled <- FALSE
   pool <- NULL
-  # Where the restarts are running when an interrupt lands: in workers (this
-  # session's Julia is idle) or here (it may be mid-call).
-  here <- TRUE
   tryCatch({
     if (workers > 1L && .ctBackendCanWarm()) {
       pool <- .ctBackendWarmWorkers(handle, workers = workers, values = start)
     }
     if (!is.null(pool) && .ctBackendWarmWait(pool) >= 1L) {
-      here <- FALSE
       jobs <- lapply(seq_len(n), function(i) tryCatch(future::future(
         utils::getFromNamespace(".ctBackendRestartOne", "ctsem")(spec,
           starts[[i]], control, gradient), seed = TRUE),
@@ -104,7 +100,6 @@
         message("Restarts could not run in worker processes (",
           table$error[1L], "); running them in this session.")
         table$error <- NA_character_
-        here <- TRUE
         for (i in seq_len(n)) record(i, .ctBackendRestartOne(spec, starts[[i]],
           control, gradient))
       }
@@ -115,16 +110,10 @@
   }, interrupt = function(cnd) {
     cancelled <<- TRUE
     if (!is.null(pool)) try(.ctBackendWarmStop(NULL), silent = TRUE)
-    if (!here) {
-      # This session's Julia was idle throughout, so only the workers go.
-      message("Restarts stopped; keeping the fit as found.")
-    } else {
-      # Interrupted inside a Julia call in this session, which leaves the
-      # bridge waiting for a reply that belongs to the call it abandoned.
-      try(.ctJuliaClearSession(), silent = TRUE)
-      message("Restarts stopped; keeping the fit as found. The Julia session ",
-        "was restarted, so the rest of this fit recompiles for its model shape.")
-    }
+    # A restart interrupted in this session's Julia stops at its next
+    # iteration, and the fit's next call collects what it owes
+    # (R/ctJuliaBridge.R), so the session carries on as it was.
+    message("Restarts stopped; keeping the fit as found.")
   })
   best <- which.max(replace(table$logposterior, is.na(table$logposterior), -Inf))
   keep <- length(best) && is.finite(table$logposterior[best]) &&

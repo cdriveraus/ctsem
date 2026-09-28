@@ -174,9 +174,9 @@ ctLaplaceCheck <- function(fit, nodes = 5L, correction = TRUE, step = 1e-3,
     # evaluating both a second time. The `correction=FALSE` path below still
     # needs to make these two calls itself.
     if (verbose > 0) message("Gap gradient (", 2 * length(est), " quadrature evaluations)")
-    result <- JuliaConnectoR::juliaGet(module$ctsem_laplace_correction(
+    result <- .ctJuliaGet(module$ctsem_laplace_correction(
       objective, .ctJuliaNumericVector(est),
-      JuliaConnectoR::juliaPut(as.matrix(hessian)),
+      .ctJuliaPut(as.matrix(hessian)),
       nodes = as.integer(nodes), step = as.numeric(step),
       laplace_gradient = corrected))
     quadrature <- as.numeric(result$quadrature)

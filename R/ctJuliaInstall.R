@@ -296,6 +296,58 @@
   normalizePath(bin, winslash = "/", mustWork = TRUE)
 }
 
+# What ctsem keeps under R_user_dir(), kept current -----------------------------
+#
+# CRAN allows a package to keep files under tools::R_user_dir() provided "the
+# contents are actively managed (including removing outdated material)". Two
+# things accumulate there. Each engine source gets its own environment keyed by
+# its hash (`.ctJuliaEnvDir()`), so every upgrade or edit leaves the previous
+# one behind; and each Julia ctJuliaInstall() puts in stays when a newer one
+# arrives, at a quarter of a gigabyte apiece.
+#
+# An environment goes once nothing has used it for `days`, not the moment a
+# newer one exists: another R session, or another installed version of ctsem,
+# may be running from it now, and deleting a directory Julia has open fails
+# part way on Windows. Each setup touches a stamp in the environment it uses.
+.ctJuliaTouchEngine <- function(env_dir) {
+  try(file.create(file.path(env_dir, ".ctsem-last-used"), showWarnings = FALSE),
+    silent = TRUE)
+  invisible(NULL)
+}
+
+.ctJuliaPruneEngines <- function(keep, days = 30) {
+  root <- dirname(keep)
+  dirs <- list.dirs(root, recursive = FALSE, full.names = TRUE)
+  dirs <- dirs[grepl("^engine-", basename(dirs)) & basename(dirs) != basename(keep)]
+  if (!length(dirs)) return(invisible(character()))
+  used <- vapply(dirs, function(d) {
+    stamp <- file.path(d, ".ctsem-last-used")
+    as.numeric(file.mtime(if (file.exists(stamp)) stamp else d))
+  }, numeric(1))
+  age <- (as.numeric(Sys.time()) - used) / 86400
+  old <- dirs[!is.na(age) & age > days]
+  # A staging copy is abandoned once it is a day old; see ctJuliaSetup().
+  old <- c(old, dirs[grepl("-partial$", dirs) & !is.na(age) & age > 1])
+  unlink(unique(old), recursive = TRUE)
+  invisible(unique(old))
+}
+
+# After ctJuliaInstall() has put in a Julia, the older ones it installed before.
+# `.ctJuliaManagedBin()` only ever uses the newest, so the rest are dead weight.
+.ctJuliaPruneInstalls <- function(keep) {
+  root <- dirname(keep)
+  dirs <- list.dirs(root, recursive = FALSE, full.names = TRUE)
+  dirs <- dirs[basename(dirs) != basename(keep)]
+  version <- function(d) sub("^julia-(\\d+(\\.\\d+)*).*$", "\\1", basename(d))
+  known <- grepl("^julia-\\d+(\\.\\d+)*$", basename(dirs))
+  newer <- tryCatch(numeric_version(version(keep)), error = function(e) NULL)
+  if (is.null(newer)) return(invisible(character()))
+  old <- dirs[known][numeric_version(version(dirs[known])) < newer]
+  old <- c(old, dirs[grepl("-partial$", basename(dirs))])
+  unlink(old, recursive = TRUE)
+  invisible(old)
+}
+
 # Offered at the point of failure by .ctJuliaCheckAvailable(), so that the first
 # thing a user does with the backend is the thing they meant to do rather than a
 # setup errand.
@@ -404,6 +456,11 @@ ctJuliaInstall <- function(threads = NULL, version = NULL, agree = NULL, force =
       if (!length(done)) " (Julia is already installed)" else "", "...")
   }
   status <- ctJuliaSetup(threads = threads, force = force, agree = agree)
+  # Only now: with `force`, the session running from an older Julia was
+  # replaced by the setup above, so nothing still has that one open.
+  if (startsWith(normalizePath(bin, winslash = "/", mustWork = FALSE), .ctJuliaInstallRoot())) {
+    .ctJuliaPruneInstalls(dirname(normalizePath(bin, winslash = "/", mustWork = FALSE)))
+  }
   if (!quiet) {
     if (length(done)) message("Installed: ", paste(done, collapse = ", "), ".")
     message("The julia backend is ready. Use ctFit(..., backend = 'julia').")
