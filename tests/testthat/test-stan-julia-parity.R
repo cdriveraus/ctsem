@@ -604,31 +604,67 @@ test_that("Stan and Julia's actual optimizers converge to the same fit for TD/TI
   # unless you specifically evaluated at the *other* backend's point, as the
   # investigation that found it had to do). This test instead runs each
   # backend's own real optimizer (ctsem_optimize's Optim.LBFGS for Julia,
-  # Stan's L-BFGS) on the fixture above, and checks that they land on matching
-  # loglik *and* matching raw parameters -- the actual end-to-end guarantee a
-  # fixed point can't give.
+  # Stan's L-BFGS) on the fixture above.
   fixture <- .parity_optimiser_fixture()
   jf <- .parity_julia_fit()
   sf <- suppressMessages(ctFit(fixture$data, model = fixture$model,
     backend = "stan", optimcontrol = list(carefulfit = FALSE, stochastic = FALSE),
     optimize = TRUE, verbose = 0, savescores = FALSE, cores = 1))
 
-  # The loglik is the claim that holds whatever the identifiability: both
-  # optimisers found the same maximum. 1e-5 rather than the old 1e-3, because
-  # the measurement is 3.8e-07 and a tolerance three orders above it would not
-  # notice a real divergence.
-  expect_equal(jf$estimate$loglik, -sf$stanfit$optimfit$f, tolerance = 1e-5)
+  # Since 158a02e1 (2026-09-27) julia's carefulfit prior warm-up defaults to
+  # OFF whenever every indicator is Gaussian -- Charles's decision, measured on
+  # other models to lead a Gaussian fit to a worse basin
+  # (review/OPTIM-next-2026-09-27.md). This fixture is Gaussian, so `jf` no
+  # longer warms up, and now reaches a DIFFERENT, better basin than stan's own
+  # unwarmed optimizer: -33.69 against -36.42, 2.73 nats apart -- too far to be
+  # two stopping points on one flat direction (the 1.92-nat bar used below), so
+  # the two default-start optimisers are no longer directly comparable point
+  # for point. "Same fit" is established as three separate, weaker facts
+  # instead of one raw-parameter equality:
+  #
+  # 1) Julia's point is a genuine maximum, not merely wherever its own
+  #    stopping rule stopped: the engine's own curvature certification agrees
+  #    (measured gap 1.17e-07 log-likelihood units, comfortably under its
+  #    1e-06 bar).
+  cert <- jf$uncertainty$certification
+  expect_true(isTRUE(cert$certified),
+    info = paste0("status: ", cert$status, " -- ", cert$reason))
+
+  # 2) Stan's objective, evaluated at julia's raw point through the same
+  #    log_prob() fixed-point route every other test in this file uses, agrees
+  #    with julia's own reported loglik (measured 1.4e-08 apart) -- so this is
+  #    the SAME likelihood function, not two functions that happen to agree at
+  #    their own separate optima the way the T0-SD meanscale bug's two
+  #    different maxima did.
+  stan_spec <- suppressMessages(ctFit(fixture$data, fixture$model, backend = "stan",
+    fit = FALSE, priors = FALSE))
+  stan_fit <- .compiled_stan_fit(stan_spec)
+  stan_at_julia <- rstan::log_prob(stan_fit, upars = as.numeric(jf$estimate$raw),
+    adjust_transform = FALSE, gradient = TRUE)
+  expect_equal(as.numeric(stan_at_julia), jf$estimate$loglik, tolerance = 1e-6)
+
+  # 3) Julia's optimizer reaches at least as good a value as stan's own
+  #    default-start optimizer, and stan's optimizer, started from julia's
+  #    point instead of its own default start, stays there rather than walking
+  #    away -- confirming julia's point is a maximum of STAN's objective too,
+  #    and that the two optimisers' basins differ only because of where each
+  #    one started, not because of a disagreement about the model. Measured:
+  #    stan-from-julia's loglik matches julia's to 3.8e-08, and its raw
+  #    parameters move by at most 4.4e-07 -- far inside noise, not a partial
+  #    walk back toward stan's own basin.
+  expect_gt(jf$estimate$loglik, -sf$stanfit$optimfit$f)
+  sf_from_julia <- suppressMessages(ctFit(fixture$data, model = fixture$model,
+    backend = "stan", optimcontrol = list(carefulfit = FALSE, stochastic = FALSE),
+    optimize = TRUE, verbose = 0, savescores = FALSE, cores = 1,
+    inits = as.numeric(jf$estimate$raw)))
+  expect_equal(-sf_from_julia$stanfit$optimfit$f, jf$estimate$loglik, tolerance = 1e-5)
 
   # The raw parameters, EXCEPT the directions this fixture cannot identify.
   # 6 subjects and 4 waves do not pin 10 population correlations among 5
   # random effects: walking the julia fit's flattest direction moves its
   # likelihood by well under the 1.92-nat bar over four raw units, and the
-  # direction names exactly those ten; the population covariance at stan's own
-  # point has a smallest eigenvalue of 8.75e-10 against a largest of 170. Along
-  # a flat direction two optimisers with different stopping rules stop in
-  # different places -- measured at about 0.3 in the raw coordinates -- and
-  # that is not a disagreement about the model. Everything the data does pin
-  # agrees to 1.1e-04.
+  # direction names nine of those ten at this basin's stopping point (see the
+  # next test for how that count depends on where the optimiser stopped).
   #
   # The directions flat by the likelihood screen, and not the ones whose
   # curvature has decayed past a threshold: that decays with where the
@@ -660,32 +696,53 @@ test_that("Stan and Julia's actual optimizers converge to the same fit for TD/TI
   expect_equal(sum(keep), length(jf$estimate$raw) - length(weak))
   expect_gt(sum(keep), length(jf$estimate$raw) / 2)
 
-  expect_equal(jf$estimate$raw[keep], sf$stanfit$rawest[keep],
-    tolerance = 1e-2)
+  # NOT compared against sf$stanfit$rawest: since the two default-start
+  # optimisers land in different basins (point 3 above), stan's own optimum
+  # moves by up to 2.96 on the coordinates `keep` marks as well-identified --
+  # not just on the excluded ridge -- which is evidence of a different basin,
+  # not of a parity bug. sf_from_julia, established above as sitting in
+  # julia's own basin, is the comparison that still has power against one.
+  expect_equal(jf$estimate$raw[keep], sf_from_julia$stanfit$rawest[keep],
+    tolerance = 1e-5)
 })
 
 test_that("which directions are named does not depend on how far the optimiser walked", {
   skip_without_julia()
   # The fit above walks this fixture's ridge to a certified point. Stopped part
-  # way -- as the first stage alone once did, 74 iterations and 4.4e-04 lower
-  # in log likelihood on the same ridge -- the curvature along the ridge had
-  # decayed only to 1.7e-08 of the sharpest, above the 1e-8 the report used to
-  # require, so nothing was named; stopped further along, nine of the ten
-  # were, because the tenth correlation's loading drifted from 0.19 to 0.28
-  # across an absolute bar of 0.25. So any change to when a fit stops changed
-  # which parameters this fixture compared across backends. The likelihood
-  # screen names the same set at every stopping point.
+  # way, the curvature along the ridge has decayed less, and a direction can
+  # drop out of the report or a marginal one drop in -- so any change to when a
+  # fit stops can change which parameters this fixture compares across
+  # backends, unless the likelihood screen names the same set at every
+  # stopping point.
   #
-  # The early point is the first stage with a looser stopping rule and no
-  # resume, 4.2e-04 lower. `gapretries = 0` alone stopped there until the
-  # finish began handing an early hand-over back to L-BFGS (2026-09-26): the
-  # first stage now walks the ridge itself and certifies where the resumes
-  # used to end.
+  # The old early point here -- `innergaptol = 1e-4, gapretries = 0` -- stopped
+  # early only because the correction loop's resumes were what walked the rest
+  # of the ridge (4471c9d2). Since the finish began handing an early hand-over
+  # back to L-BFGS (2026-09-26, fcd37fc4) the first stage walks the ridge
+  # itself, so that config no longer stops early; combined with julia's
+  # carefulfit default now off on this Gaussian fixture too (158a02e1,
+  # 2026-09-27 -- see the test above), it runs past the ridge into a
+  # different, unidentified corner and names NONE of the nine directions the
+  # full fit names -- measured, not assumed.
+  #
+  # `newton = FALSE` does still stop early ON the ridge: it skips only the
+  # exact-Hessian finish, not the batching or gap-correction stages, so the
+  # fit still reaches the ridge and is still certified there --
+  # `.ctBackendIdentifiability()` reads the standard post-fit Hessian
+  # (`out$uncertainty$hessian`), which is computed regardless of whether the
+  # Newton finish ran. Measured at fewer iterations than the full fit in every
+  # run (732 of 831, and separately 726 of 751), naming the same nine
+  # directions both times; the raw-parameter gap between the two stopping
+  # points moved with the run's own batching-schedule timing (cores defaults
+  # to 2 here, see CLAUDE.md on cores>1 reproducibility) rather than sitting at
+  # one number -- 0.30 and 0.14 raw units apart (max abs) in two runs -- so the
+  # guard below sits well under the smaller of those instead of against either
+  # exactly.
   full <- .parity_julia_fit()
-  early <- .parity_julia_fit(list(innergaptol = 1e-4, gapretries = 0L))
+  early <- .parity_julia_fit(list(newton = FALSE))
   # Two different stopping points, or this compares a fit with itself.
   expect_lt(early$optim$iterations, full$optim$iterations)
-  expect_gt(max(abs(early$estimate$raw - full$estimate$raw)), 0.5)
+  expect_gt(max(abs(early$estimate$raw - full$estimate$raw)), 0.05)
 
   named <- as.character(full$identifiability$parameters)
   expect_gt(length(named), 0L)
