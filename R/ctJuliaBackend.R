@@ -5306,6 +5306,11 @@ print.ctJuliaFit <- function(x, ...) {
       " standard errors, log likelihood ", format(corr$loglik_laplace, digits = 8),
       " -> ", format(corr$loglik_quadrature, digits = 8),
       ". See fit$laplace$correction.\n", sep = "")
+  } else if (identical(corr$status, "skipped")) {
+    cat("  Laplace estimate kept: the quadrature correction predicted a gain of ",
+      format(corr$predicted_gain, digits = 2), " nats, under ", corr$skip_gain,
+      "; the log likelihood is the quadrature one. See fit$laplace$correction.\n",
+      sep = "")
   } else if (!isTRUE(corr$applied) &&
       isTRUE(abs(as.numeric(.ctJuliaOr(corr$gap_reported, 0))[1L]) >= 1)) {
     # Not moved, and the approximation is still off by a nat or more here: the

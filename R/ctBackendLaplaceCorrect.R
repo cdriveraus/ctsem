@@ -643,8 +643,21 @@ print.ctLaplaceCorrection <- function(x, ...) {
 #            otherwise the fit keeps the Laplace optimum (status `no_gain`),
 #            with the quadrature log likelihood there reported, as the step
 #            correction does when no step raises its objective.
+#   skip     before any round: one gradient gives the gain the fixed-node
+#            model predicts from the Laplace optimum (the residual there);
+#            below `skip_gain` nothing moves (status `skipped`).
 #   stop     when that residual is below the fit's certification tolerance,
-#            or after `rounds` kept rounds.
+#            or after `rounds` kept rounds or `attempts` rounds in all.
+#            `stop_gain` > 0 stops instead on predicted gain in nats: the
+#            residual below it once the last kept round realised less (a
+#            round raising the re-placed objective by more being kept even if
+#            the residual rose), a region shrunk until it promises less, or a
+#            kept round gaining less. It is off (0) by default: on the bench's
+#            paired grid (review/bench, quadcost 2026-09-27) it cut the
+#            correction's time to a quarter and gained up to 2.5 exact nats on
+#            gB8 and 0.7 on gC8, but lost 0.46 to 0.52 on gD3, 0.026 on gC2,
+#            0.031 on gN3 and 0.06 to 0.16 on the AnomAuth default starts
+#            against the rounds run to the tolerance.
 #   guard    a continuation that moves the quadrature objective by more than
 #            max(50, N/2) nats is reverted to the Laplace optimum with a
 #            warning, keeping the rejected point, as bigIRT does.
@@ -685,7 +698,20 @@ print.ctLaplaceCorrection <- function(x, ...) {
 # D3 at 0.25 se for six rounds whose gains matched their model's to 2%, and
 # the rounds ran out 0.7 exact nats short of the best-known point. `maxiter`
 # (100) caps one round; bigIRT's whole continuation took 30 to 60
-# evaluations. `guard` and `guard_per_subject` are bigIRT's max(50, N/2).
+# evaluations. Five is enough when `stop_gain` is on (gated-gaps A1, N1, C8:
+# gradients from 54, 52 and 90 to 34, 52 and 79, end points within 0.04
+# exact nats), not with the rounds run to the certification tolerance.
+# `guard` and `guard_per_subject` are bigIRT's max(50, N/2).
+# `skip_gain` (5e-3 nats) was set on the optimiser bench's default Laplace
+# cells (dev/lapcontinue/calibrate-cost.R, dev1, 2026-09-27, one start each,
+# the AnomAuth cells from their spurious maxima). Below it were cf_mixed,
+# cf_ordinal, mvmix, ordinal, cf_binary and gD1, whose whole correction gained
+# 6e-6 to 4.9e-3 exact nats -- at most 1.7 times the prediction -- and moved
+# the estimate at most 0.075 se; the smallest prediction above it was jflat's
+# 0.07 (gain 0.078). It is also the gain of a whitened Newton step of 0.1 se,
+# the move `material` calls worth a line in print(). On the paired grid the
+# twelve cells it skips kept their exact log likelihood to 0.005 nats at 0.05
+# to 0.24 of the correction's time.
 # `value_tol` (1e-3 nats) is the step correction's `gain_tol`: a change in the
 # objective below it is not one to act on either way.
 # `rtol` (1e-8) is the identifiability report's: a direction the Laplace
@@ -695,7 +721,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
   product_maxdim = 2L, soft_tau = 3.5, soft_maxdirs = 2L, rounds = 10L,
   attempts = 15L, radius = 1, radius_max = 16, maxiter = 100L,
   material = 0.1, guard = 50, guard_per_subject = 0.5, rtol = 1e-8,
-  value_tol = 1e-3, maxdim = 5L)
+  value_tol = 1e-3, maxdim = 5L, stop_gain = 0, skip_gain = 5e-3)
 
 # The directions a round moves in: the Laplace curvature's identified ones,
 # each scaled to one of its standard errors, so the round's L-BFGS starts from
@@ -739,9 +765,15 @@ print.ctLaplaceCorrection <- function(x, ...) {
 # when one is kept. `residual` is half the squared whitened gradient with the
 # nodes placed at the point: the Newton gain it predicts, zero at the answer.
 .ctLaplaceContinueRun <- function(module, cont, est, basis, tol,
-  control = .ctLaplaceContinueDefaults, verbose = 0L) {
+  control = .ctLaplaceContinueDefaults, verbose = 0L, skip_gain = 0) {
   get <- JuliaConnectoR::juliaGet
   x <- as.numeric(est)
+  # Every stopping decision is a predicted gain in nats against one bar:
+  # `stop_gain`, or the fit's certification tolerance where `stop_gain` is 0,
+  # which is how the rounds ran before 2026-09-27 (they then stopped only on
+  # that tolerance, 1e-6 by default, or by running out of rounds or attempts).
+  stop_gain <- as.numeric(.ctJuliaOr(control$stop_gain, 0))
+  bar <- if (stop_gain > 0) stop_gain else as.numeric(tol)
   start <- get(module$ctsem_laplace_continuation_info(cont))
   value <- as.numeric(start$quadrature)
   radius <- as.numeric(control$radius)
@@ -750,9 +782,9 @@ print.ctLaplaceCorrection <- function(x, ...) {
   status <- "rounds"
   rows <- list()
   B <- JuliaConnectoR::juliaPut(as.matrix(basis))
-  optimise <- function(from, stationary = FALSE) get(
+  optimise <- function(from, stationary = FALSE, tol = bar) get(
     module$ctsem_laplace_continuation_optimize(cont, .ctJuliaNumericVector(from),
-      B, radius, maxiter = as.integer(control$maxiter), tol = as.numeric(tol),
+      B, radius, maxiter = as.integer(control$maxiter), tol = tol,
       stationary_only = stationary))
   row <- function(round, residual_after, keep, flagged, gain = NA_real_) data.frame(
     round = attempts, radius = radius,
@@ -762,12 +794,42 @@ print.ctLaplaceCorrection <- function(x, ...) {
     moved = as.numeric(round$moved), iterations = as.integer(round$iterations),
     f_calls = as.integer(round$f_calls), g_calls = as.integer(round$g_calls),
     kept = keep, flagged = as.integer(flagged))
-  residual <- NA_real_
-  repeat {
+  # The gain the fixed-node model predicts from the start: half the squared
+  # whitened gradient, the Newton gain in nats. One gradient, and it decides
+  # whether any round runs at all (`skip_gain`).
+  residual <- as.numeric(optimise(x, stationary = TRUE)$start_gain)
+  predicted <- residual
+  # What the last kept round raised the re-placed objective by; none yet.
+  realised <- 0
+  if (!is.finite(residual)) {
+    status <- "failed"
+  } else if (residual < skip_gain) {
+    status <- "skipped"
+  } else repeat {
+    # The residual is a Newton gain in the Laplace fit's metric, and where the
+    # quadrature objective is flatter than that it understates what is left:
+    # gated-gaps C2 stopped at a residual of 0.003 with 0.1 exact nats still to
+    # gain. So a residual under the bar is converged only when the last round
+    # also realised less than it; while rounds keep realising more, they go
+    # on, each taking its step on the curvature its own L-BFGS measures.
+    rising <- stop_gain > 0 && realised >= stop_gain
+    if (residual < bar && !rising) { status <- "converged"; break }
     if (kept >= control$rounds) { status <- "rounds"; break }
     if (attempts >= control$attempts) { status <- "attempts"; break }
+    # What the next round can promise inside its region: the Newton gain when
+    # the whitened Newton step fits, else the gain of the whitened gradient's
+    # step to the boundary on the same model. A region that rejections have
+    # shrunk until it promises less than the bar is as done as a residual
+    # below it; before this, those rounds ran on until the attempts ran out.
+    reach <- sqrt(2 * residual)
+    promise <- if (reach <= radius) residual else radius * reach - radius^2 / 2
+    if (stop_gain > 0 && promise < stop_gain && !rising) {
+      status <- "stalled"; break
+    }
     attempts <- attempts + 1L
-    round <- optimise(x)
+    # Below the bar, the round's own tolerance goes below the residual, so
+    # that it takes its step rather than reporting itself stationary.
+    round <- optimise(x, tol = if (residual < bar) residual / 100 else bar)
     residual <- as.numeric(round$start_gain)
     if (isTRUE(round$stationary)) {
       status <- "converged"
@@ -788,14 +850,23 @@ print.ctLaplaceCorrection <- function(x, ...) {
       .ctJuliaNumericVector(xn)))
     after <- as.numeric(optimise(xn, stationary = TRUE)$start_gain)
     gain <- as.numeric(placed$quadrature) - value
-    keep <- is.finite(after) && is.finite(gain) && after < residual &&
-      gain >= -as.numeric(control$value_tol)
+    # Kept when the residual fell without the re-placed value falling, or --
+    # whatever the residual did -- when that value rose by more than the bar.
+    # On gated-gaps D3 two rounds that raised it by 0.087 and 0.020 were
+    # rejected for a residual that rose, the region shrank, and the rounds
+    # stopped 0.6 exact nats short. A kept rise is a rise in the objective the
+    # fit reports, so this cannot walk downhill, and each such round gains at
+    # least the bar, so it cannot cycle.
+    keep <- is.finite(after) && is.finite(gain) &&
+      ((after < residual && gain >= -as.numeric(control$value_tol)) ||
+        (stop_gain > 0 && gain > stop_gain))
     rows[[length(rows) + 1L]] <- row(round, after, keep, placed$nflagged, gain)
     if (verbose > 0L) {
       message(sprintf(paste0("Laplace continuation round %d: radius %.3g, ",
         "residual %.3g -> %.3g, value %+.4g, %s"), attempts, radius, residual,
         after, gain, if (keep) "kept" else "rejected"))
     }
+    realised <- if (keep) gain else 0
     if (keep) {
       kept <- kept + 1L
       x <- xn
@@ -807,7 +878,14 @@ print.ctLaplaceCorrection <- function(x, ...) {
         radius <- min(2 * radius, as.numeric(control$radius_max))
       }
       residual <- after
-      if (after < tol) { status <- "converged"; break }
+      # Kept, but the objective with its nodes re-placed rose by less than
+      # the bar: the rounds are closing on the fixed point without gaining
+      # anything a fit could report. On gated-gaps A1 eight such rounds in a
+      # row each took 0.015 se and lost 2e-4 to 9e-4 nats, until the rounds
+      # ran out.
+      if (stop_gain > 0 && gain < stop_gain && residual >= bar) {
+        status <- "stalled"; break
+      }
     } else {
       get(module[["ctsem_laplace_continuation_revert!"]](cont))
       radius <- 0.25 * max(as.numeric(round$moved), 1e-12)
@@ -816,7 +894,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
   }
   info <- get(module$ctsem_laplace_continuation_info(cont))
   list(x = x, status = status, rounds = kept, attempts = attempts,
-    radius = radius, residual = residual,
+    radius = radius, residual = residual, predicted = predicted, bar = bar,
     trace = if (length(rows)) do.call(rbind, rows) else NULL,
     start = start, info = info, value = value)
 }
@@ -955,10 +1033,29 @@ print.ctLaplaceCorrection <- function(x, ...) {
       refused = as.integer(after$refused))
   }
   run <- try(.ctLaplaceContinueRun(module, cont, est, basis$basis, tol,
-    control = control, verbose = verbose), silent = TRUE)
+    control = control, verbose = verbose,
+    skip_gain = as.numeric(.ctJuliaOr(control$skip_gain, 0))), silent = TRUE)
   if (inherits(run, "try-error")) {
     return(failed(paste0("a round could not be evaluated (",
       trimws(as.character(run)), ")")))
+  }
+  record$predicted_gain <- as.numeric(run$predicted)
+  record$skip_gain <- as.numeric(.ctJuliaOr(control$skip_gain, 0))
+  record$stop_gain <- as.numeric(run$bar)
+  # Skipped: the fixed-node model promised less than `skip_gain` from the
+  # Laplace optimum, so no round ran. The estimate stays, and the log
+  # likelihood reported is the quadrature one there, as where a round ran and
+  # gained nothing.
+  if (identical(run$status, "skipped")) {
+    record$status <- "skipped"
+    record$loglik_quadrature <- sum(as.numeric(start$quadrature_units))
+    record$logposterior_quadrature <- as.numeric(start$quadrature)
+    record$gap_reported <- as.numeric(start$quadrature) - as.numeric(start$laplace)
+    fit <- report_quadrature(fit, start)
+    record$evaluations <- counts()
+    record$seconds <- c(screen = screen_seconds, total = seconds())
+    fit$laplace$correction <- record
+    return(fit)
   }
   info <- run$info
   change <- as.numeric(info$quadrature) - as.numeric(start$quadrature)
@@ -1063,7 +1160,10 @@ print.ctLaplaceCorrection <- function(x, ...) {
     }
     parnames <- try(.ctBackendRawParameterNames(fit, npar), silent = TRUE)
     if (inherits(parnames, "try-error")) parnames <- NULL
-    certification <- .ctBackendCertificationRecord(gap, probe, tolerance = tol,
+    # Certified to the bar the rounds stopped on, not the Laplace fit's: the
+    # quadrature rule is not resolved to 1e-6 nats, and a continuation that
+    # met its own stopping rule is not a failure to converge.
+    certification <- .ctBackendCertificationRecord(gap, probe, tolerance = run$bar,
       saturated = isTRUE(fit$optim$saturated), overshot = FALSE,
       parnames = parnames)
     record$certification <- certification

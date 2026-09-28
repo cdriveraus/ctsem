@@ -178,6 +178,11 @@ test_that("the continuation lands at the exact marginal's optimum, closer than t
   expect_true(corr$applied)
   expect_gte(corr$rounds, 1L)
   expect_identical(corr$continuation, "converged")
+  # Converged means the gain the fixed-node model still predicts is under the
+  # bar the rounds stopped on, in nats: the certification tolerance, while
+  # `stop_gain` is off.
+  expect_lt(corr$stationarity, corr$stop_gain)
+  expect_identical(corr$stop_gain, .ctBackendGapTolerance(off))
   expect_false(corr$guard$fired)
   expect_equal(corr$laplace_estimate, as.numeric(off$estimate$raw))
 
@@ -290,6 +295,31 @@ test_that("the guard reverts a continuation that moves the objective too far", {
   expect_false(isTRUE(all.equal(corr$rejected_estimate, as.numeric(off$estimate$raw))))
   # The quadrature log likelihood at the Laplace optimum is what is reported.
   expect_identical(out$estimate$loglik_method, "quadrature")
+})
+
+test_that("a correction predicted to gain less than skip_gain is skipped, and says so", {
+  skip_without_julia()
+  fits <- .lc_fits("nonlinear")
+  # This fixture's correction predicts about 0.2 nats from its Laplace
+  # optimum, so at the default bar it runs; a bar of a nat skips it.
+  expect_gte(fits$quadrature$laplace$correction$predicted_gain,
+    .ctLaplaceContinueDefaults$skip_gain)
+  high <- utils::modifyList(.ctLaplaceContinueDefaults, list(skip_gain = 1))
+  out <- .ctLaplaceContinue(fits$off, control = high)
+  corr <- out$laplace$correction
+  expect_identical(corr$status, "skipped")
+  expect_false(corr$applied)
+  expect_equal(corr$predicted_gain,
+    fits$quadrature$laplace$correction$predicted_gain)
+  expect_null(corr$trace)
+  # Nothing moved: the estimate and its uncertainty are the Laplace fit's, and
+  # the log likelihood reported is the quadrature one there.
+  expect_identical(out$estimate$raw, fits$off$estimate$raw)
+  expect_identical(out$estimate$cov, fits$off$estimate$cov)
+  expect_identical(out$estimate$loglik_method, "quadrature")
+  expect_equal(out$estimate$loglik, corr$loglik_quadrature)
+  expect_true(any(grepl("the quadrature correction predicted a gain",
+    capture.output(print(out)))))
 })
 
 test_that("a unit wider than the cap keeps its Laplace term, and the fit says so", {

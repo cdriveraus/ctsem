@@ -810,11 +810,15 @@ T0VARredundancies <- function(ctm) {
 #' Laplace optimum in rounds, each confined to a region measured in the fit's
 #' standard errors, the nodes placed afresh after each, until the gradient with
 #' the nodes placed at the estimate -- the quadrature's own estimate of the
-#' exact score -- promises less than the certification tolerance. A round after
-#' which that gradient promises more than before, or after which the objective
-#' with its nodes placed afresh is lower, is undone and the region shrunk; when
-#' no round can do both, the correction stops short of that point, and
-#' \code{print(fit)} says so. A subject or group with k random effects costs
+#' exact score -- promises less than the certification tolerance. A round
+#' after which that gradient promises more than before, or after which the
+#' objective with its nodes placed afresh is lower, is undone and the region
+#' shrunk; when no round can do both, the correction stops short of that point,
+#' and \code{print(fit)} says so.
+#' When the gain it predicts before any round is under 0.005 nats -- a move of
+#' about a tenth of a standard error -- no round runs: the estimate is kept,
+#' the log likelihood reported is the quadrature one, and \code{print(fit)}
+#' says so. A subject or group with k random effects costs
 #' \code{5^k} evaluations of its likelihood per gradient, so one with more
 #' than five keeps the Laplace term, and the fit says so. Where the rounds
 #' reach that point, the covariance and draws come from the Hessian of the

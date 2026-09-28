@@ -173,6 +173,10 @@ mutable struct CTSEMLaplaceContinuation{L} <: CTSEMOptimisable
     member_sweeps::Int
     recentres::Int
     refused::Int
+    # The last evaluation, at its point, for the placement it was made under:
+    # a round's first evaluation is at the point the previous round's
+    # stationarity check just evaluated. Cleared by every placement.
+    cache::Any
 end
 
 """Gauss-Hermite grids a rule of these options can ask for, filled before any
@@ -588,7 +592,7 @@ function ctsem_laplace_continuation(laplace::CTSEMLaplaceObjective,
         Int(product_maxdim), Float64(soft_tau), Int(soft_maxdirs), Int(maxdim),
         fill(false, nunits),
         fill(NaN, nunits), fill(NaN, nunits), fill(false, nunits), NaN, nothing,
-        0, 0, 0, 0, 0, 0)
+        0, 0, 0, 0, 0, 0, nothing)
     _continuation_place!(o, theta)
     return o
 end
@@ -626,6 +630,7 @@ function ctsem_laplace_continuation_revert!(o::CTSEMLaplaceContinuation)
         setfield!(o, f, getfield(o.previous, f))
     end
     o.previous = nothing
+    o.cache = nothing
     return ctsem_laplace_continuation_info(o)
 end
 
@@ -657,6 +662,7 @@ function _continuation_place!(o::CTSEMLaplaceContinuation, theta::Vector{Float64
     o.centre_value = sum(placed.laplace[U] for U in o.rest_units; init=0.0) +
         sum(placed.quadrature[U] for U in flagged; init=0.0) + prior
     o.recentres += 1
+    o.cache = nothing
     return o
 end
 
@@ -865,6 +871,24 @@ route. `unit_loglik` is every unit's term in the fit's unit order, and
 function ctsem_laplace_continuation_evaluate(o::CTSEMLaplaceContinuation,
     values::AbstractVector; gradient::Bool=true)
     theta = collect(Float64, values)
+    hit = o.cache
+    if hit !== nothing && hit.theta == theta && (!gradient || hit.result.gradient !== nothing)
+        return _continuation_copy(hit.result)
+    end
+    result = _continuation_evaluate(o, theta, gradient)
+    o.cache = (theta=theta, result=_continuation_copy(result))
+    return result
+end
+
+# Copies of the vectors, so that neither a caller nor the cache can change
+# what the other holds.
+_continuation_copy(r) = (value=r.value,
+    gradient=r.gradient === nothing ? nothing : copy(r.gradient),
+    unit_loglik=copy(r.unit_loglik), subject_loglik=copy(r.subject_loglik),
+    converged=r.converged)
+
+function _continuation_evaluate(o::CTSEMLaplaceContinuation, theta::Vector{Float64},
+    gradient::Bool)
     rest = ctsem_laplace_evaluate(o.rest, theta; gradient=gradient)
     flagged = _continuation_flagged(o, theta, gradient)
     gradient ? (o.gradient_calls += 1) : (o.value_calls += 1)
@@ -1092,8 +1116,9 @@ function ctsem_laplace_continuation_hessian(o::CTSEMLaplaceContinuation,
         # The gradient at `values` itself, which the forward scheme differences
         # every column against.
         g0 = if scheme === :forward
+            # Fresh, not cached: every difference starts from the same modes.
             restore!()
-            ctsem_laplace_continuation_evaluate(o, x; gradient=true)
+            _continuation_evaluate(o, x, true)
         else
             nothing
         end
@@ -1102,14 +1127,14 @@ function ctsem_laplace_continuation_hessian(o::CTSEMLaplaceContinuation,
             h = step * max(1.0, abs(x[j]))
             plus = copy(x); plus[j] += h
             restore!()
-            gp = ctsem_laplace_continuation_evaluate(o, plus; gradient=true)
+            gp = _continuation_evaluate(o, plus, true)
             if g0 !== nothing
                 gp.converged || continue
                 H[:, j] = (gp.gradient .- g0.gradient) ./ h
             else
                 minus = copy(x); minus[j] -= h
                 restore!()
-                gm = ctsem_laplace_continuation_evaluate(o, minus; gradient=true)
+                gm = _continuation_evaluate(o, minus, true)
                 (gp.converged && gm.converged) || continue
                 H[:, j] = (gp.gradient .- gm.gradient) ./ (2h)
             end
