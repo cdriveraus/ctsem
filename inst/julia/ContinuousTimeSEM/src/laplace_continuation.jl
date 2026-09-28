@@ -84,7 +84,10 @@ block tree, so each effect multiplies it by 5. Measured on dev1 at 8 threads,
 150 subjects of two latents (dev/lapcontinue/highdim.R): at `d = 4` the
 correction took 92 s beside a 343 s Laplace fit (the step correction 57 s), at
 `d = 5` 727 s beside 184 s (the step 579 s), two thirds of it the Hessian. At
-`d = 6` that is an hour, so the default stops at 5. A unit wider
+`d = 6` that is an hour, so the default stops at 5. Since the Hessian became
+exact (`ctsem_laplace_continuation_hessian`) the `d = 5` correction takes
+132 s there beside a 170-second fit, 30 s of it the Hessian; the cap has not
+been revisited. A unit wider
 than `maxdim` is not scored and keeps its Laplace term (`wide` in the info):
 the step correction, the alternative, pays the same `nodes^d` per quadrature
 value, so falling back to it would save nothing.
@@ -1087,17 +1090,21 @@ to choose (`_continuation_hessian_width`); the result does not depend on it.
 `:forward` and `:central` difference the hybrid's exact gradient, the Laplace
 part's inner modes warm-started from their modes at `values` for the reason
 `ctsem_laplace_hessian` gives: `:forward` one gradient per column and one at
-`values`, `:central` two per column. They were the default until the exact
-scheme, forward last: a gradient of the hybrid costs a reverse sweep per
-member per node, so `npar + 1` of them are `npar + 1` sweeps per node, and at
-five effects a unit (dev/lapcontinue/highdim.R, 150 subjects, npar 27; dev1,
-8 threads) the forward Hessian took 126 s and the central one 243 s. On the
-optimiser bench's Laplace fits whose continuation reported this Hessian (32
-fits of 9 models; review/bench/2026-09-26-baseline.md) the forward scheme
-moved no standard error by more than 0.24% against the central one. The
-Laplace Hessian is no substitute: at the Laplace optimum or at the
-continuation's estimate it moved some standard error by more than 20% on
-three of the nine, by up to 69%.
+`values`, `:central` two per column -- `npar + 1` and `2 npar` reverse sweeps
+per member per node, where the exact scheme takes `ceil(active / width)` dual
+ones. Measured on dev1, each after a first call: on the bench cell ord4 (27
+parameters, 49 of 50 units flagged, 625 nodes each; one thread) exact 175 s,
+forward 825 s, central 1593 s, the exact standard errors within 2e-7 of the
+central ones; on dev/lapcontinue/highdim.R (150 subjects; 8 threads) at five
+effects a unit exact 8.7 s against forward 125 s, and at four, where the width
+stays one, 10.6 s against 20.3 s. A session's first exact Hessian adds its
+compilation: 30 s and 15 s in all there. Forward was the default before this
+scheme (e258ed65), central before that; on the optimiser bench's Laplace fits
+whose continuation reported this Hessian (32 fits of 9 models;
+review/bench/2026-09-26-baseline.md) forward moved no standard error by more
+than 0.24% against central. The Laplace Hessian is no substitute: at the
+Laplace optimum or at the continuation's estimate it moved some standard
+error by more than 20% on three of the nine, by up to 69%.
 
 A column whose points did not all evaluate is `NaN`, under either difference
 scheme and in the exact scheme's differenced part, which the caller sees as an
