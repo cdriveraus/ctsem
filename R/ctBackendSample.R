@@ -1248,9 +1248,19 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # Any finite point compiles the same code, so a pre-placement start is as
   # good as the placement's own estimate for this -- only compilation is being
   # bought here, not a value the chains will actually start from.
+  #
+  # Any substep mesh does too, but the maxtimestep rule does not: the engine's
+  # subject objective is typed on its substep policy, a `Float64` rule or a
+  # per-row `Vector{Int}` mesh. Under `nsubsteps = 'auto'` the placement
+  # replaces the rule with a mesh and the chains filter with that, so a worker
+  # warmed at the rule compiled code no chain calls, then compiled the filter
+  # and its gradient again when its chain began. Ones are a valid mesh on any
+  # rows. Only a start where the likelihood is not finite keeps the rule, and
+  # pays that.
   start0 <- .ctJuliaInitialValues(npar, inits,
     initsd = .ctJuliaOr(optimcontrol$initsd, .01))
   spec0 <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
+  if (!is.null(spec0$substeps)) spec0$max_timestep <- rep(1L, length(spec0$times))
   handles <- if (processes && chains > 1L && .ctBackendCanWarm()) {
     .ctBackendWarmWorkers(spec0, workers = chains, values = start0)
   } else NULL

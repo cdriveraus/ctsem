@@ -533,6 +533,8 @@ optimum, how nonlinear each observation interval is and refines only the interva
 \code{substeptol} (default 0.01) is the largest acceptable linearisation error as a fraction of the
 predicted state standard deviation, and \code{maxsubsteps} (default 64) caps an interval.
 \code{maxtimestep} remains a ceiling on the step. The choice is reported in \code{fit$substeps}.
+With \code{optimize = FALSE} that optimum is the one that places the sampler, and the chains keep the
+mesh chosen there.
 \code{transition = 'euler'} (julia backend, \code{intoverstates = FALSE} only) replaces the exponential
 step between substeps of the state-explicit path with plain Euler-Maruyama, for a reference that
 shares no approximation with the filter; it needs a fine \code{maxtimestep}. See also

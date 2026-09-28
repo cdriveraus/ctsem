@@ -202,6 +202,83 @@ test_that("a nonlinear model gets refined intervals and a fit that runs", {
   expect_true(any(auto$model_spec$max_timestep > 1L))
 })
 
+# optimize = FALSE places the sampler through the optimising pipeline, and the
+# chains sample the model the placement meshed. The placement was once a bare
+# optimisation that never meshed: the option was accepted and a nonlinear
+# model sampled at one step per interval. The sampled fit is a copy of the
+# placement, so its spec says nothing about the chains; the objective the
+# sampler is handed does. Worker processes are warmed before any mesh exists
+# and must compile the type the chains will use. No pool is returned, so the
+# chains run in this session, where the sampler can be watched.
+test_that("sampling uses the fitted mesh, on both targets and from ctFitUncertainty", {
+  skip_if_not_installed("future")
+  dat <- .substep_data(nsub = 12, nrow = 8)
+  run <- function(...) suppressWarnings(suppressMessages(ctFit(dat,
+    .substep_nonlinear_model(), backend = "julia", cores = 1, verbose = 0,
+    inits = c(0.1, -0.2), nlcontrol = list(nsubsteps = "auto", substeptol = 0.02),
+    ...)))
+  optimised <- run()
+  mesh <- optimised$model_spec$max_timestep
+  expect_true(is.integer(mesh))
+  expect_true(any(mesh > 1L))
+
+  # The state-explicit chain is stopped where the sampler is handed its
+  # objective. Running it compiles the state-explicit engine for this shape,
+  # most of two minutes, and test_substep_mesh.jl covers that engine on a mesh.
+  warmed <- list()
+  sampled <- list()
+  sampleobjective <- ctsem:::.ctBackendSampleObjective
+  local_mocked_bindings(
+    .ctBackendWarmWorkers = function(object, ...) {
+      warmed[[length(warmed) + 1L]] <<- object
+      NULL
+    },
+    .ctBackendSampleObjective = function(fit, target) {
+      sampled[[length(sampled) + 1L]] <<- list(fit = fit, target = target)
+      if (isTRUE(target$state_explicit)) stop("handed to the sampler")
+      sampleobjective(fit, target)
+    }, .package = "ctsem")
+
+  marginal <- run(optimize = FALSE,
+    sampleControl = list(chains = 2, warmup = 10, draws = 10))
+  expect_equal(marginal$substeps, optimised$substeps)
+  expect_gt(length(sampled), 0L)
+  for (s in sampled) expect_identical(s$fit$model_spec$max_timestep, mesh)
+  rule <- function(object) if (inherits(object, "ctJuliaFit"))
+    object$model_spec$max_timestep else object$max_timestep
+  expect_gt(length(warmed), 0L)
+  for (object in warmed) {
+    expect_type(rule(object), typeof(mesh))
+    expect_length(rule(object), length(mesh))
+  }
+
+  # Sampling a fit already made samples its own mesh.
+  sampled <- list()
+  suppressWarnings(suppressMessages(ctFitUncertainty(optimised, uncertainty = "sample",
+    control = list(chains = 1, warmup = 10, draws = 10))))
+  expect_gt(length(sampled), 0L)
+  for (s in sampled) expect_identical(s$fit$model_spec$max_timestep, mesh)
+
+  # One innovation per substep, so the state-explicit target is longer on the
+  # mesh than on the maxtimestep rule.
+  sampled <- list()
+  expect_error(run(optimize = FALSE, intoverstates = FALSE,
+    sampleControl = list(chains = 1, warmup = 10, draws = 10)),
+    "handed to the sampler")
+  expect_length(sampled, 1L)
+  s <- sampled[[1]]
+  expect_true(s$target$state_explicit)
+  expect_equal(s$fit$substeps, optimised$substeps)
+  spec <- s$fit$model_spec
+  expect_identical(spec$max_timestep, mesh)
+  atrule <- spec
+  atrule$max_timestep <- spec$substeps$floor
+  expect_length(s$target$estimate,
+    ctsem:::.ctBackendNpar(spec) + ctsem:::.ctJuliaStateDimension(spec))
+  expect_gt(ctsem:::.ctJuliaStateDimension(spec),
+    ctsem:::.ctJuliaStateDimension(atrule))
+})
+
 # A fitted mesh goes with the rows it was chosen for --------------------------
 #
 # The mesh is one count per row of the fitted data. Prediction and
