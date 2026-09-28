@@ -75,6 +75,9 @@ stops the interrupted work at its next iteration; work that has no
 iterations, such as compiling for a new model shape, finishes in the
 background. If it is still running when the next julia call starts, that
 call says so and waits, and Escape during that wait stops Julia outright.
+\code{\link{ctJuliaProcesses}} lists the Julia processes ctsem has running,
+including any left by R sessions that have ended, and
+\code{\link{ctJuliaKill}} stops them.
 
 If \pkg{JuliaConnectoR} or Julia itself is missing, this offers to install it
 rather than failing -- the same thing \code{\link{ctJuliaInstall}} does, which
