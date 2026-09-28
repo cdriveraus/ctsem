@@ -51,7 +51,38 @@ function ctsem_set_interrupt!(path::AbstractString, parent::Integer)
     _CTSEM_PARENT_PID[] = Int(parent)
     _CTSEM_INTERRUPT_NEXT[] = 0.0
     _CTSEM_INTERRUPT_SEEN[] = false
+    _ctsem_detach_console()
     return Int(getpid())
+end
+
+"""
+    _ctsem_detach_console()
+
+Stop a terminal's Ctrl-C reaching this process directly.
+
+R started from a terminal shares it with this process, so Ctrl-C there went to
+both at once. Julia threw its own `InterruptException` into whatever the main
+task was doing -- including waiting on a parallel region, whose tasks then ran
+on with nobody waiting for them -- and R, reading the reply that produced
+before it had noticed the key, reported an engine error instead of an
+interrupt. Stopping only through R's request keeps every interrupt at a
+checkpoint, the same way whatever the front end.
+
+Windows: ignore Ctrl-C for this process. Elsewhere: leave the terminal's
+foreground process group, which is what the terminal signals. Best effort; a
+failure leaves things as they were.
+"""
+function _ctsem_detach_console()
+    try
+        if Sys.iswindows()
+            ccall((:SetConsoleCtrlHandler, "kernel32"), stdcall, Int32,
+                (Ptr{Cvoid}, Int32), C_NULL, 1)
+        else
+            ccall(:setpgid, Cint, (Cint, Cint), 0, 0)
+        end
+    catch
+    end
+    return nothing
 end
 
 """

@@ -1232,7 +1232,25 @@ function _laplace_parallel(f, items)
     end
     # The caller works too, on the slot it already holds, so the region always
     # completes even when the pool is empty.
-    _laplace_pull!(f, items, n, next, failed)
+    #
+    # If the caller's share throws -- R asking the call to stop is the usual
+    # reason, from a chain's progress checkpoint (interrupt.jl) -- the helpers
+    # are told to stop and waited for before the exception goes on. Otherwise
+    # they outlive the call that spawned them: its reply reaches R, R removes
+    # the file they would have stopped at, and they sample on in the background
+    # alongside whatever R asks for next.
+    try
+        _laplace_pull!(f, items, n, next, failed)
+    catch
+        failed[] = true
+        for helper in helpers
+            try
+                wait(helper)
+            catch
+            end
+        end
+        rethrow()
+    end
     foreach(wait, helpers)
     return !failed[]
 end

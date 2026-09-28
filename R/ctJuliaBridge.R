@@ -166,8 +166,13 @@
     done <- suspendInterrupts(.ctJuliaTakeMessage(wire, type, discard))
     if (is.list(done)) {
       if (identical(done$kind, "result")) return(done$value)
-      if (!discard) stop(done$message, call. = FALSE, domain = NA)
-      return(invisible(NULL))
+      if (discard) return(invisible(NULL))
+      # Julia interrupted by something other than R -- a terminal's Ctrl-C
+      # reaching it before `_ctsem_detach_console()` could, or a session
+      # started without it. The reply is whole, so the session is fine; what
+      # was asked for is an interrupt, not an engine error.
+      if (grepl("InterruptException", done$message, fixed = TRUE)) .ctJuliaInterruptNow()
+      stop(done$message, call. = FALSE, domain = NA)
     }
     if (!is.null(announce)) announce()
   }
@@ -450,20 +455,24 @@
 # nothing here has checked. The candidates are that pinned version itself,
 # which is known to exist, and whatever juliaup's release list says is newest
 # in either series; a Julia ctsem installed is offered only the pin, since
-# that is what ctJuliaInstall() installs.
-.ctJuliaNewerRelease <- function(version, bin) {
+# that is what ctJuliaInstall() installs. `pinned` and `latest` are arguments
+# so the rule can be tested without either.
+.ctJuliaNewerRelease <- function(version, bin, managed = NULL,
+  pinned = .ct_julia_version, latest = .ctJuliaupLatest) {
   if (length(version) != 1L || is.na(version) || is.null(bin)) return(NULL)
   current <- tryCatch(numeric_version(version), error = function(e) NULL)
   if (is.null(current)) return(NULL)
   series <- function(v) sub("^(\\d+\\.\\d+).*$", "\\1", v)
   running <- series(version)
-  tested <- series(.ct_julia_version)
-  managed <- startsWith(normalizePath(bin, winslash = "/", mustWork = FALSE),
-    .ctJuliaInstallRoot())
-  candidates <- .ct_julia_version
+  tested <- series(pinned)
+  if (is.null(managed)) {
+    managed <- startsWith(normalizePath(bin, winslash = "/", mustWork = FALSE),
+      .ctJuliaInstallRoot())
+  }
+  candidates <- pinned
   if (!managed) {
-    candidates <- c(candidates, .ctJuliaupLatest(running),
-      if (numeric_version(tested) > numeric_version(running)) .ctJuliaupLatest(tested))
+    candidates <- c(candidates, latest(running),
+      if (numeric_version(tested) > numeric_version(running)) latest(tested))
   }
   candidates <- candidates[!is.na(candidates)]
   keep <- vapply(candidates, function(v) series(v) %in% c(running, tested) &&
@@ -475,7 +484,7 @@
   # release, which for the default channel can be a series ctsem is not tested
   # on.
   how <- if (managed) "; ctJuliaInstall(force = TRUE) installs it" else
-    if (series(best) != running) paste0(", the series ctsem is tested on") else ""
+    if (series(best) != running) paste0(" (ctsem is tested on ", tested, ")") else ""
   list(version = best, how = how)
 }
 
