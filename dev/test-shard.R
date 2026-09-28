@@ -17,8 +17,9 @@
 # here.
 #
 # dev/test-timings.csv is the measurement and it goes stale -- it is a
-# snapshot, files get added, and eleven on disk are already missing from it. A
-# file it does not know about is weighted at the median of the ones it does.
+# snapshot and files get added (tt_fast() in dev/test-local.R lists the ones
+# it lacks). A file it does not know about is weighted at the median of the
+# ones it does.
 # That is only ever a balance question: every test file on disk lands in
 # exactly one shard whatever the csv says, and the workflow asserts that the
 # files it was handed are the files that ran.

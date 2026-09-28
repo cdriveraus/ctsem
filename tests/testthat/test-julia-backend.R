@@ -827,6 +827,44 @@ test_that("a call into a Julia process that has died errors by name, and the nex
     tolerance = 1e-10)
 })
 
+test_that("a session that died partway through a message is reported gone, not waited on", {
+  # What a SIGTERM leaves on Linux: Julia prints its signal report to stderr on
+  # the way out, so the socket holds a stderr marker, a message cut short, and
+  # end of file. JuliaConnectoR's own reader loops on that forever, which hung
+  # the test above on Linux and nowhere else. A local socket pair stands in for
+  # Julia, so this needs none and runs on every platform.
+  skip_if_not_installed("JuliaConnectoR")
+  ns <- asNamespace("JuliaConnectoR")
+  port <- sample(20000:40000, 1L)
+  server <- tryCatch(serverSocket(port), error = function(e) NULL)
+  skip_if(is.null(server), "no local port to listen on")
+  client <- socketConnection("localhost", port, blocking = TRUE, open = "r+b")
+  peer <- socketAccept(server, blocking = TRUE, open = "r+b")
+  close(server)
+  withr::defer(try(close(client), silent = TRUE))
+  # Installed as JuliaConnectoR's own connection, because that is the only one
+  # its reader ever reads: the old code handed a message over only when the
+  # connection was that one, so any other passed without reaching the loop.
+  bridge <- get("pkgLocal", envir = ns)
+  saved <- bridge$con
+  bridge$con <- client
+  withr::defer(bridge$con <- saved)
+
+  # A complete message on a live socket is output, printed and not a death.
+  writeBin(c(get("STDOUT_INDICATOR", envir = ns),
+    writeBin(5L, raw(), size = 4L), charToRaw("hello")), peer)
+  flush(peer)
+  Sys.sleep(0.2)
+  expect_output(expect_false(ctsem:::.ctJuliaPeerGone(client)), "hello")
+
+  # Promised 100 bytes, sent 11, then gone.
+  writeBin(c(get("STDERR_INDICATOR", envir = ns),
+    writeBin(100L, raw(), size = 4L), charToRaw("signal (15)")), peer)
+  close(peer)
+  Sys.sleep(0.2)
+  expect_true(ctsem:::.ctJuliaPeerGone(client))
+})
+
 test_that("output Julia prints between calls is not taken for a session that has died", {
   skip_without_julia()
   # A task can print after the call that started it has returned. That leaves

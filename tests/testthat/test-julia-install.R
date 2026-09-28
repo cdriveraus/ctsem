@@ -217,6 +217,23 @@ test_that("ctJuliaSetup declines to instantiate the engine's Julia dependencies 
   expect_error(ctJuliaSetup(), "Julia package dependencies")
 })
 
+test_that("a missing package is told apart from a broken engine, in every wording Julia uses", {
+  # Recorded from real failures. The parent-package one is what a first fit on
+  # a fresh Julia 1.12 depot reports; it went unrecognised, and the user was
+  # told installing would not help when installing was the whole remedy.
+  missing <- c(
+    'LoadError: failed to find source of parent package: "ChainRulesCore"',
+    "ArgumentError: Package ContinuousTimeSEM not found in current path.",
+    "ArgumentError: Package Optim [429524aa] not found during precompilation",
+    "Package ForwardDiff [f6369f11] is required but does not seem to be installed:")
+  for (m in missing) expect_true(ctsem:::.ctJuliaLoadFailIsMissing(m), label = m)
+  # A docstring error fails at load too, and no install can fix it.
+  broken <- c(
+    "LoadError: cannot document the following expression:",
+    "LoadError: UndefVarError: `optimcontrol` not defined in `ContinuousTimeSEM`")
+  for (m in broken) expect_false(ctsem:::.ctJuliaLoadFailIsMissing(m), label = m)
+})
+
 # What ctsem keeps under R_user_dir() is removed once outdated, as CRAN asks,
 # and never while it may still be in use.
 test_that("engine environments go once unused for a month, the current one never", {
