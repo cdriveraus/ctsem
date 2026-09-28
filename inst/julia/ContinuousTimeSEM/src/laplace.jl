@@ -1154,8 +1154,10 @@ The same, for a region whose caller has already sized the store.
 One caller: the chain runner in `sample_run.jl`, which is generic over a
 density closure and has no objective to hand -- deliberately, since that is
 what lets it run the same chains for the marginal and the state-explicit
-targets. `ctsem_sample_marginal` sizes the store before any chain starts, so
-the region below is never the outermost one.
+targets. It reaches here only when the caller passed `parallel = true`, which
+`ctsem_sample` does after sizing the store, so the region below is never the
+outermost one. `ctsem_sample_marginal` passes `false` and never reaches here:
+its chains share one objective, and run one after another.
 
 This is the hole the objective argument closes everywhere else, kept open here
 on purpose and watched by `_laplace_check_slot`, which turns a slot past the

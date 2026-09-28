@@ -626,8 +626,9 @@ end
 """
     _run_chains(nchains, parallel, seed, label, closing, chain; kwargs...)
 
-Run `nchains` chains, concurrently when there are threads for them, and collect
-their results.
+Run `nchains` chains and collect their results: concurrently when `parallel`
+says the density allows it and there are threads for them, one after another
+otherwise.
 
 `chain(c, rng, reporter, watcher)` runs chain `c` and returns its
 `_ChainResult`. Everything around that is the same whether the chains are
@@ -665,8 +666,25 @@ function _run_chains(nchains::Int, parallel::Bool, seed::Integer,
         _progress_done(reporter, closing)
         return nothing
     end
+    # `parallel = false` is a statement about the density, not a preference:
+    # `ctsem_sample_marginal` passes it because every chain evaluates one shared
+    # objective, whose workspaces are per chunk -- safe for one caller, a race
+    # for several. So it must mean one chain after another. A pool region cannot
+    # promise that, since it hands a chain to any worker that happens to be idle,
+    # and whether one is idle depends on what ran before: a `ctJuliaEvaluate()`
+    # or anything else outside a `cores` ceiling leaves the pool at full width.
+    # 6b8a87b1 dropped this branch, and from then two in-process chains on two
+    # threads drew order-1 different draws from the same seeds, and corrupted
+    # the Julia session badly enough that it later died.
+    if !parallel || nchains == 1
+        for c in 1:nchains
+            runner(c)
+        end
+        return results
+    end
     # No objective here -- see the two-argument method. The store is sized by
-    # `ctsem_sample_marginal` before any chain starts.
+    # `ctsem_sample`, the caller that passes `parallel = true`, before any
+    # chain starts.
     _laplace_parallel(1:nchains) do c
         runner(c)
         return true

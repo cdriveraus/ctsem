@@ -5272,8 +5272,13 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # can sit where the approximation is least trustworthy; both are measured
   # in R/ctBackendEffectInformation.R. Not on the state-explicit route, whose
   # estimate is the joint optimum.
-  effectcheck <- if (isTRUE(intoverstates)) .ctEffectInformation(
-    out$model_spec, out$estimate$raw, point = "at the estimate") else NULL
+  #
+  # Under the fit's `cores` ceiling, as the optimiser and the uncertainty phase
+  # are. Outside it, a `cores = 1` fit spread its check over every thread the
+  # session had, and left the worker pool at full width behind it.
+  effectcheck <- if (isTRUE(intoverstates)) .ctBackendWithMaxChunks(cores,
+    .ctEffectInformation(out$model_spec, out$estimate$raw,
+      point = "at the estimate")) else NULL
   if (!is.null(effectcheck)) out$identifiability <- list(effects = effectcheck)
   .ctEffectMessage(effectcheck)
   # `fit`/`at` let it tell a random-effect block trading its scale off against

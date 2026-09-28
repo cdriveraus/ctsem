@@ -239,6 +239,32 @@ test_that("processes = TRUE reproduces the in-process draws to numerical noise",
     inprocess$estimate$rawposterior, tolerance = 1e-6)
 })
 
+test_that("chains sampled in this session run one after another, whatever the pool holds", {
+  skip_without_julia()
+  fit <- .sample_fixture()
+  # With one thread there is no second worker to put a chain on, and nothing
+  # here can fail.
+  skip_if(!isTRUE(ctsem:::.ctBackendSessionThreads() >= 2L),
+    "the julia session has a single thread")
+
+  # An evaluation outside any `cores` ceiling spreads over every thread and
+  # leaves the worker pool at full width, its workers idle -- where a fit's
+  # random-effect check once left it too. In-process chains share one
+  # objective, so a chain runner that handed the second chain to an idle
+  # worker had two chains writing the same workspaces at once, and the draws
+  # came out order-1 different from the same seeds.
+  invisible(ctJuliaEvaluate(fit))
+  draws <- function(chains, seed) suppressWarnings(suppressMessages(
+    ctFitUncertainty(fit, uncertainty = "sample", cores = 2,
+      control = list(chains = chains, warmup = 0, draws = 3, seed = seed,
+        processes = FALSE))))$estimate$rawposterior
+  both <- draws(2L, 777L)
+  # Chain `c` of a run seeded `s` draws the stream `s + c`, so the second
+  # chain of the pair is the only chain of a run seeded 778.
+  expect_equal(both, rbind(draws(1L, 777L), draws(1L, 778L)),
+    tolerance = 1e-6)
+})
+
 test_that("ctFitUncertainty(fit, 'sample') refuses what it cannot sample", {
   skip_without_julia()
   expect_error(ctFitUncertainty(list(), uncertainty = "sample"),
