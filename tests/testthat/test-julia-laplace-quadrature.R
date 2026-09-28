@@ -254,6 +254,121 @@ test_that("what a continued fit reports is the continuation's own", {
     isTRUE(corr$material))
 })
 
+test_that("the quadrature correction reports progress at the default verbosity", {
+  skip_without_julia()
+  fits <- .lc_fits("nonlinear")
+  # `.ctProgressConsole()` mocked TRUE stands in for a real console this test
+  # cannot open: reporting is meant to appear whenever something is watching,
+  # by default, with nothing asked for on `verbose` -- unmocked, a testthat
+  # run is non-interactive and would report nothing, which is correct there
+  # and would prove nothing here.
+  testthat::local_mocked_bindings(.ctProgressConsole = function() TRUE)
+  seen <- character()
+  withCallingHandlers(
+    invisible(.ctLaplaceContinue(fits$off)),
+    message = function(m) {
+      seen <<- c(seen, conditionMessage(m)); invokeRestart("muffleMessage")
+    })
+  # Screen, at least one round (this fixture converges in >= 1, per the
+  # continuation test above) and the final Hessian -- the three phases that
+  # went a combined 22 minutes without a word on Charles's ordinal fit
+  # (2026-09-28) because each was gated on `verbose > 0` alone.
+  expect_true(any(grepl("Laplace continuation screen", seen, fixed = TRUE)))
+  expect_true(any(grepl("Laplace continuation round", seen, fixed = TRUE)))
+  expect_true(any(grepl("Laplace continuation hessian", seen, fixed = TRUE)))
+})
+
+test_that("a certification that forms its own Hessian reports progress through the shared sink", {
+  skip_without_julia()
+  # Fit-free: a certification that forms its own Hessian is `ctsem_endgame`
+  # (R/ctBackendOptimGap.R's `.ctBackendEndgameAt()`), reached here directly
+  # with no optimisation run at all -- only an objective, built from an
+  # already-fitted spec's Laplace layout, and a point to evaluate at.
+  fits <- .lc_fits("nonlinear")
+  spec <- structure(fits$off$model_spec, class = c("ctJuliaModel", "ctFitModel"))
+  module <- ctsem:::.ctJuliaModule(spec$project)
+  objective <- ctsem:::.ctJuliaObjective(spec)
+  est <- as.numeric(fits$off$estimate$raw)
+  seen <- character()
+  capture <- function(text, kind = "update") seen <<- c(seen, text)
+  # `progress_every` set far below any real cadence: this fixture's Hessian is
+  # only a handful of columns, fast enough on an already-compiled shape that
+  # the production cadence (0.4s/5s) might never be crossed inside a test's
+  # patience. That is not what is under test here -- the finish already
+  # shares this reporter with the main optimiser's own line, which uses the
+  # production cadence -- what is under test is that the callback reaches the
+  # sink at all, with the right counts.
+  out <- JuliaConnectoR::juliaGet(module$ctsem_endgame(objective,
+    ctsem:::.ctJuliaNumericVector(est), progress = TRUE, progress_sink = capture,
+    progress_overwrite = TRUE, progress_label = "certify",
+    progress_every = 1e-9))
+  npar <- length(est)
+  expect_true(is.matrix(out$hessian))
+  expect_equal(dim(out$hessian), c(npar, npar))
+  expect_true(any(grepl("hessian", seen, fixed = TRUE)))
+  expect_true(any(grepl(paste0("of ", 2L * npar, " gradients"), seen)))
+  # The closing line, once something was actually shown.
+  expect_true(any(grepl("hessian formed", seen, fixed = TRUE)))
+})
+
+test_that("ctsem_hessian_progress reports the same way, for the caller with no finish to borrow a reporter from", {
+  skip_without_julia()
+  # `.ctBackendHessian()` (R/ctBackendUncertainty.R) is the standalone
+  # `ctFitUncertainty()`/certification Hessian call: reached with no running
+  # optimiser and no `ctsem_endgame` certification either. Before this it hand
+  # -built an R-side rate limiter and a copy of the "hessian K of N gradients"
+  # text `ctsem_endgame` already produces; now it asks for the engine's own
+  # reporter the same way `ctsem_endgame` does, through `ctsem_hessian_progress`.
+  fits <- .lc_fits("nonlinear")
+  spec <- structure(fits$off$model_spec, class = c("ctJuliaModel", "ctFitModel"))
+  module <- ctsem:::.ctJuliaModule(spec$project)
+  objective <- ctsem:::.ctJuliaObjective(spec)
+  est <- as.numeric(fits$off$estimate$raw)
+  npar <- length(est)
+
+  seen <- character()
+  capture <- function(text, kind = "update") seen <<- c(seen, text)
+  # `ctsem_hessian`/`ctsem_hessian_forward` return a bare `Matrix{Float64}`,
+  # which JuliaConnectoR marshals straight to an R matrix rather than a proxy
+  # -- `.ctBackendJuliaValue()` is what the rest of the package calls a value
+  # that may or may not need `juliaGet()` through, and is what
+  # `.ctBackendHessian()` itself uses below.
+  result <- ctsem:::.ctBackendJuliaValue(module$ctsem_hessian_progress(objective,
+    ctsem:::.ctJuliaNumericVector(est), progress = TRUE, progress_sink = capture,
+    progress_overwrite = TRUE, progress_label = "hessian", progress_every = 1e-9))
+  hessian <- matrix(as.numeric(result), npar, npar)
+  expect_true(all(is.finite(hessian)))
+  expect_true(any(grepl(paste0("of ", 2L * npar, " gradients"), seen)))
+
+  # Reporting is a side channel, not a second computation: the same call with
+  # no reporter at all gives the same matrix. `expect_equal()`, not
+  # `expect_identical()`: this call is not pinned to one chunk, and two
+  # separate invocations summing per-unit contributions over however many
+  # threads the session has can differ in the last bit or two from
+  # floating-point addition's own non-associativity -- observed here as
+  # "equal but not identical", on this direct call, which sets no thread or
+  # cores ceiling of its own. A real second computation would move far more
+  # than that.
+  bare <- matrix(as.numeric(ctsem:::.ctBackendJuliaValue(
+    module$ctsem_hessian_progress(objective, ctsem:::.ctJuliaNumericVector(est)))),
+    npar, npar)
+  expect_equal(hessian, bare, tolerance = 1e-10)
+
+  # And `.ctBackendHessian()` reaches this same function and the same numbers.
+  # `estonly = TRUE` leaves the fit with no stored Hessian at all
+  # (`fit$uncertainty` is NULL), so `.ctBackendStoredHessian()` cannot short
+  # -circuit the call and this actually exercises the computation, not a
+  # cache hit.
+  estonly <- suppressMessages(ctFit(.lc_nonlinear_data(), .lc_nonlinear_model(),
+    backend = "julia", intoverpop = "laplace", cores = 1,
+    optimcontrol = list(estonly = TRUE)))
+  expect_null(estonly$uncertainty)
+  direct <- suppressMessages(ctsem:::.ctBackendHessian(estonly,
+    as.numeric(estonly$estimate$raw)))
+  expect_true(is.matrix(direct))
+  expect_equal(dim(direct), c(npar, npar))
+})
+
 test_that("ctLaplaceCheck agrees with a continued fit and refines by continuing", {
   skip_without_julia()
   fits <- .lc_fits("nonlinear")

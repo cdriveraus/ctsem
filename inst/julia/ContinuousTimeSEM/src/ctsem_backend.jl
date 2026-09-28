@@ -1760,8 +1760,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # going somewhere; they do not thereby want the chunk-tuning timings and
     # the model-shape summary that `verbose` also turns on. Separating them is
     # what lets progress be the default without making the default noisy.
-    reporter = CTSEMProgress(progress; label=progress_label,
-        overwrite=progress_overwrite, every=progress_every, sink=progress_sink)
+    reporter = _ctsem_progress_reporter(progress, progress_label,
+        progress_overwrite, progress_sink, progress_every)
     # The trace records every iteration whatever `verbose` says: it costs a
     # push onto a vector, and a fit that turns out to have gone somewhere odd
     # is exactly the one nobody thought to turn reporting on for.
@@ -1947,10 +1947,31 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         subset=Ref(0), history=(kind=String[], gain=Float64[], alpha=Float64[],
         value=Float64[]))
     handed_back = false
+    # Mirrors `watch` above: every step the finish takes -- a damped Newton
+    # step, the exact-Hessian clean-up, a saddle escape -- feeds the same
+    # `CTSEMConvergence` and prints through the same line, rather than only
+    # appending to the trace as this did before. That is the fix for the
+    # progress line freezing at "93 iter | 61% est." while the finish ran on
+    # for another 80s: it was not that nothing printed during the finish, it
+    # was that the finish's own progress had nowhere to go, so the last line
+    # L-BFGS printed just sat there, correct and stale. A finish typically
+    # takes small, converging steps -- it only starts once L-BFGS's own
+    # progress proxy says there is little left -- so this also raises the
+    # percentage honestly, rather than leaving it frozen at whatever L-BFGS
+    # last reported while the fit finishes the rest of its work.
     record = function (state)
         _record!(trace, state.iteration, -state.value, state.g_norm,
             state.gain, _ctsem_optimise_trace_values(objective)...)
         seen_iterations[] = max(seen_iterations[], Int(state.iteration))
+        percent = _convergence_percent!(convergence, state.g_norm, state.value,
+            Int(state.iteration))
+        if _due(reporter)
+            _progress_optimise(reporter, state.iteration, Int(maxiter),
+                @sprintf("logpost %11.2f", -state.value),
+                @sprintf("|g| %9.2e", state.g_norm),
+                _ctsem_optimise_progress_extra(objective)...;
+                budget=progress_budget, percent=progress_budget ? NaN : percent)
+        end
         return false
     end
     while finishing && stop_reason in ("gap", "linesearch", "gradient", "progress")
@@ -1969,7 +1990,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             tol=gap_tol, maxit=newton_maxit, callback=record,
             iteration0=result.iterations + spent.steps[],
             curvature=finish_curvature, probe=certify, reuse_se=newton_reuse,
-            flat_rtol=flat_rtol, handback=early)
+            flat_rtol=flat_rtol, handback=early, reporter=reporter)
         minimizer = collect(finish.x)
         # The finish's own gain replaces L-BFGS's metric proxy: it is the exact
         # decrement, which is what the verdict below should be judging.

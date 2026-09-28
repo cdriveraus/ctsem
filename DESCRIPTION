@@ -88,7 +88,8 @@ Suggests:
     qgraph,
     JuliaConnectoR,
     digest,
-    withr
+    withr,
+    ps
 VignetteBuilder: 
     knitr, 
     R.rsp

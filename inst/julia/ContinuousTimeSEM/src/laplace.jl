@@ -3160,6 +3160,15 @@ end
 struct _LaplaceSeedInner end
 struct _LaplaceSeedOuter end
 
+"""The two seeds `(eps1, eps2)`, one per tag: `x + d1 * eps1 + d2 * eps2`
+carries the mixed second derivative along `d1` and `d2` as the coefficient of
+`eps1 * eps2`."""
+@inline _laplace_seed_pair() = (
+    ForwardDiff.Dual{_LaplaceSeedOuter}(ForwardDiff.Dual{_LaplaceSeedInner}(0.0, 1.0),
+        ForwardDiff.Dual{_LaplaceSeedInner}(0.0, 0.0)),
+    ForwardDiff.Dual{_LaplaceSeedOuter}(ForwardDiff.Dual{_LaplaceSeedInner}(0.0, 0.0),
+        ForwardDiff.Dual{_LaplaceSeedInner}(1.0, 0.0)))
+
 """
     _laplace_run_members(body, laplace, members)
 
@@ -3262,12 +3271,7 @@ function _laplace_unit_seeded_gradient_(laplace::CTSEMLaplaceObjective, U::Integ
 
     # Two independent nilpotents, one per tag, so the eps1*eps2 coefficient is
     # the mixed derivative directly rather than through a polarisation identity.
-    e1 = ForwardDiff.Dual{_LaplaceSeedOuter}(
-        ForwardDiff.Dual{_LaplaceSeedInner}(0.0, 1.0),
-        ForwardDiff.Dual{_LaplaceSeedInner}(0.0, 0.0))
-    e2 = ForwardDiff.Dual{_LaplaceSeedOuter}(
-        ForwardDiff.Dual{_LaplaceSeedInner}(0.0, 0.0),
-        ForwardDiff.Dual{_LaplaceSeedInner}(1.0, 0.0))
+    e1, e2 = _laplace_seed_pair()
     S = typeof(e1)
     d12 = _laplace_scratch_matrix!(laplace, Float64, npar, nm, :sweep_d12)
     # One member. Writes only column `c` of the three outputs, so members never
@@ -3830,6 +3834,53 @@ function _laplace_level_chol_derivatives(values::AbstractVector{Float64},
     return out
 end
 
+"""Row `p` of `D * u[base .+ (1:r)]`: a level's `dL` (or second derivative)
+against its effects in `u`, which is how one of its effects' shifts moves with
+that population parameter at fixed `u`."""
+@inline function _laplace_dLu(D::AbstractMatrix, p::Integer, u::AbstractVector,
+    base::Integer, r::Integer)
+    inner = 0.0
+    @inbounds for q in 1:r
+        inner += D[p, q] * u[base + q]
+    end
+    return inner
+end
+
+"""
+    _laplace_chol_chain!(out, grad, spec, dL, positions, u, offsets)
+
+Add into `out` the part of a member's gradient in `theta` that reaches the
+population parameters through `L(theta) u` at fixed `u`: for each level and
+each of its parameters (`positions`, `dL` in that order),
+`sum_p grad[re_index[p]] (dL u)_p`, `grad` being the member's gradient in its
+shifted parameters and `offsets` its places in `u`. The one statement of that
+chain rule: at the mode (`_laplace_floored_unit_gradient!`), at a quadrature
+node (`_continuation_member!`) and in the continuation's exact Hessian.
+"""
+function _laplace_chol_chain!(out::AbstractVector, grad::AbstractVector,
+    spec::CTSEMLaplaceSpec, dL, positions, u::AbstractVector, offsets)
+    @inbounds for l in eachindex(spec.levels)
+        level = spec.levels[l]
+        k = nrandomeffects(level)
+        r = nlatent(level)
+        (k == 0 || r == 0) && continue
+        pos = positions[l]
+        isempty(pos) && continue
+        base = offsets[l]
+        for t in eachindex(pos)
+            dLt = dL[l][t]
+            acc = 0.0
+            for pp in 1:k
+                gp = grad[level.re_index[pp]]
+                iszero(gp) && continue
+                acc += gp * _laplace_dLu(dLt, pp, u, base, r)
+            end
+            out[pos[t]] += acc
+        end
+    end
+    return out
+end
+
 
 """
     _laplace_unit_weights(laplace)
@@ -4209,30 +4260,7 @@ function _laplace_floored_unit_gradient!(out::Vector{Float64},
         for t in 1:npar
             out[t] += grad[t]
         end
-        for l in eachindex(spec.levels)
-            level = spec.levels[l]
-            k = nrandomeffects(level)
-            r = nlatent(level)
-            (k == 0 || r == 0) && continue
-            positions = levelpositions[l]
-            isempty(positions) && continue
-            base = offsets[l]
-            dLl = dL[l]
-            for t in eachindex(positions)
-                dLt = dLl[t]
-                acc = 0.0
-                for pp in 1:k
-                    gp = grad[level.re_index[pp]]
-                    iszero(gp) && continue
-                    inner = 0.0
-                    for q in 1:r
-                        inner += dLt[pp, q] * u[base + q]
-                    end
-                    acc += gp * inner
-                end
-                out[positions[t]] += acc
-            end
-        end
+        _laplace_chol_chain!(out, grad, spec, dL, levelpositions, u, offsets)
     end
     return true
 end
@@ -5257,9 +5285,15 @@ iterations fall from 3.0-3.7 to 2.0 per unit, the Hessian 1.3-1.6x faster on
 ordinal and nonlinear models and unchanged on a linear-Gaussian one, which
 already needed two. `warm = false` is the behaviour before, which the
 inner-budget escalation test needs.
+
+`progress`, when given, is called `(done, total)` after every column with the
+gradient evaluations completed so far out of `2n` -- this loop is the one
+place a finish or a certification can go quiet for minutes on a wide Laplace
+model, so the caller reports through it rather than this function printing
+anything itself; see `_progress_fraction` in progress.jl.
 """
 function ctsem_laplace_hessian(laplace::CTSEMLaplaceObjective, values::AbstractVector;
-    step::Real=1e-4, retries::Integer=2, warm::Bool=true)
+    step::Real=1e-4, retries::Integer=2, warm::Bool=true, progress=nothing)
     x = collect(Float64, values)
     n = length(x)
     H = zeros(Float64, n, n)
@@ -5298,6 +5332,11 @@ function ctsem_laplace_hessian(laplace::CTSEMLaplaceObjective, values::AbstractV
             restore!()
             pm = _laplace_hessian_point(laplace, minus, budget, retries)
             (pp.tries + pm.tries) > 0 && push!(escalated, j)
+            # Two gradients just finished, converged or not: a column this
+            # function gives up on (NaN, below) still cost the same two inner
+            # solves, so it counts here too or the reported total falls behind
+            # the real one.
+            progress !== nothing && progress(2j, 2n)
             if !(pp.out.converged && pm.out.converged)
                 # The same predicate `fg!` applies to a trial point, applied to
                 # the two points this column is differenced from. A gradient at
@@ -5430,9 +5469,12 @@ function ctsem_evaluate(laplace::CTSEMLaplaceObjective, values::AbstractVector;
         subject_loglik=result.subject_loglik)
 end
 
-"""The outer Hessian, for the generic curvature entry point."""
-ctsem_hessian(laplace::CTSEMLaplaceObjective, values::AbstractVector; chunk::Integer=0) =
-    ctsem_laplace_hessian(laplace, values)
+"""The outer Hessian, for the generic curvature entry point. `progress`, when
+given, reports the finite-difference loop's gradients as they finish -- see
+`ctsem_laplace_hessian`."""
+ctsem_hessian(laplace::CTSEMLaplaceObjective, values::AbstractVector;
+    chunk::Integer=0, progress=nothing) =
+    ctsem_laplace_hessian(laplace, values; progress=progress)
 
 """The gradient of the approximated log marginal likelihood."""
 function ctsem_adjoint_gradient(laplace::CTSEMLaplaceObjective, values::AbstractVector)

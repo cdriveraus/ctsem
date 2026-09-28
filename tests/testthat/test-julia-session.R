@@ -584,12 +584,95 @@ test_that("the overwrite option overrides the detection in both directions", {
   # someone asks in, because the point of one rewritten line is that it stays
   # one line.
   withr::local_options(ctsem.progress.overwrite = NULL)
-  expect_equal(.ctProgressOverwrite(1), .ctProgressConsole())
+  # Not simply `.ctProgressConsole()` any more: RStudio can be a console that
+  # is watching (`.ctProgressConsole()` TRUE) and still not repaint a
+  # carriage-returned line, which is a fact about that one console rather than
+  # about whether anyone is watching -- see `.ctProgressOverwrite()`. This
+  # session is not RStudio, so the two answers agree here regardless; the
+  # point of writing it this way rather than pinning the pre-RStudio equality
+  # is that it stays correct if this test suite is ever run from inside one.
+  expect_equal(.ctProgressOverwrite(1),
+    .ctProgressConsole() && !ctsem:::.ctProgressRStudio())
   withr::local_options(ctsem.progress.overwrite = TRUE)
   expect_true(.ctProgressOverwrite(1))
   expect_false(.ctProgressOverwrite(2))   # verbose 2 keeps the history
   withr::local_options(ctsem.progress.overwrite = FALSE)
   expect_false(.ctProgressOverwrite(1))
+})
+
+test_that("RStudio gets whole lines, and the option still overrides it", {
+  # Charles reported (2026-09-28) that RStudio's console did not repaint an
+  # in-place update at all -- only each stage's closing line showed, for
+  # minutes at a time in between. `RSTUDIO` is set on every R process RStudio
+  # starts; mocked here since this session is not one.
+  withr::local_envvar(RSTUDIO = "1")
+  expect_true(ctsem:::.ctProgressRStudio())
+  withr::local_options(ctsem.progress.overwrite = NULL)
+  if (.ctProgressConsole()) expect_false(.ctProgressOverwrite(1))
+  # The option still settles it either way, unconditionally -- someone who
+  # knows their RStudio does handle it is not overruled by the default.
+  withr::local_options(ctsem.progress.overwrite = TRUE)
+  expect_true(.ctProgressOverwrite(1))
+  withr::local_options(ctsem.progress.overwrite = FALSE)
+  expect_false(.ctProgressOverwrite(1))
+})
+
+# Charles's thread rule (2026-09-28) was superseded (2026-09-28, "That max
+# cores init work supersedes other ideas, keep it"): a session now starts
+# provisioned wide (`parallelly::availableCores()`, `.ctJuliaProvision()` in
+# R/ctJuliaBridge.R) rather than defaulting to two threads, and every call is
+# held to its own `cores` by the engine's chunk ceiling, which `ctJuliaSetup()`
+# itself sets to `getOption("mc.cores", 2)` for a call that sets none -- see
+# CLAUDE.md, "Julia threads: provisioned wide, never more than the call's
+# `cores`". The two tests this file had for the two-thread default are gone
+# with it; the width and the default ceiling are julia-session's own to cover.
+
+# `.ctBackendWithMaxChunks()`/`.ctBackendSetMaxChunks()` is the ceiling every
+# engine call should run under; before this it wrapped the optimiser and the
+# uncertainty phase only. Mocked rather than measured live: neither
+# `ctJuliaEvaluate()` nor `ctIdentify()` reports back a chunk count the way a
+# fit does (`fit$optim$chunks`), so there is nothing external to read after
+# the call returns, and the property under test is which value reaches the
+# ceiling, not whether the ceiling changes anything about this small model's
+# answer.
+test_that("ctJuliaEvaluate() runs under the cores ceiling it is given", {
+  skip_without_julia()
+  recorded <- integer()
+  testthat::local_mocked_bindings(
+    .ctBackendSetMaxChunks = function(chunks) {
+      recorded <<- c(recorded, as.integer(chunks)); NA_integer_
+    },
+    .ctBackendRestoreMaxChunks = function(previous) invisible(NULL))
+  set.seed(6)
+  dat <- do.call(rbind, lapply(1:6, function(i)
+    data.frame(id = i, time = 0:4, Y1 = cumsum(stats::rnorm(5)) * .5)))
+  model <- suppressWarnings(suppressMessages(ctModel(type = "ct",
+    manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1))))
+  prepared <- suppressMessages(ctFit(dat, model, backend = "julia", fit = FALSE))
+  pars <- rep(0, ctsem:::.ctBackendNpar(prepared))
+  out <- ctJuliaEvaluate(prepared, pars = pars, cores = 3L)
+  expect_true(is.list(out))
+  expect_true(is.finite(out$value))
+  expect_true(3L %in% recorded)
+})
+
+test_that("ctIdentify() runs its engine calls under its own cores ceiling", {
+  skip_without_julia()
+  recorded <- integer()
+  testthat::local_mocked_bindings(
+    .ctBackendSetMaxChunks = function(chunks) {
+      recorded <<- c(recorded, as.integer(chunks)); NA_integer_
+    },
+    .ctBackendRestoreMaxChunks = function(previous) invisible(NULL))
+  set.seed(7)
+  dat <- do.call(rbind, lapply(1:6, function(i)
+    data.frame(id = i, time = 0:4, Y1 = cumsum(stats::rnorm(5)) * .5)))
+  model <- suppressWarnings(suppressMessages(ctModel(type = "ct",
+    manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1))))
+  out <- suppressWarnings(suppressMessages(ctIdentify(dat, model, nstart = 1L,
+    cores = 4L)))
+  expect_s3_class(out, "ctIdentify")
+  expect_true(4L %in% recorded)
 })
 
 test_that("sampleControl absorbs the deprecated iter, chains and control", {
