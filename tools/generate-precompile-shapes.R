@@ -157,15 +157,20 @@ if (nzchar(only)) shapes <- shapes[strsplit(only, ",", fixed = TRUE)[[1]]]
 raw_call <- get(".ctJuliaCall", envir = ns)
 invisible(ctsem:::.ctJuliaEval(paste(
   "function ctsem_generator_literal(x)",
-  # A matrix of draws is replayed with three of them, along whichever
-  # dimension holds the draws: its type is what matters, and a thousand
-  # draws would be a megabyte of source.
+  "  x isa AbstractArray && length(x) > 50000 && error(\"literal too large: \", summary(x))",
+  "  repr(x)",
+  "end",
+  # A matrix of draws is replayed with three of them, along whichever dimension
+  # holds the draws: its type is what matters, and a thousand draws would be a
+  # megabyte of source. Only for the calls that take draws -- the data matrix
+  # must keep every column its times and timesteps describe.
+  "function ctsem_generator_draws(x)",
   "  if x isa AbstractMatrix && length(x) > 200",
   "    x = size(x, 1) >= size(x, 2) ? x[1:3, :] : x[:, 1:3]",
   "  end",
-  "  x isa AbstractArray && length(x) > 2000 && error(\"literal too large: \", summary(x))",
-  "  repr(x)",
+  "  ctsem_generator_literal(x)",
   "end", sep = "\n")))
+draws <- c("ctsem_parameter_matrices", "ctsem_laplace_population")
 
 rec <- new.env()
 skip <- c("ctsem_set_max_chunks!", "ctsem_max_chunks", "ctsem_set_interrupt!",
@@ -175,29 +180,30 @@ engine_name <- function(name) {
   fn <- sub("^ContinuousTimeSEM\\.:?", "", name)
   if (fn %in% skip) NULL else fn
 }
-literal <- function(x) {
+# Written when the value is used, because only the call that uses it says
+# whether it is a matrix of draws.
+encode <- function(x, fn) {
   if (is.function(x)) stop("an R callback cannot be replayed at build time")
-  raw_call("ctsem_generator_literal", x)
-}
-encode <- function(x) {
-  if (!inherits(x, "JuliaProxy")) return(literal(x))
-  for (p in rec$proxies) if (identical(p$proxy, x)) return(p$code)
+  writer <- if (fn %in% draws) "ctsem_generator_draws" else "ctsem_generator_literal"
+  if (!inherits(x, "JuliaProxy")) return(raw_call(writer, x))
+  for (p in rec$proxies) if (identical(p$proxy, x)) {
+    return(if (is.null(p$code)) raw_call(writer, x) else p$code)
+  }
   stop("an argument is a Julia object no recorded call produced")
 }
 recorder <- function(name, ..., .defer = FALSE) {
   if (!isTRUE(rec$on)) return(raw_call(name, ..., .defer = .defer))
   if (identical(name, "RConnector.EnforcedProxy")) {
     out <- raw_call(name, ..., .defer = .defer)
-    rec$proxies[[length(rec$proxies) + 1L]] <- list(proxy = out,
-      code = raw_call("ctsem_generator_literal", out))
+    rec$proxies[[length(rec$proxies) + 1L]] <- list(proxy = out, code = NULL)
     return(out)
   }
   fn <- engine_name(name)
   if (is.null(fn)) return(raw_call(name, ..., .defer = .defer))
   args <- list(...)
   nm <- names(args); if (is.null(nm)) nm <- rep("", length(args))
-  pos <- lapply(args[!nzchar(nm)], encode)
-  kw <- lapply(args[nzchar(nm)], encode)
+  pos <- lapply(args[!nzchar(nm)], encode, fn = fn)
+  kw <- lapply(args[nzchar(nm)], encode, fn = fn)
   out <- raw_call(name, ..., .defer = .defer)
   k <- length(rec$calls) + 1L
   rec$calls[[k]] <- list(fn = fn, pos = pos, kw = kw)

@@ -139,16 +139,25 @@ const _PRECOMPILE_BUILT = let built = Symbol[]
     built
 end
 
+"""
+The captured models whose replay ran to the end when this image was built, and
+whether the replay was asked for at all. A failed replay costs nothing but that
+model's first fit, which is why test-julia-precompile.R asks for every one.
+"""
+const _PRECOMPILE_REPLAYED = Symbol[]
+const _PRECOMPILE_WORKLOAD_ENABLED = get(ENV, "CTSEM_PRECOMPILE_WORKLOAD", "true") != "false"
+
 # A session run through the R bridge has Pkg loaded before this module, and
 # the image is only usable there because this module loads it too: see the
 # note at `import Pkg` in ContinuousTimeSEM.jl. Until that was found, this
 # workload made every session load ~450 MB of specialisations and then
 # compiled them again in the first fit.
-if get(ENV, "CTSEM_PRECOMPILE_WORKLOAD", "true") != "false"
+if _PRECOMPILE_WORKLOAD_ENABLED
 @compile_workload begin
     for name in _PRECOMPILE_BUILT
         try
             _precompile_replay(_PRECOMPILE_SHAPES[name])
+            push!(_PRECOMPILE_REPLAYED, name)
         catch err
             err isa InterruptException && rethrow()
             @warn "ContinuousTimeSEM: precompile replay failed; a first fit of this model will compile" name exception = err

@@ -61,6 +61,21 @@ test_that("the precompiled models still match what ctsem's model writer emits", 
   }
 })
 
+test_that("every captured model replayed when the engine image was built", {
+  skip_without_julia()
+  # A replay that throws is caught, so that a broken one cannot stop the
+  # package loading: the build prints a warning and the image simply lacks that
+  # model. This is where that becomes a failure.
+  enabled <- tryCatch(isTRUE(ctsem:::.ctJuliaEval(
+    "ContinuousTimeSEM._PRECOMPILE_WORKLOAD_ENABLED")), error = function(e) NA)
+  skip_if(is.na(enabled), "engine predates the replayed workload")
+  skip_if(!enabled, "engine image built with CTSEM_PRECOMPILE_WORKLOAD=false")
+  missing <- as.character(ctsem:::.ctJuliaEval(paste0("join(string.(setdiff(",
+    "collect(keys(ContinuousTimeSEM._PRECOMPILE_SHAPES)), ",
+    "ContinuousTimeSEM._PRECOMPILE_REPLAYED)), \", \")")))
+  expect_identical(missing, "", label = "captured models whose replay failed at build time")
+})
+
 test_that("a fresh session's first fit of a precompiled model compiles almost nothing", {
   skip_without_julia()
   # Its own R process, and so its own Julia: this session's Julia has compiled
