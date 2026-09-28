@@ -473,6 +473,34 @@ test_that('the two representations of individual differences agree', {
   }
 })
 
+test_that('the two representations agree with a TI predictor', {
+  # The predictor moves CINT, which varies by person, and T0MEANS, which does
+  # not. A Laplace person is built from vectors before TI-predictor effects, so
+  # the filter and the parameter matrices each add them; the augmented route
+  # has them in its carriers and its T0 block. Adding them twice on one side,
+  # or leaving T0MEANS at the population value because it has no random effect,
+  # moves the between person variance and not the other side's.
+  tidata <- cbind(datalong, TI1 = as.numeric(scale(traits))[datalong[, 'id']])
+  timodel <- ctModel(type = 'ct', n.latent = 1, n.manifest = 1,
+    LAMBDA = matrix(1), DRIFT = matrix(truedrift),
+    DIFFUSION = matrix(truediffusion), MANIFESTVAR = matrix(truemanifestvar),
+    CINT = matrix('cint1'), T0MEANS = matrix('t0m'), T0VAR = matrix(1),
+    MANIFESTMEANS = matrix(0), TIpredNames = 'TI1')
+  timodel$pars$indvarying <- timodel$pars$matrix == 'CINT'
+  fits <- fit_intoverpop(datalong = tidata, model = timodel, cores = 1,
+    verbose = 0)
+  expect_length(ctsem:::.ctBackendSpec(fits$laplace)$ti_effects$parameter, 2L)
+  augmented <- suppressMessages(
+    ctVarianceDecomposition(fits$augmented, persons = 'estimated'))
+  laplace <- suppressMessages(
+    ctVarianceDecomposition(fits$laplace, persons = 'estimated'))
+  for (part in c('between', 'within.deterministic', 'within.stochastic',
+    'within.measurement', 'total')) {
+    expect_equal(laplace[[part]], augmented[[part]], tolerance = 1e-4,
+      label = paste('laplace', part))
+  }
+})
+
 test_that('drawing persons agrees across representations too', {
   # The same comparison with both sides drawing from their own fitted
   # population covariance rather than reading modes. Looser, because the two
