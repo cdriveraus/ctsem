@@ -210,7 +210,7 @@ test_that("a nonlinear model gets refined intervals and a fit that runs", {
 # sampler is handed does. Worker processes are warmed before any mesh exists
 # and must compile the type the chains will use. No pool is returned, so the
 # chains run in this session, where the sampler can be watched.
-test_that("sampling uses the mesh its placement chose, on both targets", {
+test_that("sampling uses the fitted mesh, on both targets and from ctFitUncertainty", {
   skip_if_not_installed("future")
   dat <- .substep_data(nsub = 12, nrow = 8)
   run <- function(...) suppressWarnings(suppressMessages(ctFit(dat,
@@ -251,6 +251,13 @@ test_that("sampling uses the mesh its placement chose, on both targets", {
     expect_type(rule(object), typeof(mesh))
     expect_length(rule(object), length(mesh))
   }
+
+  # Sampling a fit already made samples its own mesh.
+  sampled <- list()
+  suppressWarnings(suppressMessages(ctFitUncertainty(optimised, uncertainty = "sample",
+    control = list(chains = 1, warmup = 10, draws = 10))))
+  expect_gt(length(sampled), 0L)
+  for (s in sampled) expect_identical(s$fit$model_spec$max_timestep, mesh)
 
   # One innovation per substep, so the state-explicit target is longer on the
   # mesh than on the maxtimestep rule.
