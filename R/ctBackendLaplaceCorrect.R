@@ -998,7 +998,12 @@ print.ctLaplaceCorrection <- function(x, ...) {
     flagged = as.integer(start$nflagged), units = as.integer(start$nunits),
     rule_failures = as.integer(start$rule_failures),
     wide = as.integer(start$nwide), maxdim = as.integer(start$maxdim))
-  screen_seconds <- seconds()
+  # Wall seconds by stage as each is passed -- the screen, the rounds, the
+  # continuation's Hessian, its certification, the uncertainty redrawn from it
+  # -- and `total` when the record is written.
+  stages <- c(screen = seconds())
+  timed <- function() c(stages, total = seconds())
+  since <- function(from) proc.time()[["elapsed"]] - from
   # Units wider than `maxdim` are not scored and keep the Laplace term (see
   # laplace_continuation.jl for the measured cost). Said in one line, since
   # the correction then covers less than the fit, or none of it.
@@ -1011,7 +1016,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
   }
   if (record$wide == record$units) {
     record$status <- "too_wide"
-    record$seconds <- c(screen = screen_seconds, total = seconds())
+    record$seconds <- timed()
     fit$laplace$correction <- record
     return(fit)
   }
@@ -1021,7 +1026,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
   # Passed, as the step correction's screen passes: Laplace is exact here to
   # the tolerance, and the fit is left alone to the bit.
   if (record$screen <= record$tolerance) {
-    record$seconds <- c(screen = screen_seconds, total = seconds())
+    record$seconds <- timed()
     fit$laplace$correction <- record
     return(fit)
   }
@@ -1057,21 +1062,31 @@ print.ctLaplaceCorrection <- function(x, ...) {
     return(fit)
   }
   tol <- .ctBackendGapTolerance(fit)
-  # What the continuation cost, in the engine's own counts: whole-objective
+  # What the continuation cost, in the engine's own counts -- whole-objective
   # values and gradients, placements of the rule, and the member likelihood
-  # values and reverse sweeps they took.
-  counts <- function() {
+  # values and reverse sweeps they took -- and its seconds in each kind of
+  # call (`engine_seconds`, the screen's placement among the placements),
+  # beside the wall seconds by stage.
+  account <- function(record) {
     after <- get(module$ctsem_laplace_continuation_info(cont))
-    c(values = as.integer(after$value_calls),
+    record$evaluations <- c(values = as.integer(after$value_calls),
       gradients = as.integer(after$gradient_calls),
       placements = as.integer(after$recentres),
       member_values = as.numeric(after$member_values),
       member_sweeps = as.numeric(after$member_sweeps),
       refused = as.integer(after$refused))
+    record$engine_seconds <- c(values = as.numeric(after$seconds_values),
+      gradients = as.numeric(after$seconds_gradients),
+      placements = as.numeric(after$seconds_placements),
+      hessian = as.numeric(after$seconds_hessian))
+    record$seconds <- timed()
+    record
   }
+  rounds_started <- proc.time()[["elapsed"]]
   run <- try(.ctLaplaceContinueRun(module, cont, est, basis$basis, tol,
     control = control, verbose = verbose, sink = sink,
     skip_gain = as.numeric(.ctJuliaOr(control$skip_gain, 0))), silent = TRUE)
+  stages["rounds"] <- since(rounds_started)
   if (inherits(run, "try-error")) {
     return(failed(paste0("a round could not be evaluated (",
       trimws(as.character(run)), ")")))
@@ -1089,9 +1104,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
     record$logposterior_quadrature <- as.numeric(start$quadrature)
     record$gap_reported <- as.numeric(start$quadrature) - as.numeric(start$laplace)
     fit <- report_quadrature(fit, start)
-    record$evaluations <- counts()
-    record$seconds <- c(screen = screen_seconds, total = seconds())
-    fit$laplace$correction <- record
+    fit$laplace$correction <- account(record)
     return(fit)
   }
   info <- run$info
@@ -1134,9 +1147,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
     record$logposterior_quadrature <- as.numeric(start$quadrature)
     record$gap_reported <- as.numeric(start$quadrature) - as.numeric(start$laplace)
     fit <- report_quadrature(fit, start)
-    record$evaluations <- counts()
-    record$seconds <- c(screen = screen_seconds, total = seconds())
-    fit$laplace$correction <- record
+    fit$laplace$correction <- account(record)
     return(fit)
   }
   x <- run$x
@@ -1166,9 +1177,10 @@ print.ctLaplaceCorrection <- function(x, ...) {
     hc <- try(matrix(as.numeric(.ctBackendJuliaValue(
       module$ctsem_laplace_continuation_hessian(cont, .ctJuliaNumericVector(x)))),
       npar, npar), silent = TRUE)
+    stages["hessian"] <- since(hessian_started)
     if (!is.null(sink)) {
       sink(sprintf("Laplace continuation hessian done in %s",
-        .ctDuration(proc.time()[["elapsed"]] - hessian_started)), "done")
+        .ctDuration(stages[["hessian"]])), "done")
     }
   }
   final <- get(module$ctsem_laplace_continuation_evaluate(cont,
@@ -1200,6 +1212,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
     # The certification of the estimate on the objective it maximises: its
     # gradient against its own Hessian, with the flat-direction probe walking
     # the hybrid.
+    certification_started <- proc.time()[["elapsed"]]
     gradient <- as.numeric(final$gradient)
     gap <- .ctBackendOptimGap(hc, gradient)
     probe <- NULL
@@ -1218,10 +1231,12 @@ print.ctLaplaceCorrection <- function(x, ...) {
       parnames = parnames)
     record$certification <- certification
     record$hessian <- hc
+    stages["certification"] <- since(certification_started)
   }
   own <- usable && identical(method, "hessian")
   record$hessian_at <- if (own) "estimate" else "laplace_estimate"
   if (own) {
+    uncertainty_started <- proc.time()[["elapsed"]]
     settings <- fit$uncertainty$settings
     finishsamples <- .ctJuliaOr(settings$finishsamples,
       if (!is.null(fit$estimate$rawposterior)) nrow(fit$estimate$rawposterior) else 1000L)
@@ -1236,6 +1251,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
       draws = paste0("normal draws about the continuation's estimate, from the ",
         "Hessian of its quadrature objective there"),
       nodes = record$nodes)
+    stages["uncertainty"] <- since(uncertainty_started)
   } else {
     # Recentred, as the step correction does, when the continuation stopped
     # short of its fixed point, has no Hessian to offer, or the fit's
@@ -1252,8 +1268,6 @@ print.ctLaplaceCorrection <- function(x, ...) {
         nodes = record$nodes)
     }
   }
-  record$evaluations <- counts()
-  record$seconds <- c(screen = screen_seconds, total = seconds())
-  fit$laplace$correction <- record
+  fit$laplace$correction <- account(record)
   fit
 }

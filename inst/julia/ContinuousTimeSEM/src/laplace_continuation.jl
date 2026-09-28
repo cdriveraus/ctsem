@@ -176,6 +176,13 @@ mutable struct CTSEMLaplaceContinuation{L} <: CTSEMOptimisable
     member_sweeps::Int
     recentres::Int
     refused::Int
+    # Wall seconds in each kind of call, so a correction's cost can be broken
+    # down without a profiler: values, gradients, placements (the screen is
+    # the first), Hessians.
+    seconds_values::Float64
+    seconds_gradients::Float64
+    seconds_placements::Float64
+    seconds_hessian::Float64
     # The last evaluation, at its point, for the placement it was made under:
     # a round's first evaluation is at the point the previous round's
     # stationarity check just evaluated. Cleared by every placement.
@@ -595,7 +602,7 @@ function ctsem_laplace_continuation(laplace::CTSEMLaplaceObjective,
         Int(product_maxdim), Float64(soft_tau), Int(soft_maxdirs), Int(maxdim),
         fill(false, nunits),
         fill(NaN, nunits), fill(NaN, nunits), fill(false, nunits), NaN, nothing,
-        0, 0, 0, 0, 0, 0, nothing)
+        0, 0, 0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, nothing)
     _continuation_place!(o, theta)
     return o
 end
@@ -638,6 +645,7 @@ function ctsem_laplace_continuation_revert!(o::CTSEMLaplaceContinuation)
 end
 
 function _continuation_place!(o::CTSEMLaplaceContinuation, theta::Vector{Float64})
+    started = time_ns()
     laplace = o.laplace
     opts = (nodes=o.nodes, product_maxdim=o.product_maxdim, soft_tau=o.soft_tau,
         maxdim=o.maxdim,
@@ -666,6 +674,7 @@ function _continuation_place!(o::CTSEMLaplaceContinuation, theta::Vector{Float64
         sum(placed.quadrature[U] for U in flagged; init=0.0) + prior
     o.recentres += 1
     o.cache = nothing
+    o.seconds_placements += (time_ns() - started) / 1e9
     return o
 end
 
@@ -870,6 +879,7 @@ _continuation_copy(r) = (value=r.value,
 
 function _continuation_evaluate(o::CTSEMLaplaceContinuation, theta::Vector{Float64},
     gradient::Bool)
+    started = time_ns()
     rest = ctsem_laplace_evaluate(o.rest, theta; gradient=gradient)
     flagged = _continuation_flagged(o, theta, gradient)
     gradient ? (o.gradient_calls += 1) : (o.value_calls += 1)
@@ -893,6 +903,8 @@ function _continuation_evaluate(o::CTSEMLaplaceContinuation, theta::Vector{Float
             subject_loglik[i] = flagged.values[f] / length(members)
         end
     end
+    elapsed = (time_ns() - started) / 1e9
+    gradient ? (o.seconds_gradients += elapsed) : (o.seconds_values += elapsed)
     return (value=value, gradient=grad, unit_loglik=unit_loglik,
         subject_loglik=subject_loglik, converged=rest.converged && flagged.ok)
 end
@@ -1094,12 +1106,16 @@ function ctsem_laplace_continuation_hessian(o::CTSEMLaplaceContinuation,
     scheme in (:exact, :forward, :central) || throw(ArgumentError(
         "scheme must be :exact, :forward or :central, got " * repr(scheme)))
     x = collect(Float64, values)
-    if scheme === :exact
-        H = _continuation_exact_hessian(o, x; step=step, width=width)
-        H === nothing || return H
-        scheme = :forward
+    started = time_ns()
+    H = scheme === :exact ? _continuation_exact_hessian(o, x; step=step, width=width) :
+        nothing
+    if H === nothing
+        # A difference scheme's gradients are in `seconds_gradients` as well.
+        H = _continuation_difference_hessian(o, x, step,
+            scheme === :exact ? :forward : scheme)
     end
-    return _continuation_difference_hessian(o, x, step, scheme)
+    o.seconds_hessian += (time_ns() - started) / 1e9
+    return H
 end
 
 """The `:forward` and `:central` schemes of `ctsem_laplace_continuation_hessian`."""
@@ -1742,7 +1758,10 @@ function ctsem_laplace_continuation_info(o::CTSEMLaplaceContinuation)
         evaluations_per_value=sum(r.evaluations for r in o.rules; init=0),
         value_calls=o.value_calls, gradient_calls=o.gradient_calls,
         member_values=o.member_values, member_sweeps=o.member_sweeps,
-        recentres=o.recentres, refused=o.refused, nodes=o.nodes,
+        recentres=o.recentres, refused=o.refused,
+        seconds_values=o.seconds_values, seconds_gradients=o.seconds_gradients,
+        seconds_placements=o.seconds_placements, seconds_hessian=o.seconds_hessian,
+        nodes=o.nodes,
         product_maxdim=o.product_maxdim, soft_tau=o.soft_tau,
         soft_maxdirs=o.soft_maxdirs, tolerance=o.tolerance)
 end
