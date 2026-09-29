@@ -1027,15 +1027,14 @@ T0VARredundancies <- function(ctm) {
 #' splits and the timings vary; use \code{cores = 1} for a before-and-after
 #' comparison.
 #'
-#' On julia, the Julia session starts with as many threads as this R process
-#' may use (\code{parallelly::availableCores()}: every core on a desktop, the
-#' allocation under a cluster scheduler, 2 under \code{R CMD check}), and each
-#' fit uses only \code{cores} of them, so any \code{cores} up to that works
-#' without restarting anything. Julia fixes its thread count when the session
-#' starts, so a fit asking for more than a session has -- one started narrower
-#' with \code{\link{ctJuliaSetup}(threads = n)} or \code{JULIA_NUM_THREADS} --
-#' runs at the count it has and says so; \code{ctJuliaSetup(threads = n, force =
-#' TRUE)} restarts the session wider, \code{ctJuliaStatus()$threads} reports
+#' On julia, the Julia session starts with as many threads as the \code{cores}
+#' of the call that starts it (at least \code{getOption("mc.cores", 2)}), and
+#' each call uses at most its own \code{cores} of them, BLAS included. Julia
+#' fixes its thread count when the session starts, and idle threads are not
+#' free -- Julia wakes them whenever work is started -- so a session is not
+#' started wider than asked. A later fit asking for more than the session has
+#' runs at the count it has and says so; \code{ctJuliaSetup(threads = n, force
+#' = TRUE)} restarts the session wider, \code{ctJuliaStatus()$threads} reports
 #' what it currently has, and \code{options(ctsem.julia.restart = TRUE)} has a
 #' fit restart it for itself when it is short.
 #' @param backend Either 'stan' (the default) or 'julia'. The julia backend is a
