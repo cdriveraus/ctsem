@@ -1,15 +1,18 @@
-# How much of each random effect a subject's own data determine
+# How well the data determine each random effect's population sd, and how
+# much of each group's effect its own data determine
 # (R/ctBackendEffectInformation.R, `ctsem_effect_information` in the engine).
 #
 # What is pinned here: that the two routes' computations -- the Laplace unit
 # curvature on one side, the filter's smoothed covariance on the other --
 # agree where both are exact, which is the check neither can supply for
-# itself; that a population sd come out near zero is measured again at the
-# starting spread, and that this is what decides; that a fit takes it at its
-# estimate and keeps it through every later rebuild of the
-# identifiability report; that a weakly informed effect is said once, in the
-# words `summary()` and `ctReport()` repeat; and that an informed one is not
-# said at all.
+# itself; that the verdict follows what all the groups together carry about
+# the population sd, so that the same per-subject share is weak with a few
+# subjects and not with many; that a population sd come out near zero is
+# measured again at the starting spread, and that this is what decides; that a
+# fit takes it at its estimate and keeps it through every later rebuild of the
+# identifiability report; that a weakly determined effect is said once, in the
+# words `summary()` and `ctReport()` repeat, with a lower poprank offered
+# where the level can take one; and that an informed one is not said at all.
 
 # A random CINT and a random initial level: one static carrier and one
 # dynamic state on the augmented route, so its backward pass is exercised for
@@ -101,6 +104,13 @@ test_that("the two routes agree on how much each subject's data determine, where
   expect_equal(dim(laplace), c(20L, 2L))
   # Elementwise, per subject and effect.
   expect_equal(augmented[, colnames(laplace)], laplace, tolerance = 1e-6)
+  # And the population information built from them: the sum of squared shares.
+  table <- info$laplace$table
+  expect_equal(table$information[match(colnames(laplace), table$effect)],
+    unname(colSums(pmax(laplace, 0)^2)))
+  other <- info$augmented$table
+  expect_equal(other$information[match(table$effect, other$effect)],
+    table$information, tolerance = 1e-5)
   # And a share, not something else of the right shape: between zero and one
   # for a likelihood concave in the effects.
   expect_true(all(laplace > 0 & laplace < 1))
@@ -130,7 +140,10 @@ test_that("an sd near zero is measured again at the starting spread, and that de
     cint <- table[table$effect == "cint", ]
     t0m <- table[table$effect == "t0m", ]
     expect_lt(cint$determined, 1e-6)
+    expect_lt(cint$information, 1e-6)
     expect_gt(cint$reference, 0.5)
+    expect_gt(cint$referenceinformation,
+      ctsem:::.ctEffectThresholds()$information)
     expect_false(cint$weak)
     # At raw zero, the spread every fit starts from: log1p_exp(-1).
     expect_equal(cint$referencesd, log1p(exp(-1)), tolerance = 1e-6)
@@ -142,18 +155,21 @@ test_that("an sd near zero is measured again at the starting spread, and that de
     again <- ctsem:::.ctEffectInformation(specs[[route]], values,
       point = "a test point")$table
     expect_equal(cint$reference, again$determined[again$effect == "cint"])
+    expect_equal(cint$referenceinformation,
+      again$information[again$effect == "cint"])
   }
   # Both routes find the same starting-spread share, where both are exact.
   shares <- vapply(info, function(x) x$record$table$reference[
     x$record$table$effect == "cint"], numeric(1))
   expect_equal(shares[["augmented"]], shares[["laplace"]], tolerance = 1e-6)
-  # An sd below the starting spread whose share already clears the bar is
-  # not measured again: raising it could not change the verdict.
+  # An sd below the starting spread whose information already clears the bar
+  # is not measured again: raising it could not change the verdict.
   modest <- ctsem:::.ctEffectInformation(specs$laplace,
     .ei_point(specs$laplace, popsd_cint = -0.2), point = "a test point")$table
   cint <- modest[modest$effect == "cint", ]
-  expect_gt(cint$determined, ctsem:::.ctEffectThresholds()$determined)
+  expect_gt(cint$information, ctsem:::.ctEffectThresholds()$information)
   expect_true(is.na(cint$reference))
+  expect_true(is.na(cint$referenceinformation))
   expect_false(cint$weak)
 })
 
@@ -195,14 +211,20 @@ test_that("AnomAuth's random drift is weakly informed and its random intercept i
   # Each subject's three to five waves pin its intercept, and say almost
   # nothing about its rate of change.
   expect_lt(drift$reference, 0.05)
+  expect_lt(drift$referenceinformation, 0.01)
   expect_true(drift$weak)
   expect_gt(cint$reference, 0.9)
+  expect_gt(cint$referenceinformation, 90)
   expect_false(cint$weak)
   advice <- ctsem:::.ctEffectAdvice(record)
   expect_length(advice, 1L)
-  expect_match(advice, "Individual differences in drift are barely informed",
+  expect_match(advice, "Individual differences in drift are barely determined",
     fixed = TRUE)
-  expect_match(advice, "indvarying = FALSE for drift", fixed = TRUE)
+  # Two effects at one level, so a rank-1 covariance is on offer first, and
+  # dropping the effect after it.
+  expect_match(advice, "Consider poprank = 1, else indvarying = FALSE for drift",
+    fixed = TRUE)
+  expect_identical(record$ranks$rank, 2L)
 })
 
 test_that("a fit takes it at its estimate, keeps it, and says nothing when every effect is informed", {
@@ -224,14 +246,14 @@ test_that("a fit takes it at its estimate, keeps it, and says nothing when every
   expect_identical(effects$route, "laplace")
   expect_identical(effects$table$effect, "cint")
   expect_false(any(effects$table$weak))
-  expect_false(any(grepl("barely informed", messages)))
+  expect_false(any(grepl("barely determined", messages)))
   # The uncertainty stage and the fit's last step both rebuild the report from
   # a new curvature; neither drops what the check found.
   again <- suppressWarnings(suppressMessages(ctFitUncertainty(fit, "hessian")))
   expect_identical(again$identifiability$effects, effects)
   # Nothing to say, so the summary says nothing about it.
   printed <- utils::capture.output(print(summary(fit)))
-  expect_false(any(grepl("barely informed", printed)))
+  expect_false(any(grepl("barely determined", printed)))
 })
 
 test_that("a weakly informed effect is said once, and summary() and ctReport() repeat it", {
@@ -240,7 +262,7 @@ test_that("a weakly informed effect is said once, and summary() and ctReport() r
   # and well behaved rather than on one that is weak in fact; which effects
   # the real rule calls weak is calibrated on the bench, not here.
   testthat::local_mocked_bindings(
-    .ctEffectThresholds = function() list(determined = 1.01), .package = "ctsem")
+    .ctEffectThresholds = function() list(information = Inf), .package = "ctsem")
   messages <- character()
   fit <- withCallingHandlers(suppressWarnings(ctFit(.ei_fitdata(), .ei_model(),
     backend = "julia", intoverpop = "augmented", cores = 1, verbose = 0,
@@ -249,20 +271,23 @@ test_that("a weakly informed effect is said once, and summary() and ctReport() r
       messages <<- c(messages, conditionMessage(m))
       invokeRestart("muffleMessage")
     })
-  said <- grep("barely informed", messages, value = TRUE)
+  said <- grep("barely determined", messages, value = TRUE)
   expect_length(said, 1L)
-  expect_match(said, "Individual differences in cint are barely informed",
+  expect_match(said, "Individual differences in cint are barely determined",
     fixed = TRUE)
+  # A random initial level on the augmented route cannot be reduced in rank,
+  # so no poprank is offered.
   expect_match(said, "Consider indvarying = FALSE for t0m", fixed = TRUE)
+  expect_false(grepl("poprank", said, fixed = TRUE))
   expect_true(all(fit$identifiability$effects$table$weak))
   printed <- paste(utils::capture.output(print(summary(fit))), collapse = " ")
-  expect_match(printed, "barely informed", fixed = TRUE)
+  expect_match(printed, "barely determined", fixed = TRUE)
   expect_match(printed, "fit$identifiability$effects", fixed = TRUE)
   # The identification component of ctReport(), which is where it is printed.
   report <- ctsem:::.ctReportIdentificationLines(fit, summary(fit))
   expect_true(any(grepl("Random-effect information, at the estimate",
     report, fixed = TRUE)))
-  expect_true(any(grepl("barely informed", report, fixed = TRUE)))
+  expect_true(any(grepl("barely determined", report, fixed = TRUE)))
 })
 
 test_that("ctIdentify() takes it at supplied inits only", {
@@ -282,32 +307,129 @@ test_that("ctIdentify() takes it at supplied inits only", {
   expect_setequal(given$effects$table$effect, c("cint", "t0m"))
   expect_true(all(is.finite(given$effects$table$determined)))
   printed <- utils::capture.output(print(given))
-  expect_true(any(grepl("informed by its own group's data", printed,
+  expect_true(any(grepl("population sd is determined by the data", printed,
     fixed = TRUE)))
 })
 
-test_that("the wording names the level, its switch, and which spread it measured", {
+test_that("the wording names the level, its switch, poprank first, and which spread it measured", {
   effects <- list(table = data.frame(level = c("id", "study", "id"),
     effect = c("drift", "cint", "t0m"), popsd = c(0.1, 0.2, 1e-8),
     groups = c(40L, 8L, 40L), determined = c(0.6, 0.004, 1e-9),
-    reference = c(NA, NA, 0.02), referencesd = c(NA, NA, 0.313),
+    information = c(14, 1.2e-4, 1e-17),
+    reference = c(NA, NA, 0.02), referenceinformation = c(NA, NA, 0.35),
+    referencesd = c(NA, NA, 0.313),
     widened = c(0, 0.5, 0), unit = c("subject", "study", "subject"),
     switch = c("indvarying", "indvarying_study", "indvarying"),
-    weak = c(FALSE, TRUE, TRUE), stringsAsFactors = FALSE))
+    weak = c(FALSE, TRUE, TRUE), stringsAsFactors = FALSE),
+    ranks = data.frame(level = c("id", "study"), effects = c(2L, 1L),
+      rank = c(2L, 1L), reducible = TRUE, stringsAsFactors = FALSE))
   advice <- ctsem:::.ctEffectAdvice(effects)
   expect_length(advice, 2L)
   expect_match(advice[1L], "Individual differences in cint (study level)",
     fixed = TRUE)
   expect_match(advice[1L], paste0("at its estimated raw-scale population sd ",
-    "of 0.2 a typical study's own data determine almost none"), fixed = TRUE)
-  expect_match(advice[1L], "indvarying_study = FALSE for cint", fixed = TRUE)
-  expect_match(advice[1L], "more observations per study", fixed = TRUE)
-  # Measured at the starting spread, and saying so -- both sds by value.
+    "of 0.2, the 8 studies carry almost no information about it, since a ",
+    "typical study's own data determine almost none of its cint"), fixed = TRUE)
+  # One effect at that level: no lower rank exists, only the switch.
+  expect_match(advice[1L], "Consider indvarying_study = FALSE for cint.",
+    fixed = TRUE)
+  expect_false(grepl("poprank", advice[1L], fixed = TRUE))
+  # Measured at the starting spread, and saying so -- both sds by value -- and
+  # a lower rank for the level offered first, named per level.
   expect_match(advice[2L], "t0m (id level)", fixed = TRUE)
-  expect_match(advice[2L], paste0("its raw-scale population sd was estimated ",
-    "at 1e-08, and even at 0.31 a typical subject's own data would determine ",
-    "2% of its value"), fixed = TRUE)
+  expect_match(advice[2L], paste0("even at a raw-scale population sd of 0.31 ",
+    "(estimated 1e-08), that sd would rest on an effective 0.35 of the 40 ",
+    "subjects, since a typical subject's own data would determine 2% of its ",
+    "t0m"), fixed = TRUE)
+  expect_match(advice[2L], paste0("Consider poprank = c(id = 1), else ",
+    "indvarying = FALSE for t0m."), fixed = TRUE)
+  # Not where the level cannot be reduced.
+  effects$ranks$reducible <- FALSE
+  expect_false(any(grepl("poprank", ctsem:::.ctEffectAdvice(effects),
+    fixed = TRUE)))
   effects$table$weak <- FALSE
   expect_length(ctsem:::.ctEffectAdvice(effects), 0L)
   expect_length(ctsem:::.ctEffectAdvice(NULL), 0L)
+})
+
+# The bench's acnonlin model (dev/optimbench/cells.R, ac_model), which is the
+# package image's `drift_laplace` shape: a fit costs seconds in a fresh
+# session. Simulated here as the bench simulates it.
+.ei_drift_model <- function() {
+  model <- suppressMessages(ctModel(silent = TRUE, type = "ct", CINT = 0,
+    MANIFESTMEANS = 0, LAMBDA = matrix(1), T0MEANS = matrix(0),
+    DRIFT = "drift|-log1p_exp(-param)|TRUE"))
+  model$pars$indvarying <- model$pars$param %in% "drift"
+  model
+}
+.ei_drift_data <- function(nsubjects, ntimes = 8L) {
+  set.seed(3L)
+  drift <- -log1p(exp(-stats::rnorm(nsubjects, 1, 1)))
+  do.call(rbind, lapply(seq_len(nsubjects), function(i) {
+    a <- drift[i]; decay <- exp(a)
+    innovation <- sqrt(0.25 * (exp(2 * a) - 1) / (2 * a))
+    latent <- numeric(ntimes); latent[1] <- stats::rnorm(1, 0, 1)
+    for (t in seq_len(ntimes - 1L)) latent[t + 1L] <- decay * latent[t] +
+      stats::rnorm(1, 0, innovation)
+    data.frame(id = i, time = seq_len(ntimes) - 1L,
+      Y1 = latent + stats::rnorm(ntimes, 0, 0.3))
+  }))
+}
+.ei_drift_fit <- function(nsubjects) fit_cached(paste0("ei_drift_", nsubjects), {
+  messages <- character()
+  fit <- withCallingHandlers(suppressWarnings(ctFit(.ei_drift_data(nsubjects),
+    .ei_drift_model(), backend = "julia", intoverpop = "laplace", cores = 1)),
+    message = function(m) {
+      messages <<- c(messages, conditionMessage(m))
+      invokeRestart("muffleMessage")
+    })
+  list(fit = fit, messages = messages)
+})
+
+test_that("the same share is weak with a few subjects and not with many", {
+  skip_without_julia()
+  # One point, the 40-subject fit's estimate, and two data sets of the same
+  # design: eight waves a subject, drawn the same way. A typical subject's own
+  # data determine about half of its drift in both, and what differs is how
+  # many subjects there are to carry the population sd -- which a rule on the
+  # share alone, as this one was, cannot see.
+  at <- c(drift = 0.391, diff_eta1 = -1.39, mvarY1 = -1.49,
+    T0var_eta1 = -0.836, popsd_drift = 0.791)
+  record <- lapply(c(few = 5L, many = 40L), function(n) {
+    spec <- suppressWarnings(suppressMessages(ctFit(.ei_drift_data(n),
+      .ei_drift_model(), backend = "julia", intoverpop = "laplace",
+      cores = 1, fit = FALSE)))
+    names <- ctsem:::.ctBackendRawParameterNames(list(model_spec = spec),
+      ctsem:::.ctBackendNpar(spec))
+    expect_setequal(names, names(at))
+    ctsem:::.ctEffectInformation(spec, at[names], point = "x")$table
+  })
+  expect_gt(record$few$determined, 0.4)
+  expect_gt(record$many$determined, 0.4)
+  expect_lt(abs(record$few$determined - record$many$determined), 0.15)
+  # Measured 1.15 and 9.24 against the bar of 2.
+  expect_lt(record$few$information, 1.6)
+  expect_gt(record$many$information, 6)
+  expect_true(record$few$weak)
+  expect_false(record$many$weak)
+})
+
+test_that("a fit says so for a weakly determined effect and not for an informed one", {
+  skip_without_julia()
+  weak <- .ei_drift_fit(5L)
+  informed <- .ei_drift_fit(40L)
+  table <- weak$fit$identifiability$effects$table
+  expect_identical(table$effect, "drift")
+  expect_true(table$weak)
+  said <- grep("barely determined", weak$messages, value = TRUE)
+  expect_length(said, 1L)
+  expect_match(said, "Individual differences in drift are barely determined",
+    fixed = TRUE)
+  expect_match(said, "of the 5 subjects", fixed = TRUE)
+  # One effect: no lower rank to offer.
+  expect_match(said, "Consider indvarying = FALSE for drift.", fixed = TRUE)
+  table <- informed$fit$identifiability$effects$table
+  expect_false(table$weak)
+  expect_gt(table$information, ctsem:::.ctEffectThresholds()$information)
+  expect_false(any(grepl("barely determined", informed$messages)))
 })
