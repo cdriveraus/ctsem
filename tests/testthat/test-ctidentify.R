@@ -53,8 +53,14 @@ test_that("a freed loading is reported with the parameter it trades against", {
     .identify_model("lambda"), cores = 2))
   expect_gte(result$nweak, 1L)
   # Naming the parameters is the point -- a verdict alone would not tell anyone
-  # which cell of which matrix to change.
-  expect_true(all(c("lambda", "diff_eta1") %in% result$parameters))
+  # which cell of which matrix to change. T0VAR is in the trade too, since the
+  # latent's scale sets the initial variance as well as the diffusion, though
+  # it carries only 0.002 to 0.065 of the flat direction across the three
+  # evaluation points: a norm of 0.25 named it at one point, by 0.004.
+  expect_true(all(c("lambda", "diff_eta1", "T0var_eta1") %in% result$parameters))
+  # Named at every point, so the direction is not reported as turning between
+  # them: it moves, but it keeps the same three coordinates.
+  expect_false(result$rotating)
   # Structurally flat means flat to machine precision, not merely small.
   expect_lt(result$smallest, 1e-13)
 })
@@ -269,8 +275,8 @@ test_that("the report names what the likelihood measured flat, at any curvature"
 
 test_that("a direction names every coordinate carrying a share of it", {
   # Ten coordinates along one flat direction, the smallest two at half the
-  # largest. An absolute loading of 0.25 dropped them; a share of the largest
-  # does not, however many coordinates the direction is spread over.
+  # largest. An absolute loading of 0.25 dropped them; a share of the direction
+  # at the rounding floor does not, however many coordinates it is spread over.
   v <- c(0.4, 0.4, 0.4, 0.3, 0.3, 0.3, 0.3, 0.3, 0.2, 0.2)
   v <- v / sqrt(sum(v^2))
   expect_lt(min(abs(v)), 0.25)
@@ -278,6 +284,51 @@ test_that("a direction names every coordinate carrying a share of it", {
   report <- ctsem:::.ctBackendIdentifiability(-information, paste0("p", 1:10))
   expect_equal(report$nweak, 1L)
   expect_setequal(report$parameters, paste0("p", 1:10))
+})
+
+test_that("a fit names what lies in the flat subspace, in any basis, as its intervals do", {
+  # The parity fixture's flat direction turns as the optimiser walks its ridge,
+  # and the weaker of the ten correlations on it carry 0.005 to 0.07 of it
+  # depending on where the fit stopped (test-stan-julia-parity.R). Named by a
+  # third of the largest loading they came and went -- nine names at one
+  # stopping point, seven at another; named by their share against
+  # `.ctNullMassBar()`, which sits at rounding, they do not.
+  parnames <- paste0("p", 1:6)
+  v <- c(0.8, 0.6, 0.1, 1e-5, 0, 0)
+  v <- v / sqrt(sum(v^2))
+  information <- diag(6) - tcrossprod(v)
+  report <- ctsem:::.ctBackendIdentifiability(-information, parnames)
+  expect_equal(report$nweak, 1L)
+  # p3 at an eighth of the largest loading is on the ridge and named, largest
+  # share first; a leak of 1e-5 is rounding's size and is not.
+  expect_identical(report$parameters, c("p1", "p2", "p3"))
+  expect_identical(report$directions[[1]]$parameters, report$parameters)
+  # The same coordinates as the intervals with no width. This direction's
+  # curvature is zero, so the covariance drops it and the interval check
+  # measures the same subspace against the same bar.
+  check <- ctsem:::.ctBackendIntervalCheck(-information, rep(1, 6), parnames)
+  expect_setequal(check$unidentified, report$parameters)
+
+  # Two flat directions: any rotation of the pair is as good a basis as the
+  # one a decomposition returns, and a vector the likelihood screen walked in
+  # another decomposition need not be orthogonal to either. A coordinate's
+  # share of the subspace is the same from all of them.
+  w <- c(0, 0.1, 0.2, 0.9, 0, 0.3)
+  w <- w - sum(w * v) * v
+  w <- w / sqrt(sum(w^2))
+  share <- ctsem:::.ctIdentifySubspaceShare(list(list(vector = v),
+    list(vector = w)), 6L)
+  expect_equal(sum(share), 2)
+  turn <- 0.6
+  rotated <- list(list(vector = cos(turn) * v + sin(turn) * w),
+    list(vector = -sin(turn) * v + cos(turn) * w))
+  expect_equal(ctsem:::.ctIdentifySubspaceShare(rotated, 6L), share)
+  skewed <- list(list(vector = v), list(vector = v + 2 * w))
+  expect_equal(ctsem:::.ctIdentifySubspaceShare(skewed, 6L), share)
+  both <- diag(6) - tcrossprod(v) - tcrossprod(w)
+  pair <- ctsem:::.ctBackendIdentifiability(-both, parnames)
+  expect_equal(pair$nweak, 2L)
+  expect_setequal(pair$parameters, parnames[share >= ctsem:::.ctNullMassBar()])
 })
 
 test_that("the same advice is given after a fit as before one", {

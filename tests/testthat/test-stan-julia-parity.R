@@ -662,17 +662,16 @@ test_that("Stan and Julia's actual optimizers converge to the same fit for TD/TI
   # The raw parameters, EXCEPT the directions this fixture cannot identify.
   # 6 subjects and 4 waves do not pin 10 population correlations among 5
   # random effects: walking the julia fit's flattest direction moves its
-  # likelihood by well under the 1.92-nat bar over four raw units, and the
-  # direction names nine of those ten at this basin's stopping point (see the
-  # next test for how that count depends on where the optimiser stopped).
+  # likelihood by well under the 1.92-nat bar over four raw units, and all ten
+  # carry a share of that direction (see the next test for why the report
+  # names by share, and not by the size of a loading).
   #
   # The directions flat by the likelihood screen, and not the ones whose
   # curvature has decayed past a threshold: that decays with where the
-  # optimiser stopped along the ridge, and so did which of the ten were named
-  # (see the next test). Taken from the fit rather than written out here, so
-  # this tightens by itself if the fixture ever becomes identified. Stan
-  # carries no `identifiability`, hence the julia side supplies the set for
-  # both.
+  # optimiser stopped along the ridge (see the next test). Taken from the fit
+  # rather than written out here, so this tightens by itself if the fixture
+  # ever becomes identified. Stan carries no `identifiability`, hence the
+  # julia side supplies the set for both.
   weak <- .parity_flat_by_screen(jf)
   # Everything the report names, it names on that evidence here.
   expect_setequal(as.character(jf$identifiability$parameters), weak)
@@ -712,8 +711,33 @@ test_that("which directions are named does not depend on how far the optimiser w
   # way, the curvature along the ridge has decayed less, and a direction can
   # drop out of the report or a marginal one drop in -- so any change to when a
   # fit stops can change which parameters this fixture compares across
-  # backends, unless the likelihood screen names the same set at every
-  # stopping point.
+  # backends, unless the report names the same set at every stopping point.
+  #
+  # `newton = FALSE` stops part way along the ridge: it skips only the
+  # exact-Hessian finish, not the batching or gap-correction stages, and
+  # `.ctBackendIdentifiability()` reads the standard post-fit Hessian
+  # (`out$uncertainty$hessian`), computed whether or not the finish ran. Where
+  # it stops moves with the batching schedule's timing (cores defaults to 2
+  # here; see CLAUDE.md on cores > 1 reproducibility): 732 of 831 iterations
+  # and 726 of 751 in two runs, 0.30 and 0.14 raw units from the full fit
+  # (max abs); 558 of 831 on Windows and 610 of 672 on dev2 in two more, 0.58
+  # and 0.54. In the last two it is 1.4 and 1.3 raw units along the full fit's
+  # flat direction and 0.05 and 0.04 off it, 1.7e-05 and 2.1e-05 nats below,
+  # and "suboptimal" by 7.9e-06 over the identified directions rather than
+  # certified -- on the ridge, a little short of its crest. The guard below
+  # sits under the smallest of those gaps.
+  #
+  # The flat direction turns between the two points, because the ridge is
+  # curved in raw coordinates: by 4.8 degrees on Windows and 4.3 on dev2, one
+  # flat direction at each and the next eigenvalue 270 to 430 times sharper,
+  # both confirmed by the likelihood screen. The four correlations with t0a,
+  # the weakest of the ten, carry a share of it that moves with the turn.
+  # Named by a third of the largest loading, as the report once was, two of
+  # them crossed that bar in the last two runs -- nine names at the full fit,
+  # seven at the early one, on both machines. Named by their share of the flat
+  # subspace against `.ctNullMassBar()`, all ten carry 0.005 or more at both
+  # points and the fourteen identified coordinates 1.4e-08 or less. See
+  # `.ctBackendIdentifiability()`.
   #
   # The old early point here -- `innergaptol = 1e-4, gapretries = 0` -- stopped
   # early only because the correction loop's resumes were what walked the rest
@@ -722,22 +746,8 @@ test_that("which directions are named does not depend on how far the optimiser w
   # itself, so that config no longer stops early; combined with julia's
   # carefulfit default now off on this Gaussian fixture too (158a02e1,
   # 2026-09-27 -- see the test above), it runs past the ridge into a
-  # different, unidentified corner and names NONE of the nine directions the
-  # full fit names -- measured, not assumed.
-  #
-  # `newton = FALSE` does still stop early ON the ridge: it skips only the
-  # exact-Hessian finish, not the batching or gap-correction stages, so the
-  # fit still reaches the ridge and is still certified there --
-  # `.ctBackendIdentifiability()` reads the standard post-fit Hessian
-  # (`out$uncertainty$hessian`), which is computed regardless of whether the
-  # Newton finish ran. Measured at fewer iterations than the full fit in every
-  # run (732 of 831, and separately 726 of 751), naming the same nine
-  # directions both times; the raw-parameter gap between the two stopping
-  # points moved with the run's own batching-schedule timing (cores defaults
-  # to 2 here, see CLAUDE.md on cores>1 reproducibility) rather than sitting at
-  # one number -- 0.30 and 0.14 raw units apart (max abs) in two runs -- so the
-  # guard below sits well under the smaller of those instead of against either
-  # exactly.
+  # different, unidentified corner and names NONE of the parameters the full
+  # fit names -- measured, not assumed.
   full <- .parity_julia_fit()
   early <- .parity_julia_fit(list(newton = FALSE))
   # Two different stopping points, or this compares a fit with itself.
@@ -745,11 +755,20 @@ test_that("which directions are named does not depend on how far the optimiser w
   expect_gt(max(abs(early$estimate$raw - full$estimate$raw)), 0.05)
 
   named <- as.character(full$identifiability$parameters)
+  # Something is named, and only population correlations: a rule that named
+  # every coordinate would pass the comparisons below as surely as a right one.
   expect_gt(length(named), 0L)
+  expect_true(all(grepl("^rawcor_", named)), info = paste(named, collapse = " "))
   expect_setequal(as.character(early$identifiability$parameters), named)
   # On the likelihood's evidence at both.
   expect_setequal(.parity_flat_by_screen(early), named)
   expect_setequal(.parity_flat_by_screen(full), named)
+  # And they are the coordinates whose intervals have no width at both points,
+  # so the report and summary()'s NA intervals name the same parameters.
+  expect_setequal(as.character(full$uncertainty$intervalcheck$unidentified),
+    named)
+  expect_setequal(as.character(early$uncertainty$intervalcheck$unidentified),
+    named)
 })
 
 test_that("Julia's adjoint gradient matches its forward gradient and Stan", {

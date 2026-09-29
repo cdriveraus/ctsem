@@ -186,9 +186,10 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
   V <- eig$vectors[, keep, drop = FALSE]
   d <- values[keep]
   nullvectors <- eig$vectors[, !keep, drop = FALSE]
-  # Same convention as `.ctOptimIdentifiedInverse()`'s `nullParameters`: which
-  # coordinates a dropped direction loads on, not all of them.
-  loaded <- if (ncol(nullvectors)) which(apply(abs(nullvectors), 1, max) >= .25) else integer()
+  # Same convention as `.ctOptimIdentifiedInverse()`'s `nullParameters`: the
+  # coordinates with a share of the dropped directions at `.ctNullMassBar()`.
+  loaded <- if (ncol(nullvectors))
+    which(rowSums(nullvectors^2) >= .ctNullMassBar()) else integer()
   list(V = V, d = d, k = sum(keep), n = nrow(cov), nnull = sum(!keep),
     nullEigenvalues = values[!keep], nullParameters = loaded)
 }
@@ -639,21 +640,21 @@ ctOptimSafeCov <- function(cov, ridge=1e-8){
   cov <- vectors %*% (t(vectors) / values[keep])
   cov <- (cov + t(cov)) / 2
   if(any(!is.finite(cov))) return(NULL)
-  # Which parameters the dropped directions load on. `loading` matches
-  # `.ctBackendIdentifiability()`: a direction is described by the coordinates
-  # that carry it, not by all of them.
-  nullvectors <- eig$vectors[, !keep, drop=FALSE]
-  loaded <- if(ncol(nullvectors)) which(apply(abs(nullvectors), 1, max) >= .25) else
-    integer()
-  # And how much of each coordinate the projection took away, which is the
-  # number that says whether its reported spread means anything: a coordinate
-  # with a large share of the dropped subspace has an infinite asymptotic
-  # variance, and the covariance built here reports it as almost none. Free
-  # from the decomposition already taken, basis-invariant where any single
+  # How much of each coordinate the projection took away, which is the number
+  # that says whether its reported spread means anything: a coordinate with a
+  # large share of the dropped subspace has an infinite asymptotic variance,
+  # and the covariance built here reports it as almost none. Free from the
+  # decomposition already taken, basis-invariant where any single
   # eigenvector's loading is not, and the same quantity
   # `.ctBackendIntervalCheck()` reads -- see the comment there for the fit this
   # was measured on.
+  nullvectors <- eig$vectors[, !keep, drop=FALSE]
   mass <- if(ncol(nullvectors)) rowSums(nullvectors^2) else rep(0, nrow(info))
+  # Which parameters the dropped directions involve: those with a share of
+  # them at `.ctNullMassBar()`, the rule `.ctBackendIdentifiability()` and the
+  # interval check name parameters by. It was a loading of 0.25 on any one
+  # dropped direction, which named fewer and depended on the basis.
+  loaded <- which(mass >= .ctNullMassBar())
   list(cov=cov, nnull=sum(!keep), nullEigenvalues=values[!keep],
     nullParameters=loaded, nullMass=mass, threshold=threshold)
 }
@@ -916,7 +917,8 @@ ctOptimCovFromHessian <- function(hess, ridge=1e-8, rtol=.ctFlatDirectionRtol(),
       # dropped direction has an infinite variance and is given a small
       # reported one, which reads as precision rather than as a gap. See
       # `.ctBackendIntervalCheck()`, which names them on a julia fit.
-      if(sum(nullMass >= 1e-3) > 0) paste0(', and ', sum(nullMass >= 1e-3),
+      if(sum(nullMass >= .ctNullMassBar()) > 0) paste0(', and ',
+        sum(nullMass >= .ctNullMassBar()),
         ' parameter(s) along them whose reported sd is that projection rather',
         ' than a small width') else ''))
   if(isTRUE(diagnostics$usedGinv)) issues <- c(issues,
@@ -1953,7 +1955,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
     covariance = if (weighted) 'weighted importance-sampling covariance' else
       'unweighted covariance of the resampled draws',
     # NULL on the ordinary fit, where nothing was held. Positional in the raw
-    # parameter vector, as `.ctBackendIntervalCheck()`'s `nullParameters` is,
+    # parameter vector, as `ctOptimCovFromHessian()`'s `nullParameters` is,
     # because names are not attached to this vector until
     # `.ctFitNameRawUncertainty()` runs, further down the caller.
     subspace = if (is.null(subspace)) NULL else list(
