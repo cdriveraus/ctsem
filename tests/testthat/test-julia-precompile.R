@@ -46,9 +46,19 @@ test_that("the precompiled models still match what ctsem's model writer emits", 
   nz <- function(x, empty) { x[is.na(x)] <- empty; x }
   v <- ctsem:::.ctJuliaVector
 
-  for (route in c("augmented", "laplace")) {
+  # The captured model, and the same with its second loading free: a default
+  # template the captured model does not use, which must not make it another
+  # type, because every spec carries every default template's group.
+  free_loading <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 1,
+    n.manifest = 2, manifestNames = c("y1", "y2"), latentNames = "eta1",
+    LAMBDA = matrix(c(1, "lam2"), 2, 1), MANIFESTMEANS = matrix(0, 2, 1),
+    CINT = matrix("cint"), T0MEANS = matrix(0),
+    MANIFESTVAR = matrix(c("mvar", 0, 0, "mvar"), 2), manifesttype = c(0L, 0L))))
+  free_loading$pars$indvarying <- free_loading$pars$param %in% "cint"
+  models <- list(captured = .precompile_model(), free_loading = free_loading)
+  for (route in c("augmented", "laplace")) for (nm in names(models)) {
     spec <- suppressWarnings(suppressMessages(ctFit(.precompile_data(3L, 4L),
-      .precompile_model(), backend = "julia", fit = FALSE, intoverpop = route)))
+      models[[nm]], backend = "julia", fit = FALSE, intoverpop = route)))
     table <- as.data.frame(spec$parameter_table, stringsAsFactors = FALSE)
     matched <- ctsem:::.ctBackendJuliaValue(module$ctsem_shape_is_precompiled(
       v(as.character(table$matrix)), v(as.integer(table$row)), v(as.integer(table$col)),
@@ -57,8 +67,52 @@ test_that("the precompiled models still match what ctsem's model writer emits", 
       v(nz(as.character(table$predicttransform), "")),
       v(nz(as.character(table$updatetransform), "")),
       v(nz(as.character(table$tdtransform), ""))))
-    expect_true(matched, label = sprintf("the %s gaussian model is a precompiled shape", route))
+    expect_true(matched, label = sprintf("the %s gaussian model (%s) is a precompiled shape",
+      route, nm))
   }
+})
+
+test_that("every template a default model writes is one of the engine's default templates", {
+  skip_without_julia()
+  # Every spec carries a group for each default template, so that which of them
+  # a model uses does not change its type. A default the writer starts emitting
+  # and the engine's list lacks would quietly bring that back: a model freeing
+  # one more cell compiling the whole pipeline again. Fit-free: parameter
+  # tables only, and one engine call.
+  module <- ctsem:::.ctJuliaModule(NULL)
+  skip_if(is.null(module$ctsem_nondefault_templates),
+    "engine predates the default template groups")
+  q <- function(e) suppressWarnings(suppressMessages(e))
+  sim <- function(man, type = rep(0L, length(man)), td = FALSE, ti = FALSE) {
+    set.seed(2)
+    d <- data.frame(id = rep(1:6, each = 5), time = rep(0:4, 6))
+    for (j in seq_along(man)) d[[man[j]]] <- switch(as.character(type[j]),
+      "0" = stats::rnorm(30), "1" = stats::rbinom(30, 1, 0.5), "2" = sample(1:3, 30, TRUE))
+    if (td) d$td1 <- stats::rbinom(30, 1, 0.3)
+    if (ti) d$ti1 <- rep(stats::rnorm(6), each = 5)
+    d
+  }
+  cases <- list(
+    list(q(ctModel(type = "ct", n.latent = 2, n.manifest = 3, manifestNames = c("y1", "y2", "y3"),
+      LAMBDA = matrix(c(1, "auto", "auto", 0, 0, 1), 3, 2))), sim(c("y1", "y2", "y3")), "augmented"),
+    list(q(ctModel(type = "dt", n.latent = 1, n.manifest = 2, manifestNames = c("y1", "y2"),
+      LAMBDA = matrix(c(1, "auto"), 2, 1))), sim(c("y1", "y2")), "laplace"),
+    list(q(ctModel(type = "ct", n.latent = 1, n.manifest = 2, manifestNames = c("o1", "o2"),
+      LAMBDA = matrix(c(1, "auto"), 2, 1), manifesttype = c(2L, 2L), ncategories = c(3L, 3L))),
+      sim(c("o1", "o2"), c(2L, 2L)), "laplace"),
+    list(q(ctModel(type = "ct", n.latent = 1, n.manifest = 1, manifestNames = "y1",
+      LAMBDA = matrix(1), TDpredNames = "td1", TIpredNames = "ti1")),
+      sim("y1", td = TRUE, ti = TRUE), "augmented"))
+  transforms <- unlist(lapply(cases, function(cs) {
+    spec <- q(ctFit(cs[[2]], cs[[1]], backend = "julia", fit = FALSE, intoverpop = cs[[3]]))
+    tb <- as.data.frame(spec$parameter_table, stringsAsFactors = FALSE)
+    t <- tb$transform[!is.na(tb$parnumber) & tb$parnumber > 0]
+    t[!is.na(t) & nzchar(t)]
+  }))
+  expect_gt(length(transforms), 20)
+  missing <- as.character(ctsem:::.ctBackendJuliaValue(
+    module$ctsem_nondefault_templates(ctsem:::.ctJuliaVector(transforms))))
+  expect_identical(missing, "", label = "templates default models write outside the default groups")
 })
 
 test_that("every captured model replayed when the engine image was built", {
@@ -134,4 +188,86 @@ test_that("a fresh session's first fit of a precompiled model compiles almost no
   expect_lt(sum(engine), 60, label = sprintf(
     "engine methods compiled in the first fit (%d, %.1f s of compile in all)",
     sum(engine), sum(ms, na.rm = TRUE) / 1000))
+})
+
+# The engine's numbers from its package image, and from the same source built
+# without the workload -- so compiled in the session -- at the points the
+# workload was captured at: value, gradient and exact Hessian of every captured
+# model. The image carries compiled code and module state from the process
+# that built it, and nothing else checks that they compute what the source
+# says (review/ENGINE-image-state-2026-09-29.md, F6). `mutate` edits the
+# second copy's source, which is how the check was shown to fail when the two
+# differ; the test itself never passes one.
+.image_vs_session <- function(mutate = NULL) {
+  julia <- file.path(ctsem:::.ctJuliaBin(), ctsem:::.ctJuliaExeName())
+  script <- normalizePath(testthat::test_path("image-vs-session.jl"), winslash = "/")
+  image_env <- ctsem:::.ctJuliaEnvDir()
+  # R's LD_LIBRARY_PATH (R's own and the system's libraries) is unset, as
+  # JuliaConnectoR does for its Julia: with it, Julia's precompile workers load
+  # the wrong libraries and die with a segmentation fault (Linux).
+  run <- function(project, out, env = character()) {
+    withr::with_envvar(c(LD_LIBRARY_PATH = NA, env), suppressWarnings(system2(julia, c("--startup-file=no",
+      shQuote(script), shQuote(normalizePath(project, winslash = "/")), shQuote(out)),
+      stdout = TRUE, stderr = TRUE)))
+    if (file.exists(out)) readLines(out, warn = FALSE) else character()
+  }
+  from_image <- run(image_env, tempfile("image", fileext = ".txt"))
+  # A copy at another path is another cache entry, and with its own depot
+  # first it neither takes one of the user's image slots nor is found by a
+  # later session of this source. The session's own depots follow, where the
+  # packages and the dependencies' images are: an empty entry would add only
+  # Julia's bundled depots, not the user's, and nothing would load.
+  copy <- file.path(tempfile("ctsem-session-engine"), "engine")
+  dir.create(copy, recursive = TRUE)
+  file.copy(list.files(ctsem:::.ctJuliaEnginePath(), full.names = TRUE), copy,
+    recursive = TRUE)
+  if (!is.null(mutate)) mutate(copy)
+  depot <- tempfile("ctsem-depot")
+  dir.create(depot)
+  depots <- as.character(ctsem:::.ctJuliaEval(sprintf("join(DEPOT_PATH, %s)",
+    deparse(.Platform$path.sep))))
+  from_session <- run(copy, tempfile("session", fileext = ".txt"),
+    c(CTSEM_PRECOMPILE_WORKLOAD = "false", JULIA_DEPOT_PATH = paste(
+      normalizePath(depot, winslash = "/"), depots, sep = .Platform$path.sep)))
+  list(image = from_image, session = from_session)
+}
+.image_vs_session_diff <- function(lines) {
+  parse <- function(x) {
+    x <- x[!startsWith(x, "workload") & x != "done"]
+    keys <- sub("^(\\S+ \\S+ \\S+) .*$", "\\1", x)
+    stats::setNames(lapply(sub("^\\S+ \\S+ \\S+ ", "", x),
+      function(v) as.numeric(strsplit(v, " ", fixed = TRUE)[[1]])), keys)
+  }
+  a <- parse(lines$image); b <- parse(lines$session)
+  keys <- union(names(a), names(b))
+  vapply(keys, function(k) {
+    if (is.null(a[[k]]) || is.null(b[[k]]) || length(a[[k]]) != length(b[[k]])) return(Inf)
+    max(abs(a[[k]] - b[[k]])) / max(1, max(abs(a[[k]])))
+  }, numeric(1))
+}
+
+test_that("the package image computes what the engine compiled in the session computes", {
+  skip_without_julia()
+  # Needs its own engine build, a workload-free one in a temporary depot (8 s
+  # on dev1), and then compiles every captured model's value, gradient and
+  # Hessian in that session (about 8.5 minutes). Nothing cheaper sees the
+  # image's code at all: every other test of a fit runs whatever the image
+  # holds, and a workload-free engine has to be a second build.
+  skip_unless_slow("building a workload-free engine to compare the image with")
+  enabled <- tryCatch(isTRUE(ctsem:::.ctJuliaEval(
+    "ContinuousTimeSEM._PRECOMPILE_WORKLOAD_ENABLED")), error = function(e) NA)
+  skip_if(!isTRUE(enabled), "the engine image was built without the workload")
+  lines <- .image_vs_session()
+  expect_identical(tail(lines$image, 1), "done", label = paste(c("the image run finished",
+    tail(lines$image, 5)), collapse = "\n"))
+  expect_identical(tail(lines$session, 1), "done", label = "the workload-free run finished")
+  expect_identical(lines$image[1], "workload true")
+  expect_identical(lines$session[1], "workload false")
+  diffs <- .image_vs_session_diff(lines)
+  expect_gt(length(diffs), 20)
+  # Rounding differences are allowed for (the image's code is built for the
+  # CPU targets the system image lists, the session's for this CPU); anything
+  # the source actually changes is orders of magnitude above this.
+  expect_lt(max(diffs), 1e-8, label = paste("largest relative difference, at",
+    names(diffs)[which.max(diffs)]))
 })

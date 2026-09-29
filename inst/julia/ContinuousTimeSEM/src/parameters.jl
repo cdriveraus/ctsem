@@ -27,6 +27,64 @@ enough that any likelihood it reaches is absurd on sight.
 """
 const UNSET_PARAMETER = 99999.0
 
+# The templates ctModelWriter writes by default, as Julia source with index 1
+# standing for any: DRIFT's diagonal (continuous and discrete time), DIFFUSION,
+# standard deviations (MANIFESTVAR, T0VAR), the population block, identity,
+# intercepts and means, loadings, thresholds. Every spec carries a group for
+# each of these, empty when unused -- see `_group_regular_transforms`. Listed
+# from the parameter tables of default models of every kind; the R suite fails
+# when a default model emits a single-index template that is not here.
+const _DEFAULT_TEMPLATE_SOURCES = (
+    "-(1e-06 + 2 * log1p_exp(-(2 * param[1])))",
+    "1/(1 + exp(-(2 * param[1])))",
+    "10 * log1p_exp(2 * param[1]) + 1e-10",
+    "1e-10 + 5 * log1p_exp(2 * param[1])",
+    "1e-10 + 1 * log1p_exp(2 * param[1] - 1)",
+    "param[1]",
+    "10 * param[1]",
+    "0.5 + 5 * param[1]",
+    "2 * log1p_exp(2 * param[1])",
+)
+const _DEFAULT_TEMPLATE_TYPES = Any[]
+const _DEFAULT_TEMPLATE_LOCK = ReentrantLock()
+
+"""The closure types of the default templates, built once per session."""
+function _default_template_types()
+    lock(_DEFAULT_TEMPLATE_LOCK) do
+        if isempty(_DEFAULT_TEMPLATE_TYPES)
+            for src in _DEFAULT_TEMPLATE_SOURCES
+                push!(_DEFAULT_TEMPLATE_TYPES, typeof(_regular_transform_closure(src)))
+            end
+        end
+        return _DEFAULT_TEMPLATE_TYPES
+    end
+end
+
+"""The default templates' cache keys."""
+ctsem_default_template_keys() = [_regular_transform_key(s) for s in _DEFAULT_TEMPLATE_SOURCES]
+
+export ctsem_nondefault_templates
+"""
+    ctsem_nondefault_templates(transforms)
+
+The single-index transforms among `transforms` whose template is not a default
+one, joined by `" | "`, or `""` when there are none. The R suite asks this of
+default models, so that a template ctModelWriter starts writing by default
+fails a test instead of quietly making models of equal dimensions different
+types again. A string, not a vector: an empty vector does not cross the bridge.
+"""
+function ctsem_nondefault_templates(transforms::AbstractVector)
+    defaults = Set(ctsem_default_template_keys())
+    out = String[]
+    for t in transforms
+        s = String(t)
+        isempty(s) && continue
+        _regular_transform_index(s) === nothing && continue
+        _regular_transform_key(s) in defaults || push!(out, s)
+    end
+    return join(unique(out), " | ")
+end
+
 """
     _group_regular_transforms(transforms, mutables)
 
@@ -40,6 +98,14 @@ Groups are ordered by the template's type name so that two models using the same
 templates produce the *same* tuple type whatever order their cells appear in --
 which is the whole point, since that type is what `EKFParameters` is
 parameterised by.
+
+Every default template has a group whether or not the model uses it, so the
+tuple's type depends on the templates only when a model brings one of its own.
+Without that, two models of the same dimensions differing in which defaults they
+use -- one frees a loading, the other does not -- were different types, and the
+whole pipeline, Hessian duals included, compiled again for the second: about
+40 s on dev2 for a one-latent model. An empty group costs a loop that runs no
+times.
 """
 function _group_regular_transforms(transforms::Vector{Any}, mutables::BitVector)
     cells = findall(mutables)
@@ -47,6 +113,9 @@ function _group_regular_transforms(transforms::Vector{Any}, mutables::BitVector)
         "$(length(transforms)) regular transforms for $(length(cells)) mutable " *
         "positions; they are produced one per mutable cell"))
     types = unique(typeof.(transforms))
+    for T in _default_template_types()
+        T in types || push!(types, T)
+    end
     sort!(types; by = string)
     groups = Any[]
     gcells = Vector{Int}[]

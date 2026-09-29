@@ -317,16 +317,20 @@ or is rejected. These are not that. `MethodError`, `UndefVarError`,
 `UndefKeywordError`, `BoundsError` and `TypeError` mean the code is wrong --
 when the worker pool dropped the `slot` argument, two callers kept passing it,
 and their catches turned the `MethodError` into a NaN quadrature gap and an
-identity sampler metric, with nothing reported. An `InterruptException` is the
-user stopping the run. A `TaskFailedException` or `CompositeException` from a
-spawned region is unwrapped, since the error that matters is inside it.
+identity sampler metric, with nothing reported. A `ForwardDiff.DualMismatchError`
+is the same kind of fact about the code: two dual tags met in an order
+ForwardDiff cannot resolve (see `CTSEMNestedTag` below), which no parameter
+vector causes or avoids, and scoring it as an invalid point ends a fit early
+with nothing said. An `InterruptException` is the user stopping the run. A
+`TaskFailedException` or `CompositeException` from a spawned region is
+unwrapped, since the error that matters is inside it.
 """
 function _ctsem_must_propagate(err)
     err isa TaskFailedException && return _ctsem_must_propagate(err.task.result)
     err isa CompositeException && return any(_ctsem_must_propagate, err.exceptions)
     return err isa MethodError || err isa UndefVarError ||
         err isa UndefKeywordError || err isa BoundsError || err isa TypeError ||
-        err isa InterruptException
+        err isa ForwardDiff.DualMismatchError || err isa InterruptException
 end
 
 
@@ -384,6 +388,84 @@ seeds are the ones `ForwardDiff.jacobian` builds, so the numbers are the same.
 _ctsem_nested_gradient(f, x::AbstractArray) = ForwardDiff.gradient(f, x,
     ForwardDiff.GradientConfig(f, x, ForwardDiff.Chunk(x), _ctsem_nested_tag(x)),
     Val{false}())
+
+"""
+Dual widths for the forward-mode Jacobians whose input length is a property of
+the model: the Hessian's (the parameter count) and the Laplace unit
+curvature's (the unit's random-effect dimension).
+
+`ForwardDiff.pickchunksize(n)` is `n` itself up to 12, and a dual width is a
+type, so every parameter count compiled the whole filter and reverse pass
+again: about 30 s on dev2 for one more free parameter on a model the session,
+or the package image, had already compiled. Rounding the width up to the next
+of a few buckets makes every count in a bucket one type. Above 12,
+`pickchunksize`'s width is rounded up the same way, which never adds a sweep.
+The extra lanes of a padded input are zero seeds on inputs the function
+ignores, so the result is the same Jacobian. An empty list is `pickchunksize`.
+`ctsem_set_dual_widths!` sets both lists.
+
+The Hessian's list is empty by default: measured on dev1 (job H2), a padded
+lane costs 5-12% of a small model's Hessian, and a binary model's 5 parameters
+at width 8 cost 31% more (7.4 -> 9.8 ms; even buckets 2, 4, ..., 12: +8%, and
++12% for 7 Gaussian parameters at 8), so no bucketing both kept a Hessian
+within 10% and made every parameter count free. The curvature's buckets cost
+a Laplace evaluation 2% (one or two random effects, Gaussian) to 8% (one,
+ordinal) and make one to four random effects per unit a single type.
+"""
+const _CTSEM_HESSIAN_WIDTHS = Ref(Int[])
+const _CTSEM_CURVATURE_WIDTHS = Ref(Int[4, 8, 12])
+
+export ctsem_set_dual_widths!
+function ctsem_set_dual_widths!(; hessian=nothing, curvature=nothing)
+    hessian === nothing || (_CTSEM_HESSIAN_WIDTHS[] = sort!(Int.(collect(hessian))))
+    curvature === nothing || (_CTSEM_CURVATURE_WIDTHS[] = sort!(Int.(collect(curvature))))
+    return (hessian = copy(_CTSEM_HESSIAN_WIDTHS[]),
+        curvature = copy(_CTSEM_CURVATURE_WIDTHS[]))
+end
+
+"""The width a forward-mode Jacobian over `n` inputs takes from `widths`."""
+function _ctsem_dual_width(n::Integer, widths::Vector{Int})
+    w0 = ForwardDiff.pickchunksize(n)
+    for w in widths
+        w >= w0 && return w
+    end
+    return w0
+end
+
+"""`f` applied to the first `n` entries of its input: the padded Jacobian's function."""
+struct _CTSEMLeading{F}
+    f::F
+    n::Int
+end
+(g::_CTSEMLeading)(y::AbstractVector) = g.f(length(y) == g.n ? y : y[1:g.n])
+
+"""
+    _ctsem_width_jacobian!(J, f, x, n, width)
+
+The Jacobian of `f` over the first `n` entries of `x`, by forward mode at
+`width` lanes a sweep, written into `J`, which has `length(x)` columns.
+`length(x)` is `max(n, width)`: when `width` exceeds `n`, the entries past `n`
+are padding, zero, and `J`'s columns past `n` come back zero. Always through
+`_CTSEMLeading`, padded or not, so one `f` has one tag type at every width.
+"""
+function _ctsem_width_jacobian!(J::AbstractMatrix, f::F, x::AbstractVector,
+    n::Integer, width::Integer) where {F}
+    g = _CTSEMLeading(f, Int(n))
+    cfg = ForwardDiff.JacobianConfig(g, x, ForwardDiff.Chunk{Int(width)}())
+    return ForwardDiff.jacobian!(J, g, x, cfg)
+end
+
+"""`ForwardDiff.jacobian(f, x)` at the width `widths` gives `length(x)`."""
+function _ctsem_width_jacobian(f::F, x::AbstractVector, widths::Vector{Int}) where {F}
+    n = length(x)
+    width = _ctsem_dual_width(n, widths)
+    width <= n && return ForwardDiff.jacobian(_CTSEMLeading(f, n), x,
+        ForwardDiff.JacobianConfig(_CTSEMLeading(f, n), x, ForwardDiff.Chunk{width}()))
+    xp = vcat(x, zeros(eltype(x), width - n))
+    J = ForwardDiff.jacobian(_CTSEMLeading(f, n), xp,
+        ForwardDiff.JacobianConfig(_CTSEMLeading(f, n), xp, ForwardDiff.Chunk{width}()))
+    return J[:, 1:n]
+end
 
 """
     _ctsem_barrier(f, args...)
