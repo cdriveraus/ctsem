@@ -225,8 +225,9 @@ function _record_binary_step!(record::CTSEMBinaryRecord{T}, ws, c, a::T, b::T,
     record.ab[j] = (a, b)
     b > T(_CTSEM_MIN_VARIANCE[]) ||
         return _binary_moments(a, sqrt(b), y, nodes, weights, thresholds, kind)
+    # Last pass's matrix at this slot is refilled: its reverse has run.
     logZ, m, v, J = _binary_moment_jacobian(a, b, y, nodes, weights, thresholds,
-        kind)
+        kind, record.moments[j][3])
     record.moments[j] = (m, v, J)
     return (logZ, m, v)
 end

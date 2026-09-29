@@ -254,6 +254,26 @@ comparison has no business seeing derivative information at all.
 @inline _censored_at(y::Real, limit, upper::Bool) =
     upper ? y >= _primal(limit) : y <= _primal(limit)
 
+_primal_type(::Type{T}) where {T} = T
+_primal_type(::Type{ForwardDiff.Dual{G,V,N}}) where {G,V,N} = _primal_type(V)
+
+"""
+    _primals(v)
+
+`map(_primal, v)` without the copy: a read-only view of a vector, the map of a
+tuple. `_binary_mode` solves on values once per categorical observation of
+every dual pass, and the copy was an allocation each time.
+"""
+struct _PrimalView{E,V<:AbstractVector} <: AbstractVector{E}
+    parent::V
+end
+Base.size(v::_PrimalView) = size(v.parent)
+Base.@propagate_inbounds Base.getindex(v::_PrimalView, i::Int) =
+    _primal(v.parent[i])
+@inline _primals(v::AbstractVector) =
+    _PrimalView{_primal_type(eltype(v)),typeof(v)}(v)
+@inline _primals(v::Tuple) = map(_primal, v)
+
 """
     _censor_limits(extras, ::Type{T})
 
@@ -785,7 +805,7 @@ budget is iterated in the caller's arithmetic, as before.
 """
 @inline function _binary_mode(ηbar::T, s2::T, y::Real, thresholds,
     kind::Int) where {T}
-    τ = T <: ForwardDiff.Dual ? map(_primal, thresholds) : thresholds
+    τ = T <: ForwardDiff.Dual ? _primals(thresholds) : thresholds
     base, curvature, converged = _binary_mode_solve(_primal(ηbar),
         _primal(s2), _primal(y), τ, kind)
     if !converged
@@ -1613,7 +1633,8 @@ function _ekf_binary_update!(ws, λ, μ, y::Real, n::Int, thresholds,
 end
 
 """
-    _binary_moment_jacobian(a, b, y, nodes, weights, thresholds, kind)
+    _binary_moment_jacobian(a, b, y, nodes, weights, thresholds, kind,
+        J=nothing)
 
 `(logZ, m, v, J)` at `ηbar = a` and `s² = b`, where `m` is the posterior mean's
 *offset* from `a` -- see `_binary_moments` for why nothing here works with the
@@ -1621,7 +1642,8 @@ mean itself -- and `J` is their `3 x (2 + e)` Jacobian: rows `logZ`, `m`, `v`;
 columns `a`, `b`, and then each of the row's `e` extras (thresholds, asymptotes,
 censoring limits; none for a count, whose extra rides `b`). Only the extras the
 observation's likelihood reads are seeded (`_extras_read`); the other columns
-are zero, which is what they are.
+are zero, which is what they are. A `J` of that shape passed in is overwritten
+and returned, which is how the tape reuses last pass's (`_record_binary_step!`).
 
 # Why this differentiates the quadrature rather than the moments
 
@@ -1662,9 +1684,13 @@ reaches it does not compile it. Its dual is seeded by hand
 only the extras the observation reads, its width a type parameter.
 """
 function _binary_moment_jacobian(a::T, b::T, y::Real, nodes, weights,
-    thresholds, kind::Int) where {T}
+    thresholds, kind::Int, J=nothing) where {T}
     extras = kind == CTSEM_OBS_COUNT ? 0 : length(thresholds)
-    J = zeros(T, 3, 2 + extras)
+    if J isa Matrix{T} && size(J) == (3, 2 + extras)
+        fill!(J, zero(T))
+    else
+        J = zeros(T, 3, 2 + extras)
+    end
     if b <= zero(T)
         J[2, 1] = one(T)
         J[3, 2] = one(T)
