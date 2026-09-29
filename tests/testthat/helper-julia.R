@@ -4,13 +4,18 @@
 #   skip_without_julia()  this test drives the julia backend
 #   skip_on_cran()        testthat's own: this test is too slow for CRAN
 #   skip_on_32bit()       the stan models do not build in a 32-bit address space
+#   skip_unless_slow()    the release tier: too slow for every push
 #
-# All three work in two places: inside `test_that()`, skipping that block, and
+# All four work in two places: inside `test_that()`, skipping that block, and
 # at the top of a file before any setup code, skipping the rest of the file.
 # Both are reported with their reason ("(code run outside of `test_that()`)"
 # for the file-level form), which the `if (Sys.getenv("NOT_CRAN") == "true")`
 # wrappers these replaced were not -- a wrapped-out file produced no results at
 # all, so a whole file dropping out looked exactly like a file that passed.
+# Only a reporter sees the file-level form, though: it leaves no row in the
+# results `test_file()` returns, which is what tt() in dev/test-local.R and the
+# CI skip table count. A gate whose skip has to be counted, as the release
+# tier's does, goes inside each block.
 #
 # Why "needs julia" is one call and not two. The two axes used to be spelled
 # three ways -- a file-level NOT_CRAN wrapper, `skip_on_cran()`, and
@@ -24,26 +29,30 @@
 # An example cannot call any of these. It asks the same question through public
 # API instead: wrap the body in `if (isTRUE(ctJuliaStatus()$available))`.
 
-#' Skip unless a live Julia session is available (and this is not CRAN).
-#'
-#' The CRAN check comes first because the julia probe starts a Julia process.
-#' A test too expensive for every push.
+#' The release tier: a check too expensive for every push.
 #'
 #' `CTSEM_SLOW_TESTS=true` runs it. `julia-tests.yaml` sets that on its
 #' scheduled and manually dispatched runs only, so the cost is paid weekly and
-#' on demand rather than per push.
+#' on demand rather than per push, and `tt_area(..., release = TRUE)` in
+#' dev/test-local.R sets it for a local run. A file whose every test is gated
+#' this way is listed under the `release` tier in dev/test-areas.csv. Run the
+#' tier before a release.
 #'
 #' The bar for using this is high and it is not "this test is slow". It is: the
 #' behaviour cannot be reproduced any cheaper, and that has been *looked for*
-#' rather than assumed. Every use should say in a comment what was tried --
-#' otherwise the next person shrinks the fixture, the test gets fast, and
-#' nobody notices it stopped testing anything.
+#' rather than assumed -- a recovery that needs hundreds of subjects to mean
+#' anything, a stan program compiled at test time. Every use should say in a
+#' comment what was tried -- otherwise the next person shrinks the fixture, the
+#' test gets fast, and nobody notices it stopped testing anything.
 skip_unless_slow <- function(what = "this test") {
   testthat::skip_if(
     !identical(tolower(trimws(Sys.getenv("CTSEM_SLOW_TESTS", ""))), "true"),
     paste0(what, " takes minutes; set CTSEM_SLOW_TESTS=true to run it"))
 }
 
+#' Skip unless a live Julia session is available (and this is not CRAN).
+#'
+#' The CRAN check comes first because the julia probe starts a Julia process.
 skip_without_julia <- function() {
   testthat::skip_on_cran()
   testthat::skip_if_not_installed("JuliaConnectoR")
@@ -69,6 +78,47 @@ skip_on_32bit <- function() {
   testthat::skip_if(.Machine$sizeof.pointer == 4, "32-bit build.")
 }
 
+
+# ---------------------------------------------------------------------------
+# One fit per fixture
+#
+# A fit is the expensive default in this suite, not the free one. Where several
+# tests ask different questions of the same model and data, they share one fit:
+# `fit_cached(key, expr)` evaluates `expr` the first time `key` is asked for and
+# returns the stored value after that. Several files grew a copy of this
+# pattern of their own (`.laplace_cached()` in test-julia-laplace.R, and the
+# `.parity_fit_cache`, `.ac_cache` and `.check_cache` environments); this is the
+# same thing, once, for any file to use.
+#
+# How long a stored fit lives. testthat sources the helpers once per
+# `test_files()` call, so the store lasts exactly that long: one file under
+# `testthat::test_file()` -- which is how tt() and tt_area() in
+# dev/test-local.R run every file, so rerunning a file after an edit never
+# reads a fit made before it -- and the whole run under `test_dir()` or
+# `devtools::test()`, where two files naming the same key share one fit.
+#
+# The random number stream. A hit leaves the generator where the first
+# evaluation left it, so a fixture that sets its own seed hands whatever follows
+# it the same stream whether it was fitted or recalled.
+#
+# Only for what nobody mutates in place. A test that writes into its copy of a
+# fit (`fit$estimate$raw <- ...`) changes that copy, since R copies a list on
+# modification; an environment inside a fit would be shared, and a fit carries
+# none.
+.ct_test_fit_store <- new.env(parent = emptyenv())
+
+fit_cached <- function(key, expr) {
+  stopifnot(is.character(key), length(key) == 1L, nzchar(key))
+  if (!exists(key, envir = .ct_test_fit_store, inherits = FALSE)) {
+    value <- force(expr)
+    seed <- get0(".Random.seed", envir = globalenv(), inherits = FALSE)
+    assign(key, list(value = value, seed = seed), envir = .ct_test_fit_store)
+    return(value)
+  }
+  entry <- get(key, envir = .ct_test_fit_store, inherits = FALSE)
+  if (!is.null(entry$seed)) assign(".Random.seed", entry$seed, envir = globalenv())
+  entry$value
+}
 
 # ---------------------------------------------------------------------------
 # Fitting one model on both backends
