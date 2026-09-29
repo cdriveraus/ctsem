@@ -84,7 +84,7 @@ Suggests:
     diagis,
     pdftools,
     rstudioapi,
-    quarto,
+    R.rsp,
     qgraph,
     JuliaConnectoR,
     digest,
@@ -92,7 +92,7 @@ Suggests:
     ps
 VignetteBuilder: 
     knitr, 
-    quarto
+    R.rsp
 SystemRequirements: GNU make; Julia (>= 1.10), optional, for backend =
     'julia' (ctJuliaInstall() can install it)
 NeedsCompilation: yes

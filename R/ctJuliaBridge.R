@@ -51,10 +51,8 @@
     pieces <- c(pkgLocal = "pkgLocal", ensure = "ensureJuliaConnection",
       CALL = "CALL_INDICATOR", RESULT = "RESULT_INDICATOR", FAIL = "FAIL_INDICATOR",
       STDOUT = "STDOUT_INDICATOR", STDERR = "STDERR_INDICATOR",
-      writeString = "writeString", writeList = "writeList",
-      readElement = "readElement", readString = "readString",
-      readOutput = "readOutput", readCall = "readCall",
-      answerCallback = "answerCallback", writeFailMessage = "writeFailMessage")
+      writeString = "writeString", writeList = "writeList", writeElement = "writeElement",
+      readElement = "readElement", readCall = "readCall")
     out <- lapply(pieces, get, envir = ns, inherits = FALSE)
     if (!is.environment(out$pkgLocal)) stop("pkgLocal moved")
     out
@@ -144,23 +142,80 @@
 
 .ctJuliaExchange <- function(wire, name, args) {
   force(args)
-  con <- wire$pkgLocal$con
-  failed <- FALSE
-  withCallingHandlers(suspendInterrupts({
-    writeBin(wire$CALL, con)
+  request <- .ctJuliaBuffered(wire, function(buffer) {
+    writeBin(wire$CALL, buffer)
     wire$writeString(name)
     wire$writeList(args)
-  }), warning = function(w) {
-    # JuliaConnectoR only warns when a write fails, then waits for a reply
-    # that cannot come. Matched on the call rather than the translated text.
-    call <- conditionCall(w)
-    if (is.call(call) && identical(call[[1L]], as.name("writeBin"))) {
+  })
+  .ctJuliaSend(wire, request, name)
+  .ctJuliaAwait(wire, name)
+}
+
+# A whole message as bytes, written nowhere yet.
+#
+# JuliaConnectoR's writers write to `pkgLocal$con` a piece at a time, so a
+# message used to reach the socket in pieces: an argument it could not
+# translate stopped the writing halfway, and Julia then read the next request
+# as the rest of this one. `write` runs with them pointed at a buffer instead,
+# put back however it ends. Nothing here touches the socket, so it needs no
+# protection from Escape either. `write` must not call Julia.
+.ctJuliaBuffered <- function(wire, write) {
+  local <- wire$pkgLocal
+  socket <- local$con
+  buffer <- rawConnection(raw(0), open = "wb")
+  local$con <- buffer
+  on.exit({
+    local$con <- socket
+    close(buffer)
+  }, add = TRUE)
+  write(buffer)
+  rawConnectionValue(buffer)
+}
+
+# Write a message to Julia in one piece, or say by name that Julia has gone.
+#
+# A write to a peer that has exited fails differently by platform. Windows
+# warns ("problem writing to connection"). Linux raises SIGPIPE, which R turns
+# into an *error* ("ignoring SIGPIPE signal") on the second write after the
+# peer went -- the kernel accepts the first -- and only a third warns. Both are
+# the same fact, and the error, escaping as an ordinary one, left the dead
+# connection in place for the next call to write into again. A write the
+# kernel does accept surfaces as the end of the stream at the next read, which
+# `.ctJuliaNextMessage()` treats the same way.
+.ctJuliaSend <- function(wire, bytes, name) {
+  failed <- FALSE
+  tryCatch(withCallingHandlers(suspendInterrupts(writeBin(bytes, wire$pkgLocal$con)),
+    warning = function(w) {
       failed <<- TRUE
       invokeRestart("muffleWarning")
-    }
-  })
+    }), error = function(e) failed <<- TRUE)
   if (failed) .ctJuliaLost(name)
-  .ctJuliaAwait(wire, name)
+  invisible(NULL)
+}
+
+# Answer a callback Julia made during `name`: run it, then send its result, or
+# its failure, as one message. Refused outright with `refuse`, the reason. The
+# callback runs before anything is buffered because it may call Julia itself;
+# a result that cannot be translated is sent as a failure, since Julia is
+# waiting for an answer of some kind.
+.ctJuliaAnswer <- function(wire, call, name, refuse = NULL) {
+  failure <- refuse
+  result <- NULL
+  if (is.null(failure)) {
+    fun <- get(call$name, envir = wire$pkgLocal$callbacks)
+    result <- tryCatch(do.call(fun, call$args),
+      error = function(e) { failure <<- as.character(e); NULL })
+  }
+  fail <- function(message) .ctJuliaBuffered(wire, function(buffer) {
+    writeBin(wire$FAIL, buffer)
+    wire$writeString(message)
+  })
+  bytes <- if (!is.null(failure)) fail(failure) else tryCatch(
+    .ctJuliaBuffered(wire, function(buffer) {
+      writeBin(wire$RESULT, buffer)
+      wire$writeElement(result)
+    }), error = function(e) fail(conditionMessage(e)))
+  .ctJuliaSend(wire, bytes, name)
 }
 
 # Read messages until the reply to `name` arrives. `discard` is the settling of
@@ -169,7 +224,7 @@
 .ctJuliaAwait <- function(wire, name, discard = FALSE, announce = NULL) {
   repeat {
     type <- .ctJuliaNextMessage(wire, name, discard)
-    done <- suspendInterrupts(.ctJuliaTakeMessage(wire, type, discard))
+    done <- suspendInterrupts(.ctJuliaTakeMessage(wire, type, discard, name))
     if (is.list(done)) {
       if (identical(done$kind, "result")) return(done$value)
       if (discard) return(invisible(NULL))
@@ -216,33 +271,74 @@
   byte
 }
 
-.ctJuliaTakeMessage <- function(wire, type, discard) {
+# The body of a message whose first byte is `type`.
+#
+# Output and failure messages are read here rather than by JuliaConnectoR's
+# readers, which loop until they have the bytes they asked for and so spin
+# forever, at full CPU and with interrupts held, on a stream that ends partway
+# through a message. A Julia that dies does that: the relay of its stderr is
+# the likeliest thing to be mid-message when it goes, and on Linux the next
+# call after its engine was killed read the first byte of one and hung. A
+# result or a callback is still read by JuliaConnectoR, whose element format is
+# its own; one cut off mid-message remains out of reach, and is far rarer.
+#
+# A pause partway through a message is not an ending, however long: the relay
+# stops after a message's marker whenever Julia's main thread is busy, and a
+# five-second limit on that once declared a session loading the engine dead
+# (`.ctJuliaReadBytes()`). Only the end of the stream is. The wait holds
+# interrupts, as JuliaConnectoR's readers always did, since Escape partway
+# through a message would leave the stream out of step.
+.ctJuliaTakeMessage <- function(wire, type, discard, name) {
   if (identical(type, wire$RESULT)) {
     value <- wire$readElement()
     return(list(kind = "result", value = if (discard) NULL else value))
   }
-  if (identical(type, wire$FAIL)) return(list(kind = "fail", message = wire$readString()))
+  if (identical(type, wire$FAIL)) {
+    message <- .ctJuliaReadText(wire$pkgLocal$con, wait = Inf)
+    if (is.null(message)) .ctJuliaLost(name)
+    return(list(kind = "fail", message = message))
+  }
   if (identical(type, wire$STDOUT) || identical(type, wire$STDERR)) {
-    # An output message is framed as a string is: a length, then the bytes.
-    if (discard) wire$readString()
-    else wire$readOutput(writeTo = if (identical(type, wire$STDOUT)) stdout() else stderr())
+    output <- .ctJuliaReadOutput(wire$pkgLocal$con, wait = Inf)
+    if (is.null(output)) .ctJuliaLost(name)
+    if (!discard) cat(output, file = if (identical(type, wire$STDOUT)) stdout() else stderr())
     return(NULL)
   }
   if (identical(type, wire$CALL)) {
     call <- wire$readCall()
-    if (discard) {
-      # Refused rather than answered: the progress display or callback it is
-      # for belongs to a fit that is gone. The engine's callers disable a
-      # callback that fails and carry on to their next checkpoint.
-      wire$writeFailMessage("the call was interrupted from R")
-    } else {
-      wire$answerCallback(get(call$name, envir = wire$pkgLocal$callbacks), call$args)
-    }
+    # Refused rather than answered when discarding: the progress display or
+    # callback it is for belongs to a fit that is gone. The engine's callers
+    # disable a callback that fails and carry on to their next checkpoint.
+    .ctJuliaAnswer(wire, call, name,
+      refuse = if (discard) "the call was interrupted from R")
     return(NULL)
   }
   .ctJuliaKill()
   stop("The Julia session sent a message ctsem could not read, so it was stopped. ",
     "The next call starts a new one.", call. = FALSE)
+}
+
+# A length-prefixed string as JuliaConnectoR frames one -- four bytes of length,
+# then the bytes -- or NULL if the stream ends first, or goes silent for `wait`
+# seconds (`.ctJuliaReadBytes()`).
+.ctJuliaReadText <- function(connection, wait = 5) {
+  len <- .ctJuliaReadBytes(connection, 4L, wait = wait)
+  if (is.null(len)) return(NULL)
+  n <- readBin(len, "integer", size = 4L)
+  body <- if (n > 0L) .ctJuliaReadBytes(connection, n, wait = wait) else raw(0)
+  if (is.null(body)) return(NULL)
+  text <- tryCatch(rawToChar(body), error = function(e) "")
+  Encoding(text) <- "UTF-8"
+  text
+}
+
+# The text of one relayed stdout or stderr message, or NULL as for
+# `.ctJuliaReadText()`. Escape sequences are stripped, as JuliaConnectoR's
+# readOutput does.
+.ctJuliaReadOutput <- function(connection, wait = 5) {
+  text <- .ctJuliaReadText(connection, wait = wait)
+  if (is.null(text)) return(NULL)
+  gsub("\033(?:[@-Z\\\\-_]|\\[[0-?]*[ -/]*[@-~])", "", text)
 }
 
 # Releasing proxies R has collected, as `juliaCall()` does after every call.

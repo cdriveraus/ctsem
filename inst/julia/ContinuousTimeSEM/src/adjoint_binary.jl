@@ -143,6 +143,14 @@ function _record_binary!(tape, ws, pars, data, obs_col, rows, n)
     tape === nothing && return nothing
     hasproperty(tape, :nbinaries) || return nothing
     isempty(rows) && return nothing
+    # Only a model with categorical indicators gets here; see `_ctsem_barrier`.
+    # The type asserted so the caller, which hands the record on to the
+    # forward update, stays inferable.
+    return _ctsem_barrier(_record_binary_rows!, tape, ws, pars, data, obs_col,
+        rows, n)::CTSEMBinaryRecord{eltype(ws.state)}
+end
+
+function _record_binary_rows!(tape, ws, pars, data, obs_col, rows, n)
     T = eltype(ws.state)
     n = Int(n)
     obs_col = Int(obs_col)

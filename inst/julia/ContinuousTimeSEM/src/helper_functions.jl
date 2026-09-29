@@ -384,3 +384,24 @@ seeds are the ones `ForwardDiff.jacobian` builds, so the numbers are the same.
 _ctsem_nested_gradient(f, x::AbstractArray) = ForwardDiff.gradient(f, x,
     ForwardDiff.GradientConfig(f, x, ForwardDiff.Chunk(x), _ctsem_nested_tag(x)),
     Val{false}())
+
+"""
+    _ctsem_barrier(f, args...)
+
+Call `f(args...)` without letting inference look into `f`: the call dispatches
+at run time, and `f` is compiled only when a call actually reaches it.
+
+For code every model can reach and most never run -- the categorical
+measurement update, its tape record, its reverse pass and its response-scale
+moments -- this is the difference between compiling it for every model shape
+and compiling it for the shapes that use it. Behind a plain call, a Gaussian
+model's first fit compiled about 270 method instances of the categorical files
+it never executed, in every element type the filter runs in.
+
+The price is one dynamic dispatch per call and a result that inference cannot
+see, so a caller that uses the result asserts its type. Put it behind a gate
+that returns early for the common case, so a model that never needs `f` never
+pays even the dispatch.
+"""
+@inline _ctsem_barrier(f::F, args::Vararg{Any,N}) where {F,N} =
+    Base.inferencebarrier(f)(args...)

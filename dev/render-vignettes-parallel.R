@@ -1,9 +1,23 @@
 #!/usr/bin/env Rscript
 
 # Render every Quarto/R Markdown vignette in a temporary directory using a
-# PSOCK cluster. Completed artifacts are then copied to dev/vignettes. In
-# RStudio, open this file, change interactive_cores if needed, and click
-# Source. From a terminal: Rscript dev/render-vignettes-parallel.R --cores 4
+# PSOCK cluster, into the pre-rendered form the package ships. In RStudio,
+# open this file, change interactive_cores if needed, and click Source. From a
+# terminal: Rscript dev/render-vignettes-parallel.R --cores 4
+#
+# The vignettes run julia fits, and a machine without Julia -- every CRAN
+# check machine -- cannot run them. So they are not built at check time: each
+# one ships as vignettes/<name>.html, rendered here, with a
+# vignettes/<name>.html.asis stub that has R.rsp copy it into inst/doc. The
+# .qmd sources stay in vignettes/ to be edited, and .Rbuildignore keeps them
+# out of the tarball. Run this before a release, from an install of this tree
+# (R CMD INSTALL -l <lib> . and R_LIBS=<lib>): the vignettes load the
+# installed ctsem, not the source. Logs go to dev/vignettes.
+#
+# The shipped form is compact: Quarto's `minimal: true` and MathML rather than
+# the Bootstrap theme and an embedded MathJax, which took each vignette from
+# about 2.4 MB to its figures and text, styled by dev/vignette-cran.css. CRAN
+# asks that documentation stay under 5 MB in all.
 #
 # Each vignette gets its OWN staged directory. Quarto creates a .quarto
 # scratch directory beside the input it is rendering and deletes it on the
@@ -94,6 +108,43 @@ publish_files <- function(files, output_dir) {
   invisible(files[copied])
 }
 
+# Give a staged copy of a vignette the shipped format: its `format: html:`
+# block gains `minimal: true`, MathML and the stylesheet, keeps embedded
+# resources so the page is one file, and loses what those replace. Only the
+# staged copy is changed; the source keeps the format it is edited in.
+cran_format <- function(qmd, css) {
+  lines <- readLines(qmd, warn = FALSE, encoding = "UTF-8")
+  fences <- which(lines == "---")
+  if (length(fences) < 2L || fences[[1L]] != 1L) {
+    stop(basename(qmd), " has no YAML front matter.", call. = FALSE)
+  }
+  header <- seq(fences[[1L]] + 1L, fences[[2L]] - 1L)
+  html <- header[lines[header] == "  html:"]
+  if (length(html) != 1L || !identical(lines[html - 1L], "format:")) {
+    stop(basename(qmd), " has no single `format: html:` block to adapt.", call. = FALSE)
+  }
+  replaced <- "^    (minimal|html-math-method|css|theme|self-contained-math|embed-resources):"
+  drop <- header[grepl(replaced, lines[header])]
+  added <- c("    minimal: true", "    html-math-method: mathml",
+    paste0("    css: ", css), "    embed-resources: true")
+  lines <- append(lines, added, after = html)
+  if (length(drop)) lines <- lines[-(drop + length(added) * (drop > html))]
+  writeLines(lines, qmd, useBytes = TRUE)
+  invisible(qmd)
+}
+
+# The stub that has R.rsp ship a pre-rendered page as the vignette, carrying
+# the source's index entry.
+write_asis <- function(source, html, vignettes_dir) {
+  lines <- readLines(source, warn = FALSE, encoding = "UTF-8")
+  entry <- sub("^.*\\\\VignetteIndexEntry\\{(.*)\\}.*$", "\\1",
+    grep("\\\\VignetteIndexEntry\\{", lines, value = TRUE)[1L])
+  if (is.na(entry)) stop(basename(source), " has no VignetteIndexEntry.", call. = FALSE)
+  writeLines(c(paste0("%\\VignetteIndexEntry{", entry, "}"),
+    "%\\VignetteEngine{R.rsp::asis}", "%\\VignetteEncoding{UTF-8}"),
+    file.path(vignettes_dir, paste0(basename(html), ".asis")))
+}
+
 # Renders one vignette in its own staged directory and returns where the
 # artifacts landed. Everything it prints, including knitr's progress and any
 # quarto error, goes to <name>.log in that directory.
@@ -162,6 +213,10 @@ render_vignettes <- function(vignettes_dir, output_dir, requested_cores) {
     }
     matched <- list.files(work_dir, pattern = paste0("^", name, "\\.(qmd|rmd)$"),
                           full.names = TRUE, ignore.case = TRUE)
+    if (!file.copy(css_file, work_dir, overwrite = TRUE)) {
+      stop("Could not copy ", css_file, " to ", work_dir, ".", call. = FALSE)
+    }
+    cran_format(matched[[1L]], basename(css_file))
     normalizePath(matched[[1L]], winslash = "/", mustWork = TRUE)
   }, character(1L), USE.NAMES = FALSE)
 
@@ -179,9 +234,19 @@ render_vignettes <- function(vignettes_dir, output_dir, requested_cores) {
 
   # Publish before reporting, and publish regardless of failures: a vignette
   # that took twenty minutes should not be discarded because another one broke.
+  # Only a clean render is shipped; one that failed with a page written goes
+  # to dev/vignettes to be looked at.
   publish_files(vapply(results, `[[`, character(1L), "log_file"), output_dir)
-  rendered <- Filter(Negate(is.na), lapply(results, `[[`, "html_file"))
-  publish_files(unlist(rendered), output_dir)
+  for (result in results) {
+    if (is.na(result$html_file)) next
+    if (result$success) {
+      publish_files(result$html_file, vignettes_dir)
+      write_asis(file.path(vignettes_dir, basename(result$vignette)),
+        result$html_file, vignettes_dir)
+    } else {
+      publish_files(result$html_file, output_dir)
+    }
+  }
 
   for (result in results) {
     status <- if (result$success) "OK" else if (!is.na(result$html_file)) "FAILED (html written)" else "FAILED"
@@ -194,9 +259,23 @@ render_vignettes <- function(vignettes_dir, output_dir, requested_cores) {
     stop(length(failures), " vignette(s) failed; see their logs in ", output_dir, ".",
          call. = FALSE)
   }
-  message("Rendered vignettes are in ", output_dir)
+  message("Rendered vignettes are in ", vignettes_dir, " (with their .asis stubs); ",
+    "logs are in ", output_dir)
   invisible(results)
 }
+
+# The vignettes run whichever ctsem is installed, and what ships should be what
+# this tree computes. The engine's content hash is the cheap check that they
+# are the same build; R-side differences it cannot see.
+installed_engine <- tryCatch(ctsem:::.ctJuliaEngineVersion(), error = function(e) NA)
+tree_engine <- tryCatch(ctsem:::.ctJuliaEngineVersion(
+  file.path(package_root, "inst", "julia", "ContinuousTimeSEM")), error = function(e) NA)
+if (!identical(installed_engine, tree_engine)) {
+  warning("The installed ctsem (engine ", installed_engine, ") is not this tree (engine ",
+    tree_engine, "): the vignettes would show another build. Install this tree and ",
+    "render with R_LIBS pointing at that library.", call. = FALSE, immediate. = TRUE)
+}
+css_file <- file.path(package_root, "dev", "vignette-cran.css")
 
 available_cores <- parallel::detectCores(logical = FALSE)
 if (is.na(available_cores) || available_cores < 1L) {

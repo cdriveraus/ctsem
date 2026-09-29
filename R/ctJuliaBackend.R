@@ -359,6 +359,21 @@
     call. = FALSE)
 }
 
+# Does a failed `using ContinuousTimeSEM` say a package is not installed, which
+# instantiating fixes, rather than that the engine itself is broken? Julia names
+# a missing package directly when the engine's environment is empty, nested
+# inside "Failed to precompile ContinuousTimeSEM" when a dependency is absent,
+# and -- on a fresh depot under 1.12 -- as "failed to find source of parent
+# package" when the absent package is one with extensions. That last shape went
+# unrecognised, so a first fit on a new machine was told that installing would
+# not help, which is the opposite of the remedy. The phrases are Base's own,
+# from loading.jl.
+.ctJuliaLoadFailIsMissing <- function(msg) {
+  grepl(paste("not found in current path", "not found in",
+    "not found during precompilation", "does not seem to be installed",
+    "failed to find source of parent package", sep = "|"), msg)
+}
+
 # Is there a Julia that a session could be started with? Without starting one:
 # `JuliaConnectoR::juliaSetupOk()`, which this used to ask, answers by starting
 # a session through JuliaConnectoR itself, bypassing the start in
@@ -386,16 +401,19 @@
 #' \code{agree = TRUE} or \code{CTSEM_JULIA_AGREE=yes} said otherwise in
 #' advance.
 #'
-#' The first call downloads and precompiles those dependencies (roughly 120 MB
-#' and a minute or two); later calls in new sessions reuse them.
+#' The first call downloads and precompiles those dependencies (roughly 120 MB)
+#' and compiles the engine, which takes several minutes; later calls in new
+#' sessions reuse both.
 #'
-#' Separately, the first fit of a model shape in each R session compiles code
-#' specialised to that model, so it takes longer than later fits of the same
-#' shape: on one Laplace model 85 seconds against 25 for every later fit, and
-#' the first quadrature correction a further 15 to 20 seconds. The precompiled
-#' engine cannot anticipate a model's own functions, so this is paid once per
-#' shape per session rather than once per fit; time a fit after one warm-up
-#' fit, not from a fresh session.
+#' The engine is compiled in advance for a few common small models -- one
+#' latent process with a random intercept and two Gaussian or three binary
+#' indicators, two latent processes with random intercepts, one latent process
+#' with a random drift. The first fit of any other model shape in each R
+#' session compiles code specialised to that model, so it takes longer than
+#' later fits of the same shape: about a minute against two seconds for a small
+#' Gaussian model, and minutes for a Laplace model whose fit reaches the
+#' quadrature correction. This is paid once per shape per session rather than
+#' once per fit; time a fit after one warm-up fit, not from a fresh session.
 #'
 #' Pressing Escape (or Ctrl-C) during a julia fit returns to the R prompt at
 #' once, and keeps the Julia session and everything it has compiled. Julia
@@ -525,14 +543,10 @@ ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
     # consent was not given", which is wrong about the cause, wrong about the
     # remedy, and sends the user to install packages that are already there.
     #
-    # Julia names a missing package the same way in both shapes it can arrive:
-    # directly, when the engine's own environment is empty, and nested inside a
-    # "Failed to precompile ContinuousTimeSEM" when a dependency of the engine
-    # is what is absent. So the presence of that phrase is what identifies the
-    # case instantiating can fix, and its absence identifies the case it cannot.
-    missing <- !is.null(loadfail) && grepl(
-      "not found in current path|not found in|does not seem to be installed",
-      loadfail)
+    # The presence of a missing-package phrase is what identifies the case
+    # instantiating can fix, and its absence identifies the case it cannot; see
+    # .ctJuliaLoadFailIsMissing.
+    missing <- !is.null(loadfail) && .ctJuliaLoadFailIsMissing(loadfail)
     if (!is.null(loadfail) && !missing) {
       stop("The julia engine failed to load. This is not a missing ",
         "dependency -- installing packages will not help.\n",
@@ -819,36 +833,96 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # So the socket is asked, without blocking. Nothing waiting is a live session
 # at rest. Something waiting is either end-of-file -- the process has gone --
 # or output a Julia task printed after the last call returned, which the next
-# call would have printed first; that is printed now instead, by
-# JuliaConnectoR's own reader, so the stream stays in step. Anything else
+# call would have printed first; that is printed now instead, so the stream
+# stays in step. Anything else
 # waiting between calls means the stream is already out of step, and a session
 # in that state is no more usable than a dead one.
 #
 # The internals are resolved before anything is read: if they have moved, the
 # answer is "not gone", which is how the backend behaved before this existed.
+#
+# The message is read here rather than by JuliaConnectoR's `readOutput`, whose
+# length read loops on `readBin` until it has four bytes -- forever, at end of
+# file. A process that dies mid-message leaves exactly that, and on Linux every
+# SIGTERM does: Julia prints its signal report to stderr on the way out, so
+# the socket holds a stderr marker, part or all of a message, then end of
+# file. Windows ends a process without a word, which is why this only hung on
+# Linux, where test-julia-backend.R's killed-session test spun at full CPU.
 .ctJuliaPeerGone <- function(connection) {
   jc <- tryCatch({
     ns <- asNamespace("JuliaConnectoR")
-    list(con = get("pkgLocal", envir = ns)$con,
-      stdout = get("STDOUT_INDICATOR", envir = ns),
-      stderr = get("STDERR_INDICATOR", envir = ns),
-      read = get("readOutput", envir = ns))
+    list(stdout = get("STDOUT_INDICATOR", envir = ns),
+      stderr = get("STDERR_INDICATOR", envir = ns))
   }, error = function(e) NULL)
   if (is.null(jc)) return(FALSE)
   repeat {
-    waiting <- tryCatch(socketSelect(list(connection), timeout = 0),
-      error = function(e) NA)
-    if (!isTRUE(waiting)) return(FALSE)
-    first <- tryCatch(suppressWarnings(readBin(connection, "raw", 1L)),
-      error = function(e) raw(0))
-    if (!length(first)) return(TRUE)
+    if (!isTRUE(.ctSocketReadable(connection))) return(FALSE)
+    first <- .ctJuliaReadBytes(connection, 1L)
+    if (is.null(first)) return(TRUE)
     stream <- if (identical(first, jc$stdout)) stdout() else
       if (identical(first, jc$stderr)) stderr() else NULL
-    # `readOutput` reads JuliaConnectoR's own connection, so it can finish the
-    # message only when that is the connection being asked about.
-    if (is.null(stream) || !identical(connection, jc$con)) return(TRUE)
-    jc$read(writeTo = stream)
+    if (is.null(stream)) return(TRUE)
+    output <- .ctJuliaReadOutput(connection)
+    if (is.null(output)) return(TRUE)
+    cat(output, file = stream)
   }
+}
+
+# Exactly `n` bytes from a socket, or NULL at end of file. A read that returns
+# nothing is end of file when the socket says it is readable, and more still to
+# come when it is not -- for up to `wait` seconds of silence, after which the
+# stream is taken as out of step and NULL returned too.
+#
+# Five seconds suits the liveness check between calls, where nothing should
+# be arriving at all. It does not suit a read during a call: JuliaConnectoR
+# relays Julia's output from a task pinned to Julia's main thread, writing a
+# message's marker, length and text separately, so a message can stop after
+# its marker for as long as that thread is busy -- loading the engine's package
+# image, say, for longer than five seconds. The bridge waits with `Inf`, and
+# only the end of the stream ends the wait: a Julia that has died closes its
+# socket, which reads as readable and empty.
+.ctJuliaReadBytes <- function(connection, n, wait = 5) {
+  read <- function() tryCatch(suppressWarnings(readBin(connection, "raw", n - length(out))),
+    error = function(e) raw(0))
+  out <- raw(0)
+  while (length(out) < n) {
+    got <- read()
+    if (!length(got)) {
+      waited <- 0
+      repeat {
+        step <- min(1, wait - waited)
+        ready <- tryCatch(socketSelect(list(connection), timeout = step),
+          error = function(e) NA)
+        if (is.na(ready)) return(NULL)
+        if (isTRUE(ready)) break
+        waited <- waited + step
+        if (waited >= wait) return(NULL)
+      }
+      got <- read()
+      if (!length(got)) return(NULL)
+    }
+    out <- c(out, got)
+  }
+  out
+}
+
+# Whether a socket has something to read, answered at once.
+#
+# `socketSelect(list(con), timeout = 0)` is not that on Windows: R's select
+# loop there waits out a fixed 200 ms interval before it consults the timeout,
+# so a socket with nothing waiting -- a live session at rest, the usual case --
+# costs 204 ms a call (R 4.6.0). The liveness check above runs as operations
+# come in, twice for some, so every Julia call there was 0.2-0.4 s slower and a
+# function making hundreds of them minutes slower: ctVarianceDecomposition's
+# test file went from 215 s to 45 minutes, both processes idle throughout.
+# Asking about writing on the same socket in the same call ends the wait at
+# once, since a connected socket with an empty send buffer is writable, and
+# leaves the read answer as it was -- a peer that has gone still reads as
+# readable, which is how the check finds it.
+.ctSocketReadable <- function(connection) {
+  ready <- tryCatch(socketSelect(list(connection, connection),
+    write = c(FALSE, TRUE), timeout = 0), error = function(e) NA)
+  ready[1L]
 }
 
 # Refuse, by name, to call into a Julia process that has gone.
@@ -1044,8 +1118,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # which made every published Julia backend timing mostly JuliaConnectoR
   # rather than Julia. This function is called once per objective evaluation,
   # so it sits directly in the optimizer's inner loop.
-  if (length(values) == 1L) return(.ctJuliaPut(list(values)))
-  .ctJuliaPut(values)
+  .ctJuliaPut(if (length(values) == 1L) list(values) else values)
 }
 
 # Replace NA with the sentinel the engine's column API expects. Done here rather
@@ -1065,8 +1138,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     stop("Internal error: an empty vector cannot be marshalled to Julia; ",
       "omit the argument instead.", call. = FALSE)
   }
-  if (length(values) == 1L) return(.ctJuliaPut(list(values)))
-  .ctJuliaPut(values)
+  .ctJuliaPut(if (length(values) == 1L) list(values) else values)
 }
 
 # Raw starting values for the reduced-rank loadings, or NULL when the model has

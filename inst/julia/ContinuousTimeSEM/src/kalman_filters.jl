@@ -363,8 +363,17 @@ function _ekf_binary_rows!(ws::ContinuousEKFWorkspace, pars,
     data::AbstractMatrix, obs_col::Int, observed, generate=nothing,
     record=nothing)
     T = eltype(ws.state)
+    isempty(ws.manifesttype) && return zero(T)
+    # Behind a barrier, so a model without categorical indicators never
+    # compiles the categorical update; see `_ctsem_barrier`.
+    return _ctsem_barrier(_ekf_categorical_rows!, ws, pars, data, obs_col,
+        observed, generate, record)::Union{Nothing,T}
+end
+
+function _ekf_categorical_rows!(ws::ContinuousEKFWorkspace, pars,
+    data::AbstractMatrix, obs_col::Int, observed, generate, record)
+    T = eltype(ws.state)
     types = ws.manifesttype
-    isempty(types) && return zero(T)
     n = _val(ws.state_dim)
     total = zero(T)
     @inbounds for i in observed

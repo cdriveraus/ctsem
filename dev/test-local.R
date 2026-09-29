@@ -110,9 +110,18 @@ tt_fast <- function(max_secs = 20) {
       "then commit it")
   }
   tm <- utils::read.csv(p, stringsAsFactors = FALSE)
-  f <- tm$file[!is.na(tm$secs) & tm$secs <= max_secs]
+  have <- .tt_files()
+  # A file with no row is never selected, which looks exactly like a file that
+  # is slow; say so, or a stale csv shrinks the tier without anyone noticing.
+  untimed <- setdiff(have, tm$file)
+  gone <- setdiff(tm$file, have)
+  if (length(untimed)) message(length(untimed), " file(s) have no timing and ",
+    "are left out -- rerun tt_time():\n  ", paste(untimed, collapse = "\n  "))
+  if (length(gone)) message(length(gone), " timed file(s) no longer exist: ",
+    paste(gone, collapse = ", "))
+  f <- intersect(tm$file[!is.na(tm$secs) & tm$secs <= max_secs], have)
   message(length(f), " file(s) under ", max_secs, "s")
-  .tt_run(intersect(f, .tt_files()))
+  .tt_run(f)
 }
 
 #' Measure every file and write dev/test-timings.csv.

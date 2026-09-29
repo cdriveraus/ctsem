@@ -95,6 +95,61 @@ test_that("an interrupt raised in Julia arrives as an interrupt, not an error", 
   expect_equal(ctsem:::.ctJuliaEval("5"), 5)
 })
 
+# A peer that sends a message's length, then, after `pause` seconds, its text
+# -- or with `pause = NA`, closes instead. JuliaConnectoR's output relay does
+# the first whenever Julia's main thread is busy, as while it loads the engine.
+framed_peer <- function(pause) {
+  port <- sample(20000:40000, 1L)
+  script <- paste0("s <- serverSocket(", port, "); ",
+    "con <- socketAccept(s, blocking = TRUE, open = 'r+b'); ",
+    "writeBin(4L, con, size = 4L); flush(con); ",
+    if (is.na(pause)) "" else paste0("Sys.sleep(", pause, "); writeBin(charToRaw('text'), con); flush(con); Sys.sleep(1); "),
+    "close(con); close(s)")
+  rscript <- file.path(R.home("bin"), if (.Platform$OS.type == "windows") "Rscript.exe" else "Rscript")
+  system2(rscript, c("-e", shQuote(script)), wait = FALSE, stdout = FALSE, stderr = FALSE)
+  for (i in 1:100) {
+    con <- tryCatch(suppressWarnings(socketConnection("127.0.0.1", port, blocking = TRUE,
+      open = "r+b", timeout = 2)), error = function(e) NULL)
+    if (!is.null(con)) return(con)
+    Sys.sleep(0.2)
+  }
+  skip("could not reach the helper process")
+}
+
+test_that("a pause partway through a message is waited out; an ending is not", {
+  skip_on_cran()
+  # Read with a five-second limit, as it once was during calls, this pause
+  # declared a session that was loading the engine dead.
+  con <- framed_peer(7)
+  on.exit(close(con), add = TRUE)
+  expect_identical(ctsem:::.ctJuliaReadText(con, wait = Inf), "text")
+  # The end of the stream partway through is still the end, and at once.
+  ended <- framed_peer(NA)
+  on.exit(close(ended), add = TRUE)
+  elapsed <- system.time(got <- ctsem:::.ctJuliaReadText(ended, wait = Inf))[["elapsed"]]
+  expect_null(got)
+  expect_lt(elapsed, 5)
+})
+
+test_that("an argument Julia cannot take leaves the connection usable", {
+  skip_without_julia()
+  ctJuliaSetup()
+  # Written a piece at a time, the call and its name reached the socket before
+  # the argument failed to translate, and Julia read the next request as the
+  # rest of this one. The request is now marshalled whole before any of it is
+  # sent.
+  expect_error(ctsem:::.ctJuliaCall("identity", new.env()), "environment")
+  expect_equal(ctsem:::.ctJuliaEval("1 + 1"), 2)
+})
+
+test_that("callbacks are answered, and one that fails does not take the session", {
+  skip_without_julia()
+  ctJuliaSetup()
+  expect_equal(ctsem:::.ctJuliaCall("map", function(x) x + 1, c(1, 2, 3)), c(2, 3, 4))
+  expect_error(ctsem:::.ctJuliaCall("map", function(x) stop("boom"), c(1, 2)), "boom")
+  expect_equal(ctsem:::.ctJuliaEval("2 + 2"), 4)
+})
+
 test_that("stopping Julia outright ends its process and the next call starts anew", {
   skip_without_julia()
   ctJuliaSetup()
