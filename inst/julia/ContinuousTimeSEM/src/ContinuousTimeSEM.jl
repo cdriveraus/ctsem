@@ -16,6 +16,23 @@ module ContinuousTimeSEM
 # in the R interface, and is now a test-only dependency. The closure went from
 # 111 packages to 56, a fresh install from 268 MB to 124 MB, and `using
 # ContinuousTimeSEM` from ~8.7 s to ~3.8 s -- paid in every R session.
+#
+# The first line is the exception, and nothing here uses it. It loads what the
+# R bridge's Julia server loads before this module (JuliaConnectoR 1.1.6,
+# main.jl: Pkg, then REPL and InteractiveUtils), so that the package image is
+# compiled against the method table it will be loaded into. Without it the
+# precompile workload bought nothing in any R session. LibGit2, under Pkg,
+# defines `cconvert(::Type{Ptr{StrArrayStruct}}, ::Vector)`; the image reaches
+# `pointer(::Vector)` through the abstract instances inference makes at the
+# engine's function barriers (a workspace from an untyped cache, a boxed
+# capture); and loaded into a session that already had LibGit2, 4787 of the
+# image's compiled methods failed verification through that one edge and were
+# compiled again on first use -- 20 s of the workload's own calls, against
+# 0.06 s in a bare session. It costs nothing in R, where these are loaded
+# already, about 0.3 s in a bare Julia session, and no download: all three are
+# standard libraries. test-julia-precompile.R fails if a first fit through
+# the bridge starts compiling again.
+import Pkg, REPL, InteractiveUtils
 using ComponentArrays, ForwardDiff, LinearAlgebra, Optim, SpecialFunctions
 
 export hello

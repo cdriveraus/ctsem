@@ -857,15 +857,19 @@ print.ctLaplaceCorrection <- function(x, ...) {
     after <- as.numeric(optimise(xn, stationary = TRUE)$start_gain)
     gain <- as.numeric(placed$quadrature) - value
     # Kept when the residual fell without the re-placed value falling, or --
-    # whatever the residual did -- when that value rose by more than the bar.
-    # On gated-gaps D3 two rounds that raised it by 0.087 and 0.020 were
-    # rejected for a residual that rose, the region shrank, and the rounds
-    # stopped 0.6 exact nats short. A kept rise is a rise in the objective the
-    # fit reports, so this cannot walk downhill, and each such round gains at
-    # least the bar, so it cannot cycle.
+    # whatever the residual did -- when that value rose by more than
+    # `value_tol` (or `stop_gain` where that is on). On gated-gaps D3 two
+    # rounds that raised it by 0.087 and 0.020 were rejected for a residual
+    # that rose, the region shrank, and the rounds stopped 0.6 exact nats
+    # short; with this, the paired grid of 2026-09-27 gained 0.9 to 2.5 exact
+    # nats on gB8, 0.6 to 0.7 on gC8 and 2.3 on AnomAuth S1 from its spurious
+    # start. A kept rise is a rise in the objective the fit reports, so this
+    # cannot walk downhill, and each such round gains at least the bar, so it
+    # cannot cycle.
+    rise <- max(stop_gain, as.numeric(control$value_tol))
     keep <- is.finite(after) && is.finite(gain) &&
       ((after < residual && gain >= -as.numeric(control$value_tol)) ||
-        (stop_gain > 0 && gain > stop_gain))
+        gain > rise)
     rows[[length(rows) + 1L]] <- row(round, after, keep, placed$nflagged, gain)
     # At the same default verbosity as the rest of the correction: a round can
     # run for minutes (Charles's ordinal fixture, 2026-09-28), and this used to

@@ -279,8 +279,15 @@ moments, for every manifest row that is not Gaussian.
 """
 function _kalman_store_response!(trace::CTSEMKalmanTrace, kind::Int, row::Int,
     ws, pars, statecov)
+    isempty(ws.manifesttype) && return nothing
+    # Compiled only for a model with a non-Gaussian indicator; see `_ctsem_barrier`.
+    _ctsem_barrier(_kalman_store_response_rows!, trace, kind, row, ws, pars, statecov)
+    return nothing
+end
+
+function _kalman_store_response_rows!(trace::CTSEMKalmanTrace, kind::Int, row::Int,
+    ws, pars, statecov)
     types = ws.manifesttype
-    isempty(types) && return nothing
     n = trace.nlatent
     m = trace.nmanifest
     @inbounds for i in 1:m
@@ -458,8 +465,16 @@ gives a smoothed estimate on the same scale as the filtered one it refines.
 """
 function _kalman_smooth_response!(trace::CTSEMKalmanTrace, ws, row::Int, Jyr,
     Δ, covsm, ysm, ycovsm)
+    isempty(ws.manifesttype) && return nothing
+    # Compiled only for a model with a non-Gaussian indicator; see `_ctsem_barrier`.
+    _ctsem_barrier(_kalman_smooth_response_rows!, trace, ws, row, Jyr, Δ, covsm,
+        ysm, ycovsm)
+    return nothing
+end
+
+function _kalman_smooth_response_rows!(trace::CTSEMKalmanTrace, ws, row::Int, Jyr,
+    Δ, covsm, ysm, ycovsm)
     types = ws.manifesttype
-    isempty(types) && return nothing
     pars = ws.pars
     n = trace.nlatent
     m = trace.nmanifest

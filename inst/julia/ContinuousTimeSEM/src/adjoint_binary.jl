@@ -135,6 +135,13 @@ function _record_binary!(tape, ws, pars, data, obs_col, rows, state_in, P_in, n)
     tape === nothing && return nothing
     hasproperty(tape, :nbinaries) || return nothing
     isempty(rows) && return nothing
+    # Only a model with categorical indicators gets here; see `_ctsem_barrier`.
+    _ctsem_barrier(_record_binary_rows!, tape, ws, pars, data, obs_col, rows,
+        state_in, P_in, n)
+    return nothing
+end
+
+function _record_binary_rows!(tape, ws, pars, data, obs_col, rows, state_in, P_in, n)
     T = eltype(state_in)
     n = Int(n)
     obs_col = Int(obs_col)
