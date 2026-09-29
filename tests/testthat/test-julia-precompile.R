@@ -46,9 +46,19 @@ test_that("the precompiled models still match what ctsem's model writer emits", 
   nz <- function(x, empty) { x[is.na(x)] <- empty; x }
   v <- ctsem:::.ctJuliaVector
 
-  for (route in c("augmented", "laplace")) {
+  # The captured model, and the same with its second loading free: a default
+  # template the captured model does not use, which must not make it another
+  # type, because every spec carries every default template's group.
+  free_loading <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 1,
+    n.manifest = 2, manifestNames = c("y1", "y2"), latentNames = "eta1",
+    LAMBDA = matrix(c(1, "lam2"), 2, 1), MANIFESTMEANS = matrix(0, 2, 1),
+    CINT = matrix("cint"), T0MEANS = matrix(0),
+    MANIFESTVAR = matrix(c("mvar", 0, 0, "mvar"), 2), manifesttype = c(0L, 0L))))
+  free_loading$pars$indvarying <- free_loading$pars$param %in% "cint"
+  models <- list(captured = .precompile_model(), free_loading = free_loading)
+  for (route in c("augmented", "laplace")) for (nm in names(models)) {
     spec <- suppressWarnings(suppressMessages(ctFit(.precompile_data(3L, 4L),
-      .precompile_model(), backend = "julia", fit = FALSE, intoverpop = route)))
+      models[[nm]], backend = "julia", fit = FALSE, intoverpop = route)))
     table <- as.data.frame(spec$parameter_table, stringsAsFactors = FALSE)
     matched <- ctsem:::.ctBackendJuliaValue(module$ctsem_shape_is_precompiled(
       v(as.character(table$matrix)), v(as.integer(table$row)), v(as.integer(table$col)),
@@ -57,8 +67,52 @@ test_that("the precompiled models still match what ctsem's model writer emits", 
       v(nz(as.character(table$predicttransform), "")),
       v(nz(as.character(table$updatetransform), "")),
       v(nz(as.character(table$tdtransform), ""))))
-    expect_true(matched, label = sprintf("the %s gaussian model is a precompiled shape", route))
+    expect_true(matched, label = sprintf("the %s gaussian model (%s) is a precompiled shape",
+      route, nm))
   }
+})
+
+test_that("every template a default model writes is one of the engine's default templates", {
+  skip_without_julia()
+  # Every spec carries a group for each default template, so that which of them
+  # a model uses does not change its type. A default the writer starts emitting
+  # and the engine's list lacks would quietly bring that back: a model freeing
+  # one more cell compiling the whole pipeline again. Fit-free: parameter
+  # tables only, and one engine call.
+  module <- ctsem:::.ctJuliaModule(NULL)
+  skip_if(is.null(module$ctsem_nondefault_templates),
+    "engine predates the default template groups")
+  q <- function(e) suppressWarnings(suppressMessages(e))
+  sim <- function(man, type = rep(0L, length(man)), td = FALSE, ti = FALSE) {
+    set.seed(2)
+    d <- data.frame(id = rep(1:6, each = 5), time = rep(0:4, 6))
+    for (j in seq_along(man)) d[[man[j]]] <- switch(as.character(type[j]),
+      "0" = stats::rnorm(30), "1" = stats::rbinom(30, 1, 0.5), "2" = sample(1:3, 30, TRUE))
+    if (td) d$td1 <- stats::rbinom(30, 1, 0.3)
+    if (ti) d$ti1 <- rep(stats::rnorm(6), each = 5)
+    d
+  }
+  cases <- list(
+    list(q(ctModel(type = "ct", n.latent = 2, n.manifest = 3, manifestNames = c("y1", "y2", "y3"),
+      LAMBDA = matrix(c(1, "auto", "auto", 0, 0, 1), 3, 2))), sim(c("y1", "y2", "y3")), "augmented"),
+    list(q(ctModel(type = "dt", n.latent = 1, n.manifest = 2, manifestNames = c("y1", "y2"),
+      LAMBDA = matrix(c(1, "auto"), 2, 1))), sim(c("y1", "y2")), "laplace"),
+    list(q(ctModel(type = "ct", n.latent = 1, n.manifest = 2, manifestNames = c("o1", "o2"),
+      LAMBDA = matrix(c(1, "auto"), 2, 1), manifesttype = c(2L, 2L), ncategories = c(3L, 3L))),
+      sim(c("o1", "o2"), c(2L, 2L)), "laplace"),
+    list(q(ctModel(type = "ct", n.latent = 1, n.manifest = 1, manifestNames = "y1",
+      LAMBDA = matrix(1), TDpredNames = "td1", TIpredNames = "ti1")),
+      sim("y1", td = TRUE, ti = TRUE), "augmented"))
+  transforms <- unlist(lapply(cases, function(cs) {
+    spec <- q(ctFit(cs[[2]], cs[[1]], backend = "julia", fit = FALSE, intoverpop = cs[[3]]))
+    tb <- as.data.frame(spec$parameter_table, stringsAsFactors = FALSE)
+    t <- tb$transform[!is.na(tb$parnumber) & tb$parnumber > 0]
+    t[!is.na(t) & nzchar(t)]
+  }))
+  expect_gt(length(transforms), 20)
+  missing <- as.character(ctsem:::.ctBackendJuliaValue(
+    module$ctsem_nondefault_templates(ctsem:::.ctJuliaVector(transforms))))
+  expect_identical(missing, "", label = "templates default models write outside the default groups")
 })
 
 test_that("every captured model replayed when the engine image was built", {
