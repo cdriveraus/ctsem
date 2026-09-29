@@ -167,6 +167,11 @@ test_that("where the filter is exact, reweighting normal draws targets the filte
   reference <- suppressWarnings(suppressMessages(ctOptimUncertainty(fit,
     uncertainty = "is", finishsamples = 400, verbose = 0,
     control = list(isitersize = 300, isESS = 60))))
+  # uncertainty = 'is' on the julia route records the tail of its weights; on
+  # a linear model the posterior has the proposal's shape and the tail is light.
+  k <- reference$uncertainty$details$importance_sampling$pareto_k
+  expect_true(is.finite(k))
+  expect_lt(k, 0.7)
   set.seed(7)
   corrected <- suppressWarnings(ctParticleCorrect(fit, particles = 500, substeps = 1, seed = 3))
   se <- as.numeric(fit$estimate$se)

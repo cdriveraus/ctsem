@@ -91,18 +91,62 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
   invisible(ess)
 }
 
+# `tailremedy` is what to do when the Pareto k below says the weights cannot
+# be trusted, which is a different failure from a short effective sample and
+# can have a different answer: reweighting cannot recover what the proposal
+# never visits, so the remedy is to sample the target itself where that exists.
+#
+# Returns the effective sample size and Pareto k, for the caller to record.
 .ctOptimImisReport <- function(is_res, target, weighted,
   remedy = paste0('A direction the data does not identify cannot be importance ',
     'sampled at all -- check the identifiability report, and consider ',
-    'uncertainty = "hessian".')){
+    'uncertainty = "hessian".'), tailremedy = remedy){
   ess <- if(is.null(is_res$ess)) NA_real_ else as.numeric(is_res$ess)[1L]
+  k <- .ctImisParetoK(is_res)
   if(!isTRUE(weighted)) warning(
     'The weighted importance-sampling covariance was not finite, so the ',
     'unweighted covariance of the resampled draws was used instead.',
     call.=FALSE)
+  if(is.finite(k) && k > .ctImisParetoKBar()) {
+    warning('Importance sampling weights have Pareto k ', round(k, 2),
+      ', above ', .ctImisParetoKBar(), ': the proposal misses part of the ',
+      'posterior, so these intervals are unreliable whatever the effective ',
+      'sample size. ', tailremedy, call.=FALSE)
+  } else if(is.na(k) && length(is_res$log_weights) &&
+      !requireNamespace('loo', quietly = TRUE)) {
+    message('Pareto k of the importance weights not checked: install the loo ',
+      'package.')
+  }
   .ctOptimEffectiveSampleWarn(ess,
     floor = if(is.finite(target)) target / 2 else NA_real_, remedy = remedy)
-  invisible(ess)
+  invisible(list(ess = ess, k = k))
+}
+
+# Whether importance weights can be trusted at all, as the shape k of a
+# generalized Pareto fitted to their upper tail (Vehtari, Simpson, Gelman, Yao
+# and Gabry, "Pareto smoothed importance sampling"), through `.ctPsisWeights()`,
+# the fit `ctLOO(method = 'psis')` already makes, rather than a second one.
+#
+# The effective sample size cannot answer this. It is computed from the same
+# weights, so when their variance does not exist -- a proposal with lighter
+# tails than its target, which a normal proposal built on the curvature at the
+# mode is whenever the posterior is skewed or heavy-tailed -- it still returns
+# a healthy-looking number while the draws that were never made carry the
+# missing mass. k estimates the tail directly: below 0.5 the variance exists,
+# above 0.7 the estimates are not usable at any practical draw count, which is
+# loo's rule and the one `ctLOO()` already reports against.
+#
+# NA when loo is not installed (it is suggested, not imported), or when there
+# are too few weights to fit a tail to.
+.ctImisParetoKBar <- function() 0.7
+
+.ctImisParetoK <- function(is_res) {
+  lw <- as.numeric(is_res$log_weights)
+  lw <- lw[is.finite(lw)]
+  if(length(lw) < 20L || !requireNamespace('loo', quietly = TRUE)) return(NA_real_)
+  k <- tryCatch(.ctPsisWeights(matrix(lw, ncol = 1L))$k,
+    error = function(e) NA_real_)
+  as.numeric(k)[1L]
 }
 
 # Importance sampling against a reference density, and the covariance and draws
@@ -301,10 +345,9 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
   weighted <- !is.null(is_res$covariance) && all(is.finite(is_res$covariance))
   cov_out <- if(weighted) ctOptimSafeCov(is_res$covariance) else
     if(!is.null(samples) && nrow(samples) > 1) ctOptimSafeCov(stats::cov(samples)) else cov
-  .ctOptimImisReport(is_res, target_ess, weighted, remedy = remedy)
+  report <- .ctOptimImisReport(is_res, target_ess, weighted, remedy = remedy)
 
-  list(samples = samples, cov = cov_out,
-    ess = if(is.null(is_res$ess)) NA_real_ else as.numeric(is_res$ess)[1L],
+  list(samples = samples, cov = cov_out, ess = report$ess, k = report$k,
     weighted = weighted, is_res = is_res, subspace = attr(is_res, 'subspace'))
 }
 
@@ -1886,13 +1929,18 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #   `imis_is` reads the log probability and nothing else, so a `lpgFunc` that
 #   also computes a reverse pass per draw has that work thrown away.
 #
+#   `tailremedy` -- how to sample the posterior itself when the weights' Pareto
+#   k says reweighting cannot (see `.ctOptimImisReport()`), which is spelled
+#   differently on each backend.
+#
 # @return list(samples, uncertaintyfit, control) -- `control` comes back
 #   because the defaults filled in here are what gets recorded in `$settings`.
 .ctOptimDrawSamples <- function(uncertaintyfit, draws, control, est,
   finishsamples, lpg, verbose = 0,
   scaleInit = .ctImisProposalDefaults()$scaleInit,
   tailScale = .ctImisProposalDefaults()$tailScale,
-  df = Inf) {
+  df = Inf,
+  tailremedy = 'Sample the posterior rather than reweighting an approximation to it.') {
 
   if (draws == 'empirical' && !is.null(uncertaintyfit$draws)) {
     return(list(samples = uncertaintyfit$draws, uncertaintyfit = uncertaintyfit,
@@ -1950,7 +1998,11 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
     uncertaintyfit$cov <- ctOptimSafeCov(stats::cov(samples))
   }
   uncertaintyfit$imis <- is_res
+  report <- .ctOptimImisReport(is_res, control$isESS, weighted,
+    tailremedy = tailremedy)
   uncertaintyfit$details$importance_sampling <- list(ess = is_res$ess,
+    # NA when loo is not installed; see `.ctImisParetoK()`.
+    pareto_k = report$k,
     df_used = is_res$df_used, weighted = weighted,
     covariance = if (weighted) 'weighted importance-sampling covariance' else
       'unweighted covariance of the resampled draws',
@@ -1960,7 +2012,6 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
     # `.ctFitNameRawUncertainty()` runs, further down the caller.
     subspace = if (is.null(subspace)) NULL else list(
       nullDirections = subspace$nnull, heldParameters = subspace$nullParameters))
-  .ctOptimImisReport(is_res, control$isESS, weighted)
 
   list(samples = samples, uncertaintyfit = uncertaintyfit, control = control)
 }
@@ -2487,7 +2538,9 @@ ctFitUncertainty <- function(fit,
   drawn <- .ctOptimDrawSamples(uncertaintyfit, draws = draws, control = control,
     est = fit$stanfit$rawest, finishsamples = finishsamples,
     lpg = lpgsetup$lpg, verbose = verbose,
-    scaleInit = stanImis$scaleInit, tailScale = stanImis$tailScale)
+    scaleInit = stanImis$scaleInit, tailScale = stanImis$tailScale,
+    tailremedy = paste0("ctFit(..., optimize = FALSE) samples the posterior ",
+      "itself, as does ctFitUncertainty(fit, 'sample') on a backend = 'julia' fit."))
   samples <- drawn$samples
   uncertaintyfit <- drawn$uncertaintyfit
   control <- drawn$control

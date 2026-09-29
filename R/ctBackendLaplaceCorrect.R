@@ -216,6 +216,7 @@ ctLaplaceCorrect <- function(fit, draws = c("normal", "imis", "keep"),
   # anyone pay for a corrected point estimate.
   is_res <- NULL
   ess <- NA_real_
+  paretok <- NA_real_
   newcov <- as.matrix(covariance)
   samples <- fit$estimate$rawposterior
 
@@ -251,6 +252,7 @@ ctLaplaceCorrect <- function(fit, draws = c("normal", "imis", "keep"),
     }
     newcov <- drawn$cov
     ess <- drawn$ess
+    paretok <- drawn$k
   } else if (identical(draws, "normal")) {
     # The centre is corrected and the width is not: these draws carry the
     # Laplace curvature, moved to the corrected point. That is the honest
@@ -303,7 +305,7 @@ ctLaplaceCorrect <- function(fit, draws = c("normal", "imis", "keep"),
       fit$uncertainty$proposal_cov <- as.matrix(covariance) * scale^2
       fit$uncertainty$imis <- is_res
       fit$uncertainty$details$importance_sampling <- list(ess = ess,
-        df_used = is_res$df_used,
+        pareto_k = paretok, df_used = is_res$df_used,
         covariance = "weighted importance-sampling covariance")
     }
     fit$uncertainty$details$laplace_correction <- list(

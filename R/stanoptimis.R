@@ -1082,6 +1082,9 @@ imis_is <- function(parlp,
     weights      = if (length(idx_eq)) rep(1/finishsamples, length(idx_eq)) else numeric(0),
     full_theta   = samples,
     full_weights = w_norm,
+    # The same weights on the log scale, before `exp()` rounds the smallest
+    # to zero: what `.ctImisParetoK()` fits the upper tail of.
+    log_weights  = if (length(w_raw)) log_w else numeric(0),
     ess          = ess_now,
     mean         = if (length(w_norm))
       as.numeric(diagis::weighted_mean(samples, w_norm))

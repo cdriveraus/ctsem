@@ -913,3 +913,39 @@ test_that(".ctOptimImisDraws() reports which directions the subspace held", {
   expect_true(drawn$ess >= 100)
   expect_equal(ncol(drawn$samples), 4L)
 })
+
+test_that("importance sampling records the Pareto k of its weights and warns when it is high", {
+  skip_if_not_installed('mvtnorm'); skip_if_not_installed('diagis')
+  skip_if_not_installed('gridExtra'); skip_if_not_installed('ggplot2')
+  skip_if_not_installed('loo')
+
+  # Two closed-form targets for one standard normal proposal. A normal three
+  # times wider than the proposal gives weights p/q proportional to
+  # exp(|x|^2 (1 - 1/9) / 2), whose tail under the proposal is an exact power
+  # law with k = 1 - 1/9 = 0.89: no variance, however many draws. A normal
+  # narrower than the proposal gives bounded weights and k well below 0.5. One
+  # batch of 2000 each, so nothing adapts; over 20 seeds the first gave k
+  # 0.73-1.13 (median 0.90) and the second never above -0.7.
+  heavy <- function(x) sum(stats::dnorm(x, 0, 3, log = TRUE))
+  light <- function(x) sum(stats::dnorm(x, 0, 0.8, log = TRUE))
+  draw <- function(lpg) withr::with_seed(3, ctsem:::.ctOptimDrawSamples(
+    list(cov = diag(2), details = list()), draws = 'imis',
+    control = list(imisMaxIter = 0, isitersize = 2000, isESS = 1),
+    est = c(0, 0), finishsamples = 50, lpg = lpg, scaleInit = 1, tailScale = 1,
+    tailremedy = 'Sample it instead.'))
+
+  expect_warning(bad <- draw(heavy), 'Pareto k .*Sample it instead')
+  kbad <- bad$uncertaintyfit$details$importance_sampling$pareto_k
+  expect_gt(kbad, 0.7)
+
+  expect_no_warning(good <- draw(light))
+  expect_lt(good$uncertaintyfit$details$importance_sampling$pareto_k, 0.5)
+
+  # The shared route ctLaplaceCorrect() and ctParticleCorrect() take returns
+  # it too, and warns with the caller's own remedy.
+  expect_warning(drawn <- withr::with_seed(3, ctsem:::.ctOptimImisDraws(heavy,
+    centre = c(0, 0), cov = diag(2), finishsamples = 50, remedy = 'Caller remedy.',
+    nbatch = 2000, target_ess = 1, maxiter = 0, scaleInit = 1, tailScale = 1,
+    diagPlots = FALSE)), 'Pareto k .*Caller remedy')
+  expect_equal(drawn$k, kbad)
+})
