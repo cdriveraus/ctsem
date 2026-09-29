@@ -10,7 +10,7 @@
 "test-julia-category-quadrature.R","categorical","core"
 "test-julia-censored.R","categorical","core"
 "test-julia-ordinal.R","categorical","core"
-"test-binary-binary-mix.R","categorical","extended"
+"test-binary-binary-mix.R","categorical","release"
 "test-binary-path.R","categorical","extended"
 "test-ctRaschExampleTest.R","categorical","extended"
 "test-julia-binary.R","categorical","extended"
