@@ -143,6 +143,15 @@ skip_on_32bit()
     # interval came back [0, 5364]. About four minutes locally, which is what
     # the design costs; `optimcontrol = list(estonly = TRUE)` saves none of it,
     # since the optimisation and not the uncertainty phase is the cost.
+    #
+    # RELEASE TIER (`skip_unless_slow()`), for that reason: a recovery that
+    # needs its 10000 observations to mean anything, 239 s of this file's 239
+    # on dev2 (2026-09-29, three files beside it) for eight coverage claims.
+    # What cheaper tests hold of the same machinery runs on every push: the
+    # binary adjoint on two latent states and a one-latent binary recovery
+    # (test-julia-binary.R), and binary beside ordinal and Gaussian indicators
+    # across two latents (test-julia-multivariate-mixed.R).
+    skip_unless_slow("the 10000-observation two-latent binary recovery fit")
     gen <- .bbmix_gen(1234)
     f <- ctFit(datalong = gen$d, model = .bbmix_model(gen$nind), cores = 1,
       backend = 'julia')

@@ -30,26 +30,11 @@
 # `processes` and `target` are all entries of one list now, where that
 # function had them split across its own arguments and a separate list.
 
-.sample_fixture <- function(nsub = 12L, tp = 6L, seed = 31L) {
-  set.seed(seed)
-  data <- do.call(rbind, lapply(seq_len(nsub), function(i) {
-    intercept <- stats::rnorm(1, 0, 0.8)
-    state <- stats::rnorm(1, 0, 0.5)
-    y <- numeric(tp)
-    for (t in seq_len(tp)) {
-      state <- 0.75 * state + stats::rnorm(1, 0, 0.4)
-      y[t] <- state + intercept + stats::rnorm(1, 0, 0.3)
-    }
-    data.frame(id = i, time = seq_len(tp) - 1, Y1 = y)
-  }))
-  model <- suppressWarnings(suppressMessages(ctModel(type = "ct",
-    manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1))))
-  model$pars$indvarying <- FALSE
-  model$pars$indvarying[match(TRUE, model$pars$matrix == "MANIFESTMEANS")] <- TRUE
-  suppressWarnings(suppressMessages(ctFit(data, model, backend = "julia",
-    cores = 1, intoverpop = "laplace", priors = TRUE,
-    optimcontrol = list(finishsamples = 20))))
-}
+# One fit, shared by every test that asks for it: `laplace_fixture()`
+# (helper-julia.R), which test-backend-generate.R generates from too. Each test
+# here samples from it or asks it something, and none writes into it. It was
+# refitted sixteen times.
+.sample_fixture <- function() laplace_fixture()
 
 test_that("a sampled fit carries draws the summary machinery can read", {
   skip_without_julia()
@@ -621,15 +606,22 @@ test_that("a fixed stepsize is what every chain starts from", {
 # and its own effect draw measured 0.378 through the draws against 0.241
 # through the modes. A difference in the right direction, and far too small a
 # gap to test on. The per-subject exactness below is decisive instead.
+# The joint-target sample with its effect draws saved, which the four tests
+# below read and none writes into. It was drawn four times, identically -- the
+# same fixture, settings and random number stream -- and is drawn once now,
+# as the fixture is.
+.sample_joint_effects <- function() fit_cached("sample_joint_effects",
+  suppressWarnings(suppressMessages(ctFitUncertainty(.sample_fixture(),
+    uncertainty = "sample", cores = 1,
+    control = list(chains = 1, warmup = 60, draws = 60, saveEffects = TRUE,
+      target = "joint")))))
+
 test_that("generation at given effects is exact and per-subject", {
   skip_without_julia()
   # target='joint': each of these reads fit$sample$effects, which only exists
   # under the joint target -- the marginal default has no random effect in
   # the sampled vector to save.
-  fit <- suppressWarnings(suppressMessages(ctFitUncertainty(.sample_fixture(),
-    uncertainty = "sample", cores = 1,
-    control = list(chains = 1, warmup = 60, draws = 60, saveEffects = TRUE,
-      target = "joint"))))
+  fit <- .sample_joint_effects()
   expect_false(is.null(fit$sample$effects))
 
   raw <- fit$estimate$raw
@@ -668,10 +660,7 @@ test_that("a sampled fit without saved effects says it fell back to modes", {
   # target='joint': each of these reads fit$sample$effects, which only exists
   # under the joint target -- the marginal default has no random effect in
   # the sampled vector to save.
-  fit <- suppressWarnings(suppressMessages(ctFitUncertainty(.sample_fixture(),
-    uncertainty = "sample", cores = 1,
-    control = list(chains = 1, warmup = 60, draws = 60, saveEffects = TRUE,
-      target = "joint"))))
+  fit <- .sample_joint_effects()
   # Silence is the failure mode: the draws are summarised by default, so
   # without a message a user asking for a posterior predictive would get one
   # conditioned on point estimates and no way to notice.
@@ -699,10 +688,7 @@ test_that("ctGenerateFromFit can resample the trajectory or mirror the fit", {
   # target='joint': each of these reads fit$sample$effects, which only exists
   # under the joint target -- the marginal default has no random effect in
   # the sampled vector to save.
-  fit <- suppressWarnings(suppressMessages(ctFitUncertainty(.sample_fixture(),
-    uncertainty = "sample", cores = 1,
-    control = list(chains = 1, warmup = 60, draws = 60, saveEffects = TRUE,
-      target = "joint"))))
+  fit <- .sample_joint_effects()
   expect_true(isTRUE(fit$args$resolved$intoverstates))
 
   generate <- function(io) {
@@ -733,10 +719,7 @@ test_that("the resampled trajectory is drawn at each subject's own parameters", 
   # target='joint': each of these reads fit$sample$effects, which only exists
   # under the joint target -- the marginal default has no random effect in
   # the sampled vector to save.
-  fit <- suppressWarnings(suppressMessages(ctFitUncertainty(.sample_fixture(),
-    uncertainty = "sample", cores = 1,
-    control = list(chains = 1, warmup = 60, draws = 60, saveEffects = TRUE,
-      target = "joint"))))
+  fit <- .sample_joint_effects()
   raw <- fit$estimate$raw
   nrows <- length(fit$model_spec$times)
   nsub <- length(fit$model_spec$subject_starts)
@@ -813,25 +796,11 @@ test_that("a sampled fit's Hessian is not reused as curvature at its mean", {
 # always had and a sampled one never did.
 test_that("a mixed-curvature start is certified before the sampler's metric is built", {
   skip_without_julia()
-  # Same data-generating recipe as `.sample_fixture()`, reproduced rather than
-  # shared: this test also needs the bare `model_spec` (`fit = FALSE`) to
-  # verify its own precondition before trusting what placement does with it.
-  set.seed(31)
-  nsub <- 12L; tp <- 6L
-  data <- do.call(rbind, lapply(seq_len(nsub), function(i) {
-    intercept <- stats::rnorm(1, 0, 0.8)
-    state <- stats::rnorm(1, 0, 0.5)
-    y <- numeric(tp)
-    for (t in seq_len(tp)) {
-      state <- 0.75 * state + stats::rnorm(1, 0, 0.4)
-      y[t] <- state + intercept + stats::rnorm(1, 0, 0.3)
-    }
-    data.frame(id = i, time = seq_len(tp) - 1, Y1 = y)
-  }))
-  model <- suppressWarnings(suppressMessages(ctModel(type = "ct",
-    manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1))))
-  model$pars$indvarying <- FALSE
-  model$pars$indvarying[match(TRUE, model$pars$matrix == "MANIFESTMEANS")] <- TRUE
+  # The fixture's data and model, not its fit: this test also needs the bare
+  # `model_spec` (`fit = FALSE`) to verify its own precondition before trusting
+  # what placement does with it.
+  data <- laplace_fixture_data()
+  model <- laplace_fixture_model()
 
   spec <- suppressWarnings(suppressMessages(ctFit(data, model,
     backend = "julia", cores = 1, intoverpop = "laplace", priors = TRUE,

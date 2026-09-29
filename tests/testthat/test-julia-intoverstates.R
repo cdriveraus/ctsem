@@ -218,8 +218,10 @@ test_that("intoverstates='auto' is the sampled route for every model", {
   expect_false(isTRUE(all.equal(autom, viafilter)))
 })
 
-test_that("a fit over the joint density runs and carries its trajectory", {
-  skip_without_julia()
+# The joint-density fit the two tests below read: what such a fit carries, and
+# what prediction says about it. Fitted once (`fit_cached()`, helper-julia.R);
+# the second test lived in test-backend-kalman.R and fitted it again there.
+.states_joint_fit <- function() fit_cached("states_joint_fit", {
   model <- .states_model()
   set.seed(2)
   data <- data.frame(suppressMessages(ctGenerate(model, n.subjects = 12,
@@ -237,10 +239,17 @@ test_that("a fit over the joint density runs and carries its trajectory", {
 
   # `estonly`, because optimising the joint density is otherwise refused -- see
   # "optimising the joint density is refused" below. That is the only way to a
-  # joint mode now, and this block is about what such a fit carries.
-  fit <- suppressWarnings(suppressMessages(ctFit(data, fitmodel,
+  # joint mode now, and these blocks are about what such a fit carries.
+  list(data = data, fit = suppressWarnings(suppressMessages(ctFit(data, fitmodel,
     backend = "julia", intoverstates = FALSE, verbose = 0,
-    optimcontrol = list(estonly = TRUE))))
+    optimcontrol = list(estonly = TRUE)))))
+})
+
+test_that("a fit over the joint density runs and carries its trajectory", {
+  skip_without_julia()
+  joint <- .states_joint_fit()
+  data <- joint$data
+  fit <- joint$fit
 
   expect_s3_class(fit, "ctJuliaFit")
   npar <- length(fit$estimate$raw)
@@ -266,6 +275,20 @@ test_that("a fit over the joint density runs and carries its trajectory", {
   # curvature to certify against for the gap rule to aim inside.
   expect_equal(fit$optim$stall_window, 0L)
   expect_equal(fit$optim$gap_tol, 0)
+})
+
+# A state-explicit fit's point estimate is the mode of the joint density of
+# states and data, not of the marginal the Kalman filter computes, so filtering
+# through it looks like an ordinary result and is not one -- which prediction
+# has to say, as Stan's does.
+test_that("prediction warns for an intoverstates=FALSE julia fit, as Stan's does", {
+  skip_without_julia()
+  fit <- .states_joint_fit()$fit
+  expect_identical(fit$args$resolved$intoverstates, FALSE)
+  expect_warning(suppressMessages(ctPredict(fit, subjects = 1)),
+    "system noise represents prior")
+  expect_warning(suppressMessages(ctKalman(fit, subjects = 1)),
+    "system noise represents prior")
 })
 
 test_that("standard errors profile the states out, and the rest are refused", {

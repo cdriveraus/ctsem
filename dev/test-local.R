@@ -56,15 +56,30 @@ message("ready. tt('pattern'), tt_changed(), tt_fast(), tt_area('area')")
       next
     }
     d <- as.data.frame(r)
-    res$pass[i] <- sum(d$passed); res$fail[i] <- sum(d$failed)
+    # A test that errors is a failure too. It was counted nowhere, so a file
+    # whose one test died before its first expectation printed as ZERO
+    # ASSERTIONS, the flag for a file that skipped, rather than as a failure --
+    # test_behavGenNLcor.R, whose stan compile fails on Windows, read that way.
+    errored <- sum(d$error)
+    res$pass[i] <- sum(d$passed); res$fail[i] <- sum(d$failed) + errored
     res$skip[i] <- sum(d$skipped)
     # A file reporting zero assertions is a failure, not a pass: it means every
-    # test skipped, which is what an unset NOT_CRAN or a missing julia looks like.
-    flag <- if (sum(d$failed) > 0) "FAIL" else if (sum(d$passed) == 0) "ZERO ASSERTIONS" else "ok"
+    # test skipped, which is what an unset NOT_CRAN or a missing julia looks
+    # like. The reason is printed with it, so a release-tier file skipping for
+    # the reason it states can be told from one that skipped for no good one.
+    flag <- if (res$fail[i] > 0) "FAIL" else
+      if (sum(d$passed) == 0) "ZERO ASSERTIONS" else "ok"
     cat(sprintf("%-44s %6.1fs  pass=%-5d fail=%-3d skip=%-3d %s\n",
-      files[i], res$secs[i], sum(d$passed), sum(d$failed), sum(d$skipped), flag))
+      files[i], res$secs[i], sum(d$passed), res$fail[i], sum(d$skipped), flag))
     bad <- d[d$failed > 0 | d$error > 0, "test"]
     if (length(bad)) cat("    failing:", paste(bad, collapse = " | "), "\n")
+    if (identical(flag, "ZERO ASSERTIONS")) {
+      why <- unlist(lapply(r, function(t) vapply(t$results, function(e)
+        if (inherits(e, "expectation_skip")) conditionMessage(e) else NA_character_,
+        character(1))))
+      why <- unique(why[!is.na(why)])
+      if (length(why)) cat("    skipped:", paste(why, collapse = " | "), "\n")
+    }
     flush.console()
   }
   cat(sprintf("-- %d file(s), %.0fs, %d pass, %d fail\n", nrow(res),
@@ -125,20 +140,49 @@ tt_fast <- function(max_secs = 20) {
   if (length(gone)) message(length(gone), " timed file(s) no longer exist: ",
     paste(gone, collapse = ", "))
   f <- intersect(tm$file[!is.na(tm$secs) & tm$secs <= max_secs], have)
+  # A release-tier file measures as quick because it skipped; it is not quick.
+  f <- setdiff(f, .tt_release_only())
   message(length(f), " file(s) under ", max_secs, "s")
   .tt_run(f)
+}
+
+# Files whose every entry in dev/test-areas.csv is the release tier.
+.tt_release_only <- function(map = NULL) {
+  if (is.null(map)) {
+    if (!file.exists("dev/test-areas.csv")) return(character())
+    map <- utils::read.csv("dev/test-areas.csv", stringsAsFactors = FALSE)
+  }
+  tiers <- tapply(map$tier, map$file, function(t) all(t == "release"))
+  names(tiers)[tiers]
+}
+
+# The test blocks gated by skip_unless_slow() in each of `files`: release-tier
+# checks living inside a core or extended file.
+.tt_slow_blocks <- function(files) {
+  n <- vapply(files, function(f) {
+    lines <- readLines(file.path("tests/testthat", f), warn = FALSE)
+    sum(grepl("^\\s*skip_unless_slow\\(", lines))
+  }, integer(1))
+  n[n > 0L]
 }
 
 #' The core tests for the areas a change touches.
 #'
 #' `dev/test-areas.csv` gives every test file one or more areas, and within
-#' each a tier: `core`, the files a change in that area runs, and `extended`,
-#' the rest of what bears on it, for a change that goes deep. Every file is in
-#' some area, so all areas at `extended = TRUE` is the whole suite. Called with
-#' no area, lists the areas and what each costs, from dev/test-timings.csv.
-#' The quick tier runs first unless `fast = FALSE`: it is about a minute and
-#' covers the specification code every area builds on.
-tt_area <- function(area = NULL, extended = FALSE, fast = TRUE) {
+#' each a tier: `core`, the files a change in that area runs; `extended`, the
+#' rest of what bears on it, for a change that goes deep; and `release`, checks
+#' that cannot be made cheap -- a recovery that needs hundreds of subjects to
+#' mean anything, a stan program compiled at test time -- run before a release
+#' and weekly in CI. A release check skips unless CTSEM_SLOW_TESTS=true
+#' (`skip_unless_slow()`, helper-julia.R), and the same gate marks single
+#' release blocks inside core and extended files, so `release = TRUE` sets it
+#' for the run and adds the release files to the extended ones. Without it,
+#' `extended = TRUE` says what it left out. Every file is in some area, so all
+#' areas at `release = TRUE` is the whole suite. Called with no area, lists the
+#' areas and what each costs, from dev/test-timings.csv. The quick tier runs
+#' first unless `fast = FALSE`: it is about a minute and covers the
+#' specification code every area builds on.
+tt_area <- function(area = NULL, extended = FALSE, fast = TRUE, release = FALSE) {
   map <- utils::read.csv("dev/test-areas.csv", stringsAsFactors = FALSE)
   # A file in no area is never selected, which looks exactly like a file that
   # passed; say so, as tt_fast() does for an untimed one.
@@ -155,19 +199,39 @@ tt_area <- function(area = NULL, extended = FALSE, fast = TRUE) {
       m <- map[map$area == a, ]
       data.frame(area = a, core_files = sum(m$tier == "core"),
         core_min = minutes(m$file[m$tier == "core"]),
-        extended_min = minutes(m$file))
+        extended_min = minutes(m$file[m$tier != "release"]),
+        release_files = sum(m$tier == "release"))
     }))
     print(out, row.names = FALSE)
+    message("release_files are timed as skipped; tt_area(area, release = TRUE) runs them")
     return(invisible(out))
   }
   unknown <- setdiff(area, map$area)
   if (length(unknown)) stop("no such area: ", paste(unknown, collapse = ", "),
     ". Areas: ", paste(unique(map$area), collapse = ", "))
-  m <- map[map$area %in% area & (extended | map$tier == "core"), ]
+  tiers <- c("core", if (extended || release) "extended", if (release) "release")
+  m <- map[map$area %in% area & map$tier %in% tiers, ]
   files <- intersect(.tt_files(), unique(m$file))
   if (fast && !is.null(tm)) {
     quick <- intersect(tm$file[!is.na(tm$secs) & tm$secs <= 20], .tt_files())
+    if (!release) quick <- setdiff(quick, .tt_release_only(map))
     files <- union(quick, files)
+  }
+  if (release) {
+    previous <- Sys.getenv("CTSEM_SLOW_TESTS", unset = NA)
+    Sys.setenv(CTSEM_SLOW_TESTS = "true")
+    on.exit(if (is.na(previous)) Sys.unsetenv("CTSEM_SLOW_TESTS") else
+      Sys.setenv(CTSEM_SLOW_TESTS = previous), add = TRUE)
+  } else if (extended) {
+    # What `release = TRUE` would add: silence here reads as "that was all".
+    left <- setdiff(intersect(.tt_files(),
+      map$file[map$area %in% area & map$tier == "release"]), files)
+    blocks <- .tt_slow_blocks(files)
+    if (length(left) || length(blocks)) message("left out, as the release tier ",
+      "(tt_area(..., release = TRUE) runs it):",
+      if (length(left)) paste0("\n  files: ", paste(left, collapse = ", ")),
+      if (length(blocks)) paste0("\n  skip_unless_slow() blocks: ",
+        paste0(names(blocks), " (", blocks, ")", collapse = ", ")))
   }
   message(length(files), " file(s), about ", minutes(files), " min by dev/test-timings.csv")
   .tt_run(files)

@@ -42,7 +42,7 @@ test_that("anomauth", {
   # is in ctsemOMX's own tests/testthat/test-knownFits.R. It came into the
   # stan tests unchanged, so it is a cross-implementation reference and not a
   # recording of what stan happens to do. The julia backend reproduces it to
-  # 5e-5 absolute (test-julia-backend.R).
+  # 5e-5 absolute (the julia block below).
   test_isclose(23415.929,-2*sf$stanfit$optimfit$value,tol=.01)
   # A stan-side convergence property: `ginfn` is the infinity norm of the
   # gradient at the reported optimum, recorded by the optimiser and, until
@@ -61,6 +61,38 @@ test_that("anomauth", {
   test_isclose(.036,anoms$popmeans['mm_Y1','sd'],tol=.01)
  }
 
+})
+
+# The julia counterpart of `anomauth` above: the same data, the same model, and
+# the same reference -2LL. It lived in test-julia-backend.R, the bridge area's
+# core, which made a 2-latent fit part of every bridge change; it is a known fit
+# and belongs with the others, in the optimiser core an optimiser change runs.
+# It was gated on CTSEM_RUN_JULIA_E2E once, which nothing set, so it had never
+# run; `skip_without_julia()` is the whole of it now. Costs ~12 s once the
+# julia session is warm.
+test_that("Julia completes a full AnomAuth optimization", {
+  skip_without_julia()
+
+  data(AnomAuth, package = "ctsem")
+  model <- ctModel(LAMBDA = diag(2), n.latent = 2, n.manifest = 2,
+    MANIFESTVAR = diag(0, 2), Tpoints = 5)
+  model$pars$indvarying <- FALSE
+  dat <- ctDeintervalise(ctWideToLong(AnomAuth, Tpoints = model$Tpoints,
+    n.manifest = 2))
+
+  set.seed(20260820)
+  fit <- suppressMessages(ctFit(dat, model, backend = "julia", optimize = TRUE,
+    savescores = FALSE, cores = 1))
+  expect_s3_class(fit, "ctJuliaFit")
+  expect_true(is.finite(fit$estimate$loglik))
+  expect_true(fit$optim$converged)
+  # The stan fit of this model pins -2LL at 23415.929 (above). On the first
+  # run of this test the julia optimum matched that to 2e-9 relative, so the
+  # bound below is a regression pin with headroom rather than a recording of
+  # what julia happens to do: a value near it means the two backends have
+  # drifted apart.
+  expect_equal(-2 * as.numeric(fit$estimate$loglik), 23415.929,
+    tolerance = 1e-5)   # allows 0.23 of 23415.9; observed difference 4.8e-5
 })
 
 

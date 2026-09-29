@@ -16,6 +16,15 @@
 # evaluates that at the subject's first row, which the julia t0 block has no
 # access to. Giving it that is an engine change. When it happens, this file
 # converts the way the others did.
+#
+# RELEASE TIER (`skip_unless_slow()`). The model's time-varying cells need a
+# stan program generated for it (`standata$recompile` is 1), so the test
+# compiles one: six of its seven minutes on dev2, whatever the data size,
+# since it is the program that costs and not the fit. On Windows the compile
+# fails outright here (rstan's make exits 1), which is why the file errored in
+# every local run -- and tt() reported that as zero assertions until it
+# learned to count errors. Nothing cheaper reaches the claim: it is this
+# program, compiled, that is tested.
 skip_on_cran()
 skip_if(.Platform$OS.type == "windows" && R.version$major %in% 4 &&
     as.numeric(R.version$minor) >= 2 &&
@@ -29,6 +38,9 @@ skip_if(.Platform$OS.type == "windows" && R.version$major %in% 4 &&
   
   
   test_that("behavGenNLcor", {
+    # Inside the block rather than at the top of the file, so the skip is
+    # reported with its reason: a file-level skip leaves no result at all.
+    skip_unless_slow("compiling this model's stan program")
     
     
     # data gen ----------------------------------------------------------------

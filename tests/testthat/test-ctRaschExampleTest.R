@@ -212,7 +212,8 @@ test_that("the augmented and Laplace estimators find the same optimum", {
   items <- paste0("m", 2:7)
   expect_lt(max(abs(augmented[items] - laplace[items])), 0.01)
   # Two optima of two different objectives, so the likelihoods are close rather
-  # than equal: -1705.20 and -1705.36.
+  # than equal: -1705.20 and -1705.36, which the Laplace fit reports as -1705.31
+  # since its correction screen reports the quadrature log likelihood.
   expect_lt(abs(.rasch_fit("ct")$estimate$loglik -
       .rasch_fit("laplace")$estimate$loglik), 2)
 })
@@ -227,7 +228,7 @@ test_that("the discrete-time twin sees the same measurement model", {
   # The correspondence that actually holds is about the measurement model, not
   # the dynamics: an item difficulty is identified by the Bernoulli link and
   # the loadings, neither of which knows how time was discretised, so the two
-  # fits must agree on it. They agree to 0.014.
+  # fits must agree on it. They agree to 0.0005.
   continuous <- .rasch_raw(.rasch_fit("ct"))
   discrete <- .rasch_raw(.rasch_fit("dt"))
   items <- paste0("m", 2:7)
@@ -240,7 +241,7 @@ test_that("the discrete-time twin sees the same measurement model", {
   # The dynamics parameter is *not* shared, and asserting that is what keeps
   # the check above from being vacuous. In discrete time DRIFT is already the
   # one-step transition, so it must come back as an autoregression in (0, 1):
-  # about 0.96 here, against a continuous rate of -0.271.
+  # about 0.77 here, against a continuous rate of -0.271.
   s_ct <- suppressWarnings(suppressMessages(summary(.rasch_fit("ct"))))
   s_dt <- suppressWarnings(suppressMessages(summary(.rasch_fit("dt"))))
   expect_lt(s_ct$popmeans["drift_eta1", "mean"], 0)
@@ -257,7 +258,7 @@ test_that("the discrete-time twin sees the same measurement model", {
   # of a ridge the optimizer stopped at.
   #
   # What is stable is that the two discretizations describe this data about
-  # equally well: -1705.20 continuous against -1705.89 discrete.
+  # equally well: -1705.20 continuous against -1706.18 discrete.
   expect_lt(abs(.rasch_fit("ct")$estimate$loglik -
       .rasch_fit("dt")$estimate$loglik), 5)
 })

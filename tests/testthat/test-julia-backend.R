@@ -284,101 +284,9 @@ test_that("a missing TD predictor warns once and reaches the julia path as zero"
   expect_equal(run$value$tdpred_data, matrix(c(1, 0, 0, 0, 0, 1), nrow = 1))
 })
 
-# The optimising path imputes a missing TI predictor from the other variables,
-# as the Stan path does. What the warning has to carry is that the value was
-# manufactured and that it is the predictor's own effect estimate that pays for
-# it.
-test_that("a missing TI predictor is imputed for the julia optimising path, with a warning", {
-  model <- suppressWarnings(ctModel(
-    type = "ct", LAMBDA = diag(1), DRIFT = matrix("drift", 1, 1),
-    DIFFUSION = matrix(.2, 1, 1), MANIFESTVAR = matrix(.1, 1, 1),
-    MANIFESTMEANS = matrix(0, 1, 1), T0VAR = matrix(1, 1, 1),
-    T0MEANS = matrix("t0m", 1, 1), n.TIpred = 1, TIpredNames = "group",
-    tipredDefault = FALSE
-  ))
-  model$pars$group_effect[model$pars$param == "t0m"] <- TRUE
-  set.seed(20260902)
-  dat <- data.frame(id = rep(1:4, each = 3), time = rep(0:2, 4),
-    Y1 = stats::rnorm(12), group = rep(c(-1, 2, NA, .5), each = 3))
-
-  run <- .ctWarnings(suppressMessages(
-    ctFit(dat, model, backend = "julia", optimize = TRUE, fit = FALSE)))
-  told <- grep("TIpreds", run$warnings, value = TRUE)
-  expect_length(told, 1L)
-  expect_match(told, "1 in group", fixed = TRUE)
-  expect_match(told, "imputed", fixed = TRUE)
-  expect_match(told, "overly confident", fixed = TRUE)
-
-  values <- as.numeric(run$value$tipred_data)
-  expect_equal(values[c(1, 2, 4)], c(-1, 2, .5))
-  expect_true(is.finite(values[3]))
-  expect_false(values[3] == 99999)
-})
-
-test_that("julia optimises with the imputed TI predictor values", {
-  skip_without_julia()
-
-  model <- suppressWarnings(ctModel(
-    type = "ct", LAMBDA = diag(1), DRIFT = matrix(-.4, 1, 1),
-    DIFFUSION = matrix(.5, 1, 1), MANIFESTVAR = matrix(.1, 1, 1),
-    MANIFESTMEANS = matrix(0, 1, 1), T0VAR = matrix(1, 1, 1),
-    T0MEANS = matrix("t0m", 1, 1), n.TIpred = 1, TIpredNames = "group",
-    tipredDefault = FALSE
-  ))
-  model$pars$group_effect[model$pars$param == "t0m"] <- TRUE
-  set.seed(20260902)
-  group <- c(-1, -.5, 0, .5, 1, NA)
-  dat <- do.call(rbind, lapply(seq_along(group), function(i) {
-    data.frame(id = i, time = 0:3,
-      Y1 = stats::rnorm(4, ifelse(is.na(group[i]), .5, group[i]), .5),
-      group = group[i])
-  }))
-
-  fit <- suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
-    optimize = TRUE, cores = 1, savescores = FALSE)))
-  expect_s3_class(fit, "ctJuliaFit")
-  expect_true(is.finite(fit$estimate$loglik))
-  # The imputed value is what the fit conditioned on -- not a sentinel, and not
-  # dropped.
-  expect_false(any(fit$model_spec$tipred_data == 99999))
-  expect_false(anyNA(fit$model_spec$tipred_data))
-  expect_equal(as.numeric(fit$model_spec$tipred_data)[1:5], group[1:5])
-})
-
-# Stan samples a missing TI predictor by writing 99999 and reading it back as
-# a free parameter. As of SPEC-tipred-sampling.md the julia engine can sample
-# one too (test-julia-tipred-missing.R covers that route end to end), but
-# only with `intoverpop='augmented'` -- the default here resolves to 'none'
-# (`t0m` is indvarying), which is not yet supported and still refuses, with
-# what a caller can do instead.
-test_that("the julia sampling path refuses a missing TI predictor outside intoverpop='augmented'", {
-  model <- suppressWarnings(ctModel(
-    type = "ct", LAMBDA = diag(1), DRIFT = matrix("drift", 1, 1),
-    DIFFUSION = matrix(.2, 1, 1), MANIFESTVAR = matrix(.1, 1, 1),
-    MANIFESTMEANS = matrix(0, 1, 1), T0VAR = matrix(1, 1, 1),
-    T0MEANS = matrix("t0m", 1, 1), n.TIpred = 1, TIpredNames = "group",
-    tipredDefault = FALSE
-  ))
-  model$pars$group_effect[model$pars$param == "t0m"] <- TRUE
-  dat <- data.frame(id = rep(1:3, each = 3), time = rep(0:2, 3), Y1 = 0,
-    group = rep(c(-1, 2, NA), each = 3))
-
-  told <- tryCatch({
-    suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
-      optimize = FALSE, fit = FALSE)))
-    NA_character_
-  }, error = function(e) conditionMessage(e))
-  expect_match(told, "cannot sample missing TI predictor")
-  expect_match(told, "Impute them before fitting", fixed = TRUE)
-  expect_match(told, "backend='stan'", fixed = TRUE)
-
-  # Complete data still prepares on the same path, so the refusal is about the
-  # missing cell and not about sampling with TI predictors at all.
-  dat$group[dat$id == 3] <- .5
-  prepared <- suppressMessages(ctFit(dat, model, backend = "julia",
-    optimize = FALSE, fit = FALSE))
-  expect_equal(as.numeric(prepared$tipred_data), c(-1, 2, .5))
-})
+# A missing TI predictor -- imputed on the optimising path, sampled or refused
+# on the sampling one -- is test-julia-tipred-missing.R's, which holds every
+# test of it, the fit on the optimising path included.
 
 test_that("Julia preparation expands individual differences into static states", {
   model <- ctModel(
@@ -413,38 +321,6 @@ test_that("Julia preparation rejects non-constant TI predictors", {
     suppressMessages(ctFit(dat, model, backend = "julia", fit = FALSE)),
     "constant within subject"
   )
-})
-
-# The julia counterpart of test-knownFits.R's `anomauth`: the same data, the
-# same model, and the same reference -2LL. It was gated on CTSEM_RUN_JULIA_E2E
-# and nothing anywhere set that variable, so it had never run. The gate was
-# inherited from the version before it, which needed CTSEM_JULIA_PROJECT to
-# point at an out-of-tree julia project; the engine is vendored now and no such
-# prerequisite exists, so `skip_without_julia()` is the whole of it. Costs
-# ~12 s once the julia session is warm.
-test_that("Julia completes a full AnomAuth optimization", {
-  skip_without_julia()
-
-  data(AnomAuth, package = "ctsem")
-  model <- ctModel(LAMBDA = diag(2), n.latent = 2, n.manifest = 2,
-    MANIFESTVAR = diag(0, 2), Tpoints = 5)
-  model$pars$indvarying <- FALSE
-  dat <- ctDeintervalise(ctWideToLong(AnomAuth, Tpoints = model$Tpoints,
-    n.manifest = 2))
-
-  set.seed(20260820)
-  fit <- suppressMessages(ctFit(dat, model, backend = "julia", optimize = TRUE,
-    savescores = FALSE, cores = 1))
-  expect_s3_class(fit, "ctJuliaFit")
-  expect_true(is.finite(fit$estimate$loglik))
-  expect_true(fit$optim$converged)
-  # The stan fit of this model pins -2LL at 23415.929 (test-knownFits.R). On
-  # the first run of this test the julia optimum matched that to 2e-9
-  # relative, so the bound below is a regression pin with headroom rather than
-  # a recording of what julia happens to do: a value near it means the two
-  # backends have drifted apart.
-  expect_equal(-2 * as.numeric(fit$estimate$loglik), 23415.929,
-    tolerance = 1e-5)   # allows 0.23 of 23415.9; observed difference 4.8e-5
 })
 
 # Row 1 used to build the manifest covariance before the update-group transform
@@ -755,15 +631,10 @@ test_that("a cache stamped with another Julia session is dropped rather than use
 
 test_that("a model whose Julia session has ended is rebuilt, not reported as a dead reference", {
   skip_without_julia()
-  model <- suppressWarnings(ctModel(
-    type = "ct", LAMBDA = diag(1),
-    DRIFT = matrix("drift", 1, 1), DIFFUSION = matrix("diffusion", 1, 1),
-    MANIFESTVAR = matrix("residual", 1, 1), MANIFESTMEANS = matrix(0, 1, 1),
-    T0VAR = matrix(1, 1, 1), T0MEANS = matrix(0, 1, 1)))
-  set.seed(4)
-  data <- data.frame(id = rep(1:3, each = 4), time = rep(0:3, 3),
-    Y1 = stats::rnorm(12, 0, .5))
-  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
+  # The model the package image has compiled (helper-julia.R): the Julia this
+  # test starts has compiled nothing else, and the subject is the session.
+  spec <- suppressMessages(ctFit(image_data(nsub = 3L, nobs = 4L, seed = 4L),
+    image_model(), backend = "julia", fit = FALSE))
   raw <- rep(0, ctsem:::.ctBackendNpar(spec))
 
   value <- suppressMessages(ctJuliaEvaluate(spec, raw, gradient = FALSE)$value)
@@ -789,15 +660,10 @@ test_that("a model whose Julia session has ended is rebuilt, not reported as a d
 
 test_that("a call into a Julia process that has died errors by name, and the next starts afresh", {
   skip_without_julia()
-  model <- suppressWarnings(ctModel(
-    type = "ct", LAMBDA = diag(1),
-    DRIFT = matrix("drift", 1, 1), DIFFUSION = matrix("diffusion", 1, 1),
-    MANIFESTVAR = matrix("residual", 1, 1), MANIFESTMEANS = matrix(0, 1, 1),
-    T0VAR = matrix(1, 1, 1), T0MEANS = matrix(0, 1, 1)))
-  set.seed(4)
-  data <- data.frame(id = rep(1:3, each = 4), time = rep(0:3, 3),
-    Y1 = stats::rnorm(12, 0, .5))
-  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
+  # The model the package image has compiled (helper-julia.R): the Julia this
+  # test starts has compiled nothing else, and the subject is the session.
+  spec <- suppressMessages(ctFit(image_data(nsub = 3L, nobs = 4L, seed = 4L),
+    image_model(), backend = "julia", fit = FALSE))
   raw <- rep(0, ctsem:::.ctBackendNpar(spec))
   value <- suppressMessages(ctJuliaEvaluate(spec, raw, gradient = FALSE)$value)
 
