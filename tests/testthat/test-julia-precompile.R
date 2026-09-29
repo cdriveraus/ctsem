@@ -189,3 +189,85 @@ test_that("a fresh session's first fit of a precompiled model compiles almost no
     "engine methods compiled in the first fit (%d, %.1f s of compile in all)",
     sum(engine), sum(ms, na.rm = TRUE) / 1000))
 })
+
+# The engine's numbers from its package image, and from the same source built
+# without the workload -- so compiled in the session -- at the points the
+# workload was captured at: value, gradient and exact Hessian of every captured
+# model. The image carries compiled code and module state from the process
+# that built it, and nothing else checks that they compute what the source
+# says (review/ENGINE-image-state-2026-09-29.md, F6). `mutate` edits the
+# second copy's source, which is how the check was shown to fail when the two
+# differ; the test itself never passes one.
+.image_vs_session <- function(mutate = NULL) {
+  julia <- file.path(ctsem:::.ctJuliaBin(), ctsem:::.ctJuliaExeName())
+  script <- normalizePath(testthat::test_path("image-vs-session.jl"), winslash = "/")
+  image_env <- ctsem:::.ctJuliaEnvDir()
+  # R's LD_LIBRARY_PATH (R's own and the system's libraries) is unset, as
+  # JuliaConnectoR does for its Julia: with it, Julia's precompile workers load
+  # the wrong libraries and die with a segmentation fault (Linux).
+  run <- function(project, out, env = character()) {
+    withr::with_envvar(c(LD_LIBRARY_PATH = NA, env), suppressWarnings(system2(julia, c("--startup-file=no",
+      shQuote(script), shQuote(normalizePath(project, winslash = "/")), shQuote(out)),
+      stdout = TRUE, stderr = TRUE)))
+    if (file.exists(out)) readLines(out, warn = FALSE) else character()
+  }
+  from_image <- run(image_env, tempfile("image", fileext = ".txt"))
+  # A copy at another path is another cache entry, and with its own depot
+  # first it neither takes one of the user's image slots nor is found by a
+  # later session of this source. The session's own depots follow, where the
+  # packages and the dependencies' images are: an empty entry would add only
+  # Julia's bundled depots, not the user's, and nothing would load.
+  copy <- file.path(tempfile("ctsem-session-engine"), "engine")
+  dir.create(copy, recursive = TRUE)
+  file.copy(list.files(ctsem:::.ctJuliaEnginePath(), full.names = TRUE), copy,
+    recursive = TRUE)
+  if (!is.null(mutate)) mutate(copy)
+  depot <- tempfile("ctsem-depot")
+  dir.create(depot)
+  depots <- as.character(ctsem:::.ctJuliaEval(sprintf("join(DEPOT_PATH, %s)",
+    deparse(.Platform$path.sep))))
+  from_session <- run(copy, tempfile("session", fileext = ".txt"),
+    c(CTSEM_PRECOMPILE_WORKLOAD = "false", JULIA_DEPOT_PATH = paste(
+      normalizePath(depot, winslash = "/"), depots, sep = .Platform$path.sep)))
+  list(image = from_image, session = from_session)
+}
+.image_vs_session_diff <- function(lines) {
+  parse <- function(x) {
+    x <- x[!startsWith(x, "workload") & x != "done"]
+    keys <- sub("^(\\S+ \\S+ \\S+) .*$", "\\1", x)
+    stats::setNames(lapply(sub("^\\S+ \\S+ \\S+ ", "", x),
+      function(v) as.numeric(strsplit(v, " ", fixed = TRUE)[[1]])), keys)
+  }
+  a <- parse(lines$image); b <- parse(lines$session)
+  keys <- union(names(a), names(b))
+  vapply(keys, function(k) {
+    if (is.null(a[[k]]) || is.null(b[[k]]) || length(a[[k]]) != length(b[[k]])) return(Inf)
+    max(abs(a[[k]] - b[[k]])) / max(1, max(abs(a[[k]])))
+  }, numeric(1))
+}
+
+test_that("the package image computes what the engine compiled in the session computes", {
+  skip_without_julia()
+  # Needs its own engine build, a workload-free one in a temporary depot (8 s
+  # on dev1), and then compiles every captured model's value, gradient and
+  # Hessian in that session (about 8.5 minutes). Nothing cheaper sees the
+  # image's code at all: every other test of a fit runs whatever the image
+  # holds, and a workload-free engine has to be a second build.
+  skip_unless_slow("building a workload-free engine to compare the image with")
+  enabled <- tryCatch(isTRUE(ctsem:::.ctJuliaEval(
+    "ContinuousTimeSEM._PRECOMPILE_WORKLOAD_ENABLED")), error = function(e) NA)
+  skip_if(!isTRUE(enabled), "the engine image was built without the workload")
+  lines <- .image_vs_session()
+  expect_identical(tail(lines$image, 1), "done", label = paste(c("the image run finished",
+    tail(lines$image, 5)), collapse = "\n"))
+  expect_identical(tail(lines$session, 1), "done", label = "the workload-free run finished")
+  expect_identical(lines$image[1], "workload true")
+  expect_identical(lines$session[1], "workload false")
+  diffs <- .image_vs_session_diff(lines)
+  expect_gt(length(diffs), 20)
+  # Rounding differences are allowed for (the image's code is built for the
+  # CPU targets the system image lists, the session's for this CPU); anything
+  # the source actually changes is orders of magnitude above this.
+  expect_lt(max(diffs), 1e-8, label = paste("largest relative difference, at",
+    names(diffs)[which.max(diffs)]))
+})
