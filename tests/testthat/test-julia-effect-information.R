@@ -259,6 +259,41 @@ test_that("AnomAuth's random drift is weakly informed and its random intercept i
     fixed = TRUE)
 })
 
+test_that("at a reduced rank each effect is measured alone, not by the dimension it shares", {
+  skip_without_julia()
+  # A rank-1 covariance over the same two effects, at a point where the one
+  # dimension is mostly the intercept -- the pattern of gD1 refitted with
+  # poprank = 1, whose drift read its intercept's information while the exact
+  # profile of its loading stayed within 1.2 nats from -1.5 to 1.5. The
+  # engine's share there is the dimension's, well informed through the
+  # intercept; the drift's own groups say almost nothing about it.
+  spec <- suppressWarnings(suppressMessages(ctFit(.ei_anom_data(),
+    .ei_anom_model(), backend = "julia", intoverpop = "laplace", poprank = 1L,
+    fit = FALSE)))
+  npar <- ctsem:::.ctBackendNpar(spec)
+  names <- ctsem:::.ctBackendRawParameterNames(list(model_spec = spec), npar)
+  at <- c(t0m = 0.2584, drift = 3.9345, diff_anom = -2.0670,
+    mvarY1 = -1.1698, cint = 0.0071, T0var_anom = -0.9870,
+    poploading_drift_dim1 = 0.05, poploading_cint_dim1 = 0.3)
+  expect_setequal(names, names(at))
+  record <- ctsem:::.ctEffectInformation(spec, at[names], point = "x")
+  table <- record$table
+  drift <- table[table$effect == "drift", ]
+  cint <- table[table$effect == "cint", ]
+  # The shared dimension reads well informed for both...
+  expect_gt(drift$dimension, 0.5)
+  # ...but the drift alone, even raised to the starting spread, is not.
+  expect_lt(drift$referenceinformation, ctsem:::.ctEffectThresholds()$information)
+  expect_true(drift$weak)
+  expect_false(cint$weak)
+  expect_gt(cint$information, ctsem:::.ctEffectThresholds()$information)
+  advice <- ctsem:::.ctEffectAdvice(record)
+  expect_length(advice, 1L)
+  expect_match(advice, "in a rank-1 covariance, varying alone", fixed = TRUE)
+  # Rank 1 is as low as it goes: only the switch is offered.
+  expect_match(advice, "Consider indvarying = FALSE for drift.", fixed = TRUE)
+})
+
 test_that("a fit takes it at its estimate, keeps it, and says nothing when every effect is informed", {
   skip_without_julia()
   messages <- character()

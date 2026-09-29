@@ -104,6 +104,7 @@
   table$reference <- NA_real_
   table$referenceinformation <- NA_real_
   table$referencesd <- NA_real_
+  table <- .ctEffectAlone(spec, values, table)
   # Effects whose population sd is below the starting spread, whose sd is a
   # coordinate with the standard transform (raw zero is that spread there),
   # and whose information at the estimate would flag them.
@@ -205,6 +206,73 @@
   if (!length(rows)) return(NULL)
   list(table = do.call(rbind, rows), groups = groups, mins = mins,
     route = if (laplace) "laplace" else "augmented")
+}
+
+# A reduced-rank level, one effect at a time.
+#
+# There the engine's shares are of the level's shared dimensions: every
+# effect loading on one dimension gets that dimension's share, so an effect
+# whose own groups' data say nothing about it reads the information of the
+# effect it shares a dimension with. Measured with `poprank = 1`
+# (dev1, juliaFit 8f99b336, 2026-09-29): gD1's drift read 27.6, its
+# intercept's, while the exact profile of its loading (every other coordinate
+# re-maximised by the quadrature continuation, scored by the bench's
+# reference) stayed within 1.2 nats over loadings of -1.5 to 1.5 against a
+# reported standard error of 0.29.
+#
+# So each effect is measured as if it alone varied: the other rows of its
+# level's loading matrix set to zero, its own row as fitted, so its share is
+# its own groups' information at its own sd. Below the starting spread, and
+# failing there, it is measured again with its row raised to that spread on
+# the first dimension -- the full-rank rule's second point, a loading's raw
+# value being an sd in sdscale units. The dimension's own share is kept as
+# `dimension`. One engine pass per effect, and one more per raise, on
+# reduced-rank levels only.
+#' @keywords internal
+.ctEffectAlone <- function(spec, values, table) {
+  levels <- spec$laplace$levels
+  if (!length(levels)) return(table)
+  bar <- .ctEffectThresholds()$information
+  spread <- log1p(exp(-1))
+  for (lv in levels) {
+    index <- as.integer(lv$load_index)
+    k <- as.integer(lv$nrandom)
+    r <- as.integer(.ctJuliaOr(lv$rank, k))
+    if (!length(index) || !k || r >= k) next
+    # Row p of the loading matrix holds the entries for dimensions 1 to
+    # min(p, r), laid out dimension by dimension (`_laplace_poploading`).
+    rows <- vector("list", k)
+    slot <- 0L
+    for (q in seq_len(r)) for (p in seq(q, k)) {
+      slot <- slot + 1L
+      rows[[p]] <- c(rows[[p]], index[slot])
+    }
+    for (j in seq_len(k)) {
+      i <- which(table$level == as.character(lv$name) &
+        table$effect == as.character(lv$param[j]))
+      if (length(i) != 1L) next
+      alone <- values
+      for (p in setdiff(seq_len(k), j)) alone[rows[[p]]] <- 0
+      own <- .ctEffectEvaluate(spec, alone)
+      if (is.null(own) || nrow(own$table) != nrow(table)) next
+      if (is.null(table$dimension)) table$dimension <- NA_real_
+      table$dimension[i] <- table$determined[i]
+      for (column in c("determined", "information", "widened")) {
+        table[[column]][i] <- own$table[[column]][i]
+      }
+      if (isTRUE(table$information[i] >= bar) ||
+        sqrt(sum(values[rows[[j]]]^2)) >= spread) next
+      raised <- alone
+      raised[rows[[j]]] <- 0
+      raised[rows[[j]][1L]] <- spread
+      again <- .ctEffectEvaluate(spec, raised)
+      if (is.null(again) || nrow(again$table) != nrow(table)) next
+      table$reference[i] <- again$table$determined[i]
+      table$referenceinformation[i] <- again$table$information[i]
+      table$referencesd[i] <- again$table$popsd[i]
+    }
+  }
+  table
 }
 
 # The subject level's name, as `poprank` and the records call it.
@@ -355,6 +423,32 @@
 # collapsed drift sd instead, where the rule fires; a fit that ended at one of
 # those maxima would not be flagged.
 #
+# At a reduced-rank level the same rule is taken per effect as if it alone
+# varied (`.ctEffectAlone()`). Measured on refits with poprank below full
+# (dev1, juliaFit 8f99b336, one thread, default starts), against the exact
+# profile of the effect's loading -- every other coordinate re-maximised by
+# the quadrature continuation, scored by the bench's softcut reference:
+#
+#   cell (rank)       effect  loading   alone [at spread]   profile          fit's se
+#   gD1 (1)           drift   -0.010    0.21*               within 1.2 nats
+#                                                           over -1.5..1.5   0.29
+#   gD3 (1)           drift    0.30     1.36*               zero 1.31 below,
+#                                                           1.92 at ~0.9     0.20
+#   gA14 (2)          drift   (-0.17,   22.2                zero 4.4 below   0.26
+#                              -0.69)
+#   the intercepts and gA14's T0MEANS: 27.6 to 794 alone -- silent
+#
+# Flagged: gD1's and gD3's drift, whose profiles do not exclude zero; silent
+# on gA14's, which excludes it by 4.4 nats. The dimension's share would have
+# read 27.6 and 39.3 for gD1's and gD3's drift: silent on both.
+#
+# Missed: AnomAuth refitted with poprank = 1, whose drift loading ends at
+# -0.91 (S1) and 1.65 (S2) with standard errors of 0.04 and 0.03 while the
+# exact profile on S1 is flat to 0.007 nats for loadings from -0.6 to 0.6 and
+# within 1.2 over -1.5 to 1.5. Alone, at those loadings, the drift reads 7.1
+# and 8.6, because the fits end where the Laplace objective sits 17 nats above
+# the quadrature -- the spurious-maximum blind spot above -- and both fits
+# report `notmaximum`. At the starting spread it reads 0.21 and 0.011.
 #' @keywords internal
 .ctEffectThresholds <- function() list(information = 2)
 
@@ -387,7 +481,10 @@
   referencesd <- column("referencesd")
   information <- column("information")
   levels <- unique(table$level)
-  poprank <- .ctEffectPoprank(effects[["ranks"]], table, weak,
+  ranks <- effects[["ranks"]]
+  if (!is.data.frame(ranks)) ranks <- data.frame(level = character(),
+    effects = integer(), rank = integer())
+  poprank <- .ctEffectPoprank(ranks, table, weak,
     multilevel = length(levels) > 1L)
   vapply(weak, function(i) {
     row <- table[i, ]
@@ -406,6 +503,12 @@
       signif(referencesd[i], 2), " (estimated ", signif(row$popsd, 2), ")") else
       paste0("at its estimated raw-scale population sd of ",
         signif(row$popsd, 2))
+    # A reduced-rank level measures the effect alone (`.ctEffectAlone()`), and
+    # the rank is part of where that was.
+    rank <- ranks$rank[match(row$level, ranks$level)]
+    width <- ranks$effects[match(row$level, ranks$level)]
+    if (isTRUE(rank < width)) at <- paste0(at, " in a rank-", rank,
+      " covariance, varying alone")
     rests <- if (!is.finite(n) || n < 0.01) paste0("the ", row$groups, " ",
       units, if (raised) " would carry" else " carry", " almost no ",
       "information about it") else paste0("that sd ",
