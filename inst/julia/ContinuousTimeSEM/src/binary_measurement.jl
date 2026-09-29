@@ -1378,6 +1378,13 @@ The width counts too: under the seeded sweeps each number is already a dual of
 duals, and seeding all four thresholds of the bench's ord4 put a fifth of its
 gradient's samples on the rule's entry; seeding the two read made it about
 1.2x faster (local).
+
+The one chunk is seeded by hand (`_ctsem_nested_seed`, under the nested tag
+for the reason given there) with its width a type parameter of
+`_binary_moment_jacobian!`, one method per width an observation can read, rather
+than through `ForwardDiff.jacobian` with the width known only at run time: that
+allocated a config, the closure's result and a result matrix per call, over
+half of each call's allocation.
 """
 function _binary_moment_jacobian(a::T, b::T, y::Real, nodes, weights,
     thresholds, kind::Int) where {T}
@@ -1389,42 +1396,57 @@ function _binary_moment_jacobian(a::T, b::T, y::Real, nodes, weights,
         return (zero(T), zero(T), zero(T), J)
     end
     read = _extras_read(y, thresholds, kind)
-    at = Vector{T}(undef, 2 + length(read))
-    at[1] = a
-    at[2] = b
-    @inbounds for (c, i) in enumerate(read)
-        at[2 + c] = thresholds[i]
-    end
-    held = Ref{NTuple{3,T}}()
+    nread = length(read)
     # Nested: this runs inside the adjoint, which `ctsem_hessian` differentiates.
-    # `local`: a name the closure assigns that is also a local out here would be
-    # the enclosing one, boxed and dispatched at run time, as it once was here.
-    D = _ctsem_nested_jacobian(at, Val(2 + length(read))) do x
-        local τ, ℓ, μ1, σ2
-        τ = _as_scalar_type(eltype(x), thresholds)
-        @inbounds for (c, i) in enumerate(read)
-            τ[i] = x[2 + c]
-        end
-        ℓ, μ1, σ2 = _binary_moments(x[1], sqrt(x[2]), y, nodes, weights, τ,
-            kind)
-        held[] = (ForwardDiff.value(ℓ), ForwardDiff.value(μ1),
-            ForwardDiff.value(σ2))
-        return [ℓ, μ1, σ2]
-    end::Matrix{T}
-    logZ, m, v = held[]
-    if !isfinite(logZ)
+    logZ, m, v, finite = nread == 0 ?
+        _binary_moment_jacobian!(J, a, b, y, nodes, weights, thresholds, kind,
+            read, Val(2)) :
+        nread == 1 ?
+        _binary_moment_jacobian!(J, a, b, y, nodes, weights, thresholds, kind,
+            read, Val(3)) :
+        nread == 2 ?
+        _binary_moment_jacobian!(J, a, b, y, nodes, weights, thresholds, kind,
+            read, Val(4)) :
+        _binary_moment_jacobian!(J, a, b, y, nodes, weights, thresholds, kind,
+            read, Val(2 + nread))
+    if !finite
         J[2, 1] = one(T)
         J[3, 2] = one(T)
         return (T(-Inf), m, v, J)
     end
+    return (logZ, m, v, J)
+end
+
+"""
+    _binary_moment_jacobian!(J, a, b, y, nodes, weights, thresholds, kind, read,
+        Val(N))
+
+`_binary_moment_jacobian`'s evaluation at one width, `N = 2 + length(read)`:
+the moments' values, whether `logZ` is finite, and where it is their partials
+written into `J`.
+"""
+function _binary_moment_jacobian!(J::Matrix{T}, a::T, b::T, y::Real, nodes,
+    weights, thresholds, kind::Int, read::UnitRange{Int}, ::Val{N}) where {T,N}
+    S = ForwardDiff.Dual{ForwardDiff.Tag{CTSEMNestedTag,T},T,N}
+    τ = _as_scalar_type(S, thresholds)
+    @inbounds for (c, i) in enumerate(read)
+        τ[i] = _ctsem_nested_seed(convert(T, thresholds[i]), 2 + c, Val(N))
+    end
+    ℓ, μ1, σ2 = _binary_moments(_ctsem_nested_seed(a, 1, Val(N)),
+        sqrt(_ctsem_nested_seed(b, 2, Val(N))), y, nodes, weights, τ, kind)
+    moments = (convert(S, ℓ), convert(S, μ1), convert(S, σ2))
+    logZ = ForwardDiff.value(moments[1])
+    m = ForwardDiff.value(moments[2])
+    v = ForwardDiff.value(moments[3])
+    isfinite(logZ) || return (logZ, m, v, false)
     @inbounds for r in 1:3
-        J[r, 1] = D[r, 1]
-        J[r, 2] = D[r, 2]
+        J[r, 1] = ForwardDiff.partials(moments[r], 1)
+        J[r, 2] = ForwardDiff.partials(moments[r], 2)
         for (c, i) in enumerate(read)
-            J[r, 2 + i] = D[r, 2 + c]
+            J[r, 2 + i] = ForwardDiff.partials(moments[r], 2 + c)
         end
     end
-    return (logZ, m, v, J)
+    return (logZ, m, v, true)
 end
 
 """
