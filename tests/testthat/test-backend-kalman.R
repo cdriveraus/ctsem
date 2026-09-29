@@ -129,12 +129,13 @@ test_that("tracing does not change the filter", {
   expect_equal(traced$llrow[missingrow], 0)
 })
 
-test_that("ctKalmanArray matches Stan through the whole R path", {
-  skip_if_not_installed("rstan")
-  skip_without_julia()
+# The stan and julia fits the two whole-R-path comparisons below share. Both
+# compare the filters with the julia fit placed at stan's estimate, so where
+# either optimiser stopped does not enter; they were fitted twice, identically,
+# and are fitted once now (`fit_cached()`, helper-julia.R).
+.kalman_indvar_fits <- function() fit_cached("kalman_indvar_fits", {
   model <- .kalman_indvar_model()
   data <- .kalman_indvar_data()
-
   stan_fit <- suppressMessages(ctFit(data, model, backend = "stan", optimize = TRUE,
     optimcontrol = list(carefulfit = FALSE, stochastic = FALSE, finishsamples = 10),
     cores = 1, verbose = 0))
@@ -145,6 +146,21 @@ test_that("ctKalmanArray matches Stan through the whole R path", {
     intoverpop = "augmented"))
   # Compare the filters, not the optimizers: run both at Stan's estimate.
   julia_fit$estimate$raw <- stan_fit$stanfit$rawest
+  list(stan = stan_fit, julia = julia_fit)
+})
+
+# The linear model's julia fit, which removeObs and ctPredictTIP's refusal both
+# read. Fitted once, as above.
+.kalman_linear_fit <- function() fit_cached("kalman_linear_fit",
+  suppressMessages(ctFit(.kalman_linear_data(), .kalman_linear_model(),
+    backend = "julia", verbose = 0)))
+
+test_that("ctKalmanArray matches Stan through the whole R path", {
+  skip_if_not_installed("rstan")
+  skip_without_julia()
+  fits <- .kalman_indvar_fits()
+  stan_fit <- fits$stan
+  julia_fit <- fits$julia
 
   stan <- suppressMessages(ctKalmanArray(stan_fit, subjects = seq_len(10),
     standardisederrors = TRUE))
@@ -174,15 +190,10 @@ test_that("ctKalmanArray matches Stan through the whole R path", {
 test_that("ctPredict interpolates a time grid the same way Stan does", {
   skip_if_not_installed("rstan")
   skip_without_julia()
-  model <- .kalman_indvar_model()
   data <- .kalman_indvar_data()
-  stan_fit <- suppressMessages(ctFit(data, model, backend = "stan", optimize = TRUE,
-    optimcontrol = list(carefulfit = FALSE, stochastic = FALSE, finishsamples = 10),
-    cores = 1, verbose = 0))
-  # Augmented by name, for the reason given in the ctKalmanArray test above.
-  julia_fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0,
-    intoverpop = "augmented"))
-  julia_fit$estimate$raw <- stan_fit$stanfit$rawest
+  fits <- .kalman_indvar_fits()
+  stan_fit <- fits$stan
+  julia_fit <- fits$julia
 
   stan <- suppressMessages(ctPredict(stan_fit, subjects = 4, timestep = .3))
   julia <- suppressMessages(ctPredict(julia_fit, subjects = 4, timestep = .3))
@@ -305,9 +316,7 @@ test_that("on the default route only the varying subject matrices vary", {
 
 test_that("removeObs withholds observations without withholding covariates", {
   skip_without_julia()
-  model <- .kalman_linear_model()
-  data <- .kalman_linear_data()
-  fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
+  fit <- .kalman_linear_fit()
 
   kept <- suppressMessages(ctKalmanArray(fit, subjects = "all"))
   withheld <- suppressMessages(ctKalmanArray(fit, subjects = "all", removeObs = TRUE))
@@ -552,56 +561,13 @@ test_that("ctPredictTIP builds its covariate grid on a backend fit", {
 
   # A model without TI predictors is refused by name rather than failing
   # somewhere inside the grid construction.
-  plain <- suppressMessages(ctFit(.kalman_linear_data(), .kalman_linear_model(),
-    backend = "julia", verbose = 0))
+  plain <- .kalman_linear_fit()
   expect_error(ctPredictTIP(plain, plot = FALSE), "no time independent predictors")
 })
 
-test_that("prediction warns for an intoverstates=FALSE julia fit, as Stan's does", {
-  skip_without_julia()
-  # The smallest intoverstates=FALSE julia fit already used in the suite
-  # (tests/testthat/test-julia-intoverstates.R, "a fit over the joint density
-  # runs and carries its trajectory"), reused here rather than built fresh: a
-  # state-explicit fit's point estimate is the mode of the joint density of
-  # states and data, not of the marginal the Kalman filter below computes, so
-  # filtering through it looks like an ordinary result and is not one.
-  model <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 2,
-    n.manifest = 3, manifestNames = c("o1", "b1", "c1"),
-    latentNames = c("eta1", "eta2"),
-    manifesttype = c(2L, 1L, 3L), ncategories = c(4L, 0L, 0L),
-    LAMBDA = matrix(c(1, 0, 1, 0, 0, 1), 3, 2, byrow = TRUE),
-    DRIFT = matrix(c(-0.4, 0.25, -0.15, -0.7), 2, 2, byrow = TRUE),
-    DIFFUSION = diag(1, 2), T0VAR = diag(1, 2),
-    T0MEANS = matrix(0, 2, 1), CINT = matrix(0, 2, 1),
-    MANIFESTVAR = diag(0, 3),
-    MANIFESTMEANS = matrix(c(0, 0, 0.8), 3, 1), Tpoints = 10)))
-  rows <- model$pars$matrix %in% "THRESHOLDS" & model$pars$row %in% 1L
-  model$pars$value[rows] <- c(-1, 1, 1)[model$pars$col[rows]]
-  model$pars$indvarying <- FALSE
-  set.seed(2)
-  data <- data.frame(suppressMessages(ctGenerate(model, n.subjects = 12,
-    Tpoints = 8, backend = "julia", intoverstates = FALSE)))
-
-  fitmodel <- suppressWarnings(suppressMessages(ctModel(type = "ct",
-    n.latent = 2, n.manifest = 3, manifestNames = c("o1", "b1", "c1"),
-    latentNames = c("eta1", "eta2"), manifesttype = c(2L, 1L, 3L),
-    ncategories = c(4L, 0L, 0L),
-    LAMBDA = matrix(c(1, 0, 1, 0, 0, 1), 3, 2, byrow = TRUE),
-    T0MEANS = matrix(0, 2, 1), CINT = matrix(0, 2, 1),
-    MANIFESTVAR = diag(0, 3),
-    MANIFESTMEANS = matrix(c(0, 0, "cmean"), 3, 1), Tpoints = 8)))
-  fitmodel$pars$indvarying <- FALSE
-
-  fit <- suppressWarnings(suppressMessages(ctFit(data, fitmodel,
-    backend = "julia", intoverstates = FALSE, verbose = 0,
-    optimcontrol = list(estonly = TRUE))))
-  expect_identical(fit$args$resolved$intoverstates, FALSE)
-
-  expect_warning(suppressMessages(ctPredict(fit, subjects = 1)),
-    "system noise represents prior")
-  expect_warning(suppressMessages(ctKalman(fit, subjects = 1)),
-    "system noise represents prior")
-})
+# That prediction warns for an intoverstates=FALSE julia fit, as Stan's does,
+# is asserted in test-julia-intoverstates.R, on the joint-density fit that file
+# already makes; it was fitted a second time here, identically, to ask it.
 
 # How the fit represents and integrates its random effects -------------------
 #
