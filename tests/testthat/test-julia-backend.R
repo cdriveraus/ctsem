@@ -631,15 +631,10 @@ test_that("a cache stamped with another Julia session is dropped rather than use
 
 test_that("a model whose Julia session has ended is rebuilt, not reported as a dead reference", {
   skip_without_julia()
-  model <- suppressWarnings(ctModel(
-    type = "ct", LAMBDA = diag(1),
-    DRIFT = matrix("drift", 1, 1), DIFFUSION = matrix("diffusion", 1, 1),
-    MANIFESTVAR = matrix("residual", 1, 1), MANIFESTMEANS = matrix(0, 1, 1),
-    T0VAR = matrix(1, 1, 1), T0MEANS = matrix(0, 1, 1)))
-  set.seed(4)
-  data <- data.frame(id = rep(1:3, each = 4), time = rep(0:3, 3),
-    Y1 = stats::rnorm(12, 0, .5))
-  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
+  # The model the package image has compiled (helper-julia.R): the Julia this
+  # test starts has compiled nothing else, and the subject is the session.
+  spec <- suppressMessages(ctFit(image_data(nsub = 3L, nobs = 4L, seed = 4L),
+    image_model(), backend = "julia", fit = FALSE))
   raw <- rep(0, ctsem:::.ctBackendNpar(spec))
 
   value <- suppressMessages(ctJuliaEvaluate(spec, raw, gradient = FALSE)$value)
@@ -665,15 +660,10 @@ test_that("a model whose Julia session has ended is rebuilt, not reported as a d
 
 test_that("a call into a Julia process that has died errors by name, and the next starts afresh", {
   skip_without_julia()
-  model <- suppressWarnings(ctModel(
-    type = "ct", LAMBDA = diag(1),
-    DRIFT = matrix("drift", 1, 1), DIFFUSION = matrix("diffusion", 1, 1),
-    MANIFESTVAR = matrix("residual", 1, 1), MANIFESTMEANS = matrix(0, 1, 1),
-    T0VAR = matrix(1, 1, 1), T0MEANS = matrix(0, 1, 1)))
-  set.seed(4)
-  data <- data.frame(id = rep(1:3, each = 4), time = rep(0:3, 3),
-    Y1 = stats::rnorm(12, 0, .5))
-  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
+  # The model the package image has compiled (helper-julia.R): the Julia this
+  # test starts has compiled nothing else, and the subject is the session.
+  spec <- suppressMessages(ctFit(image_data(nsub = 3L, nobs = 4L, seed = 4L),
+    image_model(), backend = "julia", fit = FALSE))
   raw <- rep(0, ctsem:::.ctBackendNpar(spec))
   value <- suppressMessages(ctJuliaEvaluate(spec, raw, gradient = FALSE)$value)
 
