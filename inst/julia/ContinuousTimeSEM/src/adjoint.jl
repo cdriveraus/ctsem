@@ -751,11 +751,15 @@ function ctsem_hessian(objective::CTSEMObjective, values::AbstractVector;
     n = length(x)
     n == 0 && return zeros(Float64, 0, 0)
     gradient_of = y -> ctsem_adjoint_gradient(objective, y).gradient
-    chunksize = chunk > 0 ? min(Int(chunk), n) : ForwardDiff.pickchunksize(n)
+    # The default width is bucketed so that a parameter count the session has
+    # not seen is not a new dual type; see `_CTSEM_HESSIAN_WIDTHS`.
+    chunk > 0 || return _ctsem_symmetrised(
+        _ctsem_width_jacobian(gradient_of, x, _CTSEM_HESSIAN_WIDTHS[]))
+    chunksize = min(Int(chunk), n)
     config = ForwardDiff.JacobianConfig(gradient_of, x, ForwardDiff.Chunk{chunksize}())
-    hessian = ForwardDiff.jacobian(gradient_of, x, config)
-    return (hessian .+ transpose(hessian)) ./ 2
+    return _ctsem_symmetrised(ForwardDiff.jacobian(gradient_of, x, config))
 end
+_ctsem_symmetrised(H::AbstractMatrix) = (H .+ transpose(H)) ./ 2
 
 export ctsem_hessian_forward
 """

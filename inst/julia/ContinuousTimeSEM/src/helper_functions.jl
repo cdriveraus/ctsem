@@ -390,6 +390,76 @@ _ctsem_nested_gradient(f, x::AbstractArray) = ForwardDiff.gradient(f, x,
     Val{false}())
 
 """
+Dual widths for the forward-mode Jacobians whose input length is a property of
+the model: the Hessian's (the parameter count) and the Laplace unit
+curvature's (the unit's random-effect dimension).
+
+`ForwardDiff.pickchunksize(n)` is `n` itself up to 12, and a dual width is a
+type, so every parameter count compiled the whole filter and reverse pass
+again: about 30 s on dev2 for one more free parameter on a model the session,
+or the package image, had already compiled. Rounding the width up to the next
+of a few buckets makes every count in a bucket one type. Above 12,
+`pickchunksize`'s width is rounded up the same way, which never adds a sweep.
+The extra lanes of a padded input are zero seeds on inputs the function
+ignores, so the result is the same Jacobian. An empty list restores
+`pickchunksize`. `ctsem_set_dual_widths!` sets both lists.
+"""
+const _CTSEM_HESSIAN_WIDTHS = Ref(Int[4, 8, 12])
+const _CTSEM_CURVATURE_WIDTHS = Ref(Int[4, 8, 12])
+
+export ctsem_set_dual_widths!
+function ctsem_set_dual_widths!(; hessian=nothing, curvature=nothing)
+    hessian === nothing || (_CTSEM_HESSIAN_WIDTHS[] = sort!(Int.(collect(hessian))))
+    curvature === nothing || (_CTSEM_CURVATURE_WIDTHS[] = sort!(Int.(collect(curvature))))
+    return (hessian = copy(_CTSEM_HESSIAN_WIDTHS[]),
+        curvature = copy(_CTSEM_CURVATURE_WIDTHS[]))
+end
+
+"""The width a forward-mode Jacobian over `n` inputs takes from `widths`."""
+function _ctsem_dual_width(n::Integer, widths::Vector{Int})
+    w0 = ForwardDiff.pickchunksize(n)
+    for w in widths
+        w >= w0 && return w
+    end
+    return w0
+end
+
+"""`f` applied to the first `n` entries of its input: the padded Jacobian's function."""
+struct _CTSEMLeading{F}
+    f::F
+    n::Int
+end
+(g::_CTSEMLeading)(y::AbstractVector) = g.f(length(y) == g.n ? y : y[1:g.n])
+
+"""
+    _ctsem_width_jacobian!(J, f, x, n, width)
+
+The Jacobian of `f` over the first `n` entries of `x`, by forward mode at
+`width` lanes a sweep, written into `J`, which has `length(x)` columns.
+`length(x)` is `max(n, width)`: when `width` exceeds `n`, the entries past `n`
+are padding, zero, and `J`'s columns past `n` come back zero. Always through
+`_CTSEMLeading`, padded or not, so one `f` has one tag type at every width.
+"""
+function _ctsem_width_jacobian!(J::AbstractMatrix, f::F, x::AbstractVector,
+    n::Integer, width::Integer) where {F}
+    g = _CTSEMLeading(f, Int(n))
+    cfg = ForwardDiff.JacobianConfig(g, x, ForwardDiff.Chunk{Int(width)}())
+    return ForwardDiff.jacobian!(J, g, x, cfg)
+end
+
+"""`ForwardDiff.jacobian(f, x)` at the width `widths` gives `length(x)`."""
+function _ctsem_width_jacobian(f::F, x::AbstractVector, widths::Vector{Int}) where {F}
+    n = length(x)
+    width = _ctsem_dual_width(n, widths)
+    width <= n && return ForwardDiff.jacobian(_CTSEMLeading(f, n), x,
+        ForwardDiff.JacobianConfig(_CTSEMLeading(f, n), x, ForwardDiff.Chunk{width}()))
+    xp = vcat(x, zeros(eltype(x), width - n))
+    J = ForwardDiff.jacobian(_CTSEMLeading(f, n), xp,
+        ForwardDiff.JacobianConfig(_CTSEMLeading(f, n), xp, ForwardDiff.Chunk{width}()))
+    return J[:, 1:n]
+end
+
+"""
     _ctsem_barrier(f, args...)
 
 Call `f(args...)` without letting inference look into `f`: the call dispatches
