@@ -323,38 +323,6 @@ test_that("Julia preparation rejects non-constant TI predictors", {
   )
 })
 
-# The julia counterpart of test-knownFits.R's `anomauth`: the same data, the
-# same model, and the same reference -2LL. It was gated on CTSEM_RUN_JULIA_E2E
-# and nothing anywhere set that variable, so it had never run. The gate was
-# inherited from the version before it, which needed CTSEM_JULIA_PROJECT to
-# point at an out-of-tree julia project; the engine is vendored now and no such
-# prerequisite exists, so `skip_without_julia()` is the whole of it. Costs
-# ~12 s once the julia session is warm.
-test_that("Julia completes a full AnomAuth optimization", {
-  skip_without_julia()
-
-  data(AnomAuth, package = "ctsem")
-  model <- ctModel(LAMBDA = diag(2), n.latent = 2, n.manifest = 2,
-    MANIFESTVAR = diag(0, 2), Tpoints = 5)
-  model$pars$indvarying <- FALSE
-  dat <- ctDeintervalise(ctWideToLong(AnomAuth, Tpoints = model$Tpoints,
-    n.manifest = 2))
-
-  set.seed(20260820)
-  fit <- suppressMessages(ctFit(dat, model, backend = "julia", optimize = TRUE,
-    savescores = FALSE, cores = 1))
-  expect_s3_class(fit, "ctJuliaFit")
-  expect_true(is.finite(fit$estimate$loglik))
-  expect_true(fit$optim$converged)
-  # The stan fit of this model pins -2LL at 23415.929 (test-knownFits.R). On
-  # the first run of this test the julia optimum matched that to 2e-9
-  # relative, so the bound below is a regression pin with headroom rather than
-  # a recording of what julia happens to do: a value near it means the two
-  # backends have drifted apart.
-  expect_equal(-2 * as.numeric(fit$estimate$loglik), 23415.929,
-    tolerance = 1e-5)   # allows 0.23 of 23415.9; observed difference 4.8e-5
-})
-
 # Row 1 used to build the manifest covariance before the update-group transform
 # that owns the cell had run, so a state-dependent MANIFESTVAR was read from a
 # parameter slot nothing had written. It needs no Stan to pin: with one

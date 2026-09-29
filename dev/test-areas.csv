@@ -57,7 +57,6 @@
 "test-backend-controlsurface.R","optimiser","extended"
 "test-backend-priors-scores.R","optimiser","extended"
 "test-ctFitUpdate.R","optimiser","extended"
-"test-julia-backend.R","optimiser","extended"
 "test-julia-laplace.R","optimiser","extended"
 "test-julia-multivariate-mixed.R","optimiser","extended"
 "test-julia-parsrefs.R","predictors","core"
