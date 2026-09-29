@@ -2231,7 +2231,8 @@ function _laplace_unit_curvature(laplace::CTSEMLaplaceObjective, U::Integer,
                 _laplace_scratch_vector!(laplace, S, length(uu), :curv_inner)
                 ).gradient
         end
-        A = ForwardDiff.jacobian(gradient_of, base)
+        # Bucketed width: see `_CTSEM_CURVATURE_WIDTHS`.
+        A = _ctsem_width_jacobian(gradient_of, base, _CTSEM_CURVATURE_WIDTHS[])
         dense = Matrix{T}(LinearAlgebra.I, length(u), length(u)) .-
             _laplace_symmetrise(A)
         return _laplace_block_of(dense, blocks)
@@ -2246,7 +2247,7 @@ function _laplace_unit_curvature(laplace::CTSEMLaplaceObjective, U::Integer,
         # `local` for the reason spelled out in `_laplace_seeded_unit_gradient!`:
         # a name assigned here that is also a local of the enclosing function
         # would be shared by every task, silently.
-        local block, columns, block_of, J, t, a, rows, xb
+        local block, columns, block_of, J, t, a, rows, xb, width, nx, Jw
         block = blocks[b]
         columns = (block.offset + 1):(block.offset + block.size)
         block_of = function (ub)
@@ -2275,13 +2276,21 @@ function _laplace_unit_curvature(laplace::CTSEMLaplaceObjective, U::Integer,
         # Computing the whole thing is unavoidable, since forward mode fills
         # every row of the dual result whether or not it is read; allocating
         # it repeatedly is not.
-        xb = _laplace_scratch_vector!(laplace, T, block.size, :curv_ub)
+        # At a bucketed width (see `_CTSEM_CURVATURE_WIDTHS`): a block smaller
+        # than its width is padded with zeros `block_of` never reads, and the
+        # padding's columns of the result are ignored.
+        width = _ctsem_dual_width(block.size, _CTSEM_CURVATURE_WIDTHS[])
+        nx = max(block.size, width)
+        xb = _laplace_scratch_vector!(laplace, T, nx, :curv_ub)
         @inbounds for (t, c) in enumerate(columns)
             xb[t] = base[c]
         end
-        J = _laplace_scratch_matrix!(laplace, T, length(base), block.size,
-            :curv_jac)
-        ForwardDiff.jacobian!(J, block_of, xb)
+        @inbounds for t in (block.size + 1):nx
+            xb[t] = zero(T)
+        end
+        Jw = _laplace_scratch_matrix!(laplace, T, length(base), nx, :curv_jac)
+        _ctsem_width_jacobian!(Jw, block_of, xb, block.size, width)
+        J = view(Jw, :, 1:block.size)
         # M = I - d2(sum ll)/du du, block by block.
         M.diag[b] .= .-(@view J[columns, :])
         @inbounds for t in 1:block.size
