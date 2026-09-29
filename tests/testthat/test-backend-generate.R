@@ -356,38 +356,17 @@ test_that("ctGenerateFromPriors() generates over a julia backend fit's own desig
 # at: not "does it error", but "does each subject's own random effect
 # actually reach the generated data".
 
-.laplace_generate_data <- function(nsub = 12L, tp = 6L, seed = 31L) {
-  set.seed(seed)
-  do.call(rbind, lapply(seq_len(nsub), function(i) {
-    intercept <- stats::rnorm(1, 0, 0.8)
-    state <- stats::rnorm(1, 0, 0.5)
-    y <- numeric(tp)
-    for (t in seq_len(tp)) {
-      state <- 0.75 * state + stats::rnorm(1, 0, 0.4)
-      y[t] <- state + intercept + stats::rnorm(1, 0, 0.3)
-    }
-    data.frame(id = i, time = seq_len(tp) - 1, Y1 = y)
-  }))
-}
-
-.laplace_generate_model <- function() {
-  model <- suppressWarnings(suppressMessages(ctModel(type = "ct",
-    manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1))))
-  model$pars$indvarying <- FALSE
-  model$pars$indvarying[match(TRUE, model$pars$matrix == "MANIFESTMEANS")] <- TRUE
-  model
-}
-
+# The fixture is `laplace_fixture()` (helper-julia.R), the fit
+# test-julia-sample.R samples from: one latent, a random manifest mean, the
+# Laplace route. It was written out here and fitted twice, identically.
 test_that("ctGenerateFromFit works on a Laplace fit and matches the augmented route", {
   skip_without_julia()
-  data <- .laplace_generate_data()
-  model <- .laplace_generate_model()
+  data <- laplace_fixture_data()
+  model <- laplace_fixture_model()
   nsub <- length(unique(data$id))
   tp <- sum(data$id == data$id[1])
 
-  fit_laplace <- suppressWarnings(suppressMessages(ctFit(data, model,
-    backend = "julia", cores = 1, intoverpop = "laplace", priors = TRUE,
-    optimcontrol = list(finishsamples = 20))))
+  fit_laplace <- laplace_fixture()
   fit_augmented <- suppressWarnings(suppressMessages(ctFit(data, model,
     backend = "julia", cores = 1, intoverpop = TRUE, priors = TRUE)))
 
@@ -434,11 +413,7 @@ test_that("ctGenerateFromFit works on a Laplace fit and matches the augmented ro
 
 test_that("the posterior predictive tools run on a Laplace backend fit", {
   skip_without_julia()
-  data <- .laplace_generate_data()
-  model <- .laplace_generate_model()
-  fit <- suppressWarnings(suppressMessages(ctFit(data, model, backend = "julia",
-    cores = 1, intoverpop = "laplace", priors = TRUE,
-    optimcontrol = list(finishsamples = 20))))
+  fit <- laplace_fixture()
 
   set.seed(7)
   generated <- ctGenerateFromFit(fit, nsamples = 10, cores = 1)
@@ -470,9 +445,9 @@ test_that("the posterior predictive tools run on a Laplace backend fit", {
 
 test_that("missingness survives Laplace-route generation unchanged", {
   skip_without_julia()
-  data <- .laplace_generate_data()
+  data <- laplace_fixture_data()
   data$Y1[c(3, 40)] <- NA
-  model <- .laplace_generate_model()
+  model <- laplace_fixture_model()
   fit <- suppressWarnings(suppressMessages(ctFit(data, model, backend = "julia",
     cores = 1, intoverpop = "laplace", priors = TRUE,
     optimcontrol = list(finishsamples = 20))))
