@@ -107,6 +107,13 @@ drift_model <- function(cint) {
     MANIFESTMEANS = 0, LAMBDA = matrix(1), DRIFT = "drift|-log1p_exp(-param)|TRUE"))
 }
 
+one_latent_model <- function() suppressMessages(ctModel(silent = TRUE, type = "ct",
+  LAMBDA = matrix(1), manifestNames = "Y1", latentNames = "eta1"))
+one_latent_data <- function() {
+  d <- sim_latent(16, 8, cints = rep(0, 16))
+  data.frame(id = d$id, time = d$time, Y1 = d$eta + stats::rnorm(nrow(d), 1, 0.5))
+}
+
 shapes <- list(
   # One latent, two Gaussian indicators, a random intercept.
   gaussian_augmented = list(route = "augmented", model = function() cint_model(c("y1", "y2"), 0L),
@@ -142,7 +149,16 @@ shapes <- list(
     data = drift_data),
   # The same with a free intercept and the default random initial mean.
   drift_cint_laplace = list(route = "laplace", model = function() drift_model("cint"),
-    data = drift_cint_data)
+    data = drift_cint_data),
+  # One latent and one indicator with the writer's defaults: the filter type
+  # the test suite compiled most often (44 files) and three vignettes compile,
+  # which none of the models above has. Without random effects on the augmented
+  # route (its Hessian), and with the default random T0MEANS and MANIFESTMEANS
+  # on the Laplace route, whose filter is the same type.
+  one_latent_fixed = list(route = "augmented", model = function() {
+    m <- one_latent_model(); m$pars$indvarying <- FALSE; m }, data = one_latent_data),
+  one_latent_laplace = list(route = "laplace", model = one_latent_model,
+    data = one_latent_data)
 )
 only <- Sys.getenv("CTSEM_PRECOMPILE_SHAPES", "")
 if (nzchar(only)) shapes <- shapes[strsplit(only, ",", fixed = TRUE)[[1]]]
