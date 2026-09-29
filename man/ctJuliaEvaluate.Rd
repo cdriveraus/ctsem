@@ -34,7 +34,9 @@ afterwards. This call used to run outside any ceiling, at the session's
 full thread width: harmless on its own, but it left the worker pool at
 full width behind it, which let unrelated later work -- an in-process
 sampler's chains among them -- run wider than its own \code{cores} asked
-for. See \code{.ctBackendWithMaxChunks()}.}
+for. See \code{.ctBackendWithMaxChunks()}. \code{NA} sets none and
+evaluates under the ceiling already in force, for a caller that has set
+one around a run of evaluations.}
 }
 \value{
 A list containing log likelihood and, when requested, gradient.
