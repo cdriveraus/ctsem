@@ -4,13 +4,18 @@
 #   tt("julia-backend")          # files matching a pattern
 #   tt_changed()                 # files for the R code you have edited
 #   tt_fast()                    # the quick tier
+#   tt_area("laplace")           # the core tests of the area a change touches
 #
-# Why a session rather than a script per file. The julia engine precompiles on
-# first use, about two minutes, and that cost is per R SESSION, not per file.
-# A loop of `Rscript -e 'test_file(...)'` calls pays it every time and spends
-# most of its wall clock there. Keeping one session and calling tt() repeatedly
-# pays it once. This is the single largest speedup available locally and it
-# needs no changes to any test.
+# Which to run. The whole suite is about four hours, so it is for a release or
+# a change that cuts across many areas, not for every change: run tt_fast()
+# and the core set of each area the change touches (tt_area(), listed in
+# dev/test-areas.csv), and add the area's extended set when the change is deep.
+#
+# Why a session rather than a script per file. Each R session loads the engine
+# and compiles every model shape its fits use that the package image does not
+# hold -- seconds for the structures the image captures, a minute or more for
+# the rest. A loop of `Rscript -e 'test_file(...)'` calls pays that for every
+# file; one session calling tt() repeatedly pays it once per shape.
 #
 # NOT_CRAN is set here because every julia test is skip_on_cran: without it a
 # run reports zero assertions and looks identical to a clean pass.
@@ -27,7 +32,7 @@ if (!requireNamespace("devtools", quietly = TRUE)) {
 # R CMD INSTALL when C++ genuinely changed.
 message("loading ctsem (compile = FALSE) ...")
 suppressMessages(devtools::load_all(".", compile = FALSE, quiet = TRUE))
-message("ready. tt('pattern'), tt_changed(), tt_fast()")
+message("ready. tt('pattern'), tt_changed(), tt_fast(), tt_area('area')")
 
 # Both separators. testthat collects anything matching `^test`, and one file is
 # spelled `test_behavGenNLcor.R`, so a glob of `test-*.R` alone left one of the
@@ -122,6 +127,44 @@ tt_fast <- function(max_secs = 20) {
   f <- intersect(tm$file[!is.na(tm$secs) & tm$secs <= max_secs], have)
   message(length(f), " file(s) under ", max_secs, "s")
   .tt_run(f)
+}
+
+#' The core tests for the areas a change touches.
+#'
+#' `dev/test-areas.csv` gives every test file one or more areas, and within
+#' each a tier: `core`, the files a change in that area runs, and `extended`,
+#' the rest of what bears on it, for a change that goes deep. Every file is in
+#' some area, so all areas at `extended = TRUE` is the whole suite. Called with
+#' no area, lists the areas and what each costs, from dev/test-timings.csv.
+#' The quick tier runs first unless `fast = FALSE`: it is about a minute and
+#' covers the specification code every area builds on.
+tt_area <- function(area = NULL, extended = FALSE, fast = TRUE) {
+  map <- utils::read.csv("dev/test-areas.csv", stringsAsFactors = FALSE)
+  tm <- if (file.exists("dev/test-timings.csv"))
+    utils::read.csv("dev/test-timings.csv", stringsAsFactors = FALSE) else NULL
+  minutes <- function(files) if (is.null(tm)) NA_real_ else
+    round(sum(tm$secs[match(files, tm$file)], na.rm = TRUE) / 60, 1)
+  if (is.null(area)) {
+    out <- do.call(rbind, lapply(unique(map$area), function(a) {
+      m <- map[map$area == a, ]
+      data.frame(area = a, core_files = sum(m$tier == "core"),
+        core_min = minutes(m$file[m$tier == "core"]),
+        extended_min = minutes(m$file))
+    }))
+    print(out, row.names = FALSE)
+    return(invisible(out))
+  }
+  unknown <- setdiff(area, map$area)
+  if (length(unknown)) stop("no such area: ", paste(unknown, collapse = ", "),
+    ". Areas: ", paste(unique(map$area), collapse = ", "))
+  m <- map[map$area %in% area & (extended | map$tier == "core"), ]
+  files <- intersect(.tt_files(), unique(m$file))
+  if (fast && !is.null(tm)) {
+    quick <- intersect(tm$file[!is.na(tm$secs) & tm$secs <= 20], .tt_files())
+    files <- union(quick, files)
+  }
+  message(length(files), " file(s), about ", minutes(files), " min by dev/test-timings.csv")
+  .tt_run(files)
 }
 
 #' Measure every file and write dev/test-timings.csv.
