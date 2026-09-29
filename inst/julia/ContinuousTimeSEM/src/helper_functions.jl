@@ -401,10 +401,18 @@ or the package image, had already compiled. Rounding the width up to the next
 of a few buckets makes every count in a bucket one type. Above 12,
 `pickchunksize`'s width is rounded up the same way, which never adds a sweep.
 The extra lanes of a padded input are zero seeds on inputs the function
-ignores, so the result is the same Jacobian. An empty list restores
-`pickchunksize`. `ctsem_set_dual_widths!` sets both lists.
+ignores, so the result is the same Jacobian. An empty list is `pickchunksize`.
+`ctsem_set_dual_widths!` sets both lists.
+
+The Hessian's list is empty by default: measured on dev1 (job H2), a padded
+lane costs 5-12% of a small model's Hessian, and a binary model's 5 parameters
+at width 8 cost 31% more (7.4 -> 9.8 ms; even buckets 2, 4, ..., 12: +8%, and
++12% for 7 Gaussian parameters at 8), so no bucketing both kept a Hessian
+within 10% and made every parameter count free. The curvature's buckets cost
+a Laplace evaluation 2% (one or two random effects, Gaussian) to 8% (one,
+ordinal) and make one to four random effects per unit a single type.
 """
-const _CTSEM_HESSIAN_WIDTHS = Ref(Int[4, 8, 12])
+const _CTSEM_HESSIAN_WIDTHS = Ref(Int[])
 const _CTSEM_CURVATURE_WIDTHS = Ref(Int[4, 8, 12])
 
 export ctsem_set_dual_widths!

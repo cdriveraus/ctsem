@@ -751,8 +751,8 @@ function ctsem_hessian(objective::CTSEMObjective, values::AbstractVector;
     n = length(x)
     n == 0 && return zeros(Float64, 0, 0)
     gradient_of = y -> ctsem_adjoint_gradient(objective, y).gradient
-    # The default width is bucketed so that a parameter count the session has
-    # not seen is not a new dual type; see `_CTSEM_HESSIAN_WIDTHS`.
+    # The default width is `pickchunksize`'s unless `ctsem_set_dual_widths!`
+    # asked for buckets; see `_CTSEM_HESSIAN_WIDTHS` for why not by default.
     chunk > 0 || return _ctsem_symmetrised(
         _ctsem_width_jacobian(gradient_of, x, _CTSEM_HESSIAN_WIDTHS[]))
     chunksize = min(Int(chunk), n)
