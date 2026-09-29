@@ -317,6 +317,7 @@ ctEBprogressReporter <- function(stage, total, enabled=TRUE){
     line <- sprintf('%s: %d/%d subjects (%d%%)', stage, done, total, pct)
     padding <- strrep(' ', max(0L, lastwidth - nchar(line)))
     message('\r', line, padding, appendLF=finished)
+    utils::flush.console()  # a GUI console shows an unfinished line only once flushed
     lastwidth <<- nchar(line)
     invisible(NULL)
   }
