@@ -713,18 +713,20 @@
 # stopping point, before the report shared this bar -- is the disagreement.
 #
 # The bar separates rounding from involvement, not large involvement from
-# small. Rounding leaks roughly `(eps * largest / gap)^2` into an identified
-# coordinate: below 1e-10 on every identified coordinate of the one-latent
-# model `.ctBackendIntervalCheck()` describes, and 1.4e-08 at most on the
-# parity fixture. Involvement is set by the shape of the flat set and moves as
+# small. An identified coordinate carries rounding's share, roughly
+# `(eps * largest / gap)^2`, or a trace of the ridge's pull on it: below 1e-10
+# on every identified coordinate of the one-latent model
+# `.ctBackendIntervalCheck()` describes, and 1.4e-08 at most on the parity
+# fixture. Involvement is set by the shape of the flat set and moves as
 # the optimiser walks along it, so a bar inside its spread is crossed by where
 # the fit stopped. Measured by following the parity fixture's ridge from the
-# full fit's estimate, re-optimising the other directions every half raw unit:
-# the weakest of its ten correlations carried 0.068 of the flat direction six
-# raw units one way, where the likelihood is flat to 2e-06, and 0.0013 three
-# and a half the other way, 4.8e-04 nats below; it first fell under this bar
-# four raw units along and 1.1e-03 nats below, far from where either fit
-# stopped (1.7e-05 nats apart). ctIdentify()'s freed-loading model says the
+# full fit's estimate, re-optimising the other directions every half raw unit
+# (Windows and dev2): the weakest of its ten correlations carried 0.066 to
+# 0.068 of the flat direction six raw units one way, where the likelihood is
+# flat to 3e-06, and 0.0011 to 0.0013 three and a half the other way, 4.8e-04
+# to 6.9e-04 nats below; it first fell under this bar four raw units along,
+# 1.1e-03 to 1.5e-03 nats below, far from where either fit stopped (2e-05
+# nats apart). ctIdentify()'s freed-loading model says the
 # same from the other side: T0var_eta1 is part of its scale trade-off and
 # carries 0.002 to 0.065 of the flat direction across the three evaluation
 # points -- never a third of the largest loading, and a norm over ctIdentify's
