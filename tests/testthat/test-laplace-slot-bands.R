@@ -53,9 +53,15 @@
 
 test_that("the parallel width does not change the objective or its gradient", {
   skip_without_julia()
-  fit <- suppressWarnings(suppressMessages(ctFit(.band_data(), .band_model(),
-    backend = "julia", intoverpop = "laplace", cores = 4, verbose = 0,
-    optimcontrol = list(estonly = TRUE, maxiter = 3))))
+  # A session is only as wide as the call that started it, and this needs four
+  # threads: at two, units split two ways and the members inside a unit never
+  # run in parallel, so the nested axis would go untested and still pass. So
+  # the fit restarts a narrower session rather than running at what it finds.
+  fit <- withr::with_options(list(ctsem.julia.restart = TRUE),
+    suppressWarnings(suppressMessages(ctFit(.band_data(), .band_model(),
+      backend = "julia", intoverpop = "laplace", cores = 4, verbose = 0,
+      optimcontrol = list(estonly = TRUE, maxiter = 3)))))
+  expect_gte(as.integer(ctsem:::.ctJuliaEval("Threads.nthreads()")), 4L)
 
   at <- as.numeric(fit$estimate$raw)
   lpg <- ctsem:::.ctBackendLpgFunc(fit, gradient = TRUE)

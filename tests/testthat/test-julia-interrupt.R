@@ -214,49 +214,83 @@ test_that("the thread count a session will start with is read as Julia reads it"
   expect_identical(threads("x"), NA_character_)
 })
 
-# A session is started with the threads this process may use, so any `cores` up
-# to that is honoured without a restart; a count somebody chose is left alone.
-test_that("a session nobody sized is provisioned at the width this process may use", {
+# A session is started at the `cores` of the call that starts it and never below
+# the default, because idle threads spin whenever work is spawned; a count
+# somebody chose is left alone.
+test_that("a session nobody sized is provisioned at the cores of the call that starts it", {
   cache <- ctsem:::.ct_julia_cache
   previous <- cache$threads_from_cores
   on.exit(cache$threads_from_cores <- previous, add = TRUE)
-  testthat::local_mocked_bindings(.ctJuliaWidth = function() 6L, .package = "ctsem")
+  withr::local_options(mc.cores = 3L)
   provision <- function(value, cores = NA_integer_) withr::with_envvar(
     c(JULIA_NUM_THREADS = value), {
       got <- ctsem:::.ctJuliaProvision(cores)
       c(got = as.character(got), env = Sys.getenv("JULIA_NUM_THREADS"))
     })
   cache$threads_from_cores <- NULL
-  expect_identical(provision(NA), c(got = "6", env = "6"))
-  # Wider when a call asks for more than the machine's default.
+  expect_identical(provision(NA), c(got = "3", env = "3"))
   expect_identical(provision(NA, cores = 8L), c(got = "8", env = "8"))
+  # Never below what `cores` defaults to.
+  expect_identical(provision(NA, cores = 1L), c(got = "3", env = "3"))
   # A count set deliberately wins, even a narrow one.
   cache$threads_from_cores <- NULL
-  expect_identical(provision("3"), c(got = "3", env = "3"))
+  expect_identical(provision("2"), c(got = "2", env = "2"))
   # One ctsem set itself is recomputed rather than obeyed.
   cache$threads_from_cores <- "8"
-  expect_identical(provision("8"), c(got = "6", env = "6"))
+  expect_identical(provision("8", cores = 4L), c(got = "4", env = "4"))
+  # And taken back once the session it sized has started; a deliberate one is not.
+  withr::with_envvar(c(JULIA_NUM_THREADS = "4"), {
+    cache$threads_from_cores <- "4"
+    ctsem:::.ctJuliaUnprovision()
+    expect_identical(Sys.getenv("JULIA_NUM_THREADS", unset = NA), NA_character_)
+    expect_null(cache$threads_from_cores)
+  })
+  withr::with_envvar(c(JULIA_NUM_THREADS = "5"), {
+    ctsem:::.ctJuliaUnprovision()
+    expect_identical(Sys.getenv("JULIA_NUM_THREADS"), "5")
+  })
 })
 
-test_that("a provisioned session holds a call that sets no ceiling to the default cores", {
+test_that("a session started for no call is the default width, and holds calls to it", {
   skip_without_julia()
   withr::local_envvar(JULIA_NUM_THREADS = NA)
-  # `mc.cores` is one of the limits availableCores() takes the least of, and it
-  # is also where `cores` gets its default; unset, the two part company.
   withr::local_options(mc.cores = NULL)
   cache <- ctsem:::.ct_julia_cache
   cache$threads_from_cores <- NULL
   ctsem:::.ctJuliaClearSession()
   suppressMessages(ctJuliaSetup())
-  width <- ctsem:::.ctJuliaWidth()
   state <- ctsem:::.ctJuliaGet(ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_max_chunks()"))
-  expect_equal(state$nthreads, width)
-  expect_equal(state$max_chunks, min(2L, width))
+  expect_equal(state$nthreads, 2L)
+  expect_equal(state$max_chunks, 2L)
+  # The width it was started at is not left behind to size the next session.
+  expect_identical(Sys.getenv("JULIA_NUM_THREADS", unset = NA), NA_character_)
   # Asking for threads makes them the ceiling as well.
   suppressMessages(ctJuliaSetup(threads = 2L, force = TRUE))
   state <- ctsem:::.ctJuliaGet(ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_max_chunks()"))
   expect_equal(state$nthreads, 2L)
   expect_equal(state$max_chunks, 2L)
+})
+
+# Resolving `cores` provisions the width before the session exists, and the
+# session's own start provisions again, without `cores`. Under a wide default
+# the two agreed; under this one the second would recompute the first back down
+# to two, and a `cores = 3` fit would start a two-thread session in silence.
+test_that("a session a fit starts is as wide as the fit's cores", {
+  skip_without_julia()
+  withr::local_envvar(JULIA_NUM_THREADS = NA)
+  withr::local_options(mc.cores = NULL)
+  cache <- ctsem:::.ct_julia_cache
+  cache$threads_from_cores <- NULL
+  ctsem:::.ctJuliaClearSession()
+  set.seed(5)
+  dat <- do.call(rbind, lapply(1:6, function(i)
+    data.frame(id = i, time = 0:4, Y1 = cumsum(stats::rnorm(5)) * .5)))
+  model <- suppressWarnings(suppressMessages(ctModel(type = "ct",
+    manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1))))
+  suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
+    cores = 3L, fit = FALSE)))
+  expect_equal(as.integer(ctsem:::.ctJuliaEval("Threads.nthreads()")), 3L)
+  expect_identical(Sys.getenv("JULIA_NUM_THREADS", unset = NA), NA_character_)
 })
 
 test_that("threads asked for by name are kept, whatever ctsem last provisioned", {
