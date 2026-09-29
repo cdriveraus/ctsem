@@ -1759,20 +1759,33 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
       .ctContextPopLabel, .ctContextRemedy(object))
   }
 
+  # The population sds the random-effect check names (R/ctBackendEffectInformation.R)
+  # are reported as a coordinate with no width is: the estimate, and no sd,
+  # interval or z. Their standard error is the Hessian's, repaired where the
+  # direction is flat, and where it is not it still claims a precision the
+  # data do not give: on AnomAuth the exact likelihood is flat to 0.03 nats
+  # from a drift sd of zero to 0.31. Only where the draws come from that
+  # Hessian, as `.ctBackendNoWidthCoordinates()` has it; a sampled fit's
+  # spread is its chains'. `[[`: a fit made before the check has no `effects`.
+  identifiability <- object[["identifiability"]]
+  effects <- if (is.list(identifiability)) identifiability[["effects"]] else NULL
+  weakrows <- if (is.null(chains)) .ctEffectRows(effects, "weak") else NULL
+  undetermined <- union(nowidth, weakrows$coordinate)
   if (length(constrained$randomeffectlevels) > 1L) {
     for (lv in constrained$randomeffectlevels) {
       if (!is.null(lv$popsd)) {
         section <- .ctBackendSampleSummary(lv$popsd, digits = digits,
           chains = chains)
         out[[paste0("popsd.", lv$level)]] <- .ctBackendMarkNoWidth(section,
-          .ctBackendNoWidthRows(nowidth, rownames(section), "popsd_", lv$level))
+          .ctBackendNoWidthRows(undetermined, rownames(section), "popsd_",
+            lv$level))
       }
     }
   } else if (!is.null(constrained$popsd)) {
     out$popsd <- .ctBackendSampleSummary(constrained$popsd, digits = digits,
       chains = chains)
     out$popsd <- .ctBackendMarkNoWidth(out$popsd,
-      .ctBackendNoWidthRows(nowidth, rownames(out$popsd), "popsd_"))
+      .ctBackendNoWidthRows(undetermined, rownames(out$popsd), "popsd_"))
     out$popsd <- .ctBackendMarkNotFinite(out$popsd)
   }
   # Said here because this is the table it qualifies: some of these spreads
@@ -1783,16 +1796,16 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   popsdnote <- c(popsdnote,
     .ctBackendNotFiniteNote(out$popsd, "standard deviation"))
   # The random effects the data barely inform, from the check the fit made
-  # at its estimate (R/ctBackendEffectInformation.R). Here because
-  # these are the spreads it qualifies; on a multilevel fit the note follows
-  # the per-level tables. `[[`: a fit made before the check has no `effects`.
-  identifiability <- object[["identifiability"]]
-  weak <- .ctEffectAdvice(if (is.list(identifiability))
-    identifiability[["effects"]] else NULL)
+  # at its estimate. Here because these are the spreads it qualifies; on a
+  # multilevel fit the note follows the per-level tables.
+  weak <- .ctEffectAdvice(effects)
   if (length(popsdnote) && !is.null(out$popsd)) {
     out$popsdNote <- paste(popsdnote, collapse = " ")
   }
   if (length(weak)) out$popsdNote <- paste(c(out$popsdNote, weak,
+    if (!is.null(weakrows)) paste0(if (nrow(weakrows) > 1L)
+      "Those population sds are" else "That population sd is",
+      " shown with the estimate only: no sd, interval or z."),
     "See fit$identifiability$effects."), collapse = " ")
 
   fixed <- cells[!cells$randomeffect, , drop = FALSE]

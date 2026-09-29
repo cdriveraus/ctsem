@@ -173,11 +173,10 @@ test_that("an sd near zero is measured again at the starting spread, and that de
   expect_false(cint$weak)
 })
 
-test_that("AnomAuth's random drift is weakly informed and its random intercept is not", {
-  skip_without_julia()
-  # The case the check exists for, on the data it was calibrated on: anomia,
-  # subjects with three to five observed waves -- the bench's AnomAuth cells
-  # (dev/optimbench/cells.R, gg_genS), on the first 100 of those subjects.
+# The case the check exists for, on the data it was calibrated on: anomia,
+# subjects with three to five observed waves -- the bench's AnomAuth cells
+# (dev/optimbench/cells.R, gg_genS), on the first 100 of those subjects.
+.ei_anom_data <- function() {
   e <- new.env()
   utils::data("AnomAuth", package = "ctsem", envir = e)
   long <- suppressMessages(ctWideToLong(e$AnomAuth, Tpoints = 5,
@@ -186,15 +185,22 @@ test_that("AnomAuth's random drift is weakly informed and its random intercept i
   long <- long[!is.na(long$Y1), c("id", "time", "Y1")]
   waves <- table(long$id)
   keep <- utils::head(as.numeric(names(waves)[waves >= 3]), 100)
-  long <- long[long$id %in% keep, ]
+  long[long$id %in% keep, ]
+}
+.ei_anom_model <- function() {
   model <- suppressWarnings(suppressMessages(ctModel(type = "ct",
     manifestNames = "Y1", latentNames = "anom", LAMBDA = matrix(1),
     MANIFESTMEANS = matrix(0), CINT = matrix("cint||TRUE"),
     DRIFT = matrix("drift|-log1p_exp(-param)|TRUE"), T0MEANS = matrix("t0m"),
     silent = TRUE)))
   model$pars$indvarying <- model$pars$param %in% c("drift", "cint")
-  spec <- suppressWarnings(suppressMessages(ctFit(long, model,
-    backend = "julia", intoverpop = "laplace", fit = FALSE)))
+  model
+}
+
+test_that("AnomAuth's random drift is weakly informed and its random intercept is not", {
+  skip_without_julia()
+  spec <- suppressWarnings(suppressMessages(ctFit(.ei_anom_data(),
+    .ei_anom_model(), backend = "julia", intoverpop = "laplace", fit = FALSE)))
   # The best-known point of the bench's 800-subject cell S1
   # (dev/optimbench/starts.R, hist_anomS1), by name: both population sds at
   # the bottom of their transform, which is where fits of these data end.
@@ -225,6 +231,67 @@ test_that("AnomAuth's random drift is weakly informed and its random intercept i
   expect_match(advice, paste0("Consider a lower poprank (now 2), else ",
     "indvarying = FALSE for drift"), fixed = TRUE)
   expect_identical(record$ranks$rank, 2L)
+
+  # Both raw sd coordinates are flat here, and the identifiability report
+  # says which is which in the check's terms: the drift's sd is not
+  # estimable, the intercept's is held near zero by the data -- not "not
+  # estimable", which contradicted the check's silence about it.
+  expect_identical(ctsem:::.ctEffectRows(record, "weak")$coordinate,
+    "popsd_drift")
+  expect_identical(ctsem:::.ctEffectRows(record, "zero")$coordinate,
+    "popsd_cint")
+  flat <- list(nweak = 2L, negative = 0L,
+    parameters = c("popsd_drift", "popsd_cint"),
+    directions = list(list(parameters = "popsd_drift"),
+      list(parameters = "popsd_cint")),
+    effects = record)
+  said <- tryCatch(ctsem:::.ctBackendIdentifyWarn(flat, data.frame()),
+    warning = function(w) conditionMessage(w))
+  expect_match(said, "Not estimable as the model stands: popsd_drift.",
+    fixed = TRUE)
+  expect_match(said, "Held near zero by the data: popsd_cint (", fixed = TRUE)
+  expect_match(said, "floor of its transform", fixed = TRUE)
+  # Without the record, as before: both not estimable.
+  flat$effects <- NULL
+  said <- tryCatch(ctsem:::.ctBackendIdentifyWarn(flat, data.frame()),
+    warning = function(w) conditionMessage(w))
+  expect_match(said, "Not estimable as the model stands: popsd_drift, popsd_cint.",
+    fixed = TRUE)
+})
+
+test_that("at a reduced rank each effect is measured alone, not by the dimension it shares", {
+  skip_without_julia()
+  # A rank-1 covariance over the same two effects, at a point where the one
+  # dimension is mostly the intercept -- the pattern of gD1 refitted with
+  # poprank = 1, whose drift read its intercept's information while the exact
+  # profile of its loading stayed within 1.2 nats from -1.5 to 1.5. The
+  # engine's share there is the dimension's, well informed through the
+  # intercept; the drift's own groups say almost nothing about it.
+  spec <- suppressWarnings(suppressMessages(ctFit(.ei_anom_data(),
+    .ei_anom_model(), backend = "julia", intoverpop = "laplace", poprank = 1L,
+    fit = FALSE)))
+  npar <- ctsem:::.ctBackendNpar(spec)
+  names <- ctsem:::.ctBackendRawParameterNames(list(model_spec = spec), npar)
+  at <- c(t0m = 0.2584, drift = 3.9345, diff_anom = -2.0670,
+    mvarY1 = -1.1698, cint = 0.0071, T0var_anom = -0.9870,
+    poploading_drift_dim1 = 0.05, poploading_cint_dim1 = 0.3)
+  expect_setequal(names, names(at))
+  record <- ctsem:::.ctEffectInformation(spec, at[names], point = "x")
+  table <- record$table
+  drift <- table[table$effect == "drift", ]
+  cint <- table[table$effect == "cint", ]
+  # The shared dimension reads well informed for both...
+  expect_gt(drift$dimension, 0.5)
+  # ...but the drift alone, even raised to the starting spread, is not.
+  expect_lt(drift$referenceinformation, ctsem:::.ctEffectThresholds()$information)
+  expect_true(drift$weak)
+  expect_false(cint$weak)
+  expect_gt(cint$information, ctsem:::.ctEffectThresholds()$information)
+  advice <- ctsem:::.ctEffectAdvice(record)
+  expect_length(advice, 1L)
+  expect_match(advice, "in a rank-1 covariance, varying alone", fixed = TRUE)
+  # Rank 1 is as low as it goes: only the switch is offered.
+  expect_match(advice, "Consider indvarying = FALSE for drift.", fixed = TRUE)
 })
 
 test_that("a fit takes it at its estimate, keeps it, and says nothing when every effect is informed", {
@@ -432,4 +499,19 @@ test_that("a fit says so for a weakly determined effect and not for an informed 
   expect_false(table$weak)
   expect_gt(table$information, ctsem:::.ctEffectThresholds()$information)
   expect_false(any(grepl("barely determined", informed$messages)))
+
+  # summary() reports the weak effect's population sd as undetermined -- the
+  # estimate, and no sd, interval or z -- and says so beside the table, as it
+  # does for a coordinate with no width; the informed one keeps its interval.
+  weaksummary <- summary(weak$fit)
+  expect_true(is.finite(weaksummary$popsd["drift", "mean"]))
+  expect_true(all(is.na(unlist(weaksummary$popsd["drift",
+    c("sd", "2.5%", "50%", "97.5%")]))))
+  expect_match(weaksummary$popsdNote,
+    "That population sd is shown with the estimate only", fixed = TRUE)
+  informedsummary <- summary(informed$fit)
+  expect_true(all(is.finite(unlist(informedsummary$popsd["drift",
+    c("mean", "sd", "2.5%", "97.5%")]))))
+  expect_false(isTRUE(grepl("estimate only", informedsummary$popsdNote,
+    fixed = TRUE)))
 })
