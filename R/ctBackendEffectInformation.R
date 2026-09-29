@@ -444,9 +444,10 @@
 #
 # Missed: AnomAuth refitted with poprank = 1, whose drift loading ends at
 # -0.91 (S1) and 1.65 (S2) with standard errors of 0.04 and 0.03 while the
-# exact profile on S1 is flat to 0.007 nats for loadings from -0.6 to 0.6 and
-# within 1.2 over -1.5 to 1.5. Alone, at those loadings, the drift reads 7.1
-# and 8.6, because the fits end where the Laplace objective sits 17 nats above
+# exact profile is flat to 0.007 nats for loadings from -0.6 to 0.6 and within
+# 1.2 over -1.5 to 1.5 on S1, and within 0.45 over -2 to 2 on S2, where the
+# fit's end point is 6.3 nats below the profile. Alone, at those loadings,
+# the drift reads 7.1 and 8.6, because the fits end where the Laplace objective sits 17 nats above
 # the quadrature -- the spurious-maximum blind spot above -- and both fits
 # report `notmaximum`. At the starting spread it reads 0.21 and 0.011.
 #' @keywords internal
