@@ -317,16 +317,20 @@ or is rejected. These are not that. `MethodError`, `UndefVarError`,
 `UndefKeywordError`, `BoundsError` and `TypeError` mean the code is wrong --
 when the worker pool dropped the `slot` argument, two callers kept passing it,
 and their catches turned the `MethodError` into a NaN quadrature gap and an
-identity sampler metric, with nothing reported. An `InterruptException` is the
-user stopping the run. A `TaskFailedException` or `CompositeException` from a
-spawned region is unwrapped, since the error that matters is inside it.
+identity sampler metric, with nothing reported. A `ForwardDiff.DualMismatchError`
+is the same kind of fact about the code: two dual tags met in an order
+ForwardDiff cannot resolve (see `CTSEMNestedTag` below), which no parameter
+vector causes or avoids, and scoring it as an invalid point ends a fit early
+with nothing said. An `InterruptException` is the user stopping the run. A
+`TaskFailedException` or `CompositeException` from a spawned region is
+unwrapped, since the error that matters is inside it.
 """
 function _ctsem_must_propagate(err)
     err isa TaskFailedException && return _ctsem_must_propagate(err.task.result)
     err isa CompositeException && return any(_ctsem_must_propagate, err.exceptions)
     return err isa MethodError || err isa UndefVarError ||
         err isa UndefKeywordError || err isa BoundsError || err isa TypeError ||
-        err isa InterruptException
+        err isa ForwardDiff.DualMismatchError || err isa InterruptException
 end
 
 
