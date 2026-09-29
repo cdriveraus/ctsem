@@ -220,10 +220,10 @@ test_that("AnomAuth's random drift is weakly informed and its random intercept i
   expect_length(advice, 1L)
   expect_match(advice, "Individual differences in drift are barely determined",
     fixed = TRUE)
-  # Two effects at one level, so a rank-1 covariance is on offer first, and
-  # dropping the effect after it.
-  expect_match(advice, "Consider poprank = 1, else indvarying = FALSE for drift",
-    fixed = TRUE)
+  # Two effects at one level, so a lower rank is on offer first -- which one is
+  # the user's choice, so no value is named -- and dropping the effect after it.
+  expect_match(advice, paste0("Consider a lower poprank (now 2), else ",
+    "indvarying = FALSE for drift"), fixed = TRUE)
   expect_identical(record$ranks$rank, 2L)
 })
 
@@ -341,8 +341,8 @@ test_that("the wording names the level, its switch, poprank first, and which spr
     "(estimated 1e-08), that sd would rest on an effective 0.35 of the 40 ",
     "subjects, since a typical subject's own data would determine 2% of its ",
     "t0m"), fixed = TRUE)
-  expect_match(advice[2L], paste0("Consider poprank = c(id = 1), else ",
-    "indvarying = FALSE for t0m."), fixed = TRUE)
+  expect_match(advice[2L], paste0("Consider a lower poprank for the id level ",
+    "(now 2), else indvarying = FALSE for t0m."), fixed = TRUE)
   # Not where the level cannot be reduced.
   effects$ranks$reducible <- FALSE
   expect_false(any(grepl("poprank", ctsem:::.ctEffectAdvice(effects),

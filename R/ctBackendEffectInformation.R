@@ -430,21 +430,23 @@
   }, character(1))
 }
 
-# The `poprank` to suggest, per level with a weak effect: the level's rank less
-# its weak effects, at least 1, and only when that is below the rank it has
-# and the level can be reduced at all. Named per level on a multilevel model,
-# which is how `ctFit()` reads it (an unnamed rank applies to every level).
+# The `poprank` to suggest, per level with a weak effect: a lower one, beside
+# the rank the level has now, and no value chosen for the user. Which rank a
+# level's variation needs is a modelling question a weak effect does not
+# settle: AnomAuth S2 refitted at the rank its weak effect alone would suggest
+# ended 4.9 nats worse and not at a maximum (dev2, 2026-09-29), and Charles
+# asked for the advice to say "reduce", not "rank 1". Offered only where the
+# level's rank is above 1 and can be reduced at all; the level named on a
+# multilevel model, since an unnamed `poprank` applies to every level.
 #' @keywords internal
 .ctEffectPoprank <- function(ranks, table, weak, multilevel) {
   if (!is.data.frame(ranks) || !nrow(ranks)) return(list())
   out <- list()
   for (level in unique(table$level[weak])) {
     r <- ranks[ranks$level == level, , drop = FALSE]
-    if (nrow(r) != 1L || !isTRUE(r$reducible)) next
-    lower <- max(1L, as.integer(r$rank) - sum(table$level[weak] == level))
-    if (lower >= r$rank) next
-    out[[level]] <- if (multilevel) paste0("poprank = c(", level, " = ",
-      lower, ")") else paste0("poprank = ", lower)
+    if (nrow(r) != 1L || !isTRUE(r$reducible) || !isTRUE(r$rank > 1L)) next
+    out[[level]] <- paste0("a lower poprank",
+      if (multilevel) paste0(" for the ", level, " level"), " (now ", r$rank, ")")
   }
   out
 }
