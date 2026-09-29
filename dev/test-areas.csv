@@ -8,6 +8,7 @@
 "test-julia-session.R","bridge","extended"
 "test-binary-gaussian-mix.R","categorical","core"
 "test-julia-category-quadrature.R","categorical","core"
+"test-julia-category-jacobian.R","categorical","core"
 "test-julia-censored.R","categorical","core"
 "test-julia-ordinal.R","categorical","core"
 "test-binary-binary-mix.R","categorical","release"

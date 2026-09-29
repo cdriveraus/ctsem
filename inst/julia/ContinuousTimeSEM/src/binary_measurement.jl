@@ -231,6 +231,24 @@ taken of their difference, which tends to `log(-z)`.
 @inline _mills(z::Real) = exp(_norm_logpdf(z) - _norm_logcdf(z))
 
 """
+    _logistic(x)
+
+`1 / (1 + e^-x)`, as `inv(1 + exp(-x))` wherever that exponential is finite,
+which is the expression the score and the information have always used, so
+their numbers there are unchanged. Past `x = -700` it is `e^x / (1 + e^x)`.
+
+The difference is not in the value, which is zero or subnormal either way, but
+in a dual: `exp(-x)` overflows to `Inf`, and the partials of `inv(Inf)` are
+`Inf / Inf`, NaN. A linear predictor out at -700 is not a fitted value, but
+the Laplace optimiser's trial points and the inner curvature reach it (bench
+gD3 on dev1: over a thousand categorical evaluations at predicted means of
+-700 to -1000 in one fit), and a NaN partial there poisons the whole
+gradient where a zero was the answer.
+"""
+@inline _logistic(x::Real) = x < -700 ? (E = exp(x); E / (one(E) + E)) :
+    inv(one(x) + exp(-x))
+
+"""
     _censored_at(y, limit, upper::Bool)
 
 Whether an observation sits at a censoring limit, decided on values alone.
@@ -253,6 +271,26 @@ comparison has no business seeing derivative information at all.
 @inline _primal(x::ForwardDiff.Dual) = _primal(ForwardDiff.value(x))
 @inline _censored_at(y::Real, limit, upper::Bool) =
     upper ? y >= _primal(limit) : y <= _primal(limit)
+
+_primal_type(::Type{T}) where {T} = T
+_primal_type(::Type{ForwardDiff.Dual{G,V,N}}) where {G,V,N} = _primal_type(V)
+
+"""
+    _primals(v)
+
+`map(_primal, v)` without the copy: a read-only view of a vector, the map of a
+tuple. `_binary_mode` solves on values once per categorical observation of
+every dual pass, and the copy was an allocation each time.
+"""
+struct _PrimalView{E,V<:AbstractVector} <: AbstractVector{E}
+    parent::V
+end
+Base.size(v::_PrimalView) = size(v.parent)
+Base.@propagate_inbounds Base.getindex(v::_PrimalView, i::Int) =
+    _primal(v.parent[i])
+@inline _primals(v::AbstractVector) =
+    _PrimalView{_primal_type(eltype(v)),typeof(v)}(v)
+@inline _primals(v::Tuple) = map(_primal, v)
 
 """
     _censor_limits(extras, ::Type{T})
@@ -463,7 +501,7 @@ identically, not just numerically, which is why the fast path can stay.
         return ((T(y) - η) * prec, prec)
     end
     if kind == CTSEM_OBS_BINARY || isempty(thresholds)
-        F = inv(one(T) + exp(-η))
+        F = _logistic(η)
         length(thresholds) >= 2 ||
             return (T(y > 0.5 ? 1 : 0) - F, F * (one(T) - F))
         # With asymptotes the likelihood is `q = flat + (d-c)F` for a one and
@@ -503,10 +541,53 @@ identically, not just numerically, which is why the fast path can stay.
     k = Int(y)
     n = length(thresholds)
     # `F(a)`, zero below the first threshold, and `F(-b)`, zero above the last.
-    Fa = k <= 1 ? zero(T) : inv(one(T) + exp(η - thresholds[k - 1]))
-    Fnb = k > n ? zero(T) : inv(one(T) + exp(thresholds[k] - η))
+    Fa = k <= 1 ? zero(T) : _logistic(thresholds[k - 1] - η)
+    Fnb = k > n ? zero(T) : _logistic(η - thresholds[k])
     information = Fa * (one(T) - Fa) + Fnb * (one(T) - Fnb)
     return (Fa - Fnb, max(information, floatmin(T)))
+end
+
+"""
+    _category_slope_derivatives(η, y, thresholds, kind)
+
+`(A', B', A'', B'', clamped, info)` at `η`, for a kind the rule integrates: the
+first two `η`-derivatives of two pieces the slope is written as,
+`d log P/dη = A - B`. For the logistic kinds they are `_category_parts`' own,
+`A = F(τ_lo - η)` and `B = F(η - τ_hi)`, so `A' = -A(1-A)` and `B' = B(1-B)`;
+for a count `A = y` and `B` is the rate. Everything the mode's partials need
+follows from them: the score's slope is `A' - B'` and the information's
+`B'' - A''`, while a threshold moves `A` or `B` exactly as `η` does with the
+sign reversed.
+
+`clamped` when `_category_score` floors the information at `floatmin`, where
+the curvature has no derivative in it; `info`, the information as it floors it.
+"""
+@inline function _category_slope_derivatives(η::T, y::Real, thresholds,
+    kind::Int) where {T}
+    if kind == CTSEM_OBS_COUNT
+        cap = T(_CTSEM_COUNT_MAX_LOG_RATE[])
+        λ = exp(min(η, cap))
+        slope = η < cap ? λ : zero(λ)
+        return (zero(λ), slope, zero(λ), slope, !(λ > floatmin(T)),
+            max(λ, floatmin(T)))
+    end
+    G = promote_type(T, eltype(thresholds))
+    if kind == CTSEM_OBS_BINARY || isempty(thresholds)
+        A = y > 0.5 ? convert(G, _logistic(-η)) : zero(G)
+        B = y > 0.5 ? zero(G) : convert(G, _logistic(η))
+        floored = false
+    else
+        k = Int(y)
+        n = length(thresholds)
+        A = k <= 1 ? zero(G) : _logistic(thresholds[k - 1] - η)
+        B = k > n ? zero(G) : _logistic(η - thresholds[k])
+        floored = true
+    end
+    vA = A * (one(A) - A)
+    vB = B * (one(B) - B)
+    clamped = floored && !(vA + vB > floatmin(T))
+    return (-vA, vB, vA * (one(A) - 2 * A), vB * (one(B) - 2 * B), clamped,
+        floored ? max(vA + vB, floatmin(T)) : vA + vB)
 end
 
 """
@@ -706,7 +787,10 @@ not carry.
 """
     _binary_mode(ηbar, s2, y, thresholds, kind)
 
-`(mode - ηbar, curvature)` of `log N(η; ηbar, s²) + log P(y | η)`.
+`(mode - ηbar, curvature, converged)` of `log N(η; ηbar, s²) + log P(y | η)`,
+`converged` saying whether the solve on values reached the mode. The analytic
+partials of the rule (`_binary_quadrature`) are the implicit function theorem's
+and hold only where it did.
 
 The *offset* rather than the mode, because everything downstream wants the
 offset and forming it by subtraction afterwards throws away exactly the digits
@@ -739,14 +823,14 @@ budget is iterated in the caller's arithmetic, as before.
 """
 @inline function _binary_mode(ηbar::T, s2::T, y::Real, thresholds,
     kind::Int) where {T}
-    τ = T <: ForwardDiff.Dual ? map(_primal, thresholds) : thresholds
+    τ = T <: ForwardDiff.Dual ? _primals(thresholds) : thresholds
     base, curvature, converged = _binary_mode_solve(_primal(ηbar),
         _primal(s2), _primal(y), τ, kind)
     if !converged
-        T <: ForwardDiff.Dual || return (base, curvature)
+        T <: ForwardDiff.Dual || return (base, curvature, false)
         offset, curvature, _ = _binary_mode_solve(ηbar, s2, y, thresholds,
             kind)
-        return (offset, curvature)
+        return (offset, curvature, false)
     end
     precision = inv(s2)
     offset = convert(T, base)
@@ -756,7 +840,7 @@ budget is iterated in the caller's arithmetic, as before.
         offset += (score - offset * precision) / (precision + information)
     end
     _, information = _category_score(ηbar + offset, y, thresholds, kind)
-    return (offset, precision + information)
+    return (offset, precision + information, true)
 end
 
 """
@@ -941,6 +1025,69 @@ end
 end
 
 """
+    _log1p_exp_logistic(x)
+
+`(log1p_exp(x), F(x))`, the second being the first's derivative, from one
+exponential. The first is `log1p_exp`'s own expression, so it is the same
+number to the bit.
+"""
+@inline function _log1p_exp_logistic(x::Real)
+    if x > zero(x)
+        E = exp(-x)
+        return (x + log1p(E), inv(one(E) + E))
+    end
+    E = exp(x)
+    return (log1p(E), E / (one(E) + E))
+end
+
+"""
+    _category_parts(η, y, thresholds, kind, k, gapterm)
+
+`(log P(y | η), A, B)` for a kind the rule integrates, with the slope written
+as two pieces, `d log P/dη = A - B`, which is what the rule's analytic partials
+accumulate (`_binary_quadrature`). For the logistic kinds `A = F(τ_lo - η)` and
+`B = F(η - τ_hi)`, zero where that threshold does not exist -- a binary one is
+the top category of a threshold at zero, a binary zero the bottom one -- and the
+thresholds' own partials are `-A - g'` and `B + g'`, with `g'` the slope of the
+interior category's gap term `gapterm`. For a count, which has no thresholds,
+`A` is the whole slope `y - rate` (the rate is zero past the clamp, where the
+likelihood is linear) and `B` zero: `y` and the rate are close wherever the
+posterior has mass, and their difference is taken node by node rather than
+between two sums.
+
+The log likelihood is `_category_loglikelihood`'s, and the interior category's
+the node sum's, to the bit.
+"""
+@inline function _category_parts(η::T, y::Real, thresholds, kind::Int, k::Int,
+    gapterm) where {T}
+    if kind == CTSEM_OBS_COUNT
+        cap = T(_CTSEM_COUNT_MAX_LOG_RATE[])
+        λ = exp(min(η, cap))
+        return (T(y) * η - λ - T(_log_factorial(y)),
+            T(y) - (η < cap ? λ : zero(T)), zero(T))
+    end
+    if kind == CTSEM_OBS_BINARY || isempty(thresholds)
+        if y > 0.5
+            l, A = _log1p_exp_logistic(-η)
+            return (-l, A, zero(A))
+        end
+        l, B = _log1p_exp_logistic(η)
+        return (-l, zero(B), B)
+    end
+    n = length(thresholds)
+    if k <= 1
+        l, B = _log1p_exp_logistic(η - thresholds[1])
+        return (-l, zero(B), B)
+    elseif k > n
+        l, A = _log1p_exp_logistic(thresholds[n] - η)
+        return (-l, A, zero(A))
+    end
+    l1, A = _log1p_exp_logistic(thresholds[k - 1] - η)
+    l2, B = _log1p_exp_logistic(η - thresholds[k])
+    return (-l1 - l2 + gapterm, A, B)
+end
+
+"""
     _as_scalar_type(T, thresholds)
 
 The thresholds as element type `T`.
@@ -1084,14 +1231,20 @@ moments would subtract two numbers of order `ηbar^2`, which is the cancellation
 end
 
 """
-    _binary_quadrature(ηbar, s, y, nodes, weights, thresholds, kind)
+    _binary_quadrature(ηbar, s, y, nodes, weights, thresholds, kind, J=nothing)
 
 The adaptive Gauss-Hermite rule: what is used for the kinds whose likelihood
 against a Gaussian prior has no elementary integral, and whose scalar posterior
 is log-concave so that the mode the rule is centred on is unique.
+
+Given a `3 x (2 + e)` matrix `J`, also its exact partials, written there as
+`_binary_moment_jacobian` describes, and a fourth return, `false` when they
+could not be taken this way (a mode solve that used its budget): the same loop
+and the same numbers, with the partials accumulated beside them rather than
+carried as dual numbers. The derivation is at `_quadrature_partials!`.
 """
 @inline function _binary_quadrature(ηbar::T, s::T, y::Real, nodes, weights,
-    thresholds, kind::Int) where {T}
+    thresholds, kind::Int, J=nothing) where {T}
     s2 = s * s
     # An interior category's `log(1 - e^-gap)` does not depend on η: taken once,
     # and added where `_category_loglikelihood` adds it, so the node sum is the
@@ -1100,31 +1253,19 @@ is log-concave so that the mode the rule is centred on is unique.
     interior = 1 < k <= length(thresholds)
     G = promote_type(T, eltype(thresholds))
     gapterm = zero(G)
+    gapslope = zero(G)
     if interior
         gap = thresholds[k] - thresholds[k - 1]
-        gap > zero(gap) || return (T(-Inf), zero(T), s2)
+        gap > zero(gap) || return _quadrature_out(J, T(-Inf), zero(T), s2)
         gapterm = convert(G, log(-expm1(-gap)))
+        J === nothing || (gapslope = convert(G, inv(expm1(gap))))
     end
-    mode_offset, curvature = _binary_mode(ηbar, s2, y, thresholds, kind)
+    mode_offset, curvature, converged = _binary_mode(ηbar, s2, y, thresholds,
+        kind)
+    J === nothing || converged ||
+        return _quadrature_out(J, T(-Inf), zero(T), s2, false)
     scale = sqrt(T(2) / curvature)
 
-    # Accumulated relative to the largest weight seen so far, so the sums are
-    # of numbers no larger than one and `Z` is never smaller than one.
-    #
-    # Unnormalised, the weights are `exp(t² - deviation²/2s²)` times a category
-    # probability, and both factors range over many orders of magnitude: a wide
-    # prior with a likelihood that confines `η` to one category puts the far
-    # nodes' weights near the bottom of the floating point range. `logZ`
-    # survives that, because it takes a logarithm; `M1/Z` does not, because the
-    # derivative of a quotient divides by `Z²`, which underflows to zero while
-    # `Z` is still representable. The result is a finite value with NaN
-    # partials -- observed at a predicted variance of 23, where nothing looks
-    # extreme at all.
-    #
-    # Rescaling costs one comparison per node and a multiply on the three
-    # accumulators each time the maximum moves, which for a mode-centred rule
-    # is a handful of times at most. It is exact algebra, so it changes no
-    # value and no derivative.
     # Log-sum-exp over the nodes, rescaled to the largest exponent seen so far.
     #
     # Two underflows are being avoided at once. The likelihood itself vanishes
@@ -1134,14 +1275,16 @@ is log-concave so that the mode the rule is centred on is unique.
     # observation stays usable. And the accumulated sums have to stay away from
     # the bottom of the range because `M1/Z` divides by `Z²` under
     # differentiation, which underflows while `Z` is still representable and
-    # leaves a finite value with NaN partials.
+    # leaves a finite value with NaN partials -- observed at a predicted
+    # variance of 23, where nothing looks extreme at all.
     #
     # The rescaling is exact algebra, so it changes no value and no derivative,
-    # and it costs a comparison per node plus a multiply on three accumulators
+    # and it costs a comparison per node plus a multiply on each accumulator
     # each time the maximum moves.
     Z = zero(T)
     M1 = zero(T)
     M2 = zero(T)
+    sums = J === nothing ? nothing : ntuple(_ -> zero(G), Val(11))
     emax = T(-Inf)
     halfprec = inv(T(2) * s2)
     @inbounds for i in eachindex(nodes)
@@ -1149,10 +1292,14 @@ is log-concave so that the mode the rule is centred on is unique.
         centred = scale * t              # η - mode
         deviation = mode_offset + centred  # η - ηbar
         η = ηbar + deviation
-        ll = interior ?
-            -log1p_exp(thresholds[k - 1] - η) - log1p_exp(η - thresholds[k]) +
-                gapterm :
-            _category_loglikelihood(η, y, thresholds, kind)
+        if J === nothing
+            ll = interior ?
+                -log1p_exp(thresholds[k - 1] - η) -
+                    log1p_exp(η - thresholds[k]) + gapterm :
+                _category_loglikelihood(η, y, thresholds, kind)
+        else
+            ll, A, B = _category_parts(η, y, thresholds, kind, k, gapterm)
+        end
         # The `t²` undoes the rule's own kernel; the prior density is then
         # carried explicitly rather than folded into the nodes.
         e = t * t - deviation * deviation * halfprec + ll
@@ -1161,25 +1308,189 @@ is log-concave so that the mode the rule is centred on is unique.
             Z *= ratio
             M1 *= ratio
             M2 *= ratio
+            J === nothing || (sums = sums .* ratio)
             emax = e
         end
         u = T(weights[i]) * exp(e - emax)
         Z += u
         M1 += u * deviation
         M2 += u * centred * centred
+        J === nothing || (sums = sums .+ _quadrature_node_sums(u, centred, A, B))
     end
-    isfinite(emax) || return (T(-Inf), zero(T), s2)
+    isfinite(emax) || return _quadrature_out(J, T(-Inf), zero(T), s2)
     # A zero means every node put zero probability on the observation, which is
     # a state so far from the data that the row carries no usable information.
     # The caller treats it as an invalid evaluation.
-    Z > zero(T) || return (T(-Inf), zero(T), s2)
+    Z > zero(T) || return _quadrature_out(J, T(-Inf), zero(T), s2)
     offset = M1 / Z                      # posterior mean - ηbar
     spread = offset - mode_offset        # posterior mean - mode
     variance = M2 / Z - spread * spread
     # Z above is √(2π)s times the marginal likelihood: the scale factor and the
     # prior's normalising constant are both outside the sum.
     logZ = log(Z) + emax + log(scale) - log(sqrt(T(2) * T(pi)) * s)
-    return (logZ, offset, max(variance, zero(T)))
+    J === nothing || _quadrature_partials!(J, sums, Z, M2, ηbar, s2, y,
+        thresholds, kind, k, mode_offset, curvature, spread, variance > zero(T),
+        gapslope)
+    return _quadrature_out(J, logZ, offset, max(variance, zero(T)))
+end
+
+@inline _quadrature_out(::Nothing, logZ, offset, variance, handled=true) =
+    (logZ, offset, variance)
+@inline _quadrature_out(::AbstractMatrix, logZ, offset, variance, handled=true) =
+    (logZ, offset, variance, handled)
+
+"""
+    _quadrature_node_sums(u, c, A, B)
+
+One node's terms of the eleven sums `_quadrature_partials!` reads: `u c^j` for
+`j = 1, 3, 4` (`j = 0` and `2` are `Z` and `M2`), then `u c^j A` and
+`u c^j B` for `j = 0..3`, with `u` the node's weight, `c = η - mode` and
+`A - B` the likelihood's slope there (`_category_parts`).
+"""
+@inline function _quadrature_node_sums(u, c, A, B)
+    uc = u * c
+    uc2 = uc * c
+    uc3 = uc2 * c
+    return (uc, uc3, uc3 * c, u * A, uc * A, uc2 * A, uc3 * A,
+        u * B, uc * B, uc2 * B, uc3 * B)
+end
+
+"""
+    _quadrature_partials!(J, sums, Z, M2, ηbar, s2, y, thresholds, kind, k,
+        mode, curvature, spread, positive, gapslope)
+
+The partials of the rule's `(logZ, offset, variance)` with respect to `ηbar`,
+`s2` and the thresholds an ordinal observation reads, written into `J`'s
+columns 1, 2 and `2 + i`: exactly the derivative of what `_binary_quadrature`
+computed, nodes, weights and mode placement included.
+
+# What the rule depends on
+
+A seeded input `θ` reaches the rule through the mode `δ` (an offset from
+`ηbar`), the curvature `C` there, which sets the scale `σ = sqrt(2/C)`, and the
+likelihood itself. At the mode the prior's slope `-δ/s2` cancels the score, so
+by the implicit function theorem, with `S` the score and `I` the information,
+
+    dδ/dηbar = S'/C      dδ/ds2 = δ/(s2² C)      dδ/dτ = (dS/dτ)/C
+    dC/dθ    = -[θ = s2]/s2² + I' (dδ/dθ + [θ = ηbar]) + dI/dτ
+
+(`_category_slope_derivatives`). The node at `t` sits at `c = σ t` from the
+mode, so `dc/dθ = ρ c` with `ρ = -(dC/dθ)/2C`, which is also `d log σ/dθ`. Its
+exponent `e = t² - d²/2s2 + log P(y | η)`, `d = δ + c`, then moves by
+
+    de/dθ = r (dδ/dθ + ρ c) + X,   r = S(η) - d/s2
+
+with `X` the explicit part: `S(η)` for `ηbar`, `d²/2s2²` for `s2`, and
+`d log P/dτ` for a threshold. Writing `<.>` for the normalised weights'
+average, `E = <de/dθ>` moves `log Z`, and the moments follow by the quotient
+rule:
+
+    d logZ   = E + ρ - [θ = s2]/2s2
+    d offset = dδ + ρ <c> + <c de> - <c> E
+    d <c²>   = 2ρ <c²> + <c² de> - <c²> E
+    d var    = d <c²> - 2 <c> (d offset - dδ)
+
+Every average is a combination of `<c^j>` and `<c^j A>`, `<c^j B>` for small
+`j`, which is what `_quadrature_node_sums` accumulates: eleven sums, where the
+dual numbers carried a partial through every operation of every node.
+
+# Two cancellations taken out by hand
+
+A part of `de/dθ` that is the same at every node shifts `log Z` and nothing
+else, so it goes to the `logZ` row directly: the gap term's slope `g'`, which is
+`1/gap` and would otherwise be subtracted back out of the moments' rows
+through `<c> E` (at a gap of 1e-4 that cost the second derivative five to
+seven digits), and `δ²/2s2²` in the `s2` column.
+
+The `s2` column is also rearranged. Its `ρ` is close to `1/2s2` and its explicit
+part close to `c²/2s2²`, so `ρ <c^(j+1) r> + <c^j X>` is two terms of order
+`1/s2` whose difference is of order one, and `d logZ` loses the same again
+against the normaliser's `-1/2s2`. Written with `κ = 1/2s2 - ρ`, which is
+`(I/s2 + I' dδ)/2C` exactly, neither difference is formed.
+
+# Under differentiation
+
+Generic in the element type, and itself differentiated whenever the pass is:
+the continuation's exact Hessian and the Laplace seeds push their own duals
+through these formulas, which are the derivative as a function of the inputs,
+so what comes out is the second derivative. The mode carries its partials in
+that arithmetic from `_binary_mode`'s polish, as it did before.
+"""
+function _quadrature_partials!(J, sums, Z, M2, ηbar, s2, y::Real, thresholds,
+    kind::Int, k::Int, δ, C, spread, positive::Bool, gapslope)
+    zi = inv(Z)
+    u1 = sums[1] * zi
+    u2 = M2 * zi
+    u3 = sums[2] * zi
+    u4 = sums[3] * zi
+    a0, a1, a2, a3 = sums[4] * zi, sums[5] * zi, sums[6] * zi, sums[7] * zi
+    b0, b1, b2, b3 = sums[8] * zi, sums[9] * zi, sums[10] * zi, sums[11] * zi
+    # <c^j S>, S the likelihood's slope at a node, and <c^j r>, r the log
+    # posterior's.
+    S0, S1, S2, S3 = a0 - b0, a1 - b1, a2 - b2, a3 - b3
+    p = inv(s2)
+    r0 = S0 - (δ + u1) * p
+    r1 = S1 - (δ * u1 + u2) * p
+    r2 = S2 - (δ * u2 + u3) * p
+    r3 = S3 - (δ * u3 + u4) * p
+    r = (r0, r1, r2, r3)
+    Ap, Bp, App, Bpp, clamped, info = _category_slope_derivatives(ηbar + δ, y,
+        thresholds, kind)
+    Iη = clamped ? zero(Bpp) : Bpp - App
+    # ηbar: the node's η moves with it one for one.
+    dδ = (Ap - Bp) / C
+    ρ = -Iη * (one(dδ) + dδ) / (2 * C)
+    _quadrature_column!(J, 1, dδ, ρ, (ρ * r1 + S0, ρ * r2 + S1, ρ * r3 + S2),
+        ρ, r, spread, u2, positive)
+    # s2: the prior's scale, in the exponent and in logZ's normaliser; see
+    # "Two cancellations" for the arrangement.
+    dδ = δ * p * p / C
+    ρ = (p * p - Iη * dδ) / (2 * C)
+    κ = (p * info + Iη * dδ) / (2 * C)
+    w = δ * p * (p - ρ)
+    _quadrature_column!(J, 2, dδ, ρ,
+        (ρ * S1 + w * u1 + p * κ * u2, ρ * S2 + w * u2 + p * κ * u3,
+            ρ * S3 + w * u3 + p * κ * u4),
+        δ * δ * p * p / 2 - κ, r, spread, u2, positive)
+    # The thresholds an ordinal observation reads: the lower one moves A, the
+    # upper one B, each as η does with the sign reversed.
+    (kind == CTSEM_OBS_ORDINAL && !isempty(thresholds)) || return nothing
+    n = length(thresholds)
+    if k >= 2
+        dδ = -Ap / C
+        ρ = -((clamped ? zero(App) : App) + Iη * dδ) / (2 * C)
+        _quadrature_column!(J, 2 + min(k - 1, n), dδ, ρ,
+            (ρ * r1 - a0, ρ * r2 - a1, ρ * r3 - a2), ρ - gapslope, r, spread, u2,
+            positive)
+    end
+    if k <= n
+        dδ = Bp / C
+        ρ = -((clamped ? zero(Bpp) : -Bpp) + Iη * dδ) / (2 * C)
+        _quadrature_column!(J, 2 + max(k, 1), dδ, ρ,
+            (ρ * r1 + b0, ρ * r2 + b1, ρ * r3 + b2), ρ + gapslope, r, spread, u2,
+            positive)
+    end
+    return nothing
+end
+
+"""
+One column of `_quadrature_partials!`: the input's `dδ` and `ρ`, the node
+averages `y = ρ <c^(j+1) r> + <c^j X>` for `j = 0, 1, 2` with `X` the
+explicit part less any constant, and `L`, everything that moves `logZ` alone.
+"""
+@inline function _quadrature_column!(J, col::Int, dδ, ρ, y, L, r, spread, q,
+    positive::Bool)
+    E = dδ * r[1] + y[1]
+    F1 = dδ * r[2] + y[2]
+    F2 = dδ * r[3] + y[3]
+    doffset = dδ + ρ * spread + F1 - spread * E
+    @inbounds begin
+        J[1, col] = E + L
+        J[2, col] = doffset
+        J[3, col] = positive ?
+            2 * ρ * q + F2 - q * E - 2 * spread * (doffset - dδ) : zero(E)
+    end
+    return nothing
 end
 
 """
@@ -1338,7 +1649,8 @@ function _ekf_binary_update!(ws, λ, μ, y::Real, n::Int, thresholds,
 end
 
 """
-    _binary_moment_jacobian(a, b, y, nodes, weights, thresholds, kind)
+    _binary_moment_jacobian(a, b, y, nodes, weights, thresholds, kind,
+        J=nothing)
 
 `(logZ, m, v, J)` at `ηbar = a` and `s² = b`, where `m` is the posterior mean's
 *offset* from `a` -- see `_binary_moments` for why nothing here works with the
@@ -1346,7 +1658,8 @@ mean itself -- and `J` is their `3 x (2 + e)` Jacobian: rows `logZ`, `m`, `v`;
 columns `a`, `b`, and then each of the row's `e` extras (thresholds, asymptotes,
 censoring limits; none for a count, whose extra rides `b`). Only the extras the
 observation's likelihood reads are seeded (`_extras_read`); the other columns
-are zero, which is what they are.
+are zero, which is what they are. A `J` of that shape passed in is overwritten
+and returned, which is how the tape reuses last pass's (`_record_binary_step!`).
 
 # Why this differentiates the quadrature rather than the moments
 
@@ -1365,40 +1678,86 @@ apart: on a one-observation model with a predicted sd near 2.6, the exact-moment
 derivative disagreed with a finite difference of the objective by 2%, which is
 not an error an optimiser should be asked to work around.
 
-So the rule is differentiated directly, by forward mode over the scalar loop:
-exactly consistent with the forward pass by construction, which is the property
-that matters here.
+So the rule itself is differentiated: exactly consistent with the forward pass
+by construction, which is the property that matters here.
 
-# One dual, one evaluation, only what is read
+# By hand where the rule is used, by forward mode elsewhere
 
-Every seeded argument shares one nested dual, and the moments are its value
-part. This replaced two helpers that each evaluated the rule plainly and then
-in duals, four evaluations per observation per reverse pass where one serves.
-The width counts too: under the seeded sweeps each number is already a dual of
-duals, and seeding all four thresholds of the bench's ord4 put a fifth of its
-gradient's samples on the rule's entry; seeding the two read made it about
-1.2x faster (local).
+For the kinds the rule integrates (binary, ordinal, count) the partials are
+written out and accumulated in the rule's own loop (`_binary_quadrature` with a
+`J`, derived at `_quadrature_partials!`): the same numbers the plain rule
+returns, and their exact derivative, with the mode's partials from the implicit
+function theorem. That replaced one nested dual carrying every seeded input
+through every operation of every node, which under the Laplace seeds was a dual
+of duals of duals and most of a categorical gradient's time.
 
-The one chunk is seeded by hand (`_ctsem_nested_seed`, under the nested tag
-for the reason given there) with its width a type parameter of
-`_binary_moment_jacobian!`, one method per width an observation can read, rather
-than through `ForwardDiff.jacobian` with the width known only at run time: that
-allocated a config, the closure's result and a result matrix per call, over
-half of each call's allocation.
+Forward mode stays for what that does not cover (`_binary_moment_dual!`): a
+censored row's closed form, the asymptote mixture, and a mode solve that used
+its budget, where the implicit function theorem does not describe what the
+iteration returned. It sits behind an inference barrier, so a model that never
+reaches it does not compile it. Its dual is seeded by hand
+(`_ctsem_nested_seed`, under the nested tag for the reason given there) with
+only the extras the observation reads, its width a type parameter.
 """
 function _binary_moment_jacobian(a::T, b::T, y::Real, nodes, weights,
-    thresholds, kind::Int) where {T}
+    thresholds, kind::Int, J=nothing) where {T}
     extras = kind == CTSEM_OBS_COUNT ? 0 : length(thresholds)
-    J = zeros(T, 3, 2 + extras)
+    if J isa Matrix{T} && size(J) == (3, 2 + extras)
+        fill!(J, zero(T))
+    else
+        J = zeros(T, 3, 2 + extras)
+    end
     if b <= zero(T)
         J[2, 1] = one(T)
         J[3, 2] = one(T)
         return (zero(T), zero(T), zero(T), J)
     end
+    logZ, m, v, handled = _binary_moment_partials!(J, a, b, y, nodes, weights,
+        thresholds, kind)
+    if !handled
+        # Nested: this runs inside the adjoint, which `ctsem_hessian`
+        # differentiates.
+        logZ, m, v, _ = _ctsem_barrier(_binary_moment_dual!, J, a, b, y, nodes,
+            weights, thresholds, kind)::Tuple{T,T,T,Bool}
+    end
+    if !isfinite(logZ)
+        fill!(J, zero(T))
+        J[2, 1] = one(T)
+        J[3, 2] = one(T)
+        return (T(-Inf), m, v, J)
+    end
+    return (logZ, m, v, J)
+end
+
+"""
+    _binary_moment_partials!(J, a, b, y, nodes, weights, thresholds, kind)
+
+`_binary_moments` at `ηbar = a`, `s = sqrt(b)`, with the rule's partials
+written into `J`, and a fourth return, `false` when this observation is not one
+the rule's analytic partials cover and `_binary_moment_dual!` has to take it.
+"""
+@inline function _binary_moment_partials!(J::Matrix{T}, a::T, b::T, y::Real,
+    nodes, weights, thresholds, kind::Int) where {T}
+    s = sqrt(b)
+    handled = promote_type(T, eltype(thresholds)) === T &&
+        s * s > T(_CTSEM_MIN_VARIANCE[]) && kind != CTSEM_OBS_CENSORED &&
+        !(kind == CTSEM_OBS_BINARY && length(thresholds) >= 2)
+    handled || return (T(-Inf), zero(T), zero(T), false)
+    return _binary_quadrature(a, s, y, nodes, weights, thresholds, kind, J)
+end
+
+"""
+    _binary_moment_dual!(J, a, b, y, nodes, weights, thresholds, kind)
+
+The moments and their partials by forward mode, for what
+`_binary_moment_partials!` does not cover: `_binary_moment_jacobian!` at the
+width the observation reads.
+"""
+function _binary_moment_dual!(J::Matrix{T}, a::T, b::T, y::Real, nodes,
+    weights, thresholds, kind::Int) where {T}
     read = _extras_read(y, thresholds, kind)
     nread = length(read)
-    # Nested: this runs inside the adjoint, which `ctsem_hessian` differentiates.
-    logZ, m, v, finite = nread == 0 ?
+    return nread == 0 ?
         _binary_moment_jacobian!(J, a, b, y, nodes, weights, thresholds, kind,
             read, Val(2)) :
         nread == 1 ?
@@ -1409,12 +1768,6 @@ function _binary_moment_jacobian(a::T, b::T, y::Real, nodes, weights,
             read, Val(4)) :
         _binary_moment_jacobian!(J, a, b, y, nodes, weights, thresholds, kind,
             read, Val(2 + nread))
-    if !finite
-        J[2, 1] = one(T)
-        J[3, 2] = one(T)
-        return (T(-Inf), m, v, J)
-    end
-    return (logZ, m, v, J)
 end
 
 """

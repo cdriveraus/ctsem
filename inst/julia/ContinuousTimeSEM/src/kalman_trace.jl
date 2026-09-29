@@ -279,9 +279,11 @@ moments, for every manifest row that is not Gaussian.
 """
 function _kalman_store_response!(trace::CTSEMKalmanTrace, kind::Int, row::Int,
     ws, pars, statecov)
-    isempty(ws.manifesttype) && return nothing
-    # Compiled only for a model with a non-Gaussian indicator; see `_ctsem_barrier`.
-    _ctsem_barrier(_kalman_store_response_rows!, trace, kind, row, ws, pars, statecov)
+    # Compiled only for a model with a non-Gaussian indicator; see
+    # `_ekf_categorical_call`.
+    _ekf_has_categorical(ws) || return nothing
+    _ekf_categorical_call(ws, _kalman_store_response_rows!, trace, kind, row, ws,
+        pars, statecov)
     return nothing
 end
 
@@ -465,10 +467,11 @@ gives a smoothed estimate on the same scale as the filtered one it refines.
 """
 function _kalman_smooth_response!(trace::CTSEMKalmanTrace, ws, row::Int, Jyr,
     Δ, covsm, ysm, ycovsm)
-    isempty(ws.manifesttype) && return nothing
-    # Compiled only for a model with a non-Gaussian indicator; see `_ctsem_barrier`.
-    _ctsem_barrier(_kalman_smooth_response_rows!, trace, ws, row, Jyr, Δ, covsm,
-        ysm, ycovsm)
+    # Compiled only for a model with a non-Gaussian indicator; see
+    # `_ekf_categorical_call`.
+    _ekf_has_categorical(ws) || return nothing
+    _ekf_categorical_call(ws, _kalman_smooth_response_rows!, trace, ws, row, Jyr,
+        Δ, covsm, ysm, ycovsm)
     return nothing
 end
 

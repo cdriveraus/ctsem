@@ -15,13 +15,13 @@ partials supplied by `_binary_moment_jacobian`.
 # Why the record holds what the forward saw, not only the prior
 
 The moments are the expensive part: a 21-node rule per observation, and their
-Jacobian is that rule evaluated once more in duals. Recording only the prior
-meant the reverse replayed the chain to find each observation's `(x, P)` and
-evaluated the rule there, so a traced pass paid for the rule twice per
-observation -- plainly in the forward, in duals in the replay. A traced forward
-now evaluates the Jacobian itself (`_record_binary_step!`), whose value part is
-the moments the plain rule would have returned, and keeps it with the state the
-observation was applied to; the reverse reads them. One evaluation per
+Jacobian is that rule again with its partials accumulated beside it. Recording
+only the prior meant the reverse replayed the chain to find each observation's
+`(x, P)` and evaluated the rule there, so a traced pass paid for the rule twice
+per observation -- plainly in the forward, with partials in the replay. A
+traced forward now evaluates the Jacobian itself (`_record_binary_step!`),
+whose moments are the ones the plain rule would have returned, and keeps it
+with the state the observation was applied to; the reverse reads them. One evaluation per
 observation per pass instead of two: an ordinal gradient sweep about a third
 cheaper on ord4 (local), and the rule's Jacobian is now taken at exactly the
 point the forward used rather than at a replayed one that could differ from it
@@ -142,12 +142,13 @@ function _record_binary!(tape, ws, pars, data, obs_col, rows, n)
     # `ctACFresiduals` and `ctPostPredPlots` all at once, far from the cause.
     tape === nothing && return nothing
     hasproperty(tape, :nbinaries) || return nothing
+    # By the workspace's type: a Gaussian model compiles no record; see
+    # `_ekf_categorical_call`. The type asserted so that the caller, which
+    # hands the record on to the forward update, stays inferable.
+    _ekf_has_categorical(ws) || return nothing
     isempty(rows) && return nothing
-    # Only a model with categorical indicators gets here; see `_ctsem_barrier`.
-    # The type asserted so the caller, which hands the record on to the
-    # forward update, stays inferable.
-    return _ctsem_barrier(_record_binary_rows!, tape, ws, pars, data, obs_col,
-        rows, n)::CTSEMBinaryRecord{eltype(ws.state)}
+    return _ekf_categorical_call(ws, _record_binary_rows!, tape, ws, pars, data,
+        obs_col, rows, n)::CTSEMBinaryRecord{eltype(ws.state)}
 end
 
 function _record_binary_rows!(tape, ws, pars, data, obs_col, rows, n)
@@ -193,7 +194,7 @@ The moments of the next observation of `record`'s row, `(logZ, offset,
 variance)`, for a traced forward pass: the state and covariance it is applied
 to (`ws.state`, `ws.P_predict`), `c`, `a` and `b` are kept, and where `b` is
 above the variance floor so are the moments' offset, variance and Jacobian,
-from `_binary_moment_jacobian`, whose value part is what `_binary_moments`
+from `_binary_moment_jacobian`, whose moments are what `_binary_moments`
 returns. At or below the floor the forward adds only the likelihood at `a` and
 moves nothing, and the reverse differentiates that instead, so the plain rule
 serves.
@@ -225,8 +226,9 @@ function _record_binary_step!(record::CTSEMBinaryRecord{T}, ws, c, a::T, b::T,
     record.ab[j] = (a, b)
     b > T(_CTSEM_MIN_VARIANCE[]) ||
         return _binary_moments(a, sqrt(b), y, nodes, weights, thresholds, kind)
+    # Last pass's matrix at this slot is refilled: its reverse has run.
     logZ, m, v, J = _binary_moment_jacobian(a, b, y, nodes, weights, thresholds,
-        kind)
+        kind, record.moments[j][3])
     record.moments[j] = (m, v, J)
     return (logZ, m, v)
 end
