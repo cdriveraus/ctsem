@@ -154,21 +154,26 @@
 #
 # The same measurement names a fit's parameters (`.ctBackendIdentifiability()`),
 # whose directions can include one the likelihood screen walked in another
-# decomposition's basis, so the basis is orthonormalised here rather than
-# assumed. NA for every coordinate when a vector cannot be read, which names
-# nothing.
+# decomposition (`.ctIdentifyMeasuredFlat()`'s unmatched case), not orthogonal
+# to the eigenvectors listed beside it. Such a vector is counted as it stands,
+# not orthogonalised against them: when it is the same flat direction measured
+# on a slightly different matrix, orthogonalising would turn the small
+# difference between the two into a whole dimension and name coordinates that
+# neither vector carries a share of. NA for every coordinate when a vector
+# cannot be read, which names nothing.
 #' @keywords internal
 .ctIdentifySubspaceShare <- function(directions, npar) {
   if (!length(directions)) return(numeric(npar))
   vectors <- vapply(directions, function(d) {
-    v <- d[["vector"]]
-    if (length(v) != npar) rep(NA_real_, npar) else as.numeric(v)
+    v <- as.numeric(d[["vector"]])
+    size <- sqrt(sum(v^2))
+    if (length(v) != npar || !is.finite(size) || size <= 0) {
+      rep(NA_real_, npar)
+    } else v / size
   }, numeric(npar))
   vectors <- matrix(vectors, nrow = npar)
   if (any(!is.finite(vectors))) return(rep(NA_real_, npar))
-  decomposition <- qr(vectors)
-  basis <- qr.Q(decomposition)[, seq_len(decomposition$rank), drop = FALSE]
-  rowSums(basis^2)
+  rowSums(vectors^2)
 }
 
 #' Check which parameters a dataset can inform, before fitting

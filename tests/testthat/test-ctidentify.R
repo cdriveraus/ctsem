@@ -310,9 +310,8 @@ test_that("a fit names what lies in the flat subspace, in any basis, as its inte
   expect_setequal(check$unidentified, report$parameters)
 
   # Two flat directions: any rotation of the pair is as good a basis as the
-  # one a decomposition returns, and a vector the likelihood screen walked in
-  # another decomposition need not be orthogonal to either. A coordinate's
-  # share of the subspace is the same from all of them.
+  # one a decomposition returns, and a coordinate's share of the subspace is
+  # the same from all of them.
   w <- c(0, 0.1, 0.2, 0.9, 0, 0.3)
   w <- w - sum(w * v) * v
   w <- w / sqrt(sum(w^2))
@@ -323,12 +322,19 @@ test_that("a fit names what lies in the flat subspace, in any basis, as its inte
   rotated <- list(list(vector = cos(turn) * v + sin(turn) * w),
     list(vector = -sin(turn) * v + cos(turn) * w))
   expect_equal(ctsem:::.ctIdentifySubspaceShare(rotated, 6L), share)
-  skewed <- list(list(vector = v), list(vector = v + 2 * w))
-  expect_equal(ctsem:::.ctIdentifySubspaceShare(skewed, 6L), share)
   both <- diag(6) - tcrossprod(v) - tcrossprod(w)
   pair <- ctsem:::.ctBackendIdentifiability(-both, parnames)
   expect_equal(pair$nweak, 2L)
   expect_setequal(pair$parameters, parnames[share >= ctsem:::.ctNullMassBar()])
+
+  # The same direction measured twice -- a screen's vector from a slightly
+  # different matrix beside the eigenvector it did not quite match -- names
+  # nothing that neither carries a share of. Orthogonalising the pair would
+  # have made their small difference, spread over p5 and p6, a whole direction.
+  again <- v + c(0, 0, 0, 0, 0.02, 0.02)
+  remeasured <- ctsem:::.ctIdentifySubspaceShare(list(list(vector = v),
+    list(vector = again)), 6L)
+  expect_true(all(remeasured[5:6] < ctsem:::.ctNullMassBar()))
 })
 
 test_that("the same advice is given after a fit as before one", {
