@@ -391,17 +391,16 @@ _ctsem_nested_gradient(f, x::AbstractArray) = ForwardDiff.gradient(f, x,
 Call `f(args...)` without letting inference look into `f`: the call dispatches
 at run time, and `f` is compiled only when a call actually reaches it.
 
-For code every model can reach and most never run -- the categorical
-measurement update, its tape record, its reverse pass and its response-scale
-moments -- this is the difference between compiling it for every model shape
-and compiling it for the shapes that use it. Behind a plain call, a Gaussian
-model's first fit compiled about 270 method instances of the categorical files
-it never executed, in every element type the filter runs in.
+For code a model can reach and seldom runs: forward mode for the categorical
+moments' Jacobian (`_binary_moment_dual!`), which `_binary_moment_jacobian`
+falls back to only for a censored row, an asymptote item or a mode solve that
+used its budget. The price is one dynamic dispatch per call and a result that
+inference cannot see, so a caller that uses the result asserts its type.
 
-The price is one dynamic dispatch per call and a result that inference cannot
-see, so a caller that uses the result asserts its type. Put it behind a gate
-that returns early for the common case, so a model that never needs `f` never
-pays even the dispatch.
+Code that a whole class of models never reaches is better gated on a type, as
+the categorical update is (`_ekf_categorical_call`): that folds at compile
+time and costs nothing per call, where this barrier in front of it cost one
+dispatch per categorical row on each pass.
 """
 @inline _ctsem_barrier(f::F, args::Vararg{Any,N}) where {F,N} =
     Base.inferencebarrier(f)(args...)

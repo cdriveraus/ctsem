@@ -1085,10 +1085,12 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
             _reverse_update!(x̄, P̄, Θ̄, θ̄ca, tape.updates[index], n, aws.reverse_scratch)
         elseif kind === :binary
             # After the Gaussian block of the same row, because the forward
-            # applied binary observations before it. Through a barrier, so a
-            # model with no categorical indicator, whose tape never holds one,
-            # does not compile the categorical reverse; see `_ctsem_barrier`.
-            _ctsem_barrier(_reverse_binary!, x̄, P̄, θ̄ca, tape.binaries[index], n)
+            # applied binary observations before it. By the workspace's type,
+            # so a model with no categorical indicator, whose tape never holds
+            # one, does not compile the categorical reverse; see
+            # `_ekf_categorical_call`.
+            _ekf_categorical_call(aws.ekf_ws, _reverse_binary!, x̄, P̄, θ̄ca,
+                tape.binaries[index], n)
         elseif kind === :td
             _reverse_td!(x̄, P̄, θ̄ca, tape.tds[index], n)
         elseif kind === :predict

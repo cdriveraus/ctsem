@@ -83,7 +83,7 @@ The workspace holds materialized parameters, structured parameter views, matrix
 factorizations, covariance buffers, and log-likelihood scratch storage for one
 scalar type.
 """
-struct ContinuousEKFWorkspace{T, N, M, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF, DBUF, DSI, ST, DCACHE, BPOP, AFBUF}
+struct ContinuousEKFWorkspace{T, N, M, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF, DBUF, DSI, ST, DCACHE, BPOP, AFBUF, CAT}
     all_params::Vector{T}
     subject_values::Vector{T}
     pars::PARS
@@ -170,8 +170,51 @@ struct ContinuousEKFWorkspace{T, N, M, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF
     observed_buf::Vector{Int}
     binary_buf::Vector{Int}
     gaussian_buf::Vector{Int}
-
+    # Whether the model has a non-Gaussian indicator (`manifesttype` is not
+    # empty), as a type, so that the categorical update, its tape record and
+    # its reverse pass are called directly for a model that has one and never
+    # compiled for a model that does not; see `_ekf_categorical_call`.
+    categorical::Val{CAT}
 end
+
+"""
+    _ekf_has_categorical(ws)
+
+Whether the workspace's model has a non-Gaussian indicator: a constant
+wherever the workspace's type is known.
+"""
+@inline _ekf_has_categorical(ws::ContinuousEKFWorkspace) = _val_bool(ws.categorical)
+@inline _ekf_has_categorical(ws) = !isempty(ws.manifesttype)
+@inline _val_bool(::Val{C}) where {C} = C
+
+"""
+    _ekf_categorical_call(ws, f, args...)
+
+`f(args...)`, the categorical code a workspace's model needs, called by what
+the workspace's type says: directly when it has a non-Gaussian indicator,
+not at all when it has none, and through `_ctsem_barrier` when the type is
+not known, which is only ever inference looking at a caller that holds the
+workspace abstractly.
+
+Generated for that last case. A plain branch on `_ekf_has_categorical` folds
+for a concrete workspace, but inference also walks callers whose workspace is
+only `ContinuousEKFWorkspace{T}`, and through a branch it cannot fold it
+specialised the categorical files for a Gaussian model: 188 method instances
+on a Gaussian augmented fit (bench cf_gaussian, local, no package image),
+against 22 behind the barrier alone. A generator is not run for a type that is
+not concrete, so inference there stops at the call. And the barrier alone, in
+front of every categorical row, cost one dynamic dispatch per row on each of
+these paths: 7-10% of ord4's Laplace and continuation gradients (local
+profile), where this costs nothing.
+"""
+@generated function _ekf_categorical_call(ws::ContinuousEKFWorkspace, f::F,
+    args...) where {F}
+    flag = fieldtype(ws, :categorical)
+    flag === Val{true} && return :(f(args...))
+    flag === Val{false} && return :(nothing)
+    return :(_ctsem_barrier(f, args...))
+end
+_ekf_categorical_call(ws, f::F, args...) where {F} = _ctsem_barrier(f, args...)
 
 """
     _init_continuous_ekf_workspace(T, sp)
@@ -310,5 +353,6 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
         Vector{Int}(undef, m),
         Vector{Int}(undef, m),
         Vector{Int}(undef, m),
+        Val(!isempty(manifesttype)),
     )
 end

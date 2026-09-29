@@ -142,12 +142,13 @@ function _record_binary!(tape, ws, pars, data, obs_col, rows, n)
     # `ctACFresiduals` and `ctPostPredPlots` all at once, far from the cause.
     tape === nothing && return nothing
     hasproperty(tape, :nbinaries) || return nothing
+    # By the workspace's type: a Gaussian model compiles no record; see
+    # `_ekf_categorical_call`. The type asserted so that the caller, which
+    # hands the record on to the forward update, stays inferable.
+    _ekf_has_categorical(ws) || return nothing
     isempty(rows) && return nothing
-    # Only a model with categorical indicators gets here; see `_ctsem_barrier`.
-    # The type asserted so the caller, which hands the record on to the
-    # forward update, stays inferable.
-    return _ctsem_barrier(_record_binary_rows!, tape, ws, pars, data, obs_col,
-        rows, n)::CTSEMBinaryRecord{eltype(ws.state)}
+    return _ekf_categorical_call(ws, _record_binary_rows!, tape, ws, pars, data,
+        obs_col, rows, n)::CTSEMBinaryRecord{eltype(ws.state)}
 end
 
 function _record_binary_rows!(tape, ws, pars, data, obs_col, rows, n)
