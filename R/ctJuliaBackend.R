@@ -63,19 +63,14 @@
 # anything is being watched, and the option below settles the cases this cannot
 # know about -- in both directions, which it previously did not.
 #
-# The RStudio case is why the console/overwrite split above matters, and it
-# turned out to need its own answer. Sending both streams as messages fixed the
-# *interleaving* -- the engine's line and R's own no longer tore each other up
-# -- but Charles reported (2026-09-28) that the in-place updates did not render
-# at all there: only each stage's closing line appeared, for minutes at a time
-# in between. RStudio's console evidently does not repaint a carriage-returned
-# `message()` in place; it shows the next one only when a real newline arrives.
-# Verified from the symptom rather than from RStudio's source, since this
-# session cannot run RStudio itself -- `.ctProgressRStudio()` is intentionally
-# a small, named seam so that finding can be confirmed or reversed in one
-# place. Until then RStudio gets whole lines on the engine's own non-overwrite
-# cadence (five seconds; see `CTSEMProgress` in progress.jl), which is at least
-# visible, rather than in-place updates that were not.
+# RStudio overwrites like any other console, provided each update is flushed.
+# In-place updates once showed nothing there but each stage's closing line, for
+# minutes at a time (Charles, 2026-09-28), and whole lines instead filled the
+# console with them (2026-09-29). A GUI console -- RStudio's, like RGui's --
+# holds a line that has no newline yet until R flushes the console, which R
+# does not do while it waits on the engine; so the sink flushes after every
+# update, as `txtProgressBar()` does. Inferred from those two symptoms and from
+# `?flush.console`, not run inside RStudio from here.
 # `options(ctsem.progress.overwrite = )` still settles it explicitly in either
 # direction, checked first, so this default never overrides a choice someone
 # made.
@@ -90,20 +85,8 @@
   if (is.logical(option) && length(option) == 1L && !is.na(option)) {
     return(option && level < 2)
   }
-  .ctProgressConsole() && level < 2 && !.ctProgressRStudio()
+  .ctProgressConsole() && level < 2
 }
-
-# Is this session RStudio's own R process -- the one case known (see above)
-# where a console is watching (`.ctProgressConsole()` is TRUE) but cannot
-# repaint an in-place update. `Sys.getenv("RSTUDIO")` is what RStudio sets on
-# every R process it starts, console or Job or background; reached directly
-# rather than through the `rstudioapi` package so detecting this costs no
-# dependency. Not asked by `.ctProgressConsole()` itself: that function
-# answers "is anyone watching" and this answers a narrower "can that watcher's
-# console repaint a line", which is why `.ctProgressOverwrite()` is the only
-# reader.
-#' @keywords internal
-.ctProgressRStudio <- function() identical(Sys.getenv("RSTUDIO"), "1")
 
 #' Deliver an engine progress line as an R message
 #'
@@ -158,6 +141,9 @@
       # this line; the closing line ends itself. The padding is what stops a
       # shorter update leaving the tail of a longer one behind it.
       message("\r", formatC(text, width = -pad), appendLF = final)
+      # A GUI console shows an unfinished line only once flushed; see
+      # `.ctProgressOverwrite()`.
+      utils::flush.console()
       open <<- !final
       if (final) pad <<- 0L
       invisible(NULL)

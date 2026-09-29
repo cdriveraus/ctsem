@@ -418,7 +418,7 @@ scalar quadrature the filter uses, over the dispersion alone.
     if kind == CTSEM_OBS_COUNT
         σc = _count_dispersion(thresholds, T)
         if σc > zero(σc)
-            nodes, weights = _gauss_hermite(_CTSEM_BINARY_NODES[])
+            nodes, weights = _binary_rule()
             logZ, _, _ = _binary_moments(promote(eta, σc)..., y, nodes,
                 weights, (), kind)
             return logZ

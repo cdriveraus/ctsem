@@ -176,10 +176,23 @@ mutable struct CTSEMLaplaceContinuation{L} <: CTSEMOptimisable
     member_sweeps::Int
     recentres::Int
     refused::Int
-    # The last evaluation, at its point, for the placement it was made under:
-    # a round's first evaluation is at the point the previous round's
-    # stationarity check just evaluated. Cleared by every placement.
+    # Wall seconds in each kind of call, so a correction's cost can be broken
+    # down without a profiler: values, gradients, placements (the screen is
+    # the first), Hessians.
+    seconds_values::Float64
+    seconds_gradients::Float64
+    seconds_placements::Float64
+    seconds_hessian::Float64
+    # The last evaluation with a gradient and the last without, each at its
+    # point, for the placement it was made under: a round's first evaluation
+    # is at the point the previous round's stationarity check just evaluated,
+    # and the uncertainty stage asks for the gradient at the estimate again
+    # after the certification's probe has taken values elsewhere. One slot for
+    # both let the probe's values evict that gradient, which was then paid
+    # twice: a whole gradient per converged correction, one of the seven
+    # ord4's took. Both cleared by every placement.
     cache::Any
+    value_cache::Any
 end
 
 """Gauss-Hermite grids a rule of these options can ask for, filled before any
@@ -200,8 +213,8 @@ end
 Block `b`'s own log integrand and its precision, as functions of the block's
 coordinates with the rest of `u` held where it is now: `value_gradient(z)` is
 its members' log likelihood less `z'z/2` and that function's gradient, and
-`precision(z)` is `I - d2 ll/dz dz`, dense -- the closures
-`_quadrature_leaf_rule!` builds for the same block.
+`precision(z)` is `I - d2 ll/dz dz`, dense (`_laplace_block_precision`) -- what
+`_quadrature_leaf_rule!` uses for the same block.
 """
 function _continuation_block_functions(laplace::CTSEMLaplaceObjective, U::Integer,
     theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, b::Integer,
@@ -219,19 +232,7 @@ function _continuation_block_functions(laplace::CTSEMLaplaceObjective, U::Intege
         return (value=r.value - dot(z, z) / 2,
             gradient=[r.gradient[c] for c in columns] .- z)
     end
-    loglik_gradient = function (z)
-        S = eltype(z)
-        ws = _laplace_workspace!(laplace, S, length(theta))
-        work = convert(Vector{S}, base)
-        @inbounds for (t, c) in enumerate(columns); work[c] = z[t]; end
-        r = _laplace_unit_loglik_gradient(laplace, U, convert(Vector{S}, theta),
-            [convert(Matrix{S}, L) for L in Ls], work, ws, members)
-        return [r.gradient[c] for c in columns]
-    end
-    precision = function (z)
-        A = ForwardDiff.jacobian(loglik_gradient, collect(Float64, z))
-        return Matrix{Float64}(LinearAlgebra.I, k, k) .- _laplace_symmetrise(A)
-    end
+    precision = z -> _laplace_block_precision(laplace, U, theta, Ls, base, b, z)
     return (value_gradient=value_gradient, precision=precision)
 end
 
@@ -595,7 +596,7 @@ function ctsem_laplace_continuation(laplace::CTSEMLaplaceObjective,
         Int(product_maxdim), Float64(soft_tau), Int(soft_maxdirs), Int(maxdim),
         fill(false, nunits),
         fill(NaN, nunits), fill(NaN, nunits), fill(false, nunits), NaN, nothing,
-        0, 0, 0, 0, 0, 0, nothing)
+        0, 0, 0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, nothing, nothing)
     _continuation_place!(o, theta)
     return o
 end
@@ -634,10 +635,12 @@ function ctsem_laplace_continuation_revert!(o::CTSEMLaplaceContinuation)
     end
     o.previous = nothing
     o.cache = nothing
+    o.value_cache = nothing
     return ctsem_laplace_continuation_info(o)
 end
 
 function _continuation_place!(o::CTSEMLaplaceContinuation, theta::Vector{Float64})
+    started = time_ns()
     laplace = o.laplace
     opts = (nodes=o.nodes, product_maxdim=o.product_maxdim, soft_tau=o.soft_tau,
         maxdim=o.maxdim,
@@ -666,6 +669,8 @@ function _continuation_place!(o::CTSEMLaplaceContinuation, theta::Vector{Float64
         sum(placed.quadrature[U] for U in flagged; init=0.0) + prior
     o.recentres += 1
     o.cache = nothing
+    o.value_cache = nothing
+    o.seconds_placements += (time_ns() - started) / 1e9
     return o
 end
 
@@ -852,12 +857,15 @@ route. `unit_loglik` is every unit's term in the fit's unit order, and
 function ctsem_laplace_continuation_evaluate(o::CTSEMLaplaceContinuation,
     values::AbstractVector; gradient::Bool=true)
     theta = collect(Float64, values)
-    hit = o.cache
-    if hit !== nothing && hit.theta == theta && (!gradient || hit.result.gradient !== nothing)
-        return _continuation_copy(hit.result)
+    for hit in (o.cache, o.value_cache)
+        if hit !== nothing && hit.theta == theta &&
+                (!gradient || hit.result.gradient !== nothing)
+            return _continuation_copy(hit.result)
+        end
     end
     result = _continuation_evaluate(o, theta, gradient)
-    o.cache = (theta=theta, result=_continuation_copy(result))
+    entry = (theta=theta, result=_continuation_copy(result))
+    gradient ? (o.cache = entry) : (o.value_cache = entry)
     return result
 end
 
@@ -870,6 +878,7 @@ _continuation_copy(r) = (value=r.value,
 
 function _continuation_evaluate(o::CTSEMLaplaceContinuation, theta::Vector{Float64},
     gradient::Bool)
+    started = time_ns()
     rest = ctsem_laplace_evaluate(o.rest, theta; gradient=gradient)
     flagged = _continuation_flagged(o, theta, gradient)
     gradient ? (o.gradient_calls += 1) : (o.value_calls += 1)
@@ -893,6 +902,8 @@ function _continuation_evaluate(o::CTSEMLaplaceContinuation, theta::Vector{Float
             subject_loglik[i] = flagged.values[f] / length(members)
         end
     end
+    elapsed = (time_ns() - started) / 1e9
+    gradient ? (o.seconds_gradients += elapsed) : (o.seconds_values += elapsed)
     return (value=value, gradient=grad, unit_loglik=unit_loglik,
         subject_loglik=subject_loglik, converged=rest.converged && flagged.ok)
 end
@@ -1094,12 +1105,16 @@ function ctsem_laplace_continuation_hessian(o::CTSEMLaplaceContinuation,
     scheme in (:exact, :forward, :central) || throw(ArgumentError(
         "scheme must be :exact, :forward or :central, got " * repr(scheme)))
     x = collect(Float64, values)
-    if scheme === :exact
-        H = _continuation_exact_hessian(o, x; step=step, width=width)
-        H === nothing || return H
-        scheme = :forward
+    started = time_ns()
+    H = scheme === :exact ? _continuation_exact_hessian(o, x; step=step, width=width) :
+        nothing
+    if H === nothing
+        # A difference scheme's gradients are in `seconds_gradients` as well.
+        H = _continuation_difference_hessian(o, x, step,
+            scheme === :exact ? :forward : scheme)
     end
-    return _continuation_difference_hessian(o, x, step, scheme)
+    o.seconds_hessian += (time_ns() - started) / 1e9
+    return H
 end
 
 """The `:forward` and `:central` schemes of `ctsem_laplace_continuation_hessian`."""
@@ -1742,7 +1757,10 @@ function ctsem_laplace_continuation_info(o::CTSEMLaplaceContinuation)
         evaluations_per_value=sum(r.evaluations for r in o.rules; init=0),
         value_calls=o.value_calls, gradient_calls=o.gradient_calls,
         member_values=o.member_values, member_sweeps=o.member_sweeps,
-        recentres=o.recentres, refused=o.refused, nodes=o.nodes,
+        recentres=o.recentres, refused=o.refused,
+        seconds_values=o.seconds_values, seconds_gradients=o.seconds_gradients,
+        seconds_placements=o.seconds_placements, seconds_hessian=o.seconds_hessian,
+        nodes=o.nodes,
         product_maxdim=o.product_maxdim, soft_tau=o.soft_tau,
         soft_maxdirs=o.soft_maxdirs, tolerance=o.tolerance)
 end

@@ -584,15 +584,7 @@ test_that("the overwrite option overrides the detection in both directions", {
   # someone asks in, because the point of one rewritten line is that it stays
   # one line.
   withr::local_options(ctsem.progress.overwrite = NULL)
-  # Not simply `.ctProgressConsole()` any more: RStudio can be a console that
-  # is watching (`.ctProgressConsole()` TRUE) and still not repaint a
-  # carriage-returned line, which is a fact about that one console rather than
-  # about whether anyone is watching -- see `.ctProgressOverwrite()`. This
-  # session is not RStudio, so the two answers agree here regardless; the
-  # point of writing it this way rather than pinning the pre-RStudio equality
-  # is that it stays correct if this test suite is ever run from inside one.
-  expect_equal(.ctProgressOverwrite(1),
-    .ctProgressConsole() && !ctsem:::.ctProgressRStudio())
+  expect_equal(.ctProgressOverwrite(1), .ctProgressConsole())
   withr::local_options(ctsem.progress.overwrite = TRUE)
   expect_true(.ctProgressOverwrite(1))
   expect_false(.ctProgressOverwrite(2))   # verbose 2 keeps the history
@@ -600,21 +592,14 @@ test_that("the overwrite option overrides the detection in both directions", {
   expect_false(.ctProgressOverwrite(1))
 })
 
-test_that("RStudio gets whole lines, and the option still overrides it", {
-  # Charles reported (2026-09-28) that RStudio's console did not repaint an
-  # in-place update at all -- only each stage's closing line showed, for
-  # minutes at a time in between. `RSTUDIO` is set on every R process RStudio
-  # starts; mocked here since this session is not one.
+test_that("RStudio overwrites like any console", {
+  # It was given whole lines for a day (2026-09-28), which filled its console;
+  # the sink now flushes each update instead -- see `.ctProgressOverwrite()`.
+  # `RSTUDIO` is set on every R process RStudio starts; mocked here since this
+  # session is not one.
   withr::local_envvar(RSTUDIO = "1")
-  expect_true(ctsem:::.ctProgressRStudio())
   withr::local_options(ctsem.progress.overwrite = NULL)
-  if (.ctProgressConsole()) expect_false(.ctProgressOverwrite(1))
-  # The option still settles it either way, unconditionally -- someone who
-  # knows their RStudio does handle it is not overruled by the default.
-  withr::local_options(ctsem.progress.overwrite = TRUE)
-  expect_true(.ctProgressOverwrite(1))
-  withr::local_options(ctsem.progress.overwrite = FALSE)
-  expect_false(.ctProgressOverwrite(1))
+  expect_equal(.ctProgressOverwrite(1), .ctProgressConsole())
 })
 
 # How wide a session starts, and the ceiling for a call that sets none, are
