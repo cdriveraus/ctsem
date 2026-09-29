@@ -560,9 +560,13 @@
 # 5.3 cores (local Windows, every OS thread sampled): all 24 worker threads
 # 20-40% busy through the Laplace phases, where two threads did the work, and
 # GC mark threads -- which also default to the thread count -- another 0.8.
-# OpenBLAS came to 4 CPU-seconds of 3400. A zero spin threshold
-# (`JULIA_THREAD_SLEEP_THRESHOLD`) left it at 4.7 cores, because the wakes
-# themselves cost, and it slowed fine-grained regions at full width sevenfold.
+# OpenBLAS came to 4 CPU-seconds of 3400. On Linux (dev1, 23 threads) the
+# same fit used 6.4 cores, most of it the 23 GC mark threads (3.6) and OpenBLAS
+# (0.6); started at the call's width it used 2.1 and took 640-660 s against
+# 705, and at `cores = 8` 7.2 against 15.1 cores and 290 s against 345 --
+# marking with fewer threads was faster, not slower. A zero spin threshold
+# (`JULIA_THREAD_SLEEP_THRESHOLD`) left the Windows fit at 4.7 cores, because
+# the wakes themselves cost, and slowed fine-grained full-width regions sevenfold.
 .ctJuliaDefaultCores <- function() {
   n <- suppressWarnings(as.integer(getOption("mc.cores", 2L))[1L])
   if (is.na(n) || n < 1L) 2L else n
