@@ -216,6 +216,7 @@ ctParticleCorrect <- function(fit, draws = c("reweight", "imis"), particles = 10
   }
   before <- list(raw = est, cov = covariance, se = as.numeric(se0))
   is_res <- NULL
+  paretok <- NA_real_
 
   if (identical(draws, "reweight")) {
     n <- if (is.null(nsamples)) nrow(posterior) else as.integer(nsamples)[1L]
@@ -314,6 +315,7 @@ ctParticleCorrect <- function(fit, draws = c("reweight", "imis"), particles = 10
     theta <- is_res$full_theta
     w <- as.numeric(is_res$full_weights)
     ess <- drawn$ess
+    paretok <- drawn$k
     newmean <- as.numeric(is_res$mean)
     newcov <- drawn$cov
     ev <- do.call(rbind, memo$rows)
@@ -369,7 +371,7 @@ ctParticleCorrect <- function(fit, draws = c("reweight", "imis"), particles = 10
       fit$uncertainty$imis <- is_res
     }
     fit$uncertainty$details$particle_correction <- list(draws = draws, ess = ess,
-      particles = particles, substeps = substeps, transition = transition,
+      pareto_k = paretok, particles = particles, substeps = substeps, transition = transition,
       target = "particle-filter posterior")
   }
   fit

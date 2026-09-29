@@ -271,7 +271,8 @@
   drawn <- .ctOptimDrawSamples(uncertaintyfit, draws = draws, control = control,
     est = est, finishsamples = finishsamples,
     lpg = lpg(fit, gradient = FALSE), verbose = verbose,
-    scaleInit = juliaImis$scaleInit, tailScale = juliaImis$tailScale)
+    scaleInit = juliaImis$scaleInit, tailScale = juliaImis$tailScale,
+    tailremedy = "ctFitUncertainty(fit, 'sample') samples the posterior itself.")
   samples <- drawn$samples
   uncertaintyfit <- drawn$uncertaintyfit
   control <- drawn$control
