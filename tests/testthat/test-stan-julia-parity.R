@@ -717,24 +717,26 @@ test_that("which directions are named does not depend on how far the optimiser w
   # exact-Hessian finish, not the batching or gap-correction stages, and
   # `.ctBackendIdentifiability()` reads the standard post-fit Hessian
   # (`out$uncertainty$hessian`), computed whether or not the finish ran. Where
-  # it stops moves with the batching schedule's timing (cores defaults to 2
-  # here; see CLAUDE.md on cores > 1 reproducibility): 732 of 831 iterations
-  # and 726 of 751 in two runs, 0.30 and 0.14 raw units from the full fit
-  # (max abs); 558 of 831 on Windows and 610 of 672 on dev2 in two more, 0.58
-  # and 0.54. In the last two it is 1.4 and 1.3 raw units along the full fit's
-  # flat direction and 0.05 and 0.04 off it, 1.7e-05 and 2.1e-05 nats below,
-  # and "suboptimal" by 7.9e-06 over the identified directions rather than
-  # certified -- on the ridge, a little short of its crest. The guard below
-  # sits under the smallest of those gaps.
+  # it stops moves with the batching schedule's timing: cores defaults to 2
+  # here, where the chunk tuner times candidate splits (see ?ctFit's `cores`),
+  # and along a ridge that last-decimal difference moves the stopping point by
+  # a hundred iterations or more. Measured: 732 of 831 iterations and 726 of
+  # 751, 0.30 and 0.14 raw units from the full fit (max abs); 558 of 831 on
+  # Windows, 0.58; 610 and 602 of 672 on dev2, 0.54 and 0.20. At 558 and 610
+  # it is 1.4 and 1.3 raw units along the full fit's flat direction and 0.05
+  # and 0.04 off it, 1.7e-05 and 2.1e-05 nats below, and "suboptimal" by
+  # 7.9e-06 over the identified directions rather than certified -- on the
+  # ridge, a little short of its crest. The guard below sits under the
+  # smallest of those gaps.
   #
   # The flat direction turns between the two points, because the ridge is
-  # curved in raw coordinates: by 4.8 degrees on Windows and 4.3 on dev2, one
-  # flat direction at each and the next eigenvalue 270 to 430 times sharper,
-  # both confirmed by the likelihood screen. The four correlations with t0a,
-  # the weakest of the ten, carry a share of it that moves with the turn.
-  # Named by a third of the largest loading, as the report once was, two of
-  # them crossed that bar in the last two runs -- nine names at the full fit,
-  # seven at the early one, on both machines. Named by their share of the flat
+  # curved in raw coordinates: by 4.8 degrees at 558 and 4.3 at 610, one flat
+  # direction at each and the next eigenvalue 270 to 430 times sharper, both
+  # confirmed by the likelihood screen. The four correlations with t0a, the
+  # weakest of the ten, carry a share of it that moves with the turn. Named by
+  # a third of the largest loading, as the report once was, two of them
+  # crossed that bar at both -- nine names at the full fit, seven at the early
+  # one, on Windows and on dev2 alike. Named by their share of the flat
   # subspace against `.ctNullMassBar()`, all ten carry 0.005 or more at both
   # points and the fourteen identified coordinates 1.4e-08 or less. See
   # `.ctBackendIdentifiability()`.
