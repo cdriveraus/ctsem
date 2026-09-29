@@ -50,7 +50,13 @@ test_that("a reply left owed by Escape is collected before the next call", {
 test_that("a restore deferred behind an owed reply runs before the next call", {
   skip_without_julia()
   ctJuliaSetup()
-  on.exit(ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_max_chunks!", 0L), add = TRUE)
+  # Put back the ceiling it found, not 0: 0 is every thread the session has,
+  # which can be wider than the ceiling ctJuliaSetup() leaves, and every later
+  # file in the session would run its uncapped calls at that.
+  original <- ctsem:::.ctJuliaGet(ctsem:::.ctJuliaEval(
+    "ContinuousTimeSEM.ctsem_max_chunks()"))$max_chunks
+  on.exit(ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_max_chunks!",
+    as.integer(original)), add = TRUE)
   send_and_walk_away("sleep(1); 0")
   # As `.ctBackendRestoreMaxChunks()` does from `on.exit` while Escape unwinds.
   expect_null(ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_max_chunks!", 3L,
