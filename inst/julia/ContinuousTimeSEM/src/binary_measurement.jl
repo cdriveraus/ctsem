@@ -552,7 +552,7 @@ end
 
 `(A', B', A'', B'', clamped, info)` at `η`, for a kind the rule integrates: the
 first two `η`-derivatives of two pieces the slope is written as,
-`d log P/dη = A - B`. For the logistic kinds they are `_category_node`'s,
+`d log P/dη = A - B`. For the logistic kinds they are `_category_parts`' own,
 `A = F(τ_lo - η)` and `B = F(η - τ_hi)`, so `A' = -A(1-A)` and `B' = B(1-B)`;
 for a count `A = y` and `B` is the rate. Everything the mode's partials need
 follows from them: the score's slope is `A' - B'` and the information's
@@ -1025,73 +1025,66 @@ end
 end
 
 """
-    _log1p_exp_split(x)
+    _log1p_exp_logistic(x)
 
-`(q, E, upper)` with `log1p_exp(x) = q + log1p(E)`: `q = max(x, 0)` and
-`E = exp(-|x|)`, on the one branch `log1p_exp` takes, so that a dual `x` sees
-a single function, with `upper` saying which. The logistic `F(x)` is then
-`1/(1 + E)` on the upper branch and `E/(1 + E)` on the other.
+`(log1p_exp(x), F(x))`, the second being the first's derivative, from one
+exponential. The first is `log1p_exp`'s own expression, so it is the same
+number to the bit.
 """
-@inline function _log1p_exp_split(x::Real)
-    x > zero(x) && return (x, exp(-x), true)
-    return (zero(x), exp(x), false)
+@inline function _log1p_exp_logistic(x::Real)
+    if x > zero(x)
+        E = exp(-x)
+        return (x + log1p(E), inv(one(E) + E))
+    end
+    E = exp(x)
+    return (log1p(E), E / (one(E) + E))
 end
 
 """
-    _category_node(η, y, thresholds, kind, k)
+    _category_parts(η, y, thresholds, kind, k, gapterm)
 
-One node of the rule, for a kind it integrates, without a logarithm:
-`(q, w, A, B)` with `log P(y | η) = q + log w`, plus an interior category's gap
-term, which does not depend on `η` and is the caller's. A logistic tail is
-`log F(-x) = -max(x, 0) - log(1 + e^-|x|)`, so the logarithm is of a product
-of one or two factors `1 + e^-|x|`; the rule wants the likelihood's
-exponential in any case, and takes `w`, the product's inverse, in `[1/4, 1]`.
-That is one division per node where `log1p_exp` twice was two logarithms.
-
-`A - B` is the likelihood's slope, which the rule's analytic partials
+`(log P(y | η), A, B)` for a kind the rule integrates, with the slope written
+as two pieces, `d log P/dη = A - B`, which is what the rule's analytic partials
 accumulate (`_binary_quadrature`). For the logistic kinds `A = F(τ_lo - η)` and
-`B = F(η - τ_hi)`, from the same factors, zero where that threshold does not
-exist -- a binary one is the top category of a threshold at zero, a binary zero
-the bottom one -- and the thresholds' own partials are `-A - g'` and `B + g'`,
-with `g'` the gap term's slope. For a count, which has no thresholds, `q` is
-the whole log likelihood (`_category_loglikelihood`'s) and `w = 1`; `A` is the
-slope `y - rate` (the rate is zero past the clamp, where the likelihood is
-linear) and `B` zero: `y` and the rate are close wherever the posterior has
-mass, and their difference is taken node by node rather than between two sums.
+`B = F(η - τ_hi)`, zero where that threshold does not exist -- a binary one is
+the top category of a threshold at zero, a binary zero the bottom one -- and the
+thresholds' own partials are `-A - g'` and `B + g'`, with `g'` the slope of the
+interior category's gap term `gapterm`. For a count, which has no thresholds,
+`A` is the whole slope `y - rate` (the rate is zero past the clamp, where the
+likelihood is linear) and `B` zero: `y` and the rate are close wherever the
+posterior has mass, and their difference is taken node by node rather than
+between two sums.
+
+The log likelihood is `_category_loglikelihood`'s, and the interior category's
+the node sum's, to the bit.
 """
-@inline function _category_node(η::T, y::Real, thresholds, kind::Int,
-    k::Int) where {T}
+@inline function _category_parts(η::T, y::Real, thresholds, kind::Int, k::Int,
+    gapterm) where {T}
     if kind == CTSEM_OBS_COUNT
         cap = T(_CTSEM_COUNT_MAX_LOG_RATE[])
         λ = exp(min(η, cap))
-        return (T(y) * η - λ - T(_log_factorial(y)), one(T),
+        return (T(y) * η - λ - T(_log_factorial(y)),
             T(y) - (η < cap ? λ : zero(T)), zero(T))
     end
     if kind == CTSEM_OBS_BINARY || isempty(thresholds)
-        return y > 0.5 ? _category_tail(-η, true) : _category_tail(η, false)
+        if y > 0.5
+            l, A = _log1p_exp_logistic(-η)
+            return (-l, A, zero(A))
+        end
+        l, B = _log1p_exp_logistic(η)
+        return (-l, zero(B), B)
     end
     n = length(thresholds)
-    k <= 1 && return _category_tail(η - thresholds[1], false)
-    k > n && return _category_tail(thresholds[n] - η, true)
-    qa, Ea, ua = _log1p_exp_split(thresholds[k - 1] - η)
-    qb, Eb, ub = _log1p_exp_split(η - thresholds[k])
-    da = one(Ea) + Ea
-    db = one(Eb) + Eb
-    w = inv(da * db)
-    return (-qa - qb, w, (ua ? one(Ea) : Ea) * db * w,
-        (ub ? one(Eb) : Eb) * da * w)
-end
-
-"""
-`_category_node` for a single logistic tail, `log P = -log1p_exp(x)`: an
-observation above its one bound (`above`, whose slope is `A = F(x)`) or below
-it (`B = F(x)`).
-"""
-@inline function _category_tail(x::Real, above::Bool)
-    q, E, upper = _log1p_exp_split(x)
-    w = inv(one(E) + E)
-    F = upper ? w : E * w
-    return above ? (-q, w, F, zero(F)) : (-q, w, zero(F), F)
+    if k <= 1
+        l, B = _log1p_exp_logistic(η - thresholds[1])
+        return (-l, zero(B), B)
+    elseif k > n
+        l, A = _log1p_exp_logistic(thresholds[n] - η)
+        return (-l, A, zero(A))
+    end
+    l1, A = _log1p_exp_logistic(thresholds[k - 1] - η)
+    l2, B = _log1p_exp_logistic(η - thresholds[k])
+    return (-l1 - l2 + gapterm, A, B)
 end
 
 """
@@ -1253,8 +1246,9 @@ carried as dual numbers. The derivation is at `_quadrature_partials!`.
 @inline function _binary_quadrature(ηbar::T, s::T, y::Real, nodes, weights,
     thresholds, kind::Int, J=nothing) where {T}
     s2 = s * s
-    # An interior category's `log(1 - e^-gap)` does not depend on η: taken once
-    # and added to logZ. A closed gap makes every node `-Inf`, reported as such.
+    # An interior category's `log(1 - e^-gap)` does not depend on η: taken once,
+    # and added where `_category_loglikelihood` adds it, so the node sum is the
+    # same to the bit. A closed gap makes every node `-Inf`, reported as such.
     k = kind == CTSEM_OBS_ORDINAL ? Int(y) : 0
     interior = 1 < k <= length(thresholds)
     G = promote_type(T, eltype(thresholds))
@@ -1298,13 +1292,17 @@ carried as dual numbers. The derivation is at `_quadrature_partials!`.
         centred = scale * t              # η - mode
         deviation = mode_offset + centred  # η - ηbar
         η = ηbar + deviation
-        # The likelihood is `exp(q) w`, `w` in [1/4, 1] (`_category_node`):
-        # the exponent carries `q`, and the rescaling below keeps the largest
-        # `u` at least a quarter of its weight.
-        q, w, A, B = _category_node(η, y, thresholds, kind, k)
+        if J === nothing
+            ll = interior ?
+                -log1p_exp(thresholds[k - 1] - η) -
+                    log1p_exp(η - thresholds[k]) + gapterm :
+                _category_loglikelihood(η, y, thresholds, kind)
+        else
+            ll, A, B = _category_parts(η, y, thresholds, kind, k, gapterm)
+        end
         # The `t²` undoes the rule's own kernel; the prior density is then
         # carried explicitly rather than folded into the nodes.
-        e = t * t - deviation * deviation * halfprec + q
+        e = t * t - deviation * deviation * halfprec + ll
         if e > emax
             ratio = isfinite(emax) ? exp(emax - e) : zero(T)
             Z *= ratio
@@ -1313,7 +1311,7 @@ carried as dual numbers. The derivation is at `_quadrature_partials!`.
             J === nothing || (sums = sums .* ratio)
             emax = e
         end
-        u = T(weights[i]) * exp(e - emax) * w
+        u = T(weights[i]) * exp(e - emax)
         Z += u
         M1 += u * deviation
         M2 += u * centred * centred
@@ -1328,8 +1326,8 @@ carried as dual numbers. The derivation is at `_quadrature_partials!`.
     spread = offset - mode_offset        # posterior mean - mode
     variance = M2 / Z - spread * spread
     # Z above is √(2π)s times the marginal likelihood: the scale factor and the
-    # prior's normalising constant are both outside the sum, as is the gap term.
-    logZ = log(Z) + emax + gapterm + log(scale) - log(sqrt(T(2) * T(pi)) * s)
+    # prior's normalising constant are both outside the sum.
+    logZ = log(Z) + emax + log(scale) - log(sqrt(T(2) * T(pi)) * s)
     J === nothing || _quadrature_partials!(J, sums, Z, M2, ηbar, s2, y,
         thresholds, kind, k, mode_offset, curvature, spread, variance > zero(T),
         gapslope)
@@ -1347,7 +1345,7 @@ end
 One node's terms of the eleven sums `_quadrature_partials!` reads: `u c^j` for
 `j = 1, 3, 4` (`j = 0` and `2` are `Z` and `M2`), then `u c^j A` and
 `u c^j B` for `j = 0..3`, with `u` the node's weight, `c = η - mode` and
-`A - B` the likelihood's slope there (`_category_node`).
+`A - B` the likelihood's slope there (`_category_parts`).
 """
 @inline function _quadrature_node_sums(u, c, A, B)
     uc = u * c
