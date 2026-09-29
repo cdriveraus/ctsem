@@ -167,12 +167,12 @@ loading is a covariance with a unit-variance dimension rather than a
 correlation -- and the sign of a whole dimension is arbitrary, since negating
 a column of \code{L} leaves \code{Sigma} unchanged. Read the standard
 deviations and correlations \code{summary()} reports, which do not depend on
-that choice, rather than the sign of one loading. Under \code{'laplace'} and
-\code{'none'} the coordinates are
-\code{Sigma = [[S, S b'], [b S, b S b']]} instead, for a freely estimated
-\code{S} over the basis effects and coefficients \code{b} for the rest.
-Either way \code{summary()} notes which reported values follow from the
-structure rather than being estimated.
+that choice, rather than the sign of one loading. Under \code{'none'} the
+coordinates are \code{Sigma = [[S, S b'], [b S, b S b']]} instead, for a
+freely estimated \code{S} over the basis effects and coefficients \code{b}
+for the rest; under \code{'laplace'} a loading matrix per level, described
+below. Either way \code{summary()} notes which reported values follow from
+the structure rather than being estimated.
 
 The reduction needs the population covariance free, so any \code{RAWPOPVAR}
 cell stated -- a fixed value, or a label differing from the default -- turns

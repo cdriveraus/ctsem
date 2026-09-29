@@ -598,12 +598,12 @@ T0VARredundancies <- function(ctm) {
 #' correlation -- and the sign of a whole dimension is arbitrary, since negating
 #' a column of \code{L} leaves \code{Sigma} unchanged. Read the standard
 #' deviations and correlations \code{summary()} reports, which do not depend on
-#' that choice, rather than the sign of one loading. Under \code{'laplace'} and
-#' \code{'none'} the coordinates are
-#' \code{Sigma = [[S, S b'], [b S, b S b']]} instead, for a freely estimated
-#' \code{S} over the basis effects and coefficients \code{b} for the rest.
-#' Either way \code{summary()} notes which reported values follow from the
-#' structure rather than being estimated.
+#' that choice, rather than the sign of one loading. Under \code{'none'} the
+#' coordinates are \code{Sigma = [[S, S b'], [b S, b S b']]} instead, for a
+#' freely estimated \code{S} over the basis effects and coefficients \code{b}
+#' for the rest; under \code{'laplace'} a loading matrix per level, described
+#' below. Either way \code{summary()} notes which reported values follow from
+#' the structure rather than being estimated.
 #'
 #' The reduction needs the population covariance free, so any \code{RAWPOPVAR}
 #' cell stated -- a fixed value, or a label differing from the default -- turns
@@ -1974,17 +1974,18 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # Two routes to the same restriction, because the two have different
   # machinery to hang it on. Under `'augmented'` a basis effect has a carrier
   # state and a regressed cell references `state[j]`, so the rewrite has to
-  # follow `.ctModelIntOverPop()`. Under `'laplace'` -- and `'none'`, which
-  # prepares the same structure without integrating -- there are no carrier
-  # states, so the basis effects move into PARS and the regressed cells
-  # reference them as parameters. Both land before the second
-  # `ctModelStatesAndPARS()` call below, which is what turns the new labels into
-  # `PARS[r,c]` references.
+  # follow `.ctModelIntOverPop()`. Under `'none'` there are no carrier states,
+  # so the basis effects move into PARS and the regressed cells reference them
+  # as parameters. Both land before the second `ctModelStatesAndPARS()` call
+  # below, which is what turns the new labels into `PARS[r,c]` references.
+  # `'laplace'` takes neither: its rank is a loading matrix per level, built in
+  # the engine (`laplacerank` below).
   #
   # What the restriction *means* differs between them, and only the message says
   # so: on the augmented route it removes coordinates the filter cannot see and
   # costs no likelihood, while under laplace those coordinates are identified
-  # and removing them is an approximation. Same structure, different claim.
+  # and removing them is an approximation. The same restriction, different
+  # claims.
   # The rank may be stated on the model instead, as `model$poprank`, which is
   # where it belongs for anyone who thinks of it as part of the specification --
   # `indvarying` is set that way in nearly every multilevel model in the tests,
