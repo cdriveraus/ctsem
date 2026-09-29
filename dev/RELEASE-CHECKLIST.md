@@ -75,6 +75,13 @@ September 2026: its workers loaded whichever ctsem was installed rather than the
 tree in hand, so it may have been testing something else entirely. Fixed now,
 but historical results from it prove less than they appear to.
 
+**Run the release tier.** Checks that cannot be made cheap -- a recovery that
+needs hundreds of subjects, a stan program compiled at test time -- skip
+unless `CTSEM_SLOW_TESTS=true` (`skip_unless_slow()`); `dev/test-areas.csv`
+lists the files under `release`, and `tt_area(<areas>, release = TRUE)` runs
+them with the gate set. CI runs them weekly, so a failure there is the first
+sign; confirm it before release rather than relying on the last weekly run.
+
 **Run the stan-julia parity suite deliberately.** It skips unless
 `CTSEM_JULIA_PROJECT` is set, so it does not run in an ordinary suite. It is the
 only mechanical check that the two backends agree, and several divergences this
