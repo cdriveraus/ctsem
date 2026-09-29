@@ -213,14 +213,20 @@
 # The parameters a direction runs through: those carrying at least `share` of
 # its largest component, largest first, at most `most` of them.
 #
-# One rule for the three places that describe a direction by its parameters --
-# the not-a-maximum and flat-gain messages below, and the identifiability
-# report -- so a direction is described the same way wherever it is named. A
-# share of the largest rather than an absolute loading: a unit vector spread
-# over ten coordinates has loadings near 0.32 and one over twenty near 0.22, so
-# an absolute bar of 0.25 names every coordinate of the first and none of the
-# second, and on a ridge whose loadings shift as the optimiser walks it the
-# same bar named ten parameters at one stopping point and nine at another.
+# One rule for the places that point a reader at the parameters of one
+# direction -- the not-a-maximum and flat-gain messages below and the
+# certification's `residual_parameters` -- so such a direction is described
+# the same way wherever it is named. A share of the largest rather than an
+# absolute loading: a unit vector spread over ten coordinates has loadings near
+# 0.32 and one over twenty near 0.22, so an absolute bar of 0.25 names every
+# coordinate of the first and none of the second.
+#
+# Not the identifiability report's rule, which answers a different question --
+# which coordinates the data leave undetermined -- and so names every
+# coordinate carrying `.ctNullMassBar()` of the flat subspace. It used this
+# one, and a third of the largest cut through the loadings of a ridge that
+# turns as the optimiser walks it: nine names at one stopping point, seven at
+# another. See `.ctBackendIdentifiability()`.
 #' @keywords internal
 .ctBackendLoadedCoordinates <- function(vector, share = 1 / 3, most = Inf) {
   size <- abs(as.numeric(vector))
