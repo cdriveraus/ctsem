@@ -167,12 +167,12 @@ loading is a covariance with a unit-variance dimension rather than a
 correlation -- and the sign of a whole dimension is arbitrary, since negating
 a column of \code{L} leaves \code{Sigma} unchanged. Read the standard
 deviations and correlations \code{summary()} reports, which do not depend on
-that choice, rather than the sign of one loading. Under \code{'laplace'} and
-\code{'none'} the coordinates are
-\code{Sigma = [[S, S b'], [b S, b S b']]} instead, for a freely estimated
-\code{S} over the basis effects and coefficients \code{b} for the rest.
-Either way \code{summary()} notes which reported values follow from the
-structure rather than being estimated.
+that choice, rather than the sign of one loading. Under \code{'none'} the
+coordinates are \code{Sigma = [[S, S b'], [b S, b S b']]} instead, for a
+freely estimated \code{S} over the basis effects and coefficients \code{b}
+for the rest; under \code{'laplace'} a loading matrix per level, described
+below. Either way \code{summary()} notes which reported values follow from
+the structure rather than being estimated.
 
 The reduction needs the population covariance free, so any \code{RAWPOPVAR}
 cell stated -- a fixed value, or a label differing from the default -- turns
@@ -313,19 +313,25 @@ default, apply too when sampling with \code{intoverpop=FALSE}: the random
 effects are then sampled rather than integrated, but the sampler is placed,
 and its metric built, from the Laplace fit.
 
-On either route, a julia fit with random effects measures how much of each
-random effect each subject's own data determine -- one minus the ratio of
-its posterior to its population variance, the complement of what population
-pharmacokinetics calls shrinkage -- at the estimate it reports.
-\code{fit$identifiability$effects} records it for every effect. An effect
-whose median over subjects is below 0.1 is named in a message, in
-\code{summary()} and in \code{\link{ctReport}}: its population standard
-deviation is poorly determined, and dropping its individual variation or
-observing each subject more often is the remedy. A population standard
-deviation estimated below the one every fit starts from is measured again
-at that starting value, since at a spread near zero the share is zero
-whatever the data say; it is that share which decides, so an effect whose
-variation the data rule out clearly is not reported as weakly informed.
+On either route, a julia fit with random effects measures, at the estimate
+it reports, how much of each random effect each subject's own data
+determine -- one minus the ratio of its posterior to its population
+variance, the complement of what population pharmacokinetics calls
+shrinkage -- and from those shares how much the subjects together carry
+about the effect's population standard deviation, counted in subjects whose
+data would determine their own value outright. So many weakly informed
+subjects can determine a population standard deviation that a few cannot.
+\code{fit$identifiability$effects} records both for every effect. An effect
+whose population standard deviation rests on fewer than two such subjects
+-- a relative standard error above one half, from the subjects' own data
+alone -- is named in a message, in \code{summary()} and in
+\code{\link{ctReport}}, with a lower \code{poprank} suggested first where
+that level can take one, and \code{indvarying = FALSE} after it. A
+population standard deviation estimated below the one every fit starts from
+is measured again at that starting value, since at a spread near zero every
+share is zero whatever the data say; it is the measure there that decides,
+so an effect whose variation the data rule out clearly is not reported as
+weakly determined.
 
 Also with \code{intoverpop='laplace'}, \code{optimcontrol$laplace_correct}
 corrects the fitted estimate for the Laplace approximation's error, by the

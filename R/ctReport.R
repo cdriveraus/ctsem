@@ -445,22 +445,30 @@
       }
       add("")
     }
-    # How much of each random effect each subject's own data determine, from
-    # the check the fit made at its estimate (R/ctBackendEffectInformation.R).
-    # `[[`: a fit made before the check existed has none.
+    # How well the data determine each random effect's population sd, and how
+    # much of each group's value its own data determine, from the check the
+    # fit made at its estimate (R/ctBackendEffectInformation.R). `[[`: a fit
+    # made before the check existed has none.
     eff <- if (is.list(idf)) idf[["effects"]] else NULL
     tab <- if (is.list(eff)) eff[["table"]] else NULL
     if (is.data.frame(tab) && nrow(tab)) {
       add("Random-effect information, ", eff[["point"]])
-      add("  raw sd: population sd on the raw scale; determined: median share ",
-        "of a group's effect its own data determine; at start spread: the same ",
-        "with a population sd below the starting spread raised to it; widened: ",
-        "share whose posterior is wider than the population")
-      reference <- tab[["reference"]]
-      if (is.null(reference)) reference <- NA_real_
+      add("  raw sd: population sd on the raw scale; information: what the ",
+        "groups carry about it, in groups whose data determine their own value ",
+        "outright; determined: median share of a group's value its own data ",
+        "determine; at start: both with a population sd below the starting ",
+        "spread raised to it; widened: share whose posterior is wider than the ",
+        "population")
+      column <- function(name) {
+        x <- tab[[name]]
+        if (is.null(x)) rep(NA_real_, nrow(tab)) else x
+      }
       shown <- data.frame(level = tab$level, effect = tab$effect,
-        `raw sd` = signif(tab$popsd, 3), determined = signif(tab$determined, 3),
-        `at start spread` = signif(reference, 3),
+        `raw sd` = signif(tab$popsd, 3),
+        information = signif(column("information"), 3),
+        determined = signif(tab$determined, 3),
+        `information at start` = signif(column("referenceinformation"), 3),
+        `determined at start` = signif(column("reference"), 3),
         widened = signif(tab$widened, 3),
         weak = ifelse(tab$weak %in% TRUE, "weak", ""), stringsAsFactors = FALSE,
         check.names = FALSE)

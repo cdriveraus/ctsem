@@ -101,8 +101,9 @@ Requires the Julia backend, which is where the per-subject scores
   model with more free parameters than subjects reports flat directions for
   that reason alone; the printed summary says when that applies.
 
-  How much of each random effect each subject's own data determine -- the
-  check \code{\link{ctFit}} makes at its estimate, stored as
+  How well the data determine each random effect's population standard
+  deviation, and how much of each subject's effect its own data determine
+  -- the check \code{\link{ctFit}} makes at its estimate, stored as
   \code{fit$identifiability$effects} -- is taken here only at a supplied
   \code{inits}, such as a fit's \code{estimate$raw}. It depends on the
   population standard deviations, which only a fit estimates: at the

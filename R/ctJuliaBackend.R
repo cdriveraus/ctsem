@@ -5513,8 +5513,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # the data -- but a statement of which directions the data does not determine,
   # and therefore which reported intervals do not mean what they appear to.
   rawnames <- .ctBackendRawParameterNames(out, length(out$estimate$raw))
-  # First, how much of each random effect each subject's own data determine,
-  # at the estimate the fit reports -- after the quadrature correction, when
+  # First, how well the data determine each random effect's population sd,
+  # and how much of each subject's effect its own data determine, at the
+  # estimate the fit reports -- after the quadrature correction, when
   # that moved it. Put where `.ctBackendIdentifiability()` below finds it
   # (`fit = out`), which carries it into the report, as every later rebuild
   # of the report does. Not at the start, which was the plan, and not where
