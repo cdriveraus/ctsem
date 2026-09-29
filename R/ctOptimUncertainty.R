@@ -2195,15 +2195,20 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' holding the rest at the estimate. It costs at least an order of magnitude
 #' more log-probability evaluations than \code{'hessian'} even when it
 #' converges quickly (each batch of proposal draws is one bridge call rather
-#' than one per draw, but the draws themselves are not free), and its case is
-#' a small-sample posterior whose true width the curvature at the optimum
-#' understates -- typically a variance or a nonlinear parameter with few
-#' subjects or groups -- rather than a routine alternative to \code{'hessian'}
-#' (\code{control$imisScaleInit}/\code{imisTailScale} below were measured on
-#' such a case). \code{'sample'} checks that case directly, by genuine
-#' posterior draws rather than a reweighted approximation, and is the
-#' reference to compare against before reading \code{'is'} on a new model as
-#' more than a curiosity. \code{'bootstrap'} uses one-step score bootstrap draws with
+#' than one per draw, but the draws themselves are not free). It corrects a
+#' posterior that is moderately skewed near the optimum, but not a tail the
+#' proposal does not reach: measured against a long NUTS run on a 30-subject,
+#' two-latent Gaussian model, a measurement-error variance's posterior sd came
+#' back at 0.41-0.48 of its value and its 2.5\% quantile 2.1-2.4 posterior sds
+#' short, at the default draws and at four times them alike, where
+#' \code{'sample'} at its defaults gave 0.68-1.0 of the sd. Neither the
+#' effective sample size nor the Pareto k of
+#' the weights (recorded as
+#' \code{fit$uncertainty$details$importance_sampling$pareto_k}, with a warning
+#' above 0.7, when the loo package is installed) detects that case; k detects
+#' a posterior with heavier tails than the proposal where the proposal does
+#' reach them. \code{'sample'} draws from the posterior itself and is the
+#' method for the case \code{'is'} was meant for. \code{'bootstrap'} uses one-step score bootstrap draws with
 #' Hessian bread, \code{'fullbootstrap'} resamples subjects and fully
 #' re-optimizes each sample from the original maximum likelihood or MAP
 #' estimate using mize L-BFGS, \code{'sandwich'} uses Hessian bread with score
