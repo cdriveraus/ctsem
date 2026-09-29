@@ -346,6 +346,20 @@ test_that("the batch attribute reproduces the per-draw loop in one bridge call",
   expect_identical(from_batch[5L], -1e100)
   expect_true(all(is.finite(from_batch)))
 
+  # Whatever chunk ceiling is in force. The chunk count sets the subject
+  # loop's summation order, and the per-draw closure once set a ceiling of its
+  # own (two) while the batch ran at the session's, so the comparison above
+  # failed only in a session whose ceiling was something else -- 1.8e-12
+  # apart at one chunk. With one Julia thread every ceiling is one chunk, and
+  # this proves no more than the comparison above.
+  for (ceiling in c(1L, 2L)) {
+    pair <- ctsem:::.ctBackendWithMaxChunks(ceiling, list(
+      batch = as.numeric(batchfn(draws)),
+      loop = vapply(seq_len(nrow(draws)),
+        function(i) as.numeric(valueonly(draws[i, ])), numeric(1))))
+    expect_identical(pair$batch, pair$loop, label = paste("ceiling", ceiling))
+  }
+
   # `nrow(draws) == 1` is what `imis_is` never does (`n_batch` is always in
   # the hundreds), but a batch of one is still a batch and must not be treated
   # as an empty one -- ctsem_evaluate_batch()'s own guard is for zero columns,

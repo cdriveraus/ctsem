@@ -55,12 +55,23 @@
 # of the bridge call here means the call itself was malformed (a shape
 # mismatch, a disconnected engine), which should surface rather than be read
 # as one more rejected draw.
+#
+# Both routes evaluate under the chunk ceiling already in force, and neither
+# sets one: the subject loop's chunk count sets its summation order, so the
+# two agree bitwise only at the same count. The per-draw closure used
+# `ctJuliaEvaluate()`'s own `cores = 2` while the batch ran at whatever the
+# session held, and at any other ceiling they came apart in the last bits --
+# 1.8e-12 on test-backend-uncertainty.R's fixture at one chunk against two,
+# with two or more Julia threads. It also overrode the ceiling the caller had
+# set: `.ctBackendUncertainty()` sets one for its whole phase, from `cores`,
+# and every per-draw evaluation in it ran at a ceiling of two whatever that was.
 .ctBackendLpgFunc <- function(fit, gradient = TRUE) {
   if (!inherits(fit, "ctJuliaFit")) {
     stop("Unsupported fit class for backend uncertainty.", call. = FALSE)
   }
   wantgrad <- isTRUE(gradient)
-  evaluate <- function(parm) ctJuliaEvaluate(fit, parm, gradient = wantgrad)
+  evaluate <- function(parm) ctJuliaEvaluate(fit, parm, gradient = wantgrad,
+    cores = NA)
   fn <- function(parm) {
     result <- try(evaluate(as.numeric(parm)), silent = TRUE)
     failed <- inherits(result, "try-error")
