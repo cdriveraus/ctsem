@@ -500,9 +500,23 @@
 # threshold spacing the predicted category probabilities stop moving with it,
 # and nothing pays for a wider population. `log|Sigma|` under laplace is
 # explicit and never goes through the link.
+#
+# `zero` is the random-effect check's rows for population sds held small by
+# the data (`.ctEffectRows(effects, "zero")`). Such an sd's raw coordinate is
+# flat because it sits at the floor of its transform, where every smaller sd
+# is as good as zero, and not because the data say nothing: on AnomAuth the
+# CINT's sd is 8.5e-7 and at the starting spread its 800 subjects would carry
+# 794 subjects' worth of information about it. "Not estimable" said the
+# opposite of the check, which (rightly) stays silent there, so such a
+# coordinate is named as what it is.
 #' @keywords internal
-.ctIdentifyAdvice <- function(partition, brief = FALSE) {
+.ctIdentifyAdvice <- function(partition, brief = FALSE, zero = NULL) {
   lines <- character()
+  held <- if (is.data.frame(zero))
+    zero[zero$coordinate %in% partition$structural, , drop = FALSE] else NULL
+  if (!is.null(held) && nrow(held)) {
+    partition$structural <- setdiff(partition$structural, held$coordinate)
+  } else held <- NULL
   if (length(partition$partial)) {
     many <- length(partition$partial) > 1L
     # The correlation noun follows the number of *partners*, the covariance
@@ -549,6 +563,22 @@
       paste(partition$structural, collapse = ", "),
       ". These are not estimable from this data as the model stands. Fix one ",
       "of each set to a value, or remove it."))
+  }
+  if (!is.null(held)) {
+    many <- nrow(held) > 1L
+    named <- paste0(held$coordinate, " (", signif(held$popsd, 2), ")",
+      collapse = ", ")
+    lines <- c(lines, if (brief) paste0("Held near zero by the data: ", named,
+      "; flat only along the floor of ", if (many) "their transforms" else
+      "its transform", ", since the data would see a spread of the starting ",
+      "size.") else paste0("Held near zero by the data: ", named, ". ",
+        if (many) "These directions are" else "This direction is",
+        " flat only along the floor of the population sd's transform, where ",
+        "every smaller sd is as good as zero: at the spread every fit starts ",
+        "from, the data would determine ", if (many) "these sds" else "the sd",
+        " (fit$identifiability$effects). A finding of no individual ",
+        "differences, not a failure to estimate; indvarying = FALSE states the ",
+        "same model without the flat direction."))
   }
   lines
 }
@@ -846,7 +876,8 @@
       "stand but the standard error",
       if (identify$nweak > 1L) "s along them do" else " along it does",
       " not. ",
-      paste(.ctIdentifyAdvice(partition, brief = TRUE), collapse = " "),
+      paste(.ctIdentifyAdvice(partition, brief = TRUE,
+        zero = .ctEffectRows(identify[["effects"]], "zero")), collapse = " "),
       if (!length(partition$partial) && !length(partition$structural))
         paste0("Parameters involved: ",
           paste(utils::head(identify$parameters, 6), collapse = ", "),

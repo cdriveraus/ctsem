@@ -443,7 +443,7 @@ print.ctIdentify <- function(x, ...) {
     # finished fit warns with -- says which is which. The fallback is for a
     # partition that classifies everything and so has nothing left to list:
     # printing nothing here would read as a clean result.
-    advice <- .ctIdentifyAdvice(x)
+    advice <- .ctIdentifyAdvice(x, zero = .ctEffectRows(x[["effects"]], "zero"))
     if (!length(advice)) advice <- paste0("Parameters involved: ",
       paste(x$parameters, collapse = ", "), ".")
     writeLines(strwrap(advice, indent = 2, exdent = 2, width = 78))

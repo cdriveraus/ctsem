@@ -101,15 +101,15 @@
   at <- .ctEffectEvaluate(spec, values)
   if (is.null(at)) return(NULL)
   table <- at$table
+  table$reference <- NA_real_
+  table$referenceinformation <- NA_real_
+  table$referencesd <- NA_real_
   # Effects whose population sd is below the starting spread, whose sd is a
   # coordinate with the standard transform (raw zero is that spread there),
   # and whose information at the estimate would flag them.
   raise <- which(!is.na(table$sdindex) & table$sdindex <= length(values) &
     values[pmax(1L, table$sdindex)] < 0 & !(table$information >=
       .ctEffectThresholds()$information))
-  table$reference <- NA_real_
-  table$referenceinformation <- NA_real_
-  table$referencesd <- NA_real_
   if (length(raise)) {
     shifted <- values
     shifted[table$sdindex[raise]] <- 0
@@ -355,13 +355,6 @@
 # collapsed drift sd instead, where the rule fires; a fit that ended at one of
 # those maxima would not be flagged.
 #
-# Nor is it calibrated on a reduced-rank level. There the engine's shares are
-# of the level's shared dimensions, the same for every effect loading on one,
-# so the rule reads a dimension's information once per effect, and a level
-# has no sd coordinate to raise to the starting spread. AnomAuth refitted
-# with poprank = 1 reads 7.0 and 7.3 for both effects (silent), against the
-# full-rank fit's 6.5e-5 for drift; on S2 that refit ended 4.9 nats below the
-# full-rank one and not at a maximum (dev2, 2026-09-29).
 #' @keywords internal
 .ctEffectThresholds <- function() list(information = 2)
 
@@ -469,4 +462,38 @@
   lines <- .ctEffectAdvice(effects)
   if (length(lines)) message(paste(lines, collapse = "\n"))
   invisible(lines)
+}
+
+# Rows of the record in the raw vector's vocabulary, for the two reports that
+# match against it: `summary()`'s no-width marking and the identifiability
+# report's flat directions. A population sd is `popsd_<effect>`, with
+# `.<level>` on a multilevel Laplace fit (`.ctBackendRawParameterNames()`).
+#
+#   weak   the effects the check names.
+#   zero   the effects whose sd came out below the starting spread with too
+#          little information at the estimate to say anything, and which at
+#          the starting spread the data would determine: an sd the data hold
+#          small. On AnomAuth that is the CINT, at 8.5e-7 with 794 subjects'
+#          information at the spread. Its raw coordinate is flat there only
+#          because every smaller sd is as good as zero -- the floor of the
+#          transform, not an absence of information -- so the
+#          identifiability report says that rather than "not estimable".
+#
+# Returns the matching rows with a `coordinate` column, or NULL: none match,
+# or the record predates the check.
+#' @keywords internal
+.ctEffectRows <- function(effects, which = c("weak", "zero")) {
+  which <- match.arg(which)
+  table <- if (is.list(effects)) effects[["table"]] else NULL
+  if (!is.data.frame(table) || !nrow(table)) return(NULL)
+  reference <- table[["referenceinformation"]]
+  if (is.null(reference)) reference <- rep(NA_real_, nrow(table))
+  weak <- table$weak %in% TRUE
+  pick <- if (which == "weak") weak else is.finite(reference) & !weak
+  if (!any(pick)) return(NULL)
+  rows <- table[pick, , drop = FALSE]
+  multilevel <- length(unique(table$level)) > 1L
+  rows$coordinate <- paste0("popsd_", rows$effect,
+    if (multilevel) paste0(".", rows$level) else "")
+  rows
 }
