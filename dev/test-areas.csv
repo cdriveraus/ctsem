@@ -100,7 +100,6 @@
 "test-stan-convergence.R","stan","core"
 "test-sunspots.R","stan","core"
 "test-ukfpoptest.R","stan","core"
-"test-ctRaschExampleTest.R","stan","extended"
 "test-stan-julia-parity.R","stan","extended"
 "test-stantipred.R","stan","extended"
 "test-tdeffectvariation_covtest.R","stan","extended"
