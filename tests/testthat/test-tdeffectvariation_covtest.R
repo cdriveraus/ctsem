@@ -1,5 +1,6 @@
-# STAYS ON STAN, for now, and this is the most expensive file that does: 425 s
-# and eight stan fits. Its C1 blocks compare ctsem's own random-effect
+# STAYS ON STAN, for now: eight stan fits, about five minutes on dev2. The one
+# julia block, the C2 recovery below, is the release tier and says why. Its C1
+# blocks compare ctsem's own random-effect
 # parameterisation against a hand-written one by reading
 # `f2$stanfit$transformedparsfull$pop_T0cov` -- stan's own population
 # covariance -- and checking it against `popsd` and `rawpopcorr`. Choosing the
@@ -415,8 +416,15 @@ skip_on_32bit()
   # accurate number to match the biased one, so do not shrink it, and if it
   # starts failing it is the estimate that moved, not a tolerance that was
   # optimistic.
+  #
+  # RELEASE TIER (`skip_unless_slow()`): a recovery that needs its 400 subjects
+  # to mean anything, and it is 28 of the file's 34 minutes on dev2 (2026-09-29,
+  # four files running beside it) -- the stan blocks around it are the other
+  # six. The whole file measured 425 s on the laptop in early September, and
+  # 1612 s on dev2 on 2026-09-28: it is this fit that grew.
   test_that("randomEffectsDRIFT_julia", {
     skip_without_julia()
+    skip_unless_slow("the 400-subject Laplace recovery fit")
     g <- driftREdata()   # nsubjects = 400, deliberately
 
     f <- ctFit(datalong = g$dat, model = driftREmodel(), cores = cores,
