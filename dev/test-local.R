@@ -140,6 +140,12 @@ tt_fast <- function(max_secs = 20) {
 #' covers the specification code every area builds on.
 tt_area <- function(area = NULL, extended = FALSE, fast = TRUE) {
   map <- utils::read.csv("dev/test-areas.csv", stringsAsFactors = FALSE)
+  # A file in no area is never selected, which looks exactly like a file that
+  # passed; say so, as tt_fast() does for an untimed one.
+  unmapped <- setdiff(.tt_files(), map$file)
+  if (length(unmapped)) message(length(unmapped), " test file(s) are in no area ",
+    "and never run here -- add them to dev/test-areas.csv:\n  ",
+    paste(unmapped, collapse = "\n  "))
   tm <- if (file.exists("dev/test-timings.csv"))
     utils::read.csv("dev/test-timings.csv", stringsAsFactors = FALSE) else NULL
   minutes <- function(files) if (is.null(tm)) NA_real_ else
