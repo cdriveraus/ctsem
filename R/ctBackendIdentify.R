@@ -40,17 +40,32 @@
 # a saturated coordinate for a fit to be told anything; see
 # R/ctBackendOptimGap.R for the status that is now called `saturated`.
 #
-# The parameters a direction names are those carrying at least `loading` of
-# its largest loading, by `.ctBackendLoadedCoordinates()` -- the rule the
-# convergence messages use -- rather than an absolute loading of 0.25. The
-# absolute bar is what named nine of the fixture's ten correlations at three
-# stopping points and ten at two: spread over ten coordinates a unit vector's
-# loadings sit near 0.32, and the tenth drifted from 0.19 to 0.28 as the
-# optimiser walked the ridge.
+# Which parameters are named: every coordinate carrying at least `nullmass`
+# (`.ctNullMassBar()`) of the flat subspace the directions span, largest share
+# first. That is the share and the bar the interval check names coordinates
+# with no width by, so wherever the directions named are the ones the
+# covariance dropped, the report and the NA intervals in summary() name the
+# same coordinates. A direction's own `parameters` are the coordinates
+# carrying that much of it. A share of a subspace does not depend on which
+# basis spans it, where a loading on one of its eigenvectors does.
+#
+# The bar sits at rounding rather than inside the spread of real loadings,
+# because a flat direction turns as the optimiser walks a ridge that is curved
+# in raw coordinates, and the weaker loadings move with it. Two bars inside
+# that spread failed on test-stan-julia-parity.R's fixture, whose one flat
+# direction runs through ten population correlations. An absolute loading of
+# 0.25 named nine of the ten at three stopping points and ten at two. A third
+# of the largest loading, which replaced it, named nine at the full fit and
+# seven at a `newton = FALSE` stop 1.4 raw units along the ridge and 1.7e-05
+# nats below it (Windows and dev2 alike): between the two the direction turned
+# by 4.3 to 4.8 degrees and the four correlations with t0a fell from 0.43-0.52
+# of the largest loading to 0.18-0.41. Their shares there, 0.005 to 0.043, sit
+# far above the bar, and the fourteen identified coordinates' 1.4e-08 and less
+# far below it.
 #' @keywords internal
 .ctBackendIdentifiability <- function(hessian, parnames = NULL, rtol = 1e-8,
-  loading = 1 / 3, fit = NULL, at = NULL, metric = NULL, vectors = FALSE,
-  screen = NULL) {
+  nullmass = .ctNullMassBar(), fit = NULL, at = NULL, metric = NULL,
+  vectors = FALSE, screen = NULL) {
   empty <- list(nweak = 0L, condition = NA_real_, directions = list(),
     parameters = character())
   # The random-effect information check (`.ctEffectInformation()`) is part of
@@ -84,13 +99,16 @@
     as.character(.ctJuliaOr(run[["saturated_parameters"]], character())) else
     character()
   describe <- function(vector, eigenvalue, evidence, change) {
-    involved <- .ctBackendLoadedCoordinates(vector, share = loading)
+    share <- .ctIdentifySubspaceShare(list(list(vector = vector)), n)
+    involved <- which(is.finite(share) & share >= nullmass)
+    involved <- involved[order(share[involved], decreasing = TRUE)]
     if (!length(involved)) involved <- which.max(abs(vector))
     # The whole eigenvector, not only the loadings above the threshold. Two
-    # things downstream need it: the partial-identification check below, which
-    # asks whether a functional of the parameters changes along this direction,
-    # and the aggregation in `ctIdentify()`, which asks how much of a
-    # coordinate lies in the flat *subspace* rather than on one of its axes.
+    # things need it: the partial-identification check below, which asks
+    # whether a functional of the parameters changes along this direction, and
+    # the subspace aggregation -- this report's `parameters`, and `ctIdentify()`
+    # across its evaluation points -- which asks how much of a coordinate lies
+    # in the flat *subspace* rather than on one of its axes.
     list(eigenvalue = eigenvalue, relative = eigenvalue / scale,
       parameters = parnames[involved], loadings = vector[involved],
       vector = vector, evidence = evidence, change = change,
@@ -123,6 +141,15 @@
     directions[[length(directions) + 1L]] <- describe(vector, eigenvalue,
       evidence = "likelihood", change = measured$change[m])
   }
+  # The parameters named, read off the subspace rather than collected from the
+  # directions one at a time: see the head of this function. The directions'
+  # own lists stand in only when their vectors cannot be read, so a flat
+  # direction is never reported with no parameter at all.
+  share <- .ctIdentifySubspaceShare(directions, n)
+  named <- which(is.finite(share) & share >= nullmass)
+  named <- named[order(share[named], decreasing = TRUE)]
+  parameters <- as.character(if (length(named)) parnames[named] else
+    unique(unlist(lapply(directions, `[[`, "parameters"))))
   # Which of those directions are a random-effect block trading its scale off
   # against its correlations -- partially rather than completely unidentified.
   # Only attempted when a caller supplies the model and the point, because it
@@ -133,8 +160,8 @@
   # this report, and one length-`npar` vector per flat direction is
   # `nweak * npar` doubles for something nothing downstream of a fit reads --
   # 12 MB on a 1490-parameter model with a thousand flat directions. The
-  # classification above and `ctIdentify()`'s subspace aggregation are the two
-  # readers, and only the second outlives this call.
+  # naming and the classification above and `ctIdentify()`'s subspace
+  # aggregation are the readers, and only the last outlives this call.
   if (!isTRUE(vectors)) {
     directions <- lapply(directions, function(d) { d$vector <- NULL; d })
   }
@@ -150,7 +177,7 @@
     # reading gets ignored.
     negative = sum(values < -rtol * scale),
     directions = directions,
-    parameters = unique(unlist(lapply(directions, `[[`, "parameters"))))
+    parameters = parameters)
   # What the likelihood was asked, when it was: the bar, the ladder and the
   # candidate gate the verdicts above were reached with, and what they cost.
   # `[[` throughout, not `$`: the stored summary has an `eigenvalue` field and
@@ -581,12 +608,9 @@
 # rather than `.ctBackendIdentifiability()`'s 1e-8, so the two branches
 # partition rather than overlap: a direction flatter than 1e-12 was dropped and
 # lands here, one between the two tolerances was inverted into an enormous
-# variance and lands in the ratio above. `nullmass` sits well above the
-# 1e-16-ish leakage a well separated eigenvalue produces (measured: below
-# 1e-10 on every identified coordinate of the model above) and well below the
-# share a coordinate genuinely on the ridge carries, which was 0.36 for the
-# smaller half of a two-coordinate ridge and 1.0 where the flat direction was
-# a coordinate axis.
+# variance and lands in the ratio above. `nullmass` is `.ctNullMassBar()`, the
+# bar `.ctBackendIdentifiability()` names parameters by too; see there for
+# where it sits and why.
 #' @keywords internal
 # `mass` is the per-coordinate share of the dropped subspace, when the caller
 # already has it. `nullmass` is the threshold it is compared against; the two
@@ -599,7 +623,7 @@
 # rather than only those whose eigenvalue underflowed. See
 # `.ctOptimFlatDirectionScreen()`.
 .ctBackendIntervalCheck <- function(hessian, se, parnames = NULL,
-  threshold = 100, rtol = .ctFlatDirectionRtol(), nullmass = 1e-3,
+  threshold = 100, rtol = .ctFlatDirectionRtol(), nullmass = .ctNullMassBar(),
   mass = NULL) {
   empty <- list(threshold = threshold, nflagged = 0L, parameters = character(),
     nullmass = nullmass, nunidentified = 0L, unidentified = character(),
@@ -672,6 +696,43 @@
 # reconcile the two without reading both.
 #' @keywords internal
 .ctFlatDirectionRtol <- function() 1e-12
+
+# The one rule for "this coordinate lies in a flat subspace": at least this
+# much of it does. A coordinate's share of a subspace is the squared length of
+# its unit vector's projection there -- the diagonal of the projector,
+# `rowSums(Q^2)` for an orthonormal basis `Q`, between 0 and 1 -- and unlike its
+# loading on one eigenvector it does not depend on which basis spans the
+# subspace (`.ctIdentifySubspaceShare()`).
+#
+# Four places ask, and they have to give one answer: `.ctBackendIntervalCheck()`
+# names the coordinates whose reported interval has no width, which summary()
+# prints as NA; `ctOptimCovFromHessian()` counts them in its warning; and
+# `.ctBackendIdentifiability()` and `ctIdentify()` name the parameters the data
+# do not determine. A fit that warned seven parameters were not estimable
+# beside intervals with no width for ten -- the parity fixture at an early
+# stopping point, before the report shared this bar -- is the disagreement.
+#
+# The bar separates rounding from involvement, not large involvement from
+# small. An identified coordinate carries rounding's share, roughly
+# `(eps * largest / gap)^2`, or a trace of the ridge's pull on it: below 1e-10
+# on every identified coordinate of the one-latent model
+# `.ctBackendIntervalCheck()` describes, and 1.4e-08 at most on the parity
+# fixture. Involvement is set by the shape of the flat set and moves as
+# the optimiser walks along it, so a bar inside its spread is crossed by where
+# the fit stopped. Measured by following the parity fixture's ridge from the
+# full fit's estimate, re-optimising the other directions every half raw unit
+# (Windows and dev2): the weakest of its ten correlations carried 0.066 to
+# 0.068 of the flat direction six raw units one way, where the likelihood is
+# flat to 3e-06, and 0.0011 to 0.0013 three and a half the other way, 4.8e-04
+# to 6.9e-04 nats below; it first fell under this bar four raw units along,
+# 1.1e-03 to 1.5e-03 nats below, far from where either fit stopped (2e-05
+# nats apart). ctIdentify()'s freed-loading model says the
+# same from the other side: T0var_eta1 is part of its scale trade-off and
+# carries 0.002 to 0.065 of the flat direction across the three evaluation
+# points -- never a third of the largest loading, and a norm over ctIdentify's
+# old 0.25 at one point only, by 0.004.
+#' @keywords internal
+.ctNullMassBar <- function() 1e-3
 
 # How much of each coordinate lies in the null space of an information matrix.
 #

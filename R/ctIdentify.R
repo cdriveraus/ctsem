@@ -145,21 +145,35 @@
 # The invariant is the *dimension* of the flat subspace, not any basis for it.
 # So `k`, the smallest number of flat directions seen at any point, is the rank
 # deficiency the data has everywhere, and the `k` flattest directions at each
-# point are a basis for it. A coordinate's involvement is then the length of
-# its projection onto that subspace, which is what an orthonormal basis gives
-# as the norm of its row -- unchanged by any rotation within the subspace.
+# point are a basis for it. A coordinate's involvement is then its share of
+# that subspace, the squared length of its projection there -- the squared norm
+# of its row in an orthonormal basis, unchanged by any rotation within the
+# subspace -- and it is involved when that share reaches `.ctNullMassBar()`.
 # Directions beyond the first `k` at a point that had more are the weaker
 # statement, and are reported as one.
+#
+# The same measurement names a fit's parameters (`.ctBackendIdentifiability()`),
+# whose directions can include one the likelihood screen walked in another
+# decomposition (`.ctIdentifyMeasuredFlat()`'s unmatched case), not orthogonal
+# to the eigenvectors listed beside it. Such a vector is counted as it stands,
+# not orthogonalised against them: when it is the same flat direction measured
+# on a slightly different matrix, orthogonalising would turn the small
+# difference between the two into a whole dimension and name coordinates that
+# neither vector carries a share of. NA for every coordinate when a vector
+# cannot be read, which names nothing.
 #' @keywords internal
-.ctIdentifySubspaceLoading <- function(directions, npar, loading = 0.25) {
-  if (!length(directions)) return(logical(npar))
+.ctIdentifySubspaceShare <- function(directions, npar) {
+  if (!length(directions)) return(numeric(npar))
   vectors <- vapply(directions, function(d) {
-    v <- d$vector
-    if (length(v) != npar) rep(NA_real_, npar) else v
+    v <- as.numeric(d[["vector"]])
+    size <- sqrt(sum(v^2))
+    if (length(v) != npar || !is.finite(size) || size <= 0) {
+      rep(NA_real_, npar)
+    } else v / size
   }, numeric(npar))
   vectors <- matrix(vectors, nrow = npar)
-  if (any(!is.finite(vectors))) return(logical(npar))
-  sqrt(rowSums(vectors^2)) >= loading
+  if (any(!is.finite(vectors))) return(rep(NA_real_, npar))
+  rowSums(vectors^2)
 }
 
 #' Check which parameters a dataset can inform, before fitting
@@ -336,7 +350,7 @@ ctIdentify <- function(datalong, model, inits = NULL, nstart = 3L,
 
   # Aggregated by subspace, not by name. `k` is the rank deficiency the data
   # has at every point, and the `k` flattest directions at each point span it;
-  # see `.ctIdentifySubspaceLoading()` for what intersecting names did instead.
+  # see `.ctIdentifySubspaceShare()` for what intersecting names did instead.
   nweak <- vapply(starts, function(s) as.integer(s$nweak), integer(1))
   k <- min(nweak)
   flattest <- lapply(starts, function(s) {
@@ -349,8 +363,8 @@ ctIdentify <- function(datalong, model, inits = NULL, nstart = 3L,
     if (length(d) > k) d[seq.int(k + 1L, length(d))] else list())
   ispartial <- function(directions) !vapply(directions,
     function(d) is.null(d$partial), logical(1))
-  named <- function(directions) parnames[.ctIdentifySubspaceLoading(directions,
-    npar)]
+  named <- function(directions) parnames[which(
+    .ctIdentifySubspaceShare(directions, npar) >= .ctNullMassBar())]
   corenames <- lapply(core, named)
   extranames <- lapply(extra, named)
   ridgenames <- lapply(core, function(d) named(d[ispartial(d)]))
