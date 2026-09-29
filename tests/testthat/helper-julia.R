@@ -121,6 +121,90 @@ fit_cached <- function(key, expr) {
 }
 
 # ---------------------------------------------------------------------------
+# A model the engine's package image has already compiled
+#
+# The first fit of a model shape in a Julia session compiles the engine for
+# that shape -- most of a minute, and often most of what a small test costs.
+# The package image compiles a few shapes when it is built
+# (tools/generate-precompile-shapes.R), and a fit of one of them costs seconds
+# in a fresh session: measured on dev2, 5.0 s augmented and 5.9 s Laplace,
+# against about 50 s each for a one-indicator model of the same size. A test
+# whose subject is not the model -- the session, the bridge, a method's
+# plumbing -- should fit this one.
+#
+# It is the image's `gaussian_augmented` and `gaussian_laplace`: one latent,
+# two Gaussian indicators loading 1 and sharing one free measurement variance,
+# and a random intercept, whose default route is 'augmented'. The image types a
+# model by its matrix dimensions and transform templates, not by its data, so
+# any data will do; a model that drifts from the generator's still fits, and
+# only pays the compile again.
+image_model <- function() {
+  m <- suppressWarnings(suppressMessages(ctsem::ctModel(type = "ct",
+    n.latent = 1, n.manifest = 2, manifestNames = c("y1", "y2"),
+    latentNames = "eta1", LAMBDA = matrix(1, 2, 1),
+    MANIFESTMEANS = matrix(0, 2, 1), CINT = matrix("cint"),
+    T0MEANS = matrix(0), MANIFESTVAR = matrix(c("mvar", "0", "0", "mvar"), 2, 2),
+    manifesttype = c(0L, 0L))))
+  m$pars$indvarying <- m$pars$param %in% "cint"
+  m
+}
+
+#' Data for `image_model()`: an AR(1) process around each subject's own
+#' intercept, simulated here rather than by ctGenerate, whose draw stream moves
+#' under unrelated commits.
+image_data <- function(nsub = 12L, nobs = 6L, seed = 1L) {
+  set.seed(seed)
+  do.call(rbind, lapply(seq_len(nsub), function(i) {
+    cint <- stats::rnorm(1, 0, 0.5)
+    eta <- numeric(nobs)
+    eta[1] <- stats::rnorm(1)
+    for (t in seq_len(nobs)[-1L]) eta[t] <- 0.74 * eta[t - 1] + 0.86 * cint +
+      stats::rnorm(1, 0, 0.6)
+    data.frame(id = i, time = seq_len(nobs) - 1, y1 = eta + stats::rnorm(nobs, 0, 0.5),
+      y2 = eta + stats::rnorm(nobs, 0, 0.5))
+  }))
+}
+
+# ---------------------------------------------------------------------------
+# The Laplace fixture two files share
+#
+# One latent, one indicator, a random manifest mean, fitted on the Laplace
+# route: test-julia-sample.R samples from it and test-backend-generate.R
+# generates from it. Each wrote it out and fitted it for itself -- seventeen
+# times between them, identically -- and it is fitted once per file now, and
+# once for both under `test_dir()` (`fit_cached()`).
+laplace_fixture_data <- function(nsub = 12L, tp = 6L, seed = 31L) {
+  set.seed(seed)
+  do.call(rbind, lapply(seq_len(nsub), function(i) {
+    intercept <- stats::rnorm(1, 0, 0.8)
+    state <- stats::rnorm(1, 0, 0.5)
+    y <- numeric(tp)
+    for (t in seq_len(tp)) {
+      state <- 0.75 * state + stats::rnorm(1, 0, 0.4)
+      y[t] <- state + intercept + stats::rnorm(1, 0, 0.3)
+    }
+    data.frame(id = i, time = seq_len(tp) - 1, Y1 = y)
+  }))
+}
+
+laplace_fixture_model <- function() {
+  model <- suppressWarnings(suppressMessages(ctsem::ctModel(type = "ct",
+    manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1))))
+  model$pars$indvarying <- FALSE
+  model$pars$indvarying[match(TRUE, model$pars$matrix == "MANIFESTMEANS")] <- TRUE
+  model
+}
+
+laplace_fixture <- function(nsub = 12L, tp = 6L, seed = 31L) {
+  fit_cached(paste("laplace_fixture", nsub, tp, seed), {
+    data <- laplace_fixture_data(nsub, tp, seed)
+    suppressWarnings(suppressMessages(ctsem::ctFit(data, laplace_fixture_model(),
+      backend = "julia", cores = 1, intoverpop = "laplace", priors = TRUE,
+      optimcontrol = list(finishsamples = 20))))
+  })
+}
+
+# ---------------------------------------------------------------------------
 # Fitting one model on both backends
 #
 # The expensive files in this suite used to fit on stan, which is the default
