@@ -1216,7 +1216,14 @@ print.ctLaplaceCorrection <- function(x, ...) {
     gradient <- as.numeric(final$gradient)
     gap <- .ctBackendOptimGap(hc, gradient)
     probe <- NULL
-    if (isTRUE(gap$ok) && isTRUE(gap$residual_norm > 0)) {
+    # Only along a direction the curvature does not trust. With every one
+    # trusted the residual is the rounding left by projecting onto a complete
+    # eigenbasis, and the probe walked that: three values of the hybrid, a
+    # fifteenth of ord4's correction, and a gain of 0 on every converged
+    # continuation of the bench (controbust-c2a67356). A negative direction
+    # makes the verdict `notmaximum` whatever a probe finds.
+    if (isTRUE(gap$ok) && isTRUE(gap$nflat > 0L) &&
+        isTRUE(gap$residual_norm > 0)) {
       out <- try(get(module$ctsem_flat_probe(cont, .ctJuliaNumericVector(x),
         .ctJuliaNumericVector(gap$residual))), silent = TRUE)
       if (!inherits(out, "try-error")) probe <- .ctBackendProbeFields(out, npar)
