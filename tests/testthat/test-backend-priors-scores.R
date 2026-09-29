@@ -273,8 +273,66 @@ test_that("per-subject scores sum to the gradient on the default route too", {
   }
 })
 
+# Each score-based method on a Laplace fit: the covariance comes back the size
+# of the raw vector, finite and positive on its diagonal, says which method
+# made it, and is made from the scores. The per-unit score rows these read are
+# checked against the gradient above; this is the plumbing from them to a
+# covariance.
+#
+# "Made from the scores" is the information matrix equality: on a correctly
+# specified model the score-based covariance and the Hessian's estimate the
+# same thing, so each standard error lands near the Hessian's (0.86-1.43 of it
+# here) without equalling it. Finite and positive alone did not show that:
+# with every score row zeroed the ridge still returns a finite, positive
+# covariance, standard errors a few thousandths of the Hessian's, and the
+# checks above it all passed. The data are simulated from this model, and the
+# seed is one at which every parameter is identified -- at seed 9 the random
+# intercept's sd went to zero, leaving no Hessian width to compare against.
+#
+# The model is the one the engine's package image has compiled
+# (`image_model()`, helper-julia.R), so the fit costs seconds. On
+# `.prior_full_model()` it cost five minutes, three of them compiling that
+# model's Laplace Hessian, and that fit is kept below at the release tier for
+# what it alone shows.
 test_that("score-based uncertainty methods work for backend fits", {
   skip_without_julia()
+  # 20 subjects for a raw vector a fraction of that long, so the score
+  # covariance is not rank limited.
+  fit <- suppressMessages(ctFit(image_data(nsub = 20L, seed = 1L), image_model(),
+    backend = "julia", intoverpop = "laplace", verbose = 0))
+  expect_false(is.null(fit$laplace))
+  expect_lt(length(fit$estimate$raw), 20L)
+  hessianse <- fit$estimate$se
+  expect_true(all(is.finite(hessianse) & hessianse > 0))
+  for (method in c("opg", "sandwich", "bootstrap")) {
+    updated <- suppressWarnings(suppressMessages(
+      ctOptimUncertainty(fit, uncertainty = method, finishsamples = 50, verbose = 0)))
+    covariance <- updated$estimate$cov
+    expect_equal(dim(covariance), c(length(fit$estimate$raw), length(fit$estimate$raw)))
+    expect_true(all(is.finite(covariance)))
+    expect_true(all(diag(covariance) > 0))
+    expect_identical(updated$uncertainty$settings$method, method)
+    ratio <- sqrt(diag(covariance)) / hessianse
+    expect_true(all(ratio > 1 / 3 & ratio < 3), info = paste(method,
+      "se / Hessian se:", paste(signif(ratio, 3), collapse = " ")))
+    expect_gt(max(abs(ratio - 1)), 1e-3)
+  }
+  # fullbootstrap still needs refits per resample, and says so.
+  expect_error(ctOptimUncertainty(fit, uncertainty = "fullbootstrap"),
+    "not available for backend")
+})
+
+# The fit the test above used to make, kept for the two things only it shows,
+# at the release tier (`skip_unless_slow()`): five minutes, three of them
+# compiling this model's Laplace Hessian and one the 200-odd iterations this
+# noise-only data takes. What it alone shows: the score-based methods on a
+# Laplace fit with several correlated effects and a TI predictor effect, and
+# that such a fit completes through a subject whose inner mode sits where its
+# own DRIFT is singular. Nothing cheaper reaches that point: it is this seed's
+# data that puts a subject there.
+test_that("score-based uncertainty methods work on a multi-effect Laplace fit through a singular DRIFT", {
+  skip_without_julia()
+  skip_unless_slow("a Laplace fit of the full prior model")
   model <- .prior_full_model()
   # More subjects than parameters, so the score covariance is not rank limited.
   set.seed(9)
