@@ -231,6 +231,24 @@ taken of their difference, which tends to `log(-z)`.
 @inline _mills(z::Real) = exp(_norm_logpdf(z) - _norm_logcdf(z))
 
 """
+    _logistic(x)
+
+`1 / (1 + e^-x)`, as `inv(1 + exp(-x))` wherever that exponential is finite,
+which is the expression the score and the information have always used, so
+their numbers there are unchanged. Past `x = -700` it is `e^x / (1 + e^x)`.
+
+The difference is not in the value, which is zero or subnormal either way, but
+in a dual: `exp(-x)` overflows to `Inf`, and the partials of `inv(Inf)` are
+`Inf / Inf`, NaN. A linear predictor out at -700 is not a fitted value, but
+the Laplace optimiser's trial points and the inner curvature reach it (bench
+gD3 on dev1: over a thousand categorical evaluations at predicted means of
+-700 to -1000 in one fit), and a NaN partial there poisons the whole
+gradient where a zero was the answer.
+"""
+@inline _logistic(x::Real) = x < -700 ? (E = exp(x); E / (one(E) + E)) :
+    inv(one(x) + exp(-x))
+
+"""
     _censored_at(y, limit, upper::Bool)
 
 Whether an observation sits at a censoring limit, decided on values alone.
@@ -483,7 +501,7 @@ identically, not just numerically, which is why the fast path can stay.
         return ((T(y) - η) * prec, prec)
     end
     if kind == CTSEM_OBS_BINARY || isempty(thresholds)
-        F = inv(one(T) + exp(-η))
+        F = _logistic(η)
         length(thresholds) >= 2 ||
             return (T(y > 0.5 ? 1 : 0) - F, F * (one(T) - F))
         # With asymptotes the likelihood is `q = flat + (d-c)F` for a one and
@@ -523,8 +541,8 @@ identically, not just numerically, which is why the fast path can stay.
     k = Int(y)
     n = length(thresholds)
     # `F(a)`, zero below the first threshold, and `F(-b)`, zero above the last.
-    Fa = k <= 1 ? zero(T) : inv(one(T) + exp(η - thresholds[k - 1]))
-    Fnb = k > n ? zero(T) : inv(one(T) + exp(thresholds[k] - η))
+    Fa = k <= 1 ? zero(T) : _logistic(thresholds[k - 1] - η)
+    Fnb = k > n ? zero(T) : _logistic(η - thresholds[k])
     information = Fa * (one(T) - Fa) + Fnb * (one(T) - Fnb)
     return (Fa - Fnb, max(information, floatmin(T)))
 end
@@ -555,14 +573,14 @@ the curvature has no derivative in it; `info`, the information as it floors it.
     end
     G = promote_type(T, eltype(thresholds))
     if kind == CTSEM_OBS_BINARY || isempty(thresholds)
-        A = y > 0.5 ? convert(G, inv(one(T) + exp(η))) : zero(G)
-        B = y > 0.5 ? zero(G) : convert(G, inv(one(T) + exp(-η)))
+        A = y > 0.5 ? convert(G, _logistic(-η)) : zero(G)
+        B = y > 0.5 ? zero(G) : convert(G, _logistic(η))
         floored = false
     else
         k = Int(y)
         n = length(thresholds)
-        A = k <= 1 ? zero(G) : inv(one(T) + exp(η - thresholds[k - 1]))
-        B = k > n ? zero(G) : inv(one(T) + exp(thresholds[k] - η))
+        A = k <= 1 ? zero(G) : _logistic(thresholds[k - 1] - η)
+        B = k > n ? zero(G) : _logistic(η - thresholds[k])
         floored = true
     end
     vA = A * (one(A) - A)

@@ -50,6 +50,13 @@ test_that("the rule's partials are forward mode's, to first and second order", {
     list("binary, zero", 0.9, 4, 0, numeric(0), "binary"),
     list("binary, diffuse", 0.4, 30, 1, numeric(0), "binary"),
     list("ordinal, diffuse", -0.5, 40, 2, c(-1, 0.4, 1.9), "ordinal"),
+    # Predictors past where the logistic's exponential overflows: ordinary
+    # observations (a one far above, a zero far below) and an improbable one,
+    # whose partials were NaN under a dual, in forward mode as well.
+    list("binary, one far above", 720, 0.3, 1, numeric(0), "binary"),
+    list("binary, zero far below", -712, 0.3, 0, numeric(0), "binary"),
+    list("binary, one far below", -712, 0.3, 1, numeric(0), "binary"),
+    list("ordinal, far below", -730, 0.3, 3, c(-1, 0.4, 1.9), "ordinal"),
     list("count", 0.5, 0.6, 4, numeric(0), "count"))
   num <- function(x) paste(sprintf("%.17g", x), collapse = ", ")
   for (cs in cases) {
@@ -60,6 +67,7 @@ test_that("the rule's partials are forward mode's, to first and second order", {
       "_ctsem_test_catjac(%s, %s, %d, Float64[%s], %d, [0.3, -0.2, 0.1, 0.25, -0.4])",
       num(cs[[2]]), num(cs[[3]]), as.integer(cs[[4]]), num(cs[[5]]),
       kinds[[cs[[6]]]]))
+    expect_true(all(is.finite(got)), info = cs[[1]])
     expect_equal(got[, 1], got[, 2], tolerance = 1e-9, info = cs[[1]])
     expect_equal(got[, 3], got[, 4], tolerance = 1e-8, info = cs[[1]])
   }
