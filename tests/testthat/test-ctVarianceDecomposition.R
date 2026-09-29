@@ -441,6 +441,12 @@ test_that('the decomposition holds together on any design shape', {
   }
 })
 
+# The same model and data under both representations, which three tests below
+# compare in three different ways. They were fitted three times, identically,
+# and are fitted once now (`fit_cached()`, helper-julia.R).
+.vd_intoverpop_fits <- function() fit_cached("vd_intoverpop_fits",
+  fit_intoverpop(datalong = datalong, model = estmodel, cores = 1, verbose = 0))
+
 test_that('the two representations of individual differences agree', {
   # The test that would have caught the Laplace gap in one line, and the reason
   # `fit_intoverpop()` exists: the same model, the same data, the same
@@ -451,8 +457,7 @@ test_that('the two representations of individual differences agree', {
   #
   # Compared at persons='estimated' on both sides, since that is the only route
   # a Laplace fit has: both are then the fitted modes and the same quantity.
-  fits <- fit_intoverpop(datalong = datalong, model = estmodel, cores = 1,
-    verbose = 0)
+  fits <- .vd_intoverpop_fits()
   augmented <- suppressMessages(
     ctVarianceDecomposition(fits$augmented, persons = 'estimated'))
   laplace <- suppressMessages(
@@ -505,8 +510,7 @@ test_that('drawing persons agrees across representations too', {
   # The same comparison with both sides drawing from their own fitted
   # population covariance rather than reading modes. Looser, because the two
   # draw independently, but it is the route the default takes.
-  fits <- fit_intoverpop(datalong = datalong, model = estmodel, cores = 1,
-    verbose = 0)
+  fits <- .vd_intoverpop_fits()
   drawn <- lapply(fits, function(f) {
     set.seed(29)
     suppressMessages(ctVarianceDecomposition(f, persons = 'model',
@@ -526,8 +530,7 @@ test_that('drawing persons agrees across representations too', {
 test_that('the random effect structure reads the same from either representation', {
   # The accessor the decomposition now asks instead of looking for carrier
   # states, over both representations and over a model that has none.
-  fits <- fit_intoverpop(datalong = datalong, model = estmodel, cores = 1,
-    verbose = 0)
+  fits <- .vd_intoverpop_fits()
   for (rep in names(fits)) {
     levels <- ctsem:::.ctFitRandomEffectLevels(fits[[rep]])
     expect_length(levels, 1L)
