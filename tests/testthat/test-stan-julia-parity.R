@@ -707,27 +707,39 @@ test_that("Stan and Julia's actual optimizers converge to the same fit for TD/TI
 
 test_that("which directions are named does not depend on how far the optimiser walked", {
   skip_without_julia()
-  # The fit above walks this fixture's ridge to a certified point. Stopped part
-  # way, the curvature along the ridge has decayed less, and a direction can
-  # drop out of the report or a marginal one drop in -- so any change to when a
-  # fit stops can change which parameters this fixture compares across
-  # backends, unless the report names the same set at every stopping point.
+  # The fit above walks this fixture's ridge to a certified point. Stopped
+  # elsewhere on it, the curvature along the ridge has decayed by a different
+  # amount, and a direction can drop out of the report or a marginal one drop
+  # in -- so any change to when a fit stops can change which parameters this
+  # fixture compares across backends, unless the report names the same set at
+  # every stopping point.
   #
-  # `newton = FALSE` stops part way along the ridge: it skips only the
+  # `newton = FALSE` stops somewhere else on the ridge: it skips only the
   # exact-Hessian finish, not the batching or gap-correction stages, and
   # `.ctBackendIdentifiability()` reads the standard post-fit Hessian
-  # (`out$uncertainty$hessian`), computed whether or not the finish ran. Where
-  # it stops moves with the batching schedule's timing: cores defaults to 2
-  # here, where the chunk tuner times candidate splits (see ?ctFit's `cores`),
-  # and along a ridge that last-decimal difference moves the stopping point by
-  # a hundred iterations or more. Measured: 732 of 831 iterations and 726 of
-  # 751, 0.30 and 0.14 raw units from the full fit (max abs); 558 of 831 on
-  # Windows, 0.58; 610 and 602 of 672 on dev2, 0.54 and 0.20. At 558 and 610
-  # it is 1.4 and 1.3 raw units along the full fit's flat direction and 0.05
-  # and 0.04 off it, 1.7e-05 and 2.1e-05 nats below, and "suboptimal" by
-  # 7.9e-06 over the identified directions rather than certified -- on the
-  # ridge, a little short of its crest. The guard below sits under the
-  # smallest of those gaps.
+  # (`out$uncertainty$hessian`), computed whether or not the finish ran. It
+  # does not promise to stop sooner. Without the finish the gap-correction loop
+  # resumes L-BFGS instead, and those resumes can cost more iterations than
+  # the finish saves: on dev1 it came to 820 iterations against the full fit's
+  # 747 (two correction rounds against the finish's 36 Newton steps), 0.33 raw
+  # units from it. So which run was longer is not asserted, only that they
+  # stopped apart.
+  #
+  # Where each stops is set by the arithmetic, and so by the session's thread
+  # count. Run alone, this file's Julia session is one thread wide --
+  # `skip_without_julia()`'s `juliaSetupOk()` starts it before any fit can ask
+  # for more -- so the chunk tuner has one candidate and each machine stops at
+  # the same points in every run: 747 and 820 on dev1. In a session
+  # two or more wide, `cores = 2` lets the tuner time candidate splits (see
+  # ?ctFit's `cores`), and along a ridge that last-decimal difference moves the
+  # stopping point by a hundred iterations or more. Measured, early of full:
+  # 732 of 831 and 726 of 751, 0.30 and 0.14 raw units apart (max abs); 558 of
+  # 831 on Windows, 0.58; 610 and 602 of 672 on dev2, 0.54 and 0.20; 745 and
+  # 820 of 811 on dev1, 0.55 and 0.25. At 558 and 610 the early fit is 1.4 and
+  # 1.3 raw units along the full fit's flat direction and 0.05 and 0.04 off
+  # it, 1.7e-05 and 2.1e-05 nats below, and "suboptimal" by 7.9e-06 over the
+  # identified directions rather than certified -- on the ridge, short of its
+  # crest. The guard below sits under the smallest of those gaps.
   #
   # The flat direction turns between the two points, because the ridge is
   # curved in raw coordinates: by 4.8 degrees at 558 and 4.3 at 610, one flat
@@ -753,7 +765,6 @@ test_that("which directions are named does not depend on how far the optimiser w
   full <- .parity_julia_fit()
   early <- .parity_julia_fit(list(newton = FALSE))
   # Two different stopping points, or this compares a fit with itself.
-  expect_lt(early$optim$iterations, full$optim$iterations)
   expect_gt(max(abs(early$estimate$raw - full$estimate$raw)), 0.05)
 
   named <- as.character(full$identifiability$parameters)
@@ -764,20 +775,20 @@ test_that("which directions are named does not depend on how far the optimiser w
   expect_setequal(as.character(early$identifiability$parameters), named)
 
   # On the likelihood's evidence at the full fit, where the screen's walk moved
-  # the likelihood by 0.80 to 0.90 nats against its 1.92 bar; and there they
+  # the likelihood by 0.66 to 0.90 nats against its 1.92 bar; and there they
   # are exactly the coordinates whose intervals have no width, so the report
   # and summary()'s NA intervals name the same parameters.
   expect_setequal(.parity_flat_by_screen(full), named)
   expect_setequal(as.character(full$uncertainty$intervalcheck$unidentified),
     named)
-  # At the early fit the walk moved it by 1.67 and 1.77, and following the
+  # At the early fits the walk moved it by 1.01 to 1.77, and following the
   # ridge a further 0.2 raw units takes it to 1.93: the straight walk leaves a
   # curving ridge faster the further along it starts. The screen is one-sided,
   # so a walk it refuses proves nothing, and the direction is then named on
-  # its curvature instead -- about 1e-9 of the sharpest there, under the
-  # report's 1e-8 -- and inverted into a vast variance rather than dropped. Which
-  # evidence carries it is where the fit stopped; which parameters it names is
-  # not, and that is the assertion above.
+  # its curvature instead -- 8e-11 to about 1e-9 of the sharpest at the early
+  # stops measured, under the report's 1e-8 -- and inverted into a vast
+  # variance rather than dropped. Which evidence carries it is where the fit
+  # stopped; which parameters it names is not, and that is the assertion above.
   screened <- .parity_flat_by_screen(early)
   if (length(screened)) {
     expect_setequal(screened, named)
