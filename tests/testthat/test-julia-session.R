@@ -45,40 +45,15 @@ test_that("force restarts the session and threads take effect", {
   expect_equal(as.integer(JuliaConnectoR::juliaEval("Threads.nthreads()")), 2L)
 })
 
+# The fits in this file are of `image_model()` (helper-julia.R), the shape the
+# engine's package image has compiled: what is under test is the session and
+# the worker path, not the model, and on any other shape each fit after one of
+# the restarts below paid its whole compile again -- 105 s for the two fits of
+# this first block alone on dev2, most of the file.
 test_that("a model and a data frame fit end to end", {
   skip_without_julia()
-  set.seed(20260827)
-  nsubjects <- 12; nobs <- 6
-  dat <- do.call(rbind, lapply(seq_len(nsubjects), function(i) {
-    intercept <- stats::rnorm(1, 1.5, 0.9)
-    state <- stats::rnorm(1, 0, 0.5)
-    out <- numeric(nobs)
-    for (t in seq_len(nobs)) {
-      if (t > 1) {
-        decay <- exp(-0.4)
-        state <- decay * state +
-          stats::rnorm(1, 0, sqrt(0.36 / 0.8 * (1 - decay^2)))
-      }
-      out[t] <- state + intercept + stats::rnorm(1, 0, 0.3)
-    }
-    data.frame(id = i, time = seq_len(nobs) - 1, Y1 = out)
-  }))
-  # MANIFESTVAR is pinned at the sd the data were generated with rather than
-  # left free. Free process noise *and* free measurement error on a single
-  # indicator over 12 subjects and 6 occasions does not identify both: mvarY1
-  # walks to raw 10.17, where the variance transform is flat to machine
-  # precision, and the saturation guard then correctly reports the fit as not
-  # converged -- identically on both routes, with pinned or random starting
-  # values. That is the guard working, and this file's subject is the session
-  # and worker path, not weak identification. The guard has its own coverage in
-  # test-julia-binary.R ("a saturated optimum is not reported as converged"),
-  # so pinning here loses nothing.
-  model <- suppressWarnings(suppressMessages(ctModel(type = "ct",
-    manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1),
-    T0MEANS = matrix(0), CINT = matrix(0), T0VAR = matrix(0.5),
-    MANIFESTVAR = matrix(0.3), MANIFESTMEANS = matrix("mmean"))))
-  model$pars$indvarying <- FALSE
-  model$pars$indvarying[model$pars$param %in% "mmean"] <- TRUE
+  dat <- image_data(nsub = 12L, nobs = 6L, seed = 27L)
+  model <- image_model()
 
   for (route in c("laplace", "augmented")) {
     fit <- suppressMessages(ctFit(dat, model, backend = "julia",
@@ -88,8 +63,6 @@ test_that("a model and a data frame fit end to end", {
     expect_true(isTRUE(fit$optim$converged), label = route)
     expect_false(isTRUE(fit$optim$stalled), label = route)
     expect_true(is.finite(fit$estimate$loglik), label = route)
-    # The population mean of an identity-transformed MANIFESTMEANS is the one
-    # parameter whose truth is known here without any transform bookkeeping.
     summ <- suppressWarnings(summary(fit))
     expect_true(is.list(summ) || is.data.frame(summ), label = route)
   }
@@ -116,11 +89,8 @@ test_that("a fit leaves the engine's chunk ceiling as it found it", {
   before <- ceiling()
   expect_equal(before, 3L)
 
-  set.seed(9)
-  dat <- do.call(rbind, lapply(1:8, function(i)
-    data.frame(id = i, time = 0:4, Y1 = cumsum(stats::rnorm(5)) * .5)))
-  model <- suppressWarnings(suppressMessages(ctModel(type = "ct",
-    manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1))))
+  dat <- image_data(nsub = 8L, nobs = 5L, seed = 9L)
+  model <- image_model()
   fit <- suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
     cores = 2, optimcontrol = list(estonly = TRUE))))
 
@@ -152,11 +122,8 @@ test_that("a fit at cores = 1 holds OpenBLAS to one thread, and puts it back", {
   skip_if(before < 2L,
     "OpenBLAS started with one thread here, so holding it to one is not observable")
 
-  set.seed(9)
-  dat <- do.call(rbind, lapply(1:8, function(i)
-    data.frame(id = i, time = 0:4, Y1 = cumsum(stats::rnorm(5)) * .5)))
-  model <- suppressWarnings(suppressMessages(ctModel(type = "ct",
-    manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1))))
+  dat <- image_data(nsub = 8L, nobs = 5L, seed = 9L)
+  model <- image_model()
   # Asked from inside the optimiser, through its callback, so what is read is
   # the count the fit ran under rather than one set and reset around it.
   during <- integer()
@@ -446,11 +413,8 @@ test_that("a one-thread session asked for more cores either gets more or says so
     else Sys.setenv(JULIA_NUM_THREADS = previous_env)
   }, add = TRUE)
 
-  set.seed(11)
-  dat <- do.call(rbind, lapply(1:8, function(i)
-    data.frame(id = i, time = 0:4, Y1 = cumsum(stats::rnorm(5)) * .5)))
-  model <- suppressWarnings(suppressMessages(ctModel(type = "ct",
-    manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1))))
+  dat <- image_data(nsub = 8L, nobs = 5L, seed = 11L)
+  model <- image_model()
   # Every message, not the first one: `expect_message()` looks at one condition
   # and a fit raises several, so the line under test would be missed by it.
   messages <- function(expr) {
@@ -676,11 +640,8 @@ test_that("ctJuliaEvaluate() runs under the cores ceiling it is given", {
       recorded <<- c(recorded, as.integer(chunks)); NA_integer_
     },
     .ctBackendRestoreMaxChunks = function(previous) invisible(NULL))
-  set.seed(6)
-  dat <- do.call(rbind, lapply(1:6, function(i)
-    data.frame(id = i, time = 0:4, Y1 = cumsum(stats::rnorm(5)) * .5)))
-  model <- suppressWarnings(suppressMessages(ctModel(type = "ct",
-    manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1))))
+  dat <- image_data(nsub = 6L, nobs = 5L, seed = 6L)
+  model <- image_model()
   prepared <- suppressMessages(ctFit(dat, model, backend = "julia", fit = FALSE))
   pars <- rep(0, ctsem:::.ctBackendNpar(prepared))
   out <- ctJuliaEvaluate(prepared, pars = pars, cores = 3L)
@@ -697,11 +658,8 @@ test_that("ctIdentify() runs its engine calls under its own cores ceiling", {
       recorded <<- c(recorded, as.integer(chunks)); NA_integer_
     },
     .ctBackendRestoreMaxChunks = function(previous) invisible(NULL))
-  set.seed(7)
-  dat <- do.call(rbind, lapply(1:6, function(i)
-    data.frame(id = i, time = 0:4, Y1 = cumsum(stats::rnorm(5)) * .5)))
-  model <- suppressWarnings(suppressMessages(ctModel(type = "ct",
-    manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1))))
+  dat <- image_data(nsub = 6L, nobs = 5L, seed = 7L)
+  model <- image_model()
   out <- suppressWarnings(suppressMessages(ctIdentify(dat, model, nstart = 1L,
     cores = 4L)))
   expect_s3_class(out, "ctIdentify")
