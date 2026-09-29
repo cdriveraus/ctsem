@@ -12,12 +12,20 @@ observation as an exact scalar conditioning:
 so the reverse is the differential of that, with the moment function's own
 partials supplied by `_binary_moment_jacobian`.
 
-# Why the record holds the prior rather than the intermediates
+# Why the record holds what the forward saw, not only the prior
 
-Every quantity above is reconstructible from `(x, P, λ, μ, y)`, and the forward
-pass overwrites `x` and `P` in place. Storing the prior and replaying is both
-smaller and less brittle than storing six intermediates per observation per
-row -- and it is what `_reverse_update!` already does for the Gaussian block.
+The moments are the expensive part: a 21-node rule per observation, and their
+Jacobian is that rule evaluated once more in duals. Recording only the prior
+meant the reverse replayed the chain to find each observation's `(x, P)` and
+evaluated the rule there, so a traced pass paid for the rule twice per
+observation -- plainly in the forward, in duals in the replay. A traced forward
+now evaluates the Jacobian itself (`_record_binary_step!`), whose value part is
+the moments the plain rule would have returned, and keeps it with the state the
+observation was applied to; the reverse reads them. One evaluation per
+observation per pass instead of two: an ordinal gradient sweep about a third
+cheaper on ord4 (local), and the rule's Jacobian is now taken at exactly the
+point the forward used rather than at a replayed one that could differ from it
+in the last bit. An untraced pass evaluates the plain rule, as before.
 
 # Why the Gaussian block needed no changes
 
@@ -28,25 +36,9 @@ binary chain then reverses after it, from the true prior. Ordering the other way
 would have meant teaching `_reverse_update!` about a preceding step.
 """
 
-"""
-The variance a count row's dispersion contributes to `b`, zero for every other
-kind.
-
-Both loops of the reverse pass recompute `b` from the record rather than storing
-it, so both need this and neither can be the one that remembers.
-"""
-@inline function _count_variance(record, j::Int, ::Type{T}) where {T}
-    record.kinds[j] == CTSEM_OBS_COUNT || return zero(T)
-    τ = record.thresholds[j]
-    isempty(τ) && return zero(T)
-    return T(τ[1] * τ[1])
-end
-
-"""One row's binary observations, and the state they were applied to."""
+"""One row's binary observations, and what the forward pass saw at each."""
 mutable struct CTSEMBinaryRecord{T}
     rows::Vector{Int}         # manifest indices, in application order
-    state_in::Vector{T}       # prior mean, before any binary conditioning
-    P_in::Matrix{T}           # prior covariance, likewise
     Lambda::Matrix{T}         # LAMBDA[rows, :]
     manifestmeans::Vector{T}  # MANIFESTMEANS[rows]
     y::Vector{T}              # the observations themselves
@@ -59,12 +51,22 @@ mutable struct CTSEMBinaryRecord{T}
     # and inferring it from `thresholds` being empty would make a count look
     # like a Bernoulli -- the one confusion this whole argument exists to stop.
     kinds::Vector{Int}
+    # Written by the forward pass as it applies each observation
+    # (`_record_binary_step!`): how many it has applied, and for each the
+    # state and covariance it was applied to, `c = P λ`, the predictor's mean
+    # `a` and variance `b` (a count's dispersion included), and the moments'
+    # offset, variance and Jacobian there. `states[1]` and `covs[1]` are the
+    # row's prior. Sized on first use and reused by every later pass.
+    applied::Int
+    states::Vector{Vector{T}}
+    covs::Vector{Matrix{T}}
+    cs::Vector{Vector{T}}
+    ab::Vector{Tuple{T,T}}
+    moments::Vector{Tuple{T,T,Matrix{T}}}
+    # The reverse pass's cotangent of `c`, one observation at a time.
+    cbar::Vector{T}
 end
 
-# Deliberately untyped in `tape`: this file is included before the tape's own,
-# because the tape holds a vector of these records and so needs the type to
-# exist first. Annotating `::CTSEMAdjointTape` here would make that circular.
-# The `::Nothing` method above is what keeps an untraced pass free of dispatch.
 """
     _extras_cotangent!(θ̄ca, row, τ, kind, cot)
 
@@ -120,8 +122,14 @@ that was not a mode.
     return nothing
 end
 
+"""
+    _record_binary!(tape, ws, pars, data, obs_col, rows, n)
 
-function _record_binary!(tape, ws, pars, data, obs_col, rows, state_in, P_in, n)
+Start the record of one row's categorical observations, `rows`, before the
+forward pass applies them, and return it for `_record_binary_step!` to fill as
+it does; `nothing` when nothing is being taped.
+"""
+function _record_binary!(tape, ws, pars, data, obs_col, rows, n)
     # Two different tracing mechanisms reach this: the adjoint tape, and the
     # Kalman trace that `ctKalman`/`ctPredict` use to collect filtered states.
     # Only the first wants a record, and only the first has anywhere to put one.
@@ -136,103 +144,117 @@ function _record_binary!(tape, ws, pars, data, obs_col, rows, state_in, P_in, n)
     hasproperty(tape, :nbinaries) || return nothing
     isempty(rows) && return nothing
     # Only a model with categorical indicators gets here; see `_ctsem_barrier`.
-    _ctsem_barrier(_record_binary_rows!, tape, ws, pars, data, obs_col, rows,
-        state_in, P_in, n)
-    return nothing
+    # The type asserted so the caller, which hands the record on to the
+    # forward update, stays inferable.
+    return _ctsem_barrier(_record_binary_rows!, tape, ws, pars, data, obs_col,
+        rows, n)::CTSEMBinaryRecord{eltype(ws.state)}
 end
 
-function _record_binary_rows!(tape, ws, pars, data, obs_col, rows, state_in, P_in, n)
-    T = eltype(state_in)
+function _record_binary_rows!(tape, ws, pars, data, obs_col, rows, n)
+    T = eltype(ws.state)
     n = Int(n)
     obs_col = Int(obs_col)
     index = (tape.nbinaries += 1)
-    r = collect(rows)
     if index > length(tape.binaries)
-        push!(tape.binaries, CTSEMBinaryRecord{T}(
-            r, collect(vec(state_in)), Matrix(P_in),
-            Matrix(pars.LAMBDA[r, 1:n]), collect(pars.MANIFESTMEANS[r]),
-            T[data[i, obs_col] for i in r],
-            Vector{T}[collect(T, _ordinal_thresholds!(ws, pars, i)) for i in r],
-            Int[Int(ws.manifesttype[i]) for i in r]))
-    else
-        record = tape.binaries[index]
-        record.rows = r
-        record.state_in = collect(vec(state_in))
-        record.P_in = Matrix(P_in)
-        record.Lambda = Matrix(pars.LAMBDA[r, 1:n])
-        record.manifestmeans = collect(pars.MANIFESTMEANS[r])
-        record.y = T[data[i, obs_col] for i in r]
-        record.thresholds =
-            Vector{T}[collect(T, _ordinal_thresholds!(ws, pars, i)) for i in r]
-        record.kinds = Int[Int(ws.manifesttype[i]) for i in r]
+        push!(tape.binaries, CTSEMBinaryRecord{T}(Int[], zeros(T, 0, n), T[], T[],
+            Vector{T}[], Int[], 0, Vector{T}[], Matrix{T}[], Vector{T}[],
+            Tuple{T,T}[], Tuple{T,T,Matrix{T}}[], T[]))
     end
+    # Refilled in place, as the tape's other records are (`_tape_fill!`): the
+    # arrays of the last pass at this index already have the row's shape.
+    record = tape.binaries[index]
+    _tape_fill!(record.rows, rows)
+    record.Lambda = _tape_gather!(record.Lambda, pars.LAMBDA, rows, n)
+    _tape_gather!(record.manifestmeans, pars.MANIFESTMEANS, rows)
+    resize!(record.y, length(rows))
+    resize!(record.kinds, length(rows))
+    length(record.thresholds) < length(rows) &&
+        resize!(record.thresholds, length(rows))
+    @inbounds for (k, i) in enumerate(rows)
+        record.y[k] = data[i, obs_col]
+        record.kinds[k] = Int(ws.manifesttype[i])
+        τ = _ordinal_thresholds!(ws, pars, i)
+        if isassigned(record.thresholds, k)
+            _tape_fill!(record.thresholds[k], τ)
+        else
+            record.thresholds[k] = collect(T, τ)
+        end
+    end
+    record.applied = 0
     push!(tape.program, (:binary, index))
-    return nothing
+    return record
+end
+
+"""
+    _record_binary_step!(record, ws, c, a, b, y, nodes, weights, thresholds,
+        kind, n)
+
+The moments of the next observation of `record`'s row, `(logZ, offset,
+variance)`, for a traced forward pass: the state and covariance it is applied
+to (`ws.state`, `ws.P_predict`), `c`, `a` and `b` are kept, and where `b` is
+above the variance floor so are the moments' offset, variance and Jacobian,
+from `_binary_moment_jacobian`, whose value part is what `_binary_moments`
+returns. At or below the floor the forward adds only the likelihood at `a` and
+moves nothing, and the reverse differentiates that instead, so the plain rule
+serves.
+"""
+function _record_binary_step!(record::CTSEMBinaryRecord{T}, ws, c, a::T, b::T,
+    y::Real, nodes, weights, thresholds, kind::Int, n::Int) where {T}
+    j = (record.applied += 1)
+    if length(record.states) < j
+        push!(record.states, Vector{T}(undef, n))
+        push!(record.covs, Matrix{T}(undef, n, n))
+        push!(record.cs, Vector{T}(undef, n))
+        push!(record.ab, (a, b))
+        push!(record.moments, (zero(T), zero(T), zeros(T, 0, 0)))
+    end
+    x = record.states[j]
+    length(x) == n || resize!(x, n)
+    P = record.covs[j]
+    size(P) == (n, n) || (P = record.covs[j] = Matrix{T}(undef, n, n))
+    cj = record.cs[j]
+    length(cj) == n || resize!(cj, n)
+    source = ws.P_predict.data
+    @inbounds for q in 1:n
+        x[q] = ws.state[q]
+        cj[q] = c[q]
+        for p in 1:n
+            P[p, q] = source[p, q]
+        end
+    end
+    record.ab[j] = (a, b)
+    b > T(_CTSEM_MIN_VARIANCE[]) ||
+        return _binary_moments(a, sqrt(b), y, nodes, weights, thresholds, kind)
+    logZ, m, v, J = _binary_moment_jacobian(a, b, y, nodes, weights, thresholds,
+        kind)
+    record.moments[j] = (m, v, J)
+    return (logZ, m, v)
 end
 
 """
     _reverse_binary!(x̄, P̄, θ̄ca, record, n)
 
-Reverse one row's chain of binary conditionings.
-
-Replays the chain forward first, keeping each step's `(x, P)` so the reverse can
-be taken at the values that step actually saw, then walks it backwards.
+Reverse one row's chain of binary conditionings, last observation first, at
+the state, covariance and moments the forward pass kept for each
+(`_record_binary_step!`).
 """
 function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
     record::CTSEMBinaryRecord{T}, n::Int) where {T}
     k = length(record.rows)
     k == 0 && return nothing
-    nodes, weights = _gauss_hermite(_CTSEM_BINARY_NODES[])
+    # A reverse pass exists only for a forward pass that applied the whole row:
+    # one that stopped on an observation it could not score was invalid.
+    record.applied == k || error("binary record: the forward pass applied ",
+        record.applied, " of ", k, " observations")
+    cbar = record.cbar
+    length(cbar) == n || resize!(cbar, n)
 
-    # Forward replay, storing the state each observation was applied to and the
-    # moments' Jacobian there. The Jacobian carries the moments as its value
-    # part, so the replay's update and the reverse's derivatives come from one
-    # evaluation of the rule per observation.
-    states = Vector{Vector{T}}(undef, k)
-    covs = Vector{Matrix{T}}(undef, k)
-    moments = Vector{Tuple{T,T,Matrix{T}}}(undef, k)
-    x = copy(record.state_in)
-    P = copy(record.P_in)
-    for j in 1:k
-        states[j] = copy(x)
-        covs[j] = copy(P)
-        λ = view(record.Lambda, j, :)
-        a = record.manifestmeans[j]
-        c = P * λ
-        b = zero(T)
-        @inbounds for i in 1:n
-            b += λ[i] * c[i]
-            a += λ[i] * x[i]
-        end
-        b += _count_variance(record, j, T)
-        b > T(_CTSEM_MIN_VARIANCE[]) || continue
-        _, m, v, J = _binary_moment_jacobian(a, b, record.y[j], nodes,
-            weights, record.thresholds[j], record.kinds[j])
-        moments[j] = (m, v, J)
-        j == k && break
-        shift = m / b
-        shrink = (one(T) - v / b) / b
-        @inbounds for i in 1:n
-            x[i] += c[i] * shift
-        end
-        @inbounds for jj in 1:n, ii in 1:n
-            P[ii, jj] -= shrink * c[ii] * c[jj]
-        end
-    end
-
-    # Reverse, last observation first.
     for j in k:-1:1
         λ = view(record.Lambda, j, :)
-        x0 = states[j]
-        P0 = covs[j]
-        a = record.manifestmeans[j]
-        c = P0 * λ
-        b = zero(T)
-        @inbounds for i in 1:n
-            b += λ[i] * c[i]
-            a += λ[i] * x0[i]
-        end
-        b += _count_variance(record, j, T)
+        x0 = record.states[j]
+        P0 = record.covs[j]
+        c = record.cs[j]
+        a, b = record.ab[j]
         τ = record.thresholds[j]
         row = record.rows[j]
         if !(b > T(_CTSEM_MIN_VARIANCE[]))
@@ -265,7 +287,7 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
             end
             continue
         end
-        m, v, J = moments[j]
+        m, v, J = record.moments[j]
         dlogZ_da, dlogZ_db = J[1, 1], J[1, 2]
         dm_da, dm_db = J[2, 1], J[2, 2]
         dv_da, dv_db = J[3, 1], J[3, 2]
@@ -277,7 +299,6 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
         @inbounds for i in 1:n
             shiftbar += x̄[i] * c[i]
         end
-        cbar = Vector{T}(undef, n)
         @inbounds for i in 1:n
             cbar[i] = x̄[i] * shift
         end

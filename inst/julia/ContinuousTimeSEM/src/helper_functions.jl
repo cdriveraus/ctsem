@@ -366,18 +366,19 @@ ForwardDiff.tagcount(::Type{ForwardDiff.Tag{CTSEMNestedTag,V}}) where {V} =
 _ctsem_nested_tag(x::AbstractArray) = ForwardDiff.Tag{CTSEMNestedTag,eltype(x)}()
 
 """
-`ForwardDiff.jacobian(f, x)` under `CTSEMNestedTag`; see there.
+    _ctsem_nested_seed(value, i, Val(N))
 
-With `Val(N)` the chunk is `N` wide. Without it the width is read at run time
-and the config's dual types are built on every call: a sixth of an ordinal
-Laplace gradient, whose reverse pass takes one of these per observation.
+`value` as a dual under `CTSEMNestedTag`, seeded along direction `i` of `N`:
+one input of an inner differentiation that takes all `N` directions in one
+chunk, seeded by hand. `_binary_moment_jacobian`, the one such
+differentiation, went through `ForwardDiff.jacobian` before, whose config, the
+closure's result array and the result matrix were over half of what each of
+its calls allocated -- one call per categorical observation per pass. The
+seeds are the ones `ForwardDiff.jacobian` builds, so the numbers are the same.
 """
-_ctsem_nested_jacobian(f, x::AbstractArray) = ForwardDiff.jacobian(f, x,
-    ForwardDiff.JacobianConfig(f, x, ForwardDiff.Chunk(x), _ctsem_nested_tag(x)),
-    Val{false}())
-_ctsem_nested_jacobian(f, x::AbstractArray, ::Val{N}) where {N} =
-    ForwardDiff.jacobian(f, x, ForwardDiff.JacobianConfig(f, x,
-        ForwardDiff.Chunk{N}(), _ctsem_nested_tag(x)), Val{false}())
+@inline _ctsem_nested_seed(value::T, i::Int, ::Val{N}) where {T,N} =
+    ForwardDiff.Dual{ForwardDiff.Tag{CTSEMNestedTag,T},T,N}(value,
+        ForwardDiff.Partials{N,T}(ntuple(j -> j == i ? one(T) : zero(T), Val(N))))
 
 """`ForwardDiff.gradient(f, x)` under `CTSEMNestedTag`; see there."""
 _ctsem_nested_gradient(f, x::AbstractArray) = ForwardDiff.gradient(f, x,

@@ -2321,6 +2321,55 @@ function _laplace_unit_curvature(laplace::CTSEMLaplaceObjective, U::Integer,
 end
 
 """
+    _laplace_block_precision(laplace, U, theta, Ls, u, b, z)
+
+Block `b`'s precision `I - d2 ll / du_b du_b`, with its own coordinates at `z`
+and the rest of the unit's effects where `u` has them: what the adaptive
+quadrature scales a leaf's nodes by (`_quadrature_leaf_rule!`) and the
+continuation a soft rule's stiff complement by (`_continuation_block_functions`),
+at points other than the mode.
+
+A unit of one block takes it from `_laplace_unit_curvature` there, which for
+such a unit is the same Jacobian of the same gradient at the same width, so
+the two rules compile no dual type the Laplace fit's own curvature has not.
+Each took its own `ForwardDiff.jacobian` of a closure of its own before, and a
+closure's tag is a new dual type through the whole filter and its reverse
+pass: about 75 s of compilation (local) in the first correction of a session
+on ord4, for numbers that come out the same to the bit. A block of a nested
+unit takes the Jacobian over its own coordinates, as both did, through this one
+closure rather than two.
+"""
+function _laplace_block_precision(laplace::CTSEMLaplaceObjective, U::Integer,
+    theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64},
+    b::Integer, z::AbstractVector)
+    blocks = laplace.units.blocks[U]
+    block = blocks[b]
+    k = block.size
+    columns = (block.offset + 1):(block.offset + k)
+    work = copy(u)
+    @inbounds for (t, c) in enumerate(columns)
+        work[c] = z[t]
+    end
+    length(blocks) == 1 &&
+        return Matrix{Float64}(_laplace_unit_curvature(laplace, U, theta, Ls, work).diag[1])
+    members = block.members
+    gradient_of = function (zz)
+        local S, ws, uu, r
+        S = eltype(zz)
+        ws = _laplace_workspace!(laplace, S, length(theta))
+        uu = convert(Vector{S}, work)
+        @inbounds for (t, c) in enumerate(columns)
+            uu[c] = zz[t]
+        end
+        r = _laplace_unit_loglik_gradient(laplace, U, convert(Vector{S}, theta),
+            [convert(Matrix{S}, L) for L in Ls], uu, ws, members)
+        return [r.gradient[c] for c in columns]
+    end
+    A = ForwardDiff.jacobian(gradient_of, collect(Float64, z))
+    return Matrix{Float64}(LinearAlgebra.I, k, k) .- _laplace_symmetrise(A)
+end
+
+"""
     _laplace_repair_blocks!(M, blocks)
 
 Shift the block diagonals until the whole matrix factorizes, reporting whether
