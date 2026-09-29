@@ -354,6 +354,14 @@
 # likelihood does not give them. The default fits of both cells end at a
 # collapsed drift sd instead, where the rule fires; a fit that ended at one of
 # those maxima would not be flagged.
+#
+# Nor is it calibrated on a reduced-rank level. There the engine's shares are
+# of the level's shared dimensions, the same for every effect loading on one,
+# so the rule reads a dimension's information once per effect, and a level
+# has no sd coordinate to raise to the starting spread. AnomAuth refitted
+# with poprank = 1 reads 7.0 and 7.3 for both effects (silent), against the
+# full-rank fit's 6.5e-5 for drift; on S2 that refit ended 4.9 nats below the
+# full-rank one and not at a maximum (dev2, 2026-09-29).
 #' @keywords internal
 .ctEffectThresholds <- function() list(information = 2)
 
