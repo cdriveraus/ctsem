@@ -58,16 +58,19 @@ instantiated, and declined by default in a non-interactive session unless
 advance.
 }
 \details{
-The first call downloads and precompiles those dependencies (roughly 120 MB
-and a minute or two); later calls in new sessions reuse them.
+The first call downloads and precompiles those dependencies (roughly 120 MB)
+and compiles the engine, which takes several minutes; later calls in new
+sessions reuse both.
 
-Separately, the first fit of a model shape in each R session compiles code
-specialised to that model, so it takes longer than later fits of the same
-shape: on one Laplace model 85 seconds against 25 for every later fit, and
-the first quadrature correction a further 15 to 20 seconds. The precompiled
-engine cannot anticipate a model's own functions, so this is paid once per
-shape per session rather than once per fit; time a fit after one warm-up
-fit, not from a fresh session.
+The engine is compiled in advance for a few common small models -- one
+latent process with a random intercept and two Gaussian or three binary
+indicators, two latent processes with random intercepts, one latent process
+with a random drift. The first fit of any other model shape in each R
+session compiles code specialised to that model, so it takes longer than
+later fits of the same shape: about a minute against two seconds for a small
+Gaussian model, and minutes for a Laplace model whose fit reaches the
+quadrature correction. This is paid once per shape per session rather than
+once per fit; time a fit after one warm-up fit, not from a fresh session.
 
 Pressing Escape (or Ctrl-C) during a julia fit returns to the R prompt at
 once, and keeps the Julia session and everything it has compiled. Julia
