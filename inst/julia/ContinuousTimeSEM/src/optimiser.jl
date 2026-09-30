@@ -227,6 +227,16 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
             len = norm(s)
             len > 1 && (s .*= 1 / len)
         end
+        # Under the diagonal, no coordinate moves more than one raw unit a step,
+        # the scale over which every standard transform changes character. A
+        # coordinate whose transform has gone flat has y_i near zero in every
+        # pair, so each update shrinks its diagonal and lengthens its step, and
+        # the longer step shrinks it faster: on the bench's anomS1 a collapsed
+        # population sd ran from raw -6 to -208 at an unchanged objective.
+        # Clipped rather than scaled, so one such coordinate cannot slow the
+        # rest; its gradient is near zero, so clipping it costs no descent, and
+        # a step that lost its descent is caught just below.
+        diagonal && clamp!(s, -1.0, 1.0)
         dphi = dot(G, s)
         if !(dphi < 0) || !isfinite(dphi)
             # Not a descent direction: the memory has gone bad. Start it again.

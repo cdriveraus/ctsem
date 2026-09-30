@@ -587,6 +587,25 @@ end
     @test plain.g_converged && diag.g_converged
     @test diag.iterations < plain.iterations
     @test maximum(abs, diag.minimizer) < 1e-4
+    # A coordinate with no curvature and a vanishing gradient -- a transform
+    # gone flat -- moves at most one raw unit a step under the diagonal, while
+    # the others converge. Minimised: a quadratic in x[1:2] plus a softplus in
+    # x[3] that flattens as x[3] falls.
+    # Every trial is the iterate plus at most one raw unit in x[3], so after k
+    # iterations nothing evaluated lies further than k from the start.
+    sp(z) = z > 30 ? z : log1p(exp(z))
+    reach = Ref(0.0)
+    fg3! = function (F, G, x)
+        reach[] = max(reach[], abs(x[3]))
+        if G !== nothing
+            G[1] = 10 * x[1]; G[2] = 0.1 * x[2]; G[3] = 1e-3 / (1 + exp(-x[3]))
+        end
+        F === nothing ? nothing : 5 * x[1]^2 + 0.05 * x[2]^2 + 1e-3 * sp(x[3])
+    end
+    flat = C._ctsem_lbfgs(fg3!, [1.0, 1.0, 0.0]; memory=20, maxiter=40,
+        g_tol=1e-12, diagonal=true)
+    @test reach[] <= flat.iterations + 1e-9
+    @test maximum(abs, flat.minimizer[1:2]) < 1e-3
 end
 
 @testset "beyond the dense prefixes the pullback sets double" begin
