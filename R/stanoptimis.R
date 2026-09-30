@@ -885,19 +885,29 @@ autoTIpredsFunc <- function(cl, standata, sm, optimArgs, parsteps, optimcores, c
 #    density brings a gradient, each parameter is walked out on both sides at
 #    rungs of 3 to 96 standard errors, doubling, with the others moved to their
 #    conditional mode at each rung (Newton steps in the complement, with the
-#    mode's precision block as the metric, from the previous rung's point
-#    carried on), and a component is placed at each point the walk reaches:
-#    centred there, with the conditional covariance across the path and half
-#    the step along it, weighted by the density there times the step. A path
+#    precision block as the metric, from the best of three starts), and a
+#    component is placed at each point the walk reaches: centred there, with
+#    the conditional covariance across the path and half the step along it,
+#    weighted by the density there times the step. The walks start from the
+#    density's own mode, a few Newton steps from the point handed in. A path
 #    whose first rung falls as fast as the curvature says has no tail to
-#    follow and stops there, which is most of them. All paths move in
-#    lockstep, one batch of gradients and one of values per Newton step
-#    (`'gradbatch'` below). Without a gradient the stage is skipped.
+#    follow and stops there, which is most of them; one that has not fallen
+#    off at 96 is reported (`paths$reachesLimit`) and caps the rounds below
+#    at five. All paths move in lockstep, one batch of gradients and one of
+#    values per Newton step (`'gradbatch'` below). Without a gradient the
+#    stage is skipped. See `.ctImisPaths()`.
 #
 # 2. Rounds. `n_batch` draws from the mixture, then while the effective sample
 #    size is short of `target_ess` or the Pareto k of the weights is at or
 #    above `kbar`, a component at the top-weighted tenth of the draws (as
 #    IMIS, Raftery and Bao), from which the next round draws.
+#
+#    Measured on five bench models and two closed forms against long NUTS
+#    references (dev2, 2026-09-30): the worst parameter's sd error fell from
+#    0.03-0.57 posterior sds to 0.02-0.24, and its 2.5/97.5% quantile error
+#    from 0.10-2.28 to 0.09-1.00, at or under what the default 'sample' gave
+#    on every model but one sd (0.24 against 0.23); the path search was most
+#    of the extra cost.
 #
 # 3. Weights against every proposal used. Each draw's weight is its density
 #    over sum_k c_k q_k(x) / N, c_k the draws component k has been asked for
@@ -1021,6 +1031,11 @@ imis_is <- function(parlp,
     pw <- pw / sum(pw)
     pw <- pmax(pw, 0.5 / max(n_batch, 1))
     pw <- pw / sum(pw)
+    # A path that never fell off says the posterior may be improper, which
+    # the report warns of; more rounds cannot make that answer usable, only
+    # slower -- measured on an improper 19-parameter fit, all 51 rounds ran
+    # to an effective sample of 66.
+    if (length(pathinfo$reachesLimit)) max_iter <- min(max_iter, 4L)
   }
 
   # ---- 2 and 3. rounds against the deterministic mixture --------------------
