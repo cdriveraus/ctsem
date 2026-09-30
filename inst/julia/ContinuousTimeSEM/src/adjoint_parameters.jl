@@ -431,6 +431,9 @@ mutable struct CTSEMDualContext{D,PD,ST,T}
     written::Vector{T}
     # Pre-group values of the cells a group writes, for the reverse walk.
     saved::Vector{T}
+    # The row's TD predictors lifted into `D`, when they arrive as a dual `T`;
+    # see `_dual_context_data`.
+    tdpreds::Vector{D}
 end
 
 function CTSEMDualContext(::Type{T}, sp::EKFParameters, state_like) where {T}
@@ -441,7 +444,29 @@ function CTSEMDualContext(::Type{T}, sp::EKFParameters, state_like) where {T}
     state = similar(state_like, D)
     fill!(state, zero_dual)
     return CTSEMDualContext{D,typeof(pars),typeof(state),T}(data, pars, state, nothing,
-        T[], T[])
+        T[], T[], D[])
+end
+
+# The row's data -- TD predictors, time, dt -- reach the reverse pass in its
+# scalar `T`, which inside `ctsem_hessian` is the outer `ForwardDiff.Dual`.
+# The mirror's parameters are `Dual{Nothing,T,1}`, and ForwardDiff cannot
+# order an untagged dual against a tagged one, so an expression combining a
+# predictor with a parameter threw `DualMismatchError` -- and one reading only
+# a predictor returned an outer dual that `_partial1` took for the inner one.
+# Lifted into `D` with a zero inner partial, they keep their outer derivatives
+# and every operand shares one type. Plain floats mix with any dual and pass
+# through, so the ordinary gradient copies nothing.
+@inline _dual_context_data(::Type{D}, x::AbstractFloat) where {D} = x
+@inline _dual_context_data(::Type{D}, x::Real) where {D} =
+    D(x, ForwardDiff.Partials((zero(x),)))
+_dual_context_data(::Type{D}, x::AbstractVector{<:AbstractFloat}, buffer) where {D} = x
+_dual_context_data(::Type{D}, x, buffer) where {D} = x
+function _dual_context_data(::Type{D}, x::AbstractVector{<:Real}, buffer) where {D}
+    resize!(buffer, length(x))
+    @inbounds for (i, v) in enumerate(x)
+        buffer[i] = _dual_context_data(D, v)
+    end
+    return buffer
 end
 
 """Scratch vector of at least `n` slots for one group's replayed writes."""
@@ -476,14 +501,20 @@ function _sync_dual_context!(dual_ctx::CTSEMDualContext, ctx::CTSEMRowContext,
     @inbounds for i in eachindex(dual_ctx.state)
         dual_ctx.state[i] = _seed_dual(dual_ctx.state[i], ctx.state[i], false)
     end
-    dual_ctx.row_context = CTSEMRowContext(dual_ctx.state, dual_ctx.pars, ctx.tdpreds,
-        ctx.tipreds, ctx.time, ctx.dt, ctx.subject, ctx.row)
+    D = eltype(dual_ctx.data)
+    dual_ctx.row_context = CTSEMRowContext(dual_ctx.state, dual_ctx.pars,
+        _dual_context_data(D, ctx.tdpreds, dual_ctx.tdpreds),
+        ctx.tipreds,
+        _dual_context_data(D, ctx.time), _dual_context_data(D, ctx.dt),
+        ctx.subject, ctx.row)
     return dual_ctx
 end
 
 # A transform that happens not to depend on any dual input returns a plain
 # real; treat that as a zero partial rather than letting `partials` throw.
-@inline _partial1(x::ForwardDiff.Dual) = ForwardDiff.partials(x, 1)
+# Only the untagged dual is this layer's seed: a tagged one is an outer
+# derivative (`ctsem_hessian`'s) and its first partial is not the one asked for.
+@inline _partial1(x::ForwardDiff.Dual{Nothing}) = ForwardDiff.partials(x, 1)
 @inline _partial1(x::Real) = zero(x)
 
 function _dual_param_derivative(dual_ctx::CTSEMDualContext, transform, j::Int)

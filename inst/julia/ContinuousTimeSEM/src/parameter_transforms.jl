@@ -42,9 +42,11 @@ function apply_complex_transforms_at_indices!(
     # Asserted for the same reason as in `map_parameters!`: the transform
     # collection has an abstract element type, so the call is a dynamic
     # dispatch and its result would be boxed on the way into `all_params`.
+    # Converted first: an expression reading only data -- a TD predictor, the
+    # time -- returns a plain real while the buffer holds duals.
     P = eltype(all_params)
     @inbounds for k in eachindex(indices)
-        all_params[indices[k]] = transforms[k](context)::P
+        all_params[indices[k]] = convert(P, transforms[k](context))::P
     end
     return all_params
 end
@@ -53,7 +55,7 @@ function apply_complex_transforms_at_indices!(all_params, indices, transforms, s
     @boundscheck length(indices) == length(transforms) || throw(DimensionMismatch("Transform indices/functions mismatch"))
     P = eltype(all_params)
     @inbounds for k in eachindex(indices)
-        all_params[indices[k]] = transforms[k](state, pars)::P
+        all_params[indices[k]] = convert(P, transforms[k](state, pars))::P
     end
     return all_params
 end
