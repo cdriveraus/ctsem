@@ -672,7 +672,7 @@ function ContinuousTimeSEM.ctsem_evaluate(m::_EndgameMock, x::AbstractVector;
         row_loglik = Float64[], subject_loglik = Float64[])
 end
 function ContinuousTimeSEM.ctsem_hessian(m::_EndgameMock, x::AbstractVector;
-        chunk::Integer=0)
+        chunk::Integer=0, progress=nothing)
     m.hessians[] += 1
     return Matrix{Float64}(m.hessian(collect(Float64, x)))
 end
