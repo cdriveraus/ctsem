@@ -45,26 +45,30 @@ to draw more, or differently, from where it now stands.}
 \item{uncertainty}{Uncertainty approximation. \code{'hessian'} uses the
 finite-difference Hessian, \code{'surrogate'} fits a local quadratic
 surrogate around the optimum, \code{'is'} runs adaptive importance sampling
-(IMIS) against the fitted log posterior from a proposal built on the
-Hessian covariance, in the whitened eigen-coordinates of whichever
-directions that covariance has curvature in when it is rank deficient,
-holding the rest at the estimate. It costs at least an order of magnitude
-more log-probability evaluations than \code{'hessian'} even when it
-converges quickly (each batch of proposal draws is one bridge call rather
-than one per draw, but the draws themselves are not free). It corrects a
-posterior that is moderately skewed near the optimum, but not a tail the
-proposal does not reach: measured against a long NUTS run on a 30-subject,
-two-latent Gaussian model, a measurement-error variance's posterior sd came
-back at 0.41-0.48 of its value and its 2.5\% quantile 2.1-2.4 posterior sds
-short, at the default draws and at four times them alike, where
-\code{'sample'} at its defaults gave 0.68-1.0 of the sd. Neither the
-effective sample size nor the Pareto k of
-the weights (recorded as
-\code{fit$uncertainty$details$importance_sampling$pareto_k}, with a warning
-above 0.7, when the loo package is installed) detects that case; k detects
-a posterior with heavier tails than the proposal where the proposal does
-reach them. \code{'sample'} draws from the posterior itself and is the
-method for the case \code{'is'} was meant for. \code{'bootstrap'} uses one-step score bootstrap draws with
+against the fitted log posterior. Each raw parameter is first walked out on
+both sides of the mode, from 3 to 96 standard errors of the curvature, with
+the other parameters moved to their conditional mode, and a proposal
+component is placed wherever that walk finds a tail the curvature does not
+show -- a skewed one, or one bending away along a ridge the other
+parameters follow, as a variance with few subjects often has. Rounds of
+\code{isitersize} draws from these multivariate t components
+(\code{imisDf}) then add components at the highest-weighted draws until the
+effective sample size reaches \code{isESS} and the Pareto k of the weights
+is below 0.7 (k needs the loo package), each draw weighted against the whole
+mixture. The effective size, k, the evaluations used and which parameters
+had a tail to follow are recorded in
+\code{fit$uncertainty$details$importance_sampling}; k above 0.7 is warned
+of, and so is a parameter whose walk has not fallen off 96 standard errors
+out, which is what an improper posterior looks like. When the Hessian
+covariance is rank deficient the sampling runs in the whitened
+eigen-coordinates of the directions it has curvature in, holding the rest
+at the estimate. Measured against long NUTS runs on five bench models and
+two closed forms, its worst errors in a posterior sd and in the 2.5\% and
+97.5\% quantiles were at most those of \code{'sample'} at its defaults
+(within 5\% on the sd once), in a twentieth to a half of the time. It needs
+the log posterior's gradient for the walk, which both backends' fits
+supply. \code{'sample'} draws from the posterior itself.
+\code{'bootstrap'} uses one-step score bootstrap draws with
 Hessian bread, \code{'fullbootstrap'} resamples subjects and fully
 re-optimizes each sample from the original maximum likelihood or MAP
 estimate using mize L-BFGS, \code{'sandwich'} uses Hessian bread with score
@@ -135,8 +139,8 @@ below apply to it. For every other method, useful entries include
 \code{surrogateScale}, \code{surrogateProfile},
 \code{surrogateProfileTargetDrop}, \code{surrogateProfileMaxStep},
 \code{bootstrapFitCores}, \code{bootstrapTol}, \code{imisMaxIter},
-\code{imisScaleInit}, \code{imisTailScale}, \code{isESS}, and
-\code{isitersize}. Omitted entries use
+\code{imisScaleInit}, \code{imisTailScale}, \code{imisDf}, \code{isESS},
+and \code{isitersize}. Omitted entries use
 \code{ridge = 1e-8}, \code{hessianStep = 1e-3},
 \code{surrogateScale = .5}, \code{surrogateNpoints = NULL},
 \code{surrogateProfile = TRUE},
@@ -144,8 +148,9 @@ below apply to it. For every other method, useful entries include
 \code{surrogateProfileMaxStep = 64},
 \code{bootstrapFitCores = 1}, \code{bootstrapTol = 1e-5},
 \code{imisMaxIter = 50}, \code{imisScaleInit = 1.1},
-\code{imisTailScale = 1.1}, \code{isESS = 100}, and
-\code{isitersize = 1000}. When
+\code{imisTailScale = 1.1} (1.5 and 1.2 on julia), \code{imisDf = 5} (the
+proposal components' t degrees of freedom; \code{Inf} for normal),
+\code{isESS = 200}, and \code{isitersize = 1000}. When
 \code{surrogateNpoints} is \code{NULL}, the
 surrogate uses at least \code{max(4 * npars, 50)} local directions. The
 surrogate is fit in whitened coordinates relative to the proposal covariance.

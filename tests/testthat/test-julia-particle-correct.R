@@ -19,7 +19,11 @@ skip_on_cran()
       MANIFESTMEANS = matrix(0, 1, 1), T0VAR = matrix(1, 1, 1), T0MEANS = matrix(0, 1, 1)))
     # A stationary process, so both parameters are identified. A random walk
     # here sent the drift to its saturation plateau (raw 21, se 1e4), where a
-    # posterior has no centre to correct toward.
+    # posterior has no centre to correct toward. And priors, because even the
+    # stationary data leave that plateau only 4.6 log units below the mode
+    # 3000 raw units out: without a prior the posterior is improper there,
+    # which uncertainty = 'is' now reaches and a reweighting of normal draws
+    # around the estimate cannot.
     set.seed(4)
     dat <- data.frame(id = rep(1:8, each = 6), time = rep(0:5, 8),
       Y1 = as.vector(replicate(8, {
@@ -29,7 +33,7 @@ skip_on_cran()
         x + rnorm(6, 0, 0.3)
       })))
     fit <- suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
-      cores = 1, inits = c(0.1, -0.2), verbose = 0,
+      cores = 1, inits = c(0.1, -0.2), verbose = 0, priors = TRUE,
       optimcontrol = list(finishsamples = 200))))
     assign("fit", fit, envir = .pc_cache)
   }

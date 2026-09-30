@@ -919,18 +919,18 @@ test_that("importance sampling records the Pareto k of its weights and warns whe
   skip_if_not_installed('gridExtra'); skip_if_not_installed('ggplot2')
   skip_if_not_installed('loo')
 
-  # Two closed-form targets for one standard normal proposal. A normal three
-  # times wider than the proposal gives weights p/q proportional to
-  # exp(|x|^2 (1 - 1/9) / 2), whose tail under the proposal is an exact power
-  # law with k = 1 - 1/9 = 0.89: no variance, however many draws. A normal
-  # narrower than the proposal gives bounded weights and k well below 0.5. One
-  # batch of 2000 each, so nothing adapts; over 20 seeds the first gave k
-  # 0.73-1.13 (median 0.90) and the second never above -0.7.
+  # Two closed-form targets for one standard normal proposal (`imisDf = Inf`;
+  # the default t would bound these weights). A normal three times wider than
+  # the proposal gives weights p/q proportional to exp(|x|^2 (1 - 1/9) / 2),
+  # whose tail under the proposal is an exact power law with k = 1 - 1/9 =
+  # 0.89: no variance, however many draws. A normal narrower than the proposal
+  # gives bounded weights and k well below 0.5. One batch of 2000 each, so
+  # nothing adapts; the densities carry no gradient, so no path is searched.
   heavy <- function(x) sum(stats::dnorm(x, 0, 3, log = TRUE))
   light <- function(x) sum(stats::dnorm(x, 0, 0.8, log = TRUE))
   draw <- function(lpg) withr::with_seed(3, ctsem:::.ctOptimDrawSamples(
     list(cov = diag(2), details = list()), draws = 'imis',
-    control = list(imisMaxIter = 0, isitersize = 2000, isESS = 1),
+    control = list(imisMaxIter = 0, isitersize = 2000, isESS = 1, imisDf = Inf),
     est = c(0, 0), finishsamples = 50, lpg = lpg, scaleInit = 1, tailScale = 1,
     tailremedy = 'Sample it instead.'))
 
@@ -948,4 +948,86 @@ test_that("importance sampling records the Pareto k of its weights and warns whe
     nbatch = 2000, target_ess = 1, maxiter = 0, scaleInit = 1, tailScale = 1,
     diagPlots = FALSE)), 'Pareto k .*Caller remedy')
   expect_equal(drawn$k, kbad)
+})
+
+# A variance-like tail along a curved ridge, with exact moments: x1 = -1.1 -
+# exp(u), u ~ N(log .15, 1), and x2 = -0.7 (u - log .15) + sqrt(.51) e moving
+# with it, so x2 ~ N(0, 1) exactly; two more coordinates N(0, 1). x1's sd is
+# about six standard errors of the curvature at the mode, and its 2.5%
+# quantile about 18 out, along a path on which x2 moves too -- the shape the
+# variances of the bench models had, where a proposal built on the curvature
+# reported half the width. Both a value batch and a gradient batch, as the
+# julia route gives.
+.imis_curved_fixture <- function() {
+  mu0 <- log(0.15); a <- 0.7; b <- sqrt(1 - a^2)
+  lp1 <- function(x) {
+    y <- -1.1 - x[1]
+    if (y <= 0) return(-1e100)
+    u <- log(y); z2 <- (x[2] + a * (u - mu0)) / b
+    -0.5 * (u - mu0)^2 - u - 0.5 * z2^2 - 0.5 * sum(x[-(1:2)]^2)
+  }
+  gr1 <- function(x) {
+    y <- -1.1 - x[1]
+    if (y <= 0) return(rep(0, length(x)))
+    u <- log(y); z2 <- (x[2] + a * (u - mu0)) / b
+    c((-(u - mu0) - 1 - z2 * a / b) * (-1 / y), -z2 / b, -x[-(1:2)])
+  }
+  dens <- function(x) lp1(x)
+  attr(dens, 'batch') <- function(X) apply(as.matrix(X), 1, lp1)
+  attr(dens, 'gradbatch') <- function(X) {
+    X <- as.matrix(X)
+    list(value = apply(X, 1, lp1), gradient = t(apply(X, 1, gr1)))
+  }
+  mode <- stats::optim(c(-1.2, 0, 0, 0), function(x) -lp1(x), function(x) -gr1(x),
+    method = 'BFGS', control = list(reltol = 1e-14, maxit = 1000))$par
+  cov <- solve(stats::optimHess(mode, function(x) -lp1(x), function(x) -gr1(x)))
+  list(dens = dens, mode = mode, cov = cov,
+    sd = sqrt((exp(1) - 1) * 0.15^2 * exp(1)),
+    q025 = -1.1 - 0.15 * exp(stats::qnorm(0.975)))
+}
+
+test_that("importance sampling follows a curved tail the curvature at the mode does not show", {
+  skip_if_not_installed('mvtnorm'); skip_if_not_installed('diagis')
+  skip_if_not_installed('gridExtra'); skip_if_not_installed('ggplot2')
+
+  fx <- .imis_curved_fixture()
+  # uncertainty = 'is' at its defaults, over four seeds, as sd ratio and 2.5%
+  # quantile error in true sds. Measured: 0.82-1.01 and 0.01-0.54 with the
+  # path search, medians 0.86 and 0.37; without it 0.43-0.80 and 0.07-1.81,
+  # medians 0.67 and 0.64.
+  run <- function(dens) sapply(1:4, function(s) {
+    r <- withr::with_seed(s, suppressWarnings(ctsem:::.ctOptimDrawSamples(
+      list(cov = fx$cov, details = list()), draws = 'imis', control = list(),
+      est = fx$mode, finishsamples = 2000, lpg = dens)))
+    x1 <- r$samples[, 1]
+    c(sdratio = stats::sd(x1) / fx$sd,
+      q025 = abs(stats::quantile(x1, 0.025, names = FALSE) - fx$q025) / fx$sd,
+      followed = 1 %in% r$uncertaintyfit$details$importance_sampling$paths$followed)
+  })
+  out <- run(fx$dens)
+  expect_true(all(out['followed', ] == 1))
+  expect_gt(stats::median(out['sdratio', ]), 0.8)
+  expect_lt(stats::median(out['q025', ]), 0.45)
+})
+
+test_that("a posterior that has not fallen off far out is reported", {
+  skip_if_not_installed('mvtnorm'); skip_if_not_installed('diagis')
+  skip_if_not_installed('gridExtra'); skip_if_not_installed('ggplot2')
+
+  # A unit bump on a floor: curvature at the mode, then flat for ever along
+  # x1 -- improper, as a random-effect sd with no prior can be.
+  lp1 <- function(x) log(0.1 + exp(-0.5 * x[1]^2)) - 0.5 * x[2]^2
+  gr1 <- function(x) c(-x[1] * exp(-0.5 * x[1]^2) / (0.1 + exp(-0.5 * x[1]^2)), -x[2])
+  dens <- function(x) lp1(x)
+  attr(dens, 'batch') <- function(X) apply(as.matrix(X), 1, lp1)
+  attr(dens, 'gradbatch') <- function(X) {
+    X <- as.matrix(X)
+    list(value = apply(X, 1, lp1), gradient = t(apply(X, 1, gr1)))
+  }
+  expect_warning(r <- withr::with_seed(1, ctsem:::.ctOptimDrawSamples(
+    list(cov = diag(c(1.1, 1)), details = list()), draws = 'imis',
+    control = list(imisMaxIter = 2), est = c(0, 0), finishsamples = 100,
+    lpg = dens, tailremedy = 'Sample it instead.')),
+    'had not fallen off 96 standard errors .*raw parameters 1 \\(above\\), 1 \\(below\\).*Sample it instead')
+  expect_setequal(r$uncertaintyfit$details$importance_sampling$paths$reachesLimit, c(1L, -1L))
 })

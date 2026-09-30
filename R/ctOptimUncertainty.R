@@ -117,6 +117,21 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
     message('Pareto k of the importance weights not checked: install the loo ',
       'package.')
   }
+  # A profile path that had not fallen off at the last rung: see
+  # `.ctImisPaths()`. Positional, since names are attached later; in the
+  # identified subspace the paths run along its directions, not parameters.
+  unbounded <- is_res$paths$reachesLimit
+  if(length(unbounded)) {
+    what <- if(is.null(attr(is_res, 'subspace'))) 'raw parameter' else
+      'direction of the identified subspace'
+    warning('The posterior had not fallen off ', is_res$paths$limit,
+      ' standard errors of the ',
+      'curvature out along ', what, if(length(unbounded) > 1) 's ' else ' ',
+      paste0(abs(unbounded), ifelse(unbounded < 0, ' (below)', ' (above)'),
+        collapse = ', '),
+      ', so it may be improper there, which no reweighting can represent. ',
+      tailremedy, call.=FALSE)
+  }
   .ctOptimEffectiveSampleWarn(ess,
     floor = if(is.finite(target)) target / 2 else NA_real_, remedy = remedy)
   invisible(list(ess = ess, k = k))
@@ -195,10 +210,14 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
 # itself) has no backend to ask, so its own formal defaults use the julia
 # value: the wider, more conservative proposal, on the reasoning that costs
 # more evaluations rather than the one that can quietly under-cover.
+#
+# `df`, the components' t degrees of freedom, is one value for both: the
+# heavier tail is what lets a proposal built on the curvature reach draws its
+# normal would not, and it does not depend on which engine evaluates them.
 .ctImisProposalDefaults <- function(backend = c('julia', 'stan')) {
   backend <- match.arg(backend)
-  if (backend == 'stan') list(scaleInit = 1.1, tailScale = 1.1) else
-    list(scaleInit = 1.5, tailScale = 1.2)
+  if (backend == 'stan') list(scaleInit = 1.1, tailScale = 1.1, df = 5) else
+    list(scaleInit = 1.5, tailScale = 1.2, df = 5)
 }
 
 # Which directions of a proposal covariance carry no information at all, by
@@ -256,12 +275,25 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
 # defeat the one-bridge-call route: without this, `imis_is` would find no
 # `'batch'` attribute on the wrapped closure and fall back to its per-draw
 # loop, which is the cost this whole repair exists to remove.
+#
+# The `'gradbatch'` attribute goes through the map too, as `A' g`, for the
+# profile-path search in `imis_is()`; without it the search would silently
+# not run in the identified subspace.
 .ctImisWhitenDensity <- function(lpg, centre, subspace) {
+  A <- sweep(subspace$V, 2, sqrt(subspace$d), '*')
   wrapped <- function(z) lpg(as.numeric(
     .ctImisUnwhitenMatrix(matrix(z, nrow = 1L), centre, subspace)))
   batchbase <- attr(lpg, 'batch')
   if (!is.null(batchbase)) {
     attr(wrapped, 'batch') <- function(Z) batchbase(.ctImisUnwhitenMatrix(Z, centre, subspace))
+  }
+  gradbase <- attr(lpg, 'gradbatch')
+  if (!is.null(gradbase)) {
+    attr(wrapped, 'gradbatch') <- function(Z) {
+      r <- gradbase(.ctImisUnwhitenMatrix(Z, centre, subspace))
+      r$gradient <- as.matrix(r$gradient) %*% A
+      r
+    }
   }
   wrapped
 }
@@ -319,6 +351,204 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
   result <- .ctImisUnwhitenResult(whitened, centre, subspace)
   attr(result, 'subspace') <- subspace
   result
+}
+
+# The gradient a density can give `imis_is()`'s profile-path search: its
+# `'gradbatch'` attribute, a function of a draws matrix (rows as draws)
+# returning list(value, gradient) with one gradient row per draw, or NULL.
+# Read from the attribute and never probed for: a density says what it can do
+# by its attributes, as `'batch'` does, so the julia route's lpg carries one
+# (one bridge call per batch), stan's gets one from `.ctImisPointGradbatch()`,
+# and the quadrature and particle-filter densities of `ctLaplaceCorrect()` and
+# `ctParticleCorrect()` carry none and skip the search. Probing would cost a
+# particle filter per call there, and put a row in its evaluation record.
+.ctImisGradient <- function(parlp, centre) {
+  gb <- attr(parlp, 'gradbatch')
+  if (is.function(gb)) gb else NULL
+}
+
+# A per-point density whose value carries a `'gradient'` attribute -- stan's
+# `ctOptimFitLpgFunc()` -- given the `'gradbatch'` attribute `.ctImisGradient()`
+# reads, asking one point at a time. So both backends run the same search.
+.ctImisPointGradbatch <- function(lpg) {
+  attr(lpg, 'gradbatch') <- function(X) {
+    X <- as.matrix(X)
+    out <- lapply(seq_len(nrow(X)), function(i)
+      tryCatch(lpg(X[i, ]), error = function(e) NA_real_))
+    grads <- lapply(out, function(o) {
+      g <- attr(o, 'gradient')
+      if (is.null(g) || length(g) != ncol(X)) rep(NA_real_, ncol(X)) else as.numeric(g)
+    })
+    list(value = vapply(out, function(o) as.numeric(o)[1L], numeric(1)),
+      gradient = matrix(unlist(grads), nrow = nrow(X), byrow = TRUE))
+  }
+  lpg
+}
+
+# Each parameter's profile path, walked out on both sides of the mode: at
+# `first` and then `rungs` standard errors of the curvature, parameter j is
+# held and the others moved to their conditional mode, by Newton steps in the
+# complement with the mode's precision block as the metric, from the previous
+# rung's point carried on linearly (the regression direction at the first).
+# See `imis_is()` for why, and for what is built from the points.
+#
+# A path stops when its log density has fallen `maxdrop` below the mode's,
+# when it cannot be evaluated, or after the first rung if it fell there by
+# more than `heavy` of what the curvature predicts (`first^2 / 2`): such a
+# path has no tail to follow, and on the models measured that is most of
+# them, which is what keeps the search cheap. A path still above `maxdrop` at
+# the last rung is reported in `reachesLimit`, as parameter index times side
+# (negative for the lower), with the last rung as `limit`: the density there
+# has not fallen off that many standard errors out, which is what an
+# improper direction looks like. The ladder runs to 96 because a variance
+# held up by nothing but its N(0, 1) raw prior was measured 24 standard
+# errors out still under the drop limit, proper but long.
+#
+# Every active path moves one Newton step per iteration, so an iteration is
+# one call of `gradfun` for all of them and one or more of `evaluate` for the
+# step halving.
+.ctImisPaths <- function(gradfun, evaluate, mu, S, first = 3,
+  rungs = c(6, 12, 24, 48, 96), maxdrop = 8, steps = 12, tol = 1e-3, heavy = 0.6) {
+  d <- length(mu)
+  ladder <- c(first, rungs)
+  P <- solve(S)
+  se <- sqrt(diag(S))
+  # The paths start from the density's own mode, which the point handed in
+  # need not be: a Laplace fit whose estimate the quadrature correction moved
+  # reports that corrected point, up to a standard error from the mode of the
+  # Laplace objective this samples (measured: 0.98 on one parameter of a
+  # 40-subject model). Newton steps with the curvature handed in, kept only
+  # while they gain.
+  lp0 <- evaluate(matrix(mu, 1L))
+  ngrad <- 0L
+  for (st in 1:8) {
+    g <- gradfun(matrix(mu, 1L))
+    ngrad <- ngrad + 1L
+    gr <- as.numeric(g$gradient)
+    if (!is.finite(g$value[1L]) || any(!is.finite(gr))) break
+    step <- as.numeric(S %*% gr)
+    # the step and three halvings of it, in one batch
+    cand <- t(vapply(2^-(0:3), function(a) mu + a * step, numeric(d)))
+    if (d == 1L) cand <- matrix(cand, ncol = 1L)
+    v <- evaluate(cand)
+    best <- which.max(v)
+    if (!is.finite(v[best]) || v[best] <= lp0 + tol) break
+    mu <- cand[best, ]
+    lp0 <- v[best]
+  }
+  J <- rep(seq_len(d), each = 2L)
+  side <- rep(c(1, -1), d)
+  np <- length(J)
+  chols <- if (d > 1) lapply(seq_len(d), function(j) chol(P[-j, -j, drop = FALSE])) else NULL
+  rung <- rep(1L, np)
+  iter <- rep(0L, np)
+  active <- rep(TRUE, np)
+  history <- replicate(np, list(mu), simplify = FALSE)
+  # Where a path's next rung starts: parameter j moved to the rung, and the
+  # others carried along the regression direction (the curvature's own
+  # guess), extrapolated through the last two points of the path, or left
+  # where the last point had them. All are evaluated and the best kept. The
+  # curvature's guess alone is not enough: on a 40-subject Laplace model the
+  # Hessian at the reported estimate put the start of a variance's first rung
+  # 101 log units down, from which no Newton step recovered, where holding
+  # the others still was 20 down and the path then found its ridge.
+  starts <- function(i) {
+    j <- J[i]
+    v <- mu[j] + side[i] * ladder[rung[i]] * se[j]
+    h <- history[[i]]
+    n <- length(h)
+    last <- h[[n]]
+    cand <- list(last + (v - last[j]) * S[, j] / S[j, j], last)
+    if (n >= 2L) {
+      b <- h[[n - 1L]]
+      cand[[3L]] <- last + (last - b) * (v - last[j]) / (last[j] - b[j])
+    }
+    out <- do.call(rbind, cand)
+    out[, j] <- v
+    out
+  }
+  place <- function(ids) {
+    cl <- lapply(ids, starts)
+    allc <- do.call(rbind, cl)
+    v <- evaluate(allc)
+    ncalls <<- ncalls + 1L
+    at <- 0L
+    for (m in seq_along(ids)) {
+      nc <- nrow(cl[[m]])
+      X[ids[m], ] <<- cl[[m]][which.max(v[at + seq_len(nc)]), ]
+      at <- at + nc
+    }
+  }
+  X <- matrix(rep(mu, each = np), np, d)
+  points <- list()
+  reaches <- integer(0)
+  followed <- integer(0)
+  ncalls <- 2L * ngrad
+  place(seq_len(np))
+  while (any(active)) {
+    ids <- which(active)
+    g <- gradfun(X[ids, , drop = FALSE])
+    ngrad <- ngrad + length(ids)
+    ncalls <- ncalls + 1L
+    gv <- as.numeric(g$value)
+    G <- as.matrix(g$gradient)
+    ok <- is.finite(gv) & gv > -1e99 & apply(is.finite(G), 1L, all)
+    dy <- matrix(0, length(ids), d)
+    if (d > 1L) for (m in which(ok)) {
+      j <- J[ids[m]]
+      R <- chols[[j]]
+      dy[m, -j] <- backsolve(R, forwardsolve(t(R), G[m, -j]))
+    }
+    newv <- gv
+    accepted <- rep(FALSE, length(ids))
+    pending <- ok & d > 1L
+    a <- rep(1, length(ids))
+    for (h in 0:6) {
+      if (!any(pending)) break
+      pm <- which(pending)
+      cand <- X[ids[pm], , drop = FALSE] + a[pm] * dy[pm, , drop = FALSE]
+      v <- evaluate(cand)
+      ncalls <- ncalls + 1L
+      better <- is.finite(v) & v > -1e99 & v >= gv[pm]
+      acc <- pm[better]
+      if (length(acc)) {
+        X[ids[acc], ] <- cand[better, , drop = FALSE]
+        newv[acc] <- v[better]
+        accepted[acc] <- TRUE
+        pending[acc] <- FALSE
+      }
+      a[pending] <- a[pending] / 2
+    }
+    advance <- integer(0)
+    for (m in seq_along(ids)) {
+      i <- ids[m]
+      iter[i] <- iter[i] + 1L
+      gain <- if (accepted[m]) newv[m] - gv[m] else 0
+      if (ok[m] && accepted[m] && gain >= tol && iter[i] < steps) next
+      value <- if (accepted[m]) newv[m] else gv[m]
+      drop <- lp0 - value
+      usable <- is.finite(value) && value > -1e99
+      j <- J[i]
+      if (usable && drop <= maxdrop) points[[length(points) + 1L]] <- list(j = j,
+        side = side[i], rung = ladder[rung[i]], x = X[i, ],
+        from = history[[i]][[length(history[[i]])]], drop = drop)
+      last <- rung[i] == length(ladder)
+      if (usable && drop <= maxdrop && last) reaches <- c(reaches, as.integer(j * side[i]))
+      if (!usable || drop > maxdrop || last ||
+          (rung[i] == 1L && drop > heavy * first^2 / 2)) {
+        active[i] <- FALSE
+        next
+      }
+      followed <- c(followed, j)
+      history[[i]][[length(history[[i]]) + 1L]] <- X[i, ]
+      rung[i] <- rung[i] + 1L
+      iter[i] <- 0L
+      advance <- c(advance, i)
+    }
+    if (length(advance)) place(advance)
+  }
+  list(points = points, followed = sort(unique(followed)), gradients = ngrad,
+    calls = ncalls, reachesLimit = reaches, limit = max(ladder), centre = mu)
 }
 
 # `cov` is the proposal covariance as the caller wants it used. A caller that
@@ -1939,7 +2169,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   finishsamples, lpg, verbose = 0,
   scaleInit = .ctImisProposalDefaults()$scaleInit,
   tailScale = .ctImisProposalDefaults()$tailScale,
-  df = Inf,
+  df = .ctImisProposalDefaults()$df,
   tailremedy = 'Sample the posterior rather than reweighting an approximation to it.') {
 
   if (draws == 'empirical' && !is.null(uncertaintyfit$draws)) {
@@ -1955,11 +2185,12 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   if (is.null(control$imisMaxIter)) control$imisMaxIter <- 50
   if (is.null(control$imisScaleInit)) control$imisScaleInit <- scaleInit
   if (is.null(control$imisTailScale)) control$imisTailScale <- tailScale
-  # Normal, not t. See `imis_is`: the heavier-tailed proposal was measured and
-  # was worse at equal scale, and only competitive at a scale that collapsed
-  # the effective sample size.
+  # t with 5 degrees of freedom, not normal: see `.ctImisProposalDefaults()`.
   if (is.null(control$imisDf)) control$imisDf <- df
-  if (is.null(control$isESS)) control$isESS <- 100
+  # 200, not 100: at 100 the rounds stopped with a variance's tail still
+  # resting on a handful of heavy draws, and its posterior sd moved by a third
+  # between seeds; see `imis_is()`.
+  if (is.null(control$isESS)) control$isESS <- 200
   if (is.null(control$isitersize)) control$isitersize <- 1000
 
   # `.ctImisRun()` runs in the identified subspace of `uncertaintyfit$cov` when
@@ -2011,7 +2242,12 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
     # because names are not attached to this vector until
     # `.ctFitNameRawUncertainty()` runs, further down the caller.
     subspace = if (is.null(subspace)) NULL else list(
-      nullDirections = subspace$nnull, heldParameters = subspace$nullParameters))
+      nullDirections = subspace$nnull, heldParameters = subspace$nullParameters),
+    # How much it cost and what the profile-path search found: the log
+    # density's evaluations, the rounds of draws, and the parameters (or
+    # subspace directions) whose paths had a tail to follow; see `imis_is()`.
+    evaluations = is_res$evaluations, rounds = nrow(is_res$rounds),
+    paths = is_res$paths)
 
   list(samples = samples, uncertaintyfit = uncertaintyfit, control = control)
 }
@@ -2189,26 +2425,30 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' @param uncertainty Uncertainty approximation. \code{'hessian'} uses the
 #' finite-difference Hessian, \code{'surrogate'} fits a local quadratic
 #' surrogate around the optimum, \code{'is'} runs adaptive importance sampling
-#' (IMIS) against the fitted log posterior from a proposal built on the
-#' Hessian covariance, in the whitened eigen-coordinates of whichever
-#' directions that covariance has curvature in when it is rank deficient,
-#' holding the rest at the estimate. It costs at least an order of magnitude
-#' more log-probability evaluations than \code{'hessian'} even when it
-#' converges quickly (each batch of proposal draws is one bridge call rather
-#' than one per draw, but the draws themselves are not free). It corrects a
-#' posterior that is moderately skewed near the optimum, but not a tail the
-#' proposal does not reach: measured against a long NUTS run on a 30-subject,
-#' two-latent Gaussian model, a measurement-error variance's posterior sd came
-#' back at 0.41-0.48 of its value and its 2.5\% quantile 2.1-2.4 posterior sds
-#' short, at the default draws and at four times them alike, where
-#' \code{'sample'} at its defaults gave 0.68-1.0 of the sd. Neither the
-#' effective sample size nor the Pareto k of
-#' the weights (recorded as
-#' \code{fit$uncertainty$details$importance_sampling$pareto_k}, with a warning
-#' above 0.7, when the loo package is installed) detects that case; k detects
-#' a posterior with heavier tails than the proposal where the proposal does
-#' reach them. \code{'sample'} draws from the posterior itself and is the
-#' method for the case \code{'is'} was meant for. \code{'bootstrap'} uses one-step score bootstrap draws with
+#' against the fitted log posterior. Each raw parameter is first walked out on
+#' both sides of the mode, from 3 to 96 standard errors of the curvature, with
+#' the other parameters moved to their conditional mode, and a proposal
+#' component is placed wherever that walk finds a tail the curvature does not
+#' show -- a skewed one, or one bending away along a ridge the other
+#' parameters follow, as a variance with few subjects often has. Rounds of
+#' \code{isitersize} draws from these multivariate t components
+#' (\code{imisDf}) then add components at the highest-weighted draws until the
+#' effective sample size reaches \code{isESS} and the Pareto k of the weights
+#' is below 0.7 (k needs the loo package), each draw weighted against the whole
+#' mixture. The effective size, k, the evaluations used and which parameters
+#' had a tail to follow are recorded in
+#' \code{fit$uncertainty$details$importance_sampling}; k above 0.7 is warned
+#' of, and so is a parameter whose walk has not fallen off 96 standard errors
+#' out, which is what an improper posterior looks like. When the Hessian
+#' covariance is rank deficient the sampling runs in the whitened
+#' eigen-coordinates of the directions it has curvature in, holding the rest
+#' at the estimate. Measured against long NUTS runs on five bench models and
+#' two closed forms, its worst errors in a posterior sd and in the 2.5\% and
+#' 97.5\% quantiles were at most those of \code{'sample'} at its defaults
+#' (within 5\% on the sd once), in a twentieth to a half of the time. It needs
+#' the log posterior's gradient for the walk, which both backends' fits
+#' supply. \code{'sample'} draws from the posterior itself.
+#' \code{'bootstrap'} uses one-step score bootstrap draws with
 #' Hessian bread, \code{'fullbootstrap'} resamples subjects and fully
 #' re-optimizes each sample from the original maximum likelihood or MAP
 #' estimate using mize L-BFGS, \code{'sandwich'} uses Hessian bread with score
@@ -2275,8 +2515,8 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' \code{surrogateScale}, \code{surrogateProfile},
 #' \code{surrogateProfileTargetDrop}, \code{surrogateProfileMaxStep},
 #' \code{bootstrapFitCores}, \code{bootstrapTol}, \code{imisMaxIter},
-#' \code{imisScaleInit}, \code{imisTailScale}, \code{isESS}, and
-#' \code{isitersize}. Omitted entries use
+#' \code{imisScaleInit}, \code{imisTailScale}, \code{imisDf}, \code{isESS},
+#' and \code{isitersize}. Omitted entries use
 #' \code{ridge = 1e-8}, \code{hessianStep = 1e-3},
 #' \code{surrogateScale = .5}, \code{surrogateNpoints = NULL},
 #' \code{surrogateProfile = TRUE},
@@ -2284,8 +2524,9 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' \code{surrogateProfileMaxStep = 64},
 #' \code{bootstrapFitCores = 1}, \code{bootstrapTol = 1e-5},
 #' \code{imisMaxIter = 50}, \code{imisScaleInit = 1.1},
-#' \code{imisTailScale = 1.1}, \code{isESS = 100}, and
-#' \code{isitersize = 1000}. When
+#' \code{imisTailScale = 1.1} (1.5 and 1.2 on julia), \code{imisDf = 5} (the
+#' proposal components' t degrees of freedom; \code{Inf} for normal),
+#' \code{isESS = 200}, and \code{isitersize = 1000}. When
 #' \code{surrogateNpoints} is \code{NULL}, the
 #' surrogate uses at least \code{max(4 * npars, 50)} local directions. The
 #' surrogate is fit in whitened coordinates relative to the proposal covariance.
@@ -2542,7 +2783,7 @@ ctFitUncertainty <- function(fit,
   stanImis <- .ctImisProposalDefaults('stan')
   drawn <- .ctOptimDrawSamples(uncertaintyfit, draws = draws, control = control,
     est = fit$stanfit$rawest, finishsamples = finishsamples,
-    lpg = lpgsetup$lpg, verbose = verbose,
+    lpg = .ctImisPointGradbatch(lpgsetup$lpg), verbose = verbose,
     scaleInit = stanImis$scaleInit, tailScale = stanImis$tailScale,
     tailremedy = paste0("ctFit(..., optimize = FALSE) samples the posterior ",
       "itself, as does ctFitUncertainty(fit, 'sample') on a backend = 'julia' fit."))

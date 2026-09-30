@@ -117,6 +117,19 @@
       out[!is.finite(out)] <- -1e100
       out
     }
+    # Values and gradients for a draws matrix in one bridge call, through
+    # `ctsem_evaluate_batch_gradient`: what `imis_is()`'s profile-path search
+    # moves every path by, one Newton step at a time. A point the route
+    # cannot use comes back with the value sentinel and a gradient of NaN.
+    attr(fn, "gradbatch") <- function(draws) {
+      draws <- as.matrix(draws)
+      out <- matrix(as.numeric(.ctBackendJuliaValue(
+        module$ctsem_evaluate_batch_gradient(objective, t(draws)))),
+        nrow = ncol(draws) + 1L)
+      value <- out[1L, ]
+      value[!is.finite(value)] <- -1e100
+      list(value = value, gradient = t(out[-1L, , drop = FALSE]))
+    }
   }
   fn
 }
