@@ -455,16 +455,58 @@ function _ctsem_width_jacobian!(J::AbstractMatrix, f::F, x::AbstractVector,
     return ForwardDiff.jacobian!(J, g, x, cfg)
 end
 
-"""`ForwardDiff.jacobian(f, x)` at the width `widths` gives `length(x)`."""
-function _ctsem_width_jacobian(f::F, x::AbstractVector, widths::Vector{Int}) where {F}
+"""
+`ForwardDiff.jacobian(f, x)` at the width `widths` gives `length(x)`.
+`progress`, when given, is called as `progress(done, n)` after each sweep,
+`done` the columns finished so far (`_ctsem_reported_jacobian`).
+"""
+function _ctsem_width_jacobian(f::F, x::AbstractVector, widths::Vector{Int};
+        progress=nothing) where {F}
     n = length(x)
     width = _ctsem_dual_width(n, widths)
-    width <= n && return ForwardDiff.jacobian(_CTSEMLeading(f, n), x,
-        ForwardDiff.JacobianConfig(_CTSEMLeading(f, n), x, ForwardDiff.Chunk{width}()))
+    width <= n && return _ctsem_reported_jacobian(_CTSEMLeading(f, n), x,
+        ForwardDiff.Chunk{width}(), progress, n)
     xp = vcat(x, zeros(eltype(x), width - n))
-    J = ForwardDiff.jacobian(_CTSEMLeading(f, n), xp,
-        ForwardDiff.JacobianConfig(_CTSEMLeading(f, n), xp, ForwardDiff.Chunk{width}()))
+    J = _ctsem_reported_jacobian(_CTSEMLeading(f, n), xp,
+        ForwardDiff.Chunk{width}(), progress, n)
     return J[:, 1:n]
+end
+
+"""`g`, counting its calls and reporting after each; see `_ctsem_reported_jacobian`."""
+struct _CTSEMSweepReporter{G,P}
+    g::G
+    progress::P
+    width::Int
+    n::Int
+    calls::Base.RefValue{Int}
+end
+function (r::_CTSEMSweepReporter)(y::AbstractVector)
+    out = r.g(y)
+    r.calls[] += 1
+    r.progress(min(r.calls[] * r.width, r.n), r.n)
+    return out
+end
+
+"""
+    _ctsem_reported_jacobian(g, x, chunk, progress, n)
+
+`ForwardDiff.jacobian(g, x)` at `chunk`'s width, calling `progress(done, n)`
+after each sweep when `progress` is not `nothing` -- `done` the columns of the
+first `n` finished so far. ForwardDiff's chunk mode calls `g` once a sweep, so
+a wrapper that counts its calls is the whole mechanism. It runs under `g`'s own
+tag, with tag checking off (the one check the wrapper would otherwise fail), so
+every dual the reverse pass sees is the type it has already compiled for: a
+wrapper with a tag of its own would compile the filter and its reverse pass
+again for a new dual type, tens of seconds on a large model.
+"""
+function _ctsem_reported_jacobian(g::G, x::AbstractVector, ::ForwardDiff.Chunk{W},
+        progress, n::Integer) where {G,W}
+    progress === nothing && return ForwardDiff.jacobian(g, x,
+        ForwardDiff.JacobianConfig(g, x, ForwardDiff.Chunk{W}()))
+    h = _CTSEMSweepReporter(g, progress, W, Int(n), Ref(0))
+    cfg = ForwardDiff.JacobianConfig(h, x, ForwardDiff.Chunk{W}(),
+        ForwardDiff.Tag(g, eltype(x)))
+    return ForwardDiff.jacobian(h, x, cfg, Val{false}())
 end
 
 """

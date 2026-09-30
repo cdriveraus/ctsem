@@ -185,6 +185,27 @@ end
     @test after.gradient == before.gradient
 end
 
+@testset "the Hessian reports each sweep and is the same matrix for it" begin
+    # One forward sweep per `width` parameters, each the gradient at that dual
+    # width: about npar gradients in all, a quarter of an hour at 715
+    # parameters, which the finish's progress line sat through frozen. The
+    # report comes from counting the sweeps under the gradient's own tag, so
+    # the duals the reverse pass sees are the ones it sees without it and the
+    # matrix is the same to the bit.
+    objective, values = _hessian_test_model()
+    n = length(values)
+    for chunk in (0, 4)
+        seen = Tuple{Int,Int,String}[]
+        H = ctsem_hessian(objective, values; chunk=chunk,
+            progress=(done, total, unit) -> push!(seen, (done, total, unit)))
+        @test H == ctsem_hessian(objective, values; chunk=chunk)
+        width = chunk > 0 ? chunk : ForwardDiff.pickchunksize(n)
+        @test cld(n, width) > 1                 # more than one sweep to report
+        @test first.(seen) == [min(k * width, n) for k in 1:cld(n, width)]
+        @test all(s -> s[2] == n && s[3] == "parameters", seen)
+    end
+end
+
 @testset "the Hessian is chunk-size independent" begin
     objective, values = _hessian_test_model()
     full = ctsem_hessian(objective, values; chunk=length(values))

@@ -709,10 +709,11 @@ end
 export ctsem_hessian
 
 """
-    ctsem_hessian(objective, values; chunk=0)
+    ctsem_hessian(objective, values; chunk=0, progress=nothing)
 
 The Hessian of the log posterior, by forward-mode differentiation *of the
-reverse-mode gradient*.
+reverse-mode gradient*. `progress`, when given, hears after each sweep how many
+parameters' columns are done (`_ctsem_hessian_progress`).
 
 The alternative the R side used before this existed is a central finite
 difference of the same gradient, which costs `2 * npar` reverse sweeps and is
@@ -741,23 +742,25 @@ order; averaging them is free and keeps the matrix usable by a Cholesky.
 """
 function ctsem_hessian(objective::CTSEMObjective, values::AbstractVector;
     chunk::Integer=0, progress=nothing)
-    # `progress` is part of the generic curvature entry point's signature
-    # (`hessof` in optimiser.jl calls every method the same way) and unused
-    # here: this route is one ForwardDiff.jacobian call, not a loop of gradient
-    # evaluations to report through -- the case `progress` exists for is
-    # `ctsem_laplace_hessian`'s, where forming the Hessian genuinely takes
-    # minutes.
+    # `progress(done, total, unit)`, when given, is called after each forward
+    # sweep with `done` the parameters whose columns are finished. A sweep is
+    # the gradient at the dual width, so the Hessian costs about `npar`
+    # gradients -- a quarter of an hour on a 715-parameter model, which the
+    # finish's progress line used to sit through frozen.
     x = collect(Float64, values)
     n = length(x)
     n == 0 && return zeros(Float64, 0, 0)
     gradient_of = y -> ctsem_adjoint_gradient(objective, y).gradient
+    columns = progress === nothing ? nothing :
+        (done, total) -> progress(done, total, "parameters")
     # The default width is `pickchunksize`'s unless `ctsem_set_dual_widths!`
     # asked for buckets; see `_CTSEM_HESSIAN_WIDTHS` for why not by default.
     chunk > 0 || return _ctsem_symmetrised(
-        _ctsem_width_jacobian(gradient_of, x, _CTSEM_HESSIAN_WIDTHS[]))
+        _ctsem_width_jacobian(gradient_of, x, _CTSEM_HESSIAN_WIDTHS[];
+            progress=columns))
     chunksize = min(Int(chunk), n)
-    config = ForwardDiff.JacobianConfig(gradient_of, x, ForwardDiff.Chunk{chunksize}())
-    return _ctsem_symmetrised(ForwardDiff.jacobian(gradient_of, x, config))
+    return _ctsem_symmetrised(_ctsem_reported_jacobian(gradient_of, x,
+        ForwardDiff.Chunk{chunksize}(), columns, n))
 end
 _ctsem_symmetrised(H::AbstractMatrix) = (H .+ transpose(H)) ./ 2
 

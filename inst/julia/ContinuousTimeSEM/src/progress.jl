@@ -468,8 +468,10 @@ _ctsem_progress_reporter(progress::Bool, label::AbstractString, overwrite::Bool,
 """
     _ctsem_hessian_progress(reporter)
 
-The `(done, total) -> nothing` callback `ctsem_hessian`'s (and
-`ctsem_laplace_hessian`'s) `progress` parameter expects, reporting through
+The `(done, total[, unit]) -> nothing` callback `ctsem_hessian`'s (and
+`ctsem_laplace_hessian`'s) `progress` parameter expects -- `unit` what `done`
+counts, "gradients" (the Laplace route's finite differences) unless the caller
+says "parameters" (the marginal route's sweeps, a block of columns each) -- reporting through
 `reporter` on its own cadence via `_due`/`_progress_fraction` -- or `nothing`
 when there is nothing to report through, whether that is a literal `nothing`
 (a caller that never built a reporter at all) or a `CTSEMProgress` built
@@ -479,9 +481,10 @@ standalone entry point for a caller with no finish or certification to borrow
 a reporter from.
 """
 _ctsem_hessian_progress(reporter) = (reporter === nothing || !reporter.enabled) ?
-    nothing : function (done::Integer, total::Integer)
+    nothing : function (done::Integer, total::Integer,
+            unit::AbstractString="gradients")
         _due(reporter) && _progress_fraction(reporter,
-            @sprintf("hessian %d of %d gradients", done, total))
+            @sprintf("hessian %d of %d %s", done, total, unit))
         nothing
     end
 

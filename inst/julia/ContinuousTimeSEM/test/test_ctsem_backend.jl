@@ -828,6 +828,15 @@ end
     @test far.full_hessians >= 2
     @test far.hessian_at == far.x
     @test far.distance == 0
+    # Walked on the new one as on the first, not one Hessian a step.
+    @test all(==("newton"), far.history.kind)
+    # And a chord that uses up its steps is walked again on the Hessian where
+    # it stopped, rather than given no more steps or one Hessian a step.
+    short = _endgame_run(_endgame_mock(f), c .+ 1.0; curvature = :chord, maxit = 2)
+    @test short.gain < 1e-8
+    @test maximum(abs, short.x .- c) < 1e-3
+    @test all(==("newton"), short.history.kind)
+    @test short.full_hessians >= 2
     # The exact finish never keeps one from elsewhere.
     exact = _endgame_run(_endgame_mock(f), x0; curvature = :exact)
     @test exact.hessian_at == exact.x
@@ -897,12 +906,83 @@ end
     @test back.steps == 1
     @test back.hessian === nothing
     @test -back.f > f([4.0, 3.0])
+    # A first step the objective would not take whole is outside the region by
+    # itself, even one that then contracts the gain: on a tenth of the true
+    # curvature the Newton step overshoots tenfold, the trust region's third
+    # try is taken, and the gain there is a seventh of the first.
+    short = _endgame_mock(p -> -100 * (p[1] - 0.1)^2; h = p -> fill(-20.0, 1, 1))
+    held = _endgame_run(short, [0.0]; handback = true, probe = false)
+    @test held.handback
+    @test held.steps == 1
+    @test held.history.alpha[1] < 1
     # Not asked, the same finish walks on; with the right curvature the first
     # step closes the gap and there is nothing to hand back.
     @test !_endgame_run(_endgame_mock(f; h = wrong), [4.0, 3.0]).handback
     right = _endgame_run(_endgame_mock(f), [4.0, 3.0]; handback = true)
     @test !right.handback
     @test maximum(abs, right.x .- c) < 1e-8
+end
+
+# A quadratic whose Hessian at the first point it is asked for is reported a
+# hundred times too large, as the curvature at a point outside Newton's region
+# misleads, and is right everywhere after.
+function _endgame_misled(c)
+    asked = Ref(0)
+    f = p -> -0.5 * sum(abs2, p .- c)
+    n = length(c)
+    h = p -> (asked[] += 1) == 1 ? -100.0 * Matrix{Float64}(I, n, n) :
+        -Matrix{Float64}(I, n, n)
+    return f, h
+end
+
+@testset "a finish that may not hand back walks on a misleading first Hessian" begin
+    # The first step on it goes a hundredth of the way and contracts the gain
+    # by almost nothing. Where the Hessian is too dear to throw away, that used
+    # to be thrown away too; the exact finish refreshes on the slow step
+    # instead, and the chord corrects its copy along the step by the secant,
+    # and both close the gap.
+    c = [1.0, -2.0]
+    f, h = _endgame_misled(c)
+    exact = _endgame_run(_endgame_mock(f; h = h), [4.0, 3.0])
+    @test maximum(abs, exact.x .- c) < 1e-8
+    @test exact.hessian !== nothing
+    @test exact.hessian_at == exact.x
+    @test exact.full_hessians <= 3
+    f, h = _endgame_misled(c)
+    chord = _endgame_run(_endgame_mock(f; h = h), [4.0, 3.0]; curvature = :chord)
+    @test maximum(abs, chord.x .- c) < 1e-8
+    @test chord.full_hessians <= 2
+    @test !chord.handback
+    @test !exact.handback
+end
+
+@testset "the trust region holds back the direction the model cannot carry" begin
+    # One stiff direction a thousandth from its optimum, and one so weakly
+    # curved at the start that its Newton step runs 130 raw units, past an
+    # optimum 5 away (a pseudo-Huber valley: curvature falls as the distance
+    # grows). Damping the whole step, as a line search along it does, left the
+    # stiff direction short by as much as the weak one was cut; the trust
+    # region damps by curvature, so its first step closes the stiff direction
+    # while the weak one is held to what the model bears.
+    f = p -> -0.5e4 * p[1]^2 - 1e-2 * (sqrt(1 + (p[2] - 5)^2) - 1)
+    norms = Float64[]
+    out = _endgame_run(_endgame_mock(f), [1e-3, 0.0]; curvature = :chord,
+        probe = false, callback = st -> (push!(norms, st.g_norm); false))
+    @test out.history.alpha[1] < 0.1           # the weak direction held back
+    # The stiff one taken whole: its gradient, 10 at the start, is gone after
+    # the first step, and what is left is the weak direction's, about 0.01.
+    @test norms[1] < 0.02
+    # Walked on, it reaches the valley floor.
+    @test abs(out.x[2] - 5) < 1e-4
+    @test abs(out.x[1]) < 1e-8
+    # The multiplier puts a step outside the region on its boundary, and
+    # leaves one inside it alone.
+    mult = ContinuousTimeSEM._ctsem_trust_multiplier
+    lam = [1e4, 7.5e-5]; cc = [10.0, -0.0098]
+    mu = mult(lam, cc, 2.0)
+    @test mu > 0
+    @test sqrt(sum(abs2, cc ./ (lam .+ mu))) ≈ 2.0 rtol = 1e-5
+    @test mult(lam, cc, 200.0) == 0
 end
 
 @testset "the finish probes the directions its Hessian does not trust" begin
@@ -1044,6 +1124,50 @@ end
     @test maximum(abs, kept.minimizer .- c) < 1e-8
 end
 
+
+@testset "the cap the closing line reports is L-BFGS's, not the finish's steps" begin
+    # The finish's steps count in the line but not against `maxiter`: a dear
+    # Hessian is walked for as many steps as it cost, so on a large model they
+    # alone can pass the cap in a fit that converged. The exponential tail
+    # needs about seven steps after a hand-over at L-BFGS's first iteration,
+    # on a chord too dear to hand back (a budget of one step).
+    m = _endgame_mock(p -> -0.5e4 * p[1]^2 - 1e-4 * exp(2 * p[2]))
+    lines = String[]
+    r = ContinuousTimeSEM.ctsem_optimize(m, [0.01, 0.0]; maxiter=3,
+        tune_chunks=false, gap_tol=1e-8, newton=true, newton_switch=1e6,
+        newton_maxit=1, newton_curvature=:chord,
+        certify=false, progress=true, progress_every=1e-9,
+        progress_sink=(text, kind) -> (push!(lines, text); nothing),
+        verbose=false, overshoot_probe=:off)
+    @test r.iterations > 3
+    @test r.stop_reason != "cap"
+    @test any(occursin("iterations", l) for l in lines)
+    @test !any(occursin("ITERATION CAP", l) for l in lines)
+end
+
+@testset "ctsem_optimize finishes on a Hessian too dear to hand back" begin
+    # The quadratic whose first Hessian is a hundredfold wrong, handed over
+    # after L-BFGS's first iteration, with a step budget below what a Hessian
+    # costs (4 parameters, `newton_maxit = 3`): the first step fails the check
+    # a hand-back would make, but the finish may not throw the Hessian away,
+    # so it keeps what it formed, refreshes on the slow step and closes the
+    # gap itself, and everything it did is counted.
+    c = [1.0, -2.0, 0.5, 3.0]
+    f, h = _endgame_misled(c)
+    m = _endgame_mock(f; h = h)
+    r = ContinuousTimeSEM.ctsem_optimize(m, [4.0, 3.0, -1.0, 0.0]; maxiter=200,
+        tune_chunks=false, gap_tol=1e-8, newton=true, newton_switch=1e6,
+        newton_maxit=3, certify=false, progress=false, verbose=false,
+        overshoot_probe=:off)
+    @test maximum(abs, r.minimizer .- c) < 1e-8
+    @test r.newton_steps >= 1
+    @test length(r.newton_history_kind) == r.newton_steps
+    @test r.newton_hessians == m.hessians[] <= 3
+    @test r.iterations - r.newton_steps <= 2    # L-BFGS did not have to go on
+    @test r.stop_reason in ("gap", "gradient", "linesearch")
+    @test !r.newton_handback
+end
+
 # Shared with `test_laplace.jl`; see `laplace_fixtures.jl`.
 isdefined(@__MODULE__, :_LAPLACE_LINEAR_OBJECTIVE) ||
     include(joinpath(@__DIR__, "laplace_fixtures.jl"))
@@ -1135,4 +1259,18 @@ end
         maxiter=500, tune_chunks=false, gap_tol=1e-8, newton=true,
         certify=false, progress=false)
     @test bare.newton_hessians == 0
+end
+
+@testset "the marginal route takes the chord where a Hessian outprices its steps" begin
+    # A forward-over-reverse Hessian costs about a gradient per parameter, and
+    # a refresh can save at most the finish's step budget: above that many
+    # parameters the marginal route walks one Hessian (the chord), as the
+    # Laplace route always has.
+    laplace = _endgame_laplace_objective(; nsubjects=5)
+    marginal = laplace.objective
+    @test ContinuousTimeSEM._ctsem_finish_curvature(marginal, 30, 30) === :exact
+    @test ContinuousTimeSEM._ctsem_finish_curvature(marginal, 31, 30) === :chord
+    @test ContinuousTimeSEM._ctsem_finish_curvature(laplace, 5, 30) === :chord
+    @test ContinuousTimeSEM._ctsem_finish_curvature(
+        _endgame_mock(p -> -sum(abs2, p)), 100, 30) === :exact
 end
