@@ -869,6 +869,51 @@ autoTIpredsFunc <- function(cl, standata, sm, optimArgs, parsteps, optimcores, c
   return(list(standata   = standata,optimfit   = optimfit))
 } # end ti pred auto function
 
+# Adaptive importance sampling from the curvature at the estimate, for
+# `uncertainty = 'is'`, `ctLaplaceCorrect(draws = 'imis')` and
+# `ctParticleCorrect(draws = 'imis')`.
+#
+# Three stages, each of which answers a failure measured against long NUTS
+# runs (job M, dev2, 2026-09-29):
+#
+# 1. Profile paths. A proposal built on the curvature at the mode cannot see a
+#    tail that bends away from it. On a 30-subject, two-latent Gaussian model
+#    the posterior of a measurement-error variance runs 8-13 Hessian standard
+#    errors out, along a ridge on which the other parameters move with it;
+#    along that ridge the log density falls 3.7-4.7 at the 2.5% and 0.5%
+#    quantiles, along the straight line from the mode 85-380. So when the
+#    density brings a gradient, each parameter is walked out on both sides at
+#    rungs of 3 to 96 standard errors, doubling, with the others moved to their
+#    conditional mode at each rung (Newton steps in the complement, with the
+#    mode's precision block as the metric, from the previous rung's point
+#    carried on), and a component is placed at each point the walk reaches:
+#    centred there, with the conditional covariance across the path and half
+#    the step along it, weighted by the density there times the step. A path
+#    whose first rung falls as fast as the curvature says has no tail to
+#    follow and stops there, which is most of them. All paths move in
+#    lockstep, one batch of gradients and one of values per Newton step
+#    (`'gradbatch'` below). Without a gradient the stage is skipped.
+#
+# 2. Rounds. `n_batch` draws from the mixture, then while the effective sample
+#    size is short of `target_ess` or the Pareto k of the weights is at or
+#    above `kbar`, a component at the top-weighted tenth of the draws (as
+#    IMIS, Raftery and Bao), from which the next round draws.
+#
+# 3. Weights against every proposal used. Each draw's weight is its density
+#    over sum_k c_k q_k(x) / N, c_k the draws component k has been asked for
+#    (the deterministic mixture). The version this replaces drew each round
+#    from the equal mixture of every component so far but weighted every draw
+#    against the final equal mixture, which is not the density any draw came
+#    from.
+#
+# Components are multivariate t with `df` degrees of freedom (normal at
+# `Inf`); `scale_init` widens the central one and `tail_scale` the added ones.
+#
+# The density `parlp` is value-only, and may carry a `'batch'` attribute (a
+# function of a draws matrix, rows as draws, returning one value per row) and a
+# `'gradbatch'` attribute (the same, returning list(value, gradient) with one
+# gradient row per draw). Without `'gradbatch'`, a density whose value carries
+# a `'gradient'` attribute -- stan's -- is used one point at a time.
 imis_is <- function(parlp,
   mu_hat,
   Sigma_hat,
@@ -879,98 +924,46 @@ imis_is <- function(parlp,
   # Every real caller (.ctOptimImisDraws(), .ctOptimDrawSamples()) passes its
   # own scale explicitly; see .ctImisProposalDefaults() in
   # R/ctOptimUncertainty.R, one named source rather than this pair drifting
-  # from it. These two are what a bare call -- a dev script, or the
-  # reproduction in IS-importance-sampling-2026-09-06.md -- gets: the wider,
-  # more conservative julia value, on the reasoning that costs more
-  # evaluations rather than one that can quietly under-cover.
+  # from it.
   scale_init    = .ctImisProposalDefaults('julia')$scaleInit,
   tail_scale    = .ctImisProposalDefaults('julia')$tailScale,
-  df            = Inf,
+  df            = .ctImisProposalDefaults('julia')$df,
   ridge         = 1e-8,
   finishsamples = 1000,
   verbose       = TRUE,
-  diag_plots    = TRUE) {
-  
+  diag_plots    = TRUE,
+  paths         = TRUE,
+  kbar          = .ctImisParetoKBar()) {
+
   for (pkg in c("mvtnorm", "diagis", "gridExtra", "ggplot2", "grid"))
     if (!requireNamespace(pkg, quietly = TRUE))
       stop(sprintf("Install '%s' first.", pkg))
-  
+
   if (verbose)
     message(sprintf(
       "Importance sampling: target ESS = %d, max_iter = %d, batch = %d",
-      target_ess, max_iter, n_batch))
-  
-  ## ── helpers ──────────────────────────────────────────────────────────
-  safe_pd <- function(S, eps = ridge) {
-    S2 <- S + diag(eps, nrow(S))
-    while (any(eigen(S2, TRUE, TRUE)$values <= 0))
-      S2 <- S2 + diag(eps, nrow(S))
-    S2
+      as.integer(target_ess), as.integer(max_iter), as.integer(n_batch)))
+
+  d <- length(mu_hat)
+  mu_hat <- as.numeric(mu_hat)
+  safe_pd <- function(S) {
+    S <- (as.matrix(S) + t(as.matrix(S))) / 2
+    e <- eigen(S, symmetric = TRUE)
+    floor <- max(max(e$values), 0) * 1e-10 + ridge
+    e$vectors %*% (pmax(e$values, floor) * t(e$vectors))
   }
-  Sigma_hat <- safe_pd(Sigma_hat)
-  
   logplus <- function(a, b) {
-    idx <- a > b
-    r <- numeric(length(a))
-    r[idx]  <- a[idx] + log1p(exp(b[idx] - a[idx]))
-    r[!idx] <- b[!idx] + log1p(exp(a[!idx] - b[!idx]))
-    r
+    top <- pmax(a, b)
+    ifelse(is.finite(top), top + log1p(exp(-abs(a - b))), top)
   }
-  ess   <- function(w) diagis::ess(w)
+  ess <- function(w) diagis::ess(w)
   rsamp <- function(w, N) {
     cs <- cumsum(w / sum(w))
-    findInterval((runif(1) + 0:(N - 1)) / N, cs) + 1L
+    pmin(findInterval((runif(1) + 0:(N - 1)) / N, cs) + 1L, length(w))
   }
-  
-  ## ── containers ───────────────────────────────────────────────────────
-  comp_mu  <- list(mu_hat)
-  # `scale_init^2 * Sigma`, the whole matrix. This was written
-  # `Sigma_hat * (diag(scale_init^2-1, n) + 1)`, an elementwise product with a
-  # matrix carrying `scale_init^2` on the diagonal and *1* off it -- so it
-  # inflated the variances, left the covariances untouched, and thereby divided
-  # every proposal correlation by `scale_init^2`. That is not a wider proposal
-  # but a differently shaped one, and along the correlated directions it is
-  # narrower than `Sigma` itself, which is the opposite of what a scale above
-  # one is for. Computed exactly for a Gaussian target in the nine identified
-  # dimensions of a 400-subject fit, ESS/n at `scale_init = 1.5` was 0.058 the
-  # old way against 0.190 this way; run end to end on that fit at the julia
-  # defaults and a fixed seed, the old form spent all 51,000 evaluations to
-  # reach an effective sample of 7.7 and this one reached 144 in 4,000.
-  comp_cov <- list(Sigma_hat * scale_init^2)
-  T_comp   <- 1L
-  
-  samples   <- matrix(0, 0, length(mu_hat))
-  log_p_all <- numeric(0)
-  log_qsum  <- numeric(0)
-  w_raw     <- numeric(0)
-  ess_now   <- 0
-  interrupted <- FALSE
-  
-  # A multivariate t rather than a normal, when `df` is finite.
-  #
-  # Available, and not the default, because it was measured and did not help.
-  # The theory says an importance-sampling proposal wants heavier tails than its
-  # target; on a 40-subject ctsem model the t was consistently *worse* than the
-  # normal at the same scale -- mean standard error 0.70 of a reference sample's
-  # against the normal's 0.75 -- and matched it only at a scale wide enough to
-  # drop the effective sample size from 411 to 76, which is not a trade worth
-  # making. Kept as a knob because that is one model.
-  #
-  # `Sigma` is the t's *scale* matrix here, not rescaled so its covariance
-  # equals `Sigma`. That rescaling by `(df-2)/df` is the obvious-looking move
-  # and it is wrong: it shrinks the bulk to pay for the heavy tails, which is
-  # the opposite of the point. The first version did it and came out narrower
-  # than the normal it was meant to widen on.
-  #
-  # Importance sampling needs a proposal with *heavier* tails than the target,
-  # because a region the proposal never visits cannot be upweighted however
-  # large its weight would have been. A normal proposal fitted to the Laplace
-  # curvature has lighter tails than the posterior it is approximating, which is
-  # exactly backwards, and the failure is quiet: the effective sample size looks
-  # healthy because the draws that exist agree with each other, while the
-  # answer stays close to the proposal. Measured on a 40-subject model, a normal
-  # proposal at scale 1.1 returned standard errors within 10% of the Hessian's
-  # where the true posterior was up to twice as wide.
+  # A multivariate t, when `df` is finite. `Sigma` is its scale matrix, not
+  # rescaled so its covariance equals `Sigma`: that shrinks the bulk to pay for
+  # the tails, which is the opposite of the point.
   rprop <- function(n, mu, Sigma) {
     if (!is.finite(df)) return(mvtnorm::rmvnorm(n, mu, Sigma))
     mvtnorm::rmvt(n, sigma = Sigma, df = df, delta = mu, type = "shifted")
@@ -980,69 +973,99 @@ imis_is <- function(parlp,
     mvtnorm::dmvt(x, delta = mu, sigma = Sigma, df = df, log = TRUE,
       type = "shifted")
   }
-  draw_mix <- function(n) {
-    if (T_comp == 1L)
-      rprop(n, comp_mu[[1]], comp_cov[[1]])
-    else {
-      sel <- sample.int(T_comp, n, TRUE)
-      do.call(rbind, lapply(seq_len(T_comp), function(k) {
-        m <- sum(sel == k)
-        if (m) rprop(m, comp_mu[[k]], comp_cov[[k]])
-      }))
-    }
-  }
-  
-  
-  
-  
-  # A batch-capable density evaluates the whole draw matrix in one call rather
-  # than one call per draw -- see `.ctBackendLpgFunc()`'s `'batch'` attribute,
-  # which is what `uncertainty = 'is'` on the julia backend hands in here. Read
-  # once outside the loop: `attr()` is cheap, but the point is that `parlp`
-  # itself does not change iteration to iteration, so neither does the answer.
-  # Stan's own densities carry no such attribute, so this is exactly today's
-  # per-draw loop there.
+
+  # A batch-capable density evaluates a whole draw matrix in one call; see
+  # `.ctBackendLpgFunc()`. Stan's densities carry no batch attribute, so this
+  # is a per-draw loop there. A value the model cannot use gets a finite,
+  # negligible weight rather than a NaN in the log-weight arithmetic.
   batchlp <- attr(parlp, 'batch')
+  nevals <- 0L
+  evaluate <- function(x) {
+    x <- as.matrix(x)
+    nevals <<- nevals + nrow(x)
+    out <- if (!is.null(batchlp)) as.numeric(batchlp(x)) else
+      if (!is.null(cl) && length(cl) > 1) {
+        parallel::clusterExport(cl, "x", envir = environment())
+        unlist(parallel::parLapply(cl, seq_len(nrow(x)), \(i) parlp(x[i, ])), FALSE)
+      } else vapply(seq_len(nrow(x)), \(i) as.numeric(parlp(x[i, ]))[1L], numeric(1))
+    out[!is.finite(out)] <- -1e100
+    out
+  }
 
-  ## ── main loop ─────────────────────────────────────────────────────────
-  for (it in 0:max_iter) {
+  Sigma_hat <- safe_pd(Sigma_hat)
+  comp_mu <- list(mu_hat)
+  # `scale_init^2 * Sigma`, the whole matrix, not its diagonal: an
+  # elementwise inflation divides every correlation by `scale_init^2`.
+  comp_cov <- list(safe_pd(Sigma_hat * scale_init^2))
+  pw <- 1
 
-    x_new <- draw_mix(n_batch)
-
-    ## ---------- log-p with interrupt guard -----------------------------
-    log_p_new <- {
-      if (!is.null(batchlp)) {
-        as.numeric(batchlp(x_new))
-      } else if (!is.null(cl) && length(cl) > 1) {
-        parallel::clusterExport(cl, "x_new", envir = environment())
-        unlist(parallel::parLapply(
-          cl, seq_len(nrow(x_new)), \(i) parlp(x_new[i, ])), FALSE)
-      } else {
-        vapply(seq_len(nrow(x_new)), \(i) parlp(x_new[i, ]), numeric(1))
-      }
+  # ---- 1. profile paths ------------------------------------------------------
+  gradfun <- if (isTRUE(paths)) .ctImisGradient(parlp, mu_hat) else NULL
+  pathinfo <- NULL
+  if (!is.null(gradfun)) {
+    pathinfo <- .ctImisPaths(gradfun, evaluate, mu_hat, Sigma_hat)
+    # The central component where the paths started: the density's mode.
+    comp_mu[[1L]] <- pathinfo$centre
+    se <- sqrt(diag(Sigma_hat))
+    for (p in pathinfo$points) {
+      j <- p$j
+      Sc <- Sigma_hat - tcrossprod(Sigma_hat[, j]) / Sigma_hat[j, j]
+      seg <- p$x - p$from
+      comp_mu[[length(comp_mu) + 1L]] <- p$x
+      comp_cov[[length(comp_cov) + 1L]] <- safe_pd(Sc * tail_scale^2 +
+        tcrossprod(seg / 2))
+      pw <- c(pw, exp(-p$drop) * abs(seg[j]) / se[j] / sqrt(2 * pi))
     }
-    
-    
-    ## ---------- mixture log-q -----------------------------------------
-    lq_new <- rep.int(-Inf, n_batch)
-    for (k in seq_len(T_comp))
-      lq_new <- logplus(lq_new, dprop(x_new, comp_mu[[k]], comp_cov[[k]]))
-    
+    # Every path component keeps a share of the draws, however small its
+    # estimated mass: the estimate is a guess and the draws are the test of it.
+    pw <- pw / sum(pw)
+    pw <- pmax(pw, 0.5 / max(n_batch, 1))
+    pw <- pw / sum(pw)
+  }
+
+  # ---- 2 and 3. rounds against the deterministic mixture --------------------
+  counts    <- numeric(0)
+  samples   <- matrix(0, 0, d)
+  log_p_all <- numeric(0)
+  log_qsum  <- numeric(0)
+  w_raw     <- numeric(0)
+  log_w     <- numeric(0)
+  ess_now   <- 0
+  k_now     <- NA_real_
+  ess_met   <- NA_integer_
+  trace     <- data.frame(round = integer(0), n = integer(0), ess = numeric(0),
+    k = numeric(0), components = integer(0))
+  for (it in 0:max_iter) {
+    K <- length(comp_mu)
+    alloc <- as.numeric(stats::rmultinom(1, n_batch, pw))
+    x_new <- do.call(rbind, lapply(seq_len(K), function(k)
+      if (alloc[k] > 0) rprop(alloc[k], comp_mu[[k]], comp_cov[[k]])))
+    log_p_new <- evaluate(x_new)
+    add <- n_batch * pw
+    counts <- c(counts, rep(0, K - length(counts)))
+    if (nrow(samples)) for (k in which(add > 0))
+      log_qsum <- logplus(log_qsum, log(add[k]) +
+        dprop(samples, comp_mu[[k]], comp_cov[[k]]))
+    counts <- counts + add
+    lq_new <- rep.int(-Inf, nrow(x_new))
+    for (k in which(counts > 0))
+      lq_new <- logplus(lq_new, log(counts[k]) +
+        dprop(x_new, comp_mu[[k]], comp_cov[[k]]))
     samples   <- rbind(samples, x_new)
     log_p_all <- c(log_p_all, log_p_new)
-    log_qsum  <- c(log_qsum,  lq_new)
-    
-    log_mix <- log_qsum - log(T_comp)
-    log_w   <- log_p_all - log_mix
+    log_qsum  <- c(log_qsum, lq_new)
+
+    log_w   <- log_p_all - (log_qsum - log(sum(counts)))
     log_w   <- log_w - max(log_w)
     w_raw   <- exp(log_w)
     ess_now <- ess(w_raw)
-    
+    k_now   <- .ctImisParetoK(list(log_weights = log_w))
+    trace[nrow(trace) + 1L, ] <- list(it + 1L, nrow(samples), ess_now, k_now, K)
+
     if (verbose)
-      message(sprintf("\r iter %2d | n %6d | ESS %8.1f",
-        it + 1, nrow(samples), ess_now),
-        appendLF = FALSE)
-    
+      message(sprintf("\r iter %2d | n %6d | ESS %8.1f | k %5.2f",
+        it + 1, nrow(samples), ess_now, k_now), appendLF = FALSE)
+
     if (interactive() && diag_plots) {
       g <- diagis::weight_plot(w_raw)
       gridExtra::grid.arrange(
@@ -1051,32 +1074,33 @@ imis_is <- function(parlp,
             ess_now, nrow(samples)),
           gp = grid::gpar(fontface = "bold", fontsize = 14)))
     }
-    
-    if (ess_now >= target_ess || it == max_iter) break
-    
-    ## ---------- add new component -------------------------------------
-    top_idx <- w_raw > quantile(w_raw, 0.9)
-    comp_mu[[T_comp + 1L]] <- diagis::weighted_mean(
-      samples[top_idx,,drop=FALSE], w_raw[top_idx])
-    # `tail_scale^2 *` the weighted covariance, for the same reason the initial
-    # component is scaled that way above: the elementwise form this replaces
-    # left the covariances at their unscaled values and so shrank the
-    # correlations of every added component.
-    comp_cov[[T_comp + 1L]] <- safe_pd(
-      diagis::weighted_var(
-        samples[top_idx,,drop=FALSE], w_raw[top_idx]) * tail_scale^2)
-    T_comp <- T_comp + 1L
-    
-    lq_newcomp <- mvtnorm::dmvnorm(samples, comp_mu[[T_comp]],
-      comp_cov[[T_comp]], log = TRUE)
-    log_qsum <- logplus(log_qsum, lq_newcomp)
-  } #end main loop
-  
+
+    # k is NA without the loo package, and then the size target decides alone.
+    # Once the size target is met, four more rounds to bring k under the bar
+    # and no more: a k that stays high is a finding to report, and on a
+    # Laplace model each round costs as much as the whole run did before.
+    if (ess_now >= target_ess) {
+      if (is.na(k_now) || k_now < kbar) break
+      if (is.na(ess_met)) ess_met <- it
+      if (it - ess_met >= 4L) break
+    }
+    if (it == max_iter) break
+
+    ## ---------- add a component at the top-weighted draws ------------------
+    top_idx <- w_raw > stats::quantile(w_raw, 0.9)
+    if (sum(top_idx) < 2) top_idx <- rank(-w_raw, ties.method = "first") <= max(2, d + 1)
+    comp_mu[[K + 1L]] <- diagis::weighted_mean(
+      samples[top_idx, , drop = FALSE], w_raw[top_idx])
+    comp_cov[[K + 1L]] <- safe_pd(diagis::weighted_var(
+      samples[top_idx, , drop = FALSE], w_raw[top_idx]) * tail_scale^2)
+    pw <- c(rep(0, K), 1)
+  }
+
   if (verbose) message("")   # newline after progress line
-  
+
   w_norm <- if (length(w_raw)) w_raw / sum(w_raw) else numeric(0)
   idx_eq <- if (length(w_norm)) rsamp(w_norm, finishsamples) else integer(0)
-  
+
   list(theta        = if (length(idx_eq)) samples[idx_eq,,drop=FALSE] else samples,
     lpsamples    = if (length(idx_eq)) log_p_all[idx_eq] else log_p_all,
     weights      = if (length(idx_eq)) rep(1/finishsamples, length(idx_eq)) else numeric(0),
@@ -1084,16 +1108,20 @@ imis_is <- function(parlp,
     full_weights = w_norm,
     # The same weights on the log scale, before `exp()` rounds the smallest
     # to zero: what `.ctImisParetoK()` fits the upper tail of.
-    log_weights  = if (length(w_raw)) log_w else numeric(0),
+    log_weights  = log_w,
     ess          = ess_now,
+    pareto_k     = k_now,
     mean         = if (length(w_norm))
       as.numeric(diagis::weighted_mean(samples, w_norm))
     else rep(NA_real_, length(mu_hat)),
     covariance   = if (length(w_norm))
       diagis::weighted_var(samples, w_norm)
     else matrix(NA_real_, length(mu_hat), length(mu_hat)),
-    df_used      = df)
-  
+    df_used      = df,
+    evaluations  = nevals,
+    rounds       = trace,
+    paths        = if (is.null(pathinfo)) NULL else pathinfo[c("followed",
+      "gradients", "calls", "reachesLimit", "limit")])
 }
 
 # =============================================================================

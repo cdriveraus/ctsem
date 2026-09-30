@@ -5170,6 +5170,24 @@ function _ctsem_probe_value(o::CTSEMLaplaceObjective, x)
     (evaluated.converged && isfinite(evaluated.value)) ? evaluated.value : -Inf
 end
 
+"""
+The gradient counterpart of the laplace `_ctsem_probe_value`, refusing a point
+whose inner solve did not converge for the same reason.
+"""
+function _ctsem_probe_value_gradient(o::CTSEMLaplaceObjective, x)
+    evaluated = try
+        ctsem_laplace_evaluate(o, x; gradient=true)
+    catch err
+        _ctsem_must_propagate(err) && rethrow()
+        nothing
+    end
+    evaluated === nothing && return (value=-Inf, gradient=nothing)
+    ok = evaluated.converged && isfinite(evaluated.value) &&
+        all(isfinite, evaluated.gradient)
+    return ok ? (value=Float64(evaluated.value), gradient=evaluated.gradient) :
+        (value=-Inf, gradient=nothing)
+end
+
 """The laplace route's own result fields, and no `row_loglik`.
 
 The integral is over a whole subject's trajectory, so a single row has no

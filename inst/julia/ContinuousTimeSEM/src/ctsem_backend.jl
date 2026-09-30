@@ -780,6 +780,56 @@ function ctsem_evaluate_batch(objective, values::AbstractMatrix)
 end
 
 """
+    _ctsem_probe_value_gradient(objective, x)
+
+The objective's value and gradient at a probe point, or a value of `-Inf` and
+no gradient where the route cannot use it: `_ctsem_probe_value` with the
+gradient kept, the same refusal rule, and the same laplace override (a point
+whose inner solve did not converge is refused however finite its numbers).
+"""
+function _ctsem_probe_value_gradient(objective, x)
+    result = try
+        ctsem_evaluate(objective, x; gradient=true)
+    catch err
+        _ctsem_must_propagate(err) && rethrow()
+        nothing
+    end
+    result === nothing && return (value=-Inf, gradient=nothing)
+    ok = isfinite(result.value) && result.gradient !== nothing &&
+        all(isfinite, result.gradient)
+    return ok ? (value=Float64(result.value), gradient=result.gradient) :
+        (value=-Inf, gradient=nothing)
+end
+
+export ctsem_evaluate_batch_gradient
+
+"""
+    ctsem_evaluate_batch_gradient(objective, values::AbstractMatrix)
+
+The objective's value and gradient at each column of `values`, in one bridge
+call: an `(n + 1) x ncol` matrix whose first row holds the values and the rest
+the gradients. A column the route cannot use comes back with value `-Inf` and
+a gradient of `NaN`, by the rule `ctsem_evaluate_batch` applies.
+
+For `imis_is`'s search along each parameter's profile path, which moves every
+path one Newton step at a time: without this each step of each path was a
+bridge round trip of its own, and those, rather than the gradients, were most
+of the search's cost. `values` must have at least one column, for the reason
+`ctsem_evaluate_batch` gives.
+"""
+function ctsem_evaluate_batch_gradient(objective, values::AbstractMatrix)
+    n, ncol = size(values)
+    ncol >= 1 || throw(ArgumentError("values must have at least one column"))
+    out = fill(NaN, n + 1, ncol)
+    for j in 1:ncol
+        probe = _ctsem_probe_value_gradient(objective, Vector{Float64}(view(values, :, j)))
+        out[1, j] = probe.value
+        probe.gradient === nothing || (out[2:end, j] .= probe.gradient)
+    end
+    return out
+end
+
+"""
 What multiples of its current value each coordinate in a pulled-back set is
 tried at.
 
