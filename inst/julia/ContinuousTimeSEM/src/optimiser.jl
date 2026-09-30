@@ -812,12 +812,13 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
     full_hessians = 0; subset_hessians = 0
     # Reports a Hessian this finish forms as it goes, rather than leaving the
     # caller's progress line frozen for as long as forming one takes -- up to
-    # 80s on the fixture that found this, all of it inside one `ctsem_hessian`
-    # call the line above had no way to see into. `nothing` when there is
-    # nothing to report through (see `_ctsem_hessian_progress`), which costs
-    # nothing: `ctsem_hessian`'s other methods ignore `progress` outright, and
-    # the Laplace one -- the slow case this exists for -- calls back only when
-    # it is not `nothing`.
+    # 80s on the Laplace fixture that found this, and 15 minutes on a
+    # 715-parameter marginal model, all of it inside one `ctsem_hessian` call
+    # the line above had no way to see into. The Laplace method reports per
+    # gradient of its finite differences, the marginal one per forward sweep.
+    # `nothing` when there is nothing to report through (see
+    # `_ctsem_hessian_progress`), which costs nothing: each method calls back
+    # only when it is not `nothing`.
     hessian_progress = _ctsem_hessian_progress(reporter)
     hessof(o, y) = try
         local Hy = Matrix{Float64}(ctsem_hessian(o, y; progress=hessian_progress))
