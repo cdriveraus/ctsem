@@ -98,6 +98,57 @@ end
     @test H == transpose(H)
 end
 
+isdefined(@__MODULE__, :_adjoint_test_dataframe) ||
+    include(joinpath(@__DIR__, "adjoint_fixtures.jl"))
+
+# MANIFESTVAR row expressions reading a TD predictor: one mixing it with a
+# parameter, one reading it alone. Inside the Hessian the reverse pass runs at
+# an outer dual, so the row's data arrive as that dual while the transform
+# layer's mirror is untagged; the first shape threw `DualMismatchError` and the
+# second a `TypeError`, and both only in the optimiser's Newton finish.
+function _hessian_tdpred_model()
+    drift = [-0.5 0.3; 0.1 -0.3]
+    df = _adjoint_test_dataframe(
+        drift=drift, jax=drift, cint=[0.0; 0.0;;],
+        diffusion=[0.2 0.0; 0.0 0.15],
+        lambda=[1.0 0.0; 0.0 1.0], jy=[1.0 0.0; 0.0 1.0],
+        manifestmeans=[0.0; 0.0;;], manifestvar=[0.1 0.0; 0.0 0.1],
+        t0var=[1.0 0.0; 0.0 1.0], t0means=[0.0; 0.0;;], pars=[0.0;;],
+        tdpredeffect=[0.0; 0.0;;], jtd=[1.0 0.0; 0.0 1.0],
+        free=Dict(
+            (:DRIFT, 1, 1) => (1, "-log1p_exp(param[1])"),
+            (:JAx, 1, 1) => (1, "-log1p_exp(param[1])"),
+            (:DIFFUSION, 1, 1) => (2, "log1p_exp(param[2])"),
+            (:PARS, 1, 1) => (3, "param[3]"),
+            (:MANIFESTMEANS, 1, 1) => (4, "param[4]"),
+        ),
+        update=Dict(
+            (:MANIFESTVAR, 1, 1) => "log1p_exp(ctx.tdpreds[1]*PARS[1,1]-2)",
+            (:MANIFESTVAR, 2, 2) => "log1p_exp(ctx.tdpreds[1]*0.3)*0.2",
+        ),
+    )
+    sp = ekf_from_data_frame(df)
+    times = [0.0, 0.7, 1.9, 0.0, 0.4, 1.3, 2.2, 0.0, 1.1]
+    data = reshape([0.4 * sin(1.3i) for i in 1:(2 * length(times))], 2, :)
+    tdpreds = reshape(1 .+ 0.5 .* times, 1, :)
+    objective = ctsem_objective(sp, [1, 4, 8], times, data, tdpreds)
+    return objective, [0.2, -0.3, 0.15, 0.05]
+end
+
+@testset "the Hessian through row expressions that read a TD predictor" begin
+    objective, values = _hessian_tdpred_model()
+
+    H = ctsem_hessian(objective, values)
+    reference = ForwardDiff.hessian(objective, values)
+
+    @test all(isfinite, H)
+    @test H ≈ reference rtol = 1e-10
+    @test ctsem_adjoint_gradient(objective, values).gradient ≈
+        ForwardDiff.gradient(objective, values) rtol = 1e-10
+    # The predictor-mixing cell is the only one the PARS parameter reaches.
+    @test abs(H[3, 3]) > 1e-6
+end
+
 @testset "the forward-over-reverse Hessian beats the finite difference it replaces" begin
     objective, values = _hessian_test_model()
     reference = ForwardDiff.hessian(objective, values)
