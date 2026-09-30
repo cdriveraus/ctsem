@@ -1125,6 +1125,26 @@ end
 end
 
 
+@testset "the cap the closing line reports is L-BFGS's, not the finish's steps" begin
+    # The finish's steps count in the line but not against `maxiter`: a dear
+    # Hessian is walked for as many steps as it cost, so on a large model they
+    # alone can pass the cap in a fit that converged. The exponential tail
+    # needs about seven steps after a hand-over at L-BFGS's first iteration,
+    # on a chord too dear to hand back (a budget of one step).
+    m = _endgame_mock(p -> -0.5e4 * p[1]^2 - 1e-4 * exp(2 * p[2]))
+    lines = String[]
+    r = ContinuousTimeSEM.ctsem_optimize(m, [0.01, 0.0]; maxiter=3,
+        tune_chunks=false, gap_tol=1e-8, newton=true, newton_switch=1e6,
+        newton_maxit=1, newton_curvature=:chord,
+        certify=false, progress=true, progress_every=1e-9,
+        progress_sink=(text, kind) -> (push!(lines, text); nothing),
+        verbose=false, overshoot_probe=:off)
+    @test r.iterations > 3
+    @test r.stop_reason != "cap"
+    @test any(occursin("iterations", l) for l in lines)
+    @test !any(occursin("ITERATION CAP", l) for l in lines)
+end
+
 @testset "ctsem_optimize finishes on a Hessian too dear to hand back" begin
     # The quadratic whose first Hessian is a hundredfold wrong, handed over
     # after L-BFGS's first iteration, with a step budget below what a Hessian

@@ -459,3 +459,35 @@ test_that("what the fit reports is what the curvature measured", {
   # later call on the same fit.
   expect_null(fit$optim$convergence_pending)
 })
+
+test_that("a marginal model's exact Hessian reports its progress through the shared sink", {
+  skip_without_julia()
+  # The marginal route's Hessian is a forward sweep per dual width of
+  # parameters, about a gradient per parameter, and it reported nothing: a
+  # quarter of an hour, twice, on a 715-parameter model, with the progress
+  # line frozen on the iteration before. The sweeps are counted in the engine
+  # (test_hessian.jl); this is the plumbing, from `ctsem_hessian_progress` --
+  # `.ctBackendHessian()`'s entry point -- to R's sink. The model is the one
+  # the package image has compiled (helper-julia.R), so the subject is the
+  # reporting rather than a compile.
+  spec <- suppressMessages(ctFit(image_data(nsub = 6L, nobs = 5L, seed = 2L),
+    image_model(), backend = "julia", fit = FALSE, intoverpop = "augmented"))
+  npar <- ctsem:::.ctBackendNpar(spec)
+  module <- ctsem:::.ctJuliaModule(spec$project)
+  objective <- ctsem:::.ctJuliaObjective(spec)
+  raw <- rep(0.1, npar)
+  seen <- character()
+  capture <- function(text, kind = "update") seen <<- c(seen, text)
+  result <- ctsem:::.ctBackendJuliaValue(module$ctsem_hessian_progress(objective,
+    ctsem:::.ctJuliaNumericVector(raw), progress = TRUE, progress_sink = capture,
+    progress_overwrite = TRUE, progress_label = "hessian", progress_every = 1e-9))
+  hessian <- matrix(as.numeric(result), npar, npar)
+  expect_true(all(is.finite(hessian)))
+  expect_true(any(grepl(paste0("hessian ", npar, " of ", npar, " parameters"),
+    seen, fixed = TRUE)))
+  # A side channel, not a second computation.
+  bare <- matrix(as.numeric(ctsem:::.ctBackendJuliaValue(
+    module$ctsem_hessian_progress(objective, ctsem:::.ctJuliaNumericVector(raw)))),
+    npar, npar)
+  expect_equal(hessian, bare, tolerance = 1e-10)
+})

@@ -2142,7 +2142,10 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # Running out of iterations is a different outcome from converging, and the
     # closing line used to report both as a bare count. On a stage whose cap is
     # the plan (`budget`) reaching it is not news; anywhere else it is the one
-    # thing about the fit the user most needs to know.
+    # thing about the fit the user most needs to know. The cap is L-BFGS's: the
+    # finish's steps are counted in the line but have a budget of their own,
+    # as many as its Hessian cost where that is dear, so on a large model they
+    # alone can pass `maxiter` in a fit that converged.
     capped = !progress_budget && iterations >= Int(maxiter)
     progress && _progress_done(reporter,
         @sprintf("%d iterations%s", iterations,
