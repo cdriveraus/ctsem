@@ -31,10 +31,10 @@ logit on it. Ordinal indicators require `backend = 'julia'`; the other
 indicator types are covered in the measurement models vignette.
 
 To see what the first choice changes, we simulate from a known process,
-categorise it, and fit the same dynamic model both ways. Because the data are
-simulated we can also fit the uncategorised latent states, which gives a
-ceiling: whatever that fit fails to recover is due to the design and the
-sample, not to categorisation.
+categorise it, and fit the same dynamic model both ways. One simulated sample
+carries its own sampling error, so every comparison with the generating values
+below is shown with its uncertainty: a fit is doing its job when its interval
+covers the truth, wherever its point estimate happens to fall.
 
 Code that only generates or draws is folded throughout; unfold it if you want
 to reproduce the figures.
@@ -58,8 +58,8 @@ thresholds <- c(-2.8, -1.0, 1.0, 2.8)
 # atanh(correlation), so the generating values can be written down.
 zmat <- function(sd1, sd2, r) matrix(c(sd1, 0, atanh(r), sd2), 2, 2, byrow = TRUE)
 
-# Stationary covariance, solving A S + S A' + Q = 0, used for T0VAR so that
-# every occasion is a draw from the same distribution.
+# Stationary covariance, solving A S + S A' + Q = 0: its standard deviations
+# are what the true standardised cross effect is scaled by.
 Q <- diag(diffsd, 2) %*% matrix(c(1, diffcor, diffcor, 1), 2) %*% diag(diffsd, 2)
 S <- matrix(solve(kronecker(diag(2), DRIFT) + kronecker(DRIFT, diag(2)),
   -as.vector(Q)), 2, 2)
@@ -88,8 +88,7 @@ d <- data.frame(ctGenerate(gen, n.subjects = 150, Tpoints = 30, dtmean = 0.7,
 ordinalise <- function(eta)
   1 + rowSums(outer(eta + rlogis(length(eta)), thresholds, '>'))
 # Moderate individual differences: each person's process sits a little high or
-# low. Added to the states rather than to the responses, so the uncategorised
-# fit below sees the same differences the categorised ones do.
+# low. Added to the states, before they are categorised.
 set.seed(3)
 shift <- matrix(stats::rnorm(150 * 2, 0, 0.8), 150, 2)
 d$eta1 <- d$eta1 + shift[d$id, 1]
@@ -186,31 +185,18 @@ summary(ordinalfit)$thresholds
 
 Those are recovered against generating values of −2.8, −1, 1 and 2.8.
 
-# Fitting it as continuous, and the ceiling
+# Fitting it as continuous
 
 The Gaussian version is the same call with `manifesttype = 0`, no
-`ncategories`, and a free residual variance per item instead of thresholds.
-The ceiling fit is that same Gaussian model applied to the uncategorised
-states, which is only possible because the data are simulated.
+`ncategories`, and a free residual variance per item instead of thresholds:
 
-```{r otherfits}
-#| code-fold: true
+```{r gaussianfit}
 gaussianmodel <- ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
   manifestNames = c('y1', 'y2'), latentNames = c('eta1', 'eta2'),
   LAMBDA = diag(1, 2))
 
-# The ceiling data are the latent states themselves, so MANIFESTVAR is fixed
-# at zero: there is no measurement error to estimate, and leaving it free puts
-# a parameter on the boundary where the likelihood is flat.
-ceilingmodel <- ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
-  manifestNames = c('c1', 'c2'), latentNames = c('eta1', 'eta2'),
-  LAMBDA = diag(1, 2), MANIFESTVAR = diag(0, 2))
-ceilingdata <- setNames(d[, c('id', 'time', 'eta1', 'eta2')],
-  c('id', 'time', 'c1', 'c2'))
-
 gaussianfit <- ctFit(d[, c('id', 'time', 'y1', 'y2')], gaussianmodel,
   backend = 'julia')
-ceilingfit <- ctFit(ceilingdata, ceilingmodel, backend = 'julia')
 ```
 
 # What should and should not agree
@@ -255,74 +241,85 @@ where the raw quantities differ it is the ordinal fit to report.
 # Comparison
 
 `ctDiscretePars()` turns each fit's `DRIFT` into the regressions it implies at
-every time interval. Standardised, those are comparable across the three:
+every time interval, once per draw from the fit's uncertainty. Standardised,
+those are comparable across the two fits. The line is the median over draws,
+the band holds 95% of them, and the dashed line is the generating process:
 
-```{r crosscurve}
+```{r crosscurve, fig.height = 3.6}
 #| code-fold: true
 times <- seq(0, 6, .1)
 
-crosscurve <- function(fit, label) {
-  a <- ctDiscretePars(fit, times = times, standardise = TRUE)
+crossband <- function(fit, label) {
+  a <- ctDiscretePars(fit, times = times, standardise = TRUE,
+    nsamples = 500)[, 1, , 2, 1]                 # draws x intervals, eta1 -> eta2
   data.frame(time = times, model = label,
-    value = apply(a, c(3, 4, 5), median, na.rm = TRUE)[, 2, 1])
+    median = apply(a, 2, median, na.rm = TRUE),
+    lo = apply(a, 2, quantile, .025, na.rm = TRUE),
+    hi = apply(a, 2, quantile, .975, na.rm = TRUE))
 }
 
-curves <- rbind(
-  crosscurve(ceilingfit, 'uncategorised (ceiling)'),
-  crosscurve(gaussianfit, 'gaussian on the codes'),
-  crosscurve(ordinalfit, 'ordinal'),
-  data.frame(time = times, model = 'truth', value = sapply(times,
-    function(u) expm::expm(DRIFT * u)[2, 1] * latentsd[1] / latentsd[2])))
+bands <- rbind(crossband(gaussianfit, 'gaussian on the codes'),
+  crossband(ordinalfit, 'ordinal'))
+truth <- data.frame(time = times, value = sapply(times,
+  function(u) expm::expm(DRIFT * u)[2, 1] * latentsd[1] / latentsd[2]))
 
-ggplot(curves, aes(time, value, colour = model, linetype = model)) +
-  geom_line(linewidth = .9) + theme_bw() +
-  theme(legend.position = 'bottom') +
+ggplot(bands, aes(time)) +
+  geom_ribbon(aes(ymin = lo, ymax = hi), fill = 'grey82') +
+  geom_line(aes(y = median, colour = 'estimate', linetype = 'estimate'),
+    linewidth = .9) +
+  geom_line(data = truth, aes(y = value, colour = 'truth', linetype = 'truth'),
+    linewidth = .9) +
+  facet_wrap(~ model) +
+  scale_colour_manual(values = c(estimate = 'grey15', truth = '#c0392b')) +
+  scale_linetype_manual(values = c(estimate = 1, truth = 2)) +
+  theme_bw() + theme(legend.position = 'bottom') +
   labs(x = 'time interval', y = 'standardised cross effect, eta1 -> eta2',
     colour = NULL, linetype = NULL)
 ```
 
-The auto effect and the diffusion correlation come from
-`summary(fit)$parmatrices`, which carries `DIFFUSIONcov`, the innovation
-covariance, and `asymDIFFUSIONcov`, the stationary covariance the model
-implies:
+The auto effect, the stationary standard deviation of `eta1` and the diffusion
+correlation come from the same draws, through `ctExtract()`: `pop_DRIFT`,
+`pop_asymDIFFUSIONcov`, the stationary covariance the model implies, and
+`pop_DIFFUSIONcov`, the innovation covariance. Each cell is the median with a
+95% interval:
 
 ```{r table}
 #| code-fold: true
 comparable <- function(fit, label) {
-  pm <- summary(fit)$parmatrices
-  cell <- function(mat, i, j) pm$Mean[pm$matrix == mat & pm$row == i & pm$col == j]
-  data.frame(model = label,
-    drift_eta1 = summary(fit)$popmeans['drift_eta1', 'mean'],
-    latentsd1 = sqrt(cell('asymDIFFUSIONcov', 1, 1)),
-    diffcor = cell('DIFFUSIONcov', 1, 2) /
-      sqrt(cell('DIFFUSIONcov', 1, 1) * cell('DIFFUSIONcov', 2, 2)))
+  e <- ctExtract(fit)
+  q <- e$pop_DIFFUSIONcov
+  draws <- cbind(drift_eta1 = e$pop_DRIFT[, 1, 1],
+    latentsd1 = sqrt(e$pop_asymDIFFUSIONcov[, 1, 1]),
+    diffcor = q[, 1, 2] / sqrt(q[, 1, 1] * q[, 2, 2]))
+  s <- apply(draws, 2, quantile, c(.5, .025, .975))
+  out <- data.frame(label, t(sprintf('%.2f [%.2f, %.2f]', s[1, ], s[2, ], s[3, ])))
+  setNames(out, c('model', colnames(draws)))
 }
 
-out <- rbind(
-  comparable(ceilingfit, 'uncategorised (ceiling)'),
-  comparable(gaussianfit, 'gaussian on the codes'),
+knitr::kable(rbind(comparable(gaussianfit, 'gaussian on the codes'),
   comparable(ordinalfit, 'ordinal'),
-  data.frame(model = 'truth', drift_eta1 = DRIFT[1, 1],
-    latentsd1 = latentsd[1], diffcor = diffcor))
-cbind(out[1], round(out[-1], 3))
+  data.frame(model = 'truth', drift_eta1 = sprintf('%.2f', DRIFT[1, 1]),
+    latentsd1 = sprintf('%.2f', latentsd[1]), diffcor = sprintf('%.2f', diffcor))))
 ```
 
 `latentsd1` is in answer-code units for the Gaussian fit and in logits for the
-ordinal fit, so the two fitted columns are not comparable with each other. The
+ordinal fit, so the two fitted values are not comparable with each other. The
 ordinal one *is* comparable with the truth, because the link fixes its units:
 it estimates a real quantity rather than a convention, and checking it is
 worth doing before reading anything else.
 
-The ordinal fit tracks the ceiling closely on both comparable quantities. The
-Gaussian fit does not: it understates the diffusion correlation by about a
-seventh and overstates the reversion rate by a similar amount, where the
-ordinal fit is within a few per cent of the ceiling on each.
+Every interval in the table that should cover its generating value does, in
+both fits. The bands say the same with one qualification: the Gaussian band
+covers the true curve throughout, while beyond an interval of about three the
+true curve runs along the upper edge of the ordinal band rather than inside
+it. Both estimated curves sit below the truth, by similar amounts, which is
+what sampling error shared by two fits of the same sample looks like rather
+than something either measurement model does.
 
-Categorisation is a monotone transformation plus noise that is independent
-across items and occasions given the latent state, and a Gaussian residual can
-absorb a good deal of that -- which is why the gap is a modest bias rather
-than a broken fit, and why an earlier version of this vignette, fitted to data
-with no individual differences, found almost no cost at all. Add differences
-between people and the approximation has more to do, and does it less well.
-The scale-invariant quantities survive in both fits; how accurately is a
-question about the design.
+On this design the Gaussian approximation costs little on the scale-invariant
+quantities. Categorisation is a monotone transformation plus noise that is
+independent across items and occasions given the latent state, and a Gaussian
+residual can absorb a good deal of that. What differs is what the remaining
+numbers are about: the Gaussian fit's raw effects, variances and locations
+describe the answer codes of this questionnaire, while the ordinal fit's are on
+a scale the link fixes, and those are the ones to report.
