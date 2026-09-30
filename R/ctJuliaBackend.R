@@ -4356,6 +4356,14 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   if (!is.null(optimcontrol$lbfgs_memory)) {
     common$lbfgs_memory <- as.integer(optimcontrol$lbfgs_memory)[1L]
   }
+  # L-BFGS's initial inverse Hessian per coordinate, and a non-monotone line
+  # search (see `_ctsem_lbfgs` in optimiser.jl).
+  if (!is.null(optimcontrol$lbfgs_diagonal)) {
+    common$lbfgs_diagonal <- isTRUE(optimcontrol$lbfgs_diagonal)
+  }
+  if (!is.null(optimcontrol$lbfgs_nonmonotone)) {
+    common$lbfgs_nonmonotone <- as.numeric(optimcontrol$lbfgs_nonmonotone)[1L]
+  }
   # A stage resumed after a certification found the point short of a maximum
   # (`.ctBackendCorrectResult()`): the progress the fit made before it, so its
   # stall watch has a progress to take a share of, and leave to stop on

@@ -37,6 +37,11 @@ BENCH_VARIANTS <- list(
   # the same point, since the probe then changed no verdict.
   noprobe = list(optimcontrol = list(overshoot = "off")),
 
+  # L-BFGS's initial inverse Hessian learned per coordinate (Gilbert &
+  # Lemarechal's diagonal update) instead of one secant ratio. Paired with
+  # `default` on the same build: whether it can be the default.
+  diag = list(optimcontrol = list(lbfgs_diagonal = TRUE)),
+
   # No fit: evaluate the objective and the references at the start. Used with
   # a stored best-known point to check that a reference still reproduces.
   evalonly = list(fit = FALSE),

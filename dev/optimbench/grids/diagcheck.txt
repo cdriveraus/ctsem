@@ -1,0 +1,67 @@
+# diagcheck grid: lbfgs_diagonal against the default on one build, one seed of every
+# model and route in the baseline grid. Paired by cell: same data, start and build,
+# only optimcontrol$lbfgs_diagonal differs. Counts are the measure; timings only if
+# the contamination control says the machine was quiet.
+#
+control.1                               panel        1    augmented  zeros                    control
+cf_gaussian.aug.d1.s1.default           cf_gaussian  1    augmented  default:1                default
+cf_gaussian.lap.d1.s1.default           cf_gaussian  1    laplace    default:1                default
+cf_binary.aug.d1.s1.default             cf_binary    1    augmented  default:1                default
+cf_binary.lap.d1.s1.default             cf_binary    1    laplace    default:1                default
+cf_ordinal.aug.d1.s1.default            cf_ordinal   1    augmented  default:1                default
+cf_ordinal.lap.d1.s1.default            cf_ordinal   1    laplace    default:1                default
+cf_mixed.aug.d1.s1.default              cf_mixed     1    augmented  default:1                default
+cf_mixed.lap.d1.s1.default              cf_mixed     1    laplace    default:1                default
+gA1.lap.cfg.s1.default                  gA1          cfg  laplace    default:1                default
+gA14.lap.cfg.s1.default                 gA14         cfg  laplace    default:1                default
+gB2.lap.cfg.s1.default                  gB2          cfg  laplace    default:1                default
+gB8.lap.cfg.s1.default                  gB8          cfg  laplace    default:1                default
+gC2.lap.cfg.s1.default                  gC2          cfg  laplace    default:1                default
+gC8.lap.cfg.s1.default                  gC8          cfg  laplace    default:1                default
+gD1.lap.cfg.s1.default                  gD1          cfg  laplace    default:1                default
+gD3.lap.cfg.s1.default                  gD3          cfg  laplace    default:1                default
+acnonlin.lap.cfg.s1.default             acnonlin     cfg  laplace    default:1                default
+mvmix.lap.cfg.s1.default                mvmix        cfg  laplace    default:1                default
+mvmix.aug.cfg.s1.default                mvmix        cfg  augmented  default:1                default
+jflat.lap.cfg.s1.default                jflat        cfg  laplace    default:1                default
+gN1.lap.cfg.s1.default                  gN1          cfg  laplace    default:1                default
+gN3.lap.cfg.s1.default                  gN3          cfg  laplace    default:1                default
+small.aug.d1.s1.default                 small        1    augmented  default:1                default
+nonlin.aug.d1.s1.default                nonlin       1    augmented  default:1                default
+long.aug.d1.s1.default                  long         1    augmented  default:1                default
+bigp.aug.d1.s1.default                  bigp         1    augmented  default:1                default
+panel.aug.d1.s1.default                 panel        1    augmented  default:1                default
+ordinal.lap.d1.s1.default               ordinal      1    laplace    default:1                default
+anomS1.lap.cfg.s1.default               anomS1       cfg  laplace    default:1                default
+anomS2.lap.cfg.s1.default               anomS2       cfg  laplace    default:1                default
+cf_gaussian.aug.d1.s1.diag              cf_gaussian  1    augmented  default:1                diag
+cf_gaussian.lap.d1.s1.diag              cf_gaussian  1    laplace    default:1                diag
+cf_binary.aug.d1.s1.diag                cf_binary    1    augmented  default:1                diag
+cf_binary.lap.d1.s1.diag                cf_binary    1    laplace    default:1                diag
+cf_ordinal.aug.d1.s1.diag               cf_ordinal   1    augmented  default:1                diag
+cf_ordinal.lap.d1.s1.diag               cf_ordinal   1    laplace    default:1                diag
+cf_mixed.aug.d1.s1.diag                 cf_mixed     1    augmented  default:1                diag
+cf_mixed.lap.d1.s1.diag                 cf_mixed     1    laplace    default:1                diag
+gA1.lap.cfg.s1.diag                     gA1          cfg  laplace    default:1                diag
+gA14.lap.cfg.s1.diag                    gA14         cfg  laplace    default:1                diag
+gB2.lap.cfg.s1.diag                     gB2          cfg  laplace    default:1                diag
+gB8.lap.cfg.s1.diag                     gB8          cfg  laplace    default:1                diag
+gC2.lap.cfg.s1.diag                     gC2          cfg  laplace    default:1                diag
+gC8.lap.cfg.s1.diag                     gC8          cfg  laplace    default:1                diag
+gD1.lap.cfg.s1.diag                     gD1          cfg  laplace    default:1                diag
+gD3.lap.cfg.s1.diag                     gD3          cfg  laplace    default:1                diag
+acnonlin.lap.cfg.s1.diag                acnonlin     cfg  laplace    default:1                diag
+mvmix.lap.cfg.s1.diag                   mvmix        cfg  laplace    default:1                diag
+mvmix.aug.cfg.s1.diag                   mvmix        cfg  augmented  default:1                diag
+jflat.lap.cfg.s1.diag                   jflat        cfg  laplace    default:1                diag
+gN1.lap.cfg.s1.diag                     gN1          cfg  laplace    default:1                diag
+gN3.lap.cfg.s1.diag                     gN3          cfg  laplace    default:1                diag
+small.aug.d1.s1.diag                    small        1    augmented  default:1                diag
+nonlin.aug.d1.s1.diag                   nonlin       1    augmented  default:1                diag
+long.aug.d1.s1.diag                     long         1    augmented  default:1                diag
+bigp.aug.d1.s1.diag                     bigp         1    augmented  default:1                diag
+panel.aug.d1.s1.diag                    panel        1    augmented  default:1                diag
+ordinal.lap.d1.s1.diag                  ordinal      1    laplace    default:1                diag
+anomS1.lap.cfg.s1.diag                  anomS1       cfg  laplace    default:1                diag
+anomS2.lap.cfg.s1.diag                  anomS2       cfg  laplace    default:1                diag
+control.2                               panel        1    augmented  zeros                    control

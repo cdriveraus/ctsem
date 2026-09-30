@@ -554,6 +554,87 @@ end
     @test isempty(ContinuousTimeSEM._ctsem_pullback_sets(Float64[]))
 end
 
+@testset "the diagonal L-BFGS scaling learns each coordinate's curvature" begin
+    C = ContinuousTimeSEM
+    rng = Random.MersenneTwister(3)
+    a = exp10.(range(-3, 3; length=12))      # curvatures six orders apart
+    # On a separable quadratic the true diagonal is a fixed point of the
+    # rescaled update, whatever the pair.
+    for _ in 1:5
+        s = randn(rng, 12)
+        B = C._ctsem_lbfgs_diagonal!(copy(a), s, a .* s, ones(12))
+        @test B ≈ a rtol=1e-10
+    end
+    # From the metric's shape it stays positive. (It does not approach the
+    # truth quickly from random pairs -- a factor of ~1000 off after 200 --
+    # which is not what it is for: the pairs L-BFGS feeds it follow the path.)
+    B = nothing
+    for _ in 1:200
+        s = randn(rng, 12)
+        B = C._ctsem_lbfgs_diagonal!(B, s, a .* s, ones(12))
+        @test all(>(0), B)
+    end
+    # L-BFGS with it reaches the minimum of the ill-conditioned quadratic in
+    # fewer iterations than with one secant ratio: measured 55 against 133 at
+    # the default memory, and 67 against no convergence in 5000 at memory 3.
+    fg! = function (F, G, x)
+        G === nothing || (G .= a .* x)
+        F === nothing ? nothing : 0.5 * sum(a .* x .^ 2)
+    end
+    x0 = fill(1.0, 12)
+    plain = C._ctsem_lbfgs(fg!, x0; memory=20, maxiter=2000, g_tol=1e-8)
+    diag = C._ctsem_lbfgs(fg!, x0; memory=20, maxiter=2000, g_tol=1e-8, diagonal=true)
+    @test plain.g_converged && diag.g_converged
+    @test diag.iterations < plain.iterations
+    @test maximum(abs, diag.minimizer) < 1e-4
+end
+
+@testset "beyond the dense prefixes the pullback sets double" begin
+    C = ContinuousTimeSEM
+    n = 100
+    x = collect(Float64, n:-1:1)   # already in |raw| order: coordinate k is rank k
+    sets = C._ctsem_pullback_sets(x; dense=4)
+    @test length.(sets) == [1, 2, 3, 4, 8, 16, 32, 64, 100]
+    for i in 1:(length(sets) - 1)
+        @test sets[i] == sets[i + 1][1:length(sets[i])]
+    end
+    # A flagged coordinate inside the dense prefixes adds nothing; one ranked
+    # beyond them is tried as a set of its own, with the others flagged.
+    @test C._ctsem_pullback_sets(x, [2]; dense=4) == sets
+    withflag = C._ctsem_pullback_sets(x, [70, 3]; dense=4)
+    @test withflag[5] == [3, 70]
+    @test withflag[[1:4; 6:end]] == sets
+    # At the default a 16-parameter model keeps every prefix, and a 715-parameter
+    # one is probed in 22 sets rather than 715.
+    @test length(C._ctsem_pullback_sets(randn(16))) == 16
+    @test length(C._ctsem_pullback_sets(randn(715))) == 16 + 5 + 1
+end
+
+@testset "the overshoot probe reports each set and stops on an interrupt" begin
+    C = ContinuousTimeSEM
+    seen = Tuple{Int,Int}[]
+    # `nothing` refuses every point, so every set is tried and nothing is found.
+    out = C._ctsem_overshot(nothing, collect(Float64, 40:-1:1), Int[], 0.0, 1e-3;
+        progress=(d, t) -> push!(seen, (d, t)))
+    @test !out.overshot
+    total = length(C._ctsem_pullback_sets(zeros(40)))
+    @test seen == [(i, total) for i in 0:(total - 1)]
+    # R's request to stop is a file; set it by hand rather than through
+    # `ctsem_set_interrupt!`, which also detaches the process from its console.
+    flag = tempname(); touch(flag)
+    saved = (C._CTSEM_INTERRUPT_FILE[], C._CTSEM_PARENT_PID[])
+    C._CTSEM_INTERRUPT_FILE[] = flag; C._CTSEM_PARENT_PID[] = 0
+    C._CTSEM_INTERRUPT_NEXT[] = 0.0
+    try
+        @test_throws InterruptException C._ctsem_overshot(nothing,
+            collect(Float64, 40:-1:1), Int[], 0.0, 1e-3)
+    finally
+        C._CTSEM_INTERRUPT_FILE[], C._CTSEM_PARENT_PID[] = saved
+        C._CTSEM_INTERRUPT_NEXT[] = 0.0; C._CTSEM_INTERRUPT_SEEN[] = false
+        rm(flag; force=true)
+    end
+end
+
 
 # The convergence criterion. `converge_tol` is in nats and what is tested
 # against it is the objective still available, so these are about units and

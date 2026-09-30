@@ -489,6 +489,22 @@ _ctsem_hessian_progress(reporter) = (reporter === nothing || !reporter.enabled) 
     end
 
 """
+    _ctsem_probe_progress(reporter)
+
+The `(done, total) -> nothing` callback `_ctsem_overshot` takes, reporting the
+pullback probe's sets through `reporter` as `_ctsem_hessian_progress` does the
+Hessian's columns, or `nothing` when there is nothing to report through. The
+probe is value-only and on a large model runs for minutes where the optimiser's
+own line has stopped.
+"""
+_ctsem_probe_progress(reporter) = (reporter === nothing || !reporter.enabled) ?
+    nothing : function (done::Integer, total::Integer)
+        _due(reporter) && _progress_fraction(reporter,
+            @sprintf("pullback check %d of %d sets", done, total))
+        nothing
+    end
+
+"""
     _progress_break(p)
 
 End the current in-place line so something else can print on its own.
