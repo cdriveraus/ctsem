@@ -276,19 +276,13 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
 # `'batch'` attribute on the wrapped closure and fall back to its per-draw
 # loop, which is the cost this whole repair exists to remove.
 #
-# Gradients go through the map too, as `A' g`, for the profile-path search in
-# `imis_is()`: the `'gradbatch'` attribute, and the `'gradient'` attribute a
-# stan density's value carries. Left in raw coordinates, the second would have
-# the wrong length and the search would silently not run on stan alone.
+# The `'gradbatch'` attribute goes through the map too, as `A' g`, for the
+# profile-path search in `imis_is()`; without it the search would silently
+# not run in the identified subspace.
 .ctImisWhitenDensity <- function(lpg, centre, subspace) {
   A <- sweep(subspace$V, 2, sqrt(subspace$d), '*')
-  wrapped <- function(z) {
-    out <- lpg(as.numeric(
-      .ctImisUnwhitenMatrix(matrix(z, nrow = 1L), centre, subspace)))
-    g <- attr(out, 'gradient')
-    if (!is.null(g) && length(g) == nrow(A)) attr(out, 'gradient') <- as.numeric(crossprod(A, g))
-    out
-  }
+  wrapped <- function(z) lpg(as.numeric(
+    .ctImisUnwhitenMatrix(matrix(z, nrow = 1L), centre, subspace)))
   batchbase <- attr(lpg, 'batch')
   if (!is.null(batchbase)) {
     attr(wrapped, 'batch') <- function(Z) batchbase(.ctImisUnwhitenMatrix(Z, centre, subspace))
@@ -359,28 +353,28 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
   result
 }
 
-# The gradient a density can give `imis_is()`'s profile-path search, as a
-# function of a draws matrix (rows as draws) returning list(value, gradient),
-# or NULL when it gives none. A `'gradbatch'` attribute is used as it is (the
-# julia route: one bridge call per batch); otherwise a density whose value
-# carries a `'gradient'` attribute of the right length (stan's) is asked one
-# point at a time. The quadrature and particle-filter densities of
-# `ctLaplaceCorrect()` and `ctParticleCorrect()` carry neither, and the search
-# is skipped for them.
+# The gradient a density can give `imis_is()`'s profile-path search: its
+# `'gradbatch'` attribute, a function of a draws matrix (rows as draws)
+# returning list(value, gradient) with one gradient row per draw, or NULL.
+# Read from the attribute and never probed for: a density says what it can do
+# by its attributes, as `'batch'` does, so the julia route's lpg carries one
+# (one bridge call per batch), stan's gets one from `.ctImisPointGradbatch()`,
+# and the quadrature and particle-filter densities of `ctLaplaceCorrect()` and
+# `ctParticleCorrect()` carry none and skip the search. Probing would cost a
+# particle filter per call there, and put a row in its evaluation record.
 .ctImisGradient <- function(parlp, centre) {
   gb <- attr(parlp, 'gradbatch')
-  if (is.function(gb)) return(gb)
-  # A batch density says what it can do by its attributes: one with a value
-  # batch and no gradient batch has none, and probing its per-point form
-  # would spend a bridge round trip to learn that.
-  if (!is.null(attr(parlp, 'batch'))) return(NULL)
-  probe <- tryCatch(parlp(as.numeric(centre)), error = function(e) NULL)
-  g <- attr(probe, 'gradient')
-  if (is.null(g) || length(g) != length(centre) || any(!is.finite(g))) return(NULL)
-  function(X) {
+  if (is.function(gb)) gb else NULL
+}
+
+# A per-point density whose value carries a `'gradient'` attribute -- stan's
+# `ctOptimFitLpgFunc()` -- given the `'gradbatch'` attribute `.ctImisGradient()`
+# reads, asking one point at a time. So both backends run the same search.
+.ctImisPointGradbatch <- function(lpg) {
+  attr(lpg, 'gradbatch') <- function(X) {
     X <- as.matrix(X)
     out <- lapply(seq_len(nrow(X)), function(i)
-      tryCatch(parlp(X[i, ]), error = function(e) NA_real_))
+      tryCatch(lpg(X[i, ]), error = function(e) NA_real_))
     grads <- lapply(out, function(o) {
       g <- attr(o, 'gradient')
       if (is.null(g) || length(g) != ncol(X)) rep(NA_real_, ncol(X)) else as.numeric(g)
@@ -388,6 +382,7 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
     list(value = vapply(out, function(o) as.numeric(o)[1L], numeric(1)),
       gradient = matrix(unlist(grads), nrow = nrow(X), byrow = TRUE))
   }
+  lpg
 }
 
 # Each parameter's profile path, walked out on both sides of the mode: at
@@ -2783,7 +2778,7 @@ ctFitUncertainty <- function(fit,
   stanImis <- .ctImisProposalDefaults('stan')
   drawn <- .ctOptimDrawSamples(uncertaintyfit, draws = draws, control = control,
     est = fit$stanfit$rawest, finishsamples = finishsamples,
-    lpg = lpgsetup$lpg, verbose = verbose,
+    lpg = .ctImisPointGradbatch(lpgsetup$lpg), verbose = verbose,
     scaleInit = stanImis$scaleInit, tailScale = stanImis$tailScale,
     tailremedy = paste0("ctFit(..., optimize = FALSE) samples the posterior ",
       "itself, as does ctFitUncertainty(fit, 'sample') on a backend = 'julia' fit."))

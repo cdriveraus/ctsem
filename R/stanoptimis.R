@@ -912,8 +912,8 @@ autoTIpredsFunc <- function(cl, standata, sm, optimArgs, parsteps, optimcores, c
 # The density `parlp` is value-only, and may carry a `'batch'` attribute (a
 # function of a draws matrix, rows as draws, returning one value per row) and a
 # `'gradbatch'` attribute (the same, returning list(value, gradient) with one
-# gradient row per draw). Without `'gradbatch'`, a density whose value carries
-# a `'gradient'` attribute -- stan's -- is used one point at a time.
+# gradient row per draw): the julia lpg carries it, stan's is given one by
+# `.ctImisPointGradbatch()`, and without it the path search is skipped.
 imis_is <- function(parlp,
   mu_hat,
   Sigma_hat,
