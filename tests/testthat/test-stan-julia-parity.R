@@ -615,12 +615,12 @@ test_that("Stan and Julia's actual optimizers converge to the same fit for TD/TI
   # OFF whenever every indicator is Gaussian -- Charles's decision, measured on
   # other models to lead a Gaussian fit to a worse basin
   # (review/OPTIM-next-2026-09-27.md). This fixture is Gaussian, so `jf` no
-  # longer warms up, and now reaches a DIFFERENT, better basin than stan's own
-  # unwarmed optimizer: -33.69 against -36.42, 2.73 nats apart -- too far to be
-  # two stopping points on one flat direction (the 1.92-nat bar used below), so
-  # the two default-start optimisers are no longer directly comparable point
-  # for point. "Same fit" is established as three separate, weaker facts
-  # instead of one raw-parameter equality:
+  # longer warms up, and from a default start the two optimisers can reach
+  # different maxima (-33.69 and -36.42 have both been seen, 2.73 nats apart --
+  # too far to be two stopping points on one flat direction, the 1.92-nat bar
+  # used below), so they are not comparable point for point. "Same fit" is
+  # established as three separate, weaker facts instead of one raw-parameter
+  # equality:
   #
   # 1) Julia's point is a genuine maximum, not merely wherever its own
   #    stopping rule stopped: the engine's own curvature certification agrees
@@ -643,16 +643,17 @@ test_that("Stan and Julia's actual optimizers converge to the same fit for TD/TI
     adjust_transform = FALSE, gradient = TRUE)
   expect_equal(as.numeric(stan_at_julia), jf$estimate$loglik, tolerance = 1e-6)
 
-  # 3) Julia's optimizer reaches at least as good a value as stan's own
-  #    default-start optimizer, and stan's optimizer, started from julia's
-  #    point instead of its own default start, stays there rather than walking
-  #    away -- confirming julia's point is a maximum of STAN's objective too,
-  #    and that the two optimisers' basins differ only because of where each
-  #    one started, not because of a disagreement about the model. Measured:
-  #    stan-from-julia's loglik matches julia's to 3.8e-08, and its raw
-  #    parameters move by at most 4.4e-07 -- far inside noise, not a partial
-  #    walk back toward stan's own basin.
-  expect_gt(jf$estimate$loglik, -sf$stanfit$optimfit$f)
+  # 3) Stan's optimizer, started from julia's point instead of its own default
+  #    start, stays there rather than walking away -- confirming julia's point
+  #    is a maximum of STAN's objective too, so any difference between the two
+  #    default-start fits is where each one started, not a disagreement about
+  #    the model. Measured: stan-from-julia's loglik matches julia's to
+  #    3.8e-08, and its raw parameters move by at most 4.4e-07.
+  #    Which basin each default start reaches is not asserted: it turns on the
+  #    path. The two julia builds of 2026-09-30 agree for 29 iterations, part
+  #    at one early hand-over step (the line search to -38.34, the trust region
+  #    to -38.11), and end in the -33.69 and -36.42 basins respectively, both
+  #    certified; stan's own reaches -36.42.
   sf_from_julia <- suppressMessages(ctFit(fixture$data, model = fixture$model,
     backend = "stan", optimcontrol = list(carefulfit = FALSE, stochastic = FALSE),
     optimize = TRUE, verbose = 0, savescores = FALSE, cores = 1,
