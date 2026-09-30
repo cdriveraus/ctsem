@@ -426,7 +426,9 @@ direction of negative curvature when it has stopped at a saddle, and checks
 what the directions with no curvature are worth. Batching needs at least 80
 subjects (or top-level groups). Under \code{intoverpop='laplace'}, where a
 Hessian costs \code{2 * npar} gradients, the finish runs only when the fit
-is certified, and reuses the one Hessian it takes for its steps. When the
+is certified, and reuses the one Hessian it takes for its steps. A model
+with more than 30 parameters, whose exact Hessian costs about a gradient per
+parameter, reuses each Hessian for its steps in the same way. When the
 check still finds the fit short of a maximum, the optimiser is resumed
 under the same rules, at most \code{optimcontrol$gapretries} times (default
 2), and a resumed stage that stops gaining is stopped. Set \code{batch} or

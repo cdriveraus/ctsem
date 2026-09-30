@@ -1734,7 +1734,9 @@ whose Hessian is expensive (Laplace), is what the finish runs for at all;
 `:exact`, `:chord` or `:subset`; `newton_switch` is the predicted gain at which
 L-BFGS hands over where a Hessian is cheap, and a finish whose first step shows
 that hand-over was early gives the point back to L-BFGS, which runs on to its
-own stopping rule before the finish runs again; `newton_reuse` and `flat_rtol`
+own stopping rule before the finish runs again -- where the Hessian is cheap
+enough to discard (`_ctsem_hessian_cost` within `newton_maxit`), and otherwise
+walks on it; `newton_reuse` and `flat_rtol`
 are the finish's rules, passed from R so one number serves both sides. The stall
 watch's `stall_carried` and `stall_alone` are set only on a stage resumed after
 a certification (see `CTSEMStallWatch`).
@@ -1815,7 +1817,16 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # rule first: the finish's Hessian is then the one the certification would
     # have formed anyway, rather than an extra one.
     cheap = _ctsem_cheap_hessian(objective)
-    route_curvature = _ctsem_finish_curvature(objective)
+    route_curvature = _ctsem_finish_curvature(objective, length(start_values),
+        Int(newton_maxit))
+    # Whether a Hessian the finish forms at an early hand-over may be thrown
+    # away when its first step shows the hand-over was early: only where it
+    # costs no more than the finish's own budget of steps. On a 715-parameter
+    # model the one given back had cost a quarter of an hour, twice, after
+    # which L-BFGS gained 0.02 log likelihood an iteration; a dear Hessian is
+    # walked on instead, its steps held to a trust region.
+    discardable = _ctsem_hessian_cost(objective, length(start_values)) <=
+        newton_maxit
     finish_curvature = Symbol(newton_curvature) === :auto ? route_curvature :
         Symbol(newton_curvature)
     finishing = newton && gap_tol > 0 && route_curvature !== nothing &&
@@ -2056,13 +2067,15 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             f0 = fg!(0.0, G0, minimizer)
         end
         # A hand-over on L-BFGS's proxy rather than at its stopping rule, which
-        # the finish checks with its first step (`handback`).
+        # the finish checks with its first step (`handback`) where its Hessian
+        # is cheap enough to discard.
         early = handover > gap_tol
         finish = _ctsem_newton_finish(objective, minimizer, f0, G0, fg!;
             tol=gap_tol, maxit=newton_maxit, callback=record,
             iteration0=result.iterations + spent.steps[],
             curvature=finish_curvature, probe=certify, reuse_se=newton_reuse,
-            flat_rtol=flat_rtol, handback=early, reporter=reporter)
+            flat_rtol=flat_rtol, handback=early && discardable,
+            reporter=reporter)
         minimizer = collect(finish.x)
         # The finish's own gain replaces L-BFGS's metric proxy: it is the exact
         # decrement, which is what the verdict below should be judging.

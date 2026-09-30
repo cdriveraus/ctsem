@@ -481,9 +481,15 @@ end
 #
 # What the steps are taken against depends on what a Hessian costs:
 #
-# * the marginal route's is forward-over-adjoint, a few gradients (6 on a
-#   1000-subject panel, dev1), so L-BFGS hands over early and every step uses
-#   the exact Hessian, refreshed while the steps contract slowly;
+# * the marginal route's is forward-over-adjoint, one lane per parameter at
+#   about a gradient each: a few gradients on a small model (6 on a
+#   1000-subject panel, dev1), so L-BFGS hands over early, and there every step
+#   uses the exact Hessian, refreshed while the steps contract slowly. On a
+#   large one it is not few: about 750 gradients, a quarter of an hour, on a
+#   715-parameter model. A refresh pays only while a Hessian costs less than
+#   the steps it saves, which are at most the finish's budget of `maxit`, so
+#   above `maxit` parameters the marginal route takes the chord below
+#   (`_ctsem_finish_curvature`);
 # * the Laplace route's is central differences of the gradient, `2 npar`
 #   gradients, and an exact finish there made fits slower (0.6x with it, 1.3 to
 #   1.9x without, dev1). So L-BFGS runs to its own stopping rule there, and the
@@ -492,38 +498,72 @@ end
 #   more than `_CTSEM_HESSIAN_REUSE_SE` standard errors: one Hessian per fit in
 #   the common case.
 #
+# The steps are the model's minimiser within a trust region (`newton` inside
+# `_ctsem_newton_finish`), so a Hessian formed at a point where its quadratic
+# model holds only nearby -- negative curvature, or directions so weakly
+# determined that their Newton step runs for raw units -- is still walked on,
+# its flattest directions damped first.
+#
 # The early hand-over is on L-BFGS's own predicted gain, a proxy that after a
-# few iterations knows little of the curvature, so the finish checks it: a first
-# step on the exact Hessian that does not contract the predicted gain by
-# `contraction` is a point outside Newton's region, and the finish hands back to
-# L-BFGS, which runs on to its own stopping rule before the finish runs again.
-# Measured on the noise fixture of test-backend-summary.R from the prior
-# warm-up's start: L-BFGS handed over at its third iteration on a proxy of
-# 0.024 with an exact gain of 0.94 there, and the finish spent its cap of 30
-# steps and 13 Hessians walking 4.7 nats to a point it still called unfinished.
+# few iterations knows little of the curvature, so where a Hessian is cheap the
+# finish checks it: a first Newton step the objective does not take whole, or
+# one that does not contract the predicted gain by `contraction`, is a point
+# outside Newton's region, and the finish hands back to L-BFGS, which runs on
+# to its own stopping rule before the finish runs again. Measured on the noise
+# fixture of test-backend-summary.R from the prior warm-up's start: L-BFGS
+# handed over at its third iteration on a proxy of 0.024 with an exact gain of
+# 0.94 there, and the finish spent its cap of 30 steps and 13 Hessians walking
+# 4.7 nats to a point it still called unfinished. Where a Hessian is dear the
+# finish walks on it instead: until 2026-09-30 it handed back there too, and on
+# a 715-parameter model threw away a quarter of an hour of Hessian twice, after
+# which L-BFGS gained 0.02 log likelihood an iteration. The check also asked
+# contraction of damped steps then, which a step damped to `alpha` cannot give
+# below `(1 - alpha)^2` however right the model: on the synthetic analogue of
+# that model (116 parameters, from its hand-over point), 3 negative directions
+# and weak ones carried 77% of the predicted gain of 28.8, the line search took
+# 1/16 of the step, and the check read a contraction of 1.63.
 #
 # Provenance: the hand-over at a predicted gain of 0.1, the cap of 30 steps and
 # the contraction of 0.25 that triggers a refresh were set when this optimiser
 # replaced Optim's (92499af5, 2026-09-24), on the seven regimes of
 # `dev/stochopt/models.R` (panel, panel5k, long, ordinal Laplace, nonlin, small,
-# bigp), and have not been swept since; the hand-back reuses the contraction
-# rather than adding a constant. The eigenvalue floor at 1e-8 of the largest,
-# for the directions the certification does not trust, and the Levenberg start
-# at 1e-4 are the usual safeguards, not tuned. The consolidation plan's Appendix
-# B has the list.
+# bigp), and have not been swept since. The eigenvalue floor at 1e-8 of the
+# largest, for the directions the certification does not trust, is the usual
+# safeguard, not tuned; the trust region's constants are the textbook ones
+# (Nocedal & Wright's Algorithm 4.1) and its acceptance the Armijo constant of
+# every line search here. The consolidation plan's Appendix B has the list.
 
 _ctsem_cheap_hessian(::CTSEMObjective) = true
 _ctsem_cheap_hessian(::Any) = false
 
 """
-The route's own curvature for the finish: `:exact` where a Hessian costs a few
-gradients, `:chord` where it costs `2 npar` of them, and `nothing` for a route
-the finish does not run on -- a pinned profile point, whose wrapper has no
-Hessian of its own, and the state-explicit target, which is never certified.
+    _ctsem_hessian_cost(objective, npar)
+
+What one Hessian costs, in gradients: `2 npar` on the Laplace route (central
+differences of the gradient), and about `npar` on the marginal route, whose
+forward-over-reverse sweeps carry one lane per parameter at about a gradient
+each (measured: 750 gradients' time for 715 parameters). The unit the finish
+weighs a Hessian against its steps in, each of which costs a gradient.
+"""
+_ctsem_hessian_cost(::CTSEMLaplaceObjective, npar::Integer) = 2 * Int(npar)
+_ctsem_hessian_cost(::Any, npar::Integer) = Int(npar)
+
+"""
+    _ctsem_finish_curvature(objective[, npar, maxit])
+
+The route's own curvature for the finish: `:exact` where a Hessian costs no
+more than the `maxit` steps a refresh could save (`_ctsem_hessian_cost`),
+`:chord` where it costs more -- always on the Laplace route, and on the
+marginal route above `maxit` parameters -- and `nothing` for a route the
+finish does not run on: a pinned profile point, whose wrapper has no Hessian
+of its own, and the state-explicit target, which is never certified.
 """
 _ctsem_finish_curvature(::CTSEMObjective) = :exact
 _ctsem_finish_curvature(::CTSEMLaplaceObjective) = :chord
 _ctsem_finish_curvature(::Any) = nothing
+_ctsem_finish_curvature(o, npar::Integer, maxit::Integer) = _ctsem_finish_curvature(o)
+_ctsem_finish_curvature(o::CTSEMObjective, npar::Integer, maxit::Integer) =
+    _ctsem_hessian_cost(o, npar) <= maxit ? :exact : :chord
 
 """
 How far the estimate may be from where a Hessian was evaluated, in the standard
@@ -738,21 +778,58 @@ function _ctsem_secant_along(H::AbstractMatrix, s::AbstractVector, y::AbstractVe
 end
 
 """
+    _ctsem_trust_multiplier(curvature, c, radius)
+
+The Levenberg multiplier `mu >= 0` that puts the step `-c ./ (curvature .+ mu)`
+-- a step in the eigenbasis of a model Hessian whose `curvature`s are all
+positive, `c` the gradient there -- on the boundary of a trust region of
+`radius`: zero when the Newton step (`mu = 0`) is inside it already. The step's
+length falls monotonically in `mu`, and its reciprocal is nearly linear in it,
+so Newton's method on the reciprocal converges from zero in a few iterations,
+from below, never overshooting (Moré & Sorensen 1983). In the eigenbasis each
+iteration is a sum, so this is the exact trust-region step at no cost beyond
+the decomposition the finish already takes.
+"""
+function _ctsem_trust_multiplier(curvature::AbstractVector, c::AbstractVector,
+        radius::Real)
+    steplength(mu) = sqrt(sum(i -> (c[i] / (curvature[i] + mu))^2, eachindex(c);
+        init=0.0))
+    len = steplength(0.0)
+    (isfinite(len) && len > radius) || return 0.0
+    mu = 0.0
+    for _ in 1:100
+        len = steplength(mu)
+        len <= radius * (1 + 1e-6) && break
+        q = sum(i -> c[i]^2 / (curvature[i] + mu)^3, eachindex(c); init=0.0)
+        mu += (len^2 / q) * (len - radius) / radius
+    end
+    mu
+end
+
+"""
     _ctsem_newton_finish(objective, x, f, G, fg!; ...)
 
 The endgame, from `x` on the minimised objective behind `fg!` (`f` and `G` its
-value and gradient there): damped Newton steps, the final Hessian, an escape
-from a saddle, and the flat-direction probe.
+value and gradient there): Newton steps within a trust region, the final
+Hessian, an escape from a saddle, and the flat-direction probe.
+
+Each step minimises the quadratic model within `radius` raw units (`newton`
+inside, `_ctsem_trust_multiplier`): the Newton step while it fits, otherwise a
+step with its flattest directions damped most. A Hessian's first step is its
+Newton step; one the objective does not bear out is re-solved at a quarter of
+its length, and the radius then follows how well the model predicted each step
+(Nocedal & Wright's Algorithm 4.1).
 
 What the steps are taken against is `curvature`:
 
-- `:exact`  the exact Hessian, refreshed whenever the predicted gain is not
-  contracting by `contraction` per step;
+- `:exact`  the exact Hessian, refreshed whenever a Newton step does not
+  contract the predicted gain by `contraction`, or a step the trust region held
+  back gained less than a quarter of what the model predicted;
 - `:chord`  the exact Hessian at `x`, kept for every step (the chord, or
   simplified Newton, method: linear convergence at the rate the Hessian
   changes between `x` and the optimum, which from a hand-over this close is
-  fast), with the steps' copy of it corrected along any step that contracts
-  slowly by the secant curvature there (`_ctsem_secant_along`);
+  fast), with the steps' copy of it corrected along any step that is slow in
+  that sense by the secant curvature there (`_ctsem_secant_along`);
 - `:subset` the likelihood Hessian of a random `subset` share of the units
   (at least `subset_min`), scaled up to the data, with the prior's curvature
   kept whole -- a chord Hessian at a fraction of the cost.
@@ -760,10 +837,14 @@ What the steps are taken against is `curvature`:
 The final Hessian is the exact one at the final point, with one exception: a
 chord Hessian whose steps converged within `reuse_se` standard errors of where
 it was evaluated is kept (`hessian_at` and `distance` say where, and how far
-that is -- `_ctsem_hessian_distance`). Whatever the steps used, a failed line
-search is answered with the exact Hessian, and a subset Hessian, or a chord one
-the steps moved too far from, is replaced by the exact Hessian at the final
-point and the steps continued until it agrees.
+that is -- `_ctsem_hessian_distance`). Whatever the steps used, a step the
+trust region cannot make on a stale matrix is answered with the exact Hessian.
+A subset Hessian, or a chord one whose steps converged farther away, is
+replaced by the exact Hessian at the final point and the chord walked again on
+that, as is a chord that used up its steps -- `maxit`, or as many as its
+Hessian cost in gradients (`_ctsem_hessian_cost`) if more -- at most five
+times; on the exact variant the steps continue on a fresh Hessian each until it
+agrees.
 
 At a saddle -- negative curvature in the final Hessian -- the ladder along the
 most negative curvature is tried (`_ctsem_saddle_ladder`), and the finish
@@ -777,10 +858,11 @@ and the probe, with no step, no refresh and no ladder, for a point the optimiser
 left without a finish (`ctsem_endgame`).
 
 `handback = true` is for a hand-over L-BFGS made on its own predicted gain
-rather than at its stopping rule: when the first step does not contract the
-predicted gain by `contraction`, the point is outside Newton's region and the
-finish returns there, with `handback` set and no final Hessian, for L-BFGS to
-go on from.
+rather than at its stopping rule, where the Hessian is cheap enough to discard
+(`ctsem_optimize` decides): when the objective does not take the first Newton
+step whole, or that step does not contract the predicted gain by
+`contraction`, the point is outside Newton's region and the finish returns
+there, with `handback` set and no final Hessian, for L-BFGS to go on from.
 
 `value_at(y)`, the maximised objective or `-Inf` for the ladder and the probe,
 defaults to the route's own predicate (`_ctsem_probe_value`); `fg!` is the
@@ -791,8 +873,8 @@ MAXIMISED objective, or `nothing`, with `hessian_at` and `distance`; the steps
 taken, including escapes, and the predicted gain at the end; the full and
 subset Hessians formed and the calls made; the saddle record (`escapes`,
 `saddle`, `ladder_tried`, `ladder_gain`); the probe record; whether it handed
-back (`handback`); and the history of the steps, one entry each (`kind` is
-"newton", "exact" or "saddle").
+back (`handback`); and the history of the steps, one entry each (`kind` is "newton", "exact" or "saddle", and `alpha`
+the share of its Newton step's length the step took).
 """
 function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         maxit::Integer=30, contraction::Real=0.25, callback=nothing,
@@ -857,31 +939,21 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
     remember!(kind, g, a) = (push!(history.kind, kind); push!(history.gain, g);
         push!(history.alpha, a); push!(history.value, -f); nothing)
     fcalls = 0; gcalls = 0
-    # One Armijo backtracking search along `step` from the current point. The
-    # names inside are `local` so they cannot rebind the finish's own.
-    #
-    # Accepted only on a decrease the objective can represent, and the halving
-    # stops once the first-order gain falls below that same resolution: Armijo
-    # alone scales with the step, so at a small enough `alpha` an increase of
-    # 1e-14 satisfies it, and accepting that spends a step on a point no
-    # different from the one it left. The rule R's damped step applied before
-    # the steps moved here, now applied to every step.
-    function search(step, dphi)
-        local floor = max(abs(f), 1.0) * eps()
-        local alpha = 1.0
-        local xn = x .+ step
-        local fn = fg!(0.0, nothing, xn)
-        fcalls += 1
-        local k = 0
-        while !(isfinite(fn) && fn <= f + 1e-4 * alpha * dphi && f - fn > floor) &&
-                k < 30 && alpha * abs(dphi) > floor
-            k += 1; alpha /= 2
-            xn = x .+ alpha .* step
-            fn = fg!(0.0, nothing, xn)
-            fcalls += 1
-        end
-        (ok=isfinite(fn) && fn <= f + 1e-4 * alpha * dphi && f - fn > floor,
-            x=xn, f=fn, alpha=alpha)
+    # The model the steps are taken on: the eigen-decomposition of the matrix
+    # they use, with the curvatures described below. Kept until that matrix
+    # changes, since a step the trust region refuses is re-solved on it.
+    modelled = Ref{Any}(nothing)
+    function model(Hm)
+        local M = modelled[]
+        (M !== nothing && M.matrix === Hm) && return M
+        local E = eigen(Symmetric(Hm))
+        local lmax = maximum(abs, E.values; init=0.0)
+        local top = maximum(E.values)
+        M = (matrix=Hm, vectors=E.vectors, usable=lmax > 0,
+            curvature=[top > 0 && v > flat_rtol * top ? v :
+                max(abs(v), 1e-8 * lmax) for v in E.values])
+        modelled[] = M
+        M
     end
     # The gain the undamped step predicts, flat directions included at their
     # floored curvature. Judging convergence over the trusted directions alone
@@ -913,17 +985,54 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
     # zero, at relative curvature 9e-11 and a Newton step of 0.25 raw units,
     # took 35 chord steps of 1e-7 nats each against a gap of 1.1e-5, and the
     # certification resumed the fit twice for it: 21 Hessians.
-    function newton(Hm, Gv, mu)
-        local E = eigen(Symmetric(Hm))
-        local lmax = maximum(abs, E.values; init=0.0)
-        lmax > 0 || return nothing
-        local top = maximum(E.values)
-        local floored = [top > 0 && v > flat_rtol * top ? v :
-            max(abs(v), 1e-8 * lmax) for v in E.values]
-        local c = E.vectors' * Gv
-        local g = 0.5 * sum(abs2.(c) ./ floored; init=0.0)
-        local lam = floored .+ mu * lmax
-        (step=-(E.vectors * (c ./ lam)), gain=g)
+    #
+    # The step itself is the minimiser of that model within a trust region of
+    # `radius` raw units (`_ctsem_trust_multiplier`): the Newton step while it
+    # fits, and otherwise the step whose Levenberg multiplier `mu` puts it on
+    # the boundary, which damps each direction by `curvature / (curvature + mu)`
+    # -- the flattest most, the stiff ones hardly at all. `gain` is the undamped
+    # step's, the convergence test's; `predicted` is what the model promises
+    # for the step taken, which the trust region judges it by.
+    function newton(Hm, Gv, radius)
+        local M = model(Hm)
+        M.usable || return nothing
+        local lam = M.curvature
+        local c = transpose(M.vectors) * Gv
+        local mu = _ctsem_trust_multiplier(lam, c, radius)
+        local d = c ./ (lam .+ mu)
+        (step=-(M.vectors * d), gain=0.5 * sum(abs2.(c) ./ lam; init=0.0),
+            predicted=sum(abs2.(c) .* (lam .+ 2mu) ./ (2 .* (lam .+ mu) .^ 2); init=0.0),
+            length=norm(d), whole=mu == 0,
+            fraction=mu == 0 ? 1.0 : norm(d) / norm(c ./ lam))
+    end
+    # A step on `Hm` from the current point, starting from `nt` (its step at
+    # `radius`): accepted when the objective falls by at least 1e-4 of what the
+    # model predicted -- the Armijo constant of every line search here -- and
+    # by more than it can represent, and otherwise re-solved at a quarter of
+    # its length (Nocedal & Wright's Algorithm 4.1), until the model promises
+    # less than that resolution. Armijo alone scales with the step, so a small
+    # enough step would take an increase of 1e-14, spending a step on a point
+    # no different from the one it left. The names inside are `local` so they
+    # cannot rebind the finish's own.
+    function trust(Hm, nt, radius)
+        local floor = max(abs(f), 1.0) * eps()
+        local at = nt
+        local r = radius
+        local k = 0
+        while true
+            local xn = x .+ at.step
+            local fn = fg!(0.0, nothing, xn)
+            fcalls += 1
+            local rho = isfinite(fn) ? (f - fn) / at.predicted : -Inf
+            if isfinite(fn) && rho > 1e-4 && f - fn > floor
+                return (ok=true, x=xn, f=fn, rho=rho, nt=at, radius=r)
+            end
+            (at.predicted > floor && k < 100) ||
+                return (ok=false, x=x, f=f, rho=rho, nt=at, radius=r)
+            k += 1
+            r = at.length / 4
+            at = newton(Hm, G, r)
+        end
     end
     report(g) = callback === nothing || callback(CTSEMIterate(iteration0 + steps,
         f, maximum(abs, G; init=0.0), g))
@@ -937,7 +1046,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
     exact = curvature !== :subset       # `H` is the exact Hessian at `hat`
     steps = 0; escapes = 0; gain = Inf
     saddle = false; ladder_tried = false; ladder_gain = 0.0
-    firstgain = Inf; handed = false
+    firstgain = Inf; firstwhole = true; handed = false
     if H === nothing
         return (x=x, f=f, G=G, hessian=nothing, hessian_at=hat, distance=NaN,
             steps=0, gain=Inf, full_hessians=full_hessians,
@@ -946,11 +1055,25 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             probe=_ctsem_no_probe(), history=history, handback=false)
     end
     at_x = exact                        # `H` is the exact Hessian at `x`
-    while true                          # once, and again after each escape
+    # The trust region, in raw units. Each Hessian starts without one -- its
+    # first step is the Newton step -- and the region is set by what the steps
+    # on it then show.
+    radius = Inf
+    # The steps a Hessian is walked for: `maxit`, and on the chord and the
+    # subset as many as the Hessian cost (`_ctsem_hessian_cost`), since a
+    # step there costs a gradient and a new Hessian is not worth buying
+    # before the steps have spent as much as the last one did. A chord that
+    # uses them up, or converges somewhere its Hessian no longer describes,
+    # is walked again on the exact Hessian there (below), at most
+    # `max_rewalks` times.
+    per_hessian = curvature === :exact ? Int(maxit) :
+        max(Int(maxit), _ctsem_hessian_cost(objective, length(x)))
+    budget = per_hessian; rewalks = 0; max_rewalks = 5
+    while true                          # once, and again after an escape or a rewalk
         converged = false
-        mu = 0.0; prevgain = Inf
-        while take_steps && steps < maxit
-            nt = newton(Hs, G, mu)
+        prevgain = Inf; prevwhole = true; prevrho = 1.0
+        while take_steps && steps < budget
+            nt = newton(Hs, G, radius)
             nt === nothing && break
             gain = nt.gain
             if gain < tol
@@ -967,40 +1090,52 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
                 if curvature === :exact && !at_x
                     H = hess(x); Hs = H; hat = copy(x); exact = true; at_x = true
                     H === nothing && break
-                    prevgain = Inf
+                    prevgain = Inf; prevwhole = true; prevrho = 1.0; radius = Inf
                     continue
                 end
                 converged = true
                 break
             end
-            # The check `handback` asks for, once: in Newton's region the first
-            # step contracts the predicted gain, which is here the hand-over
-            # Hessian's prediction at the point the step reached.
+            # The check `handback` asks for, once: in Newton's region the
+            # objective takes the whole Newton step, and the step contracts the
+            # predicted gain -- the hand-over Hessian's prediction at the point
+            # it reached -- by `contraction`. A first step it did not take whole
+            # says the point is outside that region by itself, and contraction
+            # is asked only of a whole one: a step damped to `alpha` contracts
+            # the gain to no less than `(1 - alpha)^2` of itself however right
+            # the model, so asking it of a damped step, as this did until
+            # 2026-09-30, found every damped first step outside the region.
             if handback && steps == 1 && escapes == 0 &&
-                    gain > contraction * firstgain
+                    (!firstwhole || gain > contraction * firstgain)
                 handed = true
                 break
             end
             steps == 0 && (firstgain = gain)
-            trial = search(nt.step, dot(G, nt.step))
+            trial = trust(Hs, nt, radius)
             if !trial.ok
-                if !at_x
-                    H = hess(x); Hs = H; hat = copy(x); exact = true; at_x = true
-                    H === nothing && break
-                else
-                    mu = mu == 0 ? 1e-4 : 10mu
-                    mu > 1e2 && break
-                end
+                # The model promises nothing the objective can represent at
+                # any radius: a stale matrix is replaced, and on the exact
+                # one here the steps are over.
+                at_x && break
+                H = hess(x); Hs = H; hat = copy(x); exact = true; at_x = true
+                H === nothing && break
+                prevgain = Inf; prevwhole = true; prevrho = 1.0; radius = Inf
                 continue
             end
             Gn = similar(G)
             fg!(nothing, Gn, trial.x); gcalls += 1
             dx = trial.x .- x; dg = Gn .- G
             x = trial.x; f = trial.f; G = Gn; steps += 1; at_x = false
-            remember!("newton", gain, trial.alpha)
-            mu = trial.alpha == 1 ? mu / 10 : mu
-            mu < 1e-8 && (mu = 0.0)
+            steps == 1 && (firstwhole = trial.nt.whole)
+            remember!("newton", gain, trial.nt.fraction)
             report(gain)
+            # The radius follows how well the model predicted the step's gain:
+            # a quarter of the step when it predicted less than a quarter of
+            # it, twice the radius when it predicted three quarters and the
+            # region held the step back (Nocedal & Wright's Algorithm 4.1).
+            radius = trial.rho < 0.25 ? trial.nt.length / 4 :
+                (trial.rho > 0.75 && !trial.nt.whole) ? 2 * trial.radius :
+                trial.radius
             # Only the exact variant refreshes on slow contraction; the chord
             # and the subset keep their matrix, which is the point of them. A
             # step that fails outright still gets the exact Hessian (above).
@@ -1023,11 +1158,21 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             # step shorter than the last: on AnomAuth S1 from its default start
             # (bench, dev1), 30 chord steps for gains of 4e-5 down to 3e-7, then
             # five exact Hessians to finish, seven in the stage.
-            slow = gain / prevgain > contraction && steps > 1
+            #
+            # A step the trust region held back cannot contract the gain as a
+            # Newton step does -- the directions it damped keep their share of
+            # it -- so contraction is asked of whole steps only, and a held
+            # step counts as slow when the model predicted its gain poorly, the
+            # trust region's own measure of a model that no longer holds.
+            # Asking contraction of a held step too refreshed an accurate
+            # Hessian after every step the region shortened.
+            slow = steps > 1 &&
+                (prevwhole ? gain / prevgain > contraction : prevrho < 0.25)
+            prevwhole = trial.nt.whole; prevrho = trial.rho
             if curvature === :exact && slow
                 H = hess(x); Hs = H; hat = copy(x); exact = true; at_x = true
                 H === nothing && break
-                prevgain = Inf
+                prevgain = Inf; prevwhole = true; prevrho = 1.0; radius = Inf
             else
                 curvature === :chord && slow && (Hs = _ctsem_secant_along(Hs, dx, dg))
                 prevgain = gain
@@ -1051,26 +1196,46 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         # certification finds the point unfinished and resumes the optimiser
         # (measured before the finish carried on: 1045 iterations to the cap
         # on a 30-subject model the exact finish closes in 10 steps).
+        #
+        # Where Hessians are dear (the chord and the subset), the new one is
+        # walked on as the first was -- a rewalk -- rather than replaced after
+        # every step: each step there used to cost a Hessian of its own, five
+        # of them in the worst case, and on the synthetic analogue of a
+        # 715-parameter model those were most of a stage's time. So is a chord
+        # that used up its steps without converging, which is walking on a
+        # Hessian that no longer describes where it is: on that analogue a
+        # stale chord predicted a sixtieth of the gap the certification then
+        # found, and its steps each gained about that.
         if !at_x
-            keep = curvature === :chord && exact && converged &&
+            keep = curvature !== :exact && exact && converged &&
                 _ctsem_hessian_distance(_ctsem_information_split(H;
                     rtol=flat_rtol, negative=negative), hat, x) <= reuse_se
-            if !keep
+            if !keep && curvature !== :exact
+                H = hess(x); Hs = H; hat = copy(x); exact = true; at_x = true
+                H === nothing && break
+                radius = Inf
+                if take_steps && rewalks < max_rewalks
+                    rewalks += 1
+                    budget = steps + per_hessian
+                    continue
+                end
+            elseif !keep
                 for _ in 1:5
                     if !at_x
                         H = hess(x); Hs = H; hat = copy(x); exact = true; at_x = true
+                        radius = Inf
                     end
                     H === nothing && break
                     take_steps || break
-                    nt = newton(H, G, 0.0)
+                    nt = newton(H, G, radius)
                     gain = nt === nothing ? Inf : nt.gain
                     (nt === nothing || gain < tol || steps >= maxit + 5) && break
-                    trial = search(nt.step, dot(G, nt.step))
+                    trial = trust(H, nt, radius)
                     trial.ok || break
                     Gn = similar(G)
                     fg!(nothing, Gn, trial.x); gcalls += 1
                     x = trial.x; f = trial.f; G = Gn; steps += 1; at_x = false
-                    remember!("exact", gain, trial.alpha)
+                    remember!("exact", gain, trial.nt.fraction)
                     report(gain)
                 end
                 # A step on the last round leaves the Hessian one point behind.
@@ -1112,7 +1277,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
     split = H === nothing ? nothing :
         _ctsem_information_split(H; rtol=flat_rtol, negative=negative)
     if H !== nothing
-        nt = newton(H, G, 0.0)
+        nt = newton(H, G, Inf)
         gain = nt === nothing ? Inf : nt.gain
     end
     distance = H === nothing ? NaN : _ctsem_hessian_distance(split, hat, x)
