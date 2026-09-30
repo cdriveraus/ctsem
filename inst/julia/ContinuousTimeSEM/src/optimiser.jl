@@ -83,8 +83,11 @@ _ctsem_lbfgs_reset!(M::CTSEMLBFGSMemory) =
 
 # H * q for the inverse-Hessian approximation, with `dinv` the metric's inverse
 # diagonal (all ones for no metric). With no pairs, returns `h0 * D^-1 q`.
+# `diagonal`, when given, is the initial inverse Hessian itself, one scale per
+# coordinate (`_ctsem_lbfgs_diagonal!`), in place of the metric's shape times
+# the latest pair's one secant ratio.
 function _ctsem_lbfgs_hmul(M::CTSEMLBFGSMemory, q::AbstractVector, h0::Float64,
-        dinv::Vector{Float64})
+        dinv::Vector{Float64}, diagonal=nothing)
     k = length(M.S)
     k == 0 && return h0 .* dinv .* q
     r = collect(Float64, q)
@@ -93,14 +96,61 @@ function _ctsem_lbfgs_hmul(M::CTSEMLBFGSMemory, q::AbstractVector, h0::Float64,
         a[i] = M.rho[i] * dot(M.S[i], r)
         r .-= a[i] .* M.Y[i]
     end
-    y = M.Y[k]
-    gamma = dot(M.S[k], y) / sum(i -> y[i]^2 * dinv[i], eachindex(y))
-    r .= gamma .* dinv .* r
+    if diagonal === nothing
+        y = M.Y[k]
+        gamma = dot(M.S[k], y) / sum(i -> y[i]^2 * dinv[i], eachindex(y))
+        r .= gamma .* dinv .* r
+    else
+        r .= diagonal .* r
+    end
     @inbounds for i in 1:k
         b = M.rho[i] * dot(M.Y[i], r)
         r .+= (a[i] - b) .* M.S[i]
     end
     r
+end
+
+"""
+    _ctsem_lbfgs_diagonal!(B, s, y, dinv)
+
+The diagonal of the BFGS update of a diagonal Hessian approximation `B` by the
+curvature pair `(s, y)` -- Gilbert & Lemaréchal's (1989) diagonal update, the
+one M1QN3 uses for L-BFGS's initial matrix -- in place, returning the inverse
+diagonal the two-loop recursion takes. `B === nothing` starts it at the
+Oren-Spedicato scaling of the metric's shape, `B = (y'D^-1 y / s'y) D`, the
+matrix the scalar rule would have used, before the pair's own update.
+
+    B_i <- B_i - (B_i s_i)^2 / s'Bs + y_i^2 / s'y
+
+Each term keeps `B_i` positive for a pair with `s'y > 0` (the first two are
+`B_i (1 - B_i s_i^2 / s'Bs) >= 0`), so no coordinate can turn negative; a floor
+at `1e-12` of the largest stops a coordinate the pairs never touch from
+reaching zero. Why a diagonal: one secant ratio sets the scale of every
+coordinate from the latest step, which is the stiffest curvature the step saw,
+so on a model whose curvatures span orders of magnitude the weakly determined
+coordinates take steps a thousandth of their own scale; the diagonal learns each
+coordinate's scale from the pairs, as a per-parameter step size would, while the
+two-loop recursion keeps the curvature between coordinates.
+"""
+function _ctsem_lbfgs_diagonal!(B, s::Vector{Float64}, y::Vector{Float64},
+        dinv::Vector{Float64})
+    sy = dot(s, y)
+    if B === nothing
+        scale = sum(i -> y[i]^2 * dinv[i], eachindex(y)) / sy
+        B = [scale / d for d in dinv]
+    end
+    Bs = B .* s
+    sBs = dot(s, Bs)
+    if sBs > 0 && isfinite(sBs)
+        @inbounds for i in eachindex(B)
+            B[i] = B[i] - Bs[i]^2 / sBs + y[i]^2 / sy
+        end
+    end
+    lo = 1e-12 * maximum(B; init=0.0)
+    @inbounds for i in eachindex(B)
+        (isfinite(B[i]) && B[i] > lo) || (B[i] = lo > 0 ? lo : 1.0)
+    end
+    B
 end
 
 """
@@ -123,7 +173,8 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         metric=nothing, initial_alpha::Real=0.1, maxiter::Integer=1000,
         g_tol::Real=1e-8, f_tol::Real=0.0, x_tol::Real=0.0,
         callback=nothing, directional=nothing, batch=nothing,
-        c1::Real=1e-4, maxbacktrack::Integer=40, iteration0::Integer=0)
+        c1::Real=1e-4, maxbacktrack::Integer=40, iteration0::Integer=0,
+        diagonal::Bool=false, nonmonotone::Real=0.0)
     n = length(x0)
     x = collect(Float64, x0)
     dinv = metric === nothing ? ones(n) : begin
@@ -151,8 +202,20 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
     gconv = maximum(abs, G; init=0.0) <= g_tol
     fconv = false; xconv = false; lsfail = false
     retried = false
+    # `diagonal`: the initial inverse Hessian learned per coordinate from the
+    # pairs (`_ctsem_lbfgs_diagonal!`), `B` its inverse, rather than the
+    # metric's shape times one secant ratio. `nonmonotone`: Zhang & Hager's
+    # (2004) line search, which accepts a step against `C`, a running average
+    # of the values the steps reached weighted by `eta`, rather than against the
+    # last one -- so a step may rise above where it started while it stays
+    # below the recent level, which lets a step cross a curved valley that a
+    # monotone search would cut short. `eta = 0` makes `C` the last value: the
+    # search is then exactly the monotone Armijo one.
+    B = nothing; Dinv = nothing
+    eta = clamp(Float64(nonmonotone), 0.0, 1.0)
+    C = f; Q = 1.0
     while !stopped && !gconv && iteration < maxiter
-        s = -_ctsem_lbfgs_hmul(M, G, h0, dinv)
+        s = -_ctsem_lbfgs_hmul(M, G, h0, dinv, Dinv)
         # With no curvature pairs the step is the metric's alone, and at a start
         # where the transforms are flat the metric says a raw unit is worth
         # almost nothing -- so 0.1 in model units is an enormous raw step. One
@@ -167,6 +230,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
             # Not a descent direction: the memory has gone bad. Start it again.
             isempty(M.S) && (lsfail = true; break)
             _ctsem_lbfgs_reset!(M); h0 = Float64(initial_alpha) / max(metric_norm(G), eps())
+            B = nothing; Dinv = nothing; C = f; Q = 1.0
             continue
         end
         # The first trial carries the gradient too: most steps are accepted
@@ -176,7 +240,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         Gn = similar(G)
         fn = evaluate!(0.0, Gn, xn); fcalls += 1; gcalls += 1
         have_gradient = true
-        accepted = isfinite(fn) && fn <= f + c1 * alpha * dphi
+        accepted = isfinite(fn) && fn <= C + c1 * alpha * dphi
         k = 0
         while !accepted && k < maxbacktrack
             k += 1
@@ -187,7 +251,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
             xn = x .+ alpha .* s
             fn = evaluate!(0.0, nothing, xn); fcalls += 1
             have_gradient = false
-            accepted = isfinite(fn) && fn <= f + c1 * alpha * dphi
+            accepted = isfinite(fn) && fn <= C + c1 * alpha * dphi
         end
         if !accepted
             # A stale memory is the usual cause; drop it once, then give up.
@@ -195,6 +259,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
                 retried = true
                 _ctsem_lbfgs_reset!(M)
                 h0 = Float64(initial_alpha) / max(metric_norm(G), eps())
+                B = nothing; Dinv = nothing; C = f; Q = 1.0
                 continue
             end
             lsfail = true
@@ -209,8 +274,14 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         iteration += 1
         fconv = abs(fn - f) <= f_tol * abs(fn)
         xconv = maximum(abs, step; init=0.0) <= x_tol
-        _ctsem_lbfgs_push!(M, step, Gn .- G)
+        dG = Gn .- G
+        if _ctsem_lbfgs_push!(M, step, dG) && diagonal
+            B = _ctsem_lbfgs_diagonal!(B, step, dG, dinv)
+            Dinv = 1 ./ B
+        end
         x = xn; f = fn; G = Gn
+        Qn = eta * Q + 1
+        C = (eta * Q * C + f) / Qn; Q = Qn
         gconv = maximum(abs, G; init=0.0) <= g_tol
         stopped = callback !== nothing && callback(CTSEMIterate(
             iteration0 + iteration, f, maximum(abs, G; init=0.0))) === true
@@ -221,13 +292,15 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         # it is the whole data the batch steps aside and the caller's own
         # objective is used from then on.
         if batch !== nothing && !stopped &&
-                _ctsem_batch_step!(batch, x, G, q -> _ctsem_lbfgs_hmul(M, q, h0, dinv), iteration)
+                _ctsem_batch_step!(batch, x, G, q -> _ctsem_lbfgs_hmul(M, q, h0, dinv, Dinv), iteration)
             if _ctsem_batch_full(batch)
                 sizes = batch.sizes; its = batch.iterations
                 batch = nothing
             end
             f = evaluate!(0.0, G, x); fcalls += 1; gcalls += 1
             gconv = maximum(abs, G; init=0.0) <= g_tol
+            # The reference level belongs to the objective it averaged.
+            C = f; Q = 1.0
         end
         (fconv && f_tol > 0) && break
         (xconv && x_tol > 0) && break
