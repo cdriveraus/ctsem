@@ -850,10 +850,20 @@ ranking at linear cost. See `_ctsem_overshot` for what the ranking is for.
 const _CTSEM_PULLBACK_FRACTIONS = (0.5, 0.25, 0.1, 0.0, -0.1, -0.25, -0.5, -1.0)
 
 """
-    _ctsem_pullback_sets(minimizer)
+Up to this many coordinates the magnitude probe tries every prefix; beyond it,
+prefixes of doubling size (`_ctsem_pullback_sets`).
+"""
+const _CTSEM_PULLBACK_DENSE = 16
+
+"""
+    _ctsem_pullback_sets(minimizer, flagged = Int[]; dense = _CTSEM_PULLBACK_DENSE)
 
 The coordinate sets the magnitude probe pulls back: every prefix of the
-coordinates sorted by `|raw|` descending.
+coordinates sorted by `|raw|` descending, up to `dense` of them; then prefixes
+of `2 dense`, `4 dense`, ... and all `n`; and `flagged`, the coordinates a
+detector reported flat, as a set of its own when one of them is ranked beyond
+the dense prefixes, so a flat coordinate is never reached only as part of a
+pullback of dozens of others.
 
 There is no threshold in that, which is the point. A *cutoff* on raw magnitude
 is the heuristic `ctsem_optimize`'s saturation note explains was abandoned,
@@ -874,14 +884,33 @@ exhaustive search over every subset of the six population coordinates found
 nothing better than the prefix -- so the ordering is doing the work and the
 only question was how finely to sample it.
 
-`n` sets of `length(fractions)` evaluations, worst case, and it stops at the
-first improvement.
+Dense only up to `dense`, because every prefix of every size costs
+`length(fractions)` evaluations each: on a 715-parameter model (341 covariate
+effects) the stall watch's probe ran 8 x 715 value-only evaluations, an hour at
+three threads, silent. The escaping sets on record are three and four
+coordinates, a collapsed scale and the correlations that follow it out; a
+prefix of hundreds is a move toward the origin, which the doubling sizes still
+try. A model of at most `dense` parameters gets every prefix, as before.
+
+At most `dense + log2(n / dense) + 2` sets of `length(fractions)` evaluations,
+and it stops at the first improvement.
 """
-function _ctsem_pullback_sets(minimizer)
+function _ctsem_pullback_sets(minimizer, flagged=Int[];
+        dense::Integer=_CTSEM_PULLBACK_DENSE)
     n = length(minimizer)
     n == 0 && return Vector{Int}[]
     order = sortperm(collect(minimizer); by=abs, rev=true)
-    return [order[1:k] for k in 1:n]
+    sets = [order[1:k] for k in 1:min(n, dense)]
+    rank = invperm(order)
+    extra = sort!(unique(p for p in flagged if 1 <= p <= n))
+    any(p -> rank[p] > dense, extra) && push!(sets, extra)
+    k = 2 * dense
+    while k < n
+        push!(sets, order[1:k])
+        k *= 2
+    end
+    n > dense && push!(sets, order)
+    return sets
 end
 
 """
@@ -938,14 +967,18 @@ saturation detector flags -- the other two have transforms that are merely
 unresponsive rather than flat -- so selecting the set from the flag cannot work
 either. See `_ctsem_pullback_sets` for what is selected instead.
 
-At most `length(fractions) * npar` value-only evaluations, once per fit, and it
-stops at the first set that improves -- so `gain` is a lower bound on what is
-left rather than the best pullback available. The question it answers is
-whether the estimate is a maximum, and any improvement settles that.
+At most `length(fractions)` value-only evaluations per set of
+`_ctsem_pullback_sets`, and it stops at the first set that improves -- so
+`gain` is a lower bound on what is left rather than the best pullback
+available. The question it answers is whether the estimate is a maximum, and
+any improvement settles that. `progress`, when given, is called `(done, total)`
+before each set (`_ctsem_probe_progress`); each set passes an interrupt
+checkpoint, since the value calls themselves refuse every exception as an
+unusable point.
 """
 function _ctsem_overshot(objective, minimizer, saturated_parameters, value,
         tolerance; fractions=_CTSEM_PULLBACK_FRACTIONS,
-        mode=_CTSEM_OVERSHOOT_PROBE[])
+        mode=_CTSEM_OVERSHOOT_PROBE[], progress=nothing)
     gain = 0.0
     empty_result = (overshot=false, gain=gain, coordinates=Int[], point=Float64[])
     (!isfinite(value) || isempty(minimizer)) && return empty_result
@@ -954,7 +987,7 @@ function _ctsem_overshot(objective, minimizer, saturated_parameters, value,
     sets = if mode === :saturation
         [[p] for p in saturated_parameters if 1 <= p <= length(minimizer)]
     else
-        _ctsem_pullback_sets(minimizer)
+        _ctsem_pullback_sets(minimizer, saturated_parameters)
     end
     isempty(sets) && return empty_result
     keep = collect(minimizer)
@@ -965,7 +998,9 @@ function _ctsem_overshot(objective, minimizer, saturated_parameters, value,
     # fall straight back into the basin a caller is trying to leave. What to do
     # when nothing improves is decided by which coordinate is on a boundary,
     # not by which near miss was nearest -- see `.ctBackendStallEscape()`.
-    for set in sets
+    for (i, set) in enumerate(sets)
+        _ctsem_interrupt_check()
+        progress === nothing || progress(i - 1, length(sets))
         for f in fractions
             for p in set; probe[p] = f * keep[p]; end
             trial = _ctsem_probe_value(objective, probe)
@@ -1479,7 +1514,7 @@ resumed stage can still stop on progress alone.
 """
 function _ctsem_stall_verdict!(watch::CTSEMStallWatch, trace::CTSEMTrace,
         iteration::Integer, objective, params, values, range, ratio::Real;
-        tolerance::Real=1e-6)
+        tolerance::Real=1e-6, progress=nothing, report=nothing)
     watch.window >= 1 || return false
     params === nothing && !watch.alone && return false
     iteration >= watch.quiet_until || return false
@@ -1525,7 +1560,8 @@ function _ctsem_stall_verdict!(watch::CTSEMStallWatch, trace::CTSEMTrace,
             value = _ctsem_probe_value(objective, values)
             out = if isfinite(value)
                 try
-                    _ctsem_overshot(objective, values, flat, value, tolerance)
+                    _ctsem_overshot(objective, values, flat, value, tolerance;
+                        progress=progress)
                 catch err
                     _ctsem_must_propagate(err) && rethrow()
                     nothing
@@ -1533,6 +1569,8 @@ function _ctsem_stall_verdict!(watch::CTSEMStallWatch, trace::CTSEMTrace,
             else
                 nothing
             end
+            report === nothing || report(iteration, flat,
+                out === nothing ? NaN : Float64(out.gain))
             if out !== nothing && out.overshot && !isempty(out.point)
                 watch.flat = flat
                 watch.point = collect(Float64, out.point)
@@ -1690,7 +1728,7 @@ function _ctsem_optimise_verdict(objective, minimizer, start_values, value,
         gradient_norm, predicted_gain, last_gain, saturated_parameters,
         g_tol, converge_tol;
         label::AbstractString="ctsem_optimize", verbose::Bool=false,
-        overshoot_probe=_CTSEM_OVERSHOOT_PROBE[])
+        overshoot_probe=_CTSEM_OVERSHOOT_PROBE[], progress=nothing)
     moved = isempty(minimizer) ? 0.0 : maximum(abs, minimizer .- start_values)
     saturated = !isempty(saturated_parameters)
     stalled = moved == 0 && (!isfinite(value) || gradient_norm > max(g_tol, 1e-6))
@@ -1702,7 +1740,7 @@ function _ctsem_optimise_verdict(objective, minimizer, start_values, value,
     overshoot = _ctsem_overshoot_skippable(minimizer, saturated_parameters) ?
         (overshot=false, gain=0.0, coordinates=Int[], point=Float64[]) :
         _ctsem_overshot(objective, minimizer, saturated_parameters,
-            value, converge_tol; mode=overshoot_probe)
+            value, converge_tol; mode=overshoot_probe, progress=progress)
     overshot = overshoot.overshot
     verbose && stalled && println(_console(), label, ": the optimizer made no ",
         "progress from its starting values; reporting this as not converged")
@@ -1883,6 +1921,16 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     stall = CTSEMStallWatch(window=stall_window, fraction=stall_fraction,
         cooldown=stall_cooldown, tighten=stall_tighten,
         tightenings=stall_tightenings, carried=stall_carried, alone=stall_alone)
+    # Under `verbose`, each stall check that found a flat coordinate says which,
+    # and what pulling back gained -- a check that does not stop the fit
+    # otherwise leaves no trace of having run.
+    stall_report = verbose ? function (iteration, flat, gain)
+        _progress_break(reporter)
+        println(_console(), label, ": stall check at iteration ", iteration,
+            ": raw parameter(s) ", flat, " flat, raw ",
+            round.(current_x[flat]; digits=2), "; pulling back gains ", gain)
+        flush(_console())
+    end : nothing
     watch = function (state)
         latest = state isa AbstractVector ? last(state) : state
         _record!(trace, latest.iteration, -latest.value, latest.g_norm,
@@ -1935,7 +1983,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         if _ctsem_stall_verdict!(stall, trace, latest.iteration, objective,
                 _ctsem_params(objective), current_x,
                 _ctsem_saturation_range(objective, current_x), stall_ratio;
-                tolerance=converge_tol)
+                tolerance=converge_tol, progress=_ctsem_probe_progress(reporter),
+                report=stall_report)
             # Stuck on progress alone (a resumed stage) or stalled and flat
             # with somewhere better to go: different findings, and only the
             # second hands back a point to resume from.
@@ -2148,8 +2197,9 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # thing about the fit the user most needs to know. The cap is L-BFGS's: the
     # finish's steps are counted in the line but have a budget of their own,
     # as many as its Hessian cost where that is dear, so on a large model they
-    # alone can pass `maxiter` in a fit that converged.
-    capped = !progress_budget && iterations >= Int(maxiter)
+    # alone can pass `maxiter` in a fit that converged. So the line says what
+    # the stop reason says.
+    capped = !progress_budget && stop_reason == "cap"
     progress && _progress_done(reporter,
         @sprintf("%d iterations%s", iterations,
             capped ? " -- ITERATION CAP REACHED, not converged" : ""),
@@ -2212,7 +2262,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     verdict = _ctsem_optimise_verdict(objective, minimizer, start_values,
         final.value, gradient_norm, _ctsem_predicted_gain(directional),
         _ctsem_last_gain(trace), saturated_parameters, g_tol, converge_tol;
-        label=label, verbose=verbose, overshoot_probe=overshoot_probe)
+        label=label, verbose=verbose, overshoot_probe=overshoot_probe,
+        progress=_ctsem_probe_progress(reporter))
     saturated = verdict.saturated
     stalled = verdict.stalled
     finite_gradient = verdict.finite_gradient
