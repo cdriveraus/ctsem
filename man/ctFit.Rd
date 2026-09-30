@@ -279,8 +279,16 @@ What is left is a capability one backend has and the other does not.
 the gradient bar at which it restarts a stalled fit (\code{stalltol});
 \code{backend='julia'} alone has \code{gradient}, \code{datastart},
 \code{callback}, \code{saveEffects}, \code{progress}, \code{batch},
-\code{newton}, \code{restarts}, \code{restartsd} and
-\code{tipredMissingIncludeOutcome}. A \emph{value} asking for a capability
+\code{newton}, \code{restarts}, \code{restartsd}, \code{lbfgs_diagonal},
+\code{lbfgs_nonmonotone} and
+\code{tipredMissingIncludeOutcome}. \code{lbfgs_diagonal = TRUE} gives
+L-BFGS's initial inverse Hessian a scale per parameter, learned from the
+curvature pairs (Gilbert and Lemarechal's diagonal update), instead of one
+scale for all; on large models whose parameters are determined on very
+different scales it can be much faster. \code{lbfgs_nonmonotone} (between 0,
+the default, and 1) lets the line search accept a step against a running
+average of recent objective values (Zhang and Hager) rather than the last
+one. A \emph{value} asking for a capability
 the chosen backend does not have is refused by name before anything else
 happens; a value that describes what it already does is simply accepted, so
 \code{stochastic=FALSE} works on julia and \code{gradient='adjoint'} works on
