@@ -554,6 +554,41 @@ end
     @test isempty(ContinuousTimeSEM._ctsem_pullback_sets(Float64[]))
 end
 
+@testset "the diagonal L-BFGS scaling learns each coordinate's curvature" begin
+    C = ContinuousTimeSEM
+    rng = Random.MersenneTwister(3)
+    a = exp10.(range(-3, 3; length=12))      # curvatures six orders apart
+    # On a separable quadratic the true diagonal is a fixed point of the
+    # rescaled update, whatever the pair.
+    for _ in 1:5
+        s = randn(rng, 12)
+        B = C._ctsem_lbfgs_diagonal!(copy(a), s, a .* s, ones(12))
+        @test B ≈ a rtol=1e-10
+    end
+    # From the metric's shape it stays positive. (It does not approach the
+    # truth quickly from random pairs -- a factor of ~1000 off after 200 --
+    # which is not what it is for: the pairs L-BFGS feeds it follow the path.)
+    B = nothing
+    for _ in 1:200
+        s = randn(rng, 12)
+        B = C._ctsem_lbfgs_diagonal!(B, s, a .* s, ones(12))
+        @test all(>(0), B)
+    end
+    # L-BFGS with it reaches the minimum of the ill-conditioned quadratic in
+    # fewer iterations than with one secant ratio: measured 55 against 133 at
+    # the default memory, and 67 against no convergence in 5000 at memory 3.
+    fg! = function (F, G, x)
+        G === nothing || (G .= a .* x)
+        F === nothing ? nothing : 0.5 * sum(a .* x .^ 2)
+    end
+    x0 = fill(1.0, 12)
+    plain = C._ctsem_lbfgs(fg!, x0; memory=20, maxiter=2000, g_tol=1e-8)
+    diag = C._ctsem_lbfgs(fg!, x0; memory=20, maxiter=2000, g_tol=1e-8, diagonal=true)
+    @test plain.g_converged && diag.g_converged
+    @test diag.iterations < plain.iterations
+    @test maximum(abs, diag.minimizer) < 1e-4
+end
+
 @testset "beyond the dense prefixes the pullback sets double" begin
     C = ContinuousTimeSEM
     n = 100

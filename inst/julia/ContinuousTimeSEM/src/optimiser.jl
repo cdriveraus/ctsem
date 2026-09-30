@@ -117,9 +117,12 @@ The diagonal of the BFGS update of a diagonal Hessian approximation `B` by the
 curvature pair `(s, y)` -- Gilbert & Lemaréchal's (1989) diagonal update, the
 one M1QN3 uses for L-BFGS's initial matrix -- in place, returning the inverse
 diagonal the two-loop recursion takes. `B === nothing` starts it at the
-Oren-Spedicato scaling of the metric's shape, `B = (y'D^-1 y / s'y) D`, the
-matrix the scalar rule would have used, before the pair's own update.
+metric's shape `D`. Before each update `B` is rescaled by the Oren-Spedicato
+factor `y'B^-1 y / s'y`, as theirs is, so its overall scale follows the latest
+pair the way the scalar rule's does and only the shape across coordinates is
+learned; from `D` that is the matrix the scalar rule would have used.
 
+    B <- (y'B^-1 y / s'y) B
     B_i <- B_i - (B_i s_i)^2 / s'Bs + y_i^2 / s'y
 
 Each term keeps `B_i` positive for a pair with `s'y > 0` (the first two are
@@ -135,10 +138,9 @@ two-loop recursion keeps the curvature between coordinates.
 function _ctsem_lbfgs_diagonal!(B, s::Vector{Float64}, y::Vector{Float64},
         dinv::Vector{Float64})
     sy = dot(s, y)
-    if B === nothing
-        scale = sum(i -> y[i]^2 * dinv[i], eachindex(y)) / sy
-        B = [scale / d for d in dinv]
-    end
+    B === nothing && (B = [1 / d for d in dinv])
+    scale = sum(i -> y[i]^2 / B[i], eachindex(y)) / sy
+    isfinite(scale) && scale > 0 && (B .*= scale)
     Bs = B .* s
     sBs = dot(s, Bs)
     if sBs > 0 && isfinite(sBs)
