@@ -1787,7 +1787,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     maxiter::Integer=1000, g_tol::Real=1e-8, f_tol::Real=0.0,
     x_tol::Real=0.0, verbose::Bool=false, gradient_method=:adjoint,
     tune_chunks::Bool=true, lbfgs_memory::Integer=_CTSEM_LBFGS_MEMORY,
-    lbfgs_diagonal::Bool=false, lbfgs_nonmonotone::Real=0.0,
+    lbfgs_diagonal::Bool=true, lbfgs_nonmonotone::Real=0.0,
     lbfgs_gll::Integer=0, sgd::Bool=false, sgd_maxiter::Integer=2000, sgd_progress::Real=1e-3,
     progress_overwrite::Bool=true, progress_sink=nothing,
     progress_callback=nothing,

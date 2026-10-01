@@ -41,6 +41,8 @@ BENCH_VARIANTS <- list(
   # Lemarechal's diagonal update) instead of one secant ratio. Paired with
   # `default` on the same build: whether it can be the default.
   diag = list(optimcontrol = list(lbfgs_diagonal = TRUE)),
+  # The scalar initial scale, the default before the diagonal became it.
+  scalar = list(optimcontrol = list(lbfgs_diagonal = FALSE)),
 
   # The sgd phase (`_ctsem_sgd`) before L-BFGS: optimcontrol$stochastic.
   stoch = list(optimcontrol = list(stochastic = TRUE)),
