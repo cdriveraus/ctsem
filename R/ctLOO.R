@@ -108,7 +108,8 @@
 #' @return For \code{method = 'kfold'}, a list with \code{foldrows},
 #'   \code{foldpars}, \code{insampleLogLikRow}, \code{LogLikRowFolds},
 #'   \code{outsampleLogLikRow}, \code{insampleLogLik}, \code{outsampleLogLik}
-#'   and entropy and standard deviation summaries. \code{scoring} is added
+#'   and entropy and standard deviation summaries, and \code{processes},
+#'   whether the folds ran in worker processes. \code{scoring} is added
 #'   whenever the folds were refit, naming what was scored and that they are
 #'   uncertified (see Details); an \code{intoverpop = 'laplace'} fit also adds
 #'   \code{insampleLogLikSubject} and \code{outsampleLogLikSubject}. For
@@ -297,6 +298,9 @@ ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
   
   out <- list(
     foldrows=samplerows,
+    # Whether the folds ran in a cluster of worker processes, as the julia
+    # path reports.
+    processes = isTRUE(parallelFolds && cores > 1),
     foldpars = as.matrix(data.frame(lapply(folded,function(x) x$pars))),
     # outsampleLogLikFolds=lloos,
     insampleLogLikRow=llrow,

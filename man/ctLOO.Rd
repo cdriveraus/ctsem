@@ -62,7 +62,8 @@ leave-one-out, available only for \code{backend = 'julia'} fits with
 For \code{method = 'kfold'}, a list with \code{foldrows},
   \code{foldpars}, \code{insampleLogLikRow}, \code{LogLikRowFolds},
   \code{outsampleLogLikRow}, \code{insampleLogLik}, \code{outsampleLogLik}
-  and entropy and standard deviation summaries. \code{scoring} is added
+  and entropy and standard deviation summaries, and \code{processes},
+  whether the folds ran in worker processes. \code{scoring} is added
   whenever the folds were refit, naming what was scored and that they are
   uncertified (see Details); an \code{intoverpop = 'laplace'} fit also adds
   \code{insampleLogLikSubject} and \code{outsampleLogLikSubject}. For
