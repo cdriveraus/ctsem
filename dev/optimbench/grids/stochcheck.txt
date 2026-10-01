@@ -1,0 +1,33 @@
+# stochcheck grid: optimcontrol$stochastic = TRUE (the sgd phase) on the diagcheck cells,
+# paired with diagcheck's default cells (the default path is unchanged since).
+#
+cf_gaussian.aug.d1.s1.stoch             cf_gaussian  1    augmented  default:1                stoch
+cf_gaussian.lap.d1.s1.stoch             cf_gaussian  1    laplace    default:1                stoch
+cf_binary.aug.d1.s1.stoch               cf_binary    1    augmented  default:1                stoch
+cf_binary.lap.d1.s1.stoch               cf_binary    1    laplace    default:1                stoch
+cf_ordinal.aug.d1.s1.stoch              cf_ordinal   1    augmented  default:1                stoch
+cf_ordinal.lap.d1.s1.stoch              cf_ordinal   1    laplace    default:1                stoch
+cf_mixed.aug.d1.s1.stoch                cf_mixed     1    augmented  default:1                stoch
+cf_mixed.lap.d1.s1.stoch                cf_mixed     1    laplace    default:1                stoch
+gA1.lap.cfg.s1.stoch                    gA1          cfg  laplace    default:1                stoch
+gA14.lap.cfg.s1.stoch                   gA14         cfg  laplace    default:1                stoch
+gB2.lap.cfg.s1.stoch                    gB2          cfg  laplace    default:1                stoch
+gB8.lap.cfg.s1.stoch                    gB8          cfg  laplace    default:1                stoch
+gC2.lap.cfg.s1.stoch                    gC2          cfg  laplace    default:1                stoch
+gC8.lap.cfg.s1.stoch                    gC8          cfg  laplace    default:1                stoch
+gD1.lap.cfg.s1.stoch                    gD1          cfg  laplace    default:1                stoch
+gD3.lap.cfg.s1.stoch                    gD3          cfg  laplace    default:1                stoch
+acnonlin.lap.cfg.s1.stoch               acnonlin     cfg  laplace    default:1                stoch
+mvmix.lap.cfg.s1.stoch                  mvmix        cfg  laplace    default:1                stoch
+mvmix.aug.cfg.s1.stoch                  mvmix        cfg  augmented  default:1                stoch
+jflat.lap.cfg.s1.stoch                  jflat        cfg  laplace    default:1                stoch
+gN1.lap.cfg.s1.stoch                    gN1          cfg  laplace    default:1                stoch
+gN3.lap.cfg.s1.stoch                    gN3          cfg  laplace    default:1                stoch
+small.aug.d1.s1.stoch                   small        1    augmented  default:1                stoch
+nonlin.aug.d1.s1.stoch                  nonlin       1    augmented  default:1                stoch
+long.aug.d1.s1.stoch                    long         1    augmented  default:1                stoch
+bigp.aug.d1.s1.stoch                    bigp         1    augmented  default:1                stoch
+panel.aug.d1.s1.stoch                   panel        1    augmented  default:1                stoch
+ordinal.lap.d1.s1.stoch                 ordinal      1    laplace    default:1                stoch
+anomS1.lap.cfg.s1.stoch                 anomS1       cfg  laplace    default:1                stoch
+anomS2.lap.cfg.s1.stoch                 anomS2       cfg  laplace    default:1                stoch

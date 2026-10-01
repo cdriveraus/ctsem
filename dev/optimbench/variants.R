@@ -42,6 +42,9 @@ BENCH_VARIANTS <- list(
   # `default` on the same build: whether it can be the default.
   diag = list(optimcontrol = list(lbfgs_diagonal = TRUE)),
 
+  # The sgd phase (`_ctsem_sgd`) before L-BFGS: optimcontrol$stochastic.
+  stoch = list(optimcontrol = list(stochastic = TRUE)),
+
   # No fit: evaluate the objective and the references at the start. Used with
   # a stored best-known point to check that a reference still reproduces.
   evalonly = list(fit = FALSE),
