@@ -31,9 +31,16 @@
 #' a held-out row is withheld by setting its manifest observations to missing
 #' and re-preparing, which is a row the filter propagates through without an
 #' update and without a likelihood contribution -- the same thing
-#' \code{standata$dokalmanrows} does for the stan backend. \code{parallelFolds}
-#' is ignored for julia fits, because the engine already threads its own
-#' subject loop and each fold therefore uses every core.
+#' \code{standata$dokalmanrows} does for the stan backend. For julia fits
+#' \code{parallelFolds = TRUE} runs up to \code{cores} folds at once, each in a
+#' background R session with a one-thread Julia, started and compiled for the
+#' model before the first fold (it needs the \pkg{future} package; the
+#' sessions persist for the next call, and \code{\link{ctJuliaWorkersStop}}
+#' releases them). Without it the folds run one at a time on \code{cores}
+#' threads. Folds are separate fits, so they gain more from processes than
+#' from threads, except where each fold takes only seconds and starting the
+#' sessions costs more than it saves. \code{$processes} on the result says
+#' which ran.
 #'
 #' Be aware that each fold is an independent re-optimisation, and neither
 #' backend's optimizer restarts from a flat direction. On a weakly identified
@@ -436,10 +443,6 @@ ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
 
 .ctBackendLOO <- function(fit, folds, cores, tol, subjectwise, keepfirstobs,
   leaveOutN, refit, casewiseApproximation, parallelFolds) {
-  if (isTRUE(parallelFolds)) {
-    warning("parallelFolds is ignored for backend='julia': the engine threads ",
-      "its own subject loop, so each fold already uses every core.", call. = FALSE)
-  }
   spec <- .ctBackendSpec(fit)
   model <- .ctFitModelObject(fit)
   rowsubject <- .ctFitRowSubject(fit)
@@ -484,70 +487,30 @@ ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
   }
   covariance <- fit$estimate$cov
 
-  folded <- lapply(seq_len(folds), function(foldi) {
-    heldout <- samplerows[[foldi]]
-    pars <- est
-    training <- spec$data
-    # `[-heldout, ]` would drop the rows; setting them missing keeps the
-    # subject's timeline intact, so the filter still propagates across the
-    # gap exactly as it will when the row is scored out of sample.
-    training[heldout, model$manifestNames] <- NA
-    refitting <- isTRUE(refit) && !isTRUE(casewiseApproximation)
-    trainingfit <- if (refitting || (laplace && withheld)) {
-      .ctFitReplaceData(fit, training)
-    } else NULL
-    if (isTRUE(refit)) {
-      start <- est
-      if (!is.null(scores) && !is.null(covariance)) {
-        held <- unique(rowsubject[heldout])
-        held <- held[held <= nrow(scores)]
-        if (length(held)) {
-          start <- as.numeric(est - covariance %*% colSums(scores[held, , drop = FALSE]))
-        }
-      }
-      if (isTRUE(casewiseApproximation)) {
-        pars <- start
-      } else {
-        # `tol` means the same thing here as it does on the stan branch above
-        # and as `optimcontrol$tol` does in ctFit(): the objective tolerance.
-        # It used to be handed to the engine's gradient criterion instead, so
-        # the same argument relaxed two different things depending on backend.
-        #
-        # `certify = FALSE` is explicit rather than inherited, because a fold
-        # is never certified or corrected after this call (see the comment at
-        # the top of this function) -- that is deliberate, but the fit's own
-        # optimcontrol does not say so, so a fold used to inherit whatever
-        # `certify` the full fit was made with. That reached
-        # `.ctBackendInnerGapTol()`, which aims the optimiser's cheap stopping
-        # rule inside the certification tolerance only because something will
-        # spend a Hessian closing the rest of the gap; nothing does that for a
-        # fold, so the rule should not assume it.
-        result <- try(.ctJuliaOptimise(trainingfit$model_spec, start,
-          optimcontrol = utils::modifyList(
-            as.list(fit$args$resolved$optimcontrol),
-            list(tol = tol, certify = FALSE)),
-          cores = cores),
-          silent = TRUE)
-        if (inherits(result, "try-error")) return(NULL)
-        pars <- as.numeric(result$minimizer)
-      }
-    }
-    # Scored against the *full* data, so the held-out rows have a likelihood to
-    # report; the Stan path restores `dokalmanrows` before this step for the
-    # same reason. When `leaveOutN` is used without refitting, the in-sample
-    # likelihoods are the ones wanted, and they are the same call.
-    modesFrom <- if (laplace && withheld) trainingfit$model_spec else NULL
-    out <- list(llrow = .ctBackendRowLoglik(fit, pars, modesFrom = modesFrom),
-      pars = pars)
-    if (subjectlevel) {
-      full <- .ctBackendLaplaceUnitTerms(spec, pars)
-      train <- .ctBackendLaplaceUnitTerms(trainingfit$model_spec, pars)
-      out$subject <- .ctBackendLOOHeldSubjects(full, train,
-        unique(rowsubject[heldout]))
-      out$converged <- isTRUE(all(full$converged)) && isTRUE(all(train$converged))
-    }
-    out
-  })
+  # Everything a fold reads, in one list, so a fold can run in a worker
+  # process as well as here (`.ctBackendLOOFold()`).
+  context <- list(fit = fit, spec = spec, model = model, est = est,
+    rowsubject = rowsubject, refit = refit,
+    casewiseApproximation = casewiseApproximation, laplace = laplace,
+    withheld = withheld, subjectlevel = subjectlevel, scores = scores,
+    covariance = covariance, tol = tol, cores = cores)
+  jobs <- function(context) lapply(seq_len(folds), function(foldi)
+    list(heldout = samplerows[[foldi]], context = context))
+  # `parallelFolds`: each fold whole in a worker process with a one-thread
+  # Julia (`.ctBackendWorkerMap()`), up to `cores` at a time, rather than one
+  # fold at a time on every thread. Folds are separate fits, and separate fits
+  # spread over processes rather than threads (see the worker map). Falls back
+  # to this session when the pool cannot be used.
+  folded <- NULL
+  if (isTRUE(parallelFolds) && folds > 1L) {
+    context$cores <- 1L
+    folded <- .ctBackendWorkerMap(fit, jobs(context), ".ctBackendLOOFold",
+      workers = cores, values = est)
+    context$cores <- cores
+    if (is.null(folded)) message("Folds run one at a time in this session instead.")
+  }
+  processes <- !is.null(folded)
+  if (!processes) folded <- lapply(jobs(context), .ctBackendLOOFold)
 
   usable <- !vapply(folded, is.null, logical(1L))
   if (!any(usable)) stop("Every cross-validation fold failed to refit.", call. = FALSE)
@@ -602,6 +565,8 @@ ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
 
   out <- list(
     foldrows = samplerows,
+    # Whether the folds ran in worker processes (`parallelFolds`) or here.
+    processes = processes,
     foldpars = do.call(cbind, lapply(folded[usable], function(x) x$pars)),
     # A 1-row matrix, not a vector: that is the shape the Stan path returns
     # (it comes straight out of `transformedparsfull$llrow`), and code that
@@ -648,6 +613,85 @@ ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
       "and are not curvature-certified or corrected")
     out$scoring <- if (is.null(out$scoring)) uncertified else
       paste0(out$scoring, "; ", uncertified)
+  }
+  out
+}
+
+# One cross-validation fold: refit without the held-out rows (or take the
+# score-based step instead), then score every row against the full data. Run in
+# this session or in a worker process (`ctLOO(parallelFolds = TRUE)`), so it
+# reads nothing but `job`: the held-out rows and the shared `context` built in
+# `.ctBackendLOO()`. NULL when the refit failed.
+#' @keywords internal
+.ctBackendLOOFold <- function(job) {
+  heldout <- job$heldout
+  ctx <- job$context
+  fit <- ctx$fit; spec <- ctx$spec; model <- ctx$model; est <- ctx$est
+  rowsubject <- ctx$rowsubject; refit <- ctx$refit
+  casewiseApproximation <- ctx$casewiseApproximation; laplace <- ctx$laplace
+  withheld <- ctx$withheld; subjectlevel <- ctx$subjectlevel
+  scores <- ctx$scores; covariance <- ctx$covariance; tol <- ctx$tol
+  cores <- ctx$cores
+  pars <- est
+  training <- spec$data
+  # `[-heldout, ]` would drop the rows; setting them missing keeps the
+  # subject's timeline intact, so the filter still propagates across the
+  # gap exactly as it will when the row is scored out of sample.
+  training[heldout, model$manifestNames] <- NA
+  refitting <- isTRUE(refit) && !isTRUE(casewiseApproximation)
+  trainingfit <- if (refitting || (laplace && withheld)) {
+    .ctFitReplaceData(fit, training)
+  } else NULL
+  if (isTRUE(refit)) {
+    start <- est
+    if (!is.null(scores) && !is.null(covariance)) {
+      held <- unique(rowsubject[heldout])
+      held <- held[held <= nrow(scores)]
+      if (length(held)) {
+        start <- as.numeric(est - covariance %*% colSums(scores[held, , drop = FALSE]))
+      }
+    }
+    if (isTRUE(casewiseApproximation)) {
+      pars <- start
+    } else {
+      # `tol` means the same thing here as it does on the stan branch above
+      # and as `optimcontrol$tol` does in ctFit(): the objective tolerance.
+      # It used to be handed to the engine's gradient criterion instead, so
+      # the same argument relaxed two different things depending on backend.
+      #
+      # `certify = FALSE` is explicit rather than inherited, because a fold
+      # is never certified or corrected after this call (see the comment on
+      # the Laplace optimum in `.ctBackendLOO()`) -- that is deliberate, but
+      # the fit's own
+      # optimcontrol does not say so, so a fold used to inherit whatever
+      # `certify` the full fit was made with. That reached
+      # `.ctBackendInnerGapTol()`, which aims the optimiser's cheap stopping
+      # rule inside the certification tolerance only because something will
+      # spend a Hessian closing the rest of the gap; nothing does that for a
+      # fold, so the rule should not assume it.
+      result <- try(.ctJuliaOptimise(trainingfit$model_spec, start,
+        optimcontrol = utils::modifyList(
+          as.list(fit$args$resolved$optimcontrol),
+          list(tol = tol, certify = FALSE)),
+        cores = cores),
+        silent = TRUE)
+      if (inherits(result, "try-error")) return(NULL)
+      pars <- as.numeric(result$minimizer)
+    }
+  }
+  # Scored against the *full* data, so the held-out rows have a likelihood to
+  # report; the Stan path restores `dokalmanrows` before this step for the
+  # same reason. When `leaveOutN` is used without refitting, the in-sample
+  # likelihoods are the ones wanted, and they are the same call.
+  modesFrom <- if (laplace && withheld) trainingfit$model_spec else NULL
+  out <- list(llrow = .ctBackendRowLoglik(fit, pars, modesFrom = modesFrom),
+    pars = pars)
+  if (subjectlevel) {
+    full <- .ctBackendLaplaceUnitTerms(spec, pars)
+    train <- .ctBackendLaplaceUnitTerms(trainingfit$model_spec, pars)
+    out$subject <- .ctBackendLOOHeldSubjects(full, train,
+      unique(rowsubject[heldout]))
+    out$converged <- isTRUE(all(full$converged)) && isTRUE(all(train$converged))
   }
   out
 }

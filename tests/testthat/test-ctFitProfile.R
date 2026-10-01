@@ -302,4 +302,22 @@ test_that("a profile of a simple identified parameter routes through the fit's o
   expect_equal(row$verdict, "identifiable")
   expect_equal(row$lower, 0.2363984, tolerance = 1e-3)
   expect_equal(row$upper, 0.5372844, tolerance = 1e-3)
+  expect_false(out$processes)
+
+  # Walked as processes, the same profile: every (parameter, side) walk starts
+  # from the fit and continues from its own points, so where it runs changes
+  # only the summation order of a one-thread worker against this session's.
+  # Last in this test because it may skip: a `future` worker cannot load an
+  # uninstalled tree, and the fallback compared against itself would pass
+  # without checking anything (as test-julia-sample.R's processes test says).
+  both <- c("drift", "diff")
+  serial <- ctFitProfile(fit, parameters = both, points = 4L)
+  viaprocess <- suppressMessages(ctFitProfile(fit, parameters = both,
+    points = 4L, processes = 2))
+  skip_if_not(isTRUE(viaprocess$processes),
+    "processes = 2 fell back to walking in this session")
+  columns <- c("parameter", "side", "value", "loglik")
+  expect_equal(viaprocess$profile[, columns], serial$profile[, columns],
+    tolerance = 1e-6)
+  expect_equal(viaprocess$summary, serial$summary, tolerance = 1e-6)
 })

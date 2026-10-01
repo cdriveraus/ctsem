@@ -1,8 +1,7 @@
-# STAYS ON STAN. `ctLOO()` works on julia fits, but this file exercises
-# `parallelFolds` both ways, and that argument is ignored on julia -- it warns
-# and threads inside the engine instead. Running these blocks there would
-# report a setting that had not been honoured, which is the trap CLAUDE.md
-# names. A julia fold test wants its own file and its own claims.
+# STAYS ON STAN. `ctLOO()` works on julia fits, and `parallelFolds` there runs
+# the folds in worker processes rather than PSOCK clusters; that, and the
+# julia folds generally, are tested in test-backend-loo.R with their own
+# claims. These blocks exercise the stan path's clusters.
 skip_on_cran()
 skip_on_32bit()
 {  # body of the guard this replaced; indentation unchanged

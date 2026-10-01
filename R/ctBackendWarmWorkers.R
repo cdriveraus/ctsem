@@ -300,6 +300,39 @@
   invisible(NULL)
 }
 
+# Independent jobs in the warmed worker pool: cross-validation folds
+# (`ctLOO(parallelFolds = TRUE)`), profile walks (`ctFitProfile(processes =
+# TRUE)`). Separate fits parallelise better as processes than as threads inside
+# one fit -- the subject loop's threads share one objective and its
+# synchronisation, a process shares nothing -- so a job here runs whole in one
+# worker with a one-thread Julia, warmed for the model exactly as a sampling
+# chain's worker is (`.ctBackendWarmWorkers()`), and the pool persists for the
+# next call the same way.
+#
+# `fn` names a ctsem namespace function of one argument, the job, which must
+# carry everything the function needs: the worker has the installed package and
+# the job, nothing else. A job that can fail should catch its own failure and
+# say so in its value. Returns the values in job order, or `NULL` when the pool
+# could not be used or a worker did not answer, for the caller to run the jobs
+# in this session instead -- the contract the sampler's processes path keeps.
+#' @keywords internal
+.ctBackendWorkerMap <- function(object, jobs, fn, workers, values = NULL,
+  verbose = FALSE) {
+  workers <- min(suppressWarnings(as.integer(workers)[1L]), length(jobs))
+  if (!isTRUE(workers >= 2L) || !.ctBackendCanWarm()) return(NULL)
+  handles <- .ctBackendWarmWorkers(object, workers, values = values)
+  if (.ctBackendWarmWait(handles, verbose = verbose) < 1L) return(NULL)
+  futures <- lapply(jobs, function(job) tryCatch(
+    future::future(utils::getFromNamespace(fn, "ctsem")(job), seed = TRUE),
+    error = function(e) NULL))
+  if (any(vapply(futures, is.null, logical(1L)))) return(NULL)
+  out <- lapply(futures, function(f) tryCatch(future::value(f),
+    error = function(e) structure(list(), class = "ctWorkerMapFailure",
+      message = conditionMessage(e))))
+  if (any(vapply(out, inherits, logical(1L), "ctWorkerMapFailure"))) return(NULL)
+  out
+}
+
 #' Release the warmed sampling worker pool
 #'
 #' \code{\link{ctFitUncertainty}} with \code{uncertainty = 'sample'} and

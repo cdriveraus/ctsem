@@ -67,6 +67,22 @@ test_that("ctLOO runs on a julia fit and reports the same structure as Stan's", 
   # exercise, and it is only true if the held-out rows were genuinely withheld
   # from the refit rather than merely re-scored afterwards.
   expect_lt(out$outsampleLogLik, out$insampleLogLik)
+  expect_false(out$processes)
+
+  # The same folds in worker processes (`parallelFolds`) give the same answer:
+  # a fold reads nothing but its job, and a one-thread worker sums in the same
+  # order as this session at cores = 1. Last because it may skip -- a `future`
+  # worker cannot load an uninstalled tree, and the in-session fallback
+  # compared with itself would pass without checking anything.
+  set.seed(4)
+  viaprocess <- suppressMessages(ctLOO(fit, folds = 3, cores = 2,
+    parallelFolds = TRUE))
+  skip_if_not(isTRUE(viaprocess$processes),
+    "parallelFolds fell back to running the folds in this session")
+  expect_identical(viaprocess$foldrows, out$foldrows)
+  expect_equal(viaprocess$foldpars, out$foldpars, tolerance = 1e-6)
+  expect_equal(viaprocess$outsampleLogLikRow, out$outsampleLogLikRow,
+    tolerance = 1e-6)
 })
 
 test_that("without refitting, the out-of-sample likelihoods are the in-sample ones", {

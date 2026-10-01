@@ -12,7 +12,8 @@ ctFitProfile(
   growth = 1.6,
   level = 0.95,
   maxiter = 500L,
-  verbose = 0
+  verbose = 0,
+  processes = FALSE
 )
 }
 \arguments{
@@ -43,6 +44,16 @@ quickly rather than in a hundred equal steps.}
 \item{maxiter}{iteration cap for each constrained optimisation.}
 
 \item{verbose}{0 for silence, 1 to report each point as it is computed.}
+
+\item{processes}{\code{FALSE} (the default) walks each parameter's two
+sides one after another in this session. \code{TRUE}, or a number of
+sessions, walks them at once, each in a background R session with a
+one-thread Julia, started and compiled for the model first (it needs the
+\pkg{future} package; the sessions persist for the next call, and
+\code{\link{ctJuliaWorkersStop}} releases them). \code{TRUE} uses as many
+sessions as the fit's \code{cores}, and at least two. The walks are
+independent, so the profile is the same either way, except that with
+processes every walk finishes before \code{$better} is reported.}
 }
 \value{
 An object of class \code{ctFitProfile}, which
