@@ -110,6 +110,7 @@
 "test-ctOptimUncertainty.R","uncertainty","core"
 "test-julia-particle-correct.R","uncertainty","core"
 "test-julia-sample.R","uncertainty","core"
+"test-ess-target.R","uncertainty","core"
 "test-backend-priors-scores.R","uncertainty","extended"
 "test-ctCoverageCheck.R","uncertainty","extended"
 "test-julia-intoverstates.R","uncertainty","extended"
