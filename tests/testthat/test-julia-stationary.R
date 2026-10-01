@@ -11,15 +11,17 @@ skip_without_julia()
 # Two latents, a DRIFT cell written by a PARS transform (so the predict group
 # has to run before the stationary moments read it), and a TI predictor on
 # CINT (so subjects have different stationary means).
-.stat_model <- function(...) {
-  m <- suppressMessages(ctModel(type = "ct", LAMBDA = diag(2),
-    latentNames = c("a", "b"), manifestNames = c("y1", "y2"),
+.stat_model <- function(type = "ct",
     DRIFT = matrix(c("d11", "d21", "PARS[1,1]", "d22"), 2, 2),
-    PARS = matrix("p1", 1, 1), MANIFESTMEANS = matrix(0, 2, 1),
+    PARS = matrix("p1", 1, 1)) {
+  # The effect is set below; ctModel warns that none is, first.
+  m <- suppressWarnings(suppressMessages(ctModel(type = type, LAMBDA = diag(2),
+    latentNames = c("a", "b"), manifestNames = c("y1", "y2"),
+    DRIFT = DRIFT, PARS = PARS, MANIFESTMEANS = matrix(0, 2, 1),
     MANIFESTVAR = diag(.3, 2), CINT = matrix(c("c1", "c2"), 2, 1),
-    n.TIpred = 1, TIpredNames = "g", tipredDefault = FALSE, silent = TRUE,
-    ...))
+    n.TIpred = 1, TIpredNames = "g", tipredDefault = FALSE, silent = TRUE)))
   m$pars$indvarying <- FALSE
+  m$pars$g_effect[m$pars$param %in% "c1"] <- TRUE
   m
 }
 
@@ -58,7 +60,6 @@ skip_without_julia()
 
 test_that("each subject starts from the stationary distribution of its own dynamics", {
   m <- .stat_model()
-  m$pars$g_effect[m$pars$param %in% "c1"] <- TRUE
   dat <- .stat_data()
   spec <- suppressMessages(ctFit(dat, m, backend = "julia", fit = FALSE,
     stationary = TRUE))
@@ -92,7 +93,6 @@ test_that("each subject starts from the stationary distribution of its own dynam
 
 test_that("the reverse pass differentiates the stationary start", {
   m <- .stat_model()
-  m$pars$g_effect[m$pars$param %in% "c1"] <- TRUE
   spec <- suppressMessages(ctFit(.stat_data(), m, backend = "julia",
     fit = FALSE, stationary = TRUE))
   npar <- ctsem:::.ctBackendNpar(spec)
@@ -126,8 +126,8 @@ test_that("stationary = TRUE is refused where there is no one distribution to st
     fit = FALSE, stationary = NA)), "TRUE or FALSE")
 
   # A state reaching DRIFT through PARS.
-  statedep <- .stat_model()
-  statedep$pars$param[statedep$pars$matrix %in% "PARS"] <- "p1 * b"
+  statedep <- .stat_model(PARS = matrix(c("p1", "p1 * b"), 2, 1),
+    DRIFT = matrix(c("d11", "d21", "PARS[2,1]", "d22"), 2, 2))
   expect_error(prep(statedep), "DRIFT\\[1,2\\] depend on the latent states")
 
   # A latent that never settles.
