@@ -267,14 +267,24 @@ L-BFGS keeps. \code{initsd} is the sd of the random start on both.
 \code{uncertaintyDraws} and \code{uncertaintyControl} also work on both, and
 so does \code{stallretries}, with each backend's own retry (see below).
 
+\code{stochastic} is shared too. \code{TRUE} starts with ctsem's
+stochastic-gradient optimizer and finishes with the quasi-Newton one; on
+stan that is \code{sgd()}, the default there. On julia it is a reduction of
+\code{sgd()} to the mechanisms that carry it -- a step per parameter adapted
+by how often its gradient changes sign, momentum, a square-root-compressed
+direction and non-monotone acceptance -- run until its progress slows, then
+L-BFGS. \code{'auto'} does so above 50 parameters, and \code{FALSE}, the
+julia default, does not. On large, poorly conditioned models it can be much
+faster than L-BFGS alone; \code{fit$optim$sgd_iterations} records the phase.
+
 The \emph{defaults} are each backend's own, and are mirror images: stan stops
 on the objective (\code{tol = 1e-8}, \code{g_tol} off), julia on the gradient
 (\code{g_tol = 1e-8}, \code{tol} off). Leaving a name unset keeps that
 backend's default; setting one is honoured by both.
 
 What is left is a capability one backend has and the other does not.
-\code{backend='stan'} alone has the stochastic-gradient optimizer
-(\code{stochastic}, \code{nsubsets}, \code{subsamplesize},
+\code{backend='stan'} alone has the stochastic-gradient optimizer's own
+tuning (\code{nsubsets}, \code{subsamplesize},
 \code{lproughnesstarget}, \code{stochasticTolAdjust}, \code{parsteps}) and
 the gradient bar at which it restarts a stalled fit (\code{stalltol});
 \code{backend='julia'} alone has \code{gradient}, \code{datastart},
@@ -291,7 +301,7 @@ average of recent objective values (Zhang and Hager) rather than the last
 one. A \emph{value} asking for a capability
 the chosen backend does not have is refused by name before anything else
 happens; a value that describes what it already does is simply accepted, so
-\code{stochastic=FALSE} works on julia and \code{gradient='adjoint'} works on
+\code{nsubsets = 1} works on julia and \code{gradient='adjoint'} works on
 stan.
 With \code{intoverpop='laplace'}, \code{optimcontrol$laplace_inner_maxiter}
 (default 200) and \code{optimcontrol$laplace_inner_tol} (default 1e-10) tune

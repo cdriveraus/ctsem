@@ -106,6 +106,20 @@ skip_on_32bit()
   .jconv_cache$fit
 }
 
+test_that("the sgd phase (stochastic = TRUE) runs first and the fit still reaches the maximum", {
+  # The same certified optimum the default fit reaches below, through
+  # `_ctsem_sgd` then L-BFGS: the phase changes the path, not the answer, and
+  # is recorded on the fit.
+  expect_identical(.jconv_fit()$optim$sgd_iterations, 0L)
+  fit <- suppressWarnings(suppressMessages(ctFit(.jconv_data(), .jconv_model(),
+    backend = "julia", cores = 1, verbose = 0,
+    optimcontrol = list(stochastic = TRUE))))
+  expect_gt(fit$optim$sgd_iterations, 0L)
+  expect_lt(fit$optim$sgd_iterations, fit$optim$iterations)
+  expect_equal(fit$estimate$loglik, -251.8548, tolerance = 1e-4)
+  expect_equal(fit$uncertainty$certification$status, "certified")
+})
+
 test_that("the optimiser reaches the maximum and says so", {
   fit <- .jconv_fit()
   # `e` is what was estimated, `o` the run that found it.

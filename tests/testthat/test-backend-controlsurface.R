@@ -44,11 +44,9 @@ test_that("stanoptimis() takes the shared stopping rules, with defaults that cha
 })
 
 test_that("a stan-only capability is refused on julia when the value asks for it", {
-  # The julia optimiser is L-BFGS over the full data: no stochastic gradient
-  # phase, and no gradient bar for calling a fit stalled -- it judges a stall
-  # by its progress.
-  expect_error(.cs_fit(backend = 'julia', optimcontrol = list(stochastic = TRUE)),
-    "optimcontrol\\$stochastic asks for stochastic gradient descent")
+  # Julia's sgd phase (`stochastic`, shared) has no subsets or roughness
+  # targets to tune, and no gradient bar for calling a fit stalled -- it
+  # judges a stall by its progress.
   expect_error(.cs_fit(backend = 'julia', optimcontrol = list(nsubsets = 4)),
     "optimcontrol\\$nsubsets")
   expect_error(.cs_fit(backend = 'julia', optimcontrol = list(subsamplesize = .5)),
@@ -61,6 +59,13 @@ test_that("a stan-only capability is refused on julia when the value asks for it
     "optimcontrol\\$lproughnesstarget")
   expect_error(.cs_fit(backend = 'julia', optimcontrol = list(stochasticTolAdjust = 10)),
     "optimcontrol\\$stochasticTolAdjust")
+})
+
+test_that("stochastic is shared: julia runs its sgd phase for it", {
+  for (v in list(TRUE, FALSE, 'auto')) {
+    expect_type(.cs_fit(backend = 'julia', optimcontrol = list(stochastic = v)),
+      'list')
+  }
 })
 
 test_that("a value describing what the backend already does is accepted", {

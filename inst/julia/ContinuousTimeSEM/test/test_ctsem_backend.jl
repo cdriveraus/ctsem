@@ -589,6 +589,50 @@ end
     @test maximum(abs, diag.minimizer) < 1e-4
 end
 
+@testset "the sgd phase climbs an ill-conditioned problem and hands over on its progress rule" begin
+    C = ContinuousTimeSEM
+    # Minimised: a quadratic with curvatures five orders apart, offset so the
+    # start is far from the optimum in every coordinate.
+    a = exp10.(range(-2, 3; length=10))
+    c = fill(3.0, 10)
+    fg! = function (F, G, x)
+        G === nothing || (G .= a .* (x .- c))
+        F === nothing ? nothing : 0.5 * sum(a .* (x .- c) .^ 2)
+    end
+    f0 = 0.5 * sum(a .* c .^ 2)
+    seen = Int[]
+    r = C._ctsem_sgd(fg!, zeros(10); maxiter=3000,
+        callback=st -> (push!(seen, st.iteration); false))
+    # It climbed most of the way, returned its best point with that point's
+    # value, and the callback saw the start and then each iteration in order.
+    @test r.minimum < 1e-3 * f0
+    @test r.minimum ≈ 0.5 * sum(a .* (r.minimizer .- c) .^ 2)
+    @test seen == [0; 2:r.iterations]
+    @test r.f_calls == r.g_calls
+    # No coordinate moved more than the cap in one step.
+    steps = Float64[]
+    prev = zeros(10)
+    tracked = function (F, G, x)
+        push!(steps, maximum(abs, x .- prev)); prev .= x
+        fg!(F, G, x)
+    end
+    C._ctsem_sgd(tracked, zeros(10); maxiter=200)
+    @test maximum(steps) <= 0.5 + 1e-12
+    # The progress rule ends the phase far sooner than sgd()'s own absolute one,
+    # well short of the optimum, which is left to L-BFGS.
+    early = C._ctsem_sgd(fg!, zeros(10); maxiter=3000, progress=1e-2)
+    @test early.iterations < r.iterations
+    @test early.minimum < 0.1 * f0
+    # An objective that refuses every step ends the phase rather than looping.
+    refuse = function (F, G, x)
+        G === nothing || (G .= a .* (x .- c))
+        F === nothing ? nothing : (x == zeros(10) ? f0 : 1e300)
+    end
+    stuck = C._ctsem_sgd(refuse, zeros(10); maxiter=100)
+    @test stuck.linesearch_failed
+    @test stuck.minimizer == zeros(10)
+end
+
 @testset "beyond the dense prefixes the pullback sets double" begin
     C = ContinuousTimeSEM
     n = 100
