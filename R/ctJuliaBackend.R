@@ -2047,7 +2047,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 
 # The rank asked of one level's population covariance, or `k` when nothing was
 # asked. `model$laplacerank` is a named integer vector, one entry per level
-# name, written by `ctFit()` from the `poprank` argument.
+# name, written by `ctFit()` from `poprank`, passed or stated on the model.
 #
 # Clamped to `k` rather than refused when it exceeds the number of effects: a
 # rank at or above `k` is the unrestricted covariance, which is what the user
