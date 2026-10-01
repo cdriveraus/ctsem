@@ -85,6 +85,15 @@
 #' @param level confidence level setting the likelihood-ratio bar.
 #' @param maxiter iteration cap for each constrained optimisation.
 #' @param verbose 0 for silence, 1 to report each point as it is computed.
+#' @param processes \code{FALSE} (the default) walks each parameter's two
+#'   sides one after another in this session. \code{TRUE}, or a number of
+#'   sessions, walks them at once, each in a background R session with a
+#'   one-thread Julia, started and compiled for the model first (it needs the
+#'   \pkg{future} package; the sessions persist for the next call, and
+#'   \code{\link{ctJuliaWorkersStop}} releases them). \code{TRUE} uses as many
+#'   sessions as the fit's \code{cores}, and at least two. The walks are
+#'   independent, so the profile is the same either way, except that with
+#'   processes every walk finishes before \code{$better} is reported.
 #'
 #' @return An object of class \code{ctFitProfile}, which
 #'   \code{print} and \code{plot} both understand. \code{$profile} is one row
@@ -104,7 +113,7 @@
 #' }
 #' @export
 ctFitProfile <- function(fit, parameters = NULL, points = 8L, step = NULL,
-  growth = 1.6, level = 0.95, maxiter = 500L, verbose = 0) {
+  growth = 1.6, level = 0.95, maxiter = 500L, verbose = 0, processes = FALSE) {
   # `.ctFitIsJulia()` is the named predicate for this question; the class
   # literal is the same question spelled out, and `test-duplication-ratchet.R`
   # counts the spellings that are not.
@@ -165,66 +174,46 @@ ctFitProfile <- function(fit, parameters = NULL, points = 8L, step = NULL,
       call. = FALSE)
   }
 
+  # One walk per parameter and side. Each starts from the fit and continues
+  # from its own last point, so the walks are independent: in this session
+  # they run in order and stop at the first `better`; with `processes` they run
+  # at once (`.ctBackendWorkerMap()`), and the first `better` in that same
+  # order is the one reported.
+  context <- list(fit = fit, spec = spec, optimcontrol = optimcontrol,
+    gradient = gradient, cores = cores, estimate = estimate, steps = steps,
+    points = points, growth = growth, bar = bar, base = base$value,
+    maxiter = maxiter, verbose = verbose, names = names)
+  walks <- unlist(lapply(index, function(k) lapply(c(-1, 1), function(side)
+    list(k = k, side = side))), recursive = FALSE)
+  workers <- if (isTRUE(processes)) max(2L, cores) else
+    if (is.numeric(processes)) as.integer(processes)[1L] else 0L
+  walked <- NULL
+  if (isTRUE(workers >= 2L) && length(walks) > 1L) {
+    context$cores <- 1L
+    walked <- .ctBackendWorkerMap(fit, lapply(walks, function(w)
+      c(w, list(context = context))), ".ctFitProfileWalk", workers = workers,
+      values = estimate)
+    context$cores <- cores
+    if (is.null(walked)) message("Walking the profile in this session instead.")
+  }
+  usedprocesses <- !is.null(walked)
+  if (!usedprocesses) {
+    walked <- list()
+    for (w in walks) {
+      walked[[length(walked) + 1L]] <- .ctFitProfileWalk(c(w,
+        list(context = context)))
+      if (!is.null(walked[[length(walked)]]$better)) break
+    }
+  }
   rows <- list()
   points_raw <- list()
   better <- NULL
-  for (k in index) {
-    if (!is.null(better)) break
-    for (side in c(-1, 1)) {
-      # Continuation: each point starts from the last one's estimate, so a
-      # step is a short move rather than a fresh optimisation. The first step
-      # of each side starts from the fit.
-      from <- estimate
-      at <- estimate[k]
-      size <- steps[k]
-      for (point in seq_len(as.integer(points))) {
-        at <- at + side * size
-        start <- from
-        start[k] <- at
-        got <- .ctFitProfilePoint(fit, spec, optimcontrol, gradient, cores,
-          start, k, at, maxiter)
-        drop <- base$value - got$value
-        rows[[length(rows) + 1L]] <- data.frame(
-          parameter = names[k], index = k, side = side, value = at,
-          loglik = got$value, drop = drop, iterations = got$iterations,
-          stringsAsFactors = FALSE)
-        points_raw[[length(points_raw) + 1L]] <- got$par
-        if (verbose > 0) {
-          message(sprintf("%s = %+.4f  loglik %.5f  drop %.5f", names[k], at,
-            got$value, drop))
-        }
-        if (!is.finite(got$value)) break
-        # A constrained maximum above the unconstrained one. The fit was not at
-        # a maximum, so this profile describes the wrong point and the only
-        # honest thing to do is stop and say where the better one is.
-        if (drop < -.ctFitProfileTolerance()) {
-          better <- list(point = got$par, gain = -drop,
-            parameter = names[k], value = at)
-          break
-        }
-        from <- got$par
-        # Grow the step while the likelihood is barely moving, so a flat
-        # direction is walked out rather than crawled along. The target is a
-        # fraction of the bar per point, which is what makes the ladder adapt
-        # to the model rather than to whoever chose `step`.
-        #
-        # A step that changed *nothing* is the case the multiplier cannot
-        # rescue on its own. The starting step is half a standard error, and
-        # the coordinates whose profile matters most are exactly those whose
-        # standard error is near zero -- so the ladder would start at 1e-6 and
-        # need forty doublings to reach anywhere. Measured: a diffusion
-        # correlation on a flat ray walked 0.003 raw units over six points,
-        # against 35 with a flat starting step, and reported a verdict on
-        # almost no evidence. A step that produced no measurable change says
-        # nothing about what the step should be, so fall back to the model-free
-        # default and grow from there.
-        if (drop < bar / as.integer(points)) {
-          size <- if (drop < bar * 1e-6) max(size * growth, .ctFitProfileStep())
-            else size * growth
-        }
-        if (drop >= bar) break
-      }
-      if (!is.null(better)) break
+  for (w in walked) {
+    rows <- c(rows, w$rows)
+    points_raw <- c(points_raw, w$points_raw)
+    if (!is.null(w$better)) {
+      better <- w$better
+      break
     }
   }
 
@@ -237,7 +226,8 @@ ctFitProfile <- function(fit, parameters = NULL, points = 8L, step = NULL,
   out <- list(profile = profile,
     summary = .ctFitProfileSummary(profile, names, index, estimate, bar),
     bar = bar, level = level, base = base$value, better = better,
-    estimate = stats::setNames(estimate, names), call = match.call())
+    estimate = stats::setNames(estimate, names), call = match.call(),
+    processes = usedprocesses)
   class(out) <- "ctFitProfile"
   if (!is.null(better)) {
     warning("ctFitProfile(): a constrained fit beat the estimate by ",
@@ -246,6 +236,81 @@ ctFitProfile <- function(fit, parameters = NULL, points = 8L, step = NULL,
       "$better$point.", call. = FALSE)
   }
   out
+}
+
+# One side of one parameter's profile: points stepped out from the estimate,
+# each a constrained optimisation started from the last, until the drop crosses
+# the bar, the objective is not finite, `points` are used, or a point beats the
+# estimate (`better`). Reads nothing but `job` -- the parameter `k`, the
+# `side`, and the shared `context` built in `ctFitProfile()` -- so it runs in a
+# worker process as well as here.
+#' @keywords internal
+.ctFitProfileWalk <- function(job) {
+  ctx <- job$context
+  k <- job$k; side <- job$side
+  fit <- ctx$fit; spec <- ctx$spec; optimcontrol <- ctx$optimcontrol
+  gradient <- ctx$gradient; cores <- ctx$cores; estimate <- ctx$estimate
+  steps <- ctx$steps; points <- ctx$points; growth <- ctx$growth
+  bar <- ctx$bar; maxiter <- ctx$maxiter; verbose <- ctx$verbose
+  names <- ctx$names
+  base <- list(value = ctx$base)
+  rows <- list()
+  points_raw <- list()
+  better <- NULL
+  # Continuation: each point starts from the last one's estimate, so a
+  # step is a short move rather than a fresh optimisation. The first step
+  # of each side starts from the fit.
+  from <- estimate
+  at <- estimate[k]
+  size <- steps[k]
+  for (point in seq_len(as.integer(points))) {
+    at <- at + side * size
+    start <- from
+    start[k] <- at
+    got <- .ctFitProfilePoint(fit, spec, optimcontrol, gradient, cores,
+      start, k, at, maxiter)
+    drop <- base$value - got$value
+    rows[[length(rows) + 1L]] <- data.frame(
+      parameter = names[k], index = k, side = side, value = at,
+      loglik = got$value, drop = drop, iterations = got$iterations,
+      stringsAsFactors = FALSE)
+    points_raw[[length(points_raw) + 1L]] <- got$par
+    if (verbose > 0) {
+      message(sprintf("%s = %+.4f  loglik %.5f  drop %.5f", names[k], at,
+        got$value, drop))
+    }
+    if (!is.finite(got$value)) break
+    # A constrained maximum above the unconstrained one. The fit was not at
+    # a maximum, so this profile describes the wrong point and the only
+    # honest thing to do is stop and say where the better one is.
+    if (drop < -.ctFitProfileTolerance()) {
+      better <- list(point = got$par, gain = -drop,
+        parameter = names[k], value = at)
+      break
+    }
+    from <- got$par
+    # Grow the step while the likelihood is barely moving, so a flat
+    # direction is walked out rather than crawled along. The target is a
+    # fraction of the bar per point, which is what makes the ladder adapt
+    # to the model rather than to whoever chose `step`.
+    #
+    # A step that changed *nothing* is the case the multiplier cannot
+    # rescue on its own. The starting step is half a standard error, and
+    # the coordinates whose profile matters most are exactly those whose
+    # standard error is near zero -- so the ladder would start at 1e-6 and
+    # need forty doublings to reach anywhere. Measured: a diffusion
+    # correlation on a flat ray walked 0.003 raw units over six points,
+    # against 35 with a flat starting step, and reported a verdict on
+    # almost no evidence. A step that produced no measurable change says
+    # nothing about what the step should be, so fall back to the model-free
+    # default and grow from there.
+    if (drop < bar / as.integer(points)) {
+      size <- if (drop < bar * 1e-6) max(size * growth, .ctFitProfileStep())
+        else size * growth
+    }
+    if (drop >= bar) break
+  }
+  list(rows = rows, points_raw = points_raw, better = better)
 }
 
 # Each profiled point on the scale a reader reports, where the coordinate has
@@ -412,7 +477,7 @@ ctFitProfile <- function(fit, parameters = NULL, points = 8L, step = NULL,
   start, index, value, maxiter) {
   if (!length(index)) {
     out <- try(ctJuliaEvaluate(fit, pars = as.numeric(start), gradient = FALSE,
-      gradient_method = gradient), silent = TRUE)
+      gradient_method = gradient, cores = cores), silent = TRUE)
     if (inherits(out, "try-error") || !length(out$value)) {
       return(list(value = NA_real_, par = start, iterations = NA_integer_))
     }

@@ -62,7 +62,8 @@ leave-one-out, available only for \code{backend = 'julia'} fits with
 For \code{method = 'kfold'}, a list with \code{foldrows},
   \code{foldpars}, \code{insampleLogLikRow}, \code{LogLikRowFolds},
   \code{outsampleLogLikRow}, \code{insampleLogLik}, \code{outsampleLogLik}
-  and entropy and standard deviation summaries. \code{scoring} is added
+  and entropy and standard deviation summaries, and \code{processes},
+  whether the folds ran in worker processes. \code{scoring} is added
   whenever the folds were refit, naming what was scored and that they are
   uncertified (see Details); an \code{intoverpop = 'laplace'} fit also adds
   \code{insampleLogLikSubject} and \code{outsampleLogLikSubject}. For
@@ -83,9 +84,16 @@ Works for \code{backend='julia'} fits as well as stan ones. There,
 a held-out row is withheld by setting its manifest observations to missing
 and re-preparing, which is a row the filter propagates through without an
 update and without a likelihood contribution -- the same thing
-\code{standata$dokalmanrows} does for the stan backend. \code{parallelFolds}
-is ignored for julia fits, because the engine already threads its own
-subject loop and each fold therefore uses every core.
+\code{standata$dokalmanrows} does for the stan backend. For julia fits
+\code{parallelFolds = TRUE} runs up to \code{cores} folds at once, each in a
+background R session with a one-thread Julia, started and compiled for the
+model before the first fold (it needs the \pkg{future} package; the
+sessions persist for the next call, and \code{\link{ctJuliaWorkersStop}}
+releases them). Without it the folds run one at a time on \code{cores}
+threads. Folds are separate fits, so they gain more from processes than
+from threads, except where each fold takes only seconds and starting the
+sessions costs more than it saves. \code{$processes} on the result says
+which ran.
 
 Be aware that each fold is an independent re-optimisation, and neither
 backend's optimizer restarts from a flat direction. On a weakly identified
