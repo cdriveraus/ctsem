@@ -1092,17 +1092,23 @@
     # differently: `ctFit` takes `iter`, which counts warmup and sampling
     # together, and `ctFitUncertainty(fit, 'sample')` takes `control$draws`
     # directly.
+    # With an effective-size target the run chose its own length within its
+    # budget, so the budget is what to raise; without one, the count asked for.
+    remedy <- if (is.finite(.ctJuliaOr(diagnostics$ess_target, NA_real_)))
+      paste0("aise sampleControl$maxDraws in ctFit (control$maxDraws in ",
+        "ctFitUncertainty) past the ", diagnostics$draws, " draws per chain ",
+        "this run took. ")
+    else paste0("aise the draw count -- iter in ctFit (now ",
+      diagnostics$warmup + diagnostics$draws, ", of which ",
+      diagnostics$warmup, " is warmup, leaving ", diagnostics$draws,
+      " per chain) or control$draws -- or set sampleControl$minESS to keep ",
+      "sampling until an effective size is reached. ")
     warning("Largest R-hat is ", signif(worst, 4), ". The chains have not ",
       "agreed on the same distribution, so the draws are not yet a posterior. ",
       if (length(flat))
-        "That is expected for the unidentified parameter(s) named above, which more draws cannot fix. For the rest, "
-      else "",
-      if (length(flat)) "raise" else "Raise", " the draw count -- iter in ctFit (now ",
-      diagnostics$warmup + diagnostics$draws, ", of which ",
-      diagnostics$warmup, " is warmup, leaving ", diagnostics$draws,
-      " per chain) or control$draws -- or set sampleControl$minESS with ",
-      "control$maxDraws to keep sampling until an effective size is reached. ",
-      "See fit$sample$rhat.", call. = FALSE)
+        "That is expected for the unidentified parameter(s) named above, which more draws cannot fix. For the rest, r"
+      else "R",
+      remedy, "See fit$sample$rhat.", call. = FALSE)
   }
   fewest <- suppressWarnings(min(diagnostics$ess, na.rm = TRUE))
   target <- .ctJuliaOr(diagnostics$ess_target, NA_real_)

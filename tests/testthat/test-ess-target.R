@@ -60,6 +60,14 @@ test_that("a sample that ends short of its target says so, and one without a tar
   expect_no_warning(ctsem:::.ctSampleWarn(diag(150, NA_real_)))
   expect_warning(ctsem:::.ctSampleWarn(diag(80, NA_real_)),
     "set sampleControl\\$minESS")
+  # Chains that disagree: with a target the run chose its own length, so the
+  # advice is the budget, not the count asked for.
+  rough <- function(target) utils::modifyList(diag(900, target),
+    list(rhat = c(a = 1.001, b = 1.05)))
+  expect_warning(ctsem:::.ctSampleWarn(rough(200)),
+    "Raise sampleControl\\$maxDraws.*past the 500 draws per chain")
+  expect_warning(ctsem:::.ctSampleWarn(rough(NA_real_)),
+    "Raise the draw count -- iter in ctFit \\(now 700")
 })
 
 test_that("importance sampling that ends short of its target says so, not only below half of it", {
