@@ -45,6 +45,14 @@ BENCH_VARIANTS <- list(
   # The sgd phase (`_ctsem_sgd`) before L-BFGS: optimcontrol$stochastic.
   stoch = list(optimcontrol = list(stochastic = TRUE)),
 
+  # L-BFGS with the diagonal initial inverse Hessian and Grippo-Lampariello-
+  # Lucidi acceptance over the last 20 values: the BFGS-side improvement alone.
+  gll = list(optimcontrol = list(lbfgs_diagonal = TRUE, lbfgs_gll = 20L)),
+
+  # The whole pipeline: the sgd phase, then that L-BFGS, then the usual finish.
+  pipeline = list(optimcontrol = list(stochastic = TRUE, lbfgs_diagonal = TRUE,
+    lbfgs_gll = 20L)),
+
   # No fit: evaluate the objective and the references at the start. Used with
   # a stored best-known point to check that a reference still reproduces.
   evalonly = list(fit = FALSE),

@@ -176,7 +176,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         g_tol::Real=1e-8, f_tol::Real=0.0, x_tol::Real=0.0,
         callback=nothing, directional=nothing, batch=nothing,
         c1::Real=1e-4, maxbacktrack::Integer=40, iteration0::Integer=0,
-        diagonal::Bool=false, nonmonotone::Real=0.0)
+        diagonal::Bool=false, nonmonotone::Real=0.0, gll::Integer=0)
     n = length(x0)
     x = collect(Float64, x0)
     dinv = metric === nothing ? ones(n) : begin
@@ -215,7 +215,11 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
     # search is then exactly the monotone Armijo one.
     B = nothing; Dinv = nothing
     eta = clamp(Float64(nonmonotone), 0.0, 1.0)
-    C = f; Q = 1.0
+    C = f; Q = 1.0; recent = [f]
+    # `gll`: Grippo, Lampariello & Lucidi's (1986) rule instead -- a step is
+    # judged against the worst of the last `gll` values the steps reached, the
+    # acceptance sgd() uses (`_ctsem_sgd`). `recent` is set beside C.
+    reference() = gll > 0 ? maximum(@view recent[max(1, end - gll + 1):end]) : C
     while !stopped && !gconv && iteration < maxiter
         s = -_ctsem_lbfgs_hmul(M, G, h0, dinv, Dinv)
         # With no curvature pairs the step is the metric's alone, and at a start
@@ -232,7 +236,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
             # Not a descent direction: the memory has gone bad. Start it again.
             isempty(M.S) && (lsfail = true; break)
             _ctsem_lbfgs_reset!(M); h0 = Float64(initial_alpha) / max(metric_norm(G), eps())
-            B = nothing; Dinv = nothing; C = f; Q = 1.0
+            B = nothing; Dinv = nothing; C = f; Q = 1.0; recent = [f]
             continue
         end
         # The first trial carries the gradient too: most steps are accepted
@@ -242,7 +246,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         Gn = similar(G)
         fn = evaluate!(0.0, Gn, xn); fcalls += 1; gcalls += 1
         have_gradient = true
-        accepted = isfinite(fn) && fn <= C + c1 * alpha * dphi
+        accepted = isfinite(fn) && fn <= reference() + c1 * alpha * dphi
         k = 0
         while !accepted && k < maxbacktrack
             k += 1
@@ -253,7 +257,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
             xn = x .+ alpha .* s
             fn = evaluate!(0.0, nothing, xn); fcalls += 1
             have_gradient = false
-            accepted = isfinite(fn) && fn <= C + c1 * alpha * dphi
+            accepted = isfinite(fn) && fn <= reference() + c1 * alpha * dphi
         end
         if !accepted
             # A stale memory is the usual cause; drop it once, then give up.
@@ -261,7 +265,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
                 retried = true
                 _ctsem_lbfgs_reset!(M)
                 h0 = Float64(initial_alpha) / max(metric_norm(G), eps())
-                B = nothing; Dinv = nothing; C = f; Q = 1.0
+                B = nothing; Dinv = nothing; C = f; Q = 1.0; recent = [f]
                 continue
             end
             lsfail = true
@@ -282,6 +286,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
             Dinv = 1 ./ B
         end
         x = xn; f = fn; G = Gn
+        push!(recent, f)
         Qn = eta * Q + 1
         C = (eta * Q * C + f) / Qn; Q = Qn
         gconv = maximum(abs, G; init=0.0) <= g_tol
@@ -302,7 +307,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
             f = evaluate!(0.0, G, x); fcalls += 1; gcalls += 1
             gconv = maximum(abs, G; init=0.0) <= g_tol
             # The reference level belongs to the objective it averaged.
-            C = f; Q = 1.0
+            C = f; Q = 1.0; recent = [f]
         end
         (fconv && f_tol > 0) && break
         (xconv && x_tol > 0) && break

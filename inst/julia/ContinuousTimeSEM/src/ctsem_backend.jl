@@ -1788,7 +1788,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     x_tol::Real=0.0, verbose::Bool=false, gradient_method=:adjoint,
     tune_chunks::Bool=true, lbfgs_memory::Integer=_CTSEM_LBFGS_MEMORY,
     lbfgs_diagonal::Bool=false, lbfgs_nonmonotone::Real=0.0,
-    sgd::Bool=false, sgd_maxiter::Integer=2000, sgd_progress::Real=1e-3,
+    lbfgs_gll::Integer=0, sgd::Bool=false, sgd_maxiter::Integer=2000, sgd_progress::Real=1e-3,
     progress_overwrite::Bool=true, progress_sink=nothing,
     progress_callback=nothing,
     progress::Bool=verbose, progress_label::AbstractString="optimise",
@@ -2058,7 +2058,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     sgd_iterations = sgd_result === nothing ? 0 : sgd_result.iterations
     # See optimiser.jl for why this is not Optim any more.
     result = _ctsem_lbfgs(fg!, lbfgs_start; memory=Int(lbfgs_memory),
-        diagonal=lbfgs_diagonal, nonmonotone=lbfgs_nonmonotone,
+        diagonal=lbfgs_diagonal, nonmonotone=lbfgs_nonmonotone, gll=Int(lbfgs_gll),
         metric=_ctsem_metric(precondition, length(start_values)),
         initial_alpha=Float64(initial_alpha),
         maxiter=max(0, Int(maxiter) - sgd_iterations),
@@ -2184,7 +2184,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         handover = Float64(gap_tol)
         stopped_by_gap[] = false
         resumed = _ctsem_lbfgs(fg!, minimizer; memory=Int(lbfgs_memory),
-            diagonal=lbfgs_diagonal, nonmonotone=lbfgs_nonmonotone,
+            diagonal=lbfgs_diagonal, nonmonotone=lbfgs_nonmonotone, gll=Int(lbfgs_gll),
             metric=_ctsem_metric(precondition, length(start_values)),
             initial_alpha=Float64(initial_alpha),
             maxiter=max(0, Int(maxiter) - result.iterations - spent.steps[]),

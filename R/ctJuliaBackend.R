@@ -4364,6 +4364,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   if (!is.null(optimcontrol$lbfgs_nonmonotone)) {
     common$lbfgs_nonmonotone <- as.numeric(optimcontrol$lbfgs_nonmonotone)[1L]
   }
+  # Grippo-Lampariello-Lucidi acceptance over the last `lbfgs_gll` values.
+  if (!is.null(optimcontrol$lbfgs_gll)) {
+    common$lbfgs_gll <- as.integer(optimcontrol$lbfgs_gll)[1L]
+  }
   # `stochastic`, as on stan: TRUE runs the sgd phase (`_ctsem_sgd`) before
   # L-BFGS, 'auto' runs it above 50 parameters -- stan's own rule -- and FALSE,
   # the julia default, does not. Only on a stage that starts away from the
