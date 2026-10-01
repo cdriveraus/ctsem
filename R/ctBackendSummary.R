@@ -1620,7 +1620,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     # discard the table.
     note <- paste0(note, " The chains have not converged, so any estimate with ",
       "an R-hat above 1.01 is not a posterior summary. See fit$sample.")
-  } else if (is.finite(fewest) && fewest < 100) {
+  } else if (is.finite(fewest) && fewest < .ctSampleEssFloor(fit$sample)) {
     note <- paste0(note, " Too few effective draws for reliable intervals.")
   }
   note

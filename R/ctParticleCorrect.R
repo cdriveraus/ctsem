@@ -107,7 +107,9 @@
 #'   first proposal of \code{'imis'}. Above one by default, because a proposal
 #'   narrower than its target cannot correct it.
 #' @param target_ess \code{draws = 'imis'} only. Effective sample size at which
-#'   sampling stops.
+#'   sampling stops; 200 by default, the target every draw-producing route
+#'   shares (see \code{\link{ctFitUncertainty}}). Ending short of it, at
+#'   \code{maxiter}, is warned about.
 #' @param nbatch \code{draws = 'imis'} only. Proposal draws, and so
 #'   particle-filter evaluations, per iteration.
 #' @param maxiter \code{draws = 'imis'} only. Iteration cap.
@@ -155,7 +157,7 @@
 #' @export
 ctParticleCorrect <- function(fit, draws = c("reweight", "imis"), particles = 1000,
   substeps = 10, transition = c("exponential", "euler"), seed = 1,
-  nsamples = NULL, finishsamples = NULL, scale = 1.5, target_ess = 100,
+  nsamples = NULL, finishsamples = NULL, scale = 1.5, target_ess = 200,
   nbatch = 200L, maxiter = 10L, correct_estimate = TRUE, cores = NULL,
   verbose = 0L) {
 

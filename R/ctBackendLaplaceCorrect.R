@@ -90,7 +90,9 @@
 #'   \emph{narrower} than the posterior, and a proposal narrower than its target
 #'   cannot correct it.
 #' @param target_ess \code{draws='imis'} only. Effective sample size at which
-#'   sampling stops.
+#'   sampling stops; 200 by default, the target every draw-producing route
+#'   shares (see \code{\link{ctFitUncertainty}}). Ending short of it, at
+#'   \code{maxiter}, is warned about.
 #' @param nbatch \code{draws='imis'} only. Draws per importance-sampling
 #'   iteration.
 #' @param maxiter \code{draws='imis'} only. Iteration cap.
@@ -127,7 +129,7 @@
 #' @export
 ctLaplaceCorrect <- function(fit, draws = c("normal", "imis", "keep"),
   nodes = 5L, finishsamples = NULL,
-  scale = 1.5, target_ess = 100, nbatch = NULL, maxiter = 10L,
+  scale = 1.5, target_ess = 200, nbatch = NULL, maxiter = 10L,
   correct_estimate = TRUE, cores = NULL, verbose = 0L) {
 
   draws <- match.arg(draws)

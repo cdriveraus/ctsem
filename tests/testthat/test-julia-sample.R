@@ -50,7 +50,13 @@ test_that("a sampled fit carries draws the summary machinery can read", {
   expect_s3_class(sampled, "ctFit")
   # The draws are where an optimised fit's normal-approximation draws live, so
   # everything downstream reads them without knowing which produced them.
-  expect_equal(dim(sampled$estimate$rawposterior), c(160L, npar))
+  # Every draw of every chain, however many the effective-size target took:
+  # 80 asked for is the size aimed at, not a fixed count (see the budget test
+  # below), so the shape is checked against what was drawn.
+  expect_equal(dim(sampled$estimate$rawposterior),
+    c(2L * sampled$sample$draws, npar))
+  expect_gte(sampled$sample$draws, 1L)
+  expect_lte(sampled$sample$draws, 4L * 80L)
   expect_true(all(is.finite(sampled$estimate$rawposterior)))
   expect_equal(colnames(sampled$estimate$rawposterior),
     ctsem:::.ctBackendRawParameterNames(fit, npar))
@@ -91,7 +97,7 @@ test_that("the diagnostics come back per parameter and per chain", {
   expect_true(all(diagnostics$stepsize > 0))
   expect_length(diagnostics$ebfmi, 2L)
   expect_true(diagnostics$divergent >= 0L)
-  expect_length(diagnostics$accept, 160L)
+  expect_length(diagnostics$accept, 2L * diagnostics$draws)
   # The Laplace estimate the chains started from.
   expect_equal(diagnostics$start, fit$estimate$raw)
   expect_output(print(diagnostics), "ctsem Hamiltonian sample")
@@ -144,7 +150,7 @@ test_that("the effects come back summarised, or in full when asked for", {
     ctFitUncertainty(fit, uncertainty = "sample", cores = 1,
       control = list(chains = 1, warmup = 60, draws = 60, saveEffects = TRUE,
         target = "joint"))))
-  expect_equal(dim(full$sample$effects), c(60L, neffects))
+  expect_equal(dim(full$sample$effects), c(full$sample$draws, neffects))
   expect_true(all(is.finite(full$sample$effects)))
 })
 
@@ -423,7 +429,8 @@ test_that("a sampled fit reports n_eff and Rhat where a ctStanFit does, and an o
 
   # And the summary opens with it.
   expect_true(is.character(summarised$sampleNote))
-  expect_match(summarised$sampleNote, "2 chains x 120 draws", fixed = TRUE)
+  expect_match(summarised$sampleNote,
+    paste0("2 chains x ", sampled$sample$draws, " draws"), fixed = TRUE)
   expect_identical(names(summarised)[1L], "sampleNote")
   # A sampled fit did not run an uncertainty pass, and used to say it had.
   expect_match(summarised$uncertaintyNote, "Hamiltonian", fixed = TRUE)
@@ -526,8 +533,8 @@ test_that("an effective-size target turns the draw count into a budget", {
   # `minESS` used to do nothing at all without `maxDraws`: the engine extends
   # towards a budget that defaulted to exactly the draws asked for, so there
   # was nothing to extend into and the target could only be reported after the
-  # fact. The count asked for is the budget now, so a target met early stops
-  # the run -- and can only ever shorten it.
+  # fact. Now a target met early stops the run, and one not met extends it to
+  # four times the count asked for (`.ctBackendSampleBudget()`).
   #
   # `rhatTarget` is raised out of the way because this fixture is twelve
   # subjects and will not reach 1.01; what is under test is the stopping rule,
@@ -548,13 +555,21 @@ test_that("an effective-size target turns the draw count into a budget", {
       minESS = 0))))
   expect_equal(full$sample$draws, 200L)
 
-  # And the default is a target rather than an instruction: the twelve-subject
-  # fixture will not reach min ESS 200 in 200 draws, so the budget is spent in
-  # full and nothing is lost by the default being on.
+  # And the default is a target with a budget of four times the count asked
+  # for: the twelve-subject fixture does not reach min ESS 200 in 200 draws,
+  # so the run goes on past them, stops at the budget at most, and says it
+  # fell short.
+  # Warned about as well; the recorded diagnosis is what is asserted.
   default <- suppressWarnings(suppressMessages(ctFitUncertainty(fit,
     uncertainty = "sample", cores = 1,
     control = list(chains = 2, warmup = 100, draws = 200, processes = FALSE))))
-  expect_lte(default$sample$draws, 200L)
+  expect_gt(default$sample$draws, 200L)
+  expect_lte(default$sample$draws, 800L)
+  expect_identical(default$sample$ess_target, 200)
+  if (min(default$sample$ess) < 200) {
+    expect_match(paste(default$sample$diagnosis, collapse = "; "),
+      "(target 200)", fixed = TRUE)
+  }
 
   # The old spelling is refused with the new one named, rather than dropped by
   # `$` and silently ignored.

@@ -10,7 +10,7 @@ ctLaplaceCorrect(
   nodes = 5L,
   finishsamples = NULL,
   scale = 1.5,
-  target_ess = 100,
+  target_ess = 200,
   nbatch = NULL,
   maxiter = 10L,
   correct_estimate = TRUE,
@@ -45,7 +45,9 @@ fit's covariance. Above one by default: the Hessian covariance is typically
 cannot correct it.}
 
 \item{target_ess}{\code{draws='imis'} only. Effective sample size at which
-sampling stops.}
+sampling stops; 200 by default, the target every draw-producing route
+shares (see \code{\link{ctFitUncertainty}}). Ending short of it, at
+\code{maxiter}, is warned about.}
 
 \item{nbatch}{\code{draws='imis'} only. Draws per importance-sampling
 iteration.}

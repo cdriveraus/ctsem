@@ -74,18 +74,21 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
 # to the rule, or to the wording, had to be made in up to four places to stay
 # consistent, and nothing made it.
 #
-# `floor` is an argument rather than `target/2` throughout, because the drift is
-# not all accident: reweighting one fixed batch of draws has no target to halve,
-# and `max(50, 0.1 * n)` is a rule about that batch. `remedy` is the other real
-# per-caller part -- what to do instead differs by where you are, and naming the
-# wrong alternative is worse than naming none.
+# `floor` is an argument because the rule differs by caller: a run that had a
+# target warns when it ends short of it (`.ctOptimImisReport()`, which passes
+# the target and names it), while reweighting one fixed batch of draws has no
+# target and `max(50, 0.1 * n)` is a rule about that batch. `remedy` is the
+# other real per-caller part -- what to do instead differs by where you are,
+# and naming the wrong alternative is worse than naming none.
 #' @keywords internal
-.ctOptimEffectiveSampleWarn <- function(ess, floor, remedy, ndraws = NULL){
+.ctOptimEffectiveSampleWarn <- function(ess, floor, remedy, ndraws = NULL,
+  target = NULL){
   ess <- if(is.null(ess)) NA_real_ else as.numeric(ess)[1L]
   if(!is.finite(ess) || !is.finite(floor) || ess >= floor) return(invisible(ess))
   warning('Importance sampling reached an effective sample size of ',
     round(ess, 1),
     if(is.null(ndraws)) '' else paste0(' from ', ndraws, ' draws'),
+    if(is.null(target)) '' else paste0(', short of its target of ', target),
     '. The intervals rest on that many points, not on the number of draws. ',
     remedy, call.=FALSE)
   invisible(ess)
@@ -132,8 +135,12 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
       ', so it may be improper there, which no reweighting can represent. ',
       tailremedy, call.=FALSE)
   }
+  # Short of the target at all, not of half of it: the rounds stop on reaching
+  # it, so ending below it means they ran out, and a run that aimed for 200
+  # and stopped at 150 should say so rather than pass silently.
   .ctOptimEffectiveSampleWarn(ess,
-    floor = if(is.finite(target)) target / 2 else NA_real_, remedy = remedy)
+    floor = if(is.finite(target)) target else NA_real_, remedy = remedy,
+    target = if(is.finite(target)) target else NULL)
   invisible(list(ess = ess, k = k))
 }
 
@@ -219,6 +226,22 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
   if (backend == 'stan') list(scaleInit = 1.1, tailScale = 1.1, df = 5) else
     list(scaleInit = 1.5, tailScale = 1.2, df = 5)
 }
+
+# The effective sample size every route that produces draws aims for unless
+# told otherwise, named once: `uncertainty = 'sample'` (`minESS`, of the worst
+# parameter), `uncertainty = 'is'` (`isESS`), and the importance-sampling
+# corrections `ctLaplaceCorrect()` and `ctParticleCorrect()` (`target_ess`,
+# whose exported signatures write the number out; test-ess-target.R holds them
+# to this). They differed -- 100 on the corrections, 200 elsewhere, and
+# 'sample' stopping at its draw budget below its own 200 -- and one default
+# across them was Charles's decision (2026-09-30).
+#
+# 200 because the 2.5% and 97.5% quantiles `summary()` reports are what needs
+# the draws, for every parameter; and at 100 importance sampling stopped with a
+# variance's tail still resting on a handful of heavy draws, its posterior sd
+# moving by a third between seeds (job M2, `imis_is()`). A route that ends
+# short of it says so (`.ctOptimImisReport()`, `.ctSampleWarn()`).
+.ctEssTarget <- 200
 
 # Which directions of a proposal covariance carry no information at all, by
 # the same test `.ctOptimIdentifiedInverse()` applies to an information matrix
@@ -556,7 +579,7 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NUL
 # scalings, which is what `ctLaplaceCorrect()` does.
 #' @keywords internal
 .ctOptimImisDraws <- function(lpg, centre, cov, finishsamples, remedy,
-  nbatch = 1000, target_ess = 100, maxiter = 50,
+  nbatch = 1000, target_ess = .ctEssTarget, maxiter = 50,
   scaleInit = .ctImisProposalDefaults('stan')$scaleInit,
   tailScale = .ctImisProposalDefaults('stan')$tailScale,
   df = Inf, verbose = 0, diagPlots = TRUE){
@@ -2187,10 +2210,8 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   if (is.null(control$imisTailScale)) control$imisTailScale <- tailScale
   # t with 5 degrees of freedom, not normal: see `.ctImisProposalDefaults()`.
   if (is.null(control$imisDf)) control$imisDf <- df
-  # 200, not 100: at 100 the rounds stopped with a variance's tail still
-  # resting on a handful of heavy draws, and its posterior sd moved by a third
-  # between seeds; see `imis_is()`.
-  if (is.null(control$isESS)) control$isESS <- 200
+  # `.ctEssTarget`, the one default every draw-producing route shares.
+  if (is.null(control$isESS)) control$isESS <- .ctEssTarget
   if (is.null(control$isitersize)) control$isitersize <- 1000
 
   # `.ctImisRun()` runs in the identified subspace of `uncertaintyfit$cov` when
@@ -2470,7 +2491,14 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' which this method ignores: \code{chains} (default 4), \code{warmup} (500),
 #' \code{draws} (500), \code{seed}, \code{saveEffects} (FALSE, whether to keep
 #' every draw of every random effect rather than only their summary), and
-#' \code{processes} (TRUE, one R process per chain). \code{control$target}
+#' \code{processes} (TRUE, one R process per chain). A run stops once every
+#' parameter's effective sample size reaches \code{minESS} (200) and the
+#' chains' R-hat is below \code{rhatTarget} (1.01) -- \code{meanESS} adds a
+#' target for the average -- within a budget of four times \code{draws} per
+#' chain, or \code{maxDraws} when given; \code{minESS = 0} takes exactly
+#' \code{draws}. A run that reaches its budget short of the target warns.
+#' \code{settleTol} ends warmup early once the metric stops moving (off by
+#' default, and slower when measured). \code{control$target}
 #' says which posterior: \code{'auto'} (the default) follows the fit's own
 #' route -- the Laplace marginal over population parameters for
 #' \code{intoverpop = 'laplace'} or \code{'augmented'}, the joint posterior
@@ -2485,6 +2513,13 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' \code{\link{ctJuliaSetup}} for the thread count that decides whether
 #' chains run concurrently, and \code{\link{ctFit}}'s \code{intoverpop} for
 #' what each route means.
+#'
+#' Every method that produces draws aims for the same effective sample size
+#' unless told otherwise, 200: \code{minESS} for \code{'sample'} (of the worst
+#' parameter, since the 2.5\% and 97.5\% quantiles need it for each),
+#' \code{isESS} for \code{'is'}, and \code{target_ess} for
+#' \code{\link{ctLaplaceCorrect}} and \code{\link{ctParticleCorrect}} with
+#' \code{draws = 'imis'}. Each warns when it ends short of its target.
 #' @param draws Approximate raw-parameter draw method. \code{'auto'} uses
 #' empirical draws for \code{uncertainty='bootstrap'} and
 #' \code{uncertainty='fullbootstrap'} and normal draws otherwise.

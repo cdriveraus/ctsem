@@ -14,7 +14,7 @@ ctParticleCorrect(
   nsamples = NULL,
   finishsamples = NULL,
   scale = 1.5,
-  target_ess = 100,
+  target_ess = 200,
   nbatch = 200L,
   maxiter = 10L,
   correct_estimate = TRUE,
@@ -57,7 +57,9 @@ first proposal of \code{'imis'}. Above one by default, because a proposal
 narrower than its target cannot correct it.}
 
 \item{target_ess}{\code{draws = 'imis'} only. Effective sample size at which
-sampling stops.}
+sampling stops; 200 by default, the target every draw-producing route
+shares (see \code{\link{ctFitUncertainty}}). Ending short of it, at
+\code{maxiter}, is warned about.}
 
 \item{nbatch}{\code{draws = 'imis'} only. Proposal draws, and so
 particle-filter evaluations, per iteration.}
