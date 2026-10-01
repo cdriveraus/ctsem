@@ -275,7 +275,10 @@ by how often its gradient changes sign, momentum, a square-root-compressed
 direction and non-monotone acceptance -- run until its progress slows, then
 L-BFGS. \code{'auto'} does so above 50 parameters, and \code{FALSE}, the
 julia default, does not. On large, poorly conditioned models it can be much
-faster than L-BFGS alone; \code{fit$optim$sgd_iterations} records the phase.
+faster than L-BFGS alone, but it moves fastest along the directions the data
+barely determine, so it can carry a fit further toward a degenerate limit (a
+variance or rate running to zero or infinity);
+\code{fit$optim$sgd_iterations} records the phase.
 
 The \emph{defaults} are each backend's own, and are mirror images: stan stops
 on the objective (\code{tol = 1e-8}, \code{g_tol} off), julia on the gradient
@@ -295,7 +298,8 @@ the gradient bar at which it restarts a stalled fit (\code{stalltol});
 L-BFGS's initial inverse Hessian a scale per parameter, learned from the
 curvature pairs (Gilbert and Lemarechal's diagonal update), instead of one
 scale for all; on large models whose parameters are determined on very
-different scales it can be much faster. \code{lbfgs_gll = W} lets the line
+different scales it can be much faster, and like \code{stochastic} it can
+carry a fit further toward a degenerate limit. \code{lbfgs_gll = W} lets the line
 search accept a step against the worst of the last \code{W} objective values
 (Grippo, Lampariello and Lucidi), so a step may cross a curved valley; 0,
 the default, compares with the last. \code{lbfgs_nonmonotone} (between 0,
