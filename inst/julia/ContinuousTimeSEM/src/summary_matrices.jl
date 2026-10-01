@@ -254,6 +254,19 @@ function ctsem_parameter_matrices(objective::CTSEMObjective, values::AbstractMat
         _materialize_subject_values!(subject_values, raw, sp, ti)
         _materialize_all_params!(all_params, subject_values, sp)
         pars = ComponentVector(all_params, sp.parameter_axis)
+        # A stationary model's T0MEANS is the stationary mean, so that is what
+        # this column reports and where its state-dependent cells are evaluated
+        # by default. The predict group runs first for the reason it does in
+        # the filter: a DRIFT or CINT cell written by a transform has no value
+        # until it has. Those cells read no state, so the placeholder state is
+        # harmless.
+        if sp.stationary
+            first_state = Vector{Float64}(vec(pars.T0MEANS))
+            apply_complex_transforms_at_indices!(getdata(pars), predict_indices,
+                sp.predict_transforms, CTSEMRowContext(first_state, pars,
+                    zeros(Float64, ntdpred), ti, Float64(time), Float64(dt), 1, 1))
+            _ctsem_stationary_mean!(pars, sp)
+        end
 
         # `state` names where the real processes are, and nothing else. The
         # entries past them are carriers: an individually varying parameter is
@@ -288,6 +301,32 @@ function ctsem_parameter_matrices(objective::CTSEMObjective, values::AbstractMat
     selected = Int.(rows)
     all(r -> 1 <= r <= layout.size, selected) || throw(BoundsError(out, selected))
     return out[selected, :]
+end
+
+"""
+    _ctsem_stationary_mean!(pars, sp)
+
+Write the stationary mean, `-DRIFT \\ CINT` over the leading block of genuine
+dynamics, over that block of `pars.T0MEANS`: the summary's copy of the mean
+`_ctsem_stationary!` gives the filter. NaN when DRIFT is singular there.
+"""
+function _ctsem_stationary_mean!(pars, sp::EKFParameters)
+    n = size(pars.DRIFT, 1)
+    dyn = isempty(sp.diffusion_state_indices) ? collect(1:n) :
+          sp.diffusion_state_indices
+    naff = _ctsem_affine_dim(sp, dyn, n)
+    A = Matrix{Float64}(pars.DRIFT[1:naff, 1:naff])
+    c = Vector{Float64}(vec(pars.CINT)[1:naff])
+    mean = try
+        value = -(A \ c)
+        all(isfinite, value) ? value : fill(NaN, naff)
+    catch
+        fill(NaN, naff)
+    end
+    @inbounds for i in 1:naff
+        pars.T0MEANS[i, 1] = mean[i]
+    end
+    return pars
 end
 
 """
@@ -330,6 +369,16 @@ function _ctsem_pack_matrices!(column, pars, sp::EKFParameters, layout)
     end
     asym_diffusion, asym_cint = _ctsem_asymptotics(pars.DRIFT, diffusioncov,
         pars.CINT, dyn, nlatent, sp.continuous_time)
+    # The block `_ctsem_stationary!` places in the filter: the asymptotic
+    # covariance over the diffusion states and zero across the rest of the
+    # latent processes' rows and columns. NaN where there is none, as it is in
+    # `asym_diffusion`.
+    if sp.stationary
+        naff = _ctsem_affine_dim(sp, dyn, nlatent)
+        t0cov[1:naff, :] .= 0.0
+        t0cov[:, 1:naff] .= 0.0
+        t0cov[dyn, dyn] .= asym_diffusion[dyn, dyn]
+    end
 
     derived = (diffusioncov, manifestcov, t0cov, asym_diffusion, asym_cint)
     nbase = length(layout.matrix) - length(_CTSEM_DERIVED_MATRICES)

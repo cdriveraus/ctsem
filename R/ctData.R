@@ -72,9 +72,6 @@ expmGetSubsets <- function(m){
   
   
   
-  if( (nrow(ctm$t0varstationary) + nrow(ctm$t0meansstationary)) >0 && 
-      length(c(ctm$modelmats$calcs$driftcint, ctm$modelmats$calcs$diffusion)) > 0) message('Stationarity assumptions based on initial states when using non-linear dynamics')
-  
   nindvarying <- max(ctm$modelmats$matsetup$indvarying)
   nparams <- max(ctm$modelmats$matsetup$param[
     .ctMatsetupFreeRows(ctm$modelmats$matsetup, free = FALSE)])
@@ -236,10 +233,6 @@ expmGetSubsets <- function(m){
       gendata=0L,
       nindvarying=as.integer(nindvarying),
       nindvaryingoffdiagonals=as.integer((nindvarying^2-nindvarying)/2),
-      nt0varstationary=as.integer(nrow(ctm$t0varstationary)),
-      nt0meansstationary=as.integer(nrow(ctm$t0meansstationary)),
-      t0varstationary=matrix(as.integer(ctm$t0varstationary),ncol=2),
-      t0meansstationary=matrix(as.integer(ctm$t0meansstationary),ncol=2),
       driftdiagonly = as.integer(driftdiagonly),
       intoverpop=as.integer(ctm$intoverpop),
       # nlmeasurement=as.integer(nlmeasurement),
@@ -357,15 +350,7 @@ expmGetSubsets <- function(m){
         )) subindex <- 1 else subindex <- 0
         subindices[[names(mats$base)[mati]]] <- subindex
   }
-  
-  if(ctm$stationary || nrow(ctm$t0varstationary) > 0) subindices$T0VAR  <- 
-    max(c(subindices$T0VAR,subindices$DRIFT,subindices$DIFFUSION))
-  
-  if(ctm$stationary || nrow(ctm$t0meansstationary) > 0) subindices$T0MEANS <- 
-    max(c(subindices$T0MEANS,subindices$DRIFT,subindices$CINT))
-  
-  
-  
+
   standata$subindices <- as.integer(unlist(subindices))[order(mats$base)]
   
   

@@ -154,6 +154,19 @@ mutable struct CTSEMInitRecord{T}
 end
 
 """
+The stationary initial moments, `_ctsem_stationary!`: the drift over the
+leading block of genuine dynamics, the mean it gave, the covariance over the
+diffusion states, and the raw DIFFUSION, which keys the deferred diffusion
+pullback exactly as a prediction's does.
+"""
+mutable struct CTSEMStationaryRecord{T}
+    DRIFT::Matrix{T}
+    mean::Vector{T}
+    X::Matrix{T}
+    DIFFUSION::Matrix{T}
+end
+
+"""
     CTSEMAdjointTape
 
 Ordered record of one subject's forward pass.
@@ -170,6 +183,7 @@ mutable struct CTSEMAdjointTape{T}
     thetas::Vector{CTSEMThetaRecord{T}}
     inits::Vector{CTSEMInitRecord{T}}
     binaries::Vector{CTSEMBinaryRecord{T}}
+    stationaries::Vector{CTSEMStationaryRecord{T}}
     # How many of each vector the *current* pass has written. The vectors are
     # never emptied, so a subject after the first writes into records that
     # already exist and already have arrays of the right shape -- see
@@ -182,6 +196,7 @@ mutable struct CTSEMAdjointTape{T}
     nthetas::Int
     ninits::Int
     nbinaries::Int
+    nstationaries::Int
     subject_values::Vector{T}
     # For each transform group (1 = predict, 2 = td, 3 = update), the
     # `all_params` indices that group can read or write: the union of its
@@ -194,7 +209,8 @@ CTSEMAdjointTape(::Type{T}, group_relevant=[Int[], Int[], Int[]]) where {T} =
     CTSEMAdjointTape{T}(
         Tuple{Symbol,Int}[], CTSEMPredictRecord{T}[], CTSEMTDRecord{T}[],
         CTSEMUpdateRecord{T}[], CTSEMGroupRecord{T}[], CTSEMThetaRecord{T}[],
-        CTSEMInitRecord{T}[], CTSEMBinaryRecord{T}[], 0, 0, 0, 0, 0, 0, 0,
+        CTSEMInitRecord{T}[], CTSEMBinaryRecord{T}[],
+        CTSEMStationaryRecord{T}[], 0, 0, 0, 0, 0, 0, 0, 0,
         T[], group_relevant)
 
 """
@@ -219,7 +235,7 @@ function _tape_reset!(tape::CTSEMAdjointTape)
     empty!(tape.program)
     tape.npredicts = 0; tape.ntds = 0; tape.nupdates = 0
     tape.ngroups = 0; tape.nthetas = 0; tape.ninits = 0
-    tape.nbinaries = 0
+    tape.nbinaries = 0; tape.nstationaries = 0
     return tape
 end
 
@@ -303,6 +319,7 @@ end
 @inline _record_update!(::Nothing, args...) = nothing
 @inline _begin_predict!(::Nothing, args...) = nothing
 @inline _record_predict!(::Nothing, args...) = nothing
+@inline _record_stationary!(::Nothing, args...) = nothing
 
 function _record_subject_values!(tape::CTSEMAdjointTape, subject_values)
     resize!(tape.subject_values, length(subject_values))
@@ -324,6 +341,35 @@ function _record_init!(tape::CTSEMAdjointTape{T}, pars, n::Int,
             Matrix{T}(popsource)))
     end
     _tape_push!(tape, :init, index)
+    return nothing
+end
+
+"""
+    _record_stationary!(tape, ws, pars)
+
+Record `_ctsem_stationary!` just after it ran: the mean is in `ws.state` and the
+covariance still in `ws.diffusion_buffer.out`, where it left them.
+"""
+function _record_stationary!(tape::CTSEMAdjointTape{T}, ws, pars) where {T}
+    index = (tape.nstationaries += 1)
+    n = _val(ws.state_dim)
+    naff = _val(ws.affine_buffer.dim)
+    k = length(ws.diffusion_state_indices)
+    drift = view(pars.DRIFT, 1:naff, 1:naff)
+    mean = view(ws.state, 1:naff)
+    X = view(ws.diffusion_buffer.out, 1:k, 1:k)
+    diffusion = view(pars.DIFFUSION, 1:n, 1:n)
+    if index <= length(tape.stationaries)
+        record = tape.stationaries[index]
+        record.DRIFT = _tape_fill!(record.DRIFT, drift)
+        record.mean = _tape_fill!(record.mean, mean)
+        record.X = _tape_fill!(record.X, X)
+        record.DIFFUSION = _tape_fill!(record.DIFFUSION, diffusion)
+    else
+        push!(tape.stationaries, CTSEMStationaryRecord{T}(Matrix{T}(drift),
+            Vector{T}(mean), Matrix{T}(X), Matrix{T}(diffusion)))
+    end
+    _tape_push!(tape, :stationary, index)
     return nothing
 end
 
@@ -822,6 +868,73 @@ function _reverse_predict!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
     return nothing
 end
 
+"""
+    _reverse_stationary!(x̄, P̄, θ̄ca, record, dyn, n, aws)
+
+Undo `_ctsem_stationary!`. The forward pass overwrote the mean over the leading
+`naff` states and every entry of those rows and columns of the covariance, so
+their cotangents end here; the `:init` entry before it sees only what the
+overwrite left, which in those rows is nothing.
+
+  * mean, `m = -A \\ c` with `A = DRIFT[1:naff, 1:naff]`: `w = A' \\ m̄`, then
+    `Ā -= w m'` and `c̄ -= w`.
+  * covariance, `A_D X + X A_D' + Q_D = 0` over the diffusion states: the
+    prediction's own Lyapunov pullback, and `Q̄` deferred through DIFFUSION's
+    construction exactly as a prediction's is, keyed on the same raw matrix.
+"""
+function _reverse_stationary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
+    record::CTSEMStationaryRecord{T}, dyn::AbstractVector{Int}, n::Int,
+    aws) where {T}
+    sc = aws.reverse_scratch
+    naff = aws.affine_dim
+    k = length(dyn)
+
+    w = _rs(sc.av1, naff)
+    At = _rs(sc.aa1, naff, naff)
+    @inbounds for i in 1:naff
+        w[i] = x̄[i]
+    end
+    @inbounds for j in 1:naff, i in 1:naff
+        At[i, j] = record.DRIFT[j, i]
+    end
+    _solve_square_system_generic!(At, w, sc.piv, naff)
+    @inbounds for i in 1:naff
+        θ̄ca.CINT[i] -= w[i]
+    end
+    @inbounds for j in 1:naff, i in 1:naff
+        θ̄ca.DRIFT[i, j] -= w[i] * record.mean[j]
+    end
+
+    Ad = _rs(sc.kk1, k, k)
+    X̄ = _rs(sc.kk4, k, k)
+    @inbounds for j in 1:k, i in 1:k
+        Ad[i, j] = record.DRIFT[dyn[i], dyn[j]]
+        X̄[i, j] = P̄[dyn[i], dyn[j]]
+    end
+    Ād = sc.kk7
+    Q̄d = sc.kk8
+    _ctsem_lyap_pullback!(Ād, Q̄d, sc.kk9, sc.kk10, Ad, record.X, X̄,
+        aws.lyap_buffer)
+    @inbounds for j in 1:k, i in 1:k
+        θ̄ca.DRIFT[dyn[i], dyn[j]] += Ād[i, j]
+    end
+    Qc_bar = _rs(sc.nn5, n, n)
+    fill!(Qc_bar, zero(T))
+    @inbounds for j in 1:k, i in 1:k
+        Qc_bar[dyn[i], dyn[j]] = Q̄d[i, j]
+    end
+    _defer_diffusion!(aws, record.DIFFUSION, Qc_bar, θ̄ca, n)
+
+    @inbounds for i in 1:naff
+        x̄[i] = zero(T)
+    end
+    @inbounds for j in 1:n, i in 1:naff
+        P̄[i, j] = zero(T)
+        P̄[j, i] = zero(T)
+    end
+    return nothing
+end
+
 """Undo one TD-predictor impulse: `x⁺ = x + TDPREDEFFECT td`, `P⁺ = Jtd P Jtd'`."""
 function _reverse_td!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
     record::CTSEMTDRecord{T}, n::Int) where {T}
@@ -1110,6 +1223,8 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
             # Deferred rather than pushed back here; see `_defer_manifestvar!`.
             _defer_manifestvar!(aws, tape.thetas[index].MANIFESTVAR, Θ̄, θ̄ca, m)
             fill!(Θ̄, zero(T))
+        elseif kind === :stationary
+            _reverse_stationary!(x̄, P̄, θ̄ca, tape.stationaries[index], dyn, n, aws)
         elseif kind === :init
             @inbounds for i in 1:n
                 θ̄ca.T0MEANS[i] += x̄[i]

@@ -1326,6 +1326,58 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   expression
 }
 
+# stationary = TRUE starts the latent processes from the distribution DRIFT,
+# CINT and DIFFUSION settle into, which exists only while those are the
+# subject's constants. A cell of theirs over the latent processes that reads a
+# state or a time dependent predictor -- directly, or through a PARS or other
+# cell that does -- describes a different system at every state and row. The
+# engine evaluates the stationary moments once, at the first row and a
+# placeholder state (`_ctsem_stationary!`), so such a model would start from
+# the distribution of a system it is not; refused here, by cell. A state past
+# `nlatent` is a random effect the augmented route carries as a state, and
+# 'laplace' is the route that keeps it fixed for each subject.
+.ctJuliaStationaryCheck <- function(table, nlatent) {
+  blank <- function(x) .ctJuliaNoNA(as.character(x), "")
+  expression <- paste(blank(table$predicttransform),
+    blank(table$updatetransform), blank(table$tdtransform))
+  key <- paste(table$matrix, table$row, table$col)
+  cellpattern <- "\\b([A-Za-z][A-Za-z0-9]*)\\s*\\[\\s*(\\d+)\\s*(?:,\\s*(\\d+)\\s*)?\\]"
+  reach <- lapply(expression, function(e) {
+    found <- regmatches(e, gregexpr(cellpattern, e, perl = TRUE))[[1L]]
+    if (!length(found)) return(integer(0))
+    parts <- regmatches(found, regexec(cellpattern, found, perl = TRUE))
+    match(vapply(parts, function(p) paste(p[2L], p[3L],
+      if (nzchar(p[4L])) p[4L] else "1"), character(1)), key)
+  })
+  states <- lapply(expression, function(e) as.integer(regmatches(e,
+    gregexpr("(?<=\\bstate\\[)\\s*\\d+", e, perl = TRUE))[[1L]]))
+  varying <- lengths(states) > 0L | grepl("tdpreds\\s*\\[", expression)
+  carrier <- vapply(states, function(s) any(s > nlatent), logical(1))
+  repeat {
+    through <- function(flag) flag | vapply(reach, function(i)
+      any(flag[i], na.rm = TRUE), logical(1))
+    nextvarying <- through(varying)
+    nextcarrier <- through(carrier)
+    if (identical(nextvarying, varying) && identical(nextcarrier, carrier)) break
+    varying <- nextvarying
+    carrier <- nextcarrier
+  }
+  dynamics <- table$matrix %in% c("DRIFT", "CINT", "DIFFUSION") &
+    table$row <= nlatent & (table$matrix %in% "CINT" | table$col <= nlatent)
+  bad <- which(dynamics & varying)
+  if (!length(bad)) return(invisible(TRUE))
+  cells <- paste(paste0(table$matrix[bad], "[", table$row[bad], ",",
+    table$col[bad], "]"), collapse = ", ")
+  if (any(carrier[bad])) stop("stationary = TRUE needs DRIFT, CINT and ",
+    "DIFFUSION fixed within each subject, and intoverpop = 'augmented' ",
+    "carries the individual variation in ", cells, " as a state. Use ",
+    "intoverpop = 'laplace'.", call. = FALSE)
+  stop("stationary = TRUE needs DRIFT, CINT and DIFFUSION fixed within each ",
+    "subject, and ", cells, " depend on the latent states or on time ",
+    "dependent predictors, so there is no one stationary distribution. ",
+    "Estimate T0MEANS and T0VAR instead.", call. = FALSE)
+}
+
 .ctJuliaCanonicalModel <- function(model) {
   # ctFit has already established the canonical, augmented layout before it
   # dispatches to a backend. Reusing it keeps the state and parameter ordering
@@ -3143,6 +3195,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     parameter_table <- augmented$parameter_table
     ti_effects <- .ctJuliaTIEffects(parameter_table, model)
   }
+  if (isTRUE(as.logical(model$stationary))) {
+    .ctJuliaStationaryCheck(parameter_table, augmented$nlatent)
+  }
   # `laplace$npar` already counts every level's scales and correlations. Taking
   # the maximum over the *level-one* index vectors instead sized the raw vector
   # to the subject level alone, so an outer level's scale sat past the end of
@@ -3235,6 +3290,11 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     # DRIFT, CINT and DIFFUSION are already the one-step quantities, so the
     # exponential, the Lyapunov solve and the intercept solve all collapse.
     continuoustime = isTRUE(model$continuoustime),
+    # Whether the latent processes start from their stationary distribution
+    # rather than T0MEANS and T0VAR. On the spec, like `continuoustime`, so a
+    # fit rebuilt from a saved object filters the way it was estimated; NULL on
+    # a model saved before the option worked, which is FALSE.
+    stationary = isTRUE(as.logical(model$stationary)),
     # Which covariance construction to use, as the integer code both backends
     # share -- 0 for the unconstrained correlation square root, 2 for
     # covmattransform='z'. Carried on the spec so a fit rebuilt from a saved
@@ -3425,6 +3485,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       V(as.integer(spec$dynamic_state_indices))
   }
   arguments$continuous_time <- isTRUE(spec$continuoustime)
+  # Sent only when set, so every other model hashes and builds exactly as it
+  # did.
+  if (isTRUE(spec$stationary)) arguments$stationary <- TRUE
   # How many leading states are genuine dynamics rather than the static
   # coordinates the random-effect augmentation appended. The engine runs the
   # continuous form's intercept solve over that block, because JAx is exactly
