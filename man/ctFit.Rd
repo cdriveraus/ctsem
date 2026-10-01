@@ -204,9 +204,12 @@ the \code{id} elements, and an unknown one is an error rather than a silent
 no-op. \code{'auto'} keeps the meaning it has on the augmented route and is
 resolved once per level: each level's rank becomes the number of \emph{its}
 effects that reach the observation mean, so a level carrying only
-mean-affecting effects is left at full rank. It still has to be asked for,
-because under \code{'laplace'} those coordinates are identified and dropping
-them is an approximation rather than a repair.
+mean-affecting effects is left at full rank. Named, it applies to the levels
+it names, and may sit beside numbers, as \code{c(subject='auto', study=2)}.
+It still has to be asked for, because under \code{'laplace'} those
+coordinates are identified and dropping them is an approximation rather than
+a repair. Under \code{'augmented'} and \code{'none'} a named rank may name
+only the subject level, the one those routes restrict.
 
 The mechanism differs too, and it is why the per-level form exists. On the
 augmented route a reduced rank rewrites the model into basis effects and
@@ -226,17 +229,25 @@ single loading. They are named \code{poploading_<parameter>_dim<j>.<level>}
 to keep them distinct from the \code{popsd_} and \code{rawcor_} of a
 full-rank level, which are a different quantity.
 
-May also be stated on the model, as \code{model$poprank <- 2}; an argument
-here wins over that.}
+May also be stated on the model, as \code{model$poprank <- 2}, which asks for
+it just as the argument does; an argument here wins over that.}
 
 \item{sameInitialTimes}{if TRUE, include an empty observation for every subject that has no observation
 at the earliest observation time of the dataset. This ensures that the T0MEANS occurs for every subject at the same time,
 rather than just at the earliest observation for that subject. Important when modelling trends over time, age, etc.}
 
-\item{stationary}{Logical. If TRUE, T0VAR and T0MEANS input matrices are ignored,
-the parameters are instead fixed to long run expectations. More control over this can be achieved
-by instead setting parameter names of T0MEANS and T0VAR matrices in the input model to 'stationary', for
-elements that should be fixed to stationarity.}
+\item{stationary}{Logical. If TRUE, each subject's latent processes start
+from the distribution DRIFT, CINT and DIFFUSION settle into -- the mean
+\code{-DRIFT^-1 CINT} and the asymptotic covariance -- rather than from
+T0MEANS and T0VAR, which are then not estimated. Suits processes observed
+long after they began, and saves estimating the initial state. Requires
+\code{backend='julia'}, a continuous time model, and a DRIFT, CINT and
+DIFFUSION that are fixed within each subject: no cell may depend on the
+latent states or on time dependent predictors. Individual differences in
+those matrices are allowed with \code{intoverpop='laplace'}, which
+\code{intoverpop='auto'} then chooses; each subject starts from its own
+stationary distribution. A latent process whose DRIFT row is fixed at zero
+never settles, and is refused.}
 
 \item{plot}{if TRUE, for sampling, a Shiny program is launched upon fitting to interactively plot samples.
 May struggle with many (e.g., > 5000) parameters. For optimizing, various optimization details are plotted -- in development.

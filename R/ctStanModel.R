@@ -884,6 +884,16 @@ ctStanModel <- ctModelConvertOMX
   # flagged -- so every free cell carrying a varying label is one of its own.
   home <- which(flagged | (text %in% text[flagged] & is.na(pars$value)))
 
+  # Stationary initial conditions take DRIFT, CINT and DIFFUSION as the
+  # subject's constants, and the augmented filter carries individual variation
+  # on any of them as a state -- so there, even an affine CINT effect needs
+  # the route that keeps each subject's values fixed.
+  dynamics <- if(isTRUE(as.logical(model$stationary)))
+    c('DRIFT', 'CINT', 'DIFFUSION') else character(0)
+  hit <- home[matrixname[home] %in% dynamics]
+  if(length(hit)) return(paste0('individual variation on ', cells(hit),
+    ' is a state on the augmented route, and stationary=TRUE needs it ',
+    'fixed within each subject'))
   hit <- home[matrixname[home] %in% .ctPopNonlinearMatrices()]
   if(length(hit)) return(paste0('individual variation on ', cells(hit),
     ' is nonlinear in the filter'))
@@ -927,6 +937,10 @@ ctStanModel <- ctModelConvertOMX
           patterns <- c(patterns, parsref(ri))
           next
         }
+        if(matrixname[ri] %in% dynamics)
+          return(paste0('individual variation on ', label, ' reaches ',
+            matrixname[ri], ', which stationary=TRUE needs fixed within ',
+            'each subject'))
         if(matrixname[ri] %in% .ctPopNonlinearMatrices())
           return(paste0('individual variation on ', label, ' reaches ',
             matrixname[ri], ', which is nonlinear in the filter'))

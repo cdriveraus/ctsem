@@ -277,8 +277,15 @@ function _ctsem_particle_subject!(sub, sp, x::Vector{Float64}, N::Int, nsubsteps
     # standard normals. `_ctsem_t0_factor!`, not T0VAR's own factor, is what
     # makes the claim at the top of this file true: a random effect carried as
     # an augmented state has its spread in RAWPOPVAR, and built from T0VAR alone
-    # every particle started that coordinate at the population mean.
-    _ctsem_t0_factor!(factor, ws, pars, all_params)
+    # every particle started that coordinate at the population mean. A
+    # stationary model runs the predict group first, as the filter does.
+    if sp.stationary
+        copyto!(ws.state, pars.T0MEANS)
+        apply_complex_transforms_at_indices!(all_params, ws.predict_param_indices,
+            sp.predict_transforms, CTSEMRowContext(ws.state, pars,
+                view(tdpreds, :, 1), tipreds, ts[1], zero(T), subject, 1))
+    end
+    _ctsem_t0_factor!(factor, ws, pars, all_params, sp.stationary)
     @inbounds for p in 1:N
         randn!(rng, view(z, 1:n))
         for i in 1:n

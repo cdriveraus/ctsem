@@ -42,8 +42,8 @@ levelmodel <- function() {
   m
 }
 
-levelspec <- function(d, ...) {
-  suppressMessages(ctFit(d, levelmodel(), backend = "julia",
+levelspec <- function(d, ..., model = levelmodel()) {
+  suppressMessages(ctFit(d, model, backend = "julia",
     intoverpop = "laplace", cores = 2, fit = FALSE, ...))
 }
 
@@ -104,6 +104,22 @@ test_that("several levels can be reduced at once", {
   expect_equal(tab$nload, c(0L, 24L, 17L))
 })
 
+test_that("a per-level rank stated on the model is the rank passed to ctFit", {
+  # The model's rank was read and then ignored here, because laplace gated on
+  # the argument alone: a two-level model with `model$poprank` set ran at full
+  # rank and said nothing.
+  d <- levelframe()
+  m <- levelmodel()
+  m$poprank <- c(subject = 3, study = 2)
+  onmodel <- levelspec(d, model = m)
+  passed <- levelspec(d, poprank = c(subject = 3, study = 2))
+  expect_equal(bylevel(onmodel), bylevel(passed))
+  expect_equal(onmodel$laplace$npar, passed$laplace$npar)
+  # and the argument still wins over it
+  expect_equal(levelspec(d, model = m, poprank = NA)$laplace$npar,
+    levelspec(d)$laplace$npar)
+})
+
 test_that("a rank at or above the level's own k is the full covariance", {
   tab <- bylevel(levelspec(levelframe(), poprank = c(study = 50)))
   expect_equal(tab$rank[tab$name == "study"], 9L)
@@ -115,6 +131,8 @@ test_that("poprank refuses what it cannot mean", {
   expect_error(levelspec(d, poprank = c(nosuchlevel = 2)), "no level called")
   expect_error(levelspec(d, poprank = c(study = 0)), "below 1")
   expect_error(levelspec(d, poprank = c(2, 3)), "must be named")
+  expect_error(levelspec(d, poprank = c(study = 2.5)), "whole number")
+  expect_error(levelspec(d, poprank = c(study = 2, study = 3)), "more than once")
 })
 
 test_that("auto resolves to each level's own mean-affecting count", {
@@ -125,6 +143,35 @@ test_that("auto resolves to each level's own mean-affecting count", {
   expect_equal(tab$rank, c(3L, 6L, 6L))
   expect_equal(tab$nload, c(0L, 9L * 6L - 15L, 9L * 6L - 15L))
   expect_equal(tab$nsd, c(3L, 0L, 0L))
+})
+
+test_that("each named entry is read for its own level, auto and NA included", {
+  # A named 'auto' once resolved every level, and beside a number it dropped
+  # the number: `is.character()` on the whole vector decided.
+  d <- levelframe()
+  expect_equal(bylevel(levelspec(d, poprank = c(study = "auto")))$rank,
+    c(3L, 9L, 6L))
+  expect_equal(bylevel(levelspec(d,
+    poprank = c(subject = "auto", study = 2)))$rank, c(3L, 6L, 2L))
+  # NA at a level is that level at full rank, as NA is for the whole model.
+  expect_equal(bylevel(levelspec(d, poprank = c(subject = NA, study = 2)))$rank,
+    c(3L, 9L, 2L))
+})
+
+test_that("off laplace a named rank may name the subject level and no other", {
+  # The augmented rewrite works from `pars$indvarying`, the innermost level, so
+  # a rank naming another level would have been read as a number for this one.
+  d <- levelframe()
+  m <- levelmodel()
+  m$pars$indvarying_subject <- FALSE
+  m$pars$indvarying_study <- FALSE
+  augmented <- function(...) suppressWarnings(suppressMessages(ctFit(d, m,
+    backend = "julia", intoverpop = "augmented", cores = 1, fit = FALSE, ...)))
+  expect_error(augmented(poprank = c(study = 2)), "subject level \\('burst'\\) alone")
+  expect_error(augmented(poprank = c(nosuchlevel = 2)), "no level called")
+  expect_error(augmented(poprank = c(2, 3)), "must be named")
+  expect_equal(ctsem:::.ctBackendNpar(augmented(poprank = c(burst = NA))),
+    ctsem:::.ctBackendNpar(augmented(poprank = NA)))
 })
 
 test_that("a reduced level's parameters are named as loadings, not scales", {
