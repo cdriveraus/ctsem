@@ -668,8 +668,16 @@ function _ctsem_state_pass!(ws, params::AbstractVector{T}, data::AbstractMatrix,
     # first block of innovations. Through `_ctsem_t0_factor!` rather than
     # straight from T0VAR, so that a model carrying random effects as augmented
     # states draws them -- see that function for what building it from T0VAR
-    # alone silently did.
-    _ctsem_t0_factor!(factor, ws, pars, all_params)
+    # alone silently did. A stationary model runs the predict group first, as
+    # the filter does, so the stationary moments read DRIFT, CINT and DIFFUSION
+    # at their values; they read no state, so the placeholder one is harmless.
+    if sp.stationary
+        copyto!(ws.state, pars.T0MEANS)
+        apply_complex_transforms_at_indices!(all_params, ws.predict_param_indices,
+            sp.predict_transforms, CTSEMRowContext(ws.state, pars,
+                view(tdpreds, :, 1), tipreds, timesteps[1], zero(T), subject, 1))
+    end
+    _ctsem_t0_factor!(factor, ws, pars, all_params, sp.stationary)
     at = zoffset
     @inbounds for i in 1:n
         acc = T(pars.T0MEANS[i])

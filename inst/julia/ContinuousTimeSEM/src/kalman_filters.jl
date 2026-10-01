@@ -763,7 +763,133 @@ about what a fit had estimated. One placement, two callers.
 end
 
 """
-    _ctsem_t0_factor!(dest, ws, pars, all_params)
+    _ctsem_stationary!(P, x, ws, pars)
+
+Start the latent processes from the distribution they settle into: write the
+stationary mean over `x[1:naff]` and the stationary covariance over rows and
+columns `1:naff` of `P`, and return whether the system has one.
+
+The mean is `-DRIFT \\ CINT` over the leading block of genuine dynamics, the
+block the prediction's intercept solve uses. The covariance solves
+`DRIFT X + X DRIFT' + DIFFUSIONcov = 0` over the diffusion states, the block the
+prediction's Lyapunov solve uses; every other entry of those rows and columns
+is zero -- a latent outside the diffusion block is driven by no noise and sits
+at its mean, and the carrier states of random effects that do not enter the
+dynamics are independent of them. So the two agree with what the prediction
+itself converges to over a long interval, which is the point.
+
+**Only defined for dynamics that are the subject's constants.** R refuses a
+model whose DRIFT, CINT or DIFFUSION over these states reads a state or a time
+dependent predictor -- which includes a random effect carried as an augmented
+state -- because there is then no single system to be stationary in. Random
+effects on the dynamics go through `intoverpop='laplace'`, where each subject's
+values are fixed for its filter and this is exactly its stationary
+distribution. The caller runs the predict group first, so a cell written by a
+transform holds its value rather than `UNSET_PARAMETER`.
+
+`false` when `DRIFT` is singular, or when the solution is not a covariance --
+the drift is unstable and there is no stationary distribution -- and the
+caller treats the point as invalid. The stability test is the Lyapunov one:
+with the noise reaching every diffusion state, `X` is semi-definite exactly when
+the drift over them is stable.
+
+Scratch: `affine_buffer` for the mean, `diffusion_buffer` and the leading block
+of `discretization_buffer.input` for the covariance, `bufferQ` for the
+diffusion covariance. None holds anything at the point either caller runs
+this.
+"""
+function _ctsem_stationary!(P, x, ws, pars)
+    n = _val(ws.state_dim)
+    dyn = ws.diffusion_state_indices
+    k = length(dyn)
+    ab = ws.affine_buffer
+    naff = _val(ab.dim)
+
+    @inbounds for j in 1:naff, i in 1:naff
+        ab.intermediate[i, j] = pars.DRIFT[i, j]
+    end
+    @inbounds for i in 1:naff
+        ab.s[i] = -pars.CINT[i]
+    end
+    _solve_square_system!(ab.intermediate, ab.s, ab.piv, ab.dim)
+
+    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, ws.covmatcode,
+        ws.state_dim)
+    db = ws.diffusion_buffer
+    A = view(ws.discretization_buffer.input, 1:k, 1:k)
+    @inbounds for j in 1:k, i in 1:k
+        A[i, j] = pars.DRIFT[dyn[i], dyn[j]]
+        db.intermediate[i, j] = ws.bufferQ.out[dyn[i], dyn[j]]
+    end
+    my_lyap!(db.out, A, db.intermediate, ws.lyap_buffer)
+
+    @inbounds for i in 1:naff
+        isfinite(ab.s[i]) || return false
+    end
+    _ctsem_semidefinite(db.out, db.intermediate, k) || return false
+
+    @inbounds for i in 1:naff
+        x[i] = ab.s[i]
+    end
+    @inbounds for j in 1:n, i in 1:naff
+        P[i, j] = zero(eltype(P))
+        P[j, i] = zero(eltype(P))
+    end
+    @inbounds for j in 1:k, i in 1:k
+        P[dyn[i], dyn[j]] = db.out[i, j]
+    end
+    return true
+end
+
+"""
+    _ctsem_semidefinite(X, scratch, k)
+
+Whether the leading `k` by `k` block of `X` is a covariance, to rounding: a
+Cholesky elimination in `scratch` that passes a zero pivot -- a state the noise
+does not reach -- and fails a negative one beyond a tolerance relative to the
+largest diagonal. `X` is left as it was.
+
+Value-only comparisons, as everywhere in this engine, so a gradient takes the
+branch its primal took.
+"""
+function _ctsem_semidefinite(X, L, k::Int)
+    scale = zero(eltype(L))
+    @inbounds for i in 1:k
+        isfinite(X[i, i]) || return false
+        scale = max(scale, abs(X[i, i]))
+    end
+    tol = 1e-8 * scale
+    @inbounds for j in 1:k, i in 1:k
+        L[i, j] = X[i, j]
+    end
+    @inbounds for j in 1:k
+        s = L[j, j]
+        for p in 1:(j - 1)
+            s -= L[j, p] * L[j, p]
+        end
+        if s > tol
+            u = sqrt(s)
+            L[j, j] = u
+            for i in (j + 1):k
+                v = L[i, j]
+                for p in 1:(j - 1)
+                    v -= L[i, p] * L[j, p]
+                end
+                L[i, j] = v / u
+            end
+        elseif s < -tol
+            return false
+        else
+            for i in j:k
+                L[i, j] = zero(eltype(L))
+            end
+        end
+    end
+    return true
+end
+
+"""
+    _ctsem_t0_factor!(dest, ws, pars, all_params, stationary=false)
 
 The factor `M` with `M M'` the initial covariance the filter carries, written
 to `dest`.
@@ -797,9 +923,16 @@ changes -- deliberately, so a model with no random effects keeps the
 seed-for-seed generation it already had. With one, the covariance is built the
 way the filter builds it and then factored, `_ctsem_lower_chol!` being the
 semi-definite factorisation a carrier state with no diffusion of its own needs.
+
+`stationary` places the stationary block the same way, by `_ctsem_stationary!`,
+and writes the stationary mean over `pars.T0MEANS`, which is what both callers
+read the initial mean from; the caller runs the predict group first. A system
+with no stationary distribution leaves `dest` NaN, which both callers' density
+turns into an invalid point.
 """
-@inline function _ctsem_t0_factor!(dest, ws, pars, all_params)
-    if isempty(ws.population_indices)
+@inline function _ctsem_t0_factor!(dest, ws, pars, all_params,
+        stationary::Bool=false)
+    if isempty(ws.population_indices) && !stationary
         return _ctsem_sdcor_factor!(dest, pars.T0VAR, ws.bufferQ, ws.state_dim)
     end
     n = _val(ws.state_dim)
@@ -812,6 +945,10 @@ semi-definite factorisation a carrier state with no diffusion of its own needs.
     _place_population_block!(dest, all_params, ws.population_indices,
         ws.population_range, ws.population_covmatcode, ws.population_scale,
         ws.population_buffer)
+    if stationary && !_ctsem_stationary!(dest, pars.T0MEANS, ws, pars)
+        fill!(dest, eltype(dest)(NaN))
+        return dest
+    end
     _ctsem_lower_chol!(dest, n)
     # `_ctsem_lower_chol!` writes only the lower triangle, and both callers
     # multiply by the whole matrix. Left alone, the upper triangle still holds
@@ -870,6 +1007,8 @@ function _extended_kalman_filter_continuous!(
     # Initial prior:
     #   x_{1|0} = T0MEANS
     #   P_{1|0} = T0VAR
+    # with the latent processes' block replaced by their stationary moments
+    # below when the model asks for that.
     ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.T0VAR, ws.covmatcode, ws.state_dim)
     copyto!(ws.P_predict.data, ws.bufferQ.out)
     _copy_lower_to_upper!(ws.P_predict.data, ws.state_dim)
@@ -897,6 +1036,22 @@ function _extended_kalman_filter_continuous!(
     # reference ctx.dt or ctx.time at all.
     first_context = CTSEMRowContext(ws.state, pars, view(tdpreds, :, 1), tipreds,
         timesteps[1], zero(eltype(params)), Int(subject), 1)
+    if sp.stationary
+        # The predict group once more ahead of the ordinary one, so a DRIFT,
+        # CINT or DIFFUSION cell written by a transform holds its value when the
+        # stationary moments read it. Those cells read no state (R refuses
+        # stationarity when they do), so the placeholder T0MEANS state they see
+        # here does not matter; the ordinary run below then sees the stationary
+        # state, which a state-dependent PARS cell read by the measurement does
+        # need. Recorded like any group, so the reverse pass meets the two runs
+        # and the stationary step between them in the order they happened.
+        _record_group!(trace, 1, ws.predict_param_indices, all_params, first_context)
+        apply_complex_transforms_at_indices!(all_params, ws.predict_param_indices,
+            sp.predict_transforms, first_context)
+        _ctsem_stationary!(ws.P_predict.data, ws.state, ws, pars) ||
+            return _invalid_ekf_loglikelihood(ws)
+        _record_stationary!(trace, ws, pars)
+    end
     _record_group!(trace, 1, ws.predict_param_indices, all_params, first_context)
     apply_complex_transforms_at_indices!(all_params, ws.predict_param_indices, sp.predict_transforms, first_context)
     _record_group!(trace, 2, ws.td_param_indices, all_params, first_context)

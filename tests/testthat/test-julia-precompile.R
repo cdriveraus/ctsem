@@ -132,6 +132,12 @@ test_that("every captured model replayed when the engine image was built", {
 
 test_that("a fresh session's first fit of a precompiled model compiles almost nothing", {
   skip_without_julia()
+  # An image built without the workload compiled nothing ahead of time, so its
+  # first fit compiles everything by construction and there is nothing to
+  # measure. The child below inherits the same image.
+  enabled <- tryCatch(isTRUE(ctsem:::.ctJuliaEval(
+    "ContinuousTimeSEM._PRECOMPILE_WORKLOAD_ENABLED")), error = function(e) NA)
+  skip_if(isFALSE(enabled), "engine image built with CTSEM_PRECOMPILE_WORKLOAD=false")
   # Its own R process, and so its own Julia: this session's Julia has compiled
   # whatever earlier tests ran, and a first fit is a property of a fresh one.
   # Most of its time is starting R, ctsem and Julia -- nothing cheaper sees the

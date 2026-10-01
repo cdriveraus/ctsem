@@ -531,6 +531,23 @@ T0VARredundancies <- function(ctm) {
   return(ctm)
 }
 
+# A latent whose DRIFT row is fixed at zero never settles anywhere -- a trait
+# held constant, or a random walk -- so stationary = TRUE has nothing to start
+# it from. Refused by name here, because the engine would otherwise meet a
+# singular DRIFT at every trial point and the fit would fail at its starting
+# values with nothing said about why.
+.ctStationaryCheckDrift <- function(ctm) {
+  drift <- ctm$pars[ctm$pars$matrix %in% 'DRIFT', , drop = FALSE]
+  fixedzero <- is.na(drift$param) & !is.na(drift$value) & drift$value == 0
+  static <- vapply(seq_len(ctm$n.latent), function(i)
+    any(drift$row == i) && all(fixedzero[drift$row == i]), logical(1))
+  if(any(static)) stop('stationary = TRUE needs every latent process to ',
+    'settle somewhere, and DRIFT is fixed at zero for ',
+    paste(ctm$latentNames[static], collapse = ', '),
+    '. Estimate T0MEANS and T0VAR instead.', call. = FALSE)
+  invisible(TRUE)
+}
+
 
 
 #' Fit a ctsem model
@@ -1143,10 +1160,18 @@ T0VARredundancies <- function(ctm) {
 #'   \code{options(ctsem.progress.overwrite = FALSE)} if that detection is wrong
 #'   for your front end -- a Shiny app capturing stdout, for instance -- or
 #'   \code{TRUE} to force it on.
-#' @param stationary Logical. If TRUE, T0VAR and T0MEANS input matrices are ignored,
-#' the parameters are instead fixed to long run expectations. More control over this can be achieved
-#' by instead setting parameter names of T0MEANS and T0VAR matrices in the input model to 'stationary', for
-#' elements that should be fixed to stationarity.
+#' @param stationary Logical. If TRUE, each subject's latent processes start
+#' from the distribution DRIFT, CINT and DIFFUSION settle into -- the mean
+#' \code{-DRIFT^-1 CINT} and the asymptotic covariance -- rather than from
+#' T0MEANS and T0VAR, which are then not estimated. Suits processes observed
+#' long after they began, and saves estimating the initial state. Requires
+#' \code{backend='julia'}, a continuous time model, and a DRIFT, CINT and
+#' DIFFUSION that are fixed within each subject: no cell may depend on the
+#' latent states or on time dependent predictors. Individual differences in
+#' those matrices are allowed with \code{intoverpop='laplace'}, which
+#' \code{intoverpop='auto'} then chooses; each subject starts from its own
+#' stationary distribution. A latent process whose DRIFT row is fixed at zero
+#' never settles, and is refused.
 #' @param forcerecompile logical. For development purposes.
 #' If TRUE, stan model is recompiled, regardless of apparent need for compilation.
 #' @param saveCompile if TRUE and compilation is needed / requested, writes the stan model to
@@ -1645,26 +1670,38 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
 
 
   ###stationarity
+  # The latent processes start from the distribution DRIFT, CINT and DIFFUSION
+  # settle into, so T0MEANS and T0VAR are no longer parameters: their cells
+  # are fixed here and the engine writes the stationary moments over them
+  # (`_ctsem_stationary!`). The fixed values are placeholders nothing reads.
+  # Set on the model now rather than with the other flags below, because
+  # `.ctIntOverPopAuto()` reads it to keep random effects on the dynamics off
+  # the augmented route, where they are states and there is no one system to
+  # be stationary in.
+  if(!isTRUE(stationary) && !isFALSE(stationary)) stop(
+    'stationary must be TRUE or FALSE.', call. = FALSE)
+  if(any(ctm$pars$param %in% 'stationary')) stop(
+    "Naming a T0MEANS or T0VAR cell 'stationary' is no longer supported; ",
+    "use stationary = TRUE, which applies to every latent process.",
+    call. = FALSE)
   if(stationary) {
-    stop('Stationary option temporarily unavailable -- reductions needed to pass all CRAN checks')
-    ctm$pars$param[ctm$pars$matrix %in% c('T0VAR','T0MEANS')] <- 'stationary'
-    ctm$pars$value[ctm$pars$matrix %in% c('T0VAR','T0MEANS')] <- NA
-    ctm$pars$indvarying[ctm$pars$matrix %in% c('T0VAR','T0MEANS')] <- FALSE
+    if(!identical(backend, 'julia')) stop(
+      "stationary = TRUE needs backend = 'julia'.", call. = FALSE)
+    if(!isTRUE(as.logical(ctm$continuoustime))) stop(
+      'stationary = TRUE is implemented for continuous time models only.',
+      call. = FALSE)
+    .ctStationaryCheckDrift(ctm)
+    t0 <- ctm$pars$matrix %in% c('T0MEANS', 'T0VAR')
+    ctm$pars$param[t0] <- NA
+    ctm$pars$value[t0] <- ifelse(ctm$pars$matrix[t0] %in% 'T0VAR' &
+        ctm$pars$row[t0] == ctm$pars$col[t0], 1, 0)
+    ctm$pars$transform[t0] <- NA
+    ctm$pars$indvarying[t0] <- FALSE
+    # 'FALSE' as a string, for the reason T0VARredundancies() gives.
+    for(effect in intersect(paste0(ctm$TIpredNames, '_effect'),
+      names(ctm$pars))) ctm$pars[t0, effect] <- 'FALSE'
   }
-
-  #collect individual stationary elements and update ctm$pars
-  if(any(ctm$pars$param %in% 'stationary'))  stop('Stationary option temporarily unavailable -- reductions needed to pass all CRAN checks')
-    ctm$t0varstationary <- as.matrix(rbind(ctm$pars[which(ctm$pars$param %in% 'stationary' & ctm$pars$matrix %in% 'T0VAR'),c('row','col')]))
-    if(nrow(ctm$t0varstationary) > 0){ #ensure upper tri is consistent with lower
-      for(i in 1:nrow(ctm$t0varstationary)){
-        if(ctm$t0varstationary[i,1] != ctm$t0varstationary[i,2]) ctm$t0varstationary <- rbind(ctm$t0varstationary,ctm$t0varstationary[i,c(2,1)])
-      }}
-    ctm$t0varstationary = unique(ctm$t0varstationary) #remove any duplicated rows
-    ctm$t0meansstationary <- as.matrix(rbind(ctm$pars[which(ctm$pars$param[ctm$pars$matrix %in% 'T0MEANS'] %in% 'stationary'),c('row','col')]))
-    ctm$pars$value[ctm$pars$param %in% 'stationary'] <- -99 #does this get inserted?
-    ctm$pars$indvarying[ctm$pars$param %in% 'stationary'] <- FALSE
-    ctm$pars$transform[ctm$pars$param %in% 'stationary'] <- NA
-    ctm$pars$param[ctm$pars$param %in% 'stationary'] <- NA
+  ctm$stationary <- as.integer(stationary)
 
 
   if(length(unique(datalong[,ctm$subjectIDname]))==1 && any(ctm$pars$indvarying[is.na(ctm$pars$value)]==TRUE)){

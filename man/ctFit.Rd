@@ -236,10 +236,18 @@ it just as the argument does; an argument here wins over that.}
 at the earliest observation time of the dataset. This ensures that the T0MEANS occurs for every subject at the same time,
 rather than just at the earliest observation for that subject. Important when modelling trends over time, age, etc.}
 
-\item{stationary}{Logical. If TRUE, T0VAR and T0MEANS input matrices are ignored,
-the parameters are instead fixed to long run expectations. More control over this can be achieved
-by instead setting parameter names of T0MEANS and T0VAR matrices in the input model to 'stationary', for
-elements that should be fixed to stationarity.}
+\item{stationary}{Logical. If TRUE, each subject's latent processes start
+from the distribution DRIFT, CINT and DIFFUSION settle into -- the mean
+\code{-DRIFT^-1 CINT} and the asymptotic covariance -- rather than from
+T0MEANS and T0VAR, which are then not estimated. Suits processes observed
+long after they began, and saves estimating the initial state. Requires
+\code{backend='julia'}, a continuous time model, and a DRIFT, CINT and
+DIFFUSION that are fixed within each subject: no cell may depend on the
+latent states or on time dependent predictors. Individual differences in
+those matrices are allowed with \code{intoverpop='laplace'}, which
+\code{intoverpop='auto'} then chooses; each subject starts from its own
+stationary distribution. A latent process whose DRIFT row is fixed at zero
+never settles, and is refused.}
 
 \item{plot}{if TRUE, for sampling, a Shiny program is launched upon fitting to interactively plot samples.
 May struggle with many (e.g., > 5000) parameters. For optimizing, various optimization details are plotted -- in development.

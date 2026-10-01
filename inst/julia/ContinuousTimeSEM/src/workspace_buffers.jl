@@ -217,6 +217,62 @@ end
 _ekf_categorical_call(ws, f::F, args...) where {F} = _ctsem_barrier(f, args...)
 
 """
+    _ctsem_affine_dim(sp, diffusion_state_indices, n)
+
+The leading block of genuine dynamics, over which the intercept solve runs.
+
+Every fit from R states it. A caller that does not -- the engine's own direct
+`EKFParameters` constructions, and anything predating the argument -- falls
+back to the diffusion block, which is what the offset used before this existed.
+That matters: such a caller building an `intoverpop`-style model has static
+carrier states, and running the solve over them inverts a structurally singular
+`JAx` and returns NaN. The fallback only applies when the diffusion block is
+itself a leading block, which is exactly the augmented shape; otherwise the
+whole state vector is the safe reading.
+
+A function rather than inline in the workspace constructor because the summary
+needs the same block for the stationary mean it reports.
+"""
+function _ctsem_affine_dim(sp::EKFParameters, diffusion_state_indices, n::Int)
+    stated = isdefined(sp, :affine_dim) ? sp.affine_dim : 0
+    affine_dim = if stated != 0
+        stated
+    elseif !isempty(diffusion_state_indices) &&
+            diffusion_state_indices == 1:length(diffusion_state_indices)
+        length(diffusion_state_indices)
+    else
+        n
+    end
+    1 <= affine_dim <= n ||
+        throw(ArgumentError("affine_dim must be between 1 and the latent-state dimension"))
+    return affine_dim
+end
+
+"""
+    _ctsem_check_stationary(sp, diffusion_state_indices, affine_dim)
+
+Refuse a stationary specification the engine cannot honour, at construction
+rather than as a wrong likelihood later. R refuses all three first and says
+what to do instead; this is the backstop for a caller that does not.
+"""
+function _ctsem_check_stationary(sp::EKFParameters, diffusion_state_indices,
+        affine_dim::Int)
+    sp.stationary || return nothing
+    sp.continuous_time || throw(ArgumentError(
+        "stationary initial conditions are implemented for continuous time only"))
+    all(<=(affine_dim), diffusion_state_indices) || throw(ArgumentError(
+        "stationary initial conditions need every diffusing state among the " *
+        "leading $(affine_dim) latent processes"))
+    # An individually varying T0MEANS is a population row on a latent itself.
+    # Stationarity leaves no T0MEANS to vary, and the placement would write
+    # over the block that row describes.
+    any(<=(affine_dim), sp.population_indices) && throw(ArgumentError(
+        "stationary initial conditions leave no T0MEANS to vary; a population " *
+        "row refers to a latent process"))
+    return nothing
+end
+
+"""
     _init_continuous_ekf_workspace(T, sp)
 
 Allocate a `ContinuousEKFWorkspace` for scalar type `T` and parameter metadata
@@ -251,27 +307,8 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
         throw(ArgumentError("diffusion-state indices are outside the latent-state range"))
     length(unique(diffusion_state_indices)) == length(diffusion_state_indices) ||
         throw(ArgumentError("diffusion-state indices must be unique"))
-    # The leading block of genuine dynamics, over which the intercept solve
-    # runs. Every fit from R states it. A caller that does not -- the engine's
-    # own direct `EKFParameters` constructions, and anything predating the
-    # argument -- falls back to the diffusion block, which is what the offset
-    # used before this existed. That matters: such a caller building an
-    # `intoverpop`-style model has static carrier states, and running the
-    # solve over them inverts a structurally singular `JAx` and returns NaN.
-    # The fallback only applies when the diffusion block is itself a leading
-    # block, which is exactly the augmented shape; otherwise the whole state
-    # vector is the safe reading.
-    stated = isdefined(sp, :affine_dim) ? sp.affine_dim : 0
-    affine_dim = if stated != 0
-        stated
-    elseif !isempty(diffusion_state_indices) &&
-            diffusion_state_indices == 1:length(diffusion_state_indices)
-        length(diffusion_state_indices)
-    else
-        n
-    end
-    1 <= affine_dim <= n ||
-        throw(ArgumentError("affine_dim must be between 1 and the latent-state dimension"))
+    affine_dim = _ctsem_affine_dim(sp, diffusion_state_indices, n)
+    _ctsem_check_stationary(sp, diffusion_state_indices, affine_dim)
 
     # Reusable matrix/vector work buffers.
     bufferQ = _make_square_buffer(T, n)

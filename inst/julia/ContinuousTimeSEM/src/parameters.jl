@@ -271,6 +271,11 @@ struct EKFParameters{RG,PT,UT,TT,AX,FV}
     # 0 means the whole state vector. Declared last and supplied last, for the
     # reason the `manifesttype` comment above gives.
     affine_dim::Int
+    # Whether the latent processes start from the distribution they settle
+    # into rather than from T0MEANS and T0VAR; see `_ctsem_stationary!`.
+    # Declared last and supplied last, for the reason the `manifesttype`
+    # comment above gives.
+    stationary::Bool
 
     # The constructor ensures that the provided vectors are of the correct types and converts them if necessary.
     function EKFParameters(
@@ -303,6 +308,7 @@ struct EKFParameters{RG,PT,UT,TT,AX,FV}
         population_covmatcode::Union{Nothing,Integer}=nothing,
         population_scale=Float64[],
         affine_dim::Int=0,
+        stationary::Bool=false,
     )
         # Every argument from `ti_parameter_indices` on is optional and
         # positional, so inserting a field shifts every caller that passes the
@@ -373,6 +379,7 @@ struct EKFParameters{RG,PT,UT,TT,AX,FV}
                 ones(Float64, length(population_indices)) :
                 Vector{Float64}(population_scale),
             affine_dim,
+            stationary,
         )
     end
 end

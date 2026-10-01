@@ -400,6 +400,9 @@ column vectors, one entry per model-matrix cell.
     lower asymptote and then a gap.
   * `continuous_time` — `false` for a discrete-time model, whose DRIFT, CINT and
     DIFFUSION are already the one-step quantities.
+  * `stationary` — `true` to start the latent processes from the distribution
+    DRIFT, CINT and DIFFUSION settle into, in place of T0MEANS and T0VAR. See
+    `_ctsem_stationary!` for what it requires of the model.
 
 Expression strings are `Meta.parse`d and `eval`ed into closures here, once per
 *distinct expression* rather than once per model -- see `_transform_closure`
@@ -414,7 +417,7 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
     censormin=Float64[],
     censormax=Float64[], covmatcode::Int=0, population_indices=Int[],
     population_covmatcode::Union{Nothing,Integer}=nothing,
-    population_scale=Float64[], affine_dim::Int=0)
+    population_scale=Float64[], affine_dim::Int=0, stationary::Bool=false)
 
     n = length(matrix)
     length(row) == n && length(col) == n ||
@@ -516,5 +519,5 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
         Int.(population_indices), population_range,
         population_covmatcode === nothing ? covmatcode :
             Int(population_covmatcode),
-        Float64.(population_scale), affine_dim)
+        Float64.(population_scale), affine_dim, stationary)
 end
