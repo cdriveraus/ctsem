@@ -274,6 +274,20 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
     }
   })
 
+  # Off laplace the rank restricts the subject level alone, so a name is checked
+  # against the levels rather than dropped: `c(nosuchlevel = 1)` was applied
+  # to the subject level as 1, and two entries died in an `if` of length two.
+  test_that('a named rank off laplace names the subject level or is refused', {
+    dat <- poprank_data()
+    prepared <- function(...) suppressWarnings(suppressMessages(ctFit(
+      datalong = dat, model = poprank_model(), backend = 'julia', fit = FALSE,
+      intoverpop = 'augmented', cores = 1L, ...)))
+    expect_equal(ctsem:::.ctBackendNpar(prepared(poprank = c(id = 1))), 5L)
+    expect_error(prepared(poprank = c(nosuchlevel = 1)), 'no level called')
+    expect_error(prepared(poprank = c(id = 1, x = 2)), 'no level called')
+    expect_error(prepared(poprank = 1.5), 'whole number')
+  })
+
   # A reduced rank needs the population covariance free, and that is the whole
   # of the rule: under `Sigma = L L'` nothing below the diagonal is a cell, a
   # spread is a row norm, and a regressed effect has neither -- so no stated

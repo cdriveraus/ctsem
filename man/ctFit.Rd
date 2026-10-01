@@ -204,9 +204,12 @@ the \code{id} elements, and an unknown one is an error rather than a silent
 no-op. \code{'auto'} keeps the meaning it has on the augmented route and is
 resolved once per level: each level's rank becomes the number of \emph{its}
 effects that reach the observation mean, so a level carrying only
-mean-affecting effects is left at full rank. It still has to be asked for,
-because under \code{'laplace'} those coordinates are identified and dropping
-them is an approximation rather than a repair.
+mean-affecting effects is left at full rank. Named, it applies to the levels
+it names, and may sit beside numbers, as \code{c(subject='auto', study=2)}.
+It still has to be asked for, because under \code{'laplace'} those
+coordinates are identified and dropping them is an approximation rather than
+a repair. Under \code{'augmented'} and \code{'none'} a named rank may name
+only the subject level, the one those routes restrict.
 
 The mechanism differs too, and it is why the per-level form exists. On the
 augmented route a reduced rank rewrites the model into basis effects and

@@ -145,19 +145,6 @@
     row.names = NULL, stringsAsFactors = FALSE)
 }
 
-# Resolve `poprank` into a basis and a set of regressed effects.
-#
-# `poprank` is `NA` (no restriction, today's full-rank behaviour), `'auto'`
-# (the number of mean-affecting effects, which is the largest rank the
-# augmented route can identify and is a no-op when every effect is
-# mean-affecting), or an integer `r` (an explicit approximation).
-#
-# The basis is chosen mean-affecting effects first, then in the order they
-# appear. Which effects form the basis changes the coordinates but not the
-# model -- any `r` effects spanning the same rank-`r` space describe the same
-# population covariance -- so this is a conditioning choice, not a modelling
-# one. Putting the identified effects first is what makes the retained
-# coordinates the identified ones when `poprank='auto'`.
 # Every RAWPOPVAR cell a user has stated, whatever it says.
 #
 # RAWPOPVAR is the specification surface for the population covariance
@@ -199,7 +186,64 @@
   unique(out)
 }
 
+# What `poprank` asks of each level: a list named by level, each entry
+# `'auto'`, a whole number, or `NA` for that level at full rank. One unnamed
+# value applies to every level in `levelnames`; a named vector to the levels it
+# names, each of which must be one of them.
+#
+# Names decide, not length. `c(study = 2)` is one element *and* names a level,
+# and reading it as "2 everywhere" would reduce every level while looking as if
+# it had done what was asked -- which is what the first version of the laplace
+# route did. A name that is not a level is refused for the same reason: as a
+# no-op it would be a request silently not honoured. And each entry is read on
+# its own, so `c(study = 'auto')` resolves the study level alone and
+# `c(subject = 'auto', study = 2)` keeps the 2.
+.ctPoprankByLevel <- function(poprank, levelnames) {
+  levels <- paste(levelnames, collapse = ', ')
+  named <- names(poprank)
+  if (is.null(named)) {
+    if (length(poprank) != 1L) stop(
+      "a poprank per level must be named, one entry per level: ", levels,
+      call. = FALSE)
+    named <- levelnames
+    poprank <- rep(poprank, length(levelnames))
+  } else {
+    if (any(is.na(named) | !nzchar(named))) stop(
+      "every entry of a per-level poprank must name its level: ", levels,
+      call. = FALSE)
+    unknown <- setdiff(named, levelnames)
+    if (length(unknown)) stop("poprank names no level called ",
+      paste(unknown, collapse = ', '), ". The levels are ", levels, ".",
+      call. = FALSE)
+    twice <- unique(named[duplicated(named)])
+    if (length(twice)) stop("poprank names ", paste(twice, collapse = ', '),
+      " more than once.", call. = FALSE)
+  }
+  out <- lapply(as.list(poprank), function(value) {
+    if (length(value) == 1L && is.na(value)) return(NA_integer_)
+    if (identical(as.character(value), 'auto')) return('auto')
+    number <- suppressWarnings(as.numeric(value))
+    if (length(number) != 1L || is.na(number) || number != round(number)) stop(
+      "poprank must be NA, 'auto', or a whole number at each level.",
+      call. = FALSE)
+    as.integer(number)
+  })
+  stats::setNames(out, named)
+}
 
+# Resolve `poprank` into a basis and a set of regressed effects.
+#
+# `poprank` is `NA` (no restriction, today's full-rank behaviour), `'auto'`
+# (the number of mean-affecting effects, which is the largest rank the
+# augmented route can identify and is a no-op when every effect is
+# mean-affecting), or an integer `r` (an explicit approximation).
+#
+# The basis is chosen mean-affecting effects first, then in the order they
+# appear. Which effects form the basis changes the coordinates but not the
+# model -- any `r` effects spanning the same rank-`r` space describe the same
+# population covariance -- so this is a conditioning choice, not a modelling
+# one. Putting the identified effects first is what makes the retained
+# coordinates the identified ones when `poprank='auto'`.
 .ctPopRegressionSpec <- function(pars, poprank, explicit = TRUE, model = NULL,
     augmented = TRUE) {
   if (is.null(poprank) || (length(poprank) == 1L && is.na(poprank))) return(NULL)
