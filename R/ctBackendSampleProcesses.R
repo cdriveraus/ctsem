@@ -173,7 +173,8 @@
       .ctBackendFirstError(drawn), call. = FALSE)
     return(NULL)
   }
-  .ctBackendPoolChains(fit, target, drawn, chains, warmup, draws, saveEffects)
+  .ctBackendPoolChains(fit, target, drawn, chains, warmup, draws, saveEffects,
+    ess_target = .ctBackendSampleTargetESS(control))
 }
 
 # One chain, in a worker.
@@ -482,7 +483,7 @@
 # multi-chain fit -- which is the default -- reported no random effects at all.
 #' @keywords internal
 .ctBackendPoolChains <- function(fit, target, drawn, chains, warmup, draws,
-  saveEffects = FALSE) {
+  saveEffects = FALSE, ess_target = NA_real_) {
   mats <- lapply(drawn, function(d) as.matrix(d$draws))
   npar <- as.integer(target$npar)
   kept <- nrow(mats[[1]])
@@ -564,7 +565,8 @@
 
   out <- .ctBackendSampleAssemble(fit, result, npar, keepeffects,
     as.integer(chains), warmup, ndraws, target$hessian,
-    target$estimate[seq_len(npar)], marginal = isTRUE(target$marginal))
+    target$estimate[seq_len(npar)], marginal = isTRUE(target$marginal),
+    ess_target = ess_target)
   # Recorded after the fact because it changes nothing about the draws and
   # everything about how they were produced.
   out$uncertainty$settings$processes <- TRUE

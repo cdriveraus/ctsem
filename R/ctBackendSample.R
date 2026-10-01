@@ -506,17 +506,18 @@
   # spent 559 s for min ESS 246.3, a factor of 5.5 against. A settled metric is
   # not a good metric, and the sampling phase pays for the shortened warmup on
   # every draw.
-  # 200, by default, and it can only ever *shorten* a run: the draw count
-  # asked for stays the budget (see the note where `max_draws` is set), so this
-  # says "stop once every parameter has 200 effective draws and the chains
-  # agree" rather than "keep going until it does".
+  # `.ctEssTarget` (200) by default, the target every draw-producing route
+  # shares: "stop once every parameter has 200 effective draws and the chains
+  # agree", within a budget of `.ctSampleBudgetMultiple` times the draws asked
+  # for (see `.ctBackendSampleBudget()`), and a run that ends short of it says
+  # so (`.ctSampleWarn()`).
   #
   # It is the *worst* coordinate that has to reach it, not the mean, which is
   # what makes 200 a defensible floor rather than a loose one -- the 2.5% and
   # 97.5% quantiles `summary()` reports are the part that needs the draws, and
   # they need them for every parameter, not on average. `minESS = 0` turns it
   # off and takes exactly the draws asked for.
-  settings$min_ess <- as.numeric(.ctJuliaOr(control$minESS, 200))
+  settings$min_ess <- as.numeric(.ctJuliaOr(control$minESS, .ctEssTarget))
   if (!isTRUE(settings$min_ess > 0)) settings$min_ess <- NULL
   if (!is.null(control$meanESS)) settings$mean_ess <- as.numeric(control$meanESS)
   if (!is.null(control$maxDraws)) settings$max_draws <- as.integer(control$maxDraws)
@@ -564,6 +565,65 @@
   }
 }
 
+# How many draws per chain a run starts with and may extend to, given the count
+# asked for and the effective-size target.
+#
+# A target turns the draw count into a size to aim at rather than a count to
+# take. It used to be inert without `maxDraws`: the engine takes `ndraws` and
+# then extends towards `max_draws`, which defaulted to `ndraws` itself, so
+# there was nothing to extend into and the target could only ever be reported
+# after the fact. Then the count asked for became the budget, which could only
+# shorten a run -- and at the defaults it stopped short on most models that
+# needed sampling at all: job M's runs (dev2, 2026-09-29) ended at min ESS 100
+# (cf6), 70 (gA1p), 165 (gD1p), 107 (gN1p) and 32 (smallp) against the target
+# of 200. So the budget is `.ctSampleBudgetMultiple` times the count asked
+# for, which those numbers would have reached on all but smallp -- whose
+# chains disagreed (R-hat 1.12), where more draws are not the answer and the
+# shortfall is warned about instead (`.ctSampleWarn()`). `maxDraws`, given,
+# is the budget instead; `minESS = 0` takes exactly the count asked for.
+#
+# The first batch is sized from the *target*, not from the budget, and that
+# distinction is the whole of whether the target does anything. A quarter of
+# the budget was the first rule here and it is useless for a small target: on
+# a 1900-draw budget with `minESS = 100` the first batch was 475 draws, which
+# on five chains is already about 2300 effective ones, so the target was met
+# before it could ever bind and the run returned 29 times what was asked for.
+#
+# Effective size cannot exceed the draws behind it, so `minESS` needs at least
+# `minESS / nchains` draws per chain and there is no point asking for fewer.
+# The floor of 50 is about the estimators rather than the target: split R-hat
+# and effective size read off a few dozen draws are too noisy to stop on, and
+# `rhatTarget` is ANDed with the size target so a batch that cannot support
+# an R-hat estimate just spends a round of scheduling.
+#
+# Which is worth saying plainly, because it is the other half of the surprise:
+# a small `minESS` does not buy a short run. The rule is min ESS *and* mean
+# ESS *and* R-hat, and at a small size target R-hat is what binds -- so a run
+# asked for `minESS = 100` stops when the chains agree, with whatever
+# effective size that took, which is usually far more than 100.
+.ctSampleBudgetMultiple <- 4L
+
+#' @keywords internal
+.ctBackendSampleBudget <- function(draws, chains, settings) {
+  draws <- max(1L, as.integer(draws)[1L])
+  # Not `target`: that name is the sampling target elsewhere in this file, and
+  # shadowing it once replaced the target with a number.
+  ess_target <- max(.ctJuliaOr(settings$min_ess, 0), .ctJuliaOr(settings$mean_ess, 0))
+  if (!isTRUE(ess_target > 0) || !is.null(settings$max_draws)) {
+    return(list(first = draws, max_draws = settings$max_draws))
+  }
+  first <- max(50L, ceiling(ess_target / max(1L, as.integer(chains))))
+  list(first = max(1L, min(draws, as.integer(first))),
+    max_draws = .ctSampleBudgetMultiple * draws)
+}
+
+# The target a run aimed for, as recorded on the fit (`$sample$ess_target`), or
+# NA when it had none.
+#' @keywords internal
+.ctBackendSampleTargetESS <- function(control) {
+  .ctJuliaOr(.ctBackendSampleControl(control)$min_ess, NA_real_)
+}
+
 # Call the engine's sampler, and return what it returned.
 #
 # The one place either entry point reaches the sampler from, and the one place a
@@ -584,48 +644,9 @@
   callback = control$callback) {
 
   settings <- .ctBackendSampleControl(control)
-
-  # An effective-size target turns the draw count into a budget.
-  #
-  # It used to be inert without `maxDraws`: the engine takes `ndraws` and then
-  # extends towards `max_draws`, which defaulted to `ndraws` itself, so there
-  # was nothing to extend into and the target could only ever be reported after
-  # the fact. Someone who set `minESS` watched the sampler run to the end
-  # regardless -- reported exactly that way.
-  #
-  # So the count asked for becomes the budget. `maxDraws` is still there to say
-  # "keep going past what I asked for", and given explicitly it wins.
-  #
-  # The first batch is sized from the *target*, not from the budget, and that
-  # distinction is the whole of whether the target does anything. A quarter of
-  # the budget was the first rule here and it is useless for a small target: on
-  # a 1900-draw budget with `minESS = 100` the first batch was 475 draws, which
-  # on five chains is already about 2300 effective ones, so the target was met
-  # before it could ever bind and the run returned 29 times what was asked for.
-  #
-  # Effective size cannot exceed the draws behind it, so `minESS` needs at least
-  # `minESS / nchains` draws per chain and there is no point asking for fewer.
-  # The floor of 50 is about the estimators rather than the target: split R-hat
-  # and effective size read off a few dozen draws are too noisy to stop on, and
-  # `rhatTarget` is ANDed with the size target so a batch that cannot support
-  # an R-hat estimate just spends a round of scheduling.
-  #
-  # Which is worth saying plainly, because it is the other half of the surprise:
-  # a small `minESS` does not buy a short run. The rule is min ESS *and* mean
-  # ESS *and* R-hat, and at a small size target R-hat is what binds -- so a run
-  # asked for `minESS = 100` stops when the chains agree, with whatever
-  # effective size that took, which is usually far more than 100.
-  if (is.null(settings$max_draws) &&
-      (!is.null(settings$min_ess) || !is.null(settings$mean_ess))) {
-    settings$max_draws <- as.integer(draws)
-    # Not `target`: that is this function's own argument, and shadowing it
-    # replaced the sampling target with a number, which surfaced as
-    # "$ operator is invalid for atomic vectors" from a line nowhere near here.
-    ess_target <- max(.ctJuliaOr(settings$min_ess, 0),
-      .ctJuliaOr(settings$mean_ess, 0))
-    first <- max(50L, ceiling(ess_target / max(1L, as.integer(chains))))
-    draws <- max(1L, min(as.integer(draws), as.integer(first)))
-  }
+  budget <- .ctBackendSampleBudget(draws, chains, settings)
+  draws <- budget$first
+  settings$max_draws <- budget$max_draws
   module <- .ctJuliaModule(fit$model_spec$project)
   objective <- .ctBackendSampleObjective(fit, target)
 
@@ -799,10 +820,12 @@
       else if (isTRUE(target$marginal))
         "the marginal posterior over population parameters"
       else "the joint posterior over population parameters and random effects"
+    budget <- .ctBackendSampleBudget(draws, chains, settings)
     message("Sampling ", targetlabel, ": ", chains, " chain",
       if (chains == 1L) "" else "s",
       ", ", warmup, " warmup + ",
-      if (target_ess > 0) paste0("up to ", draws) else draws,
+      if (target_ess > 0) paste0("up to ", .ctJuliaOr(budget$max_draws, draws))
+        else draws,
       " draws each",
       if (target_ess > 0) paste0(", stopping once min ESS ",
         .ctJuliaOr(settings$min_ess, target_ess), " and R-hat ",
@@ -827,7 +850,8 @@
   .ctBackendSampleAssemble(fit, result, target$npar,
     isTRUE(saveEffects) && !isTRUE(target$marginal), as.integer(chains), warmup,
     as.integer(result$ndraws), target$hessian,
-    target$estimate[seq_len(target$npar)], marginal = isTRUE(target$marginal))
+    target$estimate[seq_len(target$npar)], marginal = isTRUE(target$marginal),
+    ess_target = .ctBackendSampleTargetESS(control))
 }
 
 # Turn an engine sample result into a fit object.
@@ -841,7 +865,7 @@
 # is the same, and was worth having in one place rather than two that drift.
 #' @keywords internal
 .ctBackendSampleAssemble <- function(fit, result, npar, saveEffects, chains,
-  warmup, draws, hessian, startvalues, marginal = FALSE) {
+  warmup, draws, hessian, startvalues, marginal = FALSE, ess_target = NA_real_) {
 
   # The row count is `ndim` when the effects were saved and `npar` when they
   # were not, so it is read off the result rather than assumed -- reshaping an
@@ -931,6 +955,9 @@
   # Computed here because the warner sees only the diagnostics, and the draws
   # and the parameter names both live at this level.
   out$sample$unidentified <- .ctBackendFlatParameters(out, npar)
+  # The effective size the run aimed for, so the verdict, the warning and the
+  # summary judge it against that rather than against a number of their own.
+  out$sample$ess_target <- as.numeric(ess_target)[1L]
   # The verdict, kept on the fit rather than only shouted once. A warning is
   # seen by whoever is at the console at the time and by nobody afterwards --
   # and `suppressWarnings()` around a fitting call, which any batch script has,
@@ -971,9 +998,11 @@
     problems <- c(problems, paste0("largest R-hat ", signif(worst, 4)))
   }
   fewest <- suppressWarnings(min(diagnostics$ess, na.rm = TRUE))
-  if (is.finite(fewest) && fewest < 100) {
+  if (is.finite(fewest) && fewest < .ctSampleEssFloor(diagnostics)) {
     problems <- c(problems,
-      paste0("smallest effective sample size ", round(fewest)))
+      paste0("smallest effective sample size ", round(fewest),
+        if (is.finite(.ctJuliaOr(diagnostics$ess_target, NA_real_)))
+          paste0(" (target ", diagnostics$ess_target, ")") else ""))
   }
   saturated <- suppressWarnings(as.integer(diagnostics$saturated)[1L])
   if (!is.na(saturated) && saturated > 0L) {
@@ -1005,6 +1034,16 @@
   labels <- .ctBackendRawParameterNames(fit, npar)
   if (length(labels) < npar) labels <- paste0("par", seq_len(npar))
   labels[flat]
+}
+
+# The smallest effective sample size a run should end with: the target it
+# aimed for (`$ess_target`, `.ctEssTarget` by default), or 100 for a run with
+# none -- `minESS = 0`, or a fit sampled before the target was recorded. One
+# rule for the verdict, the warning and the summary's note.
+#' @keywords internal
+.ctSampleEssFloor <- function(diagnostics) {
+  target <- suppressWarnings(as.numeric(diagnostics$ess_target)[1L])
+  if (length(target) && is.finite(target) && target > 0) target else 100
 }
 
 # The three failures worth interrupting for, in the order a user should read
@@ -1066,12 +1105,21 @@
       "See fit$sample$rhat.", call. = FALSE)
   }
   fewest <- suppressWarnings(min(diagnostics$ess, na.rm = TRUE))
-  if (is.finite(fewest) && fewest < 100) {
+  target <- .ctJuliaOr(diagnostics$ess_target, NA_real_)
+  if (is.finite(fewest) && fewest < .ctSampleEssFloor(diagnostics)) {
+    # With a target the run stopped at its budget, so the budget is what to
+    # raise; without one the draw count asked for was all it was going to take.
     warning("Smallest effective sample size is ", round(fewest), ", from ",
-      total, " draws. Interval estimates from this few are unreliable. Raise ",
-      "the draw count (iter in ctFit, control$draws otherwise), or set ",
-      "sampleControl$minESS to keep sampling until an ",
-      "effective size is reached. See fit$sample$ess.", call. = FALSE)
+      total, " draws",
+      if (is.finite(target)) paste0(", short of the target of ", target,
+        ": the sampler stopped at its budget") else "",
+      ". Interval estimates rest on that many effective draws. ",
+      if (is.finite(target)) paste0("Raise sampleControl$maxDraws in ctFit ",
+        "(control$maxDraws in ctFitUncertainty) to let it run longer. ")
+      else paste0("Raise the draw count (iter in ctFit, control$draws ",
+        "otherwise), or set sampleControl$minESS to keep sampling until an ",
+        "effective size is reached. "),
+      "See fit$sample$ess.", call. = FALSE)
   }
   if (diagnostics$saturated > 0L) {
     # Raising the cap is the mechanical answer and rarely the right first one.

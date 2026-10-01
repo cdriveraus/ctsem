@@ -90,7 +90,14 @@ entries of \code{control} rather than \code{draws}/\code{finishsamples},
 which this method ignores: \code{chains} (default 4), \code{warmup} (500),
 \code{draws} (500), \code{seed}, \code{saveEffects} (FALSE, whether to keep
 every draw of every random effect rather than only their summary), and
-\code{processes} (TRUE, one R process per chain). \code{control$target}
+\code{processes} (TRUE, one R process per chain). A run stops once every
+parameter's effective sample size reaches \code{minESS} (200) and the
+chains' R-hat is below \code{rhatTarget} (1.01) -- \code{meanESS} adds a
+target for the average -- within a budget of four times \code{draws} per
+chain, or \code{maxDraws} when given; \code{minESS = 0} takes exactly
+\code{draws}. A run that reaches its budget short of the target warns.
+\code{settleTol} ends warmup early once the metric stops moving (off by
+default, and slower when measured). \code{control$target}
 says which posterior: \code{'auto'} (the default) follows the fit's own
 route -- the Laplace marginal over population parameters for
 \code{intoverpop = 'laplace'} or \code{'augmented'}, the joint posterior
@@ -104,7 +111,14 @@ refused by name on an \code{intoverpop = 'augmented'} fit, which has no
 separate random effect to sample jointly with the parameters. See
 \code{\link{ctJuliaSetup}} for the thread count that decides whether
 chains run concurrently, and \code{\link{ctFit}}'s \code{intoverpop} for
-what each route means.}
+what each route means.
+
+Every method that produces draws aims for the same effective sample size
+unless told otherwise, 200: \code{minESS} for \code{'sample'} (of the worst
+parameter, since the 2.5\% and 97.5\% quantiles need it for each),
+\code{isESS} for \code{'is'}, and \code{target_ess} for
+\code{\link{ctLaplaceCorrect}} and \code{\link{ctParticleCorrect}} with
+\code{draws = 'imis'}. Each warns when it ends short of its target.}
 
 \item{draws}{Approximate raw-parameter draw method. \code{'auto'} uses
 empirical draws for \code{uncertainty='bootstrap'} and

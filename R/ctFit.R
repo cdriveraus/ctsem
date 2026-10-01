@@ -1085,13 +1085,15 @@ T0VARredundancies <- function(ctm) {
 #' (FALSE), and the effective-sample-size target that decides when a run stops:
 #' \code{minESS} (200, the size the worst parameter must reach),
 #' \code{rhatTarget} (1.01), \code{meanESS}, \code{maxDraws} and
-#' \code{settleTol} -- all documented in full under \code{control} in
-#' \code{\link{ctFitUncertainty}}. A name the sampler does not read is an error
-#' rather than ignored, because a name the list drops silently costs a whole
-#' run.
-#' Given \code{minESS} or \code{meanESS}, \code{iter} becomes the budget the
-#' run may take rather than the count it must: it stops as soon as the target
-#' is met.
+#' \code{settleTol} -- all documented in full under \code{uncertainty =
+#' 'sample'} in \code{\link{ctFitUncertainty}}, with the effective sample size
+#' every draw-producing route shares. A name the sampler does not read is an
+#' error rather than ignored, because a name the list drops silently costs a
+#' whole run.
+#' With an effective-size target the post-warmup part of \code{iter} is the
+#' count a run aims at: it stops as soon as the target is met, and may run to
+#' four times that count to reach it (\code{maxDraws} sets the budget
+#' instead; \code{minESS = 0} takes exactly the count).
 #'
 #' For \code{backend='stan'} the sampler settings are rstan's, and are passed
 #' to \code{\link[rstan]{stan}}'s own \code{control} argument.
@@ -1106,9 +1108,10 @@ T0VARredundancies <- function(ctm) {
 #' For \code{backend='julia'}, the same argument instead carries the julia sampler's own settings:
 #' \code{maxdepth}/\code{max_treedepth} (default 10), \code{target_accept}/\code{adapt_delta} (0.8),
 #' \code{maxdelta} (1000), \code{init_scale} (1), \code{adapt_metric} (FALSE), \code{adapt_effects} (FALSE),
-#' and the optional effective-sample-size target \code{minESS}, \code{meanESS}, \code{maxDraws},
-#' \code{rhatTarget} (1.01) and \code{settleTol} -- all documented in full under \code{control} in
-#' \code{\link{ctFitUncertainty}} -- plus \code{warmup} (default half of \code{iter}), \code{seed} (default
+#' and the effective-sample-size target \code{minESS} (200), \code{meanESS}, \code{maxDraws},
+#' \code{rhatTarget} (1.01) and \code{settleTol} -- all documented in full under \code{uncertainty =
+#' 'sample'} in \code{\link{ctFitUncertainty}} -- plus \code{warmup} (default 200, or half of
+#' \code{iter} when that is less), \code{seed} (default
 #' 20260828) and \code{processes} (default TRUE), which \code{\link{ctFitUncertainty}} takes as
 #' \code{control} entries too.
 #' @param nlcontrol List of non-linear control parameters.

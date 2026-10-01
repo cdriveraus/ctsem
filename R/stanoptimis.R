@@ -929,7 +929,7 @@ imis_is <- function(parlp,
   Sigma_hat,
   cl,
   n_batch       = 1000,
-  target_ess    = 100,
+  target_ess    = .ctEssTarget,
   max_iter      = 10,
   # Every real caller (.ctOptimImisDraws(), .ctOptimDrawSamples()) passes its
   # own scale explicitly; see .ctImisProposalDefaults() in
