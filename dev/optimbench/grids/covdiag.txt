@@ -1,0 +1,15 @@
+# covdiag grid: the diagonal L-BFGS alone on the covM family, beside pipeline.txt's
+# default, gll (diagonal + GLL) and pipeline cells, so what the GLL acceptance adds
+# to the diagonal can be read on the large models too. End points and gradient counts.
+#
+control.1                               panel        1    augmented  zeros                    control
+cov3.aug.d1.s1.diag                     cov3         1    augmented  default:1                diag
+cov3.aug.d2.s1.diag                     cov3         2    augmented  default:1                diag
+cov3.aug.d3.s1.diag                     cov3         3    augmented  default:1                diag
+cov4.aug.d1.s1.diag                     cov4         1    augmented  default:1                diag
+cov4.aug.d2.s1.diag                     cov4         2    augmented  default:1                diag
+cov4.aug.d3.s1.diag                     cov4         3    augmented  default:1                diag
+cov6.aug.d1.s1.diag                     cov6         1    augmented  default:1                diag
+cov6.aug.d2.s1.diag                     cov6         2    augmented  default:1                diag
+cov6.aug.d3.s1.diag                     cov6         3    augmented  default:1                diag
+control.2                               panel        1    augmented  zeros                    control

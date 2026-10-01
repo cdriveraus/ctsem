@@ -47,7 +47,7 @@
 # with stan's message and stan dropped it with the julia-only names.
 .ctOptimcontrolShared <- c('tol','g_tol','x_tol','maxiter','lbfgs_memory',
   'initsd','carefulfit','estonly','finishsamples','uncertainty',
-  'uncertaintyDraws','uncertaintyControl','stallretries')
+  'uncertaintyDraws','uncertaintyControl','stallretries','stochastic')
 
 # What is left after the vocabulary above is a genuine capability difference: a
 # phase or a hook one backend has and the other does not. Each such name is
@@ -56,20 +56,15 @@
 #
 # The rule is on the value, not the name. A value that asks for a capability the
 # chosen backend lacks is refused; a value that merely *describes* what that
-# backend already does is accepted, because it is true -- `stochastic = FALSE`
-# on julia names the deterministic optimiser julia already runs, and
-# `gradient = 'adjoint'` on stan names the reverse-mode gradient Stan's autodiff
-# already takes. That is why several honest calls carrying `stochastic = FALSE`
-# keep working.
+# backend already does is accepted, because it is true -- `gradient =
+# 'adjoint'` on stan names the reverse-mode gradient Stan's autodiff already
+# takes. (`stochastic` was the other example until julia gained the same
+# phase; it is a shared name now.)
 .ctOptimcontrolSplit <- function() list(
 
-  # -- stan only: the stochastic-gradient family. The julia optimiser is L-BFGS
-  # over the full data and has no SGD phase for these to tune.
-  stochastic = list(only = 'stan',
-    inert = function(v) !isTRUE(v),
-    msg = paste0("asks for stochastic gradient descent; the julia backend ",
-      "optimises with L-BFGS over the full data. Drop it -- stochastic=FALSE ",
-      "is what julia does")),
+  # -- stan only: the stochastic-gradient family's tuning. `stochastic` itself
+  # is shared (julia's sgd phase, `_ctsem_sgd`); these tune stan's own sgd(),
+  # whose subsets and roughness targets the julia phase does not have.
   nsubsets = list(only = 'stan',
     inert = function(v) isTRUE(all(v == 1)),
     msg = paste0("splits the data for stan's stochastic optimizer, which the ",
@@ -136,6 +131,10 @@
     inert = function(v) isFALSE(v),
     msg = paste0("learns the julia optimiser's initial inverse Hessian per ",
       "coordinate. The stan path has no equivalent")),
+  lbfgs_gll = list(only = 'julia',
+    inert = function(v) isTRUE(all(v == 0)),
+    msg = paste0("makes the julia optimiser's line search judge a step ",
+      "against the worst of its recent values. The stan path has no equivalent")),
   lbfgs_nonmonotone = list(only = 'julia',
     inert = function(v) isTRUE(all(v == 0)),
     msg = paste0("makes the julia optimiser's line search non-monotone. The ",
@@ -767,31 +766,48 @@ T0VARredundancies <- function(ctm) {
 #' \code{uncertaintyDraws} and \code{uncertaintyControl} also work on both, and
 #' so does \code{stallretries}, with each backend's own retry (see below).
 #'
+#' \code{stochastic} is shared too. \code{TRUE} starts with ctsem's
+#' stochastic-gradient optimizer and finishes with the quasi-Newton one; on
+#' stan that is \code{sgd()}, the default there. On julia it is a reduction of
+#' \code{sgd()} to the mechanisms that carry it -- a step per parameter adapted
+#' by how often its gradient changes sign, momentum, a square-root-compressed
+#' direction and non-monotone acceptance -- run until its progress slows, then
+#' L-BFGS. \code{'auto'} does so above 50 parameters, and \code{FALSE}, the
+#' julia default, does not. On large, poorly conditioned models it can be much
+#' faster than L-BFGS alone, but it moves fastest along the directions the data
+#' barely determine, so it can carry a fit further toward a degenerate limit (a
+#' variance or rate running to zero or infinity);
+#' \code{fit$optim$sgd_iterations} records the phase.
+#'
 #' The \emph{defaults} are each backend's own, and are mirror images: stan stops
 #' on the objective (\code{tol = 1e-8}, \code{g_tol} off), julia on the gradient
 #' (\code{g_tol = 1e-8}, \code{tol} off). Leaving a name unset keeps that
 #' backend's default; setting one is honoured by both.
 #'
 #' What is left is a capability one backend has and the other does not.
-#' \code{backend='stan'} alone has the stochastic-gradient optimizer
-#' (\code{stochastic}, \code{nsubsets}, \code{subsamplesize},
+#' \code{backend='stan'} alone has the stochastic-gradient optimizer's own
+#' tuning (\code{nsubsets}, \code{subsamplesize},
 #' \code{lproughnesstarget}, \code{stochasticTolAdjust}, \code{parsteps}) and
 #' the gradient bar at which it restarts a stalled fit (\code{stalltol});
 #' \code{backend='julia'} alone has \code{gradient}, \code{datastart},
 #' \code{callback}, \code{saveEffects}, \code{progress}, \code{batch},
 #' \code{newton}, \code{restarts}, \code{restartsd}, \code{lbfgs_diagonal},
-#' \code{lbfgs_nonmonotone} and
+#' \code{lbfgs_gll}, \code{lbfgs_nonmonotone} and
 #' \code{tipredMissingIncludeOutcome}. \code{lbfgs_diagonal = TRUE} gives
 #' L-BFGS's initial inverse Hessian a scale per parameter, learned from the
 #' curvature pairs (Gilbert and Lemarechal's diagonal update), instead of one
 #' scale for all; on large models whose parameters are determined on very
-#' different scales it can be much faster. \code{lbfgs_nonmonotone} (between 0,
+#' different scales it can be much faster, and like \code{stochastic} it can
+#' carry a fit further toward a degenerate limit. \code{lbfgs_gll = W} lets the line
+#' search accept a step against the worst of the last \code{W} objective values
+#' (Grippo, Lampariello and Lucidi), so a step may cross a curved valley; 0,
+#' the default, compares with the last. \code{lbfgs_nonmonotone} (between 0,
 #' the default, and 1) lets the line search accept a step against a running
 #' average of recent objective values (Zhang and Hager) rather than the last
 #' one. A \emph{value} asking for a capability
 #' the chosen backend does not have is refused by name before anything else
 #' happens; a value that describes what it already does is simply accepted, so
-#' \code{stochastic=FALSE} works on julia and \code{gradient='adjoint'} works on
+#' \code{nsubsets = 1} works on julia and \code{gradient='adjoint'} works on
 #' stan.
 #' With \code{intoverpop='laplace'}, \code{optimcontrol$laplace_inner_maxiter}
 #' (default 200) and \code{optimcontrol$laplace_inner_tol} (default 1e-10) tune

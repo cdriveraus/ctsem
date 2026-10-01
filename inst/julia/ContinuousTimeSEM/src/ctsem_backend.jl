@@ -1788,6 +1788,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     x_tol::Real=0.0, verbose::Bool=false, gradient_method=:adjoint,
     tune_chunks::Bool=true, lbfgs_memory::Integer=_CTSEM_LBFGS_MEMORY,
     lbfgs_diagonal::Bool=false, lbfgs_nonmonotone::Real=0.0,
+    lbfgs_gll::Integer=0, sgd::Bool=false, sgd_maxiter::Integer=2000, sgd_progress::Real=1e-3,
     progress_overwrite::Bool=true, progress_sink=nothing,
     progress_callback=nothing,
     progress::Bool=verbose, progress_label::AbstractString="optimise",
@@ -1931,6 +1932,12 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             round.(current_x[flat]; digits=2), "; pulling back gains ", gain)
         flush(_console())
     end : nothing
+    # True while `_ctsem_sgd` runs: its iterations are recorded and reported by
+    # `watch` like any other, but the two stopping rules below are L-BFGS's --
+    # the predicted gain is its quadratic model's, and the stall watch's pullback
+    # is for a quasi-Newton walk stuck in a flat corner -- and the sgd phase has
+    # its own.
+    in_sgd = Ref(false)
     watch = function (state)
         latest = state isa AbstractVector ? last(state) : state
         _record!(trace, latest.iteration, -latest.value, latest.g_norm,
@@ -1959,6 +1966,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # the same point the reported objective and gradient describe.
         _invoke_callback(watcher, latest.iteration, Int(maxiter),
             -latest.value, latest.g_norm, current_x)
+        in_sgd[] && return false
         # Stop when the step just taken was predicted to gain less objective
         # than asked for. The predicted gain of the *next* step is not knowable
         # here, and the last one is the standard stand-in: a quasi-Newton
@@ -2033,13 +2041,37 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # relative to the optimum is now measured exactly after the fit, in
     # objective units, and the fit continues when it matters.
     linesearch = "backtracking"
+    # `sgd`: the early phase for large, ill-conditioned models (`_ctsem_sgd`),
+    # on the whole data, until its own progress rule says steps of the
+    # curvature's size will do better; L-BFGS carries on from its best point,
+    # its iterations counted on from the phase's.
+    lbfgs_start = start_values
+    sgd_result = nothing
+    if sgd
+        in_sgd[] = true
+        sgd_result = _ctsem_sgd(fg!, start_values;
+            maxiter=min(Int(sgd_maxiter), Int(maxiter)), progress=sgd_progress,
+            callback=watch)
+        in_sgd[] = false
+        lbfgs_start = sgd_result.minimizer
+    end
+    sgd_iterations = sgd_result === nothing ? 0 : sgd_result.iterations
     # See optimiser.jl for why this is not Optim any more.
-    result = _ctsem_lbfgs(fg!, start_values; memory=Int(lbfgs_memory),
-        diagonal=lbfgs_diagonal, nonmonotone=lbfgs_nonmonotone,
+    result = _ctsem_lbfgs(fg!, lbfgs_start; memory=Int(lbfgs_memory),
+        diagonal=lbfgs_diagonal, nonmonotone=lbfgs_nonmonotone, gll=Int(lbfgs_gll),
         metric=_ctsem_metric(precondition, length(start_values)),
-        initial_alpha=Float64(initial_alpha), maxiter=Int(maxiter),
+        initial_alpha=Float64(initial_alpha),
+        maxiter=max(0, Int(maxiter) - sgd_iterations),
         g_tol=g_tol, f_tol=f_tol, x_tol=x_tol, callback=watch,
-        directional=directional, batch=batcher)
+        directional=directional, batch=batcher, iteration0=sgd_iterations)
+    if sgd_result !== nothing
+        result = CTSEMLBFGSResult(result.minimizer, result.minimum,
+            result.gradient, sgd_iterations + result.iterations,
+            sgd_result.f_calls + result.f_calls, sgd_result.g_calls + result.g_calls,
+            result.g_converged, result.f_converged, result.x_converged,
+            result.linesearch_failed, result.stopped_by_callback,
+            result.batch_sizes, result.batch_iterations)
+    end
     # No rescue stage. The one that stood here existed because Hager-Zhang can
     # run out of line search and return the iterate it had reached while Optim
     # reports a finished optimisation -- measured on a binary model: two
@@ -2152,7 +2184,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         handover = Float64(gap_tol)
         stopped_by_gap[] = false
         resumed = _ctsem_lbfgs(fg!, minimizer; memory=Int(lbfgs_memory),
-            diagonal=lbfgs_diagonal, nonmonotone=lbfgs_nonmonotone,
+            diagonal=lbfgs_diagonal, nonmonotone=lbfgs_nonmonotone, gll=Int(lbfgs_gll),
             metric=_ctsem_metric(precondition, length(start_values)),
             initial_alpha=Float64(initial_alpha),
             maxiter=max(0, Int(maxiter) - result.iterations - spent.steps[]),
@@ -2385,6 +2417,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # `saturated_parameters` gives.
         stall_parameters=isempty(stall.flat) ? [0] : stall.flat,
         stall_triggers=stall.triggers,
+        # The sgd phase's iterations (`sgd`), 0 when it did not run.
+        sgd_iterations=sgd_iterations,
         # The point the in-flight probe found, so the caller resuming from it
         # does not pay for the same ladder twice. Empty unless it stopped here.
         stall_point=isempty(stall.point) ? Float64[0.0] : stall.point,

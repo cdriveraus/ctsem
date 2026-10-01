@@ -534,6 +534,79 @@ ord4_model <- function() suppressMessages(ctModel(type = "ct", n.latent = 2,
   n.manifest = 2, manifestNames = c("y1", "y2"), latentNames = c("eta1", "eta2"),
   manifesttype = c(2, 2), ncategories = c(5, 5), LAMBDA = diag(1, 2), silent = TRUE))
 
+# ---- covM: covariate-heavy trait models (large, poorly conditioned) -------------
+#
+# The shape of Charles's 715-parameter paper model at a size the bench can run:
+# M manifests, each with a trait and a continuous-intercept latent, one
+# covariate moderating every free T0MEANS, T0VAR and DIFFUSION cell, no random
+# effects. W's synthetic analogue (job W, 2026-09-30), simulated by exact
+# discretisation; M = 3, 4, 6 give about 70, 116 and 234 parameters.
+cov_model <- function(m) {
+  mnames <- paste0("y", seq_len(m))
+  nl <- 2 * m
+  trait <- 1:m; cint <- (m + 1):nl
+  T0MEANS <- matrix(c(paste0("t0mu_", mnames), paste0("cint_", mnames)), ncol = 1)
+  m1 <- suppressMessages(ctModel(type = "omx", Tpoints = 3, manifestNames = mnames,
+    latentNames = c(paste0("TRAIT", mnames), paste0("CINT", mnames)),
+    LAMBDA = cbind(diag(1, m), matrix(0, m, nl - m)),
+    CINT = matrix(0, nl, 1), TIpredNames = "behavProbl",
+    T0MEANS = T0MEANS, MANIFESTMEANS = 0, silent = TRUE))
+  m1$DRIFT[diag(nl) != 1] <- 0
+  m1$DRIFT[cint, ] <- 0
+  m1$DRIFT[trait, cint] <- diag(1, m)
+  m1$DIFFUSION[, cint] <- m1$DIFFUSION[cint, ] <- 0
+  m2 <- suppressMessages(ctModelConvertOMX(m1, type = "ct"))
+  m2$pars[["behavProbl_effect"]] <- m2$pars$matrix %in% c("T0MEANS", "T0VAR",
+    "DIFFUSION") & is.na(m2$pars$value)
+  m2$pars$indvarying <- FALSE
+  m2
+}
+
+cov_data <- function(m, seed, nsub = 300L, cintsd = 0.3) {
+  set.seed(seed)
+  nl <- 2 * m; trait <- 1:m; cint <- (m + 1):nl
+  A <- matrix(0, nl, nl)
+  diag(A)[trait] <- -stats::runif(m, 0.3, 0.8)
+  A[cbind(trait, cint)] <- 1
+  R0 <- stats::cov2cor(crossprod(matrix(stats::rnorm(nl * nl, sd = 0.4), nl)) + diag(nl))
+  sd0 <- c(rep(1, m), rep(cintsd, m))
+  RQ <- stats::cov2cor(crossprod(matrix(stats::rnorm(m * m, sd = 0.4), m)) + diag(m))
+  sdq <- rep(0.5, m)
+  mu0 <- c(stats::rnorm(m), stats::rnorm(m, 0, 0.1))
+  bmu <- stats::rnorm(nl, 0, 0.2)
+  r <- rep(0.3, m)
+  times0 <- c(4.5, 5.5, 6.5, 7.5, 9, 10.5, 12, 15)
+  rows <- vector("list", nsub)
+  for (i in seq_len(nsub)) {
+    x <- stats::rnorm(1)
+    s <- exp(0.15 * x)
+    S0 <- (sd0 * s) %o% (sd0 * s) * R0
+    Q <- matrix(0, nl, nl); Q[trait, trait] <- (sdq * s) %o% (sdq * s) * RQ
+    tt <- times0 + c(0, stats::runif(7, -0.3, 0.3))
+    eta <- as.numeric(mu0 + bmu * x + t(chol(S0)) %*% stats::rnorm(nl))
+    Y <- matrix(NA, length(tt), m)
+    for (k in seq_along(tt)) {
+      if (k > 1) {
+        dt <- tt[k] - tt[k - 1]
+        E <- expmA(rbind(cbind(-A, Q), cbind(matrix(0, nl, nl), t(A))) * dt)
+        Ad <- t(E[(nl + 1):(2 * nl), (nl + 1):(2 * nl)])
+        Qd <- Ad %*% E[1:nl, (nl + 1):(2 * nl)]
+        Qd <- (Qd + t(Qd)) / 2
+        ev <- eigen(Qd, symmetric = TRUE)
+        L <- ev$vectors %*% diag(sqrt(pmax(ev$values, 0)), nl)
+        eta <- as.numeric(Ad %*% eta + L %*% stats::rnorm(nl))
+      }
+      Y[k, ] <- eta[trait] + stats::rnorm(m, 0, sqrt(r))
+    }
+    Y[stats::runif(length(Y)) < 0.15] <- NA
+    Y[1, 1] <- eta[1] + stats::rnorm(1, 0, sqrt(r[1]))
+    rows[[i]] <- data.frame(id = i, time = tt, Y, behavProbl = x)
+  }
+  d <- do.call(rbind, rows)
+  colnames(d)[3:(2 + m)] <- paste0("y", seq_len(m))
+  d
+}
+
 # ---- the registry ----------------------------------------------------------------
 
 bench_problem <- function(model) {
@@ -593,6 +666,13 @@ bench_problem <- function(model) {
     c("laplace", "augmented", "auto"), datafixed = TRUE))
   if (model == "ord4") return(mk(fixed(function() ord4_data()), ord4_model,
     c("laplace", "auto"), datafixed = TRUE))
+  if (grepl("^cov[0-9]+$", model)) {
+    m <- as.integer(substring(model, 4))
+    # No random effects: every route is the same marginal filter, and there
+    # is no Laplace correction for a reference to check.
+    return(mk(function(s) cov_data(m, as.integer(s)), function() cov_model(m),
+      c("augmented", "laplace", "auto"), reference = FALSE))
+  }
   stop("unknown bench model '", model, "'")
 }
 

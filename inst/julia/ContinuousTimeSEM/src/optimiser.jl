@@ -176,7 +176,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         g_tol::Real=1e-8, f_tol::Real=0.0, x_tol::Real=0.0,
         callback=nothing, directional=nothing, batch=nothing,
         c1::Real=1e-4, maxbacktrack::Integer=40, iteration0::Integer=0,
-        diagonal::Bool=false, nonmonotone::Real=0.0)
+        diagonal::Bool=false, nonmonotone::Real=0.0, gll::Integer=0)
     n = length(x0)
     x = collect(Float64, x0)
     dinv = metric === nothing ? ones(n) : begin
@@ -215,7 +215,11 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
     # search is then exactly the monotone Armijo one.
     B = nothing; Dinv = nothing
     eta = clamp(Float64(nonmonotone), 0.0, 1.0)
-    C = f; Q = 1.0
+    C = f; Q = 1.0; recent = [f]
+    # `gll`: Grippo, Lampariello & Lucidi's (1986) rule instead -- a step is
+    # judged against the worst of the last `gll` values the steps reached, the
+    # acceptance sgd() uses (`_ctsem_sgd`). `recent` is set beside C.
+    reference() = gll > 0 ? maximum(@view recent[max(1, end - gll + 1):end]) : C
     while !stopped && !gconv && iteration < maxiter
         s = -_ctsem_lbfgs_hmul(M, G, h0, dinv, Dinv)
         # With no curvature pairs the step is the metric's alone, and at a start
@@ -232,7 +236,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
             # Not a descent direction: the memory has gone bad. Start it again.
             isempty(M.S) && (lsfail = true; break)
             _ctsem_lbfgs_reset!(M); h0 = Float64(initial_alpha) / max(metric_norm(G), eps())
-            B = nothing; Dinv = nothing; C = f; Q = 1.0
+            B = nothing; Dinv = nothing; C = f; Q = 1.0; recent = [f]
             continue
         end
         # The first trial carries the gradient too: most steps are accepted
@@ -242,7 +246,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
         Gn = similar(G)
         fn = evaluate!(0.0, Gn, xn); fcalls += 1; gcalls += 1
         have_gradient = true
-        accepted = isfinite(fn) && fn <= C + c1 * alpha * dphi
+        accepted = isfinite(fn) && fn <= reference() + c1 * alpha * dphi
         k = 0
         while !accepted && k < maxbacktrack
             k += 1
@@ -253,7 +257,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
             xn = x .+ alpha .* s
             fn = evaluate!(0.0, nothing, xn); fcalls += 1
             have_gradient = false
-            accepted = isfinite(fn) && fn <= C + c1 * alpha * dphi
+            accepted = isfinite(fn) && fn <= reference() + c1 * alpha * dphi
         end
         if !accepted
             # A stale memory is the usual cause; drop it once, then give up.
@@ -261,7 +265,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
                 retried = true
                 _ctsem_lbfgs_reset!(M)
                 h0 = Float64(initial_alpha) / max(metric_norm(G), eps())
-                B = nothing; Dinv = nothing; C = f; Q = 1.0
+                B = nothing; Dinv = nothing; C = f; Q = 1.0; recent = [f]
                 continue
             end
             lsfail = true
@@ -282,6 +286,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
             Dinv = 1 ./ B
         end
         x = xn; f = fn; G = Gn
+        push!(recent, f)
         Qn = eta * Q + 1
         C = (eta * Q * C + f) / Qn; Q = Qn
         gconv = maximum(abs, G; init=0.0) <= g_tol
@@ -302,7 +307,7 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
             f = evaluate!(0.0, G, x); fcalls += 1; gcalls += 1
             gconv = maximum(abs, G; init=0.0) <= g_tol
             # The reference level belongs to the objective it averaged.
-            C = f; Q = 1.0
+            C = f; Q = 1.0; recent = [f]
         end
         (fconv && f_tol > 0) && break
         (xconv && x_tol > 0) && break
@@ -312,6 +317,169 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
     end
     CTSEMLBFGSResult(x, f, G, iteration, fcalls, gcalls, gconv, fconv, xconv,
         lsfail, stopped, sizes, its)
+end
+
+"""
+    _ctsem_sgd(fg!, x0; ...)
+
+The early phase for large, ill-conditioned models: ctsem 3.11's `sgd()` (the
+stan path's `stochastic = TRUE`), reduced to the mechanisms that measured as
+carrying it. One gradient per iteration, no line search.
+
+  * A step per coordinate, adapted by how often that coordinate's gradient
+    changes sign: two exponential averages of the flip rate -- of the mean of
+    consecutive gradients (aimed at 0.5) and of the momentum (aimed at 0.1,
+    pushed back hard above it) -- each scaling the step towards its target, by
+    at most a fifth an iteration. A trust radius per coordinate: a flip says the
+    last step overshot that coordinate's optimum, a run of one sign says it fell
+    short. This is the information a diagonal curvature estimate carries, read
+    from signs, which stay meaningful where the curvature measured at one point
+    says little about the next.
+  * A direction that is a moving average of the gradient, the momentum (its
+    weight rises from 0.6 to 0.8 over the first 20 iterations), which carries the
+    steps along a curved valley that a single gradient crosses.
+  * Its magnitude compressed to `sign(m) sqrt|m|`: the gradients of
+    exponential and logistic transforms span orders of magnitude and change by
+    orders as a coordinate moves, faster than a multiplicative step can follow,
+    and the square root halves that range. Each coordinate's step is capped at
+    `cap` raw units.
+  * Non-monotone acceptance, Grippo, Lampariello & Lucidi's (1986) rule with a
+    slack: a step is kept if the objective stays below the worst of the last 20
+    values plus one; the k-th rejection in a row divides every step by e^k.
+
+Measured against `sgd()` on the 715-parameter model it was written for (dev2,
+500 gradients from one start), removing the per-coordinate steps cost 2500 log
+posterior, the compression 1900, the non-monotone acceptance 300 and the
+momentum 200. `sgd()`'s other mechanisms -- a look-ahead term, a global step
+rule from how often the objective falls, a pull back to the best point, random
+walks on its momentum and target, an inflection rule, a warm-up check -- were
+each worth nothing measurable there and on a 116-parameter analogue, and
+together they were worth nothing (the analogue, two data sets: the same end
+points to 0.4); they are not here. A single sign rule in place of the two
+averages (Rprop's 1.2 and 0.5) was tried and is worse with momentum: the
+momentum's sign rarely flips, the steps compound, and a third of the trials are
+rejected.
+
+The first direction is the gradient's sign at the size `sqrt|f0|`, as `sgd()`'s
+was, which makes the first steps a fixed small move in every coordinate rather
+than one proportional to gradients that can be ten thousand at a cold start.
+
+Stops at `maxiter`, when the callback says so, after `maxreject` rejections in
+a row, when the best value has improved by less than `itertol` an iteration
+over the last 30 (`sgd()`'s own rule), or, with `progress > 0`, when those 30
+iterations gained less than `progress` of everything gained since the start --
+where steps of the curvature's own size, L-BFGS's, do better. Minimises through
+the same `fg!` contract as `_ctsem_lbfgs` and returns the same result type, at
+the best point reached; `iteration0` offsets the iteration numbers the callback
+sees.
+"""
+function _ctsem_sgd(fg!, x0::AbstractVector; maxiter::Integer=1000,
+        step0::Real=1e-3, cap::Real=0.5, window::Integer=20,
+        maxreject::Integer=20, itertol::Real=1e-3, progress::Real=0.0,
+        callback=nothing, iteration0::Integer=0)
+    n = length(x0)
+    x = collect(Float64, x0)
+    G = zeros(n)
+    f = fg!(0.0, G, x)
+    fcalls = 1; gcalls = 1
+    stopped = callback !== nothing && iteration0 == 0 &&
+        callback(CTSEMIterate(0, f, maximum(abs, G; init=0.0))) === true
+    warmup = 20
+    # Ascent quantities, for the maximised objective -f. `g` holds the previous
+    # gradient when a point is accepted; before the first it is the scaled sign
+    # direction, as sgd()'s was.
+    first = sqrt(abs(f))
+    gsmooth = [-sign(v) * first for v in G]
+    gmid = copy(gsmooth)
+    g = copy(gsmooth)
+    step = fill(Float64(step0), n)
+    groughness = fill(0.5, n)
+    gsmoothroughness = fill(0.1, n)
+    gmemory = 0.6
+    gmemory2 = 0.0
+    history = Float64[]
+    bestx = copy(x); bestf = f; bestG = copy(G)
+    xn = similar(x); Gn = similar(G)
+    oldgmid = similar(x); oldgsmooth = similar(x)
+    mod(r, t) = t / (r + t) - 0.5
+    iteration = 0; rejected = 0
+    # The start is the first accepted point; `accept!` is everything sgd() does
+    # with one.
+    accept! = function (fnew, gnew, i)
+        push!(history, fnew)
+        gmemory2 = gmemory * min(i / warmup, 1)^(1 / 8)
+        rm2 = 0.9 * min(i / warmup, 1)^(1 / 8)
+        oldgmid .= gmid
+        oldgsmooth .= gsmooth
+        @inbounds for k in 1:n
+            gmid[k] = (g[k] + gnew[k]) / 2
+            gsmooth[k] = gsmooth[k] * gmemory2 + (1 - gmemory2) * gnew[k]
+            groughness[k] = groughness[k] * rm2 + (1 - rm2) *
+                (sign(gmid[k]) != sign(oldgmid[k]))
+            gsmoothroughness[k] = gsmoothroughness[k] * rm2 + (1 - rm2) *
+                (sign(gsmooth[k]) != sign(oldgsmooth[k]))
+            if i > warmup
+                a = mod(gsmoothroughness[k], 0.1)
+                step[k] *= 1 + 0.4 * sign(a) * a^4 / 0.5^4
+                step[k] *= 1 + 0.12 * mod(groughness[k], 0.5)
+            end
+            g[k] = gnew[k]
+        end
+        # The momentum's weight settles at 0.8 once warmed up.
+        (i > 25 && i % 20 == 0) && (gmemory = clamp(gmemory, 0.8, 0.95))
+        return nothing
+    end
+    accept!(-f, -G, 1)
+    iteration = 1
+    while !stopped && iteration < maxiter
+        i = iteration + 1
+        accepted = false
+        tries = 0
+        local fn
+        while !accepted
+            tries += 1
+            tries > maxreject && break
+            _ctsem_interrupt_check()
+            @inbounds for k in 1:n
+                d = step[k] * sign(gsmooth[k]) * sqrt(abs(gsmooth[k]))
+                xn[k] = x[k] + clamp(d, -cap, cap)
+            end
+            fn = fg!(0.0, Gn, xn); fcalls += 1; gcalls += 1
+            lpn = -fn
+            # sgd()'s slack: one, and one more for every try so far.
+            bar = minimum(@view history[max(1, end - window + 1):end]) - tries - 1
+            accepted = isfinite(lpn) && all(isfinite, Gn) && lpn > bar
+            if !accepted
+                if i > warmup
+                    @inbounds for k in 1:n
+                        gsmooth[k] = gsmooth[k] * gmemory2^2 + (1 - gmemory2^2) * g[k]
+                    end
+                end
+                step ./= exp(tries)
+            end
+        end
+        accepted || (rejected = tries; break)
+        iteration = i
+        x .= xn; f = fn; G .= Gn
+        accept!(-fn, -Gn, i)
+        if f < bestf
+            bestf = f; bestx .= x; bestG .= G
+        end
+        stopped = callback !== nothing && callback(CTSEMIterate(
+            iteration0 + iteration, f, maximum(abs, G; init=0.0))) === true
+        # sgd()'s own rule, and the relative one: the best value over the last
+        # 30 iterations against the best before them.
+        if iteration > 30 && maximum(@view history[end-29:end]) == maximum(history)
+            before = maximum(@view history[1:end-30])
+            gained = maximum(history) - before
+            (gained / 30 < itertol && gained > 0) && break
+            total = maximum(history) - history[1]
+            (progress > 0 && total > 0 && gained < progress * total) && break
+        end
+    end
+    CTSEMLBFGSResult(bestx, bestf, bestG, iteration, fcalls, gcalls,
+        maximum(abs, bestG; init=0.0) <= 0, false, false, rejected > 0,
+        stopped, Int[], Int[])
 end
 
 # ------------------------------------------------------------------ batches

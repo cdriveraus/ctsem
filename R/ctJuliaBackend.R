@@ -4427,6 +4427,21 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   if (!is.null(optimcontrol$lbfgs_nonmonotone)) {
     common$lbfgs_nonmonotone <- as.numeric(optimcontrol$lbfgs_nonmonotone)[1L]
   }
+  # Grippo-Lampariello-Lucidi acceptance over the last `lbfgs_gll` values.
+  if (!is.null(optimcontrol$lbfgs_gll)) {
+    common$lbfgs_gll <- as.integer(optimcontrol$lbfgs_gll)[1L]
+  }
+  # `stochastic`, as on stan: TRUE runs the sgd phase (`_ctsem_sgd`) before
+  # L-BFGS, 'auto' runs it above 50 parameters -- stan's own rule -- and FALSE,
+  # the julia default, does not. Only on a stage that starts away from the
+  # optimum: not a stage resumed after certification (`carried`), the prior
+  # warm-up's fixed budget, or a profile point, which all start near one.
+  stochastic <- optimcontrol$stochastic
+  if (!is.null(stochastic) && is.null(carried) && !isTRUE(progress_budget) &&
+      is.null(pin)) {
+    common$sgd <- if (identical(stochastic, "auto"))
+      length(as.numeric(start)) > 50L else isTRUE(stochastic)
+  }
   # A stage resumed after a certification found the point short of a maximum
   # (`.ctBackendCorrectResult()`): the progress the fit made before it, so its
   # stall watch has a progress to take a share of, and leave to stop on
@@ -5334,6 +5349,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       "stall_parameters"),
     stall_triggers = if (is.null(result$stall_triggers)) NA_integer_ else
       as.integer(result$stall_triggers),
+    # Iterations of the sgd phase (`optimcontrol$stochastic`), 0 when none ran.
+    sgd_iterations = if (is.null(result$sgd_iterations)) 0L else
+      as.integer(result$sgd_iterations),
     # How many times the fit was pulled off a boundary and refitted.
     stall_escapes = if (is.null(result$stall_escapes)) 0L else
       as.integer(result$stall_escapes),
