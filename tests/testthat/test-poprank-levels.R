@@ -42,8 +42,8 @@ levelmodel <- function() {
   m
 }
 
-levelspec <- function(d, ...) {
-  suppressMessages(ctFit(d, levelmodel(), backend = "julia",
+levelspec <- function(d, ..., model = levelmodel()) {
+  suppressMessages(ctFit(d, model, backend = "julia",
     intoverpop = "laplace", cores = 2, fit = FALSE, ...))
 }
 
@@ -102,6 +102,22 @@ test_that("several levels can be reduced at once", {
   tab <- bylevel(levelspec(levelframe(), poprank = c(subject = 3, study = 2)))
   expect_equal(tab$rank, c(3L, 3L, 2L))
   expect_equal(tab$nload, c(0L, 24L, 17L))
+})
+
+test_that("a per-level rank stated on the model is the rank passed to ctFit", {
+  # The model's rank was read and then ignored here, because laplace gated on
+  # the argument alone: a two-level model with `model$poprank` set ran at full
+  # rank and said nothing.
+  d <- levelframe()
+  m <- levelmodel()
+  m$poprank <- c(subject = 3, study = 2)
+  onmodel <- levelspec(d, model = m)
+  passed <- levelspec(d, poprank = c(subject = 3, study = 2))
+  expect_equal(bylevel(onmodel), bylevel(passed))
+  expect_equal(onmodel$laplace$npar, passed$laplace$npar)
+  # and the argument still wins over it
+  expect_equal(levelspec(d, model = m, poprank = NA)$laplace$npar,
+    levelspec(d)$laplace$npar)
 })
 
 test_that("a rank at or above the level's own k is the full covariance", {

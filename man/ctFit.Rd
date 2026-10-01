@@ -226,8 +226,8 @@ single loading. They are named \code{poploading_<parameter>_dim<j>.<level>}
 to keep them distinct from the \code{popsd_} and \code{rawcor_} of a
 full-rank level, which are a different quantity.
 
-May also be stated on the model, as \code{model$poprank <- 2}; an argument
-here wins over that.}
+May also be stated on the model, as \code{model$poprank <- 2}, which asks for
+it just as the argument does; an argument here wins over that.}
 
 \item{sameInitialTimes}{if TRUE, include an empty observation for every subject that has no observation
 at the earliest observation time of the dataset. This ensures that the T0MEANS occurs for every subject at the same time,

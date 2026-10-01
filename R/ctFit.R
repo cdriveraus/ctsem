@@ -665,8 +665,8 @@ T0VARredundancies <- function(ctm) {
 #' to keep them distinct from the \code{popsd_} and \code{rawcor_} of a
 #' full-rank level, which are a different quantity.
 #'
-#' May also be stated on the model, as \code{model$poprank <- 2}; an argument
-#' here wins over that.
+#' May also be stated on the model, as \code{model$poprank <- 2}, which asks for
+#' it just as the argument does; an argument here wins over that.
 #' @param intoverpop how to handle declared individual differences. If 'auto',
 #' set to TRUE if optimizing and FALSE if using hmc -- except when a grouping
 #' level above the subject varies (see \code{id} in \code{\link{ctModel}}),
@@ -1497,7 +1497,8 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   backend <- match.arg(backend)
   # Whether `poprank` was asked for or merely defaulted. Taken here because
   # `missing()` has to be evaluated before the argument is touched, and it
-  # decides whether an inapplicable rank is an error or a no-op.
+  # decides whether an inapplicable rank is an error or a no-op. A rank stated
+  # on the model sets it too, once the model is read (`model$poprank` below).
   poprankexplicit <- !missing(poprank)
   # Before any data preparation and before the Julia install prompt: a control
   # name the chosen backend cannot honour is a mistake to report immediately,
@@ -2018,7 +2019,18 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # A rank passed to `ctFit()` wins, because an argument at the call site is the
   # more specific statement of the two; the model's value is used only when the
   # argument was left at its default.
-  if(!poprankexplicit && !is.null(ctm[['poprank']])) poprank <- ctm[['poprank']]
+  #
+  # A rank stated on the model was asked for just as much as one passed here, so
+  # from this point it counts as explicit: applied under laplace and 'none',
+  # refused by name where it cannot apply. Before this the flag still read "left
+  # at its default", and a laplace fit took the model's rank and then ignored
+  # it, running at full rank without a word. The `args` capture above already
+  # holds the flag as it was, so `ctFitUpdate()` replays the argument only when
+  # one was passed, and the model it refits still carries its own rank.
+  if(!poprankexplicit && !is.null(ctm[['poprank']])){
+    poprank <- ctm[['poprank']]
+    poprankexplicit <- TRUE
+  }
 
   # Under `laplace` a rank restricts each level's population covariance where
   # that covariance is actually built -- in the engine, as a loading matrix --
