@@ -643,9 +643,12 @@ T0VARredundancies <- function(ctm) {
 #' no-op. \code{'auto'} keeps the meaning it has on the augmented route and is
 #' resolved once per level: each level's rank becomes the number of \emph{its}
 #' effects that reach the observation mean, so a level carrying only
-#' mean-affecting effects is left at full rank. It still has to be asked for,
-#' because under \code{'laplace'} those coordinates are identified and dropping
-#' them is an approximation rather than a repair.
+#' mean-affecting effects is left at full rank. Named, it applies to the levels
+#' it names, and may sit beside numbers, as \code{c(subject='auto', study=2)}.
+#' It still has to be asked for, because under \code{'laplace'} those
+#' coordinates are identified and dropping them is an approximation rather than
+#' a repair. Under \code{'augmented'} and \code{'none'} a named rank may name
+#' only the subject level, the one those routes restrict.
 #'
 #' The mechanism differs too, and it is why the per-level form exists. On the
 #' augmented route a reduced rank rewrites the model into basis effects and
@@ -665,8 +668,8 @@ T0VARredundancies <- function(ctm) {
 #' to keep them distinct from the \code{popsd_} and \code{rawcor_} of a
 #' full-rank level, which are a different quantity.
 #'
-#' May also be stated on the model, as \code{model$poprank <- 2}; an argument
-#' here wins over that.
+#' May also be stated on the model, as \code{model$poprank <- 2}, which asks for
+#' it just as the argument does; an argument here wins over that.
 #' @param intoverpop how to handle declared individual differences. If 'auto',
 #' set to TRUE if optimizing and FALSE if using hmc -- except when a grouping
 #' level above the subject varies (see \code{id} in \code{\link{ctModel}}),
@@ -1497,7 +1500,8 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   backend <- match.arg(backend)
   # Whether `poprank` was asked for or merely defaulted. Taken here because
   # `missing()` has to be evaluated before the argument is touched, and it
-  # decides whether an inapplicable rank is an error or a no-op.
+  # decides whether an inapplicable rank is an error or a no-op. A rank stated
+  # on the model sets it too, once the model is read (`model$poprank` below).
   poprankexplicit <- !missing(poprank)
   # Before any data preparation and before the Julia install prompt: a control
   # name the chosen backend cannot honour is a mistake to report immediately,
@@ -2018,7 +2022,18 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # A rank passed to `ctFit()` wins, because an argument at the call site is the
   # more specific statement of the two; the model's value is used only when the
   # argument was left at its default.
-  if(!poprankexplicit && !is.null(ctm[['poprank']])) poprank <- ctm[['poprank']]
+  #
+  # A rank stated on the model was asked for just as much as one passed here, so
+  # from this point it counts as explicit: applied under laplace and 'none',
+  # refused by name where it cannot apply. Before this the flag still read "left
+  # at its default", and a laplace fit took the model's rank and then ignored
+  # it, running at full rank without a word. The `args` capture above already
+  # holds the flag as it was, so `ctFitUpdate()` replays the argument only when
+  # one was passed, and the model it refits still carries its own rank.
+  if(!poprankexplicit && !is.null(ctm[['poprank']])){
+    poprank <- ctm[['poprank']]
+    poprankexplicit <- TRUE
+  }
 
   # Under `laplace` a rank restricts each level's population covariance where
   # that covariance is actually built -- in the engine, as a loading matrix --
@@ -2038,77 +2053,68 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   #
   # A loading matrix per level has neither problem: each level's deviation is
   # `L_level * u_level` with its own `u`, and the levels stay independent.
+  #
+  # Laplace takes this route alone, whether or not it ends up restricting
+  # anything: a request that resolves to full rank at every level is answered
+  # by full rank, not by handing the rank on to the augmented machinery below,
+  # which reads it as a single number for the innermost level.
+  #
+  # Not by default, and this is the whole reason a request is distinguished
+  # from the default. On the augmented route the coordinates `'auto'` removes
+  # cannot be identified, so removing them costs nothing and is a good default.
+  # Under laplace they *are* identified, and measured on a 250 x 50 design the
+  # same restriction costs 48 log likelihood units and takes the fit to the
+  # boundary -- basis sd to zero with the coefficient to -612. A default that
+  # does that to a user who chose the route precisely because it identifies
+  # these things would be indefensible, so here it has to be asked for. The
+  # same holds under 'none', below.
+  levelnames <- c(ctm$subjectIDname, ctm$groupIDnames)
   laplacerank <- NULL
   if(identical(intoverpopmethod,'laplace') && poprankexplicit &&
       !(length(poprank)==1 && is.na(poprank))){
-    if(!identical(backend,'julia')) stop("poprank requires backend='julia'.", call.=FALSE)
-    levelnames <- c(ctm$subjectIDname, ctm$groupIDnames)
-    autorank <- is.character(poprank) && any(poprank %in% 'auto')
-    if(autorank){
+    levelcolumns <- stats::setNames(c('indvarying', if(length(ctm$groupIDnames))
+      paste0('indvarying_', ctm$groupIDnames)), levelnames)
+    asked <- .ctPoprankByLevel(poprank, levelnames)
+    laplacerank <- vapply(names(asked), function(level){
+      value <- asked[[level]]
+      if(!identical(value, 'auto')) return(value)
       # `'auto'` keeps the meaning it has on the augmented route -- how many of
-      # that level's effects reach the observation mean -- resolved once per
-      # level rather than once for the model. Under laplace those coordinates
-      # are identified, so it is an approximation asked for rather than a
-      # repair, which is why it is never the default here.
-      levelcolumns <- c('indvarying', if(length(ctm$groupIDnames))
-        paste0('indvarying_', ctm$groupIDnames))
-      counted <- vapply(levelcolumns, function(cc){
-        roles <- .ctPopEffectRoles(ctm$pars, column=cc)
-        if(!nrow(roles)) NA_integer_ else as.integer(sum(roles$mean))
-      }, integer(1L))
-      counted[!is.na(counted) & counted < 1L] <- NA_integer_
-      laplacerank <- stats::setNames(counted, levelnames)
-      laplacerank <- laplacerank[!is.na(laplacerank)]
-      if(!length(laplacerank)) laplacerank <- NULL
-      ctm$laplacerank <- laplacerank
-    }
-    value <- if(autorank) integer() else suppressWarnings(as.integer(poprank))
-    if(!autorank && any(is.na(value))) stop("poprank must be whole numbers.", call.=FALSE)
-    # Names decide, not length. `poprank=c(study=2)` is one element *and*
-    # names a level, and reading it as "2 everywhere" because it is length one
-    # would silently reduce every level while looking like it had done what was
-    # asked -- which is what the first version of this did.
-    if(autorank){
-      NULL  # resolved above, one rank per level
-    } else if(is.null(names(poprank))){
-      if(length(value)!=1L) stop(
-        "a poprank per level must be named, one entry per level: ",
-        paste(levelnames, collapse=', '), call.=FALSE)
-      laplacerank <- stats::setNames(rep(value, length(levelnames)), levelnames)
-    } else {
-      if(any(!nzchar(names(poprank)))) stop(
-        "every entry of a per-level poprank must name its level: ",
-        paste(levelnames, collapse=', '), call.=FALSE)
-      unknown <- setdiff(names(poprank), levelnames)
-      if(length(unknown)) stop("poprank names no level called ",
-        paste(unknown, collapse=', '), ". The levels are ",
-        paste(levelnames, collapse=', '), ".", call.=FALSE)
-      laplacerank <- stats::setNames(value, names(poprank))
-    }
+      # this level's effects reach the observation mean -- resolved per level
+      # rather than once for the model. A level with none keeps its full
+      # covariance rather than a rank of zero, which would be no variation.
+      roles <- .ctPopEffectRoles(ctm$pars, column=levelcolumns[[level]])
+      counted <- if(nrow(roles)) as.integer(sum(roles$mean)) else NA_integer_
+      if(is.na(counted) || counted < 1L) NA_integer_ else counted
+    }, integer(1L))
+    laplacerank <- laplacerank[!is.na(laplacerank)]
+    if(!length(laplacerank)) laplacerank <- NULL
     ctm$laplacerank <- laplacerank
   }
 
   popregression <- NULL
-  if(is.null(laplacerank) && !(length(poprank)==1 && is.na(poprank))){
+  if(!identical(intoverpopmethod,'laplace') &&
+      !(length(poprank)==1 && is.na(poprank))){
     if(!identical(backend,'julia')){
       if(poprankexplicit) stop("poprank requires backend='julia'.", call.=FALSE)
-    } else if(!intoverpop && !identical(intoverpopmethod,'laplace') &&
-        !any(ctm$pars$indvarying[is.na(ctm$pars$value)])){
+    } else if(!intoverpop && !any(ctm$pars$indvarying[is.na(ctm$pars$value)])){
       if(poprankexplicit) stop(
         "poprank restricts the population covariance, so it needs a model with ",
         "individually varying parameters.", call.=FALSE)
     } else if(!intoverpop && !poprankexplicit){
-      # Not by default off the augmented route, and this is the whole reason
-      # the two are distinguished. On the augmented route the coordinates
-      # `'auto'` removes cannot be identified, so removing them costs nothing
-      # and is a good default. Under laplace they *are* identified, and
-      # measured on a 250 x 50 design the same restriction costs 48 log
-      # likelihood units and takes the fit to the boundary -- basis sd to zero
-      # with the coefficient to -612. A default that does that to a user who
-      # chose the route precisely because it identifies these things would be
-      # indefensible, so here it has to be asked for.
-      popregression <- NULL
+      popregression <- NULL  # not by default under 'none'; see laplace above
     } else {
+      # These routes restrict the subject level alone: the rewrite works from
+      # `pars$indvarying`. So a per-level rank may name that level and no
+      # other, and an unnamed one is a single number for it.
+      asked <- .ctPoprankByLevel(poprank,
+        if(is.null(names(poprank))) ctm$subjectIDname else levelnames)
+      outer <- setdiff(names(asked), ctm$subjectIDname)
+      if(length(outer)) stop("poprank names level ",
+        paste(outer, collapse=', '), ", but under intoverpop='",
+        intoverpopmethod, "' a rank restricts the subject level ('",
+        ctm$subjectIDname, "') alone. A rank per level needs ",
+        "intoverpop='laplace'.", call.=FALSE)
+      poprank <- asked[[ctm$subjectIDname]]
       popregression <- .ctPopRegressionSpec(ctm$pars, poprank,
         explicit=poprankexplicit, model=ctm, augmented=isTRUE(intoverpop))
       if(!is.null(popregression)) ctm <- .ctPopRegressionDemote(ctm, popregression)

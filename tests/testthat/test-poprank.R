@@ -250,6 +250,44 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
     expect_equal(ctsem:::.ctBackendNpar(overridden), 6L)
   })
 
+  # Stated on the model, a rank was asked for, so it applies on the routes where
+  # only an asked-for rank does. A first version read the model's rank and then
+  # gated laplace and 'none' on the argument alone, so the fit ran at full rank
+  # and said nothing.
+  test_that('a rank stated on the model applies under laplace and none, as passed', {
+    dat <- poprank_data()
+    m <- poprank_model()
+    m$poprank <- 'auto'
+    prepared <- function(model, ...) suppressWarnings(suppressMessages(ctFit(
+      datalong = dat, model = model, backend = 'julia', fit = FALSE,
+      cores = 1L, ...)))
+    routes <- list(laplace = list(intoverpop = 'laplace'),
+      none = list(intoverpop = FALSE, optimize = FALSE))
+    for (route in names(routes)) {
+      onmodel <- do.call(prepared, c(list(model = m), routes[[route]]))
+      passed <- do.call(prepared, c(list(model = poprank_model(),
+        poprank = 'auto'), routes[[route]]))
+      full <- do.call(prepared, c(list(model = poprank_model()), routes[[route]]))
+      expect_equal(ctsem:::.ctBackendNpar(onmodel), ctsem:::.ctBackendNpar(passed),
+        info = route)
+      expect_lt(ctsem:::.ctBackendNpar(onmodel), ctsem:::.ctBackendNpar(full))
+    }
+  })
+
+  # Off laplace the rank restricts the subject level alone, so a name is checked
+  # against the levels rather than dropped: `c(nosuchlevel = 1)` was applied
+  # to the subject level as 1, and two entries died in an `if` of length two.
+  test_that('a named rank off laplace names the subject level or is refused', {
+    dat <- poprank_data()
+    prepared <- function(...) suppressWarnings(suppressMessages(ctFit(
+      datalong = dat, model = poprank_model(), backend = 'julia', fit = FALSE,
+      intoverpop = 'augmented', cores = 1L, ...)))
+    expect_equal(ctsem:::.ctBackendNpar(prepared(poprank = c(id = 1))), 5L)
+    expect_error(prepared(poprank = c(nosuchlevel = 1)), 'no level called')
+    expect_error(prepared(poprank = c(id = 1, x = 2)), 'no level called')
+    expect_error(prepared(poprank = 1.5), 'whole number')
+  })
+
   # A reduced rank needs the population covariance free, and that is the whole
   # of the rule: under `Sigma = L L'` nothing below the diagonal is a cell, a
   # spread is a row norm, and a regressed effect has neither -- so no stated
@@ -413,6 +451,12 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
     dat <- poprank_data()
     expect_error(suppressWarnings(ctFit(datalong = dat, model = poprank_model(),
       backend = 'stan', fit = FALSE, intoverpop = 'augmented', poprank = 'auto')),
+      "requires backend='julia'")
+    # Stated on the model is asked for too, rather than accepted and ignored.
+    m <- poprank_model()
+    m$poprank <- 'auto'
+    expect_error(suppressWarnings(ctFit(datalong = dat, model = m,
+      backend = 'stan', fit = FALSE, intoverpop = 'augmented')),
       "requires backend='julia'")
   })
 
