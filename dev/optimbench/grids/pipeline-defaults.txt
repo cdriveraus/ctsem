@@ -1,0 +1,33 @@
+# pipeline-defaults grid: the default cells of grids/pipeline.txt's bench models on the
+# same build, for paired timings (the counts pair with diagcheck's too).
+#
+cf_gaussian.aug.d1.s1.default           cf_gaussian  1    augmented  default:1                default
+cf_gaussian.lap.d1.s1.default           cf_gaussian  1    laplace    default:1                default
+cf_binary.aug.d1.s1.default             cf_binary    1    augmented  default:1                default
+cf_binary.lap.d1.s1.default             cf_binary    1    laplace    default:1                default
+cf_ordinal.aug.d1.s1.default            cf_ordinal   1    augmented  default:1                default
+cf_ordinal.lap.d1.s1.default            cf_ordinal   1    laplace    default:1                default
+cf_mixed.aug.d1.s1.default              cf_mixed     1    augmented  default:1                default
+cf_mixed.lap.d1.s1.default              cf_mixed     1    laplace    default:1                default
+gA1.lap.cfg.s1.default                  gA1          cfg  laplace    default:1                default
+gA14.lap.cfg.s1.default                 gA14         cfg  laplace    default:1                default
+gB2.lap.cfg.s1.default                  gB2          cfg  laplace    default:1                default
+gB8.lap.cfg.s1.default                  gB8          cfg  laplace    default:1                default
+gC2.lap.cfg.s1.default                  gC2          cfg  laplace    default:1                default
+gC8.lap.cfg.s1.default                  gC8          cfg  laplace    default:1                default
+gD1.lap.cfg.s1.default                  gD1          cfg  laplace    default:1                default
+gD3.lap.cfg.s1.default                  gD3          cfg  laplace    default:1                default
+acnonlin.lap.cfg.s1.default             acnonlin     cfg  laplace    default:1                default
+mvmix.lap.cfg.s1.default                mvmix        cfg  laplace    default:1                default
+mvmix.aug.cfg.s1.default                mvmix        cfg  augmented  default:1                default
+jflat.lap.cfg.s1.default                jflat        cfg  laplace    default:1                default
+gN1.lap.cfg.s1.default                  gN1          cfg  laplace    default:1                default
+gN3.lap.cfg.s1.default                  gN3          cfg  laplace    default:1                default
+small.aug.d1.s1.default                 small        1    augmented  default:1                default
+nonlin.aug.d1.s1.default                nonlin       1    augmented  default:1                default
+long.aug.d1.s1.default                  long         1    augmented  default:1                default
+bigp.aug.d1.s1.default                  bigp         1    augmented  default:1                default
+panel.aug.d1.s1.default                 panel        1    augmented  default:1                default
+ordinal.lap.d1.s1.default               ordinal      1    laplace    default:1                default
+anomS1.lap.cfg.s1.default               anomS1       cfg  laplace    default:1                default
+anomS2.lap.cfg.s1.default               anomS2       cfg  laplace    default:1                default
