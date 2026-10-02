@@ -1051,7 +1051,7 @@ function ctsem_laplace_continuation_optimize(o::CTSEMLaplaceContinuation,
     res = ctsem_optimize(step, zeros(size(B, 2)); maxiter=Int(maxiter), g_tol=1e-8,
         f_tol=0.0, x_tol=0.0, gap_tol=Float64(tol), converge_tol=Float64(tol),
         overshoot_probe=:off, stall_window=0, batch=false, newton=false,
-        tune_chunks=false, precondition=nothing,
+        tune_chunks=false, precondition=nothing, lbfgs_diagonal=false,
         initial_alpha=max(alpha, 1e-12), progress=false)
     y = collect(Float64, res.minimizer)
     moved = sqrt(sum(abs2, y))
