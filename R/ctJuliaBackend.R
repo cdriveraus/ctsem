@@ -5167,8 +5167,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       substeps$refit <- TRUE
       restart <- if (is.null(jointobjective)) optimum else c(optimum, numeric(nstate))
       first <- result
+      # From the coarser mesh's optimum, so without the early phases, which
+      # are for a stage that starts away from one.
       result <- .ctJuliaAddRunCounts(.ctJuliaOptimise(model_spec, restart,
-        optimcontrol = optimcontrol, gradient = gradient, cores = cores,
+        optimcontrol = utils::modifyList(optimcontrol,
+          list(saem = FALSE, stochastic = FALSE)), gradient = gradient, cores = cores,
         verbose = verbose, callback = optimcontrol$callback,
         objective = jointobjective), first)
     }
