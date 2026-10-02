@@ -223,32 +223,18 @@ test_that("a fit that reaches a rising plateau climbs it to the maximum", {
     as.numeric(ctJuliaEvaluate(spec, c(-9, s), gradient = FALSE)$value),
     numeric(1)))
   expect_lt(plateau, -39.8)
-  # From the point on the plateau the fit used to stop at: the maximum, and a
-  # verdict that says it is one. The test's own start is the next test.
-  for (start in list(c(-4.204915, -0.161058))) {
+  # From the test's start, and from the point on the plateau the fit used to
+  # stop at: the maximum, and a verdict that says it is one. With the diagonal
+  # L-BFGS scaling the first start reaches the plateau further out, at raw
+  # drift -5.6, where the ridge is flat to 1e-5 over five raw units and the
+  # Hessian negative definite; the finish leaves it along the ridge
+  # (`_ctsem_flat_ladder`), which a straight probe could not.
+  for (start in list(c(0.1, -0.2), c(-4.204915, -0.161058))) {
     fit <- fit_from(start)
     expect_equal(fit$estimate$loglik, -25.1894, tolerance = 1e-4,
       info = paste(start, collapse = " "))
     expect_true(isTRUE(fit$optim$converged), info = paste(start, collapse = " "))
   }
-})
-
-test_that("from a start in the saddle region, the fit reaches the maximum, not the plateau", {
-  skip(paste("known since the diagonal L-BFGS default (2026-10-02): from",
-    "c(0.1, -0.2) it leaps onto the white-noise plateau (-39.8787) and certifies",
-    "there; being worked on -- see CT-SEM/review/HANDOVER-2026-10-01.md"))
-  skip_without_julia()
-  model <- suppressWarnings(ctModel(
-    type = "ct", LAMBDA = diag(1), DRIFT = matrix("drift", 1, 1),
-    DIFFUSION = matrix("diffusion", 1, 1), MANIFESTVAR = matrix(.3, 1, 1),
-    MANIFESTMEANS = matrix(0, 1, 1), T0VAR = matrix(1, 1, 1), T0MEANS = matrix(0, 1, 1)))
-  set.seed(4)
-  dat <- data.frame(id = rep(1:6, each = 5), time = rep(0:4, 6),
-    Y1 = as.vector(replicate(6, cumsum(rnorm(5, 0, .5)))))
-  fit <- suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
-    cores = 1, inits = c(0.1, -0.2), verbose = 0)))
-  expect_equal(fit$estimate$loglik, -25.1894, tolerance = 1e-4)
-  expect_true(isTRUE(fit$optim$converged))
 })
 
 test_that("a julia fit stopped early does not converge, and says what is left", {

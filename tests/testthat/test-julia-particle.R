@@ -4,10 +4,6 @@
 skip_without_julia()
 
 test_that("ctParticleLik agrees with the filter on a linear fit and reports per row", {
-  skip(paste("known since the diagonal L-BFGS default (2026-10-02): the fit",
-    "from c(0.1, -0.2) ends on the white-noise plateau, where the Euler",
-    "transition is unstable; being worked on -- see",
-    "CT-SEM/review/HANDOVER-2026-10-01.md"))
   model <- suppressWarnings(ctModel(
     type = "ct", LAMBDA = diag(1), DRIFT = matrix("drift", 1, 1),
     DIFFUSION = matrix("diffusion", 1, 1), MANIFESTVAR = matrix(.3, 1, 1),
@@ -15,8 +11,12 @@ test_that("ctParticleLik agrees with the filter on a linear fit and reports per 
   set.seed(4)
   dat <- data.frame(id = rep(1:6, each = 5), time = rep(0:4, 6),
     Y1 = as.vector(replicate(6, cumsum(rnorm(5, 0, .5)))))
+  # Started in the maximum's basin: this is about the particle filter, and from
+  # the saddle region test-julia-convergence.R uses, which point a fit reaches
+  # is the optimiser's business -- on the white-noise plateau, at drift -270,
+  # the Euler transition below is unstable whatever the filter does.
   fit <- suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia", cores = 1,
-    inits = c(0.1, -0.2), verbose = 0)))
+    inits = c(3, -1.5), verbose = 0)))
   out <- ctParticleLik(fit, particles = 2000, substeps = 2, seed = 2)
   expect_true(is.finite(out$loglik) && is.finite(out$se))
   expect_equal(out$fit_loglik, fit$estimate$loglik)

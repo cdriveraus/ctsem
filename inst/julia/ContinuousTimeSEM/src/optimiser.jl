@@ -780,6 +780,22 @@ _ctsem_cheap_hessian(::CTSEMObjective) = true
 _ctsem_cheap_hessian(::Any) = false
 
 """
+    _ctsem_flat_escape(objective)
+
+Whether the finish may leave a point along a direction its curvature calls flat
+(`_ctsem_flat_ladder`). On the marginal objective, the likelihood itself, a
+gain along such a direction is a gain. Not on the Laplace objective: there the
+approximation is least reliable exactly where a direction goes flat -- a
+random-effect scale collapsing, a unit's curvature going singular -- and moving
+along one walked AnomAuth S1 from its optimum into the spurious basin, 25
+Laplace nats up and 1.8 exact nats down (decision 1 of
+review/OPTIM-consolidation-plan-2026-09-25). Nor on the state-explicit
+objective, which is sampled, never optimised.
+"""
+_ctsem_flat_escape(::CTSEMObjective) = true
+_ctsem_flat_escape(::Any) = false
+
+"""
     _ctsem_hessian_cost(objective, npar)
 
 What one Hessian costs, in gradients: `2 npar` on the Laplace route (central
@@ -1001,6 +1017,84 @@ function _ctsem_saddle_ladder(value_at, x::AbstractVector, value::Real, split,
 end
 
 """
+    _ctsem_flat_ladder(fg!, x, f, G, split; lengths, corrections)
+
+At a point with no negative curvature, the best point along the directions the
+curvature calls flat, followed as a ridge: a step of each of `lengths` raw units
+along the gradient's part outside the trusted directions, both signs, the
+gradient's first -- along a flat direction its sign can be noise -- then up to
+`corrections` Newton steps in the trusted directions, so the point rides the
+ridge rather than leaving it. Each correction takes its direction from the
+curvature at `x` and its length from the secant of the gradients at its two
+ends: the Hessian at `x` describes the ridge less well the further along it the
+rung is, and on a ridge curving as sharply as a parabola's four units out its
+curvature was 2.5 times too strong, so uncorrected lengths each recovered only
+two fifths of the way back. Returns the best point below `f` (minimised) as
+`(point, f, G, length)`, or `nothing`, and the calls spent.
+
+Why followed, not straight: a ridge flat in one direction is curved in raw
+coordinates, so a straight step leaves it. On test-julia-convergence.R's random
+walks fitted with an OU model, the fit can stop on the white-noise plateau,
+where drift and diffusion trade along a ridge flat to 1e-5 over five raw units
+and the Hessian is negative definite. Four raw units along it the straight
+step has lost 1.04 nats and the followed one gained 0.02, and the maximum, 14.7
+higher, lies further up the same ridge. The probe the certification reads
+(`_ctsem_flat_probe`) steps straight, so it could not see this, and certified
+the plateau.
+
+With no gradient at all outside the trusted directions, the flattest direction.
+`fg!` is the optimiser's trial path: an unusable point comes back as the
+sentinel value, which no correction improves and no comparison accepts.
+"""
+function _ctsem_flat_ladder(fg!, x::AbstractVector, f::Real, G::AbstractVector,
+        split; lengths=_CTSEM_FLAT_PROBE_LENGTHS, corrections::Integer=3)
+    flat = findall(.!split.trusted)
+    isempty(flat) && return (best=nothing, fcalls=0, gcalls=0)
+    r = _ctsem_flat_residual(split, -G)
+    if !(all(isfinite, r) && norm(r) > 0)
+        r = split.vectors[:, flat[argmin(abs.(split.values[flat]))]]
+    end
+    u = r ./ norm(r)
+    V = split.vectors[:, split.trusted]
+    curvature = split.values[split.trusted]
+    best = nothing; fcalls = 0; gcalls = 0
+    for side in (1.0, -1.0), len in lengths
+        y = x .+ (side * len) .* u
+        g = similar(G)
+        fy = fg!(0.0, g, y); fcalls += 1; gcalls += 1
+        isfinite(fy) || continue
+        for _ in 1:corrections
+            d = -(V * ((transpose(V) * g) ./ curvature))
+            slope = dot(d, g)
+            slope < 0 || break
+            z = y .+ d
+            gz = similar(G)
+            fz = fg!(0.0, gz, z); fcalls += 1; gcalls += 1
+            # The secant of the slope along `d` between its ends: the step's
+            # length where the slope vanishes, exact on a quadratic along it.
+            ends = isfinite(fz) ? dot(d, gz) : NaN
+            if isfinite(ends) && ends > slope
+                t = slope / (slope - ends)
+                if 0 < t <= 10 && abs(t - 1) > 0.05
+                    zt = y .+ t .* d
+                    gt = similar(G)
+                    ft = fg!(0.0, gt, zt); fcalls += 1; gcalls += 1
+                    if isfinite(ft) && !(isfinite(fz) && fz <= ft)
+                        z = zt; fz = ft; gz = gt
+                    end
+                end
+            end
+            (isfinite(fz) && fz < fy) || break
+            y = z; fy = fz; g = gz
+        end
+        if fy < f && (best === nothing || fy < best.f)
+            best = (point=y, f=fy, G=g, length=side * len)
+        end
+    end
+    (best=best, fcalls=fcalls, gcalls=gcalls)
+end
+
+"""
     _ctsem_secant_along(H, s, y)
 
 `H` with its curvature along the step `s` replaced by the secant's, `s'y / s's`
@@ -1093,7 +1187,13 @@ At a saddle -- negative curvature in the final Hessian -- the ladder along the
 most negative curvature is tried (`_ctsem_saddle_ladder`), and the finish
 continues from the better point with the exact Hessian there, at most
 `max_escapes` times: it never returns a point with a direction of negative
-curvature it did not try, short of that cap. Then, when `probe`, the
+curvature it did not try, short of that cap. With no negative curvature but a
+direction the curvature calls flat, or a saddle whose ladder found nothing
+worth having, the flat ladder (`_ctsem_flat_ladder`) is tried, when
+`flat_escape` (the fit sets it where `_ctsem_flat_escape` allows), within the
+same cap, the steps continuing on the exact Hessian there with a fresh step
+budget. Either escape is taken only when it gains more than `escape_gain`,
+which the fit sets to its certification tolerance. Then, when `probe`, the
 flat-direction probe (`_ctsem_flat_probe`) at the final point.
 
 `take_steps = false` gives the certification's numbers alone: the Hessian at `x`
@@ -1116,7 +1216,7 @@ MAXIMISED objective, or `nothing`, with `hessian_at` and `distance`; the steps
 taken, including escapes, and the predicted gain at the end; the full and
 subset Hessians formed and the calls made; the saddle record (`escapes`,
 `saddle`, `ladder_tried`, `ladder_gain`); the probe record; whether it handed
-back (`handback`); and the history of the steps, one entry each (`kind` is "newton", "exact" or "saddle", and `alpha`
+back (`handback`); and the history of the steps, one entry each (`kind` is "newton", "exact", "saddle" or "flat", and `alpha`
 the share of its Newton step's length the step took).
 """
 function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
@@ -1128,6 +1228,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         flat_rtol::Real=_CTSEM_FLAT_RTOL, negative::Real=_CTSEM_NEGATIVE_RTOL,
         ladder=_CTSEM_SADDLE_LADDER, probe_lengths=_CTSEM_FLAT_PROBE_LENGTHS,
         max_escapes::Integer=3, value_at=nothing, handback::Bool=false,
+        escape_gain::Real=0.0, flat_escape::Bool=false,
         reporter=nothing)
     curvature in (:exact, :chord, :subset) || throw(ArgumentError(
         "newton curvature must be exact, chord or subset, got $(curvature)"))
@@ -1496,26 +1597,56 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         # maximum 2 nats higher sat in the other basin.
         take_steps || break
         split = _ctsem_information_split(H; rtol=flat_rtol, negative=negative)
-        (split === nothing || !any(split.negative)) && break
-        saddle = true
-        escapes >= max_escapes && break
-        ladder_tried = true
-        tried = _ctsem_saddle_ladder(valueof, x, -f, split, -G; ladder=ladder)
-        fcalls += tried.evaluations
-        tried.best === nothing && break
-        Gn = similar(G)
-        fn = fg!(0.0, Gn, tried.best.point); fcalls += 1; gcalls += 1
-        # The point the ladder measured, through the optimiser's own trial path:
-        # a point the route refuses a gradient at is not one to continue from.
-        (isfinite(fn) && fn < f) || break
-        ladder_gain += f - fn
-        x = collect(Float64, tried.best.point); f = fn; G = Gn
+        split === nothing && break
+        # An escape has to gain more than `escape_gain`, the certification's
+        # tolerance: less is a move the verdict cannot tell from staying, and it
+        # spends one of the `max_escapes`. On test-julia-convergence.R's random
+        # walks the Hessian on the white-noise plateau showed a noise-level
+        # negative curvature, and three saddle escapes of 0.03 raw units, gaining
+        # nothing at eight digits, used the cap before anything else was tried.
+        if any(split.negative)
+            saddle = true
+            escapes >= max_escapes && break
+            ladder_tried = true
+            tried = _ctsem_saddle_ladder(valueof, x, -f, split, -G; ladder=ladder)
+            fcalls += tried.evaluations
+            if tried.best !== nothing
+                Gn = similar(G)
+                fn = fg!(0.0, Gn, tried.best.point); fcalls += 1; gcalls += 1
+                # The point the ladder measured, through the optimiser's own
+                # trial path: a point the route refuses a gradient at is not one
+                # to continue from.
+                if isfinite(fn) && f - fn > escape_gain
+                    ladder_gain += f - fn
+                    x = collect(Float64, tried.best.point); f = fn; G = Gn
+                    steps += 1; escapes += 1
+                    remember!("saddle", NaN, tried.best.length)
+                    report(NaN)
+                    H = hess(x); Hs = H; hat = copy(x); exact = true; at_x = true
+                    saddle = false; ladder_tried = false
+                    H === nothing && break
+                    continue
+                end
+            end
+        end
+        # No saddle to leave, or none worth leaving: a direction the curvature
+        # does not trust may still have somewhere better along it, which neither
+        # the Newton step (no gradient there) nor the certification's straight
+        # probe can see -- `_ctsem_flat_ladder`, where the route allows it.
+        (flat_escape && escapes < max_escapes) || break
+        walked = _ctsem_flat_ladder(fg!, x, f, G, split; lengths=probe_lengths)
+        fcalls += walked.fcalls; gcalls += walked.gcalls
+        (walked.best !== nothing && f - walked.best.f > escape_gain) || break
+        x = collect(Float64, walked.best.point); f = walked.best.f
+        G = walked.best.G
         steps += 1; escapes += 1
-        remember!("saddle", NaN, tried.best.length)
+        remember!("flat", NaN, walked.best.length)
         report(NaN)
         H = hess(x); Hs = H; hat = copy(x); exact = true; at_x = true
         saddle = false; ladder_tried = false
         H === nothing && break
+        # A new point and a new Hessian: walked as the first one was.
+        budget = max(budget, steps + per_hessian)
     end
     split = H === nothing ? nothing :
         _ctsem_information_split(H; rtol=flat_rtol, negative=negative)
