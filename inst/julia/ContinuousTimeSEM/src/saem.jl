@@ -812,7 +812,10 @@ function ctsem_saem_step!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective;
         F = cholesky(P; check=false)
         d = issuccess(F) ? F \ g : g ./ (diag(P) .+ 1.0)
         step = clamp.(d, -maxstep, maxstep)
-        st.theta .+= step
+        # Capping coordinates one by one can turn an ascent direction into
+        # one that is not; scaled whole, it stays one.
+        dot(g, step) > 0 || (step = d .* min(1.0, maxstep / maximum(abs, d; init=0.0)))
+        step = _saem_ascend!(st, laplace, items, step, g)
         centre && _saem_centre!(st, laplace, prec)
     end
     push!(st.csum, isempty(st.csum) ? copy(st.theta) : st.csum[end] .+ st.theta)
@@ -821,6 +824,50 @@ function ctsem_saem_step!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective;
 end
 
 export ctsem_saem_step!
+
+"""
+    _saem_ascend!(st, laplace, items, step, g; halvings)
+
+Take `step` from theta, or the largest of its halvings that raises the
+complete-data log posterior at the current draws by at least a sliver of its
+predicted gain (`g' step`, Armijo), or none: generalised EM's condition on an
+M-step. The comparison is at fixed draws, so it carries no Monte Carlo noise;
+it costs one likelihood pass over every member per trial, and the first trial
+is usually taken. Without it the step's information, an average over earlier
+iterations, could point the step anywhere while the centred step moved theta
+fast -- on the bench's cf_gaussian it drove drift and diffusion the full cap
+every iteration into a region where both transforms are flat, and they froze
+there.
+Returns the step taken.
+"""
+function _saem_ascend!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective, items,
+    step::Vector{Float64}, g::Vector{Float64}; halvings::Integer=10)
+    K = st.chains
+    objective = laplace.objective
+    q0 = sum(sum(st.ll[U][c]; init=0.0) for (U, c) in items; init=0.0) / K +
+        _ctsem_log_prior(objective, st.theta)
+    slope = dot(g, step)
+    (isfinite(q0) && slope > 0) || return zero(step)
+    trial = [[similar(st.ll[U][c]) for c in 1:K] for U in eachindex(st.ll)]
+    theta0 = copy(st.theta)
+    alpha = 1.0
+    for _ in 0:halvings
+        st.theta .= theta0 .+ alpha .* step
+        Ls = _laplace_popchols(st.theta, laplace.spec)
+        _laplace_parallel(laplace, items) do item
+            U, c = item
+            _saem_members_ll!(trial[U][c], laplace, U, eachindex(laplace.units.members[U]),
+                st.theta, Ls, st.u[U][c])
+            true
+        end
+        q = sum(sum(trial[U][c]; init=0.0) for (U, c) in items; init=0.0) / K +
+            _ctsem_log_prior(objective, st.theta)
+        isfinite(q) && q >= q0 + 1e-4 * alpha * slope && return alpha .* step
+        alpha /= 2
+    end
+    st.theta .= theta0
+    return zero(step)
+end
 
 """Average of the iterates `a+1:b` from the cumulative sums."""
 _saem_window(st::CTSEMSAEMState, a::Integer, b::Integer) =
