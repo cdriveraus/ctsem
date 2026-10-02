@@ -249,12 +249,18 @@ function ctsem_sample_density!(gradient::Vector{Float64}, sampler::CTSEMSampler,
                 for l in eachindex(spec.levels)
                     level = spec.levels[l]
                     k = nrandomeffects(level)
-                    k == 0 && continue
+                    # The level's block of `u` has `r` entries, which is `k`
+                    # only at full rank: a reduced-rank `L` is `k x r`. Looping
+                    # `q` to `k` there read past `L` and wrote past the block,
+                    # unchecked under `@inbounds` -- NaN loading gradients and a
+                    # Julia that died a few calls later, on the SNSF pilot.
+                    r = nlatent(level)
+                    (k == 0 || r == 0) && continue
                     base = offsets[l]
                     L = Ls[l]
                     re = level.re_index
                     # ...the effects pick it up through `L`...
-                    for q in 1:k
+                    for q in 1:r
                         acc = 0.0
                         for p in 1:k
                             acc += L[p, q] * gsub[re[p]]
@@ -271,7 +277,7 @@ function ctsem_sample_density!(gradient::Vector{Float64}, sampler::CTSEMSampler,
                         acc = 0.0
                         for p in 1:k
                             shift = 0.0
-                            for q in 1:k
+                            for q in 1:r
                                 shift += D[p, q] * x[sampler.uoffsets[U] + base + q]
                             end
                             acc += gsub[re[p]] * shift

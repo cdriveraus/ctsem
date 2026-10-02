@@ -54,10 +54,18 @@ function _sampler_reference(sampler, x::AbstractVector{T}) where {T}
     return total + ContinuousTimeSEM._ctsem_log_prior(lp.objective, theta)
 end
 
+# Three subject-level effects at rank one: loadings at raw 6-8, no scales. The
+# effect block has one entry for three effects, which the density's chain rule
+# once looped over as three -- reading past `L` and writing past the block.
+_sampler_reduced() = (ctsem_laplace_objective(_LAPLACE_LINEAR_OBJECTIVE;
+    re_index=[1, 2, 5], sd_index=Int[], cor_index=Int[], sd_scale=[1.0, 1.0, 1.0],
+    level_nre=[3], group=collect(1:6), level_ngroups=[6], level_rank=[1],
+    load_index=[6, 7, 8]), [0.2, -0.1, 0.3, -0.2, 0.05, 0.6, 0.4, 0.3])
+
 @testset "the joint gradient matches ForwardDiff at every level" begin
     for (label, fresh) in (("one level", _fresh_linear),
         ("nonlinear", _fresh_nonlinear), ("two levels", _fresh_twolevel),
-        ("three levels", _fresh_threelevel))
+        ("three levels", _fresh_threelevel), ("rank one", _sampler_reduced))
         laplace, values = fresh()
         sampler = ContinuousTimeSEM.ctsem_sampler(laplace, length(values))
         x = ContinuousTimeSEM.ctsem_sample_start(sampler, values)
