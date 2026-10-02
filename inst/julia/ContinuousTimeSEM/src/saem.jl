@@ -1082,3 +1082,408 @@ export ctsem_saem
 _ctsem_saem_phase(objective, start; kwargs...) = nothing
 _ctsem_saem_phase(laplace::CTSEMLaplaceObjective, start; kwargs...) =
     ctsem_saem(laplace, start; kwargs...)
+
+################################################################################
+# SAEM's chains as a sampler: no finish, draws of the joint posterior
+################################################################################
+#
+# SAEM's iterates are not posterior draws -- their spread is the algorithm's
+# Monte Carlo noise -- but its draws of the effects are conditional posterior
+# draws, and one change makes the whole iteration a sampler: draw theta given
+# the effects instead of stepping it toward the maximum. Every move below
+# leaves the joint posterior of theta and u (states filtered) invariant:
+#
+#   * the effects: the same Metropolis-within-Gibbs sweeps, with their scales
+#     and shapes frozen once warmup ends (fixed kernels);
+#   * theta given u: one MALA step, preconditioned by SAEM's complete-data
+#     information, which is the curvature of exactly this conditional;
+#   * each level's mean given the effects b = theta + L u: an exact Gaussian
+#     draw along L's columns, the effects re-expressed (the centred half of
+#     the interweaving, ASIS: Yu and Meng 2011);
+#   * a full-rank level's scales and correlations given the deviations L u:
+#     random-walk Metropolis on their own conditional, the deviations held
+#     and the effects re-expressed;
+#   * a reduced-rank level's loadings: L <- L exp(E), E lower triangular and
+#     symmetric about zero, the effects mapped by exp(-E), accepted with the
+#     map's Jacobian (loadings prod_q A_qq^(k - q + 1), effects |det A|^-G).
+#
+# Several chains, each with its own theta, so split R-hat and effective sample
+# size (`ctsem_sample_diagnostics`) mean what they say. Step sizes adapt in
+# warmup toward 0.574 (MALA) and 0.3 (the scale moves), then freeze.
+
+"""
+    _saem_sample_chain(base, c, theta, seed, R)
+
+Chain `c` of the sampler: a one-chain copy of SAEM's state `base`, with its
+effects taken from `base`'s chain `c` (cycling), theta jittered from `theta`
+by one conditional standard deviation (`R` the upper Cholesky factor of the
+information), and its own stream.
+"""
+function _saem_sample_chain(base::CTSEMSAEMState, c::Integer, theta::Vector{Float64},
+    seed::Integer, R)
+    K = base.chains
+    kc = mod1(c, K)
+    st = deepcopy(base)
+    nunits = length(st.u)
+    npar = length(theta)
+    st.u = [[copy(base.u[U][kc])] for U in 1:nunits]
+    st.ll = [[copy(base.ll[U][kc])] for U in 1:nunits]
+    st.logscale = [[copy(base.logscale[U][kc])] for U in 1:nunits]
+    st.accepted = [[zeros(Int, length(base.accepted[U][kc]))] for U in 1:nunits]
+    st.proposed = [[zeros(Int, length(base.proposed[U][kc]))] for U in 1:nunits]
+    st.indep_accepted = [zeros(Int, 1) for U in 1:nunits]
+    st.indep_proposed = [zeros(Int, 1) for U in 1:nunits]
+    st.scores = [[zeros(npar, size(base.scores[U][kc], 2))] for U in 1:nunits]
+    st.csum = Vector{Float64}[]
+    st.chains = 1
+    st.iteration = 0
+    st.seed = UInt64(hash((seed, c, :saem_sample)))
+    rng = Random.Xoshiro(hash((seed, c, :jitter)))
+    st.theta = theta .+ (R \ randn(rng, npar))
+    return st
+end
+
+"""Every member's log likelihood at `theta` and the chain's effects, into
+`dest` (per unit); false where one is not finite."""
+function _saem_sample_ll!(dest, st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
+    theta::Vector{Float64})
+    Ls = _laplace_popchols(theta, laplace.spec)
+    return _laplace_parallel(laplace, collect(eachindex(st.u))) do U
+        _saem_members_ll!(dest[U], laplace, U, eachindex(laplace.units.members[U]),
+            theta, Ls, st.u[U][1])
+        all(isfinite, dest[U])
+    end
+end
+
+"""The conditional log density of theta given the effects (up to the effects'
+prior, which theta does not move) and its gradient, at the chain's theta."""
+function _saem_sample_conditional!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective)
+    npar = length(st.theta)
+    Ls = _laplace_popchols(st.theta, laplace.spec)
+    dL = _laplace_level_chol_derivatives(st.theta, laplace.spec)
+    positions = [_laplace_level_positions(laplace.spec, l)
+                 for l in eachindex(laplace.spec.levels)]
+    ok = _laplace_parallel(laplace, collect(eachindex(st.u))) do U
+        isempty(laplace.units.members[U]) && return true
+        _saem_unit_scores!(st, laplace, U, 1, Ls, dL, positions)
+    end
+    g = zeros(npar)
+    for U in eachindex(st.u)
+        S = st.scores[U][1]
+        for m in axes(S, 2)
+            @views g .+= S[:, m]
+        end
+    end
+    _ctsem_log_prior_gradient!(g, laplace.objective, st.theta)
+    value = sum(sum(st.ll[U][1]; init=0.0) for U in eachindex(st.u); init=0.0) +
+        _ctsem_log_prior(laplace.objective, st.theta)
+    return (ok=ok, value=value, gradient=g)
+end
+
+"""
+    _saem_sample_theta!(st, laplace, R, eps, rng)
+
+One MALA step for theta given the effects, metric `R'R`. Returns the
+acceptance probability (zero for a proposal that cannot be evaluated).
+"""
+function _saem_sample_theta!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
+    R::UpperTriangular, eps::Float64, rng)
+    here = _saem_sample_conditional!(st, laplace)
+    here.ok && isfinite(here.value) || return 0.0
+    theta0 = copy(st.theta)
+    drift0 = (eps^2 / 2) .* (R \ (transpose(R) \ here.gradient))
+    proposal = theta0 .+ drift0 .+ eps .* (R \ randn(rng, length(theta0)))
+    ll0 = [copy(st.ll[U][1]) for U in eachindex(st.u)]
+    trial = [similar(st.ll[U][1]) for U in eachindex(st.u)]
+    if !_saem_sample_ll!(trial, st, laplace, proposal)
+        return 0.0
+    end
+    st.theta .= proposal
+    for U in eachindex(st.u)
+        st.ll[U][1] .= trial[U]
+    end
+    there = _saem_sample_conditional!(st, laplace)
+    if !(there.ok && isfinite(there.value))
+        st.theta .= theta0
+        for U in eachindex(st.u)
+            st.ll[U][1] .= ll0[U]
+        end
+        return 0.0
+    end
+    drift1 = (eps^2 / 2) .* (R \ (transpose(R) \ there.gradient))
+    forward = -sum(abs2, R * (proposal .- theta0 .- drift0)) / (2 * eps^2)
+    backward = -sum(abs2, R * (theta0 .- proposal .- drift1)) / (2 * eps^2)
+    logalpha = there.value - here.value + backward - forward
+    alpha = isfinite(logalpha) ? min(1.0, exp(logalpha)) : 0.0
+    if rand(rng) >= alpha
+        st.theta .= theta0
+        for U in eachindex(st.u)
+            st.ll[U][1] .= ll0[U]
+        end
+    end
+    return alpha
+end
+
+"""The level's sites (unit, block) and each one's columns of `u`."""
+function _saem_level_sites(laplace::CTSEMLaplaceObjective, l::Integer)
+    sites = Tuple{Int,Int}[]
+    for U in eachindex(laplace.units.blocks), (b, blk) in enumerate(laplace.units.blocks[U])
+        blk.level == l && push!(sites, (U, b))
+    end
+    return sites
+end
+
+_saem_cols(laplace, U, b) = (laplace.units.blocks[U][b].offset + 1):(laplace.units.blocks[U][b].offset +
+    laplace.units.blocks[U][b].size)
+
+"""
+    _saem_sample_mean!(st, laplace, l, prec, rng)
+
+Level `l`'s mean given its effects `b`: along `L`'s columns the conditional of
+the shift `delta` is Gaussian with precision `A = G I + L'DL` and mean
+`A^-1 (sum u - L'D mu)`; draw it, move theta by `L delta` and every effect by
+`-delta`. Members' likelihoods do not move.
+"""
+function _saem_sample_mean!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
+    l::Integer, prec::Vector{Float64}, rng)
+    level = laplace.spec.levels[l]
+    r = nlatent(level)
+    sites = _saem_level_sites(laplace, l)
+    G = length(sites)
+    (G == 0 || r == 0) && return nothing
+    L = _laplace_popchol(st.theta, level)
+    usum = zeros(r)
+    for (U, b) in sites
+        usum .+= @view st.u[U][1][_saem_cols(laplace, U, b)]
+    end
+    Dm = prec[level.re_index]
+    mu = st.theta[level.re_index]
+    A = Symmetric(G .* Matrix{Float64}(I, r, r) .+ transpose(L) * (Dm .* L))
+    F = cholesky(A)
+    delta = (F \ (usum .- transpose(L) * (Dm .* mu))) .+ (F.U \ randn(rng, r))
+    st.theta[level.re_index] .+= L * delta
+    for (U, b) in sites
+        st.u[U][1][_saem_cols(laplace, U, b)] .-= delta
+    end
+    return nothing
+end
+
+"""
+    _saem_sample_scale!(st, laplace, l, prec, scale, Rf, rng)
+
+A full-rank level's scales and correlations `phi` given the deviations
+`d = L u`: one random-walk Metropolis step on their conditional
+`log p(phi) - G sum log diag L(phi) - sum |L(phi)^-1 d|^2 / 2`, proposal
+`scale * Rf^-1 z` (`Rf` the upper factor of the conditional's Fisher
+information, frozen), the effects re-expressed as `L(phi')^-1 d` when accepted.
+Returns the acceptance probability.
+"""
+function _saem_sample_scale!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
+    l::Integer, prec::Vector{Float64}, scale::Float64, Rf::UpperTriangular, rng)
+    spec = laplace.spec
+    level = spec.levels[l]
+    positions = _laplace_level_positions(spec, l)
+    sites = _saem_level_sites(laplace, l)
+    G = length(sites)
+    (isempty(positions) || G == 0) && return NaN
+    L0 = LowerTriangular(_laplace_popchol(st.theta, level))
+    k = nrandomeffects(level)
+    d = zeros(k, G)
+    for (j, (U, b)) in enumerate(sites)
+        d[:, j] = L0 * st.u[U][1][_saem_cols(laplace, U, b)]
+    end
+    Dp = prec[positions]
+    function f(theta)
+        L = LowerTriangular(_laplace_popchol(theta, level))
+        any(x -> !(x > 0), diag(L)) && return -Inf
+        phi = theta[positions]
+        return -G * sum(log, diag(L)) - sum(abs2, L \ d) / 2 - sum(Dp .* phi .^ 2) / 2
+    end
+    trial = copy(st.theta)
+    trial[positions] .+= scale .* (Rf \ randn(rng, length(positions)))
+    f0 = f(st.theta)
+    f1 = f(trial)
+    alpha = isfinite(f1) ? min(1.0, exp(f1 - f0)) : 0.0
+    if rand(rng) < alpha
+        st.theta .= trial
+        L1 = LowerTriangular(_laplace_popchol(st.theta, level))
+        for (j, (U, b)) in enumerate(sites)
+            st.u[U][1][_saem_cols(laplace, U, b)] = L1 \ d[:, j]
+        end
+    end
+    return alpha
+end
+
+"""
+    _saem_sample_loadings!(st, laplace, l, prec, scale, rng)
+
+A reduced-rank level's loadings: propose `A = exp(E)`, `E` lower triangular
+with `N(0, scale^2)` entries, so the reverse move is `exp(-E)` with the same
+density; map loadings `R -> R A` and every effect `u -> A^-1 u`, which leaves
+each deviation `L u` and so every member's likelihood alone, and accept with
+the prior and effects' density ratio times the map's Jacobian. Returns the
+acceptance probability.
+"""
+function _saem_sample_loadings!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
+    l::Integer, prec::Vector{Float64}, scale::Float64, rng)
+    level = laplace.spec.levels[l]
+    sites = _saem_level_sites(laplace, l)
+    G = length(sites)
+    k = nrandomeffects(level)
+    r = nlatent(level)
+    (G == 0 || r == 0) && return NaN
+    E = zeros(r, r)
+    for q in 1:r, p in q:r
+        E[p, q] = scale * randn(rng)
+    end
+    A = exp(E)
+    Ainv = exp(-E)
+    Rl = zeros(k, r)
+    D = zeros(k, r)
+    counter = 0
+    for q in 1:r, p in q:k
+        counter += 1
+        Rl[p, q] = st.theta[level.load_index[counter]]
+        D[p, q] = prec[level.load_index[counter]]
+    end
+    Rn = Rl * A
+    uold = [st.u[U][1][_saem_cols(laplace, U, b)] for (U, b) in sites]
+    unew = [Ainv * v for v in uold]
+    logratio = -sum(D .* Rn .^ 2) / 2 + sum(D .* Rl .^ 2) / 2 -
+        sum(sum(abs2, v) for v in unew) / 2 + sum(sum(abs2, v) for v in uold) / 2 +
+        sum((k - q + 1) * E[q, q] for q in 1:r) - G * sum(E[q, q] for q in 1:r)
+    alpha = isfinite(logratio) ? min(1.0, exp(logratio)) : 0.0
+    if rand(rng) < alpha
+        counter = 0
+        for q in 1:r, p in q:k
+            counter += 1
+            st.theta[level.load_index[counter]] = Rn[p, q]
+        end
+        for (j, (U, b)) in enumerate(sites)
+            st.u[U][1][_saem_cols(laplace, U, b)] = unew[j]
+        end
+    end
+    return alpha
+end
+
+"""
+    _saem_scale_fisher(st, laplace, l, prec)
+
+The upper Cholesky factor of a full-rank level's scale conditional's Fisher
+information at the chain's theta (`G/2 tr((M_p + M_p')(M_q + M_q'))` plus the
+prior), the random-walk metric of `_saem_sample_scale!`.
+"""
+function _saem_scale_fisher(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
+    l::Integer, prec::Vector{Float64})
+    spec = laplace.spec
+    positions = _laplace_level_positions(spec, l)
+    G = length(_saem_level_sites(laplace, l))
+    np = length(positions)
+    L = LowerTriangular(_laplace_popchol(st.theta, spec.levels[l]))
+    dL = _laplace_level_chol_derivatives(st.theta, spec, l)
+    M = [Matrix(L \ dL[t]) for t in 1:np]
+    F = zeros(np, np)
+    for t1 in 1:np, t2 in t1:np
+        F[t1, t2] = F[t2, t1] = G / 2 * tr((M[t1] + transpose(M[t1])) * (M[t2] + transpose(M[t2])))
+    end
+    F .+= Diagonal(prec[positions] .+ 1e-6 .* (1 .+ diag(F)))
+    return cholesky(Symmetric(F)).U
+end
+
+"""
+    ctsem_saem_sample(laplace, base, theta; nchains, nwarmup, ndraws, sweeps,
+        nupper, seed, progress, ...)
+
+Draws of the joint posterior of theta and the effects, continuing SAEM's
+state `base` (its effect draws, proposal shapes and complete-data information)
+from `theta` (its estimate) as a sampler; see the header above. `nchains`
+chains, each with its own theta; `nwarmup` iterations of each adapt the step
+sizes and the effects' proposal scales and are discarded. Returns theta's
+draws (`npar x (nchains * ndraws)`, chain-major), split R-hat and effective
+sample size per parameter, the acceptance rates and the seconds taken.
+"""
+function ctsem_saem_sample(laplace::CTSEMLaplaceObjective, base::CTSEMSAEMState,
+    theta::AbstractVector; nchains::Integer=4, nwarmup::Integer=200,
+    ndraws::Integer=1000, sweeps::Integer=2, nupper::Integer=2, seed::Integer=1,
+    progress::Bool=false, progress_overwrite::Bool=true, progress_sink=nothing,
+    progress_every::Real=0.0)
+    npar = length(theta)
+    prec = _saem_prior_precision(laplace, npar)
+    R = cholesky(_saem_curvature(base.info, prec)).U
+    chains = [_saem_sample_chain(base, c, collect(Float64, theta), seed, R)
+              for c in 1:nchains]
+    levels = eachindex(laplace.spec.levels)
+    active = [nrandomeffects(laplace.spec.levels[l]) > 0 && nlatent(laplace.spec.levels[l]) > 0
+              for l in levels]
+    reduced = [isreducedrank(laplace.spec.levels[l]) for l in levels]
+    fisher = [[(active[l] && !reduced[l] && !isempty(_laplace_level_positions(laplace.spec, l))) ?
+               _saem_scale_fisher(chains[c], laplace, l, prec) : nothing for l in levels]
+              for c in 1:nchains]
+    logeps = fill(log(1.65 / npar^(1 / 6)), nchains)
+    logscale = [fill(log(0.5), length(levels)) for _ in 1:nchains]
+    for c in 1:nchains, l in levels
+        reduced[l] && (logscale[c][l] = log(1 / sqrt(2 * max(1, length(_saem_level_sites(laplace, l))))))
+    end
+    total = Int(nwarmup) + Int(ndraws)
+    draws = zeros(npar, nchains * Int(ndraws))
+    accept_theta = zeros(nchains); accept_scale = zeros(nchains); nscale = zeros(Int, nchains)
+    reporter = _ctsem_progress_reporter(progress, "saem-sample", progress_overwrite,
+        progress_sink, progress_every)
+    t0 = time()
+    for k in 1:total
+        warm = k <= nwarmup
+        for c in 1:nchains
+            st = chains[c]
+            st.iteration += 1
+            rng = _saem_rng(st, :sample)
+            Ls = _laplace_popchols(st.theta, laplace.spec)
+            rate = warm ? 1.0 / (1 + k)^0.6 : 0.0
+            ok = _laplace_parallel(laplace, collect(eachindex(st.u))) do U
+                _saem_members_ll!(st.ll[U][1], laplace, U,
+                    eachindex(laplace.units.members[U]), st.theta, Ls, st.u[U][1])
+                all(isfinite, st.ll[U][1]) || return false
+                isempty(st.u[U][1]) && return true
+                for sweep in 1:sweeps
+                    _saem_sweep!(st, laplace, U, 1, Ls, sweep, rate; nupper=nupper)
+                end
+                true
+            end
+            ok || throw(DomainError(st.theta, "SAEM sampler: a likelihood is not finite"))
+            _ctsem_interrupt_check()
+            a = _saem_sample_theta!(st, laplace, R, exp(logeps[c]), rng)
+            warm && (logeps[c] += (a - 0.574) / k^0.6)
+            warm || (accept_theta[c] += a)
+            for l in levels
+                active[l] || continue
+                _saem_sample_mean!(st, laplace, l, prec, rng)
+                for _ in 1:5
+                    s = exp(logscale[c][l])
+                    a2 = reduced[l] ? _saem_sample_loadings!(st, laplace, l, prec, s, rng) :
+                        fisher[c][l] === nothing ? NaN :
+                        _saem_sample_scale!(st, laplace, l, prec, s, fisher[c][l], rng)
+                    isfinite(a2) || continue
+                    warm && (logscale[c][l] += (a2 - 0.3) / k^0.6)
+                    warm || (accept_scale[c] += a2; nscale[c] += 1)
+                end
+            end
+            if !warm
+                draws[:, (c - 1) * Int(ndraws) + (k - Int(nwarmup))] .= st.theta
+            end
+        end
+        if _due(reporter)
+            _progress_optimise(reporter, k, total, warm ? "warmup" : "sampling",
+                @sprintf("MALA accept %.2f", warm ? NaN : sum(accept_theta) /
+                    max(1, nchains * (k - Int(nwarmup)))))
+        end
+    end
+    secs = time() - t0
+    diag = ctsem_sample_diagnostics(draws, nchains)
+    _progress_done(reporter, @sprintf("%d chains x %d draws", nchains, ndraws),
+        @sprintf("min ESS %.0f, max R-hat %.3f", minimum(filter(isfinite, diag.ess); init=NaN),
+            maximum(filter(isfinite, diag.rhat); init=NaN)))
+    return (draws=draws, rhat=diag.rhat, ess=diag.ess, nchains=nchains, ndraws=Int(ndraws),
+        accept_theta=accept_theta ./ max(1, Int(ndraws)),
+        accept_scale=accept_scale ./ max.(1, nscale), eps=exp.(logeps), secs=secs)
+end
+
+export ctsem_saem_sample
