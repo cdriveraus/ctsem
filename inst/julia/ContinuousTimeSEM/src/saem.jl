@@ -6,29 +6,22 @@
 # integral over its random effects, and that approximation fails where a
 # unit's posterior is not near-Gaussian: at a flat-topped posterior the
 # curvature at the mode goes to zero, `-logdet(M)/2` grows without bound, and
-# an optimiser climbs the error rather than the likelihood. The gated floor
-# repairs that for units it can decompose, and not for wide nested units. SAEM
-# does not approximate the integral at all. It samples each unit's random
-# effects from their conditional distribution given the data and the current
-# parameters, and moves the parameters along the Fisher identity,
+# an optimiser climbs the error rather than the likelihood. SAEM does not
+# approximate the integral. It samples each unit's random effects from their
+# conditional distribution given the data and the current parameters, and moves
+# the parameters along the Fisher identity,
 #
 #     d/dtheta log p(y | theta) = E[ d/dtheta log p(y, u | theta) | y, theta ],
 #
 # estimated at the draws -- so its fixed point is the mode of the exact
 # marginal posterior, whatever shape each unit's posterior has. The states
 # stay integrated by the filter, as on the Laplace route
-# (Rao-Blackwellisation); only the random effects are sampled.
-#
-# Measured on the SNSF pilot (380 people in 13 studies, 319 parameters), where
-# the Laplace fit climbed a near-singular person's spike: an iteration costs
-# 0.25 s against the Laplace route's 14 s, and in about 20 minutes it reached a
-# point 416 nats above the Laplace fit's iteration 290 *on the Laplace
-# objective itself*, with no unit near-singular there. See
-# CT-SEM/review/LAPLACE-nested-spike-2026-10-02.md and
-# CT-SEM/review/stochopt-saem-design.md.
+# (Rao-Blackwellisation); only the random effects are sampled. See
+# CT-SEM/review/LAPLACE-nested-spike-2026-10-02.md.
 #
 # The draws. Metropolis-within-Gibbs over each unit's block tree, the tree
-# `CTSEMLaplaceUnits` already lays out:
+# `CTSEMLaplaceUnits` already lays out, in `chains` independent chains per
+# unit:
 #   * every leaf block (a subject) takes a random-walk move shaped by its
 #     conditional curvature, clipped at the prior's so no proposal is wider
 #     than the prior in any direction. Only that block's members see it, so a
@@ -39,70 +32,86 @@
 #     shifts by Delta and each block beneath it by its Gaussian linear
 #     response `A_c Delta = -clip(M_cc)^-1 M_ca Delta`. A fixed linear shear
 #     has unit Jacobian and is reversed by -Delta, so the proposal is
-#     symmetric; it moves a study together with its people, which a plain
-#     Gibbs step on the study block cannot do when the two are tightly coupled
-#     (and they are: every person's data inform the study coordinates). Its
-#     members' filters run in parallel.
-# Shapes are refreshed from the curvature at the current draw every `refresh`
-# iterations; scales adapt toward an acceptance rate that falls with the block
-# size, at a diminishing rate.
+#     symmetric; it moves a study together with its people. Its members'
+#     filters run in parallel.
+# Chains: a model with few units has few independent draws behind each
+# population parameter, so it is replicated, as Monolix replicates a small
+# data set, until units times chains reaches fifty. They run in parallel with
+# the units, which also fills the workers a few-unit model leaves idle.
 #
-# The parameters. `theta += gamma P^-1 g`, with `g` the complete-data score at
-# the draws plus the prior's gradient -- exactly the fixed-u sweep
-# `_laplace_floored_unit_gradient!` takes -- and `P` the averaged outer product
-# of the per-member complete-data scores plus the prior precision. That is the
+# The parameters. `theta += gamma .* (P \ g)`, with `g` the complete-data score
+# at the draws averaged over chains, plus the prior's gradient -- the fixed-u
+# sweep `_laplace_floored_unit_gradient!` takes -- and `P` the averaged outer
+# product of the per-member complete-data scores plus the prior precision: the
 # complete-data information, larger than the marginal one wherever the random
-# effects carry missing information, so the steps are conservative there; the
-# marginal alternative (outer products of averaged scores) was measured to
-# diverge from a far start, its estimate dominated by the scores' mean. Steps
-# are capped in raw units.
+# effects carry missing information.
 #
-# The schedule. Step size one until the complete-data log posterior stops
-# rising -- the mean of the last quarter of the burn-in no longer exceeds the
-# quarter before by its own standard error -- then `gamma = j^-alpha` with
-# Polyak averaging, for `averaging` iterations. PX-SAEM's expansion step
-# (`_saem_expand!`) is available for the burn-in and off by default: it was
-# measured worse on the model this was built for. The averaged point is handed
-# to L-BFGS on the Laplace objective (`ctsem_optimize`), whose finish and
-# certification apply unchanged: where every unit is regular at SAEM's point,
-# Laplace is accurate there and the polish is short.
+# No phases. Each parameter has its own step size, by Kesten's rule (1958;
+# Delyon and Juditsky 1993 for the multivariate case): `gamma_i = (1 +
+# flips_i)^(-2/3)`, where `flips_i` counts the sign changes of that
+# parameter's step. A parameter still travelling keeps its sign and its full
+# step; one oscillating about its optimum flips and has its step shrink, at
+# the rate (exponent 2/3, inside Robbins-Monro's (1/2, 1]) the SAEM literature
+# uses. So the move from "getting there" to "averaging" happens per parameter,
+# on that parameter's own evidence, with nothing to tune and no switch to
+# misfire -- the plateau test this replaces fired a thousand iterations early
+# on the SNSF pilot. The estimate is the average of the last half of the
+# iterates (suffix averaging), which forgets the transient without being told
+# where it ended.
+#
+# Stopping, the one check that matters: when the estimate has stopped moving
+# relative to its own uncertainty. The averages of the last two quarters of
+# the run differ by `Delta`; the run stops once `Delta' P Delta / npar < 0.01`,
+# a root-mean-square drift below a tenth of a standard error per parameter in
+# the complete-data metric, which overstates the information and so errs
+# strict. Monte Carlo noise in the averages keeps that quantity up, so a noisy
+# problem runs longer on its own. The averaged point is then handed to the
+# optimiser's finish and certification (`ctsem_optimize`).
 #
 # Reproducibility. Every move draws from a stream seeded by (seed, iteration,
-# unit, block), never from a shared generator, so the draws do not depend on
-# how the work is split. Member scores land in a per-unit matrix and are
+# unit, chain, block), never from a shared generator, and every quantity a task
+# writes belongs to its own unit and chain, so the draws do not depend on how
+# the work is split. Member scores land in per-unit, per-chain matrices and are
 # reduced in a fixed order after the join, so a fixed seed and `cores`
-# reproduce the run exactly; across widths the BLAS reduction and the chunked
-# filter differ in the last digits, as every route here does.
+# reproduce the run exactly.
 #
-# Constants, measured or chosen, not derived: the window (50), the averaging
-# length, the step cap (0.25 raw), the information's averaging rate (0.1), the
-# refresh interval (25), two sweeps and two collapsed moves per block per
-# iteration. Set on the SNSF pilot subset and the engine's linear fixtures;
-# none was tuned on a fit's estimates.
+# Constants that remain, each a choice of scale rather than of phase: the step
+# cap (0.25 raw, a trust radius in coordinates whose priors are standard
+# normal), the information's averaging rate (0.1), the shape refresh interval
+# (25), two sweeps and two collapsed moves per block per iteration, fifty
+# units' worth of chains, and the tenth of a standard error.
 
 mutable struct CTSEMSAEMState
     theta::Vector{Float64}
-    u::Vector{Vector{Float64}}
-    # Each member's log likelihood at the unit's current draw.
-    ll::Vector{Vector{Float64}}
-    # Per unit and block: the proposal's Cholesky factor (lower), and for a
-    # block with ancestors its linear response to each of them, aligned with
-    # `blocks[b].ancestors`.
+    # Per unit, per chain: the latent vector and each member's log likelihood
+    # at it.
+    u::Vector{Vector{Vector{Float64}}}
+    ll::Vector{Vector{Vector{Float64}}}
+    # Per unit and block, shared by its chains: the proposal's Cholesky factor
+    # (lower), and for a block with ancestors its linear response to each of
+    # them, aligned with `blocks[b].ancestors`.
     chol::Vector{Vector{Matrix{Float64}}}
     response::Vector{Vector{Vector{Matrix{Float64}}}}
-    logscale::Vector{Vector{Float64}}
-    accepted::Vector{Vector{Int}}
-    proposed::Vector{Vector{Int}}
+    # Per unit, per chain, per block: proposal scale and its counts. Per chain
+    # so that two chains of one unit, running at once, never write the same
+    # number.
+    logscale::Vector{Vector{Vector{Float64}}}
+    accepted::Vector{Vector{Vector{Int}}}
+    proposed::Vector{Vector{Vector{Int}}}
     # Per unit: the blocks with no descendants, the rest innermost first, and
     # each block's descendants.
     leaves::Vector{Vector{Int}}
     uppers::Vector{Vector{Int}}
     descendants::Vector{Vector{Vector{Int}}}
-    # Per unit: the members' complete-data scores at the last M-step.
-    scores::Vector{Matrix{Float64}}
+    # Per unit, per chain: the members' complete-data scores at the last M-step.
+    scores::Vector{Vector{Matrix{Float64}}}
     info::Matrix{Float64}
-    thetabar::Vector{Float64}
-    nbar::Int
+    # Kesten's counts and the last step's signs, per parameter.
+    flips::Vector{Int}
+    lastsign::Vector{Int8}
+    # Cumulative sums of the iterates, for averages over any window.
+    csum::Vector{Vector{Float64}}
+    chains::Int
     iteration::Int
     seed::UInt64
 end
@@ -171,17 +180,17 @@ end
 """
     _saem_refresh!(st, laplace, U, Ls)
 
-Proposal shapes for unit `U` from its curvature at the current draw: a leaf's
-from its own diagonal block, a block above from its diagonal less what its
-descendants explain (each through its own clipped diagonal), and every
-block's linear response to each of its ancestors. A curvature that is not
-finite keeps the shapes it had.
+Proposal shapes for unit `U`, shared by its chains, from its curvature at the
+first chain's draw: a leaf's from its own diagonal block, a block above from
+its diagonal less what its descendants explain (each through its own clipped
+diagonal), and every block's linear response to each of its ancestors. A
+curvature that is not finite keeps the shapes it had.
 """
 function _saem_refresh!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
     U::Integer, Ls::Vector{Matrix{Float64}})
     blocks = laplace.units.blocks[U]
     isempty(blocks) && return st
-    M = _laplace_unit_curvature(laplace, U, st.theta, Ls, st.u[U])
+    M = _laplace_unit_curvature(laplace, U, st.theta, Ls, st.u[U][1])
     all(d -> all(isfinite, d), M.diag) || return st
     all(row -> all(c -> all(isfinite, c), row), M.coupling) || return st
     clipped = [_saem_clip(M.diag[b]) for b in eachindex(blocks)]
@@ -203,31 +212,31 @@ end
 
 _saem_target_acceptance(k::Integer) = 0.234 + 0.2 / k
 
-function _saem_record_move!(st::CTSEMSAEMState, U, b, accepted::Bool, adapt::Float64)
-    st.proposed[U][b] += 1
-    st.accepted[U][b] += accepted
+function _saem_record_move!(st::CTSEMSAEMState, U, c, b, accepted::Bool, adapt::Float64)
+    st.proposed[U][c][b] += 1
+    st.accepted[U][c][b] += accepted
     k = size(st.chol[U][b], 1)
-    st.logscale[U][b] += adapt * (accepted - _saem_target_acceptance(k))
+    st.logscale[U][c][b] += adapt * (accepted - _saem_target_acceptance(k))
     return nothing
 end
 
 """
-    _saem_sweep!(st, laplace, U, Ls, sweep, adapt; nupper)
+    _saem_sweep!(st, laplace, U, c, Ls, sweep, adapt; nupper)
 
-One sweep of unit `U`: every leaf once, in parallel, then `nupper` collapsed
-moves of every block above, innermost first.
+One sweep of chain `c` of unit `U`: every leaf once, in parallel, then
+`nupper` collapsed moves of every block above, innermost first.
 """
 function _saem_sweep!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
-    U::Integer, Ls::Vector{Matrix{Float64}}, sweep::Integer, adapt::Float64;
-    nupper::Integer=2)
+    U::Integer, c::Integer, Ls::Vector{Matrix{Float64}}, sweep::Integer,
+    adapt::Float64; nupper::Integer=2)
     blocks = laplace.units.blocks[U]
-    u = st.u[U]; ll = st.ll[U]; theta = st.theta
+    u = st.u[U][c]; ll = st.ll[U][c]; theta = st.theta
     _laplace_parallel(laplace, st.leaves[U]) do b
         blk = blocks[b]
         cols = (blk.offset + 1):(blk.offset + blk.size)
-        rng = _saem_rng(st, U, b, sweep, 1)
+        rng = _saem_rng(st, U, c, b, sweep, 1)
         old = u[cols]
-        step = exp(st.logscale[U][b]) .* (st.chol[U][b] * randn(rng, blk.size))
+        step = exp(st.logscale[U][c][b]) .* (st.chol[U][b] * randn(rng, blk.size))
         # Writing `u` from several tasks at once is safe here: each leaf owns
         # its columns, and a member reads only its own leaf and the ancestors,
         # which no leaf move touches.
@@ -237,50 +246,50 @@ function _saem_sweep!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
             (sum(abs2, @view u[cols]) - sum(abs2, old)) / 2
         accepted = isfinite(logr) && log(rand(rng)) < logr
         accepted ? (ll[blk.members] .= newll) : (u[cols] .= old)
-        _saem_record_move!(st, U, b, accepted, adapt)
+        _saem_record_move!(st, U, c, b, accepted, adapt)
         true
     end
     for a in st.uppers[U]
         blk = blocks[a]
         acols = (blk.offset + 1):(blk.offset + blk.size)
-        moved = vcat(collect(acols), [collect((blocks[c].offset + 1):(blocks[c].offset +
-            blocks[c].size)) for c in st.descendants[U][a]]...)
+        moved = vcat(collect(acols), [collect((blocks[d].offset + 1):(blocks[d].offset +
+            blocks[d].size)) for d in st.descendants[U][a]]...)
         newll = Vector{Float64}(undef, length(blk.members))
         for r in 1:nupper
-            rng = _saem_rng(st, U, a, sweep, 2, r)
+            rng = _saem_rng(st, U, c, a, sweep, 2, r)
             old = u[moved]
-            delta = exp(st.logscale[U][a]) .* (st.chol[U][a] * randn(rng, blk.size))
+            delta = exp(st.logscale[U][c][a]) .* (st.chol[U][a] * randn(rng, blk.size))
             u[acols] .+= delta
-            for c in st.descendants[U][a]
-                t = findfirst(==(a), blocks[c].ancestors)
-                ccols = (blocks[c].offset + 1):(blocks[c].offset + blocks[c].size)
-                u[ccols] .+= st.response[U][c][t] * delta
+            for d in st.descendants[U][a]
+                t = findfirst(==(a), blocks[d].ancestors)
+                dcols = (blocks[d].offset + 1):(blocks[d].offset + blocks[d].size)
+                u[dcols] .+= st.response[U][d][t] * delta
             end
             _saem_members_ll!(newll, laplace, U, blk.members, theta, Ls, u)
             logr = sum(newll) - sum(@view ll[blk.members]) -
                 (sum(abs2, @view u[moved]) - sum(abs2, old)) / 2
             accepted = isfinite(logr) && log(rand(rng)) < logr
             accepted ? (ll[blk.members] .= newll) : (u[moved] .= old)
-            _saem_record_move!(st, U, a, accepted, adapt)
+            _saem_record_move!(st, U, c, a, accepted, adapt)
         end
     end
     return st
 end
 
 """
-    _saem_unit_scores!(st, laplace, U, Ls, dL, positions)
+    _saem_unit_scores!(st, laplace, U, c, Ls, dL, positions)
 
-Each member's complete-data score at the unit's draw, into `st.scores[U]`'s
-columns: one reverse sweep per member and the chain rule through the level
-loadings, the sweep `_laplace_floored_unit_gradient!` takes at a mode. In
-parallel over members. False where a member cannot be evaluated.
+Each member's complete-data score at chain `c`'s draw of unit `U`, into the
+columns of `st.scores[U][c]`: one reverse sweep per member and the chain rule
+through the level loadings, the sweep `_laplace_floored_unit_gradient!` takes
+at a mode. In parallel over members. False where a member cannot be evaluated.
 """
 function _saem_unit_scores!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
-    U::Integer, Ls::Vector{Matrix{Float64}}, dL, positions)
+    U::Integer, c::Integer, Ls::Vector{Matrix{Float64}}, dL, positions)
     members = laplace.units.members[U]
     npar = length(st.theta)
-    u = st.u[U]
-    S = st.scores[U]
+    u = st.u[U][c]
+    S = st.scores[U][c]
     ok = Threads.Atomic{Bool}(true)
     _laplace_partition(laplace, length(members)) do mine, _w
         aws = _laplace_workspace!(laplace, Float64, npar)
@@ -305,44 +314,53 @@ function _saem_unit_scores!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
     return ok[]
 end
 
-"""
-    ctsem_saem_init(laplace, theta; seed)
+"""Fifty units' worth of chains: `cld(50, nunits)`, between one and eight."""
+_saem_default_chains(nunits::Integer) = clamp(cld(50, max(nunits, 1)), 1, 8)
 
-SAEM's state at `theta`: each unit's draw starts at its Laplace mode (from the
-origin, as the objective solves it) and the proposal shapes come from the
-curvature there.
+"""
+    ctsem_saem_init(laplace, theta; seed, chains)
+
+SAEM's state at `theta`: every chain of each unit starts at the unit's Laplace
+mode (from the origin, as the objective solves it), and the proposal shapes
+come from the curvature there. `chains = 0` takes `_saem_default_chains`.
 """
 function ctsem_saem_init(laplace::CTSEMLaplaceObjective, theta::AbstractVector;
-    seed::Integer=1)
+    seed::Integer=1, chains::Integer=0)
     x = collect(Float64, theta)
     _laplace_check_indices(laplace, length(x))
     ctsem_laplace_evaluate(laplace, x; gradient=false)
     nunits = length(laplace.units.members)
+    K = chains > 0 ? Int(chains) : _saem_default_chains(nunits)
     npar = length(x)
     Ls = _laplace_popchols(x, laplace.spec)
     blocks = laplace.units.blocks
-    descendants = [[[c for c in eachindex(blocks[U]) if b in blocks[U][c].ancestors]
+    descendants = [[[d for d in eachindex(blocks[U]) if b in blocks[U][d].ancestors]
                     for b in eachindex(blocks[U])] for U in 1:nunits]
     leaves = [[b for b in eachindex(blocks[U]) if isempty(descendants[U][b])]
               for U in 1:nunits]
     # Innermost first: a block with more ancestors is deeper.
     uppers = [sort([b for b in eachindex(blocks[U]) if !isempty(descendants[U][b])];
                    by=b -> -length(blocks[U][b].ancestors)) for U in 1:nunits]
-    st = CTSEMSAEMState(x, [copy(laplace.modes[U]) for U in 1:nunits],
-        [zeros(length(laplace.units.members[U])) for U in 1:nunits],
+    nmem(U) = length(laplace.units.members[U])
+    st = CTSEMSAEMState(x,
+        [[copy(laplace.modes[U]) for _ in 1:K] for U in 1:nunits],
+        [[zeros(nmem(U)) for _ in 1:K] for U in 1:nunits],
         [[Matrix{Float64}(I, b.size, b.size) for b in blocks[U]] for U in 1:nunits],
         [[Matrix{Float64}[] for _ in blocks[U]] for U in 1:nunits],
-        [[log(2.38 / sqrt(b.size)) for b in blocks[U]] for U in 1:nunits],
-        [zeros(Int, length(blocks[U])) for U in 1:nunits],
-        [zeros(Int, length(blocks[U])) for U in 1:nunits],
+        [[[log(2.38 / sqrt(b.size)) for b in blocks[U]] for _ in 1:K] for U in 1:nunits],
+        [[zeros(Int, length(blocks[U])) for _ in 1:K] for U in 1:nunits],
+        [[zeros(Int, length(blocks[U])) for _ in 1:K] for U in 1:nunits],
         leaves, uppers, descendants,
-        [zeros(npar, length(laplace.units.members[U])) for U in 1:nunits],
-        zeros(npar, npar), zeros(npar), 0, 0, UInt64(seed))
+        [[zeros(npar, nmem(U)) for _ in 1:K] for U in 1:nunits],
+        zeros(npar, npar), zeros(Int, npar), zeros(Int8, npar),
+        Vector{Float64}[], K, 0, UInt64(seed))
     ok = _laplace_parallel(laplace, 1:nunits) do U
         _saem_refresh!(st, laplace, U, Ls)
-        _saem_members_ll!(st.ll[U], laplace, U, eachindex(laplace.units.members[U]),
-            x, Ls, st.u[U])
-        all(isfinite, st.ll[U])
+        for c in 1:K
+            _saem_members_ll!(st.ll[U][c], laplace, U, eachindex(laplace.units.members[U]),
+                x, Ls, st.u[U][c])
+        end
+        all(c -> all(isfinite, st.ll[U][c]), 1:K)
     end
     ok || throw(ArgumentError("SAEM cannot start: a unit's log likelihood is not " *
         "finite at its Laplace mode"))
@@ -351,164 +369,80 @@ end
 
 export ctsem_saem_init
 
-"""
-    _saem_expand!(st, laplace)
-
-The parameter-expansion step of PX-SAEM (Lavielle and Meza 2007), between
-the E-step and the M-step during burn-in. Each level's draws are recentred
-and, on a reduced-rank level, rescaled, with the population parameters
-moved to compensate, so that every member's parameters `theta + L u` -- and
-so the likelihood -- are unchanged while the draws' empirical mean and
-second moment are put back to the prior's zero and identity (each shrunk toward no
-change by `r + 1` pseudo-groups, so a level with few groups is not jolted by
-its own sampling noise):
-
-  * location, every level: with `m` the mean draw over the level's groups,
-    `theta[re] += L m` and `u -= m`;
-  * scale, a reduced-rank level, whose loadings are raw values
-    (`_laplace_poploading`): with `S = A A'` the centred draws' second
-    moment, the loadings `R -> R A` and `u -> A^-1 u`. `A` is lower
-    triangular, so `R A` keeps the loadings' structural zeros. A full-rank
-    level's scales and correlations are not linear in its Cholesky factor,
-    so it gets the location step only.
-
-Why: with an effect per subject and plenty of data each, a subject's draw is
-pinned by its own data relative to the population parameters, so the
-ordinary M-step and the next E-step chase each other -- EM's slow rate,
-fastest to see in a level's scale and in loadings that few groups inform.
-The expansion moves the population parameters to where the draws say they
-are in one step. Burn-in only: with a prior on the raw parameters the step
-does not vanish exactly at the posterior mode, so the averaged phase, whose
-fixed point must be that mode, runs without it. The proposal factors and
-linear responses are carried into the new coordinates.
-
-Off by default (`expand` on `ctsem_saem`), because it did not help where it
-was meant to. On the SNSF pilot subset (380 people in 13 studies, rank 3 at
-both levels; same start and seed, 3000 iterations, local), the Laplace
-objective at the averaged point was -297809.9 without it, -297921.3 with it on
-every level and -298038.6 with it on the subject level alone (`min_groups =
-50`). On the engine's six-subject linear fixture it brought the average from
-0.23 to 0.12 standard errors of the exact mode. Kept for models where the
-scale directions are what is slow and the groups are many.
-"""
-function _saem_expand!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective;
-    min_groups::Integer=0)
-    spec = laplace.spec
-    for (l, level) in enumerate(spec.levels)
-        k = nrandomeffects(level)
-        r = nlatent(level)
-        (k == 0 || r == 0) && continue
-        sites = Tuple{Int,Int}[]
-        for U in eachindex(st.u), (b, blk) in enumerate(laplace.units.blocks[U])
-            blk.level == l && push!(sites, (U, b))
-        end
-        G = length(sites)
-        (G == 0 || G < min_groups) && continue
-        cols(U, b) = (laplace.units.blocks[U][b].offset + 1):(laplace.units.blocks[U][b].offset +
-            laplace.units.blocks[U][b].size)
-        m = zeros(r)
-        for (U, b) in sites
-            m .+= @view st.u[U][cols(U, b)]
-        end
-        # Shrunk toward no change by r + 1 pseudo-groups at the prior's mean
-        # and identity: negligible at hundreds of groups, and it halves the
-        # step's own noise at the dozen a study level may have.
-        kappa = r + 1
-        m ./= (G + kappa)
-        L = _laplace_popchol(st.theta, level)
-        shift = L * m
-        for p in 1:k
-            st.theta[level.re_index[p]] += shift[p]
-        end
-        for (U, b) in sites
-            st.u[U][cols(U, b)] .-= m
-        end
-        (isreducedrank(level) && G > r) || continue
-        S = zeros(r, r)
-        for (U, b) in sites
-            v = st.u[U][cols(U, b)]
-            S .+= v * transpose(v)
-        end
-        S = (S .+ kappa .* Matrix{Float64}(I, r, r)) ./ (G + kappa)
-        F = _ctsem_cholesky(Matrix(_laplace_symmetrise(S)), r)
-        issuccess(F) || continue
-        A = Matrix(LowerTriangular(transpose(UpperTriangular(F.U[1:r, 1:r]))))
-        Ainv = inv(LowerTriangular(A))
-        R = zeros(k, r)
-        counter = 0
-        for q in 1:r, p in q:k
-            counter += 1
-            R[p, q] = st.theta[level.load_index[counter]]
-        end
-        R = R * A
-        counter = 0
-        for q in 1:r, p in q:k
-            counter += 1
-            st.theta[level.load_index[counter]] = R[p, q]
-        end
-        for (U, b) in sites
-            c = cols(U, b)
-            st.u[U][c] = Ainv * st.u[U][c]
-            st.chol[U][b] = Matrix(Ainv * st.chol[U][b])
-        end
-        # A block's response to an ancestor maps the ancestor's coordinates to
-        # its own: new = (own level's A^-1) old (ancestor level's A).
-        for U in eachindex(st.u)
-            blocks = laplace.units.blocks[U]
-            for (c, blk) in enumerate(blocks), t in eachindex(blk.ancestors)
-                a = blk.ancestors[t]
-                isempty(st.response[U][c]) && continue
-                blk.level == l && (st.response[U][c][t] = Ainv * st.response[U][c][t])
-                blocks[a].level == l && (st.response[U][c][t] = st.response[U][c][t] * A)
-            end
-        end
+"""The complete-data log posterior at the state's draws, averaged over chains."""
+function _saem_logpost(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective)
+    total = 0.0
+    for U in eachindex(st.u), c in 1:st.chains
+        total += sum(st.ll[U][c]; init=0.0) - sum(abs2, st.u[U][c]; init=0.0) / 2
     end
-    return st
+    return total / st.chains + _ctsem_log_prior(laplace.objective, st.theta)
 end
-
-"""The complete-data log posterior at the state's draws."""
-_saem_logpost(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective) =
-    sum(sum, st.ll) - sum(u -> sum(abs2, u; init=0.0), st.u) / 2 +
-    _ctsem_log_prior(laplace.objective, st.theta)
 
 function _saem_acceptance(st::CTSEMSAEMState)
     a = 0; p = 0
-    for U in eachindex(st.accepted)
-        a += sum(st.accepted[U]; init=0); p += sum(st.proposed[U]; init=0)
+    for U in eachindex(st.accepted), c in 1:st.chains
+        a += sum(st.accepted[U][c]; init=0); p += sum(st.proposed[U][c]; init=0)
     end
     return p == 0 ? NaN : a / p
 end
 
-"""
-    ctsem_saem_step!(st, laplace; gamma, sweeps, nupper, maxstep, refresh,
-        info_rate, adapt)
+"""Prior precision on the raw parameters, as a vector."""
+function _saem_prior_precision(laplace::CTSEMLaplaceObjective, npar::Integer)
+    prec = zeros(npar)
+    obj = laplace.objective
+    for j in eachindex(obj.prior_index)
+        prec[obj.prior_index[j]] += obj.prior_weight / obj.prior_scale[j]^2
+    end
+    return prec
+end
 
-One SAEM iteration: `sweeps` E-step sweeps of every unit (units in parallel,
-and within a unit its leaves and its members), the expansion step if
-`expand` (`_saem_expand!`), then the M-step. Returns the
-complete-data log posterior before the step, the score norm, and the largest
-coordinate of the step taken.
+"""
+    _saem_curvature(st, prec)
+
+`P`, the M-step's metric: the averaged complete-data information plus the
+prior precision, with a ridge relative to its own diagonal.
+"""
+_saem_curvature(st::CTSEMSAEMState, prec::Vector{Float64}) =
+    Symmetric(st.info) + Diagonal(prec .+ 1e-8 .* (1 .+ diag(st.info)))
+
+"""
+    ctsem_saem_step!(st, laplace; sweeps, nupper, maxstep, refresh, info_rate,
+        adapt, prec)
+
+One SAEM iteration: `sweeps` E-step sweeps of every chain of every unit (units
+and chains in parallel, and within one its leaves and its members), then the
+M-step with each parameter's Kesten step size. Returns the complete-data log
+posterior before the step, the score norm, the largest coordinate of the step
+taken and the median step size.
 """
 function ctsem_saem_step!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective;
-    gamma::Real=1.0, sweeps::Integer=2, nupper::Integer=2, maxstep::Real=0.25,
-    refresh::Integer=25, info_rate::Real=0.1, adapt::Real=-1.0, expand::Bool=false,
-    expand_min_groups::Integer=0)
+    sweeps::Integer=2, nupper::Integer=2, maxstep::Real=0.25,
+    refresh::Integer=25, info_rate::Real=0.1, adapt::Real=-1.0,
+    prec::Vector{Float64}=_saem_prior_precision(laplace, length(st.theta)))
     st.iteration += 1
     k = st.iteration
     nunits = length(laplace.units.members)
     npar = length(st.theta)
+    K = st.chains
     rate = adapt < 0 ? 1.0 / (1 + k)^0.6 : Float64(adapt)
     Ls = _laplace_popchols(st.theta, laplace.spec)
-    ok = _laplace_parallel(laplace, 1:nunits) do U
+    if k % refresh == 0
+        _laplace_parallel(laplace, 1:nunits) do U
+            isempty(st.u[U][1]) || _saem_refresh!(st, laplace, U, Ls)
+            true
+        end
+    end
+    items = [(U, c) for U in 1:nunits for c in 1:K]
+    ok = _laplace_parallel(laplace, items) do item
+        U, c = item
         # The members' log likelihoods move with theta -- in a unit with no
         # random effects too, whose members still count in the log posterior.
-        _saem_members_ll!(st.ll[U], laplace, U, eachindex(laplace.units.members[U]),
-            st.theta, Ls, st.u[U])
-        all(isfinite, st.ll[U]) || return false
-        isempty(st.u[U]) && return true
-        (k % refresh == 0) && _saem_refresh!(st, laplace, U, Ls)
+        _saem_members_ll!(st.ll[U][c], laplace, U, eachindex(laplace.units.members[U]),
+            st.theta, Ls, st.u[U][c])
+        all(isfinite, st.ll[U][c]) || return false
+        isempty(st.u[U][c]) && return true
         for sweep in 1:sweeps
-            _saem_sweep!(st, laplace, U, Ls, sweep, rate; nupper=nupper)
+            _saem_sweep!(st, laplace, U, c, Ls, sweep, rate; nupper=nupper)
         end
         true
     end
@@ -518,150 +452,135 @@ function ctsem_saem_step!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective;
     # iteration's E-step takes seconds, and Escape should not wait for the
     # M-step's sweeps too.
     _ctsem_interrupt_check()
-    expand && _saem_expand!(st, laplace; min_groups=expand_min_groups)
     dL = _laplace_level_chol_derivatives(st.theta, laplace.spec)
     positions = [_laplace_level_positions(laplace.spec, l)
                  for l in eachindex(laplace.spec.levels)]
-    ok = _laplace_parallel(laplace, 1:nunits) do U
+    ok = _laplace_parallel(laplace, items) do item
+        U, c = item
         isempty(laplace.units.members[U]) && return true
-        _saem_unit_scores!(st, laplace, U, Ls, dL, positions)
+        _saem_unit_scores!(st, laplace, U, c, Ls, dL, positions)
     end
     ok || throw(DomainError(st.theta,
         "SAEM: a member's score is not finite at the current parameters"))
-    # Reduced in unit order, after the join: the same sum whatever the split.
+    # Reduced in unit and chain order, after the join: the same sum whatever
+    # the split.
     g = zeros(npar)
     B = zeros(npar, npar)
-    for U in 1:nunits
-        S = st.scores[U]
+    for U in 1:nunits, c in 1:K
+        S = st.scores[U][c]
         size(S, 2) == 0 && continue
         for m in axes(S, 2)
             @views g .+= S[:, m]
         end
-        BLAS.syrk!('U', 'N', 1.0, S, 1.0, B)
+        BLAS.syrk!('U', 'N', 1.0 / K, S, 1.0, B)
     end
+    g ./= K
     logpost = _saem_logpost(st, laplace)
     _ctsem_log_prior_gradient!(g, laplace.objective, st.theta)
     B = Matrix(Symmetric(B, :U))
     w = k == 1 ? 1.0 : Float64(info_rate)
     st.info .= (1 - w) .* st.info .+ w .* B
-    prec = zeros(npar)
-    obj = laplace.objective
-    for j in eachindex(obj.prior_index)
-        prec[obj.prior_index[j]] += obj.prior_weight / obj.prior_scale[j]^2
-    end
-    P = Symmetric(st.info) + Diagonal(prec .+ 1e-8 .* (1 .+ diag(st.info)))
+    P = _saem_curvature(st, prec)
     F = cholesky(P; check=false)
-    step = issuccess(F) ? F \ g : g ./ (diag(P) .+ 1.0)
-    step .*= gamma
-    smax = maximum(abs, step; init=0.0)
-    smax > maxstep && (step .*= maxstep / smax)
+    d = issuccess(F) ? F \ g : g ./ (diag(P) .+ 1.0)
+    # Kesten, per parameter: a sign change of this parameter's step is the
+    # evidence that it has reached its optimum and is oscillating about it.
+    step = similar(d)
+    for i in eachindex(d)
+        s = Int8(sign(d[i]))
+        (s != 0 && st.lastsign[i] != 0 && s != st.lastsign[i]) && (st.flips[i] += 1)
+        s != 0 && (st.lastsign[i] = s)
+        gamma = (1 + st.flips[i])^(-2 / 3)
+        step[i] = clamp(gamma * d[i], -maxstep, maxstep)
+    end
     st.theta .+= step
-    return (logpost=logpost, gradient_norm=norm(g), step=min(smax, Float64(maxstep)))
+    push!(st.csum, isempty(st.csum) ? copy(st.theta) : st.csum[end] .+ st.theta)
+    return (logpost=logpost, gradient_norm=norm(g),
+        step=maximum(abs, step; init=0.0),
+        gamma=sort((1 .+ st.flips) .^ (-2 / 3))[cld(npar, 2)])
 end
 
 export ctsem_saem_step!
 
-"""
-    _saem_plateaued(history, window)
+"""Average of the iterates `a+1:b` from the cumulative sums."""
+_saem_window(st::CTSEMSAEMState, a::Integer, b::Integer) =
+    (a == 0 ? st.csum[b] : st.csum[b] .- st.csum[a]) ./ (b - a)
 
-Whether the complete-data log posterior has stopped rising: the mean of the
-last quarter of the burn-in so far exceeds the mean of the quarter before it
-by less than their combined standard error. Never before four windows.
-
-Quarters rather than fixed windows, because the test has to see a slow climb:
-two windows of 50 against each other passed a climb of 0.36 an iteration on
-the SNSF pilot at iteration 800 as a plateau (the noise in the series is tens
-of nats), and the burn-in ended a thousand iterations early. Over quarters the
-rise it can miss falls like `q^-1.5`. The series is autocorrelated, so the
-standard error is an underestimate, which errs toward a longer burn-in.
 """
-function _saem_plateaued(history::Vector{Float64}, window::Integer)
-    n = length(history)
-    n < 4 * window && return false
-    q = n ÷ 4
-    a = @view history[(n - 2 * q + 1):(n - q)]
-    b = @view history[(n - q + 1):n]
-    ma = sum(a) / q; mb = sum(b) / q
-    va = sum(abs2, a .- ma) / (q - 1); vb = sum(abs2, b .- mb) / (q - 1)
-    return mb - ma < sqrt((va + vb) / q)
+    _saem_drift(st, P)
+
+How far the estimate moved between the last two quarters of the run, as the
+mean squared change per parameter in the metric `P`, in units of squared
+standard errors; `NaN` before forty iterations, when a quarter is too short
+to average anything.
+"""
+function _saem_drift(st::CTSEMSAEMState, P)
+    k = length(st.csum)
+    k < 40 && return NaN
+    q = k ÷ 4
+    delta = _saem_window(st, k - q, k) .- _saem_window(st, k - 2q, k - q)
+    return dot(delta, P * delta) / length(delta)
 end
 
 """
-    ctsem_saem(laplace, start; maxiter, burnin_max, averaging, window, alpha,
-        seed, ...)
+    ctsem_saem(laplace, start; maxiter, tol, seed, chains, ...)
 
-SAEM from `start`: step size one, with the expansion step (`_saem_expand!`,
-off by default) if `expand`, until the complete-data log posterior plateaus
-(`_saem_plateaued`) or `burnin_max` iterations, then `averaging` iterations
-at `gamma = j^-alpha` with Polyak averaging, all within `maxiter`.
-Returns the averaged point (`minimizer`), the iterations, where the burn-in
-ended and whether it ended on a plateau rather than its cap (`settled`), the
-mean acceptance rate and a trace. `progress`, `progress_*` and
-`callback` behave as on `ctsem_optimize`; the callback receives the iteration,
-`maxiter`, the complete-data log posterior, the score norm and the current
-estimate (the average once averaging has begun).
+SAEM from `start` until the estimate -- the average of the last half of the
+iterates -- has stopped moving (`_saem_drift` below `tol`, a squared tenth of a
+standard error per parameter by default), or `maxiter` iterations. Every
+parameter's step follows Kesten's rule (see the file's header); there are no
+phases. Returns the estimate (`minimizer`), the iterations, whether it stopped
+on the drift rule (`settled`) and the drift there, the chains, the mean
+acceptance rate and a trace. `progress`, `progress_*` and `callback` behave as
+on `ctsem_optimize`; the callback receives the iteration, `maxiter`, the
+complete-data log posterior, the score norm and the current estimate.
 """
 function ctsem_saem(laplace::CTSEMLaplaceObjective, start::AbstractVector;
-    maxiter::Integer=3000, burnin_max::Integer=-1, averaging::Integer=-1,
-    window::Integer=50, alpha::Real=0.7, seed::Integer=1, sweeps::Integer=2,
-    nupper::Integer=2, maxstep::Real=0.25, refresh::Integer=25,
-    info_rate::Real=0.1, expand::Bool=false, expand_min_groups::Integer=0,
-    progress::Bool=false,
-    progress_overwrite::Bool=true, progress_sink=nothing, progress_every::Real=0.0,
-    callback=nothing)
+    maxiter::Integer=10000, tol::Real=0.01, seed::Integer=1, chains::Integer=0,
+    sweeps::Integer=2, nupper::Integer=2, maxstep::Real=0.25, refresh::Integer=25,
+    info_rate::Real=0.1, progress::Bool=false, progress_overwrite::Bool=true,
+    progress_sink=nothing, progress_every::Real=0.0, callback=nothing)
     maxiter >= 1 || throw(ArgumentError("SAEM needs at least one iteration"))
-    burnin_cap = burnin_max < 0 ? max(2 * window, (3 * Int(maxiter)) ÷ 4) : Int(burnin_max)
-    st = ctsem_saem_init(laplace, start; seed=seed)
+    st = ctsem_saem_init(laplace, start; seed=seed, chains=chains)
+    prec = _saem_prior_precision(laplace, length(st.theta))
     reporter = _ctsem_progress_reporter(progress, "saem", progress_overwrite,
         progress_sink, progress_every)
     watcher = CTSEMCallback(callback)
-    trace = CTSEMTrace(:logpost_complete, :gradient_norm, :gamma, :step, :acceptance)
-    history = Float64[]
-    burnin = 0
-    averaged = 0
-    target = 0
+    trace = CTSEMTrace(:logpost_complete, :gradient_norm, :gamma, :step,
+        :acceptance, :drift)
     settled = false
+    drift = NaN
     for k in 1:Int(maxiter)
-        averaging_now = burnin > 0
-        gamma = averaging_now ? (k - burnin)^(-Float64(alpha)) : 1.0
-        out = ctsem_saem_step!(st, laplace; gamma=gamma, sweeps=sweeps,
-            nupper=nupper, maxstep=maxstep, refresh=refresh, info_rate=info_rate,
-            expand=expand && !averaging_now, expand_min_groups=expand_min_groups)
-        push!(history, out.logpost)
-        if averaging_now
-            st.nbar += 1
-            st.thetabar .+= (st.theta .- st.thetabar) ./ st.nbar
-            averaged += 1
-        end
+        out = ctsem_saem_step!(st, laplace; sweeps=sweeps, nupper=nupper,
+            maxstep=maxstep, refresh=refresh, info_rate=info_rate, prec=prec)
+        drift = _saem_drift(st, _saem_curvature(st, prec))
         acceptance = _saem_acceptance(st)
-        _record!(trace, k, out.logpost, out.gradient_norm, gamma, out.step, acceptance)
-        estimate = averaging_now ? st.thetabar : st.theta
+        _record!(trace, k, out.logpost, out.gradient_norm, out.gamma, out.step,
+            acceptance, drift)
+        estimate = _saem_window(st, k - max(1, k ÷ 2), k)
         if _due(reporter)
             _progress_optimise(reporter, k, Int(maxiter),
-                averaging_now ? @sprintf("averaging %d/%d", averaged, target) : "burn-in",
                 @sprintf("logpost (complete) %11.2f", out.logpost),
-                @sprintf("step %8.2e", out.step),
+                @sprintf("drift %8.2e", drift),
+                @sprintf("median step %.2f", out.gamma),
                 @sprintf("accept %.2f", acceptance))
         end
         _invoke_callback(watcher, k, Int(maxiter), out.logpost, out.gradient_norm,
             estimate)
-        if !averaging_now && (k >= burnin_cap ||
-                (k % window == 0 && _saem_plateaued(history, window)))
-            settled = k < burnin_cap
-            burnin = k
-            target = averaging < 0 ? clamp(k ÷ 2, 2 * window, 1000) : Int(averaging)
-            target = min(target, Int(maxiter) - k)
-            target <= 0 && break
+        if isfinite(drift) && drift < tol
+            settled = true
+            break
         end
-        averaging_now && averaged >= target && break
     end
-    minimizer = st.nbar > 0 ? copy(st.thetabar) : copy(st.theta)
-    _progress_done(reporter, @sprintf("%d iterations", st.iteration),
-        burnin > 0 ? @sprintf("burn-in %d, averaged %d", burnin, averaged) :
-            "burn-in not finished",
-        @sprintf("accept %.2f", _saem_acceptance(st)))
-    return (minimizer=minimizer, iterations=st.iteration, burnin=burnin,
-        settled=settled, averaged=averaged, acceptance=_saem_acceptance(st),
+    k = st.iteration
+    minimizer = _saem_window(st, k - max(1, k ÷ 2), k)
+    _progress_done(reporter, @sprintf("%d iterations", k),
+        settled ? @sprintf("settled, drift %.2e", drift) :
+            @sprintf("not settled, drift %.2e", drift),
+        @sprintf("%d chain%s, accept %.2f", st.chains, st.chains == 1 ? "" : "s",
+            _saem_acceptance(st)))
+    return (minimizer=minimizer, iterations=k, settled=settled, drift=drift,
+        chains=st.chains, acceptance=_saem_acceptance(st),
         trace=_trace_result(trace), state=st)
 end
 

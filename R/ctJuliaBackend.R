@@ -3076,7 +3076,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # Laplace random effects to sample -- 'augmented' carries them as latent
 # states, and the state-explicit route has its own joint objective -- since
 # accepting it there and running the plain optimiser would say SAEM ran.
-.ctJuliaSaemDefaultIterations <- 3000L
+.ctJuliaSaemDefaultIterations <- 10000L
 .ctJuliaSaemIterations <- function(optimcontrol, intoverpop = "laplace",
   intoverstates = TRUE) {
   v <- optimcontrol$saem
@@ -4578,12 +4578,13 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   common$saem <- NULL
   common$saem_maxiter <- NULL
   common$saem_seed <- NULL
-  saem_record <- lapply(stats::setNames(nm = c("saem_iterations", "saem_burnin",
-    "saem_settled", "saem_acceptance", "saem_trace")), function(nm) result[[nm]])
-  # A burn-in that ran into its cap was still climbing: the averaged point the
+  saem_record <- lapply(stats::setNames(nm = c("saem_iterations", "saem_settled",
+    "saem_drift", "saem_chains", "saem_acceptance", "saem_trace")),
+    function(nm) result[[nm]])
+  # A run that reached its cap with the estimate still moving: the point the
   # optimiser continued from is short of where SAEM was going.
   if (isTRUE(saem_record$saem_iterations > 0) && !isTRUE(saem_record$saem_settled)) {
-    message("SAEM's burn-in had not levelled off after ", saem_record$saem_burnin,
+    message("SAEM had not settled after ", saem_record$saem_iterations,
       " iterations; a larger optimcontrol$saem may help.")
   }
   # A stage that stopped because it had stopped getting anywhere, with a
@@ -5422,9 +5423,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # the step size and largest step, and the acceptance rate, per iteration.
     saem_iterations = if (is.null(result$saem_iterations)) 0L else
       as.integer(result$saem_iterations),
-    saem_burnin = if (is.null(result$saem_burnin)) 0L else
-      as.integer(result$saem_burnin),
     saem_settled = isTRUE(result$saem_settled),
+    saem_drift = if (is.null(result$saem_drift)) NA_real_ else
+      as.numeric(result$saem_drift),
+    saem_chains = if (is.null(result$saem_chains)) 0L else
+      as.integer(result$saem_chains),
     saem_acceptance = if (is.null(result$saem_acceptance)) NA_real_ else
       as.numeric(result$saem_acceptance),
     saem_trace = if (is.null(result$saem_trace)) NULL else

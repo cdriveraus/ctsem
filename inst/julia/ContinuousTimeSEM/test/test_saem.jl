@@ -31,16 +31,16 @@ end
 function _saem_estep_draws(laplace, values, U, n; seed=1)
     st = ctsem_saem_init(laplace, values; seed=seed)
     Ls = _S._laplace_popchols(st.theta, laplace.spec)
-    d = length(st.u[U])
+    d = length(st.u[U][1])
     draws = zeros(d, n)
     for k in 1:n
         st.iteration += 1
         _S._laplace_parallel(laplace, [U]) do U
             (k % 25 == 0) && _S._saem_refresh!(st, laplace, U, Ls)
-            _S._saem_sweep!(st, laplace, U, Ls, 1, 1 / (1 + k)^0.6)
+            _S._saem_sweep!(st, laplace, U, 1, Ls, 1, 1 / (1 + k)^0.6)
             true
         end
-        draws[:, k] = st.u[U]
+        draws[:, k] = st.u[U][1]
     end
     return draws, st
 end
@@ -67,7 +67,9 @@ end
         laplace, values = fresh()
         st = ctsem_saem_init(laplace, values; seed=3)
         for U in eachindex(laplace.units.members)
-            @test sum(st.ll[U]) ≈ _unit_loglik(laplace, U, values, st.u[U]) rtol = 1e-12
+            for c in 1:st.chains
+                @test sum(st.ll[U][c]) ≈ _unit_loglik(laplace, U, values, st.u[U][c]) rtol = 1e-12
+            end
         end
     end
 end
@@ -118,11 +120,11 @@ end
     for k in 1:K
         for U in eachindex(laplace.units.members)
             mode, Sigma = conditionals[U]
-            st.u[U] = mode .+ cholesky(Symmetric(Sigma)).L * randn(rng, length(mode))
+            st.u[U][1] = mode .+ cholesky(Symmetric(Sigma)).L * randn(rng, length(mode))
             _S._laplace_parallel(laplace, [U]) do U
-                _S._saem_unit_scores!(st, laplace, U, Ls, dL, positions)
+                _S._saem_unit_scores!(st, laplace, U, 1, Ls, dL, positions)
             end
-            G[:, k] .+= vec(sum(st.scores[U]; dims=2))
+            G[:, k] .+= vec(sum(st.scores[U][1]; dims=2))
         end
     end
     g = vec(mean(G; dims=2))
@@ -141,10 +143,15 @@ end
     mode = plain.minimizer
     H = ctsem_laplace_hessian(mk(), mode)
     se = sqrt.(diag(inv(Symmetric(-H))))
-    run = ctsem_saem(mk(), start .+ 0.3; maxiter=1500, seed=2)
-    @test run.burnin > 0
+    run = ctsem_saem(mk(), start .+ 0.3; seed=2)
+    # Settled on the drift rule, well inside the cap, with Kesten's steps
+    # smaller at the end than at the start and never growing.
     @test run.settled
-    @test run.averaged > 0
+    @test run.iterations < 10000
+    @test run.trace.gamma[1] == 1
+    @test all(diff(run.trace.gamma) .<= 1e-12)
+    @test run.trace.gamma[end] < 1
+    @test run.drift < 0.01
     # The average is within a third of a standard error of the exact mode in
     # every coordinate: SAEM's Monte Carlo error is small beside the
     # estimate's own.
@@ -189,32 +196,34 @@ _saem_reduced() = (ctsem_laplace_objective(_saem_prior_objective(8);
     level_nre=[3], group=collect(1:6), level_ngroups=[6], level_rank=[1],
     load_index=[6, 7, 8]), [0.2, -0.1, 0.3, -0.2, 0.05, 0.6, 0.4, 0.3])
 
-@testset "SAEM: the expansion step leaves every member's likelihood where it was" begin
-    for (name, fresh) in (("two levels, full rank", _fresh_twolevel),
-                          ("one level, reduced rank", _saem_reduced))
-        laplace, values = fresh()
-        st = ctsem_saem_init(laplace, values; seed=1)
-        # Draws away from the modes, parameters where they were (gamma = 0).
-        for _ in 1:5
-            ctsem_saem_step!(st, laplace; gamma=0.0)
-        end
-        total() = sum(_unit_loglik(laplace, U, st.theta, st.u[U])
-                      for U in eachindex(laplace.units.members))
-        before = total()
-        theta0 = copy(st.theta)
-        _S._saem_expand!(st, laplace)
-        @test total() ≈ before rtol = 1e-10
-        @test st.theta != theta0
-    end
-end
-
 @testset "SAEM: fixed point under a reduced-rank level" begin
     laplace, values = _saem_reduced()
     plain = ctsem_laplace_optimize(laplace, values; maxiter=500, progress=false)
-    run = ctsem_saem(_saem_reduced()[1], values; maxiter=1500, seed=6)
+    run = ctsem_saem(_saem_reduced()[1], values; seed=6)
+    @test run.settled
     # The covariance, not the loadings: a rank-one loading's sign is not
     # identified, and either sign is the same model.
     cov_of(x) = ctsem_laplace_popcov(laplace, x, 1)
     @test isapprox(cov_of(run.minimizer), cov_of(plain.minimizer); rtol=0.15, atol=0.02)
     @test isapprox(run.minimizer[1:5], plain.minimizer[1:5]; atol=0.1)
+end
+
+@testset "SAEM: chains" begin
+    @test _S._saem_default_chains(6) == 8
+    @test _S._saem_default_chains(13) == 4
+    @test _S._saem_default_chains(800) == 1
+    laplace, values = _fresh_twolevel()          # three units: eight chains
+    st = ctsem_saem_init(laplace, values; seed=4)
+    @test st.chains == 8
+    for _ in 1:20
+        ctsem_saem_step!(st, laplace)
+    end
+    # Every chain started at the mode; after twenty iterations no two chains
+    # of a unit hold the same draw.
+    for U in eachindex(laplace.units.members)
+        @test length(unique(st.u[U])) == st.chains
+    end
+    # One chain, asked for, is one chain.
+    st1 = ctsem_saem_init(laplace, values; seed=4, chains=1)
+    @test st1.chains == 1
 end

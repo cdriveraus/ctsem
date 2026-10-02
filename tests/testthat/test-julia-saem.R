@@ -37,20 +37,21 @@ test_that("a saem fit ends at the Laplace fit's optimum and records its phase", 
   op <- fit$optim
   expect_gt(op$saem_iterations, 0L)
   expect_lte(op$saem_iterations, 400L)
-  expect_gt(op$saem_burnin, 0L)
   expect_type(op$saem_settled, "logical")
+  expect_gte(op$saem_chains, 1L)
+  expect_true(is.finite(op$saem_drift))
   expect_true(op$saem_acceptance > 0.05 && op$saem_acceptance < 0.9)
   tr <- op$saem_trace
   expect_s3_class(tr, "data.frame")
   expect_equal(nrow(tr), op$saem_iterations)
   expect_true(all(c("iteration", "logpost_complete", "gradient_norm", "gamma",
-    "step", "acceptance") %in% names(tr)))
+    "step", "acceptance", "drift") %in% names(tr)))
   expect_true(all(is.finite(tr$logpost_complete)))
-  # Step size one through the burn-in, then j^-alpha: one at the first
-  # averaging iteration, falling after it.
-  expect_true(all(tr$gamma[tr$iteration <= op$saem_burnin] == 1))
-  after <- tr$gamma[tr$iteration > op$saem_burnin]
-  expect_true(length(after) > 1L && all(diff(after) < 0) && all(after[-1L] < 1))
+  # Kesten's steps: full at the start, never growing, and smaller by the end
+  # once parameters have reached their optima and oscillate.
+  expect_equal(tr$gamma[1], 1)
+  expect_true(all(diff(tr$gamma) <= 1e-12))
+  expect_lt(tr$gamma[nrow(tr)], 1)
   # And a fit that did not ask ran none.
   expect_identical(ref$optim$saem_iterations, 0L)
   expect_null(ref$optim$saem_trace)

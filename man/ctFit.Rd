@@ -298,15 +298,19 @@ approximation, and the parameters follow the Fisher identity, so it heads
 for the exact marginal posterior mode and cannot climb an error of the
 approximation -- such as the over-credit Laplace gives a unit whose
 random-effect posterior is flat-topped. Its averaged point is then polished
-by the usual optimizer and certified as usual. A number sets its iteration
-cap (\code{TRUE} is 3000). It runs in parallel over units and, within a
-unit, over its subjects, within \code{cores}, and \code{set.seed()}
-reproduces it at a given \code{cores}. On large multilevel models, where
-the quasi-Newton optimizer can be slow, it can reach the neighbourhood of
-the optimum much faster, though such a model may want more than 3000
-iterations; the fit says so when SAEM's burn-in had not levelled off.
-\code{fit$optim$saem_iterations}, \code{saem_burnin},
-\code{saem_settled}, \code{saem_acceptance} and \code{saem_trace} record
+by the usual optimizer and certified as usual. It has no burn-in or
+averaging settings: each parameter's step shrinks once that parameter
+oscillates (Kesten's rule), the estimate averages the last half of the
+iterations, and SAEM stops when that estimate drifts by less than a tenth
+of a standard error per parameter. A number caps its iterations
+(\code{TRUE} is 10000); the fit says so if the cap came first. Models with
+few units run several chains per unit. It runs in parallel over units,
+chains and, within a unit, its subjects, within \code{cores}, and
+\code{set.seed()} reproduces it at a given \code{cores}. On large multilevel
+models, where the quasi-Newton optimizer can be slow, it can reach the
+neighbourhood of the optimum much faster.
+\code{fit$optim$saem_iterations}, \code{saem_settled}, \code{saem_drift},
+\code{saem_chains}, \code{saem_acceptance} and \code{saem_trace} record
 the phase; the trace's \code{logpost_complete} is the complete-data log
 posterior, which is not on the Laplace objective's scale.
 
