@@ -1479,8 +1479,8 @@ function ctsem_saem_sample(laplace::CTSEMLaplaceObjective, base::CTSEMSAEMState,
     secs = time() - t0
     diag = ctsem_sample_diagnostics(draws, nchains)
     _progress_done(reporter, @sprintf("%d chains x %d draws", nchains, ndraws),
-        @sprintf("min ESS %.0f, max R-hat %.3f", minimum(filter(isfinite, diag.ess); init=NaN),
-            maximum(filter(isfinite, diag.rhat); init=NaN)))
+        @sprintf("min ESS %.0f, max R-hat %.3f", _finite_extremum(diag.ess, minimum),
+            _finite_extremum(diag.rhat, maximum)))
     return (draws=draws, rhat=diag.rhat, ess=diag.ess, nchains=nchains, ndraws=Int(ndraws),
         accept_theta=accept_theta ./ max(1, Int(ndraws)),
         accept_scale=accept_scale ./ max.(1, nscale), eps=exp.(logeps), secs=secs)

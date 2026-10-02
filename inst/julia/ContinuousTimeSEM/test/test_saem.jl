@@ -312,3 +312,30 @@ end
     @test maximum(abs, ForwardDiff.gradient(f, x)) < 1e-6
     @test f(x) > f([A0[p, q] for (p, q) in idx])
 end
+
+# SAEM's chains continued as a sampler draw the same joint posterior NUTS
+# draws (`ctsem_sample`, validated on its own): means within four Monte Carlo
+# standard errors, standard deviations within ten per cent. On the rank-one
+# fixture, so the loadings' transformation move is in it; measured at 4 x 16000
+# draws within 2.4 se and 5 per cent, and no discrepancy persisted between draw
+# counts.
+@testset "SAEM sampler: the joint posterior NUTS draws" begin
+    laplace, values = _saem_reduced()
+    mode = ctsem_laplace_optimize(laplace, values; maxiter=500, progress=false).minimizer
+    nuts = ctsem_sample(_saem_reduced()[1], mode; nchains=4, nwarmup=300, ndraws=1500, seed=3)
+    run = ctsem_saem(_saem_reduced()[1], values; seed=2)
+    l2 = _saem_reduced()[1]
+    st = ctsem_saem_init(l2, run.minimizer; seed=5)
+    for _ in 1:50
+        ctsem_saem_step!(st, l2; mstep=false)
+    end
+    s = ctsem_saem_sample(l2, st, run.minimizer; nchains=4, nwarmup=300, ndraws=6000, seed=7)
+    a = nuts.draws; b = s.draws
+    sa = vec(std(a; dims=2)); sb = vec(std(b; dims=2))
+    mcse = sqrt.(sa .^ 2 ./ nuts.ess .+ sb .^ 2 ./ s.ess)
+    z = (vec(mean(b; dims=2)) .- vec(mean(a; dims=2))) ./ mcse
+    @info "SAEM sampler against NUTS" maximum(abs, z) extrema(sb ./ sa)
+    @test all(abs.(z) .< 4)
+    @test all(0.9 .< sb ./ sa .< 1.1)
+    @test maximum(s.rhat) < 1.05
+end
