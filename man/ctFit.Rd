@@ -291,6 +291,25 @@ barely determine, so it can carry a fit further toward a degenerate limit (a
 variance or rate running to zero or infinity);
 \code{fit$optim$sgd_iterations} records the phase.
 
+With \code{intoverpop='laplace'} on julia, \code{saem = TRUE} starts with
+SAEM (stochastic approximation EM): the random effects are sampled from
+their conditional distribution rather than integrated by the Laplace
+approximation, and the parameters follow the Fisher identity, so it heads
+for the exact marginal posterior mode and cannot climb an error of the
+approximation -- such as the over-credit Laplace gives a unit whose
+random-effect posterior is flat-topped. Its averaged point is then polished
+by the usual optimizer and certified as usual. A number sets its iteration
+cap (\code{TRUE} is 3000). It runs in parallel over units and, within a
+unit, over its subjects, within \code{cores}, and \code{set.seed()}
+reproduces it at a given \code{cores}. On large multilevel models, where
+the quasi-Newton optimizer can be slow, it can reach the neighbourhood of
+the optimum much faster, though such a model may want more than 3000
+iterations; the fit says so when SAEM's burn-in had not levelled off.
+\code{fit$optim$saem_iterations}, \code{saem_burnin},
+\code{saem_settled}, \code{saem_acceptance} and \code{saem_trace} record
+the phase; the trace's \code{logpost_complete} is the complete-data log
+posterior, which is not on the Laplace objective's scale.
+
 The \emph{defaults} are each backend's own, and are mirror images: stan stops
 on the objective (\code{tol = 1e-8}, \code{g_tol} off), julia on the gradient
 (\code{g_tol = 1e-8}, \code{tol} off). Leaving a name unset keeps that
@@ -304,7 +323,7 @@ the gradient bar at which it restarts a stalled fit (\code{stalltol});
 \code{backend='julia'} alone has \code{gradient}, \code{datastart},
 \code{callback}, \code{saveEffects}, \code{progress}, \code{batch},
 \code{newton}, \code{restarts}, \code{restartsd}, \code{lbfgs_diagonal},
-\code{lbfgs_gll}, \code{lbfgs_nonmonotone} and
+\code{lbfgs_gll}, \code{lbfgs_nonmonotone}, \code{saem} and
 \code{tipredMissingIncludeOutcome}. \code{lbfgs_diagonal} (TRUE by
 default) gives L-BFGS's initial inverse Hessian a scale per parameter,
 learned from the curvature pairs (Gilbert and Lemarechal's diagonal update);

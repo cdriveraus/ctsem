@@ -673,10 +673,13 @@ ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
       # rule inside the certification tolerance only because something will
       # spend a Hessian closing the rest of the gap; nothing does that for a
       # fold, so the rule should not assume it.
+      # `saem` and `stochastic` off for the same kind of reason: both are
+      # phases for a stage that starts away from the optimum, and a fold
+      # starts at the full fit's estimate.
       result <- try(.ctJuliaOptimise(trainingfit$model_spec, start,
         optimcontrol = utils::modifyList(
           as.list(fit$args$resolved$optimcontrol),
-          list(tol = tol, certify = FALSE)),
+          list(tol = tol, certify = FALSE, saem = FALSE, stochastic = FALSE)),
         cores = cores),
         silent = TRUE)
       if (inherits(result, "try-error")) return(NULL)

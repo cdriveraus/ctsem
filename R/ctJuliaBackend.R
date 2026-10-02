@@ -3070,6 +3070,38 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # for.
 .ctJuliaLaplaceFloorDefault <- "gated"
 
+# `optimcontrol$saem`: how many SAEM iterations the first optimisation stage
+# may run before L-BFGS (`ctsem_saem` in the engine), 0 for none. TRUE is the
+# default cap, a positive number another. Refused by name where there are no
+# Laplace random effects to sample -- 'augmented' carries them as latent
+# states, and the state-explicit route has its own joint objective -- since
+# accepting it there and running the plain optimiser would say SAEM ran.
+.ctJuliaSaemDefaultIterations <- 3000L
+.ctJuliaSaemIterations <- function(optimcontrol, intoverpop = "laplace",
+  intoverstates = TRUE) {
+  v <- optimcontrol$saem
+  if (is.null(v) || isFALSE(v)) return(0L)
+  n <- if (isTRUE(v)) .ctJuliaSaemDefaultIterations else
+    suppressWarnings(as.integer(v)[1L])
+  if (length(v) != 1L || is.na(n) || n < 1L) {
+    stop("optimcontrol$saem must be TRUE, FALSE or a positive number of ",
+      "iterations.", call. = FALSE)
+  }
+  if (!as.character(intoverpop)[1L] %in% c("laplace", "none")) {
+    stop("optimcontrol$saem samples the random effects that ",
+      "intoverpop='laplace' integrates; with intoverpop='",
+      as.character(intoverpop)[1L], "' they are latent states and there is ",
+      "nothing for it to sample. Use intoverpop='laplace', or drop it.",
+      call. = FALSE)
+  }
+  if (!isTRUE(intoverstates)) {
+    stop("optimcontrol$saem applies to the marginal Laplace objective; ",
+      "intoverstates=FALSE samples the states and the random effects ",
+      "together already. Drop it.", call. = FALSE)
+  }
+  n
+}
+
 # `intoverpop` deliberately has no default. It selects which *model* is
 # prepared -- random effects as latent states, or integrated by Laplace -- and a
 # default meant a caller could omit it and silently get the other one. That is
@@ -4442,6 +4474,16 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     common$sgd <- if (identical(stochastic, "auto"))
       length(as.numeric(start)) > 50L else isTRUE(stochastic)
   }
+  # `saem`: SAEM before L-BFGS on a Laplace objective (`ctsem_saem`), on the
+  # same stages as `stochastic` and for the same reason. Its seed comes from
+  # R's generator, so `set.seed()` reproduces the fit at a given `cores`.
+  saem <- .ctJuliaSaemIterations(optimcontrol)
+  if (saem > 0L && is.null(carried) && !isTRUE(progress_budget) &&
+      is.null(pin) && !is.null(model_spec$laplace) && !state_explicit) {
+    common$saem <- TRUE
+    common$saem_maxiter <- saem
+    common$saem_seed <- sample.int(.Machine$integer.max, 1L)
+  }
   # A stage resumed after a certification found the point short of a maximum
   # (`.ctBackendCorrectResult()`): the progress the fit made before it, so its
   # stall watch has a progress to take a share of, and leave to stop on
@@ -4528,6 +4570,22 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     out
   }
   result <- optimise_once(start)
+  # The two early phases belong to the first stage, which is the one that
+  # starts away from the optimum. An escape below resumes from a pulled-back
+  # point beside it, so neither runs again there -- and SAEM's record is the
+  # first stage's, kept for the result whichever run the loop keeps.
+  common$sgd <- NULL
+  common$saem <- NULL
+  common$saem_maxiter <- NULL
+  common$saem_seed <- NULL
+  saem_record <- lapply(stats::setNames(nm = c("saem_iterations", "saem_burnin",
+    "saem_settled", "saem_acceptance", "saem_trace")), function(nm) result[[nm]])
+  # A burn-in that ran into its cap was still climbing: the averaged point the
+  # optimiser continued from is short of where SAEM was going.
+  if (isTRUE(saem_record$saem_iterations > 0) && !isTRUE(saem_record$saem_settled)) {
+    message("SAEM's burn-in had not levelled off after ", saem_record$saem_burnin,
+      " iterations; a larger optimcontrol$saem may help.")
+  }
   # A stage that stopped because it had stopped getting anywhere, with a
   # transform flat as the reason, is the one case where there is somewhere
   # better to go and we know where: pull the flat coordinates back and run
@@ -4620,6 +4678,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     result <- resumed
   }
   if (is.null(result$stall_escapes)) result$stall_escapes <- escapes
+  for (nm in names(saem_record)) result[nm] <- list(saem_record[[nm]])
   result <- .ctJuliaAddRunCounts(result, spent)
   # What the tuner settled on, when that is well short of what was asked for.
   .ctBackendReportChunks(cores, result$chunks)
@@ -4685,8 +4744,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 # An eigenvalue below one is a direction where the likelihood has gone convex
 # in the random effects; mildly is harmless, but near zero the Laplace term
 # over-credits that unit by several nats and nothing else shows it. `Inf` is a
-# unit whose every eigenvalue exceeds one (not computed), `NaN` one too wide to
-# decompose. See ctsem_laplace_conditioning in the engine.
+# unit whose every eigenvalue exceeds one (not computed), `NaN` one whose
+# curvature is not finite. See ctsem_laplace_conditioning in the engine.
 #' @keywords internal
 .ctJuliaLaplaceConditioning <- function(mins) {
   if (is.null(mins)) return(NULL)
@@ -4747,6 +4806,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # prepared or fitted. See `.ctLaplaceAutoCorrect()`.
   correctlaplace <- .ctLaplaceCorrectResolve(optimcontrol, intoverpop = intoverpop,
     optimize = optimize, intoverstates = intoverstates)
+  .ctJuliaSaemIterations(optimcontrol, intoverpop = intoverpop,
+    intoverstates = intoverstates)
   gradient <- .ctJuliaOr(optimcontrol$gradient, "adjoint")
   if (!gradient %in% c("forward", "adjoint")) stop("gradient must be 'forward' or 'adjoint'", call. = FALSE)
   # 'adjoint' selects the Julia engine's reverse-mode gradient. Its cost is
@@ -5112,8 +5173,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       substeps$refit <- TRUE
       restart <- if (is.null(jointobjective)) optimum else c(optimum, numeric(nstate))
       first <- result
+      # From the coarser mesh's optimum, so without the early phases, which
+      # are for a stage that starts away from one.
       result <- .ctJuliaAddRunCounts(.ctJuliaOptimise(model_spec, restart,
-        optimcontrol = optimcontrol, gradient = gradient, cores = cores,
+        optimcontrol = utils::modifyList(optimcontrol,
+          list(saem = FALSE, stochastic = FALSE)), gradient = gradient, cores = cores,
         verbose = verbose, callback = optimcontrol$callback,
         objective = jointobjective), first)
     }
@@ -5352,6 +5416,19 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # Iterations of the sgd phase (`optimcontrol$stochastic`), 0 when none ran.
     sgd_iterations = if (is.null(result$sgd_iterations)) 0L else
       as.integer(result$sgd_iterations),
+    # The SAEM phase (`optimcontrol$saem`): its iterations, where its burn-in
+    # ended, its mean acceptance rate, and its trace -- the complete-data log
+    # posterior, which is not on the Laplace objective's scale, the score norm,
+    # the step size and largest step, and the acceptance rate, per iteration.
+    saem_iterations = if (is.null(result$saem_iterations)) 0L else
+      as.integer(result$saem_iterations),
+    saem_burnin = if (is.null(result$saem_burnin)) 0L else
+      as.integer(result$saem_burnin),
+    saem_settled = isTRUE(result$saem_settled),
+    saem_acceptance = if (is.null(result$saem_acceptance)) NA_real_ else
+      as.numeric(result$saem_acceptance),
+    saem_trace = if (is.null(result$saem_trace)) NULL else
+      as.data.frame(lapply(result$saem_trace, as.numeric)),
     # How many times the fit was pulled off a boundary and refitted.
     stall_escapes = if (is.null(result$stall_escapes)) 0L else
       as.integer(result$stall_escapes),

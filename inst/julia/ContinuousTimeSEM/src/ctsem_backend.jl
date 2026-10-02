@@ -1789,6 +1789,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     tune_chunks::Bool=true, lbfgs_memory::Integer=_CTSEM_LBFGS_MEMORY,
     lbfgs_diagonal::Bool=true, lbfgs_nonmonotone::Real=0.0,
     lbfgs_gll::Integer=0, sgd::Bool=false, sgd_maxiter::Integer=2000, sgd_progress::Real=1e-3,
+    saem::Bool=false, saem_maxiter::Integer=3000, saem_seed::Integer=1,
     progress_overwrite::Bool=true, progress_sink=nothing,
     progress_callback=nothing,
     progress::Bool=verbose, progress_label::AbstractString="optimise",
@@ -2046,10 +2047,28 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # curvature's size will do better; L-BFGS carries on from its best point,
     # its iterations counted on from the phase's.
     lbfgs_start = start_values
+    # `saem`: on a Laplace objective, SAEM first (saem.jl) -- the exact
+    # marginal posterior mode by stochastic approximation, which never sees the
+    # Laplace term and so cannot climb its failures -- and L-BFGS polishes from
+    # its averaged point on the Laplace objective, with the finish and the
+    # certification after it unchanged. Its iterations are its own count and
+    # its own progress line: an SAEM iteration is a different unit of work, and
+    # its complete-data log posterior is not on the Laplace objective's scale.
+    saem_result = nothing
+    if saem
+        saem_result = _ctsem_saem_phase(objective, start_values;
+            maxiter=Int(saem_maxiter), seed=Int(saem_seed), progress=progress,
+            progress_overwrite=progress_overwrite, progress_sink=progress_sink,
+            progress_every=progress_every, callback=progress_callback)
+        if saem_result !== nothing
+            lbfgs_start = saem_result.minimizer
+            copyto!(current_x, lbfgs_start)
+        end
+    end
     sgd_result = nothing
     if sgd
         in_sgd[] = true
-        sgd_result = _ctsem_sgd(fg!, start_values;
+        sgd_result = _ctsem_sgd(fg!, lbfgs_start;
             maxiter=min(Int(sgd_maxiter), Int(maxiter)), progress=sgd_progress,
             callback=watch)
         in_sgd[] = false
@@ -2420,6 +2439,14 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         stall_triggers=stall.triggers,
         # The sgd phase's iterations (`sgd`), 0 when it did not run.
         sgd_iterations=sgd_iterations,
+        # The SAEM phase (`saem`): its iterations, where its burn-in ended, its
+        # mean acceptance rate and its own trace; zeros and `nothing` when it
+        # did not run.
+        saem_iterations=saem_result === nothing ? 0 : saem_result.iterations,
+        saem_burnin=saem_result === nothing ? 0 : saem_result.burnin,
+        saem_settled=saem_result === nothing ? false : saem_result.settled,
+        saem_acceptance=saem_result === nothing ? NaN : saem_result.acceptance,
+        saem_trace=saem_result === nothing ? nothing : saem_result.trace,
         # The point the in-flight probe found, so the caller resuming from it
         # does not pay for the same ladder twice. Empty unless it stopped here.
         stall_point=isempty(stall.point) ? Float64[0.0] : stall.point,
