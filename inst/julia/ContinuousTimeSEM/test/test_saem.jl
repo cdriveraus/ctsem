@@ -231,8 +231,9 @@ end
 # The centred step re-expresses the draws: theta's population means and
 # scales move, and every member's shifted parameters stay exactly where they
 # were, so no likelihood moves -- on one, two and three levels and at reduced
-# rank. And with no prior on a level's means, the step leaves that level's
-# effects averaging zero over its groups and chains, the Gaussian's maximum.
+# rank. And with no prior on a level's means, the step brings that level's
+# effects' average over its groups and chains toward zero, the Gaussian's
+# maximum -- part of the way, by the data's share of each direction.
 @testset "SAEM: the centred step leaves every member where it was" begin
     function shifted_all(st, laplace)
         Ls = _S._laplace_popchols(st.theta, laplace.spec)
@@ -254,6 +255,14 @@ end
         prec = _S._saem_prior_precision(laplace, length(st.theta))
         before = shifted_all(st, laplace)
         theta0 = copy(st.theta)
+        total_before = map(eachindex(laplace.spec.levels)) do l
+            t = zeros(_S.nlatent(laplace.spec.levels[l]))
+            for U in eachindex(st.u), blk in laplace.units.blocks[U], c in 1:st.chains
+                blk.level == l || continue
+                t .+= st.u[U][c][(blk.offset + 1):(blk.offset + blk.size)]
+            end
+            t
+        end
         _S._saem_centre!(st, laplace, prec)
         after = shifted_all(st, laplace)
         @test st.theta != theta0
@@ -266,7 +275,7 @@ end
                 blk.level == l || continue
                 total .+= st.u[U][c][(blk.offset + 1):(blk.offset + blk.size)]
             end
-            @test maximum(abs, total) < 1e-10
+            @test norm(total) <= norm(total_before[l]) + 1e-10
         end
     end
 end

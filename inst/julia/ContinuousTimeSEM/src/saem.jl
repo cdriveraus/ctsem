@@ -422,8 +422,10 @@ Per level, over its groups and every chain (a chain's draws weigh 1/chains):
   `u <- A^-1 u`, with `A = chol(S)` for `S` the mean of `u u'`, or with the
   loadings' prior when they carry one (`_saem_centre_loadings!`).
 
-Every member's shifted parameters, so its likelihood, are left where they
-were; the proposal shapes are carried into the new coordinates.
+Each moves only part of the way: by `I - Lambda` of its full step, `Lambda` the
+share of each direction the data leave to the prior (see the code). Every
+member's shifted parameters, so its likelihood, are left where they were; the
+proposal shapes are carried into the new coordinates.
 """
 function _saem_centre!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
     prec::Vector{Float64})
@@ -441,6 +443,29 @@ function _saem_centre!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
         G == 0 && continue
         cols(U, b) = (laplace.units.blocks[U][b].offset + 1):(laplace.units.blocks[U][b].offset +
             laplace.units.blocks[U][b].size)
+        # How far to centre. Lambda, the mean over the level's groups of the
+        # posterior covariance of `u` (the proposal shapes' prior-clipped
+        # inverse curvature), is the share of each direction the data leave to
+        # the prior. The centred augmentation is the efficient one where the
+        # data pin the effects down (Lambda near 0) and the fixed-u one where
+        # they barely inform them (Lambda near I): there the centred step reads
+        # a population scale off draws that are mostly prior, follows their
+        # noise with almost nothing pulling it back, and walks -- on the
+        # bench's bigre a drift effect's scale walked from -1.0 to -2.4 raw.
+        # So the centred step moves each direction by `I - Lambda` of its full
+        # step, the weight with which a partially non-centred
+        # parameterisation (Papaspiliopoulos, Roberts and Skold 2003) leaves a
+        # Gaussian mean no missing information; fixed points are unchanged.
+        Lambda = zeros(r, r)
+        for (U, b) in sites
+            C = st.chol[U][b]
+            Lambda .+= C * transpose(C)
+        end
+        Lambda ./= G
+        E = eigen(Symmetric(Lambda))
+        keep = clamp.(1 .- E.values, 0.0, 1.0)
+        W = E.vectors * Diagonal(keep) * transpose(E.vectors)
+        Whalf = E.vectors * Diagonal(sqrt.(keep)) * transpose(E.vectors)
         # The mean.
         L = _laplace_popchol(st.theta, level)
         usum = zeros(r)
@@ -451,14 +476,24 @@ function _saem_centre!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
         Dm = prec[level.re_index]
         mu = st.theta[level.re_index]
         A = Symmetric(G .* Matrix{Float64}(I, r, r) .+ transpose(L) * (Dm .* L))
-        delta = A \ (usum .- transpose(L) * (Dm .* mu))
+        delta = W * (A \ (usum .- transpose(L) * (Dm .* mu)))
         st.theta[level.re_index] .+= L * delta
         for (U, b) in sites, c in 1:K
             st.u[U][c][cols(U, b)] .-= delta
         end
-        # The scale.
-        T = isreducedrank(level) ? _saem_centre_loadings!(st, laplace, l, sites, cols, prec) :
-            _saem_centre_scale!(st, laplace, l, sites, cols, prec)
+        # The scale, from the effects' second moment with its departure from
+        # the identity -- what the full step would act on -- shrunk the same
+        # way: `G I + Whalf (S - G I) Whalf`.
+        S = zeros(r, r)
+        for (U, b) in sites, c in 1:K
+            v = st.u[U][c][cols(U, b)]
+            S .+= v * transpose(v)
+        end
+        S ./= K
+        S = Matrix(Symmetric(G .* Matrix{Float64}(I, r, r) .+
+            Whalf * (S .- G .* Matrix{Float64}(I, r, r)) * Whalf))
+        T = isreducedrank(level) ? _saem_centre_loadings!(st, laplace, l, S, G, prec) :
+            _saem_centre_scale!(st, laplace, l, S, G, prec)
         T === nothing && continue
         Tinv = inv(T)
         for (U, b) in sites
@@ -482,39 +517,35 @@ function _saem_centre!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
 end
 
 """
-    _saem_centre_scale!(st, laplace, l, sites, cols, prec)
+    _saem_centre_scale!(st, laplace, l, S, G, prec)
 
 Full-rank level `l`'s scales and correlations by Fisher scoring on the
-Gaussian log likelihood of the deviations `d = L u` (held fixed) plus the
-prior, with a halving line search on that same objective. With `M_p =
-L^-1 dL_p` and `S` the chain-averaged sum of `w w'`, `w = L^-1 d`, the
-gradient is `tr(M_p (S - G I))` and the information
+Gaussian log likelihood of `G` groups' deviations `d = L u`, held fixed, whose
+summed second moment in the current coordinates is `S` (`sum u u'`, averaged
+over chains), plus the prior; with a halving line search on that same
+objective. With `M_p = L^-1 dL_p` and `Sw = L^-1 L0 S L0' L^-T`, the gradient
+is `tr(M_p (Sw - G I))` and the information
 `G/2 tr((M_p + M_p')(M_q + M_q'))`. Returns the map `L_new^-1 L_old` that
 re-expresses the effects, or `nothing` where the level has no scale
 parameters or nothing moved.
 """
 function _saem_centre_scale!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
-    l::Integer, sites, cols, prec::Vector{Float64})
+    l::Integer, S::Matrix{Float64}, G::Integer, prec::Vector{Float64})
     spec = laplace.spec
     level = spec.levels[l]
     positions = _laplace_level_positions(spec, l)
     isempty(positions) && return nothing
-    K = st.chains
-    G = length(sites)
-    k = nrandomeffects(level)
     L0 = _laplace_popchol(st.theta, level)
-    d = zeros(k, G * K)
-    j = 0
-    for (U, b) in sites, c in 1:K
-        j += 1
-        d[:, j] = L0 * st.u[U][c][cols(U, b)]
-    end
+    D2 = Matrix(Symmetric(L0 * S * transpose(L0)))
     Dp = prec[positions]
+    function second_moment(L)
+        X = L \ D2
+        return Matrix(Symmetric(transpose(L \ transpose(X))))
+    end
     function objective(theta)
         L = LowerTriangular(_laplace_popchol(theta, level))
-        W = L \ d
         phi = theta[positions]
-        return -G * sum(log, diag(L)) - sum(abs2, W) / (2K) - sum(Dp .* phi .^ 2) / 2
+        return -G * sum(log, diag(L)) - tr(second_moment(L)) / 2 - sum(Dp .* phi .^ 2) / 2
     end
     theta = copy(st.theta)
     q = objective(theta)
@@ -523,10 +554,9 @@ function _saem_centre_scale!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
     for _ in 1:25
         L = LowerTriangular(_laplace_popchol(theta, level))
         dL = _laplace_level_chol_derivatives(theta, spec, l)
-        W = L \ d
-        S = (W * transpose(W)) ./ K
+        Sw = second_moment(L)
         M = [Matrix(L \ dL[t]) for t in 1:np]
-        grad = [tr(M[t] * (S - G * I)) for t in 1:np] .- Dp .* theta[positions]
+        grad = [tr(M[t] * (Sw - G * I)) for t in 1:np] .- Dp .* theta[positions]
         F = zeros(np, np)
         for t1 in 1:np, t2 in t1:np
             F[t1, t2] = F[t2, t1] = G / 2 * tr((M[t1] + transpose(M[t1])) *
@@ -556,28 +586,21 @@ function _saem_centre_scale!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
 end
 
 """
-    _saem_centre_loadings!(st, laplace, l, sites, cols, prec)
+    _saem_centre_loadings!(st, laplace, l, S, G, prec)
 
 Reduced-rank level `l`: `L <- L A`, `A` lower triangular, which keeps the
-loadings' column space, and `u <- A^-1 u`, with `A` maximising the effects'
-Gaussian log likelihood at fixed deviations plus the loadings' prior. Without
-a prior that is `A A' = S`, `S` the chain-averaged mean of `u u'`; with one,
-Newton on `A`'s entries from there (`_saem_loading_factor`). Returns `A^-1`.
+loadings' column space, and `u <- A^-1 u`, with `A` maximising the Gaussian
+log likelihood of `G` groups' deviations, held fixed, whose summed second
+moment in the current coordinates is `S`, plus the loadings' prior. Without a
+prior that is `A A' = S / G`; with one, Newton on `A`'s entries from there
+(`_saem_loading_factor`). Returns `A^-1`.
 """
 function _saem_centre_loadings!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
-    l::Integer, sites, cols, prec::Vector{Float64})
+    l::Integer, S::Matrix{Float64}, G::Integer, prec::Vector{Float64})
     level = laplace.spec.levels[l]
-    K = st.chains
-    G = length(sites)
     k = nrandomeffects(level)
     r = nlatent(level)
     G > r || return nothing
-    S = zeros(r, r)
-    for (U, b) in sites, c in 1:K
-        v = st.u[U][c][cols(U, b)]
-        S .+= v * transpose(v)
-    end
-    S ./= K
     F = cholesky(Symmetric(S ./ G); check=false)
     issuccess(F) || return nothing
     A = Matrix(F.L)
