@@ -2158,6 +2158,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             iteration0=result.iterations + spent.steps[],
             curvature=finish_curvature, probe=certify, reuse_se=newton_reuse,
             flat_rtol=flat_rtol, handback=early && discardable,
+            escape_gain=Float64(converge_tol), flat_escape=_ctsem_flat_escape(objective),
             reporter=reporter)
         minimizer = collect(finish.x)
         # The finish's own gain replaces L-BFGS's metric proxy: it is the exact

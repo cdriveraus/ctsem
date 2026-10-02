@@ -913,6 +913,59 @@ end
     @test stuck.x == [0.0, 0.0]
 end
 
+# A plateau on a curved ridge, as test-julia-convergence.R's random walks have
+# one: maximised, a ridge along b = 0.15 a^2 whose height is a bump of 15 at
+# a = 2 and about 2e-7 at a = -4. There the gradient and the curvature along
+# the ridge are both all but zero, so the Newton step has nothing to take, and
+# the ridge curves, so a straight step along it falls off.
+_ridge_c(a) = 0.15 * a^2
+_ridge(p) = -50 * (p[2] - _ridge_c(p[1]))^2 + 15 * exp(-(p[1] - 2)^2 / 2)
+
+@testset "the flat ladder follows a curved ridge that a straight step leaves" begin
+    m = _endgame_mock(_ridge)
+    fg! = ContinuousTimeSEM._ctsem_trial_closure(m, :adjoint)
+    x = [-4.0, _ridge_c(-4.0)]
+    G = zeros(2)
+    f = fg!(0.0, G, x)
+    split = ContinuousTimeSEM._ctsem_information_split(-ForwardDiff.hessian(_ridge, x);
+        rtol=1e-6)
+    @test count(.!split.trusted) == 1
+    out = ContinuousTimeSEM._ctsem_flat_ladder(fg!, x, f, G, split)
+    @test out.best !== nothing
+    @test f - out.best.f > 0.01            # measured, against ~2e-7 at the start
+    @test out.best.length == 4             # towards the bump, the longest rung
+    # On the ridge, where the same rung taken straight is a unit off it.
+    u = ContinuousTimeSEM._ctsem_flat_residual(split, -G)
+    u = u ./ sqrt(sum(abs2, u))
+    off(p) = abs(p[2] - _ridge_c(p[1]))
+    @test off(x .+ 4 .* u) > 0.5
+    @test off(out.best.point) < off(x .+ 4 .* u) / 20
+    # The corrections are what keep it on the ridge: without them every rung
+    # falls off, and so does the certification's straight probe.
+    @test ContinuousTimeSEM._ctsem_flat_ladder(fg!, x, f, G, split;
+        corrections=0).best === nothing
+    @test ContinuousTimeSEM._ctsem_flat_probe(_ridge, x, -f, u).gain == 0
+end
+
+@testset "the finish leaves a plateau on a curved ridge where the route allows it" begin
+    m = _endgame_mock(_ridge)
+    x0 = [-4.0, _ridge_c(-4.0)]
+    up = _endgame_run(m, x0; flat_rtol=1e-6, flat_escape=true, escape_gain=1e-6)
+    @test -up.f ≈ 15 atol = 1e-6
+    @test up.x ≈ [2.0, _ridge_c(2.0)] atol = 1e-4
+    @test "flat" in up.history.kind
+    @test up.escapes >= 1
+    # Where the route does not allow it (Laplace, `_ctsem_flat_escape`), the
+    # finish stays where it was asked to finish, as it did before.
+    stay = _endgame_run(m, x0; flat_rtol=1e-6)
+    @test -stay.f < 1e-5
+    @test !("flat" in stay.history.kind)
+    # An escape that gains less than `escape_gain` is not taken.
+    tiny = _endgame_run(m, x0; flat_rtol=1e-6, flat_escape=true, escape_gain=100.0)
+    @test !("flat" in tiny.history.kind)
+    @test tiny.escapes == 0
+end
+
 @testset "negative curvature does not starve the step that closes the gap" begin
     # Maximised: -(x - 3)^2/2 + y^2/2 - y^4/4, from beside the saddle in y with
     # three units still to go in x -- a gap of 4.5 in the trusted direction.
