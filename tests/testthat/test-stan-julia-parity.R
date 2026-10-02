@@ -763,8 +763,12 @@ test_that("which directions are named does not depend on how far the optimiser w
   # 2026-09-27 -- see the test above), it runs past the ridge into a
   # different, unidentified corner and names NONE of the parameters the full
   # fit names -- measured, not assumed.
+  # Since the diagonal L-BFGS scaling became the default (2026-10-02),
+  # `newton = FALSE` alone stopped only 0.037 raw units from the full fit on
+  # Windows; with the scalar scale as well it walks the ridge by another path,
+  # which is all this test needs of it -- a second stopping point.
   full <- .parity_julia_fit()
-  early <- .parity_julia_fit(list(newton = FALSE))
+  early <- .parity_julia_fit(list(newton = FALSE, lbfgs_diagonal = FALSE))
   # Two different stopping points, or this compares a fit with itself.
   expect_gt(max(abs(early$estimate$raw - full$estimate$raw)), 0.05)
 

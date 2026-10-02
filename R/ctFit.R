@@ -793,12 +793,13 @@ T0VARredundancies <- function(ctm) {
 #' \code{callback}, \code{saveEffects}, \code{progress}, \code{batch},
 #' \code{newton}, \code{restarts}, \code{restartsd}, \code{lbfgs_diagonal},
 #' \code{lbfgs_gll}, \code{lbfgs_nonmonotone} and
-#' \code{tipredMissingIncludeOutcome}. \code{lbfgs_diagonal = TRUE} gives
-#' L-BFGS's initial inverse Hessian a scale per parameter, learned from the
-#' curvature pairs (Gilbert and Lemarechal's diagonal update), instead of one
-#' scale for all; on large models whose parameters are determined on very
-#' different scales it can be much faster, and like \code{stochastic} it can
-#' carry a fit further toward a degenerate limit. \code{lbfgs_gll = W} lets the line
+#' \code{tipredMissingIncludeOutcome}. \code{lbfgs_diagonal} (TRUE by
+#' default) gives L-BFGS's initial inverse Hessian a scale per parameter,
+#' learned from the curvature pairs (Gilbert and Lemarechal's diagonal update);
+#' FALSE uses one scale for all, which on large models whose parameters are
+#' determined on very different scales can be much slower. Like
+#' \code{stochastic}, the per-parameter scale can carry a fit further toward a
+#' degenerate limit. \code{lbfgs_gll = W} lets the line
 #' search accept a step against the worst of the last \code{W} objective values
 #' (Grippo, Lampariello and Lucidi), so a step may cross a curved valley; 0,
 #' the default, compares with the last. \code{lbfgs_nonmonotone} (between 0,
