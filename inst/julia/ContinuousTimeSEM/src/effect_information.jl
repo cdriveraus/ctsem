@@ -117,8 +117,7 @@ function _effect_information_unit!(laplace::CTSEMLaplaceObjective, U::Int,
     # it, and before the factorization below, which shifts the diagonal of a
     # curvature it has to repair.
     if !_laplace_exceeds_identity(M, blocks)
-        mins[U] = d > _LAPLACE_EIGEN_MAXDIM[] ? NaN :
-            _ctsem_symeig(_laplace_block_dense(M, blocks, d)).values[1]
+        mins[U] = _laplace_min_eigenvalue(M, blocks, d)
     end
     factored = _laplace_factor_repaired!(M, blocks)
     factored.ok || return nothing

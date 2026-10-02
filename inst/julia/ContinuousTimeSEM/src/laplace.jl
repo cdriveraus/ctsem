@@ -2796,11 +2796,10 @@ end
 
 """
 Largest unit dimension decomposed densely: by the gated floor to find its soft
-direction, and by `ctsem_laplace_conditioning` to report its smallest
-eigenvalue. A wider unit keeps the total floor under `:gated`, and is reported
-as `NaN` by the conditioning, because a dense eigendecomposition of a
-block-sparse unit curvature is `O(d^3)` and fills in what the block
-elimination keeps sparse.
+direction, and by `_laplace_min_eigenvalue` for the reports. A wider unit keeps
+the total floor under `:gated` -- a dense eigendecomposition of a block-sparse
+unit curvature is `O(d^3)` and fills in what the block elimination keeps sparse
+-- and its smallest eigenvalue is found by bisection on the inertia instead.
 """
 const _LAPLACE_EIGEN_MAXDIM = Ref(64)
 
@@ -2859,6 +2858,103 @@ function _laplace_exceeds_identity(M::CTSEMBlockMatrix{T},
     end
     ok, _, _, _ = _laplace_block_factor(shifted, blocks)
     return ok
+end
+
+"""
+    _laplace_count_below(M, blocks, shift)
+
+How many eigenvalues of `M` lie below `shift`: the inertia of `M - shift I`,
+by Sylvester's law of inertia, read off the same innermost-first elimination
+`_laplace_block_factor` performs. The elimination is a congruence with a block
+unit-triangular matrix, so `M - shift I` and the block diagonal of eliminated
+pivots have the same inertia; each pivot is decomposed by `_ctsem_symeig`
+rather than Cholesky-factored, so an indefinite one is counted instead of
+refused. `nothing` when a pivot is singular to working precision -- `shift` is
+an eigenvalue there, and the caller treats it as one.
+"""
+function _laplace_count_below(M::CTSEMBlockMatrix{Float64},
+    blocks::Vector{CTSEMLaplaceBlock}, shift::Real)
+    nb = length(blocks)
+    diag = [Matrix{Float64}(d) for d in M.diag]
+    for d in diag
+        for i in axes(d, 1); d[i, i] -= shift; end
+    end
+    coupling = [[Matrix{Float64}(c) for c in row] for row in M.coupling]
+    count = 0
+    for b in 1:nb
+        E = _ctsem_symeig(diag[b])
+        scale = max(maximum(abs, E.values; init=0.0), 1.0)
+        any(v -> abs(v) <= 1e-13 * scale, E.values) && return nothing
+        count += Base.count(<(0.0), E.values)
+        ancestors = blocks[b].ancestors
+        isempty(ancestors) && continue
+        Dinv = E.vectors * Diagonal(1 ./ E.values) * transpose(E.vectors)
+        W = [Dinv * coupling[b][t] for t in eachindex(ancestors)]
+        for t in eachindex(ancestors)
+            a = ancestors[t]
+            diag[a] .-= _laplace_symmetrise(transpose(coupling[b][t]) * W[t])
+            for s in eachindex(ancestors)
+                s == t && continue
+                slot = findfirst(==(ancestors[s]), blocks[a].ancestors)
+                slot === nothing && continue
+                coupling[a][slot] .-= transpose(coupling[b][t]) * W[s]
+            end
+        end
+    end
+    return count
+end
+
+"""
+    _laplace_min_eigenvalue(M, blocks, d; rtol)
+
+The smallest eigenvalue of a unit's curvature, for the reports. A unit up to
+`_LAPLACE_EIGEN_MAXDIM` wide is decomposed densely by `_ctsem_symeig`; a wider
+one by bisection on `_laplace_count_below`, which needs only block eliminations
+-- no fill-in, `O(sum_b k_b^3)` each, every width -- to relative precision
+`rtol`. The bisection halves from 1 until no eigenvalue lies below (doubling
+downwards first if one is negative), then narrows geometrically.
+
+Wide units used to be reported as `NaN`, which the fit's print counts as below
+the prior's but never as near-singular: on the SNSF pilot a study unit of 93
+coordinates reached an eigenvalue of 2.5e-4 while the print said nothing
+(`CT-SEM/review/LAPLACE-nested-spike-2026-10-02.md`).
+"""
+function _laplace_min_eigenvalue(M::CTSEMBlockMatrix{Float64},
+    blocks::Vector{CTSEMLaplaceBlock}, d::Integer; rtol::Real=1e-4)
+    d == 0 && return Inf
+    d <= _LAPLACE_EIGEN_MAXDIM[] &&
+        return _ctsem_symeig(_laplace_block_dense(M, blocks, d)).values[1]
+    below(s) = (c = _laplace_count_below(M, blocks, s); c === nothing || c > 0)
+    hi = 1.0
+    below(hi) || return Inf
+    lo = 0.0
+    if below(0.0)
+        # An eigenvalue at or below zero: walk down until none is below.
+        step = 1.0
+        lo = -step
+        while below(lo)
+            hi = lo
+            step *= 2
+            lo = -step
+            step > 1e12 && return -Inf
+        end
+    else
+        # Halve until nothing is below, so a tiny positive eigenvalue is
+        # bracketed in relative terms before the geometric narrowing.
+        s = hi / 2
+        while below(s)
+            hi = s
+            s /= 2
+            s < 1e-14 && return s
+        end
+        lo = s
+    end
+    for _ in 1:200
+        (hi - lo) <= rtol * max(abs(hi), abs(lo)) && break
+        mid = (lo > 0 && hi > 0) ? sqrt(lo * hi) : (lo + hi) / 2
+        below(mid) ? (hi = mid) : (lo = mid)
+    end
+    return (lo + hi) / 2
 end
 
 ################################################################################
@@ -4959,14 +5055,15 @@ the total prior floor does not engage while the other eigenvalues keep
 `CT-SEM/review/LAPLACE-eigenwise-floor-2026-09-23.md`.
 
 Report-time only, and it changes nothing: it rebuilds each unit's curvature
-once, tests `M - I` with the block factorization (no fill-in), and
-decomposes densely only the units that fail that test and are no wider than
-`_LAPLACE_EIGEN_MAXDIM`. Returns
+once, tests `M - I` with the block factorization (no fill-in), and finds the
+smallest eigenvalue only of the units that fail that test, by
+`_laplace_min_eigenvalue` -- densely up to `_LAPLACE_EIGEN_MAXDIM`, by
+bisection on the inertia above it. Returns
 
   * `min_eigenvalue`, per unit: the smallest eigenvalue where the test
     failed, `Inf` where it passed (every eigenvalue above one, not computed),
-    and `NaN` for a failed unit too wide to decompose;
-  * `below_one`, units with an eigenvalue below one (undecomposed failures
+    and `NaN` where the curvature is not finite;
+  * `below_one`, units with an eigenvalue below one (non-finite ones
     included);
   * `near_singular`, units whose smallest eigenvalue is below 0.05.
 """
@@ -4984,12 +5081,7 @@ function ctsem_laplace_conditioning(laplace::CTSEMLaplaceObjective)
             M = _laplace_unit_curvature(laplace, U, theta, Ls, u)
             all(d -> all(isfinite, d), M.diag) || (mins[U] = NaN; continue)
             _laplace_exceeds_identity(M, blocks) && continue
-            d = length(u)
-            if d > _LAPLACE_EIGEN_MAXDIM[]
-                mins[U] = NaN
-                continue
-            end
-            mins[U] = _ctsem_symeig(_laplace_block_dense(M, blocks, d)).values[1]
+            mins[U] = _laplace_min_eigenvalue(M, blocks, length(u))
         end
     end
     return (min_eigenvalue=mins,
