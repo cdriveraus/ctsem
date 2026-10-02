@@ -2444,6 +2444,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # did not run.
         saem_iterations=saem_result === nothing ? 0 : saem_result.iterations,
         saem_burnin=saem_result === nothing ? 0 : saem_result.burnin,
+        saem_settled=saem_result === nothing ? false : saem_result.settled,
         saem_acceptance=saem_result === nothing ? NaN : saem_result.acceptance,
         saem_trace=saem_result === nothing ? nothing : saem_result.trace,
         # The point the in-flight probe found, so the caller resuming from it

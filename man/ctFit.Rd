@@ -303,8 +303,10 @@ cap (\code{TRUE} is 3000). It runs in parallel over units and, within a
 unit, over its subjects, within \code{cores}, and \code{set.seed()}
 reproduces it at a given \code{cores}. On large multilevel models, where
 the quasi-Newton optimizer can be slow, it can reach the neighbourhood of
-the optimum much faster. \code{fit$optim$saem_iterations},
-\code{saem_burnin}, \code{saem_acceptance} and \code{saem_trace} record
+the optimum much faster, though such a model may want more than 3000
+iterations; the fit says so when SAEM's burn-in had not levelled off.
+\code{fit$optim$saem_iterations}, \code{saem_burnin},
+\code{saem_settled}, \code{saem_acceptance} and \code{saem_trace} record
 the phase; the trace's \code{logpost_complete} is the complete-data log
 posterior, which is not on the Laplace objective's scale.
 

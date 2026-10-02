@@ -143,6 +143,7 @@ end
     se = sqrt.(diag(inv(Symmetric(-H))))
     run = ctsem_saem(mk(), start .+ 0.3; maxiter=1500, seed=2)
     @test run.burnin > 0
+    @test run.settled
     @test run.averaged > 0
     # The average is within a third of a standard error of the exact mode in
     # every coordinate: SAEM's Monte Carlo error is small beside the
@@ -180,4 +181,40 @@ end
     finally
         ctsem_set_max_chunks!(previous)
     end
+end
+
+# Three subject-level effects at rank one: loadings at raw 6-8, no scales.
+_saem_reduced() = (ctsem_laplace_objective(_saem_prior_objective(8);
+    re_index=[1, 2, 5], sd_index=Int[], cor_index=Int[], sd_scale=[1.0, 1.0, 1.0],
+    level_nre=[3], group=collect(1:6), level_ngroups=[6], level_rank=[1],
+    load_index=[6, 7, 8]), [0.2, -0.1, 0.3, -0.2, 0.05, 0.6, 0.4, 0.3])
+
+@testset "SAEM: the expansion step leaves every member's likelihood where it was" begin
+    for (name, fresh) in (("two levels, full rank", _fresh_twolevel),
+                          ("one level, reduced rank", _saem_reduced))
+        laplace, values = fresh()
+        st = ctsem_saem_init(laplace, values; seed=1)
+        # Draws away from the modes, parameters where they were (gamma = 0).
+        for _ in 1:5
+            ctsem_saem_step!(st, laplace; gamma=0.0)
+        end
+        total() = sum(_unit_loglik(laplace, U, st.theta, st.u[U])
+                      for U in eachindex(laplace.units.members))
+        before = total()
+        theta0 = copy(st.theta)
+        _S._saem_expand!(st, laplace)
+        @test total() ≈ before rtol = 1e-10
+        @test st.theta != theta0
+    end
+end
+
+@testset "SAEM: fixed point under a reduced-rank level" begin
+    laplace, values = _saem_reduced()
+    plain = ctsem_laplace_optimize(laplace, values; maxiter=500, progress=false)
+    run = ctsem_saem(_saem_reduced()[1], values; maxiter=1500, seed=6)
+    # The covariance, not the loadings: a rank-one loading's sign is not
+    # identified, and either sign is the same model.
+    cov_of(x) = ctsem_laplace_popcov(laplace, x, 1)
+    @test isapprox(cov_of(run.minimizer), cov_of(plain.minimizer); rtol=0.15, atol=0.02)
+    @test isapprox(run.minimizer[1:5], plain.minimizer[1:5]; atol=0.1)
 end

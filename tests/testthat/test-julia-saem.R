@@ -38,6 +38,7 @@ test_that("a saem fit ends at the Laplace fit's optimum and records its phase", 
   expect_gt(op$saem_iterations, 0L)
   expect_lte(op$saem_iterations, 400L)
   expect_gt(op$saem_burnin, 0L)
+  expect_type(op$saem_settled, "logical")
   expect_true(op$saem_acceptance > 0.05 && op$saem_acceptance < 0.9)
   tr <- op$saem_trace
   expect_s3_class(tr, "data.frame")
