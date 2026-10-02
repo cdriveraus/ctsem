@@ -270,3 +270,36 @@ end
         end
     end
 end
+
+# The reduced-rank loading step's factor: without a prior the closed form
+# chol(S / G); with one, a stationary point of the same objective.
+@testset "SAEM: the loading factor maximises its objective" begin
+    rng = Random.Xoshiro(3)
+    r, k, G = 2, 4, 30
+    U = randn(rng, r, G) .* [1.3, 0.7]
+    S = U * transpose(U)
+    R = zeros(k, r)
+    for q in 1:r, p in q:k
+        R[p, q] = 0.5 + 0.1 * (p + q)
+    end
+    A0 = Matrix(cholesky(Symmetric(S ./ G)).L)
+    @test _S._saem_loading_factor(A0, S, R, zeros(k, r), G) ≈ A0 atol = 1e-8
+    D = zeros(k, r)
+    for q in 1:r, p in q:k
+        D[p, q] = 4.0
+    end
+    A = _S._saem_loading_factor(A0, S, R, D, G)
+    idx = [(p, q) for q in 1:r for p in q:r]
+    f(x) = begin
+        B = zeros(eltype(x), r, r)
+        for (j, (p, q)) in enumerate(idx)
+            B[p, q] = x[j]
+        end
+        Binv = inv(LowerTriangular(B))
+        -G * sum(a -> log(abs(a)), diag(B)) - tr(Binv * S * transpose(Binv)) / 2 -
+            sum(D .* (R * B) .^ 2) / 2
+    end
+    x = [A[p, q] for (p, q) in idx]
+    @test maximum(abs, ForwardDiff.gradient(f, x)) < 1e-6
+    @test f(x) > f([A0[p, q] for (p, q) in idx])
+end

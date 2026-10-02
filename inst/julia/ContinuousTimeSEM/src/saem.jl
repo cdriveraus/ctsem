@@ -418,8 +418,9 @@ Per level, over its groups and every chain (a chain's draws weigh 1/chains):
   `L u` held fixed, in raw coordinates through `_laplace_popchol` and its
   derivatives, so whatever the covariance transform, and the effects
   re-expressed as `L(phi)^-1 L u`;
-* the loadings, reduced rank: `L <- L chol(S)`, `S` the mean of `u u'`, which
-  keeps the column space, and `u <- chol(S)^-1 u`.
+* the loadings, reduced rank: `L <- L A`, which keeps the column space, and
+  `u <- A^-1 u`, with `A = chol(S)` for `S` the mean of `u u'`, or with the
+  loadings' prior when they carry one (`_saem_centre_loadings!`).
 
 Every member's shifted parameters, so its likelihood, are left where they
 were; the proposal shapes are carried into the new coordinates.
@@ -521,7 +522,7 @@ function _saem_centre_scale!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
     moved = false
     for _ in 1:25
         L = LowerTriangular(_laplace_popchol(theta, level))
-        dL = _laplace_level_chol_derivatives(theta, spec)[l]
+        dL = _laplace_level_chol_derivatives(theta, spec, l)
         W = L \ d
         S = (W * transpose(W)) ./ K
         M = [Matrix(L \ dL[t]) for t in 1:np]
@@ -557,15 +558,15 @@ end
 """
     _saem_centre_loadings!(st, laplace, l, sites, cols, prec)
 
-Reduced-rank level `l`: `L <- L A` with `A A' = S`, the chain-averaged mean of
-`u u'`, the exact maximiser of the effects' Gaussian log likelihood at fixed
-deviations within the loadings' column space. Left alone where the loadings
-carry a prior, which this closed form does not include. Returns `A^-1`.
+Reduced-rank level `l`: `L <- L A`, `A` lower triangular, which keeps the
+loadings' column space, and `u <- A^-1 u`, with `A` maximising the effects'
+Gaussian log likelihood at fixed deviations plus the loadings' prior. Without
+a prior that is `A A' = S`, `S` the chain-averaged mean of `u u'`; with one,
+Newton on `A`'s entries from there (`_saem_loading_factor`). Returns `A^-1`.
 """
 function _saem_centre_loadings!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
     l::Integer, sites, cols, prec::Vector{Float64})
     level = laplace.spec.levels[l]
-    any(>(0), prec[level.load_index]) && return nothing
     K = st.chains
     G = length(sites)
     k = nrandomeffects(level)
@@ -576,15 +577,21 @@ function _saem_centre_loadings!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjecti
         v = st.u[U][c][cols(U, b)]
         S .+= v * transpose(v)
     end
-    S ./= G * K
-    F = cholesky(Symmetric(S); check=false)
+    S ./= K
+    F = cholesky(Symmetric(S ./ G); check=false)
     issuccess(F) || return nothing
     A = Matrix(F.L)
     R = zeros(k, r)
+    D = zeros(k, r)
     counter = 0
     for q in 1:r, p in q:k
         counter += 1
         R[p, q] = st.theta[level.load_index[counter]]
+        D[p, q] = prec[level.load_index[counter]]
+    end
+    if any(>(0), D)
+        A = _saem_loading_factor(A, S, R, D, G)
+        A === nothing && return nothing
     end
     R = R * A
     counter = 0
@@ -593,6 +600,60 @@ function _saem_centre_loadings!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjecti
         st.theta[level.load_index[counter]] = R[p, q]
     end
     return Matrix(inv(LowerTriangular(A)))
+end
+
+"""
+    _saem_loading_factor(A0, S, R, D, G)
+
+The lower-triangular `A` maximising
+`-G log|det A| - tr(A^-1 S A^-T) / 2 - sum(D .* (R A).^2) / 2`: the
+log likelihood of `G` groups' deviations `L u` (summed second moment `S` of
+the `u`) under the loadings `L A`, plus a Gaussian prior of precision `D` on
+the raw loadings `R A`. Newton on `A`'s `r (r + 1) / 2` entries with a halving
+line search, from `A0`. `nothing` where no step could be taken from the start.
+"""
+function _saem_loading_factor(A0::Matrix{Float64}, S::Matrix{Float64},
+    R::Matrix{Float64}, D::Matrix{Float64}, G::Integer)
+    r = size(A0, 1)
+    idx = [(p, q) for q in 1:r for p in q:r]
+    function unpack(x)
+        A = zeros(eltype(x), r, r)
+        for (j, (p, q)) in enumerate(idx)
+            A[p, q] = x[j]
+        end
+        return A
+    end
+    function f(x)
+        A = unpack(x)
+        any(iszero, diag(A)) && return oftype(x[1], -Inf)
+        Ainv = inv(LowerTriangular(A))
+        return -G * sum(a -> log(abs(a)), diag(A)) - tr(Ainv * S * transpose(Ainv)) / 2 -
+            sum(D .* (R * A) .^ 2) / 2
+    end
+    x = [A0[p, q] for (p, q) in idx]
+    fx = f(x)
+    isfinite(fx) || return nothing
+    for _ in 1:25
+        g = ForwardDiff.gradient(f, x)
+        H = ForwardDiff.hessian(f, x)
+        F = cholesky(Symmetric(-H); check=false)
+        step = issuccess(F) ? F \ g : g ./ (abs.(diag(H)) .+ 1.0)
+        slope = dot(g, step)
+        (all(isfinite, step) && slope > 0) || break
+        t = 1.0
+        moved = false
+        for _ in 1:30
+            trial = x .+ t .* step
+            ft = f(trial)
+            if isfinite(ft) && ft >= fx + 1e-4 * t * slope
+                x = trial; fx = ft; moved = true
+                break
+            end
+            t /= 2
+        end
+        (moved && maximum(abs, t .* step) > 1e-10) || break
+    end
+    return Matrix{Float64}(unpack(x))
 end
 
 """Fifty units' worth of chains: `cld(50, nunits)`, between one and eight."""
