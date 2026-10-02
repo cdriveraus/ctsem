@@ -253,6 +253,10 @@
       "term -- it augments the latent state instead. Drop it")),
   # SAEM, julia only: the random effects julia's Laplace route integrates are
   # sampled instead (saem.jl). FALSE describes what stan does.
+  saem_proposal = list(only = 'julia',
+    inert = function(v) FALSE,
+    msg = paste0("chooses the proposal of the julia engine's SAEM phase, and ",
+      "stan has no SAEM. Drop it")),
   saem = list(only = 'julia',
     inert = function(v) isFALSE(v),
     msg = paste0("runs the julia engine's SAEM phase, which samples the random ",
@@ -793,18 +797,20 @@ T0VARredundancies <- function(ctm) {
 #' for the exact marginal posterior mode and cannot climb an error of the
 #' approximation -- such as the over-credit Laplace gives a unit whose
 #' random-effect posterior is flat-topped. Its averaged point is then polished
-#' by the usual optimizer and certified as usual. It has no burn-in or
-#' averaging settings: each parameter's step shrinks once that parameter
-#' oscillates (Kesten's rule), the estimate averages the last half of the
-#' iterations, and SAEM stops when that estimate drifts by less than a tenth
-#' of a standard error per parameter. A number caps its iterations
+#' by the usual optimizer and certified as usual. It has no burn-in, averaging
+#' or step-size settings: every step is a full one, alternating between holding
+#' the standardised random effects fixed and holding the effects themselves
+#' fixed, so population means and scales move quickly whether the data say much
+#' or little about each subject; the estimate averages the last half of the
+#' iterations, and SAEM stops once the iterations no longer drift beyond their
+#' own Monte Carlo noise. A number caps its iterations
 #' (\code{TRUE} is 10000); the fit says so if the cap came first. Models with
 #' few units run several chains per unit. It runs in parallel over units,
 #' chains and, within a unit, its subjects, within \code{cores}, and
 #' \code{set.seed()} reproduces it at a given \code{cores}. On large multilevel
 #' models, where the quasi-Newton optimizer can be slow, it can reach the
 #' neighbourhood of the optimum much faster.
-#' \code{fit$optim$saem_iterations}, \code{saem_settled}, \code{saem_drift},
+#' \code{fit$optim$saem_iterations}, \code{saem_settled}, \code{saem_trend},
 #' \code{saem_chains}, \code{saem_acceptance} and \code{saem_trace} record
 #' the phase; the trace's \code{logpost_complete} is the complete-data log
 #' posterior, which is not on the Laplace objective's scale.

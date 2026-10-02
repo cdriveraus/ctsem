@@ -4483,6 +4483,15 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     common$saem <- TRUE
     common$saem_maxiter <- saem
     common$saem_seed <- sample.int(.Machine$integer.max, 1L)
+    # 'laplace': each subject also takes f-SAEM's independence move from its
+    # conditional Laplace approximation (`_saem_independence_move!`).
+    if (!is.null(optimcontrol$saem_proposal)) {
+      proposal <- as.character(optimcontrol$saem_proposal)[1L]
+      if (!proposal %in% c("rw", "laplace")) {
+        stop("optimcontrol$saem_proposal must be 'rw' or 'laplace'.", call. = FALSE)
+      }
+      common$saem_proposal <- proposal
+    }
   }
   # A stage resumed after a certification found the point short of a maximum
   # (`.ctBackendCorrectResult()`): the progress the fit made before it, so its
@@ -4578,8 +4587,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   common$saem <- NULL
   common$saem_maxiter <- NULL
   common$saem_seed <- NULL
+  common$saem_proposal <- NULL
   saem_record <- lapply(stats::setNames(nm = c("saem_iterations", "saem_settled",
-    "saem_drift", "saem_chains", "saem_acceptance", "saem_trace")),
+    "saem_trend", "saem_chains", "saem_acceptance", "saem_trace")),
     function(nm) result[[nm]])
   # A run that reached its cap with the estimate still moving: the point the
   # optimiser continued from is short of where SAEM was going.
@@ -5417,15 +5427,16 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # Iterations of the sgd phase (`optimcontrol$stochastic`), 0 when none ran.
     sgd_iterations = if (is.null(result$sgd_iterations)) 0L else
       as.integer(result$sgd_iterations),
-    # The SAEM phase (`optimcontrol$saem`): its iterations, where its burn-in
-    # ended, its mean acceptance rate, and its trace -- the complete-data log
-    # posterior, which is not on the Laplace objective's scale, the score norm,
-    # the step size and largest step, and the acceptance rate, per iteration.
+    # The SAEM phase (`optimcontrol$saem`): its iterations, whether it stopped
+    # on its trend rule and the trend there, its chains, its mean acceptance
+    # rate, and its trace -- the complete-data log posterior, which is not on
+    # the Laplace objective's scale, the score norm, the largest step, the
+    # acceptance rate and the trend, per iteration.
     saem_iterations = if (is.null(result$saem_iterations)) 0L else
       as.integer(result$saem_iterations),
     saem_settled = isTRUE(result$saem_settled),
-    saem_drift = if (is.null(result$saem_drift)) NA_real_ else
-      as.numeric(result$saem_drift),
+    saem_trend = if (is.null(result$saem_trend)) NA_real_ else
+      as.numeric(result$saem_trend),
     saem_chains = if (is.null(result$saem_chains)) 0L else
       as.integer(result$saem_chains),
     saem_acceptance = if (is.null(result$saem_acceptance)) NA_real_ else

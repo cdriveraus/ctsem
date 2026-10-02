@@ -28,7 +28,7 @@ function _saem_prior_objective(npar)
 end
 
 """E-step only, at fixed theta: `n` sweeps of unit `U`, the draws as columns."""
-function _saem_estep_draws(laplace, values, U, n; seed=1)
+function _saem_estep_draws(laplace, values, U, n; seed=1, independence=false)
     st = ctsem_saem_init(laplace, values; seed=seed)
     Ls = _S._laplace_popchols(st.theta, laplace.spec)
     d = length(st.u[U][1])
@@ -37,7 +37,8 @@ function _saem_estep_draws(laplace, values, U, n; seed=1)
         st.iteration += 1
         _S._laplace_parallel(laplace, [U]) do U
             (k % 25 == 0) && _S._saem_refresh!(st, laplace, U, Ls)
-            _S._saem_sweep!(st, laplace, U, 1, Ls, 1, 1 / (1 + k)^0.6)
+            _S._saem_sweep!(st, laplace, U, 1, Ls, 1, 1 / (1 + k)^0.6;
+                independence=independence)
             true
         end
         draws[:, k] = st.u[U][1]
@@ -74,15 +75,16 @@ end
     end
 end
 
-@testset "SAEM: E-step draws the exact conditional ($name)" for (name, fresh) in (
+@testset "SAEM: E-step draws the exact conditional ($name, $kernel)" for (name, fresh) in (
         ("one level", _fresh_linear), ("two levels", _fresh_twolevel),
-        ("three levels", _fresh_threelevel))
+        ("three levels", _fresh_threelevel)), kernel in ("random walk", "with independence moves")
     laplace, values = fresh()
     U = 1
     mode, Sigma = _saem_exact_conditional(laplace, values, U)
     sd = sqrt.(diag(Sigma))
     errs = map((4000, 16000)) do n
-        draws, st = _saem_estep_draws(laplace, values, U, n + 500; seed=7)
+        draws, st = _saem_estep_draws(laplace, values, U, n + 500; seed=7,
+            independence=(kernel != "random walk"))
         x = draws[:, 501:end]
         m = vec(mean(x; dims=2))
         C = cov(x; dims=2)
@@ -91,7 +93,7 @@ end
          cor=maximum(abs.(cov2cor(C) .- cov2cor(Sigma))),
          acc=_S._saem_acceptance(st))
     end
-    @info "SAEM E-step moments ($name)" errs
+    @info "SAEM E-step moments ($name, $kernel)" errs
     # At the larger count: means within a tenth of a posterior sd, variances
     # within 15%, correlations within 0.1 -- and none of them worse than at
     # the smaller count by more than its own sampling error would allow.
@@ -144,14 +146,10 @@ end
     H = ctsem_laplace_hessian(mk(), mode)
     se = sqrt.(diag(inv(Symmetric(-H))))
     run = ctsem_saem(mk(), start .+ 0.3; seed=2)
-    # Settled on the drift rule, well inside the cap, with Kesten's steps
-    # smaller at the end than at the start and never growing.
+    # Settled on the trend rule, well inside the cap.
     @test run.settled
     @test run.iterations < 10000
-    @test run.trace.gamma[1] == 1
-    @test all(diff(run.trace.gamma) .<= 1e-12)
-    @test run.trace.gamma[end] < 1
-    @test run.drift < 0.01
+    @test run.trend <= _S._saem_trend_null()
     # The average is within a third of a standard error of the exact mode in
     # every coordinate: SAEM's Monte Carlo error is small beside the
     # estimate's own.
@@ -205,7 +203,9 @@ _saem_reduced() = (ctsem_laplace_objective(_saem_prior_objective(8);
     # identified, and either sign is the same model.
     cov_of(x) = ctsem_laplace_popcov(laplace, x, 1)
     @test isapprox(cov_of(run.minimizer), cov_of(plain.minimizer); rtol=0.15, atol=0.02)
-    @test isapprox(run.minimizer[1:5], plain.minimizer[1:5]; atol=0.1)
+    # Every other parameter within a third of its standard error, one by one.
+    se = sqrt.(diag(inv(Symmetric(-ctsem_laplace_hessian(laplace, plain.minimizer)))))
+    @test all(abs.(run.minimizer[1:5] .- plain.minimizer[1:5]) .<= se[1:5] ./ 3)
 end
 
 @testset "SAEM: chains" begin
@@ -218,12 +218,55 @@ end
     for _ in 1:20
         ctsem_saem_step!(st, laplace)
     end
-    # Every chain started at the mode; after twenty iterations no two chains
-    # of a unit hold the same draw.
+    # Every chain started at its own draw; after twenty iterations no two
+    # chains of a unit hold the same one.
     for U in eachindex(laplace.units.members)
         @test length(unique(st.u[U])) == st.chains
     end
     # One chain, asked for, is one chain.
     st1 = ctsem_saem_init(laplace, values; seed=4, chains=1)
     @test st1.chains == 1
+end
+
+# The centred step re-expresses the draws: theta's population means and
+# scales move, and every member's shifted parameters stay exactly where they
+# were, so no likelihood moves -- on one, two and three levels and at reduced
+# rank. And with no prior on a level's means, the step leaves that level's
+# effects averaging zero over its groups and chains, the Gaussian's maximum.
+@testset "SAEM: the centred step leaves every member where it was" begin
+    function shifted_all(st, laplace)
+        Ls = _S._laplace_popchols(st.theta, laplace.spec)
+        [_S._laplace_member_values(st.theta, laplace.spec, Ls, st.u[U][c],
+            laplace.units.offsets[U][m])
+         for U in eachindex(st.u) for c in 1:st.chains
+         for m in eachindex(laplace.units.members[U])]
+    end
+    for (name, fresh) in (("one level", _fresh_linear), ("two levels", _fresh_twolevel),
+                          ("three levels", _fresh_threelevel), ("rank one", _saem_reduced))
+        laplace, values = fresh()
+        st = ctsem_saem_init(laplace, values; seed=3)
+        for _ in 1:15
+            ctsem_saem_step!(st, laplace; centre=false)
+        end
+        pop = reduce(vcat, [_S._laplace_level_positions(laplace.spec, l)
+                            for l in eachindex(laplace.spec.levels)])
+        keep = setdiff(eachindex(st.theta), pop)
+        prec = _S._saem_prior_precision(laplace, length(st.theta))
+        before = shifted_all(st, laplace)
+        theta0 = copy(st.theta)
+        _S._saem_centre!(st, laplace, prec)
+        after = shifted_all(st, laplace)
+        @test st.theta != theta0
+        @test all(isapprox(a[keep], b[keep]; atol=1e-12) for (a, b) in zip(after, before))
+        for (l, level) in enumerate(laplace.spec.levels)
+            all(iszero, prec[level.re_index]) || continue
+            r = _S.nlatent(level)
+            total = zeros(r)
+            for U in eachindex(st.u), blk in laplace.units.blocks[U], c in 1:st.chains
+                blk.level == l || continue
+                total .+= st.u[U][c][(blk.offset + 1):(blk.offset + blk.size)]
+            end
+            @test maximum(abs, total) < 1e-10
+        end
+    end
 end

@@ -1790,6 +1790,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     lbfgs_diagonal::Bool=true, lbfgs_nonmonotone::Real=0.0,
     lbfgs_gll::Integer=0, sgd::Bool=false, sgd_maxiter::Integer=2000, sgd_progress::Real=1e-3,
     saem::Bool=false, saem_maxiter::Integer=10000, saem_seed::Integer=1,
+    saem_proposal::AbstractString="rw",
     progress_overwrite::Bool=true, progress_sink=nothing,
     progress_callback=nothing,
     progress::Bool=verbose, progress_label::AbstractString="optimise",
@@ -2057,7 +2058,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     saem_result = nothing
     if saem
         saem_result = _ctsem_saem_phase(objective, start_values;
-            maxiter=Int(saem_maxiter), seed=Int(saem_seed), progress=progress,
+            maxiter=Int(saem_maxiter), seed=Int(saem_seed),
+            proposal=Symbol(saem_proposal), progress=progress,
             progress_overwrite=progress_overwrite, progress_sink=progress_sink,
             progress_every=progress_every, callback=progress_callback)
         if saem_result !== nothing
@@ -2440,11 +2442,11 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         # The sgd phase's iterations (`sgd`), 0 when it did not run.
         sgd_iterations=sgd_iterations,
         # The SAEM phase (`saem`): its iterations, whether it stopped on its
-        # drift rule and the drift there, its chains, its mean acceptance rate
+        # trend rule and the trend there, its chains, its mean acceptance rate
         # and its own trace; zeros and `nothing` when it did not run.
         saem_iterations=saem_result === nothing ? 0 : saem_result.iterations,
         saem_settled=saem_result === nothing ? false : saem_result.settled,
-        saem_drift=saem_result === nothing ? NaN : saem_result.drift,
+        saem_trend=saem_result === nothing ? NaN : saem_result.trend,
         saem_chains=saem_result === nothing ? 0 : saem_result.chains,
         saem_acceptance=saem_result === nothing ? NaN : saem_result.acceptance,
         saem_trace=saem_result === nothing ? nothing : saem_result.trace,

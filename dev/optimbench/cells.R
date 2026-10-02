@@ -19,6 +19,7 @@
 #                         (ctGenerate replaced as for cf_*)
 #   jflat                 tests/testthat/test-julia-convergence.R
 #   ord4                  a model reported on 2026-09-28 (see there)
+#   bigre                 written for the SAEM comparison, 2026-10-02
 #
 # `bench_problem(model)` returns list(data = function(dataseed), model =
 # function(), routes = allowed routes, idcols = id column(s)). Nothing in here touches the optimiser.
@@ -607,6 +608,57 @@ cov_data <- function(m, seed, nsub = 300L, cintsd = 0.3) {
   d
 }
 
+# ---- bigre: a larger, well-identified multilevel model ----------------------
+# Two latents, three indicators, six correlated random effects (both CINTs,
+# both T0MEANS, both DRIFT diagonals), 200 subjects at 20 irregular,
+# continuous observation times, simulated by exact discretisation. Six
+# effects per subject put an exact quadrature reference out of reach, so it is
+# scored by the Laplace objective.
+
+bigre_model <- function() {
+  m <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 2,
+    n.manifest = 3, manifestNames = c("y1", "y2", "y3"), latentNames = c("eta1", "eta2"),
+    LAMBDA = matrix(c(1, 0, "lam31", 0, 1, "lam32"), 3, 2),
+    MANIFESTMEANS = matrix(0, 3, 1), CINT = matrix(c("cint1", "cint2")), silent = TRUE)))
+  p <- m$pars
+  p$indvarying <- FALSE
+  p$indvarying[(p$matrix == "CINT") | (p$matrix == "T0MEANS") |
+    (p$matrix == "DRIFT" & p$row == p$col)] <- TRUE
+  m$pars <- p
+  m
+}
+
+bigre_data <- function(seed = 1, nsub = 200L, nobs = 20L) {
+  set.seed(seed)
+  k <- 6
+  R <- stats::cov2cor(crossprod(matrix(stats::rnorm(k * k, sd = 0.35), k)) + diag(k))
+  sds <- c(0.5, 0.5, 1, 1, 0.25, 0.25)
+  L <- t(chol(diag(sds) %*% R %*% diag(sds)))
+  mu <- c(0.5, -0.3, 0, 0, log(0.5), log(0.4))
+  G <- matrix(c(0.6, 0.2, 0, 0.5), 2, 2)
+  Q <- G %*% t(G)
+  Lam <- matrix(c(1, 0, 0.6, 0, 1, 0.4), 3, 2)
+  rows <- lapply(seq_len(nsub), function(i) {
+    b <- mu + L %*% stats::rnorm(k)
+    A <- matrix(c(-exp(b[5]), -0.1, 0.2, -exp(b[6])), 2, 2)
+    cint <- b[1:2]
+    times <- c(0, cumsum(exp(stats::rnorm(nobs - 1, 0, 0.5))))
+    eta <- matrix(0, nobs, 2)
+    eta[1, ] <- b[3:4]
+    Qinf <- matrix(solve(kronecker(diag(2), A) + kronecker(A, diag(2)), -c(Q)), 2, 2)
+    for (t in 2:nobs) {
+      dt <- times[t] - times[t - 1]
+      Ad <- expmA(A * dt)
+      bd <- solve(A, (Ad - diag(2)) %*% cint)
+      Qd <- Qinf - Ad %*% Qinf %*% t(Ad)
+      eta[t, ] <- Ad %*% eta[t - 1, ] + bd + t(chol((Qd + t(Qd)) / 2)) %*% stats::rnorm(2)
+    }
+    y <- eta %*% t(Lam) + matrix(stats::rnorm(nobs * 3, 0, 0.4), nobs, 3)
+    data.frame(id = i, time = times, y1 = y[, 1], y2 = y[, 2], y3 = y[, 3])
+  })
+  do.call(rbind, rows)
+}
+
 # ---- the registry ----------------------------------------------------------------
 
 bench_problem <- function(model) {
@@ -666,6 +718,8 @@ bench_problem <- function(model) {
     c("laplace", "augmented", "auto"), datafixed = TRUE))
   if (model == "ord4") return(mk(fixed(function() ord4_data()), ord4_model,
     c("laplace", "auto"), datafixed = TRUE))
+  if (model == "bigre") return(mk(fixed(function() bigre_data(1)), bigre_model,
+    c("laplace", "augmented", "auto"), datafixed = TRUE, reference = FALSE))
   if (grepl("^cov[0-9]+$", model)) {
     m <- as.integer(substring(model, 4))
     # No random effects: every route is the same marginal filter, and there
