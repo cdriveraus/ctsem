@@ -859,7 +859,7 @@ function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     # chains start from its estimate and its chains' effects, and the metric is
     # read there -- rather than from the point handed in.
     placement = saem ? _saem_placement(laplace, collect(Float64, values)[1:Int(npar)];
-        nchains=nchains, seed=seed, nestep=saem_nestep) : nothing
+        nchains=nchains, seed=seed, nestep=saem_nestep, init_scale=init_scale) : nothing
     if placement !== nothing
         values = placement.theta
         starts === nothing && (starts = placement.joint)

@@ -510,8 +510,13 @@
     target_accept = as.numeric(.ctJuliaOr(control$target_accept,
       .ctJuliaOr(control$adapt_delta, 0.8))),
     maxdelta = as.numeric(.ctJuliaOr(control$maxdelta, 1000)),
-    # 2, not 1. Chains are dispersed by drawing from the Laplace approximation,
-    # which has the right shape and the wrong width: Laplace understates spread
+    # How widely the chains' starts are spread about the placement's centre.
+    # Under SAEM's placement (the joint target's default) the spread is one
+    # draw from SAEM's complete-data information, which is narrower than the
+    # posterior by the information the random effects hide; under
+    # `placement = 'fit'` it is one draw from the Laplace approximation.
+    #
+    # 2, not 1? The Laplace draw has the right shape and the wrong width: Laplace understates spread
     # wherever the posterior is skewed or heavy-tailed, which is the case
     # `ctLaplaceCorrect` exists to repair. Starting every chain from that
     # narrower distribution makes R-hat compare chains that began already

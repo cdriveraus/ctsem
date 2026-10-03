@@ -432,6 +432,19 @@ end
     # Without it, nothing is placed and nothing is reported.
     @test ctsem_saem_sample(_saem_reduced()[1], values; nchains=2, nwarmup=5,
         ndraws=5, seed=4).placement === nothing
+    # `init_scale` scales the chains' jitter about SAEM's estimate, as it
+    # scales NUTS's own starts when nothing is placed: the same run, so the
+    # same estimate and the same draw, twice as far out at 2, and every chain
+    # at the estimate at 0. It was accepted and ignored here before.
+    p1 = _S._saem_placement(_saem_reduced()[1], values; nchains=2, seed=4)
+    p2 = _S._saem_placement(_saem_reduced()[1], values; nchains=2, seed=4,
+        init_scale=2.0)
+    p0 = _S._saem_placement(_saem_reduced()[1], values; nchains=2, seed=4,
+        init_scale=0.0)
+    @test p2.theta == p1.theta
+    @test any(p1.pars .!= p1.theta)
+    @test p2.pars .- p2.theta ≈ 2 .* (p1.pars .- p1.theta)
+    @test all(p0.pars .== p0.theta)
     run = ctsem_saem(_saem_reduced()[1], values; seed=2, maxiter=200)
     @test_throws ArgumentError ctsem_saem_sample(_saem_reduced()[1], values; nchains=2,
         nwarmup=5, ndraws=5, saem=true, state=run.state)

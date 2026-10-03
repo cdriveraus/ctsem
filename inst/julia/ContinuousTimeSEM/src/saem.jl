@@ -1501,7 +1501,7 @@ function _saem_joint_point(sampler::CTSEMSampler, theta::AbstractVector, st::CTS
 end
 
 """
-    _saem_placement(laplace, values; nchains, seed, nestep)
+    _saem_placement(laplace, values; nchains, seed, nestep, init_scale)
 
 Where the joint samplers start when asked to (`saem = true`): SAEM from
 `values` to its own stop, on the exact marginal posterior rather than the
@@ -1509,13 +1509,15 @@ Laplace approximation to it, with at least as many chains as the sampler will
 run so each starts from different effects. Its state's draws are then settled
 by `nestep` E-steps at the averaged estimate -- the run ends on its last
 iterate, not on the average it returns. Each chain then starts at the estimate
-jittered by one draw from the state's complete-data information (plus the
-prior), with its own SAEM chain's effects. Returns the estimate, the state,
+jittered by `init_scale` times one draw from the state's complete-data
+information (plus the prior), with its own SAEM chain's effects -- the
+samplers' `init_scale`, which would otherwise have nothing to scale once the
+chains are placed. Returns the estimate, the state,
 the starts (the joint vectors and their parameter parts) and SAEM's
 summary.
 """
 function _saem_placement(laplace::CTSEMLaplaceObjective, values::AbstractVector;
-    nchains::Integer=4, seed::Integer=1, nestep::Integer=50)
+    nchains::Integer=4, seed::Integer=1, nestep::Integer=50, init_scale::Real=1.0)
     t0 = time()
     npar = length(values)
     nunits = length(laplace.units.members)
@@ -1534,7 +1536,7 @@ function _saem_placement(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     joint = zeros(sampler.ndim, nchains)
     pars = zeros(npar, nchains)
     for c in 1:nchains
-        th = theta .+ (R \ randn(rng, npar))
+        th = theta .+ Float64(init_scale) .* (R \ randn(rng, npar))
         pars[:, c] = th
         joint[:, c] = _saem_joint_point(sampler, th, _saem_one_chain(st, c))
     end
@@ -1772,7 +1774,7 @@ function ctsem_saem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVecto
         state === nothing || throw(ArgumentError(
             "saem = true makes its own state; pass state or saem, not both"))
         placement = _saem_placement(laplace, collect(Float64, values)[1:npar];
-            nchains=nchains, seed=seed, nestep=saem_nestep)
+            nchains=nchains, seed=seed, nestep=saem_nestep, init_scale=init_scale)
         values = placement.theta
         state = placement.state
         starts === nothing && (starts = placement.pars)
