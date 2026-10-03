@@ -128,8 +128,13 @@ is then handed to the same runner \code{\link{ctFitUncertainty}} uses for
 \code{uncertainty = 'sample'}, so the two are one pipeline:
 \code{intoverpop='laplace'} and \code{intoverpop='none'} (the \code{FALSE}
 route above) sample the joint posterior over parameters and random effects,
-the Laplace fit serving only to place the chains,
-and \code{\link{ctFitUncertainty}}'s own \code{control$target} entry says
+with the chains placed by SAEM (\code{sampleControl$placement = 'saem'}, the
+default there): the placement fit then stops after the start and the prior
+warm-up, SAEM runs from that point on the exact marginal posterior, and the
+chains start from its estimate and its draws of the random effects, so no
+Laplace optimum is needed (\code{placement = 'fit'} restores the whole
+placement pipeline and its identifiability report). \code{ctFitUncertainty}'s
+own \code{control$target} entry says
 which one a later call on the resulting fit repeats or overrides.}
 
 \item{poprank}{Rank of the population covariance of the individually
@@ -708,7 +713,9 @@ For \code{backend='julia'} it also carries the sampler's own settings:
 \code{target_accept}/\code{adapt_delta} (0.8), \code{maxdelta} (1000),
 \code{init_scale} (1), \code{adapt_metric} (FALSE), \code{adapt_effects}
 (FALSE), \code{sampler} (\code{'nuts'}, or \code{'saem'} for SAEM's kernel on
-the joint posterior), and the effective-sample-size target that decides
+the joint posterior), \code{placement} (\code{'saem'} on the joint posterior,
+where SAEM's state places the chains; \code{'fit'} otherwise), and the
+effective-sample-size target that decides
 when a run stops: \code{minESS} (200, the size the worst parameter must reach),
 \code{rhatTarget} (1.01), \code{meanESS}, \code{maxDraws} and
 \code{settleTol} -- all documented in full under \code{uncertainty =

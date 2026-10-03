@@ -215,6 +215,7 @@
       "for control = list(target = 'marginal') to sample the population ",
       "parameters alone.", call. = FALSE)
   }
+  placement <- .ctBackendPlacementName(control$placement, marginal || isTRUE(state_explicit))
   if (identical(.ctBackendSamplerName(control$sampler), "saem") &&
       (marginal || isTRUE(state_explicit))) {
     stop("control$sampler = 'saem' samples the joint posterior over population ",
@@ -270,7 +271,7 @@
   # difference is not finite.
   sampletarget <- .ctBackendSampleTarget(estimate = estimate, npar = npar,
     marginal = marginal, state_explicit = isTRUE(state_explicit),
-    hessian = fit$uncertainty$hessian)
+    hessian = fit$uncertainty$hessian, placement = placement)
 
   out <- .ctBackendSampleRun(fit, sampletarget, chains = chains, warmup = warmup,
     draws = draws, cores = cores, saveEffects = saveEffects, seed = seed,
@@ -337,6 +338,10 @@
   # vector) or 'saem' (SAEM's sweeps for the effects, NUTS for the parameters
   # given them); read by `.ctBackendSampleControl()`.
   "sampler",
+  # Where the chains start on the joint target: 'saem' (SAEM's own run and
+  # state, the default there) or 'fit' (the fit's estimate); read by
+  # `.ctBackendUncertaintySample()`.
+  "placement",
   "callback")
 
 #' Fold the deprecated sampling arguments into \code{sampleControl}
@@ -449,6 +454,28 @@
     stop("control$sampler must be 'nuts' or 'saem'.", call. = FALSE)
   }
   sampler
+}
+
+# Where the chains start, `control$placement`. 'saem', the default on the joint
+# target, runs SAEM from the fit's estimate (or, under `ctFit(optimize =
+# FALSE)`, from the start and prior warm-up alone) and starts the chains from
+# its state: its estimate, which targets the exact marginal posterior where the
+# fit's optimum targets the Laplace approximation to it, and its chains'
+# effects. 'fit' starts them around the fit's own estimate, as before. A
+# marginal or state-explicit target has no effects to start, and takes 'fit'.
+#' @keywords internal
+.ctBackendPlacementName <- function(placement, marginal) {
+  if (is.null(placement)) return(if (isTRUE(marginal)) "fit" else "saem")
+  if (!is.character(placement) || length(placement) != 1L ||
+      !placement %in% c("saem", "fit")) {
+    stop("control$placement must be 'saem' or 'fit'.", call. = FALSE)
+  }
+  if (isTRUE(marginal) && identical(placement, "saem")) {
+    stop("control$placement = 'saem' starts the chains from SAEM's draws of the ",
+      "random effects, and this run samples the marginal or the latent states, ",
+      "which has none to start. Use placement = 'fit'.", call. = FALSE)
+  }
+  placement
 }
 
 # The sampler settings, from either spelling of the control list.
@@ -596,10 +623,11 @@
 # reverse.
 #' @keywords internal
 .ctBackendSampleTarget <- function(estimate, npar, marginal = FALSE,
-  state_explicit = FALSE, hessian = NULL, gradient = "adjoint") {
+  state_explicit = FALSE, hessian = NULL, gradient = "adjoint", placement = "fit") {
   list(estimate = as.numeric(estimate), npar = as.integer(npar)[1L],
     marginal = isTRUE(marginal), state_explicit = isTRUE(state_explicit),
     hessian = if (is.null(hessian)) NULL else as.matrix(hessian),
+    placement = placement,
     gradient = gradient)
 }
 
@@ -771,6 +799,7 @@
     arguments$npar <- as.integer(target$npar)
     arguments$save_effects <- isTRUE(saveEffects)
     if (!saem) arguments$adapt_effects <- settings$adapt_effects
+    if (identical(target$placement, "saem")) arguments$saem <- TRUE
   } else if (!identical(target$gradient, "adjoint")) {
     # `ctsem_sample_marginal`'s own default is `:adjoint`; only said
     # explicitly when something asked for the other one -- currently only a
@@ -940,7 +969,12 @@
   # The posterior mean, not the mode, is now the point estimate: it is what the
   # draws describe, and leaving `raw` at the mode would make ctKalman() and the
   # system matrices report a different fit from the one summarised.
-  out$estimate$laplace_raw <- as.numeric(startvalues)
+  # Where the chains were placed: SAEM's estimate under `placement = 'saem'`,
+  # the fit's otherwise. `startvalues` stays the fit's estimate, which is where
+  # any Hessian on the fit was taken.
+  placed <- if (!is.null(result$placement$theta))
+    as.numeric(result$placement$theta)[seq_len(npar)] else as.numeric(startvalues)
+  out$estimate$placed_raw <- placed
   out$estimate$raw <- as.numeric(colMeans(posterior))
   out$estimate$cov <- stats::cov(posterior)
   out$estimate$se <- sqrt(diag(out$estimate$cov))
@@ -998,7 +1032,11 @@
     scale_accept = as.numeric(result$scale_accept),
     ncp_accept = as.numeric(result$ncp_accept),
     processes = FALSE,
-    start = as.numeric(startvalues))
+    placement = if (is.null(result$placement)) list(method = "fit") else
+      list(method = "saem", saem_iterations = as.integer(result$placement$saem_iterations),
+        saem_settled = isTRUE(result$placement$saem_settled),
+        saem_seconds = as.numeric(result$placement$saem_secs)),
+    start = placed)
   if (length(out$sample$effect_mean)) {
     out$sample$effectIndex <- .ctBackendEffectIndex(fit)
     labels <- out$sample$effectIndex$label
@@ -1427,6 +1465,18 @@ print.ctSampleDiagnostics <- function(x, ...) {
   placementcontrol <- utils::modifyList(optimcontrol,
     list(laplace_correct = FALSE, uncertainty = "hessian", estonly = FALSE,
       finishsamples = 2L))
+  # When SAEM places the chains (`control$placement = 'saem'`, the default on
+  # the joint target), it runs from this fit's point, so this fit needs only
+  # the start and the prior warm-up: the Laplace approximation's optimum is
+  # not where the exact posterior is, and SAEM is what finds that. No
+  # Hessian, so no identifiability report from a placement optimum either; the
+  # sampler's own flat-region check stands in.
+  jointtarget <- isTRUE(intoverstates) && switch(.ctJuliaOr(control$target, "auto"),
+    joint = TRUE, marginal = FALSE, intoverpop %in% c("laplace", "none"))
+  if (jointtarget && identical(.ctBackendPlacementName(control$placement, FALSE), "saem")) {
+    placementcontrol <- utils::modifyList(placementcontrol,
+      list(estonly = TRUE, maxiter = 0L))
+  }
   placementfit <- .ctJuliaOptimiseFit(model_spec = model_spec, datalong = datalong,
     model = model, prepared_data = prepared_data, inits = inits, cores = cores,
     optimcontrol = placementcontrol, verbose = verbose, priors = priors,

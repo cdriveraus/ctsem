@@ -65,10 +65,15 @@ suppressWarnings(suppressPackageStartupMessages(library(ctsem)))
     optimised <- suppressWarnings(suppressMessages(ctFit(data, model,
       backend = "julia", cores = 1, intoverpop = "laplace", priors = TRUE,
       optimcontrol = list(finishsamples = 20))))
+    # `placement = 'fit'`: the route through the whole placement pipeline,
+    # whose fields this file checks against the optimised route's. Under the
+    # default SAEM placement the placement fit stops after the prior warm-up,
+    # so it has no optimum to report identifiability at (test-julia-sample.R
+    # covers that route).
     sampled <- suppressWarnings(suppressMessages(ctFit(data, model,
       backend = "julia", cores = 1, intoverpop = "laplace", priors = TRUE,
       optimize = FALSE,
-      sampleControl = list(chains = 1, warmup = 25, draws = 25))))
+      sampleControl = list(chains = 1, warmup = 25, draws = 25, placement = "fit"))))
     cached <<- list(optimised = optimised, sampled = sampled)
     cached
   }
@@ -126,9 +131,9 @@ suppressWarnings(suppressPackageStartupMessages(library(ctsem)))
 .SHAPE_OPTIM_SAMPLED_ONLY <- character(0)
 
 .SHAPE_ESTIMATE_SAMPLED_ONLY <- c(
-  # The Laplace point the chain started from, kept so it can be told from the
+  # The point the chains were placed from, kept so it can be told from the
   # posterior mean that replaced it in `$raw`.
-  "laplace_raw")
+  "placed_raw")
 
 test_that("both ctFit routes produce a fit of the same class", {
   skip_without_julia()
@@ -194,7 +199,7 @@ test_that("a sampled fit reports its identifiability findings, not just stores t
   smp <- fits$sampled$identifiability$effects
   expect_identical(opt$point, "at the estimate")
   expect_identical(smp$point, "at the optimum that placed the sampler")
-  expect_equal(smp$values, fits$sampled$estimate$laplace_raw)
+  expect_equal(smp$values, fits$sampled$estimate$placed_raw)
   expect_identical(smp$table$effect, opt$table$effect)
 })
 

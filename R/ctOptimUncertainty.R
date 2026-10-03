@@ -2506,7 +2506,13 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' and scales. Both start from the same draws of the fit's Laplace
 #' approximation and stop by the same rule; \code{adapt_metric},
 #' \code{adapt_effects} and \code{settleTol} belong to the first and are
-#' refused with the second. \code{control$target}
+#' refused with the second. \code{control$placement} says where the chains
+#' start: \code{'saem'}, the default on the joint posterior, runs SAEM from the
+#' fit's estimate -- on the exact marginal posterior, where the fit's optimum is
+#' the Laplace approximation's -- and starts each chain from SAEM's estimate and
+#' its draws of the random effects, for either sampler; \code{'fit'} starts them
+#' around the fit's own estimate, and is the only placement for a marginal
+#' target, which has no random effects to start. \code{control$target}
 #' says which posterior: \code{'auto'} (the default) is the exact posterior
 #' the fit's route can reach -- the joint posterior over population parameters
 #' \emph{and} every subject's random effects for \code{intoverpop =

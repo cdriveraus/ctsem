@@ -58,11 +58,16 @@ test_that("a sampled fit carries draws the summary machinery can read", {
   expect_equal(colnames(sampled$estimate$rawposterior),
     ctsem:::.ctBackendRawParameterNames(fit, npar))
 
-  # The point estimate becomes the posterior mean, and the Laplace estimate it
-  # started from is kept rather than overwritten.
+  # The point estimate becomes the posterior mean, and the point the chains
+  # were placed from is kept rather than overwritten: on the joint target, by
+  # default, SAEM's estimate (it ran from the fit's), with what SAEM did.
   expect_equal(sampled$estimate$raw,
     as.numeric(colMeans(sampled$estimate$rawposterior)))
-  expect_equal(sampled$estimate$laplace_raw, fit$estimate$raw)
+  expect_identical(sampled$sample$placement$method, "saem")
+  expect_gt(sampled$sample$placement$saem_iterations, 0L)
+  expect_length(sampled$estimate$placed_raw, npar)
+  expect_true(all(is.finite(sampled$estimate$placed_raw)))
+  expect_equal(sampled$sample$start, sampled$estimate$placed_raw)
   expect_equal(sampled$estimate$se,
     sqrt(diag(stats::cov(sampled$estimate$rawposterior))))
 
@@ -96,7 +101,7 @@ test_that("the diagnostics come back per parameter and per chain", {
   expect_true(diagnostics$divergent >= 0L)
   expect_length(diagnostics$accept, 2L * diagnostics$draws)
   # The Laplace estimate the chains started from.
-  expect_equal(diagnostics$start, fit$estimate$raw)
+  expect_equal(diagnostics$start, sampled$estimate$placed_raw)
   expect_output(print(diagnostics), "ctsem Hamiltonian sample")
 
   # Everything above is asserted at chains > 1 on purpose, because that is the
@@ -177,7 +182,28 @@ test_that("the SAEM kernel samples the joint posterior through the same runner",
   expect_true(all(d$effect_sd > 0))
   expect_length(d$scale_accept, 2L)
   expect_output(print(d), "SAEM kernel")
-  expect_equal(d$start, fit$estimate$raw)
+  # Placed by SAEM's state by default on the joint target.
+  expect_identical(d$placement$method, "saem")
+  expect_equal(d$start, saem$estimate$placed_raw)
+})
+
+test_that("placement = 'fit' starts the chains around the fit's own estimate", {
+  skip_without_julia()
+  fit <- .sample_fixture()
+  # The old placement, kept as a choice: no SAEM run, the chains drawn around
+  # the fit's estimate.
+  sampled <- suppressWarnings(suppressMessages(
+    ctFitUncertainty(fit, uncertainty = "sample", cores = 1,
+      control = list(chains = 1, warmup = 30, draws = 30, placement = "fit"))))
+  expect_identical(sampled$sample$placement$method, "fit")
+  expect_equal(sampled$estimate$placed_raw, as.numeric(fit$estimate$raw))
+  # A marginal target has no effects for SAEM to start, so the default there
+  # is 'fit', and asking for 'saem' is refused by name.
+  expect_error(ctFitUncertainty(fit, uncertainty = "sample",
+    control = list(target = "marginal", placement = "saem")),
+    "control$placement = 'saem'", fixed = TRUE)
+  expect_error(ctFitUncertainty(fit, uncertainty = "sample",
+    control = list(placement = "laplace")), "'saem' or 'fit'", fixed = TRUE)
 })
 
 test_that("the SAEM kernel is refused by name where it cannot apply", {
@@ -243,14 +269,19 @@ test_that("processes = TRUE reproduces the in-process draws to numerical noise",
   # not bit for bit: measured there at 6.2e-10 on the first draw. A normal
   # warmup lets NUTS's chaos carry the difference to order 1 within a few
   # dozen transitions, which is why this stays at `warmup = 0`.
+  #
+  # `placement = 'fit'`: under the default SAEM placement each worker runs its
+  # own SAEM for its one chain, so the two routes start from different points
+  # and cannot reproduce each other. What this checks -- the pooling and the
+  # streams -- is the same under either placement.
   inprocess <- suppressWarnings(suppressMessages(
     ctFitUncertainty(fit, uncertainty = "sample", cores = 2,
       control = list(chains = 2, warmup = 0, draws = 3, seed = 777,
-        processes = FALSE))))
+        processes = FALSE, placement = "fit"))))
   viaprocess <- suppressWarnings(suppressMessages(
     ctFitUncertainty(fit, uncertainty = "sample", cores = 2,
       control = list(chains = 2, warmup = 0, draws = 3, seed = 777,
-        processes = TRUE))))
+        processes = TRUE, placement = "fit"))))
 
   expect_false(isTRUE(inprocess$sample$processes))
   # If the workers could not be used -- in particular, a `future` worker
@@ -831,7 +862,9 @@ test_that("a sampled fit's Hessian is not reused as curvature at its mean", {
   # `.ctBackendHessian()` reusing the matrix for the mean.
   at <- sampled$uncertainty$evaluated_at
   expect_false(is.null(at))
-  expect_equal(as.numeric(at), as.numeric(sampled$estimate$laplace_raw))
+  # The fit's estimate, where its Hessian was taken -- not SAEM's placement
+  # point, which the chains started from.
+  expect_equal(as.numeric(at), as.numeric(fit$estimate$raw))
   # The premise: the two points really are different, or this guards nothing.
   expect_false(isTRUE(all.equal(as.numeric(at),
     as.numeric(sampled$estimate$raw), tolerance = 1e-8)))
@@ -890,10 +923,13 @@ test_that("a mixed-curvature start is certified before the sampler's metric is b
   skip_if_not(any(ev_before > 1e-6) && any(ev_before < -1e-6),
     "this start is no longer a mixed-curvature point on this engine version; pick a new one")
 
+  # `placement = 'fit'`, the route this is about: under the default SAEM
+  # placement the placement fit stops after the prior warm-up and SAEM moves
+  # the start, so there is no certification to check.
   sampled <- suppressWarnings(suppressMessages(ctFit(data, model,
     backend = "julia", cores = 1, intoverpop = "laplace", priors = TRUE,
     optimize = FALSE, inits = saddle,
-    sampleControl = list(chains = 1, warmup = 20, draws = 20))))
+    sampleControl = list(chains = 1, warmup = 20, draws = 20, placement = "fit"))))
 
   # Certified, not merely run: the placement's own verdict, which is what
   # `$optim$converged` reports on a sampled fit now (decision 5,

@@ -486,6 +486,9 @@
     effect_mean = as.numeric(result$effect_mean),
     effect_sd = as.numeric(result$effect_sd),
     sampler = if (is.null(result$sampler)) "nuts" else as.character(result$sampler),
+    # Each worker placed its own chain; the first worker's placement stands for
+    # the run's in the assembled fit.
+    placement = result$placement,
     scale_accept = as.numeric(result$scale_accept),
     ncp_accept = as.numeric(result$ncp_accept))
 }
@@ -588,6 +591,7 @@
     effect_mean = effectmean, effect_sd = effectsd,
     # Per chain, like the step size.
     sampler = drawn[[1]]$sampler,
+    placement = drawn[[1]]$placement,
     scale_accept = unlist(lapply(drawn, function(d) as.numeric(d$scale_accept))),
     ncp_accept = unlist(lapply(drawn, function(d) as.numeric(d$ncp_accept))))
 
