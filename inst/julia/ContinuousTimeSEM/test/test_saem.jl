@@ -313,29 +313,67 @@ end
     @test f(x) > f([A0[p, q] for (p, q) in idx])
 end
 
-# SAEM's chains continued as a sampler draw the same joint posterior NUTS
-# draws (`ctsem_sample`, validated on its own): means within four Monte Carlo
-# standard errors, standard deviations within ten per cent. On the rank-one
-# fixture, so the loadings' transformation move is in it; measured at 4 x 16000
-# draws within 2.4 se and 5 per cent, and no discrepancy persisted between draw
-# counts.
-@testset "SAEM sampler: the joint posterior NUTS draws" begin
+# The SAEM sampler draws the same joint posterior NUTS draws (`ctsem_sample`,
+# validated on its own): means within four Monte Carlo standard errors,
+# standard deviations within ten per cent, at two draw counts, since a wrong
+# sampler returns a plausible wrong answer whose error does not shrink. Two
+# fixtures, so every move is in it: the rank-one level (the loadings'
+# transformation move), and two nested full-rank levels (the centred and
+# non-centred scale moves, the collapsed moves of a block above a leaf).
+function _saem_against_nuts(mk, values; ndraws)
+    mode = ctsem_laplace_optimize(mk(), values; maxiter=500, progress=false).minimizer
+    nuts = ctsem_sample(mk(), mode; nchains=4, nwarmup=300, ndraws=1500, seed=3)
+    map(ndraws) do n
+        s = ctsem_saem_sample(mk(), mode; nchains=4, nwarmup=300, ndraws=n, seed=7)
+        a = nuts.draws; b = s.draws
+        sa = vec(std(a; dims=2)); sb = vec(std(b; dims=2))
+        mcse = sqrt.(sa .^ 2 ./ nuts.ess .+ sb .^ 2 ./ s.ess)
+        (z=maximum(abs.(vec(mean(b; dims=2)) .- vec(mean(a; dims=2))) ./ mcse),
+         sd=extrema(sb ./ sa), rhat=maximum(s.rhat), sampler=s.sampler,
+         ndraws=s.ndraws, ncp=s.ncp_accept)
+    end
+end
+
+_saem_twolevel() = ctsem_laplace_objective(_saem_prior_objective(9);
+    re_index=[1, 2, 5], sd_index=[6, 7, 9], cor_index=[8], sd_scale=[1.0, 1.0, 1.0],
+    level_nre=[2, 1], group=vcat(1:6, _TWOLEVEL_GROUP), level_ngroups=[6, 3])
+
+@testset "SAEM sampler: the joint posterior NUTS draws ($name)" for (name, mk, values) in (
+        ("rank one", () -> _saem_reduced()[1], _saem_reduced()[2]),
+        ("two full-rank levels", _saem_twolevel,
+         [0.2, -0.1, 0.3, -0.2, 0.05, -0.3, -0.15, 0.4, -0.25]))
+    r = _saem_against_nuts(mk, values; ndraws=(1000, 4000))
+    @info "SAEM sampler against NUTS ($name)" r
+    @test all(x -> x.sampler == "saem", r)
+    # No target: exactly the draws asked for.
+    @test [x.ndraws for x in r] == [1000, 4000]
+    @test r[2].z < 4
+    @test 0.9 < r[2].sd[1] && r[2].sd[2] < 1.1
+    @test r[2].rhat < 1.05
+    # No discrepancy that persists as the draws grow.
+    @test r[2].z < max(4, r[1].z)
+    name == "two full-rank levels" && @test all(isfinite, r[2].ncp)
+end
+
+# The same stopping rule as NUTS (`_sample_until_target`): a target the first
+# batch cannot meet extends the run, within the budget, and the same seed
+# reproduces it whatever the thread count did.
+@testset "SAEM sampler: sampled to a target, and reproducible" begin
     laplace, values = _saem_reduced()
     mode = ctsem_laplace_optimize(laplace, values; maxiter=500, progress=false).minimizer
-    nuts = ctsem_sample(_saem_reduced()[1], mode; nchains=4, nwarmup=300, ndraws=1500, seed=3)
-    run = ctsem_saem(_saem_reduced()[1], values; seed=2)
-    l2 = _saem_reduced()[1]
-    st = ctsem_saem_init(l2, run.minimizer; seed=5)
-    for _ in 1:50
-        ctsem_saem_step!(st, l2; mstep=false)
-    end
-    s = ctsem_saem_sample(l2, st, run.minimizer; nchains=4, nwarmup=300, ndraws=6000, seed=7)
-    a = nuts.draws; b = s.draws
-    sa = vec(std(a; dims=2)); sb = vec(std(b; dims=2))
-    mcse = sqrt.(sa .^ 2 ./ nuts.ess .+ sb .^ 2 ./ s.ess)
-    z = (vec(mean(b; dims=2)) .- vec(mean(a; dims=2))) ./ mcse
-    @info "SAEM sampler against NUTS" maximum(abs, z) extrema(sb ./ sa)
-    @test all(abs.(z) .< 4)
-    @test all(0.9 .< sb ./ sa .< 1.1)
-    @test maximum(s.rhat) < 1.05
+    s = ctsem_saem_sample(_saem_reduced()[1], mode; nchains=2, nwarmup=100,
+        ndraws=40, min_ess=150, max_draws=600, seed=11)
+    @test 40 < s.ndraws <= 600
+    @test size(s.draws, 2) == 2 * s.ndraws
+    @test s.min_ess >= 150 || s.ndraws == 600
+    again = ctsem_saem_sample(_saem_reduced()[1], mode; nchains=2, nwarmup=100,
+        ndraws=40, min_ess=150, max_draws=600, seed=11)
+    @test again.draws == s.draws
+    # The effects' summaries are over the same draws, in the joint layout.
+    sampler = ctsem_sampler(_saem_reduced()[1], length(mode))
+    @test length(s.effect_mean) == sampler.ndim - sampler.npar
+    @test all(isfinite, s.effect_sd)
+    saved = ctsem_saem_sample(_saem_reduced()[1], mode; nchains=2, nwarmup=50,
+        ndraws=30, seed=11, save_effects=true)
+    @test size(saved.draws, 1) == sampler.ndim
 end

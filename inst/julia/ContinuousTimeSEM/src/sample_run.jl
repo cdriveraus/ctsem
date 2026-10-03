@@ -559,12 +559,39 @@ function _sample_to_target(density_for, centre, metric, nchains::Int,
             density_for, resume; progress=verbose, overwrite=overwrite,
             progress_callback=progress_callback, progress_sink=progress_sink)
     end
+    held = Ref(results)
+    extend! = function (wanted, attempt)
+        held[] = _merge_chains(held[],
+            _continue_chains(nchains, parallel, seed + 1000 * attempt, wanted,
+                maxdepth, maxdelta, density_for, held[]; progress=verbose,
+                overwrite=overwrite, progress_callback=progress_callback,
+                progress_sink=progress_sink))
+        return nothing
+    end
+    total = _sample_until_target(() -> _pool_draws(held[], npar), extend!, nchains,
+        ndraws, min_ess, mean_ess, max_draws, rhat_target, verbose)
+    return (results=held[], ndraws=total)
+end
+
+"""
+    _sample_until_target(pool, extend!, nchains, ndraws, min_ess, mean_ess,
+        max_draws, rhat_target, verbose)
+
+The stopping rule of `_sample_to_target`, for any sampler whose chains can be
+continued: `pool()` returns the population draws so far (`npar x (nchains *
+total)`, chain-major) and `extend!(wanted, attempt)` continues every chain by
+`wanted` draws with its tuning held fixed. Returns the draws per chain at the
+end. The NUTS chains and the SAEM sampler's (`ctsem_saem_sample`) both stop
+here, so a run means the same thing whichever drew it.
+"""
+function _sample_until_target(pool, extend!, nchains::Int, ndraws::Int,
+    min_ess::Float64, mean_ess::Float64, max_draws::Int, rhat_target::Float64,
+    verbose::Bool)
     total = ndraws
     attempt = 0
     was_met = false
     while min_ess > 0 || mean_ess > 0
-        pooled = _pool_draws(results, npar)
-        diagnostics = ctsem_sample_diagnostics(pooled, nchains)
+        diagnostics = ctsem_sample_diagnostics(pool(), nchains)
         finite_ess = filter(isfinite, diagnostics.ess)
         finite_rhat = filter(isfinite, diagnostics.rhat)
         worst = isempty(finite_ess) ? 0.0 : minimum(finite_ess)
@@ -601,14 +628,10 @@ function _sample_to_target(density_for, centre, metric, nchains::Int,
         wanted = min(wanted, max_draws - total)
         wanted <= 0 && break
         attempt += 1
-        results = _merge_chains(results,
-            _continue_chains(nchains, parallel, seed + 1000 * attempt, wanted,
-                maxdepth, maxdelta, density_for, results; progress=verbose,
-                overwrite=overwrite, progress_callback=progress_callback,
-                progress_sink=progress_sink))
+        extend!(wanted, attempt)
         total += wanted
     end
-    return (results=results, ndraws=total)
+    return total
 end
 
 """Draws from every chain, population part only, chain-major."""
