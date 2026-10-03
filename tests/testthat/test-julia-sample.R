@@ -154,6 +154,48 @@ test_that("the effects come back summarised, or in full when asked for", {
   expect_true(all(is.finite(full$sample$effects)))
 })
 
+test_that("the SAEM kernel samples the joint posterior through the same runner", {
+  skip_without_julia()
+  fit <- .sample_fixture()
+  npar <- length(fit$estimate$raw)
+  neffects <- length(fit$model_spec$subject_starts) *
+    length(fit$model_spec$laplace$re_index)
+  # control$sampler = 'saem': SAEM's sweeps for the effects, NUTS for the
+  # parameters given them, placed and stopped as the default sampler is
+  # (`ctsem_saem_sample`, checked against NUTS in the engine suite). What is
+  # left for here is that it reaches the same assembly with the same shape.
+  saem <- suppressWarnings(suppressMessages(
+    ctFitUncertainty(fit, uncertainty = "sample", cores = 1,
+      control = list(chains = 2, warmup = 80, draws = 80, target = "joint",
+        sampler = "saem", processes = FALSE))))
+  d <- saem$sample
+  expect_identical(d$sampler, "saem")
+  expect_identical(d$target, "joint")
+  expect_equal(dim(saem$estimate$rawposterior), c(2L * d$draws, npar))
+  expect_true(all(is.finite(saem$estimate$rawposterior)))
+  expect_length(d$rhat, npar)
+  expect_length(d$stepsize, 2L)
+  expect_length(d$accept, 2L * d$draws)
+  expect_length(d$effect_mean, neffects)
+  expect_true(all(d$effect_sd > 0))
+  expect_length(d$scale_accept, 2L)
+  expect_output(print(d), "SAEM kernel")
+  expect_equal(d$start, fit$estimate$raw)
+})
+
+test_that("the SAEM kernel is refused by name where it cannot apply", {
+  skip_without_julia()
+  fit <- .sample_fixture()
+  expect_error(ctFitUncertainty(fit, uncertainty = "sample",
+    control = list(sampler = "saem", target = "marginal")),
+    "control$sampler = 'saem'", fixed = TRUE)
+  expect_error(ctFitUncertainty(fit, uncertainty = "sample",
+    control = list(sampler = "saem", target = "joint", adapt_metric = TRUE)),
+    "control$adapt_metric", fixed = TRUE)
+  expect_error(ctFitUncertainty(fit, uncertainty = "sample",
+    control = list(sampler = "hmc")), "'nuts' or 'saem'", fixed = TRUE)
+})
+
 test_that("a sampled fit keeps the exact Hessian it was built from", {
   skip_without_julia()
   fit <- .sample_fixture()

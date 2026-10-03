@@ -1155,8 +1155,9 @@ T0VARredundancies <- function(ctm) {
 #' \code{maxdepth}/\code{max_treedepth} (default 10),
 #' \code{target_accept}/\code{adapt_delta} (0.8), \code{maxdelta} (1000),
 #' \code{init_scale} (1), \code{adapt_metric} (FALSE), \code{adapt_effects}
-#' (FALSE), and the effective-sample-size target that decides when a run stops:
-#' \code{minESS} (200, the size the worst parameter must reach),
+#' (FALSE), \code{sampler} (\code{'nuts'}, or \code{'saem'} for SAEM's kernel on
+#' the joint posterior), and the effective-sample-size target that decides
+#' when a run stops: \code{minESS} (200, the size the worst parameter must reach),
 #' \code{rhatTarget} (1.01), \code{meanESS}, \code{maxDraws} and
 #' \code{settleTol} -- all documented in full under \code{uncertainty =
 #' 'sample'} in \code{\link{ctFitUncertainty}}, with the effective sample size

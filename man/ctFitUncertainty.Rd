@@ -97,7 +97,15 @@ target for the average -- within a budget of four times \code{draws} per
 chain, or \code{maxDraws} when given; \code{minESS = 0} takes exactly
 \code{draws}. A run that reaches its budget short of the target warns.
 \code{settleTol} ends warmup early once the metric stops moving (off by
-default, and slower when measured). \code{control$target}
+default, and slower when measured). \code{control$sampler} chooses the
+kernel for the joint posterior: \code{'nuts'} (the default) runs NUTS on the
+parameters and every random effect at once; \code{'saem'} draws the random
+effects by SAEM's Metropolis-within-Gibbs sweeps and the parameters given
+them by NUTS, with moves that re-express the effects for each level's means
+and scales. Both start from the same draws of the fit's Laplace
+approximation and stop by the same rule; \code{adapt_metric},
+\code{adapt_effects} and \code{settleTol} belong to the first and are
+refused with the second. \code{control$target}
 says which posterior: \code{'auto'} (the default) follows the fit's own
 route -- the Laplace marginal over population parameters for
 \code{intoverpop = 'laplace'} or \code{'augmented'}, the joint posterior

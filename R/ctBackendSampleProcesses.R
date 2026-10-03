@@ -464,7 +464,10 @@
     # Always, even unsaved: a pooled fit that reported no random effects at all
     # is what dropping these produced.
     effect_mean = as.numeric(result$effect_mean),
-    effect_sd = as.numeric(result$effect_sd))
+    effect_sd = as.numeric(result$effect_sd),
+    sampler = if (is.null(result$sampler)) "nuts" else as.character(result$sampler),
+    scale_accept = as.numeric(result$scale_accept),
+    ncp_accept = as.numeric(result$ncp_accept))
 }
 
 # Pool the chains into one engine result, then hand it to the ordinary assembler.
@@ -561,7 +564,11 @@
     ebfmi = unlist(lapply(drawn, function(d) as.numeric(d$ebfmi))),
     accept = perdraw("accept"), depth = perdraw("depth"),
     energy = perdraw("energy"),
-    effect_mean = effectmean, effect_sd = effectsd)
+    effect_mean = effectmean, effect_sd = effectsd,
+    # Per chain, like the step size.
+    sampler = drawn[[1]]$sampler,
+    scale_accept = unlist(lapply(drawn, function(d) as.numeric(d$scale_accept))),
+    ncp_accept = unlist(lapply(drawn, function(d) as.numeric(d$ncp_accept))))
 
   out <- .ctBackendSampleAssemble(fit, result, npar, keepeffects,
     as.integer(chains), warmup, ndraws, target$hessian,

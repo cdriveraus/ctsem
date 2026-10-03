@@ -191,6 +191,10 @@
   verbose = 0, state_explicit = FALSE, handles = NULL) {
 
   .ctBackendSampleCheckControl(control)
+  # Resolved once here for its refusals, before any worker is started or the
+  # engine reached: a setting refused deep in a worker process would surface
+  # as a failed chain and a fallback rather than as the error it is.
+  invisible(.ctBackendSampleControl(control))
   target_arg <- .ctJuliaOr(control$target, "auto")
   if (!identical(target_arg, "auto") && !target_arg %in% c("marginal", "joint")) {
     stop("control$target must be 'auto', 'marginal' or 'joint', not '",
@@ -207,6 +211,15 @@
       "state, so there is no separate posterior over them to sample. Ask ",
       "for control = list(target = 'marginal') to sample the population ",
       "parameters alone.", call. = FALSE)
+  }
+  if (identical(.ctBackendSamplerName(control$sampler), "saem") &&
+      (marginal || isTRUE(state_explicit))) {
+    stop("control$sampler = 'saem' samples the joint posterior over population ",
+      "parameters and random effects, and this run asks for ",
+      if (isTRUE(state_explicit)) "the joint posterior over the latent states. "
+      else "the marginal posterior. ",
+      "Use the default sampler, or a fit made with intoverpop = 'laplace' or ",
+      "'none' and control$target = 'joint'.", call. = FALSE)
   }
 
   npar <- length(fit$estimate$raw)
@@ -317,6 +330,10 @@
   # something other than the fit's own route.
   "iter", "chains", "warmup", "draws", "seed", "saveEffects", "processes",
   "target", "stepsize",
+  # Which kernel draws the joint posterior: 'nuts' (NUTS on the whole joint
+  # vector) or 'saem' (SAEM's sweeps for the effects, NUTS for the parameters
+  # given them); read by `.ctBackendSampleControl()`.
+  "sampler",
   "callback")
 
 #' Fold the deprecated sampling arguments into \code{sampleControl}
@@ -417,6 +434,20 @@
       collapse = ", "), ".", call. = FALSE)
 }
 
+# The kernel `control$sampler` names. 'nuts', the default, runs NUTS on the
+# whole joint vector; 'saem' runs SAEM's kernel (`ctsem_saem_sample`): the
+# effects by SAEM's sweeps, the parameters given them by NUTS, placed and
+# stopped exactly as NUTS is. Both draw the same posterior.
+#' @keywords internal
+.ctBackendSamplerName <- function(sampler) {
+  sampler <- .ctJuliaOr(sampler, "nuts")
+  if (!is.character(sampler) || length(sampler) != 1L ||
+      !sampler %in% c("nuts", "saem")) {
+    stop("control$sampler must be 'nuts' or 'saem'.", call. = FALSE)
+  }
+  sampler
+}
+
 # The sampler settings, from either spelling of the control list.
 #
 # `ctFit(optimize = FALSE)` took Stan's names for two of these and
@@ -491,7 +522,23 @@
     # sound wherever the starting metric is *not* exact, which is any route
     # whose curvature had to be repaired or floored.
     adapt_metric = isTRUE(.ctJuliaOr(control$adapt_metric, FALSE)),
-    adapt_effects = isTRUE(.ctJuliaOr(control$adapt_effects, FALSE)))
+    adapt_effects = isTRUE(.ctJuliaOr(control$adapt_effects, FALSE)),
+    sampler = .ctBackendSamplerName(control$sampler))
+
+  # The SAEM kernel draws the effects by SAEM's own sweeps and keeps the
+  # parameters' metric at the conditional curvature it was placed with, so
+  # the joint metric's adaptation and the warmup's early stop have nothing to
+  # act on there. Refused by name rather than accepted and ignored.
+  if (identical(settings$sampler, "saem")) {
+    unused <- c(adapt_metric = isTRUE(control$adapt_metric),
+      adapt_effects = isTRUE(control$adapt_effects),
+      settleTol = !is.null(control$settleTol))
+    if (any(unused)) {
+      stop("control$", paste(names(unused)[unused], collapse = ", control$"),
+        " is a setting of the NUTS sampler's joint metric, which the SAEM ",
+        "kernel (control$sampler = 'saem') does not use.", call. = FALSE)
+    }
+  }
 
   # Sampling targets, when asked for, and absent from the call when not: the
   # engine reads zero as "no target", so an unset element here and an omitted
@@ -665,18 +712,22 @@
     }
   }
 
+  saem <- identical(settings$sampler, "saem")
   arguments <- list(objective, .ctJuliaNumericVector(target$estimate),
     nchains = as.integer(chains), nwarmup = as.integer(warmup),
     ndraws = as.integer(draws), seed = as.integer(seed)[1L],
     maxdepth = settings$maxdepth, target_accept = settings$target_accept,
     maxdelta = settings$maxdelta, init_scale = settings$init_scale,
     stepsize = settings$stepsize,
-    adapt_metric = settings$adapt_metric,
     verbose = isTRUE(progress),
     progress_overwrite = .ctProgressOverwrite(verbose),
     progress_sink = if (isTRUE(progress)) .ctProgressSink(
       .ctProgressOverwrite(verbose)) else NULL)
-  for (name in c("min_ess", "mean_ess", "max_draws", "rhat_target", "settle_tol")) {
+  # The joint metric's adaptation belongs to NUTS on the joint vector; the
+  # SAEM kernel has none (`.ctBackendSampleControl()` refuses it there).
+  if (!saem) arguments$adapt_metric <- settings$adapt_metric
+  for (name in c("min_ess", "mean_ess", "max_draws", "rhat_target",
+    if (!saem) "settle_tol")) {
     if (!is.null(settings[[name]])) arguments[[name]] <- settings[[name]]
   }
   # A live callback into R while the chains run, mirroring
@@ -716,7 +767,7 @@
   if (!isTRUE(target$marginal)) {
     arguments$npar <- as.integer(target$npar)
     arguments$save_effects <- isTRUE(saveEffects)
-    arguments$adapt_effects <- settings$adapt_effects
+    if (!saem) arguments$adapt_effects <- settings$adapt_effects
   } else if (!identical(target$gradient, "adjoint")) {
     # `ctsem_sample_marginal`'s own default is `:adjoint`; only said
     # explicitly when something asked for the other one -- currently only a
@@ -740,7 +791,7 @@
     arguments$nparameters <- as.integer(target$npar)
   }
   entry <- if (isTRUE(target$marginal)) module$ctsem_sample_marginal else
-    module$ctsem_sample
+    if (saem) module$ctsem_saem_sample else module$ctsem_sample
 
   result <- .ctBackendWithMaxChunks(cores,
     .ctJuliaGet(do.call(entry, arguments)))
@@ -821,7 +872,9 @@
         "the marginal posterior over population parameters"
       else "the joint posterior over population parameters and random effects"
     budget <- .ctBackendSampleBudget(draws, chains, settings)
-    message("Sampling ", targetlabel, ": ", chains, " chain",
+    message("Sampling ", targetlabel,
+      if (identical(settings$sampler, "saem")) " with the SAEM kernel" else "",
+      ": ", chains, " chain",
       if (chains == 1L) "" else "s",
       ", ", warmup, " warmup + ",
       if (target_ess > 0) paste0("up to ", .ctJuliaOr(budget$max_draws, draws))
@@ -927,6 +980,14 @@
     # space was exactly `npar`-dimensional) that reads FALSE for both the
     # `'none'` route and the state-explicit one alike.
     target = if (isTRUE(marginal)) "marginal" else "joint",
+    # Which kernel drew it (`control$sampler`). Under 'saem' the step size,
+    # tree depth, divergences and energy describe the parameters' NUTS
+    # transitions given the effects, E-BFMI is not computed (an energy taken
+    # at different effects every iteration does not measure it), and the two
+    # acceptance rates are the level scale moves' (centred and non-centred).
+    sampler = if (is.null(result$sampler)) "nuts" else as.character(result$sampler),
+    scale_accept = as.numeric(result$scale_accept),
+    ncp_accept = as.numeric(result$ncp_accept),
     processes = FALSE,
     start = as.numeric(startvalues))
   if (length(out$sample$effect_mean)) {
@@ -1149,7 +1210,9 @@
 #' @export
 print.ctSampleDiagnostics <- function(x, ...) {
   total <- x$chains * x$draws
-  cat("ctsem Hamiltonian sample\n")
+  saem <- identical(x$sampler, "saem")
+  cat(if (saem) "ctsem sample, SAEM kernel (effects by SAEM's sweeps, parameters by NUTS given them)\n"
+    else "ctsem Hamiltonian sample\n")
   if (!is.null(x$target)) cat("  target: ", x$target, " posterior\n", sep = "")
   cat("  ", x$chains, " chains x ", x$draws, " draws (", x$warmup,
     " warmup discarded)\n", sep = "")
@@ -1157,9 +1220,15 @@ print.ctSampleDiagnostics <- function(x, ...) {
     "   max tree depth reached: ", x$saturated, "\n", sep = "")
   cat("  step size: ", paste(signif(x$stepsize, 3), collapse = ", "),
     "\n", sep = "")
-  cat("  E-BFMI:    ", paste(signif(x$ebfmi, 3), collapse = ", "),
-    if (any(x$ebfmi < 0.3, na.rm = TRUE)) "  (below 0.3 suggests a funnel)" else "",
-    "\n", sep = "")
+  if (saem) {
+    cat("  scale moves accepted, centred / non-centred: ",
+      paste(signif(x$scale_accept, 2), collapse = ", "), " / ",
+      paste(signif(x$ncp_accept, 2), collapse = ", "), "\n", sep = "")
+  } else {
+    cat("  E-BFMI:    ", paste(signif(x$ebfmi, 3), collapse = ", "),
+      if (any(x$ebfmi < 0.3, na.rm = TRUE)) "  (below 0.3 suggests a funnel)" else "",
+      "\n", sep = "")
+  }
   worst <- order(-x$rhat)[seq_len(min(5L, length(x$rhat)))]
   cat("  worst R-hat and effective sample size:\n")
   print(data.frame(parameter = names(x$rhat)[worst],
