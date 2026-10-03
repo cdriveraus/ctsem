@@ -31,8 +31,7 @@ ctPlotPosterior<-function(obj, rows='all', npp=6,priorwidth=TRUE,
   
   # if(!priorwidth) message('priorwidth argument temporarily unavailable sorry...')
   # inherits(), not class() %in%: a fit carries both 'ctStanFit' and 'ctFit',
-  # so the membership test returns two values and the condition errors. The
-  # bundled ctstantestfit predates the second class and so hides this.
+  # so the membership test returns two values and the condition errors.
   if(!inherits(obj, c('ctStanFit','ctStanModel'))) stop('not a ctStanFit or ctStanModel object!')
   plots <- list()
   densiter <- 1e5
