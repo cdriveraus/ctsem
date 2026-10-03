@@ -1500,6 +1500,48 @@ function _saem_joint_point(sampler::CTSEMSampler, theta::AbstractVector, st::CTS
     return x
 end
 
+"""
+    _saem_placement(laplace, values; nchains, seed, nestep)
+
+Where the joint samplers start when asked to (`saem = true`): SAEM from
+`values` to its own stop, on the exact marginal posterior rather than the
+Laplace approximation to it, with at least as many chains as the sampler will
+run so each starts from different effects. Its state's draws are then settled
+by `nestep` E-steps at the averaged estimate -- the run ends on its last
+iterate, not on the average it returns. Each chain then starts at the estimate
+jittered by one draw from the state's complete-data information (plus the
+prior), with its own SAEM chain's effects. Returns the estimate, the state,
+the starts (the joint vectors and their parameter parts) and SAEM's
+summary.
+"""
+function _saem_placement(laplace::CTSEMLaplaceObjective, values::AbstractVector;
+    nchains::Integer=4, seed::Integer=1, nestep::Integer=50)
+    t0 = time()
+    npar = length(values)
+    nunits = length(laplace.units.members)
+    run = ctsem_saem(laplace, collect(Float64, values); seed=seed,
+        chains=max(Int(nchains), _saem_default_chains(nunits)))
+    st = run.state
+    theta = collect(Float64, run.minimizer)
+    st.theta .= theta
+    prec = _saem_prior_precision(laplace, npar)
+    for _ in 1:nestep
+        ctsem_saem_step!(st, laplace; prec=prec, mstep=false)
+    end
+    sampler = ctsem_sampler(laplace, npar)
+    R = cholesky(_saem_curvature(st.info, prec)).U
+    rng = Random.Xoshiro(hash((seed, :saem_placement)))
+    joint = zeros(sampler.ndim, nchains)
+    pars = zeros(npar, nchains)
+    for c in 1:nchains
+        th = theta .+ (R \ randn(rng, npar))
+        pars[:, c] = th
+        joint[:, c] = _saem_joint_point(sampler, th, _saem_one_chain(st, c))
+    end
+    return (theta=theta, state=st, joint=joint, pars=pars, iterations=run.iterations,
+        settled=run.settled, trend=run.trend, secs=time() - t0)
+end
+
 """The chain's own members' log likelihoods, one vector per unit (the arrays
 in `st.ll`, not copies)."""
 _saem_own_ll(st::CTSEMSAEMState) = [st.ll[U][1] for U in eachindex(st.u)]
@@ -1702,7 +1744,9 @@ E-steps), continues SAEM's chains instead of starting fresh: chain `c` takes
 the state's chain `c`'s effects (cycling), its tuned proposal scales and
 shapes, and the state's averaged complete-data information as theta's first
 metric, with theta from `starts` when given (parameters only) and `values`
-otherwise.
+otherwise. `saem = true` makes that state itself first (`_saem_placement`):
+SAEM from `values`, then its chains continued, so nothing from the Laplace
+approximation's optimum is needed to place the sampler.
 
 The result has `ctsem_sample`'s fields, with `sampler = "saem"`; `depth`,
 `divergent`, `energy` and `stepsize` describe theta's transitions, and `ebfmi`
@@ -1718,10 +1762,21 @@ function ctsem_saem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVecto
     max_draws::Integer=0, rhat_target::Real=1.01, progress_overwrite::Bool=true,
     progress_callback=nothing, progress_sink=nothing, stepsize::Real=0.0,
     sweeps::Integer=2, nupper::Integer=2, nscale::Integer=5, nncp::Integer=2,
-    starts::Union{Nothing,AbstractMatrix}=nothing, state=nothing)
+    starts::Union{Nothing,AbstractMatrix}=nothing, state=nothing, saem::Bool=false,
+    saem_nestep::Integer=50)
 
     t0 = time()
     nchains = Int(nchains); nwarmup = Int(nwarmup); ndraws = Int(ndraws)
+    placement = nothing
+    if saem
+        state === nothing || throw(ArgumentError(
+            "saem = true makes its own state; pass state or saem, not both"))
+        placement = _saem_placement(laplace, collect(Float64, values)[1:npar];
+            nchains=nchains, seed=seed, nestep=saem_nestep)
+        values = placement.theta
+        state = placement.state
+        starts === nothing && (starts = placement.pars)
+    end
     nchains >= 1 || throw(ArgumentError("nchains must be positive"))
     ndraws >= 1 || throw(ArgumentError("ndraws must be positive"))
     nwarmup >= 0 || throw(ArgumentError("nwarmup must be non-negative"))
@@ -1861,7 +1916,14 @@ function ctsem_saem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVecto
         scale_accept=[ch.nscale == 0 ? NaN : ch.scale_accept / ch.nscale for ch in chains],
         ncp_accept=[ch.nncp == 0 ? NaN : ch.ncp_accept / ch.nncp for ch in chains],
         target_trace=run.trace,
+        placement=_saem_placement_summary(placement),
     )
 end
+
+"""What a result reports of an SAEM placement: where it put the sampler, and
+how SAEM got there; `nothing` when there was none."""
+_saem_placement_summary(p) = p === nothing ? nothing :
+    (theta=p.theta, saem_iterations=p.iterations, saem_settled=p.settled,
+     saem_trend=p.trend, saem_secs=p.secs)
 
 export ctsem_saem_sample

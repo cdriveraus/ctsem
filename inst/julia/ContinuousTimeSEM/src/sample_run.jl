@@ -845,7 +845,8 @@ function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     rhat_target::Real=1.01, settle_tol::Real=0.0, resume=nothing,
     progress_overwrite::Bool=true, progress_callback=nothing,
     progress_sink=nothing, stepsize::Real=0.0,
-    starts::Union{Nothing,AbstractMatrix}=nothing)
+    starts::Union{Nothing,AbstractMatrix}=nothing, saem::Bool=false,
+    saem_nestep::Integer=50)
 
     t0 = time()
     nchains = Int(nchains); nwarmup = Int(nwarmup); ndraws = Int(ndraws)
@@ -854,6 +855,15 @@ function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     nwarmup >= 0 || throw(ArgumentError("nwarmup must be non-negative"))
     0 < target_accept < 1 || throw(ArgumentError("target_accept must be in (0, 1)"))
 
+    # `saem = true`: placed by SAEM's state, as `ctsem_saem_sample` is -- the
+    # chains start from its estimate and its chains' effects, and the metric is
+    # read there -- rather than from the point handed in.
+    placement = saem ? _saem_placement(laplace, collect(Float64, values)[1:Int(npar)];
+        nchains=nchains, seed=seed, nestep=saem_nestep) : nothing
+    if placement !== nothing
+        values = placement.theta
+        starts === nothing && (starts = placement.joint)
+    end
     sampler = ctsem_sampler(laplace, npar)
     start = collect(Float64, values)
     # Builds the metric *and* solves each unit's conditional mode at `start`,
@@ -964,6 +974,7 @@ function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
         worst_rhat=_finite_extremum(diagnostics.rhat, maximum),
         min_ess=_finite_extremum(vcat(diagnostics.ess, diagnostics.ess_tail), minimum),
         target_trace=run.trace,
+        placement=_saem_placement_summary(placement),
     )
 end
 
