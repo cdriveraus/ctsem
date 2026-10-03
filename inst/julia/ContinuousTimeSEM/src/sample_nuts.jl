@@ -310,6 +310,32 @@ function _prior_bounded_covariance(P::Symmetric{Float64}, prec::AbstractVector{F
 end
 
 """
+    _prior_capped_covariance(C, prior = 1)
+
+`C` with no variance, in any direction, above `prior`: the eigenvalues above it
+set to it, and `C` returned as it stands when there are none. For a
+random-effect block, whose effects are standardised to a prior variance of 1,
+this is `_prior_bounded_covariance`'s bound stated on the covariance: where
+the unit's likelihood curves down, its conditional covariance is already
+inside the prior's; where the curvature has turned upward, the inverse of a
+near-singular curvature measures nothing, and the prior is the bound.
+"""
+function _prior_capped_covariance(C::AbstractMatrix{Float64}, prior::Real=1.0)
+    n = size(C, 1)
+    S = Symmetric((C .+ transpose(C)) ./ 2)
+    decomposition = try
+        eigen(S)
+    catch err
+        err isa InterruptException && rethrow()
+        return Matrix(Float64(prior) * I, n, n)
+    end
+    maximum(decomposition.values; init=-Inf) <= prior && return Matrix(C)
+    V = decomposition.vectors
+    out = V * Diagonal(min.(decomposition.values, Float64(prior))) * transpose(V)
+    return (out .+ transpose(out)) ./ 2
+end
+
+"""
     ctsem_sample_metric(sampler, values; regularize)
 
 The initial metric, read off the Laplace approximation at `values`.
@@ -439,7 +465,13 @@ function ctsem_sample_metric(sampler::CTSEMSampler, values::AbstractVector;
             if !all(isfinite, candidate) || any(candidate[i, i] <= 0 for i in 1:block.size)
                 candidate = Matrix(1.0I, block.size, block.size)
             end
-            push!(covariances, candidate)
+            # And the same bound: no wider than the effects' prior. A unit whose
+            # curvature is near singular at `theta` gives a variance with no
+            # limit -- gB2 at SAEM's estimate, 0.2 standard errors from the
+            # Laplace optimum where every block was below 0.9, had one at
+            # 1.6e7, and NUTS's step size fell from 0.5 to 2.5e-4 with every
+            # chain frozen where it started. Capped at 1, the step was 0.5.
+            push!(covariances, _prior_capped_covariance(candidate))
         end
     end
 

@@ -312,6 +312,17 @@ end
     # No prior: the plain bounded inverse.
     @test ContinuousTimeSEM._prior_bounded_covariance(P, zeros(2)) ≈
         ContinuousTimeSEM._bounded_inverse(P)
+    # The effect blocks' form of the bound, on the covariance: a variance of
+    # 1.6e7 along one direction (a near-singular unit curvature) comes back at
+    # the prior's 1, the other direction is kept, and a block already inside
+    # the prior is returned exactly as it was.
+    R = [cos(0.3) -sin(0.3); sin(0.3) cos(0.3)]
+    wide = R * Diagonal([1.6e7, 0.25]) * transpose(R)
+    capped = ContinuousTimeSEM._prior_capped_covariance(wide)
+    @test eigvals(Symmetric(capped)) ≈ [0.25, 1.0]
+    @test capped * R[:, 2] ≈ 0.25 .* R[:, 2]
+    inside = [0.5 0.1; 0.1 0.3]
+    @test ContinuousTimeSEM._prior_capped_covariance(inside) == inside
 end
 
 @testset "momentum drawn from the metric has the metric's inverse covariance" begin
