@@ -1149,11 +1149,17 @@ mutable struct _SAEMChain
     metric::CTSEMMetric
     info_sum::Matrix{Float64}
     info_n::Int
-    # Per level: the centred scale (or loading) move's and the non-centred
-    # move's log step, and the centred move's metric factor where it has one.
+    # Per level: the loading move's and the non-centred move's log step, and
+    # the centred conditional's Fisher factor where the level is full rank.
     logscale::Vector{Float64}
     logncp::Vector{Float64}
     fisher::Vector{Any}
+    # Per full-rank level, the centred move's NUTS workspace, metric, step size
+    # and its averaging (`nothing` where a level has no such move).
+    cws::Vector{Any}
+    cmetric::Vector{Any}
+    ceps::Vector{Float64}
+    cda::Vector{Any}
     draws::Vector{Vector{Float64}}
     effect_sum::Vector{Float64}
     effect_sq::Vector{Float64}
@@ -1231,9 +1237,9 @@ end
 
 A full-rank level's scales and correlations by random-walk Metropolis with the
 standardised effects `u` held -- the non-centred counterpart of
-`_saem_sample_scale!`. Every member's likelihood moves, so a proposal costs one
+`_saem_sample_centred!`. Every member's likelihood moves, so a proposal costs one
 pass over all of them; the proposal is `scale * Rf^-1 z`, `Rf` the centred
-move's metric factor. Returns the acceptance probability, NaN for a level with
+conditional's Fisher factor (`_saem_scale_fisher`). Returns the acceptance probability, NaN for a level with
 nothing to move.
 """
 function _saem_sample_ncp!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
@@ -1303,49 +1309,93 @@ function _saem_sample_mean!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
 end
 
 """
-    _saem_sample_scale!(st, laplace, l, prec, scale, Rf, rng)
+    _saem_centred_density(st, laplace, l, prec)
 
 A full-rank level's scales and correlations `phi` given the deviations
-`d = L u`: one random-walk Metropolis step on their conditional
-`log p(phi) - G sum log diag L(phi) - sum |L(phi)^-1 d|^2 / 2`, proposal
-`scale * Rf^-1 z` (`Rf` the upper factor of the conditional's Fisher
-information, frozen), the effects re-expressed as `L(phi')^-1 d` when accepted.
-Returns the acceptance probability.
+`d = L u`, the centred half of the sampler's interweaving: their positions in
+theta, the level's sites, `d`, and `density!(g, phi)`, the conditional
+`log p(phi) - G sum log diag L(phi) - sum |L(phi)^-1 d|^2 / 2` with its
+gradient in `g`. With the deviations held no member's likelihood moves, so this
+costs no likelihood evaluation: with `M_t = L^-1 dL/dphi_t` and `W = L^-1 d`,
+the gradient is `-G tr(M_t) + tr(M_t W W') - prec_t phi_t`.
 """
-function _saem_sample_scale!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
-    l::Integer, prec::Vector{Float64}, scale::Float64, Rf::UpperTriangular, rng)
+function _saem_centred_density(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
+    l::Integer, prec::Vector{Float64})
     spec = laplace.spec
     level = spec.levels[l]
     positions = _laplace_level_positions(spec, l)
     sites = _saem_level_sites(laplace, l)
     G = length(sites)
-    (isempty(positions) || G == 0) && return NaN
     L0 = LowerTriangular(_laplace_popchol(st.theta, level))
-    k = nrandomeffects(level)
-    d = zeros(k, G)
+    d = zeros(nrandomeffects(level), G)
     for (j, (U, b)) in enumerate(sites)
         d[:, j] = L0 * st.u[U][1][_saem_cols(laplace, U, b)]
     end
     Dp = prec[positions]
-    function f(theta)
-        L = LowerTriangular(_laplace_popchol(theta, level))
-        any(x -> !(x > 0), diag(L)) && return -Inf
-        phi = theta[positions]
-        return -G * sum(log, diag(L)) - sum(abs2, L \ d) / 2 - sum(Dp .* phi .^ 2) / 2
+    theta = copy(st.theta)
+    function density!(g, phi)
+        theta[positions] .= phi
+        L = try
+            LowerTriangular(_laplace_popchol(theta, level))
+        catch err
+            _ctsem_must_propagate(err) && rethrow()
+            return -Inf
+        end
+        all(x -> x > 0 && isfinite(x), diag(L)) || return -Inf
+        W = L \ d
+        S = W * transpose(W)
+        dL = _laplace_level_chol_derivatives(theta, spec, l)
+        for t in eachindex(positions)
+            M = L \ dL[t]
+            g[t] = -G * tr(M) + sum(M .* S) - Dp[t] * phi[t]
+        end
+        value = -G * sum(log, diag(L)) - sum(abs2, W) / 2 - sum(Dp .* phi .^ 2) / 2
+        return isfinite(value) && all(isfinite, g) ? value : -Inf
     end
-    trial = copy(st.theta)
-    trial[positions] .+= scale .* (Rf \ randn(rng, length(positions)))
-    f0 = f(st.theta)
-    f1 = f(trial)
-    alpha = isfinite(f1) ? min(1.0, exp(f1 - f0)) : 0.0
-    if rand(rng) < alpha
-        st.theta .= trial
-        L1 = LowerTriangular(_laplace_popchol(st.theta, level))
+    return positions, sites, d, density!
+end
+
+"""The centred move's metric: the inverse of its conditional's Fisher
+information, from `_saem_scale_fisher`'s upper factor."""
+_saem_centred_metric(Rf::UpperTriangular) =
+    _metric_from_covariances([1:size(Rf, 1)], [Matrix(inv(Symmetric(transpose(Rf) * Rf)))];
+        jitter=1e-10)
+
+"""
+    _saem_sample_centred!(ch, laplace, l, setup, warm)
+
+One NUTS transition of a full-rank level's scales and correlations on their
+centred conditional (`_saem_centred_density`), the effects re-expressed as
+`L(phi')^-1 d`, so every deviation, and with it every member's likelihood,
+stays where it was. Its step size adapts by dual averaging during warmup.
+Returns the transition's mean acceptance, NaN for a level without the move.
+
+A random-walk Metropolis step stood here, five a sweep, with its metric frozen
+where the chain started. Scales and correlations together are `k(k+1)/2`
+dimensions, and on bigre (six effects, 21) it left each chain holding its own
+correlations after 2000 draws (R-hat about 2, every slow parameter a
+correlation) though this conditional is cheap and smooth.
+"""
+function _saem_sample_centred!(ch, laplace::CTSEMLaplaceObjective, l::Integer, setup,
+    warm::Bool)
+    ch.cws[l] === nothing && return NaN
+    st = ch.st
+    positions, sites, d, density! = _saem_centred_density(st, laplace, l, setup.prec)
+    x = st.theta[positions]
+    g = zeros(length(positions))
+    logp = density!(g, x)
+    isfinite(logp) || return NaN
+    step = _nuts_transition!(ch.cws[l], density!, ch.cmetric[l], ch.rng, x, g, logp,
+        ch.ceps[l], setup.maxdepth, setup.maxdelta)
+    warm && (ch.ceps[l] = _dual_update!(ch.cda[l], step.accept))
+    if x != st.theta[positions]
+        st.theta[positions] .= x
+        L1 = LowerTriangular(_laplace_popchol(st.theta, laplace.spec.levels[l]))
         for (j, (U, b)) in enumerate(sites)
             st.u[U][1][_saem_cols(laplace, U, b)] = L1 \ d[:, j]
         end
     end
-    return alpha
+    return step.accept
 end
 
 """
@@ -1405,7 +1455,8 @@ end
 
 The upper Cholesky factor of a full-rank level's scale conditional's Fisher
 information at the chain's theta (`G/2 tr((M_p + M_p')(M_q + M_q'))` plus the
-prior), the random-walk metric of `_saem_sample_scale!`.
+prior): the centred move's metric (`_saem_centred_metric`) and the non-centred
+move's proposal shape. Re-measured at each warmup window's end.
 """
 function _saem_scale_fisher(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
     l::Integer, prec::Vector{Float64})
@@ -1457,11 +1508,28 @@ function _saem_new_chain(base::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
     logscale = [setup.reduced[l] ?
         log(1 / sqrt(2 * max(1, length(_saem_level_sites(laplace, l))))) : log(0.5)
         for l in levels]
+    cws = Any[nothing for _ in levels]
+    cmetric = Any[nothing for _ in levels]
+    ceps = ones(length(levels))
+    cda = Any[nothing for _ in levels]
+    for l in levels
+        fisher[l] === nothing && continue
+        positions, _, _, density! = _saem_centred_density(st, laplace, l, setup.prec)
+        cws[l] = _NUTSWorkspace(length(positions), Int(maxdepth))
+        cmetric[l] = _saem_centred_metric(fisher[l])
+        x0 = st.theta[positions]
+        g0 = zeros(length(positions))
+        logp0 = density!(g0, x0)
+        ceps[l] = isfinite(logp0) ?
+            _init_stepsize(density!, cmetric[l], rng, x0, g0, logp0, cws[l]) : 0.1
+        cda[l] = _DualAverage(ceps[l], 0.8)
+    end
     neffects = sampler.ndim - npar
     return _SAEMChain(st, rng, _NUTSWorkspace(npar, Int(maxdepth)), zeros(npar),
         [similar(st.ll[U][1]) for U in eachindex(st.u)], 0.0, _DualAverage(1.0, 0.8),
         ctsem_identity_metric(npar), zeros(npar, npar), 0,
-        logscale, fill(log(0.5), length(levels)), fisher, Vector{Float64}[],
+        logscale, fill(log(0.5), length(levels)), fisher, cws, cmetric, ceps, cda,
+        Vector{Float64}[],
         zeros(neffects), zeros(neffects), Float64[], Bool[], Int[], Float64[], 0,
         0.0, 0, 0.0, 0)
 end
@@ -1624,15 +1692,21 @@ function _saem_chain_iterate!(ch::_SAEMChain, laplace::CTSEMLaplaceObjective,
     for l in setup.levels
         setup.active[l] || continue
         _saem_sample_mean!(st, laplace, l, setup.prec, ch.rng)
-        for _ in 1:setup.nscale
-            s = exp(ch.logscale[l])
-            a = setup.reduced[l] ? _saem_sample_loadings!(st, laplace, l, setup.prec, s, ch.rng) :
-                ch.fisher[l] === nothing ? NaN :
-                _saem_sample_scale!(st, laplace, l, setup.prec, s, ch.fisher[l], ch.rng)
-            isfinite(a) || continue
-            if warm
-                ch.logscale[l] += (a - 0.3) / k^0.6
-            else
+        if setup.reduced[l]
+            for _ in 1:setup.nscale
+                a = _saem_sample_loadings!(st, laplace, l, setup.prec,
+                    exp(ch.logscale[l]), ch.rng)
+                isfinite(a) || continue
+                if warm
+                    ch.logscale[l] += (a - 0.3) / k^0.6
+                else
+                    ch.scale_accept += a
+                    ch.nscale += 1
+                end
+            end
+        else
+            a = _saem_sample_centred!(ch, laplace, l, setup, warm)
+            if isfinite(a) && !warm
                 ch.scale_accept += a
                 ch.nscale += 1
             end
@@ -1702,7 +1776,22 @@ function _saem_chain_run!(ch::_SAEMChain, laplace::CTSEMLaplaceObjective,
                 ch.info_n = 0
                 _dual_restart!(ch.da, ch.eps)
             end
-            k == nwarm && (ch.eps = _dual_final(ch.da))
+            # The centred moves' metrics, re-measured where the chain now is
+            # rather than where it started, and their step sizes re-averaged.
+            if k in windows
+                for l in setup.levels
+                    ch.cws[l] === nothing && continue
+                    ch.fisher[l] = _saem_scale_fisher(ch.st, laplace, l, setup.prec)
+                    ch.cmetric[l] = _saem_centred_metric(ch.fisher[l])
+                    _dual_restart!(ch.cda[l], ch.ceps[l])
+                end
+            end
+            if k == nwarm
+                ch.eps = _dual_final(ch.da)
+                for l in setup.levels
+                    ch.cda[l] === nothing || (ch.ceps[l] = _dual_final(ch.cda[l]))
+                end
+            end
         else
             _saem_chain_record!(ch, sampler, step, save_effects)
             ndiv += step.divergent

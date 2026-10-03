@@ -338,6 +338,29 @@ _saem_twolevel() = ctsem_laplace_objective(_saem_prior_objective(9);
     re_index=[1, 2, 5], sd_index=[6, 7, 9], cor_index=[8], sd_scale=[1.0, 1.0, 1.0],
     level_nre=[2, 1], group=vcat(1:6, _TWOLEVEL_GROUP), level_ngroups=[6, 3])
 
+# The centred move's conditional of a full-rank level's scales and correlations
+# given the deviations, whose gradient is written by hand: against central
+# differences, on the two-effect level (scales and the correlation) and the
+# one-effect level above it.
+@testset "SAEM sampler: the centred move's gradient" begin
+    laplace = _saem_twolevel()
+    values = [0.2, -0.1, 0.3, -0.2, 0.05, -0.3, -0.15, 0.4, -0.25]
+    st = _S.ctsem_saem_init(laplace, values; seed=5, chains=1)
+    prec = _S._saem_prior_precision(laplace, length(values))
+    for l in eachindex(laplace.spec.levels)
+        positions, _, _, density! = _S._saem_centred_density(st, laplace, l, prec)
+        x = st.theta[positions] .+ 0.1
+        g = zeros(length(x))
+        @test isfinite(density!(g, x))
+        h = 1e-6
+        fd = map(eachindex(x)) do t
+            e = zeros(length(x)); e[t] = h
+            (density!(zeros(length(x)), x .+ e) - density!(zeros(length(x)), x .- e)) / (2h)
+        end
+        @test g ≈ fd rtol = 1e-5 atol = 1e-6
+    end
+end
+
 @testset "SAEM sampler: the joint posterior NUTS draws ($name)" for (name, mk, values) in (
         ("rank one", () -> _saem_reduced()[1], _saem_reduced()[2]),
         ("two full-rank levels", _saem_twolevel,
