@@ -593,8 +593,13 @@ function _sample_until_target(pool, extend!, nchains::Int, ndraws::Int,
     while min_ess > 0 || mean_ess > 0
         diagnostics = ctsem_sample_diagnostics(pool(), nchains)
         finite_ess = filter(isfinite, diagnostics.ess)
+        finite_tail = filter(isfinite, diagnostics.ess_tail)
         finite_rhat = filter(isfinite, diagnostics.rhat)
-        worst = isempty(finite_ess) ? 0.0 : minimum(finite_ess)
+        # The worse of bulk and tail: the 5% and 95% points a summary reports
+        # rest on the tail's draws, and a chain that has missed a tail leaves
+        # the bulk figure untouched.
+        worst = isempty(finite_ess) ? 0.0 :
+            min(minimum(finite_ess), isempty(finite_tail) ? Inf : minimum(finite_tail))
         average = isempty(finite_ess) ? 0.0 : sum(finite_ess) / length(finite_ess)
         rhat = isempty(finite_rhat) ? Inf : maximum(finite_rhat)
         met = worst >= min_ess && average >= mean_ess && rhat <= rhat_target
@@ -605,7 +610,7 @@ function _sample_until_target(pool, extend!, nchains::Int, ndraws::Int,
         # extra batch removes most of that, and costs one batch.
         confirmed = met && was_met
         if verbose
-            println(_console(), "  ", total, " draws per chain: min ESS ",
+            println(_console(), "  ", total, " draws per chain: min ESS (bulk and tail) ",
                 round(worst; digits=1), ", mean ESS ", round(average; digits=1),
                 ", worst R-hat ", round(rhat; digits=3),
                 confirmed ? " -- targets met" :
@@ -926,6 +931,7 @@ function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
         effect_sd=effect_sd,
         rhat=diagnostics.rhat,
         ess=diagnostics.ess,
+        ess_tail=diagnostics.ess_tail,
         accept=accept,
         divergent=divergent,
         depth=depth,
@@ -940,7 +946,7 @@ function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
         # `max` propagate NaN, so it poisons every result instead of only the
         # empty one.
         worst_rhat=_finite_extremum(diagnostics.rhat, maximum),
-        min_ess=_finite_extremum(diagnostics.ess, minimum),
+        min_ess=_finite_extremum(vcat(diagnostics.ess, diagnostics.ess_tail), minimum),
     )
 end
 
@@ -1119,7 +1125,7 @@ function ctsem_sample_marginal(objective, values::AbstractVector;
     return (
         draws=draws, npar=npar, ndim=npar, nchains=nchains, ndraws=ndraws,
         saved_effects=false, effect_mean=Float64[], effect_sd=Float64[],
-        rhat=diagnostics.rhat, ess=diagnostics.ess,
+        rhat=diagnostics.rhat, ess=diagnostics.ess, ess_tail=diagnostics.ess_tail,
         accept=accept, divergent=divergent, depth=depth, energy=energy,
         stepsize=[r.stepsize for r in results],
         warmup_divergent=[r.warmup_divergent for r in results],
@@ -1127,6 +1133,6 @@ function ctsem_sample_marginal(objective, values::AbstractVector;
         nsaturated=count(==(Int(maxdepth)), depth),
         ebfmi=_ebfmi(energy, nchains),
         worst_rhat=_finite_extremum(diagnostics.rhat, maximum),
-        min_ess=_finite_extremum(diagnostics.ess, minimum),
+        min_ess=_finite_extremum(vcat(diagnostics.ess, diagnostics.ess_tail), minimum),
     )
 end

@@ -553,6 +553,7 @@
   result <- list(
     draws = pooled, npar = npar, ndim = ndim, ndraws = ndraws,
     rhat = as.numeric(pooldiag$rhat), ess = as.numeric(pooldiag$ess),
+    ess_tail = as.numeric(pooldiag$ess_tail),
     # Summed across chains, because they count events; the step size and E-BFMI
     # are per chain and stay per chain.
     ndivergent = sum(vapply(drawn, function(d) as.integer(d$ndivergent), integer(1))),

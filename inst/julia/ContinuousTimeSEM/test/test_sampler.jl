@@ -480,6 +480,42 @@ end
     @test ctsem_sample_diagnostics(correlated, 4).ess[1] < 1000
 end
 
+@testset "R-hat sees chains that differ in spread, tail size sees a missed tail" begin
+    rng = Random.Xoshiro(21)
+    # Same centre, one chain three times as wide: the chains agree on location
+    # and not on spread, which only the folded R-hat measures.
+    spread = randn(rng, 1, 4000)
+    spread[1, 1:1000] .*= 3.0
+    @test ctsem_sample_diagnostics(spread, 4).rhat[1] > 1.05
+
+    # Independent draws: tail size near the count, like bulk size.
+    iid = randn(rng, 1, 8000)
+    d = ctsem_sample_diagnostics(iid, 4)
+    @test d.ess_tail[1] > 2000
+    @test d.ess[1] > 2000
+
+    # The lower tail visited in one burst: 100 consecutive draws of one chain,
+    # every one in the lower 5% of the distribution -- inside its range, all on
+    # one side -- the shape gN3's study-level standard deviation had. The
+    # chains agree in location and spread well enough for R-hat, and the bulk
+    # size stays in the thousands; the 5% point rests on that one burst, and
+    # only the tail size says so (measured: bulk 2700-5000, tail 630-700,
+    # R-hat 1.002-1.003 over three draws of this construction).
+    burst = randn(rng, 1, 8000)
+    k = 0
+    while k < 100
+        z = randn(rng)
+        z < -1.645 || continue
+        k += 1
+        burst[1, 500 + k] = z
+    end
+    b = ctsem_sample_diagnostics(burst, 4)
+    @test b.rhat[1] < 1.01
+    @test b.ess[1] > 2000
+    @test b.ess_tail[1] < b.ess[1] / 3
+    @test b.ess_tail[1] < 1000
+end
+
 @testset "the adaptation schedule brackets its windows the way Stan does" begin
     # Too short for a window: the Laplace metric is used as it stands, which is
     # a reasonable mode here rather than a degenerate one.

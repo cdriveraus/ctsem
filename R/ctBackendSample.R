@@ -961,6 +961,12 @@
     chains = chains, warmup = warmup, draws = draws,
     rhat = stats::setNames(as.numeric(result$rhat)[seq_len(npar)], colnames(posterior)),
     ess = stats::setNames(as.numeric(result$ess)[seq_len(npar)], colnames(posterior)),
+    # The tails' effective size (`ctsem_sample_diagnostics`): what the 5% and
+    # 95% points rest on, and the one a chain that has missed a tail lowers.
+    # The verdict, the warning and the run's stopping rule take the worse of
+    # the two.
+    ess_tail = if (is.null(result$ess_tail)) NULL else
+      stats::setNames(as.numeric(result$ess_tail)[seq_len(npar)], colnames(posterior)),
     divergent = as.integer(result$ndivergent),
     warmup_divergent = as.integer(result$warmup_divergent),
     saturated = as.integer(result$nsaturated),
@@ -1058,7 +1064,7 @@
   if (is.finite(worst) && worst > 1.01) {
     problems <- c(problems, paste0("largest R-hat ", signif(worst, 4)))
   }
-  fewest <- suppressWarnings(min(diagnostics$ess, na.rm = TRUE))
+  fewest <- .ctSampleFewest(diagnostics)
   if (is.finite(fewest) && fewest < .ctSampleEssFloor(diagnostics)) {
     problems <- c(problems,
       paste0("smallest effective sample size ", round(fewest),
@@ -1095,6 +1101,14 @@
   labels <- .ctBackendRawParameterNames(fit, npar)
   if (length(labels) < npar) labels <- paste0("par", seq_len(npar))
   labels[flat]
+}
+
+# The smallest effective sample size of a run, bulk or tail: the one the
+# engine's stopping rule compared with the target. A fit sampled before tail
+# sizes were recorded has only the bulk ones.
+#' @keywords internal
+.ctSampleFewest <- function(diagnostics) {
+  suppressWarnings(min(c(diagnostics$ess, diagnostics$ess_tail), na.rm = TRUE))
 }
 
 # The smallest effective sample size a run should end with: the target it
@@ -1171,7 +1185,7 @@
       else "R",
       remedy, "See fit$sample$rhat.", call. = FALSE)
   }
-  fewest <- suppressWarnings(min(diagnostics$ess, na.rm = TRUE))
+  fewest <- .ctSampleFewest(diagnostics)
   target <- .ctJuliaOr(diagnostics$ess_target, NA_real_)
   if (is.finite(fewest) && fewest < .ctSampleEssFloor(diagnostics)) {
     # With a target the run stopped at its budget, so the budget is what to
@@ -1186,7 +1200,7 @@
       else paste0("Raise the draw count (iter in ctFit, control$draws ",
         "otherwise), or set sampleControl$minESS to keep sampling until an ",
         "effective size is reached. "),
-      "See fit$sample$ess.", call. = FALSE)
+      "See fit$sample$ess and fit$sample$ess_tail.", call. = FALSE)
   }
   if (diagnostics$saturated > 0L) {
     # Raising the cap is the mechanical answer and rarely the right first one.
@@ -1230,10 +1244,11 @@ print.ctSampleDiagnostics <- function(x, ...) {
       "\n", sep = "")
   }
   worst <- order(-x$rhat)[seq_len(min(5L, length(x$rhat)))]
-  cat("  worst R-hat and effective sample size:\n")
-  print(data.frame(parameter = names(x$rhat)[worst],
-    rhat = round(x$rhat[worst], 4), ess = round(x$ess[worst])),
-    row.names = FALSE)
+  cat("  worst R-hat and effective sample size (bulk, tail):\n")
+  table <- data.frame(parameter = names(x$rhat)[worst],
+    rhat = round(x$rhat[worst], 4), ess = round(x$ess[worst]))
+  if (length(x$ess_tail) == length(x$ess)) table$ess_tail <- round(x$ess_tail[worst])
+  print(table, row.names = FALSE)
   # Last, because it is the conclusion. A reader who stops at the table above
   # has to know what the numbers in it mean; this says it.
   if (!is.null(x$converged)) {
