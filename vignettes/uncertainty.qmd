@@ -36,7 +36,7 @@ Every `ctFit()` returns an estimate and a claim about how uncertain it is. Where
 that claim comes from depends on three choices, each of which changes what the
 resulting interval means:
 
-- **`optimize`**: sample the posterior (or likelihood) with HMC, or find its
+- **`optimize`**: sample the posterior (or likelihood) by MCMC, or find its
   mode and approximate the curvature there.
 - **`priors`**: include ctsem's weakly informative priors on the raw parameter
   scale, or leave them out.
@@ -49,9 +49,11 @@ intervals can be compared directly rather than described in the abstract.
 
 ## The two routes
 
-**Sampling** (`optimize = FALSE`) draws from the target density with HMC --
-Stan's sampler for `backend = 'stan'`, the julia engine's own No-U-Turn
-sampler for `backend = 'julia'`. Uncertainty is then just the spread of the
+**Sampling** (`optimize = FALSE`) draws from the target density by MCMC --
+Stan's sampler for `backend = 'stan'`, the julia engine's own for
+`backend = 'julia'`: its No-U-Turn sampler for a model like the one here,
+with no random effects, and SAEM's kernel on the joint posterior of
+parameters and random effects when there are some. Uncertainty is then just the spread of the
 draws: no curvature is computed and no normal approximation is assumed. This
 is the most trustworthy route and the slowest one.
 
@@ -65,7 +67,7 @@ multimodal, which variance-like parameters often are with few subjects.
 Both routes target the *same* density for a given setting of `priors`; they
 differ only in how they characterise it. The rest of this vignette compares
 them directly, then works through what sits between "one Hessian" and "full
-HMC," and then through what changes when priors are switched off.
+sampling," and then through what changes when priors are switched off.
 
 ## A small model, fit several ways
 
