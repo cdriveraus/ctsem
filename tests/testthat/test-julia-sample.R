@@ -269,6 +269,21 @@ test_that("processes = TRUE reproduces the in-process draws to numerical noise",
     inprocess$estimate$rawposterior, tolerance = 1e-6)
 })
 
+test_that("each worker process samples its chain to its share of the run's target", {
+  # A worker stops its own chain, so it is handed the chain's share: handed the
+  # whole target, every chain of the default four-process run sampled to min
+  # ESS 200 on its own and the pool held about four times what was asked.
+  share <- ctsem:::.ctBackendWorkerControl(list(), 4L)
+  expect_equal(share$minESS, 200 / 4)
+  share <- ctsem:::.ctBackendWorkerControl(list(minESS = 400, meanESS = 800,
+    chains = 4L), 4L)
+  expect_equal(share$minESS, 100)
+  expect_equal(share$meanESS, 200)
+  expect_identical(share$chains, 4L)
+  # No target is no target in every worker too.
+  expect_identical(ctsem:::.ctBackendWorkerControl(list(minESS = 0), 4L)$minESS, 0)
+})
+
 test_that("chains sampled in this session run one after another, whatever the pool holds", {
   skip_without_julia()
   fit <- .sample_fixture()

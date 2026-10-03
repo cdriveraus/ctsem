@@ -140,6 +140,7 @@
   # and would not have announced itself. A mismatched stream or a chain-major
   # layout error would show at the *first* draw, at the scale of the posterior's
   # own width -- order 1, not 1e-10. Neither does.
+  workercontrol <- .ctBackendWorkerControl(control, chains)
   results <- lapply(seq_len(chains), function(k) {
     chain_file <- if (report) progress_files[k] else NULL
     tryCatch(
@@ -148,7 +149,7 @@
       # would do the same job but draws a CRAN NOTE for ::: on our own objects.
       future::future(utils::getFromNamespace(".ctBackendSampleOneChain",
         "ctsem")(fit, target, warmup,
-        draws, per_worker, control, saveEffects, as.integer(seed) + k - 1L,
+        draws, per_worker, workercontrol, saveEffects, as.integer(seed) + k - 1L,
         progress_file = chain_file),
         seed = TRUE),
       error = function(e) NULL)
@@ -175,6 +176,25 @@
   }
   .ctBackendPoolChains(fit, target, drawn, chains, warmup, draws, saveEffects,
     ess_target = .ctBackendSampleTargetESS(control))
+}
+
+# The control list a worker's single chain samples by: the run's effective-size
+# targets divided among the chains.
+#
+# A worker stops its own chain on the target it is handed, so it has to be
+# handed the chain's share. Given the whole of it, every chain sampled until it
+# alone reached min ESS 200, and a four-chain run pooled about four times the
+# effective draws asked for -- on the default path, since processes are on
+# whenever `future` is installed. The pooled verdict is still the run's own:
+# `.ctBackendPoolChains()` recomputes R-hat and effective size over every draw
+# and judges them against the run's target, not the chain's.
+#' @keywords internal
+.ctBackendWorkerControl <- function(control, chains) {
+  settings <- .ctBackendSampleControl(control)
+  chains <- max(1L, as.integer(chains))
+  if (!is.null(settings$min_ess)) control$minESS <- settings$min_ess / chains
+  if (!is.null(settings$mean_ess)) control$meanESS <- settings$mean_ess / chains
+  control
 }
 
 # One chain, in a worker.
