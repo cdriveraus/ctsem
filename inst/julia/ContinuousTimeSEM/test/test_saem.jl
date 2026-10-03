@@ -377,3 +377,38 @@ end
         ndraws=30, seed=11, save_effects=true)
     @test size(saved.draws, 1) == sampler.ndim
 end
+
+# Every sampler takes its chains' starts from a caller -- one column a chain --
+# and reports when each check of the stopping rule happened; the SAEM kernel
+# also continues a SAEM state's chains rather than starting fresh.
+@testset "samplers take starts, the SAEM kernel continues a SAEM state, each reports its checks" begin
+    laplace, values = _saem_reduced()
+    run = ctsem_saem(laplace, values; seed=2)
+    npar = length(values)
+    starts = repeat(run.minimizer, 1, 2) .+ 0.01 .* randn(Random.Xoshiro(1), npar, 2)
+
+    s = ctsem_saem_sample(_saem_reduced()[1], run.minimizer; nchains=2, nwarmup=60,
+        ndraws=40, seed=3, state=run.state, min_ess=50, max_draws=200)
+    @test s.sampler == "saem"
+    tr = s.target_trace
+    @test length(tr.draws) >= 1
+    @test issorted(tr.secs) && all(>=(0), tr.secs)
+    @test tr.draws[end] == s.ndraws
+    @test all(isfinite, s.draws)
+
+    withstarts = ctsem_saem_sample(_saem_reduced()[1], run.minimizer; nchains=2,
+        nwarmup=20, ndraws=20, seed=3, starts=starts)
+    @test size(withstarts.draws) == (npar, 40)
+    @test isempty(withstarts.target_trace.draws)          # no target, no checks
+    @test_throws DimensionMismatch ctsem_saem_sample(_saem_reduced()[1], run.minimizer;
+        nchains=2, nwarmup=5, ndraws=5, starts=zeros(3, 2))
+
+    nuts = ctsem_sample(_saem_reduced()[1], run.minimizer; nchains=2, nwarmup=20,
+        ndraws=20, seed=3, starts=starts, min_ess=30, max_draws=100)
+    @test length(nuts.target_trace.draws) >= 1
+    @test nuts.target_trace.draws[end] == nuts.ndraws
+    marginal = ctsem_sample_marginal(_saem_reduced()[1], run.minimizer; nchains=2,
+        nwarmup=20, ndraws=20, seed=3, starts=starts)
+    @test size(marginal.draws) == (npar, 40)
+    @test all(isfinite, marginal.draws)
+end

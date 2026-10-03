@@ -1466,6 +1466,40 @@ function _saem_new_chain(base::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
         0.0, 0, 0.0, 0)
 end
 
+"""
+    _saem_one_chain(base, c)
+
+A one-chain copy of SAEM's state `base`, holding its chain `c`'s draws, tuned
+scales and counts (cycling when there are fewer chains than asked for); `base`
+itself when it has one chain.
+"""
+function _saem_one_chain(base::CTSEMSAEMState, c::Integer)
+    base.chains == 1 && return base
+    kc = mod1(c, base.chains)
+    st = deepcopy(base)
+    st.u = [[copy(base.u[U][kc])] for U in eachindex(base.u)]
+    st.ll = [[copy(base.ll[U][kc])] for U in eachindex(base.ll)]
+    st.logscale = [[copy(base.logscale[U][kc])] for U in eachindex(base.logscale)]
+    st.accepted = [[copy(base.accepted[U][kc])] for U in eachindex(base.accepted)]
+    st.proposed = [[copy(base.proposed[U][kc])] for U in eachindex(base.proposed)]
+    st.indep_accepted = [zeros(Int, 1) for _ in eachindex(base.u)]
+    st.indep_proposed = [zeros(Int, 1) for _ in eachindex(base.u)]
+    st.scores = [[copy(base.scores[U][kc])] for U in eachindex(base.scores)]
+    st.chains = 1
+    return st
+end
+
+"""The joint point `[theta; u_1; u_2; ...]` from `theta` and a one-chain
+state's effects."""
+function _saem_joint_point(sampler::CTSEMSampler, theta::AbstractVector, st::CTSEMSAEMState)
+    x = zeros(sampler.ndim)
+    x[1:sampler.npar] .= theta
+    for U in 1:sampler.nunits
+        x[_sample_urange(sampler, U)] .= st.u[U][1]
+    end
+    return x
+end
+
 """The chain's own members' log likelihoods, one vector per unit (the arrays
 in `st.ll`, not copies)."""
 _saem_own_ll(st::CTSEMSAEMState) = [st.ll[U][1] for U in eachindex(st.u)]
@@ -1662,6 +1696,14 @@ on by the same rule. `sweeps` and `nupper` are the effects' sweeps per
 iteration and collapsed moves per block above a leaf, `nscale` the centred
 scale moves and `nncp` the non-centred ones per level per iteration.
 
+`starts`, as for `ctsem_sample`, gives each chain its own starting point.
+`state`, a SAEM state (`ctsem_saem`'s `state`, or `ctsem_saem_init` after
+E-steps), continues SAEM's chains instead of starting fresh: chain `c` takes
+the state's chain `c`'s effects (cycling), its tuned proposal scales and
+shapes, and the state's averaged complete-data information as theta's first
+metric, with theta from `starts` when given (parameters only) and `values`
+otherwise.
+
 The result has `ctsem_sample`'s fields, with `sampler = "saem"`; `depth`,
 `divergent`, `energy` and `stepsize` describe theta's transitions, and `ebfmi`
 is NaN, since an energy taken at a different `u` every iteration does not
@@ -1675,8 +1717,10 @@ function ctsem_saem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVecto
     verbose::Bool=false, min_ess::Real=0.0, mean_ess::Real=0.0,
     max_draws::Integer=0, rhat_target::Real=1.01, progress_overwrite::Bool=true,
     progress_callback=nothing, progress_sink=nothing, stepsize::Real=0.0,
-    sweeps::Integer=2, nupper::Integer=2, nscale::Integer=5, nncp::Integer=2)
+    sweeps::Integer=2, nupper::Integer=2, nscale::Integer=5, nncp::Integer=2,
+    starts::Union{Nothing,AbstractMatrix}=nothing, state=nothing)
 
+    t0 = time()
     nchains = Int(nchains); nwarmup = Int(nwarmup); ndraws = Int(ndraws)
     nchains >= 1 || throw(ArgumentError("nchains must be positive"))
     ndraws >= 1 || throw(ArgumentError("ndraws must be positive"))
@@ -1691,7 +1735,8 @@ function ctsem_saem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVecto
     metric = ctsem_sample_metric(sampler, start; hessian=hessian)
     centre = ctsem_sample_start(sampler, start)
     npar = sampler.npar
-    base = ctsem_saem_init(laplace, centre[1:npar]; seed=seed, chains=1, disperse=false)
+    base = state === nothing ?
+        ctsem_saem_init(laplace, centre[1:npar]; seed=seed, chains=1, disperse=false) : state
 
     levels = collect(eachindex(laplace.spec.levels))
     setup = (
@@ -1705,15 +1750,25 @@ function ctsem_saem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVecto
     gjoint = zeros(sampler.ndim)
     density = (g, x) -> ctsem_sample_density!(g, sampler, x)
     chains = Vector{_SAEMChain}(undef, nchains)
+    jointstarts = _sample_joint_starts(starts, centre, npar)
     for c in 1:nchains
         rng = Random.Xoshiro(UInt64(seed) + UInt64(c))
-        x, _ = _sample_initial_point(centre, metric, rng, Float64(init_scale),
-            density, gjoint)
-        ch = _saem_new_chain(base, laplace, sampler, x, c, seed, rng, setup, maxdepth)
+        chainbase = _saem_one_chain(base, c)
+        x = if state !== nothing && (starts === nothing || size(starts, 1) == npar)
+            _saem_joint_point(sampler, starts === nothing ? centre[1:npar] :
+                view(starts, :, mod1(c, size(starts, 2))), chainbase)
+        elseif jointstarts !== nothing
+            jointstarts[mod1(c, length(jointstarts))]
+        else
+            first(_sample_initial_point(centre, metric, rng, Float64(init_scale),
+                density, gjoint))
+        end
+        ch = _saem_new_chain(chainbase, laplace, sampler, x, c, seed, rng, setup, maxdepth)
         logp = _saem_conditional!(ch.g, ch.st, laplace, ch.st.theta, _saem_own_ll(ch.st))
         isfinite(logp) || throw(DomainError(ch.st.theta, "SAEM sampler: the " *
             "parameters' conditional density is not finite where chain $c starts"))
-        _saem_set_metric!(ch, _saem_score_information(ch.st), setup.prec)
+        _saem_set_metric!(ch, (state === nothing || all(iszero, state.info)) ?
+            _saem_score_information(ch.st) : state.info, setup.prec)
         ch.eps = stepsize > 0 ? Float64(stepsize) :
             _init_stepsize((g, y) -> _saem_conditional!(g, ch.st, laplace, y, ch.trial),
                 ch.metric, rng, copy(ch.st.theta), copy(ch.g), logp, ch.ws)
@@ -1758,9 +1813,10 @@ function ctsem_saem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVecto
         end
         return P
     end
-    total = _sample_until_target(pool, (wanted, attempt) -> run_all(wanted, 0),
+    run = _sample_until_target(pool, (wanted, attempt) -> run_all(wanted, 0),
         nchains, ndraws, Float64(min_ess), Float64(mean_ess),
-        max(Int(max_draws), ndraws), Float64(rhat_target), verbose)
+        max(Int(max_draws), ndraws), Float64(rhat_target), verbose; t0=t0)
+    total = run.total
 
     kept = save_effects ? sampler.ndim : npar
     draws = Matrix{Float64}(undef, kept, nchains * total)
@@ -1804,6 +1860,7 @@ function ctsem_saem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVecto
         sampler="saem",
         scale_accept=[ch.nscale == 0 ? NaN : ch.scale_accept / ch.nscale for ch in chains],
         ncp_accept=[ch.nncp == 0 ? NaN : ch.ncp_accept / ch.nncp for ch in chains],
+        target_trace=run.trace,
     )
 end
 
