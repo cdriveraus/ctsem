@@ -229,6 +229,14 @@ value keeps the accuracy the adjoint already has.
 `fallback` is the marginal Hessian, used only if the difference fails. It is the
 wrong matrix for this purpose, as the caller explains, but a wrong metric costs
 efficiency where no metric costs the run.
+
+Inverted by `_prior_bounded_covariance`, not plainly: the joint density has no
+interior maximum in a population scale direction, and at the shrunk modes its
+likelihood can curve upward there, cancelling the prior's precision. Inverted
+as it stands, that gave variances of 35^2 and 69^2 in raw scale coordinates on
+two bench models (mvmix, gD1) whose posterior sds there are under 1 -- every
+chain's start was drawn that wide, and the step sizes the metric allowed were
+0.004 and 0.03.
 """
 function _conditional_population_covariance(sampler::CTSEMSampler,
     theta::Vector{Float64}, Ls::Vector{<:AbstractMatrix},
@@ -266,12 +274,39 @@ function _conditional_population_covariance(sampler::CTSEMSampler,
             H[i, j] = (gplus[i] - gminus[i]) / (2 * step)
         end
     end
+    prec = _ctsem_prior_precision(laplace.objective, n)
     if !ok
         fallback === nothing && return Matrix(1.0I, n, n)
         F = Matrix(fallback)
-        return _bounded_inverse(Symmetric((-(F .+ transpose(F))) ./ 2))
+        return _prior_bounded_covariance(Symmetric((-(F .+ transpose(F))) ./ 2), prec)
     end
-    return _bounded_inverse(Symmetric((-(H .+ transpose(H))) ./ 2))
+    return _prior_bounded_covariance(Symmetric((-(H .+ transpose(H))) ./ 2), prec)
+end
+
+"""
+    _prior_bounded_covariance(P, prec)
+
+The covariance a metric block uses, from a posterior precision `P` that holds
+the prior's precision `prec` (a vector) on its diagonal: the likelihood's part,
+`P - diag(prec)`, with its negative eigenvalues set to zero, and the prior added
+back before `_bounded_inverse`. Where the likelihood curves upward at the
+point it was measured, the prior is then what bounds the variance -- the
+posterior there is the prior's as far as that point can tell -- and where it
+curves down nothing changes. With no prior on a direction the floor in
+`_bounded_inverse` still applies.
+"""
+function _prior_bounded_covariance(P::Symmetric{Float64}, prec::AbstractVector{Float64})
+    any(>(0), prec) || return _bounded_inverse(P)
+    likelihood = Matrix(P) .- Diagonal(prec)
+    decomposition = try
+        eigen(Symmetric(likelihood))
+    catch err
+        err isa InterruptException && rethrow()
+        return _bounded_inverse(P)
+    end
+    V = decomposition.vectors
+    clipped = V * Diagonal(max.(decomposition.values, 0.0)) * transpose(V)
+    return _bounded_inverse(Symmetric((clipped .+ transpose(clipped)) ./ 2 .+ Diagonal(prec)))
 end
 
 """

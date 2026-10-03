@@ -402,9 +402,8 @@ const _CTSEM_COUNT_GENERATE_MAX = Ref(100000)
 Constant in the linear predictor, so it changes no mode, no score and no
 posterior moment -- but it *is* part of the log likelihood the fit reports, and
 leaving it out would make counts incomparable with every other likelihood in
-the package. Computed rather than taken from SpecialFunctions, which the engine
-does not otherwise depend on; the observation is data, so this never needs a
-derivative.
+the package. Computed here rather than through SpecialFunctions' `loggamma`;
+the observation is data, so this never needs a derivative.
 
 Kept in floating point throughout rather than counting in `Int`. A count is
 unbounded, so a value past `typemax(Int64)` is reachable -- from generation

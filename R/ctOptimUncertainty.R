@@ -2498,18 +2498,32 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' chain, or \code{maxDraws} when given; \code{minESS = 0} takes exactly
 #' \code{draws}. A run that reaches its budget short of the target warns.
 #' \code{settleTol} ends warmup early once the metric stops moving (off by
-#' default, and slower when measured). \code{control$target}
-#' says which posterior: \code{'auto'} (the default) follows the fit's own
-#' route -- the Laplace marginal over population parameters for
-#' \code{intoverpop = 'laplace'} or \code{'augmented'}, the joint posterior
-#' over population parameters \emph{and} every subject's random effects for
-#' \code{intoverpop = 'none'}, which has no marginal to fall back to.
+#' default, and slower when measured). \code{control$sampler} chooses the
+#' kernel for the joint posterior: \code{'nuts'} (the default) runs NUTS on the
+#' parameters and every random effect at once; \code{'saem'} draws the random
+#' effects by SAEM's Metropolis-within-Gibbs sweeps and the parameters given
+#' them by NUTS, with moves that re-express the effects for each level's means
+#' and scales. Both start from the same draws of the fit's Laplace
+#' approximation and stop by the same rule; \code{adapt_metric},
+#' \code{adapt_effects} and \code{settleTol} belong to the first and are
+#' refused with the second. \code{control$placement} says where the chains
+#' start: \code{'saem'}, the default on the joint posterior, runs SAEM from the
+#' fit's estimate -- on the exact marginal posterior, where the fit's optimum is
+#' the Laplace approximation's -- and starts each chain from SAEM's estimate and
+#' its draws of the random effects, for either sampler; \code{'fit'} starts them
+#' around the fit's own estimate, and is the only placement for a marginal
+#' target, which has no random effects to start. \code{control$target}
+#' says which posterior: \code{'auto'} (the default) is the exact posterior
+#' the fit's route can reach -- the joint posterior over population parameters
+#' \emph{and} every subject's random effects for \code{intoverpop =
+#' 'laplace'} or \code{'none'}, with the Laplace fit serving only to place the
+#' chains, and the filter's marginal for \code{intoverpop = 'augmented'}.
 #' \code{'marginal'}/\code{'joint'} ask for one explicitly regardless of
-#' route; \code{'joint'} on an ordinary \code{intoverpop = 'laplace'}
-#' maximum-likelihood fit is what removes the Laplace approximation exactly,
-#' at the cost of a dimension that grows with the subject count, and is
-#' refused by name on an \code{intoverpop = 'augmented'} fit, which has no
-#' separate random effect to sample jointly with the parameters. See
+#' route; \code{'marginal'} on a Laplace fit samples the Laplace marginal,
+#' an approximate posterior whose dimension does not grow with the subject
+#' count, and \code{'joint'} is refused by name on an \code{intoverpop =
+#' 'augmented'} fit, which has no separate random effect to sample jointly
+#' with the parameters. See
 #' \code{\link{ctJuliaSetup}} for the thread count that decides whether
 #' chains run concurrently, and \code{\link{ctFit}}'s \code{intoverpop} for
 #' what each route means.

@@ -253,6 +253,10 @@
       "term -- it augments the latent state instead. Drop it")),
   # SAEM, julia only: the random effects julia's Laplace route integrates are
   # sampled instead (saem.jl). FALSE describes what stan does.
+  saem_proposal = list(only = 'julia',
+    inert = function(v) FALSE,
+    msg = paste0("chooses the proposal of the julia engine's SAEM phase, and ",
+      "stan has no SAEM. Drop it")),
   saem = list(only = 'julia',
     inert = function(v) isFALSE(v),
     msg = paste0("runs the julia engine's SAEM phase, which samples the random ",
@@ -740,9 +744,15 @@ T0VARredundancies <- function(ctm) {
 #' interior maximum and is not a place to start a chain from. That placed fit
 #' is then handed to the same runner \code{\link{ctFitUncertainty}} uses for
 #' \code{uncertainty = 'sample'}, so the two are one pipeline:
-#' \code{intoverpop='laplace'} samples the Laplace marginal,
-#' \code{intoverpop='none'} (the \code{FALSE} route above) the joint posterior,
-#' and \code{\link{ctFitUncertainty}}'s own \code{control$target} entry says
+#' \code{intoverpop='laplace'} and \code{intoverpop='none'} (the \code{FALSE}
+#' route above) sample the joint posterior over parameters and random effects,
+#' with the chains placed by SAEM (\code{sampleControl$placement = 'saem'}, the
+#' default there): the placement fit then stops after the start and the prior
+#' warm-up, SAEM runs from that point on the exact marginal posterior, and the
+#' chains start from its estimate and its draws of the random effects, so no
+#' Laplace optimum is needed (\code{placement = 'fit'} restores the whole
+#' placement pipeline and its identifiability report). \code{ctFitUncertainty}'s
+#' own \code{control$target} entry says
 #' which one a later call on the resulting fit repeats or overrides.
 #' @param sameInitialTimes if TRUE, include an empty observation for every subject that has no observation
 #' at the earliest observation time of the dataset. This ensures that the T0MEANS occurs for every subject at the same time,
@@ -793,15 +803,21 @@ T0VARredundancies <- function(ctm) {
 #' for the exact marginal posterior mode and cannot climb an error of the
 #' approximation -- such as the over-credit Laplace gives a unit whose
 #' random-effect posterior is flat-topped. Its averaged point is then polished
-#' by the usual optimizer and certified as usual. A number sets its iteration
-#' cap (\code{TRUE} is 3000). It runs in parallel over units and, within a
-#' unit, over its subjects, within \code{cores}, and \code{set.seed()}
-#' reproduces it at a given \code{cores}. On large multilevel models, where
-#' the quasi-Newton optimizer can be slow, it can reach the neighbourhood of
-#' the optimum much faster, though such a model may want more than 3000
-#' iterations; the fit says so when SAEM's burn-in had not levelled off.
-#' \code{fit$optim$saem_iterations}, \code{saem_burnin},
-#' \code{saem_settled}, \code{saem_acceptance} and \code{saem_trace} record
+#' by the usual optimizer and certified as usual. It has no burn-in, averaging
+#' or step-size settings: every step is a full one, alternating between holding
+#' the standardised random effects fixed and holding the effects themselves
+#' fixed, so population means and scales move quickly whether the data say much
+#' or little about each subject; the estimate averages the last half of the
+#' iterations, and SAEM stops once the iterations no longer drift beyond their
+#' own Monte Carlo noise. A number caps its iterations
+#' (\code{TRUE} is 10000); the fit says so if the cap came first. Models with
+#' few units run several chains per unit. It runs in parallel over units,
+#' chains and, within a unit, its subjects, within \code{cores}, and
+#' \code{set.seed()} reproduces it at a given \code{cores}. On large multilevel
+#' models, where the quasi-Newton optimizer can be slow, it can reach the
+#' neighbourhood of the optimum much faster.
+#' \code{fit$optim$saem_iterations}, \code{saem_settled}, \code{saem_trend},
+#' \code{saem_chains}, \code{saem_acceptance} and \code{saem_trace} record
 #' the phase; the trace's \code{logpost_complete} is the complete-data log
 #' posterior, which is not on the Laplace objective's scale.
 #'
@@ -1145,8 +1161,11 @@ T0VARredundancies <- function(ctm) {
 #' \code{maxdepth}/\code{max_treedepth} (default 10),
 #' \code{target_accept}/\code{adapt_delta} (0.8), \code{maxdelta} (1000),
 #' \code{init_scale} (1), \code{adapt_metric} (FALSE), \code{adapt_effects}
-#' (FALSE), and the effective-sample-size target that decides when a run stops:
-#' \code{minESS} (200, the size the worst parameter must reach),
+#' (FALSE), \code{sampler} (\code{'nuts'}, or \code{'saem'} for SAEM's kernel on
+#' the joint posterior), \code{placement} (\code{'saem'} on the joint posterior,
+#' where SAEM's state places the chains; \code{'fit'} otherwise), and the
+#' effective-sample-size target that decides
+#' when a run stops: \code{minESS} (200, the size the worst parameter must reach),
 #' \code{rhatTarget} (1.01), \code{meanESS}, \code{maxDraws} and
 #' \code{settleTol} -- all documented in full under \code{uncertainty =
 #' 'sample'} in \code{\link{ctFitUncertainty}}, with the effective sample size
@@ -2595,7 +2614,8 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     #   optimize  intoverpop     what runs                 sampled dimension
     #   TRUE      'laplace'      Laplace ML                --
     #   TRUE      TRUE           augmented ML              --
-    #   FALSE     'laplace'      NUTS, Laplace marginal    npar
+    #   FALSE     'laplace'      NUTS, joint (placed by    npar + effects
+    #                            the Laplace fit)
     #   FALSE     TRUE           NUTS, filter marginal     npar
     #   FALSE     FALSE          NUTS over parameters      npar + effects
     #                            *and* effects

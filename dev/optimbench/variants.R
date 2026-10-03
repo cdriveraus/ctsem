@@ -55,6 +55,28 @@ BENCH_VARIANTS <- list(
   pipeline = list(optimcontrol = list(stochastic = TRUE, lbfgs_diagonal = TRUE,
     lbfgs_gll = 20L)),
 
+  # SAEM before the optimiser (optimcontrol$saem): the random effects sampled,
+  # Kesten's per-parameter steps, the drift rule; then the usual L-BFGS, finish
+  # and certification.
+  saem = list(optimcontrol = list(saem = TRUE)),
+  # SAEM's own estimate: no L-BFGS iterations, no finish, no probe, nothing
+  # certified -- what the sampling estimator reaches by itself, scored on the
+  # exact reference like every other cell.
+  saemonly = list(optimcontrol = list(saem = TRUE, maxiter = 0L, estonly = TRUE,
+    overshoot = "off")),
+  # The same two with f-SAEM's independence proposals for every subject.
+  saemlap = list(optimcontrol = list(saem = TRUE, saem_proposal = "laplace")),
+  saemlaponly = list(optimcontrol = list(saem = TRUE, saem_proposal = "laplace",
+    maxiter = 0L, estonly = TRUE, overshoot = "off")),
+  # Priors on every parameter, so every model is identified: the default
+  # optimiser, SAEM before it, and SAEM alone, scored among themselves.
+  allprior = list(args = list(priors = TRUE), objective = "allprior"),
+  saem_allprior = list(optimcontrol = list(saem = TRUE), args = list(priors = TRUE),
+    objective = "allprior"),
+  saemonly_allprior = list(optimcontrol = list(saem = TRUE, maxiter = 0L,
+    estonly = TRUE, overshoot = "off"), args = list(priors = TRUE),
+    objective = "allprior"),
+
   # No fit: evaluate the objective and the references at the start. Used with
   # a stored best-known point to check that a reference still reproduces.
   evalonly = list(fit = FALSE),

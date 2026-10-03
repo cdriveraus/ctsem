@@ -3964,28 +3964,32 @@ so it is computed once per evaluation rather than once per unit.
 """
 function _laplace_level_chol_derivatives(values::AbstractVector{Float64},
     spec::CTSEMLaplaceSpec)
-    out = Vector{Vector{Matrix{Float64}}}(undef, length(spec.levels))
-    for l in eachindex(spec.levels)
-        level = spec.levels[l]
-        positions = _laplace_level_positions(spec, l)
-        k = length(level.re_index)
-        r = nlatent(level)
-        if isempty(positions) || k == 0 || r == 0
-            out[l] = Matrix{Float64}[]
-            continue
+    return [_laplace_level_chol_derivatives(values, spec, l) for l in eachindex(spec.levels)]
+end
+
+"""
+    _laplace_level_chol_derivatives(values, spec, l)
+
+Level `l`'s entry of the above alone, for a caller that steps one level's
+population parameters (SAEM's centred step).
+"""
+function _laplace_level_chol_derivatives(values::AbstractVector{Float64},
+    spec::CTSEMLaplaceSpec, l::Integer)
+    level = spec.levels[l]
+    positions = _laplace_level_positions(spec, l)
+    k = length(level.re_index)
+    r = nlatent(level)
+    (isempty(positions) || k == 0 || r == 0) && return Matrix{Float64}[]
+    chol_of = function (p)
+        v = convert(Vector{eltype(p)}, values)
+        @inbounds for (slot, position) in enumerate(positions)
+            v[position] = p[slot]
         end
-        chol_of = function (p)
-            v = convert(Vector{eltype(p)}, values)
-            @inbounds for (slot, position) in enumerate(positions)
-                v[position] = p[slot]
-            end
-            return vec(_laplace_popchol(v, level))
-        end
-        J = ForwardDiff.jacobian(chol_of, values[positions])
-        out[l] = [Matrix{Float64}(reshape(collect(view(J, :, t)), k, r))
-                  for t in eachindex(positions)]
+        return vec(_laplace_popchol(v, level))
     end
-    return out
+    J = ForwardDiff.jacobian(chol_of, values[positions])
+    return [Matrix{Float64}(reshape(collect(view(J, :, t)), k, r))
+            for t in eachindex(positions)]
 end
 
 """Row `p` of `D * u[base .+ (1:r)]`: a level's `dL` (or second derivative)

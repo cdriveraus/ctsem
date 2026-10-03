@@ -294,6 +294,26 @@ end
               for C in metric.factors)
 end
 
+@testset "a metric block is never wider than the prior where the likelihood curves upward" begin
+    # `_conditional_population_covariance` measures the joint curvature at the
+    # modes, where a population scale direction can curve upward and cancel the
+    # prior's precision; inverted as it stood, that gave raw-scale variances of
+    # 35^2 and 69^2 on two bench models. The likelihood's upward part is dropped
+    # and the prior is what bounds the variance.
+    prec = [1.0, 1.0]
+    P = Symmetric([4.0 0.0; 0.0 -0.99] .+ Diagonal(prec))   # precisions 5 and 0.01
+    C = ContinuousTimeSEM._prior_bounded_covariance(P, prec)
+    @test C[1, 1] ≈ 1 / 5
+    @test C[2, 2] ≈ 1.0                                   # the prior's, not 1 / 0.01
+    # A likelihood that curves down in every direction: nothing changes.
+    P2 = Symmetric([3.0 0.5; 0.5 2.0])
+    @test ContinuousTimeSEM._prior_bounded_covariance(P2, [0.5, 0.5]) ≈
+        ContinuousTimeSEM._bounded_inverse(P2)
+    # No prior: the plain bounded inverse.
+    @test ContinuousTimeSEM._prior_bounded_covariance(P, zeros(2)) ≈
+        ContinuousTimeSEM._bounded_inverse(P)
+end
+
 @testset "momentum drawn from the metric has the metric's inverse covariance" begin
     # Sigma is the *inverse* mass matrix, so momentum has covariance Sigma^-1.
     # Getting this backwards is an easy slip that leaves the sampler correct but
@@ -478,6 +498,42 @@ end
         end
     end
     @test ctsem_sample_diagnostics(correlated, 4).ess[1] < 1000
+end
+
+@testset "R-hat sees chains that differ in spread, tail size sees a missed tail" begin
+    rng = Random.Xoshiro(21)
+    # Same centre, one chain three times as wide: the chains agree on location
+    # and not on spread, which only the folded R-hat measures.
+    spread = randn(rng, 1, 4000)
+    spread[1, 1:1000] .*= 3.0
+    @test ctsem_sample_diagnostics(spread, 4).rhat[1] > 1.05
+
+    # Independent draws: tail size near the count, like bulk size.
+    iid = randn(rng, 1, 8000)
+    d = ctsem_sample_diagnostics(iid, 4)
+    @test d.ess_tail[1] > 2000
+    @test d.ess[1] > 2000
+
+    # The lower tail visited in one burst: 100 consecutive draws of one chain,
+    # every one in the lower 5% of the distribution -- inside its range, all on
+    # one side -- the shape gN3's study-level standard deviation had. The
+    # chains agree in location and spread well enough for R-hat, and the bulk
+    # size stays in the thousands; the 5% point rests on that one burst, and
+    # only the tail size says so (measured: bulk 2700-5000, tail 630-700,
+    # R-hat 1.002-1.003 over three draws of this construction).
+    burst = randn(rng, 1, 8000)
+    k = 0
+    while k < 100
+        z = randn(rng)
+        z < -1.645 || continue
+        k += 1
+        burst[1, 500 + k] = z
+    end
+    b = ctsem_sample_diagnostics(burst, 4)
+    @test b.rhat[1] < 1.01
+    @test b.ess[1] > 2000
+    @test b.ess_tail[1] < b.ess[1] / 3
+    @test b.ess_tail[1] < 1000
 end
 
 @testset "the adaptation schedule brackets its windows the way Stan does" begin

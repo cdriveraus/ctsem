@@ -268,6 +268,10 @@ The pairing is not an optimisation. An autocorrelation estimate for a reversible
 chain is positive in consecutive pairs even when individual lags are not, so
 truncating on single lags stops early and overstates the sample size -- exactly
 the direction of error a diagnostic must not have.
+
+Each lag's autocorrelation is computed only when the sequence reaches it: the
+sum stops at the first non-positive pair, usually within a few dozen lags, and
+computing all thousand lags up front cost the same result many times over.
 """
 function _ess(chains::AbstractMatrix{Float64})
     ndraws, nchains = size(chains)
@@ -282,25 +286,25 @@ function _ess(chains::AbstractMatrix{Float64})
     varplus <= 0 && return NaN
 
     maxlag = min(ndraws - 2, 1000)
-    corr = Vector{Float64}(undef, maxlag + 1)
-    for t in 0:maxlag
+    corr = function (t)
         acov = 0.0
         for c in 1:nchains
             s = 0.0
-            for i in 1:(ndraws - t)
-                s += (chains[i, c] - means[c]) * (chains[i + t, c] - means[c])
+            m = means[c]
+            @inbounds for i in 1:(ndraws - t)
+                s += (chains[i, c] - m) * (chains[i + t, c] - m)
             end
             acov += s / ndraws
         end
         acov /= nchains
-        corr[t + 1] = 1 - (W - acov) / varplus
+        return 1 - (W - acov) / varplus
     end
 
     # Initial positive sequence, then made monotone.
     pairs = Float64[]
     t = 1
     while t + 1 <= maxlag
-        pair = corr[t + 1] + corr[t + 2]
+        pair = corr(t) + corr(t + 1)
         pair <= 0 && break
         push!(pairs, pair)
         t += 2
@@ -312,11 +316,72 @@ function _ess(chains::AbstractMatrix{Float64})
     return nchains * ndraws / tau
 end
 
+"""
+    _rank_normalise(x)
+
+The draws replaced by normal scores of their ranks over all chains,
+`Phi^-1((r - 3/8) / (S + 1/4))`, ties at their average rank (Vehtari, Gelman,
+Simpson, Carpenter and Buerkner 2021). R-hat and effective size of these are
+the bulk diagnostics: defined whatever the tails do, and the same under any
+monotone transform of the parameter -- which matters here, where a raw scale
+parameter and its constrained value are both reported.
+"""
+function _rank_normalise(x::AbstractMatrix{Float64})
+    v = vec(x)
+    S = length(v)
+    order = sortperm(v)
+    ranks = Vector{Float64}(undef, S)
+    i = 1
+    while i <= S
+        j = i
+        while j < S && v[order[j + 1]] == v[order[i]]
+            j += 1
+        end
+        r = (i + j) / 2
+        for k in i:j
+            ranks[order[k]] = r
+        end
+        i = j + 1
+    end
+    z = similar(x)
+    for k in 1:S
+        z[k] = sqrt(2.0) * erfinv(2 * (ranks[k] - 3 / 8) / (S + 1 / 4) - 1)
+    end
+    return z
+end
+
+"""
+    _tail_ess(x)
+
+The smaller of the effective sizes of `x <= q05` and `x >= q95` as indicators,
+the quantiles over all chains: how many effective draws the 5% and 95% points
+rest on. A chain that has not visited a tail lately leaves bulk effective size
+untouched and this one low, which is the failure it is for: a study-level
+standard deviation reached its lower tail only in bursts thousands of draws
+apart, and bulk size read about 160 where the tail held about 40
+(review/POSTERIOR-race-2026-10-02.md, gN3).
+"""
+function _tail_ess(x::AbstractMatrix{Float64})
+    v = sort(vec(x))
+    S = length(v)
+    lo = v[clamp(ceil(Int, 0.05 * S), 1, S)]
+    hi = v[clamp(ceil(Int, 0.95 * S), 1, S)]
+    a = _ess(Float64.(x .<= lo))
+    b = _ess(Float64.(x .>= hi))
+    return _finite_extremum([a, b], minimum)
+end
+
 export ctsem_sample_diagnostics
 """
     ctsem_sample_diagnostics(draws, nchains)
 
-Split R-hat and effective sample size for every sampled coordinate.
+R-hat, bulk and tail effective sample size for every sampled coordinate, as
+Stan reports them now (Vehtari et al. 2021). R-hat is the larger of the split
+R-hats of the rank-normalised draws and of their rank-normalised distances from
+the median: the first sees chains that disagree on location, the second chains
+that agree on location but not on spread -- chains that have missed a tail.
+`ess` is the bulk effective size (rank-normalised draws) and `ess_tail` the
+tails' (`_tail_ess`).
 
 `draws` is `ndim x (nchains * ndraws)`, chain-major -- the layout `ctsem_sample`
 returns, and the one that crosses the R bridge as a single matrix.
@@ -330,15 +395,23 @@ function ctsem_sample_diagnostics(draws::AbstractMatrix{Float64}, nchains::Integ
         throw(DimensionMismatch("draw count is not a multiple of the chain count"))
     rhat = fill(NaN, ndim)
     ess = fill(NaN, ndim)
+    ess_tail = fill(NaN, ndim)
     buffer = Matrix{Float64}(undef, ndraws, nchains)
     for j in 1:ndim
         @inbounds for c in 1:nchains, t in 1:ndraws
             buffer[t, c] = draws[j, (c - 1) * ndraws + t]
         end
-        rhat[j] = _split_rhat(buffer)
-        ess[j] = _ess(buffer)
+        all(isfinite, buffer) || continue
+        z = _rank_normalise(buffer)
+        sorted = sort(vec(buffer))
+        n = length(sorted)
+        med = isodd(n) ? sorted[(n + 1) ÷ 2] : (sorted[n ÷ 2] + sorted[n ÷ 2 + 1]) / 2
+        folded = _rank_normalise(abs.(buffer .- med))
+        rhat[j] = _finite_extremum([_split_rhat(z), _split_rhat(folded)], maximum)
+        ess[j] = _ess(z)
+        ess_tail[j] = _tail_ess(buffer)
     end
-    return (rhat=rhat, ess=ess)
+    return (rhat=rhat, ess=ess, ess_tail=ess_tail)
 end
 
 """

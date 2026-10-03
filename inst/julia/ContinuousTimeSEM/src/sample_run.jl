@@ -545,7 +545,8 @@ function _sample_to_target(density_for, centre, metric, nchains::Int,
     adapt_metric::Bool, adapt, settle_tol::Float64, min_ess::Float64,
     mean_ess::Float64, max_draws::Int, rhat_target::Float64, npar::Int,
     resume, verbose::Bool, overwrite::Bool=true; progress_callback=nothing,
-    progress_sink=nothing, init_eps::Float64=0.0)
+    progress_sink=nothing, init_eps::Float64=0.0, starts=nothing,
+    t0::Float64=time())
 
     results = if resume === nothing
         _sample_chains(nchains, parallel, seed, centre, metric, nwarmup, ndraws,
@@ -553,23 +554,63 @@ function _sample_to_target(density_for, centre, metric, nchains::Int,
             density_for; settle_tol=settle_tol, init_eps=init_eps,
             progress=verbose, overwrite=overwrite,
             progress_callback=progress_callback,
-            progress_sink=progress_sink)
+            progress_sink=progress_sink, starts=starts)
     else
         _continue_chains(nchains, parallel, seed, ndraws, maxdepth, maxdelta,
             density_for, resume; progress=verbose, overwrite=overwrite,
             progress_callback=progress_callback, progress_sink=progress_sink)
     end
+    held = Ref(results)
+    extend! = function (wanted, attempt)
+        held[] = _merge_chains(held[],
+            _continue_chains(nchains, parallel, seed + 1000 * attempt, wanted,
+                maxdepth, maxdelta, density_for, held[]; progress=verbose,
+                overwrite=overwrite, progress_callback=progress_callback,
+                progress_sink=progress_sink))
+        return nothing
+    end
+    run = _sample_until_target(() -> _pool_draws(held[], npar), extend!, nchains,
+        ndraws, min_ess, mean_ess, max_draws, rhat_target, verbose; t0=t0)
+    return (results=held[], ndraws=run.total, trace=run.trace)
+end
+
+"""
+    _sample_until_target(pool, extend!, nchains, ndraws, min_ess, mean_ess,
+        max_draws, rhat_target, verbose)
+
+The stopping rule of `_sample_to_target`, for any sampler whose chains can be
+continued: `pool()` returns the population draws so far (`npar x (nchains *
+total)`, chain-major) and `extend!(wanted, attempt)` continues every chain by
+`wanted` draws with its tuning held fixed. The NUTS chains and the SAEM
+sampler's (`ctsem_saem_sample`) both stop here, so a run means the same thing
+whichever drew it.
+
+Returns the draws per chain at the end and a trace of every check: draws per
+chain, seconds since `t0`, the worst effective size (bulk or tail) and the
+worst R-hat -- which is how long a run took to reach a given size, whether or
+not R-hat then held it open.
+"""
+function _sample_until_target(pool, extend!, nchains::Int, ndraws::Int,
+    min_ess::Float64, mean_ess::Float64, max_draws::Int, rhat_target::Float64,
+    verbose::Bool; t0::Float64=time())
     total = ndraws
     attempt = 0
     was_met = false
+    trace = (draws=Int[], secs=Float64[], ess=Float64[], rhat=Float64[])
     while min_ess > 0 || mean_ess > 0
-        pooled = _pool_draws(results, npar)
-        diagnostics = ctsem_sample_diagnostics(pooled, nchains)
+        diagnostics = ctsem_sample_diagnostics(pool(), nchains)
         finite_ess = filter(isfinite, diagnostics.ess)
+        finite_tail = filter(isfinite, diagnostics.ess_tail)
         finite_rhat = filter(isfinite, diagnostics.rhat)
-        worst = isempty(finite_ess) ? 0.0 : minimum(finite_ess)
+        # The worse of bulk and tail: the 5% and 95% points a summary reports
+        # rest on the tail's draws, and a chain that has missed a tail leaves
+        # the bulk figure untouched.
+        worst = isempty(finite_ess) ? 0.0 :
+            min(minimum(finite_ess), isempty(finite_tail) ? Inf : minimum(finite_tail))
         average = isempty(finite_ess) ? 0.0 : sum(finite_ess) / length(finite_ess)
         rhat = isempty(finite_rhat) ? Inf : maximum(finite_rhat)
+        push!(trace.draws, total); push!(trace.secs, time() - t0)
+        push!(trace.ess, worst); push!(trace.rhat, rhat)
         met = worst >= min_ess && average >= mean_ess && rhat <= rhat_target
         # Confirmed once before stopping. Stopping the moment a target is first
         # met is a rule correlated with the quantity it tests: effective size is
@@ -578,7 +619,7 @@ function _sample_to_target(density_for, centre, metric, nchains::Int,
         # extra batch removes most of that, and costs one batch.
         confirmed = met && was_met
         if verbose
-            println(_console(), "  ", total, " draws per chain: min ESS ",
+            println(_console(), "  ", total, " draws per chain: min ESS (bulk and tail) ",
                 round(worst; digits=1), ", mean ESS ", round(average; digits=1),
                 ", worst R-hat ", round(rhat; digits=3),
                 confirmed ? " -- targets met" :
@@ -601,14 +642,10 @@ function _sample_to_target(density_for, centre, metric, nchains::Int,
         wanted = min(wanted, max_draws - total)
         wanted <= 0 && break
         attempt += 1
-        results = _merge_chains(results,
-            _continue_chains(nchains, parallel, seed + 1000 * attempt, wanted,
-                maxdepth, maxdelta, density_for, results; progress=verbose,
-                overwrite=overwrite, progress_callback=progress_callback,
-                progress_sink=progress_sink))
+        extend!(wanted, attempt)
         total += wanted
     end
-    return (results=results, ndraws=total)
+    return (total=total, trace=trace)
 end
 
 """Draws from every chain, population part only, chain-major."""
@@ -760,15 +797,19 @@ function _sample_chains(nchains::Int, parallel::Bool, seed::Integer,
     init_scale::Float64, adapt_metric::Bool, adapt::Union{Nothing,Vector{Bool}},
     density_for; settle_tol::Float64=0.0, init_eps::Float64=0.0,
     progress::Bool=false, overwrite::Bool=true, progress_callback=nothing,
-    progress_sink=nothing)
+    progress_sink=nothing, starts=nothing)
     # One reporter spans both phases -- `_run_chain` relabels it from "warmup"
     # to "sampling" partway -- so it opens on "warmup" and the closing line
     # names both rather than whichever phase it ended in.
     return _run_chains(nchains, parallel, seed, "warmup",
         @sprintf("%d warmup + %d draws", nwarmup, ndraws),
-        (c, rng, reporter, watcher) -> _run_chain(density_for(c), centre,
+        # Given starts, chain `c` begins exactly at its own (cycling), rather
+        # than at a draw around `centre`.
+        (c, rng, reporter, watcher) -> _run_chain(density_for(c),
+            starts === nothing ? centre : starts[mod1(c, length(starts))],
             metric, rng, nwarmup, ndraws, maxdepth,
-            target_accept, maxdelta, init_scale, adapt_metric, adapt;
+            target_accept, maxdelta, starts === nothing ? init_scale : 0.0,
+            adapt_metric, adapt;
             settle_tol=settle_tol, init_eps=init_eps, progress=reporter,
             callback=watcher);
         progress=progress, overwrite=overwrite,
@@ -803,14 +844,26 @@ function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     min_ess::Real=0.0, mean_ess::Real=0.0, max_draws::Integer=0,
     rhat_target::Real=1.01, settle_tol::Real=0.0, resume=nothing,
     progress_overwrite::Bool=true, progress_callback=nothing,
-    progress_sink=nothing, stepsize::Real=0.0)
+    progress_sink=nothing, stepsize::Real=0.0,
+    starts::Union{Nothing,AbstractMatrix}=nothing, saem::Bool=false,
+    saem_nestep::Integer=50)
 
+    t0 = time()
     nchains = Int(nchains); nwarmup = Int(nwarmup); ndraws = Int(ndraws)
     nchains >= 1 || throw(ArgumentError("nchains must be positive"))
     ndraws >= 1 || throw(ArgumentError("ndraws must be positive"))
     nwarmup >= 0 || throw(ArgumentError("nwarmup must be non-negative"))
     0 < target_accept < 1 || throw(ArgumentError("target_accept must be in (0, 1)"))
 
+    # `saem = true`: placed by SAEM's state, as `ctsem_saem_sample` is -- the
+    # chains start from its estimate and its chains' effects, and the metric is
+    # read there -- rather than from the point handed in.
+    placement = saem ? _saem_placement(laplace, collect(Float64, values)[1:Int(npar)];
+        nchains=nchains, seed=seed, nestep=saem_nestep) : nothing
+    if placement !== nothing
+        values = placement.theta
+        starts === nothing && (starts = placement.joint)
+    end
     sampler = ctsem_sampler(laplace, npar)
     start = collect(Float64, values)
     # Builds the metric *and* solves each unit's conditional mode at `start`,
@@ -844,6 +897,7 @@ function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     # measured at 356 effective draws keeping them against 261 re-estimating.
     adapt = adapt_effects ? nothing : [b == 1 for b in eachindex(metric.ranges)]
     centre = ctsem_sample_start(sampler, start)
+    chainstarts = _sample_joint_starts(starts, centre, sampler.npar)
     run = _sample_to_target(
         c -> ((g, x) -> ctsem_sample_density!(g, sampler, x;
             )),
@@ -853,7 +907,7 @@ function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
         Float64(mean_ess), max(Int(max_draws), ndraws), Float64(rhat_target),
         sampler.npar, resume, verbose, progress_overwrite;
         progress_callback=progress_callback, progress_sink=progress_sink,
-        init_eps=Float64(stepsize))
+        init_eps=Float64(stepsize), starts=chainstarts, t0=t0)
     results = run.results
     ndraws = run.ndraws
 
@@ -903,6 +957,7 @@ function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
         effect_sd=effect_sd,
         rhat=diagnostics.rhat,
         ess=diagnostics.ess,
+        ess_tail=diagnostics.ess_tail,
         accept=accept,
         divergent=divergent,
         depth=depth,
@@ -917,8 +972,29 @@ function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
         # `max` propagate NaN, so it poisons every result instead of only the
         # empty one.
         worst_rhat=_finite_extremum(diagnostics.rhat, maximum),
-        min_ess=_finite_extremum(diagnostics.ess, minimum),
+        min_ess=_finite_extremum(vcat(diagnostics.ess, diagnostics.ess_tail), minimum),
+        target_trace=run.trace,
+        placement=_saem_placement_summary(placement),
     )
+end
+
+"""
+    _sample_joint_starts(starts, centre, npar)
+
+Chains' starting points on the joint vector from a caller's `starts`: one
+column a chain, either `npar` long (the parameters, the effects then at the
+centre's modes) or the joint vector's whole length. `nothing` for none.
+"""
+function _sample_joint_starts(starts, centre::Vector{Float64}, npar::Integer)
+    starts === nothing && return nothing
+    ndim = length(centre)
+    size(starts, 1) in (npar, ndim) || throw(DimensionMismatch(
+        "starts must have $npar (parameters) or $ndim (parameters and effects) rows"))
+    return [begin
+        x = copy(centre)
+        x[1:size(starts, 1)] .= view(starts, :, c)
+        x
+    end for c in axes(starts, 2)]
 end
 
 export ctsem_sample_marginal
@@ -981,8 +1057,10 @@ function ctsem_sample_marginal(objective, values::AbstractVector;
     verbose::Bool=false, min_ess::Real=0.0, mean_ess::Real=0.0,
     max_draws::Integer=0, rhat_target::Real=1.01, settle_tol::Real=0.0,
     resume=nothing, progress_overwrite::Bool=true, progress_callback=nothing,
-    progress_sink=nothing, nparameters::Integer=0, stepsize::Real=0.0)
+    progress_sink=nothing, nparameters::Integer=0, stepsize::Real=0.0,
+    starts::Union{Nothing,AbstractMatrix}=nothing)
 
+    t0 = time()
     nchains = Int(nchains); nwarmup = Int(nwarmup); ndraws = Int(ndraws)
     nchains >= 1 || throw(ArgumentError("nchains must be positive"))
     ndraws >= 1 || throw(ArgumentError("ndraws must be positive"))
@@ -1069,7 +1147,9 @@ function ctsem_sample_marginal(objective, values::AbstractVector;
         Float64(settle_tol), Float64(min_ess), Float64(mean_ess),
         max(Int(max_draws), ndraws), Float64(rhat_target), npar, resume,
         verbose, progress_overwrite; progress_callback=progress_callback,
-        progress_sink=progress_sink, init_eps=Float64(stepsize))
+        progress_sink=progress_sink, init_eps=Float64(stepsize),
+        starts=_sample_joint_starts(starts, centre, size(something(starts, centre), 1)),
+        t0=t0)
     results = run.results
     ndraws = run.ndraws
 
@@ -1096,7 +1176,7 @@ function ctsem_sample_marginal(objective, values::AbstractVector;
     return (
         draws=draws, npar=npar, ndim=npar, nchains=nchains, ndraws=ndraws,
         saved_effects=false, effect_mean=Float64[], effect_sd=Float64[],
-        rhat=diagnostics.rhat, ess=diagnostics.ess,
+        rhat=diagnostics.rhat, ess=diagnostics.ess, ess_tail=diagnostics.ess_tail,
         accept=accept, divergent=divergent, depth=depth, energy=energy,
         stepsize=[r.stepsize for r in results],
         warmup_divergent=[r.warmup_divergent for r in results],
@@ -1104,6 +1184,7 @@ function ctsem_sample_marginal(objective, values::AbstractVector;
         nsaturated=count(==(Int(maxdepth)), depth),
         ebfmi=_ebfmi(energy, nchains),
         worst_rhat=_finite_extremum(diagnostics.rhat, maximum),
-        min_ess=_finite_extremum(diagnostics.ess, minimum),
+        min_ess=_finite_extremum(vcat(diagnostics.ess, diagnostics.ess_tail), minimum),
+        target_trace=run.trace,
     )
 end

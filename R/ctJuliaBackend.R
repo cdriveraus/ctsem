@@ -3076,7 +3076,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # Laplace random effects to sample -- 'augmented' carries them as latent
 # states, and the state-explicit route has its own joint objective -- since
 # accepting it there and running the plain optimiser would say SAEM ran.
-.ctJuliaSaemDefaultIterations <- 3000L
+.ctJuliaSaemDefaultIterations <- 10000L
 .ctJuliaSaemIterations <- function(optimcontrol, intoverpop = "laplace",
   intoverstates = TRUE) {
   v <- optimcontrol$saem
@@ -4483,6 +4483,15 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     common$saem <- TRUE
     common$saem_maxiter <- saem
     common$saem_seed <- sample.int(.Machine$integer.max, 1L)
+    # 'laplace': each subject also takes f-SAEM's independence move from its
+    # conditional Laplace approximation (`_saem_independence_move!`).
+    if (!is.null(optimcontrol$saem_proposal)) {
+      proposal <- as.character(optimcontrol$saem_proposal)[1L]
+      if (!proposal %in% c("rw", "laplace")) {
+        stop("optimcontrol$saem_proposal must be 'rw' or 'laplace'.", call. = FALSE)
+      }
+      common$saem_proposal <- proposal
+    }
   }
   # A stage resumed after a certification found the point short of a maximum
   # (`.ctBackendCorrectResult()`): the progress the fit made before it, so its
@@ -4578,12 +4587,14 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   common$saem <- NULL
   common$saem_maxiter <- NULL
   common$saem_seed <- NULL
-  saem_record <- lapply(stats::setNames(nm = c("saem_iterations", "saem_burnin",
-    "saem_settled", "saem_acceptance", "saem_trace")), function(nm) result[[nm]])
-  # A burn-in that ran into its cap was still climbing: the averaged point the
+  common$saem_proposal <- NULL
+  saem_record <- lapply(stats::setNames(nm = c("saem_iterations", "saem_settled",
+    "saem_trend", "saem_chains", "saem_acceptance", "saem_trace")),
+    function(nm) result[[nm]])
+  # A run that reached its cap with the estimate still moving: the point the
   # optimiser continued from is short of where SAEM was going.
   if (isTRUE(saem_record$saem_iterations > 0) && !isTRUE(saem_record$saem_settled)) {
-    message("SAEM's burn-in had not levelled off after ", saem_record$saem_burnin,
+    message("SAEM had not settled after ", saem_record$saem_iterations,
       " iterations; a larger optimcontrol$saem may help.")
   }
   # A stage that stopped because it had stopped getting anywhere, with a
@@ -4896,10 +4907,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 # review/OPTIM-consolidation-plan-2026-09-25.md P5. `intoverstates` here is
 # always TRUE for a placement call -- optimising the joint state density is
 # degenerate (state-explicit-generation.md) -- and `correctlaplace` is always
-# FALSE there, because the sampled target under `intoverpop = 'laplace'` is
-# the Laplace marginal itself, whose optimum is where to place the sampler,
-# not the quadrature-corrected point that answers a question the sampler is
-# not asking.
+# FALSE there, because under `intoverpop = 'laplace'` the fit only places the
+# chains, from its own optimum and curvature, and the quadrature-corrected
+# point answers a question the placement is not asking.
 #' @keywords internal
 .ctJuliaOptimiseFit <- function(model_spec, datalong, model, prepared_data,
   inits, cores, optimcontrol, verbose, priors, priorscope, intoverpop,
@@ -5416,15 +5426,18 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # Iterations of the sgd phase (`optimcontrol$stochastic`), 0 when none ran.
     sgd_iterations = if (is.null(result$sgd_iterations)) 0L else
       as.integer(result$sgd_iterations),
-    # The SAEM phase (`optimcontrol$saem`): its iterations, where its burn-in
-    # ended, its mean acceptance rate, and its trace -- the complete-data log
-    # posterior, which is not on the Laplace objective's scale, the score norm,
-    # the step size and largest step, and the acceptance rate, per iteration.
+    # The SAEM phase (`optimcontrol$saem`): its iterations, whether it stopped
+    # on its trend rule and the trend there, its chains, its mean acceptance
+    # rate, and its trace -- the complete-data log posterior, which is not on
+    # the Laplace objective's scale, the score norm, the largest step, the
+    # acceptance rate and the trend, per iteration.
     saem_iterations = if (is.null(result$saem_iterations)) 0L else
       as.integer(result$saem_iterations),
-    saem_burnin = if (is.null(result$saem_burnin)) 0L else
-      as.integer(result$saem_burnin),
     saem_settled = isTRUE(result$saem_settled),
+    saem_trend = if (is.null(result$saem_trend)) NA_real_ else
+      as.numeric(result$saem_trend),
+    saem_chains = if (is.null(result$saem_chains)) 0L else
+      as.integer(result$saem_chains),
     saem_acceptance = if (is.null(result$saem_acceptance)) NA_real_ else
       as.numeric(result$saem_acceptance),
     saem_trace = if (is.null(result$saem_trace)) NULL else
