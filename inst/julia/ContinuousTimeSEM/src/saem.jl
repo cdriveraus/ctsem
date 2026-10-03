@@ -793,14 +793,8 @@ function _saem_acceptance(st::CTSEMSAEMState)
 end
 
 """Prior precision on the raw parameters, as a vector."""
-function _saem_prior_precision(laplace::CTSEMLaplaceObjective, npar::Integer)
-    prec = zeros(npar)
-    obj = laplace.objective
-    for j in eachindex(obj.prior_index)
-        prec[obj.prior_index[j]] += obj.prior_weight / obj.prior_scale[j]^2
-    end
-    return prec
-end
+_saem_prior_precision(laplace::CTSEMLaplaceObjective, npar::Integer) =
+    _ctsem_prior_precision(laplace.objective, npar)
 
 """
     _saem_curvature(B, prec)
@@ -1102,13 +1096,18 @@ _ctsem_saem_phase(laplace::CTSEMLaplaceObjective, start; kwargs...) =
 #   * the effects: SAEM's Metropolis-within-Gibbs sweeps (`_saem_sweep!`),
 #     their scales adapted in warmup and fixed after it;
 #   * theta given u: one NUTS transition (`_nuts_transition!`) on that
-#     conditional, metered by the population block of the joint sampler's own
-#     metric -- the conditional covariance at the mode, from
-#     `ctsem_sample_metric`. One MALA step, which this took before, is too
-#     short a move there: on six bench models whose chains had not mixed in
-#     4000 draws, five leapfrog steps brought every one to NUTS-level error
-#     with seeds agreeing (review/POSTERIOR-race-2026-10-02.md). NUTS chooses
-#     the length itself;
+#     conditional, metered by its complete-data information at the draws
+#     actually visited -- the members' score outer products plus the prior's
+#     precision, from each chain's start and then averaged over Stan's warmup
+#     windows (`_adapt_windows`). Not the joint sampler's metric: its
+#     population block is measured once at the modes, where a population scale
+#     direction can curve upward, and on mvmix and gD1 it let NUTS take steps
+#     of 0.004 and 0.03 where the information allows 0.25 and 1 -- the chains
+#     did not move, R-hat 3.5-4.1. One MALA step, which this took before, is
+#     too short a move: on six bench models whose chains had not mixed in 4000
+#     draws, five leapfrog steps brought every one to NUTS-level error with
+#     seeds agreeing (review/POSTERIOR-race-2026-10-02.md). NUTS chooses the
+#     length itself;
 #   * each level's mean given the effects b = theta + L u: an exact Gaussian
 #     draw along L's columns, the effects re-expressed (the centred half of
 #     the interweaving, ASIS: Yu and Meng 2011);
@@ -1145,6 +1144,11 @@ mutable struct _SAEMChain
     trial::Vector{Vector{Float64}}
     eps::Float64
     da::_DualAverage
+    # Theta's metric, and the information summed since the current warmup
+    # window began.
+    metric::CTSEMMetric
+    info_sum::Matrix{Float64}
+    info_n::Int
     # Per level: the centred scale (or loading) move's and the non-centred
     # move's log step, and the centred move's metric factor where it has one.
     logscale::Vector{Float64}
@@ -1456,6 +1460,7 @@ function _saem_new_chain(base::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
     neffects = sampler.ndim - npar
     return _SAEMChain(st, rng, _NUTSWorkspace(npar, Int(maxdepth)), zeros(npar),
         [similar(st.ll[U][1]) for U in eachindex(st.u)], 0.0, _DualAverage(1.0, 0.8),
+        ctsem_identity_metric(npar), zeros(npar, npar), 0,
         logscale, fill(log(0.5), length(levels)), fisher, Vector{Float64}[],
         zeros(neffects), zeros(neffects), Float64[], Bool[], Int[], Float64[], 0,
         0.0, 0, 0.0, 0)
@@ -1464,6 +1469,28 @@ end
 """The chain's own members' log likelihoods, one vector per unit (the arrays
 in `st.ll`, not copies)."""
 _saem_own_ll(st::CTSEMSAEMState) = [st.ll[U][1] for U in eachindex(st.u)]
+
+"""The members' score outer products at the chain's draw, summed: the
+complete-data information about theta given u, from the scores the last
+`_saem_conditional!` left in `st.scores`."""
+function _saem_score_information(st::CTSEMSAEMState)
+    npar = length(st.theta)
+    B = zeros(npar, npar)
+    for U in eachindex(st.u)
+        S = st.scores[U][1]
+        size(S, 2) == 0 && continue
+        mul!(B, S, transpose(S), 1.0, 1.0)
+    end
+    return B
+end
+
+"""Meter theta's transitions by the information `B` plus the prior's
+precision (`_saem_curvature`)."""
+function _saem_set_metric!(ch::_SAEMChain, B::AbstractMatrix, prec::Vector{Float64})
+    ch.metric = _metric_from_covariances([1:length(prec)],
+        [Matrix(inv(_saem_curvature(B, prec)))])
+    return ch
+end
 
 """
     _saem_chain_iterate!(ch, laplace, setup, k, warm)
@@ -1482,10 +1509,16 @@ function _saem_chain_iterate!(ch::_SAEMChain, laplace::CTSEMLaplaceObjective,
     logp = _saem_conditional!(ch.g, st, laplace, st.theta, own)
     isfinite(logp) || throw(DomainError(st.theta, "SAEM sampler: the parameters' " *
         "conditional density is not finite at the chain's own point"))
+    # The same sweep left the members' scores here, which is the information
+    # the metric is re-estimated from at each warmup window's end.
+    if warm && k > _ADAPT_INIT_BUFFER
+        ch.info_sum .+= _saem_score_information(st)
+        ch.info_n += 1
+    end
     x = copy(st.theta)
     trial = ch.trial
     step = _nuts_transition!(ch.ws, (g, y) -> _saem_conditional!(g, st, laplace, y, trial),
-        setup.metric, ch.rng, x, ch.g, logp, ch.eps, setup.maxdepth, setup.maxdelta)
+        ch.metric, ch.rng, x, ch.g, logp, ch.eps, setup.maxdepth, setup.maxdelta)
     if x != st.theta
         # The transition chose one point of its trajectory and its members'
         # likelihoods went with the others; one forward pass recovers them.
@@ -1571,16 +1604,26 @@ end
         callback, save_effects)
 
 `niter` iterations of one chain, the first `nwarm` of them adapting and
-discarded. The averaged step size takes over when warmup ends.
+discarded. At each of Stan's warmup windows' ends (`_adapt_windows`) theta's
+metric is re-estimated from the information averaged over the window and the
+step size's averaging restarts around it; the averaged step size takes over
+when warmup ends.
 """
 function _saem_chain_run!(ch::_SAEMChain, laplace::CTSEMLaplaceObjective,
     sampler::CTSEMSampler, setup, niter::Int, nwarm::Int,
     progress::CTSEMProgress, callback::CTSEMCallback, save_effects::Bool)
     ndiv = 0
+    windows = nwarm > 0 ? _adapt_windows(nwarm) : Int[]
     for k in 1:niter
         warm = k <= nwarm
         step = _saem_chain_iterate!(ch, laplace, setup, k, warm)
         if warm
+            if k in windows && ch.info_n > 0
+                _saem_set_metric!(ch, ch.info_sum ./ ch.info_n, setup.prec)
+                fill!(ch.info_sum, 0.0)
+                ch.info_n = 0
+                _dual_restart!(ch.da, ch.eps)
+            end
             k == nwarm && (ch.eps = _dual_final(ch.da))
         else
             _saem_chain_record!(ch, sampler, step, save_effects)
@@ -1648,13 +1691,10 @@ function ctsem_saem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVecto
     metric = ctsem_sample_metric(sampler, start; hessian=hessian)
     centre = ctsem_sample_start(sampler, start)
     npar = sampler.npar
-    first(metric.ranges) == 1:npar ||
-        error("the joint metric's first block is not the population block")
     base = ctsem_saem_init(laplace, centre[1:npar]; seed=seed, chains=1, disperse=false)
 
     levels = collect(eachindex(laplace.spec.levels))
     setup = (
-        metric=CTSEMMetric([1:npar], [first(metric.factors)]),
         maxdepth=Int(maxdepth), maxdelta=Float64(maxdelta),
         sweeps=Int(sweeps), nupper=Int(nupper), nscale=Int(nscale), nncp=Int(nncp),
         prec=_saem_prior_precision(laplace, npar), levels=levels,
@@ -1673,9 +1713,10 @@ function ctsem_saem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVecto
         logp = _saem_conditional!(ch.g, ch.st, laplace, ch.st.theta, _saem_own_ll(ch.st))
         isfinite(logp) || throw(DomainError(ch.st.theta, "SAEM sampler: the " *
             "parameters' conditional density is not finite where chain $c starts"))
+        _saem_set_metric!(ch, _saem_score_information(ch.st), setup.prec)
         ch.eps = stepsize > 0 ? Float64(stepsize) :
             _init_stepsize((g, y) -> _saem_conditional!(g, ch.st, laplace, y, ch.trial),
-                setup.metric, rng, copy(ch.st.theta), copy(ch.g), logp, ch.ws)
+                ch.metric, rng, copy(ch.st.theta), copy(ch.g), logp, ch.ws)
         ch.da = _DualAverage(ch.eps, Float64(target_accept))
         chains[c] = ch
     end

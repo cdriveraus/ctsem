@@ -93,6 +93,16 @@ function _ctsem_log_prior(objective::CTSEMObjective, values::AbstractVector{T}) 
     return weight * total
 end
 
+"""The prior's precision on each raw parameter, as a vector (zero where a
+parameter has no prior): minus the Hessian of `_ctsem_log_prior`."""
+function _ctsem_prior_precision(objective::CTSEMObjective, npar::Integer)
+    prec = zeros(npar)
+    for j in eachindex(objective.prior_index)
+        prec[objective.prior_index[j]] += objective.prior_weight / objective.prior_scale[j]^2
+    end
+    return prec
+end
+
 """Accumulate the prior's gradient contribution into `gradient`."""
 function _ctsem_log_prior_gradient!(gradient::AbstractVector{T},
     objective::CTSEMObjective, values::AbstractVector{T}, weight::Real=1.0) where {T}

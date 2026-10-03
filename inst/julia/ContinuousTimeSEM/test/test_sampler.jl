@@ -294,6 +294,26 @@ end
               for C in metric.factors)
 end
 
+@testset "a metric block is never wider than the prior where the likelihood curves upward" begin
+    # `_conditional_population_covariance` measures the joint curvature at the
+    # modes, where a population scale direction can curve upward and cancel the
+    # prior's precision; inverted as it stood, that gave raw-scale variances of
+    # 35^2 and 69^2 on two bench models. The likelihood's upward part is dropped
+    # and the prior is what bounds the variance.
+    prec = [1.0, 1.0]
+    P = Symmetric([4.0 0.0; 0.0 -0.99] .+ Diagonal(prec))   # precisions 5 and 0.01
+    C = ContinuousTimeSEM._prior_bounded_covariance(P, prec)
+    @test C[1, 1] ≈ 1 / 5
+    @test C[2, 2] ≈ 1.0                                   # the prior's, not 1 / 0.01
+    # A likelihood that curves down in every direction: nothing changes.
+    P2 = Symmetric([3.0 0.5; 0.5 2.0])
+    @test ContinuousTimeSEM._prior_bounded_covariance(P2, [0.5, 0.5]) ≈
+        ContinuousTimeSEM._bounded_inverse(P2)
+    # No prior: the plain bounded inverse.
+    @test ContinuousTimeSEM._prior_bounded_covariance(P, zeros(2)) ≈
+        ContinuousTimeSEM._bounded_inverse(P)
+end
+
 @testset "momentum drawn from the metric has the metric's inverse covariance" begin
     # Sigma is the *inverse* mass matrix, so momentum has covariance Sigma^-1.
     # Getting this backwards is an easy slip that leaves the sampler correct but
