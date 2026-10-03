@@ -2499,14 +2499,16 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' \code{draws}. A run that reaches its budget short of the target warns.
 #' \code{settleTol} ends warmup early once the metric stops moving (off by
 #' default, and slower when measured). \code{control$sampler} chooses the
-#' kernel for the joint posterior: \code{'nuts'} (the default) runs NUTS on the
-#' parameters and every random effect at once; \code{'saem'} draws the random
-#' effects by SAEM's Metropolis-within-Gibbs sweeps and the parameters given
-#' them by NUTS, with moves that re-express the effects for each level's means
-#' and scales. Both start from the same draws of the fit's Laplace
-#' approximation and stop by the same rule; \code{adapt_metric},
-#' \code{adapt_effects} and \code{settleTol} belong to the first and are
-#' refused with the second. \code{control$placement} says where the chains
+#' kernel for the joint posterior: \code{'saem'} (the default there) draws the
+#' random effects by SAEM's Metropolis-within-Gibbs sweeps and the parameters
+#' given them by NUTS, with moves that re-express the effects for each level's
+#' means and scales; \code{'nuts'} runs NUTS on the parameters and every
+#' random effect at once. Both draw the same posterior, from the same
+#' placement, and stop by the same rule; SAEM's kernel was the more reliable
+#' and the faster of the two in comparisons on variance and nested models,
+#' where NUTS on the joint vector mixes poorly. \code{adapt_metric},
+#' \code{adapt_effects} and \code{settleTol} belong to NUTS and are refused
+#' with SAEM's kernel. A marginal target is sampled by NUTS. \code{control$placement} says where the chains
 #' start: \code{'saem'}, the default on the joint posterior, runs SAEM from the
 #' fit's estimate -- on the exact marginal posterior, where the fit's optimum is
 #' the Laplace approximation's -- and starts each chain from SAEM's estimate and
@@ -2623,7 +2625,8 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' \code{uncertainty = 'sample'}: a \code{ctJuliaFit} with
 #' \code{estimate$rawposterior} holding the draws and \code{$sample} holding
 #' the chain diagnostics (split R-hat and effective sample size per
-#' parameter, divergences, tree depths, step sizes, E-BFMI, \code{converged}
+#' parameter, divergences, tree depths, step sizes, E-BFMI (NUTS only),
+#' \code{sampler} naming the kernel, \code{converged}
 #' and \code{diagnosis}, and \code{target} naming which posterior was
 #' sampled), exactly as \code{ctFit(optimize = FALSE)} returns.
 #' @seealso \code{\link{ctFitAddSamples}} is the deprecated stan-only

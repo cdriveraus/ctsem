@@ -698,9 +698,11 @@ T0VARredundancies <- function(ctm) {
 #' May also be stated on the model, as \code{model$poprank <- 2}, which asks for
 #' it just as the argument does; an argument here wins over that.
 #' @param intoverpop how to handle declared individual differences. If 'auto',
-#' set to TRUE if optimizing and FALSE if using hmc -- except when a grouping
-#' level above the subject varies (see \code{id} in \code{\link{ctModel}}),
-#' which only 'laplace' can integrate out, so 'auto' resolves to that. With
+#' FALSE when sampling (\code{optimize=FALSE}), so the random effects are
+#' sampled with everything else, whatever the model. When optimizing, TRUE --
+#' except when a grouping level above the subject varies (see \code{id} in
+#' \code{\link{ctModel}}), which only 'laplace' can integrate out, so 'auto'
+#' resolves to that. With
 #' \code{backend='julia'} and \code{optimize=TRUE}, 'auto' also resolves to
 #' 'laplace' wherever the augmented filter is measurably the wrong estimator:
 #' a varying parameter in DRIFT, DIFFUSION, MANIFESTVAR or LAMBDA, one in
@@ -724,14 +726,15 @@ T0VARredundancies <- function(ctm) {
 #' single-subject size, so the cost of a random effect stops growing cubically
 #' with the number of varying parameters. 'laplace' requires
 #' \code{backend='julia'} and works with either \code{optimize=TRUE} (Laplace
-#' maximum likelihood) or \code{optimize=FALSE} (NUTS over the Laplace
-#' marginal). It is exact whenever the
+#' maximum likelihood) or \code{optimize=FALSE}, which samples the joint
+#' posterior exactly as \code{FALSE} does (\code{sampleControl$target =
+#' 'marginal'} samples the Laplace marginal instead). It is exact whenever the
 #' varying parameters enter the state mean linearly; elsewhere it is an
 #' approximation, and \code{summary()} says so.
 #' \code{FALSE} is the other route, and the one \code{'auto'} chooses when
 #' \code{optimize=FALSE}: the individual parameters are sampled rather than
-#' integrated over, so HMC targets the joint posterior over the population
-#' parameters and every subject's random effects. That is exact whatever the
+#' integrated over, so the sampler targets the joint posterior over the
+#' population parameters and every subject's random effects. That is exact whatever the
 #' model, and its dimension grows with the number of subjects rather than
 #' staying at the parameter count. \code{TRUE} and \code{FALSE} may be given
 #' in place of the character forms above.
@@ -746,6 +749,9 @@ T0VARredundancies <- function(ctm) {
 #' \code{uncertainty = 'sample'}, so the two are one pipeline:
 #' \code{intoverpop='laplace'} and \code{intoverpop='none'} (the \code{FALSE}
 #' route above) sample the joint posterior over parameters and random effects,
+#' drawn by SAEM's kernel -- the random effects by SAEM's sweeps, the
+#' parameters given them by NUTS (\code{sampleControl$sampler = 'saem'}, the
+#' default there; \code{'nuts'} runs NUTS on the whole vector) -- and
 #' with the chains placed by SAEM (\code{sampleControl$placement = 'saem'}, the
 #' default there): the placement fit then stops after the start and the prior
 #' warm-up, SAEM runs from that point on the exact marginal posterior, and the
@@ -1161,8 +1167,9 @@ T0VARredundancies <- function(ctm) {
 #' \code{maxdepth}/\code{max_treedepth} (default 10),
 #' \code{target_accept}/\code{adapt_delta} (0.8), \code{maxdelta} (1000),
 #' \code{init_scale} (1), \code{adapt_metric} (FALSE), \code{adapt_effects}
-#' (FALSE), \code{sampler} (\code{'nuts'}, or \code{'saem'} for SAEM's kernel on
-#' the joint posterior), \code{placement} (\code{'saem'} on the joint posterior,
+#' (FALSE), \code{sampler} (\code{'saem'}, SAEM's kernel, on the joint
+#' posterior, where \code{'nuts'} is the alternative; \code{'nuts'} on the
+#' marginal one), \code{placement} (\code{'saem'} on the joint posterior,
 #' where SAEM's state places the chains; \code{'fit'} otherwise), and the
 #' effective-sample-size target that decides
 #' when a run stops: \code{minESS} (200, the size the worst parameter must reach),
@@ -1723,12 +1730,13 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   if(optimize && priorscope %in% 'all') message(
     "Maximum a posteriori estimation requested")
   # Naming stan here was wrong for half the fits it described: with
-  # backend='julia' the engine runs its own NUTS over the joint posterior of
-  # parameters and random effects, and a user reading "Stan's NUTS sampler" on a
-  # julia fit has no reason to believe the julia sampler ran at all.
+  # backend='julia' the engine runs its own sampler -- SAEM's kernel on the
+  # joint posterior by default, NUTS on a marginal one -- and a user reading
+  # "Stan's NUTS sampler" on a julia fit has no reason to believe the julia
+  # sampler ran at all. Which kernel is said when sampling starts.
   if(!optimize) message("Bayesian estimation via ",
-    if(identical(backend,'julia')) "the julia engine's" else "Stan's",
-    " NUTS sampler requested")
+    if(identical(backend,'julia')) "the julia engine's sampler" else
+      "Stan's NUTS sampler", " requested")
 
 
   ###stationarity
@@ -2614,11 +2622,14 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     #   optimize  intoverpop     what runs                 sampled dimension
     #   TRUE      'laplace'      Laplace ML                --
     #   TRUE      TRUE           augmented ML              --
-    #   FALSE     'laplace'      NUTS, joint (placed by    npar + effects
-    #                            the Laplace fit)
+    #   FALSE     'laplace'      sampled, joint            npar + effects
     #   FALSE     TRUE           NUTS, filter marginal     npar
-    #   FALSE     FALSE          NUTS over parameters      npar + effects
-    #                            *and* effects
+    #   FALSE     FALSE          sampled, joint            npar + effects
+    #
+    # The two joint rows are one target, drawn by SAEM's kernel and placed by
+    # SAEM's state unless `sampleControl` says otherwise (`sampler`,
+    # `placement`); `sampleControl$target = 'marginal'` on 'laplace' samples
+    # the Laplace marginal (npar) by NUTS instead.
     #
     # Only 'laplace' is julia-only; the guard for that is above. `'none'` is
     # the third route the engine needs, and it prepares the Laplace structure

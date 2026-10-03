@@ -1,4 +1,4 @@
-# Hamiltonian sampling of a julia backend fit.
+# Sampling a julia backend fit: NUTS, or SAEM's kernel on the joint posterior.
 #
 # `intoverpop='laplace'` approximates each unit's integral by a Gaussian at its
 # mode. That is exact when the integrand is Gaussian in the random effects and
@@ -6,8 +6,8 @@
 # the profile and shrinks the scale estimate -- `ctLaplaceCheck()` measures that
 # error and corrects it to first order. Sampling removes it: the joint
 # posterior over population parameters *and* random effects makes no Gaussian
-# assumption anywhere, and the Laplace fit is then used only to place the
-# chains -- their starting draws and their metric.
+# assumption anywhere, and the fit is then used only to place the chains --
+# by default through SAEM's state, which starts from it.
 #
 # `control$target='auto'`, the default, samples the exact posterior the fit's
 # route can reach: the joint posterior for an `intoverpop='laplace'` or
@@ -163,7 +163,7 @@
   NULL
 }
 
-# Sample a fit's posterior by Hamiltonian Monte Carlo: `uncertainty = 'sample'`
+# Sample a fit's posterior by MCMC: `uncertainty = 'sample'`
 # on `ctFitUncertainty()`, and what `ctFit(backend = 'julia', optimize =
 # FALSE)` calls once its placement optimisation
 # (`.ctJuliaOptimiseFit()`/`.ctJuliaSampleFit()`) has produced a fit to
@@ -194,10 +194,6 @@
   verbose = 0, state_explicit = FALSE, handles = NULL) {
 
   .ctBackendSampleCheckControl(control)
-  # Resolved once here for its refusals, before any worker is started or the
-  # engine reached: a setting refused deep in a worker process would surface
-  # as a failed chain and a fallback rather than as the error it is.
-  invisible(.ctBackendSampleControl(control))
   target_arg <- .ctJuliaOr(control$target, "auto")
   if (!identical(target_arg, "auto") && !target_arg %in% c("marginal", "joint")) {
     stop("control$target must be 'auto', 'marginal' or 'joint', not '",
@@ -216,8 +212,7 @@
       "parameters alone.", call. = FALSE)
   }
   placement <- .ctBackendPlacementName(control$placement, marginal || isTRUE(state_explicit))
-  if (identical(.ctBackendSamplerName(control$sampler), "saem") &&
-      (marginal || isTRUE(state_explicit))) {
+  if (identical(control$sampler, "saem") && (marginal || isTRUE(state_explicit))) {
     stop("control$sampler = 'saem' samples the joint posterior over population ",
       "parameters and random effects, and this run asks for ",
       if (isTRUE(state_explicit)) "the joint posterior over the latent states. "
@@ -225,6 +220,15 @@
       "Use the default sampler, or a fit made with intoverpop = 'laplace' or ",
       "'none' and control$target = 'joint'.", call. = FALSE)
   }
+  # The sampler, resolved against the target and written back into `control`,
+  # which is what the engine call and every worker read it from: the default
+  # differs by target, and a worker sees only `control`.
+  control$sampler <- .ctBackendSamplerName(control$sampler,
+    joint = !marginal && !isTRUE(state_explicit))
+  # Resolved once here for its refusals, before any worker is started or the
+  # engine reached: a setting refused deep in a worker process would surface
+  # as a failed chain and a fallback rather than as the error it is.
+  invisible(.ctBackendSampleControl(control))
 
   npar <- length(fit$estimate$raw)
   chains <- max(1L, as.integer(.ctJuliaOr(control$chains, 4L))[1L])
@@ -334,9 +338,10 @@
   # something other than the fit's own route.
   "iter", "chains", "warmup", "draws", "seed", "saveEffects", "processes",
   "target", "stepsize",
-  # Which kernel draws the joint posterior: 'nuts' (NUTS on the whole joint
-  # vector) or 'saem' (SAEM's sweeps for the effects, NUTS for the parameters
-  # given them); read by `.ctBackendSampleControl()`.
+  # Which kernel draws the joint posterior: 'saem' (SAEM's sweeps for the
+  # effects, NUTS for the parameters given them; the default there) or 'nuts'
+  # (NUTS on the whole joint vector); resolved against the target by
+  # `.ctBackendUncertaintySample()` and read by `.ctBackendSampleControl()`.
   "sampler",
   # Where the chains start on the joint target: 'saem' (SAEM's own run and
   # state, the default there) or 'fit' (the fit's estimate); read by
@@ -442,13 +447,22 @@
       collapse = ", "), ".", call. = FALSE)
 }
 
-# The kernel `control$sampler` names. 'nuts', the default, runs NUTS on the
-# whole joint vector; 'saem' runs SAEM's kernel (`ctsem_saem_sample`): the
-# effects by SAEM's sweeps, the parameters given them by NUTS, placed and
-# stopped exactly as NUTS is. Both draw the same posterior.
+# The kernel `control$sampler` names. 'saem' runs SAEM's kernel
+# (`ctsem_saem_sample`): the effects by SAEM's sweeps, the parameters given
+# them by NUTS, placed and stopped exactly as NUTS is. 'nuts' runs NUTS on the
+# whole vector. Both draw the same posterior.
+#
+# 'saem' is the default on the joint target because it is the more reliable
+# of the two there, not only the faster: through `ctFitUncertainty()` on 13
+# models (dev2, review/POSTERIOR-race-2026-10-02.md) its mean worst error
+# against a long reference was 0.34 posterior sds to NUTS's 0.50, at 0.6x the
+# time, and NUTS on the joint vector never reached ESS 200 on three variance
+# and nested models where it reached it everywhere. A marginal or
+# state-explicit target has no effects for its sweeps, so NUTS is the
+# sampler there.
 #' @keywords internal
-.ctBackendSamplerName <- function(sampler) {
-  sampler <- .ctJuliaOr(sampler, "nuts")
+.ctBackendSamplerName <- function(sampler, joint = TRUE) {
+  if (is.null(sampler)) return(if (isTRUE(joint)) "saem" else "nuts")
   if (!is.character(sampler) || length(sampler) != 1L ||
       !sampler %in% c("nuts", "saem")) {
     stop("control$sampler must be 'nuts' or 'saem'.", call. = FALSE)
@@ -566,7 +580,9 @@
     if (any(unused)) {
       stop("control$", paste(names(unused)[unused], collapse = ", control$"),
         " is a setting of the NUTS sampler's joint metric, which the SAEM ",
-        "kernel (control$sampler = 'saem') does not use.", call. = FALSE)
+        "kernel (control$sampler = 'saem', the default on the joint ",
+        "posterior) does not use. Add sampler = 'nuts' to use it.",
+        call. = FALSE)
     }
   }
 
@@ -877,7 +893,7 @@
   if (warmup < 1L) {
     message("warmup = 0, so nothing adapts: each chain keeps the step size ",
       "found by a single trial leapfrog step, so chains will differ in speed ",
-      "and in divergences. The metric is the fit's own curvature either way.",
+      "and in divergences. The metric keeps its starting value either way.",
       if (!is.null(control$target_accept) || !is.null(control$adapt_delta))
         " target_accept only reaches the dual averaging that warmup runs, so it is unused here." else "")
   }

@@ -1894,8 +1894,9 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     # cosmetic slip: `uncertainty$settings$method` is NULL on this route, so the
     # note read "intervals from ctOptimUncertainty(uncertainty='')" -- a normal
     # approximation named on the one fit that does not use one.
-    paste0("Julia backend; intervals from Hamiltonian posterior draws ",
-      "pushed through the transforms.")
+    paste0("Julia backend; intervals from posterior draws (",
+      if (identical(object$sample$sampler, "saem")) "SAEM kernel" else "NUTS",
+      ") pushed through the transforms.")
   } else if (has_posterior) {
     paste0("Julia backend; intervals from ctOptimUncertainty(uncertainty='",
       object$uncertainty$settings$method, "') draws pushed through the transforms.")

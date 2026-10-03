@@ -1,5 +1,5 @@
-# ctFitUncertainty(fit, uncertainty = 'sample'): Hamiltonian sampling of a
-# julia backend fit.
+# ctFitUncertainty(fit, uncertainty = 'sample'): sampling a julia backend fit,
+# by SAEM's kernel on the joint posterior and NUTS on the marginal.
 #
 # The statistics of the sampler are tested in the engine suite, against
 # posteriors known in closed form. What is tested here is the R side of it: that
@@ -100,9 +100,12 @@ test_that("the diagnostics come back per parameter and per chain", {
   expect_length(diagnostics$ebfmi, 2L)
   expect_true(diagnostics$divergent >= 0L)
   expect_length(diagnostics$accept, 2L * diagnostics$draws)
-  # The Laplace estimate the chains started from.
+  # The point the chains started from.
   expect_equal(diagnostics$start, sampled$estimate$placed_raw)
-  expect_output(print(diagnostics), "ctsem Hamiltonian sample")
+  # SAEM's kernel, the default on the joint posterior.
+  expect_identical(diagnostics$sampler, "saem")
+  expect_length(diagnostics$scale_accept, 2L)
+  expect_output(print(diagnostics), "SAEM kernel")
 
   # Everything above is asserted at chains > 1 on purpose, because that is the
   # branch that runs each chain in its own process, and it is the branch whose
@@ -156,35 +159,36 @@ test_that("the effects come back summarised, or in full when asked for", {
   expect_true(all(is.finite(full$sample$effects)))
 })
 
-test_that("the SAEM kernel samples the joint posterior through the same runner", {
+test_that("NUTS samples the joint posterior through the same runner", {
   skip_without_julia()
   fit <- .sample_fixture()
   npar <- length(fit$estimate$raw)
   neffects <- length(fit$model_spec$subject_starts) *
     length(fit$model_spec$laplace$re_index)
-  # control$sampler = 'saem': SAEM's sweeps for the effects, NUTS for the
-  # parameters given them, placed and stopped as the default sampler is
-  # (`ctsem_saem_sample`, checked against NUTS in the engine suite). What is
-  # left for here is that it reaches the same assembly with the same shape.
-  saem <- suppressWarnings(suppressMessages(
+  # control$sampler = 'nuts': NUTS on the parameters and every effect at once,
+  # the alternative to the default SAEM kernel on the joint posterior
+  # (`ctsem_sample`, checked against SAEM's kernel in the engine suite),
+  # placed and stopped as the default is. What is left for here is that it
+  # reaches the same assembly with the same shape.
+  nuts <- suppressWarnings(suppressMessages(
     ctFitUncertainty(fit, uncertainty = "sample", cores = 1,
       control = list(chains = 2, warmup = 80, draws = 80, target = "joint",
-        sampler = "saem", processes = FALSE))))
-  d <- saem$sample
-  expect_identical(d$sampler, "saem")
+        sampler = "nuts", processes = FALSE))))
+  d <- nuts$sample
+  expect_identical(d$sampler, "nuts")
   expect_identical(d$target, "joint")
-  expect_equal(dim(saem$estimate$rawposterior), c(2L * d$draws, npar))
-  expect_true(all(is.finite(saem$estimate$rawposterior)))
+  expect_equal(dim(nuts$estimate$rawposterior), c(2L * d$draws, npar))
+  expect_true(all(is.finite(nuts$estimate$rawposterior)))
   expect_length(d$rhat, npar)
   expect_length(d$stepsize, 2L)
+  expect_true(all(is.finite(d$ebfmi)))
   expect_length(d$accept, 2L * d$draws)
   expect_length(d$effect_mean, neffects)
   expect_true(all(d$effect_sd > 0))
-  expect_length(d$scale_accept, 2L)
-  expect_output(print(d), "SAEM kernel")
-  # Placed by SAEM's state by default on the joint target.
+  expect_output(print(d), "ctsem Hamiltonian sample")
+  # Placed by SAEM's state by default on the joint target, whichever sampler.
   expect_identical(d$placement$method, "saem")
-  expect_equal(d$start, saem$estimate$placed_raw)
+  expect_equal(d$start, nuts$estimate$placed_raw)
 })
 
 test_that("placement = 'fit' starts the chains around the fit's own estimate", {
@@ -215,6 +219,16 @@ test_that("the SAEM kernel is refused by name where it cannot apply", {
   expect_error(ctFitUncertainty(fit, uncertainty = "sample",
     control = list(sampler = "saem", target = "joint", adapt_metric = TRUE)),
     "control$adapt_metric", fixed = TRUE)
+  # Refused under the default too, since that is SAEM's kernel on the joint
+  # posterior, and the message says how to get NUTS.
+  expect_error(ctFitUncertainty(fit, uncertainty = "sample",
+    control = list(target = "joint", settleTol = 0.1)),
+    "sampler = 'nuts'", fixed = TRUE)
+  # The default follows the target: the marginal one has no effects for
+  # SAEM's sweeps.
+  expect_identical(.ctBackendSamplerName(NULL, joint = TRUE), "saem")
+  expect_identical(.ctBackendSamplerName(NULL, joint = FALSE), "nuts")
+  expect_identical(.ctBackendSamplerName("nuts", joint = TRUE), "nuts")
   expect_error(ctFitUncertainty(fit, uncertainty = "sample",
     control = list(sampler = "hmc")), "'nuts' or 'saem'", fixed = TRUE)
 })
@@ -518,7 +532,8 @@ test_that("a sampled fit reports n_eff and Rhat where a ctStanFit does, and an o
     paste0("2 chains x ", sampled$sample$draws, " draws"), fixed = TRUE)
   expect_identical(names(summarised)[1L], "sampleNote")
   # A sampled fit did not run an uncertainty pass, and used to say it had.
-  expect_match(summarised$uncertaintyNote, "Hamiltonian", fixed = TRUE)
+  expect_match(summarised$uncertaintyNote, "posterior draws (SAEM kernel)",
+    fixed = TRUE)
   expect_false(grepl("ctOptimUncertainty", summarised$uncertaintyNote, fixed = TRUE))
 
   # The optimised fit it started from has draws too -- from a covariance fitted
