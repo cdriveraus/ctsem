@@ -4,20 +4,23 @@
 # mode. That is exact when the integrand is Gaussian in the random effects and
 # otherwise wrong by an amount that grows with the population scale, which tilts
 # the profile and shrinks the scale estimate -- `ctLaplaceCheck()` measures that
-# error and corrects it to first order. `ctFitUncertainty(fit, 'sample',
-# control=list(target='joint'))` removes it instead, by sampling the joint
-# posterior over population parameters *and* random effects with no Gaussian
-# assumption anywhere -- at the cost of a dimension that grows with the subject
-# count, where the marginal's does not.
+# error and corrects it to first order. Sampling removes it: the joint
+# posterior over population parameters *and* random effects makes no Gaussian
+# assumption anywhere, and the Laplace fit is then used only to place the
+# chains -- their starting draws and their metric.
 #
-# `control$target='auto'`, the default, samples the fit's *own* route instead:
-# the Laplace marginal for an `intoverpop='laplace'` fit (`npar` dimensions, the
-# same approximation the fit itself made, still with an exact posterior rather
-# than a Gaussian one for it) and the joint posterior for an
-# `intoverpop='none'` fit, which has no marginal to fall back to. Two entry
-# points reach the same targets by the same names: `ctFit(optimize=FALSE)`
-# picks the route from `intoverpop`, and `ctFitUncertainty(fit, 'sample')` on
-# the fit that produced picks the same one unless told otherwise.
+# `control$target='auto'`, the default, samples the exact posterior the fit's
+# route can reach: the joint posterior for an `intoverpop='laplace'` or
+# `'none'` fit, and the marginal for an `intoverpop='augmented'` fit, whose
+# filter integrates the effects itself. An approximate posterior is worth
+# nothing as a sampling target when the exact one is in reach; its job is to
+# place the sampler. `target='marginal'` on a Laplace fit samples the Laplace
+# marginal all the same -- `npar` dimensions whatever the subject count -- for
+# when the approximation is trusted and the joint is too large. Two entry
+# points reach the same targets by the same names: `ctFit(optimize=FALSE)` and
+# `ctFitUncertainty(fit, 'sample')`. Until 2026-10-03 'auto' meant the Laplace
+# marginal on a Laplace fit (decision 5 of
+# review/OPTIM-consolidation-plan-2026-09-25.md).
 #
 # It takes a fitted object rather than a model and data, and that is not merely
 # convenience. The fit supplies the starting point *and* the metric: the engine
@@ -169,11 +172,11 @@
 # `test-julia-fit-shape.R` catches rather than something a caller discovers
 # later.
 #
-# `control$target` names which posterior: `'auto'` (the default) follows the
-# fit's own route (`.ctBackendIntOverPop()`) -- the Laplace marginal for
-# `intoverpop = 'laplace'` or `'augmented'`, the joint posterior over
-# parameters and random effects for `intoverpop = 'none'`, which has no
-# marginal to fall back to. `'marginal'`/`'joint'` ask for one explicitly;
+# `control$target` names which posterior: `'auto'` (the default) is the exact
+# one the fit's route (`.ctBackendIntOverPop()`) can reach -- the joint
+# posterior over parameters and random effects for `intoverpop = 'laplace'` or
+# `'none'`, the filter's marginal for `'augmented'`. `'marginal'`/`'joint'` ask
+# for one explicitly;
 # `'joint'` needs the Laplace structure (`intoverpop = 'laplace'` or
 # `'none'`) to have somewhere to put the effects, and is refused by name on
 # an augmented fit rather than silently sampling the marginal instead.
@@ -204,7 +207,7 @@
   marginal <- switch(target_arg,
     marginal = TRUE,
     joint = FALSE,
-    !identical(route, "none"))
+    identical(route, "augmented"))
   if (!marginal && is.null(fit$model_spec$laplace)) {
     stop("The joint posterior needs a fit made with intoverpop = 'laplace' ",
       "or 'none': the augmented route carries the random effects in the ",
@@ -863,9 +866,9 @@
     # Which posterior this run draws from, said once here rather than left to
     # be inferred from `$sample$target` after the fact:
     # `ctFitUncertainty(fit, 'sample')`'s default target depends on the fit's
-    # own route (decision 5, review/OPTIM-consolidation-plan-2026-09-25.md),
-    # so the two are not always the same thing a reader might remember from
-    # an earlier call.
+    # route (joint for 'laplace' and 'none', marginal for 'augmented'), and
+    # it changed on 2026-10-03, so it is not always what a reader remembers
+    # from an earlier call.
     targetlabel <- if (isTRUE(target$state_explicit))
         "the joint posterior over parameters and the latent states"
       else if (isTRUE(target$marginal))
@@ -1302,8 +1305,9 @@ print.ctSampleDiagnostics <- function(x, ...) {
 # inside `ctOptimUncertainty()` rather than recomputed here -- so the common
 # case costs one Hessian for the whole call, not one for the fit and a second
 # for the sampler. `laplace_correct` is forced off for the placement: the
-# target sampled under `'laplace'` is the Laplace marginal itself, so its
-# optimum, not the quadrature-corrected point, is where to place the sampler.
+# Laplace fit only places the chains, from its own optimum and curvature, and
+# the quadrature-corrected point answers a question the placement does not
+# ask.
 # review/OPTIM-consolidation-plan-2026-09-25.md P5.
 #
 # What is optimised is always an *integrated* objective, never the joint one,
@@ -1411,11 +1415,11 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # density of the parameters and the latent states is a category error, not
   # a lesser estimate (`state-explicit-generation.md`) -- the joint mode is
   # degenerate and not a place to start a sampler from. `laplace_correct` is
-  # forced off and `uncertainty` forced to `'hessian'`: the target sampled
-  # under `intoverpop='laplace'` is the Laplace marginal itself, so its
-  # optimum -- not the quadrature-corrected point, which answers a question
-  # the sampler is not asking -- is where to place it, and only the Hessian
-  # is needed here, not importance draws. `finishsamples = 2` (the least
+  # forced off and `uncertainty` forced to `'hessian'`: under
+  # `intoverpop='laplace'` the fit only places the chains, from its optimum
+  # and curvature -- not the quadrature-corrected point, which answers a
+  # question the placement is not asking -- so only the Hessian is needed
+  # here, not importance draws. `finishsamples = 2` (the least
   # `ctFitUncertainty()` accepts) for the same reason: it would otherwise
   # draw a thousand Gaussian pseudo-posterior samples around the placement
   # point only for `.ctBackendSampleAssemble()` to overwrite them with the

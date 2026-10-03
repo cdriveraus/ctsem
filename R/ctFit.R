@@ -744,8 +744,9 @@ T0VARredundancies <- function(ctm) {
 #' interior maximum and is not a place to start a chain from. That placed fit
 #' is then handed to the same runner \code{\link{ctFitUncertainty}} uses for
 #' \code{uncertainty = 'sample'}, so the two are one pipeline:
-#' \code{intoverpop='laplace'} samples the Laplace marginal,
-#' \code{intoverpop='none'} (the \code{FALSE} route above) the joint posterior,
+#' \code{intoverpop='laplace'} and \code{intoverpop='none'} (the \code{FALSE}
+#' route above) sample the joint posterior over parameters and random effects,
+#' the Laplace fit serving only to place the chains,
 #' and \code{\link{ctFitUncertainty}}'s own \code{control$target} entry says
 #' which one a later call on the resulting fit repeats or overrides.
 #' @param sameInitialTimes if TRUE, include an empty observation for every subject that has no observation
@@ -2606,7 +2607,8 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     #   optimize  intoverpop     what runs                 sampled dimension
     #   TRUE      'laplace'      Laplace ML                --
     #   TRUE      TRUE           augmented ML              --
-    #   FALSE     'laplace'      NUTS, Laplace marginal    npar
+    #   FALSE     'laplace'      NUTS, joint (placed by    npar + effects
+    #                            the Laplace fit)
     #   FALSE     TRUE           NUTS, filter marginal     npar
     #   FALSE     FALSE          NUTS over parameters      npar + effects
     #                            *and* effects

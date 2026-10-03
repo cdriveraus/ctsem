@@ -126,8 +126,9 @@ never the joint density of parameters and random effects, which has no
 interior maximum and is not a place to start a chain from. That placed fit
 is then handed to the same runner \code{\link{ctFitUncertainty}} uses for
 \code{uncertainty = 'sample'}, so the two are one pipeline:
-\code{intoverpop='laplace'} samples the Laplace marginal,
-\code{intoverpop='none'} (the \code{FALSE} route above) the joint posterior,
+\code{intoverpop='laplace'} and \code{intoverpop='none'} (the \code{FALSE}
+route above) sample the joint posterior over parameters and random effects,
+the Laplace fit serving only to place the chains,
 and \code{\link{ctFitUncertainty}}'s own \code{control$target} entry says
 which one a later call on the resulting fit repeats or overrides.}
 

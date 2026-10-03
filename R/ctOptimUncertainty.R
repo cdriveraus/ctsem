@@ -2507,17 +2507,17 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' approximation and stop by the same rule; \code{adapt_metric},
 #' \code{adapt_effects} and \code{settleTol} belong to the first and are
 #' refused with the second. \code{control$target}
-#' says which posterior: \code{'auto'} (the default) follows the fit's own
-#' route -- the Laplace marginal over population parameters for
-#' \code{intoverpop = 'laplace'} or \code{'augmented'}, the joint posterior
-#' over population parameters \emph{and} every subject's random effects for
-#' \code{intoverpop = 'none'}, which has no marginal to fall back to.
+#' says which posterior: \code{'auto'} (the default) is the exact posterior
+#' the fit's route can reach -- the joint posterior over population parameters
+#' \emph{and} every subject's random effects for \code{intoverpop =
+#' 'laplace'} or \code{'none'}, with the Laplace fit serving only to place the
+#' chains, and the filter's marginal for \code{intoverpop = 'augmented'}.
 #' \code{'marginal'}/\code{'joint'} ask for one explicitly regardless of
-#' route; \code{'joint'} on an ordinary \code{intoverpop = 'laplace'}
-#' maximum-likelihood fit is what removes the Laplace approximation exactly,
-#' at the cost of a dimension that grows with the subject count, and is
-#' refused by name on an \code{intoverpop = 'augmented'} fit, which has no
-#' separate random effect to sample jointly with the parameters. See
+#' route; \code{'marginal'} on a Laplace fit samples the Laplace marginal,
+#' an approximate posterior whose dimension does not grow with the subject
+#' count, and \code{'joint'} is refused by name on an \code{intoverpop =
+#' 'augmented'} fit, which has no separate random effect to sample jointly
+#' with the parameters. See
 #' \code{\link{ctJuliaSetup}} for the thread count that decides whether
 #' chains run concurrently, and \code{\link{ctFit}}'s \code{intoverpop} for
 #' what each route means.

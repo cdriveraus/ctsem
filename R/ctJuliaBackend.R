@@ -4907,10 +4907,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 # review/OPTIM-consolidation-plan-2026-09-25.md P5. `intoverstates` here is
 # always TRUE for a placement call -- optimising the joint state density is
 # degenerate (state-explicit-generation.md) -- and `correctlaplace` is always
-# FALSE there, because the sampled target under `intoverpop = 'laplace'` is
-# the Laplace marginal itself, whose optimum is where to place the sampler,
-# not the quadrature-corrected point that answers a question the sampler is
-# not asking.
+# FALSE there, because under `intoverpop = 'laplace'` the fit only places the
+# chains, from its own optimum and curvature, and the quadrature-corrected
+# point answers a question the placement is not asking.
 #' @keywords internal
 .ctJuliaOptimiseFit <- function(model_spec, datalong, model, prepared_data,
   inits, cores, optimcontrol, verbose, priors, priorscope, intoverpop,

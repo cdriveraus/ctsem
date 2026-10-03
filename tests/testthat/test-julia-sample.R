@@ -13,15 +13,12 @@
 #
 # `ctFitUncertainty(fit, 'sample')` on the `.sample_fixture()` below -- an
 # `intoverpop='laplace'` maximum-likelihood fit -- defaults to
-# `control$target='auto'`, which is the Laplace marginal (decision 5,
-# review/OPTIM-consolidation-plan-2026-09-25.md): population parameters only,
-# no random effects in the sampled vector. Tests that are specifically about
-# the random effects -- their draws, their summaries, `saveEffects`,
-# generation at a sampled effect -- ask for `control = list(target = 'joint')`
-# explicitly, which is what removes the Laplace approximation rather than
-# sampling around it, and is what this file tested by default before the
-# route had a name. Everything else here is generic sampler mechanics that
-# holds under either target, and is left at the default.
+# `control$target='auto'`, which on a Laplace fit is the joint posterior over
+# parameters and random effects (the Laplace marginal until 2026-10-03, decision
+# 5 of review/OPTIM-consolidation-plan-2026-09-25.md, reversed). Tests that are
+# specifically about the random effects still ask for `target = 'joint'`
+# explicitly, so they say what they need whatever the default; everything else
+# here is generic sampler mechanics that holds under either target.
 #
 # The separate exported sampling function this file used to call was removed
 # (it was julia-only and never released); every call below that used to reach
