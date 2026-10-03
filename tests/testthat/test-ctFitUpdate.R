@@ -29,6 +29,12 @@ suppressWarnings(suppressPackageStartupMessages(library(ctsem)))
 #
 # `ctstantestfit` is optimised, so `refit = FALSE` rebuilds its data without
 # fitting -- a second or two, and no compilation.
+#
+# What an update should rebuild is what ctFit() builds now from the call the
+# fit was made with (R/ctdataupdate.R), not the stored fit's own `$standata`,
+# whose layout is whatever the format was when the fixture was last saved.
+.stan_rebuilt <- function() .quietly(ctFit(ctstantestdat,
+  ctstantestfit$ctstanmodelbase, priors = TRUE, fit = FALSE))
 
 test_that("a stan fit updates without refitting, unchanged and without warnings", {
   .local_fresh_sample_deprecation()
@@ -39,8 +45,9 @@ test_that("a stan fit updates without refitting, unchanged and without warnings"
   suppressMessages(expect_no_warning(
     updated <- ctFitUpdate(ctstantestfit, refit = FALSE)))
   expect_s3_class(updated, "ctStanFit")
-  expect_equal(updated$standata, ctstantestfit$standata)
-  expect_equal(updated$data, ctstantestfit$data)
+  rebuilt <- .stan_rebuilt()
+  expect_equal(updated$standata, rebuilt$standata)
+  expect_equal(updated$data, rebuilt$data)
 })
 
 test_that("replacement data is used, and the old data is not rebuilt first", {
@@ -88,7 +95,7 @@ test_that("a fit saved by ctsem 3.11.1 is updated with its own arguments", {
   # Replayed at their defaults, the priors this fit was estimated with would
   # be gone from the data it is evaluated against.
   expect_equal(updated$standata$priors, ctstantestfit$standata$priors)
-  expect_equal(updated$standata, ctstantestfit$standata)
+  expect_equal(updated$standata, .stan_rebuilt()$standata)
 })
 
 test_that("an update that keeps the estimates keeps their backend", {

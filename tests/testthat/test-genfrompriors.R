@@ -276,10 +276,10 @@ test_that("a fit made with less than the full prior warns rather than refusing",
   #
   # As a fit made now records it -- `priorscope` beside the logical ctFit()
   # reduced it to -- and as one made before `priorscope` was recorded, which has
-  # only the logical. `ctstantestfit` is the second kind.
+  # only the logical. The second kind first, made by removing the record.
   fit <- ctstantestfit
   fit$args$resolved$priors <- fit$args$input$priors <- FALSE
-  expect_null(fit$args$input$priorscope)
+  fit$args$input$priorscope <- NULL
   expect_warning(out <- suppressMessages(ctsem:::.ctGenerateFromPriors(fit,
     nsamples = 2, cores = 1, backend = 'stan')), regexp = 'priors=FALSE')
   expect_equal(dim(out$Y)[1:2], c(2L, nrow(ctsem:::.ctFitLongData(fit))))
