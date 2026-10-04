@@ -195,40 +195,33 @@ test_that("the two routes agree on a count model", {
   skip_without_julia()
   d <- .count_data()
   m <- .count_model_varying()
-  # A COMMON, FIXED starting point, because the difference below is read as a
-  # methodological gap and that reading needs both routes to have started from
-  # the same place. `inits = NULL` starts each at rnorm(npar, 0, .01) from
-  # whatever RNG state it inherits, so the laplace fit's start depended on how
-  # much RNG the augmented fit above it had consumed -- and on this model that
-  # matters far more than 0.01 suggests. From fixed starts:
+  # A COMMON, FIXED starting point, so that both routes start from the same
+  # place: `inits = NULL` starts each at rnorm(npar, 0, .01) from whatever RNG
+  # state it inherits.
   #
-  #   route      zeros          rnorm sd .01     rnorm sd .3
-  #   augmented  -1483.480158   -1483.480158     -1483.480158
-  #   laplace    -1471.584356   -1471.584356     -1.47e14
-  #
-  # The augmented route is flat over all three; the laplace route reaches the
-  # intended optimum from a small start, runs away from a wider one, and from
-  # some sd-0.01 starts lands near -2175. That is what made this fail
-  # intermittently, and it is a property of the model rather than of either
-  # construction -- both recorded values below are reproduced exactly from
-  # zeros, so zeros is the neutral choice and not the one that passes.
+  # Full fits, not `estonly`. On the Laplace route `estonly` forms no Hessian,
+  # so no Newton finish runs and the fit ends wherever L-BFGS stops -- and this
+  # model has a plateau there, 41 nats below the maximum: drift near -15, the
+  # latent process white noise and the random intercept carrying the stability,
+  # with a slightly positive curvature along drift. From ten small random starts
+  # (sd 0.01 and 0.1) estonly fits stopped short of the maximum from most of
+  # them on both routes and under either L-BFGS scaling, while full Laplace fits
+  # reached it from all ten under both (2026-10-04). With estonly this test read
+  # which side of the plateau zeros fell on, which the diagonal scaling changed.
   fit <- function(route) {
     spec <- suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
       intoverpop = route, fit = FALSE)))
     suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
-      intoverpop = route, inits = rep(0, ctsem:::.ctBackendNpar(spec)),
-      optimcontrol = list(estonly = TRUE))))
+      intoverpop = route, inits = rep(0, ctsem:::.ctBackendNpar(spec)))))
   }
   augmented <- fit("augmented")
   laplace <- fit("laplace")
-  # The two routes integrate the same random effect differently, so the gap is
-  # a real methodological difference and not noise: -1471.584 (laplace) against
   # The two were 11.896 apart, 0.0080 relative, when the count mode solve
   # stopped short; the gap was that defect rather than a difference between the
   # routes, and the augmented route carried more of it because its extra state
-  # adds to the linear predictor's variance. Measured now: -1466.970967283
-  # (augmented) against -1466.970967298 (laplace), 1.5e-08 apart and 1.0e-11
-  # relative.
+  # adds to the linear predictor's variance. Measured from full fits:
+  # -1466.970967287 (augmented) against -1466.970967305 (laplace), 1.8e-08
+  # apart and 1.2e-11 relative.
   #
   # 1e-6 rather than anything tighter because two different integration routes
   # reaching a maximum by different paths have no reason to agree to the last
@@ -238,7 +231,7 @@ test_that("the two routes agree on a count model", {
     as.numeric(augmented$estimate$loglik), tolerance = 1e-6)
   # No ordering is asserted. It used to be -- laplace the better fit, as the
   # methodology predicts for an integrated random effect against a linearised
-  # one -- and with the mode solved the two agree to 1.5e-08, which is optimiser
+  # one -- and with the mode solved the two agree to 1.8e-08, which is optimiser
   # noise and falls either way between runs. Asserting a direction across a gap
   # that small tests the optimiser's last digit, not the methodology.
 })
