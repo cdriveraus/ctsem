@@ -825,6 +825,42 @@ test_that("a sampled fit without saved effects says it fell back to modes", {
     fullposterior = TRUE, cores = 1))
 })
 
+test_that("a sampled fit reports subject parameters from its own effects", {
+  skip_without_julia()
+  fit <- .sample_joint_effects()
+  posterior <- fit$estimate$rawposterior
+  draws <- ctSubjectPars(fit, pointest = FALSE)
+  expect_equal(dim(draws)[1], nrow(posterior))
+
+  # Draw s of a subject is its draw-s parameters plus its draw-s deviation:
+  # on the raw scale exactly, so through a monotone transform the ranks over
+  # draws agree perfectly. Modes linearised around the estimate would not.
+  index <- fit$sample$effectIndex
+  shared <- intersect(as.character(unique(index$parameter)),
+    intersect(colnames(posterior), dimnames(draws)$param))
+  expect_gt(length(shared), 0L)
+  for (p in shared) for (i in c(1L, max(index$subject))) {
+    raw <- posterior[, p] + fit$sample$effects[, which(index$parameter == p &
+      index$subject == i)]
+    expect_equal(stats::cor(raw, draws[, i, p], method = "spearman"), 1)
+  }
+
+  # The same pairing through the point path: a fit whose estimate and mean
+  # effects are draw s reports draw s.
+  for (s in c(1L, nrow(posterior))) {
+    one <- fit
+    one$estimate$raw <- as.numeric(posterior[s, ])
+    one$sample$effect_mean <- as.numeric(fit$sample$effects[s, ])
+    expect_equal(as.numeric(ctSubjectPars(one)[1, , , drop = FALSE]),
+      as.numeric(draws[s, , , drop = FALSE]))
+  }
+
+  # Without the effect draws the draws fall back to linearised modes, and say so.
+  stripped <- fit
+  stripped$sample$effects <- NULL
+  expect_message(ctSubjectPars(stripped, pointest = FALSE), "saveEffects=TRUE")
+})
+
 # Which route generates the states, as a choice rather than a consequence.
 #
 # What a fit contributes to generated data is its sampled individual
