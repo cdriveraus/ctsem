@@ -2338,7 +2338,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' log-posterior surface around the optimum, not a sample from the posterior
 #' itself, and the point estimate stays at the optimum throughout.
 #' \code{uncertainty = 'sample'} is the other thing, genuine posterior draws
-#' by Hamiltonian Monte Carlo, and it is the one method that moves the point
+#' by Markov chain Monte Carlo, and it is the one method that moves the point
 #' estimate: \code{$estimate$raw} (or \code{$stanfit$rawest}) becomes the
 #' posterior mean, the way \code{ctFit(optimize = FALSE)} already reports a
 #' sampled fit. Everything downstream reads either kind of draw from the same
@@ -2463,12 +2463,23 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' out, which is what an improper posterior looks like. When the Hessian
 #' covariance is rank deficient the sampling runs in the whitened
 #' eigen-coordinates of the directions it has curvature in, holding the rest
-#' at the estimate. Measured against long NUTS runs on five bench models and
-#' two closed forms, its worst errors in a posterior sd and in the 2.5\% and
-#' 97.5\% quantiles were at most those of \code{'sample'} at its defaults
-#' (within 5\% on the sd once), in a twentieth to a half of the time. It needs
-#' the log posterior's gradient for the walk, which both backends' fits
-#' supply. \code{'sample'} draws from the posterior itself.
+#' at the estimate. It needs the log posterior's gradient for the walk, which
+#' both backends' fits supply.
+#'
+#' The density \code{'is'} weights toward is the fit's own objective. On a
+#' fit whose random effects are integrated -- \code{intoverpop = 'laplace'}
+#' or \code{'augmented'} -- that is the approximate marginal posterior the route
+#' maximised, so the draws correct the normal approximation's shape but keep
+#' the route's own approximation: where the Laplace approximation is biased
+#' (random effects on variances, in nonlinear dynamics, or with non-Gaussian
+#' indicators), \code{'is'} reproduces the bias faithfully. Measured against
+#' long reference samples on five bench models and two closed forms where
+#' that approximation is accurate, its worst errors in a posterior sd and in
+#' the 2.5\% and 97.5\% quantiles were at most those of \code{'sample'} at its
+#' defaults, in a twentieth to a half of the time; on twenty models including
+#' those where it is not, it cost 5 to 12 times the fit and was no more
+#' accurate than the Hessian on balance. \code{'sample'} draws from the exact
+#' posterior.
 #' \code{'bootstrap'} uses one-step score bootstrap draws with
 #' Hessian bread, \code{'fullbootstrap'} resamples subjects and fully
 #' re-optimizes each sample from the original maximum likelihood or MAP
@@ -2483,8 +2494,9 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' log-probability evaluations, this one costs none -- and it warns if the
 #' fit's existing draws came from \code{'is'} or \code{'bootstrap'}, which
 #' normal draws from that covariance do not reproduce.
-#' \code{'sample'} draws from the genuine posterior by Hamiltonian Monte Carlo
-#' (the No-U-Turn sampler), through the same runner
+#' \code{'sample'} draws from the genuine posterior by Markov chain Monte
+#' Carlo -- SAEM's kernel on the joint posterior of parameters and random
+#' effects, the No-U-Turn sampler otherwise -- through the same runner
 #' \code{ctFit(backend = 'julia', optimize = FALSE)} uses to fit and sample
 #' together -- \code{julia}-only, see \code{fit} above. Its settings are
 #' entries of \code{control} rather than \code{draws}/\code{finishsamples},
@@ -2500,6 +2512,23 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' target for the average -- within a budget of four times \code{draws} per
 #' chain, or \code{maxDraws} when given; \code{minESS = 0} takes exactly
 #' \code{draws}. A run that reaches its budget short of the target warns.
+#'
+#' Lower targets give a quicker, approximate posterior, and say how
+#' approximate. A reported quantile's Monte Carlo error is about
+#' \code{1.96 * 2.1 / sqrt(ESS)} posterior sds at the 5\% and 95\% points (the
+#' tail ESS) and \code{1.96 * 1.25 / sqrt(ESS)} at the median, and chains
+#' whose means disagree by \code{d} posterior sds give an R-hat of about
+#' \code{sqrt(1 + d^2)}; measured on short runs, the error these imply was
+#' about a third optimistic. So \code{minESS = 50, rhatTarget = 1.07} aims at
+#' about half a posterior sd at the centre and more in the tails, and the
+#' defaults at about a fifth at the centre and two fifths in the tails. On the models compared, runs of four chains
+#' and 100 to 200 draws each overtook the Laplace normal approximation's
+#' accuracy at two to three times a Laplace fit's time, and were faster and
+#' more accurate outright where the Laplace fit was slow or biased; short runs
+#' are limited by whether the chains agree, so R-hat is usually the binding
+#' check. With \code{processes = TRUE} each chain pays for starting its own
+#' Julia session, which a short run does not recover; use
+#' \code{processes = FALSE} for one.
 #' \code{settleTol} ends warmup early once the metric stops moving (off by
 #' default, and slower when measured). \code{control$sampler} chooses the
 #' kernel for the joint posterior: \code{'saem'} (the default there) draws the
@@ -2563,8 +2592,11 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' @param control List of method-specific options. For \code{uncertainty =
 #' 'sample'} these are the sampler settings described under \code{uncertainty}
 #' above (\code{chains}, \code{warmup}, \code{draws}, \code{seed},
-#' \code{saveEffects}, \code{processes}, \code{target}); none of the entries
-#' below apply to it. For every other method, useful entries include
+#' \code{saveEffects}, \code{processes}, \code{target}, \code{sampler},
+#' \code{placement}, \code{minESS}, \code{meanESS}, \code{rhatTarget},
+#' \code{maxDraws}, \code{settleTol}, \code{init_scale}, and NUTS's
+#' \code{maxdepth}, \code{target_accept}, \code{adapt_metric} and
+#' \code{adapt_effects}); none of the entries below apply to it. For every other method, useful entries include
 #' \code{ridge}, \code{hessianStep}, \code{surrogateNpoints},
 #' \code{surrogateScale}, \code{surrogateProfile},
 #' \code{surrogateProfileTargetDrop}, \code{surrogateProfileMaxStep},
