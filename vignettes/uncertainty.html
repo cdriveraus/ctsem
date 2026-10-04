@@ -134,6 +134,7 @@ border-radius: 0 4px 4px 0;
   <ul>
   <li><a href="#the-state-explicit-path-has-one-route-not-seven" id="toc-the-state-explicit-path-has-one-route-not-seven">The state-explicit path has one route, not seven</a></li>
   </ul></li>
+  <li><a href="#with-random-effects" id="toc-with-random-effects">With random effects</a></li>
   <li><a href="#with-and-without-priors" id="toc-with-and-without-priors">With and without priors</a></li>
   <li><a href="#summary" id="toc-summary">Summary</a></li>
   </ul>
@@ -145,15 +146,15 @@ border-radius: 0 4px 4px 0;
 </div>
 <p>Every <code>ctFit()</code> returns an estimate and a claim about how uncertain it is. Where that claim comes from depends on three choices, each of which changes what the resulting interval means:</p>
 <ul>
-<li><strong><code>optimize</code></strong>: sample the posterior (or likelihood) with HMC, or find its mode and approximate the curvature there.</li>
+<li><strong><code>optimize</code></strong>: sample the posterior (or likelihood) by MCMC, or find its mode and approximate the curvature there.</li>
 <li><strong><code>priors</code></strong>: include ctsem’s weakly informative priors on the raw parameter scale, or leave them out.</li>
 <li><strong><code>uncertainty</code></strong>: for an optimized fit, which curvature-or-resampling approximation to use around the mode.</li>
 </ul>
 <p>This vignette works through all three, on both backends (<code>backend = &#39;stan&#39;</code> and <code>backend = &#39;julia&#39;</code>), using one small model fit many different ways so the intervals can be compared directly rather than described in the abstract.</p>
 <h2 id="the-two-routes">The two routes</h2>
-<p><strong>Sampling</strong> (<code>optimize = FALSE</code>) draws from the target density with HMC – Stan’s sampler for <code>backend = &#39;stan&#39;</code>, the julia engine’s own No-U-Turn sampler for <code>backend = &#39;julia&#39;</code>. Uncertainty is then just the spread of the draws: no curvature is computed and no normal approximation is assumed. This is the most trustworthy route and the slowest one.</p>
+<p><strong>Sampling</strong> (<code>optimize = FALSE</code>) draws from the target density by MCMC – Stan’s sampler for <code>backend = &#39;stan&#39;</code>, the julia engine’s own for <code>backend = &#39;julia&#39;</code>: its No-U-Turn sampler for a model like the one here, with no random effects, and SAEM’s kernel on the joint posterior of parameters and random effects when there are some. Uncertainty is then just the spread of the draws: no curvature is computed and no normal approximation is assumed. This is the most trustworthy route and the slowest one.</p>
 <p><strong>Optimizing</strong> (<code>optimize = TRUE</code>, the default) finds the mode of the same target and reports a point estimate plus an approximation of the local curvature there. The approximation is cheap – one fit instead of thousands of gradient evaluations – but it is only as good as the normal approximation it rests on. It is a poor description of a posterior that is skewed, bounded, or multimodal, which variance-like parameters often are with few subjects.</p>
-<p>Both routes target the <em>same</em> density for a given setting of <code>priors</code>; they differ only in how they characterise it. The rest of this vignette compares them directly, then works through what sits between “one Hessian” and “full HMC,” and then through what changes when priors are switched off.</p>
+<p>Both routes target the <em>same</em> density for a given setting of <code>priors</code>; they differ only in how they characterise it. The rest of this vignette compares them directly, then works through what sits between “one Hessian” and “full sampling,” and then through what changes when priors are switched off.</p>
 <h2 id="a-small-model-fit-several-ways">A small model, fit several ways</h2>
 <p>The model below is a single latent process observed with a fixed measurement scale, estimating a continuous-time intercept, drift, and diffusion. Ten subjects and eight time points keep every fit in this document fast, which also means several of the demonstrations below hit the small-sample problems this vignette is about – deliberately, since a model too well identified to show the difference between uncertainty methods would not make the point.</p>
 <div class="cell">
@@ -225,8 +226,8 @@ border-radius: 0 4px 4px 0;
 <span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
 <span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; SAMPLING FOR MODEL &#39;ctsm&#39; NOW (CHAIN 1).</span></span>
 <span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: </span></span>
-<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Gradient evaluation took 0.001102 seconds</span></span>
-<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: 1000 transitions using 10 leapfrog steps per transition would take 11.02 seconds.</span></span>
+<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Gradient evaluation took 0.000947 seconds</span></span>
+<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: 1000 transitions using 10 leapfrog steps per transition would take 9.47 seconds.</span></span>
 <span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Adjust your expectations accordingly!</span></span>
 <span id="cb4-12"><a href="#cb4-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: </span></span>
 <span id="cb4-13"><a href="#cb4-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: </span></span>
@@ -253,9 +254,9 @@ border-radius: 0 4px 4px 0;
 <span id="cb4-34"><a href="#cb4-34" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 380 / 400 [ 95%]  (Sampling)</span></span>
 <span id="cb4-35"><a href="#cb4-35" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 400 / 400 [100%]  (Sampling)</span></span>
 <span id="cb4-36"><a href="#cb4-36" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: </span></span>
-<span id="cb4-37"><a href="#cb4-37" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:  Elapsed Time: 2.467 seconds (Warm-up)</span></span>
-<span id="cb4-38"><a href="#cb4-38" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:                2.179 seconds (Sampling)</span></span>
-<span id="cb4-39"><a href="#cb4-39" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:                4.646 seconds (Total)</span></span>
+<span id="cb4-37"><a href="#cb4-37" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:  Elapsed Time: 2.174 seconds (Warm-up)</span></span>
+<span id="cb4-38"><a href="#cb4-38" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:                2.037 seconds (Sampling)</span></span>
+<span id="cb4-39"><a href="#cb4-39" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:                4.211 seconds (Total)</span></span>
 <span id="cb4-40"><a href="#cb4-40" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:</span></span></code></pre></div>
 </div>
 <div class="cell">
@@ -270,7 +271,7 @@ border-radius: 0 4px 4px 0;
 <div class="sourceCode cell-code" id="cb6"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="fu">rbind</span>(<span class="at">stan =</span> <span class="fu">drift_interval</span>(stan_sample), <span class="at">julia =</span> <span class="fu">drift_interval</span>(julia_sample))</span>
 <span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;             mean      2.5%       97.5%</span></span>
 <span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; stan  -0.6794117 -2.040637 -0.02921703</span></span>
-<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; julia -0.6651755 -1.751657 -0.04824635</span></span></code></pre></div>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; julia -0.6746238 -1.862115 -0.03367108</span></span></code></pre></div>
 </div>
 <h3 id="optimizing">Optimizing</h3>
 <div class="cell">
@@ -291,11 +292,11 @@ border-radius: 0 4px 4px 0;
 <div class="sourceCode cell-code" id="cb9"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="fu">rbind</span>(<span class="at">stan =</span> <span class="fu">drift_interval</span>(stan_map), <span class="at">julia =</span> <span class="fu">drift_interval</span>(julia_map))</span>
 <span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;             mean      2.5%      97.5%</span></span>
 <span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; stan  -0.7051033 -1.945421 -0.1221965</span></span>
-<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; julia -0.6670232 -2.018282 -0.1256228</span></span></code></pre></div>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; julia -0.6670242 -2.018281 -0.1256235</span></span></code></pre></div>
 </div>
 <p>Each optimized fit above draws its <code>rawposterior</code> from a Hessian-based normal approximation by default (<code>uncertainty = &quot;hessian&quot;</code>) – the closest optimized-fit analogue to the sampling intervals above, but still an approximation around a single point rather than a description of the whole density. The next section is about what else can go in that approximation’s place.</p>
 <h2 id="the-bits-in-between">The bits in between</h2>
-<p>An optimized fit does not have to settle for the default Hessian approximation. <code>uncertainty</code> in <code>optimcontrol</code> (at fit time) or in <code>ctOptimUncertainty()</code> (after the fact, reusing the existing optimum) selects among several:</p>
+<p>An optimized fit does not have to settle for the default Hessian approximation. <code>uncertainty</code> in <code>optimcontrol</code> (at fit time) or in <code>ctFitUncertainty()</code> (after the fact, reusing the existing optimum; previously <code>ctOptimUncertainty()</code>, still available) selects among several:</p>
 <ul>
 <li><code>hessian</code>: finite-difference (stan) or exact forward-mode (julia) curvature at the optimum, with normal draws. The default, and the cheapest.</li>
 <li><code>surrogate</code>: a local quadratic fit using gradient evaluations at points spread around the optimum (<code>max(4 * npars, 50)</code> by default). More stable than a single finite-difference Hessian when individual directions are noisy, still local.</li>
@@ -303,7 +304,7 @@ border-radius: 0 4px 4px 0;
 <li><code>sandwich</code>: Hessian bread with score-covariance meat – a robust covariance more than a curvature approximation, useful as a misspecification check.</li>
 <li><code>bootstrap</code>: a one-step score bootstrap using the Hessian as bread. Much cheaper than refitting, but score-based methods need enough independent subject-level score rows to be stable; with few subjects, expect a warning and a wider, noisier interval.</li>
 <li><code>fullbootstrap</code>: resample subjects and fully re-optimize for each resample. The most literal bootstrap and the most expensive – for <code>backend = &#39;julia&#39;</code> it is the one method not available, because it needs the model rebuilt per resample rather than just re-evaluated at new data.</li>
-<li><code>is</code>: importance sampling using the Hessian as the proposal covariance, with uncertainty read from the resulting weighted sample.</li>
+<li><code>is</code>: importance sampling using the Hessian as the proposal covariance, with uncertainty read from the resulting weighted sample. It reweights toward the objective the fit maximised: here that is the exact posterior, since nothing is integrated out; with random effects it is the integrated approximation (see below).</li>
 </ul>
 <p>Every method except <code>fullbootstrap</code> works on both backends, reusing the same underlying <code>ctOptimComputeUncertainty()</code> machinery either way – the julia path supplies its own exact Hessian and per-subject scores to the same code rather than duplicating the numerics.</p>
 <div class="cell">
@@ -311,7 +312,7 @@ border-radius: 0 4px 4px 0;
 <span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>gallery <span class="ot">&lt;-</span> <span class="cf">function</span>(base_fit, backend_label) {</span>
 <span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">do.call</span>(rbind, <span class="fu">lapply</span>(methods, <span class="cf">function</span>(m) {</span>
-<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a>    updated <span class="ot">&lt;-</span> <span class="fu">ctOptimUncertainty</span>(base_fit, <span class="at">uncertainty =</span> m, <span class="at">finishsamples =</span> <span class="dv">200</span>, <span class="at">cores =</span> <span class="dv">1</span>)</span>
+<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a>    updated <span class="ot">&lt;-</span> <span class="fu">ctFitUncertainty</span>(base_fit, <span class="at">uncertainty =</span> m, <span class="at">finishsamples =</span> <span class="dv">200</span>, <span class="at">cores =</span> <span class="dv">1</span>)</span>
 <span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a>    <span class="fu">data.frame</span>(<span class="at">backend =</span> backend_label, <span class="at">method =</span> m, <span class="fu">t</span>(<span class="fu">drift_interval</span>(updated)))</span>
 <span id="cb10-7"><a href="#cb10-7" aria-hidden="true" tabindex="-1"></a>  }))</span>
 <span id="cb10-8"><a href="#cb10-8" aria-hidden="true" tabindex="-1"></a>}</span>
@@ -325,12 +326,12 @@ border-radius: 0 4px 4px 0;
 <span id="cb10-16"><a href="#cb10-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 4     stan  sandwich -0.7093890 -1.818714 -0.17067079</span></span>
 <span id="cb10-17"><a href="#cb10-17" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 5     stan bootstrap -0.6592181 -1.651801 -0.16349160</span></span>
 <span id="cb10-18"><a href="#cb10-18" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 6     stan        is -0.6824358 -1.661323 -0.04706093</span></span>
-<span id="cb10-19"><a href="#cb10-19" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 7    julia   hessian -0.6785577 -1.804208 -0.10804734</span></span>
-<span id="cb10-20"><a href="#cb10-20" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 8    julia surrogate -0.7073086 -1.722448 -0.17242032</span></span>
-<span id="cb10-21"><a href="#cb10-21" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 9    julia       opg -0.7403088 -2.688940 -0.08071691</span></span>
-<span id="cb10-22"><a href="#cb10-22" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 10   julia  sandwich -0.6453961 -1.824159 -0.15513199</span></span>
-<span id="cb10-23"><a href="#cb10-23" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 11   julia bootstrap -0.6265069 -1.566964 -0.15783538</span></span>
-<span id="cb10-24"><a href="#cb10-24" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 12   julia        is -0.6812146 -1.695873 -0.06325884</span></span></code></pre></div>
+<span id="cb10-19"><a href="#cb10-19" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 7    julia   hessian -0.6785587 -1.804208 -0.10804797</span></span>
+<span id="cb10-20"><a href="#cb10-20" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 8    julia surrogate -0.7073095 -1.722447 -0.17242128</span></span>
+<span id="cb10-21"><a href="#cb10-21" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 9    julia       opg -0.7403087 -2.688929 -0.08071744</span></span>
+<span id="cb10-22"><a href="#cb10-22" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 10   julia  sandwich -0.6453968 -1.824154 -0.15513329</span></span>
+<span id="cb10-23"><a href="#cb10-23" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 11   julia bootstrap -0.6265077 -1.566960 -0.15783634</span></span>
+<span id="cb10-24"><a href="#cb10-24" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 12   julia        is -0.6812151 -1.695873 -0.06325930</span></span></code></pre></div>
 </div>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb11"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="fu">ggplot</span>(uncertainty_table, <span class="fu">aes</span>(<span class="at">x =</span> method, <span class="at">y =</span> mean, <span class="at">ymin =</span> X2.<span class="fl">5.</span>, <span class="at">ymax =</span> X97.<span class="fl">5.</span>,</span>
@@ -348,7 +349,7 @@ border-radius: 0 4px 4px 0;
 </div>
 <p>With eight subjects the score-based methods (<code>opg</code>, <code>sandwich</code>, <code>bootstrap</code>) warn about too few independent score rows and show it: wider and less stable intervals than <code>hessian</code> or <code>surrogate</code>. That warning is informative rather than a bug in the demonstration – it is the method telling you its assumption does not hold here. <code>fullbootstrap</code> is shown separately because it is stan-only and slower even at a small resample count:</p>
 <div class="cell">
-<div class="sourceCode cell-code" id="cb12"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a>stan_fullboot <span class="ot">&lt;-</span> <span class="fu">ctOptimUncertainty</span>(</span>
+<div class="sourceCode cell-code" id="cb12"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a>stan_fullboot <span class="ot">&lt;-</span> <span class="fu">ctFitUncertainty</span>(</span>
 <span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>  stan_map, <span class="at">uncertainty =</span> <span class="st">&quot;fullbootstrap&quot;</span>, <span class="at">finishsamples =</span> <span class="dv">8</span>, <span class="at">cores =</span> <span class="dv">1</span>,</span>
 <span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">control =</span> <span class="fu">list</span>(<span class="at">bootstrapTol =</span> <span class="fl">1e-3</span>)</span>
 <span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a>)</span>
@@ -358,7 +359,7 @@ border-radius: 0 4px 4px 0;
 </div>
 <h3 id="the-state-explicit-path-has-one-route-not-seven">The state-explicit path has one route, not seven</h3>
 <p>Everything above assumes <code>intoverstates = TRUE</code>, the default: a Kalman filter integrates the latent states out, and the fit’s objective is the marginal likelihood (or posterior) over the parameters alone. Setting <code>intoverstates = FALSE</code> instead makes the states part of what is estimated – useful with non-Gaussian indicators, where <code>backend = &#39;julia&#39;</code> can integrate the observation exactly rather than linearising it the way the filter does.</p>
-<p>Optimizing that model would find the <em>joint</em> mode of parameters and states together, which is not the marginal maximum likelihood and is not an estimate at all: with an innovation per observation the states re-optimise to absorb almost any change in the parameters, so the mode is degenerate, and its variance parameters are biased downward in the same way a random-effects model’s variance is biased if the effects are treated as parameters to optimize rather than integrated out. <code>ctFit()</code> therefore refuses <code>optimize = TRUE</code> with <code>intoverstates = FALSE</code>; <code>optimcontrol$estonly = TRUE</code> is the explicit way to ask for the mode anyway. Every uncertainty method above except <code>hessian</code> scores the marginal likelihood, which such a fit did not maximise, so <code>ctOptimUncertainty()</code> refuses them for it. <code>hessian</code> profiles the enormous state block out of the curvature (<code>ctsem_joint_hessian(..., profile = TRUE)</code> in the julia engine), and the profile can be close to flat – on a model this small it is:</p>
+<p>Optimizing that model would find the <em>joint</em> mode of parameters and states together, which is not the marginal maximum likelihood and is not an estimate at all: with an innovation per observation the states re-optimise to absorb almost any change in the parameters, so the mode is degenerate, and its variance parameters are biased downward in the same way a random-effects model’s variance is biased if the effects are treated as parameters to optimize rather than integrated out. <code>ctFit()</code> therefore refuses <code>optimize = TRUE</code> with <code>intoverstates = FALSE</code>; <code>optimcontrol$estonly = TRUE</code> is the explicit way to ask for the mode anyway. Every uncertainty method above except <code>hessian</code> scores the marginal likelihood, which such a fit did not maximise, so <code>ctFitUncertainty()</code> refuses them for it. <code>hessian</code> profiles the enormous state block out of the curvature (<code>ctsem_joint_hessian(..., profile = TRUE)</code> in the julia engine), and the profile can be close to flat – on a model this small it is:</p>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb13"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>count_gen <span class="ot">&lt;-</span> <span class="fu">ctModel</span>(</span>
 <span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">type =</span> <span class="st">&quot;ct&quot;</span>, <span class="at">n.latent =</span> <span class="dv">1</span>, <span class="at">n.manifest =</span> <span class="dv">1</span>,</span>
@@ -394,13 +395,75 @@ border-radius: 0 4px 4px 0;
 <span id="cb14-5"><a href="#cb14-5" aria-hidden="true" tabindex="-1"></a>)</span>
 <span id="cb14-6"><a href="#cb14-6" aria-hidden="true" tabindex="-1"></a>state_explicit_samp<span class="sc">$</span>estimate<span class="sc">$</span>se</span>
 <span id="cb14-7"><a href="#cb14-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; drift_eta1  diff_eta1      cmean T0var_eta1 </span></span>
-<span id="cb14-8"><a href="#cb14-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 0.66198968 0.31147909 0.01729801 0.20496553</span></span>
+<span id="cb14-8"><a href="#cb14-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 0.99464229 0.39159351 0.01536947 0.19847670</span></span>
 <span id="cb14-9"><a href="#cb14-9" aria-hidden="true" tabindex="-1"></a><span class="fu">dim</span>(state_explicit_samp<span class="sc">$</span>estimate<span class="sc">$</span>states)</span>
 <span id="cb14-10"><a href="#cb14-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; [1] 48  1</span></span></code></pre></div>
 </div>
 <p>The sampled fit reports finite standard errors from the draws directly, and <code>estimate$states</code> carries the sampled trajectory alongside the parameters – the whole reason to make the states explicit rather than let the filter integrate them away.</p>
+<h2 id="with-random-effects">With random effects</h2>
+<p>The model so far has no individual differences, so every route above targets one density. Once parameters vary over subjects there is a choice about the random effects themselves, and it decides what an interval describes.</p>
+<ul>
+<li><strong>Integrated out</strong> – an optimized fit, <code>intoverpop = TRUE</code> or the default <code>&#39;auto&#39;</code>: the augmented filter where it is exact (random effects that shift a mean, Gaussian indicators), a Laplace approximation everywhere else. Every <code>uncertainty</code> method above then describes <em>that</em> integrated objective. Where the integration is approximate – random effects on dynamics or variances, non-Gaussian indicators – they all inherit the approximation, <code>is</code> included: it reweights toward the objective the fit maximised, not toward the exact posterior. The Laplace fit’s own correction (on by default) moves the estimate toward the exact one, but its interval stays a normal approximation at a mode, and a population standard deviation estimated from few subjects is usually skewed.</li>
+<li><strong>Sampled</strong> – <code>optimize = FALSE</code>, or <code>ctFitUncertainty(fit, &#39;sample&#39;)</code> on an optimized fit: the parameters and every subject’s random effects are drawn together, from the exact joint posterior, with the fit (or SAEM, by default) only placing the chains.</li>
+</ul>
+<p>Sampling does not have to mean waiting for a long run. Its stopping rule is an effective sample size and an R-hat, and lowering them asks for a quicker, rougher posterior with a stated precision: a reported 5% or 95% point carries a Monte Carlo error of about <code>1.96 * 2.1 / sqrt(ESS)</code> posterior standard deviations, the median <code>1.96 * 1.25 / sqrt(ESS)</code>, and chains whose means differ by <code>d</code> standard deviations show an R-hat of about <code>sqrt(1 + d^2)</code>. <code>minESS = 50, rhatTarget = 1.07</code> therefore aims at roughly half a posterior standard deviation at the centre. On the models it was compared on, runs of four chains and 100 to 200 draws each were already more accurate than the Laplace normal approximation, at two to three times the cost of the fit. For a run of under a minute or so, keep the chains in this session (<code>processes = FALSE</code>): a separate process per chain pays tens of seconds to start Julia, which only a longer run recovers.</p>
+<p>Here a drift that varies across 30 subjects – a random effect inside the dynamics, so <code>&#39;auto&#39;</code> integrates it by Laplace – is summarised three ways:</p>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb15"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">3</span>)</span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a>re_dat <span class="ot">&lt;-</span> <span class="fu">do.call</span>(rbind, <span class="fu">lapply</span>(<span class="fu">seq_len</span>(<span class="dv">30</span>), <span class="cf">function</span>(id) {</span>
+<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>  subject <span class="ot">&lt;-</span> gen_model</span>
+<span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a>  subject<span class="sc">$</span>DRIFT <span class="ot">&lt;-</span> <span class="fu">matrix</span>(<span class="sc">-</span><span class="fu">exp</span>(<span class="fu">log</span>(<span class="fl">0.35</span>) <span class="sc">+</span> <span class="fu">rnorm</span>(<span class="dv">1</span>, <span class="dv">0</span>, <span class="fl">0.5</span>)))</span>
+<span id="cb15-5"><a href="#cb15-5" aria-hidden="true" tabindex="-1"></a>  d <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(<span class="fu">ctGenerate</span>(<span class="at">ctmodelobj =</span> subject, <span class="at">n.subjects =</span> <span class="dv">1</span>, <span class="at">burnin =</span> <span class="dv">0</span>,</span>
+<span id="cb15-6"><a href="#cb15-6" aria-hidden="true" tabindex="-1"></a>    <span class="at">dtmean =</span> <span class="fl">0.4</span>, <span class="at">logdtsd =</span> <span class="fl">0.1</span>))</span>
+<span id="cb15-7"><a href="#cb15-7" aria-hidden="true" tabindex="-1"></a>  d<span class="sc">$</span>id <span class="ot">&lt;-</span> id</span>
+<span id="cb15-8"><a href="#cb15-8" aria-hidden="true" tabindex="-1"></a>  d</span>
+<span id="cb15-9"><a href="#cb15-9" aria-hidden="true" tabindex="-1"></a>}))</span>
+<span id="cb15-10"><a href="#cb15-10" aria-hidden="true" tabindex="-1"></a>re_model <span class="ot">&lt;-</span> fit_model</span>
+<span id="cb15-11"><a href="#cb15-11" aria-hidden="true" tabindex="-1"></a>re_model<span class="sc">$</span>pars<span class="sc">$</span>indvarying[re_model<span class="sc">$</span>pars<span class="sc">$</span>param <span class="sc">%in%</span> <span class="st">&quot;drift&quot;</span>] <span class="ot">&lt;-</span> <span class="cn">TRUE</span></span></code></pre></div>
+</div>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb16"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a>fit_time <span class="ot">&lt;-</span> <span class="fu">system.time</span>(re_fit <span class="ot">&lt;-</span> <span class="fu">ctFit</span>(re_dat, re_model, <span class="at">backend =</span> <span class="st">&quot;julia&quot;</span>,</span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">priors =</span> <span class="cn">TRUE</span>, <span class="at">cores =</span> <span class="dv">1</span>, <span class="at">verbose =</span> <span class="dv">0</span>))[[<span class="st">&quot;elapsed&quot;</span>]]</span>
+<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a>re_fit<span class="sc">$</span>args<span class="sc">$</span>resolved<span class="sc">$</span>intoverpop</span>
+<span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; [1] &quot;laplace&quot;</span></span></code></pre></div>
+</div>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb17"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a>quick_time <span class="ot">&lt;-</span> <span class="fu">system.time</span>(re_quick <span class="ot">&lt;-</span> <span class="fu">ctFitUncertainty</span>(re_fit, <span class="st">&quot;sample&quot;</span>,</span>
+<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">cores =</span> <span class="dv">1</span>, <span class="at">control =</span> <span class="fu">list</span>(<span class="at">chains =</span> <span class="dv">4</span>, <span class="at">warmup =</span> <span class="dv">100</span>, <span class="at">draws =</span> <span class="dv">100</span>, <span class="at">minESS =</span> <span class="dv">50</span>,</span>
+<span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a>    <span class="at">rhatTarget =</span> <span class="fl">1.07</span>, <span class="at">processes =</span> <span class="cn">FALSE</span>)))[[<span class="st">&quot;elapsed&quot;</span>]]</span>
+<span id="cb17-4"><a href="#cb17-4" aria-hidden="true" tabindex="-1"></a>full_time <span class="ot">&lt;-</span> <span class="fu">system.time</span>(re_full <span class="ot">&lt;-</span> <span class="fu">ctFitUncertainty</span>(re_fit, <span class="st">&quot;sample&quot;</span>,</span>
+<span id="cb17-5"><a href="#cb17-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">cores =</span> <span class="dv">1</span>, <span class="at">control =</span> <span class="fu">list</span>(<span class="at">processes =</span> <span class="cn">FALSE</span>)))[[<span class="st">&quot;elapsed&quot;</span>]]</span></code></pre></div>
+</div>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb18"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a>drift_rows <span class="ot">&lt;-</span> <span class="cf">function</span>(fit, label, secs) {</span>
+<span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a>  s <span class="ot">&lt;-</span> <span class="fu">summary</span>(fit)</span>
+<span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a>  cols <span class="ot">&lt;-</span> <span class="fu">c</span>(<span class="st">&quot;mean&quot;</span>, <span class="st">&quot;2.5%&quot;</span>, <span class="st">&quot;97.5%&quot;</span>)</span>
+<span id="cb18-4"><a href="#cb18-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">data.frame</span>(<span class="at">route =</span> label, <span class="at">seconds =</span> <span class="fu">round</span>(secs),</span>
+<span id="cb18-5"><a href="#cb18-5" aria-hidden="true" tabindex="-1"></a>    <span class="at">quantity =</span> <span class="fu">c</span>(<span class="st">&quot;population mean&quot;</span>, <span class="st">&quot;population sd&quot;</span>),</span>
+<span id="cb18-6"><a href="#cb18-6" aria-hidden="true" tabindex="-1"></a>    <span class="fu">rbind</span>(s<span class="sc">$</span>popmeans[<span class="st">&quot;drift&quot;</span>, cols], s<span class="sc">$</span>popsd[<span class="st">&quot;drift&quot;</span>, cols]),</span>
+<span id="cb18-7"><a href="#cb18-7" aria-hidden="true" tabindex="-1"></a>    <span class="at">check.names =</span> <span class="cn">FALSE</span>, <span class="at">row.names =</span> <span class="cn">NULL</span>)</span>
+<span id="cb18-8"><a href="#cb18-8" aria-hidden="true" tabindex="-1"></a>}</span>
+<span id="cb18-9"><a href="#cb18-9" aria-hidden="true" tabindex="-1"></a><span class="fu">rbind</span>(<span class="fu">drift_rows</span>(re_fit, <span class="st">&quot;Laplace + Hessian&quot;</span>, fit_time),</span>
+<span id="cb18-10"><a href="#cb18-10" aria-hidden="true" tabindex="-1"></a>  <span class="fu">drift_rows</span>(re_quick, <span class="st">&quot;short sample&quot;</span>, fit_time <span class="sc">+</span> quick_time),</span>
+<span id="cb18-11"><a href="#cb18-11" aria-hidden="true" tabindex="-1"></a>  <span class="fu">drift_rows</span>(re_full, <span class="st">&quot;default sample&quot;</span>, fit_time <span class="sc">+</span> full_time))</span>
+<span id="cb18-12"><a href="#cb18-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;               route seconds        quantity   mean   2.5%  97.5%</span></span>
+<span id="cb18-13"><a href="#cb18-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 1 Laplace + Hessian     132 population mean -0.286 -0.718 -0.073</span></span>
+<span id="cb18-14"><a href="#cb18-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 2 Laplace + Hessian     132   population sd  0.380     NA     NA</span></span>
+<span id="cb18-15"><a href="#cb18-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 3      short sample     164 population mean -0.243 -0.622 -0.019</span></span>
+<span id="cb18-16"><a href="#cb18-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 4      short sample     164   population sd  0.458  0.005  1.485</span></span>
+<span id="cb18-17"><a href="#cb18-17" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 5    default sample     246 population mean -0.242 -0.601 -0.030</span></span>
+<span id="cb18-18"><a href="#cb18-18" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 6    default sample     246   population sd  0.361  0.003  1.277</span></span></code></pre></div>
+</div>
+<p>Each subject’s own data say little about its own drift here, and the Laplace fit, whose interval is the curvature at its mode, can give the population standard deviation no interval at all – <code>summary()</code> reports <code>NA</code> and the fit says why. Both samples describe what the curvature could not: a wide, skewed posterior that runs down to near zero. The default sample is the reference; the short one is a draft of it, and says how rough a draft through its own diagnostics:</p>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb19"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="fu">rbind</span>(<span class="at">short =</span> <span class="fu">c</span>(<span class="at">max_rhat =</span> <span class="fu">max</span>(re_quick<span class="sc">$</span>sample<span class="sc">$</span>rhat), <span class="at">min_ess =</span> <span class="fu">min</span>(re_quick<span class="sc">$</span>sample<span class="sc">$</span>ess)),</span>
+<span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">default =</span> <span class="fu">c</span>(<span class="at">max_rhat =</span> <span class="fu">max</span>(re_full<span class="sc">$</span>sample<span class="sc">$</span>rhat), <span class="at">min_ess =</span> <span class="fu">min</span>(re_full<span class="sc">$</span>sample<span class="sc">$</span>ess)))</span>
+<span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;         max_rhat   min_ess</span></span>
+<span id="cb19-4"><a href="#cb19-4" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; short   1.064443  80.23478</span></span>
+<span id="cb19-5"><a href="#cb19-5" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; default 1.008449 578.29342</span></span></code></pre></div>
+</div>
 <h2 id="with-and-without-priors">With and without priors</h2>
-<p><code>priors = TRUE</code> adds ctsem’s raw-scale priors to the objective; <code>priors = FALSE</code> (the <code>ctFit()</code> default) leaves them out. Combined with <code>optimize</code>, that is four corners, and they mean four different things:</p>
+<p><code>priors = TRUE</code> adds ctsem’s raw-scale priors to the objective; <code>priors = FALSE</code> leaves them out. (<code>ctFit()</code>’s default, <code>&#39;randomCorr&#39;</code>, puts the prior on random-effect correlations alone, which for a model with no random effects, like this one, is the same as <code>FALSE</code>.) Combined with <code>optimize</code>, that is four corners, and they mean four different things:</p>
 <table class="caption-top">
 <colgroup>
 <col style="width: 14%">
@@ -429,47 +492,47 @@ border-radius: 0 4px 4px 0;
 </table>
 <p>The first three corners are unremarkable and already shown above (<code>stan_map</code> / <code>julia_map</code> are MAP fits; an MLE fit is the same call with <code>priors = FALSE</code>; <code>stan_sample</code> / <code>julia_sample</code> are posterior draws). The fourth is the one users reach for without meaning to – <code>priors = FALSE, optimize = FALSE</code> – and both backends warn about it rather than refusing it outright:</p>
 <div class="cell">
-<div class="sourceCode cell-code" id="cb15"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a>stan_lik_sample <span class="ot">&lt;-</span> <span class="fu">ctFit</span>(</span>
-<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">datalong =</span> dat, <span class="at">model =</span> fit_model, <span class="at">backend =</span> <span class="st">&quot;stan&quot;</span>,</span>
-<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">cores =</span> <span class="dv">1</span>, <span class="at">priors =</span> <span class="cn">FALSE</span>, <span class="at">optimize =</span> <span class="cn">FALSE</span>,</span>
-<span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">chains =</span> <span class="dv">1</span>, <span class="at">iter =</span> <span class="dv">200</span>, <span class="at">verbose =</span> <span class="dv">0</span></span>
-<span id="cb15-5"><a href="#cb15-5" aria-hidden="true" tabindex="-1"></a>)</span>
-<span id="cb15-6"><a href="#cb15-6" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
-<span id="cb15-7"><a href="#cb15-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; SAMPLING FOR MODEL &#39;ctsm&#39; NOW (CHAIN 1).</span></span>
-<span id="cb15-8"><a href="#cb15-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: </span></span>
-<span id="cb15-9"><a href="#cb15-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Gradient evaluation took 0.000926 seconds</span></span>
-<span id="cb15-10"><a href="#cb15-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: 1000 transitions using 10 leapfrog steps per transition would take 9.26 seconds.</span></span>
-<span id="cb15-11"><a href="#cb15-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Adjust your expectations accordingly!</span></span>
-<span id="cb15-12"><a href="#cb15-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: </span></span>
-<span id="cb15-13"><a href="#cb15-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: </span></span>
-<span id="cb15-14"><a href="#cb15-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration:   1 / 200 [  0%]  (Warmup)</span></span>
-<span id="cb15-15"><a href="#cb15-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration:  20 / 200 [ 10%]  (Warmup)</span></span>
-<span id="cb15-16"><a href="#cb15-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration:  40 / 200 [ 20%]  (Warmup)</span></span>
-<span id="cb15-17"><a href="#cb15-17" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration:  60 / 200 [ 30%]  (Warmup)</span></span>
-<span id="cb15-18"><a href="#cb15-18" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration:  80 / 200 [ 40%]  (Warmup)</span></span>
-<span id="cb15-19"><a href="#cb15-19" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 100 / 200 [ 50%]  (Warmup)</span></span>
-<span id="cb15-20"><a href="#cb15-20" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 101 / 200 [ 50%]  (Sampling)</span></span>
-<span id="cb15-21"><a href="#cb15-21" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 120 / 200 [ 60%]  (Sampling)</span></span>
-<span id="cb15-22"><a href="#cb15-22" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 140 / 200 [ 70%]  (Sampling)</span></span>
-<span id="cb15-23"><a href="#cb15-23" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 160 / 200 [ 80%]  (Sampling)</span></span>
-<span id="cb15-24"><a href="#cb15-24" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 180 / 200 [ 90%]  (Sampling)</span></span>
-<span id="cb15-25"><a href="#cb15-25" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 200 / 200 [100%]  (Sampling)</span></span>
-<span id="cb15-26"><a href="#cb15-26" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: </span></span>
-<span id="cb15-27"><a href="#cb15-27" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:  Elapsed Time: 13.042 seconds (Warm-up)</span></span>
-<span id="cb15-28"><a href="#cb15-28" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:                27.372 seconds (Sampling)</span></span>
-<span id="cb15-29"><a href="#cb15-29" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:                40.414 seconds (Total)</span></span>
-<span id="cb15-30"><a href="#cb15-30" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:</span></span>
-<span id="cb15-31"><a href="#cb15-31" aria-hidden="true" tabindex="-1"></a><span class="fu">range</span>(stan_lik_sample<span class="sc">$</span>stanfit<span class="sc">$</span>rawposterior)</span>
-<span id="cb15-32"><a href="#cb15-32" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; [1] -45.56253 793.26414</span></span></code></pre></div>
+<div class="sourceCode cell-code" id="cb20"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a>stan_lik_sample <span class="ot">&lt;-</span> <span class="fu">ctFit</span>(</span>
+<span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">datalong =</span> dat, <span class="at">model =</span> fit_model, <span class="at">backend =</span> <span class="st">&quot;stan&quot;</span>,</span>
+<span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">cores =</span> <span class="dv">1</span>, <span class="at">priors =</span> <span class="cn">FALSE</span>, <span class="at">optimize =</span> <span class="cn">FALSE</span>,</span>
+<span id="cb20-4"><a href="#cb20-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">chains =</span> <span class="dv">1</span>, <span class="at">iter =</span> <span class="dv">200</span>, <span class="at">verbose =</span> <span class="dv">0</span></span>
+<span id="cb20-5"><a href="#cb20-5" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb20-6"><a href="#cb20-6" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb20-7"><a href="#cb20-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; SAMPLING FOR MODEL &#39;ctsm&#39; NOW (CHAIN 1).</span></span>
+<span id="cb20-8"><a href="#cb20-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: </span></span>
+<span id="cb20-9"><a href="#cb20-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Gradient evaluation took 0.000925 seconds</span></span>
+<span id="cb20-10"><a href="#cb20-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: 1000 transitions using 10 leapfrog steps per transition would take 9.25 seconds.</span></span>
+<span id="cb20-11"><a href="#cb20-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Adjust your expectations accordingly!</span></span>
+<span id="cb20-12"><a href="#cb20-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: </span></span>
+<span id="cb20-13"><a href="#cb20-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: </span></span>
+<span id="cb20-14"><a href="#cb20-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration:   1 / 200 [  0%]  (Warmup)</span></span>
+<span id="cb20-15"><a href="#cb20-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration:  20 / 200 [ 10%]  (Warmup)</span></span>
+<span id="cb20-16"><a href="#cb20-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration:  40 / 200 [ 20%]  (Warmup)</span></span>
+<span id="cb20-17"><a href="#cb20-17" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration:  60 / 200 [ 30%]  (Warmup)</span></span>
+<span id="cb20-18"><a href="#cb20-18" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration:  80 / 200 [ 40%]  (Warmup)</span></span>
+<span id="cb20-19"><a href="#cb20-19" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 100 / 200 [ 50%]  (Warmup)</span></span>
+<span id="cb20-20"><a href="#cb20-20" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 101 / 200 [ 50%]  (Sampling)</span></span>
+<span id="cb20-21"><a href="#cb20-21" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 120 / 200 [ 60%]  (Sampling)</span></span>
+<span id="cb20-22"><a href="#cb20-22" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 140 / 200 [ 70%]  (Sampling)</span></span>
+<span id="cb20-23"><a href="#cb20-23" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 160 / 200 [ 80%]  (Sampling)</span></span>
+<span id="cb20-24"><a href="#cb20-24" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 180 / 200 [ 90%]  (Sampling)</span></span>
+<span id="cb20-25"><a href="#cb20-25" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 200 / 200 [100%]  (Sampling)</span></span>
+<span id="cb20-26"><a href="#cb20-26" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: </span></span>
+<span id="cb20-27"><a href="#cb20-27" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:  Elapsed Time: 6.864 seconds (Warm-up)</span></span>
+<span id="cb20-28"><a href="#cb20-28" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:                17.856 seconds (Sampling)</span></span>
+<span id="cb20-29"><a href="#cb20-29" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:                24.72 seconds (Total)</span></span>
+<span id="cb20-30"><a href="#cb20-30" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:</span></span>
+<span id="cb20-31"><a href="#cb20-31" aria-hidden="true" tabindex="-1"></a><span class="fu">range</span>(stan_lik_sample<span class="sc">$</span>stanfit<span class="sc">$</span>rawposterior)</span>
+<span id="cb20-32"><a href="#cb20-32" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; [1] -236.0343  106.8135</span></span></code></pre></div>
 </div>
 <div class="cell">
-<div class="sourceCode cell-code" id="cb16"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a>julia_lik_sample <span class="ot">&lt;-</span> <span class="fu">ctFit</span>(</span>
-<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">datalong =</span> dat, <span class="at">model =</span> fit_model, <span class="at">backend =</span> <span class="st">&quot;julia&quot;</span>,</span>
-<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">cores =</span> <span class="dv">1</span>, <span class="at">priors =</span> <span class="cn">FALSE</span>, <span class="at">optimize =</span> <span class="cn">FALSE</span>,</span>
-<span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">chains =</span> <span class="dv">1</span>, <span class="at">iter =</span> <span class="dv">150</span>, <span class="at">verbose =</span> <span class="dv">0</span></span>
-<span id="cb16-5"><a href="#cb16-5" aria-hidden="true" tabindex="-1"></a>)</span>
-<span id="cb16-6"><a href="#cb16-6" aria-hidden="true" tabindex="-1"></a><span class="fu">range</span>(julia_lik_sample<span class="sc">$</span>estimate<span class="sc">$</span>rawposterior)</span>
-<span id="cb16-7"><a href="#cb16-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; [1] -22.30975  58.92291</span></span></code></pre></div>
+<div class="sourceCode cell-code" id="cb21"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a>julia_lik_sample <span class="ot">&lt;-</span> <span class="fu">ctFit</span>(</span>
+<span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">datalong =</span> dat, <span class="at">model =</span> fit_model, <span class="at">backend =</span> <span class="st">&quot;julia&quot;</span>,</span>
+<span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">cores =</span> <span class="dv">1</span>, <span class="at">priors =</span> <span class="cn">FALSE</span>, <span class="at">optimize =</span> <span class="cn">FALSE</span>,</span>
+<span id="cb21-4"><a href="#cb21-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">chains =</span> <span class="dv">1</span>, <span class="at">iter =</span> <span class="dv">150</span>, <span class="at">verbose =</span> <span class="dv">0</span></span>
+<span id="cb21-5"><a href="#cb21-5" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb21-6"><a href="#cb21-6" aria-hidden="true" tabindex="-1"></a><span class="fu">range</span>(julia_lik_sample<span class="sc">$</span>estimate<span class="sc">$</span>rawposterior)</span>
+<span id="cb21-7"><a href="#cb21-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; [1]  -92.17601 1072.79826</span></span></code></pre></div>
 </div>
 <p>Compare the raw-scale range here to the posterior sample earlier, which stayed within a couple of units of zero on the same raw scale. With no prior at all, the raw parameters have nothing constraining them outside what the likelihood itself identifies, and for a model and sample size this small that is not much. Run at these settings, the julia backend often names the mechanism directly, with a warning that some sampled parameter “reached the region where their transform is flat to machine precision… with no prior the posterior is improper there and the chains wander rather than mix” – suppressed from this rendering along with every other warning, but worth reading in full the first time it appears in an interactive session. The stan sampler shows the same problem less legibly: warm-up tends to take substantially longer with <code>priors = FALSE</code> than with <code>priors = TRUE</code> on this model, because the sampler is fighting geometry that a prior would have tamed, and the resulting draws are still not trustworthy afterward.</p>
 <p>None of this means <code>priors = FALSE</code> sampling is broken – it is sampling exactly what was asked for, the raw likelihood, and for a well identified model with enough data it is a legitimate route to a frequentist-flavoured posterior. It means that removing the prior removes the thing keeping the raw scale bounded, and a small or weakly identified model will show you that immediately rather than converging to something that merely looks plausible. <code>priors = TRUE</code> is the safer default for sampling for exactly this reason, whatever <code>ctFit()</code>’s own default is for optimizing.</p>
@@ -477,6 +540,7 @@ border-radius: 0 4px 4px 0;
 <ul>
 <li>Sampling and optimizing target the same density for a given <code>priors</code> setting; they differ in whether the answer is a set of draws or a point plus a local approximation.</li>
 <li>Around an optimum, <code>uncertainty</code> chooses which approximation: <code>hessian</code> is the default and cheapest, <code>surrogate</code> is a more stable local alternative, <code>opg</code>/<code>sandwich</code>/<code>bootstrap</code> use per-subject scores and need enough subjects to be stable, <code>fullbootstrap</code> (stan only) is the most literal and most expensive, and <code>is</code> turns the same curvature into an importance-sampling proposal.</li>
+<li>With random effects, an optimized fit’s uncertainty describes the integrated objective, approximation included, whichever method is chosen; <code>ctFitUncertainty(fit, &#39;sample&#39;)</code> samples the exact joint posterior, and a lower <code>minESS</code> and higher <code>rhatTarget</code> make that a quick draft with a stated precision rather than a long run.</li>
 <li><code>intoverstates = FALSE</code> is for sampling, which draws the states along with the parameters. Optimizing it is refused unless <code>optimcontrol$estonly = TRUE</code> asks for the joint mode, and that mode has only <code>hessian</code>, profiling the state block out of the curvature, because everything else would score an objective the fit did not maximise.</li>
 <li>Priors change what the objective <em>is</em>, not just how confident the reported uncertainty looks: MAP and MLE for optimizing, a real posterior or a likelihood-only draw for sampling. The likelihood-only corner is the one to be careful with – it is supported, but a small or weakly identified model will show you exactly why priors are the default recommendation for sampling, by wandering.</li>
 </ul>
