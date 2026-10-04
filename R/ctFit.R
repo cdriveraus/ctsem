@@ -633,12 +633,11 @@ T0VARredundancies <- function(ctm) {
 #' correlation -- and the sign of a whole dimension is arbitrary, since negating
 #' a column of \code{L} leaves \code{Sigma} unchanged. Read the standard
 #' deviations and correlations \code{summary()} reports, which do not depend on
-#' that choice, rather than the sign of one loading. Under \code{'none'} the
-#' coordinates are \code{Sigma = [[S, S b'], [b S, b S b']]} instead, for a
-#' freely estimated \code{S} over the basis effects and coefficients \code{b}
-#' for the rest; under \code{'laplace'} a loading matrix per level, described
-#' below. Either way \code{summary()} notes which reported values follow from
-#' the structure rather than being estimated.
+#' that choice, rather than the sign of one loading. Under \code{'laplace'} and
+#' \code{'none'} the structure is the same, a loading matrix, built per level
+#' by the same code for both, described below. Either way \code{summary()}
+#' notes which reported values follow from the structure rather than being
+#' estimated.
 #'
 #' The reduction needs the population covariance free, so any \code{RAWPOPVAR}
 #' cell stated -- a fixed value, or a label differing from the default -- turns
@@ -672,18 +671,19 @@ T0VARredundancies <- function(ctm) {
 #' effects that reach the observation mean, so a level carrying only
 #' mean-affecting effects is left at full rank. Named, it applies to the levels
 #' it names, and may sit beside numbers, as \code{c(subject='auto', study=2)}.
-#' It still has to be asked for, because under \code{'laplace'} those
-#' coordinates are identified and dropping them is an approximation rather than
-#' a repair. Under \code{'augmented'} and \code{'none'} a named rank may name
-#' only the subject level, the one those routes restrict.
+#' It still has to be asked for, because under \code{'laplace'} and
+#' \code{'none'} those coordinates are identified and dropping them is an
+#' approximation rather than a repair. Under \code{'augmented'} a named rank may
+#' name only the subject level, the only level that route has.
 #'
 #' The mechanism differs too, and it is why the per-level form exists. On the
 #' augmented route a reduced rank rewrites the model into basis effects and
 #' regressions on them, which works from \code{pars$indvarying} and so reaches
 #' the innermost level alone -- and a regressed effect written as
 #' \code{(p + beta * b)} inherits \emph{every} level's deviation of \code{b}
-#' through one coefficient, tying levels together. Under \code{'laplace'} the
-#' restriction is applied where the covariance is built instead: level \code{l}
+#' through one coefficient, tying levels together. Under \code{'laplace'} and
+#' \code{'none'} the restriction is applied where the covariance is built
+#' instead: level \code{l}
 #' with \code{k} varying parameters and rank \code{r} gets a \code{k} by
 #' \code{r} loading matrix \code{L}, contributing \code{k*r - r*(r-1)/2}
 #' parameters in place of \code{k} scales and \code{k*(k-1)/2} correlations,
@@ -2103,15 +2103,19 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # `poprank` defaults to 'auto', so the places it does not apply have to be
   # inapplicable rather than errors: only a rank the user asked for is refused.
   #
-  # Two routes to the same restriction, because the two have different
-  # machinery to hang it on. Under `'augmented'` a basis effect has a carrier
-  # state and a regressed cell references `state[j]`, so the rewrite has to
-  # follow `.ctModelIntOverPop()`. Under `'none'` there are no carrier states,
-  # so the basis effects move into PARS and the regressed cells reference them
-  # as parameters. Both land before the second `ctModelStatesAndPARS()` call
-  # below, which is what turns the new labels into `PARS[r,c]` references.
-  # `'laplace'` takes neither: its rank is a loading matrix per level, built in
-  # the engine (`laplacerank` below).
+  # One structure, a loading matrix on standardised dimensions, reached two
+  # ways because the routes build their population covariance in two places.
+  # Under `'laplace'` and `'none'` -- which prepare the same engine
+  # specification, one integrating the effects and the other sampling them --
+  # it is built in the engine, per level, by one piece of code (`laplacerank`
+  # below, read by `.ctJuliaLevelRank()`). Under `'augmented'` the effects are
+  # carrier states in the filter, so the rank has to be written into the model
+  # around `.ctModelIntOverPop()` (R/ctPopRegression.R); that route has only the
+  # subject level, so the rewrite's limit to the innermost level costs it
+  # nothing. `'none'` used to take a separate rewrite into regression
+  # coordinates -- the form `203e223f` measured as reaching the optimum from 1
+  # of 12 matched starts against 8 of 12 for loadings, and which tied levels
+  # together through one coefficient.
   #
   # What the restriction *means* differs between them, and only the message says
   # so: on the augmented route it removes coordinates the filter cannot see and
@@ -2177,8 +2181,15 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # same holds under 'none', below.
   levelnames <- c(ctm$subjectIDname, ctm$groupIDnames)
   laplacerank <- NULL
-  if(identical(intoverpopmethod,'laplace') && poprankexplicit &&
-      !(length(poprank)==1 && is.na(poprank))){
+  enginerank <- intoverpopmethod %in% c('laplace','none') && poprankexplicit &&
+    !(length(poprank)==1 && is.na(poprank))
+  if(enginerank && !identical(backend,'julia')) stop(
+    "poprank requires backend='julia'.", call.=FALSE)
+  if(enginerank && !any(ctm$pars$indvarying[is.na(ctm$pars$value)]) &&
+      !.ctAnyVarying(ctm, .ctOuterVaryingColumns(ctm))) stop(
+    "poprank restricts the population covariance, so it needs a model with ",
+    "individually varying parameters.", call.=FALSE)
+  if(enginerank){
     levelcolumns <- stats::setNames(c('indvarying', if(length(ctm$groupIDnames))
       paste0('indvarying_', ctm$groupIDnames)), levelnames)
     asked <- .ctPoprankByLevel(poprank, levelnames)
@@ -2196,41 +2207,44 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     laplacerank <- laplacerank[!is.na(laplacerank)]
     if(!length(laplacerank)) laplacerank <- NULL
     ctm$laplacerank <- laplacerank
+    # Said once, for the levels it reduces: on these routes the coordinates a
+    # rank drops are identified, so the restriction is an approximation.
+    reduced <- vapply(names(laplacerank), function(level){
+      k <- nrow(.ctPopEffectRoles(ctm$pars, column=levelcolumns[[level]]))
+      if(k > laplacerank[[level]]) paste0(level, ' ', laplacerank[[level]],
+        ' of ', k) else NA_character_
+    }, character(1L))
+    reduced <- reduced[!is.na(reduced)]
+    if(length(reduced)) message('poprank: population covariance reduced to rank ',
+      paste(reduced, collapse=', '), " -- an approximation under intoverpop='",
+      intoverpopmethod, "'; poprank=NA estimates it in full.")
   }
 
   popregression <- NULL
-  if(!identical(intoverpopmethod,'laplace') &&
-      !(length(poprank)==1 && is.na(poprank))){
+  if(intoverpop && !(length(poprank)==1 && is.na(poprank))){
     if(!identical(backend,'julia')){
       if(poprankexplicit) stop("poprank requires backend='julia'.", call.=FALSE)
-    } else if(!intoverpop && !any(ctm$pars$indvarying[is.na(ctm$pars$value)])){
-      if(poprankexplicit) stop(
-        "poprank restricts the population covariance, so it needs a model with ",
-        "individually varying parameters.", call.=FALSE)
-    } else if(!intoverpop && !poprankexplicit){
-      popregression <- NULL  # not by default under 'none'; see laplace above
     } else {
-      # These routes restrict the subject level alone: the rewrite works from
+      # The augmented route has the subject level only: the rewrite works from
       # `pars$indvarying`. So a per-level rank may name that level and no
       # other, and an unnamed one is a single number for it.
       asked <- .ctPoprankByLevel(poprank,
         if(is.null(names(poprank))) ctm$subjectIDname else levelnames)
       outer <- setdiff(names(asked), ctm$subjectIDname)
       if(length(outer)) stop("poprank names level ",
-        paste(outer, collapse=', '), ", but under intoverpop='",
-        intoverpopmethod, "' a rank restricts the subject level ('",
-        ctm$subjectIDname, "') alone. A rank per level needs ",
-        "intoverpop='laplace'.", call.=FALSE)
+        paste(outer, collapse=', '), ", but under intoverpop='augmented' ",
+        "a rank restricts the subject level ('", ctm$subjectIDname,
+        "') alone. A rank per level needs intoverpop='laplace', or ",
+        "sampling (optimize=FALSE).", call.=FALSE)
       poprank <- asked[[ctm$subjectIDname]]
       popregression <- .ctPopRegressionSpec(ctm$pars, poprank,
-        explicit=poprankexplicit, model=ctm, augmented=isTRUE(intoverpop))
+        explicit=poprankexplicit, model=ctm)
       if(!is.null(popregression)) ctm <- .ctPopRegressionDemote(ctm, popregression)
     }
   }
   if(intoverpop)   ctm <- .ctModelIntOverPop(ctm) #extend system matrices for individual differences
   if(!is.null(popregression)){
-    ctm <- if(intoverpop) .ctPopRegressionRewrite(ctm, popregression) else
-      .ctPopRegressionRewriteParameters(ctm, popregression)
+    ctm <- .ctPopRegressionRewrite(ctm, popregression)
     popregression <- ctm$popregression
     if(!is.null(popregression)) message(.ctPopRegressionMessage(popregression))
   }

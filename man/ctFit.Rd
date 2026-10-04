@@ -179,12 +179,11 @@ loading is a covariance with a unit-variance dimension rather than a
 correlation -- and the sign of a whole dimension is arbitrary, since negating
 a column of \code{L} leaves \code{Sigma} unchanged. Read the standard
 deviations and correlations \code{summary()} reports, which do not depend on
-that choice, rather than the sign of one loading. Under \code{'none'} the
-coordinates are \code{Sigma = [[S, S b'], [b S, b S b']]} instead, for a
-freely estimated \code{S} over the basis effects and coefficients \code{b}
-for the rest; under \code{'laplace'} a loading matrix per level, described
-below. Either way \code{summary()} notes which reported values follow from
-the structure rather than being estimated.
+that choice, rather than the sign of one loading. Under \code{'laplace'} and
+\code{'none'} the structure is the same, a loading matrix, built per level
+by the same code for both, described below. Either way \code{summary()}
+notes which reported values follow from the structure rather than being
+estimated.
 
 The reduction needs the population covariance free, so any \code{RAWPOPVAR}
 cell stated -- a fixed value, or a label differing from the default -- turns
@@ -218,18 +217,19 @@ resolved once per level: each level's rank becomes the number of \emph{its}
 effects that reach the observation mean, so a level carrying only
 mean-affecting effects is left at full rank. Named, it applies to the levels
 it names, and may sit beside numbers, as \code{c(subject='auto', study=2)}.
-It still has to be asked for, because under \code{'laplace'} those
-coordinates are identified and dropping them is an approximation rather than
-a repair. Under \code{'augmented'} and \code{'none'} a named rank may name
-only the subject level, the one those routes restrict.
+It still has to be asked for, because under \code{'laplace'} and
+\code{'none'} those coordinates are identified and dropping them is an
+approximation rather than a repair. Under \code{'augmented'} a named rank may
+name only the subject level, the only level that route has.
 
 The mechanism differs too, and it is why the per-level form exists. On the
 augmented route a reduced rank rewrites the model into basis effects and
 regressions on them, which works from \code{pars$indvarying} and so reaches
 the innermost level alone -- and a regressed effect written as
 \code{(p + beta * b)} inherits \emph{every} level's deviation of \code{b}
-through one coefficient, tying levels together. Under \code{'laplace'} the
-restriction is applied where the covariance is built instead: level \code{l}
+through one coefficient, tying levels together. Under \code{'laplace'} and
+\code{'none'} the restriction is applied where the covariance is built
+instead: level \code{l}
 with \code{k} varying parameters and rank \code{r} gets a \code{k} by
 \code{r} loading matrix \code{L}, contributing \code{k*r - r*(r-1)/2}
 parameters in place of \code{k} scales and \code{k*(k-1)/2} correlations,

@@ -173,17 +173,20 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
         model = poprank_model(), backend = 'julia', fit = FALSE,
         intoverpop = iop, cores = 1L, ...)))
     }
-    for (iop in c('laplace', 'augmented')) {
-      full <- prepared(iop, poprank = NA)
-      auto <- prepared(iop, poprank = 'auto')
-      expect_equal(ctsem:::.ctBackendNpar(full), 6L)
-      expect_equal(ctsem:::.ctBackendNpar(auto), 5L)
+    for (iop in c('laplace', 'none', 'augmented')) {
+      # 'none' is sampling: intoverpop = FALSE with optimize = FALSE.
+      route <- if (identical(iop, 'none')) list(FALSE, optimize = FALSE) else list(iop)
+      full <- do.call(prepared, c(route, poprank = NA))
+      auto <- do.call(prepared, c(route, poprank = 'auto'))
+      expect_equal(ctsem:::.ctBackendNpar(full), 6L, info = iop)
+      expect_equal(ctsem:::.ctBackendNpar(auto), 5L, info = iop)
       names <- ctsem:::.ctBackendRawParameterNames(list(model_spec = auto),
         ctsem:::.ctBackendNpar(auto))
       if (identical(iop, 'augmented')) {
         expect_true('beta_df11_dr11' %in% names)
       } else {
-        expect_true(any(grepl('^poploading_', names)))
+        # laplace and 'none': one loading matrix per level, built by one code path.
+        expect_true(any(grepl('^poploading_', names)), info = iop)
       }
       # Either way the reduced effect keeps neither a spread of its own nor a
       # correlation, which is the whole content of the restriction.
@@ -227,11 +230,27 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
     expect_match(augmented, 'cannot see its own spread', fixed = TRUE)
     expect_match(augmented, "intoverpop='laplace' identifies it", fixed = TRUE)
 
-    spec$route <- 'parameters'
-    parameters <- ctsem:::.ctPopRegressionMessage(spec)
-    expect_false(grepl('cannot see', parameters, fixed = TRUE))
-    expect_match(parameters, 'those coordinates are identified', fixed = TRUE)
-    expect_match(parameters, 'approximation for parsimony or speed', fixed = TRUE)
+    # laplace and 'none' build the rank in the engine and say so in one line
+    # from ctFit(): an approximation there, with no claim about what a filter
+    # cannot see.
+    dat <- poprank_data()
+    said <- function(...) {
+      out <- character(0)
+      withCallingHandlers(suppressWarnings(ctFit(datalong = dat,
+        model = poprank_model(), backend = 'julia', fit = FALSE, cores = 1L,
+        poprank = 'auto', ...)),
+        message = function(m) {
+          out <<- c(out, conditionMessage(m)); invokeRestart('muffleMessage')
+        })
+      paste(out, collapse = '')
+    }
+    for (route in list(list(intoverpop = 'laplace'),
+        list(intoverpop = FALSE, optimize = FALSE))) {
+      text <- do.call(said, route)
+      expect_match(text, 'reduced to rank', fixed = TRUE)
+      expect_match(text, 'an approximation under', fixed = TRUE)
+      expect_false(grepl('cannot see', text, fixed = TRUE))
+    }
   })
 
   # The rank may be stated on the model, which is the idiom indvarying already
@@ -549,8 +568,17 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
     pars <- prepared_pars(m)
     expect_error(ctsem:::.ctPopRegressionSpec(pars, 'auto'),
       'individually varying T0MEANS')
-    laplace <- ctsem:::.ctPopRegressionSpec(pars, 'auto', augmented = FALSE)
-    expect_true('t0m' %in% laplace$basis)
+    # laplace and 'none' build their loadings in the engine, with no carrier
+    # states, so a varying T0MEANS takes a rank there like any other effect.
+    for (route in list(list(intoverpop = 'laplace'),
+        list(intoverpop = FALSE, optimize = FALSE))) {
+      reduced <- do.call(function(...) suppressWarnings(suppressMessages(ctFit(
+        datalong = dat, model = m, backend = 'julia', fit = FALSE, cores = 1L,
+        poprank = 2L, ...))), route)
+      names <- ctsem:::.ctBackendRawParameterNames(list(model_spec = reduced),
+        ctsem:::.ctBackendNpar(reduced))
+      expect_true(any(grepl('^poploading_t0m', names)))
+    }
   })
 
   # verified rather than assumed: with both effects mean-affecting the rank is
@@ -834,21 +862,20 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
 
   # The `'parameters'` route reaches the same cell by the same lookup, so it
   # gets the same declaration.
-  test_that('a PARS-declared random effect is rewritten on the parameters route', {
-    m <- poprank_model_pars()
-    pars <- prepared_pars(m)
-    spec <- ctsem:::.ctPopRegressionSpec(pars, 'auto', augmented = FALSE)
-    m$pars <- pars
-    m <- ctsem:::.ctPopRegressionDemote(m, spec)
-    m <- ctsem:::.ctPopRegressionRewriteParameters(m, spec)
-    spec <- m$popregression
-    expect_equal(spec$route, 'parameters')
-    expect_equal(spec$cells$matrix, 'PARS')
-    driven <- which(m$pars$matrix %in% spec$cells$matrix[1] &
-        m$pars$row == spec$cells$row[1] & m$pars$col == spec$cells$col[1])
-    expect_length(driven, 1L)
-    expect_equal(m$pars$param[driven], '(df11 + beta_df11_dr11 * dr11)')
-    expect_length(which(m$pars$param %in% 'beta_df11_dr11'), 1L)
+  # 'none' (sampling) takes the rank exactly as laplace does -- the engine's
+  # loading matrix per level, by the same code -- not a rewrite of its own. A
+  # PARS-declared random effect is an ordinary varying parameter there.
+  test_that('a PARS-declared random effect takes the engine loading under none', {
+    dat <- poprank_data()
+    prepared <- function(...) suppressWarnings(suppressMessages(ctFit(
+      datalong = dat, model = poprank_model_pars(), backend = 'julia',
+      fit = FALSE, intoverpop = FALSE, optimize = FALSE, cores = 1L, ...)))
+    auto <- prepared(poprank = 'auto')
+    names <- ctsem:::.ctBackendRawParameterNames(list(model_spec = auto),
+      ctsem:::.ctBackendNpar(auto))
+    expect_true(any(grepl('^poploading_', names)))
+    expect_false(any(grepl('^beta_', names)))
+    expect_null(auto$model$popregression)
   })
 
 }

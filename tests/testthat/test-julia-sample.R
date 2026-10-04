@@ -145,11 +145,10 @@ test_that("sampled effects are each parameter's natural deviation, at reduced ra
     sampleControl = list(chains = 1L, warmup = 20L, draws = 20L, minESS = 0,
       saveEffects = TRUE, processes = FALSE))))
 
-  # Rank one on the Laplace route, a loading matrix over both effects: one
-  # coordinate per subject, two parameters, so two deviations each. (Under
-  # 'none', which sampling otherwise resolves to, a reduced rank regresses the
-  # second effect on the first instead, and the level carries one effect.)
-  reduced <- run(model, poprank = 1, intoverpop = "laplace")
+  # Rank one, a loading matrix over both effects -- on the route sampling
+  # resolves to ('none'), which builds it as laplace does: one coordinate per
+  # subject, two parameters, so two deviations each.
+  reduced <- run(model, poprank = 1)
   expect_length(reduced$sample$effect_mean, 12L * 2L)
   expect_false(is.null(names(reduced$sample$effect_mean)))
   expect_equal(dim(reduced$sample$effects), c(reduced$sample$draws, 24L))
