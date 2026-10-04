@@ -125,9 +125,10 @@ and 100 to 200 draws each overtook the Laplace normal approximation's
 accuracy at two to three times a Laplace fit's time, and were faster and
 more accurate outright where the Laplace fit was slow or biased; short runs
 are limited by whether the chains agree, so R-hat is usually the binding
-check. With \code{processes = TRUE} each chain pays for starting its own
-Julia session, which a short run does not recover; use
-\code{processes = FALSE} for one.
+check. With \code{processes = TRUE} each chain starts its own Julia
+session, a fixed cost of some tens of seconds that a run much shorter than
+a minute does not recover; \code{processes = FALSE} keeps the chains in this
+session, as threads when it has them.
 \code{settleTol} ends warmup early once the metric stops moving (off by
 default, and slower when measured). \code{control$sampler} chooses the
 kernel for the joint posterior: \code{'saem'} (the default there) draws the

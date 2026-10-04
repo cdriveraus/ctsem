@@ -381,8 +381,9 @@ by `d` standard deviations show an R-hat of about `sqrt(1 + d^2)`.
 standard deviation at the centre. On the models it was compared on, runs of
 four chains and 100 to 200 draws each were already more accurate than the
 Laplace normal approximation, at two to three times the cost of the fit. For
-a short run, keep the chains in this session (`processes = FALSE`): a separate
-process per chain pays for starting Julia, which a short run does not recover.
+a run of under a minute or so, keep the chains in this session
+(`processes = FALSE`): a separate process per chain pays tens of seconds to
+start Julia, which only a longer run recovers.
 
 Here a drift that varies across 30 subjects -- a random effect inside the
 dynamics, so `'auto'` integrates it by Laplace -- is summarised three ways:
