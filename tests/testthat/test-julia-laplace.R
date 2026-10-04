@@ -69,7 +69,7 @@
     intoverpop = "laplace", optimcontrol = list(finishsamples = 100))))
 .laplace_augmented_fit <- function() .laplace_cached("augmented", suppressMessages(
   ctFit(.laplace_test_data(), .laplace_test_model(), backend = "julia",
-    intoverpop = TRUE, optimcontrol = list(estonly = TRUE))))
+    intoverpop = "augmented", optimcontrol = list(estonly = TRUE))))
 
 test_that("the Laplace route describes random effects without augmenting the state", {
   model <- .laplace_test_model()
@@ -78,7 +78,7 @@ test_that("the Laplace route describes random effects without augmenting the sta
   laplace <- suppressMessages(ctFit(dat, model, backend = "julia",
     intoverpop = "laplace", fit = FALSE))
   augmented <- suppressMessages(ctFit(dat, model, backend = "julia",
-    intoverpop = TRUE, fit = FALSE))
+    intoverpop = "augmented", fit = FALSE))
 
   # The point of the route: the filtered system stays at its single-subject
   # size, where augmenting grows it by one state per random effect.
@@ -352,7 +352,7 @@ test_that("the note about smoothed trajectories is said where a trajectory is", 
   # Not at all for a fit whose random effects are carrier states, where the
   # filtered output really is filtered.
   augmented <- suppressMessages(suppressWarnings(ctFit(dat, model,
-    backend = "julia", intoverpop = TRUE,
+    backend = "julia", intoverpop = "augmented",
     optimcontrol = list(estonly = TRUE))))
   expect_equal(note(capture_messages(ctPredict(augmented, subjects = 1:2))), 0L)
 })
@@ -781,12 +781,13 @@ test_that("unsupported ways of asking for Laplace fail rather than doing somethi
 
 })
 
-test_that("existing intoverpop values keep their existing meanings", {
+test_that("intoverpop values mean what they say", {
   model <- .laplace_test_model()
   dat <- .laplace_test_data(nsubjects = 4, nobs = 4)
 
-  # TRUE and 'augmented' name the same thing, and 'auto' still resolves to it
-  # when optimizing a model with declared random effects.
+  # TRUE integrates the random effects out by the method the model suits, as
+  # 'auto' does when optimizing: on this model, whose only random effect shifts
+  # a manifest mean with a Gaussian indicator, that is the augmented filter.
   logical_spec <- suppressMessages(ctFit(dat, model, backend = "julia",
     intoverpop = TRUE, fit = FALSE))
   named_spec <- suppressMessages(ctFit(dat, model, backend = "julia",
@@ -800,6 +801,24 @@ test_that("existing intoverpop values keep their existing meanings", {
   expect_null(named_spec$laplace)
   expect_null(auto_spec$laplace)
   expect_equal(logical_spec$intoverpop, "augmented")
+
+  # Where the augmented filter is not exact -- a random effect on DRIFT -- TRUE
+  # takes the Laplace route and says so; 'augmented' still names the filter.
+  nonlinear <- model
+  nonlinear$pars$indvarying[nonlinear$pars$matrix %in% "DRIFT" &
+    is.na(nonlinear$pars$value)] <- TRUE
+  expect_message(nonlinear_spec <- ctFit(dat, nonlinear, backend = "julia",
+    intoverpop = TRUE, fit = FALSE), "intoverpop=TRUE integrates by 'laplace'")
+  expect_false(is.null(nonlinear_spec$laplace))
+  forced <- suppressMessages(ctFit(dat, nonlinear, backend = "julia",
+    intoverpop = "augmented", fit = FALSE))
+  expect_null(forced$laplace)
+
+  # 'none' is FALSE's name: sampling only, refused when optimizing.
+  expect_error(suppressMessages(ctFit(dat, model, backend = "julia",
+    intoverpop = "none", optimize = TRUE, fit = FALSE)), "optimize=FALSE to sample")
+  expect_error(suppressMessages(ctFit(dat, model, backend = "julia",
+    intoverpop = FALSE, optimize = TRUE, fit = FALSE)), "optimize=FALSE to sample")
 })
 
 # ---------------------------------------------------------------------------

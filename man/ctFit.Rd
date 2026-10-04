@@ -79,25 +79,35 @@ This now sets the \code{manifesttype} of every indicator to 1, for binary.}
 
 \item{fit}{If TRUE, fit specified model using Stan, if FALSE, return stan model object without fitting.}
 
-\item{intoverpop}{how to handle declared individual differences. If 'auto',
-FALSE when sampling (\code{optimize=FALSE}), so the random effects are
-sampled with everything else, whatever the model. When optimizing, TRUE --
-except when a grouping level above the subject varies (see \code{id} in
-\code{\link{ctModel}}), which only 'laplace' can integrate out, so 'auto'
-resolves to that. With
-\code{backend='julia'} and \code{optimize=TRUE}, 'auto' also resolves to
-'laplace' wherever the augmented filter is measurably the wrong estimator:
-a varying parameter in DRIFT, DIFFUSION, MANIFESTVAR or LAMBDA, one in
-MANIFESTMEANS, CINT, T0MEANS or TDPREDEFFECT whose transform is not affine,
-one that enters an expression in another cell, or any varying parameter
-with a non-Gaussian indicator. It says so in one line, and
-\code{fit$args$resolved$intoverpopreason} records why either route was
-taken. Everywhere else it is 'augmented', which is exact and cheapest for a
-random effect that shifts a mean with Gaussian indicators.
-\code{intoverpop='augmented'} keeps the previous behaviour.
-if TRUE, integrates over population distribution of parameters rather than full sampling.
-Allows for optimization of non-linearities and random effects, via state expansion.
-'augmented' names that state-expansion method explicitly. Individual
+\item{intoverpop}{how to handle declared individual differences (random
+effects): integrate them out of the likelihood, or sample them with
+everything else.
+
+\code{TRUE} integrates them out, by whichever of the two methods below is
+exact, or nearest to it, for the model: \code{'augmented'} where every
+individual difference shifts a mean affinely and every indicator is
+Gaussian -- there it is exact and the cheapest -- and \code{'laplace'}
+wherever the augmented filter is measurably the wrong estimator: a varying
+parameter in DRIFT, DIFFUSION, MANIFESTVAR or LAMBDA, one in MANIFESTMEANS,
+CINT, T0MEANS or TDPREDEFFECT whose transform is not affine, one that enters
+an expression in another cell, any varying parameter with a non-Gaussian
+indicator, or a grouping level above the subject (see \code{id} in
+\code{\link{ctModel}}), which only \code{'laplace'} can integrate out.
+\code{backend='stan'} and \code{intoverstates=FALSE} have the augmented
+filter only. A choice of \code{'laplace'} is announced in one line, and
+\code{fit$args$resolved$intoverpopreason} records why either was taken.
+Before 3.12.0 \code{TRUE} always meant \code{'augmented'}; name that route to
+keep it.
+
+\code{FALSE}, or \code{'none'}, samples them instead (\code{optimize=FALSE}
+only; see below).
+
+\code{'auto'}, the default, is \code{FALSE} when sampling
+(\code{optimize=FALSE}), so the random effects are sampled with everything
+else whatever the model, and \code{TRUE} when optimizing.
+
+\code{'augmented'} integrates them by state expansion: each random effect
+becomes a state of the filter. Individual
 variation on a DIFFUSION or MANIFESTVAR parameter is only partially
 identified under 'augmented' -- the data determines that effect's covariance
 with the other random effects but not the split of it into a standard
@@ -113,22 +123,21 @@ posterior exactly as \code{FALSE} does (\code{sampleControl$target =
 'marginal'} samples the Laplace marginal instead). It is exact whenever the
 varying parameters enter the state mean linearly; elsewhere it is an
 approximation, and \code{summary()} says so.
-\code{FALSE} is the other route, and the one \code{'auto'} chooses when
-\code{optimize=FALSE}: the individual parameters are sampled rather than
-integrated over, so the sampler targets the joint posterior over the
-population parameters and every subject's random effects. That is exact whatever the
-model, and its dimension grows with the number of subjects rather than
-staying at the parameter count. \code{TRUE} and \code{FALSE} may be given
-in place of the character forms above.
+\code{FALSE} (\code{'none'}) is the other route, and the one \code{'auto'}
+chooses when \code{optimize=FALSE}: the individual parameters are sampled
+rather than integrated over, so the sampler targets the joint posterior over
+the population parameters and every subject's random effects. That is exact
+whatever the model, and its dimension grows with the number of subjects
+rather than staying at the parameter count. With \code{optimize=TRUE} it is
+refused, since maximising over every subject's effects drives the population
+variance to zero.
 
-With \code{backend='julia'} and \code{optimize=FALSE}, the sampler is
-placed by running the same pipeline \code{optimize=TRUE} does on the
-integrated objective -- starting values, the prior warm-up, the substep
-mesh, the endgame's certification and its resume, restarts only if asked --
-never the joint density of parameters and random effects, which has no
-interior maximum and is not a place to start a chain from. That placed fit
-is then handed to the same runner \code{\link{ctFitUncertainty}} uses for
-\code{uncertainty = 'sample'}, so the two are one pipeline:
+With \code{backend='julia'} and \code{optimize=FALSE}, the chains are
+placed from the integrated objective, never from the joint density of
+parameters and random effects, which has no interior maximum and is not a
+place to start a chain from. The placement is then handed to the same runner
+\code{\link{ctFitUncertainty}} uses for \code{uncertainty = 'sample'}, so
+the two are one pipeline:
 \code{intoverpop='laplace'} and \code{intoverpop='none'} (the \code{FALSE}
 route above) sample the joint posterior over parameters and random effects,
 drawn by SAEM's kernel -- the random effects by SAEM's sweeps, the
@@ -271,7 +280,10 @@ For genuinely live output use \code{optimcontrol$callback}.}
 \item{derrind}{deprecated, latents involved in dynamic error calculations are determined automatically now.}
 
 \item{optimize}{if TRUE, use \code{\link{stanoptimis}} function for maximum a posteriori estimates,
-otherwise use the HMC sampler from Stan, which is (much) slower, but generally more robust for complex individual differences.
+otherwise sample the posterior -- with Stan's HMC sampler for \code{backend='stan'}, and for
+\code{backend='julia'} with SAEM's kernel on the joint posterior of parameters and random effects
+(NUTS when there are none; see \code{intoverpop} and \code{sampleControl}) -- which is slower,
+but exact rather than a normal approximation at a mode, and more robust for complex individual differences.
 Importance sampling is a separate, opt-in uncertainty method on top of the optimized estimate; see \code{\link{ctOptimUncertainty}}.
 When \code{optimize=FALSE}, the stored point estimate (\code{stanfit$rawest}) is the per-parameter
 median of the posterior draws; the julia backend's sampled point estimate (see \code{\link{ctFitUncertainty}} with \code{uncertainty = 'sample'})
@@ -320,9 +332,18 @@ own Monte Carlo noise. A number caps its iterations
 (\code{TRUE} is 10000); the fit says so if the cap came first. Models with
 few units run several chains per unit. It runs in parallel over units,
 chains and, within a unit, its subjects, within \code{cores}, and
-\code{set.seed()} reproduces it at a given \code{cores}. On large multilevel
-models, where the quasi-Newton optimizer can be slow, it can reach the
-neighbourhood of the optimum much faster.
+\code{set.seed()} reproduces it at a given \code{cores}. Because the
+finish that follows climbs the Laplace objective (then corrected by
+\code{laplace_correct}), the estimate usually ends where a fit without SAEM
+ends, at more cost; what SAEM changes is which maximum is reached when the
+Laplace objective has more than one, as it can when the approximation
+over-credits many subjects. Nor is SAEM's own point, without the finish, a
+better approximate estimate: on the models compared the Laplace mode was
+usually nearer the posterior median, and the Laplace curvature taken at
+SAEM's point described the posterior worse than at the Laplace mode. For an
+approximate posterior better than a Laplace fit's, sample with
+\code{optimize = FALSE} and a lower effective-sample-size target (see
+\code{uncertainty = 'sample'} in \code{\link{ctFitUncertainty}}).
 \code{fit$optim$saem_iterations}, \code{saem_settled}, \code{saem_trend},
 \code{saem_chains}, \code{saem_acceptance} and \code{saem_trace} record
 the phase; the trace's \code{logpost_complete} is the complete-data log
@@ -383,9 +404,11 @@ fit saved before \code{'gated'} became the default records no floor, and is
 rebuilt under the \code{'total'} it was fitted with.
 \code{fit$laplace$conditioning} reports how many subjects have such
 curvature at the estimate, whichever floor was used. The floor, and its
-default, apply too when sampling with \code{intoverpop=FALSE}: the random
-effects are then sampled rather than integrated, but the sampler is placed,
-and its metric built, from the Laplace fit.
+default, apply too when sampling with \code{intoverpop=FALSE} and
+\code{sampleControl$placement = 'fit'}: the random effects are then sampled
+rather than integrated, but the sampler is placed, and its metric built,
+from the Laplace fit. Under the default placement (\code{'saem'}) SAEM
+places the chains instead, and no Laplace optimum is used.
 
 On either route, a julia fit with random effects measures, at the estimate
 it reports, how much of each random effect each subject's own data
@@ -727,7 +750,8 @@ when a run stops: \code{minESS} (200, the size the worst parameter must reach),
 \code{rhatTarget} (1.01), \code{meanESS}, \code{maxDraws} and
 \code{settleTol} -- all documented in full under \code{uncertainty =
 'sample'} in \code{\link{ctFitUncertainty}}, with the effective sample size
-every draw-producing route shares. A name the sampler does not read is an
+every draw-producing route shares, and how lower targets give a quicker
+approximate posterior. A name the sampler does not read is an
 error rather than ignored, because a name the list drops silently costs a
 whole run.
 With an effective-size target the post-warmup part of \code{iter} is the

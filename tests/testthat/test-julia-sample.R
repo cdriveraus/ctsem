@@ -409,7 +409,7 @@ test_that("ctFitUncertainty(fit, 'sample') refuses what it cannot sample", {
   # The augmented route has no separate posterior over the random effects --
   # they are carried in the state, integrated by the filter -- so the joint
   # target is refused by name. The marginal is not: it is the same augmented
-  # marginal `ctFit(optimize=FALSE, intoverpop=TRUE)` already samples, and
+  # marginal `ctFit(optimize=FALSE, intoverpop='augmented')` already samples, and
   # `uncertainty = 'sample'` reaches it by the same route.
   set.seed(4)
   data <- do.call(rbind, lapply(1:8, function(i)

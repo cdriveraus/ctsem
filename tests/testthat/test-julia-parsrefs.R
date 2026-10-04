@@ -39,13 +39,13 @@ skip_on_32bit()
 test_that("a shared PARS parameter in T0MEANS and T0VAR is resolved, not refused", {
   d <- .parsref_data()
   m <- .parsref_model()
-  # `intoverpop = TRUE` forces the augmented route, which is what rewrites the
+  # `intoverpop = 'augmented'` forces the augmented route, which is what rewrites the
   # named parameters into PARS references. Left at 'auto' this model does not
   # take that route and the references are never created, so the bug does not
   # appear -- which is why a smaller reproduction than this one does not
   # reproduce anything.
   fits <- fit_backends(datalong = d, model = m, cores = 1, verbose = 0,
-    intoverpop = TRUE)
+    intoverpop = 'augmented')
   s <- summary(fits$julia, parmatrices = TRUE)
   pm <- s$parmatrices
 
@@ -83,7 +83,7 @@ test_that("a static cell over two PARS cells composes both parameters", {
   m <- .parsref_model(T0MEANS = c('aa + bb', 'aa'), PARS = c('aa', 'bb'),
     T0VAR = diag(2))
   prepped <- suppressMessages(ctFit(datalong = d, model = m, fit = FALSE,
-    backend = 'julia', intoverpop = TRUE))
+    backend = 'julia', intoverpop = 'augmented'))
   pt <- prepped$parameter_table
   cell <- pt[pt$matrix == 'T0MEANS' & pt$row == 1 & pt$col == 1, ]
   testthat::expect_equal(nrow(cell), 1L)
@@ -107,7 +107,7 @@ test_that("a composed T0VAR fits, and agrees with stan", {
   m <- .parsref_model(T0MEANS = c('aa', 'aa'), PARS = c('aa', 'bb'),
     T0VAR = matrix(c('log1p_exp(aa + bb)', 0, 0, 't0sd'), 2, 2, byrow = TRUE))
   fits <- fit_backends(datalong = d, model = m, cores = 1, verbose = 0,
-    intoverpop = TRUE)
+    intoverpop = 'augmented')
   testthat::expect_s3_class(fits$julia, 'ctJuliaFit')
   expect_backends_agree(fits, tol = 5e-2)
 })
@@ -127,7 +127,7 @@ test_that("a static cell depending on a time-dependent predictor is refused, and
   # can be composed away here. The message has to say which of the two it is.
   testthat::expect_error(
     suppressMessages(ctFit(datalong = d, model = m, fit = FALSE,
-      backend = 'julia', intoverpop = TRUE)),
+      backend = 'julia', intoverpop = 'augmented')),
     "time-dependent predictor data")
 })
 

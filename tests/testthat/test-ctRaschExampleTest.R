@@ -113,7 +113,7 @@
     args <- switch(what,
       # The fit everything else is read against, and the only one that needs
       # draws: its intervals are what the recovery checks are stated in.
-      ct = list(model = .rasch_model("ct"), intoverpop = TRUE),
+      ct = list(model = .rasch_model("ct"), intoverpop = "augmented"),
       # Laplace integrates the random effects instead of maximising over them
       # jointly. Compared on the raw vector, so 20 draws is all it needs -- and
       # the draws are most of a Laplace fit's cost, because each one redoes the
@@ -122,7 +122,7 @@
         optimcontrol = list(finishsamples = 20)),
       # Same random-effect treatment as `ct`, so the pair differs in exactly
       # one thing: the discretization.
-      dt = list(model = .rasch_model("dt"), intoverpop = TRUE,
+      dt = list(model = .rasch_model("dt"), intoverpop = "augmented",
         optimcontrol = list(finishsamples = 20)))
     fit <- suppressWarnings(suppressMessages(do.call(ctFit, c(
       list(datalong = d, backend = "julia", cores = 1, verbose = 0,
@@ -198,8 +198,9 @@ test_that("the augmented and Laplace estimators find the same optimum", {
   # onto the backend that integrates the measurement rather than linearising it,
   # and onto the raw vector, where no draw noise stands between them.
   #
-  # They are genuinely different objectives: `intoverpop = TRUE` maximises over
-  # the random effects jointly, `'laplace'` integrates them out. Agreement is
+  # They are genuinely different objectives: `intoverpop = 'augmented'`
+  # integrates the random effects through the filter's linearised measurement
+  # update, `'laplace'` by a Laplace approximation at each subject's mode. Agreement is
   # therefore a result and not an identity, and it is not exact: the largest
   # gap is 0.024, on the population sd of T0MEANS -- the parameter the two
   # treatments of the random effects actually disagree about. The item

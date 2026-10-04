@@ -697,25 +697,35 @@ T0VARredundancies <- function(ctm) {
 #'
 #' May also be stated on the model, as \code{model$poprank <- 2}, which asks for
 #' it just as the argument does; an argument here wins over that.
-#' @param intoverpop how to handle declared individual differences. If 'auto',
-#' FALSE when sampling (\code{optimize=FALSE}), so the random effects are
-#' sampled with everything else, whatever the model. When optimizing, TRUE --
-#' except when a grouping level above the subject varies (see \code{id} in
-#' \code{\link{ctModel}}), which only 'laplace' can integrate out, so 'auto'
-#' resolves to that. With
-#' \code{backend='julia'} and \code{optimize=TRUE}, 'auto' also resolves to
-#' 'laplace' wherever the augmented filter is measurably the wrong estimator:
-#' a varying parameter in DRIFT, DIFFUSION, MANIFESTVAR or LAMBDA, one in
-#' MANIFESTMEANS, CINT, T0MEANS or TDPREDEFFECT whose transform is not affine,
-#' one that enters an expression in another cell, or any varying parameter
-#' with a non-Gaussian indicator. It says so in one line, and
-#' \code{fit$args$resolved$intoverpopreason} records why either route was
-#' taken. Everywhere else it is 'augmented', which is exact and cheapest for a
-#' random effect that shifts a mean with Gaussian indicators.
-#' \code{intoverpop='augmented'} keeps the previous behaviour.
-#' if TRUE, integrates over population distribution of parameters rather than full sampling.
-#' Allows for optimization of non-linearities and random effects, via state expansion.
-#' 'augmented' names that state-expansion method explicitly. Individual
+#' @param intoverpop how to handle declared individual differences (random
+#' effects): integrate them out of the likelihood, or sample them with
+#' everything else.
+#'
+#' \code{TRUE} integrates them out, by whichever of the two methods below is
+#' exact, or nearest to it, for the model: \code{'augmented'} where every
+#' individual difference shifts a mean affinely and every indicator is
+#' Gaussian -- there it is exact and the cheapest -- and \code{'laplace'}
+#' wherever the augmented filter is measurably the wrong estimator: a varying
+#' parameter in DRIFT, DIFFUSION, MANIFESTVAR or LAMBDA, one in MANIFESTMEANS,
+#' CINT, T0MEANS or TDPREDEFFECT whose transform is not affine, one that enters
+#' an expression in another cell, any varying parameter with a non-Gaussian
+#' indicator, or a grouping level above the subject (see \code{id} in
+#' \code{\link{ctModel}}), which only \code{'laplace'} can integrate out.
+#' \code{backend='stan'} and \code{intoverstates=FALSE} have the augmented
+#' filter only. A choice of \code{'laplace'} is announced in one line, and
+#' \code{fit$args$resolved$intoverpopreason} records why either was taken.
+#' Before 3.12.0 \code{TRUE} always meant \code{'augmented'}; name that route to
+#' keep it.
+#'
+#' \code{FALSE}, or \code{'none'}, samples them instead (\code{optimize=FALSE}
+#' only; see below).
+#'
+#' \code{'auto'}, the default, is \code{FALSE} when sampling
+#' (\code{optimize=FALSE}), so the random effects are sampled with everything
+#' else whatever the model, and \code{TRUE} when optimizing.
+#'
+#' \code{'augmented'} integrates them by state expansion: each random effect
+#' becomes a state of the filter. Individual
 #' variation on a DIFFUSION or MANIFESTVAR parameter is only partially
 #' identified under 'augmented' -- the data determines that effect's covariance
 #' with the other random effects but not the split of it into a standard
@@ -731,13 +741,14 @@ T0VARredundancies <- function(ctm) {
 #' 'marginal'} samples the Laplace marginal instead). It is exact whenever the
 #' varying parameters enter the state mean linearly; elsewhere it is an
 #' approximation, and \code{summary()} says so.
-#' \code{FALSE} is the other route, and the one \code{'auto'} chooses when
-#' \code{optimize=FALSE}: the individual parameters are sampled rather than
-#' integrated over, so the sampler targets the joint posterior over the
-#' population parameters and every subject's random effects. That is exact whatever the
-#' model, and its dimension grows with the number of subjects rather than
-#' staying at the parameter count. \code{TRUE} and \code{FALSE} may be given
-#' in place of the character forms above.
+#' \code{FALSE} (\code{'none'}) is the other route, and the one \code{'auto'}
+#' chooses when \code{optimize=FALSE}: the individual parameters are sampled
+#' rather than integrated over, so the sampler targets the joint posterior over
+#' the population parameters and every subject's random effects. That is exact
+#' whatever the model, and its dimension grows with the number of subjects
+#' rather than staying at the parameter count. With \code{optimize=TRUE} it is
+#' refused, since maximising over every subject's effects drives the population
+#' variance to zero.
 #'
 #' With \code{backend='julia'} and \code{optimize=FALSE}, the chains are
 #' placed from the integrated objective, never from the joint density of
@@ -1934,8 +1945,20 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # Why 'auto' went the way it did, kept for `fit$args$resolved`; NA when the
   # route was named.
   intoverpopreason <- NA_character_
-  if(is.character(intoverpop)){
-    intoverpop <- match.arg(intoverpop[1], c('auto','augmented','laplace'))
+  # TRUE asks for the random effects to be integrated out, as it always has,
+  # and since there are now two ways to do that it takes the one the model
+  # suits: the rule 'auto' applies when optimizing, whatever `optimize` is.
+  # Before 3.12.0 it meant 'augmented', the only way there was.
+  if(isTRUE(intoverpop)){
+    auto <- .ctIntOverPopAuto(ctm, backend = backend, optimize = TRUE,
+      intoverstates = intoverstates)
+    intoverpopmethod <- auto$route
+    intoverpopreason <- auto$reason
+    intoverpop <- identical(auto$route, 'augmented')
+    if(isTRUE(auto$announce)) message("intoverpop=TRUE integrates by 'laplace': ",
+      auto$reason, ".")
+  } else if(is.character(intoverpop)){
+    intoverpop <- match.arg(intoverpop[1], c('auto','augmented','laplace','none'))
     if(intoverpop %in% 'auto'){
       # See `.ctIntOverPopAuto()` for the rule and the measurements behind it.
       # An outer level resolves to 'laplace' silently, as it always has: there

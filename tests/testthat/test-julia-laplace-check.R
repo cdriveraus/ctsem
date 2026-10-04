@@ -102,7 +102,7 @@ test_that("the check refuses what it cannot do", {
   expect_error(ctLaplaceCheck(list()), "backend='julia'")
 
   augmented <- suppressMessages(ctFit(.check_test_data(), .check_test_model(),
-    backend = "julia", intoverpop = TRUE, optimcontrol = list(estonly = TRUE)))
+    backend = "julia", intoverpop = "augmented", optimcontrol = list(estonly = TRUE)))
   expect_error(ctLaplaceCheck(augmented), "intoverpop='laplace'")
 
   # Without a Hessian the correction cannot be formed, and saying so beats
