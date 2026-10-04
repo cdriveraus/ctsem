@@ -204,8 +204,8 @@ place.
 
 An optimized fit does not have to settle for the default Hessian
 approximation. `uncertainty` in `optimcontrol` (at fit time) or in
-`ctOptimUncertainty()` (after the fact, reusing the existing optimum) selects
-among several:
+`ctFitUncertainty()` (after the fact, reusing the existing optimum; previously
+`ctOptimUncertainty()`, still available) selects among several:
 
 - `hessian`: finite-difference (stan) or exact forward-mode (julia) curvature
   at the optimum, with normal draws. The default, and the cheapest.
@@ -228,7 +228,10 @@ among several:
   it is the one method not available, because it needs the model rebuilt per
   resample rather than just re-evaluated at new data.
 - `is`: importance sampling using the Hessian as the proposal covariance,
-  with uncertainty read from the resulting weighted sample.
+  with uncertainty read from the resulting weighted sample. It reweights
+  toward the objective the fit maximised: here that is the exact posterior,
+  since nothing is integrated out; with random effects it is the integrated
+  approximation (see below).
 
 Every method except `fullbootstrap` works on both backends, reusing the same
 underlying `ctOptimComputeUncertainty()` machinery either way -- the julia
@@ -240,7 +243,7 @@ methods <- c("hessian", "surrogate", "opg", "sandwich", "bootstrap", "is")
 
 gallery <- function(base_fit, backend_label) {
   do.call(rbind, lapply(methods, function(m) {
-    updated <- ctOptimUncertainty(base_fit, uncertainty = m, finishsamples = 200, cores = 1)
+    updated <- ctFitUncertainty(base_fit, uncertainty = m, finishsamples = 200, cores = 1)
     data.frame(backend = backend_label, method = m, t(drift_interval(updated)))
   }))
 }
@@ -265,7 +268,7 @@ does not hold here. `fullbootstrap` is shown separately because it is
 stan-only and slower even at a small resample count:
 
 ```{r fullbootstrap}
-stan_fullboot <- ctOptimUncertainty(
+stan_fullboot <- ctFitUncertainty(
   stan_map, uncertainty = "fullbootstrap", finishsamples = 8, cores = 1,
   control = list(bootstrapTol = 1e-3)
 )
@@ -291,7 +294,7 @@ optimize rather than integrated out. `ctFit()` therefore refuses
 `optimize = TRUE` with `intoverstates = FALSE`; `optimcontrol$estonly = TRUE`
 is the explicit way to ask for the mode anyway. Every uncertainty method above
 except `hessian` scores the marginal likelihood, which such a fit did not
-maximise, so `ctOptimUncertainty()` refuses them for it. `hessian` profiles
+maximise, so `ctFitUncertainty()` refuses them for it. `hessian` profiles
 the enormous state block out of the curvature
 (`ctsem_joint_hessian(..., profile = TRUE)` in the julia engine), and the
 profile can be close to flat -- on a model this small it is:
@@ -346,11 +349,106 @@ The sampled fit reports finite standard errors from the draws directly, and
 the whole reason to make the states explicit rather than let the filter
 integrate them away.
 
+## With random effects
+
+The model so far has no individual differences, so every route above targets
+one density. Once parameters vary over subjects there is a choice about the
+random effects themselves, and it decides what an interval describes.
+
+- **Integrated out** -- an optimized fit, `intoverpop = TRUE` or the default
+  `'auto'`: the augmented filter where it is exact (random effects that shift a
+  mean, Gaussian indicators), a Laplace approximation everywhere else. Every
+  `uncertainty` method above then describes *that* integrated objective. Where
+  the integration is approximate -- random effects on dynamics or variances,
+  non-Gaussian indicators -- they all inherit the approximation, `is`
+  included: it reweights toward the objective the fit maximised, not toward
+  the exact posterior. The Laplace fit's own correction (on by default) moves
+  the estimate toward the exact one, but its interval stays a normal
+  approximation at a mode, and a population standard deviation estimated from
+  few subjects is usually skewed.
+- **Sampled** -- `optimize = FALSE`, or `ctFitUncertainty(fit, 'sample')` on an
+  optimized fit: the parameters and every subject's random effects are drawn
+  together, from the exact joint posterior, with the fit (or SAEM, by
+  default) only placing the chains.
+
+Sampling does not have to mean waiting for a long run. Its stopping rule is an
+effective sample size and an R-hat, and lowering them asks for a quicker,
+rougher posterior with a stated precision: a reported 5% or 95% point carries
+a Monte Carlo error of about `1.96 * 2.1 / sqrt(ESS)` posterior standard
+deviations, the median `1.96 * 1.25 / sqrt(ESS)`, and chains whose means differ
+by `d` standard deviations show an R-hat of about `sqrt(1 + d^2)`.
+`minESS = 50, rhatTarget = 1.07` therefore aims at roughly half a posterior
+standard deviation at the centre. On the models it was compared on, runs of
+four chains and 100 to 200 draws each were already more accurate than the
+Laplace normal approximation, at two to three times the cost of the fit. For
+a short run, keep the chains in this session (`processes = FALSE`): a separate
+process per chain pays for starting Julia, which a short run does not recover.
+
+Here a drift that varies across 30 subjects -- a random effect inside the
+dynamics, so `'auto'` integrates it by Laplace -- is summarised three ways:
+
+```{r re-data}
+set.seed(3)
+re_dat <- do.call(rbind, lapply(seq_len(30), function(id) {
+  subject <- gen_model
+  subject$DRIFT <- matrix(-exp(log(0.35) + rnorm(1, 0, 0.5)))
+  d <- data.frame(ctGenerate(ctmodelobj = subject, n.subjects = 1, burnin = 0,
+    dtmean = 0.4, logdtsd = 0.1))
+  d$id <- id
+  d
+}))
+re_model <- fit_model
+re_model$pars$indvarying[re_model$pars$param %in% "drift"] <- TRUE
+```
+
+```{r re-fit}
+fit_time <- system.time(re_fit <- ctFit(re_dat, re_model, backend = "julia",
+  priors = TRUE, cores = 1, verbose = 0))[["elapsed"]]
+re_fit$args$resolved$intoverpop
+```
+
+```{r re-sample}
+quick_time <- system.time(re_quick <- ctFitUncertainty(re_fit, "sample",
+  cores = 1, control = list(chains = 4, warmup = 100, draws = 100, minESS = 50,
+    rhatTarget = 1.07, processes = FALSE)))[["elapsed"]]
+full_time <- system.time(re_full <- ctFitUncertainty(re_fit, "sample",
+  cores = 1, control = list(processes = FALSE)))[["elapsed"]]
+```
+
+```{r re-compare}
+drift_rows <- function(fit, label, secs) {
+  s <- summary(fit)
+  cols <- c("mean", "2.5%", "97.5%")
+  data.frame(route = label, seconds = round(secs),
+    quantity = c("population mean", "population sd"),
+    rbind(s$popmeans["drift", cols], s$popsd["drift", cols]),
+    check.names = FALSE, row.names = NULL)
+}
+rbind(drift_rows(re_fit, "Laplace + Hessian", fit_time),
+  drift_rows(re_quick, "short sample", fit_time + quick_time),
+  drift_rows(re_full, "default sample", fit_time + full_time))
+```
+
+Each subject's own data say little about its own drift here, and the Laplace
+fit, whose interval is the curvature at its mode, can give the population
+standard deviation no interval at all -- `summary()` reports `NA` and the fit
+says why. Both samples describe what the curvature could not: a wide, skewed
+posterior that runs down to near zero. The default sample is the reference;
+the short one is a draft of it, and says how rough a draft through its own
+diagnostics:
+
+```{r re-diagnostics}
+rbind(short = c(max_rhat = max(re_quick$sample$rhat), min_ess = min(re_quick$sample$ess)),
+  default = c(max_rhat = max(re_full$sample$rhat), min_ess = min(re_full$sample$ess)))
+```
+
 ## With and without priors
 
 `priors = TRUE` adds ctsem's raw-scale priors to the objective; `priors =
-FALSE` (the `ctFit()` default) leaves them out. Combined with `optimize`, that
-is four corners, and they mean four different things:
+FALSE` leaves them out. (`ctFit()`'s default, `'randomCorr'`, puts the prior on
+random-effect correlations alone, which for a model with no random effects,
+like this one, is the same as `FALSE`.) Combined with `optimize`, that is four
+corners, and they mean four different things:
 
 |              | `priors = TRUE`                          | `priors = FALSE`                    |
 |--------------|-------------------------------------------|--------------------------------------|
@@ -416,6 +514,11 @@ whatever `ctFit()`'s own default is for optimizing.
   to be stable, `fullbootstrap` (stan only) is the most literal and most
   expensive, and `is` turns the same curvature into an importance-sampling
   proposal.
+- With random effects, an optimized fit's uncertainty describes the
+  integrated objective, approximation included, whichever method is chosen;
+  `ctFitUncertainty(fit, 'sample')` samples the exact joint posterior, and a
+  lower `minESS` and higher `rhatTarget` make that a quick draft with a stated
+  precision rather than a long run.
 - `intoverstates = FALSE` is for sampling, which draws the states along with
   the parameters. Optimizing it is refused unless `optimcontrol$estonly = TRUE`
   asks for the joint mode, and that mode has only `hessian`, profiling the
