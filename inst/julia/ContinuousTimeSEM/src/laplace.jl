@@ -4707,6 +4707,33 @@ function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
 end
 
 """
+    ctsem_laplace_subject_values(laplace, draws, effects; ti_effects=true)
+
+The method above for a whole sample at once: `draws[s, :]` is one draw of the
+parameters and `effects[s, :]` the natural deviations drawn with it, so each
+subject's vector at draw `s` is built from the pair. Batched because the caller
+is the summary, which has a sample rather than a point, and one call a draw
+would cost a bridge round trip each.
+
+Returns `ndraws x nsubjects x npar`, as the linearised method does.
+"""
+function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
+    draws::AbstractMatrix, effects::AbstractMatrix; ti_effects::Bool=true)
+    size(effects, 1) == size(draws, 1) || throw(DimensionMismatch(string(
+        "effects has ", size(effects, 1), " draws for ", size(draws, 1),
+        " parameter draws")))
+    ndraws = size(draws, 1)
+    nsubjects = length(laplace.objective.subject_objectives)
+    out = zeros(Float64, ndraws, nsubjects, size(draws, 2))
+    for s in 1:ndraws
+        out[s, :, :] = ctsem_laplace_subject_values(laplace,
+            collect(Float64, view(draws, s, :)), view(effects, s, :);
+            ti_effects=ti_effects)
+    end
+    return out
+end
+
+"""
     _laplace_filter_values(laplace, values; from_level, effects, subject_values)
 
 The per-subject matrix a Laplace method hands the wrapped objective's filter:

@@ -1119,10 +1119,15 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # population values, so a subject's parameter and the population parameter are
 # reported on the same scale by construction.
 #
-# Point estimate only. Posterior draws would need the inner mode re-solved at
-# every draw, which is a real computation rather than a lookup, and returning
-# the point-estimate modes against varying population draws would silently
-# understate the spread it is being asked for.
+# On an optimised fit the draws are a normal approximation's, and the modes are
+# linearised around the estimate rather than re-solved at every draw (see
+# `ctsem_laplace_subject_values`). A sampled fit on the joint posterior drew
+# every subject's effects with the parameters, so it reports from those
+# instead: the point is the posterior mean of each subject's raw vector (the
+# mean parameters plus the mean deviations; both shifts are additive), and the
+# draws pair draw `s` of the parameters with draw `s` of the effects, as
+# generation does. Without the effect draws (`saveEffects = FALSE`, the
+# default) the draws fall back to the linearised modes, and say so.
 .ctBackendLaplaceSubjectPars <- function(fit, spec, pointest = TRUE,
   nsamples = "all") {
   cells <- .ctBackendFreeParameterCells(fit)
@@ -1140,15 +1145,31 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 
   draws <- if (isTRUE(pointest)) NULL else .ctBackendRawSamples(fit)
   if (!is.null(draws) && identical(nrow(draws), 1L)) draws <- NULL
+  keep <- NULL
   if (!is.null(draws) && !identical(nsamples, "all")) {
     keep <- unique(round(seq(1, nrow(draws), length.out = min(nrow(draws),
       as.integer(nsamples)))))
     draws <- draws[keep, , drop = FALSE]
   }
 
+  sampled <- identical(fit$sample$target, "joint") &&
+    length(fit$sample$effect_mean) > 0L
+  effects <- NULL
+  if (!is.null(draws) && sampled) {
+    saved <- fit$sample$effects
+    if (!is.null(saved) && nrow(saved) == nrow(.ctBackendRawSamples(fit))) {
+      effects <- if (is.null(keep)) saved else saved[keep, , drop = FALSE]
+    } else message("This fit sampled its random effects, but their draws are ",
+      "not on it, so each subject's draws are its conditional mode linearised ",
+      "around the estimate rather than its sampled effects. Sample with ",
+      "saveEffects=TRUE to report from the draws.")
+  }
+
   if (is.null(draws)) {
-    subject_raw <- .ctBackendJuliaValue(module$ctsem_laplace_subject_values(
-      objective, estimate))
+    subject_raw <- .ctBackendJuliaValue(if (sampled)
+      module$ctsem_laplace_subject_values(objective, estimate,
+        .ctJuliaNumericVector(fit$sample$effect_mean)) else
+      module$ctsem_laplace_subject_values(objective, estimate))
     subject_raw <- matrix(as.numeric(subject_raw), ncol = length(fit$estimate$raw))
     values <- .ctBackendPopCellValues(fit, subject_raw, selected, layout)
     out <- array(as.numeric(values[, alphabetical, drop = FALSE]),
@@ -1158,13 +1179,17 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     return(out)
   }
 
-  # Draws. The population factors are rebuilt exactly at every draw; only the
-  # random-effect mode is linearised around the estimate, which is what makes
-  # this a matrix-vector product per draw rather than a Newton solve. See
+  # Draws. With sampled effects, each draw is its own parameters and effects.
+  # Otherwise the population factors are rebuilt exactly at every draw and only
+  # the random-effect mode is linearised around the estimate, which is what
+  # makes this a matrix-vector product per draw rather than a Newton solve. See
   # `ctsem_laplace_subject_values`: it is an approximation, and it is documented
   # as one wherever it surfaces.
-  raw <- .ctBackendJuliaValue(module$ctsem_laplace_subject_values(objective,
-    .ctJuliaPut(as.matrix(draws)), estimate))
+  raw <- .ctBackendJuliaValue(if (!is.null(effects))
+    module$ctsem_laplace_subject_values(objective, .ctJuliaPut(as.matrix(draws)),
+      .ctJuliaPut(as.matrix(effects))) else
+    module$ctsem_laplace_subject_values(objective, .ctJuliaPut(as.matrix(draws)),
+      estimate))
   nsubjects <- length(spec$subject_starts)
   raw <- array(as.numeric(raw), dim = c(nrow(draws), nsubjects,
     length(fit$estimate$raw)))
