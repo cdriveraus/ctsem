@@ -601,7 +601,7 @@ test_that('the integration method is read from the fit rather than guessed', {
   model$pars$indvarying <- model$pars$matrix == 'CINT'
 
   cases <- list(
-    augmented = list(intoverpop = TRUE, optimize = TRUE),
+    augmented = list(intoverpop = "augmented", optimize = TRUE),
     laplace = list(intoverpop = 'laplace', optimize = TRUE),
     none = list(intoverpop = FALSE, optimize = FALSE))
 

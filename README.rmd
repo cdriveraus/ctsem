@@ -322,7 +322,7 @@ The functions most users need, by task. `?name` gives the details for any of the
 | `ctFit` | fit a model: maximum likelihood, maximum a posteriori, or sampling |
 | `ctFitUpdate`, `ctFitUpdateModel` | refit with changed data or specification, without recompiling |
 | `ctFitAddSamples` | add posterior samples to an existing fit |
-| `ctFitUncertainty` | compute a fit's uncertainty: Hessian, bootstrap or importance sampling, or (`uncertainty = 'sample'`) the exact HMC posterior of a Julia backend fit |
+| `ctFitUncertainty` | compute a fit's uncertainty: Hessian, bootstrap or importance sampling, or (`uncertainty = 'sample'`) the exact posterior of a Julia backend fit, sampled |
 | `ctEmpiricalBayesFit` | subject-wise fits with the population estimate as a prior |
 
 **Inspect a fit**

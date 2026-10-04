@@ -341,7 +341,7 @@ test_that("ctGenerateFromPriors() generates over a julia backend fit's own desig
 #
 # `ctGenerateFromFit()` used to error here: the engine's `ctsem_generate`
 # refused any `CTSEMLaplaceObjective` with "not implemented ... yet". The
-# augmented route (intoverpop=TRUE) carries individual differences as
+# augmented route (intoverpop='augmented') carries individual differences as
 # augmented latent states the filter integrates over, so one shared raw
 # parameter vector is enough to generate from. The Laplace route has no such
 # vector -- each subject's random effect is a conditional mode estimated from
@@ -368,7 +368,7 @@ test_that("ctGenerateFromFit works on a Laplace fit and matches the augmented ro
 
   fit_laplace <- laplace_fixture()
   fit_augmented <- suppressWarnings(suppressMessages(ctFit(data, model,
-    backend = "julia", cores = 1, intoverpop = TRUE, priors = TRUE)))
+    backend = "julia", cores = 1, intoverpop = "augmented", priors = TRUE)))
 
   set.seed(123)
   gen_laplace <- ctGenerateFromFit(fit_laplace, nsamples = 20)
