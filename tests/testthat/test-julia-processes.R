@@ -29,6 +29,18 @@ test_that("without ps, R sessions still count as running", {
   expect_false(ctsem:::.ctProcInfo(gone_pid(), use_ps = FALSE)$alive)
 })
 
+test_that("a machine with no Julia processes lists none, and stops none", {
+  # A machine with no engines at all -- CI's -- once failed both examples.
+  withr::local_options(ctsem.julia.registry = withr::local_tempdir())
+  for (use_ps in c(TRUE, FALSE)) expect_equal(nrow(ctsem:::.ctProcInfo(integer(), use_ps)), 0L)
+  # Nor this session's own engine, whether or not an earlier test started one.
+  local_mocked_bindings(.ctProcList = function(...)
+    data.frame(pid = integer(), name = character()),
+    .ctJuliaSessionStamp = function() "no session", .package = "ctsem")
+  expect_equal(nrow(ctJuliaProcesses()), 0L)
+  expect_message(ctJuliaKill(), "No Julia processes")
+})
+
 test_that("this session's engine is listed with the threads it started with", {
   skip_without_julia()
   skip_if_not_installed("ps")

@@ -96,10 +96,13 @@
 # whether each is running and what its executable is called.
 .ctProcInfo <- function(pids, use_ps = requireNamespace("ps", quietly = TRUE)) {
   pids <- unique(as.integer(pids[!is.na(pids)]))
-  out <- data.frame(pid = pids, alive = FALSE, name = NA_character_,
-    ppid = NA_integer_, parent = NA_character_, created = NA_real_,
-    cpu = NA_real_, rss_mb = NA_real_, os_threads = NA_integer_,
-    connector = FALSE, stringsAsFactors = FALSE)
+  # rep(), not scalars: data.frame() will not recycle a length-one column to
+  # zero rows, and no ids is the usual case on a machine with no engines.
+  n <- length(pids)
+  out <- data.frame(pid = pids, alive = rep(FALSE, n), name = rep(NA_character_, n),
+    ppid = rep(NA_integer_, n), parent = rep(NA_character_, n), created = rep(NA_real_, n),
+    cpu = rep(NA_real_, n), rss_mb = rep(NA_real_, n), os_threads = rep(NA_integer_, n),
+    connector = rep(FALSE, n), stringsAsFactors = FALSE)
   if (!length(pids)) return(out)
   if (isTRUE(use_ps)) {
     for (i in seq_along(pids)) {
