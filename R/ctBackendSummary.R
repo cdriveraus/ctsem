@@ -1809,15 +1809,18 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     "See fit$identifiability$effects."), collapse = " ")
 
   fixed <- cells[!cells$randomeffect, , drop = FALSE]
-  # A `poprank` fit's coefficients are free parameters, so without this they
-  # appear here as `beta_df11_dr11` beside the model's own parameters -- an
-  # internal coordinate in the one table a reader treats as the answer. Dropped
-  # for the same reason the coefficient table is not printed; the note under
-  # `popsd` says the structure, and `npar` still counts them.
-  coefficients <- .ctBackendSpec(object)$model$popregression$coefficients
-  if (!is.null(coefficients) && nrow(coefficients)) {
-    fixed <- fixed[!(.ctBackendParameterNames(fixed) %in%
-        coefficients$coefficient), , drop = FALSE]
+  # A `poprank` fit's loadings are free parameters, so without this they
+  # appear here as `poploading_df11_dim1` beside the model's own parameters --
+  # an internal coordinate in the one table a reader treats as the answer.
+  # Dropped, every row of the loading matrix: the regressed rows'
+  # (`coefficients`) and the basis rows' (`loadings`), which were shown until
+  # the names were aligned with the engine's. The note under `popsd` says the
+  # structure, and `npar` still counts them.
+  popregression <- .ctBackendSpec(object)$model$popregression
+  internal <- c(popregression$coefficients$coefficient,
+    popregression$loadings$loading)
+  if (length(internal)) {
+    fixed <- fixed[!(.ctBackendParameterNames(fixed) %in% internal), , drop = FALSE]
   }
   out$popmeans <- .ctBackendSampleSummary(
     .ctBackendPopCellsFromFlat(flat, fixed, layout), digits = digits,

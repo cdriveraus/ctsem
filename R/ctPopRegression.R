@@ -46,8 +46,9 @@
 # The basis/regression partition above is how the rank and the basis are
 # chosen. The fitted coordinates have been loadings since `203e223f`:
 # `Sigma = L L'`, `L` k-by-r and triangular in its first r rows, on carrier
-# states of unit variance -- the basis rows `M` and the regressed rows (still
-# labelled `beta_<regressed>_<basis>`) are one loading matrix. The sd,
+# states of unit variance -- the basis rows `M` and the regressed rows are one
+# loading matrix, named `poploading_<param>_dim<j>` as the engine names it on
+# the laplace and 'none' routes. The sd,
 # correlation and coefficient coordinates it replaced spanned the same manifold
 # but reached the optimum from 1 of 12 matched starts against 8 of 12 (see that
 # commit and review/REDUCEDRANK-parameterisation-reliability-2026-09-08.md).
@@ -471,7 +472,10 @@
     # The mean keeps the parameter's own name, so the summary still has a row
     # called `df11` meaning the population mean of `df11`.
     addpar(p, effects)
-    betas <- paste0('beta_', p, '_', spec$basis)
+    # Named as the engine names the same loading (`poploading_<param>_dim<j>`),
+    # since it is the same coordinate: this row's loading on basis effect j's
+    # dimension, the carrier state of `spec$basis[j]`.
+    betas <- paste0('poploading_', p, '_dim', seq_along(spec$basis))
     for (b in betas) addpar(b)
     coefficients[[length(coefficients) + 1L]] <- data.frame(
       param = p, basis = spec$basis, coefficient = betas,
@@ -537,7 +541,7 @@
     # what removes the rotation freedom a free loading matrix would have, and
     # it keeps the parameter count at r(r+1)/2 over the basis block, which is
     # what the sd-and-correlation block had.
-    own_loadings <- paste0('L_', p, '_', seq_len(pos))
+    own_loadings <- paste0('poploading_', p, '_dim', seq_len(pos))
     # `sdscale` multiplied this effect's population sd under the previous
     # parameterisation. Its spread is a row norm of the loading matrix now, so
     # the scale goes on the row -- which scales the spread by exactly the same

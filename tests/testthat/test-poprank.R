@@ -155,7 +155,8 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
   #
   # On the augmented route there are carrier states, so a reduced rank rewrites
   # the model: basis effects move into PARS and the regressed cells reference
-  # them, giving `beta_<regressed>_<basis>` coefficients.
+  # them, giving loadings named as the engine names them,
+  # `poploading_<parameter>_dim<j>`.
   #
   # Under laplace the restriction is applied where the covariance is built, as
   # a loading matrix per level, giving `poploading_<parameter>_dim<j>`. That is
@@ -173,6 +174,7 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
         model = poprank_model(), backend = 'julia', fit = FALSE,
         intoverpop = iop, cores = 1L, ...)))
     }
+    loadings <- list()
     for (iop in c('laplace', 'none', 'augmented')) {
       # 'none' is sampling: intoverpop = FALSE with optimize = FALSE.
       route <- if (identical(iop, 'none')) list(FALSE, optimize = FALSE) else list(iop)
@@ -182,16 +184,15 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
       expect_equal(ctsem:::.ctBackendNpar(auto), 5L, info = iop)
       names <- ctsem:::.ctBackendRawParameterNames(list(model_spec = auto),
         ctsem:::.ctBackendNpar(auto))
-      if (identical(iop, 'augmented')) {
-        expect_true('beta_df11_dr11' %in% names)
-      } else {
-        # laplace and 'none': one loading matrix per level, built by one code path.
-        expect_true(any(grepl('^poploading_', names)), info = iop)
-      }
+      loadings[[iop]] <- sort(grep('^poploading_', names, value = TRUE))
+      expect_true('poploading_df11_dim1' %in% names, info = iop)
       # Either way the reduced effect keeps neither a spread of its own nor a
       # correlation, which is the whole content of the restriction.
       expect_false(any(c('popsd_df11', 'rawcor_df11__dr11') %in% names))
     }
+    # One structure under one set of names, whichever route built it.
+    expect_identical(loadings$none, loadings$laplace)
+    expect_identical(loadings$augmented, loadings$laplace)
   })
 
   # And it is NOT the default off the augmented route. On the augmented route
@@ -625,7 +626,7 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
     namesfull <- ctsem:::.ctBackendRawParameterNames(list(model_spec = full), nfull)
     namesauto <- ctsem:::.ctBackendRawParameterNames(list(model_spec = auto), nauto)
     expect_true(all(c('popsd_dr11', 'popsd_df11', 'rawcor_df11__dr11') %in% namesfull))
-    expect_true('beta_df11_dr11' %in% namesauto)
+    expect_true('poploading_df11_dim1' %in% namesauto)
     # The coordinates the profile likelihood cannot distinguish are gone.
     expect_false(any(c('popsd_df11', 'rawcor_df11__dr11') %in% namesauto))
     # And no population sd or correlation coordinate survives at all: the
@@ -634,7 +635,7 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
     # is its loading on dimension j -- and that is the parameter `popsd_dr11`
     # used to be.
     expect_false(any(grepl('^popsd_|^rawcor_', namesauto)))
-    expect_true('L_dr11_1' %in% namesauto)
+    expect_true('poploading_dr11_dim1' %in% namesauto)
     # ... and every effect population mean is still estimated, basis and
     # regressed alike.
     expect_true(all(c('dr11', 'df11') %in% namesauto))
@@ -664,7 +665,7 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
   # costs 0.575 -- it refuses to spend an unidentified parameter on noise, which
   # is the point, but it is not the "costs nothing" of the well-determined case.
   # ctsem already reports that fit properly: non-convergence, and the
-  # identifiability warning naming popsd_dr11 and beta_df11_dr11 as not
+  # identifiability warning naming popsd_dr11 and poploading_df11_dim1 as not
   # estimable with NA widths. No extra warning was added for it.
   test_that('a poprank fit reports the spreads, not the mechanism', {
     dat <- poprank_data(nsub = 100L)
@@ -689,7 +690,7 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
 
     # the mechanism is not in the way
     expect_null(s$popregression)
-    expect_false(any(grepl('^beta_', rownames(s$popmeans))))
+    expect_false(any(grepl('^poploading_', rownames(s$popmeans))))
     # ... while the parameter count still counts it
     expect_equal(length(f$estimate$raw), 5L)
     # ... and it is still reachable for anyone who wants it
@@ -784,7 +785,7 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
     expression <- !is.na(m$pars$param) & grepl('[', m$pars$param, fixed = TRUE)
     expect_false(any(m$pars$TI1_effect[expression]))
     # the coefficients themselves take no TI effect
-    beta <- m$pars$param %in% 'beta_df11_dr11'
+    beta <- m$pars$param %in% 'poploading_df11_dim1'
     expect_true(any(beta))
     expect_false(any(m$pars$TI1_effect[beta]))
   })
@@ -826,12 +827,12 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
 
     # The driven cell is the user's own PARS cell, and it is the one rewritten.
     expect_equal(spec$cells$matrix, 'PARS')
-    expect_equal(spec$coefficients$coefficient, 'beta_df11_dr11')
+    expect_equal(spec$coefficients$coefficient, 'poploading_df11_dim1')
     driven <- which(m$pars$matrix %in% spec$cells$matrix[1] &
         m$pars$row == spec$cells$row[1] & m$pars$col == spec$cells$col[1])
     expect_length(driven, 1L)
     expect_match(m$pars$param[driven],
-      sprintf('^\\(df11 \\+ beta_df11_dr11 \\* state\\[%d\\]\\)$',
+      sprintf('^\\(df11 \\+ poploading_df11_dim1 \\* state\\[%d\\]\\)$',
         spec$coefficients$state[1]))
     expect_false(m$pars$indvarying[driven])
 
@@ -840,7 +841,7 @@ if (identical(Sys.getenv('NOT_CRAN'), 'true')) {
     mean <- which(m$pars$matrix %in% 'PARS' & m$pars$param %in% 'df11')
     expect_length(mean, 1L)
     expect_false(mean %in% driven)
-    expect_length(which(m$pars$param %in% 'beta_df11_dr11'), 1L)
+    expect_length(which(m$pars$param %in% 'poploading_df11_dim1'), 1L)
   })
 
   test_that('a model with a PARS-declared random effect builds under poprank', {
