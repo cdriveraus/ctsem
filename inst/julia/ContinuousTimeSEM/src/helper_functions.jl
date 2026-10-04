@@ -191,8 +191,9 @@ function _mul_right_transpose!(
         size(C, 2) == cols && size(B, 1) == cols || throw(DimensionMismatch("B row count must match C column count"))
         size(A, 2) == inner && size(B, 2) == inner || throw(DimensionMismatch("A and B must have the same column count"))
     end
-    LinearAlgebra.BLAS.gemm!('N', 'T', one(T), A, B, zero(T), C)
-    return C
+    # Small products by hand, BLAS above the threshold: see `_ctsem_mul!`
+    # and the note at the predict step in kalman_filters.jl.
+    return _ctsem_mulNT!(C, A, B)
 end
 
 """

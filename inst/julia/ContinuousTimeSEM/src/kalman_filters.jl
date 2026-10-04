@@ -167,7 +167,13 @@ prediction is written back into `ws.state` and `ws.P_predict`.
     # for row rather than only at the final innovation-covariance Cholesky.
     _ridge_diagonal!(ws.P_update.data, _val(ws.state_dim), 1e-10)
 
-    mul!(ws.bufferQ.intermediate, ws.discrete_ca.dDRIFT, ws.P_update)
+    # Hand-written small products (`_ctsem_mul!`), not `mul!`: with a
+    # `Symmetric` operand that is OpenBLAS's `symm`, which takes a
+    # process-wide lock for its work buffer on every call, so threads filtering
+    # different subjects queued for it. Profiled on dev1, SAEM's sweep over
+    # 800 subjects at 8 threads: a third of all samples were that mutex, from
+    # this line, and the sweep gained 1.5x where equal work gained 8.5x.
+    _ctsem_mul!(ws.bufferQ.intermediate, ws.discrete_ca.dDRIFT, ws.P_update)
     _mul_right_transpose!(ws.P_predict.data, ws.bufferQ.intermediate, ws.discrete_ca.dDRIFT, ws.state_dim, ws.state_dim, ws.state_dim)
     ws.P_predict.data .+= ws.discrete_ca.dDIFFUSION
     _copy_lower_to_upper!(ws.P_predict.data, ws.state_dim)
@@ -567,9 +573,9 @@ function _ekf_masked_update_step!(ws::ContinuousEKFWorkspace, pars,
     # transpose(PHt) is simultaneously Jy[observed,:] * P_{t|t-1}, so this one
     # buffer covers both orientations of that product.
     PHt = view(ws.K, :, 1:m)
-    mul!(PHt, ws.P_predict.data, transpose(Hv))
+    _ctsem_mulNT!(PHt, ws.P_predict.data, Hv)
     Sv = view(ws.S.UL.data, 1:m, 1:m)
-    mul!(Sv, Hv, PHt)
+    _ctsem_mul!(Sv, Hv, PHt)
     Rv = view(ws.bufferΘ.out, observed, observed)
     Sv .+= Rv
     _ridge_diagonal!(ws.P_predict.data, n, -1e-10)
@@ -620,7 +626,7 @@ function _ekf_masked_update_step!(ws::ContinuousEKFWorkspace, pars,
     # State update: x_{t|t} = x_{t|t-1} + PHt * (S^{-1} * ỹ)
     row_sq = view(ws.bufferΘ.row_sq, 1:m)
     ldiv!(row_sq, factor, yv)
-    mul!(ws.state, PHt, row_sq, one(eltype(ws.state)), one(eltype(ws.state)))
+    _ctsem_mul!(ws.state, PHt, row_sq, one(eltype(ws.state)), one(eltype(ws.state)))
 
     # Covariance update (Joseph form):
     #   G_t = PHt * S^{-1}; A_t = I - G_t * Jy[observed,:]
@@ -628,18 +634,18 @@ function _ekf_masked_update_step!(ws::ContinuousEKFWorkspace, pars,
     KRv = view(ws.KR, :, 1:m)
     copyto!(KRv, PHt)
     rdiv!(KRv, factor)
-    mul!(ws.bufferQ.intermediate, KRv, Hv)
+    _ctsem_mul!(ws.bufferQ.intermediate, KRv, Hv)
     oneT = one(eltype(ws.K))
     zeroT = zero(oneT)
     @inbounds for j in 1:n, i in 1:n
         ws.bufferQ.intermediate[i, j] = (i == j ? oneT : zeroT) - ws.bufferQ.intermediate[i, j]
     end
-    mul!(ws.bufferQ.out, ws.bufferQ.intermediate, ws.P_predict.data)
-    mul!(ws.P_update.data, ws.bufferQ.out, transpose(ws.bufferQ.intermediate))
+    _ctsem_mul!(ws.bufferQ.out, ws.bufferQ.intermediate, ws.P_predict.data)
+    _ctsem_mulNT!(ws.P_update.data, ws.bufferQ.out, ws.bufferQ.intermediate)
 
     GR = view(ws.K, :, 1:m)  # PHt is no longer needed; reuse the same scratch for G_t * Theta
-    mul!(GR, KRv, Rv)
-    mul!(ws.bufferQ.out, GR, transpose(KRv))
+    _ctsem_mul!(GR, KRv, Rv)
+    _ctsem_mulNT!(ws.bufferQ.out, GR, KRv)
     ws.P_update.data .+= ws.bufferQ.out
     _copy_lower_to_upper!(ws.P_update.data, ws.state_dim)
     return factor
@@ -663,7 +669,7 @@ end
     isempty(tdpreds) && return nothing
     _matvec_mul!(ws.bufferQ.r, pars.TDPREDEFFECT, tdpreds, ws.state_dim, Val(length(tdpreds)))
     ws.state .+= ws.bufferQ.r
-    mul!(ws.bufferQ.intermediate, pars.Jtd, ws.P_predict.data)
+    _ctsem_mul!(ws.bufferQ.intermediate, pars.Jtd, ws.P_predict.data)
     _mul_right_transpose!(ws.bufferQ.out, ws.bufferQ.intermediate, pars.Jtd,
         ws.state_dim, ws.state_dim, ws.state_dim)
     copyto!(ws.P_predict.data, ws.bufferQ.out)
