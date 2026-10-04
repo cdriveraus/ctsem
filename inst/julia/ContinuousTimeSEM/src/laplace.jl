@@ -135,6 +135,11 @@ struct CTSEMLaplaceLevel
     ngroups::Int
     covmatcode::Int
     rank::Int
+    # The order this level's effects take in the Cholesky root that standardises
+    # them, `d = S u` (`_laplace_popchol`); empty for the natural order. Set by
+    # the samplers for the run (`_laplace_order_roots!`) and cleared after it,
+    # so nothing outside a sampling run sees permuted coordinates.
+    order::Vector{Int}
 
     function CTSEMLaplaceLevel(re_index, sd_index, cor_index, sd_scale, group,
         ngroups::Integer; covmatcode::Integer=0, rank::Integer=-1,
@@ -175,7 +180,7 @@ struct CTSEMLaplaceLevel
         allunique(re) || throw(ArgumentError("random-effect parameter indices must be distinct within a level"))
         isempty(grp) || (minimum(grp) >= 1 && maximum(grp) <= ngroups) ||
             throw(ArgumentError("group ids must lie in 1:ngroups"))
-        return new(re, sd, cor, load, scale, grp, Int(ngroups), Int(covmatcode), r)
+        return new(re, sd, cor, load, scale, grp, Int(ngroups), Int(covmatcode), r, Int[])
     end
 end
 
@@ -711,14 +716,10 @@ function _laplace_popchol(values::AbstractVector{T}, level::CTSEMLaplaceLevel) w
     # derivatives -- and a cache whose key comparison is `!=` on Duals compares
     # values and not partials. One construction per outer evaluation per level
     # is not a path worth caching anyway.
-    root = _ctsem_population_root()
-    if root === :expm && _effective_covmatcode(level.covmatcode) == 2
-        return _laplace_expm_root(base, Val(k))
-    end
     buffer = _make_square_buffer(T, k)
     _sdcovsqrt2cov_uncached!(buffer, base, level.covmatcode, Val(k))
-    order = _ctsem_population_root_order()
-    if root === :ordered && length(order) == k
+    order = level.order
+    if length(order) == k
         Sigma = Matrix(Symmetric(buffer.out, :L))
         Lp = cholesky(Symmetric(Sigma[order, order])).L
         S = similar(Sigma)
@@ -728,72 +729,123 @@ function _laplace_popchol(values::AbstractVector{T}, level::CTSEMLaplaceLevel) w
     return Matrix(cholesky(Symmetric(buffer.out, :L)).L)
 end
 
-# Which square root of a full-rank level's population covariance the effects
-# are standardised by, `d = S u`. Every root gives the same population
-# distribution, the same Laplace objective (det(I + S'HS) = det(I + H Sigma))
-# and the same joint posterior over the deviations, with no Jacobian between
-# them (|det S| = det(Sigma)^(1/2) for all); what changes is which coordinates a
-# sampler holds fixed when it moves theta given u. EXPERIMENTAL, read from the
-# environment so a run can choose without an API:
-#   CTSEM_POPROOT = cholesky (default) | expm | ordered
-#   CTSEM_POPROOT_ORDER = "1,5,6,2,4,3"  (ordered: the effects, strongest first)
-# `expm` applies to covmattransform 'z' levels and is the Cholesky elsewhere.
-# Read once, by `__init__` (`_ctsem_read_population_root!`): this runs inside
-# every gradient evaluation.
-const _CTSEM_POPROOT = Ref(:cholesky)
-const _CTSEM_POPROOT_ORDER = Ref(Int[])
-_ctsem_population_root() = _CTSEM_POPROOT[]
-_ctsem_population_root_order() = _CTSEM_POPROOT_ORDER[]
-function _ctsem_read_population_root!()
-    _CTSEM_POPROOT[] = Symbol(get(ENV, "CTSEM_POPROOT", "cholesky"))
-    text = strip(get(ENV, "CTSEM_POPROOT_ORDER", ""))
-    _CTSEM_POPROOT_ORDER[] = isempty(text) ? Int[] : parse.(Int, split(text, ","))
-    return _CTSEM_POPROOT[]
+# Which square root of a full-rank level's covariance standardises its effects,
+# `d = S u`, is a choice: every root gives the same population distribution, the
+# same Laplace objective (det(I + S'HS) = det(I + H Sigma)) and the same joint
+# posterior over the deviations, with no Jacobian between them. What it decides
+# is which deviations move when a sampler moves theta with `u` held. A Cholesky
+# writes each correlation into the later effect's row, so the order matters:
+# with a strongly determined effect after a weakly determined one, moving their
+# correlation shifts the strong effect's deviations, which the data pin -- on
+# bigre (CINT effects 0.9 determined, DRIFT 0.1-0.25) every chain kept its own
+# correlations, R-hat about 2. Strongest first puts each mixed correlation in
+# the weaker effect's row; there, R-hat 1.11 at the same draws and three times
+# the effective draws a second. The equivariant root of covmattransform 'z',
+# `D rownormalise(exp(A/2))`, was tried as well and was no better than the
+# Cholesky on the 20-model check (review/HANDOFF-sampler-checks-2026-10-03.md).
+
+"""
+    _laplace_determined_shares(laplace, theta)
+
+Per full-rank level, the share of each effect's variation the data determine,
+averaged over the level's units: `1 - Var(d_p | data) / Var(d_p)` on the
+natural deviations, from each unit's curvature at its mode -- the quantity the
+identifiability report's `determined` column gives. On the deviations, so it
+does not depend on the root the curvature was formed in. Reduced-rank levels
+are left at zero.
+"""
+function _laplace_determined_shares(laplace::CTSEMLaplaceObjective,
+    theta::AbstractVector)
+    theta = collect(Float64, theta)
+    spec = laplace.spec
+    _laplace_ensure_pool!(laplace)
+    Ls = _laplace_popchols(theta, spec)
+    for U in eachindex(laplace.units.members)
+        _laplace_solve_unit_mode!(laplace, U, theta, Ls)
+    end
+    totals = [zeros(nrandomeffects(lv)) for lv in spec.levels]
+    counts = [zeros(Int, nrandomeffects(lv)) for lv in spec.levels]
+    for U in eachindex(laplace.units.members)
+        blocks = laplace.units.blocks[U]
+        isempty(blocks) && continue
+        Cdiag = try
+            M = _laplace_unit_curvature(laplace, U, theta, Ls, laplace.modes[U])
+            fac = _laplace_factor_repaired!(M, blocks)
+            fac.ok ? first(_laplace_selected_inverse(fac.factors, fac.coupling,
+                blocks)) : nothing
+        catch err
+            _ctsem_must_propagate(err) && rethrow()
+            nothing
+        end
+        Cdiag === nothing && continue
+        for (b, blk) in enumerate(blocks)
+            l = blk.level
+            isreducedrank(spec.levels[l]) && continue
+            L = Ls[l]
+            posterior = L * Matrix(Cdiag[b]) * transpose(L)
+            for p in axes(L, 1)
+                prior = sum(abs2, view(L, p, :))
+                (prior > 0 && isfinite(posterior[p, p])) || continue
+                totals[l][p] += 1 - posterior[p, p] / prior
+                counts[l][p] += 1
+            end
+        end
+    end
+    return [totals[l] ./ max.(counts[l], 1) for l in eachindex(spec.levels)]
 end
 
 """
-    _laplace_expm_root(base, Val(k))
+    _laplace_order_roots!(laplace, theta)
 
-The square root of covmattransform 'z''s covariance `D normalise(exp(A)) D`
-that the construction itself suggests: `S = D rownormalise(exp(A/2))`, since
-`exp(A/2)` is symmetric with `exp(A/2) exp(A/2)' = exp(A)` and the row norms
-are `sqrt(exp(A)_ii)`. Permutation equivariant, as the construction is: reorder
-the effects and `S` reorders with them, so no effect's deviations carry another
-effect's correlations because of where it sits. `base` holds the scales on its
-diagonal and the correlation coordinates below it, as `sdcovexpm2cov!` reads
-them; `A` is shifted by its row-sum bound as `_fill_hollow!` shifts it, which
-the row normalisation divides back out.
+Order each full-rank level's effects strongest first by
+`_laplace_determined_shares` at `theta`, the order `_laplace_popchol` then takes
+its Cholesky root in. The stored modes are reset, since their coordinates
+change. Returns the orders.
 """
-function _laplace_expm_root(base::AbstractMatrix{T}, ::Val{k}) where {T,k}
-    A = zeros(T, k, k)
-    @inbounds for j in 1:k, i in 1:k
-        i == j && continue
-        A[i, j] = i > j ? base[i, j] : base[j, i]
+function _laplace_order_roots!(laplace::CTSEMLaplaceObjective, theta::AbstractVector)
+    _laplace_clear_root_orders!(laplace)
+    shares = _laplace_determined_shares(laplace, theta)
+    for (l, level) in enumerate(laplace.spec.levels)
+        k = nrandomeffects(level)
+        (k < 2 || isreducedrank(level)) && continue
+        order = sortperm(shares[l]; rev=true)
+        resize!(level.order, k)
+        copyto!(level.order, order)
     end
-    shift = zero(T)
-    @inbounds for i in 1:k
-        rowsum = zero(T)
-        for j in 1:k
-            rowsum += abs(A[i, j])
-        end
-        rowsum > shift && (shift = rowsum)
+    for U in eachindex(laplace.modes)
+        fill!(laplace.modes[U], 0.0)
     end
-    @inbounds for i in 1:k
-        A[i, i] -= shift
+    return [copy(level.order) for level in laplace.spec.levels]
+end
+
+"""Every level back to the natural order, and the stored modes reset."""
+function _laplace_clear_root_orders!(laplace::CTSEMLaplaceObjective)
+    for level in laplace.spec.levels
+        empty!(level.order)
     end
-    E = _ctsem_expm(A ./ 2)
-    S = similar(E)
-    @inbounds for i in 1:k
-        norm2 = zero(T)
-        for j in 1:k
-            norm2 += E[i, j]^2
-        end
-        scale = base[i, i] / sqrt(norm2)
-        for j in 1:k
-            S[i, j] = scale * E[i, j]
-        end
+    for U in eachindex(laplace.modes)
+        fill!(laplace.modes[U], 0.0)
     end
-    return S
+    return laplace
+end
+
+"""
+    _with_root_orders(f, laplace, theta, natural)
+
+`f()` with each level's root ordered by `_laplace_order_roots!` for the call,
+the natural order restored afterwards whatever happens. `natural = true` -- a
+caller that supplied its own starts or SAEM state, expressed in the natural
+order -- runs `f()` unordered.
+"""
+function _with_root_orders(f, laplace::CTSEMLaplaceObjective, theta::AbstractVector,
+    natural::Bool)
+    natural && return f()
+    _laplace_order_roots!(laplace, theta)
+    try
+        return f()
+    finally
+        _laplace_clear_root_orders!(laplace)
+    end
 end
 
 """

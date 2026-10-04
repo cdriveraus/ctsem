@@ -1761,7 +1761,7 @@ The result has `ctsem_sample`'s fields, with `sampler = "saem"`; `depth`,
 is NaN, since an energy taken at a different `u` every iteration does not
 measure what E-BFMI asks.
 """
-function ctsem_saem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
+function _ctsem_saem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     npar::Integer=length(values), nchains::Integer=4, nwarmup::Integer=500,
     ndraws::Integer=500, maxdepth::Integer=10, target_accept::Real=0.8,
     maxdelta::Real=1000.0, seed::Integer=20260828, init_scale::Real=1.0,
@@ -1926,6 +1926,24 @@ function ctsem_saem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVecto
         target_trace=run.trace,
         placement=_saem_placement_summary(placement),
     )
+end
+
+"""
+    ctsem_saem_sample(laplace, values; kwargs...)
+
+`_ctsem_saem_sample` (documented there) with each full-rank level's effects
+standardised in a Cholesky ordered strongest-determined first for the run
+(`_with_root_orders`). A caller's own `starts` or `state` are in the natural
+order and keep it.
+"""
+function ctsem_saem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
+    kwargs...)
+    npar = Int(get(kwargs, :npar, length(values)))
+    natural = get(kwargs, :starts, nothing) !== nothing ||
+        get(kwargs, :state, nothing) !== nothing
+    return _with_root_orders(laplace, collect(Float64, values)[1:npar], natural) do
+        _ctsem_saem_sample(laplace, values; kwargs...)
+    end
 end
 
 """What a result reports of an SAEM placement: where it put the sampler, and

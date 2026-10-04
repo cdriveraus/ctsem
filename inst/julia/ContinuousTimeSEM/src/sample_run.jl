@@ -835,7 +835,7 @@ parameter, divergences, tree depths, step sizes and E-BFMI.
 when warmup is short: it is already a good metric, and re-estimating it from a
 few hundred draws can be worse than leaving it alone.
 """
-function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
+function _ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     npar::Integer=length(values), nchains::Integer=4, nwarmup::Integer=500,
     ndraws::Integer=500, maxdepth::Integer=10, target_accept::Real=0.8,
     maxdelta::Real=1000.0, seed::Integer=20260828, init_scale::Real=1.0,
@@ -986,6 +986,23 @@ function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
         target_trace=run.trace,
         placement=_saem_placement_summary(placement),
     )
+end
+
+"""
+    ctsem_sample(laplace, values; kwargs...)
+
+`_ctsem_sample` (documented there) with each full-rank level's effects
+standardised in a Cholesky ordered strongest-determined first for the run
+(`_with_root_orders`). A caller's own `starts` are in the natural order and keep
+it.
+"""
+function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
+    kwargs...)
+    npar = Int(get(kwargs, :npar, length(values)))
+    natural = get(kwargs, :starts, nothing) !== nothing
+    return _with_root_orders(laplace, collect(Float64, values)[1:npar], natural) do
+        _ctsem_sample(laplace, values; kwargs...)
+    end
 end
 
 """
