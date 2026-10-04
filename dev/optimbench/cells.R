@@ -608,12 +608,17 @@ cov_data <- function(m, seed, nsub = 300L, cintsd = 0.3) {
   d
 }
 
-# ---- bigre: a larger, well-identified multilevel model ----------------------
+# ---- bigre: a larger multilevel model, mixed identification ---------------
 # Two latents, three indicators, six correlated random effects (both CINTs,
 # both T0MEANS, both DRIFT diagonals), 200 subjects at 20 irregular,
 # continuous observation times, simulated by exact discretisation. Six
 # effects per subject put an exact quadrature reference out of reach, so it is
 # scored by the Laplace objective.
+# Not well identified throughout: the data determine about 0.9 of each subject's
+# T0MEANS and CINT effects but only 0.10 and 0.25 of its DRIFT effects (the
+# random-effect table of fit$identifiability), so the two DRIFT sds are small and
+# their nine correlations near the prior -- a funnel that neither sampler mixes
+# in a default run (review/HANDOFF-sampler-checks-2026-10-03.md).
 
 bigre_model <- function() {
   m <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 2,
