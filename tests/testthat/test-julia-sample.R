@@ -381,10 +381,14 @@ test_that("chains sampled in this session run one after another, whatever the po
   # worker had two chains writing the same workspaces at once, and the draws
   # came out order-1 different from the same seeds.
   invisible(ctJuliaEvaluate(fit))
+  # placement = 'fit': SAEM's placement draws every chain's start from one
+  # stream seeded by the run, so under it chain 2 of seed s is not the chain
+  # of seed s + 1 and this identity cannot hold. Around the fit, each chain's
+  # stream is its own.
   draws <- function(chains, seed) suppressWarnings(suppressMessages(
     ctFitUncertainty(fit, uncertainty = "sample", cores = 2,
       control = list(chains = chains, warmup = 0, draws = 3, seed = seed,
-        processes = FALSE))))$estimate$rawposterior
+        processes = FALSE, placement = "fit"))))$estimate$rawposterior
   both <- draws(2L, 777L)
   # Chain `c` of a run seeded `s` draws the stream `s + c`, so the second
   # chain of the pair is the only chain of a run seeded 778.

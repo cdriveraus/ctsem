@@ -362,6 +362,34 @@ _saem_twolevel() = ctsem_laplace_objective(_saem_prior_objective(9);
     end
 end
 
+# The samplers standardise each level's effects in a Cholesky ordered
+# strongest-determined first (`_with_root_orders`). Any order gives the same
+# covariance, Laplace value and gradient -- det(I + S'HS) = det(I + H Sigma) --
+# and the natural order is restored after a run.
+@testset "ordered roots: same covariance, value and gradient; cleared after a run" begin
+    laplace = _saem_twolevel()
+    values = [0.2, -0.1, 0.3, -0.2, 0.05, -0.3, -0.15, 0.4, -0.25]
+    base = ctsem_laplace_evaluate(laplace, values; gradient=true)
+    cov0 = [L * transpose(L) for L in _S._laplace_popchols(values, laplace.spec)]
+    orders = _S._laplace_order_roots!(laplace, values)
+    shares = _S._laplace_determined_shares(laplace, values)
+    @test all(0 .<= shares[1] .<= 1)
+    @test orders[1] == sortperm(shares[1]; rev=true)
+    @test isempty(orders[2])                     # one effect: nothing to order
+    copyto!(laplace.spec.levels[1].order, [2, 1])  # a permuted root, whatever the shares
+    Ls = _S._laplace_popchols(values, laplace.spec)
+    @test !istril(Ls[1])
+    @test Ls[1] * transpose(Ls[1]) ≈ cov0[1]
+    ev = ctsem_laplace_evaluate(laplace, values; gradient=true)
+    @test ev.value ≈ base.value rtol = 1e-8
+    @test ev.gradient ≈ base.gradient rtol = 1e-6
+    _S._laplace_clear_root_orders!(laplace)
+    @test all(isempty(level.order) for level in laplace.spec.levels)
+    s = ctsem_saem_sample(laplace, values; nchains=2, nwarmup=30, ndraws=30, seed=3)
+    @test all(isfinite, s.draws)
+    @test all(isempty(level.order) for level in laplace.spec.levels)
+end
+
 @testset "SAEM sampler: the joint posterior NUTS draws ($name)" for (name, mk, values) in (
         ("rank one", () -> _saem_reduced()[1], _saem_reduced()[2]),
         ("two full-rank levels", _saem_twolevel,
