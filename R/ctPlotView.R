@@ -40,7 +40,6 @@
 # caption what it did, so there is nothing for a caller to have to manage.
 
 
-#' @noRd
 #' View limits for one variable, and how much of `values` falls outside them.
 #'
 #' `values` are the model quantities that may be extreme; `keep` are the
@@ -48,6 +47,7 @@
 #' limits when the guard is off, when there is nothing to cut, or when cutting
 #' would not materially change the range -- callers treat that as "plot as
 #' before" and do nothing.
+#' @noRd
 .ctPlotView <- function(values, keep = numeric(0), trim = c(.005, .995),
   slack = 5){
   none <- list(limits = NULL, nout = 0L, max = NA_real_, n = 0L)
@@ -67,7 +67,6 @@
 }
 
 
-#' @noRd
 #' `.ctPlotView` over each group of a long table, returning one row per group
 #' the guard engaged on, and NULL when it engaged on none.
 #'
@@ -77,6 +76,7 @@
 #' what has to stay visible: the observed data where there is any, and
 #' otherwise the central estimate, since a band far wider than its own median
 #' is exactly the case where the median is what the reader needs to see.
+#' @noRd
 .ctPlotViews <- function(dt, valuecols = 'value', refcol = 'obsValue',
   by = 'variable'){
   if(!nrow(dt) || !by %in% names(dt)) return(NULL)
@@ -97,10 +97,10 @@
 }
 
 
-#' @noRd
 #' The sentence a panel adds to its caption when its view was cut: which
 #' variable, how much of the model is off the axis, how far it reaches, and how
 #' to turn the cut off.
+#' @noRd
 .ctPlotViewNote <- function(views){
   if(is.null(views) || !nrow(views)) return(NULL)
   num <- function(x) format(signif(x, 3), big.mark = ',', scientific = FALSE,
@@ -117,10 +117,10 @@
 }
 
 
-#' @noRd
 #' Clamp the named columns of `dt` into each variable's view. For a band or a
 #' line, where dropping the row would take a reference value with it and the
 #' honest picture is a band drawn running off the edge.
+#' @noRd
 .ctPlotViewClamp <- function(dt, views, cols, by = 'variable'){
   if(is.null(views) || !nrow(views) || !by %in% names(dt)) return(dt)
   cols <- intersect(cols, names(dt))
@@ -136,10 +136,10 @@
 }
 
 
-#' @noRd
 #' Drop rows of `dt` whose `valuecol` lies outside its variable's view. For a
 #' density, which has to be estimated on the values it is drawn over -- clamping
 #' would pile the tail onto the boundary as a spike the model does not have.
+#' @noRd
 .ctPlotViewFilter <- function(dt, views, valuecol = 'value', by = 'variable'){
   if(is.null(views) || !nrow(views) || !valuecol %in% names(dt) ||
       !by %in% names(dt)) return(dt)

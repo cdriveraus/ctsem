@@ -758,18 +758,21 @@ test_that("each Laplace filter consumer applies a subject's TI effects once", {
   states <- ctsem:::.ctBackendGenerateStates(fit, raw, numeric(nz), zeros)$Y
   expect_equal(bysubject(states), firstmean(atmode), tolerance = 1e-6)
   expect_lt(spread(states), 1e-8)
-  # One effect per unit, in unit order, which is the sampler's layout.
+  # One effect per unit, in unit order. Generation takes natural deviations,
+  # which for a single effect are the standardised effect times its sd.
+  module <- ctsem:::.ctJuliaModule(spec$project)
   units <- ctsem:::.ctFitRandomEffectLevels(fit)[[1L]]$units
   effects <- seq(-1.5, 1.2, length.out = max(units))
+  sd <- sqrt(as.numeric(ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_popcov(
+    ctsem:::.ctJuliaObjective(fit), ctsem:::.ctJuliaNumericVector(raw), 1L))))
   given <- vapply(ids, function(i) .kalman_ti_reference(fit, data, i,
     u = effects[units[i]])$mean, numeric(1))
   expect_equal(bysubject(ctsem:::.ctBackendGenerate(fit, raw, zeros,
-    effects = effects)$Y), given, tolerance = 1e-8)
+    effects = sd * effects)$Y), given, tolerance = 1e-8)
   expect_equal(bysubject(ctsem:::.ctBackendGenerateStates(fit, raw, numeric(nz),
-    zeros, effects = effects)$Y), given, tolerance = 1e-8)
+    zeros, effects = sd * effects)$Y), given, tolerance = 1e-8)
 
   # The effect draws behind leave-one-row-out, concentrated at the modes.
-  module <- ctsem:::.ctJuliaModule(spec$project)
   draws <- ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_effect_draws(
     ctsem:::.ctJuliaObjective(fit), ctsem:::.ctJuliaNumericVector(raw), 1L,
     seed = 1L, scale = 1e-9))

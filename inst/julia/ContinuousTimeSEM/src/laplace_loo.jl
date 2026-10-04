@@ -148,10 +148,13 @@ function ctsem_laplace_effect_draws(laplace::CTSEMLaplaceObjective,
     end
     # Sized from the first trace rather than from the subjects' data, so the
     # rows are exactly the ones the filter reports.
+    # The draws are coordinates u; the filter takes natural deviations S u.
     llrow = Matrix{Float64}(undef, 0, 0)
+    starts, ndev = _laplace_deviation_offsets(laplace)
+    deviations = zeros(Float64, ndev)
     for s in 1:ndraws
-        persubject = _laplace_filter_values(laplace, theta;
-            effects=view(effects, :, s))
+        _laplace_deviations!(deviations, laplace, Ls, view(effects, :, s), starts)
+        persubject = _laplace_filter_values(laplace, theta; effects=deviations)
         trace = ctsem_kalman(laplace.objective, persubject; subject_matrices=false,
             fields=["llrow"])
         s == 1 && (llrow = fill(NaN, length(trace.llrow), ndraws))
