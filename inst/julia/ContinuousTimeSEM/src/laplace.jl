@@ -711,9 +711,89 @@ function _laplace_popchol(values::AbstractVector{T}, level::CTSEMLaplaceLevel) w
     # derivatives -- and a cache whose key comparison is `!=` on Duals compares
     # values and not partials. One construction per outer evaluation per level
     # is not a path worth caching anyway.
+    root = _ctsem_population_root()
+    if root === :expm && _effective_covmatcode(level.covmatcode) == 2
+        return _laplace_expm_root(base, Val(k))
+    end
     buffer = _make_square_buffer(T, k)
     _sdcovsqrt2cov_uncached!(buffer, base, level.covmatcode, Val(k))
+    order = _ctsem_population_root_order()
+    if root === :ordered && length(order) == k
+        Sigma = Matrix(Symmetric(buffer.out, :L))
+        Lp = cholesky(Symmetric(Sigma[order, order])).L
+        S = similar(Sigma)
+        S[order, :] = Lp
+        return S
+    end
     return Matrix(cholesky(Symmetric(buffer.out, :L)).L)
+end
+
+# Which square root of a full-rank level's population covariance the effects
+# are standardised by, `d = S u`. Every root gives the same population
+# distribution, the same Laplace objective (det(I + S'HS) = det(I + H Sigma))
+# and the same joint posterior over the deviations, with no Jacobian between
+# them (|det S| = det(Sigma)^(1/2) for all); what changes is which coordinates a
+# sampler holds fixed when it moves theta given u. EXPERIMENTAL, read from the
+# environment so a run can choose without an API:
+#   CTSEM_POPROOT = cholesky (default) | expm | ordered
+#   CTSEM_POPROOT_ORDER = "1,5,6,2,4,3"  (ordered: the effects, strongest first)
+# `expm` applies to covmattransform 'z' levels and is the Cholesky elsewhere.
+# Read once, by `__init__` (`_ctsem_read_population_root!`): this runs inside
+# every gradient evaluation.
+const _CTSEM_POPROOT = Ref(:cholesky)
+const _CTSEM_POPROOT_ORDER = Ref(Int[])
+_ctsem_population_root() = _CTSEM_POPROOT[]
+_ctsem_population_root_order() = _CTSEM_POPROOT_ORDER[]
+function _ctsem_read_population_root!()
+    _CTSEM_POPROOT[] = Symbol(get(ENV, "CTSEM_POPROOT", "cholesky"))
+    text = strip(get(ENV, "CTSEM_POPROOT_ORDER", ""))
+    _CTSEM_POPROOT_ORDER[] = isempty(text) ? Int[] : parse.(Int, split(text, ","))
+    return _CTSEM_POPROOT[]
+end
+
+"""
+    _laplace_expm_root(base, Val(k))
+
+The square root of covmattransform 'z''s covariance `D normalise(exp(A)) D`
+that the construction itself suggests: `S = D rownormalise(exp(A/2))`, since
+`exp(A/2)` is symmetric with `exp(A/2) exp(A/2)' = exp(A)` and the row norms
+are `sqrt(exp(A)_ii)`. Permutation equivariant, as the construction is: reorder
+the effects and `S` reorders with them, so no effect's deviations carry another
+effect's correlations because of where it sits. `base` holds the scales on its
+diagonal and the correlation coordinates below it, as `sdcovexpm2cov!` reads
+them; `A` is shifted by its row-sum bound as `_fill_hollow!` shifts it, which
+the row normalisation divides back out.
+"""
+function _laplace_expm_root(base::AbstractMatrix{T}, ::Val{k}) where {T,k}
+    A = zeros(T, k, k)
+    @inbounds for j in 1:k, i in 1:k
+        i == j && continue
+        A[i, j] = i > j ? base[i, j] : base[j, i]
+    end
+    shift = zero(T)
+    @inbounds for i in 1:k
+        rowsum = zero(T)
+        for j in 1:k
+            rowsum += abs(A[i, j])
+        end
+        rowsum > shift && (shift = rowsum)
+    end
+    @inbounds for i in 1:k
+        A[i, i] -= shift
+    end
+    E = _ctsem_expm(A ./ 2)
+    S = similar(E)
+    @inbounds for i in 1:k
+        norm2 = zero(T)
+        for j in 1:k
+            norm2 += E[i, j]^2
+        end
+        scale = base[i, i] / sqrt(norm2)
+        for j in 1:k
+            S[i, j] = scale * E[i, j]
+        end
+    end
+    return S
 end
 
 """

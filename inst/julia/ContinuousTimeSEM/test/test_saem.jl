@@ -362,6 +362,48 @@ _saem_twolevel() = ctsem_laplace_objective(_saem_prior_objective(9);
     end
 end
 
+# The population covariance's square root (`_laplace_popchol`, CTSEM_POPROOT):
+# Cholesky, the 'z' construction's own `D rownormalise(exp(A/2))`, or a Cholesky
+# in a chosen order. Each must give the same covariance, the same Laplace value
+# and gradient -- det(I + S'HS) = det(I + H Sigma) for any S with SS' = Sigma --
+# and a SAEM sampler that runs; only the coordinates `u` differ.
+_saem_twolevel_z() = ctsem_laplace_objective(_saem_prior_objective(9);
+    re_index=[1, 2, 5], sd_index=[6, 7, 9], cor_index=[8], sd_scale=[1.0, 1.0, 1.0],
+    level_nre=[2, 1], group=vcat(1:6, _TWOLEVEL_GROUP), level_ngroups=[6, 3],
+    level_covmatcode=[2, 2])
+
+@testset "population roots: same covariance, Laplace value and gradient" begin
+    values = [0.2, -0.1, 0.3, -0.2, 0.05, -0.3, -0.15, 0.4, -0.25]
+    previous = (_S._CTSEM_POPROOT[], copy(_S._CTSEM_POPROOT_ORDER[]))
+    out = Dict{Symbol,Any}()
+    try
+        for (root, order) in ((:cholesky, Int[]), (:expm, Int[]), (:ordered, [2, 1]))
+            _S._CTSEM_POPROOT[] = root
+            _S._CTSEM_POPROOT_ORDER[] = order
+            laplace = _saem_twolevel_z()
+            Ls = _S._laplace_popchols(values, laplace.spec)
+            ev = ctsem_laplace_evaluate(laplace, values; gradient=true)
+            s = ctsem_saem_sample(_saem_twolevel_z(), values; nchains=2, nwarmup=50,
+                ndraws=50, seed=3)
+            out[root] = (cov=[L * transpose(L) for L in Ls], L1=Ls[1], value=ev.value,
+                gradient=ev.gradient, draws=s.draws)
+        end
+    finally
+        _S._CTSEM_POPROOT[] = previous[1]
+        _S._CTSEM_POPROOT_ORDER[] = previous[2]
+    end
+    # The roots are different matrices ...
+    @test !isapprox(out[:expm].L1, out[:cholesky].L1; rtol=1e-3)
+    @test !isapprox(out[:ordered].L1, out[:cholesky].L1; rtol=1e-3)
+    for root in (:expm, :ordered)
+        # ... of the same covariance, giving the same Laplace objective.
+        @test all(isapprox.(out[root].cov, out[:cholesky].cov; rtol=1e-10))
+        @test out[root].value ≈ out[:cholesky].value rtol = 1e-8
+        @test out[root].gradient ≈ out[:cholesky].gradient rtol = 1e-6
+        @test all(isfinite, out[root].draws)
+    end
+end
+
 @testset "SAEM sampler: the joint posterior NUTS draws ($name)" for (name, mk, values) in (
         ("rank one", () -> _saem_reduced()[1], _saem_reduced()[2]),
         ("two full-rank levels", _saem_twolevel,

@@ -151,6 +151,7 @@ function __init__()
     ctsem_laplace_diag_reset!()
     _CTSEM_LAPLACE_FALLBACKS[] = 0
     _CTSEM_BLAS_START[] = LinearAlgebra.BLAS.get_num_threads()
+    _ctsem_read_population_root!()
     return nothing
 end
 

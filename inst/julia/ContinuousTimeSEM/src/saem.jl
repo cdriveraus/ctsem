@@ -548,17 +548,19 @@ function _saem_centre_scale!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
         X = L \ D2
         return Matrix(Symmetric(transpose(L \ transpose(X))))
     end
+    # Any square root of the covariance (`_laplace_popchol`), so the log
+    # determinant is taken whole rather than off a triangular diagonal.
     function objective(theta)
-        L = LowerTriangular(_laplace_popchol(theta, level))
+        L = _laplace_popchol(theta, level)
         phi = theta[positions]
-        return -G * sum(log, diag(L)) - tr(second_moment(L)) / 2 - sum(Dp .* phi .^ 2) / 2
+        return -G * first(logabsdet(L)) - tr(second_moment(L)) / 2 - sum(Dp .* phi .^ 2) / 2
     end
     theta = copy(st.theta)
     q = objective(theta)
     np = length(positions)
     moved = false
     for _ in 1:25
-        L = LowerTriangular(_laplace_popchol(theta, level))
+        L = _laplace_popchol(theta, level)
         dL = _laplace_level_chol_derivatives(theta, spec, l)
         Sw = second_moment(L)
         M = [Matrix(L \ dL[t]) for t in 1:np]
@@ -588,7 +590,7 @@ function _saem_centre_scale!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
     moved || return nothing
     st.theta[positions] .= theta[positions]
     L1 = _laplace_popchol(st.theta, level)
-    return Matrix(LowerTriangular(L1) \ L0)
+    return Matrix(L1 \ L0)
 end
 
 """
@@ -1320,7 +1322,7 @@ function _saem_sample_scale!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
     sites = _saem_level_sites(laplace, l)
     G = length(sites)
     (isempty(positions) || G == 0) && return NaN
-    L0 = LowerTriangular(_laplace_popchol(st.theta, level))
+    L0 = _laplace_popchol(st.theta, level)
     k = nrandomeffects(level)
     d = zeros(k, G)
     for (j, (U, b)) in enumerate(sites)
@@ -1328,10 +1330,12 @@ function _saem_sample_scale!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
     end
     Dp = prec[positions]
     function f(theta)
-        L = LowerTriangular(_laplace_popchol(theta, level))
-        any(x -> !(x > 0), diag(L)) && return -Inf
+        L = _laplace_popchol(theta, level)
+        all(isfinite, L) || return -Inf
+        logdet, sign = logabsdet(L)
+        (sign == 0 || !isfinite(logdet)) && return -Inf
         phi = theta[positions]
-        return -G * sum(log, diag(L)) - sum(abs2, L \ d) / 2 - sum(Dp .* phi .^ 2) / 2
+        return -G * logdet - sum(abs2, L \ d) / 2 - sum(Dp .* phi .^ 2) / 2
     end
     trial = copy(st.theta)
     trial[positions] .+= scale .* (Rf \ randn(rng, length(positions)))
@@ -1340,7 +1344,7 @@ function _saem_sample_scale!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
     alpha = isfinite(f1) ? min(1.0, exp(f1 - f0)) : 0.0
     if rand(rng) < alpha
         st.theta .= trial
-        L1 = LowerTriangular(_laplace_popchol(st.theta, level))
+        L1 = _laplace_popchol(st.theta, level)
         for (j, (U, b)) in enumerate(sites)
             st.u[U][1][_saem_cols(laplace, U, b)] = L1 \ d[:, j]
         end
@@ -1413,7 +1417,7 @@ function _saem_scale_fisher(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
     positions = _laplace_level_positions(spec, l)
     G = length(_saem_level_sites(laplace, l))
     np = length(positions)
-    L = LowerTriangular(_laplace_popchol(st.theta, spec.levels[l]))
+    L = _laplace_popchol(st.theta, spec.levels[l])
     dL = _laplace_level_chol_derivatives(st.theta, spec, l)
     M = [Matrix(L \ dL[t]) for t in 1:np]
     F = zeros(np, np)
