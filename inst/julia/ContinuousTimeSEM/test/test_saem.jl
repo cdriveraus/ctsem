@@ -338,6 +338,30 @@ _saem_twolevel() = ctsem_laplace_objective(_saem_prior_objective(9);
     re_index=[1, 2, 5], sd_index=[6, 7, 9], cor_index=[8], sd_scale=[1.0, 1.0, 1.0],
     level_nre=[2, 1], group=vcat(1:6, _TWOLEVEL_GROUP), level_ngroups=[6, 3])
 
+# Natural deviations (`d = S u`, what a sampled fit reports and generation takes)
+# must rebuild exactly the subject parameters the sampler's own coordinates
+# give -- nested, and on a reduced-rank level whose deviations are wider than
+# its coordinates.
+@testset "deviations rebuild the parameters the effects give" begin
+    for (laplace, values) in ((_saem_twolevel(),
+            [0.2, -0.1, 0.3, -0.2, 0.05, -0.3, -0.15, 0.4, -0.25]), _saem_reduced())
+        theta = collect(Float64, values)
+        Ls = _S._laplace_popchols(theta, laplace.spec)
+        units = laplace.units
+        effects = randn(Random.Xoshiro(4), sum(units.dims))
+        starts, ndev = _S._laplace_deviation_offsets(laplace)
+        dev = _S._laplace_deviations!(zeros(ndev), laplace, Ls, effects, starts)
+        ustarts = cumsum(units.dims) .- units.dims
+        fromu = _S._laplace_shifted_values(laplace, theta, Ls, U ->
+            effects[(ustarts[U] + 1):(ustarts[U] + units.dims[U])])
+        fromd = _S._laplace_shifted_values_from_deviations(laplace, theta, dev)
+        @test fromd ≈ fromu
+        layout = _S.ctsem_laplace_deviation_layout(laplace)
+        @test length(layout.position) == ndev
+        @test all(>(0), layout.within) && all(>(0), layout.unit)
+    end
+end
+
 @testset "SAEM sampler: the joint posterior NUTS draws ($name)" for (name, mk, values) in (
         ("rank one", () -> _saem_reduced()[1], _saem_reduced()[2]),
         ("two full-rank levels", _saem_twolevel,
@@ -369,13 +393,16 @@ end
     again = ctsem_saem_sample(_saem_reduced()[1], mode; nchains=2, nwarmup=100,
         ndraws=40, min_ess=150, max_draws=600, seed=11)
     @test again.draws == s.draws
-    # The effects' summaries are over the same draws, in the joint layout.
+    # The effects' summaries are over the same draws, as natural deviations:
+    # wider than the rank-one coordinates, one per parameter the level moves.
     sampler = ctsem_sampler(_saem_reduced()[1], length(mode))
-    @test length(s.effect_mean) == sampler.ndim - sampler.npar
+    ndev = last(_S._laplace_deviation_offsets(_saem_reduced()[1]))
+    @test ndev == 6 * 3 && ndev > sampler.ndim - sampler.npar
+    @test length(s.effect_mean) == ndev
     @test all(isfinite, s.effect_sd)
     saved = ctsem_saem_sample(_saem_reduced()[1], mode; nchains=2, nwarmup=50,
         ndraws=30, seed=11, save_effects=true)
-    @test size(saved.draws, 1) == sampler.ndim
+    @test size(saved.draws, 1) == sampler.npar + ndev
 end
 
 # Every sampler takes its chains' starts from a caller -- one column a chain --

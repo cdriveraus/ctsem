@@ -89,7 +89,10 @@ together -- \code{julia}-only, see \code{fit} above. Its settings are
 entries of \code{control} rather than \code{draws}/\code{finishsamples},
 which this method ignores: \code{chains} (default 4), \code{warmup} (500),
 \code{draws} (500), \code{seed}, \code{saveEffects} (FALSE, whether to keep
-every draw of every random effect rather than only their summary), and
+every draw of every random effect rather than only their summary; either way
+they are each parameter's deviation from its population value on the raw
+scale, per subject or group, in \code{fit$sample$effects},
+\code{effect_mean} and \code{effect_sd}), and
 \code{processes} (TRUE, one R process per chain). A run stops once every
 parameter's effective sample size reaches \code{minESS} (200) and the
 chains' R-hat is below \code{rhatTarget} (1.01) -- \code{meanESS} adds a

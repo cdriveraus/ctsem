@@ -1457,7 +1457,7 @@ function _saem_new_chain(base::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
     logscale = [setup.reduced[l] ?
         log(1 / sqrt(2 * max(1, length(_saem_level_sites(laplace, l))))) : log(0.5)
         for l in levels]
-    neffects = sampler.ndim - npar
+    neffects = last(_laplace_deviation_offsets(laplace))
     return _SAEMChain(st, rng, _NUTSWorkspace(npar, Int(maxdepth)), zeros(npar),
         [similar(st.ll[U][1]) for U in eachindex(st.u)], 0.0, _DualAverage(1.0, 0.8),
         ctsem_identity_metric(npar), zeros(npar, npar), 0,
@@ -1658,16 +1658,18 @@ function _saem_chain_record!(ch::_SAEMChain, sampler::CTSEMSampler, step,
     save_effects::Bool)
     st = ch.st
     npar = sampler.npar
-    x = save_effects ? zeros(sampler.ndim) : copy(st.theta)
+    laplace = sampler.laplace
+    # Natural deviations, as `ctsem_sample` reports them (`_laplace_deviations!`).
+    devstarts, ndev = _laplace_deviation_offsets(laplace)
+    effects = reduce(vcat, (st.u[U][1] for U in 1:sampler.nunits); init=Float64[])
+    dev = _laplace_deviations!(zeros(ndev), laplace,
+        _laplace_popchols(st.theta, laplace.spec), effects, devstarts)
+    x = save_effects ? zeros(npar + ndev) : copy(st.theta)
     save_effects && (x[1:npar] .= st.theta)
-    for U in 1:sampler.nunits
-        u = st.u[U][1]
-        base = sampler.uoffsets[U] - npar
-        @inbounds for q in eachindex(u)
-            ch.effect_sum[base + q] += u[q]
-            ch.effect_sq[base + q] += u[q] * u[q]
-            save_effects && (x[sampler.uoffsets[U] + q] = u[q])
-        end
+    @inbounds for j in 1:ndev
+        ch.effect_sum[j] += dev[j]
+        ch.effect_sq[j] += dev[j] * dev[j]
+        save_effects && (x[npar + j] = dev[j])
     end
     push!(ch.draws, x)
     push!(ch.accept, step.accept)
@@ -1875,12 +1877,12 @@ function ctsem_saem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVecto
         max(Int(max_draws), ndraws), Float64(rhat_target), verbose; t0=t0)
     total = run.total
 
-    kept = save_effects ? sampler.ndim : npar
+    neffects = last(_laplace_deviation_offsets(laplace))
+    kept = save_effects ? npar + neffects : npar
     draws = Matrix{Float64}(undef, kept, nchains * total)
     for c in 1:nchains, t in 1:total
         @inbounds draws[:, (c - 1) * total + t] .= chains[c].draws[t]
     end
-    neffects = sampler.ndim - npar
     nall = nchains * total
     effect_sum = sum(ch.effect_sum for ch in chains; init=zeros(neffects))
     effect_sq = sum(ch.effect_sq for ch in chains; init=zeros(neffects))
@@ -1893,7 +1895,7 @@ function ctsem_saem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVecto
     return (
         draws=draws,
         npar=npar,
-        ndim=sampler.ndim,
+        ndim=npar + neffects,
         nchains=nchains,
         ndraws=total,
         saved_effects=save_effects,

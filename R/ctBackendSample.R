@@ -39,8 +39,12 @@
 # With more than one level it is not: the blocks interleave a group's own
 # effects with its members'. Reconstructing that here would mean reimplementing
 # `_laplace_build_units` in R and keeping the two in step, so the engine is
-# asked instead -- `ctsem_laplace_effect_layout` reports, for each position,
-# which unit and level it belongs to and which subject the block starts at.
+# asked instead -- `ctsem_laplace_deviation_layout` reports, for each position,
+# which unit and level it belongs to, which subject the block starts at, and
+# which of the level's parameters it is. The positions are natural deviations,
+# one per parameter a block moves, not the sampler's coordinates: a
+# reduced-rank block's coordinates are fewer than its parameters and are no
+# parameter's effect.
 # That is the same information without the second implementation, and a
 # plausible mislabelling would attach the wrong subject's name to a number and
 # never announce itself.
@@ -76,7 +80,7 @@
 .ctBackendEffectIndexNested <- function(fit) {
   laplace <- fit$model_spec$laplace
   layout <- try(.ctJuliaGet(
-    .ctJuliaModule(fit$model_spec$project)$ctsem_laplace_effect_layout(
+    .ctJuliaModule(fit$model_spec$project)$ctsem_laplace_deviation_layout(
       .ctJuliaObjective(fit))), silent = TRUE)
   if (inherits(layout, "try-error") || is.null(layout$position)) return(NULL)
   level_index <- as.integer(layout$level)

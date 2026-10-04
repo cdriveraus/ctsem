@@ -912,8 +912,12 @@ function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     ndraws = run.ndraws
 
     ndim = sampler.ndim
+    npar = sampler.npar
     total = nchains * ndraws
-    kept = save_effects ? ndim : sampler.npar
+    # The effects are reported, summarised and kept as natural deviations
+    # (`_laplace_deviations!`), not as the coordinates the sampler moves.
+    devstarts, ndev = _laplace_deviation_offsets(laplace)
+    kept = save_effects ? npar + ndev : npar
     draws = Matrix{Float64}(undef, kept, total)
     accept = Vector{Float64}(undef, total)
     divergent = Vector{Bool}(undef, total)
@@ -921,19 +925,23 @@ function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     energy = Vector{Float64}(undef, total)
     # Running mean and sum of squares for the effects, so their summary costs
     # nothing whether or not the draws themselves are kept.
-    effect_sum = zeros(Float64, ndim - sampler.npar)
-    effect_sq = zeros(Float64, ndim - sampler.npar)
+    effect_sum = zeros(Float64, ndev)
+    effect_sq = zeros(Float64, ndev)
+    dev = zeros(Float64, ndev)
     for c in 1:nchains
         r = results[c]
         for t in 1:ndraws
             column = (c - 1) * ndraws + t
-            @inbounds for j in 1:kept
+            @inbounds for j in 1:npar
                 draws[j, column] = r.draws[j, t]
             end
-            @inbounds for j in (sampler.npar + 1):ndim
-                v = r.draws[j, t]
-                effect_sum[j - sampler.npar] += v
-                effect_sq[j - sampler.npar] += v * v
+            Ls = _laplace_popchols(r.draws[1:npar, t], laplace.spec)
+            _laplace_deviations!(dev, laplace, Ls, view(r.draws, (npar + 1):ndim, t),
+                devstarts)
+            @inbounds for j in 1:ndev
+                effect_sum[j] += dev[j]
+                effect_sq[j] += dev[j] * dev[j]
+                save_effects && (draws[npar + j, column] = dev[j])
             end
             accept[column] = r.accept[t]
             divergent[column] = r.divergent[t]
@@ -949,7 +957,9 @@ function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     return (
         draws=draws,
         npar=sampler.npar,
-        ndim=ndim,
+        # The reported joint dimension: the parameters and the natural
+        # deviations, which is what `draws` holds when the effects are kept.
+        ndim=npar + ndev,
         nchains=nchains,
         ndraws=ndraws,
         saved_effects=save_effects,

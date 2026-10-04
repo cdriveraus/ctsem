@@ -570,8 +570,11 @@ end
     @test out.npar == length(values)
     @test out.ndim > out.npar
     @test !out.saved_effects
-    @test length(out.effect_mean) == out.ndim - out.npar
-    @test length(out.effect_sd) == out.ndim - out.npar
+    # Natural deviations; a full-rank level's are as many as its coordinates.
+    ndev = last(ContinuousTimeSEM._laplace_deviation_offsets(laplace))
+    @test ndev == out.ndim - out.npar
+    @test length(out.effect_mean) == ndev
+    @test length(out.effect_sd) == ndev
     @test all(isfinite, out.draws)
     @test length(out.rhat) == out.npar
     @test length(out.stepsize) == 2
@@ -581,6 +584,6 @@ end
     # The effects are kept when asked for, and then the draws carry them.
     with = ctsem_sample(laplace, values; nchains=1, nwarmup=60, ndraws=60,
         seed=5, maxdepth=7, save_effects=true)
-    @test size(with.draws, 1) == with.ndim
+    @test size(with.draws, 1) == with.npar + ndev
     @test with.saved_effects
 end

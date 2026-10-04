@@ -130,6 +130,44 @@ test_that("the diagnostics come back per parameter and per chain", {
   expect_true(all(diagnostics$effect_sd > 0))
 })
 
+test_that("sampled effects are each parameter's natural deviation, at reduced rank and nested", {
+  skip_without_julia()
+  # What a sampled fit reports as its effects is each parameter's deviation
+  # from its population value, per subject or group -- not the sampler's
+  # standardised coordinates, which depend on a choice of square root of the
+  # population covariance and, at reduced rank, are fewer than the parameters.
+  data <- laplace_fixture_data(12L, 6L, 31L)
+  data$study <- ceiling(data$id / 3)
+  model <- laplace_fixture_model()
+  model$pars$indvarying[model$pars$matrix == "T0MEANS" & is.na(model$pars$value)] <- TRUE
+  run <- function(m, ...) suppressWarnings(suppressMessages(ctFit(data, m,
+    backend = "julia", cores = 1, priors = TRUE, optimize = FALSE, ...,
+    sampleControl = list(chains = 1L, warmup = 20L, draws = 20L, minESS = 0,
+      saveEffects = TRUE, processes = FALSE))))
+
+  # Rank one on the Laplace route, a loading matrix over both effects: one
+  # coordinate per subject, two parameters, so two deviations each. (Under
+  # 'none', which sampling otherwise resolves to, a reduced rank regresses the
+  # second effect on the first instead, and the level carries one effect.)
+  reduced <- run(model, poprank = 1, intoverpop = "laplace")
+  expect_length(reduced$sample$effect_mean, 12L * 2L)
+  expect_false(is.null(names(reduced$sample$effect_mean)))
+  expect_equal(dim(reduced$sample$effects), c(reduced$sample$draws, 24L))
+  expect_true(all(is.finite(reduced$sample$effects)))
+
+  # Nested: a study-level effect on the manifest mean too -- 12 subjects x 2
+  # plus 4 studies x 1, labelled from the engine's deviation layout.
+  nested <- model
+  nested$groupIDnames <- "study"
+  nested$pars$indvarying_study <- nested$pars$matrix == "MANIFESTMEANS" &
+    nested$pars$indvarying
+  twolevel <- run(nested)
+  expect_length(twolevel$sample$effect_mean, 12L * 2L + 4L)
+  expect_false(is.null(twolevel$sample$effectIndex))
+  expect_equal(nrow(twolevel$sample$effectIndex), 28L)
+  expect_identical(colnames(twolevel$sample$effects), twolevel$sample$effectIndex$label)
+})
+
 test_that("the effects come back summarised, or in full when asked for", {
   skip_without_julia()
   fit <- .sample_fixture()

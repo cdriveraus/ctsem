@@ -4555,10 +4555,11 @@ sampled them: a sampler already has a draw of every effect, and pairing draw
 predictive integrate over the random effects instead of conditioning on a
 point estimate of them.
 
-`effects` is the flat vector one draw of the sampler produces: unit by unit in
-unit order, and within a unit by block offset, exactly the layout
-`ctsem_laplace_effect_layout` reports and the sampler returns. Its length must
-be the total latent dimension over all units.
+`effects` is one draw's natural deviations as a sampled fit reports them: each
+block's `S u` on its level's parameters, in `ctsem_laplace_deviation_layout`'s
+layout. Deviations rather than the sampler's coordinates `u`, so a draw means
+the same thing whichever square root of the population covariance it was made
+under.
 
 Everything after the slicing is shared with the mode method, including what
 `ti_effects` means, so the two cannot drift in how a shifted parameter vector
@@ -4569,15 +4570,7 @@ Returns `nsubjects x length(values)`.
 function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
     values::AbstractVector, effects::AbstractVector; ti_effects::Bool=true)
     theta = collect(Float64, values)
-    Ls = _laplace_popchols(theta, laplace.spec)
-    units = laplace.units
-    total = sum(units.dims; init=0)
-    length(effects) == total || throw(DimensionMismatch(string(
-        "effects must have ", total, " entries for this design, got ",
-        length(effects))))
-    starts = cumsum(units.dims) .- units.dims
-    shifted = _laplace_shifted_values(laplace, theta, Ls, U ->
-        Vector{Float64}(view(effects, (starts[U] + 1):(starts[U] + units.dims[U]))))
+    shifted = _laplace_shifted_values_from_deviations(laplace, theta, effects)
     return ti_effects ? _laplace_add_ti_effects(laplace, shifted) : shifted
 end
 
@@ -5813,6 +5806,131 @@ function ctsem_laplace_effect_layout(laplace::CTSEMLaplaceObjective)
     return (position=position[order], unit=unit[order], level=level[order],
         first_member=first_member[order], nmembers=nmembers[order],
         within=within[order])
+end
+
+# The effects a sampler draws, `u`, are coordinates: each block's deviation of
+# its level's parameters is `d = S u` for a square root `S` of the level's
+# population covariance, and which root is a choice (the Cholesky here). What a
+# fit reports and what generation takes are the deviations, which are the same
+# whatever the root and are what a parameter's random effect is.
+
+"""
+    _laplace_deviation_offsets(laplace)
+
+Each block's place in the flat vector of natural deviations: a zero-based start
+per unit per block (in `units.blocks[U]`'s order), blocks laid out in offset
+order and each taking its level's `k` entries -- one per parameter the level
+moves. On a full-rank level that is the effects' own layout; a reduced-rank
+block is wider, its `rank` effects moving `k` parameters. Returns the starts and
+the total length.
+"""
+function _laplace_deviation_offsets(laplace::CTSEMLaplaceObjective)
+    units = laplace.units
+    starts = [zeros(Int, length(units.blocks[U])) for U in eachindex(units.members)]
+    total = 0
+    for U in eachindex(units.members)
+        blocks = units.blocks[U]
+        for b in sortperm([blk.offset for blk in blocks])
+            starts[U][b] = total
+            total += nrandomeffects(laplace.spec.levels[blocks[b].level])
+        end
+    end
+    return starts, total
+end
+
+"""
+    _laplace_deviations!(dest, laplace, Ls, effects, starts)
+
+One draw's natural deviations into `dest` (`_laplace_deviation_offsets`'s
+layout) from its effects `effects` (the sampler's layout, unit by unit) and the
+population roots `Ls` at that draw's parameters.
+"""
+function _laplace_deviations!(dest::AbstractVector, laplace::CTSEMLaplaceObjective,
+    Ls::Vector{<:AbstractMatrix}, effects::AbstractVector, starts)
+    units = laplace.units
+    ubase = 0
+    @inbounds for U in eachindex(units.members)
+        for (b, blk) in enumerate(units.blocks[U])
+            L = Ls[blk.level]
+            s = starts[U][b]
+            for p in axes(L, 1)
+                acc = 0.0
+                for q in axes(L, 2)
+                    acc += L[p, q] * effects[ubase + blk.offset + q]
+                end
+                dest[s + p] = acc
+            end
+        end
+        ubase += units.dims[U]
+    end
+    return dest
+end
+
+"""
+    ctsem_laplace_deviation_layout(laplace)
+
+`ctsem_laplace_effect_layout`'s account for the natural deviations a sampled
+fit reports: one entry per position, giving the unit, the level, the block's
+first member, how many members it covers, and which of the level's parameters
+(`within`, 1 to `k`) the position is.
+"""
+function ctsem_laplace_deviation_layout(laplace::CTSEMLaplaceObjective)
+    units = laplace.units
+    starts, total = _laplace_deviation_offsets(laplace)
+    unit = zeros(Int, total); level = zeros(Int, total)
+    first_member = zeros(Int, total); nmembers = zeros(Int, total)
+    within = zeros(Int, total)
+    for U in eachindex(units.members), (b, blk) in enumerate(units.blocks[U])
+        for p in 1:nrandomeffects(laplace.spec.levels[blk.level])
+            i = starts[U][b] + p
+            unit[i] = U
+            level[i] = blk.level
+            first_member[i] = isempty(blk.members) ? 0 : units.members[U][blk.members[1]]
+            nmembers[i] = length(blk.members)
+            within[i] = p
+        end
+    end
+    return (position=collect(1:total), unit=unit, level=level,
+        first_member=first_member, nmembers=nmembers, within=within)
+end
+
+"""
+    _laplace_shifted_values_from_deviations(laplace, theta, deviations)
+
+Every subject's raw parameters before TI-predictor effects, from the population
+vector and one draw's natural deviations: each of its blocks' deviations added
+to that level's parameters. No population root is involved, so this is the same
+whichever root the draws were made under.
+"""
+function _laplace_shifted_values_from_deviations(laplace::CTSEMLaplaceObjective,
+    theta::Vector{Float64}, deviations::AbstractVector)
+    units = laplace.units
+    spec = laplace.spec
+    starts, total = _laplace_deviation_offsets(laplace)
+    length(deviations) == total || throw(DimensionMismatch(string(
+        "deviations must have ", total, " entries for this design, got ",
+        length(deviations))))
+    out = fill(NaN, length(laplace.objective.subject_objectives), length(theta))
+    for U in eachindex(units.members)
+        blocks = units.blocks[U]
+        for (m, i) in enumerate(units.members[U])
+            shifted = copy(theta)
+            for l in eachindex(spec.levels)
+                level = spec.levels[l]
+                k = nrandomeffects(level)
+                (k == 0 || nlatent(level) == 0) && continue
+                offset = units.offsets[U][m][l]
+                b = findfirst(blk -> blk.level == l && blk.offset == offset, blocks)
+                b === nothing && continue
+                s = starts[U][b]
+                for p in 1:k
+                    shifted[level.re_index[p]] += deviations[s + p]
+                end
+            end
+            out[i, :] = shifted
+        end
+    end
+    return out
 end
 
 """The parameters a saturation check reads, for the wrapped objective."""
