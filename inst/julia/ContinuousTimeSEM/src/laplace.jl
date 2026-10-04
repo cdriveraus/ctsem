@@ -4834,8 +4834,8 @@ ctsem_state_layout(laplace::CTSEMLaplaceObjective) =
 One dataset with each subject's trajectory drawn from *its own* model.
 
 `values` is the population parameter vector. `effects` is one draw of the
-random effects in the sampler's layout, from which each subject's own
-parameter vector is built; `subject_values` supplies those vectors directly
+random effects as natural deviations, in `ctsem_laplace_deviation_layout`'s
+layout, from which each subject's own parameter vector is built; `subject_values` supplies those vectors directly
 instead, before TI-predictor effects as `ctsem_kalman` takes them. Given
 neither, each subject is put at its conditional mode, matching what
 `ctsem_generate` does.
@@ -5898,7 +5898,7 @@ conditional-on-the-subject's-own-data quantity `ctsem_kalman(laplace, ...)`
 already reports for residuals and predictions on this route, not a new
 statistical convention introduced for generation.
 
-`effects` is one draw of the random effects in the sampler's layout, for a fit
+`effects` is one draw of the random effects as natural deviations, for a fit
 that sampled them, as `ctsem_generate_states` takes it. `subject_values`
 supplies the per-subject vectors instead of solving for them here, before
 TI-predictor effects, for the same reason `ctsem_kalman` takes it: a caller

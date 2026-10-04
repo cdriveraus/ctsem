@@ -194,13 +194,15 @@ test_that("PSIS leave-one-row-out matches a grid over each subject's intercept",
 
   # Every row's one-step-ahead log likelihood with every subject's standardised
   # intercept at each grid value, in one Julia call; the draws and weights under
-  # test play no part.
+  # test play no part. Subject values take natural deviations, which for the
+  # one effect here are the standardised intercept times its sd.
   JuliaConnectoR::juliaEval(paste(
     "function _ctsem_test_loo_grid(obj, theta, grid)",
     "  n = length(obj.objective.subject_objectives)",
+    "  sd = sqrt(ContinuousTimeSEM.ctsem_laplace_popcov(obj, theta)[1, 1])",
     "  out = zeros(0, 0)",
     "  for (g, u) in enumerate(grid)",
-    "    sv = ContinuousTimeSEM.ctsem_laplace_subject_values(obj, theta, fill(u, n);",
+    "    sv = ContinuousTimeSEM.ctsem_laplace_subject_values(obj, theta, fill(sd * u, n);",
     "      ti_effects=false)",
     "    tr = ContinuousTimeSEM.ctsem_kalman(obj.objective, sv;",
     "      subject_matrices=false, fields=[\"llrow\"])",
