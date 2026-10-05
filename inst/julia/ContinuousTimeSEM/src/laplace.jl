@@ -1242,7 +1242,7 @@ function _laplace_partition(f, laplace::CTSEMLaplaceObjective, n::Int)
     try
         Threads.@sync begin
             for (k, slot) in enumerate(slots)
-                Threads.@spawn begin
+                Threads.@spawn _ctsem_with_scratch() do
                     task_local_storage(:ctsem_pool_worker, true)
                     task_local_storage(:ctsem_slot, slot)
                     oks[k + 1] = f((k + 1):nw:n, k + 1) !== false
@@ -1343,7 +1343,7 @@ function _laplace_parallel(f, items)
     # closure-rebinding trap this file has been caught by twice before, and
     # here it would hand one workspace to several workers.
     start_worker = function (mine::Int)
-        Threads.@spawn begin
+        Threads.@spawn _ctsem_with_scratch() do
             task_local_storage(:ctsem_pool_worker, true)
             task_local_storage(:ctsem_slot, mine)
             try
@@ -1555,8 +1555,11 @@ for the same reason they are in `ctsem_subject_gradients`, so the Frechet batch
 is flushed within the subject here too.
 """
 function _laplace_subject_value_gradient!(gradient::AbstractVector{T},
-    subject_objective, aws, values::AbstractVector{T};
+    subject_objective, aws, values::AbstractVector{T},
     ekf_workspace=nothing) where {T}
+    # Positional, not a keyword: the sampler calls this with `aws` untyped, and
+    # a dynamic call with a keyword builds its named tuple on the heap, the
+    # workspace copied inside it -- 56 KB an evaluation on gC8.
     # `aws.ekf_ws` rather than the subject's own cached workspace, and
     # `ekf_workspace` overrides both.
     #
@@ -1754,7 +1757,11 @@ function _laplace_block_factor(M::CTSEMBlockMatrix{T},
     factors = Vector{_LaplaceCholesky{T}}(undef, nb)
     total = zero(T)
     for b in 1:nb
-        f = _ctsem_cholesky(Matrix{T}(_laplace_symmetrise(diag[b])), size(diag[b], 1))
+        # In place on this function's own copy of the block, which nothing
+        # reads once it is factored -- the factor keeps it. Symmetrising into
+        # a new matrix and then copying that was two more allocations per block
+        # per evaluation (gC8: 2,400 a Laplace gradient).
+        f = _ctsem_cholesky(_laplace_symmetrise!(diag[b]), size(diag[b], 1))
         issuccess(f) || return (false, T(NaN), factors, coupling)
         # Numerically singular counts as failure, so the caller shifts it.
         #
@@ -1786,8 +1793,11 @@ function _laplace_block_factor(M::CTSEMBlockMatrix{T},
         W = [f \ coupling[b][t] for t in eachindex(ancestors)]
         for t in eachindex(ancestors)
             a = ancestors[t]
-            update = transpose(coupling[b][t]) * W[t]
-            diag[a] .-= _laplace_symmetrise(update)
+            # `_ctsem_mulTN!`, not `transpose(B) * W`: that is OpenBLAS's
+            # `dgemm_tn`, which takes a process-wide lock on every call.
+            update = _ctsem_mulTN!(similar(W[t], size(coupling[b][t], 2), size(W[t], 2)),
+                coupling[b][t], W[t])
+            diag[a] .-= _laplace_symmetrise!(update)
             for s in eachindex(ancestors)
                 s == t && continue
                 c = ancestors[s]
@@ -1796,7 +1806,7 @@ function _laplace_block_factor(M::CTSEMBlockMatrix{T},
                 # row.
                 slot = findfirst(==(c), blocks[a].ancestors)
                 if slot !== nothing
-                    coupling[a][slot] .-= transpose(coupling[b][t]) * W[s]
+                    _ctsem_mulTN!(coupling[a][slot], coupling[b][t], W[s], -1, true)
                 end
             end
         end
@@ -1805,6 +1815,17 @@ function _laplace_block_factor(M::CTSEMBlockMatrix{T},
 end
 
 @inline _laplace_symmetrise(A) = (A .+ transpose(A)) ./ 2
+
+"""`A` overwritten by `(A + A') / 2`, and returned."""
+function _laplace_symmetrise!(A::AbstractMatrix)
+    n = size(A, 1)
+    @inbounds for j in 1:n, i in (j + 1):n
+        v = (A[i, j] + A[j, i]) / 2
+        A[i, j] = v
+        A[j, i] = v
+    end
+    return A
+end
 
 """
     _laplace_selected_inverse(factors, elim, blocks)
@@ -3530,12 +3551,17 @@ function _laplace_unit_seeded_gradient_(laplace::CTSEMLaplaceObjective, U::Integ
 
     if order == 1
         seed = ForwardDiff.Dual{_LaplaceSeedInner}(0.0, 1.0)
-        S = typeof(seed)
+        # `S1`, not `S`: the order-2 path below assigns `S` too, and a local
+        # assigned twice and captured by a closure is boxed, so both closures
+        # saw an untyped `S`, untyped scratch vectors, and a dynamic dispatch
+        # and a boxed dual on every element of every member's sweep -- 3,700
+        # heap objects a gradient evaluation on gC8.
+        S1 = typeof(seed)
         one_member! = function (c::Int, m)
             local aws, gradient, x, shifted, loglik, t
-            aws = _laplace_workspace!(laplace, S, npar)
-            gradient = _laplace_scratch_vector!(laplace, S, npar, :sweep_grad)
-            x = _laplace_scratch_vector!(laplace, S, npar, :sweep_x)
+            aws = _laplace_workspace!(laplace, S1, npar)
+            gradient = _laplace_scratch_vector!(laplace, S1, npar, :sweep_grad)
+            x = _laplace_scratch_vector!(laplace, S1, npar, :sweep_x)
             shifted = _laplace_member_values!(
                 _laplace_scratch_vector!(laplace, Float64, npar, :sweep_shift),
                 values, spec, Ls, u, units.offsets[U][m])
