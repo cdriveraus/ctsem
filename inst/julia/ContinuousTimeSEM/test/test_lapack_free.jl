@@ -63,5 +63,16 @@ end
         Av = view(big, 2:(m + 1), 3:(K + 2))
         Cv = view(zeros(m + 2, n + 2), 1:m, 2:(n + 1))
         @test CT._ctsem_mul!(Cv, Av, B) ≈ Matrix(Av) * B
+        # An output larger than the product: only its leading block is
+        # written, and the rest keeps what it held. The filter passes buffers
+        # sized for every manifest and uses the block for the observed ones.
+        for (f, a, b, ref) in ((CT._ctsem_mul!, A, B, A * B), (CT._ctsem_mulNT!, A, Bt, A * Bt'),
+                (CT._ctsem_mulTN!, At, B, At' * B))
+            Cbig = fill(7.0, m + 2, n + 3)
+            f(Cbig, a, b)
+            @test Cbig[1:m, 1:n] ≈ ref
+            @test all(==(7.0), Cbig[(m + 1):end, :])
+            @test all(==(7.0), Cbig[:, (n + 1):end])
+        end
     end
 end
