@@ -86,18 +86,23 @@ test_that("fitting a missing TI predictor with the default (adjoint) gradient no
 
 # Stan samples a missing TI predictor by writing 99999 and reading it back as
 # a free parameter. The julia engine samples one too, but only with
-# `intoverpop='augmented'` -- the default here resolves to 'none' (`t0m` is
-# indvarying), which is not supported and refuses, with what a caller can do
-# instead. (This and the test after it were each written twice, here and in
-# test-julia-backend.R, asserting different halves of one message.)
+# `intoverpop='augmented'`; 'none' is not supported and refuses, with what a
+# caller can do instead. Since 2026-10-05 the default takes 'augmented' for
+# such data wherever that route is exact, as it is here (`t0m`, a mean shift),
+# so the refusal is reached by naming 'none'. (This and the test after it were
+# each written twice, here and in test-julia-backend.R, asserting different
+# halves of one message.)
 test_that("the julia sampling path refuses a missing TI predictor outside intoverpop='augmented'", {
   model <- .tipred_missing_model()
   dat <- data.frame(id = rep(1:3, each = 3), time = rep(0:2, 3), Y1 = 0,
     group = rep(c(-1, 2, NA), each = 3))
 
+  defaulted <- suppressWarnings(suppressMessages(ctFit(dat, model,
+    backend = "julia", optimize = FALSE, fit = FALSE)))
+  expect_identical(defaulted$args$resolved$intoverpop, "augmented")
   told <- tryCatch({
     suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
-      optimize = FALSE, fit = FALSE)))  # default intoverpop -- 'none' here, T0MEANS is indvarying
+      optimize = FALSE, intoverpop = "none", fit = FALSE)))
     NA_character_
   }, error = function(e) conditionMessage(e))
   expect_match(told, "cannot sample missing TI predictor")
