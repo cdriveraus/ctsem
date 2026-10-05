@@ -3597,11 +3597,13 @@ end
 @inline _laplace_finite(x::ForwardDiff.Dual) = _finite_deep(x)
 
 """
-    _laplace_seeded_unit_gradient!(out, laplace, U, values, Ls, dL, M, factors,
-                                   elim)
+    _laplace_seeded_unit_gradient!(out, laplace, U, values, Ls, dL, dLsolved, M,
+                                   factors, elim)
 
 Accumulate unit `U`'s exact contribution to `dT/dtheta` into `out`, in a number
 of sweeps proportional to the unit's members rather than to the parameter count.
+`dLsolved[l][t]` is `Ls[l] \\ dL[l][t]`, solved once by the caller (`nothing`
+under reduced rank).
 
     dT/dtheta = dg/dtheta + [ dpsi/dtheta + s' B ] / 2
 
@@ -3624,7 +3626,7 @@ back rather than proceed on a partial answer.
 function _laplace_seeded_unit_gradient!(out::Vector{Float64},
     laplace::CTSEMLaplaceObjective, U::Integer, values::Vector{Float64},
     Ls::Vector{Matrix{Float64}}, dL::Vector{Vector{Matrix{Float64}}},
-    M::CTSEMBlockMatrix{Float64}, factors, elim)
+    dLsolved, M::CTSEMBlockMatrix{Float64}, factors, elim)
 
     spec = laplace.spec
     units = laplace.units
@@ -4028,7 +4030,7 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
         isempty(dL[l]) && continue
         levelpositions = _laplace_level_positions(spec, l)
         for (t, j) in enumerate(levelpositions)
-            X = needV ? zeros(Float64, 0, 0) : Ls[l] \ dL[l][t]
+            X = needV ? zeros(Float64, 0, 0) : dLsolved[l][t]
             total = 0.0
             for (b, block) in enumerate(blocks)
                 k = block.size
@@ -4387,6 +4389,15 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
     # the specialised single-level version used to do by hand.
     if !nested_gradient
         dLlevels = _laplace_level_chol_derivatives(theta, laplace.spec)
+        # `L \ dL` for every level and parameter, which no unit changes: solved
+        # here once rather than by every unit, where the general `\` was an
+        # LAPACK factorization -- and its process-wide lock -- per unit and
+        # parameter: nearly every lock sample left in a Laplace gradient or
+        # Hessian at eight threads (dev1). A reduced level's `L` is not square
+        # and its units take the other route (`needV`), so it gets none.
+        dLsolved = hasreducedrank(laplace.spec) ? nothing :
+            [[Ls[l] \ dLlevels[l][t] for t in eachindex(dLlevels[l])]
+             for l in eachindex(dLlevels)]
         # One accumulator per slot rather than one shared vector: the unit
         # contributions are a sum, and summing per slot and then across slots
         # is the same sum in a different order.
@@ -4432,7 +4443,7 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
                 bg = _laplace_mark()
                 if !_laplace_seeded_unit_gradient!(partials[_laplace_slot()],
                         laplace, U, theta,
-                        Ls, dLlevels, primal_matrices[U], factors, elim)
+                        Ls, dLlevels, dLsolved, primal_matrices[U], factors, elim)
                     chunk_ok[_laplace_slot()] = false
                     return nothing
                 end
