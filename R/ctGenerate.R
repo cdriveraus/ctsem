@@ -382,7 +382,10 @@ ctStanGenerate <- ctGenerateFromPriors
 #' This function generates data according to the specified ctsem model object. 
 #' 
 #' @param ctmodelobj ctsem model object from \code{\link{ctModel}}.
-#' @param n.subjects Number of subjects to output.
+#' @param n.subjects Number of subjects to output. For a model with grouping
+#' levels above the subject (\code{ctModel(id = c('subject', 'study'))}), one
+#' count per level in the same order, innermost first: \code{c(100, 10)} is
+#' 100 subjects split evenly over 10 studies. A level not given has one group.
 #' @param burnin Number of initial time points to discard (to simulate stationary data)
 #' @param dtmean Positive numeric. Median time interval (delta T) to use.
 #' Intervals are drawn as \code{exp(rnorm(n, log(dtmean), logdtsd))}, so
@@ -399,18 +402,24 @@ ctStanGenerate <- ctGenerateFromPriors
 #' uses \code{ctmodelobj$Tpoints} when available.
 #' @param wide Logical. Output in wide format?
 #' @param backend Which generator to use: \code{'r'}, \code{'julia'}, or
-#' \code{'auto'} (the default). \code{'r'} integrates the linear system with a
-#' matrix exponential -- fast, and exact for a linear Gaussian model, but it has
-#' no measurement link, so a model with non-Gaussian indicators would silently
-#' get continuous values, and a nonlinear (state-dependent) model is refused
-#' outright. \code{'julia'} generates through the same filter that fits the
-#' model, so it handles nonlinear dynamics and non-Gaussian (binary, ordinal,
-#' count) indicators, and requires \code{ctmodelobj} to be a
-#' \code{ctStanModel} (as returned by \code{ctModel(type='ct'/'dt')}) rather
-#' than the matrix-list form. \code{'auto'} picks \code{'julia'} exactly when
-#' the model is nonlinear or declares a non-Gaussian indicator, and \code{'r'}
-#' otherwise -- the split is by capability, not preference, so linear Gaussian
-#' models keep the seed-for-seed output every existing caller already gets.
+#' \code{'auto'} (the default). \code{'julia'} generates from the model
+#' itself: each subject's parameters are drawn from the population at every
+#' level, its latent trajectory is simulated from the process, and each
+#' observation is drawn from its measurement model, so nonlinear dynamics,
+#' random effects on any parameter and binary, ordinal or count indicators are
+#' all generated exactly. It needs \code{ctmodelobj} to be a
+#' \code{ctModel(type='ct'/'dt')} object rather than the matrix-list form.
+#' \code{'r'} integrates a linear Gaussian system with a matrix exponential at
+#' the values the model states, with individual differences only through
+#' \code{TRAITVAR} and \code{MANIFESTTRAITVAR}; it refuses a nonlinear model
+#' and has no measurement link. \code{'auto'} uses \code{'julia'} whenever
+#' julia is available or the model needs it, and \code{'r'} otherwise.
+#' @param popmeans For \code{backend='julia'}: a named numeric vector of
+#' population means on each parameter's natural scale, e.g.
+#' \code{c(mm = 2, drift = -0.3)}. This is the way to state the mean of an
+#' individually varying parameter, whose cell cannot hold a value; it works for
+#' any free parameter. Unnamed free parameters are set at their prior's centre,
+#' raw zero.
 #' @param fromPriors Draw the parameters from the model's priors rather than
 #' using the values the model specifies, and return \code{nsamples} datasets
 #' instead of one. This is the prior predictive: what the model says the data
@@ -424,34 +433,34 @@ ctStanGenerate <- ctGenerateFromPriors
 #' its own.
 #' @param cores With \code{fromPriors=TRUE}, cpu cores to use.
 #' @param intoverstates For \code{backend='julia'}: \code{'auto'} (the
-#' default), \code{TRUE} or \code{FALSE}, choosing how the latent states are
-#' handled while generating. A diagnostic handle rather than a modelling
-#' choice -- \code{'auto'} is \code{FALSE} for every model, and that is the
-#' route to use.
+#' default, which is \code{FALSE}), \code{TRUE} or \code{FALSE}. A
+#' diagnostic handle rather than a modelling choice.
 #'
 #' \code{FALSE} samples the latent trajectory from the process and then each
 #' observation from its conditional distribution given the state at its row:
 #' a draw from the model. \code{TRUE} instead draws each row from the filter's
-#' one-step-ahead predictive and lets the filter condition on the draw, which
-#' is a draw from the density a fit maximises. The two agree in distribution
-#' for linear dynamics with Gaussian indicators, where the filter's predictive
-#' is exact, and do not otherwise: a categorical indicator makes the
-#' measurement update an assumed-density projection that moves the state it
-#' conditions on, and with an unbounded indicator (a count) one improbable
-#' draw can move it far enough that the following rows are drawn from a rate
-#' that has already run away. A state-dependent drift makes the prediction a
-#' moment approximation in the same way.
+#' one-step-ahead predictive, for the same subjects, which is the density a
+#' fit integrating over the states maximises. The two agree in distribution
+#' for linear dynamics with Gaussian indicators and differ otherwise, which is
+#' what makes the comparison useful.
 #'
 #' \code{backend='r'} already generates this way and ignores the argument.
-#' @section Individual differences:
-#' \code{ctGenerate} produces one dataset from the values the model states,
-#' with every subject at the same parameters: individual differences and any
-#' population spread in \code{RAWPOPVAR} are ignored, and named in a message
-#' when the model declares them. To generate data \emph{with} random effects,
-#' use \code{\link{ctGenerateFromFit}}, which has a fit and so has the
-#' population distribution on the same scale the fit itself used.
-#' \code{fromPriors=TRUE} draws the parameters, including population spreads,
-#' from the model's priors and is unaffected by this.
+#' @section Generating values:
+#' With \code{backend='julia'} every value the model leaves free is fixed by
+#' the scale of its prior, and all of them are named in a message:
+#' \itemize{
+#'   \item a free parameter is at its prior's centre, raw zero, unless
+#'   \code{popmeans} names it;
+#'   \item an individually varying parameter's population sd is its
+#'   \code{sdscale} (\code{sdscale_<level>} for a grouping level) on the raw,
+#'   untransformed scale, unless \code{RAWPOPVAR} states a number, and random
+#'   effects are uncorrelated unless \code{RAWPOPVAR} states a coordinate;
+#'   \item a time independent predictor is drawn standard normal per subject,
+#'   and an effect fixed in the model (\code{'mm||||TI1=0.5'}) shifts the raw
+#'   parameter by that much per unit of the predictor; an effect left free is
+#'   zero.
+#' }
+#' \code{fromPriors=TRUE} draws all of these from the priors instead.
 #' @details Covariance related matrices are treated as Cholesky factors.
 #' TRAITTDPREDCOV and TIPREDCOV matrices are not accounted for, at present. 
 #' The first 1:n.TDpred rows and columns of TDPREDVAR are used for generating
@@ -496,7 +505,8 @@ ctStanGenerate <- ctGenerateFromPriors
 
 ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat=NA,
   Tpoints=NULL, wide=FALSE, backend=c('auto','r','julia','stan'),
-  intoverstates='auto', fromPriors=FALSE, nsamples=200, datastruct=NA, cores=2){
+  intoverstates='auto', fromPriors=FALSE, nsamples=200, datastruct=NA, cores=2,
+  popmeans=NULL){
   backend <- match.arg(backend)
 
   # The prior predictive is a different question about the same model -- what
@@ -515,7 +525,9 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
       if(!identical(logdtsd, 0)) 'logdtsd',
       if(!identical(dtmat, NA) && !is.na(dtmat[1])) 'dtmat',
       if(!identical(wide, FALSE)) 'wide',
-      if(!identical(intoverstates, 'auto')) 'intoverstates')
+      if(!identical(intoverstates, 'auto')) 'intoverstates',
+      if(!is.null(popmeans)) 'popmeans',
+      if(length(n.subjects) > 1L) 'one count per level in n.subjects')
     if(length(unused)) stop('fromPriors=TRUE does not use ',
       paste(unused, collapse=', '), ': it returns nsamples datasets over one ',
       'design rather than a single dataset, and the design is n.subjects, ',
@@ -531,65 +543,35 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
     'which is what it is there for. Use fromPriors=TRUE, or one of ',
     "'auto', 'r' and 'julia'.", call.=FALSE)
   # `auto` prefers julia wherever julia can do the job, and falls back to the
-  # generator below otherwise -- including when there is no julia session.
-  #
-  # It used to route purely by capability, julia only for the models the
-  # generator below cannot do, specifically so that a linear gaussian model
-  # kept the seed-for-seed output every existing caller already had. That tie
-  # is now broken on purpose: on a machine with julia, a linear gaussian model
-  # with no random effects generates different data for the same seed than it
-  # did. Pass `backend='r'` to pin the old output. Generating through the same
-  # filter that fits the model is the better default, and the engine is the
-  # developed path.
+  # R generator otherwise -- including when there is no julia session. Julia
+  # generates from the model, random effects and measurement included; the R
+  # generator integrates a linear Gaussian system at fixed values. Pass
+  # `backend='r'` for the R generator's seed-for-seed output.
   nonlinear <- isTRUE(try(ctModelIsNonlinear(ctmodelobj), silent=TRUE))
-  # A categorical indicator is the same situation as a nonlinear one: the
-  # generator below integrates a linear Gaussian system and has no notion of a
-  # link, so it produces continuous values for a manifest the model declares
-  # binary or ordinal -- silently, which is the worst of both. Measured before
-  # this line existed: a model with `manifesttype = 1` generated values with a
-  # mean of 0.063 and no zeros or ones among them.
+  # The R generator has no notion of a link, so it would produce continuous
+  # values for a manifest the model declares binary, ordinal or count.
   categorical <- !is.null(ctmodelobj$manifesttype) &&
     any(ctmodelobj$manifesttype > 0)
-  # The matrix-list model form is the one thing left that the julia route cannot
-  # take: it refuses it a few lines below, because it carries no parameter
-  # specification for the engine to read. `auto` has to know that, or it sends
-  # every omx-style model straight into that refusal -- which is what
-  # test-corrcheck.R caught.
-  #
-  # Individually varying parameters used to be a second exclusion, and are not
-  # any more: the engine draws them as T0 states since generateRandomEffects
-  # merged. Measured on a one-latent model with indvarying MANIFESTMEANS, 60
-  # subjects: between-subject sd of the subject means 0.542 against a mean
-  # within-subject variance of 0.00015. Before the merge the same model gave
-  # 0.0087, which is the noise floor and no random effect at all.
+  # The matrix-list model form carries no parameter specification for the
+  # engine to read, so `auto` keeps it on the R generator.
   specified <- inherits(ctmodelobj, 'ctStanModel')
   if(backend == 'auto') backend <-
     if(nonlinear || categorical) 'julia' else
       if(specified &&
           isTRUE(tryCatch(ctJuliaStatus()$available, error=function(e) FALSE)))
         'julia' else 'r'
-  # `'auto'` resolves to the sampled route for every model, and it used to
-  # resolve by capability -- TRUE wherever the filter's one-step-ahead
-  # predictive *is* the model's own, which is the linear Gaussian case.
-  #
-  # One route rather than two, because the sampled route is right everywhere
-  # the filter route is and right in cases it is not: a categorical indicator
-  # makes the measurement update an assumed-density projection, which moves
-  # the state it conditions on, and on an unbounded indicator one improbable
-  # draw can move it far enough that the following rows are drawn from a rate
-  # that has already run away. A state-dependent drift makes the prediction a
-  # moment approximation the same way. Where the two agree in distribution --
-  # linear dynamics, Gaussian indicators -- the choice was never about
-  # correctness, only about which stream of random numbers a given seed
-  # produced.
-  #
-  # The argument stays, rather than going with the choice, because comparing
-  # the two routes on one specification is how the state-explicit path is
-  # checked against an independently derived answer rather than against
-  # itself; see tests/testthat/test-julia-intoverstates.R. It is a diagnostic
-  # handle, not a modelling decision.
+  # `'auto'` is the state-explicit route for every model. The argument stays
+  # because comparing the two routes on one specification is how the
+  # filter's approximation is checked; see test-julia-intoverstates.R.
   if(identical(intoverstates,'auto')) intoverstates <- FALSE
   intoverstates <- isTRUE(as.logical(intoverstates)[1])
+  if(backend == 'r' && (length(n.subjects) > 1L || !is.null(popmeans))) {
+    stop("backend='r' generates subjects at the values the model states, ",
+      "without grouping levels or population means: ",
+      if(length(n.subjects) > 1L) "n.subjects must be one count" else
+        "popmeans is a backend='julia' argument",
+      ". Use backend='julia'.", call.=FALSE)
+  }
   if(backend == 'r' && categorical){
     warning('This model declares non-Gaussian indicators (manifesttype ',
       "1, 2 or 3) and backend='r' generates continuous values for them: the R ",
@@ -599,8 +581,8 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
   if(backend == 'r' && nonlinear) {
     stop("This model is nonlinear, and ctGenerate's own generator integrates a ",
       "linear system: it has no way to apply a state-dependent specification. ",
-      "Use backend='julia' (the default for such models), which generates ",
-      "through the same filter that fits them.", call.=FALSE)
+      "Use backend='julia' (the default for such models), which simulates ",
+      "the model directly.", call.=FALSE)
   }
   if(backend == 'julia'){
     if(!'ctStanModel' %in% class(ctmodelobj)) {
@@ -613,7 +595,8 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
         ctmodelobj$Tpoints[1] else
           stop('Tpoints not found in ctmodelobj and no Tpoints argument supplied. Provide Tpoints explicitly.')
     fullTpoints <- burnin + as.integer(modelTpoints)
-    times <- lapply(seq_len(n.subjects), function(si){
+    nsubjects <- as.integer(n.subjects[1])
+    times <- lapply(seq_len(nsubjects), function(si){
       dtvec <- if(is.na(dtmat[1])) exp(rnorm(fullTpoints,log(dtmean),logdtsd)) else
         c(rep(1,burnin), dtmat[si,,drop=TRUE])
       tv <- numeric(fullTpoints)
@@ -621,15 +604,15 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
       tv
     })
     out <- .ctGenerateJulia(ctmodelobj, n.subjects, times,
-      intoverstates = intoverstates)
+      popmeans = popmeans, intoverstates = intoverstates)
     if(burnin > 0){
-      keep <- unlist(lapply(seq_len(n.subjects), function(si)
+      keep <- unlist(lapply(seq_len(nsubjects), function(si)
         (si-1)*fullTpoints + (burnin+1):fullTpoints))
       out <- out[keep, , drop=FALSE]
       # Time restarts at zero for each subject once the burnin is dropped, as
       # the generator below does. Leaving it running from the burnin would make
       # the first observed interval look like the whole burnin period.
-      for(si in seq_len(n.subjects)){
+      for(si in seq_len(nsubjects)){
         rows <- (si-1)*(fullTpoints-burnin) + seq_len(fullTpoints-burnin)
         out[rows,ctmodelobj$timeName] <-
           out[rows,ctmodelobj$timeName] - out[rows[1],ctmodelobj$timeName]

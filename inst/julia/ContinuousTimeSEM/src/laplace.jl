@@ -6070,6 +6070,43 @@ function ctsem_laplace_deviation_layout(laplace::CTSEMLaplaceObjective)
 end
 
 """
+    ctsem_laplace_coordinate_dimension(laplace)
+
+How many standard-normal coordinates `u` one draw of every random effect takes:
+the samplers' layout, unit by unit, which on a reduced-rank level is narrower
+than the deviations it builds.
+"""
+ctsem_laplace_coordinate_dimension(laplace::CTSEMLaplaceObjective) =
+    sum(laplace.units.dims; init=0)
+
+"""
+    ctsem_laplace_population_deviations(laplace, values, u)
+
+Natural deviations `S u` -- each block's deviation of its level's raw
+parameters, in `ctsem_laplace_deviation_layout`'s layout -- for coordinates `u`
+at the population covariance `values` implies. With `u` independent standard
+normals this is a draw of new groups and subjects from the population, which is
+what generation from a model, rather than from a fit's subjects, needs. The
+deviations go to `ctsem_generate` or `ctsem_generate_states` as their `effects`.
+
+The same construction the samplers report their draws through
+(`_laplace_popchols`, `_laplace_deviations!`), so a deviation means one thing
+however it was made.
+"""
+function ctsem_laplace_population_deviations(laplace::CTSEMLaplaceObjective,
+    values::AbstractVector, u::AbstractVector)
+    n = ctsem_laplace_coordinate_dimension(laplace)
+    length(u) == n || throw(DimensionMismatch(string("u has ", length(u),
+        " coordinates where the random effects take ", n)))
+    theta = collect(Float64, values)
+    _laplace_check_indices(laplace, length(theta))
+    Ls = _laplace_popchols(theta, laplace.spec)
+    starts, ndev = _laplace_deviation_offsets(laplace)
+    return _laplace_deviations!(zeros(Float64, ndev), laplace, Ls,
+        collect(Float64, u), starts)
+end
+
+"""
     _laplace_shifted_values_from_deviations(laplace, theta, deviations)
 
 Every subject's raw parameters before TI-predictor effects, from the population
