@@ -509,6 +509,11 @@ function _ctsem_subject_gradient_chunk!(scores::Matrix{T}, totals::Vector{T},
             end
             total += loglik
 
+            if _tape_unstable(tape)
+                _ctsem_forward_subject_gradient!(view(scores, i, :), subject_objective, values)
+                continue
+            end
+
             fill!(aws.theta_bar, zero(T))
             _ctsem_reverse_tape!(tape, subject_objective.params, aws, aws.n, aws.m)
             # The original `tipreds` (recipe or plain vector), not
@@ -573,6 +578,16 @@ function _ctsem_adjoint_chunk!(gradient::Vector{T}, totals::Vector{T},
             return nothing
         end
         total += loglik
+
+        # Forward mode for a subject whose reverse pass would not be stable;
+        # see `_CTSEM_ADJOINT_GROWTH`. Its gradient goes straight into the
+        # chunk's, so nothing of it enters the shared parameter layer.
+        if _tape_unstable(tape)
+            gf = similar(gradient)
+            _ctsem_forward_subject_gradient!(gf, subject_objective, values)
+            gradient .+= gf
+            continue
+        end
 
         shared || fill!(aws.theta_bar, zero(T))
         _ctsem_reverse_tape!(tape, subject_objective.params, aws, aws.n, aws.m)

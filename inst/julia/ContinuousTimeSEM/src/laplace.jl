@@ -1590,6 +1590,10 @@ function _laplace_subject_value_gradient!(gradient::AbstractVector{T},
             subject_objective.max_timestep, tape)
         _laplace_charge!(_LAPLACE_BYTES_FWD, bf)
         isfinite(loglik) || return loglik
+        if _tape_unstable(tape)
+            _ctsem_forward_subject_gradient!(gradient, subject_objective, values)
+            return loglik
+        end
         br = _laplace_mark()
         fill!(aws.theta_bar, zero(T))
         _ctsem_reverse_tape!(tape, subject_objective.params, aws, aws.n, aws.m)
