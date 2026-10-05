@@ -29,7 +29,8 @@
 #' 
 #' #fit
 #' ssfit <- ctFit(datalong, ssmodel,
-#'   iter=200, chains=2,optimize=FALSE, priors=TRUE,control=list(max_treedepth=4))
+#'   optimize=FALSE, priors=TRUE,
+#'   sampleControl=list(iter=200, chains=2, max_treedepth=4))
 #' umat <- stan_unconstrainsamples(ssfit$stanfit$stanfit)
 #' }
 stan_unconstrainsamples <- function(fit, standata=NA){

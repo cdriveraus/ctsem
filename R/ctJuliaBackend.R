@@ -3286,7 +3286,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     .ctBackendRandomCorrPriorSpec(prepared_data, laplace, npar)
   } else if (!isTRUE(priors)) NULL else if (!is.null(laplace)) {
     .ctBackendLaplacePriorSpec(prepared_data, laplace, npar)
-  } else .ctBackendPriorSpec(prepared_data, npar)
+  } else .ctBackendPriorSpec(prepared_data, npar,
+    nextra = if (is.null(ti_missing)) 0L else nrow(ti_missing))
   list(
     class = "ctJuliaModel",
     intoverpop = intoverpop,
@@ -4992,7 +4993,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     spec <- model_spec
     spec$priors <- try(if (!is.null(model_spec$laplace))
       .ctBackendLaplacePriorSpec(prepared_data, model_spec$laplace, npar)
-      else .ctBackendPriorSpec(prepared_data, npar), silent = TRUE)
+      else .ctBackendPriorSpec(prepared_data, npar,
+        nextra = NROW(model_spec$ti_missing)), silent = TRUE)
     if (inherits(spec$priors, "try-error") || !length(spec$priors$index))
       return(NULL)
     spec

@@ -151,7 +151,7 @@ drift_interval <- function(fit) {
 stan_sample <- ctFit(
   datalong = dat, model = fit_model, backend = "stan",
   cores = 1, priors = TRUE, optimize = FALSE,
-  chains = 1, iter = 400, verbose = 0
+  sampleControl = list(chains = 1, iter = 400), verbose = 0
 )
 ```
 
@@ -159,13 +159,13 @@ stan_sample <- ctFit(
 julia_sample <- ctFit(
   datalong = dat, model = fit_model, backend = "julia",
   cores = 1, priors = TRUE, optimize = FALSE,
-  chains = 1, iter = 250, verbose = 0
+  sampleControl = list(chains = 1, iter = 250), verbose = 0
 )
 ```
 
 With a single short chain each, these are quick demonstrations rather than
-publication-ready samples -- raise `chains` and `iter` for real work. The
-drift interval from each:
+publication-ready samples -- raise `chains` and `iter` in `sampleControl` for
+real work. The drift interval from each:
 
 ```{r sample-compare}
 rbind(stan = drift_interval(stan_sample), julia = drift_interval(julia_sample))
@@ -338,7 +338,7 @@ states anywhere.
 state_explicit_samp <- ctFit(
   count_dat, count_fit_model, backend = "julia",
   intoverstates = FALSE, optimize = FALSE, priors = TRUE,
-  chains = 1, iter = 120, verbose = 0
+  sampleControl = list(chains = 1, iter = 120), verbose = 0
 )
 state_explicit_samp$estimate$se
 dim(state_explicit_samp$estimate$states)
@@ -466,7 +466,7 @@ and both backends warn about it rather than refusing it outright:
 stan_lik_sample <- ctFit(
   datalong = dat, model = fit_model, backend = "stan",
   cores = 1, priors = FALSE, optimize = FALSE,
-  chains = 1, iter = 200, verbose = 0
+  sampleControl = list(chains = 1, iter = 200), verbose = 0
 )
 range(stan_lik_sample$stanfit$rawposterior)
 ```
@@ -475,7 +475,7 @@ range(stan_lik_sample$stanfit$rawposterior)
 julia_lik_sample <- ctFit(
   datalong = dat, model = fit_model, backend = "julia",
   cores = 1, priors = FALSE, optimize = FALSE,
-  chains = 1, iter = 150, verbose = 0
+  sampleControl = list(chains = 1, iter = 150), verbose = 0
 )
 range(julia_lik_sample$estimate$rawposterior)
 ```

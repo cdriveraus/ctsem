@@ -943,7 +943,8 @@
         .ctJuliaOr(settings$rhat_target, 1.01), " are reached") else "", ".")
   }
 
-  if (isTRUE(processes) && chains > 1L && .ctBackendCanWarm()) {
+  if (isTRUE(processes) && .ctBackendSampleWorkers(chains, cores) > 1L &&
+      .ctBackendCanWarm()) {
     out <- .ctBackendSampleProcesses(fit, target, chains = chains,
       warmup = warmup, draws = draws, cores = cores, handles = handles,
       control = control, saveEffects = saveEffects, seed = seed,
@@ -1468,8 +1469,10 @@ print.ctSampleDiagnostics <- function(x, ...) {
     initsd = .ctJuliaOr(optimcontrol$initsd, .01))
   spec0 <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
   if (!is.null(spec0$substeps)) spec0$max_timestep <- rep(1L, length(spec0$times))
-  handles <- if (processes && chains > 1L && .ctBackendCanWarm()) {
-    .ctBackendWarmWorkers(spec0, workers = chains, values = start0)
+  handles <- if (processes && .ctBackendSampleWorkers(chains, cores) > 1L &&
+      .ctBackendCanWarm()) {
+    .ctBackendWarmWorkers(spec0, workers = .ctBackendSampleWorkers(chains,
+      cores), values = start0)
   } else NULL
 
   # Placement: `.ctJuliaOptimiseFit()` (R/ctJuliaBackend.R) is the whole

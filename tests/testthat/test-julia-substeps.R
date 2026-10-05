@@ -213,11 +213,13 @@ test_that("a nonlinear model gets refined intervals and a fit that runs", {
 test_that("sampling uses the fitted mesh, on both targets and from ctFitUncertainty", {
   skip_if_not_installed("future")
   dat <- .substep_data(nsub = 12, nrow = 8)
-  run <- function(...) suppressWarnings(suppressMessages(ctFit(dat,
-    .substep_nonlinear_model(), backend = "julia", cores = 1, verbose = 0,
+  run <- function(..., cores = 1) suppressWarnings(suppressMessages(ctFit(dat,
+    .substep_nonlinear_model(), backend = "julia", cores = cores, verbose = 0,
     inits = c(0.1, -0.2), nlcontrol = list(nsubsteps = "auto", substeptol = 0.02),
     ...)))
-  optimised <- run()
+  # Under the prior sampling uses by default, so that the placement below and
+  # this fit share one objective and so one mesh.
+  optimised <- run(priors = TRUE)
   mesh <- optimised$model_spec$max_timestep
   expect_true(is.integer(mesh))
   expect_true(any(mesh > 1L))
@@ -239,7 +241,9 @@ test_that("sampling uses the fitted mesh, on both targets and from ctFitUncertai
       sampleobjective(fit, target)
     }, .package = "ctsem")
 
-  marginal <- run(optimize = FALSE,
+  # Two cores, since chains get worker processes only when there are cores
+  # for more than one.
+  marginal <- run(optimize = FALSE, cores = 2,
     sampleControl = list(chains = 2, warmup = 10, draws = 10))
   expect_equal(marginal$substeps, optimised$substeps)
   expect_gt(length(sampled), 0L)
