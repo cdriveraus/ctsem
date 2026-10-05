@@ -3597,13 +3597,26 @@ end
 @inline _laplace_finite(x::ForwardDiff.Dual) = _finite_deep(x)
 
 """
+    _laplace_level_chol_solves(spec, Ls, dL)
+
+`Ls[l] \\ dL[l][t]` for every level `l` and parameter `t`, as
+`_laplace_seeded_unit_gradient!` takes it; `nothing` under reduced rank, whose
+`L` is not square and whose units take the other route (`needV`) there. No unit
+changes it, so it is solved once per evaluation: solved by each unit, the
+general `\\` was an LAPACK factorization -- and its process-wide lock -- per
+unit and parameter, nearly every lock sample left in a Laplace gradient or
+Hessian at eight threads (dev1).
+"""
+_laplace_level_chol_solves(spec, Ls, dL) = hasreducedrank(spec) ? nothing :
+    [[Ls[l] \ dL[l][t] for t in eachindex(dL[l])] for l in eachindex(dL)]
+
+"""
     _laplace_seeded_unit_gradient!(out, laplace, U, values, Ls, dL, dLsolved, M,
                                    factors, elim)
 
 Accumulate unit `U`'s exact contribution to `dT/dtheta` into `out`, in a number
 of sweeps proportional to the unit's members rather than to the parameter count.
-`dLsolved[l][t]` is `Ls[l] \\ dL[l][t]`, solved once by the caller (`nothing`
-under reduced rank).
+`dLsolved` is `_laplace_level_chol_solves(spec, Ls, dL)`.
 
     dT/dtheta = dg/dtheta + [ dpsi/dtheta + s' B ] / 2
 
@@ -4389,15 +4402,7 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
     # the specialised single-level version used to do by hand.
     if !nested_gradient
         dLlevels = _laplace_level_chol_derivatives(theta, laplace.spec)
-        # `L \ dL` for every level and parameter, which no unit changes: solved
-        # here once rather than by every unit, where the general `\` was an
-        # LAPACK factorization -- and its process-wide lock -- per unit and
-        # parameter: nearly every lock sample left in a Laplace gradient or
-        # Hessian at eight threads (dev1). A reduced level's `L` is not square
-        # and its units take the other route (`needV`), so it gets none.
-        dLsolved = hasreducedrank(laplace.spec) ? nothing :
-            [[Ls[l] \ dLlevels[l][t] for t in eachindex(dLlevels[l])]
-             for l in eachindex(dLlevels)]
+        dLsolved = _laplace_level_chol_solves(laplace.spec, Ls, dLlevels)
         # One accumulator per slot rather than one shared vector: the unit
         # contributions are a sum, and summing per slot and then across slots
         # is the same sum in a different order.
