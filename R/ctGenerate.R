@@ -411,9 +411,13 @@ ctStanGenerate <- ctGenerateFromPriors
 #' \code{ctModel(type='ct'/'dt')} object rather than the matrix-list form.
 #' \code{'r'} integrates a linear Gaussian system with a matrix exponential at
 #' the values the model states, with individual differences only through
-#' \code{TRAITVAR} and \code{MANIFESTTRAITVAR}; it refuses a nonlinear model
-#' and has no measurement link. \code{'auto'} uses \code{'julia'} whenever
-#' julia is available or the model needs it, and \code{'r'} otherwise.
+#' \code{TRAITVAR} and \code{MANIFESTTRAITVAR}, and fills free parameters
+#' with fixed defaults; it refuses a nonlinear model and has no measurement
+#' link. \code{'auto'} uses \code{'r'}, as \code{ctGenerate} always has,
+#' unless the model or the call needs \code{'julia'}: a nonlinear model, a
+#' non-Gaussian indicator, more than one count in \code{n.subjects}, or
+#' \code{popmeans}. On a model that declares random effects or TI predictor
+#' effects, \code{'r'} says what it leaves out.
 #' @param popmeans For \code{backend='julia'}: a named numeric vector of
 #' population means on each parameter's natural scale, e.g.
 #' \code{c(mm = 2, drift = -0.3)}. This is the way to state the mean of an
@@ -542,11 +546,12 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
   if(backend == 'stan') stop("backend='stan' generates only from priors, ",
     'which is what it is there for. Use fromPriors=TRUE, or one of ',
     "'auto', 'r' and 'julia'.", call.=FALSE)
-  # `auto` prefers julia wherever julia can do the job, and falls back to the
-  # R generator otherwise -- including when there is no julia session. Julia
-  # generates from the model, random effects and measurement included; the R
-  # generator integrates a linear Gaussian system at fixed values. Pass
-  # `backend='r'` for the R generator's seed-for-seed output.
+  # `auto` is the R generator -- what ctGenerate has always been, so existing
+  # scripts keep their data -- except where only julia can do what was asked:
+  # a nonlinear model, a non-Gaussian indicator, grouping levels or stated
+  # population means. Julia generates from the model, random effects and
+  # measurement included; the R generator integrates a linear Gaussian system
+  # at fixed values and says so when the model asks for more.
   nonlinear <- isTRUE(try(ctModelIsNonlinear(ctmodelobj), silent=TRUE))
   # The R generator has no notion of a link, so it would produce continuous
   # values for a manifest the model declares binary, ordinal or count.
@@ -556,10 +561,8 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
   # engine to read, so `auto` keeps it on the R generator.
   specified <- inherits(ctmodelobj, 'ctStanModel')
   if(backend == 'auto') backend <-
-    if(nonlinear || categorical) 'julia' else
-      if(specified &&
-          isTRUE(tryCatch(ctJuliaStatus()$available, error=function(e) FALSE)))
-        'julia' else 'r'
+    if(nonlinear || categorical || length(n.subjects) > 1L || !is.null(popmeans))
+      'julia' else 'r'
   # `'auto'` is the state-explicit route for every model. The argument stays
   # because comparing the two routes on one specification is how the
   # filter's approximation is checked; see test-julia-intoverstates.R.
@@ -577,6 +580,23 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
       "1, 2 or 3) and backend='r' generates continuous values for them: the R ",
       'generator has no measurement link. Use backend="julia" for ',
       'binary, ordinal or count data.', call.=FALSE)
+  }
+  # What the R generator does not draw, named, since the julia path draws it
+  # and the two otherwise look alike from the call.
+  if(backend == 'r' && specified) {
+    varying <- .ctVaryingParams(ctmodelobj)
+    tieffects <- unlist(lapply(ctmodelobj$TIpredNames, function(nm) {
+      column <- ctmodelobj$pars[[paste0(nm, '_effect')]]
+      if(!is.null(column) && any(.ctTipredEffectActive(column) &
+          !is.na(ctmodelobj$pars$param))) nm
+    }))
+    if(length(varying) || length(tieffects)) message("backend='r' generates ",
+      'every subject at the values the model states: ',
+      if(length(varying)) paste0('random effects on ',
+        paste(varying, collapse=', '), if(length(tieffects)) ' and ' else ''),
+      if(length(tieffects)) paste0('effects of ', paste(tieffects, collapse=', ')),
+      " are not drawn, and free parameters are filled with fixed defaults. ",
+      "backend='julia' draws them from the population the model states.")
   }
   if(backend == 'r' && nonlinear) {
     stop("This model is nonlinear, and ctGenerate's own generator integrates a ",

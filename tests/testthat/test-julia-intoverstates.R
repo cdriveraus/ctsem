@@ -47,8 +47,7 @@ test_that("the engine reports the innovation count the design needs", {
   model <- .states_model()
   times <- lapply(1:3, function(i) 0:4)
   skeleton <- ctsem:::.ctGenerateSkeleton(model, 3, times)
-  spec <- ctsem:::.ctJuliaPrepare(skeleton,
-    suppressMessages(ctsem:::.ctGenerateResolveFree(model, quiet = TRUE)),
+  spec <- ctsem:::.ctJuliaPrepare(skeleton, model,
     priors = FALSE, intoverpop = "augmented")
   handle <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
   # Two latent states at every row: one innovation each at the first row of a
@@ -131,8 +130,7 @@ test_that("with no process noise the counts are Poisson at the fixed rate", {
 
 test_that("the joint density is finite and differentiable through R", {
   skip_without_julia()
-  model <- suppressMessages(ctsem:::.ctGenerateResolveFree(.states_model(),
-    quiet = TRUE))
+  model <- .states_model()
   times <- lapply(1:4, function(i) 0:5)
   skeleton <- ctsem:::.ctGenerateSkeleton(model, 4, times)
   set.seed(3)

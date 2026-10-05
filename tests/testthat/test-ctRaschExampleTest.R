@@ -1,4 +1,4 @@
-# backend='r' pinned, not left at 'auto'. This test characterises what the model recovers from one particular dataset, and 'auto' prefers the julia engine now, which generates different data for the same seed. The generator is not what is under test here.
+# backend='r' pinned rather than left at 'auto': this test characterises what the model recovers from one particular dataset, and the generator is not what is under test here.
 # A Rasch-style measurement model: seven binary indicators loading on one
 # latent process, item difficulties as free manifest means with the first fixed
 # at zero for identification, and a per-subject continuous intercept.
