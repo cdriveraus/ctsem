@@ -797,7 +797,7 @@ ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
     stop("method = 'psis' with subjectwise = TRUE draws from the fit's normal ",
       "approximation, and this fit carries no covariance (fit$estimate$cov). ",
       "Fit without optimcontrol = list(estonly = TRUE), or run ",
-      "ctOptimUncertainty(fit) first.", call. = FALSE)
+      "ctFitUncertainty(fit) first.", call. = FALSE)
   }
   covariance <- as.matrix(covariance)
   eig <- eigen((covariance + t(covariance)) / 2, symmetric = TRUE)

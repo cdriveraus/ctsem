@@ -1235,7 +1235,10 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   }
   values <- as.numeric(inits)
   if (length(values) != npar) {
-    stop("Julia initial values must have one entry per free parameter.", call. = FALSE)
+    stop("inits has ", length(values), " value", if (length(values) != 1L) "s",
+      "; the model has ", npar, " free parameters, one value each on the raw ",
+      "scale (as fit$estimate$raw holds them). Julia initial values must have ",
+      "one entry per free parameter.", call. = FALSE)
   }
   if (anyNA(values)) stop("Julia initial values must be numeric.", call. = FALSE)
   values
@@ -1243,7 +1246,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 
 .ctJuliaUnsupported <- function(model, optimize, priors, intoverpop, gendata,
   stanmodeltext, compileArgs, forcerecompile, intoverstates = TRUE,
-  optimcontrol = list()) {
+  optimcontrol = list(), savescores = FALSE, savesubjectmatrices = FALSE,
+  dots = character()) {
   failures <- character()
   # `optimcontrol$is` selects Stan's optimization-plus-importance-sampling
   # route (see R/ctFit.R's estimation-method message); the julia path's only
@@ -1313,9 +1317,23 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       "to a value (", paste(utils::head(fixedeffects, 4), collapse = ", "),
       ") -- these are for generation; use TRUE for an effect to estimate"))
   }
-  if (isTRUE(gendata)) failures <- c(failures, "generation")
-  if (!is.na(stanmodeltext)[1] || length(compileArgs) > 0L || isTRUE(forcerecompile)) failures <- c(failures, "Stan compilation controls")
-  if (length(failures)) stop("Julia backend v1 does not support: ", paste(failures, collapse = ", "), ".", call. = FALSE)
+  if (isTRUE(gendata)) failures <- c(failures, paste0("generation through ",
+    "the fit call (gendata=TRUE); use ctGenerate(), or ctGenerateFromFit() ",
+    "on a fit"))
+  if (!is.na(stanmodeltext)[1] || length(compileArgs) > 0L || isTRUE(forcerecompile)) failures <- c(failures, "Stan compilation controls (stanmodeltext, compileArgs, forcerecompile)")
+  # Stored on a stan fit at fit time; the julia path computes them after the
+  # fit instead, and accepting the flag would promise output it never writes.
+  saved <- c("savescores", "savesubjectmatrices")[c(isTRUE(savescores),
+    isTRUE(savesubjectmatrices))]
+  if (length(saved)) failures <- c(failures, paste0(paste(saved,
+    collapse = " and "), ", which a julia fit computes afterwards: ",
+    "ctKalman() for the filter output, ctSubjectPars() for subject matrices"))
+  # `...` reaches rstan::stan() on the stan path and nothing on this one.
+  if (length(dots)) failures <- c(failures, paste0("the extra argument",
+    if (length(dots) > 1L) "s" else "", " ", paste(dots, collapse = ", "),
+    ", which only backend='stan' passes on (to rstan::stan())"))
+  if (length(failures)) stop("backend='julia' does not support ",
+    paste(failures, collapse = "; "), ".", call. = FALSE)
 }
 
 .ctJuliaTDExpression <- function(expression) {
@@ -2994,8 +3012,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     # a fixed effect before this runs, and on the generation path every
     # `parnumber` is NA so `direct` excludes every row and this returns
     # nothing. Both of those are other functions' behaviour, and the julia
-    # refusal is worded "v1 does not support", so the day it does the wrong
-    # test here would silently free an effect the user fixed.
+    # refusal says only that it is not supported yet, so the day it is the
+    # wrong test here would silently free an effect the user fixed.
     freeeffects <- direct & .ctTipredEffectFree(table[[column]])
     parameters <- sort(unique(table$parnumber[freeeffects]))
     for (parameter in parameters) {
@@ -5744,7 +5762,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 print.ctJuliaFit <- function(x, ...) {
   cat("ctsem Julia fit\n")
   cat("  log likelihood:", format(x$estimate$loglik), "\n")
-  cat("  converged:", x$optim$converged, " iterations:", x$optim$iterations, "\n")
+  # On a sampled fit that optimisation only placed the chains, and an unlabelled
+  # "converged: TRUE" beside "chains converged: FALSE" read as a contradiction.
+  cat(if (is.null(x$sample)) "  converged:" else "  placement converged:",
+    x$optim$converged, " iterations:", x$optim$iterations, "\n")
   # A sampled fit's headline is not the optimiser's. That optimisation ran only
   # to place the sampler and build its metric, so a fit whose chains never
   # agreed prints `converged: TRUE` on the line above and is still worthless.

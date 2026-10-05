@@ -575,7 +575,7 @@ test_that("a sampled fit reports n_eff and Rhat where a ctStanFit does, and an o
   # A sampled fit did not run an uncertainty pass, and used to say it had.
   expect_match(summarised$uncertaintyNote, "posterior draws (SAEM kernel)",
     fixed = TRUE)
-  expect_false(grepl("ctOptimUncertainty", summarised$uncertaintyNote, fixed = TRUE))
+  expect_false(grepl("ctFitUncertainty", summarised$uncertaintyNote, fixed = TRUE))
 
   # The optimised fit it started from has draws too -- from a covariance fitted
   # at the mode -- and there is no between-chain variance for those. Same

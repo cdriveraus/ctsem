@@ -492,6 +492,8 @@ summaryCtStanFitLabel <- function(x){
     # what it is rather than filed with the footnotes.
     sampleNote = 'Sampling',
     uncertaintyNote = 'Note',
+    # The certification's verdict; the field name read as 'optimgap Note'.
+    optimgapNote = 'Convergence',
     parmatNote = 'Note')
   if(x %in% names(labels)) return(unname(labels[x]))
   # A hierarchy names its levels, so a section can be `popsd.study`. The label

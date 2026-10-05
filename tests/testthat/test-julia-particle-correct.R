@@ -97,7 +97,7 @@ test_that("reweighting a linear fit changes little and records everything it did
   expect_output(print(pc), "effective sample size")
   s <- suppressMessages(summary(out))
   expect_match(s$uncertaintyNote, "ctParticleCorrect")
-  expect_match(suppressMessages(summary(fit))$uncertaintyNote, "ctOptimUncertainty")
+  expect_match(suppressMessages(summary(fit))$uncertaintyNote, "ctFitUncertainty")
 })
 
 test_that("a corrected fit reweights again as a posterior-distributed one", {

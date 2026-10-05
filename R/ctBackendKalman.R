@@ -643,7 +643,7 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
   if (isTRUE(fullposterior)) {
     posterior <- fit$estimate$rawposterior
     if (is.null(posterior)) {
-      stop("fullposterior=TRUE needs posterior draws; run ctOptimUncertainty() first, ",
+      stop("fullposterior=TRUE needs posterior draws; run ctFitUncertainty() first, ",
         "or use fullposterior=FALSE to generate from the point estimate.", call. = FALSE)
     }
     rows <- sample(seq_len(nrow(posterior)), nsamples, replace = nsamples > nrow(posterior))

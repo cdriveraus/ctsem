@@ -179,13 +179,13 @@ ctParticleCorrect <- function(fit, draws = c("reweight", "imis"), particles = 10
   posterior <- fit$estimate$rawposterior
   hasdraws <- !is.null(posterior) && length(dim(posterior)) == 2L && nrow(posterior) >= 2L
   if (identical(draws, "reweight") && !hasdraws) {
-    stop("The fit carries no posterior draws to reweight. Run ctOptimUncertainty() ",
+    stop("The fit carries no posterior draws to reweight. Run ctFitUncertainty() ",
       "first, or use draws = 'imis'.", call. = FALSE)
   }
   covariance <- fit$estimate$cov
   if (identical(draws, "imis") && is.null(covariance)) {
     stop("draws = 'imis' needs the fit's covariance as its first proposal. Run ",
-      "ctOptimUncertainty() first.", call. = FALSE)
+      "ctFitUncertainty() first.", call. = FALSE)
   }
   proposal <- if (identical(draws, "reweight")) .ctParticleProposal(fit) else "imis"
   est <- as.numeric(fit$estimate$raw)
@@ -427,19 +427,19 @@ print.ctParticleCorrection <- function(x, ...) {
   if (is.null(kind)) {
     stop("The fit does not record how its posterior draws were produced ",
       "(fit$uncertainty$draws), so their density is unknown. Recompute them with ",
-      "ctOptimUncertainty(), or use draws = 'imis'.", call. = FALSE)
+      "ctFitUncertainty(), or use draws = 'imis'.", call. = FALSE)
   }
   switch(as.character(kind)[1L],
     normal = {
       if (is.null(fit$estimate$cov)) {
         stop("The fit's draws are normal but it carries no covariance to describe ",
-          "them with. Recompute them with ctOptimUncertainty().", call. = FALSE)
+          "them with. Recompute them with ctFitUncertainty().", call. = FALSE)
       }
       "normal"
     },
     imis = "posterior", empirical = "posterior", particle = "posterior",
     stop("Draws of kind '", kind, "' are not recognised here. Recompute them with ",
-      "ctOptimUncertainty(), or use draws = 'imis'.", call. = FALSE))
+      "ctFitUncertainty(), or use draws = 'imis'.", call. = FALSE))
 }
 
 # The particle and filter likelihoods at each row of `theta`, in batches of one

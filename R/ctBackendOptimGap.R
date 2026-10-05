@@ -707,7 +707,7 @@
       "largest gradient ", signif(as.numeric(fit$optim$gradient_norm), 3),
       ". No curvature was computed, so how far this is from the optimum is ",
       "unknown -- fit without optimcontrol$estonly, or call ",
-      "ctOptimUncertainty(), to have it certified.", call. = FALSE)
+      "ctFitUncertainty(), to have it certified.", call. = FALSE)
     return(invisible(NULL))
   }
   if (isTRUE(certification$certified)) return(invisible(NULL))

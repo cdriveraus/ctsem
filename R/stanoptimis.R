@@ -46,7 +46,7 @@ ctFitAddSamples <- function(fit,nsamples,cores=2){
   # replacement would move every number this has ever produced for a given
   # seed.
   .Deprecated(msg = paste0(
-    "ctFitAddSamples() is deprecated. Use ctOptimUncertainty(fit, ",
+    "ctFitAddSamples() is deprecated. Use ctFitUncertainty(fit, ",
     "uncertainty = 'stored', finishsamples = n), which redraws from the same ",
     "covariance and works on both backends."))
 

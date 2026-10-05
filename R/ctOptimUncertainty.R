@@ -2279,7 +2279,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   est <- if(julia) as.numeric(fit$estimate$raw) else fit$stanfit$rawest
   if(is.null(cov) || !length(cov) || any(!is.finite(cov))) stop(
     "uncertainty='stored' redraws from the covariance already on the fit, and ",
-    "this fit has no usable one. Run ctOptimUncertainty() with a method that ",
+    "this fit has no usable one. Run ctFitUncertainty() with a method that ",
     "computes one first -- 'hessian' is the default.", call.=FALSE)
   if(is.null(est) || length(est) != ncol(cov)) stop(
     "uncertainty='stored' needs the fit's raw estimate and stored covariance ",
@@ -2650,7 +2650,8 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' subjects. Bootstrap-style methods require at least two returned samples /
 #' refits.
 #' @param verbose Integer controlling progress detail.
-#' @param ... Unused.
+#' @param ... Not used. Anything passed here is an error rather than ignored:
+#' a method's settings are entries of \code{control}.
 #'
 #' @return The fit, of the class it came in as. For every method except
 #' \code{'sample'}: the resolved method, draw strategy, sample count, cores,
@@ -2676,6 +2677,16 @@ ctFitUncertainty <- function(fit,
   draws=c('auto','normal','empirical','imis'), finishsamples=NULL,
   cores=NULL, control=list(), verbose=0, ...){
   
+  # `...` used to swallow whatever reached it: `chains = 4` here, meant for
+  # `control`, ran the method with its own defaults and said nothing.
+  if(...length()) {
+    dotnames <- ...names()
+    if(is.null(dotnames)) dotnames <- rep('', ...length())
+    dotnames <- ifelse(nzchar(dotnames), dotnames, '(unnamed)')
+    stop("ctFitUncertainty() does not take ", paste(dotnames, collapse=', '),
+      ". A method's settings are entries of control, as in ",
+      "control = list(", dotnames[1L], " = ...).", call.=FALSE)
+  }
   uncertainty <- match.arg(uncertainty)
 
   # `'sample'` is a different kind of thing from the other eight methods --
@@ -2767,7 +2778,7 @@ ctFitUncertainty <- function(fit,
     "ctFit(..., backend='stan') or a ctJuliaFit from ctFit(..., ",
     "backend='julia'). This object is neither.", call.=FALSE)
   if(length(fit$stanfit$stanfit@sim) > 0) {
-    stop('ctOptimUncertainty currently applies to optimized ctStanFit objects')
+    stop('ctFitUncertainty currently applies to optimized ctStanFit objects')
   }
   # The mirror of the julia branch's `parsteps` refusal above. `analyticHessian`
   # selects the julia engine's exact Hessian, differentiated out of its own

@@ -1297,7 +1297,8 @@ T0VARredundancies <- function(ctm) {
 #'  routing, deprecated-argument merges (e.g. \code{nopriors} into
 #'  \code{priors}) and backend-specific defaults were settled -- \code{cores}
 #'  is a concrete integer, \code{intoverpop} is one of \code{'augmented'},
-#'  \code{'laplace'} or \code{'none'}. A call that gives the same \code{input}
+#'  \code{'laplace'} or \code{'none'}, and \code{priors} is \code{TRUE},
+#'  \code{FALSE} or \code{'randomCorr'}. A call that gives the same \code{input}
 #'  on both backends gives the same \code{resolved} on both.}
 #' }
 #' Before this, \code{$args} itself held the raw call on a stan fit and only
@@ -1577,6 +1578,14 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   iter <- .ctsample_resolved$iter
   chains <- .ctsample_resolved$chains
   control <- .ctsample_resolved$control
+  # Sampling settings on a fit that does not sample were dropped without a
+  # word, and the deprecation warning above even said they took effect.
+  sampling_given <- c(if(length(sampleControl)) 'sampleControl',
+    intersect(c('iter', 'chains', 'control'), names(match.call())))
+  if(isTRUE(optimize) && length(sampling_given)) warning(
+    paste(sampling_given, collapse=', '), " set how optimize=FALSE samples; ",
+    "this fit optimises, so ", if(length(sampling_given) > 1L) "they are" else
+      "it is", " not used.", call.=FALSE)
 
   if('vb' %in% ...names()) stop(
     "the 'vb' (variational Bayes) argument to ctFit() has been removed -- ",
@@ -1625,11 +1634,27 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # name the chosen backend cannot honour is a mistake to report immediately,
   # not after a wait.
   .ctFitCheckControls(optimcontrol, backend)
+  # Both are coerced further down without a check: cores = 0 ran a fit and
+  # recorded 0 as what it used, and verbose = 'yes' became NA with only a
+  # coercion warning.
+  if(!(identical(cores, 'maxneeded') || (is.numeric(cores) &&
+      length(cores) == 1L && !is.na(cores) && cores >= 1 && cores == round(cores))))
+    stop("cores must be a positive whole number, or 'maxneeded'.", call.=FALSE)
+  if(!(is.numeric(verbose) || is.logical(verbose)) || length(verbose) != 1L ||
+      is.na(verbose) || verbose < 0 || verbose != round(verbose))
+    stop("verbose must be 0, 1 or 2.", call.=FALSE)
   if(backend %in% 'julia') {
+    dots <- if(...length()) {
+      dotnames <- ...names()
+      if(is.null(dotnames)) dotnames <- rep('', ...length())
+      ifelse(nzchar(dotnames), dotnames, '(unnamed)')
+    } else character()
     .ctJuliaUnsupported(ctstanmodel, optimize=optimize, priors=priors,
       intoverpop=intoverpop, gendata=gendata,
       stanmodeltext=stanmodeltext, compileArgs=compileArgs,
-      forcerecompile=forcerecompile, optimcontrol=optimcontrol)
+      forcerecompile=forcerecompile, optimcontrol=optimcontrol,
+      savescores=savescores, savesubjectmatrices=savesubjectmatrices,
+      dots=dots)
     # Before any data preparation, so that a first-time user is asked about the
     # setup they need rather than being told about it after a wait. Only when
     # the fit will actually run: preparation is pure R, and stays usable -- and
@@ -1742,9 +1767,15 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     }
   }
 
+  # The prior has something to act on only where a level has two or more
+  # varying parameters; naming it on a model with none read as a prior that
+  # was not there.
+  hascorrelations <- any(vapply(.ctVaryingColumns(ctm), function(cl)
+    length(.ctVaryingParams(ctm, cl)) > 1L, logical(1)))
   if(optimize && priorscope %in% 'randomCorr') message(
-    "Maximum likelihood estimation requested, with priors on the ",
-    "random-effect correlations. priors=FALSE for none, TRUE for all.")
+    if(hascorrelations) paste0("Maximum likelihood estimation requested, ",
+      "with priors on the random-effect correlations. priors=FALSE for none, ",
+      "TRUE for all.") else "Maximum likelihood estimation requested")
   if(optimize && !priors) message("Maximum likelihood estimation requested")
   # `optimcontrol$is` is refused above, so it is NULL by the time we get here
   # and the importance-sampling wording this used to choose is unreachable.
@@ -2397,6 +2428,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
       paste(ctm$manifestNames[ctm$manifesttype %in% 4], collapse=', '), '.',
       call.=FALSE)
   }
+  if(any(ctm$manifesttype %in% 1)) .ctDataBinary(datalong, ctm)
   if(any(ctm$manifesttype %in% 2)) .ctDataCategories(datalong, ctm)
   if(any(ctm$manifesttype %in% 3)) .ctDataCounts(datalong, ctm)
   if(any(ctm$manifesttype %in% 4)) .ctDataCensored(datalong, ctm)
@@ -2650,7 +2682,10 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # model the restriction did not apply to reports NA whatever was asked for.
   argsresolved$poprank <- if(!is.null(laplacerank)) laplacerank else
     if(is.null(popregression)) NA_integer_ else as.integer(popregression$rank)
-  argsresolved$priors <- as.logical(priors)
+  # The scope, not the logical `priors` was reduced to: the julia default reads
+  # TRUE there, and TRUE is a prior on every coordinate, a different estimator.
+  argsresolved$priors <- switch(priorscope, all = TRUE, none = FALSE,
+    randomCorr = 'randomCorr')
   argsresolved$optimize <- isTRUE(optimize)
   argsresolved$intoverstates <- isTRUE(intoverstates)
 
