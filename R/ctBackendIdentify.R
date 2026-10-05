@@ -898,9 +898,11 @@
   if (isTRUE(identify$nweak > 0L)) parts <- c(parts, paste0(identify$nweak,
     " direction", if (identify$nweak > 1L) "s are" else " is",
     " not identified (", name3(identify$parameters), ")"))
-  if (isTRUE(intervals$nflagged > 0L)) parts <- c(parts, paste0(
-    intervals$nflagged, " interval", if (intervals$nflagged > 1L) "s are" else
-      " is", " far wider than the curvature supports"))
+  wide <- setdiff(intervals$parameters, c(identify$parameters,
+    intervals$unidentified))
+  if (length(wide)) parts <- c(parts, paste0(length(wide), " interval",
+    if (length(wide) > 1L) "s are" else " is",
+    " far wider than the curvature supports"))
   if (!length(parts) && length(repairs)) parts <- paste0("the covariance ",
     "needed numerical repair")
   if (!length(parts)) return("")
@@ -981,15 +983,23 @@
   # still have almost all of its reported width come from its entanglement with
   # the others, and then the interval moves by orders of magnitude between two
   # runs that reached the same optimum.
-  if (!is.null(intervals) && isTRUE(intervals$nflagged > 0L)) {
-    involved <- paste(utils::head(intervals$parameters, 6), collapse = ", ")
-    if (length(intervals$parameters) > 6) involved <- paste0(involved, ", ...")
-    widest <- max(intervals$table$ratio[is.finite(intervals$table$ratio)])
-    warning(intervals$nflagged, " reported interval",
-      if (intervals$nflagged > 1L) "s are" else " is",
-      " far wider than the curvature at the estimate supports -- up to ",
-      signif(widest, 3), " times the width that parameter's own curvature ",
-      "gives. That width comes from the parameter not being separable from ",
+  # A parameter the identifiability warning above already named is not named
+  # again here: its wide interval is that finding, and on a binary fit both
+  # warnings listed the same TI-effect coefficient.
+  fresh <- if (is.null(intervals)) character(0) else
+    setdiff(intervals$parameters, c(if (isTRUE(identify$nweak > 0L))
+      identify$parameters, intervals$unidentified))
+  if (length(fresh)) {
+    involved <- paste(utils::head(fresh, 6), collapse = ", ")
+    if (length(fresh) > 6) involved <- paste0(involved, ", ...")
+    ratios <- intervals$table$ratio[intervals$table$param %in% fresh]
+    ratios <- ratios[is.finite(ratios)]
+    warning(length(fresh), " reported interval",
+      if (length(fresh) > 1L) "s are" else " is",
+      " far wider than the curvature at the estimate supports",
+      if (length(ratios)) paste0(" -- up to ", signif(max(ratios), 3),
+        " times the width that parameter's own curvature gives") else "",
+      ". That width comes from the parameter not being separable from ",
       "the others rather than from the data, and it is not stable: it can ",
       "move by orders of magnitude between two fits that reach the same ",
       "optimum. Parameters involved: ", involved,
