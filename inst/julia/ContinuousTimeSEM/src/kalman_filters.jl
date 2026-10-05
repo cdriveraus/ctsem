@@ -167,13 +167,18 @@ prediction is written back into `ws.state` and `ws.P_predict`.
     # for row rather than only at the final innovation-covariance Cholesky.
     _ridge_diagonal!(ws.P_update.data, _val(ws.state_dim), 1e-10)
 
-    # Hand-written small products (`_ctsem_mul!`), not `mul!`: with a
-    # `Symmetric` operand that is OpenBLAS's `symm`, which takes a
-    # process-wide lock for its work buffer on every call, so threads filtering
-    # different subjects queued for it. Profiled on dev1, SAEM's sweep over
-    # 800 subjects at 8 threads: a third of all samples were that mutex, from
-    # this line, and the sweep gained 1.5x where equal work gained 8.5x.
-    _ctsem_mul!(ws.bufferQ.intermediate, ws.discrete_ca.dDRIFT, ws.P_update)
+    # The plain matrix, never the `Symmetric` wrapper. `mul!` with a
+    # `Symmetric` operand is OpenBLAS's `symm`, which takes a process-wide lock
+    # for its work buffer on every call, so threads filtering different
+    # subjects queued for it: profiled on dev1, SAEM's sweep over 800 subjects
+    # at 8 threads spent a third of its samples in that mutex, from this line,
+    # and gained 1.5x where equal work gained 8.5x. Measured in isolation, `symm`
+    # on a 4x4 was 77 times slower per call with eight threads calling it than
+    # with one; `gemm`, transposed or on views, did not slow at all. So the
+    # wrapper's upper triangle is filled in and the product taken on `.data`:
+    # hand-written below `_CTSEM_SMALL_PRODUCT`, `gemm` above it.
+    _copy_lower_to_upper!(ws.P_update.data, ws.state_dim)
+    _ctsem_mul!(ws.bufferQ.intermediate, ws.discrete_ca.dDRIFT, ws.P_update.data)
     _mul_right_transpose!(ws.P_predict.data, ws.bufferQ.intermediate, ws.discrete_ca.dDRIFT, ws.state_dim, ws.state_dim, ws.state_dim)
     ws.P_predict.data .+= ws.discrete_ca.dDIFFUSION
     _copy_lower_to_upper!(ws.P_predict.data, ws.state_dim)
