@@ -235,8 +235,7 @@ function ctsem_sample_density!(gradient::Vector{Float64}, sampler::CTSEMSampler,
                 offsets = laplace.units.offsets[U][m]
                 _laplace_member_values!(shifted, theta, spec, Ls, uview, offsets)
                 loglik = _laplace_subject_value_gradient!(gsub,
-                    laplace.objective.subject_objectives[i], aws, shifted;
-                    ekf_workspace=ekf)
+                    laplace.objective.subject_objectives[i], aws, shifted, ekf)
                 if !isfinite(loglik)
                     return false
                 end

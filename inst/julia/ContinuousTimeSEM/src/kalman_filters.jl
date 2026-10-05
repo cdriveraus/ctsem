@@ -89,14 +89,29 @@ function _get_or_init_objective_workspace!(objective::ContinuousEKFObjective, ::
     return ws::ContinuousEKFWorkspace{T}
 end
 
+"""
+    _ekf_run(ws, objective, p, tipreds, trace)
+
+`_extended_kalman_filter_continuous!` for one subject objective, behind a
+function barrier: every argument is a reference.
+
+A subject's own workspace comes out of an untyped field, so a call on it is a
+dynamic dispatch, and a dynamic call boxes every immutable argument it is
+handed -- here the subject's `EKFParameters`, copied to the heap on every
+subject of every evaluation (gC8's five-node quadrature: 1.7 of its 6.6 MB an
+evaluation, from that one line). Handing over the mutable objective instead
+leaves the dispatch with nothing to copy but the returned value.
+"""
+@noinline _ekf_run(ws::ContinuousEKFWorkspace, o::ContinuousEKFObjective, p, tipreds,
+    trace) = _extended_kalman_filter_continuous!(ws, p, o.data, o.timesteps, o.params,
+    o.tdpreds, tipreds, o.subject, o.max_timestep, trace)
+
 function (objective::ContinuousEKFObjective)(p::AbstractVector{T}) where {T}
     ws = _get_or_init_objective_workspace!(objective, eltype(p))
     # Identity for the common case (see `_ctsem_tipred_vector`); only a
     # subject with a sampled TI predictor cell does any work here.
     tipred_vec = _ctsem_tipred_vector(objective.tipreds, p)
-    return _extended_kalman_filter_continuous!(ws, p, objective.data, objective.timesteps,
-        objective.params, objective.tdpreds, tipred_vec, objective.subject,
-        objective.max_timestep)::T
+    return _ekf_run(ws, objective, p, tipred_vec, nothing)::T
 end
 
 """

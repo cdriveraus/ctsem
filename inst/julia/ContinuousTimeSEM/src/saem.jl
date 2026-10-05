@@ -167,15 +167,19 @@ function _saem_member_ll(laplace::CTSEMLaplaceObjective, U::Integer, m::Integer,
         laplace.units.offsets[U][m])
     so = laplace.objective.subject_objectives[laplace.units.members[U][m]]
     value = try
-        _extended_kalman_filter_continuous!(aws.ekf_ws, shifted, so.data,
-            so.timesteps, so.params, so.tdpreds, so.tipreds, so.subject,
-            so.max_timestep)
+        _saem_member_filter(aws, so, shifted)
     catch err
         _ctsem_must_propagate(err) && rethrow()
         -Inf
     end
     return isfinite(value) ? Float64(value) : -Inf
 end
+
+# A barrier on `aws`, which arrives untyped from the slot's cache: read from it
+# directly, its inline `ekf_ws` was copied to the heap for every member, 700
+# bytes a call on gC8.
+@noinline _saem_member_filter(aws, so, shifted) =
+    _ekf_run(aws.ekf_ws, so, shifted, so.tipreds, nothing)
 
 """Member positions' log likelihoods into `dest`, in parallel over members."""
 function _saem_members_ll!(dest::Vector{Float64}, laplace::CTSEMLaplaceObjective,
