@@ -302,11 +302,12 @@ ctsem_objective(params::EKFParameters, subject_starts, timesteps, data,
 # already owns its own primal and dual workspaces, and nothing is shared between
 # them but the read-only `EKFParameters`.
 #
-# Work is split into contiguous *chunks* handed to `Threads.@spawn`, with each
-# chunk owning the workspace it uses, rather than indexing workspaces by
-# `threadid()`. That distinction matters: a task can migrate between threads at
-# any yield point, so `threadid()` is not stable for the duration of a task and
-# indexing mutable scratch by it is a data race waiting to happen.
+# Work is split into contiguous *blocks* of subjects that a few tasks pull from
+# a shared counter (`_ctsem_pull_blocks`), each task owning the workspace it
+# uses, rather than indexing workspaces by `threadid()`. That distinction
+# matters: a task can migrate between threads at any yield point, so
+# `threadid()` is not stable for the duration of a task and indexing mutable
+# scratch by it is a data race waiting to happen.
 #
 # Threading changes the summation order, so a threaded result differs from a
 # serial one at the last bits. `test_threading.jl` asserts agreement to 1e-12
@@ -542,6 +543,81 @@ function _ctsem_chunk_assignment(weights::AbstractVector{<:Real}, nchunks::Int)
     return chunks
 end
 
+"""
+Blocks per worker in the subject loops (`_ctsem_pull_blocks`). One block per
+worker is the old fixed split; more let the workers that start promptly take
+the share of one that starts late, at the price of the per-block setup -- the
+shared parameter layer and the exponential table, once per block.
+"""
+const _CTSEM_BLOCKS_PER_WORKER = Ref(4)
+
+"""Set the subject loops' blocks per worker; returns the value now in force."""
+function ctsem_set_blocks_per_worker!(k::Integer)
+    k >= 1 || throw(ArgumentError("blocks per worker must be at least 1"))
+    _CTSEM_BLOCKS_PER_WORKER[] = Int(k)
+    return _CTSEM_BLOCKS_PER_WORKER[]
+end
+
+"""Blocks for `n` subjects over `nworkers` workers: one when there is one."""
+_ctsem_nblocks(n::Int, nworkers::Int) =
+    nworkers <= 1 ? 1 : max(1, min(n, nworkers * _CTSEM_BLOCKS_PER_WORKER[]))
+
+"""
+    _ctsem_pull_blocks(work, nblocks, nworkers)
+
+Call `work(b, w)` once for each block `b` in `1:nblocks`, on `nworkers` tasks --
+the caller and `nworkers - 1` spawned -- each taking the next block from a
+shared counter until none are left. `w` in `1:nworkers` names the task, for
+scratch that must not be shared. Which blocks a task gets is not fixed, so
+anything summed over blocks is stored by `b` and summed in block order by the
+caller: the result depends on the block count, never on the threads.
+
+Not one fixed range per task, which is what the subject loops did: a task
+spawned onto a sleeping thread can start milliseconds late, and a fixed range
+waits for its slowest starter. Measured on dev1 under load, a 12-state
+augmented value of 100 subjects at eight chunks: two tasks started at once and
+six about 3 ms later, against 2.5 ms of work each, so the evaluation took
+twice as long as its arithmetic. The Laplace pool (`_laplace_parallel`) never
+had this, because its workers pull too; this is the same idea for the loops
+that do not run on the pool. The caller works rather than waits, so the region
+makes progress from the start whatever the threads are doing.
+
+A block that throws stops the others at their next block, and the exception
+is rethrown once they have finished.
+"""
+function _ctsem_pull_blocks(work, nblocks::Int, nworkers::Int)
+    nworkers = max(1, min(nworkers, nblocks))
+    if nworkers == 1
+        for b in 1:nblocks
+            work(b, 1)
+        end
+        return nothing
+    end
+    next = Threads.Atomic{Int}(0)
+    failed = Threads.Atomic{Bool}(false)
+    Threads.@sync begin
+        for w in 2:nworkers
+            Threads.@spawn _ctsem_pull!(work, nblocks, w, next, failed)
+        end
+        _ctsem_pull!(work, nblocks, 1, next, failed)
+    end
+    return nothing
+end
+
+function _ctsem_pull!(work, nblocks::Int, w::Int, next, failed)
+    try
+        while !failed[]
+            b = Threads.atomic_add!(next, 1) + 1
+            b > nblocks && break
+            work(b, w)
+        end
+    catch
+        failed[] = true
+        rethrow()
+    end
+    return nothing
+end
+
 """Contiguous, near-equal partition of `1:n` into `nchunks` ranges."""
 function _ctsem_chunk_ranges(n::Int, nchunks::Int)
     nchunks = max(1, min(nchunks, n))
@@ -570,20 +646,19 @@ function (objective::CTSEMObjective)(values::AbstractVector)
                _ctsem_ti_missing_loglik(objective, values)
     end
 
-    ranges = _ctsem_chunk_ranges(nsubjects, nchunks)
-    partials = Vector{T}(undef, nchunks)
-    Threads.@sync for c in 1:nchunks
-        Threads.@spawn begin
-            accumulator = zero(T)
-            @inbounds for i in ranges[c]
-                accumulator += subjects[i](values)
-            end
-            partials[c] = accumulator
+    nblocks = _ctsem_nblocks(nsubjects, nchunks)
+    ranges = _ctsem_chunk_ranges(nsubjects, nblocks)
+    partials = Vector{T}(undef, nblocks)
+    _ctsem_pull_blocks(nblocks, nchunks) do b, _
+        accumulator = zero(T)
+        @inbounds for i in ranges[b]
+            accumulator += subjects[i](values)
         end
+        partials[b] = accumulator
     end
     total = zero(T)
-    @inbounds for c in 1:nchunks
-        total += partials[c]
+    @inbounds for b in 1:nblocks
+        total += partials[b]
     end
     return total + _ctsem_log_prior(objective, values) +
            _ctsem_ti_missing_loglik(objective, values)

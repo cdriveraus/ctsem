@@ -777,9 +777,10 @@ end
 
     seeded = zeros(Float64, length(theta))
     allok = true
+    dLsolved = ContinuousTimeSEM._laplace_level_chol_solves(laplace.spec, Ls, dL)
     for U in 1:nunits
         allok &= ContinuousTimeSEM._laplace_seeded_unit_gradient!(seeded, laplace, U,
-            theta, Ls, dL, Ms[U], curv[U][1], curv[U][2])
+            theta, Ls, dL, dLsolved, Ms[U], curv[U][1], curv[U][2])
     end
     @test allok
     ContinuousTimeSEM._ctsem_log_prior_gradient!(seeded, laplace.objective, theta)

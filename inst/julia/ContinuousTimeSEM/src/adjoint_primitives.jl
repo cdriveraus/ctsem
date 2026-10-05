@@ -457,7 +457,7 @@ function _sdcovsqrt2cov_pullback!(mat_bar::AbstractMatrix, mat::AbstractMatrix,
     @inbounds for j in 1:d, i in 1:d
         Csym[i, j] = cov_bar[i, j] + cov_bar[j, i]
     end
-    mul!(Bbar, Csym, B)
+    _ctsem_mul!(Bbar, Csym, B)
 
     # SD path: mat[i,i] scales the whole of row i of O.
     @inbounds for i in 1:d

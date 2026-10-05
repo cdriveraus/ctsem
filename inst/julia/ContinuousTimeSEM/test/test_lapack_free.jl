@@ -38,3 +38,30 @@ end
         @test isapprox(ContinuousTimeSEM._ctsem_expm(A), exp(A); rtol=1e-11, atol=1e-13)
     end
 end
+
+@testset "the engine's products: no BLAS by default, both kernels exact" begin
+    CT = ContinuousTimeSEM
+    @test CT._CTSEM_SMALL_PRODUCT[] == typemax(Int)
+    rng = MersenneTwister(11)
+    # Inner dimensions either side of the column kernel's threshold, with every
+    # remainder of four; non-square; views of a larger buffer; alpha and beta.
+    for (m, K, n) in ((3, 2, 4), (5, 7, 3), (4, 8, 6), (9, 9, 2), (6, 10, 7),
+            (12, 11, 12), (7, 13, 5), (16, 16, 16))
+        A = randn(rng, m, K); B = randn(rng, K, n); Bt = randn(rng, n, K)
+        At = randn(rng, K, m)
+        for (alpha, beta) in ((true, false), (2.5, 0.0), (1.0, 1.0), (-0.5, 0.3))
+            C0 = randn(rng, m, n)
+            @test CT._ctsem_mul!(copy(C0), A, B, alpha, beta) ≈ alpha .* (A * B) .+ beta .* C0
+            @test CT._ctsem_mulNT!(copy(C0), A, Bt, alpha, beta) ≈ alpha .* (A * Bt') .+ beta .* C0
+            @test CT._ctsem_mulTN!(copy(C0), At, B, alpha, beta) ≈ alpha .* (At' * B) .+ beta .* C0
+        end
+        # beta = 0 must not read C: NaN in the output buffer stays out.
+        @test !any(isnan, CT._ctsem_mul!(fill(NaN, m, n), A, B))
+        @test !any(isnan, CT._ctsem_mulNT!(fill(NaN, m, n), A, Bt))
+        @test !any(isnan, CT._ctsem_mulTN!(fill(NaN, m, n), At, B))
+        big = randn(rng, m + 3, K + 3)
+        Av = view(big, 2:(m + 1), 3:(K + 2))
+        Cv = view(zeros(m + 2, n + 2), 1:m, 2:(n + 1))
+        @test CT._ctsem_mul!(Cv, Av, B) ≈ Matrix(Av) * B
+    end
+end
