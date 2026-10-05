@@ -259,6 +259,24 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
             have_gradient = false
             accepted = isfinite(fn) && fn <= reference() + c1 * alpha * dphi
         end
+        # A step accepted on its value alone still needs a usable gradient.
+        # When the gradient evaluation is refused (see `trial_fg!`), the step
+        # is treated as too long: halved, and tried again with both.
+        if accepted && !have_gradient
+            evaluate!(nothing, Gn, xn); gcalls += 1
+            have_gradient = true
+            while !all(isfinite, Gn)
+                accepted = false
+                k < maxbacktrack || break
+                k += 1
+                alpha *= 0.5
+                xn = x .+ alpha .* s
+                fn = evaluate!(0.0, Gn, xn); fcalls += 1; gcalls += 1
+                accepted = isfinite(fn) && fn <= reference() + c1 * alpha * dphi &&
+                    all(isfinite, Gn)
+                accepted && break
+            end
+        end
         if !accepted
             # A stale memory is the usual cause; drop it once, then give up.
             if !retried && !isempty(M.S)
@@ -272,9 +290,6 @@ function _ctsem_lbfgs(fg!, x0::AbstractVector; memory::Integer=20,
             break
         end
         retried = false
-        if !have_gradient
-            evaluate!(nothing, Gn, xn); gcalls += 1
-        end
         directional === nothing || (directional.dphi0 = alpha * dphi)
         step = xn .- x
         iteration += 1
@@ -1468,6 +1483,10 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
             end
             Gn = similar(G)
             fg!(nothing, Gn, trial.x); gcalls += 1
+            # A refused gradient at the step's end (see `trial_fg!`): the
+            # finish stops where it was rather than step to a point it cannot
+            # differentiate.
+            all(isfinite, Gn) || break
             dx = trial.x .- x; dg = Gn .- G
             x = trial.x; f = trial.f; G = Gn; steps += 1; at_x = false
             steps == 1 && (firstwhole = trial.nt.whole)
@@ -1578,6 +1597,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
                     trial.ok || break
                     Gn = similar(G)
                     fg!(nothing, Gn, trial.x); gcalls += 1
+                    all(isfinite, Gn) || break
                     x = trial.x; f = trial.f; G = Gn; steps += 1; at_x = false
                     remember!("exact", gain, trial.nt.fraction)
                     report(gain)
