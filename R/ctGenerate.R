@@ -458,8 +458,9 @@ ctStanGenerate <- ctGenerateFromPriors
 #'   \code{popmeans} names it;
 #'   \item an individually varying parameter's population sd is its
 #'   \code{sdscale} (\code{sdscale_<level>} for a grouping level) on the raw,
-#'   untransformed scale, unless \code{RAWPOPVAR} states a number, and random
-#'   effects are uncorrelated unless \code{RAWPOPVAR} states a coordinate;
+#'   untransformed scale, unless \code{RAWPOPVAR} (\code{RAWPOPVAR_<level>})
+#'   states a number, and random effects are uncorrelated unless it states a
+#'   coordinate -- \code{\link{ctCov}} writes one from a covariance;
 #'   \item a time independent predictor is drawn standard normal per subject,
 #'   and an effect fixed in the model (\code{'mm||||TI1=0.5'}) shifts the raw
 #'   parameter by that much per unit of the predictor; an effect left free is
@@ -647,6 +648,9 @@ ctGenerate<-function(ctmodelobj,n=100,burnin=0,dtmean=1,logdtsd=0,dtmat=NA,
     return(out)
   }
   if('ctStanModel' %in% class(ctmodelobj)){
+    # The R generator reads every covariance as a Cholesky factor, so a
+    # covariance given as ctCov() is rewritten as one.
+    ctmodelobj <- .ctCovRefresh(ctmodelobj, 'cholesky')
     # Reconstruct matrix-style slots when a ctStanModel is supplied.
     mlist <- listOfMatrices(ctmodelobj$pars)
     for(nm in names(mlist)){

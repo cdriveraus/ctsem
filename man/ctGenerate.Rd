@@ -127,8 +127,9 @@ the scale of its prior, and all of them are named in a message:
   \code{popmeans} names it;
   \item an individually varying parameter's population sd is its
   \code{sdscale} (\code{sdscale_<level>} for a grouping level) on the raw,
-  untransformed scale, unless \code{RAWPOPVAR} states a number, and random
-  effects are uncorrelated unless \code{RAWPOPVAR} states a coordinate;
+  untransformed scale, unless \code{RAWPOPVAR} (\code{RAWPOPVAR_<level>})
+  states a number, and random effects are uncorrelated unless it states a
+  coordinate -- \code{\link{ctCov}} writes one from a covariance;
   \item a time independent predictor is drawn standard normal per subject,
   and an effect fixed in the model (\code{'mm||||TI1=0.5'}) shifts the raw
   parameter by that much per unit of the predictor; an effect left free is

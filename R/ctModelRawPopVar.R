@@ -118,10 +118,10 @@
 # the two have to mean the same thing by construction rather than by
 # coincidence.
 #' @keywords internal
-.ctModelRawPopVarNames <- function(pars) {
-  if (is.null(pars$indvarying)) return(character())
+.ctModelRawPopVarNames <- function(pars, column = "indvarying") {
+  if (is.null(pars[[column]])) return(character())
   free <- is.na(pars$value)
-  varying <- !is.na(pars$indvarying) & pars$indvarying & !is.na(pars$param) &
+  varying <- !is.na(pars[[column]]) & pars[[column]] & !is.na(pars$param) &
     free
   if (!any(varying)) return(character())
   unique(as.character(pars$param[varying]))
@@ -134,18 +134,47 @@
 # parameter's population spread has always been estimated -- and the point of
 # surfacing it is to show what the model implies, not to change it.
 #' @keywords internal
-.ctModelRawPopVar <- function(pars) {
-  names <- .ctModelRawPopVarNames(pars)
+.ctModelRawPopVar <- function(pars, column = "indvarying", suffix = "") {
+  names <- .ctModelRawPopVarNames(pars, column)
   if (!length(names)) return(NULL)
   n <- length(names)
   out <- matrix("0", n, n, dimnames = list(names, names))
   for (i in seq_len(n)) {
-    out[i, i] <- paste0("popsd_", names[i])
+    out[i, i] <- paste0("popsd_", names[i], suffix)
     if (i > 1L) for (j in seq_len(i - 1L)) {
-      out[i, j] <- paste0("popcorr_", names[i], "__", names[j])
+      out[i, j] <- paste0("popcorr_", names[i], "__", names[j], suffix)
     }
   }
   out
+}
+
+# One RAWPOPVAR per level of the hierarchy: `RAWPOPVAR` for the subject level,
+# `RAWPOPVAR_<idname>` for each grouping level, as `indvarying_<idname>` and
+# `sdscale_<idname>` already name a level's own columns. A field per level
+# rather than a list in one field, so `m$RAWPOPVAR_study['mm', 'mm'] <- 0.2`
+# reads like the subject level's own.
+#' @keywords internal
+.ctModelRawPopVarLevels <- function(model) {
+  groups <- as.character(model$groupIDnames)
+  data.frame(
+    level = c(if (is.null(model$subjectIDname)) "id" else
+      as.character(model$subjectIDname), groups),
+    field = c("RAWPOPVAR", if (length(groups)) paste0("RAWPOPVAR_", groups)),
+    column = c("indvarying", if (length(groups)) paste0("indvarying_", groups)),
+    suffix = c("", if (length(groups)) paste0(".", groups)),
+    stringsAsFactors = FALSE)
+}
+
+# The field holding a level's RAWPOPVAR, by level name; the subject level when
+# the name is NULL or the subject id.
+#' @keywords internal
+.ctModelRawPopVarField <- function(model, level = NULL) {
+  levels <- .ctModelRawPopVarLevels(model)
+  if (is.null(level)) return("RAWPOPVAR")
+  hit <- match(level, levels$level)
+  if (is.na(hit)) stop("'", level, "' is not an id level of this model.",
+    call. = FALSE)
+  levels$field[hit]
 }
 
 # Keep a RAWPOPVAR in step with the parameters that are varying now.
@@ -157,20 +186,24 @@
 # shuffle the specification of the ones already there.
 #' @keywords internal
 .ctModelRawPopVarSync <- function(model) {
-  fresh <- .ctModelRawPopVar(model$pars)
-  previous <- model[["RAWPOPVAR"]]
-  if (is.null(fresh)) {
-    model[["RAWPOPVAR"]] <- NULL
-    return(model)
-  }
-  if (!is.null(previous) && !is.null(dimnames(previous))) {
-    shared_row <- intersect(rownames(fresh), rownames(previous))
-    shared_col <- intersect(colnames(fresh), colnames(previous))
-    if (length(shared_row) && length(shared_col)) {
-      fresh[shared_row, shared_col] <- previous[shared_row, shared_col]
+  levels <- .ctModelRawPopVarLevels(model)
+  for (l in seq_len(nrow(levels))) {
+    field <- levels$field[l]
+    fresh <- .ctModelRawPopVar(model$pars, levels$column[l], levels$suffix[l])
+    previous <- model[[field]]
+    if (is.null(fresh)) {
+      model[[field]] <- NULL
+      next
     }
+    if (!is.null(previous) && !is.null(dimnames(previous))) {
+      shared_row <- intersect(rownames(fresh), rownames(previous))
+      shared_col <- intersect(colnames(fresh), colnames(previous))
+      if (length(shared_row) && length(shared_col)) {
+        fresh[shared_row, shared_col] <- previous[shared_row, shared_col]
+      }
+    }
+    model[[field]] <- fresh
   }
-  model[["RAWPOPVAR"]] <- fresh
   model
 }
 
@@ -188,8 +221,9 @@
 # The entry for one varying parameter pair, by name, or NA when the model has
 # nothing to say about it.
 #' @keywords internal
-.ctModelRawPopVarEntry <- function(model, rowname, colname = rowname) {
-  popcov <- model[["RAWPOPVAR"]]
+.ctModelRawPopVarEntry <- function(model, rowname, colname = rowname,
+  field = "RAWPOPVAR") {
+  popcov <- model[[field]]
   if (is.null(popcov)) return(NA_character_)
   if (!rowname %in% rownames(popcov) || !colname %in% colnames(popcov)) {
     return(NA_character_)
@@ -203,12 +237,30 @@
 # and assigned to a model with another would otherwise silently attach each
 # value to the wrong parameter.
 #' @keywords internal
-.ctModelRawPopVarAssign <- function(model, value) {
+.ctModelRawPopVarAssign <- function(model, value, field = "RAWPOPVAR") {
   model <- .ctModelRawPopVarSync(model)
-  current <- model[["RAWPOPVAR"]]
+  current <- model[[field]]
   if (is.null(current)) {
-    stop("This model has no individually varying parameters, so there is no ",
-      "population covariance to set.", call. = FALSE)
+    stop("This model has no parameters varying at the level ", field,
+      " describes, so there is no population covariance to set.", call. = FALSE)
+  }
+  # A covariance given as ctCov() covers the whole matrix -- its coordinates
+  # depend on every other one, so a block of them alone is not the covariance
+  # it was computed for -- and is remembered so `.ctCovRefresh()` can rewrite it.
+  if (inherits(value, "ctCov")) {
+    cov <- attr(value, "covariance")
+    if (is.null(rownames(cov))) dimnames(cov) <- dimnames(current)
+    if (!setequal(rownames(cov), rownames(current)) || nrow(cov) != nrow(current)) {
+      stop(field, " needs ctCov() for the whole matrix: ",
+        paste(rownames(current), collapse = ", "), ".", call. = FALSE)
+    }
+    cov <- cov[rownames(current), rownames(current), drop = FALSE]
+    model[[field]] <- current
+    accepted <- .ctCovAccept(model, field, structure(value, covariance = cov))
+    model <- accepted$model
+    value <- matrix(sprintf("%.17g", accepted$cells), nrow(cov), nrow(cov),
+      dimnames = dimnames(cov))
+    value[upper.tri(value)] <- "0"
   }
   value <- as.matrix(value)
   if (is.null(dimnames(value)) || is.null(rownames(value))) {
@@ -227,6 +279,6 @@
   }
   storage.mode(value) <- "character"
   current[rownames(value), colnames(value)] <- value
-  model[["RAWPOPVAR"]] <- current
+  model[[field]] <- current
   model
 }

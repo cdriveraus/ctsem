@@ -261,6 +261,22 @@ ctModel<-function(LAMBDA, type='ct',n.manifest = 'auto', n.latent='auto', Tpoint
   
   # keep track of whether Tpoints was explicitly provided by user
   TpointsProvided <- !is.null(Tpoints) && !is.na(Tpoints[1])
+
+  # A covariance given as ctCov(): the cells for the construction this model
+  # will use -- 'z' for ct and dt models, a Cholesky factor for the old omx
+  # form -- with the covariance remembered so the cells can be rewritten if
+  # covmattransform changes (.ctCovRefresh()).
+  covinput <- list()
+  for(nm in .ctCovSystemMatrices){
+    value <- get(nm)
+    if(inherits(value, 'ctCov')){
+      cov <- attr(value, 'covariance')
+      tf <- if(type %in% 'omx') 'cholesky' else 'z'
+      cells <- .ctCovCells(cov, tf, what = nm)
+      covinput[[nm]] <- list(cov = cov, cells = unname(cells), covmattransform = tf)
+      assign(nm, matrix(as.numeric(cells), nrow(cells), ncol(cells)))
+    }
+  }
   
   #get dimensions
   if(is.null(n.manifest) || is.null(n.latent) || all(n.manifest %in% 'auto') || all(n.latent %in% 'auto')){
@@ -581,6 +597,7 @@ ctModel<-function(LAMBDA, type='ct',n.manifest = 'auto', n.latent='auto', Tpoint
   if(type %in% c('ct','dt','stanct','standt')) completemodel<-ctModelConvertOMX(completemodel,type=type,tipredDefault= tipredDefault)
   if(type %in% c('omx')) class(completemodel)<-'ctsemInit'
   if(TpointsProvided) completemodel$Tpoints <- Tpoints
+  if(length(covinput) && !type %in% 'omx') completemodel$covinput <- covinput
   
   return(completemodel)
 }

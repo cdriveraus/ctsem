@@ -137,13 +137,6 @@
     "transform (", transform, ") can take.", call. = FALSE)
 }
 
-# The raw entry for a population sd, as the engine's `_laplace_popchol` reads
-# it: `log1p_exp(2 raw - 1) * sd_scale`.
-#' @keywords internal
-.ctGenerateRawSd <- function(target, scale) {
-  (log(expm1(target / scale)) + 1) / 2
-}
-
 # The generation model, its prepared specification, and the raw vector that
 # fixes every value generation needs, with a message naming them.
 #
@@ -154,6 +147,7 @@
 #' @keywords internal
 .ctGeneratePrepare <- function(model, skeleton, popmeans = NULL,
   project = NULL, quiet = FALSE) {
+  model <- .ctCovRefresh(model)
   fixedti <- list()
   for (k in seq_along(model$TIpredNames)) {
     column <- paste0(model$TIpredNames[k], "_effect")
@@ -204,35 +198,19 @@
   natural <- vapply(centred, function(nm)
     .ctGenerateNatural(transformOf(nm), 0), numeric(1))
 
-  # Population spread, per level: RAWPOPVAR where it states a number (the
-  # subject level), otherwise the level's sdscale, both raw-scale sds.
-  # Correlation coordinates where RAWPOPVAR states them; zero otherwise.
+  # Population spread, per level. What RAWPOPVAR (RAWPOPVAR_<level>) states is
+  # already fixed in the specification, as fitting holds it; a free sd is the
+  # level's sdscale, a free correlation coordinate zero. All raw-scale.
   spread <- character()
   for (level in spec$laplace$levels) {
-    subjectlevel <- identical(level$name, model$subjectIDname)
     if (length(level$sd_index)) {
       for (j in seq_along(level$sd_index)) {
-        target <- level$sd_scale[j]
-        if (subjectlevel) {
-          stated <- .ctModelRawPopVarValue(
-            .ctModelRawPopVarEntry(model, level$param[j]))
-          if (is.finite(stated)) target <- stated
-        }
-        if (!(target > 0)) stop("The population sd of ", level$param[j],
-          " at level '", level$name, "' must be positive.", call. = FALSE)
-        raw[level$sd_index[j]] <- .ctGenerateRawSd(target, level$sd_scale[j])
+        free <- level$sd_index[j] > 0L
+        target <- if (free) level$sd_scale[j] else
+          log1p(exp(2 * level$sd_fixed[j] - 1)) * level$sd_scale[j]
+        if (free) raw[level$sd_index[j]] <- .ctJuliaRawPopSd(target, level$sd_scale[j])
         spread <- c(spread, sprintf("%s %s [%s]", level$param[j],
           format(signif(target, 4)), level$name))
-      }
-      counter <- 0L
-      k <- length(level$param)
-      for (j in seq_len(k)) for (i in seq_len(k)) if (i > j) {
-        counter <- counter + 1L
-        if (subjectlevel) {
-          stated <- .ctModelRawPopVarValue(.ctModelRawPopVarEntry(model,
-            level$param[i], level$param[j]))
-          if (is.finite(stated)) raw[level$cor_index[counter]] <- stated
-        }
       }
     } else if (length(level$load_index)) {
       # A reduced-rank level: each basis effect's own loading at raw 1, which

@@ -126,8 +126,9 @@ reduced at all, and an explicit rank is refused. A restricted covariance is
 \code{L \%*\% t(L)} for a loading matrix \code{L}, reported as
 \code{poploading_<parameter>_dim<j>.<level>}; a loading's sign is
 arbitrary, so read the standard deviations and correlations
-\code{summary()} reports. A stated \code{RAWPOPVAR} cell turns the
-reduction off. May also be set on the model, as \code{model$poprank <- 2}.}
+\code{summary()} reports. A stated \code{RAWPOPVAR} cell turns a defaulted
+reduction off, and is refused alongside a rank asked for. May also be set on
+the model, as \code{model$poprank <- 2}.}
 
 \item{sameInitialTimes}{if TRUE, include an empty observation for every subject that has no observation
 at the earliest observation time of the dataset. This ensures that the T0MEANS occurs for every subject at the same time,

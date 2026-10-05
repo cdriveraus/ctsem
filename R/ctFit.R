@@ -622,8 +622,9 @@ T0VARredundancies <- function(ctm) {
 #' \code{L \%*\% t(L)} for a loading matrix \code{L}, reported as
 #' \code{poploading_<parameter>_dim<j>.<level>}; a loading's sign is
 #' arbitrary, so read the standard deviations and correlations
-#' \code{summary()} reports. A stated \code{RAWPOPVAR} cell turns the
-#' reduction off. May also be set on the model, as \code{model$poprank <- 2}.
+#' \code{summary()} reports. A stated \code{RAWPOPVAR} cell turns a defaulted
+#' reduction off, and is refused alongside a rank asked for. May also be set on
+#' the model, as \code{model$poprank <- 2}.
 #' @param intoverpop How declared individual differences (random effects) are
 #' handled: integrated out of the likelihood, or sampled with everything else.
 #'
@@ -1297,6 +1298,8 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # construction still carries it in its own parameter table, so it would be
   # applied twice. Both backends come through here.
   .ctCheckLegacyCovTransformModel(ctm$pars)
+  # Covariances given as ctCov(), rewritten for the construction in force now.
+  ctm <- .ctCovRefresh(ctm)
 
   if(!is.null(ctm$TIpredAuto) && ctm$TIpredAuto %in% c(1L,TRUE)){ #if auto tipred, set all effects to true
     for(tip in ctm$TIpredNames){

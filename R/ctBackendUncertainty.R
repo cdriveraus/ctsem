@@ -487,7 +487,8 @@
     # One block per level of the hierarchy, each with its own sds and
     # correlations.
     for (level in laplace$levels) {
-      if (length(level$cor_index)) index <- c(index, as.integer(level$cor_index))
+      if (length(level$cor_index)) index <- c(index,
+        setdiff(as.integer(level$cor_index), 0L))
     }
   } else {
     # The single-level layout, whose blocks are counted rather than indexed:
@@ -535,13 +536,16 @@
   scale <- rep(1, nparams)
 
   for (level in laplace$levels) {
-    if (length(level$sd_index)) {
-      index <- c(index, as.integer(level$sd_index))
-      scale <- c(scale, rep(1, length(level$sd_index)))
+    # Stated entries (index 0) are not parameters and take no prior.
+    sdfree <- setdiff(as.integer(level$sd_index), 0L)
+    corfree <- setdiff(as.integer(level$cor_index), 0L)
+    if (length(sdfree)) {
+      index <- c(index, sdfree)
+      scale <- c(scale, rep(1, length(sdfree)))
     }
-    if (length(level$cor_index)) {
-      index <- c(index, as.integer(level$cor_index))
-      scale <- c(scale, rep(1, length(level$cor_index)))
+    if (length(corfree)) {
+      index <- c(index, corfree)
+      scale <- c(scale, rep(1, length(corfree)))
     }
     # A reduced level carries loadings instead, and they need a prior of their
     # own rather than the scales' -- a row of `L` contributes its squared norm

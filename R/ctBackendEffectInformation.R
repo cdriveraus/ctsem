@@ -180,6 +180,8 @@
       # a spread there but a saddle.
       sdindex <- as.integer(level$sd_index)
       if (length(sdindex) != k) sdindex <- rep(NA_integer_, k)
+      # A stated sd has no raw position.
+      sdindex[sdindex %in% 0L] <- NA_integer_
       for (j in seq_len(k)) rows[[length(rows) + 1L]] <- .ctEffectRow(
         level$name, level$param[j], sqrt(popvar[j]), d[, j], unit, column,
         sdindex[j])

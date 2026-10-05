@@ -37,4 +37,15 @@ must be assigned back with \code{x$matrices <- mats}. A placeholder
 \code{matrices} element is stored in the object so the view is visible in
 \code{names(x)} and printed objects, but the matrix values are always derived
 from \code{x$pars}.
+
+The view also holds the population spread of the individually varying
+parameters: \code{RAWPOPVAR} for the subject level and
+\code{RAWPOPVAR_<idname>} for each grouping level, one row and column per
+parameter varying at that level, also reachable as \code{x$RAWPOPVAR}.
+The diagonal holds standard deviations and the lower triangle correlation
+coordinates, both for the raw, untransformed parameters, the scale a fit
+reports them on. A number fixes a cell, on every route, and a label leaves
+it free. \code{\link{ctCov}} writes a whole matrix from a covariance, which
+is also how to state \code{T0VAR}, \code{DIFFUSION} or \code{MANIFESTVAR}
+as the covariance it is meant to be.
 }
