@@ -1250,6 +1250,13 @@ _ctsem_optimise_log(::CTSEMOptimisable, verbose::Bool) = nothing
 _ctsem_optimise_trace_keys(::CTSEMOptimisable) = (:objective, :gradient_norm)
 _ctsem_optimise_trace_values(::CTSEMOptimisable) = ()
 _ctsem_optimise_progress_extra(::CTSEMOptimisable) = ()
+
+"""
+Why the route refused the point it last evaluated, as a clause for an error
+message, or `""`. The laplace route names the units whose inner solve did not
+converge.
+"""
+_ctsem_optimise_refusal(::CTSEMOptimisable) = ""
 _ctsem_optimise_verbose_shape(::CTSEMOptimisable) = nothing
 _ctsem_optimise_verbose_report(::CTSEMOptimisable, log) = nothing
 
@@ -1395,6 +1402,7 @@ _ctsem_optimise_trace_keys(p::CTSEMPinnedObjective) =
     _ctsem_optimise_trace_keys(p.objective)
 _ctsem_optimise_trace_values(p::CTSEMPinnedObjective) =
     _ctsem_optimise_trace_values(p.objective)
+_ctsem_optimise_refusal(p::CTSEMPinnedObjective) = _ctsem_optimise_refusal(p.objective)
 _ctsem_optimise_progress_extra(p::CTSEMPinnedObjective) =
     _ctsem_optimise_progress_extra(p.objective)
 _ctsem_optimise_verbose_shape(p::CTSEMPinnedObjective) =
@@ -2244,6 +2252,16 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # still has to gain and resumes this optimiser when it falls short. Two
     # mechanisms for one job, where the second can only act in cases the first
     # did not fix, is a way to be surprised rather than a safety net.
+    # A start the route refuses is not a point to stop at. L-BFGS accepts only
+    # usable points, so ending on the sentinel means the start was refused --
+    # and it took no step from it, having no gradient to step along. This used
+    # to fall through to the finish and the Hessian at that point, silently
+    # (the SNSF pilot, restarting from another build's checkpoint).
+    if !(isfinite(result.minimum) && result.minimum < invalid_objective)
+        throw(ErrorException(string(
+            "The objective cannot be evaluated at the point the optimiser starts from",
+            _ctsem_optimise_refusal(objective), ". Try other starting values.")))
+    end
     # Before the final evaluation, so what it reports is the run rather than
     # the extra call: see `_ctsem_optimise_verbose_report`.
     minimizer = collect(result.minimizer)

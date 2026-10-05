@@ -5379,6 +5379,14 @@ _ctsem_optimise_trace_keys(::CTSEMLaplaceObjective) =
     (:objective, :gradient_norm, :inner_converged)
 _ctsem_optimise_trace_values(o::CTSEMLaplaceObjective) =
     (count(o.inner_converged),)
+function _ctsem_optimise_refusal(o::CTSEMLaplaceObjective)
+    failed = findall(!, o.inner_converged)
+    isempty(failed) && return ""
+    return string(": the inner mode did not converge for unit",
+        length(failed) == 1 ? " " : "s ", join(failed, ", "), " of ",
+        length(o.inner_converged))
+end
+
 _ctsem_optimise_progress_extra(o::CTSEMLaplaceObjective) =
     (@sprintf("inner %d/%d", count(o.inner_converged),
         length(o.inner_converged)),)
