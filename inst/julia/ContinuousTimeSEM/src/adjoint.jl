@@ -345,30 +345,26 @@ function ctsem_adjoint_gradient(objective::CTSEMObjective, values::AbstractVecto
     nsubjects = length(subjects)
     nchunks = _ctsem_nchunks(nsubjects)
     workspaces = _get_or_init_adjoint_workspaces!(objective, T, length(values), nchunks)
-    ranges = _ctsem_chunk_ranges(nsubjects, nchunks)
+    nblocks = _ctsem_nblocks(nsubjects, nchunks)
+    ranges = _ctsem_chunk_ranges(nsubjects, nblocks)
 
-    # Per-chunk accumulators, summed at the end. Each chunk is independently a
-    # valid sub-objective: the parameter layer and the deferred Frechet
-    # contribution are both unwound within the chunk that produced them, so
-    # summing chunk gradients is exactly summing subject gradients, only in a
-    # different order.
-    gradients = [zeros(T, length(values)) for _ in 1:nchunks]
-    totals = zeros(T, nchunks)
-    valid = fill(true, nchunks)
-    badvalue = fill(T(NaN), nchunks)
+    # Per-block accumulators, summed at the end in block order. Each block is
+    # independently a valid sub-objective: the parameter layer and the deferred
+    # Frechet contribution are both unwound within the block that produced
+    # them, so summing block gradients is exactly summing subject gradients,
+    # only in a different order. A block runs on whichever worker pulls it
+    # (`_ctsem_pull_blocks`), with that worker's workspace.
+    gradients = [zeros(T, length(values)) for _ in 1:nblocks]
+    totals = zeros(T, nblocks)
+    valid = fill(true, nblocks)
+    badvalue = fill(T(NaN), nblocks)
 
-    if nchunks <= 1
-        _ctsem_adjoint_chunk!(gradients[1], totals, valid, badvalue, 1,
-            ranges[1], subjects, objective.params, workspaces[1], values)
-    else
-        Threads.@sync for c in 1:nchunks
-            Threads.@spawn _ctsem_adjoint_chunk!(gradients[c], totals, valid,
-                badvalue, c, ranges[c], subjects, objective.params,
-                workspaces[c], values)
-        end
+    _ctsem_pull_blocks(nblocks, nchunks) do b, w
+        _ctsem_adjoint_chunk!(gradients[b], totals, valid, badvalue, b,
+            ranges[b], subjects, objective.params, workspaces[w], values)
     end
 
-    @inbounds for c in 1:nchunks
+    @inbounds for c in 1:nblocks
         if !valid[c]
             # One invalid subject invalidates the whole evaluation, exactly as
             # in the serial path: a non-finite value *and* a non-finite
@@ -380,7 +376,7 @@ function ctsem_adjoint_gradient(objective::CTSEMObjective, values::AbstractVecto
 
     total = zero(T)
     gradient = gradients[1]
-    @inbounds for c in 1:nchunks
+    @inbounds for c in 1:nblocks
         total += totals[c]
         if c > 1
             gradient .+= gradients[c]
@@ -448,22 +444,18 @@ function ctsem_subject_gradients(objective::CTSEMObjective, values::AbstractVect
     scores = zeros(T, nsubjects, npars)
     nchunks = _ctsem_nchunks(nsubjects)
     workspaces = _get_or_init_adjoint_workspaces!(objective, T, npars, nchunks)
-    ranges = _ctsem_chunk_ranges(nsubjects, nchunks)
-    totals = zeros(T, nchunks)
-    valid = fill(true, nchunks)
-    badvalue = fill(T(NaN), nchunks)
+    nblocks = _ctsem_nblocks(nsubjects, nchunks)
+    ranges = _ctsem_chunk_ranges(nsubjects, nblocks)
+    totals = zeros(T, nblocks)
+    valid = fill(true, nblocks)
+    badvalue = fill(T(NaN), nblocks)
 
-    if nchunks <= 1
-        _ctsem_subject_gradient_chunk!(scores, totals, valid, badvalue, 1,
-            ranges[1], subjects, workspaces[1], values)
-    else
-        Threads.@sync for c in 1:nchunks
-            Threads.@spawn _ctsem_subject_gradient_chunk!(scores, totals, valid,
-                badvalue, c, ranges[c], subjects, workspaces[c], values)
-        end
+    _ctsem_pull_blocks(nblocks, nchunks) do b, w
+        _ctsem_subject_gradient_chunk!(scores, totals, valid, badvalue, b,
+            ranges[b], subjects, workspaces[w], values)
     end
 
-    @inbounds for c in 1:nchunks
+    @inbounds for c in 1:nblocks
         valid[c] || return (value=badvalue[c], scores=fill(T(NaN), nsubjects, npars))
     end
 
