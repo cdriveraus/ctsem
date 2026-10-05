@@ -104,10 +104,21 @@ least.
 const _CTSEM_BINARY_NODES = Ref(21)
 
 # The rule `_binary_rule` hands out, with the node count it was built for.
-mutable struct _CTSEMBinaryRule
-    @atomic rule::Tuple{Int,Vector{Float64},Vector{Float64}}
+# Mutable, so the atomic field below holds a pointer: Julia implements an
+# atomic field wider than one -- as the `(m, nodes, weights)` tuple this used to
+# be, stored inline at 24 bytes -- with a lock on the parent object, which every
+# read takes. That read was 38x slower at eight threads than serially (dev1),
+# and up to 5% of an 8-thread pass on mvmix; a pointer-sized one is a plain load.
+mutable struct _CTSEMBinaryRuleValue
+    const m::Int
+    const nodes::Vector{Float64}
+    const weights::Vector{Float64}
 end
-const _CTSEM_BINARY_RULE = _CTSEMBinaryRule((0, Float64[], Float64[]))
+
+mutable struct _CTSEMBinaryRule
+    @atomic rule::_CTSEMBinaryRuleValue
+end
+const _CTSEM_BINARY_RULE = _CTSEMBinaryRule(_CTSEMBinaryRuleValue(0, Float64[], Float64[]))
 
 """
     _binary_rule()
@@ -121,9 +132,9 @@ the node count has changed; the vectors are never written after they are built.
 @inline function _binary_rule()
     cached = @atomic :acquire _CTSEM_BINARY_RULE.rule
     m = _CTSEM_BINARY_NODES[]
-    cached[1] == m && return (cached[2], cached[3])
+    cached.m == m && return (cached.nodes, cached.weights)
     nodes, weights = _gauss_hermite(m)
-    @atomic :release _CTSEM_BINARY_RULE.rule = (m, nodes, weights)
+    @atomic :release _CTSEM_BINARY_RULE.rule = _CTSEMBinaryRuleValue(m, nodes, weights)
     return (nodes, weights)
 end
 
