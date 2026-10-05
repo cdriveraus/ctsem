@@ -18,7 +18,7 @@
       DRIFT = matrix(-0.4), DIFFUSION = matrix(0.6),
       MANIFESTVAR = matrix(1e-6), T0VAR = matrix(1), T0MEANS = matrix(0),
       CINT = matrix(0), MANIFESTMEANS = matrix(0), Tpoints = nobs))
-    one <- data.frame(ctGenerate(gen, n.subjects = 1, Tpoints = nobs,
+    one <- data.frame(ctGenerate(gen, n = 1, Tpoints = nobs,
       backend = "r"))
     one$id <- i
     one
@@ -245,7 +245,7 @@ test_that("ctGenerate draws counts rather than continuous values", {
     MANIFESTVAR = diag(0, 2), T0VAR = matrix(1), T0MEANS = matrix(0),
     CINT = matrix(0), MANIFESTMEANS = matrix(1.0, 2, 1), Tpoints = 6)))
   set.seed(4)
-  d <- data.frame(ctGenerate(gen, n.subjects = 15, Tpoints = 6,
+  d <- data.frame(ctGenerate(gen, n = 15, Tpoints = 6,
     backend = "julia"))
   values <- c(d$c1, d$c2)
   values <- values[!is.na(values)]
@@ -462,7 +462,7 @@ test_that("generated counts have the dispersion's moments", {
   wanted_var <- wanted_mean + wanted_mean^2 * (exp(sigma^2) - 1)
   for (ios in c(TRUE, FALSE)) {
     set.seed(7)
-    d <- data.frame(ctGenerate(gen, n.subjects = 3000, Tpoints = 5,
+    d <- data.frame(ctGenerate(gen, n = 3000, Tpoints = 5,
       backend = "julia", intoverstates = ios))
     y <- d$y[!is.na(d$y)]
     expect_equal(mean(y), wanted_mean, tolerance = 0.05,

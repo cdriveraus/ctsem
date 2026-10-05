@@ -382,10 +382,11 @@ ctStanGenerate <- ctGenerateFromPriors
 #' This function generates data according to the specified ctsem model object. 
 #' 
 #' @param ctmodelobj ctsem model object from \code{\link{ctModel}}.
-#' @param n.subjects Number of subjects to output. For a model with grouping
+#' @param n Number of subjects to output. For a model with grouping
 #' levels above the subject (\code{ctModel(id = c('subject', 'study'))}), one
 #' count per level in the same order, innermost first: \code{c(100, 10)} is
 #' 100 subjects split evenly over 10 studies. A level not given has one group.
+#' @param n.subjects Deprecated; use \code{n}.
 #' @param burnin Number of initial time points to discard (to simulate stationary data)
 #' @param dtmean Positive numeric. Median time interval (delta T) to use.
 #' Intervals are drawn as \code{exp(rnorm(n, log(dtmean), logdtsd))}, so
@@ -394,7 +395,7 @@ ctStanGenerate <- ctGenerateFromPriors
 #' at \code{logdtsd = 0.6} is about 20 percent longer than \code{dtmean}.
 #' @param logdtsd Numeric. Standard deviation of the log time interval. Zero
 #' gives an equal-interval design.
-#' @param dtmat Either NA, or numeric matrix of n.subjects rows and Tpoints-1 columns, 
+#' @param dtmat Either NA, or numeric matrix of n rows and Tpoints-1 columns, 
 #' containing positive numeric values for all time intervals between measurements. 
 #' If not NA, dtmean and logdtsd are ignored.
 #' @param Tpoints Optional number of time points to generate. If supplied, this overrides
@@ -415,7 +416,7 @@ ctStanGenerate <- ctGenerateFromPriors
 #' with fixed defaults; it refuses a nonlinear model and has no measurement
 #' link. \code{'auto'} uses \code{'r'}, as \code{ctGenerate} always has,
 #' unless the model or the call needs \code{'julia'}: a nonlinear model, a
-#' non-Gaussian indicator, more than one count in \code{n.subjects}, or
+#' non-Gaussian indicator, more than one count in \code{n}, or
 #' \code{popmeans}. On a model that declares random effects or TI predictor
 #' effects, \code{'r'} says what it leaves out.
 #' @param popmeans For \code{backend='julia'}: a named numeric vector of
@@ -428,7 +429,7 @@ ctStanGenerate <- ctGenerateFromPriors
 #' using the values the model specifies, and return \code{nsamples} datasets
 #' instead of one. This is the prior predictive: what the model says the data
 #' could look like before it has seen any. It needs no fitted model and no
-#' data -- with no \code{datastruct}, a balanced design of \code{n.subjects}
+#' data -- with no \code{datastruct}, a balanced design of \code{n}
 #' subjects at \code{Tpoints} occasions \code{dtmean} apart is used.
 #' @param nsamples With \code{fromPriors=TRUE}, how many datasets to draw.
 #' @param datastruct With \code{fromPriors=TRUE}, an optional long format data
@@ -485,13 +486,13 @@ ctStanGenerate <- ctGenerateFromPriors
 #'
 #' #the R generator: every subject at the values the model states, with free
 #' #cells filled by fixed defaults and no individual differences
-#' data <- ctGenerate(generatingModel,n.subjects=15,burnin=10)
+#' data <- ctGenerate(generatingModel,n=15,burnin=10)
 #'
 #' \donttest{
 #' #the julia engine: each subject's CINT drawn from the population, with the
 #' #means stated on the natural scale and the sds given by sdscale on the raw
 #' #scale (CINT is 10 * raw, so 0.5 and 0.8)
-#' data <- ctGenerate(generatingModel,n.subjects=15,burnin=10,
+#' data <- ctGenerate(generatingModel,n=15,burnin=10,
 #'   backend='julia',popmeans=c(cint1=1,cint2=0))
 #' }
 #'
@@ -499,16 +500,20 @@ ctStanGenerate <- ctGenerateFromPriors
 #' #has seen any. No fit, and no data.
 #' \donttest{
 #' priorpred <- ctGenerate(generatingModel, fromPriors = TRUE, Tpoints = 6,
-#'   n.subjects = 10, nsamples = 20, cores = 2)
+#'   n = 10, nsamples = 20, cores = 2)
 #' str(priorpred$Y)
 #' }
 #' @export
 
-ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat=NA,
+ctGenerate<-function(ctmodelobj,n=100,burnin=0,dtmean=1,logdtsd=0,dtmat=NA,
   Tpoints=NULL, wide=FALSE, backend=c('auto','r','julia','stan'),
   intoverstates='auto', fromPriors=FALSE, nsamples=200, datastruct=NA, cores=2,
-  popmeans=NULL){
+  popmeans=NULL, n.subjects){
   backend <- match.arg(backend)
+  if(!missing(n.subjects)){
+    .Deprecated(msg = 'ctGenerate(n = ) is deprecated; use n.')
+    n <- n.subjects
+  }
 
   # The prior predictive is a different question about the same model -- what
   # could the data look like, before the model has seen any -- so it lives
@@ -528,17 +533,17 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
       if(!identical(wide, FALSE)) 'wide',
       if(!identical(intoverstates, 'auto')) 'intoverstates',
       if(!is.null(popmeans)) 'popmeans',
-      if(length(n.subjects) > 1L) 'one count per level in n.subjects')
+      if(length(n) > 1L) 'one count per level in n')
     if(length(unused)) stop('fromPriors=TRUE does not use ',
       paste(unused, collapse=', '), ': it returns nsamples datasets over one ',
-      'design rather than a single dataset, and the design is n.subjects, ',
+      'design rather than a single dataset, and the design is n, ',
       'Tpoints and dtmean, or a datastruct. Drop ',
       if(length(unused) > 1) 'those arguments' else 'that argument',
       ' or build the design yourself and pass it as datastruct.', call.=FALSE)
     return(.ctGenerateFromPriors(cts=ctmodelobj, datastruct=datastruct,
       nsamples=nsamples, cores=cores,
       backend=if(backend == 'auto') 'auto' else backend,
-      n.subjects=n.subjects, Tpoints=Tpoints, dtmean=dtmean))
+      n.subjects=n, Tpoints=Tpoints, dtmean=dtmean))
   }
   if(backend == 'stan') stop("backend='stan' generates only from priors, ",
     'which is what it is there for. Use fromPriors=TRUE, or one of ',
@@ -558,17 +563,17 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
   # engine to read, so `auto` keeps it on the R generator.
   specified <- inherits(ctmodelobj, 'ctStanModel')
   if(backend == 'auto') backend <-
-    if(nonlinear || categorical || length(n.subjects) > 1L || !is.null(popmeans))
+    if(nonlinear || categorical || length(n) > 1L || !is.null(popmeans))
       'julia' else 'r'
   # `'auto'` is the state-explicit route for every model. The argument stays
   # because comparing the two routes on one specification is how the
   # filter's approximation is checked; see test-julia-intoverstates.R.
   if(identical(intoverstates,'auto')) intoverstates <- FALSE
   intoverstates <- isTRUE(as.logical(intoverstates)[1])
-  if(backend == 'r' && (length(n.subjects) > 1L || !is.null(popmeans))) {
+  if(backend == 'r' && (length(n) > 1L || !is.null(popmeans))) {
     stop("backend='r' generates subjects at the values the model states, ",
       "without grouping levels or population means: ",
-      if(length(n.subjects) > 1L) "n.subjects must be one count" else
+      if(length(n) > 1L) "n must be one count" else
         "popmeans is a backend='julia' argument",
       ". Use backend='julia'.", call.=FALSE)
   }
@@ -612,7 +617,7 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
         ctmodelobj$Tpoints[1] else
           stop('Tpoints not found in ctmodelobj and no Tpoints argument supplied. Provide Tpoints explicitly.')
     fullTpoints <- burnin + as.integer(modelTpoints)
-    nsubjects <- as.integer(n.subjects[1])
+    nsubjects <- as.integer(n[1])
     times <- lapply(seq_len(nsubjects), function(si){
       dtvec <- if(is.na(dtmat[1])) exp(rnorm(fullTpoints,log(dtmean),logdtsd)) else
         c(rep(1,burnin), dtmat[si,,drop=TRUE])
@@ -620,7 +625,7 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
       for(t in 2:fullTpoints) tv[t] <- round(tv[t-1] + dtvec[t-1], 6)
       tv
     })
-    out <- .ctGenerateJulia(ctmodelobj, n.subjects, times,
+    out <- .ctGenerateJulia(ctmodelobj, n, times,
       popmeans = popmeans, intoverstates = intoverstates)
     if(burnin > 0){
       keep <- unlist(lapply(seq_len(nsubjects), function(si)
@@ -664,7 +669,7 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
   m$Tpoints <- modelTpoints
   fullTpoints<-burnin+m$Tpoints
 
-  for(si in 1:n.subjects){
+  for(si in 1:n){
     
     if(is.na(dtmat[1])) dtvec<- exp(rnorm(fullTpoints,log(dtmean),logdtsd))
     if(!is.na(dtmat[1])) dtvec <- c(rep(1,burnin),dtmat[si,,drop=FALSE])

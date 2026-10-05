@@ -60,14 +60,14 @@ test_that("generation without a maxtimestep is reproducible from the seed", {
   skip_without_julia()
   model <- .states_model()
   set.seed(11)
-  first <- suppressMessages(ctGenerate(model, n.subjects = 5, Tpoints = 6,
+  first <- suppressMessages(ctGenerate(model, n = 5, Tpoints = 6,
     backend = "julia", intoverstates = FALSE))
   set.seed(11)
-  again <- suppressMessages(ctGenerate(model, n.subjects = 5, Tpoints = 6,
+  again <- suppressMessages(ctGenerate(model, n = 5, Tpoints = 6,
     backend = "julia", intoverstates = FALSE))
   expect_equal(first, again)
   set.seed(12)
-  different <- suppressMessages(ctGenerate(model, n.subjects = 5, Tpoints = 6,
+  different <- suppressMessages(ctGenerate(model, n = 5, Tpoints = 6,
     backend = "julia", intoverstates = FALSE))
   expect_false(isTRUE(all.equal(first, different)))
 })
@@ -77,7 +77,7 @@ test_that("a mixed ordinal, binary and count model generates bounded data", {
   # The reported reproduction, at its own seed.
   model <- .states_model()
   set.seed(11)
-  generated <- suppressMessages(ctGenerate(model, n.subjects = 30,
+  generated <- suppressMessages(ctGenerate(model, n = 30,
     Tpoints = 10, backend = "julia", intoverstates = FALSE))
   data <- data.frame(generated)
 
@@ -111,7 +111,7 @@ test_that("with no process noise the counts are Poisson at the fixed rate", {
   # or from the right one at the wrong rate -- fails both.
   model <- .states_model(diffusion = 0, t0var = 0)
   set.seed(4)
-  data <- data.frame(suppressMessages(ctGenerate(model, n.subjects = 60,
+  data <- data.frame(suppressMessages(ctGenerate(model, n = 60,
     Tpoints = 20, backend = "julia", intoverstates = FALSE)))
   rate <- exp(0.8)
   n <- nrow(data)
@@ -134,7 +134,7 @@ test_that("the joint density is finite and differentiable through R", {
   times <- lapply(1:4, function(i) 0:5)
   skeleton <- ctsem:::.ctGenerateSkeleton(model, 4, times)
   set.seed(3)
-  filled <- suppressMessages(ctGenerate(model, n.subjects = 4, Tpoints = 6,
+  filled <- suppressMessages(ctGenerate(model, n = 4, Tpoints = 6,
     backend = "julia", intoverstates = FALSE))
   skeleton[, model$manifestNames] <- data.frame(filled)[, model$manifestNames]
 
@@ -189,13 +189,13 @@ test_that("intoverstates='auto' is the sampled route for every model", {
   # Gaussian model generates different data for a given seed than it did.
   model <- .gaussian_model()
   set.seed(21)
-  auto <- suppressMessages(ctGenerate(model, n.subjects = 4, Tpoints = 6,
+  auto <- suppressMessages(ctGenerate(model, n = 4, Tpoints = 6,
     backend = "julia", intoverstates = "auto"))
   set.seed(21)
-  sampledgauss <- suppressMessages(ctGenerate(model, n.subjects = 4,
+  sampledgauss <- suppressMessages(ctGenerate(model, n = 4,
     Tpoints = 6, backend = "julia", intoverstates = FALSE))
   set.seed(21)
-  filtered <- suppressMessages(ctGenerate(model, n.subjects = 4, Tpoints = 6,
+  filtered <- suppressMessages(ctGenerate(model, n = 4, Tpoints = 6,
     backend = "julia", intoverstates = TRUE))
   expect_equal(auto, sampledgauss)
   expect_false(isTRUE(all.equal(auto, filtered)))
@@ -204,14 +204,14 @@ test_that("intoverstates='auto' is the sampled route for every model", {
   # 'auto' takes the state path instead.
   mixed <- .states_model()
   set.seed(21)
-  autom <- suppressMessages(ctGenerate(mixed, n.subjects = 4, Tpoints = 6,
+  autom <- suppressMessages(ctGenerate(mixed, n = 4, Tpoints = 6,
     backend = "julia", intoverstates = "auto"))
   set.seed(21)
-  sampled <- suppressMessages(ctGenerate(mixed, n.subjects = 4, Tpoints = 6,
+  sampled <- suppressMessages(ctGenerate(mixed, n = 4, Tpoints = 6,
     backend = "julia", intoverstates = FALSE))
   expect_equal(autom, sampled)
   set.seed(21)
-  viafilter <- suppressMessages(ctGenerate(mixed, n.subjects = 4, Tpoints = 6,
+  viafilter <- suppressMessages(ctGenerate(mixed, n = 4, Tpoints = 6,
     backend = "julia", intoverstates = TRUE))
   expect_false(isTRUE(all.equal(autom, viafilter)))
 })
@@ -222,7 +222,7 @@ test_that("intoverstates='auto' is the sampled route for every model", {
 .states_joint_fit <- function() fit_cached("states_joint_fit", {
   model <- .states_model()
   set.seed(2)
-  data <- data.frame(suppressMessages(ctGenerate(model, n.subjects = 12,
+  data <- data.frame(suppressMessages(ctGenerate(model, n = 12,
     Tpoints = 8, backend = "julia", intoverstates = FALSE)))
 
   fitmodel <- suppressWarnings(suppressMessages(ctModel(type = "ct",
@@ -293,7 +293,7 @@ test_that("standard errors profile the states out, and the rest are refused", {
   skip_without_julia()
   model <- .gaussian_model()
   set.seed(6)
-  data <- data.frame(suppressMessages(ctGenerate(model, n.subjects = 15,
+  data <- data.frame(suppressMessages(ctGenerate(model, n = 15,
     Tpoints = 6, backend = "julia", intoverstates = TRUE)))
   # MANIFESTVAR fixed, which it has to be. With a Gaussian indicator's
   # measurement variance free the joint density is unbounded -- send it to zero
@@ -366,7 +366,7 @@ test_that("a free Gaussian measurement variance is called out, not left to fail"
   # the boundary and report not converged.
   model <- .gaussian_model()
   set.seed(6)
-  data <- data.frame(suppressMessages(ctGenerate(model, n.subjects = 8,
+  data <- data.frame(suppressMessages(ctGenerate(model, n = 8,
     Tpoints = 5, backend = "julia", intoverstates = TRUE)))
   free <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 1,
     n.manifest = 1, manifestNames = "y1", latentNames = "eta1",
@@ -452,7 +452,7 @@ test_that("sampling the joint density gives a posterior over both", {
     T0MEANS = matrix(0), CINT = matrix(0), MANIFESTMEANS = matrix(1),
     Tpoints = 6)))
   set.seed(9)
-  data <- data.frame(suppressMessages(ctGenerate(gen, n.subjects = 8,
+  data <- data.frame(suppressMessages(ctGenerate(gen, n = 8,
     Tpoints = 6, backend = "julia")))
 
   fitmodel <- suppressWarnings(suppressMessages(ctModel(type = "ct",
@@ -514,7 +514,7 @@ test_that('the state path draws the carrier states of an augmented model', {
   data <- do.call(rbind, lapply(1:12, function(i) {
     m <- generating
     m$matrices$CINT <- matrix(stats::rnorm(1, 0, 0.4))
-    d <- suppressMessages(ctGenerate(m, n.subjects = 1, burnin = 10,
+    d <- suppressMessages(ctGenerate(m, n = 1, burnin = 10,
       Tpoints = 12, backend = 'r'))
     d[, 'id'] <- i
     d

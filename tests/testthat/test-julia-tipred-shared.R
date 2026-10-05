@@ -134,7 +134,7 @@ test_that('a fixed effect claims no coefficient', {
   # Generating with one is what a fixed effect is for, and still works.
   set.seed(1)
   generated <- suppressWarnings(suppressMessages(ctGenerate(fixedmodel,
-    n.subjects = 5, Tpoints = 4, backend = 'julia')))
+    n = 5, Tpoints = 4, backend = 'julia')))
   expect_equal(nrow(generated), 20L)
   expect_true('age' %in% colnames(generated))
 })

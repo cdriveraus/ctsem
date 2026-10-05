@@ -40,7 +40,7 @@ skip_on_32bit()
       gm=suppressMessages(ctModel(LAMBDA=diag(1), Tpoints=Tpoints, DRIFT=matrix(-.5),T0MEANS = matrix(4), 
         CINT=matrix(par[subi]),DIFFUSION=matrix(1),
         T0VAR=matrix(1), MANIFESTVAR=matrix(.3)))
-      d=suppressMessages(ctGenerate(gm,n.subjects = 1,burnin = 0,dtmean = dt,
+      d=suppressMessages(ctGenerate(gm,n = 1,burnin = 0,dtmean = dt,
         backend='r'))
       if(subi==1) dat=cbind(subi,d) else dat=rbind(dat,cbind(subi,d))
     }
@@ -113,7 +113,7 @@ skip_on_32bit()
         gm=suppressMessages(ctModel(LAMBDA=diag(1), Tpoints=Tpoints, DRIFT=matrix(-.5),T0MEANS = matrix(4), 
           CINT=matrix(par[subi]),DIFFUSION=matrix(2),
           T0VAR=matrix(2), MANIFESTVAR=matrix(2)))
-        d=suppressMessages(ctGenerate(gm,n.subjects = 1,burnin = 10,dtmean = dt,
+        d=suppressMessages(ctGenerate(gm,n = 1,burnin = 10,dtmean = dt,
           backend='r'))
         if(subi==1) dat=cbind(subi,d) else dat=rbind(dat,cbind(subi,d))
       }

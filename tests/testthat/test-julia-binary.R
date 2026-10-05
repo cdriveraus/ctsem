@@ -14,7 +14,7 @@
     DRIFT = matrix(-0.3), DIFFUSION = matrix(0.8), MANIFESTVAR = matrix(0.001),
     T0VAR = matrix(1), T0MEANS = matrix(0), CINT = matrix(0),
     MANIFESTMEANS = matrix(0), Tpoints = nobs))
-  latent <- ctGenerate(gen, n.subjects = nsubjects, Tpoints = nobs,
+  latent <- ctGenerate(gen, n = nsubjects, Tpoints = nobs,
     backend = "r")
   d <- data.frame(latent)
   for (i in seq_len(nindicators)) {
@@ -165,7 +165,7 @@ test_that("a saturated optimum is not reported as converged", {
     DRIFT = matrix(-0.4), DIFFUSION = matrix(0.6), MANIFESTVAR = matrix(0.3),
     T0VAR = matrix(1), T0MEANS = matrix(0), CINT = matrix(0),
     MANIFESTMEANS = matrix(0), Tpoints = 8))
-  d <- ctGenerate(gen, n.subjects = 20, Tpoints = 8, backend = "r")
+  d <- ctGenerate(gen, n = 20, Tpoints = 8, backend = "r")
   m <- suppressMessages(ctModel(type = "ct", n.latent = 1, n.manifest = 1,
     manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1),
     T0MEANS = matrix(0), CINT = matrix(0), MANIFESTMEANS = matrix(0)))
@@ -228,7 +228,7 @@ test_that("a saturated optimum is not reported as converged", {
     DRIFT = matrix(-0.3), DIFFUSION = matrix(0.8), MANIFESTVAR = matrix(0.001),
     T0VAR = matrix(1), T0MEANS = matrix(0), CINT = matrix(0),
     MANIFESTMEANS = matrix(0), Tpoints = 12))
-  d <- data.frame(ctGenerate(gen, n.subjects = nsubjects, Tpoints = 12,
+  d <- data.frame(ctGenerate(gen, n = nsubjects, Tpoints = 12,
     backend = "r"))
   for (i in 1:3) d[[paste0("b", i)]] <- stats::rbinom(nrow(d), 1, invlog(d$eta))
   d$y1 <- d$eta + stats::rnorm(nrow(d), 0, 0.5)
@@ -271,7 +271,7 @@ test_that("generation draws binary indicators as zeros and ones", {
   # than a bug in the generator.
   set.seed(4)
   d <- suppressWarnings(suppressMessages(
-    ctGenerate(.jbin_mixed_genmodel(), n.subjects = 30, Tpoints = 10,
+    ctGenerate(.jbin_mixed_genmodel(), n = 30, Tpoints = 10,
       backend = "julia")))
   for (nm in c("b1", "b2", "b3")) {
     expect_true(all(d[, nm] %in% c(0, 1)), info = nm)
@@ -287,7 +287,7 @@ test_that("a binary model is routed away from the r generator", {
   # produced continuous values for a manifest declared binary -- silently.
   m <- .jbin_mixed_genmodel()
   expect_warning(
-    suppressMessages(ctGenerate(m, n.subjects = 3, Tpoints = 4,
+    suppressMessages(ctGenerate(m, n = 3, Tpoints = 4,
       backend = "r")),
     "no measurement link")
 })

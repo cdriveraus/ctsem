@@ -32,7 +32,7 @@ skip_on_32bit()
     
     for(i in 1:n.subjects){
       gm$CINT[1,1] <- TI1[i]*5+rnorm(1,0,.6)
-      ndat<-suppressMessages(ctGenerate(gm,n.subjects=1,burnin=10,logdtsd=.4))
+      ndat<-suppressMessages(ctGenerate(gm,n=1,burnin=10,logdtsd=.4))
       ndat <- cbind(ndat,TI1[i])
       ndat[,1] <- i
       if(i>1) tdat <- rbind(tdat,ndat) else tdat <- ndat

@@ -93,7 +93,7 @@ skip_on_32bit()
         TDPREDEFFECT = matrix(c(0,effect[i]),2),
         MANIFESTMEANS = baseline[i]))
       
-      d <- suppressMessages(data.frame(ctGenerate(ctmodelobj = gm,n.subjects = 1,burnin = 0,dtmean = 1,logdtsd = 0)))
+      d <- suppressMessages(data.frame(ctGenerate(ctmodelobj = gm,n = 1,burnin = 0,dtmean = 1,logdtsd = 0)))
       d$id <- i
       if(i==1) dat <- d else dat <- rbind(dat,d)
     }
@@ -180,7 +180,7 @@ skip_on_32bit()
         TDPREDEFFECT = matrix(c(0,1),2),
         MANIFESTMEANS = baseline[i]))
       
-      d <- suppressMessages(data.frame(ctGenerate(ctmodelobj = gm,n.subjects = 1,burnin = 0,dtmean = 1,logdtsd = 0)))
+      d <- suppressMessages(data.frame(ctGenerate(ctmodelobj = gm,n = 1,burnin = 0,dtmean = 1,logdtsd = 0)))
       d$id <- i
       if(i==1) dat <- d else dat <- rbind(dat,d)
     }
@@ -270,7 +270,7 @@ skip_on_32bit()
         T0VAR = c(0),
         CINT = c(baseline[i]),MANIFESTMEANS=0))
 
-      d <- suppressMessages(data.frame(ctGenerate(ctmodelobj = gm,n.subjects = 1,burnin = 0,dtmean = 1,logdtsd = 0)))
+      d <- suppressMessages(data.frame(ctGenerate(ctmodelobj = gm,n = 1,burnin = 0,dtmean = 1,logdtsd = 0)))
       d$id <- i
       if(i==1) dat <- d else dat <- rbind(dat,d)
     }
@@ -493,7 +493,7 @@ skip_on_32bit()
         CINT = baseline[i],
         MANIFESTMEANS=0))
       
-      d <- suppressMessages(data.frame(ctGenerate(ctmodelobj = gm,n.subjects = 1,burnin = 0,dtmean = .1,logdtsd = 0)))
+      d <- suppressMessages(data.frame(ctGenerate(ctmodelobj = gm,n = 1,burnin = 0,dtmean = .1,logdtsd = 0)))
       d$id <- i
       if(i==1) dat <- d else dat <- rbind(dat,d)
     }

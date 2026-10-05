@@ -100,7 +100,7 @@ gen_model <- ctModel(
 dat <- do.call(rbind, lapply(seq_len(n_subjects), function(id) {
   d <- data.frame(ctGenerate(
     ctmodelobj = gen_model,
-    n.subjects = 1,
+    n = 1,
     burnin = 0,
     dtmean = 0.4,
     logdtsd = 0.1
@@ -307,7 +307,7 @@ count_gen <- ctModel(
   MANIFESTVAR = matrix(0), T0VAR = matrix(1), T0MEANS = matrix(0),
   CINT = matrix(0), MANIFESTMEANS = matrix(1), Tpoints = 6
 )
-count_dat <- data.frame(ctGenerate(count_gen, n.subjects = 8, Tpoints = 6, backend = "julia"))
+count_dat <- data.frame(ctGenerate(count_gen, n = 8, Tpoints = 6, backend = "julia"))
 
 count_fit_model <- ctModel(
   type = "ct", n.latent = 1, n.manifest = 1,
@@ -393,7 +393,7 @@ set.seed(3)
 re_dat <- do.call(rbind, lapply(seq_len(30), function(id) {
   subject <- gen_model
   subject$DRIFT <- matrix(-exp(log(0.35) + rnorm(1, 0, 0.5)))
-  d <- data.frame(ctGenerate(ctmodelobj = subject, n.subjects = 1, burnin = 0,
+  d <- data.frame(ctGenerate(ctmodelobj = subject, n = 1, burnin = 0,
     dtmean = 0.4, logdtsd = 0.1))
   d$id <- id
   d

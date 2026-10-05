@@ -218,7 +218,7 @@ test_that("ctPostPredData(residuals=TRUE) works, for stan too", {
 }
 .gen_subject_means <- function(d) tapply(d[, "Y1"], d[, "id"], mean)
 
-test_that("n.subjects counts each id level, innermost first", {
+test_that("n counts each id level, innermost first", {
   m <- .gen_model(id = c("id", "study"))
   expect_equal(ctsem:::.ctGenerateLevelCounts(m, c(12, 3)), c(id = 12L, study = 3L))
   expect_equal(ctsem:::.ctGenerateLevelCounts(m, 12), c(id = 12L, study = 1L))
@@ -226,8 +226,16 @@ test_that("n.subjects counts each id level, innermost first", {
   expect_error(ctsem:::.ctGenerateLevelCounts(m, c(12, 3, 1)), "2 id levels")
   skeleton <- ctsem:::.ctGenerateSkeleton(m, c(12, 3), lapply(1:12, function(i) 0:1))
   expect_equal(as.numeric(table(skeleton$study[!duplicated(skeleton$id)])), c(4, 4, 4))
-  expect_error(ctGenerate(m, n.subjects = c(12, 3), Tpoints = 2, backend = "r"),
-    "n.subjects must be one count")
+  expect_error(ctGenerate(m, n = c(12, 3), Tpoints = 2, backend = "r"),
+    "n must be one count")
+  # The former name still works, and says so.
+  flat <- .gen_model()
+  set.seed(1)
+  expect_warning(old <- suppressMessages(ctGenerate(flat, n.subjects = 3,
+    Tpoints = 2, backend = "r")), "is deprecated; use n", fixed = TRUE)
+  set.seed(1)
+  expect_equal(old, suppressMessages(ctGenerate(flat, n = 3, Tpoints = 2,
+    backend = "r")))
 })
 
 test_that("ctGenerate draws subjects from the population at every level", {
@@ -236,7 +244,7 @@ test_that("ctGenerate draws subjects from the population at every level", {
   m$pars$indvarying_study <- m$pars$param %in% "mm"
   m$pars$sdscale_study[m$pars$param %in% "mm"] <- 0.5
   set.seed(3)
-  expect_message(d <- ctGenerate(m, n.subjects = c(600, 30), Tpoints = 6,
+  expect_message(d <- ctGenerate(m, n = c(600, 30), Tpoints = 6,
     backend = "julia"), "mm 1 \\[id\\], mm 0.5 \\[study\\]")
   means <- .gen_subject_means(d)
   study <- tapply(d[, "study"], d[, "id"], `[`, 1)
@@ -252,7 +260,7 @@ test_that("popmeans, RAWPOPVAR and fixed TI effects set what they state", {
   m$RAWPOPVAR["mm", "mm"] <- 0.2
   m$pars$TI1_effect <- ifelse(m$pars$param %in% "mm", "0.3", "FALSE")
   set.seed(4)
-  expect_message(d <- ctGenerate(m, n.subjects = 400, Tpoints = 8,
+  expect_message(d <- ctGenerate(m, n = 400, Tpoints = 8,
     backend = "julia", popmeans = c(mm = 3, drift = -0.5)),
     "from popmeans: mm, drift; population sd \\(raw\\): mm 0.2 \\[id\\]")
   means <- .gen_subject_means(d)
@@ -266,9 +274,9 @@ test_that("popmeans, RAWPOPVAR and fixed TI effects set what they state", {
   free <- .gen_model(ti = 1)
   free$pars$TI1_effect <- ifelse(free$pars$param %in% "mm", "TRUE", "FALSE")
   set.seed(4)
-  expect_message(ctGenerate(free, n.subjects = 4, Tpoints = 3, backend = "julia"),
+  expect_message(ctGenerate(free, n = 4, Tpoints = 3, backend = "julia"),
     "at prior centres \\(raw 0\\): drift=-1.386, mm=0.*TI effects at zero: TI1 on mm")
-  expect_error(ctGenerate(free, n.subjects = 4, Tpoints = 3, backend = "julia",
+  expect_error(ctGenerate(free, n = 4, Tpoints = 3, backend = "julia",
     popmeans = c(nothere = 1)), "not a free parameter")
 })
 
@@ -282,7 +290,7 @@ test_that("state dependent generation carries the dependence into the data", {
     T0MEANS = matrix(0), CINT = matrix(0),
     MANIFESTMEANS = matrix(c(0, 0), 2, 1), Tpoints = 8)))
   set.seed(9)
-  d <- data.frame(suppressMessages(ctGenerate(m, n.subjects = 40, Tpoints = 8,
+  d <- data.frame(suppressMessages(ctGenerate(m, n = 40, Tpoints = 8,
     backend = "julia")))
 
   # The loading on y2 rises with the state, so regressing y2 on y1 where y1 is

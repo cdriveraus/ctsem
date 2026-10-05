@@ -58,7 +58,7 @@
     for (i in seq_len(nsubjects)) {
       gm_i <- gm
       gm_i$matrices$CINT[] <- cint[i]
-      d_i <- suppressMessages(ctGenerate(gm_i, n.subjects = 1, logdtsd = .2,
+      d_i <- suppressMessages(ctGenerate(gm_i, n = 1, logdtsd = .2,
         backend = 'r'))
       d_i[, "id"] <- i
       dlist[[i]] <- d_i

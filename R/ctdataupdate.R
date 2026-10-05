@@ -59,7 +59,7 @@ ctdataupdate <- function(what = c("data", "fit"), confirm = TRUE, forcerecompile
         gm_i <- gm
         tipreds_i <- tipredVar %*% rnorm(n.TIpred)
         gm_i$CINT <- gm$CINT + tipredEffect %*% tipreds_i
-        dat_i <- ctGenerate(gm_i,n.subjects=1,burnin=3,logdtsd=.4,dtmean = .3)
+        dat_i <- ctGenerate(gm_i,n=1,burnin=3,logdtsd=.4,dtmean = .3)
         dat_i[,'id'] <- i
         dat_i <- cbind(dat_i, matrix(tipreds_i, nrow=nrow(dat_i), ncol=n.TIpred, byrow=TRUE))
         if(i == 1) ctstantestdat <- dat_i else ctstantestdat <- rbind(ctstantestdat, dat_i)

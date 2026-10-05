@@ -21,7 +21,7 @@
 # with "argument 1 is not a vector". On the R route the data came back with
 # columns the model could not be fitted to without renaming them first.
 test_that("generated column names follow the model, backend r", {
-  d <- ctGenerate(.route_model(id = "subject", time = "age"), n.subjects = 3,
+  d <- ctGenerate(.route_model(id = "subject", time = "age"), n = 3,
     Tpoints = 4, backend = "r")
   expect_true(all(c("subject", "age") %in% colnames(d)))
   expect_false(any(c("id", "time") %in% colnames(d)))
@@ -30,7 +30,7 @@ test_that("generated column names follow the model, backend r", {
 test_that("generated column names follow the model, backend julia", {
   skip_without_julia()
   d <- suppressMessages(ctGenerate(.route_model(id = "subject", time = "age"),
-    n.subjects = 3, Tpoints = 4, backend = "julia"))
+    n = 3, Tpoints = 4, backend = "julia"))
   expect_true(all(c("subject", "age") %in% colnames(d)))
   expect_false(any(c("id", "time") %in% colnames(d)))
   expect_equal(nrow(d), 12L)
@@ -40,10 +40,10 @@ test_that("generated column names follow the model, backend julia", {
 # A default-named model is the case every existing caller has, and it keeps the
 # names it always had -- the point of the fix is the lookup, not a rename.
 test_that("default names are unchanged on both routes", {
-  d <- ctGenerate(.route_model(), n.subjects = 3, Tpoints = 4, backend = "r")
+  d <- ctGenerate(.route_model(), n = 3, Tpoints = 4, backend = "r")
   expect_true(all(c("id", "time") %in% colnames(d)))
   skip_without_julia()
-  dj <- suppressMessages(ctGenerate(.route_model(), n.subjects = 3,
+  dj <- suppressMessages(ctGenerate(.route_model(), n = 3,
     Tpoints = 4, backend = "julia"))
   expect_true(all(c("id", "time") %in% colnames(dj)))
 })
@@ -54,13 +54,13 @@ test_that("default names are unchanged on both routes", {
 test_that("burnin and wide output honour a custom time name", {
   skip_without_julia()
   m <- .route_model(id = "subject", time = "age")
-  d <- suppressMessages(ctGenerate(m, n.subjects = 2, Tpoints = 4,
+  d <- suppressMessages(ctGenerate(m, n = 2, Tpoints = 4,
     burnin = 3, backend = "julia"))
   expect_equal(nrow(d), 8L)
   # Time restarts at zero for each subject once the burnin is dropped.
   expect_equal(unname(d[1, "age"]), 0)
   expect_equal(unname(d[5, "age"]), 0)
-  w <- suppressMessages(ctGenerate(m, n.subjects = 2, Tpoints = 4,
+  w <- suppressMessages(ctGenerate(m, n = 2, Tpoints = 4,
     wide = TRUE, backend = "julia"))
   expect_equal(nrow(w), 2L)
 })
@@ -85,11 +85,11 @@ test_that("burnin and wide output honour a custom time name", {
 
 test_that("a stated population sd reaches the data, and is named", {
   skip_without_julia()
-  expect_message(ctGenerate(.route_varying(sd = 2), n.subjects = 3,
+  expect_message(ctGenerate(.route_varying(sd = 2), n = 3,
     Tpoints = 5, backend = "julia"), "population sd \\(raw\\): mm 2 \\[id\\]")
   spread <- function(sd) {
     set.seed(9)
-    d <- suppressMessages(ctGenerate(.route_varying(sd = sd), n.subjects = 40,
+    d <- suppressMessages(ctGenerate(.route_varying(sd = sd), n = 40,
       Tpoints = 8, backend = "julia"))
     stats::sd(tapply(d[, "Y1"], d[, "id"], mean))
   }
@@ -108,7 +108,7 @@ test_that("a grouping level draws its own effects", {
   m$pars$indvarying <- FALSE
   m$pars$indvarying_study <- m$pars$param %in% "mm"
   set.seed(1)
-  expect_message(d <- ctGenerate(m, n.subjects = c(40, 4), Tpoints = 5,
+  expect_message(d <- ctGenerate(m, n = c(40, 4), Tpoints = 5,
     backend = "julia"), "mm 1 \\[study\\]")
   expect_true(all(c("subject", "study", "Y1") %in% colnames(d)))
   # Subjects within a study share its effect: the study means spread far more
@@ -131,7 +131,7 @@ test_that("a fixed TI predictor effect reaches the data", {
     MANIFESTMEANS = matrix("mm||TRUE|1|TI1=0.3"))))
   m$RAWPOPVAR["mm", "mm"] <- 0.01
   set.seed(2)
-  d <- suppressMessages(ctGenerate(m, n.subjects = 60, Tpoints = 6,
+  d <- suppressMessages(ctGenerate(m, n = 60, Tpoints = 6,
     backend = "julia"))
   ti <- tapply(d[, "TI1"], d[, "id"], mean)
   expect_gt(stats::sd(ti), 0.5)

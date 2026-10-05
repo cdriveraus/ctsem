@@ -53,7 +53,7 @@ make_data <- function(seed, measure) {
       DRIFT = matrix(TRUE_DRIFT), DIFFUSION = matrix(TRUE_DIFF),
       MANIFESTVAR = matrix(1e-6), T0VAR = matrix(1), T0MEANS = matrix(0),
       CINT = matrix(cints[i]), MANIFESTMEANS = matrix(0), Tpoints = NOBS))
-    one <- data.frame(ctGenerate(gen, n.subjects = 1, Tpoints = NOBS,
+    one <- data.frame(ctGenerate(gen, n = 1, Tpoints = NOBS,
       backend = "r"))
     one$id <- i
     one

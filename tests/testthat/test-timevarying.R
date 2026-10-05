@@ -55,7 +55,7 @@ skip_if(.Platform$OS.type == "windows" && R.version$major %in% 4 &&
         DIFFUSION=diag(.2,2),
         MANIFESTVAR=diag(0,2), MANIFESTMEANS=matrix(0,2,1),
         T0VAR=diag(2)))
-      dat=suppressMessages(ctGenerate(gm,n.subjects = nsubjects,burnin = 3,dtmean = dt))
+      dat=suppressMessages(ctGenerate(gm,n = nsubjects,burnin = 3,dtmean = dt))
 
     dat <- as.matrix(dat)
     dat[,'Y1'] <-  dat[,'Y1'] * (1+ lambdafactor * dat[,'Y2']) #state dependent lambda
@@ -153,7 +153,7 @@ skip_if(.Platform$OS.type == "windows" && R.version$major %in% 4 &&
       CINT=matrix(c('cint1, indvarying=TRUE, sdscale=0.05',
         'cint2, indvarying=TRUE, sdscale=0.05')),
       DIFFUSION=diag(2)) #within person covariance
-    d <- suppressMessages(ctGenerate(gm, n.subjects = 100, burnin = 20,
+    d <- suppressMessages(ctGenerate(gm, n = 100, burnin = 20,
       dtmean = 1, backend = 'julia'))
     d <- data.frame(d)
     d$Z <- d$Y1 + rnorm(nrow(d))

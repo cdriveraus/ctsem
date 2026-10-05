@@ -125,7 +125,7 @@ genmulti <- ctModel(type = 'ct', n.latent = 1, n.manifest = 3,
   MANIFESTMEANS = matrix(c(0, 0.5, -0.5), 3, 1),
   MANIFESTVAR = diag(0.8, 3), Tpoints = 10)
 
-dmulti <- data.frame(ctGenerate(genmulti, n.subjects = 50, Tpoints = 10,
+dmulti <- data.frame(ctGenerate(genmulti, n = 50, Tpoints = 10,
   backend = 'julia'))
 head(dmulti, 3)
 ```
@@ -223,7 +223,7 @@ process <- ctModel(type = 'ct', n.latent = 1, n.manifest = 1,
   T0MEANS = matrix(0), CINT = matrix(0), MANIFESTMEANS = matrix(0),
   MANIFESTVAR = matrix(1e-6), Tpoints = nobs)
 
-d <- data.frame(ctGenerate(process, n.subjects = nsub, Tpoints = nobs,
+d <- data.frame(ctGenerate(process, n = nsub, Tpoints = nobs,
   backend = 'r'))
 eta <- d$eta
 ```
@@ -466,7 +466,7 @@ gen2 <- ctModel(type = 'ct', n.latent = 2, n.manifest = 5,
 # -1, 0 and 1 are a manifest mean of 1 with both gaps at 1.
 gen2$pars$value[gen2$pars$matrix %in% 'THRESHOLDS' & gen2$pars$col > 1] <- 1
 
-d2 <- data.frame(ctGenerate(gen2, n.subjects = 60, Tpoints = 10,
+d2 <- data.frame(ctGenerate(gen2, n = 60, Tpoints = 10,
   backend = 'julia'))
 head(d2, 3)
 ```
@@ -550,7 +550,7 @@ gensd <- ctModel(type = 'ct', n.latent = 1, n.manifest = 2,
   T0MEANS = matrix(0), CINT = matrix(0),
   MANIFESTMEANS = matrix(c(0, 0.5), 2, 1), Tpoints = 10)
 
-dsd <- data.frame(ctGenerate(gensd, n.subjects = 60, Tpoints = 10,
+dsd <- data.frame(ctGenerate(gensd, n = 60, Tpoints = 10,
   backend = 'julia'))
 head(dsd, 3)
 ```

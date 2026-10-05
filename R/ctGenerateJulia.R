@@ -56,16 +56,16 @@
   levels <- c(model$subjectIDname, model$groupIDnames)
   n <- suppressWarnings(as.integer(n.subjects))
   if (!length(n) || anyNA(n) || any(n < 1L) || any(n != n.subjects)) {
-    stop("n.subjects must be positive whole numbers.", call. = FALSE)
+    stop("n must be positive whole numbers.", call. = FALSE)
   }
   if (length(n) > length(levels)) {
-    stop("n.subjects has ", length(n), " counts for the model's ",
+    stop("n has ", length(n), " counts for the model's ",
       length(levels), " id level", if (length(levels) > 1L) "s" else "", " (",
       paste(levels, collapse = ", "), ").", call. = FALSE)
   }
   n <- c(n, rep(1L, length(levels) - length(n)))
   if (is.unsorted(rev(n))) {
-    stop("n.subjects must not grow from one level to the next: each ",
+    stop("n must not grow from one level to the next: each ",
       "grouping level holds the units of the level inside it (",
       paste(levels, n, sep = " = ", collapse = ", "), ").", call. = FALSE)
   }

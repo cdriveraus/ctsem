@@ -49,7 +49,7 @@ onerep <- function(i) {
       DRIFT = -1, T0MEANS = t0m[subi], DIFFUSION = .5, MANIFESTVAR = 0.5,
       T0VAR = 0, MANIFESTMEANS = 0, CINT = cint[subi]))
     dd <- suppressMessages(data.frame(ctGenerate(ctmodelobj = gm,
-      n.subjects = 1, burnin = 0, dtmean = 1, logdtsd = 0)))
+      n = 1, burnin = 0, dtmean = 1, logdtsd = 0)))
     dd$id <- subi
     dd
   }))

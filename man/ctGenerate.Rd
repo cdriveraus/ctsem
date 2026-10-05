@@ -6,7 +6,7 @@
 \usage{
 ctGenerate(
   ctmodelobj,
-  n.subjects = 100,
+  n = 100,
   burnin = 0,
   dtmean = 1,
   logdtsd = 0,
@@ -19,13 +19,14 @@ ctGenerate(
   nsamples = 200,
   datastruct = NA,
   cores = 2,
-  popmeans = NULL
+  popmeans = NULL,
+  n.subjects
 )
 }
 \arguments{
 \item{ctmodelobj}{ctsem model object from \code{\link{ctModel}}.}
 
-\item{n.subjects}{Number of subjects to output. For a model with grouping
+\item{n}{Number of subjects to output. For a model with grouping
 levels above the subject (\code{ctModel(id = c('subject', 'study'))}), one
 count per level in the same order, innermost first: \code{c(100, 10)} is
 100 subjects split evenly over 10 studies. A level not given has one group.}
@@ -41,7 +42,7 @@ at \code{logdtsd = 0.6} is about 20 percent longer than \code{dtmean}.}
 \item{logdtsd}{Numeric. Standard deviation of the log time interval. Zero
 gives an equal-interval design.}
 
-\item{dtmat}{Either NA, or numeric matrix of n.subjects rows and Tpoints-1 columns, 
+\item{dtmat}{Either NA, or numeric matrix of n rows and Tpoints-1 columns, 
 containing positive numeric values for all time intervals between measurements. 
 If not NA, dtmean and logdtsd are ignored.}
 
@@ -65,7 +66,7 @@ the values the model states, with individual differences only through
 with fixed defaults; it refuses a nonlinear model and has no measurement
 link. \code{'auto'} uses \code{'r'}, as \code{ctGenerate} always has,
 unless the model or the call needs \code{'julia'}: a nonlinear model, a
-non-Gaussian indicator, more than one count in \code{n.subjects}, or
+non-Gaussian indicator, more than one count in \code{n}, or
 \code{popmeans}. On a model that declares random effects or TI predictor
 effects, \code{'r'} says what it leaves out.}
 
@@ -87,7 +88,7 @@ what makes the comparison useful.
 using the values the model specifies, and return \code{nsamples} datasets
 instead of one. This is the prior predictive: what the model says the data
 could look like before it has seen any. It needs no fitted model and no
-data -- with no \code{datastruct}, a balanced design of \code{n.subjects}
+data -- with no \code{datastruct}, a balanced design of \code{n}
 subjects at \code{Tpoints} occasions \code{dtmean} apart is used.}
 
 \item{nsamples}{With \code{fromPriors=TRUE}, how many datasets to draw.}
@@ -105,6 +106,8 @@ population means on each parameter's natural scale, e.g.
 individually varying parameter, whose cell cannot hold a value; it works for
 any free parameter. Unnamed free parameters are set at their prior's centre,
 raw zero.}
+
+\item{n.subjects}{Deprecated; use \code{n}.}
 }
 \description{
 This function generates data according to the specified ctsem model object.
@@ -150,13 +153,13 @@ generatingModel<-ctModel(Tpoints=8,n.latent=2,n.TDpred=0,n.TIpred=0,n.manifest=2
 
 #the R generator: every subject at the values the model states, with free
 #cells filled by fixed defaults and no individual differences
-data <- ctGenerate(generatingModel,n.subjects=15,burnin=10)
+data <- ctGenerate(generatingModel,n=15,burnin=10)
 
 \donttest{
 #the julia engine: each subject's CINT drawn from the population, with the
 #means stated on the natural scale and the sds given by sdscale on the raw
 #scale (CINT is 10 * raw, so 0.5 and 0.8)
-data <- ctGenerate(generatingModel,n.subjects=15,burnin=10,
+data <- ctGenerate(generatingModel,n=15,burnin=10,
   backend='julia',popmeans=c(cint1=1,cint2=0))
 }
 
@@ -164,7 +167,7 @@ data <- ctGenerate(generatingModel,n.subjects=15,burnin=10,
 #has seen any. No fit, and no data.
 \donttest{
 priorpred <- ctGenerate(generatingModel, fromPriors = TRUE, Tpoints = 6,
-  n.subjects = 10, nsamples = 20, cores = 2)
+  n = 10, nsamples = 20, cores = 2)
 str(priorpred$Y)
 }
 }

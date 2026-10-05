@@ -122,7 +122,7 @@ if (isTRUE(ctJuliaStatus()$available)) {
     DRIFT = matrix(-0.4), DIFFUSION = matrix(0.6), MANIFESTVAR = matrix(0.3),
     T0VAR = matrix(1), T0MEANS = matrix(0), CINT = matrix(0),
     MANIFESTMEANS = matrix(0), Tpoints = 8))
-  datalong <- ctGenerate(gen, n.subjects = 40, Tpoints = 8, backend = 'r')
+  datalong <- ctGenerate(gen, n = 40, Tpoints = 8, backend = 'r')
 
   model <- suppressMessages(ctModel(type = 'ct', n.latent = 1, n.manifest = 1,
     manifestNames = 'Y1', latentNames = 'eta1', LAMBDA = matrix(1),

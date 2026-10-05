@@ -14,7 +14,7 @@
     DIFFUSION = matrix(1.5), T0VAR = matrix(1.7), T0MEANS = matrix(0),
     CINT = matrix(0), MANIFESTMEANS = matrix(c(0, 0.5, -0.5), 3, 1),
     MANIFESTVAR = diag(0.8, 3), Tpoints = nobs))
-  d <- data.frame(ctGenerate(gen, n.subjects = nsubjects, Tpoints = nobs,
+  d <- data.frame(ctGenerate(gen, n = nsubjects, Tpoints = nobs,
     backend = "r"))
   d[, c("y1", "y2", "y3")] <- d[, c("y1", "y2", "y3")] * scale
   d

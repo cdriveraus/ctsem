@@ -44,7 +44,7 @@ skip_on_32bit()
       T0VAR = diag(1, 2),
       T0MEANS = matrix(0, 2, 1),
       n.latent = 2, n.manifest = 2, Tpoints = Tpoints)
-    d <- ctGenerate(gm, n.subjects = n.subjects, logdtsd = .1, dtmean = .1,
+    d <- ctGenerate(gm, n = n.subjects, logdtsd = .1, dtmean = .1,
       burnin = 20)
     d[, 'Y1'] <- rbinom(nrow(d), size = 1, prob = invlog(d[, 'Y1']))
     d <- data.frame(d)

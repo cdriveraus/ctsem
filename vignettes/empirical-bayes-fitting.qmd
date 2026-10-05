@@ -90,7 +90,7 @@ for(i in seq_len(n_subjects)){
 
   dat_i <- data.frame(ctGenerate(
     ctmodelobj = gm,
-    n.subjects = 1,
+    n = 1,
     burnin = 0,
     dtmean = .1,
     logdtsd = 0,

@@ -81,7 +81,7 @@ skip_on_32bit()
       LAMBDA = matrix(c(1, 1), 2, 1), DRIFT = matrix(-.4), DIFFUSION = matrix(.6),
       MANIFESTVAR = diag(.2, 2), T0VAR = matrix(1), T0MEANS = matrix(0),
       CINT = matrix(0), MANIFESTMEANS = matrix(mm, 2, 1), Tpoints = 8))
-    d <- suppressMessages(data.frame(ctGenerate(gm, n.subjects = 1, Tpoints = 8,
+    d <- suppressMessages(data.frame(ctGenerate(gm, n = 1, Tpoints = 8,
       burnin = 0, backend = 'r')))
     d$id <- i
     d

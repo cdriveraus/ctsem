@@ -29,7 +29,7 @@ skip_on_32bit()
     for(i in seq_len(nsubjects)){
       gm_i <- gm
       gm_i$MANIFESTMEANS <- matrix(subjectManifestMeans[i, ], ncol = 1)
-      d_i <- ctGenerate(ctmodelobj = gm_i, n.subjects = 1, burnin = 0)
+      d_i <- ctGenerate(ctmodelobj = gm_i, n = 1, burnin = 0)
       d_i[, "id"] <- i
       dlist[[i]] <- d_i
     }
@@ -83,12 +83,12 @@ skip_on_32bit()
     gm <- ctModel(type='omx',LAMBDA = diag(1,10),DRIFT=diag(-1,10),
       T0VAR=cmat,
       DIFFUSION=diag(1,10),Tpoints=2)
-    d1 <- data.frame(ctGenerate(ctmodelobj = gm,n.subjects = 1000,burnin = 0))
+    d1 <- data.frame(ctGenerate(ctmodelobj = gm,n = 1000,burnin = 0))
     
     gm <- ctModel(type='omx',LAMBDA = diag(1,10),DRIFT=diag(-1,10),
       T0VAR=cmat2,
       DIFFUSION=diag(1,10),Tpoints=2)
-    d2 <- data.frame(ctGenerate(ctmodelobj = gm,n.subjects = 1000,burnin = 0))
+    d2 <- data.frame(ctGenerate(ctmodelobj = gm,n = 1000,burnin = 0))
     
     d2$id <- d2$id + 2000
     d <- rbind(d1,d2)
