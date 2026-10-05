@@ -105,8 +105,12 @@
 #' @param TIpredNames n.TIpred length vector of time independent predictor variable names,
 #' as they appear in the data structure.  Default names are TI1, TI2, etc.
 #' 
-#' @param tipredDefault Logical. TRUE sets any parameters with unspecified time independent 
+#' @param tipredDefault Logical. TRUE sets any parameters with unspecified time independent
 #' predictor effects to have effects estimated, FALSE fixes the effect to zero unless individually specified.
+#' A cell's effects count as unspecified only when its \code{tipreds} field is
+#' left out: an empty one (\code{'mypar||||'}) states that the parameter has no
+#' predictor effects, which is the way to exclude a parameter under
+#' \code{tipredDefault = TRUE}.
 #' 
 #' @param n.TDpred Number of time dependent predictor variables in the dataset.  
 #' 
@@ -383,7 +387,9 @@ ctModel<-function(LAMBDA, type='ct',n.manifest = 'auto', n.latent='auto', Tpoint
     'MANIFESTMEANS','CINT','TDPREDEFFECT','PARS')){
     mat <- get0(m, ifnotfound=NULL)
     if(is.null(mat) || (length(mat)==1 && !is.na(mat[1]) && mat[1]=='auto')) next
-    bad <- which(is.na(mat))
+    # The text "NA" -- what a character conversion or a text field gives --
+    # is the same non-cell, and was read as neither a number nor a name.
+    bad <- which(is.na(mat) | trimws(as.character(mat)) %in% 'NA')
     if(length(bad)){
       idx <- if(is.matrix(mat)) paste0('[',(bad[1]-1) %% nrow(mat) + 1,',',
         (bad[1]-1) %/% nrow(mat) + 1,']') else paste0('[',bad[1],']')

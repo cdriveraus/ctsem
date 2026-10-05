@@ -500,6 +500,10 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
   
   for(pi in 1:nrow(ctspec)){ #check for complex / split specifications
     if(grepl('|',ctspec$param[pi],fixed=TRUE)){
+      # The trailing space keeps a trailing empty field, which strsplit()
+      # would otherwise drop: 'p||||' is then five fields, an empty tipreds
+      # field meaning "no effects", rather than four with tipreds left to
+      # tipredDefault. The spaces are removed again just below.
       ctspec$param[pi] <- gsub('$',' ',ctspec$param[pi])
       split = strsplit(ctspec$param[pi],split = '|',fixed=TRUE)[[1]]
       split=sapply(split,function(x) gsub(' ','',x))

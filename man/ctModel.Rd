@@ -169,8 +169,12 @@ Each TIpredictor is inserted at the right of the data matrix, after the time int
 \item{TIpredNames}{n.TIpred length vector of time independent predictor variable names,
 as they appear in the data structure.  Default names are TI1, TI2, etc.}
 
-\item{tipredDefault}{Logical. TRUE sets any parameters with unspecified time independent 
-predictor effects to have effects estimated, FALSE fixes the effect to zero unless individually specified.}
+\item{tipredDefault}{Logical. TRUE sets any parameters with unspecified time independent
+predictor effects to have effects estimated, FALSE fixes the effect to zero unless individually specified.
+A cell's effects count as unspecified only when its \code{tipreds} field is
+left out: an empty one (\code{'mypar||||'}) states that the parameter has no
+predictor effects, which is the way to exclude a parameter under
+\code{tipredDefault = TRUE}.}
 
 \item{PARS}{for types 'ct' and 'dt' only. May be of any structure, only needed to contain extra parameters for certain non-linear models.}
 }

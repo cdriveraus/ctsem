@@ -69,6 +69,17 @@
     p <- trimws(p)
     cell <- .ctSpecCellName(ctspec, i)
 
+    # --- a word R reserves, read as a parameter name ----------------------
+    #
+    # `TRUE` in a cell became a free parameter called TRUE, and FALSE and NULL
+    # likewise -- nothing a user writing them could have meant, and not a name
+    # an expression can then refer to.
+    if (p %in% c('TRUE', 'FALSE', 'NULL')) {
+      stop(cell, ' is "', p, '", which is a reserved word in R, not a number ',
+        'or a parameter name. Write a number for a fixed cell, or give the ',
+        'parameter a name.', call. = FALSE)
+    }
+
     # --- a bare latent or tdpred name -------------------------------------
     #
     # The whole cell is one name and that name belongs to a state or a tdpred.
@@ -197,9 +208,14 @@
       }
       computable <- grepl('[', p, fixed = TRUE) || length(bare) > 0
       if (!computable) {
+        # A decimal comma is the likeliest way to get here, and the generic
+        # message did not say what was wrong with "0,5".
+        comma <- grepl('^[-+]?[0-9]*,[0-9]+$', p)
         stop(cell, ' is the expression "', p, '", which names nothing at all, ',
           'so there is nothing for it to be computed from. For a fixed cell, ',
-          'write the number itself.', call. = FALSE)
+          'write the number itself',
+          if (comma) paste0(' with a decimal point: ', sub(',', '.', p, fixed = TRUE)),
+          '.', call. = FALSE)
       }
     }
   }
@@ -304,7 +320,11 @@
     rows <- which(holds & ctspec$param %in% nm)
     if (length(rows) < 2) next
     tf <- ctspec$transform[rows]
-    if (length(unique(tf)) < 2) next
+    # Compared without whitespace: a default resolved here and the same
+    # transform written into a cell by hand -- or copied from model$pars --
+    # can differ only in spacing, and are one transform.
+    tfn <- gsub('\\s+', '', tf)
+    if (length(unique(tfn)) < 2) next
 
     # One cell per distinct transform, at most two. Showing the first two
     # *cells* instead would often show two that agree -- `DRIFT = matrix('a',
@@ -312,10 +332,10 @@
     # contradiction of the sentence above it. Two is enough to see the
     # disagreement, and a whole constrained matrix would otherwise fill the
     # message.
-    shown <- rows[!duplicated(tf)][1:2]
+    shown <- rows[!duplicated(tfn)][1:2]
     where <- vapply(shown, function(r) paste0(.ctSpecCellName(ctspec, r),
       ' as ', ctspec$transform[r]), character(1))
-    ntf <- length(unique(tf))
+    ntf <- length(unique(tfn))
     more <- if (length(rows) > 2) paste0('\n  (', length(rows),
       ' cells name it, with ', ntf, ' different transforms)') else ''
 

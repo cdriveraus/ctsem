@@ -445,3 +445,30 @@ test_that("sharing a name is still how an equality constraint is written", {
     T0MEANS = matrix(c('q', 0), 2, 1),
     MANIFESTMEANS = matrix(c('q', 0), 2, 1))))
 })
+
+test_that("one transform spelled two ways is still one transform", {
+  # A default resolved by ctModel and the same function written into a cell
+  # -- by hand, or copied from model$pars as ctsemGUI does for an equality
+  # constraint -- differ only in spacing. Compared as text, they were refused.
+  drift <- function(a, b) suppressWarnings(suppressMessages(ctModel(type = 'ct',
+    n.latent = 2, n.manifest = 2, manifestNames = c('Y1', 'Y2'),
+    latentNames = c('e1', 'e2'), LAMBDA = diag(2),
+    DRIFT = matrix(c(a, b, 'd21', 'd2'), 2, 2))))
+  expect_no_error(drift('d', 'd|-(1e-06+2*log1p_exp(-(2*param)))'))
+  expect_no_error(drift('d|-(1e-06 + 2 * log1p_exp(-(2 * param)))',
+    'd|-(1e-06+2*log1p_exp(-(2*param)))'))
+  # Still refused where the transforms are different functions.
+  expect_error(drift('d', 'd'), 'transform it differently')
+})
+
+test_that("a reserved word or a decimal comma in a cell is refused, saying what to write", {
+  # TRUE, FALSE and NULL each became a free parameter of that name.
+  for (word in c('TRUE', 'FALSE', 'NULL')) {
+    expect_error(.guard_model(DRIFT = matrix(word)), 'reserved word', info = word)
+  }
+  expect_error(.guard_model(DRIFT = matrix('0,5')), 'decimal point: 0.5', fixed = TRUE)
+  # The text "NA" is refused as an NA cell is.
+  expect_error(.guard_model(DRIFT = matrix('NA')), 'DRIFT\\[1,1\\] is NA')
+  # T is an ordinary name in a model, not R's TRUE.
+  expect_no_error(.guard_model(DRIFT = matrix('T')))
+})
