@@ -174,9 +174,10 @@ prediction is written back into `ws.state` and `ws.P_predict`.
     # at 8 threads spent a third of its samples in that mutex, from this line,
     # and gained 1.5x where equal work gained 8.5x. Measured in isolation, `symm`
     # on a 4x4 was 77 times slower per call with eight threads calling it than
-    # with one; `gemm`, transposed or on views, did not slow at all. So the
-    # wrapper's upper triangle is filled in and the product taken on `.data`:
-    # hand-written below `_CTSEM_SMALL_PRODUCT`, `gemm` above it.
+    # with one -- and `gemm` locks the same way on most CPUs, dev1's being the
+    # exception that made it look safe (see `_CTSEM_SMALL_PRODUCT`). So the
+    # wrapper's upper triangle is filled in and the product taken on `.data`
+    # by the engine's own kernels.
     _copy_lower_to_upper!(ws.P_update.data, ws.state_dim)
     _ctsem_mul!(ws.bufferQ.intermediate, ws.discrete_ca.dDRIFT, ws.P_update.data)
     _mul_right_transpose!(ws.P_predict.data, ws.bufferQ.intermediate, ws.discrete_ca.dDRIFT, ws.state_dim, ws.state_dim, ws.state_dim)

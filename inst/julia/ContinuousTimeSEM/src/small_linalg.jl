@@ -61,37 +61,50 @@ for a session that runs one fit on one core and wants it.
 const _CTSEM_SMALL_CHOLESKY = Ref(typemax(Int))
 
 """
-Arithmetic budget below which a product is done by hand rather than by `gemm`,
-in `rows * cols * inner`; 64 is a 4x4 by 4x4.
+Arithmetic budget above which a matrix product goes to BLAS `gemm` rather than
+the engine's own kernels, in `rows * cols * inner`. Never, by default.
 
-Unlike the factorizations, `gemm` itself scales across threads -- the
-transposed-first form excepted, which `_ctsem_mulTN!` avoids -- so the line is
-where the hand loop stops being quicker, not where a lock starts. Measured on
-dev1 (scripts/sampler-checks-2026-10/probe_thresh.R, probe_big2.R): forcing
-`gemm` at every size made the Laplace gradient of one- and two-state models up
-to 12 times slower at 8 threads, and every threshold from 27 to 4096 timed the
-same there; on a 12-state model, 64 against the previous 4096 halved the
-filter's value on one thread (18.8 against 37.8 ms), and was quicker for the
-value at 8 threads and for the gradient at 1 and 8 (151 against 185, 21 against
-26 ms). Nothing above 4096 changed anything.
+OpenBLAS's `gemm` takes a process-wide lock for its work buffer on every call
+on most CPUs, so threads filtering different subjects queue for it. Measured
+with eight threads calling at once, one BLAS thread (scripts/
+sampler-checks-2026-10/kernels.jl): a 4x4 to 32x32 `gemm` costs about 2.2 us a
+call locally (i9, AVX2) and 8.5 us on dev2 (EPYC 7702, AVX2) whatever its size
+-- 30 and 50 times its serial cost at 4x4. Only CPUs where OpenBLAS has its
+small-matrix kernels skip the lock, and then for `A*B` and `A*B'` only: dev1
+(EPYC 9654, AVX-512) does, which is where an earlier threshold of 64 was
+measured and looked right. 3x3 and smaller never reach OpenBLAS.
+
+The engine's kernels (`_ctsem_mul!` and its transposed forms) take no lock and
+come within about 1.5x of `gemm`'s serial speed from 8x8 up, so the threshold
+is a setter for a single-threaded run on a large model, not a default.
 """
-const _CTSEM_SMALL_PRODUCT = Ref(64)
+const _CTSEM_SMALL_PRODUCT = Ref(typemax(Int))
+
+"""
+Arithmetic budget above which a matrix-vector product goes to BLAS `gemv`, in
+`length(y) * inner`. BLAS's matrix-vector products take no buffer and no lock:
+with eight threads calling at once they cost what they cost serially (12x12:
+33 against 35 ns locally, 67 against 101 on dev2), so this stays where the
+hand loop stops being quicker.
+"""
+const _CTSEM_SMALL_MATVEC = Ref(64)
 
 export ctsem_set_small_linalg!
 """
-    ctsem_set_small_linalg!(; dimension, product)
+    ctsem_set_small_linalg!(; dimension, product, matvec)
 
 Move the thresholds separating the engine's own small-matrix kernels from
 LAPACK and BLAS. Exposed because the crossover is a property of the machine, not
 of the mathematics -- the same reason `ctsem_set_block_threshold!` exists.
 """
 function ctsem_set_small_linalg!(; dimension::Integer=_CTSEM_SMALL_CHOLESKY[],
-    product::Integer=_CTSEM_SMALL_PRODUCT[])
-    dimension >= 0 && product >= 0 ||
+    product::Integer=_CTSEM_SMALL_PRODUCT[], matvec::Integer=_CTSEM_SMALL_MATVEC[])
+    dimension >= 0 && product >= 0 && matvec >= 0 ||
         throw(ArgumentError("thresholds must be non-negative"))
     _CTSEM_SMALL_CHOLESKY[] = Int(dimension)
     _CTSEM_SMALL_PRODUCT[] = Int(product)
-    return (dimension=Int(dimension), product=Int(product))
+    _CTSEM_SMALL_MATVEC[] = Int(matvec)
+    return (dimension=Int(dimension), product=Int(product), matvec=Int(matvec))
 end
 
 """
@@ -253,30 +266,26 @@ end
 # Small matrix products
 ################################################################################
 #
-# `mul!` on plain matrices scales across threads and is fine. `mul!` with a
-# *transposed view* operand is not: measured at 23 threads on one BLAS thread,
+# Matrix products in per-row and per-substep code do not call BLAS: `gemm`
+# locks on most CPUs (`_CTSEM_SMALL_PRODUCT` has the measurements), and a
+# transposed view is worse still, because Julia cannot hand it to `gemm` and
+# falls back to a copy or the generic kernel. These touch nothing outside their
+# own arguments, so they thread.
 #
-#     operands                n=1     n=2     n=4
-#     plain Matrix           4.49x   7.15x   4.71x
-#     views of a buffer      4.39x   3.51x   6.29x
-#     transpose(view)        0.09x   4.37x   0.11x
-#
-# and it is slower serially too, because Julia cannot hand a transposed
-# non-contiguous view to `gemm` and falls back to a copy or to the generic
-# kernel. The buffered reverse pass is made of exactly that shape -- every
-# temporary is a view, and half the products transpose one side.
-#
-# At these sizes the answer is not to shuffle operands into a form BLAS likes.
-# It is to not call BLAS: a hand-written multiply is about five times faster
-# than `gemm` at n = 1 and comparable at n = 4, and it threads because it
-# touches nothing outside its own arguments.
+# Two kernels. Below an inner dimension of `_CTSEM_COLUMN_KERNEL`, a dot product
+# per element, which is quickest when everything is a few registers. From there
+# up, each column of `C` built as a running sum of columns of `A`, four of them
+# a pass (`_ctsem_colmul!`): contiguous in the row index, so it vectorises, and
+# a quarter of the passes over `C`. At 12x12 that is 241 ns against 497 for the
+# dot form and 167 for an unlocked `gemm` (local), 430 against 883 and 465 on
+# dev2. The dot form read `A` along a row, which is strided.
 #
 # All six follow `mul!(C, A, B, alpha, beta)`: `C = alpha * op(A) * op(B) +
 # beta * C`, with `beta = 0` overwriting rather than reading `C` -- so an
 # uninitialised buffer is safe.
 
 """
-Is this product small enough to be worth doing by hand?
+Is this product to be done by the engine's kernels rather than by BLAS?
 
 `inner` is the contracted dimension, which differs between the transposed forms
 -- hence passing it rather than reading it off one operand.
@@ -284,9 +293,79 @@ Is this product small enough to be worth doing by hand?
 @inline _ctsem_small_product(C, inner::Integer) =
     length(C) * inner <= _CTSEM_SMALL_PRODUCT[]
 
+"""The matrix-vector form of `_ctsem_small_product`, against `_CTSEM_SMALL_MATVEC`."""
+@inline _ctsem_small_matvec(y, inner::Integer) =
+    length(y) * inner <= _CTSEM_SMALL_MATVEC[]
+
+"""Inner dimension from which the column kernel (`_ctsem_colmul!`) is used."""
+const _CTSEM_COLUMN_KERNEL = 8
+
+@inline _ctsem_bkj(B, k, j, ::Val{false}) = @inbounds B[k, j]
+@inline _ctsem_bkj(B, k, j, ::Val{true}) = @inbounds B[j, k]
+
+"""
+    _ctsem_colmul!(C, A, B, alpha, beta, Val(transB))
+
+`C = alpha * A * op(B) + beta * C`, with `op(B)` = `B` or `B'`, column by
+column: `C[:, j]` is a sum of columns of `A` weighted by `op(B)[:, j]`, four
+columns a pass. Contiguous in the row index, so it vectorises.
+"""
+@inline function _ctsem_colmul!(C, A, B, alpha, beta, tb::Val)
+    m = size(A, 1)
+    K = size(A, 2)
+    T = eltype(C)
+    @inbounds for j in axes(C, 2)
+        if iszero(beta)
+            @simd for i in 1:m
+                C[i, j] = zero(T)
+            end
+        elseif !isone(beta)
+            @simd for i in 1:m
+                C[i, j] *= beta
+            end
+        end
+        k = 1
+        while k + 3 <= K
+            b1 = alpha * _ctsem_bkj(B, k, j, tb)
+            b2 = alpha * _ctsem_bkj(B, k + 1, j, tb)
+            b3 = alpha * _ctsem_bkj(B, k + 2, j, tb)
+            b4 = alpha * _ctsem_bkj(B, k + 3, j, tb)
+            @simd for i in 1:m
+                C[i, j] = muladd(A[i, k], b1, muladd(A[i, k + 1], b2,
+                    muladd(A[i, k + 2], b3, muladd(A[i, k + 3], b4, C[i, j]))))
+            end
+            k += 4
+        end
+        r = K - k + 1
+        if r == 3
+            b1 = alpha * _ctsem_bkj(B, k, j, tb)
+            b2 = alpha * _ctsem_bkj(B, k + 1, j, tb)
+            b3 = alpha * _ctsem_bkj(B, k + 2, j, tb)
+            @simd for i in 1:m
+                C[i, j] = muladd(A[i, k], b1, muladd(A[i, k + 1], b2,
+                    muladd(A[i, k + 2], b3, C[i, j])))
+            end
+        elseif r == 2
+            b1 = alpha * _ctsem_bkj(B, k, j, tb)
+            b2 = alpha * _ctsem_bkj(B, k + 1, j, tb)
+            @simd for i in 1:m
+                C[i, j] = muladd(A[i, k], b1, muladd(A[i, k + 1], b2, C[i, j]))
+            end
+        elseif r == 1
+            b1 = alpha * _ctsem_bkj(B, k, j, tb)
+            @simd for i in 1:m
+                C[i, j] = muladd(A[i, k], b1, C[i, j])
+            end
+        end
+    end
+    return C
+end
+
 """`C = alpha * A * B + beta * C`."""
 @inline function _ctsem_mul!(C, A, B, alpha=true, beta=false)
     _ctsem_small_product(C, size(A, 2)) || return mul!(C, A, B, alpha, beta)
+    size(A, 2) >= _CTSEM_COLUMN_KERNEL &&
+        return _ctsem_colmul!(C, A, B, alpha, beta, Val(false))
     @inbounds for j in axes(B, 2), i in axes(A, 1)
         acc = zero(eltype(C))
         for k in axes(A, 2)
@@ -323,20 +402,20 @@ end
 
 """`C = alpha * A' * B + beta * C`.
 
-Above the threshold, `A'` is formed explicitly and the product is an ordinary
-`gemm`: OpenBLAS's transposed-first `dgemm_tn` takes the process-wide lock for
-its work buffer on every call, where its untransposed and right-transposed
-products at these sizes use small kernels that take none. Profiled on dev1, a
-12-state model's gradient at 8 threads with this fallback live: a quarter of
-all samples in that lock, from here. The copy is O(nk) against the O(nkm)
-product, into a buffer the task keeps per element type and shape
-(`_ctsem_transpose_buffer`): a fresh matrix every call, from `permutedims`,
-made the eight threads stop for the collector instead, and the value path
-lost a third.
+From the column kernel's size up, `A'` is formed explicitly and the product is
+the column kernel's: the copy is O(nk) against the O(nkm) product, into a
+buffer the task keeps per element type and shape (`_ctsem_transpose_buffer`)
+-- a fresh matrix every call, from `permutedims`, made eight threads stop for
+the collector instead. Above `_CTSEM_SMALL_PRODUCT` the same copy goes to an
+ordinary `gemm`, never to `dgemm_tn`, which locks even where OpenBLAS's other
+products do not: a quarter of a 12-state gradient's samples at 8 threads on
+dev1.
 """
 @inline function _ctsem_mulTN!(C, A, B, alpha=true, beta=false)
     _ctsem_small_product(C, size(A, 1)) ||
         return mul!(C, transpose!(_ctsem_transpose_buffer(A), A), B, alpha, beta)
+    size(A, 1) >= _CTSEM_COLUMN_KERNEL && return _ctsem_colmul!(C,
+        transpose!(_ctsem_transpose_buffer(A), A), B, alpha, beta, Val(false))
     @inbounds for j in axes(B, 2), i in axes(A, 2)
         acc = zero(eltype(C))
         for k in axes(A, 1)
@@ -350,6 +429,8 @@ end
 """`C = alpha * A * B' + beta * C`."""
 @inline function _ctsem_mulNT!(C, A, B, alpha=true, beta=false)
     _ctsem_small_product(C, size(A, 2)) || return mul!(C, A, transpose(B), alpha, beta)
+    size(A, 2) >= _CTSEM_COLUMN_KERNEL &&
+        return _ctsem_colmul!(C, A, B, alpha, beta, Val(true))
     @inbounds for j in axes(B, 1), i in axes(A, 1)
         acc = zero(eltype(C))
         for k in axes(A, 2)
@@ -362,7 +443,7 @@ end
 
 """`y = alpha * A * x + beta * y`."""
 @inline function _ctsem_mulvec!(y, A, x, alpha=true, beta=false)
-    _ctsem_small_product(y, size(A, 2)) || return mul!(y, A, x, alpha, beta)
+    _ctsem_small_matvec(y, size(A, 2)) || return mul!(y, A, x, alpha, beta)
     @inbounds for i in axes(A, 1)
         acc = zero(eltype(y))
         for k in axes(A, 2)
@@ -375,7 +456,7 @@ end
 
 """`y = alpha * A' * x + beta * y`."""
 @inline function _ctsem_mulTvec!(y, A, x, alpha=true, beta=false)
-    _ctsem_small_product(y, size(A, 1)) || return mul!(y, transpose(A), x, alpha, beta)
+    _ctsem_small_matvec(y, size(A, 1)) || return mul!(y, transpose(A), x, alpha, beta)
     @inbounds for i in axes(A, 2)
         acc = zero(eltype(y))
         for k in axes(A, 1)

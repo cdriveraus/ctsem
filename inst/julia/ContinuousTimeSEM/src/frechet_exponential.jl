@@ -94,15 +94,15 @@ function my_exp_frechet!(Y::AbstractMatrix{TYPE}, L::AbstractMatrix{TYPE},
     A2, A4, A6 = buf.A2, buf.A4, buf.A6
     M2, M4, M6 = buf.M2, buf.M4, buf.M6
     one_t = one(TYPE)
-    mul!(A2, As, As)
-    mul!(M2, As, Es)
-    mul!(M2, Es, As, one_t, one_t)
-    mul!(A4, A2, A2)
-    mul!(M4, A2, M2)
-    mul!(M4, M2, A2, one_t, one_t)
-    mul!(A6, A4, A2)
-    mul!(M6, A4, M2)
-    mul!(M6, M4, A2, one_t, one_t)
+    _ctsem_mul!(A2, As, As)
+    _ctsem_mul!(M2, As, Es)
+    _ctsem_mul!(M2, Es, As, one_t, one_t)
+    _ctsem_mul!(A4, A2, A2)
+    _ctsem_mul!(M4, A2, M2)
+    _ctsem_mul!(M4, M2, A2, one_t, one_t)
+    _ctsem_mul!(A6, A4, A2)
+    _ctsem_mul!(M6, A4, M2)
+    _ctsem_mul!(M6, M4, A2, one_t, one_t)
 
     b = _pade13_b(TYPE)
 
@@ -112,24 +112,24 @@ function my_exp_frechet!(Y::AbstractMatrix{TYPE}, L::AbstractMatrix{TYPE},
     # Odd part U = A (A6 W1 + W2), even part V = A6 Z1 + Z2.
     @. W1 = b[14] * A6 + b[12] * A4 + b[10] * A2
     @. Z1 = b[13] * A6 + b[11] * A4 + b[9] * A2
-    mul!(W, A6, W1)
+    _ctsem_mul!(W, A6, W1)
     @. W += b[8] * A6 + b[6] * A4 + b[4] * A2
     add_diag!(W, b[2], dim)
-    mul!(V, A6, Z1)
+    _ctsem_mul!(V, A6, Z1)
     @. V += b[7] * A6 + b[5] * A4 + b[3] * A2
     add_diag!(V, b[1], dim)
-    mul!(U, As, W)
+    _ctsem_mul!(U, As, W)
 
     # Their Fréchet derivatives, term by term.
     @. T1 = b[14] * M6 + b[12] * M4 + b[10] * M2          # L(W1)
-    mul!(LW, A6, T1)
-    mul!(LW, M6, W1, one_t, one_t)
+    _ctsem_mul!(LW, A6, T1)
+    _ctsem_mul!(LW, M6, W1, one_t, one_t)
     @. LW += b[8] * M6 + b[6] * M4 + b[4] * M2            # L(W)
-    mul!(LU, As, LW)
-    mul!(LU, Es, W, one_t, one_t)                          # L(U) = A L(W) + E W
+    _ctsem_mul!(LU, As, LW)
+    _ctsem_mul!(LU, Es, W, one_t, one_t)                          # L(U) = A L(W) + E W
     @. T1 = b[13] * M6 + b[11] * M4 + b[9] * M2           # L(Z1)
-    mul!(LV, A6, T1)
-    mul!(LV, M6, Z1, one_t, one_t)
+    _ctsem_mul!(LV, A6, T1)
+    _ctsem_mul!(LV, M6, Z1, one_t, one_t)
     @. LV += b[7] * M6 + b[5] * M4 + b[3] * M2            # L(V)
 
     # R = (V - U)⁻¹ (V + U), and L = (V - U)⁻¹ (LU + LV + (LU - LV) R).
@@ -138,16 +138,16 @@ function my_exp_frechet!(Y::AbstractMatrix{TYPE}, L::AbstractMatrix{TYPE},
     copyto!(T2, T1)
     _solve_square_system!(T2, Y, buf.piv, dim)
     @. T2 = LU - LV
-    mul!(L, T2, Y)
+    _ctsem_mul!(L, T2, Y)
     @. L += LU + LV
     _solve_square_system!(T1, L, buf.piv, dim)
 
     # Undo the scaling: L(A², E) = A L + L A at each doubling.
     for _ in 1:s
-        mul!(T1, Y, L)
-        mul!(T1, L, Y, one_t, one_t)
+        _ctsem_mul!(T1, Y, L)
+        _ctsem_mul!(T1, L, Y, one_t, one_t)
         copyto!(L, T1)
-        mul!(T1, Y, Y)
+        _ctsem_mul!(T1, Y, Y)
         copyto!(Y, T1)
     end
     return Y, L

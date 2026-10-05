@@ -110,26 +110,26 @@ function my_exp!(Y::AbstractMatrix{TYPE}, A::AbstractMatrix{TYPE}, W1::AbstractM
     @inbounds for j in 1:d, i in 1:d
         buffer.As[i, j] = factor * A[i, j]
     end
-    mul!(buffer.A2, buffer.As, buffer.As)
-    mul!(buffer.A4, buffer.A2, buffer.A2)
-    mul!(buffer.A6, buffer.A4, buffer.A2)
+    _ctsem_mul!(buffer.A2, buffer.As, buffer.As)
+    _ctsem_mul!(buffer.A4, buffer.A2, buffer.A2)
+    _ctsem_mul!(buffer.A6, buffer.A4, buffer.A2)
 
     b = _pade13_b(TYPE)
 
     # Odd polynomial core (before left-multiplication by As):
     # W = A6*(b13*A6 + b11*A4 + b9*A2) + b7*A6 + b5*A4 + b3*A2 + b1*I
     @. W1 = (b[14] * buffer.A6 + b[12] * buffer.A4 + b[10] * buffer.A2)
-    mul!(Y, buffer.A6, W1)
+    _ctsem_mul!(Y, buffer.A6, W1)
     @. Y += b[8] * buffer.A6 + b[6] * buffer.A4 + b[4] * buffer.A2
     add_diag!(Y, b[2], dim)
 
     # U = As * W. Store U in W1.
-    mul!(W1, buffer.As, Y)
+    _ctsem_mul!(W1, buffer.As, Y)
 
     # Even polynomial:
     # V = A6*(b12*A6 + b10*A4 + b8*A2) + b6*A6 + b4*A4 + b2*A2 + b0*I
     @. Y = (b[13] * buffer.A6 + b[11] * buffer.A4 + b[9] * buffer.A2)
-    mul!(buffer.As, buffer.A6, Y)
+    _ctsem_mul!(buffer.As, buffer.A6, Y)
     @. buffer.As += b[7] * buffer.A6 + b[5] * buffer.A4 + b[3] * buffer.A2
     add_diag!(buffer.As, b[1], dim)
 
@@ -147,11 +147,11 @@ function my_exp!(Y::AbstractMatrix{TYPE}, A::AbstractMatrix{TYPE}, W1::AbstractM
     # Squaring phase
     for _ in 1:div(s, 2)
     # for _ in 1:s
-        mul!(W1, Y, Y)
-        mul!(Y, W1, W1)
+        _ctsem_mul!(W1, Y, Y)
+        _ctsem_mul!(Y, W1, W1)
     end
     if isodd(s)
-        mul!(W1, Y, Y)
+        _ctsem_mul!(W1, Y, Y)
         copyto!(Y, W1)
     end
     return Y
