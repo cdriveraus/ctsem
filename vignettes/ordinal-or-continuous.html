@@ -178,7 +178,7 @@ border-radius: 0 4px 4px 0;
 <span id="cb2-30"><a href="#cb2-30" aria-hidden="true" tabindex="-1"></a><span class="co"># roots whatever covmattransform says, while the julia generator applies the</span></span>
 <span id="cb2-31"><a href="#cb2-31" aria-hidden="true" tabindex="-1"></a><span class="co"># declared transform, as ctFit() does.</span></span>
 <span id="cb2-32"><a href="#cb2-32" aria-hidden="true" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">2</span>)</span>
-<span id="cb2-33"><a href="#cb2-33" aria-hidden="true" tabindex="-1"></a>d <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(<span class="fu">ctGenerate</span>(gen, <span class="at">n.subjects =</span> <span class="dv">150</span>, <span class="at">Tpoints =</span> <span class="dv">30</span>, <span class="at">dtmean =</span> <span class="fl">0.7</span>,</span>
+<span id="cb2-33"><a href="#cb2-33" aria-hidden="true" tabindex="-1"></a>d <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(<span class="fu">ctGenerate</span>(gen, <span class="at">n =</span> <span class="dv">150</span>, <span class="at">Tpoints =</span> <span class="dv">30</span>, <span class="at">dtmean =</span> <span class="fl">0.7</span>,</span>
 <span id="cb2-34"><a href="#cb2-34" aria-hidden="true" tabindex="-1"></a>  <span class="at">backend =</span> <span class="st">&#39;julia&#39;</span>))</span>
 <span id="cb2-35"><a href="#cb2-35" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb2-36"><a href="#cb2-36" aria-hidden="true" tabindex="-1"></a><span class="co"># The cumulative logit: the response falls in category k or below when the</span></span>
