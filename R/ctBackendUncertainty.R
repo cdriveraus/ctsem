@@ -601,7 +601,11 @@
   invisible(TRUE)
 }
 
-.ctBackendPriorSpec <- function(standata, npar) {
+# `nextra`: raw parameters past the stan layout that carry a density of their
+# own and so take no raw prior -- the sampled values of missing TI predictors,
+# whose density is the imputation model's (`_ctsem_ti_missing_loglik`). They
+# sit at the end of the vector, after every index this assigns.
+.ctBackendPriorSpec <- function(standata, npar, nextra = 0L) {
   if (is.null(standata)) {
     stop("priors=TRUE needs the prepared model data; this fit was built without it.",
       call. = FALSE)
@@ -640,7 +644,8 @@
   # If the engine's free-parameter count and the Stan-side layout disagree, the
   # indices are meaningless and a silently mis-scaled posterior is far worse
   # than a refusal.
-  if (position != npar) {
+  nextra <- max(0L, as.integer(nextra)[1L], na.rm = TRUE)
+  if (position + nextra != npar) {
     stop("Cannot map ctsem's priors onto this model's raw parameters: the Stan ",
       "layout accounts for ", position, " of ", npar, " free parameters. ",
       "Please report this model shape.", call. = FALSE)

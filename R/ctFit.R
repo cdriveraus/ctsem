@@ -616,8 +616,8 @@ T0VARredundancies <- function(ctm) {
 #' dropped coordinates are identified, so a rank has to be asked for. There it
 #' may be given per grouping level by name, as \code{poprank=c(study=2)}, with
 #' \code{'auto'} resolved per level, and it may not fall below the number of
-#' individually varying T0MEANS, whose latents take their initial variance from
-#' this covariance. Under \code{'augmented'} a varying T0MEANS cannot be
+#' individually varying T0MEANS with a free T0VAR, whose latents then take their
+#' initial variance from this covariance. Under \code{'augmented'} a varying T0MEANS cannot be
 #' reduced at all, and an explicit rank is refused. A restricted covariance is
 #' \code{L \%*\% t(L)} for a loading matrix \code{L}, reported as
 #' \code{poploading_<parameter>_dim<j>.<level>}; a loading's sign is
@@ -1819,14 +1819,20 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     }, integer(1L))
     laplacerank <- laplacerank[!is.na(laplacerank)]
     if(!length(laplacerank)) laplacerank <- NULL
-    # A subject-level varying T0MEANS takes its latent's initial variance from
-    # this covariance (`T0VARredundancies()` disables T0VAR there), so a rank
-    # below their number fixes the initial state along a direction: on the
-    # ?ctFit example poprank 1 cost 4447 log likelihood units and reported
-    # convergence. The augmented route refuses the same case.
+    # An innermost-level varying T0MEANS whose latent has a free T0VAR takes
+    # its initial variance from this covariance instead (`T0VARredundancies()`,
+    # below, disables those T0VAR cells), so a rank below their number fixes
+    # the initial state along a direction: on the ?ctFit example poprank 1 cost
+    # 4447 log likelihood units and reported convergence. A fixed T0VAR keeps
+    # its own variance, and there a lower rank is an approximation like any
+    # other. The augmented route refuses the same case.
     subjectrank <- laplacerank[ctm$subjectIDname]
-    t0vary <- unique(as.character(ctm$pars$param[ctm$pars$matrix %in% 'T0MEANS' &
-      ctm$pars$indvarying %in% TRUE & is.na(ctm$pars$value)]))
+    t0cells <- ctm$pars$matrix %in% 'T0MEANS' & ctm$pars$indvarying %in% TRUE &
+      is.na(ctm$pars$value)
+    freevar <- ctm$pars$matrix %in% 'T0VAR' & is.na(ctm$pars$value) &
+      ctm$pars$row == ctm$pars$col
+    t0vary <- unique(as.character(ctm$pars$param[t0cells &
+      ctm$pars$row %in% ctm$pars$row[freevar]]))
     if(length(subjectrank) && isTRUE(subjectrank < length(t0vary))) stop(
       "poprank ", subjectrank, " is below the ", length(t0vary),
       " individually varying T0MEANS (", paste(t0vary, collapse=', '), "): ",

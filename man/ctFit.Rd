@@ -120,8 +120,8 @@ Requires \code{backend='julia'}, and the default applies to
 dropped coordinates are identified, so a rank has to be asked for. There it
 may be given per grouping level by name, as \code{poprank=c(study=2)}, with
 \code{'auto'} resolved per level, and it may not fall below the number of
-individually varying T0MEANS, whose latents take their initial variance from
-this covariance. Under \code{'augmented'} a varying T0MEANS cannot be
+individually varying T0MEANS with a free T0VAR, whose latents then take their
+initial variance from this covariance. Under \code{'augmented'} a varying T0MEANS cannot be
 reduced at all, and an explicit rank is refused. A restricted covariance is
 \code{L \%*\% t(L)} for a loading matrix \code{L}, reported as
 \code{poploading_<parameter>_dim<j>.<level>}; a loading's sign is
