@@ -86,3 +86,97 @@ test_that("a variable that cannot be tuned leaves its own band NA and keeps the 
   expect_equal(leaked, character(0))
   expect_message(suppressWarnings(ctsem:::ctACFquantiles(ac)), "short")
 })
+
+test_that("cross correlations keep lag 0, autocorrelations drop it", {
+  skip_if_not_installed("collapse")
+
+  # Y2 shares Y1's value at the same occasion only, so the cross correlation is
+  # large at lag 0 and near zero elsewhere. Lag 0 used to be dropped for cross
+  # correlations as well as autocorrelations, hiding the largest value.
+  set.seed(1)
+  d <- data.frame(id = rep(1:20, each = 20), time = rep(1:20, times = 20),
+    Y1 = stats::rnorm(400))
+  d$Y2 <- d$Y1 + stats::rnorm(400)
+  ac <- suppressMessages(ctACF(d, varnames = c("Y1", "Y2"), idcol = "id",
+    timecol = "time", timestep = 1, time.max = 3, nboot = 0, plot = FALSE))
+
+  expect_false(0 %in% ac[Variable == "Y1"]$TimeInterval)
+  cc <- ac[Variable == "Y1_Y2"]
+  expect_true(0 %in% cc$TimeInterval)
+  expect_gt(cc[TimeInterval == 0]$ACF, 0.5)
+  expect_true(all(abs(cc[TimeInterval != 0]$ACF) < 0.2))
+})
+
+# A ctACF-shaped table with a known truth: Sample 0 is the full data estimate,
+# Samples 1..nboot scatter around the truth with standard deviation sd.
+acftable <- function(truth, lags, sd, nboot = 100, seed = 1, variable = "Y1_Y2") {
+  set.seed(seed)
+  data.table::rbindlist(lapply(0:nboot, function(s) data.table::data.table(
+    Sample = s, TimeInterval = lags, Variable = variable,
+    ACF = truth + stats::rnorm(length(lags), 0, sd))))
+}
+
+test_that("the weighted spline follows a precisely estimated peak", {
+  skip_if_not_installed("mgcv")
+
+  # The quantile spline flattened a lag 0 cross correlation of about .4 to about
+  # .05: a peak one lag wide, smoothed with the same stiffness as everything
+  # else. Weighted by its precision, the peak is followed.
+  lags <- -10:10
+  truth <- ifelse(lags == 0, .4, 0)
+  q <- suppressMessages(ctsem:::ctACFweightedSpline(acftable(truth, lags, sd = .03)))
+
+  expect_true(all(qcolnames() %in% names(q)))
+  med <- unique(q[, c("TimeInterval", "Q50%")])
+  # thresholds hold across seeds (lowest peak about .25 over 30), while the
+  # quantile spline gives about .05 here
+  expect_gt(med[TimeInterval == 0][["Q50%"]], 0.2)
+  expect_true(all(abs(med[abs(TimeInterval) >= 3][["Q50%"]]) < 0.15))
+  expect_true(all(q[["Q2.5%"]] <= q[["Q50%"]] & q[["Q50%"]] <= q[["Q97.5%"]]))
+})
+
+test_that("the weighted spline smooths away noise consistent with its standard errors", {
+  skip_if_not_installed("mgcv")
+
+  # No signal, and one noisy lag far from zero: the spline should stay flat
+  # rather than chase it, since the departure is within that lag's error.
+  lags <- 1:12
+  ac <- acftable(rep(0, 12), lags, sd = .05, seed = 2, variable = "Y1")
+  sd7 <- .2 # one imprecise lag, as when few pairs fall at that interval
+  ac[TimeInterval == 7, ACF := stats::rnorm(.N, 0, sd7)]
+  ac[Sample == 0 & TimeInterval == 7, ACF := .3]
+  q <- suppressMessages(ctsem:::ctACFweightedSpline(ac))
+
+  med <- unique(q[, c("TimeInterval", "Q50%")])
+  expect_true(all(abs(med[["Q50%"]]) < 0.15)) #half the stray estimate; about .1 at most over 30 seeds
+})
+
+test_that("without bootstrap samples the weighted spline falls back to the samples", {
+  skip_if_not_installed("mgcv")
+
+  ac <- acftable(rep(0, 10), 1:10, sd = .05, nboot = 0, variable = "Y1")
+  expect_message(q <- ctsem:::ctACFweightedSpline(ac), "could not be fitted")
+  expect_false(any(qcolnames() %in% names(q)))
+  expect_equal(nrow(q), nrow(ac))
+  expect_message(gg <- plotctACF(ac), "plotting ACF samples")
+  expect_s3_class(gg, "ggplot")
+})
+
+test_that("plotctACF draws the weighted spline by default, the quantile spline on request", {
+  skip_on_cran()
+  skip_if_not_installed("mgcv")
+  skip_if_not_installed("qgam")
+
+  ac <- acftable(exp(-(1:12) / 4), 1:12, sd = .05, nboot = 20, variable = "Y1")
+  gg <- suppressWarnings(suppressMessages(plotctACF(ac, reducedXlim = 0)))
+  expect_s3_class(gg, "ggplot")
+  # the full data estimates are drawn as points over the band
+  expect_true(any(vapply(gg$layers, function(l) inherits(l$geom, "GeomPoint"), logical(1))))
+  wq <- suppressMessages(ctsem:::ctACFweightedSpline(ac))
+  built <- ggplot2::ggplot_build(gg)$data[[2]] # the spline line
+  expect_equal(sort(unique(built$y)), sort(unique(wq[["Q50%"]])), tolerance = 1e-8)
+
+  gq <- suppressWarnings(suppressMessages(plotctACF(ac, reducedXlim = 0, method = "quantile")))
+  expect_s3_class(gq, "ggplot")
+  expect_error(plotctACF(ac, method = "nonsense"))
+})

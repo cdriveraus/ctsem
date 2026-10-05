@@ -78,6 +78,7 @@ Suggests:
     gridExtra,
     collapse,
     qgam,
+    mgcv,
     papaja,
     future,
     future.apply,

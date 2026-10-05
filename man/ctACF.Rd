@@ -57,7 +57,9 @@ containing multiple subjects and/or variables.
 \details{
 This function computes the continuous time ACF by discretizing the data and then
 performing bootstrapped ACF calculations to estimate the confidence intervals. It can create
-ACF plots with confidence intervals if 'plot' is set to TRUE.
+ACF plots with confidence intervals if 'plot' is set to TRUE. Autocorrelations are returned
+from the first non-zero lag, as the lag 0 autocorrelation is always 1. Cross correlations
+include lag 0, the contemporaneous correlation.
 }
 \examples{
 data.table::setDTthreads(1) #ignore this line

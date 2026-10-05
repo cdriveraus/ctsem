@@ -23,7 +23,9 @@
 #'
 #' @details This function computes the continuous time ACF by discretizing the data and then
 #' performing bootstrapped ACF calculations to estimate the confidence intervals. It can create
-#' ACF plots with confidence intervals if 'plot' is set to TRUE.
+#' ACF plots with confidence intervals if 'plot' is set to TRUE. Autocorrelations are returned
+#' from the first non-zero lag, as the lag 0 autocorrelation is always 1. Cross correlations
+#' include lag 0, the contemporaneous correlation.
 #'
 #' @seealso \code{\link{ctDiscretiseData}}
 #'
@@ -153,7 +155,7 @@ ctACF <- function(dat, varnames='auto',ccfnames='all',idcol='id', timecol='time'
       message('')
       ACF=rbindlist(ACF,idcol = 'Sample')
       ACF[,Sample:=Sample-1]
-      ACF=ACF[TimeInterval!=0,]
+      if(vari==varj) ACF=ACF[TimeInterval!=0,] #lag 0 autocorrelation is trivially 1, but lag 0 cross correlation is the contemporaneous correlation
       ACF[,Variable:=ifelse(vari==varj,vari,paste0(vari,'_',varj))]
       ACF[,SignificanceLevel:= ifelse(vari==varj,
         qnorm((1 + 0.95)/2)/sqrt(sum(!is.na(dat[[vari]]))),
@@ -245,15 +247,75 @@ ctACFquantiles<-function(ctacfobj,quantiles=c(.025,.5,.975),separateLearnRates=F
   return(ctacfobj)
 }
 
+# Precision weighted spline through the full data ACF estimates (Sample 0), each
+# lag weighted by the inverse of its bootstrap variance, which is treated as
+# known (scale=1). The smoothness is then chosen by whether the estimates depart
+# from a smooth curve by more than their own standard errors: a precisely
+# estimated spike is followed, while scatter consistent with its standard errors
+# is smoothed away. An unweighted spline can only choose one smoothness for
+# both, and either flattens the spike or follows the noise. Returns the same
+# quantile columns as ctACFquantiles, from the spline estimate and its standard
+# error, so plotctACF can draw either.
+ctACFweightedSpline <- function(ctacfobj,quantiles=c(.025,.5,.975),df='auto'){
+  if(F) Sample = ACF = TimeInterval = Variable = Estimate = SE = NULL
+  if(!requireNamespace('mgcv')) stop("mgcv package required for ACF plots: install.packages('mgcv')")
+  ctacfobj <- data.table(data.frame(ctacfobj))
+  qcols <- paste0('Q',quantiles*100,'%')
+
+  failed <- character(0)
+  for(vari in unique(ctacfobj$Variable)){
+    vdat <- ctacfobj[Variable %in% vari & !is.na(ACF),]
+    se <- vdat[Sample > 0, list(SE=sd(ACF)), by=TimeInterval] #needs bootstrap samples, nboot > 1
+    est <- merge(vdat[Sample == 0, list(TimeInterval, Estimate=ACF)], se, by='TimeInterval')
+    est <- est[is.finite(SE) & SE > 0,]
+    k <- min(nrow(est)-1, if(df == 'auto') 40 else df) #basis can be generous, the penalty does the smoothing
+
+    fit <- NULL
+    if(k >= 3) fit <- try(mgcv::gam(Estimate ~ s(TimeInterval, k=k), data=est,
+      weights=1/SE^2, scale=1, method='REML'), silent=TRUE)
+    if(is.null(fit) || inherits(fit,'try-error')){
+      failed <- c(failed,vari)
+      next #leaves this variable's quantile cells NA
+    }
+    newdata <- data.frame(TimeInterval=sort(unique(ctacfobj[Variable %in% vari,TimeInterval])))
+    pred <- stats::predict(fit, newdata=newdata, se.fit=TRUE)
+    qdat <- data.table(TimeInterval=newdata$TimeInterval)
+    for(qi in seq_along(quantiles)) set(qdat, j=qcols[qi],
+      value=as.numeric(pred$fit + stats::qnorm(quantiles[qi]) * pred$se.fit))
+    rows <- which(ctacfobj$Variable %in% vari)
+    for(qc in qcols) set(ctacfobj, i=rows, j=qc,
+      value=qdat[[qc]][match(ctacfobj$TimeInterval[rows], qdat$TimeInterval)])
+  }
+
+  if(!any(qcols %in% names(ctacfobj))){ #every variable failed
+    message('Weighted splines could not be fitted (too few distinct time intervals, or fewer than 2 bootstrap samples?); ACF samples returned without quantile estimates.')
+    return(ctacfobj)
+  }
+  if(length(failed)) message('Weighted splines could not be fitted for: ',
+    paste(failed,collapse=', '),'.')
+
+  return(ctacfobj)
+}
+
 #' Plot an approximate continuous-time ACF object from ctACF
 #'
 #' @param ctacfobj object
-#' @param df df for the basis spline.
+#' @param df basis dimension for the spline. 'auto' uses up to 40 for \code{method='weighted'},
+#' and 10\% of the number of time intervals for \code{method='quantile'}.
 #' @param quantiles quantiles to plot.
-#' @param separateLearnRates if TRUE, estimate the learning rate for the quantile splines for each combination of variables. Slower but theoretically more accurate. 
-#' @param reducedXlim if non-zero, n timesteps are removed from the upper and lower end of the x range 
-#' where the spline estimates are less likely to be reasonable. 
-#' @param estimateSpline if TRUE, quantile spline regression is used, otherwise the samples are simply plotted as lines and the other arguments here are not used.
+#' @param separateLearnRates if TRUE, estimate the learning rate for the quantile splines for each combination of variables. Slower but theoretically more accurate.
+#' Only used with \code{method='quantile'}.
+#' @param reducedXlim if non-zero, n timesteps are removed from the upper and lower end of the x range
+#' where the spline estimates are less likely to be reasonable.
+#' @param estimateSpline if TRUE, a spline is estimated according to \code{method}, otherwise the samples are simply plotted as lines and the other arguments here are not used.
+#' @param method \code{'weighted'} (default) fits a spline through the full data estimates, weighting each
+#' time interval by the inverse of its bootstrap variance, so that precisely estimated features such as a
+#' sharp peak are followed while noisy estimates are smoothed. Needs \code{nboot > 1} in \code{ctACF}.
+#' \code{'quantile'} fits quantile regression splines to the pooled bootstrap samples, which smooths
+#' all time intervals alike and can flatten sharp peaks.
+#'
+#' @details With a spline, the full data estimate at each time interval is shown as a point, the spline
+#' as a line, and the band spans the outer quantiles.
 #'
 #' @return a ggplot object
 #' @export
@@ -265,15 +327,17 @@ ctACFquantiles<-function(ctacfobj,quantiles=c(.025,.5,.975),separateLearnRates=F
 #' ac=ctACF(ctstantestdat,varnames=c('Y1'),idcol='id',timecol='time',timestep=.5,nboot=5,plot=FALSE)
 #' plotctACF(ac, reducedXlim=0)
 plotctACF <- function(ctacfobj,df='auto',quantiles=c(.025,.5,.975),
-  separateLearnRates=FALSE, reducedXlim=1,estimateSpline=TRUE){
-  
-  
+  separateLearnRates=FALSE, reducedXlim=1,estimateSpline=TRUE,method=c('weighted','quantile')){
+
+  if(F) Sample = ACF = TimeInterval = NULL
+  method <- match.arg(method)
   # browser()
   # ctacfobj=melt(ctacfobj,measure.vars = paste0('Q',quantiles*100,'%'),variable.name = 'Quantile',value.name = 'Corr')
   if(estimateSpline){
-    ctacfobj=copy(ctACFquantiles(ctacfobj,quantiles=quantiles,
+    if(method == 'weighted') ctacfobj=copy(ctACFweightedSpline(ctacfobj,quantiles=quantiles,df=df))
+    if(method == 'quantile') ctacfobj=copy(ctACFquantiles(ctacfobj,quantiles=quantiles,
       separateLearnRates=separateLearnRates,df=df))
-    #ctACFquantiles returns the samples without the quantile columns when the
+    #both spline functions return the samples without the quantile columns when the
     #spline cannot be fitted at all -- then there is no band to draw.
     estimateSpline <- all(paste0('Q',quantiles*100,'%') %in% names(ctacfobj))
     if(!estimateSpline) message('No quantile estimates available; plotting ACF samples instead.')
@@ -285,6 +349,7 @@ plotctACF <- function(ctacfobj,df='auto',quantiles=c(.025,.5,.975),
       geom_ribbon(aes(ymin=!!sym(paste0('Q',quantiles[1]*100,'%')),
         ymax=!!sym(paste0('Q',quantiles[3]*100,'%'))),alpha=.2,linetype='dashed',linewidth=.5)+
       geom_line(linewidth=1)+
+      geom_point(data=ctacfobj[Sample == 0 & !is.na(ACF),],aes(y=ACF),size=1)+ #full data estimates
       # guides(linewidth='none',linetype='none')+
       geom_hline(yintercept=0,linetype='dotted')+
       geom_vline(xintercept=0,linetype='dotted')+

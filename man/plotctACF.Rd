@@ -10,28 +10,41 @@ plotctACF(
   quantiles = c(0.025, 0.5, 0.975),
   separateLearnRates = FALSE,
   reducedXlim = 1,
-  estimateSpline = TRUE
+  estimateSpline = TRUE,
+  method = c("weighted", "quantile")
 )
 }
 \arguments{
 \item{ctacfobj}{object}
 
-\item{df}{df for the basis spline.}
+\item{df}{basis dimension for the spline. 'auto' uses up to 40 for \code{method='weighted'},
+and 10\% of the number of time intervals for \code{method='quantile'}.}
 
 \item{quantiles}{quantiles to plot.}
 
-\item{separateLearnRates}{if TRUE, estimate the learning rate for the quantile splines for each combination of variables. Slower but theoretically more accurate.}
+\item{separateLearnRates}{if TRUE, estimate the learning rate for the quantile splines for each combination of variables. Slower but theoretically more accurate.
+Only used with \code{method='quantile'}.}
 
-\item{reducedXlim}{if non-zero, n timesteps are removed from the upper and lower end of the x range 
+\item{reducedXlim}{if non-zero, n timesteps are removed from the upper and lower end of the x range
 where the spline estimates are less likely to be reasonable.}
 
-\item{estimateSpline}{if TRUE, quantile spline regression is used, otherwise the samples are simply plotted as lines and the other arguments here are not used.}
+\item{estimateSpline}{if TRUE, a spline is estimated according to \code{method}, otherwise the samples are simply plotted as lines and the other arguments here are not used.}
+
+\item{method}{\code{'weighted'} (default) fits a spline through the full data estimates, weighting each
+time interval by the inverse of its bootstrap variance, so that precisely estimated features such as a
+sharp peak are followed while noisy estimates are smoothed. Needs \code{nboot > 1} in \code{ctACF}.
+\code{'quantile'} fits quantile regression splines to the pooled bootstrap samples, which smooths
+all time intervals alike and can flatten sharp peaks.}
 }
 \value{
 a ggplot object
 }
 \description{
 Plot an approximate continuous-time ACF object from ctACF
+}
+\details{
+With a spline, the full data estimate at each time interval is shown as a point, the spline
+as a line, and the band spans the outer quantiles.
 }
 \examples{
 data.table::setDTthreads(1) #ignore this line
