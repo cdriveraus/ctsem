@@ -166,7 +166,12 @@ stan_reinitsf <- function(model, data,fast=FALSE){
 # Function to compute numeric Hessian using finite differences
 numericHessianFunc <- function(pars, step=1e-3, whichpars='all',
   lpdifmin=1e-8, lpdifmax=.1, cl=NA, verbose=1, directions=c(-1,1), parsteps=c(), 
-  lpgFunc, base_value, base_gradient=NULL) {
+  lpgFunc, base_value, base_gradient=NULL, progress=NULL) {
+  # One progress line for the whole Hessian, rewritten per parameter, through
+  # the sink julia's stages use; a caller running both directions passes one
+  # sink to both so that they share the line.
+  ownsink <- is.null(progress)
+  if (ownsink) progress <- .ctBackendProgressSink(0)
   
   if('all' %in% whichpars) whichpars <- 1:length(pars)
   if(is.null(base_gradient)){
@@ -181,9 +186,8 @@ numericHessianFunc <- function(pars, step=1e-3, whichpars='all',
   
   hessout <- sapply(whichpars, function(i){
     
-    message(paste0("\rEstimating Hessian, par ",i,',', 
-      as.integer(i/length(pars)*50+ifelse(directions[1]==1,0,50)),
-      '%'),appendLF = FALSE)
+    if (!is.null(progress)) progress(paste0("Estimating Hessian, par ", i, ', ',
+      as.integer(i/length(pars)*50+ifelse(directions[1]==1,0,50)), '%'), "update")
     if(verbose) message('### Par ',i,'###')
     stepsize = step
     uppars<-rep(0,length(pars))
@@ -252,6 +256,7 @@ numericHessianFunc <- function(pars, step=1e-3, whichpars='all',
     return(grad)
   }) #end sapply
   
+  if (ownsink && !is.null(progress)) progress('', 'break')
   out=(hessout+t(hessout))/2
   return(out)
 }

@@ -578,6 +578,38 @@ test_that("a progress line is delivered as a message, not written to a stream", 
   expect_silent(.ctProgressSink(TRUE)(new.env(), "update"))
 })
 
+test_that("stan's stochastic optimizer reports through the same sink, on one line", {
+  # Each update was its own message() -- about a thousand per default stan
+  # fit in a log or a capturing front end. Through the sink they are one line
+  # updated in place, ended once; with nothing watching, only the verdict.
+  lpg <- function(x) {
+    v <- -sum((x - 1)^2)
+    attr(v, "gradient") <- -2 * (x - 1)
+    v
+  }
+  kinds <- character(0)
+  said <- character(0)
+  out <- withCallingHandlers(
+    sgd(c(0, 0), lpg, maxiter = 400, progress = function(text, kind)
+      kinds <<- c(kinds, kind)),
+    message = function(m) {
+      said <<- c(said, conditionMessage(m))
+      invokeRestart("muffleMessage")
+    })
+  expect_equal(out$par, c(1, 1), tolerance = 1e-2)
+  expect_true(any(kinds == "update"))
+  expect_identical(tail(kinds, 1L), "break")
+  expect_false(any(grepl("Progress est", said)))
+  said <- character(0)
+  withCallingHandlers(sgd(c(0, 0), lpg, maxiter = 400, progress = NULL),
+    message = function(m) {
+      said <<- c(said, conditionMessage(m))
+      invokeRestart("muffleMessage")
+    })
+  expect_length(said, 1L)
+  expect_match(said, "Converged")
+})
+
 test_that("the overwrite option overrides the detection in both directions", {
   # It used to override only downwards, so a console the detection had given up
   # on could not be told to overwrite after all -- which is the direction

@@ -1915,13 +1915,15 @@ ctOptimComputeUncertainty <- function(est, standata, sm, lpgFunc,
       hess <- hessian
     } else {
       message('Estimating Hessian')
+      # Both directions on one progress line (see numericHessianFunc()).
+      progress <- .ctBackendProgressSink(0)
       hess1 <- numericHessianFunc(pars=est, step=control$hessianStep,
         verbose=verbose, directions=1, lpgFunc=lpgFunc,
-        base_value=base[1], base_gradient=base_gradient)
+        base_value=base[1], base_gradient=base_gradient, progress=progress)
       hess2 <- numericHessianFunc(pars=est, step=control$hessianStep,
         verbose=verbose, directions=-1, lpgFunc=lpgFunc,
-        base_value=base[1], base_gradient=base_gradient)
-      message('')
+        base_value=base[1], base_gradient=base_gradient, progress=progress)
+      if (!is.null(progress)) progress('', 'break')
       hessian_result <- processHessianMatrices(hess1, hess2, verbose, matsetup)
       hess <- hessian_result$hess
     }

@@ -10,7 +10,14 @@ sgd <- function(init,lpgFunc,whichignore=c(),nsubsets=1,nsubjects=NA,plot=FALSE,
   nconvergeiter=30, 
   worsecountconverge=1000,
   lpnoisethresh= .1,#length(init)*.01,
-  itertol=1e-3, parrangetol=1e-3){
+  itertol=1e-3, parrangetol=1e-3,
+  progress=.ctBackendProgressSink(0)){
+  # `progress` is the sink julia's stages report through: one line rewritten in
+  # place, padded and flushed so that RStudio shows it, where a console is
+  # watching; NULL, and silence, where none is. Each update used to be its own
+  # message(), which a capturing front end or a log saw as one line apiece --
+  # about a thousand for one default fit.
+  report <- function(text) if (!is.null(progress)) progress(text, "update")
   
   
   if(nsubsets>1){
@@ -404,8 +411,8 @@ sgd <- function(init,lpgFunc,whichignore=c(),nsubsets=1,nsubjects=NA,plot=FALSE,
       if(is.na(lpdiff1) || lpdiff1 < lpdiff) lpdiff1 <- lpdiff
       progressEst <- round(min(100,100*(1 - log(lpdiff/itertol) / log(lpdiff1/itertol))),2)
       
-      message(paste0('\rProgress est. = ',progressEst,'%, LPchange = ',signif(lpdiff,digits = 2), 
-        ', Iter = ',i, ', LP = ',lp[bestiter]),appendLF = FALSE)
+      report(paste0('Progress est. = ',progressEst,'%, LPchange = ',signif(lpdiff,digits = 2),
+        ', Iter = ',i, ', LP = ',lp[bestiter]))
       # ', grad = ', mean(sqrt((g^2))), ', gmem = ', gmemory,'  lprt = ',lproughnesstarget))
       
 
@@ -443,8 +450,8 @@ sgd <- function(init,lpgFunc,whichignore=c(),nsubsets=1,nsubjects=NA,plot=FALSE,
         lpchange=signif(lpdiff,digits = 2)
         }
         
-        message(paste0('\rProgress est. = ',progressEst,'%, LPchange = ',lpchange, 
-          ', Iter = ',i, ', LP = ',bestsubsetlp,', worseCount = ',worsecount,'           '),appendLF = FALSE)
+        report(paste0('Progress est. = ',progressEst,'%, LPchange = ',lpchange,
+          ', Iter = ',i, ', LP = ',bestsubsetlp,', worseCount = ',worsecount))
         # ', grad = ', mean(sqrt((g^2))), ', gmem = ', gmemory,'  lprt = ',lproughnesstarget))
         
         if(lpdiff < itertol & lpdiff > 0 && bestsubsetlp==subsetlp) converged <- 1
@@ -461,7 +468,7 @@ sgd <- function(init,lpgFunc,whichignore=c(),nsubsets=1,nsubjects=NA,plot=FALSE,
     } #end subsampling check
     
   }
-  message('')
+  if (!is.null(progress)) progress('', 'break')
   convergemessages <- c(
     paste0('Converged -- lp change within tol(',itertol,')'),
     'Converged -- parameter changes within parrangetol',
