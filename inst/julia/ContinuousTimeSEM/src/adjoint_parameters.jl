@@ -517,18 +517,35 @@ end
 @inline _partial1(x::ForwardDiff.Dual{Nothing}) = ForwardDiff.partials(x, 1)
 @inline _partial1(x::Real) = zero(x)
 
-function _dual_param_derivative(dual_ctx::CTSEMDualContext, transform, j::Int)
+# The first partial of a transform's result, as the seed's value type `V`.
+# The result arrives untyped -- the complex group's transforms are closures of
+# different types in one vector, so every call is a dynamic dispatch -- and a
+# type test against the seed's own type reads it without a second dispatch.
+@inline function _partial1_as(r, ::Type{ForwardDiff.Dual{Nothing,V,N}}) where {V,N}
+    r isa ForwardDiff.Dual{Nothing,V,N} && return ForwardDiff.partials(r, 1)::V
+    return convert(V, _partial1(r))::V
+end
+
+# `@nospecialize` on the transform, so that the calls below are static and
+# return an unboxed `V`. Specialised on it, each call was a dynamic dispatch
+# whose result was boxed, and `_partial1` behind it another three: about
+# 11,000 heap objects a gradient evaluation on gC8, a third of what the
+# filter's gradient allocated. The transform call itself stays dynamic and
+# boxes its result once.
+function _dual_param_derivative(dual_ctx::CTSEMDualContext{D}, @nospecialize(transform),
+    j::Int) where {D}
     saved = dual_ctx.data[j]
     dual_ctx.data[j] = _seed_dual(saved, ForwardDiff.value(saved), true)
-    derivative = _partial1(transform(dual_ctx.row_context))
+    derivative = _partial1_as(transform(dual_ctx.row_context), D)
     dual_ctx.data[j] = saved
     return derivative
 end
 
-function _dual_state_derivative(dual_ctx::CTSEMDualContext, transform, s::Int)
+function _dual_state_derivative(dual_ctx::CTSEMDualContext{D}, @nospecialize(transform),
+    s::Int) where {D}
     saved = dual_ctx.state[s]
     dual_ctx.state[s] = _seed_dual(saved, ForwardDiff.value(saved), true)
-    derivative = _partial1(transform(dual_ctx.row_context))
+    derivative = _partial1_as(transform(dual_ctx.row_context), D)
     dual_ctx.state[s] = saved
     return derivative
 end
