@@ -61,14 +61,21 @@ for a session that runs one fit on one core and wants it.
 const _CTSEM_SMALL_CHOLESKY = Ref(typemax(Int))
 
 """
-Arithmetic budget below which a product is done by hand rather than by `gemm`.
+Arithmetic budget below which a product is done by hand rather than by `gemm`,
+in `rows * cols * inner`; 64 is a 4x4 by 4x4.
 
-The same trade as the factorization threshold, in the units a matrix product is
-naturally measured in: `rows * cols * inner`. `16^3 = 4096` is a cube of side
-sixteen, so a product stays hand-written exactly while a Cholesky of the same
-dimension would.
+Unlike the factorizations, `gemm` itself scales across threads -- the
+transposed-first form excepted, which `_ctsem_mulTN!` avoids -- so the line is
+where the hand loop stops being quicker, not where a lock starts. Measured on
+dev1 (scripts/sampler-checks-2026-10/probe_thresh.R, probe_big2.R): forcing
+`gemm` at every size made the Laplace gradient of one- and two-state models up
+to 12 times slower at 8 threads, and every threshold from 27 to 4096 timed the
+same there; on a 12-state model, 64 against the previous 4096 halved the
+filter's value on one thread (18.8 against 37.8 ms), and was quicker for the
+value at 8 threads and for the gradient at 1 and 8 (151 against 185, 21 against
+26 ms). Nothing above 4096 changed anything.
 """
-const _CTSEM_SMALL_PRODUCT = Ref(4096)
+const _CTSEM_SMALL_PRODUCT = Ref(64)
 
 export ctsem_set_small_linalg!
 """
@@ -290,9 +297,36 @@ Is this product small enough to be worth doing by hand?
     return C
 end
 
-"""`C = alpha * A' * B + beta * C`."""
+"""
+    _ctsem_transpose_buffer(A)
+
+A `size(A, 2) x size(A, 1)` matrix of `A`'s element type, kept in the calling
+task's local storage and reused by every later call of that shape on the same
+task. Task-local rather than per thread: a task can move between threads, and
+the pool's workers are tasks.
+"""
+function _ctsem_transpose_buffer(A::AbstractMatrix{T}) where {T}
+    key = (:ctsem_transpose, T, size(A, 2), size(A, 1))
+    return get!(() -> Matrix{T}(undef, size(A, 2), size(A, 1)),
+        task_local_storage(), key)::Matrix{T}
+end
+
+"""`C = alpha * A' * B + beta * C`.
+
+Above the threshold, `A'` is formed explicitly and the product is an ordinary
+`gemm`: OpenBLAS's transposed-first `dgemm_tn` takes the process-wide lock for
+its work buffer on every call, where its untransposed and right-transposed
+products at these sizes use small kernels that take none. Profiled on dev1, a
+12-state model's gradient at 8 threads with this fallback live: a quarter of
+all samples in that lock, from here. The copy is O(nk) against the O(nkm)
+product, into a buffer the task keeps per element type and shape
+(`_ctsem_transpose_buffer`): a fresh matrix every call, from `permutedims`,
+made the eight threads stop for the collector instead, and the value path
+lost a third.
+"""
 @inline function _ctsem_mulTN!(C, A, B, alpha=true, beta=false)
-    _ctsem_small_product(C, size(A, 1)) || return mul!(C, transpose(A), B, alpha, beta)
+    _ctsem_small_product(C, size(A, 1)) ||
+        return mul!(C, transpose!(_ctsem_transpose_buffer(A), A), B, alpha, beta)
     @inbounds for j in axes(B, 2), i in axes(A, 2)
         acc = zero(eltype(C))
         for k in axes(A, 1)
