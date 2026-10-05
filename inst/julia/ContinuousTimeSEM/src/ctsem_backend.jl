@@ -563,6 +563,57 @@ _ctsem_nblocks(n::Int, nworkers::Int) =
     nworkers <= 1 ? 1 : max(1, min(n, nworkers * _CTSEM_BLOCKS_PER_WORKER[]))
 
 """
+Scratch stores that outlive the tasks using them; see `_ctsem_scratch`.
+"""
+const _CTSEM_SCRATCH_POOL = IdDict{Any,Any}[]
+const _CTSEM_SCRATCH_LOCK = Threads.SpinLock()
+
+"""
+    _ctsem_scratch()
+
+The store the engine's per-task caches live in: the covariance and
+exponential caches (`_covcache`, `_expm_cov_scratch`) and the transpose
+buffers (`_ctsem_transpose_buffer`). A worker spawned by a parallel region
+borrows one from a pool for its lifetime (`_ctsem_with_scratch`); any other
+task uses its own task-local storage.
+
+Per task because two running tasks must never share these buffers -- a task can
+migrate between threads, so a thread id does not name a private buffer. But
+not per *new* task: the parallel regions spawn their workers afresh on every
+evaluation, and a task's own storage dies with it, so every worker of every
+evaluation rebuilt its caches -- about 40 small matrices each. On gC8 that was
+most of what the filter's value allocated at eight chunks (139 KB an
+evaluation, against 21 KB at one).
+"""
+@inline function _ctsem_scratch()
+    tls = task_local_storage()
+    store = get(tls, :ctsem_scratch, nothing)
+    return (store === nothing ? tls : store)::IdDict{Any,Any}
+end
+
+"""
+    _ctsem_with_scratch(f)
+
+`f()` with a scratch store borrowed from the pool as this task's
+`_ctsem_scratch()`, returned when `f` finishes. The pool grows to the most
+workers ever running at once.
+"""
+function _ctsem_with_scratch(f)
+    lock(_CTSEM_SCRATCH_LOCK)
+    store = isempty(_CTSEM_SCRATCH_POOL) ? IdDict{Any,Any}() : pop!(_CTSEM_SCRATCH_POOL)
+    unlock(_CTSEM_SCRATCH_LOCK)
+    task_local_storage(:ctsem_scratch, store)
+    try
+        return f()
+    finally
+        delete!(task_local_storage(), :ctsem_scratch)
+        lock(_CTSEM_SCRATCH_LOCK)
+        push!(_CTSEM_SCRATCH_POOL, store)
+        unlock(_CTSEM_SCRATCH_LOCK)
+    end
+end
+
+"""
     _ctsem_pull_blocks(work, nblocks, nworkers)
 
 Call `work(b, w)` once for each block `b` in `1:nblocks`, on `nworkers` tasks --
@@ -597,7 +648,8 @@ function _ctsem_pull_blocks(work, nblocks::Int, nworkers::Int)
     failed = Threads.Atomic{Bool}(false)
     Threads.@sync begin
         for w in 2:nworkers
-            Threads.@spawn _ctsem_pull!(work, nblocks, w, next, failed)
+            Threads.@spawn _ctsem_with_scratch(() ->
+                _ctsem_pull!(work, nblocks, w, next, failed))
         end
         _ctsem_pull!(work, nblocks, 1, next, failed)
     end

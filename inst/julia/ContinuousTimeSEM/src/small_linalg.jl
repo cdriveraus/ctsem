@@ -394,7 +394,7 @@ integers -- 48 bytes a call and three times as slow (83 ns against 30, dev1),
 on a path that exists to keep the threads from waiting on the collector.
 """
 function _ctsem_transpose_buffer(A::AbstractMatrix{T}) where {T}
-    table = get!(Dict{Tuple{Int,Int},Matrix{T}}, task_local_storage(),
+    table = get!(Dict{Tuple{Int,Int},Matrix{T}}, _ctsem_scratch(),
         _CTSEMTransposeKey{T}())::Dict{Tuple{Int,Int},Matrix{T}}
     return get!(() -> Matrix{T}(undef, size(A, 2), size(A, 1)), table,
         (size(A, 2), size(A, 1)))
