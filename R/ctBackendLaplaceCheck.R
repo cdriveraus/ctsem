@@ -393,7 +393,9 @@ print.ctLaplaceCheck <- function(x, ...) {
       suffix <- if (length(laplace$levels) > 1L) paste0(".", level$name) else ""
       sd_index <- as.integer(level$sd_index)
       if (length(sd_index) && length(varying) == length(sd_index)) {
-        names[sd_index] <- paste0("popsd_", varying, suffix)
+        # Zero is a stated value with no raw position.
+        free <- sd_index > 0L
+        names[sd_index[free]] <- paste0("popsd_", varying[free], suffix)
       }
       # A reduced level has loadings instead, and they are neither a spread
       # nor a correlation: `poploading_<parameter>_<dimension>`. Naming them
@@ -423,8 +425,9 @@ print.ctLaplaceCheck <- function(x, ...) {
         # column names use: parameter names contain single underscores
         # themselves (`drift_eta2_eta1`), so a single one does not say where
         # the first name stops.
-        names[cor_index[seq_len(n)]] <- paste0("rawcor_",
-          varying[pairs[seq_len(n), "row"]], "__", varying[pairs[seq_len(n), "col"]],
+        free <- which(cor_index[seq_len(n)] > 0L)
+        names[cor_index[free]] <- paste0("rawcor_",
+          varying[pairs[free, "row"]], "__", varying[pairs[free, "col"]],
           suffix)
       }
     }

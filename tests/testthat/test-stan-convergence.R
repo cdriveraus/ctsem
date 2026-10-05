@@ -24,7 +24,7 @@ skip_on_32bit()
     MANIFESTVAR = matrix(.2), T0VAR = matrix(1), T0MEANS = matrix(0),
     CINT = matrix(0), MANIFESTMEANS = matrix(0), Tpoints = 6))
   set.seed(3)
-  data.frame(ctGenerate(gm, n.subjects = 15, Tpoints = 6, burnin = 0))
+  data.frame(ctGenerate(gm, n = 15, Tpoints = 6, burnin = 0))
 }
 
 .conv_model <- function() {

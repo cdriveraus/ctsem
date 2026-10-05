@@ -1978,7 +1978,14 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         evaluated = trial.evaluated
         valid = trial.valid
         if !valid
-            G !== nothing && fill!(G, zero(eltype(G)))
+            # NaN, never zero: a zero gradient reads as a stationary point.
+            # The optimisers' value-only line searches accept a step and then
+            # fetch its gradient; when that fetch was refused -- an inner solve
+            # that did not converge, a gradient over the limit -- zeros here
+            # ended a laplace fit as converged thousands of nats from a maximum
+            # (the SNSF pilot, 2026-10-05). Each caller of a gradient-only
+            # evaluation checks for a non-finite one.
+            G !== nothing && fill!(G, eltype(G)(NaN))
             return F === nothing ? nothing : invalid_objective
         end
         if G !== nothing

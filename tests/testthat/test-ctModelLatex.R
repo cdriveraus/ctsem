@@ -58,7 +58,7 @@ test_that("ctModelLatex substitutes a julia fit's estimates, as stan's", {
     CINT = matrix(c(.2, -.1), 2, 1),
     T0MEANS = matrix(0, 2, 1), T0VAR = diag(1, 2)))
   set.seed(7)
-  datalong <- suppressMessages(ctGenerate(generating, n.subjects = 30,
+  datalong <- suppressMessages(ctGenerate(generating, n = 30,
     Tpoints = 20, burnin = 5, dtmean = 1, logdtsd = 0, wide = FALSE))
 
   model <- suppressMessages(ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
@@ -102,7 +102,7 @@ test_that("a state dependent cell keeps its expression for a julia fit", {
     CINT = matrix(c(.2, .1), 2, 1), MANIFESTMEANS = matrix(0, 2, 1),
     MANIFESTVAR = diag(.2, 2), DIFFUSION = matrix(c(.5, 0, 0, .4), 2, 2)))
   set.seed(1)
-  datalong <- suppressMessages(ctGenerate(generating, n.subjects = 25,
+  datalong <- suppressMessages(ctGenerate(generating, n = 25,
     Tpoints = 12, burnin = 5, dtmean = 1, logdtsd = .1, wide = FALSE))
 
   model <- suppressMessages(ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
@@ -177,7 +177,7 @@ test_that("a julia fit's subject distribution is the one it holds", {
     CINT = matrix(c(.2,-.1),2,1), T0MEANS = matrix(0,2,1), T0VAR = diag(1,2)))
   set.seed(7)
   datalong <- as.data.frame(suppressMessages(ctGenerate(generating,
-    n.subjects = 20, Tpoints = 10, burnin = 5, dtmean = 1, logdtsd = 0,
+    n = 20, Tpoints = 10, burnin = 5, dtmean = 1, logdtsd = 0,
     wide = FALSE)))
   ids <- unique(datalong$id)
   set.seed(9)
@@ -291,7 +291,7 @@ test_that("each population mean is printed under its own parameter", {
     CINT = matrix(c(.2,-.1),2,1), T0MEANS = matrix(0,2,1), T0VAR = diag(1,2)))
   set.seed(7)
   datalong <- as.data.frame(suppressMessages(ctGenerate(generating,
-    n.subjects = 20, Tpoints = 10, burnin = 5, dtmean = 1, logdtsd = 0,
+    n = 20, Tpoints = 10, burnin = 5, dtmean = 1, logdtsd = 0,
     wide = FALSE)))
   ids <- unique(datalong$id)
   set.seed(9)

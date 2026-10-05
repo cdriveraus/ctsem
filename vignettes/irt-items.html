@@ -230,7 +230,7 @@ border-radius: 0 4px 4px 0;
 <span id="cb3-20"><a href="#cb3-20" aria-hidden="true" tabindex="-1"></a>gen<span class="sc">$</span>pars<span class="sc">$</span>transform[lower] <span class="ot">&lt;-</span> <span class="cn">NA</span></span>
 <span id="cb3-21"><a href="#cb3-21" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb3-22"><a href="#cb3-22" aria-hidden="true" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">7</span>)</span>
-<span id="cb3-23"><a href="#cb3-23" aria-hidden="true" tabindex="-1"></a>d <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(<span class="fu">ctGenerate</span>(gen, <span class="at">n.subjects =</span> <span class="dv">250</span>, <span class="at">Tpoints =</span> <span class="dv">8</span>, <span class="at">dtmean =</span> <span class="fl">0.9</span>,</span>
+<span id="cb3-23"><a href="#cb3-23" aria-hidden="true" tabindex="-1"></a>d <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(<span class="fu">ctGenerate</span>(gen, <span class="at">n =</span> <span class="dv">250</span>, <span class="at">Tpoints =</span> <span class="dv">8</span>, <span class="at">dtmean =</span> <span class="fl">0.9</span>,</span>
 <span id="cb3-24"><a href="#cb3-24" aria-hidden="true" tabindex="-1"></a>  <span class="at">backend =</span> <span class="st">&#39;julia&#39;</span>))</span></code></pre></div>
 </div>
 <p>The floor is visible in the data. An item far above someone’s ability is still answered correctly about <code>c</code> of the time, where a 2PL would go to zero:</p>

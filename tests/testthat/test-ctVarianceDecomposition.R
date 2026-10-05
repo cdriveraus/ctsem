@@ -69,7 +69,7 @@ traits <- stats::rnorm(nsub, 0, traitsd)
 datalong <- do.call(rbind, lapply(seq_len(nsub), function(i) {
   subjectmodel <- generating
   subjectmodel$matrices$CINT <- matrix(traits[i])
-  d <- ctGenerate(subjectmodel, n.subjects = 1, burnin = 20, dtmean = 1,
+  d <- ctGenerate(subjectmodel, n = 1, burnin = 20, dtmean = 1,
     Tpoints = tpoints, backend = 'r')
   d[, 'id'] <- i
   d
@@ -422,7 +422,7 @@ test_that('the decomposition holds together on any design shape', {
     dat <- do.call(rbind, lapply(seq_along(traits), function(i) {
       m <- generating
       m$matrices$CINT <- matrix(traits[i])
-      d <- suppressMessages(ctGenerate(m, n.subjects = 1, burnin = 15,
+      d <- suppressMessages(ctGenerate(m, n = 1, burnin = 15,
         Tpoints = length(times[[i]]), backend = 'r'))
       d <- as.data.frame(d)
       d$time <- times[[i]]
@@ -563,7 +563,7 @@ test_that('a level above the subject gets its own between column', {
     unit <- unit + 1L
     m <- generating
     m$matrices$CINT <- matrix(groupeffect[g] + stats::rnorm(1, 0, 0.3))
-    d <- suppressMessages(ctGenerate(m, n.subjects = 1, burnin = 15,
+    d <- suppressMessages(ctGenerate(m, n = 1, burnin = 15,
       Tpoints = 10, backend = 'r'))
     d <- as.data.frame(d)
     d$id <- unit

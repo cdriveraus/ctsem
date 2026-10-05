@@ -98,6 +98,10 @@ no packing anywhere.
   * `cor_index`: raw positions of the unconstrained correlation parameters, in
     column-major lower-triangular order -- the order Stan's own counter walks.
   * `sd_scale[j]`: the model's `sdscale` multiplier for that parameter.
+  * `sd_fixed`, `cor_fixed`: raw values for scales and correlation coordinates
+    the model states rather than estimates. A stated entry has index 0 in
+    `sd_index` or `cor_index` and its raw value here; a free one has its raw
+    position there and `NaN` here. Empty means nothing is stated.
   * `group[i]`: which group at this level subject `i` belongs to.
   * `covmatcode`: which covariance construction this level's population matrix
     uses, in `sdcovsqrt2cov`'s own encoding -- 0 the row-normalised correlation
@@ -140,10 +144,12 @@ struct CTSEMLaplaceLevel
     # the samplers for the run (`_laplace_order_roots!`) and cleared after it,
     # so nothing outside a sampling run sees permuted coordinates.
     order::Vector{Int}
+    sd_fixed::Vector{Float64}
+    cor_fixed::Vector{Float64}
 
     function CTSEMLaplaceLevel(re_index, sd_index, cor_index, sd_scale, group,
         ngroups::Integer; covmatcode::Integer=0, rank::Integer=-1,
-        load_index=Int[])
+        load_index=Int[], sd_fixed=Float64[], cor_fixed=Float64[])
         re = Vector{Int}(collect(re_index))
         sd = Vector{Int}(collect(sd_index))
         cor = Vector{Int}(collect(cor_index))
@@ -180,7 +186,21 @@ struct CTSEMLaplaceLevel
         allunique(re) || throw(ArgumentError("random-effect parameter indices must be distinct within a level"))
         isempty(grp) || (minimum(grp) >= 1 && maximum(grp) <= ngroups) ||
             throw(ArgumentError("group ids must lie in 1:ngroups"))
-        return new(re, sd, cor, load, scale, grp, Int(ngroups), Int(covmatcode), r, Int[])
+        sdfix = isempty(sd_fixed) ? fill(NaN, length(sd)) : Vector{Float64}(collect(sd_fixed))
+        corfix = isempty(cor_fixed) ? fill(NaN, length(cor)) : Vector{Float64}(collect(cor_fixed))
+        for (what, index, fixed) in (("scale", sd, sdfix), ("correlation", cor, corfix))
+            length(fixed) == length(index) || throw(DimensionMismatch(
+                "one fixed $(what) value, or NaN, per $(what) entry is required"))
+            all((index .== 0) .== isfinite.(fixed)) || throw(ArgumentError(
+                "a stated $(what) has index 0 and a finite value; a free one a raw position and NaN"))
+        end
+        # A stated coordinate past the cap would be clipped where the
+        # covariance is built, describing a different matrix than was stated.
+        cap = _LAPLACE_COR_CAP[]
+        cap > 0 && any(x -> isfinite(x) && abs(x) > cap, corfix) && throw(ArgumentError(
+            "a stated correlation coordinate exceeds the cap of $(cap) the population covariance applies"))
+        return new(re, sd, cor, load, scale, grp, Int(ngroups), Int(covmatcode), r, Int[],
+            sdfix, corfix)
     end
 end
 
@@ -498,11 +518,15 @@ split by `level_nre` (random effects per level). `group` is likewise
 concatenated, `nsubjects` entries per level, and `level_ngroups` says how many
 groups each level has. With one level all of that collapses to the
 single-level form and none of it needs sending.
+
+`sd_fixed` and `cor_fixed`, when sent, run parallel to `sd_index` and
+`cor_index`: the raw value of a scale or correlation coordinate the model
+states, at an index of 0, and `NaN` beside a free one.
 """
 function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
     sd_index=Int[], cor_index=Int[], sd_scale=Float64[], level_nre=Int[],
     group=Int[], level_ngroups=Int[], level_covmatcode=Int[],
-    level_rank=Int[], load_index=Int[],
+    level_rank=Int[], load_index=Int[], sd_fixed=Float64[], cor_fixed=Float64[],
     inner_maxiter::Integer=_LAPLACE_INNER_MAXITER[], inner_tol::Real=1e-10,
     floor="total", gate_lo::Real=0.2, gate_hi::Real=0.7)
     nsubjects = length(objective.subject_objectives)
@@ -555,7 +579,11 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
             Float64.(sd_scale[(re_at + 1):(re_at + k)]),
             groups[((l - 1) * nsubjects + 1):(l * nsubjects)],
             ngroups[l]; covmatcode=codes[l], rank=r,
-            load_index=Int.(load_index[(load_at + 1):(load_at + nload)])))
+            load_index=Int.(load_index[(load_at + 1):(load_at + nload)]),
+            sd_fixed=isempty(sd_fixed) ? Float64[] :
+                Float64.(sd_fixed[(sd_at + 1):(sd_at + nsd)]),
+            cor_fixed=isempty(cor_fixed) ? Float64[] :
+                Float64.(cor_fixed[(cor_at + 1):(cor_at + ncor)])))
         re_at += k; sd_at += nsd; cor_at += ncor; load_at += nload
     end
     return CTSEMLaplaceObjective(objective, CTSEMLaplaceSpec(levels);
@@ -632,6 +660,7 @@ function ctsem_laplace_boundary(laplace::CTSEMLaplaceObjective, values::Abstract
     theta = collect(Float64, values)
     for (l, level) in enumerate(laplace.spec.levels)
         for (t, idx) in enumerate(level.cor_index)
+            idx == 0 && continue
             if abs(theta[idx]) >= cap - 1e-8
                 push!(levels, l); push!(positions, t); push!(found, theta[idx])
             end
@@ -689,7 +718,8 @@ function _laplace_popchol(values::AbstractVector{T}, level::CTSEMLaplaceLevel) w
     isreducedrank(level) && return _laplace_poploading(values, level)
     scales = Vector{T}(undef, k)
     @inbounds for j in 1:k
-        raw = values[level.sd_index[j]]
+        idx = level.sd_index[j]
+        raw = idx == 0 ? level.sd_fixed[j] : values[idx]
         scales[j] = log1p_exp(2 * raw - 1) * level.sd_scale[j] + 1e-10
     end
     base = zeros(T, k, k)
@@ -702,8 +732,9 @@ function _laplace_popchol(values::AbstractVector{T}, level::CTSEMLaplaceLevel) w
                 # No squash here any more: `constraincorsqrt1` applies it.
                 # The cap still bounds the correlation at 0.99, because it
                 # bounds the coordinate the squash then maps.
+                idx = level.cor_index[counter]
                 base[i, j] = _laplace_cap_correlation(
-                    values[level.cor_index[counter]])
+                    idx == 0 ? level.cor_fixed[counter] : values[idx])
             end
         end
     end
@@ -929,12 +960,14 @@ function _laplace_saturated_parameters(laplace::CTSEMLaplaceObjective,
     for level in laplace.spec.levels
         for j in eachindex(level.sd_index)
             idx = level.sd_index[j]
+            idx == 0 && continue
             scale = level.sd_scale[j]
             d = abs(ForwardDiff.derivative(
                 raw -> log1p_exp(2 * raw - 1) * scale + 1e-10, values[idx]))
             d < threshold && push!(found, idx)
         end
         for idx in level.cor_index
+            idx == 0 && continue
             d = abs(ForwardDiff.derivative(
                 raw -> 2 / (1 + exp(-_laplace_cap_correlation(raw))) - 1, values[idx]))
             d < threshold && push!(found, idx)
@@ -4124,10 +4157,11 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
     return true
 end
 
-"""Raw positions of one level's population parameters, scales then correlations."""
+"""Raw positions of one level's free population parameters, scales then
+correlations. A stated entry (index 0) is not a parameter and has no position."""
 _laplace_level_positions(spec::CTSEMLaplaceSpec, l::Integer) =
     isreducedrank(spec.levels[l]) ? copy(spec.levels[l].load_index) :
-        vcat(spec.levels[l].sd_index, spec.levels[l].cor_index)
+        filter(!=(0), vcat(spec.levels[l].sd_index, spec.levels[l].cor_index))
 
 """
     _laplace_level_chol_derivatives(values, spec)
@@ -6105,6 +6139,43 @@ function ctsem_laplace_deviation_layout(laplace::CTSEMLaplaceObjective)
     end
     return (position=collect(1:total), unit=unit, level=level,
         first_member=first_member, nmembers=nmembers, within=within)
+end
+
+"""
+    ctsem_laplace_coordinate_dimension(laplace)
+
+How many standard-normal coordinates `u` one draw of every random effect takes:
+the samplers' layout, unit by unit, which on a reduced-rank level is narrower
+than the deviations it builds.
+"""
+ctsem_laplace_coordinate_dimension(laplace::CTSEMLaplaceObjective) =
+    sum(laplace.units.dims; init=0)
+
+"""
+    ctsem_laplace_population_deviations(laplace, values, u)
+
+Natural deviations `S u` -- each block's deviation of its level's raw
+parameters, in `ctsem_laplace_deviation_layout`'s layout -- for coordinates `u`
+at the population covariance `values` implies. With `u` independent standard
+normals this is a draw of new groups and subjects from the population, which is
+what generation from a model, rather than from a fit's subjects, needs. The
+deviations go to `ctsem_generate` or `ctsem_generate_states` as their `effects`.
+
+The same construction the samplers report their draws through
+(`_laplace_popchols`, `_laplace_deviations!`), so a deviation means one thing
+however it was made.
+"""
+function ctsem_laplace_population_deviations(laplace::CTSEMLaplaceObjective,
+    values::AbstractVector, u::AbstractVector)
+    n = ctsem_laplace_coordinate_dimension(laplace)
+    length(u) == n || throw(DimensionMismatch(string("u has ", length(u),
+        " coordinates where the random effects take ", n)))
+    theta = collect(Float64, values)
+    _laplace_check_indices(laplace, length(theta))
+    Ls = _laplace_popchols(theta, laplace.spec)
+    starts, ndev = _laplace_deviation_offsets(laplace)
+    return _laplace_deviations!(zeros(Float64, ndev), laplace, Ls,
+        collect(Float64, u), starts)
 end
 
 """

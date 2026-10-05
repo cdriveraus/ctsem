@@ -176,38 +176,28 @@ border-radius: 0 4px 4px 0;
 <span id="cb2-16"><a href="#cb2-16" aria-hidden="true" tabindex="-1"></a>  <span class="at">MANIFESTVAR =</span> <span class="fu">matrix</span>(<span class="fl">0.25</span>)</span>
 <span id="cb2-17"><a href="#cb2-17" aria-hidden="true" tabindex="-1"></a>)</span>
 <span id="cb2-18"><a href="#cb2-18" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-19"><a href="#cb2-19" aria-hidden="true" tabindex="-1"></a>dat <span class="ot">&lt;-</span> <span class="fu">do.call</span>(rbind, <span class="fu">lapply</span>(<span class="fu">seq_len</span>(n_subjects), <span class="cf">function</span>(id) {</span>
-<span id="cb2-20"><a href="#cb2-20" aria-hidden="true" tabindex="-1"></a>  d <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(<span class="fu">ctGenerate</span>(</span>
-<span id="cb2-21"><a href="#cb2-21" aria-hidden="true" tabindex="-1"></a>    <span class="at">ctmodelobj =</span> gen_model,</span>
-<span id="cb2-22"><a href="#cb2-22" aria-hidden="true" tabindex="-1"></a>    <span class="at">n.subjects =</span> <span class="dv">1</span>,</span>
-<span id="cb2-23"><a href="#cb2-23" aria-hidden="true" tabindex="-1"></a>    <span class="at">burnin =</span> <span class="dv">0</span>,</span>
-<span id="cb2-24"><a href="#cb2-24" aria-hidden="true" tabindex="-1"></a>    <span class="at">dtmean =</span> <span class="fl">0.4</span>,</span>
-<span id="cb2-25"><a href="#cb2-25" aria-hidden="true" tabindex="-1"></a>    <span class="at">logdtsd =</span> <span class="fl">0.1</span></span>
-<span id="cb2-26"><a href="#cb2-26" aria-hidden="true" tabindex="-1"></a>  ))</span>
-<span id="cb2-27"><a href="#cb2-27" aria-hidden="true" tabindex="-1"></a>  d<span class="sc">$</span>id <span class="ot">&lt;-</span> id</span>
-<span id="cb2-28"><a href="#cb2-28" aria-hidden="true" tabindex="-1"></a>  d</span>
-<span id="cb2-29"><a href="#cb2-29" aria-hidden="true" tabindex="-1"></a>}))</span>
-<span id="cb2-30"><a href="#cb2-30" aria-hidden="true" tabindex="-1"></a>dat <span class="ot">&lt;-</span> dat[<span class="fu">order</span>(dat<span class="sc">$</span>id, dat<span class="sc">$</span>time), ]</span>
-<span id="cb2-31"><a href="#cb2-31" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-32"><a href="#cb2-32" aria-hidden="true" tabindex="-1"></a>fit_model <span class="ot">&lt;-</span> <span class="fu">ctModel</span>(</span>
-<span id="cb2-33"><a href="#cb2-33" aria-hidden="true" tabindex="-1"></a>  <span class="at">type =</span> <span class="st">&quot;ct&quot;</span>,</span>
-<span id="cb2-34"><a href="#cb2-34" aria-hidden="true" tabindex="-1"></a>  <span class="at">Tpoints =</span> tpoints,</span>
-<span id="cb2-35"><a href="#cb2-35" aria-hidden="true" tabindex="-1"></a>  <span class="at">n.latent =</span> <span class="dv">1</span>,</span>
-<span id="cb2-36"><a href="#cb2-36" aria-hidden="true" tabindex="-1"></a>  <span class="at">n.manifest =</span> <span class="dv">1</span>,</span>
-<span id="cb2-37"><a href="#cb2-37" aria-hidden="true" tabindex="-1"></a>  <span class="at">LAMBDA =</span> <span class="fu">matrix</span>(<span class="dv">1</span>),</span>
-<span id="cb2-38"><a href="#cb2-38" aria-hidden="true" tabindex="-1"></a>  <span class="at">MANIFESTMEANS =</span> <span class="fu">matrix</span>(<span class="dv">0</span>),</span>
-<span id="cb2-39"><a href="#cb2-39" aria-hidden="true" tabindex="-1"></a>  <span class="at">CINT =</span> <span class="fu">matrix</span>(<span class="st">&quot;cint&quot;</span>),</span>
-<span id="cb2-40"><a href="#cb2-40" aria-hidden="true" tabindex="-1"></a>  <span class="at">DRIFT =</span> <span class="fu">matrix</span>(<span class="st">&quot;drift&quot;</span>),</span>
-<span id="cb2-41"><a href="#cb2-41" aria-hidden="true" tabindex="-1"></a>  <span class="at">DIFFUSION =</span> <span class="fu">matrix</span>(<span class="st">&quot;diffusion&quot;</span>)</span>
-<span id="cb2-42"><a href="#cb2-42" aria-hidden="true" tabindex="-1"></a>)</span>
-<span id="cb2-43"><a href="#cb2-43" aria-hidden="true" tabindex="-1"></a><span class="co"># A fixed-effects model: no individual differences to estimate on top of the</span></span>
-<span id="cb2-44"><a href="#cb2-44" aria-hidden="true" tabindex="-1"></a><span class="co"># already small sample. ctModel() defaults T0MEANS and CINT to individually</span></span>
-<span id="cb2-45"><a href="#cb2-45" aria-hidden="true" tabindex="-1"></a><span class="co"># varying, which is realistic for most applications but adds population</span></span>
-<span id="cb2-46"><a href="#cb2-46" aria-hidden="true" tabindex="-1"></a><span class="co"># standard deviations and correlations this vignette does not need, and with</span></span>
-<span id="cb2-47"><a href="#cb2-47" aria-hidden="true" tabindex="-1"></a><span class="co"># eight subjects those are barely identified on their own -- confounding</span></span>
-<span id="cb2-48"><a href="#cb2-48" aria-hidden="true" tabindex="-1"></a><span class="co"># uncertainty about the individual-differences distribution with uncertainty</span></span>
-<span id="cb2-49"><a href="#cb2-49" aria-hidden="true" tabindex="-1"></a><span class="co"># about the drift this vignette is actually comparing.</span></span>
-<span id="cb2-50"><a href="#cb2-50" aria-hidden="true" tabindex="-1"></a>fit_model<span class="sc">$</span>pars<span class="sc">$</span>indvarying <span class="ot">&lt;-</span> <span class="cn">FALSE</span></span></code></pre></div>
+<span id="cb2-19"><a href="#cb2-19" aria-hidden="true" tabindex="-1"></a>dat <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(<span class="fu">ctGenerate</span>(gen_model, <span class="at">n =</span> n_subjects, <span class="at">dtmean =</span> <span class="fl">0.4</span>,</span>
+<span id="cb2-20"><a href="#cb2-20" aria-hidden="true" tabindex="-1"></a>  <span class="at">logdtsd =</span> <span class="fl">0.1</span>))</span>
+<span id="cb2-21"><a href="#cb2-21" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-22"><a href="#cb2-22" aria-hidden="true" tabindex="-1"></a>fit_model <span class="ot">&lt;-</span> <span class="fu">ctModel</span>(</span>
+<span id="cb2-23"><a href="#cb2-23" aria-hidden="true" tabindex="-1"></a>  <span class="at">type =</span> <span class="st">&quot;ct&quot;</span>,</span>
+<span id="cb2-24"><a href="#cb2-24" aria-hidden="true" tabindex="-1"></a>  <span class="at">Tpoints =</span> tpoints,</span>
+<span id="cb2-25"><a href="#cb2-25" aria-hidden="true" tabindex="-1"></a>  <span class="at">n.latent =</span> <span class="dv">1</span>,</span>
+<span id="cb2-26"><a href="#cb2-26" aria-hidden="true" tabindex="-1"></a>  <span class="at">n.manifest =</span> <span class="dv">1</span>,</span>
+<span id="cb2-27"><a href="#cb2-27" aria-hidden="true" tabindex="-1"></a>  <span class="at">LAMBDA =</span> <span class="fu">matrix</span>(<span class="dv">1</span>),</span>
+<span id="cb2-28"><a href="#cb2-28" aria-hidden="true" tabindex="-1"></a>  <span class="at">MANIFESTMEANS =</span> <span class="fu">matrix</span>(<span class="dv">0</span>),</span>
+<span id="cb2-29"><a href="#cb2-29" aria-hidden="true" tabindex="-1"></a>  <span class="at">CINT =</span> <span class="fu">matrix</span>(<span class="st">&quot;cint&quot;</span>),</span>
+<span id="cb2-30"><a href="#cb2-30" aria-hidden="true" tabindex="-1"></a>  <span class="at">DRIFT =</span> <span class="fu">matrix</span>(<span class="st">&quot;drift&quot;</span>),</span>
+<span id="cb2-31"><a href="#cb2-31" aria-hidden="true" tabindex="-1"></a>  <span class="at">DIFFUSION =</span> <span class="fu">matrix</span>(<span class="st">&quot;diffusion&quot;</span>)</span>
+<span id="cb2-32"><a href="#cb2-32" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb2-33"><a href="#cb2-33" aria-hidden="true" tabindex="-1"></a><span class="co"># A fixed-effects model: no individual differences to estimate on top of the</span></span>
+<span id="cb2-34"><a href="#cb2-34" aria-hidden="true" tabindex="-1"></a><span class="co"># already small sample. ctModel() defaults T0MEANS and CINT to individually</span></span>
+<span id="cb2-35"><a href="#cb2-35" aria-hidden="true" tabindex="-1"></a><span class="co"># varying, which is realistic for most applications but adds population</span></span>
+<span id="cb2-36"><a href="#cb2-36" aria-hidden="true" tabindex="-1"></a><span class="co"># standard deviations and correlations this vignette does not need, and with</span></span>
+<span id="cb2-37"><a href="#cb2-37" aria-hidden="true" tabindex="-1"></a><span class="co"># eight subjects those are barely identified on their own -- confounding</span></span>
+<span id="cb2-38"><a href="#cb2-38" aria-hidden="true" tabindex="-1"></a><span class="co"># uncertainty about the individual-differences distribution with uncertainty</span></span>
+<span id="cb2-39"><a href="#cb2-39" aria-hidden="true" tabindex="-1"></a><span class="co"># about the drift this vignette is actually comparing.</span></span>
+<span id="cb2-40"><a href="#cb2-40" aria-hidden="true" tabindex="-1"></a>fit_model<span class="sc">$</span>pars<span class="sc">$</span>indvarying <span class="ot">&lt;-</span> <span class="cn">FALSE</span></span></code></pre></div>
 </div>
 <p>The two backends store an optimized fit’s point estimate and posterior draws in different places (<code>fit$stanfit$rawest</code> / <code>fit$stanfit$rawposterior</code> for <code>backend = &#39;stan&#39;</code>, <code>fit$estimate$raw</code> / <code>fit$estimate$rawposterior</code> for <code>backend = &#39;julia&#39;</code>). <code>summary()</code> and <code>ctExtract()</code> read either transparently and report on the usual constrained parameter scale, so the rest of this vignette uses those rather than the raw slots directly.</p>
 <div class="cell">
@@ -226,8 +216,8 @@ border-radius: 0 4px 4px 0;
 <span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
 <span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; SAMPLING FOR MODEL &#39;ctsm&#39; NOW (CHAIN 1).</span></span>
 <span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: </span></span>
-<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Gradient evaluation took 0.001692 seconds</span></span>
-<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: 1000 transitions using 10 leapfrog steps per transition would take 16.92 seconds.</span></span>
+<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Gradient evaluation took 0.000852 seconds</span></span>
+<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: 1000 transitions using 10 leapfrog steps per transition would take 8.52 seconds.</span></span>
 <span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Adjust your expectations accordingly!</span></span>
 <span id="cb4-12"><a href="#cb4-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: </span></span>
 <span id="cb4-13"><a href="#cb4-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: </span></span>
@@ -254,9 +244,9 @@ border-radius: 0 4px 4px 0;
 <span id="cb4-34"><a href="#cb4-34" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 380 / 400 [ 95%]  (Sampling)</span></span>
 <span id="cb4-35"><a href="#cb4-35" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 400 / 400 [100%]  (Sampling)</span></span>
 <span id="cb4-36"><a href="#cb4-36" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: </span></span>
-<span id="cb4-37"><a href="#cb4-37" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:  Elapsed Time: 3.652 seconds (Warm-up)</span></span>
-<span id="cb4-38"><a href="#cb4-38" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:                3.388 seconds (Sampling)</span></span>
-<span id="cb4-39"><a href="#cb4-39" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:                7.04 seconds (Total)</span></span>
+<span id="cb4-37"><a href="#cb4-37" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:  Elapsed Time: 1.993 seconds (Warm-up)</span></span>
+<span id="cb4-38"><a href="#cb4-38" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:                1.901 seconds (Sampling)</span></span>
+<span id="cb4-39"><a href="#cb4-39" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:                3.894 seconds (Total)</span></span>
 <span id="cb4-40"><a href="#cb4-40" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:</span></span></code></pre></div>
 </div>
 <div class="cell">
@@ -368,7 +358,7 @@ border-radius: 0 4px 4px 0;
 <span id="cb13-5"><a href="#cb13-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">MANIFESTVAR =</span> <span class="fu">matrix</span>(<span class="dv">0</span>), <span class="at">T0VAR =</span> <span class="fu">matrix</span>(<span class="dv">1</span>), <span class="at">T0MEANS =</span> <span class="fu">matrix</span>(<span class="dv">0</span>),</span>
 <span id="cb13-6"><a href="#cb13-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">CINT =</span> <span class="fu">matrix</span>(<span class="dv">0</span>), <span class="at">MANIFESTMEANS =</span> <span class="fu">matrix</span>(<span class="dv">1</span>), <span class="at">Tpoints =</span> <span class="dv">6</span></span>
 <span id="cb13-7"><a href="#cb13-7" aria-hidden="true" tabindex="-1"></a>)</span>
-<span id="cb13-8"><a href="#cb13-8" aria-hidden="true" tabindex="-1"></a>count_dat <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(<span class="fu">ctGenerate</span>(count_gen, <span class="at">n.subjects =</span> <span class="dv">8</span>, <span class="at">Tpoints =</span> <span class="dv">6</span>, <span class="at">backend =</span> <span class="st">&quot;julia&quot;</span>))</span>
+<span id="cb13-8"><a href="#cb13-8" aria-hidden="true" tabindex="-1"></a>count_dat <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(<span class="fu">ctGenerate</span>(count_gen, <span class="at">n =</span> <span class="dv">8</span>, <span class="at">Tpoints =</span> <span class="dv">6</span>, <span class="at">backend =</span> <span class="st">&quot;julia&quot;</span>))</span>
 <span id="cb13-9"><a href="#cb13-9" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb13-10"><a href="#cb13-10" aria-hidden="true" tabindex="-1"></a>count_fit_model <span class="ot">&lt;-</span> <span class="fu">ctModel</span>(</span>
 <span id="cb13-11"><a href="#cb13-11" aria-hidden="true" tabindex="-1"></a>  <span class="at">type =</span> <span class="st">&quot;ct&quot;</span>, <span class="at">n.latent =</span> <span class="dv">1</span>, <span class="at">n.manifest =</span> <span class="dv">1</span>,</span>
@@ -395,7 +385,7 @@ border-radius: 0 4px 4px 0;
 <span id="cb14-5"><a href="#cb14-5" aria-hidden="true" tabindex="-1"></a>)</span>
 <span id="cb14-6"><a href="#cb14-6" aria-hidden="true" tabindex="-1"></a>state_explicit_samp<span class="sc">$</span>estimate<span class="sc">$</span>se</span>
 <span id="cb14-7"><a href="#cb14-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; drift_eta1  diff_eta1      cmean T0var_eta1 </span></span>
-<span id="cb14-8"><a href="#cb14-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 0.99464229 0.39159351 0.01536947 0.19847670</span></span>
+<span id="cb14-8"><a href="#cb14-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 0.99442702 0.39113265 0.01537336 0.19846031</span></span>
 <span id="cb14-9"><a href="#cb14-9" aria-hidden="true" tabindex="-1"></a><span class="fu">dim</span>(state_explicit_samp<span class="sc">$</span>estimate<span class="sc">$</span>states)</span>
 <span id="cb14-10"><a href="#cb14-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; [1] 48  1</span></span></code></pre></div>
 </div>
@@ -410,14 +400,14 @@ border-radius: 0 4px 4px 0;
 <p>Here a drift that varies across 30 subjects – a random effect inside the dynamics, so <code>&#39;auto&#39;</code> integrates it by Laplace – is summarised three ways:</p>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb15"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">3</span>)</span>
-<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a>re_dat <span class="ot">&lt;-</span> <span class="fu">do.call</span>(rbind, <span class="fu">lapply</span>(<span class="fu">seq_len</span>(<span class="dv">30</span>), <span class="cf">function</span>(id) {</span>
-<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>  subject <span class="ot">&lt;-</span> gen_model</span>
-<span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a>  subject<span class="sc">$</span>DRIFT <span class="ot">&lt;-</span> <span class="fu">matrix</span>(<span class="sc">-</span><span class="fu">exp</span>(<span class="fu">log</span>(<span class="fl">0.35</span>) <span class="sc">+</span> <span class="fu">rnorm</span>(<span class="dv">1</span>, <span class="dv">0</span>, <span class="fl">0.5</span>)))</span>
-<span id="cb15-5"><a href="#cb15-5" aria-hidden="true" tabindex="-1"></a>  d <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(<span class="fu">ctGenerate</span>(<span class="at">ctmodelobj =</span> subject, <span class="at">n.subjects =</span> <span class="dv">1</span>, <span class="at">burnin =</span> <span class="dv">0</span>,</span>
-<span id="cb15-6"><a href="#cb15-6" aria-hidden="true" tabindex="-1"></a>    <span class="at">dtmean =</span> <span class="fl">0.4</span>, <span class="at">logdtsd =</span> <span class="fl">0.1</span>))</span>
-<span id="cb15-7"><a href="#cb15-7" aria-hidden="true" tabindex="-1"></a>  d<span class="sc">$</span>id <span class="ot">&lt;-</span> id</span>
-<span id="cb15-8"><a href="#cb15-8" aria-hidden="true" tabindex="-1"></a>  d</span>
-<span id="cb15-9"><a href="#cb15-9" aria-hidden="true" tabindex="-1"></a>}))</span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a><span class="co"># The same process, with each subject&#39;s drift drawn by ctGenerate: -exp(raw),</span></span>
+<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a><span class="co"># the raw value normal around log(0.35) with an sd of 0.5 (the sdscale field).</span></span>
+<span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a>re_gen <span class="ot">&lt;-</span> <span class="fu">ctModel</span>(<span class="at">type =</span> <span class="st">&quot;ct&quot;</span>, <span class="at">Tpoints =</span> tpoints, <span class="at">n.latent =</span> <span class="dv">1</span>, <span class="at">n.manifest =</span> <span class="dv">1</span>,</span>
+<span id="cb15-5"><a href="#cb15-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">LAMBDA =</span> <span class="fu">matrix</span>(<span class="dv">1</span>), <span class="at">T0MEANS =</span> <span class="fu">matrix</span>(<span class="dv">0</span>), <span class="at">T0VAR =</span> <span class="fu">matrix</span>(<span class="fl">0.6</span>),</span>
+<span id="cb15-6"><a href="#cb15-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">DRIFT =</span> <span class="fu">matrix</span>(<span class="st">&quot;drift|-exp(param)|TRUE|0.5&quot;</span>), <span class="at">DIFFUSION =</span> <span class="fu">matrix</span>(<span class="fl">0.5</span>),</span>
+<span id="cb15-7"><a href="#cb15-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">CINT =</span> <span class="fu">matrix</span>(<span class="fl">0.15</span>), <span class="at">MANIFESTMEANS =</span> <span class="fu">matrix</span>(<span class="dv">0</span>), <span class="at">MANIFESTVAR =</span> <span class="fu">matrix</span>(<span class="fl">0.25</span>))</span>
+<span id="cb15-8"><a href="#cb15-8" aria-hidden="true" tabindex="-1"></a>re_dat <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(<span class="fu">ctGenerate</span>(re_gen, <span class="at">n =</span> <span class="dv">30</span>, <span class="at">dtmean =</span> <span class="fl">0.4</span>, <span class="at">logdtsd =</span> <span class="fl">0.1</span>,</span>
+<span id="cb15-9"><a href="#cb15-9" aria-hidden="true" tabindex="-1"></a>  <span class="at">backend =</span> <span class="st">&quot;julia&quot;</span>, <span class="at">popmeans =</span> <span class="fu">c</span>(<span class="at">drift =</span> <span class="sc">-</span><span class="fl">0.35</span>)))</span>
 <span id="cb15-10"><a href="#cb15-10" aria-hidden="true" tabindex="-1"></a>re_model <span class="ot">&lt;-</span> fit_model</span>
 <span id="cb15-11"><a href="#cb15-11" aria-hidden="true" tabindex="-1"></a>re_model<span class="sc">$</span>pars<span class="sc">$</span>indvarying[re_model<span class="sc">$</span>pars<span class="sc">$</span>param <span class="sc">%in%</span> <span class="st">&quot;drift&quot;</span>] <span class="ot">&lt;-</span> <span class="cn">TRUE</span></span></code></pre></div>
 </div>
@@ -447,20 +437,20 @@ border-radius: 0 4px 4px 0;
 <span id="cb18-10"><a href="#cb18-10" aria-hidden="true" tabindex="-1"></a>  <span class="fu">drift_rows</span>(re_quick, <span class="st">&quot;short sample&quot;</span>, fit_time <span class="sc">+</span> quick_time),</span>
 <span id="cb18-11"><a href="#cb18-11" aria-hidden="true" tabindex="-1"></a>  <span class="fu">drift_rows</span>(re_full, <span class="st">&quot;default sample&quot;</span>, fit_time <span class="sc">+</span> full_time))</span>
 <span id="cb18-12"><a href="#cb18-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;               route seconds        quantity   mean   2.5%  97.5%</span></span>
-<span id="cb18-13"><a href="#cb18-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 1 Laplace + Hessian      88 population mean -0.286 -0.718 -0.073</span></span>
-<span id="cb18-14"><a href="#cb18-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 2 Laplace + Hessian      88   population sd  0.380     NA     NA</span></span>
-<span id="cb18-15"><a href="#cb18-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 3      short sample     125 population mean -0.243 -0.622 -0.019</span></span>
-<span id="cb18-16"><a href="#cb18-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 4      short sample     125   population sd  0.456  0.005  1.485</span></span>
-<span id="cb18-17"><a href="#cb18-17" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 5    default sample     179 population mean -0.237 -0.582 -0.020</span></span>
-<span id="cb18-18"><a href="#cb18-18" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 6    default sample     179   population sd  0.360  0.003  1.232</span></span></code></pre></div>
+<span id="cb18-13"><a href="#cb18-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 1 Laplace + Hessian     114 population mean -0.381 -0.676 -0.181</span></span>
+<span id="cb18-14"><a href="#cb18-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 2 Laplace + Hessian     114   population sd  0.387     NA     NA</span></span>
+<span id="cb18-15"><a href="#cb18-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 3      short sample     125 population mean -0.378 -0.667 -0.164</span></span>
+<span id="cb18-16"><a href="#cb18-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 4      short sample     125   population sd  0.269  0.005  1.254</span></span>
+<span id="cb18-17"><a href="#cb18-17" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 5    default sample     132 population mean -0.375 -0.740 -0.089</span></span>
+<span id="cb18-18"><a href="#cb18-18" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 6    default sample     132   population sd  0.228  0.003  0.975</span></span></code></pre></div>
 </div>
 <p>Each subject’s own data say little about its own drift here, and the Laplace fit, whose interval is the curvature at its mode, can give the population standard deviation no interval at all – <code>summary()</code> reports <code>NA</code> and the fit says why. Both samples describe what the curvature could not: a wide, skewed posterior that runs down to near zero. The default sample is the reference; the short one is a draft of it, and says how rough a draft through its own diagnostics:</p>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb19"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="fu">rbind</span>(<span class="at">short =</span> <span class="fu">c</span>(<span class="at">max_rhat =</span> <span class="fu">max</span>(re_quick<span class="sc">$</span>sample<span class="sc">$</span>rhat), <span class="at">min_ess =</span> <span class="fu">min</span>(re_quick<span class="sc">$</span>sample<span class="sc">$</span>ess)),</span>
 <span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">default =</span> <span class="fu">c</span>(<span class="at">max_rhat =</span> <span class="fu">max</span>(re_full<span class="sc">$</span>sample<span class="sc">$</span>rhat), <span class="at">min_ess =</span> <span class="fu">min</span>(re_full<span class="sc">$</span>sample<span class="sc">$</span>ess)))</span>
 <span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;         max_rhat   min_ess</span></span>
-<span id="cb19-4"><a href="#cb19-4" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; short   1.064456  81.57575</span></span>
-<span id="cb19-5"><a href="#cb19-5" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; default 1.009085 367.91866</span></span></code></pre></div>
+<span id="cb19-4"><a href="#cb19-4" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; short   1.044624  73.77139</span></span>
+<span id="cb19-5"><a href="#cb19-5" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; default 1.007835 354.03839</span></span></code></pre></div>
 </div>
 <h2 id="with-and-without-priors">With and without priors</h2>
 <p><code>priors = TRUE</code> adds ctsem’s raw-scale priors to the objective; <code>priors = FALSE</code> leaves them out. (<code>ctFit()</code>’s default, <code>&#39;randomCorr&#39;</code>, puts the prior on random-effect correlations alone, which for a model with no random effects, like this one, is the same as <code>FALSE</code>.) Combined with <code>optimize</code>, that is four corners, and they mean four different things:</p>
@@ -500,8 +490,8 @@ border-radius: 0 4px 4px 0;
 <span id="cb20-6"><a href="#cb20-6" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
 <span id="cb20-7"><a href="#cb20-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; SAMPLING FOR MODEL &#39;ctsm&#39; NOW (CHAIN 1).</span></span>
 <span id="cb20-8"><a href="#cb20-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: </span></span>
-<span id="cb20-9"><a href="#cb20-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Gradient evaluation took 0.0014 seconds</span></span>
-<span id="cb20-10"><a href="#cb20-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: 1000 transitions using 10 leapfrog steps per transition would take 14 seconds.</span></span>
+<span id="cb20-9"><a href="#cb20-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Gradient evaluation took 0.000643 seconds</span></span>
+<span id="cb20-10"><a href="#cb20-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: 1000 transitions using 10 leapfrog steps per transition would take 6.43 seconds.</span></span>
 <span id="cb20-11"><a href="#cb20-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Adjust your expectations accordingly!</span></span>
 <span id="cb20-12"><a href="#cb20-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: </span></span>
 <span id="cb20-13"><a href="#cb20-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: </span></span>
@@ -518,12 +508,12 @@ border-radius: 0 4px 4px 0;
 <span id="cb20-24"><a href="#cb20-24" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 180 / 200 [ 90%]  (Sampling)</span></span>
 <span id="cb20-25"><a href="#cb20-25" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: Iteration: 200 / 200 [100%]  (Sampling)</span></span>
 <span id="cb20-26"><a href="#cb20-26" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1: </span></span>
-<span id="cb20-27"><a href="#cb20-27" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:  Elapsed Time: 11.104 seconds (Warm-up)</span></span>
-<span id="cb20-28"><a href="#cb20-28" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:                29.083 seconds (Sampling)</span></span>
-<span id="cb20-29"><a href="#cb20-29" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:                40.187 seconds (Total)</span></span>
+<span id="cb20-27"><a href="#cb20-27" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:  Elapsed Time: 9.713 seconds (Warm-up)</span></span>
+<span id="cb20-28"><a href="#cb20-28" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:                10.74 seconds (Sampling)</span></span>
+<span id="cb20-29"><a href="#cb20-29" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:                20.453 seconds (Total)</span></span>
 <span id="cb20-30"><a href="#cb20-30" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Chain 1:</span></span>
 <span id="cb20-31"><a href="#cb20-31" aria-hidden="true" tabindex="-1"></a><span class="fu">range</span>(stan_lik_sample<span class="sc">$</span>stanfit<span class="sc">$</span>rawposterior)</span>
-<span id="cb20-32"><a href="#cb20-32" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; [1] -236.0343  106.8135</span></span></code></pre></div>
+<span id="cb20-32"><a href="#cb20-32" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; [1] -9448.344152     2.047528</span></span></code></pre></div>
 </div>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb21"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a>julia_lik_sample <span class="ot">&lt;-</span> <span class="fu">ctFit</span>(</span>
@@ -532,7 +522,7 @@ border-radius: 0 4px 4px 0;
 <span id="cb21-4"><a href="#cb21-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">sampleControl =</span> <span class="fu">list</span>(<span class="at">chains =</span> <span class="dv">1</span>, <span class="at">iter =</span> <span class="dv">150</span>), <span class="at">verbose =</span> <span class="dv">0</span></span>
 <span id="cb21-5"><a href="#cb21-5" aria-hidden="true" tabindex="-1"></a>)</span>
 <span id="cb21-6"><a href="#cb21-6" aria-hidden="true" tabindex="-1"></a><span class="fu">range</span>(julia_lik_sample<span class="sc">$</span>estimate<span class="sc">$</span>rawposterior)</span>
-<span id="cb21-7"><a href="#cb21-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; [1] -209.5864  312.2687</span></span></code></pre></div>
+<span id="cb21-7"><a href="#cb21-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; [1] -46.15351 280.35846</span></span></code></pre></div>
 </div>
 <p>Compare the raw-scale range here to the posterior sample earlier, which stayed within a couple of units of zero on the same raw scale. With no prior at all, the raw parameters have nothing constraining them outside what the likelihood itself identifies, and for a model and sample size this small that is not much. Run at these settings, the julia backend often names the mechanism directly, with a warning that some sampled parameter “reached the region where their transform is flat to machine precision… with no prior the posterior is improper there and the chains wander rather than mix” – suppressed from this rendering along with every other warning, but worth reading in full the first time it appears in an interactive session. The stan sampler shows the same problem less legibly: warm-up tends to take substantially longer with <code>priors = FALSE</code> than with <code>priors = TRUE</code> on this model, because the sampler is fighting geometry that a prior would have tamed, and the resulting draws are still not trustworthy afterward.</p>
 <p>None of this means <code>priors = FALSE</code> sampling is broken – it is sampling exactly what was asked for, the raw likelihood, and for a well identified model with enough data it is a legitimate route to a frequentist-flavoured posterior. It means that removing the prior removes the thing keeping the raw scale bounded, and a small or weakly identified model will show you that immediately rather than converging to something that merely looks plausible. <code>priors = TRUE</code> is the safer default for sampling for exactly this reason, whatever <code>ctFit()</code>’s own default is for optimizing.</p>

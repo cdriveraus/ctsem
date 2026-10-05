@@ -2033,8 +2033,11 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   }
   if (!is.null(laplace)) {
     for (level in laplace$levels) {
-      used[[paste0("'", level$name, "' population scales")]] <- as.integer(level$sd_index)
-      used[[paste0("'", level$name, "' correlations")]] <- as.integer(level$cor_index)
+      # Zero is a stated value, not a raw position.
+      used[[paste0("'", level$name, "' population scales")]] <-
+        setdiff(as.integer(level$sd_index), 0L)
+      used[[paste0("'", level$name, "' correlations")]] <-
+        setdiff(as.integer(level$cor_index), 0L)
       used[[paste0("'", level$name, "' loadings")]] <- as.integer(level$load_index)
       used[[paste0("'", level$name, "' varying parameters")]] <- as.integer(level$re_index)
     }
@@ -2267,22 +2270,55 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     k <- length(lv_varying)
     rank <- .ctJuliaLevelRank(model, hierarchy[[l]]$name, k)
     reduced <- rank < k
+    lv_names <- .ctJuliaLaplaceNames(table, lv_varying)
+    # What RAWPOPVAR (RAWPOPVAR_<level> above the subject) states for this
+    # level: a number fixes that scale or correlation coordinate, a label or
+    # nothing leaves it free. A fixed entry takes no place in the raw vector;
+    # it reaches the engine as index 0 with its raw value beside it.
+    field <- if (l == 1L) "RAWPOPVAR" else paste0("RAWPOPVAR_", model$groupIDnames[l - 1L])
+    stated <- function(i, j = i) .ctModelRawPopVarValue(
+      .ctModelRawPopVarEntry(model, lv_names[i], lv_names[j], field = field))
+    sd_fixed <- vapply(seq_len(k), function(j) {
+      value <- stated(j)
+      if (!is.finite(value)) return(NA_real_)
+      if (!(value > 0)) stop(field, "['", lv_names[j], "', '", lv_names[j],
+        "'] is ", value, ": a population sd must be positive.", call. = FALSE)
+      .ctJuliaRawPopSd(value, lv_scale[j])
+    }, numeric(1))
+    pairs <- which(lower.tri(diag(k)), arr.ind = TRUE)
+    pairs <- pairs[order(pairs[, "col"], pairs[, "row"]), , drop = FALSE]
+    cor_fixed <- vapply(seq_len(nrow(pairs)), function(t)
+      stated(pairs[t, "row"], pairs[t, "col"]), numeric(1))
+    if (reduced && any(is.finite(c(sd_fixed, cor_fixed)))) {
+      stop(field, " states values for level '", hierarchy[[l]]$name,
+        "', which poprank reduces to rank ", rank, ": a loading matrix has no ",
+        "scale or correlation of its own to fix. Use poprank=NA for that level, ",
+        "or leave ", field, " free.", call. = FALSE)
+    }
     # A level is described one way or the other, never both: scales and
     # correlations at full rank, a loading matrix below it. Allocating the
     # unused set anyway would leave parameters in the vector that nothing
     # reads, which the optimiser would then wander along.
-    nsd <- if (reduced) 0L else as.integer(k)
-    noff <- if (reduced) 0L else as.integer(k * (k - 1L) / 2L)
+    sdfree <- if (reduced) logical() else !is.finite(sd_fixed)
+    corfree <- if (reduced) logical() else !is.finite(cor_fixed)
+    nsd <- sum(sdfree)
+    noff <- sum(corfree)
     nload <- if (reduced) as.integer(k * rank - rank * (rank - 1L) / 2L) else 0L
+    sd_index <- integer(length(sdfree))
+    sd_index[sdfree] <- cursor + seq_len(nsd)
+    cor_index <- integer(length(corfree))
+    cor_index[corfree] <- cursor + nsd + seq_len(noff)
     levels[[l]] <- list(
       name = hierarchy[[l]]$name,
       re_index = as.integer(lv_varying),
-      sd_index = if (nsd) as.integer(cursor + seq_len(nsd)) else integer(),
-      cor_index = if (noff) as.integer(cursor + nsd + seq_len(noff)) else integer(),
+      sd_index = as.integer(sd_index),
+      cor_index = as.integer(cor_index),
+      sd_fixed = if (reduced) numeric() else as.numeric(sd_fixed),
+      cor_fixed = if (reduced) numeric() else as.numeric(cor_fixed),
       load_index = if (nload) as.integer(cursor + seq_len(nload)) else integer(),
       rank = as.integer(rank),
       sd_scale = as.numeric(lv_scale),
-      param = .ctJuliaLaplaceNames(table, lv_varying),
+      param = lv_names,
       nrandom = as.integer(k),
       group = as.integer(hierarchy[[l]]$group),
       ngroups = as.integer(hierarchy[[l]]$ngroups),
@@ -2331,6 +2367,13 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     base_npar = as.integer(base_npar),
     npar = as.integer(cursor)
   )
+}
+
+# The raw entry for a population sd, as the engine's `_laplace_popchol` reads
+# it: `sd = log1p_exp(2 raw - 1) * sdscale + 1e-10`, inverted, floor included,
+# so a stated sd is held exactly.
+.ctJuliaRawPopSd <- function(target, scale) {
+  (log(expm1((target - 1e-10) / scale)) + 1) / 2
 }
 
 # The model's own name for each varying parameter, so every later report can
@@ -3659,6 +3702,19 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     }
     if (length(grab("cor_index"))) {
       laplace_args$cor_index <- V(as.integer(grab("cor_index")))
+    }
+    # Stated scales and correlations, sent only when there are any, so a model
+    # that states none crosses exactly as before. NaN marks a free entry.
+    fixedvalues <- function(field) {
+      x <- as.numeric(grab(field))
+      x[!is.finite(x)] <- NaN
+      x
+    }
+    if (any(is.finite(grab("sd_fixed")))) {
+      laplace_args$sd_fixed <- V(fixedvalues("sd_fixed"))
+    }
+    if (any(is.finite(grab("cor_fixed")))) {
+      laplace_args$cor_fixed <- V(fixedvalues("cor_fixed"))
     }
     # Sent only when some level is actually reduced, so a model that asked for
     # nothing crosses exactly as it did before this existed.

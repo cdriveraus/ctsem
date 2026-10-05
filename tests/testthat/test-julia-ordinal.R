@@ -24,7 +24,7 @@
     DRIFT = matrix(-0.3), DIFFUSION = matrix(0.8), MANIFESTVAR = matrix(0.001),
     T0VAR = matrix(1), T0MEANS = matrix(0), CINT = matrix(0),
     MANIFESTMEANS = matrix(0), Tpoints = nobs))
-  d <- data.frame(ctGenerate(gen, n.subjects = nsubjects, Tpoints = nobs,
+  d <- data.frame(ctGenerate(gen, n = nsubjects, Tpoints = nobs,
     backend = "r"))
   for (i in seq_len(nindicators)) {
     d[[paste0("o", i)]] <- .jord_draw(d$eta, .jord_thresholds)
@@ -238,7 +238,7 @@ test_that("generation draws categories in the proportions the model implies", {
 
   set.seed(1)
   g <- suppressWarnings(suppressMessages(
-    ctGenerate(m, n.subjects = 300, Tpoints = 12, backend = "julia")))
+    ctGenerate(m, n = 300, Tpoints = 12, backend = "julia")))
   values <- g[, "o1"]
   expect_true(all(values == round(values)))
   expect_true(all(values >= 1 & values <= 4))
@@ -253,7 +253,7 @@ test_that("generation draws categories in the proportions the model implies", {
     DRIFT = matrix(-0.3), DIFFUSION = matrix(0.8), MANIFESTVAR = matrix(1e-8),
     T0VAR = matrix(1), T0MEANS = matrix(0), CINT = matrix(0),
     MANIFESTMEANS = matrix(0), Tpoints = 12))
-  eta <- data.frame(ctGenerate(gen, n.subjects = 300, Tpoints = 12,
+  eta <- data.frame(ctGenerate(gen, n = 300, Tpoints = 12,
     backend = "r"))$eta
   invlog <- function(x) 1 / (1 + exp(-x))
   cum <- sapply(.jord_thresholds, function(t) invlog(t - eta))
@@ -296,7 +296,7 @@ test_that("mixed ordinal, binary and Gaussian indicators fit together", {
     DRIFT = matrix(-0.3), DIFFUSION = matrix(0.8), MANIFESTVAR = matrix(0.001),
     T0VAR = matrix(1), T0MEANS = matrix(0), CINT = matrix(0),
     MANIFESTMEANS = matrix(0), Tpoints = 12))
-  d <- data.frame(ctGenerate(gen, n.subjects = 50, Tpoints = 12,
+  d <- data.frame(ctGenerate(gen, n = 50, Tpoints = 12,
     backend = "r"))
   d$o1 <- .jord_draw(d$eta, .jord_thresholds)
   d$b1 <- stats::rbinom(nrow(d), 1, 1 / (1 + exp(-d$eta)))

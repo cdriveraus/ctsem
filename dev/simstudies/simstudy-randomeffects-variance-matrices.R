@@ -50,7 +50,7 @@ gendata <- function(matrixname, nsubjects, ntimes, seed = 1) {
       DIFFUSION = 0.5, MANIFESTVAR = 0.5)
     args[[matrixname]] <- effect[i]
     gm <- suppressMessages(do.call(ctModel, args))
-    d <- suppressMessages(data.frame(ctGenerate(ctmodelobj = gm, n.subjects = 1,
+    d <- suppressMessages(data.frame(ctGenerate(ctmodelobj = gm, n = 1,
       burnin = 0, dtmean = .1, logdtsd = 0)))
     d$id <- i
     if (i == 1) dat <- d else dat <- rbind(dat, d)

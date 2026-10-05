@@ -10,30 +10,25 @@ skip_on_32bit()
   #anomauth
   test_that("corrCheck", {
     set.seed(1)
+    skip_without_julia()
     nsubjects <- 600
-    manifestTraitChol <- matrix(c(2,-1,-1, 0,1,1,0,0,2),3,3)
-    # MANIFESTVAR and T0MEANS are stated rather than left free. A free
-    # generating cell is filled from `.ctGenerateDefaults()`, so this test's
-    # data moves whenever those defaults do -- under a set.seed() that reads as
-    # though it pinned everything. Zero is what has always been generated here
-    # and what the fitted model below assumes: it fixes MANIFESTVAR to 0, so a
-    # non-zero generating value would be a misspecification.
-    gm <- ctModel(type='omx',LAMBDA = diag(1,3),DRIFT=diag(-1,3),
-      T0VAR=matrix(c(5,-5,-5,0,1,-1,0,0,2),3,3),
-      MANIFESTVAR=diag(0,3), T0MEANS=matrix(0,3,1),
-      DIFFUSION=matrix(c(2,1,1,0,4,-2,0,0,2),3,3),Tpoints=30)
-    
-    subjectManifestMeans <- t(replicate(nsubjects, as.numeric(manifestTraitChol %*% rnorm(3))))
-    targetManifestCov <- stats::cov(subjectManifestMeans)
-    dlist <- vector("list", nsubjects)
-    for(i in seq_len(nsubjects)){
-      gm_i <- gm
-      gm_i$MANIFESTMEANS <- matrix(subjectManifestMeans[i, ], ncol = 1)
-      d_i <- ctGenerate(ctmodelobj = gm_i, n.subjects = 1, burnin = 0)
-      d_i[, "id"] <- i
-      dlist[[i]] <- d_i
-    }
-    d <- do.call(rbind, dlist)
+    # The generating covariances, stated as covariances. ctCov() writes the
+    # cells that give them under the model's construction; the manifest traits
+    # are individually varying MANIFESTMEANS, drawn by ctGenerate from the
+    # population RAWPOPVAR states -- on the raw scale, and MANIFESTMEANS is
+    # 10 * raw, so the raw covariance is a hundredth of the trait covariance.
+    # MANIFESTVAR is zero, as the fitted model below assumes.
+    targetManifestCov <- tcrossprod(matrix(c(2,-1,-1, 0,1,1,0,0,2),3,3))
+    diffusionCov <- tcrossprod(matrix(c(2,1,1,0,4,-2,0,0,2),3,3))
+    gm <- ctModel(LAMBDA = diag(1,3), DRIFT = diag(-1,3),
+      T0VAR = ctCov(tcrossprod(matrix(c(5,-5,-5,0,1,-1,0,0,2),3,3))),
+      DIFFUSION = ctCov(diffusionCov), MANIFESTVAR = diag(0,3),
+      T0MEANS = matrix(0,3,1), CINT = matrix(0,3,1),
+      MANIFESTMEANS = matrix(c('mm1','mm2','mm3')), Tpoints = 30)
+    gm$pars$indvarying <- gm$pars$param %in% c('mm1','mm2','mm3')
+    gm$RAWPOPVAR <- ctCov(targetManifestCov / 100)
+    d <- suppressMessages(ctGenerate(gm, n = nsubjects, burnin = 0,
+      backend = 'julia'))
     
     m <- ctModel(LAMBDA = diag(1,3),DRIFT=diag(-1,3),type='ct',
       # MANIFESTMEANS = 0,
@@ -45,8 +40,8 @@ skip_on_32bit()
     
     diffcov <- p$DIFFUSIONcov
     diffcor <- cov2cor(p$DIFFUSIONcov)
-    ediffcov <- tcrossprod(gm$DIFFUSION)
-    ediffcor <- cov2cor(tcrossprod(gm$DIFFUSION))
+    ediffcov <- diffusionCov
+    ediffcor <- cov2cor(diffusionCov)
     
     s=summary(f)
     s$rawpopcorr
@@ -83,12 +78,12 @@ skip_on_32bit()
     gm <- ctModel(type='omx',LAMBDA = diag(1,10),DRIFT=diag(-1,10),
       T0VAR=cmat,
       DIFFUSION=diag(1,10),Tpoints=2)
-    d1 <- data.frame(ctGenerate(ctmodelobj = gm,n.subjects = 1000,burnin = 0))
+    d1 <- data.frame(ctGenerate(ctmodelobj = gm,n = 1000,burnin = 0))
     
     gm <- ctModel(type='omx',LAMBDA = diag(1,10),DRIFT=diag(-1,10),
       T0VAR=cmat2,
       DIFFUSION=diag(1,10),Tpoints=2)
-    d2 <- data.frame(ctGenerate(ctmodelobj = gm,n.subjects = 1000,burnin = 0))
+    d2 <- data.frame(ctGenerate(ctmodelobj = gm,n = 1000,burnin = 0))
     
     d2$id <- d2$id + 2000
     d <- rbind(d1,d2)

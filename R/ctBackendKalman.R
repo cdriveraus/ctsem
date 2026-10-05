@@ -602,8 +602,20 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
 }
 
 .ctBackendGenerateFromFit <- function(fit, nsamples = 200, fullposterior = FALSE,
-  cores = 2, intoverstates = "fit") {
+  cores = 2, intoverstates = "fit", effects = c("population", "fitted")) {
+  effects <- match.arg(effects)
   spec <- .ctBackendSpec(fit)
+  # Which subjects. A Laplace or 'none' fit describes its random effects as
+  # raw-parameter deviations, so it can either keep its fitted subjects or
+  # draw new ones from the fitted population. An augmented fit carries them as
+  # initial states, which every generation route draws from the population.
+  population <- identical(effects, "population")
+  if (!population && is.null(spec$laplace) && .ctAnyVarying(.ctFitModelObject(fit))) {
+    stop("effects = 'fitted' needs per-subject effects, and this fit ",
+      "integrated its random effects as states (intoverpop = 'augmented'), ",
+      "which generation draws from the population. Use effects = ",
+      "'population', or refit with intoverpop = 'laplace'.", call. = FALSE)
+  }
   # `ctsem_generate` (and `ctsem_generate_states` below it) pass each
   # subject's `tipreds` straight to the extended Kalman filter without the
   # `TIMissingRecipe` substitution the adjoint/gradient path performs for a
@@ -636,8 +648,8 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
   # numbers and the bridge moves about 1 MB/s, so they are summarised by
   # default. Where they are absent this says so and uses the modes, rather than
   # substituting them in silence.
-  effectdraws <- fit$sample$effects
-  sampledeffects <- !is.null(fit$sample) &&
+  effectdraws <- if (!population) fit$sample$effects
+  sampledeffects <- !population && !is.null(fit$sample) &&
     (!is.null(effectdraws) || length(fit$sample$effect_mean))
 
   if (isTRUE(fullposterior)) {
@@ -653,7 +665,7 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
     # `rawposterior` came from somewhere other than the sampler (a Hessian
     # draw, say) is not paired with these effects and must not be treated as
     # though it were.
-    effects <- if (!is.null(effectdraws) &&
+    fitted <- if (!is.null(effectdraws) &&
         nrow(effectdraws) == nrow(posterior)) effectdraws[rows, , drop = FALSE]
   } else {
     samples <- matrix(as.numeric(fit$estimate$raw), nrow = nsamples,
@@ -661,15 +673,15 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
     # A point estimate of the parameters takes the point estimate of the
     # effects, which is their posterior mean -- available whether or not the
     # draws themselves were kept.
-    mean_effects <- if (length(fit$sample$effect_mean))
+    mean_effects <- if (!population && length(fit$sample$effect_mean))
       as.numeric(fit$sample$effect_mean) else
         if (!is.null(effectdraws)) colMeans(effectdraws)
-    effects <- if (!is.null(mean_effects))
+    fitted <- if (!is.null(mean_effects))
       matrix(mean_effects, nrow = nsamples, ncol = length(mean_effects),
         byrow = TRUE)
   }
 
-  if (sampledeffects && is.null(effects)) {
+  if (sampledeffects && is.null(fitted)) {
     message("This fit sampled its random effects, but the draws needed to pair ",
       "them with the parameter draws are not on it, so each subject is ",
       "generated at its conditional mode instead -- a point estimate of its ",
@@ -703,15 +715,20 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
       !isTRUE(as.logical(intoverstates)[1L])
   nz <- if (statepath) .ctBackendStateDimension(fit) else 0L
   for (iteration in seq_len(nsamples)) {
-    # Innovations first, then the observation deviates, matching the order
-    # `.ctGenerateJulia` draws them in.
+    # The random effects, then the innovations, then the observation
+    # deviates, matching the order `.ctGenerateJulia` draws them in. New
+    # subjects are drawn at this iteration's parameters, so a posterior draw
+    # carries its own population.
+    drawneffects <- if (population) {
+      .ctGeneratePopulationEffects(fit, samples[iteration, ])
+    } else if (!is.null(fitted)) fitted[iteration, ]
     z <- if (statepath) stats::rnorm(nz) else NULL
     base <- matrix(stats::rnorm(nmanifest * nrows), nmanifest, nrows)
     drawn <- if (statepath) {
       .ctBackendGenerateStates(fit, samples[iteration, ], z, base,
-        effects = if (!is.null(effects)) effects[iteration, ])
+        effects = drawneffects)
     } else .ctBackendGenerate(fit, samples[iteration, ], base,
-      effects = if (!is.null(effects)) effects[iteration, ])
+      effects = drawneffects)
     generated[iteration, , ] <- t(matrix(as.numeric(drawn$Y), nmanifest, nrows))
     llrow[iteration, ] <- as.numeric(drawn$llrow)
   }

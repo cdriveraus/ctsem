@@ -302,6 +302,8 @@ const _CTSEM_COLUMN_KERNEL = 8
 
 @inline _ctsem_bkj(B, k, j, ::Val{false}) = @inbounds B[k, j]
 @inline _ctsem_bkj(B, k, j, ::Val{true}) = @inbounds B[j, k]
+@inline _ctsem_bcols(B, ::Val{false}) = size(B, 2)
+@inline _ctsem_bcols(B, ::Val{true}) = size(B, 1)
 
 """
     _ctsem_colmul!(C, A, B, alpha, beta, Val(transB))
@@ -309,12 +311,20 @@ const _CTSEM_COLUMN_KERNEL = 8
 `C = alpha * A * op(B) + beta * C`, with `op(B)` = `B` or `B'`, column by
 column: `C[:, j]` is a sum of columns of `A` weighted by `op(B)[:, j]`, four
 columns a pass. Contiguous in the row index, so it vectorises.
+
+Writes the leading `size(A, 1)` by `size(op(B), 2)` block of `C` and nothing
+else, as the dot-product loops always did: callers hand over a buffer sized for
+the largest case and use its leading block -- the measurement update, for the
+variables a row actually observed. Iterating over `C`'s own columns instead
+wrote past that block and, under `@inbounds`, read past the end of `B`: a
+wrong likelihood with no error, on one study of a 13-study fit whose other
+units agreed to 1e-6 (juliaFit d568f112).
 """
 @inline function _ctsem_colmul!(C, A, B, alpha, beta, tb::Val)
     m = size(A, 1)
     K = size(A, 2)
     T = eltype(C)
-    @inbounds for j in axes(C, 2)
+    @inbounds for j in 1:_ctsem_bcols(B, tb)
         if iszero(beta)
             @simd for i in 1:m
                 C[i, j] = zero(T)

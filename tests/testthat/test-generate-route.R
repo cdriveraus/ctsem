@@ -21,7 +21,7 @@
 # with "argument 1 is not a vector". On the R route the data came back with
 # columns the model could not be fitted to without renaming them first.
 test_that("generated column names follow the model, backend r", {
-  d <- ctGenerate(.route_model(id = "subject", time = "age"), n.subjects = 3,
+  d <- ctGenerate(.route_model(id = "subject", time = "age"), n = 3,
     Tpoints = 4, backend = "r")
   expect_true(all(c("subject", "age") %in% colnames(d)))
   expect_false(any(c("id", "time") %in% colnames(d)))
@@ -30,7 +30,7 @@ test_that("generated column names follow the model, backend r", {
 test_that("generated column names follow the model, backend julia", {
   skip_without_julia()
   d <- suppressMessages(ctGenerate(.route_model(id = "subject", time = "age"),
-    n.subjects = 3, Tpoints = 4, backend = "julia"))
+    n = 3, Tpoints = 4, backend = "julia"))
   expect_true(all(c("subject", "age") %in% colnames(d)))
   expect_false(any(c("id", "time") %in% colnames(d)))
   expect_equal(nrow(d), 12L)
@@ -40,10 +40,10 @@ test_that("generated column names follow the model, backend julia", {
 # A default-named model is the case every existing caller has, and it keeps the
 # names it always had -- the point of the fix is the lookup, not a rename.
 test_that("default names are unchanged on both routes", {
-  d <- ctGenerate(.route_model(), n.subjects = 3, Tpoints = 4, backend = "r")
+  d <- ctGenerate(.route_model(), n = 3, Tpoints = 4, backend = "r")
   expect_true(all(c("id", "time") %in% colnames(d)))
   skip_without_julia()
-  dj <- suppressMessages(ctGenerate(.route_model(), n.subjects = 3,
+  dj <- suppressMessages(ctGenerate(.route_model(), n = 3,
     Tpoints = 4, backend = "julia"))
   expect_true(all(c("id", "time") %in% colnames(dj)))
 })
@@ -54,25 +54,19 @@ test_that("default names are unchanged on both routes", {
 test_that("burnin and wide output honour a custom time name", {
   skip_without_julia()
   m <- .route_model(id = "subject", time = "age")
-  d <- suppressMessages(ctGenerate(m, n.subjects = 2, Tpoints = 4,
+  d <- suppressMessages(ctGenerate(m, n = 2, Tpoints = 4,
     burnin = 3, backend = "julia"))
   expect_equal(nrow(d), 8L)
   # Time restarts at zero for each subject once the burnin is dropped.
   expect_equal(unname(d[1, "age"]), 0)
   expect_equal(unname(d[5, "age"]), 0)
-  w <- suppressMessages(ctGenerate(m, n.subjects = 2, Tpoints = 4,
+  w <- suppressMessages(ctGenerate(m, n = 2, Tpoints = 4,
     wide = TRUE, backend = "julia"))
   expect_equal(nrow(w), 2L)
 })
 
-# Fixed values only: no random effects at any level.
-#
-# The between-subject spread used to be drawn from the augmented layout's own
-# T0 draw -- measured 2.18 against a stated 2 -- through a RAWPOPVAR entry read on
-# the parameter's natural scale, which is not the scale a fit reports. Rather
-# than carry a convention that disagrees with fitting, user side generation
-# draws nothing and says so; ctGenerateFromFit() is where random effects in
-# generated data come from.
+# Random effects are drawn from the population the model states: a
+# RAWPOPVAR number is the raw-scale sd, exactly as a fit reports it.
 .route_varying <- function(sd = NA) {
   m <- suppressMessages(suppressWarnings(ctModel(type = "ct", Tpoints = 8,
     manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1),
@@ -89,29 +83,22 @@ test_that("burnin and wide output honour a custom time name", {
   m
 }
 
-test_that("a declared random effect is ignored, and named", {
+test_that("a stated population sd reaches the data, and is named", {
   skip_without_julia()
-  expect_message(ctGenerate(.route_varying(sd = 2), n.subjects = 3,
-    Tpoints = 5, backend = "julia"),
-    "Individual differences are ignored for mm")
-})
-
-test_that("no between-subject spread is generated whatever the stated sd", {
-  skip_without_julia()
+  expect_message(ctGenerate(.route_varying(sd = 2), n = 3,
+    Tpoints = 5, backend = "julia"), "population sd \\(raw\\): mm 2 \\[id\\]")
   spread <- function(sd) {
     set.seed(9)
-    d <- suppressMessages(ctGenerate(.route_varying(sd = sd), n.subjects = 40,
+    d <- suppressMessages(ctGenerate(.route_varying(sd = sd), n = 40,
       Tpoints = 8, backend = "julia"))
     stats::sd(tapply(d[, "Y1"], d[, "id"], mean))
   }
-  # A stated sd of 4 is large against the within-subject scale here, so if any
-  # of it reached the data the two would differ far beyond sampling noise.
-  # Identical, because the same seed generates the same fixed-effects dataset.
-  expect_equal(spread(0.5), spread(4))
+  # One seed gives the same standard normals, so the subject means scale with
+  # the stated sd; the within-subject noise is small beside either.
+  expect_equal(spread(4) / spread(0.5), 8, tolerance = 0.05)
 })
 
-# A multilevel model generates rather than erroring, from its fixed values.
-test_that("a grouping level generates from fixed values and says so", {
+test_that("a grouping level draws its own effects", {
   skip_without_julia()
   m <- suppressMessages(suppressWarnings(ctModel(type = "ct", Tpoints = 5,
     manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1),
@@ -120,37 +107,59 @@ test_that("a grouping level generates from fixed values and says so", {
     MANIFESTMEANS = matrix("mm"), id = c("subject", "study"))))
   m$pars$indvarying <- FALSE
   m$pars$indvarying_study <- m$pars$param %in% "mm"
-  expect_message(d <- ctGenerate(m, n.subjects = 4, Tpoints = 5,
-    backend = "julia"), "Individual differences are ignored for mm")
+  set.seed(1)
+  expect_message(d <- ctGenerate(m, n = c(40, 4), Tpoints = 5,
+    backend = "julia"), "mm 1 \\[study\\]")
   expect_true(all(c("subject", "study", "Y1") %in% colnames(d)))
-  expect_true(all(is.finite(d[, "Y1"])))
+  # Subjects within a study share its effect: the study means spread far more
+  # than the subjects within one.
+  means <- tapply(d[, "Y1"], d[, "subject"], mean)
+  study <- tapply(d[, "study"], d[, "subject"], `[`, 1)
+  expect_gt(stats::sd(tapply(means, study, mean)),
+    3 * mean(tapply(means, study, stats::sd)))
 })
 
-# Which route 'auto' takes, and how the two compare on one specification,
-# lives in test-julia-intoverstates.R -- that file owns the comparison.
-
-# A time independent predictor effect goes with the random effects, and the
-# silence would be worse than the loss: the predictor column is still drawn
-# and still varies between subjects, so the data looks like data with a
-# predictor in it. Measured on a model stating TI1=4.3, the correlation
-# between the subject means and the predictor came out -0.19 over 60
-# subjects, which is noise.
-test_that("a TI predictor effect is ignored, and named", {
+# A TI predictor effect fixed in the model is applied as a fit applies it: a
+# shift of the raw parameter per unit of the predictor.
+test_that("a fixed TI predictor effect reaches the data", {
   skip_without_julia()
   m <- suppressMessages(suppressWarnings(ctModel(type = "ct", Tpoints = 6,
     manifestNames = "Y1", latentNames = "eta1", n.TIpred = 1,
     TIpredNames = "TI1", LAMBDA = matrix(1), T0MEANS = matrix(0),
     CINT = matrix(0), DRIFT = matrix(-0.4), DIFFUSION = matrix(0.2),
     MANIFESTVAR = matrix(0.05), T0VAR = matrix(0.2),
-    MANIFESTMEANS = matrix("mm||TRUE|1|TI1=4.3"))))
-  expect_message(ctGenerate(m, n.subjects = 4, Tpoints = 6,
-    backend = "julia"), "Effects of TI1 are ignored")
-
+    MANIFESTMEANS = matrix("mm||TRUE|1|TI1=0.3"))))
+  m$RAWPOPVAR["mm", "mm"] <- 0.01
   set.seed(2)
-  d <- suppressMessages(ctGenerate(m, n.subjects = 60, Tpoints = 6,
+  d <- suppressMessages(ctGenerate(m, n = 60, Tpoints = 6,
     backend = "julia"))
-  # The column is there and varies, and carries nothing.
-  expect_gt(stats::sd(tapply(d[, "TI1"], d[, "id"], mean)), 0.5)
-  expect_lt(abs(stats::cor(tapply(d[, "Y1"], d[, "id"], mean),
-    tapply(d[, "TI1"], d[, "id"], mean))), 0.4)
+  ti <- tapply(d[, "TI1"], d[, "id"], mean)
+  expect_gt(stats::sd(ti), 0.5)
+  # mm = 10 * param: 0.3 raw is a slope of 3.
+  expect_equal(unname(stats::coef(stats::lm(tapply(d[, "Y1"], d[, "id"], mean) ~
+    ti))[2]), 3, tolerance = 0.1)
+})
+
+# What generated the data comes back with it: each subject's parameters, and
+# the latent states. Exactly what generated it -- the data minus the state and
+# the subject's own mean leave only measurement noise -- through burnin.
+test_that("the subject parameters and states that generated the data are returned", {
+  skip_without_julia()
+  m <- suppressMessages(suppressWarnings(ctModel(type = "ct",
+    manifestNames = "Y1", latentNames = "eta1", n.TIpred = 1,
+    TIpredNames = "TI1", LAMBDA = matrix(1), T0MEANS = matrix(0),
+    CINT = matrix(0), DRIFT = matrix(-0.4), DIFFUSION = matrix(0.5),
+    MANIFESTVAR = matrix(0.01), T0VAR = matrix(1),
+    MANIFESTMEANS = matrix("mm||TRUE|1|TI1=0.2"))))
+  set.seed(4)
+  d <- suppressMessages(ctGenerate(m, n = 30, Tpoints = 5, burnin = 2,
+    backend = "julia"))
+  pars <- attr(d, "subjectpars")
+  states <- attr(d, "states")
+  expect_equal(nrow(pars), 30L)
+  expect_equal(states[, "time"], d[, "time"])
+  noise <- d[, "Y1"] - states[, "eta1"] - pars$mm[match(d[, "id"], pars$id)]
+  expect_lt(abs(stats::sd(noise) - 0.01), 0.003)
+  expect_null(attr(suppressMessages(ctGenerate(m, n = 3, Tpoints = 3,
+    backend = "julia", intoverstates = TRUE)), "states"))
 })

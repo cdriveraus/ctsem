@@ -24,7 +24,7 @@ context('nonlinearreportingjulia')
     LAMBDA = diag(2), DRIFT = matrix(c(-.4, .1, 0, -.3), 2, 2),
     CINT = matrix(c(.2, .1), 2, 1), MANIFESTMEANS = matrix(0, 2, 1),
     MANIFESTVAR = diag(.2, 2), DIFFUSION = diffusion))
-  as.data.frame(suppressMessages(ctGenerate(generating, n.subjects = nsubjects,
+  as.data.frame(suppressMessages(ctGenerate(generating, n = nsubjects,
     burnin = 5, dtmean = 1, logdtsd = .1, wide = FALSE, Tpoints = Tpoints)))
 }
 

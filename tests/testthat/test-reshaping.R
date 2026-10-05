@@ -23,7 +23,7 @@ test_that("reshaping1", {
     # TRAITTDPREDCOV = matrix(c(.6,-.3,.4,.4),nrow=n.latent,ncol=n.TDpred*(Tpoints)),
     TDPREDEFFECT=matrix(c(1.2,-.4, 0,.3),nrow=n.latent,ncol=n.TDpred),
     T0MEANS=matrix(0,ncol=1,nrow=n.latent))
-  data<-ctGenerate(gm,n.subjects=20,burnin=50)
+  data<-ctGenerate(gm,n=20,burnin=50)
   
   data <- ctLongToWide(data,id='id',time='time',
     manifestNames=gm$manifestNames,TDpredNames=gm$TDpredNames,TIpredNames = gm$TIpredNames)

@@ -55,7 +55,7 @@ skip_if(.Platform$OS.type == "windows" && R.version$major %in% 4 &&
         DIFFUSION=diag(.2,2),
         MANIFESTVAR=diag(0,2), MANIFESTMEANS=matrix(0,2,1),
         T0VAR=diag(2)))
-      dat=suppressMessages(ctGenerate(gm,n.subjects = nsubjects,burnin = 3,dtmean = dt))
+      dat=suppressMessages(ctGenerate(gm,n = nsubjects,burnin = 3,dtmean = dt))
 
     dat <- as.matrix(dat)
     dat[,'Y1'] <-  dat[,'Y1'] * (1+ lambdafactor * dat[,'Y2']) #state dependent lambda
@@ -140,35 +140,21 @@ skip_if(.Platform$OS.type == "windows" && R.version$major %in% 4 &&
       PARS=c('a', 'b'))
     
     
-    nsubjects <- 100
-    traitChol <- diag(.5,2)
-    subjectCint <- t(replicate(nsubjects, as.numeric(traitChol %*% rnorm(2))))
-    # Stated in full, for the same reason as the model above. T0VAR is the one
-    # value that is not what generation has lately been supplying (1e-6 from
-    # the defaults); burnin = 20 against a drift of -1 washes the initial
-    # condition out entirely, and this test asserts only that the fit returns.
+    # Stated in full, for the same reason as the model above; burnin = 20
+    # against a drift of -1 washes the initial condition out entirely, and
+    # this test asserts only that the fit returns. Each subject's CINT is drawn
+    # from the population: sdscale 0.05 on the raw scale is an sd of 0.5,
+    # since CINT is 10 * raw.
     gm <- ctModel(LAMBDA=diag(2), #diagonal factor loading, 2 latents 2 observables
       Tpoints = 5,
       DRIFT=matrix(c(-1,.5,0,-1),2,2), #temporal dynamics
       MANIFESTVAR=diag(0,2), MANIFESTMEANS=matrix(0,2,1),
       T0MEANS=matrix(0,2,1), T0VAR=diag(1,2),
+      CINT=matrix(c('cint1, indvarying=TRUE, sdscale=0.05',
+        'cint2, indvarying=TRUE, sdscale=0.05')),
       DIFFUSION=diag(2)) #within person covariance
-    
-    dlist <- vector("list", nsubjects)
-    for(i in seq_len(nsubjects)){
-      gm_i <- gm
-      # Through $matrices, not `gm_i$CINT <-`. `gm` is a ctStanModel, whose
-      # canonical specification is $pars; ctGenerate() rebuilds every top level
-      # matrix from $pars before generating, so a direct assignment is silently
-      # discarded and all 100 subjects were generated with CINT = 0. The
-      # $matrices view writes back into $pars, so the value reaches the data.
-      gm_i$matrices$CINT <- matrix(subjectCint[i, ], ncol = 1)
-      d_i <- suppressMessages(ctGenerate(ctmodelobj = gm_i,n.subjects = 1,
-        burnin = 20,dtmean = 1))
-      d_i[, "id"] <- i
-      dlist[[i]] <- d_i
-    }
-    d <- do.call(rbind, dlist)
+    d <- suppressMessages(ctGenerate(gm, n = 100, burnin = 20,
+      dtmean = 1, backend = 'julia'))
     d <- data.frame(d)
     d$Z <- d$Y1 + rnorm(nrow(d))
     d$X <- d$Y1

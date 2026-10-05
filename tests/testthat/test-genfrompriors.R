@@ -246,7 +246,7 @@ test_that("a julia fit is generated from through the model it was given", {
     DIFFUSION = matrix('diff'), MANIFESTVAR = matrix('mvar'),
     MANIFESTMEANS = matrix('mmean'), T0VAR = matrix('t0v'),
     T0MEANS = matrix(0), CINT = matrix(0)))
-  data <- suppressMessages(ctGenerate(model, n.subjects = 8, burnin = 2))
+  data <- suppressMessages(ctGenerate(model, n = 8, burnin = 2))
   fit <- suppressMessages(suppressWarnings(ctFit(data, model, backend = 'julia',
     verbose = 0)))
 

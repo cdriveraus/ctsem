@@ -97,18 +97,8 @@ gen_model <- ctModel(
   MANIFESTVAR = matrix(0.25)
 )
 
-dat <- do.call(rbind, lapply(seq_len(n_subjects), function(id) {
-  d <- data.frame(ctGenerate(
-    ctmodelobj = gen_model,
-    n.subjects = 1,
-    burnin = 0,
-    dtmean = 0.4,
-    logdtsd = 0.1
-  ))
-  d$id <- id
-  d
-}))
-dat <- dat[order(dat$id, dat$time), ]
+dat <- data.frame(ctGenerate(gen_model, n = n_subjects, dtmean = 0.4,
+  logdtsd = 0.1))
 
 fit_model <- ctModel(
   type = "ct",
@@ -307,7 +297,7 @@ count_gen <- ctModel(
   MANIFESTVAR = matrix(0), T0VAR = matrix(1), T0MEANS = matrix(0),
   CINT = matrix(0), MANIFESTMEANS = matrix(1), Tpoints = 6
 )
-count_dat <- data.frame(ctGenerate(count_gen, n.subjects = 8, Tpoints = 6, backend = "julia"))
+count_dat <- data.frame(ctGenerate(count_gen, n = 8, Tpoints = 6, backend = "julia"))
 
 count_fit_model <- ctModel(
   type = "ct", n.latent = 1, n.manifest = 1,
@@ -390,14 +380,14 @@ dynamics, so `'auto'` integrates it by Laplace -- is summarised three ways:
 
 ```{r re-data}
 set.seed(3)
-re_dat <- do.call(rbind, lapply(seq_len(30), function(id) {
-  subject <- gen_model
-  subject$DRIFT <- matrix(-exp(log(0.35) + rnorm(1, 0, 0.5)))
-  d <- data.frame(ctGenerate(ctmodelobj = subject, n.subjects = 1, burnin = 0,
-    dtmean = 0.4, logdtsd = 0.1))
-  d$id <- id
-  d
-}))
+# The same process, with each subject's drift drawn by ctGenerate: -exp(raw),
+# the raw value normal around log(0.35) with an sd of 0.5 (the sdscale field).
+re_gen <- ctModel(type = "ct", Tpoints = tpoints, n.latent = 1, n.manifest = 1,
+  LAMBDA = matrix(1), T0MEANS = matrix(0), T0VAR = matrix(0.6),
+  DRIFT = matrix("drift|-exp(param)|TRUE|0.5"), DIFFUSION = matrix(0.5),
+  CINT = matrix(0.15), MANIFESTMEANS = matrix(0), MANIFESTVAR = matrix(0.25))
+re_dat <- data.frame(ctGenerate(re_gen, n = 30, dtmean = 0.4, logdtsd = 0.1,
+  backend = "julia", popmeans = c(drift = -0.35)))
 re_model <- fit_model
 re_model$pars$indvarying[re_model$pars$param %in% "drift"] <- TRUE
 ```

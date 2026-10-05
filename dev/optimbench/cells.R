@@ -520,7 +520,7 @@ ord4_data <- function() {
     silent = TRUE))
   gen$covmattransform <- "z"
   set.seed(2)
-  d <- data.frame(suppressMessages(ctGenerate(gen, n.subjects = 50, Tpoints = 30,
+  d <- data.frame(suppressMessages(ctGenerate(gen, n = 50, Tpoints = 30,
     dtmean = 0.7, backend = "julia")))
   ordinalise <- function(eta) 1 + rowSums(outer(eta + stats::rlogis(length(eta)),
     thresholds, ">"))

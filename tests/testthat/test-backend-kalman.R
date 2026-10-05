@@ -589,7 +589,7 @@ test_that('the integration method is read from the fit rather than guessed', {
   dat <- do.call(rbind, lapply(1:8, function(i) {
     m <- generating
     m$matrices$CINT <- matrix(stats::rnorm(1, 0, 0.4))
-    d <- as.data.frame(suppressMessages(ctGenerate(m, n.subjects = 1,
+    d <- as.data.frame(suppressMessages(ctGenerate(m, n = 1,
       burnin = 10, Tpoints = 8, backend = 'r')))
     d$id <- i
     d
