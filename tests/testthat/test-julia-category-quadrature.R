@@ -382,7 +382,7 @@ test_that('the gradient of a binary model with asymptotes matches finite differe
   gen$pars$param[fixed] <- NA
   gen$pars$transform[fixed] <- NA
   set.seed(5)
-  d <- data.frame(ctGenerate(gen, n.subjects = 30, Tpoints = 5, dtmean = 0.8,
+  d <- data.frame(ctGenerate(gen, n = 30, Tpoints = 5, dtmean = 0.8,
     backend = 'julia'))
 
   JuliaConnectoR::juliaEval('

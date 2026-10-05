@@ -118,7 +118,7 @@ gen$pars$param[lower] <- NA
 gen$pars$transform[lower] <- NA
 
 set.seed(7)
-d <- data.frame(ctGenerate(gen, n.subjects = 250, Tpoints = 8, dtmean = 0.9,
+d <- data.frame(ctGenerate(gen, n = 250, Tpoints = 8, dtmean = 0.9,
   backend = 'julia'))
 ```
 

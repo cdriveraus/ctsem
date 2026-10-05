@@ -41,7 +41,7 @@ make_data <- function(seed, nsubjects, nobs, nindicators, ngauss = 0) {
     MANIFESTVAR = matrix(0.001), T0VAR = matrix(TRUE_T0VAR),
     T0MEANS = matrix(0), CINT = matrix(0), MANIFESTMEANS = matrix(0),
     Tpoints = nobs))
-  latent <- ctGenerate(gen, n.subjects = nsubjects, Tpoints = nobs,
+  latent <- ctGenerate(gen, n = nsubjects, Tpoints = nobs,
     backend = "r")
   d <- data.frame(latent)
   eta <- d$eta

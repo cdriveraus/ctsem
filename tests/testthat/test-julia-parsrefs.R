@@ -23,7 +23,7 @@ skip_on_32bit()
     DRIFT = diag(-.3, 2), DIFFUSION = diag(.5, 2), MANIFESTVAR = diag(.2, 2),
     MANIFESTMEANS = matrix(0, 2, 1), T0MEANS = matrix(c(1, 1), 2, 1),
     T0VAR = diag(.5, 2), CINT = matrix(0, 2, 1), Tpoints = 8))
-  suppressMessages(ctGenerate(gm, n.subjects = n, burnin = 3, dtmean = 1))
+  suppressMessages(ctGenerate(gm, n = n, burnin = 3, dtmean = 1))
 }
 
 .parsref_model <- function(T0MEANS = c('baselevel','baselevel'),

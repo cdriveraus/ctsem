@@ -36,7 +36,7 @@
       T0MEANS = matrix(0, 2, 1),
       CINT = matrix(c(cint1[i], cint2[i]), 2, 1),
       MANIFESTMEANS = matrix(0, 2, 1), Tpoints = nobs))
-    one <- data.frame(ctGenerate(gen, n.subjects = 1, Tpoints = nobs,
+    one <- data.frame(ctGenerate(gen, n = 1, Tpoints = nobs,
       backend = "r"))
     one$id <- i
     one

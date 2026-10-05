@@ -76,7 +76,7 @@ if (isTRUE(ctJuliaStatus()$available)) {
     LAMBDA = diag(2), DRIFT = matrix(c(-.4, .1, 0, -.3), 2, 2),
     CINT = matrix(c(.2, .1), 2, 1), MANIFESTMEANS = matrix(0, 2, 1),
     MANIFESTVAR = diag(.2, 2), DIFFUSION = matrix(c(.5, 0, 0, .4), 2, 2)))
-  datalong <- as.data.frame(suppressMessages(ctGenerate(generating, n.subjects = 25,
+  datalong <- as.data.frame(suppressMessages(ctGenerate(generating, n = 25,
     burnin = 5, dtmean = 1, logdtsd = .1, wide = FALSE, Tpoints = 12)))
 
   # eta1's own decay depends on where eta2 is -- a state-dependent DRIFT cell.

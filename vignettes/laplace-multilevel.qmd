@@ -164,29 +164,29 @@ mu_cint <- 0.3; drift <- -0.4; diffusion <- 0.6; merror <- 0.2
 sd_study_cint <- 0.5
 sd_sub_cint <- 0.4; sd_sub_t0 <- 0.8; rho <- -0.4
 
-S <- matrix(c(sd_sub_t0^2, rho * sd_sub_t0 * sd_sub_cint,
-              rho * sd_sub_t0 * sd_sub_cint, sd_sub_cint^2), 2, 2)
-L <- t(chol(S))
-studyeff <- rnorm(nstudy, 0, sd_study_cint)
+gm <- ctModel(type = 'ct', id = c('id', 'study'),
+  manifestNames = 'Y1', latentNames = 'eta1', LAMBDA = matrix(1),
+  T0MEANS = matrix('t0'), CINT = matrix('cint'), DRIFT = matrix(drift),
+  DIFFUSION = matrix(diffusion), MANIFESTVAR = matrix(merror),
+  MANIFESTMEANS = matrix(0), T0VAR = matrix(0))
+gm$pars$indvarying <- gm$pars$param %in% c('t0', 'cint')
+gm$pars$indvarying_study <- gm$pars$param %in% 'cint'
 
-rows <- list(); truth <- list(); id <- 0
-for (s in 1:nstudy) for (j in 1:npersub) {
-  id <- id + 1
-  z <- L %*% rnorm(2)
-  t0_i <- as.numeric(z[1])
-  cint_i <- mu_cint + studyeff[s] + as.numeric(z[2])
-  truth[[id]] <- data.frame(id = id, study = s, t0 = t0_i, cint = cint_i)
-  x <- t0_i; y <- numeric(nobs)
-  A <- exp(drift); b <- (cint_i / drift) * (A - 1)
-  Q <- diffusion^2 / (-2 * drift) * (1 - A^2)
-  for (t in 1:nobs) {
-    if (t > 1) x <- A * x + b + rnorm(1, 0, sqrt(Q))
-    y[t] <- x + rnorm(1, 0, merror)
-  }
-  rows[[id]] <- data.frame(id = id, study = s, time = 0:(nobs - 1), Y1 = y)
-}
-dat <- do.call(rbind, rows)
-truth <- do.call(rbind, truth)
+# The population covariances, on the raw scale: T0MEANS and CINT are 10 times
+# their raw parameter, so a covariance is a hundredth of its natural value and
+# an sd a tenth.
+S <- matrix(c(sd_sub_t0^2, rho * sd_sub_t0 * sd_sub_cint,
+              rho * sd_sub_t0 * sd_sub_cint, sd_sub_cint^2), 2, 2,
+  dimnames = list(c('t0', 'cint'), c('t0', 'cint')))
+gm$RAWPOPVAR <- ctCov(S / 100)
+gm$RAWPOPVAR_study['cint', 'cint'] <- sd_study_cint / 10
+
+dat <- ctGenerate(gm, n = c(nstudy * npersub, nstudy), Tpoints = nobs,
+  backend = 'julia', popmeans = c(t0 = 0, cint = mu_cint))
+# What each subject and each study was generated with.
+truth <- attr(dat, 'subjectpars')
+studytruth <- attr(dat, 'grouppars')$study
+dat <- data.frame(dat)
 head(dat)
 ```
 
@@ -321,7 +321,7 @@ structure, and averaging them within study recovers the study effects:
 ```{r studymeans}
 round(rbind(
   estimated = tapply(sp[1, , 'cint_eta1'], truth$study, mean),
-  truth = mu_cint + studyeff), 3)
+  truth = studytruth$cint), 3)
 ```
 
 ```{r studyplot, fig.height = 4}

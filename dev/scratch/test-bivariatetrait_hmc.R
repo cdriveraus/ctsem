@@ -16,7 +16,7 @@ dlist <- vector("list", nsubjects)
 for(i in seq_len(nsubjects)){
   gm_i <- gm
   gm_i$CINT <- matrix(subjectCint[i,], ncol = 1)
-  d_i <- ctGenerate(ctmodelobj = gm_i,n.subjects = 1,logdtsd = .1,burnin = 20,dtmean = 1)
+  d_i <- ctGenerate(ctmodelobj = gm_i,n = 1,logdtsd = .1,burnin = 20,dtmean = 1)
   d_i[, "id"] <- i
   dlist[[i]] <- d_i
 }

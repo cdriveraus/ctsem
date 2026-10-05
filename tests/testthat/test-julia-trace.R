@@ -13,7 +13,7 @@
     DRIFT = matrix(-0.4), DIFFUSION = matrix(0.6), MANIFESTVAR = matrix(0.3),
     T0VAR = matrix(1), T0MEANS = matrix(0), CINT = matrix(0),
     MANIFESTMEANS = matrix(0), Tpoints = nobs))
-  ctGenerate(gen, n.subjects = nsubjects, Tpoints = nobs, backend = "r")
+  ctGenerate(gen, n = nsubjects, Tpoints = nobs, backend = "r")
 }
 
 .trace_model <- function() {

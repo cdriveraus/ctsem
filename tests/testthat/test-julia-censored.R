@@ -21,7 +21,7 @@
       DRIFT = matrix(-0.4), DIFFUSION = matrix(0.6),
       MANIFESTVAR = matrix(1e-6), T0VAR = matrix(1), T0MEANS = matrix(0),
       CINT = matrix(0), MANIFESTMEANS = matrix(0), Tpoints = nobs))
-    one <- data.frame(ctGenerate(gen, n.subjects = 1, Tpoints = nobs,
+    one <- data.frame(ctGenerate(gen, n = 1, Tpoints = nobs,
       backend = "r"))
     one$id <- i
     one
@@ -246,7 +246,7 @@ test_that("ctGenerate respects the censoring limits", {
     T0VAR = matrix(1), T0MEANS = matrix(0), CINT = matrix(0),
     MANIFESTMEANS = matrix(1.5), Tpoints = 6)))
   set.seed(4)
-  d <- data.frame(ctGenerate(gen, n.subjects = 20, Tpoints = 6,
+  d <- data.frame(ctGenerate(gen, n = 20, Tpoints = 6,
     backend = "julia"))
   values <- d$y[!is.na(d$y)]
   expect_true(length(values) > 0)

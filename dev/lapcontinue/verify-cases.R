@@ -63,7 +63,7 @@ cfs_data <- function(seed) {
       DRIFT = matrix(-0.3), DIFFUSION = matrix(0.8), MANIFESTVAR = matrix(1e-6),
       T0VAR = matrix(1), T0MEANS = matrix(0), CINT = matrix(cints[i]),
       MANIFESTMEANS = matrix(0), Tpoints = 10))
-    one <- data.frame(ctGenerate(gen, n.subjects = 1, Tpoints = 10, backend = "r"))
+    one <- data.frame(ctGenerate(gen, n = 1, Tpoints = 10, backend = "r"))
     one$id <- i
     one
   }))

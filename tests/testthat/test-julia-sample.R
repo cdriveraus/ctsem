@@ -822,11 +822,12 @@ test_that("a sampled fit without saved effects says it fell back to modes", {
   # conditioned on point estimates and no way to notice.
   stripped <- fit
   stripped$sample$effects <- NULL
+  # effects = 'fitted': the default draws new subjects and needs no draws.
   expect_message(ctGenerateFromFit(stripped, nsamples = 3,
-    fullposterior = TRUE, cores = 1), "saveEffects=TRUE")
+    fullposterior = TRUE, cores = 1, effects = "fitted"), "saveEffects=TRUE")
   # With them, nothing to report.
   expect_no_message(ctGenerateFromFit(fit, nsamples = 3,
-    fullposterior = TRUE, cores = 1))
+    fullposterior = TRUE, cores = 1, effects = "fitted"))
 })
 
 test_that("a sampled fit reports subject parameters from its own effects", {

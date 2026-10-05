@@ -31,7 +31,7 @@ skip_on_32bit()
       T0MEANS=matrix(0,2,1),
       n.latent=2,n.manifest=2,Tpoints=50)
     
-    d=ctGenerate(gm,n.subjects = 50,logdtsd=.2,dtmean = .2,burnin = 20)
+    d=ctGenerate(gm,n = 50,logdtsd=.2,dtmean = .2,burnin = 20)
     d[,gm$manifestNames[1]] <- d[,gm$manifestNames[1]] + rnorm(nrow(d),0,.2)
     d=data.frame(d)
     for(i in 1:10){

@@ -80,7 +80,7 @@ gen$covmattransform <- 'z'
 # roots whatever covmattransform says, while the julia generator applies the
 # declared transform, as ctFit() does.
 set.seed(2)
-d <- data.frame(ctGenerate(gen, n.subjects = 150, Tpoints = 30, dtmean = 0.7,
+d <- data.frame(ctGenerate(gen, n = 150, Tpoints = 30, dtmean = 0.7,
   backend = 'julia'))
 
 # The cumulative logit: the response falls in category k or below when the

@@ -203,77 +203,81 @@ test_that("ctPostPredData(residuals=TRUE) works, for stan too", {
   expect_true(any(grepl("std. res.", stanpredictive$variable)))
 })
 
-# `.ctGenerateResolveFree()` fills in free parameters that generation needs a
-# value for. A cell written as an expression -- `LAMBDA[2,1] = '0.9 + 0.35 *
-# eta1'` -- has no value either, and is not a free parameter: it is the
-# specification, and it is exactly the specification `backend='julia'`
-# generation exists to reach. Filled with the matrix default it becomes a
-# constant, and the state dependence disappears from the generated data with
-# nothing to say so -- measured, an off-diagonal LAMBDA expression was
-# overwritten with zero and the indicator came back pure noise.
-test_that("an expression cell survives generation rather than being filled", {
-  m <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 1,
-    n.manifest = 2, manifestNames = c("y1", "y2"), latentNames = "eta1",
-    LAMBDA = matrix(c(1, "0.9 + 0.35 * eta1"), 2, 1),
-    MANIFESTVAR = matrix(c("exp(-0.7 + 0.3 * eta1)", 0, 0, 0.8), 2, 2),
-    DRIFT = matrix(-0.4), DIFFUSION = matrix(1.5), T0VAR = matrix(1.7),
-    T0MEANS = matrix(0), CINT = matrix(0),
-    MANIFESTMEANS = matrix(c(0, 0.5), 2, 1), Tpoints = 5)))
+# User side generation draws each subject from the population the model
+# states, at every level, and simulates it. The values it has to choose are
+# the priors' scales: raw zero for a free mean, sdscale for a population sd.
+.gen_model <- function(id = "id", ti = 0) {
+  m <- suppressWarnings(suppressMessages(ctModel(type = "ct", id = id,
+    manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1),
+    DRIFT = matrix("drift"), DIFFUSION = matrix(.5), MANIFESTVAR = matrix(.3),
+    MANIFESTMEANS = matrix("mm||TRUE"), T0VAR = matrix(1), T0MEANS = matrix(0),
+    CINT = matrix(0), n.TIpred = ti,
+    TIpredNames = if (ti) paste0("TI", seq_len(ti)))))
+  m$pars$indvarying <- m$pars$param %in% "mm"
+  m
+}
+.gen_subject_means <- function(d) tapply(d[, "Y1"], d[, "id"], mean)
 
-  resolved <- ctsem:::.ctGenerateResolveFree(m, quiet = TRUE)
-  expression_cells <- resolved$pars$param %in%
-    c("0.9 + 0.35 * eta1", "exp(-0.7 + 0.3 * eta1)")
-  expect_equal(sum(expression_cells), 2L)
-  expect_true(all(is.na(resolved$pars$value[expression_cells])))
-
-  # A genuine free parameter in the same model is still filled, since that is
-  # what the function is for.
-  free <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 1,
-    n.manifest = 1, manifestNames = "y1", latentNames = "eta1",
-    LAMBDA = matrix(1), T0MEANS = matrix(0), CINT = matrix(0))))
-  # An individually varying parameter is filled like any other. It used to be
-  # left free deliberately -- assigning a value makes a parameter fixed, a
-  # fixed parameter is not augmented, and the carrier state that would hold its
-  # individual deviations was then never created -- but user side generation
-  # draws no random effects, so `.ctGenerateFixedOnly()` has cleared every
-  # varying flag before this function sees the model and there is no carrier
-  # state to preserve. MANIFESTMEANS is individually varying by default, which
-  # is why this model has one to clear.
-  cleared <- ctsem:::.ctGenerateFixedOnly(free, quiet = TRUE)
-  expect_false(any(cleared$pars$indvarying %in% TRUE))
-  expect_false(any(is.na(ctsem:::.ctGenerateResolveFree(cleared,
-    quiet = TRUE)$pars$value)))
+test_that("n counts each id level, innermost first", {
+  m <- .gen_model(id = c("id", "study"))
+  expect_equal(ctsem:::.ctGenerateLevelCounts(m, c(12, 3)), c(id = 12L, study = 3L))
+  expect_equal(ctsem:::.ctGenerateLevelCounts(m, 12), c(id = 12L, study = 1L))
+  expect_error(ctsem:::.ctGenerateLevelCounts(m, c(3, 12)), "must not grow")
+  expect_error(ctsem:::.ctGenerateLevelCounts(m, c(12, 3, 1)), "2 id levels")
+  skeleton <- ctsem:::.ctGenerateSkeleton(m, c(12, 3), lapply(1:12, function(i) 0:1))
+  expect_equal(as.numeric(table(skeleton$study[!duplicated(skeleton$id)])), c(4, 4, 4))
+  expect_error(ctGenerate(m, n = c(12, 3), Tpoints = 2, backend = "r"),
+    "n must be one count")
+  # The former name still works, and says so.
+  flat <- .gen_model()
+  set.seed(1)
+  expect_warning(old <- suppressMessages(ctGenerate(flat, n.subjects = 3,
+    Tpoints = 2, backend = "r")), "is deprecated; use n", fixed = TRUE)
+  set.seed(1)
+  expect_equal(old, suppressMessages(ctGenerate(flat, n = 3, Tpoints = 2,
+    backend = "r")))
 })
 
-# What the message has to say, because silence is the failure mode: a model
-# declaring individual differences generates a fixed-effects dataset, and
-# nothing in the data itself says the random effects were dropped.
-test_that("parking the random effects names what it dropped", {
-  m <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 1,
-    n.manifest = 1, manifestNames = "Y1", latentNames = "eta1",
-    LAMBDA = matrix(1), DRIFT = matrix(-0.4), DIFFUSION = matrix(0.2),
-    MANIFESTVAR = matrix(0.05), T0VAR = matrix(0.2), T0MEANS = matrix(0),
-    CINT = matrix(0), MANIFESTMEANS = matrix("mm"), Tpoints = 5)))
-  m$pars$indvarying <- m$pars$param %in% "mm"
-  m <- ctsem:::.ctModelRawPopVarSync(m)
-  mats <- m$matrices
-  mats$RAWPOPVAR["mm", "mm"] <- 0.3
-  m$matrices <- mats
+test_that("ctGenerate draws subjects from the population at every level", {
+  skip_without_julia()
+  m <- .gen_model(id = c("id", "study"))
+  m$pars$indvarying_study <- m$pars$param %in% "mm"
+  m$pars$sdscale_study[m$pars$param %in% "mm"] <- 0.5
+  set.seed(3)
+  expect_message(d <- ctGenerate(m, n = c(600, 30), Tpoints = 6,
+    backend = "julia"), "mm 1 \\[id\\], mm 0.5 \\[study\\]")
+  means <- .gen_subject_means(d)
+  study <- tapply(d[, "study"], d[, "id"], `[`, 1)
+  # mm = 10 * param, so raw sds of 1 and 0.5 are 10 and 5 in the data. A study
+  # mean also carries its 20 subjects' spread, 10 / sqrt(20).
+  expect_equal(mean(tapply(means, study, sd)), 10, tolerance = 0.1)
+  expect_equal(sd(tapply(means, study, mean)), sqrt(25 + 100 / 20), tolerance = 0.25)
+})
 
-  expect_message(cleared <- ctsem:::.ctGenerateFixedOnly(m),
-    "Individual differences are ignored for mm")
-  expect_message(ctsem:::.ctGenerateFixedOnly(m),
-    "population spread stated for mm is unused")
-  expect_false(any(cleared$pars$indvarying %in% TRUE))
-  # The covariance goes with them, so nothing downstream can read a spread for
-  # a parameter that no longer has a random effect.
-  expect_null(cleared[["RAWPOPVAR"]])
+test_that("popmeans, RAWPOPVAR and fixed TI effects set what they state", {
+  skip_without_julia()
+  m <- .gen_model(ti = 1)
+  m$RAWPOPVAR["mm", "mm"] <- 0.2
+  m$pars$TI1_effect <- ifelse(m$pars$param %in% "mm", "0.3", "FALSE")
+  set.seed(4)
+  expect_message(d <- ctGenerate(m, n = 400, Tpoints = 8,
+    backend = "julia", popmeans = c(mm = 3, drift = -0.5)),
+    "from popmeans: mm, drift; population sd \\(raw\\): mm 0.2 \\[id\\]")
+  means <- .gen_subject_means(d)
+  ti <- tapply(d[, "TI1"], d[, "id"], `[`, 1)
+  regression <- stats::lm(means ~ ti)
+  # A fixed effect of 0.3 shifts the raw parameter, 3 in the data; the
+  # residual spread is RAWPOPVAR's 0.2 raw, 2 in the data.
+  expect_equal(unname(stats::coef(regression)), c(3, 3), tolerance = 0.1)
+  expect_equal(stats::sigma(regression), 2, tolerance = 0.15)
 
-  # A fixed-effects model says nothing, having dropped nothing.
-  plain <- m
-  plain$pars$indvarying <- FALSE
-  plain <- ctsem:::.ctModelRawPopVarSync(plain)
-  expect_no_message(ctsem:::.ctGenerateFixedOnly(plain))
+  free <- .gen_model(ti = 1)
+  free$pars$TI1_effect <- ifelse(free$pars$param %in% "mm", "TRUE", "FALSE")
+  set.seed(4)
+  expect_message(ctGenerate(free, n = 4, Tpoints = 3, backend = "julia"),
+    "at prior centres \\(raw 0\\): drift=-1.386, mm=0.*TI effects at zero: TI1 on mm")
+  expect_error(ctGenerate(free, n = 4, Tpoints = 3, backend = "julia",
+    popmeans = c(nothere = 1)), "not a free parameter")
 })
 
 test_that("state dependent generation carries the dependence into the data", {
@@ -286,7 +290,7 @@ test_that("state dependent generation carries the dependence into the data", {
     T0MEANS = matrix(0), CINT = matrix(0),
     MANIFESTMEANS = matrix(c(0, 0), 2, 1), Tpoints = 8)))
   set.seed(9)
-  d <- data.frame(suppressMessages(ctGenerate(m, n.subjects = 40, Tpoints = 8,
+  d <- data.frame(suppressMessages(ctGenerate(m, n = 40, Tpoints = 8,
     backend = "julia")))
 
   # The loading on y2 rises with the state, so regressing y2 on y1 where y1 is
@@ -370,10 +374,13 @@ test_that("ctGenerateFromFit works on a Laplace fit and matches the augmented ro
   fit_augmented <- suppressWarnings(suppressMessages(ctFit(data, model,
     backend = "julia", cores = 1, intoverpop = "augmented", priors = TRUE)))
 
+  # New subjects from the fitted population on both routes, the default.
   set.seed(123)
   gen_laplace <- ctGenerateFromFit(fit_laplace, nsamples = 20)
   set.seed(123)
   gen_augmented <- ctGenerateFromFit(fit_augmented, nsamples = 20)
+  expect_error(ctGenerateFromFit(fit_augmented, nsamples = 2, effects = "fitted"),
+    "intoverpop = 'augmented'")
 
   # Same shape as the other three routes: same names, same dimensions, same
   # class, so downstream tools cannot tell which route produced the fit.
@@ -385,30 +392,36 @@ test_that("ctGenerateFromFit works on a Laplace fit and matches the augmented ro
   expect_identical(dimnames(gen_laplace$generated$Y)[[3]], model$manifestNames)
   expect_identical(dim(gen_laplace$generated$llrow), dim(gen_augmented$generated$llrow))
 
-  # The two routes fit the same model to the same data, so their
-  # posterior-predictive distributions should be close, not merely
-  # "plausible-looking". A generator that quietly used the wrong covariance,
-  # or the wrong (e.g. population-only) per-subject parameters, would show up
-  # here as a shifted mean/sd or a rejected KS test.
-  yl <- as.numeric(gen_laplace$generated$Y)
-  ya <- as.numeric(gen_augmented$generated$Y)
-  yl <- yl[is.finite(yl)]
-  ya <- ya[is.finite(ya)]
-  expect_equal(mean(yl), mean(ya), tolerance = 0.1)
-  expect_equal(stats::sd(yl), stats::sd(ya), tolerance = 0.1)
-  expect_gt(suppressWarnings(stats::ks.test(yl, ya)$p.value), 0.05)
-
-  # The specific failure mode a stub implementation risks: returning the
-  # population-level trajectory for every subject. Each subject has its own
-  # MANIFESTMEANS random effect estimated from its own data, so a correct
-  # generator's per-subject mean should track the subject's own observed
-  # mean closely; a population-only generator would show ~zero correlation.
-  obs_subject_mean <- tapply(data$Y1, data$id, mean)
-  gen_y <- gen_laplace$generated$Y[, , 1]
+  # The two routes fit the same model to the same data, so new subjects from
+  # either should look alike: the same grand mean and the same spread of
+  # subject means. Compared per dataset, against the standard error the 20
+  # datasets themselves give -- rows within a subject are dependent, so a test
+  # that treats every value as independent would be far too strict.
   row_subject <- rep(seq_len(nsub), each = tp)
-  gen_subject_mean <- vapply(seq_len(nsub), function(s)
-    mean(gen_y[, row_subject == s]), numeric(1))
-  expect_gt(stats::cor(obs_subject_mean, gen_subject_mean), 0.8)
+  per_dataset <- function(gen, f) apply(gen$generated$Y[, , 1], 1, f)
+  closeness <- function(f) {
+    l <- per_dataset(gen_laplace, f)
+    a <- per_dataset(gen_augmented, f)
+    abs(mean(l) - mean(a)) / sqrt(stats::var(l) / length(l) + stats::var(a) / length(a))
+  }
+  expect_lt(closeness(mean), 4)
+  expect_lt(closeness(function(y) stats::sd(tapply(y, row_subject, mean))), 4)
+
+  # effects = 'fitted' keeps the fitted subjects, each at its own conditional
+  # mode, so a subject's generated mean tracks its observed one; the new
+  # subjects of the default do not. A generator that put every subject at the
+  # population vector would fail the first.
+  obs_subject_mean <- tapply(data$Y1, data$id, mean)
+  subject_means <- function(gen) {
+    gen_y <- gen$generated$Y[, , 1]
+    vapply(seq_len(nsub), function(s) mean(gen_y[, row_subject == s]), numeric(1))
+  }
+  set.seed(123)
+  gen_fitted <- ctGenerateFromFit(fit_laplace, nsamples = 20, effects = "fitted")
+  expect_gt(stats::cor(obs_subject_mean, subject_means(gen_fitted)), 0.8)
+  # Averaged over 20 datasets of new subjects, each subject's mean is near the
+  # population's, whatever that subject's data said.
+  expect_lt(abs(stats::cor(obs_subject_mean, subject_means(gen_laplace))), 0.6)
 })
 
 test_that("the posterior predictive tools run on a Laplace backend fit", {

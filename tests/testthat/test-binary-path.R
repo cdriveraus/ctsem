@@ -16,7 +16,7 @@
     DRIFT = matrix(-0.3), DIFFUSION = matrix(0.8),
     MANIFESTVAR = matrix(0.001), T0VAR = matrix(1), T0MEANS = matrix(0),
     CINT = matrix(0), MANIFESTMEANS = matrix(0), Tpoints = nobs))
-  latent <- ctGenerate(gm, n.subjects = nsubjects, Tpoints = nobs,
+  latent <- ctGenerate(gm, n = nsubjects, Tpoints = nobs,
     backend = "r")
   d <- data.frame(latent)
   for (i in seq_len(nindicators)) {

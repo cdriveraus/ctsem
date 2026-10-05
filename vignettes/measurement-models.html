@@ -221,7 +221,7 @@ border-radius: 0 4px 4px 0;
 <span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">MANIFESTMEANS =</span> <span class="fu">matrix</span>(<span class="fu">c</span>(<span class="dv">0</span>, <span class="fl">0.5</span>, <span class="sc">-</span><span class="fl">0.5</span>), <span class="dv">3</span>, <span class="dv">1</span>),</span>
 <span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">MANIFESTVAR =</span> <span class="fu">diag</span>(<span class="fl">0.8</span>, <span class="dv">3</span>), <span class="at">Tpoints =</span> <span class="dv">10</span>)</span>
 <span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a>dmulti <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(<span class="fu">ctGenerate</span>(genmulti, <span class="at">n.subjects =</span> <span class="dv">50</span>, <span class="at">Tpoints =</span> <span class="dv">10</span>,</span>
+<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a>dmulti <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(<span class="fu">ctGenerate</span>(genmulti, <span class="at">n =</span> <span class="dv">50</span>, <span class="at">Tpoints =</span> <span class="dv">10</span>,</span>
 <span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a>  <span class="at">backend =</span> <span class="st">&#39;julia&#39;</span>))</span>
 <span id="cb2-12"><a href="#cb2-12" aria-hidden="true" tabindex="-1"></a><span class="fu">head</span>(dmulti, <span class="dv">3</span>)</span>
 <span id="cb2-13"><a href="#cb2-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   id time        y1         y2        y3</span></span>
@@ -304,7 +304,7 @@ border-radius: 0 4px 4px 0;
 <span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">T0MEANS =</span> <span class="fu">matrix</span>(<span class="dv">0</span>), <span class="at">CINT =</span> <span class="fu">matrix</span>(<span class="dv">0</span>), <span class="at">MANIFESTMEANS =</span> <span class="fu">matrix</span>(<span class="dv">0</span>),</span>
 <span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">MANIFESTVAR =</span> <span class="fu">matrix</span>(<span class="fl">1e-6</span>), <span class="at">Tpoints =</span> nobs)</span>
 <span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-9"><a href="#cb6-9" aria-hidden="true" tabindex="-1"></a>d <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(<span class="fu">ctGenerate</span>(process, <span class="at">n.subjects =</span> nsub, <span class="at">Tpoints =</span> nobs,</span>
+<span id="cb6-9"><a href="#cb6-9" aria-hidden="true" tabindex="-1"></a>d <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(<span class="fu">ctGenerate</span>(process, <span class="at">n =</span> nsub, <span class="at">Tpoints =</span> nobs,</span>
 <span id="cb6-10"><a href="#cb6-10" aria-hidden="true" tabindex="-1"></a>  <span class="at">backend =</span> <span class="st">&#39;r&#39;</span>))</span>
 <span id="cb6-11"><a href="#cb6-11" aria-hidden="true" tabindex="-1"></a>eta <span class="ot">&lt;-</span> d<span class="sc">$</span>eta</span></code></pre></div>
 </div>
@@ -511,7 +511,7 @@ border-radius: 0 4px 4px 0;
 <span id="cb14-24"><a href="#cb14-24" aria-hidden="true" tabindex="-1"></a><span class="co"># -1, 0 and 1 are a manifest mean of 1 with both gaps at 1.</span></span>
 <span id="cb14-25"><a href="#cb14-25" aria-hidden="true" tabindex="-1"></a>gen2<span class="sc">$</span>pars<span class="sc">$</span>value[gen2<span class="sc">$</span>pars<span class="sc">$</span>matrix <span class="sc">%in%</span> <span class="st">&#39;THRESHOLDS&#39;</span> <span class="sc">&amp;</span> gen2<span class="sc">$</span>pars<span class="sc">$</span>col <span class="sc">&gt;</span> <span class="dv">1</span>] <span class="ot">&lt;-</span> <span class="dv">1</span></span>
 <span id="cb14-26"><a href="#cb14-26" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb14-27"><a href="#cb14-27" aria-hidden="true" tabindex="-1"></a>d2 <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(<span class="fu">ctGenerate</span>(gen2, <span class="at">n.subjects =</span> <span class="dv">60</span>, <span class="at">Tpoints =</span> <span class="dv">10</span>,</span>
+<span id="cb14-27"><a href="#cb14-27" aria-hidden="true" tabindex="-1"></a>d2 <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(<span class="fu">ctGenerate</span>(gen2, <span class="at">n =</span> <span class="dv">60</span>, <span class="at">Tpoints =</span> <span class="dv">10</span>,</span>
 <span id="cb14-28"><a href="#cb14-28" aria-hidden="true" tabindex="-1"></a>  <span class="at">backend =</span> <span class="st">&#39;julia&#39;</span>))</span>
 <span id="cb14-29"><a href="#cb14-29" aria-hidden="true" tabindex="-1"></a><span class="fu">head</span>(d2, <span class="dv">3</span>)</span>
 <span id="cb14-30"><a href="#cb14-30" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   id time o1 b1 c1       x1         y1</span></span>
@@ -519,7 +519,7 @@ border-radius: 0 4px 4px 0;
 <span id="cb14-32"><a href="#cb14-32" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 2  1    1  1  0  1 1.688552 -1.3622011</span></span>
 <span id="cb14-33"><a href="#cb14-33" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 3  1    2  2  0  1 1.867846  0.3068517</span></span></code></pre></div>
 </div>
-<p><code>ctGenerate(backend = &#39;julia&#39;)</code> draws each row from its own prior predictive as the filter reaches it, so it applies the links above rather than producing continuous values for a variable the model calls binary. The R generator integrates a linear Gaussian system and has no notion of a link; it warns if asked to generate from a model with non-Gaussian indicators.</p>
+<p><code>ctGenerate(backend = &#39;julia&#39;)</code> simulates the latent process and draws each observation from its measurement model given the state, so it applies the links above rather than producing continuous values for a variable the model calls binary. The R generator integrates a linear Gaussian system and has no notion of a link; it warns if asked to generate from a model with non-Gaussian indicators.</p>
 <p>The estimation model has the same block structure, with the measurement parameters freed:</p>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb15"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a>estvar <span class="ot">&lt;-</span> <span class="fu">diag</span>(<span class="dv">0</span>, <span class="dv">5</span>)</span>
@@ -603,7 +603,7 @@ border-radius: 0 4px 4px 0;
 <span id="cb18-8"><a href="#cb18-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">T0MEANS =</span> <span class="fu">matrix</span>(<span class="dv">0</span>), <span class="at">CINT =</span> <span class="fu">matrix</span>(<span class="dv">0</span>),</span>
 <span id="cb18-9"><a href="#cb18-9" aria-hidden="true" tabindex="-1"></a>  <span class="at">MANIFESTMEANS =</span> <span class="fu">matrix</span>(<span class="fu">c</span>(<span class="dv">0</span>, <span class="fl">0.5</span>), <span class="dv">2</span>, <span class="dv">1</span>), <span class="at">Tpoints =</span> <span class="dv">10</span>)</span>
 <span id="cb18-10"><a href="#cb18-10" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb18-11"><a href="#cb18-11" aria-hidden="true" tabindex="-1"></a>dsd <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(<span class="fu">ctGenerate</span>(gensd, <span class="at">n.subjects =</span> <span class="dv">60</span>, <span class="at">Tpoints =</span> <span class="dv">10</span>,</span>
+<span id="cb18-11"><a href="#cb18-11" aria-hidden="true" tabindex="-1"></a>dsd <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(<span class="fu">ctGenerate</span>(gensd, <span class="at">n =</span> <span class="dv">60</span>, <span class="at">Tpoints =</span> <span class="dv">10</span>,</span>
 <span id="cb18-12"><a href="#cb18-12" aria-hidden="true" tabindex="-1"></a>  <span class="at">backend =</span> <span class="st">&#39;julia&#39;</span>))</span>
 <span id="cb18-13"><a href="#cb18-13" aria-hidden="true" tabindex="-1"></a><span class="fu">head</span>(dsd, <span class="dv">3</span>)</span>
 <span id="cb18-14"><a href="#cb18-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   id time        y1         y2</span></span>

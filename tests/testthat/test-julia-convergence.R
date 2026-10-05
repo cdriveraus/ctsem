@@ -1,4 +1,4 @@
-# backend='r' pinned, not left at 'auto'. This test characterises what the model recovers from one particular dataset, and 'auto' prefers the julia engine now, which generates different data for the same seed. The generator is not what is under test here.
+# backend='r' pinned rather than left at 'auto': this test characterises what the model recovers from one particular dataset, and the generator is not what is under test here.
 # Does `fit$optim$converged` mean what it says?
 #
 # The stan side has `test-stan-convergence.R`, which checks the same thing the
@@ -81,7 +81,7 @@ skip_on_32bit()
       LAMBDA = matrix(c(1, 1), 2, 1), DRIFT = matrix(-.4), DIFFUSION = matrix(.6),
       MANIFESTVAR = diag(.2, 2), T0VAR = matrix(1), T0MEANS = matrix(0),
       CINT = matrix(0), MANIFESTMEANS = matrix(mm, 2, 1), Tpoints = 8))
-    d <- suppressMessages(data.frame(ctGenerate(gm, n.subjects = 1, Tpoints = 8,
+    d <- suppressMessages(data.frame(ctGenerate(gm, n = 1, Tpoints = 8,
       burnin = 0, backend = 'r')))
     d$id <- i
     d

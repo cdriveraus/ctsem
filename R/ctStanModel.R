@@ -168,9 +168,19 @@ ctModelUnlist<-function(ctmodelobj,
   # RAWPOPVAR is not a system matrix and has no rows in `pars`; it is stored on
   # the model and taken out here before the loop below, which requires every
   # matrix it sees to be present in `pars`.
-  if('RAWPOPVAR' %in% names(matrices)){
-    ctm <- .ctModelRawPopVarAssign(ctm, matrices[['RAWPOPVAR']])
-    matrices[['RAWPOPVAR']] <- NULL
+  for(field in grep('^RAWPOPVAR(_.+)?$', names(matrices), value=TRUE)){
+    ctm <- .ctModelRawPopVarAssign(ctm, matrices[[field]], field)
+    matrices[[field]] <- NULL
+  }
+  # A covariance given as ctCov(): its cells for this model's construction,
+  # with the covariance remembered (R/ctCov.R).
+  for(field in intersect(names(matrices), .ctCovSystemMatrices)){
+    if(inherits(matrices[[field]], 'ctCov')){
+      accepted <- .ctCovAccept(ctm, field, matrices[[field]])
+      ctm <- accepted$model
+      matrices[[field]] <- matrix(as.numeric(accepted$cells),
+        nrow(accepted$cells), ncol(accepted$cells))
+    }
   }
 
   pars <- ctm[['pars']]
@@ -274,6 +284,17 @@ ctModelUnlist<-function(ctmodelobj,
 #' \code{names(x)} and printed objects, but the matrix values are always derived
 #' from \code{x$pars}.
 #'
+#' The view also holds the population spread of the individually varying
+#' parameters: \code{RAWPOPVAR} for the subject level and
+#' \code{RAWPOPVAR_<idname>} for each grouping level, one row and column per
+#' parameter varying at that level, also reachable as \code{x$RAWPOPVAR}.
+#' The diagonal holds standard deviations and the lower triangle correlation
+#' coordinates, both for the raw, untransformed parameters, the scale a fit
+#' reports them on. A number fixes a cell, on every route, and a label leaves
+#' it free. \code{\link{ctCov}} writes a whole matrix from a covariance, which
+#' is also how to state \code{T0VAR}, \code{DIFFUSION} or \code{MANIFESTVAR}
+#' as the covariance it is meant to be.
+#'
 #' @return \code{ctModelMatrices()} returns a named list of matrices. The
 #' replacement form returns the updated \code{ctStanModel}.
 #' @export
@@ -284,7 +305,9 @@ ctModelMatrices <- function(x){
   # after the model is built, and a RAWPOPVAR describing a different set of random
   # effects than the model currently has would be worse than none.
   synced <- .ctModelRawPopVarSync(x)
-  if(!is.null(synced[['RAWPOPVAR']])) out$RAWPOPVAR <- synced[['RAWPOPVAR']]
+  for(field in .ctModelRawPopVarLevels(x)$field){
+    if(!is.null(synced[[field]])) out[[field]] <- synced[[field]]
+  }
   out
 }
 
@@ -298,13 +321,19 @@ ctModelMatrices <- function(x){
 `$.ctStanModel` <- function(x, name){
   nameindex <- pmatch(name, names(x), duplicates.ok=FALSE)
   if(!is.na(nameindex) && identical(names(x)[nameindex], 'matrices')) return(ctModelMatrices(x))
+  # A level's RAWPOPVAR follows its varying parameters, which are routinely set
+  # after the model is built, so `m$RAWPOPVAR_study['mm', 'mm'] <- 0.3` finds
+  # the matrix whether or not anything has synced it yet.
+  if(grepl('^RAWPOPVAR(_.+)?$', name)) return(.ctModelRawPopVarSync(x)[[name]])
   x[[name, exact=FALSE]]
 }
 
 #' @export
 `$<-.ctStanModel` <- function(x, name, value){
   if(identical(name, 'matrices')) return(.ctModelUpdateParsFromMatrices(x, value))
-  x[[name]] <- value
+  if(grepl('^RAWPOPVAR(_.+)?$', name) && !is.null(value)){
+    x <- .ctModelRawPopVarAssign(x, value, name)
+  } else x[[name]] <- value
   x
 }
 
