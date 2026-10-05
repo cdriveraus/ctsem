@@ -944,6 +944,32 @@ print.ctLaplaceCorrection <- function(x, ...) {
   }
 }
 
+# The log posterior the quadrature correction would report at `values`, from
+# its own screen (`ctsem_laplace_continuation`): quadrature for every unit no
+# wider than `maxdim` random effects, the Laplace term for the rest, plus the
+# prior. `NA` when the quadrature cannot be evaluated. Used to compare two
+# maxima of one Laplace objective on the objective the fit reports
+# (`.ctJuliaOptimiseFit()`'s guard on `saem = TRUE`).
+#' @keywords internal
+.ctLaplaceCorrectedValue <- function(model_spec, values,
+  control = .ctLaplaceContinueDefaults) {
+  spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
+  module <- .ctJuliaModule(spec$project)
+  cont <- try(module$ctsem_laplace_continuation(.ctJuliaObjective(spec),
+    .ctJuliaNumericVector(values), nodes = as.integer(control$nodes),
+    tolerance = as.numeric(control$tolerance),
+    product_maxdim = as.integer(control$product_maxdim),
+    soft_tau = as.numeric(control$soft_tau),
+    soft_maxdirs = as.integer(control$soft_maxdirs),
+    maxdim = as.integer(control$maxdim)), silent = TRUE)
+  if (inherits(cont, "try-error")) return(c(corrected = NA_real_,
+    laplace = NA_real_, wide = NA_real_, units = NA_real_))
+  info <- .ctJuliaGet(module$ctsem_laplace_continuation_info(cont))
+  c(corrected = as.numeric(info$quadrature)[1L],
+    laplace = as.numeric(info$laplace)[1L],
+    wide = as.numeric(info$nwide)[1L], units = as.numeric(info$nunits)[1L])
+}
+
 .ctLaplaceContinue <- function(fit, cores = 1L, verbose = 0L,
   control = .ctLaplaceContinueDefaults) {
   started <- proc.time()[["elapsed"]]

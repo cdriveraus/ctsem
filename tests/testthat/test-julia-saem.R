@@ -53,6 +53,18 @@ test_that("a saem fit ends at the Laplace fit's optimum and records its phase", 
   # And a fit that did not ask ran none.
   expect_identical(ref$optim$saem_iterations, 0L)
   expect_null(ref$optim$saem_trace)
+  # It also finished without SAEM from its own start and kept the higher
+  # maximum on the corrected objective; here both are the one maximum, so the
+  # tie keeps SAEM's, and the fit reports that maximum's log posterior.
+  guard <- op$saem_guard
+  expect_true(guard$chosen %in% c("saem", "without"))
+  expect_true(all(is.finite(c(guard$logpost_saem, guard$logpost_without))))
+  # Absolute, in nats: expect_equal's tolerance is relative.
+  expect_lt(abs(guard$logpost_saem - guard$logpost_without), 1e-3)
+  expect_identical(guard$chosen, "saem")
+  expect_lt(abs(as.numeric(fit$estimate$logposterior) -
+    max(guard$logpost_saem, guard$logpost_without)), 1e-2)
+  expect_null(ref$optim$saem_guard)
 })
 
 test_that("saem runs at cores > 1 and set.seed() reproduces it", {
