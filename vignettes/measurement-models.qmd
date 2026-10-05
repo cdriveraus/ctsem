@@ -471,9 +471,10 @@ d2 <- data.frame(ctGenerate(gen2, n.subjects = 60, Tpoints = 10,
 head(d2, 3)
 ```
 
-`ctGenerate(backend = 'julia')` draws each row from its own prior predictive as
-the filter reaches it, so it applies the links above rather than producing
-continuous values for a variable the model calls binary. The R generator
+`ctGenerate(backend = 'julia')` simulates the latent process and draws each
+observation from its measurement model given the state, so it applies the links
+above rather than producing continuous values for a variable the model calls
+binary. The R generator
 integrates a linear Gaussian system and has no notion of a link; it warns if
 asked to generate from a model with non-Gaussian indicators.
 
