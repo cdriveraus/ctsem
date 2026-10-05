@@ -499,11 +499,7 @@ function _ctsem_subject_gradient_chunk!(scores::Matrix{T}, totals::Vector{T},
             copyto!(aws.tipreds, tipred_vec)
             aws.frechet_count = 0
 
-            loglik = _extended_kalman_filter_continuous!(ws, values,
-                subject_objective.data, subject_objective.timesteps,
-                subject_objective.params, subject_objective.tdpreds,
-                tipred_vec, subject_objective.subject,
-                subject_objective.max_timestep, tape)
+            loglik = _ekf_run(ws, subject_objective, values, tipred_vec, tape)
             # _finite_deep, not isfinite: under ctsem_hessian this runs at Dual
             # and isfinite tests the value alone, so a NaN partial would pass.
             if !_finite_deep(loglik)
@@ -512,6 +508,11 @@ function _ctsem_subject_gradient_chunk!(scores::Matrix{T}, totals::Vector{T},
                 return nothing
             end
             total += loglik
+
+            if _tape_unstable(tape)
+                _ctsem_forward_subject_gradient!(view(scores, i, :), subject_objective, values)
+                continue
+            end
 
             fill!(aws.theta_bar, zero(T))
             _ctsem_reverse_tape!(tape, subject_objective.params, aws, aws.n, aws.m)
@@ -568,11 +569,7 @@ function _ctsem_adjoint_chunk!(gradient::Vector{T}, totals::Vector{T},
         resize!(aws.tipreds, length(tipred_vec))
         copyto!(aws.tipreds, tipred_vec)
 
-        loglik = _extended_kalman_filter_continuous!(ws, values,
-            subject_objective.data, subject_objective.timesteps,
-            subject_objective.params, subject_objective.tdpreds,
-            tipred_vec, subject_objective.subject,
-            subject_objective.max_timestep, tape)
+        loglik = _ekf_run(ws, subject_objective, values, tipred_vec, tape)
         # _finite_deep, not isfinite: under ctsem_hessian this runs at Dual and
         # isfinite tests the value alone, so a NaN partial would pass.
         if !_finite_deep(loglik)
@@ -581,6 +578,16 @@ function _ctsem_adjoint_chunk!(gradient::Vector{T}, totals::Vector{T},
             return nothing
         end
         total += loglik
+
+        # Forward mode for a subject whose reverse pass would not be stable;
+        # see `_CTSEM_ADJOINT_GROWTH`. Its gradient goes straight into the
+        # chunk's, so nothing of it enters the shared parameter layer.
+        if _tape_unstable(tape)
+            gf = similar(gradient)
+            _ctsem_forward_subject_gradient!(gf, subject_objective, values)
+            gradient .+= gf
+            continue
+        end
 
         shared || fill!(aws.theta_bar, zero(T))
         _ctsem_reverse_tape!(tape, subject_objective.params, aws, aws.n, aws.m)

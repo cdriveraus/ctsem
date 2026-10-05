@@ -118,10 +118,11 @@ end
 # Task-local storage removes the assumption rather than patching it: nothing is
 # shared, so nothing has to be reasoned about, and no future parallel site can
 # reintroduce this by forgetting to pass a slot. The struct is built once per
-# task per shape and dies with the task, so the cost is one allocation per
-# chunk, not one per call.
+# task per shape; a parallel region's workers borrow their store from a pool
+# that outlives them (`_ctsem_scratch`), so it is built once per worker, not
+# once per evaluation.
 function _expm_cov_scratch(::Type{T}, ::Val{d}) where {T,d}
-    store = task_local_storage()
+    store = _ctsem_scratch()
     key = (:expm_cov_scratch, T, d)
     sc = get(store, key, nothing)
     if sc === nothing

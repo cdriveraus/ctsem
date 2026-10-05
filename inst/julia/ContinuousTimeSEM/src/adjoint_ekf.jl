@@ -203,6 +203,9 @@ mutable struct CTSEMAdjointTape{T}
     # transforms' recorded read sets and their written indices. This is what
     # a group record snapshots instead of the whole parameter vector.
     group_relevant::Vector{Vector{Int}}
+    # The largest growth of any prediction's transition this pass, the 1-norm
+    # of `e^{JAx dt}`; see `_CTSEM_ADJOINT_GROWTH`.
+    growth::Float64
 end
 
 CTSEMAdjointTape(::Type{T}, group_relevant=[Int[], Int[], Int[]]) where {T} =
@@ -211,7 +214,69 @@ CTSEMAdjointTape(::Type{T}, group_relevant=[Int[], Int[], Int[]]) where {T} =
         CTSEMUpdateRecord{T}[], CTSEMGroupRecord{T}[], CTSEMThetaRecord{T}[],
         CTSEMInitRecord{T}[], CTSEMBinaryRecord{T}[],
         CTSEMStationaryRecord{T}[], 0, 0, 0, 0, 0, 0, 0, 0,
-        T[], group_relevant)
+        T[], group_relevant, 0.0)
+
+"""
+Transition growth above which a subject's gradient is taken by forward mode
+rather than by the reverse pass.
+
+The reverse pass is exact in exact arithmetic and not stable in double
+precision once a prediction's covariance is very large in some direction: the
+covariance cotangent there comes from an explicit `S^-1` whose rounding
+(about 1e-6 on an innovation covariance of 1e10) is far larger than its true
+value (about 1e-10), and the reverse through `e^{JAx dt}` then multiplies that
+direction by up to the square of the growth. Forward mode never forms that
+cotangent. Found on the SNSF pilot: a person's drift with eigenvalues -1.05
+and +0.28 over a 43-day gap, growth 2e5 -- the adjoint gradient off by up to
+1.7e4 (relative) against BigFloat, the same adjoint in BigFloat exact, Float64
+forward mode good to 1.6e-6. A stable drift's transition shrinks, so this
+fires only on explosive (or strongly non-normal) intervals.
+`ctsem_set_adjoint_growth!` moves it; `Inf` keeps the reverse pass always.
+"""
+const _CTSEM_ADJOINT_GROWTH = Ref(100.0)
+
+"""Set the transition growth above which subjects take the forward-mode gradient."""
+function ctsem_set_adjoint_growth!(x::Real)
+    x > 0 || throw(ArgumentError("threshold must be positive"))
+    _CTSEM_ADJOINT_GROWTH[] = Float64(x)
+    return _CTSEM_ADJOINT_GROWTH[]
+end
+
+"""The 1-norm of `E[1:n, 1:n]`'s primal values."""
+function _transition_growth(E::AbstractMatrix, n::Int)
+    largest = 0.0
+    @inbounds for j in 1:n
+        column = 0.0
+        for i in 1:n
+            column += abs(Float64(_primal(E[i, j])))
+        end
+        largest = max(largest, column)
+    end
+    return largest
+end
+
+"""Whether the subject just taped needs the forward-mode gradient."""
+@inline _tape_unstable(tape::CTSEMAdjointTape) = tape.growth > _CTSEM_ADJOINT_GROWTH[]
+
+"""
+    _ctsem_forward_subject_gradient!(g, subject_objective, values)
+
+`g` set to the gradient of one subject's log likelihood at `values`, by forward
+mode, on a workspace of its own (the subject's cached one can be shared by
+sampler chains filtering the same subject). Behind a barrier, so the filter is
+compiled for the new dual type only when a subject actually needs this. Works
+at any element type, the nested duals of the Hessian and the Laplace sweeps
+included: ForwardDiff's tag for this call is created after theirs.
+"""
+_ctsem_forward_subject_gradient!(g::AbstractVector, so, values::AbstractVector) =
+    (_ctsem_barrier(_ctsem_forward_subject_gradient_impl!, g, so, values); g)
+
+function _ctsem_forward_subject_gradient_impl!(g, so, values)
+    f = x -> _ekf_run(_init_continuous_ekf_workspace(eltype(x), so.params), so, x,
+        _ctsem_tipred_vector(so.tipreds, x), nothing)
+    ForwardDiff.gradient!(g, f, values)
+    return nothing
+end
 
 """
     _tape_reset!(tape)
@@ -233,6 +298,7 @@ stale record beyond the count is unreachable rather than merely unread.
 """
 function _tape_reset!(tape::CTSEMAdjointTape)
     empty!(tape.program)
+    tape.growth = 0.0
     tape.npredicts = 0; tape.ntds = 0; tape.nupdates = 0
     tape.ngroups = 0; tape.nthetas = 0; tape.ninits = 0
     tape.nbinaries = 0; tape.nstationaries = 0
@@ -535,6 +601,7 @@ function _record_predict!(tape::CTSEMAdjointTape{T}, ws, pars,
     _tape_fill!(record.affine, view(ws.affine_buffer.r, 1:naff))
     _tape_fill!(record.dINT_dynamic, view(ws.discrete_ca.dINT, 1:naff))
     record.dt = T(Δt)
+    tape.growth = max(tape.growth, _transition_growth(ws.discrete_ca.eJAx, n))
     series = ws.discretization_buffer.series
     record.series_intercept = series.intercept
     record.series_noise = series.noise

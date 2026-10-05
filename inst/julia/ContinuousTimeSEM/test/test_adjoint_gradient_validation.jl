@@ -523,3 +523,57 @@ end
     @test nl([0.2]) == nl_pristine([0.2])
     _check_adjoint(nl, [0.35])
 end
+
+# An explosive drift over a long gap: the shape the SNSF pilot met, where the
+# reverse pass is exact in exact arithmetic and loses every digit in Float64
+# (see `_CTSEM_ADJOINT_GROWTH`). Two latents, three indicators each, small
+# measurement error, a dense start and then six weeks with a positive
+# eigenvalue -- the transition grows by about 1e5. The gradient must still
+# agree with ForwardDiff, which it does by taking forward mode for such a
+# subject; and with that switched off the reverse pass must disagree, or this
+# fixture no longer exercises the case.
+function _adjoint_explosive_2d_parameters()
+    lam = [1.0 0.0; 0.8 0.0; 1.2 0.0; 0.0 1.0; 0.0 0.9; 0.0 1.1]
+    df = _adjoint_test_dataframe(
+        drift=[-0.6 1.5; 0.25 -0.17], jax=[-0.6 1.5; 0.25 -0.17],
+        cint=[0.0; 0.0;;], diffusion=[0.6 0.0; 0.1 0.5],
+        lambda=lam, jy=lam, manifestmeans=zeros(6, 1),
+        manifestvar=Matrix(0.3 * I(6)), t0var=[1.0 0.0; 0.0 1.0],
+        t0means=[0.0; 0.0;;],
+        free=Dict(
+            (:DRIFT, 1, 1) => (1, "param[1]"), (:JAx, 1, 1) => (1, "param[1]"),
+            (:DRIFT, 1, 2) => (2, "param[2]"), (:JAx, 1, 2) => (2, "param[2]"),
+            (:DRIFT, 2, 1) => (3, "param[3]"), (:JAx, 2, 1) => (3, "param[3]"),
+            (:DRIFT, 2, 2) => (4, "param[4]"), (:JAx, 2, 2) => (4, "param[4]"),
+            (:LAMBDA, 2, 1) => (5, "param[5]"), (:Jy, 2, 1) => (5, "param[5]"),
+            (:LAMBDA, 6, 2) => (6, "param[6]"), (:Jy, 6, 2) => (6, "param[6]"),
+        ),
+    )
+    ekf_from_data_frame(df)
+end
+
+@testset "Explosive drift over a long gap: the gradient stays exact" begin
+    CT = ContinuousTimeSEM
+    sp = _adjoint_explosive_2d_parameters()
+    times = [0.0, 0.1, 0.2, 0.3, 0.45, 43.3, 43.4, 43.5, 43.6]
+    data = [sin(1.3 * i + 0.7 * j) for i in 1:6, j in eachindex(times)]
+    objective = CT.ctsem_objective(sp, [1], times, data)
+    values = [-0.6, 1.5, 0.25, -0.17, 0.8, 1.1]
+    A = [values[1] values[2]; values[3] values[4]]
+    @test maximum(real, eigvals(A)) > 0.2
+    @test opnorm(exp(A .* (times[6] - times[5])), 1) > 100 * CT._CTSEM_ADJOINT_GROWTH[]
+    reference = ForwardDiff.gradient(objective, values)
+    rel(g) = maximum(abs.(g .- reference) ./ max.(1.0, abs.(reference)))
+    adjoint = CT.ctsem_adjoint_gradient(objective, values)
+    @test isapprox(adjoint.value, objective(values); rtol=1e-12)
+    @test rel(adjoint.gradient) < 1e-8
+    scores = CT.ctsem_subject_gradients(objective, values).scores
+    @test rel(vec(sum(scores; dims=1))) < 1e-8
+    old = CT._CTSEM_ADJOINT_GROWTH[]
+    try
+        CT.ctsem_set_adjoint_growth!(Inf)
+        @test rel(CT.ctsem_adjoint_gradient(objective, values).gradient) > 1e-6
+    finally
+        CT.ctsem_set_adjoint_growth!(old)
+    end
+end

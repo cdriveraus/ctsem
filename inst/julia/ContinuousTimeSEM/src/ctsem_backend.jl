@@ -563,6 +563,57 @@ _ctsem_nblocks(n::Int, nworkers::Int) =
     nworkers <= 1 ? 1 : max(1, min(n, nworkers * _CTSEM_BLOCKS_PER_WORKER[]))
 
 """
+Scratch stores that outlive the tasks using them; see `_ctsem_scratch`.
+"""
+const _CTSEM_SCRATCH_POOL = IdDict{Any,Any}[]
+const _CTSEM_SCRATCH_LOCK = Threads.SpinLock()
+
+"""
+    _ctsem_scratch()
+
+The store the engine's per-task caches live in: the covariance and
+exponential caches (`_covcache`, `_expm_cov_scratch`) and the transpose
+buffers (`_ctsem_transpose_buffer`). A worker spawned by a parallel region
+borrows one from a pool for its lifetime (`_ctsem_with_scratch`); any other
+task uses its own task-local storage.
+
+Per task because two running tasks must never share these buffers -- a task can
+migrate between threads, so a thread id does not name a private buffer. But
+not per *new* task: the parallel regions spawn their workers afresh on every
+evaluation, and a task's own storage dies with it, so every worker of every
+evaluation rebuilt its caches -- about 40 small matrices each. On gC8 that was
+most of what the filter's value allocated at eight chunks (139 KB an
+evaluation, against 21 KB at one).
+"""
+@inline function _ctsem_scratch()
+    tls = task_local_storage()
+    store = get(tls, :ctsem_scratch, nothing)
+    return (store === nothing ? tls : store)::IdDict{Any,Any}
+end
+
+"""
+    _ctsem_with_scratch(f)
+
+`f()` with a scratch store borrowed from the pool as this task's
+`_ctsem_scratch()`, returned when `f` finishes. The pool grows to the most
+workers ever running at once.
+"""
+function _ctsem_with_scratch(f)
+    lock(_CTSEM_SCRATCH_LOCK)
+    store = isempty(_CTSEM_SCRATCH_POOL) ? IdDict{Any,Any}() : pop!(_CTSEM_SCRATCH_POOL)
+    unlock(_CTSEM_SCRATCH_LOCK)
+    task_local_storage(:ctsem_scratch, store)
+    try
+        return f()
+    finally
+        delete!(task_local_storage(), :ctsem_scratch)
+        lock(_CTSEM_SCRATCH_LOCK)
+        push!(_CTSEM_SCRATCH_POOL, store)
+        unlock(_CTSEM_SCRATCH_LOCK)
+    end
+end
+
+"""
     _ctsem_pull_blocks(work, nblocks, nworkers)
 
 Call `work(b, w)` once for each block `b` in `1:nblocks`, on `nworkers` tasks --
@@ -597,7 +648,8 @@ function _ctsem_pull_blocks(work, nblocks::Int, nworkers::Int)
     failed = Threads.Atomic{Bool}(false)
     Threads.@sync begin
         for w in 2:nworkers
-            Threads.@spawn _ctsem_pull!(work, nblocks, w, next, failed)
+            Threads.@spawn _ctsem_with_scratch(() ->
+                _ctsem_pull!(work, nblocks, w, next, failed))
         end
         _ctsem_pull!(work, nblocks, 1, next, failed)
     end
@@ -1198,6 +1250,13 @@ _ctsem_optimise_log(::CTSEMOptimisable, verbose::Bool) = nothing
 _ctsem_optimise_trace_keys(::CTSEMOptimisable) = (:objective, :gradient_norm)
 _ctsem_optimise_trace_values(::CTSEMOptimisable) = ()
 _ctsem_optimise_progress_extra(::CTSEMOptimisable) = ()
+
+"""
+Why the route refused the point it last evaluated, as a clause for an error
+message, or `""`. The laplace route names the units whose inner solve did not
+converge.
+"""
+_ctsem_optimise_refusal(::CTSEMOptimisable) = ""
 _ctsem_optimise_verbose_shape(::CTSEMOptimisable) = nothing
 _ctsem_optimise_verbose_report(::CTSEMOptimisable, log) = nothing
 
@@ -1343,6 +1402,7 @@ _ctsem_optimise_trace_keys(p::CTSEMPinnedObjective) =
     _ctsem_optimise_trace_keys(p.objective)
 _ctsem_optimise_trace_values(p::CTSEMPinnedObjective) =
     _ctsem_optimise_trace_values(p.objective)
+_ctsem_optimise_refusal(p::CTSEMPinnedObjective) = _ctsem_optimise_refusal(p.objective)
 _ctsem_optimise_progress_extra(p::CTSEMPinnedObjective) =
     _ctsem_optimise_progress_extra(p.objective)
 _ctsem_optimise_verbose_shape(p::CTSEMPinnedObjective) =
@@ -2199,6 +2259,16 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # still has to gain and resumes this optimiser when it falls short. Two
     # mechanisms for one job, where the second can only act in cases the first
     # did not fix, is a way to be surprised rather than a safety net.
+    # A start the route refuses is not a point to stop at. L-BFGS accepts only
+    # usable points, so ending on the sentinel means the start was refused --
+    # and it took no step from it, having no gradient to step along. This used
+    # to fall through to the finish and the Hessian at that point, silently
+    # (the SNSF pilot, restarting from another build's checkpoint).
+    if !(isfinite(result.minimum) && result.minimum < invalid_objective)
+        throw(ErrorException(string(
+            "The objective cannot be evaluated at the point the optimiser starts from",
+            _ctsem_optimise_refusal(objective), ". Try other starting values.")))
+    end
     # Before the final evaluation, so what it reports is the run rather than
     # the extra call: see `_ctsem_optimise_verbose_report`.
     minimizer = collect(result.minimizer)

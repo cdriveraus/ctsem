@@ -87,7 +87,7 @@ CovCache{T,D}(code::Int) where {T,D} = CovCache{T,D}(
 # is a type test. That is cheaper than the allocation it replaces, let alone
 # than the construction either one is in front of.
 function _covcache(::Type{T}, ::Val{d}, code::Int) where {T,d}
-    store = task_local_storage()
+    store = _ctsem_scratch()
     caches = get(store, _COVCACHE_TLS_KEY, nothing)
     if caches === nothing
         caches = Vector{Any}()
