@@ -2712,6 +2712,17 @@ ctFitUncertainty <- function(fit,
     if(is.null(cores)) cores <- getOption("mc.cores", 2L)
     cores <- max(1L, suppressWarnings(as.integer(cores[1])))
     if(is.na(cores)) cores <- 1L
+    # The fit's own prior is what is sampled under. An ML fit has none on its
+    # population sds (or none at all), and where the data allow one near zero
+    # the posterior is improper there -- said before the run, not after it.
+    scope <- fit$args$input$priorscope
+    varying <- isTRUE(tryCatch(.ctAnyVarying(.ctFitBaseModel(fit)),
+      error = function(e) FALSE))
+    if(identical(scope, 'none') || (identical(scope, 'randomCorr') && varying))
+      message("This fit has no prior on ", if(identical(scope, 'none'))
+        "its parameters" else "its population sds", ", so the sampled ",
+        "posterior is improper wherever the data leave one flat. ",
+        "ctFit(optimize = FALSE) samples under priors = TRUE by default.")
     return(.ctBackendUncertaintySample(fit, control=control, cores=cores,
       verbose=verbose))
   }

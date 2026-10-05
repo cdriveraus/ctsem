@@ -26,11 +26,11 @@ fill. Carries the model and data a worker rebuilds its objective from.}
 \item{target}{From [.ctBackendSampleTarget()]: what to sample, in a form that
 survives serialisation.}
 
-\item{chains}{Number of chains, one per worker.}
+\item{chains}{Number of chains.}
 
 \item{warmup, draws}{Per chain.}
 
-\item{cores}{Total threads to divide among the workers.}
+\item{cores}{The most processes to run at once, and the threads they share.}
 
 \item{handles}{Optional warmed pool from [.ctBackendWarmWorkers()]. When
 absent the workers are started here and the compile is paid in full.}

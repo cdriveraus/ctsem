@@ -125,6 +125,45 @@ test_that("arguments a fit would coerce or drop are refused or named before any 
     "control = list\\(chains")
 })
 
+test_that("the defaults a sampled or reduced-rank fit resolves to combine", {
+  # The ?ctFit example: random intercepts, TI predictors, one TI1 value missing.
+  m <- suppressMessages(ctModel(type = "ct", latentNames = c("eta1", "eta2"),
+    manifestNames = c("Y1", "Y2"), MANIFESTVAR = diag(.1, 2),
+    TDpredNames = "TD1", TIpredNames = c("TI1", "TI2", "TI3"),
+    LAMBDA = diag(2)))
+  prep <- function(...) suppressWarnings(suppressMessages(ctFit(ctstantestdat,
+    m, backend = "julia", fit = FALSE, ...)))
+  # Sampling it used to refuse: 'auto' chose 'none', which cannot sample the
+  # missing value. Where the augmented route is exact, 'auto' takes it.
+  sampled <- prep(optimize = FALSE)
+  expect_identical(sampled$args$resolved$intoverpop, "augmented")
+  expect_match(sampled$args$resolved$intoverpopreason, "TI predictor values")
+  # A nonlinear effect keeps 'none', whose refusal says what to do.
+  drift <- m
+  drift$pars$indvarying[drift$pars$matrix %in% "DRIFT" &
+    drift$pars$row == 1 & drift$pars$col == 1] <- TRUE
+  expect_identical(ctsem:::.ctIntOverPopAuto(drift, optimize = FALSE,
+    timissing = TRUE)$route, "none")
+  # Sampling defaults to a prior on every parameter; one asked for is kept,
+  # and a scope that leaves parameters flat is named before the run.
+  expect_identical(sampled$args$resolved$priors, TRUE)
+  expect_identical(prep()$args$resolved$priors, "randomCorr")
+  expect_message(suppressWarnings(ctFit(ctstantestdat, m, backend = "julia",
+    fit = FALSE, optimize = FALSE, priors = "randomCorr")),
+    "population sds without a prior")
+  # Under laplace a rank below the varying T0MEANS fixed the initial state
+  # along a direction (-5481 against -1034, reported converged).
+  expect_error(prep(intoverpop = "laplace", poprank = 1),
+    "below the 2 individually varying T0MEANS")
+  expect_no_error(prep(intoverpop = "laplace", poprank = 2))
+})
+
+test_that("chain processes number at most cores", {
+  expect_identical(ctsem:::.ctBackendSampleWorkers(4L, 2L), 2L)
+  expect_identical(ctsem:::.ctBackendSampleWorkers(2L, 8L), 2L)
+  expect_identical(ctsem:::.ctBackendSampleWorkers(4L, NA), 1L)
+})
+
 test_that("a bracketed expression is resolved or refused for the reason it actually hit", {
   # One model shape, three expressions, so the difference in the message is
   # attributable to the expression and nothing else.

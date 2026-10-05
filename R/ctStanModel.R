@@ -784,9 +784,21 @@ ctStanModel <- ctModelConvertOMX
 # So on the julia backend, when optimising, 'auto' takes laplace whenever any
 # of those holds, and augmented otherwise. Stan has one route and keeps it.
 .ctIntOverPopAuto <- function(model, backend = 'julia', optimize = TRUE,
-  intoverstates = TRUE){
+  intoverstates = TRUE, timissing = FALSE){
   choose <- function(route, reason, announce = FALSE)
     list(route = route, reason = reason, announce = announce)
+  # Missing TI predictor values are sampled by the augmented route only, so a
+  # sampled fit of such data refused the 'none' it was sent to -- the ?ctFit
+  # example among them. Where the augmented route is exact, it is the one that
+  # can sample this data; elsewhere 'none' stands and its refusal says what to
+  # do.
+  if(!isTRUE(optimize) && isTRUE(timissing) && identical(backend, 'julia') &&
+      isTRUE(intoverstates) && .ctAnyVarying(model) &&
+      !.ctAnyVarying(model, .ctOuterVaryingColumns(model)) &&
+      is.null(.ctPopFilterNonlinearity(model)))
+    return(choose('augmented', paste0('TI predictor values are missing, which ',
+      'only the augmented route samples, and it is exact for this model'),
+      announce = TRUE))
   # Sampling integrates nothing: the effects are sampled with the rest.
   if(!isTRUE(optimize)) return(choose('none',
     'optimize=FALSE samples the individual differences'))

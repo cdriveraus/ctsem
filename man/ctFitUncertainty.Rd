@@ -126,10 +126,12 @@ and 100 to 200 draws each overtook the Laplace normal approximation's
 accuracy at two to three times a Laplace fit's time, and were faster and
 more accurate outright where the Laplace fit was slow or biased; short runs
 are limited by whether the chains agree, so R-hat is usually the binding
-check. With \code{processes = TRUE} each chain starts its own Julia
-session, a fixed cost of some tens of seconds that a run much shorter than
-a minute does not recover; \code{processes = FALSE} keeps the chains in this
-session, as threads when it has them.
+check. With \code{processes = TRUE} the chains run in up to \code{cores}
+worker processes, each starting its own Julia session -- a fixed cost of
+some tens of seconds that a run much shorter than a minute does not recover
+-- and a worker runs its share of the chains in turn, so four chains at the
+default of two cores run two at a time. \code{processes = FALSE}, or one
+core, keeps the chains in this session, as threads when it has them.
 \code{settleTol} ends warmup early once the metric stops moving (off by
 default, and slower when measured). \code{control$sampler} chooses the
 kernel for the joint posterior: \code{'saem'} (the default there) draws the
@@ -184,7 +186,9 @@ proposal. For \code{uncertainty='is'}, \code{draws} is set to \code{'imis'}.}
 for julia) is reused when available; otherwise 1000 samples are used.}
 
 \item{cores}{Number of cores. If \code{NULL}, one core is used, and nothing
-is parallelised unless a value above one is asked for. On a
+is parallelised unless a value above one is asked for -- except for
+\code{'sample'}, which takes \code{getOption("mc.cores", 2)} as
+\code{ctFit} does, and runs at most that many chains at once. On a
 \code{ctStanFit} these are R worker processes: each
 log-probability/gradient evaluation is split across subjects and reassembled,
 and score contributions and transformed quantities use them too. On a
