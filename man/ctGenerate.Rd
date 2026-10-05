@@ -136,6 +136,15 @@ the scale of its prior, and all of them are named in a message:
   zero.
 }
 \code{fromPriors=TRUE} draws all of these from the priors instead.
+
+The julia generator also returns what it generated from, as attributes:
+\code{attr(, 'subjectpars')}, each subject's parameters on their natural
+scale with its id and groups; \code{attr(, 'grouppars')}, for a model with
+grouping levels, each group's parameters at each level -- its own effects
+and those above it, as a subject of average deviation within it would have;
+and \code{attr(, 'states')}, the latent
+states at every row by id and time (not with \code{intoverstates=TRUE},
+which draws observations from the filter rather than states).
 }
 
 \examples{

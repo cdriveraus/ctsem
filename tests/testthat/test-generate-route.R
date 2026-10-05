@@ -139,3 +139,27 @@ test_that("a fixed TI predictor effect reaches the data", {
   expect_equal(unname(stats::coef(stats::lm(tapply(d[, "Y1"], d[, "id"], mean) ~
     ti))[2]), 3, tolerance = 0.1)
 })
+
+# What generated the data comes back with it: each subject's parameters, and
+# the latent states. Exactly what generated it -- the data minus the state and
+# the subject's own mean leave only measurement noise -- through burnin.
+test_that("the subject parameters and states that generated the data are returned", {
+  skip_without_julia()
+  m <- suppressMessages(suppressWarnings(ctModel(type = "ct",
+    manifestNames = "Y1", latentNames = "eta1", n.TIpred = 1,
+    TIpredNames = "TI1", LAMBDA = matrix(1), T0MEANS = matrix(0),
+    CINT = matrix(0), DRIFT = matrix(-0.4), DIFFUSION = matrix(0.5),
+    MANIFESTVAR = matrix(0.01), T0VAR = matrix(1),
+    MANIFESTMEANS = matrix("mm||TRUE|1|TI1=0.2"))))
+  set.seed(4)
+  d <- suppressMessages(ctGenerate(m, n = 30, Tpoints = 5, burnin = 2,
+    backend = "julia"))
+  pars <- attr(d, "subjectpars")
+  states <- attr(d, "states")
+  expect_equal(nrow(pars), 30L)
+  expect_equal(states[, "time"], d[, "time"])
+  noise <- d[, "Y1"] - states[, "eta1"] - pars$mm[match(d[, "id"], pars$id)]
+  expect_lt(abs(stats::sd(noise) - 0.01), 0.003)
+  expect_null(attr(suppressMessages(ctGenerate(m, n = 3, Tpoints = 3,
+    backend = "julia", intoverstates = TRUE)), "states"))
+})

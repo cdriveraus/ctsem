@@ -467,6 +467,15 @@ ctStanGenerate <- ctGenerateFromPriors
 #'   zero.
 #' }
 #' \code{fromPriors=TRUE} draws all of these from the priors instead.
+#'
+#' The julia generator also returns what it generated from, as attributes:
+#' \code{attr(, 'subjectpars')}, each subject's parameters on their natural
+#' scale with its id and groups; \code{attr(, 'grouppars')}, for a model with
+#' grouping levels, each group's parameters at each level -- its own effects
+#' and those above it, as a subject of average deviation within it would have;
+#' and \code{attr(, 'states')}, the latent
+#' states at every row by id and time (not with \code{intoverstates=TRUE},
+#' which draws observations from the filter rather than states).
 #' @details Covariance related matrices are treated as Cholesky factors.
 #' TRAITTDPREDCOV and TIPREDCOV matrices are not accounted for, at present. 
 #' The first 1:n.TDpred rows and columns of TDPREDVAR are used for generating
@@ -628,23 +637,32 @@ ctGenerate<-function(ctmodelobj,n=100,burnin=0,dtmean=1,logdtsd=0,dtmat=NA,
     })
     out <- .ctGenerateJulia(ctmodelobj, n, times,
       popmeans = popmeans, intoverstates = intoverstates)
+    subjectpars <- attr(out, 'subjectpars')
+    grouppars <- attr(out, 'grouppars')
+    states <- attr(out, 'states')
     if(burnin > 0){
       keep <- unlist(lapply(seq_len(nsubjects), function(si)
         (si-1)*fullTpoints + (burnin+1):fullTpoints))
       out <- out[keep, , drop=FALSE]
+      if(!is.null(states)) states <- states[keep, , drop=FALSE]
       # Time restarts at zero for each subject once the burnin is dropped, as
       # the generator below does. Leaving it running from the burnin would make
       # the first observed interval look like the whole burnin period.
       for(si in seq_len(nsubjects)){
         rows <- (si-1)*(fullTpoints-burnin) + seq_len(fullTpoints-burnin)
+        if(!is.null(states)) states[rows,ctmodelobj$timeName] <-
+          states[rows,ctmodelobj$timeName] - out[rows[1],ctmodelobj$timeName]
         out[rows,ctmodelobj$timeName] <-
           out[rows,ctmodelobj$timeName] - out[rows[1],ctmodelobj$timeName]
       }
     }
-    if(wide) return(ctLongToWide(out, id=ctmodelobj$subjectIDname,
+    if(wide) out <- ctLongToWide(out, id=ctmodelobj$subjectIDname,
       time=ctmodelobj$timeName,
       manifestNames=ctmodelobj$manifestNames,
-      TDpredNames=ctmodelobj$TDpredNames, TIpredNames=ctmodelobj$TIpredNames))
+      TDpredNames=ctmodelobj$TDpredNames, TIpredNames=ctmodelobj$TIpredNames)
+    attr(out, 'subjectpars') <- subjectpars
+    if(!is.null(grouppars)) attr(out, 'grouppars') <- grouppars
+    if(!is.null(states)) attr(out, 'states') <- states
     return(out)
   }
   if('ctStanModel' %in% class(ctmodelobj)){

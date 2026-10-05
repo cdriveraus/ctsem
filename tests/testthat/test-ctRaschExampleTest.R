@@ -1,4 +1,3 @@
-# backend='r' pinned rather than left at 'auto': this test characterises what the model recovers from one particular dataset, and the generator is not what is under test here.
 # A Rasch-style measurement model: seven binary indicators loading on one
 # latent process, item difficulties as free manifest means with the first fixed
 # at zero for identification, and a per-subject continuous intercept.
@@ -22,23 +21,19 @@
 # handled, compared on the raw parameter vector so no Monte Carlo enters. They
 # agree to 0.024 -- an order of magnitude tighter than the check they replace.
 
-# The generating model. MANIFESTVAR is stated rather than left free: a free
-# generating cell is filled from `.ctGenerateDefaults()`, so the data would move
-# whenever those defaults do, silently, under a `set.seed()` that reads as
-# though it pinned everything. Zero is what the rbinom link below wants -- the
-# indicators are noise-free before the draw.
+# The generating model, stated in full: a free generating cell would be set at
+# its prior's centre and the data would move whenever that convention did.
+# Seven binary indicators through ctsem's own logistic link, each subject's
+# intercept drawn by ctGenerate from the population the model states -- CINT
+# has an identity transform here, so its sdscale of 0.3 is the intercept sd
+# and popmeans sets the mean.
 #
-# Per-subject heterogeneity goes in through `$matrices$CINT`, not
-# `gm_i$CINT[] <-`. `gm` is a ctStanModel whose canonical specification is
-# `$pars`, and ctGenerate() rebuilds every top level matrix from `$pars` before
-# generating, so a direct assignment is silently discarded -- which is how this
-# file spent a long time fitting a model that declares individual variation to
-# data that had none. That parks the between-subject sd against its lower
-# boundary, the easiest place in the space for two estimators to agree, so the
-# comparison was systematically easier than it read. The "not parked at zero"
-# assertion below is what makes the difference visible: on identically
-# generated subjects the same fit returns a population sd of 0.046 with a 2.5%
-# bound of 0.005, against 0.28 [0.13, 0.49] here.
+# Generated rather than looped over subjects by hand. The hand loop had to
+# write each subject's CINT through `$matrices`, because a direct assignment
+# to a ctStanModel's matrix is rebuilt away from `$pars` -- which is how this
+# file once spent a long time fitting a model with individual variation to
+# data that had none. The "not parked at zero" assertion below is what would
+# show that again.
 .rasch_data <- local({
   cache <- NULL
   function() {
@@ -46,33 +41,24 @@
     set.seed(1234)
     nsubjects <- 20
     n.manifest <- 7
-    invlog <- function(x) exp(x) / (1 + exp(x))
-    cint <- stats::rnorm(nsubjects, mean = .1, sd = .3)
-    gm <- suppressMessages(ctModel(DRIFT = -.3, DIFFUSION = .3, CINT = .1,
+    difficulty <- c(m2 = .5, m3 = .5, m4 = .5, m5 = -.5, m6 = -.5, m7 = -.5)
+    gm <- suppressMessages(ctModel(DRIFT = -.3, DIFFUSION = .3,
+      CINT = 'b|param|TRUE|0.3',
       LAMBDA = rep(1, each = n.manifest),
       n.latent = 1, n.manifest = n.manifest, Tpoints = 20,
       MANIFESTVAR = diag(0, n.manifest),
-      MANIFESTMEANS = c(0, rep(c(.5, -.5), each = (n.manifest - 1) / 2)),
+      MANIFESTMEANS = c(0, difficulty),
       T0MEANS = -.3, T0VAR = .5))
-    dlist <- vector("list", nsubjects)
-    for (i in seq_len(nsubjects)) {
-      gm_i <- gm
-      gm_i$matrices$CINT[] <- cint[i]
-      d_i <- suppressMessages(ctGenerate(gm_i, n = 1, logdtsd = .2,
-        backend = 'r'))
-      d_i[, "id"] <- i
-      dlist[[i]] <- d_i
-    }
-    d <- do.call(rbind, dlist)
-    d[, gm$manifestNames] <- stats::rbinom(nrow(d) * n.manifest, size = 1,
-      prob = invlog(d[, gm$manifestNames]))
+    gm$manifesttype[] <- 1L
+    d <- suppressMessages(ctGenerate(gm, n = nsubjects, logdtsd = .2,
+      backend = 'julia', popmeans = c(b = .1)))
     cache <<- list(
       data = d,
       # The realised spread, not the nominal 0.3: 20 draws of an sd 0.3 normal
       # have a sample sd of their own, and it is that the fit can recover.
-      intercept_sd = stats::sd(cint),
+      intercept_sd = stats::sd(attr(d, "subjectpars")$b),
       # Item difficulties, in the order the fitted model names them m2..m7.
-      difficulty = c(m2 = .5, m3 = .5, m4 = .5, m5 = -.5, m6 = -.5, m7 = -.5),
+      difficulty = difficulty,
       drift = -.3, diffusion = .3)
     cache
   }

@@ -210,7 +210,7 @@ test_that("ctPostPredData(residuals=TRUE) works, for stan too", {
   m <- suppressWarnings(suppressMessages(ctModel(type = "ct", id = id,
     manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1),
     DRIFT = matrix("drift"), DIFFUSION = matrix(.5), MANIFESTVAR = matrix(.3),
-    MANIFESTMEANS = matrix("mm"), T0VAR = matrix(1), T0MEANS = matrix(0),
+    MANIFESTMEANS = matrix("mm||TRUE"), T0VAR = matrix(1), T0MEANS = matrix(0),
     CINT = matrix(0), n.TIpred = ti,
     TIpredNames = if (ti) paste0("TI", seq_len(ti)))))
   m$pars$indvarying <- m$pars$param %in% "mm"

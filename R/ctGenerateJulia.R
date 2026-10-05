@@ -306,6 +306,94 @@
   }
   skeleton[, model$manifestNames] <- t(matrix(drawn, nrow = nmanifest))
   # A matrix, because that is what `ctGenerate`'s own path returns and callers
-  # index it positionally.
-  as.matrix(skeleton)
+  # index it positionally. What generated it rides along as attributes, keyed
+  # by id (and time) so they survive the burnin trim: each subject's
+  # parameters, and on the state-explicit route the latent states.
+  out <- as.matrix(skeleton)
+  attr(out, "subjectpars") <- .ctGenerateSubjectPars(handle, raw, effects,
+    model, skeleton)
+  grouppars <- .ctGenerateGroupPars(handle, raw, effects, model, skeleton)
+  if (length(grouppars)) attr(out, "grouppars") <- grouppars
+  if (!isTRUE(intoverstates) && is.list(generated) && !is.null(generated$states)) {
+    states <- t(as.matrix(generated$states))
+    nl <- length(model$latentNames)
+    colnames(states) <- c(model$latentNames,
+      if (ncol(states) > nl) paste0("state", seq_len(ncol(states) - nl)))
+    attr(out, "states") <- cbind(skeleton[, c(model$subjectIDname,
+      model$timeName)], states[, seq_len(min(nl, ncol(states))), drop = FALSE])
+  }
+  out
+}
+
+# Each grouping level's own parameters, as generated: the population values
+# shifted by that level's random effects and those of the levels above it,
+# with every level inside it at zero. One data frame per grouping level, one
+# row per group. TI predictor effects are a subject's and are left out.
+#' @keywords internal
+.ctGenerateGroupPars <- function(handle, raw, effects, model, skeleton) {
+  spec <- .ctBackendSpec(handle)
+  if (is.null(spec$laplace) || !length(effects) || !length(model$groupIDnames)) {
+    return(NULL)
+  }
+  module <- .ctJuliaModule(spec$project)
+  objective <- .ctJuliaObjective(handle)
+  position <- as.integer(.ctBackendJuliaValue(
+    module$ctsem_laplace_deviation_layout(objective))$level)
+  out <- list()
+  for (l in seq_along(model$groupIDnames)) {
+    kept <- effects
+    kept[position <= l] <- 0
+    pars <- .ctGenerateSubjectPars(handle, raw, kept, model, skeleton,
+      ti_effects = FALSE)
+    group <- model$groupIDnames[l]
+    pars <- pars[!duplicated(pars[[group]]), , drop = FALSE]
+    pars <- pars[, setdiff(names(pars), c(model$subjectIDname,
+      model$groupIDnames[seq_len(l - 1L)])), drop = FALSE]
+    rownames(pars) <- NULL
+    out[[group]] <- pars
+  }
+  out
+}
+
+# Each subject's parameters as generated, on their natural scale: the
+# population values shifted by that subject's drawn random effects at every
+# level and by its TI predictor effects. One row per subject, one column per
+# free parameter, with the subject's groups beside its id.
+#' @keywords internal
+.ctGenerateSubjectPars <- function(handle, raw, effects, model, skeleton,
+  ti_effects = TRUE) {
+  spec <- .ctBackendSpec(handle)
+  table <- spec$parameter_table
+  free <- !is.na(table$parnumber)
+  if (!any(free)) return(NULL)
+  parnames <- unique(as.character(table$param[free]))
+  parnumber <- table$parnumber[free][match(parnames, as.character(table$param[free]))]
+  first <- !duplicated(skeleton[[model$subjectIDname]])
+  nsubjects <- sum(first)
+  values <- if (!is.null(spec$laplace) && length(effects)) {
+    module <- .ctJuliaModule(spec$project)
+    matrix(as.numeric(.ctBackendJuliaValue(module$ctsem_laplace_subject_values(
+      .ctJuliaObjective(handle), .ctJuliaNumericVector(as.numeric(raw)),
+      .ctJuliaNumericVector(as.numeric(effects)), ti_effects = ti_effects))),
+      nrow = nsubjects)
+  } else {
+    # No random effects: the population vector, shifted by TI effects alone.
+    v <- matrix(as.numeric(raw), nsubjects, length(raw), byrow = TRUE)
+    ti <- spec$ti_effects
+    for (r in seq_len(NROW(ti))) {
+      predictor <- skeleton[[model$TIpredNames[ti$predictor[r]]]][first]
+      v[, ti$parameter[r]] <- v[, ti$parameter[r]] + raw[ti$coefficient[r]] * predictor
+    }
+    v
+  }
+  transformOf <- function(name) {
+    model$pars$transform[which(model$pars$param %in% name)[1L]]
+  }
+  natural <- vapply(seq_along(parnames), function(k)
+    .ctGenerateNatural(transformOf(parnames[k]), values[, parnumber[k]]),
+    numeric(nsubjects))
+  natural <- matrix(natural, nrow = nsubjects, dimnames = list(NULL, parnames))
+  keys <- skeleton[first, c(model$subjectIDname, model$groupIDnames), drop = FALSE]
+  rownames(keys) <- NULL
+  cbind(keys, as.data.frame(natural))
 }
