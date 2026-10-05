@@ -1255,15 +1255,19 @@ ctOptimCovFromHessian <- function(hess, ridge=1e-8, rtol=.ctFlatDirectionRtol(),
         'two look the same at this magnitude; fit$identifiability names the ',
         'parameters if it is the latter.')
     } else {
-      warning(context, ' covariance from Hessian required numerical repair: ',
+      # Classed, so that a julia fit can hold it to its closing summary
+      # (`.ctBackendFitWarnings()`), where the identifiability warning usually
+      # says the same thing in terms a reader can act on.
+      warning(warningCondition(paste0(context,
+        ' covariance from Hessian required numerical repair: ',
         paste(issues, collapse='; '),
         if(is.finite(infoEigenRatio) &&
             infoEigenRatio >= sqrt(.Machine$double.eps))
           paste0('. The smallest eigenvalue is ', signif(infoEigenRatio, 3),
             ' of the largest, too large to be rounding: some direction of this ',
             'model is close to unidentified and the standard errors along it ',
-            'are not trustworthy') else '',
-        call.=FALSE)
+            'are not trustworthy') else ''),
+        class = 'ctsemCovarianceRepair'))
     }
   }
   cov

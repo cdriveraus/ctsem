@@ -5605,6 +5605,16 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   }
   class(out) <- c("ctJuliaFit", "ctFit")
 
+  # The covariance-repair warnings raised while the uncertainty is built are
+  # held for the closing summary, which says the same finding once, beside the
+  # verdict (`.ctBackendFitWarnings()`).
+  repairs <- character(0)
+  holdrepair <- function(expr) withCallingHandlers(expr,
+    ctsemCovarianceRepair = function(w) {
+      repairs <<- c(repairs, conditionMessage(w))
+      invokeRestart("muffleWarning")
+    })
+
   # Uncertainty is part of fitting, not a separate step the user has to know to
   # take -- `stanoptimis()` finishes every optimized Stan fit the same way, and
   # a `summary()` that silently reported point estimates only, purely because of
@@ -5655,11 +5665,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
         "ctFitUncertainty(fit, 'sample') on this fit once it is made.",
         call. = FALSE)
     }
-    out <- ctFitUncertainty(fit = out, uncertainty = uncertainty,
+    out <- holdrepair(ctFitUncertainty(fit = out, uncertainty = uncertainty,
       draws = .ctJuliaOr(optimcontrol$uncertaintyDraws, "auto"),
       finishsamples = .ctJuliaOr(optimcontrol$finishsamples, 1000L),
       cores = cores, control = .ctJuliaOr(optimcontrol$uncertaintyControl, list()),
-      verbose = verbose)
+      verbose = verbose))
   }
 
   # The quadrature correction, last of the post-optimiser stages: after the
@@ -5672,9 +5682,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # `.ctLaplaceAutoCorrect()` for `'step'`.
   if (!is.null(out$laplace) && isTRUE(intoverstates)) {
     if (identical(correctlaplace, "quadrature")) {
-      out <- .ctLaplaceContinue(out, cores = cores, verbose = verbose)
+      out <- holdrepair(.ctLaplaceContinue(out, cores = cores, verbose = verbose))
     } else if (identical(correctlaplace, "step")) {
-      out <- .ctLaplaceAutoCorrect(out, cores = cores, verbose = verbose)
+      out <- holdrepair(.ctLaplaceAutoCorrect(out, cores = cores, verbose = verbose))
     } else {
       out$laplace$correction <- list(status = if (isTRUE(optimcontrol$estonly) &&
         !isFALSE(optimcontrol$laplace_correct)) "estonly" else "off",
@@ -5752,11 +5762,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # unidentified, and that case reaches the user as a plausible fit with
   # suspiciously wide intervals.
   out$collapsedScales <- .ctBackendCollapsedScales(out)
-  .ctBackendIdentifyWarn(out$identifiability, out$collapsedScales,
-    out$uncertainty$intervalcheck)
-  # And the convergence verdict, once, now that both halves exist: where the
-  # optimizer stopped, and what the curvature there says about the optimum.
-  .ctBackendCertifyWarn(out)
+  # The convergence verdict and the standard-error findings together, once,
+  # now that both exist (see `.ctBackendFitWarnings()`).
+  .ctBackendFitWarnings(out, repairs = unique(repairs))
   out
 }
 
