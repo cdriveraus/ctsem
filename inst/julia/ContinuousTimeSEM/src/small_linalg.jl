@@ -297,6 +297,9 @@ Is this product small enough to be worth doing by hand?
     return C
 end
 
+"""Task-local-storage key for `_ctsem_transpose_buffer`'s tables."""
+struct _CTSEMTransposeKey{T} end
+
 """
     _ctsem_transpose_buffer(A)
 
@@ -304,11 +307,18 @@ A `size(A, 2) x size(A, 1)` matrix of `A`'s element type, kept in the calling
 task's local storage and reused by every later call of that shape on the same
 task. Task-local rather than per thread: a task can move between threads, and
 the pool's workers are tasks.
+
+The task's store is keyed by a singleton per element type and holds a typed
+table keyed by shape. Keying the store by `(name, T, rows, cols)` directly
+built that tuple on the heap every call -- it holds a type and two runtime
+integers -- 48 bytes a call and three times as slow (83 ns against 30, dev1),
+on a path that exists to keep the threads from waiting on the collector.
 """
 function _ctsem_transpose_buffer(A::AbstractMatrix{T}) where {T}
-    key = (:ctsem_transpose, T, size(A, 2), size(A, 1))
-    return get!(() -> Matrix{T}(undef, size(A, 2), size(A, 1)),
-        task_local_storage(), key)::Matrix{T}
+    table = get!(Dict{Tuple{Int,Int},Matrix{T}}, task_local_storage(),
+        _CTSEMTransposeKey{T}())::Dict{Tuple{Int,Int},Matrix{T}}
+    return get!(() -> Matrix{T}(undef, size(A, 2), size(A, 1)), table,
+        (size(A, 2), size(A, 1)))
 end
 
 """`C = alpha * A' * B + beta * C`.
