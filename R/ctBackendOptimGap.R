@@ -699,43 +699,49 @@
 #   no certification the gradient, and the fact that nothing checked further.
 #' @keywords internal
 .ctBackendCertifyWarn <- function(fit) {
+  verdict <- .ctBackendCertifyVerdict(fit)
+  if (!is.null(verdict)) warning(verdict$text, call. = FALSE)
+  invisible(NULL)
+}
+
+# The verdict `.ctBackendCertifyWarn()` gives, as text: NULL when there is
+# nothing to say, else `text` and whether it says the fit failed to reach a
+# maximum (`failed`) -- every case but a saturated maximum, which is a
+# finding about the model rather than the optimiser.
+#' @keywords internal
+.ctBackendCertifyVerdict <- function(fit) {
+  verdict <- function(text, failed = TRUE) list(text = text, failed = failed)
   certification <- fit$uncertainty$certification
   pending <- isTRUE(fit$optim$convergence_pending)
   if (is.null(certification) || !length(certification$status)) {
-    if (!pending) return(invisible(NULL))
-    warning("The optimizer stopped without meeting its convergence criterion: ",
+    if (!pending) return(NULL)
+    return(verdict(paste0("The optimizer stopped without meeting its ",
+      "convergence criterion: ",
       "largest gradient ", signif(as.numeric(fit$optim$gradient_norm), 3),
       ". No curvature was computed, so how far this is from the optimum is ",
       "unknown -- fit without optimcontrol$estonly, or call ",
-      "ctFitUncertainty(), to have it certified.", call. = FALSE)
-    return(invisible(NULL))
+      "ctFitUncertainty(), to have it certified.")))
   }
-  if (isTRUE(certification$certified)) return(invisible(NULL))
+  if (isTRUE(certification$certified)) return(NULL)
   status <- .ctBackendCertificationStatus(certification)
   # A maximum with a coordinate the data does not determine is a finding, and
   # the finding is `fit$identifiability`'s to report. Warning "not converged"
   # here is what sent 45 of 64 good fits back to be re-run.
-  if (identical(status, "saturated")) {
-    warning("This fit is a maximum, but ", certification$reason, ".",
-      call. = FALSE)
-    return(invisible(NULL))
-  }
+  if (identical(status, "saturated")) return(verdict(paste0(
+    "This fit is a maximum, but ", certification$reason, "."), failed = FALSE))
   if (identical(status, "notstationary")) {
     involved <- as.character(certification$residual_parameters)
-    warning("Not converged: ", certification$reason, ". More iterations, ",
-      "other starts, or ctFitProfile() ",
+    return(verdict(paste0("Not converged: ", certification$reason,
+      ". More iterations, other starts, or ctFitProfile() ",
       if (length(involved)) paste0("on ", involved[1L]) else "along it",
-      " would say whether it keeps rising.", call. = FALSE)
-    return(invisible(NULL))
+      " would say whether it keeps rising.")))
   }
   if (identical(status, "notmaximum") &&
       length(certification$negative_vector)) {
-    warning(.ctBackendNotMaximumMessage(fit, certification), call. = FALSE)
-    return(invisible(NULL))
+    return(verdict(.ctBackendNotMaximumMessage(fit, certification)))
   }
-  warning("This fit is not certified as converged: ", certification$reason,
-    ". See fit$uncertainty$certification.", call. = FALSE)
-  invisible(NULL)
+  verdict(paste0("This fit is not certified as converged: ",
+    certification$reason, ". See fit$uncertainty$certification."))
 }
 
 # What a not-a-maximum verdict tells a user: which parameters the likelihood

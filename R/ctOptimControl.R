@@ -94,7 +94,11 @@
 #'  for the exact marginal posterior mode. The usual optimiser then polishes
 #'  and certifies its point on the Laplace objective, so the estimate usually
 #'  ends where a fit without SAEM does; what it can change is which maximum is
-#'  reached when the Laplace objective has more than one. Not a better
+#'  reached when the Laplace objective has more than one. Its point carries
+#'  Monte Carlo error, so where the posterior itself has several maxima --
+#'  weakly identified random-effect scales and correlations -- that error, not
+#'  the data, can decide which one is reached, and a fit without SAEM may reach
+#'  a better one. Not a better
 #'  approximate estimate on its own -- for that, sample with
 #'  \code{optimize = FALSE}. A number caps its iterations (TRUE is 10000).
 #'  \code{fit$optim$saem_iterations}, \code{saem_settled}, \code{saem_trend},

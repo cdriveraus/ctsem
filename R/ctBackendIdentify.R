@@ -855,9 +855,72 @@
     "summary() reports them as NA.")
 }
 
-# Say it once, at the end of a fit, in the terms a reader needs.
+# A julia fit's closing warnings, in order of what matters.
+#
+# A fit that did not reach a maximum used to close with up to five warnings
+# about one situation: the covariance repair, the unidentified directions, the
+# negative curvature, the intervals wider than the curvature supports, and the
+# verdict itself -- on a binary model that ended at a saddle, about two
+# thousand characters. The verdict is what a reader has to act on, and at a
+# point that is not a maximum the standard errors are a secondary concern, so
+# then it is one warning: the verdict, and a sentence on the standard errors.
+# The negative-curvature warning is the verdict's own finding and goes.
+#
+# At a maximum the identifiability and interval warnings stand as before. The
+# covariance repair is said only when they say nothing: a direction left out of
+# the inversion is the unidentified direction they name, in other words.
 #' @keywords internal
-.ctBackendIdentifyWarn <- function(identify, collapsed, intervals = NULL) {
+.ctBackendFitWarnings <- function(fit, repairs = character(0)) {
+  identify <- fit$identifiability
+  intervals <- fit$uncertainty$intervalcheck
+  verdict <- .ctBackendCertifyVerdict(fit)
+  if (!is.null(verdict) && isTRUE(verdict$failed)) {
+    .ctBackendIdentifyWarn(identify, fit$collapsedScales, intervals,
+      standard_errors = FALSE)
+    warning(verdict$text, .ctBackendStandardErrorNote(identify, intervals,
+      repairs), call. = FALSE)
+    return(invisible(NULL))
+  }
+  .ctBackendIdentifyWarn(identify, fit$collapsedScales, intervals)
+  said <- isTRUE(identify$nweak > 0L) || isTRUE(intervals$nflagged > 0L) ||
+    isTRUE(intervals$nunidentified > 0L)
+  if (length(repairs) && !said) warning(repairs[1L], call. = FALSE)
+  if (!is.null(verdict)) warning(verdict$text, call. = FALSE)
+  invisible(NULL)
+}
+
+# The standard errors in a sentence, for a fit whose verdict leads.
+#' @keywords internal
+.ctBackendStandardErrorNote <- function(identify, intervals, repairs) {
+  name3 <- function(x) paste0(paste(utils::head(x, 3), collapse = ", "),
+    if (length(x) > 3) ", ..." else "")
+  parts <- character(0)
+  if (isTRUE(identify$nweak > 0L)) parts <- c(parts, paste0(identify$nweak,
+    " direction", if (identify$nweak > 1L) "s are" else " is",
+    " not identified (", name3(identify$parameters), ")"))
+  wide <- setdiff(intervals$parameters, c(identify$parameters,
+    intervals$unidentified))
+  if (length(wide)) parts <- c(parts, paste0(length(wide), " interval",
+    if (length(wide) > 1L) "s are" else " is",
+    " far wider than the curvature supports"))
+  if (!length(parts) && length(repairs)) parts <- paste0("the covariance ",
+    "needed numerical repair")
+  if (!length(parts)) return("")
+  paste0(" The standard errors there are unreliable too: ",
+    paste(parts, collapse = ", and "), "; see fit$identifiability and ",
+    "fit$uncertainty$intervalcheck.")
+}
+
+# Say it once, at the end of a fit, in the terms a reader needs.
+# `standard_errors = FALSE` keeps only the collapsed-scale message, for a fit
+# whose verdict carries the rest (`.ctBackendFitWarnings()`).
+#' @keywords internal
+.ctBackendIdentifyWarn <- function(identify, collapsed, intervals = NULL,
+  standard_errors = TRUE) {
+  if (!isTRUE(standard_errors)) {
+    identify <- NULL
+    intervals <- NULL
+  }
   nowidth <- .ctBackendNoWidthAdvice(intervals, brief = TRUE)
   if (!is.null(identify) && identify$nweak > 0L) {
     # Which parameters are on a random-effect scale/correlation ridge and which
@@ -920,15 +983,23 @@
   # still have almost all of its reported width come from its entanglement with
   # the others, and then the interval moves by orders of magnitude between two
   # runs that reached the same optimum.
-  if (!is.null(intervals) && isTRUE(intervals$nflagged > 0L)) {
-    involved <- paste(utils::head(intervals$parameters, 6), collapse = ", ")
-    if (length(intervals$parameters) > 6) involved <- paste0(involved, ", ...")
-    widest <- max(intervals$table$ratio[is.finite(intervals$table$ratio)])
-    warning(intervals$nflagged, " reported interval",
-      if (intervals$nflagged > 1L) "s are" else " is",
-      " far wider than the curvature at the estimate supports -- up to ",
-      signif(widest, 3), " times the width that parameter's own curvature ",
-      "gives. That width comes from the parameter not being separable from ",
+  # A parameter the identifiability warning above already named is not named
+  # again here: its wide interval is that finding, and on a binary fit both
+  # warnings listed the same TI-effect coefficient.
+  fresh <- if (is.null(intervals)) character(0) else
+    setdiff(intervals$parameters, c(if (isTRUE(identify$nweak > 0L))
+      identify$parameters, intervals$unidentified))
+  if (length(fresh)) {
+    involved <- paste(utils::head(fresh, 6), collapse = ", ")
+    if (length(fresh) > 6) involved <- paste0(involved, ", ...")
+    ratios <- intervals$table$ratio[intervals$table$param %in% fresh]
+    ratios <- ratios[is.finite(ratios)]
+    warning(length(fresh), " reported interval",
+      if (length(fresh) > 1L) "s are" else " is",
+      " far wider than the curvature at the estimate supports",
+      if (length(ratios)) paste0(" -- up to ", signif(max(ratios), 3),
+        " times the width that parameter's own curvature gives") else "",
+      ". That width comes from the parameter not being separable from ",
       "the others rather than from the data, and it is not stable: it can ",
       "move by orders of magnitude between two fits that reach the same ",
       "optimum. Parameters involved: ", involved,

@@ -139,6 +139,51 @@ test_that("a flat direction that still gains says what the probe measured", {
     "of the estimate; the probe looked no further than 4. More iterations, ",
     "other starts, or ctFitProfile() on popsd_cint would say whether it keeps ",
     "rising."), fixed = TRUE)
+
+  # A fit closes with one warning when it did not reach a maximum: the verdict,
+  # then the standard errors in a sentence. A binary fit stopped at a saddle
+  # used to close with five, one of them the verdict's own negative curvature.
+  warned <- function(f, repairs = character(0)) {
+    out <- character(0)
+    withCallingHandlers(ctsem:::.ctBackendFitWarnings(f, repairs),
+      warning = function(w) {
+        out <<- c(out, conditionMessage(w))
+        invokeRestart("muffleWarning")
+      })
+    out
+  }
+  intervals <- list(nflagged = 2L, nunidentified = 0L,
+    parameters = c("drift", "popsd_cint"),
+    table = data.frame(param = c("drift", "popsd_cint"), ratio = c(30, 12)))
+  failed <- fit
+  failed$identifiability <- list(nweak = 2L, negative = 1L,
+    parameters = c("popsd_cint", "mm"))
+  failed$uncertainty$intervalcheck <- intervals
+  said <- warned(failed, repairs = "Hessian covariance from Hessian required numerical repair")
+  expect_length(said, 1L)
+  expect_match(said, "^Not converged: ")
+  # popsd_cint's wide interval is its identifiability, so only drift's counts.
+  expect_match(said, paste0("The standard errors there are unreliable too: 2 ",
+    "directions are not identified (popsd_cint, mm), and 1 interval is far ",
+    "wider than the curvature supports"), fixed = TRUE)
+  # At a maximum the interval warning stands, and the repair, which says the
+  # same thing as it, is not repeated; said alone, the repair still is.
+  certified <- list(optim = list(converged = TRUE),
+    uncertainty = list(certification = list(status = "certified",
+      certified = TRUE), intervalcheck = intervals))
+  said <- warned(certified, repairs = "Hessian covariance from Hessian required numerical repair")
+  expect_length(said, 1L)
+  expect_match(said, "far wider than the curvature")
+  certified$uncertainty$intervalcheck <- NULL
+  expect_identical(warned(certified, repairs = "repair"), "repair")
+  # A wide interval on a parameter already reported as having no width is
+  # that finding, said once.
+  certified$uncertainty$intervalcheck <- list(nflagged = 1L,
+    parameters = "drift", nunidentified = 1L, unidentified = "drift",
+    table = data.frame(param = "drift", ratio = 40))
+  said <- warned(certified)
+  expect_length(said, 1L)
+  expect_match(said, "No width at all for drift")
 })
 
 test_that("a direction is described by its largest loadings, in one rule", {
