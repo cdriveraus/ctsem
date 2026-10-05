@@ -13,9 +13,13 @@
 # that has to run first anyway. Measured, workers warmed alongside a 39.8 s
 # optimisation were ready with 0.0 s of waiting.
 #
-# Each worker runs one chain through the ordinary
-# `ctFitUncertainty(fit, uncertainty = 'sample')` path, so there is no second
-# sampler implementation to keep in step with the first. The parent
+# There are at most `cores` workers -- the call's own ceiling, 2 unless asked
+# -- so four chains at the default run two at a time, two to a worker, each
+# chain still its own engine call with its own seed. One worker per chain used
+# to start four processes, and four cores, whatever `cores` said.
+#
+# Each chain runs through the ordinary sampling engine call, so there is no
+# second sampler implementation to keep in step with the first. The parent
 # pools the draws and recomputes R-hat and effective size over all of them,
 # through the same Julia routine the single-process path uses -- those are
 # properties of the whole run and cannot be averaged from per-chain values.
@@ -26,9 +30,9 @@
 #'   fill. Carries the model and data a worker rebuilds its objective from.
 #' @param target From [.ctBackendSampleTarget()]: what to sample, in a form that
 #'   survives serialisation.
-#' @param chains Number of chains, one per worker.
+#' @param chains Number of chains.
 #' @param warmup,draws Per chain.
-#' @param cores Total threads to divide among the workers.
+#' @param cores The most processes to run at once, and the threads they share.
 #' @param handles Optional warmed pool from [.ctBackendWarmWorkers()]. When
 #'   absent the workers are started here and the compile is paid in full.
 #' @param control,saveEffects,seed,verbose As for [ctFitUncertainty()].
@@ -48,13 +52,19 @@
   # the spellings that are not. Brought down here because the file was open.
   if (!.ctFitIsJulia(fit)) return(NULL)
 
-  # Threads left over after one process per chain. A worker's own subject split
-  # then uses them, which is the same nesting the in-process path does, except
-  # that the chains no longer share an allocator.
-  per_worker <- max(1L, as.integer(cores) %/% as.integer(chains))
+  # No more processes than `cores`: one worker would gain nothing over this
+  # session but its own startup, so then the chains run here.
+  workers <- .ctBackendSampleWorkers(chains, cores)
+  if (workers < 2L) return(NULL)
+  # Contiguous blocks, run in turn within a worker; pooled back in chain order.
+  blocks <- split(seq_len(chains), sort(rep_len(seq_len(workers), chains)))
+  # Threads left over after one process per worker. A worker's own subject
+  # split then uses them, which is the same nesting the in-process path does,
+  # except that the chains no longer share an allocator.
+  per_worker <- max(1L, as.integer(cores) %/% workers)
 
   if (is.null(handles)) {
-    handles <- .ctBackendWarmWorkers(fit, workers = chains,
+    handles <- .ctBackendWarmWorkers(fit, workers = workers,
       values = target$estimate)
     if (is.null(handles)) return(NULL)
   }
@@ -97,8 +107,8 @@
   # That is the same information the single-process path prints live, just
   # relayed through a file because a process boundary is in the way.
   report <- isTRUE(progress)
-  progress_files <- if (report) vapply(seq_len(chains), function(i)
-    tempfile(pattern = sprintf("ctsem_sample_chain%d_", i), fileext = ".progress"),
+  progress_files <- if (report) vapply(seq_len(workers), function(i)
+    tempfile(pattern = sprintf("ctsem_sample_worker%d_", i), fileext = ".progress"),
     character(1)) else NULL
   if (report) on.exit(unlink(progress_files, force = TRUE), add = TRUE)
 
@@ -141,27 +151,32 @@
   # layout error would show at the *first* draw, at the scale of the posterior's
   # own width -- order 1, not 1e-10. Neither does.
   workercontrol <- .ctBackendWorkerControl(control, chains)
-  results <- lapply(seq_len(chains), function(k) {
-    chain_file <- if (report) progress_files[k] else NULL
+  results <- lapply(seq_along(blocks), function(w) {
+    worker_file <- if (report) progress_files[w] else NULL
     tryCatch(
       # The namespace lookup is explicit because the expression is evaluated in
       # a worker process, where only the installed ctsem exists. `ctsem:::`
       # would do the same job but draws a CRAN NOTE for ::: on our own objects.
-      future::future(utils::getFromNamespace(".ctBackendSampleOneChain",
+      future::future(utils::getFromNamespace(".ctBackendSampleChainBlock",
         "ctsem")(fit, target, warmup,
-        draws, per_worker, workercontrol, saveEffects, as.integer(seed) + k - 1L,
-        progress_file = chain_file),
+        draws, per_worker, workercontrol, saveEffects,
+        as.integer(seed) + blocks[[w]] - 1L, progress_file = worker_file),
         seed = TRUE),
       error = function(e) NULL)
   })
   if (report) {
-    .ctBackendReportProcesses(results, progress_files, chains = chains,
+    .ctBackendReportProcesses(results, progress_files, chains = workers,
       overwrite = .ctProgressOverwrite(verbose))
   }
-  drawn <- lapply(results, function(h) {
-    if (is.null(h)) return(NULL)
-    tryCatch(future::value(h), error = function(e) NULL)
-  })
+  # Back to one entry per chain, in chain order; a worker that failed outright
+  # leaves its chains NULL.
+  drawn <- vector("list", chains)
+  for (w in seq_along(blocks)) {
+    got <- if (is.null(results[[w]])) NULL else
+      tryCatch(future::value(results[[w]]), error = function(e) NULL)
+    if (is.list(got) && length(got) == length(blocks[[w]]))
+      drawn[blocks[[w]]] <- got
+  }
   # A worker that failed returns an empty list carrying an `error` attribute,
   # not NULL, so testing for NULL alone would let it through and the failure
   # would surface later as an empty matrix in the pooling.
@@ -230,6 +245,24 @@
         callback = callback)))
     .ctBackendChainResult(result)
   }, error = function(e) structure(list(), error = conditionMessage(e)))
+}
+
+# A worker's chains, in turn. Seed `seeds[i]` gives its chain the stream the
+# in-process chain of that number would have used (see the note on seeds above).
+# The progress file is shared, so it shows whichever chain is running.
+#' @keywords internal
+.ctBackendSampleChainBlock <- function(fit, target, warmup, draws, threads,
+  control, saveEffects, seeds, progress_file = NULL) {
+  lapply(seeds, function(s) .ctBackendSampleOneChain(fit, target, warmup,
+    draws, threads, control, saveEffects, s, progress_file = progress_file))
+}
+
+# How many worker processes a run uses: one per chain, at most `cores`.
+#' @keywords internal
+.ctBackendSampleWorkers <- function(chains, cores) {
+  cores <- suppressWarnings(as.integer(cores)[1L])
+  if (is.na(cores) || cores < 1L) cores <- 1L
+  min(as.integer(chains), cores)
 }
 
 # A callback that writes one line rather than printing one -- the worker's

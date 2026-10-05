@@ -2527,10 +2527,12 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' accuracy at two to three times a Laplace fit's time, and were faster and
 #' more accurate outright where the Laplace fit was slow or biased; short runs
 #' are limited by whether the chains agree, so R-hat is usually the binding
-#' check. With \code{processes = TRUE} each chain starts its own Julia
-#' session, a fixed cost of some tens of seconds that a run much shorter than
-#' a minute does not recover; \code{processes = FALSE} keeps the chains in this
-#' session, as threads when it has them.
+#' check. With \code{processes = TRUE} the chains run in up to \code{cores}
+#' worker processes, each starting its own Julia session -- a fixed cost of
+#' some tens of seconds that a run much shorter than a minute does not recover
+#' -- and a worker runs its share of the chains in turn, so four chains at the
+#' default of two cores run two at a time. \code{processes = FALSE}, or one
+#' core, keeps the chains in this session, as threads when it has them.
 #' \code{settleTol} ends warmup early once the metric stops moving (off by
 #' default, and slower when measured). \code{control$sampler} chooses the
 #' kernel for the joint posterior: \code{'saem'} (the default there) draws the
@@ -2582,7 +2584,9 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' (\code{fit$stanfit$rawposterior} for stan, \code{fit$estimate$rawposterior}
 #' for julia) is reused when available; otherwise 1000 samples are used.
 #' @param cores Number of cores. If \code{NULL}, one core is used, and nothing
-#' is parallelised unless a value above one is asked for. On a
+#' is parallelised unless a value above one is asked for -- except for
+#' \code{'sample'}, which takes \code{getOption("mc.cores", 2)} as
+#' \code{ctFit} does, and runs at most that many chains at once. On a
 #' \code{ctStanFit} these are R worker processes: each
 #' log-probability/gradient evaluation is split across subjects and reassembled,
 #' and score contributions and transformed quantities use them too. On a
@@ -2704,7 +2708,8 @@ ctFitUncertainty <- function(fit,
         "backend='julia', or sample a stan fit with ctFit(backend='stan', ",
         "optimize=FALSE).", call.=FALSE)
     }
-    if(is.null(cores)) cores <- 1L
+    # As ctFit(optimize = FALSE): its chains run at most `cores` at a time.
+    if(is.null(cores)) cores <- getOption("mc.cores", 2L)
     cores <- max(1L, suppressWarnings(as.integer(cores[1])))
     if(is.na(cores)) cores <- 1L
     return(.ctBackendUncertaintySample(fit, control=control, cores=cores,

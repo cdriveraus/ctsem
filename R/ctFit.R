@@ -1569,6 +1569,10 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # `names(match.call())` because a default cannot otherwise be told from a
   # value that happens to equal it, and only an argument the caller actually
   # wrote should draw a deprecation warning.
+  # Whether the caller chose the chain count: the julia sampler defaults to 4,
+  # as ctFitUncertainty(fit, 'sample') does, and the formal's 2 is stan's.
+  chainsgiven <- !is.null(sampleControl$chains) || !is.null(control$chains) ||
+    'chains' %in% names(match.call())
   .ctsample_resolved <- .ctSampleControlResolve(sampleControl,
     given = names(match.call()), iter = iter, chains = chains,
     control = control)
@@ -2729,7 +2733,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
       cores=cores, optimcontrol=optimcontrol,
       verbose=verbose, fit=fit, priors=priors, priorscope=priorscope,
       optimize=optimize,
-      chains=chains, iter=iter, control=control,
+      chains=if(chainsgiven) chains else 4L, iter=iter, control=control,
       intoverpop=juliaintoverpop, intoverstates=intoverstates)
     # Replaces whatever narrower `$args` the julia backend built internally
     # (it only ever had the resolved settings, and not all of them) with the
