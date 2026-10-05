@@ -24,7 +24,7 @@ knitr::opts_chunk$set(
 ```
 
 This document demonstrates `ctEmpiricalBayesFit()` for a simple univariate
-continuous time process. The data contain 50 subjects, each with 80 equally
+continuous time process. The data contain 20 subjects, each with 80 equally
 spaced observations. The generating model varies across subjects in:
 
 * `T0MEANS`: subject-specific initial latent level
@@ -54,53 +54,41 @@ dimnames = list(raw_param_names, raw_param_names))
 raw_sd <- c(t0m = .7, drift = .55, diffusion = .35, mmean = 2.45)
 raw_mean <- c(t0m = 0, drift = -.4, diffusion = log(exp(.45) - 1), mmean = 0)
 raw_cov <- diag(raw_sd) %*% raw_cor %*% diag(raw_sd)
-raw_truth_mat <- MASS::mvrnorm(
-  n = n_subjects,
-  mu = raw_mean,
-  Sigma = raw_cov)
-colnames(raw_truth_mat) <- raw_param_names
-raw_truth <- data.frame(id = seq_len(n_subjects), raw_truth_mat,
-  check.names = FALSE)
+dimnames(raw_cov) <- dimnames(raw_cor)
 
-softplus <- function(x) ifelse(x > 30, x, log1p(exp(x)))
-truth <- data.frame(
-  id = seq_len(n_subjects),
-  t0m = raw_truth$t0m,
-  drift = -softplus(-raw_truth$drift),
-  diffusion = softplus(raw_truth$diffusion),
-  mmean = raw_truth$mmean
+# Each subject's raw parameters are drawn from this population by ctGenerate:
+# RAWPOPVAR is the covariance of the raw (pre-transform) parameters, written
+# from a covariance matrix by ctCov(), and popmeans the population means on
+# the natural scale.
+gm <- ctModel(
+  silent = TRUE,
+  Tpoints = n_obs,
+  latentNames = "eta",
+  manifestNames = "Y",
+  LAMBDA = matrix(1),
+  T0MEANS = matrix("t0m|param|TRUE"),
+  DRIFT = matrix("drift|-log1p_exp(-param)|TRUE"),
+  DIFFUSION = matrix("diffusion|log1p_exp(param)|TRUE"),
+  CINT = matrix(0),
+  T0VAR = matrix(0),
+  MANIFESTMEANS = matrix("mmean|param|TRUE"),
+  MANIFESTVAR = matrix(.35)
 )
+gm$RAWPOPVAR <- ctCov(raw_cov)
+softplus <- function(x) ifelse(x > 30, x, log1p(exp(x)))
 
-datalist <- vector("list", n_subjects)
-for(i in seq_len(n_subjects)){
-  gm <- ctModel(
-    silent = TRUE,
-    Tpoints = n_obs,
-    latentNames = "eta",
-    manifestNames = "Y",
-    LAMBDA = matrix(1),
-    T0MEANS = matrix(truth$t0m[i], 1, 1),
-    DRIFT = matrix(truth$drift[i], 1, 1),
-    DIFFUSION = matrix(truth$diffusion[i], 1, 1),
-    CINT = matrix(0),
-    T0VAR = matrix(0),
-    MANIFESTMEANS = matrix(truth$mmean[i], 1, 1),
-    MANIFESTVAR = matrix(.35)
-  )
+generated <- ctGenerate(gm, n = n_subjects, dtmean = .1, backend = "julia",
+  popmeans = c(t0m = raw_mean[["t0m"]], drift = -softplus(-raw_mean[["drift"]]),
+    diffusion = softplus(raw_mean[["diffusion"]]), mmean = raw_mean[["mmean"]]))
 
-  dat_i <- data.frame(ctGenerate(
-    ctmodelobj = gm,
-    n = 1,
-    burnin = 0,
-    dtmean = .1,
-    logdtsd = 0,
-    wide = FALSE))
-  dat_i$id <- i
-  datalist[[i]] <- dat_i
-}
+# The parameters each subject was generated with, on the natural scale, and
+# back on the raw scale through the inverse transforms.
+truth <- attr(generated, "subjectpars")[, c("id", raw_param_names)]
+raw_truth <- data.frame(id = truth$id, t0m = truth$t0m,
+  drift = -log(expm1(-truth$drift)), diffusion = log(expm1(truth$diffusion)),
+  mmean = truth$mmean)
 
-dat <- do.call(rbind, datalist)
-dat <- dat[, c("id", "time", "Y")]
+dat <- data.frame(generated)[, c("id", "time", "Y")]
 ```
 
 ```{r plot-data}
