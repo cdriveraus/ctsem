@@ -11,7 +11,8 @@ ctGenerateFromFit(
   fullposterior = FALSE,
   verboseErrors = FALSE,
   cores = 2,
-  intoverstates = "fit"
+  intoverstates = "fit",
+  effects = c("population", "fitted")
 )
 }
 \arguments{
@@ -28,21 +29,32 @@ ctGenerateFromFit(
 \item{intoverstates}{For \code{backend='julia'} fits: which route generates
 the latent states. \code{'fit'} (the default) mirrors the fit, so a
 state-explicit fit gets a state-explicit predictive and every other fit
-generates through the filter's one-step-ahead predictive. That keeps the
-identity that a generated dataset's \code{llrow} is the likelihood reported
-while generating it.
+generates through the filter's one-step-ahead predictive: the density the
+fit worked with, and the identity that a generated dataset's \code{llrow}
+is the likelihood reported while generating it.
 
-\code{FALSE} resamples the trajectory whatever the fit did: drawn from the
-process at each subject's own parameters, then each observation from its
-conditional distribution given the state at its row. That is a draw from the
-model rather than from the filter's approximation of it, and the two differ
-for a non-Gaussian indicator -- where the measurement update is an
-assumed-density projection -- or for state-dependent dynamics.
+\code{FALSE} simulates the model exactly whatever the fit did: the
+trajectory from the process at each subject's own parameters, then each
+observation from its measurement model given the state at its row, as
+\code{\link{ctGenerate}} does. The two differ for a non-Gaussian indicator
+-- where the filter's measurement update is an assumed-density projection
+-- or for state-dependent dynamics. Comparing data generated each way, with
+the same \code{effects}, separates the fitting approximation from model
+misspecification, which comparing either with the observed data tests.
 \code{TRUE} forces the filter route.
 
-Either way the states are regenerated rather than reused: what a fit
-contributes is its sampled individual differences, and the trajectory is
-drawn afresh conditional on the subject-specific model.}
+Either way the states are regenerated rather than reused.}
+
+\item{effects}{For \code{backend='julia'} fits with random effects:
+\code{'population'} (the default) draws new subjects -- and groups, at every
+level -- from the fitted population distribution at each parameter draw, so
+the generated data are the model's prediction for a new sample from the same
+design. \code{'fitted'} keeps the fitted subjects: each at its sampled
+effects when the fit sampled them and saved the draws, otherwise at its
+conditional mode. A fit that integrates the random effects as states
+(\code{intoverpop='augmented'}) carries no per-subject effects, so only
+\code{'population'} applies there. Stan fits generate as the fit was
+made and refuse the argument.}
 }
 \value{
 Matrix of generated data -- one dataset per iteration, according to original time and missingness structure.

@@ -469,34 +469,31 @@ ctStanGenerate <- ctGenerateFromPriors
 #' TRAITTDPREDCOV and TIPREDCOV matrices are not accounted for, at present. 
 #' The first 1:n.TDpred rows and columns of TDPREDVAR are used for generating
 #' tdpreds at each time point. 
-#' @examples 
-#' #generate data for 2 process model, each process measured by noisy indicator, 
-#' #stable individual differences in process levels.
-#' 
+#' @examples
+#' #a 2 process model, each process measured by a noisy indicator, with stable
+#' #individual differences in process levels
 #' generatingModel<-ctModel(Tpoints=8,n.latent=2,n.TDpred=0,n.TIpred=0,n.manifest=2,
 #'  MANIFESTVAR=diag(.1,2),
 #'  LAMBDA=diag(1,2),
 #'  DRIFT=matrix(c(-.2,-.05,-.1,-.1),nrow=2),
 #'  DIFFUSION=matrix(c(1,.2,0,4),2),
-#'  CINT=matrix(c(1,0),nrow=2),
+#'  CINT=matrix(c('cint1, indvarying=TRUE, sdscale=0.05',
+#'    'cint2, indvarying=TRUE, sdscale=0.08'),nrow=2),
+#'  MANIFESTMEANS=matrix(0,ncol=1,nrow=2),
 #'  T0MEANS=matrix(0,ncol=1,nrow=2),
 #'  T0VAR=diag(1,2))
 #'
-#' nsubjects <- 15
-#' traitChol <- matrix(c(.5,.2,0,.8),nrow=2)
-#' subjectCint <- t(replicate(nsubjects, as.numeric(traitChol %*% rnorm(2))))
-#' datalist <- vector("list", nsubjects)
-#' for(i in seq_len(nsubjects)){
-#'   subjectModel <- generatingModel
-#'   #through $matrices: a ctStanModel's specification is $pars, which every
-#'   #top level matrix is rebuilt from below, so `subjectModel$CINT <- ` would
-#'   #be discarded and every subject generated with the same CINT.
-#'   subjectModel$matrices$CINT <- matrix(subjectCint[i,], ncol = 1)
-#'   d <- ctGenerate(subjectModel,n.subjects=1,burnin=10)
-#'   d[,'id'] <- i
-#'   datalist[[i]] <- d
+#' #the R generator: every subject at the values the model states, with free
+#' #cells filled by fixed defaults and no individual differences
+#' data <- ctGenerate(generatingModel,n.subjects=15,burnin=10)
+#'
+#' \donttest{
+#' #the julia engine: each subject's CINT drawn from the population, with the
+#' #means stated on the natural scale and the sds given by sdscale on the raw
+#' #scale (CINT is 10 * raw, so 0.5 and 0.8)
+#' data <- ctGenerate(generatingModel,n.subjects=15,burnin=10,
+#'   backend='julia',popmeans=c(cint1=1,cint2=0))
 #' }
-#' data <- do.call(rbind, datalist)
 #'
 #' #the prior predictive: what the model says data could look like before it
 #' #has seen any. No fit, and no data.
