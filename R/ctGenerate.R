@@ -223,11 +223,12 @@ ctModeltoNumeric <- function(ctmodelobj){
 # the route this replaced, which fitted the model to an empty dataset and so had
 # nothing to optimise without a prior; drawing directly has no such need.
 #
-# `priorscope` says which prior the fit had. `priors` alone cannot, because
-# ctFit() reduces the julia default 'randomCorr' to TRUE. A fit made before
-# `priorscope` was recorded has only the logical: under `$args$resolved`; in
-# `$args` itself for a fit saved by 3.11.1; or, failing both, in the prepared
-# data.
+# `priorscope` says which prior the fit had. `$args$input$priors` alone cannot,
+# because ctFit() reduces the julia default 'randomCorr' to TRUE before it is
+# captured; `$args$resolved$priors` records the scope itself, but only since
+# 2026-10-05. A fit made before `priorscope` was recorded has only the logical:
+# under `$args$resolved`; in `$args` itself for a fit saved by 3.11.1; or,
+# failing both, in the prepared data.
 .ctPriorScopeWarning <- function(fit){
   scope <- fit$args$input$priorscope
   if(is.null(scope)){
@@ -235,7 +236,8 @@ ctModeltoNumeric <- function(ctmodelobj){
     if(is.null(priors)) priors <- fit$args$priors
     if(is.null(priors) && !is.null(fit$standata$priors))
       priors <- as.logical(fit$standata$priors)
-    scope <- if(is.null(priors) || isTRUE(as.logical(priors))) 'all' else 'none'
+    scope <- if(identical(priors, 'randomCorr')) 'randomCorr' else
+      if(is.null(priors) || isTRUE(as.logical(priors))) 'all' else 'none'
   }
   if(!scope %in% 'all') warning('This fit was specified with ',
     if(scope %in% 'randomCorr') paste0("priors='randomCorr', a prior on the ",

@@ -1926,11 +1926,11 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
       if (identical(object$sample$sampler, "saem")) "SAEM kernel" else "NUTS",
       ") pushed through the transforms.")
   } else if (has_posterior) {
-    paste0("Julia backend; intervals from ctOptimUncertainty(uncertainty='",
+    paste0("Julia backend; intervals from ctFitUncertainty(uncertainty='",
       object$uncertainty$settings$method, "') draws pushed through the transforms.")
   } else {
     paste0("Julia backend; point estimates only. ",
-      "Run ctOptimUncertainty() for standard errors and intervals.")
+      "Run ctFitUncertainty() for standard errors and intervals.")
   }
   # One sentence, in the note that is already about what the intervals are, and
   # only when there is something to say -- rather than a section that appears

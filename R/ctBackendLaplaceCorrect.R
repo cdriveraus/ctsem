@@ -146,7 +146,7 @@ ctLaplaceCorrect <- function(fit, draws = c("normal", "imis", "keep"),
   if (is.null(covariance) || !all(is.finite(as.matrix(covariance)))) {
     stop("ctLaplaceCorrect needs the fit's parameter covariance: the ",
       "correction is a Newton step against the curvature computed for the ",
-      "standard errors. Run ctOptimUncertainty(fit) first, or refit without ",
+      "standard errors. Run ctFitUncertainty(fit) first, or refit without ",
       "optimcontrol$estonly.", call. = FALSE)
   }
   est <- as.numeric(fit$estimate$raw)

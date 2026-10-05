@@ -120,7 +120,7 @@ test_that("ctGenerateFromFit returns what the posterior predictive tools expect"
   estonly <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0,
     optimcontrol = list(estonly = TRUE)))
   expect_error(ctGenerateFromFit(estonly, nsamples = 5, fullposterior = TRUE, cores = 1),
-    "ctOptimUncertainty")
+    "ctFitUncertainty")
 
   fromposterior <- ctGenerateFromFit(fit, nsamples = 10, fullposterior = TRUE,
     cores = 1)

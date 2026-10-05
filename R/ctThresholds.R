@@ -191,6 +191,30 @@ NULL
   invisible(NULL)
 }
 
+#' Binary data checked against the model that declares it.
+#'
+#' A Bernoulli observation is 0 or 1. Any other value is a coding error, and
+#' the filter would score it anyway -- a continuous variable declared binary
+#' fitted to a log likelihood with no meaning and no message.
+#' @noRd
+.ctDataBinary <- function(datalong, ctm) {
+  binary <- which(ctm$manifesttype %in% 1)
+  if (!length(binary)) return(invisible(NULL))
+  for (i in binary) {
+    name <- ctm$manifestNames[i]
+    v <- datalong[[name]]
+    if (is.null(v)) next
+    v <- v[!is.na(v)]
+    if (!length(v)) next
+    if (any(!v %in% c(0, 1))) stop('binary variable ', name, ' has values ',
+      'other than 0 and 1 (range ', min(v), ' to ', max(v), '). Code it 0/1, ',
+      'or model it as manifesttype 0 if it is continuous', call. = FALSE)
+    if (all(v == v[1])) warning('binary variable ', name, ' takes the single ',
+      'value ', v[1], ', so its probability is not identified by the data')
+  }
+  invisible(NULL)
+}
+
 #' Check and normalise the censoring limits.
 #'
 #' Limits are known constants, so the checking is about coherence rather than

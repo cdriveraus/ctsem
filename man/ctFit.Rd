@@ -71,13 +71,13 @@ density gives the posterior of parameters and states together.
 the states re-optimise to absorb almost any change in the parameters --
 and is not an estimate. \code{optimcontrol$estonly=TRUE} returns it
 anyway, with no standard errors; the profile curvature is kept at
-\code{fit$optim$hessian_profile}.
-Generally recommended to set TRUE unless using non-gaussian measurement model.}
+\code{fit$optim$hessian_profile}.}
 
 \item{binomial}{Deprecated. Logical indicating the use of binary rather than Gaussian data, as with IRT analyses.
 This now sets the \code{manifesttype} of every indicator to 1, for binary.}
 
-\item{fit}{If TRUE, fit specified model using Stan, if FALSE, return stan model object without fitting.}
+\item{fit}{If FALSE, prepare the model and data without fitting: stan
+returns its fit object unfitted, julia the specification its engine reads.}
 
 \item{intoverpop}{how to handle declared individual differences (random
 effects): integrate them out of the likelihood, or sample them with
@@ -271,7 +271,7 @@ stationary distribution. A latent process whose DRIFT row is fixed at zero
 never settles, and is refused.}
 
 \item{plot}{if TRUE, for sampling, a Shiny program is launched upon fitting to interactively plot samples.
-May struggle with many (e.g., > 5000) parameters. For optimizing, various optimization details are plotted -- in development.
+May struggle with many (e.g., > 5000) parameters. For optimizing, the optimisation trace is plotted.
 With \code{backend='julia'} the trace is plotted once the fit returns
 rather than during it: a julia fit is a single blocking call into the
 engine, so there is no point at which R could draw anything while it runs.
@@ -279,20 +279,19 @@ For genuinely live output use \code{optimcontrol$callback}.}
 
 \item{derrind}{deprecated, latents involved in dynamic error calculations are determined automatically now.}
 
-\item{optimize}{if TRUE, use \code{\link{stanoptimis}} function for maximum a posteriori estimates,
+\item{optimize}{if TRUE, estimate by optimisation -- maximum likelihood, or maximum a posteriori
+with \code{priors=TRUE} -- with uncertainty from the curvature at the estimate;
 otherwise sample the posterior -- with Stan's HMC sampler for \code{backend='stan'}, and for
 \code{backend='julia'} with SAEM's kernel on the joint posterior of parameters and random effects
 (NUTS when there are none; see \code{intoverpop} and \code{sampleControl}) -- which is slower,
 but exact rather than a normal approximation at a mode, and more robust for complex individual differences.
-Importance sampling is a separate, opt-in uncertainty method on top of the optimized estimate; see \code{\link{ctOptimUncertainty}}.
-When \code{optimize=FALSE}, the stored point estimate (\code{stanfit$rawest}) is the per-parameter
-median of the posterior draws; the julia backend's sampled point estimate (see \code{\link{ctFitUncertainty}} with \code{uncertainty = 'sample'})
-is the per-parameter mean instead.}
+Other uncertainty methods for an optimised fit, importance sampling among them, are in
+\code{\link{ctFitUncertainty}}.
+When \code{optimize=FALSE}, the point estimate is the per-parameter median of the posterior
+draws on stan (\code{fit$stanfit$rawest}) and their mean on julia (\code{fit$estimate$raw}).}
 
-\item{optimcontrol}{list of parameters sent to \code{\link{stanoptimis}}
-governing optimization. It is the only optimizer control list: the julia
-backend's \code{backendcontrol} was merged into it, and every name below
-means the same thing on both backends.
+\item{optimcontrol}{list of settings governing optimisation, on either
+backend. A name means the same thing on both.
 
 Stopping rules, honoured by both: \code{tol} (the objective stops changing),
 \code{g_tol} (l2 norm of the gradient), \code{x_tol} (size of the parameter
@@ -595,7 +594,7 @@ An error inside the callback disables it and warns, leaving the fit
 unaffected. If output after the fit is enough, \code{fit$optim$trace} holds
 every iteration and \code{\link{ctTracePlot}} draws it.
 \code{backend='julia'} also finishes by estimating uncertainty, as the stan
-backend does, and reads the same \code{stanoptimis} control names for it:
+backend does, and reads the same control names for it:
 \code{uncertainty} (default \code{'hessian'}), \code{uncertaintyDraws},
 \code{finishsamples}, and \code{uncertaintyControl}. Set
 \code{optimcontrol$estonly = TRUE} for point estimates only.
@@ -618,10 +617,11 @@ is not a maximum, has the flat coordinates pulled back and is refitted from
 there, and the refit is kept only if it improves the objective.}
 
 \item{backend}{Either 'stan' (the default) or 'julia'. The julia backend is a
-separate maximum-likelihood engine with the same model definitions and the
-same summaries; it takes its own reverse-mode gradient, supports
-\code{intoverpop='laplace'} for random effects, and can be sampled afterwards
-with \code{\link{ctFitUncertainty}} (\code{uncertainty = 'sample'}). It
+separate engine with the same model definitions and the same summaries. It
+optimises and samples (\code{optimize=FALSE}), and adds
+\code{intoverpop='laplace'}, grouping levels above the subject, and
+ordinal, count and censored indicators, and it integrates a binary one rather
+than linearising it. It
 needs a working Julia -- see
 \code{\link{ctJuliaSetup}} and \code{\link{ctJuliaInstall}}.}
 
@@ -698,9 +698,12 @@ runs at the count it has and says so; \code{ctJuliaSetup(threads = n, force
 what it currently has, and \code{options(ctsem.julia.restart = TRUE)} has a
 fit restart it for itself when it is short.}
 
-\item{inits}{either character string 'optimize, NULL, or vector of (unconstrained)
-parameter start values, as returned by the rstan function \code{rstan::unconstrain_pars}, or the parameter values
-found in a ctsem fit object \code{myfit$stanfit$rawest} (or \code{$rawposterior}) for instance.}
+\item{inits}{\code{NULL} (the default) for ctsem's own starting values, or
+a vector of starting values on the raw (unconstrained) scale, one per free
+parameter, as a fit holds its estimate: \code{fit$estimate$raw} on julia,
+\code{fit$stanfit$rawest} on stan. With \code{backend='stan'} and
+\code{optimize=FALSE}, the string \code{'optimize'} optimises first and
+starts the chains there.}
 
 \item{compileArgs}{List of arguments to pass to \code{\link[rstan]{stan_model}} for compilation of the Stan model.}
 
@@ -711,12 +714,13 @@ If TRUE, stan model is recompiled, regardless of apparent need for compilation.}
 the parent frame as ctsem.compiled (unless that object already exists and is not from ctsem), to avoid unnecessary recompilation.}
 
 \item{savescores}{Logical. If TRUE, output from the Kalman filter is saved in output. For datasets with many variables
-or time points, will increase file size substantially.}
+or time points, will increase file size substantially. \code{backend='stan'} only;
+on julia, \code{\link{ctKalman}} computes it from the fit.}
 
 \item{savesubjectmatrices}{Logical. If TRUE, subject specific matrices are saved --
 only relevant when either time dependent predictors or individual differences are
 used. Can increase memory usage dramatically in large models, and can be computed after fitting using ctExtract
-or ctSubjectPars .}
+or ctSubjectPars. \code{backend='stan'} only.}
 
 \item{saveComplexPars}{Logical. If TRUE, also save rowwise output of any complex parameters specified,
 i.e. combinations of parameters, functions and states.}
@@ -768,15 +772,8 @@ warning; where both name the same setting, \code{sampleControl} wins.
 For \code{backend='stan'}, a list of arguments sent to \code{\link[rstan]{stan}} control argument,
 regarding warmup / sampling behaviour. Unless specified, values used are:
 list(adapt_delta = .8, adapt_window=5, max_treedepth=10, adapt_init_buffer=2, stepsize = .001).
-For \code{backend='julia'}, the same argument instead carries the julia sampler's own settings:
-\code{maxdepth}/\code{max_treedepth} (default 10), \code{target_accept}/\code{adapt_delta} (0.8),
-\code{maxdelta} (1000), \code{init_scale} (1), \code{adapt_metric} (FALSE), \code{adapt_effects} (FALSE),
-and the effective-sample-size target \code{minESS} (200), \code{meanESS}, \code{maxDraws},
-\code{rhatTarget} (1.01) and \code{settleTol} -- all documented in full under \code{uncertainty =
-'sample'} in \code{\link{ctFitUncertainty}} -- plus \code{warmup} (default 200, or half of
-\code{iter} when that is less), \code{seed} (default
-20260828) and \code{processes} (default TRUE), which \code{\link{ctFitUncertainty}} takes as
-\code{control} entries too.}
+For \code{backend='julia'}, the julia sampler's settings, as listed under
+\code{sampleControl}.}
 
 \item{verbose}{Integer from 0 to 2. 1 reports progress while the model
 fits; 2 additionally keeps every progress line rather than overwriting one
@@ -786,7 +783,8 @@ detected from where the output is going; set
 for your front end -- a Shiny app capturing stdout, for instance -- or
 \code{TRUE} to force it on.}
 
-\item{...}{additional arguments to pass to \code{\link[rstan]{stan}} function.}
+\item{...}{additional arguments to pass to \code{\link[rstan]{stan}} function
+(\code{backend='stan'} only; refused on julia).}
 
 \item{ctstanmodel}{Deprecated. Use \code{model}.}
 }
@@ -804,7 +802,8 @@ with two sublists that mean the same thing on both backends:
  routing, deprecated-argument merges (e.g. \code{nopriors} into
  \code{priors}) and backend-specific defaults were settled -- \code{cores}
  is a concrete integer, \code{intoverpop} is one of \code{'augmented'},
- \code{'laplace'} or \code{'none'}. A call that gives the same \code{input}
+ \code{'laplace'} or \code{'none'}, and \code{priors} is \code{TRUE},
+ \code{FALSE} or \code{'randomCorr'}. A call that gives the same \code{input}
  on both backends gives the same \code{resolved} on both.}
 }
 Before this, \code{$args} itself held the raw call on a stan fit and only

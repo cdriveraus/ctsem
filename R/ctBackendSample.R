@@ -393,7 +393,8 @@
     warning("ctFit(", paste(paste0(deprecated, " = "), collapse = ", "),
       ") is deprecated: sampling settings are entries of sampleControl now, ",
       "as in sampleControl = list(iter = 2000, chains = 4, warmup = 500). ",
-      "What was passed here still takes effect. Said once per session.",
+      "What was passed here still takes effect when sampling. Said once per ",
+      "session.",
       call. = FALSE)
   }
 
@@ -430,11 +431,11 @@
 # different question, and the cure is one character. A near match is named
 # because case is what goes wrong most.
 #' @keywords internal
-.ctBackendSampleCheckControl <- function(control) {
+.ctBackendSampleCheckControl <- function(control, listname = "control") {
   control <- .ctJuliaOr(control, list())
   if (!length(control)) return(invisible(NULL))
   if (is.null(names(control)) || any(!nzchar(names(control)))) {
-    stop("Every entry of control must be named. Accepted names: ",
+    stop("Every entry of ", listname, " must be named. Accepted names: ",
       paste(sort(.CT_SAMPLE_CONTROL_NAMES), collapse = ", "), ".", call. = FALSE)
   }
   unknown <- setdiff(names(control), .CT_SAMPLE_CONTROL_NAMES)
@@ -444,7 +445,7 @@
         tolower(name)]
     if (length(near)) paste0(" (did you mean ", near[1L], "?)") else ""
   }, character(1))
-  stop("control has ", if (length(unknown) > 1L) "entries" else "an entry",
+  stop(listname, " has ", if (length(unknown) > 1L) "entries" else "an entry",
     " the julia sampler does not read: ",
     paste0(unknown, hint, collapse = ", "),
     ". Accepted names: ", paste(sort(.CT_SAMPLE_CONTROL_NAMES),
@@ -1396,7 +1397,8 @@ print.ctSampleDiagnostics <- function(x, ...) {
   intoverpop, gradient, verbose, intoverstates = TRUE) {
 
   # First, because everything after it takes minutes and this takes none.
-  .ctBackendSampleCheckControl(control)
+  # Named as the caller wrote it: ctFit takes these as sampleControl.
+  .ctBackendSampleCheckControl(control, listname = "sampleControl")
   npar <- .ctBackendNpar(model_spec)
   # As in the optimising path: the zero keeps `max` from warning and returning
   # -Inf on a fully fixed model, and the refusal replaces the "invalid

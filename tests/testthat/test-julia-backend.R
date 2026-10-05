@@ -81,6 +81,48 @@ test_that("Julia backend rejects unsupported capabilities before session startup
   # rather than be rejected by it. Asserting the absence of the old error keeps
   # the lifted limitation from quietly coming back.
   expect_no_error(unsupported(optimize = FALSE))
+
+  # Accepted and ignored until 2026-10-05; each now says what computes it.
+  expect_error(unsupported(savescores = TRUE), "ctKalman")
+  expect_error(unsupported(savesubjectmatrices = TRUE), "ctSubjectPars")
+  expect_error(unsupported(dots = "seed"), "seed, which only backend='stan'")
+})
+
+test_that("arguments a fit would coerce or drop are refused or named before any work", {
+  model <- suppressWarnings(suppressMessages(ctModel(type = "ct",
+    LAMBDA = diag(1), DRIFT = matrix("drift", 1, 1),
+    DIFFUSION = matrix("diffusion", 1, 1), MANIFESTVAR = matrix("residual", 1, 1),
+    MANIFESTMEANS = matrix(0, 1, 1), T0VAR = matrix(1, 1, 1),
+    T0MEANS = matrix(0, 1, 1))))
+  dat <- data.frame(id = rep(1:2, each = 3), time = rep(0:2, 2),
+    Y1 = c(0, 1, 0, 1, 1, 0))
+  prep <- function(...) suppressMessages(ctFit(dat, model, backend = "julia",
+    fit = FALSE, ...))
+  # 0 used to run and be recorded as the cores used; 'yes' became NA.
+  expect_error(prep(cores = 0), "positive whole number")
+  expect_error(prep(cores = 1.5), "positive whole number")
+  expect_error(prep(verbose = "yes"), "verbose must be")
+  expect_error(prep(seed = 1), "only backend='stan'")
+  # Sampling settings on a fit that optimises are named as unused.
+  expect_warning(prep(sampleControl = list(chains = 3)), "not used")
+  # The prior the fit runs under, not the logical it was reduced to.
+  expect_identical(suppressWarnings(prep())$args$resolved$priors, "randomCorr")
+  # A binary indicator is checked against the data, as counts and ordinal
+  # categories are: a continuous column declared binary fitted silently.
+  binary <- model
+  binary$manifesttype <- 1L
+  binary$pars$value[binary$pars$matrix %in% "MANIFESTVAR"] <- 0
+  binary$pars$param[binary$pars$matrix %in% "MANIFESTVAR"] <- NA
+  expect_no_error(suppressWarnings(suppressMessages(ctFit(dat, binary,
+    backend = "julia", fit = FALSE))))
+  continuous <- dat
+  continuous$Y1 <- continuous$Y1 + 0.5
+  expect_error(suppressWarnings(suppressMessages(ctFit(continuous, binary,
+    backend = "julia", fit = FALSE))), "other than 0 and 1")
+  # ctFitUncertainty's ... swallowed a misplaced control entry; refused first,
+  # before the fit is looked at.
+  expect_error(ctFitUncertainty(NULL, "opg", chains = 4),
+    "control = list\\(chains")
 })
 
 test_that("a bracketed expression is resolved or refused for the reason it actually hit", {

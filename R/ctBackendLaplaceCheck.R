@@ -156,7 +156,7 @@ ctLaplaceCheck <- function(fit, nodes = 5L, correction = TRUE, step = 1e-3,
   hessian <- fit$uncertainty$hessian
   if (isTRUE(correction) && is.null(hessian)) {
     warning("No Hessian on the fit, so the correction cannot be formed. ",
-      "Run ctOptimUncertainty(fit) first, or use correction=FALSE.",
+      "Run ctFitUncertainty(fit) first, or use correction=FALSE.",
       call. = FALSE)
   }
   do_correction <- isTRUE(correction) && !is.null(hessian)

@@ -43,7 +43,8 @@ replacing it with a curvature-based approximation would discard it.
 to draw more, or differently, from where it now stands.}
 
 \item{uncertainty}{Uncertainty approximation. \code{'hessian'} uses the
-finite-difference Hessian, \code{'surrogate'} fits a local quadratic
+Hessian at the estimate -- exact on julia, which differentiates its own
+gradient, and by finite differences on stan -- \code{'surrogate'} fits a local quadratic
 surrogate around the optimum, \code{'is'} runs adaptive importance sampling
 against the fitted log posterior. Each raw parameter is first walked out on
 both sides of the mode, from 3 to 96 standard errors of the curvature, with
@@ -255,7 +256,8 @@ refits.}
 
 \item{verbose}{Integer controlling progress detail.}
 
-\item{...}{Unused.}
+\item{...}{Not used. Anything passed here is an error rather than ignored:
+a method's settings are entries of \code{control}.}
 }
 \value{
 The fit, of the class it came in as. For every method except

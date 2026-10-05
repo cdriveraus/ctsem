@@ -101,8 +101,13 @@ accessor (`.ctFitModelObject`, `.ctFitLongData`, `.ctFitIdMap`,
 ## What works
 
 - **Fitting**: `ctFit(backend='julia')`, continuous and discrete time,
-  individually varying parameters (`intoverpop`), TI predictors, TD predictors,
-  state-dependent (nonlinear) model matrices, `priors=TRUE`.
+  individually varying parameters (`intoverpop`: `'augmented'`, `'laplace'`,
+  or sampled with `'none'`), grouping levels above the subject (`'laplace'`),
+  TI predictors, TD predictors, state-dependent (nonlinear) model matrices,
+  binary, ordinal, count and censored indicators, `priors`.
+- **Sampling**: `ctFit(optimize=FALSE)`, or `ctFitUncertainty(fit, 'sample')`
+  after an optimised fit -- the exact posterior, by SAEM's kernel on the joint
+  posterior of parameters and random effects and by NUTS on a marginal one.
 - **Threading**: the subject loop splits into contiguous chunks over
   `Threads.@spawn`, each owning its adjoint workspace — never indexed by
   `threadid()`, because a task can migrate between threads at any yield point.
@@ -112,7 +117,8 @@ accessor (`.ctFitModelObject`, `.ctFitLongData`, `.ctFitIdMap`,
   `bootstrap` — **run as part of fitting**, as `stanoptimis()` runs them for an
   optimized Stan fit, and controlled by the same `optimcontrol` names
   (`uncertainty`, `uncertaintyDraws`, `finishsamples`, `uncertaintyControl`,
-  `estonly`). `ctOptimUncertainty()` re-runs it with different settings. The
+  `estonly`). `ctFitUncertainty()` re-runs it with different settings, and
+  `ctFitUncertainty(fit, 'sample')` samples the posterior instead. The
   Hessian is **exact**, not finite-differenced — see below. Not
   `fullbootstrap`, which re-optimises each resample and so needs the model
   rebuilt rather than re-evaluated.
@@ -138,14 +144,12 @@ variational Bayes (`vb=TRUE`), data generation through the fit call
 `intoverpop='laplace'`. Also unsupported, without a hard refusal:
 `fullbootstrap` uncertainty, `summary(priorcheck=)`
 (accepted and ignored — it compares posteriors against the *Stan* model's
-prior block), the prior/posterior-density, trace and interval panels of
-`plot()`, and multi-start/restart robustness in the optimizer — both
-`ctsem_optimize` and Stan's `stanoptimis` can walk to `|raw| ~ 1e4` on a weakly
-identified model, and only Stan's has any defence against it. That last one
-deserves more attention now that `ctLOO()` works, because every fold is an
-independent re-optimisation: on a model where withholding a fold leaves a
-parameter poorly determined, two folds — or two backends — can converge to
-raw parameters several units apart for a likelihood difference of a percent.
+prior block), and the prior/posterior-density, trace and interval panels of
+`plot()`. A weakly identified model can still leave folds of `ctLOO()`, or two
+backends, at raw parameters several units apart for a likelihood difference of
+a percent; the julia optimiser's own defences are its Newton finish and
+certification, the stall retries (`optimcontrol$stallretries`) and opt-in
+random restarts (`optimcontrol$restarts`).
 
 ---
 
