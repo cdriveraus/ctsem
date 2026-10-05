@@ -110,7 +110,8 @@
 #' A cell's effects count as unspecified only when its \code{tipreds} field is
 #' left out: an empty one (\code{'mypar||||'}) states that the parameter has no
 #' predictor effects, which is the way to exclude a parameter under
-#' \code{tipredDefault = TRUE}.
+#' \code{tipredDefault = TRUE}. The setting is kept on the returned model as
+#' \code{$tipredDefault}.
 #' 
 #' @param n.TDpred Number of time dependent predictor variables in the dataset.  
 #' 

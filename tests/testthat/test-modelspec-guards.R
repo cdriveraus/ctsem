@@ -472,3 +472,13 @@ test_that("a reserved word or a decimal comma in a cell is refused, saying what 
   # T is an ordinary name in a model, not R's TRUE.
   expect_no_error(.guard_model(DRIFT = matrix('T')))
 })
+
+test_that("a model keeps the tipredDefault it was built with", {
+  # The effects themselves are in $pars; what edits the model later needs
+  # the default the cells without a tipreds field were given.
+  build <- function(...) .guard_model(n.TIpred = 1, TIpredNames = 'age', ...)
+  expect_true(build()$tipredDefault)
+  off <- build(tipredDefault = FALSE)
+  expect_false(off$tipredDefault)
+  expect_false(any(as.logical(off$pars$age_effect), na.rm = TRUE))
+})

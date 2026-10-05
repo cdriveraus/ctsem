@@ -676,7 +676,12 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
     censormax=if(is.null(ctmodelobj$censormax))
       rep(Inf, n.manifest) else as.numeric(ctmodelobj$censormax))
   class(out)<-'ctStanModel'
-  
+
+  # The resolved effects are in $pars, but whatever edits a model afterwards
+  # -- ctsemGUI adding a parameter to a loaded one -- needs the default the
+  # cells without a tipreds field were given, and had to guess it.
+  out$tipredDefault <- isTRUE(tipredDefault)
+
   out$tipredeffectscale <- 1
   out$tipredsimputedscale <- 1
   

@@ -174,7 +174,8 @@ predictor effects to have effects estimated, FALSE fixes the effect to zero unle
 A cell's effects count as unspecified only when its \code{tipreds} field is
 left out: an empty one (\code{'mypar||||'}) states that the parameter has no
 predictor effects, which is the way to exclude a parameter under
-\code{tipredDefault = TRUE}.}
+\code{tipredDefault = TRUE}. The setting is kept on the returned model as
+\code{$tipredDefault}.}
 
 \item{PARS}{for types 'ct' and 'dt' only. May be of any structure, only needed to contain extra parameters for certain non-linear models.}
 }
