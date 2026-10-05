@@ -97,8 +97,12 @@
 #'  reached when the Laplace objective has more than one. Its point carries
 #'  Monte Carlo error, so where the posterior itself has several maxima --
 #'  weakly identified random-effect scales and correlations -- that error, not
-#'  the data, can decide which one is reached, and a fit without SAEM may reach
-#'  a better one. Not a better
+#'  the data, can decide which one is reached. So the fit also finishes from
+#'  its own start without SAEM, one more optimisation, and keeps whichever
+#'  maximum has the higher log posterior on the quadrature-corrected objective
+#'  (quadrature for each unit narrow enough, as \code{laplace_correct}
+#'  screens), where a maximum the Laplace approximation over-credits loses;
+#'  \code{fit$optim$saem_guard} records both. Not a better
 #'  approximate estimate on its own -- for that, sample with
 #'  \code{optimize = FALSE}. A number caps its iterations (TRUE is 10000).
 #'  \code{fit$optim$saem_iterations}, \code{saem_settled}, \code{saem_trend},

@@ -5268,6 +5268,56 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       }
     }
   }
+  # `saem = TRUE`: SAEM's averaged point carries Monte Carlo error, and where
+  # the posterior itself has several maxima that error decides which one the
+  # finish reaches -- on the ?ctFit example with a drift random effect, three
+  # certified maxima 2.3 apart, quadrature agreeing at each, the default fit
+  # reaching the best from every seed and saem one of the three by seed
+  # (review/SAEM-fell-short-2026-10-05.md). So the fit also finishes from its
+  # own start without SAEM and keeps whichever maximum is higher on the
+  # corrected log posterior, by the correction's own screen. Compared there
+  # rather than on the Laplace objective, so that a maximum the approximation
+  # over-credits -- SAEM's reason to exist -- still loses. Ties keep SAEM's.
+  saemguard <- NULL
+  if (.ctJuliaSaemIterations(optimcontrol) > 0L && !is.null(model_spec$laplace) &&
+      is.null(jointobjective) && isTRUE(intoverstates)) {
+    saemrun <- result
+    plain <- try(.ctJuliaOptimise(model_spec, start, optimcontrol =
+      utils::modifyList(optimcontrol, list(saem = FALSE)), gradient = gradient,
+      cores = cores, verbose = verbose, callback = optimcontrol$callback,
+      progress_label = "without SAEM"), silent = TRUE)
+    plaincorrection <- NULL
+    if (!inherits(plain, "try-error") && certifying) {
+      plaincorrection <- correct(plain)
+      plain <- plaincorrection$result
+    }
+    if (!inherits(plain, "try-error")) {
+      withsaem <- .ctLaplaceCorrectedValue(model_spec, as.numeric(saemrun$minimizer))
+      without <- .ctLaplaceCorrectedValue(model_spec, as.numeric(plain$minimizer))
+      chosen <- if (all(is.finite(c(withsaem[["corrected"]], without[["corrected"]]))) &&
+          without[["corrected"]] > withsaem[["corrected"]] + 1e-3) "without" else "saem"
+      # Both runs counted, whichever is kept (`.ctJuliaAddRunCounts()`).
+      if (identical(chosen, "saem")) result <- .ctJuliaAddRunCounts(saemrun, plain)
+      saemguard <- list(chosen = chosen,
+        logpost_saem = withsaem[["corrected"]],
+        logpost_without = without[["corrected"]],
+        laplace_saem = withsaem[["laplace"]], laplace_without = without[["laplace"]],
+        units_kept_laplace = withsaem[["wide"]])
+      if (identical(chosen, "without")) {
+        # The kept run is the plain one, but the SAEM phase that ran stays
+        # recorded, beside the comparison that set it aside.
+        for (nm in grep("^saem_", names(saemrun), value = TRUE)) {
+          plain[nm] <- list(saemrun[[nm]])
+        }
+        result <- .ctJuliaAddRunCounts(plain, saemrun)
+        correction <- plaincorrection
+        message(sprintf(paste0("SAEM reached a maximum with log posterior %.2f; ",
+          "finishing without it reached %.2f, which the fit keeps. See ",
+          "fit$optim$saem_guard."), withsaem[["corrected"]],
+          without[["corrected"]]))
+      }
+    }
+  }
   # The engine maximises the log posterior, so its `maximum_loglik` is the log
   # posterior and the per-subject objectives (which carry no prior term) sum to
   # the log likelihood. Without priors the two are the same number; with them
@@ -5557,6 +5607,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     out$optim$restarts <- restarts$table
     out$optim$restarts_cancelled <- isTRUE(restarts$cancelled)
   }
+  # Which of SAEM's maximum and the one reached without it the fit kept, and
+  # both corrected log posteriors (see the guard in `.ctJuliaOptimiseFit()`).
+  if (!is.null(saemguard)) out$optim$saem_guard <- saemguard
   # The kept run's own count, when the fit also ran one it did not keep -- a
   # stall escape, a substep refit (`.ctJuliaAddRunCounts()`): `iterations`
   # counts both, and the trace is the kept run's.
