@@ -509,7 +509,7 @@ function _ctsem_subject_gradient_chunk!(scores::Matrix{T}, totals::Vector{T},
             end
             total += loglik
 
-            if _tape_unstable(tape)
+            if _growth_unstable(ws)
                 _ctsem_forward_subject_gradient!(view(scores, i, :), subject_objective, values)
                 continue
             end
@@ -582,7 +582,7 @@ function _ctsem_adjoint_chunk!(gradient::Vector{T}, totals::Vector{T},
         # Forward mode for a subject whose reverse pass would not be stable;
         # see `_CTSEM_ADJOINT_GROWTH`. Its gradient goes straight into the
         # chunk's, so nothing of it enters the shared parameter layer.
-        if _tape_unstable(tape)
+        if _growth_unstable(ws)
             gf = similar(gradient)
             _ctsem_forward_subject_gradient!(gf, subject_objective, values)
             gradient .+= gf

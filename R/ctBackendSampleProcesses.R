@@ -506,6 +506,7 @@
     npar = as.integer(result$npar), ndim = as.integer(result$ndim),
     ndraws = ndraws,
     ndivergent = as.integer(result$ndivergent),
+    forward_gradients = as.integer(.ctJuliaOr(result$forward_gradients, 0L))[1L],
     warmup_divergent = as.integer(result$warmup_divergent),
     nsaturated = as.integer(result$nsaturated),
     max_depth = as.integer(result$max_depth),
@@ -613,6 +614,8 @@
     # Summed across chains, because they count events; the step size and E-BFMI
     # are per chain and stay per chain.
     ndivergent = sum(vapply(drawn, function(d) as.integer(d$ndivergent), integer(1))),
+    forward_gradients = sum(vapply(drawn,
+      function(d) as.integer(.ctJuliaOr(d$forward_gradients, 0L))[1L], integer(1))),
     warmup_divergent = sum(vapply(drawn,
       function(d) as.integer(d$warmup_divergent), integer(1))),
     nsaturated = sum(vapply(drawn, function(d) as.integer(d$nsaturated), integer(1))),
