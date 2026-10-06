@@ -4293,7 +4293,8 @@ needs a marginal per independent block (leave-one-unit-out, for one) reads
 `unit_loglik`.
 """
 function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::AbstractVector;
-    gradient::Bool=true, contributions::Bool=false, nested_gradient::Bool=false)
+    gradient::Bool=true, contributions::Bool=false, nested_gradient::Bool=false,
+    scores::Union{Nothing,Matrix{Float64}}=nothing)
     theta = collect(Float64, values)
     _laplace_check_indices(laplace, length(theta))
     laplace.last_values = theta
@@ -4480,60 +4481,74 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
         # races: piece `c` and the worker holding slot `c` would share one
         # accumulator.
         partials = [zeros(Float64, length(theta)) for _ in 1:nslot]
+        # With `scores`, each unit's gradient is formed in a row buffer of the
+        # slot's and then added both to the slot's sum and to the unit's row:
+        # the units' own gradients are the score rows
+        # (`ctsem_subject_gradients`). Without, the buffer is the sum itself.
+        rows = scores === nothing ? partials :
+            [zeros(Float64, length(theta)) for _ in 1:nslot]
         fill!(chunk_ok, true)
         run_gradient = function (c)
             @inbounds for U in ranges[c]
-                # A unit the gated floor scored is differentiated through its
-                # own term; see `_laplace_gated_unit_gradient`.
-                if primal_gated[U]
-                    local gg
-                    gg = _laplace_gated_unit_gradient(laplace, U, theta,
-                        primal_curvature[U])
-                    if !all(isfinite, gg)
+                scores === nothing || fill!(rows[_laplace_slot()], 0.0)
+                # One pass, so a unit handled early can `break` to the row below.
+                for _ in 1:1
+                    # A unit the gated floor scored is differentiated through its
+                    # own term; see `_laplace_gated_unit_gradient`.
+                    if primal_gated[U]
+                        local gg
+                        gg = _laplace_gated_unit_gradient(laplace, U, theta,
+                            primal_curvature[U])
+                        if !all(isfinite, gg)
+                            chunk_ok[_laplace_slot()] = false
+                            return nothing
+                        end
+                        rows[_laplace_slot()] .+= gg
+                        break
+                    end
+                    # A floored unit is differentiated whole; see
+                    # `_laplace_floored_unit_gradient!`.
+                    if laplace.logdet_floored[U]
+                        if !_laplace_floored_unit_gradient!(
+                                rows[_laplace_slot()], laplace, U,
+                                theta, Ls, dLlevels)
+                            chunk_ok[_laplace_slot()] = false
+                            return nothing
+                        end
+                        break
+                    end
+                    factors, elim = primal_curvature[U]
+                    local bg
+                    bg = _laplace_mark()
+                    if !_laplace_seeded_unit_gradient!(rows[_laplace_slot()],
+                            laplace, U, theta,
+                            Ls, dLlevels, dLsolved, primal_matrices[U], factors, elim)
                         chunk_ok[_laplace_slot()] = false
                         return nothing
                     end
-                    partials[_laplace_slot()] .+= gg
-                    continue
-                end
-                # A floored unit is differentiated whole; see
-                # `_laplace_floored_unit_gradient!`.
-                if laplace.logdet_floored[U]
-                    if !_laplace_floored_unit_gradient!(
-                            partials[_laplace_slot()], laplace, U,
-                            theta, Ls, dLlevels)
+                    # A sweep can return success and still have accumulated a
+                    # non-finite contribution: it reports whether its
+                    # factorizations worked, not whether the numbers that came out
+                    # of them are usable. One NaN here is the whole gradient, and
+                    # the trial point is then rejected with a perfectly good
+                    # objective value attached to it -- 54 of one fit's 267
+                    # evaluations went that way, and the fit stopped 0.14 log units
+                    # short with a gradient of 3.2.
+                    #
+                    # The fallback below exists for exactly this and was reachable
+                    # only through a failed factorization. It computes the same
+                    # quantity by ForwardDiff over the whole per-unit term, sharing
+                    # only the primal, so it is a genuinely different route rather
+                    # than a retry.
+                    _laplace_charge!(_LAPLACE_BYTES_GRAD, bg)
+                    if !all(isfinite, rows[_laplace_slot()])
                         chunk_ok[_laplace_slot()] = false
                         return nothing
                     end
-                    continue
                 end
-                factors, elim = primal_curvature[U]
-                local bg
-                bg = _laplace_mark()
-                if !_laplace_seeded_unit_gradient!(partials[_laplace_slot()],
-                        laplace, U, theta,
-                        Ls, dLlevels, dLsolved, primal_matrices[U], factors, elim)
-                    chunk_ok[_laplace_slot()] = false
-                    return nothing
-                end
-                # A sweep can return success and still have accumulated a
-                # non-finite contribution: it reports whether its
-                # factorizations worked, not whether the numbers that came out
-                # of them are usable. One NaN here is the whole gradient, and
-                # the trial point is then rejected with a perfectly good
-                # objective value attached to it -- 54 of one fit's 267
-                # evaluations went that way, and the fit stopped 0.14 log units
-                # short with a gradient of 3.2.
-                #
-                # The fallback below exists for exactly this and was reachable
-                # only through a failed factorization. It computes the same
-                # quantity by ForwardDiff over the whole per-unit term, sharing
-                # only the primal, so it is a genuinely different route rather
-                # than a retry.
-                _laplace_charge!(_LAPLACE_BYTES_GRAD, bg)
-                if !all(isfinite, partials[_laplace_slot()])
-                    chunk_ok[_laplace_slot()] = false
-                    return nothing
+                if scores !== nothing
+                    partials[_laplace_slot()] .+= rows[_laplace_slot()]
+                    scores[U, :] .= rows[_laplace_slot()]
                 end
             end
             return nothing
@@ -4559,9 +4574,11 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
             fill!(grad, 0.0)
             grad .= _laplace_nested_gradient(laplace, theta, Ls, primal_curvature)
             _CTSEM_LAPLACE_FALLBACKS[] += 1
+            scores === nothing || fill!(scores, NaN)
         end
     else
         grad .= _laplace_nested_gradient(laplace, theta, Ls, primal_curvature)
+        scores === nothing || fill!(scores, NaN)
     end
     return (value=value, gradient=grad, subject_loglik=subject_loglik,
         unit_loglik=unit_loglik, converged=all(laplace.inner_converged))
@@ -5906,11 +5923,43 @@ joint one -- the two differ by exactly the random-effect terms that have been
 integrated out, so using the joint score would understate the uncertainty it is
 there to measure.
 
-It costs one sweep, not one per subject: the per-subject terms are assembled
-into a vector and differentiated together, so the same forward directions serve
-every row.
+The rows are the units' own gradients from the evaluation's seeded reverse
+sweep (`ctsem_laplace_evaluate`'s `scores`), so they cost one gradient and run
+in parallel over units like it. They were a forward-mode Jacobian of the
+per-unit terms (`_laplace_subject_gradients_forward`, still the fallback): one
+dual pass per chunk of parameters over every unit, on one thread. The batched
+optimiser takes every gradient of a batch stage from here, and on the SNSF
+pilot (310 parameters, 493 single-member units) its first iterations then took
+5-20 minutes each at one core, against seconds once the batch was full.
 """
 function ctsem_subject_gradients(laplace::CTSEMLaplaceObjective,
+    values::AbstractVector)
+    theta = collect(Float64, values)
+    nunits = length(laplace.units.members)
+    S = zeros(Float64, nunits, length(theta))
+    r = ctsem_laplace_evaluate(laplace, theta; gradient=true, scores=S)
+    isfinite(r.value) || return (value=r.value, scores=fill(NaN, size(S)))
+    all(isfinite, S) || return _laplace_subject_gradients_forward(laplace, theta)
+    # Each unit carries its share of the prior, as the forward route's rows do.
+    if !isempty(laplace.objective.prior_index) && nunits > 0
+        share = 1 / nunits
+        for U in 1:nunits
+            _ctsem_log_prior_gradient!(view(S, U, :), laplace.objective, theta, share)
+        end
+    end
+    return (value=r.value, scores=S)
+end
+
+"""
+    _laplace_subject_gradients_forward(laplace, values)
+
+`ctsem_subject_gradients` by a forward-mode Jacobian of the per-unit terms: the
+reference its seeded rows are tested against, and its fallback when the seeded
+sweep fails. One sweep, not one per unit: the per-unit terms are assembled into
+a vector and differentiated together, so the same forward directions serve
+every row.
+"""
+function _laplace_subject_gradients_forward(laplace::CTSEMLaplaceObjective,
     values::AbstractVector)
     theta = collect(Float64, values)
     nsubjects = length(laplace.objective.subject_objectives)

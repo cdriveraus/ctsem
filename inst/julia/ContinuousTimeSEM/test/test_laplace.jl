@@ -146,6 +146,24 @@ end
     @test norm(result.gradient - reference) / norm(reference) < 1e-6
 end
 
+# The score rows come from the evaluation's own seeded sweep, unit by unit and
+# in parallel; the forward-mode Jacobian of the per-unit terms they replaced is
+# an independent route to the same matrix (it shares the primal and nothing
+# else), so it is the reference. Elementwise, so a row in the wrong place or a
+# prior share counted twice shows by name.
+@testset "score rows are the units' own gradients" begin
+    for (label, fresh) in (("one level", _fresh_linear), ("two levels", _fresh_twolevel))
+        laplace, values = fresh()
+        seeded = ctsem_subject_gradients(laplace, values)
+        forward = ContinuousTimeSEM._laplace_subject_gradients_forward(laplace, values)
+        @test isapprox(seeded.value, forward.value; rtol=1e-10)
+        @test size(seeded.scores) == size(forward.scores)
+        @test all(isapprox.(seeded.scores, forward.scores; rtol=1e-7, atol=1e-9))
+        total = ctsem_laplace_evaluate(laplace, values; gradient=true).gradient
+        @test all(isapprox.(vec(sum(seeded.scores; dims=1)), total; rtol=1e-9, atol=1e-10))
+    end
+end
+
 @testset "two levels: an empty outer level reduces to one level" begin
     # A study level carrying no random effects is a hierarchy that does not do
     # anything, and it must not change the answer -- only how the subjects are
