@@ -1170,18 +1170,38 @@ Undo one measurement update, including its log-likelihood contribution.
 
 Forward (on the observed subset, with `ε` the Stan-matching ridge):
 
-    Pr  = P + εI
-    PHt = Pr H'
-    S   = sym(H PHt + R) + εI
+    Pr  = P + εI;   R̃ = R + εI
+    S   = sym(H Pr H' + R) + εI  = H Pr H' + R̃
     ỹ   = y - (Λ x + μ)
-    α   = S⁻¹ ỹ
-    x⁺  = x + PHt α
-    G   = PHt S⁻¹;   M = I - G H
-    P⁺  = M P M' + G R G'                (Joseph form, on the *unridged* P)
-    ll  = -½ (m log 2π + logdet S + ỹ'α)
+    K   = Pr H' S⁻¹;   M = I - K H
+    x⁺  = x + K ỹ
+    P⁺  = M Pr M' + K R̃ K'              (Joseph form)
+    ll  = -½ (m log 2π + logdet S + ỹ'S⁻¹ỹ)
 
 The seed for `ll` is 1: the reverse pass differentiates the summed
 log-likelihood, so every row contributes with unit weight.
+
+# Stable in an explosive direction
+
+After a long interval with a positive drift eigenvalue the prediction is huge
+in one direction (1e10 on the SNSF pilot), so `S` is badly conditioned there:
+an explicit `S⁻¹` is wrong there by about 1e-6 absolute, where the cotangent
+`H'S̄H` it feeds is about 1e-10, and the reverse prediction then multiplies that
+direction by up to 1e10. Derivatives of the Joseph form taken through `M P`
+with `P` huge cancel the same way. So nothing here forms `S⁻¹` or multiplies by
+`Pr`: with `S = U'U`, `e = U⁻ᵀỹ`, `a = S⁻¹ỹ`, `Kb = Pr H'U⁻¹`, `Wh = U⁻ᵀH`,
+
+    P̄  = -½(Wh'Wh - (Wh'e)(Wh'e)') + sym(x̄⁺ (Wh'e)') - sym(H'K'x̄⁺ (Wh'e)') + M'P̄⁺M
+    H̄  = -U⁻¹(I - ee')Kb' + a (P⁺x̄⁺)' - (K'x̄⁺)(Kỹ)' - 2K'P̄⁺P⁺
+    R̄  = -½U⁻¹(I - ee')U⁻ᵀ - sym((K'x̄⁺) a') + K'P̄⁺K
+    ỹ̄  = K'x̄⁺ - a
+
+using the Joseph form's stationarity in `K` at the optimal gain (so its `K`
+path contributes nothing) and `M Pr = P⁺` (so products with `Pr` become
+products with `P⁺`). Both hold because the forward forms the posterior on the
+same `Pr` and `R̃` as the gain. Checked on the regression fixture's explosive
+row against BigFloat: the amplified `P̄` to 3e-6 relative where the previous
+derivation was 24% off, `H̄` to 2e-6 where it was 28% off.
 """
 function _reverse_update!(x̄::Vector{T}, P̄::Matrix{T}, Θ̄::Matrix{T}, θ̄ca,
     record::CTSEMUpdateRecord{T}, n::Int, sc::CTSEMReverseScratch{T}) where {T}
@@ -1251,13 +1271,11 @@ function _reverse_update!(x̄::Vector{T}, P̄::Matrix{T}, Θ̄::Matrix{T}, θ̄c
     else
         CTSEMCholesky(mm2, m, issuccess(cholesky!(mm2, check=false)))
     end
+    # `Sinv` holds `U⁻¹` here, not `S⁻¹`: see the docstring for why nothing
+    # below forms `S⁻¹`.
+    Ui = Sinv
     if issuccess(F)
-        @inbounds for j in 1:m
-            column = view(Sinv, :, j)
-            fill!(column, zero(T))
-            column[j] = one(T)
-            ldiv!(column, F, column)
-        end
+        _ctsem_cholesky_uinv!(Ui, F)
     else
         # Not `inv(S)`. The reverse recomputes `S` with its own kernels rather
         # than reusing the forward's factorization, so it can fail here on a
@@ -1280,73 +1298,80 @@ function _reverse_update!(x̄::Vector{T}, P̄::Matrix{T}, Θ̄::Matrix{T}, θ̄c
     end
     copyto!(ỹ, record.manifestmeans)
     _ctsem_mulvec!(ỹ, Λ, x, one(T), one(T))                     # ỹ = Λ x + μ
-    # The seven broadcasts in this function were rewritten as @inbounds loops
-    # once, on the evidence of a profile that put 9% of the gradient in
-    # `_setindex!` and 4% in a `==` whose callers were broadcast's aliasing
-    # check and its CartesianIndices iterator. Measured on dev1 over three runs
-    # at one and ten threads: 1.5% on a one-latent model and nothing at all on
-    # five or twelve latents. Most of that self time is not broadcast. Reverted,
-    # and recorded here so it is not rediscovered.
     ỹ .= record.y .- ỹ
-    _ctsem_mulvec!(α, Sinv, ỹ)
-    _ctsem_mul!(G, PHt, Sinv)
-    _ctsem_mul!(M, G, H)                                     # M = I - G H
+
+    # Names for the buffers this derivation uses; see the docstring.
+    e   = α                                   # U⁻ᵀ ỹ
+    a   = β                                   # S⁻¹ ỹ
+    Kx  = ᾱ                                   # K' x̄⁺
+    Kb  = PHt_bar                             # Pr H' U⁻¹
+    K   = G                                   # Pr H' S⁻¹
+    Wh  = Λ̄                                   # U⁻ᵀ H, until Λ̄ is formed
+    Pp  = M̄                                   # P⁺
+    We  = view(_rs(sc.nn3, n, n), :, 1)       # Wh' e = H' a
+    HKx = view(_rs(sc.nn4, n, n), :, 1)       # H' K' x̄⁺
+    Ky  = view(_rs(sc.nn5, n, n), :, 1)       # K ỹ
+    Ppx = _rs(sc.nv1, n)                      # P⁺ x̄⁺
+    oneT = one(T)
+
+    _ctsem_mulTvec!(e, Ui, ỹ)
+    _ctsem_mulvec!(a, Ui, e)
+    _ctsem_mul!(Kb, PHt, Ui)
+    _ctsem_mulNT!(K, Kb, Ui)
+    _ctsem_mul!(M, K, H)                                     # M = I - K H
     M .= .-M
-    @inbounds for i in 1:n; M[i, i] += one(T); end
-
-    # --- log-likelihood contribution (unit seed)
-    _ctsem_outer!(mm1, α, α)
-    S̄ .= -0.5 .* (Sinv .- mm1)
-    ỹ̄ .= .-α
-
-    # --- x⁺ = x + PHt α
-    copyto!(x̄_new, x̄)
-    _ctsem_outer!(PHt_bar, x̄, α)
-    _ctsem_mulTvec!(ᾱ, PHt, x̄)
-
-    # --- α = S⁻¹ ỹ
-    _ctsem_mulvec!(β, Sinv, ᾱ)
-    ỹ̄ .+= β
-    _ctsem_outer!(mm1, β, α)
-    S̄ .-= mm1
-
-    # --- P⁺ = M P M' + G R G'
+    @inbounds for i in 1:n; M[i, i] += oneT; end
+    _ctsem_mulTN!(Wh, Ui, H)
+    _ctsem_mul!(nn1, M, Pr)                                  # P⁺ = M Pr M' + K R̃ K'
+    _ctsem_mulNT!(Pp, nn1, M)
+    _ctsem_mul!(nm1, K, R)
+    _ctsem_mulNT!(Pp, nm1, K, oneT, oneT)
+    _ctsem_mulNT!(Pp, K, K, T(_CTSEM_RIDGE), oneT)
     _symmetrize_into!(Ps, P̄)
-    P_in = record.P_in
-    _ctsem_mul!(nn1, Ps, M)                           # nn1 = Ps M
-    _ctsem_mulNT!(M̄, nn1, P_in)
-    _ctsem_mulTN!(nn2, Ps, M)
-    _ctsem_mul!(M̄, nn2, P_in, one(T), one(T))                # M̄ = Ps M P' + Ps' M P
-    _ctsem_mulTN!(nn1, M, Ps)
-    _ctsem_mul!(P̄_new, nn1, M)                               # P̄_new = M' Ps M
-    _ctsem_mul!(nm1, Ps, G)
-    _ctsem_mulNT!(Ḡ, nm1, R)
-    _ctsem_mulTN!(nm1, Ps, G)
-    _ctsem_mul!(Ḡ, nm1, R, one(T), one(T))                   # Ḡ = Ps G R' + Ps' G R
-    _ctsem_mul!(nm1, Ps, G)
-    _ctsem_mulTN!(R̄, G, nm1)                        # R̄ = G' Ps G
+    _ctsem_mulTvec!(Kx, K, x̄)
+    _ctsem_mulTvec!(We, Wh, e)
+    _ctsem_mulTvec!(HKx, H, Kx)
+    _ctsem_mulvec!(Ky, Kb, e)
+    _ctsem_mulvec!(Ppx, Pp, x̄)
 
-    # --- M = I - G H
-    _ctsem_mulNT!(Ḡ, M̄, H, -one(T), one(T))
-    _ctsem_mulTN!(H̄, G, M̄)
-    H̄ .= .-H̄
+    # --- P̄ of the prediction
+    _ctsem_mulTN!(P̄_new, Wh, Wh, -T(0.5), false)
+    @inbounds for j in 1:n, i in 1:n
+        P̄_new[i, j] += T(0.5) * (We[i] * We[j] + x̄[i] * We[j] + We[i] * x̄[j] -
+            HKx[i] * We[j] - We[i] * HKx[j])
+    end
+    _ctsem_mul!(nn1, Ps, M)
+    _ctsem_mulTN!(P̄_new, M, nn1, oneT, oneT)                # + M' P̄⁺ M
 
-    # --- G = PHt S⁻¹
-    _ctsem_mul!(PHt_bar, Ḡ, Sinv, one(T), one(T))
-    _ctsem_mulTN!(mm1, G, Ḡ)
-    _ctsem_mul!(S̄, mm1, Sinv, -one(T), one(T))
+    # --- H̄ (the covariance's loading, Jy)
+    Z = Λ̄                                                    # Wh is done with
+    @inbounds for j in 1:n, i in 1:m
+        Z[i, j] = Kb[j, i] - e[i] * Ky[j]                    # (I - ee') Kb'
+    end
+    _ctsem_mul!(H̄, Ui, Z, -oneT, false)
+    @inbounds for j in 1:n, i in 1:m
+        H̄[i, j] += a[i] * Ppx[j] - Kx[i] * Ky[j]
+    end
+    _ctsem_mul!(nn1, Ps, Pp)
+    _ctsem_mulTN!(H̄, K, nn1, -T(2), oneT)                   # - 2 K' P̄⁺ P⁺
 
-    # --- S = sym(H PHt + R) + εI
-    _symmetrize_into!(S̄0, S̄)
-    _ctsem_mulNT!(H̄, S̄0, PHt, one(T), one(T))
-    _ctsem_mulTN!(PHt_bar, H, S̄0, one(T), one(T))
-    R̄ .+= S̄0
+    # --- R̄
+    Y = S̄
+    @inbounds for j in 1:m, i in 1:m
+        Y[i, j] = Ui[j, i] - e[i] * a[j]                     # (I - ee') U⁻ᵀ
+    end
+    _ctsem_mul!(R̄, Ui, Y, -T(0.5), false)
+    @inbounds for j in 1:m, i in 1:m
+        R̄[i, j] -= T(0.5) * (Kx[i] * a[j] + a[i] * Kx[j])
+    end
+    _ctsem_mul!(nm1, Ps, K)
+    _ctsem_mulTN!(R̄, K, nm1, oneT, oneT)                    # + K' P̄⁺ K
 
-    # --- PHt = Pr H'
-    _ctsem_mul!(P̄_new, PHt_bar, H, one(T), one(T))
-    _ctsem_mulTN!(H̄, PHt_bar, Pr, one(T), one(T))
-
-    # --- ỹ = y - (Λ x + μ)
+    # --- ỹ = y - (Λ x + μ), through x⁺ = x + K ỹ and the log-likelihood
+    @inbounds for i in 1:m
+        ỹ̄[i] = Kx[i] - a[i]
+    end
+    copyto!(x̄_new, x̄)
     _ctsem_outer!(Λ̄, ỹ̄, x)
     Λ̄ .= .-Λ̄
     _ctsem_mulTvec!(x̄_new, Λ, ỹ̄, -one(T), one(T))
