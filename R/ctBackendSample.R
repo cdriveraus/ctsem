@@ -1514,7 +1514,8 @@ print.ctSampleDiagnostics <- function(x, ...) {
   handles <- if (processes && .ctBackendSampleWorkers(chains, cores) > 1L &&
       .ctBackendCanWarm()) {
     .ctBackendWarmWorkers(spec0, workers = .ctBackendSampleWorkers(chains,
-      cores), values = start0)
+      cores), values = start0, threads = max(1L, as.integer(cores) %/%
+      .ctBackendSampleWorkers(chains, cores)))
   } else NULL
 
   # Placement: `.ctJuliaOptimiseFit()` (R/ctJuliaBackend.R) is the whole

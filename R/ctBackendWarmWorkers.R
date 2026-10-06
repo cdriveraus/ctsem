@@ -46,9 +46,13 @@
 #' @param workers How many sessions to start.
 #' @param values Parameter vector to evaluate at. Any finite point compiles the
 #'   same code; a fit's own estimate is the natural choice when there is one.
+#' @param threads Julia threads each worker's session starts with. Fixed when
+#'   the session starts, so a pool warmed at another width is replaced rather
+#'   than reused.
 #' @return A list of future handles, or `NULL` when warming is unavailable.
 #' @keywords internal
-.ctBackendWarmWorkers <- function(object, workers, values = NULL) {
+.ctBackendWarmWorkers <- function(object, workers, values = NULL, threads = 1L) {
+  threads <- max(1L, suppressWarnings(as.integer(threads)[1L]), na.rm = TRUE)
   workers <- suppressWarnings(as.integer(workers))
   if (!.ctBackendCanWarm() || !isTRUE(workers >= 1L)) return(NULL)
   if (!inherits(object, c("ctJuliaModel", "ctJuliaFit"))) return(NULL)
@@ -80,6 +84,16 @@
       "are being replaced. This model's shape recompiles in the new ones.")
     .ctBackendWarmStop(NULL)
   }
+  # A Julia session's thread count is fixed when it starts, so a pool whose
+  # sessions started at another width cannot serve this call: replaced, or a
+  # chain asking for four threads runs on the one its worker was warmed with.
+  # That was every processes-mode chain: workers warmed at one thread, so 16
+  # cores and 4 chains used 4 (bigre, 16 cores: 352 s against 106 s for the
+  # same chains as threads in one session, dev1).
+  if (!is.null(.ct_warm_state$threads) && !identical(.ct_warm_state$threads, threads)) {
+    .ctBackendWarmStop(NULL)
+  }
+  .ct_warm_state$threads <- threads
 
   started <- tryCatch({
     future::plan(future::multisession, workers = workers)
@@ -114,7 +128,7 @@
       # in a worker process, where only the installed ctsem exists. `ctsem:::`
       # would do the same job but draws a CRAN NOTE for ::: on our own objects.
       future::future(utils::getFromNamespace(".ctBackendWarmSession",
-        "ctsem")(object, values), seed = TRUE),
+        "ctsem")(object, values, threads), seed = TRUE),
       error = function(e) NULL)
   })
   if (!length(handles) || all(vapply(handles, is.null, logical(1)))) return(NULL)
@@ -163,7 +177,7 @@
 # Runs inside a worker. Wrapped, because a worker that cannot warm should leave
 # the parent to sample with threads rather than take the fit down with it.
 #' @keywords internal
-.ctBackendWarmSession <- function(object, values) {
+.ctBackendWarmSession <- function(object, values, threads = 1L) {
   tryCatch({
     # Only when this process has no Julia yet. Asking again warns that the
     # thread count cannot be changed on a running session, which is true and
@@ -179,7 +193,7 @@
     # inside the progress line. `.ctBackendWarmWait()` says how many warmed,
     # which is the parent's business; how each one got there is not.
     suppressMessages({
-      if (is.null(.ct_julia_cache$module)) ctsem::ctJuliaSetup(threads = 1)
+      if (is.null(.ct_julia_cache$module)) ctsem::ctJuliaSetup(threads = threads)
       # One evaluation does both jobs: `ctJuliaEvaluate` builds the objective,
       # which marshals the data, and evaluating it forces the specialisation.
       # The objective cache is per process and keyed on content, and this
@@ -297,6 +311,7 @@
   # Each worker holds a Julia process, so leaving the pool up leaves those up
   # too. `sequential` releases the sessions.
   tryCatch(future::plan(future::sequential), error = function(e) NULL)
+  .ct_warm_state$threads <- NULL
   invisible(NULL)
 }
 

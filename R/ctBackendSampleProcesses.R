@@ -65,7 +65,7 @@
 
   if (is.null(handles)) {
     handles <- .ctBackendWarmWorkers(fit, workers = workers,
-      values = target$estimate)
+      values = target$estimate, threads = per_worker)
     if (is.null(handles)) return(NULL)
   }
   # `resolved()` does not block, so this can say what the pause is for before
