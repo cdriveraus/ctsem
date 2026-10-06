@@ -171,7 +171,7 @@
 ctKalmanArray <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=1,
   subjects='all', timestep='asdata',maxtime='asdata',
   standardisederrors=FALSE, subjectpars=TRUE, indvarstates=FALSE,removeObs=F,realid=TRUE,...){
-  if(!identical(subjects,'all') && inherits(fit,c('ctStanFit','ctJuliaFit')))
+  if(!identical(subjects,'all') && inherits(fit,'ctFit'))
     subjects <- sort(as.vector(.ctResolveSubjects(fit, subjects, realid)))
   
   # The julia engine produces the same four arrays from its own forward pass;
