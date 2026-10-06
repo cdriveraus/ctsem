@@ -523,7 +523,7 @@ ctGenerate<-function(ctmodelobj,n=100,burnin=0,dtmean=1,logdtsd=0,dtmat=NA,
   popmeans=NULL, n.subjects){
   backend <- match.arg(backend)
   if(!missing(n.subjects)){
-    .Deprecated(msg = 'ctGenerate(n = ) is deprecated; use n.')
+    .Deprecated(msg = 'ctGenerate(n.subjects = ) is deprecated; use n.')
     n <- n.subjects
   }
 
