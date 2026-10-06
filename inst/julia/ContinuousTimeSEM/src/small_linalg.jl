@@ -222,10 +222,16 @@ Base.inv(F::CTSEMCholesky{T}) where {T} = F \ Matrix{T}(LinearAlgebra.I, F.d, F.
 `U^-1` for the upper factor, by back substitution column by column -- what
 `inv(F.U)` would give through LAPACK's `trtri`, without the call.
 """
-function _ctsem_cholesky_uinv(F::CTSEMCholesky{T}) where {T}
+_ctsem_cholesky_uinv(F::CTSEMCholesky{T}) where {T} =
+    _ctsem_cholesky_uinv!(zeros(T, F.d, F.d), F)
+
+"""`X` set to `U^-1` (upper triangular, zero below) for `F = U'U`; `X` at least `d x d`."""
+function _ctsem_cholesky_uinv!(X::AbstractMatrix{T}, F::CTSEMCholesky{T}) where {T}
     d = F.d
     U = F.U
-    X = zeros(T, d, d)
+    @inbounds for j in 1:d, i in (j + 1):d
+        X[i, j] = zero(T)
+    end
     @inbounds for j in 1:d
         X[j, j] = one(T) / U[j, j]
         for i in (j - 1):-1:1

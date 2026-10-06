@@ -397,7 +397,10 @@ end
                            ("three levels", _fresh_threelevel))
         laplace, values = fresh()
         theta = collect(Float64, values)
-        o = ctsem_laplace_continuation(laplace, theta; tolerance=0.0)
+        # A negative tolerance: every unit on its rule, a zero gap included --
+        # these fixtures are linear Gaussian, so the gaps are rounding and some
+        # come out exactly zero.
+        o = ctsem_laplace_continuation(laplace, theta; tolerance=-1.0)
         info = ctsem_laplace_continuation_info(o)
         # Every unit on its rule, so what is differenced is the prior alone and
         # the reference below measures the exact part.

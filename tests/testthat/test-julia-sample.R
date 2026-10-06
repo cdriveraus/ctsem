@@ -844,10 +844,21 @@ test_that("a sampled fit reports subject parameters from its own effects", {
   shared <- intersect(as.character(unique(index$parameter)),
     intersect(colnames(posterior), dimnames(draws)$param))
   expect_gt(length(shared), 0L)
+  # Checked as monotonicity over the draws rather than a rank correlation of
+  # exactly one: the engine rebuilds a draw's raw value through the population
+  # factor, equal to `posterior + effects` only to rounding, so two draws whose
+  # raw values agree to rounding may sort either way -- one such pair in 400
+  # draws is a Spearman correlation of 1 - 2e-7. Pairs further apart than
+  # rounding must all move the same way.
   for (p in shared) for (i in c(1L, max(index$subject))) {
     raw <- posterior[, p] + fit$sample$effects[, which(index$parameter == p &
       index$subject == i)]
-    expect_equal(stats::cor(raw, draws[, i, p], method = "spearman"), 1)
+    o <- order(raw)
+    apart <- diff(raw[o]) > 1e-9 * max(1, abs(raw))
+    steps <- sign(diff(draws[o, i, p]))[apart]
+    expect_gt(sum(apart), length(raw) / 2)
+    expect_equal(length(unique(steps[steps != 0])), 1L,
+      info = paste(p, "subject", i))
   }
 
   # The same pairing through the point path: a fit whose estimate and mean
