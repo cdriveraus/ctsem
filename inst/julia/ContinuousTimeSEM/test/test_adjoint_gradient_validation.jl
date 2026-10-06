@@ -1,4 +1,5 @@
 using DataFrames
+using LinearAlgebra
 
 # This file is the acceptance-gate harness docs/src/adjoint-roadmap.md commits
 # to: "compare it [the adjoint] with current ForwardDiff and central finite

@@ -7,6 +7,8 @@
 # are the identities that define a filter and a smoother, rather than a
 # comparison against the code that produced the numbers.
 
+using LinearAlgebra
+
 function _kalman_test_setup()
     df = DataFrame(
         matrix = [:T0MEANS, :T0MEANS, :LAMBDA, :LAMBDA, :LAMBDA, :LAMBDA,

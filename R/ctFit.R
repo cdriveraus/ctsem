@@ -1257,15 +1257,36 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     rm(dtable)
   }
 
-  datalong <- datalong[order(datalong[[ctstanmodel$subjectIDname]],datalong[[ctstanmodel$timeName]]),] #sort by subject, time.
+  # Every column the model names, checked before anything reads one, and the
+  # missing ones reported together with the role each was named for.
+  dataroles <- list(time = ctstanmodel$timeName, id = ctstanmodel$subjectIDname,
+    manifest = ctstanmodel$manifestNames,
+    `time dependent predictor` = ctstanmodel$TDpredNames,
+    `time independent predictor` = ctstanmodel$TIpredNames)
+  missingcols <- unlist(lapply(names(dataroles), function(role) {
+    absent <- setdiff(dataroles[[role]], colnames(datalong))
+    if(length(absent)) paste0(paste(absent, collapse = ', '), ' (', role, ')')
+  }))
+  if(length(missingcols)) stop(call. = FALSE, 'Columns not found in the data: ',
+    paste(missingcols, collapse = '; '), '.')
+  # as.numeric() turns text into NA with only a warning, which would drop those
+  # observations without a word, so a value that does not read as a number is
+  # refused. The check this replaces tested is.numeric(as.numeric(x)), which is
+  # always TRUE.
+  # Columns that pass, numbers held as text or a logical, are used as numbers.
+  for(x in setdiff(unique(unlist(dataroles)), ctstanmodel$subjectIDname)){
+    values <- datalong[[x]]
+    if(is.numeric(values)) next
+    if(is.logical(values)) { datalong[[x]] <- as.numeric(values); next }
+    numbers <- suppressWarnings(as.numeric(as.character(values)))
+    notnumber <- !is.na(values) & is.na(numbers)
+    if(any(notnumber)) stop(call. = FALSE, 'Column ', x, ' holds values that are not numbers: ',
+      paste0("'", utils::head(unique(as.character(values[notnumber])), 3), "'", collapse = ', '),
+      if(length(unique(values[notnumber])) > 3) ', ...', '.')
+    datalong[[x]] <- numbers
+  }
 
-  datavars <- c(ctstanmodel$timeName,ctstanmodel$subjectIDname, ctstanmodel$manifestNames,ctstanmodel$TDpredNames,ctstanmodel$TIpredNames)
-  sapply(datavars,function(x){
-    if(!x %in% colnames(datalong)) stop(paste0(x,' column not found in data!'))
-    if(!x %in% ctstanmodel$subjectIDname){ #if not an id column
-      if(any(!is.numeric(as.numeric(datalong[!is.na(datalong[,x]),x])))) stop(x ,' column contains non-numeric data!')
-    }
-  })
+  datalong <- datalong[order(datalong[[ctstanmodel$subjectIDname]],datalong[[ctstanmodel$timeName]]),] #sort by subject, time.
 
   if(!'ctStanModel' %in% class(ctstanmodel)) stop('not a ctStanModel object')
 

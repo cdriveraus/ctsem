@@ -171,7 +171,7 @@
 ctKalmanArray <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=1,
   subjects='all', timestep='asdata',maxtime='asdata',
   standardisederrors=FALSE, subjectpars=TRUE, indvarstates=FALSE,removeObs=F,realid=TRUE,...){
-  if(!identical(subjects,'all') && inherits(fit,c('ctStanFit','ctJuliaFit')))
+  if(!identical(subjects,'all') && inherits(fit,'ctFit'))
     subjects <- sort(as.vector(.ctResolveSubjects(fit, subjects, realid)))
   
   # The julia engine produces the same four arrays from its own forward pass;
@@ -292,7 +292,10 @@ ctStanKalman <- ctKalmanArray
 #' @param tipreds A character vector specifying which time independent predictors to use. Default is 'all', which uses all time independent predictors in the model.
 #' @param subject The subject for which predictions are made, as an id in the data
 #' (see \code{realid}), or NULL (the default) for the first subject.
-#' This is relevant only when time dependent predictors are also included in the model. 
+#' This is relevant only when time dependent predictors are also included in the model.
+#' @param realid If TRUE (the default), subject is read as an id in the data,
+#' and an integer that is not an id there as ctsem's numbering of the
+#' subjects, 1 to N, with a message. If FALSE, it is read as that numbering.
 #' @param doDynamics A logical value indicating whether to plot the effects of time independent predictors on the dynamics of the system. Default is TRUE. 
 #' Can be problematic for systems with many dimensions.
 #' @param timestep A numeric value specifying the time step for predictions. Default is 'auto', which tries to automatically determine an appropriate time step.

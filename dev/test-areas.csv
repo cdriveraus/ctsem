@@ -120,3 +120,4 @@
 "test-julia-intoverstates.R","uncertainty","extended"
 "test-kalman-elements.R","filter","core"
 "test-subject-ids.R","filter","core"
+"test-data-guards.R","spec","core"

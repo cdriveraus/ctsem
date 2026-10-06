@@ -6,6 +6,8 @@
 # been most expensive in this engine, and the first version of this one was
 # wrong by a factor of two in the standard-deviation term while looking right.
 
+using LinearAlgebra
+
 using ForwardDiff
 
 const _COVEXPM_BUF = (k, T) -> (s = Vector{T}(undef, k), ss = Vector{T}(undef, k),

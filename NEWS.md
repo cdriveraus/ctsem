@@ -29,6 +29,7 @@
 - The `observational` argument of `ctDiscretePars()` and `ctNetwork()` is deprecated in favour of `impulseType`, which names what the impulse is rather than what the study design was: `'unit'` (the default, an impulse of one to a single process) replaces `observational=FALSE`, `'observed'` replaces `observational=TRUE`, and `'shock'` and `'orthogonal'` are unchanged.
 - `ctDiscretePars()`, `ctPredictTIP()`, `ctExtract()`, `ctKalmanArray()` and `ctVarianceDecomposition()` now take subjects as the ids in the data, as `ctPredict()` does, reading integers that are not ids as ctsem's numbering 1 to N, with a message. `realid=FALSE` for the previous behaviour.
 - Fixed: `ctDiscretePars()` given subjects out of ascending order labelled each subject's results with another subject's id.
+- Fixed: values in a data column that do not read as numbers were treated as missing, without a word; `ctFit()` now stops and names them. Numbers stored as text are used as numbers.
 
 ## 29/6/2026
 ### 3.11.0

@@ -12,6 +12,8 @@
 # independent check of a hand-written adjoint), and the recorded times play no
 # part, which is the property that distinguishes discrete from continuous.
 
+using LinearAlgebra
+
 # `_adjoint_cross_effect_2d_parameters` is shared with the adjoint tests.
 isdefined(@__MODULE__, :_adjoint_cross_effect_2d_parameters) ||
     include(joinpath(@__DIR__, "adjoint_fixtures.jl"))
