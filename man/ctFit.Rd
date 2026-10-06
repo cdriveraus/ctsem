@@ -209,14 +209,15 @@ shares no approximation with the filter; it needs a fine \code{maxtimestep}. See
 \item{priors}{\code{'randomCorr'}, \code{TRUE} or \code{FALSE}. \code{TRUE}
 adds ctsem's \code{normal(0,1)} raw-scale prior to every parameter, making
 an optimised fit maximum a posteriori; \code{FALSE} uses none.
-\code{'randomCorr'}, the default when optimizing, applies it to the
+\code{'randomCorr'}, the default, applies it to the
 random-effect correlations only, at every level: those are where unbounded
 maximum likelihood is ill-posed, since a bounded correlation on an
 unbounded coordinate walks along any direction the data do not determine.
-The default when sampling (\code{optimize=FALSE}) is \code{TRUE}, because a
-parameter the data leave flat has an improper posterior without a prior.
+Sampling (\code{optimize=FALSE}) without a prior on every parameter warns,
+because a parameter the data leave flat has an improper posterior; use
+\code{priors=TRUE} there.
 \code{'randomCorr'} needs \code{backend='julia'}: asked for on stan it is an
-error, and stan's default when optimizing is \code{FALSE}.}
+error, and left at the default on stan it means \code{FALSE}.}
 
 \item{chains}{\strong{Deprecated} -- use \code{sampleControl$chains}. Still
 honoured, with a warning.}

@@ -2725,10 +2725,10 @@ ctFitUncertainty <- function(fit,
     varying <- isTRUE(tryCatch(.ctAnyVarying(.ctFitBaseModel(fit)),
       error = function(e) FALSE))
     if(identical(scope, 'none') || (identical(scope, 'randomCorr') && varying))
-      message("This fit has no prior on ", if(identical(scope, 'none'))
+      warning("This fit has no prior on ", if(identical(scope, 'none'))
         "its parameters" else "its population sds", ", so the sampled ",
         "posterior is improper wherever the data leave one flat. ",
-        "ctFit(optimize = FALSE) samples under priors = TRUE by default.")
+        "Refit with priors = TRUE for a prior on every parameter.", call. = FALSE)
     return(.ctBackendUncertaintySample(fit, control=control, cores=cores,
       verbose=verbose))
   }

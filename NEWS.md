@@ -5,7 +5,6 @@
 ### 3.12.0 (development)
 
 - `ctFit()` now applies ctsem's `normal(0,1)` raw priors to the random effect correlations by default, `priors='randomCorr'`. `priors=TRUE` for priors on every parameter and `priors=FALSE` for none, as before. Julia backend only; `backend='stan'` is unchanged.
-- Sampling, `optimize=FALSE`, now applies ctsem's priors to every parameter by default, on both backends. `priors=FALSE` for the previous behaviour.
 - Covariance matrices are now parameterised by a matrix logarithm rather than a correlation square root, so every positive definite matrix is reachable. Use `mymodel$covmattransform='rawcorr'` for the previous parameterisation, which a comparison against stan or a stored fit needs.
 - Adaptive importance sampling for `uncertainty='is'`, finding skewed and curved posterior tails the curvature at the estimate misses and warning when the Pareto k of its weights exceeds 0.7; its effective sample target is now 200, `optimcontrol$isESS=100` for the previous.
 - New `backend='julia'` option for `ctFit()`, using a Julia extended-Kalman-filter engine with a hand-written reverse-mode adjoint for the gradient. `ctJuliaInstall()` supplies whatever is missing -- the bridge package, Julia itself, and the engine's dependencies -- asking before it downloads anything. The engine ships inside ctsem, so no repository access is needed.
