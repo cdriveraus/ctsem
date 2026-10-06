@@ -177,14 +177,19 @@
   # the tests here do -- is stale rather than stated, and refusing on it would
   # refuse a model nobody constrained. Each pair is read where the stored
   # matrix keeps it (`.ctModelRawPopVarCell()`), so a reorder of `pars` since
-  # is not read as a statement either. Only a number states anything: a label,
-  # whatever it says, leaves the cell free on every route.
+  # is not read as a statement either, and a pair's default label is accepted
+  # in either order, since the label was written in the order the matrix was
+  # built in. Anything else is stated: a number, or a label of the user's own,
+  # which is an equality constraint.
   names <- rownames(default)[rownames(default) %in% rownames(popcov) &
     rownames(default) %in% colnames(popcov)]
   out <- character()
-  for (i in seq_along(names)) for (j in seq_len(i)) {
+  for (i in seq_len(length(names))) for (j in seq_len(i)) {
     stated <- .ctModelRawPopVarCell(popcov, names[i], names[j])
-    if (!is.finite(.ctModelRawPopVarValue(stated))) next
+    if (is.na(stated) || !nzchar(stated)) next
+    defaults <- if (i == j) default[names[i], names[i]] else
+      paste0("popcorr_", c(names[i], names[j]), "__", c(names[j], names[i]))
+    if (stated %in% defaults) next
     out <- c(out, sprintf("RAWPOPVAR['%s', '%s'] = %s", names[i], names[j], stated))
   }
   out

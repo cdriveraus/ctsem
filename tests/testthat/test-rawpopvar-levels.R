@@ -59,10 +59,10 @@ test_that("reordering pars keeps each pair's RAWPOPVAR entry", {
   expect_equal(unname(m$RAWPOPVAR[last[2], last[1]]), entry)
   expect_equal(unname(m$RAWPOPVAR[last[1], last[2]]), "0")
   expect_equal(ctsem:::.ctModelRawPopVarEntry(m, first[1]), "0.3")
-  # Only the number is a statement.
+  # The number is a statement; the reordered pair's default label is not.
   expect_equal(ctsem:::.ctPopRegressionRawPopVarStated(m),
     sprintf("RAWPOPVAR['%s', '%s'] = 0.3", first[1], first[1]))
-  m$RAWPOPVAR[first[1], first[1]] <- "popsd_x"
+  m$RAWPOPVAR[first[1], first[1]] <- paste0("popsd_", first[1])
   expect_length(ctsem:::.ctPopRegressionRawPopVarStated(m), 0L)
   # A stated correlation moves with its pair too.
   m <- ctsem:::.ctModelRawPopVarSync(m)
