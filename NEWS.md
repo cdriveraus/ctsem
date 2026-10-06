@@ -28,6 +28,7 @@
 - `ctFit(stationary=TRUE)` works again, with `backend='julia'`: each subject's latent processes start from the stationary distribution of its DRIFT, CINT and DIFFUSION in place of T0MEANS and T0VAR.
 - `ctDiscretePars()` plots now state in the title which impulse and which scale produced them, rather than leaving `standardise` and the impulse type to be remembered from the call.
 - The `observational` argument of `ctDiscretePars()` and `ctNetwork()` is deprecated in favour of `impulseType`, which names what the impulse is rather than what the study design was: `'unit'` (the default, an impulse of one to a single process) replaces `observational=FALSE`, `'observed'` replaces `observational=TRUE`, and `'shock'` and `'orthogonal'` are unchanged.
+- `ctDiscretePars()`, `ctPredictTIP()`, `ctExtract()`, `ctKalmanArray()` and `ctVarianceDecomposition()` now take subjects as the ids in the data, as `ctPredict()` does, reading integers that are not ids as ctsem's numbering 1 to N, with a message. `realid=FALSE` for the previous behaviour.
 
 ## 29/6/2026
 ### 3.11.0

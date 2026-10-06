@@ -119,3 +119,4 @@
 "test-ctCoverageCheck.R","uncertainty","extended"
 "test-julia-intoverstates.R","uncertainty","extended"
 "test-kalman-elements.R","filter","core"
+"test-subject-ids.R","filter","core"

@@ -12,6 +12,7 @@ ctExtract(
   nsamples = "all",
   subjects = "all",
   state = NULL,
+  realid = TRUE,
   ...
 )
 }
@@ -24,7 +25,8 @@ ctExtract(
 
 \item{nsamples}{either 'all' or an integer denoting number of random samples to extract.}
 
-\item{subjects}{either 'all', or an integer vector denoting subjects to extract.}
+\item{subjects}{either 'all', or the subjects to extract, as ids in the data
+(see \code{realid}).}
 
 \item{state}{The latent state at which state dependent cells of the
 \code{pop_*} matrices are evaluated: \code{'T0MEANS'} (the default),
@@ -35,6 +37,10 @@ silently ignored. Irrelevant to a linear model, whose matrices are the same
 everywhere. Note that it moves the \code{pop_*} arrays only: the subject
 matrices \code{subjectMatrices=TRUE} adds come from the filter, and are
 always at each subject's own last observed row.}
+
+\item{realid}{If TRUE (the default), subjects are read as the ids in the data,
+and integers that are not ids there are read as ctsem's numbering of the
+subjects, 1 to N, with a message. If FALSE, they are read as that numbering.}
 
 \item{...}{not used.}
 }

@@ -59,8 +59,11 @@ ctStanParnames <- ctRawParnames
 #'
 #'@param fit model fit from \code{\link{ctFit}}
 #'@param ctstanfitobj Deprecated. Use \code{fit}.
-#'@param subjects Either 'popmean', to use the population mean parameter, or a vector of integers denoting which
-#'subjects.
+#'@param subjects Either 'popmean', to use the population mean parameter, or the
+#'subjects to use, as ids in the data (see \code{realid}).
+#'@param realid If TRUE (the default), subjects are read as the ids in the data,
+#' and integers that are not ids there are read as ctsem's numbering of the
+#' subjects, 1 to N, with a message. If FALSE, they are read as that numbering.
 #'@param times Numeric vector of positive values, discrete time parameters will be calculated for each. If the fit
 #'object is a discrete time model, these should be positive integers.
 #'@param nsamples Number of samples from the stanfit to use for plotting. Higher values will
@@ -157,7 +160,7 @@ ctStanParnames <- ctRawParnames
 ctDiscretePars<-function(fit, subjects='popmean',
   times=seq(from=0,to=10,by=.1),
   nsamples=200,impulseType='unit',standardise=FALSE,
-  cov=FALSE, plot=FALSE,cores=2,state=NULL,method='linearise',...,
+  cov=FALSE, plot=FALSE,cores=2,state=NULL,method='linearise',realid=TRUE,...,
   ctstanfitobj, observational){
 
   if(missing(fit)){
@@ -217,8 +220,14 @@ ctDiscretePars<-function(fit, subjects='popmean',
   type='discreteDRIFT'
   collapseSubjects=TRUE #consider this for a switch
 
-  if(subjects[1] != 'popmean' && any(!is.integer(as.integer(subjects)))) stop('
-  subjects argument must be either "popmean" or an integer denoting specific subjects')
+  subjectLabels <- subjects
+  if(!'popmean' %in% subjects){
+    subjects <- .ctResolveSubjects(fit, subjects, realid)
+    # ctExtract returns subjects in ctsem's order, so the labels follow it.
+    ordering <- order(subjects)
+    subjectLabels <- attr(subjects, 'ids')[ordering]
+    subjects <- as.vector(subjects)[ordering]
+  }
 
   extractSubjects <- subjects
   if('popmean' %in% extractSubjects) extractSubjects <- 'all'
@@ -237,7 +246,7 @@ ctDiscretePars<-function(fit, subjects='popmean',
   }
   e<-do.call(ctExtract,c(list(fit,subjectMatrices = subjects[1]!='popmean',cores=cores,
     nsamples = min(nsamples,.ctFitNsamples(fit)),
-    subjects=extractSubjects),stateArgs))
+    subjects=extractSubjects, realid=FALSE),stateArgs))
 
   # A fit with no stationary variance to standardise by says so and carries on,
   # rather than returning a block of NaN. Same fallback as ctNetwork(), same
@@ -298,7 +307,7 @@ ctDiscretePars<-function(fit, subjects='popmean',
 
   out <- ctDiscreteParsDrift(ctpars,times, impulseType, standardise, cov=cov,discreteInput = ctm$continuoustime==FALSE)
 
-  dimnames(out)<- list(Sample=samples, Subject=subjects,
+  dimnames(out)<- list(Sample=samples, Subject=if('popmean' %in% subjects) subjects else subjectLabels,
     `Time interval`=times, row=latentNames, col=latentNames)
 
   attributes(out)$impulseType <- impulseType

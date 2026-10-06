@@ -14,7 +14,8 @@ ctVarianceDecomposition(
   npaths = 20L,
   latents = TRUE,
   quadpoints = 21L,
-  subjects = "all"
+  subjects = "all",
+  realid = TRUE
 )
 }
 \arguments{
@@ -68,8 +69,12 @@ measurement component.}
 
 \item{quadpoints}{Gauss-Hermite nodes used when \code{scale='response'}.}
 
-\item{subjects}{\code{'all'}, or an integer vector of subjects whose designs
-the decomposition is computed over.}
+\item{subjects}{\code{'all'}, or the subjects whose designs the decomposition
+is computed over, as ids in the data (see \code{realid}).}
+
+\item{realid}{If TRUE (the default), subjects are read as the ids in the data,
+and integers that are not ids there are read as ctsem's numbering of the
+subjects, 1 to N, with a message. If FALSE, they are read as that numbering.}
 }
 \value{
 A data frame of class \code{ctVarianceDecomposition}, one row per

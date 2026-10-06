@@ -989,8 +989,11 @@
 #' @param latents If TRUE, also decompose the latent processes, which have no
 #'   measurement component.
 #' @param quadpoints Gauss-Hermite nodes used when \code{scale='response'}.
-#' @param subjects \code{'all'}, or an integer vector of subjects whose designs
-#'   the decomposition is computed over.
+#' @param subjects \code{'all'}, or the subjects whose designs the decomposition
+#'   is computed over, as ids in the data (see \code{realid}).
+#' @param realid If TRUE (the default), subjects are read as the ids in the data,
+#' and integers that are not ids there are read as ctsem's numbering of the
+#' subjects, 1 to N, with a message. If FALSE, they are read as that numbering.
 #'
 #' @details The decomposition is a nested law of total variance over the
 #'   population of (person, occasion) pairs at the design the fit was built on.
@@ -1084,7 +1087,7 @@
 ctVarianceDecomposition <- function(fit, method = c('auto', 'moment', 'simulation'),
   persons = c('auto', 'model', 'estimated'), scale = c('latent', 'response'),
   times = NULL, npersons = 200L, npaths = 20L, latents = TRUE, quadpoints = 21L,
-  subjects = 'all') {
+  subjects = 'all', realid = TRUE) {
 
   # `ctFit`, which both backends' fits carry, rather than naming the two
   # classes: this asks whether the argument is a fit at all, not which backend
@@ -1163,7 +1166,7 @@ ctVarianceDecomposition <- function(fit, method = c('auto', 'moment', 'simulatio
     if (length(times) < 1L) stop('times= is empty.', call. = FALSE)
   }
   wanted <- if (identical(subjects, 'all')) seq_len(design$nsubjects) else
-    as.integer(subjects)
+    as.vector(.ctResolveSubjects(fit, subjects, realid))
   wanted <- wanted[wanted %in% unique(design$subject)]
   if (!length(wanted)) stop('No rows for the requested subjects.', call. = FALSE)
 

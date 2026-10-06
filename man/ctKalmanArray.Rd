@@ -18,6 +18,7 @@ ctKalmanArray(
   subjectpars = TRUE,
   indvarstates = FALSE,
   removeObs = F,
+  realid = TRUE,
   ...
 )
 }
@@ -34,7 +35,8 @@ ctKalmanArray(
 \code{backend='stan'} only -- the julia path runs this loop serially in the engine and refuses
 \code{cores} by name rather than accepting it and ignoring it.}
 
-\item{subjects}{'all' (the default), or an integer vector of subjects to compute for.}
+\item{subjects}{'all' (the default), or the subjects to compute for, as ids in the
+data (see \code{realid}). The output numbers them in the order given, sorted.}
 
 \item{timestep}{Either a positive numeric value, 'asdata' to use the times in the dataset, or 'auto' to select 
 a timestep automatically (resulting in some interpolation but not excessive computation).}
@@ -52,6 +54,10 @@ are returned, for parameters that had random effects specified.}
 are set to NA, so only expectations based on parameters and covariates are returned. If a positive integer N, 
 every N observations are retained while others are set NA for computing model expectations -- useful for observing prediction performance
 forward further in time than one observation.}
+
+\item{realid}{If TRUE (the default), subjects are read as the ids in the data,
+and integers that are not ids there are read as ctsem's numbering of the
+subjects, 1 to N, with a message. If FALSE, they are read as that numbering.}
 
 \item{...}{additional arguments to collpsefunc.}
 }

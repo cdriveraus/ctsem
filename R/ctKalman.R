@@ -143,7 +143,11 @@
 #' are set to NA, so only expectations based on parameters and covariates are returned. If a positive integer N, 
 #' every N observations are retained while others are set NA for computing model expectations -- useful for observing prediction performance
 #' forward further in time than one observation.
-#' @param subjects 'all' (the default), or an integer vector of subjects to compute for.
+#' @param subjects 'all' (the default), or the subjects to compute for, as ids in the
+#' data (see \code{realid}). The output numbers them in the order given, sorted.
+#' @param realid If TRUE (the default), subjects are read as the ids in the data,
+#' and integers that are not ids there are read as ctsem's numbering of the
+#' subjects, 1 to N, with a message. If FALSE, they are read as that numbering.
 #' @param timestep Either a positive numeric value, 'asdata' to use the times in the dataset, or 'auto' to select 
 #' a timestep automatically (resulting in some interpolation but not excessive computation).
 #' @param maxtime only relevant if timestep is not 'asdata'. Positive numeric denoting max time for computations.
@@ -166,7 +170,9 @@
 #' k=ctKalmanArray(ctstantestfit,subjectpars=TRUE,collapsefunc=mean)
 ctKalmanArray <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=1,
   subjects='all', timestep='asdata',maxtime='asdata',
-  standardisederrors=FALSE, subjectpars=TRUE, indvarstates=FALSE,removeObs=F,...){
+  standardisederrors=FALSE, subjectpars=TRUE, indvarstates=FALSE,removeObs=F,realid=TRUE,...){
+  if(!identical(subjects,'all') && inherits(fit,c('ctStanFit','ctJuliaFit')))
+    subjects <- sort(as.vector(.ctResolveSubjects(fit, subjects, realid)))
   
   # The julia engine produces the same four arrays from its own forward pass;
   # everything downstream of that is shared (see .ctKalmanArrayAssemble below
@@ -284,7 +290,8 @@ ctStanKalman <- ctKalmanArray
 #' 
 #' @param sf A fitted object from \code{\link{ctFit}}, from any backend.
 #' @param tipreds A character vector specifying which time independent predictors to use. Default is 'all', which uses all time independent predictors in the model.
-#' @param subject An integer value specifying the internal ctsem subject ID (mapping visible under myfit$setup$idmap) for which predictions are made. 
+#' @param subject The subject for which predictions are made, as an id in the data
+#' (see \code{realid}), or NULL (the default) for the first subject.
 #' This is relevant only when time dependent predictors are also included in the model. 
 #' @param doDynamics A logical value indicating whether to plot the effects of time independent predictors on the dynamics of the system. Default is TRUE. 
 #' Can be problematic for systems with many dimensions.
@@ -315,11 +322,11 @@ ctStanKalman <- ctKalmanArray
 #' # Example usage:
 #' ctPredictTIP(ctstantestfit, tipreds='all', doDynamics=FALSE, plot=TRUE)
 #' @export
-ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',doDynamics=TRUE, plot=TRUE,
+ctPredictTIP <- function(sf,tipreds='all',subject=NULL,timestep='auto',doDynamics=TRUE, plot=TRUE,
   quantiles=c(.16,.5,.84), discreteTimeQuantiles=c(.025, .5, .975),
   dynamicsControl=list(),
-  showUncertainty=TRUE, 
-  TIPvalues=NA){
+  showUncertainty=TRUE,
+  TIPvalues=NA, realid=TRUE){
   if(!is.list(dynamicsControl)) stop('dynamicsControl must be a list')
   if(length(dynamicsControl) > 0 && (is.null(names(dynamicsControl)) || any(names(dynamicsControl) == ''))){
     stop('dynamicsControl must be a named list')
@@ -335,6 +342,7 @@ ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',doDynamics=T
   if(tipreds[1] %in% 'all') tipreds <- ctmb$TIpredNames
   if(!length(tipreds)) stop('The model has no time independent predictors')
   if(length(subject) > 1) stop('>1 subject!')
+  subject <- if(is.null(subject)) 1L else as.vector(.ctResolveSubjects(sf, subject, realid))
   if(.ctFitNsubjects(sf) < 3) stop('With fewer than 3 subjects in the data, these predictions are not possible')
   
   if(all(is.na(TIPvalues))){
@@ -352,8 +360,8 @@ ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',doDynamics=T
   contextdependent <- isTRUE(ctModelIsNonlinear(sf))
 
   dat <- data.frame(.ctFitLongData(sf))
-  subjectids <- unique(dat[[ctmb$subjectIDname]])
-  dat <- dat[dat[[ctmb$subjectIDname]] %in% subjectids[subject],,drop=FALSE]
+  idmap <- .ctFitIdMap(sf)
+  dat <- dat[dat[[ctmb$subjectIDname]] %in% idmap[match(subject, idmap[,2]),1],,drop=FALSE]
   dat[,ctmb$manifestNames] <- NA #set all manifest obs to missing
   
   TIPvalues <- matrix(apply(TIPvalues,2,function(x) sort(x)),ncol=ncol(TIPvalues)) #sort ascending to get plot colours correct
@@ -503,7 +511,9 @@ ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',doDynamics=T
 #'   every observation withheld still uses that subject's own random effects
 #'   -- which is what makes it a prediction for that subject rather than for
 #'   the average one.
-#' @param realid use original (not necessarily integer sequence) subject id's? Otherwise use integers 1:N.
+#' @param realid If TRUE (the default), subjects are read as the ids in the data,
+#' and integers that are not ids there are read as ctsem's numbering of the
+#' subjects, 1 to N, with a message. If FALSE, they are read as that numbering.
 #' @param ... additional arguments to pass to \code{\link{plot.ctKalmanDF}}.
 #' @return Returns a list containing matrix objects etaprior, etaupd, etasmooth, y, yprior,
 #' yupd, ysmooth, errprior, errupd, errsmooth, time, loglik,  with values for each time point in each row.
@@ -555,21 +565,16 @@ ctPredict<-function(fit, timerange='asdata', timestep='auto',
   if('factor' %in% class(idmap$original)) idmap$original <- as.character(idmap$original)
   if('factor' %in% class(subjects)) subjects <- as.character(subjects)
   subjectsarg <- subjects
-  if(realid) subjects <- idmap[which(idmap[,1] %in% subjects),2]
-  
-  if(length(subjects) == 0){
-    if(all(!is.na(as.integer(subjectsarg)))){ #if all subjects specified as integers
-      subjects <- as.integer(subjectsarg)
-      warning('Specified subjects not found in original id set -- assuming integers correspond to internal integer mapping. Consider setting realid=FALSE')
-      realid=FALSE
-    } else stop('Specified subjects not found in original id set, and (some) are not integers...')
-  }
-  subjects <- sort(subjects) #in case not entered in ascending order
-  
+  subjects <- .ctResolveSubjects(fit, subjects, realid)
+  # Read as ctsem's numbering, the output is labelled with it, which is also
+  # what plot() below is asked for.
+  realid <- attr(subjects, 'realid')
+  subjects <- sort(as.vector(subjects)) #in case not entered in ascending order
+
   # `randomEffects` is a named argument rather than part of `...`, which goes
   # to plot(). Only passed on when set, so a Stan fit never sees an argument
   # that means nothing to it.
-  kalmanargs <- list(fit,pointest=TRUE,
+  kalmanargs <- list(fit,pointest=TRUE,realid=FALSE,
     removeObs=removeObs, subjects=subjects,timestep = timestep,maxtime=max(timerange),
     collapsefunc=mean, indvarstates = FALSE,standardisederrors = standardisederrors)
   if(!is.null(randomEffects)) kalmanargs$randomEffects <- randomEffects
@@ -601,7 +606,8 @@ ctKalman <- ctPredict
 #'
 #' @param x Output from \code{\link{ctPredict}}. In general it is easier to call
 #' \code{\link{ctPredict}} directly with the \code{plot=TRUE} argument, which calls this function.
-#' @param subjects vector of integers denoting which subjects (from 1 to N) to plot predictions for. 
+#' @param subjects which subjects to plot, as they appear in the Subject column of
+#' \code{x}: the ids in the data, unless \code{ctPredict} read them as ctsem's numbering.
 #' @param kalmanvec string vector of the elements of the output to plot: 'y', the
 #' data, or 'y', 'eta', 'err' or 'errstd' followed by 'prior', 'upd' or 'smooth'. 'y' is
 #' the observed variables and 'eta' the latent states; 'prior' is conditional on all

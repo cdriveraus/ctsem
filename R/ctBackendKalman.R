@@ -43,6 +43,40 @@
   data.frame(original = ids, new = seq_along(ids), stringsAsFactors = FALSE)
 }
 
+# The subjects a caller names, as ctsem's numbering 1..N. Names that are all
+# ids in the data are read as those; otherwise integers in 1..N are read as the
+# numbering, with a message, as ctPredict() always has. realid = FALSE reads
+# the numbering without looking at the ids. The result carries `realid`, how
+# the names were read, and `ids`, what to label the subjects with in output.
+.ctResolveSubjects <- function(fit, subjects, realid = TRUE) {
+  idmap <- .ctFitIdMap(fit)
+  original <- idmap[, 1]
+  if (is.factor(original)) original <- as.character(original)
+  position <- as.integer(idmap[, 2])
+  asked <- as.character(subjects)
+  short <- function(x) paste0(paste(utils::head(x, 5), collapse = ', '),
+    if (length(x) > 5) ', ...' else '')
+  if (realid && length(asked) && all(asked %in% as.character(original))) {
+    out <- position[match(asked, as.character(original))]
+    attr(out, 'realid') <- TRUE
+    attr(out, 'ids') <- original[match(asked, as.character(original))]
+    return(out)
+  }
+  number <- suppressWarnings(as.numeric(asked))
+  if (length(asked) && all(!is.na(number)) && all(number %in% position)) {
+    if (realid) message('Subjects ', short(setdiff(asked, as.character(original))),
+      ' are not ids in the data, so the subjects were read as ctsem\'s numbering, 1 to ',
+      length(position), '.')
+    out <- as.integer(number)
+    attr(out, 'realid') <- FALSE
+    attr(out, 'ids') <- as.integer(number)
+    return(out)
+  }
+  missing <- if (realid) setdiff(asked, as.character(original)) else asked[!number %in% position]
+  stop(call. = FALSE, 'Subjects not found: ', short(missing), '. Give ids from the data',
+    if (realid) paste0(', or ctsem\'s numbering 1 to ', length(position)), '.')
+}
+
 # Which levels of random effect a Laplace trajectory is built from.
 #
 # Naming a level means "this level and every level outside it": the innermost
