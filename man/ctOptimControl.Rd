@@ -69,6 +69,13 @@ default.
  \item{\code{batch}}{Julia. Default TRUE. Start on a random subset of the
  subjects and grow it as the fit needs more data; needs at least 80
  subjects or top-level groups.}
+ \item{\code{explosive_forward}}{Julia. Default FALSE. For a subject whose
+ predictions grow more than 100-fold between observations (explosive
+ dynamics over a long gap), take its gradient by forward mode: the reverse
+ pass can lose its accuracy there. The first such subject in a session
+ compiles the filter again, minutes on a large model. The fit counts such
+ subjects either way (\code{fit$optim$explosive_passes}) and warns when
+ any is explosive at the estimate.}
  \item{\code{lbfgs_diagonal}}{Julia. Default TRUE. L-BFGS's initial inverse
  Hessian takes a scale per parameter, learned from the curvature pairs
  (Gilbert and Lemarechal); FALSE uses one scale for all, which can be much

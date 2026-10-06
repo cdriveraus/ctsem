@@ -229,9 +229,32 @@ and +0.28 over a 43-day gap, growth 2e5 -- the adjoint gradient off by up to
 1.7e4 (relative) against BigFloat, the same adjoint in BigFloat exact, Float64
 forward mode good to 1.6e-6. A stable drift's transition shrinks, so this
 fires only on explosive (or strongly non-normal) intervals.
-`ctsem_set_adjoint_growth!` moves it; `Inf` keeps the reverse pass always.
+
+`Inf`, the reverse pass always, by default: forward mode needs a dual type the
+fit has not otherwise used, so the first subject that takes it compiles the
+filter again -- inside the Laplace route's seeded sweeps at a nested type. On a
+one-latent model, 55 s on the plain route and 140 s on the Laplace one, once
+per session (dev2); on the SNSF pilot's 32-effect model a single iteration
+then ran 35 minutes on one core with the memory climbing past 25 GB. Opted
+into per fit by `optimcontrol$explosive_forward`, at
+`_CTSEM_EXPLOSIVE_GROWTH`. `ctsem_set_adjoint_growth!` moves it.
 """
-const _CTSEM_ADJOINT_GROWTH = Ref(100.0)
+const _CTSEM_ADJOINT_GROWTH = Ref(Inf)
+
+"""
+Transition growth past which a subject's filter pass counts as explosive: what
+the progress line counts, what the fit's warning at the estimate and the
+sampler's check of its draws report. Measured and reported whatever
+`_CTSEM_ADJOINT_GROWTH` says, since the measurement costs nothing.
+"""
+const _CTSEM_EXPLOSIVE_GROWTH = Ref(100.0)
+
+# Filter passes that crossed `_CTSEM_EXPLOSIVE_GROWTH`, since the session
+# started; read as differences (`ctsem_explosive_passes`).
+const _CTSEM_EXPLOSIVE_PASSES = Threads.Atomic{Int}(0)
+
+"""Filter passes so far that crossed `_CTSEM_EXPLOSIVE_GROWTH`."""
+ctsem_explosive_passes() = _CTSEM_EXPLOSIVE_PASSES[]
 
 """Set the transition growth above which subjects take the forward-mode gradient."""
 function ctsem_set_adjoint_growth!(x::Real)
@@ -244,8 +267,8 @@ end
     _track_growth!(growth, E, n, subject)
 
 Fold the transition `E[1:n, 1:n]` just applied into `growth` (`CTSEMGrowth`),
-and note `subject` when the pass first exceeds `_CTSEM_ADJOINT_GROWTH` while
-`ctsem_explosive_subjects` is recording. A hand loop rather than
+count the pass when it first exceeds `_CTSEM_EXPLOSIVE_GROWTH`, and note
+`subject` then while `ctsem_explosive_subjects` is recording. A hand loop rather than
 `_ctsem_mul!`: `E` may hold duals and only its primal values are wanted.
 """
 function _track_growth!(growth::CTSEMGrowth, E::AbstractMatrix, n::Int, subject)
@@ -275,9 +298,11 @@ function _track_growth!(growth::CTSEMGrowth, E::AbstractMatrix, n::Int, subject)
     end
     growth.steps += 1
     if largest > growth.max
-        threshold = _CTSEM_ADJOINT_GROWTH[]
-        growth.max <= threshold < largest && _CTSEM_EXPLOSIVE_RECORDING[] &&
-            _note_explosive(subject)
+        threshold = _CTSEM_EXPLOSIVE_GROWTH[]
+        if growth.max <= threshold < largest
+            Threads.atomic_add!(_CTSEM_EXPLOSIVE_PASSES, 1)
+            _CTSEM_EXPLOSIVE_RECORDING[] && _note_explosive(subject)
+        end
         growth.max = largest
     end
     return nothing
@@ -307,7 +332,7 @@ _note_explosive(subject) =
     ctsem_explosive_subjects(f)
 
 Run `f()` and return its value with the sorted subject indices whose filter,
-during it, exceeded `_CTSEM_ADJOINT_GROWTH` -- the subjects whose predictions
+during it, exceeded `_CTSEM_EXPLOSIVE_GROWTH` -- the subjects whose predictions
 grow that much between observations at the points `f` evaluates. Not
 reentrant.
 """
@@ -327,19 +352,22 @@ end
     _with_forward_count(f)
 
 `f()`'s named tuple with `forward_gradients`, the forward-mode subject gradients
-taken during it, added: how a sampler reports them.
+taken during it, and `explosive_passes`, the filter passes that crossed
+`_CTSEM_EXPLOSIVE_GROWTH`, added: how a sampler reports them.
 """
 function _with_forward_count(f)
     n0 = ctsem_forward_gradients()
+    e0 = ctsem_explosive_passes()
     result = f()
-    return merge(result, (forward_gradients=ctsem_forward_gradients() - n0,))
+    return merge(result, (forward_gradients=ctsem_forward_gradients() - n0,
+        explosive_passes=ctsem_explosive_passes() - e0))
 end
 
 """
     ctsem_explosive_draws(objective, draws)
 
 Evaluate `objective` at each column of `draws` and report how many columns had
-a subject whose filter exceeded `_CTSEM_ADJOINT_GROWTH`, and which subjects
+a subject whose filter exceeded `_CTSEM_EXPLOSIVE_GROWTH`, and which subjects
 (`[0]` for none). A Laplace objective filters each subject at its effects' mode
 given the column.
 """
@@ -359,10 +387,17 @@ end
 
 export ctsem_explosive_draws
 
-"""The progress line's count of forward-mode subject gradients since `since`, when any."""
-function _ctsem_forward_progress(since::Int)
-    n = ctsem_forward_gradients() - since
-    return n > 0 ? (@sprintf("fwd-grad %d", n),) : ()
+"""
+The progress line's counts since `forward0` and `explosive0`, each when any:
+filter passes past `_CTSEM_EXPLOSIVE_GROWTH`, and forward-mode subject
+gradients (`optimcontrol$explosive_forward`).
+"""
+function _ctsem_forward_progress(forward0::Int, explosive0::Int)
+    e = ctsem_explosive_passes() - explosive0
+    n = ctsem_forward_gradients() - forward0
+    e > 0 || n > 0 || return ()
+    n > 0 || return (@sprintf("explosive %d", e),)
+    return (@sprintf("explosive %d", e), @sprintf("fwd-grad %d", n))
 end
 
 """

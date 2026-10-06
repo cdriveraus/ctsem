@@ -82,7 +82,8 @@ with an observation: the 1-norm of the product of every transition since then
 (substeps and unobserved rows included), and the largest such norm over the
 pass. A row's own interval is not the measure, because nothing conditions the
 covariance between observations -- three unobserved weekly rows grow it as one
-three-week interval does. Primal values only. See `_CTSEM_ADJOINT_GROWTH`.
+three-week interval does. Primal values only. See `_CTSEM_EXPLOSIVE_GROWTH`
+and `_CTSEM_ADJOINT_GROWTH`.
 """
 mutable struct CTSEMGrowth
     max::Float64

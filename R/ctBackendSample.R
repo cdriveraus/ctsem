@@ -287,11 +287,11 @@
     progress = .ctBackendReporting(verbose),
     processes = processes, handles = handles)
 
-  # Explosive dynamics in the posterior, looked for only when the run took a
-  # forward-mode gradient -- which is what such a subject costs, so none means
-  # there is nothing to find. Not on the state-explicit route, which has no
-  # filter.
-  if (is.null(jointobjective) && isTRUE(out$sample$forward_gradients > 0L)) {
+  # Explosive dynamics in the posterior, looked for only when the run had an
+  # explosive filter pass -- none means there is nothing to find. Not on the
+  # state-explicit route, which has no filter.
+  if (is.null(jointobjective) && isTRUE(out$sample$explosive_passes > 0L ||
+      out$sample$forward_gradients > 0L)) {
     explosive <- .ctBackendExplosiveDraws(fit, out$estimate$rawposterior, cores)
     out$sample$explosive_draws <- explosive$draws
     out$sample$explosive_subjects <- explosive$subjects
@@ -1070,8 +1070,10 @@
       stats::setNames(as.numeric(result$ess_tail)[seq_len(npar)], colnames(posterior)),
     divergent = as.integer(result$ndivergent),
     warmup_divergent = as.integer(result$warmup_divergent),
-    # Subject gradients taken by forward mode over the run, warmup included:
-    # a subject's predictions grew more than 100-fold between observations.
+    # Subject filter passes over the run, warmup included, whose predictions
+    # grew more than 100-fold between observations, and the gradients taken by
+    # forward mode for them (`optimcontrol$explosive_forward`).
+    explosive_passes = as.integer(.ctJuliaOr(result$explosive_passes, 0L))[1L],
     forward_gradients = as.integer(.ctJuliaOr(result$forward_gradients, 0L))[1L],
     saturated = as.integer(result$nsaturated),
     max_depth = as.integer(result$max_depth),

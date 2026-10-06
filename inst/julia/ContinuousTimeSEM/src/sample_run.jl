@@ -1089,6 +1089,7 @@ function ctsem_sample_marginal(objective, values::AbstractVector;
 
     t0 = time()
     forward0 = ctsem_forward_gradients()
+    explosive0 = ctsem_explosive_passes()
     nchains = Int(nchains); nwarmup = Int(nwarmup); ndraws = Int(ndraws)
     nchains >= 1 || throw(ArgumentError("nchains must be positive"))
     ndraws >= 1 || throw(ArgumentError("ndraws must be positive"))
@@ -1215,5 +1216,6 @@ function ctsem_sample_marginal(objective, values::AbstractVector;
         min_ess=_finite_extremum(vcat(diagnostics.ess, diagnostics.ess_tail), minimum),
         target_trace=run.trace,
         forward_gradients=ctsem_forward_gradients() - forward0,
+        explosive_passes=ctsem_explosive_passes() - explosive0,
     )
 end

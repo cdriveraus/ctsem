@@ -1,5 +1,6 @@
-# Explosive dynamics over a long gap: the engine takes such a subject's
-# gradient by forward mode (`_CTSEM_ADJOINT_GROWTH`), counts it, and the fit
+# Explosive dynamics over a long gap: the engine counts such a subject's filter
+# passes (`_CTSEM_EXPLOSIVE_GROWTH`), takes its gradient by forward mode when
+# `optimcontrol$explosive_forward` asks (`_CTSEM_ADJOINT_GROWTH`), and the fit
 # warns only when the estimate itself, or the posterior, has such a subject.
 
 skip_without_julia()
@@ -8,7 +9,7 @@ skip_without_julia()
 # about e^8 over it, so every subject is explosive at any estimate. Simulated
 # here rather than by ctGenerate, whose draw stream moves under unrelated
 # commits.
-.explosive_fit <- function(drift = .4) {
+.explosive_fit <- function(drift = .4, optimcontrol = list()) {
   set.seed(11)
   times <- c(0, 1, 2, 3, 23)
   d <- do.call(rbind, lapply(1:6, function(i) {
@@ -27,7 +28,8 @@ skip_without_julia()
   m$pars$indvarying <- FALSE
   warnings <- character()
   fit <- withCallingHandlers(
-    suppressMessages(ctFit(d, m, backend = "julia", cores = 1)),
+    suppressMessages(ctFit(d, m, backend = "julia", cores = 1,
+      optimcontrol = optimcontrol)),
     warning = function(w) {
       warnings <<- c(warnings, conditionMessage(w))
       invokeRestart("muffleWarning")
@@ -38,7 +40,9 @@ skip_without_julia()
 test_that("explosive dynamics at the estimate are counted, named and warned about", {
   run <- .explosive_fit()
   fit <- run$fit
-  expect_gt(fit$optim$forward_gradients, 0)
+  expect_gt(fit$optim$explosive_passes, 0)
+  # The fallback is opt-in, so nothing took forward mode.
+  expect_equal(fit$optim$forward_gradients, 0)
   expect_equal(sort(as.numeric(fit$optim$explosive_subjects)), 101:106)
   expect_true(any(grepl("explosive dynamics", run$warnings)))
 
@@ -52,7 +56,17 @@ test_that("explosive dynamics at the estimate are counted, named and warned abou
 
 test_that("a stable drift over the same gap takes no forward gradient and warns nothing", {
   run <- .explosive_fit(drift = -.4)
+  expect_equal(run$fit$optim$explosive_passes, 0)
   expect_equal(run$fit$optim$forward_gradients, 0)
   expect_null(run$fit$optim$explosive_subjects)
   expect_false(any(grepl("explosive", run$warnings)))
+})
+
+test_that("explosive_forward takes such subjects' gradients by forward mode, for the fit only", {
+  run <- .explosive_fit(optimcontrol = list(explosive_forward = TRUE))
+  expect_gt(run$fit$optim$forward_gradients, 0)
+  expect_equal(sort(as.numeric(run$fit$optim$explosive_subjects)), 101:106)
+  # Put back afterwards: a session setting must not outlive the fit.
+  expect_equal(as.numeric(ctsem:::.ctJuliaEval(
+    "ContinuousTimeSEM._CTSEM_ADJOINT_GROWTH[]")), Inf)
 })
