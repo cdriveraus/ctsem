@@ -5299,14 +5299,19 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   certifying <- isTRUE(intoverstates) && !isTRUE(optimcontrol$estonly) &&
     !identical(optimcontrol$certify, FALSE)
   # A resume runs under the fit's own controls, with only the progress the fit
-  # has made carried in (see `.ctBackendCorrectResult()`).
+  # has made carried in (see `.ctBackendCorrectResult()`) -- and on the full
+  # data. It starts where the full objective already brought the fit, so a
+  # first batch of a few units only walks it away again: on the SNSF pilot
+  # (493 units) every resume began at the 20-unit batch, its log posterior
+  # back at -271148 from -386462, and repeated the slow early iterations.
   correct <- function(r) .ctBackendCorrectResult(r, model_spec, npar,
     tolerance = .ctJuliaOr(optimcontrol$gaptol, 1e-6),
     maxtries = .ctJuliaOr(optimcontrol$gapretries, 2L),
     gradient = gradient, verbose = verbose,
     optimise = function(from, carried = 0) .ctJuliaOptimise(model_spec,
       if (is.null(jointobjective)) from else c(from, numeric(nstate)),
-      optimcontrol = optimcontrol, gradient = gradient, cores = cores,
+      optimcontrol = utils::modifyList(optimcontrol, list(batch = FALSE)),
+      gradient = gradient, cores = cores,
       verbose = verbose, callback = optimcontrol$callback,
       objective = jointobjective, carried = carried))
   if (certifying) {
