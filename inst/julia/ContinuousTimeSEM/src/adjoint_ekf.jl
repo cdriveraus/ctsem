@@ -236,7 +236,7 @@ filter again -- inside the Laplace route's seeded sweeps at a nested type. On a
 one-latent model, 55 s on the plain route and 140 s on the Laplace one, once
 per session (dev2); on the SNSF pilot's 32-effect model a single iteration
 then ran 35 minutes on one core with the memory climbing past 25 GB. Opted
-into per fit by `optimcontrol$explosive_forward`, at
+into per fit by optimcontrol's `explosive_forward`, at
 `_CTSEM_EXPLOSIVE_GROWTH`. `ctsem_set_adjoint_growth!` moves it.
 """
 const _CTSEM_ADJOINT_GROWTH = Ref(Inf)
@@ -390,7 +390,7 @@ export ctsem_explosive_draws
 """
 The progress line's counts since `forward0` and `explosive0`, each when any:
 filter passes past `_CTSEM_EXPLOSIVE_GROWTH`, and forward-mode subject
-gradients (`optimcontrol$explosive_forward`).
+gradients (optimcontrol's `explosive_forward`).
 """
 function _ctsem_forward_progress(forward0::Int, explosive0::Int)
     e = ctsem_explosive_passes() - explosive0
