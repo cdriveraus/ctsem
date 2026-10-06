@@ -21,6 +21,7 @@
 "test-dtVct.R","filter","core"
 "test-julia-prediction-scale.R","filter","core"
 "test-julia-trace.R","filter","core"
+"test-julia-explosive.R","filter","core"
 "test-julia-stationary.R","filter","core"
 "test-backend-generate.R","filter","extended"
 "test-backend-kalman.R","filter","extended"

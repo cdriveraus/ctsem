@@ -1001,7 +1001,7 @@ function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     npar = Int(get(kwargs, :npar, length(values)))
     natural = get(kwargs, :starts, nothing) !== nothing
     return _with_root_orders(laplace, collect(Float64, values)[1:npar], natural) do
-        _ctsem_sample(laplace, values; kwargs...)
+        _with_forward_count(() -> _ctsem_sample(laplace, values; kwargs...))
     end
 end
 
@@ -1088,6 +1088,7 @@ function ctsem_sample_marginal(objective, values::AbstractVector;
     starts::Union{Nothing,AbstractMatrix}=nothing)
 
     t0 = time()
+    forward0 = ctsem_forward_gradients()
     nchains = Int(nchains); nwarmup = Int(nwarmup); ndraws = Int(ndraws)
     nchains >= 1 || throw(ArgumentError("nchains must be positive"))
     ndraws >= 1 || throw(ArgumentError("ndraws must be positive"))
@@ -1213,5 +1214,6 @@ function ctsem_sample_marginal(objective, values::AbstractVector;
         worst_rhat=_finite_extremum(diagnostics.rhat, maximum),
         min_ess=_finite_extremum(vcat(diagnostics.ess, diagnostics.ess_tail), minimum),
         target_trace=run.trace,
+        forward_gradients=ctsem_forward_gradients() - forward0,
     )
 end

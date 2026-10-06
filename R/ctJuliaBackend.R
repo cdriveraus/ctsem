@@ -4188,7 +4188,22 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 # iterations stay readable as `stage_iterations`, since its trace is the one
 # reported and is read against that count. `spent` is a run or its counts.
 .ctJuliaRunCounters <- c("iterations", "f_calls", "g_calls", "newton_steps",
-  "newton_hessians", "newton_subset_hessians")
+  "newton_hessians", "newton_subset_hessians", "forward_gradients")
+
+# The ids of the subjects the engine found explosive at the estimate (its
+# `explosive_subjects`, positions in first-appearance order, `0` for none):
+# predictions growing more than `_CTSEM_ADJOINT_GROWTH` (100) fold between
+# observations. `NULL` for none.
+#' @keywords internal
+.ctJuliaExplosiveIds <- function(result, model_spec, model) {
+  idx <- as.integer(result$explosive_subjects)
+  idx <- idx[!is.na(idx) & idx > 0L]
+  if (!length(idx)) return(NULL)
+  d <- model_spec$data
+  idcol <- if (!is.null(d[[model$subjectIDname]])) model$subjectIDname else "id"
+  ids <- unique(d[[idcol]])
+  if (length(ids) >= max(idx)) ids[idx] else idx
+}
 #' @keywords internal
 .ctJuliaRunCounts <- function(run) vapply(.ctJuliaRunCounters, function(k)
   as.numeric(.ctJuliaOr(run[[k]], 0))[1L], numeric(1))
@@ -5439,6 +5454,13 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # it was previously only obtainable by timing one evaluation and dividing.
     f_calls = if (is.null(result$f_calls)) NA_integer_ else as.integer(result$f_calls),
     g_calls = if (is.null(result$g_calls)) NA_integer_ else as.integer(result$g_calls),
+    # Subject gradients the engine took by forward mode, because a subject's
+    # predictions grew more than 100-fold between observations -- explosive
+    # dynamics over a gap, where the reverse pass loses its accuracy -- and the
+    # subjects for which that holds at the estimate. Forward mode is exact and
+    # slower; the warning below is about the model.
+    forward_gradients = as.integer(.ctJuliaOr(result$forward_gradients, 0L))[1L],
+    explosive_subjects = .ctJuliaExplosiveIds(result, model_spec, model),
     # What the fit still had to gain when it stopped, in log likelihood
     # units, and the tolerance that was asked of it. This is the criterion --
     # `1/2 g'Bg` under the optimiser's own metric -- and not the gradient,
@@ -5635,6 +5657,14 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # whether that is the optimum is a question about the curvature, and the
     # curvature is computed a few lines below. Raised there, or superseded.
     out$optim$convergence_pending <- TRUE
+  }
+  explosive <- out$optim$explosive_subjects
+  if (length(explosive)) {
+    warning(sprintf(paste0("At the estimate, predictions grow more than ",
+      "100-fold between observations for %d subject(s) (%s%s): explosive ",
+      "dynamics over the gaps. See fit$optim$explosive_subjects."),
+      length(explosive), paste(utils::head(explosive, 5), collapse = ", "),
+      if (length(explosive) > 5) ", ..." else ""), call. = FALSE)
   }
   if (!is.null(model_spec$laplace)) {
     out$laplace <- .ctJuliaFitLaplaceBlock(model_spec, result)

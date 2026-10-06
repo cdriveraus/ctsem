@@ -75,6 +75,25 @@ function _make_discretization_buffer(::Type{T}, n::Int) where {T}
 end
 
 """
+    CTSEMGrowth
+
+How far the filter's transitions have carried the state since the last row
+with an observation: the 1-norm of the product of every transition since then
+(substeps and unobserved rows included), and the largest such norm over the
+pass. A row's own interval is not the measure, because nothing conditions the
+covariance between observations -- three unobserved weekly rows grow it as one
+three-week interval does. Primal values only. See `_CTSEM_ADJOINT_GROWTH`.
+"""
+mutable struct CTSEMGrowth
+    max::Float64
+    steps::Int
+    phi::Matrix{Float64}
+    tmp::Matrix{Float64}
+end
+
+CTSEMGrowth(n::Int) = CTSEMGrowth(0.0, 0, zeros(n, n), zeros(n, n))
+
+"""
     ContinuousEKFWorkspace
 
 Reusable workspace for continuous-time extended Kalman filter evaluations.
@@ -175,6 +194,8 @@ struct ContinuousEKFWorkspace{T, N, M, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF
     # its reverse pass are called directly for a model that has one and never
     # compiled for a model that does not; see `_ekf_categorical_call`.
     categorical::Val{CAT}
+    # Transition growth since the last observed row; see `CTSEMGrowth`.
+    growth::CTSEMGrowth
 end
 
 """
@@ -391,5 +412,6 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
         Vector{Int}(undef, m),
         Vector{Int}(undef, m),
         Val(!isempty(manifesttype)),
+        CTSEMGrowth(n),
     )
 end

@@ -1946,7 +1946,7 @@ function ctsem_saem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVecto
     natural = get(kwargs, :starts, nothing) !== nothing ||
         get(kwargs, :state, nothing) !== nothing
     return _with_root_orders(laplace, collect(Float64, values)[1:npar], natural) do
-        _ctsem_saem_sample(laplace, values; kwargs...)
+        _with_forward_count(() -> _ctsem_saem_sample(laplace, values; kwargs...))
     end
 end
 

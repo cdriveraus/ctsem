@@ -577,3 +577,46 @@ end
         CT.ctsem_set_adjoint_growth!(old)
     end
 end
+
+# The growth that decides is that of everything since the last observed row:
+# four unobserved five-day steps grow the covariance as one twenty-day interval
+# does, though no single step passes the threshold; a short interval followed
+# by an ordinary one passes nothing, because the observation between them
+# starts the product again.
+@testset "Transition growth accumulates between observed rows" begin
+    CT = ContinuousTimeSEM
+    sp = _adjoint_explosive_2d_parameters()
+    values = [-0.6, 1.5, 0.25, -0.17, 0.8, 1.1]
+    A = [values[1] values[2]; values[3] values[4]]
+    threshold = CT._CTSEM_ADJOINT_GROWTH[]
+    @test opnorm(exp(A .* 5.0), 1) < threshold < opnorm(exp(A .* 20.0), 1)
+    times = [0.0, 5.0, 10.0, 15.0, 20.0]
+    observed = [sin(1.3 * i + 0.7 * j) for i in 1:6, j in eachindex(times)]
+    gaps = copy(observed)
+    gaps[:, 2:4] .= NaN
+    short = [0.0, 0.01, 5.01]
+    short_data = observed[:, 1:3]
+    explosive(o) = last(CT.ctsem_explosive_subjects(() -> o(values)))
+    every = CT.ctsem_objective(sp, [1], times, observed)
+    sparse = CT.ctsem_objective(sp, [1], times, gaps)
+    brief = CT.ctsem_objective(sp, [1], short, short_data)
+    @test isempty(explosive(every))
+    @test explosive(sparse) == [1]
+    @test isempty(explosive(brief))
+    # Each forward-mode subject gradient is counted, and only those.
+    n0 = CT.ctsem_forward_gradients()
+    CT.ctsem_adjoint_gradient(every, values)
+    @test CT.ctsem_forward_gradients() == n0
+    reference = ForwardDiff.gradient(sparse, values)
+    g = CT.ctsem_adjoint_gradient(sparse, values).gradient
+    @test CT.ctsem_forward_gradients() == n0 + 1
+    @test maximum(abs.(g .- reference) ./ max.(1.0, abs.(reference))) < 1e-8
+    # And a sampler's result reports them (`_with_forward_count`).
+    counted = CT._with_forward_count(() -> (ok=true,
+        g=CT.ctsem_adjoint_gradient(sparse, values)))
+    @test counted.forward_gradients == 1
+    report = CT.ctsem_explosive_draws(sparse, hcat(values, values))
+    @test (report.checked, report.explosive, report.subjects) == (2, 2, [1])
+    report = CT.ctsem_explosive_draws(every, reshape(values, :, 1))
+    @test (report.explosive, report.subjects) == (0, [0])
+end

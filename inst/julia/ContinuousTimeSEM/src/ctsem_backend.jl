@@ -2039,6 +2039,9 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # what lets progress be the default without making the default noisy.
     reporter = _ctsem_progress_reporter(progress, progress_label,
         progress_overwrite, progress_sink, progress_every)
+    # Forward-mode subject gradients this run takes (`_CTSEM_ADJOINT_GROWTH`),
+    # counted from here so a stage reports its own.
+    forward0 = ctsem_forward_gradients()
     # The trace records every iteration whatever `verbose` says: it costs a
     # push onto a vector, and a fit that turns out to have gone somewhere odd
     # is exactly the one nobody thought to turn reporting on for.
@@ -2106,7 +2109,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             _progress_optimise(reporter, latest.iteration, Int(maxiter),
                 @sprintf("logpost %11.2f", -latest.value),
                 @sprintf("|g| %9.2e", latest.g_norm),
-                _ctsem_optimise_progress_extra(objective)...;
+                _ctsem_optimise_progress_extra(objective)...,
+                _ctsem_forward_progress(forward0)...;
                 budget=progress_budget,
                 percent=progress_budget ? NaN : percent)
         end
@@ -2318,7 +2322,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
             _progress_optimise(reporter, state.iteration, Int(maxiter),
                 @sprintf("logpost %11.2f", -state.value),
                 @sprintf("|g| %9.2e", state.g_norm),
-                _ctsem_optimise_progress_extra(objective)...;
+                _ctsem_optimise_progress_extra(objective)...,
+                _ctsem_forward_progress(forward0)...;
                 budget=progress_budget, percent=progress_budget ? NaN : percent)
         end
         return false
@@ -2392,8 +2397,17 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
          alpha=vcat(spent.history.alpha, finish.history.alpha),
          value=vcat(spent.history.value, finish.history.value))
     verbose && _ctsem_optimise_verbose_report(objective, call_log)
-    final = ctsem_evaluate(objective, minimizer; gradient=true,
-        contributions=true, gradient_method=gradient_method)
+    # Which subjects are explosive at the estimate, recorded only when some
+    # evaluation of the run needed forward mode -- none did otherwise, and the
+    # final point's gradient was among them.
+    forward_gradients = ctsem_forward_gradients() - forward0
+    final, explosive = if forward_gradients > 0
+        ctsem_explosive_subjects(() -> ctsem_evaluate(objective, minimizer;
+            gradient=true, contributions=true, gradient_method=gradient_method))
+    else
+        ctsem_evaluate(objective, minimizer; gradient=true, contributions=true,
+            gradient_method=gradient_method), Int[]
+    end
 
     # Optim's own `converged` is the disjunction of three criteria, and a line
     # search that fails on its first try satisfies the `f` one trivially: the
@@ -2515,6 +2529,11 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
         gradient=collect(final.gradient),
         subject_loglik=collect(final.subject_loglik),
         result_extra...,
+        # Forward-mode subject gradients over the run, and the subjects whose
+        # filter grows past `_CTSEM_ADJOINT_GROWTH` at the estimate (`[0]` for
+        # none, for the bridge's sake).
+        forward_gradients=forward_gradients,
+        explosive_subjects=isempty(explosive) ? [0] : explosive,
         # The larger of the two: they agree unless the callback stopped the
         # run, in which case Optim's is the one that stopped being updated.
         iterations=max(iterations, seen_iterations[]),

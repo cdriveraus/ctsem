@@ -203,9 +203,6 @@ mutable struct CTSEMAdjointTape{T}
     # transforms' recorded read sets and their written indices. This is what
     # a group record snapshots instead of the whole parameter vector.
     group_relevant::Vector{Vector{Int}}
-    # The largest growth of any prediction's transition this pass, the 1-norm
-    # of `e^{JAx dt}`; see `_CTSEM_ADJOINT_GROWTH`.
-    growth::Float64
 end
 
 CTSEMAdjointTape(::Type{T}, group_relevant=[Int[], Int[], Int[]]) where {T} =
@@ -214,11 +211,12 @@ CTSEMAdjointTape(::Type{T}, group_relevant=[Int[], Int[], Int[]]) where {T} =
         CTSEMUpdateRecord{T}[], CTSEMGroupRecord{T}[], CTSEMThetaRecord{T}[],
         CTSEMInitRecord{T}[], CTSEMBinaryRecord{T}[],
         CTSEMStationaryRecord{T}[], 0, 0, 0, 0, 0, 0, 0, 0,
-        T[], group_relevant, 0.0)
+        T[], group_relevant)
 
 """
 Transition growth above which a subject's gradient is taken by forward mode
-rather than by the reverse pass.
+rather than by the reverse pass. The growth is that of the product of every
+transition since the last observed row (`CTSEMGrowth`).
 
 The reverse pass is exact in exact arithmetic and not stable in double
 precision once a prediction's covariance is very large in some direction: the
@@ -242,21 +240,130 @@ function ctsem_set_adjoint_growth!(x::Real)
     return _CTSEM_ADJOINT_GROWTH[]
 end
 
-"""The 1-norm of `E[1:n, 1:n]`'s primal values."""
-function _transition_growth(E::AbstractMatrix, n::Int)
+"""
+    _track_growth!(growth, E, n, subject)
+
+Fold the transition `E[1:n, 1:n]` just applied into `growth` (`CTSEMGrowth`),
+and note `subject` when the pass first exceeds `_CTSEM_ADJOINT_GROWTH` while
+`ctsem_explosive_subjects` is recording. A hand loop rather than
+`_ctsem_mul!`: `E` may hold duals and only its primal values are wanted.
+"""
+function _track_growth!(growth::CTSEMGrowth, E::AbstractMatrix, n::Int, subject)
+    phi, tmp = growth.phi, growth.tmp
+    @inbounds if growth.steps == 0
+        for j in 1:n, i in 1:n
+            phi[i, j] = Float64(_primal(E[i, j]))
+        end
+    else
+        for j in 1:n, i in 1:n
+            acc = 0.0
+            for k in 1:n
+                acc += Float64(_primal(E[i, k])) * phi[k, j]
+            end
+            tmp[i, j] = acc
+        end
+        growth.phi, growth.tmp = tmp, phi
+        phi = tmp
+    end
     largest = 0.0
     @inbounds for j in 1:n
         column = 0.0
         for i in 1:n
-            column += abs(Float64(_primal(E[i, j])))
+            column += abs(phi[i, j])
         end
         largest = max(largest, column)
     end
-    return largest
+    growth.steps += 1
+    if largest > growth.max
+        threshold = _CTSEM_ADJOINT_GROWTH[]
+        growth.max <= threshold < largest && _CTSEM_EXPLOSIVE_RECORDING[] &&
+            _note_explosive(subject)
+        growth.max = largest
+    end
+    return nothing
 end
 
-"""Whether the subject just taped needs the forward-mode gradient."""
-@inline _tape_unstable(tape::CTSEMAdjointTape) = tape.growth > _CTSEM_ADJOINT_GROWTH[]
+"""Whether the subject just filtered on `ws` needs the forward-mode gradient."""
+@inline _growth_unstable(ws) = ws.growth.max > _CTSEM_ADJOINT_GROWTH[]
+
+# Forward-mode subject gradients taken since the last reset, for the progress
+# line (`_ctsem_forward_progress`) and the fit's result.
+const _CTSEM_FORWARD_GRADIENTS = Threads.Atomic{Int}(0)
+
+"""Forward-mode subject gradients taken since the last reset; `reset` zeroes the count."""
+function ctsem_forward_gradients(; reset::Bool=false)
+    return reset ? Threads.atomic_xchg!(_CTSEM_FORWARD_GRADIENTS, 0) :
+        _CTSEM_FORWARD_GRADIENTS[]
+end
+
+const _CTSEM_EXPLOSIVE_RECORDING = Ref(false)
+const _CTSEM_EXPLOSIVE_SUBJECTS = Set{Int}()
+const _CTSEM_EXPLOSIVE_LOCK = ReentrantLock()
+
+_note_explosive(subject) =
+    lock(() -> push!(_CTSEM_EXPLOSIVE_SUBJECTS, Int(subject)), _CTSEM_EXPLOSIVE_LOCK)
+
+"""
+    ctsem_explosive_subjects(f)
+
+Run `f()` and return its value with the sorted subject indices whose filter,
+during it, exceeded `_CTSEM_ADJOINT_GROWTH` -- the subjects whose predictions
+grow that much between observations at the points `f` evaluates. Not
+reentrant.
+"""
+function ctsem_explosive_subjects(f)
+    lock(() -> empty!(_CTSEM_EXPLOSIVE_SUBJECTS), _CTSEM_EXPLOSIVE_LOCK)
+    _CTSEM_EXPLOSIVE_RECORDING[] = true
+    value = try
+        f()
+    finally
+        _CTSEM_EXPLOSIVE_RECORDING[] = false
+    end
+    return value, lock(() -> sort!(collect(_CTSEM_EXPLOSIVE_SUBJECTS)),
+        _CTSEM_EXPLOSIVE_LOCK)
+end
+
+"""
+    _with_forward_count(f)
+
+`f()`'s named tuple with `forward_gradients`, the forward-mode subject gradients
+taken during it, added: how a sampler reports them.
+"""
+function _with_forward_count(f)
+    n0 = ctsem_forward_gradients()
+    result = f()
+    return merge(result, (forward_gradients=ctsem_forward_gradients() - n0,))
+end
+
+"""
+    ctsem_explosive_draws(objective, draws)
+
+Evaluate `objective` at each column of `draws` and report how many columns had
+a subject whose filter exceeded `_CTSEM_ADJOINT_GROWTH`, and which subjects
+(`[0]` for none). A Laplace objective filters each subject at its effects' mode
+given the column.
+"""
+function ctsem_explosive_draws(objective, draws::AbstractMatrix)
+    hits = 0
+    subjects = Set{Int}()
+    for j in axes(draws, 2)
+        _, s = ctsem_explosive_subjects(() ->
+            ctsem_evaluate(objective, collect(Float64, view(draws, :, j)); gradient=false))
+        isempty(s) && continue
+        hits += 1
+        union!(subjects, s)
+    end
+    return (checked=size(draws, 2), explosive=hits,
+        subjects=isempty(subjects) ? [0] : sort!(collect(subjects)))
+end
+
+export ctsem_explosive_draws
+
+"""The progress line's count of forward-mode subject gradients since `since`, when any."""
+function _ctsem_forward_progress(since::Int)
+    n = ctsem_forward_gradients() - since
+    return n > 0 ? (@sprintf("fwd-grad %d", n),) : ()
+end
 
 """
     _ctsem_forward_subject_gradient!(g, subject_objective, values)
@@ -268,8 +375,11 @@ compiled for the new dual type only when a subject actually needs this. Works
 at any element type, the nested duals of the Hessian and the Laplace sweeps
 included: ForwardDiff's tag for this call is created after theirs.
 """
-_ctsem_forward_subject_gradient!(g::AbstractVector, so, values::AbstractVector) =
-    (_ctsem_barrier(_ctsem_forward_subject_gradient_impl!, g, so, values); g)
+function _ctsem_forward_subject_gradient!(g::AbstractVector, so, values::AbstractVector)
+    Threads.atomic_add!(_CTSEM_FORWARD_GRADIENTS, 1)
+    _ctsem_barrier(_ctsem_forward_subject_gradient_impl!, g, so, values)
+    return g
+end
 
 function _ctsem_forward_subject_gradient_impl!(g, so, values)
     f = x -> _ekf_run(_init_continuous_ekf_workspace(eltype(x), so.params), so, x,
@@ -298,7 +408,6 @@ stale record beyond the count is unreachable rather than merely unread.
 """
 function _tape_reset!(tape::CTSEMAdjointTape)
     empty!(tape.program)
-    tape.growth = 0.0
     tape.npredicts = 0; tape.ntds = 0; tape.nupdates = 0
     tape.ngroups = 0; tape.nthetas = 0; tape.ninits = 0
     tape.nbinaries = 0; tape.nstationaries = 0
@@ -601,7 +710,6 @@ function _record_predict!(tape::CTSEMAdjointTape{T}, ws, pars,
     _tape_fill!(record.affine, view(ws.affine_buffer.r, 1:naff))
     _tape_fill!(record.dINT_dynamic, view(ws.discrete_ca.dINT, 1:naff))
     record.dt = T(Δt)
-    tape.growth = max(tape.growth, _transition_growth(ws.discrete_ca.eJAx, n))
     series = ws.discretization_buffer.series
     record.series_intercept = series.intercept
     record.series_noise = series.noise

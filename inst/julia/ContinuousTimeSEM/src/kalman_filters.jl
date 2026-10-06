@@ -272,6 +272,7 @@ function _ekf_update_observed!(ws::ContinuousEKFWorkspace, pars,
         copyto!(ws.P_update.data, ws.P_predict.data)
         return zero(eltype(ws.state))
     end
+    ws.growth.steps = 0
 
     if n_observed == m_full
         observed = 1:m_full
@@ -1025,6 +1026,8 @@ function _extended_kalman_filter_continuous!(
     # real loop -- rather than maintaining a parallel traced copy of it -- is
     # what stops the reverse pass silently drifting away from the forward one.
     _record_subject_values!(trace, ws.subject_values)
+    ws.growth.max = 0.0
+    ws.growth.steps = 0
 
     # Populate ComponentArray storage from transformed parameters.
     pars = ws.pars
@@ -1126,6 +1129,7 @@ function _extended_kalman_filter_continuous!(
             predict_snapshot = _begin_predict!(trace, ws, _val(ws.state_dim))
             _begin_substep!(substep_recorder, ws)
             _ekf_predict_step!(ws, pars, substep_dt)
+            _track_growth!(ws.growth, ws.discrete_ca.eJAx, _val(ws.state_dim), subject)
             _record_substep_defect!(substep_recorder, ws, pars, sp, all_params, substep_dt,
                 t_idx, predict_context)
             _record_predict!(trace, ws, pars, predict_snapshot, substep_dt, _val(ws.state_dim))

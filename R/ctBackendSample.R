@@ -287,6 +287,16 @@
     progress = .ctBackendReporting(verbose),
     processes = processes, handles = handles)
 
+  # Explosive dynamics in the posterior, looked for only when the run took a
+  # forward-mode gradient -- which is what such a subject costs, so none means
+  # there is nothing to find. Not on the state-explicit route, which has no
+  # filter.
+  if (is.null(jointobjective) && isTRUE(out$sample$forward_gradients > 0L)) {
+    explosive <- .ctBackendExplosiveDraws(fit, out$estimate$rawposterior, cores)
+    out$sample$explosive_draws <- explosive$draws
+    out$sample$explosive_subjects <- explosive$subjects
+  }
+
   # State-explicit only: the identifiability report is about the parameters,
   # so it needs the curvature that lets the states respond to them -- the
   # *profiled* joint Hessian, by the implicit-function theorem at this
@@ -966,6 +976,33 @@
     ess_target = .ctBackendSampleTargetESS(control))
 }
 
+# How many of up to `n` thinned posterior draws have a subject whose
+# predictions grow more than 100-fold between observations, and which subjects
+# (their ids), with a warning when any do. The fit's objective is evaluated at
+# each draw's parameters, so on a Laplace fit each subject sits at its effects'
+# mode given the draw rather than at its sampled effects.
+#' @keywords internal
+.ctBackendExplosiveDraws <- function(fit, posterior, cores, n = 20L) {
+  rows <- unique(round(seq(1, nrow(posterior), length.out = min(n, nrow(posterior)))))
+  module <- .ctJuliaModule(fit$model_spec$project)
+  res <- try(.ctJuliaGet(.ctBackendWithMaxChunks(cores,
+    module$ctsem_explosive_draws(.ctJuliaObjective(fit),
+      .ctJuliaPut(t(posterior[rows, , drop = FALSE]))))), silent = TRUE)
+  if (inherits(res, "try-error")) return(list(draws = NULL, subjects = NULL))
+  draws <- c(explosive = as.integer(res$explosive), checked = as.integer(res$checked))
+  ids <- .ctJuliaExplosiveIds(list(explosive_subjects = res$subjects),
+    fit$model_spec, .ctFitModelObject(fit))
+  if (draws[["explosive"]] > 0L) {
+    warning(sprintf(paste0("In %d of %d posterior draws checked, predictions ",
+      "grow more than 100-fold between observations for some subjects ",
+      "(%s%s): explosive dynamics over the gaps. See ",
+      "fit$sample$explosive_subjects."), draws[["explosive"]],
+      draws[["checked"]], paste(utils::head(ids, 5), collapse = ", "),
+      if (length(ids) > 5) ", ..." else ""), call. = FALSE)
+  }
+  list(draws = draws, subjects = ids)
+}
+
 # Turn an engine sample result into a fit object.
 #
 # Shared by `ctFitUncertainty(fit, 'sample')` and by `ctFit(optimize = FALSE)`,
@@ -1033,6 +1070,9 @@
       stats::setNames(as.numeric(result$ess_tail)[seq_len(npar)], colnames(posterior)),
     divergent = as.integer(result$ndivergent),
     warmup_divergent = as.integer(result$warmup_divergent),
+    # Subject gradients taken by forward mode over the run, warmup included:
+    # a subject's predictions grew more than 100-fold between observations.
+    forward_gradients = as.integer(.ctJuliaOr(result$forward_gradients, 0L))[1L],
     saturated = as.integer(result$nsaturated),
     max_depth = as.integer(result$max_depth),
     stepsize = as.numeric(result$stepsize),
