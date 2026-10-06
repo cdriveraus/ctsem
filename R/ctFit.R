@@ -694,14 +694,15 @@ T0VARredundancies <- function(ctm) {
 #' @param priors \code{'randomCorr'}, \code{TRUE} or \code{FALSE}. \code{TRUE}
 #' adds ctsem's \code{normal(0,1)} raw-scale prior to every parameter, making
 #' an optimised fit maximum a posteriori; \code{FALSE} uses none.
-#' \code{'randomCorr'}, the default when optimizing, applies it to the
+#' \code{'randomCorr'}, the default, applies it to the
 #' random-effect correlations only, at every level: those are where unbounded
 #' maximum likelihood is ill-posed, since a bounded correlation on an
 #' unbounded coordinate walks along any direction the data do not determine.
-#' The default when sampling (\code{optimize=FALSE}) is \code{TRUE}, because a
-#' parameter the data leave flat has an improper posterior without a prior.
+#' Sampling (\code{optimize=FALSE}) without a prior on every parameter warns,
+#' because a parameter the data leave flat has an improper posterior; use
+#' \code{priors=TRUE} there.
 #' \code{'randomCorr'} needs \code{backend='julia'}: asked for on stan it is an
-#' error, and stan's default when optimizing is \code{FALSE}.
+#' error, and left at the default on stan it means \code{FALSE}.
 #' @param cores number of cpu cores to use: a positive whole number, or
 #' \code{'maxneeded'} for all but one (capped at the number of chains on
 #' stan). Defaults to \code{getOption("mc.cores", 2)}. On julia it caps the
@@ -1223,12 +1224,11 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     if(isTRUE(priors)) 'all' else 'none'
   if(!is.character(priors) && !is.logical(priors)) stop(
     "priors must be TRUE, FALSE, or 'randomCorr'", call.=FALSE)
-  # Sampling needs a prior wherever the likelihood can go flat. Under
-  # 'randomCorr' a population sd has none, and where the data allow it near
-  # zero the sampled posterior is improper there: on the ?ctFit example the
-  # chains wandered off along popsd_mm (R-hat 2.1) and the run was spent.
-  # Before 3.12.0 the default was FALSE on both routes.
-  if(priorsdefaulted && !isTRUE(optimize)) priorscope <- 'all'
+  # Sampling needs a prior wherever the likelihood can go flat -- under
+  # 'randomCorr' a population sd has none, and on the ?ctFit example the chains
+  # wandered off along popsd_mm (R-hat 2.1). The argument is not changed for
+  # it: the default is one value whatever the route, and sampling without a
+  # prior on every parameter warns below, before the run.
   # The generated Stan model builds its priors in, so a subset of coordinates
   # is not expressible there. Asking for one explicitly is refused by name;
   # arriving at one only because it is the default falls back to stan's own
@@ -1402,12 +1402,11 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   }
 
   recompile <- FALSE
-  # Only reached when asked for, since sampling defaults to priors=TRUE.
-  if(!optimize && priorscope %in% c('none', 'randomCorr')) message(
+  if(!optimize && priorscope %in% c('none', 'randomCorr')) warning(
     if(priorscope %in% 'none') 'Sampling with priors=FALSE' else
       "Sampling with priors='randomCorr', which leaves the population sds without a prior",
     ": where the data leave a parameter flat its posterior is improper. ",
-    "priors=TRUE, the sampling default, puts a prior on every parameter.")
+    "priors=TRUE puts a prior on every parameter.", call. = FALSE)
   # `intoverstates=FALSE` with `optimize=TRUE` maximises the joint density of
   # the parameters and the innovations that build the states, and that mode is
   # degenerate rather than merely biased: with an innovation per observation

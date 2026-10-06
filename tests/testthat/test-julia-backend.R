@@ -144,13 +144,15 @@ test_that("the defaults a sampled or reduced-rank fit resolves to combine", {
     drift$pars$row == 1 & drift$pars$col == 1] <- TRUE
   expect_identical(ctsem:::.ctIntOverPopAuto(drift, optimize = FALSE,
     timissing = TRUE)$route, "none")
-  # Sampling defaults to a prior on every parameter; one asked for is kept,
-  # and a scope that leaves parameters flat is named before the run.
-  expect_identical(sampled$args$resolved$priors, TRUE)
+  # Sampling keeps the priors it is given, the default included -- it is not
+  # switched to TRUE -- and a scope that leaves parameters flat warns before
+  # the run. priors = TRUE is the way out, and says nothing.
+  expect_identical(sampled$args$resolved$priors, "randomCorr")
   expect_identical(prep()$args$resolved$priors, "randomCorr")
-  expect_message(suppressWarnings(ctFit(ctstantestdat, m, backend = "julia",
-    fit = FALSE, optimize = FALSE, priors = "randomCorr")),
-    "population sds without a prior")
+  expect_warning(suppressMessages(ctFit(ctstantestdat, m, backend = "julia",
+    fit = FALSE, optimize = FALSE)), "population sds without a prior")
+  expect_no_warning(suppressMessages(ctFit(ctstantestdat, m, backend = "julia",
+    fit = FALSE, optimize = FALSE, priors = TRUE)), message = "without a prior")
   # Under laplace a rank below the varying T0MEANS fixed the initial state
   # along a direction (-5481 against -1034, reported converged).
   expect_error(prep(intoverpop = "laplace", poprank = 1),
