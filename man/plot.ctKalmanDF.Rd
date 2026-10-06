@@ -24,12 +24,13 @@
 
 \item{subjects}{vector of integers denoting which subjects (from 1 to N) to plot predictions for.}
 
-\item{kalmanvec}{string vector of names of any elements of the output you wish to plot, 
-the defaults of 'y' and 'ysmooth' plot the original data, 'y', 
-and the estimates of the 'true' value of y given all data. Replacing 'y' by 'eta' will 
-plot latent states instead (though 'eta' alone does not exist) and replacing 'smooth' 
-with 'upd' or 'prior' respectively plots updated (conditional on all data up to current time point)
-or prior (conditional on all previous data) estimates.}
+\item{kalmanvec}{string vector of the elements of the output to plot: 'y', the
+data, or 'y', 'eta', 'err' or 'errstd' followed by 'prior', 'upd' or 'smooth'. 'y' is
+the observed variables and 'eta' the latent states; 'prior' is conditional on all
+previous data, 'upd' on all data up to the current time point, and 'smooth' on all
+data. 'err' is the data minus the estimate, and 'errstd' its standardised form, present
+when the output was made with \code{standardisederrors=TRUE}. The default, 'y' and
+'yprior', plots the data against the one step ahead predictions.}
 
 \item{errorvec}{vector of names indicating which kalmanvec elements to plot uncertainty bands for. 
 'auto' plots all possible.}

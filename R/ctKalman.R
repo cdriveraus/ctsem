@@ -8,6 +8,17 @@
 #
 # `e` carries ya/ycova/etaa/etacova/llrow in Stan's shape: iteration, then
 # 1 = prior / 2 = updated / 3 = smoothed, then data row.
+.ctKalmanTypes <- c('prior','upd','smooth')
+
+# The elements of the output that plot as series over time, which is what
+# plot.ctKalmanDF's kalmanvec selects from: the data, the prior, updated and
+# smoothed estimates of observations and states, the errors against each, and
+# the standardised errors when asked for. The covariances and llrow are in the
+# output too, but are not series. Declared here so a caller -- ctsemGUI among
+# them -- can offer the set without copying it.
+.ctKalmanSeries <- c('y', paste0('y', .ctKalmanTypes), paste0('eta', .ctKalmanTypes),
+  paste0('err', .ctKalmanTypes), paste0('errstd', .ctKalmanTypes))
+
 .ctKalmanArrayAssemble <- function(e, time, Y, id, nlatent, latentNames, manifestNames,
   standardisederrors = FALSE){
   nsamples <- dim(e$etaa)[1]
@@ -34,7 +45,7 @@
     llrow=e$llrow)
   out$y[out$y==99999] <- NA
   for(basei in c('y','eta')){
-    for(typei in c('prior','upd','smooth')){
+    for(typei in .ctKalmanTypes){
       for(typex in c('','cov')){
         ref=paste0(basei,typei,typex)
         out[[ref]] <- e[[ref]]
@@ -54,12 +65,12 @@
     }
   }
   
-  for(typei in c('prior','upd','smooth')){
+  for(typei in .ctKalmanTypes){
     out[[paste0('err',typei)]] <- aaply(out[[paste0('y',typei)]],1, function(yp) array(out$y-yp,dim=dim(out$y)),.drop=FALSE,.inform=TRUE)
   } 
   # 
   if(standardisederrors){
-    for(typei in c('prior','upd','smooth')){
+    for(typei in .ctKalmanTypes){
       arr <- array(sapply(1:dim(out$yprior)[1], function(i){
         array(sapply(1:nrow(out$y), function(r){
           tmp <- matrix(NA,length(manifestNames))
@@ -591,12 +602,13 @@ ctKalman <- ctPredict
 #' @param x Output from \code{\link{ctPredict}}. In general it is easier to call
 #' \code{\link{ctPredict}} directly with the \code{plot=TRUE} argument, which calls this function.
 #' @param subjects vector of integers denoting which subjects (from 1 to N) to plot predictions for. 
-#' @param kalmanvec string vector of names of any elements of the output you wish to plot, 
-#' the defaults of 'y' and 'ysmooth' plot the original data, 'y', 
-#' and the estimates of the 'true' value of y given all data. Replacing 'y' by 'eta' will 
-#' plot latent states instead (though 'eta' alone does not exist) and replacing 'smooth' 
-#' with 'upd' or 'prior' respectively plots updated (conditional on all data up to current time point)
-#' or prior (conditional on all previous data) estimates.
+#' @param kalmanvec string vector of the elements of the output to plot: 'y', the
+#' data, or 'y', 'eta', 'err' or 'errstd' followed by 'prior', 'upd' or 'smooth'. 'y' is
+#' the observed variables and 'eta' the latent states; 'prior' is conditional on all
+#' previous data, 'upd' on all data up to the current time point, and 'smooth' on all
+#' data. 'err' is the data minus the estimate, and 'errstd' its standardised form, present
+#' when the output was made with \code{standardisederrors=TRUE}. The default, 'y' and
+#' 'yprior', plots the data against the one step ahead predictions.
 #' @param errorvec vector of names indicating which kalmanvec elements to plot uncertainty bands for. 
 #' 'auto' plots all possible.
 #' @param elementNames if NA, all relevant object elements are included -- e.g. if yprior is in the kalmanvec
@@ -636,6 +648,10 @@ plot.ctKalmanDF<-function(x, subjects=unique(x$Subject), kalmanvec=c('y','yprior
   if(FALSE) Time <- Value <- Subject <- Row <- Variable <- Element <- NULL
   colnames(x)[colnames(x) %in% 'Row'] <- "Variable"
   colnames(x)[colnames(x) %in% 'value'] <- "Value"
+  # A name that is not a series would select nothing and plot nothing.
+  if(!all(kalmanvec %in% .ctKalmanSeries)) stop(call. = FALSE, 'kalmanvec takes ',
+    paste0("'", .ctKalmanSeries, "'", collapse = ', '), '; not ',
+    paste0("'", setdiff(kalmanvec, .ctKalmanSeries), "'", collapse = ', '))
   
   if(any(!is.na(elementNames))) x <- subset(x,Variable %in% elementNames)
   x <- subset(x,Subject %in% subjects)
