@@ -169,8 +169,10 @@ data <- ctGenerate(generatingModel,n=15,burnin=10)
 #the julia engine: each subject's CINT drawn from the population, with the
 #means stated on the natural scale and the sds given by sdscale on the raw
 #scale (CINT is 10 * raw, so 0.5 and 0.8)
-data <- ctGenerate(generatingModel,n=15,burnin=10,
-  backend='julia',popmeans=c(cint1=1,cint2=0))
+if (isTRUE(ctJuliaStatus()$available)) {
+  data <- ctGenerate(generatingModel,n=15,burnin=10,
+    backend='julia',popmeans=c(cint1=1,cint2=0))
+}
 }
 
 #the prior predictive: what the model says data could look like before it
