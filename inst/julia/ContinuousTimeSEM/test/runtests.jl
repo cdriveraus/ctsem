@@ -1,5 +1,11 @@
 using Test
 using ContinuousTimeSEM
+# The same packages runtests_parallel.jl's PREAMBLE loads into each worker, so
+# both runners give a test file the same names. Without them a file that used
+# one without importing it passed locally and errored here, or not, depending
+# on whether a file sorting before it happened to import it into Main.
+using LinearAlgebra, Random, Printf, ForwardDiff, DataFrames, ChainRulesCore,
+    ComponentArrays
 
 # Shared, test-only conveniences for writing parameter tables as DataFrames.
 # The package itself takes plain column vectors; see src/r_interface.jl.
