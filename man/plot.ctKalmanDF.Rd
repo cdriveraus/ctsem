@@ -22,7 +22,8 @@
 \item{x}{Output from \code{\link{ctPredict}}. In general it is easier to call
 \code{\link{ctPredict}} directly with the \code{plot=TRUE} argument, which calls this function.}
 
-\item{subjects}{vector of integers denoting which subjects (from 1 to N) to plot predictions for.}
+\item{subjects}{which subjects to plot, as they appear in the Subject column of
+\code{x}: the ids in the data, unless \code{ctPredict} read them as ctsem's numbering.}
 
 \item{kalmanvec}{string vector of the elements of the output to plot: 'y', the
 data, or 'y', 'eta', 'err' or 'errstd' followed by 'prior', 'upd' or 'smooth'. 'y' is

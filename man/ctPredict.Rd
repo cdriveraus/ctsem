@@ -45,7 +45,9 @@ See \code{\link{plot.ctKalmanDF}}
 \item{standardisederrors}{if TRUE, also include standardised error output (based on covariance
 per time point).}
 
-\item{realid}{use original (not necessarily integer sequence) subject id's? Otherwise use integers 1:N.}
+\item{realid}{If TRUE (the default), subjects are read as the ids in the data,
+and integers that are not ids there are read as ctsem's numbering of the
+subjects, 1 to N, with a message. If FALSE, they are read as that numbering.}
 
 \item{randomEffects}{For an \code{intoverpop='laplace'} fit, which levels
   of random effect the trajectories are built from. Naming one of the

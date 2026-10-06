@@ -7,7 +7,7 @@
 ctPredictTIP(
   sf,
   tipreds = "all",
-  subject = 1,
+  subject = NULL,
   timestep = "auto",
   doDynamics = TRUE,
   plot = TRUE,
@@ -15,7 +15,8 @@ ctPredictTIP(
   discreteTimeQuantiles = c(0.025, 0.5, 0.975),
   dynamicsControl = list(),
   showUncertainty = TRUE,
-  TIPvalues = NA
+  TIPvalues = NA,
+  realid = TRUE
 )
 }
 \arguments{
@@ -23,7 +24,8 @@ ctPredictTIP(
 
 \item{tipreds}{A character vector specifying which time independent predictors to use. Default is 'all', which uses all time independent predictors in the model.}
 
-\item{subject}{An integer value specifying the internal ctsem subject ID (mapping visible under myfit$setup$idmap) for which predictions are made. 
+\item{subject}{The subject for which predictions are made, as an id in the data
+(see \code{realid}), or NULL (the default) for the first subject.
 This is relevant only when time dependent predictors are also included in the model.}
 
 \item{timestep}{A numeric value specifying the time step for predictions. Default is 'auto', which tries to automatically determine an appropriate time step.}

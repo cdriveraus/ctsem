@@ -4,7 +4,11 @@
 #' @param subjectMatrices Calculate subject specific system matrices?
 #' @param cores Only used if subjectMatrices = TRUE . For faster computation use more cores.
 #' @param nsamples either 'all' or an integer denoting number of random samples to extract.
-#' @param subjects either 'all', or an integer vector denoting subjects to extract.
+#' @param subjects either 'all', or the subjects to extract, as ids in the data
+#' (see \code{realid}).
+#' @param realid If TRUE (the default), subjects are read as the ids in the data,
+#' and integers that are not ids there are read as ctsem's numbering of the
+#' subjects, 1 to N, with a message. If FALSE, they are read as that numbering.
 #' @param state The latent state at which state dependent cells of the
 #' \code{pop_*} matrices are evaluated: \code{'T0MEANS'} (the default),
 #' \code{'mean'}, \code{'asymptotic'}, or a numeric state vector. Only
@@ -28,11 +32,11 @@
 #' }
 #' @export
 ctExtract <- function(object, subjectMatrices=FALSE, cores=2, nsamples='all', subjects='all',
-  state=NULL, ...) UseMethod("ctExtract")
+  state=NULL, realid=TRUE, ...) UseMethod("ctExtract")
 
 #' @export
 ctExtract.ctStanFit <- function(object,subjectMatrices=FALSE,cores=2,nsamples='all', subjects='all',
-  state=NULL, ...){
+  state=NULL, realid=TRUE, ...){
   # inherits(), not class() %in%: a fit carries both 'ctStanFit' and 'ctFit'
   # since the ctFit rename, and `if` on a length-2 condition is an error in
   # R >= 4.2 -- so this guard used to reject every fit it was given.
@@ -44,6 +48,8 @@ ctExtract.ctStanFit <- function(object,subjectMatrices=FALSE,cores=2,nsamples='a
   # dropped, while ctExtract.ctJuliaFit honoured it -- so the same call returned
   # a different linearisation on each backend and said nothing on either.
   .ctContextRequireStateSupport(object, state)
+  if(!'all' %in% subjects && inherits(object, 'ctStanFit'))
+    subjects <- sort(as.vector(.ctResolveSubjects(object, subjects, realid)))
 
   
   

@@ -17,6 +17,7 @@ ctDiscretePars(
   cores = 2,
   state = NULL,
   method = "linearise",
+  realid = TRUE,
   ...,
   ctstanfitobj,
   observational
@@ -25,8 +26,8 @@ ctDiscretePars(
 \arguments{
 \item{fit}{model fit from \code{\link{ctFit}}}
 
-\item{subjects}{Either 'popmean', to use the population mean parameter, or a vector of integers denoting which
-subjects.}
+\item{subjects}{Either 'popmean', to use the population mean parameter, or the
+subjects to use, as ids in the data (see \code{realid}).}
 
 \item{times}{Numeric vector of positive values, discrete time parameters will be calculated for each. If the fit
 object is a discrete time model, these should be positive integers.}
@@ -100,6 +101,10 @@ model implied regression; it starts at 1 and decays to 0 for a stable process,
 and reduces exactly to \code{'linearise'} when no cell depends on the state.
 \code{'simulate'} requires \code{backend='julia'} and is far slower, so it
 uses \code{nsamples} posterior draws with a small default.}
+
+\item{realid}{If TRUE (the default), subjects are read as the ids in the data,
+and integers that are not ids there are read as ctsem's numbering of the
+subjects, 1 to N, with a message. If FALSE, they are read as that numbering.}
 
 \item{...}{additional plotting arguments to control \code{\link{ctDiscreteParsPlot}}}
 

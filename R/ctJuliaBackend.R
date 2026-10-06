@@ -3907,7 +3907,9 @@ summary.ctJuliaFit <- function(object, timeinterval = 1, digits = 3, parmatrices
 
 #' @export
 ctExtract.ctJuliaFit <- function(object, subjectMatrices = FALSE, cores = 2,
-  nsamples = "all", subjects = "all", state = NULL, ...) {
+  nsamples = "all", subjects = "all", state = NULL, realid = TRUE, ...) {
+  if (!"all" %in% subjects)
+    subjects <- sort(as.vector(.ctResolveSubjects(object, subjects, realid)))
   # `cores` was accepted and dropped. It is the engine's subject-chunk ceiling
   # here, not a number of R processes -- there is no cluster on this path -- and
   # it is restored afterwards so an extract does not leave the session
