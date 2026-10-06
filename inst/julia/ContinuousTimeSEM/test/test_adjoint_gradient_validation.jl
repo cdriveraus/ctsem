@@ -561,18 +561,21 @@ end
     values = [-0.6, 1.5, 0.25, -0.17, 0.8, 1.1]
     A = [values[1] values[2]; values[3] values[4]]
     @test maximum(real, eigvals(A)) > 0.2
-    @test opnorm(exp(A .* (times[6] - times[5])), 1) > 100 * CT._CTSEM_ADJOINT_GROWTH[]
+    @test opnorm(exp(A .* (times[6] - times[5])), 1) > 100 * CT._CTSEM_EXPLOSIVE_GROWTH[]
     reference = ForwardDiff.gradient(objective, values)
     rel(g) = maximum(abs.(g .- reference) ./ max.(1.0, abs.(reference)))
-    adjoint = CT.ctsem_adjoint_gradient(objective, values)
-    @test isapprox(adjoint.value, objective(values); rtol=1e-12)
-    @test rel(adjoint.gradient) < 1e-8
-    scores = CT.ctsem_subject_gradients(objective, values).scores
-    @test rel(vec(sum(scores; dims=1))) < 1e-8
+    # The fallback is opt-in (`optimcontrol$explosive_forward`): off by default
+    # the reverse pass runs and is wrong here, which is what the fallback is for.
+    @test CT._CTSEM_ADJOINT_GROWTH[] == Inf
+    @test rel(CT.ctsem_adjoint_gradient(objective, values).gradient) > 1e-6
     old = CT._CTSEM_ADJOINT_GROWTH[]
     try
-        CT.ctsem_set_adjoint_growth!(Inf)
-        @test rel(CT.ctsem_adjoint_gradient(objective, values).gradient) > 1e-6
+        CT.ctsem_set_adjoint_growth!(CT._CTSEM_EXPLOSIVE_GROWTH[])
+        adjoint = CT.ctsem_adjoint_gradient(objective, values)
+        @test isapprox(adjoint.value, objective(values); rtol=1e-12)
+        @test rel(adjoint.gradient) < 1e-8
+        scores = CT.ctsem_subject_gradients(objective, values).scores
+        @test rel(vec(sum(scores; dims=1))) < 1e-8
     finally
         CT.ctsem_set_adjoint_growth!(old)
     end
@@ -588,7 +591,7 @@ end
     sp = _adjoint_explosive_2d_parameters()
     values = [-0.6, 1.5, 0.25, -0.17, 0.8, 1.1]
     A = [values[1] values[2]; values[3] values[4]]
-    threshold = CT._CTSEM_ADJOINT_GROWTH[]
+    threshold = CT._CTSEM_EXPLOSIVE_GROWTH[]
     @test opnorm(exp(A .* 5.0), 1) < threshold < opnorm(exp(A .* 20.0), 1)
     times = [0.0, 5.0, 10.0, 15.0, 20.0]
     observed = [sin(1.3 * i + 0.7 * j) for i in 1:6, j in eachindex(times)]
@@ -603,18 +606,31 @@ end
     @test isempty(explosive(every))
     @test explosive(sparse) == [1]
     @test isempty(explosive(brief))
-    # Each forward-mode subject gradient is counted, and only those.
-    n0 = CT.ctsem_forward_gradients()
-    CT.ctsem_adjoint_gradient(every, values)
-    @test CT.ctsem_forward_gradients() == n0
-    reference = ForwardDiff.gradient(sparse, values)
-    g = CT.ctsem_adjoint_gradient(sparse, values).gradient
-    @test CT.ctsem_forward_gradients() == n0 + 1
-    @test maximum(abs.(g .- reference) ./ max.(1.0, abs.(reference))) < 1e-8
-    # And a sampler's result reports them (`_with_forward_count`).
-    counted = CT._with_forward_count(() -> (ok=true,
-        g=CT.ctsem_adjoint_gradient(sparse, values)))
-    @test counted.forward_gradients == 1
+    # Each explosive pass is counted whatever the fallback says, and only those.
+    e0 = CT.ctsem_explosive_passes()
+    every(values); brief(values)
+    @test CT.ctsem_explosive_passes() == e0
+    sparse(values)
+    @test CT.ctsem_explosive_passes() == e0 + 1
+    # With the fallback on, each forward-mode subject gradient is counted too.
+    old = CT._CTSEM_ADJOINT_GROWTH[]
+    try
+        CT.ctsem_set_adjoint_growth!(threshold)
+        n0 = CT.ctsem_forward_gradients()
+        CT.ctsem_adjoint_gradient(every, values)
+        @test CT.ctsem_forward_gradients() == n0
+        reference = ForwardDiff.gradient(sparse, values)
+        g = CT.ctsem_adjoint_gradient(sparse, values).gradient
+        @test CT.ctsem_forward_gradients() == n0 + 1
+        @test maximum(abs.(g .- reference) ./ max.(1.0, abs.(reference))) < 1e-8
+        # And a sampler's result reports both (`_with_forward_count`).
+        counted = CT._with_forward_count(() -> (ok=true,
+            g=CT.ctsem_adjoint_gradient(sparse, values)))
+        @test counted.forward_gradients == 1
+        @test counted.explosive_passes >= 1
+    finally
+        CT.ctsem_set_adjoint_growth!(old)
+    end
     report = CT.ctsem_explosive_draws(sparse, hcat(values, values))
     @test (report.checked, report.explosive, report.subjects) == (2, 2, [1])
     report = CT.ctsem_explosive_draws(every, reshape(values, :, 1))

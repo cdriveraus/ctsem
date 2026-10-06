@@ -4190,11 +4190,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 # iterations stay readable as `stage_iterations`, since its trace is the one
 # reported and is read against that count. `spent` is a run or its counts.
 .ctJuliaRunCounters <- c("iterations", "f_calls", "g_calls", "newton_steps",
-  "newton_hessians", "newton_subset_hessians", "forward_gradients")
+  "newton_hessians", "newton_subset_hessians", "forward_gradients",
+  "explosive_passes")
 
 # The ids of the subjects the engine found explosive at the estimate (its
 # `explosive_subjects`, positions in first-appearance order, `0` for none):
-# predictions growing more than `_CTSEM_ADJOINT_GROWTH` (100) fold between
+# predictions growing more than `_CTSEM_EXPLOSIVE_GROWTH` (100) fold between
 # observations. `NULL` for none.
 #' @keywords internal
 .ctJuliaExplosiveIds <- function(result, model_spec, model) {
@@ -4971,6 +4972,18 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # resolved above: 'adjoint' by default, 'forward' still available on
   # request, neither one singled out for this kind of model any more.
 
+  # Forward-mode gradients for explosive subjects, when asked for: a session
+  # setting in the engine (`_CTSEM_ADJOINT_GROWTH`), so put back on the way out.
+  # Off by default because the first subject to take it compiles the filter
+  # again; see there.
+  if (isTRUE(optimcontrol$explosive_forward)) {
+    previous <- .ctJuliaEval("ContinuousTimeSEM._CTSEM_ADJOINT_GROWTH[]")
+    .ctJuliaEval(paste0("ContinuousTimeSEM.ctsem_set_adjoint_growth!(",
+      "ContinuousTimeSEM._CTSEM_EXPLOSIVE_GROWTH[])"))
+    on.exit(try(.ctJuliaCall("ContinuousTimeSEM.ctsem_set_adjoint_growth!",
+      as.numeric(previous), .defer = TRUE), silent = TRUE), add = TRUE)
+  }
+
   # `optimize=FALSE` fits by sampling. Which sampler is decided by
   # `intoverpop`, which says what has already been integrated out; see
   # `.ctJuliaSampleFit`.
@@ -5461,11 +5474,13 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # it was previously only obtainable by timing one evaluation and dividing.
     f_calls = if (is.null(result$f_calls)) NA_integer_ else as.integer(result$f_calls),
     g_calls = if (is.null(result$g_calls)) NA_integer_ else as.integer(result$g_calls),
-    # Subject gradients the engine took by forward mode, because a subject's
-    # predictions grew more than 100-fold between observations -- explosive
-    # dynamics over a gap, where the reverse pass loses its accuracy -- and the
-    # subjects for which that holds at the estimate. Forward mode is exact and
-    # slower; the warning below is about the model.
+    # Subject filter passes whose predictions grew more than 100-fold between
+    # observations -- explosive dynamics over a gap, where the reverse pass
+    # loses accuracy -- and the subjects for which that holds at the estimate;
+    # and the gradients taken by forward mode for such subjects, when
+    # `optimcontrol$explosive_forward` asked for that. The warning below is
+    # about the model.
+    explosive_passes = as.integer(.ctJuliaOr(result$explosive_passes, 0L))[1L],
     forward_gradients = as.integer(.ctJuliaOr(result$forward_gradients, 0L))[1L],
     explosive_subjects = .ctJuliaExplosiveIds(result, model_spec, model),
     # What the fit still had to gain when it stopped, in log likelihood
