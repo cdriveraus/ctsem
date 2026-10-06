@@ -225,6 +225,55 @@ ContinuousTimeSEM.ctsem_evaluate(::_JointMock, x::AbstractVector;
     end
 end
 
+# A second maximum where a transform caps the parameter, from far out. The
+# profile log likelihood in drift measured on a two-level Laplace model (400
+# subjects in 40 studies, drift -0.5), linearly interpolated: an interior
+# maximum at -0.5 and a boundary one at the random walk, 22 nats lower, with a
+# valley at -0.1 between them. The fit stopped at raw 11.16, where the drift
+# transform has capped it at -1e-6. The relative ladder tries raw 5.6, 2.8 and
+# 1.1 (all in or beyond the valley) and then 0 (drift -1.39, far down the other
+# side), so only the magnitudes below its 0.1 rung find the way back.
+struct _ProfileMock
+    drift::Vector{Float64}
+    loglik::Vector{Float64}
+end
+_profile_drift(x) = -(1e-6 + 2 * log1p(exp(-2 * x)))
+function _profile_value(m::_ProfileMock, d)
+    d <= m.drift[1] && return m.loglik[1]
+    d >= m.drift[end] && return m.loglik[end]
+    k = searchsortedlast(m.drift, d)
+    w = (d - m.drift[k]) / (m.drift[k + 1] - m.drift[k])
+    return (1 - w) * m.loglik[k] + w * m.loglik[k + 1]
+end
+ContinuousTimeSEM.ctsem_evaluate(m::_ProfileMock, x::AbstractVector;
+    gradient::Bool=true, contributions::Bool=false, gradient_method=:adjoint) =
+    (value = _profile_value(m, _profile_drift(x[1])), gradient = nothing)
+
+@testset "a pullback reaches back past a valley to an interior maximum" begin
+    CT = ContinuousTimeSEM
+    mock = _ProfileMock(
+        [-2.0, -1.0, -0.7, -0.5, -0.35, -0.2, -0.1, -0.05, -0.02, -0.005, 0.0],
+        [-3804.5, -3542.0, -3491.2, -3480.2, -3487.3, -3504.7, -3510.2, -3506.4,
+         -3503.3, -3502.4, -3502.2])
+    estimate = [11.16]
+    value = CT.ctsem_evaluate(mock, estimate; gradient=false).value
+    # The fixture still needs the new rungs: none of the ladder's own is better.
+    @test all(CT.ctsem_evaluate(mock, f .* estimate; gradient=false).value <= value
+        for f in CT._CTSEM_PULLBACK_FRACTIONS)
+    out = CT._ctsem_overshot(mock, estimate, [1], value, 1e-3)
+    @test out.overshot
+    @test out.gain > 1
+    @test -0.7 < _profile_drift(out.point[1]) < -0.15
+
+    # The rungs are magnitudes of the largest coordinate, between 0.1 and 0,
+    # and only when they fall there.
+    ladder = CT._ctsem_pullback_fractions(11.16)
+    @test ladder[1:3] == [0.5, 0.25, 0.1]
+    @test ladder[4:6] ≈ [1.0, 0.5, 0.25] ./ 11.16
+    @test ladder[7:end] == collect(CT._CTSEM_PULLBACK_FRACTIONS[4:end])
+    @test CT._ctsem_pullback_fractions(2.0) == collect(CT._CTSEM_PULLBACK_FRACTIONS)
+end
+
 # One free drift and one free diffusion, with the transforms that matter here:
 # `-log1p_exp` saturates in one direction and not the other, and `log1p_exp`
 # does the reverse. Built locally rather than borrowed from

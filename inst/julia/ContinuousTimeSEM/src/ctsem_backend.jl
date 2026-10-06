@@ -983,8 +983,41 @@ at +1 needs if it belongs at -1.
 
 Cheap either way: these are value-only evaluations, and more rungs buy a better
 ranking at linear cost. See `_ctsem_overshot` for what the ranking is for.
+
+A set far out gets rungs between `0.1` and zero as well
+(`_CTSEM_PULLBACK_ABSOLUTE`): a relative ladder leaves the whole stretch from
+a tenth of the current value down to zero untried, which from raw 11 is raw
+1.1 to 0 -- exactly where a transform like the drift's still responds.
 """
 const _CTSEM_PULLBACK_FRACTIONS = (0.5, 0.25, 0.1, 0.0, -0.1, -0.25, -0.5, -1.0)
+
+"""
+Raw magnitudes the largest coordinate of a pulled-back set is also tried at,
+when they lie below the ladder's `0.1` rung. Measured on a two-level Laplace
+model whose likelihood has a second maximum where the drift's transform caps
+it at zero (drift -1e-9, 22 nats below the one at -0.5): the fit stopped at raw
+11.2; the ladder tried raw 5.6, 2.8 and 1.1 (drift -0.20, in the valley between
+the two maxima, worse) and then 0 (drift -1.39, far worse), and reported a
+maximum. Raw 0.5 is drift -0.63, 21 nats better.
+"""
+const _CTSEM_PULLBACK_ABSOLUTE = (1.0, 0.5, 0.25)
+
+"""
+The fractions a set whose largest magnitude is `largest` is tried at: the
+ladder, with `_CTSEM_PULLBACK_ABSOLUTE`'s magnitudes as fractions of `largest`
+placed after its `0.1` rung where they fall below it.
+"""
+function _ctsem_pullback_fractions(largest::Real, fractions=_CTSEM_PULLBACK_FRACTIONS)
+    extra = [a / largest for a in _CTSEM_PULLBACK_ABSOLUTE
+        if isfinite(largest) && a / largest < 0.1]
+    isempty(extra) && return collect(Float64, fractions)
+    out = Float64[]
+    for f in fractions
+        push!(out, f)
+        f == 0.1 && append!(out, extra)
+    end
+    return out
+end
 
 """
 Up to this many coordinates the magnitude probe tries every prefix; beyond it,
@@ -1105,7 +1138,8 @@ unresponsive rather than flat -- so selecting the set from the flag cannot work
 either. See `_ctsem_pullback_sets` for what is selected instead.
 
 At most `length(fractions)` value-only evaluations per set of
-`_ctsem_pullback_sets`, and it stops at the first set that improves -- so
+`_ctsem_pullback_sets` (three more for a set far out,
+`_ctsem_pullback_fractions`), and it stops at the first set that improves -- so
 `gain` is a lower bound on what is left rather than the best pullback
 available. The question it answers is whether the estimate is a maximum, and
 any improvement settles that. `progress`, when given, is called `(done, total)`
@@ -1138,7 +1172,7 @@ function _ctsem_overshot(objective, minimizer, saturated_parameters, value,
     for (i, set) in enumerate(sets)
         _ctsem_interrupt_check()
         progress === nothing || progress(i - 1, length(sets))
-        for f in fractions
+        for f in _ctsem_pullback_fractions(maximum(p -> abs(keep[p]), set), fractions)
             for p in set; probe[p] = f * keep[p]; end
             trial = _ctsem_probe_value(objective, probe)
             isfinite(trial) && (gain = max(gain, trial - value))
