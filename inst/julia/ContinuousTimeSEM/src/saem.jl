@@ -610,6 +610,9 @@ prior that is `A A' = S / G`; with one, Newton on `A`'s entries from there
 function _saem_centre_loadings!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
     l::Integer, S::Matrix{Float64}, G::Integer, prec::Vector{Float64})
     level = laplace.spec.levels[l]
+    # The move rotates the triangular loadings; own-variance columns are not
+    # part of that triangle, so a level with any keeps its coordinates.
+    nunique(level) > 0 && return nothing
     k = nrandomeffects(level)
     r = nlatent(level)
     G > r || return nothing
@@ -1369,6 +1372,8 @@ acceptance probability.
 function _saem_sample_loadings!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
     l::Integer, prec::Vector{Float64}, scale::Float64, rng)
     level = laplace.spec.levels[l]
+    # As `_saem_centre_loadings!`: the move is for the triangular loadings only.
+    nunique(level) > 0 && return NaN
     sites = _saem_level_sites(laplace, l)
     G = length(sites)
     k = nrandomeffects(level)

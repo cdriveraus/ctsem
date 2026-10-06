@@ -561,6 +561,13 @@
       index <- c(index, as.integer(level$load_index))
       scale <- c(scale, rep(1 / sqrt(rank), length(level$load_index)))
     }
+    # Own variances (`popunique`) take a full-rank sd's transform, and so its
+    # prior.
+    ownfree <- setdiff(as.integer(level$unique_index), 0L)
+    if (length(ownfree)) {
+      index <- c(index, ownfree)
+      scale <- c(scale, rep(1, length(ownfree)))
+    }
   }
 
   ntipredeffects <- as.integer(standata$ntipredeffects)[1L]

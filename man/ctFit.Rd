@@ -39,6 +39,7 @@ ctFit(
   control = list(),
   verbose = 0,
   ...,
+  popunique = NULL,
   ctstanmodel
 )
 }
@@ -128,7 +129,8 @@ reduced at all, and an explicit rank is refused. A restricted covariance is
 arbitrary, so read the standard deviations and correlations
 \code{summary()} reports. A stated \code{RAWPOPVAR} cell turns a defaulted
 reduction off, and is refused alongside a rank asked for. May also be set on
-the model, as \code{model$poprank <- 2}.}
+the model, as \code{model$poprank <- 2}. A rank of 0 is allowed at a level
+whose every varying parameter has an own variance (\code{popunique}).}
 
 \item{sameInitialTimes}{if TRUE, include an empty observation for every subject that has no observation
 at the earliest observation time of the dataset. This ensures that the T0MEANS occurs for every subject at the same time,
@@ -306,6 +308,20 @@ for your front end -- a Shiny app capturing stdout, for instance -- or
 
 \item{...}{additional arguments to pass to \code{\link[rstan]{stan}} function
 (\code{backend='stan'} only; refused on julia).}
+
+\item{popunique}{Own variances on a reduced-rank level: the parameters
+selected get a variance of their own beside the \code{poprank} shared
+dimensions, so that level's covariance is \code{L \%*\% t(L)} plus a
+diagonal -- the factor-analytic form. \code{TRUE} selects every parameter
+varying at a level, \code{FALSE} none, and names select matrices or
+parameters, e.g. \code{popunique = c(subject = 'MANIFESTMEANS')}. One
+unnamed value applies to every level; named entries, or a named list, apply
+per level. Each selected level needs a \code{poprank} below its number of
+varying parameters; \code{poprank = 0} with every parameter selected gives
+independent random effects. Reported as
+\code{popunique_<parameter>.<level>}, on the same raw scale as a full-rank
+sd. Requires \code{backend = 'julia'} and \code{intoverpop = 'laplace'} or
+sampling (\code{'none'}); must be passed by name.}
 
 \item{ctstanmodel}{Deprecated. Use \code{model}.}
 }

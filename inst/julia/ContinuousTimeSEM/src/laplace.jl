@@ -113,21 +113,17 @@ no packing anywhere.
     a reduced-rank level: `load_index` holds the `k*rank - rank*(rank-1)/2`
     entries of a `k x rank` loading matrix in column-major lower-triangular
     order, `sd_index` and `cor_index` are empty, and the covariance is
-    `L * L'`.
-
-    A reduced level keeps a `k`-dimensional latent block rather than a
-    `rank`-dimensional one, and that is deliberate. The deviation a unit
-    contributes is `L * u` for `u ~ N(0, I)` (see `_laplace_member_values!`),
-    so the `k - rank` columns of `L` that are zero make those coordinates of
-    `u` invisible to the likelihood. Their inner mode is the origin and their
-    inner curvature is exactly the prior identity, so they integrate out
-    against it contributing nothing -- no singular covariance is ever formed
-    and nothing is inverted that cannot be. The cost is `k - rank` wasted
-    coordinates per unit; the alternative, resizing every block, would touch
-    the offsets, the ancestor sets and the curvature factorisation, where the
-    same number means both "parameters this level moves" and "dimensions its
-    block spans" and separating the two silently is how a wrong answer gets
-    made here.
+    `L * L'`. Its latent block is `nlatent(level)`-dimensional, not
+    `k`-dimensional: the deviation a unit contributes is `F * u` for
+    `u ~ N(0, I)` (see `_laplace_member_values!`) with `F` the level's root,
+    `k x nlatent`, and every site that indexes `u` asks `nlatent`.
+  * `unique_index[j]`: raw position of effect `j`'s own variance, or 0 when it
+    has none; empty when no effect has one. Only on a reduced level (the rank
+    may then be 0): the covariance becomes `L * L' + diag(psi.^2)`, the
+    factor-analytic form, and the root `F = [L | Psi]` gains one column per
+    own variance, a single entry `psi_j` in row `j`, transformed as a
+    full-rank level's scale. An own variance on a full-rank level would not
+    be identified, so it is refused.
 """
 struct CTSEMLaplaceLevel
     re_index::Vector{Int}
@@ -139,6 +135,7 @@ struct CTSEMLaplaceLevel
     ngroups::Int
     covmatcode::Int
     rank::Int
+    unique_index::Vector{Int}
     # The order this level's effects take in the Cholesky root that standardises
     # them, `d = S u` (`_laplace_popchol`); empty for the natural order. Set by
     # the samplers for the run (`_laplace_order_roots!`) and cleared after it,
@@ -149,7 +146,8 @@ struct CTSEMLaplaceLevel
 
     function CTSEMLaplaceLevel(re_index, sd_index, cor_index, sd_scale, group,
         ngroups::Integer; covmatcode::Integer=0, rank::Integer=-1,
-        load_index=Int[], sd_fixed=Float64[], cor_fixed=Float64[])
+        load_index=Int[], sd_fixed=Float64[], cor_fixed=Float64[],
+        unique_index=Int[])
         re = Vector{Int}(collect(re_index))
         sd = Vector{Int}(collect(sd_index))
         cor = Vector{Int}(collect(cor_index))
@@ -184,6 +182,17 @@ struct CTSEMLaplaceLevel
                 "load_index applies to a reduced-rank level only; this level is full rank"))
         end
         allunique(re) || throw(ArgumentError("random-effect parameter indices must be distinct within a level"))
+        uniq = Vector{Int}(collect(unique_index))
+        if !isempty(uniq)
+            length(uniq) == k || throw(DimensionMismatch(
+                "unique_index holds one entry per random effect, 0 for none"))
+            all(>=(0), uniq) || throw(ArgumentError("unique_index entries are raw positions or 0"))
+            any(>(0), uniq) && r == k && throw(ArgumentError(
+                "own variances need a reduced-rank level: on a full-rank level they are not identified"))
+            all(iszero, uniq) && (uniq = Int[])
+        end
+        r == 0 && isempty(uniq) && k > 0 && throw(ArgumentError(
+            "a rank-0 level needs an own variance on some effect; otherwise it has no variation"))
         isempty(grp) || (minimum(grp) >= 1 && maximum(grp) <= ngroups) ||
             throw(ArgumentError("group ids must lie in 1:ngroups"))
         sdfix = isempty(sd_fixed) ? fill(NaN, length(sd)) : Vector{Float64}(collect(sd_fixed))
@@ -199,8 +208,8 @@ struct CTSEMLaplaceLevel
         cap = _LAPLACE_COR_CAP[]
         cap > 0 && any(x -> isfinite(x) && abs(x) > cap, corfix) && throw(ArgumentError(
             "a stated correlation coordinate exceeds the cap of $(cap) the population covariance applies"))
-        return new(re, sd, cor, load, scale, grp, Int(ngroups), Int(covmatcode), r, Int[],
-            sdfix, corfix)
+        return new(re, sd, cor, load, scale, grp, Int(ngroups), Int(covmatcode), r, uniq,
+            Int[], sdfix, corfix)
     end
 end
 
@@ -221,7 +230,10 @@ count, and every site that used it meant one or the other: `re_index[p]` is
 indexed by the parameter count, `u[offset + q]` by the block dimension. A site
 that takes the wrong one still runs and still returns a number.
 """
-nlatent(level::CTSEMLaplaceLevel) = level.rank
+nlatent(level::CTSEMLaplaceLevel) = level.rank + count(>(0), level.unique_index)
+
+"""Number of this level's effects with an own variance (`unique_index`)."""
+nunique(level::CTSEMLaplaceLevel) = count(>(0), level.unique_index)
 
 """
     CTSEMLaplaceSpec(levels)
@@ -527,7 +539,7 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
     sd_index=Int[], cor_index=Int[], sd_scale=Float64[], level_nre=Int[],
     group=Int[], level_ngroups=Int[], level_covmatcode=Int[],
     level_rank=Int[], load_index=Int[], sd_fixed=Float64[], cor_fixed=Float64[],
-    inner_maxiter::Integer=_LAPLACE_INNER_MAXITER[], inner_tol::Real=1e-10,
+    unique_index=Int[], inner_maxiter::Integer=_LAPLACE_INNER_MAXITER[], inner_tol::Real=1e-10,
     floor="total", gate_lo::Real=0.2, gate_hi::Real=0.7)
     nsubjects = length(objective.subject_objectives)
     counts = isempty(level_nre) ? [length(re_index)] : Vector{Int}(Int.(level_nre))
@@ -583,7 +595,9 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
             sd_fixed=isempty(sd_fixed) ? Float64[] :
                 Float64.(sd_fixed[(sd_at + 1):(sd_at + nsd)]),
             cor_fixed=isempty(cor_fixed) ? Float64[] :
-                Float64.(cor_fixed[(cor_at + 1):(cor_at + ncor)])))
+                Float64.(cor_fixed[(cor_at + 1):(cor_at + ncor)]),
+            unique_index=isempty(unique_index) ? Int[] :
+                Int.(unique_index[(re_at + 1):(re_at + k)])))
         re_at += k; sd_at += nsd; cor_at += ncor; load_at += nload
     end
     return CTSEMLaplaceObjective(objective, CTSEMLaplaceSpec(levels);
@@ -684,7 +698,8 @@ function _laplace_check_indices(laplace::CTSEMLaplaceObjective, npar::Integer)
         for (what, index) in (("varying parameter", level.re_index),
                               ("population scale", level.sd_index),
                               ("correlation", level.cor_index),
-                              ("loading", level.load_index))
+                              ("loading", level.load_index),
+                              ("own variance", filter(>(0), level.unique_index)))
             isempty(index) && continue
             maximum(index) <= npar || throw(ArgumentError(string(
                 "level ", l, " references ", what, " ", maximum(index),
@@ -882,14 +897,16 @@ end
 """
     _laplace_poploading(values, level)
 
-A reduced-rank level's factor: `k x rank`, the loading itself, so that
-`L * L'` is the population covariance and `L * u` is the deviation for
-`u ~ N(0, I)` of dimension `rank`.
+A reduced-rank level's factor: `k x nlatent`, the loading itself followed by
+one column per own variance (`unique_index`), so that `F * F'` is the
+population covariance and `F * u` is the deviation for `u ~ N(0, I)` of
+dimension `nlatent` (the rank plus the own variances).
 
-The block is `rank`-dimensional, not `k`, which is what makes a reduced level
-cheap; see `nlatent`. No Cholesky is taken, because there is nothing
-to decompose -- the parameters *are* the factor, which is also why they need no
-positivity transform and no correlation cap. `sd_scale` multiplies a row, so a
+The block is `nlatent`-dimensional, not `k`, which is what makes a reduced
+level cheap; see `nlatent`. No Cholesky is taken, because there is nothing
+to decompose -- the parameters *are* the factor, which is also why the loadings
+need no positivity transform and no correlation cap (an own variance takes the
+scales' transform, which also fixes the sign of its single-entry column). `sd_scale` multiplies a row, so a
 level still scales its own spread exactly as the full-rank form does, and a
 loading is signed: negating a whole column leaves `L * L'` alone, so read the
 covariance rather than the sign of one entry.
@@ -897,13 +914,23 @@ covariance rather than the sign of one entry.
 function _laplace_poploading(values::AbstractVector{T}, level::CTSEMLaplaceLevel) where {T}
     k = nrandomeffects(level)
     r = level.rank
-    L = zeros(T, k, r)
+    L = zeros(T, k, nlatent(level))
     counter = 0
     @inbounds for q in 1:r
         for p in q:k
             counter += 1
             L[p, q] = values[level.load_index[counter]] * level.sd_scale[p]
         end
+    end
+    # Own variances (`unique_index`): one column each, a single entry in the
+    # effect's own row, transformed as a full-rank level's scale
+    # (`_laplace_popchol`) so a raw value means the same spread either way.
+    column = r
+    @inbounds for p in eachindex(level.unique_index)
+        idx = level.unique_index[p]
+        idx > 0 || continue
+        column += 1
+        L[p, column] = log1p_exp(2 * values[idx] - 1) * level.sd_scale[p] + 1e-10
     end
     return L
 end
@@ -4160,7 +4187,8 @@ end
 """Raw positions of one level's free population parameters, scales then
 correlations. A stated entry (index 0) is not a parameter and has no position."""
 _laplace_level_positions(spec::CTSEMLaplaceSpec, l::Integer) =
-    isreducedrank(spec.levels[l]) ? copy(spec.levels[l].load_index) :
+    isreducedrank(spec.levels[l]) ?
+        vcat(spec.levels[l].load_index, filter(>(0), spec.levels[l].unique_index)) :
         filter(!=(0), vcat(spec.levels[l].sd_index, spec.levels[l].cor_index))
 
 """

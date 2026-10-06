@@ -240,7 +240,13 @@
     index <- as.integer(lv$load_index)
     k <- as.integer(lv$nrandom)
     r <- as.integer(.ctJuliaOr(lv$rank, k))
+    # A rank-0 level (own variances only) has independent effects already, and
+    # needs no isolating.
     if (!length(index) || !k || r >= k) next
+    # Own variances (`popunique`): raw -20 is a spread of about 1e-17 sdscale,
+    # the nearest the sd transform comes to switching one off.
+    ownindex <- as.integer(lv$unique_index)
+    if (length(ownindex) != k) ownindex <- integer(k)
     # Row p of the loading matrix holds the entries for dimensions 1 to
     # min(p, r), laid out dimension by dimension (`_laplace_poploading`).
     rows <- vector("list", k)
@@ -254,7 +260,10 @@
         table$effect == as.character(lv$param[j]))
       if (length(i) != 1L) next
       alone <- values
-      for (p in setdiff(seq_len(k), j)) alone[rows[[p]]] <- 0
+      for (p in setdiff(seq_len(k), j)) {
+        alone[rows[[p]]] <- 0
+        if (ownindex[p] > 0L) alone[ownindex[p]] <- -20
+      }
       own <- .ctEffectEvaluate(spec, alone)
       if (is.null(own) || nrow(own$table) != nrow(table)) next
       if (is.null(table$dimension)) table$dimension <- NA_real_

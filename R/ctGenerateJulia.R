@@ -219,6 +219,14 @@
       spread <- c(spread, sprintf("rank %d loadings at their start [%s]",
         level$rank, level$name))
     }
+    # Own variances (`popunique`) at one sdscale of spread, as a free
+    # full-rank sd is; a rank-0 level has these and no loadings.
+    own <- as.integer(level$unique_index)
+    for (j in which(own > 0L)) {
+      raw[own[j]] <- .ctJuliaRawPopSd(level$sd_scale[j], level$sd_scale[j])
+      spread <- c(spread, sprintf("%s own %s [%s]", level$param[j],
+        format(signif(level$sd_scale[j], 4)), level$name))
+    }
   }
 
   # TI effects: a fixed value where the model states one, zero otherwise.

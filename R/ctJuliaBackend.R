@@ -2039,6 +2039,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       used[[paste0("'", level$name, "' correlations")]] <-
         setdiff(as.integer(level$cor_index), 0L)
       used[[paste0("'", level$name, "' loadings")]] <- as.integer(level$load_index)
+      used[[paste0("'", level$name, "' own variances")]] <-
+        setdiff(as.integer(level$unique_index), 0L)
       used[[paste0("'", level$name, "' varying parameters")]] <- as.integer(level$re_index)
     }
   }
@@ -2083,10 +2085,14 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     spec[[name]] else NA
   value <- suppressWarnings(as.integer(value))
   if (!length(value) || is.na(value)) return(as.integer(k))
-  if (value < 1L) {
+  # Zero is a covariance of own variances alone (`popunique`), which
+  # `ctFit()` has already checked covers every effect at the level.
+  own <- length(model[['laplaceunique']][[name]]) > 0L
+  if (value < 0L || (value < 1L && !own)) {
     stop("poprank for level '", name, "' is ", value,
       ". A rank below 1 is not a restricted covariance, it is no variation at ",
-      "that level -- say that by removing the level's random effects.",
+      "that level -- say that by removing the level's random effects, or give ",
+      "every effect there an own variance with popunique.",
       call. = FALSE)
   }
   as.integer(min(value, k))
@@ -2304,6 +2310,16 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     nsd <- sum(sdfree)
     noff <- sum(corfree)
     nload <- if (reduced) as.integer(k * rank - rank * (rank - 1L) / 2L) else 0L
+    # Own variances (`popunique`), one raw position each after the loadings,
+    # 0 for an effect without one. Only on a reduced level: `ctFit()` refuses
+    # them at full rank, where they would not be identified.
+    own <- lv_names %in% model[['laplaceunique']][[hierarchy[[l]]$name]]
+    if (any(own) && !reduced) stop("popunique gives level '",
+      hierarchy[[l]]$name, "' own variances, which need a reduced rank there.",
+      call. = FALSE)
+    nown <- sum(own)
+    unique_index <- integer(k)
+    unique_index[own] <- cursor + nsd + noff + nload + seq_len(nown)
     sd_index <- integer(length(sdfree))
     sd_index[sdfree] <- cursor + seq_len(nsd)
     cor_index <- integer(length(corfree))
@@ -2316,6 +2332,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       sd_fixed = if (reduced) numeric() else as.numeric(sd_fixed),
       cor_fixed = if (reduced) numeric() else as.numeric(cor_fixed),
       load_index = if (nload) as.integer(cursor + seq_len(nload)) else integer(),
+      unique_index = if (nown) as.integer(unique_index) else integer(),
       rank = as.integer(rank),
       sd_scale = as.numeric(lv_scale),
       param = lv_names,
@@ -2323,7 +2340,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       group = as.integer(hierarchy[[l]]$group),
       ngroups = as.integer(hierarchy[[l]]$ngroups),
       labels = hierarchy[[l]]$labels)
-    cursor <- cursor + nsd + noff + nload
+    cursor <- cursor + nsd + noff + nload + nown
   }
 
   # What a level's groups cannot support is *rank*, not parameter count.
@@ -3722,7 +3739,20 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       if (is.null(x$rank)) x$nrandom else x$rank, integer(1)))
     if (any(ranks < as.integer(vapply(levels, function(x) x$nrandom, integer(1))))) {
       laplace_args$level_rank <- V(ranks)
-      laplace_args$load_index <- V(as.integer(grab("load_index")))
+      # Absent rather than empty when every reduced level has rank 0 (own
+      # variances only): a zero-length vector deadlocks the bridge.
+      if (length(grab("load_index"))) {
+        laplace_args$load_index <- V(as.integer(grab("load_index")))
+      }
+    }
+    # One entry per random effect, 0 for none, sent only when some level has
+    # an own variance (`popunique`), so every other model crosses as before.
+    owns <- lapply(levels, function(x) {
+      u <- as.integer(x$unique_index)
+      if (length(u)) u else integer(as.integer(x$nrandom))
+    })
+    if (any(unlist(owns) > 0L)) {
+      laplace_args$unique_index <- V(as.integer(unlist(owns)))
     }
     # Absent unless the fit asked for them, so the engine's own defaults stay
     # the defaults and a spec built before this existed is byte-for-byte as it

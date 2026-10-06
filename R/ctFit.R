@@ -628,7 +628,21 @@ T0VARredundancies <- function(ctm) {
 #' arbitrary, so read the standard deviations and correlations
 #' \code{summary()} reports. A stated \code{RAWPOPVAR} cell turns a defaulted
 #' reduction off, and is refused alongside a rank asked for. May also be set on
-#' the model, as \code{model$poprank <- 2}.
+#' the model, as \code{model$poprank <- 2}. A rank of 0 is allowed at a level
+#' whose every varying parameter has an own variance (\code{popunique}).
+#' @param popunique Own variances on a reduced-rank level: the parameters
+#' selected get a variance of their own beside the \code{poprank} shared
+#' dimensions, so that level's covariance is \code{L \%*\% t(L)} plus a
+#' diagonal -- the factor-analytic form. \code{TRUE} selects every parameter
+#' varying at a level, \code{FALSE} none, and names select matrices or
+#' parameters, e.g. \code{popunique = c(subject = 'MANIFESTMEANS')}. One
+#' unnamed value applies to every level; named entries, or a named list, apply
+#' per level. Each selected level needs a \code{poprank} below its number of
+#' varying parameters; \code{poprank = 0} with every parameter selected gives
+#' independent random effects. Reported as
+#' \code{popunique_<parameter>.<level>}, on the same raw scale as a full-rank
+#' sd. Requires \code{backend = 'julia'} and \code{intoverpop = 'laplace'} or
+#' sampling (\code{'none'}); must be passed by name.
 #' @param intoverpop How declared individual differences (random effects) are
 #' handled: integrated out of the likelihood, or sampled with everything else.
 #'
@@ -1088,7 +1102,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   savesubjectmatrices=FALSE, saveComplexPars=FALSE,
   gendata=FALSE,
   sampleControl=list(),
-  control=list(),verbose=0,..., ctstanmodel){
+  control=list(),verbose=0,..., popunique=NULL, ctstanmodel){
 
   # `vb` (Stan's variational Bayes) was removed: it is a stan-only path,
   # crashed on the default fit=TRUE, and stan is being deprecated. Without
@@ -1846,6 +1860,12 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     }, integer(1L))
     laplacerank <- laplacerank[!is.na(laplacerank)]
     if(!length(laplacerank)) laplacerank <- NULL
+    # Own variances (`popunique`, R/ctPopUnique.R), resolved here because the
+    # T0MEANS floor below counts them: an effect with an own variance has a
+    # dimension of its own whatever the rank.
+    laplaceunique <- if(.ctPopuniqueRequested(popunique)) .ctPopuniqueResolve(ctm,
+      popunique, levelnames, levelcolumns, laplacerank) else list()
+    if(length(laplaceunique)) ctm$laplaceunique <- laplaceunique
     # An innermost-level varying T0MEANS whose latent has a free T0VAR takes
     # its initial variance from this covariance instead (`T0VARredundancies()`,
     # below, disables those T0VAR cells), so a rank below their number fixes
@@ -1860,24 +1880,43 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
       ctm$pars$row == ctm$pars$col
     t0vary <- unique(as.character(ctm$pars$param[t0cells &
       ctm$pars$row %in% ctm$pars$row[freevar]]))
-    if(length(subjectrank) && isTRUE(subjectrank < length(t0vary))) stop(
-      "poprank ", subjectrank, " is below the ", length(t0vary),
-      " individually varying T0MEANS (", paste(t0vary, collapse=', '), "): ",
+    t0shared <- setdiff(t0vary, laplaceunique[[ctm$subjectIDname]])
+    if(length(subjectrank) && isTRUE(subjectrank < length(t0shared))) stop(
+      "poprank ", subjectrank, " is below the ", length(t0shared),
+      " individually varying T0MEANS without an own variance (",
+      paste(t0shared, collapse=', '), "): ",
       "their latents take their initial variance from the population ",
       "covariance, so a lower rank fixes the initial state along a direction. ",
-      "Use poprank=", length(t0vary), " or more, or poprank=NA.", call.=FALSE)
+      "Use poprank=", length(t0shared), " or more, poprank=NA, or give them ",
+      "own variances with popunique.", call.=FALSE)
     ctm$laplacerank <- laplacerank
     # Said once, for the levels it reduces: on these routes the coordinates a
     # rank drops are identified, so the restriction is an approximation.
     reduced <- vapply(names(laplacerank), function(level){
       k <- nrow(.ctPopEffectRoles(ctm$pars, column=levelcolumns[[level]]))
+      m <- length(laplaceunique[[level]])
       if(k > laplacerank[[level]]) paste0(level, ' ', laplacerank[[level]],
-        ' of ', k) else NA_character_
+        ' of ', k, if(m) paste0(' plus ', m, ' own variance', if(m > 1) 's'))
+        else NA_character_
     }, character(1L))
     reduced <- reduced[!is.na(reduced)]
     if(length(reduced)) message('poprank: population covariance reduced to rank ',
       paste(reduced, collapse=', '), " -- an approximation under intoverpop='",
       intoverpopmethod, "'; poprank=NA estimates it in full.")
+  }
+
+  # `popunique` is built where the engine builds the loadings, so it needs that
+  # route and a rank asked for there; refused by name anywhere else rather
+  # than accepted and ignored.
+  if(.ctPopuniqueRequested(popunique) && !enginerank){
+    if(!identical(backend,'julia') || !intoverpopmethod %in% c('laplace','none'))
+      stop("popunique requires backend='julia' with intoverpop='laplace' or ",
+        "sampling (intoverpop='none'): an own variance is a column of the ",
+        "engine's loading matrix, which the augmented route and stan do not ",
+        "build.", call.=FALSE)
+    stop("popunique needs a reduced rank at the levels it selects: give ",
+      "poprank, e.g. poprank=c(", ctm$subjectIDname, "=2), or 0 for ",
+      "independent random effects.", call.=FALSE)
   }
 
   popregression <- NULL

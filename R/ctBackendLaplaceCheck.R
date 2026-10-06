@@ -415,6 +415,13 @@ print.ctLaplaceCheck <- function(x, ...) {
           }
         }
       }
+      # Own variances (`popunique`): an sd, but only the effect's own part of
+      # it, so not `popsd_`.
+      unique_index <- as.integer(level$unique_index)
+      if (length(unique_index) == length(varying)) {
+        own <- unique_index > 0L
+        names[unique_index[own]] <- paste0("popunique_", varying[own], suffix)
+      }
       cor_index <- as.integer(level$cor_index)
       if (length(cor_index) && length(varying) > 1L) {
         pairs <- which(lower.tri(matrix(0, length(varying), length(varying))),
