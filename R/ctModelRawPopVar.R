@@ -196,10 +196,13 @@
       next
     }
     if (!is.null(previous) && !is.null(dimnames(previous))) {
-      shared_row <- intersect(rownames(fresh), rownames(previous))
-      shared_col <- intersect(colnames(fresh), colnames(previous))
-      if (length(shared_row) && length(shared_col)) {
-        fresh[shared_row, shared_col] <- previous[shared_row, shared_col]
+      # By pair, not by position (`.ctModelRawPopVarCell()`): a reorder of
+      # `pars` moves a pair across the diagonal.
+      shared <- rownames(fresh)[rownames(fresh) %in% rownames(previous) &
+        rownames(fresh) %in% colnames(previous)]
+      for (i in seq_along(shared)) for (j in seq_len(i)) {
+        fresh[shared[i], shared[j]] <-
+          .ctModelRawPopVarCell(previous, shared[i], shared[j])
       }
     }
     model[[field]] <- fresh
@@ -218,6 +221,21 @@
   is.na(.ctModelRawPopVarValue(x)) & !is.na(x) & nzchar(as.character(x))
 }
 
+# What a matrix says about the pair `a`, `b`: the diagonal for one parameter,
+# otherwise the cell below the diagonal in the matrix's *own* row order, which
+# is the order of the varying parameters when it was built. Reordering `pars`
+# reorders those parameters but not a matrix already stored, so the same pair
+# then sits above the new order's diagonal, and reading `[a, b]` by position
+# found the upper triangle's fixed zero instead: a correlation silently fixed
+# at zero, or refused under poprank as a stated cell.
+#' @keywords internal
+.ctModelRawPopVarCell <- function(popcov, a, b = a) {
+  if (identical(a, b)) return(as.character(popcov[a, a]))
+  if (match(a, rownames(popcov)) > match(b, rownames(popcov))) {
+    as.character(popcov[a, b])
+  } else as.character(popcov[b, a])
+}
+
 # The entry for one varying parameter pair, by name, or NA when the model has
 # nothing to say about it.
 #' @keywords internal
@@ -225,10 +243,11 @@
   field = "RAWPOPVAR") {
   popcov <- model[[field]]
   if (is.null(popcov)) return(NA_character_)
-  if (!rowname %in% rownames(popcov) || !colname %in% colnames(popcov)) {
+  if (!all(c(rowname, colname) %in% rownames(popcov)) ||
+      !all(c(rowname, colname) %in% colnames(popcov))) {
     return(NA_character_)
   }
-  as.character(popcov[rowname, colname])
+  .ctModelRawPopVarCell(popcov, rowname, colname)
 }
 
 # Take a user's RAWPOPVAR, checked against what the model actually has.
