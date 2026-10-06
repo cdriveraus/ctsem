@@ -53,6 +53,10 @@ Internally controlled arguments \code{fit}, \code{ctstanfitobj}, \code{plot},
 
 \item{TIPvalues}{An nvalue * nTIpred numeric matrix specifying the fixed values for each time independent predictor effect to plot. 
 Default is NA, which instead relies on the quantiles specified in the quantiles argument.}
+
+\item{realid}{If TRUE (the default), subject is read as an id in the data,
+and an integer that is not an id there as ctsem's numbering of the
+subjects, 1 to N, with a message. If FALSE, it is read as that numbering.}
 }
 \value{
 If plot is TRUE, a list of ggplot objects showing the estimated effects of covariate moderators. Otherwise, a data frame with the predictions.
