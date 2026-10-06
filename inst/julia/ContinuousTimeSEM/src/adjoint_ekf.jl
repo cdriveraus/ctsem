@@ -218,17 +218,17 @@ Transition growth above which a subject's gradient is taken by forward mode
 rather than by the reverse pass. The growth is that of the product of every
 transition since the last observed row (`CTSEMGrowth`).
 
-The reverse pass is exact in exact arithmetic and not stable in double
-precision once a prediction's covariance is very large in some direction: the
-covariance cotangent there comes from an explicit `S^-1` whose rounding
-(about 1e-6 on an innovation covariance of 1e10) is far larger than its true
-value (about 1e-10), and the reverse through `e^{JAx dt}` then multiplies that
-direction by up to the square of the growth. Forward mode never forms that
-cotangent. Found on the SNSF pilot: a person's drift with eigenvalues -1.05
-and +0.28 over a 43-day gap, growth 2e5 -- the adjoint gradient off by up to
-1.7e4 (relative) against BigFloat, the same adjoint in BigFloat exact, Float64
-forward mode good to 1.6e-6. A stable drift's transition shrinks, so this
-fires only on explosive (or strongly non-normal) intervals.
+Not needed for accuracy since juliaFit 21b7a1a2. The reverse pass used to be
+unstable in double precision once a prediction's covariance was very large in
+some direction: the update's covariance cotangent came from an explicit `S^-1`
+whose rounding (about 1e-6 on an innovation covariance of 1e10) was far larger
+than its true value (about 1e-10), and the reverse through `e^{JAx dt}`
+multiplied that direction by up to the square of the growth. Found on the SNSF
+pilot: a person's drift with eigenvalues -1.05 and +0.28 over a 43-day gap,
+growth 2e5, the adjoint gradient off by up to 1.7e4 (relative) against
+BigFloat. The update's reverse is now stable (`_reverse_update!`), and on the
+regression fixture the adjoint is closer to BigFloat than Float64 forward mode
+is. This stays as an opt-in cross-check.
 
 `Inf`, the reverse pass always, by default: forward mode needs a dual type the
 fit has not otherwise used, so the first subject that takes it compiles the
