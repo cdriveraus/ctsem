@@ -34,8 +34,9 @@ test_that("ctPredict and ctExtract give a subject the same by id or by number", 
   expect_setequal(as.character(unique(bynumber$Subject)), c("2", "3"))
   expect_equal(byid$value, bynumber$value)
 
-  e_id <- ctExtract(fit, subjectMatrices = TRUE, subjects = 120)
-  e_number <- ctExtract(fit, subjectMatrices = TRUE, subjects = 2, realid = FALSE)
+  # cores = 1: worker processes would load the installed ctsem, not this one.
+  e_id <- ctExtract(fit, subjectMatrices = TRUE, subjects = 120, cores = 1)
+  e_number <- ctExtract(fit, subjectMatrices = TRUE, subjects = 2, realid = FALSE, cores = 1)
   expect_equal(e_id$subj_DRIFT, e_number$subj_DRIFT)
 })
 
