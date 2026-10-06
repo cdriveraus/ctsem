@@ -172,20 +172,27 @@
   if (is.null(popcov) || !length(popcov)) return(character())
   default <- .ctModelRawPopVar(model$pars)
   if (is.null(default) || !length(default)) return(character())
-  # Only cells both matrices have. A RAWPOPVAR built for a different set of
-  # varying parameters -- `pars$indvarying` edited after `ctModel()`, which the
-  # tests here do -- is stale rather than stated, and refusing on it would
-  # refuse a model nobody constrained.
-  rows <- intersect(rownames(popcov), rownames(default))
-  cols <- intersect(colnames(popcov), colnames(default))
+  # Only parameters both matrices have. A RAWPOPVAR built for a different set
+  # of varying parameters -- `pars$indvarying` edited after `ctModel()`, which
+  # the tests here do -- is stale rather than stated, and refusing on it would
+  # refuse a model nobody constrained. Each pair is read where the stored
+  # matrix keeps it (`.ctModelRawPopVarCell()`), so a reorder of `pars` since
+  # is not read as a statement either, and a pair's default label is accepted
+  # in either order, since the label was written in the order the matrix was
+  # built in. Anything else is stated: a number, or a label of the user's own,
+  # which is an equality constraint.
+  names <- rownames(default)[rownames(default) %in% rownames(popcov) &
+    rownames(default) %in% colnames(popcov)]
   out <- character()
-  for (ri in rows) for (ci in cols) {
-    stated <- as.character(popcov[ri, ci])
+  for (i in seq_len(length(names))) for (j in seq_len(i)) {
+    stated <- .ctModelRawPopVarCell(popcov, names[i], names[j])
     if (is.na(stated) || !nzchar(stated)) next
-    if (identical(stated, as.character(default[ri, ci]))) next
-    out <- c(out, sprintf("RAWPOPVAR['%s', '%s'] = %s", ri, ci, stated))
+    defaults <- if (i == j) default[names[i], names[i]] else
+      paste0("popcorr_", c(names[i], names[j]), "__", c(names[j], names[i]))
+    if (stated %in% defaults) next
+    out <- c(out, sprintf("RAWPOPVAR['%s', '%s'] = %s", names[i], names[j], stated))
   }
-  unique(out)
+  out
 }
 
 # What `poprank` asks of each level: a list named by level, each entry

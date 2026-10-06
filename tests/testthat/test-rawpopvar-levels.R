@@ -36,6 +36,43 @@ test_that("each grouping level has its own RAWPOPVAR", {
   expect_null(ctsem:::.ctModelRawPopVarSync(m)[["RAWPOPVAR_study"]])
 })
 
+test_that("reordering pars keeps each pair's RAWPOPVAR entry", {
+  # The pilot put its anchor effects first. A stored matrix keeps the order it
+  # was built in, so a pair moves across the new order's diagonal: read by
+  # position it was the upper triangle's fixed zero (a correlation fixed
+  # without anyone asking) and poprank refused it as a stated cell.
+  m <- suppressWarnings(suppressMessages(ctModel(type = "ct",
+    manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1),
+    DRIFT = matrix(-0.5), DIFFUSION = matrix(.5), MANIFESTVAR = matrix(.3),
+    MANIFESTMEANS = matrix("mm"), T0VAR = matrix(1), T0MEANS = matrix(0),
+    CINT = matrix("cint"))))
+  m$pars$indvarying <- m$pars$param %in% c("mm", "cint")
+  m <- ctsem:::.ctModelRawPopVarSync(m)
+  first <- rownames(m[["RAWPOPVAR"]])
+  m$RAWPOPVAR[first[1], first[1]] <- 0.3
+  m$pars <- m$pars[rev(seq_len(nrow(m$pars))), ]
+  last <- rev(first)
+  expect_equal(rownames(ctsem:::.ctModelRawPopVar(m$pars)), last)
+  # Free stays free, below the new diagonal, under its old label.
+  entry <- ctsem:::.ctModelRawPopVarEntry(m, last[2], last[1])
+  expect_equal(entry, paste0("popcorr_", first[2], "__", first[1]))
+  expect_equal(unname(m$RAWPOPVAR[last[2], last[1]]), entry)
+  expect_equal(unname(m$RAWPOPVAR[last[1], last[2]]), "0")
+  expect_equal(ctsem:::.ctModelRawPopVarEntry(m, first[1]), "0.3")
+  # The number is a statement; the reordered pair's default label is not.
+  expect_equal(ctsem:::.ctPopRegressionRawPopVarStated(m),
+    sprintf("RAWPOPVAR['%s', '%s'] = 0.3", first[1], first[1]))
+  m$RAWPOPVAR[first[1], first[1]] <- paste0("popsd_", first[1])
+  expect_length(ctsem:::.ctPopRegressionRawPopVarStated(m), 0L)
+  # A stated correlation moves with its pair too.
+  m <- ctsem:::.ctModelRawPopVarSync(m)
+  m$RAWPOPVAR[last[2], last[1]] <- 0.2
+  m$pars <- m$pars[rev(seq_len(nrow(m$pars))), ]
+  expect_equal(ctsem:::.ctModelRawPopVarEntry(m, first[2], first[1]), "0.2")
+  expect_equal(unname(m$RAWPOPVAR[first[2], first[1]]), "0.2")
+  expect_equal(unname(m$RAWPOPVAR[first[1], first[2]]), "0")
+})
+
 test_that("a stated sd is held on the Laplace route, at its own level", {
   skip_without_julia()
   m <- .rpv_model()
