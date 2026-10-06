@@ -556,7 +556,10 @@ The units the continuation puts nodes on: largest `|gap|` first, the smallest
 set whose removal leaves the rest carrying at most `tolerance` in total. That
 is the tolerance the screen passes a whole fit on, so what the hybrid leaves to
 Laplace is what the screen would have called exact. A unit whose rule could
-not be placed (`NaN`) is never flagged.
+not be placed (`NaN`) is never flagged. A negative `tolerance` flags every
+other unit, a zero gap included: at `0` a unit whose gap is exactly zero, as on
+a linear Gaussian model where Laplace is exact and the gaps are rounding, is
+left to Laplace, so whether it is flagged would be a matter of the last digit.
 """
 function _continuation_flags(gaps::Vector{Float64}, tolerance::Real)
     g = [isfinite(x) ? abs(x) : 0.0 for x in gaps]
@@ -572,7 +575,7 @@ function _continuation_flags(gaps::Vector{Float64}, tolerance::Real)
     flagged = Int[]
     for (k, U) in enumerate(order)
         remaining[k] <= tolerance && break
-        g[U] > 0 || break
+        (g[U] > 0 || tolerance < 0) || break
         push!(flagged, U)
     end
     return sort!(flagged)
