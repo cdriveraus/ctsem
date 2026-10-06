@@ -319,8 +319,15 @@ variables a row actually observed. Iterating over `C`'s own columns instead
 wrote past that block and, under `@inbounds`, read past the end of `B`: a
 wrong likelihood with no error, on one study of a 13-study fit whose other
 units agreed to 1e-6 (juliaFit d568f112).
+
+`@noinline`, and the products that call it are not `@inline` either: inlined,
+its four unrolled loops were compiled into every caller instance -- each of
+some 130 product sites, at Float64 and every dual type the routes use, against
+the 428 filter instances the precompile workload leaves -- which took the
+engine's precompile from 811 s to about 1400 s (local) and the CI runners past
+their limits. A call costs nanoseconds against the product's arithmetic.
 """
-@inline function _ctsem_colmul!(C, A, B, alpha, beta, tb::Val)
+@noinline function _ctsem_colmul!(C, A, B, alpha, beta, tb::Val)
     m = size(A, 1)
     K = size(A, 2)
     T = eltype(C)
@@ -372,8 +379,9 @@ units agreed to 1e-6 (juliaFit d568f112).
 end
 
 """`C = alpha * A * B + beta * C`."""
-@inline function _ctsem_mul!(C, A, B, alpha=true, beta=false)
-    _ctsem_small_product(C, size(A, 2)) || return mul!(C, A, B, alpha, beta)
+function _ctsem_mul!(C, A, B, alpha=true, beta=false)
+    _ctsem_small_product(C, size(A, 2)) ||
+        return (_ctsem_barrier(mul!, C, A, B, alpha, beta); C)
     size(A, 2) >= _CTSEM_COLUMN_KERNEL &&
         return _ctsem_colmul!(C, A, B, alpha, beta, Val(false))
     @inbounds for j in axes(B, 2), i in axes(A, 1)
@@ -421,9 +429,9 @@ ordinary `gemm`, never to `dgemm_tn`, which locks even where OpenBLAS's other
 products do not: a quarter of a 12-state gradient's samples at 8 threads on
 dev1.
 """
-@inline function _ctsem_mulTN!(C, A, B, alpha=true, beta=false)
-    _ctsem_small_product(C, size(A, 1)) ||
-        return mul!(C, transpose!(_ctsem_transpose_buffer(A), A), B, alpha, beta)
+function _ctsem_mulTN!(C, A, B, alpha=true, beta=false)
+    _ctsem_small_product(C, size(A, 1)) || return (_ctsem_barrier(mul!, C,
+        transpose!(_ctsem_transpose_buffer(A), A), B, alpha, beta); C)
     size(A, 1) >= _CTSEM_COLUMN_KERNEL && return _ctsem_colmul!(C,
         transpose!(_ctsem_transpose_buffer(A), A), B, alpha, beta, Val(false))
     @inbounds for j in axes(B, 2), i in axes(A, 2)
@@ -437,8 +445,9 @@ dev1.
 end
 
 """`C = alpha * A * B' + beta * C`."""
-@inline function _ctsem_mulNT!(C, A, B, alpha=true, beta=false)
-    _ctsem_small_product(C, size(A, 2)) || return mul!(C, A, transpose(B), alpha, beta)
+function _ctsem_mulNT!(C, A, B, alpha=true, beta=false)
+    _ctsem_small_product(C, size(A, 2)) ||
+        return (_ctsem_barrier(mul!, C, A, transpose(B), alpha, beta); C)
     size(A, 2) >= _CTSEM_COLUMN_KERNEL &&
         return _ctsem_colmul!(C, A, B, alpha, beta, Val(true))
     @inbounds for j in axes(B, 1), i in axes(A, 1)
@@ -453,7 +462,8 @@ end
 
 """`y = alpha * A * x + beta * y`."""
 @inline function _ctsem_mulvec!(y, A, x, alpha=true, beta=false)
-    _ctsem_small_matvec(y, size(A, 2)) || return mul!(y, A, x, alpha, beta)
+    _ctsem_small_matvec(y, size(A, 2)) ||
+        return (_ctsem_barrier(mul!, y, A, x, alpha, beta); y)
     @inbounds for i in axes(A, 1)
         acc = zero(eltype(y))
         for k in axes(A, 2)
@@ -466,7 +476,8 @@ end
 
 """`y = alpha * A' * x + beta * y`."""
 @inline function _ctsem_mulTvec!(y, A, x, alpha=true, beta=false)
-    _ctsem_small_matvec(y, size(A, 1)) || return mul!(y, transpose(A), x, alpha, beta)
+    _ctsem_small_matvec(y, size(A, 1)) ||
+        return (_ctsem_barrier(mul!, y, transpose(A), x, alpha, beta); y)
     @inbounds for i in axes(A, 2)
         acc = zero(eltype(y))
         for k in axes(A, 1)
