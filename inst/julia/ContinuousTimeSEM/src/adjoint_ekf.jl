@@ -1347,6 +1347,24 @@ function _reverse_update!(x̄::Vector{T}, P̄::Matrix{T}, Θ̄::Matrix{T}, θ̄c
     _ctsem_mul!(nn1, Ps, M)
     _ctsem_mulTN!(P̄_new, M, nn1, oneT, oneT)                # + M' P̄⁺ M
 
+    # The ridge. The forward's posterior is on the unridged P and R, which is
+    # P⁺ - ε(MM' + KK'), so the correction's own derivative is added here,
+    # exactly: its cotangents are ε-scaled, so their rounding cannot matter
+    # even in an explosive direction. Without it the gradient was that of a
+    # posterior 1e-10 away, which `test_continuation.jl`'s 1e-10 checks of
+    # the exact Hessian against forward mode saw.
+    ε = T(_CTSEM_RIDGE)
+    Kc = Ḡ                                                   # K̄ of the correction
+    Mc = nn2                                                 # M̄ of the correction
+    _ctsem_mul!(Kc, Ps, K, -2ε, false)                       # -2ε P̄⁺ K
+    _ctsem_mul!(Mc, Ps, M, -2ε, false)                       # -2ε P̄⁺ M
+    _ctsem_mulNT!(Kc, Mc, H, -oneT, oneT)                    # through M = I - K H
+    _ctsem_mul!(nm1, Kc, Ui)
+    _ctsem_mul!(nn1, nm1, Wh)                                # K̄ S⁻¹ H
+    @inbounds for j in 1:n, i in 1:n
+        P̄_new[i, j] += T(0.5) * (nn1[i, j] + nn1[j, i])
+    end
+
     # --- H̄ (the covariance's loading, Jy)
     Z = Λ̄                                                    # Wh is done with
     @inbounds for j in 1:n, i in 1:m
@@ -1370,6 +1388,23 @@ function _reverse_update!(x̄::Vector{T}, P̄::Matrix{T}, Θ̄::Matrix{T}, θ̄c
     end
     _ctsem_mul!(nm1, Ps, K)
     _ctsem_mulTN!(R̄, K, nm1, oneT, oneT)                    # + K' P̄⁺ K
+
+    # The ridge correction's H̄ and R̄, and its P̄ through S (see above).
+    _ctsem_mulTN!(H̄, K, Mc, -oneT, oneT)                    # M = I - K H
+    _ctsem_mul!(nm1, Pr, Kc)                                 # K = Pr H' S⁻¹:
+    _ctsem_mul!(PHt, nm1, Ui)                                #   S⁻¹ K̄' Pr
+    _ctsem_mulNT!(nm1, PHt, Ui)
+    @inbounds for j in 1:n, i in 1:m
+        H̄[i, j] += nm1[j, i]
+    end
+    _ctsem_mulTN!(mm1, K, Kc)                                # S̄ = -K'K̄ S⁻¹
+    _ctsem_mul!(S̄0, mm1, Ui)
+    _ctsem_mulNT!(mm1, S̄0, Ui, -oneT, false)
+    _symmetrize_into!(S̄0, mm1)
+    _ctsem_mul!(Λ̄, S̄0, H)                                   # S = H Pr H' + R̃
+    _ctsem_mulTN!(P̄_new, H, Λ̄, oneT, oneT)
+    _ctsem_mul!(H̄, Λ̄, Pr, T(2), oneT)
+    R̄ .+= S̄0
 
     # --- ỹ = y - (Λ x + μ), through x⁺ = x + K ỹ and the log-likelihood
     @inbounds for i in 1:m
