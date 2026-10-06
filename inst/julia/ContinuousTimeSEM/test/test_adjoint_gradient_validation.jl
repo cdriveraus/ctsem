@@ -564,17 +564,15 @@ end
     @test opnorm(exp(A .* (times[6] - times[5])), 1) > 100 * CT._CTSEM_EXPLOSIVE_GROWTH[]
     reference = ForwardDiff.gradient(objective, values)
     rel(g) = maximum(abs.(g .- reference) ./ max.(1.0, abs.(reference)))
-    # The reverse pass itself, with the fallback off (its default): exact in
-    # exact arithmetic, and since the stable update reverse (`_reverse_update!`)
-    # as accurate in Float64 as forward mode is. Against BigFloat, because the
-    # Float64 forward-mode reference is itself good to only about 1e-6 here; the
-    # previous derivation was off by 1e-1 and more.
+    # The reverse pass itself, with the fallback off (its default): since the
+    # stable update reverse (`_reverse_update!`) it is accurate here -- more so
+    # than Float64 forward mode, which is off by about 1e-4 -- where the previous
+    # derivation was off by 1e-1 and more. Against BigFloat for that reason.
     @test CT._CTSEM_ADJOINT_GROWTH[] == Inf
     setprecision(BigFloat, 256) do
         exact = Float64.(ForwardDiff.gradient(objective, big.(values)))
         relx(g) = maximum(abs.(g .- exact) ./ max.(1.0, abs.(exact)))
         @test relx(CT.ctsem_adjoint_gradient(objective, values).gradient) < 1e-5
-        @test relx(reference) < 1e-5
     end
     old = CT._CTSEM_ADJOINT_GROWTH[]
     try

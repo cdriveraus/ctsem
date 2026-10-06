@@ -1175,7 +1175,7 @@ Forward (on the observed subset, with `ε` the Stan-matching ridge):
     ỹ   = y - (Λ x + μ)
     K   = Pr H' S⁻¹;   M = I - K H
     x⁺  = x + K ỹ
-    P⁺  = M Pr M' + K R̃ K'              (Joseph form)
+    P⁺  = M P M' + K R K'                (Joseph form, on the unridged P and R)
     ll  = -½ (m log 2π + logdet S + ỹ'S⁻¹ỹ)
 
 The seed for `ll` is 1: the reverse pass differentiates the summed
@@ -1198,10 +1198,14 @@ with `P` huge cancel the same way. So nothing here forms `S⁻¹` or multiplies 
 
 using the Joseph form's stationarity in `K` at the optimal gain (so its `K`
 path contributes nothing) and `M Pr = P⁺` (so products with `Pr` become
-products with `P⁺`). Both hold because the forward forms the posterior on the
-same `Pr` and `R̃` as the gain. Checked on the regression fixture's explosive
-row against BigFloat: the amplified `P̄` to 3e-6 relative where the previous
-derivation was 24% off, `H̄` to 2e-6 where it was 28% off.
+products with `P⁺`). Both are exact for the posterior on the ridged `Pr` and
+`R̃`, which is what is differentiated; the forward forms it on the unridged
+`P` and `R` (Stan's choice), 1e-10 away, so the gradient is that of a
+posterior 1e-10 from the one the forward carries. Putting the forward on the
+ridged pair instead was tried: it moved a unit sitting exactly at curvature one
+across the Laplace conditioning counts. Checked on the regression fixture's
+explosive row against BigFloat: the amplified `P̄` to 3e-6 relative where the
+previous derivation was 24% off, `H̄` to 2e-6 where it was 28% off.
 """
 function _reverse_update!(x̄::Vector{T}, P̄::Matrix{T}, Θ̄::Matrix{T}, θ̄ca,
     record::CTSEMUpdateRecord{T}, n::Int, sc::CTSEMReverseScratch{T}) where {T}

@@ -600,6 +600,7 @@ function _ekf_masked_update_step!(ws::ContinuousEKFWorkspace, pars,
     _ctsem_mul!(Sv, Hv, PHt)
     Rv = view(ws.bufferΘ.out, observed, observed)
     Sv .+= Rv
+    _ridge_diagonal!(ws.P_predict.data, n, -1e-10)
     _symmetrize_and_ridge!(Sv, m)
     # Hand-written rather than LAPACK: see `small_linalg.jl`. This runs once per
     # observed row, and `potrf` on a matrix this size is almost entirely the
@@ -633,10 +634,7 @@ function _ekf_masked_update_step!(ws::ContinuousEKFWorkspace, pars,
     #
     # The caller checks `issuccess` instead, which is the same question asked
     # of a value that is always the same type.
-    if !issuccess(factor)
-        _ridge_diagonal!(ws.P_predict.data, n, -1e-10)
-        return factor
-    end
+    issuccess(factor) || return factor
 
     # Data generation, if asked for: draw this row's observation from its own
     # prior predictive and carry on as though it had been read. Taken here
@@ -654,12 +652,7 @@ function _ekf_masked_update_step!(ws::ContinuousEKFWorkspace, pars,
 
     # Covariance update (Joseph form):
     #   G_t = PHt * S^{-1}; A_t = I - G_t * Jy[observed,:]
-    #   P_{t|t} = A_t * Pr * A_t' + G_t * (Theta[observed,observed] + eps I) * G_t'
-    # on the ridged prediction `Pr` and the ridged measurement covariance the
-    # gain was formed from, so the gain is the optimal one for the covariance it
-    # updates. That is what makes the Joseph form stationary in the gain and
-    # `A_t Pr` the posterior, which the stable reverse pass relies on
-    # (`_reverse_update!`); an unridged posterior differed by 1e-10.
+    #   P_{t|t} = A_t * P_{t|t-1} * A_t' + G_t * Theta[observed,observed] * G_t'
     KRv = view(ws.KR, :, 1:m)
     copyto!(KRv, PHt)
     rdiv!(KRv, factor)
@@ -675,10 +668,8 @@ function _ekf_masked_update_step!(ws::ContinuousEKFWorkspace, pars,
     GR = view(ws.K, :, 1:m)  # PHt is no longer needed; reuse the same scratch for G_t * Theta
     _ctsem_mul!(GR, KRv, Rv)
     _ctsem_mulNT!(ws.bufferQ.out, GR, KRv)
-    _ctsem_mulNT!(ws.bufferQ.out, KRv, KRv, 1e-10, one(eltype(ws.K)))
     ws.P_update.data .+= ws.bufferQ.out
     _copy_lower_to_upper!(ws.P_update.data, ws.state_dim)
-    _ridge_diagonal!(ws.P_predict.data, n, -1e-10)
     return factor
 end
 
