@@ -487,7 +487,7 @@ test_that('the gradient of a binary model with asymptotes matches finite differe
     # And with the pair crossed, lower 0.82 above upper 0.27, which takes its
     # own branch through the likelihood and the mixture moments.
     if (all(c('guess', 'upper') %in% asym)) {
-      raw <- names(fit$estimate$raw)
+      raw <- .ctFitRawParNames(fit)
       expect_true(all(c('guess', 'upper') %in% raw))
       at[raw == 'guess'] <- 3
       at[raw == 'upper'] <- -4
