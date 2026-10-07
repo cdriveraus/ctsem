@@ -711,9 +711,10 @@ T0VARredundancies <- function(ctm) {
 #' error, and left at the default on stan it means \code{FALSE}.
 #' @param cores number of cpu cores to use: a positive whole number, or
 #' \code{'maxneeded'} for all but one (capped at the number of chains on
-#' stan). Defaults to \code{getOption("mc.cores", 2)}. On julia it caps the
-#' threads a fit uses, BLAS included, and the worker processes a sampling run
-#' spreads its chains over. A julia fit at \code{cores > 1} is not
+#' stan). Defaults to \code{getOption("mc.cores", 2)}. It is the most CPU
+#' cores the call uses at once, counting every process it starts: on julia
+#' the threads a fit uses, BLAS included, and a sampling run's worker
+#' processes, which share it between them. A julia fit at \code{cores > 1} is not
 #' reproducible to the last decimal, because the chunk tuner times candidate
 #' splits; use \code{cores = 1} for a before-and-after comparison. The Julia
 #' session starts as wide as the call that starts it, and a later call asking

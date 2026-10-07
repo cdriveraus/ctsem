@@ -95,6 +95,15 @@
   }
   .ct_warm_state$threads <- threads
 
+  # Workers start with a one-thread OpenBLAS, unless the caller chose one: an R
+  # linked to OpenBLAS otherwise starts a thread per CPU in every worker, and
+  # those spin while it loads. A worker's Julia grows its own pool to the
+  # worker's share of `cores` (`ctsem_set_max_chunks!`).
+  blas <- Sys.getenv("OPENBLAS_NUM_THREADS", unset = NA)
+  if (is.na(blas)) {
+    Sys.setenv(OPENBLAS_NUM_THREADS = "1")
+    on.exit(Sys.unsetenv("OPENBLAS_NUM_THREADS"), add = TRUE)
+  }
   started <- tryCatch({
     future::plan(future::multisession, workers = workers)
     TRUE
@@ -183,7 +192,7 @@
     # thread count cannot be changed on a running session, which is true and
     # not worth saying: a warmed worker being asked for more work is the
     # expected case, not a problem.
-    # Suppressed, as `.ctBackendSampleOneChain` suppresses its own: `future`
+    # Suppressed, as `.ctBackendSampleChainBlock` suppresses its own: `future`
     # relays a worker's messages to the parent when the parent collects the
     # worker's value, which here is in the middle of the parent's own run and
     # long after they were true. One warmed worker per chain put "Starting
@@ -198,7 +207,8 @@
       # which marshals the data, and evaluating it forces the specialisation.
       # The objective cache is per process and keyed on content, and this
       # process has an empty one, so nothing here is shared with the parent.
-      invisible(ctsem::ctJuliaEvaluate(object, values, gradient = TRUE))
+      invisible(ctsem::ctJuliaEvaluate(object, values, gradient = TRUE,
+        cores = 1L))
     })
     # A list rather than a bare TRUE, so the parent can check that this worker
     # is running the same build it is. `.ctBackendWarmWait()` accepts both

@@ -1775,7 +1775,7 @@ function _ctsem_saem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVect
     progress_callback=nothing, progress_sink=nothing, stepsize::Real=0.0,
     sweeps::Integer=2, nupper::Integer=2, nscale::Integer=5, nncp::Integer=2,
     starts::Union{Nothing,AbstractMatrix}=nothing, state=nothing, saem::Bool=false,
-    saem_nestep::Integer=50)
+    saem_nestep::Integer=50, coordinate=nothing)
 
     t0 = time()
     nchains = Int(nchains); nwarmup = Int(nwarmup); ndraws = Int(ndraws)
@@ -1882,7 +1882,8 @@ function _ctsem_saem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVect
     end
     run = _sample_until_target(pool, (wanted, attempt) -> run_all(wanted, 0),
         nchains, ndraws, Float64(min_ess), Float64(mean_ess),
-        max(Int(max_draws), ndraws), Float64(rhat_target), verbose; t0=t0)
+        max(Int(max_draws), ndraws), Float64(rhat_target), verbose; t0=t0,
+        coordinate=coordinate)
     total = run.total
 
     neffects = last(_laplace_deviation_offsets(laplace))

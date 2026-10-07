@@ -324,17 +324,24 @@ test_that("processes = TRUE reproduces the in-process draws to numerical noise",
   # dozen transitions, which is why this stays at `warmup = 0`.
   #
   # `placement = 'fit'`: under the default SAEM placement each worker runs its
-  # own SAEM for its one chain, so the two routes start from different points
+  # own SAEM for its block, so the two routes start from different points
   # and cannot reproduce each other. What this checks -- the pooling and the
   # streams -- is the same under either placement.
+  #
+  # Four chains on two workers, two to a block, so a block's second chain has
+  # to find its stream from the block's seed. And the default effective-size
+  # target, which three draws cannot meet, so the run is extended batch by
+  # batch to its budget: in one session by the engine's own rule, across the
+  # workers by the parent applying the same rule to the pooled chains.
   inprocess <- suppressWarnings(suppressMessages(
     ctFitUncertainty(fit, uncertainty = "sample", cores = 2,
-      control = list(chains = 2, warmup = 0, draws = 3, seed = 777,
+      control = list(chains = 4, warmup = 0, draws = 3, seed = 777,
         processes = FALSE, placement = "fit"))))
   viaprocess <- suppressWarnings(suppressMessages(
     ctFitUncertainty(fit, uncertainty = "sample", cores = 2,
-      control = list(chains = 2, warmup = 0, draws = 3, seed = 777,
+      control = list(chains = 4, warmup = 0, draws = 3, seed = 777,
         processes = TRUE, placement = "fit"))))
+  expect_gt(inprocess$sample$draws, 3L)
 
   expect_false(isTRUE(inprocess$sample$processes))
   # If the workers could not be used -- in particular, a `future` worker
@@ -347,6 +354,7 @@ test_that("processes = TRUE reproduces the in-process draws to numerical noise",
   skip_if_not(isTRUE(viaprocess$sample$processes),
     "processes = TRUE fell back to in-process sampling in this session")
 
+  expect_identical(viaprocess$sample$draws, inprocess$sample$draws)
   expect_equal(dim(viaprocess$estimate$rawposterior),
     dim(inprocess$estimate$rawposterior))
   expect_equal(viaprocess$estimate$rawposterior,
@@ -415,19 +423,61 @@ test_that("sampling workers start Julia at their share of the cores", {
     threads = 1L)), 1L)
 })
 
-test_that("each worker process samples its chain to its share of the run's target", {
-  # A worker stops its own chain, so it is handed the chain's share: handed the
-  # whole target, every chain of the default four-process run sampled to min
-  # ESS 200 on its own and the pool held about four times what was asked.
-  share <- ctsem:::.ctBackendWorkerControl(list(), 4L)
-  expect_equal(share$minESS, 200 / 4)
-  share <- ctsem:::.ctBackendWorkerControl(list(minESS = 400, meanESS = 800,
-    chains = 4L), 4L)
-  expect_equal(share$minESS, 100)
-  expect_equal(share$meanESS, 200)
-  expect_identical(share$chains, 4L)
-  # No target is no target in every worker too.
-  expect_identical(ctsem:::.ctBackendWorkerControl(list(minESS = 0), 4L)$minESS, 0)
+test_that("chains in worker processes stop together, by the run's rule", {
+  skip_without_julia()
+  fit <- .sample_fixture()
+  npar <- length(fit$estimate$raw)
+  # Workers that stopped on their own share of the target returned chains of
+  # different lengths, and the pool cut them all to the shortest: 230 of 930,
+  # 1365, 230 and 696 draws on one run (dev2, 2026-10-07), below the target.
+  # Now a worker judges nothing and the parent decides every batch.
+  wc <- ctsem:::.ctBackendWorkerControl(list(minESS = 400, meanESS = 800,
+    maxDraws = 50L, chains = 4L))
+  expect_identical(wc$minESS, 0)
+  expect_null(wc$meanESS)
+  expect_null(wc$maxDraws)
+  expect_identical(wc$chains, 4L)
+  # A run without a target has nothing to decide.
+  expect_null(ctsem:::.ctBackendChainCoordinator(fit,
+    ctsem:::.ctBackendSampleControl(list(minESS = 0)), list(first = 20L), 4L, 2L))
+
+  settings <- ctsem:::.ctBackendSampleControl(list(minESS = 1000))
+  budget <- ctsem:::.ctBackendSampleBudget(100L, 4L, settings)
+  first <- as.integer(budget$first)
+  co <- ctsem:::.ctBackendChainCoordinator(fit, settings, budget, chains = 4L,
+    workers = 2L)
+  on.exit(co$close(), add = TRUE)
+  set.seed(3)
+  batch <- function() list(draws = matrix(stats::rnorm(npar * 2L * first), npar),
+    total = first)
+  verdict <- function(r) file.path(co$dir, sprintf("verdict_r%d.rds", r))
+  # One worker of two has written its batch: nothing is decided yet.
+  # Each tick is called outside the expectation: it acts, and an expectation
+  # may evaluate its argument more than once.
+  saveRDS(batch(), file.path(co$dir, "w1_r1.rds"))
+  said <- co$tick(c(FALSE, FALSE))
+  expect_null(said)
+  expect_false(file.exists(verdict(1L)))
+  # Both have: every chain is judged at once, and every chain is asked for the
+  # same number more -- 400 independent draws are well short of ESS 1000.
+  saveRDS(batch(), file.path(co$dir, "w2_r1.rds"))
+  said <- co$tick(c(FALSE, FALSE))
+  expect_match(said, paste(first, "draws per chain"), fixed = TRUE)
+  wanted <- readRDS(verdict(1L))
+  expect_gt(wanted, 0L)
+  # A worker's half writes its batch and returns the parent's answer.
+  answered <- ctsem:::.ctBackendChainCoordinate(co$dir, 1L)(batch()$draws, first)
+  expect_identical(answered, wanted)
+  # A worker that ended without writing stops the others rather than leaving
+  # them waiting on a batch that is never coming.
+  saveRDS(batch(), file.path(co$dir, "w1_r2.rds"))
+  said <- co$tick(c(FALSE, TRUE))
+  expect_null(said)
+  expect_identical(readRDS(verdict(2L)), 0L)
+  # And a worker still waiting when the parent finishes is released.
+  co$close()
+  answered <- ctsem:::.ctBackendChainCoordinate(co$dir, 2L)(batch()$draws, first)
+  expect_identical(answered, 0L)
 })
 
 test_that("chains sampled in this session run one after another, whatever the pool holds", {

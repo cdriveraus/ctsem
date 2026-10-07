@@ -26,17 +26,16 @@ ctCoverageCheck(
 (e.g., list(boot = list(optimcontrol = list(uncertainty = 'bootstrap')), 
 hess = list(optimcontrol = list(uncertainty = 'hessian'))))}
 
-\item{cores}{Number of outer simulation iterations to run in parallel.
-Inner model fits use \code{fitCores} by default to avoid nested
-parallelism.}
+\item{cores}{The most CPU cores the check uses at once. Iterations run
+\code{cores \%/\% fitCores} at a time, each fit on \code{fitCores}.}
 
-\item{fitCores}{Number of cores for each inner \code{\link{ctFit}} call.
-This is enforced after merging each \code{fitArgs} entry so that outer
-simulation \code{cores} cannot accidentally be reused by worker fits.}
+\item{fitCores}{Number of cores for each inner \code{\link{ctFit}} call,
+at most \code{cores}. This is enforced after merging each \code{fitArgs}
+entry so that worker fits cannot take more than their share.}
 
 \item{generateCores}{Number of cores for \code{\link{ctGenerateFromFit}}
-when generating replicated datasets. Defaults to \code{fitCores}; set it
-explicitly to use more cores for generation.}
+when generating replicated datasets, at most \code{cores}. Defaults to
+\code{fitCores}; set it explicitly to use more cores for generation.}
 
 \item{plotEvery}{Print plots every n iterations (default = 10)}
 }

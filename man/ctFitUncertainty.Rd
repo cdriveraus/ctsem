@@ -185,10 +185,12 @@ proposal. For \code{uncertainty='is'}, \code{draws} is set to \code{'imis'}.}
 (\code{fit$stanfit$rawposterior} for stan, \code{fit$estimate$rawposterior}
 for julia) is reused when available; otherwise 1000 samples are used.}
 
-\item{cores}{Number of cores. If \code{NULL}, one core is used, and nothing
+\item{cores}{The most CPU cores the call uses at once, counting every
+process it starts. If \code{NULL}, one core is used, and nothing
 is parallelised unless a value above one is asked for -- except for
 \code{'sample'}, which takes \code{getOption("mc.cores", 2)} as
-\code{ctFit} does, and runs at most that many chains at once. On a
+\code{ctFit} does, and shares it between at most that many worker
+processes, which run the chains. On a
 \code{ctStanFit} these are R worker processes: each
 log-probability/gradient evaluation is split across subjects and reassembled,
 and score contributions and transformed quantities use them too. On a

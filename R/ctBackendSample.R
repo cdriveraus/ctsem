@@ -770,7 +770,7 @@
 #' @keywords internal
 .ctBackendSampleEngine <- function(fit, target, chains, warmup, draws, cores,
   saveEffects, seed, control, verbose, progress = .ctVerboseOn(verbose),
-  callback = control$callback) {
+  callback = control$callback, coordinate = NULL) {
 
   settings <- .ctBackendSampleControl(control)
   budget <- .ctBackendSampleBudget(draws, chains, settings)
@@ -812,6 +812,9 @@
     if (!saem) "settle_tol")) {
     if (!is.null(settings[[name]])) arguments[[name]] <- settings[[name]]
   }
+  # A worker process's chains stop when the parent says, not by their own
+  # targets: `.ctBackendChainCoordinate()` (R/ctBackendSampleProcesses.R).
+  if (!is.null(coordinate)) arguments$coordinate <- coordinate
   # A live callback into R while the chains run, mirroring
   # `optimcontrol$callback` on `.ctJuliaOptimise()`: a front end that wants to
   # draw sampling progress rather than read it afterwards. Only chain 1 of an
@@ -1522,15 +1525,25 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # and its gradient again when its chain began. Ones are a valid mesh on any
   # rows. Only a start where the likelihood is not finite keeps the rule, and
   # pays that.
+  #
+  # `cores` counts every core the call uses at once, in every process. A
+  # warming worker takes one (`.ctBackendWarmSession()`), so warming overlaps
+  # the placement only where the placement keeps at least one of its own, and
+  # the placement then runs at `cores - workers`. Where it cannot -- two cores
+  # and four chains, the default -- the workers start after the placement,
+  # from `.ctBackendSampleProcesses()`, while this session waits. Overlapping
+  # regardless ran the placement at every core while each worker compiled.
   start0 <- .ctJuliaInitialValues(npar, inits,
     initsd = .ctJuliaOr(optimcontrol$initsd, .01))
   spec0 <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
   if (!is.null(spec0$substeps)) spec0$max_timestep <- rep(1L, length(spec0$times))
-  handles <- if (processes && .ctBackendSampleWorkers(chains, cores) > 1L &&
-      .ctBackendCanWarm()) {
-    .ctBackendWarmWorkers(spec0, workers = .ctBackendSampleWorkers(chains,
-      cores), values = start0, threads = max(1L, as.integer(cores) %/%
-      .ctBackendSampleWorkers(chains, cores)))
+  workers <- .ctBackendSampleWorkers(chains, cores)
+  overlap <- processes && workers > 1L && as.integer(cores) > workers &&
+    .ctBackendCanWarm()
+  placementcores <- if (overlap) as.integer(cores) - workers else cores
+  handles <- if (overlap) {
+    .ctBackendWarmWorkers(spec0, workers = workers, values = start0,
+      threads = max(1L, as.integer(cores) %/% workers))
   } else NULL
 
   # Placement: `.ctJuliaOptimiseFit()` (R/ctJuliaBackend.R) is the whole
@@ -1566,12 +1579,13 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # caller that reaches this with 'auto' named its route.
   marginal <- .ctBackendSampleMarginal(control$target, intoverpop)
   jointtarget <- isTRUE(intoverstates) && !marginal
-  if (jointtarget &&identical(.ctBackendPlacementName(control$placement, FALSE), "saem")) {
+  if (jointtarget && identical(.ctBackendPlacementName(control$placement, FALSE), "saem")) {
     placementcontrol <- utils::modifyList(placementcontrol,
       list(estonly = TRUE, maxiter = 0L))
   }
   placementfit <- .ctJuliaOptimiseFit(model_spec = model_spec, datalong = datalong,
-    model = model, prepared_data = prepared_data, inits = inits, cores = cores,
+    model = model, prepared_data = prepared_data, inits = inits,
+    cores = placementcores,
     optimcontrol = placementcontrol, verbose = verbose, priors = priors,
     priorscope = priorscope, intoverpop = intoverpop, intoverstates = TRUE,
     gradient = gradient, correctlaplace = FALSE)
