@@ -43,14 +43,6 @@
 #' censored on one side only leaves the other infinite. Unlike thresholds these
 #' are known constants rather than parameters -- a scale's floor and ceiling are
 #' properties of the instrument, and the data cannot inform them.
-#' @param asymptotes n.manifest length integer vector for binary indicators:
-#' 0 (the default) for the two parameter logistic, where the response
-#' probability runs from 0 to 1; 1 to estimate a lower asymptote, the
-#' three parameter model's guessing probability; 2 to estimate both, the four
-#' parameter model. Ignored for every other indicator type. The asymptotes
-#' appear in \code{THRESHOLDS} as \code{asymptote_<name>} and, when both are
-#' free, \code{asymptotegap_<name>}, the latter being the gap from the lower
-#' asymptote to the upper as a proportion of the room left.
 #' @param ncategories n.manifest length integer vector, giving the number of
 #' categories of each ordinal manifest variable and ignored for the others.
 #' Required when any \code{manifesttype} is 2, because the model has to know how
@@ -87,7 +79,17 @@
 #' between manifests at each measurement occasion (i.e. measurement error / residual).  
 #' "auto" freely estimates variance parameters, 
 #' and fixes covariances between manifests to 0. "free" frees all values, including covariances.
-#' 
+#'
+#' @param ASYMPTOTES n.manifest*2 matrix of the lower and upper asymptotes of
+#' each binary indicator's response probability, which is then
+#' lower + (upper - lower) times the logistic of the linear predictor.
+#' \code{NULL} (the default) fixes them at 0 and 1, the two parameter logistic.
+#' Name a lower cell to estimate a guessing probability (the three parameter
+#' model), an upper cell for a ceiling below one, or both (four parameter);
+#' a fixed number fixes it, and one name shared across rows estimates one
+#' asymptote for those items. Each cell is a probability. Rows of non-binary
+#' indicators must stay at 0 and 1. Julia backend only.
+#'
 #' @param DRIFT n.latent*n.latent DRIFT matrix of continuous auto and cross effects, 
 #' relating the processes over time. 
 #' "auto" freely estimates all parameters.
@@ -250,10 +252,10 @@
 
 ctModel<-function(LAMBDA, type='ct',n.manifest = 'auto', n.latent='auto', Tpoints=NULL, 
   manifestNames='auto', manifesttype=rep(0,nrow(LAMBDA)), ncategories=NULL,
-  asymptotes=NULL,
   censormin=NULL, censormax=NULL,
   latentNames='auto', id='id',time='time', silent=FALSE,
-  T0VAR="auto", T0MEANS="auto", MANIFESTMEANS="auto", MANIFESTVAR="diag", 
+  T0VAR="auto", T0MEANS="auto", MANIFESTMEANS="auto", MANIFESTVAR="diag",
+  ASYMPTOTES=NULL,
   DRIFT="auto", CINT=0, DIFFUSION="auto",
   n.TDpred='auto', TDpredNames='auto', TDPREDEFFECT="auto", TDPREDMEANS="auto", TDPREDVAR="auto",
   n.TIpred='auto', TIpredNames='auto', tipredDefault=TRUE,
@@ -401,7 +403,7 @@ ctModel<-function(LAMBDA, type='ct',n.manifest = 'auto', n.latent='auto', Tpoint
   # number, a name, or an expression; there is no reading under which NA is one
   # of those, and `0` is what an absent cell usually means.
   for(m in c('T0MEANS','T0VAR','LAMBDA','DRIFT','DIFFUSION','MANIFESTVAR',
-    'MANIFESTMEANS','CINT','TDPREDEFFECT','PARS')){
+    'MANIFESTMEANS','CINT','TDPREDEFFECT','PARS','ASYMPTOTES')){
     mat <- get0(m, ifnotfound=NULL)
     if(is.null(mat) || (length(mat)==1 && !is.na(mat[1]) && mat[1]=='auto')) next
     # The text "NA" -- what a character conversion or a text field gives --
@@ -568,14 +570,14 @@ ctModel<-function(LAMBDA, type='ct',n.manifest = 'auto', n.latent='auto', Tpoint
   censormax <- censorlimits$max
   THRESHOLDS <- NULL
   ncategories <- .ctCheckNcategories(ncategories, manifesttype, manifestNames)
-  asymptotes <- .ctCheckAsymptotes(asymptotes, manifesttype, manifestNames)
-  if(any(manifesttype %in% 2) || any(asymptotes > 0)){
+  if(any(manifesttype %in% 2)){
     # The first threshold is fixed at zero and the location lives in
     # MANIFESTMEANS -- see `.ctThresholdMatrix()`. Nothing to warn about
     # afterwards, because the pair can no longer both be free.
-    THRESHOLDS <- .ctThresholdMatrix(ncategories, manifesttype, manifestNames,
-      asymptotes)
+    THRESHOLDS <- .ctThresholdMatrix(ncategories, manifesttype, manifestNames)
   }
+  ASYMPTOTES <- .ctCheckAsymptoteMatrix(ASYMPTOTES, manifesttype,
+    manifestNames)
   
   
   
@@ -588,8 +590,8 @@ ctModel<-function(LAMBDA, type='ct',n.manifest = 'auto', n.latent='auto', Tpoint
     `DIFFUSION`=DIFFUSION, `TDPREDEFFECT`=TDPREDEFFECT, `TDPREDMEANS`=TDPREDMEANS, `TDPREDVAR`=TDPREDVAR, `PARS`=PARS, 
      `id`=id, `time`=time, `manifesttype`=manifesttype,
      `censormin`=censormin, `censormax`=censormax,
-     `ncategories`=ncategories, `asymptotes`=asymptotes,
-     `THRESHOLDS`=THRESHOLDS)
+     `ncategories`=ncategories,
+     `THRESHOLDS`=THRESHOLDS, `ASYMPTOTES`=ASYMPTOTES)
   
   
   

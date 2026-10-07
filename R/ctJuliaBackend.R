@@ -3403,8 +3403,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       as.integer(model$manifesttype),
     ncategories = if (is.null(model$ncategories)) integer(0) else
       as.integer(model$ncategories),
-    nasymptotes = if (is.null(model$asymptotes)) integer(0) else
-      as.integer(model$asymptotes),
+    # 1 for a binary variable whose response probability has asymptotes other
+    # than 0 and 1, so reads ASYMPTOTES; see `.ctAsymptoteRows()`.
+    hasasymptotes = .ctAsymptoteRows(model$pars, length(model$manifestNames)),
     censormin = if (is.null(model$censormin)) numeric(0) else
       as.numeric(model$censormin),
     censormax = if (is.null(model$censormax)) numeric(0) else
@@ -3650,8 +3651,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   if (any(spec$manifesttype %in% 2)) {
     arguments$ncategories <- V(as.integer(spec$ncategories))
   }
-  if (length(spec$nasymptotes) && any(spec$nasymptotes > 0)) {
-    arguments$nasymptotes <- V(as.integer(spec$nasymptotes))
+  if (any(spec$hasasymptotes > 0)) {
+    arguments$hasasymptotes <- V(as.integer(spec$hasasymptotes))
   }
   if (any(spec$manifesttype %in% 4)) {
     arguments$censormin <- V(as.numeric(spec$censormin))

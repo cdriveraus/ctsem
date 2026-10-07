@@ -56,8 +56,8 @@ variable is the same machinery with the cumulative logit in that slot:
     P(y <= k | η) = inv_logit(τ_k - η)
 
 Binary is its `K = 2` case with a single threshold at zero, and the two agree
-to the last bit -- which is why `_category_likelihood` and `_category_score`
-carry both and the binary fast path is an optimisation rather than a separate
+to the last bit -- which is why `_category_loglikelihood` and
+`_category_score` carry both and the binary fast path is an optimisation rather than a separate
 model. The reverse pass generalises unchanged apart from one extra cotangent,
 for the thresholds themselves.
 
@@ -629,11 +629,10 @@ optimizer to be, and `iszero` on a dual number tests the value while the
 partials are the thing that would be lost -- the same tie-breaking hazard
 `_censored_at` is written to avoid.
 
-The pair arrives already accumulated, as ordinal thresholds do: the matrix
-holds `c` and then a gap, each a single free parameter with its own bounded
-transform, and `_ordinal_thresholds!` turns the gap into `d = c + (1-c)g`. That
-keeps `0 <= c < d <= 1` without any cell's transform having to read another
-cell's parameter, which is the constraint the parameter layer imposes.
+The pair arrives as ASYMPTOTES holds it, each cell a probability with its own
+bounded transform. Nothing orders them, and nothing needs to: `c > d` is the
+same curve reflected, a probability still between the two, and the likelihood
+and the mixture moments score it as such.
 """
 @inline function _binary_asymptotes(extras, ::Type{T}) where {T}
     length(extras) >= 2 || return (zero(T), one(T))
@@ -939,9 +938,9 @@ the arithmetic of its arguments; not converged only when it used its budget.
 end
 
 """
-    _category_likelihood(η, y, thresholds, kind)
+    _category_loglikelihood(η, y, thresholds, kind)
 
-`P(y | η)` for an ordinal observation under the cumulative logit model:
+`log P(y | η)` for an ordinal observation under the cumulative logit model:
 
     P(y <= k | η) = inv_logit(τ_k - η)
 
@@ -950,8 +949,7 @@ with `τ_0 = -Inf` and `τ_K = +Inf`. Binary is the two-category case with a
 single threshold at zero, and gives `inv_logit(η)` for a one -- which is why
 `thresholds` being empty means binary and needs no separate code path.
 
-`_category_loglikelihood` is the same identity with `log F(z) = -log1p_exp(-z)`
-substituted, and it is the one the quadrature uses. A category probability
+In logs, with `log F(z) = -log1p_exp(-z)`, because a category probability
 underflows to zero once the linear predictor is a few hundred away from the
 threshold that bounds it, which an optimiser reaches while its parameters are
 still poor; the probability form then makes the whole observation impossible
@@ -1002,7 +1000,12 @@ stops being representable. The product form has neither problem -- see
         c, d = _binary_asymptotes(thresholds, T)
         flat = y > 0.5 ? c : one(c) - d
         logF = y > 0.5 ? -log1p_exp(-η) : -log1p_exp(η)
-        return _logaddexp(log(flat), log(d - c) + logF)
+        span = d - c
+        # A crossed pair, `c > d`, is the same curve reflected rather than a
+        # degenerate one: the probability still lies between the two, so it is
+        # formed directly where `log(span)` has no meaning.
+        span > zero(span) || return log(flat + span * exp(logF))
+        return _logaddexp(log(flat), log(span) + logF)
     end
     k = Int(y)
     n = length(thresholds)
@@ -1012,26 +1015,6 @@ stops being representable. The product form has neither problem -- see
     gap > zero(gap) || return T(-Inf)
     return -log1p_exp(thresholds[k - 1] - η) - log1p_exp(η - thresholds[k]) +
         log(-expm1(-gap))
-end
-
-@inline function _category_likelihood(η::T, y::Real, thresholds,
-    kind::Int) where {T}
-    (kind == CTSEM_OBS_COUNT || kind == CTSEM_OBS_CENSORED) &&
-        return exp(_category_loglikelihood(η, y, thresholds, kind))
-    (kind == CTSEM_OBS_BINARY || isempty(thresholds)) &&
-        return y > 0.5 ? inv(one(T) + exp(-η)) : inv(one(T) + exp(η))
-    k = Int(y)
-    n = length(thresholds)
-    # Below the first threshold, or above the last: one tail, no subtraction.
-    k <= 1 && return inv(one(T) + exp(η - thresholds[1]))
-    k > n && return inv(one(T) + exp(thresholds[n] - η))
-    # F(-a) F(b) (1 - exp(-gap)), not F(b) - F(a): see `_category_score` for
-    # what the difference costs. `expm1` keeps the last factor accurate for a
-    # gap far below the point where `1 - exp(-gap)` would round to zero.
-    gap = thresholds[k] - thresholds[k - 1]
-    Fna = inv(one(T) + exp(thresholds[k - 1] - η))
-    Fb = inv(one(T) + exp(η - thresholds[k]))
-    return Fna * Fb * (-expm1(-gap))
 end
 
 """
@@ -1219,22 +1202,29 @@ moments would subtract two numbers of order `ηbar^2`, which is the cancellation
     c, d = _binary_asymptotes(thresholds, T)
     flat = y > 0.5 ? c : one(c) - d
     span = d - c
-    # An item with no span carries no information about `η`: every response is
-    # the constant, so the posterior is the prior. `<=` rather than `==`
-    # because a free asymptote pair can cross before the optimizer is pulled
-    # back, and a negative span is not a likelihood.
-    if !(span > zero(span))
-        return (log(max(flat, zero(flat))), zero(T), s2)
-    end
     logZq, offsetq, varq = _binary_quadrature(ηbar, s, y, nodes, weights, (),
         CTSEM_OBS_BINARY)
-    logspan = log(span) + logZq
-    logflat = log(flat)
-    logZ = _logaddexp(logflat, logspan)
-    isfinite(logZ) || return (T(-Inf), zero(T), s2)
-    # The weight on the logistic component. Taken as a ratio of logarithms so
-    # that a vanishing `flat` gives exactly one rather than `0/0`.
-    w = exp(logspan - logZ)
+    if span > zero(span)
+        logspan = log(span) + logZq
+        logZ = _logaddexp(log(flat), logspan)
+        isfinite(logZ) || return (T(-Inf), zero(T), s2)
+        # The weight on the logistic component. Taken as a ratio of logarithms
+        # so that a vanishing `flat` gives exactly one rather than `0/0`.
+        w = exp(logspan - logZ)
+    else
+        # A crossed pair, `c > d`: the curve reflected, which the two cells
+        # are free to reach because neither is bounded by the other. The total
+        # is still positive -- at least `min(d, 1-c)`, since the logistic term
+        # is at most one -- but the logistic component's weight is negative,
+        # so it is formed directly rather than in logs. The moment formulas
+        # below hold for a signed weight, being those of a positive density;
+        # at `span = 0` the weight is zero and the posterior is the prior.
+        Zq = exp(logZq)
+        Z = flat + span * Zq
+        Z > zero(Z) || return (T(-Inf), zero(T), s2)
+        logZ = log(Z)
+        w = span * Zq / Z
+    end
     offset = w * offsetq
     second = (one(w) - w) * s2 + w * (varq + offsetq * offsetq)
     return (logZ, offset, max(second - offset * offset, zero(second)))
@@ -1507,8 +1497,9 @@ end
     _ordinal_thresholds!(ws, pars, row)
 
 The cumulated thresholds for manifest variable `row`, as a view into the
-workspace scratch. Empty for a Gaussian or binary variable, which is what makes
-the binary path fall through to its own two-outcome branch everywhere.
+workspace scratch. Empty for a Gaussian variable or a binary one without
+asymptotes, which is what makes the binary path fall through to its own
+two-outcome branch everywhere.
 
 # Why the matrix holds gaps rather than thresholds
 
@@ -1558,27 +1549,24 @@ sum here costs a handful of additions on a vector of length `K-1`.
         @inbounds ws.thresholds[1] = pars.MANIFESTVAR[row, row]
         return view(ws.thresholds, 1:1)
     end
-    hasproperty(pars, :THRESHOLDS) || return view(ws.thresholds, 1:0)
-    # A binary row with asymptotes reads two cells of the same matrix: the
-    # lower asymptote and then a gap, accumulated here into the upper one so
-    # that `0 <= c < d <= 1` holds without a cell's transform having to read
-    # another cell's parameter. That is the constraint the parameter layer
-    # imposes and the reason the ordinal thresholds below are gaps too.
+    # A binary row with asymptotes carries its row of ASYMPTOTES, the lower and
+    # upper, as they are: each is a probability of its own and nothing has to
+    # be accumulated or ordered (see `_binary_asymptotes`).
     #
-    # `nasymptotes` rather than the values decides whether the row has them: a
-    # free guessing parameter sitting at zero is an ordinary place for an
+    # `hasasymptotes` rather than the values decides whether the row has them:
+    # a free guessing parameter sitting at zero is an ordinary place for an
     # optimizer to be, and inferring from the numbers would lose it there.
     if row <= length(types) && types[row] == CTSEM_OBS_BINARY
-        na = row <= length(ws.nasymptotes) ? ws.nasymptotes[row] : 0
-        (na >= 1 && size(pars.THRESHOLDS, 2) >= 2 &&
+        has = row <= length(ws.hasasymptotes) && ws.hasasymptotes[row] > 0
+        (has && hasproperty(pars, :ASYMPTOTES) &&
             length(ws.thresholds) >= 2) || return view(ws.thresholds, 1:0)
         @inbounds begin
-            c = pars.THRESHOLDS[row, 1]
-            ws.thresholds[1] = c
-            ws.thresholds[2] = c + (one(c) - c) * pars.THRESHOLDS[row, 2]
+            ws.thresholds[1] = pars.ASYMPTOTES[row, 1]
+            ws.thresholds[2] = pars.ASYMPTOTES[row, 2]
         end
         return view(ws.thresholds, 1:2)
     end
+    hasproperty(pars, :THRESHOLDS) || return view(ws.thresholds, 1:0)
     (row <= length(types) && types[row] == 2) ||
         return view(ws.thresholds, 1:0)
     ncat = row <= length(ws.ncategories) ? ws.ncategories[row] : 0

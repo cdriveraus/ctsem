@@ -2021,6 +2021,21 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
       paste(ctm$manifestNames[ctm$manifesttype %in% 4], collapse=', '), '.',
       call.=FALSE)
   }
+  # The stan programs have no asymptotes in their binary measurement, so a stan
+  # fit would quietly be the two parameter model. Refused on the matrix being
+  # there at all, rather than on its cells, so the message does not depend on
+  # what they hold.
+  if(any(ctm$pars$matrix %in% 'ASYMPTOTES') && !identical(backend, 'julia')){
+    stop('ASYMPTOTES need backend="julia": the stan model has no asymptotes ',
+      'in its binary measurement, so it would fit the two parameter logistic.',
+      call.=FALSE)
+  }
+  # ctModel checks this too, but a cell can be freed in `pars` afterwards.
+  asymwrong <- .ctAsymptoteRows(ctm$pars, length(ctm$manifestNames)) > 0 &
+    !ctm$manifesttype %in% 1
+  if(any(asymwrong)) stop('ASYMPTOTES applies to binary indicators ',
+    '(manifesttype 1) only; leave the rows of the others at 0 and 1. Check: ',
+    paste(ctm$manifestNames[asymwrong], collapse=', '), call.=FALSE)
   if(any(ctm$manifesttype %in% 1)) .ctDataBinary(datalong, ctm)
   if(any(ctm$manifesttype %in% 2)) .ctDataCategories(datalong, ctm)
   if(any(ctm$manifesttype %in% 3)) .ctDataCounts(datalong, ctm)

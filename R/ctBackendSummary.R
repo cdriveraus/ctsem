@@ -535,7 +535,8 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   TDpredNames, calcfunc = quantile, calcfuncargs = list(probs = 0.5), timeinterval = 1) {
 
   mats <- .ctMatricesList()
-  mats <- c(names(mats$base), names(mats$asymptotic), names(mats$extra))
+  mats <- c(names(mats$base), names(mats$asymptotic), names(mats$extra),
+    names(mats$julia))
   if (isTRUE(continuoustime)) {
     d <- list(DRIFT = e$pop_DRIFT)
     dd <- ctDiscreteParsDrift(d, timeinterval, impulseType = 'unit', standardise = FALSE,
@@ -583,6 +584,8 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     dimnames(out$MANIFESTcov) <- list(mn, mn)
   }
   if (!is.null(e$pop_TDPREDEFFECT)) dimnames(out$TDPREDEFFECT) <- list(ln, tdn)
+  if (!is.null(out$ASYMPTOTES)) dimnames(out$ASYMPTOTES) <- list(mn,
+    c('lower', 'upper'))
 
   out$MANIFESTVAR <- NULL
   out

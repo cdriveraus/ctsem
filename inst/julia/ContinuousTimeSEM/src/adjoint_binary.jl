@@ -83,18 +83,17 @@ The three rules:
 
   * censored, whose extras are two constant limits and a standard deviation
     that belongs to MANIFESTVAR;
-  * binary with asymptotes, where cell 1 is `c` and cell 2 is a gap `g` with
-    `d = c + (1-c)g`, so `dc/dcell1 = 1`, `dd/dcell1 = 1-g` and
-    `dd/dcell2 = 1-c`;
+  * binary with asymptotes, whose two extras are ASYMPTOTES' cells `c` and
+    `d` themselves, so each takes its own cotangent;
   * ordinal, where threshold `k` is the sum of the first `k` cells, so a
     cell's cotangent is the running sum of every threshold at or above it.
 
-Getting the second one wrong is not visible in a likelihood -- the forward pass
-is untouched by it -- and shows up only as an optimizer walking off a cliff.
-Measured before this existed, with the ordinal rule applied to a three
-parameter logistic: the fit stopped at a gradient norm of 6536 where a
-converged one is 1e-3, and every downstream diagnostic then described a point
-that was not a mode.
+Getting one wrong is not visible in a likelihood -- the forward pass is
+untouched by it -- and shows up only as an optimizer walking off a cliff.
+Measured when asymptotes were stored as a gap and the ordinal rule was applied
+to them: the fit stopped at a gradient norm of 6536 where a converged one is
+1e-3, and every downstream diagnostic then described a point that was not a
+mode.
 """
 @inline function _extras_cotangent!(θ̄ca, row::Int, τ, kind::Int, cot::F
     ) where {F}
@@ -104,13 +103,8 @@ that was not a mode.
     end
     if kind == CTSEM_OBS_BINARY
         @inbounds begin
-            c = τ[1]
-            room = one(c) - c
-            g = room > zero(room) ? (τ[2] - c) / room : zero(c)
-            d1 = cot(1)
-            d2 = cot(2)
-            θ̄ca.THRESHOLDS[row, 1] += d1 + d2 * (one(g) - g)
-            θ̄ca.THRESHOLDS[row, 2] += d2 * room
+            θ̄ca.ASYMPTOTES[row, 1] += cot(1)
+            θ̄ca.ASYMPTOTES[row, 2] += cot(2)
         end
         return nothing
     end
@@ -350,9 +344,8 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
             @inbounds θ̄ca.MANIFESTVAR[row, row] += bbar * T(2) * τ[1]
         end
 
-        # Thresholds, when this observation has any. THRESHOLDS holds gaps and
-        # the forward pass cumulates them, so the cotangent on gap `i` is the
-        # sum of the cotangents on every threshold at or after it.
+        # The row's extras, when this observation has any -- see
+        # `_extras_cotangent!` for where each kind's cotangent goes.
         if !isempty(τ) && record.kinds[j] != CTSEM_OBS_COUNT
             _extras_cotangent!(θ̄ca, row, τ, record.kinds[j],
                 i -> logZbar * J[1, 2 + i] + mbar * J[2, 2 + i] +
