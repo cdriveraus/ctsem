@@ -351,6 +351,28 @@ test_that("processes = TRUE reproduces the in-process draws to numerical noise",
     inprocess$estimate$rawposterior, tolerance = 1e-6)
 })
 
+test_that("sampling workers start Julia at their share of the cores", {
+  skip_without_julia()
+  skip_if_not(ctsem:::.ctBackendCanWarm(), "future is not installed")
+  fit <- .sample_fixture()
+  # A Julia session's thread count is fixed when it starts. Workers were warmed
+  # at one thread whatever a chain later asked for, so processes mode at 16
+  # cores and four chains ran on four (bigre: 352 s against 106 s for the same
+  # chains as threads in one session, dev1), and nothing noticed.
+  nthreads <- function(handles) {
+    skip_if(ctsem:::.ctBackendWarmWait(handles) < 1L,
+      "no worker could be warmed in this session")
+    future::value(future::future(as.integer(utils::getFromNamespace(
+      ".ctJuliaEval", "ctsem")("Threads.nthreads()")), seed = TRUE))
+  }
+  on.exit(ctsem:::.ctBackendWarmStop(NULL), add = TRUE)
+  expect_equal(nthreads(ctsem:::.ctBackendWarmWorkers(fit, workers = 2L,
+    threads = 2L)), 2L)
+  # A pool warmed at another width is replaced, not reused.
+  expect_equal(nthreads(ctsem:::.ctBackendWarmWorkers(fit, workers = 2L,
+    threads = 1L)), 1L)
+})
+
 test_that("each worker process samples its chain to its share of the run's target", {
   # A worker stops its own chain, so it is handed the chain's share: handed the
   # whole target, every chain of the default four-process run sampled to min
