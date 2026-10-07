@@ -660,7 +660,7 @@ T0VARredundancies <- function(ctm) {
 #' parameters and random effects; \code{'laplace'} and \code{'augmented'}
 #' sample the population parameters with the effects integrated out, by the
 #' Laplace approximation or the filter, and \code{TRUE} by whichever of the two
-#' it resolves to. \code{sampleControl$target} overrides this.
+#' it resolves to.
 #' @param sameInitialTimes if TRUE, include an empty observation for every subject that has no observation
 #' at the earliest observation time of the dataset. This ensures that the T0MEANS occurs for every subject at the same time,
 #' rather than just at the earliest observation for that subject. Important when modelling trends over time, age, etc.
@@ -738,10 +738,7 @@ T0VARredundancies <- function(ctm) {
 #' processes -- at most \code{cores} at once, so four chains on two cores run
 #' two at a time.
 #'
-#' For \code{backend='julia'} also \code{target}, which posterior:
-#' \code{'auto'} (the one \code{intoverpop} names), \code{'joint'} (parameters
-#' and random effects) or \code{'marginal'} (parameters, effects integrated
-#' out); \code{sampler} (\code{'saem'}, SAEM's
+#' For \code{backend='julia'} also \code{sampler} (\code{'saem'}, SAEM's
 #' kernel, on the joint posterior, \code{'nuts'} otherwise or by choice),
 #' \code{placement} (\code{'saem'} on the joint posterior: SAEM's state places
 #' the chains, so no Laplace optimum is needed; \code{'fit'} places them
@@ -2323,9 +2320,10 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     # The route is what `intoverpop` resolved to: TRUE takes 'laplace' or
     # 'augmented' as the model suits, and 'auto' under optimize=FALSE takes
     # 'none'. The joint row is drawn by SAEM's kernel and placed by SAEM's
-    # state unless `sampleControl` says otherwise (`sampler`, `placement`);
-    # `sampleControl$target` overrides the target, so 'joint' on 'laplace'
-    # samples the joint posterior with the Laplace fit placing the chains.
+    # state unless `sampleControl` says otherwise (`sampler`, `placement`).
+    # Under optimize=FALSE the route is what is sampled, and nothing else
+    # says it (`.ctBackendSampleRoute()`): 'auto' never resolves to 'laplace'
+    # there, so a 'laplace' route is one the caller named.
     #
     # Only 'laplace' is julia-only; the guard for that is above. `'none'` is
     # the third route the engine needs, and it prepares the Laplace structure
@@ -2334,12 +2332,6 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
       if(intoverpop) 'augmented' else
         if(!optimize && .ctAnyVarying(ctm)) 'none' else
           'augmented'
-    # Which posterior a sampled fit draws, settled here because only here is
-    # it still known whether `intoverpop` named the route or 'auto' chose it
-    # (`.ctBackendSampleMarginal()`).
-    if(!isTRUE(optimize)) control$target <- if(.ctBackendSampleMarginal(
-      control$target, juliaintoverpop, requested = args[['intoverpop']]))
-      'marginal' else 'joint'
     juliafit <- .ctFitJuliaBackend(datalong=datalong, model=ctm, prepared_data=standata, inits=inits,
       cores=cores, optimcontrol=optimcontrol,
       verbose=verbose, fit=fit, priors=priors, priorscope=priorscope,

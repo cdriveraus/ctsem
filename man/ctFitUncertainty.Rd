@@ -149,18 +149,18 @@ fit's estimate -- on the exact marginal posterior, where the fit's optimum is
 the Laplace approximation's -- and starts each chain from SAEM's estimate and
 its draws of the random effects, for either sampler; \code{'fit'} starts them
 around the fit's own estimate, and is the only placement for a marginal
-target, which has no random effects to start. \code{control$target}
-says which posterior: \code{'auto'} (the default) is the one the fit's
-\code{intoverpop} names -- the filter's marginal for \code{'augmented'}, the
-Laplace marginal for a fit that asked for \code{'laplace'} (an approximate
-posterior whose dimension does not grow with the subject count), and the
-joint posterior over population parameters \emph{and} every subject's
-random effects for \code{'none'} or for a Laplace route that
-\code{intoverpop = 'auto'} chose, where the Laplace fit only places the
-chains. \code{'marginal'}/\code{'joint'} ask for one explicitly regardless
-of route; \code{'joint'} is refused by name on an \code{intoverpop =
-'augmented'} fit, which has no separate random effect to sample jointly
-with the parameters. See
+target, which has no random effects to start. What is sampled is what the
+fit's \code{intoverpop} says, read as \code{ctFit(optimize = FALSE)} reads
+it: the filter's marginal for \code{'augmented'}, the Laplace marginal for a
+fit that named \code{'laplace'} (an approximate posterior whose dimension
+does not grow with the subject count), and the joint posterior over
+population parameters \emph{and} every subject's random effects for
+\code{'none'} or for a Laplace route that \code{intoverpop = 'auto'} chose,
+where the Laplace fit only places the chains. \code{control$intoverpop}
+overrides it in the same words: \code{'none'} for the joint posterior or
+\code{'laplace'} for the Laplace marginal on a Laplace fit;
+\code{'augmented'} needs a fit made that way, and an augmented fit, which
+has no separate random effect to sample, takes nothing else. See
 \code{\link{ctJuliaSetup}} for the thread count that decides whether
 chains run concurrently, and \code{\link{ctFit}}'s \code{intoverpop} for
 what each route means.
@@ -203,7 +203,7 @@ both change the order things are summed in, so results are reproducible at
 \item{control}{List of method-specific options. For \code{uncertainty =
 'sample'} these are the sampler settings described under \code{uncertainty}
 above (\code{chains}, \code{warmup}, \code{draws}, \code{seed},
-\code{saveEffects}, \code{processes}, \code{target}, \code{sampler},
+\code{saveEffects}, \code{processes}, \code{intoverpop}, \code{sampler},
 \code{placement}, \code{minESS}, \code{meanESS}, \code{rhatTarget},
 \code{maxDraws}, \code{settleTol}, \code{init_scale}, and NUTS's
 \code{maxdepth}, \code{target_accept}, \code{adapt_metric} and

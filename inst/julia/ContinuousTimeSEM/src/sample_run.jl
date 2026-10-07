@@ -607,8 +607,8 @@ function _sample_until_target(pool, extend!, nchains::Int, ndraws::Int,
             reply = coordinate(pool(), total)
             reply === nothing ? 0 : Int(round(Float64(first(reply))))
         else
-            v = _sample_verdict(pool(), nchains, ndraws, total, min_ess,
-                mean_ess, max_draws, rhat_target, was_met)
+            v = _sample_verdict(pool(), fill(total, nchains), ndraws, total,
+                min_ess, mean_ess, max_draws, rhat_target, was_met)
             push!(trace.draws, total); push!(trace.secs, time() - t0)
             push!(trace.ess, v.worst); push!(trace.rhat, v.rhat)
             if verbose
@@ -635,16 +635,18 @@ end
     _sample_verdict(pooled, nchains, ndraws, total, min_ess, mean_ess,
         max_draws, rhat_target, was_met)
 
-One check of the stopping rule over `pooled` (`npar x (nchains * total)`,
-chain-major): whether the targets are met, and if not how many more draws per
-chain to ask for, `wanted`, which is zero once the run should end. The loop in
-`_sample_until_target` applies it to chains in one session, and
-`ctsem_sample_verdict` to chains in several processes, so the two stop alike.
+One check of the stopping rule over `pooled` (`npar x sum(lengths)`, chain
+`c` the next `lengths[c]` columns): whether the targets are met, and if not
+how many more draws per chain to ask for, `wanted`, which is zero once the run
+should end. `total` is the draws per chain so far, their mean when chains
+differ, which is what the budget counts. The loop in `_sample_until_target`
+applies it to chains in one session, and `ctsem_sample_verdict` to chains in
+several processes, so the two stop alike.
 """
-function _sample_verdict(pooled::AbstractMatrix, nchains::Int, ndraws::Int,
-    total::Int, min_ess::Float64, mean_ess::Float64, max_draws::Int,
+function _sample_verdict(pooled::AbstractMatrix, lengths::AbstractVector{<:Integer},
+    ndraws::Int, total::Real, min_ess::Float64, mean_ess::Float64, max_draws::Int,
     rhat_target::Float64, was_met::Bool)
-    diagnostics = ctsem_sample_diagnostics(Matrix{Float64}(pooled), nchains)
+    diagnostics = ctsem_sample_diagnostics(Matrix{Float64}(pooled), lengths)
     finite_ess = filter(isfinite, diagnostics.ess)
     finite_tail = filter(isfinite, diagnostics.ess_tail)
     finite_rhat = filter(isfinite, diagnostics.rhat)
@@ -672,25 +674,27 @@ function _sample_verdict(pooled::AbstractMatrix, nchains::Int, ndraws::Int,
         # single batch on the strength of an early, noisy estimate.
         shortfall = max(min_ess / max(worst, 1.0), mean_ess / max(average, 1.0))
         wanted = clamp(ceil(Int, ndraws * (shortfall - 1)), fld(ndraws, 4), ndraws * 4)
-        wanted = max(min(wanted, max_draws - total), 0)
+        wanted = max(min(wanted, floor(Int, max_draws - total)), 0)
     end
     return (wanted=wanted, met=met, confirmed=confirmed, budget=budget,
         worst=worst, average=average, rhat=rhat)
 end
 
 """
-    ctsem_sample_verdict(pooled, nchains; ndraws, total, min_ess, mean_ess,
+    ctsem_sample_verdict(pooled, lengths; ndraws, min_ess, mean_ess,
         max_draws, rhat_target, was_met)
 
 `_sample_verdict` for a caller pooling chains that ran in separate processes,
 each continued by the `coordinate` keyword of `ctsem_sample`,
-`ctsem_sample_marginal` and `ctsem_saem_sample`. `ndraws` is the first
-batch per chain, which sizes the next one as it does in one session.
+`ctsem_sample_marginal` and `ctsem_saem_sample`. `lengths` are the chains'
+draw counts, which may differ, and the draws per chain the budget counts are
+their mean. `ndraws` is the first batch per chain, which sizes the next one as
+it does in one session.
 """
-function ctsem_sample_verdict(pooled::AbstractMatrix, nchains::Integer;
-    ndraws::Integer, total::Integer, min_ess::Real=0.0, mean_ess::Real=0.0,
+function ctsem_sample_verdict(pooled::AbstractMatrix, lengths::AbstractVector{<:Integer};
+    ndraws::Integer, min_ess::Real=0.0, mean_ess::Real=0.0,
     max_draws::Integer=0, rhat_target::Real=1.01, was_met::Bool=false)
-    return _sample_verdict(pooled, Int(nchains), Int(ndraws), Int(total),
+    return _sample_verdict(pooled, lengths, Int(ndraws), sum(lengths) / length(lengths),
         Float64(min_ess), Float64(mean_ess), max(Int(max_draws), Int(ndraws)),
         Float64(rhat_target), was_met)
 end

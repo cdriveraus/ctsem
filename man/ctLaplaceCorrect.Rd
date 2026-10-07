@@ -111,7 +111,7 @@ corrected draws are carried by a few points and the interval should not be
 trusted. When that happens the approximation is too far from the target to
 repair by reweighting, and \code{\link{ctFitUncertainty}} with
 \code{uncertainty = 'sample'} on the joint posterior
-(\code{control = list(target = 'joint')}) is the answer rather than this.
+(\code{control = list(intoverpop = 'none')}) is the answer rather than this.
 
 Laplace fits are now corrected when they are fitted, by default
 (\code{optimcontrol$laplace_correct}, see \code{\link{ctFit}}): the estimate
@@ -138,6 +138,6 @@ resampled$laplace_correction$ess                # check before trusting it
 \seealso{
 \code{\link{ctLaplaceCheck}} measures without applying.
   \code{\link{ctFitUncertainty}} (\code{uncertainty = 'sample'}, with
-  \code{control = list(target = 'joint')}) removes the approximation
+  \code{control = list(intoverpop = 'none')}) removes the approximation
   instead of correcting it.
 }

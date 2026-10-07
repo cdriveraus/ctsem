@@ -23,10 +23,13 @@
 # rule over every chain, as it does in one session: after each batch a worker
 # hands its draws to the parent through a file and waits; the parent pools
 # every worker's batch, asks the engine's `ctsem_sample_verdict` how many more
-# draws each chain needs, and writes that back. Workers that stopped on their
-# own share of the target returned chains of different lengths, and pooling
-# cut them all to the shortest -- 230 of 930, 1365, 230 and 696 draws on one
-# run, below the target the run was asked for.
+# draws the chains need, and shares them out in proportion to each worker's
+# speed, so no worker waits on another. The workers' shares of `cores` need
+# not be equal -- 6 over 4 chains is 2, 2, 1, 1 -- and their chains end at
+# different lengths, which the engine's diagnostics weight by length. Workers
+# that stopped on their own share of the target, as they once did, returned
+# chains the pool then cut to the shortest: 230 of 930, 1365, 230 and 696
+# draws on one run, below the target the run was asked for.
 
 #' Run each chain in its own process
 #'
@@ -62,14 +65,14 @@
   if (workers < 2L) return(NULL)
   # Contiguous blocks, one engine call per worker; pooled back in chain order.
   blocks <- split(seq_len(chains), sort(rep_len(seq_len(workers), chains)))
-  # Threads left over after one process per worker. A worker's own subject
-  # split then uses them, which is the same nesting the in-process path does,
-  # except that the chains no longer share an allocator.
-  per_worker <- max(1L, as.integer(cores) %/% workers)
+  # Every core goes to some worker: a worker's own subject split uses its
+  # share, which is the same nesting the in-process path does, except that
+  # the chains no longer share an allocator.
+  threads <- .ctBackendWorkerThreads(cores, workers)
 
   if (is.null(handles)) {
     handles <- .ctBackendWarmWorkers(fit, workers = workers,
-      values = target$estimate, threads = per_worker)
+      values = target$estimate, threads = threads)
     if (is.null(handles)) return(NULL)
   }
   # `resolved()` does not block, so this can say what the pause is for before
@@ -163,7 +166,7 @@
   settings <- .ctBackendSampleControl(control)
   budget <- .ctBackendSampleBudget(draws, chains, settings)
   coordinator <- .ctBackendChainCoordinator(fit, settings, budget, chains,
-    workers)
+    workers, warmup)
   if (!is.null(coordinator)) on.exit(coordinator$close(), add = TRUE)
   workercontrol <- .ctBackendWorkerControl(control)
   results <- lapply(seq_along(blocks), function(w) {
@@ -174,7 +177,7 @@
       # would do the same job but draws a CRAN NOTE for ::: on our own objects.
       future::future(utils::getFromNamespace(".ctBackendSampleChainBlock",
         "ctsem")(fit, target, warmup,
-        budget$first, per_worker, workercontrol, saveEffects,
+        budget$first, threads[w], workercontrol, saveEffects,
         as.integer(seed) + blocks[[w]][1L] - 1L, length(blocks[[w]]),
         progress_file = worker_file,
         coordinate = if (is.null(coordinator)) NULL else
@@ -215,14 +218,19 @@
 # count asked for, and there is nothing to decide. Otherwise a directory the
 # workers write each batch into and read each verdict from, and `tick()`, which
 # the progress poll calls: once every worker has written the current batch, it
-# pools them in chain order, asks `ctsem_sample_verdict` -- the rule
-# `_sample_until_target` applies in one session -- and writes how many more
-# draws per chain to take, zero to stop. A worker that has ended without
-# writing gets a zero for everyone else, so no worker waits on a chain that is
-# never coming, and its failure surfaces at collection. `close()` deletes the
-# directory, which also releases any worker still waiting.
+# pools them in chain order and asks `ctsem_sample_verdict` -- the rule
+# `_sample_until_target` applies in one session -- how many more draws per
+# chain the run needs, zero to stop. Those draws are shared out by each
+# worker's speed over its last batch, so a worker with more cores, or fewer
+# chains, takes more and all finish the round together; chain lengths then
+# differ, and the verdict weights each chain by its length. A worker that has
+# ended without writing gets a zero for everyone else, so no worker waits on a
+# chain that is never coming, and its failure surfaces at collection.
+# `close()` deletes the directory, which also releases any worker still
+# waiting.
 #' @keywords internal
-.ctBackendChainCoordinator <- function(fit, settings, budget, chains, workers) {
+.ctBackendChainCoordinator <- function(fit, settings, budget, chains, workers,
+  warmup = 0L) {
   min_ess <- as.numeric(.ctJuliaOr(settings$min_ess, 0))
   mean_ess <- as.numeric(.ctJuliaOr(settings$mean_ess, 0))
   if (!isTRUE(max(min_ess, mean_ess) > 0)) return(NULL)
@@ -234,16 +242,18 @@
   module <- .ctJuliaModule(fit$model_spec$project)
   state <- new.env()
   state$round <- 1L
-  state$total <- first
   state$was_met <- FALSE
   state$done <- FALSE
+  # Each worker's draws for the round, one count per worker: zero stops it.
   answer <- function(wanted) {
-    path <- file.path(dir, sprintf("verdict_r%d.rds", state$round))
-    saveRDS(as.integer(wanted), paste0(path, ".tmp"))
-    file.rename(paste0(path, ".tmp"), path)
-    if (wanted <= 0L) state$done <- TRUE
+    wanted <- rep_len(as.integer(wanted), workers)
+    for (w in seq_len(workers)) {
+      path <- file.path(dir, sprintf("verdict_w%d_r%d.rds", w, state$round))
+      saveRDS(wanted[w], paste0(path, ".tmp"))
+      file.rename(paste0(path, ".tmp"), path)
+    }
+    if (all(wanted <= 0L)) state$done <- TRUE
     state$round <- state$round + 1L
-    state$total <- state$total + as.integer(wanted)
   }
   tick <- function(resolved) {
     if (state$done) return(NULL)
@@ -255,22 +265,30 @@
     }
     batches <- lapply(files, readRDS)
     pooled <- do.call(cbind, lapply(batches, function(b) as.matrix(b$draws)))
-    if (ncol(pooled) != chains * state$total) {
+    nblock <- vapply(batches, function(b) as.integer(b$nchains), integer(1))
+    lengths <- unlist(lapply(batches, function(b)
+      rep(as.integer(b$total), as.integer(b$nchains))))
+    if (sum(nblock) != chains || ncol(pooled) != sum(lengths)) {
       answer(0L)
       return(NULL)
     }
     verdict <- .ctJuliaGet(module$ctsem_sample_verdict(.ctJuliaPut(pooled),
-      as.integer(chains), ndraws = first, total = state$total,
-      min_ess = min_ess, mean_ess = mean_ess, max_draws = max_draws,
-      rhat_target = rhat_target, was_met = state$was_met))
+      lengths, ndraws = first, min_ess = min_ess, mean_ess = mean_ess,
+      max_draws = max_draws, rhat_target = rhat_target,
+      was_met = state$was_met))
     state$was_met <- isTRUE(verdict$met)
-    said <- paste0("  ", state$total, " draws per chain: min ESS (bulk and tail) ",
+    perchain <- if (length(unique(lengths)) > 1L) paste0(sum(lengths),
+      " draws (", min(lengths), "-", max(lengths), " per chain)") else
+      paste0(lengths[1L], " draws per chain")
+    said <- paste0("  ", perchain, ": min ESS (bulk and tail) ",
       round(verdict$worst, 1), ", mean ESS ", round(verdict$average, 1),
       ", worst R-hat ", round(verdict$rhat, 3),
       if (isTRUE(verdict$confirmed)) " -- targets met" else
         if (isTRUE(verdict$met)) " -- targets met, confirming" else "")
     unlink(files)
-    answer(as.integer(verdict$wanted))
+    answer(.ctBackendShareDraws(as.integer(verdict$wanted) * chains,
+      rates = vapply(batches, function(b) as.numeric(b$rate), numeric(1)),
+      nchains = nblock))
     said
   }
   list(dir = dir, tick = tick,
@@ -279,28 +297,57 @@
 
 # The worker's half: a function the engine calls after each batch with the
 # block's population draws so far and the draws per chain, which writes them
-# for the parent and returns the parent's answer -- how many more draws per
-# chain, zero to stop. A directory that has gone means the parent has finished
-# or been interrupted, and stops the chain rather than leaving it waiting.
+# for the parent -- with how fast this worker's chains ran, iterations per
+# chain per second over the batch, warmup counted in the first -- and returns
+# the parent's answer: how many more draws per chain, zero to stop. The clock
+# runs only while the chains do, not while this waits. A directory that has
+# gone means the parent has finished or been interrupted, and stops the chain
+# rather than leaving it waiting.
 #' @keywords internal
-.ctBackendChainCoordinate <- function(dir, worker, interval = 0.05) {
+.ctBackendChainCoordinate <- function(dir, worker, warmup = 0L, interval = 0.05) {
   round <- 0L
+  started <- Sys.time()
+  previous <- 0L
   function(pooled, total) {
     round <<- round + 1L
+    total <- as.integer(total)
+    pooled <- as.matrix(pooled)
+    iterations <- total - previous + if (round == 1L) as.integer(warmup) else 0L
+    secs <- max(1e-3, as.numeric(difftime(Sys.time(), started, units = "secs")))
+    previous <<- total
     path <- file.path(dir, sprintf("w%d_r%d.rds", worker, round))
     ok <- tryCatch({
-      suppressWarnings(saveRDS(list(draws = as.matrix(pooled),
-        total = as.integer(total)), paste0(path, ".tmp")))
+      suppressWarnings(saveRDS(list(draws = pooled, total = total,
+        nchains = ncol(pooled) %/% max(1L, total), rate = iterations / secs),
+        paste0(path, ".tmp")))
       file.rename(paste0(path, ".tmp"), path)
     }, error = function(e) FALSE)
     if (!isTRUE(ok)) return(0L)
-    verdict <- file.path(dir, sprintf("verdict_r%d.rds", round))
+    verdict <- file.path(dir, sprintf("verdict_w%d_r%d.rds", worker, round))
     while (!file.exists(verdict)) {
       if (!dir.exists(dir)) return(0L)
       Sys.sleep(interval)
     }
+    started <<- Sys.time()
     as.integer(tryCatch(readRDS(verdict), error = function(e) 0L))
   }
+}
+
+# The draws a round asks for, `total` over every chain, shared out among the
+# workers so that each takes as long as the others: a worker's chains get
+# draws in proportion to the rate they ran at (iterations per chain per
+# second), so a worker with twice the cores per chain draws about twice as
+# many. None gets fewer than one per chain while the run goes on, because
+# zero is the signal to stop.
+#' @keywords internal
+.ctBackendShareDraws <- function(total, rates, nchains) {
+  total <- as.integer(total)[1L]
+  if (is.na(total) || total <= 0L) return(integer(length(rates)))
+  rates <- as.numeric(rates)
+  rates[!is.finite(rates) | rates <= 0] <- NA_real_
+  if (all(is.na(rates))) rates[] <- 1
+  rates[is.na(rates)] <- min(rates, na.rm = TRUE)
+  pmax(1L, as.integer(round(total * rates / sum(nchains * rates))))
 }
 
 # The control list a worker's chains sample by: the run's, with no stopping
@@ -351,17 +398,38 @@
   coordinate = NULL) {
   tryCatch({
     if (is.null(.ct_julia_cache$module)) ctsem::ctJuliaSetup(threads = threads)
+    # The pool's sessions were started at the workers' shares of `cores`, and
+    # which worker takes which block is the pool's choice, so a block runs at
+    # the width of the session it lands in; `threads` started one only if the
+    # pool had not.
+    width <- suppressWarnings(as.integer(.ctBackendSessionThreads())[1L])
+    if (is.na(width) || width < 1L) width <- as.integer(threads)
     callback <- if (is.null(progress_file)) NULL else
       .ctBackendProgressFileWriter(progress_file)
     result <- suppressWarnings(suppressMessages(
       .ctBackendSampleEngine(fit, target, chains = as.integer(nchains),
-        warmup = warmup, draws = draws, cores = threads,
+        warmup = warmup, draws = draws, cores = width,
         saveEffects = saveEffects, seed = seed, control = control,
         verbose = FALSE, progress = FALSE, callback = callback,
         coordinate = if (is.null(coordinate)) NULL else
-          .ctBackendChainCoordinate(coordinate$dir, coordinate$worker))))
+          .ctBackendChainCoordinate(coordinate$dir, coordinate$worker,
+            warmup = warmup))))
     .ctBackendChainResult(result)
   }, error = function(e) structure(list(), error = conditionMessage(e)))
+}
+
+# Each worker's share of `cores`: as even as whole threads allow, the
+# remainder one each to the first workers -- 6 over 4 is 2, 2, 1, 1 -- so
+# every core goes to some worker. Chains on a wider worker run faster and the
+# parent gives them more draws (`.ctBackendShareDraws()`).
+#' @keywords internal
+.ctBackendWorkerThreads <- function(cores, workers) {
+  cores <- suppressWarnings(as.integer(cores)[1L])
+  workers <- suppressWarnings(as.integer(workers)[1L])
+  if (is.na(workers) || workers < 1L) workers <- 1L
+  if (is.na(cores) || cores < workers) return(rep(1L, workers))
+  base <- cores %/% workers
+  base + as.integer(seq_len(workers) <= cores - base * workers)
 }
 
 # How many worker processes a run uses: one per chain, at most `cores`.
@@ -675,23 +743,24 @@
   kept <- nrow(mats[[1]])
   if (!all(vapply(mats, nrow, integer(1)) == kept) || kept < npar) return(NULL)
 
-  # Every chain is one length: the parent decides when all of them stop
-  # (`.ctBackendChainCoordinator()`), and without a target each draws the
-  # count asked for. Chains that stopped separately used to be cut to the
-  # shortest here, which threw most of a run away; a block that disagrees now
-  # is a fault, and the run is sampled again in this session.
-  ndraws <- as.integer(drawn[[1]]$ndraws)
+  # Every chain is kept whole. A worker's chains share a length; workers'
+  # need not, since the parent extends each in proportion to its speed
+  # (`.ctBackendChainCoordinator()`), and the diagnostics below weight each
+  # chain by its length. Chains that stopped separately used to be cut to the
+  # shortest here, which threw most of a run away; a block whose draws do not
+  # add up is a fault, and the run is sampled again in this session.
   nper <- vapply(drawn, function(d) as.integer(d$ndraws), integer(1))
   nblock <- vapply(drawn, function(d) as.integer(.ctJuliaOr(d$nchains, 1L))[1L],
     integer(1))
-  if (ndraws < 1L || any(nper != ndraws) || sum(nblock) != chains ||
-      any(vapply(mats, ncol, integer(1)) != nblock * ndraws)) return(NULL)
+  lengths <- rep(nper, nblock)
+  if (any(nper < 1L) || sum(nblock) != chains ||
+      any(vapply(mats, ncol, integer(1)) != nblock * nper)) return(NULL)
+  ndraws <- if (length(unique(lengths)) > 1L) lengths else nper[1L]
   perdraw <- function(field) unlist(lapply(drawn, function(d) as.numeric(d[[field]])))
 
   # `cbind` puts chain 1's draws first, then chain 2's, which is the chain-major
-  # `ndim x (nchains * ndraws)` layout `ctsem_sample_diagnostics` indexes and the
-  # assembler reshapes: column `(c-1)*ndraws + t` holds chain `c`'s draw `t`.
-  # Each block is chain-major already and the blocks are in chain order.
+  # layout `ctsem_sample_diagnostics` indexes, given the chain lengths. Each
+  # block is chain-major already and the blocks are in chain order.
   # Getting this wrong would not error -- it would silently mix the chains and
   # report R-hat over the mixture, which is always reassuring.
   pooled <- do.call(cbind, mats)
@@ -714,7 +783,7 @@
   effectmean <- numeric(0)
   effectsd <- numeric(0)
   if (!is.null(means) && ncol(means) > 0L && identical(dim(means), dim(sds))) {
-    nb <- nblock * ndraws
+    nb <- nblock * nper
     effectmean <- colSums(means * nb) / sum(nb)
     total <- colSums((nb - 1) * sds^2) +
       colSums(nb * sweep(means, 2, effectmean)^2)
@@ -726,8 +795,7 @@
   # cost more than it says, and the assembler reads only the first `npar`.
   # Not `diag`, which would shadow `base::diag` for the rest of the function.
   pooldiag <- .ctJuliaGet(module$ctsem_sample_diagnostics(
-    .ctJuliaPut(pooled[seq_len(npar), , drop = FALSE]),
-    as.integer(chains)))
+    .ctJuliaPut(pooled[seq_len(npar), , drop = FALSE]), lengths))
 
   result <- list(
     draws = pooled, npar = npar, ndim = ndim, ndraws = ndraws,

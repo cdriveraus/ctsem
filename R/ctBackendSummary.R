@@ -747,8 +747,22 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # the same two columns under `optimize`.
 #' @keywords internal
 .ctBackendDrawDiagnostics <- function(values, chains) {
-  chains <- suppressWarnings(as.integer(chains)[1L])
   if (is.null(values) || !length(dim(values))) return(NULL)
+  # Chains of different lengths, one count each: rstan's monitor needs one
+  # length, so the engine's diagnostics, which weight each chain by its
+  # length (`ctsem_sample_diagnostics`), take them instead.
+  lengths <- suppressWarnings(as.integer(chains))
+  if (length(lengths) > 1L && length(unique(lengths)) > 1L) {
+    if (anyNA(lengths) || any(lengths < 4L) || sum(lengths) != nrow(values)) {
+      return(NULL)
+    }
+    d <- try(.ctJuliaCall("ContinuousTimeSEM.ctsem_sample_diagnostics",
+      .ctJuliaPut(t(values)), lengths), silent = TRUE)
+    if (inherits(d, "try-error")) return(NULL)
+    return(data.frame(n_eff = as.numeric(d$ess), Rhat = as.numeric(d$rhat),
+      row.names = colnames(values), check.names = FALSE))
+  }
+  chains <- if (length(lengths) > 1L) length(lengths) else lengths[1L]
   if (is.na(chains) || chains < 1L) return(NULL)
   total <- nrow(values)
   if (total < 1L || total %% chains != 0L) return(NULL)
@@ -1588,11 +1602,13 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   # likelihood, which keeps the row count and destroys the chain ordering. The
   # count matching is therefore not enough on its own.
   if (!is.null(fit$particle_correction)) return(NULL)
-  chains <- suppressWarnings(as.integer(diagnostics$chains)[1L])
-  draws <- suppressWarnings(as.integer(diagnostics$draws)[1L])
-  if (is.na(chains) || is.na(draws) || chains < 1L || draws < 1L) return(NULL)
-  if (!identical(nrow(samples), chains * draws)) return(NULL)
-  chains
+  # The chain count, or, when chains run in worker processes differ in length,
+  # the draws of each: every reader below uses this only as how the rows are
+  # grouped (`.ctBackendDrawDiagnostics()`).
+  lengths <- suppressWarnings(.ctSampleChainDraws(diagnostics))
+  if (!length(lengths) || anyNA(lengths) || any(lengths < 1L)) return(NULL)
+  if (!identical(nrow(samples), sum(lengths))) return(NULL)
+  if (length(unique(lengths)) > 1L) lengths else length(lengths)
 }
 
 # The convergence verdict as one line, from the tables the reader is about to
@@ -1626,9 +1642,10 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
       }
     }
   }
-  draws <- nrow(fit$estimate$rawposterior) %/% chains
-  note <- paste0(chains, " chain", if (chains > 1L) "s" else "", " x ", draws,
-    " draws.")
+  note <- paste0(.ctSampleDrawsLabel(if (length(chains) > 1L)
+    list(chains = length(chains), chain_draws = chains) else
+    list(chains = chains, draws = nrow(fit$estimate$rawposterior) %/% chains)),
+    ".")
   if (is.finite(worst)) {
     note <- paste0(note, " Worst R-hat ", signif(worst, 4), " (", worstname, ")")
     note <- paste0(note, if (is.finite(fewest))

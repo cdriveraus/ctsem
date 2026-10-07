@@ -13,18 +13,18 @@
 #
 # `ctFitUncertainty(fit, 'sample')` on the `.sample_fixture()` below -- an
 # maximum-likelihood fit that named `intoverpop='laplace'` -- defaults to
-# `control$target='auto'`, which there is the Laplace marginal; had 'auto'
-# chosen the route it would be the joint posterior over parameters and random
-# effects (`.ctBackendSampleMarginal()`). Tests that are about the random
-# effects or SAEM ask for `target = 'joint'` explicitly, so they say what they
-# need whatever the default; everything else here is generic sampler mechanics
-# that holds under either target.
+# the Laplace marginal; had 'auto' chosen the route it would be the joint
+# posterior over parameters and random effects (`.ctBackendSampleRoute()`).
+# Tests that are about the random effects or SAEM ask for
+# `intoverpop = 'none'` explicitly, so they say what they need whatever the
+# default; everything else here is generic sampler mechanics that holds under
+# either posterior.
 #
 # The separate exported sampling function this file used to call was removed
 # (it was julia-only and never released); every call below that used to reach
 # it now reaches `ctFitUncertainty()` instead, with the same settings folded
 # into `control` -- `chains`, `warmup`, `draws`, `seed`, `saveEffects`,
-# `processes` and `target` are all entries of one list now, where that
+# `processes` and `intoverpop` are all entries of one list now, where that
 # function had them split across its own arguments and a separate list.
 
 # One fit, shared by every test that asks for it: `laplace_fixture()`
@@ -37,11 +37,11 @@ test_that("a sampled fit carries draws the summary machinery can read", {
   skip_without_julia()
   fit <- .sample_fixture()
   npar <- length(fit$estimate$raw)
-  # target='joint': the placement asserted below is SAEM's, which the joint
+  # intoverpop='none': the placement asserted below is SAEM's, which the joint
   # target takes; the fixture names 'laplace', whose own target is marginal.
   sampled <- suppressWarnings(suppressMessages(
     ctFitUncertainty(fit, uncertainty = "sample", cores = 1,
-      control = list(chains = 2, warmup = 80, draws = 80, target = "joint"))))
+      control = list(chains = 2, warmup = 80, draws = 80, intoverpop = "none"))))
 
   expect_s3_class(sampled, "ctJuliaFit")
   # And as a fit, not as a model spec: "ctFitModel" marks an unfitted handle,
@@ -84,11 +84,11 @@ test_that("the diagnostics come back per parameter and per chain", {
   skip_without_julia()
   fit <- .sample_fixture()
   npar <- length(fit$estimate$raw)
-  # target='joint': this test asserts on the per-subject effect summaries
+  # intoverpop='none': this test asserts on the per-subject effect summaries
   # below, which the marginal target -- the default -- does not carry at all.
   sampled <- suppressWarnings(suppressMessages(
     ctFitUncertainty(fit, uncertainty = "sample", cores = 1,
-      control = list(chains = 2, warmup = 80, draws = 80, target = "joint"))))
+      control = list(chains = 2, warmup = 80, draws = 80, intoverpop = "none"))))
   diagnostics <- sampled$sample
 
   expect_s3_class(diagnostics, "ctSampleDiagnostics")
@@ -175,7 +175,7 @@ test_that("the effects come back summarised, or in full when asked for", {
   neffects <- length(fit$model_spec$subject_starts) *
     length(fit$model_spec$laplace$re_index)
 
-  # target='joint': there is no random effect in the sampled vector at all
+  # intoverpop='none': there is no random effect in the sampled vector at all
   # under the marginal default, so `saveEffects` has nothing to save -- this
   # test is specifically about that vector.
   #
@@ -184,7 +184,7 @@ test_that("the effects come back summarised, or in full when asked for", {
   # 1 MB/s.
   lean <- suppressWarnings(suppressMessages(
     ctFitUncertainty(fit, uncertainty = "sample", cores = 1,
-      control = list(chains = 1, warmup = 60, draws = 60, target = "joint"))))
+      control = list(chains = 1, warmup = 60, draws = 60, intoverpop = "none"))))
   expect_null(lean$sample$effects)
   expect_length(lean$sample$effect_mean, neffects)
   expect_length(lean$sample$effect_sd, neffects)
@@ -193,7 +193,7 @@ test_that("the effects come back summarised, or in full when asked for", {
   full <- suppressWarnings(suppressMessages(
     ctFitUncertainty(fit, uncertainty = "sample", cores = 1,
       control = list(chains = 1, warmup = 60, draws = 60, saveEffects = TRUE,
-        target = "joint"))))
+        intoverpop = "none"))))
   expect_equal(dim(full$sample$effects), c(full$sample$draws, neffects))
   expect_true(all(is.finite(full$sample$effects)))
 })
@@ -211,7 +211,7 @@ test_that("NUTS samples the joint posterior through the same runner", {
   # reaches the same assembly with the same shape.
   nuts <- suppressWarnings(suppressMessages(
     ctFitUncertainty(fit, uncertainty = "sample", cores = 1,
-      control = list(chains = 2, warmup = 80, draws = 80, target = "joint",
+      control = list(chains = 2, warmup = 80, draws = 80, intoverpop = "none",
         sampler = "nuts", processes = FALSE))))
   d <- nuts$sample
   expect_identical(d$sampler, "nuts")
@@ -243,7 +243,7 @@ test_that("placement = 'fit' starts the chains around the fit's own estimate", {
   # A marginal target has no effects for SAEM to start, so the default there
   # is 'fit', and asking for 'saem' is refused by name.
   expect_error(ctFitUncertainty(fit, uncertainty = "sample",
-    control = list(target = "marginal", placement = "saem")),
+    control = list(intoverpop = "laplace", placement = "saem")),
     "control$placement = 'saem'", fixed = TRUE)
   expect_error(ctFitUncertainty(fit, uncertainty = "sample",
     control = list(placement = "laplace")), "'saem' or 'fit'", fixed = TRUE)
@@ -253,15 +253,15 @@ test_that("the SAEM kernel is refused by name where it cannot apply", {
   skip_without_julia()
   fit <- .sample_fixture()
   expect_error(ctFitUncertainty(fit, uncertainty = "sample",
-    control = list(sampler = "saem", target = "marginal")),
+    control = list(sampler = "saem", intoverpop = "laplace")),
     "control$sampler = 'saem'", fixed = TRUE)
   expect_error(ctFitUncertainty(fit, uncertainty = "sample",
-    control = list(sampler = "saem", target = "joint", adapt_metric = TRUE)),
+    control = list(sampler = "saem", intoverpop = "none", adapt_metric = TRUE)),
     "control$adapt_metric", fixed = TRUE)
   # Refused under the default too, since that is SAEM's kernel on the joint
   # posterior, and the message says how to get NUTS.
   expect_error(ctFitUncertainty(fit, uncertainty = "sample",
-    control = list(target = "joint", settleTol = 0.1)),
+    control = list(intoverpop = "none", settleTol = 0.1)),
     "sampler = 'nuts'", fixed = TRUE)
   # The default follows the target: the marginal one has no effects for
   # SAEM's sweeps.
@@ -329,19 +329,14 @@ test_that("processes = TRUE reproduces the in-process draws to numerical noise",
   # streams -- is the same under either placement.
   #
   # Four chains on two workers, two to a block, so a block's second chain has
-  # to find its stream from the block's seed. And the default effective-size
-  # target, which three draws cannot meet, so the run is extended batch by
-  # batch to its budget: in one session by the engine's own rule, across the
-  # workers by the parent applying the same rule to the pooled chains.
-  inprocess <- suppressWarnings(suppressMessages(
+  # to find its stream from the block's seed. `minESS = 0`: every chain draws
+  # exactly the count asked for, so the two routes draw the same chains whole.
+  run <- function(processes, minESS) suppressWarnings(suppressMessages(
     ctFitUncertainty(fit, uncertainty = "sample", cores = 2,
       control = list(chains = 4, warmup = 0, draws = 3, seed = 777,
-        processes = FALSE, placement = "fit"))))
-  viaprocess <- suppressWarnings(suppressMessages(
-    ctFitUncertainty(fit, uncertainty = "sample", cores = 2,
-      control = list(chains = 4, warmup = 0, draws = 3, seed = 777,
-        processes = TRUE, placement = "fit"))))
-  expect_gt(inprocess$sample$draws, 3L)
+        processes = processes, placement = "fit", minESS = minESS))))
+  inprocess <- run(FALSE, 0)
+  viaprocess <- run(TRUE, 0)
 
   expect_false(isTRUE(inprocess$sample$processes))
   # If the workers could not be used -- in particular, a `future` worker
@@ -359,25 +354,64 @@ test_that("processes = TRUE reproduces the in-process draws to numerical noise",
     dim(inprocess$estimate$rawposterior))
   expect_equal(viaprocess$estimate$rawposterior,
     inprocess$estimate$rawposterior, tolerance = 1e-6)
+
+  # With the default effective-size target, which three draws cannot meet, the
+  # run is extended to its budget: in one session every chain by the same
+  # amount, across the workers by amounts in proportion to each worker's
+  # speed, so the chains may end at different lengths. Every draw is kept --
+  # the pool once cut every chain to the shortest -- and each chain's first
+  # batch is still the in-session chain's.
+  targeted <- run(TRUE, 200)
+  inprocessTargeted <- run(FALSE, 200)
+  expect_gt(inprocessTargeted$sample$draws, 3L)
+  skip_if_not(isTRUE(targeted$sample$processes),
+    "processes = TRUE fell back to in-process sampling in this session")
+  lengths <- ctsem:::.ctSampleChainDraws(targeted$sample)
+  expect_length(lengths, 4L)
+  expect_identical(sum(lengths), nrow(targeted$estimate$rawposterior))
+  expect_true(all(lengths > 3L))
+  first <- function(f) {
+    L <- ctsem:::.ctSampleChainDraws(f$sample)
+    starts <- cumsum(c(0L, L[-length(L)]))
+    f$estimate$rawposterior[as.vector(outer(1:3, starts, "+")), , drop = FALSE]
+  }
+  expect_equal(first(targeted), first(inprocessTargeted), tolerance = 1e-6)
+  expect_length(targeted$sample$rhat, ncol(targeted$estimate$rawposterior))
+  expect_true(all(is.finite(targeted$sample$ess)))
 })
 
-test_that("'auto' samples the posterior intoverpop names", {
-  marginal <- ctsem:::.ctBackendSampleMarginal
-  # A route the caller named says how the effects are handled, so its marginal
-  # is sampled; a route 'auto' chose to optimise says nothing about the
-  # posterior, which is then the exact one. Before 2026-10-07 a named
-  # 'laplace' sampled the joint posterior too.
-  expect_true(marginal("auto", "laplace", requested = "laplace"))
-  expect_true(marginal("auto", "laplace", requested = TRUE))
-  expect_false(marginal("auto", "laplace", requested = "auto"))
-  expect_false(marginal("auto", "laplace", requested = NULL))
-  expect_true(marginal(NULL, "augmented", requested = "auto"))
-  expect_false(marginal(NULL, "none", requested = "auto"))
+test_that("intoverpop alone says what is sampled", {
+  route <- ctsem:::.ctBackendSampleRoute
+  # A route the caller named is sampled as named; a Laplace route 'auto'
+  # chose to optimise is sampled as 'none', the joint posterior, as
+  # ctFit(optimize = FALSE, intoverpop = 'auto') samples it. Before
+  # 2026-10-07 a separate `target` said the same thing a second way.
+  expect_identical(route("laplace", requested = "laplace"), "laplace")
+  expect_identical(route("laplace", requested = TRUE), "laplace")
+  expect_identical(route("laplace", requested = "auto"), "none")
+  expect_identical(route("laplace", requested = NULL), "none")
+  expect_identical(route("augmented", requested = "auto"), "augmented")
+  expect_identical(route("none", requested = FALSE), "none")
   # A backend caller passing only the route has named it.
-  expect_true(marginal(NULL, "laplace"))
-  expect_false(marginal("joint", "laplace", requested = "laplace"))
-  expect_true(marginal("marginal", "laplace", requested = "auto"))
-  expect_error(marginal("exact", "laplace"), "'auto', 'marginal' or 'joint'")
+  expect_identical(route("laplace"), "laplace")
+  # ctFitUncertainty's control$intoverpop overrides, in the same words, within
+  # what the fit's specification can carry.
+  expect_identical(route("laplace", requested = "laplace", override = "none"), "none")
+  expect_identical(route("laplace", requested = "auto", override = "laplace"), "laplace")
+  expect_identical(route("laplace", requested = "laplace", override = "auto"), "laplace")
+  expect_error(route("augmented", override = "none"), "Refit with intoverpop = 'none'",
+    fixed = TRUE)
+  expect_error(route("laplace", override = "augmented"), "needs a fit made with",
+    fixed = TRUE)
+  expect_error(route("laplace", override = "joint"), "'auto', 'none', 'laplace'",
+    fixed = TRUE)
+  # The retired name, and ctFit's own argument given a second time, are refused
+  # by name rather than accepted beside intoverpop.
+  expect_error(ctsem:::.ctBackendSampleCheckControl(list(target = "joint")),
+    "intoverpop says what is sampled", fixed = TRUE)
+  expect_error(ctsem:::.ctBackendSampleCheckControl(list(intoverpop = "none"),
+    listname = "sampleControl"), "ctFit()'s own intoverpop", fixed = TRUE)
+  expect_null(ctsem:::.ctBackendSampleCheckControl(list(intoverpop = "none")))
 })
 
 test_that("ctFit(optimize = FALSE, intoverpop = 'laplace') samples the Laplace marginal in worker processes", {
@@ -448,13 +482,15 @@ test_that("chains in worker processes stop together, by the run's rule", {
     workers = 2L)
   on.exit(co$close(), add = TRUE)
   set.seed(3)
-  batch <- function() list(draws = matrix(stats::rnorm(npar * 2L * first), npar),
-    total = first)
-  verdict <- function(r) file.path(co$dir, sprintf("verdict_r%d.rds", r))
+  # A worker's batch as `.ctBackendChainCoordinate()` writes it: two chains
+  # each, the first worker's running twice as fast as the second's.
+  batch <- function(rate = 1) list(draws = matrix(stats::rnorm(npar * 2L * first), npar),
+    total = first, nchains = 2L, rate = rate)
+  verdict <- function(r, w = 1L) file.path(co$dir, sprintf("verdict_w%d_r%d.rds", w, r))
   # One worker of two has written its batch: nothing is decided yet.
   # Each tick is called outside the expectation: it acts, and an expectation
   # may evaluate its argument more than once.
-  saveRDS(batch(), file.path(co$dir, "w1_r1.rds"))
+  saveRDS(batch(2), file.path(co$dir, "w1_r1.rds"))
   said <- co$tick(c(FALSE, FALSE))
   expect_null(said)
   expect_false(file.exists(verdict(1L)))
@@ -465,6 +501,16 @@ test_that("chains in worker processes stop together, by the run's rule", {
   expect_match(said, paste(first, "draws per chain"), fixed = TRUE)
   wanted <- readRDS(verdict(1L))
   expect_gt(wanted, 0L)
+  # Shared by speed: the faster worker's chains are asked for twice as many,
+  # so both finish the round together.
+  expect_equal(wanted / readRDS(verdict(1L, 2L)), 2, tolerance = 0.05)
+  expect_identical(ctsem:::.ctBackendShareDraws(600L, c(2, 1), c(2L, 2L)),
+    c(200L, 100L))
+  expect_identical(ctsem:::.ctBackendShareDraws(600L, c(NA, 1), c(2L, 2L)),
+    c(150L, 150L))
+  expect_identical(ctsem:::.ctBackendWorkerThreads(6L, 4L), c(2L, 2L, 1L, 1L))
+  expect_identical(ctsem:::.ctBackendWorkerThreads(16L, 4L), rep(4L, 4L))
+  expect_identical(ctsem:::.ctBackendWorkerThreads(2L, 4L), rep(1L, 4L))
   # A worker's half writes its batch and returns the parent's answer.
   answered <- ctsem:::.ctBackendChainCoordinate(co$dir, 1L)(batch()$draws, first)
   expect_identical(answered, wanted)
@@ -474,6 +520,7 @@ test_that("chains in worker processes stop together, by the run's rule", {
   said <- co$tick(c(FALSE, TRUE))
   expect_null(said)
   expect_identical(readRDS(verdict(2L)), 0L)
+  expect_identical(readRDS(verdict(2L, 2L)), 0L)
   # And a worker still waiting when the parent finishes is released.
   co$close()
   answered <- ctsem:::.ctBackendChainCoordinate(co$dir, 2L)(batch()$draws, first)
@@ -533,7 +580,8 @@ test_that("ctFitUncertainty(fit, 'sample') refuses what it cannot sample", {
   augmented <- suppressWarnings(suppressMessages(ctFit(data, model,
     backend = "julia", cores = 1, optimcontrol = list(estonly = TRUE))))
   expect_error(ctFitUncertainty(augmented, uncertainty = "sample",
-    control = list(target = "joint")), "intoverpop = 'laplace'", fixed = TRUE)
+    control = list(intoverpop = "none")), "made with intoverpop = 'augmented'",
+    fixed = TRUE)
 
   marginal <- suppressWarnings(suppressMessages(ctFitUncertainty(augmented,
     uncertainty = "sample", cores = 1,
@@ -886,11 +934,11 @@ test_that("a fixed stepsize is what every chain starts from", {
   suppressWarnings(suppressMessages(ctFitUncertainty(.sample_fixture(),
     uncertainty = "sample", cores = 1,
     control = list(chains = 1, warmup = 60, draws = 60, saveEffects = TRUE,
-      target = "joint")))))
+      intoverpop = "none")))))
 
 test_that("generation at given effects is exact and per-subject", {
   skip_without_julia()
-  # target='joint': each of these reads fit$sample$effects, which only exists
+  # intoverpop='none': each of these reads fit$sample$effects, which only exists
   # under the joint target -- the marginal default has no random effect in
   # the sampled vector to save.
   fit <- .sample_joint_effects()
@@ -929,7 +977,7 @@ test_that("generation at given effects is exact and per-subject", {
 
 test_that("a sampled fit without saved effects says it fell back to modes", {
   skip_without_julia()
-  # target='joint': each of these reads fit$sample$effects, which only exists
+  # intoverpop='none': each of these reads fit$sample$effects, which only exists
   # under the joint target -- the marginal default has no random effect in
   # the sampled vector to save.
   fit <- .sample_joint_effects()
@@ -1005,7 +1053,7 @@ test_that("a sampled fit reports subject parameters from its own effects", {
 # generating it.
 test_that("ctGenerateFromFit can resample the trajectory or mirror the fit", {
   skip_without_julia()
-  # target='joint': each of these reads fit$sample$effects, which only exists
+  # intoverpop='none': each of these reads fit$sample$effects, which only exists
   # under the joint target -- the marginal default has no random effect in
   # the sampled vector to save.
   fit <- .sample_joint_effects()
@@ -1036,7 +1084,7 @@ test_that("ctGenerateFromFit can resample the trajectory or mirror the fit", {
 
 test_that("the resampled trajectory is drawn at each subject's own parameters", {
   skip_without_julia()
-  # target='joint': each of these reads fit$sample$effects, which only exists
+  # intoverpop='none': each of these reads fit$sample$effects, which only exists
   # under the joint target -- the marginal default has no random effect in
   # the sampled vector to save.
   fit <- .sample_joint_effects()

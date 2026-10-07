@@ -326,8 +326,9 @@
   }, numeric(1))
   age <- (as.numeric(Sys.time()) - used) / 86400
   old <- dirs[!is.na(age) & age > days]
-  # A staging copy is abandoned once it is a day old; see ctJuliaSetup().
-  old <- c(old, dirs[grepl("-partial$", dirs) & !is.na(age) & age > 1])
+  # A staging copy is abandoned once it is a day old; see ctJuliaSetup(),
+  # which names each one for the process making it.
+  old <- c(old, dirs[grepl("-partial(-[0-9]+)?$", dirs) & !is.na(age) & age > 1])
   unlink(unique(old), recursive = TRUE)
   invisible(unique(old))
 }
