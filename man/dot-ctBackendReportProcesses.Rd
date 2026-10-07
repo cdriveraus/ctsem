@@ -9,7 +9,8 @@
   progress_files,
   chains,
   interval = 1,
-  overwrite = .ctProgressOverwrite(1)
+  overwrite = .ctProgressOverwrite(1),
+  tick = NULL
 )
 }
 \arguments{
@@ -17,7 +18,8 @@
 chain, possibly containing `NULL` for a chain that never started.}
 
 \item{progress_files}{One path per chain, written by
-[.ctBackendProgressFileWriter()].}
+[.ctBackendProgressFileWriter()], or `NULL` to print nothing and only
+poll for `tick`.}
 
 \item{chains}{Number of chains.}
 
@@ -25,6 +27,10 @@ chain, possibly containing `NULL` for a chain that never started.}
 
 \item{overwrite}{Update one line in place rather than printing each report
 on its own line.}
+
+\item{tick}{Called with which workers have finished on every poll: the
+parent's half of the stopping rule (`.ctBackendChainCoordinator()`). Text
+it returns is printed on its own line.}
 }
 \value{
 `NULL`, invisibly. Called for its printing.

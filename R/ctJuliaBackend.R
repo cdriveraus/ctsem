@@ -515,6 +515,15 @@ ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
   # `.ctJuliaAgreed()`), and skipped entirely -- no prompt, no network -- when
   # the environment already loads, which is the ordinary case after the first
   # session on a machine.
+  # A first load of a new engine precompiles it, and by default Julia writes
+  # the image on a thread per CPU (`JULIA_IMAGE_THREADS`) and Pkg builds that
+  # many packages at once: 15 cores on dev2 for the last minute of a
+  # `cores = 2` fit's precompile. The build is held to the width of the call
+  # that started the session -- `cores` is every core a call uses -- and a
+  # value set outside ctsem wins. OpenBLAS in a build process is held too.
+  .ctJuliaBuildWidth(.ctJuliaOr(threads, .ctJuliaOr(.ct_julia_cache$build_cores,
+    .ctJuliaDefaultCores())))
+  .ct_julia_cache$build_cores <- NULL
   loadfail <- NULL
   ready <- tryCatch({
     .ctJuliaEval("using ContinuousTimeSEM")
@@ -4063,6 +4072,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 # say about cores it was never going to use and no reason to restart anything.
 .ctBackendResolveThreads <- function(cores, threads = NULL, report = TRUE) {
   cores <- suppressWarnings(as.integer(cores)[1L])
+  # What a session this call starts may build the engine with
+  # (`.ctJuliaBuildWidth()`), one core included.
+  if (!is.na(cores) && cores >= 1L && !.ctJuliaSessionRunning()) {
+    .ct_julia_cache$build_cores <- cores
+  }
   if (is.na(cores) || cores < 2L) return(invisible(NA_integer_))
   restart <- isTRUE(report) && isTRUE(getOption("ctsem.julia.restart", FALSE))
   if (is.null(threads) && !.ctJuliaSessionRunning()) {

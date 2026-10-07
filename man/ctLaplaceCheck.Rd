@@ -125,7 +125,8 @@ check$parameters          # the full per-parameter table
 }
 \seealso{
 \code{\link{ctFitUncertainty}} with \code{uncertainty = 'sample'}
-  removes the approximation instead of measuring it, by sampling the joint
-  posterior; much slower, and the right answer when \code{delta_se} says a
-  linear correction is not credible.
+  and \code{control = list(target = 'joint')} removes the approximation
+  instead of measuring it, by sampling the joint posterior; much slower,
+  and the right answer when \code{delta_se} says a linear correction is not
+  credible.
 }

@@ -9,18 +9,17 @@
 # assumption anywhere, and the fit is then used only to place the chains --
 # by default through SAEM's state, which starts from it.
 #
-# `control$target='auto'`, the default, samples the exact posterior the fit's
-# route can reach: the joint posterior for an `intoverpop='laplace'` or
-# `'none'` fit, and the marginal for an `intoverpop='augmented'` fit, whose
-# filter integrates the effects itself. An approximate posterior is worth
-# nothing as a sampling target when the exact one is in reach; its job is to
-# place the sampler. `target='marginal'` on a Laplace fit samples the Laplace
-# marginal all the same -- `npar` dimensions whatever the subject count -- for
-# when the approximation is trusted and the joint is too large. Two entry
-# points reach the same targets by the same names: `ctFit(optimize=FALSE)` and
-# `ctFitUncertainty(fit, 'sample')`. Until 2026-10-03 'auto' meant the Laplace
-# marginal on a Laplace fit (decision 5 of
-# review/OPTIM-consolidation-plan-2026-09-25.md).
+# `control$target='auto'`, the default, samples the posterior `intoverpop`
+# names (`.ctBackendSampleMarginal()`): the filter's marginal for
+# 'augmented', the joint posterior over parameters and effects for 'none', and
+# for 'laplace' the Laplace marginal -- `npar` dimensions whatever the subject
+# count -- when the caller asked for that route, or the joint posterior when
+# `intoverpop='auto'` chose it to optimise. A chosen route says how the fit
+# was found, not what to sample, and there the approximation only places the
+# sampler. Two entry points reach the same targets by the same names:
+# `ctFit(optimize=FALSE)` and `ctFitUncertainty(fit, 'sample')`. From
+# 2026-10-03 to 2026-10-07 'auto' sampled the joint posterior on every Laplace
+# fit, a named route included.
 #
 # It takes a fitted object rather than a model and data, and that is not merely
 # convenience. The fit supplies the starting point *and* the metric: the engine
@@ -167,6 +166,32 @@
   NULL
 }
 
+# Which posterior `control$target` names: TRUE for the marginal over the
+# population parameters, FALSE for the joint posterior over them and every
+# random effect. Both entry points resolve it here and nowhere else.
+#
+# 'auto' samples the posterior `intoverpop` names. A route the caller named --
+# 'laplace', or TRUE resolving to it -- says how the random effects are to be
+# handled, so its marginal is sampled: the Laplace marginal, by NUTS over the
+# parameters alone. A route `intoverpop = 'auto'` chose for the optimiser says
+# only how the fit was found, so the exact posterior is sampled there and the
+# Laplace fit places the chains. 'augmented' samples the filter's marginal,
+# which is exact for it, and 'none' the joint posterior. `requested` is the
+# caller's `intoverpop` argument; NULL, a fit stored without it, reads as
+# 'auto', and a backend caller that passes only a route has named it.
+#' @keywords internal
+.ctBackendSampleMarginal <- function(target, route, requested = route) {
+  target <- .ctJuliaOr(target, "auto")
+  if (!is.character(target) || length(target) != 1L ||
+      !target %in% c("auto", "marginal", "joint")) {
+    stop("control$target must be 'auto', 'marginal' or 'joint', not '",
+      paste(format(target), collapse = " "), "'.", call. = FALSE)
+  }
+  named <- !is.null(requested) && !identical(as.character(requested)[1L], "auto")
+  switch(target, marginal = TRUE, joint = FALSE,
+    switch(as.character(route)[1L], augmented = TRUE, laplace = named, FALSE))
+}
+
 # Sample a fit's posterior by MCMC: `uncertainty = 'sample'`
 # on `ctFitUncertainty()`, and what `ctFit(backend = 'julia', optimize =
 # FALSE)` calls once its placement optimisation
@@ -176,14 +201,12 @@
 # `test-julia-fit-shape.R` catches rather than something a caller discovers
 # later.
 #
-# `control$target` names which posterior: `'auto'` (the default) is the exact
-# one the fit's route (`.ctBackendIntOverPop()`) can reach -- the joint
-# posterior over parameters and random effects for `intoverpop = 'laplace'` or
-# `'none'`, the filter's marginal for `'augmented'`. `'marginal'`/`'joint'` ask
-# for one explicitly;
-# `'joint'` needs the Laplace structure (`intoverpop = 'laplace'` or
-# `'none'`) to have somewhere to put the effects, and is refused by name on
-# an augmented fit rather than silently sampling the marginal instead.
+# `control$target` names which posterior, resolved by
+# `.ctBackendSampleMarginal()` against the fit's route and the `intoverpop`
+# its caller wrote. `'joint'` needs the Laplace structure (`intoverpop =
+# 'laplace'` or `'none'`) to have somewhere to put the effects, and is refused
+# by name on an augmented fit rather than silently sampling the marginal
+# instead.
 #
 # `state_explicit` is not a `control` entry -- a caller of
 # `ctFitUncertainty()` never sets it, because a fit whose states are not
@@ -198,16 +221,8 @@
   verbose = 0, state_explicit = FALSE, handles = NULL) {
 
   .ctBackendSampleCheckControl(control)
-  target_arg <- .ctJuliaOr(control$target, "auto")
-  if (!identical(target_arg, "auto") && !target_arg %in% c("marginal", "joint")) {
-    stop("control$target must be 'auto', 'marginal' or 'joint', not '",
-      target_arg, "'.", call. = FALSE)
-  }
-  route <- .ctBackendIntOverPop(fit$model_spec)
-  marginal <- switch(target_arg,
-    marginal = TRUE,
-    joint = FALSE,
-    identical(route, "augmented"))
+  marginal <- .ctBackendSampleMarginal(control$target,
+    .ctBackendIntOverPop(fit$model_spec), requested = fit$args$input[["intoverpop"]])
   if (!marginal && is.null(fit$model_spec$laplace)) {
     stop("The joint posterior needs a fit made with intoverpop = 'laplace' ",
       "or 'none': the augmented route carries the random effects in the ",
@@ -755,7 +770,7 @@
 #' @keywords internal
 .ctBackendSampleEngine <- function(fit, target, chains, warmup, draws, cores,
   saveEffects, seed, control, verbose, progress = .ctVerboseOn(verbose),
-  callback = control$callback) {
+  callback = control$callback, coordinate = NULL) {
 
   settings <- .ctBackendSampleControl(control)
   budget <- .ctBackendSampleBudget(draws, chains, settings)
@@ -797,6 +812,9 @@
     if (!saem) "settle_tol")) {
     if (!is.null(settings[[name]])) arguments[[name]] <- settings[[name]]
   }
+  # A worker process's chains stop when the parent says, not by their own
+  # targets: `.ctBackendChainCoordinate()` (R/ctBackendSampleProcesses.R).
+  if (!is.null(coordinate)) arguments$coordinate <- coordinate
   # A live callback into R while the chains run, mirroring
   # `optimcontrol$callback` on `.ctJuliaOptimise()`: a front end that wants to
   # draw sampling progress rather than read it afterwards. Only chain 1 of an
@@ -1507,15 +1525,25 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # and its gradient again when its chain began. Ones are a valid mesh on any
   # rows. Only a start where the likelihood is not finite keeps the rule, and
   # pays that.
+  #
+  # `cores` counts every core the call uses at once, in every process. A
+  # warming worker takes one (`.ctBackendWarmSession()`), so warming overlaps
+  # the placement only where the placement keeps at least one of its own, and
+  # the placement then runs at `cores - workers`. Where it cannot -- two cores
+  # and four chains, the default -- the workers start after the placement,
+  # from `.ctBackendSampleProcesses()`, while this session waits. Overlapping
+  # regardless ran the placement at every core while each worker compiled.
   start0 <- .ctJuliaInitialValues(npar, inits,
     initsd = .ctJuliaOr(optimcontrol$initsd, .01))
   spec0 <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
   if (!is.null(spec0$substeps)) spec0$max_timestep <- rep(1L, length(spec0$times))
-  handles <- if (processes && .ctBackendSampleWorkers(chains, cores) > 1L &&
-      .ctBackendCanWarm()) {
-    .ctBackendWarmWorkers(spec0, workers = .ctBackendSampleWorkers(chains,
-      cores), values = start0, threads = max(1L, as.integer(cores) %/%
-      .ctBackendSampleWorkers(chains, cores)))
+  workers <- .ctBackendSampleWorkers(chains, cores)
+  overlap <- processes && workers > 1L && as.integer(cores) > workers &&
+    .ctBackendCanWarm()
+  placementcores <- if (overlap) as.integer(cores) - workers else cores
+  handles <- if (overlap) {
+    .ctBackendWarmWorkers(spec0, workers = workers, values = start0,
+      threads = max(1L, as.integer(cores) %/% workers))
   } else NULL
 
   # Placement: `.ctJuliaOptimiseFit()` (R/ctJuliaBackend.R) is the whole
@@ -1544,14 +1572,20 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # not where the exact posterior is, and SAEM is what finds that. No
   # Hessian, so no identifiability report from a placement optimum either; the
   # sampler's own flat-region check stands in.
-  jointtarget <- isTRUE(intoverstates) && switch(.ctJuliaOr(control$target, "auto"),
-    joint = TRUE, marginal = FALSE, intoverpop %in% c("laplace", "none"))
+  #
+  # The target is settled here, once, and handed on by name, so the
+  # placement and the sampler cannot disagree about it. ctFit() has already
+  # resolved 'auto' against the `intoverpop` its caller wrote; a backend
+  # caller that reaches this with 'auto' named its route.
+  marginal <- .ctBackendSampleMarginal(control$target, intoverpop)
+  jointtarget <- isTRUE(intoverstates) && !marginal
   if (jointtarget && identical(.ctBackendPlacementName(control$placement, FALSE), "saem")) {
     placementcontrol <- utils::modifyList(placementcontrol,
       list(estonly = TRUE, maxiter = 0L))
   }
   placementfit <- .ctJuliaOptimiseFit(model_spec = model_spec, datalong = datalong,
-    model = model, prepared_data = prepared_data, inits = inits, cores = cores,
+    model = model, prepared_data = prepared_data, inits = inits,
+    cores = placementcores,
     optimcontrol = placementcontrol, verbose = verbose, priors = priors,
     priorscope = priorscope, intoverpop = intoverpop, intoverstates = TRUE,
     gradient = gradient, correctlaplace = FALSE)
@@ -1562,14 +1596,13 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # not two to keep in step. `chains`/`warmup`/`draws`/`seed`/`saveEffects`/
   # `processes` were resolved above from `ctFit()`'s own `iter`/`optimcontrol`
   # vocabulary; folded into `control` here so the shared function reads them
-  # exactly as it reads a caller's own `control` list. `target` is left at
-  # `.ctBackendUncertaintySample()`'s default ('auto'): its own route
-  # inference from `.ctBackendIntOverPop(placementfit$model_spec)` already
-  # gives the joint posterior for `intoverpop='none'` and the marginal
-  # otherwise, which is what `intoverpop` says here too.
+  # exactly as it reads a caller's own `control` list, and `target` as
+  # resolved above: the placement fit carries no record of how its route was
+  # chosen.
   samplecontrol <- utils::modifyList(control,
     list(chains = chains, warmup = warmup, draws = draws, seed = seed,
-      saveEffects = saveEffects, processes = processes))
+      saveEffects = saveEffects, processes = processes,
+      target = if (marginal) "marginal" else "joint"))
   .ctBackendUncertaintySample(placementfit, control = samplecontrol,
     cores = cores, verbose = verbose, state_explicit = !isTRUE(intoverstates),
     handles = handles)

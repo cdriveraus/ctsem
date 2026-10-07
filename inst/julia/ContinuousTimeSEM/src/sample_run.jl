@@ -546,7 +546,7 @@ function _sample_to_target(density_for, centre, metric, nchains::Int,
     mean_ess::Float64, max_draws::Int, rhat_target::Float64, npar::Int,
     resume, verbose::Bool, overwrite::Bool=true; progress_callback=nothing,
     progress_sink=nothing, init_eps::Float64=0.0, starts=nothing,
-    t0::Float64=time())
+    t0::Float64=time(), coordinate=nothing)
 
     results = if resume === nothing
         _sample_chains(nchains, parallel, seed, centre, metric, nwarmup, ndraws,
@@ -570,7 +570,8 @@ function _sample_to_target(density_for, centre, metric, nchains::Int,
         return nothing
     end
     run = _sample_until_target(() -> _pool_draws(held[], npar), extend!, nchains,
-        ndraws, min_ess, mean_ess, max_draws, rhat_target, verbose; t0=t0)
+        ndraws, min_ess, mean_ess, max_draws, rhat_target, verbose; t0=t0,
+        coordinate=coordinate)
     return (results=held[], ndraws=run.total, trace=run.trace)
 end
 
@@ -592,54 +593,36 @@ not R-hat then held it open.
 """
 function _sample_until_target(pool, extend!, nchains::Int, ndraws::Int,
     min_ess::Float64, mean_ess::Float64, max_draws::Int, rhat_target::Float64,
-    verbose::Bool; t0::Float64=time())
+    verbose::Bool; t0::Float64=time(), coordinate=nothing)
     total = ndraws
     attempt = 0
     was_met = false
     trace = (draws=Int[], secs=Float64[], ess=Float64[], rhat=Float64[])
-    while min_ess > 0 || mean_ess > 0
-        diagnostics = ctsem_sample_diagnostics(pool(), nchains)
-        finite_ess = filter(isfinite, diagnostics.ess)
-        finite_tail = filter(isfinite, diagnostics.ess_tail)
-        finite_rhat = filter(isfinite, diagnostics.rhat)
-        # The worse of bulk and tail: the 5% and 95% points a summary reports
-        # rest on the tail's draws, and a chain that has missed a tail leaves
-        # the bulk figure untouched.
-        worst = isempty(finite_ess) ? 0.0 :
-            min(minimum(finite_ess), isempty(finite_tail) ? Inf : minimum(finite_tail))
-        average = isempty(finite_ess) ? 0.0 : sum(finite_ess) / length(finite_ess)
-        rhat = isempty(finite_rhat) ? Inf : maximum(finite_rhat)
-        push!(trace.draws, total); push!(trace.secs, time() - t0)
-        push!(trace.ess, worst); push!(trace.rhat, rhat)
-        met = worst >= min_ess && average >= mean_ess && rhat <= rhat_target
-        # Confirmed once before stopping. Stopping the moment a target is first
-        # met is a rule correlated with the quantity it tests: effective size is
-        # estimated with error, so a first crossing is more often a favourable
-        # error than a real one, and the realised size settles below target. One
-        # extra batch removes most of that, and costs one batch.
-        confirmed = met && was_met
-        if verbose
-            println(_console(), "  ", total, " draws per chain: min ESS (bulk and tail) ",
-                round(worst; digits=1), ", mean ESS ", round(average; digits=1),
-                ", worst R-hat ", round(rhat; digits=3),
-                confirmed ? " -- targets met" :
-                met ? " -- targets met, confirming" : "")
+    while coordinate !== nothing || min_ess > 0 || mean_ess > 0
+        wanted = if coordinate !== nothing
+            # Another process judges these chains with others it is running:
+            # hand it this batch and continue by however many it says, where
+            # zero ends the run. Its rule is `_sample_verdict` too, over every
+            # chain at once, so the chains stay one length and pool whole.
+            reply = coordinate(pool(), total)
+            reply === nothing ? 0 : Int(round(Float64(first(reply))))
+        else
+            v = _sample_verdict(pool(), nchains, ndraws, total, min_ess,
+                mean_ess, max_draws, rhat_target, was_met)
+            push!(trace.draws, total); push!(trace.secs, time() - t0)
+            push!(trace.ess, v.worst); push!(trace.rhat, v.rhat)
+            if verbose
+                println(_console(), "  ", total, " draws per chain: min ESS (bulk and tail) ",
+                    round(v.worst; digits=1), ", mean ESS ", round(v.average; digits=1),
+                    ", worst R-hat ", round(v.rhat; digits=3),
+                    v.confirmed ? " -- targets met" :
+                    v.met ? " -- targets met, confirming" : "")
+                v.budget && println(_console(), "  draw budget of ", max_draws,
+                    " per chain reached before the targets were met")
+            end
+            was_met = v.met
+            v.wanted
         end
-        was_met = met
-        confirmed && break
-        if total >= max_draws
-            verbose && println(_console(), "  draw budget of ", max_draws,
-                " per chain reached before the targets were met")
-            break
-        end
-        # Ask for as many more as the shortfall suggests, bounded below by a
-        # quarter of the last batch -- a tiny follow-up costs a round of
-        # scheduling and moves the estimate hardly at all -- and above by four
-        # times it, so one badly mixing coordinate cannot demand an enormous
-        # single batch on the strength of an early, noisy estimate.
-        shortfall = max(min_ess / max(worst, 1.0), mean_ess / max(average, 1.0))
-        wanted = clamp(ceil(Int, ndraws * (shortfall - 1)), fld(ndraws, 4), ndraws * 4)
-        wanted = min(wanted, max_draws - total)
         wanted <= 0 && break
         attempt += 1
         extend!(wanted, attempt)
@@ -647,6 +630,72 @@ function _sample_until_target(pool, extend!, nchains::Int, ndraws::Int,
     end
     return (total=total, trace=trace)
 end
+
+"""
+    _sample_verdict(pooled, nchains, ndraws, total, min_ess, mean_ess,
+        max_draws, rhat_target, was_met)
+
+One check of the stopping rule over `pooled` (`npar x (nchains * total)`,
+chain-major): whether the targets are met, and if not how many more draws per
+chain to ask for, `wanted`, which is zero once the run should end. The loop in
+`_sample_until_target` applies it to chains in one session, and
+`ctsem_sample_verdict` to chains in several processes, so the two stop alike.
+"""
+function _sample_verdict(pooled::AbstractMatrix, nchains::Int, ndraws::Int,
+    total::Int, min_ess::Float64, mean_ess::Float64, max_draws::Int,
+    rhat_target::Float64, was_met::Bool)
+    diagnostics = ctsem_sample_diagnostics(Matrix{Float64}(pooled), nchains)
+    finite_ess = filter(isfinite, diagnostics.ess)
+    finite_tail = filter(isfinite, diagnostics.ess_tail)
+    finite_rhat = filter(isfinite, diagnostics.rhat)
+    # The worse of bulk and tail: the 5% and 95% points a summary reports
+    # rest on the tail's draws, and a chain that has missed a tail leaves
+    # the bulk figure untouched.
+    worst = isempty(finite_ess) ? 0.0 :
+        min(minimum(finite_ess), isempty(finite_tail) ? Inf : minimum(finite_tail))
+    average = isempty(finite_ess) ? 0.0 : sum(finite_ess) / length(finite_ess)
+    rhat = isempty(finite_rhat) ? Inf : maximum(finite_rhat)
+    met = worst >= min_ess && average >= mean_ess && rhat <= rhat_target
+    # Confirmed once before stopping. Stopping the moment a target is first
+    # met is a rule correlated with the quantity it tests: effective size is
+    # estimated with error, so a first crossing is more often a favourable
+    # error than a real one, and the realised size settles below target. One
+    # extra batch removes most of that, and costs one batch.
+    confirmed = met && was_met
+    budget = !confirmed && total >= max_draws
+    wanted = 0
+    if !confirmed && !budget
+        # Ask for as many more as the shortfall suggests, bounded below by a
+        # quarter of the last batch -- a tiny follow-up costs a round of
+        # scheduling and moves the estimate hardly at all -- and above by four
+        # times it, so one badly mixing coordinate cannot demand an enormous
+        # single batch on the strength of an early, noisy estimate.
+        shortfall = max(min_ess / max(worst, 1.0), mean_ess / max(average, 1.0))
+        wanted = clamp(ceil(Int, ndraws * (shortfall - 1)), fld(ndraws, 4), ndraws * 4)
+        wanted = max(min(wanted, max_draws - total), 0)
+    end
+    return (wanted=wanted, met=met, confirmed=confirmed, budget=budget,
+        worst=worst, average=average, rhat=rhat)
+end
+
+"""
+    ctsem_sample_verdict(pooled, nchains; ndraws, total, min_ess, mean_ess,
+        max_draws, rhat_target, was_met)
+
+`_sample_verdict` for a caller pooling chains that ran in separate processes,
+each continued by the `coordinate` keyword of `ctsem_sample`,
+`ctsem_sample_marginal` and `ctsem_saem_sample`. `ndraws` is the first
+batch per chain, which sizes the next one as it does in one session.
+"""
+function ctsem_sample_verdict(pooled::AbstractMatrix, nchains::Integer;
+    ndraws::Integer, total::Integer, min_ess::Real=0.0, mean_ess::Real=0.0,
+    max_draws::Integer=0, rhat_target::Real=1.01, was_met::Bool=false)
+    return _sample_verdict(pooled, Int(nchains), Int(ndraws), Int(total),
+        Float64(min_ess), Float64(mean_ess), max(Int(max_draws), Int(ndraws)),
+        Float64(rhat_target), was_met)
+end
+
+export ctsem_sample_verdict
 
 """Draws from every chain, population part only, chain-major."""
 function _pool_draws(results::Vector{_ChainResult}, npar::Int)
@@ -846,7 +895,7 @@ function _ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     progress_overwrite::Bool=true, progress_callback=nothing,
     progress_sink=nothing, stepsize::Real=0.0,
     starts::Union{Nothing,AbstractMatrix}=nothing, saem::Bool=false,
-    saem_nestep::Integer=50)
+    saem_nestep::Integer=50, coordinate=nothing)
 
     t0 = time()
     nchains = Int(nchains); nwarmup = Int(nwarmup); ndraws = Int(ndraws)
@@ -907,7 +956,8 @@ function _ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
         Float64(mean_ess), max(Int(max_draws), ndraws), Float64(rhat_target),
         sampler.npar, resume, verbose, progress_overwrite;
         progress_callback=progress_callback, progress_sink=progress_sink,
-        init_eps=Float64(stepsize), starts=chainstarts, t0=t0)
+        init_eps=Float64(stepsize), starts=chainstarts, t0=t0,
+        coordinate=coordinate)
     results = run.results
     ndraws = run.ndraws
 
@@ -1085,7 +1135,7 @@ function ctsem_sample_marginal(objective, values::AbstractVector;
     max_draws::Integer=0, rhat_target::Real=1.01, settle_tol::Real=0.0,
     resume=nothing, progress_overwrite::Bool=true, progress_callback=nothing,
     progress_sink=nothing, nparameters::Integer=0, stepsize::Real=0.0,
-    starts::Union{Nothing,AbstractMatrix}=nothing)
+    starts::Union{Nothing,AbstractMatrix}=nothing, coordinate=nothing)
 
     t0 = time()
     forward0 = ctsem_forward_gradients()
@@ -1178,7 +1228,7 @@ function ctsem_sample_marginal(objective, values::AbstractVector;
         verbose, progress_overwrite; progress_callback=progress_callback,
         progress_sink=progress_sink, init_eps=Float64(stepsize),
         starts=_sample_joint_starts(starts, centre, size(something(starts, centre), 1)),
-        t0=t0)
+        t0=t0, coordinate=coordinate)
     results = run.results
     ndraws = run.ndraws
 

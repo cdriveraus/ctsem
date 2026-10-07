@@ -150,15 +150,15 @@ the Laplace approximation's -- and starts each chain from SAEM's estimate and
 its draws of the random effects, for either sampler; \code{'fit'} starts them
 around the fit's own estimate, and is the only placement for a marginal
 target, which has no random effects to start. \code{control$target}
-says which posterior: \code{'auto'} (the default) is the exact posterior
-the fit's route can reach -- the joint posterior over population parameters
-\emph{and} every subject's random effects for \code{intoverpop =
-'laplace'} or \code{'none'}, with the Laplace fit serving only to place the
-chains, and the filter's marginal for \code{intoverpop = 'augmented'}.
-\code{'marginal'}/\code{'joint'} ask for one explicitly regardless of
-route; \code{'marginal'} on a Laplace fit samples the Laplace marginal,
-an approximate posterior whose dimension does not grow with the subject
-count, and \code{'joint'} is refused by name on an \code{intoverpop =
+says which posterior: \code{'auto'} (the default) is the one the fit's
+\code{intoverpop} names -- the filter's marginal for \code{'augmented'}, the
+Laplace marginal for a fit that asked for \code{'laplace'} (an approximate
+posterior whose dimension does not grow with the subject count), and the
+joint posterior over population parameters \emph{and} every subject's
+random effects for \code{'none'} or for a Laplace route that
+\code{intoverpop = 'auto'} chose, where the Laplace fit only places the
+chains. \code{'marginal'}/\code{'joint'} ask for one explicitly regardless
+of route; \code{'joint'} is refused by name on an \code{intoverpop =
 'augmented'} fit, which has no separate random effect to sample jointly
 with the parameters. See
 \code{\link{ctJuliaSetup}} for the thread count that decides whether
@@ -185,10 +185,12 @@ proposal. For \code{uncertainty='is'}, \code{draws} is set to \code{'imis'}.}
 (\code{fit$stanfit$rawposterior} for stan, \code{fit$estimate$rawposterior}
 for julia) is reused when available; otherwise 1000 samples are used.}
 
-\item{cores}{Number of cores. If \code{NULL}, one core is used, and nothing
+\item{cores}{The most CPU cores the call uses at once, counting every
+process it starts. If \code{NULL}, one core is used, and nothing
 is parallelised unless a value above one is asked for -- except for
 \code{'sample'}, which takes \code{getOption("mc.cores", 2)} as
-\code{ctFit} does, and runs at most that many chains at once. On a
+\code{ctFit} does, and shares it between at most that many worker
+processes, which run the chains. On a
 \code{ctStanFit} these are R worker processes: each
 log-probability/gradient evaluation is split across subjects and reassembled,
 and score contributions and transformed quantities use them too. On a
