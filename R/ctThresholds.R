@@ -91,6 +91,7 @@ NULL
 #' @noRd
 .ctAsymptoteRows <- function(pars, n) {
   out <- integer(n)
+  if (is.null(pars)) return(out)
   a <- pars[pars$matrix %in% 'ASYMPTOTES', , drop = FALSE]
   if (!nrow(a)) return(out)
   default <- ifelse(a$col == 1L, 0, 1)
