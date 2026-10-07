@@ -512,19 +512,22 @@ simplifystanfunction<-function(bcalc,simplify=TRUE){ #input text of list of comp
 # path reads these codes too (R/ctBackendSummary.R, R/ctJuliaBackend.R). Do not
 # delete with stan.
 .ctMatricesList <- function(unsafe=FALSE){
-  # THRESHOLDS exists only on models with an ordinal manifest variable, which
-  # only the julia backend accepts -- ctFit refuses them for stan, and the
-  # julia branch returns before ctStanModelWriter is reached, so no .stan file
-  # ever sees code 11. It has to be registered here all the same: parameter
-  # numbers come from matsetup, and a matrix missing from this list would fall
-  # back to a separate numbering that collides with it.
   base <- c(PARS=10, T0MEANS=1,LAMBDA=2,DRIFT=3,DIFFUSION=4,MANIFESTVAR=5,MANIFESTMEANS=6, CINT=7,
-    T0VAR=8,TDPREDEFFECT=9,THRESHOLDS=11)
+    T0VAR=8,TDPREDEFFECT=9)
   jacobian = c(JAx=52,Jtd=53,Jy=54) #J0=51,
   asymptotic = c(asymCINT=21,asymDIFFUSIONcov=22)
   extra <- c(DIFFUSIONcov=31,MANIFESTcov=32,T0cov=33)
-  all <- c(base,jacobian,asymptotic, extra)
-  mn <- list(base=base, jacobian=jacobian, asymptotic=asymptotic, extra=extra,all=all)
+  # Matrices only the julia engine reads -- ordinal thresholds and binary
+  # asymptotes, both refused by ctFit on stan. Registered here because
+  # parameter numbers come from matsetup, and a matrix missing from this list
+  # would fall back to a separate numbering that collides with it; kept out of
+  # `base` because the stan programs are generated from `base`
+  # (dev/regenerate-stan.R), and would otherwise declare and compute matrices
+  # no stan fit can have.
+  julia <- c(THRESHOLDS=11, ASYMPTOTES=12)
+  all <- c(base,jacobian,asymptotic, extra, julia)
+  mn <- list(base=base, jacobian=jacobian, asymptotic=asymptotic, extra=extra,
+    julia=julia, all=all)
   mn$driftcint <- all[names(all) %in% c('DRIFT','CINT')]
   mn$diffusion <- all[names(all) %in% c('DIFFUSION','JAx')]
   mn$tdpred <- all[names(all) %in% c('TDPREDEFFECT','Jtd')]
@@ -565,7 +568,7 @@ simplifystanfunction<-function(bcalc,simplify=TRUE){ #input text of list of comp
   
   matlist <- listOfMatrices(ctspec) #put back into matrix form
   # matlist <- unfoldmats(matlist) #unfold references to basic state
-  ctspecp <- ctModelUnlist(matlist,matnames = names(c(mats$base,mats$jacobian))) #convert back to list
+  ctspecp <- ctModelUnlist(matlist,matnames = names(c(mats$base,mats$jacobian,mats$julia))) #convert back to list
   ctspecp <- ctModelStatesAndPARS(ctspecp,statenames=ctm$latentNames,tdprednames=ctm$TDpredNames) #ensure PARS[,] refs are not replaced by names
   ctspec[order(ctspec$matrix, ctspec$row,ctspec$col),colnames(ctspecp)] <-  
     ctspecp[order(ctspecp$matrix, ctspecp$row,ctspecp$col),] #replace updated columns, free of direct references

@@ -34,11 +34,13 @@ model:
 |---|---|---|
 | discrimination $a$ | `LAMBDA` | free loading |
 | difficulty $b$ | `MANIFESTMEANS` | enters as $-ab$ |
-| guessing $c$ | `asymptotes = 1` | lower asymptote |
-| upper asymptote $d$ | `asymptotes = 2` | also frees $c$ |
+| guessing $c$ | `ASYMPTOTES[, 'lower']` | lower asymptote |
+| upper asymptote $d$ | `ASYMPTOTES[, 'upper']` | ceiling |
 
-So the two parameter model needs no special argument at all, and `asymptotes`
-adds the other two. Ordinal items are in the measurement models vignette; this
+So the two parameter model needs no special argument at all. `ASYMPTOTES` has
+a row per binary item and a column for each asymptote. A cell left `NA` is no
+asymptote on that side, a number between 0 and 1 fixes it, and a name
+estimates it. Ordinal items are in the measurement models vignette; this
 one is about binary items and what has to be held fixed to estimate them.
 
 # The response curves
@@ -104,23 +106,19 @@ guess <- 0.20
 
 gen <- ctModel(type = 'ct', n.latent = 1, n.manifest = nitem,
   manifestNames = items, latentNames = 'eta',
-  manifesttype = rep(1, nitem), asymptotes = rep(1, nitem),
+  manifesttype = rep(1, nitem), ASYMPTOTES = c(guess, NA),
   LAMBDA = matrix(a, nitem, 1), MANIFESTMEANS = matrix(-a * b, nitem, 1),
   DRIFT = matrix(-0.4), DIFFUSION = matrix(1.2), T0VAR = matrix(1.342),
   T0MEANS = matrix(0), CINT = matrix(0), MANIFESTVAR = diag(0, nitem),
   Tpoints = 8)
 
-# The guessing probability is THRESHOLDS column 1. Fixing it to generate from
-# a known value; in a model being fitted it is left free.
-lower <- gen$pars$matrix == 'THRESHOLDS' & gen$pars$col == 1
-gen$pars$value[lower] <- guess
-gen$pars$param[lower] <- NA
-gen$pars$transform[lower] <- NA
-
 set.seed(7)
 d <- data.frame(ctGenerate(gen, n = 250, Tpoints = 8, dtmean = 0.9,
   backend = 'julia'))
 ```
+
+A length 2 vector, as here, fills every binary item's row: the lower asymptote
+fixed at the guessing probability, and no upper one.
 
 The floor is visible in the data. An item far above someone's ability is still
 answered correctly about `c` of the time, where a 2PL would go to zero:
@@ -139,29 +137,29 @@ ggplot(data.frame(p = c(mean(hardest), guess +
   theme_bw() + labs(x = NULL, y = 'P(correct), hardest item')
 ```
 
-Fitting needs one line changed between the three models — `asymptotes`.
+Fitting needs one argument changed between the models — `ASYMPTOTES`. A name
+in place of a number estimates that asymptote, and the same name on every item
+estimates one guessing parameter for the whole test. Per item is possible
+(`cbind(paste0('guess_', items), NA)`) and much harder to estimate; sharing is
+the usual starting point.
 
 ```{r fit}
-irtmodel <- function(asymptotes = NULL) {
+irtmodel <- function(ASYMPTOTES = NA) {
   m <- ctModel(type = 'ct', n.latent = 1, n.manifest = nitem,
     manifestNames = items, latentNames = 'eta',
-    manifesttype = rep(1, nitem), asymptotes = asymptotes,
+    manifesttype = rep(1, nitem), ASYMPTOTES = ASYMPTOTES,
     # Scale: the first loading is fixed at 1 and DIFFUSION is free.
     LAMBDA = matrix(c(1, paste0('a_', items[-1])), nitem, 1),
     # Location: the latent is centred, so MANIFESTMEANS are the difficulties.
     CINT = matrix(0), T0MEANS = matrix(0),
     MANIFESTVAR = diag(0, nitem))
   m$pars$indvarying <- FALSE
-  # One guessing parameter for the whole test. Per item is possible and much
-  # harder to estimate; sharing is the usual starting point.
-  if (!is.null(asymptotes)) m$pars$param[m$pars$matrix == 'THRESHOLDS' &
-      m$pars$col == 1 & !is.na(m$pars$param)] <- 'guess'
   m
 }
 
 fit2 <- ctFit(d[, c('id', 'time', items)], irtmodel(),
   backend = 'julia', cores = 1, priors = TRUE)
-fit3 <- ctFit(d[, c('id', 'time', items)], irtmodel(rep(1, nitem)),
+fit3 <- ctFit(d[, c('id', 'time', items)], irtmodel(c('guess', NA)),
   backend = 'julia', cores = 1, priors = TRUE)
 ```
 
@@ -188,18 +186,15 @@ ctDiscretePars(fit3, times = seq(0, 8, .1), plot = TRUE, indices = 'AR',
 
 # Four parameters, and when to stop
 
-`asymptotes = 2` frees the ceiling as well. It is reported as a gap: the model
-estimates how far the upper asymptote sits from the lower one as a proportion
-of the room left, so that $0 \le c < d \le 1$ holds without either parameter
-having to know the other's value.
+Naming the second column frees the ceiling as well. Both are reported as the
+probabilities they are, and either can be estimated without the other — a
+ceiling alone, `c(NA, 'ceiling')`, is the model for items that able people
+sometimes slip on but nobody guesses.
 
 ```{r fourpl}
-m4 <- irtmodel(rep(2, nitem))
-m4$pars$param[m4$pars$matrix == 'THRESHOLDS' & m4$pars$col == 2 &
-    !is.na(m4$pars$param)] <- 'uppergap'
-fit4 <- ctFit(d[, c('id', 'time', items)], m4, backend = 'julia', cores = 1,
-  priors = TRUE)
-round(summary(fit4)$popmeans[c('guess', 'uppergap'), ], 3)
+fit4 <- ctFit(d[, c('id', 'time', items)], irtmodel(c('guess', 'ceiling')),
+  backend = 'julia', cores = 1, priors = TRUE)
+round(summary(fit4)$popmeans[c('guess', 'ceiling'), ], 3)
 ```
 
 These data were generated with no ceiling, so the four parameter model is
@@ -211,7 +206,7 @@ same information. Three practical points:
 * **Share the asymptote across items** unless you have a reason and the data
   to do otherwise.
 * **Use `priors = TRUE`.** The default prior puts the guessing probability
-  near 0.18 and the ceiling near 1, which is where they belong when the data
+  near 0.18 and the ceiling near 0.95, which is where they belong when the data
   are quiet about them.
 * **Check the fit converged** rather than reading the estimate. A guessing
   parameter reported without a standard error, or alongside a warning about
@@ -219,8 +214,8 @@ same information. Three practical points:
 
 # Summary
 
-* A free loading on a binary indicator is already a 2PL; `asymptotes = 1` and
-  `2` add the third and fourth parameters.
+* A free loading on a binary indicator is already a 2PL; naming cells of
+  `ASYMPTOTES` adds a guessing parameter, a ceiling, or both.
 * Fix either one loading or `DIFFUSION` to set the latent scale. The
   stationary variance cannot be fixed directly, being
   $\text{DIFFUSION}^2/(2|\text{DRIFT}|)$.

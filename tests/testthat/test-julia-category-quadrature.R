@@ -237,6 +237,71 @@ test_that('the mode solve reaches a stationary point for every kind', {
   }
 })
 
+test_that('ASYMPTOTES is a matrix of its own, one row per binary indicator', {
+  # Fit-free. The asymptotes once lived in THRESHOLDS cells, picked out by a
+  # transform chosen from the parameter's name. This pins that they are their
+  # own matrix with a row per binary indicator and nothing else, that NA means
+  # no asymptote and a matrix with none is no matrix, that each column gets its
+  # probability transform by position, and that each manifest variable maps
+  # to its row. The continuous variable comes first, so that a manifest index
+  # and an ASYMPTOTES row differ and a mixed-up map cannot pass.
+  nm <- c('g1', 'b1', 'b2')
+  type <- c(0, 1, 1)
+  build <- function(...) ctModel(type = 'ct', n.latent = 1, n.manifest = 3,
+    manifestNames = nm, latentNames = 'eta', manifesttype = type,
+    LAMBDA = matrix(1, 3, 1), silent = TRUE, ...)
+  has <- function(m) any(m$pars$matrix %in% 'ASYMPTOTES')
+
+  expect_false(has(build()))
+  expect_false(has(build(ASYMPTOTES = c(NA, NA))))
+  expect_false(has(build(ASYMPTOTES = c(0, 1))))
+
+  m <- build(ASYMPTOTES = c('guess', NA))
+  a <- m$pars[m$pars$matrix %in% 'ASYMPTOTES', ]
+  expect_equal(max(a$row), 2)
+  expect_equal(a$param[a$col == 1], c('guess', 'guess'))
+  expect_equal(a$value[a$col == 2], c(1, 1))
+  expect_false(any(m$pars$matrix %in% 'THRESHOLDS'))
+  expect_equal(.ctAsymptoteRows(m$pars, type), c(0L, 1L, 2L))
+  expect_equal(dimnames(.ctCheckAsymptoteMatrix(c('guess', NA), type, nm)),
+    list(c('b1', 'b2'), c('lower', 'upper')))
+
+  # The prior centres: a guessing probability near 0.18, a ceiling near 0.95.
+  tf <- function(p) eval(parse(text = p$transform), list(param = 0))
+  expect_equal(tf(a[a$row == 1 & a$col == 1, ]), stats::plogis(-1.5))
+  p <- build(ASYMPTOTES = rbind(c(NA, 'ceiling'), c(0.25, NA)))$pars
+  expect_equal(tf(p[p$matrix %in% 'ASYMPTOTES' & p$row == 1 & p$col == 2, ]),
+    stats::plogis(3))
+  # A fixed value away from its bound is an asymptote too; a row at its
+  # bounds maps to nothing.
+  expect_equal(.ctAsymptoteRows(p, type), c(0L, 1L, 2L))
+  expect_equal(.ctAsymptoteRows(build(ASYMPTOTES = rbind(c(NA, NA),
+    c(0.25, NA)))$pars, type), c(0L, 0L, 2L))
+
+  expect_error(build(ASYMPTOTES = matrix('g', 3, 2)),
+    'one row per binary indicator (2: b1, b2)', fixed = TRUE)
+  expect_error(build(ASYMPTOTES = c(1.5, NA)), 'between 0 and 1')
+  expect_error(build(ASYMPTOTES = c(NA, -0.1)), 'between 0 and 1')
+  expect_error(ctModel(type = 'ct', LAMBDA = matrix(1), silent = TRUE,
+    ASYMPTOTES = c('guess', NA)), 'has none')
+
+  # Stan has no asymptotes in its binary measurement and would fit the two
+  # parameter model without a word, so it refuses before anything compiles.
+  dat <- data.frame(id = rep(1:2, each = 3), time = rep(0:2, 2),
+    g1 = seq(-1, 1, 0.4), b1 = c(0, 1, 0, 1, 1, 0), b2 = c(1, 1, 0, 0, 1, 0))
+  expect_error(ctFit(dat, m, backend = 'stan'), 'backend="julia"',
+    fixed = TRUE)
+  # `pars` and `manifesttype` can be edited after ctModel, so the fit checks
+  # again: a fixed value out of range, and rows no longer matching the items.
+  m2 <- m
+  m2$pars$value[m2$pars$matrix %in% 'ASYMPTOTES' & m2$pars$col == 2][1] <- 1.2
+  expect_error(ctFit(dat, m2, backend = 'julia'), 'between 0 and 1')
+  m3 <- m
+  m3$manifesttype <- c(0, 1, 0)
+  expect_error(ctFit(dat, m3, backend = 'julia'),
+    'ASYMPTOTES has 2 rows but the model has 1 binary')
+})
+
 test_that('binary asymptotes reduce to plain binary and match direct integration', {
   skip_on_cran()
   skip_without_julia()
@@ -290,7 +355,12 @@ test_that('binary asymptotes reduce to plain binary and match direct integration
     list(0,    1, 0, 0.20, 1.00),
     list(2,    2, 1, 0.25, 0.90),      # 4PL
     list(-6,   2, 0, 0.15, 0.85),      # 4PL, incorrect response
-    list(0,  0.5, 1, 0.35, 1.00))
+    list(0,  0.5, 1, 0.35, 1.00),
+    # Crossed, lower above upper: the curve reflected, which the two free
+    # cells can reach, and which has a likelihood like any other.
+    list(1,  1.5, 1, 0.80, 0.30),
+    list(-2,   3, 0, 0.90, 0.05),
+    list(0,    1, 1, 0.40, 0.40))      # no span: the posterior is the prior
   for (cs in cases) {
     got <- moments(cs[[1]], cs[[2]], cs[[3]], c(cs[[4]], cs[[5]]))
     want <- direct(cs[[1]], cs[[2]], cs[[3]], cs[[4]], cs[[5]])
@@ -326,9 +396,13 @@ test_that('the asymptote score is the derivative of the asymptote likelihood', {
 
   h <- 1e-4
   sawnegative <- FALSE
-  for (cc in c(0, 0.15, 0.3)) for (dd in c(0.85, 1))
+  # 0.9 against 0.2 is a crossed pair, which takes its own branch.
+  for (cd in list(c(0, 0.85), c(0, 1), c(0.15, 0.85), c(0.15, 1),
+      c(0.3, 0.85), c(0.3, 1), c(0.9, 0.2)))
     for (e in c(-3, -1, 0, 1, 3)) for (y in c(0, 1)) {
-      ex <- c(cc, dd)
+      ex <- cd
+      cc <- cd[1]
+      dd <- cd[2]
       got <- sc(e, y, ex)
       expect_equal(got[1], (ll(e + h, y, ex) - ll(e - h, y, ex)) / (2 * h),
         tolerance = 1e-5, info = paste0('score c=', cc, ' d=', dd, ' eta=', e))
@@ -352,10 +426,10 @@ test_that('the gradient of a binary model with asymptotes matches finite differe
 
   # The forward pass and the reverse pass are separate code, and a reverse pass
   # can be wrong while every likelihood in the package is right. That is what
-  # happened here: the adjoint mapped an asymptote's cotangent back onto its
+  # happened here, when the ceiling was stored as a gap `g` with
+  # `d = c + (1-c)g`: the adjoint mapped an asymptote's cotangent back onto its
   # parameter cell with the rule the ordinal thresholds use -- a reverse
-  # cumulative sum, correct when threshold k is a sum of gaps and wrong when
-  # `d = c + (1-c)g`. Nothing in the likelihood tests could see it. The fit
+  # cumulative sum. Nothing in the likelihood tests could see it. The fit
   # stopped at a gradient norm of 6536, where a converged one is 1e-3, and the
   # diagnostics then reported the guessing parameter as unidentified with
   # negative curvature -- a description of a point that was not a mode, which
@@ -372,15 +446,11 @@ test_that('the gradient of a binary model with asymptotes matches finite differe
   difficulty <- seq(-1.2, 1.2, length.out = nit)
   gen <- ctModel(type = 'ct', n.latent = 1, n.manifest = nit,
     manifestNames = nm, latentNames = 'eta', manifesttype = rep(1L, nit),
-    asymptotes = rep(1L, nit), LAMBDA = matrix(loadings, nit, 1),
+    ASYMPTOTES = c(0.2, NA), LAMBDA = matrix(loadings, nit, 1),
     DRIFT = matrix(-0.5), DIFFUSION = matrix(1.3), T0VAR = matrix(1.3),
     T0MEANS = matrix(0), CINT = matrix(0),
     MANIFESTMEANS = matrix(-loadings * difficulty, nit, 1),
     MANIFESTVAR = diag(0, nit), Tpoints = 5)
-  fixed <- gen$pars$matrix %in% 'THRESHOLDS' & gen$pars$col == 1
-  gen$pars$value[fixed] <- 0.2
-  gen$pars$param[fixed] <- NA
-  gen$pars$transform[fixed] <- NA
   set.seed(5)
   d <- data.frame(ctGenerate(gen, n = 30, Tpoints = 5, dtmean = 0.8,
     backend = 'julia'))
@@ -391,29 +461,7 @@ test_that('the gradient of a binary model with asymptotes matches finite differe
     function _ctsem_test_grad(obj, x)
       collect(ContinuousTimeSEM.ctsem_adjoint_gradient(obj, x).gradient) end')
 
-  for (asym in c(0L, 1L, 2L)) {
-    model <- ctModel(type = 'ct', n.latent = 1, n.manifest = nit,
-      manifestNames = nm, latentNames = 'eta', manifesttype = rep(1L, nit),
-      asymptotes = if (asym == 0L) NULL else rep(asym, nit),
-      LAMBDA = matrix(c(1, paste0('a_', nm[-1])), nit, 1),
-      CINT = matrix(0), T0MEANS = matrix(0), MANIFESTVAR = diag(0, nit))
-    model$pars$indvarying <- FALSE
-    # One shared asymptote, which is both the usual way to make it estimable
-    # and the case where a wrong cotangent is summed over items rather than
-    # cancelling.
-    if (asym >= 1L) model$pars$param[model$pars$matrix %in% 'THRESHOLDS' &
-        model$pars$col == 1 & !is.na(model$pars$param)] <- 'guess'
-    if (asym >= 2L) model$pars$param[model$pars$matrix %in% 'THRESHOLDS' &
-        model$pars$col == 2 & !is.na(model$pars$param)] <- 'upper'
-
-    fit <- ctFit(d[, c('id', 'time', nm)], model, backend = 'julia', cores = 1,
-      optimcontrol = list(maxiter = 1), priors = TRUE)
-    objective <- .ctJuliaObjective(fit)
-    # Away from the optimum on purpose: at a mode every gradient is near zero
-    # and agrees with anything.
-    set.seed(1)
-    at <- as.numeric(fit$estimate$raw) +
-      stats::rnorm(length(fit$estimate$raw), 0, 0.3)
+  checkgradient <- function(objective, at, info) {
     analytic <- JuliaConnectoR::juliaCall('_ctsem_test_grad', objective, at)
     step <- 1e-5
     numeric <- vapply(seq_along(at), function(i) {
@@ -423,7 +471,40 @@ test_that('the gradient of a binary model with asymptotes matches finite differe
           JuliaConnectoR::juliaCall('_ctsem_test_value', objective, down)) /
         (2 * step)
     }, numeric(1))
-    expect_equal(analytic, numeric, tolerance = 1e-5,
-      info = paste0('asymptotes = ', asym))
+    expect_equal(analytic, numeric, tolerance = 1e-5, info = info)
+  }
+
+  # One shared asymptote, which is both the usual way to make it estimable
+  # and the case where a wrong cotangent is summed over items rather than
+  # cancelling. The ceiling alone is the case the old integer code could not
+  # express.
+  for (asym in list(NA, c('guess', NA), c(NA, 'upper'), c('guess', 'upper'))) {
+    model <- ctModel(type = 'ct', n.latent = 1, n.manifest = nit,
+      manifestNames = nm, latentNames = 'eta', manifesttype = rep(1L, nit),
+      ASYMPTOTES = asym, silent = TRUE,
+      LAMBDA = matrix(c(1, paste0('a_', nm[-1])), nit, 1),
+      CINT = matrix(0), T0MEANS = matrix(0), MANIFESTVAR = diag(0, nit))
+    model$pars$indvarying <- FALSE
+    info <- paste0('ASYMPTOTES = ', paste(asym, collapse = ', '))
+
+    fit <- ctFit(d[, c('id', 'time', nm)], model, backend = 'julia', cores = 1,
+      optimcontrol = list(maxiter = 1), priors = TRUE)
+    objective <- .ctJuliaObjective(fit)
+    # Away from the optimum on purpose: at a mode every gradient is near zero
+    # and agrees with anything.
+    set.seed(1)
+    at <- as.numeric(fit$estimate$raw) +
+      stats::rnorm(length(fit$estimate$raw), 0, 0.3)
+    checkgradient(objective, at, info)
+
+    # And with the pair crossed, lower 0.82 above upper 0.27, which takes its
+    # own branch through the likelihood and the mixture moments.
+    if (all(c('guess', 'upper') %in% asym)) {
+      raw <- .ctFitRawParNames(fit)
+      expect_true(all(c('guess', 'upper') %in% raw))
+      at[raw == 'guess'] <- 3
+      at[raw == 'upper'] <- -4
+      checkgradient(objective, at, paste(info, 'crossed'))
+    }
   }
 })

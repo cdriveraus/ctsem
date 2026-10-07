@@ -198,14 +198,12 @@ struct EKFParameters{RG,PT,UT,TT,AX,FV}
     # THRESHOLDS and ignores the rest, so variables with different numbers of
     # categories can share one rectangular matrix.
     ncategories::Vector{Int}
-    # Asymptote count per manifest variable, read only by the binary ones: 0
-    # for a plain two parameter logistic, 1 when the lower asymptote is
-    # estimated (three parameter) and 2 when both are (four parameter). It
-    # says whether that row's THRESHOLDS cells are its asymptotes, which is a
-    # property of the model rather than of the values, so it cannot be
-    # recovered by looking at them -- a guessing parameter of zero is an
-    # ordinary place for an optimizer to be.
-    nasymptotes::Vector{Int}
+    # Per manifest variable, the row of ASYMPTOTES it reads -- that matrix has
+    # one row per binary indicator -- or 0 for the plain two parameter
+    # logistic. A property of the model rather than of the values, so it
+    # cannot be recovered by looking at them: a guessing parameter of zero is
+    # an ordinary place for an optimizer to be.
+    asymptoterow::Vector{Int}
     # Censoring limits per manifest variable, read only by the censored ones.
     # Known constants rather than parameters: a scale's floor and ceiling are
     # properties of the instrument, not things the data can inform. Empty means
@@ -299,7 +297,7 @@ struct EKFParameters{RG,PT,UT,TT,AX,FV}
         continuous_time::Bool=true,
         manifesttype=Int[],
         ncategories=Int[],
-        nasymptotes=Int[],
+        asymptoterow=Int[],
         censormin=Float64[],
         censormax=Float64[],
         covmatcode::Int=0,
@@ -314,8 +312,8 @@ struct EKFParameters{RG,PT,UT,TT,AX,FV}
         # positional, so inserting a field shifts every caller that passes the
         # ones after it -- silently, because the types are compatible either
         # way: `Vector{Int}([0.0])` succeeds, so a censoring limit of zero
-        # becomes an asymptote count. `nasymptotes` was inserted ahead of these
-        # two and that is exactly what happened, and the only symptom was
+        # becomes an asymptote row. `asymptoterow` was inserted ahead of
+        # these two and that is exactly what happened, and the only symptom was
         # generated data clamped at the wrong limit.
         #
         # R builds both limits as n.manifest length vectors or neither, so
@@ -367,7 +365,7 @@ struct EKFParameters{RG,PT,UT,TT,AX,FV}
             continuous_time,
             Vector{Int}(manifesttype),
             Vector{Int}(ncategories),
-            Vector{Int}(nasymptotes),
+            Vector{Int}(asymptoterow),
             Vector{Float64}(censormin),
             Vector{Float64}(censormax),
             covmatcode,

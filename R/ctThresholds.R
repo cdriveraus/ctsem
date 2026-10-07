@@ -33,34 +33,111 @@
 #' @noRd
 NULL
 
-#' Check and normalise the asymptotes argument.
+#' Check the ASYMPTOTES matrix argument.
 #'
-#' How many asymptotes each binary variable estimates: 0 for the two parameter
-#' logistic ctsem has always fitted, 1 for a lower asymptote (three parameter,
-#' the guessing probability) and 2 for both (four parameter).
+#' A binary indicator's response probability is `lower + (upper - lower) F`,
+#' with `F` the logistic of the linear predictor. ASYMPTOTES holds `lower` and
+#' `upper` as its two columns, on the same terms as any other matrix: a number
+#' fixes a cell and a name frees it. Each cell is
+#' the probability itself, so a fixed ceiling with a free floor, a ceiling
+#' alone, or one guessing parameter shared by name across items are all just
+#' cells -- none needs a mode of its own.
 #'
-#' A count per variable rather than a logical, because the three cases are
-#' nested and an integer says which without a second argument. Zeroed for
-#' every non-binary variable for the reason `.ctCheckNcategories` zeroes its
-#' own: nothing downstream should have to remember to ignore it.
+#' One row per binary indicator, in manifest order and named by it, so the
+#' matrix holds nothing that is not an asymptote. NA means no asymptote on
+#' that side -- the bound itself, 0 or 1 -- and is stored as that bound, so the
+#' cells downstream are numbers and names like every other matrix's. A matrix
+#' with no cell left away from its bound is no matrix at all: nothing is built,
+#' fitted or reported.
+#'
+#' A length 2 vector is the one shorthand. It fills every binary row, which is
+#' the usual model: `c('guess', NA)` is one guessing parameter for the whole
+#' test.
 #' @noRd
-.ctCheckAsymptotes <- function(asymptotes, manifesttype, manifestNames) {
-  n <- length(manifesttype)
-  if (is.null(asymptotes)) return(rep(0L, n))
-  if (length(asymptotes) == 1L) asymptotes <- rep(asymptotes, n)
-  if (length(asymptotes) != n) stop('asymptotes must have one entry per ',
-    'manifest variable (', n, '), or be a single value', call. = FALSE)
-  asymptotes <- as.integer(asymptotes)
-  asymptotes[is.na(asymptotes)] <- 0L
-  if (any(!asymptotes %in% 0:2)) stop('asymptotes must be 0 (two parameter ',
-    'logistic), 1 (three parameter -- a lower asymptote) or 2 (four ',
-    'parameter -- both)', call. = FALSE)
-  wrong <- asymptotes > 0 & !manifesttype %in% 1L
-  if (any(wrong)) stop('asymptotes apply to binary indicators (manifesttype ',
-    '1) only. Check: ', paste(manifestNames[wrong], collapse = ', '),
-    call. = FALSE)
-  asymptotes[!manifesttype %in% 1L] <- 0L
-  asymptotes
+.ctCheckAsymptoteMatrix <- function(ASYMPTOTES, manifesttype, manifestNames) {
+  if (is.null(ASYMPTOTES) || all(is.na(ASYMPTOTES))) return(NULL)
+  binary <- manifestNames[manifesttype %in% 1L]
+  nb <- length(binary)
+  if (!nb) stop('ASYMPTOTES applies to binary indicators ',
+    '(manifesttype 1), and this model has none', call. = FALSE)
+  if (!is.matrix(ASYMPTOTES)) {
+    if (length(ASYMPTOTES) != 2L) stop('ASYMPTOTES must be a matrix with one ',
+      'row per binary indicator and two columns (lower, upper), or a length 2 ',
+      'vector applied to every binary indicator', call. = FALSE)
+    ASYMPTOTES <- matrix(ASYMPTOTES, nb, 2, byrow = TRUE)
+  }
+  if (!identical(dim(ASYMPTOTES), c(nb, 2L))) stop('ASYMPTOTES needs one row ',
+    'per binary indicator (', nb, ': ', paste(binary, collapse = ', '),
+    ') and two columns (lower, upper); got ',
+    paste(dim(ASYMPTOTES), collapse = ' * '), call. = FALSE)
+  out <- matrix(as.character(ASYMPTOTES), nb, 2,
+    dimnames = list(binary, c('lower', 'upper')))
+  out[is.na(out) | trimws(out) %in% 'NA'] <- NA
+  out[is.na(out[, 1]), 1] <- '0'
+  out[is.na(out[, 2]), 2] <- '1'
+  .ctCheckAsymptoteValues(suppressWarnings(as.numeric(out)))
+  if (!.ctAsymptoteMoved(out)) return(NULL)
+  out
+}
+
+#' TRUE where a cell is free or fixed away from its bound, 0 for the lower
+#' column and 1 for the upper. Takes the matrix (cells as text) or a pars
+#' subset (`param`, `value`, `col`).
+#' @noRd
+.ctAsymptoteMoved <- function(x) {
+  if (is.matrix(x)) {
+    num <- suppressWarnings(matrix(as.numeric(x), nrow(x), 2))
+    bound <- matrix(c(0, 1), nrow(x), 2, byrow = TRUE)
+    return(any(is.na(num) | num != bound))
+  }
+  bound <- ifelse(x$col == 1L, 0, 1)
+  !is.na(x$param) | (!is.na(x$value) & x$value != bound)
+}
+
+.ctCheckAsymptoteValues <- function(values) {
+  values <- values[!is.na(values)]
+  if (any(values < 0 | values > 1)) stop('a fixed asymptote is a probability, ',
+    'so must lie between 0 and 1 -- or NA for none', call. = FALSE)
+  invisible(NULL)
+}
+
+#' For each manifest variable, the ASYMPTOTES row it reads, or 0.
+#'
+#' Row k of ASYMPTOTES is the k-th binary indicator, so this is the map the
+#' engine indexes with. A row whose cells all sit at their bounds maps to 0
+#' and takes the plain logistic path -- the same likelihood without the
+#' mixture's cost.
+#'
+#' Read from `pars` at fit time rather than from ctModel's argument, because a
+#' cell can be freed or fixed in `pars` afterwards. And decided by the model
+#' rather than by the values the engine meets: a free guessing parameter at
+#' zero is an ordinary place for an optimizer to be, and is still a row with
+#' asymptotes.
+#' @noRd
+.ctAsymptoteRows <- function(pars, manifesttype) {
+  out <- integer(length(manifesttype))
+  if (is.null(pars)) return(out)
+  a <- pars[pars$matrix %in% 'ASYMPTOTES', , drop = FALSE]
+  if (!nrow(a)) return(out)
+  binary <- which(manifesttype %in% 1L)
+  rows <- unique(a$row[.ctAsymptoteMoved(a)])
+  rows <- rows[rows <= length(binary)]
+  out[binary[rows]] <- as.integer(rows)
+  out
+}
+
+#' The fit-time half of `.ctCheckAsymptoteMatrix`: `pars` can be edited after
+#' ctModel, and `manifesttype` too, which would leave the rows matched to the
+#' wrong items.
+#' @noRd
+.ctCheckAsymptotePars <- function(pars, manifesttype) {
+  a <- pars[pars$matrix %in% 'ASYMPTOTES', , drop = FALSE]
+  if (!nrow(a)) return(invisible(NULL))
+  nb <- sum(manifesttype %in% 1L)
+  if (max(a$row) != nb) stop('ASYMPTOTES has ', max(a$row), ' rows but the ',
+    'model has ', nb, ' binary indicators; it needs one row per binary ',
+    'indicator -- rebuild the model with ctModel()', call. = FALSE)
+  .ctCheckAsymptoteValues(a$value)
 }
 
 #' Check and normalise the ncategories argument.
@@ -95,30 +172,13 @@ NULL
 #' variable needs. Variables with fewer categories leave their trailing cells
 #' fixed at zero and the engine never reads them, which is what lets ordinal
 #' variables with different category counts share one rectangular matrix.
-#' @param asymptotes Per variable, as `.ctCheckAsymptotes` returns it. A
-#' binary variable with any takes the first two columns: its lower asymptote
-#' and then a gap, so that the engine can form `d = c + (1-c)g` and keep
-#' `0 <= c < d <= 1` without a cell's transform reading another cell's
-#' parameter. That is the same restriction the ordinal gaps exist for, and the
-#' same matrix, rather than a second one shaped like it.
 #' @noRd
-.ctThresholdMatrix <- function(ncategories, manifesttype, manifestNames,
-  asymptotes = NULL) {
+.ctThresholdMatrix <- function(ncategories, manifesttype, manifestNames) {
   n <- length(manifesttype)
-  if (is.null(asymptotes)) asymptotes <- rep(0L, n)
-  ncol <- max(c(ncategories - 1L, ifelse(asymptotes > 0L, 2L, 0L)))
+  ncol <- max(ncategories - 1L)
   out <- matrix(0, n, ncol,
     dimnames = list(manifestNames, paste0('threshold', seq_len(ncol))))
   for (i in seq_len(n)) {
-    if (asymptotes[i] > 0L) {
-      # Column 1 is the lower asymptote and column 2 the gap to the upper one.
-      # A three parameter model fixes the gap at 1, which makes the upper
-      # asymptote exactly 1 and costs the engine nothing to evaluate.
-      out[i, 1] <- paste0('asymptote_', manifestNames[i])
-      out[i, 2] <- if (asymptotes[i] >= 2L)
-        paste0('asymptotegap_', manifestNames[i]) else 1
-      next
-    }
     if (!manifesttype[i] %in% 2) next
     # Column 1 stays at its initialised zero: see the file header. The location
     # lives in MANIFESTMEANS, so the ambiguous model -- both free, neither

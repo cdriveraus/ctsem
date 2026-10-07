@@ -532,10 +532,12 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # that changes about how ctsem summarises system matrices changes here, once.
 
 .ctSummaryMatricesFromArrays <- function(e, continuoustime, latentNames, manifestNames,
-  TDpredNames, calcfunc = quantile, calcfuncargs = list(probs = 0.5), timeinterval = 1) {
+  TDpredNames, calcfunc = quantile, calcfuncargs = list(probs = 0.5), timeinterval = 1,
+  binaryNames = NULL) {
 
   mats <- .ctMatricesList()
-  mats <- c(names(mats$base), names(mats$asymptotic), names(mats$extra))
+  mats <- c(names(mats$base), names(mats$asymptotic), names(mats$extra),
+    names(mats$julia))
   if (isTRUE(continuoustime)) {
     d <- list(DRIFT = e$pop_DRIFT)
     dd <- ctDiscreteParsDrift(d, timeinterval, impulseType = 'unit', standardise = FALSE,
@@ -583,6 +585,8 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     dimnames(out$MANIFESTcov) <- list(mn, mn)
   }
   if (!is.null(e$pop_TDPREDEFFECT)) dimnames(out$TDPREDEFFECT) <- list(ln, tdn)
+  if (!is.null(out$ASYMPTOTES) && length(binaryNames) == nrow(out$ASYMPTOTES))
+    dimnames(out$ASYMPTOTES) <- list(binaryNames, c('lower', 'upper'))
 
   out$MANIFESTVAR <- NULL
   out
@@ -595,7 +599,8 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   .ctSummaryMatricesFromArrays(e, continuoustime = model$continuoustime,
     latentNames = model$latentNames, manifestNames = model$manifestNames,
     TDpredNames = model$TDpredNames, calcfunc = calcfunc,
-    calcfuncargs = calcfuncargs, timeinterval = timeinterval)
+    calcfuncargs = calcfuncargs, timeinterval = timeinterval,
+    binaryNames = model$manifestNames[model$manifesttype %in% 1])
 }
 
 
