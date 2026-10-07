@@ -185,8 +185,8 @@ functions{
     
     return o;
   }
-  // covmattransform='z': the diagonal is a standard deviation as usual, and the
-  // lower triangle holds Fisher's z of the correlation -- for a lone pair the
+  // covmattransform z: the diagonal is a standard deviation as usual, and the
+  // lower triangle holds the Fisher z of the correlation -- for a lone pair the
   // correlation is exactly tanh(mat[i,j]). Unlike constraincorsqrt1 this is
   // onto the space of correlation matrices, permutation equivariant (so a
   // parameter shared across cells means equal correlations), and unbounded.
@@ -229,7 +229,6 @@ functions{
     }
     return(out);
   }
-
   matrix sdcovsqrt2cov(matrix mat, int choleskymats){ //covariance from cholesky or unconstrained cor sq root
     if(rows(mat) == 0) return(mat);
     else {
@@ -637,8 +636,7 @@ model{
       matrix[matrixdims[6, 1], matrixdims[6, 2] ] subj_MANIFESTMEANS;array[ (savesubjectmatrices && (sum(whenmat[7,1:5]) || statedep[7])) ? nsubjects : 0]
       matrix[matrixdims[7, 1], matrixdims[7, 2] ] subj_CINT;array[ (savesubjectmatrices && (sum(whenmat[8,1:5]) || statedep[8])) ? nsubjects : 0]
       matrix[matrixdims[8, 1], matrixdims[8, 2] ] subj_T0VAR;array[ (savesubjectmatrices && (sum(whenmat[9,1:5]) || statedep[9])) ? nsubjects : 0]
-      matrix[matrixdims[9, 1], matrixdims[9, 2] ] subj_TDPREDEFFECT;array[ (savesubjectmatrices && (sum(whenmat[11,1:5]) || statedep[11])) ? nsubjects : 0]
-      matrix[matrixdims[11, 1], matrixdims[11, 2] ] subj_THRESHOLDS;array[ (savesubjectmatrices && (sum(whenmat[31,1:5]) || statedep[31])) ? nsubjects : 0]
+      matrix[matrixdims[9, 1], matrixdims[9, 2] ] subj_TDPREDEFFECT;array[ (savesubjectmatrices && (sum(whenmat[31,1:5]) || statedep[31])) ? nsubjects : 0]
       matrix[matrixdims[31, 1], matrixdims[31, 2] ] subj_DIFFUSIONcov;array[ (savesubjectmatrices && (sum(whenmat[32,1:5]) || statedep[32])) ? nsubjects : 0]
       matrix[matrixdims[32, 1], matrixdims[32, 2] ] subj_MANIFESTcov;array[ (savesubjectmatrices && (sum(whenmat[33,1:5]) || statedep[33])) ? nsubjects : 0]
       matrix[matrixdims[33, 1], matrixdims[33, 2] ] subj_T0cov;array[ (savesubjectmatrices && (sum(whenmat[21,1:5]) || statedep[21])) ? nsubjects : 0]
@@ -655,7 +653,6 @@ model{
       matrix[matrixdims[7, 1], matrixdims[7, 2] ] pop_CINT;
       matrix[matrixdims[8, 1], matrixdims[8, 2] ] pop_T0VAR;
       matrix[matrixdims[9, 1], matrixdims[9, 2] ] pop_TDPREDEFFECT;
-      matrix[matrixdims[11, 1], matrixdims[11, 2] ] pop_THRESHOLDS;
       matrix[matrixdims[31, 1], matrixdims[31, 2] ] pop_DIFFUSIONcov;
       matrix[matrixdims[32, 1], matrixdims[32, 2] ] pop_MANIFESTcov;
       matrix[matrixdims[33, 1], matrixdims[33, 2] ] pop_T0cov;
@@ -781,7 +778,6 @@ model{
       matrix[matrixdims[7, 1], matrixdims[7, 2] ] CINT;
       matrix[matrixdims[8, 1], matrixdims[8, 2] ] T0VAR;
       matrix[matrixdims[9, 1], matrixdims[9, 2] ] TDPREDEFFECT;
-      matrix[matrixdims[11, 1], matrixdims[11, 2] ] THRESHOLDS;
       matrix[matrixdims[31, 1], matrixdims[31, 2] ] DIFFUSIONcov;
       matrix[matrixdims[32, 1], matrixdims[32, 2] ] MANIFESTcov;
       matrix[matrixdims[33, 1], matrixdims[33, 2] ] T0cov;
@@ -869,7 +865,6 @@ if(si==0 || sum(whenmat[6,{5}]) > 0 )MANIFESTMEANS=mcalc(MANIFESTMEANS,indparams
 if(si==0 || sum(whenmat[7,{5}]) > 0 )CINT=mcalc(CINT,indparams, state,{0}, 7, matsetup, matvalues, si); 
 if(si==0 || sum(whenmat[8,{5}]) > 0 )T0VAR=mcalc(T0VAR,indparams, state,{0}, 8, matsetup, matvalues, si); 
 if(si==0 || sum(whenmat[9,{5}]) > 0 )TDPREDEFFECT=mcalc(TDPREDEFFECT,indparams, state,{0}, 9, matsetup, matvalues, si); 
-if(si==0 || sum(whenmat[11,{5}]) > 0 )THRESHOLDS=mcalc(THRESHOLDS,indparams, state,{0}, 11, matsetup, matvalues, si); 
 if(si==0 || sum(whenmat[52,{5}]) > 0 )JAx=mcalc(JAx,indparams, state,{0}, 52, matsetup, matvalues, si); 
 if(si==0 || sum(whenmat[53,{5}]) > 0 )Jtd=mcalc(Jtd,indparams, state,{0}, 53, matsetup, matvalues, si); 
 if(si==0 || sum(whenmat[54,{5}]) > 0 )Jy=mcalc(Jy,indparams, state,{0}, 54, matsetup, matvalues, si); 
@@ -906,7 +901,6 @@ if(si==0 || sum(whenmat[54,{5}]) > 0 )Jy=mcalc(Jy,indparams, state,{0}, 54, mats
     // rawpopsd: scaling row i and column j by k_i and k_j is what the
     // carrier states need, and quad_form_diag says so in one line.
     T0cov[intoverpopindvaryingindex, intoverpopindvaryingindex] = quad_form_diag(rawpopcov, popstatescale);
-    
     }
  }
   
@@ -1207,7 +1201,7 @@ if(verbose > 1) print("b");
       
     
   if(si == 0){
-pop_PARS = PARS; pop_T0MEANS = T0MEANS; pop_LAMBDA = LAMBDA; pop_DRIFT = DRIFT; pop_DIFFUSION = DIFFUSION; pop_MANIFESTVAR = MANIFESTVAR; pop_MANIFESTMEANS = MANIFESTMEANS; pop_CINT = CINT; pop_T0VAR = T0VAR; pop_TDPREDEFFECT = TDPREDEFFECT; pop_THRESHOLDS = THRESHOLDS; pop_DIFFUSIONcov = DIFFUSIONcov; pop_MANIFESTcov = MANIFESTcov; pop_T0cov = T0cov; pop_asymCINT = asymCINT; pop_asymDIFFUSIONcov = asymDIFFUSIONcov; 
+pop_PARS = PARS; pop_T0MEANS = T0MEANS; pop_LAMBDA = LAMBDA; pop_DRIFT = DRIFT; pop_DIFFUSION = DIFFUSION; pop_MANIFESTVAR = MANIFESTVAR; pop_MANIFESTMEANS = MANIFESTMEANS; pop_CINT = CINT; pop_T0VAR = T0VAR; pop_TDPREDEFFECT = TDPREDEFFECT; pop_DIFFUSIONcov = DIFFUSIONcov; pop_MANIFESTcov = MANIFESTcov; pop_T0cov = T0cov; pop_asymCINT = asymCINT; pop_asymDIFFUSIONcov = asymDIFFUSIONcov; 
   }
   
   

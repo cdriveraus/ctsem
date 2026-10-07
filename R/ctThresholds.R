@@ -37,67 +37,107 @@ NULL
 #'
 #' A binary indicator's response probability is `lower + (upper - lower) F`,
 #' with `F` the logistic of the linear predictor. ASYMPTOTES holds `lower` and
-#' `upper` as its two columns, one row per manifest variable, on the same terms
-#' as any other matrix: a number fixes a cell and a name frees it. Each cell is
+#' `upper` as its two columns, on the same terms as any other matrix: a number
+#' fixes a cell and a name frees it. Each cell is
 #' the probability itself, so a fixed ceiling with a free floor, a ceiling
 #' alone, or one guessing parameter shared by name across items are all just
 #' cells -- none needs a mode of its own.
 #'
-#' A length 2 vector is the one shorthand. It fills every binary row and leaves
-#' the others at 0 and 1, which is the usual model: one guessing parameter for
-#' the whole test.
+#' One row per binary indicator, in manifest order and named by it, so the
+#' matrix holds nothing that is not an asymptote. NA means no asymptote on
+#' that side -- the bound itself, 0 or 1 -- and is stored as that bound, so the
+#' cells downstream are numbers and names like every other matrix's. A matrix
+#' with no cell left away from its bound is no matrix at all: nothing is built,
+#' fitted or reported.
+#'
+#' A length 2 vector is the one shorthand. It fills every binary row, which is
+#' the usual model: `c('guess', NA)` is one guessing parameter for the whole
+#' test.
 #' @noRd
 .ctCheckAsymptoteMatrix <- function(ASYMPTOTES, manifesttype, manifestNames) {
-  if (is.null(ASYMPTOTES)) return(NULL)
-  n <- length(manifesttype)
-  binary <- manifesttype %in% 1L
-  if (!any(binary)) stop('ASYMPTOTES applies to binary indicators ',
+  if (is.null(ASYMPTOTES) || all(is.na(ASYMPTOTES))) return(NULL)
+  binary <- manifestNames[manifesttype %in% 1L]
+  nb <- length(binary)
+  if (!nb) stop('ASYMPTOTES applies to binary indicators ',
     '(manifesttype 1), and this model has none', call. = FALSE)
   if (!is.matrix(ASYMPTOTES)) {
-    if (length(ASYMPTOTES) != 2L) stop('ASYMPTOTES must be an n.manifest * 2 ',
-      'matrix (lower, upper), or a length 2 vector applied to every binary ',
-      'indicator', call. = FALSE)
-    filled <- matrix(c('0', '1'), n, 2, byrow = TRUE)
-    filled[binary, 1] <- as.character(ASYMPTOTES[1])
-    filled[binary, 2] <- as.character(ASYMPTOTES[2])
-    ASYMPTOTES <- filled
+    if (length(ASYMPTOTES) != 2L) stop('ASYMPTOTES must be a matrix with one ',
+      'row per binary indicator and two columns (lower, upper), or a length 2 ',
+      'vector applied to every binary indicator', call. = FALSE)
+    ASYMPTOTES <- matrix(ASYMPTOTES, nb, 2, byrow = TRUE)
   }
-  if (!identical(dim(ASYMPTOTES), c(n, 2L))) stop('ASYMPTOTES must be an ',
-    'n.manifest * 2 matrix (lower, upper); got ',
+  if (!identical(dim(ASYMPTOTES), c(nb, 2L))) stop('ASYMPTOTES needs one row ',
+    'per binary indicator (', nb, ': ', paste(binary, collapse = ', '),
+    ') and two columns (lower, upper); got ',
     paste(dim(ASYMPTOTES), collapse = ' * '), call. = FALSE)
-  dimnames(ASYMPTOTES) <- list(manifestNames, c('lower', 'upper'))
-  num <- suppressWarnings(matrix(as.numeric(ASYMPTOTES), n, 2))
-  fixed <- !is.na(num)
-  if (any(num[fixed] < 0 | num[fixed] > 1)) stop('a fixed asymptote is a ',
-    'probability, so must lie between 0 and 1', call. = FALSE)
-  moved <- !fixed
-  moved[fixed] <- num[fixed] != matrix(c(0, 1), n, 2, byrow = TRUE)[fixed]
-  wrong <- !binary & rowSums(moved) > 0
-  if (any(wrong)) stop('ASYMPTOTES applies to binary indicators (manifesttype ',
-    '1) only; leave the rows of the others at 0 and 1. Check: ',
-    paste(manifestNames[wrong], collapse = ', '), call. = FALSE)
-  ASYMPTOTES
+  out <- matrix(as.character(ASYMPTOTES), nb, 2,
+    dimnames = list(binary, c('lower', 'upper')))
+  out[is.na(out) | trimws(out) %in% 'NA'] <- NA
+  out[is.na(out[, 1]), 1] <- '0'
+  out[is.na(out[, 2]), 2] <- '1'
+  .ctCheckAsymptoteValues(suppressWarnings(as.numeric(out)))
+  if (!.ctAsymptoteMoved(out)) return(NULL)
+  out
 }
 
-#' Which manifest variables read ASYMPTOTES: 1 where either cell is free or
-#' fixed away from its 0 or 1, else 0.
+#' TRUE where a cell is free or fixed away from its bound, 0 for the lower
+#' column and 1 for the upper. Takes the matrix (cells as text) or a pars
+#' subset (`param`, `value`, `col`).
+#' @noRd
+.ctAsymptoteMoved <- function(x) {
+  if (is.matrix(x)) {
+    num <- suppressWarnings(matrix(as.numeric(x), nrow(x), 2))
+    bound <- matrix(c(0, 1), nrow(x), 2, byrow = TRUE)
+    return(any(is.na(num) | num != bound))
+  }
+  bound <- ifelse(x$col == 1L, 0, 1)
+  !is.na(x$param) | (!is.na(x$value) & x$value != bound)
+}
+
+.ctCheckAsymptoteValues <- function(values) {
+  values <- values[!is.na(values)]
+  if (any(values < 0 | values > 1)) stop('a fixed asymptote is a probability, ',
+    'so must lie between 0 and 1 -- or NA for none', call. = FALSE)
+  invisible(NULL)
+}
+
+#' For each manifest variable, the ASYMPTOTES row it reads, or 0.
+#'
+#' Row k of ASYMPTOTES is the k-th binary indicator, so this is the map the
+#' engine indexes with. A row whose cells all sit at their bounds maps to 0
+#' and takes the plain logistic path -- the same likelihood without the
+#' mixture's cost.
 #'
 #' Read from `pars` at fit time rather than from ctModel's argument, because a
 #' cell can be freed or fixed in `pars` afterwards. And decided by the model
 #' rather than by the values the engine meets: a free guessing parameter at
 #' zero is an ordinary place for an optimizer to be, and is still a row with
-#' asymptotes. A row at 0 and 1 takes the plain logistic path, which is the
-#' same likelihood without the mixture's cost.
+#' asymptotes.
 #' @noRd
-.ctAsymptoteRows <- function(pars, n) {
-  out <- integer(n)
+.ctAsymptoteRows <- function(pars, manifesttype) {
+  out <- integer(length(manifesttype))
   if (is.null(pars)) return(out)
   a <- pars[pars$matrix %in% 'ASYMPTOTES', , drop = FALSE]
   if (!nrow(a)) return(out)
-  default <- ifelse(a$col == 1L, 0, 1)
-  moved <- !is.na(a$param) | (!is.na(a$value) & a$value != default)
-  out[unique(a$row[moved])] <- 1L
+  binary <- which(manifesttype %in% 1L)
+  rows <- unique(a$row[.ctAsymptoteMoved(a)])
+  rows <- rows[rows <= length(binary)]
+  out[binary[rows]] <- as.integer(rows)
   out
+}
+
+#' The fit-time half of `.ctCheckAsymptoteMatrix`: `pars` can be edited after
+#' ctModel, and `manifesttype` too, which would leave the rows matched to the
+#' wrong items.
+#' @noRd
+.ctCheckAsymptotePars <- function(pars, manifesttype) {
+  a <- pars[pars$matrix %in% 'ASYMPTOTES', , drop = FALSE]
+  if (!nrow(a)) return(invisible(NULL))
+  nb <- sum(manifesttype %in% 1L)
+  if (max(a$row) != nb) stop('ASYMPTOTES has ', max(a$row), ' rows but the ',
+    'model has ', nb, ' binary indicators; it needs one row per binary ',
+    'indicator -- rebuild the model with ctModel()', call. = FALSE)
+  .ctCheckAsymptoteValues(a$value)
 }
 
 #' Check and normalise the ncategories argument.

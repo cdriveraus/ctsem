@@ -237,56 +237,69 @@ test_that('the mode solve reaches a stationary point for every kind', {
   }
 })
 
-test_that('ASYMPTOTES is a matrix of its own, checked where it is built', {
-  # Fit-free. The asymptotes once lived in THRESHOLDS cells, picked out by
-  # a transform chosen from the parameter's name; this pins that they are
-  # their own matrix, that each column gets its probability transform by
-  # position, and that nothing reaches THRESHOLDS.
-  nm <- c('b1', 'b2', 'g1')
+test_that('ASYMPTOTES is a matrix of its own, one row per binary indicator', {
+  # Fit-free. The asymptotes once lived in THRESHOLDS cells, picked out by a
+  # transform chosen from the parameter's name. This pins that they are their
+  # own matrix with a row per binary indicator and nothing else, that NA means
+  # no asymptote and a matrix with none is no matrix, that each column gets its
+  # probability transform by position, and that each manifest variable maps
+  # to its row. The continuous variable comes first, so that a manifest index
+  # and an ASYMPTOTES row differ and a mixed-up map cannot pass.
+  nm <- c('g1', 'b1', 'b2')
+  type <- c(0, 1, 1)
   build <- function(...) ctModel(type = 'ct', n.latent = 1, n.manifest = 3,
-    manifestNames = nm, latentNames = 'eta', manifesttype = c(1, 1, 0),
+    manifestNames = nm, latentNames = 'eta', manifesttype = type,
     LAMBDA = matrix(1, 3, 1), silent = TRUE, ...)
+  has <- function(m) any(m$pars$matrix %in% 'ASYMPTOTES')
 
-  m <- build(ASYMPTOTES = c('guess', 1))
+  expect_false(has(build()))
+  expect_false(has(build(ASYMPTOTES = c(NA, NA))))
+  expect_false(has(build(ASYMPTOTES = c(0, 1))))
+
+  m <- build(ASYMPTOTES = c('guess', NA))
   a <- m$pars[m$pars$matrix %in% 'ASYMPTOTES', ]
-  expect_equal(a$param[a$col == 1], c('guess', 'guess', NA))
-  expect_equal(a$value[a$col == 2], c(1, 1, 1))
-  expect_equal(a$value[a$row == 3], c(0, 1))
+  expect_equal(max(a$row), 2)
+  expect_equal(a$param[a$col == 1], c('guess', 'guess'))
+  expect_equal(a$value[a$col == 2], c(1, 1))
   expect_false(any(m$pars$matrix %in% 'THRESHOLDS'))
-  expect_equal(.ctAsymptoteRows(m$pars, 3), c(1L, 1L, 0L))
+  expect_equal(.ctAsymptoteRows(m$pars, type), c(0L, 1L, 2L))
+  expect_equal(dimnames(.ctCheckAsymptoteMatrix(c('guess', NA), type, nm)),
+    list(c('b1', 'b2'), c('lower', 'upper')))
+
   # The prior centres: a guessing probability near 0.18, a ceiling near 0.95.
   tf <- function(p) eval(parse(text = p$transform), list(param = 0))
   expect_equal(tf(a[a$row == 1 & a$col == 1, ]), stats::plogis(-1.5))
-  p <- build(ASYMPTOTES = c(0, 'ceiling'))$pars
+  p <- build(ASYMPTOTES = rbind(c(NA, 'ceiling'), c(0.25, NA)))$pars
   expect_equal(tf(p[p$matrix %in% 'ASYMPTOTES' & p$row == 1 & p$col == 2, ]),
     stats::plogis(3))
+  # A fixed value away from its bound is an asymptote too; a row at its
+  # bounds maps to nothing.
+  expect_equal(.ctAsymptoteRows(p, type), c(0L, 1L, 2L))
+  expect_equal(.ctAsymptoteRows(build(ASYMPTOTES = rbind(c(NA, NA),
+    c(0.25, NA)))$pars, type), c(0L, 0L, 2L))
 
-  expect_equal(.ctAsymptoteRows(build()$pars, 3), c(0L, 0L, 0L))
-  expect_equal(.ctAsymptoteRows(build(ASYMPTOTES = c(0, 1))$pars, 3),
-    c(0L, 0L, 0L))
-  # A fixed value away from 0 and 1 is an asymptote too.
-  expect_equal(.ctAsymptoteRows(build(ASYMPTOTES = cbind(c(0.25, 0, 0),
-    1))$pars, 3), c(1L, 0L, 0L))
-
-  expect_error(build(ASYMPTOTES = cbind(c('c1', 'c2', 'c3'), 1)),
-    'binary indicators.*g1')
-  expect_error(build(ASYMPTOTES = c(1.5, 1)), 'between 0 and 1')
-  expect_error(build(ASYMPTOTES = matrix(0, 2, 2)), 'n.manifest \\* 2')
+  expect_error(build(ASYMPTOTES = matrix('g', 3, 2)),
+    'one row per binary indicator (2: b1, b2)', fixed = TRUE)
+  expect_error(build(ASYMPTOTES = c(1.5, NA)), 'between 0 and 1')
+  expect_error(build(ASYMPTOTES = c(NA, -0.1)), 'between 0 and 1')
   expect_error(ctModel(type = 'ct', LAMBDA = matrix(1), silent = TRUE,
-    ASYMPTOTES = c('guess', 1)), 'has none')
+    ASYMPTOTES = c('guess', NA)), 'has none')
 
   # Stan has no asymptotes in its binary measurement and would fit the two
   # parameter model without a word, so it refuses before anything compiles.
   dat <- data.frame(id = rep(1:2, each = 3), time = rep(0:2, 2),
-    b1 = c(0, 1, 0, 1, 1, 0), b2 = c(1, 1, 0, 0, 1, 0), g1 = seq(-1, 1, 0.4))
+    g1 = seq(-1, 1, 0.4), b1 = c(0, 1, 0, 1, 1, 0), b2 = c(1, 1, 0, 0, 1, 0))
   expect_error(ctFit(dat, m, backend = 'stan'), 'backend="julia"',
     fixed = TRUE)
-  # A cell freed in `pars` after ctModel is checked at fit time too.
-  m$pars$param[m$pars$matrix %in% 'ASYMPTOTES' & m$pars$row == 3 &
-      m$pars$col == 1] <- 'oops'
-  m$pars$value[m$pars$matrix %in% 'ASYMPTOTES' & m$pars$row == 3 &
-      m$pars$col == 1] <- NA
-  expect_error(ctFit(dat, m, backend = 'julia'), 'binary indicators.*g1')
+  # `pars` and `manifesttype` can be edited after ctModel, so the fit checks
+  # again: a fixed value out of range, and rows no longer matching the items.
+  m2 <- m
+  m2$pars$value[m2$pars$matrix %in% 'ASYMPTOTES' & m2$pars$col == 2][1] <- 1.2
+  expect_error(ctFit(dat, m2, backend = 'julia'), 'between 0 and 1')
+  m3 <- m
+  m3$manifesttype <- c(0, 1, 0)
+  expect_error(ctFit(dat, m3, backend = 'julia'),
+    'ASYMPTOTES has 2 rows but the model has 1 binary')
 })
 
 test_that('binary asymptotes reduce to plain binary and match direct integration', {
@@ -433,7 +446,7 @@ test_that('the gradient of a binary model with asymptotes matches finite differe
   difficulty <- seq(-1.2, 1.2, length.out = nit)
   gen <- ctModel(type = 'ct', n.latent = 1, n.manifest = nit,
     manifestNames = nm, latentNames = 'eta', manifesttype = rep(1L, nit),
-    ASYMPTOTES = c(0.2, 1), LAMBDA = matrix(loadings, nit, 1),
+    ASYMPTOTES = c(0.2, NA), LAMBDA = matrix(loadings, nit, 1),
     DRIFT = matrix(-0.5), DIFFUSION = matrix(1.3), T0VAR = matrix(1.3),
     T0MEANS = matrix(0), CINT = matrix(0),
     MANIFESTMEANS = matrix(-loadings * difficulty, nit, 1),
@@ -465,7 +478,7 @@ test_that('the gradient of a binary model with asymptotes matches finite differe
   # and the case where a wrong cotangent is summed over items rather than
   # cancelling. The ceiling alone is the case the old integer code could not
   # express.
-  for (asym in list(NULL, c('guess', 1), c(0, 'upper'), c('guess', 'upper'))) {
+  for (asym in list(NA, c('guess', NA), c(NA, 'upper'), c('guess', 'upper'))) {
     model <- ctModel(type = 'ct', n.latent = 1, n.manifest = nit,
       manifestNames = nm, latentNames = 'eta', manifesttype = rep(1L, nit),
       ASYMPTOTES = asym, silent = TRUE,

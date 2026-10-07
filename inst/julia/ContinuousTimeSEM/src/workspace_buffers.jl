@@ -138,7 +138,7 @@ struct ContinuousEKFWorkspace{T, N, M, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF
     # parameter. Empty means every variable is Gaussian.
     manifesttype::Vector{Int}
     ncategories::Vector{Int}
-    hasasymptotes::Vector{Int}
+    asymptoterow::Vector{Int}
     # Scratch for one categorical row's extras: an ordinal variable's cumulated
     # thresholds, a binary one's asymptotes, a censored one's limits and sd, a
     # count's dispersion. Long enough for the widest of them in the model.
@@ -359,7 +359,7 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
     ll_buffer = zeros(T, m)
     manifesttype = isdefined(sp, :manifesttype) ? copy(sp.manifesttype) : Int[]
     ncategories = isdefined(sp, :ncategories) ? copy(sp.ncategories) : Int[]
-    hasasymptotes = isdefined(sp, :hasasymptotes) ? copy(sp.hasasymptotes) :
+    asymptoterow = isdefined(sp, :asymptoterow) ? copy(sp.asymptoterow) :
         Int[]
     censormin = isdefined(sp, :censormin) ? copy(sp.censormin) : Float64[]
     censormax = isdefined(sp, :censormax) ? copy(sp.censormax) : Float64[]
@@ -369,7 +369,7 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
     # least one for a count, which borrows it for its dispersion.
     thresholds = zeros(T, max(hasproperty(pars, :THRESHOLDS) ?
         size(pars.THRESHOLDS, 2) : 0, any(==(4), manifesttype) ? 3 : 0,
-        any(==(3), manifesttype) ? 1 : 0, any(>(0), hasasymptotes) ? 2 : 0))
+        any(==(3), manifesttype) ? 1 : 0, any(>(0), asymptoterow) ? 2 : 0))
 
     return ContinuousEKFWorkspace(
         all_params,
@@ -400,7 +400,7 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
         ll_buffer,
         manifesttype,
         ncategories,
-        hasasymptotes,
+        asymptoterow,
         thresholds,
         censormin,
         censormax,

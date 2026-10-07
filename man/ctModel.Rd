@@ -23,7 +23,7 @@ ctModel(
   T0MEANS = "auto",
   MANIFESTMEANS = "auto",
   MANIFESTVAR = "diag",
-  ASYMPTOTES = NULL,
+  ASYMPTOTES = NA,
   DRIFT = "auto",
   CINT = 0,
   DIFFUSION = "auto",
@@ -125,15 +125,17 @@ between manifests at each measurement occasion (i.e. measurement error / residua
 "auto" freely estimates variance parameters, 
 and fixes covariances between manifests to 0. "free" frees all values, including covariances.}
 
-\item{ASYMPTOTES}{n.manifest*2 matrix of the lower and upper asymptotes of
-each binary indicator's response probability, which is then
-lower + (upper - lower) times the logistic of the linear predictor.
-\code{NULL} (the default) fixes them at 0 and 1, the two parameter logistic.
-Name a lower cell to estimate a guessing probability (the three parameter
-model), an upper cell for a ceiling below one, or both (four parameter);
-a fixed number fixes it, and one name shared across rows estimates one
-asymptote for those items. Each cell is a probability. Rows of non-binary
-indicators must stay at 0 and 1. Julia backend only.}
+\item{ASYMPTOTES}{Matrix with one row per binary indicator, in manifest
+order, and two columns: the lower and upper asymptotes of its response
+probability, which is then lower + (upper - lower) times the logistic of
+the linear predictor. \code{NA} means no asymptote on that side, so the
+default -- all \code{NA} -- is the two parameter logistic, and the model
+has no ASYMPTOTES matrix at all. Name a lower cell to estimate a guessing
+probability (the three parameter model), an upper cell for a ceiling below
+one, or both (four parameter); a number between 0 and 1 fixes it, and one
+name shared across rows estimates one asymptote for those items. A length 2
+vector applies to every binary indicator, so \code{c('guess', NA)} is one
+guessing parameter for the whole test. Julia backend only.}
 
 \item{DRIFT}{n.latent*n.latent DRIFT matrix of continuous auto and cross effects, 
 relating the processes over time. 

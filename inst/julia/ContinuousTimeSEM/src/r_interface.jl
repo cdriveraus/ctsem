@@ -393,9 +393,9 @@ column vectors, one entry per model-matrix cell.
   * `ncategories` — number of categories per manifest variable. Read only for
     the ordinal ones, which take their thresholds from the first
     `ncategories - 1` columns of `THRESHOLDS`.
-  * `hasasymptotes` — `1` for a binary variable whose response probability
-    runs between asymptotes other than 0 and 1, read from its row of
-    `ASYMPTOTES` (lower, upper); `0` for the plain two parameter logistic.
+  * `asymptoterow` — per manifest variable, the row of `ASYMPTOTES` (lower,
+    upper; one row per binary indicator) whose asymptotes its response
+    probability runs between, or `0` for the plain two parameter logistic.
   * `continuous_time` — `false` for a discrete-time model, whose DRIFT, CINT and
     DIFFUSION are already the one-step quantities.
   * `stationary` — `true` to start the latent processes from the distribution
@@ -411,7 +411,7 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
     predicttransform, updatetransform, tdtransform;
     ti_parameter=Int[], ti_predictor=Int[], ti_coefficient=Int[],
     diffusion_state_indices=Int[], continuous_time::Bool=true,
-    manifesttype=Int[], ncategories=Int[], hasasymptotes=Int[],
+    manifesttype=Int[], ncategories=Int[], asymptoterow=Int[],
     censormin=Float64[],
     censormax=Float64[], covmatcode::Int=0, population_indices=Int[],
     population_covmatcode::Union{Nothing,Integer}=nothing,
@@ -512,7 +512,7 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
         fixed_positions, fixed_values, Int.(ti_parameter),
         Int.(ti_predictor), Int.(ti_coefficient), Int.(diffusion_state_indices),
         continuous_time, Int.(manifesttype), Int.(ncategories),
-        Int.(hasasymptotes),
+        Int.(asymptoterow),
         Float64.(censormin), Float64.(censormax), covmatcode,
         Int.(population_indices), population_range,
         population_covmatcode === nothing ? covmatcode :

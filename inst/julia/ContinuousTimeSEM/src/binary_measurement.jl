@@ -618,6 +618,14 @@ zero, or a two parameter logistic term whose mass is far into the tail.
 end
 
 """
+    _asymptote_row(ws, row)
+
+The row of ASYMPTOTES manifest variable `row` reads, or 0 when it has none.
+"""
+@inline _asymptote_row(ws, row::Int) =
+    row <= length(ws.asymptoterow) ? @inbounds(ws.asymptoterow[row]) : 0
+
+"""
     _binary_asymptotes(extras, T)
 
 A binary item's lower and upper asymptotes, `(c, d)`, or `(0, 1)` when it has
@@ -1551,18 +1559,20 @@ sum here costs a handful of additions on a vector of length `K-1`.
     end
     # A binary row with asymptotes carries its row of ASYMPTOTES, the lower and
     # upper, as they are: each is a probability of its own and nothing has to
-    # be accumulated or ordered (see `_binary_asymptotes`).
+    # be accumulated or ordered (see `_binary_asymptotes`). That matrix has a
+    # row per binary indicator rather than per manifest variable, so the row
+    # is looked up rather than shared.
     #
-    # `hasasymptotes` rather than the values decides whether the row has them:
-    # a free guessing parameter sitting at zero is an ordinary place for an
-    # optimizer to be, and inferring from the numbers would lose it there.
+    # The map rather than the values decides whether the row has them: a free
+    # guessing parameter sitting at zero is an ordinary place for an optimizer
+    # to be, and inferring from the numbers would lose it there.
     if row <= length(types) && types[row] == CTSEM_OBS_BINARY
-        has = row <= length(ws.hasasymptotes) && ws.hasasymptotes[row] > 0
-        (has && hasproperty(pars, :ASYMPTOTES) &&
+        k = _asymptote_row(ws, row)
+        (k > 0 && hasproperty(pars, :ASYMPTOTES) &&
             length(ws.thresholds) >= 2) || return view(ws.thresholds, 1:0)
         @inbounds begin
-            ws.thresholds[1] = pars.ASYMPTOTES[row, 1]
-            ws.thresholds[2] = pars.ASYMPTOTES[row, 2]
+            ws.thresholds[1] = pars.ASYMPTOTES[k, 1]
+            ws.thresholds[2] = pars.ASYMPTOTES[k, 2]
         end
         return view(ws.thresholds, 1:2)
     end

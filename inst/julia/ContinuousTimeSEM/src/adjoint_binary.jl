@@ -51,6 +51,9 @@ mutable struct CTSEMBinaryRecord{T}
     # and inferring it from `thresholds` being empty would make a count look
     # like a Bernoulli -- the one confusion this whole argument exists to stop.
     kinds::Vector{Int}
+    # The ASYMPTOTES row each observation's asymptotes came from, 0 for none,
+    # for the same reason: the reverse pass has no workspace to look it up in.
+    asymptoterows::Vector{Int}
     # Written by the forward pass as it applies each observation
     # (`_record_binary_step!`): how many it has applied, and for each the
     # state and covariance it was applied to, `c = P λ`, the predictor's mean
@@ -68,7 +71,7 @@ mutable struct CTSEMBinaryRecord{T}
 end
 
 """
-    _extras_cotangent!(θ̄ca, row, τ, kind, cot)
+    _extras_cotangent!(θ̄ca, row, asymrow, τ, kind, cot)
 
 Push a row's extras cotangents back onto the matrix cells they came from.
 
@@ -83,8 +86,8 @@ The three rules:
 
   * censored, whose extras are two constant limits and a standard deviation
     that belongs to MANIFESTVAR;
-  * binary with asymptotes, whose two extras are ASYMPTOTES' cells `c` and
-    `d` themselves, so each takes its own cotangent;
+  * binary with asymptotes, whose two extras are the cells `c` and `d` of
+    ASYMPTOTES row `asymrow` themselves, so each takes its own cotangent;
   * ordinal, where threshold `k` is the sum of the first `k` cells, so a
     cell's cotangent is the running sum of every threshold at or above it.
 
@@ -95,16 +98,16 @@ to them: the fit stopped at a gradient norm of 6536 where a converged one is
 1e-3, and every downstream diagnostic then described a point that was not a
 mode.
 """
-@inline function _extras_cotangent!(θ̄ca, row::Int, τ, kind::Int, cot::F
-    ) where {F}
+@inline function _extras_cotangent!(θ̄ca, row::Int, asymrow::Int, τ,
+    kind::Int, cot::F) where {F}
     if kind == CTSEM_OBS_CENSORED
         @inbounds θ̄ca.MANIFESTVAR[row, row] += cot(3)
         return nothing
     end
     if kind == CTSEM_OBS_BINARY
         @inbounds begin
-            θ̄ca.ASYMPTOTES[row, 1] += cot(1)
-            θ̄ca.ASYMPTOTES[row, 2] += cot(2)
+            θ̄ca.ASYMPTOTES[asymrow, 1] += cot(1)
+            θ̄ca.ASYMPTOTES[asymrow, 2] += cot(2)
         end
         return nothing
     end
@@ -152,7 +155,7 @@ function _record_binary_rows!(tape, ws, pars, data, obs_col, rows, n)
     index = (tape.nbinaries += 1)
     if index > length(tape.binaries)
         push!(tape.binaries, CTSEMBinaryRecord{T}(Int[], zeros(T, 0, n), T[], T[],
-            Vector{T}[], Int[], 0, Vector{T}[], Matrix{T}[], Vector{T}[],
+            Vector{T}[], Int[], Int[], 0, Vector{T}[], Matrix{T}[], Vector{T}[],
             Tuple{T,T}[], Tuple{T,T,Matrix{T}}[], T[]))
     end
     # Refilled in place, as the tape's other records are (`_tape_fill!`): the
@@ -163,11 +166,13 @@ function _record_binary_rows!(tape, ws, pars, data, obs_col, rows, n)
     _tape_gather!(record.manifestmeans, pars.MANIFESTMEANS, rows)
     resize!(record.y, length(rows))
     resize!(record.kinds, length(rows))
+    resize!(record.asymptoterows, length(rows))
     length(record.thresholds) < length(rows) &&
         resize!(record.thresholds, length(rows))
     @inbounds for (k, i) in enumerate(rows)
         record.y[k] = data[i, obs_col]
         record.kinds[k] = Int(ws.manifesttype[i])
+        record.asymptoterows[k] = _asymptote_row(ws, i)
         τ = _ordinal_thresholds!(ws, pars, i)
         if isassigned(record.thresholds, k)
             _tape_fill!(record.thresholds[k], τ)
@@ -278,8 +283,8 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
                     t -> _category_loglikelihood(a, record.y[j], t,
                         record.kinds[j]),
                     collect(T, τ))
-                _extras_cotangent!(θ̄ca, row, τ, record.kinds[j],
-                    i -> dτ[i])
+                _extras_cotangent!(θ̄ca, row, record.asymptoterows[j], τ,
+                    record.kinds[j], i -> dτ[i])
             end
             continue
         end
@@ -347,7 +352,8 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
         # The row's extras, when this observation has any -- see
         # `_extras_cotangent!` for where each kind's cotangent goes.
         if !isempty(τ) && record.kinds[j] != CTSEM_OBS_COUNT
-            _extras_cotangent!(θ̄ca, row, τ, record.kinds[j],
+            _extras_cotangent!(θ̄ca, row, record.asymptoterows[j], τ,
+                record.kinds[j],
                 i -> logZbar * J[1, 2 + i] + mbar * J[2, 2 + i] +
                     vbar * J[3, 2 + i])
         end

@@ -90,7 +90,7 @@ print.ctStanModel <- function(x, matrices = NULL, ...) {
   }
   if (any(x$manifesttype > 0)) {
     described <- character()
-    asym <- .ctAsymptoteRows(x$pars, length(x$manifestNames)) > 0
+    asym <- .ctAsymptoteRows(x$pars, x$manifesttype) > 0
     binary <- x$manifestNames[x$manifesttype == 1 & !asym]
     if (length(binary)) described <- c(described,
       paste0(paste(binary, collapse = ", "), " (binary)"))

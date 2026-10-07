@@ -512,21 +512,19 @@ simplifystanfunction<-function(bcalc,simplify=TRUE){ #input text of list of comp
 # path reads these codes too (R/ctBackendSummary.R, R/ctJuliaBackend.R). Do not
 # delete with stan.
 .ctMatricesList <- function(unsafe=FALSE){
-  # THRESHOLDS exists only on models with an ordinal manifest variable, which
-  # only the julia backend accepts -- ctFit refuses them for stan, so the
-  # stan programs declare matrix 11 but no stan fit ever has a cell in it. It
-  # has to be registered here all the same: parameter numbers come from
-  # matsetup, and a matrix missing from this list would fall back to a
-  # separate numbering that collides with it.
   base <- c(PARS=10, T0MEANS=1,LAMBDA=2,DRIFT=3,DIFFUSION=4,MANIFESTVAR=5,MANIFESTMEANS=6, CINT=7,
-    T0VAR=8,TDPREDEFFECT=9,THRESHOLDS=11)
+    T0VAR=8,TDPREDEFFECT=9)
   jacobian = c(JAx=52,Jtd=53,Jy=54) #J0=51,
   asymptotic = c(asymCINT=21,asymDIFFUSIONcov=22)
   extra <- c(DIFFUSIONcov=31,MANIFESTcov=32,T0cov=33)
-  # Matrices only the julia engine reads, registered for matsetup's numbering
-  # but kept out of `base`: the stan programs are generated from `base`, and
-  # adding to it changes them for a matrix ctFit refuses on stan anyway.
-  julia <- c(ASYMPTOTES=12)
+  # Matrices only the julia engine reads -- ordinal thresholds and binary
+  # asymptotes, both refused by ctFit on stan. Registered here because
+  # parameter numbers come from matsetup, and a matrix missing from this list
+  # would fall back to a separate numbering that collides with it; kept out of
+  # `base` because the stan programs are generated from `base`
+  # (dev/regenerate-stan.R), and would otherwise declare and compute matrices
+  # no stan fit can have.
+  julia <- c(THRESHOLDS=11, ASYMPTOTES=12)
   all <- c(base,jacobian,asymptotic, extra, julia)
   mn <- list(base=base, jacobian=jacobian, asymptotic=asymptotic, extra=extra,
     julia=julia, all=all)
