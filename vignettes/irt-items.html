@@ -158,17 +158,17 @@ border-radius: 0 4px 4px 0;
 </tr>
 <tr class="odd">
 <td>guessing <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>c</mi><annotation encoding="application/x-tex">c</annotation></semantics></math></td>
-<td><code>ASYMPTOTES[, 1]</code></td>
+<td><code>ASYMPTOTES[, &#39;lower&#39;]</code></td>
 <td>lower asymptote</td>
 </tr>
 <tr class="even">
 <td>upper asymptote <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>d</mi><annotation encoding="application/x-tex">d</annotation></semantics></math></td>
-<td><code>ASYMPTOTES[, 2]</code></td>
+<td><code>ASYMPTOTES[, &#39;upper&#39;]</code></td>
 <td>ceiling</td>
 </tr>
 </tbody>
 </table>
-<p>So the two parameter model needs no special argument at all. <code>ASYMPTOTES</code> is an <code>n.manifest</code> by 2 matrix like any other: it defaults to 0 and 1, and naming a cell estimates it. Ordinal items are in the measurement models vignette; this one is about binary items and what has to be held fixed to estimate them.</p>
+<p>So the two parameter model needs no special argument at all. <code>ASYMPTOTES</code> has a row per binary item and a column for each asymptote. A cell left <code>NA</code> is no asymptote on that side, a number between 0 and 1 fixes it, and a name estimates it. Ordinal items are in the measurement models vignette; this one is about binary items and what has to be held fixed to estimate them.</p>
 <h1 id="the-response-curves">The response curves</h1>
 <p><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>P</mi><mo stretchy="false" form="prefix">(</mo><mi>y</mi><mo>=</mo><mn>1</mn><mo>∣</mo><mi>η</mi><mo stretchy="false" form="postfix">)</mo><mo>=</mo><mi>c</mi><mo>+</mo><mo stretchy="false" form="prefix">(</mo><mi>d</mi><mo>−</mo><mi>c</mi><mo stretchy="false" form="postfix">)</mo><mspace width="0.167em"></mspace><msup><mtext mathvariant="normal">logit</mtext><mrow><mi>−</mi><mn>1</mn></mrow></msup><mo stretchy="false" form="prefix">(</mo><mi>a</mi><mo stretchy="false" form="prefix">(</mo><mi>η</mi><mo>−</mo><mi>b</mi><mo stretchy="false" form="postfix">)</mo><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">P(y=1 \mid \eta) = c + (d-c)\,\text{logit}^{-1}(a(\eta - b))</annotation></semantics></math>. The three forms differ only in where the curve starts and stops:</p>
 <div class="cell">
@@ -216,7 +216,7 @@ border-radius: 0 4px 4px 0;
 <span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a>gen <span class="ot">&lt;-</span> <span class="fu">ctModel</span>(<span class="at">type =</span> <span class="st">&#39;ct&#39;</span>, <span class="at">n.latent =</span> <span class="dv">1</span>, <span class="at">n.manifest =</span> nitem,</span>
 <span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">manifestNames =</span> items, <span class="at">latentNames =</span> <span class="st">&#39;eta&#39;</span>,</span>
-<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a>  <span class="at">manifesttype =</span> <span class="fu">rep</span>(<span class="dv">1</span>, nitem), <span class="at">ASYMPTOTES =</span> <span class="fu">c</span>(guess, <span class="dv">1</span>),</span>
+<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a>  <span class="at">manifesttype =</span> <span class="fu">rep</span>(<span class="dv">1</span>, nitem), <span class="at">ASYMPTOTES =</span> <span class="fu">c</span>(guess, <span class="cn">NA</span>),</span>
 <span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a>  <span class="at">LAMBDA =</span> <span class="fu">matrix</span>(a, nitem, <span class="dv">1</span>), <span class="at">MANIFESTMEANS =</span> <span class="fu">matrix</span>(<span class="sc">-</span>a <span class="sc">*</span> b, nitem, <span class="dv">1</span>),</span>
 <span id="cb3-11"><a href="#cb3-11" aria-hidden="true" tabindex="-1"></a>  <span class="at">DRIFT =</span> <span class="fu">matrix</span>(<span class="sc">-</span><span class="fl">0.4</span>), <span class="at">DIFFUSION =</span> <span class="fu">matrix</span>(<span class="fl">1.2</span>), <span class="at">T0VAR =</span> <span class="fu">matrix</span>(<span class="fl">1.342</span>),</span>
 <span id="cb3-12"><a href="#cb3-12" aria-hidden="true" tabindex="-1"></a>  <span class="at">T0MEANS =</span> <span class="fu">matrix</span>(<span class="dv">0</span>), <span class="at">CINT =</span> <span class="fu">matrix</span>(<span class="dv">0</span>), <span class="at">MANIFESTVAR =</span> <span class="fu">diag</span>(<span class="dv">0</span>, nitem),</span>
@@ -226,7 +226,7 @@ border-radius: 0 4px 4px 0;
 <span id="cb3-16"><a href="#cb3-16" aria-hidden="true" tabindex="-1"></a>d <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(<span class="fu">ctGenerate</span>(gen, <span class="at">n =</span> <span class="dv">250</span>, <span class="at">Tpoints =</span> <span class="dv">8</span>, <span class="at">dtmean =</span> <span class="fl">0.9</span>,</span>
 <span id="cb3-17"><a href="#cb3-17" aria-hidden="true" tabindex="-1"></a>  <span class="at">backend =</span> <span class="st">&#39;julia&#39;</span>))</span></code></pre></div>
 </div>
-<p>A length 2 vector, as here, fills every binary item’s row: lower asymptote fixed at the guessing probability, upper at 1.</p>
+<p>A length 2 vector, as here, fills every binary item’s row: the lower asymptote fixed at the guessing probability, and no upper one.</p>
 <p>The floor is visible in the data. An item far above someone’s ability is still answered correctly about <code>c</code> of the time, where a 2PL would go to zero:</p>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb4"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>hardest <span class="ot">&lt;-</span> d[[items[nitem]]]</span>
@@ -248,9 +248,9 @@ border-radius: 0 4px 4px 0;
 </div>
 </div>
 </div>
-<p>Fitting needs one argument changed between the models — <code>ASYMPTOTES</code>. A name in place of a number estimates that asymptote, and the same name on every item estimates one guessing parameter for the whole test. Per item is possible (<code>cbind(paste0(&#39;guess_&#39;, items), 1)</code>) and much harder to estimate; sharing is the usual starting point.</p>
+<p>Fitting needs one argument changed between the models — <code>ASYMPTOTES</code>. A name in place of a number estimates that asymptote, and the same name on every item estimates one guessing parameter for the whole test. Per item is possible (<code>cbind(paste0(&#39;guess_&#39;, items), NA)</code>) and much harder to estimate; sharing is the usual starting point.</p>
 <div class="cell">
-<div class="sourceCode cell-code" id="cb5"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>irtmodel <span class="ot">&lt;-</span> <span class="cf">function</span>(<span class="at">ASYMPTOTES =</span> <span class="cn">NULL</span>) {</span>
+<div class="sourceCode cell-code" id="cb5"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>irtmodel <span class="ot">&lt;-</span> <span class="cf">function</span>(<span class="at">ASYMPTOTES =</span> <span class="cn">NA</span>) {</span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>  m <span class="ot">&lt;-</span> <span class="fu">ctModel</span>(<span class="at">type =</span> <span class="st">&#39;ct&#39;</span>, <span class="at">n.latent =</span> <span class="dv">1</span>, <span class="at">n.manifest =</span> nitem,</span>
 <span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>    <span class="at">manifestNames =</span> items, <span class="at">latentNames =</span> <span class="st">&#39;eta&#39;</span>,</span>
 <span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>    <span class="at">manifesttype =</span> <span class="fu">rep</span>(<span class="dv">1</span>, nitem), <span class="at">ASYMPTOTES =</span> ASYMPTOTES,</span>
@@ -265,7 +265,7 @@ border-radius: 0 4px 4px 0;
 <span id="cb5-13"><a href="#cb5-13" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb5-14"><a href="#cb5-14" aria-hidden="true" tabindex="-1"></a>fit2 <span class="ot">&lt;-</span> <span class="fu">ctFit</span>(d[, <span class="fu">c</span>(<span class="st">&#39;id&#39;</span>, <span class="st">&#39;time&#39;</span>, items)], <span class="fu">irtmodel</span>(),</span>
 <span id="cb5-15"><a href="#cb5-15" aria-hidden="true" tabindex="-1"></a>  <span class="at">backend =</span> <span class="st">&#39;julia&#39;</span>, <span class="at">cores =</span> <span class="dv">1</span>, <span class="at">priors =</span> <span class="cn">TRUE</span>)</span>
-<span id="cb5-16"><a href="#cb5-16" aria-hidden="true" tabindex="-1"></a>fit3 <span class="ot">&lt;-</span> <span class="fu">ctFit</span>(d[, <span class="fu">c</span>(<span class="st">&#39;id&#39;</span>, <span class="st">&#39;time&#39;</span>, items)], <span class="fu">irtmodel</span>(<span class="fu">c</span>(<span class="st">&#39;guess&#39;</span>, <span class="dv">1</span>)),</span>
+<span id="cb5-16"><a href="#cb5-16" aria-hidden="true" tabindex="-1"></a>fit3 <span class="ot">&lt;-</span> <span class="fu">ctFit</span>(d[, <span class="fu">c</span>(<span class="st">&#39;id&#39;</span>, <span class="st">&#39;time&#39;</span>, items)], <span class="fu">irtmodel</span>(<span class="fu">c</span>(<span class="st">&#39;guess&#39;</span>, <span class="cn">NA</span>)),</span>
 <span id="cb5-17"><a href="#cb5-17" aria-hidden="true" tabindex="-1"></a>  <span class="at">backend =</span> <span class="st">&#39;julia&#39;</span>, <span class="at">cores =</span> <span class="dv">1</span>, <span class="at">priors =</span> <span class="cn">TRUE</span>)</span></code></pre></div>
 </div>
 <div class="cell">
@@ -293,7 +293,7 @@ border-radius: 0 4px 4px 0;
 </div>
 </div>
 <h1 id="four-parameters-and-when-to-stop">Four parameters, and when to stop</h1>
-<p>Naming the second column frees the ceiling as well. Both are reported as the probabilities they are, and either can be estimated without the other — a ceiling alone, <code>c(0, &#39;ceiling&#39;)</code>, is the model for items that able people sometimes slip on but nobody guesses.</p>
+<p>Naming the second column frees the ceiling as well. Both are reported as the probabilities they are, and either can be estimated without the other — a ceiling alone, <code>c(NA, &#39;ceiling&#39;)</code>, is the model for items that able people sometimes slip on but nobody guesses.</p>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb8"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>fit4 <span class="ot">&lt;-</span> <span class="fu">ctFit</span>(d[, <span class="fu">c</span>(<span class="st">&#39;id&#39;</span>, <span class="st">&#39;time&#39;</span>, items)], <span class="fu">irtmodel</span>(<span class="fu">c</span>(<span class="st">&#39;guess&#39;</span>, <span class="st">&#39;ceiling&#39;</span>)),</span>
 <span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">backend =</span> <span class="st">&#39;julia&#39;</span>, <span class="at">cores =</span> <span class="dv">1</span>, <span class="at">priors =</span> <span class="cn">TRUE</span>)</span>
