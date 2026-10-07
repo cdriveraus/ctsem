@@ -268,8 +268,13 @@
 # -- but a cache keyed on the path alone would report a stale version after an
 # edit within the same session, which is precisely the property this exists to
 # provide. A guarantee with an exception is not a guarantee.
+#
+# What is hashed is what the engine is built from: everything but `test/`.
+# Hashing the tests too made an edit to one a new engine for every user -- a
+# new cached project, and a precompile of the engine (about twenty minutes)
+# for code no build reads.
 .ctJuliaEngineVersion <- function(path = .ctJuliaEnginePath()) {
-  files <- sort(list.files(path, recursive = TRUE, full.names = TRUE))
+  files <- .ctJuliaEngineFiles(path, recursive = TRUE)
   manifest <- paste(substring(files, nchar(path) + 2L), tools::md5sum(files),
     collapse = "
 ")
@@ -277,6 +282,17 @@
   on.exit(unlink(handle), add = TRUE)
   writeLines(manifest, handle)
   substr(unname(tools::md5sum(handle)), 1L, 12L)
+}
+
+# The engine's files the build reads: everything but its `test/` directory.
+# Top-level entries when not `recursive` (what a copy of the engine takes),
+# every file below them when it is (what its hash takes), sorted.
+.ctJuliaEngineFiles <- function(path, recursive = FALSE) {
+  top <- list.files(path, full.names = TRUE)
+  top <- top[basename(top) != "test"]
+  if (!recursive) return(top)
+  sort(unlist(lapply(top, function(f) if (dir.exists(f))
+    list.files(f, recursive = TRUE, full.names = TRUE) else f)))
 }
 
 # Path to the copy of ContinuousTimeSEM.jl shipped inside this ctsem install.
@@ -488,7 +504,9 @@ ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
       staging <- paste0(env_dir, "-partial-", Sys.getpid())
       unlink(staging, recursive = TRUE)
       dir.create(staging, recursive = TRUE, showWarnings = FALSE)
-      file.copy(list.files(.ctJuliaEnginePath(), full.names = TRUE), staging,
+      # What the hash covers and nothing else, so the copy is what its key
+      # names: the tests run from the package's own copy, never from here.
+      file.copy(.ctJuliaEngineFiles(.ctJuliaEnginePath()), staging,
         recursive = TRUE)
       if (!isTRUE(suppressWarnings(file.rename(staging, env_dir)))) {
         unlink(staging, recursive = TRUE)
