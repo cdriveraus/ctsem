@@ -2557,15 +2557,15 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' its draws of the random effects, for either sampler; \code{'fit'} starts them
 #' around the fit's own estimate, and is the only placement for a marginal
 #' target, which has no random effects to start. \code{control$target}
-#' says which posterior: \code{'auto'} (the default) is the exact posterior
-#' the fit's route can reach -- the joint posterior over population parameters
-#' \emph{and} every subject's random effects for \code{intoverpop =
-#' 'laplace'} or \code{'none'}, with the Laplace fit serving only to place the
-#' chains, and the filter's marginal for \code{intoverpop = 'augmented'}.
-#' \code{'marginal'}/\code{'joint'} ask for one explicitly regardless of
-#' route; \code{'marginal'} on a Laplace fit samples the Laplace marginal,
-#' an approximate posterior whose dimension does not grow with the subject
-#' count, and \code{'joint'} is refused by name on an \code{intoverpop =
+#' says which posterior: \code{'auto'} (the default) is the one the fit's
+#' \code{intoverpop} names -- the filter's marginal for \code{'augmented'}, the
+#' Laplace marginal for a fit that asked for \code{'laplace'} (an approximate
+#' posterior whose dimension does not grow with the subject count), and the
+#' joint posterior over population parameters \emph{and} every subject's
+#' random effects for \code{'none'} or for a Laplace route that
+#' \code{intoverpop = 'auto'} chose, where the Laplace fit only places the
+#' chains. \code{'marginal'}/\code{'joint'} ask for one explicitly regardless
+#' of route; \code{'joint'} is refused by name on an \code{intoverpop =
 #' 'augmented'} fit, which has no separate random effect to sample jointly
 #' with the parameters. See
 #' \code{\link{ctJuliaSetup}} for the thread count that decides whether

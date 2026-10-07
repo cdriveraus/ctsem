@@ -101,9 +101,11 @@ the state mean linearly, an approximation elsewhere, which \code{summary()}
 says. \code{FALSE}, or \code{'none'}, samples them, so it needs
 \code{optimize=FALSE}: maximising over every subject's effects would drive
 the population variance to zero. With \code{optimize=FALSE} on julia,
-\code{'laplace'} and \code{'none'} sample the joint posterior of parameters
-and random effects, \code{'augmented'} the filter's marginal; see
-\code{sampleControl}.}
+\code{'none'} (and so \code{'auto'}) samples the joint posterior of
+parameters and random effects; \code{'laplace'} and \code{'augmented'}
+sample the population parameters with the effects integrated out, by the
+Laplace approximation or the filter, and \code{TRUE} by whichever of the two
+it resolves to. \code{sampleControl$target} overrides this.}
 
 \item{poprank}{Rank of the population covariance of the individually
 varying parameters. \code{'auto'}, the default, uses the number of varying
@@ -158,9 +160,9 @@ into the engine; for live output use \code{optimcontrol$callback}.}
 maximum a posteriori with \code{priors=TRUE} -- with uncertainty from the
 curvature at the estimate. If FALSE, sample the posterior: with Stan's HMC
 sampler for \code{backend='stan'}, and for \code{backend='julia'} with
-SAEM's kernel on the joint posterior of parameters and random effects (NUTS
-when there are none) -- slower, but exact rather than a normal
-approximation at a mode. Other uncertainty methods for an optimised fit,
+SAEM's kernel on the joint posterior of parameters and random effects, or
+NUTS when there are none or \code{intoverpop} integrates them out -- slower,
+but exact rather than a normal approximation at a mode. Other uncertainty methods for an optimised fit,
 importance sampling among them, are in \code{\link{ctFitUncertainty}}. A
 sampled fit's point estimate is the per-parameter median of the draws on
 stan (\code{fit$stanfit$rawest}) and their mean on julia
@@ -277,7 +279,10 @@ draw is kept; and \code{processes} (TRUE), whether the chains run in worker
 processes -- at most \code{cores} at once, so four chains on two cores run
 two at a time.
 
-For \code{backend='julia'} also \code{sampler} (\code{'saem'}, SAEM's
+For \code{backend='julia'} also \code{target}, which posterior:
+\code{'auto'} (the one \code{intoverpop} names), \code{'joint'} (parameters
+and random effects) or \code{'marginal'} (parameters, effects integrated
+out); \code{sampler} (\code{'saem'}, SAEM's
 kernel, on the joint posterior, \code{'nuts'} otherwise or by choice),
 \code{placement} (\code{'saem'} on the joint posterior: SAEM's state places
 the chains, so no Laplace optimum is needed; \code{'fit'} places them

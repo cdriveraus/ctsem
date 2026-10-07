@@ -12,13 +12,13 @@
 # tests carry the correctness argument.
 #
 # `ctFitUncertainty(fit, 'sample')` on the `.sample_fixture()` below -- an
-# `intoverpop='laplace'` maximum-likelihood fit -- defaults to
-# `control$target='auto'`, which on a Laplace fit is the joint posterior over
-# parameters and random effects (the Laplace marginal until 2026-10-03, decision
-# 5 of review/OPTIM-consolidation-plan-2026-09-25.md, reversed). Tests that are
-# specifically about the random effects still ask for `target = 'joint'`
-# explicitly, so they say what they need whatever the default; everything else
-# here is generic sampler mechanics that holds under either target.
+# maximum-likelihood fit that named `intoverpop='laplace'` -- defaults to
+# `control$target='auto'`, which there is the Laplace marginal; had 'auto'
+# chosen the route it would be the joint posterior over parameters and random
+# effects (`.ctBackendSampleMarginal()`). Tests that are about the random
+# effects or SAEM ask for `target = 'joint'` explicitly, so they say what they
+# need whatever the default; everything else here is generic sampler mechanics
+# that holds under either target.
 #
 # The separate exported sampling function this file used to call was removed
 # (it was julia-only and never released); every call below that used to reach
@@ -37,9 +37,11 @@ test_that("a sampled fit carries draws the summary machinery can read", {
   skip_without_julia()
   fit <- .sample_fixture()
   npar <- length(fit$estimate$raw)
+  # target='joint': the placement asserted below is SAEM's, which the joint
+  # target takes; the fixture names 'laplace', whose own target is marginal.
   sampled <- suppressWarnings(suppressMessages(
     ctFitUncertainty(fit, uncertainty = "sample", cores = 1,
-      control = list(chains = 2, warmup = 80, draws = 80))))
+      control = list(chains = 2, warmup = 80, draws = 80, target = "joint"))))
 
   expect_s3_class(sampled, "ctJuliaFit")
   # And as a fit, not as a model spec: "ctFitModel" marks an unfitted handle,
@@ -59,8 +61,8 @@ test_that("a sampled fit carries draws the summary machinery can read", {
     ctsem:::.ctBackendRawParameterNames(fit, npar))
 
   # The point estimate becomes the posterior mean, and the point the chains
-  # were placed from is kept rather than overwritten: on the joint target, by
-  # default, SAEM's estimate (it ran from the fit's), with what SAEM did.
+  # were placed from is kept rather than overwritten: on the joint target
+  # SAEM's estimate (it ran from the fit's), with what SAEM did.
   expect_equal(sampled$estimate$raw,
     as.numeric(colMeans(sampled$estimate$rawposterior)))
   expect_identical(sampled$sample$placement$method, "saem")
@@ -351,6 +353,46 @@ test_that("processes = TRUE reproduces the in-process draws to numerical noise",
     inprocess$estimate$rawposterior, tolerance = 1e-6)
 })
 
+test_that("'auto' samples the posterior intoverpop names", {
+  marginal <- ctsem:::.ctBackendSampleMarginal
+  # A route the caller named says how the effects are handled, so its marginal
+  # is sampled; a route 'auto' chose to optimise says nothing about the
+  # posterior, which is then the exact one. Before 2026-10-07 a named
+  # 'laplace' sampled the joint posterior too.
+  expect_true(marginal("auto", "laplace", requested = "laplace"))
+  expect_true(marginal("auto", "laplace", requested = TRUE))
+  expect_false(marginal("auto", "laplace", requested = "auto"))
+  expect_false(marginal("auto", "laplace", requested = NULL))
+  expect_true(marginal(NULL, "augmented", requested = "auto"))
+  expect_false(marginal(NULL, "none", requested = "auto"))
+  # A backend caller passing only the route has named it.
+  expect_true(marginal(NULL, "laplace"))
+  expect_false(marginal("joint", "laplace", requested = "laplace"))
+  expect_true(marginal("marginal", "laplace", requested = "auto"))
+  expect_error(marginal("exact", "laplace"), "'auto', 'marginal' or 'joint'")
+})
+
+test_that("ctFit(optimize = FALSE, intoverpop = 'laplace') samples the Laplace marginal in worker processes", {
+  skip_without_julia()
+  # Each worker builds the Laplace objective for its own chain; that the
+  # pooled draws reproduce the in-session ones on this target is the test
+  # above, whose fixture names 'laplace'. This is the ctFit() entry, which
+  # sampled the joint posterior until 2026-10-07.
+  fit <- suppressWarnings(suppressMessages(ctFit(laplace_fixture_data(),
+    laplace_fixture_model(), backend = "julia", cores = 2,
+    intoverpop = "laplace", priors = TRUE, optimize = FALSE,
+    sampleControl = list(chains = 2, warmup = 30, draws = 30, minESS = 0))))
+  expect_identical(fit$sample$target, "marginal")
+  expect_identical(fit$sample$sampler, "nuts")
+  expect_identical(fit$args$resolved$intoverpop, "laplace")
+  expect_identical(ncol(fit$estimate$rawposterior), length(fit$estimate$raw))
+  expect_true(all(is.finite(fit$estimate$rawposterior)))
+  skip_if_not(isTRUE(fit$sample$processes),
+    "processes = TRUE fell back to in-process sampling in this session")
+  # A chain from each worker, each to the count asked for.
+  expect_identical(nrow(fit$estimate$rawposterior), 60L)
+})
+
 test_that("sampling workers start Julia at their share of the cores", {
   skip_without_julia()
   skip_if_not(ctsem:::.ctBackendCanWarm(), "future is not installed")
@@ -595,8 +637,10 @@ test_that("a sampled fit reports n_eff and Rhat where a ctStanFit does, and an o
     paste0("2 chains x ", sampled$sample$draws, " draws"), fixed = TRUE)
   expect_identical(names(summarised)[1L], "sampleNote")
   # A sampled fit did not run an uncertainty pass, and used to say it had.
-  expect_match(summarised$uncertaintyNote, "posterior draws (SAEM kernel)",
-    fixed = TRUE)
+  # Naming the kernel that drew them: NUTS on this fixture's marginal target.
+  expect_match(summarised$uncertaintyNote, paste0("posterior draws (",
+    if (identical(sampled$sample$sampler, "saem")) "SAEM kernel" else "NUTS",
+    ")"), fixed = TRUE)
   expect_false(grepl("ctFitUncertainty", summarised$uncertaintyNote, fixed = TRUE))
 
   # The optimised fit it started from has draws too -- from a covariance fitted
