@@ -33,6 +33,13 @@ test_that("the engine version is a hash of the engine source", {
   dir.create(altered, recursive = TRUE)
   file.copy(list.files(engine, full.names = TRUE), altered, recursive = TRUE)
   expect_identical(ctsem:::.ctJuliaEngineVersion(altered), version)
+  # The tests are not the engine: editing one is not a new engine, which would
+  # mean a new cached project and a precompile for every user.
+  testfiles <- list.files(file.path(altered, "test"), pattern = "[.]jl$",
+    full.names = TRUE)
+  expect_gt(length(testfiles), 0L)
+  cat("\n# a test edit", file = testfiles[1L], append = TRUE)
+  expect_identical(ctsem:::.ctJuliaEngineVersion(altered), version)
   cat("
 # a change", file = file.path(altered, "src", "r_interface.jl"), append = TRUE)
   expect_false(identical(ctsem:::.ctJuliaEngineVersion(altered), version))
