@@ -236,24 +236,38 @@ end
 # Convergence diagnostics
 ################################################################################
 
+# Chains are columns of a matrix when they share a length, and a vector of
+# vectors when they need not: chains run in separate processes at different
+# speeds are extended by different amounts (R/ctBackendSampleProcesses.R). The
+# formulas below are Stan's with every mean over chains weighted by the
+# chain's length -- within-chain variances by their degrees of freedom,
+# chain means and autocovariances by their draw counts -- so a longer chain
+# counts for what it holds, and with equal lengths every weight is equal and
+# each reduces to the unweighted original.
+_chain_columns(x::AbstractMatrix{Float64}) = [collect(view(x, :, c)) for c in axes(x, 2)]
+
 """Split R-hat: each chain is halved first, so within-chain drift is caught."""
-function _split_rhat(chains::AbstractMatrix{Float64})
-    ndraws, nchains = size(chains)
-    ndraws < 4 && return NaN
-    half = div(ndraws, 2)
+_split_rhat(chains::AbstractMatrix{Float64}) = _split_rhat(_chain_columns(chains))
+
+function _split_rhat(chains::AbstractVector{<:AbstractVector{Float64}})
     pieces = Vector{Vector{Float64}}()
-    for c in 1:nchains
-        push!(pieces, collect(view(chains, 1:half, c)))
-        push!(pieces, collect(view(chains, (ndraws - half + 1):ndraws, c)))
+    for x in chains
+        n = length(x)
+        n < 4 && return NaN
+        half = div(n, 2)
+        push!(pieces, collect(view(x, 1:half)))
+        push!(pieces, collect(view(x, (n - half + 1):n)))
     end
     m = length(pieces)
-    means = [sum(p) / half for p in pieces]
-    vars = [sum(abs2, p .- means[j]) / (half - 1) for (j, p) in enumerate(pieces)]
-    W = sum(vars) / m
+    h = [length(p) for p in pieces]
+    means = [sum(p) / length(p) for p in pieces]
+    vars = [sum(abs2, p .- means[j]) / (h[j] - 1) for (j, p) in enumerate(pieces)]
+    W = sum((h .- 1) .* vars) / sum(h .- 1)
     W <= 0 && return NaN
-    grand = sum(means) / m
-    B = half * sum(abs2, means .- grand) / (m - 1)
-    varplus = ((half - 1) / half) * W + B / half
+    nbar = sum(h) / m
+    grand = sum(h .* means) / sum(h)
+    between = sum(h .* abs2.(means .- grand)) / ((m - 1) * nbar)
+    varplus = ((nbar - 1) / nbar) * W + between
     return sqrt(varplus / W)
 end
 
@@ -261,8 +275,16 @@ end
     _ess(chains)
 
 Effective sample size by Geyer's initial monotone positive sequence: sum the
-autocorrelations in pairs, stop at the first non-positive pair, then enforce
-that the pair sums are non-increasing.
+autocorrelations in pairs from lag 0, stop at the first non-positive pair, then
+enforce that the pair sums are non-increasing, and `tau = -1 + 2 * sum`.
+
+From lag 0, not 1: the pairs are (rho_0 + rho_1), (rho_2 + rho_3), ..., which
+is what makes `-1 + 2 * sum` the integrated autocorrelation time
+`1 + 2 sum_{t >= 1} rho_t`. Pairing from lag 1 drops rho_0 = 1 and gives
+`tau - 2`: on AR(1) chains with phi = 0.6 (tau = 4) every effective size came
+out twice the closed form, and the stopping rule ended runs at half the size
+asked for. Independent draws (tau = 1) and slow chains (tau in the tens) hid
+it.
 
 The pairing is not an optimisation. An autocorrelation estimate for a reversible
 chain is positive in consecutive pairs even when individual lags are not, so
@@ -273,36 +295,50 @@ Each lag's autocorrelation is computed only when the sequence reaches it: the
 sum stops at the first non-positive pair, usually within a few dozen lags, and
 computing all thousand lags up front cost the same result many times over.
 """
-function _ess(chains::AbstractMatrix{Float64})
-    ndraws, nchains = size(chains)
-    ndraws < 4 && return NaN
-    means = [sum(view(chains, :, c)) / ndraws for c in 1:nchains]
-    vars = [sum(abs2, view(chains, :, c) .- means[c]) / (ndraws - 1) for c in 1:nchains]
-    W = sum(vars) / nchains
+_ess(chains::AbstractMatrix{Float64}) = _ess(_chain_columns(chains))
+
+function _ess(chains::AbstractVector{<:AbstractVector{Float64}})
+    nchains = length(chains)
+    n = [length(x) for x in chains]
+    minimum(n) < 4 && return NaN
+    means = [sum(x) / length(x) for x in chains]
+    vars = [sum(abs2, chains[c] .- means[c]) / (n[c] - 1) for c in 1:nchains]
+    W = sum((n .- 1) .* vars) / sum(n .- 1)
     W <= 0 && return NaN
-    grand = sum(means) / nchains
-    B = nchains > 1 ? ndraws * sum(abs2, means .- grand) / (nchains - 1) : 0.0
-    varplus = ((ndraws - 1) / ndraws) * W + (nchains > 1 ? B / ndraws : 0.0)
+    N = sum(n)
+    nbar = N / nchains
+    grand = sum(n .* means) / N
+    between = nchains > 1 ?
+        sum(n .* abs2.(means .- grand)) / ((nchains - 1) * nbar) : 0.0
+    varplus = ((nbar - 1) / nbar) * W + between
     varplus <= 0 && return NaN
 
-    maxlag = min(ndraws - 2, 1000)
+    # A chain contributes to a lag while it has two pairs at that lag, so the
+    # longest chain sets how far the sequence can run; with equal lengths
+    # every chain contributes to every lag, as before.
+    maxlag = min(maximum(n) - 2, 1000)
     corr = function (t)
         acov = 0.0
+        weight = 0
         for c in 1:nchains
+            n[c] - t < 2 && continue
             s = 0.0
             m = means[c]
-            @inbounds for i in 1:(ndraws - t)
-                s += (chains[i, c] - m) * (chains[i + t, c] - m)
+            x = chains[c]
+            @inbounds for i in 1:(n[c] - t)
+                s += (x[i] - m) * (x[i + t] - m)
             end
-            acov += s / ndraws
+            # The chain's autocovariance, s / n[c], weighted by n[c].
+            acov += s
+            weight += n[c]
         end
-        acov /= nchains
+        acov /= weight
         return 1 - (W - acov) / varplus
     end
 
     # Initial positive sequence, then made monotone.
     pairs = Float64[]
-    t = 1
+    t = 0
     while t + 1 <= maxlag
         pair = corr(t) + corr(t + 1)
         pair <= 0 && break
@@ -313,7 +349,7 @@ function _ess(chains::AbstractMatrix{Float64})
         pairs[i] = min(pairs[i], pairs[i - 1])
     end
     tau = max(1.0, -1.0 + 2 * sum(pairs))
-    return nchains * ndraws / tau
+    return N / tau
 end
 
 """
@@ -361,13 +397,15 @@ standard deviation reached its lower tail only in bursts thousands of draws
 apart, and bulk size read about 160 where the tail held about 40
 (review/POSTERIOR-race-2026-10-02.md, gN3).
 """
-function _tail_ess(x::AbstractMatrix{Float64})
-    v = sort(vec(x))
+_tail_ess(x::AbstractMatrix{Float64}) = _tail_ess(_chain_columns(x))
+
+function _tail_ess(chains::AbstractVector{<:AbstractVector{Float64}})
+    v = sort(reduce(vcat, chains))
     S = length(v)
     lo = v[clamp(ceil(Int, 0.05 * S), 1, S)]
     hi = v[clamp(ceil(Int, 0.95 * S), 1, S)]
-    a = _ess(Float64.(x .<= lo))
-    b = _ess(Float64.(x .>= hi))
+    a = _ess([Float64.(x .<= lo) for x in chains])
+    b = _ess([Float64.(x .>= hi) for x in chains])
     return _finite_extremum([a, b], minimum)
 end
 
@@ -384,7 +422,10 @@ that agree on location but not on spread -- chains that have missed a tail.
 tails' (`_tail_ess`).
 
 `draws` is `ndim x (nchains * ndraws)`, chain-major -- the layout `ctsem_sample`
-returns, and the one that crosses the R bridge as a single matrix.
+returns, and the one that crosses the R bridge as a single matrix. Given
+`lengths` in place of a chain count, chain `c` is the next `lengths[c]`
+columns: chains of different lengths, which processes running at different
+speeds produce.
 """
 function ctsem_sample_diagnostics(draws::AbstractMatrix{Float64}, nchains::Integer)
     ndim, total = size(draws)
@@ -393,23 +434,34 @@ function ctsem_sample_diagnostics(draws::AbstractMatrix{Float64}, nchains::Integ
     ndraws = div(total, nchains)
     ndraws * nchains == total ||
         throw(DimensionMismatch("draw count is not a multiple of the chain count"))
+    return ctsem_sample_diagnostics(draws, fill(ndraws, nchains))
+end
+
+function ctsem_sample_diagnostics(draws::AbstractMatrix{Float64},
+    lengths::AbstractVector{<:Integer})
+    ndim, total = size(draws)
+    lengths = Int.(lengths)
+    (isempty(lengths) || any(<(1), lengths)) &&
+        throw(ArgumentError("every chain needs at least one draw"))
+    sum(lengths) == total ||
+        throw(DimensionMismatch("chain lengths do not add up to the draw count"))
+    starts = cumsum(vcat(0, lengths[1:(end - 1)]))
+    ragged = v -> [v[(s + 1):(s + l)] for (s, l) in zip(starts, lengths)]
     rhat = fill(NaN, ndim)
     ess = fill(NaN, ndim)
     ess_tail = fill(NaN, ndim)
-    buffer = Matrix{Float64}(undef, ndraws, nchains)
     for j in 1:ndim
-        @inbounds for c in 1:nchains, t in 1:ndraws
-            buffer[t, c] = draws[j, (c - 1) * ndraws + t]
-        end
-        all(isfinite, buffer) || continue
-        z = _rank_normalise(buffer)
-        sorted = sort(vec(buffer))
+        flat = Vector{Float64}(draws[j, :])
+        all(isfinite, flat) || continue
+        chains = ragged(flat)
+        z = ragged(vec(_rank_normalise(reshape(flat, :, 1))))
+        sorted = sort(flat)
         n = length(sorted)
         med = isodd(n) ? sorted[(n + 1) ÷ 2] : (sorted[n ÷ 2] + sorted[n ÷ 2 + 1]) / 2
-        folded = _rank_normalise(abs.(buffer .- med))
+        folded = ragged(vec(_rank_normalise(reshape(abs.(flat .- med), :, 1))))
         rhat[j] = _finite_extremum([_split_rhat(z), _split_rhat(folded)], maximum)
         ess[j] = _ess(z)
-        ess_tail[j] = _tail_ess(buffer)
+        ess_tail[j] = _tail_ess(chains)
     end
     return (rhat=rhat, ess=ess, ess_tail=ess_tail)
 end

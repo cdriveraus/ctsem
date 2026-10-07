@@ -105,7 +105,7 @@ the population variance to zero. With \code{optimize=FALSE} on julia,
 parameters and random effects; \code{'laplace'} and \code{'augmented'}
 sample the population parameters with the effects integrated out, by the
 Laplace approximation or the filter, and \code{TRUE} by whichever of the two
-it resolves to. \code{sampleControl$target} overrides this.}
+it resolves to.}
 
 \item{poprank}{Rank of the population covariance of the individually
 varying parameters. \code{'auto'}, the default, uses the number of varying
@@ -280,10 +280,7 @@ draw is kept; and \code{processes} (TRUE), whether the chains run in worker
 processes -- at most \code{cores} at once, so four chains on two cores run
 two at a time.
 
-For \code{backend='julia'} also \code{target}, which posterior:
-\code{'auto'} (the one \code{intoverpop} names), \code{'joint'} (parameters
-and random effects) or \code{'marginal'} (parameters, effects integrated
-out); \code{sampler} (\code{'saem'}, SAEM's
+For \code{backend='julia'} also \code{sampler} (\code{'saem'}, SAEM's
 kernel, on the joint posterior, \code{'nuts'} otherwise or by choice),
 \code{placement} (\code{'saem'} on the joint posterior: SAEM's state places
 the chains, so no Laplace optimum is needed; \code{'fit'} places them

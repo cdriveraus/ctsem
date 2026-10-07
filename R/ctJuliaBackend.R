@@ -480,13 +480,19 @@ ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
       dir.create(dirname(env_dir), recursive = TRUE, showWarnings = FALSE)
       unlink(env_dir, recursive = TRUE)
       # copy the vendored tree, then rename to the target so an interrupted
-      # copy cannot leave a half-populated environment behind
-      staging <- paste0(env_dir, "-partial")
+      # copy cannot leave a half-populated environment behind. The staging
+      # directory is this process's own: two sessions setting up one engine
+      # at once shared `-partial`, and one deleted it under the other's copy
+      # ("more 'from' files than 'to' files"). The first copy renamed into
+      # place stands, and a later one is discarded.
+      staging <- paste0(env_dir, "-partial-", Sys.getpid())
       unlink(staging, recursive = TRUE)
       dir.create(staging, recursive = TRUE, showWarnings = FALSE)
       file.copy(list.files(.ctJuliaEnginePath(), full.names = TRUE), staging,
         recursive = TRUE)
-      file.rename(staging, env_dir)
+      if (!isTRUE(suppressWarnings(file.rename(staging, env_dir)))) {
+        unlink(staging, recursive = TRUE)
+      }
     }
     .ctJuliaTouchEngine(env_dir)
     .ctJuliaPruneEngines(env_dir)
@@ -5958,8 +5964,7 @@ print.ctJuliaFit <- function(x, ...) {
   if (!is.null(x$sample)) {
     cat("  sampled: ", if (!is.null(x$sample$target))
       paste0(x$sample$target, " posterior, ") else "",
-      x$sample$chains, " chains x ", x$sample$draws,
-      " draws; chains converged: ",
+      .ctSampleDrawsLabel(x$sample), "; chains converged: ",
       if (is.null(x$sample$converged) || is.na(x$sample$converged)) "unknown" else
         as.character(isTRUE(x$sample$converged)), "\n", sep = "")
     if (length(x$sample$diagnosis)) {

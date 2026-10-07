@@ -9,17 +9,17 @@
 # assumption anywhere, and the fit is then used only to place the chains --
 # by default through SAEM's state, which starts from it.
 #
-# `control$target='auto'`, the default, samples the posterior `intoverpop`
-# names (`.ctBackendSampleMarginal()`): the filter's marginal for
-# 'augmented', the joint posterior over parameters and effects for 'none', and
-# for 'laplace' the Laplace marginal -- `npar` dimensions whatever the subject
-# count -- when the caller asked for that route, or the joint posterior when
-# `intoverpop='auto'` chose it to optimise. A chosen route says how the fit
-# was found, not what to sample, and there the approximation only places the
-# sampler. Two entry points reach the same targets by the same names:
-# `ctFit(optimize=FALSE)` and `ctFitUncertainty(fit, 'sample')`. From
-# 2026-10-03 to 2026-10-07 'auto' sampled the joint posterior on every Laplace
-# fit, a named route included.
+# What is sampled is said by `intoverpop`, in its own words, and by nothing
+# else (`.ctBackendSampleRoute()`): 'none' samples the joint posterior over
+# parameters and random effects, 'laplace' the Laplace marginal -- `npar`
+# dimensions whatever the subject count -- and 'augmented' the filter's
+# marginal. 'auto' integrates when optimising and samples when sampling, so a
+# Laplace route it chose to optimise is sampled as 'none', and the
+# approximation only places the sampler. `ctFit(optimize=FALSE)` reads its
+# own `intoverpop`; `ctFitUncertainty(fit, 'sample')` reads the fit's, and
+# `control$intoverpop` overrides it there. A separate `control$target`
+# ('joint'/'marginal') said the same thing a second way until 2026-10-07, and
+# could contradict `intoverpop`; it is refused by name now.
 #
 # It takes a fitted object rather than a model and data, and that is not merely
 # convenience. The fit supplies the starting point *and* the metric: the engine
@@ -166,30 +166,53 @@
   NULL
 }
 
-# Which posterior `control$target` names: TRUE for the marginal over the
-# population parameters, FALSE for the joint posterior over them and every
-# random effect. Both entry points resolve it here and nowhere else.
+# What a sampled run integrates, in `intoverpop`'s words: 'none' samples the
+# joint posterior over parameters and every random effect, 'laplace' the
+# Laplace marginal over the parameters, 'augmented' the filter's marginal.
+# Both entry points resolve it here and nowhere else.
 #
-# 'auto' samples the posterior `intoverpop` names. A route the caller named --
-# 'laplace', or TRUE resolving to it -- says how the random effects are to be
-# handled, so its marginal is sampled: the Laplace marginal, by NUTS over the
-# parameters alone. A route `intoverpop = 'auto'` chose for the optimiser says
-# only how the fit was found, so the exact posterior is sampled there and the
-# Laplace fit places the chains. 'augmented' samples the filter's marginal,
-# which is exact for it, and 'none' the joint posterior. `requested` is the
-# caller's `intoverpop` argument; NULL, a fit stored without it, reads as
-# 'auto', and a backend caller that passes only a route has named it.
+# `route` is what the fit's specification carries; `requested` the
+# `intoverpop` its caller wrote, NULL for a fit stored without it, which
+# reads as 'auto'. A route named by the caller -- 'laplace', or TRUE
+# resolving to it -- is sampled as named. A Laplace route 'auto' chose to
+# optimise is sampled as 'none': 'auto' integrates when optimising and
+# samples when sampling, which is `ctFit(optimize = FALSE)`'s own rule. A
+# backend caller passing only a route has named it.
+#
+# `override`, `ctFitUncertainty()`'s `control$intoverpop`, picks another
+# route the fit's specification can carry: 'none' and 'laplace' share one
+# (the Laplace structure says which parameters vary, integrated or not), the
+# augmented one is a different model.
 #' @keywords internal
-.ctBackendSampleMarginal <- function(target, route, requested = route) {
-  target <- .ctJuliaOr(target, "auto")
-  if (!is.character(target) || length(target) != 1L ||
-      !target %in% c("auto", "marginal", "joint")) {
-    stop("control$target must be 'auto', 'marginal' or 'joint', not '",
-      paste(format(target), collapse = " "), "'.", call. = FALSE)
+.ctBackendSampleRoute <- function(route, requested = route, override = NULL) {
+  route <- as.character(route)[1L]
+  if (!is.null(override)) {
+    override <- as.character(override)
+    if (length(override) != 1L ||
+        !override %in% c("auto", "none", "laplace", "augmented")) {
+      stop("control$intoverpop must be 'auto', 'none', 'laplace' or ",
+        "'augmented', not '", paste(override, collapse = " "), "'.",
+        call. = FALSE)
+    }
+    if (!identical(override, "auto")) {
+      if (identical(route, "augmented") && !identical(override, "augmented")) {
+        stop("This fit was made with intoverpop = 'augmented', which carries ",
+          "the random effects in the state: there is no separate posterior ",
+          "over them, and no Laplace marginal. Refit with intoverpop = '",
+          override, "' to sample that.", call. = FALSE)
+      }
+      if (!identical(route, "augmented") && identical(override, "augmented")) {
+        stop("Sampling the filter's marginal (intoverpop = 'augmented') needs ",
+          "a fit made with intoverpop = 'augmented'; this one integrates by ",
+          "'laplace'. Refit, or sample with intoverpop = 'none' or 'laplace'.",
+          call. = FALSE)
+      }
+      return(override)
+    }
   }
   named <- !is.null(requested) && !identical(as.character(requested)[1L], "auto")
-  switch(target, marginal = TRUE, joint = FALSE,
-    switch(as.character(route)[1L], augmented = TRUE, laplace = named, FALSE))
+  switch(route, augmented = "augmented",
+    laplace = if (named) "laplace" else "none", "none")
 }
 
 # Sample a fit's posterior by MCMC: `uncertainty = 'sample'`
@@ -201,12 +224,8 @@
 # `test-julia-fit-shape.R` catches rather than something a caller discovers
 # later.
 #
-# `control$target` names which posterior, resolved by
-# `.ctBackendSampleMarginal()` against the fit's route and the `intoverpop`
-# its caller wrote. `'joint'` needs the Laplace structure (`intoverpop =
-# 'laplace'` or `'none'`) to have somewhere to put the effects, and is refused
-# by name on an augmented fit rather than silently sampling the marginal
-# instead.
+# What is sampled is `.ctBackendSampleRoute()`'s, from the fit's route, the
+# `intoverpop` its caller wrote, and `control$intoverpop`.
 #
 # `state_explicit` is not a `control` entry -- a caller of
 # `ctFitUncertainty()` never sets it, because a fit whose states are not
@@ -221,23 +240,17 @@
   verbose = 0, state_explicit = FALSE, handles = NULL) {
 
   .ctBackendSampleCheckControl(control)
-  marginal <- .ctBackendSampleMarginal(control$target,
-    .ctBackendIntOverPop(fit$model_spec), requested = fit$args$input[["intoverpop"]])
-  if (!marginal && is.null(fit$model_spec$laplace)) {
-    stop("The joint posterior needs a fit made with intoverpop = 'laplace' ",
-      "or 'none': the augmented route carries the random effects in the ",
-      "state, so there is no separate posterior over them to sample. Ask ",
-      "for control = list(target = 'marginal') to sample the population ",
-      "parameters alone.", call. = FALSE)
-  }
+  sampled <- .ctBackendSampleRoute(.ctBackendIntOverPop(fit$model_spec),
+    requested = fit$args$input[["intoverpop"]], override = control$intoverpop)
+  marginal <- !identical(sampled, "none")
   placement <- .ctBackendPlacementName(control$placement, marginal || isTRUE(state_explicit))
   if (identical(control$sampler, "saem") && (marginal || isTRUE(state_explicit))) {
     stop("control$sampler = 'saem' samples the joint posterior over population ",
       "parameters and random effects, and this run asks for ",
       if (isTRUE(state_explicit)) "the joint posterior over the latent states. "
       else "the marginal posterior. ",
-      "Use the default sampler, or a fit made with intoverpop = 'laplace' or ",
-      "'none' and control$target = 'joint'.", call. = FALSE)
+      "Use the default sampler, or sample with intoverpop = 'none'.",
+      call. = FALSE)
   }
   # The sampler, resolved against the target and written back into `control`,
   # which is what the engine call and every worker read it from: the default
@@ -362,11 +375,11 @@
   # own. `iter` is kept because it is what `chains` and `warmup` were always
   # expressed against, and because a script that passed it should keep working
   # through `sampleControl` as well as through the deprecated argument.
-  # `target` says which posterior -- 'auto'/'marginal'/'joint' -- read by
-  # `.ctBackendUncertaintySample()`, the only caller that resolves it to
-  # something other than the fit's own route.
+  # `intoverpop` overrides, for `ctFitUncertainty(fit, 'sample')`, the
+  # route the fit's own `intoverpop` would sample (`.ctBackendSampleRoute()`);
+  # `ctFit()` takes it as an argument of its own and refuses it here.
   "iter", "chains", "warmup", "draws", "seed", "saveEffects", "processes",
-  "target", "stepsize",
+  "intoverpop", "stepsize",
   # Which kernel draws the joint posterior: 'saem' (SAEM's sweeps for the
   # effects, NUTS for the parameters given them; the default there) or 'nuts'
   # (NUTS on the whole joint vector); resolved against the target by
@@ -463,9 +476,19 @@
     stop("Every entry of ", listname, " must be named. Accepted names: ",
       paste(sort(.CT_SAMPLE_CONTROL_NAMES), collapse = ", "), ".", call. = FALSE)
   }
+  # ctFit()'s own `intoverpop` says what it samples; a second one in its
+  # sampler settings could only contradict it.
+  if (identical(listname, "sampleControl") && "intoverpop" %in% names(control)) {
+    stop("sampleControl$intoverpop: ctFit()'s own intoverpop argument says ",
+      "what is sampled ('none' the joint posterior, 'laplace' the Laplace ",
+      "marginal, 'augmented' the filter's marginal).", call. = FALSE)
+  }
   unknown <- setdiff(names(control), .CT_SAMPLE_CONTROL_NAMES)
   if (!length(unknown)) return(invisible(NULL))
+  retired <- c(target = paste0("intoverpop says what is sampled: 'none' for ",
+    "the joint posterior, 'laplace' for the Laplace marginal"))
   hint <- vapply(unknown, function(name) {
+    if (name %in% names(retired)) return(paste0(" (", retired[[name]], ")"))
     near <- .CT_SAMPLE_CONTROL_NAMES[tolower(.CT_SAMPLE_CONTROL_NAMES) ==
         tolower(name)]
     if (length(near)) paste0(" (did you mean ", near[1L], "?)") else ""
@@ -947,11 +970,9 @@
     target_ess <- max(.ctJuliaOr(settings$min_ess, 0),
       .ctJuliaOr(settings$mean_ess, 0))
     # Which posterior this run draws from, said once here rather than left to
-    # be inferred from `$sample$target` after the fact:
-    # `ctFitUncertainty(fit, 'sample')`'s default target depends on the fit's
-    # route (joint for 'laplace' and 'none', marginal for 'augmented'), and
-    # it changed on 2026-10-03, so it is not always what a reader remembers
-    # from an earlier call.
+    # be inferred from `$sample$target` after the fact: on a Laplace fit it
+    # depends on whether `intoverpop` named the route, which is not always
+    # what a reader remembers from the call that made the fit.
     targetlabel <- if (isTRUE(target$state_explicit))
         "the joint posterior over parameters and the latent states"
       else if (isTRUE(target$marginal))
@@ -1040,6 +1061,11 @@
   # and effects into plausible-looking nonsense.
   kept <- if (isTRUE(saveEffects)) as.integer(result$ndim) else as.integer(result$npar)
   raw <- matrix(as.numeric(result$draws), nrow = kept)
+  # One count per chain when chains in worker processes ran to different
+  # lengths (`.ctBackendChainCoordinator()`); `draws` is then their mean, and
+  # `$sample$chain_draws` keeps them.
+  lengths <- as.integer(draws)
+  draws <- if (length(lengths) > 1L) as.integer(round(mean(lengths))) else lengths
   posterior <- t(raw[seq_len(npar), , drop = FALSE])
   # Named here rather than through `.ctFitNameRawUncertainty()`, because the
   # covariance and the standard errors below are computed *from* this matrix and
@@ -1078,6 +1104,7 @@
 
   out$sample <- list(
     chains = chains, warmup = warmup, draws = draws,
+    chain_draws = if (length(unique(lengths)) > 1L) lengths else NULL,
     rhat = stats::setNames(as.numeric(result$rhat)[seq_len(npar)], colnames(posterior)),
     ess = stats::setNames(as.numeric(result$ess)[seq_len(npar)], colnames(posterior)),
     # The tails' effective size (`ctsem_sample_diagnostics`): what the 5% and
@@ -1103,9 +1130,8 @@
     effect_mean = as.numeric(result$effect_mean),
     effect_sd = as.numeric(result$effect_sd),
     marginal = identical(as.integer(result$ndim), as.integer(result$npar)),
-    # Which posterior the caller asked for, in the vocabulary
-    # `ctFitUncertainty(fit, 'sample', control=list(target=))` and
-    # `ctFit(optimize=FALSE)` share -- distinct from
+    # Which posterior was sampled, 'joint' (`intoverpop = 'none'`) or
+    # 'marginal' (`'laplace'` or `'augmented'`) -- distinct from
     # `marginal` above, which asks a narrower question (whether the sampled
     # space was exactly `npar`-dimensional) that reads FALSE for both the
     # `'none'` route and the state-explicit one alike.
@@ -1164,6 +1190,29 @@
   out
 }
 
+# Draws per chain, one entry per chain. Chains in worker processes are
+# extended in proportion to their speed (`.ctBackendChainCoordinator()`), so
+# they need not share a length; `$sample$chain_draws` is set only when they
+# do not.
+#' @keywords internal
+.ctSampleChainDraws <- function(sample) {
+  if (!is.null(sample$chain_draws)) return(as.integer(sample$chain_draws))
+  rep(as.integer(sample$draws)[1L], as.integer(sample$chains)[1L])
+}
+
+# "4 chains x 500 draws", or "4 chains, 2120 draws (461-612 per chain)".
+#' @keywords internal
+.ctSampleDrawsLabel <- function(sample) {
+  lengths <- .ctSampleChainDraws(sample)
+  chains <- length(lengths)
+  word <- if (chains == 1L) " chain" else " chains"
+  if (length(unique(lengths)) <= 1L) {
+    return(paste0(chains, word, " x ", lengths[1L], " draws"))
+  }
+  paste0(chains, word, ", ", sum(lengths), " draws (", min(lengths), "-",
+    max(lengths), " per chain)")
+}
+
 # What went wrong with this sample, as short phrases, and whether the chains
 # agreed at all.
 #
@@ -1174,7 +1223,7 @@
 # two set it to FALSE.
 #' @keywords internal
 .ctSampleDiagnosis <- function(diagnostics) {
-  total <- diagnostics$chains * diagnostics$draws
+  total <- sum(.ctSampleChainDraws(diagnostics))
   problems <- character(0)
   divergent <- suppressWarnings(as.integer(diagnostics$divergent)[1L])
   if (!is.na(divergent) && divergent > 0L) {
@@ -1254,7 +1303,7 @@
 # not follow the geometry there, and a posterior summarised over draws it could
 # not reach is wrong in a way no amount of averaging fixes.
 .ctSampleWarn <- function(diagnostics) {
-  total <- diagnostics$chains * diagnostics$draws
+  total <- sum(.ctSampleChainDraws(diagnostics))
   if (diagnostics$divergent > 0L) {
     warning(diagnostics$divergent, " of ", total, " transitions diverged. The ",
       "sampler could not follow the posterior's geometry there, so these draws ",
@@ -1543,7 +1592,7 @@ print.ctSampleDiagnostics <- function(x, ...) {
   placementcores <- if (overlap) as.integer(cores) - workers else cores
   handles <- if (overlap) {
     .ctBackendWarmWorkers(spec0, workers = workers, values = start0,
-      threads = max(1L, as.integer(cores) %/% workers))
+      threads = .ctBackendWorkerThreads(cores, workers))
   } else NULL
 
   # Placement: `.ctJuliaOptimiseFit()` (R/ctJuliaBackend.R) is the whole
@@ -1573,11 +1622,11 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # Hessian, so no identifiability report from a placement optimum either; the
   # sampler's own flat-region check stands in.
   #
-  # The target is settled here, once, and handed on by name, so the
-  # placement and the sampler cannot disagree about it. ctFit() has already
-  # resolved 'auto' against the `intoverpop` its caller wrote; a backend
-  # caller that reaches this with 'auto' named its route.
-  marginal <- .ctBackendSampleMarginal(control$target, intoverpop)
+  # `intoverpop` here is the route ctFit() resolved for sampling: 'auto'
+  # already made 'none'. Handed on by name below, so the placement and the
+  # sampler cannot disagree about it -- the placement fit carries no record
+  # of how its route was chosen.
+  marginal <- !identical(intoverpop, "none")
   jointtarget <- isTRUE(intoverstates) && !marginal
   if (jointtarget && identical(.ctBackendPlacementName(control$placement, FALSE), "saem")) {
     placementcontrol <- utils::modifyList(placementcontrol,
@@ -1597,12 +1646,11 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # `processes` were resolved above from `ctFit()`'s own `iter`/`optimcontrol`
   # vocabulary; folded into `control` here so the shared function reads them
   # exactly as it reads a caller's own `control` list, and `target` as
-  # resolved above: the placement fit carries no record of how its route was
-  # chosen.
+  # resolved above.
   samplecontrol <- utils::modifyList(control,
     list(chains = chains, warmup = warmup, draws = draws, seed = seed,
       saveEffects = saveEffects, processes = processes,
-      target = if (marginal) "marginal" else "joint"))
+      intoverpop = intoverpop))
   .ctBackendUncertaintySample(placementfit, control = samplecontrol,
     cores = cores, verbose = verbose, state_explicit = !isTRUE(intoverstates),
     handles = handles)
