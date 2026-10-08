@@ -370,6 +370,66 @@ test_that("reporting through the hybrid is the layer's: population, subjects, mo
   }
 })
 
+test_that("sequential predictions are the fitted model's own, row by row", {
+  skip_without_julia()
+  # Each row's prediction from the subject's earlier rows alone, the effects at
+  # their Laplace posterior given those rows. Checked: the rows' log predictive
+  # densities sum to the objective (no priors, so it is the subjects' terms
+  # alone); the last row's updated values, conditional on the whole record,
+  # are the plug-in filter's at the fitted modes; a subject's first prediction,
+  # with nothing observed, adds the population covariance of the intercepts to
+  # the filter's own; and the hybrid and the layer agree.
+  old <- options(ctsem.laplace.hybrid = TRUE)
+  on.exit(options(old), add = TRUE)
+  d <- .pu_dyn_data()
+  handle <- function(s) structure(s, class = c("ctJuliaModel", "ctFitModel"))
+  set.seed(31)
+  cases <- list(list(m = .pu_model(), linear = TRUE),
+    list(m = .pu_dyn_model(), linear = FALSE))
+  for (case in cases) {
+    out <- list()
+    x <- NULL
+    for (h in c(TRUE, FALSE)) {
+      options(ctsem.laplace.hybrid = h)
+      spec <- .pu_spec(d, case$m, poprank = 1, popunique = "MANIFESTMEANS",
+        priors = FALSE)
+      if (is.null(x)) x <- rnorm(length(.pu_names(spec)), 0, 0.3)
+      module <- ctsem:::.ctJuliaModule(spec$project)
+      o <- ctsem:::.ctJuliaObjective(handle(spec), hybrid = TRUE)
+      xx <- ctsem:::.ctJuliaNumericVector(x)
+      seq <- ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_sequential(o, xx))
+      value <- ctJuliaEvaluate(handle(spec), x, gradient = FALSE, cores = 1L)$value
+      expect_equal(sum(seq$llrow), value, tolerance = 1e-8)
+      kal <- ctsem:::.ctBackendJuliaValue(module$ctsem_kalman(o, xx,
+        subject_matrices = FALSE))
+      subject <- as.integer(seq$subject)
+      last <- as.integer(tapply(seq_along(subject), subject, max))
+      expect_equal(seq$eta[2, last, , drop = FALSE], kal$eta[2, last, , drop = FALSE],
+        tolerance = 1e-7)
+      expect_equal(seq$y[2, last, , drop = FALSE], kal$y[2, last, , drop = FALSE],
+        tolerance = 1e-7)
+      if (case$linear && h) {
+        first <- as.integer(tapply(seq_along(subject), subject, min))
+        base <- ctsem:::.ctBackendJuliaValue(module$ctsem_kalman(o, xx,
+          subject_matrices = FALSE, from_level = 2L))
+        popcov <- as.matrix(ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_popcov(o,
+          xx, 1L)))
+        slope <- spec$laplace$hybrid$slope
+        rows <- spec$laplace$hybrid$manifest
+        added <- matrix(0, 3, 3)
+        added[rows, rows] <- diag(slope, 3) %*% popcov %*% diag(slope, 3)
+        for (r in first) {
+          expect_equal(seq$ycov[1, r, , ], base$ycov[1, r, , ] + added, tolerance = 1e-8)
+        }
+      }
+      out[[as.character(h)]] <- seq
+    }
+    for (f in c("eta", "etacov", "y", "ycov", "llrow")) {
+      expect_equal(out[["TRUE"]][[f]], out[["FALSE"]][[f]], tolerance = 1e-7, info = f)
+    }
+  }
+})
+
 test_that("a fit with own variances converges and reports them", {
   skip_without_julia()
   skip_on_cran()
@@ -383,4 +443,17 @@ test_that("a fit with own variances converges and reports them", {
   # Each item's person means vary independently in the data, so the own
   # variances carry the spread: no sd collapses to zero.
   expect_true(all(s$popsd[, "mean"] > 0.3))
+  # The fit integrates the own variances in its filter, and its reports read
+  # them from that objective: the same as the layer holding them as
+  # coordinates reports, which the fit with its hybrid record removed uses.
+  expect_false(is.null(fit$model_spec$laplace$hybrid))
+  layer <- fit
+  layer$model_spec$laplace$hybrid <- NULL
+  expect_equal(summary(layer)$popsd, s$popsd, tolerance = 1e-8)
+  expect_equal(ctSubjectPars(layer), ctSubjectPars(fit), tolerance = 1e-6)
+  quiet <- function(x) suppressWarnings(suppressMessages(x))
+  kh <- quiet(ctKalman(fit, subjects = 1:3))
+  kl <- quiet(ctKalman(layer, subjects = 1:3))
+  numeric <- vapply(kh, is.numeric, logical(1))
+  expect_equal(kh[numeric], kl[numeric], tolerance = 1e-6)
 })
