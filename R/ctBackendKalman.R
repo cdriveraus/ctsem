@@ -122,7 +122,8 @@
   raw <- as.numeric(raw)
   spec <- .ctBackendSpec(fit)
   module <- .ctJuliaModule(spec$project)
-  arguments <- list(.ctJuliaObjective(fit), .ctJuliaNumericVector(raw),
+  hybrid <- .ctBackendHybridReports(spec)
+  arguments <- list(.ctJuliaObjective(fit, hybrid = hybrid), .ctJuliaNumericVector(raw),
     subject_matrices = isTRUE(subjectmatrices))
   if (length(fields)) arguments$fields <- .ctJuliaVector(as.character(fields))
 
@@ -145,7 +146,7 @@
     if (!is.null(source)) {
       subjects <- attr(fit, "laplaceSubjects")
       fitted <- .ctBackendJuliaValue(module$ctsem_laplace_subject_values(
-        .ctJuliaObjective(source), .ctJuliaNumericVector(raw),
+        .ctJuliaObjective(source, hybrid = hybrid), .ctJuliaNumericVector(raw),
         from_level = as.integer(from), ti_effects = FALSE))
       arguments$subject_values <- .ctJuliaPut(
         fitted[subjects, , drop = FALSE])

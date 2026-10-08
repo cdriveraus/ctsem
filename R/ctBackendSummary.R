@@ -1154,7 +1154,6 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   varying <- .ctBackendVaryingParameters(spec, cells)
 
   module <- .ctJuliaModule(spec$project)
-  objective <- .ctJuliaObjective(fit)
   estimate <- .ctJuliaNumericVector(fit$estimate$raw)
   index <- match(varying, cells$parnumber)
   selected <- cells[index, , drop = FALSE]
@@ -1173,6 +1172,11 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 
   sampled <- identical(fit$sample$target, "joint") &&
     length(fit$sample$effect_mean) > 0L
+  # The engine reports deviations its filter integrates at their conditional
+  # modes (`.ctBackendHybridReports`); draws, sampled or linearised, still come
+  # from the layer holding them as coordinates.
+  objective <- .ctJuliaObjective(fit, hybrid = is.null(draws) && !sampled &&
+    .ctBackendHybridReports(spec))
   effects <- NULL
   if (!is.null(draws) && sampled) {
     saved <- fit$sample$effects
@@ -1232,7 +1236,9 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   laplace <- spec$laplace
   if (is.null(laplace) || !laplace$nrandom) return(NULL)
   module <- .ctJuliaModule(spec$project)
-  objective <- .ctJuliaObjective(fit)
+  # A function of the parameters alone, so the same whichever objective; the
+  # one a fit evaluates is the one already built.
+  objective <- .ctJuliaObjective(fit, hybrid = TRUE)
   draws <- .ctJuliaPut(as.matrix(samples))
   out <- list()
   for (l in seq_along(laplace$levels)) {

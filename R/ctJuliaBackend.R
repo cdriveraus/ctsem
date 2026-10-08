@@ -3930,6 +3930,14 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   list(ekf = arguments, objective = objective_args, laplace = laplace_args)
 }
 
+# Whether a fit's reports read deviations its subject filter integrates from
+# the objective that integrates them: a Laplace fit's do (subject parameters
+# at the conditional modes, population sds, plug-in trajectories); a sampled
+# fit's effects are draws of every coordinate, so its reports keep the layer.
+.ctBackendHybridReports <- function(spec) {
+  !is.null(spec$laplace$hybrid) && !identical(.ctBackendIntOverPop(spec), "none")
+}
+
 .ctJuliaObjective <- function(object, hybrid = FALSE) {
   stopifnot(inherits(object, "ctJuliaModel") || inherits(object, "ctJuliaFit"))
   spec <- if (inherits(object, "ctJuliaFit")) object$model_spec else object
