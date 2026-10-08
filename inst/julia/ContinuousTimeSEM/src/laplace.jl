@@ -3743,13 +3743,62 @@ function _laplace_gated_term(laplace::CTSEMLaplaceObjective, U::Integer,
 end
 
 """
+    _laplace_unit_reach(laplace, U, theta, Ls)
+
+The raw positions unit `U`'s term can depend on, sorted, or `nothing` if a
+member cannot be evaluated: every position some member's log likelihood reads,
+from its gradient at the unit's mode -- a position the member's filter never
+reads, another study's predictor effect at a predictor value of zero or an
+item the member never answers, has a derivative of exactly zero there -- and
+every population parameter of the model's levels, which shape the unit's
+curvature whatever the gradient at one point says.
+"""
+function _laplace_unit_reach(laplace::CTSEMLaplaceObjective, U::Integer,
+    theta::Vector{Float64}, Ls::Vector{<:AbstractMatrix})
+    spec = laplace.spec
+    units = laplace.units
+    members = units.members[U]
+    npar = length(theta)
+    reach = fill(false, npar)
+    aws = _laplace_workspace!(laplace, Float64, npar)
+    grad = _laplace_scratch_vector!(laplace, Float64, npar, :reach_grad)
+    shift = _laplace_scratch_vector!(laplace, Float64, npar, :reach_shift)
+    u = laplace.modes[U]
+    for m in eachindex(members)
+        shifted = _laplace_member_values!(shift, theta, spec, Ls, u, units.offsets[U][m])
+        loglik = _laplace_subject_value_gradient!(grad,
+            laplace.objective.subject_objectives[members[m]], aws, shifted, nothing,
+            _HYBRID_FULL)
+        isfinite(loglik) || return nothing
+        @inbounds for t in 1:npar
+            iszero(grad[t]) || (reach[t] = true)
+        end
+    end
+    for l in eachindex(spec.levels), t in _laplace_level_positions(spec, l)
+        reach[t] = true
+    end
+    return findall(reach)
+end
+
+"""
     _laplace_gated_unit_gradient(laplace, U, theta, curvature)
 
 The exact gradient of a flagged unit's gated term: ForwardDiff over the term,
-the inner mode's first derivative from `_laplace_dual_unit_mode`.
+the inner mode's first derivative from `_laplace_dual_unit_mode`, along the
+positions the unit can depend on (`_laplace_unit_reach`) alone. The others'
+derivatives are exactly zero, and on a model with per-study effects and items
+a subject never answers they are most of the vector: each forward pass here
+repeats the whole gated rule, so the count of them is the cost.
 """
 function _laplace_gated_unit_gradient(laplace::CTSEMLaplaceObjective, U::Integer,
     theta::Vector{Float64}, curvature)
+    # The reverse pass (laplace_gated_adjoint.jl), at a cost that does not grow
+    # with the parameter count; what follows is the route it falls back to
+    # where it does not apply, and the oracle it is tested against.
+    if _LAPLACE_GATED_ADJOINT[]
+        adjoint = _laplace_gated_unit_adjoint(laplace, U, theta)
+        adjoint === nothing || return adjoint
+    end
     uhat = laplace.modes[U]
     # A repaired unit's factors are of a shifted curvature, which is not the
     # implicit function theorem's matrix; take the mode's derivative from the
@@ -3777,7 +3826,26 @@ function _laplace_gated_unit_gradient(laplace::CTSEMLaplaceObjective, U::Integer
         # so a filter-integrating objective need not decide the gate again.
         return _laplace_gated_term(laplace, U, x, Lsd, ud, wsd; flagged=true).value
     end
-    return ForwardDiff.gradient(term_of, theta)
+    reach = _laplace_unit_reach(laplace, U, theta, _laplace_popchols(theta, laplace.spec))
+    reach === nothing && return ForwardDiff.gradient(term_of, theta)
+    term_along = function (y)
+        S = eltype(y)
+        x = Vector{S}(undef, length(theta))
+        @inbounds for t in eachindex(theta)
+            x[t] = theta[t]
+        end
+        @inbounds for (k, t) in enumerate(reach)
+            x[t] = y[k]
+        end
+        return term_of(x)
+    end
+    gradient = zeros(Float64, length(theta))
+    isempty(reach) && return gradient
+    partial = ForwardDiff.gradient(term_along, theta[reach])
+    @inbounds for (k, t) in enumerate(reach)
+        gradient[t] = partial[k]
+    end
+    return gradient
 end
 
 """
@@ -4676,7 +4744,7 @@ against its effects in `u`, which is how one of its effects' shifts moves with
 that population parameter at fixed `u`."""
 @inline function _laplace_dLu(D::AbstractMatrix, p::Integer, u::AbstractVector,
     base::Integer, r::Integer)
-    inner = 0.0
+    inner = zero(promote_type(eltype(D), eltype(u)))
     @inbounds for q in 1:r
         inner += D[p, q] * u[base + q]
     end
@@ -4706,7 +4774,7 @@ function _laplace_chol_chain!(out::AbstractVector, grad::AbstractVector,
         base = offsets[l]
         for t in eachindex(pos)
             dLt = dL[l][t]
-            acc = 0.0
+            acc = zero(eltype(out))
             for pp in 1:k
                 gp = grad[level.re_index[pp]]
                 iszero(gp) && continue

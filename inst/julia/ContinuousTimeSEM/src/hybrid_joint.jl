@@ -182,6 +182,18 @@ function _hybrid_joint_exceeds(laplace::CTSEMLaplaceObjective, M::CTSEMBlockMatr
     return issuccess(_ctsem_cholesky(D, d))
 end
 
+"""Member offsets into the joint vector `z = (u, d_1, ...)`: `d` the unit's own
+coordinates, `q[m]` member `m`'s observed columns."""
+function _hybrid_layout(d::Integer, q::Vector{Int})
+    offs = zeros(Int, length(q))
+    at = Int(d)
+    for m in eachindex(q)
+        offs[m] = at
+        at += q[m]
+    end
+    return (d=Int(d), q=copy(q), offs=offs, n=at)
+end
+
 # Collects each member's conditional mode, at the pass's own element type,
 # from a pass that needs nothing else.
 struct _HybridModeHook{T}
@@ -381,13 +393,7 @@ function _hybrid_joint_gated(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T},
     aws, d::Int, q::Vector{Int}, dhat) where {T}
     members = laplace.units.members[U]
-    offs = zeros(Int, length(q))
-    at = d
-    for m in eachindex(q)
-        offs[m] = at
-        at += q[m]
-    end
-    layout = (d=d, q=copy(q), offs=offs, n=at)
+    layout = _hybrid_layout(d, q)
     z = Vector{T}(undef, layout.n)
     @inbounds for a in 1:layout.d
         z[a] = u[a]

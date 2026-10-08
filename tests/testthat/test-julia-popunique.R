@@ -283,6 +283,8 @@ test_that("the gated floor on integrated deviations is the layer's, unit for uni
   handle <- function(s) structure(s, class = c("ctJuliaModel", "ctFitModel"))
   objectives <- list(ctsem:::.ctJuliaObjective(handle(spec), hybrid = TRUE),
     ctsem:::.ctJuliaObjective(handle(layer), hybrid = TRUE))
+  on.exit(ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_gated_adjoint!", TRUE),
+    add = TRUE)
   previous <- lapply(objectives, function(o) ctsem:::.ctJuliaCall(
     "ContinuousTimeSEM.ctsem_set_laplace_floor!", o, "gated", hi = 0.95))
   on.exit(for (i in seq_along(objectives)) ctsem:::.ctJuliaCall(
@@ -302,6 +304,17 @@ test_that("the gated floor on integrated deviations is the layer's, unit for uni
     expect_equal(hybrid$value, full$value, tolerance = 1e-9)
     expect_equal(as.numeric(hybrid$gradient), as.numeric(full$gradient),
       tolerance = 1e-7)
+    # The gated units' gradient by the reverse pass (the default) against
+    # forward mode over the parameters, for the layer and the hybrid.
+    for (s in list(layer, spec)) {
+      ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_gated_adjoint!", FALSE)
+      forward <- .pu_eval(s, x)
+      ctsem:::.ctJuliaCall("ContinuousTimeSEM.ctsem_set_gated_adjoint!", TRUE)
+      reverse <- .pu_eval(s, x)
+      expect_equal(reverse$value, forward$value, tolerance = 1e-12)
+      expect_equal(as.numeric(reverse$gradient), as.numeric(forward$gradient),
+        tolerance = 1e-7)
+    }
   }
 })
 

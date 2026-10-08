@@ -103,6 +103,7 @@ include("summary_matrices.jl")
 include("kalman_trace.jl")
 include("laplace.jl")
 include("hybrid_joint.jl")
+include("laplace_gated_adjoint.jl")
 # After kalman_trace.jl and laplace.jl: it reads the filter trace on one route
 # and the unit curvature on the other.
 include("effect_information.jl")
