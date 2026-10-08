@@ -127,6 +127,10 @@ if (requireNamespace('testthat', quietly = TRUE)) {
         DRIFT = matrix('dr|-log1p_exp(param)'), DIFFUSION = matrix('df'),
         MANIFESTMEANS = matrix(paste0('mm', 1:k), k, 1),
         CINT = matrix(0), T0MEANS = matrix(0), T0VAR = matrix(1)))
+      # No random effects: ctModel lets the intercepts vary by default, and
+      # their population covariance has free correlations, where the two
+      # constructions are different models.
+      m$pars$indvarying <- FALSE
       m$covmattransform <- tf
       p <- suppressWarnings(suppressMessages(ctFit(datalong = dat, model = m,
         backend = 'julia', fit = FALSE, cores = 1L)))
