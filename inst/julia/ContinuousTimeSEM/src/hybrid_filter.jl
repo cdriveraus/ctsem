@@ -210,18 +210,22 @@ function _hybrid_marginal!(hb::CTSEMHybridBuffers{T}, h::CTSEMHybrid,
         quad += bv[c] * z[c]
     end
     hb.half_logdet = half_logdet
+    fixed = hb.mode == _HYBRID_FIXED
+    fixed && length(hb.dfix) < q && throw(ArgumentError(string(
+        "the fixed deviations hold ", length(hb.dfix), " values for ", q, " columns")))
+    # `r = b - M d` at the deviations the pass is at -- the conditional mode,
+    # or the fixed ones -- held fixed in the outermost seed's derivative.
+    dref = fixed ? hb.dfix : z
     @inbounds for a in 1:q
         acc = bv[a]
         for b in 1:q
-            acc -= Mh[a, b] * _hybrid_constant(T, _hybrid_strip(z[b]))
+            acc -= Mh[a, b] * _hybrid_constant(T, _hybrid_strip(dref[b]))
         end
         hb.r[a] = acc
     end
     _record_hybrid!(trace, hb)
-    if hb.mode == _HYBRID_FIXED
+    if fixed
         d = hb.dfix
-        length(d) >= q || throw(ArgumentError(string("the fixed deviations hold ",
-            length(d), " values for ", q, " columns")))
         value = zero(T)
         @inbounds for a in 1:q
             value += d[a] * bv[a]

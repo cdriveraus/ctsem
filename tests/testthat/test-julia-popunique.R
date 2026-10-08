@@ -34,6 +34,27 @@
 .pu_spec <- function(d, m, ...) suppressMessages(ctFit(d, m, backend = "julia",
   intoverpop = "laplace", fit = FALSE, ...))
 
+# Shared effects on DRIFT and DIFFUSION beside own intercepts, and data with one
+# item missing for a third of the subjects: the deviations' curvature depends
+# on the shared effect, so the filter's profile and the layer must agree through
+# that dependence.
+.pu_dyn_model <- function() {
+  m <- suppressWarnings(suppressMessages(ctModel(type = "ct",
+    id = "id", manifestNames = c("Y1", "Y2", "Y3"), latentNames = "eta1",
+    LAMBDA = matrix(c(1, 0.8, 1.2), 3, 1), DRIFT = matrix("drift"),
+    DIFFUSION = matrix("diffusion"), MANIFESTVAR = diag(0.4, 3),
+    MANIFESTMEANS = matrix(c("mm1", "mm2", "mm3"), 3, 1),
+    T0VAR = matrix(1), T0MEANS = matrix(0), CINT = matrix(0))))
+  m$pars$indvarying <- m$pars$param %in% c("drift", "diffusion", "mm1", "mm2", "mm3")
+  m
+}
+
+.pu_dyn_data <- function() {
+  d <- .pu_data()
+  d$Y2[d$id > 16] <- NA
+  d
+}
+
 .pu_names <- function(spec) {
   npar <- ctsem:::.ctBackendNpar(spec)
   ctsem:::.ctBackendRawParameterNames(list(model_spec = spec), npar)
@@ -220,15 +241,8 @@ test_that("integrated own intercepts beside shared effects on the dynamics are s
   # complement for the curvature, and the joint logdet. So the value and
   # gradient must match the layer holding them as coordinates, and the adjoint
   # must match forward mode through the logdet's dependence on the mode.
-  m <- suppressWarnings(suppressMessages(ctModel(type = "ct",
-    id = "id", manifestNames = c("Y1", "Y2", "Y3"), latentNames = "eta1",
-    LAMBDA = matrix(c(1, 0.8, 1.2), 3, 1), DRIFT = matrix("drift"),
-    DIFFUSION = matrix("diffusion"), MANIFESTVAR = diag(0.4, 3),
-    MANIFESTMEANS = matrix(c("mm1", "mm2", "mm3"), 3, 1),
-    T0VAR = matrix(1), T0MEANS = matrix(0), CINT = matrix(0))))
-  m$pars$indvarying <- m$pars$param %in% c("drift", "diffusion", "mm1", "mm2", "mm3")
-  d <- .pu_data()
-  d$Y2[d$id > 16] <- NA
+  m <- .pu_dyn_model()
+  d <- .pu_dyn_data()
   old <- options(ctsem.laplace.hybrid = TRUE)
   on.exit(options(old), add = TRUE)
   spec <- .pu_spec(d, m, poprank = 1, popunique = "MANIFESTMEANS")
@@ -247,6 +261,47 @@ test_that("integrated own intercepts beside shared effects on the dynamics are s
     expect_equal(adjoint$value, forward$value, tolerance = 1e-10)
     expect_equal(as.numeric(adjoint$gradient), as.numeric(forward$gradient),
       tolerance = 1e-6)
+  }
+})
+
+test_that("the gated floor on integrated deviations is the layer's, unit for unit", {
+  skip_without_julia()
+  # The gate reads the joint curvature's smallest eigenvalue, which the
+  # profile's can exceed, and a unit it flags is scored in joint coordinates
+  # with the filter at fixed deviations. The band is widened (hi 0.95) so that
+  # units are flagged on this fixture at all, and the count is asserted so the
+  # comparison cannot pass without the gated path running.
+  m <- .pu_dyn_model()
+  d <- .pu_dyn_data()
+  old <- options(ctsem.laplace.hybrid = TRUE)
+  on.exit(options(old), add = TRUE)
+  spec <- .pu_spec(d, m, poprank = 1, popunique = "MANIFESTMEANS",
+    optimcontrol = list(laplace_floor = "gated"))
+  options(ctsem.laplace.hybrid = FALSE)
+  layer <- .pu_spec(d, m, poprank = 1, popunique = "MANIFESTMEANS",
+    optimcontrol = list(laplace_floor = "gated"))
+  handle <- function(s) structure(s, class = c("ctJuliaModel", "ctFitModel"))
+  objectives <- list(ctsem:::.ctJuliaObjective(handle(spec), hybrid = TRUE),
+    ctsem:::.ctJuliaObjective(handle(layer), hybrid = TRUE))
+  previous <- lapply(objectives, function(o) ctsem:::.ctJuliaCall(
+    "ContinuousTimeSEM.ctsem_set_laplace_floor!", o, "gated", hi = 0.95))
+  on.exit(for (i in seq_along(objectives)) ctsem:::.ctJuliaCall(
+    "ContinuousTimeSEM.ctsem_set_laplace_floor!", objectives[[i]], "gated",
+    hi = previous[[i]]$hi), add = TRUE)
+  # The count the last evaluation left, read as the field it is.
+  gated <- function(o) as.integer(ctsem:::.ctJuliaCall("getfield", o,
+    ctsem:::.ctJuliaEval(":gated_units")))
+  # 10 and 18 units flagged at these two draws.
+  for (seed in c(2, 4)) {
+    set.seed(seed)
+    x <- rnorm(length(.pu_names(spec)), 0, 1)
+    full <- .pu_eval(layer, x)
+    expect_gt(gated(objectives[[2]]), 0L)
+    hybrid <- .pu_eval(spec, x)
+    expect_equal(gated(objectives[[1]]), gated(objectives[[2]]))
+    expect_equal(hybrid$value, full$value, tolerance = 1e-9)
+    expect_equal(as.numeric(hybrid$gradient), as.numeric(full$gradient),
+      tolerance = 1e-7)
   }
 })
 

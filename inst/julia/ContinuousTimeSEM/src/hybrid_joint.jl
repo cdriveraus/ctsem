@@ -51,11 +51,11 @@ CTSEMHybridCross{T}(d::Integer, nmembers::Integer) where {T} = CTSEMHybridCross{
 `nmembers` members, with every count zeroed and every `H` cleared: a sweep
 fills only the columns it seeded, and the rest must read zero."""
 function _hybrid_cross!(laplace::CTSEMLaplaceObjective, ::Type{T}, d::Integer,
-    nmembers::Integer) where {T}
+    nmembers::Integer, tag::Symbol=:hybrid_cross) where {T}
     slot = _laplace_slot()
     _laplace_check_slot(laplace, slot)
     store = laplace.workspaces[slot]
-    key = (:hybrid_cross, T, Int(d), Int(nmembers))
+    key = (tag, T, Int(d), Int(nmembers))
     cross = get(store, key, nothing)
     if cross === nothing
         cross = CTSEMHybridCross{T}(d, nmembers)
@@ -182,15 +182,19 @@ function _hybrid_joint_exceeds(laplace::CTSEMLaplaceObjective, M::CTSEMBlockMatr
     return issuccess(_ctsem_cholesky(D, d))
 end
 
-"""Member offsets into the joint vector `z = (u, d_1, ...)`, from `cross`."""
-function _hybrid_joint_layout(cross::CTSEMHybridCross)
-    offs = zeros(Int, length(cross.q))
-    at = cross.d
-    for m in eachindex(cross.q)
-        offs[m] = at
-        at += cross.q[m]
-    end
-    return (d=cross.d, q=copy(cross.q), offs=offs, n=at)
+# Collects each member's conditional mode, at the pass's own element type,
+# from a pass that needs nothing else.
+struct _HybridModeHook{T}
+    q::Vector{Int}
+    dhat::Vector{Vector{T}}
+end
+_hybrid_before!(::_HybridModeHook, m, ws) = nothing
+function _hybrid_after!(h::_HybridModeHook{T}, m, ws, u) where {T}
+    hb = ws.ekf_ws.hyb
+    q = hb.active ? hb.q : 0
+    h.q[m] = q
+    h.dhat[m] = T[hb.dhat[c] for c in 1:q]
+    return nothing
 end
 
 # Hands each member its fixed deviations from `z`, and collects the deviations'
@@ -252,43 +256,100 @@ function _hybrid_joint_objective_gradient(laplace::CTSEMLaplaceObjective, U::Int
     return (value=r.value - dot(z, z) / 2, gradient=gradient, hlogdet=zero(T))
 end
 
+# Fixed deviations handed in, the cross curvature at them read out: the two
+# hooks one curvature pass in joint coordinates needs.
+struct _HybridFixedCross{J,C}
+    joint::J
+    cross::C
+end
+_hybrid_before!(h::_HybridFixedCross, m, ws) = _hybrid_before!(h.joint, m, ws)
+_hybrid_after!(h::_HybridFixedCross, m, ws, u) = _hybrid_after!(h.cross, m, ws, u)
+
 """
     _hybrid_joint_curvature(laplace, U, values, Ls, z, layout)
 
-`I - d2(log likelihood)/dz dz` in joint coordinates, as one dense block.
+`I - d2(log likelihood)/dz dz` in joint coordinates, as one dense block, from a
+curvature pass over the unit's own `d` coordinates alone. The deviations enter
+the log likelihood exactly quadratically for given `u`, so their block is `M`
+and their cross block `-d(b - M d)/du`, both read from that same pass with the
+filter at the fixed deviations: one sweep of the unit's width rather than one
+of the joint width, which is most of the gated rule's cost here.
 """
 function _hybrid_joint_curvature(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, z::AbstractVector{T},
     layout) where {T}
-    gradient_of = function (zz)
-        local S, ws, vs, Lss
-        S = eltype(zz)
-        ws = _laplace_workspace!(laplace, S, length(values))
-        vs = _laplace_scratch_vector!(laplace, S, length(values), :curv_vs)
-        copyto!(vs, values)
-        Lss = _laplace_scratch_levels!(laplace, S, Ls, :curv_levels)
-        return _hybrid_joint_objective_gradient(laplace, U, vs, Lss, zz, ws,
-            layout).gradient
+    d = layout.d
+    members = laplace.units.members[U]
+    blocks = laplace.units.blocks[U]
+    u = T[z[a] for a in 1:d]
+    cross = _hybrid_cross!(laplace, T, d, length(members), :hybrid_joint_cross)
+    hook = _HybridFixedCross(_HybridJointHook{T,typeof(z),typeof(layout)}(z, layout,
+        T[]), cross)
+    Muu = _laplace_unit_curvature(laplace, U, values, Ls, u; hook=hook,
+        mode=_HYBRID_FIXED)
+    D = layout.n
+    dense = zeros(T, D, D)
+    @inbounds for (b, block) in enumerate(blocks)
+        ob = block.offset
+        for j in 1:block.size, i in 1:block.size
+            dense[ob + i, ob + j] = Muu.diag[b][i, j]
+        end
+        for (t, a) in enumerate(block.ancestors)
+            oa = blocks[a].offset
+            C = Muu.coupling[b][t]
+            for j in 1:blocks[a].size, i in 1:block.size
+                dense[ob + i, oa + j] = C[i, j]
+                dense[oa + j, ob + i] = C[i, j]
+            end
+        end
     end
-    J = _ctsem_width_jacobian(gradient_of, z, _CTSEM_CURVATURE_WIDTHS[])
-    # The objective's gradient carries the prior's -z, so -J is the curvature.
-    dense = .-_laplace_symmetrise(J)
+    @inbounds for m in eachindex(members)
+        q = layout.q[m]
+        q == 0 && continue
+        cross.q[m] == q || error(string("member ", m, " integrates ", cross.q[m],
+            " deviations in joint coordinates laid out for ", q))
+        o = layout.offs[m]
+        H, A = cross.H[m], cross.A[m]
+        for i in 1:q
+            for a in 1:d
+                dense[o + i, a] = H[i, a]
+                dense[a, o + i] = H[i, a]
+            end
+            for j in 1:q
+                dense[o + i, o + j] = A[i, j]
+            end
+        end
+    end
     return CTSEMBlockMatrix{T}([dense], [Matrix{T}[]])
 end
 
 """
-    _hybrid_gated_term(laplace, U, values, Ls, u, aws; M, logdetM, inner, cross)
+    _hybrid_gated_term(laplace, U, values, Ls, u, aws; M, logdetM, inner, cross,
+                       flagged)
 
 `_laplace_gated_term` for an objective whose filter integrates deviations: the
 plain term with the joint logdet where the joint curvature clears the gate,
 and the gated rule in joint coordinates where it does not -- what the layer
-holding the deviations as coordinates computes, unit for unit.
+holding the deviations as coordinates computes, unit for unit. `flagged` says
+the unit is already known to be gated (the gated gradient, differentiating a
+unit its primal flagged), which needs the conditional modes and not the
+curvature the decision reads.
 """
 function _hybrid_gated_term(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T},
-    aws; M=nothing, logdetM=nothing, inner=nothing, cross=nothing) where {T}
+    aws; M=nothing, logdetM=nothing, inner=nothing, cross=nothing,
+    flagged::Bool=false) where {T}
     blocks = laplace.units.blocks[U]
     members = laplace.units.members[U]
+    if flagged
+        modes = _HybridModeHook{T}(zeros(Int, length(members)),
+            [T[] for _ in eachindex(members)])
+        r = _laplace_unit_loglik_gradient(laplace, U, values, Ls, u, aws,
+            eachindex(members), nothing, _HYBRID_PROFILE, modes)
+        isfinite(r.value) || return (value=r.value, flagged=true, floor=false)
+        return _hybrid_joint_gated(laplace, U, values, Ls, u, aws, length(u),
+            modes.q, modes.dhat)
+    end
     inner === nothing &&
         (inner = _laplace_unit_objective_gradient(laplace, U, values, Ls, u, aws))
     g = inner.value
@@ -306,13 +367,33 @@ function _hybrid_gated_term(laplace::CTSEMLaplaceObjective, U::Integer,
     hi = laplace.gate_hi
     ok && _hybrid_joint_exceeds(laplace, M, blocks, cross, hi) &&
         return (value=g - logdetM / 2, flagged=false, floor=false)
-    layout = _hybrid_joint_layout(cross)
+    return _hybrid_joint_gated(laplace, U, values, Ls, u, aws, cross.d, cross.q,
+        cross.dhat)
+end
+
+"""
+    _hybrid_joint_gated(laplace, U, values, Ls, u, aws, d, q, dhat)
+
+The gated rule in joint coordinates at the joint mode `(u, dhat_1, ...)`, `q`
+each member's observed columns.
+"""
+function _hybrid_joint_gated(laplace::CTSEMLaplaceObjective, U::Integer,
+    values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T},
+    aws, d::Int, q::Vector{Int}, dhat) where {T}
+    members = laplace.units.members[U]
+    offs = zeros(Int, length(q))
+    at = d
+    for m in eachindex(q)
+        offs[m] = at
+        at += q[m]
+    end
+    layout = (d=d, q=copy(q), offs=offs, n=at)
     z = Vector{T}(undef, layout.n)
     @inbounds for a in 1:layout.d
         z[a] = u[a]
     end
     @inbounds for m in eachindex(members), c in 1:layout.q[m]
-        z[layout.offs[m] + c] = cross.dhat[m][c]
+        z[layout.offs[m] + c] = dhat[m][c]
     end
     objective = zz -> _hybrid_joint_objective_gradient(laplace, U, values, Ls, zz,
         aws, layout)
