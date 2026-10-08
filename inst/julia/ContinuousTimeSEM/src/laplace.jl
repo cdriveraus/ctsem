@@ -1947,9 +1947,13 @@ function _laplace_scratch_blockmatrix!(laplace::CTSEMLaplaceObjective, ::Type{T}
 end
 
 """Reassemble a block matrix densely. Testing and small-unit use only."""
-function _laplace_block_dense(M::CTSEMBlockMatrix{T},
-    blocks::Vector{CTSEMLaplaceBlock}, dim::Integer) where {T}
-    out = zeros(T, dim, dim)
+_laplace_block_dense(M::CTSEMBlockMatrix{T}, blocks::Vector{CTSEMLaplaceBlock},
+    dim::Integer) where {T} = _laplace_block_dense!(zeros(T, dim, dim), M, blocks)
+
+"""`_laplace_block_dense` into `out`, which is overwritten."""
+function _laplace_block_dense!(out::AbstractMatrix, M::CTSEMBlockMatrix,
+    blocks::Vector{CTSEMLaplaceBlock})
+    fill!(out, zero(eltype(out)))
     for (b, block) in enumerate(blocks)
         rows = (block.offset + 1):(block.offset + block.size)
         out[rows, rows] .= M.diag[b]
@@ -3195,7 +3199,8 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
     converged = false
     iterations = 0
     # The last curvature formed, before any repair, for `_laplace_probe_modes`:
-    # one step from the mode, so its directions are the mode's.
+    # one step from the mode, so its directions are the mode's. The slot's
+    # scratch, so read it before the next solve on this slot.
     curvature = nothing
     keep = _LAPLACE_MODE_PROBES[] && d <= _LAPLACE_PROBE_MAXDIM
     current = _laplace_unit_objective_gradient(laplace, U, values, Ls, u, aws,
@@ -3218,7 +3223,8 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
         # ran serially while everything else divided. It cost 4.6x down to
         # 1.2x on the value-only path and no test could have reported it.
         M = _laplace_unit_curvature(laplace, U, values, Ls, u)
-        keep && (curvature = _laplace_block_dense(M, laplace.units.blocks[U], d))
+        keep && (curvature = _laplace_block_dense!(_laplace_scratch_matrix!(laplace,
+            Float64, d, d, :probe_curvature), M, laplace.units.blocks[U]))
         fac = _laplace_factor_repaired!(M, laplace.units.blocks[U])
         repaired |= fac.repaired
         fac.ok || break
@@ -3339,7 +3345,9 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
     M = found.curvature === nothing ?
         _laplace_block_dense(_laplace_unit_curvature(laplace, U, values, Ls,
             copy(found.u)), laplace.units.blocks[U], d) : found.curvature
-    M = Matrix{Float64}(_laplace_symmetrise(M))
+    # A copy: `found.curvature` is the slot's scratch, and the probes'
+    # own solves overwrite it.
+    M = _laplace_symmetrise(M)
     E = _ctsem_symeig(M)
     (all(isfinite, E.values) && E.values[1] < _LAPLACE_PROBE_SOFT) || return found
     F = _ctsem_cholesky(copy(M), d)
@@ -3369,7 +3377,7 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
             if isfinite(term) && (!isfinite(bestterm) || term > bestterm)
                 best = (u=r.u, value=r.value, gradient=r.gradient, converged=true,
                     iterations=found.iterations + r.iterations,
-                    repaired=found.repaired || r.repaired, curvature=r.curvature)
+                    repaired=found.repaired || r.repaired, curvature=nothing)
                 bestterm = term
             end
         end
