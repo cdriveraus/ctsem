@@ -3945,10 +3945,12 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # the Laplace layer with no coordinate for them: no mode, no deviation, no
   # column of the population root. So only the paths that evaluate the
   # objective a fit optimises ask for it -- the optimiser, evaluation, the
-  # Hessian and scores, the marginal sampler. Every other reader, reporting and
-  # generation among them, gets the objective with each own variance a
-  # coordinate: for a linear model the same function, so a path that does not
-  # ask is slower, never wrong.
+  # Hessian and scores, the marginal sampler, the quadrature check and
+  # corrections (which integrate the deviations exactly at every node) -- and
+  # the reports that read them back (`.ctBackendHybridReports`). Every other
+  # reader gets the objective with each own variance a coordinate: for a
+  # linear model the same function, so a path that does not ask is slower,
+  # never wrong.
   if (!isTRUE(hybrid) && !is.null(spec$laplace$hybrid)) spec$laplace$hybrid <- NULL
   inputs <- .ctJuliaObjectiveInputs(spec)
   key <- .ctJuliaObjectiveKey(spec, inputs)

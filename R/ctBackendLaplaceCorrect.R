@@ -187,7 +187,7 @@ ctLaplaceCorrect <- function(fit, draws = c("normal", "imis", "keep"),
   centre <- if (isTRUE(correct_estimate)) as.numeric(check$corrected) else est
 
   module <- .ctJuliaModule(fit$model_spec$project)
-  objective <- .ctJuliaObjective(fit)
+  objective <- .ctJuliaObjective(fit, hybrid = TRUE)
   # The quadrature posterior, as a scalar log density. `imis_is` asks for
   # nothing else -- importance weights need the target's density and not its
   # slope, which is what keeps this to one quadrature evaluation per draw.
@@ -491,7 +491,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
     control$nodes, " nodes)")
   res <- try(.ctBackendWithMaxChunks(chunks, .ctJuliaGet(
     .ctJuliaModule(fit$model_spec$project)$ctsem_laplace_autocorrect(
-      .ctJuliaObjective(fit), .ctJuliaNumericVector(est),
+      .ctJuliaObjective(fit, hybrid = TRUE), .ctJuliaNumericVector(est),
       .ctJuliaPut(as.matrix(hessian)),
       nodes = as.integer(control$nodes), step = as.numeric(control$step),
       tolerance = as.numeric(control$tolerance),
@@ -959,7 +959,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
   control = .ctLaplaceContinueDefaults) {
   spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
   module <- .ctJuliaModule(spec$project)
-  cont <- try(module$ctsem_laplace_continuation(.ctJuliaObjective(spec),
+  cont <- try(module$ctsem_laplace_continuation(.ctJuliaObjective(spec, hybrid = TRUE),
     .ctJuliaNumericVector(values), nodes = as.integer(control$nodes),
     tolerance = as.numeric(control$tolerance),
     product_maxdim = as.integer(control$product_maxdim),
@@ -1016,7 +1016,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
     sink(sprintf("Laplace continuation screen (%d nodes) | %8s",
       control$nodes, .ctDuration(seconds())), "update")
   }
-  cont <- try(module$ctsem_laplace_continuation(.ctJuliaObjective(fit),
+  cont <- try(module$ctsem_laplace_continuation(.ctJuliaObjective(fit, hybrid = TRUE),
     .ctJuliaNumericVector(est), nodes = as.integer(control$nodes),
     tolerance = as.numeric(control$tolerance),
     product_maxdim = as.integer(control$product_maxdim),

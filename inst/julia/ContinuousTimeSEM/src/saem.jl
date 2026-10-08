@@ -167,29 +167,12 @@ function _saem_member_ll(laplace::CTSEMLaplaceObjective, U::Integer, m::Integer,
         laplace.units.offsets[U][m])
     so = laplace.objective.subject_objectives[laplace.units.members[U][m]]
     value = try
-        _saem_member_filter(aws, so, shifted)
+        _laplace_member_loglik(aws, so, shifted)
     catch err
         _ctsem_must_propagate(err) && rethrow()
         -Inf
     end
     return isfinite(value) ? Float64(value) : -Inf
-end
-
-# A barrier on `aws`, which arrives untyped from the slot's cache: read from it
-# directly, its inline `ekf_ws` was copied to the heap for every member, 700
-# bytes a call on gC8.
-#
-# SAEM samples `u` from its exact conditional, so deviations the filter
-# integrates (`CTSEMHybrid`) are integrated here, logdet and all, where the
-# Laplace layer takes their profile; see `CTSEMHybridBuffers`.
-@noinline function _saem_member_filter(aws, so, shifted)
-    hb = aws.ekf_ws.hyb
-    hb.mode = _HYBRID_FULL
-    try
-        return _ekf_run(aws.ekf_ws, so, shifted, so.tipreds, nothing)
-    finally
-        hb.mode = _HYBRID_PROFILE
-    end
 end
 
 """Member positions' log likelihoods into `dest`, in parallel over members."""
@@ -397,8 +380,8 @@ function _saem_unit_scores!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
         for m in mine
             offsets = laplace.units.offsets[U][m]
             shifted = _laplace_member_values!(shift, theta, laplace.spec, Ls, u, offsets)
-            # `true`: the complete-data score integrates the filter's own
-            # deviations, as `_saem_member_filter` does.
+            # The complete-data score integrates the filter's own deviations,
+            # as `_laplace_member_loglik` does.
             value = _laplace_subject_value_gradient!(grad,
                 laplace.objective.subject_objectives[members[m]], aws, shifted,
                 nothing, _HYBRID_FULL)

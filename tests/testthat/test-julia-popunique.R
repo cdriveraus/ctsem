@@ -318,6 +318,104 @@ test_that("the gated floor on integrated deviations is the layer's, unit for uni
   }
 })
 
+test_that("quadrature integrates the filter's deviations at every node, and spans the shared effects alone", {
+  skip_without_julia()
+  # Under the hybrid a node's integrand is the members' likelihood with their
+  # own deviations integrated exactly (the profile less logdet M / 2), so the
+  # rule spans the one shared effect; on the layer it spans the effect and all
+  # three deviations. Both converge on the same integral. The continuation on
+  # the hybrid is that quadrature at its centre, its gradient is its value's,
+  # and its Hessian is exact -- the own variances, which the filter reads,
+  # seeded with the parameters it reads -- as central differences confirm.
+  m <- .pu_dyn_model()
+  d <- .pu_dyn_data()
+  old <- options(ctsem.laplace.hybrid = TRUE)
+  on.exit(options(old), add = TRUE)
+  spec <- .pu_spec(d, m, poprank = 1, popunique = "MANIFESTMEANS")
+  options(ctsem.laplace.hybrid = FALSE)
+  layer <- .pu_spec(d, m, poprank = 1, popunique = "MANIFESTMEANS")
+  handle <- function(s) structure(s, class = c("ctJuliaModel", "ctFitModel"))
+  module <- ctsem:::.ctJuliaModule(spec$project)
+  oh <- ctsem:::.ctJuliaObjective(handle(spec), hybrid = TRUE)
+  ol <- ctsem:::.ctJuliaObjective(handle(layer), hybrid = TRUE)
+  set.seed(5)
+  x <- rnorm(length(.pu_names(spec)), 0, 0.3)
+  xx <- ctsem:::.ctJuliaNumericVector(x)
+  quad <- function(o, nodes) ctsem:::.ctBackendJuliaValue(
+    module$ctsem_laplace_quadrature(o, xx, nodes = as.integer(nodes),
+      contributions = TRUE))
+  h9 <- quad(oh, 9)
+  l9 <- quad(ol, 9)
+  # Per subject, against the layer's 9^4-node rule.
+  expect_equal(as.numeric(h9$subject_loglik), as.numeric(l9$subject_loglik),
+    tolerance = 1e-6)
+  expect_equal(quad(oh, 15)$value, h9$value, tolerance = 1e-10)
+
+  cont <- module$ctsem_laplace_continuation(oh, xx, nodes = 5L, tolerance = -1)
+  info <- ctsem:::.ctJuliaGet(module$ctsem_laplace_continuation_info(cont))
+  expect_equal(as.integer(info$nflagged), 24L)
+  expect_equal(as.integer(info$nwide), 0L)
+  expect_equal(as.numeric(info$value), quad(oh, 5)$value, tolerance = 1e-10)
+  value <- function(z) as.numeric(ctsem:::.ctJuliaGet(
+    module$ctsem_laplace_continuation_evaluate(cont,
+      ctsem:::.ctJuliaNumericVector(z), gradient = FALSE))$value)
+  g <- as.numeric(ctsem:::.ctJuliaGet(module$ctsem_laplace_continuation_evaluate(
+    cont, xx))$gradient)
+  v <- rnorm(length(x))
+  v <- v / sqrt(sum(v^2))
+  h <- 1e-4
+  expect_equal((value(x + h * v) - value(x - h * v)) / (2 * h), sum(g * v),
+    tolerance = 1e-6)
+  flagged <- ctsem:::.ctJuliaCall("ContinuousTimeSEM._continuation_flagged_hessian",
+    cont, xx)
+  expect_false(is.null(flagged))
+  hess <- function(scheme) as.matrix(ctsem:::.ctBackendJuliaValue(
+    module$ctsem_laplace_continuation_hessian(cont, xx, scheme = scheme)))
+  expect_equal(hess("exact"), hess("central"), tolerance = 1e-5)
+})
+
+test_that("leave-one-out and linearised draws through the hybrid are the layer's", {
+  skip_without_julia()
+  # The deviations each filter integrates are drawn with the shared effect from
+  # their joint Laplace posterior, in the layer's coordinates and order -- an
+  # item a subject never answers from its prior -- so with one seed the draws,
+  # their densities and every row's likelihood at them are the layer's. The
+  # unit terms at parameter draws are the objective's, which is the layer's.
+  m <- .pu_dyn_model()
+  d <- .pu_dyn_data()
+  old <- options(ctsem.laplace.hybrid = TRUE)
+  on.exit(options(old), add = TRUE)
+  spec <- .pu_spec(d, m, poprank = 1, popunique = "MANIFESTMEANS")
+  options(ctsem.laplace.hybrid = FALSE)
+  layer <- .pu_spec(d, m, poprank = 1, popunique = "MANIFESTMEANS")
+  handle <- function(s) structure(s, class = c("ctJuliaModel", "ctFitModel"))
+  module <- ctsem:::.ctJuliaModule(spec$project)
+  objectives <- list(hybrid = ctsem:::.ctJuliaObjective(handle(spec), hybrid = TRUE),
+    layer = ctsem:::.ctJuliaObjective(handle(layer), hybrid = TRUE))
+  set.seed(9)
+  x <- rnorm(length(.pu_names(spec)), 0, 0.3)
+  draws <- lapply(objectives, function(o) ctsem:::.ctBackendJuliaValue(
+    module$ctsem_laplace_effect_draws(o, ctsem:::.ctJuliaNumericVector(x), 12L,
+      seed = 7L, scale = 1.2)))
+  expect_true(all(as.logical(draws$hybrid$converged)))
+  for (f in c("logq", "logprior", "llrow")) {
+    expect_equal(as.numeric(draws$hybrid[[f]]), as.numeric(draws$layer[[f]]),
+      tolerance = 1e-6, info = f)
+  }
+  at <- cbind(x, x + rnorm(length(x), 0, 0.05))
+  terms <- lapply(objectives, function(o) ctsem:::.ctBackendJuliaValue(
+    module$ctsem_laplace_unit_terms(o, ctsem:::.ctJuliaPut(at))))
+  expect_equal(as.numeric(terms$hybrid$unit_loglik),
+    as.numeric(terms$layer$unit_loglik), tolerance = 1e-8)
+  # Subject parameters at parameter draws, each subject's modes linearised
+  # around the estimate: the deviations' modes move with the parameters,
+  # directly and through the shared effect's, as the layer's coordinates do.
+  linear <- lapply(objectives, function(o) as.numeric(ctsem:::.ctBackendJuliaValue(
+    module$ctsem_laplace_subject_values(o, ctsem:::.ctJuliaPut(t(at)),
+      ctsem:::.ctJuliaNumericVector(x)))))
+  expect_equal(linear$hybrid, linear$layer, tolerance = 1e-6)
+})
+
 test_that("reporting through the hybrid is the layer's: population, subjects, modes, Kalman", {
   skip_without_julia()
   # Each subject's parameters carry its filter-integrated deviations at their

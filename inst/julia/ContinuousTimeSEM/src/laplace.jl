@@ -1847,6 +1847,29 @@ function _laplace_subject_value_gradient!(gradient::AbstractVector{T},
     end
 end
 
+"""
+    _laplace_member_loglik(aws, so, shifted)
+
+A member's log likelihood at `shifted`, value only, on this task's workspace,
+with the deviations its filter integrates (`CTSEMHybrid`) integrated exactly --
+their profile less `logdet(M) / 2` (`_HYBRID_FULL`) -- so that it is the
+integrand over the unit's effects: what quadrature, the continuation and SAEM
+integrate, where the Laplace layer takes the profile. Without such deviations
+it is the subject's own value. A barrier on `aws`, which arrives untyped from
+the slot's cache: read from it directly, its inline `ekf_ws` was copied to the
+heap for every member, 700 bytes a call on gC8.
+"""
+@noinline function _laplace_member_loglik(aws, so, shifted)
+    hb = aws.ekf_ws.hyb
+    hb.mode = _HYBRID_FULL
+    try
+        return _ekf_run(aws.ekf_ws, so, shifted,
+            _ctsem_tipred_vector(so.tipreds, shifted), nothing)
+    finally
+        hb.mode = _HYBRID_PROFILE
+    end
+end
+
 ################################################################################
 # Factorizing a unit's curvature without forming it
 ################################################################################
@@ -2880,13 +2903,15 @@ function _laplace_unit_curvature_pruned(laplace::CTSEMLaplaceObjective, U::Integ
 end
 
 """
-    _laplace_block_precision(laplace, U, theta, Ls, u, b, z)
+    _laplace_block_precision(laplace, U, theta, Ls, u, b, z; mode=_HYBRID_PROFILE)
 
 Block `b`'s precision `I - d2 ll / du_b du_b`, with its own coordinates at `z`
 and the rest of the unit's effects where `u` has them: what the adaptive
 quadrature scales a leaf's nodes by (`_quadrature_leaf_rule!`) and the
 continuation a soft rule's stiff complement by (`_continuation_block_functions`),
-at points other than the mode.
+at points other than the mode. `mode` is what each member's filter returns for
+the deviations it integrates (`CTSEMHybridBuffers`); the quadrature asks for
+their exact integral, `_HYBRID_FULL`, the integrand it integrates.
 
 A unit of one block takes it from `_laplace_unit_curvature` there, which for
 such a unit is the same Jacobian of the same gradient at the same width, so
@@ -2900,7 +2925,7 @@ closure rather than two.
 """
 function _laplace_block_precision(laplace::CTSEMLaplaceObjective, U::Integer,
     theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64},
-    b::Integer, z::AbstractVector)
+    b::Integer, z::AbstractVector; mode::Int=_HYBRID_PROFILE)
     blocks = laplace.units.blocks[U]
     block = blocks[b]
     k = block.size
@@ -2910,7 +2935,8 @@ function _laplace_block_precision(laplace::CTSEMLaplaceObjective, U::Integer,
         work[c] = z[t]
     end
     length(blocks) == 1 &&
-        return Matrix{Float64}(_laplace_unit_curvature(laplace, U, theta, Ls, work).diag[1])
+        return Matrix{Float64}(_laplace_unit_curvature(laplace, U, theta, Ls, work;
+            mode=mode).diag[1])
     members = block.members
     gradient_of = function (zz)
         local S, ws, uu, r
@@ -2921,7 +2947,7 @@ function _laplace_block_precision(laplace::CTSEMLaplaceObjective, U::Integer,
             uu[c] = zz[t]
         end
         r = _laplace_unit_loglik_gradient(laplace, U, convert(Vector{S}, theta),
-            [convert(Matrix{S}, L) for L in Ls], uu, ws, members)
+            [convert(Matrix{S}, L) for L in Ls], uu, ws, members, nothing, mode)
         return [r.gradient[c] for c in columns]
     end
     A = ForwardDiff.jacobian(gradient_of, collect(Float64, z))
@@ -5667,31 +5693,80 @@ it is worth computing here and reusing across every posterior draw rather than
 re-solving a mode per draw.
 
 Returns a vector of `dim(u) x npar` matrices, one per unit.
+
+With deviations each member's filter integrates (`CTSEMHybrid`), a unit's rows
+are its effects and then, member by member, one per hybrid item in the order
+`_laplace_effect_posterior` gives -- each the item's conditional mode, which
+moves with the parameters directly and through the effects' mode -- and an
+item the member never observes is a row of zeros, its mode the prior's.
 """
-function ctsem_laplace_mode_jacobian(laplace::CTSEMLaplaceObjective,
-    values::AbstractVector)
-    theta = collect(Float64, values)
+ctsem_laplace_mode_jacobian(laplace::CTSEMLaplaceObjective, values::AbstractVector) =
+    _laplace_mode_jacobian(laplace, collect(Float64, values)).jacobians
+
+"""
+    _laplace_mode_jacobian(laplace, theta)
+
+`ctsem_laplace_mode_jacobian`'s Jacobians, and each unit's mode in the same
+coordinates (`modes`) at `theta`.
+"""
+function _laplace_mode_jacobian(laplace::CTSEMLaplaceObjective, theta::Vector{Float64})
     _laplace_check_indices(laplace, length(theta))
-    nunits = length(laplace.units.members)
+    units = laplace.units
+    nunits = length(units.members)
     Ls = _laplace_popchols(theta, laplace.spec)
     hessians = _laplace_primal_curvature(laplace, theta, Ls)
+    hyb = laplace.objective.params.hybrid
+    nh = _hybrid_on(hyb) ? length(hyb.manifests) : 0
+    slot = nh > 0 ? invperm(sortperm(hyb.effect)) : Int[]
     out = Vector{Matrix{Float64}}(undef, nunits)
+    modes = Vector{Vector{Float64}}(undef, nunits)
     for U in 1:nunits
-        d = laplace.units.dims[U]
-        if d == 0
+        d = units.dims[U]
+        nm = length(units.members[U])
+        D = d + nh * nm
+        if D == 0
             out[U] = zeros(Float64, 0, length(theta))
+            modes[U] = Float64[]
             continue
         end
         uhat = laplace.modes[U]
         mode_of = function (x)
+            local S, wsd, Lsd, u, w, hook, r
             S = eltype(x)
             wsd = _laplace_workspace!(laplace, S, length(x))
             Lsd = _laplace_popchols(x, laplace.spec)
-            return _laplace_dual_unit_mode(laplace, U, x, Lsd, uhat, hessians[U], wsd)
+            u = d == 0 ? S[] :
+                _laplace_dual_unit_mode(laplace, U, x, Lsd, uhat, hessians[U], wsd)
+            nh == 0 && return u
+            w = zeros(S, D)
+            w[1:d] .= u
+            hook = _HybridModeHook{S}(nm)
+            r = _laplace_unit_loglik_gradient(laplace, U, x, Lsd, u, wsd,
+                eachindex(units.members[U]), nothing, _HYBRID_PROFILE, hook)
+            isfinite(r.value) || return fill(S(NaN), D)
+            for m in 1:nm, (c, k) in enumerate(hook.items[m])
+                w[d + (m - 1) * nh + slot[k]] = hook.dhat[m][c]
+            end
+            return w
         end
         out[U] = ForwardDiff.jacobian(mode_of, theta)
+        if nh == 0
+            modes[U] = copy(uhat)
+        else
+            # The effects' mode as solved, and the deviations' conditional modes
+            # given it.
+            modes[U] = zeros(Float64, D)
+            modes[U][1:d] .= uhat
+            hook = _hybrid_member_modes(laplace, U, theta, Ls, copy(uhat),
+                _laplace_workspace!(laplace, Float64, length(theta)))
+            if hook !== nothing
+                for m in 1:nm, (c, k) in enumerate(hook.items[m])
+                    modes[U][d + (m - 1) * nh + slot[k]] = hook.dhat[m][c]
+                end
+            end
+        end
     end
-    return out
+    return (jacobians=out, modes=modes)
 end
 
 export ctsem_laplace_mode_jacobian
@@ -5715,6 +5790,10 @@ is itself least trustworthy.
 
 `ti_effects` means what it does for the other two methods.
 
+Deviations each member's filter integrates (`CTSEMHybrid`) are linearised with
+the effects (`ctsem_laplace_mode_jacobian`) and enter at each draw's own
+variances, as the layer holding them as coordinates would have them.
+
 Returns `ndraws x nsubjects x npar`.
 """
 function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
@@ -5722,19 +5801,32 @@ function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
     # The Jacobian is computed here rather than handed in: it is a vector of
     # matrices, and round-tripping one through the R bridge only to send it
     # straight back costs two marshalling steps for no gain.
-    jacobians = ctsem_laplace_mode_jacobian(laplace, thetahat)
+    centre = collect(Float64, thetahat)
+    linear = _laplace_mode_jacobian(laplace, centre)
     ndraws = size(draws, 1)
     npar = size(draws, 2)
     nsubjects = length(laplace.objective.subject_objectives)
-    centre = collect(Float64, thetahat)
+    units = laplace.units
+    hyb = laplace.objective.params.hybrid
+    nh = _hybrid_on(hyb) ? length(hyb.manifests) : 0
+    items = nh > 0 ? sortperm(hyb.effect) : Int[]
+    lv = laplace.spec.levels[1]
     out = zeros(Float64, ndraws, nsubjects, npar)
     for s in 1:ndraws
         theta = collect(Float64, view(draws, s, :))
         Ls = _laplace_popchols(theta, laplace.spec)
         step = theta .- centre
-        shifted = _laplace_shifted_values(laplace, theta, Ls, U ->
-            laplace.units.dims[U] == 0 ? Float64[] :
-                laplace.modes[U] .+ jacobians[U] * step)
+        w = [linear.modes[U] .+ linear.jacobians[U] * step for U in eachindex(units.members)]
+        shifted = _laplace_shifted_values(laplace, theta, Ls, U -> w[U][1:units.dims[U]])
+        if nh > 0
+            psi = [_hybrid_item_sd(hyb, lv, theta, k) for k in items]
+            for U in eachindex(units.members), (m, i) in enumerate(units.members[U])
+                at = units.dims[U] + (m - 1) * nh
+                for (c, k) in enumerate(items)
+                    shifted[i, lv.re_index[hyb.effect[k]]] += psi[c] * w[U][at + c]
+                end
+            end
+        end
         out[s, :, :] = ti_effects ? _laplace_add_ti_effects(laplace, shifted) : shifted
     end
     return out

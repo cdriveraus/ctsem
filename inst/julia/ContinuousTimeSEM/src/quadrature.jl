@@ -82,7 +82,19 @@ With one level the tree is a single leaf with no ancestors, the recursion is one
 call, and the result is identical to the flat rule this file started as -- which
 is what `test_quadrature.jl` pins by checking `nodes = 1` against the Laplace
 value at one, two and three levels (on concave fixtures; see the clipping
-above). With the clip, `nodes = 1` at more than one level clips each block's
+above).
+
+# Deviations the filter integrates
+
+Where each subject's filter integrates deviations of its own (`CTSEMHybrid`),
+the integrand at a node is the members' log likelihood with those deviations
+integrated exactly -- their profile less `logdet(M) / 2`, `_HYBRID_FULL`
+(`_laplace_member_loglik`) -- so the rule spans only the unit's own effects
+and is the integral over both. A leaf's conditional mode and scale are that
+integrand's. The fit's Laplace term is the joint approximation over effects
+and deviations, so `nodes = 1` then differs from it by the difference of the
+two approximations: zero where the deviations' curvature does not depend on
+the effects, as on a linear model with an intercept deviation. With the clip, `nodes = 1` at more than one level clips each block's
 eliminated precision separately, which is not the same as clipping the unit's
 eigenvalues: the two agree only where nothing is clipped.
 """
@@ -299,12 +311,14 @@ function _quadrature_leaf_rule!(laplace::CTSEMLaplaceObjective, U::Integer,
     inner = function (z)
         work = copy(u)
         @inbounds for (t, c) in enumerate(columns); work[c] = z[t]; end
-        result = _laplace_unit_loglik_gradient(laplace, U, theta, Ls, work, aws, members)
+        result = _laplace_unit_loglik_gradient(laplace, U, theta, Ls, work, aws,
+            members, nothing, _HYBRID_FULL)
         isfinite(result.value) || return (value=-Inf, gradient=fill(NaN, k))
         return (value=result.value - dot(z, z) / 2,
             gradient=[result.gradient[c] for c in columns] .- z)
     end
-    precision_at = z -> _laplace_block_precision(laplace, U, theta, Ls, u, b, z)
+    precision_at = z -> _laplace_block_precision(laplace, U, theta, Ls, u, b, z;
+        mode=_HYBRID_FULL)
 
     z = start === nothing ? Float64[u[c] for c in columns] : collect(Float64, start)
     current = inner(z)
@@ -413,8 +427,8 @@ function _quadrature_block(laplace::CTSEMLaplaceObjective, U::Integer,
             for m in block.members
                 shifted = _laplace_member_values(theta, laplace.spec, Ls, u,
                     laplace.units.offsets[U][m])
-                inner += laplace.objective.subject_objectives[
-                    laplace.units.members[U][m]](shifted)
+                inner += _laplace_member_loglik(aws, laplace.objective.subject_objectives[
+                    laplace.units.members[U][m]], shifted)
             end
         else
             for c in children
@@ -570,8 +584,9 @@ function _quadrature_chunk!(laplace::CTSEMLaplaceObjective, theta::Vector{Float6
         if isempty(blocks)
             # No random effects anywhere in this unit: there is no integral,
             # and the term is the plain log likelihood.
-            unit_term[U] = _laplace_unit_objective_gradient(laplace, U, theta,
-                Ls, Float64[], aws).value
+            # With deviations the filter integrates, their exact integral:
+            # what the Laplace term is for a unit with no effects.
+            unit_term[U] = _laplace_unit_term(laplace, U, theta, Ls, Float64[], aws)
             continue
         end
         _laplace_solve_unit_mode!(laplace, U, theta, Ls)

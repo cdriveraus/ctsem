@@ -214,7 +214,8 @@ Block `b`'s own log integrand and its precision, as functions of the block's
 coordinates with the rest of `u` held where it is now: `value_gradient(z)` is
 its members' log likelihood less `z'z/2` and that function's gradient, and
 `precision(z)` is `I - d2 ll/dz dz`, dense (`_laplace_block_precision`) -- what
-`_quadrature_leaf_rule!` uses for the same block.
+`_quadrature_leaf_rule!` uses for the same block, with the deviations each
+member's filter integrates integrated exactly, as there.
 """
 function _continuation_block_functions(laplace::CTSEMLaplaceObjective, U::Integer,
     theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, b::Integer,
@@ -227,12 +228,14 @@ function _continuation_block_functions(laplace::CTSEMLaplaceObjective, U::Intege
     value_gradient = function (z)
         work = copy(base)
         @inbounds for (t, c) in enumerate(columns); work[c] = z[t]; end
-        r = _laplace_unit_loglik_gradient(laplace, U, theta, Ls, work, aws, members)
+        r = _laplace_unit_loglik_gradient(laplace, U, theta, Ls, work, aws, members,
+            nothing, _HYBRID_FULL)
         isfinite(r.value) || return (value=-Inf, gradient=fill(NaN, k))
         return (value=r.value - dot(z, z) / 2,
             gradient=[r.gradient[c] for c in columns] .- z)
     end
-    precision = z -> _laplace_block_precision(laplace, U, theta, Ls, base, b, z)
+    precision = z -> _laplace_block_precision(laplace, U, theta, Ls, base, b, z;
+        mode=_HYBRID_FULL)
     return (value_gradient=value_gradient, precision=precision)
 end
 
@@ -435,8 +438,8 @@ function _continuation_block_rule(laplace::CTSEMLaplaceObjective, U::Integer,
             for m in block.members
                 shifted = _laplace_member_values(theta, laplace.spec, Ls, u,
                     laplace.units.offsets[U][m])
-                inner += laplace.objective.subject_objectives[
-                    laplace.units.members[U][m]](shifted)
+                inner += _laplace_member_loglik(aws, laplace.objective.subject_objectives[
+                    laplace.units.members[U][m]], shifted)
             end
         else
             kidrules = CTSEMFixedRule[]
@@ -696,7 +699,9 @@ Member `m` of unit `U` at the fixed standardised effects `u`: its log
 likelihood at `theta + L(theta) u`, and, when asked, its gradient in `theta`
 added into `gh` -- one reverse sweep at the shifted parameters and the chain
 through `L(theta)`, the partial `_laplace_floored_unit_gradient!` takes at the
-mode, taken here at a node.
+mode, taken here at a node. Deviations the member's filter integrates are
+integrated exactly (`_laplace_member_loglik`), their own variances read by the
+filter directly.
 """
 function _continuation_member!(gh, laplace::CTSEMLaplaceObjective, U::Integer,
     m::Integer, theta::Vector{Float64}, Ls, dL, positions, u::Vector{Float64},
@@ -707,9 +712,10 @@ function _continuation_member!(gh, laplace::CTSEMLaplaceObjective, U::Integer,
     offsets = units.offsets[U][m]
     shifted = _laplace_member_values!(scratch.shift, theta, spec, Ls, u, offsets)
     subject = laplace.objective.subject_objectives[i]
-    want_gradient || return subject(shifted)
+    want_gradient || return _laplace_member_loglik(aws, subject, shifted)
     grad = scratch.grad
-    loglik = _laplace_subject_value_gradient!(grad, subject, aws, shifted)
+    loglik = _laplace_subject_value_gradient!(grad, subject, aws, shifted, nothing,
+        _HYBRID_FULL)
     isfinite(loglik) || return loglik
     all(isfinite, grad) || return NaN
     @inbounds for t in eachindex(grad)
@@ -1219,10 +1225,15 @@ one `(level, position, parameter)` entry per population parameter that moves a
 member (`entries`), and the `positions` it was built from. `nothing` when a
 random effect sits on a population parameter, which the assembly does not
 handle.
+
+`filtered` are the own variances of deviations the filter integrates
+(`CTSEMHybrid`'s `psi_index`): a level's parameters, but read by the filter
+and no part of `L`, so they are seeded with the active ones, and their
+entries' `dL` is zero.
 """
 function _continuation_hessian_layout(spec::CTSEMLaplaceSpec, npar::Integer,
-    positions::Vector{Vector{Int}}, dL)
-    pop = sort!(unique!(reduce(vcat, positions; init=Int[])))
+    positions::Vector{Vector{Int}}, dL, filtered::Vector{Int}=Int[])
+    pop = setdiff!(sort!(unique!(reduce(vcat, positions; init=Int[]))), filtered)
     active = Int[]
     local_of = zeros(Int, npar)
     for t in 1:npar
@@ -1372,7 +1383,8 @@ function _continuation_member_hessian!(gnode::Vector{Float64},
             x[t] = S(shifted[t], ForwardDiff.Partials{N,Float64}(
                 ntuple(q -> q == c ? 1.0 : 0.0, Val(N))))
         end
-        ll = ForwardDiff.value(_laplace_subject_value_gradient!(gd, subject, aws, x))
+        ll = ForwardDiff.value(_laplace_subject_value_gradient!(gd, subject, aws, x,
+            nothing, _HYBRID_FULL))
         isfinite(ll) || return (ll, 1)
         if lo == 0
             loglik = ll
@@ -1600,7 +1612,7 @@ function _continuation_hessian_width(o::CTSEMLaplaceContinuation,
     best = Inf
     for _ in 1:3
         started = time_ns()
-        _laplace_subject_value_gradient!(gd, subject, aws, x)
+        _laplace_subject_value_gradient!(gd, subject, aws, x, nothing, _HYBRID_FULL)
         best = min(best, (time_ns() - started) / 1e9)
     end
     sweeps = sum(r.evaluations for r in o.rules; init=0)
@@ -1626,7 +1638,9 @@ function _continuation_flagged_hessian(o::CTSEMLaplaceContinuation,
     Ls = _laplace_popchols(theta, spec)
     dL = _laplace_level_chol_derivatives(theta, spec)
     positions = Vector{Int}[_laplace_level_positions(spec, l) for l in eachindex(spec.levels)]
-    layout = _continuation_hessian_layout(spec, npar, positions, dL)
+    hyb = laplace.objective.params.hybrid
+    layout = _continuation_hessian_layout(spec, npar, positions, dL,
+        _hybrid_on(hyb) ? hyb.psi_index : Int[])
     (layout === nothing || isempty(layout.active)) && return nothing
     d2L = _continuation_level_chol_second_derivatives(theta, spec, positions)
     _laplace_ensure_pool!(laplace)
