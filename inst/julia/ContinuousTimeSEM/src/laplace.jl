@@ -3022,6 +3022,61 @@ finite, so an unusable number can never certify a mode.
 end
 
 """
+Largest unit dimension whose inner Newton step, at a curvature that is not
+positive definite, is modified per direction (`_laplace_modified_newton_step`)
+rather than by the uniform shift of `_laplace_factor_repaired!`. Above it a
+dense eigendecomposition of the unit costs more than it saves; nested units
+of many members keep the shift. `ctsem_set_eigen_step_max!` sets it, and 0
+restores the shift everywhere.
+"""
+const _LAPLACE_EIGEN_STEP_MAX = Ref(64)
+
+export ctsem_set_eigen_step_max!
+"""Set the largest unit dimension whose inner Newton step is modified per direction."""
+ctsem_set_eigen_step_max!(n::Integer) = (_LAPLACE_EIGEN_STEP_MAX[] = max(0, Int(n)))
+
+"""
+    _laplace_modified_newton_step(M, blocks, d, gradient, active)
+
+The inner Newton step `M^-1 g` at a curvature `M` that is not positive
+definite, with `M` modified per eigendirection: an eigenvalue above a
+roundoff floor is kept, and one at or below it becomes `max(|lambda|, 1)`.
+`1` is the curvature the prior alone gives a direction, `u ~ N(0, I)`, so a
+direction where the likelihood curves the wrong way moves no further than the
+prior's own scale; the line search guards the rest. Over the active
+coordinates (`_laplace_active_columns`; the others are the prior's identity,
+whose step is the gradient itself). `nothing` if the decomposition is not
+finite.
+
+Why not the shift. `_laplace_factor_repaired!` adds one multiple of the
+identity to every diagonal, scaled by the largest of them, until the matrix
+factors -- which is the right repair for the curvature a log determinant is
+taken of, and a poor one for a step. Where the largest diagonals belong to
+well-determined effects (the item intercepts of the SNSF pilot, curvature in
+the hundreds) the shift is large against the weakly determined ones
+(persistence, innovation scale), and Newton crawls along those: a median of
+six steps per person there, 336 of 493 persons repaired on the way.
+"""
+function _laplace_modified_newton_step(M::CTSEMBlockMatrix{Float64},
+    blocks::Vector{CTSEMLaplaceBlock}, d::Integer, gradient::AbstractVector{Float64},
+    active)
+    dense = _laplace_block_dense(M, blocks, d)
+    idx = active === nothing ? collect(1:d) : active
+    E = _ctsem_symeig(dense[idx, idx])
+    all(isfinite, E.values) || return nothing
+    floor = sqrt(eps(Float64)) * max(1.0, maximum(abs, E.values; init=0.0))
+    w = transpose(E.vectors) * gradient[idx]
+    @inbounds for i in eachindex(w)
+        lambda = E.values[i]
+        w[i] /= lambda > floor ? lambda : max(abs(lambda), 1.0)
+    end
+    step = collect(Float64, gradient)
+    step[idx] = E.vectors * w
+    all(isfinite, step) || return nothing
+    return step
+end
+
+"""
     _laplace_newton_unit_mode(laplace, U, values, Ls, aws, start)
 
 Newton on `g_U` from one given starting point, reporting what happened rather
@@ -3058,11 +3113,24 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
         # ran serially while everything else divided. It cost 4.6x down to
         # 1.2x on the value-only path and no test could have reported it.
         M = _laplace_unit_curvature(laplace, U, values, Ls, u)
-        fac = _laplace_factor_repaired!(M, laplace.units.blocks[U])
-        repaired |= fac.repaired
-        fac.ok || break
-        step = _laplace_block_solve(fac.factors, fac.coupling,
-            laplace.units.blocks[U], current.gradient)
+        blocks = laplace.units.blocks[U]
+        ok, _, factors, coupling = _laplace_block_factor(M, blocks)
+        if ok
+            step = _laplace_block_solve(factors, coupling, blocks, current.gradient)
+        elseif d <= _LAPLACE_EIGEN_STEP_MAX[]
+            # Not definite here, on a unit small enough to decompose: modify
+            # the curvature per direction rather than shift it everywhere.
+            step = _laplace_modified_newton_step(M, blocks, d, current.gradient,
+                _laplace_active_columns(laplace, U))
+            step === nothing && break
+            repaired = true
+        else
+            fac = _laplace_factor_repaired!(M, blocks)
+            repaired |= fac.repaired
+            fac.ok || break
+            step = _laplace_block_solve(fac.factors, fac.coupling, blocks,
+                current.gradient)
+        end
         accepted = false
         # Whether any trial could be evaluated at all, which is what separates
         # "there is nothing left to gain here" from "the step went somewhere
