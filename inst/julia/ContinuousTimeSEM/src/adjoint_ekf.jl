@@ -118,7 +118,9 @@ what the pass ended with -- `q`, the columns' items and manifests (`item`,
 reverse state: the cotangents of `S` and `s` from the closing term, the
 cotangent of `X` carried backwards through the rows, and each item's own-sd
 cotangent (`psibar`), which the caller adds to the raw gradient. Scratch for
-the per-row work beside it.
+the per-row work beside it. Every array is sized by capacity -- the model's
+hybrid item count, the manifest count, the state count -- and grows only, so a
+pass after the first allocates nothing; loops read the leading block they need.
 """
 mutable struct CTSEMHybridTape{T}
     active::Bool
@@ -144,11 +146,17 @@ mutable struct CTSEMHybridTape{T}
     ybar::Vector{T}
     Lbar::Matrix{T}
     Xt::Matrix{T}
+    Mw::Matrix{T}
+    C::Matrix{T}
+    wv::Vector{T}
+    uv::Vector{T}
+    beta::Vector{T}
 end
 CTSEMHybridTape{T}() where {T} = CTSEMHybridTape{T}(false, 0, T[], 0, Int[], Int[],
     zeros(T, 0, 0), T[], T[], T[], zeros(T, 0, 0), T[], zeros(T, 0, 0), T[],
     zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0),
-    zeros(T, 0, 0), T[], zeros(T, 0, 0), zeros(T, 0, 0))
+    zeros(T, 0, 0), T[], zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0),
+    zeros(T, 0, 0), T[], T[], T[])
 
 """
 One application of a group of state-dependent transforms.
@@ -1428,7 +1436,7 @@ function _reverse_update!(x̄::Vector{T}, P̄::Matrix{T}, Θ̄::Matrix{T}, θ̄c
     _ctsem_mulNT!(Kc, Mc, H, -oneT, oneT)                    # through M = I - K H
     # The gain's cotangent from the integrated deviations rides the same
     # K = Pr H' S^-1 path as the ridge correction's.
-    hyb === nothing || (Kc .+= hyb.Kbar)
+    hyb === nothing || _hybrid_accumulate!(Kc, hyb.Kbar)
     _ctsem_mul!(nm1, Kc, Ui)
     _ctsem_mul!(nn1, nm1, Wh)                                # K̄ S⁻¹ H
     @inbounds for j in 1:n, i in 1:n
@@ -1481,7 +1489,7 @@ function _reverse_update!(x̄::Vector{T}, P̄::Matrix{T}, Θ̄::Matrix{T}, θ̄c
     end
     _ctsem_mulTN!(mm1, K, PHt, -oneT, false)                 # S̄ = -K'K̄ S⁻¹
     _symmetrize_into!(S̄0, mm1)
-    hyb === nothing || (S̄0 .+= hyb.Rbar)
+    hyb === nothing || _hybrid_accumulate!(S̄0, hyb.Rbar)
     _ctsem_mul!(Λ̄, S̄0, H)                                   # S = H Pr H' + R̃
     _ctsem_mulTN!(P̄_new, H, Λ̄, oneT, oneT)
     _ctsem_mul!(H̄, Λ̄, Pr, T(2), oneT)
@@ -1491,11 +1499,11 @@ function _reverse_update!(x̄::Vector{T}, P̄::Matrix{T}, Θ̄::Matrix{T}, θ̄c
     @inbounds for i in 1:m
         ỹ̄[i] = Kx[i] - a[i]
     end
-    hyb === nothing || (ỹ̄ .+= hyb.ybar)
+    hyb === nothing || _hybrid_accumulate!(ỹ̄, hyb.ybar)
     copyto!(x̄_new, x̄)
     _ctsem_outer!(Λ̄, ỹ̄, x)
     Λ̄ .= .-Λ̄
-    hyb === nothing || (Λ̄ .+= hyb.Lbar)
+    hyb === nothing || _hybrid_accumulate!(Λ̄, hyb.Lbar)
     _ctsem_mulTvec!(x̄_new, Λ, ỹ̄, -one(T), one(T))
 
     # --- scatter back into the full-size parameter and Θ cotangents

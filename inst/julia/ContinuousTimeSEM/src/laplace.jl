@@ -4596,7 +4596,8 @@ function _laplace_hybrid_full_gradients(laplace::CTSEMLaplaceObjective, U::Integ
     units = laplace.units
     members = units.members[U]
     npar = length(values)
-    out = zeros(Float64, npar, length(members))
+    # The calling slot's: read by the caller at once, before its next unit.
+    out = _laplace_scratch_matrix!(laplace, Float64, npar, length(members), :hybrid_full)
     ok = _laplace_partition(laplace, length(members)) do mine, _w
         local aws, grad, shift, m, shifted, loglik
         aws = _laplace_workspace!(laplace, Float64, npar)
@@ -4841,7 +4842,7 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
             local cross
             cross = (gated_floor && !isempty(u) &&
                      _hybrid_on(laplace.objective.params.hybrid)) ?
-                CTSEMHybridCross{Float64}(length(u), length(laplace.units.members[U])) :
+                _hybrid_cross!(laplace, Float64, length(u), length(laplace.units.members[U])) :
                 nothing
             M = isempty(u) ? CTSEMBlockMatrix(Float64, blocks) :
                 _laplace_unit_curvature(laplace, U, theta, Ls, u; hook=cross)

@@ -130,8 +130,11 @@ mutable struct CTSEMHybridBuffers{T}
     dfix::Vector{T}
     dhat::Vector{T}
     gv::Vector{T}
+    dgv::Vector{T}
+    bv::Vector{T}
     r::Vector{T}
     Mh::Matrix{T}
+    Mw::Matrix{T}
     q::Int
     col::Vector{Int}
     item::Vector{Int}
@@ -144,7 +147,8 @@ mutable struct CTSEMHybridBuffers{T}
     e::Vector{T}
 end
 CTSEMHybridBuffers{T}() where {T} = CTSEMHybridBuffers{T}(false, _HYBRID_PROFILE,
-    zero(T), T[], T[], T[], T[], zeros(T, 0, 0), 0, Int[], Int[],
+    zero(T), T[], T[], T[], T[], T[], T[], zeros(T, 0, 0), zeros(T, 0, 0), 0,
+    Int[], Int[],
     zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0),
     T[], T[])
 

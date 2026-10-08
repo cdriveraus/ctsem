@@ -20,14 +20,21 @@
 # coordinates `z = (u, d_1, ..., d_n)`, `d_m` member `m`'s observed columns,
 # with the filter at fixed deviations (`_HYBRID_FIXED`). That is the layer's
 # own computation, so the result is the layer's.
+#
+# The gate runs for every unit on every evaluation, so its record and its test
+# live in per-slot scratch and allocate nothing after a slot's first unit of a
+# given shape. The joint coordinates are for flagged units only, a few percent
+# of them, and are written for clarity over allocation.
 
 """
     CTSEMHybridCross{T}
 
 One unit's cross curvature with its members' filter-integrated deviations, read
 by `_hybrid_after!` from the curvature pass: per member, the observed column
-count `q`, `H` (`q x d`, `-d(b - M dhat)/du` over the unit's `d` coordinates),
-`A` (`M`) and `dhat` (the conditional mode), all at the outer element type.
+count `q`, `H` (`-d(b - M dhat)/du` over the unit's `d` coordinates), `A`
+(`M`) and `dhat` (the conditional mode), all at the outer element type. Each
+array is capacity sized and read over its leading `q` rows; `_hybrid_cross!`
+hands out a slot's own, reset.
 """
 mutable struct CTSEMHybridCross{T}
     d::Int
@@ -40,6 +47,28 @@ CTSEMHybridCross{T}(d::Integer, nmembers::Integer) where {T} = CTSEMHybridCross{
     Int(d), zeros(Int, nmembers), [zeros(T, 0, d) for _ in 1:nmembers],
     [zeros(T, 0, 0) for _ in 1:nmembers], [T[] for _ in 1:nmembers])
 
+"""The calling slot's `CTSEMHybridCross` for a unit of `d` coordinates and
+`nmembers` members, with every count zeroed and every `H` cleared: a sweep
+fills only the columns it seeded, and the rest must read zero."""
+function _hybrid_cross!(laplace::CTSEMLaplaceObjective, ::Type{T}, d::Integer,
+    nmembers::Integer) where {T}
+    slot = _laplace_slot()
+    _laplace_check_slot(laplace, slot)
+    store = laplace.workspaces[slot]
+    key = (:hybrid_cross, T, Int(d), Int(nmembers))
+    cross = get(store, key, nothing)
+    if cross === nothing
+        cross = CTSEMHybridCross{T}(d, nmembers)
+        store[key] = cross
+    end
+    cross = cross::CTSEMHybridCross{T}
+    fill!(cross.q, 0)
+    for H in cross.H
+        fill!(H, zero(T))
+    end
+    return cross
+end
+
 # Hooks around one member's pass in `_laplace_unit_loglik_gradient`; nothing
 # for no hook.
 _hybrid_before!(::Nothing, m, ws) = nothing
@@ -50,10 +79,20 @@ function _hybrid_after!(cross::CTSEMHybridCross{T}, m, ws, u) where {T}
     hb = ws.ekf_ws.hyb
     q = hb.active ? hb.q : 0
     cross.q[m] = q
-    size(cross.H[m]) == (q, cross.d) || (cross.H[m] = zeros(T, q, cross.d))
     q == 0 && return nothing
-    cross.A[m] = T[_hybrid_strip(hb.Mh[a, b]) for a in 1:q, b in 1:q]
-    cross.dhat[m] = T[_hybrid_strip(hb.dhat[c]) for c in 1:q]
+    nh = length(hb.gv)
+    if size(cross.H[m], 1) < q
+        cross.H[m] = zeros(T, nh, cross.d)
+        cross.A[m] = zeros(T, nh, nh)
+        cross.dhat[m] = zeros(T, nh)
+    end
+    A, dhat, H = cross.A[m], cross.dhat[m], cross.H[m]
+    @inbounds for b in 1:q
+        dhat[b] = _hybrid_strip(hb.dhat[b])
+        for a in 1:q
+            A[a, b] = _hybrid_strip(hb.Mh[a, b])
+        end
+    end
     eltype(u) <: ForwardDiff.Dual || return nothing
     # Each coordinate's seed, wherever this sweep put one: a chunked Jacobian
     # or one block's sweep seeds some coordinates and not others, and each
@@ -63,7 +102,7 @@ function _hybrid_after!(cross::CTSEMHybridCross{T}, m, ws, u) where {T}
         for j in eachindex(p)
             iszero(_laplace_deepvalue(p[j])) && continue
             for i in 1:q
-                cross.H[m][i, a] = -ForwardDiff.partials(hb.r[i])[j]
+                H[i, a] = -ForwardDiff.partials(hb.r[i])[j]
             end
             break
         end
@@ -72,39 +111,59 @@ function _hybrid_after!(cross::CTSEMHybridCross{T}, m, ws, u) where {T}
 end
 
 """
-    _hybrid_joint_exceeds(M, blocks, cross, shift)
+    _hybrid_joint_exceeds(laplace, M, blocks, cross, shift)
 
 Whether the joint curvature less `shift I` is positive definite, from the
-profile curvature `M` and `cross` (the identity at the top of this section).
-Dense; a decision, so on the deep values.
+profile curvature `M` and `cross` (the identity at the top of this file). A
+decision, so on the deep values, in the calling slot's scratch.
 """
-function _hybrid_joint_exceeds(M::CTSEMBlockMatrix, blocks::Vector{CTSEMLaplaceBlock},
-    cross::CTSEMHybridCross, shift::Real)
+function _hybrid_joint_exceeds(laplace::CTSEMLaplaceObjective, M::CTSEMBlockMatrix,
+    blocks::Vector{CTSEMLaplaceBlock}, cross::CTSEMHybridCross, shift::Real)
     d = cross.d
-    D = Float64[_laplace_deepvalue(x) for x in _laplace_block_dense(M, blocks, d)]
+    D = _laplace_scratch_matrix!(laplace, Float64, d, d, :hybrid_joint_D)
+    fill!(D, 0.0)
+    @inbounds for (b, block) in enumerate(blocks)
+        ob = block.offset
+        Db = M.diag[b]
+        for j in 1:block.size, i in 1:block.size
+            D[ob + i, ob + j] = _laplace_deepvalue(Db[i, j])
+        end
+        for (t, a) in enumerate(block.ancestors)
+            oa = blocks[a].offset
+            Cb = M.coupling[b][t]
+            for j in 1:blocks[a].size, i in 1:block.size
+                v = _laplace_deepvalue(Cb[i, j])
+                D[ob + i, oa + j] = v
+                D[oa + j, ob + i] = v
+            end
+        end
+    end
     @inbounds for i in 1:d
         D[i, i] -= shift
     end
     for m in eachindex(cross.q)
         q = cross.q[m]
         q == 0 && continue
-        A = Float64[_laplace_deepvalue(x) for x in cross.A[m]]
-        H = Float64[_laplace_deepvalue(x) for x in cross.H[m]]
-        As = copy(A)
-        @inbounds for i in 1:q
-            As[i, i] -= shift
+        cap = size(cross.A[m], 1)
+        A = _laplace_scratch_matrix!(laplace, Float64, cap, cap, :hybrid_joint_A)
+        As = _laplace_scratch_matrix!(laplace, Float64, cap, cap, :hybrid_joint_As)
+        KH = _laplace_scratch_matrix!(laplace, Float64, cap, d, :hybrid_joint_KH)
+        col = _laplace_scratch_vector!(laplace, Float64, cap, :hybrid_joint_col)
+        a1 = _laplace_scratch_vector!(laplace, Float64, cap, :hybrid_joint_a1)
+        a2 = _laplace_scratch_vector!(laplace, Float64, cap, :hybrid_joint_a2)
+        Am, H = cross.A[m], cross.H[m]
+        @inbounds for j in 1:q, i in 1:q
+            v = _laplace_deepvalue(Am[i, j])
+            A[i, j] = v
+            As[i, j] = i == j ? v - shift : v
         end
         Fa = _ctsem_cholesky(A, q)
         Fs = _ctsem_cholesky(As, q)
         (issuccess(Fa) && issuccess(Fs)) || return false
         # K H with K = (A - shift I)^-1 - A^-1, a column of H at a time.
-        KH = zeros(q, d)
-        col = zeros(q)
-        a1 = zeros(q)
-        a2 = zeros(q)
         @inbounds for j in 1:d
             for i in 1:q
-                col[i] = H[i, j]
+                col[i] = _laplace_deepvalue(H[i, j])
             end
             ldiv!(a1, Fs, col)
             ldiv!(a2, Fa, col)
@@ -115,7 +174,7 @@ function _hybrid_joint_exceeds(M::CTSEMBlockMatrix, blocks::Vector{CTSEMLaplaceB
         @inbounds for j in 1:d, i in 1:d
             acc = 0.0
             for k in 1:q
-                acc += H[k, i] * KH[k, j]
+                acc += _laplace_deepvalue(H[k, i]) * KH[k, j]
             end
             D[i, j] -= acc
         end
@@ -136,9 +195,9 @@ end
 
 # Hands each member its fixed deviations from `z`, and collects the deviations'
 # own gradient `b - (M - I) d` from its pass.
-struct _HybridJointHook{T,Z}
+struct _HybridJointHook{T,Z,L}
     z::Z
-    layout::NamedTuple
+    layout::L
     grad::Vector{T}
 end
 
@@ -181,7 +240,7 @@ function _hybrid_joint_objective_gradient(laplace::CTSEMLaplaceObjective, U::Int
     aws, layout) where {T}
     d = layout.d
     u = T[z[a] for a in 1:d]
-    hook = _HybridJointHook{T,typeof(z)}(z, layout, zeros(T, layout.n - d))
+    hook = _HybridJointHook{T,typeof(z),typeof(layout)}(z, layout, zeros(T, layout.n - d))
     r = _laplace_unit_loglik_gradient(laplace, U, values, Ls, u, aws,
         eachindex(laplace.units.members[U]), nothing, _HYBRID_FIXED, hook)
     isfinite(r.value) ||
@@ -205,8 +264,9 @@ function _hybrid_joint_curvature(laplace::CTSEMLaplaceObjective, U::Integer,
         local S, ws, vs, Lss
         S = eltype(zz)
         ws = _laplace_workspace!(laplace, S, length(values))
-        vs = convert(Vector{S}, values)
-        Lss = [convert(Matrix{S}, L) for L in Ls]
+        vs = _laplace_scratch_vector!(laplace, S, length(values), :curv_vs)
+        copyto!(vs, values)
+        Lss = _laplace_scratch_levels!(laplace, S, Ls, :curv_levels)
         return _hybrid_joint_objective_gradient(laplace, U, vs, Lss, zz, ws,
             layout).gradient
     end
@@ -234,7 +294,7 @@ function _hybrid_gated_term(laplace::CTSEMLaplaceObjective, U::Integer,
     g = inner.value
     (isfinite(g) && !isempty(u)) || return (value=g, flagged=false, floor=true)
     if M === nothing || cross === nothing
-        cross = CTSEMHybridCross{T}(length(u), length(members))
+        cross = _hybrid_cross!(laplace, T, length(u), length(members))
         M = _laplace_unit_curvature(laplace, U, values, Ls, u; hook=cross)
         logdetM = nothing
     end
@@ -244,7 +304,7 @@ function _hybrid_gated_term(laplace::CTSEMLaplaceObjective, U::Integer,
         logdetM += 2 * inner.hlogdet
     end
     hi = laplace.gate_hi
-    ok && _hybrid_joint_exceeds(M, blocks, cross, hi) &&
+    ok && _hybrid_joint_exceeds(laplace, M, blocks, cross, hi) &&
         return (value=g - logdetM / 2, flagged=false, floor=false)
     layout = _hybrid_joint_layout(cross)
     z = Vector{T}(undef, layout.n)

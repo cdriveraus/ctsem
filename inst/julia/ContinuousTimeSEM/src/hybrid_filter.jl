@@ -23,8 +23,13 @@
 # joint mode in `u` is the profile's, the profile's curvature is the Schur
 # complement of the joint curvature, and the joint logdet is that one's plus
 # `logdet(M)` -- which the Laplace layer adds at the mode
-# (`_laplace_unit_loglik_gradient`'s `hlogdet`). With `full` set the pass
-# returns the integral itself, profile less `logdet(M) / 2`.
+# (`_laplace_unit_loglik_gradient`'s `hlogdet`). The other modes are in
+# `CTSEMHybridBuffers`.
+#
+# Every buffer here and on the tape is sized by capacity (items, manifests,
+# states) and only grows, so after a model's first pass nothing allocates; the
+# loops read the leading block a subject or row needs. Products and solves are
+# loops: nothing takes a BLAS or LAPACK lock.
 
 """Start a pass: which hybrid items this subject observes, and zeroed state."""
 function _hybrid_start!(hb::CTSEMHybridBuffers{T}, h::CTSEMHybrid, data,
@@ -56,22 +61,35 @@ function _hybrid_start!(hb::CTSEMHybridBuffers{T}, h::CTSEMHybrid, data,
     end
     hb.q = q
     q == 0 && return nothing
-    if size(hb.X, 1) < n || size(hb.X, 2) < q
+    if size(hb.X, 1) < n || size(hb.X, 2) < nh
         hb.X = zeros(T, n, nh)
         hb.Xt = zeros(T, n, nh)
     end
-    if size(hb.V, 1) < m || size(hb.V, 2) < q
+    if size(hb.V, 1) < m || size(hb.V, 2) < nh
         hb.V = zeros(T, m, nh)
         hb.W = zeros(T, m, nh)
         hb.e = zeros(T, m)
     end
-    if size(hb.S, 1) < q
+    if size(hb.S, 1) < nh
         hb.S = zeros(T, nh, nh)
         hb.s = zeros(T, nh)
+        hb.Mh = zeros(T, nh, nh)
+        hb.Mw = zeros(T, nh, nh)
+        hb.gv = zeros(T, nh)
+        hb.dgv = zeros(T, nh)
+        hb.bv = zeros(T, nh)
+        hb.dhat = zeros(T, nh)
+        hb.r = zeros(T, nh)
     end
-    fill!(view(hb.X, 1:n, 1:q), zero(T))
-    fill!(view(hb.S, 1:q, 1:q), zero(T))
-    fill!(view(hb.s, 1:q), zero(T))
+    @inbounds for c in 1:q
+        for r in 1:n
+            hb.X[r, c] = zero(T)
+        end
+        for a in 1:q
+            hb.S[a, c] = zero(T)
+        end
+        hb.s[c] = zero(T)
+    end
     return nothing
 end
 
@@ -134,7 +152,7 @@ function _hybrid_update!(hb::CTSEMHybridBuffers{T}, L, factor, K, y,
     return nothing
 end
 
-"""One prediction substep's share: `X = A X`."""
+"""One prediction substep's share: `X = A X`, into the spare and swapped in."""
 function _hybrid_predict!(hb::CTSEMHybridBuffers{T}, A, n::Int) where {T}
     q = hb.q
     X, Xt = hb.X, hb.Xt
@@ -145,9 +163,7 @@ function _hybrid_predict!(hb::CTSEMHybridBuffers{T}, A, n::Int) where {T}
         end
         Xt[r, c] = acc
     end
-    @inbounds for c in 1:q, r in 1:n
-        X[r, c] = Xt[r, c]
-    end
+    hb.X, hb.Xt = Xt, X
     return nothing
 end
 
@@ -163,11 +179,10 @@ function _hybrid_marginal!(hb::CTSEMHybridBuffers{T}, h::CTSEMHybrid,
     values::AbstractVector, trace) where {T}
     q = hb.q
     if q == 0
-        _record_hybrid!(trace, hb, T[], T[])
+        _record_hybrid!(trace, hb)
         return zero(T)
     end
-    g = Vector{T}(undef, q)
-    dg = Vector{T}(undef, q)
+    g, dg, Mh, Mw, bv, z = hb.gv, hb.dgv, hb.Mh, hb.Mw, hb.bv, hb.dhat
     @inbounds for c in 1:q
         k = hb.item[c]
         raw = values[h.psi_index[k]]
@@ -175,57 +190,48 @@ function _hybrid_marginal!(hb::CTSEMHybridBuffers{T}, h::CTSEMHybrid,
         # d log1p_exp(z)/dz is the logistic function.
         dg[c] = h.slope[k] * h.sd_scale[k] * 2 / (1 + exp(-(2 * raw - 1)))
     end
-    M = Matrix{T}(undef, q, q)
+    # `M` twice: `Mw` is factored in place (`_ctsem_cholesky`), and the cross
+    # score and the fixed-deviation value read `M` itself, from `Mh`.
     @inbounds for b in 1:q, a in 1:q
-        M[a, b] = g[a] * hb.S[a, b] * g[b] + (a == b ? one(T) : zero(T))
+        v = g[a] * hb.S[a, b] * g[b] + (a == b ? one(T) : zero(T))
+        Mh[a, b] = v
+        Mw[a, b] = v
     end
-    # Kept before the factorization, which overwrites `M` with its factor; the
-    # cross score and the fixed-deviation value below read `M` itself.
-    size(hb.Mh, 1) >= q || (hb.Mh = zeros(T, q, q))
-    @inbounds for b in 1:q, a in 1:q
-        hb.Mh[a, b] = M[a, b]
-    end
-    F = _ctsem_cholesky(M, q)
+    F = _ctsem_cholesky(Mw, q)
     issuccess(F) || return T(NaN)
-    Mh = hb.Mh
-    bvec = Vector{T}(undef, q)
     @inbounds for c in 1:q
-        bvec[c] = g[c] * hb.s[c]
+        bv[c] = g[c] * hb.s[c]
     end
-    z = similar(bvec)
-    ldiv!(z, F, bvec)
+    ldiv!(z, F, bv)
     half_logdet = zero(T)
+    quad = zero(T)
     @inbounds for c in 1:q
-        half_logdet += log(F.U[c, c])
+        half_logdet += log(Mw[c, c])
+        quad += bv[c] * z[c]
     end
     hb.half_logdet = half_logdet
-    length(hb.dhat) >= q || (hb.dhat = zeros(T, q))
-    length(hb.gv) >= q || (hb.gv = zeros(T, q))
-    length(hb.r) >= q || (hb.r = zeros(T, q))
     @inbounds for a in 1:q
-        hb.dhat[a] = z[a]
-        hb.gv[a] = g[a]
-        acc = bvec[a]
+        acc = bv[a]
         for b in 1:q
             acc -= Mh[a, b] * _hybrid_constant(T, _hybrid_strip(z[b]))
         end
         hb.r[a] = acc
     end
-    _record_hybrid!(trace, hb, g, dg)
+    _record_hybrid!(trace, hb)
     if hb.mode == _HYBRID_FIXED
         d = hb.dfix
         length(d) >= q || throw(ArgumentError(string("the fixed deviations hold ",
             length(d), " values for ", q, " columns")))
         value = zero(T)
         @inbounds for a in 1:q
-            value += d[a] * bvec[a]
+            value += d[a] * bv[a]
             for b in 1:q
                 value -= d[a] * (Mh[a, b] - (a == b ? one(T) : zero(T))) * d[b] / 2
             end
         end
         return value
     end
-    return (hb.mode == _HYBRID_FULL ? -half_logdet : zero(T)) + dot(bvec, z) / 2
+    return (hb.mode == _HYBRID_FULL ? -half_logdet : zero(T)) + quad / 2
 end
 
 # One dual layer off: the conditional mode held fixed in the derivative the
@@ -245,32 +251,52 @@ _hybrid_record_X!(record, hb, n::Int) = nothing
 function _hybrid_record_X!(record::Union{CTSEMUpdateRecord{T},CTSEMPredictRecord{T}},
     hb::CTSEMHybridBuffers{T}, n::Int) where {T}
     q = hb.active ? hb.q : 0
-    if size(record.Xh) != (n, q)
-        record.Xh = zeros(T, n, q)
-    end
     q == 0 && return nothing
+    Xh = record.Xh
+    if size(Xh, 1) != n || size(Xh, 2) < q
+        Xh = zeros(T, n, size(hb.X, 2))
+        record.Xh = Xh
+    end
+    X = hb.X
     @inbounds for c in 1:q, r in 1:n
-        record.Xh[r, c] = hb.X[r, c]
+        Xh[r, c] = X[r, c]
     end
     return nothing
 end
 
-_record_hybrid!(trace, hb, g, dg) = nothing
-function _record_hybrid!(tape::CTSEMAdjointTape{T}, hb::CTSEMHybridBuffers{T},
-    g::Vector{T}, dg::Vector{T}) where {T}
+_record_hybrid!(trace, hb) = nothing
+function _record_hybrid!(tape::CTSEMAdjointTape{T}, hb::CTSEMHybridBuffers{T}) where {T}
     rec = tape.hyb
     q = hb.q
     rec.active = true
     rec.mode = hb.mode
-    rec.mode == _HYBRID_FIXED && (rec.dfix = T[hb.dfix[c] for c in 1:q])
     rec.q = q
-    resize!(rec.item, q)
-    copyto!(rec.item, 1, hb.item, 1, q)
-    rec.col = copy(hb.col)
-    rec.S = Matrix(view(hb.S, 1:q, 1:q))
-    rec.s = Vector(view(hb.s, 1:q))
-    rec.g = copy(g)
-    rec.dg = copy(dg)
+    q == 0 && return _tape_push!(tape, :hybrid, 0)
+    nh = length(hb.gv)
+    if length(rec.g) < nh
+        rec.g = zeros(T, nh)
+        rec.dg = zeros(T, nh)
+        rec.s = zeros(T, nh)
+        rec.dfix = zeros(T, nh)
+        rec.S = zeros(T, nh, nh)
+    end
+    length(rec.item) >= q || resize!(rec.item, nh)
+    length(rec.col) == length(hb.col) || resize!(rec.col, length(hb.col))
+    copyto!(rec.col, hb.col)
+    @inbounds for a in 1:q
+        rec.item[a] = hb.item[a]
+        rec.g[a] = hb.gv[a]
+        rec.dg[a] = hb.dgv[a]
+        rec.s[a] = hb.s[a]
+        for b in 1:q
+            rec.S[a, b] = hb.S[a, b]
+        end
+    end
+    if rec.mode == _HYBRID_FIXED
+        @inbounds for a in 1:q
+            rec.dfix[a] = hb.dfix[a]
+        end
+    end
     _tape_push!(tape, :hybrid, 0)
     return nothing
 end
@@ -278,25 +304,39 @@ end
 """
 Reverse of the closing term, run first in the walk: the cotangents of `S` and
 `s`, each item's own-sd cotangent into `psibar` (indexed by hybrid item), and
-the carried cotangent of `X` started at zero.
+the carried cotangent of `X` started at zero. `nh` is the model's hybrid item
+count, the capacity every per-item array is sized by.
 """
 function _reverse_hybrid_marginal!(rec::CTSEMHybridTape{T}, n::Int, nh::Int) where {T}
     q = rec.q
     length(rec.psibar) == nh || (rec.psibar = zeros(T, nh))
     fill!(rec.psibar, zero(T))
-    rec.Sbar = zeros(T, q, q)
-    rec.sbar = zeros(T, q)
-    rec.Xbar = zeros(T, n, q)
+    if size(rec.Sbar, 1) < nh || size(rec.Xbar, 1) != n
+        rec.Sbar = zeros(T, nh, nh)
+        rec.sbar = zeros(T, nh)
+        rec.Xbar = zeros(T, n, nh)
+        rec.Mw = zeros(T, nh, nh)
+        rec.C = zeros(T, nh, nh)
+        rec.wv = zeros(T, nh)
+        rec.uv = zeros(T, nh)
+        rec.beta = zeros(T, nh)
+    end
     q == 0 && return nothing
     g, S, s = rec.g, rec.S, rec.s
+    Sbar, sbar, Xbar = rec.Sbar, rec.sbar, rec.Xbar
+    @inbounds for c in 1:q
+        for r in 1:n
+            Xbar[r, c] = zero(T)
+        end
+    end
     if rec.mode == _HYBRID_FIXED
         # d' G s - 1/2 d' G S G d at the caller's `d`.
         d = rec.dfix
         @inbounds for b in 1:q, a in 1:q
-            rec.Sbar[a, b] = -g[a] * d[a] * d[b] * g[b] / 2
+            Sbar[a, b] = -g[a] * d[a] * d[b] * g[b] / 2
         end
         @inbounds for a in 1:q
-            rec.sbar[a] = g[a] * d[a]
+            sbar[a] = g[a] * d[a]
             gbar = d[a] * s[a]
             for b in 1:q
                 gbar -= d[a] * S[a, b] * g[b] * d[b]
@@ -305,35 +345,36 @@ function _reverse_hybrid_marginal!(rec::CTSEMHybridTape{T}, n::Int, nh::Int) whe
         end
         return nothing
     end
-    M = Matrix{T}(undef, q, q)
+    Mw, C, col, unit, beta = rec.Mw, rec.C, rec.wv, rec.uv, rec.beta
     @inbounds for b in 1:q, a in 1:q
-        M[a, b] = g[a] * S[a, b] * g[b] + (a == b ? one(T) : zero(T))
+        Mw[a, b] = g[a] * S[a, b] * g[b] + (a == b ? one(T) : zero(T))
     end
-    F = _ctsem_cholesky(M, q)
-    C = Matrix{T}(undef, q, q)
-    col = zeros(T, q)
-    unit = zeros(T, q)
+    F = _ctsem_cholesky(Mw, q)
     @inbounds for b in 1:q
-        fill!(unit, zero(T))
-        unit[b] = one(T)
+        for a in 1:q
+            unit[a] = a == b ? one(T) : zero(T)
+        end
         ldiv!(col, F, unit)
         for a in 1:q
             C[a, b] = col[a]
         end
     end
-    beta = zeros(T, q)
-    @inbounds for b in 1:q, a in 1:q
-        beta[a] += C[a, b] * g[b] * s[b]
+    @inbounds for a in 1:q
+        acc = zero(T)
+        for b in 1:q
+            acc += C[a, b] * g[b] * s[b]
+        end
+        beta[a] = acc
     end
     # dll/dM = -1/2 (w C + beta beta'), dll/db = beta, with `w` 1 when the
     # pass returned the logdet and 0 for the profile.
     w = rec.mode == _HYBRID_FULL ? one(T) : zero(T)
     @inbounds for b in 1:q, a in 1:q
         Mbar = -(w * C[a, b] + beta[a] * beta[b]) / 2
-        rec.Sbar[a, b] = g[a] * Mbar * g[b]
+        Sbar[a, b] = g[a] * Mbar * g[b]
     end
     @inbounds for a in 1:q
-        rec.sbar[a] = g[a] * beta[a]
+        sbar[a] = g[a] * beta[a]
         gbar = beta[a] * s[a]
         for b in 1:q
             gbar -= (w * C[a, b] + beta[a] * beta[b]) * S[a, b] * g[b]
@@ -348,9 +389,10 @@ One measurement update's reverse, before the base `_reverse_update!` uses its
 intermediates: from the carried `Xbar` (the cotangent of `X` after the update)
 and the closing term's `Sbar`, `sbar`, the cotangents of the gain (`Kbar`), of
 the innovation covariance (`Rbar`), of the innovation (`ybar`) and of the
-observed LAMBDA rows (`Lbar`), which the base reverse folds into its own; and
-`Xbar` carried back to before the update. `Ui` is `U^-1`, `K` the gain, `a`
-`S^-1 y`, all as the base reverse recomputed them.
+observed LAMBDA rows (`Lbar`), which the base reverse folds into its own
+(`_hybrid_accumulate!`, over the leading block); and `Xbar` carried back to
+before the update. `Ui` is `U^-1`, `K` the gain, `a` `S^-1 y`, all as the base
+reverse recomputed them.
 """
 function _hybrid_reverse_update!(rec::CTSEMHybridTape{T}, record::CTSEMUpdateRecord{T},
     Ui, K, a, n::Int) where {T}
@@ -359,14 +401,25 @@ function _hybrid_reverse_update!(rec::CTSEMHybridTape{T}, record::CTSEMUpdateRec
     m = length(o)
     Xh = record.Xh
     L = record.Lambda
-    for (name, rows, cols) in ((:V, m, q), (:W, m, q), (:Z, m, q), (:Vbar, m, q),
-            (:Kbar, n, m), (:Rbar, m, m), (:Lbar, m, n), (:Xt, n, q))
-        A = getfield(rec, name)
-        size(A) == (rows, cols) || setfield!(rec, name, zeros(T, rows, cols))
+    nh = size(rec.Xbar, 2)
+    if size(rec.V, 1) < m || size(rec.V, 2) < nh
+        rows = max(m, size(rec.V, 1))
+        rec.V = zeros(T, rows, nh)
+        rec.W = zeros(T, rows, nh)
+        rec.Z = zeros(T, rows, nh)
+        rec.Vbar = zeros(T, rows, nh)
     end
-    length(rec.ybar) == m || (rec.ybar = zeros(T, m))
+    if size(rec.Kbar, 1) != n || size(rec.Kbar, 2) < m
+        cols = max(m, size(rec.Kbar, 2))
+        rec.Kbar = zeros(T, n, cols)
+        rec.Rbar = zeros(T, cols, cols)
+        rec.Lbar = zeros(T, cols, n)
+        rec.ybar = zeros(T, cols)
+    end
+    size(rec.Xt) == size(rec.Xbar) || (rec.Xt = zeros(T, n, nh))
     V, W, Z, Vbar = rec.V, rec.W, rec.Z, rec.Vbar
-    Xbar, Sbar, sbar = rec.Xbar, rec.Sbar, rec.sbar
+    Kbar, Rbar, Lbar, ybar = rec.Kbar, rec.Rbar, rec.Lbar, rec.ybar
+    Xbar, Sbar, sbar, Xt = rec.Xbar, rec.Sbar, rec.sbar, rec.Xt
     @inbounds for c in 1:q, i in 1:m
         acc = rec.col[o[i]] == c ? one(T) : zero(T)
         for k in 1:n
@@ -395,7 +448,15 @@ function _hybrid_reverse_update!(rec::CTSEMHybridTape{T}, record::CTSEMUpdateRec
         for c in 1:q
             acc -= Xbar[r, c] * V[i, c]
         end
-        rec.Kbar[r, i] = acc
+        Kbar[r, i] = acc
+    end
+    # `W` is spent: it holds `Z Sbar` from here.
+    @inbounds for c in 1:q, i in 1:m
+        acc = zero(T)
+        for b in 1:q
+            acc += Z[i, b] * Sbar[b, c]
+        end
+        W[i, c] = acc
     end
     @inbounds for c in 1:q, i in 1:m
         acc = zero(T)
@@ -403,10 +464,7 @@ function _hybrid_reverse_update!(rec::CTSEMHybridTape{T}, record::CTSEMUpdateRec
             acc -= K[r, i] * Xbar[r, c]
         end
         # S += V' S^-1 V:  Vbar += 2 Z Sbar.  s += V' S^-1 y:  Vbar += a sbar'.
-        for b in 1:q
-            acc += 2 * Z[i, b] * Sbar[b, c]
-        end
-        Vbar[i, c] = acc + a[i] * sbar[c]
+        Vbar[i, c] = acc + 2 * W[i, c] + a[i] * sbar[c]
     end
     # Rbar (the innovation covariance) = -Z Sbar Z' - sym(Z sbar a');
     # ybar = Z sbar.
@@ -415,18 +473,14 @@ function _hybrid_reverse_update!(rec::CTSEMHybridTape{T}, record::CTSEMUpdateRec
         for c in 1:q
             zs += Z[i, c] * sbar[c]
         end
-        rec.ybar[i] = zs
+        ybar[i] = zs
     end
     @inbounds for j in 1:m, i in 1:m
         acc = zero(T)
         for c in 1:q
-            zc = zero(T)
-            for b in 1:q
-                zc += Sbar[c, b] * Z[j, b]
-            end
-            acc -= Z[i, c] * zc
+            acc -= W[i, c] * Z[j, c]
         end
-        rec.Rbar[i, j] = acc - (rec.ybar[i] * a[j] + a[i] * rec.ybar[j]) / 2
+        Rbar[i, j] = acc - (ybar[i] * a[j] + a[i] * ybar[j]) / 2
     end
     # V = L X + E:  Lbar = Vbar X',  Xbar(before) = Xbar(after) + L' Vbar.
     @inbounds for k in 1:n, i in 1:m
@@ -434,18 +488,16 @@ function _hybrid_reverse_update!(rec::CTSEMHybridTape{T}, record::CTSEMUpdateRec
         for c in 1:q
             acc += Vbar[i, c] * Xh[k, c]
         end
-        rec.Lbar[i, k] = acc
+        Lbar[i, k] = acc
     end
     @inbounds for c in 1:q, k in 1:n
         acc = Xbar[k, c]
         for i in 1:m
             acc += L[i, k] * Vbar[i, c]
         end
-        rec.Xt[k, c] = acc
+        Xt[k, c] = acc
     end
-    @inbounds for c in 1:q, k in 1:n
-        Xbar[k, c] = rec.Xt[k, c]
-    end
+    rec.Xbar, rec.Xt = Xt, Xbar
     return nothing
 end
 
@@ -459,7 +511,8 @@ function _hybrid_reverse_predict!(Abar, A, rec::CTSEMHybridTape{T},
     q == 0 && return nothing
     Xh = record.Xh
     Xbar = rec.Xbar
-    size(rec.Xt) == (n, q) || (rec.Xt = zeros(T, n, q))
+    size(rec.Xt) == size(Xbar) || (rec.Xt = zeros(T, size(Xbar)...))
+    Xt = rec.Xt
     @inbounds for j in 1:n, i in 1:n
         acc = zero(T)
         for c in 1:q
@@ -472,12 +525,24 @@ function _hybrid_reverse_predict!(Abar, A, rec::CTSEMHybridTape{T},
         for i in 1:n
             acc += A[i, j] * Xbar[i, c]
         end
-        rec.Xt[j, c] = acc
+        Xt[j, c] = acc
     end
-    @inbounds for c in 1:q, j in 1:n
-        Xbar[j, c] = rec.Xt[j, c]
-    end
+    rec.Xbar, rec.Xt = Xt, Xbar
     return nothing
+end
+
+"""`dest += src` over `dest`'s extent: `src` is a capacity-sized buffer."""
+function _hybrid_accumulate!(dest::AbstractMatrix, src::AbstractMatrix)
+    @inbounds for j in axes(dest, 2), i in axes(dest, 1)
+        dest[i, j] += src[i, j]
+    end
+    return dest
+end
+function _hybrid_accumulate!(dest::AbstractVector, src::AbstractVector)
+    @inbounds for i in eachindex(dest)
+        dest[i] += src[i]
+    end
+    return dest
 end
 
 """Add the own-sd cotangents to the raw gradient, after the parameter layer."""
