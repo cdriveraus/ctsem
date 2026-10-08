@@ -2549,6 +2549,37 @@ end
 
 export ctsem_set_warm_start!
 
+"""
+Whether the inner solve looks for a better mode than the one it reaches from
+the origin (`_laplace_probe_modes`). On by default; `ctsem_set_mode_probes!`.
+"""
+const _LAPLACE_MODE_PROBES = Ref(true)
+
+"""
+Precision below which a direction of a mode's curvature is probed: the
+continuation's `soft_tau`, the precision below which a direction can be
+non-Gaussian enough to matter.
+"""
+const _LAPLACE_PROBE_SOFT = 3.5
+
+"""Widest unit probed: the quadrature's `maxdim`, for the same reason of cost."""
+const _LAPLACE_PROBE_MAXDIM = 5
+
+"""
+    ctsem_set_mode_probes!(on)
+
+Turn the inner solve's probes for a better mode (`_laplace_probe_modes`) on or
+off. Returns the previous setting. Off is the objective as it was, Newton from
+the origin alone, which is what a measurement of the probes is made against.
+"""
+function ctsem_set_mode_probes!(on::Bool)
+    previous = _LAPLACE_MODE_PROBES[]
+    _LAPLACE_MODE_PROBES[] = on
+    return previous
+end
+
+export ctsem_set_mode_probes!
+
 """Unit size at or above which the blocked curvature beats the dense one."""
 const _LAPLACE_BLOCK_THRESHOLD = Ref(14)
 
@@ -3008,7 +3039,10 @@ end
     _laplace_solve_unit_mode!(laplace, U, values, Ls)
 
 Newton's method on `g_U`, from the origin -- or from the retained mode for
-unit `U` when `ctsem_set_warm_start!` has asked for that.
+unit `U` when `ctsem_set_warm_start!` has asked for that -- and then, for a unit
+no wider than `_LAPLACE_PROBE_MAXDIM`, from points along that mode's soft
+directions, keeping the mode with the largest Laplace term
+(`_laplace_probe_modes`).
 
 `g_U` is a log likelihood minus a quadratic, so its curvature is negative
 definite near the mode and Newton is the right method; away from the mode, and
@@ -3064,6 +3098,9 @@ function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
                 (!isfinite(best.value) || cold.value > best.value))
             best = cold
         end
+    end
+    if _LAPLACE_MODE_PROBES[] && best.converged && 0 < d <= _LAPLACE_PROBE_MAXDIM
+        best = _laplace_probe_modes(laplace, U, values, Ls, aws, best)
     end
     laplace.modes[U] = best.u
     laplace.inner_iterations[U] = best.iterations
@@ -3157,6 +3194,10 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
     repaired = false
     converged = false
     iterations = 0
+    # The last curvature formed, before any repair, for `_laplace_probe_modes`:
+    # one step from the mode, so its directions are the mode's.
+    curvature = nothing
+    keep = _LAPLACE_MODE_PROBES[] && d <= _LAPLACE_PROBE_MAXDIM
     current = _laplace_unit_objective_gradient(laplace, U, values, Ls, u, aws,
         )
     if !isfinite(current.value) && any(!iszero, u)
@@ -3177,6 +3218,7 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
         # ran serially while everything else divided. It cost 4.6x down to
         # 1.2x on the value-only path and no test could have reported it.
         M = _laplace_unit_curvature(laplace, U, values, Ls, u)
+        keep && (curvature = _laplace_block_dense(M, laplace.units.blocks[U], d))
         fac = _laplace_factor_repaired!(M, laplace.units.blocks[U])
         repaired |= fac.repaired
         fac.ok || break
@@ -3250,7 +3292,89 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
         converged = true
     end
     return (u=u, value=current.value, gradient=current.gradient,
-        converged=converged, iterations=iterations, repaired=repaired)
+        converged=converged, iterations=iterations, repaired=repaired,
+        curvature=curvature)
+end
+
+"""
+    _laplace_probe_modes(laplace, U, values, Ls, aws, found)
+
+The unit's mode with the largest Laplace term among `found`, the one Newton
+reached from the origin, and those Newton reaches from two posterior sds
+either way (at most three prior sds) along each of `found`'s soft directions:
+precision below `_LAPLACE_PROBE_SOFT`, a negative one included.
+
+Why. Where `g_U` has two maxima, Newton from the origin reaches whichever one
+the origin's basin holds, and as the parameters move the basin's edge crosses
+the origin: the unit's term jumps to the other mode's, and the objective with
+it. On the affect pilot's person-persistence fit the optimiser climbed into
+exactly such an edge and stalled there: one person with modes 5 log units apart
+in `g_U`, a valley 0.15 below the lower, the term 7.7 lower on the far side of
+the edge and central differences of the objective growing as one over the
+step. The lower mode carried `exp(-7.7)` of the higher's mass, so the higher
+mode's term was the Laplace approximation, and the jump only which basin the
+origin fell in. A lower mode is shallow along the way to a higher one, so its
+soft directions are where to look; a mode the data pin in every direction has
+no soft direction and costs no probe.
+
+A probe is screened before Newton runs from it, at the cost of one gradient:
+where `g_U` is the quadratic the found mode's curvature `M` describes, the
+gradient at `p` is `-M (p - u)` and a Newton step from `p` lands on `u`. Newton
+runs only where the actual gradient `a` would land it more than one posterior
+sd away, `(a + M (p - u))' M^-1 (a + M (p - u)) > 1`, or where `M` does not
+factor. Most probes return to the mode they started from, and this is what
+they cost then.
+
+The term (`_laplace_unit_primal`), not `g_U`, decides: where two modes' terms
+cross, the larger is the better single-mode approximation of the integral and
+the objective stays continuous there, which choosing by height does not. It is still a search: a
+better mode no probe reaches is not found, and where a probe starts to reach one
+the objective changes by that mode's gain. A unit with two modes of comparable
+mass is one no single-mode term approximates, and the quadrature correction is
+the remedy there (`ctLaplaceCheck`).
+"""
+function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
+    values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws, found)
+    d = length(found.u)
+    M = found.curvature === nothing ?
+        _laplace_block_dense(_laplace_unit_curvature(laplace, U, values, Ls,
+            copy(found.u)), laplace.units.blocks[U], d) : found.curvature
+    M = Matrix{Float64}(_laplace_symmetrise(M))
+    E = _ctsem_symeig(M)
+    (all(isfinite, E.values) && E.values[1] < _LAPLACE_PROBE_SOFT) || return found
+    F = _ctsem_cholesky(copy(M), d)
+    screened = issuccess(F)
+    best = found
+    bestterm = NaN
+    seen = [found.u]
+    for j in 1:d
+        lambda = E.values[j]
+        lambda < _LAPLACE_PROBE_SOFT || break
+        reach = min(2 / sqrt(max(lambda, 1e-8)), 3.0)
+        for sign in (-1.0, 1.0)
+            start = found.u .+ (sign * reach) .* E.vectors[:, j]
+            if screened
+                at = _laplace_unit_objective_gradient(laplace, U, values, Ls, start, aws)
+                isfinite(at.value) || continue
+                miss = at.gradient .+ M * (start .- found.u)
+                dot(miss, F \ miss) > 1 || continue
+            end
+            r = _laplace_newton_unit_mode(laplace, U, values, Ls, aws, start)
+            (r.converged && isfinite(r.value)) || continue
+            any(m -> maximum(abs, m .- r.u) < 1e-4, seen) && continue
+            push!(seen, r.u)
+            isnan(bestterm) && (bestterm = _laplace_unit_primal(laplace, U, values, Ls,
+                copy(best.u), aws).term)
+            term = _laplace_unit_primal(laplace, U, values, Ls, copy(r.u), aws).term
+            if isfinite(term) && (!isfinite(bestterm) || term > bestterm)
+                best = (u=r.u, value=r.value, gradient=r.gradient, converged=true,
+                    iterations=found.iterations + r.iterations,
+                    repaired=found.repaired || r.repaired, curvature=r.curvature)
+                bestterm = term
+            end
+        end
+    end
+    return best
 end
 
 """
@@ -3893,24 +4017,81 @@ The `(2*pi)^(d/2)` the Laplace approximation produces cancels the
 `(2*pi)^(-d/2)` in the standard-normal density of `u`, so no dimension-dependent
 constant appears here whatever the unit's size.
 """
-function _laplace_unit_term(laplace::CTSEMLaplaceObjective, U::Integer,
+_laplace_unit_term(laplace::CTSEMLaplaceObjective, U::Integer,
+    values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T},
+    aws) where {T} = _laplace_unit_primal(laplace, U, values, Ls, u, aws).term
+
+"""
+    _laplace_unit_primal(laplace, U, values, Ls, u, aws)
+
+Unit `U`'s term at `u` as the objective scores it, and what the gradient reads
+from the way there: `(term, M, fac, gated, floored)`, the curvature `M` (shifted
+in place where `fac` repaired it), its factorization, whether the gated rule
+scored the unit, and whether the term is the prior floor's bound. The one
+definition: the evaluation's primal, `_laplace_unit_term`, and the inner
+solve's choice between modes (`_laplace_probe_modes`) all take it from here, so
+a unit cannot be scored one way when its mode is chosen and another when it is
+summed. They were three before, and the third returned `NaN` for a curvature
+the primal repairs and scores by the gated rule's soft directions.
+
+Under the gated floor, deviations the filter integrates (`CTSEMHybrid`) need the
+joint curvature's gate, whose cross terms the same curvature pass gives
+(`CTSEMHybridCross`).
+"""
+function _laplace_unit_primal(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T},
     aws) where {T}
-    inner = _laplace_unit_objective_gradient(laplace, U, values, Ls, u, aws,
-        )
-    isfinite(inner.value) || return inner.value
-    isempty(u) && return inner.value - inner.hlogdet
-    M = _laplace_unit_curvature(laplace, U, values, Ls, u)
-    ok, logdetM, _, _ = _laplace_block_factor(M, laplace.units.blocks[U])
-    ok || return T(NaN)
+    blocks = laplace.units.blocks[U]
+    gated_floor = _LAPLACE_PRIOR_FLOOR[] && laplace.floor === :gated
+    b0 = _laplace_mark()
+    cross = (gated_floor && !isempty(u) &&
+             _hybrid_on(laplace.objective.params.hybrid)) ?
+        _hybrid_cross!(laplace, T, length(u), length(laplace.units.members[U])) :
+        nothing
+    M = isempty(u) ? CTSEMBlockMatrix(T, blocks) :
+        _laplace_unit_curvature(laplace, U, values, Ls, u; hook=cross)
+    _laplace_charge!(_LAPLACE_BYTES_CURV, b0)
+    fac = _laplace_factor_repaired!(M, blocks)
+    ok, logdetM = fac.ok, fac.logdet
+    b0 = _laplace_mark()
+    inner = _laplace_unit_objective_gradient(laplace, U, values, Ls, u, aws)
+    _laplace_charge!(_LAPLACE_BYTES_OBJ, b0)
     # The joint curvature's logdet: the profile's plus the filter-integrated
     # deviations' (`CTSEMHybrid`), before the floor or the gate reads it.
-    logdetM += 2 * inner.hlogdet
-    if _LAPLACE_PRIOR_FLOOR[] && laplace.floor === :gated
-        return _laplace_gated_term(laplace, U, values, Ls, u, aws; M=M,
-            logdetM=logdetM, inner=inner).value
+    ok && (logdetM += 2 * inner.hlogdet)
+    floored = ok && _LAPLACE_PRIOR_FLOOR[] && logdetM < 0
+    gated = false
+    term = if !isfinite(inner.value)
+        inner.value
+    elseif isempty(u)
+        inner.value - inner.hlogdet
+    elseif ok
+        inner.value - _laplace_prior_floor_logdet(logdetM) / 2
+    else
+        T(NaN)
     end
-    return inner.value - _laplace_prior_floor_logdet(logdetM) / 2
+    if gated_floor && ok && !isempty(u) && isfinite(inner.value)
+        # The factorization shifted a repaired `M` in place, so the gated term
+        # gets the curvature afresh and factors it itself.
+        g = fac.repaired ?
+            _laplace_gated_term(laplace, U, values, Ls, u, aws;
+                M=_laplace_unit_curvature(laplace, U, values, Ls, u), inner=inner) :
+            _laplace_gated_term(laplace, U, values, Ls, u, aws; M=M,
+                logdetM=logdetM, inner=inner, cross=cross)
+        if g.flagged
+            term = g.value
+            gated = true
+            # Scored by the gated rule, not floored: the diagnostics count
+            # `logdet_floored` as "the term is a bound".
+            floored = false
+        elseif !g.floor && !fac.repaired
+            # Cleared by the gate: plain Laplace, no floor, and so the ordinary
+            # seeded gradient rather than the floored one.
+            term = inner.value - logdetM / 2
+            floored = false
+        end
+    end
+    return (term=term, M=M, fac=fac, gated=gated, floored=floored)
 end
 
 ################################################################################
@@ -4941,66 +5122,13 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
             b0 = _laplace_mark()
             _laplace_solve_unit_mode!(laplace, U, theta, Ls)
             _laplace_charge!(_LAPLACE_BYTES_MODE, b0)
-            u = laplace.modes[U]
-            blocks = laplace.units.blocks[U]
-            b0 = _laplace_mark()
-            # Under the gated floor, deviations the filter integrates
-            # (`CTSEMHybrid`) need the joint curvature's gate, whose cross
-            # terms this same pass gives (`CTSEMHybridCross`).
-            local cross
-            cross = (gated_floor && !isempty(u) &&
-                     _hybrid_on(laplace.objective.params.hybrid)) ?
-                _hybrid_cross!(laplace, Float64, length(u), length(laplace.units.members[U])) :
-                nothing
-            M = isempty(u) ? CTSEMBlockMatrix(Float64, blocks) :
-                _laplace_unit_curvature(laplace, U, theta, Ls, u; hook=cross)
-            _laplace_charge!(_LAPLACE_BYTES_CURV, b0)
-            fac = _laplace_factor_repaired!(M, blocks)
-            laplace.mode_repaired[U] = fac.repaired
-            ok, logdetM, factors, coupling = fac.ok, fac.logdet, fac.factors, fac.coupling
-            primal_curvature[U] = (factors, coupling)
-            primal_matrices[U] = M
-            b0 = _laplace_mark()
-            inner = _laplace_unit_objective_gradient(laplace, U, theta, Ls, u, aws)
-            _laplace_charge!(_LAPLACE_BYTES_OBJ, b0)
-            # The joint curvature's logdet: the profile's plus the
-            # filter-integrated deviations' (`CTSEMHybrid`), before the floor
-            # or the gate reads it.
-            ok && (logdetM += 2 * inner.hlogdet)
-            laplace.logdet_floored[U] =
-                ok && _LAPLACE_PRIOR_FLOOR[] && logdetM < 0
-            term = if !isfinite(inner.value)
-                inner.value
-            elseif isempty(u)
-                inner.value - inner.hlogdet
-            elseif ok
-                inner.value - _laplace_prior_floor_logdet(logdetM) / 2
-            else
-                NaN
-            end
-            if gated_floor && ok && !isempty(u) && isfinite(inner.value)
-                local gated
-                # The factorization shifted a repaired `M` in place, so the
-                # gated term gets the curvature afresh and factors it itself.
-                gated = fac.repaired ?
-                    _laplace_gated_term(laplace, U, theta, Ls, u, aws;
-                        M=_laplace_unit_curvature(laplace, U, theta, Ls, u),
-                        inner=inner) :
-                    _laplace_gated_term(laplace, U, theta, Ls, u, aws; M=M,
-                        logdetM=logdetM, inner=inner, cross=cross)
-                if gated.flagged
-                    term = gated.value
-                    primal_gated[U] = true
-                    # Scored by the gated rule, not floored: the diagnostics
-                    # count `logdet_floored` as "the term is a bound".
-                    laplace.logdet_floored[U] = false
-                elseif !gated.floor && !fac.repaired
-                    # Cleared by the gate: plain Laplace, no floor, and so the
-                    # ordinary seeded gradient rather than the floored one.
-                    term = inner.value - logdetM / 2
-                    laplace.logdet_floored[U] = false
-                end
-            end
+            primal = _laplace_unit_primal(laplace, U, theta, Ls, laplace.modes[U], aws)
+            laplace.mode_repaired[U] = primal.fac.repaired
+            primal_curvature[U] = (primal.fac.factors, primal.fac.coupling)
+            primal_matrices[U] = primal.M
+            laplace.logdet_floored[U] = primal.floored
+            primal_gated[U] = primal.gated
+            term = primal.term
             if !isfinite(term)
                 chunk_ok[_laplace_slot()] = false
                 chunk_bad[_laplace_slot()] = term
