@@ -34,6 +34,7 @@
 "test-julia-laplace-check.R","laplace","core"
 "test-julia-laplace-correct.R","laplace","core"
 "test-julia-laplace-invariance.R","laplace","core"
+"test-julia-laplace-modes.R","laplace","core"
 "test-julia-laplace-quadrature.R","laplace","core"
 "test-julia-popunique.R","laplace","core"
 "test-laplace-slot-bands.R","laplace","core"
