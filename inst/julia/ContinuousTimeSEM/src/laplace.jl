@@ -3331,13 +3331,21 @@ sd away, `(a + M (p - u))' M^-1 (a + M (p - u)) > 1`, or where `M` does not
 factor. Most probes return to the mode they started from, and this is what
 they cost then.
 
-The term (`_laplace_unit_primal`), not `g_U`, decides: where two modes' terms
-cross, the larger is the better single-mode approximation of the integral and
-the objective stays continuous there, which choosing by height does not. It is still a search: a
-better mode no probe reaches is not found, and where a probe starts to reach one
-the objective changes by that mode's gain. A unit with two modes of comparable
-mass is one no single-mode term approximates, and the quadrature correction is
-the remedy there (`ctLaplaceCheck`).
+Between two maxima the term (`_laplace_unit_primal`), not `g_U`, decides:
+where their terms cross, the larger is the better single-mode approximation of
+the integral and the objective stays continuous there, which choosing by height
+does not. But only between maxima (`_laplace_modes_separated`): where `g_U`
+climbs from one point to the other without a dip, the lower is a point on the
+higher's slope, where Newton stopped on a nearly flat stretch, and the higher is
+the mode. Comparing terms there kept the stopping point whenever its curvature
+was soft enough for the gated rule to score it above plain Laplace at the mode
+-- on the pilot, a person 0.18 below their mode in `g_U` and 0.51 above it in
+term -- so the unit's term depended on where Newton stopped.
+
+It is still a search: a better mode no probe reaches is not found, and where a
+probe starts to reach one the objective changes by that mode's gain. A unit
+with two modes of comparable mass is one no single-mode term approximates, and
+the quadrature correction is the remedy there (`ctLaplaceCheck`).
 """
 function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws, found)
@@ -3371,18 +3379,43 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
             (r.converged && isfinite(r.value)) || continue
             any(m -> maximum(abs, m .- r.u) < 1e-4, seen) && continue
             push!(seen, r.u)
-            isnan(bestterm) && (bestterm = _laplace_unit_primal(laplace, U, values, Ls,
-                copy(best.u), aws).term)
-            term = _laplace_unit_primal(laplace, U, values, Ls, copy(r.u), aws).term
-            if isfinite(term) && (!isfinite(bestterm) || term > bestterm)
-                best = (u=r.u, value=r.value, gradient=r.gradient, converged=true,
-                    iterations=found.iterations + r.iterations,
-                    repaired=found.repaired || r.repaired, curvature=nothing)
-                bestterm = term
+            if _laplace_modes_separated(laplace, U, values, Ls, aws, best, r)
+                isnan(bestterm) && (bestterm = _laplace_unit_primal(laplace, U,
+                    values, Ls, copy(best.u), aws).term)
+                term = _laplace_unit_primal(laplace, U, values, Ls, copy(r.u), aws).term
+                (isfinite(term) && (!isfinite(bestterm) || term > bestterm)) || continue
+            else
+                r.value > best.value || continue
+                term = NaN
             end
+            best = (u=r.u, value=r.value, gradient=r.gradient, converged=true,
+                iterations=found.iterations + r.iterations,
+                repaired=found.repaired || r.repaired, curvature=nothing)
+            bestterm = term
         end
     end
     return best
+end
+
+"""
+    _laplace_modes_separated(laplace, U, values, Ls, aws, a, b)
+
+Whether two of unit `U`'s Newton end points are separate maxima of `g_U`: it
+dips below the lower of the two somewhere on the segment between them (seven
+interior points), or cannot be evaluated there. Otherwise the lower is a point
+on the higher's slope. See `_laplace_probe_modes`.
+"""
+function _laplace_modes_separated(laplace::CTSEMLaplaceObjective, U::Integer,
+    values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws, a, b)
+    lower = min(a.value, b.value)
+    margin = 1e-8 * (1 + abs(lower))
+    for k in 1:7
+        t = k / 8
+        g = _laplace_unit_objective_gradient(laplace, U, values, Ls,
+            a.u .+ t .* (b.u .- a.u), aws).value
+        (isfinite(g) && g >= lower - margin) || return true
+    end
+    return false
 end
 
 """

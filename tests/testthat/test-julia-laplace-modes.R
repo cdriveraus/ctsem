@@ -1,14 +1,16 @@
 # The inner solve's choice of mode (`_laplace_probe_modes`). Where a unit's
 # integrand has more than one maximum, Newton from the origin reaches whichever
 # one the origin's basin holds; probes along the found mode's soft directions
-# keep the candidate with the largest term, scored exactly as the evaluation
-# scores it (`_laplace_unit_primal`).
+# find others, and between separate maxima the largest term, scored exactly as
+# the evaluation scores it (`_laplace_unit_primal`), decides. A point Newton
+# stopped at that climbs to a higher one without a dip is not a maximum, and
+# gives way to it.
 #
 # The fixture is a loading whose sign the data cannot fix: y = lambda * eta
 # with eta centred, so a person's likelihood depends on lambda^2 and has a
 # maximum either side of zero. At a population mean of zero the origin is the
-# stationary point between them -- not a maximum -- which Newton accepts at
-# once and the evaluation scores by the gated rule's soft direction.
+# stationary point between them -- a minimum along the loading -- which Newton
+# accepts at once and the evaluation scores by the gated rule's soft direction.
 
 .modes_sign_data <- function() {
   set.seed(3)
@@ -36,7 +38,7 @@
   m
 }
 
-test_that("the inner solve keeps the best mode it finds, scored as the evaluation scores it", {
+test_that("the inner solve ends at a maximum, scored as the evaluation scores it", {
   skip_without_julia()
   spec <- suppressMessages(ctFit(.modes_sign_data(), .modes_sign_model(),
     backend = "julia", intoverpop = "laplace", fit = FALSE))
@@ -48,30 +50,37 @@ test_that("the inner solve keeps the best mode it finds, scored as the evaluatio
   evaluate <- function(x) ctJuliaEvaluate(handle, x, gradient = TRUE,
     contributions = TRUE, cores = 1L)
   # Each unit's term at the modes the last evaluation left, by the function the
-  # probes compare with: it must be the evaluation's own, the gated rule at a
-  # curvature that does not factor included.
+  # probes compare with -- it must be the evaluation's own, the gated rule at a
+  # curvature that does not factor included -- and its inner objective there
+  # and at the origin.
   ctsem:::.ctJuliaEval(paste(
     "function _ctsem_test_unit_terms(o, theta)",
     "  C = ContinuousTimeSEM",
     "  Ls = C._laplace_popchols(theta, o.spec)",
     "  aws = C._laplace_workspace!(o, Float64, length(theta))",
-    "  [C._laplace_unit_term(o, U, theta, Ls, copy(o.modes[U]), aws)",
-    "    for U in eachindex(o.units.members)]",
+    "  n = length(o.units.members)",
+    "  g(U, u) = C._laplace_unit_objective_gradient(o, U, theta, Ls, u, aws).value",
+    "  hcat([C._laplace_unit_term(o, U, theta, Ls, copy(o.modes[U]), aws) for U in 1:n],",
+    "    [g(U, copy(o.modes[U])) for U in 1:n], [g(U, zeros(1)) for U in 1:n])",
     "end", sep = "\n"))
-  terms <- function(x) as.numeric(ctsem:::.ctJuliaCall("Main._ctsem_test_unit_terms",
-    objective, ctsem:::.ctJuliaNumericVector(x)))
+  units <- function(x) matrix(as.numeric(ctsem:::.ctJuliaCall(
+    "Main._ctsem_test_unit_terms", objective, ctsem:::.ctJuliaNumericVector(x))),
+    ncol = 3, dimnames = list(NULL, c("term", "g", "g_origin")))
 
-  # Population mean zero, raw sd 0.5: every origin a stationary point.
+  # Population mean zero, raw sd 0.5: every origin a stationary point. Newton
+  # alone stops there; with the probes every person ends at one of their two
+  # maxima, above the origin.
   x <- c(0, 0.5)
   probes(FALSE)
   off <- evaluate(x)
-  expect_equal(terms(x), as.numeric(off$subject_loglik), tolerance = 1e-10)
+  u <- units(x)
+  expect_equal(u[, "term"], as.numeric(off$subject_loglik), tolerance = 1e-10)
+  expect_equal(u[, "g"], u[, "g_origin"], tolerance = 1e-12)
   probes(TRUE)
   on <- evaluate(x)
-  expect_equal(terms(x), as.numeric(on$subject_loglik), tolerance = 1e-10)
-  gain <- as.numeric(on$subject_loglik) - as.numeric(off$subject_loglik)
-  expect_true(all(gain >= -1e-10))
-  expect_gt(max(gain), 0.1)
+  u <- units(x)
+  expect_equal(u[, "term"], as.numeric(on$subject_loglik), tolerance = 1e-10)
+  expect_true(all(u[, "g"] > u[, "g_origin"] + 0.1))
 
   # Away from zero the origin lies in a basin, and the probes' choice is a
   # smooth function there: the gradient is the value's.
