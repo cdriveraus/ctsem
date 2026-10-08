@@ -4,7 +4,7 @@
 \alias{.ctBackendWarmWorkers}
 \title{Start worker sessions and get them ready to sample}
 \usage{
-.ctBackendWarmWorkers(object, workers, values = NULL)
+.ctBackendWarmWorkers(object, workers, values = NULL, threads = 1L)
 }
 \arguments{
 \item{object}{A prepared `ctJuliaModel` or a `ctJuliaFit`.}
@@ -13,6 +13,10 @@
 
 \item{values}{Parameter vector to evaluate at. Any finite point compiles the
 same code; a fit's own estimate is the natural choice when there is one.}
+
+\item{threads}{Julia threads each worker's session starts with. Fixed when
+the session starts, so a pool warmed at another width is replaced rather
+than reused.}
 }
 \value{
 A list of future handles, or `NULL` when warming is unavailable.
