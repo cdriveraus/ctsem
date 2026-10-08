@@ -197,6 +197,14 @@ struct ContinuousEKFWorkspace{T, N, M, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF
     categorical::Val{CAT}
     # Transition growth since the last observed row; see `CTSEMGrowth`.
     growth::CTSEMGrowth
+    # True when no transform group writes a MANIFESTVAR cell, so the manifest
+    # covariance is the same on every row of a pass: the filter builds and
+    # records it on the first row only (`_extended_kalman_filter_continuous!`),
+    # rather than rebuilding a manifest-by-manifest matrix per row and taping
+    # it per row for the reverse to compare and accumulate. The reverse's
+    # MANIFESTVAR cotangent accumulates over rows until a `:theta` record
+    # (`_ctsem_reverse_tape!`), so one record pushes the whole pass back once.
+    manifestvar_static::Bool
 end
 
 """
@@ -414,5 +422,21 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
         Vector{Int}(undef, m),
         Val(!isempty(manifesttype)),
         CTSEMGrowth(n),
+        _ctsem_manifestvar_static(sp, predict_param_indices, update_param_indices,
+            td_param_indices),
     )
+end
+
+"""
+    _ctsem_manifestvar_static(sp, predict, update, td)
+
+Whether no transform group -- the per-row predict, update and TD-predictor
+groups -- writes a MANIFESTVAR cell; see `ContinuousEKFWorkspace`'s
+`manifestvar_static`. The same test `CTSEMAdjointWorkspace` makes for
+`groups_write_manifestvar`, negated.
+"""
+function _ctsem_manifestvar_static(sp::EKFParameters, predict, update, td)
+    isempty(predict) && isempty(update) && isempty(td) && return true
+    positions = Set(_ctsem_component_positions(sp, :MANIFESTVAR))
+    return !any(i -> i in positions, Iterators.flatten((predict, update, td)))
 end

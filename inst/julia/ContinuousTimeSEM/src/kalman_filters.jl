@@ -1150,8 +1150,14 @@ function _extended_kalman_filter_continuous!(
             curr_timestep, Δt, Int(subject), t_idx)
         _record_group!(trace, 3, ws.update_param_indices, all_params, measurement_context)
         apply_complex_transforms_at_indices!(all_params, ws.update_param_indices, sp.update_transforms, measurement_context)
-        ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferΘ, pars.MANIFESTVAR, ws.covmatcode, ws.manifest_dim)
-        _record_theta!(trace, pars, _val(ws.manifest_dim))
+        # Row 1's manifest covariance stands when nothing writes MANIFESTVAR
+        # per row (`manifestvar_static`): rebuilding it, and taping it for the
+        # reverse to compare, was the whole manifest-by-manifest matrix every
+        # row, against an update that reads only the observed block of it.
+        if !ws.manifestvar_static
+            ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferΘ, pars.MANIFESTVAR, ws.covmatcode, ws.manifest_dim)
+            _record_theta!(trace, pars, _val(ws.manifest_dim))
+        end
         _record_row_prior!(trace, ws, pars, t_idx)
         row_ll = _ekf_update_observed!(ws, pars, data, t_idx, log2π_const, trace, generate)
         row_ll === nothing && return _invalid_ekf_loglikelihood(ws)
