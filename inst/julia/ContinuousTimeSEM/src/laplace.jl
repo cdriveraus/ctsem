@@ -3022,6 +3022,32 @@ finite, so an unusable number can never certify a mode.
 end
 
 """
+Whether the inner Newton solve continues with chord steps -- the last
+reliable curvature's factors reused, one gradient pass a step -- once a Newton
+step has shown that curvature's quadratic model holds (a full step, no
+repair, the gain within `_LAPLACE_CHORD_AGREEMENT` of the prediction), for as
+long as each chord step shrinks the largest gradient entry by at least
+`_LAPLACE_CHORD_CONTRACTION`; a step that does not falls back to Newton from
+where it got to.
+
+A Newton step's curvature is a forward-mode Jacobian of the unit's gradient,
+one dual lane per active coordinate, several times a gradient pass. On the
+SNSF pilot's own-variance model (dev1) the median person took six Newton
+steps -- two repaired from the origin, then three whose gains matched the
+prediction to 20% while contracting about tenfold, then the quadratic finish
+-- at 2.2 ms a curvature against 0.5 ms a gradient. The mode reached is the
+same to the inner tolerance, and the curvature the Laplace term and its
+gradient use is still taken exactly at it. `ctsem_set_inner_chord!` sets it.
+"""
+const _LAPLACE_INNER_CHORD = Ref(true)
+const _LAPLACE_CHORD_AGREEMENT = 0.25
+const _LAPLACE_CHORD_CONTRACTION = 0.5
+
+export ctsem_set_inner_chord!
+"""Set whether the inner Newton solve continues with chord steps."""
+ctsem_set_inner_chord!(on::Bool) = (_LAPLACE_INNER_CHORD[] = on)
+
+"""
     _laplace_newton_unit_mode(laplace, U, values, Ls, aws, start)
 
 Newton on `g_U` from one given starting point, reporting what happened rather
@@ -3045,6 +3071,10 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
         current = _laplace_unit_objective_gradient(laplace, U, values, Ls, u, aws,
             )
     end
+    blocks = laplace.units.blocks[U]
+    # Factors of a curvature the last Newton step showed reliable, reused for
+    # chord steps while they keep contracting; see `_LAPLACE_INNER_CHORD`.
+    chord = nothing
     for iteration in 1:laplace.inner_maxiter
         iterations = iteration
         if d == 0 || maximum(abs, current.gradient) <
@@ -3052,17 +3082,33 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
             converged = true
             break
         end
+        if chord !== nothing
+            step = _laplace_block_solve(chord[1], chord[2], blocks, current.gradient)
+            candidate = u .+ step
+            trial = _laplace_unit_objective_gradient(laplace, U, values, Ls,
+                candidate, aws)
+            if isfinite(trial.value) && trial.value >= current.value - 1e-12
+                contracted = maximum(abs, trial.gradient) <=
+                    _LAPLACE_CHORD_CONTRACTION * maximum(abs, current.gradient)
+                u = candidate
+                current = trial
+                contracted || (chord = nothing)
+                continue
+            end
+            # Not even an improvement: a Newton step from here, this iteration.
+            chord = nothing
+        end
         # The band, not just the slot. Each Newton step builds the curvature
         # over every block, and that is the bulk of the primal -- passing only
         # the slot alone left the count at its default, so the whole mode solve
         # ran serially while everything else divided. It cost 4.6x down to
         # 1.2x on the value-only path and no test could have reported it.
         M = _laplace_unit_curvature(laplace, U, values, Ls, u)
-        fac = _laplace_factor_repaired!(M, laplace.units.blocks[U])
+        fac = _laplace_factor_repaired!(M, blocks)
         repaired |= fac.repaired
         fac.ok || break
-        step = _laplace_block_solve(fac.factors, fac.coupling,
-            laplace.units.blocks[U], current.gradient)
+        step = _laplace_block_solve(fac.factors, fac.coupling, blocks,
+            current.gradient)
         accepted = false
         # Whether any trial could be evaluated at all, which is what separates
         # "there is nothing left to gain here" from "the step went somewhere
@@ -3075,6 +3121,14 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
                 candidate, aws)
             evaluable |= isfinite(trial.value)
             if isfinite(trial.value) && trial.value >= current.value - 1e-12
+                # A full step on an unrepaired curvature whose quadratic model
+                # predicted the gain: that curvature is good enough to keep.
+                predicted = dot(current.gradient, step) / 2
+                if _LAPLACE_INNER_CHORD[] && !fac.repaired && scale == 1.0 &&
+                        abs((trial.value - current.value) - predicted) <=
+                            _LAPLACE_CHORD_AGREEMENT * abs(predicted)
+                    chord = (fac.factors, fac.coupling)
+                end
                 u = candidate
                 current = trial
                 accepted = true
