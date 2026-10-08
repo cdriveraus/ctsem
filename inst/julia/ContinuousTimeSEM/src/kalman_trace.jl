@@ -607,6 +607,9 @@ function ctsem_kalman(objective::CTSEMObjective, values::AbstractVecOrMat;
             "one row of parameters per subject is required"))
     raw = persubject ? Vector{Float64}(view(values, 1, :)) : Vector{Float64}(values)
     ws = _init_continuous_ekf_workspace(Float64, sp)
+    # A plug-in filter: a Laplace fit's subjects arrive with any deviations the
+    # filter would integrate already in their parameters.
+    ws.hyb.mode = _HYBRID_OFF
     n = _val(ws.state_dim)
     m = _val(ws.manifest_dim)
     nall = length(sp.mutables)
@@ -847,6 +850,7 @@ function ctsem_generate(objective::CTSEMObjective, values::AbstractVecOrMat,
             "one row of parameters per subject is required"))
     raw = persubject ? Vector{Float64}(view(values, 1, :)) : Vector{Float64}(values)
     ws = _init_continuous_ekf_workspace(Float64, sp)
+    ws.hyb.mode = _HYBRID_OFF  # as `ctsem_kalman`: deviations are in `values`
     m = _val(ws.manifest_dim)
     nrows = sum(size(sub.data, 2) for sub in subjects)
     size(base) == (m, nrows) ||

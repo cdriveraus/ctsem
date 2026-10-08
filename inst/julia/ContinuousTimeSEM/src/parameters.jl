@@ -151,6 +151,8 @@ deviations are its own is built after the `EKFParameters` it wraps:
 
   * `manifests[h]`: the manifest whose intercept item `h` shifts.
   * `psi_index[h]`: the raw position of its own variance.
+  * `effect[h]`: its index among the subject level's effects, whose `re_index`
+    is the raw position the deviation shifts (reporting adds it there).
   * `sd_scale[h]`, `slope[h]`: its sdscale, and the intercept transform's slope
     in the raw value, so the deviation in manifest units is
     `slope * (log1p_exp(2 raw - 1) sd_scale + 1e-10) * u`, `u ~ N(0, 1)`.
@@ -158,10 +160,11 @@ deviations are its own is built after the `EKFParameters` it wraps:
 mutable struct CTSEMHybrid
     manifests::Vector{Int}
     psi_index::Vector{Int}
+    effect::Vector{Int}
     sd_scale::Vector{Float64}
     slope::Vector{Float64}
 end
-CTSEMHybrid() = CTSEMHybrid(Int[], Int[], Float64[], Float64[])
+CTSEMHybrid() = CTSEMHybrid(Int[], Int[], Int[], Float64[], Float64[])
 _hybrid_on(h::CTSEMHybrid) = !isempty(h.manifests)
 
 """

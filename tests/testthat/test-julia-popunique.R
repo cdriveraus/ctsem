@@ -318,6 +318,58 @@ test_that("the gated floor on integrated deviations is the layer's, unit for uni
   }
 })
 
+test_that("reporting through the hybrid is the layer's: population, subjects, modes, Kalman", {
+  skip_without_julia()
+  # Each subject's parameters carry its filter-integrated deviations at their
+  # conditional modes, the population sds their own variances, the modes
+  # report their joint posterior sd, and the Kalman output is a plug-in filter
+  # at those parameters: all what the layer holding the deviations as
+  # coordinates reports, on a model with shared effects on the dynamics and on
+  # the diagonal (rank 0) one.
+  old <- options(ctsem.laplace.hybrid = TRUE)
+  on.exit(options(old), add = TRUE)
+  d <- .pu_dyn_data()
+  handle <- function(s) structure(s, class = c("ctJuliaModel", "ctFitModel"))
+  cases <- list(list(m = .pu_dyn_model(), rank = 1, pu = "MANIFESTMEANS"),
+    list(m = .pu_model(), rank = 0, pu = TRUE))
+  set.seed(21)
+  for (case in cases) {
+    options(ctsem.laplace.hybrid = TRUE)
+    hy <- .pu_spec(d, case$m, poprank = case$rank, popunique = case$pu)
+    options(ctsem.laplace.hybrid = FALSE)
+    la <- .pu_spec(d, case$m, poprank = case$rank, popunique = case$pu)
+    expect_false(is.null(hy$laplace$hybrid))
+    x <- rnorm(length(.pu_names(hy)), 0, 0.3)
+    module <- ctsem:::.ctJuliaModule(hy$project)
+    report <- function(s) {
+      o <- ctsem:::.ctJuliaObjective(handle(s), hybrid = TRUE)
+      xx <- ctsem:::.ctJuliaNumericVector(x)
+      list(
+        population = ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_population(o,
+          ctsem:::.ctJuliaPut(matrix(x, 1)), 1L)),
+        subjects = as.numeric(ctsem:::.ctBackendJuliaValue(
+          module$ctsem_laplace_subject_values(o, xx))),
+        modes = ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_modes(o, xx, 1L)),
+        kalman = ctsem:::.ctBackendJuliaValue(module$ctsem_kalman(o, xx,
+          subject_matrices = FALSE)))
+    }
+    rh <- report(hy)
+    rl <- report(la)
+    expect_equal(as.numeric(rh$population$sd), as.numeric(rl$population$sd),
+      tolerance = 1e-10)
+    expect_equal(as.numeric(rh$population$correlation),
+      as.numeric(rl$population$correlation), tolerance = 1e-10)
+    expect_equal(rh$subjects, rl$subjects, tolerance = 1e-7)
+    expect_equal(as.numeric(rh$modes$raw), as.numeric(rl$modes$raw), tolerance = 1e-7)
+    expect_equal(as.numeric(rh$modes$raw_sd), as.numeric(rl$modes$raw_sd),
+      tolerance = 1e-7)
+    for (f in c("eta", "etacov", "y", "ycov", "llrow")) {
+      expect_equal(as.numeric(rh$kalman[[f]]), as.numeric(rl$kalman[[f]]),
+        tolerance = 1e-7, info = f)
+    }
+  }
+})
+
 test_that("a fit with own variances converges and reports them", {
   skip_without_julia()
   skip_on_cran()

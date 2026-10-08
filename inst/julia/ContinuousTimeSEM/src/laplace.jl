@@ -728,7 +728,7 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
     # The deviations the filter integrates, into the shared `EKFParameters`.
     hyb = objective.params.hybrid
     if isempty(hybrid_effect)
-        hyb.manifests = Int[]; hyb.psi_index = Int[]
+        hyb.manifests = Int[]; hyb.psi_index = Int[]; hyb.effect = Int[]
         hyb.sd_scale = Float64[]; hyb.slope = Float64[]
     else
         (length(hybrid_manifest) == length(hybrid_effect) == length(hybrid_slope)) ||
@@ -737,6 +737,7 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
         lv = levels[1]
         hyb.manifests = Int.(hybrid_manifest)
         hyb.psi_index = [lv.unique_index[p] for p in hybrid_effect]
+        hyb.effect = Int.(hybrid_effect)
         hyb.sd_scale = [lv.sd_scale[p] for p in hybrid_effect]
         hyb.slope = Float64.(hybrid_slope)
     end
@@ -1106,12 +1107,20 @@ Reporting helper; the fit itself only ever needs the Cholesky factor.
 """
 function ctsem_laplace_popcov(laplace::CTSEMLaplaceObjective, values::AbstractVector,
     level::Integer=1)
-    lv = laplace.spec.levels[level]
-    x = collect(Float64, values)
+    return _laplace_level_covariance(laplace.spec.levels[level],
+        collect(Float64, values))
+end
+
+"""
+    _laplace_level_covariance(level, x)
+
+A level's raw-scale population covariance at `x`: its root's `L L'`, plus the
+squared own sd of every effect whose deviation the subject filter integrates
+(`hybrid`), which has no column of the root.
+"""
+function _laplace_level_covariance(lv::CTSEMLaplaceLevel, x::Vector{Float64})
     L = _laplace_popchol(x, lv)
     Sigma = L * transpose(L)
-    # An own variance the filter integrates (`hybrid`) is part of the
-    # population covariance even though it has no column of the root.
     for p in eachindex(lv.hybrid)
         lv.hybrid[p] || continue
         psi = log1p_exp(2 * x[lv.unique_index[p]] - 1) * lv.sd_scale[p] + 1e-10
@@ -5318,6 +5327,10 @@ function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
         _laplace_solve_unit_mode!(laplace, U, theta, Ls)
         return _laplace_restrict_levels(laplace, U, laplace.modes[U], from_level)
     end)
+    # Deviations the subject filter integrates (`CTSEMHybrid`), at their
+    # conditional modes given each subject's whole record and its effects'
+    # modes: the subject level's own, so only where that level is kept.
+    from_level <= 1 && _hybrid_add_modes!(shifted, laplace, theta, Ls)
     return ti_effects ? _laplace_add_ti_effects(laplace, shifted) : shifted
 end
 
@@ -5748,8 +5761,7 @@ function ctsem_laplace_population(laplace::CTSEMLaplaceObjective, values::Abstra
     sd = zeros(Float64, nsamples, k)
     correlation = zeros(Float64, nsamples, noffdiagonals)
     for s in 1:nsamples
-        L = _laplace_popchol(collect(Float64, view(values, s, :)), lv)
-        covariance = L * transpose(L)
+        covariance = _laplace_level_covariance(lv, collect(Float64, view(values, s, :)))
         scales = sqrt.(max.(diag(covariance), 0.0))
         sd[s, :] = scales
         counter = 0
@@ -5792,16 +5804,26 @@ function ctsem_laplace_modes(laplace::CTSEMLaplaceObjective, values::AbstractVec
     zsd = zeros(Float64, ngroups, r)
     rawsd = zeros(Float64, ngroups, k)
     filled = falses(ngroups)
+    # Deviations the subject filter integrates (`CTSEMHybrid`): reported as the
+    # layer holding them as coordinates reports them, from the cross curvature
+    # read with the unit's own (`_hybrid_add_mode_rows!`).
+    hyb = laplace.objective.params.hybrid
+    hybrid = level == 1 && _hybrid_on(hyb)
+    aws = hybrid ? _laplace_workspace!(laplace, Float64, length(theta)) : nothing
     for U in eachindex(laplace.units.members)
         _laplace_solve_unit_mode!(laplace, U, theta, Ls)
         u = laplace.modes[U]
         blocks = laplace.units.blocks[U]
         factors = nothing; coupling = nothing
+        cross = nothing
         if !isempty(u)
-            M = _laplace_unit_curvature(laplace, U, theta, Ls, u)
+            hybrid && (cross = CTSEMHybridCross{Float64}(length(u),
+                length(laplace.units.members[U])))
+            M = _laplace_unit_curvature(laplace, U, theta, Ls, u; hook=cross)
             fac = _laplace_factor_repaired!(M, blocks)
             factors = fac.factors; coupling = fac.coupling
         end
+        hmodes = hybrid ? _hybrid_member_modes(laplace, U, theta, Ls, u, aws) : nothing
         # Only the diagonal block of the inverse is wanted, so it is solved for
         # a column at a time rather than by inverting the whole curvature --
         # which for a large study would be the dense matrix this file exists to
@@ -5820,7 +5842,9 @@ function ctsem_laplace_modes(laplace::CTSEMLaplaceObjective, values::AbstractVec
             # vector, not one per subject, so it is written once.
             filled[g] && continue
             filled[g] = true
-            (k == 0 || r == 0) && continue
+            # A level with no coordinate of its own still reports deviations
+            # the filter integrates.
+            (k == 0 || (r == 0 && !hybrid)) && continue
             base = laplace.units.offsets[U][m][level]
             slice = (base + 1):(base + r)
             zi = u[slice]
@@ -5829,6 +5853,10 @@ function ctsem_laplace_modes(laplace::CTSEMLaplaceObjective, values::AbstractVec
             block = conditional(slice)
             zsd[g, :] = sqrt.(max.(diag(block), 0.0))
             rawcov = L * block * transpose(L)
+            if hybrid
+                _hybrid_add_mode_rows!(raw, rawcov, g, m, slice, laplace, hyb, lv,
+                    theta, hmodes, cross, factors, coupling, blocks, length(u))
+            end
             rawsd[g, :] = sqrt.(max.(diag(rawcov), 0.0))
         end
     end

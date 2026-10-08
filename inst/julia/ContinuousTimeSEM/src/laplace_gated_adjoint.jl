@@ -480,8 +480,7 @@ function _laplace_gated_unit_adjoint(laplace::CTSEMLaplaceObjective, U::Integer,
     positions = [_laplace_level_positions(spec, l) for l in eachindex(spec.levels)]
     aws = _laplace_workspace!(laplace, Float64, npar)
     if _hybrid_on(laplace.objective.params.hybrid)
-        modes = _HybridModeHook{Float64}(zeros(Int, length(members)),
-            [Float64[] for _ in eachindex(members)])
+        modes = _HybridModeHook{Float64}(length(members))
         r = _laplace_unit_loglik_gradient(laplace, U, theta, Ls, uhat, aws,
             eachindex(members), nothing, _HYBRID_PROFILE, modes)
         isfinite(r.value) || return nothing

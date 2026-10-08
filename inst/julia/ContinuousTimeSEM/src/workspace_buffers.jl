@@ -99,6 +99,9 @@ CTSEMGrowth(n::Int) = CTSEMGrowth(0.0, 0, zeros(n, n), zeros(n, n))
 const _HYBRID_PROFILE = 0
 const _HYBRID_FULL = 1
 const _HYBRID_FIXED = 2
+# Not integrated at all: a plug-in filter at parameters that already carry the
+# deviations (`ctsem_kalman`, `ctsem_generate` on a Laplace fit's subjects).
+const _HYBRID_OFF = 3
 
 """
     CTSEMHybridBuffers{T}

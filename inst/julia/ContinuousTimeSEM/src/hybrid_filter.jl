@@ -34,7 +34,7 @@
 """Start a pass: which hybrid items this subject observes, and zeroed state."""
 function _hybrid_start!(hb::CTSEMHybridBuffers{T}, h::CTSEMHybrid, data,
     n::Int, m::Int, continuous_time::Bool) where {T}
-    hb.active = _hybrid_on(h)
+    hb.active = _hybrid_on(h) && hb.mode != _HYBRID_OFF
     hb.q = 0
     hb.half_logdet = zero(T)
     hb.active || return nothing

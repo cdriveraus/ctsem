@@ -199,13 +199,19 @@ end
 struct _HybridModeHook{T}
     q::Vector{Int}
     dhat::Vector{Vector{T}}
+    items::Vector{Vector{Int}}
+    A::Vector{Matrix{T}}
 end
+_HybridModeHook{T}(n::Integer) where {T} = _HybridModeHook{T}(zeros(Int, n),
+    [T[] for _ in 1:n], [Int[] for _ in 1:n], [zeros(T, 0, 0) for _ in 1:n])
 _hybrid_before!(::_HybridModeHook, m, ws) = nothing
 function _hybrid_after!(h::_HybridModeHook{T}, m, ws, u) where {T}
     hb = ws.ekf_ws.hyb
     q = hb.active ? hb.q : 0
     h.q[m] = q
     h.dhat[m] = T[hb.dhat[c] for c in 1:q]
+    h.items[m] = hb.item[1:q]
+    h.A[m] = T[hb.Mh[a, b] for a in 1:q, b in 1:q]
     return nothing
 end
 
@@ -354,8 +360,7 @@ function _hybrid_gated_term(laplace::CTSEMLaplaceObjective, U::Integer,
     blocks = laplace.units.blocks[U]
     members = laplace.units.members[U]
     if flagged
-        modes = _HybridModeHook{T}(zeros(Int, length(members)),
-            [T[] for _ in eachindex(members)])
+        modes = _HybridModeHook{T}(length(members))
         r = _laplace_unit_loglik_gradient(laplace, U, values, Ls, u, aws,
             eachindex(members), nothing, _HYBRID_PROFILE, modes)
         isfinite(r.value) || return (value=r.value, flagged=true, floor=false)
@@ -411,4 +416,122 @@ function _hybrid_joint_gated(laplace::CTSEMLaplaceObjective, U::Integer,
     return _laplace_gated_term(laplace, U, values, Ls, z, aws; M=curvature(z),
         inner=objective(z), objective=objective, curvature=curvature,
         blocks=jblocks, dcheck=dlayer)
+end
+
+################################################################################
+# Reporting: the deviations' posterior given a subject's record
+################################################################################
+
+"""
+    _hybrid_member_modes(laplace, U, theta, Ls, u, aws)
+
+Unit `U`'s members' filter-integrated deviations at their conditional modes
+given `u` and the members' whole records, in `N(0, 1)` units, with the hybrid
+items each covers: the `_HybridModeHook` of one profile pass at `u`, or
+`nothing` if a member cannot be evaluated.
+"""
+function _hybrid_member_modes(laplace::CTSEMLaplaceObjective, U::Integer,
+    theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64}, aws)
+    members = laplace.units.members[U]
+    hook = _HybridModeHook{Float64}(length(members))
+    r = _laplace_unit_loglik_gradient(laplace, U, theta, Ls, u, aws,
+        eachindex(members), nothing, _HYBRID_PROFILE, hook)
+    isfinite(r.value) || return nothing
+    return hook
+end
+
+"""Item `k`'s own sd on the raw scale at `theta`, as the filter takes it."""
+@inline function _hybrid_item_sd(h::CTSEMHybrid, lv::CTSEMLaplaceLevel,
+    theta::AbstractVector, k::Integer)
+    p = h.effect[k]
+    return log1p_exp(2 * theta[lv.unique_index[p]] - 1) * lv.sd_scale[p] + 1e-10
+end
+
+"""
+    _hybrid_add_modes!(shifted, laplace, theta, Ls)
+
+Each subject's filter-integrated deviations at their conditional modes, at the
+units' current modes -- `psi * dhat` on the raw position of the intercept each
+shifts -- added to its row of `shifted`: what the layer holding the deviations
+as coordinates reports as that subject's parameters.
+"""
+function _hybrid_add_modes!(shifted::AbstractMatrix, laplace::CTSEMLaplaceObjective,
+    theta::Vector{Float64}, Ls::Vector{Matrix{Float64}})
+    h = laplace.objective.params.hybrid
+    _hybrid_on(h) || return shifted
+    lv = laplace.spec.levels[1]
+    aws = _laplace_workspace!(laplace, Float64, length(theta))
+    for U in eachindex(laplace.units.members)
+        hook = _hybrid_member_modes(laplace, U, theta, Ls, laplace.modes[U], aws)
+        if hook === nothing
+            for i in laplace.units.members[U]
+                shifted[i, :] .= NaN
+            end
+            continue
+        end
+        for (m, i) in enumerate(laplace.units.members[U]), (c, k) in enumerate(hook.items[m])
+            shifted[i, lv.re_index[h.effect[k]]] += _hybrid_item_sd(h, lv, theta, k) *
+                hook.dhat[m][c]
+        end
+    end
+    return shifted
+end
+
+"""
+    _hybrid_add_mode_rows!(raw, rawcov, g, m, slice, laplace, h, lv, theta,
+                           modes, cross, factors, coupling, blocks, d)
+
+Group `g`'s (member `m`'s) filter-integrated deviations into the modes report:
+`psi * dhat` onto `raw`, and onto `rawcov` their share of the joint posterior
+covariance of `(z, d)` -- `Szz` the unit's inverse curvature, `Szd = -Szz H' A^-1`,
+`Sdd = A^-1 + A^-1 H Szz H' A^-1` with `H` the cross curvature and `A = M` --
+pushed through `raw = L z + psi d`; an item the subject never observes keeps its
+prior, `psi^2`.
+"""
+function _hybrid_add_mode_rows!(raw, rawcov, g, m, slice, laplace, h::CTSEMHybrid,
+    lv::CTSEMLaplaceLevel, theta, modes, cross, factors, coupling, blocks, d)
+    nh = length(h.manifests)
+    seen = falses(nh)
+    L = _laplace_popchol(theta, lv)
+    if modes !== nothing
+        q = modes.q[m]
+        if q > 0
+            Fa = _ctsem_cholesky(copy(modes.A[m]), q)
+            Ainv = Fa \ Matrix{Float64}(LinearAlgebra.I, q, q)
+            Sdd = copy(Ainv)
+            LSzd = zeros(Float64, size(L, 1), q)
+            if d > 0 && cross !== nothing
+                H = cross.H[m][1:q, 1:d]
+                # Szz H' over the unit's coordinates, a column at a time.
+                SH = zeros(Float64, d, q)
+                for c in 1:q
+                    SH[:, c] = _laplace_block_solve(factors, coupling, blocks,
+                        collect(view(H, c, :)))
+                end
+                Szd = -(SH[slice, :] * Ainv)
+                Sdd .+= Ainv * (H * SH) * Ainv
+                LSzd = L * Szd
+            end
+            psi = [_hybrid_item_sd(h, lv, theta, k) for k in modes.items[m]]
+            pos = [h.effect[k] for k in modes.items[m]]
+            for (c, k) in enumerate(modes.items[m])
+                seen[k] = true
+                pc = pos[c]
+                raw[g, pc] += psi[c] * modes.dhat[m][c]
+                for j in axes(rawcov, 1)
+                    rawcov[pc, j] += psi[c] * LSzd[j, c]
+                    rawcov[j, pc] += psi[c] * LSzd[j, c]
+                end
+                for (e, ke) in enumerate(modes.items[m])
+                    rawcov[pc, pos[e]] += psi[c] * Sdd[c, e] * psi[e]
+                end
+            end
+        end
+    end
+    for k in 1:nh
+        seen[k] && continue
+        pc = h.effect[k]
+        rawcov[pc, pc] += _hybrid_item_sd(h, lv, theta, k)^2
+    end
+    return nothing
 end
