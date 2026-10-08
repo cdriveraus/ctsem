@@ -122,7 +122,8 @@ the per-row work beside it.
 """
 mutable struct CTSEMHybridTape{T}
     active::Bool
-    full::Bool
+    mode::Int
+    dfix::Vector{T}
     q::Int
     item::Vector{Int}
     col::Vector{Int}
@@ -144,7 +145,7 @@ mutable struct CTSEMHybridTape{T}
     Lbar::Matrix{T}
     Xt::Matrix{T}
 end
-CTSEMHybridTape{T}() where {T} = CTSEMHybridTape{T}(false, false, 0, Int[], Int[],
+CTSEMHybridTape{T}() where {T} = CTSEMHybridTape{T}(false, 0, T[], 0, Int[], Int[],
     zeros(T, 0, 0), T[], T[], T[], zeros(T, 0, 0), T[], zeros(T, 0, 0), T[],
     zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0),
     zeros(T, 0, 0), T[], zeros(T, 0, 0), zeros(T, 0, 0))
@@ -457,18 +458,20 @@ at any element type, the nested duals of the Hessian and the Laplace sweeps
 included: ForwardDiff's tag for this call is created after theirs.
 """
 function _ctsem_forward_subject_gradient!(g::AbstractVector, so, values::AbstractVector,
-    full::Bool=false)
+    mode::Int=0, dfix::AbstractVector=Float64[])
     Threads.atomic_add!(_CTSEM_FORWARD_GRADIENTS, 1)
-    _ctsem_barrier(_ctsem_forward_subject_gradient_impl!, g, so, values, full)
+    _ctsem_barrier(_ctsem_forward_subject_gradient_impl!, g, so, values, mode, dfix)
     return g
 end
 
-# `full`: what the pass returns for deviations the filter integrates; see
-# `CTSEMHybridBuffers`.
-function _ctsem_forward_subject_gradient_impl!(g, so, values, full::Bool=false)
+# `mode` and `dfix`: what the pass returns for deviations the filter
+# integrates, and the fixed ones it is handed; see `CTSEMHybridBuffers`.
+function _ctsem_forward_subject_gradient_impl!(g, so, values, mode::Int=0,
+    dfix::AbstractVector=Float64[])
     f = function (x)
         ws = _init_continuous_ekf_workspace(eltype(x), so.params)
-        ws.hyb.full = full
+        ws.hyb.mode = mode
+        ws.hyb.dfix = convert(Vector{eltype(x)}, collect(dfix))
         return _ekf_run(ws, so, x, _ctsem_tipred_vector(so.tipreds, x), nothing)
     end
     ForwardDiff.gradient!(g, f, values)

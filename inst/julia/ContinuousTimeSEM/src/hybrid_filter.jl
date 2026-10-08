@@ -152,10 +152,12 @@ function _hybrid_predict!(hb::CTSEMHybridBuffers{T}, A, n::Int) where {T}
 end
 
 """
-The closing term, `1/2 b' M^-1 b`, less `logdet(M) / 2` when `hb.full`, with
-`M = I + G S G` and `b = G s`; `logdet(M) / 2` left in `hb.half_logdet` either
-way, and the term recorded for the reverse when `trace` is a tape. `values` is
-the raw parameter vector the filter was given, which holds the own variances.
+The closing term, by `hb.mode`: the profile `1/2 b' M^-1 b`, less
+`logdet(M) / 2` for the full integral, or at the caller's deviations `d`
+(`hb.dfix`) `d' b - 1/2 d' (M - I) d`; with `M = I + G S G` and `b = G s`.
+What `CTSEMHybridBuffers` lists is left in `hb` whatever the mode, and the term
+is recorded for the reverse when `trace` is a tape. `values` is the raw
+parameter vector the filter was given, which holds the own variances.
 """
 function _hybrid_marginal!(hb::CTSEMHybridBuffers{T}, h::CTSEMHybrid,
     values::AbstractVector, trace) where {T}
@@ -177,8 +179,15 @@ function _hybrid_marginal!(hb::CTSEMHybridBuffers{T}, h::CTSEMHybrid,
     @inbounds for b in 1:q, a in 1:q
         M[a, b] = g[a] * hb.S[a, b] * g[b] + (a == b ? one(T) : zero(T))
     end
+    # Kept before the factorization, which overwrites `M` with its factor; the
+    # cross score and the fixed-deviation value below read `M` itself.
+    size(hb.Mh, 1) >= q || (hb.Mh = zeros(T, q, q))
+    @inbounds for b in 1:q, a in 1:q
+        hb.Mh[a, b] = M[a, b]
+    end
     F = _ctsem_cholesky(M, q)
     issuccess(F) || return T(NaN)
+    Mh = hb.Mh
     bvec = Vector{T}(undef, q)
     @inbounds for c in 1:q
         bvec[c] = g[c] * hb.s[c]
@@ -190,9 +199,45 @@ function _hybrid_marginal!(hb::CTSEMHybridBuffers{T}, h::CTSEMHybrid,
         half_logdet += log(F.U[c, c])
     end
     hb.half_logdet = half_logdet
+    length(hb.dhat) >= q || (hb.dhat = zeros(T, q))
+    length(hb.gv) >= q || (hb.gv = zeros(T, q))
+    length(hb.r) >= q || (hb.r = zeros(T, q))
+    @inbounds for a in 1:q
+        hb.dhat[a] = z[a]
+        hb.gv[a] = g[a]
+        acc = bvec[a]
+        for b in 1:q
+            acc -= Mh[a, b] * _hybrid_constant(T, _hybrid_strip(z[b]))
+        end
+        hb.r[a] = acc
+    end
     _record_hybrid!(trace, hb, g, dg)
-    return (hb.full ? -half_logdet : zero(T)) + dot(bvec, z) / 2
+    if hb.mode == _HYBRID_FIXED
+        d = hb.dfix
+        length(d) >= q || throw(ArgumentError(string("the fixed deviations hold ",
+            length(d), " values for ", q, " columns")))
+        value = zero(T)
+        @inbounds for a in 1:q
+            value += d[a] * bvec[a]
+            for b in 1:q
+                value -= d[a] * (Mh[a, b] - (a == b ? one(T) : zero(T))) * d[b] / 2
+            end
+        end
+        return value
+    end
+    return (hb.mode == _HYBRID_FULL ? -half_logdet : zero(T)) + dot(bvec, z) / 2
 end
+
+# One dual layer off: the conditional mode held fixed in the derivative the
+# outermost seed takes, which is what makes `r`'s partials the cross curvature.
+@inline _hybrid_strip(x::ForwardDiff.Dual) = ForwardDiff.value(x)
+@inline _hybrid_strip(x) = x
+# ... and lifted back to `T` as a constant of the outermost seed, so the
+# product is between two `T`s: the seeded sweeps' two tags have no order, and
+# multiplying a dual by its own inner layer is a `DualMismatchError` there.
+@inline _hybrid_constant(::Type{T}, x) where {T} = convert(T, x)
+@inline _hybrid_constant(::Type{ForwardDiff.Dual{G,V,N}}, x) where {G,V,N} =
+    ForwardDiff.Dual{G,V,N}(convert(V, x), zero(ForwardDiff.Partials{N,V}))
 
 # Tape records. Every hook has a fallback that does nothing, so the plain
 # primal and ForwardDiff paths compile to what they did.
@@ -216,7 +261,8 @@ function _record_hybrid!(tape::CTSEMAdjointTape{T}, hb::CTSEMHybridBuffers{T},
     rec = tape.hyb
     q = hb.q
     rec.active = true
-    rec.full = hb.full
+    rec.mode = hb.mode
+    rec.mode == _HYBRID_FIXED && (rec.dfix = T[hb.dfix[c] for c in 1:q])
     rec.q = q
     resize!(rec.item, q)
     copyto!(rec.item, 1, hb.item, 1, q)
@@ -243,6 +289,22 @@ function _reverse_hybrid_marginal!(rec::CTSEMHybridTape{T}, n::Int, nh::Int) whe
     rec.Xbar = zeros(T, n, q)
     q == 0 && return nothing
     g, S, s = rec.g, rec.S, rec.s
+    if rec.mode == _HYBRID_FIXED
+        # d' G s - 1/2 d' G S G d at the caller's `d`.
+        d = rec.dfix
+        @inbounds for b in 1:q, a in 1:q
+            rec.Sbar[a, b] = -g[a] * d[a] * d[b] * g[b] / 2
+        end
+        @inbounds for a in 1:q
+            rec.sbar[a] = g[a] * d[a]
+            gbar = d[a] * s[a]
+            for b in 1:q
+                gbar -= d[a] * S[a, b] * g[b] * d[b]
+            end
+            rec.psibar[rec.item[a]] += gbar * rec.dg[a]
+        end
+        return nothing
+    end
     M = Matrix{T}(undef, q, q)
     @inbounds for b in 1:q, a in 1:q
         M[a, b] = g[a] * S[a, b] * g[b] + (a == b ? one(T) : zero(T))
@@ -265,7 +327,7 @@ function _reverse_hybrid_marginal!(rec::CTSEMHybridTape{T}, n::Int, nh::Int) whe
     end
     # dll/dM = -1/2 (w C + beta beta'), dll/db = beta, with `w` 1 when the
     # pass returned the logdet and 0 for the profile.
-    w = rec.full ? one(T) : zero(T)
+    w = rec.mode == _HYBRID_FULL ? one(T) : zero(T)
     @inbounds for b in 1:q, a in 1:q
         Mbar = -(w * C[a, b] + beta[a] * beta[b]) / 2
         rec.Sbar[a, b] = g[a] * Mbar * g[b]

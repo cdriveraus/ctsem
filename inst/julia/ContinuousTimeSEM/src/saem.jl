@@ -184,11 +184,11 @@ end
 # Laplace layer takes their profile; see `CTSEMHybridBuffers`.
 @noinline function _saem_member_filter(aws, so, shifted)
     hb = aws.ekf_ws.hyb
-    hb.full = true
+    hb.mode = _HYBRID_FULL
     try
         return _ekf_run(aws.ekf_ws, so, shifted, so.tipreds, nothing)
     finally
-        hb.full = false
+        hb.mode = _HYBRID_PROFILE
     end
 end
 
@@ -401,7 +401,7 @@ function _saem_unit_scores!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
             # deviations, as `_saem_member_filter` does.
             value = _laplace_subject_value_gradient!(grad,
                 laplace.objective.subject_objectives[members[m]], aws, shifted,
-                nothing, true)
+                nothing, _HYBRID_FULL)
             if !(isfinite(value) && all(isfinite, grad))
                 ok[] = false
                 return nothing

@@ -1780,7 +1780,7 @@ is flushed within the subject here too.
 """
 function _laplace_subject_value_gradient!(gradient::AbstractVector{T},
     subject_objective, aws, values::AbstractVector{T},
-    ekf_workspace=nothing, full::Bool=false) where {T}
+    ekf_workspace=nothing, mode::Int=_HYBRID_PROFILE) where {T}
     # Positional, not a keyword: the sampler calls this with `aws` untyped, and
     # a dynamic call with a keyword builds its named tuple on the heap, the
     # workspace copied inside it -- 56 KB an evaluation on gC8.
@@ -1798,10 +1798,10 @@ function _laplace_subject_value_gradient!(gradient::AbstractVector{T},
     # An override must have the same type for the same reason, and it does: the
     # sampler builds it from the same `params` and the same `T`.
     ws = ekf_workspace === nothing ? aws.ekf_ws : ekf_workspace::typeof(aws.ekf_ws)
-    # The filter's own deviations (`CTSEMHybrid`): their profile unless `full`
-    # asks for the integral, and back to the profile afterwards, so a direct
+    # The filter's own deviations (`CTSEMHybrid`): their profile unless `mode`
+    # asks for something else, and back to the profile afterwards, so a direct
     # filter call on this workspace never inherits a caller's setting.
-    ws.hyb.full = full
+    ws.hyb.mode = mode
     tape = _tape_reset!(aws.tape)
     resize!(aws.tipreds, length(subject_objective.tipreds))
     copyto!(aws.tipreds, subject_objective.tipreds)
@@ -1819,7 +1819,8 @@ function _laplace_subject_value_gradient!(gradient::AbstractVector{T},
         _laplace_charge!(_LAPLACE_BYTES_FWD, bf)
         isfinite(loglik) || return loglik
         if _growth_unstable(ws)
-            _ctsem_forward_subject_gradient!(gradient, subject_objective, values, full)
+            _ctsem_forward_subject_gradient!(gradient, subject_objective, values,
+                mode, ws.hyb.dfix)
             return loglik
         end
         br = _laplace_mark()
@@ -1833,7 +1834,7 @@ function _laplace_subject_value_gradient!(gradient::AbstractVector{T},
         return loglik
     finally
         aws.defer_frechet = deferred
-        ws.hyb.full = false
+        ws.hyb.mode = _HYBRID_PROFILE
     end
 end
 
@@ -2229,7 +2230,8 @@ block is structurally zero rather than merely small.
 """
 function _laplace_unit_loglik_gradient(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T},
-    aws, positions, into::Union{Nothing,AbstractVector}=nothing) where {T}
+    aws, positions, into::Union{Nothing,AbstractVector}=nothing,
+    mode::Int=_HYBRID_PROFILE, hook=nothing) where {T}
     spec = laplace.spec
     units = laplace.units
     members = units.members[U]
@@ -2244,9 +2246,13 @@ function _laplace_unit_loglik_gradient(laplace::CTSEMLaplaceObjective, U::Intege
         i = members[m]
         offsets = units.offsets[U][m]
         shifted = _laplace_member_values!(shift, values, spec, Ls, u, offsets)
+        # `hook`: what a caller reads from, or hands to, each member's filter
+        # around its pass (`_hybrid_before!`, `_hybrid_after!`).
+        _hybrid_before!(hook, m, ws)
         loglik = _laplace_subject_value_gradient!(grad,
-            laplace.objective.subject_objectives[i], ws, shifted)
+            laplace.objective.subject_objectives[i], ws, shifted, nothing, mode)
         isfinite(loglik) || return loglik
+        _hybrid_after!(hook, m, ws, u)
         @inbounds for l in eachindex(spec.levels)
             level = spec.levels[l]
             k = nrandomeffects(level)
@@ -2609,14 +2615,18 @@ blocks afterwards, which is the same matrix by a cheaper route at that size.
 derived; `ctsem_set_block_threshold!` moves it.
 """
 function _laplace_unit_curvature(laplace::CTSEMLaplaceObjective, U::Integer,
-    values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T}
-    ) where {T}
+    values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T};
+    hook=nothing) where {T}
+    # `hook` is handed every member's pass (`_laplace_unit_loglik_gradient`):
+    # a `CTSEMHybridCross` reads the cross curvature with the deviations the
+    # filter integrates off the same sweeps.
     blocks = laplace.units.blocks[U]
     base = _laplace_scratch_vector!(laplace, T, length(u), :curv_base)
     copyto!(base, u)
     act = _laplace_active_columns(laplace, U)
     act === nothing ||
-        return _laplace_unit_curvature_pruned(laplace, U, values, Ls, base, act)
+        return _laplace_unit_curvature_pruned(laplace, U, values, Ls, base, act;
+            hook=hook)
     if length(blocks) <= 1 || length(u) < _LAPLACE_BLOCK_THRESHOLD[]
         gradient_of = function (uu)
             S = eltype(uu)
@@ -2626,8 +2636,8 @@ function _laplace_unit_curvature(laplace::CTSEMLaplaceObjective, U::Integer,
             Lss = _laplace_scratch_levels!(laplace, S, Ls, :curv_levels)
             return _laplace_unit_loglik_gradient(laplace, U, vs, Lss, uu, ws,
                 eachindex(laplace.units.members[U]),
-                _laplace_scratch_vector!(laplace, S, length(uu), :curv_inner)
-                ).gradient
+                _laplace_scratch_vector!(laplace, S, length(uu), :curv_inner),
+                _HYBRID_PROFILE, hook).gradient
         end
         # Bucketed width: see `_CTSEM_CURVATURE_WIDTHS`.
         A = _ctsem_width_jacobian(gradient_of, base, _CTSEM_CURVATURE_WIDTHS[])
@@ -2662,8 +2672,8 @@ function _laplace_unit_curvature(laplace::CTSEMLaplaceObjective, U::Integer,
             end
             return _laplace_unit_loglik_gradient(laplace, U, vs, Lss, uu, ws,
                 block.members,
-                _laplace_scratch_vector!(laplace, S, length(base), :curv_inner)
-                ).gradient
+                _laplace_scratch_vector!(laplace, S, length(base), :curv_inner),
+                _HYBRID_PROFILE, hook).gradient
         end
         # `jacobian!` into a cached result, and views out of it. The jacobian
         # is as tall as the unit's whole random-effect dimension because that
@@ -2741,7 +2751,7 @@ without inactive coordinates runs, and compiles, exactly what it did.
 """
 function _laplace_unit_curvature_pruned(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, base::AbstractVector{T},
-    act::Vector{Int}) where {T}
+    act::Vector{Int}; hook=nothing) where {T}
     blocks = laplace.units.blocks[U]
     d = length(base)
     if length(blocks) <= 1 || d < _LAPLACE_BLOCK_THRESHOLD[]
@@ -2763,7 +2773,8 @@ function _laplace_unit_curvature_pruned(laplace::CTSEMLaplaceObjective, U::Integ
                 end
                 g = _laplace_unit_loglik_gradient(laplace, U, vs, Lss, full, ws,
                     eachindex(laplace.units.members[U]),
-                    _laplace_scratch_vector!(laplace, S, d, :curv_inner)).gradient
+                    _laplace_scratch_vector!(laplace, S, d, :curv_inner),
+                    _HYBRID_PROFILE, hook).gradient
                 out = _laplace_scratch_vector!(laplace, S, length(act), :curv_act)
                 @inbounds for (t, c) in enumerate(act)
                     out[t] = g[c]
@@ -2814,8 +2825,8 @@ function _laplace_unit_curvature_pruned(laplace::CTSEMLaplaceObjective, U::Integ
                 uu[c] = ub[t]
             end
             return _laplace_unit_loglik_gradient(laplace, U, vs, Lss, uu, ws,
-                block.members, _laplace_scratch_vector!(laplace, S, d, :curv_inner)
-                ).gradient
+                block.members, _laplace_scratch_vector!(laplace, S, d, :curv_inner),
+                _HYBRID_PROFILE, hook).gradient
         end
         width = _ctsem_dual_width(n, _CTSEM_CURVATURE_WIDTHS[])
         nx = max(n, width)
@@ -3608,6 +3619,14 @@ Unit `U`'s term under the gated rule, generic in the element type: returns
 `(value, flagged, floor)`. `M`, `logdetM` and `inner` may be passed when the
 caller already has them at `u`.
 
+`objective`, `curvature` and `blocks` evaluate the unit somewhere else than its
+own coordinates -- `(value, gradient, hlogdet)` and the curvature at a point of
+that space, and its block layout -- and `dcheck` is the dimension the
+eigenvalue cap compares. With none given, an objective whose filter integrates
+deviations (`CTSEMHybrid`) is scored by `_hybrid_gated_term`, which decides on
+the joint curvature and comes back here in joint coordinates; `cross` is the
+`CTSEMHybridCross` a caller read with `M`.
+
 `floor` says whether the unit still needs the total floor. Only the explicit
 fallbacks do -- a unit wider than `_LAPLACE_EIGEN_MAXDIM` or with a degenerate
 soft pair, where no eigenvalue is known. Everywhere else the eigenvalue is, and
@@ -3625,13 +3644,21 @@ hour at zero gain.
 """
 function _laplace_gated_term(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T},
-    aws; M=nothing, logdetM=nothing, inner=nothing) where {T}
-    blocks = laplace.units.blocks[U]
-    inner === nothing &&
-        (inner = _laplace_unit_objective_gradient(laplace, U, values, Ls, u, aws))
+    aws; M=nothing, logdetM=nothing, inner=nothing, cross=nothing, objective=nothing,
+    curvature=nothing, blocks=nothing, dcheck=nothing) where {T}
+    objective === nothing && _hybrid_on(laplace.objective.params.hybrid) &&
+        return _hybrid_gated_term(laplace, U, values, Ls, u, aws; M=M,
+            logdetM=logdetM, inner=inner, cross=cross)
+    objf = objective === nothing ?
+        (z -> _laplace_unit_objective_gradient(laplace, U, values, Ls, z, aws)) :
+        objective
+    curvf = curvature === nothing ?
+        (z -> _laplace_unit_curvature(laplace, U, values, Ls, z)) : curvature
+    blocks === nothing && (blocks = laplace.units.blocks[U])
+    inner === nothing && (inner = objf(u))
     g = inner.value
     (isfinite(g) && !isempty(u)) || return (value=g, flagged=false, floor=true)
-    M === nothing && (M = _laplace_unit_curvature(laplace, U, values, Ls, u))
+    M === nothing && (M = curvf(u))
     # A curvature that does not factor at the mode -- the inner solve stopped
     # at a point that is not a strict maximum, the primal repaired it, and the
     # repaired Laplace term is unbounded there -- is scored by the soft rule
@@ -3653,7 +3680,8 @@ function _laplace_gated_term(laplace::CTSEMLaplaceObjective, U::Integer,
     _laplace_exceeds_identity(M, blocks, hi) &&
         return (value=lap, flagged=false, floor=false)
     d = length(u)
-    d > _LAPLACE_EIGEN_MAXDIM[] && return (value=total, flagged=false, floor=true)
+    (dcheck === nothing ? d : dcheck) > _LAPLACE_EIGEN_MAXDIM[] &&
+        return (value=total, flagged=false, floor=true)
     dense = _laplace_block_dense(M, blocks, d)
     E = _laplace_eig_first_order(dense)
     lam = E.primal.values
@@ -3684,33 +3712,23 @@ function _laplace_gated_term(laplace::CTSEMLaplaceObjective, U::Integer,
         x = xs[j]
         local h
         if abs(x) < 1e-12 || d == 1
-            # Each node's value integrates the filter's own deviations
-            # (`- hlogdet`, `CTSEMHybrid`), as the term at the mode does.
             if d == 1
                 ub = u .+ (sqrt(2) * x / sqrt(lam1c)) .* v1
-                h = if abs(x) < 1e-12
-                    g - inner.hlogdet
-                else
-                    rn = _laplace_unit_objective_gradient(laplace, U, values, Ls, ub, aws)
-                    rn.value - rn.hlogdet
-                end
+                h = abs(x) < 1e-12 ? g : objf(ub).value
             else
                 Bc = _laplace_clip_first_order(transpose(Vh) * dense * Vh)
                 F = _ctsem_cholesky(Matrix(_laplace_symmetrise(Bc)), d - 1)
-                h = g - inner.hlogdet - logdet(F) / 2
+                h = g - logdet(F) / 2
             end
         else
             ub = u .+ (sqrt(2) * x / sqrt(lam1c)) .* v1
-            r = _laplace_unit_objective_gradient(laplace, U, values, Ls, ub, aws)
-            Mb = _laplace_block_dense(_laplace_unit_curvature(laplace, U, values,
-                Ls, ub), blocks, d)
+            r = objf(ub)
+            Mb = _laplace_block_dense(curvf(ub), blocks, d)
             Bc = _laplace_clip_first_order(transpose(Vh) * Mb * Vh)
             F = _ctsem_cholesky(Matrix(_laplace_symmetrise(Bc)), d - 1)
             issuccess(F) || return (value=T(NaN), flagged=true, floor=false)
             z = F \ (transpose(Vh) * r.gradient)
-            rz = _laplace_unit_objective_gradient(laplace, U, values, Ls,
-                ub .+ Vh * z, aws)
-            h = rz.value - rz.hlogdet - logdet(F) / 2
+            h = objf(ub .+ Vh * z).value - logdet(F) / 2
         end
         terms[j] = h + log(ws[j]) + x^2
     end
@@ -4589,7 +4607,7 @@ function _laplace_hybrid_full_gradients(laplace::CTSEMLaplaceObjective, U::Integ
                 units.offsets[U][m])
             loglik = _laplace_subject_value_gradient!(grad,
                 laplace.objective.subject_objectives[members[m]], aws, shifted,
-                nothing, true)
+                nothing, _HYBRID_FULL)
             (isfinite(loglik) && all(isfinite, grad)) || return false
             @inbounds for t in 1:npar
                 out[t, m] = grad[t]
@@ -4817,8 +4835,16 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
             u = laplace.modes[U]
             blocks = laplace.units.blocks[U]
             b0 = _laplace_mark()
+            # Under the gated floor, deviations the filter integrates
+            # (`CTSEMHybrid`) need the joint curvature's gate, whose cross
+            # terms this same pass gives (`CTSEMHybridCross`).
+            local cross
+            cross = (gated_floor && !isempty(u) &&
+                     _hybrid_on(laplace.objective.params.hybrid)) ?
+                CTSEMHybridCross{Float64}(length(u), length(laplace.units.members[U])) :
+                nothing
             M = isempty(u) ? CTSEMBlockMatrix(Float64, blocks) :
-                _laplace_unit_curvature(laplace, U, theta, Ls, u)
+                _laplace_unit_curvature(laplace, U, theta, Ls, u; hook=cross)
             _laplace_charge!(_LAPLACE_BYTES_CURV, b0)
             fac = _laplace_factor_repaired!(M, blocks)
             laplace.mode_repaired[U] = fac.repaired
@@ -4852,7 +4878,7 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
                         M=_laplace_unit_curvature(laplace, U, theta, Ls, u),
                         inner=inner) :
                     _laplace_gated_term(laplace, U, theta, Ls, u, aws; M=M,
-                        logdetM=logdetM, inner=inner)
+                        logdetM=logdetM, inner=inner, cross=cross)
                 if gated.flagged
                     term = gated.value
                     primal_gated[U] = true

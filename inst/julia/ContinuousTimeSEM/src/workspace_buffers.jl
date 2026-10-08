@@ -94,6 +94,12 @@ end
 
 CTSEMGrowth(n::Int) = CTSEMGrowth(0.0, 0, zeros(n, n), zeros(n, n))
 
+# What a pass returns for the deviations its filter integrates; see
+# `CTSEMHybridBuffers`.
+const _HYBRID_PROFILE = 0
+const _HYBRID_FULL = 1
+const _HYBRID_FIXED = 2
+
 """
     CTSEMHybridBuffers{T}
 
@@ -105,16 +111,27 @@ column of manifest `j`, 0 for none; `item[c]` the hybrid item of column `c`);
 the arrays can grow when a model needs more than the empty default -- the
 workspace may be built before the Laplace objective fills `CTSEMHybrid`.
 
-`full` says what the pass returns for them, and is the caller's to set
-(`_laplace_subject_value_gradient!`): `false`, the default, the profile -- the
-log likelihood at the deviations' conditional mode -- which is what Laplace's
-mode and curvature are taken of; `true` the profile less `half_logdet`, their
-exact integral. `half_logdet`, `logdet(M) / 2`, is left by every pass.
+`mode` says what the pass returns for them, and is the caller's to set
+(`_laplace_subject_value_gradient!`): `_HYBRID_PROFILE`, the default, the
+profile -- the log likelihood at the deviations' conditional mode -- which is
+what Laplace's mode and curvature are taken of; `_HYBRID_FULL` the profile less
+`half_logdet`, their exact integral; `_HYBRID_FIXED` the log likelihood at the
+deviations `dfix` (one per column, the caller's), which is how a unit is
+evaluated in joint coordinates. Every pass leaves `half_logdet`,
+`logdet(M) / 2`; the conditional mode `dhat`; each column's scale `gv`; `Mh`,
+`M` itself; and `r = b - M value(dhat)`, zero in value, whose partials along a
+seeded direction are minus that direction's cross curvature with the
+deviations (`_hybrid_after!` on a `CTSEMHybridCross`).
 """
 mutable struct CTSEMHybridBuffers{T}
     active::Bool
-    full::Bool
+    mode::Int
     half_logdet::T
+    dfix::Vector{T}
+    dhat::Vector{T}
+    gv::Vector{T}
+    r::Vector{T}
+    Mh::Matrix{T}
     q::Int
     col::Vector{Int}
     item::Vector{Int}
@@ -126,8 +143,8 @@ mutable struct CTSEMHybridBuffers{T}
     s::Vector{T}
     e::Vector{T}
 end
-CTSEMHybridBuffers{T}() where {T} = CTSEMHybridBuffers{T}(false, false, zero(T),
-    0, Int[], Int[],
+CTSEMHybridBuffers{T}() where {T} = CTSEMHybridBuffers{T}(false, _HYBRID_PROFILE,
+    zero(T), T[], T[], T[], T[], zeros(T, 0, 0), 0, Int[], Int[],
     zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0),
     T[], T[])
 
