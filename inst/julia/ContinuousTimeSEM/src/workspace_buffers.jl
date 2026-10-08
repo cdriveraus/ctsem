@@ -205,6 +205,11 @@ struct ContinuousEKFWorkspace{T, N, M, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF
     # MANIFESTVAR cotangent accumulates over rows until a `:theta` record
     # (`_ctsem_reverse_tape!`), so one record pushes the whole pass back once.
     manifestvar_static::Bool
+    # The same for DIFFUSION: when no transform group writes it, the subject
+    # filter builds its covariance into `diffusion_cov` once per pass and hands
+    # that to every prediction, rather than each prediction rebuilding it.
+    diffusion_static::Bool
+    diffusion_cov::Matrix{T}
 end
 
 """
@@ -422,21 +427,25 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
         Vector{Int}(undef, m),
         Val(!isempty(manifesttype)),
         CTSEMGrowth(n),
-        _ctsem_manifestvar_static(sp, predict_param_indices, update_param_indices,
-            td_param_indices),
+        _ctsem_static_component(sp, :MANIFESTVAR, predict_param_indices,
+            update_param_indices, td_param_indices),
+        _ctsem_static_component(sp, :DIFFUSION, predict_param_indices,
+            update_param_indices, td_param_indices),
+        zeros(T, n, n),
     )
 end
 
 """
-    _ctsem_manifestvar_static(sp, predict, update, td)
+    _ctsem_static_component(sp, name, predict, update, td)
 
 Whether no transform group -- the per-row predict, update and TD-predictor
-groups -- writes a MANIFESTVAR cell; see `ContinuousEKFWorkspace`'s
-`manifestvar_static`. The same test `CTSEMAdjointWorkspace` makes for
-`groups_write_manifestvar`, negated.
+groups -- writes a cell of matrix `name`, so that matrix is the same on every
+row of a pass; see `ContinuousEKFWorkspace`'s `manifestvar_static` and
+`diffusion_static`. The test `CTSEMAdjointWorkspace` makes for
+`groups_write_manifestvar` and `groups_write_diffusion`, negated.
 """
-function _ctsem_manifestvar_static(sp::EKFParameters, predict, update, td)
+function _ctsem_static_component(sp::EKFParameters, name::Symbol, predict, update, td)
     isempty(predict) && isempty(update) && isempty(td) && return true
-    positions = Set(_ctsem_component_positions(sp, :MANIFESTVAR))
+    positions = Set(_ctsem_component_positions(sp, name))
     return !any(i -> i in positions, Iterators.flatten((predict, update, td)))
 end

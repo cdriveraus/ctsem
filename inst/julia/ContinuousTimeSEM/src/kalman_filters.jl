@@ -150,19 +150,29 @@ Advance the EKF state and covariance by one continuous-time prediction step.
 
 The continuous dynamics in `pars` are discretized for the interval `Δt`, and the
 prediction is written back into `ws.state` and `ws.P_predict`.
+
+With `DIFFUSIONcov`, the diffusion covariance the caller already built, which
+the subject filter does once per pass when nothing writes DIFFUSION per row
+(`ContinuousEKFWorkspace`'s `diffusion_static`); without, it is built here
+from `pars.DIFFUSION`, which every other caller relies on. Passed rather than
+remembered on the workspace, so no caller can read one left by another pass.
 """
 @inline function _ekf_predict_step!(ws::ContinuousEKFWorkspace, pars, Δt)
-    # Refresh process noise and map continuous-time dynamics to discrete time.
-    # Discretization provides:
-    #   A_d = dDRIFT, b_d = dINT, Q_d = dDIFFUSION
     ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, ws.covmatcode, ws.state_dim)
+    return _ekf_predict_step!(ws, pars, Δt, ws.bufferQ.out)
+end
+
+@inline function _ekf_predict_step!(ws::ContinuousEKFWorkspace, pars, Δt,
+    DIFFUSIONcov::AbstractMatrix)
+    # Map continuous-time dynamics to discrete time. Discretization provides:
+    #   A_d = dDRIFT, b_d = dINT, Q_d = dDIFFUSION
     if ws.continuous_time
-        _compute_discrete_time_form!(ws.discrete_ca, ws.bufferQ, ws.bufferQ.out, pars, Δt,
+        _compute_discrete_time_form!(ws.discrete_ca, ws.bufferQ, DIFFUSIONcov, pars, Δt,
             ws.exp_buffer, ws.lyap_buffer, ws.state, ws.diffusion_state_indices,
             ws.diffusion_buffer, ws.discretization_buffer, ws.state_dim,
             ws.discretization_cache, ws.affine_buffer)
     else
-        _compute_one_step_form!(ws.discrete_ca, ws.bufferQ.out, pars, ws.state,
+        _compute_one_step_form!(ws.discrete_ca, DIFFUSIONcov, pars, ws.state,
             ws.diffusion_state_indices, ws.state_dim)
     end
 
@@ -1112,6 +1122,13 @@ function _extended_kalman_filter_continuous!(
     #   (3) accumulate log p(y_t | y_{1:t-1})
     prev_timestep = timesteps[1]
     nsteps = min(length(timesteps), size(data, 2))
+    # The diffusion covariance once for the pass when nothing writes DIFFUSION
+    # per row (`diffusion_static`), as MANIFESTVAR's above; each prediction
+    # rebuilt it from `pars.DIFFUSION` otherwise.
+    if ws.diffusion_static && nsteps >= 2
+        ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, ws.covmatcode, ws.state_dim)
+        copyto!(ws.diffusion_cov, ws.bufferQ.out)
+    end
     @inbounds for t_idx in 2:nsteps
         curr_timestep = timesteps[t_idx]
         Δt = curr_timestep - prev_timestep
@@ -1128,7 +1145,11 @@ function _extended_kalman_filter_continuous!(
             apply_complex_transforms_at_indices!(all_params, ws.predict_param_indices, sp.predict_transforms, predict_context)
             predict_snapshot = _begin_predict!(trace, ws, _val(ws.state_dim))
             _begin_substep!(substep_recorder, ws)
-            _ekf_predict_step!(ws, pars, substep_dt)
+            if ws.diffusion_static
+                _ekf_predict_step!(ws, pars, substep_dt, ws.diffusion_cov)
+            else
+                _ekf_predict_step!(ws, pars, substep_dt)
+            end
             _track_growth!(ws.growth, ws.discrete_ca.eJAx, _val(ws.state_dim), subject)
             _record_substep_defect!(substep_recorder, ws, pars, sp, all_params, substep_dt,
                 t_idx, predict_context)

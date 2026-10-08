@@ -1457,6 +1457,12 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
     Θ̄ = aws.manifest_cov_bar
     θ̄ = aws.theta_bar
     fill!(x̄, zero(T)); fill!(P̄, zero(T)); fill!(Θ̄, zero(T))
+    # A walk starts with nothing deferred. The end of a walk flushes both, but
+    # a walk an exception left would hand its pending cotangent to the next
+    # subject's, which with `_defer_diffusion!`'s comparison skipped would
+    # merge into it unseen.
+    aws.mvar_pending = false
+    aws.dvar_pending = false
     # Constructed here rather than read from the workspace on purpose: a
     # `ComponentVector` view is a free wrapper around `θ̄`, but a workspace
     # field holding one has to be `Any`-typed (its axis type is model
@@ -1609,7 +1615,10 @@ force: the prediction reverse runs once per *substep*, so a model with a
 substep mesh pushes the same matrix back several times per row.
 """
 function _defer_diffusion!(aws, mat, cov_bar, θ̄ca, n::Int)
-    if aws.dvar_pending && _ctsem_same_matrix(aws.dvar_mat, mat, n)
+    # No group writing DIFFUSION means one matrix for the whole walk, so the
+    # comparison, per substep, can only succeed: it is skipped then.
+    if aws.dvar_pending && (!aws.groups_write_diffusion ||
+            _ctsem_same_matrix(aws.dvar_mat, mat, n))
         @inbounds for j in 1:n, i in 1:n
             aws.dvar_bar[i, j] += cov_bar[i, j]
         end
