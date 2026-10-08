@@ -1382,7 +1382,15 @@ function _reverse_update!(x̄::Vector{T}, P̄::Matrix{T}, Θ̄::Matrix{T}, θ̄c
     @inbounds for j in 1:m, i in 1:m
         Y[i, j] = Ui[j, i] - e[i] * a[j]                     # (I - ee') U⁻ᵀ
     end
-    _ctsem_mul!(R̄, Ui, Y, -T(0.5), false)
+    # -½ U⁻¹ Y with U⁻¹ upper triangular: only its k >= i entries, half the
+    # products of a dense multiply (which summed the structural zeros too).
+    @inbounds for j in 1:m, i in 1:m
+        acc = zero(T)
+        for k in i:m
+            acc += Ui[i, k] * Y[k, j]
+        end
+        R̄[i, j] = -T(0.5) * acc
+    end
     @inbounds for j in 1:m, i in 1:m
         R̄[i, j] -= T(0.5) * (Kx[i] * a[j] + a[i] * Kx[j])
     end
@@ -1390,16 +1398,18 @@ function _reverse_update!(x̄::Vector{T}, P̄::Matrix{T}, Θ̄::Matrix{T}, θ̄c
     _ctsem_mulTN!(R̄, K, nm1, oneT, oneT)                    # + K' P̄⁺ K
 
     # The ridge correction's H̄ and R̄, and its P̄ through S (see above).
+    # `K̄ U⁻¹ U⁻ᵀ` once, n by m, serves both of its terms: `Pr` on the left for
+    # H̄, `-K'` for S̄. Associated the other way -- `K'K̄` first, then the two
+    # triangular factors -- S̄ was two m-by-m-by-m products, the cost of the
+    # whole update on a row with many indicators, for a term scaled by ε.
     _ctsem_mulTN!(H̄, K, Mc, -oneT, oneT)                    # M = I - K H
-    _ctsem_mul!(nm1, Pr, Kc)                                 # K = Pr H' S⁻¹:
-    _ctsem_mul!(PHt, nm1, Ui)                                #   S⁻¹ K̄' Pr
-    _ctsem_mulNT!(nm1, PHt, Ui)
+    _ctsem_mul!(nm1, Kc, Ui)                                 # K = Pr H' S⁻¹:
+    _ctsem_mulNT!(PHt, nm1, Ui)                              #   K̄ S⁻¹
+    _ctsem_mul!(nm1, Pr, PHt)                                #   Pr K̄ S⁻¹
     @inbounds for j in 1:n, i in 1:m
         H̄[i, j] += nm1[j, i]
     end
-    _ctsem_mulTN!(mm1, K, Kc)                                # S̄ = -K'K̄ S⁻¹
-    _ctsem_mul!(S̄0, mm1, Ui)
-    _ctsem_mulNT!(mm1, S̄0, Ui, -oneT, false)
+    _ctsem_mulTN!(mm1, K, PHt, -oneT, false)                 # S̄ = -K'K̄ S⁻¹
     _symmetrize_into!(S̄0, mm1)
     _ctsem_mul!(Λ̄, S̄0, H)                                   # S = H Pr H' + R̃
     _ctsem_mulTN!(P̄_new, H, Λ̄, oneT, oneT)
