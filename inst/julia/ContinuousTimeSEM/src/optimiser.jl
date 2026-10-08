@@ -576,7 +576,7 @@ _ctsem_batchable(o) = false
 function _ctsem_subset_objective(L::CTSEMLaplaceObjective, keep::AbstractVector{<:Integer})
     u = L.units
     units = CTSEMLaplaceUnits(u.members[keep], u.offsets[keep], u.dims[keep],
-        u.blocks[keep])
+        u.blocks[keep], u.active[keep], u.inactive[keep])
     n = length(keep)
     NU = length(u.members)
     fresh = Dict{Symbol,Any}(

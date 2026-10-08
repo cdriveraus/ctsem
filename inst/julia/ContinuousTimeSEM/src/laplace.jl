@@ -339,6 +339,50 @@ struct CTSEMLaplaceUnits
     # Each entry is `(offset, size, member positions)`, positions indexing into
     # `members[U]`.
     blocks::Vector{Vector{CTSEMLaplaceBlock}}
+    # The coordinates of `u` that can reach unit `U`'s data, and the rest
+    # (`inactive`), both sorted. A coordinate is inactive when every effect its
+    # column of the root loads on is inert for the block's group -- it moves
+    # only cells of manifests the group never observes (`inert` in
+    # `_laplace_build_units`). Nothing in the likelihood depends on it, so its
+    # curvature row is exactly the prior's, its mode exactly 0, and every sweep
+    # along it exactly zero: `_laplace_unit_curvature` and
+    # `_laplace_seeded_unit_gradient!` skip it, and nothing else changes --
+    # the layout of `u`, the modes and what is reported stay as they were.
+    active::Vector{Vector{Int}}
+    inactive::Vector{Vector{Int}}
+end
+
+"""Units with every coordinate active: the layout before inert effects were
+known, and what a spec without them builds."""
+CTSEMLaplaceUnits(members, offsets, dims, blocks) = CTSEMLaplaceUnits(members,
+    offsets, dims, blocks, [collect(1:d) for d in dims], [Int[] for _ in dims])
+
+"""
+    _laplace_coordinate_inert(level, q, inert)
+
+Whether coordinate `q` of `level`'s block loads only on effects in `inert`
+(sorted effect indices). Read from the root's structural pattern in its natural
+order: a loading column, or a full-rank Cholesky column, has rows `q:k`; an own
+variance's column has its one effect's row.
+"""
+function _laplace_coordinate_inert(level::CTSEMLaplaceLevel, q::Integer,
+    inert::AbstractVector{Int})
+    isempty(inert) && return false
+    k = nrandomeffects(level)
+    if isreducedrank(level) && q > level.rank
+        t = q - level.rank
+        seen = 0
+        for p in eachindex(level.unique_index)
+            level.unique_index[p] > 0 || continue
+            seen += 1
+            seen == t && return insorted(p, inert)
+        end
+        return false
+    end
+    for p in q:k
+        insorted(p, inert) || return false
+    end
+    return true
 end
 
 """
@@ -349,8 +393,15 @@ Group subjects into integration units and lay out each unit's latent vector.
 Strict nesting is assumed and checked by the R side; here the outermost level's
 grouping simply defines the units, and every inner level's groups are placed
 inside whichever unit its subjects fall in.
+
+`inert`, when given, holds per level and per group the effects (sorted indices
+into the level's `re_index`) that cannot reach that group's data, which the R
+side reads off the model and the data: an effect whose every cell is a
+measurement cell of a manifest none of the group's subjects observes. It
+decides which coordinates are inactive (`CTSEMLaplaceUnits`).
 """
-function _laplace_build_units(spec::CTSEMLaplaceSpec, nsubjects::Integer)
+function _laplace_build_units(spec::CTSEMLaplaceSpec, nsubjects::Integer;
+    inert::Union{Nothing,Vector{Vector{Vector{Int}}}}=nothing)
     levels = spec.levels
     nlev = length(levels)
     if nlev == 0 || nsubjects == 0
@@ -366,6 +417,7 @@ function _laplace_build_units(spec::CTSEMLaplaceSpec, nsubjects::Integer)
     end
     offsets = Vector{Vector{Vector{Int}}}(undef, nunits)
     dims = zeros(Int, nunits)
+    inactive = [Int[] for _ in 1:nunits]
     for U in 1:nunits
         cursor = 0
         seen = Dict{Tuple{Int,Int},Int}()
@@ -381,12 +433,21 @@ function _laplace_build_units(spec::CTSEMLaplaceSpec, nsubjects::Integer)
                     slot = cursor
                     seen[key] = slot
                     cursor += k
+                    if inert !== nothing
+                        groupinert = inert[l][levels[l].group[i]]
+                        for q in 1:k
+                            _laplace_coordinate_inert(levels[l], q, groupinert) &&
+                                push!(inactive[U], slot + q)
+                        end
+                    end
                 end
                 offsets[U][m][l] = slot
             end
         end
         dims[U] = cursor
+        sort!(inactive[U])
     end
+    active = [setdiff(1:dims[U], inactive[U]) for U in 1:nunits]
 
     # Invert the offset map: which member positions share each block.
     blocks = Vector{Vector{CTSEMLaplaceBlock}}(undef, nunits)
@@ -426,8 +487,19 @@ function _laplace_build_units(spec::CTSEMLaplaceSpec, nsubjects::Integer)
                 ancestors))
         end
     end
-    return CTSEMLaplaceUnits(members, offsets, dims, blocks)
+    return CTSEMLaplaceUnits(members, offsets, dims, blocks, active, inactive)
 end
+
+"""
+Whether units skip their inactive coordinates (`CTSEMLaplaceUnits`). On; off
+evaluates every coordinate, which gives the same objective and gradient at more
+cost and is there to show that it does. `ctsem_set_laplace_prune!` sets it.
+"""
+const _LAPLACE_PRUNE = Ref(true)
+
+export ctsem_set_laplace_prune!
+"""Set whether Laplace units skip coordinates that cannot reach their data."""
+ctsem_set_laplace_prune!(on::Bool) = (_LAPLACE_PRUNE[] = on)
 
 """
     CTSEMLaplaceObjective(objective, spec; inner_maxiter, inner_tol)
@@ -498,12 +570,13 @@ end
 # provenance paragraph at the gated rule's section further down.
 function CTSEMLaplaceObjective(objective::CTSEMObjective, spec::CTSEMLaplaceSpec;
     inner_maxiter::Integer=_LAPLACE_INNER_MAXITER[], inner_tol::Real=1e-10,
-    floor=:total, gate_lo::Real=0.2, gate_hi::Real=0.7)
+    floor=:total, gate_lo::Real=0.2, gate_hi::Real=0.7,
+    inert::Union{Nothing,Vector{Vector{Vector{Int}}}}=nothing)
     Symbol(floor) in (:total, :gated) ||
         throw(ArgumentError("the Laplace floor must be :total or :gated"))
     0 < gate_lo < gate_hi || throw(ArgumentError("the gate needs 0 < lo < hi"))
     nsubjects = length(objective.subject_objectives)
-    units = _laplace_build_units(spec, nsubjects)
+    units = _laplace_build_units(spec, nsubjects; inert=inert)
     nunits = length(units.members)
     return CTSEMLaplaceObjective{typeof(objective)}(objective, spec, units,
         [zeros(Float64, units.dims[U]) for U in 1:nunits],
@@ -511,6 +584,21 @@ function CTSEMLaplaceObjective(objective::CTSEMObjective, spec::CTSEMLaplaceSpec
         zeros(Int, nunits), zeros(Float64, nunits), falses(nunits), falses(nunits),
         falses(nunits), falses(nunits), Float64[], Symbol(floor), Float64(gate_lo),
         Float64(gate_hi), 0)
+end
+
+"""
+    _laplace_active_columns(laplace, U)
+
+Unit `U`'s active coordinates, or `nothing` when all of them are to be
+evaluated: none is inactive, pruning is off, or a level's root is permuted for
+a sampling run (`_laplace_order_roots!`), whose structural pattern the inactive
+set was not computed for.
+"""
+@inline function _laplace_active_columns(laplace::CTSEMLaplaceObjective, U::Integer)
+    _LAPLACE_PRUNE[] || return nothing
+    isempty(laplace.units.inactive[U]) && return nothing
+    any(level -> !isempty(level.order), laplace.spec.levels) && return nothing
+    return laplace.units.active[U]
 end
 
 """
@@ -534,12 +622,18 @@ single-level form and none of it needs sending.
 `sd_fixed` and `cor_fixed`, when sent, run parallel to `sd_index` and
 `cor_index`: the raw value of a scale or correlation coordinate the model
 states, at an index of 0, and `NaN` beside a free one.
+
+`inert_level`, `inert_group` and `inert_effect`, when sent, are parallel: each
+triple says that effect `inert_effect` (an index into that level's effects)
+cannot reach group `inert_group`'s data at level `inert_level`
+(`_laplace_build_units`).
 """
 function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
     sd_index=Int[], cor_index=Int[], sd_scale=Float64[], level_nre=Int[],
     group=Int[], level_ngroups=Int[], level_covmatcode=Int[],
     level_rank=Int[], load_index=Int[], sd_fixed=Float64[], cor_fixed=Float64[],
-    unique_index=Int[], inner_maxiter::Integer=_LAPLACE_INNER_MAXITER[], inner_tol::Real=1e-10,
+    unique_index=Int[], inert_level=Int[], inert_group=Int[], inert_effect=Int[],
+    inner_maxiter::Integer=_LAPLACE_INNER_MAXITER[], inner_tol::Real=1e-10,
     floor="total", gate_lo::Real=0.2, gate_hi::Real=0.7)
     nsubjects = length(objective.subject_objectives)
     counts = isempty(level_nre) ? [length(re_index)] : Vector{Int}(Int.(level_nre))
@@ -600,9 +694,23 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
                 Int.(unique_index[(re_at + 1):(re_at + k)])))
         re_at += k; sd_at += nsd; cor_at += ncor; load_at += nload
     end
+    inert = nothing
+    if !isempty(inert_level)
+        (length(inert_group) == length(inert_level) == length(inert_effect)) ||
+            throw(DimensionMismatch(
+                "inert_level, inert_group and inert_effect must be the same length"))
+        inert = [[Int[] for _ in 1:ngroups[l]] for l in eachindex(counts)]
+        for (l, g, p) in zip(inert_level, inert_group, inert_effect)
+            (1 <= l <= length(counts) && 1 <= g <= ngroups[l] && 1 <= p <= counts[l]) ||
+                throw(ArgumentError("inert entry (level $l, group $g, effect $p) " *
+                    "is outside the hierarchy"))
+            push!(inert[l][g], Int(p))
+        end
+        foreach(lv -> foreach(x -> unique!(sort!(x)), lv), inert)
+    end
     return CTSEMLaplaceObjective(objective, CTSEMLaplaceSpec(levels);
         inner_maxiter=inner_maxiter, inner_tol=inner_tol, floor=Symbol(floor),
-        gate_lo=gate_lo, gate_hi=gate_hi)
+        gate_lo=gate_lo, gate_hi=gate_hi, inert=inert)
 end
 
 """Positional convenience form, for single-level calls written in Julia."""
@@ -2436,6 +2544,9 @@ function _laplace_unit_curvature(laplace::CTSEMLaplaceObjective, U::Integer,
     blocks = laplace.units.blocks[U]
     base = _laplace_scratch_vector!(laplace, T, length(u), :curv_base)
     copyto!(base, u)
+    act = _laplace_active_columns(laplace, U)
+    act === nothing ||
+        return _laplace_unit_curvature_pruned(laplace, U, values, Ls, base, act)
     if length(blocks) <= 1 || length(u) < _LAPLACE_BLOCK_THRESHOLD[]
         gradient_of = function (uu)
             S = eltype(uu)
@@ -2532,6 +2643,135 @@ function _laplace_unit_curvature(laplace::CTSEMLaplaceObjective, U::Integer,
     # this one did not claim. A unit's innermost level is one block per subject,
     # which only this axis can spread, and its outermost is a single block over
     # every member, which only the member axis can.
+    at = 1
+    while at <= length(blocks)
+        stop = at
+        while stop < length(blocks) && blocks[stop + 1].level == blocks[at].level
+            stop += 1
+        end
+        _laplace_parallel(laplace, at:stop) do b
+            fill_block!(b)
+        end
+        at = stop + 1
+    end
+    return M
+end
+
+"""
+    _laplace_unit_curvature_pruned(laplace, U, values, Ls, base, act)
+
+`_laplace_unit_curvature` for a unit with inactive coordinates
+(`CTSEMLaplaceUnits`): the Jacobian is taken over the active coordinates `act`
+alone, and every inactive row and column is the prior's identity with no
+coupling -- which is what it is exactly, since no member's likelihood depends
+on an inactive coordinate. The same matrix the full Jacobian gives, at one
+forward lane per active coordinate rather than per coordinate. `base` holds
+`u`. A separate function rather than a branch inside the other, so a unit
+without inactive coordinates runs, and compiles, exactly what it did.
+"""
+function _laplace_unit_curvature_pruned(laplace::CTSEMLaplaceObjective, U::Integer,
+    values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, base::AbstractVector{T},
+    act::Vector{Int}) where {T}
+    blocks = laplace.units.blocks[U]
+    d = length(base)
+    if length(blocks) <= 1 || d < _LAPLACE_BLOCK_THRESHOLD[]
+        dense = Matrix{T}(LinearAlgebra.I, d, d)
+        if !isempty(act)
+            gradient_of = function (ua)
+                local S, ws, vs, Lss, full, g, out
+                S = eltype(ua)
+                ws = _laplace_workspace!(laplace, S, length(values))
+                vs = _laplace_scratch_vector!(laplace, S, length(values), :curv_vs)
+                copyto!(vs, values)
+                Lss = _laplace_scratch_levels!(laplace, S, Ls, :curv_levels)
+                full = _laplace_scratch_vector!(laplace, S, d, :curv_full)
+                @inbounds for c in 1:d
+                    full[c] = base[c]
+                end
+                @inbounds for (t, c) in enumerate(act)
+                    full[c] = ua[t]
+                end
+                g = _laplace_unit_loglik_gradient(laplace, U, vs, Lss, full, ws,
+                    eachindex(laplace.units.members[U]),
+                    _laplace_scratch_vector!(laplace, S, d, :curv_inner)).gradient
+                out = _laplace_scratch_vector!(laplace, S, length(act), :curv_act)
+                @inbounds for (t, c) in enumerate(act)
+                    out[t] = g[c]
+                end
+                return out
+            end
+            # Bucketed width: see `_CTSEM_CURVATURE_WIDTHS`.
+            A = _laplace_symmetrise(_ctsem_width_jacobian(gradient_of, base[act],
+                _CTSEM_CURVATURE_WIDTHS[]))
+            @inbounds for (j, cj) in enumerate(act), (i, ci) in enumerate(act)
+                dense[ci, cj] -= A[i, j]
+            end
+        end
+        return _laplace_block_of(dense, blocks)
+    end
+    isactive = fill(false, d)
+    @inbounds for c in act
+        isactive[c] = true
+    end
+    M = _laplace_scratch_blockmatrix!(laplace, T, U, blocks, :curv_M)
+    # As in `_laplace_unit_curvature`'s block route, over each block's active
+    # columns only; `local` for the reason given there.
+    fill_block! = function (b::Int)
+        local block, off, columns, n, D, Cp, block_of, width, nx, xb, Jw, rows
+        block = blocks[b]
+        off = block.offset
+        columns = Int[c for c in (off + 1):(off + block.size) if isactive[c]]
+        n = length(columns)
+        D = M.diag[b]
+        fill!(D, zero(T))
+        @inbounds for t in 1:block.size
+            D[t, t] = one(T)
+        end
+        for t in eachindex(block.ancestors)
+            fill!(M.coupling[b][t], zero(T))
+        end
+        n == 0 && return nothing
+        block_of = function (ub)
+            local S, ws, vs, Lss, uu
+            S = eltype(ub)
+            ws = _laplace_workspace!(laplace, S, length(values))
+            vs = _laplace_scratch_vector!(laplace, S, length(values), :curv_vs)
+            copyto!(vs, values)
+            Lss = _laplace_scratch_levels!(laplace, S, Ls, :curv_levels)
+            uu = _laplace_scratch_vector!(laplace, S, d, :curv_uu)
+            copyto!(uu, base)
+            @inbounds for (t, c) in enumerate(columns)
+                uu[c] = ub[t]
+            end
+            return _laplace_unit_loglik_gradient(laplace, U, vs, Lss, uu, ws,
+                block.members, _laplace_scratch_vector!(laplace, S, d, :curv_inner)
+                ).gradient
+        end
+        width = _ctsem_dual_width(n, _CTSEM_CURVATURE_WIDTHS[])
+        nx = max(n, width)
+        xb = _laplace_scratch_vector!(laplace, T, nx, :curv_ub)
+        @inbounds for (t, c) in enumerate(columns)
+            xb[t] = base[c]
+        end
+        @inbounds for t in (n + 1):nx
+            xb[t] = zero(T)
+        end
+        Jw = _laplace_scratch_matrix!(laplace, T, d, nx, :curv_jac)
+        _ctsem_width_jacobian!(Jw, block_of, xb, n, width)
+        # M = I - d2(sum ll)/du du on the active columns, as the full route.
+        @inbounds for (j, cj) in enumerate(columns), ci in columns
+            D[ci - off, cj - off] -= Jw[ci, j]
+        end
+        for (t, a) in enumerate(block.ancestors)
+            rows = (blocks[a].offset + 1):(blocks[a].offset + blocks[a].size)
+            Cp = M.coupling[b][t]
+            @inbounds for (j, cj) in enumerate(columns), (i, r) in enumerate(rows)
+                Cp[cj - off, i] = -Jw[r, j]
+            end
+        end
+        return nothing
+    end
+    # A level at a time, as `_laplace_unit_curvature`.
     at = 1
     while at <= length(blocks)
         stop = at
@@ -3739,6 +3979,13 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
     nmem = length(units.members[U])
     uhat = laplace.modes[U]
     zerodir = zeros(Float64, npar)
+    # Inactive coordinates (`CTSEMLaplaceUnits`): nothing depends on them, so
+    # their curvature rows are the identity with no coupling, their columns of
+    # the factor of C below are basis vectors, and a sweep along one moves only
+    # effects no member here can see -- exactly zero, and skipped.
+    act = _laplace_active_columns(laplace, U)
+    isactive = fill(true, d)
+    act === nothing || (fill!(isactive, false); isactive[act] .= true)
 
     # No random effects anywhere in this unit: there is no integral, the term
     # is the plain log likelihood, and one ordinary reverse sweep is the whole
@@ -3875,6 +4122,7 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
         # which is why the measurement above names its model. See
         # `review/LAPLACE-where-the-time-goes-2026-09-23.md`.
         for j in 1:k
+            isactive[block.offset + j] || continue
             dir = scatter(l, Q[:, j])
             pass = sweep_at(subsA, dir, dir, 2)
             pass.ok || (_LAPLACE_DIAG[] = 12; return false)
@@ -3938,6 +4186,9 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
             if nb * na < kparl
                 Cab = transpose(Ccoup[b][t])          # C[a,b], rank_a by rank_b
                 for i in 1:nb, j in 1:na
+                    # C[a,b] is zero in an inactive row or column.
+                    (isactive[block.offset + i] && isactive[blocks[a].offset + j]) ||
+                        continue
                     accumulate(sweep_at(subsA, scatter(l, L[:, i]),
                         scatter(la, Ls[la][:, j]), 2), subsA,
                         2 * Cab[j, i]) || return false
@@ -4064,12 +4315,35 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
             rl = nlatent(spec.levels[l])
             levelsweeps[l] = Vector{Matrix{Float64}}(undef, rl)
             for q in 1:rl
-                pass = sweep(1:nmem, scatter(l, Ls[l][:, q]), zerodir, 1)
+                # Only the members for whom column `q` is active: for the
+                # others the direction moves nothing they can see, and their
+                # columns are zero.
+                if act === nothing
+                    pass = sweep(1:nmem, scatter(l, Ls[l][:, q]), zerodir, 1)
+                    pass.ok || return false
+                    all(isfinite, pass.d1c) || return false
+                    # A copy, because the sweep's output buffer is reused by
+                    # the next `q` and these are read after the loop.
+                    levelsweeps[l][q] = copy(pass.d1c)
+                    continue
+                end
+                seeing = Int[m for m in 1:nmem if isactive[units.offsets[U][m][l] + q]]
+                if isempty(seeing)
+                    levelsweeps[l][q] = zeros(Float64, npar, nmem)
+                    continue
+                end
+                pass = sweep(seeing, scatter(l, Ls[l][:, q]), zerodir, 1)
                 pass.ok || return false
                 all(isfinite, pass.d1c) || return false
-                # A copy, because the sweep's output buffer is reused by
-                # the next `q` and these are read after the loop.
-                levelsweeps[l][q] = copy(pass.d1c)
+                if length(seeing) == nmem
+                    levelsweeps[l][q] = copy(pass.d1c)
+                else
+                    swept = zeros(Float64, npar, nmem)
+                    @inbounds for (c, m) in enumerate(seeing), t in 1:npar
+                        swept[t, m] = pass.d1c[t, c]
+                    end
+                    levelsweeps[l][q] = swept
+                end
             end
         end
     end

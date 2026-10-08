@@ -134,6 +134,48 @@ test_that("popunique is refused where it cannot apply, by name", {
   expect_silent(nofit <- .pu_spec(d, m, popunique = FALSE))
 })
 
+test_that("own variances of items a subject never answers are skipped, exactly", {
+  skip_without_julia()
+  # Half the subjects never answer Y3, so its own variance cannot reach their
+  # data; the engine skips that coordinate for them. Pruning on and off must
+  # give the same value and gradient, on a single-level unit and on the block
+  # route of a nested one (forced at any unit size by the block threshold).
+  d <- .pu_data(study = TRUE)
+  d$Y3[d$id > 12] <- NA
+  set.seed(7)
+  threshold <- NULL
+  on.exit({
+    ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_set_laplace_prune!(true)")
+    if (!is.null(threshold)) ctsem:::.ctJuliaEval(sprintf(
+      "ContinuousTimeSEM.ctsem_set_block_threshold!(%d)", threshold))
+  }, add = TRUE)
+  for (levels in list("id", c("id", "study"))) {
+    rank <- if (length(levels) == 1L) 1 else c(id = 1, study = 1)
+    pu <- if (length(levels) == 1L) "MANIFESTMEANS" else list(id = "MANIFESTMEANS")
+    spec <- .pu_spec(d, .pu_model(levels), poprank = rank, popunique = pu)
+    inert <- spec$laplace$inert
+    expect_false(is.null(inert))
+    # Y3's intercept (effect 3), for subjects 13-24 at the subject level.
+    expect_setequal(inert[inert[, "level"] == 1, "group"], 13:24)
+    expect_true(all(inert[, "effect"] == 3L))
+    x <- rnorm(length(.pu_names(spec)), 0, 0.3)
+    prune <- function(on) ctsem:::.ctJuliaEval(sprintf(
+      "ContinuousTimeSEM.ctsem_set_laplace_prune!(%s)", tolower(on)))
+    if (length(levels) > 1L) {
+      threshold <- as.integer(ctsem:::.ctJuliaEval(
+        "ContinuousTimeSEM._LAPLACE_BLOCK_THRESHOLD[]"))
+      ctsem:::.ctJuliaEval("ContinuousTimeSEM.ctsem_set_block_threshold!(1)")
+    }
+    prune(FALSE)
+    full <- .pu_eval(spec, x)
+    prune(TRUE)
+    pruned <- .pu_eval(spec, x)
+    expect_equal(pruned$value, full$value, tolerance = 1e-10)
+    expect_equal(as.numeric(pruned$gradient), as.numeric(full$gradient),
+      tolerance = 1e-8)
+  }
+})
+
 test_that("a fit with own variances converges and reports them", {
   skip_without_julia()
   skip_on_cran()

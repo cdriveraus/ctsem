@@ -2382,8 +2382,57 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     nrandom = as.integer(total),
     nlevels = length(levels),
     base_npar = as.integer(base_npar),
-    npar = as.integer(cursor)
+    npar = as.integer(cursor),
+    inert = .ctJuliaLaplaceInert(model, setup, levels, dat)
   )
+}
+
+# Which random effects cannot reach which groups' data: a matrix of (level,
+# group, effect) rows, effect indexing the level's `re_index`, or NULL.
+#
+# An effect is a candidate when every matsetup cell carrying its raw position is
+# a LAMBDA or MANIFESTMEANS cell: the filter's row update reads only the
+# observed manifests' rows of those matrices, so such an effect reaches its
+# own manifests and nothing else. It is inert for a group none of whose
+# subjects ever observes one of them -- an item a study did not ask, say -- and
+# the engine then skips the coordinates that move only inert effects, which is
+# exact (`CTSEMLaplaceUnits`). A calculation reading LAMBDA or MANIFESTMEANS
+# cells could carry an effect elsewhere, so such a model is left as it is.
+.ctJuliaLaplaceInert <- function(model, setup, levels, dat) {
+  if (is.null(setup) || !nrow(setup) || !length(levels)) return(NULL)
+  rhs <- sub("^[^=]*=", "", unlist(model$modelmats$calcs))
+  if (any(grepl("LAMBDA[", rhs, fixed = TRUE) |
+      grepl("MANIFESTMEANS[", rhs, fixed = TRUE))) return(NULL)
+  manifests <- model$manifestNames
+  id <- model$subjectIDname
+  if (!length(manifests) || !all(c(id, manifests) %in% colnames(dat))) return(NULL)
+  codes <- .ctMatricesList()$base[c("LAMBDA", "MANIFESTMEANS")]
+  subjects <- factor(dat[[id]], levels = unique(dat[[id]]))
+  # Subjects by manifests: whether that subject observes it at all.
+  observed <- vapply(manifests, function(m)
+    as.vector(tapply(!is.na(dat[[m]]), subjects, any)), logical(nlevels(subjects)))
+  observed <- matrix(observed, nrow = nlevels(subjects))
+  param <- as.integer(setup$param)
+  out <- list()
+  for (l in seq_along(levels)) {
+    lv <- levels[[l]]
+    reach <- lapply(as.integer(lv$re_index), function(p) {
+      rows <- which(param == p)
+      if (!length(rows) || !all(as.integer(setup$matrix[rows]) %in% codes)) return(NULL)
+      unique(as.integer(setup$row[rows]))
+    })
+    candidates <- which(!vapply(reach, is.null, logical(1)))
+    if (!length(candidates) || length(lv$group) != nrow(observed)) next
+    # Groups by manifests: whether any of the group's subjects observes it.
+    seen <- rowsum(observed * 1, as.integer(lv$group), reorder = TRUE) > 0
+    if (nrow(seen) != lv$ngroups) next
+    for (j in candidates) {
+      g <- which(!apply(seen[, reach[[j]], drop = FALSE], 1, any))
+      if (length(g)) out[[length(out) + 1L]] <- cbind(level = l, group = g, effect = j)
+    }
+  }
+  if (!length(out)) return(NULL)
+  do.call(rbind, out)
 }
 
 # The raw entry for a population sd, as the engine's `_laplace_popchol` reads
@@ -3753,6 +3802,14 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     })
     if (any(unlist(owns) > 0L)) {
       laplace_args$unique_index <- V(as.integer(unlist(owns)))
+    }
+    # Effects that cannot reach a group's data (`.ctJuliaLaplaceInert`), sent
+    # only when there are some, so every other model crosses as before.
+    inert <- spec$laplace$inert
+    if (!is.null(inert) && nrow(inert)) {
+      laplace_args$inert_level <- V(as.integer(inert[, "level"]))
+      laplace_args$inert_group <- V(as.integer(inert[, "group"]))
+      laplace_args$inert_effect <- V(as.integer(inert[, "effect"]))
     }
     # Absent unless the fit asked for them, so the engine's own defaults stay
     # the defaults and a spec built before this existed is byte-for-byte as it
