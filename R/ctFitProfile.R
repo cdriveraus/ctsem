@@ -127,7 +127,7 @@ ctFitProfile <- function(fit, parameters = NULL, points = 8L, step = NULL,
   # and the base value below evaluates it through the fit directly), fetched
   # once here so a model shape Julia has not compiled for announces itself
   # before the loop rather than partway through it.
-  invisible(.ctJuliaObjective(fit))
+  invisible(.ctJuliaObjective(fit, hybrid = TRUE))
   # The fit's own resolved controls, the way `.ctBackendGapTolerance()` reads
   # them: a profile point used to run on the engine's bare defaults -- no
   # transform-scale metric, no batching, no Newton finish, the gap rule off --

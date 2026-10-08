@@ -3930,9 +3930,18 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   list(ekf = arguments, objective = objective_args, laplace = laplace_args)
 }
 
-.ctJuliaObjective <- function(object) {
+.ctJuliaObjective <- function(object, hybrid = FALSE) {
   stopifnot(inherits(object, "ctJuliaModel") || inherits(object, "ctJuliaFit"))
   spec <- if (inherits(object, "ctJuliaFit")) object$model_spec else object
+  # Own variances the subject filter integrates (`.ctJuliaLaplaceHybrid`) leave
+  # the Laplace layer with no coordinate for them: no mode, no deviation, no
+  # column of the population root. So only the paths that evaluate the
+  # objective a fit optimises ask for it -- the optimiser, evaluation, the
+  # Hessian and scores, the marginal sampler. Every other reader, reporting and
+  # generation among them, gets the objective with each own variance a
+  # coordinate: for a linear model the same function, so a path that does not
+  # ask is slower, never wrong.
+  if (!isTRUE(hybrid) && !is.null(spec$laplace$hybrid)) spec$laplace$hybrid <- NULL
   inputs <- .ctJuliaObjectiveInputs(spec)
   key <- .ctJuliaObjectiveKey(spec, inputs)
   cached <- .ctJuliaCached(key)
@@ -4049,7 +4058,7 @@ ctJuliaEvaluate <- function(object, pars = NULL, gradient = TRUE, contributions 
   }
   module <- .ctJuliaModule(if (inherits(object, "ctJuliaFit")) object$model_spec$project else object$project)
   result <- .ctBackendWithMaxChunks(cores, module$ctsem_evaluate(
-    .ctJuliaObjective(object), .ctJuliaNumericVector(pars),
+    .ctJuliaObjective(object, hybrid = TRUE), .ctJuliaNumericVector(pars),
     gradient = isTRUE(gradient), contributions = isTRUE(contributions),
     gradient_method = gradient_method))
   .ctJuliaGet(result)
@@ -4514,7 +4523,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # 885 iterations, spent the last 300 of them with a predicted gain of
   # 1e-8, and stopped 387 nats short with neither rule having fired once.
   state_explicit <- !is.null(objective)
-  if (is.null(objective)) objective <- .ctJuliaObjective(spec)
+  if (is.null(objective)) objective <- .ctJuliaObjective(spec, hybrid = TRUE)
   module <- .ctJuliaModule(model_spec$project)
   # The shared optimcontrol vocabulary (see the table at the top of R/ctFit.R).
   # `tol` is the objective criterion on both backends -- mize's `abs_tol` there,

@@ -93,7 +93,7 @@
   }
   if (!wantgrad) {
     module <- .ctJuliaModule(fit$model_spec$project)
-    objective <- .ctJuliaObjective(fit)
+    objective <- .ctJuliaObjective(fit, hybrid = TRUE)
     attr(fn, "batch") <- function(draws) {
       draws <- as.matrix(draws)
       # The engine takes columns as draws; `imis_is`'s `x_new` (and every
@@ -751,13 +751,14 @@
     error = function(e) FALSE))
   result <- try(.ctBackendJuliaValue(
     if (reporting_available) {
-      module$ctsem_hessian_progress(.ctJuliaObjective(fit),
+      module$ctsem_hessian_progress(.ctJuliaObjective(fit, hybrid = TRUE),
         .ctJuliaVector(as.numeric(est)),
         forward = identical(hessian_fn_name, "ctsem_hessian_forward"),
         progress = !is.null(sink), progress_sink = sink,
         progress_overwrite = .ctProgressOverwrite(verbose), progress_label = "hessian")
     } else {
-      module[[hessian_fn_name]](.ctJuliaObjective(fit), .ctJuliaVector(as.numeric(est)))
+      module[[hessian_fn_name]](.ctJuliaObjective(fit, hybrid = TRUE),
+        .ctJuliaVector(as.numeric(est)))
     }), silent = TRUE)
   # Ends the in-place line, if the loop ran long enough for one to be open,
   # before anything else -- a warning below, or nothing at all -- prints on
@@ -802,7 +803,7 @@
   }
   module <- .ctJuliaModule(fit$model_spec$project)
   result <- .ctJuliaGet(module$ctsem_subject_gradients(
-    .ctJuliaObjective(fit), .ctJuliaVector(as.numeric(est))))
+    .ctJuliaObjective(fit, hybrid = TRUE), .ctJuliaVector(as.numeric(est))))
   scores <- as.matrix(result$scores)
   if (any(!is.finite(scores))) {
     stop("The engine returned non-finite per-subject scores at the estimate; ",

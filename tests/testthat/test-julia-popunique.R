@@ -176,6 +176,66 @@ test_that("own variances of items a subject never answers are skipped, exactly",
   }
 })
 
+test_that("own intercept variances the filter integrates match the Laplace coordinates", {
+  skip_without_julia()
+  # A linear Gaussian model with own variances on intercepts: the Laplace layer
+  # is exact over them and so is the filter's closed form (`CTSEMHybrid`), so
+  # taking them out of the layer, the default, and leaving them in must give
+  # the same value and gradient. Missing items exercise the per-row observed
+  # subset, rank 0 a level left with no Laplace coordinate at all, and the
+  # study level that a nested level is untouched.
+  d <- .pu_data(study = TRUE)
+  d$Y3[d$id > 12 & d$time > 1] <- NA
+  d$Y1[d$id %% 3 == 0 & d$time == 2] <- NA
+  old <- options(ctsem.laplace.hybrid = TRUE)
+  on.exit(options(old), add = TRUE)
+  set.seed(9)
+  cases <- list(
+    list(levels = "id", rank = 1, pu = "MANIFESTMEANS"),
+    list(levels = "id", rank = 0, pu = TRUE),
+    list(levels = c("id", "study"), rank = c(id = 1, study = 1),
+      pu = list(id = "MANIFESTMEANS")))
+  for (case in cases) {
+    m <- .pu_model(case$levels)
+    options(ctsem.laplace.hybrid = TRUE)
+    hy <- .pu_spec(d, m, poprank = case$rank, popunique = case$pu)
+    options(ctsem.laplace.hybrid = FALSE)
+    la <- .pu_spec(d, m, poprank = case$rank, popunique = case$pu)
+    expect_equal(hy$laplace$hybrid$effect, 1:3)
+    expect_null(la$laplace$hybrid)
+    x <- rnorm(length(.pu_names(hy)), 0, 0.3)
+    rh <- .pu_eval(hy, x)
+    rl <- .pu_eval(la, x)
+    expect_equal(rh$value, rl$value, tolerance = 1e-9)
+    expect_equal(as.numeric(rh$gradient), as.numeric(rl$gradient), tolerance = 1e-7)
+  }
+})
+
+test_that("integrated own intercepts beside a shared effect on the dynamics: gradient matches forward mode", {
+  skip_without_julia()
+  # The shared effect loads on DRIFT, so the Laplace layer over it is an
+  # approximation and the hybrid is not the same objective as the layer over
+  # everything; its adjoint must still agree with forward mode through it.
+  m <- suppressWarnings(suppressMessages(ctModel(type = "ct",
+    id = "id", manifestNames = c("Y1", "Y2", "Y3"), latentNames = "eta1",
+    LAMBDA = matrix(c(1, 0.8, 1.2), 3, 1), DRIFT = matrix("drift"),
+    DIFFUSION = matrix(0.5), MANIFESTVAR = diag(0.4, 3),
+    MANIFESTMEANS = matrix(c("mm1", "mm2", "mm3"), 3, 1),
+    T0VAR = matrix(1), T0MEANS = matrix(0), CINT = matrix(0))))
+  m$pars$indvarying <- m$pars$param %in% c("drift", "mm1", "mm2", "mm3")
+  d <- .pu_data()
+  d$Y2[d$id > 16] <- NA
+  spec <- .pu_spec(d, m, poprank = 1, popunique = "MANIFESTMEANS")
+  expect_equal(length(spec$laplace$hybrid$effect), 3L)
+  set.seed(13)
+  x <- rnorm(length(.pu_names(spec)), 0, 0.3)
+  adjoint <- .pu_eval(spec, x, "adjoint")
+  forward <- .pu_eval(spec, x, "forward")
+  expect_equal(adjoint$value, forward$value, tolerance = 1e-10)
+  expect_equal(as.numeric(adjoint$gradient), as.numeric(forward$gradient),
+    tolerance = 1e-6)
+})
+
 test_that("a fit with own variances converges and reports them", {
   skip_without_julia()
   skip_on_cran()

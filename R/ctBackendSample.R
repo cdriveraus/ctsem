@@ -713,7 +713,9 @@
   if (isTRUE(target$state_explicit)) {
     .ctJuliaJointObjective(fit, target$npar)
   } else {
-    .ctJuliaObjective(fit)
+    # The marginal target is the objective the fit optimised; the joint one
+    # samples every effect, own variances' included.
+    .ctJuliaObjective(fit, hybrid = isTRUE(target$marginal))
   }
 }
 

@@ -190,7 +190,7 @@
   if (!is.finite(size) || size <= 0) return(NULL)
   module <- .ctJuliaModule(.ctBackendSpec(x)$project)
   out <- try(.ctJuliaGet(module$ctsem_flat_probe(
-    .ctJuliaObjective(x), .ctJuliaNumericVector(as.numeric(at)),
+    .ctJuliaObjective(x, hybrid = TRUE), .ctJuliaNumericVector(as.numeric(at)),
     .ctJuliaNumericVector(direction))), silent = TRUE)
   if (inherits(out, "try-error")) return(NULL)
   .ctBackendProbeFields(out, length(direction))
@@ -836,7 +836,7 @@
     error = function(e) FALSE))
   if (!available) return(NULL)
   est <- as.numeric(est)
-  out <- try(.ctBackendJuliaValue(module[[name]](.ctJuliaObjective(spec),
+  out <- try(.ctBackendJuliaValue(module[[name]](.ctJuliaObjective(spec, hybrid = TRUE),
     .ctJuliaVector(est))), silent = TRUE)
   if (inherits(out, "try-error")) return(NULL)
   matrix(as.numeric(out), nrow = length(est), ncol = length(est))
@@ -947,7 +947,7 @@
   # reach: this path bypasses the finish entirely.
   reporting <- .ctBackendReporting(verbose)
   out <- try(.ctBackendWithMaxChunks(NA_integer_, .ctJuliaGet(
-    module$ctsem_endgame(.ctJuliaObjective(spec), .ctJuliaNumericVector(est),
+    module$ctsem_endgame(.ctJuliaObjective(spec, hybrid = TRUE), .ctJuliaNumericVector(est),
       gradient_method = gradient, flat_rtol = .ctFlatDirectionRtol(),
       progress = reporting, progress_overwrite = .ctProgressOverwrite(verbose),
       progress_sink = .ctBackendProgressSink(verbose), progress_label = "certify"))),
