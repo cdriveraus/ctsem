@@ -95,6 +95,34 @@ end
 CTSEMGrowth(n::Int) = CTSEMGrowth(0.0, 0, zeros(n, n), zeros(n, n))
 
 """
+    CTSEMHybridBuffers{T}
+
+One pass's state for the deviations the filter integrates (`CTSEMHybrid`):
+`q` columns, one per hybrid item the subject observes at all (`col[j]` the
+column of manifest `j`, 0 for none; `item[c]` the hybrid item of column `c`);
+`X`, the state mean's dependence on them (`n x q`); the accumulated
+`S = sum V' S_t^-1 V` and `s = sum V' S_t^-1 y_t`; and row scratch. Mutable so
+the arrays can grow when a model needs more than the empty default -- the
+workspace may be built before the Laplace objective fills `CTSEMHybrid`.
+"""
+mutable struct CTSEMHybridBuffers{T}
+    active::Bool
+    q::Int
+    col::Vector{Int}
+    item::Vector{Int}
+    X::Matrix{T}
+    Xt::Matrix{T}
+    V::Matrix{T}
+    W::Matrix{T}
+    S::Matrix{T}
+    s::Vector{T}
+    e::Vector{T}
+end
+CTSEMHybridBuffers{T}() where {T} = CTSEMHybridBuffers{T}(false, 0, Int[], Int[],
+    zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0),
+    T[], T[])
+
+"""
     ContinuousEKFWorkspace
 
 Reusable workspace for continuous-time extended Kalman filter evaluations.
@@ -211,6 +239,9 @@ struct ContinuousEKFWorkspace{T, N, M, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF
     # that to every prediction, rather than each prediction rebuilding it.
     diffusion_static::Bool
     diffusion_cov::Matrix{T}
+    # The deviations this filter integrates itself, when the model has any
+    # (`CTSEMHybrid`, `_hybrid_start!`).
+    hyb::CTSEMHybridBuffers{T}
 end
 
 """
@@ -434,6 +465,7 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
         _ctsem_static_component(sp, :DIFFUSION, predict_param_indices,
             update_param_indices, td_param_indices),
         zeros(T, n, n),
+        CTSEMHybridBuffers{T}(),
     )
 end
 

@@ -97,6 +97,7 @@ include("reverse_scratch.jl")
 # record type must exist when `CTSEMAdjointTape` is defined.
 include("adjoint_binary.jl")
 include("adjoint_ekf.jl")
+include("hybrid_filter.jl")
 include("adjoint.jl")
 include("summary_matrices.jl")
 include("kalman_trace.jl")

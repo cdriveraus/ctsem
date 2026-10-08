@@ -522,6 +522,7 @@ function _ctsem_subject_gradient_chunk!(scores::Matrix{T}, totals::Vector{T},
             _ctsem_parameter_layer!(view(scores, i, :), aws.theta_bar,
                 tape.subject_values, subject_objective.params, aws,
                 subject_objective.tipreds, values)
+            _hybrid_scatter!(view(scores, i, :), tape.hyb, subject_objective.params.hybrid)
         end
     finally
         aws.defer_frechet = deferred
@@ -591,6 +592,9 @@ function _ctsem_adjoint_chunk!(gradient::Vector{T}, totals::Vector{T},
 
         shared || fill!(aws.theta_bar, zero(T))
         _ctsem_reverse_tape!(tape, subject_objective.params, aws, aws.n, aws.m)
+        # Per subject and straight onto raw positions, so before or after a
+        # shared parameter layer alike (`CTSEMHybrid`).
+        _hybrid_scatter!(gradient, tape.hyb, subject_objective.params.hybrid)
         # Kept for the shared parameter layer below, and for the deferred
         # Frechet pass; with either of those enabled every subject sees the
         # same parameter layer, so any subject's values do. The original

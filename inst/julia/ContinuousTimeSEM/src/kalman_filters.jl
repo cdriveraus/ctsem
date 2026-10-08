@@ -208,6 +208,8 @@ end
     _mul_right_transpose!(ws.P_predict.data, ws.bufferQ.intermediate, ws.discrete_ca.dDRIFT, ws.state_dim, ws.state_dim, ws.state_dim)
     ws.P_predict.data .+= ws.discrete_ca.dDIFFUSION
     _copy_lower_to_upper!(ws.P_predict.data, ws.state_dim)
+    ws.hyb.active && ws.hyb.q > 0 &&
+        _hybrid_predict!(ws.hyb, ws.discrete_ca.dDRIFT, _val(ws.state_dim))
     return nothing
 end
 
@@ -680,6 +682,9 @@ function _ekf_masked_update_step!(ws::ContinuousEKFWorkspace, pars,
     _ctsem_mulNT!(ws.bufferQ.out, GR, KRv)
     ws.P_update.data .+= ws.bufferQ.out
     _copy_lower_to_upper!(ws.P_update.data, ws.state_dim)
+    # The integrated deviations' share of this update (`CTSEMHybrid`).
+    ws.hyb.active && ws.hyb.q > 0 &&
+        _hybrid_update!(ws.hyb, Lv, factor, KRv, yv, observed, n)
     return factor
 end
 
@@ -1054,6 +1059,8 @@ function _extended_kalman_filter_continuous!(
     _copy_lower_to_upper!(ws.P_predict.data, ws.state_dim)
     _apply_population_block!(ws, all_params)
     copyto!(ws.state, pars.T0MEANS)
+    _hybrid_start!(ws.hyb, sp.hybrid, data, _val(ws.state_dim), _val(ws.manifest_dim),
+        sp.continuous_time)
     _record_init!(trace, pars, _val(ws.state_dim),
         _population_raw_view(ws, all_params))
 
@@ -1188,6 +1195,8 @@ function _extended_kalman_filter_continuous!(
 
         prev_timestep = curr_timestep
     end
+    # The integrated deviations' closing term (`CTSEMHybrid`).
+    ws.hyb.active && (ll += _hybrid_marginal!(ws.hyb, sp.hybrid, params, trace))
     return ll
 end
 

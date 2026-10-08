@@ -77,6 +77,8 @@ mutable struct CTSEMPredictRecord{T}
     series_intercept::Bool
     series_noise::Bool
     Qd::Matrix{T}
+    # `X` entering the substep (`CTSEMHybrid`), `n x q`; `0 x 0` without.
+    Xh::Matrix{T}
 end
 
 """One TD-predictor impulse."""
@@ -103,7 +105,48 @@ mutable struct CTSEMUpdateRecord{T}
     H::Matrix{T}             # Jy[observed, :]
     R::Matrix{T}             # Θ[observed, observed]
     y::Vector{T}             # observed data for this row
+    # `X` entering the update (`CTSEMHybrid`), `n x q`; `0 x 0` without.
+    Xh::Matrix{T}
 end
+
+"""
+    CTSEMHybridTape{T}
+
+The deviations the filter integrated (`CTSEMHybrid`), for the reverse pass:
+what the pass ended with -- `q`, the columns' items and manifests (`item`,
+`col`), the accumulated `S` and `s`, each column's `g` and `dg/draw` -- and the
+reverse state: the cotangents of `S` and `s` from the closing term, the
+cotangent of `X` carried backwards through the rows, and each item's own-sd
+cotangent (`psibar`), which the caller adds to the raw gradient. Scratch for
+the per-row work beside it.
+"""
+mutable struct CTSEMHybridTape{T}
+    active::Bool
+    q::Int
+    item::Vector{Int}
+    col::Vector{Int}
+    S::Matrix{T}
+    s::Vector{T}
+    g::Vector{T}
+    dg::Vector{T}
+    Sbar::Matrix{T}
+    sbar::Vector{T}
+    Xbar::Matrix{T}
+    psibar::Vector{T}
+    V::Matrix{T}
+    W::Matrix{T}
+    Z::Matrix{T}
+    Vbar::Matrix{T}
+    Kbar::Matrix{T}
+    Rbar::Matrix{T}
+    ybar::Vector{T}
+    Lbar::Matrix{T}
+    Xt::Matrix{T}
+end
+CTSEMHybridTape{T}() where {T} = CTSEMHybridTape{T}(false, 0, Int[], Int[],
+    zeros(T, 0, 0), T[], T[], T[], zeros(T, 0, 0), T[], zeros(T, 0, 0), T[],
+    zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0),
+    zeros(T, 0, 0), T[], zeros(T, 0, 0), zeros(T, 0, 0))
 
 """
 One application of a group of state-dependent transforms.
@@ -198,6 +241,8 @@ mutable struct CTSEMAdjointTape{T}
     nbinaries::Int
     nstationaries::Int
     subject_values::Vector{T}
+    # The integrated deviations' record and reverse state; see `CTSEMHybridTape`.
+    hyb::CTSEMHybridTape{T}
     # For each transform group (1 = predict, 2 = td, 3 = update), the
     # `all_params` indices that group can read or write: the union of its
     # transforms' recorded read sets and their written indices. This is what
@@ -211,7 +256,7 @@ CTSEMAdjointTape(::Type{T}, group_relevant=[Int[], Int[], Int[]]) where {T} =
         CTSEMUpdateRecord{T}[], CTSEMGroupRecord{T}[], CTSEMThetaRecord{T}[],
         CTSEMInitRecord{T}[], CTSEMBinaryRecord{T}[],
         CTSEMStationaryRecord{T}[], 0, 0, 0, 0, 0, 0, 0, 0,
-        T[], group_relevant)
+        T[], CTSEMHybridTape{T}(), group_relevant)
 
 """
 Transition growth above which a subject's gradient is taken by forward mode
@@ -446,6 +491,7 @@ function _tape_reset!(tape::CTSEMAdjointTape)
     tape.npredicts = 0; tape.ntds = 0; tape.nupdates = 0
     tape.ngroups = 0; tape.nthetas = 0; tape.ninits = 0
     tape.nbinaries = 0; tape.nstationaries = 0
+    tape.hyb.active = false
     return tape
 end
 
@@ -675,7 +721,8 @@ function _record_update!(tape::CTSEMAdjointTape{T}, ws, pars, data, obs_col::Int
             o, collect(vec(state_in)), Matrix(P_in),
             Matrix(pars.LAMBDA[o, 1:n]), collect(pars.MANIFESTMEANS[o]),
             Matrix(pars.Jy[o, 1:n]), Matrix(ws.bufferΘ.out[o, o]),
-            T[data[i, obs_col] for i in o]))
+            T[data[i, obs_col] for i in o], zeros(T, 0, 0)))
+        _hybrid_record_X!(tape.updates[index], ws.hyb, n)
         _tape_push!(tape, :update, index)
         return nothing
     end
@@ -693,6 +740,7 @@ function _record_update!(tape::CTSEMAdjointTape{T}, ws, pars, data, obs_col::Int
     @inbounds for j in eachindex(o)
         record.y[j] = T(data[o[j], obs_col])
     end
+    _hybrid_record_X!(record, ws.hyb, n)
     _tape_push!(tape, :update, index)
     return nothing
 end
@@ -703,7 +751,8 @@ end
 _empty_predict_record(::Type{T}, n::Int, k::Int, naff::Int=k) where {T} =
     CTSEMPredictRecord{T}(zeros(T, n), zeros(T, n, n), zeros(T, n, n),
         zeros(T, n, n), zeros(T, n, n), zeros(T, n, n), zeros(T, k, k),
-        zeros(T, naff), zeros(T, naff), zero(T), false, false, zeros(T, 0, 0))
+        zeros(T, naff), zeros(T, naff), zero(T), false, false, zeros(T, 0, 0),
+        zeros(T, 0, 0))
 
 """
 Snapshot the substep inputs, which `_ekf_predict_step!` overwrites.
@@ -724,6 +773,7 @@ function _begin_predict!(tape::CTSEMAdjointTape{T}, ws, n::Int) where {T}
     record = tape.predicts[index]
     _tape_fill!(record.state_in, ws.state)
     record.P_in = _tape_fill!(record.P_in, view(ws.P_update.data, 1:n, 1:n))
+    _hybrid_record_X!(record, ws.hyb, n)
     return record
 end
 
@@ -884,7 +934,7 @@ likelihood entirely. `A` spans the whole augmented state throughout.
 """
 function _reverse_predict!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
     record::CTSEMPredictRecord{T}, dyn::AbstractVector{Int}, n::Int,
-    lyap_buffer, aws) where {T}
+    lyap_buffer, aws, hyb::Union{Nothing,CTSEMHybridTape{T}}=nothing) where {T}
     A = record.A
     JAx = record.JAx
     x = record.state_in
@@ -941,6 +991,8 @@ function _reverse_predict!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
 
     # --- mean: x⁺ = A x + dINT
     _ctsem_outer!(Ā, x̄, x, one(T), one(T))
+    # and the integrated deviations' X⁺ = A X (`CTSEMHybrid`).
+    hyb === nothing || _hybrid_reverse_predict!(Ā, A, hyb, record, n)
     copyto!(dINT_bar, x̄)
     _ctsem_mulTvec!(x̄_new, A, x̄)
 
@@ -1208,7 +1260,8 @@ explosive row against BigFloat: the amplified `P̄` to 3e-6 relative where the
 previous derivation was 24% off, `H̄` to 2e-6 where it was 28% off.
 """
 function _reverse_update!(x̄::Vector{T}, P̄::Matrix{T}, Θ̄::Matrix{T}, θ̄ca,
-    record::CTSEMUpdateRecord{T}, n::Int, sc::CTSEMReverseScratch{T}) where {T}
+    record::CTSEMUpdateRecord{T}, n::Int, sc::CTSEMReverseScratch{T},
+    hyb::Union{Nothing,CTSEMHybridTape{T}}=nothing) where {T}
     o = record.observed
     m = length(o)
     H = record.H
@@ -1322,6 +1375,10 @@ function _reverse_update!(x̄::Vector{T}, P̄::Matrix{T}, Θ̄::Matrix{T}, θ̄c
     _ctsem_mulvec!(a, Ui, e)
     _ctsem_mul!(Kb, PHt, Ui)
     _ctsem_mulNT!(K, Kb, Ui)
+    # The integrated deviations' cotangents of the gain, the innovation
+    # covariance, the innovation and LAMBDA's rows, folded in below where the
+    # base reverse handles each (`_hybrid_reverse_update!`).
+    hyb === nothing || _hybrid_reverse_update!(hyb, record, Ui, K, a, n)
     _ctsem_mul!(M, K, H)                                     # M = I - K H
     M .= .-M
     @inbounds for i in 1:n; M[i, i] += oneT; end
@@ -1359,6 +1416,9 @@ function _reverse_update!(x̄::Vector{T}, P̄::Matrix{T}, Θ̄::Matrix{T}, θ̄c
     _ctsem_mul!(Kc, Ps, K, -2ε, false)                       # -2ε P̄⁺ K
     _ctsem_mul!(Mc, Ps, M, -2ε, false)                       # -2ε P̄⁺ M
     _ctsem_mulNT!(Kc, Mc, H, -oneT, oneT)                    # through M = I - K H
+    # The gain's cotangent from the integrated deviations rides the same
+    # K = Pr H' S^-1 path as the ridge correction's.
+    hyb === nothing || (Kc .+= hyb.Kbar)
     _ctsem_mul!(nm1, Kc, Ui)
     _ctsem_mul!(nn1, nm1, Wh)                                # K̄ S⁻¹ H
     @inbounds for j in 1:n, i in 1:n
@@ -1411,6 +1471,7 @@ function _reverse_update!(x̄::Vector{T}, P̄::Matrix{T}, Θ̄::Matrix{T}, θ̄c
     end
     _ctsem_mulTN!(mm1, K, PHt, -oneT, false)                 # S̄ = -K'K̄ S⁻¹
     _symmetrize_into!(S̄0, mm1)
+    hyb === nothing || (S̄0 .+= hyb.Rbar)
     _ctsem_mul!(Λ̄, S̄0, H)                                   # S = H Pr H' + R̃
     _ctsem_mulTN!(P̄_new, H, Λ̄, oneT, oneT)
     _ctsem_mul!(H̄, Λ̄, Pr, T(2), oneT)
@@ -1420,9 +1481,11 @@ function _reverse_update!(x̄::Vector{T}, P̄::Matrix{T}, Θ̄::Matrix{T}, θ̄c
     @inbounds for i in 1:m
         ỹ̄[i] = Kx[i] - a[i]
     end
+    hyb === nothing || (ỹ̄ .+= hyb.ybar)
     copyto!(x̄_new, x̄)
     _ctsem_outer!(Λ̄, ỹ̄, x)
     Λ̄ .= .-Λ̄
+    hyb === nothing || (Λ̄ .+= hyb.Lbar)
     _ctsem_mulTvec!(x̄_new, Λ, ỹ̄, -one(T), one(T))
 
     # --- scatter back into the full-size parameter and Θ cotangents
@@ -1485,7 +1548,12 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
     for entry_index in length(tape.program):-1:1
         kind, index = tape.program[entry_index]
         if kind === :update
-            _reverse_update!(x̄, P̄, Θ̄, θ̄ca, tape.updates[index], n, aws.reverse_scratch)
+            _reverse_update!(x̄, P̄, Θ̄, θ̄ca, tape.updates[index], n, aws.reverse_scratch,
+                tape.hyb.active && tape.hyb.q > 0 ? tape.hyb : nothing)
+        elseif kind === :hybrid
+            # The integrated deviations' closing term; last in the forward, so
+            # first here (`CTSEMHybrid`).
+            _reverse_hybrid_marginal!(tape.hyb, n, length(sp.hybrid.manifests))
         elseif kind === :binary
             # After the Gaussian block of the same row, because the forward
             # applied binary observations before it. By the workspace's type,
@@ -1497,7 +1565,8 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
         elseif kind === :td
             _reverse_td!(x̄, P̄, θ̄ca, tape.tds[index], n)
         elseif kind === :predict
-            _reverse_predict!(x̄, P̄, θ̄ca, tape.predicts[index], dyn, n, aws.lyap_buffer, aws)
+            _reverse_predict!(x̄, P̄, θ̄ca, tape.predicts[index], dyn, n, aws.lyap_buffer, aws,
+                tape.hyb.active && tape.hyb.q > 0 ? tape.hyb : nothing)
         elseif kind === :group
             # Only a group that writes a JAx cell can consume a queued Fréchet
             # contribution (its reverse zeroes that cell's cotangent).

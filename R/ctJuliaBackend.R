@@ -2416,8 +2416,54 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     nlevels = length(levels),
     base_npar = as.integer(base_npar),
     npar = as.integer(cursor),
-    inert = .ctJuliaLaplaceInert(model, setup, levels, dat)
+    inert = .ctJuliaLaplaceInert(model, setup, levels, dat),
+    hybrid = .ctJuliaLaplaceHybrid(model, setup, levels)
   )
+}
+
+# Which subject-level own variances the subject filter integrates itself
+# instead of the Laplace layer (the engine's `CTSEMHybrid`): a list of the
+# effects (indices into the subject level's), the manifest each one is the
+# intercept of, and that intercept transform's slope in the raw value -- or
+# NULL.
+#
+# An own variance qualifies when every matsetup cell carrying its raw position
+# is a MANIFESTMEANS cell of one manifest with the affine transform (code 0:
+# `(raw * meanscale + inneroffset) * multiplier + offset`, slope
+# `meanscale * multiplier`). Then, for fixed deviations, a linear Gaussian
+# filter's covariances and gains do not depend on them, the log likelihood is
+# exactly quadratic in them, and the filter integrates them in closed form;
+# Laplace runs over what is left. So the model must also be linear and
+# Gaussian: continuous time, every indicator Gaussian, no cell referencing a
+# state, no calculation. Off with `options(ctsem.laplace.hybrid = FALSE)`, which
+# keeps every own variance in the Laplace layer as before.
+.ctJuliaLaplaceHybrid <- function(model, setup, levels) {
+  if (!isTRUE(getOption("ctsem.laplace.hybrid", TRUE))) return(NULL)
+  if (is.null(setup) || !nrow(setup) || !length(levels)) return(NULL)
+  lv <- levels[[1]]
+  own <- which(as.integer(lv$unique_index) > 0L)
+  if (!length(own)) return(NULL)
+  if (!isTRUE(model$continuoustime)) return(NULL)
+  if (length(model$manifesttype) && any(as.integer(model$manifesttype) != 0L)) return(NULL)
+  if (length(unlist(model$modelmats$calcs))) return(NULL)
+  if ("stateref" %in% names(setup) && any(as.integer(setup$stateref) > 0L)) return(NULL)
+  values <- as.data.frame(model$modelmats$matvalues)
+  code <- .ctMatricesList()$base[["MANIFESTMEANS"]]
+  param <- as.integer(setup$param)
+  effect <- integer(); manifest <- integer(); slope <- numeric()
+  for (p in own) {
+    rows <- which(param == as.integer(lv$re_index[p]))
+    if (!length(rows) || !all(as.integer(setup$matrix[rows]) == code) ||
+        !all(as.integer(setup$transform[rows]) == 0L) ||
+        length(unique(as.integer(setup$row[rows]))) != 1L) next
+    sl <- as.numeric(values$meanscale[rows]) * as.numeric(values$multiplier[rows])
+    if (!all(is.finite(sl)) || any(abs(sl - sl[1]) > 0)) next
+    effect <- c(effect, p)
+    manifest <- c(manifest, as.integer(setup$row[rows[1]]))
+    slope <- c(slope, sl[1])
+  }
+  if (!length(effect)) return(NULL)
+  list(effect = effect, manifest = manifest, slope = slope)
 }
 
 # Which random effects cannot reach which groups' data: a matrix of (level,
@@ -3844,6 +3890,14 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       laplace_args$inert_level <- V(as.integer(inert[, "level"]))
       laplace_args$inert_group <- V(as.integer(inert[, "group"]))
       laplace_args$inert_effect <- V(as.integer(inert[, "effect"]))
+    }
+    # Own variances the subject filter integrates (`.ctJuliaLaplaceHybrid`),
+    # sent only when there are some.
+    hybrid <- spec$laplace$hybrid
+    if (!is.null(hybrid) && length(hybrid$effect)) {
+      laplace_args$hybrid_effect <- V(as.integer(hybrid$effect))
+      laplace_args$hybrid_manifest <- V(as.integer(hybrid$manifest))
+      laplace_args$hybrid_slope <- V(as.numeric(hybrid$slope))
     }
     # Absent unless the fit asked for them, so the engine's own defaults stay
     # the defaults and a spec built before this existed is byte-for-byte as it

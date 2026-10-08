@@ -143,11 +143,15 @@ struct CTSEMLaplaceLevel
     order::Vector{Int}
     sd_fixed::Vector{Float64}
     cor_fixed::Vector{Float64}
+    # Effects whose own variance the subject filter integrates rather than this
+    # level (`CTSEMHybrid`): no column of the level's root, no coordinate of
+    # its block. Empty when there are none.
+    hybrid::Vector{Bool}
 
     function CTSEMLaplaceLevel(re_index, sd_index, cor_index, sd_scale, group,
         ngroups::Integer; covmatcode::Integer=0, rank::Integer=-1,
         load_index=Int[], sd_fixed=Float64[], cor_fixed=Float64[],
-        unique_index=Int[])
+        unique_index=Int[], hybrid=Bool[])
         re = Vector{Int}(collect(re_index))
         sd = Vector{Int}(collect(sd_index))
         cor = Vector{Int}(collect(cor_index))
@@ -193,6 +197,14 @@ struct CTSEMLaplaceLevel
         end
         r == 0 && isempty(uniq) && k > 0 && throw(ArgumentError(
             "a rank-0 level needs an own variance on some effect; otherwise it has no variation"))
+        hyb = Vector{Bool}(collect(hybrid))
+        if !isempty(hyb)
+            length(hyb) == k || throw(DimensionMismatch(
+                "hybrid holds one entry per random effect"))
+            all(p -> !hyb[p] || (!isempty(uniq) && uniq[p] > 0), 1:k) ||
+                throw(ArgumentError("an effect the filter integrates needs an own variance"))
+            any(hyb) || (hyb = Bool[])
+        end
         isempty(grp) || (minimum(grp) >= 1 && maximum(grp) <= ngroups) ||
             throw(ArgumentError("group ids must lie in 1:ngroups"))
         sdfix = isempty(sd_fixed) ? fill(NaN, length(sd)) : Vector{Float64}(collect(sd_fixed))
@@ -209,7 +221,7 @@ struct CTSEMLaplaceLevel
         cap > 0 && any(x -> isfinite(x) && abs(x) > cap, corfix) && throw(ArgumentError(
             "a stated correlation coordinate exceeds the cap of $(cap) the population covariance applies"))
         return new(re, sd, cor, load, scale, grp, Int(ngroups), Int(covmatcode), r, uniq,
-            Int[], sdfix, corfix)
+            Int[], sdfix, corfix, hyb)
     end
 end
 
@@ -230,10 +242,19 @@ count, and every site that used it meant one or the other: `re_index[p]` is
 indexed by the parameter count, `u[offset + q]` by the block dimension. A site
 that takes the wrong one still runs and still returns a number.
 """
-nlatent(level::CTSEMLaplaceLevel) = level.rank + count(>(0), level.unique_index)
+nlatent(level::CTSEMLaplaceLevel) = level.rank + nunique(level)
 
-"""Number of this level's effects with an own variance (`unique_index`)."""
-nunique(level::CTSEMLaplaceLevel) = count(>(0), level.unique_index)
+"""
+Number of this level's effects with an own variance (`unique_index`) that the
+level itself carries: one column of its root each. An own variance the filter
+integrates (`hybrid`) is not counted -- it has no column here.
+"""
+nunique(level::CTSEMLaplaceLevel) = count(p -> _laplace_own(level, p),
+    eachindex(level.unique_index))
+
+"""Whether effect `p`'s own variance is a column of the level's root."""
+@inline _laplace_own(level::CTSEMLaplaceLevel, p::Integer) =
+    level.unique_index[p] > 0 && (isempty(level.hybrid) || !level.hybrid[p])
 
 """
     CTSEMLaplaceSpec(levels)
@@ -373,7 +394,7 @@ function _laplace_coordinate_inert(level::CTSEMLaplaceLevel, q::Integer,
         t = q - level.rank
         seen = 0
         for p in eachindex(level.unique_index)
-            level.unique_index[p] > 0 || continue
+            _laplace_own(level, p) || continue
             seen += 1
             seen == t && return insorted(p, inert)
         end
@@ -627,12 +648,20 @@ states, at an index of 0, and `NaN` beside a free one.
 triple says that effect `inert_effect` (an index into that level's effects)
 cannot reach group `inert_group`'s data at level `inert_level`
 (`_laplace_build_units`).
+
+`hybrid_effect`, `hybrid_manifest` and `hybrid_slope`, when sent, are parallel
+too: the subject level's effects (indices into its effects) whose own variance
+the subject filter integrates instead of this objective, the manifest whose
+intercept each one is, and that intercept transform's slope in the raw value
+(`CTSEMHybrid`). They leave the level's root and its block, and fill the
+wrapped objective's `params.hybrid`, which every subject's filter shares.
 """
 function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
     sd_index=Int[], cor_index=Int[], sd_scale=Float64[], level_nre=Int[],
     group=Int[], level_ngroups=Int[], level_covmatcode=Int[],
     level_rank=Int[], load_index=Int[], sd_fixed=Float64[], cor_fixed=Float64[],
     unique_index=Int[], inert_level=Int[], inert_group=Int[], inert_effect=Int[],
+    hybrid_effect=Int[], hybrid_manifest=Int[], hybrid_slope=Float64[],
     inner_maxiter::Integer=_LAPLACE_INNER_MAXITER[], inner_tol::Real=1e-10,
     floor="total", gate_lo::Real=0.2, gate_hi::Real=0.7)
     nsubjects = length(objective.subject_objectives)
@@ -691,8 +720,25 @@ function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
             cor_fixed=isempty(cor_fixed) ? Float64[] :
                 Float64.(cor_fixed[(cor_at + 1):(cor_at + ncor)]),
             unique_index=isempty(unique_index) ? Int[] :
-                Int.(unique_index[(re_at + 1):(re_at + k)])))
+                Int.(unique_index[(re_at + 1):(re_at + k)]),
+            hybrid=(l == 1 && !isempty(hybrid_effect)) ?
+                [p in hybrid_effect for p in 1:k] : Bool[]))
         re_at += k; sd_at += nsd; cor_at += ncor; load_at += nload
+    end
+    # The deviations the filter integrates, into the shared `EKFParameters`.
+    hyb = objective.params.hybrid
+    if isempty(hybrid_effect)
+        hyb.manifests = Int[]; hyb.psi_index = Int[]
+        hyb.sd_scale = Float64[]; hyb.slope = Float64[]
+    else
+        (length(hybrid_manifest) == length(hybrid_effect) == length(hybrid_slope)) ||
+            throw(DimensionMismatch(
+                "hybrid_effect, hybrid_manifest and hybrid_slope must be the same length"))
+        lv = levels[1]
+        hyb.manifests = Int.(hybrid_manifest)
+        hyb.psi_index = [lv.unique_index[p] for p in hybrid_effect]
+        hyb.sd_scale = [lv.sd_scale[p] for p in hybrid_effect]
+        hyb.slope = Float64.(hybrid_slope)
     end
     inert = nothing
     if !isempty(inert_level)
@@ -1035,8 +1081,8 @@ function _laplace_poploading(values::AbstractVector{T}, level::CTSEMLaplaceLevel
     # (`_laplace_popchol`) so a raw value means the same spread either way.
     column = r
     @inbounds for p in eachindex(level.unique_index)
+        _laplace_own(level, p) || continue
         idx = level.unique_index[p]
-        idx > 0 || continue
         column += 1
         L[p, column] = log1p_exp(2 * values[idx] - 1) * level.sd_scale[p] + 1e-10
     end
@@ -1060,8 +1106,18 @@ Reporting helper; the fit itself only ever needs the Cholesky factor.
 """
 function ctsem_laplace_popcov(laplace::CTSEMLaplaceObjective, values::AbstractVector,
     level::Integer=1)
-    L = _laplace_popchol(collect(Float64, values), laplace.spec.levels[level])
-    return L * transpose(L)
+    lv = laplace.spec.levels[level]
+    x = collect(Float64, values)
+    L = _laplace_popchol(x, lv)
+    Sigma = L * transpose(L)
+    # An own variance the filter integrates (`hybrid`) is part of the
+    # population covariance even though it has no column of the root.
+    for p in eachindex(lv.hybrid)
+        lv.hybrid[p] || continue
+        psi = log1p_exp(2 * x[lv.unique_index[p]] - 1) * lv.sd_scale[p] + 1e-10
+        Sigma[p, p] += psi^2
+    end
+    return Sigma
 end
 
 """
@@ -1768,6 +1824,7 @@ function _laplace_subject_value_gradient!(gradient::AbstractVector{T},
         fill!(gradient, zero(T))
         _ctsem_parameter_layer!(gradient, aws.theta_bar, tape.subject_values,
             subject_objective.params, aws, subject_objective.tipreds, values)
+        _hybrid_scatter!(gradient, tape.hyb, subject_objective.params.hybrid)
         _laplace_charge!(_LAPLACE_BYTES_REV, br)
         return loglik
     finally

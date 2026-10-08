@@ -128,6 +128,42 @@ function _group_regular_transforms(transforms::Vector{Any}, mutables::BitVector)
     end
     return (Tuple(groups), gcells, gtf)
 end
+
+"""
+    CTSEMHybrid
+
+Random-effect deviations the subject filter integrates itself rather than the
+Laplace layer: one per item, an own variance (`popunique`) on a manifest
+intercept whose transform is affine. For fixed deviations a linear Gaussian
+filter's covariances and gains do not depend on them -- they only shift
+means -- so the log likelihood is exactly quadratic in them and their
+Gaussian prior integrates out in closed form (de Jong's augmented filter).
+The filter carries `X`, the state mean's dependence on the deviations, and
+accumulates `S = sum V' S_t^-1 V` and `s = sum V' S_t^-1 y_t` with
+`V = Lambda X + E` (`_hybrid_update!`); the pass ends by adding
+`-1/2 logdet(I + G S G) + 1/2 (G s)'(I + G S G)^-1 (G s)`, `G` the items' own
+sds times their transforms' slopes (`_hybrid_marginal!`). Exact for a linear
+Gaussian model; the R side sends it for no other.
+
+Mutable and empty by default, because the Laplace objective that knows which
+deviations are its own is built after the `EKFParameters` it wraps:
+`ctsem_laplace_objective` fills it in place.
+
+  * `manifests[h]`: the manifest whose intercept item `h` shifts.
+  * `psi_index[h]`: the raw position of its own variance.
+  * `sd_scale[h]`, `slope[h]`: its sdscale, and the intercept transform's slope
+    in the raw value, so the deviation in manifest units is
+    `slope * (log1p_exp(2 raw - 1) sd_scale + 1e-10) * u`, `u ~ N(0, 1)`.
+"""
+mutable struct CTSEMHybrid
+    manifests::Vector{Int}
+    psi_index::Vector{Int}
+    sd_scale::Vector{Float64}
+    slope::Vector{Float64}
+end
+CTSEMHybrid() = CTSEMHybrid(Int[], Int[], Float64[], Float64[])
+_hybrid_on(h::CTSEMHybrid) = !isempty(h.manifests)
+
 """
     EKFParameters
 
@@ -274,6 +310,9 @@ struct EKFParameters{RG,PT,UT,TT,AX,FV}
     # Declared last and supplied last, for the reason the `manifesttype`
     # comment above gives.
     stationary::Bool
+    # Deviations the filter integrates itself; see `CTSEMHybrid`. Empty unless a
+    # Laplace objective filled it. Declared last and supplied last.
+    hybrid::CTSEMHybrid
 
     # The constructor ensures that the provided vectors are of the correct types and converts them if necessary.
     function EKFParameters(
@@ -378,6 +417,7 @@ struct EKFParameters{RG,PT,UT,TT,AX,FV}
                 Vector{Float64}(population_scale),
             affine_dim,
             stationary,
+            CTSEMHybrid(),
         )
     end
 end
