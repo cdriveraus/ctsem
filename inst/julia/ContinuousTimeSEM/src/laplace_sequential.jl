@@ -155,17 +155,13 @@ function _laplace_sequential_unit!(out, laplace::CTSEMLaplaceObjective, U::Integ
             end
             # One plug-in pass over rows 1:tt, seeded in the effects, gives row
             # t's updated values and row t+1's predicted ones, both given rows
-            # 1:t. Its coordinates: `u`, then the hybrid items rows 1:tt
-            # observe, each at its posterior mean given rows 1:t -- zero, with
-            # the prior's unit variance, for one not observed by then.
+            # 1:t. Its coordinates: `u`, then every hybrid item, each at its
+            # posterior mean given rows 1:t -- zero, with the prior's unit
+            # variance, for one not observed by then, which a prediction of
+            # that item still carries.
             tt = min(t + 1, T)
             _laplace_truncate!(so, full, tt)
-            pass_items = Int[]
-            if hybrid
-                for (k, j) in enumerate(hyb.manifests)
-                    any(c -> _ctsem_observed(so.data[j, c]), 1:tt) && push!(pass_items, k)
-                end
-            end
+            pass_items = hybrid ? collect(1:length(hyb.manifests)) : Int[]
             D = d + length(pass_items)
             z0 = zeros(Float64, D)
             SigmaP = zeros(Float64, D, D)
