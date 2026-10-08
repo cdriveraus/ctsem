@@ -1780,7 +1780,7 @@ is flushed within the subject here too.
 """
 function _laplace_subject_value_gradient!(gradient::AbstractVector{T},
     subject_objective, aws, values::AbstractVector{T},
-    ekf_workspace=nothing) where {T}
+    ekf_workspace=nothing, full::Bool=false) where {T}
     # Positional, not a keyword: the sampler calls this with `aws` untyped, and
     # a dynamic call with a keyword builds its named tuple on the heap, the
     # workspace copied inside it -- 56 KB an evaluation on gC8.
@@ -1798,6 +1798,10 @@ function _laplace_subject_value_gradient!(gradient::AbstractVector{T},
     # An override must have the same type for the same reason, and it does: the
     # sampler builds it from the same `params` and the same `T`.
     ws = ekf_workspace === nothing ? aws.ekf_ws : ekf_workspace::typeof(aws.ekf_ws)
+    # The filter's own deviations (`CTSEMHybrid`): their profile unless `full`
+    # asks for the integral, and back to the profile afterwards, so a direct
+    # filter call on this workspace never inherits a caller's setting.
+    ws.hyb.full = full
     tape = _tape_reset!(aws.tape)
     resize!(aws.tipreds, length(subject_objective.tipreds))
     copyto!(aws.tipreds, subject_objective.tipreds)
@@ -1815,7 +1819,7 @@ function _laplace_subject_value_gradient!(gradient::AbstractVector{T},
         _laplace_charge!(_LAPLACE_BYTES_FWD, bf)
         isfinite(loglik) || return loglik
         if _growth_unstable(ws)
-            _ctsem_forward_subject_gradient!(gradient, subject_objective, values)
+            _ctsem_forward_subject_gradient!(gradient, subject_objective, values, full)
             return loglik
         end
         br = _laplace_mark()
@@ -1829,6 +1833,7 @@ function _laplace_subject_value_gradient!(gradient::AbstractVector{T},
         return loglik
     finally
         aws.defer_frechet = deferred
+        ws.hyb.full = false
     end
 end
 
@@ -2212,7 +2217,9 @@ end
     _laplace_unit_loglik_gradient(laplace, U, values, Ls, u, aws, positions)
 
 The summed *process* log likelihood of the given member positions and its
-gradient with respect to `u` -- without the `-u'u/2` term, which belongs to the
+gradient with respect to `u`, and `hlogdet`, the summed `logdet(M) / 2` of the
+deviations the members' filters integrate (`CTSEMHybrid`; zero without), whose
+profile the log likelihood holds -- without the `-u'u/2` term, which belongs to the
 unit as a whole rather than to any member.
 
 Restricting the member set is what makes the blocked curvature below cheap. It
@@ -2275,15 +2282,17 @@ function _laplace_unit_loglik_gradient(laplace::CTSEMLaplaceObjective, U::Intege
         # one gradient across a line search while computing the next.
         inner = into === nothing ? zeros(T, length(u)) : fill!(into, zero(T))
         total = zero(T)
+        hsum = zero(T)
         gradient = _laplace_scratch_vector!(laplace, T, length(values), :loglik_grad)
         shift = _laplace_scratch_vector!(laplace, T, length(values), :loglik_shift)
         for m in pos
             loglik = one!(m, aws, gradient, shift, inner)
             isfinite(loglik) ||
-                return (value=loglik, gradient=fill(T(NaN), length(u)))
+                return (value=loglik, gradient=fill(T(NaN), length(u)), hlogdet=zero(T))
             total += loglik
+            hsum += aws.ekf_ws.hyb.half_logdet
         end
-        return (value=total, gradient=inner)
+        return (value=total, gradient=inner, hlogdet=hsum)
     end
 
     # A reduction, not per-member columns: every member of a block adds into
@@ -2305,10 +2314,11 @@ function _laplace_unit_loglik_gradient(laplace::CTSEMLaplaceObjective, U::Intege
     width = _laplace_pool_width()
     used = fill(false, width)
     totals = zeros(T, width)
+    hls = zeros(T, width)
     bad = zeros(T, width)
     okk = fill(true, width)
     _laplace_partition(laplace, npos) do mine, _w
-        local ws, grad, shift, acc, tot, i, loglik, slot
+        local ws, grad, shift, acc, tot, htot, i, loglik, slot
         slot = _laplace_slot()
         # `::typeof(aws)` and not a bare fetch. `_laplace_workspace!` cannot
         # promise a concrete type -- the filter workspace's dimensions come
@@ -2326,6 +2336,7 @@ function _laplace_unit_loglik_gradient(laplace::CTSEMLaplaceObjective, U::Intege
         fill!(acc, zero(T))
         used[slot] = true
         tot = zero(T)
+        htot = zero(T)
         for i in mine
             loglik = one!(pos[i], ws, grad, shift, acc)
             if !isfinite(loglik)
@@ -2334,12 +2345,14 @@ function _laplace_unit_loglik_gradient(laplace::CTSEMLaplaceObjective, U::Intege
                 return false
             end
             tot += loglik
+            htot += ws.ekf_ws.hyb.half_logdet
         end
         totals[slot] = tot
+        hls[slot] = htot
         return true
     end
     @inbounds for w in 1:width
-        okk[w] || return (value=bad[w], gradient=fill(T(NaN), length(u)))
+        okk[w] || return (value=bad[w], gradient=fill(T(NaN), length(u)), hlogdet=zero(T))
     end
     inner = into === nothing ? zeros(T, length(u)) : fill!(into, zero(T))
     @inbounds for w in 1:width
@@ -2349,7 +2362,7 @@ function _laplace_unit_loglik_gradient(laplace::CTSEMLaplaceObjective, U::Intege
             inner[j] += acc[j]
         end
     end
-    return (value=sum(totals), gradient=inner)
+    return (value=sum(totals), gradient=inner, hlogdet=sum(hls))
 end
 
 """
@@ -2376,7 +2389,7 @@ function _laplace_unit_objective_gradient(laplace::CTSEMLaplaceObjective, U::Int
     @inbounds for a in eachindex(u)
         inner[a] -= u[a]
     end
-    return (value=result.value - dot(u, u) / 2, gradient=inner)
+    return (value=result.value - dot(u, u) / 2, gradient=inner, hlogdet=result.hlogdet)
 end
 
 """
@@ -3629,6 +3642,8 @@ function _laplace_gated_term(laplace::CTSEMLaplaceObjective, U::Integer,
     if logdetM === nothing
         ok, logdetM, _, _ = _laplace_block_factor(M, blocks)
         ok || (indefinite = true)
+        # Joint, as a caller passing `logdetM` passes it: see `_laplace_unit_term`.
+        logdetM += 2 * inner.hlogdet
     end
     # `total` only for the fallbacks, which have no eigenvalue to go on;
     # `lap`, unfloored, wherever there is one. See the docstring.
@@ -3669,14 +3684,20 @@ function _laplace_gated_term(laplace::CTSEMLaplaceObjective, U::Integer,
         x = xs[j]
         local h
         if abs(x) < 1e-12 || d == 1
+            # Each node's value integrates the filter's own deviations
+            # (`- hlogdet`, `CTSEMHybrid`), as the term at the mode does.
             if d == 1
                 ub = u .+ (sqrt(2) * x / sqrt(lam1c)) .* v1
-                h = abs(x) < 1e-12 ? g :
-                    _laplace_unit_objective_gradient(laplace, U, values, Ls, ub, aws).value
+                h = if abs(x) < 1e-12
+                    g - inner.hlogdet
+                else
+                    rn = _laplace_unit_objective_gradient(laplace, U, values, Ls, ub, aws)
+                    rn.value - rn.hlogdet
+                end
             else
                 Bc = _laplace_clip_first_order(transpose(Vh) * dense * Vh)
                 F = _ctsem_cholesky(Matrix(_laplace_symmetrise(Bc)), d - 1)
-                h = g - logdet(F) / 2
+                h = g - inner.hlogdet - logdet(F) / 2
             end
         else
             ub = u .+ (sqrt(2) * x / sqrt(lam1c)) .* v1
@@ -3687,8 +3708,9 @@ function _laplace_gated_term(laplace::CTSEMLaplaceObjective, U::Integer,
             F = _ctsem_cholesky(Matrix(_laplace_symmetrise(Bc)), d - 1)
             issuccess(F) || return (value=T(NaN), flagged=true, floor=false)
             z = F \ (transpose(Vh) * r.gradient)
-            h = _laplace_unit_objective_gradient(laplace, U, values, Ls,
-                ub .+ Vh * z, aws).value - logdet(F) / 2
+            rz = _laplace_unit_objective_gradient(laplace, U, values, Ls,
+                ub .+ Vh * z, aws)
+            h = rz.value - rz.hlogdet - logdet(F) / 2
         end
         terms[j] = h + log(ws[j]) + x^2
     end
@@ -3751,10 +3773,13 @@ function _laplace_unit_term(laplace::CTSEMLaplaceObjective, U::Integer,
     inner = _laplace_unit_objective_gradient(laplace, U, values, Ls, u, aws,
         )
     isfinite(inner.value) || return inner.value
-    isempty(u) && return inner.value
+    isempty(u) && return inner.value - inner.hlogdet
     M = _laplace_unit_curvature(laplace, U, values, Ls, u)
     ok, logdetM, _, _ = _laplace_block_factor(M, laplace.units.blocks[U])
     ok || return T(NaN)
+    # The joint curvature's logdet: the profile's plus the filter-integrated
+    # deviations' (`CTSEMHybrid`), before the floor or the gate reads it.
+    logdetM += 2 * inner.hlogdet
     if _LAPLACE_PRIOR_FLOOR[] && laplace.floor === :gated
         return _laplace_gated_term(laplace, U, values, Ls, u, aws; M=M,
             logdetM=logdetM, inner=inner).value
@@ -4048,6 +4073,16 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
     # is the plain log likelihood, and one ordinary reverse sweep is the whole
     # gradient. Returning early without it would silently contribute nothing.
     if d == 0
+        # With deviations the filter integrates (`CTSEMHybrid`), the term is
+        # their integral, so the gradient is the integral's.
+        if _hybrid_on(laplace.objective.params.hybrid)
+            full = _laplace_hybrid_full_gradients(laplace, U, values, Ls, uhat)
+            full === nothing && return false
+            @inbounds for m in 1:nmem, t in 1:npar
+                out[t] += full[t, m]
+            end
+            return true
+        end
         pass = _laplace_unit_seeded_gradient(laplace, U, values, Ls, uhat,
             1:nmem, zerodir, zerodir, 1)
         pass.ok || return false
@@ -4276,6 +4311,21 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
         @inbounds for m in 1:nmem
             seen[m] && continue
             for t in 1:npar; llvm[t, m] = pass.d0[t, m]; end
+        end
+    end
+
+    # Deviations the filter integrates (`CTSEMHybrid`): the joint logdet holds
+    # each member's `logdet(M_m)` beside the profile curvature's, and enters
+    # the term as `-1/2` of it, exactly as `-1/2 logdet` of the curvature does
+    # through `psi / 2`. So its gradient joins `psi`'s, twice over: half of it
+    # is added below as `dpsi/dtheta` is, and its `u` part goes into `s`,
+    # carrying the mode's own dependence. The gradient of `-logdet(M_m) / 2` is
+    # the full pass's less the profile's (`llvm`).
+    if _hybrid_on(laplace.objective.params.hybrid)
+        full = _laplace_hybrid_full_gradients(laplace, U, values, Ls, uhat)
+        full === nothing && return false
+        @inbounds for m in 1:nmem, t in 1:npar
+            Pm[t, m] += 2 * (full[t, m] - llvm[t, m])
         end
     end
 
@@ -4515,6 +4565,41 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
     return true
 end
 
+"""
+    _laplace_hybrid_full_gradients(laplace, U, values, Ls, u)
+
+Each of unit `U`'s members' raw gradient at `u` with the deviations its filter
+integrates (`CTSEMHybrid`) integrated -- `full`, logdet and all -- as an
+`npar x members` matrix, or `nothing` if a member cannot be evaluated. In
+parallel over members.
+"""
+function _laplace_hybrid_full_gradients(laplace::CTSEMLaplaceObjective, U::Integer,
+    values::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64})
+    units = laplace.units
+    members = units.members[U]
+    npar = length(values)
+    out = zeros(Float64, npar, length(members))
+    ok = _laplace_partition(laplace, length(members)) do mine, _w
+        local aws, grad, shift, m, shifted, loglik
+        aws = _laplace_workspace!(laplace, Float64, npar)
+        grad = _laplace_scratch_vector!(laplace, Float64, npar, :hybrid_grad)
+        shift = _laplace_scratch_vector!(laplace, Float64, npar, :hybrid_shift)
+        for m in mine
+            shifted = _laplace_member_values!(shift, values, laplace.spec, Ls, u,
+                units.offsets[U][m])
+            loglik = _laplace_subject_value_gradient!(grad,
+                laplace.objective.subject_objectives[members[m]], aws, shifted,
+                nothing, true)
+            (isfinite(loglik) && all(isfinite, grad)) || return false
+            @inbounds for t in 1:npar
+                out[t, m] = grad[t]
+            end
+        end
+        return true
+    end
+    return ok ? out : nothing
+end
+
 """Raw positions of one level's free population parameters, scales then
 correlations. A stated entry (index 0) is not a parameter and has no position."""
 _laplace_level_positions(spec::CTSEMLaplaceSpec, l::Integer) =
@@ -4743,10 +4828,16 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
             b0 = _laplace_mark()
             inner = _laplace_unit_objective_gradient(laplace, U, theta, Ls, u, aws)
             _laplace_charge!(_LAPLACE_BYTES_OBJ, b0)
+            # The joint curvature's logdet: the profile's plus the
+            # filter-integrated deviations' (`CTSEMHybrid`), before the floor
+            # or the gate reads it.
+            ok && (logdetM += 2 * inner.hlogdet)
             laplace.logdet_floored[U] =
                 ok && _LAPLACE_PRIOR_FLOOR[] && logdetM < 0
-            term = if !isfinite(inner.value) || isempty(u)
+            term = if !isfinite(inner.value)
                 inner.value
+            elseif isempty(u)
+                inner.value - inner.hlogdet
             elseif ok
                 inner.value - _laplace_prior_floor_logdet(logdetM) / 2
             else

@@ -8,7 +8,7 @@
 #             S += V' S_t^-1 V,  s += V' S_t^-1 y_t      (through U^-T, never S^-1)
 #             X -= K V
 #   predict:  X = A X                         (A the discrete drift)
-#   close:    ll += -1/2 logdet(M) + 1/2 b' M^-1 b,   M = I + G S G,  b = G s
+#   close:    ll += 1/2 b' M^-1 b  [ - 1/2 logdet(M) ],   M = I + G S G,  b = G s
 #
 # with `G = diag(g)`, `g` each item's own sd times its intercept's slope. For
 # fixed deviations a linear Gaussian filter's covariances and gains do not
@@ -16,12 +16,22 @@
 # is its integral against their N(0, I) prior (de Jong's augmented filter).
 # Nothing here propagates a covariance for the deviations: they carry no
 # dynamics but `A X`, and no discretisation at all.
+#
+# By default the pass returns the profile, `1/2 b' M^-1 b` without the logdet:
+# the joint log density at the deviations' conditional mode. That is what
+# reproduces Laplace over the random effects *and* the deviations exactly: the
+# joint mode in `u` is the profile's, the profile's curvature is the Schur
+# complement of the joint curvature, and the joint logdet is that one's plus
+# `logdet(M)` -- which the Laplace layer adds at the mode
+# (`_laplace_unit_loglik_gradient`'s `hlogdet`). With `full` set the pass
+# returns the integral itself, profile less `logdet(M) / 2`.
 
 """Start a pass: which hybrid items this subject observes, and zeroed state."""
 function _hybrid_start!(hb::CTSEMHybridBuffers{T}, h::CTSEMHybrid, data,
     n::Int, m::Int, continuous_time::Bool) where {T}
     hb.active = _hybrid_on(h)
     hb.q = 0
+    hb.half_logdet = zero(T)
     hb.active || return nothing
     continuous_time || throw(ArgumentError(
         "deviations integrated in the filter need a continuous-time model"))
@@ -142,9 +152,10 @@ function _hybrid_predict!(hb::CTSEMHybridBuffers{T}, A, n::Int) where {T}
 end
 
 """
-The closing term, `-1/2 logdet(M) + 1/2 b' M^-1 b`, with `M = I + G S G` and
-`b = G s`; recorded for the reverse when `trace` is a tape. `values` is the raw
-parameter vector the filter was given, which holds the own variances.
+The closing term, `1/2 b' M^-1 b`, less `logdet(M) / 2` when `hb.full`, with
+`M = I + G S G` and `b = G s`; `logdet(M) / 2` left in `hb.half_logdet` either
+way, and the term recorded for the reverse when `trace` is a tape. `values` is
+the raw parameter vector the filter was given, which holds the own variances.
 """
 function _hybrid_marginal!(hb::CTSEMHybridBuffers{T}, h::CTSEMHybrid,
     values::AbstractVector, trace) where {T}
@@ -178,8 +189,9 @@ function _hybrid_marginal!(hb::CTSEMHybridBuffers{T}, h::CTSEMHybrid,
     @inbounds for c in 1:q
         half_logdet += log(F.U[c, c])
     end
+    hb.half_logdet = half_logdet
     _record_hybrid!(trace, hb, g, dg)
-    return -half_logdet + dot(bvec, z) / 2
+    return (hb.full ? -half_logdet : zero(T)) + dot(bvec, z) / 2
 end
 
 # Tape records. Every hook has a fallback that does nothing, so the plain
@@ -204,6 +216,7 @@ function _record_hybrid!(tape::CTSEMAdjointTape{T}, hb::CTSEMHybridBuffers{T},
     rec = tape.hyb
     q = hb.q
     rec.active = true
+    rec.full = hb.full
     rec.q = q
     resize!(rec.item, q)
     copyto!(rec.item, 1, hb.item, 1, q)
@@ -250,16 +263,18 @@ function _reverse_hybrid_marginal!(rec::CTSEMHybridTape{T}, n::Int, nh::Int) whe
     @inbounds for b in 1:q, a in 1:q
         beta[a] += C[a, b] * g[b] * s[b]
     end
-    # dll/dM = -1/2 (C + beta beta'), dll/db = beta.
+    # dll/dM = -1/2 (w C + beta beta'), dll/db = beta, with `w` 1 when the
+    # pass returned the logdet and 0 for the profile.
+    w = rec.full ? one(T) : zero(T)
     @inbounds for b in 1:q, a in 1:q
-        Mbar = -(C[a, b] + beta[a] * beta[b]) / 2
+        Mbar = -(w * C[a, b] + beta[a] * beta[b]) / 2
         rec.Sbar[a, b] = g[a] * Mbar * g[b]
     end
     @inbounds for a in 1:q
         rec.sbar[a] = g[a] * beta[a]
         gbar = beta[a] * s[a]
         for b in 1:q
-            gbar -= (C[a, b] + beta[a] * beta[b]) * S[a, b] * g[b]
+            gbar -= (w * C[a, b] + beta[a] * beta[b]) * S[a, b] * g[b]
         end
         rec.psibar[rec.item[a]] += gbar * rec.dg[a]
     end

@@ -211,29 +211,43 @@ test_that("own intercept variances the filter integrates match the Laplace coord
   }
 })
 
-test_that("integrated own intercepts beside a shared effect on the dynamics: gradient matches forward mode", {
+test_that("integrated own intercepts beside shared effects on the dynamics are still Laplace exactly", {
   skip_without_julia()
-  # The shared effect loads on DRIFT, so the Laplace layer over it is an
-  # approximation and the hybrid is not the same objective as the layer over
-  # everything; its adjoint must still agree with forward mode through it.
+  # The shared effect loads on DRIFT and DIFFUSION, so the deviations'
+  # curvature depends on it and the Laplace layer over everything is an
+  # approximation. The filter's profile of the deviations, with their logdet
+  # added at the mode, is that same approximation: the joint mode, the Schur
+  # complement for the curvature, and the joint logdet. So the value and
+  # gradient must match the layer holding them as coordinates, and the adjoint
+  # must match forward mode through the logdet's dependence on the mode.
   m <- suppressWarnings(suppressMessages(ctModel(type = "ct",
     id = "id", manifestNames = c("Y1", "Y2", "Y3"), latentNames = "eta1",
     LAMBDA = matrix(c(1, 0.8, 1.2), 3, 1), DRIFT = matrix("drift"),
-    DIFFUSION = matrix(0.5), MANIFESTVAR = diag(0.4, 3),
+    DIFFUSION = matrix("diffusion"), MANIFESTVAR = diag(0.4, 3),
     MANIFESTMEANS = matrix(c("mm1", "mm2", "mm3"), 3, 1),
     T0VAR = matrix(1), T0MEANS = matrix(0), CINT = matrix(0))))
-  m$pars$indvarying <- m$pars$param %in% c("drift", "mm1", "mm2", "mm3")
+  m$pars$indvarying <- m$pars$param %in% c("drift", "diffusion", "mm1", "mm2", "mm3")
   d <- .pu_data()
   d$Y2[d$id > 16] <- NA
+  old <- options(ctsem.laplace.hybrid = TRUE)
+  on.exit(options(old), add = TRUE)
   spec <- .pu_spec(d, m, poprank = 1, popunique = "MANIFESTMEANS")
+  options(ctsem.laplace.hybrid = FALSE)
+  layer <- .pu_spec(d, m, poprank = 1, popunique = "MANIFESTMEANS")
   expect_equal(length(spec$laplace$hybrid$effect), 3L)
   set.seed(13)
-  x <- rnorm(length(.pu_names(spec)), 0, 0.3)
-  adjoint <- .pu_eval(spec, x, "adjoint")
-  forward <- .pu_eval(spec, x, "forward")
-  expect_equal(adjoint$value, forward$value, tolerance = 1e-10)
-  expect_equal(as.numeric(adjoint$gradient), as.numeric(forward$gradient),
-    tolerance = 1e-6)
+  for (draw in 1:2) {
+    x <- rnorm(length(.pu_names(spec)), 0, 0.3)
+    adjoint <- .pu_eval(spec, x, "adjoint")
+    forward <- .pu_eval(spec, x, "forward")
+    full <- .pu_eval(layer, x, "adjoint")
+    expect_equal(adjoint$value, full$value, tolerance = 1e-9)
+    expect_equal(as.numeric(adjoint$gradient), as.numeric(full$gradient),
+      tolerance = 1e-7)
+    expect_equal(adjoint$value, forward$value, tolerance = 1e-10)
+    expect_equal(as.numeric(adjoint$gradient), as.numeric(forward$gradient),
+      tolerance = 1e-6)
+  }
 })
 
 test_that("a fit with own variances converges and reports them", {

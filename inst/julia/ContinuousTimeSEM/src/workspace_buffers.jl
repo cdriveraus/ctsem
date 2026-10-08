@@ -104,9 +104,17 @@ column of manifest `j`, 0 for none; `item[c]` the hybrid item of column `c`);
 `S = sum V' S_t^-1 V` and `s = sum V' S_t^-1 y_t`; and row scratch. Mutable so
 the arrays can grow when a model needs more than the empty default -- the
 workspace may be built before the Laplace objective fills `CTSEMHybrid`.
+
+`full` says what the pass returns for them, and is the caller's to set
+(`_laplace_subject_value_gradient!`): `false`, the default, the profile -- the
+log likelihood at the deviations' conditional mode -- which is what Laplace's
+mode and curvature are taken of; `true` the profile less `half_logdet`, their
+exact integral. `half_logdet`, `logdet(M) / 2`, is left by every pass.
 """
 mutable struct CTSEMHybridBuffers{T}
     active::Bool
+    full::Bool
+    half_logdet::T
     q::Int
     col::Vector{Int}
     item::Vector{Int}
@@ -118,7 +126,8 @@ mutable struct CTSEMHybridBuffers{T}
     s::Vector{T}
     e::Vector{T}
 end
-CTSEMHybridBuffers{T}() where {T} = CTSEMHybridBuffers{T}(false, 0, Int[], Int[],
+CTSEMHybridBuffers{T}() where {T} = CTSEMHybridBuffers{T}(false, false, zero(T),
+    0, Int[], Int[],
     zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0), zeros(T, 0, 0),
     T[], T[])
 
