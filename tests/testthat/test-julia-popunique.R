@@ -430,6 +430,42 @@ test_that("sequential predictions are the fitted model's own, row by row", {
   }
 })
 
+test_that("a sequential prediction does not see the subject's later data", {
+  skip_without_julia()
+  # Subject 1's observations after time 2 withheld: its predicted and updated
+  # values up to then are unchanged. The plug-in filter, at modes from the
+  # whole record, moves -- which is what makes this a test of anything.
+  old <- options(ctsem.laplace.hybrid = TRUE)
+  on.exit(options(old), add = TRUE)
+  handle <- function(s) structure(s, class = c("ctJuliaModel", "ctFitModel"))
+  d <- .pu_dyn_data()
+  cut <- d
+  cut[cut$id == 1 & cut$time > 2, c("Y1", "Y2", "Y3")] <- NA
+  m <- .pu_dyn_model()
+  set.seed(41)
+  x <- NULL
+  report <- function(dd) {
+    spec <- .pu_spec(dd, m, poprank = 1, popunique = "MANIFESTMEANS")
+    if (is.null(x)) x <<- rnorm(length(.pu_names(spec)), 0, 0.3)
+    module <- ctsem:::.ctJuliaModule(spec$project)
+    o <- ctsem:::.ctJuliaObjective(handle(spec), hybrid = TRUE)
+    xx <- ctsem:::.ctJuliaNumericVector(x)
+    list(seq = ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_sequential(o, xx)),
+      plug = ctsem:::.ctBackendJuliaValue(module$ctsem_kalman(o, xx,
+        subject_matrices = FALSE)))
+  }
+  full <- report(d)
+  part <- report(cut)
+  rows <- which(full$seq$subject == 1)[d$time[d$id == 1] <= 2]
+  at <- function(a) if (length(dim(a)) == 3L) a[, rows, , drop = FALSE] else
+    a[, rows, , , drop = FALSE]
+  for (f in c("eta", "etacov", "y", "ycov")) {
+    expect_equal(at(full$seq[[f]]), at(part$seq[[f]]), tolerance = 1e-9, info = f)
+  }
+  expect_false(isTRUE(all.equal(full$plug$y[1, rows, , drop = FALSE],
+    part$plug$y[1, rows, , drop = FALSE], tolerance = 1e-9)))
+})
+
 test_that("a fit with own variances converges and reports them", {
   skip_without_julia()
   skip_on_cran()

@@ -104,7 +104,13 @@
   if (is.null(randomEffects)) randomEffects <- .ctSpecRandomEffectLevels(spec)[[1L]]$name
   # Validates the name here rather than leaving a bad one to error further in,
   # where the message would be about a level index.
-  .ctBackendLaplaceLevel(spec, randomEffects)
+  from <- .ctBackendLaplaceLevel(spec, randomEffects)
+  if (.ctBackendSequentialApplies(spec, from)) {
+    message("Laplace fit: predicted and updated trajectories condition on each ",
+      "subject's earlier data only (random effects at their posterior given ",
+      "it); smoothed ones on the whole record.")
+    return(invisible(NULL))
+  }
   # A Laplace fit's effects are conditional modes; a 'none' fit samples them,
   # and calling a draw a mode would be a different claim about the same number.
   sampled <- identical(.ctBackendIntOverPop(spec), "none")
@@ -117,8 +123,18 @@
   invisible(NULL)
 }
 
+# Whether a trajectory's predicted and updated passes can take each subject's
+# random effects from its earlier data alone (`ctsem_laplace_sequential`): a
+# Laplace fit, not a sampled one, a single level of random effects, and those
+# effects in the trajectory. A nested unit's group effects are shared, so one
+# member's truncated record would move them for the others.
+.ctBackendSequentialApplies <- function(spec, from = 1L) {
+  !is.null(spec$laplace) && !identical(.ctBackendIntOverPop(spec), "none") &&
+    length(spec$laplace$levels) == 1L && identical(as.integer(from), 1L)
+}
+
 .ctBackendKalmanRaw <- function(fit, raw, subjectmatrices = TRUE,
-  randomEffects = NULL, fields = NULL) {
+  randomEffects = NULL, fields = NULL, sequential = FALSE) {
   raw <- as.numeric(raw)
   spec <- .ctBackendSpec(fit)
   module <- .ctJuliaModule(spec$project)
@@ -126,6 +142,7 @@
   arguments <- list(.ctJuliaObjective(fit, hybrid = hybrid), .ctJuliaNumericVector(raw),
     subject_matrices = isTRUE(subjectmatrices))
   if (length(fields)) arguments$fields <- .ctJuliaVector(as.character(fields))
+  from <- 1L
 
   # The Laplace route is the same call with two more keywords: which levels of
   # random effect to build the trajectory from, and -- when this specification
@@ -155,6 +172,21 @@
 
   result <- .ctBackendJuliaValue(do.call(module$ctsem_kalman, arguments))
   if (!is.null(result$subject)) result$subject <- as.integer(result$subject)
+  # Predicted and updated passes from each subject's earlier data alone, and
+  # each row's log predictive density with them; the smoothed pass stays the
+  # plug-in one, conditional on the whole record. Asked for by the calls that
+  # return trajectories; the others compare like with like through the plug-in.
+  if (isTRUE(sequential) && .ctBackendSequentialApplies(spec, from)) {
+    seq <- .ctBackendJuliaValue(module$ctsem_laplace_sequential(arguments[[1L]],
+      .ctJuliaNumericVector(raw)))
+    for (f in c("eta", "y")) {
+      if (!is.null(result[[f]])) result[[f]][1:2, , ] <- seq[[f]]
+    }
+    for (f in c("etacov", "ycov")) {
+      if (!is.null(result[[f]])) result[[f]][1:2, , , ] <- seq[[f]]
+    }
+    if (!is.null(result$llrow)) result$llrow <- as.numeric(seq$llrow)
+  }
   result
 }
 
@@ -436,7 +468,7 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
       # Every field this loop reads, and nothing else -- in particular not
       # `transition`, which nothing here or downstream looks at.
       fields = c("eta", "etacov", "y", "ycov", "llrow", "subject", "subject_loglik"),
-      randomEffects = randomEffects)
+      randomEffects = randomEffects, sequential = TRUE)
     etaa[iteration, , , ] <- scores$eta
     etacova[iteration, , , , ] <- scores$etacov
     ya[iteration, , , ] <- scores$y
