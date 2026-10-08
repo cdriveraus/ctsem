@@ -31,6 +31,18 @@ _finite_deep(x::ForwardDiff.Dual) = _finite_deep(ForwardDiff.value(x)) &&
 _finite_deep(x::AbstractArray) = all(_finite_deep, x)
 
 """
+    _zero_deep(x)
+
+Whether `x` is exactly zero *including its derivatives*: the value and every
+partial at every nesting level. A dual whose value is zero still moves when its
+partials do not vanish, so a structural shortcut for a zero input asks this,
+not `iszero` on the value.
+"""
+_zero_deep(x::Real) = iszero(x)
+_zero_deep(x::ForwardDiff.Dual) = _zero_deep(ForwardDiff.value(x)) &&
+    all(_zero_deep, ForwardDiff.partials(x))
+
+"""
     _custom_abs(x::ForwardDiff.Dual)
 
 Return the absolute value of the primal part of a dual number.

@@ -195,6 +195,25 @@ function _expm_cov_slot!(sc::ExpmCovScratch{T,D}, A, ::Val{d}) where {T,D,d}
 end
 
 """
+    _expm_cov_diagonal(A, dim)
+
+Whether the hollow `A` built from `mat` is exactly zero, derivatives included
+(`_zero_deep`) -- the case of a diagonal covariance, the default MANIFESTVAR.
+Then `exp(A) = I`, the construction is `D^2` exactly and its pullback has a
+closed form, so neither needs the exponential or its Frechet derivative. That
+is not a small saving: on a model with 30 manifest variables the MANIFESTVAR
+pullback's 30 x 30 Frechet derivative was 35% of a Laplace gradient
+(the SNSF pilot, dev1). Deep, not on values: an off-diagonal parameter that
+happens to sit at 0 still has a derivative, which the general route keeps.
+"""
+@inline function _expm_cov_diagonal(A, ::Val{d}) where {d}
+    @inbounds for j in 1:d, i in 1:d
+        _zero_deep(A[i, j]) || return false
+    end
+    return true
+end
+
+"""
     sdcovexpm2cov!(buffer, mat, dim)
 
 Write `D * normalise(exp(A)) * D` into `buffer.out`, where `D` is `mat`'s
@@ -205,6 +224,12 @@ function sdcovexpm2cov!(buffer, mat, ::Val{d}) where {d}
     sc = _expm_cov_scratch(T, Val(d))
     A = sc.A
     _fill_hollow!(A, mat, Val(d), T)
+    if _expm_cov_diagonal(A, Val(d))
+        @inbounds for j in 1:d, i in 1:d
+            buffer.out[i, j] = i == j ? T(mat[i, i])^2 : zero(T)
+        end
+        return nothing
+    end
     slot = _expm_cov_slot!(sc, A, Val(d))
     Y = sc.Ytab[slot]
     yd, g = sc.yd, sc.g
@@ -240,6 +265,20 @@ function _sdcovexpm2cov_pullback!(mat_bar::AbstractMatrix, mat::AbstractMatrix,
     sc = _expm_cov_scratch(T, Val(d))
     A = sc.A
     _fill_hollow!(A, mat, Val(d), T)
+    if _expm_cov_diagonal(A, Val(d))
+        # The general route below at A = 0, where Y = I, the normalisation is
+        # the identity and the Frechet map is too: the diagonal gets
+        # 2 cbar_ii s_i, and each off-diagonal coordinate the pair's cotangent
+        # times s_i s_j (the slope of tanh at 0 is 1).
+        @inbounds for i in 1:d
+            mat_bar[i, i] += 2 * T(cov_bar[i, i]) * T(mat[i, i])
+            for j in 1:(i - 1)
+                mat_bar[i, j] += (T(cov_bar[i, j]) + T(cov_bar[j, i])) *
+                    T(mat[i, i]) * T(mat[j, j])
+            end
+        end
+        return mat_bar
+    end
     slot = _expm_cov_slot!(sc, A, Val(d))
     Y = sc.Ytab[slot]
     yd = sc.yd

@@ -102,6 +102,49 @@ _covexpm_cotangent(k) = [0.03 * (1 + i) + 0.011 * j for i in 1:k, j in 1:k]
         end
     end
 
+    @testset "a diagonal input takes the closed form, the general route at A = 0" begin
+        # Off-diagonals exactly zero -- the default MANIFESTVAR -- skip the
+        # exponential and its Frechet derivative (`_expm_cov_diagonal`).
+        # ForwardDiff seeds every coordinate, so its off-diagonal duals are not
+        # deep zero and go the general route: an independent reference for the
+        # closed-form pullback, off-diagonal cotangents included. A shortcut
+        # that tested values rather than partials would hand ForwardDiff a
+        # zero derivative for those coordinates and fail here.
+        for k in (2, 6, 30)
+            v = zeros(k + _covexpm_lower_n(k))
+            for i in 1:k
+                v[i] = 0.5 + i / k
+            end
+            @test _covexpm_sigma(v, k, 2) == Matrix(Diagonal(v[1:k] .^ 2))
+            cb = _covexpm_cotangent(k)
+            analytic = ForwardDiff.gradient(x -> sum(cb .* _covexpm_sigma(x, k, 2)), v)
+            mb = zeros(k, k)
+            ContinuousTimeSEM._sdcovexpm2cov_pullback!(mb,
+                _covexpm_unpack(v, k, Float64), cb, k)
+            @test _covexpm_pack(mb, k) ≈ analytic rtol = 1e-12
+            # Under duals whose off-diagonals are deep zero, as a sweep through
+            # a diagonal MANIFESTVAR sees it: the pullback's derivative in the
+            # sds, against central differences of the Float64 pullback (which
+            # is quadratic in them, so the differences are exact to roundoff).
+            pull = function (s)
+                T = eltype(s)
+                m = zeros(T, k, k)
+                for i in 1:k
+                    m[i, i] = s[i]
+                end
+                out = zeros(T, k, k)
+                ContinuousTimeSEM._sdcovexpm2cov_pullback!(out, m, T.(cb), k)
+                _covexpm_pack(out, k)
+            end
+            s0 = v[1:k]
+            J = ForwardDiff.jacobian(pull, s0)
+            h = 1e-4
+            fd = reduce(hcat, [(pull(s0 .+ h .* (1:k .== l)) .-
+                pull(s0 .- h .* (1:k .== l))) ./ (2h) for l in 1:k])
+            @test J ≈ fd rtol = 1e-8
+        end
+    end
+
     @testset "the route is generic in the element type" begin
         # Float64 and BigFloat must agree. The construction calls no LAPACK, so
         # there is no fast path that only some element types take -- this pins
