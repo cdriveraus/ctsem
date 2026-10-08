@@ -268,8 +268,13 @@
 # -- but a cache keyed on the path alone would report a stale version after an
 # edit within the same session, which is precisely the property this exists to
 # provide. A guarantee with an exception is not a guarantee.
+#
+# What is hashed is what the engine is built from: everything but `test/`.
+# Hashing the tests too made an edit to one a new engine for every user -- a
+# new cached project, and a precompile of the engine (about twenty minutes)
+# for code no build reads.
 .ctJuliaEngineVersion <- function(path = .ctJuliaEnginePath()) {
-  files <- sort(list.files(path, recursive = TRUE, full.names = TRUE))
+  files <- .ctJuliaEngineFiles(path, recursive = TRUE)
   manifest <- paste(substring(files, nchar(path) + 2L), tools::md5sum(files),
     collapse = "
 ")
@@ -277,6 +282,17 @@
   on.exit(unlink(handle), add = TRUE)
   writeLines(manifest, handle)
   substr(unname(tools::md5sum(handle)), 1L, 12L)
+}
+
+# The engine's files the build reads: everything but its `test/` directory.
+# Top-level entries when not `recursive` (what a copy of the engine takes),
+# every file below them when it is (what its hash takes), sorted.
+.ctJuliaEngineFiles <- function(path, recursive = FALSE) {
+  top <- list.files(path, full.names = TRUE)
+  top <- top[basename(top) != "test"]
+  if (!recursive) return(top)
+  sort(unlist(lapply(top, function(f) if (dir.exists(f))
+    list.files(f, recursive = TRUE, full.names = TRUE) else f)))
 }
 
 # Path to the copy of ContinuousTimeSEM.jl shipped inside this ctsem install.
@@ -480,13 +496,21 @@ ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
       dir.create(dirname(env_dir), recursive = TRUE, showWarnings = FALSE)
       unlink(env_dir, recursive = TRUE)
       # copy the vendored tree, then rename to the target so an interrupted
-      # copy cannot leave a half-populated environment behind
-      staging <- paste0(env_dir, "-partial")
+      # copy cannot leave a half-populated environment behind. The staging
+      # directory is this process's own: two sessions setting up one engine
+      # at once shared `-partial`, and one deleted it under the other's copy
+      # ("more 'from' files than 'to' files"). The first copy renamed into
+      # place stands, and a later one is discarded.
+      staging <- paste0(env_dir, "-partial-", Sys.getpid())
       unlink(staging, recursive = TRUE)
       dir.create(staging, recursive = TRUE, showWarnings = FALSE)
-      file.copy(list.files(.ctJuliaEnginePath(), full.names = TRUE), staging,
+      # What the hash covers and nothing else, so the copy is what its key
+      # names: the tests run from the package's own copy, never from here.
+      file.copy(.ctJuliaEngineFiles(.ctJuliaEnginePath()), staging,
         recursive = TRUE)
-      file.rename(staging, env_dir)
+      if (!isTRUE(suppressWarnings(file.rename(staging, env_dir)))) {
+        unlink(staging, recursive = TRUE)
+      }
     }
     .ctJuliaTouchEngine(env_dir)
     .ctJuliaPruneEngines(env_dir)
@@ -515,6 +539,15 @@ ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
   # `.ctJuliaAgreed()`), and skipped entirely -- no prompt, no network -- when
   # the environment already loads, which is the ordinary case after the first
   # session on a machine.
+  # A first load of a new engine precompiles it, and by default Julia writes
+  # the image on a thread per CPU (`JULIA_IMAGE_THREADS`) and Pkg builds that
+  # many packages at once: 15 cores on dev2 for the last minute of a
+  # `cores = 2` fit's precompile. The build is held to the width of the call
+  # that started the session -- `cores` is every core a call uses -- and a
+  # value set outside ctsem wins. OpenBLAS in a build process is held too.
+  .ctJuliaBuildWidth(.ctJuliaOr(threads, .ctJuliaOr(.ct_julia_cache$build_cores,
+    .ctJuliaDefaultCores())))
+  .ct_julia_cache$build_cores <- NULL
   loadfail <- NULL
   ready <- tryCatch({
     .ctJuliaEval("using ContinuousTimeSEM")
@@ -3469,8 +3502,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       as.integer(model$manifesttype),
     ncategories = if (is.null(model$ncategories)) integer(0) else
       as.integer(model$ncategories),
-    nasymptotes = if (is.null(model$asymptotes)) integer(0) else
-      as.integer(model$asymptotes),
+    # Per manifest variable, the ASYMPTOTES row it reads, 0 for none; see
+    # `.ctAsymptoteRows()`.
+    asymptoterow = .ctAsymptoteRows(model$pars, model$manifesttype),
     censormin = if (is.null(model$censormin)) numeric(0) else
       as.numeric(model$censormin),
     censormax = if (is.null(model$censormax)) numeric(0) else
@@ -3716,8 +3750,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   if (any(spec$manifesttype %in% 2)) {
     arguments$ncategories <- V(as.integer(spec$ncategories))
   }
-  if (length(spec$nasymptotes) && any(spec$nasymptotes > 0)) {
-    arguments$nasymptotes <- V(as.integer(spec$nasymptotes))
+  if (any(spec$asymptoterow > 0)) {
+    arguments$asymptoterow <- V(as.integer(spec$asymptoterow))
   }
   if (any(spec$manifesttype %in% 4)) {
     arguments$censormin <- V(as.numeric(spec$censormin))
@@ -4150,6 +4184,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 # say about cores it was never going to use and no reason to restart anything.
 .ctBackendResolveThreads <- function(cores, threads = NULL, report = TRUE) {
   cores <- suppressWarnings(as.integer(cores)[1L])
+  # What a session this call starts may build the engine with
+  # (`.ctJuliaBuildWidth()`), one core included.
+  if (!is.na(cores) && cores >= 1L && !.ctJuliaSessionRunning()) {
+    .ct_julia_cache$build_cores <- cores
+  }
   if (is.na(cores) || cores < 2L) return(invisible(NA_integer_))
   restart <- isTRUE(report) && isTRUE(getOption("ctsem.julia.restart", FALSE))
   if (is.null(threads) && !.ctJuliaSessionRunning()) {
@@ -6030,8 +6069,7 @@ print.ctJuliaFit <- function(x, ...) {
   if (!is.null(x$sample)) {
     cat("  sampled: ", if (!is.null(x$sample$target))
       paste0(x$sample$target, " posterior, ") else "",
-      x$sample$chains, " chains x ", x$sample$draws,
-      " draws; chains converged: ",
+      .ctSampleDrawsLabel(x$sample), "; chains converged: ",
       if (is.null(x$sample$converged) || is.na(x$sample$converged)) "unknown" else
         as.character(isTRUE(x$sample$converged)), "\n", sep = "")
     if (length(x$sample$diagnosis)) {

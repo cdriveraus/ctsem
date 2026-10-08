@@ -46,15 +46,18 @@
 #' @param workers How many sessions to start.
 #' @param values Parameter vector to evaluate at. Any finite point compiles the
 #'   same code; a fit's own estimate is the natural choice when there is one.
-#' @param threads Julia threads each worker's session starts with. Fixed when
-#'   the session starts, so a pool warmed at another width is replaced rather
-#'   than reused.
+#' @param threads Julia threads each worker's session starts with, one for
+#'   all or one per worker (`.ctBackendWorkerThreads()`). Fixed when the
+#'   session starts, so a pool warmed at other widths is replaced rather than
+#'   reused.
 #' @return A list of future handles, or `NULL` when warming is unavailable.
 #' @keywords internal
 .ctBackendWarmWorkers <- function(object, workers, values = NULL, threads = 1L) {
-  threads <- max(1L, suppressWarnings(as.integer(threads)[1L]), na.rm = TRUE)
   workers <- suppressWarnings(as.integer(workers))
   if (!.ctBackendCanWarm() || !isTRUE(workers >= 1L)) return(NULL)
+  threads <- suppressWarnings(as.integer(threads))
+  threads[is.na(threads) | threads < 1L] <- 1L
+  threads <- rep_len(if (length(threads)) threads else 1L, workers)
   if (!inherits(object, c("ctJuliaModel", "ctJuliaFit"))) return(NULL)
   npar <- .ctBackendNpar(object)
   if (!isTRUE(npar >= 1L)) return(NULL)
@@ -90,11 +93,24 @@
   # That was every processes-mode chain: workers warmed at one thread, so 16
   # cores and 4 chains used 4 (bigre, 16 cores: 352 s against 106 s for the
   # same chains as threads in one session, dev1).
-  if (!is.null(.ct_warm_state$threads) && !identical(.ct_warm_state$threads, threads)) {
+  # The widths as a set: the pool's sessions are interchangeable, so which
+  # worker holds which width does not matter, only that the set is the one
+  # asked for.
+  if (!is.null(.ct_warm_state$threads) &&
+      !identical(sort(.ct_warm_state$threads), sort(threads))) {
     .ctBackendWarmStop(NULL)
   }
   .ct_warm_state$threads <- threads
 
+  # Workers start with a one-thread OpenBLAS, unless the caller chose one: an R
+  # linked to OpenBLAS otherwise starts a thread per CPU in every worker, and
+  # those spin while it loads. A worker's Julia grows its own pool to the
+  # worker's share of `cores` (`ctsem_set_max_chunks!`).
+  blas <- Sys.getenv("OPENBLAS_NUM_THREADS", unset = NA)
+  if (is.na(blas)) {
+    Sys.setenv(OPENBLAS_NUM_THREADS = "1")
+    on.exit(Sys.unsetenv("OPENBLAS_NUM_THREADS"), add = TRUE)
+  }
   started <- tryCatch({
     future::plan(future::multisession, workers = workers)
     TRUE
@@ -128,7 +144,7 @@
       # in a worker process, where only the installed ctsem exists. `ctsem:::`
       # would do the same job but draws a CRAN NOTE for ::: on our own objects.
       future::future(utils::getFromNamespace(".ctBackendWarmSession",
-        "ctsem")(object, values, threads), seed = TRUE),
+        "ctsem")(object, values, threads[k]), seed = TRUE),
       error = function(e) NULL)
   })
   if (!length(handles) || all(vapply(handles, is.null, logical(1)))) return(NULL)
@@ -183,7 +199,7 @@
     # thread count cannot be changed on a running session, which is true and
     # not worth saying: a warmed worker being asked for more work is the
     # expected case, not a problem.
-    # Suppressed, as `.ctBackendSampleOneChain` suppresses its own: `future`
+    # Suppressed, as `.ctBackendSampleChainBlock` suppresses its own: `future`
     # relays a worker's messages to the parent when the parent collects the
     # worker's value, which here is in the middle of the parent's own run and
     # long after they were true. One warmed worker per chain put "Starting
@@ -198,7 +214,8 @@
       # which marshals the data, and evaluating it forces the specialisation.
       # The objective cache is per process and keyed on content, and this
       # process has an empty one, so nothing here is shared with the parent.
-      invisible(ctsem::ctJuliaEvaluate(object, values, gradient = TRUE))
+      invisible(ctsem::ctJuliaEvaluate(object, values, gradient = TRUE,
+        cores = 1L))
     })
     # A list rather than a bare TRUE, so the parent can check that this worker
     # is running the same build it is. `.ctBackendWarmWait()` accepts both

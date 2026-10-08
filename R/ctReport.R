@@ -417,8 +417,8 @@
     # TRUE" about a run whose chains never met.
     if (!is.null(fit$sample)) {
       add("Sampler")
-      add("  ", fit$sample$chains, " chains x ", fit$sample$draws,
-        " draws (", fit$sample$warmup, " warmup discarded)")
+      add("  ", .ctSampleDrawsLabel(fit$sample), " (", fit$sample$warmup,
+        " warmup discarded)")
       add("  chains converged: ",
         if (is.null(fit$sample$converged) || is.na(fit$sample$converged))
           "unknown" else isTRUE(fit$sample$converged))

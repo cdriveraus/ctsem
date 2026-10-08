@@ -11,15 +11,14 @@
 #' @param fitArgs Named list of fit argument sets to test 
 #' (e.g., list(boot = list(optimcontrol = list(uncertainty = 'bootstrap')), 
 #' hess = list(optimcontrol = list(uncertainty = 'hessian'))))
-#' @param cores Number of outer simulation iterations to run in parallel.
-#' Inner model fits use \code{fitCores} by default to avoid nested
-#' parallelism.
-#' @param fitCores Number of cores for each inner \code{\link{ctFit}} call.
-#' This is enforced after merging each \code{fitArgs} entry so that outer
-#' simulation \code{cores} cannot accidentally be reused by worker fits.
+#' @param cores The most CPU cores the check uses at once. Iterations run
+#' \code{cores \%/\% fitCores} at a time, each fit on \code{fitCores}.
+#' @param fitCores Number of cores for each inner \code{\link{ctFit}} call,
+#' at most \code{cores}. This is enforced after merging each \code{fitArgs}
+#' entry so that worker fits cannot take more than their share.
 #' @param generateCores Number of cores for \code{\link{ctGenerateFromFit}}
-#' when generating replicated datasets. Defaults to \code{fitCores}; set it
-#' explicitly to use more cores for generation.
+#' when generating replicated datasets, at most \code{cores}. Defaults to
+#' \code{fitCores}; set it explicitly to use more cores for generation.
 #' @param plotEvery Print plots every n iterations (default = 10)
 #' 
 #' @return A list containing the results data.table and final plots
@@ -48,7 +47,11 @@ ctCoverageCheck <- function(initialData, fittingModel, niter, fitArgs,
   if(!is.finite(cores) || is.na(cores) || cores < 1) cores <- 1L
   if(!is.finite(fitCores) || is.na(fitCores) || fitCores < 1) fitCores <- 1L
   if(!is.finite(generateCores) || is.na(generateCores) || generateCores < 1) generateCores <- 1L
-  cores <- min(cores, niter)
+  # `cores` bounds everything that runs at once: the iterations in parallel
+  # times each one's fit.
+  fitCores <- min(fitCores, cores)
+  generateCores <- min(generateCores, cores)
+  workers <- max(1L, min(cores %/% fitCores, niter))
   
   
   # Default fit arguments. Inner fits are single-core by default to avoid
@@ -63,11 +66,6 @@ ctCoverageCheck <- function(initialData, fittingModel, niter, fitArgs,
     logical(1))
   if(any(fit_args_cores)) {
     warning('Ignoring top-level cores entries in fitArgs; use fitCores to control inner ctFit cores.',
-      call.=FALSE)
-  }
-  if(cores > 1 && fitCores > 1) {
-    warning('ctCoverageCheck is using outer parallelism and inner ctFit cores > 1. ',
-      'This can oversubscribe CPUs; prefer cores > 1 with fitCores = 1 unless you have budgeted for nested workers.',
       call.=FALSE)
   }
   
@@ -91,7 +89,7 @@ ctCoverageCheck <- function(initialData, fittingModel, niter, fitArgs,
   on.exit(future::plan(old_plan), add=TRUE)
   
   # Set up parallel processing over generated datasets.
-  future::plan(future::multisession, workers = cores)
+  future::plan(future::multisession, workers = workers)
   
   # Check if parallel setup worked
   message(paste("Using", future::nbrOfWorkers(), "workers for coverage iterations"))

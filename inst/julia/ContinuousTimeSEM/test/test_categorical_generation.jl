@@ -59,10 +59,10 @@ function _generate_categorical_objective(kind::Int; nrows=8, ncategories=0,
         Function[], Function[], Int[], axis, fill(true, n),
         AbstractFloat[values...], Int[], Int[], Int[], [1],
         # Positional, so every trailing argument has to be counted: the
-        # `nasymptotes` slot sits between `ncategories` and `censormin` and is
-        # named here rather than left out. Leaving it out is silent, because
+        # `asymptoterow` slot sits between `ncategories` and `censormin` and
+        # is named here rather than left out. Leaving it out is silent, because
         # `Vector{Int}([0.0])` succeeds -- a censormin of 0.0 became an
-        # asymptote count, the censormax became the censormin, and every
+        # asymptote row, the censormax became the censormin, and every
         # censored draw came back clamped at a lower limit of 5.0.
         true, [kind], [ncategories], Int[], censormin, censormax)
     nrows_ = nrows

@@ -13,7 +13,6 @@ ctModel(
   manifestNames = "auto",
   manifesttype = rep(0, nrow(LAMBDA)),
   ncategories = NULL,
-  asymptotes = NULL,
   censormin = NULL,
   censormax = NULL,
   latentNames = "auto",
@@ -24,6 +23,7 @@ ctModel(
   T0MEANS = "auto",
   MANIFESTMEANS = "auto",
   MANIFESTVAR = "diag",
+  ASYMPTOTES = NA,
   DRIFT = "auto",
   CINT = 0,
   DIFFUSION = "auto",
@@ -84,15 +84,6 @@ Required when any \code{manifesttype} is 2, because the model has to know how
 many thresholds to estimate before it sees any data -- \code{ctGenerate} needs
 it too.}
 
-\item{asymptotes}{n.manifest length integer vector for binary indicators:
-0 (the default) for the two parameter logistic, where the response
-probability runs from 0 to 1; 1 to estimate a lower asymptote, the
-three parameter model's guessing probability; 2 to estimate both, the four
-parameter model. Ignored for every other indicator type. The asymptotes
-appear in \code{THRESHOLDS} as \code{asymptote_<name>} and, when both are
-free, \code{asymptotegap_<name>}, the latter being the gap from the lower
-asymptote to the upper as a proportion of the room left.}
-
 \item{censormin, censormax}{n.manifest length numeric vectors giving the lower
 and upper censoring limits of each \code{manifesttype = 4} variable, and
 ignored for the others. Defaults are \code{-Inf} and \code{Inf}; a variable
@@ -133,6 +124,18 @@ Levels above the subject require \code{backend='julia'} with
 between manifests at each measurement occasion (i.e. measurement error / residual).  
 "auto" freely estimates variance parameters, 
 and fixes covariances between manifests to 0. "free" frees all values, including covariances.}
+
+\item{ASYMPTOTES}{Matrix with one row per binary indicator, in manifest
+order, and two columns: the lower and upper asymptotes of its response
+probability, which is then lower + (upper - lower) times the logistic of
+the linear predictor. \code{NA} means no asymptote on that side, so the
+default -- all \code{NA} -- is the two parameter logistic, and the model
+has no ASYMPTOTES matrix at all. Name a lower cell to estimate a guessing
+probability (the three parameter model), an upper cell for a ceiling below
+one, or both (four parameter); a number between 0 and 1 fixes it, and one
+name shared across rows estimates one asymptote for those items. A length 2
+vector applies to every binary indicator, so \code{c('guess', NA)} is one
+guessing parameter for the whole test. Julia backend only.}
 
 \item{DRIFT}{n.latent*n.latent DRIFT matrix of continuous auto and cross effects, 
 relating the processes over time. 

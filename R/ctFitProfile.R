@@ -91,7 +91,8 @@
 #'   one-thread Julia, started and compiled for the model first (it needs the
 #'   \pkg{future} package; the sessions persist for the next call, and
 #'   \code{\link{ctJuliaWorkersStop}} releases them). \code{TRUE} uses as many
-#'   sessions as the fit's \code{cores}, and at least two. The walks are
+#'   sessions as the fit's \code{cores}, so a one-core fit walks in this
+#'   session. The walks are
 #'   independent, so the profile is the same either way, except that with
 #'   processes every walk finishes before \code{$better} is reported.
 #'
@@ -185,7 +186,9 @@ ctFitProfile <- function(fit, parameters = NULL, points = 8L, step = NULL,
     maxiter = maxiter, verbose = verbose, names = names)
   walks <- unlist(lapply(index, function(k) lapply(c(-1, 1), function(side)
     list(k = k, side = side))), recursive = FALSE)
-  workers <- if (isTRUE(processes)) max(2L, cores) else
+  # The fit's `cores` is every core it may use at once, so `TRUE` never
+  # starts more sessions than that; a number is the caller's own count.
+  workers <- if (isTRUE(processes)) cores else
     if (is.numeric(processes)) as.integer(processes)[1L] else 0L
   walked <- NULL
   if (isTRUE(workers >= 2L) && length(walks) > 1L) {

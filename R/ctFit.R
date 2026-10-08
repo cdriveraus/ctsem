@@ -670,9 +670,11 @@ T0VARredundancies <- function(ctm) {
 #' says. \code{FALSE}, or \code{'none'}, samples them, so it needs
 #' \code{optimize=FALSE}: maximising over every subject's effects would drive
 #' the population variance to zero. With \code{optimize=FALSE} on julia,
-#' \code{'laplace'} and \code{'none'} sample the joint posterior of parameters
-#' and random effects, \code{'augmented'} the filter's marginal; see
-#' \code{sampleControl}.
+#' \code{'none'} (and so \code{'auto'}) samples the joint posterior of
+#' parameters and random effects; \code{'laplace'} and \code{'augmented'}
+#' sample the population parameters with the effects integrated out, by the
+#' Laplace approximation or the filter, and \code{TRUE} by whichever of the two
+#' it resolves to.
 #' @param sameInitialTimes if TRUE, include an empty observation for every subject that has no observation
 #' at the earliest observation time of the dataset. This ensures that the T0MEANS occurs for every subject at the same time,
 #' rather than just at the earliest observation for that subject. Important when modelling trends over time, age, etc.
@@ -685,9 +687,9 @@ T0VARredundancies <- function(ctm) {
 #' maximum a posteriori with \code{priors=TRUE} -- with uncertainty from the
 #' curvature at the estimate. If FALSE, sample the posterior: with Stan's HMC
 #' sampler for \code{backend='stan'}, and for \code{backend='julia'} with
-#' SAEM's kernel on the joint posterior of parameters and random effects (NUTS
-#' when there are none) -- slower, but exact rather than a normal
-#' approximation at a mode. Other uncertainty methods for an optimised fit,
+#' SAEM's kernel on the joint posterior of parameters and random effects, or
+#' NUTS when there are none or \code{intoverpop} integrates them out -- slower,
+#' but exact rather than a normal approximation at a mode. Other uncertainty methods for an optimised fit,
 #' importance sampling among them, are in \code{\link{ctFitUncertainty}}. A
 #' sampled fit's point estimate is the per-parameter median of the draws on
 #' stan (\code{fit$stanfit$rawest}) and their mean on julia
@@ -723,9 +725,10 @@ T0VARredundancies <- function(ctm) {
 #' error, and left at the default on stan it means \code{FALSE}.
 #' @param cores number of cpu cores to use: a positive whole number, or
 #' \code{'maxneeded'} for all but one (capped at the number of chains on
-#' stan). Defaults to \code{getOption("mc.cores", 2)}. On julia it caps the
-#' threads a fit uses, BLAS included, and the worker processes a sampling run
-#' spreads its chains over. A julia fit at \code{cores > 1} is not
+#' stan). Defaults to \code{getOption("mc.cores", 2)}. It is the most CPU
+#' cores the call uses at once, counting every process it starts: on julia
+#' the threads a fit uses, BLAS included, and a sampling run's worker
+#' processes, which share it between them. A julia fit at \code{cores > 1} is not
 #' reproducible to the last decimal, because the chunk tuner times candidate
 #' splits; use \code{cores = 1} for a before-and-after comparison. The Julia
 #' session starts as wide as the call that starts it, and a later call asking
@@ -2060,6 +2063,16 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
       paste(ctm$manifestNames[ctm$manifesttype %in% 4], collapse=', '), '.',
       call.=FALSE)
   }
+  # The stan programs have no asymptotes in their binary measurement, so a stan
+  # fit would quietly be the two parameter model. Refused on the matrix being
+  # there at all, rather than on its cells, so the message does not depend on
+  # what they hold.
+  if(any(ctm$pars$matrix %in% 'ASYMPTOTES') && !identical(backend, 'julia')){
+    stop('ASYMPTOTES need backend="julia": the stan model has no asymptotes ',
+      'in its binary measurement, so it would fit the two parameter logistic.',
+      call.=FALSE)
+  }
+  .ctCheckAsymptotePars(ctm$pars, ctm$manifesttype)
   if(any(ctm$manifesttype %in% 1)) .ctDataBinary(datalong, ctm)
   if(any(ctm$manifesttype %in% 2)) .ctDataCategories(datalong, ctm)
   if(any(ctm$manifesttype %in% 3)) .ctDataCounts(datalong, ctm)
@@ -2336,17 +2349,20 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     # remaining parameters are maximised or sampled. Every combination is
     # meaningful for this backend:
     #
-    #   optimize  intoverpop     what runs                 sampled dimension
+    #   optimize  route          what runs                 sampled dimension
     #   TRUE      'laplace'      Laplace ML                --
-    #   TRUE      TRUE           augmented ML              --
-    #   FALSE     'laplace'      sampled, joint            npar + effects
-    #   FALSE     TRUE           NUTS, filter marginal     npar
-    #   FALSE     FALSE          sampled, joint            npar + effects
+    #   TRUE      'augmented'    augmented ML              --
+    #   FALSE     'laplace'      NUTS, Laplace marginal    npar
+    #   FALSE     'augmented'    NUTS, filter marginal     npar
+    #   FALSE     'none'         sampled, joint            npar + effects
     #
-    # The two joint rows are one target, drawn by SAEM's kernel and placed by
-    # SAEM's state unless `sampleControl` says otherwise (`sampler`,
-    # `placement`); `sampleControl$target = 'marginal'` on 'laplace' samples
-    # the Laplace marginal (npar) by NUTS instead.
+    # The route is what `intoverpop` resolved to: TRUE takes 'laplace' or
+    # 'augmented' as the model suits, and 'auto' under optimize=FALSE takes
+    # 'none'. The joint row is drawn by SAEM's kernel and placed by SAEM's
+    # state unless `sampleControl` says otherwise (`sampler`, `placement`).
+    # Under optimize=FALSE the route is what is sampled, and nothing else
+    # says it (`.ctBackendSampleRoute()`): 'auto' never resolves to 'laplace'
+    # there, so a 'laplace' route is one the caller named.
     #
     # Only 'laplace' is julia-only; the guard for that is above. `'none'` is
     # the third route the engine needs, and it prepares the Laplace structure

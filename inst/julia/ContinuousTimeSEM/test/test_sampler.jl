@@ -530,8 +530,9 @@ end
     # one side -- the shape gN3's study-level standard deviation had. The
     # chains agree in location and spread well enough for R-hat, and the bulk
     # size stays in the thousands; the 5% point rests on that one burst, and
-    # only the tail size says so (measured: bulk 2700-5000, tail 630-700,
-    # R-hat 1.002-1.003 over three draws of this construction).
+    # only the tail size says so (measured: bulk 1509-2048, tail 410-658,
+    # R-hat 1.002-1.003 over three draws of this construction, since the ESS
+    # pairing was corrected on 2026-10-07; the bulk read 2700-5000 before).
     burst = randn(rng, 1, 8000)
     k = 0
     while k < 100
@@ -542,9 +543,139 @@ end
     end
     b = ctsem_sample_diagnostics(burst, 4)
     @test b.rhat[1] < 1.01
-    @test b.ess[1] > 2000
+    @test b.ess[1] > 1200
     @test b.ess_tail[1] < b.ess[1] / 3
     @test b.ess_tail[1] < 1000
+end
+
+@testset "diagnostics over chains of different lengths" begin
+    CT = ContinuousTimeSEM
+    # The equal-length formulas as they stood before chains could differ in
+    # length (Stan's, unweighted), kept here as the reference: the weighted
+    # ones must reduce to them exactly when every chain is the same length.
+    function ref_split_rhat(chains)
+        ndraws, nchains = size(chains)
+        half = div(ndraws, 2)
+        pieces = Vector{Vector{Float64}}()
+        for c in 1:nchains
+            push!(pieces, chains[1:half, c])
+            push!(pieces, chains[(ndraws - half + 1):ndraws, c])
+        end
+        m = length(pieces)
+        means = [sum(p) / half for p in pieces]
+        vars = [sum(abs2, p .- means[j]) / (half - 1) for (j, p) in enumerate(pieces)]
+        W = sum(vars) / m
+        grand = sum(means) / m
+        B = half * sum(abs2, means .- grand) / (m - 1)
+        sqrt((((half - 1) / half) * W + B / half) / W)
+    end
+    function ref_ess(chains)
+        ndraws, nchains = size(chains)
+        means = [sum(chains[:, c]) / ndraws for c in 1:nchains]
+        vars = [sum(abs2, chains[:, c] .- means[c]) / (ndraws - 1) for c in 1:nchains]
+        W = sum(vars) / nchains
+        grand = sum(means) / nchains
+        B = ndraws * sum(abs2, means .- grand) / (nchains - 1)
+        varplus = ((ndraws - 1) / ndraws) * W + B / ndraws
+        corr(t) = 1 - (W - sum(sum((chains[i, c] - means[c]) *
+            (chains[i + t, c] - means[c]) for i in 1:(ndraws - t)) / ndraws
+            for c in 1:nchains) / nchains) / varplus
+        pairs = Float64[]
+        t = 0
+        while t + 1 <= min(ndraws - 2, 1000)
+            pair = corr(t) + corr(t + 1)
+            pair <= 0 && break
+            push!(pairs, pair)
+            t += 2
+        end
+        for i in 2:length(pairs)
+            pairs[i] = min(pairs[i], pairs[i - 1])
+        end
+        nchains * ndraws / max(1.0, -1.0 + 2 * sum(pairs))
+    end
+    rng = Random.Xoshiro(31)
+    x = zeros(500, 4)
+    for c in 1:4
+        v = 0.0
+        for t in 1:500
+            v = 0.7 * v + randn(rng)
+            x[t, c] = v + 0.1 * c
+        end
+    end
+    @test CT._split_rhat(x) ≈ ref_split_rhat(x) rtol = 1e-12
+    @test CT._ess(x) ≈ ref_ess(x) rtol = 1e-12
+    z = CT._rank_normalise(x)
+    d = ctsem_sample_diagnostics(reshape(vec(x), 1, :), 4)
+    @test d.ess[1] ≈ ref_ess(z) rtol = 1e-12
+    @test d == ctsem_sample_diagnostics(reshape(vec(x), 1, :), fill(500, 4))
+
+    # AR(1) chains started in their stationary distribution, of four different
+    # lengths: the effective size of their mean is known in closed form,
+    # N (1 - phi) / (1 + phi), and the chains agree.
+    phi = 0.6
+    lengths = [800, 2000, 400, 1200]
+    ar = Float64[]
+    for n in lengths
+        v = randn(rng)
+        for t in 1:n
+            v = phi * v + sqrt(1 - phi^2) * randn(rng)
+            push!(ar, v)
+        end
+    end
+    truth = sum(lengths) * (1 - phi) / (1 + phi)
+    d = ctsem_sample_diagnostics(reshape(ar, 1, :), lengths)
+    @test 0.8 * truth < d.ess[1] < 1.25 * truth
+    @test d.rhat[1] < 1.02
+    @test isfinite(d.ess_tail[1])
+
+    # Equal lengths, and the closed form again: the pairing from lag 0 is what
+    # gets this right; from lag 1 it read about twice the truth.
+    equal = Float64[]
+    for c in 1:4
+        v = randn(rng)
+        for t in 1:1100
+            v = phi * v + sqrt(1 - phi^2) * randn(rng)
+            push!(equal, v)
+        end
+    end
+    e = ctsem_sample_diagnostics(reshape(equal, 1, :), 4)
+    @test 0.8 * truth < e.ess[1] < 1.25 * truth
+
+    # One chain somewhere else: R-hat sees it whatever the lengths. Its weight
+    # is its length, as in a one-way analysis of variance with unequal groups,
+    # so the shortest chain shifted three standard deviations reads lower than
+    # the same shift on an equal-length chain would, and still far above 1.01.
+    shifted = copy(ar)
+    shifted[(sum(lengths[1:2]) + 1):sum(lengths[1:3])] .+= 3.0
+    @test ctsem_sample_diagnostics(reshape(shifted, 1, :), lengths).rhat[1] > 1.1
+
+    # A chain shorter than the lags the sequence reaches stops contributing
+    # to them rather than ending the sequence early.
+    slow = Float64[]
+    for n in (60, 4000)
+        v = randn(rng)
+        for t in 1:n
+            v = 0.95 * v + sqrt(1 - 0.95^2) * randn(rng)
+            push!(slow, v)
+        end
+    end
+    s = ctsem_sample_diagnostics(reshape(slow, 1, :), [60, 4000])
+    @test isfinite(s.ess[1])
+    @test s.ess[1] < 4060 * 0.05 / 1.95 * 1.5
+
+    @test_throws DimensionMismatch ctsem_sample_diagnostics(reshape(ar, 1, :), [800, 10])
+
+    # The stopping rule over chains of different lengths: their mean is the
+    # draws per chain the budget counts, and the answer is a whole number.
+    v = ctsem_sample_verdict(reshape(ar, 1, :), lengths; ndraws=100,
+        min_ess=1e5, max_draws=4000)
+    @test v.wanted isa Int
+    @test v.wanted > 0
+    @test !v.met
+    full = ctsem_sample_verdict(reshape(ar, 1, :), lengths; ndraws=100,
+        min_ess=1e5, max_draws=1100)
+    @test full.budget
+    @test full.wanted == 0
 end
 
 @testset "the adaptation schedule brackets its windows the way Stan does" begin

@@ -520,6 +520,7 @@
       # just provisioned for this call's `cores` is not to be recomputed here,
       # without them, back down to the default.
       if (!nzchar(Sys.getenv("JULIA_NUM_THREADS", unset = ""))) .ctJuliaProvision()
+      .ctJuliaProvisionBlas()
       .ctJuliaAnnounce()
     }
     tryCatch(suspendInterrupts(withCallingHandlers(wire$ensure(), message = function(m) {
@@ -597,7 +598,42 @@
     Sys.unsetenv("JULIA_NUM_THREADS")
   }
   .ct_julia_cache$threads_from_cores <- NULL
+  blas <- .ct_julia_cache$blas_from_cores
+  if (!is.null(blas) && identical(Sys.getenv("OPENBLAS_NUM_THREADS", unset = ""), blas)) {
+    Sys.unsetenv("OPENBLAS_NUM_THREADS")
+  }
+  .ct_julia_cache$blas_from_cores <- NULL
   invisible(NULL)
+}
+
+# OpenBLAS's starting pool for a session about to start, unless someone chose
+# it. Unset, OpenBLAS creates a thread per CPU when Julia loads it and they
+# spin while it initialises: 13 cores for a fifth of a second on dev2, for a
+# session asked to use two. Sized to the call that starts the session; the
+# engine resizes it per call within `cores` (`ctsem_set_max_chunks!`), and a
+# pool started small grows when a later call asks for more.
+.ctJuliaProvisionBlas <- function() {
+  if (nzchar(Sys.getenv("OPENBLAS_NUM_THREADS", unset = ""))) return(invisible(NULL))
+  width <- suppressWarnings(as.integer(.ctJuliaOr(.ct_julia_cache$build_cores,
+    .ctJuliaStartThreads()))[1L])
+  if (is.na(width) || width < 1L) width <- .ctJuliaDefaultCores()
+  Sys.setenv(OPENBLAS_NUM_THREADS = as.character(width))
+  .ct_julia_cache$blas_from_cores <- as.character(width)
+  invisible(width)
+}
+
+# How wide the running session's package builds may go: the threads Julia
+# writes a package image with, the packages Pkg precompiles at once, and
+# OpenBLAS in each build process -- all a thread per CPU by default, whatever
+# the call's `cores`. Set in the session's own environment, which the build
+# processes it spawns inherit, and only where nothing outside ctsem has.
+.ctJuliaBuildWidth <- function(width) {
+  width <- suppressWarnings(as.integer(width)[1L])
+  if (is.na(width) || width < 1L) width <- 1L
+  try(.ctJuliaEval(sprintf(paste0("for k in (\"JULIA_IMAGE_THREADS\", ",
+    "\"JULIA_NUM_PRECOMPILE_TASKS\", \"OPENBLAS_NUM_THREADS\"); ",
+    "haskey(ENV, k) || (ENV[k] = \"%d\"); end"), width)), silent = TRUE)
+  invisible(width)
 }
 
 # "Starting Julia 1.12.5 with 2 threads ...", in place of JuliaConnectoR's

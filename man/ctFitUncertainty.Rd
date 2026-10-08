@@ -149,18 +149,18 @@ fit's estimate -- on the exact marginal posterior, where the fit's optimum is
 the Laplace approximation's -- and starts each chain from SAEM's estimate and
 its draws of the random effects, for either sampler; \code{'fit'} starts them
 around the fit's own estimate, and is the only placement for a marginal
-target, which has no random effects to start. \code{control$target}
-says which posterior: \code{'auto'} (the default) is the exact posterior
-the fit's route can reach -- the joint posterior over population parameters
-\emph{and} every subject's random effects for \code{intoverpop =
-'laplace'} or \code{'none'}, with the Laplace fit serving only to place the
-chains, and the filter's marginal for \code{intoverpop = 'augmented'}.
-\code{'marginal'}/\code{'joint'} ask for one explicitly regardless of
-route; \code{'marginal'} on a Laplace fit samples the Laplace marginal,
-an approximate posterior whose dimension does not grow with the subject
-count, and \code{'joint'} is refused by name on an \code{intoverpop =
-'augmented'} fit, which has no separate random effect to sample jointly
-with the parameters. See
+target, which has no random effects to start. What is sampled is what the
+fit's \code{intoverpop} says, read as \code{ctFit(optimize = FALSE)} reads
+it: the filter's marginal for \code{'augmented'}, the Laplace marginal for a
+fit that named \code{'laplace'} (an approximate posterior whose dimension
+does not grow with the subject count), and the joint posterior over
+population parameters \emph{and} every subject's random effects for
+\code{'none'} or for a Laplace route that \code{intoverpop = 'auto'} chose,
+where the Laplace fit only places the chains. \code{control$intoverpop}
+overrides it in the same words: \code{'none'} for the joint posterior or
+\code{'laplace'} for the Laplace marginal on a Laplace fit;
+\code{'augmented'} needs a fit made that way, and an augmented fit, which
+has no separate random effect to sample, takes nothing else. See
 \code{\link{ctJuliaSetup}} for the thread count that decides whether
 chains run concurrently, and \code{\link{ctFit}}'s \code{intoverpop} for
 what each route means.
@@ -185,10 +185,12 @@ proposal. For \code{uncertainty='is'}, \code{draws} is set to \code{'imis'}.}
 (\code{fit$stanfit$rawposterior} for stan, \code{fit$estimate$rawposterior}
 for julia) is reused when available; otherwise 1000 samples are used.}
 
-\item{cores}{Number of cores. If \code{NULL}, one core is used, and nothing
+\item{cores}{The most CPU cores the call uses at once, counting every
+process it starts. If \code{NULL}, one core is used, and nothing
 is parallelised unless a value above one is asked for -- except for
 \code{'sample'}, which takes \code{getOption("mc.cores", 2)} as
-\code{ctFit} does, and runs at most that many chains at once. On a
+\code{ctFit} does, and shares it between at most that many worker
+processes, which run the chains. On a
 \code{ctStanFit} these are R worker processes: each
 log-probability/gradient evaluation is split across subjects and reassembled,
 and score contributions and transformed quantities use them too. On a
@@ -201,7 +203,7 @@ both change the order things are summed in, so results are reproducible at
 \item{control}{List of method-specific options. For \code{uncertainty =
 'sample'} these are the sampler settings described under \code{uncertainty}
 above (\code{chains}, \code{warmup}, \code{draws}, \code{seed},
-\code{saveEffects}, \code{processes}, \code{target}, \code{sampler},
+\code{saveEffects}, \code{processes}, \code{intoverpop}, \code{sampler},
 \code{placement}, \code{minESS}, \code{meanESS}, \code{rhatTarget},
 \code{maxDraws}, \code{settleTol}, \code{init_scale}, and NUTS's
 \code{maxdepth}, \code{target_accept}, \code{adapt_metric} and

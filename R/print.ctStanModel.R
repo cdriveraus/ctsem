@@ -90,9 +90,13 @@ print.ctStanModel <- function(x, matrices = NULL, ...) {
   }
   if (any(x$manifesttype > 0)) {
     described <- character()
-    binary <- x$manifestNames[x$manifesttype == 1]
+    asym <- .ctAsymptoteRows(x$pars, x$manifesttype) > 0
+    binary <- x$manifestNames[x$manifesttype == 1 & !asym]
     if (length(binary)) described <- c(described,
       paste0(paste(binary, collapse = ", "), " (binary)"))
+    binary <- x$manifestNames[x$manifesttype == 1 & asym]
+    if (length(binary)) described <- c(described,
+      paste0(paste(binary, collapse = ", "), " (binary, with ASYMPTOTES)"))
     # Named one at a time, because the category count differs per variable and
     # is the thing a reader most wants to check against their data.
     ordinal <- which(x$manifesttype == 2)
