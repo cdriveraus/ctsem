@@ -106,13 +106,14 @@ if (requireNamespace('testthat', quietly = TRUE)) {
     expect_false(isTRUE(all.equal(got$rawcorr, got$z)))
   })
 
-  # With every covariance diagonal the two constructions are one model: both
-  # are D^2. 'z' then skips its matrix exponential and the exponential's
-  # Frechet derivative (cov_expm.jl, `_expm_cov_diagonal`), so this compares
-  # that shortcut against the correlation square root's own code, value and
-  # gradient, on a model with enough manifest variables for the shortcut to be
-  # the bulk of the work it replaces.
-  test_that("diagonal covariances give the same model under 'z' and 'rawcorr'", {
+  # With every covariance diagonal, 'z' and 'cholesky' are one model: both are
+  # D^2 exactly ('cholesky' is the factor's tcrossprod). 'z' then skips its
+  # matrix exponential and the exponential's Frechet derivative (cov_expm.jl,
+  # `_expm_cov_diagonal`), so this compares that shortcut against other code,
+  # value and gradient. Not 'rawcorr': its correlation square root carries a
+  # 1e-5 regulariser, so its D^2 is only approximate (1.7e-4 in the log
+  # likelihood here).
+  test_that("diagonal covariances give the same model under 'z' and 'cholesky'", {
     skip_on_cran()
     k <- 5L
     set.seed(4)
@@ -120,7 +121,7 @@ if (requireNamespace('testthat', quietly = TRUE)) {
     for (i in 1:k) dat[[paste0('Y', i)]] <- rnorm(60)
     dat$Y5[dat$id > 5] <- NA
     got <- list()
-    for (tf in c('rawcorr', 'z')) {
+    for (tf in c('cholesky', 'z')) {
       m <- suppressMessages(ctModel(type = 'ct', n.latent = 1, n.manifest = k,
         manifestNames = paste0('Y', 1:k), latentNames = 'eta',
         LAMBDA = matrix(c(1, paste0('l', 2:k)), k, 1),
@@ -137,8 +138,8 @@ if (requireNamespace('testthat', quietly = TRUE)) {
       set.seed(9); pars <- rnorm(ctsem:::.ctBackendNpar(p), 0, 0.3)
       got[[tf]] <- ctsem:::ctJuliaEvaluate(p, pars = pars, gradient = TRUE)
     }
-    expect_equal(got$z$value, got$rawcorr$value, tolerance = 1e-12)
-    expect_equal(as.numeric(got$z$gradient), as.numeric(got$rawcorr$gradient),
+    expect_equal(got$z$value, got$cholesky$value, tolerance = 1e-12)
+    expect_equal(as.numeric(got$z$gradient), as.numeric(got$cholesky$gradient),
       tolerance = 1e-10)
   })
 
