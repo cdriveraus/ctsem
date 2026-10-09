@@ -275,6 +275,9 @@ struct ContinuousEKFWorkspace{T, N, M, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF
     # The deviations this filter integrates itself, when the model has any
     # (`CTSEMHybrid`, `_hybrid_start!`).
     hyb::CTSEMHybridBuffers{T}
+    # The last pass's log likelihood, which `_ekf_run` returns through here
+    # rather than out of its function barrier; see there.
+    loglik::Base.RefValue{T}
 end
 
 """
@@ -499,6 +502,7 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
             update_param_indices, td_param_indices),
         zeros(T, n, n),
         CTSEMHybridBuffers{T}(),
+        Ref(zero(T)),
     )
 end
 

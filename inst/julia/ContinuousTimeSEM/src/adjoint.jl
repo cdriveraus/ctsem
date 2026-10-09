@@ -26,7 +26,7 @@ lookups are evaluated through. `tipreds` is the one genuinely per-subject
 field, refreshed by `ctsem_adjoint_gradient` before each subject's reverse
 pass.
 """
-mutable struct CTSEMAdjointWorkspace{T,SP,LB,FB,WS}
+mutable struct CTSEMAdjointWorkspace{T,SP,LB,FB,WS,DC}
     sp::SP
     n::Int
     m::Int
@@ -48,7 +48,10 @@ mutable struct CTSEMAdjointWorkspace{T,SP,LB,FB,WS}
     # the `parnumber` it used to be.
     regular_supports::Vector{Vector{Int}}
     regular_dual_scratch::Vector{ForwardDiff.Dual{Nothing,T,1}}
-    dual_context::Any
+    # A type parameter for the reason `ekf_ws` is one (below): read from an
+    # `Any` field, every group reverse was a dynamic call that boxed its row
+    # context on the way in.
+    dual_context::DC
     tipreds::Vector{T}
     # Persistent working copy of `all_params` used to replay a transform group
     # forward during the reverse pass; see `_ctsem_complex_group_pullback!`.
@@ -194,8 +197,9 @@ function CTSEMAdjointWorkspace(::Type{T}, sp::EKFParameters, nvalues::Integer,
     defer_frechet = isempty(sp.ti_parameter_indices) && !groups_write_jax
 
     frechet_buffer = ExpFrechetBuffer{T}(n)
+    dual_context = CTSEMDualContext(T, sp, zeros(T, n))
     return CTSEMAdjointWorkspace{T,typeof(sp),typeof(lyap_buffer),
-        typeof(frechet_buffer),typeof(ws)}(
+        typeof(frechet_buffer),typeof(ws),typeof(dual_context)}(
         sp, n, m, _val(ws.affine_buffer.dim),
         collect(ws.diffusion_state_indices),
         predict_indices, update_indices, td_indices,
@@ -204,7 +208,7 @@ function CTSEMAdjointWorkspace(::Type{T}, sp::EKFParameters, nvalues::Integer,
         td_supports,
         _ctsem_regular_transform_supports(sp, nvalues),
         fill(nan_dual, Int(nvalues)),
-        CTSEMDualContext(T, sp, zeros(T, n)),
+        dual_context,
         T[],
         group_scratch,
         lyap_buffer,
@@ -361,7 +365,7 @@ function ctsem_adjoint_gradient(objective::CTSEMObjective, values::AbstractVecto
 
     _ctsem_pull_blocks(nblocks, nchunks) do b, w
         _ctsem_adjoint_chunk!(gradients[b], totals, valid, badvalue, b,
-            ranges[b], subjects, objective.params, workspaces[w], values)
+            ranges, subjects, objective, workspaces[w], values)
     end
 
     @inbounds for c in 1:nblocks
@@ -532,19 +536,27 @@ function _ctsem_subject_gradient_chunk!(scores::Matrix{T}, totals::Vector{T},
 end
 
 """
-    _ctsem_adjoint_chunk!(gradient, totals, valid, badvalue, c, range, subjects,
-                          params, aws, values)
+    _ctsem_adjoint_chunk!(gradient, totals, valid, badvalue, c, ranges, subjects,
+                          objective, aws, values)
 
-Accumulate one contiguous chunk of subjects into its own gradient and workspace.
+Accumulate one contiguous chunk of subjects, `ranges[c]`, into its own gradient
+and workspace.
 
-This is the serial adjoint loop, scoped to `range`. Everything it touches --
+This is the serial adjoint loop, scoped to that range. Everything it touches --
 `aws` and its tape, `gradient`, and slot `c` of the shared result vectors -- is
 private to this chunk, so no synchronisation is needed beyond the enclosing
 `@sync`.
+
+The range vector and the objective rather than the range and `objective.params`:
+the call reaches here through a dynamic dispatch (`aws` comes out of a
+`Vector{Any}`), which boxes every immutable argument -- the parameters struct
+and the range, once per block.
 """
 function _ctsem_adjoint_chunk!(gradient::Vector{T}, totals::Vector{T},
-    valid::Vector{Bool}, badvalue::Vector{T}, c::Int, range::UnitRange{Int},
-    subjects, params, aws, values::AbstractVector{T}) where {T}
+    valid::Vector{Bool}, badvalue::Vector{T}, c::Int, ranges::Vector{UnitRange{Int}},
+    subjects, objective, aws, values::AbstractVector{T}) where {T}
+    range = ranges[c]
+    params = objective.params
 
     shared = aws.parameter_layer_shareable
     shared && fill!(aws.theta_bar, zero(T))

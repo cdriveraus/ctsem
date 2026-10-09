@@ -71,10 +71,13 @@ function ContinuousEKFObjective(params::EKFParameters, data::Matrix, timesteps::
         nothing, nothing, params, data, timesteps, tdpreds, tipreds, Int(subject), rule)
 end
 
+# `isa ContinuousEKFWorkspace{T}` rather than reading `eltype(ws.all_params)`
+# off a workspace whose type is not known here, which allocated on every
+# subject of every evaluation.
 function _get_or_init_objective_workspace!(objective::ContinuousEKFObjective, ::Type{T}) where {T}
     if T <: ForwardDiff.Dual
         ws = objective.dual_ws
-        if ws === nothing || !(ws isa ContinuousEKFWorkspace) || eltype(ws.all_params) != T
+        if !(ws isa ContinuousEKFWorkspace{T})
             ws = _init_continuous_ekf_workspace(T, objective.params)
             objective.dual_ws = ws
         end
@@ -82,7 +85,7 @@ function _get_or_init_objective_workspace!(objective::ContinuousEKFObjective, ::
     end
 
     ws = objective.value_ws
-    if ws === nothing || !(ws isa ContinuousEKFWorkspace) || eltype(ws.all_params) != T
+    if !(ws isa ContinuousEKFWorkspace{T})
         ws = _init_continuous_ekf_workspace(T, objective.params)
         objective.value_ws = ws
     end
@@ -100,11 +103,23 @@ dynamic dispatch, and a dynamic call boxes every immutable argument it is
 handed -- here the subject's `EKFParameters`, copied to the heap on every
 subject of every evaluation (gC8's five-node quadrature: 1.7 of its 6.6 MB an
 evaluation, from that one line). Handing over the mutable objective instead
-leaves the dispatch with nothing to copy but the returned value.
+leaves the dispatch with nothing to copy but the returned value -- and that
+too comes back through the workspace (`ws.loglik`), so the barrier returns
+`nothing` and boxes nothing: the value itself, returned through it, was the
+last allocation of a subject's pass.
 """
-@noinline _ekf_run(ws::ContinuousEKFWorkspace, o::ContinuousEKFObjective, p, tipreds,
-    trace) = _extended_kalman_filter_continuous!(ws, p, o.data, o.timesteps, o.params,
-    o.tdpreds, tipreds, o.subject, o.max_timestep, trace)
+@inline function _ekf_run(ws::ContinuousEKFWorkspace{T}, o::ContinuousEKFObjective, p,
+    tipreds, trace) where {T}
+    _ekf_run!(ws, o, p, tipreds, trace)
+    return ws.loglik[]::T
+end
+
+@noinline function _ekf_run!(ws::ContinuousEKFWorkspace, o::ContinuousEKFObjective, p,
+    tipreds, trace)
+    ws.loglik[] = _extended_kalman_filter_continuous!(ws, p, o.data, o.timesteps,
+        o.params, o.tdpreds, tipreds, o.subject, o.max_timestep, trace)
+    return nothing
+end
 
 function (objective::ContinuousEKFObjective)(p::AbstractVector{T}) where {T}
     ws = _get_or_init_objective_workspace!(objective, eltype(p))
@@ -704,7 +719,9 @@ end
 
 @inline function _apply_td_impulse!(ws::ContinuousEKFWorkspace, pars, tdpreds)
     isempty(tdpreds) && return nothing
-    _matvec_mul!(ws.bufferQ.r, pars.TDPREDEFFECT, tdpreds, ws.state_dim, Val(length(tdpreds)))
+    # Not `_matvec_mul!` at `Val(length(tdpreds))`: a runtime `Val` made it a
+    # dynamic call, which boxed both views on every row with a TD predictor.
+    _ctsem_mulvec!(ws.bufferQ.r, pars.TDPREDEFFECT, tdpreds)
     ws.state .+= ws.bufferQ.r
     _ctsem_mul!(ws.bufferQ.intermediate, pars.Jtd, ws.P_predict.data)
     _mul_right_transpose!(ws.bufferQ.out, ws.bufferQ.intermediate, pars.Jtd,
@@ -740,6 +757,9 @@ cannot disagree about the layout.
 """
 @inline function _population_raw_view(ws, all_params)
     isempty(ws.population_indices) && return nothing
+    return _population_raw_block(ws, all_params)
+end
+@inline function _population_raw_block(ws, all_params)
     k = length(ws.population_indices)
     return reshape(view(all_params, ws.population_range), k, k)
 end
@@ -770,6 +790,10 @@ free at this point: its T0VAR contents are already in `P_predict`.
         ws.population_covmatcode, ws.population_scale, ws.population_buffer)
 end
 
+# A square buffer's dimension as the `Val` it was built with.
+@inline _square_dim(buffer::SquareBuffer, k::Int) = buffer.dim
+@inline _square_dim(buffer, k::Int) = Val(k)
+
 """
     _place_population_block!(P, all_params, indices, range, covmatcode, scale,
         buffer)
@@ -794,7 +818,10 @@ about what a fit had estimated. One placement, two callers.
             P[i, s] = zero(eltype(P))
         end
     end
-    ContinuousTimeSEM.sdcovsqrt2cov!(buffer, raw, covmatcode, Val(k))
+    # The buffer's own `Val`, which is `k` by construction (and checked there):
+    # `Val(k)` is a runtime value, so the call was a dynamic dispatch boxing the
+    # buffer and the `raw` view, twice per subject evaluation.
+    ContinuousTimeSEM.sdcovsqrt2cov!(buffer, raw, covmatcode, _square_dim(buffer, k))
     # The state-unit conversion, here and nowhere else. Row a and column b by
     # their own factors, which is the same `quad_form_diag(rawpopcov,
     # popstatescale)` the stan program writes at the one line that places this
@@ -1061,8 +1088,15 @@ function _extended_kalman_filter_continuous!(
     copyto!(ws.state, pars.T0MEANS)
     _hybrid_start!(ws.hyb, sp.hybrid, data, _val(ws.state_dim), _val(ws.manifest_dim),
         sp.continuous_time)
-    _record_init!(trace, pars, _val(ws.state_dim),
-        _population_raw_view(ws, all_params))
+    # Split rather than handed `_population_raw_view`'s result: a union of
+    # `nothing` and a view is not a bits union, so it was boxed on every
+    # traced subject pass.
+    if isempty(ws.population_indices)
+        _record_init!(trace, pars, _val(ws.state_dim), nothing)
+    else
+        _record_init!(trace, pars, _val(ws.state_dim),
+            _population_raw_block(ws, all_params))
+    end
 
     # Each row follows one contract: prediction, TD impulse, measurement, and
     # the three transform groups run in that order. The first row has no

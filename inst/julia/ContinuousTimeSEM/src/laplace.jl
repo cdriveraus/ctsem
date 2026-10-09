@@ -2191,6 +2191,10 @@ the elimination order and back substitution against it.
 function _laplace_block_solve(factors, coupling, blocks::Vector{CTSEMLaplaceBlock},
     rhs::Vector{T}) where {T}
     nb = length(blocks)
+    # One block with nothing above it -- every single-level unit -- is one
+    # solve; the elimination below is the same solve with five temporaries
+    # round it, once per Newton step.
+    nb == 1 && blocks[1].size == length(rhs) && return factors[1] \ rhs
     y = [rhs[(blocks[b].offset + 1):(blocks[b].offset + blocks[b].size)] for b in 1:nb]
     # Forward: subtract each eliminated block's contribution from its ancestors.
     for b in 1:nb
@@ -2307,7 +2311,8 @@ function _laplace_unit_loglik_gradient(laplace::CTSEMLaplaceObjective, U::Intege
         return loglik
     end
 
-    pos = collect(positions)
+    # A range or vector is indexed as it is; anything else is collected.
+    pos = positions isa AbstractVector{<:Integer} ? positions : collect(positions)
     npos = length(pos)
     # "Is anyone free", not "is the pool wide". Those differ whenever the pool
     # is fully committed above this call -- which is the normal state of a
@@ -2406,6 +2411,16 @@ function _laplace_unit_loglik_gradient(laplace::CTSEMLaplaceObjective, U::Intege
     end
     return (value=sum(totals), gradient=inner, hlogdet=sum(hls))
 end
+
+"""
+`_laplace_unit_loglik_gradient(...).gradient`, for the curvature's sweeps. Their
+workspace is a slot's, which `_laplace_workspace!` cannot type, so the call is a
+dynamic dispatch: returning the named tuple boxed it on every sweep, where the
+vector alone is a reference.
+"""
+_laplace_unit_loglik_gradient_vector(laplace, U, values, Ls, u, aws, positions,
+    into, mode, hook) = _laplace_unit_loglik_gradient(laplace, U, values, Ls, u,
+    aws, positions, into, mode, hook).gradient
 
 """
     _laplace_unit_objective_gradient(laplace, U, values, Ls, u, aws)
@@ -2712,16 +2727,50 @@ function _laplace_unit_curvature(laplace::CTSEMLaplaceObjective, U::Integer,
             vs = _laplace_scratch_vector!(laplace, S, length(values), :curv_vs)
             copyto!(vs, values)
             Lss = _laplace_scratch_levels!(laplace, S, Ls, :curv_levels)
-            return _laplace_unit_loglik_gradient(laplace, U, vs, Lss, uu, ws,
+            return _laplace_unit_loglik_gradient_vector(laplace, U, vs, Lss, uu, ws,
                 eachindex(laplace.units.members[U]),
                 _laplace_scratch_vector!(laplace, S, length(uu), :curv_inner),
-                mode, hook).gradient
+                mode, hook)
         end
-        # Bucketed width: see `_CTSEM_CURVATURE_WIDTHS`.
-        A = _ctsem_width_jacobian(gradient_of, base, _CTSEM_CURVATURE_WIDTHS[])
-        dense = Matrix{T}(LinearAlgebra.I, length(u), length(u)) .-
-            _laplace_symmetrise(A)
-        return _laplace_block_of(dense, blocks)
+        # Bucketed width: see `_CTSEM_CURVATURE_WIDTHS`. Into the slot's
+        # scratch, padded input and all, as the blocked route below does: the
+        # padding is `n + 1:nx` of `uu`, which no member reads, and the rows of
+        # the gradient it adds are zero and not read either. Built fresh, the
+        # padded input, the Jacobian, its leading block, the identity, the
+        # symmetrised copy and the dense curvature were six arrays a Newton
+        # step, most of what a small unit's mode solve allocated.
+        n = length(base)
+        width = _ctsem_dual_width(n, _CTSEM_CURVATURE_WIDTHS[])
+        nx = max(n, width)
+        xb = _laplace_scratch_vector!(laplace, T, nx, :curv_ub)
+        @inbounds for t in 1:nx
+            xb[t] = t <= n ? base[t] : zero(T)
+        end
+        Jw = _laplace_scratch_matrix!(laplace, T, nx, nx, :curv_jac)
+        _ctsem_width_jacobian!(Jw, gradient_of, xb, n, width; whole=true,
+            store=laplace.workspaces[_laplace_slot()])
+        # M = I - (J + J') / 2, block by block. A matrix of its own rather than
+        # the slot's: a caller keeps it, `_laplace_unit_primal`'s until the
+        # gradient reads it.
+        # Not `M`: the blocked route below assigns that name and its closures
+        # capture it, and a captured name assigned twice is boxed.
+        Mdense = CTSEMBlockMatrix(T, blocks)
+        for (b, block) in enumerate(blocks)
+            ob = block.offset
+            D = Mdense.diag[b]
+            @inbounds for j in 1:block.size, i in 1:block.size
+                D[i, j] = (i == j ? one(T) : zero(T)) -
+                    (Jw[ob + i, ob + j] + Jw[ob + j, ob + i]) / 2
+            end
+            for (t, a) in enumerate(block.ancestors)
+                oa = blocks[a].offset
+                C = Mdense.coupling[b][t]
+                @inbounds for j in 1:blocks[a].size, i in 1:block.size
+                    C[i, j] = -(Jw[ob + i, oa + j] + Jw[oa + j, ob + i]) / 2
+                end
+            end
+        end
+        return Mdense
     end
     M = _laplace_scratch_blockmatrix!(laplace, T, U, blocks, :curv_M)
     # One block's fill. `M.diag[b]` and `M.coupling[b][*]` belong to that block
@@ -2748,10 +2797,10 @@ function _laplace_unit_curvature(laplace::CTSEMLaplaceObjective, U::Integer,
             @inbounds for (tt, c) in enumerate(columns)
                 uu[c] = ub[tt]
             end
-            return _laplace_unit_loglik_gradient(laplace, U, vs, Lss, uu, ws,
+            return _laplace_unit_loglik_gradient_vector(laplace, U, vs, Lss, uu, ws,
                 block.members,
                 _laplace_scratch_vector!(laplace, S, length(base), :curv_inner),
-                mode, hook).gradient
+                mode, hook)
         end
         # `jacobian!` into a cached result, and views out of it. The jacobian
         # is as tall as the unit's whole random-effect dimension because that
@@ -2775,7 +2824,8 @@ function _laplace_unit_curvature(laplace::CTSEMLaplaceObjective, U::Integer,
             xb[t] = zero(T)
         end
         Jw = _laplace_scratch_matrix!(laplace, T, length(base), nx, :curv_jac)
-        _ctsem_width_jacobian!(Jw, block_of, xb, block.size, width)
+        _ctsem_width_jacobian!(Jw, block_of, xb, block.size, width; whole=true,
+            store=laplace.workspaces[_laplace_slot()])
         J = view(Jw, :, 1:block.size)
         # M = I - d2(sum ll)/du du, block by block.
         M.diag[b] .= .-(@view J[columns, :])
@@ -2902,9 +2952,9 @@ function _laplace_unit_curvature_pruned(laplace::CTSEMLaplaceObjective, U::Integ
             @inbounds for (t, c) in enumerate(columns)
                 uu[c] = ub[t]
             end
-            return _laplace_unit_loglik_gradient(laplace, U, vs, Lss, uu, ws,
+            return _laplace_unit_loglik_gradient_vector(laplace, U, vs, Lss, uu, ws,
                 block.members, _laplace_scratch_vector!(laplace, S, d, :curv_inner),
-                mode, hook).gradient
+                mode, hook)
         end
         width = _ctsem_dual_width(n, _CTSEM_CURVATURE_WIDTHS[])
         nx = max(n, width)
@@ -2916,7 +2966,8 @@ function _laplace_unit_curvature_pruned(laplace::CTSEMLaplaceObjective, U::Integ
             xb[t] = zero(T)
         end
         Jw = _laplace_scratch_matrix!(laplace, T, d, nx, :curv_jac)
-        _ctsem_width_jacobian!(Jw, block_of, xb, n, width)
+        _ctsem_width_jacobian!(Jw, block_of, xb, n, width; whole=true,
+            store=laplace.workspaces[_laplace_slot()])
         # M = I - d2(sum ll)/du du on the active columns, as the full route.
         @inbounds for (j, cj) in enumerate(columns), ci in columns
             D[ci - off, cj - off] -= Jw[ci, j]
@@ -3371,21 +3422,34 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
     best = found
     bestterm = NaN
     seen = [found.u]
+    # The screen's working vectors, the slot's: none outlives one probe.
+    atgrad = _laplace_scratch_vector!(laplace, Float64, d, :probe_grad)
+    miss = _laplace_scratch_vector!(laplace, Float64, d, :probe_miss)
+    solved = _laplace_scratch_vector!(laplace, Float64, d, :probe_solve)
     for j in 1:d
         lambda = E.values[j]
         lambda < _LAPLACE_PROBE_SOFT || break
         reach = min(_LAPLACE_PROBE_REACH / sqrt(max(lambda, 1e-8)), 3.0)
         for sign in (-1.0, 1.0)
-            start = found.u .+ (sign * reach) .* E.vectors[:, j]
+            # A vector of its own: Newton keeps it as the mode it reaches.
+            start = found.u .+ (sign * reach) .* view(E.vectors, :, j)
             if screened
-                at = _laplace_unit_objective_gradient(laplace, U, values, Ls, start, aws)
+                at = _laplace_unit_objective_gradient(laplace, U, values, Ls, start,
+                    aws, atgrad)
                 isfinite(at.value) || continue
-                miss = at.gradient .+ M * (start .- found.u)
-                dot(miss, F \ miss) > 1 || continue
+                # miss = a + M (p - u)
+                @inbounds for i in 1:d
+                    acc = at.gradient[i]
+                    for k in 1:d
+                        acc += M[i, k] * (start[k] - found.u[k])
+                    end
+                    miss[i] = acc
+                end
+                dot(miss, ldiv!(solved, F, miss)) > 1 || continue
             end
             r = _laplace_newton_unit_mode(laplace, U, values, Ls, aws, start)
             (r.converged && isfinite(r.value)) || continue
-            any(m -> maximum(abs, m .- r.u) < 1e-4, seen) && continue
+            any(m -> _laplace_maxabsdiff(m, r.u) < 1e-4, seen) && continue
             push!(seen, r.u)
             if _laplace_modes_separated(laplace, U, values, Ls, aws, best, r)
                 isnan(bestterm) && (bestterm = _laplace_unit_primal(laplace, U,
@@ -3403,6 +3467,15 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
         end
     end
     return best
+end
+
+"""`maximum(abs, a .- b)` without the difference vector."""
+function _laplace_maxabsdiff(a::AbstractVector, b::AbstractVector)
+    m = 0.0
+    @inbounds for i in eachindex(a, b)
+        m = max(m, abs(a[i] - b[i]))
+    end
+    return m
 end
 
 """
@@ -4416,14 +4489,23 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
     d = units.dims[U]
     nmem = length(units.members[U])
     uhat = laplace.modes[U]
-    zerodir = zeros(Float64, npar)
+    # Every working array below is the calling slot's, cached by shape
+    # (`_laplace_scratch_vector!`), or a worker's own where the member loops
+    # divide: built afresh, they were most of what a Laplace gradient
+    # allocated, once per unit, block and population parameter.
+    zerodir = fill!(_laplace_scratch_vector!(laplace, Float64, npar, :sg_zero), 0.0)
     # Inactive coordinates (`CTSEMLaplaceUnits`): nothing depends on them, so
     # their curvature rows are the identity with no coupling, their columns of
     # the factor of C below are basis vectors, and a sweep along one moves only
     # effects no member here can see -- exactly zero, and skipped.
     act = _laplace_active_columns(laplace, U)
-    isactive = fill(true, d)
-    act === nothing || (fill!(isactive, false); isactive[act] .= true)
+    isactive = fill!(_laplace_scratch_vector!(laplace, Bool, d, :sg_active), true)
+    if act !== nothing
+        fill!(isactive, false)
+        @inbounds for c in act
+            isactive[c] = true
+        end
+    end
 
     # No random effects anywhere in this unit: there is no integral, the term
     # is the plain log likelihood, and one ordinary reverse sweep is the whole
@@ -4480,30 +4562,47 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
     # nothing beside one subject sweep.
     run_by_member! = function (body)
         return _laplace_partition(laplace, nmem) do mine, _w
-            body(collect(mine))
+            body(mine)
         end
     end
 
-    # Scatter a level-space vector onto the raw parameter vector. The local name
-    # must not collide with anything in the enclosing scope: a Julia closure
-    # rebinds an enclosing local rather than shadowing it, so assigning `out`
-    # here would silently replace the caller's accumulator.
-    function scatter(level::Int, w::AbstractVector)
-        dir = zeros(Float64, npar)
+    # Scatter a level-space vector onto the raw parameter vector, into `dir`.
+    # The local names must not collide with anything in the enclosing scope: a
+    # Julia closure rebinds an enclosing local rather than shadowing it, so
+    # assigning `out` here would silently replace the caller's accumulator.
+    function scatter!(dir::Vector{Float64}, level::Int, w::AbstractVector)
+        local rho, p
+        fill!(dir, 0.0)
         rho = spec.levels[level].re_index
         @inbounds for p in eachindex(rho); dir[rho[p]] = w[p]; end
         return dir
     end
+    # The same for `L w`, a level's loading applied to block coordinates.
+    function scatter_loaded!(dir::Vector{Float64}, level::Int, L::AbstractMatrix,
+        w::AbstractVector)
+        local rho, p, q, acc
+        fill!(dir, 0.0)
+        rho = spec.levels[level].re_index
+        @inbounds for p in eachindex(rho)
+            acc = 0.0
+            for q in eachindex(w)
+                acc += L[p, q] * w[q]
+            end
+            dir[rho[p]] = acc
+        end
+        return dir
+    end
 
-    Pm = zeros(Float64, npar, nmem)     # d psi / d v_m
-    llvm = zeros(Float64, npar, nmem)   # d loglik_m / d v_m
-    Bsm = zeros(Float64, npar, nmem)    # member share of s' B
+    # d psi / d v_m, d loglik_m / d v_m, and the member share of s' B.
+    Pm = fill!(_laplace_scratch_matrix!(laplace, Float64, npar, nmem, :sg_Pm), 0.0)
+    llvm = fill!(_laplace_scratch_matrix!(laplace, Float64, npar, nmem, :sg_llvm), 0.0)
+    Bsm = fill!(_laplace_scratch_matrix!(laplace, Float64, npar, nmem, :sg_Bsm), 0.0)
     # `Vector{Bool}`, not `falses`. A `BitVector` packs 64 flags into a word, so
     # `seen[m] = true` is a read-modify-write of that word: two tasks setting
     # *different* members race on it and one write is simply lost.
-    seen = fill(false, nmem)
+    seen = fill!(_laplace_scratch_vector!(laplace, Bool, nmem, :sg_seen), false)
 
-    assemble! = function (mine::Vector{Int})
+    assemble! = function (mine)
         # `local`, and not for tidiness. Assignment inside a closure binds the
         # *enclosing* function's variable whenever that name is already a local
         # there, and this function assigns `pass`, `dir`, `s`, `b`, `block` and
@@ -4514,14 +4613,23 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
         # one-column matrix, and would otherwise be a wrong gradient.
         local ownedA, b, block, l, L, k, subsA, FC, Q, j, dir, pass, c, m, t
         local kparl, la, nb, na, accumulate, Cab, Vcross, e, q, i, tt
-        ownedA = fill(false, nmem)
+        local Cs, dir1, dir2, T1, p, x, y, z, acc
+        # This worker's own: `_laplace_scratch_*` is keyed by the calling slot,
+        # and every worker of the partition holds a different one.
+        ownedA = fill!(_laplace_scratch_vector!(laplace, Bool, nmem, :sg_ownedA), false)
+        subsA = _laplace_scratch_vector!(laplace, Int, 0, :sg_subsA)
+        dir1 = _laplace_scratch_vector!(laplace, Float64, npar, :sg_dir1)
+        dir2 = _laplace_scratch_vector!(laplace, Float64, npar, :sg_dir2)
         @inbounds for m in mine; ownedA[m] = true; end
         for (b, block) in enumerate(blocks)
             l = block.level
             L = Ls[l]
             k = block.size
             k == 0 && continue
-            subsA = Int[m for m in block.members if ownedA[m]]
+            empty!(subsA)
+            for m in block.members
+                ownedA[m] && push!(subsA, m)
+            end
             isempty(subsA) && continue
         # Diagonal term. tr(C[b,b] A[b,b]) = tr(W H) with W = L C[b,b] L', so a
         # factor of W turns the trace into pure second directional derivatives
@@ -4536,9 +4644,24 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
         # column per block dimension, which is the number of directions the
         # trace needs. At full rank this is the same factorisation of the same
         # matrix, reached without forming it.
-        FC = cholesky(Symmetric(_laplace_symmetrise(Cdiag[b])); check=false)
-        issuccess(FC) || (_LAPLACE_DIAG[] = 11; return false)
-        Q = L * Matrix(FC.L)
+        #
+        # The engine's own factor, `Cs = U'U` in place, rather than LAPACK's,
+        # which took its process-wide lock once per block per unit on every
+        # worker (`small_linalg.jl`); and `Q = L U'` by hand rather than a BLAS
+        # product, which locks the same way.
+        Cs = _laplace_scratch_matrix!(laplace, Float64, k, k, :sg_Cs)
+        @inbounds for y in 1:k, x in 1:k
+            Cs[x, y] = (Cdiag[b][x, y] + Cdiag[b][y, x]) / 2
+        end
+        _ctsem_cholesky!(Cs, k) || (_LAPLACE_DIAG[] = 11; return false)
+        Q = _laplace_scratch_matrix!(laplace, Float64, size(L, 1), k, :sg_Q)
+        @inbounds for j in 1:k, p in 1:size(L, 1)
+            acc = 0.0
+            for z in j:k
+                acc += L[p, z] * Cs[j, z]
+            end
+            Q[p, j] = acc
+        end
         # One sweep per direction, and it stays that way. This is the only site
         # whose sweep count grows with the number of random effects -- 100k
         # member-sweeps against 100 for every other site on a single-level
@@ -4571,7 +4694,7 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
         # `review/LAPLACE-where-the-time-goes-2026-09-23.md`.
         for j in 1:k
             isactive[block.offset + j] || continue
-            dir = scatter(l, Q[:, j])
+            dir = scatter!(dir1, l, view(Q, :, j))
             pass = sweep_at(subsA, dir, dir, 2)
             pass.ok || (_LAPLACE_DIAG[] = 12; return false)
             # The second-order sweep is where this fails when it fails: it is a
@@ -4637,8 +4760,8 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
                     # C[a,b] is zero in an inactive row or column.
                     (isactive[block.offset + i] && isactive[blocks[a].offset + j]) ||
                         continue
-                    accumulate(sweep_at(subsA, scatter(l, L[:, i]),
-                        scatter(la, Ls[la][:, j]), 2), subsA,
+                    accumulate(sweep_at(subsA, scatter!(dir1, l, view(L, :, i)),
+                        scatter!(dir2, la, view(Ls[la], :, j)), 2), subsA,
                         2 * Cab[j, i]) || return false
                 end
             else
@@ -4647,11 +4770,26 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
                 # land on it. Harmless only because that one is reallocated
                 # before it is read -- a reordering, or lifting this loop into
                 # a closure, makes it a silent wrong answer.
-                Vcross = Ls[la] * transpose(Ccoup[b][t]) * transpose(L)
+                # Vcross = Ls[la] C[a,b] L', through `T1 = C[a,b] L'`, by the
+                # engine's kernels rather than two locking BLAS products.
+                T1 = _laplace_scratch_matrix!(laplace, Float64, na, kparl, :sg_T1)
+                @inbounds for q in 1:kparl, j in 1:na
+                    acc = 0.0
+                    for i in 1:nb
+                        acc += Ccoup[b][t][i, j] * L[q, i]
+                    end
+                    T1[j, q] = acc
+                end
+                Vcross = _laplace_scratch_matrix!(laplace, Float64,
+                    size(Ls[la], 1), kparl, :sg_Vcross)
+                _ctsem_mul!(Vcross, Ls[la], T1)
                 for q in 1:kparl
-                    e = zeros(Float64, kparl); e[q] = 1.0
-                    accumulate(sweep_at(subsA, scatter(l, e),
-                        scatter(la, Vcross[:, q]), 2), subsA, 2.0) || return false
+                    # The basis direction `e_q` of this level, scattered.
+                    fill!(dir1, 0.0)
+                    dir1[spec.levels[l].re_index[q]] = 1.0
+                    accumulate(sweep_at(subsA, dir1,
+                        scatter!(dir2, la, view(Vcross, :, q)), 2), subsA,
+                        2.0) || return false
                 end
             end
         end
@@ -4686,7 +4824,7 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
     end
 
     # dpsi/du_b runs through this block's members only, then s = C dpsi/du.
-    gradu = zeros(Float64, d)
+    gradu = fill!(_laplace_scratch_vector!(laplace, Float64, d, :sg_gradu), 0.0)
     for (b, block) in enumerate(blocks)
         l = block.level
         rho = spec.levels[l].re_index
@@ -4697,13 +4835,16 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
         k = block.size
         kpar = length(rho)
         k == 0 && continue
-        acc = zeros(Float64, kpar)
+        acc = fill!(_laplace_scratch_vector!(laplace, Float64, kpar, :sg_acc), 0.0)
         for m in block.members, p in 1:kpar
             acc[p] += Pm[rho[p], m]
         end
-        contribution = transpose(Ls[l]) * acc
         @inbounds for q in 1:k
-            gradu[block.offset + q] += contribution[q]
+            contribution = 0.0
+            for p in 1:kpar
+                contribution += Ls[l][p, q] * acc[p]
+            end
+            gradu[block.offset + q] += contribution
         end
     end
     s = _laplace_block_solve(factors, elim, blocks, gradu)
@@ -4712,18 +4853,23 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
     # s' B: one sweep per block, along that block's share of L s. Summed over
     # blocks this is one directional derivative per member along the total shift
     # its own block and its ancestors impose, which is what the product needs.
-    sB! = function (mine::Vector{Int})
+    sB! = function (mine)
         # See the note in `assemble!`: without this the tasks share `pass`.
         local ownedB, b, block, k, subsB, sb, dir, pass, c, m, t
-        ownedB = fill(false, nmem)
+        ownedB = fill!(_laplace_scratch_vector!(laplace, Bool, nmem, :sg_ownedB), false)
+        subsB = _laplace_scratch_vector!(laplace, Int, 0, :sg_subsB)
+        dir = _laplace_scratch_vector!(laplace, Float64, npar, :sg_dirB)
         @inbounds for m in mine; ownedB[m] = true; end
         for (b, block) in enumerate(blocks)
             k = block.size
             k == 0 && continue
-            subsB = Int[m for m in block.members if ownedB[m]]
+            empty!(subsB)
+            for m in block.members
+                ownedB[m] && push!(subsB, m)
+            end
             isempty(subsB) && continue
-            sb = [s[block.offset + q] for q in 1:k]
-            dir = scatter(block.level, Ls[block.level] * sb)
+            sb = view(s, (block.offset + 1):(block.offset + k))
+            scatter_loaded!(dir, block.level, Ls[block.level], sb)
             pass = sweep_at(subsB, dir, dir, 1)
             pass.ok || (_LAPLACE_DIAG[] = 16; return false)
             all(isfinite, pass.d1c) || (_LAPLACE_DIAG[] = 17; return false)
@@ -4782,7 +4928,9 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
                 # others the direction moves nothing they can see, and their
                 # columns are zero.
                 if act === nothing
-                    pass = sweep(1:nmem, scatter(l, Ls[l][:, q]), zerodir, 1)
+                    pass = sweep(1:nmem, scatter!(
+                        _laplace_scratch_vector!(laplace, Float64, npar, :sg_dirV),
+                        l, view(Ls[l], :, q)), zerodir, 1)
                     pass.ok || return false
                     all(isfinite, pass.d1c) || return false
                     # A copy, because the sweep's output buffer is reused by
@@ -4795,7 +4943,9 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
                     levelsweeps[l][q] = zeros(Float64, npar, nmem)
                     continue
                 end
-                pass = sweep(seeing, scatter(l, Ls[l][:, q]), zerodir, 1)
+                pass = sweep(seeing, scatter!(
+                    _laplace_scratch_vector!(laplace, Float64, npar, :sg_dirV),
+                    l, view(Ls[l], :, q)), zerodir, 1)
                 pass.ok || return false
                 all(isfinite, pass.d1c) || return false
                 if length(seeing) == nmem
@@ -4826,8 +4976,8 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
         return acc
     end
 
-    V = Vector{Matrix{Float64}}(undef, length(blocks))
     if needV
+        V = Vector{Matrix{Float64}}(undef, length(blocks))
         for (b, block) in enumerate(blocks)
             V[b] = zeros(Float64,
                 length(spec.levels[block.level].re_index), block.size)
@@ -4853,69 +5003,105 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
     # give the curvature blocks with no further sweeps, and writing each trace
     # through A rather than through the v-space Hessian needs only one
     # triangular solve X = L \ dL.
-    Gb = Vector{Vector{Float64}}(undef, length(blocks))
-    Fb = Vector{Vector{Float64}}(undef, length(blocks))
+    #
+    # Block by block, and everything that does not depend on which population
+    # parameter moves -- `G` and `F`, and the one matrix each trace contracts
+    # `X` against -- is formed once per block, in the slot's scratch. Formed
+    # inside the parameter loop, as it was, each was a few arrays and a BLAS
+    # product per parameter per unit: a quarter of what a Laplace gradient
+    # allocated, on a one-effect model.
+    positions = _laplace_scratch_vector!(laplace, Int, 0, :sg_positions)
     for (b, block) in enumerate(blocks)
-        rho = spec.levels[block.level].re_index
-        kpar = length(rho)
-        Gb[b] = zeros(Float64, kpar)
-        Fb[b] = zeros(Float64, kpar)
-        for m in block.members, p in 1:kpar
-            Gb[b][p] += llvm[rho[p], m] + (Pm[rho[p], m] + Bsm[rho[p], m]) / 2
-            Fb[b][p] += llvm[rho[p], m]
-        end
-    end
-
-    for l in eachindex(spec.levels)
-        isempty(dL[l]) && continue
-        levelpositions = _laplace_level_positions(spec, l)
-        for (t, j) in enumerate(levelpositions)
-            X = needV ? zeros(Float64, 0, 0) : dLsolved[l][t]
-            total = 0.0
-            for (b, block) in enumerate(blocks)
-                k = block.size
-                if block.level == l && k > 0
-                    kpar = length(spec.levels[l].re_index)
-                    ub = [uhat[block.offset + q] for q in 1:k]
-                    sb = [s[block.offset + q] for q in 1:k]
-                    # `dL` is parameter-by-block, so both shifts land in
-                    # parameter space where `Gb` and `Fb` live.
-                    shift = dL[l][t] * ub
-                    sshift = dL[l][t] * sb
-                    for p in 1:kpar
-                        total += Gb[b][p] * shift[p] + Fb[b][p] * sshift[p] / 2
+        l = block.level
+        k = block.size
+        if k > 0 && !isempty(dL[l])
+            rho = spec.levels[l].re_index
+            kpar = length(rho)
+            G = fill!(_laplace_scratch_vector!(laplace, Float64, kpar, :sg_G), 0.0)
+            F = fill!(_laplace_scratch_vector!(laplace, Float64, kpar, :sg_F), 0.0)
+            for m in block.members, p in 1:kpar
+                G[p] += llvm[rho[p], m] + (Pm[rho[p], m] + Bsm[rho[p], m]) / 2
+                F[p] += llvm[rho[p], m]
+            end
+            # tr(C[b,b] A[b,b] X) and, for each ancestor, tr(X' A[b,a] C[a,b])
+            # -- this block's own factor moving -- as one contraction
+            # `sum(X .* W)`, `W = (C[b,b] A[b,b])' + sum_a A[b,a] C[a,b]'`.
+            if !needV
+                W = _laplace_scratch_matrix!(laplace, Float64, k, k, :sg_W)
+                Cb = Cdiag[b]
+                Md = M.diag[b]
+                @inbounds for y in 1:k, x in 1:k
+                    acc = Cb[x, y]
+                    for z in 1:k
+                        acc -= Cb[x, z] * Md[z, y]
                     end
-                    if needV
-                        for x in axes(V[b], 1), y in axes(V[b], 2)
-                            total += V[b][x, y] * dL[l][t][x, y]
-                        end
-                    else
-                    KB = Cdiag[b] * (Matrix{Float64}(LinearAlgebra.I, k, k) .- M.diag[b])
-                    for x in 1:k, y in 1:k
-                        total += KB[x, y] * X[y, x]
-                    end
-                    # tr(X' A[b,a] C[a,b]): this block's own factor moving.
-                    for (tt, a) in enumerate(block.ancestors)
-                        Z = (.-M.coupling[b][tt]) * transpose(Ccoup[b][tt])
-                        for x in 1:k, y in 1:k
-                            total += X[y, x] * Z[y, x]
-                        end
-                    end
-                    end
+                    W[y, x] = acc
                 end
-                # tr(C[a,b] A[b,a] X): an ancestor's factor moving.
-                if !needV
                 for (tt, a) in enumerate(block.ancestors)
-                    blocks[a].level == l || continue
-                    ka = blocks[a].size
-                    Z = transpose(Ccoup[b][tt]) * (.-M.coupling[b][tt])
-                    for x in 1:ka, y in 1:ka
-                        total += Z[x, y] * X[y, x]
+                    Mc = M.coupling[b][tt]
+                    Cc = Ccoup[b][tt]
+                    @inbounds for x in 1:k, y in 1:k
+                        acc = 0.0
+                        for z in axes(Mc, 2)
+                            acc += Mc[y, z] * Cc[x, z]
+                        end
+                        W[y, x] -= acc
                     end
-                end
                 end
             end
-            out[j] += total
+            _laplace_level_positions!(positions, spec, l)
+            for (t, j) in enumerate(positions)
+                # `dL` is parameter-by-block, so both shifts land in parameter
+                # space where `G` and `F` live.
+                D = dL[l][t]
+                total = 0.0
+                @inbounds for q in 1:k
+                    uq = uhat[block.offset + q]
+                    sq = s[block.offset + q]
+                    for p in 1:kpar
+                        total += D[p, q] * (G[p] * uq + F[p] * sq / 2)
+                    end
+                end
+                if needV
+                    Vb = V[b]
+                    @inbounds for x in axes(Vb, 1), y in axes(Vb, 2)
+                        total += Vb[x, y] * D[x, y]
+                    end
+                else
+                    X = dLsolved[l][t]
+                    @inbounds for x in 1:k, y in 1:k
+                        total += X[y, x] * W[y, x]
+                    end
+                end
+                out[j] += total
+            end
+        end
+        # tr(C[a,b] A[b,a] X): an ancestor's factor moving, in the ancestor's
+        # level's parameters, against `Z = -C[a,b] A[b,a]`.
+        needV && continue
+        for (tt, a) in enumerate(block.ancestors)
+            la = blocks[a].level
+            isempty(dL[la]) && continue
+            ka = blocks[a].size
+            Mc = M.coupling[b][tt]
+            Cc = Ccoup[b][tt]
+            Z = _laplace_scratch_matrix!(laplace, Float64, ka, ka, :sg_Z)
+            @inbounds for y in 1:ka, x in 1:ka
+                acc = 0.0
+                for z in 1:k
+                    acc += Cc[z, x] * Mc[z, y]
+                end
+                Z[x, y] = -acc
+            end
+            _laplace_level_positions!(positions, spec, la)
+            for (t, j) in enumerate(positions)
+                X = dLsolved[la][t]
+                total = 0.0
+                @inbounds for x in 1:ka, y in 1:ka
+                    total += Z[x, y] * X[y, x]
+                end
+                out[j] += total
+            end
         end
     end
     return true
@@ -4960,9 +5146,27 @@ end
 """Raw positions of one level's free population parameters, scales then
 correlations. A stated entry (index 0) is not a parameter and has no position."""
 _laplace_level_positions(spec::CTSEMLaplaceSpec, l::Integer) =
-    isreducedrank(spec.levels[l]) ?
-        vcat(spec.levels[l].load_index, filter(>(0), spec.levels[l].unique_index)) :
-        filter(!=(0), vcat(spec.levels[l].sd_index, spec.levels[l].cor_index))
+    _laplace_level_positions!(Int[], spec, l)
+
+"""The same, into `dest`, for a caller that runs once per unit."""
+function _laplace_level_positions!(dest::Vector{Int}, spec::CTSEMLaplaceSpec, l::Integer)
+    level = spec.levels[l]
+    empty!(dest)
+    if isreducedrank(level)
+        append!(dest, level.load_index)
+        for i in level.unique_index
+            i > 0 && push!(dest, i)
+        end
+    else
+        for i in level.sd_index
+            i != 0 && push!(dest, i)
+        end
+        for i in level.cor_index
+            i != 0 && push!(dest, i)
+        end
+    end
+    return dest
+end
 
 """
     _laplace_level_chol_derivatives(values, spec)

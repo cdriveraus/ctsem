@@ -445,12 +445,23 @@ function _ctsem_dual_width(n::Integer, widths::Vector{Int})
     return w0
 end
 
-"""`f` applied to the first `n` entries of its input: the padded Jacobian's function."""
+"""
+`f` applied to the first `n` entries of its input: the padded Jacobian's function.
+
+`whole` when `f` reads only those entries and ignores the padding after them,
+so it can be handed the padded input itself rather than a copy of its head --
+a new vector of duals on every sweep otherwise. A field and not a type
+parameter: this type names the Jacobian's tag, so a second type would be a
+second dual type for the filter to compile.
+"""
 struct _CTSEMLeading{F}
     f::F
     n::Int
+    whole::Bool
 end
-(g::_CTSEMLeading)(y::AbstractVector) = g.f(length(y) == g.n ? y : y[1:g.n])
+_CTSEMLeading(f, n::Integer) = _CTSEMLeading(f, Int(n), false)
+(g::_CTSEMLeading)(y::AbstractVector) =
+    g.f(g.whole || length(y) == g.n ? y : y[1:g.n])
 
 """
     _ctsem_width_jacobian!(J, f, x, n, width)
@@ -460,12 +471,32 @@ The Jacobian of `f` over the first `n` entries of `x`, by forward mode at
 `length(x)` is `max(n, width)`: when `width` exceeds `n`, the entries past `n`
 are padding, zero, and `J`'s columns past `n` come back zero. Always through
 `_CTSEMLeading`, padded or not, so one `f` has one tag type at every width.
+`whole`: `f` takes the padded input as it is (`_CTSEMLeading`).
+
+`store`, a caller's per-task dictionary, keeps the `JacobianConfig` -- a vector
+of duals, built per call otherwise -- by its type and the input's length. Its
+tag is the one built here either way, so a cached config changes no dual type.
 """
 function _ctsem_width_jacobian!(J::AbstractMatrix, f::F, x::AbstractVector,
-    n::Integer, width::Integer) where {F}
-    g = _CTSEMLeading(f, Int(n))
-    cfg = ForwardDiff.JacobianConfig(g, x, ForwardDiff.Chunk{Int(width)}())
-    return ForwardDiff.jacobian!(J, g, x, cfg)
+    n::Integer, width::Integer; whole::Bool=false,
+    store::Union{Nothing,AbstractDict}=nothing) where {F}
+    return _ctsem_width_jacobian!(J, _CTSEMLeading(f, Int(n), whole), x,
+        Val(Int(width)), store)
+end
+
+function _ctsem_width_jacobian!(J::AbstractMatrix, g::G, x::AbstractVector{V},
+    ::Val{W}, store) where {G,V,W}
+    (store === nothing || !(x isa Vector)) && return ForwardDiff.jacobian!(J, g, x,
+        ForwardDiff.JacobianConfig(g, x, ForwardDiff.Chunk{W}()))
+    T = ForwardDiff.Tag{G,V}
+    C = ForwardDiff.JacobianConfig{T,V,W,Vector{ForwardDiff.Dual{T,V,W}}}
+    key = (:width_jacobian, C, length(x))
+    cfg = get(store, key, nothing)
+    if cfg === nothing
+        cfg = ForwardDiff.JacobianConfig(g, x, ForwardDiff.Chunk{W}())
+        store[key] = cfg
+    end
+    return ForwardDiff.jacobian!(J, g, x, cfg::C)
 end
 
 """

@@ -1,5 +1,6 @@
 using DataFrames
 using LinearAlgebra
+using Random
 
 # This file is the acceptance-gate harness docs/src/adjoint-roadmap.md commits
 # to: "compare it [the adjoint] with current ForwardDiff and central finite
@@ -642,4 +643,46 @@ end
     @test (report.checked, report.explosive, report.subjects) == (2, 2, [1])
     report = CT.ctsem_explosive_draws(every, reshape(values, :, 1))
     @test (report.explosive, report.subjects) == (0, [0])
+end
+
+@testset "adjoint gradient allocation does not grow with the subject count" begin
+    # Bytes, not time, so deterministic. A subject's pass reuses its chunk's
+    # tape, reverse scratch and filter workspace, so once those exist a
+    # gradient of a model of fixed shape allocates the same at any subject
+    # count: the per-call result vectors and nothing per subject. Each call of
+    # a state-dependent transform in the reverse used to box its row context
+    # and its result, 9.6 KB a subject on a one-effect augmented model, and
+    # nothing failed. One chunk, so no task spawns enter the count.
+    CT = ContinuousTimeSEM
+    function adjoint_bytes(sp, nmanifest, nsubjects, values; td::Bool=false)
+        rng = Random.MersenneTwister(7)
+        data = 0.3 .* randn(rng, nmanifest, 3 * nsubjects)
+        times = repeat([0.0, 0.5, 1.2], nsubjects)
+        starts = collect(1:3:(3 * nsubjects))
+        objective = td ?
+            CT.ctsem_objective(sp, starts, times, data,
+                repeat([0.0 1.0 0.0], 1, nsubjects)) :
+            CT.ctsem_objective(sp, starts, times, data)
+        gradient = () -> CT.ctsem_adjoint_gradient(objective, values)
+        value = () -> objective(values)
+        gradient(); gradient(); value(); value()
+        return (gradient=(@allocated gradient()), value=(@allocated value()))
+    end
+    old = CT.ctsem_max_chunks().max_chunks
+    try
+        CT.ctsem_set_max_chunks!(1)
+        for (label, sp, nmanifest, values, td) in (
+                ("state-dependent", _ADJOINT_SP_STATE_DEPENDENT, 1, [0.2], false),
+                ("free covariance", _ADJOINT_SP_FREE_COVARIANCE, 2,
+                    [0.3, 0.2, -0.1, 0.4, 0.15, -0.2, 0.25, 0.1, -0.15, 0.35, 0.2],
+                    false),
+                ("TD predictor", _ADJOINT_SP_TD_CROSS_2D, 2, [0.2, -0.3, 0.15], true))
+            few = adjoint_bytes(sp, nmanifest, 4, values; td=td)
+            many = adjoint_bytes(sp, nmanifest, 8, values; td=td)
+            @test (label, many.gradient) == (label, few.gradient)
+            @test (label, many.value) == (label, few.value)
+        end
+    finally
+        CT.ctsem_set_max_chunks!(old)
+    end
 end
