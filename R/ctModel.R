@@ -212,7 +212,11 @@
 #' same thing on the natural scale only where the transforms agree, so sharing
 #' a name between parameters transformed differently is refused. A name is
 #' scoped per predictor: the same label under two predictors is two
-#' coefficients.
+#' coefficients. A number instead of a name (\code{'mypar||||age=0.5'}) fixes
+#' the effect: no coefficient is estimated, and each subject's raw value of the
+#' parameter is displaced by 0.5 times their \code{age}, before the transform.
+#' Fixed effects are fitted by \code{backend = 'julia'} and used by
+#' \code{ctGenerate}; the stan backend refuses them.
 #'
 #' A cell that is exactly a latent state or time dependent predictor name is
 #' taken as a reference to it rather than as a parameter of that name, and

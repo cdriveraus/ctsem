@@ -1653,6 +1653,15 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
       call.=FALSE)
   }
 
+  # A TI effect fixed to a value ('TI1=4.3') is a known offset on its
+  # parameter. The julia engine adds it; the stan program has no slot for it
+  # and would fit the model without it, so it is refused there by name.
+  fixedti <- .ctTipredFixedEffects(ctm)
+  if(length(fixedti) && !backend %in% 'julia') stop(
+    'Time independent predictor effects fixed to a value (',
+    paste(utils::head(fixedti, 4), collapse=', '),
+    ') are fitted by backend="julia" only.', call.=FALSE)
+
   outervarying <- .ctVaryingParams(ctm, .ctOuterVaryingColumns(ctm))
   if(length(outervarying)){
     named <- paste(outervarying, collapse=', ')

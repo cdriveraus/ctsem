@@ -312,6 +312,14 @@ function _ctsem_ti_pullback!(values_bar::AbstractVector,
             values_bar[spec.parameter_index[k]] += cotangent * values[coefficient]
         end
     end
+    # A fixed effect has no coefficient, so only its predictor term: present
+    # where that predictor is one of this subject's sampled cells.
+    @inbounds for i in eachindex(sp.ti_fixed_parameter_indices)
+        k = findfirst(==(sp.ti_fixed_predictor_indices[i]), spec.predictor_index)
+        k === nothing && continue
+        values_bar[spec.parameter_index[k]] +=
+            subject_values_bar[sp.ti_fixed_parameter_indices[i]] * sp.ti_fixed_values[i]
+    end
     return values_bar
 end
 

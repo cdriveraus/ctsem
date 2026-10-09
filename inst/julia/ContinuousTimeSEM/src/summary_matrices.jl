@@ -232,8 +232,9 @@ function ctsem_parameter_matrices(objective::CTSEMObjective, values::AbstractMat
     layout = ctsem_parameter_layout(objective)
     names, nrows, ncols, offsets, nall = _ctsem_base_layout(sp)
 
-    ntipred = length(sp.ti_predictor_indices) == 0 ? length(tipreds) :
-              max(length(tipreds), maximum(sp.ti_predictor_indices))
+    ntipred = max(length(tipreds),
+        maximum(sp.ti_predictor_indices; init=0),
+        maximum(sp.ti_fixed_predictor_indices; init=0))
     ti = zeros(Float64, ntipred)
     ti[eachindex(tipreds)] .= Float64.(tipreds)
 
