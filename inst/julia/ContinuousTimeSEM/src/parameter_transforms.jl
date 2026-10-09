@@ -61,8 +61,7 @@ function apply_complex_transforms_at_indices!(all_params, indices, transforms, s
 end
 
 """Copy population raw parameters and add TI effects into an isolated subject
-buffer: each estimated effect's coefficient, and each fixed one's value, times
-the subject's predictor."""
+buffer: each effect (`_ctsem_ti_effect`) times the subject's predictor."""
 function _materialize_subject_values!(subject_values::AbstractVector, values::AbstractVector,
     sp::EKFParameters, tipreds::AbstractVector)
     subject_values isa Vector || throw(ArgumentError("subject parameter buffer must be resizable"))
@@ -77,23 +76,18 @@ function _materialize_subject_values!(subject_values::AbstractVector, values::Ab
         parameter <= length(subject_values) || throw(BoundsError(subject_values, parameter))
         predictor <= length(tipreds) || throw(BoundsError(tipreds, predictor))
         coefficient <= length(values) || throw(BoundsError(values, coefficient))
-        subject_values[parameter] += values[coefficient] * tipreds[predictor]
-    end
-    @inbounds for i in eachindex(sp.ti_fixed_parameter_indices)
-        parameter = sp.ti_fixed_parameter_indices[i]
-        predictor = sp.ti_fixed_predictor_indices[i]
-        parameter <= length(subject_values) || throw(BoundsError(subject_values, parameter))
-        predictor <= length(tipreds) || throw(BoundsError(tipreds, predictor))
-        subject_values[parameter] += sp.ti_fixed_values[i] * tipreds[predictor]
+        subject_values[parameter] += _ctsem_ti_effect(sp, values, i) * tipreds[predictor]
     end
     return subject_values
 end
 
-"""Whether subjects' raw parameters differ by TI predictor effects, estimated or
-fixed: the shared parameter layer and the cross-subject Frechet batch assume
-they do not."""
-_ctsem_has_ti_effects(sp::EKFParameters) =
-    !isempty(sp.ti_parameter_indices) || !isempty(sp.ti_fixed_parameter_indices)
+"""The `i`th TI effect at `values`: its coefficient, or its value when it is
+fixed (coefficient index 0)."""
+@inline function _ctsem_ti_effect(sp::EKFParameters, values::AbstractVector{T},
+    i::Integer) where {T}
+    coefficient = sp.ti_coefficient_indices[i]
+    return coefficient == 0 ? T(sp.ti_fixed_values[i]) : values[coefficient]
+end
 
 """
     TIMissingRecipe(base, predictor_index, parameter_index)
@@ -132,14 +126,20 @@ Two methods, dispatched on the *stored* type, not a runtime flag:
     exactly the identity function and the compiler resolves it at the call
     site, so a model with nothing missing pays nothing for this feature
     existing: no branch, no allocation, no new code on its path.
-  * `tipreds::TIMissingRecipe` -- a fresh `Vector{T}` (`T` = `eltype(p)`, so a
+  * `tipreds::TIMissingRecipe` -- a `Vector{T}` (`T` = `eltype(p)`, so a
     `ForwardDiff.Dual` during a gradient) built from the fixed base row with
-    each missing cell overwritten by `p[parameter_index]`. This is the
-    "honest cost" the spec accepts for sampling a missing predictor: one
-    small per-subject allocation per evaluation, paid only by subjects that
-    actually have a missing cell.
+    each missing cell overwritten by `p[parameter_index]`: a new one, or, given
+    a workspace's `buffer`, that one, which is what a pass repeated every
+    evaluation passes.
 """
 @inline _ctsem_tipred_vector(tipreds::AbstractVector, p::AbstractVector) = tipreds
+@inline _ctsem_tipred_vector(tipreds::AbstractVector, p::AbstractVector, buffer) = tipreds
+@inline _ctsem_tipred_vector(spec::TIMissingRecipe, p::AbstractVector, buffer) =
+    _ctsem_tipred_fill!(buffer, spec, p)
+
+"""How many TI predictors a subject's stored row holds."""
+_ctsem_tipred_length(tipreds::AbstractVector) = length(tipreds)
+_ctsem_tipred_length(spec::TIMissingRecipe) = length(spec.base)
 
 @inline function _ctsem_tipred_vector(spec::TIMissingRecipe, p::AbstractVector{T}) where {T}
     buffer = Vector{T}(undef, length(spec.base))

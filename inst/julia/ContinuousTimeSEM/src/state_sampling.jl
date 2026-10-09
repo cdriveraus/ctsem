@@ -856,7 +856,7 @@ function ctsem_joint_loglikelihood(objective::CTSEMObjective,
         ws = _get_or_init_objective_workspace!(sub, T)
         contribution = _ctsem_state_pass!(ws, parameters, sub.data,
             sub.timesteps, sp, sub.tdpreds,
-            _ctsem_tipred_vector(sub.tipreds, parameters), sub.subject,
+            _ctsem_tipred_vector(sub.tipreds, parameters, ws.tipred_row), sub.subject,
             sub.max_timestep, innovations, layout.zoffsets[i], nothing, trans)
         isfinite(contribution) || return _ctsem_invalid(T)
         total += contribution
@@ -1090,7 +1090,8 @@ function _ctsem_joint_subject(o::CTSEMJointObjective, i::Int,
     sub = o.objective.subject_objectives[i]
     ws = _get_or_init_objective_workspace!(sub, T)
     value = _ctsem_state_pass!(ws, theta, sub.data, sub.timesteps,
-        o.objective.params, sub.tdpreds, _ctsem_tipred_vector(sub.tipreds, theta),
+        o.objective.params, sub.tdpreds,
+        _ctsem_tipred_vector(sub.tipreds, theta, ws.tipred_row),
         sub.subject, sub.max_timestep, z, offset, nothing, o.transition)
     isfinite(value) || return value
     prior = zero(T)

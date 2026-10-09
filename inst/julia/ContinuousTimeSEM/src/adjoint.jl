@@ -191,7 +191,7 @@ function CTSEMAdjointWorkspace(::Type{T}, sp::EKFParameters, nvalues::Integer,
     dvar_set = Set(_ctsem_component_positions(sp, :DIFFUSION))
     groups_write_diffusion = any(i -> i in dvar_set,
         Iterators.flatten((predict_indices, td_indices, update_indices)))
-    defer_frechet = !_ctsem_has_ti_effects(sp) && !groups_write_jax
+    defer_frechet = isempty(sp.ti_parameter_indices) && !groups_write_jax
 
     frechet_buffer = ExpFrechetBuffer{T}(n)
     return CTSEMAdjointWorkspace{T,typeof(sp),typeof(lyap_buffer),
@@ -304,7 +304,7 @@ and once.
 """
 function _ctsem_parameter_layer_shareable(sp::EKFParameters, predict_indices,
     update_indices, td_indices)
-    _ctsem_has_ti_effects(sp) && return false
+    isempty(sp.ti_parameter_indices) || return false
     return isempty(predict_indices) && isempty(update_indices) && isempty(td_indices)
 end
 

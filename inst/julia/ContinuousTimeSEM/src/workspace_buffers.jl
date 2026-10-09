@@ -275,6 +275,10 @@ struct ContinuousEKFWorkspace{T, N, M, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF
     # The deviations this filter integrates itself, when the model has any
     # (`CTSEMHybrid`, `_hybrid_start!`).
     hyb::CTSEMHybridBuffers{T}
+    # The predictor row of a subject with sampled TI predictor cells, built here
+    # each evaluation (`_ctsem_tipred_vector(tipreds, p, buffer)`); unused, and
+    # empty, for every other subject.
+    tipred_row::Vector{T}
 end
 
 """
@@ -499,6 +503,7 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
             update_param_indices, td_param_indices),
         zeros(T, n, n),
         CTSEMHybridBuffers{T}(),
+        T[],
     )
 end
 

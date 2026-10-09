@@ -3190,9 +3190,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # pass carries no cotangent to a value read there, so such a predictor's
 # missing values are imputed, never sampled.
 .ctJuliaTIMissingReadCheck <- function(model, cells) {
-  param <- as.character(model$pars$param)
-  read <- regmatches(param, gregexpr("tipreds\\[([0-9]+)\\]", param))
-  read <- sort(unique(as.integer(gsub("\\D", "", unlist(read)))))
+  read <- unique(unlist(lapply(as.character(model$pars$param),
+    .ctExpressionIndices, name = "tipreds")))
   absent <- read[read %in% cells$predictor]
   if (length(absent)) stop("A cell reads the time independent predictor ",
     paste0('"', model$TIpredNames[absent], '"', collapse = ", "),
@@ -3898,16 +3897,21 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     V(.ctJuliaNoNA(as.character(table$predicttransform), "")),
     V(.ctJuliaNoNA(as.character(table$updatetransform), "")),
     V(.ctJuliaNoNA(as.character(table$tdtransform), "")))
+  # A fixed effect is an entry like any other with no coefficient (0), its
+  # value beside it.
+  fixed <- spec$ti_fixed
+  if (!is.null(fixed) && nrow(fixed)) {
+    effects <- data.frame(
+      parameter = c(as.integer(effects$parameter), as.integer(fixed$parameter)),
+      predictor = c(as.integer(effects$predictor), as.integer(fixed$predictor)),
+      coefficient = c(as.integer(effects$coefficient), integer(nrow(fixed))),
+      value = c(numeric(nrow(effects)), as.numeric(fixed$value)))
+  }
   if (nrow(effects)) {
     arguments$ti_parameter <- V(as.integer(effects$parameter))
     arguments$ti_predictor <- V(as.integer(effects$predictor))
     arguments$ti_coefficient <- V(as.integer(effects$coefficient))
-  }
-  fixed <- spec$ti_fixed
-  if (!is.null(fixed) && nrow(fixed)) {
-    arguments$ti_fixed_parameter <- V(as.integer(fixed$parameter))
-    arguments$ti_fixed_predictor <- V(as.integer(fixed$predictor))
-    arguments$ti_fixed_value <- V(as.numeric(fixed$value))
+    if (!is.null(effects$value)) arguments$ti_fixed_value <- V(as.numeric(effects$value))
   }
   if (length(spec$dynamic_state_indices)) {
     arguments$diffusion_state_indices <-

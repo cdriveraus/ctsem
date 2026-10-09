@@ -232,9 +232,13 @@ function ctsem_parameter_matrices(objective::CTSEMObjective, values::AbstractMat
     layout = ctsem_parameter_layout(objective)
     names, nrows, ncols, offsets, nall = _ctsem_base_layout(sp)
 
-    ntipred = max(length(tipreds),
-        maximum(sp.ti_predictor_indices; init=0),
-        maximum(sp.ti_fixed_predictor_indices; init=0))
+    # As wide as a subject's predictor row: a cell may read any predictor
+    # (`ctx.tipreds[j]`), not only one with an effect. Unsupplied ones are zero,
+    # where the population is reported.
+    nsubjectti = isempty(objective.subject_objectives) ? 0 :
+        _ctsem_tipred_length(first(objective.subject_objectives).tipreds)
+    ntipred = max(length(tipreds), nsubjectti,
+        maximum(sp.ti_predictor_indices; init=0))
     ti = zeros(Float64, ntipred)
     ti[eachindex(tipreds)] .= Float64.(tipreds)
 

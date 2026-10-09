@@ -254,7 +254,8 @@ end
     _ctsem_ti_pullback!(values_bar, subject_values_bar, sp, tipreds, values)
 
 Undo `_materialize_subject_values!`: the identity copy plus each TI predictor
-effect `subject_values[par] += values[coef] * tipred[pred]`.
+effect `subject_values[par] += values[coef] * tipred[pred]`. A fixed effect
+(coefficient index 0) has no coefficient to receive a term.
 
 Two methods, dispatched on the *stored* `tipreds` type -- exactly mirroring
 `_ctsem_tipred_vector` in parameter_transforms.jl:
@@ -275,7 +276,9 @@ Two methods, dispatched on the *stored* `tipreds` type -- exactly mirroring
     another TI effect. Two or more TI effects reading the same missing cell
     (`predictor` shared across several `i`) each contribute their own term to
     the same `values_bar[parameter_index[k]]` slot, and the `+=` below sums
-    them rather than overwriting, as it must.
+    them rather than overwriting, as it must. The second term uses the effect,
+    `_ctsem_ti_effect`, so it holds for a fixed one too; each predictor value
+    is read from the recipe rather than from a row built for the purpose.
 """
 function _ctsem_ti_pullback!(values_bar::AbstractVector,
     subject_values_bar::AbstractVector, sp::EKFParameters, tipreds::AbstractVector,
@@ -284,10 +287,10 @@ function _ctsem_ti_pullback!(values_bar::AbstractVector,
         values_bar[i] += subject_values_bar[i]
     end
     @inbounds for i in eachindex(sp.ti_parameter_indices)
-        parameter = sp.ti_parameter_indices[i]
-        predictor = sp.ti_predictor_indices[i]
         coefficient = sp.ti_coefficient_indices[i]
-        values_bar[coefficient] += subject_values_bar[parameter] * tipreds[predictor]
+        coefficient == 0 && continue
+        values_bar[coefficient] += subject_values_bar[sp.ti_parameter_indices[i]] *
+            tipreds[sp.ti_predictor_indices[i]]
     end
     return values_bar
 end
@@ -295,30 +298,23 @@ end
 function _ctsem_ti_pullback!(values_bar::AbstractVector,
     subject_values_bar::AbstractVector, sp::EKFParameters, spec::TIMissingRecipe,
     values::AbstractVector)
-    tipred_vec = _ctsem_tipred_vector(spec, values)
     @inbounds for i in eachindex(values_bar)
         values_bar[i] += subject_values_bar[i]
     end
     @inbounds for i in eachindex(sp.ti_parameter_indices)
-        parameter = sp.ti_parameter_indices[i]
         predictor = sp.ti_predictor_indices[i]
         coefficient = sp.ti_coefficient_indices[i]
-        cotangent = subject_values_bar[parameter]
-        values_bar[coefficient] += cotangent * tipred_vec[predictor]
-        # Second product-rule term, present only when this TI effect's own
-        # predictor column is one of this subject's sampled cells.
+        cotangent = subject_values_bar[sp.ti_parameter_indices[i]]
+        # Present only when this effect's predictor is one of this subject's
+        # sampled cells, whose value is then that raw parameter.
         k = findfirst(==(predictor), spec.predictor_index)
-        if k !== nothing
-            values_bar[spec.parameter_index[k]] += cotangent * values[coefficient]
+        if coefficient != 0
+            values_bar[coefficient] += cotangent * (k === nothing ?
+                spec.base[predictor] : values[spec.parameter_index[k]])
         end
-    end
-    # A fixed effect has no coefficient, so only its predictor term: present
-    # where that predictor is one of this subject's sampled cells.
-    @inbounds for i in eachindex(sp.ti_fixed_parameter_indices)
-        k = findfirst(==(sp.ti_fixed_predictor_indices[i]), spec.predictor_index)
-        k === nothing && continue
-        values_bar[spec.parameter_index[k]] +=
-            subject_values_bar[sp.ti_fixed_parameter_indices[i]] * sp.ti_fixed_values[i]
+        if k !== nothing
+            values_bar[spec.parameter_index[k]] += cotangent * _ctsem_ti_effect(sp, values, i)
+        end
     end
     return values_bar
 end
