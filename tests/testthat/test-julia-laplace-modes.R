@@ -1,8 +1,9 @@
 # The inner solve's choice of mode (`_laplace_probe_modes`). Where a unit's
 # integrand has more than one maximum, Newton from the origin reaches whichever
-# one the origin's basin holds; probes along the found mode's soft directions
-# find others, and between separate maxima the largest term, scored exactly as
-# the evaluation scores it (`_laplace_unit_primal`), decides. A point Newton
+# one the origin's basin holds; probes along the found mode's soft directions,
+# and from its reflection through the origin, find others, and between separate
+# maxima the largest term, scored exactly as the evaluation scores it
+# (`_laplace_unit_primal`), decides. A point Newton
 # stopped at that climbs to a higher one without a dip is not a maximum, and
 # gives way to it.
 #
@@ -92,4 +93,72 @@ test_that("the inner solve ends at a maximum, scored as the evaluation scores it
   h <- 1e-5
   fd <- (evaluate(x + h * v)$value - evaluate(x - h * v)$value) / (2 * h)
   expect_equal(fd, sum(as.numeric(r$gradient) * v), tolerance = 1e-5)
+})
+
+# The loading fixture made asymmetric: the latent starts at a known mean of 1,
+# so the data say the loading's sign weakly, through the first few means, and
+# the sign's two maxima no longer score alike. With the population mean at 0.5
+# the origin lies on the positive side, and for a person whose data favour the
+# negative one Newton from the origin stops at a maximum the data pin (precision
+# above `_LAPLACE_PROBE_SOFT`), where no soft direction leads anywhere.
+.modes_reflect_data <- function() {
+  set.seed(3)
+  n <- 6; nt <- 10
+  d <- data.frame(id = rep(1:n, each = nt), time = rep(0:(nt - 1), n))
+  eta <- unlist(lapply(1:n, function(i) {
+    e <- numeric(nt)
+    e[1] <- 1 + rnorm(1)
+    for (t in 2:nt) e[t] <- 0.6 * e[t - 1] + rnorm(1, 0, 0.8)
+    e
+  }))
+  d$Y1 <- -1.2 * eta + rnorm(n * nt, 0, 0.3)
+  d
+}
+
+test_that("a better mode past the origin is found where the found one is pinned", {
+  skip_without_julia()
+  m <- .modes_sign_model()
+  m$pars$value[m$pars$matrix %in% "T0MEANS"] <- 1
+  spec <- suppressMessages(ctFit(.modes_reflect_data(), m, backend = "julia",
+    intoverpop = "laplace", fit = FALSE))
+  handle <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
+  objective <- ctsem:::.ctJuliaObjective(handle, hybrid = TRUE)
+  x <- c(0.5, 0.5)
+  r <- ctJuliaEvaluate(handle, x, gradient = FALSE, contributions = TRUE,
+    cores = 1L)
+  # Every maximum of each person's g_U, from a grid refined by Newton, and the
+  # largest of their terms; Newton from the origin, and the precision there.
+  ctsem:::.ctJuliaEval(paste(
+    "function _ctsem_test_reflect_scan(o, theta)",
+    "  C = ContinuousTimeSEM",
+    "  Ls = C._laplace_popchols(theta, o.spec)",
+    "  aws = C._laplace_workspace!(o, Float64, length(theta))",
+    "  grid = collect(-6.0:0.01:6.0)",
+    "  out = zeros(length(o.units.members), 4)",
+    "  for U in eachindex(o.units.members)",
+    "    g = [C._laplace_unit_objective_gradient(o, U, theta, Ls, [u], aws).value",
+    "      for u in grid]",
+    "    best = -Inf",
+    "    for i in 2:length(grid)-1",
+    "      (g[i] > g[i-1] && g[i] >= g[i+1]) || continue",
+    "      m = C._laplace_newton_unit_mode(o, U, theta, Ls, aws, [grid[i]])",
+    "      best = max(best, C._laplace_unit_primal(o, U, theta, Ls, copy(m.u), aws).term)",
+    "    end",
+    "    r0 = C._laplace_newton_unit_mode(o, U, theta, Ls, aws, zeros(1))",
+    "    M = C._laplace_unit_curvature(o, U, theta, Ls, copy(r0.u))",
+    "    out[U, :] = [best, r0.u[1], C._laplace_unit_primal(o, U, theta, Ls,",
+    "      copy(r0.u), aws).term, C._laplace_block_dense(M, o.units.blocks[U], 1)[1, 1]]",
+    "  end",
+    "  out",
+    "end", sep = "\n"))
+  scan <- matrix(as.numeric(ctsem:::.ctJuliaCall("Main._ctsem_test_reflect_scan",
+    objective, ctsem:::.ctJuliaNumericVector(x))), ncol = 4,
+    dimnames = list(NULL, c("best", "u_origin", "term_origin", "precision")))
+  # Each person's term is that of their best maximum.
+  expect_equal(as.numeric(r$subject_loglik), scan[, "best"], tolerance = 1e-6)
+  # And the case under test is here: a person whose origin's maximum is pinned,
+  # so no soft-direction probe runs, and lower than the one past the origin.
+  pinned <- scan[, "precision"] > 3.5 & scan[, "u_origin"] > 0 &
+    scan[, "best"] > scan[, "term_origin"] + 0.5
+  expect_true(any(pinned))
 })

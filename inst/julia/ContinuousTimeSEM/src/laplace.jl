@@ -3367,7 +3367,8 @@ end
 The unit's mode with the largest Laplace term among `found`, the one Newton
 reached from the origin, and those Newton reaches from `_LAPLACE_PROBE_REACH`
 posterior sds either way (at most three prior sds) along each of `found`'s soft
-directions: precision below `_LAPLACE_PROBE_SOFT`, a negative one included.
+directions -- precision below `_LAPLACE_PROBE_SOFT`, a negative one included --
+and from `-found.u`, its reflection through the origin.
 
 Why. Where `g_U` has two maxima, Newton from the origin reaches whichever one
 the origin's basin holds, and as the parameters move the basin's edge crosses
@@ -3378,9 +3379,20 @@ in `g_U`, a valley 0.15 below the lower, the term 7.7 lower on the far side of
 the edge and central differences of the objective growing as one over the
 step. The lower mode carried `exp(-7.7)` of the higher's mass, so the higher
 mode's term was the Laplace approximation, and the jump only which basin the
-origin fell in. A lower mode is shallow along the way to a higher one, so its
-soft directions are where to look; a mode the data pin in every direction has
-no soft direction and costs no probe.
+origin fell in. A lower mode is often shallow along the way to a higher one, so
+its soft directions are where to look.
+
+Not always, and the reflection is for when not. On the pilot's item-level fit
+(rank-3 loadings, three effects a person) three people's better modes lay 4 to
+6 posterior sds from the found ones, past a valley, with the found mode pinned
+in every direction in two of them (least precision 3.7 and 4.3): a person's
+data explained on one loading dimension or on another, at -3.2 on the first or
++3.0 on the second. No soft-direction probe ran or reached them, and the
+objective was 12.9 short there. Newton from `-found.u` found all three; probes
+at 6 posterior sds along every direction found two, at ten times the cost; at
+the reflection the found mode's quadratic is wrong by construction, so the
+screen passes it, and near the origin, where the reflection is the found mode,
+the screen stops it.
 
 A probe is screened before Newton runs from it, at the cost of one gradient:
 where `g_U` is the quadratic the found mode's curvature `M` describes, the
@@ -3416,7 +3428,14 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
     # own solves overwrite it.
     M = _laplace_symmetrise(M)
     E = _ctsem_symeig(M)
-    (all(isfinite, E.values) && E.values[1] < _LAPLACE_PROBE_SOFT) || return found
+    all(isfinite, E.values) || return found
+    # The values ascend, so the soft directions are the first `nsoft`.
+    nsoft = 0
+    while nsoft < d && E.values[nsoft + 1] < _LAPLACE_PROBE_SOFT
+        nsoft += 1
+    end
+    reflected = any(!iszero, found.u)
+    (nsoft > 0 || reflected) || return found
     F = _ctsem_cholesky(copy(M), d)
     screened = issuccess(F)
     best = found
@@ -3426,45 +3445,48 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
     atgrad = _laplace_scratch_vector!(laplace, Float64, d, :probe_grad)
     miss = _laplace_scratch_vector!(laplace, Float64, d, :probe_miss)
     solved = _laplace_scratch_vector!(laplace, Float64, d, :probe_solve)
-    for j in 1:d
-        lambda = E.values[j]
-        lambda < _LAPLACE_PROBE_SOFT || break
-        reach = min(_LAPLACE_PROBE_REACH / sqrt(max(lambda, 1e-8)), 3.0)
-        for sign in (-1.0, 1.0)
-            # A vector of its own: Newton keeps it as the mode it reaches.
+    # Each soft direction either way, then the reflection.
+    for probe in 1:(2 * nsoft + (reflected ? 1 : 0))
+        # A vector of its own: Newton keeps it as the mode it reaches.
+        if probe <= 2 * nsoft
+            j = (probe + 1) >> 1
+            reach = min(_LAPLACE_PROBE_REACH / sqrt(max(E.values[j], 1e-8)), 3.0)
+            sign = isodd(probe) ? -1.0 : 1.0
             start = found.u .+ (sign * reach) .* view(E.vectors, :, j)
-            if screened
-                at = _laplace_unit_objective_gradient(laplace, U, values, Ls, start,
-                    aws, atgrad)
-                isfinite(at.value) || continue
-                # miss = a + M (p - u)
-                @inbounds for i in 1:d
-                    acc = at.gradient[i]
-                    for k in 1:d
-                        acc += M[i, k] * (start[k] - found.u[k])
-                    end
-                    miss[i] = acc
-                end
-                dot(miss, ldiv!(solved, F, miss)) > 1 || continue
-            end
-            r = _laplace_newton_unit_mode(laplace, U, values, Ls, aws, start)
-            (r.converged && isfinite(r.value)) || continue
-            any(m -> _laplace_maxabsdiff(m, r.u) < 1e-4, seen) && continue
-            push!(seen, r.u)
-            if _laplace_modes_separated(laplace, U, values, Ls, aws, best, r)
-                isnan(bestterm) && (bestterm = _laplace_unit_primal(laplace, U,
-                    values, Ls, copy(best.u), aws).term)
-                term = _laplace_unit_primal(laplace, U, values, Ls, copy(r.u), aws).term
-                (isfinite(term) && (!isfinite(bestterm) || term > bestterm)) || continue
-            else
-                r.value > best.value || continue
-                term = NaN
-            end
-            best = (u=r.u, value=r.value, gradient=r.gradient, converged=true,
-                iterations=found.iterations + r.iterations,
-                repaired=found.repaired || r.repaired, curvature=nothing)
-            bestterm = term
+        else
+            start = -found.u
         end
+        if screened
+            at = _laplace_unit_objective_gradient(laplace, U, values, Ls, start,
+                aws, atgrad)
+            isfinite(at.value) || continue
+            # miss = a + M (p - u)
+            @inbounds for i in 1:d
+                acc = at.gradient[i]
+                for k in 1:d
+                    acc += M[i, k] * (start[k] - found.u[k])
+                end
+                miss[i] = acc
+            end
+            dot(miss, ldiv!(solved, F, miss)) > 1 || continue
+        end
+        r = _laplace_newton_unit_mode(laplace, U, values, Ls, aws, start)
+        (r.converged && isfinite(r.value)) || continue
+        any(m -> _laplace_maxabsdiff(m, r.u) < 1e-4, seen) && continue
+        push!(seen, r.u)
+        if _laplace_modes_separated(laplace, U, values, Ls, aws, best, r)
+            isnan(bestterm) && (bestterm = _laplace_unit_primal(laplace, U,
+                values, Ls, copy(best.u), aws).term)
+            term = _laplace_unit_primal(laplace, U, values, Ls, copy(r.u), aws).term
+            (isfinite(term) && (!isfinite(bestterm) || term > bestterm)) || continue
+        else
+            r.value > best.value || continue
+            term = NaN
+        end
+        best = (u=r.u, value=r.value, gradient=r.gradient, converged=true,
+            iterations=found.iterations + r.iterations,
+            repaired=found.repaired || r.repaired, curvature=nothing)
+        bestterm = term
     end
     return best
 end
