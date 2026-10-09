@@ -173,7 +173,9 @@
 #' independent predictor by name, the subject's value of it -- a study's known
 #' response rounding as \code{MANIFESTVAR = 'rsd + mvar'}, say, with
 #' \code{PARS = c('mvar|1e-10 + 5 * log1p_exp(2 * param)')}; this is julia
-#' only, and every subject's value of such a predictor must be observed. A
+#' only, and every subject's value of such a predictor must be observed.
+#' Population summaries evaluate the cell at a predictor value of zero, where
+#' they report predictor effects. A
 #' cell cannot reference a manifest variable or the time interval at all.
 #' Predictor \emph{effects} on a parameter are set with the \code{tipreds}
 #' field.
