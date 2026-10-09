@@ -222,6 +222,14 @@ default.
  error inside it disables it with a warning. \code{fit$optim$trace} holds
  every iteration after the fit, and \code{\link{ctTracePlot}} draws it.}
  \item{\code{progress}}{Force the progress line on or off.}
+ \item{\code{tipredMissing}}{How missing TI predictor values are handled.
+ Each gets a normal distribution from a regression on the other variables;
+ \code{'impute'} holds the value at its mean, \code{'sample'} makes it a
+ parameter with that distribution as its prior, and \code{'auto'}, the
+ default, imputes when optimizing and samples when sampling. A sampled fit
+ is placed with the values imputed. \code{ctFitUncertainty(fit, 'sample')}
+ reads the fit's setting, and its \code{control$tipredMissing} overrides
+ it.}
  \item{\code{tipredMissingIncludeOutcome}}{Default TRUE. Whether the outcome
  informs the imputation of missing TI predictors.}
  \item{\code{saveEffects}}{A sampling setting; read here for older scripts.

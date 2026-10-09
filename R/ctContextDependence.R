@@ -112,7 +112,7 @@
   # single expression parser below sees one language rather than two.
   if (inherits(fit, "ctStanModel")) {
     pars <- ctModelStatesAndPARS(fit$pars, statenames = fit$latentNames,
-      tdprednames = fit$TDpredNames)
+      tdprednames = fit$TDpredNames, tiprednames = fit$TIpredNames)
     expression <- replace(as.character(pars$param), is.na(pars$param), "")
     # ctsem's own rewrite only touches `param`, so a reference written into a
     # `name | transform` cell is left as a bare latent name. Both backends read
@@ -124,7 +124,7 @@
       shim <- pars
       shim$param <- replace(as.character(pars$transform), is.na(pars$transform), "")
       shim <- ctModelStatesAndPARS(shim, statenames = fit$latentNames,
-        tdprednames = fit$TDpredNames)
+        tdprednames = fit$TDpredNames, tiprednames = fit$TIpredNames)
       expression <- trimws(paste(expression, shim$param))
     }
     return(data.frame(matrix = as.character(pars$matrix), row = as.integer(pars$row),

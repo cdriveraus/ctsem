@@ -181,7 +181,7 @@ function ctsem_particle_batch(objective::CTSEMObjective, values::AbstractMatrix;
         ess_min[j] = pf.ess_min
         full = objective(x)
         posterior[j] = full
-        filter[j] = full - _ctsem_log_prior(objective, x) - _ctsem_ti_missing_loglik(objective, x)
+        filter[j] = full - _ctsem_log_prior(objective, x)
     end
     return (particle=particle, se=se, ess_min=ess_min, filter=filter, posterior=posterior)
 end

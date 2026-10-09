@@ -216,9 +216,18 @@ fresh name inside an expression does not declare it, so
 \code{DRIFT = matrix('-exp(dr)*eta1')} needs
 \code{PARS = c('dr')} alongside it. To transform one parameter and nothing
 else the second field is shorter --
-\code{DRIFT = matrix('dr|-exp(param)')}. A cell cannot reference a
-manifest variable, a time-independent predictor or the time interval at
-all; predictor effects are set with the \code{tipreds} field.
+\code{DRIFT = matrix('dr|-exp(param)')}. A cell may also read a time
+independent predictor by name, the subject's value of it -- a study's known
+response rounding as \code{MANIFESTVAR = 'rsd + mvar'}, say, with
+\code{PARS = c('mvar|1e-10 + 5 * log1p_exp(2 * param)')}; this is julia
+only. A subject's missing value of such a predictor is imputed
+(\code{optimcontrol$tipredMissing}); it cannot be sampled, since the cell
+reads it as data.
+Population summaries evaluate the cell at a predictor value of zero, where
+they report predictor effects. A
+cell cannot reference a manifest variable or the time interval at all.
+Predictor \emph{effects} on a parameter are set with the \code{tipreds}
+field.
 
 Not every simple name in a cell is a parameter name. A latent state or
 time dependent predictor name is a \emph{reference} to it, and any number
@@ -254,7 +263,11 @@ one coefficient displaces each parameter's raw value equally, it means the
 same thing on the natural scale only where the transforms agree, so sharing
 a name between parameters transformed differently is refused. A name is
 scoped per predictor: the same label under two predictors is two
-coefficients.
+coefficients. A number instead of a name (\code{'mypar||||age=0.5'}) fixes
+the effect: no coefficient is estimated, and each subject's raw value of the
+parameter is displaced by 0.5 times their \code{age}, before the transform.
+Fixed effects are fitted by \code{backend = 'julia'} and used by
+\code{ctGenerate}; the stan backend refuses them.
 
 A cell that is exactly a latent state or time dependent predictor name is
 taken as a reference to it rather than as a parameter of that name, and

@@ -125,7 +125,7 @@ function (objective::ContinuousEKFObjective)(p::AbstractVector{T}) where {T}
     ws = _get_or_init_objective_workspace!(objective, eltype(p))
     # Identity for the common case (see `_ctsem_tipred_vector`); only a
     # subject with a sampled TI predictor cell does any work here.
-    tipred_vec = _ctsem_tipred_vector(objective.tipreds, p)
+    tipred_vec = _ctsem_tipred_vector(objective.tipreds, p, ws.tipred_row)
     return _ekf_run(ws, objective, p, tipred_vec, nothing)::T
 end
 

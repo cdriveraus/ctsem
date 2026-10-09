@@ -121,11 +121,12 @@
     # parameter called `age` next to a time independent predictor called `age`.
     # Nothing is numerically wrong; nothing asked for is delivered either.
     if (p %in% TIpredNames) {
-      warning(cell, ' is "', p, '", which is also a time independent ',
-        'predictor of this model. The cell is a free parameter of that name, ',
-        'not a reference to the predictor -- a cell cannot reference one. To ',
-        'let "', p, '" predict this parameter, name it in the cell\'s tipreds ',
-        'field: "', p, '_par, tipreds=', p, '".', call. = FALSE)
+      hint <- paste0(cell, ' is the time independent predictor name "', p,
+        '", so the cell takes that subject\'s value of it rather than being a ',
+        'free parameter. Write tipreds[', match(p, TIpredNames),
+        '] if that is what you meant; to let "', p, '" predict a parameter ',
+        'instead, name it in the cell\'s tipreds field.')
+      if (inpars) stop(hint, call. = FALSE) else warning(hint, call. = FALSE)
       next
     }
     if (p %in% manifestNames) {
@@ -165,8 +166,9 @@
     # label is the text and whose transform is built from NA, reaching the
     # backend as the unfinished string "99999 + 99999*".
     if (grepl('\\W', gsub('.', '', p, fixed = TRUE))) {
-      declared <- c(latentNames, TDpredNames, .ctSpecParsLabels(ctspec),
-        'state', 'tdpreds', 'PARS', 'param', 'rowi')
+      declared <- c(latentNames, TDpredNames, TIpredNames,
+        .ctSpecParsLabels(ctspec), 'state', 'tdpreds', 'tipreds', 'PARS',
+        'param', 'rowi')
       bare <- .ctSpecBareNames(p)
       undeclared <- setdiff(bare, declared)
       if (length(undeclared)) {
@@ -180,24 +182,19 @@
             why <- c(why, paste0('"', nm, '" is the time interval, which a ',
               'cell cannot see -- an interval effect comes from the ',
               'continuous time parameters, not from a cell'))
-          } else if (nm %in% TIpredNames) {
-            why <- c(why, paste0('"', nm, '" is a time independent predictor, ',
-              'which acts through the cell\'s tipreds field rather than by ',
-              'being referenced'))
           } else if (nm %in% manifestNames) {
             why <- c(why, paste0('"', nm, '" is a manifest variable, which a ',
               'cell cannot see -- reference the latent state it loads on'))
           }
         }
-        fixable <- setdiff(undeclared,
-          c('dt', 'time', TIpredNames, manifestNames))
+        fixable <- setdiff(undeclared, c('dt', 'time', manifestNames))
         stop(cell, ' is the expression "', p, '", which uses ',
           paste0('"', undeclared, '"', collapse = ', '),
           if (length(undeclared) > 1) ' -- none of which are declared'
             else ' -- which is not declared',
           ' by this model. Writing a name inside an expression does not ',
-          'declare it: a name has to be a latent state, a time dependent ',
-          'predictor, or a parameter given a PARS cell. ',
+          'declare it: a name has to be a latent state, a time dependent or ',
+          'time independent predictor, or a parameter given a PARS cell. ',
           if (length(why)) paste0('Note that ',
             paste(why, collapse = ', and '), '. ') else '',
           if (length(fixable)) paste0('Add PARS = c(\'', fixable[1],

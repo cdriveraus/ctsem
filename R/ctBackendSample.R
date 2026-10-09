@@ -240,6 +240,12 @@
   verbose = 0, state_explicit = FALSE, handles = NULL) {
 
   .ctBackendSampleCheckControl(control)
+  # Missing TI predictor values are sampled with the rest unless the fit or
+  # `control$tipredMissing` says to impute them; a fit that imputed them, the
+  # placement of `ctFit(optimize = FALSE)` among them, gains them here.
+  if (.ctJuliaTIMissingSamples(fit$model_spec, control[["tipredMissing"]])) {
+    fit <- .ctJuliaTIMissingSampleFit(fit)
+  }
   sampled <- .ctBackendSampleRoute(.ctBackendIntOverPop(fit$model_spec),
     requested = fit$args$input[["intoverpop"]], override = control$intoverpop)
   marginal <- !identical(sampled, "none")
@@ -380,6 +386,10 @@
   # `ctFit()` takes it as an argument of its own and refuses it here.
   "iter", "chains", "warmup", "draws", "seed", "saveEffects", "processes",
   "intoverpop", "stepsize",
+  # Whether missing TI predictor values are sampled or held at their imputed
+  # means, overriding the fit's `optimcontrol$tipredMissing`, as `intoverpop`
+  # overrides its route; read by `.ctBackendUncertaintySample()`.
+  "tipredMissing",
   # Which kernel draws the joint posterior: 'saem' (SAEM's sweeps for the
   # effects, NUTS for the parameters given them; the default there) or 'nuts'
   # (NUTS on the whole joint vector); resolved against the target by
@@ -482,6 +492,10 @@
     stop("sampleControl$intoverpop: ctFit()'s own intoverpop argument says ",
       "what is sampled ('none' the joint posterior, 'laplace' the Laplace ",
       "marginal, 'augmented' the filter's marginal).", call. = FALSE)
+  }
+  if (identical(listname, "sampleControl") && "tipredMissing" %in% names(control)) {
+    stop("sampleControl$tipredMissing: ctFit() takes it as ",
+      "optimcontrol$tipredMissing.", call. = FALSE)
   }
   unknown <- setdiff(names(control), .CT_SAMPLE_CONTROL_NAMES)
   if (!length(unknown)) return(invisible(NULL))
@@ -881,12 +895,9 @@
     if (identical(target$placement, "saem")) arguments$saem <- TRUE
   } else if (!identical(target$gradient, "adjoint")) {
     # `ctsem_sample_marginal`'s own default is `:adjoint`; only said
-    # explicitly when something asked for the other one -- currently only a
-    # model with a sampled TI predictor value, which forces 'forward' because
-    # the adjoint path has no cotangent for it (see
-    # `.ctFitJuliaBackendImpl`). `ctsem_sample` (the joint entry, the `!
-    # isTRUE(marginal)` branch above) has no such keyword at all, so this is
-    # deliberately only reachable on the marginal path.
+    # explicitly when something asked for the other one. `ctsem_sample` (the
+    # joint entry, the `!isTRUE(marginal)` branch above) has no such keyword
+    # at all, so this is deliberately only reachable on the marginal path.
     arguments$gradient_method <- target$gradient
   }
   if (!is.null(target$hessian)) {
@@ -1588,6 +1599,12 @@ print.ctSampleDiagnostics <- function(x, ...) {
     initsd = .ctJuliaOr(optimcontrol$initsd, .01))
   spec0 <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
   if (!is.null(spec0$substeps)) spec0$max_timestep <- rep(1L, length(spec0$times))
+  # The chains sample missing TI predictor values the placement imputes, and
+  # their subjects compile differently, so the workers warm on that.
+  if (NROW(spec0$ti_imputed) && .ctJuliaTIMissingSamples(spec0)) {
+    start0 <- c(start0, spec0$ti_imputed$mu)
+    spec0 <- .ctJuliaTIMissingSampled(spec0)
+  }
   workers <- .ctBackendSampleWorkers(chains, cores)
   overlap <- processes && workers > 1L && as.integer(cores) > workers &&
     .ctBackendCanWarm()

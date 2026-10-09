@@ -1812,8 +1812,10 @@ function _laplace_subject_value_gradient!(gradient::AbstractVector{T},
     # filter call on this workspace never inherits a caller's setting.
     ws.hyb.mode = mode
     tape = _tape_reset!(aws.tape)
-    resize!(aws.tipreds, length(subject_objective.tipreds))
-    copyto!(aws.tipreds, subject_objective.tipreds)
+    # The row this evaluation reads: a sampled TI predictor cell's value is
+    # the raw parameter's at `values`, and the forward pass and the group
+    # replay (`ctx.tipreds`) must both see it.
+    tipreds = _ctsem_tipred_fill!(aws.tipreds, subject_objective.tipreds, values)
     aws.frechet_count = 0
     deferred = aws.defer_frechet
     aws.defer_frechet = false
@@ -1823,7 +1825,7 @@ function _laplace_subject_value_gradient!(gradient::AbstractVector{T},
         loglik = _extended_kalman_filter_continuous!(ws, values,
             subject_objective.data, subject_objective.timesteps,
             subject_objective.params, subject_objective.tdpreds,
-            subject_objective.tipreds, subject_objective.subject,
+            tipreds, subject_objective.subject,
             subject_objective.max_timestep, tape)
         _laplace_charge!(_LAPLACE_BYTES_FWD, bf)
         isfinite(loglik) || return loglik
@@ -1864,7 +1866,7 @@ heap for every member, 700 bytes a call on gC8.
     hb.mode = _HYBRID_FULL
     try
         return _ekf_run(aws.ekf_ws, so, shifted,
-            _ctsem_tipred_vector(so.tipreds, shifted), nothing)
+            _ctsem_tipred_fill!(aws.tipreds, so.tipreds, shifted), nothing)
     finally
         hb.mode = _HYBRID_PROFILE
     end
@@ -5718,8 +5720,9 @@ function _laplace_add_ti_effects(laplace::CTSEMLaplaceObjective,
     out = Matrix{Float64}(undef, size(shifted))
     buffer = Float64[]
     for (i, subject) in enumerate(laplace.objective.subject_objectives)
-        _materialize_subject_values!(buffer, view(shifted, i, :), subject.params,
-            subject.tipreds)
+        row = view(shifted, i, :)
+        _materialize_subject_values!(buffer, row, subject.params,
+            _ctsem_tipred_vector(subject.tipreds, row))
         out[i, :] = buffer
     end
     return out
@@ -6796,9 +6799,28 @@ anything itself; see `_progress_fraction` in progress.jl.
 """
 function ctsem_laplace_hessian(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     step::Real=1e-4, retries::Integer=2, warm::Bool=true, progress=nothing)
+    H = _laplace_hessian_columns(laplace, values, 1:length(values); step=step,
+        retries=retries, warm=warm, progress=progress)
+    return (H .+ transpose(H)) ./ 2
+end
+
+"""
+    _laplace_hessian_columns(laplace, values, columns; step, retries, warm, progress)
+
+`ctsem_laplace_hessian`'s columns `columns` alone, unsymmetrised, as an `n` by
+`length(columns)` matrix: each differenced from the gradient at two points as
+there, with the same inner-budget escalation and `NaN` for a column whose
+points did not both solve their modes.
+"""
+function _laplace_hessian_columns(laplace::CTSEMLaplaceObjective,
+    values::AbstractVector, columns; step::Real=1e-4, retries::Integer=2,
+    warm::Bool=true, progress=nothing)
     x = collect(Float64, values)
     n = length(x)
-    H = zeros(Float64, n, n)
+    cols = collect(Int, columns)
+    k = length(cols)
+    H = zeros(Float64, n, k)
+    k == 0 && return H
     budget = laplace.inner_maxiter
     base = nothing
     if warm
@@ -6825,7 +6847,7 @@ function ctsem_laplace_hessian(laplace::CTSEMLaplaceObjective, values::AbstractV
     worst = 0.0
     units = 0
     try
-        for j in 1:n
+        for (c, j) in enumerate(cols)
             h = step * max(1.0, abs(x[j]))
             plus = copy(x); plus[j] += h
             minus = copy(x); minus[j] -= h
@@ -6838,7 +6860,7 @@ function ctsem_laplace_hessian(laplace::CTSEMLaplaceObjective, values::AbstractV
             # function gives up on (NaN, below) still cost the same two inner
             # solves, so it counts here too or the reported total falls behind
             # the real one.
-            progress !== nothing && progress(2j, 2n)
+            progress !== nothing && progress(2c, 2k)
             if !(pp.out.converged && pm.out.converged)
                 # The same predicate `fg!` applies to a trial point, applied to
                 # the two points this column is differenced from. A gradient at
@@ -6849,10 +6871,10 @@ function ctsem_laplace_hessian(laplace::CTSEMLaplaceObjective, values::AbstractV
                 push!(unconverged, j)
                 worst = max(worst, pp.worst, pm.worst)
                 units = max(units, pp.units, pm.units)
-                H[:, j] .= NaN
+                H[:, c] .= NaN
                 continue
             end
-            H[:, j] = (pp.out.gradient .- pm.out.gradient) ./ (2h)
+            H[:, c] = (pp.out.gradient .- pm.out.gradient) ./ (2h)
         end
     finally
         # The budget is a field of a mutable objective the caller keeps, so an
@@ -6864,13 +6886,13 @@ function ctsem_laplace_hessian(laplace::CTSEMLaplaceObjective, values::AbstractV
     # A count, not a list of indices: on a model with a thousand parameters the
     # list is the whole message and says no more than the count does.
     isempty(escalated) || @info string("Laplace inner budget raised above ",
-        budget, " for ", length(escalated), " of ", n, " Hessian columns.")
+        budget, " for ", length(escalated), " of ", k, " Hessian columns.")
     isempty(unconverged) || @warn string("Laplace inner solve did not converge ",
         "at the Hessian step for parameter ", join(unconverged, ", "),
         "; those columns are NaN. ", units, " unit(s) short, worst inner ",
         "gradient ", worst, " against a budget of ", budget * 4^retries,
         " iterations.")
-    return (H .+ transpose(H)) ./ 2
+    return H
 end
 
 """
@@ -6978,6 +7000,11 @@ ctsem_hessian(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     chunk::Integer=0, progress=nothing) =
     ctsem_laplace_hessian(laplace, values; progress=progress)
 
+"""The outer Hessian's `columns`, for `ctsem_hessian_columns`."""
+ctsem_hessian_columns(laplace::CTSEMLaplaceObjective, values::AbstractVector,
+    columns; progress=nothing) =
+    _laplace_hessian_columns(laplace, values, columns; progress=progress)
+
 """The gradient of the approximated log marginal likelihood."""
 function ctsem_adjoint_gradient(laplace::CTSEMLaplaceObjective, values::AbstractVector)
     result = ctsem_laplace_evaluate(laplace, values; gradient=true)
@@ -7014,12 +7041,7 @@ function ctsem_subject_gradients(laplace::CTSEMLaplaceObjective,
     isfinite(r.value) || return (value=r.value, scores=fill(NaN, size(S)))
     all(isfinite, S) || return _laplace_subject_gradients_forward(laplace, theta)
     # Each unit carries its share of the prior, as the forward route's rows do.
-    if !isempty(laplace.objective.prior_index) && nunits > 0
-        share = 1 / nunits
-        for U in 1:nunits
-            _ctsem_log_prior_gradient!(view(S, U, :), laplace.objective, theta, share)
-        end
-    end
+    _ctsem_prior_scores!(S, laplace.objective, theta, _laplace_unit_of_subject(laplace))
     return (value=r.value, scores=S)
 end
 
@@ -7058,15 +7080,10 @@ function _laplace_subject_gradients_forward(laplace::CTSEMLaplaceObjective,
     # decompose over its members and there is no per-subject score to report.
     scores = ForwardDiff.jacobian(terms_of, theta)
 
-    # Each subject carries its share of the prior, so the rows still sum to the
+    # Each unit carries its share of the prior, so the rows still sum to the
     # full posterior gradient -- the same convention `ctsem_subject_gradients`
     # uses without random effects.
-    if !isempty(laplace.objective.prior_index) && nunits > 0
-        share = 1 / nunits
-        for U in 1:nunits
-            _ctsem_log_prior_gradient!(view(scores, U, :), laplace.objective, theta, share)
-        end
-    end
+    _ctsem_prior_scores!(scores, laplace.objective, theta, _laplace_unit_of_subject(laplace))
     aws = _laplace_workspace!(laplace, Float64, length(theta))
     value = sum(_laplace_unit_term(laplace, U, theta, Ls, laplace.modes[U], aws)
                 for U in 1:nunits; init=0.0)

@@ -625,8 +625,9 @@ function ctsem_kalman(objective::CTSEMObjective, values::AbstractVecOrMat;
         trace.offset = offset
         trace.current_subject = i
         persubject && copyto!(raw, view(values, i, :))
+        tipreds = _ctsem_tipred_vector(sub.tipreds, raw)
         value = _extended_kalman_filter_continuous!(ws, raw, sub.data,
-            collect(sub.timesteps), sp, sub.tdpreds, sub.tipreds, i, sub.max_timestep,
+            collect(sub.timesteps), sp, sub.tdpreds, tipreds, i, sub.max_timestep,
             trace)
         loglik[i] = value
         if isfinite(value)
@@ -659,7 +660,7 @@ function ctsem_kalman(objective::CTSEMObjective, values::AbstractVecOrMat;
             end
             let all_params = getdata(ws.pars),
                 ctx = CTSEMRowContext(ws.state, ws.pars, view(sub.tdpreds, :, 1),
-                    sub.tipreds, sub.timesteps[1], zero(Float64), i, 1)
+                    tipreds, sub.timesteps[1], zero(Float64), i, 1)
                 apply_complex_transforms_at_indices!(all_params,
                     ws.predict_param_indices, sp.predict_transforms, ctx)
                 apply_complex_transforms_at_indices!(all_params,
@@ -866,8 +867,8 @@ function ctsem_generate(objective::CTSEMObjective, values::AbstractVecOrMat,
         generate.rng = _ctsem_generate_rng(seed, i)
         persubject && copyto!(raw, view(values, i, :))
         loglik[i] = _extended_kalman_filter_continuous!(ws, raw, sub.data,
-            collect(sub.timesteps), sp, sub.tdpreds, sub.tipreds, i, sub.max_timestep,
-            nothing, generate)
+            collect(sub.timesteps), sp, sub.tdpreds, _ctsem_tipred_vector(sub.tipreds, raw),
+            i, sub.max_timestep, nothing, generate)
         offset += size(sub.data, 2)
     end
     return (Y=generate.out, llrow=generate.llrow, subject_loglik=loglik)

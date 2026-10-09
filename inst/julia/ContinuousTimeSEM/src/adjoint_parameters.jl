@@ -126,6 +126,17 @@ function _ctsem_regular_transform_supports(sp::EKFParameters, nvalues::Integer)
 end
 
 """
+A cell may read the subject's time independent predictors (`ctx.tipreds[j]`),
+which are data to it and never recorded, so the support probe hands it this: a
+plain number at whatever index the cell names, without needing to know how
+many predictors the model has. It had an empty vector, and a cell reading a
+predictor failed there.
+"""
+struct _CTSEMProbePredictors <: AbstractVector{Float64} end
+Base.size(::_CTSEMProbePredictors) = (0,)
+Base.getindex(::_CTSEMProbePredictors, i::Int) = 0.17 + 0.003 * i
+
+"""
     _ctsem_complex_transform_supports(transforms, indices, sp, state_dim, ntdpred)
 
 Return a `Vector{Vector{Int}}` giving, for each state-dependent transform, the
@@ -146,8 +157,8 @@ function _ctsem_complex_transform_supports(transforms, indices::AbstractVector{I
     pars = ComponentVector(probe, sp.parameter_axis)
     state = reshape(collect(range(0.23, step=0.011, length=state_dim)), state_dim, 1)
     tdpreds = collect(range(0.19, step=0.007, length=ntdpred))
-    tipreds = Float64[]
-    ctx = CTSEMRowContext(state, pars, tdpreds, tipreds, 0.5, 0.25, 1, 2)
+    ctx = CTSEMRowContext(state, pars, tdpreds, _CTSEMProbePredictors(), 0.5, 0.25,
+        1, 2)
     supports = Vector{Vector{Int}}(undef, length(indices))
     for k in eachindex(indices)
         _reset_recording!(probe)
@@ -243,7 +254,8 @@ end
     _ctsem_ti_pullback!(values_bar, subject_values_bar, sp, tipreds, values)
 
 Undo `_materialize_subject_values!`: the identity copy plus each TI predictor
-effect `subject_values[par] += values[coef] * tipred[pred]`.
+effect `subject_values[par] += values[coef] * tipred[pred]`. A fixed effect
+(coefficient index 0) has no coefficient to receive a term.
 
 Two methods, dispatched on the *stored* `tipreds` type -- exactly mirroring
 `_ctsem_tipred_vector` in parameter_transforms.jl:
@@ -264,7 +276,9 @@ Two methods, dispatched on the *stored* `tipreds` type -- exactly mirroring
     another TI effect. Two or more TI effects reading the same missing cell
     (`predictor` shared across several `i`) each contribute their own term to
     the same `values_bar[parameter_index[k]]` slot, and the `+=` below sums
-    them rather than overwriting, as it must.
+    them rather than overwriting, as it must. The second term uses the effect,
+    `_ctsem_ti_effect`, so it holds for a fixed one too; each predictor value
+    is read from the recipe rather than from a row built for the purpose.
 """
 function _ctsem_ti_pullback!(values_bar::AbstractVector,
     subject_values_bar::AbstractVector, sp::EKFParameters, tipreds::AbstractVector,
@@ -273,10 +287,10 @@ function _ctsem_ti_pullback!(values_bar::AbstractVector,
         values_bar[i] += subject_values_bar[i]
     end
     @inbounds for i in eachindex(sp.ti_parameter_indices)
-        parameter = sp.ti_parameter_indices[i]
-        predictor = sp.ti_predictor_indices[i]
         coefficient = sp.ti_coefficient_indices[i]
-        values_bar[coefficient] += subject_values_bar[parameter] * tipreds[predictor]
+        coefficient == 0 && continue
+        values_bar[coefficient] += subject_values_bar[sp.ti_parameter_indices[i]] *
+            tipreds[sp.ti_predictor_indices[i]]
     end
     return values_bar
 end
@@ -284,21 +298,21 @@ end
 function _ctsem_ti_pullback!(values_bar::AbstractVector,
     subject_values_bar::AbstractVector, sp::EKFParameters, spec::TIMissingRecipe,
     values::AbstractVector)
-    tipred_vec = _ctsem_tipred_vector(spec, values)
     @inbounds for i in eachindex(values_bar)
         values_bar[i] += subject_values_bar[i]
     end
     @inbounds for i in eachindex(sp.ti_parameter_indices)
-        parameter = sp.ti_parameter_indices[i]
         predictor = sp.ti_predictor_indices[i]
         coefficient = sp.ti_coefficient_indices[i]
-        cotangent = subject_values_bar[parameter]
-        values_bar[coefficient] += cotangent * tipred_vec[predictor]
-        # Second product-rule term, present only when this TI effect's own
-        # predictor column is one of this subject's sampled cells.
+        cotangent = subject_values_bar[sp.ti_parameter_indices[i]]
+        # Present only when this effect's predictor is one of this subject's
+        # sampled cells, whose value is then that raw parameter.
+        if coefficient != 0
+            values_bar[coefficient] += cotangent * _ctsem_tipred_value(spec, predictor, values)
+        end
         k = findfirst(==(predictor), spec.predictor_index)
         if k !== nothing
-            values_bar[spec.parameter_index[k]] += cotangent * values[coefficient]
+            values_bar[spec.parameter_index[k]] += cotangent * _ctsem_ti_effect(sp, values, i)
         end
     end
     return values_bar
@@ -460,6 +474,8 @@ mutable struct CTSEMDualContext{D,PD,ST,T}
     # The row's TD predictors lifted into `D`, when they arrive as a dual `T`;
     # see `_dual_context_data`.
     tdpreds::Vector{D}
+    # The subject's TI predictors, lifted the same way: a cell can read them.
+    tipreds::Vector{D}
 end
 
 function CTSEMDualContext(::Type{T}, sp::EKFParameters, state_like) where {T}
@@ -470,7 +486,7 @@ function CTSEMDualContext(::Type{T}, sp::EKFParameters, state_like) where {T}
     state = similar(state_like, D)
     fill!(state, zero_dual)
     return CTSEMDualContext{D,typeof(pars),typeof(state),T}(data, pars, state,
-        T[], T[], D[])
+        T[], T[], D[], D[])
 end
 
 # The row's data -- TD predictors, time, dt -- reach the reverse pass in its
@@ -533,7 +549,7 @@ function _sync_dual_context!(dual_ctx::CTSEMDualContext, ctx::CTSEMRowContext,
     D = eltype(dual_ctx.data)
     return CTSEMRowContext(dual_ctx.state, dual_ctx.pars,
         _dual_context_data(D, ctx.tdpreds, dual_ctx.tdpreds),
-        ctx.tipreds,
+        _dual_context_data(D, ctx.tipreds, dual_ctx.tipreds),
         _dual_context_data(D, ctx.time), _dual_context_data(D, ctx.dt),
         ctx.subject, ctx.row)
 end

@@ -105,7 +105,7 @@ test_that('a shared effect costs one parameter and reports one value', {
   expect_false(isTRUE(all.equal(tsp$mean[1], tsp$mean[2])))
 })
 
-test_that('a fixed effect claims no coefficient', {
+test_that('a fixed effect claims no coefficient, and is fitted as a known offset', {
   skip_on_cran()
   # An effect fixed to a value carries the value and is not estimated, so it
   # must not take a coefficient slot. `.ctJuliaTIEffects()` tested for an
@@ -117,19 +117,57 @@ test_that('a fixed effect claims no coefficient', {
   expect_equal(.ctTipredEffectFree(spec), c(TRUE, FALSE, FALSE, TRUE))
   expect_equal(.ctTipredEffectActive(spec), c(TRUE, TRUE, FALSE, TRUE))
 
-  # Fitting a fixed effect is refused by name, which is what keeps the two
-  # backends from disagreeing about whether it is estimated.
-  fixedmodel <- suppressWarnings(suppressMessages(ctModel(type = 'ct',
+  # A fixed effect is a known offset on its parameter's raw value, which the
+  # julia engine adds per subject: the same model with the offset taken out of
+  # the data instead -- an identity-transformed intercept, so 0.7 raw is 0.7
+  # on the data's scale -- has the same value and gradient at every point.
+  # The stan program has no slot for it, and refuses it by name rather than
+  # fitting without it.
+  onemodel <- function(mm) suppressWarnings(suppressMessages(ctModel(type = 'ct',
     n.latent = 1, n.manifest = 1, manifestNames = 'Y1', latentNames = 'e1',
     LAMBDA = matrix(1), n.TIpred = 1, TIpredNames = 'age',
-    tipredDefault = FALSE, DRIFT = matrix(-0.5), DIFFUSION = matrix(1),
+    tipredDefault = FALSE, DRIFT = matrix('drift'), DIFFUSION = matrix(1),
     T0VAR = matrix(1), T0MEANS = matrix(0), CINT = matrix(0),
-    MANIFESTVAR = matrix(0.5),
-    MANIFESTMEANS = matrix('mm||||age=0.7'))))
+    MANIFESTVAR = matrix(0.5), MANIFESTMEANS = matrix(mm))))
+  fixedmodel <- onemodel('mm|param|||age=0.7')
   d <- .tishare_data()
+  spec <- function(dd, model) suppressWarnings(suppressMessages(ctFit(dat = dd,
+    model = model, fit = FALSE, backend = 'julia')))
+  fixedspec <- spec(d, fixedmodel)
+  expect_equal(nrow(as.data.frame(fixedspec$ti_effects)), 0L)
+  expect_equal(as.numeric(fixedspec$ti_fixed$value), 0.7)
+  shifted <- d
+  shifted$Y1 <- d$Y1 - 0.7 * d$age
+  plainspec <- spec(shifted, onemodel('mm|param'))
+  handle <- function(s) structure(s, class = c('ctJuliaModel', 'ctFitModel'))
+  npar <- ctsem:::.ctBackendNpar(fixedspec)
+  expect_equal(ctsem:::.ctBackendNpar(plainspec), npar)
+  for (x in list(rep(c(0.3, -0.2), length.out = npar),
+      rep(c(-0.4, 0.5), length.out = npar))) {
+    a <- ctJuliaEvaluate(handle(fixedspec), x, gradient = TRUE, cores = 1L)
+    b <- ctJuliaEvaluate(handle(plainspec), x, gradient = TRUE, cores = 1L)
+    expect_equal(a$value, b$value, tolerance = 1e-12)
+    expect_equal(as.numeric(a$gradient), as.numeric(b$gradient), tolerance = 1e-10)
+  }
+  # With some subjects' age missing, a sampled fit draws each as a parameter,
+  # and the fixed effect's product with it enters the gradient through the
+  # predictor: the adjoint against forward mode.
+  gappy <- d
+  gappy$age[gappy$id %in% 1:4] <- NA
+  gappyspec <- ctsem:::.ctJuliaTIMissingSampled(suppressWarnings(
+    suppressMessages(ctFit(dat = gappy, model = fixedmodel, fit = FALSE,
+      backend = 'julia', optimize = FALSE, intoverpop = 'augmented'))))
+  expect_gt(nrow(as.data.frame(gappyspec$ti_missing)), 0L)
+  x <- rep(0.1, ctsem:::.ctBackendNpar(gappyspec))
+  x[1:2] <- c(0.3, -0.2)
+  adjoint <- ctJuliaEvaluate(handle(gappyspec), x, gradient = TRUE, cores = 1L)
+  forward <- ctJuliaEvaluate(handle(gappyspec), x, gradient = TRUE,
+    gradient_method = 'forward', cores = 1L)
+  expect_equal(as.numeric(adjoint$gradient), as.numeric(forward$gradient),
+    tolerance = 1e-8)
   expect_error(suppressWarnings(suppressMessages(ctFit(dat = d,
-    model = fixedmodel, fit = FALSE, backend = 'julia'))),
-    'fixed to a value')
+    model = fixedmodel, fit = FALSE, backend = 'stan'))),
+    'fitted by backend="julia" only', fixed = TRUE)
 
   # Generating with one is what a fixed effect is for, and still works.
   set.seed(1)

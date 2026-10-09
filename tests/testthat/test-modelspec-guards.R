@@ -268,11 +268,13 @@ test_that("the fields reader sees an empty trailing tipreds field", {
 })
 
 test_that("a bare name for something a cell cannot reference says so", {
-  # Unlike a latent or tdpred name, these stay ordinary free parameters --
-  # which is the problem: the model builds and fits, and reports a parameter
-  # called `age` beside a time independent predictor called `age`.
+  # A time independent predictor's name is a reference, as a latent or tdpred
+  # name is, and the warning says so. The others stay ordinary free parameters
+  # -- which is the problem: the model builds and fits, and reports a
+  # parameter called `Y1` beside a manifest called `Y1`.
   expect_warning(.guard_model(n.TIpred = 1, TIpredNames = 'age',
-    MANIFESTMEANS = matrix('age')), 'also a time independent predictor')
+    MANIFESTMEANS = matrix('age')), "takes that subject's value of it",
+    fixed = TRUE)
   expect_warning(.guard_model(MANIFESTMEANS = matrix('Y1')),
     'also a manifest variable')
   expect_warning(.guard_model(DRIFT = matrix('dt')),
@@ -290,8 +292,12 @@ test_that("a refused expression names the unreachable thing it reached for", {
   # entirely, because there is no parameter to declare.
   expect_error(.guard_model(DRIFT = matrix('-exp(dr)*dt')),
     'the time interval, which a cell cannot see')
-  expect_error(.guard_model(n.TIpred = 1, TIpredNames = 'age',
-    DRIFT = matrix('dr*age')), 'acts through the cell\'s tipreds field')
+  # A time independent predictor is a name a cell may read, so only the
+  # undeclared parameter is reported.
+  msg <- tryCatch(.guard_model(n.TIpred = 1, TIpredNames = 'age',
+    DRIFT = matrix('dr*age')), error = function(e) conditionMessage(e))
+  expect_match(msg, 'uses "dr"', fixed = TRUE)
+  expect_false(grepl('"age"', msg, fixed = TRUE))
   expect_error(.guard_model(DRIFT = matrix('dr*Y1')),
     'a manifest variable, which a cell cannot see')
   # The PARS suggestion names only the parameter it could actually declare.
