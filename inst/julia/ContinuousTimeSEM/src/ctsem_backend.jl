@@ -2573,7 +2573,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     verdict = _ctsem_optimise_verdict(objective, minimizer, start_values,
         final.value, gradient_norm, _ctsem_predicted_gain(directional),
         _ctsem_last_gain(trace), saturated_parameters, g_tol, converge_tol;
-        label=label, verbose=verbose, overshoot_probe=overshoot_probe,
+        # A stage asked for no iterations has not stalled.
+        label=label, verbose=verbose && maxiter > 0, overshoot_probe=overshoot_probe,
         progress=_ctsem_probe_progress(reporter))
     saturated = verdict.saturated
     stalled = verdict.stalled

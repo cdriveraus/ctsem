@@ -4868,8 +4868,11 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # the counter carries a denominator at all. The warm-up's cap of 10 is
     # always reached, so "7/10" is honest there; the fit's cap of 1000 is not a
     # target and showing "297/1000" invited reading a completion fraction that
-    # meant nothing. See `_progress_optimise` in progress.jl.
-    progress_budget = isTRUE(progress_budget),
+    # meant nothing. See `_progress_optimise` in progress.jl. A cap of zero is
+    # the plan too -- `ctFit(optimize = FALSE)`'s SAEM placement asks for the
+    # start and warm-up alone -- and was reported as ITERATION CAP REACHED.
+    progress_budget = isTRUE(progress_budget) ||
+      identical(as.integer(.ctJuliaOr(maxiter, optimcontrol$maxiter)), 0L),
     # `verbose = 2` asks for the history, and the engine's non-overwriting
     # cadence is 5s against 0.4s for the overwriting one -- so raising the
     # level printed *fewer* progress lines than leaving it alone, and on any
