@@ -264,6 +264,55 @@ test_that("integrated own intercepts beside shared effects on the dynamics are s
   }
 })
 
+test_that("a measurement error written in a time dependent predictor keeps the deviations integrated, exactly", {
+  skip_without_julia()
+  # A study's known response rounding as a per-row variance q added to each
+  # item's error, MANIFESTVAR = sqrt(q + sd^2): a calculation, but in a
+  # predictor and parameters only, so each row's covariances and gains are fixed
+  # and the filter still integrates the own intercept deviations exactly. The
+  # hybrid applies, and equals the layer holding them as coordinates.
+  error <- matrix("0", 3, 3)
+  diag(error) <- c("sqrt(q + mvar1^2)", "sqrt(q + mvar2^2)", "sqrt(q + mvar3^2)")
+  m <- suppressWarnings(suppressMessages(ctModel(type = "ct",
+    id = "id", manifestNames = c("Y1", "Y2", "Y3"), latentNames = "eta1",
+    TDpredNames = "q", TDPREDEFFECT = matrix(0, 1, 1),
+    LAMBDA = matrix(c(1, 0.8, 1.2), 3, 1), DRIFT = matrix("drift"),
+    DIFFUSION = matrix("diffusion"),
+    PARS = c("mvar1|1e-10 + 5 * log1p_exp(2 * param)",
+      "mvar2|1e-10 + 5 * log1p_exp(2 * param)",
+      "mvar3|1e-10 + 5 * log1p_exp(2 * param)"),
+    MANIFESTVAR = error,
+    MANIFESTMEANS = matrix(c("mm1", "mm2", "mm3"), 3, 1),
+    T0VAR = matrix(1), T0MEANS = matrix(0), CINT = matrix(0))))
+  m$pars$indvarying <- m$pars$param %in% c("drift", "diffusion", "mm1", "mm2", "mm3")
+  d <- .pu_dyn_data()
+  d$q <- ifelse(d$id <= 12, (10 / 6)^2 / 12, 0.1^2 / 12)
+  old <- options(ctsem.laplace.hybrid = TRUE)
+  on.exit(options(old), add = TRUE)
+  spec <- .pu_spec(d, m, poprank = 1, popunique = "MANIFESTMEANS")
+  options(ctsem.laplace.hybrid = FALSE)
+  layer <- .pu_spec(d, m, poprank = 1, popunique = "MANIFESTMEANS")
+  expect_equal(length(spec$laplace$hybrid$effect), 3L)
+  set.seed(17)
+  for (draw in 1:2) {
+    x <- rnorm(length(.pu_names(spec)), 0, 0.3)
+    adjoint <- .pu_eval(spec, x, "adjoint")
+    forward <- .pu_eval(spec, x, "forward")
+    full <- .pu_eval(layer, x, "adjoint")
+    expect_equal(adjoint$value, full$value, tolerance = 1e-9)
+    expect_equal(as.numeric(adjoint$gradient), as.numeric(full$gradient),
+      tolerance = 1e-7)
+    expect_equal(as.numeric(adjoint$gradient), as.numeric(forward$gradient),
+      tolerance = 1e-6)
+  }
+  # A calculation reading a state still keeps the deviations in the layer.
+  m2 <- m
+  m2$pars$param[m2$pars$matrix == "MANIFESTVAR" & m2$pars$row == 1 &
+    m2$pars$col == 1] <- "sqrt(q + mvar1^2 + 0.01 * state[1]^2)"
+  options(ctsem.laplace.hybrid = TRUE)
+  expect_null(.pu_spec(d, m2, poprank = 1, popunique = "MANIFESTMEANS")$laplace$hybrid)
+})
+
 test_that("the gated floor on integrated deviations is the layer's, unit for unit", {
   skip_without_julia()
   # The gate reads the joint curvature's smallest eigenvalue, which the

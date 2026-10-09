@@ -2435,8 +2435,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # exactly quadratic in them, and the filter integrates them in closed form;
 # Laplace runs over what is left. So the model must also be linear and
 # Gaussian: continuous time, every indicator Gaussian, no cell referencing a
-# state, no calculation. Off with `options(ctsem.laplace.hybrid = FALSE)`, which
-# keeps every own variance in the Laplace layer as before.
+# state, and no calculation that could carry the deviations into a covariance
+# or gain (`.ctJuliaHybridCalcsOk`). Off with `options(ctsem.laplace.hybrid =
+# FALSE)`, which keeps every own variance in the Laplace layer as before.
 .ctJuliaLaplaceHybrid <- function(model, setup, levels) {
   if (!isTRUE(getOption("ctsem.laplace.hybrid", TRUE))) return(NULL)
   if (is.null(setup) || !nrow(setup) || !length(levels)) return(NULL)
@@ -2445,7 +2446,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   if (!length(own)) return(NULL)
   if (!isTRUE(model$continuoustime)) return(NULL)
   if (length(model$manifesttype) && any(as.integer(model$manifesttype) != 0L)) return(NULL)
-  if (length(unlist(model$modelmats$calcs))) return(NULL)
+  if (!.ctJuliaHybridCalcsOk(model)) return(NULL)
   if ("stateref" %in% names(setup) && any(as.integer(setup$stateref) > 0L)) return(NULL)
   values <- as.data.frame(model$modelmats$matvalues)
   code <- .ctMatricesList()$base[["MANIFESTMEANS"]]
@@ -2464,6 +2465,25 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   }
   if (!length(effect)) return(NULL)
   list(effect = effect, manifest = manifest, slope = slope)
+}
+
+# Whether the model's calculations leave the filter linear and Gaussian with
+# covariances and gains that do not depend on the own intercept deviations, as
+# the hybrid needs (`.ctJuliaLaplaceHybrid`). The deviations enter only through
+# MANIFESTMEANS, and the state estimates through the residual, so a calculation
+# is out when it reads a state (gains through the state) or MANIFESTMEANS, or
+# is itself a MANIFESTMEANS cell. Anything else -- a measurement error written
+# in parameters and a time dependent predictor, say, as for a study's known
+# response rounding -- is a fixed matrix for each row, and the filter integrates
+# the deviations exactly through it.
+.ctJuliaHybridCalcsOk <- function(model) {
+  calcs <- unlist(model$modelmats$calcs)
+  if (!length(calcs)) return(TRUE)
+  lhs <- sub("=.*$", "", calcs)
+  rhs <- sub("^[^=]*=", "", calcs)
+  !any(grepl("state[", rhs, fixed = TRUE) |
+    grepl("MANIFESTMEANS[", rhs, fixed = TRUE) |
+    grepl("MANIFESTMEANS[", lhs, fixed = TRUE))
 }
 
 # Which random effects cannot reach which groups' data: a matrix of (level,
