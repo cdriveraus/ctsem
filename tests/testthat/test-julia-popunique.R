@@ -314,8 +314,8 @@ test_that("a measurement error written in a time dependent predictor keeps the d
 
   # The same rounding read from a time independent predictor: one value per
   # subject, so exactly the time dependent version's value and gradient, with
-  # the deviations still integrated. A predictor read by a cell must be
-  # observed for everyone, and the stan backend has no such reference.
+  # the deviations still integrated. The stan backend has no such
+  # reference.
   mt <- suppressWarnings(suppressMessages(ctModel(type = "ct",
     id = "id", manifestNames = c("Y1", "Y2", "Y3"), latentNames = "eta1",
     TIpredNames = "r", tipredDefault = FALSE,
@@ -352,10 +352,18 @@ test_that("a measurement error written in a time dependent predictor keeps the d
   at0 <- ctBackendParMatrices(classed, raw = x, trim = FALSE)$MANIFESTVAR
   at5 <- ctBackendParMatrices(classed, raw = x, tipreds = 0.5, trim = FALSE)$MANIFESTVAR
   expect_equal(unname(diag(at5)^2 - diag(at0)^2), rep(0.5, 3), tolerance = 1e-10)
+  # A subject's missing value of a predictor a cell reads is imputed, and the
+  # cell reads the imputed value; sampling it is refused.
   gappy <- dt
   gappy$r[gappy$id == 3] <- NA
-  expect_error(.pu_spec(gappy, mt, poprank = 1, popunique = "MANIFESTMEANS"),
-    'reads the time independent predictor "r"', fixed = TRUE)
+  imputed <- suppressWarnings(.pu_spec(gappy, mt, poprank = 1,
+    popunique = "MANIFESTMEANS"))
+  expect_equal(imputed$ti_imputed$subject, 3L)
+  expect_true(is.finite(imputed$tipred_data[3, 1]))
+  expect_error(suppressWarnings(.pu_spec(gappy, mt, poprank = 1,
+    popunique = "MANIFESTMEANS", optimcontrol = list(tipredMissing = "sample"))),
+    'reads the time independent predictor "r", whose missing values cannot be sampled',
+    fixed = TRUE)
   expect_error(suppressWarnings(suppressMessages(ctFit(dt, mt, fit = FALSE,
     backend = "stan"))), "the stan backend does not", fixed = TRUE)
 })
