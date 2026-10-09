@@ -346,6 +346,12 @@ test_that("a measurement error written in a time dependent predictor keeps the d
     expect_equal(as.numeric(viati$gradient), as.numeric(viatd$gradient),
       tolerance = 1e-10)
   }
+  # Population matrices read the predictor at zero, or at a value supplied,
+  # though it has no effect on any parameter.
+  classed <- structure(tispec, class = c("ctJuliaModel", "ctFitModel"))
+  at0 <- ctBackendParMatrices(classed, raw = x, trim = FALSE)$MANIFESTVAR
+  at5 <- ctBackendParMatrices(classed, raw = x, tipreds = 0.5, trim = FALSE)$MANIFESTVAR
+  expect_equal(unname(diag(at5)^2 - diag(at0)^2), rep(0.5, 3), tolerance = 1e-10)
   gappy <- dt
   gappy$r[gappy$id == 3] <- NA
   expect_error(.pu_spec(gappy, mt, poprank = 1, popunique = "MANIFESTMEANS"),
