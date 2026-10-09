@@ -605,18 +605,25 @@ function _record_init!(tape::CTSEMAdjointTape{T}, pars, n::Int,
         popraw=nothing) where {T}
     index = (tape.ninits += 1)
     source = view(pars.T0VAR, 1:n, 1:n)
-    popsource = popraw === nothing ? view(zeros(T, 0, 0), 1:0, 1:0) : popraw
     if index <= length(tape.inits)
         record = tape.inits[index]
         record.T0VAR = _tape_fill!(record.T0VAR, source)
-        record.POPRAW = _tape_fill!(record.POPRAW, popsource)
+        record.POPRAW = _tape_fill_raw!(record.POPRAW, popraw)
     else
         push!(tape.inits, CTSEMInitRecord{T}(Matrix{T}(source),
-            Matrix{T}(popsource)))
+            _tape_fill_raw!(zeros(T, 0, 0), popraw)))
     end
     _tape_push!(tape, :init, index)
     return nothing
 end
+
+# The raw population matrix, or `0 x 0` for a model without one. By method
+# rather than by a local holding either, which would be a union of two views
+# and boxed.
+@inline _tape_fill_raw!(destination::Matrix{T}, ::Nothing) where {T} =
+    size(destination) == (0, 0) ? destination : zeros(T, 0, 0)
+@inline _tape_fill_raw!(destination::Matrix, popraw::AbstractMatrix) =
+    _tape_fill!(destination, popraw)
 
 """
     _record_stationary!(tape, ws, pars)
@@ -965,8 +972,7 @@ function _reverse_predict!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
     # (no linear solve). Written out separately rather than branched inside the
     # shared recursion, which would put a test in every step of it.
     if !aws.sp.continuous_time
-        return _reverse_predict_discrete!(x̄, P̄, θ̄ca, record, dyn, n;
-            covmatcode=aws.sp.covmatcode)
+        return _reverse_predict_discrete!(x̄, P̄, θ̄ca, record, dyn, n, aws)
     end
 
     # Every temporary is a view of a scratch buffer; see `CTSEMReverseScratch`.
@@ -1215,20 +1221,31 @@ function _reverse_stationary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
     return nothing
 end
 
-"""Undo one TD-predictor impulse: `x⁺ = x + TDPREDEFFECT td`, `P⁺ = Jtd P Jtd'`."""
+"""
+Undo one TD-predictor impulse: `x⁺ = x + TDPREDEFFECT td`, `P⁺ = Jtd P Jtd'`.
+
+Temporaries from `sc` and products by the engine's kernels, as in
+`_reverse_predict!`: this runs once per row with a TD predictor, and the BLAS
+products it used to take lock (`small_linalg.jl`).
+"""
 function _reverse_td!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
-    record::CTSEMTDRecord{T}, n::Int) where {T}
+    record::CTSEMTDRecord{T}, n::Int, sc::CTSEMReverseScratch{T}) where {T}
     td = record.tdpreds
     @inbounds for j in eachindex(td), i in 1:n
         θ̄ca.TDPREDEFFECT[i, j] += x̄[i] * td[j]
     end
-    Ps = _symmetrized(P̄)
+    Ps = _symmetrize_into!(_rs(sc.Ps, n, n), P̄)
     Jtd = record.Jtd
-    Jtd_bar = Ps * Jtd * transpose(record.P_in) .+ transpose(Ps) * Jtd * record.P_in
+    # Jtd_bar = Ps Jtd P' + Ps' Jtd P; `Ps` is symmetric, so both terms start
+    # from `Ps Jtd`.
+    PJ = _ctsem_mul!(_rs(sc.nn1, n, n), Ps, Jtd)
+    Jtd_bar = _ctsem_mulNT!(_rs(sc.nn2, n, n), PJ, record.P_in)
+    _ctsem_mul!(Jtd_bar, PJ, record.P_in, one(T), one(T))
     @inbounds for j in 1:n, i in 1:n
         θ̄ca.Jtd[i, j] += Jtd_bar[i, j]
     end
-    copyto!(P̄, transpose(Jtd) * Ps * Jtd)
+    JP = _ctsem_mulTN!(_rs(sc.nn1, n, n), Jtd, Ps)
+    _ctsem_mul!(P̄, JP, Jtd)
     # The mean update is a pure translation, so x̄ passes through unchanged.
     return nothing
 end
@@ -1523,10 +1540,6 @@ function _reverse_update!(x̄::Vector{T}, P̄::Matrix{T}, Θ̄::Matrix{T}, θ̄c
     return nothing
 end
 
-@inline function _symmetrized(A::AbstractMatrix)
-    return (A .+ transpose(A)) ./ 2
-end
-
 """
     _ctsem_reverse_tape!(tape, sp, aws, n, m)
 
@@ -1581,7 +1594,7 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
             _ekf_categorical_call(aws.ekf_ws, _reverse_binary!, x̄, P̄, θ̄ca,
                 tape.binaries[index], n)
         elseif kind === :td
-            _reverse_td!(x̄, P̄, θ̄ca, tape.tds[index], n)
+            _reverse_td!(x̄, P̄, θ̄ca, tape.tds[index], n, aws.reverse_scratch)
         elseif kind === :predict
             _reverse_predict!(x̄, P̄, θ̄ca, tape.predicts[index], dyn, n, aws.lyap_buffer, aws,
                 tape.hyb.active && tape.hyb.q > 0 ? tape.hyb : nothing)
@@ -1619,18 +1632,23 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
                 # cotangent picks up the same factors on its way back. Missing
                 # them leaves the likelihood right and the gradient wrong.
                 popscale = aws.sp.population_scale
-                popbar = zeros(T, k, k)
+                # Scratch rather than three new matrices per subject: nothing
+                # else in the walk is live at its start, and `k <= n`.
+                sc = aws.reverse_scratch
+                popbar = _rs(sc.nn1, k, k)
                 @inbounds for b in 1:k, a in 1:k
                     popbar[a, b] = popscale[a] * popscale[b] *
                         P̄[popidx[a], popidx[b]]
                 end
-                popraw_bar = zeros(T, k, k)
+                popraw_bar = _rs(sc.nn2, k, k)
+                fill!(popraw_bar, zero(T))
                 # The POPULATION code, not the model's: the forward pass
                 # built this block with it, and a reverse pass differentiating
                 # the other construction gives a gradient for a different
                 # model than the likelihood.
                 _sdcovsqrt2cov_pullback!(popraw_bar, tape.inits[index].POPRAW,
-                    _symmetrized(popbar), k; scratch=aws.covsqrt_scratch,
+                    _symmetrize_into!(_rs(sc.nn3, k, k), popbar), k;
+                    scratch=aws.covsqrt_scratch,
                     covmatcode=aws.sp.population_covmatcode)
                 # Written through the flat cotangent by range rather than by
                 # name: `θ̄ca.RAWPOPVAR` would have to compile for models
@@ -1788,13 +1806,24 @@ end
 """Reverse one recorded state-dependent transform group."""
 function _reverse_group!(θ̄::Vector{T}, x̄::Vector{T}, record::CTSEMGroupRecord{T},
     sp::EKFParameters, aws) where {T}
-    transforms, indices, supports = if record.group == 1
-        sp.predict_transforms, aws.predict_indices, aws.predict_supports
+    # One call per group rather than a call on whichever triple an `if` picked:
+    # the three transform tuples are different types, so the picked one is a
+    # union and the call behind it was not static.
+    if record.group == 1
+        _reverse_group!(θ̄, x̄, record, sp, aws, sp.predict_transforms,
+            aws.predict_indices, aws.predict_supports)
     elseif record.group == 2
-        sp.td_transforms, aws.td_indices, aws.td_supports
+        _reverse_group!(θ̄, x̄, record, sp, aws, sp.td_transforms,
+            aws.td_indices, aws.td_supports)
     else
-        sp.update_transforms, aws.update_indices, aws.update_supports
+        _reverse_group!(θ̄, x̄, record, sp, aws, sp.update_transforms,
+            aws.update_indices, aws.update_supports)
     end
+    return nothing
+end
+
+function _reverse_group!(θ̄::Vector{T}, x̄::Vector{T}, record::CTSEMGroupRecord{T},
+    sp::EKFParameters, aws, transforms, indices, supports) where {T}
     isempty(indices) && return nothing
     # `group_scratch` is a persistent full-length buffer whose entries outside
     # this group's relevant set are never written and stay `NaN` for the life
@@ -1816,8 +1845,7 @@ function _reverse_group!(θ̄::Vector{T}, x̄::Vector{T}, record::CTSEMGroupReco
 end
 
 """
-    _reverse_predict_discrete!(XBAR, PBAR, THETA, record, dyn, n;
-        covmatcode=sp.covmatcode)
+    _reverse_predict_discrete!(XBAR, PBAR, THETA, record, dyn, n, aws)
 
 Undo one prediction step of a discrete-time model.
 
@@ -1834,31 +1862,45 @@ intercept solve all collapsed -- a discrete model's DRIFT, CINT and DIFFUSION
 are already the one-step quantities. The affine offset runs over every state,
 matching the forward pass; `_compute_one_step_form!`'s docstring says why that
 requires DRIFT's augmented diagonal to be 1 rather than 0.
+
+Temporaries from the workspace's reverse scratch and products by the engine's
+kernels, as `_reverse_predict!` takes them, and the DIFFUSION cotangent
+deferred as its is (`_defer_diffusion!`): written the obvious way this was a
+dozen arrays and four BLAS products per row.
 """
 function _reverse_predict_discrete!(XBAR::Vector{T}, PBAR::Matrix{T}, THETA,
-    record::CTSEMPredictRecord{T}, dyn::AbstractVector{Int}, n::Int;
-    covmatcode::Int=0) where {T}
+    record::CTSEMPredictRecord{T}, dyn::AbstractVector{Int}, n::Int, aws) where {T}
     A = record.A
     JAx = record.JAx
     x = record.state_in
     k = length(dyn)
-
-    JAx_bar = zeros(T, n, n)
+    sc = aws.reverse_scratch
+    Abar = _rs(sc.Abar, n, n)
+    JAx_bar = _rs(sc.nn3, n, n)
+    Pbar_new = _rs(sc.Pbar_new, n, n)
+    Ps = _rs(sc.Ps, n, n)
+    Ptilde = _rs(sc.Pr, n, n)
+    nn1 = _rs(sc.nn1, n, n)
+    nn2 = _rs(sc.nn2, n, n)
+    Qc_bar = _rs(sc.nn5, n, n)
+    xbar_new = _rs(sc.xbar_new, n)
+    dINT_bar = _rs(sc.nv1, n)
+    fill!(JAx_bar, zero(T))
+    fill!(Abar, zero(T))
 
     # --- mean: x_next = A x + dINT
-    Abar = XBAR * transpose(x)
-    dINT_bar = copy(XBAR)
-    xbar_new = transpose(A) * XBAR
+    _ctsem_outer!(Abar, XBAR, x, one(T), one(T))
+    copyto!(dINT_bar, XBAR)
+    _ctsem_mulTvec!(xbar_new, A, XBAR)
 
     # --- covariance: P_next = A (P + eps I) A' + dDIFF
-    Ps = _symmetrized(PBAR)
-    Ptilde = copy(record.P_in)
+    _symmetrize_into!(Ps, PBAR)
+    copyto!(Ptilde, record.P_in)
     _ridge_diagonal!(Ptilde, n, _CTSEM_RIDGE)
-    Abar .+= 2 .* (Ps * A * Ptilde)
-    Pbar_new = transpose(A) * Ps * A
-
-    # --- dDIFF[D,D] = Qc[D,D]: the cotangent passes straight through.
-    Qcd_bar = _symmetrized(Ps[dyn, dyn])
+    _ctsem_mul!(nn1, Ps, A)
+    _ctsem_mul!(Abar, nn1, Ptilde, T(2), one(T))
+    _ctsem_mulTN!(nn2, A, Ps)
+    _ctsem_mul!(Pbar_new, nn2, A)
 
     # --- dINT[i] = CINT[i] + sum_j (DRIFT[i,j] - JAx[i,j]) x[j]
     @inbounds for i in 1:n
@@ -1872,22 +1914,18 @@ function _reverse_predict_discrete!(XBAR::Vector{T}, PBAR::Matrix{T}, THETA,
     end
 
     # --- A is JAx itself, so its cotangent simply adds.
-    JAx_bar .+= Abar
     @inbounds for j in 1:n, i in 1:n
-        THETA.JAx[i, j] += JAx_bar[i, j]
+        THETA.JAx[i, j] += JAx_bar[i, j] + Abar[i, j]
     end
 
-    # --- Qc = sdcovsqrt2cov(DIFFUSION); only the dynamic block was consumed.
-    Qc_bar = zeros(T, n, n)
+    # --- dDIFF[D,D] = Qc[D,D]: the cotangent passes straight through, and
+    # Qc = sdcovsqrt2cov(DIFFUSION) consumed only the dynamic block. `Ps` is
+    # symmetric, so its dynamic block needs no symmetrising of its own.
+    fill!(Qc_bar, zero(T))
     @inbounds for j in 1:k, i in 1:k
-        Qc_bar[dyn[i], dyn[j]] = Qcd_bar[i, j]
+        Qc_bar[dyn[i], dyn[j]] = Ps[dyn[i], dyn[j]]
     end
-    diffusion_bar = zeros(T, n, n)
-    _sdcovsqrt2cov_pullback!(diffusion_bar, record.DIFFUSION, Qc_bar, n;
-        covmatcode=covmatcode)
-    @inbounds for j in 1:n, i in 1:n
-        THETA.DIFFUSION[i, j] += diffusion_bar[i, j]
-    end
+    _defer_diffusion!(aws, record.DIFFUSION, Qc_bar, THETA, n)
 
     copyto!(XBAR, xbar_new)
     copyto!(PBAR, Pbar_new)

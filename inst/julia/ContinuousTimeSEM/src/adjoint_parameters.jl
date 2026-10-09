@@ -359,9 +359,16 @@ contribution that transform `k` sends to a cell written by a later transform
 lands on that cell after it has already been consumed and zeroed, so it flows
 onward to earlier tape entries -- which is exactly right, because the value
 `k` read came from earlier in time.
+
+Both walks recurse over the transform tuple rather than index it, so each
+transform is called at its own concrete type with a concretely typed context.
+Indexed with a runtime `k`, the element is a union of the group's closure
+types, which the compiler splits only up to four; past that, or with an
+untyped context, every call boxed its context and its result -- on a
+one-effect augmented model 90% of what a gradient allocated, per row.
 """
 function _ctsem_complex_group_pullback!(all_params_bar::AbstractVector,
-    state_bar::AbstractVector, transforms, indices::AbstractVector{Int},
+    state_bar::AbstractVector, transforms::Tuple, indices::AbstractVector{Int},
     supports::AbstractVector{Vector{Int}}, ctx::CTSEMRowContext,
     relevant::AbstractVector{Int}, dual_ctx)
     isempty(indices) && return nothing
@@ -379,11 +386,7 @@ function _ctsem_complex_group_pullback!(all_params_bar::AbstractVector,
     # Replay the group forward over `ctx`'s working buffer (seeded from the
     # compact record by the caller) to recover what each transform wrote.
     written = _group_write_buffer(dual_ctx, nk)
-    @inbounds for k in 1:nk
-        value = transforms[k](ctx)
-        written[k] = value
-        working[indices[k]] = value
-    end
+    _group_replay!(written, working, indices, transforms, ctx, 1)
 
     # Start the reverse walk at transform K, whose inputs are the pre-group
     # values with every earlier transform's write applied. Only the relevant
@@ -394,30 +397,54 @@ function _ctsem_complex_group_pullback!(all_params_bar::AbstractVector,
     # set explicitly rather than relying on the sync: cells 1..K-1 to what
     # their transforms wrote, and cell K back to its pre-group value, since
     # transform K ran before its own write landed.
-    _sync_dual_context!(dual_ctx, ctx, working, relevant)
+    dctx = _sync_dual_context!(dual_ctx, ctx, working, relevant)
     @inbounds for k in 1:(nk - 1)
         _set_dual_value!(dual_ctx, indices[k], written[k])
     end
     @inbounds _set_dual_value!(dual_ctx, indices[nk], saved[nk])
 
-    @inbounds for k in nk:-1:1
+    _group_reverse_walk!(all_params_bar, state_bar, transforms, indices, supports,
+        saved, dual_ctx, dctx, nk)
+    return nothing
+end
+
+@inline _group_replay!(written, working, indices, ::Tuple{}, ctx, k::Int) = nothing
+
+function _group_replay!(written, working, indices, transforms::Tuple, ctx, k::Int)
+    value = first(transforms)(ctx)
+    @inbounds written[k] = value
+    @inbounds working[indices[k]] = value
+    return _group_replay!(written, working, indices, Base.tail(transforms), ctx, k + 1)
+end
+
+@inline _group_reverse_walk!(all_params_bar, state_bar, ::Tuple{}, indices, supports,
+    saved, dual_ctx, dctx, k::Int) = nothing
+
+# Transform `k` is the tuple's last element; the walk then steps back to the
+# tuple without it.
+function _group_reverse_walk!(all_params_bar, state_bar, transforms::Tuple, indices,
+    supports, saved, dual_ctx, dctx, k::Int)
+    transform = last(transforms)
+    @inbounds begin
         idx = indices[k]
         cotangent = all_params_bar[idx]
         all_params_bar[idx] = zero(cotangent)
         if !iszero(cotangent)
-            transform = transforms[k]
             for j in supports[k]
-                all_params_bar[j] += cotangent * _dual_param_derivative(dual_ctx, transform, j)
+                all_params_bar[j] += cotangent *
+                    _dual_param_derivative(dual_ctx, transform, dctx, j)
             end
             for s in eachindex(state_bar)
-                state_bar[s] += cotangent * _dual_state_derivative(dual_ctx, transform, s)
+                state_bar[s] += cotangent *
+                    _dual_state_derivative(dual_ctx, transform, dctx, s)
             end
         end
         # Step back one transform: undo transform k-1's write so that
         # transform k-1 sees the inputs it actually had.
         k > 1 && _set_dual_value!(dual_ctx, indices[k - 1], saved[k - 1])
     end
-    return nothing
+    return _group_reverse_walk!(all_params_bar, state_bar, Base.front(transforms),
+        indices, supports, saved, dual_ctx, dctx, k - 1)
 end
 
 """
@@ -434,7 +461,6 @@ mutable struct CTSEMDualContext{D,PD,ST,T}
     data::Vector{D}
     pars::PD
     state::ST
-    row_context::Any
     # Scratch for the forward replay in `_ctsem_complex_group_pullback!`,
     # grown on demand to the largest group seen. Typed `T` -- the scalar the
     # surrounding reverse pass works in -- and not `Float64`. It used to be
@@ -459,7 +485,7 @@ function CTSEMDualContext(::Type{T}, sp::EKFParameters, state_like) where {T}
     pars = ComponentVector(data, sp.parameter_axis)
     state = similar(state_like, D)
     fill!(state, zero_dual)
-    return CTSEMDualContext{D,typeof(pars),typeof(state),T}(data, pars, state, nothing,
+    return CTSEMDualContext{D,typeof(pars),typeof(state),T}(data, pars, state,
         T[], T[], D[], D[])
 end
 
@@ -505,8 +531,11 @@ end
 
 """
 Refresh the dual mirror's values (with zero partials) from the primal context,
-and rebuild the dual row context so the seeded derivative calls below see this
-row's time, dt, and predictors.
+and return the dual row context the seeded derivative calls below evaluate the
+transforms at: this row's time, dt and predictors over the mirror's state and
+parameters. Returned rather than kept on `dual_ctx`, where its type -- which
+depends on the row's predictors -- could only be `Any`, and every transform
+called with it was a dynamic dispatch boxing it.
 """
 function _sync_dual_context!(dual_ctx::CTSEMDualContext, ctx::CTSEMRowContext,
     primal_data::AbstractVector=getdata(ctx.pars),
@@ -518,12 +547,11 @@ function _sync_dual_context!(dual_ctx::CTSEMDualContext, ctx::CTSEMRowContext,
         dual_ctx.state[i] = _seed_dual(dual_ctx.state[i], ctx.state[i], false)
     end
     D = eltype(dual_ctx.data)
-    dual_ctx.row_context = CTSEMRowContext(dual_ctx.state, dual_ctx.pars,
+    return CTSEMRowContext(dual_ctx.state, dual_ctx.pars,
         _dual_context_data(D, ctx.tdpreds, dual_ctx.tdpreds),
         _dual_context_data(D, ctx.tipreds, dual_ctx.tipreds),
         _dual_context_data(D, ctx.time), _dual_context_data(D, ctx.dt),
         ctx.subject, ctx.row)
-    return dual_ctx
 end
 
 # A transform that happens not to depend on any dual input returns a plain
@@ -533,35 +561,29 @@ end
 @inline _partial1(x::ForwardDiff.Dual{Nothing}) = ForwardDiff.partials(x, 1)
 @inline _partial1(x::Real) = zero(x)
 
-# The first partial of a transform's result, as the seed's value type `V`.
-# The result arrives untyped -- the complex group's transforms are closures of
-# different types in one vector, so every call is a dynamic dispatch -- and a
-# type test against the seed's own type reads it without a second dispatch.
+# The first partial of a transform's result, as the seed's value type `V`: a
+# transform reading only data returns a plain real, whose partial is zero.
 @inline function _partial1_as(r, ::Type{ForwardDiff.Dual{Nothing,V,N}}) where {V,N}
     r isa ForwardDiff.Dual{Nothing,V,N} && return ForwardDiff.partials(r, 1)::V
     return convert(V, _partial1(r))::V
 end
 
-# `@nospecialize` on the transform, so that the calls below are static and
-# return an unboxed `V`. Specialised on it, each call was a dynamic dispatch
-# whose result was boxed, and `_partial1` behind it another three: about
-# 11,000 heap objects a gradient evaluation on gC8, a third of what the
-# filter's gradient allocated. The transform call itself stays dynamic and
-# boxes its result once.
-function _dual_param_derivative(dual_ctx::CTSEMDualContext{D}, @nospecialize(transform),
-    j::Int) where {D}
+# Specialised on the transform and on `dctx`, both concrete where the group
+# walk calls these, so the transform call is static and nothing is boxed.
+@inline function _dual_param_derivative(dual_ctx::CTSEMDualContext{D}, transform::F,
+    dctx::CTSEMRowContext, j::Int) where {D,F}
     saved = dual_ctx.data[j]
     dual_ctx.data[j] = _seed_dual(saved, ForwardDiff.value(saved), true)
-    derivative = _partial1_as(transform(dual_ctx.row_context), D)
+    derivative = _partial1_as(transform(dctx), D)
     dual_ctx.data[j] = saved
     return derivative
 end
 
-function _dual_state_derivative(dual_ctx::CTSEMDualContext{D}, @nospecialize(transform),
-    s::Int) where {D}
+@inline function _dual_state_derivative(dual_ctx::CTSEMDualContext{D}, transform::F,
+    dctx::CTSEMRowContext, s::Int) where {D,F}
     saved = dual_ctx.state[s]
     dual_ctx.state[s] = _seed_dual(saved, ForwardDiff.value(saved), true)
-    derivative = _partial1_as(transform(dual_ctx.row_context), D)
+    derivative = _partial1_as(transform(dctx), D)
     dual_ctx.state[s] = saved
     return derivative
 end

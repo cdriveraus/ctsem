@@ -232,8 +232,8 @@ end
 """State-only form of `_apply_td_impulse!`: there is no covariance to carry."""
 @inline function _ctsem_td_impulse!(ws, pars, tdpreds)
     isempty(tdpreds) && return nothing
-    _matvec_mul!(ws.bufferQ.r, pars.TDPREDEFFECT, tdpreds, ws.state_dim,
-        Val(length(tdpreds)))
+    # The hand kernel, as `_apply_td_impulse!`: a runtime `Val` boxed both views.
+    _ctsem_mulvec!(ws.bufferQ.r, pars.TDPREDEFFECT, tdpreds)
     ws.state .+= ws.bufferQ.r
     return nothing
 end

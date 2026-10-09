@@ -80,9 +80,7 @@ struct CTSEMReverseScratch{T}
     piv::Vector{Int}
     # --- the T0VAR block of the reverse, sized (n, n) ---------------------
     # `sym` holds the symmetrised state cotangent handed to the T0VAR
-    # pullback. `_symmetrized` builds a fresh matrix, which is right for the
-    # paths that run once per model and wrong for this one, which runs once per
-    # subject evaluation.
+    # pullback, once per subject evaluation.
     # Its own slot rather than a shared one: it is live across
     # `_sdcovsqrt2cov_pullback!`, which consumes `covsqrt_scratch`, and it is
     # read out after that call returns.

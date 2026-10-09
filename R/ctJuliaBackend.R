@@ -3219,7 +3219,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # fit's own setting and `control$tipredMissing`. A fit that estimated them as
 # parameters cannot be sampled with them imputed.
 .ctJuliaTIMissingSamples <- function(spec, requested = NULL) {
-  request <- if (is.null(requested)) .ctJuliaTIMissingRequest(spec$tipredMissing) else
+  request <- if (is.null(requested)) .ctJuliaTIMissingRequest(spec[["tipredMissing"]]) else
     .ctJuliaTIMissingRequest(requested, "control$tipredMissing")
   if (identical(request, "impute") && NROW(spec$ti_missing)) {
     stop("control$tipredMissing = 'impute': this fit estimated its missing TI ",
@@ -3230,8 +3230,12 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 }
 
 # A fit about to be sampled, with its imputed TI predictor values made
-# parameters: the estimate gains the imputed means, and the Hessian the cells'
-# prior curvature, which is all an imputed fit knows of them.
+# parameters: the estimate gains the imputed means, and the Hessian -- the
+# sampler's metric where the fit places the chains -- the cells' rows and
+# columns at that point (`ctsem_hessian_columns`, two gradients a cell on the
+# Laplace route): their likelihood's curvature and their coupling to the
+# effects that read them, not their prior's alone. The prior's diagonal stands
+# in only where those columns cannot be had.
 .ctJuliaTIMissingSampleFit <- function(fit) {
   cells <- fit$model_spec$ti_imputed
   if (!NROW(cells)) return(fit)
@@ -3244,9 +3248,17 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   H <- fit$uncertainty$hessian
   if (!is.null(H)) {
     k <- nrow(cells)
+    cols <- npar + seq_len(k)
     out <- matrix(0, npar + k, npar + k)
     out[seq_len(npar), seq_len(npar)] <- H
-    out[cbind(npar + seq_len(k), npar + seq_len(k))] <- -1 / cells$sigma^2
+    added <- .ctBackendHessianColumns(fit$model_spec, fit$estimate$raw, cols)
+    if (all(is.finite(added))) {
+      out[, cols] <- added
+      out[cols, ] <- t(added)
+      out[cols, cols] <- (added[cols, ] + t(added[cols, ])) / 2
+    } else {
+      out[cbind(cols, cols)] <- -1 / cells$sigma^2
+    }
     fit$uncertainty$hessian <- out
   }
   fit
@@ -3258,7 +3270,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # parameter, so the fit's raw vectors apply unchanged. A subject the fit did
 # not have keeps what `spec` made of it.
 .ctJuliaCarryTIMissing <- function(spec, fitted) {
-  spec$tipredMissing <- fitted$tipredMissing
+  spec$tipredMissing <- fitted[["tipredMissing"]]
   own <- spec$ti_imputed
   if (NROW(own)) {
     idname <- spec$model$subjectIDname
@@ -5327,7 +5339,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # Missing TI predictor values: an optimisation imputes them unless asked to
   # estimate them, and so does the optimisation that places a sampler, whose
   # sample then makes them parameters (`.ctBackendUncertaintySample()`).
-  tipredMissing <- .ctJuliaTIMissingRequest(optimcontrol$tipredMissing)
+  # `[[`, not `$`: `$` would read `tipredMissingIncludeOutcome` when this is
+  # absent.
+  tipredMissing <- .ctJuliaTIMissingRequest(optimcontrol[["tipredMissing"]])
   model_spec <- .ctJuliaPrepare(datalong, model, prepared_data = prepared_data,
     priors = priors, priorscope = priorscope, intoverpop = intoverpop,
     tipredMissing = if (isTRUE(optimize) && identical(tipredMissing, "sample"))

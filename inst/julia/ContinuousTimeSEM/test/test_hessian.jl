@@ -212,3 +212,16 @@ end
     @test ctsem_hessian(objective, values; chunk=1) ≈ full rtol = 1e-12
     @test ctsem_hessian(objective, values; chunk=4) ≈ full rtol = 1e-12
 end
+
+# Columns for coordinates added to a Hessian in hand (a sampled TI predictor
+# cell's): the full Hessian's columns, and only those.
+@testset "a Hessian's columns alone are the full Hessian's" begin
+    objective, values = _hessian_test_model()
+    n = length(values)
+    cols = [2, 5, n]
+    full = ctsem_hessian(objective, values)
+    some = ctsem_hessian_columns(objective, values, cols)
+    @test size(some) == (n, length(cols))
+    @test all(isapprox.(some, full[:, cols]; rtol=1e-10, atol=1e-10))
+    @test size(ctsem_hessian_columns(objective, values, Int[])) == (n, 0)
+end
