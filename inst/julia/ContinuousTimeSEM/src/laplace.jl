@@ -3384,9 +3384,10 @@ mode's term was the Laplace approximation, and the jump only which basin the
 origin fell in. A lower mode is often shallow along the way to a higher one, so
 its soft directions are where to look.
 
-Not always, and the reflection is for when not. On the pilot's item-level fit
-(rank-3 loadings, three effects a person) three people's better modes lay 4 to
-6 posterior sds from the found ones, past a valley, with the found mode pinned
+Not always, and the reflection is for when not. On the pilot's
+person-persistence fit (rank-3 loadings, three effects a person) three
+people's better modes lay 4 to 6 posterior sds from the found ones, past a
+valley, with the found mode pinned
 in every direction in two of them (least precision 3.7 and 4.3): a person's
 data explained on one loading dimension or on another, at -3.2 on the first or
 +3.0 on the second. No soft-direction probe ran or reached them, and the
