@@ -137,6 +137,15 @@ Two methods, dispatched on the *stored* type, not a runtime flag:
 @inline _ctsem_tipred_vector(spec::TIMissingRecipe, p::AbstractVector, buffer) =
     _ctsem_tipred_fill!(buffer, spec, p)
 
+"""The `j`th TI predictor of a subject's stored row at the raw parameters
+`p`: the data, or a sampled cell's raw parameter. No row is built."""
+@inline _ctsem_tipred_value(tipreds::AbstractVector, j::Integer, p::AbstractVector) =
+    tipreds[j]
+@inline function _ctsem_tipred_value(spec::TIMissingRecipe, j::Integer, p::AbstractVector)
+    k = findfirst(==(j), spec.predictor_index)
+    return k === nothing ? spec.base[j] : p[spec.parameter_index[k]]
+end
+
 """How many TI predictors a subject's stored row holds."""
 _ctsem_tipred_length(tipreds::AbstractVector) = length(tipreds)
 _ctsem_tipred_length(spec::TIMissingRecipe) = length(spec.base)

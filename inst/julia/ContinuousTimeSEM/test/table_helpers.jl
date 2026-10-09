@@ -36,6 +36,8 @@ function ekf_from_data_frame(df::DataFrame,
         ti_parameter=Int.(ti_effects.parameter),
         ti_predictor=Int.(ti_effects.predictor),
         ti_coefficient=Int.(ti_effects.coefficient),
+        ti_fixed_value=hasproperty(ti_effects, :value) ?
+            Float64.(ti_effects.value) : Float64[],
         diffusion_state_indices=Int.(diffusion_state_indices),
         continuous_time=continuous_time)
 end

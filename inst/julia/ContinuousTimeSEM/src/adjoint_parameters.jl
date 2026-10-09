@@ -307,11 +307,10 @@ function _ctsem_ti_pullback!(values_bar::AbstractVector,
         cotangent = subject_values_bar[sp.ti_parameter_indices[i]]
         # Present only when this effect's predictor is one of this subject's
         # sampled cells, whose value is then that raw parameter.
-        k = findfirst(==(predictor), spec.predictor_index)
         if coefficient != 0
-            values_bar[coefficient] += cotangent * (k === nothing ?
-                spec.base[predictor] : values[spec.parameter_index[k]])
+            values_bar[coefficient] += cotangent * _ctsem_tipred_value(spec, predictor, values)
         end
+        k = findfirst(==(predictor), spec.predictor_index)
         if k !== nothing
             values_bar[spec.parameter_index[k]] += cotangent * _ctsem_ti_effect(sp, values, i)
         end

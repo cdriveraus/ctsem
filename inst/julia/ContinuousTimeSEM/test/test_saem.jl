@@ -338,6 +338,71 @@ _saem_twolevel() = ctsem_laplace_objective(_saem_prior_objective(9);
     re_index=[1, 2, 5], sd_index=[6, 7, 9], cor_index=[8], sd_scale=[1.0, 1.0, 1.0],
     level_nre=[2, 1], group=vcat(1:6, _TWOLEVEL_GROUP), level_ngroups=[6, 3])
 
+# The linear fixture with TI predictors: an estimated effect (raw 9) of the
+# first on CINT, one of the random-effect parameters, and an effect of the
+# second fixed at 0.5 on T0MEANS, the other. Ten subjects.
+isdefined(@__MODULE__, :_SAEM_TI_OBJECTIVE) || global _SAEM_TI_OBJECTIVE = let
+    df = _laplace_test_dataframe(
+        drift=[-0.5;;], jax=[-0.5;;], cint=[0.0;;], diffusion=[0.2;;],
+        lambda=[1.0;;], jy=[1.0;;], manifestmeans=[0.0;;], manifestvar=[0.3;;],
+        t0var=[0.4;;], t0means=[0.0;;],
+        free=Dict(
+            (:T0MEANS, 1, 1) => (1, "param[1]"),
+            (:CINT, 1, 1) => (2, "param[2]"),
+            (:DRIFT, 1, 1) => (3, "-log1p_exp(param[3])"),
+            (:JAx, 1, 1) => (3, "-log1p_exp(param[3])"),
+            (:DIFFUSION, 1, 1) => (4, "log1p_exp(param[4])"),
+            (:MANIFESTMEANS, 1, 1) => (5, "param[5]")))
+    ti = DataFrame(parameter=[2, 1], predictor=[1, 2], coefficient=[9, 0],
+        value=[0.0, 0.5])
+    starts, times, data = _laplace_test_data(10, 1)
+    x = hcat(collect(range(-1.0, 1.0; length=10)), [sin(1.3 * s) for s in 1:10])
+    _S.CTSEMObjective(ekf_from_data_frame(df, ti), starts, times, data,
+        zeros(0, size(data, 2)), x; prior_index=collect(1:9), prior_scale=ones(9))
+end
+_saem_ti() = (ctsem_laplace_objective(_SAEM_TI_OBJECTIVE, [1, 2], [6, 7], [8],
+    [1.0, 1.0]), [0.2, -0.1, 0.3, -0.2, 0.05, -0.3, -0.15, 0.4, 0.3])
+
+# Every chain's members' parameters as the filter sees them, TI effects added.
+function _saem_ti_members(st, laplace; chains=st.chains)
+    Ls = _S._laplace_popchols(st.theta, laplace.spec)
+    out = Vector{Vector{Float64}}()
+    for U in eachindex(st.u), c in 1:chains, (m, s) in enumerate(laplace.units.members[U])
+        v = _S._laplace_member_values(st.theta, laplace.spec, Ls, st.u[U][c],
+            laplace.units.offsets[U][m])
+        so = laplace.objective.subject_objectives[s]
+        push!(out, _S._materialize_subject_values!(Float64[], v, so.params, so.tipreds))
+    end
+    return out
+end
+
+# A TI coefficient on a random-effect parameter moves with the level's mean
+# in the centred step and in the sampler's centred draw, and the effects take
+# its change back out, so no member's parameters move; a fixed effect has no
+# coefficient to move.
+@testset "SAEM: TI coefficients move with the centred mean; no member moves" begin
+    laplace, values = _saem_ti()
+    @test _S._saem_level_ti(laplace, 1) == [(9, [(1, 2)])]
+    st = ctsem_saem_init(laplace, values; seed=3)
+    for _ in 1:15
+        ctsem_saem_step!(st, laplace; centre=false)
+    end
+    prec = _S._saem_prior_precision(laplace, length(st.theta))
+    model = 1:5
+    before = _saem_ti_members(st, laplace)
+    theta0 = copy(st.theta)
+    _S._saem_centre!(st, laplace, prec)
+    after = _saem_ti_members(st, laplace)
+    @test st.theta[9] != theta0[9]
+    @test all(isapprox(a[model], b[model]; atol=1e-12) for (a, b) in zip(after, before))
+    before = _saem_ti_members(st, laplace; chains=1)
+    theta0 = copy(st.theta)
+    _S._saem_sample_mean!(st, laplace, 1, prec, Random.Xoshiro(5))
+    after = _saem_ti_members(st, laplace; chains=1)
+    @test st.theta[9] != theta0[9]
+    @test all(isapprox(a[model], b[model]; atol=1e-12) for (a, b) in zip(after, before))
+end
+
 # Natural deviations (`d = S u`, what a sampled fit reports and generation takes)
 # must rebuild exactly the subject parameters the sampler's own coordinates
 # give -- nested, and on a reduced-rank level whose deviations are wider than
@@ -393,7 +458,9 @@ end
 @testset "SAEM sampler: the joint posterior NUTS draws ($name)" for (name, mk, values) in (
         ("rank one", () -> _saem_reduced()[1], _saem_reduced()[2]),
         ("two full-rank levels", _saem_twolevel,
-         [0.2, -0.1, 0.3, -0.2, 0.05, -0.3, -0.15, 0.4, -0.25]))
+         [0.2, -0.1, 0.3, -0.2, 0.05, -0.3, -0.15, 0.4, -0.25]),
+        ("TI coefficient on a random-effect parameter", () -> _saem_ti()[1],
+         _saem_ti()[2]))
     r = _saem_against_nuts(mk, values; ndraws=(1000, 4000))
     @info "SAEM sampler against NUTS ($name)" r
     @test all(x -> x.sampler == "saem", r)

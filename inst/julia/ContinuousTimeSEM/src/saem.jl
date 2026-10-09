@@ -419,7 +419,12 @@ Per level, over its groups and every chain (a chain's draws weigh 1/chains):
 
 * the mean: `theta[re] += L delta` and every `u -= delta`, `delta` maximising
   `sum log N(u - delta; 0, I) + log prior(theta + L delta)` -- in closed form;
-  along `L`'s columns, which is all a reduced-rank level allows;
+  along `L`'s columns, which is all a reduced-rank level allows. With it, the
+  TI coefficients on the level's parameters (`_saem_level_ti`), as the
+  regression they are given the effects: `u_g -= N_g eta` for a change `eta`
+  (`_saem_mean_system`). In the fixed-u augmentation a coefficient on a
+  well-determined parameter moves every subject the data pin down, as the
+  mean does;
 * the scale, full rank: the level's scales and correlations by Fisher scoring
   on `sum log N(L u; 0, L(phi) L(phi)') + log prior(phi)` with the deviations
   `L u` held fixed, in raw coordinates through `_laplace_popchol` and its
@@ -473,21 +478,28 @@ function _saem_centre!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
         keep = clamp.(1 .- E.values, 0.0, 1.0)
         W = E.vectors * Diagonal(keep) * transpose(E.vectors)
         Whalf = E.vectors * Diagonal(sqrt.(keep)) * transpose(E.vectors)
-        # The mean.
-        L = _laplace_popchol(st.theta, level)
-        usum = zeros(r)
-        for (U, b) in sites, c in 1:K
-            usum .+= @view st.u[U][c][cols(U, b)]
+        # The mean, and the TI coefficients on the level's parameters with it:
+        # each coefficient's direction in `u` is scaled by the share the data
+        # take there, averaged over the groups by the size of their shift.
+        ti = _saem_level_ti(laplace, l)
+        system = _saem_mean_system(st, laplace, l, sites, prec, K, ti)
+        system === nothing && (ti = _saem_level_ti_none;
+            system = _saem_mean_system(st, laplace, l, sites, prec, K, ti))
+        A, rhs, L, N = system
+        full = Symmetric(A) \ rhs
+        delta = W * full[1:r]
+        eta = full[(r + 1):end]
+        for c in eachindex(eta)
+            num = 0.0
+            den = 0.0
+            for Ng in N
+                v = @view Ng[:, c]
+                num += dot(v, Lambda * v)
+                den += dot(v, v)
+            end
+            eta[c] *= den > 0 ? clamp(1 - num / den, 0.0, 1.0) : 0.0
         end
-        usum ./= K
-        Dm = prec[level.re_index]
-        mu = st.theta[level.re_index]
-        A = Symmetric(G .* Matrix{Float64}(I, r, r) .+ transpose(L) * (Dm .* L))
-        delta = W * (A \ (usum .- transpose(L) * (Dm .* mu)))
-        st.theta[level.re_index] .+= L * delta
-        for (U, b) in sites, c in 1:K
-            st.u[U][c][cols(U, b)] .-= delta
-        end
+        _saem_mean_apply!(st, laplace, l, sites, K, ti, L, N, delta, eta)
         # The scale, from the effects' second moment with its departure from
         # the identity -- what the full step would act on -- shrunk the same
         # way: `G I + Whalf (S - G I) Whalf`.
@@ -1279,10 +1291,10 @@ _saem_cols(laplace, U, b) = (laplace.units.blocks[U][b].offset + 1):(laplace.uni
 """
     _saem_sample_mean!(st, laplace, l, prec, rng)
 
-Level `l`'s mean given its effects `b`: along `L`'s columns the conditional of
-the shift `delta` is Gaussian with precision `A = G I + L'DL` and mean
-`A^-1 (sum u - L'D mu)`; draw it, move theta by `L delta` and every effect by
-`-delta`. Members' likelihoods do not move.
+Level `l`'s mean, and the TI coefficients on its parameters, given its effects
+`b`: their conditional (`_saem_mean_system`) is Gaussian; draw from it, move
+theta by `L delta` and the coefficients by `eta`, and every group's effects by
+`-delta - N_g eta`. Members' likelihoods do not move.
 """
 function _saem_sample_mean!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
     l::Integer, prec::Vector{Float64}, rng)
@@ -1291,21 +1303,133 @@ function _saem_sample_mean!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
     sites = _saem_level_sites(laplace, l)
     G = length(sites)
     (G == 0 || r == 0) && return nothing
-    L = _laplace_popchol(st.theta, level)
-    usum = zeros(r)
-    for (U, b) in sites
-        usum .+= @view st.u[U][1][_saem_cols(laplace, U, b)]
+    ti = _saem_level_ti(laplace, l)
+    system = _saem_mean_system(st, laplace, l, sites, prec, 1, ti)
+    system === nothing && (ti = _saem_level_ti_none;
+        system = _saem_mean_system(st, laplace, l, sites, prec, 1, ti))
+    A, rhs, L, N = system
+    F = cholesky(Symmetric(A))
+    z = (F \ rhs) .+ (F.U \ randn(rng, length(rhs)))
+    _saem_mean_apply!(st, laplace, l, sites, 1, ti, L, N, z[1:r], z[(r + 1):end])
+    return nothing
+end
+
+const _saem_level_ti_none = Tuple{Int,Vector{Tuple{Int,Int}}}[]
+
+"""
+    _saem_level_ti(laplace, l)
+
+The TI coefficients a centred move can carry with level `l`'s mean, each as
+`(coefficient, [(predictor, row), ...])`: its raw index, and each effect it
+has, `row` the parameter's place in `re_index`. A coefficient moves its
+parameters by its change times each group's predictor, and the move takes that
+back out of the group's effects -- which needs the shift of one parameter to
+be one of `u` (a full-rank level with no own variances), one predictor value
+per group (a level whose groups are single subjects), and every parameter the
+coefficient reaches to be one of the level's, or that parameter's members
+would move. Fixed effects have no coefficient. Empty where nothing qualifies.
+"""
+function _saem_level_ti(laplace::CTSEMLaplaceObjective, l::Integer)
+    sp = laplace.objective.params
+    out = Tuple{Int,Vector{Tuple{Int,Int}}}[]
+    isempty(sp.ti_parameter_indices) && return out
+    level = laplace.spec.levels[l]
+    nlatent(level) == nrandomeffects(level) == level.rank || return out
+    for U in eachindex(laplace.units.blocks), blk in laplace.units.blocks[U]
+        blk.level == l && length(blk.members) != 1 && return out
     end
+    for coef in unique(sp.ti_coefficient_indices)
+        coef == 0 && continue
+        effects = Tuple{Int,Int}[]
+        for i in eachindex(sp.ti_coefficient_indices)
+            sp.ti_coefficient_indices[i] == coef || continue
+            row = findfirst(==(sp.ti_parameter_indices[i]), level.re_index)
+            row === nothing && (empty!(effects); break)
+            push!(effects, (sp.ti_predictor_indices[i], row))
+        end
+        isempty(effects) || push!(out, (coef, effects))
+    end
+    return out
+end
+
+"""
+    _saem_mean_system(st, laplace, l, sites, prec, chains, ti)
+
+The Gaussian that level `l`'s mean and the TI coefficients `ti`
+(`_saem_level_ti`) have given the effects, in the centred move's coordinates:
+`delta` along `L`'s columns for the mean and `eta` for the coefficients, which
+shift group `g`'s effects by `-delta - N_g eta` (column `c` of `N_g` is
+`L^-1` applied to coefficient `c`'s shift of the parameters for one unit of
+it, at that group's predictor values), so no member's parameters move. The
+effects are averaged over the first `chains` chains. Returns `(A, b, L, N)`,
+`A` the precision and `A^-1 b` the mean, or `nothing` where `A` is singular --
+a coefficient its predictor cannot tell from the mean, with no prior.
+"""
+function _saem_mean_system(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
+    l::Integer, sites, prec::Vector{Float64}, chains::Integer, ti)
+    level = laplace.spec.levels[l]
+    r = nlatent(level)
+    C = length(ti)
+    G = length(sites)
+    L = _laplace_popchol(st.theta, level)
     Dm = prec[level.re_index]
     mu = st.theta[level.re_index]
-    A = Symmetric(G .* Matrix{Float64}(I, r, r) .+ transpose(L) * (Dm .* L))
-    F = cholesky(A)
-    delta = (F \ (usum .- transpose(L) * (Dm .* mu))) .+ (F.U \ randn(rng, r))
-    st.theta[level.re_index] .+= L * delta
-    for (U, b) in sites
-        st.u[U][1][_saem_cols(laplace, U, b)] .-= delta
+    A = zeros(r + C, r + C)
+    b = zeros(r + C)
+    A[1:r, 1:r] .= transpose(L) * (Dm .* L)
+    for q in 1:r
+        A[q, q] += G
     end
-    return nothing
+    b[1:r] .= .-(transpose(L) * (Dm .* mu))
+    N = Vector{Matrix{Float64}}(undef, C == 0 ? 0 : G)
+    Linv = C == 0 ? L : inv(L)
+    ubar = zeros(r)
+    for (g, (U, blk)) in enumerate(sites)
+        fill!(ubar, 0.0)
+        for c in 1:chains
+            ubar .+= @view st.u[U][c][_saem_cols(laplace, U, blk)]
+        end
+        ubar ./= chains
+        @views b[1:r] .+= ubar
+        C == 0 && continue
+        member = laplace.units.members[U][laplace.units.blocks[U][blk].members[1]]
+        tipreds = laplace.objective.subject_objectives[member].tipreds
+        Ng = zeros(r, C)
+        for (c, (_, effects)) in enumerate(ti), (predictor, row) in effects
+            x = _ctsem_tipred_value(tipreds, predictor, st.theta)
+            @views Ng[:, c] .+= x .* Linv[:, row]
+        end
+        N[g] = Ng
+        @views A[1:r, (r + 1):end] .+= Ng
+        @views A[(r + 1):end, (r + 1):end] .+= transpose(Ng) * Ng
+        @views b[(r + 1):end] .+= transpose(Ng) * ubar
+    end
+    for (c, (coef, _)) in enumerate(ti)
+        A[r + c, r + c] += prec[coef]
+        b[r + c] -= prec[coef] * st.theta[coef]
+    end
+    C == 0 && return (A, b, L, N)
+    A[(r + 1):end, 1:r] .= transpose(A[1:r, (r + 1):end])
+    issuccess(cholesky(Symmetric(A); check=false)) || return nothing
+    return (A, b, L, N)
+end
+
+"""Move level `l`'s mean by `L delta`, the TI coefficients `ti` by `eta`, and
+the first `chains` chains' effects at every site by `-delta - N_g eta`."""
+function _saem_mean_apply!(st::CTSEMSAEMState, laplace::CTSEMLaplaceObjective,
+    l::Integer, sites, chains::Integer, ti, L, N, delta, eta)
+    level = laplace.spec.levels[l]
+    st.theta[level.re_index] .+= L * delta
+    for (c, (coef, _)) in enumerate(ti)
+        st.theta[coef] += eta[c]
+    end
+    for (g, (U, blk)) in enumerate(sites)
+        shift = isempty(ti) ? delta : delta .+ N[g] * eta
+        for c in 1:chains
+            st.u[U][c][_saem_cols(laplace, U, blk)] .-= shift
+        end
+    end
+    return st
 end
 
 """
