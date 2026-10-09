@@ -6573,9 +6573,28 @@ anything itself; see `_progress_fraction` in progress.jl.
 """
 function ctsem_laplace_hessian(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     step::Real=1e-4, retries::Integer=2, warm::Bool=true, progress=nothing)
+    H = _laplace_hessian_columns(laplace, values, 1:length(values); step=step,
+        retries=retries, warm=warm, progress=progress)
+    return (H .+ transpose(H)) ./ 2
+end
+
+"""
+    _laplace_hessian_columns(laplace, values, columns; step, retries, warm, progress)
+
+`ctsem_laplace_hessian`'s columns `columns` alone, unsymmetrised, as an `n` by
+`length(columns)` matrix: each differenced from the gradient at two points as
+there, with the same inner-budget escalation and `NaN` for a column whose
+points did not both solve their modes.
+"""
+function _laplace_hessian_columns(laplace::CTSEMLaplaceObjective,
+    values::AbstractVector, columns; step::Real=1e-4, retries::Integer=2,
+    warm::Bool=true, progress=nothing)
     x = collect(Float64, values)
     n = length(x)
-    H = zeros(Float64, n, n)
+    cols = collect(Int, columns)
+    k = length(cols)
+    H = zeros(Float64, n, k)
+    k == 0 && return H
     budget = laplace.inner_maxiter
     base = nothing
     if warm
@@ -6602,7 +6621,7 @@ function ctsem_laplace_hessian(laplace::CTSEMLaplaceObjective, values::AbstractV
     worst = 0.0
     units = 0
     try
-        for j in 1:n
+        for (c, j) in enumerate(cols)
             h = step * max(1.0, abs(x[j]))
             plus = copy(x); plus[j] += h
             minus = copy(x); minus[j] -= h
@@ -6615,7 +6634,7 @@ function ctsem_laplace_hessian(laplace::CTSEMLaplaceObjective, values::AbstractV
             # function gives up on (NaN, below) still cost the same two inner
             # solves, so it counts here too or the reported total falls behind
             # the real one.
-            progress !== nothing && progress(2j, 2n)
+            progress !== nothing && progress(2c, 2k)
             if !(pp.out.converged && pm.out.converged)
                 # The same predicate `fg!` applies to a trial point, applied to
                 # the two points this column is differenced from. A gradient at
@@ -6626,10 +6645,10 @@ function ctsem_laplace_hessian(laplace::CTSEMLaplaceObjective, values::AbstractV
                 push!(unconverged, j)
                 worst = max(worst, pp.worst, pm.worst)
                 units = max(units, pp.units, pm.units)
-                H[:, j] .= NaN
+                H[:, c] .= NaN
                 continue
             end
-            H[:, j] = (pp.out.gradient .- pm.out.gradient) ./ (2h)
+            H[:, c] = (pp.out.gradient .- pm.out.gradient) ./ (2h)
         end
     finally
         # The budget is a field of a mutable objective the caller keeps, so an
@@ -6641,13 +6660,13 @@ function ctsem_laplace_hessian(laplace::CTSEMLaplaceObjective, values::AbstractV
     # A count, not a list of indices: on a model with a thousand parameters the
     # list is the whole message and says no more than the count does.
     isempty(escalated) || @info string("Laplace inner budget raised above ",
-        budget, " for ", length(escalated), " of ", n, " Hessian columns.")
+        budget, " for ", length(escalated), " of ", k, " Hessian columns.")
     isempty(unconverged) || @warn string("Laplace inner solve did not converge ",
         "at the Hessian step for parameter ", join(unconverged, ", "),
         "; those columns are NaN. ", units, " unit(s) short, worst inner ",
         "gradient ", worst, " against a budget of ", budget * 4^retries,
         " iterations.")
-    return (H .+ transpose(H)) ./ 2
+    return H
 end
 
 """
@@ -6754,6 +6773,11 @@ given, reports the finite-difference loop's gradients as they finish -- see
 ctsem_hessian(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     chunk::Integer=0, progress=nothing) =
     ctsem_laplace_hessian(laplace, values; progress=progress)
+
+"""The outer Hessian's `columns`, for `ctsem_hessian_columns`."""
+ctsem_hessian_columns(laplace::CTSEMLaplaceObjective, values::AbstractVector,
+    columns; progress=nothing) =
+    _laplace_hessian_columns(laplace, values, columns; progress=progress)
 
 """The gradient of the approximated log marginal likelihood."""
 function ctsem_adjoint_gradient(laplace::CTSEMLaplaceObjective, values::AbstractVector)

@@ -3230,8 +3230,12 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 }
 
 # A fit about to be sampled, with its imputed TI predictor values made
-# parameters: the estimate gains the imputed means, and the Hessian the cells'
-# prior curvature, which is all an imputed fit knows of them.
+# parameters: the estimate gains the imputed means, and the Hessian -- the
+# sampler's metric where the fit places the chains -- the cells' rows and
+# columns at that point (`ctsem_hessian_columns`, two gradients a cell on the
+# Laplace route): their likelihood's curvature and their coupling to the
+# effects that read them, not their prior's alone. The prior's diagonal stands
+# in only where those columns cannot be had.
 .ctJuliaTIMissingSampleFit <- function(fit) {
   cells <- fit$model_spec$ti_imputed
   if (!NROW(cells)) return(fit)
@@ -3244,9 +3248,17 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   H <- fit$uncertainty$hessian
   if (!is.null(H)) {
     k <- nrow(cells)
+    cols <- npar + seq_len(k)
     out <- matrix(0, npar + k, npar + k)
     out[seq_len(npar), seq_len(npar)] <- H
-    out[cbind(npar + seq_len(k), npar + seq_len(k))] <- -1 / cells$sigma^2
+    added <- .ctBackendHessianColumns(fit$model_spec, fit$estimate$raw, cols)
+    if (all(is.finite(added))) {
+      out[, cols] <- added
+      out[cols, ] <- t(added)
+      out[cols, cols] <- (added[cols, ] + t(added[cols, ])) / 2
+    } else {
+      out[cbind(cols, cols)] <- -1 / cells$sigma^2
+    }
     fit$uncertainty$hessian <- out
   }
   fit

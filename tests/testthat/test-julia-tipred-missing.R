@@ -161,6 +161,33 @@ test_that("the Laplace objective's gradient carries a sampled TI predictor value
   expect_gt(abs(g[cell] + .8 / spec$ti_missing$sigma^2), 1e-3)
 })
 
+test_that("a sampled cell's metric rows are its Hessian columns, coupling included", {
+  skip_without_julia()
+  # Sampling places with the cells imputed, so their rows of the metric are
+  # added afterwards (`.ctJuliaTIMissingSampleFit()`): the Hessian's columns
+  # for them alone, which must be the full Hessian's, and reach past the
+  # cell's own prior to the effects that read it.
+  model <- .tipred_missing_model()
+  model$pars$group_effect[model$pars$param == "drift"] <- TRUE
+  set.seed(5)
+  dat <- data.frame(id = rep(1:5, each = 4), time = rep(c(0, .7, 1.9, 3.2), 5),
+    Y1 = rnorm(20), group = rep(c(-1, .4, NA, 1.2, -.3), each = 4))
+  for (route in c("laplace", "augmented")) {
+    spec <- ctsem:::.ctJuliaTIMissingSampled(suppressWarnings(suppressMessages(
+      ctFit(dat, model, backend = "julia", intoverpop = route, fit = FALSE))))
+    npar <- ctsem:::.ctBackendNpar(spec)
+    x <- seq(-.2, .2, length.out = npar)
+    cell <- spec$ti_missing$parameter
+    x[cell] <- spec$ti_missing$mu
+    full <- ctsem:::.ctBackendHessianAt(spec, x)
+    added <- ctsem:::.ctBackendHessianColumns(spec, x, cell)
+    expect_equal(dim(added), c(npar, length(cell)), info = route)
+    expect_equal(added[, 1], full[, cell], tolerance = 1e-4, info = route)
+    others <- setdiff(seq_len(npar), cell)
+    expect_gt(max(abs(added[others, 1])), 1e-3, label = paste(route, "coupling"))
+  }
+})
+
 # The optimising path imputes a missing TI predictor from the other variables,
 # as the Stan path does, and the new missingness detection must not reach it:
 # SPEC-tipred-sampling.md is explicit that this path is not to change. What

@@ -917,6 +917,17 @@ end
     @test norm(H * direction - (gp .- gm) ./ (2h)) / norm(H * direction) < 1e-4
 end
 
+@testset "the outer Hessian's columns alone are its columns" begin
+    laplace, values = _fresh_linear()
+    n = length(values)
+    cols = [2, n]
+    full = ctsem_laplace_hessian(laplace, values; step=1e-4)
+    some = ctsem_hessian_columns(laplace, values, cols)
+    @test size(some) == (n, length(cols))
+    # The full matrix is the symmetrised one; columns are differenced alone.
+    @test all(isapprox.(some, full[:, cols]; rtol=1e-5, atol=1e-8))
+end
+
 @testset "an unusable inner curvature is reported, not hidden" begin
     laplace, values = _fresh_linear()
     # A population scale driven to essentially zero makes the random effects
