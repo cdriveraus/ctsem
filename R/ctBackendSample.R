@@ -243,7 +243,7 @@
   # Missing TI predictor values are sampled with the rest unless the fit or
   # `control$tipredMissing` says to impute them; a fit that imputed them, the
   # placement of `ctFit(optimize = FALSE)` among them, gains them here.
-  if (.ctJuliaTIMissingSamples(fit$model_spec, control$tipredMissing)) {
+  if (.ctJuliaTIMissingSamples(fit$model_spec, control[["tipredMissing"]])) {
     fit <- .ctJuliaTIMissingSampleFit(fit)
   }
   sampled <- .ctBackendSampleRoute(.ctBackendIntOverPop(fit$model_spec),

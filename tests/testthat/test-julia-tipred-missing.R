@@ -42,7 +42,7 @@ test_that("a sampled fit places with a missing TI predictor imputed, then sample
   expect_equal(prepped$ti_imputed$predictor, 1L)
   expect_equal(prepped$ti_imputed$mu, mean(c(-1, 2)), tolerance = 1e-8)
   expect_equal(prepped$ti_imputed$sigma, sd(c(-1, 2)), tolerance = 1e-8)
-  expect_equal(prepped$tipred_data[3, 1], mean(c(-1, 2)))
+  expect_equal(unname(prepped$tipred_data[3, 1]), mean(c(-1, 2)))
 
   # The sample makes it a parameter, its raw index past every other block:
   # the model parameters (t0m is indvarying, so the augmented route also
@@ -54,7 +54,7 @@ test_that("a sampled fit places with a missing TI predictor imputed, then sample
   # Never NA in what reaches the engine -- the missing cell holds the
   # placeholder, always overwritten before it is read.
   expect_false(anyNA(sampled$tipred_data))
-  expect_equal(sampled$tipred_data[3, 1], 99999)
+  expect_equal(unname(sampled$tipred_data[3, 1]), 99999)
 
   # Complete data still prepares on the same path with nothing new, so the
   # new machinery is about the missing cell specifically.
@@ -431,7 +431,7 @@ test_that("a rebuild over some subjects takes the fit's values for its missing T
   expect_null(carried$ti_imputed)
   expect_equal(carried$ti_missing$parameter, sampled$ti_missing$parameter)
   expect_equal(carried$ti_missing$subject, 1L)
-  expect_equal(carried$tipred_data[1, 1], 99999)
+  expect_equal(unname(carried$tipred_data[1, 1]), 99999)
 
   # A subject the fit never had, with nothing to impute from, is refused.
   stranger <- dat[dat$id %in% 3:4, ]

@@ -3219,7 +3219,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # fit's own setting and `control$tipredMissing`. A fit that estimated them as
 # parameters cannot be sampled with them imputed.
 .ctJuliaTIMissingSamples <- function(spec, requested = NULL) {
-  request <- if (is.null(requested)) .ctJuliaTIMissingRequest(spec$tipredMissing) else
+  request <- if (is.null(requested)) .ctJuliaTIMissingRequest(spec[["tipredMissing"]]) else
     .ctJuliaTIMissingRequest(requested, "control$tipredMissing")
   if (identical(request, "impute") && NROW(spec$ti_missing)) {
     stop("control$tipredMissing = 'impute': this fit estimated its missing TI ",
@@ -3258,7 +3258,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # parameter, so the fit's raw vectors apply unchanged. A subject the fit did
 # not have keeps what `spec` made of it.
 .ctJuliaCarryTIMissing <- function(spec, fitted) {
-  spec$tipredMissing <- fitted$tipredMissing
+  spec$tipredMissing <- fitted[["tipredMissing"]]
   own <- spec$ti_imputed
   if (NROW(own)) {
     idname <- spec$model$subjectIDname
@@ -5327,7 +5327,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # Missing TI predictor values: an optimisation imputes them unless asked to
   # estimate them, and so does the optimisation that places a sampler, whose
   # sample then makes them parameters (`.ctBackendUncertaintySample()`).
-  tipredMissing <- .ctJuliaTIMissingRequest(optimcontrol$tipredMissing)
+  # `[[`, not `$`: `$` would read `tipredMissingIncludeOutcome` when this is
+  # absent.
+  tipredMissing <- .ctJuliaTIMissingRequest(optimcontrol[["tipredMissing"]])
   model_spec <- .ctJuliaPrepare(datalong, model, prepared_data = prepared_data,
     priors = priors, priorscope = priorscope, intoverpop = intoverpop,
     tipredMissing = if (isTRUE(optimize) && identical(tipredMissing, "sample"))
