@@ -12,6 +12,8 @@ ctScoreTest(
   df = 3,
   parameters = NULL,
   order = 2L,
+  variance = c("robust", "model"),
+  nboot = 1999L,
   cores = 2L,
   verbose = TRUE
 )
@@ -39,11 +41,16 @@ character or logical covariate; linear otherwise), \code{'linear'},
 \item{parameters}{Optional parameter names to restrict the heterogeneity and
 covariate tests to.}
 
-\item{order}{Highest degree of the state-dependence terms: 2 tests each
-drift coefficient varying linearly with each state; 3 adds variation with
+\item{order}{Highest degree of the state-dependence terms: 2, each drift
+coefficient varying linearly with each state; 3 adds variation with
 products and squares of states, which is what a symmetric dependence --
 regulation that strengthens at both extremes, say -- shows up as, and
 which degree 2 cannot see.}
+
+\item{variance}{\code{'robust'} (the default) or \code{'model'}; see the
+section on variance.}
+
+\item{nboot}{Bootstrap resamples for the robust p-values.}
 
 \item{cores}{Engine cores for the evaluations.}
 
@@ -52,91 +59,110 @@ which degree 2 cannot see.}
 \value{
 An object of class \code{ctScoreTest}: a list with
   \code{heterogeneity} (a data frame, one row per parameter),
-  \code{covariates} (one element per covariate, each with its \code{joint}
-  test and a data frame \code{parameters}), \code{statedependence} (a data
-  frame of terms, with \code{joint} tests per equation and overall), and
-  \code{info} (the route, the number of subjects, the evaluation counts).
+  \code{covariates} (one element per covariate, each a list of its
+  \code{joint} test and a data frame \code{parameters}),
+  \code{statedependence} (a list of \code{terms}, a data frame, and
+  \code{joint}, the tests per equation and overall), and \code{info} (the
+  route, the number of subjects and parameters, the variance used).
 }
 \description{
 Tests, from one fitted model and without refitting it, whether the model
 would fit better with a relaxation it does not contain: parameters that
 differ between subjects (an unmodelled random effect), parameters that
 depend on a time independent covariate the model does not include, or
-dynamics that depend on the latent state (missing nonlinearity). Each test
-is a score (Lagrange multiplier) test: the gradient of the log likelihood
-in the direction of the relaxation, at the fitted model, set against its
-sampling variance with the fitted parameters projected out. Each also gives
-a one-step estimate of the relaxation's size -- roughly what a refit
-including it would estimate -- for screening; refit with the relaxations
-that matter before interpreting their sizes.
+dynamics that depend on the latent state (a missing nonlinearity). Each test
+is a score (Lagrange multiplier) test: the slope of the log likelihood in
+the direction of the relaxation, at the fitted model, with the fitted
+parameters projected out. Each also gives a one-step estimate of the
+relaxation's size, for screening: refit with the relaxations that matter
+before interpreting their sizes.
 }
 \section{Heterogeneity}{
  For each parameter that is free, does not already
   vary over subjects, and is not an initial condition (T0MEANS and T0VAR,
   whose variation T0VAR already carries), the score test that its variance
   over subjects is zero. A variance cannot be negative, so the test is one
-  sided: \code{z} large and positive says the subjects' data disagree with
-  one shared value more than chance allows. The statistic is White's
+  sided: \code{z} large and positive says the subjects disagree about the
+  parameter more than one shared value allows. The statistic is the
   information matrix test in that parameter, which is the score test for
-  neglected heterogeneity (Chesher, 1984): it responds to any failure of
-  the information equality in that coordinate, of which subject
-  differences are the usual cause. \code{sd} is the one-step estimate of
-  the subjects' standard deviation, on the raw (unconstrained) scale and,
-  for model parameters, approximately on the parameter's own scale
-  (\code{sd_natural}). To act on a result, set \code{indvarying = TRUE} for
-  the parameter and refit.
+  neglected heterogeneity (Chesher, 1984). It responds to any failure of
+  the information equality in that coordinate, of which subject differences
+  are the usual cause but not the only one: a subject-varying drift also
+  moves the diffusion's test, because both change how much a subject
+  varies, and a missing nonlinearity moves several. \code{sd} is the
+  one-step estimate of the subjects' standard deviation on the raw scale,
+  and \code{sd_natural} approximately on the parameter's own. To act on a
+  result, set \code{indvarying = TRUE} for the parameter, refit, and test
+  again.
 }
 
 \section{Covariates}{
- For each covariate, the effect it would have on every
+ For each covariate, the effects it would have on every
   tested parameter if added as a time independent predictor (on the raw
-  scale, as \code{TIPREDEFFECT} acts), including on the population standard
-  deviations of parameters that vary (a covariate moderating
-  heterogeneity). \code{joint} tests all of a covariate's effects together
-  and is the screen: it is valid whatever the covariate does to other
-  parameters. Per parameter, \code{p} tests that parameter's effect given
-  the covariate's effects on all the others (from the joint one-step
-  estimate), and \code{p_alone} tests it as though no other parameter were
-  affected. The two differ when a covariate that shifts one parameter --
-  the level of a random effect, say -- shows up in another's score through
-  their correlation; trust \code{p}. \code{estimate} is the one-step
-  effect per unit of the covariate, raw and (\code{estimate_natural})
-  approximately on the parameter's own scale. A covariate is entered
-  linearly (centred), as treatment indicators for a factor, or as a
-  natural spline with \code{df} degrees of freedom; subjects missing it
-  contribute at the mean. To act on a result, add the covariate to the data
-  and to \code{TIpredNames} and refit.
+  scale, as a predictor effect acts), including on the population standard
+  deviations of the parameters that vary: a covariate moderating
+  heterogeneity. The \code{joint} test of all of a covariate's effects is the
+  screen. Per parameter, \code{estimate} is the one-step effect per unit of
+  the covariate with the fitted parameters held at their estimates, jointly
+  over the parameters, so a covariate that shifts one parameter is not read
+  off another correlated with it; \code{estimate_natural} puts it
+  approximately on the parameter's own scale, and \code{p} tests it. Holding
+  the fit's parameters is what keeps the size near a refit's: a covariate
+  the model lacks is absorbed by the parameters it has -- a random effect's
+  standard deviation grows to take in a covariate that shifts its mean --
+  and letting them move in a one-step extrapolates the likelihood across
+  that whole change. A covariate enters linearly (centred), as treatment
+  indicators for a factor, or as a natural spline with \code{df} degrees of
+  freedom, for which only \code{p} is given; subjects missing it contribute
+  at the mean. To act on a result, add the covariate to the data and to
+  \code{TIpredNames} and refit.
 }
 
 \section{State dependence}{
  For each latent equation and each pair of
   latent states \code{k <= m}, the score test of a term \code{d * eta_k *
-  eta_m} in that equation's drift: the second-order (Taylor) expansion of a
-  drift that depends on the state (Luukkonen, Saikkonen & Terasvirta, 1988,
-  in continuous time). A term \code{eta_k * eta_m} in the equation of
-  \code{eta_i} is \code{DRIFT[i,k]} varying with \code{eta_m} -- and,
-  when \code{k != m}, equally \code{DRIFT[i,m]} varying with
-  \code{eta_k}; the data cannot tell those apart at this order.
-  \code{estimate} is the one-step change in that drift coefficient per
-  unit of the state. The terms are evaluated by the model's own filter at
-  the state predicted from earlier observations, which keeps the test
-  valid; a state estimate that has seen the observation being scored (the
-  updated or smoothed state) would not. To act on a result, write the
-  dependence into the DRIFT cell (\code{'dr11 + d * eta2'}, with \code{d}
-  and \code{dr11} declared in \code{PARS}) and refit.
+  eta_m} in that equation's drift: a drift coefficient that varies linearly
+  with a state, the second-order expansion of a drift that depends on the
+  state (Luukkonen, Saikkonen & Terasvirta, 1988). A term \code{eta_k *
+  eta_m} in the equation of \code{eta_i} is \code{DRIFT[i,k]} varying with
+  \code{eta_m} -- and, when \code{k != m}, equally \code{DRIFT[i,m]} varying
+  with \code{eta_k}; at this order the data cannot tell those apart, and
+  \code{reads} says both. \code{estimate} is the one-step change in that
+  drift coefficient per unit of the state. \code{order = 3} adds the terms
+  of degree three. The terms are evaluated by the model's own filter at the
+  state predicted from earlier observations, which keeps the test valid; a
+  state estimate that has seen the observation being scored -- the updated
+  or smoothed state -- would not. To act on a result, write the dependence
+  into the drift cell (\code{DRIFT[1,1] = 'dr11 + d * eta2'} with
+  \code{PARS = c('dr11|-log1p_exp(-param)', 'd')}) and refit.
+}
+
+\section{Variance and p-values}{
+ The fitted model's curvature projects the
+  fitted parameters out of each test and sets the one-step sizes; the
+  variance of each test is, by default (\code{variance = 'robust'}), the
+  spread over subjects of their projected contributions, and its p-value a
+  bootstrap over subjects of the studentised statistic (\code{nboot}
+  resamples, from a fixed stream, so a call is reproducible and leaves the
+  session's random numbers alone). That keeps each test valid when the model
+  is wrong in some other way, which is when a screen is used, and corrects
+  for the skewness of a variance score. \code{variance = 'model'} uses the
+  curvature for the variance and chi-square and normal references instead;
+  it is what is used below 20 subjects, where a spread over subjects is too
+  thin to estimate.
 }
 
 \section{Reading the results}{
- The tests are screens, made at the fitted
-  model: a badly misspecified model lights up many of them at once, and
-  their one-step sizes are local approximations -- especially for drift
-  parameters, which act through the matrix exponential. Within each family
-  \code{p_adj} is the Benjamini-Hochberg adjustment over the tests shown.
-  The tests use the fit's own objective, so they apply to the route it was
-  fitted on (\code{intoverpop}); they are made at an optimum and refuse a
-  sampled fit. Heterogeneity and covariate tests need subjects as the
-  independent units, so they are not available for a model with a level
-  above the subject.
+ The tests are screens. A badly misspecified
+  model lights up many at once, and their one-step sizes are local
+  approximations -- especially for drift parameters, which act through the
+  matrix exponential. Relax what stands out most, refit, and test again.
+  Within each family \code{p_adj} is the Benjamini-Hochberg adjustment over
+  the tests shown. The tests use the fit's own objective, so they apply to
+  the route it was fitted on (\code{intoverpop}); they are made at an
+  optimum, and refuse a sampled fit. Heterogeneity and covariate tests need
+  subjects as the independent units, so a model with a level above the
+  subject can only be tested for state dependence.
 }
 
 \examples{
@@ -148,11 +174,15 @@ st$heterogeneity
 }
 }
 \references{
-Chesher, A. (1984). Testing for neglected heterogeneity.
-  Econometrica, 52, 865-872.
+Boos, D. D. (1992). On generalized score tests. The American
+  Statistician, 46, 327-333.
+
+  Chesher, A. (1984). Testing for neglected heterogeneity. Econometrica, 52,
+  865-872.
 
   Luukkonen, R., Saikkonen, P., & Terasvirta, T. (1988). Testing linearity
   against smooth transition autoregressive models. Biometrika, 75, 491-499.
-
-  Sorbom, D. (1989). Model modification. Psychometrika, 54, 371-384.
+}
+\seealso{
+\code{vignette('score-tests')} for three worked examples.
 }

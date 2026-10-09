@@ -7,8 +7,9 @@
 # curvature blocks that involve it, evaluated at the fit -- no refit -- and
 # projects the fitted parameters out of it (Neyman's C(alpha) form), so the
 # test holds at an estimate that is near, not exactly at, the maximum (priors,
-# a finish that stopped on gain). The design, the literature and the checks
-# behind it are in CT-SEM/review/SCORETESTS-misfit-design-2026-10-09.md.
+# a finish that stopped on gain). The design, the literature and the
+# simulations behind the choices below are in
+# CT-SEM/review/SCORETESTS-misfit-design-2026-10-09.md.
 #
 # Two sources of the pieces:
 #
@@ -24,6 +25,15 @@
 #     its Hessian columns along the new coordinates (`ctsem_hessian_columns`).
 #     State dependence goes this way, because its terms enter the filter's
 #     linearisation and no per-subject identity carries them.
+#
+# The Hessian projects and sizes; it does not set the variance. A screen meets
+# models that are wrong, and when one is wrong in any way the information
+# equality fails, so a variance built from the Hessian mis-scales every other
+# test: an unrelated covariate's joint test rejected 27 to 44 per cent of the
+# time under a missing nonlinearity. The variance is the spread of each
+# subject's projected contribution (Boos, 1992), and the p-value a studentised
+# bootstrap of those contributions, since a variance score is a sum of skewed
+# terms; the same unrelated test then rejected 2 per cent.
 #
 # State dependence is written into CINT rather than into DRIFT cells. The
 # engine's Jacobian is derived from DRIFT * state + CINT (`ctJacobian`), so a
@@ -41,74 +51,90 @@
 #' would fit better with a relaxation it does not contain: parameters that
 #' differ between subjects (an unmodelled random effect), parameters that
 #' depend on a time independent covariate the model does not include, or
-#' dynamics that depend on the latent state (missing nonlinearity). Each test
-#' is a score (Lagrange multiplier) test: the gradient of the log likelihood
-#' in the direction of the relaxation, at the fitted model, set against its
-#' sampling variance with the fitted parameters projected out. Each also gives
-#' a one-step estimate of the relaxation's size -- roughly what a refit
-#' including it would estimate -- for screening; refit with the relaxations
-#' that matter before interpreting their sizes.
+#' dynamics that depend on the latent state (a missing nonlinearity). Each test
+#' is a score (Lagrange multiplier) test: the slope of the log likelihood in
+#' the direction of the relaxation, at the fitted model, with the fitted
+#' parameters projected out. Each also gives a one-step estimate of the
+#' relaxation's size, for screening: refit with the relaxations that matter
+#' before interpreting their sizes.
 #'
 #' @section Heterogeneity: For each parameter that is free, does not already
 #'   vary over subjects, and is not an initial condition (T0MEANS and T0VAR,
 #'   whose variation T0VAR already carries), the score test that its variance
 #'   over subjects is zero. A variance cannot be negative, so the test is one
-#'   sided: \code{z} large and positive says the subjects' data disagree with
-#'   one shared value more than chance allows. The statistic is White's
+#'   sided: \code{z} large and positive says the subjects disagree about the
+#'   parameter more than one shared value allows. The statistic is the
 #'   information matrix test in that parameter, which is the score test for
-#'   neglected heterogeneity (Chesher, 1984): it responds to any failure of
-#'   the information equality in that coordinate, of which subject
-#'   differences are the usual cause. \code{sd} is the one-step estimate of
-#'   the subjects' standard deviation, on the raw (unconstrained) scale and,
-#'   for model parameters, approximately on the parameter's own scale
-#'   (\code{sd_natural}). To act on a result, set \code{indvarying = TRUE} for
-#'   the parameter and refit.
+#'   neglected heterogeneity (Chesher, 1984). It responds to any failure of
+#'   the information equality in that coordinate, of which subject differences
+#'   are the usual cause but not the only one: a subject-varying drift also
+#'   moves the diffusion's test, because both change how much a subject
+#'   varies, and a missing nonlinearity moves several. \code{sd} is the
+#'   one-step estimate of the subjects' standard deviation on the raw scale,
+#'   and \code{sd_natural} approximately on the parameter's own. To act on a
+#'   result, set \code{indvarying = TRUE} for the parameter, refit, and test
+#'   again.
 #'
-#' @section Covariates: For each covariate, the effect it would have on every
+#' @section Covariates: For each covariate, the effects it would have on every
 #'   tested parameter if added as a time independent predictor (on the raw
-#'   scale, as \code{TIPREDEFFECT} acts), including on the population standard
-#'   deviations of parameters that vary (a covariate moderating
-#'   heterogeneity). \code{joint} tests all of a covariate's effects together
-#'   and is the screen: it is valid whatever the covariate does to other
-#'   parameters. Per parameter, \code{p} tests that parameter's effect given
-#'   the covariate's effects on all the others (from the joint one-step
-#'   estimate), and \code{p_alone} tests it as though no other parameter were
-#'   affected. The two differ when a covariate that shifts one parameter --
-#'   the level of a random effect, say -- shows up in another's score through
-#'   their correlation; trust \code{p}. \code{estimate} is the one-step
-#'   effect per unit of the covariate, raw and (\code{estimate_natural})
-#'   approximately on the parameter's own scale. A covariate is entered
-#'   linearly (centred), as treatment indicators for a factor, or as a
-#'   natural spline with \code{df} degrees of freedom; subjects missing it
-#'   contribute at the mean. To act on a result, add the covariate to the data
-#'   and to \code{TIpredNames} and refit.
+#'   scale, as a predictor effect acts), including on the population standard
+#'   deviations of the parameters that vary: a covariate moderating
+#'   heterogeneity. The \code{joint} test of all of a covariate's effects is the
+#'   screen. Per parameter, \code{estimate} is the one-step effect per unit of
+#'   the covariate with the fitted parameters held at their estimates, jointly
+#'   over the parameters, so a covariate that shifts one parameter is not read
+#'   off another correlated with it; \code{estimate_natural} puts it
+#'   approximately on the parameter's own scale, and \code{p} tests it. Holding
+#'   the fit's parameters is what keeps the size near a refit's: a covariate
+#'   the model lacks is absorbed by the parameters it has -- a random effect's
+#'   standard deviation grows to take in a covariate that shifts its mean --
+#'   and letting them move in a one-step extrapolates the likelihood across
+#'   that whole change. A covariate enters linearly (centred), as treatment
+#'   indicators for a factor, or as a natural spline with \code{df} degrees of
+#'   freedom, for which only \code{p} is given; subjects missing it contribute
+#'   at the mean. To act on a result, add the covariate to the data and to
+#'   \code{TIpredNames} and refit.
 #'
 #' @section State dependence: For each latent equation and each pair of
 #'   latent states \code{k <= m}, the score test of a term \code{d * eta_k *
-#'   eta_m} in that equation's drift: the second-order (Taylor) expansion of a
-#'   drift that depends on the state (Luukkonen, Saikkonen & Terasvirta, 1988,
-#'   in continuous time). A term \code{eta_k * eta_m} in the equation of
-#'   \code{eta_i} is \code{DRIFT[i,k]} varying with \code{eta_m} -- and,
-#'   when \code{k != m}, equally \code{DRIFT[i,m]} varying with
-#'   \code{eta_k}; the data cannot tell those apart at this order.
-#'   \code{estimate} is the one-step change in that drift coefficient per
-#'   unit of the state. The terms are evaluated by the model's own filter at
-#'   the state predicted from earlier observations, which keeps the test
-#'   valid; a state estimate that has seen the observation being scored (the
-#'   updated or smoothed state) would not. To act on a result, write the
-#'   dependence into the DRIFT cell (\code{'dr11 + d * eta2'}, with \code{d}
-#'   and \code{dr11} declared in \code{PARS}) and refit.
+#'   eta_m} in that equation's drift: a drift coefficient that varies linearly
+#'   with a state, the second-order expansion of a drift that depends on the
+#'   state (Luukkonen, Saikkonen & Terasvirta, 1988). A term \code{eta_k *
+#'   eta_m} in the equation of \code{eta_i} is \code{DRIFT[i,k]} varying with
+#'   \code{eta_m} -- and, when \code{k != m}, equally \code{DRIFT[i,m]} varying
+#'   with \code{eta_k}; at this order the data cannot tell those apart, and
+#'   \code{reads} says both. \code{estimate} is the one-step change in that
+#'   drift coefficient per unit of the state. \code{order = 3} adds the terms
+#'   of degree three. The terms are evaluated by the model's own filter at the
+#'   state predicted from earlier observations, which keeps the test valid; a
+#'   state estimate that has seen the observation being scored -- the updated
+#'   or smoothed state -- would not. To act on a result, write the dependence
+#'   into the drift cell (\code{DRIFT[1,1] = 'dr11 + d * eta2'} with
+#'   \code{PARS = c('dr11|-log1p_exp(-param)', 'd')}) and refit.
 #'
-#' @section Reading the results: The tests are screens, made at the fitted
-#'   model: a badly misspecified model lights up many of them at once, and
-#'   their one-step sizes are local approximations -- especially for drift
-#'   parameters, which act through the matrix exponential. Within each family
-#'   \code{p_adj} is the Benjamini-Hochberg adjustment over the tests shown.
-#'   The tests use the fit's own objective, so they apply to the route it was
-#'   fitted on (\code{intoverpop}); they are made at an optimum and refuse a
-#'   sampled fit. Heterogeneity and covariate tests need subjects as the
-#'   independent units, so they are not available for a model with a level
-#'   above the subject.
+#' @section Variance and p-values: The fitted model's curvature projects the
+#'   fitted parameters out of each test and sets the one-step sizes; the
+#'   variance of each test is, by default (\code{variance = 'robust'}), the
+#'   spread over subjects of their projected contributions, and its p-value a
+#'   bootstrap over subjects of the studentised statistic (\code{nboot}
+#'   resamples, from a fixed stream, so a call is reproducible and leaves the
+#'   session's random numbers alone). That keeps each test valid when the model
+#'   is wrong in some other way, which is when a screen is used, and corrects
+#'   for the skewness of a variance score. \code{variance = 'model'} uses the
+#'   curvature for the variance and chi-square and normal references instead;
+#'   it is what is used below 20 subjects, where a spread over subjects is too
+#'   thin to estimate.
+#'
+#' @section Reading the results: The tests are screens. A badly misspecified
+#'   model lights up many at once, and their one-step sizes are local
+#'   approximations -- especially for drift parameters, which act through the
+#'   matrix exponential. Relax what stands out most, refit, and test again.
+#'   Within each family \code{p_adj} is the Benjamini-Hochberg adjustment over
+#'   the tests shown. The tests use the fit's own objective, so they apply to
+#'   the route it was fitted on (\code{intoverpop}); they are made at an
+#'   optimum, and refuse a sampled fit. Heterogeneity and covariate tests need
+#'   subjects as the independent units, so a model with a level above the
+#'   subject can only be tested for state dependence.
 #'
 #' @param fit A fit from \code{\link{ctFit}} with \code{backend = 'julia'},
 #'   optimised.
@@ -126,26 +152,32 @@
 #' @param df Degrees of freedom of the spline basis.
 #' @param parameters Optional parameter names to restrict the heterogeneity and
 #'   covariate tests to.
-#' @param order Highest degree of the state-dependence terms: 2 tests each
-#'   drift coefficient varying linearly with each state; 3 adds variation with
+#' @param order Highest degree of the state-dependence terms: 2, each drift
+#'   coefficient varying linearly with each state; 3 adds variation with
 #'   products and squares of states, which is what a symmetric dependence --
 #'   regulation that strengthens at both extremes, say -- shows up as, and
 #'   which degree 2 cannot see.
+#' @param variance \code{'robust'} (the default) or \code{'model'}; see the
+#'   section on variance.
+#' @param nboot Bootstrap resamples for the robust p-values.
 #' @param cores Engine cores for the evaluations.
 #' @param verbose Report progress.
 #' @return An object of class \code{ctScoreTest}: a list with
 #'   \code{heterogeneity} (a data frame, one row per parameter),
-#'   \code{covariates} (one element per covariate, each with its \code{joint}
-#'   test and a data frame \code{parameters}), \code{statedependence} (a data
-#'   frame of terms, with \code{joint} tests per equation and overall), and
-#'   \code{info} (the route, the number of subjects, the evaluation counts).
-#' @references Chesher, A. (1984). Testing for neglected heterogeneity.
-#'   Econometrica, 52, 865-872.
+#'   \code{covariates} (one element per covariate, each a list of its
+#'   \code{joint} test and a data frame \code{parameters}),
+#'   \code{statedependence} (a list of \code{terms}, a data frame, and
+#'   \code{joint}, the tests per equation and overall), and \code{info} (the
+#'   route, the number of subjects and parameters, the variance used).
+#' @references Boos, D. D. (1992). On generalized score tests. The American
+#'   Statistician, 46, 327-333.
+#'
+#'   Chesher, A. (1984). Testing for neglected heterogeneity. Econometrica, 52,
+#'   865-872.
 #'
 #'   Luukkonen, R., Saikkonen, P., & Terasvirta, T. (1988). Testing linearity
 #'   against smooth transition autoregressive models. Biometrika, 75, 491-499.
-#'
-#'   Sorbom, D. (1989). Model modification. Psychometrika, 54, 371-384.
+#' @seealso \code{vignette('score-tests')} for three worked examples.
 #' @examples
 #' \dontrun{
 #' fit <- ctFit(dat, model, backend = 'julia')
@@ -157,7 +189,8 @@
 ctScoreTest <- function(fit, covariates = NULL,
   tests = c('heterogeneity', 'covariates', 'statedependence'),
   form = c('auto', 'linear', 'spline', 'factor'), df = 3, parameters = NULL,
-  order = 2L, cores = 2L, verbose = TRUE) {
+  order = 2L, variance = c('robust', 'model'), nboot = 1999L, cores = 2L,
+  verbose = TRUE) {
   if (!inherits(fit, 'ctJuliaFit')) stop("ctScoreTest() needs a fit from ",
     "ctFit(backend = 'julia'). Refit on that backend to use it.", call. = FALSE)
   if (!is.null(fit$sample)) stop("Score tests are made at an optimum, and this ",
@@ -179,6 +212,18 @@ ctScoreTest <- function(fit, covariates = NULL,
   # several.ok would return the whole default vector for a missing argument.
   form <- if (missing(form)) 'auto' else match.arg(form, several.ok = TRUE)
   say <- function(...) if (isTRUE(verbose)) message(...)
+  variance <- match.arg(variance)
+  if (variance == 'robust' && .ctFitNsubjects(fit) < 20L) {
+    say("Fewer than 20 subjects: using the model-based variance.")
+    variance <- 'model'
+  }
+  # The bootstrap draws from its own stream, so a call gives the same answer
+  # every time and leaves the caller's random numbers where they were.
+  if (exists('.Random.seed', envir = globalenv(), inherits = FALSE)) {
+    oldseed <- get('.Random.seed', envir = globalenv(), inherits = FALSE)
+    on.exit(assign('.Random.seed', oldseed, envir = globalenv()), add = TRUE)
+  } else on.exit(rm('.Random.seed', envir = globalenv()), add = TRUE)
+  set.seed(20261009L)
 
   spec <- fit$model_spec
   est <- .ctFitRawEstimate(fit)
@@ -186,6 +231,7 @@ ctScoreTest <- function(fit, covariates = NULL,
   out <- list(heterogeneity = NULL, covariates = NULL, statedependence = NULL,
     info = list(route = .ctBackendIntOverPop(spec),
       nsubjects = .ctFitNsubjects(fit), npar = length(est)))
+  out$info$variance <- variance
 
   persubject <- intersect(tests, c('heterogeneity', 'covariates'))
   pieces <- NULL
@@ -201,19 +247,21 @@ ctScoreTest <- function(fit, covariates = NULL,
       "above the subject, so its independent units are not subjects. ",
       "Heterogeneity and covariate tests need subjects; use ",
       "tests = 'statedependence'.", call. = FALSE)
-    if (length(het)) out$heterogeneity <- .ctScoreHeterogeneity(pieces, ptab, het)
+    if (length(het)) out$heterogeneity <- .ctScoreHeterogeneity(pieces, ptab, het,
+      variance, nboot)
     if (length(cov)) {
       values <- .ctScoreCovariateValues(fit, covariates)
       forms <- rep_len(form, length(values))
       out$covariates <- Map(function(z, f, name) .ctScoreCovariate(pieces, ptab,
-        cov, .ctScoreBasis(z, f, df, name)), values, forms, names(values))
+        cov, .ctScoreBasis(z, f, df, name), variance, nboot), values, forms,
+        names(values))
     }
   }
   if ('statedependence' %in% tests) {
     say("State dependence: preparing the model with the drift terms at zero")
     information <- if (!is.null(pieces)) -pieces$Hsum else NULL
     out$statedependence <- .ctScoreStateDependence(fit, est, information,
-      order = order, cores = cores)
+      order = order, variance = variance, nboot = nboot, cores = cores)
   }
   structure(out, class = 'ctScoreTest')
 }
@@ -320,41 +368,97 @@ ctScoreTest <- function(fit, covariates = NULL,
 }
 
 # The variance score for each parameter j, (s_ij^2 + H_i,jj) / 2 summed over
-# subjects, projected on the fitted parameters. Its variance per subject is
-# H_i,jj^2 / 2 -- exact when s_ij is Gaussian, as it is for a parameter that
-# enters a linear Gaussian model's mean, and the score's large-sample
-# behaviour otherwise -- less what estimating theta removes,
-# D' I^-1 D with D the derivative of the statistic in theta.
-.ctScoreHeterogeneity <- function(pieces, ptab, het) {
+# subjects, projected on the fitted parameters (C(alpha)): each subject's
+# contribution plus D' I^-1 s_i, with D the derivative of the statistic in
+# theta. Its variance, `robust`, is the spread of those contributions, which
+# stays right when the model is wrong in some other way -- the case a screen
+# meets most -- where the information equality the model-based variance
+# leans on fails. `model` is sum_i H_i,jj^2 / 2 less D' I^-1 D: exact for a
+# Gaussian score, as a parameter of a linear Gaussian model's mean has, and
+# the information for the variance in either case, which sets the one-step
+# estimate of the standard deviation.
+.ctScoreHeterogeneity <- function(pieces, ptab, het, variance = 'robust',
+  nboot = 1999L) {
   S <- pieces$S
-  I <- -pieces$Hsum
-  Iinv <- .ctScorePinv(I)$inv
+  Iinv <- .ctScorePinv(-pieces$Hsum)$inv
   Stot <- colSums(S)
   rows <- lapply(seq_along(het), function(a) {
     j <- het[a]
-    r <- match(j, pieces$rows)
     s <- S[, j]
-    Hj <- pieces$H[, r, , drop = TRUE]
-    if (is.null(dim(Hj))) Hj <- matrix(Hj, nrow = nrow(S))
+    Hj <- .ctScoreHrow(pieces, j)
     hjj <- Hj[, j]
-    stat <- sum(0.5 * (s^2 + hjj))
-    # D = dT/dtheta. T(theta) + D' I^-1 S(theta) is T at the true theta to
-    # first order wherever it is evaluated -- the C(alpha) form. Plus, because
-    # D is the derivative and I the negative Hessian; the covariate test's
-    # `- Idt I^-1 S` is the same with Idt = -dU/dtheta.
+    # D = dT/dtheta: d(s_ij^2/2)/dtheta = s_ij H_i[j, ] and
+    # d(H_i,jj/2)/dtheta_k = d^2 s_ik / dtheta_j^2 / 2.
     D <- colSums(s * Hj) + 0.5 * colSums(pieces$D2[, , a, drop = TRUE])
-    statstar <- stat + sum(D * (Iinv %*% Stot))
-    V <- sum(0.5 * hjj^2) - as.numeric(t(D) %*% Iinv %*% D)
-    z <- if (V > 0) statstar / sqrt(V) else NA_real_
-    sdraw <- if (V > 0) sqrt(max(0, statstar / V)) else NA_real_
+    w <- as.numeric(Iinv %*% D)
+    # T(theta) + D' I^-1 S(theta) is T at the true theta to first order,
+    # wherever it is evaluated. Plus: D is a derivative and I the negative
+    # Hessian; the covariate test's `- Idt I^-1 S` is the same with
+    # Idt = -dU/dtheta.
+    contribution <- 0.5 * (s^2 + hjj) + as.numeric(S %*% w)
+    stat <- sum(contribution)
+    information <- sum(0.5 * hjj^2) - sum(D * w)
+    V <- if (variance == 'robust') .ctScoreSpread(matrix(contribution))[1, 1] else
+      information
+    z <- if (V > 0) stat / sqrt(V) else NA_real_
+    p <- if (variance == 'robust') .ctScoreBoot(matrix(contribution), nboot,
+      onesided = TRUE) else stats::pnorm(z, lower.tail = FALSE)
+    # The one-step variance divides by the information for it. Less what
+    # estimating the other parameters takes, when that leaves it positive;
+    # the third derivatives that projection needs are differenced twice and
+    # can overshoot, and the plain sum is the size to first order anyway.
+    if (information <= 0) information <- sum(0.5 * hjj^2)
+    sdraw <- if (information > 0) sqrt(max(0, stat / information)) else NA_real_
     data.frame(parameter = ptab$name[j], matrix = ptab$matrix[j],
-      row = ptab$row[j], col = ptab$col[j], z = z,
-      p = stats::pnorm(z, lower.tail = FALSE), sd = sdraw,
+      row = ptab$row[j], col = ptab$col[j], z = z, p = p, sd = sdraw,
       sd_natural = abs(ptab$slope[j]) * sdraw, stringsAsFactors = FALSE)
   })
   out <- do.call(rbind, rows)
   out$p_adj <- .ctScoreBH(out$p)
   out[order(out$p), , drop = FALSE]
+}
+
+# Subject i's Hessian row for raw parameter j, n x p.
+.ctScoreHrow <- function(pieces, j) {
+  Hj <- pieces$H[, match(j, pieces$rows), , drop = TRUE]
+  if (is.null(dim(Hj))) Hj <- matrix(Hj, nrow = nrow(pieces$S))
+  Hj
+}
+
+# The variance of a sum of independent units' contributions (rows of C),
+# estimated from their spread: n / (n - 1) times the centred cross product.
+.ctScoreSpread <- function(C) {
+  C <- as.matrix(C)
+  n <- nrow(C)
+  centred <- sweep(C, 2, colMeans(C))
+  crossprod(centred) * n / (n - 1)
+}
+
+# The p-value of U' V^-1 U, U = colSums(C) and V its robust variance, by a
+# studentised bootstrap over the units: rows of C centred (the null) and
+# resampled, the statistic recomputed with its own variance each time. The
+# chi-square (or normal) reference assumes U is Gaussian, and a variance
+# score is a sum of chi-square-like terms: with 100 subjects the robust
+# one-sided z rejected a true model at 2 per cent where 5 was asked, and the
+# joint covariate test at 7.5 to 10.5. Studentising and resampling corrects
+# the skewness to second order, and costs milliseconds: nothing is refitted.
+# `onesided` takes a single column and rejects for large U.
+.ctScoreBoot <- function(C, nboot = 1999L, onesided = FALSE) {
+  C <- as.matrix(C)
+  n <- nrow(C)
+  stat <- function(X) {
+    u <- colSums(X)
+    v <- .ctScoreSpread(X)
+    if (onesided) return(u / sqrt(v[1, 1]))
+    pv <- .ctScorePinv(v)
+    as.numeric(t(u) %*% pv$inv %*% u)
+  }
+  observed <- stat(C)
+  if (!is.finite(observed)) return(NA_real_)
+  null <- sweep(C, 2, colMeans(C))
+  draws <- vapply(seq_len(nboot), function(b)
+    stat(null[sample.int(n, n, replace = TRUE), , drop = FALSE]), numeric(1))
+  (1 + sum(draws >= observed, na.rm = TRUE)) / (1 + sum(is.finite(draws)))
 }
 
 # Covariate values per subject, in the fit's subject order, as a named list.
@@ -436,53 +540,74 @@ ctScoreTest <- function(fit, covariates = NULL,
 }
 
 # The C(alpha) test of a covariate's effects on the parameters `cov`, with the
-# basis G: U = G' S over those columns, and the information blocks from the
-# per-subject Hessians weighted by G.
-.ctScoreCovariate <- function(pieces, ptab, cov, G) {
+# basis G: each subject's contribution g_i s_ij, projected on the fitted
+# parameters with the per-subject Hessians weighted by G. The variance is the
+# contributions' spread (`robust`) or the projected information (`model`).
+#
+# The effects are estimated with the fitted parameters held (Idd^-1 U*), not
+# free (V^-1 U*, the classical expected parameter change). A covariate the
+# model lacks is absorbed by the parameters it has -- a random effect's sd
+# grows to take in a covariate that shifts its mean -- and the free one-step
+# extrapolates the likelihood's curvature across that whole change. On
+# simulated data where a covariate shifted a random manifest mean by 0.8:
+# held 0.81, refit 0.81, free 3.0, and Newton from the fit diverged; over 100
+# such datasets the free one also attributed effects to parameters the
+# covariate did not touch (T0MEANS 50 per cent, a population sd 58). Holding
+# them is bigIRT's post-hoc adjustment (its items held, the ability side
+# estimated), here joint over all of the covariate's effects.
+.ctScoreCovariate <- function(pieces, ptab, cov, G, variance = 'robust',
+  nboot = 1999L) {
   S <- pieces$S
   q <- ncol(G)
   k <- length(cov)
   Iinv <- .ctScorePinv(-pieces$Hsum)$inv
-  Stot <- colSums(S)
-  U <- as.numeric(crossprod(G, S[, cov, drop = FALSE]))
+  block <- function(a) (a - 1L) * q + seq_len(q)
+  # Contributions g_ia s_ij, ordered by parameter then basis column.
+  C <- do.call(cbind, lapply(cov, function(j) G * S[, j]))
+  U <- colSums(C)
   Idt <- matrix(0, q * k, ncol(S))
   Idd <- matrix(0, q * k, q * k)
-  block <- function(a) (a - 1L) * q + seq_len(q)
   for (a in seq_len(k)) {
-    Ha <- pieces$H[, match(cov[a], pieces$rows), , drop = TRUE]
-    if (is.null(dim(Ha))) Ha <- matrix(Ha, nrow = nrow(S))
+    Ha <- .ctScoreHrow(pieces, cov[a])
     Idt[block(a), ] <- -crossprod(G, Ha)
-    for (b in seq_len(k)) {
-      Idd[block(a), block(b)] <- -crossprod(G, G * Ha[, cov[b]])
-    }
+    for (b in seq_len(k)) Idd[block(a), block(b)] <- -crossprod(G, G * Ha[, cov[b]])
   }
-  Ustar <- U - as.numeric(Idt %*% (Iinv %*% Stot))
-  V <- Idd - Idt %*% Iinv %*% t(Idt)
-  V <- (V + t(V)) / 2
+  Idd <- (Idd + t(Idd)) / 2
+  A <- Idt %*% Iinv
+  Cstar <- C - S %*% t(A)
+  Ustar <- colSums(Cstar)
+  Vmodel <- Idd - A %*% t(Idt)
+  Vmodel <- (Vmodel + t(Vmodel)) / 2
+  V <- if (variance == 'robust') .ctScoreSpread(Cstar) else Vmodel
   joint <- .ctScorePinv(V)
-  epc <- as.numeric(joint$inv %*% Ustar)
   lm <- as.numeric(t(Ustar) %*% joint$inv %*% Ustar)
+  pjoint <- if (variance == 'robust') .ctScoreBoot(Cstar, nboot) else
+    stats::pchisq(lm, joint$rank, lower.tail = FALSE)
+  heldinv <- .ctScorePinv(Idd)$inv
+  held <- as.numeric(heldinv %*% Ustar)
+  heldcov <- heldinv %*% V %*% heldinv
+  # Each subject's contribution to the held estimates, for their bootstrap:
+  # summed they are the estimates, and their spread is `heldcov`.
+  heldC <- Cstar %*% t(heldinv)
+  wald <- function(b, est, covariance) {
+    if (variance == 'robust') return(.ctScoreBoot(heldC[, b, drop = FALSE], nboot))
+    w <- .ctScorePinv(covariance[b, b, drop = FALSE])
+    if (!w$rank) return(NA_real_)
+    stats::pchisq(as.numeric(t(est[b]) %*% w$inv %*% est[b]), w$rank, lower.tail = FALSE)
+  }
   rows <- lapply(seq_len(k), function(a) {
     b <- block(a)
-    given <- .ctScorePinv(joint$inv[b, b, drop = FALSE])
-    wald <- as.numeric(t(epc[b]) %*% given$inv %*% epc[b])
-    alone <- .ctScorePinv(V[b, b, drop = FALSE])
-    lmalone <- as.numeric(t(Ustar[b]) %*% alone$inv %*% Ustar[b])
     j <- cov[a]
-    est <- if (q == 1L) epc[b] else NA_real_
-    se <- if (q == 1L) sqrt(joint$inv[b, b]) else NA_real_
+    one <- function(x) if (q == 1L) x else NA_real_
     data.frame(parameter = ptab$name[j], matrix = ptab$matrix[j],
-      estimate = est, se = se, estimate_natural = ptab$slope[j] * est,
-      df = given$rank,
-      p = if (given$rank) stats::pchisq(wald, given$rank, lower.tail = FALSE) else NA_real_,
-      p_alone = if (alone$rank) stats::pchisq(lmalone, alone$rank, lower.tail = FALSE) else NA_real_,
-      stringsAsFactors = FALSE)
+      estimate = one(held[b]), se = one(sqrt(heldcov[b, b])),
+      estimate_natural = ptab$slope[j] * one(held[b]),
+      p = wald(b, held, heldcov), stringsAsFactors = FALSE)
   })
   parameters <- do.call(rbind, rows)
   parameters$p_adj <- .ctScoreBH(parameters$p)
   list(joint = data.frame(covariate = attr(G, 'name'), form = attr(G, 'form'),
-    basis = q, LM = lm, df = joint$rank,
-    p = stats::pchisq(lm, joint$rank, lower.tail = FALSE),
+    basis = q, LM = lm, df = joint$rank, p = pjoint,
     nmissing = attr(G, 'nmissing'), stringsAsFactors = FALSE),
     parameters = parameters[order(parameters$p), , drop = FALSE])
 }
@@ -563,9 +688,11 @@ ctScoreTest <- function(fit, covariates = NULL,
 
 # State dependence by the extended model: prepared as the fit was, evaluated
 # with the fitted values and the terms at zero, which must reproduce the fit;
-# then its gradient and its Hessian columns along the terms.
+# then its gradient, its Hessian columns along the terms, and -- for the
+# robust variance -- each unit's gradient, whose term columns projected on
+# the fitted parameters are the contributions.
 .ctScoreStateDependence <- function(fit, est, information = NULL, order = 2L,
-  cores = 2L) {
+  variance = 'robust', nboot = 1999L, cores = 2L) {
   spec <- fit$model_spec
   base <- .ctFitBaseModel(fit)
   if (is.null(base)) stop("This fit does not carry the model it was built from, ",
@@ -604,20 +731,32 @@ ctScoreTest <- function(fit, covariates = NULL,
   theta <- match(nm1, nm2)
   delta <- match(ext$terms$name, nm2)
   module <- .ctJuliaModule(spec$project)
+  objective <- .ctJuliaObjective(spec2, hybrid = TRUE)
   Hc <- .ctBackendWithMaxChunks(cores, as.matrix(.ctBackendJuliaValue(
-    module$ctsem_hessian_columns(.ctJuliaObjective(spec2, hybrid = TRUE),
-      .ctJuliaNumericVector(as.numeric(x2)), .ctJuliaVector(as.integer(delta))))))
+    module$ctsem_hessian_columns(objective, .ctJuliaNumericVector(as.numeric(x2)),
+      .ctJuliaVector(as.integer(delta))))))
   if (is.null(information)) information <- -.ctBackendHessian(fit, est)
   Iinv <- .ctScorePinv(information)$inv
   Idt <- -t(Hc[theta, , drop = FALSE])
   Idd <- -Hc[delta, , drop = FALSE]
   Idd <- (Idd + t(Idd)) / 2
-  Ustar <- grad[delta] - as.numeric(Idt %*% (Iinv %*% grad[theta]))
-  V <- Idd - Idt %*% Iinv %*% t(Idt)
-  V <- (V + t(V)) / 2
+  A <- Idt %*% Iinv
+  Ustar <- grad[delta] - as.numeric(A %*% grad[theta])
+  Vmodel <- Idd - A %*% t(Idt)
+  Vmodel <- (Vmodel + t(Vmodel)) / 2
+  V <- Vmodel
+  Cstar <- NULL
+  if (variance == 'robust') {
+    units <- .ctBackendWithMaxChunks(cores, .ctJuliaGet(module$ctsem_subject_gradients(
+      objective, .ctJuliaVector(as.numeric(x2)))))
+    units <- as.matrix(units$scores)
+    Cstar <- units[, delta, drop = FALSE] - units[, theta, drop = FALSE] %*% t(A)
+    V <- .ctScoreSpread(Cstar)
+  }
   v <- diag(V)
+  vm <- diag(Vmodel)
   terms <- ext$terms
-  latent <- .ctFitBaseModel(fit)$latentNames
+  latent <- base$latentNames
   lm <- ifelse(v > 0, Ustar^2 / v, NA_real_)
   table <- data.frame(term = terms$term, equation = terms$equation,
     reads = paste0('DRIFT[', latent[terms$i], ',', latent[terms$k], '] varies with ',
@@ -625,22 +764,25 @@ ctScoreTest <- function(fit, covariates = NULL,
         latent[terms$i], ',', latent[pmax(1L, terms$other)], '] with ',
         latent[terms$k]))),
     LM = lm, p = stats::pchisq(lm, 1, lower.tail = FALSE),
-    estimate = ifelse(v > 0, Ustar / v, NA_real_),
-    se = ifelse(v > 0, 1 / sqrt(v), NA_real_), stringsAsFactors = FALSE)
+    # One term at a time, the fitted parameters free: a state dependence the
+    # fit lacks is not absorbed by any one parameter the way a covariate is,
+    # and this is the expected parameter change.
+    estimate = ifelse(vm > 0, Ustar / vm, NA_real_),
+    se = ifelse(vm > 0, sqrt(v) / vm, NA_real_), stringsAsFactors = FALSE)
   table$p_adj <- .ctScoreBH(table$p)
   jointtest <- function(idx, label) {
     j <- .ctScorePinv(V[idx, idx, drop = FALSE])
     stat <- as.numeric(t(Ustar[idx]) %*% j$inv %*% Ustar[idx])
-    data.frame(equation = label, LM = stat, df = j$rank,
-      p = if (j$rank) stats::pchisq(stat, j$rank, lower.tail = FALSE) else NA_real_,
+    p <- if (!j$rank) NA_real_ else if (!is.null(Cstar))
+      .ctScoreBoot(Cstar[, idx, drop = FALSE], nboot) else
+      stats::pchisq(stat, j$rank, lower.tail = FALSE)
+    data.frame(equation = label, LM = stat, df = j$rank, p = p,
       stringsAsFactors = FALSE)
   }
   joint <- do.call(rbind, c(lapply(unique(terms$equation), function(e)
     jointtest(which(terms$equation == e), e)),
     list(jointtest(seq_along(delta), 'all'))))
-  attr(table, 'joint') <- joint
-  table <- table[order(table$p), , drop = FALSE]
-  list(terms = table, joint = joint)
+  list(terms = table[order(table$p), , drop = FALSE], joint = joint)
 }
 
 #' @export
@@ -662,7 +804,7 @@ print.ctScoreTest <- function(x, digits = 3, top = 10, ...) {
     cat("\nCovariate ", j$covariate, " (", j$form, "): joint LM = ",
       signif(j$LM, digits), ", df = ", j$df, ", p = ", signif(j$p, digits), "\n", sep = "")
     fmt(c$parameters[, c('parameter', 'estimate', 'se', 'estimate_natural', 'p',
-      'p_adj', 'p_alone')])
+      'p_adj')])
   }
   if (!is.null(x$statedependence)) {
     cat("\nState dependence of the drift:\n")
