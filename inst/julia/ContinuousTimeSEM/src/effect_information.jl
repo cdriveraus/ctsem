@@ -189,7 +189,8 @@ function ctsem_effect_information(objective::CTSEMObjective, values::AbstractVec
             trace.offset = 0
             trace.current_subject = 1
             value = _extended_kalman_filter_continuous!(ws, raw, sub.data,
-                collect(sub.timesteps), sp, sub.tdpreds, sub.tipreds, i,
+                collect(sub.timesteps), sp, sub.tdpreds,
+                _ctsem_tipred_vector(sub.tipreds, raw), i,
                 sub.max_timestep, trace)
             isfinite(value) || continue
             smoothed = _effect_smoothed_initial_cov(trace, nobs, n)

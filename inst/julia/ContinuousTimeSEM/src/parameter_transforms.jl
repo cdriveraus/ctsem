@@ -60,7 +60,8 @@ function apply_complex_transforms_at_indices!(all_params, indices, transforms, s
     return all_params
 end
 
-"""Copy population raw parameters and add TI effects into an isolated subject buffer."""
+"""Copy population raw parameters and add TI effects into an isolated subject
+buffer: each effect (`_ctsem_ti_effect`) times the subject's predictor."""
 function _materialize_subject_values!(subject_values::AbstractVector, values::AbstractVector,
     sp::EKFParameters, tipreds::AbstractVector)
     subject_values isa Vector || throw(ArgumentError("subject parameter buffer must be resizable"))
@@ -75,9 +76,17 @@ function _materialize_subject_values!(subject_values::AbstractVector, values::Ab
         parameter <= length(subject_values) || throw(BoundsError(subject_values, parameter))
         predictor <= length(tipreds) || throw(BoundsError(tipreds, predictor))
         coefficient <= length(values) || throw(BoundsError(values, coefficient))
-        subject_values[parameter] += values[coefficient] * tipreds[predictor]
+        subject_values[parameter] += _ctsem_ti_effect(sp, values, i) * tipreds[predictor]
     end
     return subject_values
+end
+
+"""The `i`th TI effect at `values`: its coefficient, or its value when it is
+fixed (coefficient index 0)."""
+@inline function _ctsem_ti_effect(sp::EKFParameters, values::AbstractVector{T},
+    i::Integer) where {T}
+    coefficient = sp.ti_coefficient_indices[i]
+    return coefficient == 0 ? T(sp.ti_fixed_values[i]) : values[coefficient]
 end
 
 """
@@ -117,17 +126,54 @@ Two methods, dispatched on the *stored* type, not a runtime flag:
     exactly the identity function and the compiler resolves it at the call
     site, so a model with nothing missing pays nothing for this feature
     existing: no branch, no allocation, no new code on its path.
-  * `tipreds::TIMissingRecipe` -- a fresh `Vector{T}` (`T` = `eltype(p)`, so a
+  * `tipreds::TIMissingRecipe` -- a `Vector{T}` (`T` = `eltype(p)`, so a
     `ForwardDiff.Dual` during a gradient) built from the fixed base row with
-    each missing cell overwritten by `p[parameter_index]`. This is the
-    "honest cost" the spec accepts for sampling a missing predictor: one
-    small per-subject allocation per evaluation, paid only by subjects that
-    actually have a missing cell.
+    each missing cell overwritten by `p[parameter_index]`: a new one, or, given
+    a workspace's `buffer`, that one, which is what a pass repeated every
+    evaluation passes.
 """
 @inline _ctsem_tipred_vector(tipreds::AbstractVector, p::AbstractVector) = tipreds
+@inline _ctsem_tipred_vector(tipreds::AbstractVector, p::AbstractVector, buffer) = tipreds
+@inline _ctsem_tipred_vector(spec::TIMissingRecipe, p::AbstractVector, buffer) =
+    _ctsem_tipred_fill!(buffer, spec, p)
+
+"""The `j`th TI predictor of a subject's stored row at the raw parameters
+`p`: the data, or a sampled cell's raw parameter. No row is built."""
+@inline _ctsem_tipred_value(tipreds::AbstractVector, j::Integer, p::AbstractVector) =
+    tipreds[j]
+@inline function _ctsem_tipred_value(spec::TIMissingRecipe, j::Integer, p::AbstractVector)
+    k = findfirst(==(j), spec.predictor_index)
+    return k === nothing ? spec.base[j] : p[spec.parameter_index[k]]
+end
+
+"""How many TI predictors a subject's stored row holds."""
+_ctsem_tipred_length(tipreds::AbstractVector) = length(tipreds)
+_ctsem_tipred_length(spec::TIMissingRecipe) = length(spec.base)
 
 @inline function _ctsem_tipred_vector(spec::TIMissingRecipe, p::AbstractVector{T}) where {T}
     buffer = Vector{T}(undef, length(spec.base))
+    return _ctsem_tipred_fill!(buffer, spec, p)
+end
+
+"""
+    _ctsem_tipred_fill!(buffer, tipreds, p)
+
+`_ctsem_tipred_vector` into a workspace's own row, `buffer` (resized), for the
+passes that copy the row there anyway for the group replay to read: returns
+the row to hand the filter -- the stored row itself when nothing is sampled,
+so the filter sees the type it always has, and `buffer` otherwise. No
+allocation either way.
+"""
+@inline function _ctsem_tipred_fill!(buffer::AbstractVector, tipreds::AbstractVector,
+    p::AbstractVector)
+    resize!(buffer, length(tipreds))
+    copyto!(buffer, tipreds)
+    return tipreds
+end
+
+@inline function _ctsem_tipred_fill!(buffer::AbstractVector, spec::TIMissingRecipe,
+    p::AbstractVector)
+    resize!(buffer, length(spec.base))
     copyto!(buffer, spec.base)
     @inbounds for k in eachindex(spec.predictor_index)
         buffer[spec.predictor_index[k]] = p[spec.parameter_index[k]]

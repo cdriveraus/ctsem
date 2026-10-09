@@ -818,6 +818,19 @@
   if (identical(gradient, "forward")) "ctsem_hessian_forward" else "ctsem_hessian"
 }
 
+# The curvature's `columns` at one point (`ctsem_hessian_columns`), for
+# coordinates added to a Hessian already in hand: `length(est)` rows. An error
+# is the engine's and propagates; columns whose inner solves failed come back
+# non-finite, for the caller to judge.
+.ctBackendHessianColumns <- function(spec, est, columns) {
+  spec <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
+  module <- .ctJuliaModule(spec$project)
+  out <- .ctBackendJuliaValue(module$ctsem_hessian_columns(
+    .ctJuliaObjective(spec, hybrid = TRUE), .ctJuliaVector(as.numeric(est)),
+    .ctJuliaVector(as.integer(columns))))
+  matrix(as.numeric(out), nrow = length(est), ncol = length(columns))
+}
+
 # The curvature at one point, from the spec rather than from a fit.
 #
 # `.ctBackendHessian()` is the same call with a fit around it; this is for a

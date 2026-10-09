@@ -555,11 +555,17 @@ _ctsem_nunits(o::CTSEMObjective) = length(o.subject_objectives)
 _ctsem_nunits(o) = 0
 _ctsem_batch_nsubjects(o::CTSEMObjective) = length(o.subject_objectives)
 
-"""A CTSEMObjective over some of its subjects; the subject objectives are self-contained."""
-_ctsem_subset_objective(o::CTSEMObjective, idx::AbstractVector{<:Integer}) =
+"""A CTSEMObjective over some of its subjects; the subject objectives are
+self-contained, and the sampled TI predictor cells are those subjects' own,
+renumbered with them."""
+function _ctsem_subset_objective(o::CTSEMObjective, idx::AbstractVector{<:Integer})
+    renumber = Dict(Int(s) => j for (j, s) in enumerate(idx))
+    keep = [k for k in eachindex(o.ti_missing_subject) if haskey(renumber, o.ti_missing_subject[k])]
     CTSEMObjective(o.params, o.subject_objectives[idx], nothing,
         o.prior_index, o.prior_scale, o.prior_weight,
-        o.ti_missing_parameter, o.ti_missing_mu, o.ti_missing_sigma)
+        o.ti_missing_parameter[keep], o.ti_missing_mu[keep], o.ti_missing_sigma[keep],
+        Int[renumber[o.ti_missing_subject[k]] for k in keep])
+end
 _ctsem_subset_objective(o, idx) = nothing
 
 _ctsem_batchable(o::CTSEMObjective) = isempty(o.ti_missing_parameter)

@@ -313,6 +313,11 @@ struct EKFParameters{RG,PT,UT,TT,AX,FV}
     # Declared last and supplied last, for the reason the `manifesttype`
     # comment above gives.
     stationary::Bool
+    # Parallel to `ti_parameter_indices`: the value of a TI effect fixed to one,
+    # whose `ti_coefficient_indices` entry is 0 -- no coefficient to estimate,
+    # the value times the predictor (`_ctsem_ti_effect`). Declared last and
+    # supplied last, for the reason the `manifesttype` comment above gives.
+    ti_fixed_values::Vector{Float64}
     # Deviations the filter integrates itself; see `CTSEMHybrid`. Empty unless a
     # Laplace objective filled it. Declared last and supplied last.
     hybrid::CTSEMHybrid
@@ -349,6 +354,7 @@ struct EKFParameters{RG,PT,UT,TT,AX,FV}
         population_scale=Float64[],
         affine_dim::Int=0,
         stationary::Bool=false,
+        ti_fixed_values=Float64[],
     )
         # Every argument from `ti_parameter_indices` on is optional and
         # positional, so inserting a field shifts every caller that passes the
@@ -361,6 +367,11 @@ struct EKFParameters{RG,PT,UT,TT,AX,FV}
         # R builds both limits as n.manifest length vectors or neither, so
         # unequal lengths mean the arguments did not land where the caller
         # meant them to.
+        isempty(ti_fixed_values) ||
+            length(ti_fixed_values) == length(ti_parameter_indices) ||
+            throw(ArgumentError("ti_fixed_values must be empty or one per TI effect"))
+        isempty(ti_fixed_values) && any(iszero, ti_coefficient_indices) &&
+            throw(ArgumentError("a TI effect with coefficient 0 is fixed and needs ti_fixed_values"))
         length(censormin) == length(censormax) || throw(ArgumentError(
             "censormin and censormax have lengths $(length(censormin)) and " *
             "$(length(censormax)); they are per-manifest vectors and must " *
@@ -420,6 +431,8 @@ struct EKFParameters{RG,PT,UT,TT,AX,FV}
                 Vector{Float64}(population_scale),
             affine_dim,
             stationary,
+            isempty(ti_fixed_values) ? zeros(Float64, length(ti_parameter_indices)) :
+                Vector{Float64}(ti_fixed_values),
             CTSEMHybrid(),
         )
     end

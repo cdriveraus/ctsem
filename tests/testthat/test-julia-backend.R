@@ -133,17 +133,11 @@ test_that("the defaults a sampled or reduced-rank fit resolves to combine", {
     LAMBDA = diag(2)))
   prep <- function(...) suppressWarnings(suppressMessages(ctFit(ctstantestdat,
     m, backend = "julia", fit = FALSE, ...)))
-  # Sampling it used to refuse: 'auto' chose 'none', which cannot sample the
-  # missing value. Where the augmented route is exact, 'auto' takes it.
+  # Sampling samples the effects ('none'), and the missing value with them:
+  # imputed for the placement, a parameter of the sample.
   sampled <- prep(optimize = FALSE)
-  expect_identical(sampled$args$resolved$intoverpop, "augmented")
-  expect_match(sampled$args$resolved$intoverpopreason, "TI predictor values")
-  # A nonlinear effect keeps 'none', whose refusal says what to do.
-  drift <- m
-  drift$pars$indvarying[drift$pars$matrix %in% "DRIFT" &
-    drift$pars$row == 1 & drift$pars$col == 1] <- TRUE
-  expect_identical(ctsem:::.ctIntOverPopAuto(drift, optimize = FALSE,
-    timissing = TRUE)$route, "none")
+  expect_identical(sampled$args$resolved$intoverpop, "none")
+  expect_identical(sampled$ti_imputed$predictor, 1L)
   # Sampling keeps the priors it is given, the default included -- it is not
   # switched to TRUE -- and a scope that leaves parameters flat warns before
   # the run. priors = TRUE is the way out, and says nothing.
@@ -367,9 +361,9 @@ test_that("a missing TD predictor warns once and reaches the julia path as zero"
   expect_equal(run$value$tdpred_data, matrix(c(1, 0, 0, 0, 0, 1), nrow = 1))
 })
 
-# A missing TI predictor -- imputed on the optimising path, sampled or refused
-# on the sampling one -- is test-julia-tipred-missing.R's, which holds every
-# test of it, the fit on the optimising path included.
+# A missing TI predictor -- imputed on the optimising path, sampled on the
+# sampling one -- is test-julia-tipred-missing.R's, which holds every test of
+# it, the fit on the optimising path included.
 
 test_that("Julia preparation expands individual differences into static states", {
   model <- ctModel(

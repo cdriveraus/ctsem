@@ -194,11 +194,14 @@ end
     Hfwd = ContinuousTimeSEM.ctsem_hessian_forward(obj_full, p_h)
     @test isapprox(H, Hfwd; atol=1e-6)
 
-    # ctsem_subject_gradients still refuses: the imputation term has no
-    # single subject's row to land on (CTSEMObjective does not retain which
-    # subject a sampled cell belongs to), so it is short of it structurally,
-    # not by an oversight -- refusing beats a quietly incomplete score matrix.
-    @test_throws ArgumentError ContinuousTimeSEM.ctsem_subject_gradients(obj_full, p_h)
+    # Per-subject scores: the rows sum to the gradient, and the sampled cell's
+    # partial -- its TI effect term and its imputation density -- is all on
+    # its own subject's row.
+    sc = ContinuousTimeSEM.ctsem_subject_gradients(obj_full, p_h)
+    g_h = ContinuousTimeSEM.ctsem_adjoint_gradient(obj_full, p_h).gradient
+    @test isapprox(vec(sum(sc.scores; dims=1)), g_h; atol=1e-9)
+    @test sc.scores[1, 8] == 0
+    @test isapprox(sc.scores[2, 8], g_h[8]; atol=1e-9)
 end
 
 @testset "adjoint: multiple missing cells, multiple subjects, one predictor driving two parameters" begin

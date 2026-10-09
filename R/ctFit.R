@@ -223,6 +223,11 @@
     inert = function(v) !isTRUE(v),
     msg = paste0("forces the julia engine's progress line on or off, and the ",
       "stan optimizer does not draw one. Use verbose=1")),
+  tipredMissing = list(only = 'julia',
+    inert = function(v) identical(v, 'auto'),
+    msg = paste0("chooses whether julia imputes or samples missing TI ",
+      "predictors; stan imputes them when optimizing and samples them when ",
+      "sampling. Drop it")),
   tipredMissingIncludeOutcome = list(only = 'julia',
     inert = function(v) isTRUE(v),
     msg = paste0("chooses whether the outcome informs julia's imputation of ",
@@ -648,9 +653,7 @@ T0VARredundancies <- function(ctm) {
 #'
 #' \code{'auto'}, the default, integrates them out when optimizing, as
 #' \code{TRUE} does, and samples them (\code{'none'}) when
-#' \code{optimize=FALSE} -- except where TI predictor values are missing and
-#' the augmented route is exact for the model, since only it samples missing
-#' predictors.
+#' \code{optimize=FALSE}.
 #'
 #' \code{TRUE} integrates them out by whichever method suits the model:
 #' \code{'augmented'} where every individual difference shifts a mean
@@ -1578,9 +1581,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
       # An outer level resolves to 'laplace' silently, as it always has: there
       # is one route for that model, not a choice between two.
       auto <- .ctIntOverPopAuto(ctm, backend = backend, optimize = optimize,
-        intoverstates = intoverstates,
-        timissing = length(ctm$TIpredNames) > 0L &&
-          anyNA(datalong[, ctm$TIpredNames, drop = FALSE]))
+        intoverstates = intoverstates)
       intoverpopmethod <- auto$route
       intoverpopreason <- auto$reason
       intoverpop <- identical(auto$route, 'augmented')
@@ -1652,6 +1653,15 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
       if(sum(inert) > 1) 'them' else 'it', ' with a population spread.',
       call.=FALSE)
   }
+
+  # A TI effect fixed to a value ('TI1=4.3') is a known offset on its
+  # parameter. The julia engine adds it; the stan program has no slot for it
+  # and would fit the model without it, so it is refused there by name.
+  fixedti <- .ctTipredFixedEffects(ctm)
+  if(length(fixedti) && !backend %in% 'julia') stop(
+    'Time independent predictor effects fixed to a value (',
+    paste(utils::head(fixedti, 4), collapse=', '),
+    ') are fitted by backend="julia" only.', call.=FALSE)
 
   outervarying <- .ctVaryingParams(ctm, .ctOuterVaryingColumns(ctm))
   if(length(outervarying)){
@@ -1745,7 +1755,12 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   }
 
   ctm <- ctModel0DRIFT(ctm, ctm$continuoustime) #offset 0 drift
-  ctm$pars <- ctModelStatesAndPARS(ctm$pars,statenames = ctm$latentNames,tdprednames=ctm$TDpredNames) #replace latent states and PARS with state and PAR[] refs, need this early because we rely on [] detection
+  ctm$pars <- ctModelStatesAndPARS(ctm$pars,statenames = ctm$latentNames,tdprednames=ctm$TDpredNames,tiprednames=ctm$TIpredNames) #replace latent states and PARS with state and PAR[] refs, need this early because we rely on [] detection
+  if(any(grepl('tipreds[', ctm$pars$param, fixed=TRUE)) && !backend %in% 'julia') stop(
+    'A cell reads a time independent predictor (',
+    paste(utils::head(unique(ctm$pars$param[grepl('tipreds[', ctm$pars$param, fixed=TRUE)]), 3),
+      collapse=', '), '), which backend="julia" evaluates and the stan backend does not.',
+    call.=FALSE)
 
   # A reduced-rank population covariance, written as a regression of the
   # remaining random effects on a basis of them. Three steps around the
@@ -1982,7 +1997,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
 
   ctm$pars <- rbind(ctm$pars,jl2)
 
-  ctm$pars <- ctModelStatesAndPARS(ctm$pars,statenames = ctm$latentNames,tdprednames=ctm$TDpredNames) #replace any new state and par refs with square bracket refs
+  ctm$pars <- ctModelStatesAndPARS(ctm$pars,statenames = ctm$latentNames,tdprednames=ctm$TDpredNames,tiprednames=ctm$TIpredNames) #replace any new state and par refs with square bracket refs
 
   # The transform text as the model states it, keyed by cell, kept before
   # `ctModelTransformsToNum` replaces it with four numbers recovered from it by
@@ -2282,7 +2297,8 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   ctm$recompile <- recompile
 
 
-  standata <- .ctPrepareData(ctm,datalong,optimize=optimize, sameInitialTimes=sameInitialTimes) #bit slow
+  standata <- .ctPrepareData(ctm,datalong,optimize=optimize, sameInitialTimes=sameInitialTimes, #bit slow
+    tipredMissing = if (identical(backend, 'julia')) 'leave' else if (optimize) 'impute' else 'sample')
   standata$verbose=as.integer(verbose)
   standata$savesubjectmatrices=as.integer(savesubjectmatrices)
   standata$gendata=as.integer(gendata)

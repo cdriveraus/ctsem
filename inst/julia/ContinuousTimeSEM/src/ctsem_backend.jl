@@ -59,38 +59,48 @@ mutable struct CTSEMObjective{P,O} <: CTSEMOptimisable
     # SPEC-tipred-sampling.md, "Decisions") and held fixed here -- this is
     # data, exactly like `prior_index`/`prior_scale` above, and for the same
     # reason. Empty for every model with no missing TI predictor cells, which
-    # is what keeps `_ctsem_ti_missing_loglik` free for them.
+    # is what keeps `_ctsem_ti_missing_loglik` free for them. `subject` is the
+    # subject each cell belongs to, so that per-subject scores can give the
+    # cell's density to its own row (`_ctsem_prior_scores!`).
     ti_missing_parameter::Vector{Int}
     ti_missing_mu::Vector{Float64}
     ti_missing_sigma::Vector{Float64}
+    ti_missing_subject::Vector{Int}
 end
 
 CTSEMObjective(params, subject_objectives) =
     CTSEMObjective(params, subject_objectives, nothing, Int[], Float64[], 1.0,
-        Int[], Float64[], Float64[])
+        Int[], Float64[], Float64[], Int[])
 
 """
     _ctsem_log_prior(objective, values)
 
-The prior contribution to the log posterior, and its gradient.
+The prior contribution to the log posterior, and its gradient: the
+parameters' prior, scaled by `prior_weight`, plus the imputation density of
+every sampled TI predictor cell (`_ctsem_ti_missing_loglik`), which no weight
+scales -- it is part of the model whenever a cell is sampled, `priors = FALSE`
+included, not a prior that a warm-up eases in. Every route reaches the cells
+through here: the plain adjoint, the Laplace objective, the samplers and SAEM.
 
-Matches the generated Stan model's `model` block term for term:
-`normal_lpdf(x / scale | 0, 1)`, i.e. `-x^2/(2 scale^2) - log(2pi)/2`, summed
-over the parameters the R side flagged. Note the missing `-log(scale)`: Stan
-takes the density *of the scaled quantity*, so that Jacobian term is absent
-there too. It is a constant and so irrelevant to optimisation, but including it
-would put this engine's log probability a constant away from Stan's, which is
-exactly what the parity tests would then report as a mismatch.
+The parameter prior matches the generated Stan model's `model` block term for
+term: `normal_lpdf(x / scale | 0, 1)`, i.e. `-x^2/(2 scale^2) - log(2pi)/2`,
+summed over the parameters the R side flagged. Note the missing `-log(scale)`:
+Stan takes the density *of the scaled quantity*, so that Jacobian term is
+absent there too. It is a constant and so irrelevant to optimisation, but
+including it would put this engine's log probability a constant away from
+Stan's, which is exactly what the parity tests would then report as a
+mismatch.
 """
 function _ctsem_log_prior(objective::CTSEMObjective, values::AbstractVector{T}) where {T}
-    isempty(objective.prior_index) && return zero(T)
+    cells = _ctsem_ti_missing_loglik(objective, values)
+    isempty(objective.prior_index) && return cells
     total = zero(T)
     weight = objective.prior_weight
     @inbounds for k in eachindex(objective.prior_index)
         scaled = values[objective.prior_index[k]] / objective.prior_scale[k]
         total += -0.5 * scaled * scaled - 0.5 * log(2 * pi)
     end
-    return weight * total
+    return weight * total + cells
 end
 
 """The prior's precision on each raw parameter, as a vector (zero where a
@@ -100,12 +110,20 @@ function _ctsem_prior_precision(objective::CTSEMObjective, npar::Integer)
     for j in eachindex(objective.prior_index)
         prec[objective.prior_index[j]] += objective.prior_weight / objective.prior_scale[j]^2
     end
+    for k in eachindex(objective.ti_missing_parameter)
+        prec[objective.ti_missing_parameter[k]] += 1 / objective.ti_missing_sigma[k]^2
+    end
     return prec
 end
 
-"""Accumulate the prior's gradient contribution into `gradient`."""
+"""Accumulate the prior's gradient contribution into `gradient`: the
+parameter prior at `weight` times its own, and, when `cells`, the sampled TI
+predictor cells' imputation density whole. Per-row scores pass `cells = false`
+and give each cell to its own row instead (`_ctsem_prior_scores!`)."""
 function _ctsem_log_prior_gradient!(gradient::AbstractVector{T},
-    objective::CTSEMObjective, values::AbstractVector{T}, weight::Real=1.0) where {T}
+    objective::CTSEMObjective, values::AbstractVector{T}, weight::Real=1.0,
+    cells::Bool=true) where {T}
+    cells && _ctsem_ti_missing_loglik_gradient!(gradient, objective, values)
     isempty(objective.prior_index) && return gradient
     scale_weight = objective.prior_weight * weight
     @inbounds for k in eachindex(objective.prior_index)
@@ -117,20 +135,47 @@ function _ctsem_log_prior_gradient!(gradient::AbstractVector{T},
 end
 
 """
+    _ctsem_prior_scores!(scores, objective, values, row=Base.OneTo(nsubjects))
+
+Add the prior's gradient to per-row scores, so that the rows still sum to the
+full posterior gradient: the parameter prior in equal shares, which is what
+the R side's `scorecalc()` does for the Stan backend (its `priormod` of
+`1/nsubjects`), and each sampled TI predictor cell's imputation density whole,
+to the row of the subject it belongs to -- `row[subject]`, a unit under the
+Laplace layer.
+"""
+function _ctsem_prior_scores!(scores::AbstractMatrix, objective::CTSEMObjective,
+    values::AbstractVector, row::AbstractVector{<:Integer}=Base.OneTo(size(scores, 1)))
+    nrows = size(scores, 1)
+    nrows > 0 || return scores
+    if !isempty(objective.prior_index)
+        share = 1 / nrows
+        @inbounds for r in 1:nrows
+            _ctsem_log_prior_gradient!(view(scores, r, :), objective, values, share, false)
+        end
+    end
+    @inbounds for k in eachindex(objective.ti_missing_parameter)
+        idx = objective.ti_missing_parameter[k]
+        sigma = objective.ti_missing_sigma[k]
+        scores[row[objective.ti_missing_subject[k]], idx] -=
+            (values[idx] - objective.ti_missing_mu[k]) / (sigma * sigma)
+    end
+    return scores
+end
+
+"""
     _ctsem_ti_missing_loglik(objective, values)
 
-The conditional-imputation contribution to the log posterior: a proper
-Gaussian log-density (the `-log(sigma)` term is *not* dropped, unlike
-`_ctsem_log_prior` above -- these are genuine data values on their own scale,
-not a standardised quantity, and the pre-computed `sigma` differs per
-predictor, so the normalising constant is part of the answer here).
+The conditional-imputation contribution to the log posterior, which
+`_ctsem_log_prior` includes: a proper Gaussian log-density (the `-log(sigma)`
+term is *not* dropped, unlike the parameter prior -- these are genuine data
+values on their own scale, not a standardised quantity, and the pre-computed
+`sigma` differs per predictor, so the normalising constant is part of the
+answer here).
 
-`_ctsem_ti_missing_loglik_gradient!`, right below, is its analytic derivative
--- both the adjoint path (`ctsem_adjoint_gradient`, which now supports a
-sampled TI predictor value in full) and `:forward` (ForwardDiff
-differentiating straight through this loop) reach this term; the adjoint calls
-the gradient function once per evaluation rather than differentiating it.
-Empty and free for every model with no missing TI predictor cells.
+`_ctsem_ti_missing_loglik_gradient!`, right below, is its analytic derivative,
+which `_ctsem_log_prior_gradient!` adds. Empty and free for every model with no
+missing TI predictor cells.
 """
 function _ctsem_ti_missing_loglik(objective::CTSEMObjective, values::AbstractVector{T}) where {T}
     isempty(objective.ti_missing_parameter) && return zero(T)
@@ -225,11 +270,13 @@ function CTSEMObjective(params::EKFParameters, subject_starts::AbstractVector,
     # One entry per missing/sampled TI predictor cell, parallel arrays, empty
     # for every model with none (the overwhelmingly common case). `subject`
     # and `predictor` are consumed only here, to sort each cell into its
-    # subject's `TIMissingRecipe`; `parameter`/`mu`/`sigma` are also kept flat
-    # on the returned objective for `_ctsem_ti_missing_loglik`.
+    # subject's `TIMissingRecipe`; `parameter`/`mu`/`sigma`/`subject` are also
+    # kept flat on the returned objective for `_ctsem_ti_missing_loglik`.
     ti_missing_subject=Int[], ti_missing_predictor=Int[], ti_missing_parameter=Int[],
     ti_missing_mu=Float64[], ti_missing_sigma=Float64[])
     ranges = _ctsem_subject_ranges(subject_starts, timesteps, data)
+    all(s -> 1 <= s <= length(ranges), ti_missing_subject) ||
+        throw(ArgumentError("ti_missing_subject must name subjects of this objective"))
     # A mesh (one substep count per row of the whole dataset) is sliced per
     # subject exactly as `timesteps` is; a `maxtimestep` rule is shared.
     max_timestep isa AbstractVector && length(max_timestep) != length(timesteps) &&
@@ -278,7 +325,7 @@ function CTSEMObjective(params::EKFParameters, subject_starts::AbstractVector,
         throw(DimensionMismatch("prior index and scale vectors must have equal length"))
     return CTSEMObjective(params, objects, nothing, Int.(prior_index),
         Float64.(prior_scale), Float64(prior_weight), Int.(ti_missing_parameter),
-        Float64.(ti_missing_mu), Float64.(ti_missing_sigma))
+        Float64.(ti_missing_mu), Float64.(ti_missing_sigma), Int.(ti_missing_subject))
 end
 
 ctsem_objective(params::EKFParameters, subject_starts, timesteps, data,
@@ -694,8 +741,7 @@ function (objective::CTSEMObjective)(values::AbstractVector)
         @inbounds for subject_objective in subjects
             total += subject_objective(values)
         end
-        return total + _ctsem_log_prior(objective, values) +
-               _ctsem_ti_missing_loglik(objective, values)
+        return total + _ctsem_log_prior(objective, values)
     end
 
     nblocks = _ctsem_nblocks(nsubjects, nchunks)
@@ -712,8 +758,7 @@ function (objective::CTSEMObjective)(values::AbstractVector)
     @inbounds for b in 1:nblocks
         total += partials[b]
     end
-    return total + _ctsem_log_prior(objective, values) +
-           _ctsem_ti_missing_loglik(objective, values)
+    return total + _ctsem_log_prior(objective, values)
 end
 
 """
@@ -743,9 +788,8 @@ function ctsem_evaluate(objective::CTSEMObjective, values::AbstractVector;
     # A sampled TI predictor value is fully covered by the reverse pass now:
     # `_ctsem_ti_pullback!`'s `TIMissingRecipe` method (adjoint_parameters.jl)
     # supplies the product-rule term through `_materialize_subject_values!`'s
-    # TI effect, and `ctsem_adjoint_gradient` adds
-    # `_ctsem_ti_missing_loglik_gradient!`'s term for the imputation
-    # log-density itself. See test_ti_missing_predictor.jl for the
+    # TI effect, and the prior (`_ctsem_log_prior_gradient!`) the term for the
+    # imputation log-density itself. See test_ti_missing_predictor.jl for the
     # cross-checks against ForwardDiff and FiniteDiff this replaced a refusal
     # with. `gradient_method=:forward` remains available, and identical.
     if gradient && method === :adjoint
@@ -2536,7 +2580,8 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     verdict = _ctsem_optimise_verdict(objective, minimizer, start_values,
         final.value, gradient_norm, _ctsem_predicted_gain(directional),
         _ctsem_last_gain(trace), saturated_parameters, g_tol, converge_tol;
-        label=label, verbose=verbose, overshoot_probe=overshoot_probe,
+        # A stage asked for no iterations has not stalled.
+        label=label, verbose=verbose && maxiter > 0, overshoot_probe=overshoot_probe,
         progress=_ctsem_probe_progress(reporter))
     saturated = verdict.saturated
     stalled = verdict.stalled

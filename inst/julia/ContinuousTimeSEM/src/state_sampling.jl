@@ -855,7 +855,8 @@ function ctsem_joint_loglikelihood(objective::CTSEMObjective,
     @inbounds for (i, sub) in enumerate(subjects)
         ws = _get_or_init_objective_workspace!(sub, T)
         contribution = _ctsem_state_pass!(ws, parameters, sub.data,
-            sub.timesteps, sp, sub.tdpreds, sub.tipreds, sub.subject,
+            sub.timesteps, sp, sub.tdpreds,
+            _ctsem_tipred_vector(sub.tipreds, parameters, ws.tipred_row), sub.subject,
             sub.max_timestep, innovations, layout.zoffsets[i], nothing, trans)
         isfinite(contribution) || return _ctsem_invalid(T)
         total += contribution
@@ -978,7 +979,8 @@ function ctsem_generate_states(objective::CTSEMObjective,
         persubject && copyto!(parameters, view(values, i, :))
         ws = _get_or_init_objective_workspace!(sub, Float64)
         loglik[i] = _ctsem_state_pass!(ws, parameters, sub.data, sub.timesteps,
-            sp, sub.tdpreds, sub.tipreds, sub.subject, sub.max_timestep,
+            sp, sub.tdpreds, _ctsem_tipred_vector(sub.tipreds, parameters),
+            sub.subject, sub.max_timestep,
             innovations, layout.zoffsets[i], gen, trans)
     end
     return (Y=gen.out, states=gen.states, llrow=gen.llrow,
@@ -1088,8 +1090,9 @@ function _ctsem_joint_subject(o::CTSEMJointObjective, i::Int,
     sub = o.objective.subject_objectives[i]
     ws = _get_or_init_objective_workspace!(sub, T)
     value = _ctsem_state_pass!(ws, theta, sub.data, sub.timesteps,
-        o.objective.params, sub.tdpreds, sub.tipreds, sub.subject,
-        sub.max_timestep, z, offset, nothing, o.transition)
+        o.objective.params, sub.tdpreds,
+        _ctsem_tipred_vector(sub.tipreds, theta, ws.tipred_row),
+        sub.subject, sub.max_timestep, z, offset, nothing, o.transition)
     isfinite(value) || return value
     prior = zero(T)
     @inbounds for k in eachindex(z)
@@ -1228,8 +1231,9 @@ function _ctsem_joint_record(o::CTSEMJointObjective, x::AbstractVector)
         gen.offset = layout.rowoffsets[i]
         ws = _get_or_init_objective_workspace!(sub, Float64)
         _ctsem_state_pass!(ws, theta, sub.data, sub.timesteps,
-            o.objective.params, sub.tdpreds, sub.tipreds, sub.subject,
-            sub.max_timestep, innovations, layout.zoffsets[i], gen, o.transition)
+            o.objective.params, sub.tdpreds, _ctsem_tipred_vector(sub.tipreds, theta),
+            sub.subject, sub.max_timestep, innovations, layout.zoffsets[i], gen,
+            o.transition)
     end
     return gen
 end

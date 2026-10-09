@@ -7,9 +7,10 @@
 # against FiniteDiff, the adjoint guard -- lives in
 # inst/julia/ContinuousTimeSEM/test/test_ti_missing_predictor.jl; this file is
 # the R side: that `.ctJuliaPrepare()` builds the right spec, that the
-# fallback rule and its warning fire correctly, that `ctFit()` actually
-# samples end to end, and one targeted comparison against Stan's independent
-# implementation on the smallest model that exercises the path.
+# fallback rule and its warning fire correctly, that `optimcontrol$tipredMissing`
+# chooses between imputing and sampling on every route, that `ctFit()`
+# actually samples end to end, and one targeted comparison against Stan's
+# independent implementation on the smallest model that exercises the path.
 
 .tipred_missing_model <- function() {
   model <- suppressWarnings(ctModel(
@@ -23,7 +24,7 @@
   model
 }
 
-test_that("a missing TI predictor is sampled (not refused) with intoverpop='augmented'", {
+test_that("a sampled fit places with a missing TI predictor imputed, then samples it", {
   model <- .tipred_missing_model()
   dat <- data.frame(id = rep(1:3, each = 3), time = rep(0:2, 3), Y1 = 0,
     group = rep(c(-1, 2, NA), each = 3))
@@ -31,23 +32,29 @@ test_that("a missing TI predictor is sampled (not refused) with intoverpop='augm
   prepped <- suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
     optimize = FALSE, fit = FALSE, intoverpop = "augmented")))
   expect_s3_class(prepped, "ctJuliaModel")
-  expect_true(is.data.frame(prepped$ti_missing))
-  expect_equal(nrow(prepped$ti_missing), 1L)
-  expect_equal(prepped$ti_missing$subject, 3L)
-  expect_equal(prepped$ti_missing$predictor, 1L)
-  # Single predictor, includeOutcome defaults TRUE but there is nothing to
-  # condition on here (constant Y1) -- falls through to marginal: mean and SD
-  # of the two complete cases.
-  expect_equal(prepped$ti_missing$mu, mean(c(-1, 2)), tolerance = 1e-8)
-  expect_equal(prepped$ti_missing$sigma, sd(c(-1, 2)), tolerance = 1e-8)
-  # The sampled cell's raw index sits past every other block: the model
-  # parameters (t0m is indvarying, so the augmented route also carries its
-  # population SD), then the one TI-effect coefficient, then this.
-  expect_equal(prepped$ti_missing$parameter, max(prepped$ti_effects$coefficient) + 1L)
-  # Never NA in what actually reaches the engine -- the missing cell holds
-  # the placeholder, always overwritten before it is read.
-  expect_false(anyNA(prepped$tipred_data))
-  expect_equal(prepped$tipred_data[3, 1], 99999)
+  # The placement optimises with the value at its imputed mean. Single
+  # predictor, includeOutcome defaults TRUE but there is nothing to condition
+  # on here (constant Y1) -- falls through to marginal: mean and SD of the two
+  # complete cases.
+  expect_null(prepped$ti_missing)
+  expect_equal(nrow(prepped$ti_imputed), 1L)
+  expect_equal(prepped$ti_imputed$subject, 3L)
+  expect_equal(prepped$ti_imputed$predictor, 1L)
+  expect_equal(prepped$ti_imputed$mu, mean(c(-1, 2)), tolerance = 1e-8)
+  expect_equal(prepped$ti_imputed$sigma, sd(c(-1, 2)), tolerance = 1e-8)
+  expect_equal(unname(prepped$tipred_data[3, 1]), mean(c(-1, 2)))
+
+  # The sample makes it a parameter, its raw index past every other block:
+  # the model parameters (t0m is indvarying, so the augmented route also
+  # carries its population SD), then the one TI-effect coefficient, then this.
+  sampled <- ctsem:::.ctJuliaTIMissingSampled(prepped)
+  expect_null(sampled$ti_imputed)
+  expect_equal(sampled$ti_missing$parameter, max(prepped$ti_effects$coefficient) + 1L)
+  expect_equal(sampled$ti_missing$mu, prepped$ti_imputed$mu)
+  # Never NA in what reaches the engine -- the missing cell holds the
+  # placeholder, always overwritten before it is read.
+  expect_false(anyNA(sampled$tipred_data))
+  expect_equal(unname(sampled$tipred_data[3, 1]), 99999)
 
   # Complete data still prepares on the same path with nothing new, so the
   # new machinery is about the missing cell specifically.
@@ -55,6 +62,7 @@ test_that("a missing TI predictor is sampled (not refused) with intoverpop='augm
   prepared <- suppressMessages(ctFit(dat, model, backend = "julia",
     optimize = FALSE, fit = FALSE, intoverpop = "augmented"))
   expect_null(prepared$ti_missing)
+  expect_null(prepared$ti_imputed)
   expect_equal(as.numeric(prepared$tipred_data), c(-1, 2, .5))
 })
 
@@ -84,38 +92,100 @@ test_that("fitting a missing TI predictor with the default (adjoint) gradient no
   expect_s3_class(fit_forward, "ctJuliaFit")
 })
 
-# Stan samples a missing TI predictor by writing 99999 and reading it back as
-# a free parameter. The julia engine samples one too, but only with
-# `intoverpop='augmented'`; 'none' is not supported and refuses, with what a
-# caller can do instead. Since 2026-10-05 the default takes 'augmented' for
-# such data wherever that route is exact, as it is here (`t0m`, a mean shift),
-# so the refusal is reached by naming 'none'. (This and the test after it were
-# each written twice, here and in test-julia-backend.R, asserting different
-# halves of one message.)
-test_that("the julia sampling path refuses a missing TI predictor outside intoverpop='augmented'", {
+# Missing TI predictor values are imputed when optimising and sampled when
+# sampling, on every route, unless `optimcontrol$tipredMissing` says otherwise.
+test_that("optimcontrol$tipredMissing chooses imputing or sampling, on every route", {
   model <- .tipred_missing_model()
   dat <- data.frame(id = rep(1:3, each = 3), time = rep(0:2, 3), Y1 = 0,
     group = rep(c(-1, 2, NA), each = 3))
+  prep <- function(...) suppressWarnings(suppressMessages(ctFit(dat, model,
+    backend = "julia", fit = FALSE, ...)))
 
-  defaulted <- suppressWarnings(suppressMessages(ctFit(dat, model,
-    backend = "julia", optimize = FALSE, fit = FALSE)))
-  expect_identical(defaulted$args$resolved$intoverpop, "augmented")
-  told <- tryCatch({
-    suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
-      optimize = FALSE, intoverpop = "none", fit = FALSE)))
-    NA_character_
-  }, error = function(e) conditionMessage(e))
-  expect_match(told, "cannot sample missing TI predictor")
-  expect_match(told, "intoverpop='augmented'", fixed = TRUE)
-  expect_match(told, "Impute them before fitting", fixed = TRUE)
-  expect_match(told, "backend='stan'", fixed = TRUE)
+  # Sampling needs no particular route: 'auto' samples the effects.
+  defaulted <- prep(optimize = FALSE)
+  expect_identical(defaulted$args$resolved$intoverpop, "none")
+  expect_identical(defaulted$tipredMissing, "auto")
+  expect_true(ctsem:::.ctJuliaTIMissingSamples(defaulted))
+  expect_false(ctsem:::.ctJuliaTIMissingSamples(defaulted, "impute"))
+  expect_false(ctsem:::.ctJuliaTIMissingSamples(prep(optimize = FALSE,
+    optimcontrol = list(tipredMissing = "impute"))))
 
-  # Complete data still prepares on the same path, so the refusal is about the
-  # missing cell and not about sampling with TI predictors at all.
-  dat$group[dat$id == 3] <- .5
-  prepared <- suppressMessages(ctFit(dat, model, backend = "julia",
-    optimize = FALSE, fit = FALSE))
-  expect_equal(as.numeric(prepared$tipred_data), c(-1, 2, .5))
+  # Optimising imputes unless asked to estimate the values as parameters, and
+  # a fit that estimated them cannot then be sampled with them imputed.
+  expect_null(prep(intoverpop = "laplace")$ti_missing)
+  estimated <- prep(intoverpop = "laplace",
+    optimcontrol = list(tipredMissing = "sample"))
+  expect_equal(nrow(estimated$ti_missing), 1L)
+  expect_null(estimated$ti_imputed)
+  expect_error(ctsem:::.ctJuliaTIMissingSamples(estimated, "impute"),
+    "estimated its missing TI")
+
+  # Refused by name: a value that is not one, the setting on stan, and the
+  # setting in the sampler's list, where ctFit() does not read it.
+  expect_error(prep(optimcontrol = list(tipredMissing = "drop")),
+    "must be 'auto', 'impute' or 'sample'")
+  expect_error(suppressWarnings(suppressMessages(ctFit(dat, model,
+    backend = "stan", fit = FALSE, optimcontrol = list(tipredMissing = "sample")))),
+    "tipredMissing")
+  expect_error(ctsem:::.ctBackendSampleCheckControl(list(tipredMissing = "impute"),
+    "sampleControl"), "optimcontrol$tipredMissing", fixed = TRUE)
+})
+
+test_that("the Laplace objective's gradient carries a sampled TI predictor value", {
+  skip_without_julia()
+  # The value moves the subject's raw parameters through its TI effect, and
+  # with them the subject's mode and curvature: central differences against
+  # the engine's gradient, on every coordinate, at a point off the imputed
+  # mean so the imputation density's own term is not zero.
+  model <- .tipred_missing_model()
+  model$pars$group_effect[model$pars$param == "drift"] <- TRUE
+  set.seed(5)
+  dat <- data.frame(id = rep(1:5, each = 4), time = rep(c(0, .7, 1.9, 3.2), 5),
+    Y1 = rnorm(20), group = rep(c(-1, .4, NA, 1.2, -.3), each = 4))
+  spec <- suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
+    intoverpop = "laplace", fit = FALSE)))
+  spec <- ctsem:::.ctJuliaTIMissingSampled(spec)
+  npar <- ctsem:::.ctBackendNpar(spec)
+  x <- seq(-.2, .2, length.out = npar)
+  cell <- spec$ti_missing$parameter
+  x[cell] <- spec$ti_missing$mu + .8
+  value <- function(x) ctJuliaEvaluate(spec, x, gradient = FALSE, cores = 1L)$value
+  g <- as.numeric(ctJuliaEvaluate(spec, x, gradient = TRUE, cores = 1L)$gradient)
+  h <- 1e-5
+  fd <- vapply(seq_len(npar), function(j) {
+    e <- replace(numeric(npar), j, h)
+    (value(x + e) - value(x - e)) / (2 * h)
+  }, numeric(1))
+  expect_equal(g, fd, tolerance = 1e-5)
+  # And not the imputation term alone: the effect reaches the likelihood.
+  expect_gt(abs(g[cell] + .8 / spec$ti_missing$sigma^2), 1e-3)
+})
+
+test_that("a sampled cell's metric rows are its Hessian columns, coupling included", {
+  skip_without_julia()
+  # Sampling places with the cells imputed, so their rows of the metric are
+  # added afterwards (`.ctJuliaTIMissingSampleFit()`): the Hessian's columns
+  # for them alone, which must be the full Hessian's, and reach past the
+  # cell's own prior to the effects that read it.
+  model <- .tipred_missing_model()
+  model$pars$group_effect[model$pars$param == "drift"] <- TRUE
+  set.seed(5)
+  dat <- data.frame(id = rep(1:5, each = 4), time = rep(c(0, .7, 1.9, 3.2), 5),
+    Y1 = rnorm(20), group = rep(c(-1, .4, NA, 1.2, -.3), each = 4))
+  for (route in c("laplace", "augmented")) {
+    spec <- ctsem:::.ctJuliaTIMissingSampled(suppressWarnings(suppressMessages(
+      ctFit(dat, model, backend = "julia", intoverpop = route, fit = FALSE))))
+    npar <- ctsem:::.ctBackendNpar(spec)
+    x <- seq(-.2, .2, length.out = npar)
+    cell <- spec$ti_missing$parameter
+    x[cell] <- spec$ti_missing$mu
+    full <- ctsem:::.ctBackendHessianAt(spec, x)
+    added <- ctsem:::.ctBackendHessianColumns(spec, x, cell)
+    expect_equal(dim(added), c(npar, length(cell)), info = route)
+    expect_equal(added[, 1], full[, cell], tolerance = 1e-4, info = route)
+    others <- setdiff(seq_len(npar), cell)
+    expect_gt(max(abs(added[others, 1])), 1e-3, label = paste(route, "coupling"))
+  }
 })
 
 # The optimising path imputes a missing TI predictor from the other variables,
@@ -221,11 +291,12 @@ test_that("the imputation fallback rule warns naming the fallback taken, and onl
       optimcontrol = list(tipredMissingIncludeOutcome = FALSE)))
   }, warning = function(w) { warned2[[length(warned2) + 1L]] <<- conditionMessage(w); invokeRestart("muffleWarning") })
   expect_length(grep("not enough complete cases", warned2, value = TRUE), 0L)
-  expect_equal(prepped2$ti_missing$parameter, prepped$ti_missing$parameter)
+  expect_equal(prepped2$ti_imputed[, c("subject", "predictor")],
+    prepped$ti_imputed[, c("subject", "predictor")])
 })
 
 # The small sampled fit the three tests below ask things of: that it samples
-# the missing cell at all, and that two consumers refuse it by name. It was
+# the missing cell at all, and that two consumers handle it. It was
 # fitted three times, identically -- same seed, data and settings -- and is
 # fitted once now (`fit_cached()`, helper-julia.R).
 .tipred_missing_sampled <- function() fit_cached("tipred_missing_sampled", {
@@ -282,10 +353,11 @@ test_that("closed form via ctFit(): posterior of an isolated missing predictor r
   mu <- mean(c(-2, -1, 1, 2, 0.5))
   sigma <- sd(c(-2, -1, 1, 2, 0.5))
 
+  # On the default route, which samples the random effects jointly.
   fit <- suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
-    optimize = FALSE, intoverpop = "augmented", chains = 1,
-    cores = 1, sampleControl = list(iter = 300L, warmup = 150L),
-    optimcontrol = list(gradient = "forward"))))
+    optimize = FALSE, chains = 1, cores = 1,
+    sampleControl = list(iter = 300L, warmup = 150L))))
+  expect_identical(fit$args$resolved$intoverpop, "none")
   draws <- fit$estimate$rawposterior[, fit$model_spec$ti_missing$parameter]
 
   # One draw count, not two. The error shrinking with the draws -- the error at
@@ -346,43 +418,52 @@ test_that("targeted stan comparison: same model, same gap, agreeing posteriors",
 
 # Auxiliary/uncertainty functions on this same sampled-missing-TI-predictor
 # fit -- the 2026-09 sampled-fit review (review/J7-sampled-fit-support.md).
-# Two engine functions read a subject's tipreds without the TIMissingRecipe
-# substitution `_ctsem_subject_gradient_chunk!` performs, and used to fail
-# obscurely rather than refuse; both are R-level guards on
-# fit$model_spec$ti_missing, checked before the engine is ever asked.
-test_that("per-subject scores (opg/sandwich/bootstrap uncertainty) refuse cleanly, not obscurely, for a sampled missing TI predictor", {
+test_that("per-subject scores carry a sampled TI predictor value on its own subject's row", {
   skip_without_julia()
   fit <- .tipred_missing_sampled()
-  expect_false(is.null(fit$model_spec$ti_missing))
-
-  # ctOptimUncertainty() refuses any sampled julia fit before it gets this
-  # far (see test-ctOptimUncertainty.R), so .ctBackendScoreMatrix() is
-  # exercised directly here -- it is also reachable on its own, and this is
-  # the refusal the Julia engine's ctsem_subject_gradients() itself documents
-  # ("does not yet support a sampled (missing) TI predictor value").
+  cells <- fit$model_spec$ti_missing
+  expect_equal(nrow(cells), 1L)
   est <- as.numeric(fit$estimate$raw)
-  err <- tryCatch({
-    ctsem:::.ctBackendScoreMatrix(fit, est)
-    NA_character_
-  }, error = function(e) conditionMessage(e))
-  expect_match(err, "Per-subject scores are not available", fixed = TRUE)
-  expect_match(err, "opg", fixed = TRUE)
-  expect_match(err, "sandwich", fixed = TRUE)
-  expect_match(err, "bootstrap", fixed = TRUE)
-  expect_match(err, "hessian", fixed = TRUE)
+  scores <- ctsem:::.ctBackendScoreMatrix(fit, est)
+  gradient <- as.numeric(ctJuliaEvaluate(fit, est, gradient = TRUE, cores = 1L)$gradient)
+  expect_equal(colSums(scores), gradient, tolerance = 1e-8)
+  expect_equal(which(scores[, cells$parameter] != 0), cells$subject)
 })
 
-test_that("ctGenerateFromFit()/ctPostPredict() refuse cleanly, not with a raw Julia MethodError, for a sampled missing TI predictor", {
+test_that("ctGenerateFromFit() generates from a fit that sampled a TI predictor value", {
   skip_without_julia()
   fit <- .tipred_missing_sampled()
+  expect_no_error(suppressMessages(ctGenerateFromFit(fit, nsamples = 5, cores = 1)))
+})
 
-  err <- tryCatch({
-    ctGenerateFromFit(fit, nsamples = 5, cores = 1)
-    NA_character_
-  }, error = function(e) conditionMessage(e))
-  expect_false(is.na(err))
-  expect_match(err, "sampled (missing) TI predictor", fixed = TRUE)
-  # Not the raw engine failure this used to surface as, which named an
-  # internal workspace type rather than anything about the model:
-  expect_false(grepl("MethodError", err, fixed = TRUE))
+test_that("a rebuild over some subjects takes the fit's values for its missing TI predictors", {
+  model <- .tipred_missing_model()
+  dat <- data.frame(id = rep(1:4, each = 3), time = rep(0:2, 4), Y1 = 0,
+    group = rep(c(-1, 2, NA, .5), each = 3))
+  fitted <- suppressWarnings(suppressMessages(ctFit(dat, model,
+    backend = "julia", fit = FALSE)))
+  # Subjects 3 and 4: one observed value, too few to impute from on its own.
+  rebuild <- function() suppressMessages(ctsem:::.ctJuliaPrepare(
+    dat[dat$id %in% 3:4, ], fitted$model, intoverpop = fitted$intoverpop))
+  expect_true(is.na(rebuild()$ti_imputed$mu))
+
+  carried <- ctsem:::.ctJuliaCarryTIMissing(rebuild(), fitted)
+  expect_equal(carried$tipred_data[, 1], c(fitted$ti_imputed$mu, .5))
+  expect_null(carried$ti_missing)
+
+  # From a fit that sampled it: the same raw parameter, so the fit's raw
+  # vectors apply to the rebuild unchanged.
+  sampled <- ctsem:::.ctJuliaTIMissingSampled(fitted)
+  carried <- ctsem:::.ctJuliaCarryTIMissing(rebuild(), sampled)
+  expect_null(carried$ti_imputed)
+  expect_equal(carried$ti_missing$parameter, sampled$ti_missing$parameter)
+  expect_equal(carried$ti_missing$subject, 1L)
+  expect_equal(unname(carried$tipred_data[1, 1]), 99999)
+
+  # A subject the fit never had, with nothing to impute from, is refused.
+  stranger <- dat[dat$id %in% 3:4, ]
+  stranger$id <- stranger$id + 10
+  expect_error(ctsem:::.ctJuliaCarryTIMissing(suppressMessages(
+    ctsem:::.ctJuliaPrepare(stranger, fitted$model, intoverpop = fitted$intoverpop)),
+    fitted), "fewer than two subjects")
 })

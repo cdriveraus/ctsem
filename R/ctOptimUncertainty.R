@@ -2567,7 +2567,10 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' overrides it in the same words: \code{'none'} for the joint posterior or
 #' \code{'laplace'} for the Laplace marginal on a Laplace fit;
 #' \code{'augmented'} needs a fit made that way, and an augmented fit, which
-#' has no separate random effect to sample, takes nothing else. See
+#' has no separate random effect to sample, takes nothing else. Missing TI
+#' predictor values that the fit imputed are sampled too, unless the fit's
+#' \code{optimcontrol$tipredMissing} or \code{control$tipredMissing} is
+#' \code{'impute'}. See
 #' \code{\link{ctJuliaSetup}} for the thread count that decides whether
 #' chains run concurrently, and \code{\link{ctFit}}'s \code{intoverpop} for
 #' what each route means.
@@ -2606,7 +2609,8 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' @param control List of method-specific options. For \code{uncertainty =
 #' 'sample'} these are the sampler settings described under \code{uncertainty}
 #' above (\code{chains}, \code{warmup}, \code{draws}, \code{seed},
-#' \code{saveEffects}, \code{processes}, \code{intoverpop}, \code{sampler},
+#' \code{saveEffects}, \code{processes}, \code{intoverpop},
+#' \code{tipredMissing}, \code{sampler},
 #' \code{placement}, \code{minESS}, \code{meanESS}, \code{rhatTarget},
 #' \code{maxDraws}, \code{settleTol}, \code{init_scale}, and NUTS's
 #' \code{maxdepth}, \code{target_accept}, \code{adapt_metric} and
