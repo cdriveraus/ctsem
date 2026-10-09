@@ -28,15 +28,21 @@ using Random
 """
 The state an iteration callback sees, shaped like the Optim state it replaced,
 plus the predicted gain of the step that produced it where the step knows it
-exactly (a Newton step does; an L-BFGS step leaves it to `CTSEMDirectional`).
+exactly (a Newton step does; an L-BFGS step leaves it to `CTSEMDirectional`),
+and the point itself where the stepper holds it apart from the objective's
+evaluations: the finish's evaluations include Hessian columns and rejected
+trials, so the last point evaluated is not its iterate. `nothing` for L-BFGS,
+whose caller reads the last accepted trial instead.
 """
 struct CTSEMIterate
     iteration::Int
     value::Float64
     g_norm::Float64
     gain::Float64
+    x::Union{Nothing,Vector{Float64}}
 end
-CTSEMIterate(iteration, value, g_norm) = CTSEMIterate(iteration, value, g_norm, NaN)
+CTSEMIterate(iteration, value, g_norm, gain=NaN) =
+    CTSEMIterate(iteration, value, g_norm, gain, nothing)
 
 """What `_ctsem_lbfgs` returns: the point and the reasons it stopped."""
 struct CTSEMLBFGSResult
@@ -1394,7 +1400,7 @@ function _ctsem_newton_finish(objective, x0, f0, G0, fg!; tol::Real=1e-8,
         end
     end
     report(g) = callback === nothing || callback(CTSEMIterate(iteration0 + steps,
-        f, maximum(abs, G; init=0.0), g))
+        f, maximum(abs, G; init=0.0), g, x))
     H = step_hessian(x)
     # What the steps are taken against: `H` itself, except that the chord
     # corrects its copy along the direction it walks (see the refresh below),

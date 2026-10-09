@@ -1324,6 +1324,36 @@ end
     @test !bare.probe_ran
 end
 
+@testset "the progress callback hears the finish, at the finish's own point" begin
+    # The callback, which R's checkpointing reads its restart point from, was
+    # called from L-BFGS only, so it fell silent for as long as the finish ran:
+    # five hours on the SNSF pilot. Here L-BFGS converges into the saddle on
+    # y = 0 and the finish escapes it, so a point off that line can only have
+    # come from the finish.
+    f = p -> -0.5 * p[1]^2 + 0.5 * p[2]^2 - 0.25 * p[2]^4
+    seen = Tuple{Int,Float64,Vector{Float64}}[]
+    cb = (iteration, total, value, gnorm, x) ->
+        (push!(seen, (Int(iteration), Float64(value), copy(x))); nothing)
+    r = ContinuousTimeSEM.ctsem_optimize(_endgame_mock(f), [0.5, 0.0];
+        maxiter=200, tune_chunks=false, gap_tol=1e-8, newton=true,
+        certify=false, progress=false, verbose=false, overshoot_probe=:off,
+        progress_callback=cb, callback_every=0.0)
+    @test r.newton_escapes == 1
+    last_lbfgs = r.iterations - r.newton_steps
+    finish = filter(s -> s[1] > last_lbfgs, seen)
+    @test length(unique(first.(finish))) == r.newton_steps
+    # The closing call is forced whatever happened before it, so what shows the
+    # finish being heard is a call between L-BFGS's last iteration and it.
+    @test r.newton_steps >= 2
+    @test any(s -> last_lbfgs < s[1] < r.iterations, seen)
+    @test all(s -> abs(s[3][2]) < 1e-8, filter(s -> s[1] <= last_lbfgs, seen))
+    @test any(s -> abs(s[3][2]) > 0.5, finish)
+    # Each point the finish reports is the one its value was taken at -- not the
+    # last point evaluated, which may be a Hessian column or a rejected trial.
+    @test all(s -> s[2] ≈ f(s[3]), finish)
+    @test seen[end][3] == r.minimizer
+end
+
 @testset "ctsem_optimize goes back to L-BFGS when the hand-over was early" begin
     # The quadratic with the hundredfold Hessian, and the switch set so high
     # that L-BFGS hands over after its first iteration: the finish hands back,

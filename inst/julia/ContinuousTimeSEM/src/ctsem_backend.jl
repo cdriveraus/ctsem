@@ -1971,7 +1971,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     saem::Bool=false, saem_maxiter::Integer=10000, saem_seed::Integer=1,
     saem_proposal::AbstractString="rw",
     progress_overwrite::Bool=true, progress_sink=nothing,
-    progress_callback=nothing,
+    progress_callback=nothing, callback_every::Real=0.4,
     progress::Bool=verbose, progress_label::AbstractString="optimise",
     progress_budget::Bool=false, progress_every::Real=0.0,
     gap_tol::Real=0.0, converge_tol::Real=1e-6,
@@ -2085,7 +2085,9 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # so `_ctsem_optimise_trace_keys` keeps naming only what a route adds.
     trace = CTSEMTrace(:objective, :gradient_norm, :predicted_gain,
         _ctsem_optimise_trace_keys(objective)[3:end]...)
-    watcher = CTSEMCallback(progress_callback)
+    # `callback_every` is its cadence in seconds; a test sets 0 to hear every
+    # iteration.
+    watcher = CTSEMCallback(progress_callback; every=callback_every)
     # How far this run has come toward the nearest of its stopping rules; see
     # `CTSEMConvergence`. Fed every iteration rather than every printed line,
     # because the scales it interpolates on are the worst gradient and the
@@ -2362,6 +2364,11 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
                 _ctsem_forward_progress(forward0, explosive0)...;
                 budget=progress_budget, percent=progress_budget ? NaN : percent)
         end
+        # And the caller's callback, with the finish's own iterate: without
+        # this a checkpointing callback stopped at the stall that started the
+        # finish, and on the SNSF pilot the finish was the next five hours.
+        _invoke_callback(watcher, state.iteration, Int(maxiter), -state.value,
+            state.g_norm, state.x === nothing ? current_x : state.x)
         return false
     end
     while finishing && stop_reason in ("gap", "linesearch", "gradient", "progress")
