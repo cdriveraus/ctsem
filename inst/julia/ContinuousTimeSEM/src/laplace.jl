@@ -1716,6 +1716,18 @@ function _laplace_scratch_matrix!(laplace::CTSEMLaplaceObjective, ::Type{V},
     return built
 end
 
+"""The calling slot's `CTSEMSymEigWork` for dimension `d`."""
+function _laplace_scratch_symeig!(laplace::CTSEMLaplaceObjective, d::Integer)
+    _laplace_check_slot(laplace, _laplace_slot())
+    store = laplace.workspaces[_laplace_slot()]
+    key = (:symeig, Int(d))
+    cached = get(store, key, nothing)
+    cached === nothing || return cached::CTSEMSymEigWork
+    built = CTSEMSymEigWork(d)
+    store[key] = built
+    return built
+end
+
 """
     _laplace_scratch_levels!(laplace, S, Ls, tag)
 
@@ -1734,9 +1746,12 @@ function _laplace_scratch_levels!(laplace::CTSEMLaplaceObjective, ::Type{S},
     Ls::Vector{<:AbstractMatrix}, tag::Symbol) where {S}
     _laplace_check_slot(laplace, _laplace_slot())
     store = laplace.workspaces[_laplace_slot()]
-    key = (tag, S, size.(Ls))
+    # Keyed by type alone and checked against the shapes, rather than keyed by
+    # `size.(Ls)`, which built a vector on every curvature sweep. An objective's
+    # levels keep their shapes, so the check passes after the first build.
+    key = (tag, S)
     cached = get(store, key, nothing)
-    if cached === nothing
+    if cached === nothing || !_laplace_same_shapes(cached::Vector{Matrix{S}}, Ls)
         cached = [Matrix{S}(undef, size(L)) for L in Ls]
         store[key] = cached
     end
@@ -1745,6 +1760,14 @@ function _laplace_scratch_levels!(laplace::CTSEMLaplaceObjective, ::Type{S},
         copyto!(out[i], Ls[i])
     end
     return out
+end
+
+function _laplace_same_shapes(a::Vector, b::Vector)
+    length(a) == length(b) || return false
+    @inbounds for i in eachindex(a)
+        size(a[i]) == size(b[i]) || return false
+    end
+    return true
 end
 
 """
@@ -1932,17 +1955,24 @@ is written before the matrix is read, block by block over every level, so
 reusing the storage cannot carry a value forward; if a block fails, the caller
 abandons the whole curvature rather than reading a partial one.
 
-Keyed by unit, because the shape is the unit's. A worker holds one per unit it
-is given, and the pool strides units across workers deterministically, so the
-total held is the unit count rather than units times workers.
+Keyed by the unit's shape (`_laplace_shape_key`): a unit of one block shares
+it with every unit of that size, and any other unit holds its own. A worker
+holds one per unit it is given, and the pool strides units across workers
+deterministically, so the total held is the unit count rather than units times
+workers.
 """
 function _laplace_scratch_blockmatrix!(laplace::CTSEMLaplaceObjective, ::Type{T},
     U::Integer, blocks::Vector{CTSEMLaplaceBlock}, tag::Symbol) where {T}
     _laplace_check_slot(laplace, _laplace_slot())
     store = laplace.workspaces[_laplace_slot()]
-    key = (tag, T, Int(U))
+    key = _laplace_shape_key(tag, T, U, blocks)
     cached = get(store, key, nothing)
-    cached === nothing || return cached::CTSEMBlockMatrix{T}
+    if cached !== nothing
+        c = cached::CTSEMBlockMatrix{T}
+        # A layout other than the unit's own (the gated term's joint
+        # coordinates) can share a key with it; what does not fit is replaced.
+        _laplace_blocks_fit(c.diag, c.coupling, blocks) && return c
+    end
     built = CTSEMBlockMatrix(T, blocks)
     store[key] = built
     return built
@@ -2003,6 +2033,90 @@ const _LaplaceFactorization{T} =
     Tuple{Vector{_LaplaceCholesky{T}},Vector{Vector{Matrix{T}}}}
 
 """
+Storage for a factorization nobody keeps -- a Newton step's, used for one solve
+and dropped: the per-block copies `_laplace_block_factor` factors in place, the
+eliminated couplings, and the factors. One per slot and unit shape
+(`_laplace_factor_store!`); the primal's factorization, which the gradient
+phase reads, never uses one.
+"""
+struct _LaplaceFactorStore{T}
+    diag::Vector{Matrix{T}}
+    coupling::Vector{Vector{Matrix{T}}}
+    factors::Vector{_LaplaceCholesky{T}}
+end
+
+function _LaplaceFactorStore{T}(blocks::Vector{CTSEMLaplaceBlock}) where {T}
+    M = CTSEMBlockMatrix(T, blocks)
+    return _LaplaceFactorStore{T}(M.diag, M.coupling,
+        Vector{_LaplaceCholesky{T}}(undef, length(blocks)))
+end
+
+"""
+A per-slot scratch key for something shaped like unit `U`: by size alone for a
+unit of one block with nothing above it -- every unit of a single-level model --
+so all units of that size share one, and by unit otherwise.
+"""
+_laplace_shape_key(tag::Symbol, ::Type{T}, U::Integer,
+    blocks::Vector{CTSEMLaplaceBlock}) where {T} =
+    length(blocks) == 1 && isempty(blocks[1].ancestors) ?
+        (tag, T, :single, blocks[1].size) : (tag, T, :unit, Int(U))
+
+# The working arrays `_laplace_block_factor` factors into: copies of `M`'s
+# blocks, fresh or the store's. `factors` is concretely typed, not `Vector{Any}`:
+# `factors[b] \ x` and `logdet(factors[b])` are called once per block per solve,
+# and through an `Any` element every one of them is a dynamic dispatch.
+function _laplace_factor_buffers(M::CTSEMBlockMatrix{T}, nb::Int, ::Nothing) where {T}
+    return ([copy(d) for d in M.diag], [[copy(c) for c in row] for row in M.coupling],
+        Vector{_LaplaceCholesky{T}}(undef, nb))
+end
+
+function _laplace_factor_buffers(M::CTSEMBlockMatrix{T}, nb::Int,
+    store::_LaplaceFactorStore{T}) where {T}
+    for b in 1:nb
+        copyto!(store.diag[b], M.diag[b])
+        for t in eachindex(M.coupling[b])
+            copyto!(store.coupling[b][t], M.coupling[b][t])
+        end
+    end
+    return (store.diag, store.coupling, store.factors)
+end
+
+"""
+The calling slot's `_LaplaceFactorStore` for `blocks` -- unit `U`'s own unless
+the caller factors another layout of it, as the gated term does in joint
+coordinates (`_hybrid_joint_gated`), whose one block also spans the deviations
+the filter integrates. A cached store that does not fit `blocks` is replaced.
+"""
+function _laplace_factor_store!(laplace::CTSEMLaplaceObjective, ::Type{T},
+    U::Integer, blocks::Vector{CTSEMLaplaceBlock}=laplace.units.blocks[U]) where {T}
+    _laplace_check_slot(laplace, _laplace_slot())
+    store = laplace.workspaces[_laplace_slot()]
+    key = _laplace_shape_key(:factor_store, T, U, blocks)
+    cached = get(store, key, nothing)
+    if cached !== nothing
+        c = cached::_LaplaceFactorStore{T}
+        _laplace_blocks_fit(c.diag, c.coupling, blocks) && return c
+    end
+    built = _LaplaceFactorStore{T}(blocks)
+    store[key] = built
+    return built
+end
+
+"""Whether block storage `diag`, `coupling` is shaped for `blocks`."""
+function _laplace_blocks_fit(diag::Vector, coupling::Vector,
+    blocks::Vector{CTSEMLaplaceBlock})
+    length(diag) == length(blocks) == length(coupling) || return false
+    @inbounds for (b, block) in enumerate(blocks)
+        size(diag[b]) == (block.size, block.size) || return false
+        length(coupling[b]) == length(block.ancestors) || return false
+        for (t, a) in enumerate(block.ancestors)
+            size(coupling[b][t]) == (block.size, blocks[a].size) || return false
+        end
+    end
+    return true
+end
+
+"""
     _laplace_block_factor(M, blocks)
 
 Eliminate the blocks innermost-first, returning
@@ -2019,15 +2133,15 @@ was already nonzero. That is the no-fill-in property, and it is why this stays
 linear in the number of members.
 """
 function _laplace_block_factor(M::CTSEMBlockMatrix{T},
-    blocks::Vector{CTSEMLaplaceBlock}) where {T}
+    blocks::Vector{CTSEMLaplaceBlock};
+    store::Union{Nothing,_LaplaceFactorStore{T}}=nothing) where {T}
     nb = length(blocks)
-    diag = [copy(d) for d in M.diag]
-    coupling = [[copy(c) for c in row] for row in M.coupling]
-    # Concretely typed, not `Vector{Any}`: `factors[b] \ x` and `logdet(factors[b])`
-    # are called once per block per solve, and through an `Any` element every one
-    # of them is a dynamic dispatch. A unit with one block per subject makes that
-    # two dispatches per subject per Newton step.
-    factors = Vector{_LaplaceCholesky{T}}(undef, nb)
+    # Copies of the blocks to factor in place: fresh where the caller keeps the
+    # factorization (the primal's, read by the gradient phase), a store's where
+    # it does not -- a Newton step uses its factors once. Assigned once, from a
+    # function: the comprehension below captures `coupling`, and a captured
+    # name assigned in two branches is boxed.
+    diag, coupling, factors = _laplace_factor_buffers(M, nb, store)
     total = zero(T)
     for b in 1:nb
         # In place on this function's own copy of the block, which nothing
@@ -2052,10 +2166,18 @@ function _laplace_block_factor(M::CTSEMBlockMatrix{T},
         # and the threshold corresponds to a condition number around 1e15 --
         # so this fires where the inverse has no significant digits left, and
         # not on a merely awkward model.
-        let dg = LinearAlgebra.diag(f.factors)
-            lo, hi = extrema(abs, dg)
-            hi > 0 && lo <= sqrt(eps(real(float(one(T))))) * hi &&
-                return (false, T(NaN), factors, coupling)
+        # The diagonal's extremes by a loop: `diag(f.factors)` was a vector per
+        # block per factorization.
+        let F = f.factors, k = size(F, 1)
+            if k > 0
+                lo = hi = abs(F[1, 1])
+                @inbounds for i in 2:k
+                    lo = min(lo, abs(F[i, i]))
+                    hi = max(hi, abs(F[i, i]))
+                end
+                hi > 0 && lo <= sqrt(eps(real(float(one(T))))) * hi &&
+                    return (false, T(NaN), factors, coupling)
+            end
         end
         factors[b] = f
         total += logdet(f)
@@ -2185,6 +2307,31 @@ function _laplace_selected_inverse(factors, elim, blocks::Vector{CTSEMLaplaceBlo
 end
 
 """
+`_laplace_selected_inverse` for the seeded gradient, which reads it and drops
+it: for a unit of one block, `C = sym(inv(D))` into the slot's storage by the
+same column solves `inv` makes; any other unit takes the general route.
+"""
+function _laplace_selected_inverse_scratch!(laplace::CTSEMLaplaceObjective,
+    U::Integer, factors, elim, blocks::Vector{CTSEMLaplaceBlock})
+    (length(blocks) == 1 && isempty(blocks[1].ancestors)) ||
+        return _laplace_selected_inverse(factors, elim, blocks)
+    k = blocks[1].size
+    C = _laplace_scratch_blockmatrix!(laplace, Float64, U, blocks, :sg_C)
+    Dinv = _laplace_scratch_matrix!(laplace, Float64, k, k, :sg_Dinv)
+    e = fill!(_laplace_scratch_vector!(laplace, Float64, k, :sg_unit), 0.0)
+    @inbounds for j in 1:k
+        e[j] = 1.0
+        ldiv!(view(Dinv, :, j), factors[1], e)
+        e[j] = 0.0
+    end
+    Cd = C.diag[1]
+    @inbounds for j in 1:k, i in 1:k
+        Cd[i, j] = (Dinv[i, j] + Dinv[j, i]) / 2
+    end
+    return (C.diag, C.coupling)
+end
+
+"""
     _laplace_block_solve(factors, coupling, blocks, rhs)
 
 Solve `M x = rhs` using the factorization above, by forward substitution over
@@ -2219,6 +2366,14 @@ function _laplace_block_solve(factors, coupling, blocks::Vector{CTSEMLaplaceBloc
         out[(blocks[b].offset + 1):(blocks[b].offset + blocks[b].size)] .= x[b]
     end
     return out
+end
+
+"""`_laplace_block_solve` into `out`; for a single block, with nothing built."""
+function _laplace_block_solve!(out::AbstractVector, factors, coupling,
+    blocks::Vector{CTSEMLaplaceBlock}, rhs::Vector)
+    length(blocks) == 1 && blocks[1].size == length(rhs) &&
+        return ldiv!(out, factors[1], rhs)
+    return copyto!(out, _laplace_block_solve(factors, coupling, blocks, rhs))
 end
 
 """
@@ -2422,7 +2577,8 @@ vector alone is a reference.
 """
 _laplace_unit_loglik_gradient_vector(laplace, U, values, Ls, u, aws, positions,
     into, mode, hook) = _laplace_unit_loglik_gradient(laplace, U, values, Ls, u,
-    aws, positions, into, mode, hook).gradient
+    aws, positions === nothing ? eachindex(laplace.units.members[U]) : positions,
+    into, mode, hook).gradient
 
 """
     _laplace_unit_objective_gradient(laplace, U, values, Ls, u, aws)
@@ -2708,7 +2864,11 @@ derived; `ctsem_set_block_threshold!` moves it.
 """
 function _laplace_unit_curvature(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T};
-    hook=nothing, mode::Int=_HYBRID_PROFILE) where {T}
+    hook=nothing, mode::Int=_HYBRID_PROFILE,
+    into::Union{Nothing,CTSEMBlockMatrix{T}}=nothing) where {T}
+    # `into`: where a caller that uses the curvature once (a Newton step) wants
+    # it, rather than a block matrix of its own. Only the small-unit route below
+    # reads it; the blocked route fills the slot's per-unit matrix anyway.
     # `hook` is handed every member's pass (`_laplace_unit_loglik_gradient`):
     # a `CTSEMHybridCross` reads the cross curvature with the deviations the
     # filter integrates off the same sweeps. `mode` is what those passes return
@@ -2730,7 +2890,7 @@ function _laplace_unit_curvature(laplace::CTSEMLaplaceObjective, U::Integer,
             copyto!(vs, values)
             Lss = _laplace_scratch_levels!(laplace, S, Ls, :curv_levels)
             return _laplace_unit_loglik_gradient_vector(laplace, U, vs, Lss, uu, ws,
-                eachindex(laplace.units.members[U]),
+                nothing,
                 _laplace_scratch_vector!(laplace, S, length(uu), :curv_inner),
                 mode, hook)
         end
@@ -2751,12 +2911,12 @@ function _laplace_unit_curvature(laplace::CTSEMLaplaceObjective, U::Integer,
         Jw = _laplace_scratch_matrix!(laplace, T, nx, nx, :curv_jac)
         _ctsem_width_jacobian!(Jw, gradient_of, xb, n, width; whole=true,
             store=laplace.workspaces[_laplace_slot()])
-        # M = I - (J + J') / 2, block by block. A matrix of its own rather than
-        # the slot's: a caller keeps it, `_laplace_unit_primal`'s until the
-        # gradient reads it.
+        # M = I - (J + J') / 2, block by block. A matrix of its own unless the
+        # caller handed one: `_laplace_unit_primal`'s is kept until the gradient
+        # reads it.
         # Not `M`: the blocked route below assigns that name and its closures
         # capture it, and a captured name assigned twice is boxed.
-        Mdense = CTSEMBlockMatrix(T, blocks)
+        Mdense = into === nothing ? CTSEMBlockMatrix(T, blocks) : into
         for (b, block) in enumerate(blocks)
             ob = block.offset
             D = Mdense.diag[b]
@@ -3080,8 +3240,9 @@ so the ordinary case, where nothing needs repairing, was paying for two
 eliminations per Newton step and two more per evaluation.
 """
 function _laplace_factor_repaired!(M::CTSEMBlockMatrix{T},
-    blocks::Vector{CTSEMLaplaceBlock}) where {T}
-    ok, logdetM, factors, coupling = _laplace_block_factor(M, blocks)
+    blocks::Vector{CTSEMLaplaceBlock};
+    store::Union{Nothing,_LaplaceFactorStore{T}}=nothing) where {T}
+    ok, logdetM, factors, coupling = _laplace_block_factor(M, blocks; store=store)
     ok && return (repaired=false, ok=true, logdet=logdetM, factors=factors,
         coupling=coupling)
     scale = maximum((maximum(abs, d) for d in M.diag); init=one(real(T)))
@@ -3091,7 +3252,7 @@ function _laplace_factor_repaired!(M::CTSEMBlockMatrix{T},
         for d in M.diag
             for i in axes(d, 1); d[i, i] += shift * scale; end
         end
-        ok, logdetM, factors, coupling = _laplace_block_factor(M, blocks)
+        ok, logdetM, factors, coupling = _laplace_block_factor(M, blocks; store=store)
         ok && return (repaired=true, ok=true, logdet=logdetM, factors=factors,
             coupling=coupling)
         shift *= 10
@@ -3116,11 +3277,19 @@ diagnostics rather than silent: a curvature that is not negative definite is
 shifted until it is and the unit flagged as repaired, and a step that does not
 improve `g_U` is halved before the iteration gives up.
 """
+_laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
+    values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}) =
+    _laplace_solve_unit_mode!(laplace, U, values, Ls,
+        _laplace_workspace!(laplace, Float64, length(values)))
+
+# With the slot's workspace in hand: called with it concretely typed, Newton and
+# the probes below are static calls, and nothing they return is boxed.
 function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
-    values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}})
+    values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws)
     d = laplace.units.dims[U]
-    aws = _laplace_workspace!(laplace, Float64, length(values))
-    retained = _LAPLACE_WARM_START[] ? copy(laplace.modes[U]) : zeros(Float64, d)
+    # Newton copies its start, so neither needs a vector of its own.
+    origin = _laplace_scratch_vector!(laplace, Float64, d, :mode_origin)
+    retained = _LAPLACE_WARM_START[] ? laplace.modes[U] : fill!(origin, 0.0)
     started_warm = any(!iszero, retained)
     warm = _laplace_newton_unit_mode(laplace, U, values, Ls, aws, retained)
     best = warm
@@ -3158,7 +3327,7 @@ function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
     # kept, which is the guard that used to stand here on its own.
     if !warm.converged && started_warm
         cold = _laplace_newton_unit_mode(laplace, U, values, Ls, aws,
-            zeros(Float64, d))
+            fill!(origin, 0.0))
         if cold.converged || (isfinite(cold.value) &&
                 (!isfinite(best.value) || cold.value > best.value))
             best = cold
@@ -3169,7 +3338,7 @@ function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
     end
     laplace.modes[U] = best.u
     laplace.inner_iterations[U] = best.iterations
-    laplace.inner_gradient[U] = d == 0 ? 0.0 : maximum(abs, best.gradient)
+    laplace.inner_gradient[U] = best.gradmax
     laplace.inner_converged[U] = best.converged
     laplace.hessian_repaired[U] = best.repaired
     return (u=best.u, value=best.value, converged=best.converged)
@@ -3253,9 +3422,22 @@ twice from different starts -- see the cold retry there.
 """
 function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws,
-    start::Vector{Float64})
+    start::AbstractVector{Float64})
     d = laplace.units.dims[U]
-    u = start
+    blocks = laplace.units.blocks[U]
+    # The current point and the trial, with their gradients, swapped when a step
+    # is accepted; the curvature, its factorization and the step. All the
+    # slot's: a step uses each once, and building them fresh was most of what a
+    # small unit's mode solve allocated. `start` is read, not written. Only the
+    # mode found is the caller's, copied out at the end, because it is kept
+    # (`laplace.modes[U]`, and every mode the probes reach).
+    u = copyto!(_laplace_scratch_vector!(laplace, Float64, d, :newton_u1), start)
+    utry = _laplace_scratch_vector!(laplace, Float64, d, :newton_u2)
+    gcur = _laplace_scratch_vector!(laplace, Float64, d, :newton_g1)
+    gtry = _laplace_scratch_vector!(laplace, Float64, d, :newton_g2)
+    step = _laplace_scratch_vector!(laplace, Float64, d, :newton_step)
+    Mwork = _laplace_scratch_blockmatrix!(laplace, Float64, U, blocks, :newton_M)
+    fstore = _laplace_factor_store!(laplace, Float64, U)
     repaired = false
     converged = false
     iterations = 0
@@ -3265,11 +3447,11 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
     curvature = nothing
     keep = _LAPLACE_MODE_PROBES[] && d <= _LAPLACE_PROBE_MAXDIM
     current = _laplace_unit_objective_gradient(laplace, U, values, Ls, u, aws,
-        )
+        gcur)
     if !isfinite(current.value) && any(!iszero, u)
         fill!(u, 0.0)
         current = _laplace_unit_objective_gradient(laplace, U, values, Ls, u, aws,
-            )
+            gcur)
     end
     for iteration in 1:laplace.inner_maxiter
         iterations = iteration
@@ -3283,14 +3465,18 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
         # the slot alone left the count at its default, so the whole mode solve
         # ran serially while everything else divided. It cost 4.6x down to
         # 1.2x on the value-only path and no test could have reported it.
-        M = _laplace_unit_curvature(laplace, U, values, Ls, u)
+        # Asserted: inference does not see through the curvature's routes, and
+        # an untyped `M` made the factorization below a dynamic call that boxed
+        # its result, every Newton step.
+        M = _laplace_unit_curvature(laplace, U, values, Ls, u;
+            into=Mwork)::CTSEMBlockMatrix{Float64}
         keep && (curvature = _laplace_block_dense!(_laplace_scratch_matrix!(laplace,
             Float64, d, d, :probe_curvature), M, laplace.units.blocks[U]))
-        fac = _laplace_factor_repaired!(M, laplace.units.blocks[U])
+        fac = _laplace_factor_repaired!(M, blocks; store=fstore)
         repaired |= fac.repaired
         fac.ok || break
-        step = _laplace_block_solve(fac.factors, fac.coupling,
-            laplace.units.blocks[U], current.gradient)
+        _laplace_block_solve!(step, fac.factors, fac.coupling, blocks,
+            current.gradient)
         accepted = false
         # Whether any trial could be evaluated at all, which is what separates
         # "there is nothing left to gain here" from "the step went somewhere
@@ -3298,12 +3484,13 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
         evaluable = false
         scale = 1.0
         for _ in 1:20
-            candidate = u .+ scale .* step
+            utry .= u .+ scale .* step
             trial = _laplace_unit_objective_gradient(laplace, U, values, Ls,
-                candidate, aws)
+                utry, aws, gtry)
             evaluable |= isfinite(trial.value)
             if isfinite(trial.value) && trial.value >= current.value - 1e-12
-                u = candidate
+                u, utry = utry, u
+                gcur, gtry = gtry, gcur
                 current = trial
                 accepted = true
                 break
@@ -3358,7 +3545,10 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
             _laplace_inner_tolerance(laplace, current.value)
         converged = true
     end
-    return (u=u, value=current.value, gradient=current.gradient,
+    # The gradient's largest entry, the one thing its readers ask of it: the
+    # vector is the slot's, and the next solve on this slot overwrites it.
+    return (u=copy(u), value=current.value,
+        gradmax=d == 0 ? 0.0 : maximum(abs, current.gradient),
         converged=converged, iterations=iterations, repaired=repaired,
         curvature=curvature)
 end
@@ -3415,11 +3605,18 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
         _laplace_block_dense(_laplace_unit_curvature(laplace, U, values, Ls,
             copy(found.u)), laplace.units.blocks[U], d) : found.curvature
     # A copy: `found.curvature` is the slot's scratch, and the probes'
-    # own solves overwrite it.
-    M = _laplace_symmetrise(M)
-    E = _ctsem_symeig(M)
+    # own solves overwrite it. This copy, the decomposition and the factor are
+    # the slot's too, under tags no solve uses: they run for every unit,
+    # probed or not.
+    Msym = _laplace_scratch_matrix!(laplace, Float64, d, d, :probe_M)
+    @inbounds for j in 1:d, i in 1:d
+        Msym[i, j] = (M[i, j] + M[j, i]) / 2
+    end
+    M = Msym
+    E = _ctsem_symeig!(_laplace_scratch_symeig!(laplace, d), M)
     (all(isfinite, E.values) && E.values[1] < _LAPLACE_PROBE_SOFT) || return found
-    F = _ctsem_cholesky(copy(M), d)
+    F = _ctsem_cholesky(copyto!(_laplace_scratch_matrix!(laplace, Float64, d, d,
+        :probe_F), M), d)
     screened = issuccess(F)
     best = found
     bestterm = NaN
@@ -3433,8 +3630,9 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
         lambda < _LAPLACE_PROBE_SOFT || break
         reach = min(_LAPLACE_PROBE_REACH / sqrt(max(lambda, 1e-8)), 3.0)
         for sign in (-1.0, 1.0)
-            # A vector of its own: Newton keeps it as the mode it reaches.
-            start = found.u .+ (sign * reach) .* view(E.vectors, :, j)
+            # The slot's: Newton reads its start and does not keep it.
+            start = _laplace_scratch_vector!(laplace, Float64, d, :probe_start)
+            start .= found.u .+ (sign * reach) .* view(E.vectors, :, j)
             if screened
                 at = _laplace_unit_objective_gradient(laplace, U, values, Ls, start,
                     aws, atgrad)
@@ -3462,7 +3660,7 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
                 r.value > best.value || continue
                 term = NaN
             end
-            best = (u=r.u, value=r.value, gradient=r.gradient, converged=true,
+            best = (u=r.u, value=r.value, gradmax=r.gradmax, converged=true,
                 iterations=found.iterations + r.iterations,
                 repaired=found.repaired || r.repaired, curvature=nothing)
             bestterm = term
@@ -3492,10 +3690,13 @@ function _laplace_modes_separated(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws, a, b)
     lower = min(a.value, b.value)
     margin = 1e-8 * (1 + abs(lower))
+    point = _laplace_scratch_vector!(laplace, Float64, length(a.u), :sep_point)
+    grad = _laplace_scratch_vector!(laplace, Float64, length(a.u), :sep_grad)
     for k in 1:7
         t = k / 8
-        g = _laplace_unit_objective_gradient(laplace, U, values, Ls,
-            a.u .+ t .* (b.u .- a.u), aws).value
+        point .= a.u .+ t .* (b.u .- a.u)
+        g = _laplace_unit_objective_gradient(laplace, U, values, Ls, point, aws,
+            grad).value
         (isfinite(g) && g >= lower - margin) || return true
     end
     return false
@@ -3674,13 +3875,27 @@ callers (the gated floor's gate, `ctsem_laplace_conditioning`) then decompose
 the unit, which gives the exact answer there.
 """
 function _laplace_exceeds_identity(M::CTSEMBlockMatrix{T},
-    blocks::Vector{CTSEMLaplaceBlock}, shift::Real=1.0) where {T}
-    shifted = CTSEMBlockMatrix{T}([copy(d) for d in M.diag],
-        [[copy(c) for c in row] for row in M.coupling])
+    blocks::Vector{CTSEMLaplaceBlock}, shift::Real=1.0;
+    shifted::Union{Nothing,CTSEMBlockMatrix{T}}=nothing,
+    store::Union{Nothing,_LaplaceFactorStore{T}}=nothing) where {T}
+    # `shifted` and `store`: a caller's storage for the shifted copy and its
+    # factorization, neither of which outlives this call -- the gated floor's
+    # gate passes the slot's, once per unit per evaluation.
+    if shifted === nothing
+        shifted = CTSEMBlockMatrix{T}([copy(d) for d in M.diag],
+            [[copy(c) for c in row] for row in M.coupling])
+    else
+        for b in eachindex(M.diag)
+            copyto!(shifted.diag[b], M.diag[b])
+            for t in eachindex(M.coupling[b])
+                copyto!(shifted.coupling[b][t], M.coupling[b][t])
+            end
+        end
+    end
     for d in shifted.diag
         for i in axes(d, 1); d[i, i] -= shift; end
     end
-    ok, _, _, _ = _laplace_block_factor(shifted, blocks)
+    ok, _, _, _ = _laplace_block_factor(shifted, blocks; store=store)
     return ok
 end
 
@@ -3963,7 +4178,9 @@ function _laplace_gated_term(laplace::CTSEMLaplaceObjective, U::Integer,
     total = indefinite ? T(NaN) : g - max(logdetM, zero(logdetM)) / 2
     lap = indefinite ? T(NaN) : g - logdetM / 2
     lo, hi = laplace.gate_lo, laplace.gate_hi
-    _laplace_exceeds_identity(M, blocks, hi) &&
+    _laplace_exceeds_identity(M, blocks, hi;
+        shifted=_laplace_scratch_blockmatrix!(laplace, T, U, blocks, :gate_shifted),
+        store=_laplace_factor_store!(laplace, T, U, blocks)) &&
         return (value=lap, flagged=false, floor=false)
     d = length(u)
     (dcheck === nothing ? d : dcheck) > _LAPLACE_EIGEN_MAXDIM[] &&
@@ -4146,6 +4363,36 @@ _laplace_unit_term(laplace::CTSEMLaplaceObjective, U::Integer,
     aws) where {T} = _laplace_unit_primal(laplace, U, values, Ls, u, aws).term
 
 """
+One unit's mode and primal into the evaluation's records: its factorization
+and curvature, which the gradient phase reads, its flags, and its term -- or,
+when the term is not finite, the slot's failure. `false` then. A function of
+its own because `aws` is a slot's and untyped, so the call is a dynamic
+dispatch: made here once, everything inside is static, where before the mode
+solve's and the primal's results each came back boxed through one.
+"""
+function _laplace_store_unit_primal!(laplace::CTSEMLaplaceObjective, U::Integer,
+    theta::Vector{Float64}, Ls, aws, primal_curvature, primal_matrices,
+    primal_gated, unit_loglik, chunk_ok, chunk_bad)
+    b0 = _laplace_mark()
+    _laplace_solve_unit_mode!(laplace, U, theta, Ls, aws)
+    _laplace_charge!(_LAPLACE_BYTES_MODE, b0)
+    primal = _laplace_unit_primal(laplace, U, theta, Ls, laplace.modes[U], aws)
+    laplace.mode_repaired[U] = primal.fac.repaired
+    primal_curvature[U] = (primal.fac.factors, primal.fac.coupling)
+    primal_matrices[U] = primal.M
+    laplace.logdet_floored[U] = primal.floored
+    primal_gated[U] = primal.gated
+    term = primal.term
+    if !isfinite(term)
+        chunk_ok[_laplace_slot()] = false
+        chunk_bad[_laplace_slot()] = term
+        return false
+    end
+    unit_loglik[U] = term
+    return true
+end
+
+"""
     _laplace_unit_primal(laplace, U, values, Ls, u, aws)
 
 Unit `U`'s term at `u` as the objective scores it, and what the gradient reads
@@ -4172,13 +4419,18 @@ function _laplace_unit_primal(laplace::CTSEMLaplaceObjective, U::Integer,
              _hybrid_on(laplace.objective.params.hybrid)) ?
         _hybrid_cross!(laplace, T, length(u), length(laplace.units.members[U])) :
         nothing
+    # Asserted, as in `_laplace_newton_unit_mode`.
     M = isempty(u) ? CTSEMBlockMatrix(T, blocks) :
-        _laplace_unit_curvature(laplace, U, values, Ls, u; hook=cross)
+        _laplace_unit_curvature(laplace, U, values, Ls, u;
+            hook=cross)::CTSEMBlockMatrix{T}
     _laplace_charge!(_LAPLACE_BYTES_CURV, b0)
     fac = _laplace_factor_repaired!(M, blocks)
     ok, logdetM = fac.ok, fac.logdet
     b0 = _laplace_mark()
-    inner = _laplace_unit_objective_gradient(laplace, U, values, Ls, u, aws)
+    # The gradient into the slot's: only this call and the gated term below
+    # read it, and neither keeps it.
+    inner = _laplace_unit_objective_gradient(laplace, U, values, Ls, u, aws,
+        _laplace_scratch_vector!(laplace, T, length(u), :primal_grad))
     _laplace_charge!(_LAPLACE_BYTES_OBJ, b0)
     # The joint curvature's logdet: the profile's plus the filter-integrated
     # deviations' (`CTSEMHybrid`), before the floor or the gate reads it.
@@ -4375,7 +4627,7 @@ function _laplace_unit_seeded_gradient_(laplace::CTSEMLaplaceObjective, U::Integ
         # heap objects a gradient evaluation on gC8.
         S1 = typeof(seed)
         one_member! = function (c::Int, m)
-            local aws, gradient, x, shifted, loglik, t
+            local aws, gradient, x, shifted, t
             aws = _laplace_workspace!(laplace, S1, npar)
             gradient = _laplace_scratch_vector!(laplace, S1, npar, :sweep_grad)
             x = _laplace_scratch_vector!(laplace, S1, npar, :sweep_x)
@@ -4385,9 +4637,9 @@ function _laplace_unit_seeded_gradient_(laplace::CTSEMLaplaceObjective, U::Integ
             @inbounds for t in 1:npar
                 x[t] = shifted[t] + seed * d1[t]
             end
-            loglik = _laplace_subject_value_gradient!(gradient,
-                laplace.objective.subject_objectives[unitmembers[m]], aws, x)
-            _laplace_finite(loglik) || return false
+            _laplace_member_pass_finite!(gradient,
+                laplace.objective.subject_objectives[unitmembers[m]], aws, x) ||
+                return false
             @inbounds for t in 1:npar
                 d0[t, c] = ForwardDiff.value(gradient[t])
                 d1c[t, c] = ForwardDiff.partials(gradient[t])[1]
@@ -4407,7 +4659,7 @@ function _laplace_unit_seeded_gradient_(laplace::CTSEMLaplaceObjective, U::Integ
     # collide however they are divided; the workspace comes from the ambient
     # slot, and the dual buffers are cached against it.
     one_member! = function (c::Int, m)
-        local aws, gradient, x, shifted, loglik, t, inner
+        local aws, gradient, x, shifted, t, inner
         aws = _laplace_workspace!(laplace, S, npar)
         gradient = _laplace_scratch_vector!(laplace, S, npar, :sweep_grad)
         x = _laplace_scratch_vector!(laplace, S, npar, :sweep_x)
@@ -4417,9 +4669,9 @@ function _laplace_unit_seeded_gradient_(laplace::CTSEMLaplaceObjective, U::Integ
         @inbounds for t in 1:npar
             x[t] = shifted[t] + e1 * d1[t] + e2 * d2[t]
         end
-        loglik = _laplace_subject_value_gradient!(gradient,
-            laplace.objective.subject_objectives[unitmembers[m]], aws, x)
-        _laplace_finite(loglik) || return false
+        _laplace_member_pass_finite!(gradient,
+            laplace.objective.subject_objectives[unitmembers[m]], aws, x) ||
+            return false
         @inbounds for t in 1:npar
             inner = ForwardDiff.value(gradient[t])
             d0[t, c] = ForwardDiff.value(inner)
@@ -4431,6 +4683,14 @@ function _laplace_unit_seeded_gradient_(laplace::CTSEMLaplaceObjective, U::Integ
     _laplace_run_members(one_member!, laplace, members) || return failure
     return (ok=true, d0=d0, d1c=d1c, d12=d12)
 end
+
+# Whether one member's pass came out finite, deep. The sweeps' workspace is a
+# slot's, which `_laplace_workspace!` cannot type, so the pass is a dynamic call:
+# returning its dual log likelihood boxed it, once per member per sweep, where a
+# `Bool` comes back as itself.
+_laplace_member_pass_finite!(gradient, subject_objective, aws, x) =
+    _laplace_finite(_laplace_subject_value_gradient!(gradient, subject_objective,
+        aws, x))
 
 # Deep: `isfinite` on a dual tests only its value, and a sweep's whole point
 # is the partials. Testing the value alone is what let a NaN derivative travel
@@ -4452,6 +4712,9 @@ Hessian at eight threads (dev1).
 """
 _laplace_level_chol_solves(spec, Ls, dL) = hasreducedrank(spec) ? nothing :
     [[Ls[l] \ dL[l][t] for t in eachindex(dL[l])] for l in eachindex(dL)]
+
+# `levelsweeps` for a unit that needs none: never written, so one is enough.
+const _LAPLACE_NO_LEVELSWEEPS = Vector{Matrix{Float64}}[]
 
 """
     _laplace_seeded_unit_gradient!(out, laplace, U, values, Ls, dL, dLsolved, M,
@@ -4533,7 +4796,8 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
     end
 
     bsi = _laplace_mark()
-    Cdiag, Ccoup = _laplace_selected_inverse(factors, elim, blocks)
+    Cdiag, Ccoup = _laplace_selected_inverse_scratch!(laplace, U, factors, elim,
+        blocks)
     _laplace_charge!(_LAPLACE_BYTES_SELINV, bsi)
     # The selected inverse of the curvature is where a badly conditioned unit
     # first shows, and every sweep below is scaled by it.
@@ -4849,7 +5113,8 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
             gradu[block.offset + q] += contribution
         end
     end
-    s = _laplace_block_solve(factors, elim, blocks, gradu)
+    s = _laplace_block_solve!(_laplace_scratch_vector!(laplace, Float64, d, :sg_s),
+        factors, elim, blocks, gradu)
     all(isfinite, s) || return false
 
     # s' B: one sweep per block, along that block's share of L s. Summed over
@@ -4920,7 +5185,8 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
     # strict nesting is the members of whichever is inner.
     nlev = length(spec.levels)
     needV = hasreducedrank(spec)
-    levelsweeps = Vector{Vector{Matrix{Float64}}}(undef, nlev)
+    levelsweeps = needV ? Vector{Vector{Matrix{Float64}}}(undef, nlev) :
+        _LAPLACE_NO_LEVELSWEEPS
     if needV
         for l in 1:nlev
             rl = nlatent(spec.levels[l])
@@ -5373,23 +5639,10 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
     run_primal = function (c)
         aws = _laplace_workspace!(laplace, Float64, length(theta))
         @inbounds for U in ranges[c]
-            local b0
-            b0 = _laplace_mark()
-            _laplace_solve_unit_mode!(laplace, U, theta, Ls)
-            _laplace_charge!(_LAPLACE_BYTES_MODE, b0)
-            primal = _laplace_unit_primal(laplace, U, theta, Ls, laplace.modes[U], aws)
-            laplace.mode_repaired[U] = primal.fac.repaired
-            primal_curvature[U] = (primal.fac.factors, primal.fac.coupling)
-            primal_matrices[U] = primal.M
-            laplace.logdet_floored[U] = primal.floored
-            primal_gated[U] = primal.gated
-            term = primal.term
-            if !isfinite(term)
-                chunk_ok[_laplace_slot()] = false
-                chunk_bad[_laplace_slot()] = term
+            _laplace_store_unit_primal!(laplace, U, theta, Ls, aws, primal_curvature,
+                primal_matrices, primal_gated, unit_loglik, chunk_ok, chunk_bad) ||
                 return nothing
-            end
-            unit_loglik[U] = term
+            term = unit_loglik[U]
             # A unit's term is the marginal likelihood of all its subjects
             # jointly, and with a study level it does not decompose over them:
             # the study effect is shared. Attributing it to the first member
