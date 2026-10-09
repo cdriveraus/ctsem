@@ -193,7 +193,7 @@ ctScoreTest <- function(fit, covariates = NULL,
   form = c('auto', 'linear', 'spline', 'factor'), df = 3, parameters = NULL,
   order = 2L, variance = c('robust', 'model'), nboot = 1999L, cores = 2L,
   verbose = TRUE) {
-  if (!inherits(fit, 'ctJuliaFit')) stop("ctScoreTest() needs a fit from ",
+  if (!.ctFitIsJulia(fit)) stop("ctScoreTest() needs a fit from ",
     "ctFit(backend = 'julia'). Refit on that backend to use it.", call. = FALSE)
   if (!is.null(fit$sample)) stop("Score tests are made at an optimum, and this ",
     "fit was sampled. Fit with optimize = TRUE to test it.", call. = FALSE)
