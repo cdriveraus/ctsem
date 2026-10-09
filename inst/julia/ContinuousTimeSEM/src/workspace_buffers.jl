@@ -279,6 +279,9 @@ struct ContinuousEKFWorkspace{T, N, M, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF
     # each evaluation (`_ctsem_tipred_vector(tipreds, p, buffer)`); unused, and
     # empty, for every other subject.
     tipred_row::Vector{T}
+    # The last pass's log likelihood, which `_ekf_run` returns through here
+    # rather than out of its function barrier; see there.
+    loglik::Base.RefValue{T}
 end
 
 """
@@ -504,6 +507,7 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
         zeros(T, n, n),
         CTSEMHybridBuffers{T}(),
         T[],
+        Ref(zero(T)),
     )
 end
 

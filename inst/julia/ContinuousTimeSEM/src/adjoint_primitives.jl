@@ -384,6 +384,42 @@ CTSEMCovSqrtScratch(::Type{T}, d::Int) where {T} = CTSEMCovSqrtScratch{T}(
     zeros(T, d, d), zeros(T, d, d), zeros(T, d, d), zeros(T, d, d),
     zeros(T, d), zeros(T, d), zeros(T, d))
 
+"""
+    _sdcovexpm2cov_pullback_plain!(mat_bar, mat, cov_bar, d, scratch)
+
+`_sdcovexpm2cov_pullback!` with its three matrices handed over as plain
+`Matrix`es. That pullback reaches its body through one dynamic dispatch on
+`Val(d)`, and a dynamic call boxes every immutable argument: the reverse
+pass's are views -- a `ComponentVector` block, a leading block of scratch --
+so each flush of DIFFUSION or MANIFESTVAR and each T0VAR pullback put two on
+the heap, once per subject on the plain route and once per inner step on the
+Laplace one. Copied into `scratch`'s own matrices first, which this branch of
+`_sdcovsqrt2cov_pullback!` does not otherwise use, the dispatch has nothing to
+box: `d x d` copies against the pullback's matrix exponential.
+"""
+function _sdcovexpm2cov_pullback_plain!(mat_bar::AbstractMatrix, mat::AbstractMatrix,
+    cov_bar::AbstractMatrix, d::Int, scratch::CTSEMCovSqrtScratch{T}) where {T}
+    (eltype(mat_bar) === T && eltype(mat) === T && eltype(cov_bar) === T &&
+        size(scratch.O, 1) >= d) ||
+        return _sdcovexpm2cov_pullback!(mat_bar, mat, cov_bar, d)
+    (mat_bar isa Matrix && mat isa Matrix && cov_bar isa Matrix) &&
+        return _sdcovexpm2cov_pullback!(mat_bar, mat, cov_bar, d)
+    M, C, B = scratch.O, scratch.B, scratch.Csym
+    @inbounds for j in 1:d, i in 1:d
+        M[i, j] = mat[i, j]
+        C[i, j] = cov_bar[i, j]
+        B[i, j] = zero(T)
+    end
+    _sdcovexpm2cov_pullback!(B, M, C, d)
+    @inbounds for j in 1:d, i in 1:d
+        mat_bar[i, j] += B[i, j]
+    end
+    return mat_bar
+end
+
+_sdcovexpm2cov_pullback_plain!(mat_bar, mat, cov_bar, d::Int, ::Nothing) =
+    _sdcovexpm2cov_pullback!(mat_bar, mat, cov_bar, d)
+
 # With no scratch, allocate as the pullback always did (tests, the rrule).
 _covsqrt_scratch(::Nothing, ::Type{T}, d::Int) where {T} = (
     Matrix{T}(undef, d, d), Matrix{T}(undef, d, d), Matrix{T}(undef, d, d),
@@ -414,7 +450,7 @@ function _sdcovsqrt2cov_pullback!(mat_bar::AbstractMatrix, mat::AbstractMatrix,
     # different model than the likelihood.
     code = _effective_covmatcode(covmatcode)
     if code == 2
-        return _sdcovexpm2cov_pullback!(mat_bar, mat, cov_bar, d)
+        return _sdcovexpm2cov_pullback_plain!(mat_bar, mat, cov_bar, d, scratch)
     end
     # A zero cotangent happens routinely -- e.g. the manifest-covariance
     # cotangent on a fully missing row, where no measurement update ran -- and
