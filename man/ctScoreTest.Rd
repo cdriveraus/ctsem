@@ -128,7 +128,9 @@ before interpreting their sizes.
   \code{eta_m} -- and, when \code{k != m}, equally \code{DRIFT[i,m]} varying
   with \code{eta_k}; at this order the data cannot tell those apart, and
   \code{reads} says both. \code{estimate} is the one-step change in that
-  drift coefficient per unit of the state. \code{order = 3} adds the terms
+  drift coefficient per unit of the state. It is \code{NA} when the fitted model's
+  curvature cannot size the term, which happens when the departure is
+  strong; the test itself is unaffected. \code{order = 3} adds the terms
   of degree three. The terms are evaluated by the model's own filter at the
   state predicted from earlier observations, which keeps the test valid; a
   state estimate that has seen the observation being scored -- the updated

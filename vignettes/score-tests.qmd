@@ -1,0 +1,282 @@
+---
+title: "What is the model missing? Score tests after a fit"
+format:
+  html:
+    toc: true
+    code-fold: false
+    embed-resources: true
+    self-contained-math: true
+execute:
+  message: false
+  warning: false
+vignette: >
+  %\VignetteIndexEntry{What is the model missing? Score tests after a fit}
+  %\VignetteEngine{quarto::html}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", message = FALSE,
+  warning = FALSE)
+```
+
+A fitted model can be wrong in ways its own estimates do not show. Subjects
+may differ in a parameter the model holds fixed; a parameter may depend on a
+covariate that was never put in the model; the dynamics may depend on where the
+process is. `ctScoreTest()` asks of one fitted model, without refitting it,
+whether any of these relaxations would fit better, and if so where:
+
+* **heterogeneity**: does a parameter differ between subjects, so that it
+  should be individually varying?
+* **covariates**: does a parameter depend on a subject-level covariate the
+  model does not contain -- including the size of a random effect, not only
+  its mean?
+* **state dependence**: does a drift coefficient change with the level of a
+  latent state, so that the dynamics are nonlinear?
+
+Each is a score (Lagrange multiplier) test: the slope of the log likelihood,
+at the fitted model, in the direction of the relaxation. It needs a few
+evaluations of the fitted model's gradient rather than a new fit per
+candidate, so any number of candidates can be screened after one fit, and each
+test also says roughly how large the relaxation would be. The tests are
+screens: they point at what to relax, and the refit says how much it matters.
+
+The three examples below each generate data with one thing the fitted model
+lacks, fit the model without it, ask `ctScoreTest()`, and then refit with what
+it found.
+
+```{r libs}
+library(ctsem)
+set.seed(3)
+```
+
+## The process
+
+Two latent processes, each measured by one indicator, observed 30 times at
+irregular intervals for 150 subjects. `eta1` regulates towards its baseline at
+rate 0.6, `eta2` at 0.4, and `eta1` pushes `eta2` up (a cross effect of 0.25).
+Each subject has their own measurement intercepts. The generating model is
+written once, and each example changes one cell of it.
+
+```{r generator}
+generator <- function(DRIFT, MANIFESTMEANS = c("mm1|param|TRUE|1", "mm2|param|TRUE|1"),
+  TIpredNames = NULL) {
+  ctModel(type = "ct", silent = TRUE,
+    manifestNames = c("Y1", "Y2"), latentNames = c("eta1", "eta2"),
+    LAMBDA = diag(2), DRIFT = DRIFT, CINT = matrix(0, 2, 1),
+    DIFFUSION = matrix(c(0.8, 0, 0, 0.6), 2, 2), MANIFESTVAR = diag(0.5, 2),
+    MANIFESTMEANS = matrix(MANIFESTMEANS, 2, 1),
+    T0MEANS = matrix(0, 2, 1), T0VAR = diag(1, 2), TIpredNames = TIpredNames)
+}
+```
+
+The model fitted in every example is ctsem's default for two latents with one
+indicator each: every drift, diffusion and measurement error parameter free
+and shared by all subjects, and individually varying measurement intercepts
+and initial states.
+
+```{r model}
+model <- ctModel(type = "ct", silent = TRUE,
+  manifestNames = c("Y1", "Y2"), latentNames = c("eta1", "eta2"),
+  LAMBDA = diag(2))
+```
+
+## 1. Subjects who differ in a parameter
+
+Here the subjects differ in how quickly `eta1` regulates: the drift
+`DRIFT[1,1]` varies between subjects around -0.6, with a standard deviation of
+about 0.25.
+
+```{r het-generate}
+gen1 <- generator(DRIFT = matrix(c("drift11|-log1p_exp(-param)|TRUE|0.6", 0.25,
+  0, -0.4), 2, 2))
+d1 <- ctGenerate(gen1, n = 150, Tpoints = 30, dtmean = 1, logdtsd = 0.5,
+  backend = "julia", popmeans = c(drift11 = -0.6, mm1 = 0, mm2 = 0))
+truedrift <- attr(d1, "subjectpars")$drift11
+c(mean = mean(truedrift), sd = sd(truedrift))
+d1 <- data.frame(d1)
+```
+
+The default model shares one drift among all subjects.
+
+```{r het-fit}
+fit1 <- ctFit(d1, model, backend = "julia", cores = 2)
+st1 <- ctScoreTest(fit1, tests = "heterogeneity")
+st1
+```
+
+Each row tests whether that parameter's variance over subjects is zero; the
+test is one sided, since a variance cannot be negative. The drift of `eta1` is
+flagged, and so is its diffusion. That is expected rather than a second
+finding: a subject whose process regulates more slowly also varies more, so
+the subjects disagree about the diffusion too. The test says that the subjects
+differ, and roughly where; it cannot always say which of two related
+parameters is the source. The way to find out is to relax the strongest
+candidate and test again.
+
+```{r het-refit}
+model1b <- model
+model1b$pars$indvarying[model1b$pars$param %in% "drift_eta1"] <- TRUE
+fit1b <- ctFit(d1, model1b, backend = "julia", cores = 2)
+c(loglik_without = fit1$estimate$loglik, loglik_with = fit1b$estimate$loglik)
+ctScoreTest(fit1b, tests = "heterogeneity")
+```
+
+With the drift free to vary the log likelihood rises by about 12, and
+nothing else stands out: the diffusion's signal was the drift's. (A drift that
+varies between subjects enters the filter nonlinearly, so `ctFit()` chose the
+Laplace route for the refit; the tests work on either.)
+
+## 2. A covariate the model does not contain
+
+Now each subject has an `age` (standardised), and age matters twice: older
+subjects have a higher intercept on `Y1`, and in older subjects `eta1` pushes
+`eta2` harder (the cross effect `DRIFT[2,1]` rises by 0.3 per standard
+deviation of age). A second covariate, `w`, is unrelated to anything.
+
+```{r cov-generate}
+gen2 <- generator(DRIFT = matrix(c(-0.6, "drift21||||age=0.3", 0, -0.4), 2, 2),
+  MANIFESTMEANS = c("mm1|param|TRUE|1|age=0.6", "mm2|param|TRUE|1"),
+  TIpredNames = c("age", "w"))
+d2 <- data.frame(ctGenerate(gen2, n = 150, Tpoints = 30, dtmean = 1,
+  logdtsd = 0.5, backend = "julia", popmeans = c(drift21 = 0.25, mm1 = 0, mm2 = 0)))
+covariates <- unique(d2[, c("id", "age", "w")])
+head(covariates)
+```
+
+The model is fitted without either covariate, and the covariates are handed to
+`ctScoreTest()` afterwards, one row per subject.
+
+```{r cov-fit}
+fit2 <- ctFit(d2[, c("id", "time", "Y1", "Y2")], model, backend = "julia", cores = 2)
+st2 <- ctScoreTest(fit2, covariates = covariates, tests = "covariates")
+st2
+```
+
+For each covariate, the joint test asks whether it matters anywhere; then each
+parameter's row gives the effect a refit with that covariate would be expected
+to estimate, per unit of the covariate. `age` is found, on the intercept of
+`Y1` and on the cross effect, at about the sizes it was generated with; `w` is
+not. Two things make that attribution work. The effects are estimated jointly,
+so a covariate that moves one parameter is not read off another that happens
+to be correlated with it. And they are estimated with the fitted model's
+parameters held where the fit left them: the model without `age` has already
+absorbed some of its effect -- the intercepts' standard deviation has grown to
+take in the age differences -- and an estimate that lets those parameters move
+too extrapolates the model's curvature across that whole change.
+
+The tests also cover the random effects' standard deviations (the `popsd_`
+rows): whether subjects differ more at some ages than others.
+
+The refit puts `age` into the model as a time independent predictor, with
+effects on every parameter:
+
+```{r cov-refit}
+model2b <- ctModel(type = "ct", silent = TRUE,
+  manifestNames = c("Y1", "Y2"), latentNames = c("eta1", "eta2"),
+  LAMBDA = diag(2), TIpredNames = "age")
+fit2b <- ctFit(d2, model2b, backend = "julia", cores = 2)
+effects <- summary(fit2b)$tipreds
+effects[grepl("mm_Y1|drift_eta2_eta1", rownames(effects)), ]
+```
+
+## 3. Dynamics that depend on the state
+
+Last, `eta2` moderates how `eta1` regulates: when `eta2` is high, `eta1`
+returns to baseline more slowly. The drift of `eta1` is
+`-0.6 + 0.3 * tanh(eta2)`, so it ranges between -0.9 and -0.3, and near
+`eta2 = 0` it rises by about 0.3 per unit of `eta2`.
+
+```{r sdep-generate}
+gen3 <- generator(DRIFT = matrix(c("-0.6 + 0.3 * tanh(eta2)", 0.25, 0, -0.4), 2, 2))
+d3 <- data.frame(ctGenerate(gen3, n = 150, Tpoints = 30, dtmean = 1,
+  logdtsd = 0.5, backend = "julia", popmeans = c(mm1 = 0, mm2 = 0)))
+```
+
+The fitted model is linear: each drift coefficient is a constant.
+
+```{r sdep-fit}
+fit3 <- ctFit(d3, model, backend = "julia", cores = 2)
+st3 <- ctScoreTest(fit3, tests = "statedependence")
+st3
+```
+
+Each term is one drift coefficient varying linearly with one state. The term
+`eta1*eta2` in the equation of `eta1` stands out: either the drift of `eta1`
+changes with `eta2` -- which is what generated the data -- or the effect of
+`eta2` on `eta1` changes with `eta1`. At this order the two are the same term,
+so the table names both, and which reading to fit is a substantive choice. The
+estimate is the change in the drift coefficient per unit of the state. Writing
+the dependence into the model:
+
+```{r sdep-refit}
+model3b <- ctModel(type = "ct", silent = TRUE,
+  manifestNames = c("Y1", "Y2"), latentNames = c("eta1", "eta2"),
+  LAMBDA = diag(2),
+  DRIFT = matrix(c("dr11 + dstate * eta2", "dr21", "dr12", "dr22"), 2, 2),
+  PARS = c("dr11|-log1p_exp(-param)", "dstate"))
+fit3b <- ctFit(d3, model3b, backend = "julia", cores = 2)
+c(loglik_without = fit3$estimate$loglik, loglik_with = fit3b$estimate$loglik)
+summary(fit3b)$popmeans[c("dr11", "dstate"), ]
+```
+
+The refit's `dstate` is a little smaller than the one-step estimate: the
+generating `tanh` flattens away from zero, and a term linear in `eta2`
+averages over its whole range. The first screen also flagged a second, weaker
+term, `eta1*eta1` in the equation of `eta2`. That one was an echo -- the misfit
+in `eta1`'s dynamics reaches `eta2` through the cross effect -- and testing the
+refitted model shows nothing left:
+
+```{r sdep-retest}
+ctScoreTest(fit3b, tests = "statedependence")
+```
+
+The term already in the model now has no score left at all, and no other
+term stands out.
+
+The test works because the filter evaluates each candidate term at the state
+it predicts from earlier observations. A weight that has not seen the
+observation being scored keeps that observation's contribution to the score at
+mean zero when the model is right. Using smoothed or updated state estimates
+as covariates instead -- regressing something on the estimated states after
+the fit -- does not have that property, and rejects correct models: in
+simulation, nearly always.
+
+## Everything at once
+
+By default `ctScoreTest()` runs all three families (covariates when given).
+On the last dataset:
+
+```{r all}
+ctScoreTest(fit3)
+```
+
+The state dependence stands out. The heterogeneity tests stay quiet here, but
+they need not: a drift that changes with the state can also look, subject by
+subject, like a drift that differs between subjects, and in simulations a
+missing nonlinearity did move them. A badly misspecified model can light up
+several tests at once, so read them as a map: relax what stands out most,
+refit, and test again.
+
+## How the tests work, briefly
+
+* The scores are those of the objective the model was fitted with, so they
+  integrate over random effects exactly as the fit did. A covariate's effect
+  adds to a parameter's raw value, so its score is the covariate times each
+  subject's score in that parameter -- any number of covariates costs a few
+  matrix products after one set of per-subject scores and Hessians.
+* A random effect's variance has, at zero, the score
+  $\frac{1}{2}\sum_i (s_{ij}^2 + H_{i,jj})$: the information matrix test in that
+  parameter, which is the score test for neglected heterogeneity.
+* State dependence is tested on the fitted model extended with the drift terms
+  at zero, which reproduces the fit exactly there.
+* The fitted model's curvature projects the fitted parameters out of each test
+  and sizes the one-step estimates; each test's variance is the spread of the
+  subjects' contributions, and its p-value comes from resampling subjects. That
+  keeps a test valid when the model is wrong in some other way -- the case a
+  screen is for -- where a variance from the model's own curvature would make
+  unrelated tests reject too.
+
+The tests need subjects as independent units, so a model with levels above the
+subject can be tested for state dependence only. See `?ctScoreTest` for the
+details.
