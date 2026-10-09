@@ -261,6 +261,65 @@ end
     end
 end
 
+isdefined(@__MODULE__, :_adjoint_test_dataframe) ||
+    include(joinpath(@__DIR__, "adjoint_fixtures.jl"))
+
+@testset "adjoint: a cell reading a sampled predictor sends its derivative to it" begin
+    # The reverse pass carried no cotangent to a predictor a cell reads, so R
+    # refused to sample a missing value of one. Two latents, so that a slip
+    # symmetric in the states cannot pass. The predictor reaches the
+    # likelihood through a predict-group cell (CINT, with a parameter), two
+    # update-group cells (MANIFESTVAR, one with a parameter and one alone) and
+    # a TI effect on MANIFESTMEANS, so the cells' route and the effect's land
+    # on one sampled slot and must sum.
+    drift = [-0.5 0.3; 0.1 -0.3]
+    df = _adjoint_test_dataframe(
+        drift=drift, jax=drift, cint=[0.0; 0.0;;],
+        diffusion=[0.2 0.0; 0.0 0.15],
+        lambda=[1.0 0.0; 0.0 1.0], jy=[1.0 0.0; 0.0 1.0],
+        manifestmeans=[0.0; 0.0;;], manifestvar=[0.1 0.0; 0.0 0.1],
+        t0var=[1.0 0.0; 0.0 1.0], t0means=[0.0; 0.0;;], pars=[0.0;;],
+        free=Dict(
+            (:DRIFT, 1, 1) => (1, "-log1p_exp(param[1])"),
+            (:JAx, 1, 1) => (1, "-log1p_exp(param[1])"),
+            (:DIFFUSION, 1, 1) => (2, "log1p_exp(param[2])"),
+            (:PARS, 1, 1) => (3, "param[3]"),
+            (:MANIFESTMEANS, 1, 1) => (4, "param[4]"),
+        ),
+        predict=Dict((:CINT, 1, 1) => "0.4 * ctx.tipreds[1] * PARS[1,1]"),
+        update=Dict(
+            (:MANIFESTVAR, 1, 1) => "log1p_exp(ctx.tipreds[1]*PARS[1,1]-2)",
+            (:MANIFESTVAR, 2, 2) => "log1p_exp(ctx.tipreds[1]*0.3)*0.2",
+        ),
+    )
+    sp = ekf_from_data_frame(df, DataFrame(parameter=[4], predictor=[1], coefficient=[5]))
+    times = [0.0, 0.7, 1.9, 0.0, 0.4, 1.3, 2.2, 0.0, 1.1]
+    data = reshape([0.4 * sin(1.3i) for i in 1:(2 * length(times))], 2, :)
+    tipreds = reshape([0.5, 99999.0, 99999.0], 3, 1)
+    obj = ContinuousTimeSEM.ctsem_objective(sp, [1, 4, 8], times, data,
+        zeros(0, length(times)), tipreds, Inf;
+        ti_missing_subject=[2, 3], ti_missing_predictor=[1, 1],
+        ti_missing_parameter=[6, 7], ti_missing_mu=[0.1, -0.2],
+        ti_missing_sigma=[0.6, 0.5])
+    @test obj.subject_objectives[1].tipreds isa Vector{Float64}
+    @test obj.subject_objectives[2].tipreds isa ContinuousTimeSEM.TIMissingRecipe
+    # At the imputation means and away from them.
+    for p in ([0.2, -0.3, 0.15, 0.05, 0.3, 0.1, -0.2],
+              [0.2, -0.3, 0.15, 0.05, 0.3, 1.3, -0.9])
+        g_fwd = ForwardDiff.gradient(obj, p)
+        @test ContinuousTimeSEM.ctsem_adjoint_gradient(obj, p).gradient ≈ g_fwd rtol = 1e-10
+        scores = ContinuousTimeSEM.ctsem_subject_gradients(obj, p).scores
+        @test vec(sum(scores; dims=1)) ≈ g_fwd rtol = 1e-10
+        # The subject that observes the predictor sends nothing to a sampled
+        # value; each sampled value is its own subject's.
+        @test all(iszero, scores[1, 6:7])
+        @test iszero(scores[2, 7]) && iszero(scores[3, 6])
+    end
+    # The Hessian runs the reverse pass at a dual, where the row arrives lifted.
+    p = [0.2, -0.3, 0.15, 0.05, 0.3, 1.3, -0.9]
+    @test ContinuousTimeSEM.ctsem_hessian(obj, p) ≈ ForwardDiff.hessian(obj, p) rtol = 1e-9
+end
+
 @testset "closed form: sampled posterior recovers the imputation prior" begin
     # Every model matrix cell fixed (no free process parameters at all), so
     # the raw parameter vector has exactly one entry: the sampled value

@@ -353,17 +353,25 @@ test_that("a measurement error written in a time dependent predictor keeps the d
   at5 <- ctBackendParMatrices(classed, raw = x, tipreds = 0.5, trim = FALSE)$MANIFESTVAR
   expect_equal(unname(diag(at5)^2 - diag(at0)^2), rep(0.5, 3), tolerance = 1e-10)
   # A subject's missing value of a predictor a cell reads is imputed, and the
-  # cell reads the imputed value; sampling it is refused.
+  # cell reads the imputed value; or sampled, a parameter the cell reads, whose
+  # gradient comes back through the cell. The model has no effect of the
+  # predictor, so without that route only the imputation's own term would.
   gappy <- dt
   gappy$r[gappy$id == 3] <- NA
   imputed <- suppressWarnings(.pu_spec(gappy, mt, poprank = 1,
     popunique = "MANIFESTMEANS"))
   expect_equal(imputed$ti_imputed$subject, 3L)
   expect_true(is.finite(imputed$tipred_data[3, 1]))
-  expect_error(suppressWarnings(.pu_spec(gappy, mt, poprank = 1,
-    popunique = "MANIFESTMEANS", optimcontrol = list(tipredMissing = "sample"))),
-    'reads the time independent predictor "r", whose missing values cannot be sampled',
-    fixed = TRUE)
+  sampled <- suppressWarnings(.pu_spec(gappy, mt, poprank = 1,
+    popunique = "MANIFESTMEANS", optimcontrol = list(tipredMissing = "sample")))
+  slot <- sampled$ti_missing$parameter
+  expect_equal(slot, length(x) + 1L)
+  xs <- c(x, imputed$ti_imputed$mu + 0.3)
+  at <- .pu_eval(sampled, xs)
+  h <- 1e-5
+  e <- replace(numeric(length(xs)), slot, h)
+  fd <- (.pu_eval(sampled, xs + e)$value - .pu_eval(sampled, xs - e)$value) / (2 * h)
+  expect_equal(as.numeric(at$gradient)[slot], fd, tolerance = 1e-6)
   expect_error(suppressWarnings(suppressMessages(ctFit(dt, mt, fit = FALSE,
     backend = "stan"))), "the stan backend does not", fixed = TRUE)
 })
