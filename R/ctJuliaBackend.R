@@ -3185,29 +3185,15 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     call. = FALSE)
 }
 
-# A cell that reads a time independent predictor (`tipreds[j]`, from
-# `ctModelStatesAndPARS()`) reads each subject's value as data, and the reverse
-# pass carries no cotangent to a value read there, so such a predictor's
-# missing values are imputed, never sampled.
-.ctJuliaTIMissingReadCheck <- function(model, cells) {
-  read <- unique(unlist(lapply(as.character(model$pars$param),
-    .ctExpressionIndices, name = "tipreds")))
-  absent <- read[read %in% cells$predictor]
-  if (length(absent)) stop("A cell reads the time independent predictor ",
-    paste0('"', model$TIpredNames[absent], '"', collapse = ", "),
-    ", whose missing values cannot be sampled. Use ",
-    "optimcontrol$tipredMissing = 'impute'.", call. = FALSE)
-  invisible(NULL)
-}
-
 # Missing TI predictor values held at their imputed means (`ti_imputed`), made
 # parameters of the posterior: each cell a raw index past every other, its
 # imputation its prior (`_ctsem_log_prior` in the engine). A spec with nothing
-# imputed comes back unchanged.
+# imputed comes back unchanged. A cell that reads such a predictor reads the
+# sampled value, and the reverse pass carries its derivative back to it
+# (`_ctsem_tipred_scatter!`).
 .ctJuliaTIMissingSampled <- function(spec) {
   cells <- spec$ti_imputed
   if (!NROW(cells)) return(spec)
-  .ctJuliaTIMissingReadCheck(spec$model, cells)
   cells$parameter <- .ctBackendNpar(spec) + seq_len(nrow(cells))
   spec$tipred_data[cbind(cells$subject, cells$predictor)] <- .ctJuliaTIMissingPlaceholder
   spec$ti_missing <- rbind(spec$ti_missing, cells)
@@ -3564,7 +3550,6 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     cells <- .ctJuliaTIMissingSpec(dat, model, tipred_data,
       includeOutcome = tipredMissingIncludeOutcome)
     if (identical(tipredMissing, "sample")) {
-      .ctJuliaTIMissingReadCheck(model, cells)
       ti_missing <- cells
       tipred_data[missing_mask] <- .ctJuliaTIMissingPlaceholder
     } else {

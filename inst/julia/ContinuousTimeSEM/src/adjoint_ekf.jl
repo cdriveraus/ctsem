@@ -1811,19 +1811,19 @@ function _reverse_group!(θ̄::Vector{T}, x̄::Vector{T}, record::CTSEMGroupReco
     # union and the call behind it was not static.
     if record.group == 1
         _reverse_group!(θ̄, x̄, record, sp, aws, sp.predict_transforms,
-            aws.predict_indices, aws.predict_supports)
+            aws.predict_indices, aws.predict_supports, aws.predict_tipred_supports)
     elseif record.group == 2
         _reverse_group!(θ̄, x̄, record, sp, aws, sp.td_transforms,
-            aws.td_indices, aws.td_supports)
+            aws.td_indices, aws.td_supports, aws.td_tipred_supports)
     else
         _reverse_group!(θ̄, x̄, record, sp, aws, sp.update_transforms,
-            aws.update_indices, aws.update_supports)
+            aws.update_indices, aws.update_supports, aws.update_tipred_supports)
     end
     return nothing
 end
 
 function _reverse_group!(θ̄::Vector{T}, x̄::Vector{T}, record::CTSEMGroupRecord{T},
-    sp::EKFParameters, aws, transforms, indices, supports) where {T}
+    sp::EKFParameters, aws, transforms, indices, supports, tipred_supports) where {T}
     isempty(indices) && return nothing
     # `group_scratch` is a persistent full-length buffer whose entries outside
     # this group's relevant set are never written and stay `NaN` for the life
@@ -1840,7 +1840,8 @@ function _reverse_group!(θ̄::Vector{T}, x̄::Vector{T}, record::CTSEMGroupReco
     ctx = CTSEMRowContext(record.state, pars, record.tdpreds, aws.tipreds,
         record.time, record.dt, 1, record.row)
     _ctsem_complex_group_pullback!(θ̄, x̄, transforms, indices, supports, ctx,
-        relevant, aws.dual_context)
+        relevant, aws.dual_context, (supports=tipred_supports, bar=aws.tipreds_bar,
+            sampled=aws.tipred_sampled))
     return nothing
 end
 

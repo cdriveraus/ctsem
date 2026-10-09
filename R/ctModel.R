@@ -173,9 +173,9 @@
 #' independent predictor by name, the subject's value of it -- a study's known
 #' response rounding as \code{MANIFESTVAR = 'rsd + mvar'}, say, with
 #' \code{PARS = c('mvar|1e-10 + 5 * log1p_exp(2 * param)')}; this is julia
-#' only. A subject's missing value of such a predictor is imputed
-#' (\code{optimcontrol$tipredMissing}); it cannot be sampled, since the cell
-#' reads it as data.
+#' only. A subject's missing value of such a predictor is imputed or sampled
+#' as any other (\code{optimcontrol$tipredMissing}), and the cell reads that
+#' value.
 #' Population summaries evaluate the cell at a predictor value of zero, where
 #' they report predictor effects. A
 #' cell cannot reference a manifest variable or the time interval at all.

@@ -41,6 +41,11 @@ mutable struct CTSEMAdjointWorkspace{T,SP,LB,FB,WS,DC}
     predict_supports::Vector{Vector{Int}}
     update_supports::Vector{Vector{Int}}
     td_supports::Vector{Vector{Int}}
+    # The same for the TI predictors each of those transforms reads, which only
+    # a subject whose value of one is sampled needs (`_group_reverse_walk!`).
+    predict_tipred_supports::Vector{Vector{Int}}
+    update_tipred_supports::Vector{Vector{Int}}
+    td_tipred_supports::Vector{Vector{Int}}
     # One entry per mutable position: the `subject_values` indices its regular
     # transform reads. Almost always a single index -- a cell materialised from
     # one raw parameter -- but a cell written as an expression over several
@@ -53,6 +58,10 @@ mutable struct CTSEMAdjointWorkspace{T,SP,LB,FB,WS,DC}
     # context on the way in.
     dual_context::DC
     tipreds::Vector{T}
+    # The subject's TI predictor cotangent, and which of its predictors it
+    # samples; see `_ctsem_tipred_bar_reset!` and `_ctsem_tipred_scatter!`.
+    tipreds_bar::Vector{T}
+    tipred_sampled::Vector{Bool}
     # Persistent working copy of `all_params` used to replay a transform group
     # forward during the reverse pass; see `_ctsem_complex_group_pullback!`.
     # Initialised to `NaN`: only cells in a group's relevant set are ever
@@ -174,9 +183,12 @@ function CTSEMAdjointWorkspace(::Type{T}, sp::EKFParameters, nvalues::Integer,
     theta_bar = zeros(T, length(sp.mutables))
     lyap_buffer = LyapBuffer(T, length(ws.diffusion_state_indices))
 
-    predict_supports = _ctsem_complex_transform_supports(sp.predict_transforms, predict_indices, sp, n, Int(ntdpred))
-    update_supports = _ctsem_complex_transform_supports(sp.update_transforms, update_indices, sp, n, Int(ntdpred))
-    td_supports = _ctsem_complex_transform_supports(sp.td_transforms, td_indices, sp, n, Int(ntdpred))
+    predict_supports, predict_tipred_supports = _ctsem_complex_transform_supports(
+        sp.predict_transforms, predict_indices, sp, n, Int(ntdpred))
+    update_supports, update_tipred_supports = _ctsem_complex_transform_supports(
+        sp.update_transforms, update_indices, sp, n, Int(ntdpred))
+    td_supports, td_tipred_supports = _ctsem_complex_transform_supports(
+        sp.td_transforms, td_indices, sp, n, Int(ntdpred))
     group_relevant = [
         _ctsem_group_relevant(predict_supports, predict_indices),
         _ctsem_group_relevant(td_supports, td_indices),
@@ -206,10 +218,15 @@ function CTSEMAdjointWorkspace(::Type{T}, sp::EKFParameters, nvalues::Integer,
         predict_supports,
         update_supports,
         td_supports,
+        predict_tipred_supports,
+        update_tipred_supports,
+        td_tipred_supports,
         _ctsem_regular_transform_supports(sp, nvalues),
         fill(nan_dual, Int(nvalues)),
         dual_context,
         T[],
+        T[],
+        Bool[],
         group_scratch,
         lyap_buffer,
         theta_bar,
@@ -420,8 +437,9 @@ the two routes share every primitive but differ in where they accumulate.
 
 A sampled (missing) TI predictor value is its subject's: the TI-effect term
 of its cotangent lands on that row through the per-subject
-`_ctsem_parameter_layer!`, and its imputation density's term is added to the
-same row (`_ctsem_prior_scores!`).
+`_ctsem_parameter_layer!`, a cell reading it through `_ctsem_tipred_scatter!`,
+and its imputation density's term is added to the same row
+(`_ctsem_prior_scores!`).
 """
 function ctsem_subject_gradients(objective::CTSEMObjective, values::AbstractVector{T}) where {T}
     subjects = objective.subject_objectives
@@ -490,6 +508,7 @@ function _ctsem_subject_gradient_chunk!(scores::Matrix{T}, totals::Vector{T},
             end
 
             fill!(aws.theta_bar, zero(T))
+            _ctsem_tipred_bar_reset!(aws, subject_objective.tipreds, length(tipred_vec))
             _ctsem_reverse_tape!(tape, subject_objective.params, aws, aws.n, aws.m)
             # The original `tipreds` (recipe or plain vector), not
             # `tipred_vec`: `_ctsem_parameter_layer!` dispatches on its type to
@@ -498,6 +517,7 @@ function _ctsem_subject_gradient_chunk!(scores::Matrix{T}, totals::Vector{T},
                 tape.subject_values, subject_objective.params, aws,
                 subject_objective.tipreds, values)
             _hybrid_scatter!(view(scores, i, :), tape.hyb, subject_objective.params.hybrid)
+            _ctsem_tipred_scatter!(view(scores, i, :), aws, subject_objective.tipreds)
         end
     finally
         aws.defer_frechet = deferred
@@ -572,10 +592,13 @@ function _ctsem_adjoint_chunk!(gradient::Vector{T}, totals::Vector{T},
         end
 
         shared || fill!(aws.theta_bar, zero(T))
+        _ctsem_tipred_bar_reset!(aws, subject_objective.tipreds, length(tipred_vec))
         _ctsem_reverse_tape!(tape, subject_objective.params, aws, aws.n, aws.m)
         # Per subject and straight onto raw positions, so before or after a
-        # shared parameter layer alike (`CTSEMHybrid`).
+        # shared parameter layer alike (`CTSEMHybrid`, a sampled TI predictor
+        # a cell reads).
         _hybrid_scatter!(gradient, tape.hyb, subject_objective.params.hybrid)
+        _ctsem_tipred_scatter!(gradient, aws, subject_objective.tipreds)
         # Kept for the shared parameter layer below, and for the deferred
         # Frechet pass; with either of those enabled every subject sees the
         # same parameter layer, so any subject's values do. The original

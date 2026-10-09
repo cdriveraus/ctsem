@@ -127,28 +127,36 @@ end
 
 """
 A cell may read the subject's time independent predictors (`ctx.tipreds[j]`),
-which are data to it and never recorded, so the support probe hands it this: a
-plain number at whatever index the cell names, without needing to know how
-many predictors the model has. It had an empty vector, and a cell reading a
-predictor failed there.
+so the support probe hands it this: a plain number at whatever index the cell
+names, without needing to know how many predictors the model has, and a record
+of which it read. A predictor is data to the cell unless the subject's value
+of it is sampled (`TIMissingRecipe`), and then the reverse pass needs the
+cell's derivative with respect to it (`_group_reverse_walk!`). It had an empty
+vector, and a cell reading a predictor failed there.
 """
-struct _CTSEMProbePredictors <: AbstractVector{Float64} end
+struct _CTSEMProbePredictors <: AbstractVector{Float64}
+    read::Vector{Int}
+end
+_CTSEMProbePredictors() = _CTSEMProbePredictors(Int[])
 Base.size(::_CTSEMProbePredictors) = (0,)
-Base.getindex(::_CTSEMProbePredictors, i::Int) = 0.17 + 0.003 * i
+function Base.getindex(p::_CTSEMProbePredictors, i::Int)
+    i in p.read || push!(p.read, i)
+    return 0.17 + 0.003 * i
+end
 
 """
     _ctsem_complex_transform_supports(transforms, indices, sp, state_dim, ntdpred)
 
-Return a `Vector{Vector{Int}}` giving, for each state-dependent transform, the
-`all_params` indices it reads.
+For each state-dependent transform, the `all_params` indices it reads and the
+TI predictor indices it reads, as two `Vector{Vector{Int}}`.
 
 The state dependence is handled separately (every complex transform is
 differentiated with respect to the whole state vector, which is short), so
-only the parameter-cell reads need discovering here.
+only the parameter-cell and predictor reads need discovering here.
 """
 function _ctsem_complex_transform_supports(transforms, indices::AbstractVector{Int},
     sp::EKFParameters, state_dim::Int, ntdpred::Int)
-    isempty(indices) && return Vector{Int}[]
+    isempty(indices) && return Vector{Int}[], Vector{Int}[]
     nall = length(sp.mutables)
     # Probe values are distinct and non-degenerate so that an expression like
     # `PARS[1,1] * pars.X` cannot be read-free by accident. Reads are recorded
@@ -157,15 +165,18 @@ function _ctsem_complex_transform_supports(transforms, indices::AbstractVector{I
     pars = ComponentVector(probe, sp.parameter_axis)
     state = reshape(collect(range(0.23, step=0.011, length=state_dim)), state_dim, 1)
     tdpreds = collect(range(0.19, step=0.007, length=ntdpred))
-    ctx = CTSEMRowContext(state, pars, tdpreds, _CTSEMProbePredictors(), 0.5, 0.25,
-        1, 2)
+    predictors = _CTSEMProbePredictors()
+    ctx = CTSEMRowContext(state, pars, tdpreds, predictors, 0.5, 0.25, 1, 2)
     supports = Vector{Vector{Int}}(undef, length(indices))
+    tipred_supports = Vector{Vector{Int}}(undef, length(indices))
     for k in eachindex(indices)
         _reset_recording!(probe)
+        empty!(predictors.read)
         transforms[k](ctx)
         supports[k] = _recorded_indices(probe)
+        tipred_supports[k] = sort(predictors.read)
     end
-    return supports
+    return supports, tipred_supports
 end
 
 ################################################################################
@@ -318,13 +329,50 @@ function _ctsem_ti_pullback!(values_bar::AbstractVector,
     return values_bar
 end
 
+"""
+    _ctsem_tipred_bar_reset!(aws, tipreds, n)
+
+Before a subject's reverse pass: its TI predictor cotangent zeroed, and which
+of its `n` predictors are sampled -- a `TIMissingRecipe`'s cells, the only ones
+whose cotangent `_group_reverse_walk!` computes. A plain row has none.
+"""
+function _ctsem_tipred_bar_reset!(aws, tipreds, n::Integer)
+    resize!(aws.tipreds_bar, n)
+    fill!(aws.tipreds_bar, zero(eltype(aws.tipreds_bar)))
+    resize!(aws.tipred_sampled, n)
+    fill!(aws.tipred_sampled, false)
+    if tipreds isa TIMissingRecipe
+        @inbounds for j in tipreds.predictor_index
+            aws.tipred_sampled[j] = true
+        end
+    end
+    return nothing
+end
+
+"""
+    _ctsem_tipred_scatter!(gradient, aws, tipreds)
+
+After a subject's reverse pass: what cells reading a sampled TI predictor sent
+back to it (`aws.tipreds_bar`), onto that cell's raw parameter. Per subject and
+straight onto raw positions, as `_hybrid_scatter!` does, so a parameter layer
+unwound once for all subjects cannot drop it. An effect's route to the same
+parameter is `_ctsem_ti_pullback!`'s.
+"""
+_ctsem_tipred_scatter!(gradient, aws, tipreds) = gradient
+function _ctsem_tipred_scatter!(gradient, aws, tipreds::TIMissingRecipe)
+    @inbounds for k in eachindex(tipreds.predictor_index)
+        gradient[tipreds.parameter_index[k]] += aws.tipreds_bar[tipreds.predictor_index[k]]
+    end
+    return gradient
+end
+
 ################################################################################
 # Layer 3 pullback
 ################################################################################
 
 """
     _ctsem_complex_group_pullback!(all_params_bar, state_bar, transforms, indices,
-                                   supports, ctx, relevant, dual_ctx)
+                                   supports, ctx, relevant, dual_ctx, ti)
 
 Reverse one group of state-dependent transforms (the `predict`, `td`, or
 `update` group at one row).
@@ -338,7 +386,8 @@ cell an earlier one has already written. For each transform this:
   3. adds `cotangent * ∂f/∂input` to every parameter cell and state entry the
      transform reads (including the written cell itself, which is legitimate:
      a self-referencing expression reads the pre-write value, and step 2 has
-     already cleared the post-write cotangent).
+     already cleared the post-write cotangent), and to every sampled TI
+     predictor it reads (`ti`, see `_group_reverse_walk!`).
 
 Derivatives come from `dual_ctx`, a `ForwardDiff` mirror of `ctx` with a
 single seeded input at a time. One-at-a-time seeding keeps this simple and
@@ -370,7 +419,7 @@ one-effect augmented model 90% of what a gradient allocated, per row.
 function _ctsem_complex_group_pullback!(all_params_bar::AbstractVector,
     state_bar::AbstractVector, transforms::Tuple, indices::AbstractVector{Int},
     supports::AbstractVector{Vector{Int}}, ctx::CTSEMRowContext,
-    relevant::AbstractVector{Int}, dual_ctx)
+    relevant::AbstractVector{Int}, dual_ctx, ti)
     isempty(indices) && return nothing
     nk = length(indices)
     working = getdata(ctx.pars)
@@ -404,7 +453,7 @@ function _ctsem_complex_group_pullback!(all_params_bar::AbstractVector,
     @inbounds _set_dual_value!(dual_ctx, indices[nk], saved[nk])
 
     _group_reverse_walk!(all_params_bar, state_bar, transforms, indices, supports,
-        saved, dual_ctx, dctx, nk)
+        saved, dual_ctx, dctx, ti, nk)
     return nothing
 end
 
@@ -418,12 +467,15 @@ function _group_replay!(written, working, indices, transforms::Tuple, ctx, k::In
 end
 
 @inline _group_reverse_walk!(all_params_bar, state_bar, ::Tuple{}, indices, supports,
-    saved, dual_ctx, dctx, k::Int) = nothing
+    saved, dual_ctx, dctx, ti, k::Int) = nothing
 
 # Transform `k` is the tuple's last element; the walk then steps back to the
-# tuple without it.
+# tuple without it. `ti` is the group's predictor reads (`ti.supports`), the
+# subject's predictor cotangent (`ti.bar`), and which of its predictors are
+# sampled (`ti.sampled`): a read of a sampled one sends the cell's cotangent
+# back to it, where `_ctsem_tipred_scatter!` collects it for the parameter.
 function _group_reverse_walk!(all_params_bar, state_bar, transforms::Tuple, indices,
-    supports, saved, dual_ctx, dctx, k::Int)
+    supports, saved, dual_ctx, dctx, ti, k::Int)
     transform = last(transforms)
     @inbounds begin
         idx = indices[k]
@@ -438,13 +490,18 @@ function _group_reverse_walk!(all_params_bar, state_bar, transforms::Tuple, indi
                 state_bar[s] += cotangent *
                     _dual_state_derivative(dual_ctx, transform, dctx, s)
             end
+            for j in ti.supports[k]
+                ti.sampled[j] || continue
+                ti.bar[j] += cotangent *
+                    _dual_tipred_derivative(dual_ctx, transform, dctx, j)
+            end
         end
         # Step back one transform: undo transform k-1's write so that
         # transform k-1 sees the inputs it actually had.
         k > 1 && _set_dual_value!(dual_ctx, indices[k - 1], saved[k - 1])
     end
     return _group_reverse_walk!(all_params_bar, state_bar, Base.front(transforms),
-        indices, supports, saved, dual_ctx, dctx, k - 1)
+        indices, supports, saved, dual_ctx, dctx, ti, k - 1)
 end
 
 """
@@ -587,3 +644,33 @@ end
     dual_ctx.state[s] = saved
     return derivative
 end
+
+# The derivative with respect to TI predictor `j`, which the row context
+# carries as data -- plain floats on an ordinary gradient, passed through
+# unlifted by `_sync_dual_context!` -- so the row is lifted into the mirror's
+# predictor buffer here, on the one path that needs it: a cell reading a
+# predictor whose value this subject samples. Under `ctsem_hessian` the row
+# arrives lifted already, as that same buffer, and is left as it is.
+@inline function _dual_tipred_derivative(dual_ctx::CTSEMDualContext{D}, transform::F,
+    dctx::CTSEMRowContext, j::Int) where {D,F}
+    lifted = _dual_lift!(dual_ctx.tipreds, dctx.tipreds)
+    saved = lifted[j]
+    lifted[j] = _seed_dual(saved, ForwardDiff.value(saved), true)
+    seeded = CTSEMRowContext(dctx.state, dctx.pars, dctx.tdpreds, lifted, dctx.time,
+        dctx.dt, dctx.subject, dctx.row)
+    derivative = _partial1_as(transform(seeded), D)
+    lifted[j] = saved
+    return derivative
+end
+
+function _dual_lift!(buffer::Vector{D}, x::AbstractVector) where {D<:ForwardDiff.Dual}
+    x === buffer && return buffer
+    resize!(buffer, length(x))
+    @inbounds for i in eachindex(x)
+        buffer[i] = _dual_lift(D, x[i])
+    end
+    return buffer
+end
+@inline _dual_lift(::Type{D}, v::D) where {D<:ForwardDiff.Dual} = v
+@inline _dual_lift(::Type{D}, v::Real) where {D<:ForwardDiff.Dual} =
+    D(v, ForwardDiff.Partials((zero(v),)))
