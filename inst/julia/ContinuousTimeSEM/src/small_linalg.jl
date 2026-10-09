@@ -523,10 +523,58 @@ sweeps, so it is for the dimension of one unit's random effects, not a model's.
 function _ctsem_symeig(A::AbstractMatrix{Float64}; maxsweeps::Integer=60)
     n = size(A, 1)
     a = Matrix{Float64}(undef, n, n)
+    V = Matrix{Float64}(LinearAlgebra.I, n, n)
+    _ctsem_jacobi!(a, V, A, n, maxsweeps)
+    values = [a[i, i] for i in 1:n]
+    order = sortperm(values)
+    return (values=values[order], vectors=V[:, order])
+end
+
+"""Working storage for `_ctsem_symeig!` at one dimension."""
+struct CTSEMSymEigWork
+    a::Matrix{Float64}
+    V::Matrix{Float64}
+    raw::Vector{Float64}
+    order::Vector{Int}
+    values::Vector{Float64}
+    vectors::Matrix{Float64}
+end
+CTSEMSymEigWork(n::Integer) = CTSEMSymEigWork(zeros(n, n), zeros(n, n), zeros(n),
+    zeros(Int, n), zeros(n), zeros(n, n))
+
+"""
+`_ctsem_symeig(A)` into `w`, whose `values` and `vectors` the result names: the
+same rotations and the same order, for a caller that decomposes once per unit.
+"""
+function _ctsem_symeig!(w::CTSEMSymEigWork, A::AbstractMatrix{Float64};
+    maxsweeps::Integer=60)
+    n = size(A, 1)
+    V = w.V
+    fill!(V, 0.0)
+    @inbounds for i in 1:n
+        V[i, i] = 1.0
+    end
+    _ctsem_jacobi!(w.a, V, A, n, maxsweeps)
+    @inbounds for i in 1:n
+        w.raw[i] = w.a[i, i]
+    end
+    sortperm!(w.order, w.raw)
+    @inbounds for i in 1:n
+        w.values[i] = w.raw[w.order[i]]
+        for k in 1:n
+            w.vectors[k, i] = V[k, w.order[i]]
+        end
+    end
+    return (values=w.values, vectors=w.vectors)
+end
+
+# The cyclic Jacobi sweeps both forms run: `a` receives A's symmetric part and
+# is diagonalised in place, `V` (the identity on entry) accumulates the rotations.
+function _ctsem_jacobi!(a::AbstractMatrix{Float64}, V::AbstractMatrix{Float64},
+    A::AbstractMatrix{Float64}, n::Int, maxsweeps::Integer)
     @inbounds for j in 1:n, i in 1:n
         a[i, j] = (A[i, j] + A[j, i]) / 2
     end
-    V = Matrix{Float64}(LinearAlgebra.I, n, n)
     scale = 0.0
     @inbounds for j in 1:n, i in 1:n
         scale += a[i, j]^2
@@ -562,7 +610,5 @@ function _ctsem_symeig(A::AbstractMatrix{Float64}; maxsweeps::Integer=60)
             end
         end
     end
-    values = [a[i, i] for i in 1:n]
-    order = sortperm(values)
-    return (values=values[order], vectors=V[:, order])
+    return nothing
 end
