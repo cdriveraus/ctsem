@@ -42,7 +42,7 @@ ctStanUpdModel <- function(...) .Defunct('ctFitUpdate')
 
 
 
-ctModelStatesAndPARS <- function(ctspec, statenames,tdprednames){ #replace latentName and par references with square bracket refs
+ctModelStatesAndPARS <- function(ctspec, statenames,tdprednames,tiprednames=NULL){ #replace latentName and par references with square bracket refs
   #detect state refs
   # 
   ln <- statenames
@@ -57,6 +57,19 @@ ctModelStatesAndPARS <- function(ctspec, statenames,tdprednames){ #replace laten
     for(li in c(1:length(ln))){
       for(ri in grep(paste0('\\b(',ln[li],')\\b'),ctspec$param)){
         ctspec$param[ri] <- gsub(paste0('\\b(',ln[li],')\\b'),paste0('tdpreds[rowi, ',li,']'),ctspec$param[ri])
+      }
+    }
+  }
+
+  # A time independent predictor named in a cell reads the subject's value of
+  # it: one number per subject, as a time dependent predictor is one per row.
+  # The julia backend evaluates it (`.ctJuliaTDExpression()`); the stan
+  # program has no such reference and ctFit refuses it there.
+  if(length(tiprednames)>0){
+    ln <- tiprednames
+    for(li in c(1:length(ln))){
+      for(ri in grep(paste0('\\b(',ln[li],')\\b'),ctspec$param)){
+        ctspec$param[ri] <- gsub(paste0('\\b(',ln[li],')\\b'),paste0('tipreds[',li,']'),ctspec$param[ri])
       }
     }
   }

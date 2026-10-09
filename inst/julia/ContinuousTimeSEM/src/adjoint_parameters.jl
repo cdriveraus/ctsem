@@ -126,6 +126,17 @@ function _ctsem_regular_transform_supports(sp::EKFParameters, nvalues::Integer)
 end
 
 """
+A cell may read the subject's time independent predictors (`ctx.tipreds[j]`),
+which are data to it and never recorded, so the support probe hands it this: a
+plain number at whatever index the cell names, without needing to know how
+many predictors the model has. It had an empty vector, and a cell reading a
+predictor failed there.
+"""
+struct _CTSEMProbePredictors <: AbstractVector{Float64} end
+Base.size(::_CTSEMProbePredictors) = (0,)
+Base.getindex(::_CTSEMProbePredictors, i::Int) = 0.17 + 0.003 * i
+
+"""
     _ctsem_complex_transform_supports(transforms, indices, sp, state_dim, ntdpred)
 
 Return a `Vector{Vector{Int}}` giving, for each state-dependent transform, the
@@ -146,8 +157,8 @@ function _ctsem_complex_transform_supports(transforms, indices::AbstractVector{I
     pars = ComponentVector(probe, sp.parameter_axis)
     state = reshape(collect(range(0.23, step=0.011, length=state_dim)), state_dim, 1)
     tdpreds = collect(range(0.19, step=0.007, length=ntdpred))
-    tipreds = Float64[]
-    ctx = CTSEMRowContext(state, pars, tdpreds, tipreds, 0.5, 0.25, 1, 2)
+    ctx = CTSEMRowContext(state, pars, tdpreds, _CTSEMProbePredictors(), 0.5, 0.25,
+        1, 2)
     supports = Vector{Vector{Int}}(undef, length(indices))
     for k in eachindex(indices)
         _reset_recording!(probe)
@@ -434,6 +445,8 @@ mutable struct CTSEMDualContext{D,PD,ST,T}
     # The row's TD predictors lifted into `D`, when they arrive as a dual `T`;
     # see `_dual_context_data`.
     tdpreds::Vector{D}
+    # The subject's TI predictors, lifted the same way: a cell can read them.
+    tipreds::Vector{D}
 end
 
 function CTSEMDualContext(::Type{T}, sp::EKFParameters, state_like) where {T}
@@ -444,7 +457,7 @@ function CTSEMDualContext(::Type{T}, sp::EKFParameters, state_like) where {T}
     state = similar(state_like, D)
     fill!(state, zero_dual)
     return CTSEMDualContext{D,typeof(pars),typeof(state),T}(data, pars, state, nothing,
-        T[], T[], D[])
+        T[], T[], D[], D[])
 end
 
 # The row's data -- TD predictors, time, dt -- reach the reverse pass in its
@@ -504,7 +517,7 @@ function _sync_dual_context!(dual_ctx::CTSEMDualContext, ctx::CTSEMRowContext,
     D = eltype(dual_ctx.data)
     dual_ctx.row_context = CTSEMRowContext(dual_ctx.state, dual_ctx.pars,
         _dual_context_data(D, ctx.tdpreds, dual_ctx.tdpreds),
-        ctx.tipreds,
+        _dual_context_data(D, ctx.tipreds, dual_ctx.tipreds),
         _dual_context_data(D, ctx.time), _dual_context_data(D, ctx.dt),
         ctx.subject, ctx.row)
     return dual_ctx

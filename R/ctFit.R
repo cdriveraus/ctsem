@@ -1745,7 +1745,12 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   }
 
   ctm <- ctModel0DRIFT(ctm, ctm$continuoustime) #offset 0 drift
-  ctm$pars <- ctModelStatesAndPARS(ctm$pars,statenames = ctm$latentNames,tdprednames=ctm$TDpredNames) #replace latent states and PARS with state and PAR[] refs, need this early because we rely on [] detection
+  ctm$pars <- ctModelStatesAndPARS(ctm$pars,statenames = ctm$latentNames,tdprednames=ctm$TDpredNames,tiprednames=ctm$TIpredNames) #replace latent states and PARS with state and PAR[] refs, need this early because we rely on [] detection
+  if(any(grepl('tipreds[', ctm$pars$param, fixed=TRUE)) && !backend %in% 'julia') stop(
+    'A cell reads a time independent predictor (',
+    paste(utils::head(unique(ctm$pars$param[grepl('tipreds[', ctm$pars$param, fixed=TRUE)]), 3),
+      collapse=', '), '), which backend="julia" evaluates and the stan backend does not.',
+    call.=FALSE)
 
   # A reduced-rank population covariance, written as a regression of the
   # remaining random effects on a basis of them. Three steps around the
@@ -1982,7 +1987,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
 
   ctm$pars <- rbind(ctm$pars,jl2)
 
-  ctm$pars <- ctModelStatesAndPARS(ctm$pars,statenames = ctm$latentNames,tdprednames=ctm$TDpredNames) #replace any new state and par refs with square bracket refs
+  ctm$pars <- ctModelStatesAndPARS(ctm$pars,statenames = ctm$latentNames,tdprednames=ctm$TDpredNames,tiprednames=ctm$TIpredNames) #replace any new state and par refs with square bracket refs
 
   # The transform text as the model states it, keyed by cell, kept before
   # `ctModelTransformsToNum` replaces it with four numbers recovered from it by

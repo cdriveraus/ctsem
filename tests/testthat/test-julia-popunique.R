@@ -311,6 +311,47 @@ test_that("a measurement error written in a time dependent predictor keeps the d
     m2$pars$col == 1] <- "sqrt(q + mvar1^2 + 0.01 * state[1]^2)"
   options(ctsem.laplace.hybrid = TRUE)
   expect_null(.pu_spec(d, m2, poprank = 1, popunique = "MANIFESTMEANS")$laplace$hybrid)
+
+  # The same rounding read from a time independent predictor: one value per
+  # subject, so exactly the time dependent version's value and gradient, with
+  # the deviations still integrated. A predictor read by a cell must be
+  # observed for everyone, and the stan backend has no such reference.
+  mt <- suppressWarnings(suppressMessages(ctModel(type = "ct",
+    id = "id", manifestNames = c("Y1", "Y2", "Y3"), latentNames = "eta1",
+    TIpredNames = "r", tipredDefault = FALSE,
+    LAMBDA = matrix(c(1, 0.8, 1.2), 3, 1), DRIFT = matrix("drift"),
+    DIFFUSION = matrix("diffusion"),
+    PARS = c("mvar1|1e-10 + 5 * log1p_exp(2 * param)",
+      "mvar2|1e-10 + 5 * log1p_exp(2 * param)",
+      "mvar3|1e-10 + 5 * log1p_exp(2 * param)"),
+    MANIFESTVAR = {
+      e <- matrix("0", 3, 3)
+      diag(e) <- c("sqrt(r + mvar1^2)", "sqrt(r + mvar2^2)", "sqrt(r + mvar3^2)")
+      e
+    },
+    MANIFESTMEANS = matrix(c("mm1", "mm2", "mm3"), 3, 1),
+    T0VAR = matrix(1), T0MEANS = matrix(0), CINT = matrix(0))))
+  mt$pars$indvarying <- mt$pars$param %in% c("drift", "diffusion", "mm1", "mm2", "mm3")
+  dt <- d
+  dt$r <- dt$q
+  tispec <- .pu_spec(dt, mt, poprank = 1, popunique = "MANIFESTMEANS")
+  expect_equal(length(tispec$laplace$hybrid$effect), 3L)
+  expect_equal(.pu_names(tispec), .pu_names(spec))
+  set.seed(17)
+  for (draw in 1:2) {
+    x <- rnorm(length(.pu_names(spec)), 0, 0.3)
+    viatd <- .pu_eval(spec, x)
+    viati <- .pu_eval(tispec, x)
+    expect_equal(viati$value, viatd$value, tolerance = 1e-12)
+    expect_equal(as.numeric(viati$gradient), as.numeric(viatd$gradient),
+      tolerance = 1e-10)
+  }
+  gappy <- dt
+  gappy$r[gappy$id == 3] <- NA
+  expect_error(.pu_spec(gappy, mt, poprank = 1, popunique = "MANIFESTMEANS"),
+    'reads the time independent predictor "r"', fixed = TRUE)
+  expect_error(suppressWarnings(suppressMessages(ctFit(dt, mt, fit = FALSE,
+    backend = "stan"))), "the stan backend does not", fixed = TRUE)
 })
 
 test_that("the gated floor on integrated deviations is the layer's, unit for unit", {

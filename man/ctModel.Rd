@@ -216,9 +216,14 @@ fresh name inside an expression does not declare it, so
 \code{DRIFT = matrix('-exp(dr)*eta1')} needs
 \code{PARS = c('dr')} alongside it. To transform one parameter and nothing
 else the second field is shorter --
-\code{DRIFT = matrix('dr|-exp(param)')}. A cell cannot reference a
-manifest variable, a time-independent predictor or the time interval at
-all; predictor effects are set with the \code{tipreds} field.
+\code{DRIFT = matrix('dr|-exp(param)')}. A cell may also read a time
+independent predictor by name, the subject's value of it -- a study's known
+response rounding as \code{MANIFESTVAR = 'rsd + mvar'}, say, with
+\code{PARS = c('mvar|1e-10 + 5 * log1p_exp(2 * param)')}; this is julia
+only, and every subject's value of such a predictor must be observed. A
+cell cannot reference a manifest variable or the time interval at all.
+Predictor \emph{effects} on a parameter are set with the \code{tipreds}
+field.
 
 Not every simple name in a cell is a parameter name. A latent state or
 time dependent predictor name is a \emph{reference} to it, and any number

@@ -1371,8 +1371,11 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 
 .ctJuliaTDExpression <- function(expression) {
   # ctModelStatesAndPARS emits Stan-style row references. Julia receives the
-  # current row as a vector in CTSEMRowContext instead.
+  # current row as a vector in CTSEMRowContext instead, and the subject's time
+  # independent predictors beside it.
   expression <- gsub("tdpreds\\[rowi\\s*,\\s*([0-9]+)\\]", "ctx.tdpreds[\\1]",
+    expression, perl = TRUE)
+  expression <- gsub("(?<![.\\w])tipreds\\[\\s*([0-9]+)\\s*\\]", "ctx.tipreds[\\1]",
     expression, perl = TRUE)
   expression
 }
@@ -1436,7 +1439,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   if (!is.null(model$modelmats) && !is.null(model$intoverpop)) return(model)
   ctm <- ctModel0DRIFT(model, model$continuoustime)
   ctm$pars <- ctModelStatesAndPARS(
-    ctm$pars, statenames = ctm$latentNames, tdprednames = ctm$TDpredNames
+    ctm$pars, statenames = ctm$latentNames, tdprednames = ctm$TDpredNames,
+    tiprednames = ctm$TIpredNames
   )
   jacobian <- try(ctJacobian(ctm), silent = TRUE)
   if (inherits(jacobian, "try-error")) jacobian <- ctJacobian(ctm, simplify = FALSE)
@@ -1471,7 +1475,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     }
   }
   ctm$pars <- ctModelStatesAndPARS(
-    ctm$pars, statenames = ctm$latentNames, tdprednames = ctm$TDpredNames
+    ctm$pars, statenames = ctm$latentNames, tdprednames = ctm$TDpredNames,
+    tiprednames = ctm$TIpredNames
   )
   T0VARredundancies(ctm)
 }
@@ -2623,7 +2628,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   expanded <- if (prepared_augmentation) model else {
     prepared <- ctModel0DRIFT(model, model$continuoustime)
     prepared$pars <- ctModelStatesAndPARS(prepared$pars,
-      statenames = prepared$latentNames, tdprednames = prepared$TDpredNames)
+      statenames = prepared$latentNames, tdprednames = prepared$TDpredNames,
+      tiprednames = prepared$TIpredNames)
     .ctModelIntOverPop(prepared)
   }
   augmented_indices <- as.integer(expanded$intoverpopindvaryingindex)
@@ -3387,6 +3393,21 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # supported yet: sampling a missing predictor value needs
   # `gradient_method='forward'`, which the Laplace inner solve and the joint
   # sampler do not (yet) offer an equivalent for.
+  # A cell that reads a time independent predictor (`tipreds[j]`, from
+  # `ctModelStatesAndPARS()`) reads each subject's value of it as data: a
+  # missing value has nothing to be sampled through there, and the placeholder
+  # would be read as the value.
+  read <- regmatches(as.character(model$pars$param),
+    gregexpr("tipreds\\[([0-9]+)\\]", as.character(model$pars$param)))
+  read <- sort(unique(as.integer(gsub("\\D", "", unlist(read)))))
+  if (length(read) && model$n.TIpred > 0) {
+    absent <- colSums(is.na(.ctJuliaTIDataAllowMissing(dat, model)[, read,
+      drop = FALSE])) > 0
+    if (any(absent)) stop("A cell reads the time independent predictor ",
+      paste0('"', model$TIpredNames[read[absent]], '"', collapse = ", "),
+      ", which is missing for some subjects. A predictor read by a cell must ",
+      "be observed for every subject.", call. = FALSE)
+  }
   ti_missing <- NULL
   if (!isTRUE(optimize) && model$n.TIpred > 0) {
     raw_tipred <- .ctJuliaTIDataAllowMissing(dat, model)
