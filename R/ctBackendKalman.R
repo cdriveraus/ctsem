@@ -291,7 +291,7 @@
   # `nsubsteps = 'auto'` back to the maxtimestep rule, so every prediction that
   # selected subjects or interpolated a grid -- ctPredict()'s defaults do both
   # -- was integrated more coarsely than the fit.
-  prepared <- .ctBackendAsModel(.ctJuliaCarrySubsteps(.ctJuliaPrepare(dat, model,
+  prepared <- .ctBackendAsModel(.ctJuliaCarryFit(.ctJuliaPrepare(dat, model,
     project = spec$project, intoverpop = .ctBackendIntOverPop(spec),
     laplacecontrol = spec$laplace$inner), spec, .ctFitRawEstimate(fit)))
   if (withhold) attr(prepared, "reportManifest") <- reported
@@ -683,20 +683,6 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
       "which generation draws from the population. Use effects = ",
       "'population', or refit with intoverpop = 'laplace'.", call. = FALSE)
   }
-  # `ctsem_generate` (and `ctsem_generate_states` below it) pass each
-  # subject's `tipreds` straight to the extended Kalman filter without the
-  # `TIMissingRecipe` substitution the adjoint/gradient path performs for a
-  # sampled (missing) TI predictor value (see `_ctsem_subject_gradient_chunk!`
-  # in adjoint.jl) -- so a subject carrying one dispatches to no matching
-  # `_extended_kalman_filter_continuous!` method and fails with a raw Julia
-  # `MethodError` naming an internal workspace type, not this model. Caught
-  # here rather than left to surface that way.
-  if (!is.null(spec$ti_missing) && nrow(spec$ti_missing)) {
-    stop("ctGenerateFromFit()/ctPostPredict() are not available for a fit ",
-      "with a sampled (missing) TI predictor value: the engine's generate ",
-      "routine does not yet substitute the sampled value the way the ",
-      "gradient does. See fit$model_spec$ti_missing.", call. = FALSE)
-  }
   model <- .ctFitModelObject(fit)
   manifestNames <- model$manifestNames
   nmanifest <- length(manifestNames)
@@ -1033,6 +1019,6 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
   # `nsubsteps = 'auto'` is a count per fitted row, and goes only with those
   # rows: ctPredictTIP()'s pseudo-subjects are none of them.
   prepared$priors <- spec$priors
-  fit$model_spec <- .ctJuliaCarrySubsteps(prepared, spec, .ctFitRawEstimate(fit))
+  fit$model_spec <- .ctJuliaCarryFit(prepared, spec, .ctFitRawEstimate(fit))
   fit
 }

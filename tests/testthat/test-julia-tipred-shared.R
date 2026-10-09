@@ -149,14 +149,14 @@ test_that('a fixed effect claims no coefficient, and is fitted as a known offset
     expect_equal(a$value, b$value, tolerance = 1e-12)
     expect_equal(as.numeric(a$gradient), as.numeric(b$gradient), tolerance = 1e-10)
   }
-  # With some subjects' age missing, a sampled fit draws each as a parameter
-  # (augmented route only), and the fixed effect's product with it enters the
-  # gradient through the predictor: the adjoint against forward mode.
+  # With some subjects' age missing, a sampled fit draws each as a parameter,
+  # and the fixed effect's product with it enters the gradient through the
+  # predictor: the adjoint against forward mode.
   gappy <- d
   gappy$age[gappy$id %in% 1:4] <- NA
-  gappyspec <- suppressWarnings(suppressMessages(ctFit(dat = gappy,
-    model = fixedmodel, fit = FALSE, backend = 'julia', optimize = FALSE,
-    intoverpop = 'augmented')))
+  gappyspec <- ctsem:::.ctJuliaTIMissingSampled(suppressWarnings(
+    suppressMessages(ctFit(dat = gappy, model = fixedmodel, fit = FALSE,
+      backend = 'julia', optimize = FALSE, intoverpop = 'augmented'))))
   expect_gt(nrow(as.data.frame(gappyspec$ti_missing)), 0L)
   x <- rep(0.1, ctsem:::.ctBackendNpar(gappyspec))
   x[1:2] <- c(0.3, -0.2)

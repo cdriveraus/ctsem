@@ -80,9 +80,7 @@ handled: integrated out of the likelihood, or sampled with everything else.
 
 \code{'auto'}, the default, integrates them out when optimizing, as
 \code{TRUE} does, and samples them (\code{'none'}) when
-\code{optimize=FALSE} -- except where TI predictor values are missing and
-the augmented route is exact for the model, since only it samples missing
-predictors.
+\code{optimize=FALSE}.
 
 \code{TRUE} integrates them out by whichever method suits the model:
 \code{'augmented'} where every individual difference shifts a mean

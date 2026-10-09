@@ -143,6 +143,28 @@ Two methods, dispatched on the *stored* type, not a runtime flag:
 
 @inline function _ctsem_tipred_vector(spec::TIMissingRecipe, p::AbstractVector{T}) where {T}
     buffer = Vector{T}(undef, length(spec.base))
+    return _ctsem_tipred_fill!(buffer, spec, p)
+end
+
+"""
+    _ctsem_tipred_fill!(buffer, tipreds, p)
+
+`_ctsem_tipred_vector` into a workspace's own row, `buffer` (resized), for the
+passes that copy the row there anyway for the group replay to read: returns
+the row to hand the filter -- the stored row itself when nothing is sampled,
+so the filter sees the type it always has, and `buffer` otherwise. No
+allocation either way.
+"""
+@inline function _ctsem_tipred_fill!(buffer::AbstractVector, tipreds::AbstractVector,
+    p::AbstractVector)
+    resize!(buffer, length(tipreds))
+    copyto!(buffer, tipreds)
+    return tipreds
+end
+
+@inline function _ctsem_tipred_fill!(buffer::AbstractVector, spec::TIMissingRecipe,
+    p::AbstractVector)
+    resize!(buffer, length(spec.base))
     copyto!(buffer, spec.base)
     @inbounds for k in eachindex(spec.predictor_index)
         buffer[spec.predictor_index[k]] = p[spec.parameter_index[k]]

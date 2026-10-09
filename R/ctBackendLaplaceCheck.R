@@ -464,7 +464,7 @@ print.ctLaplaceCheck <- function(x, ...) {
   # Sampled values for missing TI-predictor cells: one parameter per cell, so
   # the name says which subject's which predictor. The subject label is the
   # user's own id where the spec still carries the data (`ti_missing$subject`
-  # indexes subjects in first-appearance order, as `.ctJuliaTIData()` builds
+  # indexes subjects in first-appearance order, as `.ctJuliaTIDataAllowMissing()` builds
   # them), and the position otherwise.
   ti_missing <- spec$ti_missing
   if (!is.null(ti_missing) && length(ti_missing) && nrow(ti_missing)) {

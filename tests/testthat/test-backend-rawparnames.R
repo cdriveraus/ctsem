@@ -110,8 +110,9 @@ test_that("a sampled missing TI-predictor value names its predictor and subject"
   model$pars$grp_effect[model$pars$param == "t0m"] <- TRUE
   data <- data.frame(id = rep(1:4, each = 3), time = rep(0:2, 4), Y1 = 0,
     grp = rep(c(-1, 2, NA, 0.5), each = 3))
-  spec <- .rawnames_prepare(data, model, optimize = FALSE,
-    intoverpop = "augmented")
+  # Imputed when prepared, sampled once a sample makes it a parameter.
+  spec <- ctsem:::.ctJuliaTIMissingSampled(.rawnames_prepare(data, model,
+    optimize = FALSE, intoverpop = "augmented"))
   expect_equal(nrow(spec$ti_missing), 1L)
   names <- .rawnames_of(spec)
   expect_false(any(grepl("^raw\\[", names)))

@@ -25,7 +25,12 @@ expmGetSubsets <- function(m){
 # Builds the prepared data list (historically "standata"). Shared: ctFit runs it
 # before backend dispatch and passes the result to the julia engine as
 # prepared_data. Do not delete with stan.
-.ctPrepareData <- function(ctm, datalong,optimize,sameInitialTimes=FALSE){
+# `tipredMissing`: what becomes of a missing TI predictor value -- 'impute' (from
+# the other variables), 'sample' (stan's 99999 sentinel, a parameter of the
+# model) or 'leave' (the sentinel, silently: the julia backend reads the
+# missing cells from the data and handles them itself).
+.ctPrepareData <- function(ctm, datalong,optimize,sameInitialTimes=FALSE,
+  tipredMissing = if (optimize) 'impute' else 'sample'){
   
   
   nsubjects <- length(unique(datalong[, ctm$subjectIDname])) 
@@ -95,11 +100,11 @@ expmGetSubsets <- function(m){
       #count and the affected predictors, rather than one per subject.
       nati <- sum(is.na(tipreds))
       whichti <- paste0(colnames(tipreds)[apply(is.na(tipreds),2,any)],collapse=', ')
-      if(!optimize){
-        warning(paste0("NA's in TIpreds (",nati,' in ',whichti,') - sampling them.'),call.=FALSE)
+      if(tipredMissing %in% c('sample','leave')){
+        if(identical(tipredMissing,'sample')) warning(paste0("NA's in TIpreds (",nati,' in ',whichti,') - sampling them.'),call.=FALSE)
         tipreds[is.na(tipreds)] = 99999
       }
-      if(optimize){
+      if(identical(tipredMissing,'impute')){
         warning(paste0("NA's in TIpreds (",nati,' in ',whichti,
           ') - imputed from the other variables to allow optimization -- TIpred effect estimates may be overly confident.'),call.=FALSE)
         # tipreds[is.na(tipreds)] = 0

@@ -223,6 +223,11 @@
     inert = function(v) !isTRUE(v),
     msg = paste0("forces the julia engine's progress line on or off, and the ",
       "stan optimizer does not draw one. Use verbose=1")),
+  tipredMissing = list(only = 'julia',
+    inert = function(v) identical(v, 'auto'),
+    msg = paste0("chooses whether julia imputes or samples missing TI ",
+      "predictors; stan imputes them when optimizing and samples them when ",
+      "sampling. Drop it")),
   tipredMissingIncludeOutcome = list(only = 'julia',
     inert = function(v) isTRUE(v),
     msg = paste0("chooses whether the outcome informs julia's imputation of ",
@@ -648,9 +653,7 @@ T0VARredundancies <- function(ctm) {
 #'
 #' \code{'auto'}, the default, integrates them out when optimizing, as
 #' \code{TRUE} does, and samples them (\code{'none'}) when
-#' \code{optimize=FALSE} -- except where TI predictor values are missing and
-#' the augmented route is exact for the model, since only it samples missing
-#' predictors.
+#' \code{optimize=FALSE}.
 #'
 #' \code{TRUE} integrates them out by whichever method suits the model:
 #' \code{'augmented'} where every individual difference shifts a mean
@@ -1578,9 +1581,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
       # An outer level resolves to 'laplace' silently, as it always has: there
       # is one route for that model, not a choice between two.
       auto <- .ctIntOverPopAuto(ctm, backend = backend, optimize = optimize,
-        intoverstates = intoverstates,
-        timissing = length(ctm$TIpredNames) > 0L &&
-          anyNA(datalong[, ctm$TIpredNames, drop = FALSE]))
+        intoverstates = intoverstates)
       intoverpopmethod <- auto$route
       intoverpopreason <- auto$reason
       intoverpop <- identical(auto$route, 'augmented')
@@ -2296,7 +2297,8 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   ctm$recompile <- recompile
 
 
-  standata <- .ctPrepareData(ctm,datalong,optimize=optimize, sameInitialTimes=sameInitialTimes) #bit slow
+  standata <- .ctPrepareData(ctm,datalong,optimize=optimize, sameInitialTimes=sameInitialTimes, #bit slow
+    tipredMissing = if (identical(backend, 'julia')) 'leave' else if (optimize) 'impute' else 'sample')
   standata$verbose=as.integer(verbose)
   standata$savesubjectmatrices=as.integer(savesubjectmatrices)
   standata$gendata=as.integer(gendata)

@@ -338,9 +338,7 @@ function ctsem_adjoint_gradient(objective::CTSEMObjective, values::AbstractVecto
     # (`_ctsem_tipred_vector`), and `_ctsem_parameter_layer!` dispatches
     # `_ctsem_ti_pullback!` on the recipe to add the product-rule term for the
     # TI effect(s) that read it (adjoint_parameters.jl). The imputation
-    # log-density's own contribution -- `_ctsem_ti_missing_loglik`, which
-    # has no per-subject home at all -- is added below, exactly like the
-    # prior.
+    # log-density's own contribution is part of the prior, added below.
     subjects = objective.subject_objectives
     nsubjects = length(subjects)
     nchunks = _ctsem_nchunks(nsubjects)
@@ -383,14 +381,10 @@ function ctsem_adjoint_gradient(objective::CTSEMObjective, values::AbstractVecto
         end
     end
     # The prior is a closed-form function of the raw parameters alone, so it is
-    # added once here rather than inside a chunk. The imputation log-density
-    # for a sampled TI predictor value is the same kind of term -- a function
-    # of the raw parameter vector alone, no per-subject state -- so it is
-    # added the same way, once, rather than folded into any subject's chunk.
+    # added once here rather than inside a chunk; it includes the imputation
+    # density of a sampled TI predictor value.
     total += _ctsem_log_prior(objective, values)
     _ctsem_log_prior_gradient!(gradient, objective, values)
-    total += _ctsem_ti_missing_loglik(objective, values)
-    _ctsem_ti_missing_loglik_gradient!(gradient, objective, values)
     return (value=total, gradient=gradient)
 end
 
@@ -420,24 +414,12 @@ reverse pass:
 `test_subject_gradients.jl` asserts that -- which is the natural check, since
 the two routes share every primitive but differ in where they accumulate.
 
-Refuses a model with a sampled (missing) TI predictor value: the TI-effect
-term of such a cell's cotangent already lands correctly on the right
-subject's row (it goes through the same per-subject `_ctsem_parameter_layer!`
-this function already runs), but the imputation log-density's own
-contribution (`_ctsem_ti_missing_loglik_gradient!`) is a function of the raw
-parameter vector alone -- `CTSEMObjective` does not retain which subject each
-sampled cell belongs to, only `ti_missing_parameter`/`mu`/`sigma` -- so there
-is no correct row to add it to here the way `ctsem_adjoint_gradient` adds it
-once, globally. Producing scores short of that term would be quietly wrong
-rather than short by an error, so this refuses instead.
+A sampled (missing) TI predictor value is its subject's: the TI-effect term
+of its cotangent lands on that row through the per-subject
+`_ctsem_parameter_layer!`, and its imputation density's term is added to the
+same row (`_ctsem_prior_scores!`).
 """
 function ctsem_subject_gradients(objective::CTSEMObjective, values::AbstractVector{T}) where {T}
-    isempty(objective.ti_missing_parameter) || throw(ArgumentError(
-        "ctsem_subject_gradients does not yet support a sampled (missing) " *
-        "TI predictor value: the imputation log-density's gradient " *
-        "contribution has no single subject's row to land on. Use " *
-        "ctsem_adjoint_gradient (or gradient_method=:forward, which does " *
-        "not build per-subject scores at all) for a model like this one."))
     subjects = objective.subject_objectives
     nsubjects = length(subjects)
     npars = length(values)
@@ -459,16 +441,7 @@ function ctsem_subject_gradients(objective::CTSEMObjective, values::AbstractVect
         valid[c] || return (value=badvalue[c], scores=fill(T(NaN), nsubjects, npars))
     end
 
-    # Each subject's row carries 1/nsubjects of the prior, which is what the R
-    # side's `scorecalc()` does for the Stan backend (it sets
-    # `standata$priormod = 1/nsubjects` before taking per-subject gradients).
-    # The rows then still sum to the full posterior gradient.
-    if !isempty(objective.prior_index) && nsubjects > 0
-        share = 1 / nsubjects
-        @inbounds for i in 1:nsubjects
-            _ctsem_log_prior_gradient!(view(scores, i, :), objective, values, share)
-        end
-    end
+    _ctsem_prior_scores!(scores, objective, values)
     return (value=sum(totals) + _ctsem_log_prior(objective, values), scores=scores)
 end
 
@@ -494,9 +467,7 @@ function _ctsem_subject_gradient_chunk!(scores::Matrix{T}, totals::Vector{T},
             # `TIMissingRecipe` subject. The forward pass and the group replay
             # inside the reverse pass (`aws.tipreds`, read via `ctx.tipreds`)
             # must see the same row `values` produced, not the recipe itself.
-            tipred_vec = _ctsem_tipred_vector(subject_objective.tipreds, values)
-            resize!(aws.tipreds, length(tipred_vec))
-            copyto!(aws.tipreds, tipred_vec)
+            tipred_vec = _ctsem_tipred_fill!(aws.tipreds, subject_objective.tipreds, values)
             aws.frechet_count = 0
 
             loglik = _ekf_run(ws, subject_objective, values, tipred_vec, tape)
@@ -566,9 +537,7 @@ function _ctsem_adjoint_chunk!(gradient::Vector{T}, totals::Vector{T},
         # See the matching comment in `_ctsem_subject_gradient_chunk!`: the
         # forward pass and the group replay need the concrete numeric row, not
         # the (possibly `TIMissingRecipe`) stored one.
-        tipred_vec = _ctsem_tipred_vector(subject_objective.tipreds, values)
-        resize!(aws.tipreds, length(tipred_vec))
-        copyto!(aws.tipreds, tipred_vec)
+        tipred_vec = _ctsem_tipred_fill!(aws.tipreds, subject_objective.tipreds, values)
 
         loglik = _ekf_run(ws, subject_objective, values, tipred_vec, tape)
         # _finite_deep, not isfinite: under ctsem_hessian this runs at Dual and

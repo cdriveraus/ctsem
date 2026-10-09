@@ -2956,36 +2956,10 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     random_effects = do.call(rbind, covariance_rows), rewritten_cells = rewritten)
 }
 
-.ctJuliaTIData <- function(dat, model) {
-  subject_ids <- unique(dat[[model$subjectIDname]])
-  if (!model$n.TIpred) return(matrix(numeric(), nrow = length(subject_ids), ncol = 0L))
-  values <- matrix(NA_real_, nrow = length(subject_ids), ncol = model$n.TIpred,
-    dimnames = list(NULL, model$TIpredNames))
-  for (i in seq_along(subject_ids)) {
-    rows <- dat[[model$subjectIDname]] == subject_ids[i]
-    subject_values <- as.matrix(dat[rows, model$TIpredNames, drop = FALSE])
-    if (anyNA(subject_values)) {
-      stop("Julia backend currently requires complete TI predictors; missing values must be handled before fitting.", call. = FALSE)
-    }
-    # Constancy within subject is not re-tested here: `.ctJuliaPrepare` calls
-    # `.ctJuliaValidateTIConstancy` on the same frame first, and unlike this it
-    # runs on the prepared-data path too. What is left is the completeness
-    # check above, which that one deliberately does not make -- it ignores NAs
-    # so that a partly-recorded predictor is reported as missing rather than as
-    # varying.
-    values[i, ] <- subject_values[1L, ]
-  }
-  values
-}
-
-# A subject-level TI predictor matrix that leaves missingness as `NA` rather
-# than erroring. `.ctJuliaTIData()` above keeps erroring for every other
-# caller -- this is a separate function rather than a changed one, so that
-# nothing about the existing (non-sampling) callers changes.
-#
-# Used only by the sampling path's imputation model (see
-# `.ctJuliaTIMissingSpec` below), which needs to know *which* cells are
-# missing, not merely that some are.
+# The subject-level TI predictor matrix, a subject's first observed value of
+# each predictor, and `NA` where a subject has none: what is missing is read
+# here, from the data, and handled by `.ctJuliaPrepare()` (imputed or
+# sampled). Constancy within subject is `.ctJuliaValidateTIConstancy()`'s.
 .ctJuliaTIDataAllowMissing <- function(dat, model) {
   subject_ids <- unique(dat[[model$subjectIDname]])
   if (!model$n.TIpred) return(matrix(numeric(), nrow = length(subject_ids), ncol = 0L))
@@ -3142,6 +3116,15 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   rows <- list()
   for (j in seq_len(model$n.TIpred)) {
     if (!any(missing_mask[, j])) next
+    # Fewer than two observed values leave nothing to impute from: `NA` here,
+    # which a rebuild fills from the fit it was rebuilt from
+    # (`.ctJuliaCarryTIMissing()`) and anything else refuses
+    # (`.ctJuliaTIMissingCheck()`).
+    if (sum(!missing_mask[, j]) < 2L) {
+      rows[[length(rows) + 1L]] <- data.frame(subject = which(missing_mask[, j]),
+        predictor = as.integer(j), mu = NA_real_, sigma = NA_real_)
+      next
+    }
     others <- if (model$n.TIpred > 1L) raw_tipred[, -j, drop = FALSE] else
       matrix(numeric(), nrow(raw_tipred), 0L)
     imputation <- .ctJuliaTIImputationFit(model$TIpredNames[j], raw_tipred[, j],
@@ -3157,6 +3140,161 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   }
   if (!length(rows)) return(empty)
   do.call(rbind, rows)
+}
+
+# `optimcontrol$tipredMissing`, or `control$tipredMissing` for a sample:
+# 'impute' holds a missing TI predictor value at its imputed mean, 'sample'
+# makes it a parameter with its imputation as prior, and 'auto' imputes when
+# optimizing and samples when sampling.
+.ctJuliaTIMissingRequest <- function(x, name = "optimcontrol$tipredMissing") {
+  if (is.null(x)) return("auto")
+  if (!is.character(x) || length(x) != 1L || !x %in% c("auto", "impute", "sample")) {
+    stop(name, " must be 'auto', 'impute' or 'sample'.", call. = FALSE)
+  }
+  x
+}
+
+# The cells, imputed or sampled, as one frame of `subject` and `predictor`.
+.ctJuliaTIMissingCells <- function(spec) {
+  cols <- c("subject", "predictor", "mu", "sigma")
+  rbind(if (NROW(spec$ti_imputed)) spec$ti_imputed[, cols, drop = FALSE],
+    if (NROW(spec$ti_missing)) spec$ti_missing[, cols, drop = FALSE])
+}
+
+# A predictor observed for too few subjects to be imputed, refused by name.
+.ctJuliaTIMissingCheck <- function(spec) {
+  cells <- .ctJuliaTIMissingCells(spec)
+  if (!NROW(cells) || !anyNA(cells$mu)) return(invisible(spec))
+  names <- spec$model$TIpredNames[sort(unique(cells$predictor[is.na(cells$mu)]))]
+  stop("The TI predictor ", paste0('"', names, '"', collapse = ", "),
+    " is observed for fewer than two subjects, so its missing values cannot ",
+    "be imputed or sampled. Drop it, or supply its values.", call. = FALSE)
+}
+
+# Once per fit, what became of the missing values.
+.ctJuliaTIMissingWarn <- function(spec, sampled, optimize) {
+  cells <- .ctJuliaTIMissingCells(spec)
+  if (!NROW(cells)) return(invisible(NULL))
+  which <- paste(spec$model$TIpredNames[sort(unique(cells$predictor))], collapse = ", ")
+  warning("NA's in TIpreds (", nrow(cells), " in ", which, ") - ",
+    if (!sampled) paste0("imputed from the other variables -- TIpred effect ",
+      "estimates may be overly confident; optimcontrol$tipredMissing = ",
+      "'sample' samples them.")
+    else if (isTRUE(optimize)) "estimated as parameters, with their imputation from the other variables as prior."
+    else "sampled, with their imputation from the other variables as prior.",
+    call. = FALSE)
+}
+
+# A cell that reads a time independent predictor (`tipreds[j]`, from
+# `ctModelStatesAndPARS()`) reads each subject's value as data, and the reverse
+# pass carries no cotangent to a value read there, so such a predictor's
+# missing values are imputed, never sampled.
+.ctJuliaTIMissingReadCheck <- function(model, cells) {
+  param <- as.character(model$pars$param)
+  read <- regmatches(param, gregexpr("tipreds\\[([0-9]+)\\]", param))
+  read <- sort(unique(as.integer(gsub("\\D", "", unlist(read)))))
+  absent <- read[read %in% cells$predictor]
+  if (length(absent)) stop("A cell reads the time independent predictor ",
+    paste0('"', model$TIpredNames[absent], '"', collapse = ", "),
+    ", whose missing values cannot be sampled. Use ",
+    "optimcontrol$tipredMissing = 'impute'.", call. = FALSE)
+  invisible(NULL)
+}
+
+# Missing TI predictor values held at their imputed means (`ti_imputed`), made
+# parameters of the posterior: each cell a raw index past every other, its
+# imputation its prior (`_ctsem_log_prior` in the engine). A spec with nothing
+# imputed comes back unchanged.
+.ctJuliaTIMissingSampled <- function(spec) {
+  cells <- spec$ti_imputed
+  if (!NROW(cells)) return(spec)
+  .ctJuliaTIMissingReadCheck(spec$model, cells)
+  cells$parameter <- .ctBackendNpar(spec) + seq_len(nrow(cells))
+  spec$tipred_data[cbind(cells$subject, cells$predictor)] <- .ctJuliaTIMissingPlaceholder
+  spec$ti_missing <- rbind(spec$ti_missing, cells)
+  spec["ti_imputed"] <- list(NULL)
+  spec
+}
+
+# Whether a sample of `fit` samples its missing TI predictor values, from the
+# fit's own setting and `control$tipredMissing`. A fit that estimated them as
+# parameters cannot be sampled with them imputed.
+.ctJuliaTIMissingSamples <- function(spec, requested = NULL) {
+  request <- if (is.null(requested)) .ctJuliaTIMissingRequest(spec$tipredMissing) else
+    .ctJuliaTIMissingRequest(requested, "control$tipredMissing")
+  if (identical(request, "impute") && NROW(spec$ti_missing)) {
+    stop("control$tipredMissing = 'impute': this fit estimated its missing TI ",
+      "predictor values as parameters (optimcontrol$tipredMissing = 'sample'). ",
+      "Refit with 'impute' to hold them at imputed values.", call. = FALSE)
+  }
+  !identical(request, "impute")
+}
+
+# A fit about to be sampled, with its imputed TI predictor values made
+# parameters: the estimate gains the imputed means, and the Hessian the cells'
+# prior curvature, which is all an imputed fit knows of them.
+.ctJuliaTIMissingSampleFit <- function(fit) {
+  cells <- fit$model_spec$ti_imputed
+  if (!NROW(cells)) return(fit)
+  npar <- length(fit$estimate$raw)
+  if (npar != .ctBackendNpar(fit$model_spec)) {
+    stop("The fit's estimate does not match its specification.", call. = FALSE)
+  }
+  fit$model_spec <- .ctJuliaTIMissingSampled(fit$model_spec)
+  fit$estimate$raw <- c(as.numeric(fit$estimate$raw), cells$mu)
+  H <- fit$uncertainty$hessian
+  if (!is.null(H)) {
+    k <- nrow(cells)
+    out <- matrix(0, npar + k, npar + k)
+    out[seq_len(npar), seq_len(npar)] <- H
+    out[cbind(npar + seq_len(k), npar + seq_len(k))] <- -1 / cells$sigma^2
+    fit$uncertainty$hessian <- out
+  }
+  fit
+}
+
+# The fit's TI predictor values, carried onto `spec`, a rebuild over its
+# subjects or some of them, where `spec` is missing them too: a value the fit
+# imputed is the value it imputed, and one it sampled is the same raw
+# parameter, so the fit's raw vectors apply unchanged. A subject the fit did
+# not have keeps what `spec` made of it.
+.ctJuliaCarryTIMissing <- function(spec, fitted) {
+  spec$tipredMissing <- fitted$tipredMissing
+  own <- spec$ti_imputed
+  if (NROW(own)) {
+    idname <- spec$model$subjectIDname
+    newids <- as.character(unique(spec$data[[idname]]))
+    oldids <- as.character(unique(fitted$data[[idname]]))
+    key <- function(cells, ids) paste(ids[cells$subject], cells$predictor, sep = "\r")
+    ownkey <- key(own, newids)
+    if (NROW(fitted$ti_imputed)) {
+      at <- match(ownkey, key(fitted$ti_imputed, oldids))
+      hit <- !is.na(at)
+      own$mu[hit] <- fitted$ti_imputed$mu[at[hit]]
+      own$sigma[hit] <- fitted$ti_imputed$sigma[at[hit]]
+      spec$tipred_data[cbind(own$subject, own$predictor)[hit, , drop = FALSE]] <- own$mu[hit]
+    }
+    if (NROW(fitted$ti_missing)) {
+      at <- match(ownkey, key(fitted$ti_missing, oldids))
+      hit <- !is.na(at)
+      if (any(hit)) {
+        cells <- fitted$ti_missing[at[hit], , drop = FALSE]
+        cells$subject <- own$subject[hit]
+        spec$tipred_data[cbind(cells$subject, cells$predictor)] <- .ctJuliaTIMissingPlaceholder
+        spec$ti_missing <- rbind(spec$ti_missing, cells)
+        own <- own[!hit, , drop = FALSE]
+      }
+    }
+    spec["ti_imputed"] <- list(if (NROW(own)) own)
+  }
+  .ctJuliaTIMissingCheck(spec)
+  spec
+}
+
+# What a rebuild over other rows takes from the fit it was rebuilt from: its TI
+# predictor values where they were missing, then its integration step.
+.ctJuliaCarryFit <- function(spec, fitted, values) {
+  .ctJuliaCarrySubsteps(.ctJuliaCarryTIMissing(spec, fitted), fitted, values)
 }
 
 .ctJuliaValidateTIConstancy <- function(dat, model) {
@@ -3359,8 +3497,12 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # specification from a fit and neither of which said which kind of fit it was.
 # Making it mandatory turns that from a silent wrong answer into a stop at the
 # call site.
+# `tipredMissing` is what this specification does with a missing TI predictor
+# value: 'impute' holds it at its imputed mean, 'sample' makes it a parameter.
+# Imputing is the default, for rebuilds as well as fits: a rebuild then takes
+# the fit's own values (`.ctJuliaCarryTIMissing()`).
 .ctJuliaPrepare <- function(datalong, model, prepared_data = NULL, project = NULL,
-  priors = FALSE, intoverpop, optimize = TRUE, tipredMissingIncludeOutcome = TRUE,
+  priors = FALSE, intoverpop, tipredMissing = "impute", tipredMissingIncludeOutcome = TRUE,
   laplacecontrol = NULL, priorscope = NULL) {
   # "none" prepares exactly as "laplace" does. The Laplace specification is what
   # *describes* the random effects -- which raw parameters vary, at which level,
@@ -3388,61 +3530,35 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   tdpred_data <- if (is.null(prepared_data)) {
     if (model$n.TDpred) as.matrix(dat[, model$TDpredNames, drop = FALSE]) else matrix(numeric(), nrow(dat), 0L)
   } else prepared_data$tdpreds
-  tipred_data <- if (is.null(prepared_data)) .ctJuliaTIData(dat, model) else prepared_data$tipredsdata
+  # From the data rather than `prepared_data`, whose missing cells are stan's
+  # business (`.ctPrepareData()`); handled below.
+  tipred_data <- .ctJuliaTIDataAllowMissing(dat, model)
   if (is.null(tdpred_data)) tdpred_data <- matrix(numeric(), nrow(dat), 0L)
   if (is.null(tipred_data)) tipred_data <- matrix(numeric(), nrow = length(unique(dat[[model$subjectIDname]])), ncol = 0L)
   tipred_data <- as.matrix(tipred_data)
   if (!ncol(tipred_data)) tipred_data <- matrix(numeric(), nrow = length(subject_starts), ncol = 0L)
   if (nrow(tdpred_data) != nrow(dat)) stop("Prepared TD predictor rows do not match the fitted data.", call. = FALSE)
   if (nrow(tipred_data) != length(subject_starts)) stop("Prepared TI predictor rows do not match the fitted subjects.", call. = FALSE)
-  # A missing TI predictor cell, on the sampling path only. `optimize=TRUE`
-  # is untouched here: `.ctPrepareData()` (`prepared_data`, when supplied)
-  # already regression-imputed it into a real number before this function
-  # ever saw it (`ctData.R`; that is what Charles asked for and it is
-  # cheaper), so nothing below runs and `tipred_data` is used exactly as
-  # prepared -- as it always was.
-  #
-  # `optimize=FALSE` is the new path, SPEC-tipred-sampling.md, and missingness
-  # is detected from the raw data (`dat`) rather than from whatever
-  # `prepared_data$tipredsdata` holds, because on this path Stan would have
-  # written its own 99999 sentinel there and this engine does not read that
-  # convention (see `.ctJuliaTIMissingPlaceholder` for the one it does use,
-  # and why it is not the same thing). Only `intoverpop='augmented'` is
-  # supported yet: sampling a missing predictor value needs
-  # `gradient_method='forward'`, which the Laplace inner solve and the joint
-  # sampler do not (yet) offer an equivalent for.
-  # A cell that reads a time independent predictor (`tipreds[j]`, from
-  # `ctModelStatesAndPARS()`) reads each subject's value of it as data: a
-  # missing value has nothing to be sampled through there, and the placeholder
-  # would be read as the value.
-  read <- regmatches(as.character(model$pars$param),
-    gregexpr("tipreds\\[([0-9]+)\\]", as.character(model$pars$param)))
-  read <- sort(unique(as.integer(gsub("\\D", "", unlist(read)))))
-  if (length(read) && model$n.TIpred > 0) {
-    absent <- colSums(is.na(.ctJuliaTIDataAllowMissing(dat, model)[, read,
-      drop = FALSE])) > 0
-    if (any(absent)) stop("A cell reads the time independent predictor ",
-      paste0('"', model$TIpredNames[read[absent]], '"', collapse = ", "),
-      ", which is missing for some subjects. A predictor read by a cell must ",
-      "be observed for every subject.", call. = FALSE)
-  }
-  ti_missing <- NULL
-  if (!isTRUE(optimize) && model$n.TIpred > 0) {
-    raw_tipred <- .ctJuliaTIDataAllowMissing(dat, model)
-    missing_mask <- is.na(raw_tipred)
-    n_missing <- sum(missing_mask)
-    if (n_missing > 0L) {
-      if (identical(intoverpop, "augmented")) {
-        ti_missing <- .ctJuliaTIMissingSpec(dat, model, raw_tipred,
-          includeOutcome = tipredMissingIncludeOutcome)
-        tipred_data[missing_mask] <- .ctJuliaTIMissingPlaceholder
-      } else {
-        stop("Julia backend cannot sample missing TI predictor values (",
-          n_missing, " missing) with intoverpop='", intoverpop, "'; it can ",
-          "currently do so only with intoverpop='augmented'. Impute them ",
-          "before fitting, drop those subjects, use intoverpop='augmented', ",
-          "or use backend='stan'.", call. = FALSE)
-      }
+  # A missing TI predictor value gets a normal distribution from a regression
+  # on what is observed (`.ctJuliaTIMissingSpec()`, SPEC-tipred-sampling.md),
+  # and is then held at its mean ('impute', `ti_imputed`) or made a parameter
+  # with that distribution as its prior ('sample', `ti_missing`; the raw index
+  # is assigned below, once the rest of the vector is laid out).
+  ti_missing <- ti_imputed <- NULL
+  missing_mask <- is.na(tipred_data)
+  if (any(missing_mask)) {
+    if (!tipredMissing %in% c("impute", "sample")) {
+      stop("tipredMissing must be 'impute' or 'sample' here.", call. = FALSE)
+    }
+    cells <- .ctJuliaTIMissingSpec(dat, model, tipred_data,
+      includeOutcome = tipredMissingIncludeOutcome)
+    if (identical(tipredMissing, "sample")) {
+      .ctJuliaTIMissingReadCheck(model, cells)
+      ti_missing <- cells
+      tipred_data[missing_mask] <- .ctJuliaTIMissingPlaceholder
+    } else {
+      ti_imputed <- cells
+      tipred_data[cbind(cells$subject, cells$predictor)] <- cells$mu
     }
   }
   max_timestep <- if (!is.null(prepared_data$maxtimestep)) {
@@ -3584,6 +3700,10 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     # `parameter` that samples it, and its pre-computed conditional `mu`/
     # `sigma`. `NULL` for every model with nothing missing.
     ti_missing = ti_missing,
+    # The same frame without `parameter`, for cells held at their imputed
+    # `mu`; NULL when none. `.ctJuliaTIMissingSampled()` turns them into
+    # `ti_missing` rows.
+    ti_imputed = ti_imputed,
     priors = prior_spec,
     max_timestep = max_timestep,
     substeps = substeps,
@@ -5197,9 +5317,14 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # bound with the parameter count, which is why it is the default; 'forward'
   # stays available by name for anyone who wants ForwardDiff specifically. No
   # silent fallback between them in either direction.
+  # Missing TI predictor values: an optimisation imputes them unless asked to
+  # estimate them, and so does the optimisation that places a sampler, whose
+  # sample then makes them parameters (`.ctBackendUncertaintySample()`).
+  tipredMissing <- .ctJuliaTIMissingRequest(optimcontrol$tipredMissing)
   model_spec <- .ctJuliaPrepare(datalong, model, prepared_data = prepared_data,
     priors = priors, priorscope = priorscope, intoverpop = intoverpop,
-    optimize = optimize,
+    tipredMissing = if (isTRUE(optimize) && identical(tipredMissing, "sample"))
+      "sample" else "impute",
     tipredMissingIncludeOutcome = .ctJuliaOr(optimcontrol$tipredMissingIncludeOutcome, TRUE),
     laplacecontrol = list(inner_maxiter = optimcontrol$laplace_inner_maxiter,
       inner_tol = optimcontrol$laplace_inner_tol,
@@ -5213,32 +5338,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
       floor = if (as.character(intoverpop)[1L] %in% c("laplace", "none"))
         .ctJuliaOr(optimcontrol$laplace_floor, .ctJuliaLaplaceFloorDefault)
         else optimcontrol$laplace_floor))
-  if (!is.null(model_spec$ti_missing) && nrow(model_spec$ti_missing)) {
-    # The state-explicit route (`intoverstates=FALSE`) samples the latent
-    # trajectory through a different objective (`CTSEMJointObjective`,
-    # state_sampling.jl) that this feature has not touched at all -- not
-    # "not verified", genuinely absent. Refusing here is the same choice as
-    # the `intoverpop='laplace'/'none'` refusal inside `.ctJuliaPrepare()`,
-    # for the same reason: no silent gap in the gradient.
-    if (isFALSE(intoverstates)) {
-      stop("Julia backend cannot sample missing TI predictor values (",
-        nrow(model_spec$ti_missing), " missing) with intoverstates=FALSE; ",
-        "the state-explicit route does not yet support this. Impute them ",
-        "before fitting, drop those subjects, use intoverstates=TRUE, or ",
-        "use backend='stan'.", call. = FALSE)
-    }
-  }
+  model_spec$tipredMissing <- tipredMissing
+  .ctJuliaTIMissingCheck(model_spec)
+  .ctJuliaTIMissingWarn(model_spec, optimize = optimize,
+    sampled = if (isTRUE(optimize)) identical(tipredMissing, "sample") else
+      .ctJuliaTIMissingSamples(model_spec))
   if (!fit) return(structure(model_spec, class = c("ctJuliaModel", "ctFitModel")))
-  # A sampled TI-predictor value used to have no adjoint cotangent, so a fit
-  # here was refused unless `gradient='forward'` was requested by name (see
-  # the git history of this function, and SPEC-tipred-sampling.md). The
-  # reverse pass now covers it -- `_ctsem_ti_pullback!`'s `TIMissingRecipe`
-  # method adds the TI-effect product-rule term and `ctsem_adjoint_gradient`
-  # adds `_ctsem_ti_missing_loglik_gradient!`'s term for the imputation
-  # log-density itself, both cross-checked against ForwardDiff and FiniteDiff
-  # in test_ti_missing_predictor.jl -- so `gradient` is left exactly as
-  # resolved above: 'adjoint' by default, 'forward' still available on
-  # request, neither one singled out for this kind of model any more.
 
   # Forward-mode gradients for explosive subjects, when asked for: a session
   # setting in the engine (`_CTSEM_ADJOINT_GROWTH`), so put back on the way out.

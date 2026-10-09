@@ -24,7 +24,7 @@ const _S = ContinuousTimeSEM
 function _saem_prior_objective(npar)
     o = _LAPLACE_LINEAR_OBJECTIVE
     _S.CTSEMObjective(o.params, o.subject_objectives, nothing, collect(1:npar),
-        ones(npar), 1.0, Int[], Float64[], Float64[])
+        ones(npar), 1.0, Int[], Float64[], Float64[], Int[])
 end
 
 """E-step only, at fixed theta: `n` sweeps of unit `U`, the draws as columns."""
