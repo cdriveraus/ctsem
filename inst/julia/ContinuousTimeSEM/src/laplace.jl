@@ -2570,6 +2570,14 @@ const _LAPLACE_PROBE_SOFT = 3.5
 const _LAPLACE_PROBE_MAXDIM = 5
 
 """
+How far a probe starts from the mode, in posterior sds along its direction.
+Two missed, on the pilot's person-persistence fit, a person's second mode two
+units away past a valley at one, which a probe started at 2.5 and at 3 reached;
+the point a probe starts at has to be past the valley, not merely towards it.
+"""
+const _LAPLACE_PROBE_REACH = 3.0
+
+"""
     ctsem_set_mode_probes!(on)
 
 Turn the inner solve's probes for a better mode (`_laplace_probe_modes`) on or
@@ -3306,9 +3314,9 @@ end
     _laplace_probe_modes(laplace, U, values, Ls, aws, found)
 
 The unit's mode with the largest Laplace term among `found`, the one Newton
-reached from the origin, and those Newton reaches from two posterior sds
-either way (at most three prior sds) along each of `found`'s soft directions:
-precision below `_LAPLACE_PROBE_SOFT`, a negative one included.
+reached from the origin, and those Newton reaches from `_LAPLACE_PROBE_REACH`
+posterior sds either way (at most three prior sds) along each of `found`'s soft
+directions: precision below `_LAPLACE_PROBE_SOFT`, a negative one included.
 
 Why. Where `g_U` has two maxima, Newton from the origin reaches whichever one
 the origin's basin holds, and as the parameters move the basin's edge crosses
@@ -3366,7 +3374,7 @@ function _laplace_probe_modes(laplace::CTSEMLaplaceObjective, U::Integer,
     for j in 1:d
         lambda = E.values[j]
         lambda < _LAPLACE_PROBE_SOFT || break
-        reach = min(2 / sqrt(max(lambda, 1e-8)), 3.0)
+        reach = min(_LAPLACE_PROBE_REACH / sqrt(max(lambda, 1e-8)), 3.0)
         for sign in (-1.0, 1.0)
             start = found.u .+ (sign * reach) .* E.vectors[:, j]
             if screened
