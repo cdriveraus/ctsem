@@ -1341,15 +1341,6 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       as.character(model$covmattransform)[1L],
       "' (only 'rawcorr', 'cholesky' and 'z')"))
   }
-  # A TI effect fixed to a value ('TI1=4.3') is honoured by generation and not
-  # by fitting: the coefficient it occupies is an ordinary free parameter to
-  # the optimiser, so a fit would estimate it and silently ignore the value.
-  fixedeffects <- .ctTipredFixedEffects(model)
-  if (length(fixedeffects)) {
-    failures <- c(failures, paste0("time independent predictor effects fixed ",
-      "to a value (", paste(utils::head(fixedeffects, 4), collapse = ", "),
-      ") -- these are for generation; use TRUE for an effect to estimate"))
-  }
   if (isTRUE(gendata)) failures <- c(failures, paste0("generation through ",
     "the fit call (gendata=TRUE); use ctGenerate(), or ctGenerateFromFit() ",
     "on a fit"))
@@ -3223,6 +3214,33 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   do.call(rbind, entries)
 }
 
+# TI effects fixed to a value ('TI1=4.3'): `(parameter, predictor, value)`,
+# one row each. They need no coefficient -- the engine adds the value times the
+# subject's predictor to the raw parameter (`_materialize_subject_values!`) --
+# so they are kept apart from `.ctJuliaTIEffects()`, whose rows are
+# coefficients the optimiser moves.
+.ctJuliaTIFixed <- function(table, model) {
+  none <- data.frame(parameter = integer(), predictor = integer(), value = numeric())
+  if (!model$n.TIpred) return(none)
+  direct <- !is.na(table$parnumber) & !grepl("[", table$param, fixed = TRUE)
+  out <- list()
+  for (predictor in seq_along(model$TIpredNames)) {
+    column <- paste0(model$TIpredNames[predictor], "_effect")
+    if (!column %in% names(table)) next
+    value <- .ctTipredEffectValue(table[[column]])
+    rows <- which(direct & is.finite(value))
+    for (parameter in sort(unique(table$parnumber[rows]))) {
+      # Cells sharing a parameter state the same effects
+      # (R/ctModelSpecCheck.R), so the first carries the value.
+      first <- rows[table$parnumber[rows] %in% parameter][1L]
+      out[[length(out) + 1L]] <- data.frame(parameter = as.integer(parameter),
+        predictor = as.integer(predictor), value = as.numeric(value[first]))
+    }
+  }
+  if (!length(out)) return(none)
+  do.call(rbind, out)
+}
+
 # The inner-solve settings, checked here rather than where they are used.
 #
 # They reach the engine as keyword arguments to `ctsem_laplace_objective`, and a
@@ -3433,6 +3451,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     parameter_table <- augmented$parameter_table
     ti_effects <- .ctJuliaTIEffects(parameter_table, model)
   }
+  ti_fixed <- .ctJuliaTIFixed(parameter_table, model)
   if (isTRUE(as.logical(model$stationary))) {
     .ctJuliaStationaryCheck(parameter_table, augmented$nlatent)
   }
@@ -3516,6 +3535,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     tdpred_data = t(tdpred_data),
     tipred_data = as.matrix(tipred_data),
     ti_effects = ti_effects,
+    # TI effects fixed to a value (`.ctJuliaTIFixed()`); NULL when there are
+    # none, so every other specification is as it was.
+    ti_fixed = if (nrow(ti_fixed)) ti_fixed else NULL,
     # One row per sampled (missing) TI-predictor cell: `subject`, `predictor`
     # (both 1-based, matching `tipred_data`'s rows/columns), the raw-parameter
     # `parameter` that samples it, and its pre-computed conditional `mu`/
@@ -3719,6 +3741,12 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     arguments$ti_parameter <- V(as.integer(effects$parameter))
     arguments$ti_predictor <- V(as.integer(effects$predictor))
     arguments$ti_coefficient <- V(as.integer(effects$coefficient))
+  }
+  fixed <- spec$ti_fixed
+  if (!is.null(fixed) && nrow(fixed)) {
+    arguments$ti_fixed_parameter <- V(as.integer(fixed$parameter))
+    arguments$ti_fixed_predictor <- V(as.integer(fixed$predictor))
+    arguments$ti_fixed_value <- V(as.numeric(fixed$value))
   }
   if (length(spec$dynamic_state_indices)) {
     arguments$diffusion_state_indices <-

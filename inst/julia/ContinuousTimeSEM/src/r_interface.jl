@@ -415,7 +415,8 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
     censormin=Float64[],
     censormax=Float64[], covmatcode::Int=0, population_indices=Int[],
     population_covmatcode::Union{Nothing,Integer}=nothing,
-    population_scale=Float64[], affine_dim::Int=0, stationary::Bool=false)
+    population_scale=Float64[], affine_dim::Int=0, stationary::Bool=false,
+    ti_fixed_parameter=Int[], ti_fixed_predictor=Int[], ti_fixed_value=Float64[])
 
     n = length(matrix)
     length(row) == n && length(col) == n ||
@@ -517,5 +518,6 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
         Int.(population_indices), population_range,
         population_covmatcode === nothing ? covmatcode :
             Int(population_covmatcode),
-        Float64.(population_scale), affine_dim, stationary)
+        Float64.(population_scale), affine_dim, stationary,
+        Int.(ti_fixed_parameter), Int.(ti_fixed_predictor), Float64.(ti_fixed_value))
 end

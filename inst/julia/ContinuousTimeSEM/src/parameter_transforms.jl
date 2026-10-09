@@ -60,7 +60,9 @@ function apply_complex_transforms_at_indices!(all_params, indices, transforms, s
     return all_params
 end
 
-"""Copy population raw parameters and add TI effects into an isolated subject buffer."""
+"""Copy population raw parameters and add TI effects into an isolated subject
+buffer: each estimated effect's coefficient, and each fixed one's value, times
+the subject's predictor."""
 function _materialize_subject_values!(subject_values::AbstractVector, values::AbstractVector,
     sp::EKFParameters, tipreds::AbstractVector)
     subject_values isa Vector || throw(ArgumentError("subject parameter buffer must be resizable"))
@@ -77,8 +79,21 @@ function _materialize_subject_values!(subject_values::AbstractVector, values::Ab
         coefficient <= length(values) || throw(BoundsError(values, coefficient))
         subject_values[parameter] += values[coefficient] * tipreds[predictor]
     end
+    @inbounds for i in eachindex(sp.ti_fixed_parameter_indices)
+        parameter = sp.ti_fixed_parameter_indices[i]
+        predictor = sp.ti_fixed_predictor_indices[i]
+        parameter <= length(subject_values) || throw(BoundsError(subject_values, parameter))
+        predictor <= length(tipreds) || throw(BoundsError(tipreds, predictor))
+        subject_values[parameter] += sp.ti_fixed_values[i] * tipreds[predictor]
+    end
     return subject_values
 end
+
+"""Whether subjects' raw parameters differ by TI predictor effects, estimated or
+fixed: the shared parameter layer and the cross-subject Frechet batch assume
+they do not."""
+_ctsem_has_ti_effects(sp::EKFParameters) =
+    !isempty(sp.ti_parameter_indices) || !isempty(sp.ti_fixed_parameter_indices)
 
 """
     TIMissingRecipe(base, predictor_index, parameter_index)

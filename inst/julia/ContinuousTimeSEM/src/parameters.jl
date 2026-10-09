@@ -313,6 +313,12 @@ struct EKFParameters{RG,PT,UT,TT,AX,FV}
     # Declared last and supplied last, for the reason the `manifesttype`
     # comment above gives.
     stationary::Bool
+    # TI effects fixed to a value: `subject_values[p] += value * tipred[q]` with
+    # no coefficient to estimate (`_materialize_subject_values!`). Declared last
+    # and supplied last, for the reason the `manifesttype` comment above gives.
+    ti_fixed_parameter_indices::Vector{Int}
+    ti_fixed_predictor_indices::Vector{Int}
+    ti_fixed_values::Vector{Float64}
     # Deviations the filter integrates itself; see `CTSEMHybrid`. Empty unless a
     # Laplace objective filled it. Declared last and supplied last.
     hybrid::CTSEMHybrid
@@ -349,6 +355,9 @@ struct EKFParameters{RG,PT,UT,TT,AX,FV}
         population_scale=Float64[],
         affine_dim::Int=0,
         stationary::Bool=false,
+        ti_fixed_parameter_indices=Int[],
+        ti_fixed_predictor_indices=Int[],
+        ti_fixed_values=Float64[],
     )
         # Every argument from `ti_parameter_indices` on is optional and
         # positional, so inserting a field shifts every caller that passes the
@@ -361,6 +370,9 @@ struct EKFParameters{RG,PT,UT,TT,AX,FV}
         # R builds both limits as n.manifest length vectors or neither, so
         # unequal lengths mean the arguments did not land where the caller
         # meant them to.
+        length(ti_fixed_parameter_indices) == length(ti_fixed_predictor_indices) ==
+            length(ti_fixed_values) || throw(ArgumentError(
+            "fixed TI effects need one parameter, predictor and value each"))
         length(censormin) == length(censormax) || throw(ArgumentError(
             "censormin and censormax have lengths $(length(censormin)) and " *
             "$(length(censormax)); they are per-manifest vectors and must " *
@@ -420,6 +432,9 @@ struct EKFParameters{RG,PT,UT,TT,AX,FV}
                 Vector{Float64}(population_scale),
             affine_dim,
             stationary,
+            Vector{Int}(ti_fixed_parameter_indices),
+            Vector{Int}(ti_fixed_predictor_indices),
+            Vector{Float64}(ti_fixed_values),
             CTSEMHybrid(),
         )
     end
