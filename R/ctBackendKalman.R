@@ -287,13 +287,16 @@
     dat[setdiff(seq_len(nrow(dat)), keep), model$manifestNames] <- NA
   }
 
-  # With the fit's integration step. Re-preparing put a mesh from
-  # `nsubsteps = 'auto'` back to the maxtimestep rule, so every prediction that
-  # selected subjects or interpolated a grid -- ctPredict()'s defaults do both
-  # -- was integrated more coarsely than the fit.
-  prepared <- .ctBackendAsModel(.ctJuliaCarryFit(.ctJuliaPrepare(dat, model,
-    project = spec$project, intoverpop = .ctBackendIntOverPop(spec),
-    laplacecontrol = spec$laplace$inner), spec, .ctFitRawEstimate(fit)))
+  # With the fit's integration step and its TI predictor values. Re-preparing
+  # put a mesh from `nsubsteps = 'auto'` back to the maxtimestep rule, so every
+  # prediction that selected subjects or interpolated a grid -- ctPredict()'s
+  # defaults do both -- was integrated more coarsely than the fit. Preparation's
+  # messages are about fitting these rows -- a population rank too high for two
+  # subjects -- and a prediction fits nothing, so they are not passed on.
+  prepared <- .ctBackendAsModel(.ctJuliaCarryFit(suppressMessages(
+    .ctJuliaPrepare(dat, model, project = spec$project,
+      intoverpop = .ctBackendIntOverPop(spec),
+      laplacecontrol = spec$laplace$inner)), spec, .ctFitRawEstimate(fit)))
   if (withhold) attr(prepared, "reportManifest") <- reported
 
   # A Laplace fit's random effects are conditional modes, and a mode is only
