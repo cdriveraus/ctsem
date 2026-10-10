@@ -129,6 +129,8 @@ border-radius: 0 4px 4px 0;
   <li><a href="#a-covariate-the-model-does-not-contain" id="toc-a-covariate-the-model-does-not-contain">2. A covariate the model does not contain</a></li>
   <li><a href="#dynamics-that-depend-on-the-state" id="toc-dynamics-that-depend-on-the-state">3. Dynamics that depend on the state</a></li>
   <li><a href="#everything-at-once" id="toc-everything-at-once">Everything at once</a></li>
+  <li><a href="#do-the-models-predictions-look-like-the-data" id="toc-do-the-models-predictions-look-like-the-data">Do the model’s predictions look like the data?</a></li>
+  <li><a href="#automating-the-search" id="toc-automating-the-search">Automating the search</a></li>
   <li><a href="#how-the-tests-work-briefly" id="toc-how-the-tests-work-briefly">How the tests work, briefly</a></li>
   </ul>
 </nav>
@@ -139,7 +141,7 @@ border-radius: 0 4px 4px 0;
 <li><strong>state dependence</strong>: does a drift coefficient change with the level of a latent state, so that the dynamics are nonlinear?</li>
 </ul>
 <p>Each is a score (Lagrange multiplier) test: the slope of the log likelihood, at the fitted model, in the direction of the relaxation. It needs a few evaluations of the fitted model’s gradient rather than a new fit per candidate, so any number of candidates can be screened after one fit, and each test also says roughly how large the relaxation would be. The tests are screens: they point at what to relax, and the refit says how much it matters.</p>
-<p>The three examples below each generate data with one thing the fitted model lacks, fit the model without it, ask <code>ctScoreTest()</code>, and then refit with what it found.</p>
+<p>The three examples below each generate data with one thing the fitted model lacks, fit the model without it, ask <code>ctScoreTest()</code>, and then refit with what it found. The sections after them add a fourth family of tests (cells the model fixes at zero), the posterior predictive checks as tests (<code>ctFitAdequacy()</code>), and a search that combines the two and does the refitting itself (<code>ctModelImprove()</code>).</p>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(ctsem)</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">3</span>)</span></code></pre></div>
@@ -363,7 +365,7 @@ border-radius: 0 4px 4px 0;
 <p>The term already in the model now has no score left at all, and no other term stands out.</p>
 <p>The test works because the filter evaluates each candidate term at the state it predicts from earlier observations. A weight that has not seen the observation being scored keeps that observation’s contribution to the score at mean zero when the model is right. Using smoothed or updated state estimates as covariates instead – regressing something on the estimated states after the fit – does not have that property, and rejects correct models: in simulation, nearly always.</p>
 <h2 id="everything-at-once">Everything at once</h2>
-<p>By default <code>ctScoreTest()</code> runs all three families (covariates when given). On the last dataset:</p>
+<p>By default <code>ctScoreTest()</code> runs every family: the three above (covariates when given) and a fourth, the cells the model fixes at zero – here the measurement error covariance and the cross loadings – each tested as though freed. On the last dataset:</p>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb14"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="fu">ctScoreTest</span>(fit3)</span>
 <span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Score tests at the fitted model (augmented route, 150 subjects)</span></span>
@@ -399,9 +401,104 @@ border-radius: 0 4px 4px 0;
 <span id="cb14-32"><a href="#cb14-32" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                                 DRIFT[eta1,eta2] varies with eta2</span></span>
 <span id="cb14-33"><a href="#cb14-33" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                                 DRIFT[eta1,eta1] varies with eta1</span></span>
 <span id="cb14-34"><a href="#cb14-34" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  DRIFT[eta2,eta1] varies with eta2, or DRIFT[eta2,eta2] with eta1</span></span>
-<span id="cb14-35"><a href="#cb14-35" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                                 DRIFT[eta2,eta2] varies with eta2</span></span></code></pre></div>
+<span id="cb14-35"><a href="#cb14-35" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                                 DRIFT[eta2,eta2] varies with eta2</span></span>
+<span id="cb14-36"><a href="#cb14-36" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb14-37"><a href="#cb14-37" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Fixed cells, freed: joint LM = 0.266, df = 1, p = 0.594</span></span>
+<span id="cb14-38"><a href="#cb14-38" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                cell    LM     p p_adj estimate     se</span></span>
+<span id="cb14-39"><a href="#cb14-39" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  MANIFESTVAR[Y2,Y1] 0.266 0.606 0.606   0.0373 0.0724</span></span></code></pre></div>
 </div>
 <p>The state dependence stands out. The heterogeneity tests stay quiet here, but they need not: a drift that changes with the state can also look, subject by subject, like a drift that differs between subjects, and in simulations a missing nonlinearity did move them. A badly misspecified model can light up several tests at once, so read them as a map: relax what stands out most, refit, and test again.</p>
+<h2 id="do-the-models-predictions-look-like-the-data">Do the model’s predictions look like the data?</h2>
+<p>The usual check of a dynamic model compares the data with data the fitted model generates: the autocorrelations and cross-correlations (ACF and CCF), how much subjects differ from each other, and so on. <code>ctFitAdequacy()</code> makes those comparisons numbers with p-values, in families aimed at different departures. Four compare statistics of the data with the same statistics of generated data: the lagged correlations; the spread over subjects of each subject’s own mean, standard deviation and lag-one correlations; whether change depends on level nonlinearly; and, given covariates, whether subjects’ statistics depend on them. Four more need no generated data, because they work on the one-step-ahead prediction errors, which under the model are independent and standard normal however the observations are spaced: whether those errors are white (the residual ACF and CCF), whether they are normal, whether some subjects are fitted worse than the model allows, and whether an error or its size depends, in any form, on what came before it – the predicted states, the previous errors, the time since the last observation. Each variable’s error is taken given the others observed at the same time, so a result names a variable.</p>
+<p>On the second example’s fit, which lacks <code>age</code>, the checks fail, through the subjects’ spread and their relation to age:</p>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb15"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="fu">ctFitAdequacy</span>(fit2, <span class="at">covariates =</span> covariates)</span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Posterior predictive adequacy (100 generated datasets): NOT adequate at alpha = 0.05</span></span>
+<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        family statistics               worst worst_z        p    p_adj</span></span>
+<span id="cb15-5"><a href="#cb15-5" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        lagged         13             Y2~Y2@3   0.438 1.00e+00 1.00e+00</span></span>
+<span id="cb15-6"><a href="#cb15-6" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      subjects          8      sd(lag1_Y1_Y2)   5.580 1.93e-06 1.35e-05</span></span>
+<span id="cb15-7"><a href="#cb15-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;     nonlinear         10      cor(dY1,Y1*Y2)   1.610 6.97e-01 1.00e+00</span></span>
+<span id="cb15-8"><a href="#cb15-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    covariates         16 cor(age,lag1_Y1_Y2)   7.450 6.88e-10 5.51e-09</span></span>
+<span id="cb15-9"><a href="#cb15-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;     residuals         14             Y2~Y2@3   2.340 2.38e-01 1.00e+00</span></span>
+<span id="cb15-10"><a href="#cb15-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  distribution          3 chisq(row distance)   0.956 7.11e-01 1.00e+00</span></span>
+<span id="cb15-11"><a href="#cb15-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;           fit          2   worst subject: 97   0.674 7.50e-01 1.00e+00</span></span>
+<span id="cb15-12"><a href="#cb15-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    dependence          4    dcor(Y1^2, past)   1.350 4.77e-01 1.00e+00</span></span></code></pre></div>
+</div>
+<p>On the linear fit to the state-dependent data:</p>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb16"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="fu">ctFitAdequacy</span>(fit3)</span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Posterior predictive adequacy (100 generated datasets): adequate at alpha = 0.05</span></span>
+<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        family statistics                    worst worst_z      p p_adj</span></span>
+<span id="cb16-5"><a href="#cb16-5" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        lagged         13                  Y2~Y2@3   0.672 1.0000  1.00</span></span>
+<span id="cb16-6"><a href="#cb16-6" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      subjects          8           sd(lag1_Y2_Y2)   2.560 0.0943  0.66</span></span>
+<span id="cb16-7"><a href="#cb16-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;     nonlinear         10            cor(dY2^2,Y2)   1.790 0.5570  1.00</span></span>
+<span id="cb16-8"><a href="#cb16-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;     residuals         14                  Y1~Y1@2   1.350 0.9340  1.00</span></span>
+<span id="cb16-9"><a href="#cb16-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  distribution          3               normal(Y1)   0.269 0.9900  1.00</span></span>
+<span id="cb16-10"><a href="#cb16-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;           fit          2 chisq(subject distances)   0.917 0.5900  1.00</span></span>
+<span id="cb16-11"><a href="#cb16-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    dependence          4         dcor(Y1^2, past)   1.630 0.3430  1.00</span></span></code></pre></div>
+</div>
+<p>Every family passes, though this model is missing the state dependence the score test found at p = 5e-6. A moderated drift, averaged over the data, still decays much like a single exponential, and summary statistics are coarse instruments for a departure the likelihood sees directly. The lagged correlations are the bluntest: they are close to what the fit was chosen to reproduce, so they sit near the model’s whatever else is wrong. The checks are worth having: they catch what lies outside every score test’s reach, such as a process of the wrong order or errors with heavy tails. But passing them is necessary rather than sufficient, which is why the next section screens with the score tests and stops on the checks.</p>
+<h2 id="automating-the-search">Automating the search</h2>
+<p><code>ctModelImprove()</code> puts the tests into a loop. It screens the fit, refits with the most strongly indicated relaxations one at a time (warm started from the current estimates), and keeps the best if the refit’s likelihood confirms it. It repeats until nothing more is indicated, then checks the model with <code>ctFitAdequacy()</code>. If a check fails, it tries structural changes the score tests cannot reach, such as making a process second order (<code>ctModelHigherOrder()</code>) or models you supply. Finally it tries dropping each change it kept, in case a later one made it redundant.</p>
+<p>Here the data contain two of the departures above at once: <code>age</code> acts on the intercept of <code>Y1</code> and on the cross effect, <code>eta2</code> moderates how <code>eta1</code> regulates, and <code>w</code> is unrelated.</p>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb17"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a>gen4 <span class="ot">&lt;-</span> <span class="fu">generator</span>(<span class="at">DRIFT =</span> <span class="fu">matrix</span>(<span class="fu">c</span>(<span class="st">&quot;-0.6 + 0.3 * tanh(eta2)&quot;</span>, <span class="st">&quot;drift21||||age=0.3&quot;</span>,</span>
+<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a>  <span class="dv">0</span>, <span class="sc">-</span><span class="fl">0.4</span>), <span class="dv">2</span>, <span class="dv">2</span>),</span>
+<span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">MANIFESTMEANS =</span> <span class="fu">c</span>(<span class="st">&quot;mm1|param|TRUE|1|age=0.6&quot;</span>, <span class="st">&quot;mm2|param|TRUE|1&quot;</span>),</span>
+<span id="cb17-4"><a href="#cb17-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">TIpredNames =</span> <span class="fu">c</span>(<span class="st">&quot;age&quot;</span>, <span class="st">&quot;w&quot;</span>))</span>
+<span id="cb17-5"><a href="#cb17-5" aria-hidden="true" tabindex="-1"></a>d4 <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(<span class="fu">ctGenerate</span>(gen4, <span class="at">n =</span> <span class="dv">150</span>, <span class="at">Tpoints =</span> <span class="dv">30</span>, <span class="at">dtmean =</span> <span class="dv">1</span>,</span>
+<span id="cb17-6"><a href="#cb17-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">logdtsd =</span> <span class="fl">0.5</span>, <span class="at">backend =</span> <span class="st">&quot;julia&quot;</span>, <span class="at">popmeans =</span> <span class="fu">c</span>(<span class="at">drift21 =</span> <span class="fl">0.25</span>, <span class="at">mm1 =</span> <span class="dv">0</span>, <span class="at">mm2 =</span> <span class="dv">0</span>)))</span>
+<span id="cb17-7"><a href="#cb17-7" aria-hidden="true" tabindex="-1"></a>fit4 <span class="ot">&lt;-</span> <span class="fu">ctFit</span>(d4[, <span class="fu">c</span>(<span class="st">&quot;id&quot;</span>, <span class="st">&quot;time&quot;</span>, <span class="st">&quot;Y1&quot;</span>, <span class="st">&quot;Y2&quot;</span>)], model, <span class="at">backend =</span> <span class="st">&quot;julia&quot;</span>, <span class="at">cores =</span> <span class="dv">2</span>)</span></code></pre></div>
+</div>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb18"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a>imp <span class="ot">&lt;-</span> <span class="fu">ctModelImprove</span>(fit4, <span class="at">covariates =</span> <span class="fu">unique</span>(d4[, <span class="fu">c</span>(<span class="st">&quot;id&quot;</span>, <span class="st">&quot;age&quot;</span>, <span class="st">&quot;w&quot;</span>)]))</span>
+<span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a>imp</span>
+<span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Model improvement: stopped because adequate</span></span>
+<span id="cb18-4"><a href="#cb18-4" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Log likelihood -11303.79 -&gt; -11140.63 (23 -&gt; 27 parameters)</span></span>
+<span id="cb18-5"><a href="#cb18-5" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb18-6"><a href="#cb18-6" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  round                                                      change screen_p</span></span>
+<span id="cb18-7"><a href="#cb18-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      1      age as a predictor of drift_eta2_eta1, mm_Y1, T0m_eta1 1.00e-03</span></span>
+<span id="cb18-8"><a href="#cb18-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      1                              eta1*eta2 in the drift of eta1 7.24e-06</span></span>
+<span id="cb18-9"><a href="#cb18-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      1                        drift_eta2_eta1 individually varying 5.00e-04</span></span>
+<span id="cb18-10"><a href="#cb18-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      2                              eta1*eta2 in the drift of eta1 1.40e-04</span></span>
+<span id="cb18-11"><a href="#cb18-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  prune drop age as a predictor of drift_eta2_eta1, mm_Y1, T0m_eta1       NA</span></span>
+<span id="cb18-12"><a href="#cb18-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  prune                         drop eta1*eta2 in the drift of eta1       NA</span></span>
+<span id="cb18-13"><a href="#cb18-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  dloglik dpar  done                           note</span></span>
+<span id="cb18-14"><a href="#cb18-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    151.0    3  TRUE LR p = 4.21e-65 against 0.0167</span></span>
+<span id="cb18-15"><a href="#cb18-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;     18.7    1 FALSE LR p = 9.33e-10 against 0.0167</span></span>
+<span id="cb18-16"><a href="#cb18-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;     65.8    5 FALSE LR p = 1.07e-26 against 0.0167</span></span>
+<span id="cb18-17"><a href="#cb18-17" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;     12.3    1  TRUE   LR p = 7.06e-07 against 0.05</span></span>
+<span id="cb18-18"><a href="#cb18-18" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;   -144.0   -3 FALSE   LR p = 2.56e-62 against 0.05</span></span>
+<span id="cb18-19"><a href="#cb18-19" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    -12.3   -1 FALSE   LR p = 7.06e-07 against 0.05</span></span>
+<span id="cb18-20"><a href="#cb18-20" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb18-21"><a href="#cb18-21" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Posterior predictive adequacy (100 generated datasets): adequate at alpha = 0.05</span></span>
+<span id="cb18-22"><a href="#cb18-22" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb18-23"><a href="#cb18-23" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        family statistics                    worst worst_z     p p_adj</span></span>
+<span id="cb18-24"><a href="#cb18-24" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;        lagged         13                  Y2~Y2@2   0.688 1.000 1.000</span></span>
+<span id="cb18-25"><a href="#cb18-25" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;      subjects          8           sd(lag1_Y2_Y2)   2.620 0.081 0.648</span></span>
+<span id="cb18-26"><a href="#cb18-26" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;     nonlinear         10            cor(dY1^2,Y2)   0.910 0.990 1.000</span></span>
+<span id="cb18-27"><a href="#cb18-27" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    covariates          8             cor(w,sd_Y2)   1.370 0.790 1.000</span></span>
+<span id="cb18-28"><a href="#cb18-28" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;     residuals         14                   Y1^2@1   1.610 0.796 1.000</span></span>
+<span id="cb18-29"><a href="#cb18-29" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  distribution          3      chisq(row distance)   0.369 0.976 1.000</span></span>
+<span id="cb18-30"><a href="#cb18-30" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;           fit          2 chisq(subject distances)   0.188 0.978 1.000</span></span>
+<span id="cb18-31"><a href="#cb18-31" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    dependence          4           dcor(Y1, past)   2.050 0.143 1.000</span></span></code></pre></div>
+</div>
+<p>Each round shows what was tried, the score test that proposed it, and what the refit’s likelihood said. The first round kept <code>age</code>, with effects on the cross effect, the intercept of <code>Y1</code> and the initial level of <code>eta1</code>; it also tried a random effect on the cross effect, which the score tests had flagged because subjects of different ages differ in it – a covariate that explains the variation beats a random effect that only describes it. The second round kept the moderation. Then nothing more was indicated, every adequacy check passed, and trying each kept change out again showed both were still needed. The effects found are near those that generated the data (0.3 on the cross effect, 0.6 on the intercept of <code>Y1</code>). The effect on the initial level of <code>eta1</code> was not generated: it is small, and only just significant – a search that decides at <code>alpha = 0.05</code> keeps such things about one time in twenty, and <code>alpha = 0.01</code> is the stricter choice.</p>
+<p>The final fit is an ordinary fit:</p>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb19"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a>s <span class="ot">&lt;-</span> <span class="fu">summary</span>(imp<span class="sc">$</span>fit)</span>
+<span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a>s<span class="sc">$</span>tipreds</span>
+<span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                           mean    sd   2.5%    50%  97.5%      z</span></span>
+<span id="cb19-4"><a href="#cb19-4" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; tip_age_T0m_eta1        -0.200 0.085 -0.377 -0.198 -0.029 -2.341</span></span>
+<span id="cb19-5"><a href="#cb19-5" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; tip_age_drift_eta2_eta1  0.313 0.025  0.265  0.312  0.364 12.561</span></span>
+<span id="cb19-6"><a href="#cb19-6" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; tip_age_mm_Y1            0.631 0.083  0.479  0.632  0.791  7.591</span></span>
+<span id="cb19-7"><a href="#cb19-7" aria-hidden="true" tabindex="-1"></a>s<span class="sc">$</span>popmeans[<span class="fu">grepl</span>(<span class="st">&quot;^sdep&quot;</span>, <span class="fu">rownames</span>(s<span class="sc">$</span>popmeans)), ]</span>
+<span id="cb19-8"><a href="#cb19-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;                      mean    sd  2.5%   50% 97.5%</span></span>
+<span id="cb19-9"><a href="#cb19-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; sdep_eta1_eta1_eta2 0.112 0.022 0.069 0.111 0.156</span></span></code></pre></div>
+</div>
+<p>The model was chosen by the data it is fitted to, so its standard errors and tests are too optimistic about the structure the search added. Treat that structure as a hypothesis: confirm it on other data, or hold out some subjects from the search for that purpose.</p>
 <h2 id="how-the-tests-work-briefly">How the tests work, briefly</h2>
 <ul>
 <li>The scores are those of the objective the model was fitted with, so they integrate over random effects exactly as the fit did. A covariate’s effect adds to a parameter’s raw value, so its score is the covariate times each subject’s score in that parameter – any number of covariates costs a few matrix products after one set of per-subject scores and Hessians.</li>

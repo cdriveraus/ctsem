@@ -269,25 +269,43 @@ The usual check of a dynamic model compares the data with data the fitted
 model generates: the autocorrelations and cross-correlations (ACF and CCF),
 how much subjects differ from each other, and so on. `ctFitAdequacy()` makes
 those comparisons numbers with p-values, in families aimed at different
-departures: the lagged correlations; the spread over subjects of each
+departures. Four compare statistics of the data with the same statistics of
+generated data: the lagged correlations; the spread over subjects of each
 subject's own mean, standard deviation and lag-one correlations; whether
-change depends on level nonlinearly; whether the one-step-ahead prediction
-errors are white; and, given covariates, whether subjects' statistics depend
-on them. On the linear fit to the state-dependent data:
+change depends on level nonlinearly; and, given covariates, whether subjects'
+statistics depend on them. Four more need no generated data, because they
+work on the one-step-ahead prediction errors, which under the model are
+independent and standard normal however the observations are spaced: whether
+those errors are white (the residual ACF and CCF), whether they are normal,
+whether some subjects are fitted worse than the model allows, and whether an
+error or its size depends, in any form, on what came before it -- the
+predicted states, the previous errors, the time since the last observation.
+Each variable's error is taken given the others observed at the same time,
+so a result names a variable.
+
+On the second example's fit, which lacks `age`, the checks fail, through the
+subjects' spread and their relation to age:
+
+```{r adequacy-cov}
+ctFitAdequacy(fit2, covariates = covariates)
+```
+
+On the linear fit to the state-dependent data:
 
 ```{r adequacy}
 ctFitAdequacy(fit3)
 ```
 
-Every family passes -- the lagged correlations, the subjects, the
-nonlinearity statistics, the residuals -- though this model is missing the
-state dependence the score test found at p = 5e-6. A moderated drift,
-averaged over the data, still decays much like a single exponential, and
-summary statistics of the data are coarse instruments for a departure the
-likelihood sees directly. The checks are worth having: they catch what lies
-outside every score test's reach, such as a process of the wrong order. But
-passing them is necessary rather than sufficient, which is why the next
-section screens with the score tests and stops on the checks.
+Every family passes, though this model is missing the state dependence the
+score test found at p = 5e-6. A moderated drift, averaged over the data,
+still decays much like a single exponential, and summary statistics are
+coarse instruments for a departure the likelihood sees directly. The lagged
+correlations are the bluntest: they are close to what the fit was chosen to
+reproduce, so they sit near the model's whatever else is wrong. The checks
+are worth having: they catch what lies outside every score test's reach,
+such as a process of the wrong order or errors with heavy tails. But passing
+them is necessary rather than sufficient, which is why the next section
+screens with the score tests and stops on the checks.
 
 ## Automating the search
 
@@ -321,17 +339,18 @@ imp
 
 Each round shows what was tried, the score test that proposed it, and what
 the refit's likelihood said. The first round kept `age`, with effects on the
-cross effect and on both intercepts; it also tried a random effect on the
+cross effect, the intercept of `Y1` and the initial level of `eta1`; it also
+tried a random effect on the
 cross effect, which the score tests had flagged because subjects of different
 ages differ in it -- a covariate that explains the variation beats a random
 effect that only describes it. The second round kept the moderation. Then
 nothing more was indicated, every adequacy check passed, and trying each kept
 change out again showed both were still needed. The effects found are near
 those that generated the data (0.3 on the cross effect, 0.6 on the intercept
-of `Y1`). The effect on the intercept of `Y2` was not generated: it is small,
-and only just significant -- a search that decides at `alpha = 0.05` keeps
-such things about one time in twenty, and `alpha = 0.01` is the stricter
-choice.
+of `Y1`). The effect on the initial level of `eta1` was not generated: it is
+small, and only just significant -- a search that decides at `alpha = 0.05`
+keeps such things about one time in twenty, and `alpha = 0.01` is the
+stricter choice.
 
 The final fit is an ordinary fit:
 
