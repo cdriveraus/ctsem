@@ -338,10 +338,11 @@ ctScoreTest <- function(fit, covariates = NULL,
       values <- .ctScoreCovariateValues(fit, covariates)
       forms <- rep_len(form, length(values))
       bases <- Map(function(z, f, name) {
-        if (!identical(f, 'threshold')) return(.ctScoreBasis(z, f, df, name))
-        if (is.factor(z) || is.character(z) || is.logical(z)) stop("Covariate '", name,
-          "' is not numeric; a threshold needs an ordered covariate.", call. = FALSE)
-        list(threshold = z)
+        if (identical(f, 'threshold')) {
+          if (is.factor(z) || is.character(z) || is.logical(z)) stop("Covariate '", name,
+            "' is not numeric; a threshold needs an ordered covariate.", call. = FALSE)
+          list(threshold = z)
+        } else .ctScoreBasis(z, f, df, name)
       }, values, forms, names(values))
     }
     dirs <- if (reduced && length(cov)) .ctScoreScaleDirections(est, ptab, parameters) else NULL
