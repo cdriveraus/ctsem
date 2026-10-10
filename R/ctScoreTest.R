@@ -73,7 +73,21 @@
 #'   one-step estimate of the subjects' standard deviation on the raw scale,
 #'   and \code{sd_natural} approximately on the parameter's own. To act on a
 #'   result, set \code{indvarying = TRUE} for the parameter, refit, and test
-#'   again.
+#'   again. On a reduced-rank level (\code{poprank}), a parameter that varies
+#'   only through the shared dimensions, without a variance of its own, is
+#'   tested too: for variation outside those dimensions.
+#'
+#'   \code{dimension} tests every direction at once: whether subjects vary
+#'   along some combination of the tested parameters -- a new dimension of
+#'   person variation, or on a reduced-rank level one beyond its rank. Adding
+#'   variance along a direction \code{u} changes a subject's log likelihood,
+#'   at zero, by \code{(u's_i)^2/2 + u'H_iu/2}, so the per-parameter tests are
+#'   the diagonal of one score matrix; its largest eigenvalue, scaled by each
+#'   diagonal's spread, is the statistic, against a bootstrap over subjects,
+#'   and its eigenvector is the direction, read as relative loadings (raw
+#'   scale). It can detect variation spread over parameters that no single
+#'   test singles out, and is less sensitive than the best single test when
+#'   one parameter carries it.
 #'
 #' @section Covariates: For each covariate, the effects it would have on every
 #'   tested parameter if added as a time independent predictor (on the raw
@@ -94,6 +108,19 @@
 #'   freedom, for which only \code{p} is given; subjects missing it contribute
 #'   at the mean. To act on a result, add the covariate to the data and to
 #'   \code{TIpredNames} and refit.
+#'
+#'   \code{form = 'threshold'} tests a step at an unknown cut instead: the
+#'   joint test at each cut from the 15th to the 85th percentile, the largest
+#'   of them against a bootstrap over subjects that takes the search over cuts
+#'   into account (Andrews, 1993) -- the split a score-guided tree makes. The
+#'   effects reported are those of being above the best cut, \code{cut} in the
+#'   joint row.
+#'
+#'   On a reduced-rank level the spread of a varying parameter has no
+#'   \code{popsd_} coordinate, so a covariate's effect on it is tested along
+#'   the direction that scales that parameter's row of the loadings and its own
+#'   sd together, reported as \code{scale(<parameter>)}: the effect on its log
+#'   standard deviation per unit of the covariate, the correlations held.
 #'
 #' @section State dependence: For each latent equation and each pair of
 #'   latent states \code{k <= m}, the score test of a term \code{d * eta_k *
@@ -124,6 +151,13 @@
 #'   State dependence and fixed cells are tested on one extended model, so
 #'   asking for both costs one preparation.
 #'
+#' @section Alike relaxations: Two relaxations whose per-subject projected
+#'   contributions are nearly collinear (correlation of 0.9 or more) would
+#'   each explain the same signal, and the data cannot tell them apart at this
+#'   order (MacCallum et al., 1993). They share a letter in \code{class};
+#'   \code{NA} means alike to none. Refit with the most plausible, then test
+#'   again.
+#'
 #' @section Variance and p-values: The fitted model's curvature projects the
 #'   fitted parameters out of each test and sets the one-step sizes; the
 #'   variance of each test is, by default (\code{variance = 'robust'}), the
@@ -146,7 +180,11 @@
 #'   the route it was fitted on (\code{intoverpop}); they are made at an
 #'   optimum, and refuse a sampled fit. Heterogeneity and covariate tests need
 #'   subjects as the independent units, so a model with a level above the
-#'   subject can only be tested for state dependence.
+#'   subject can only be tested for state dependence. A family that cannot be
+#'   tested on a model says why, as a warning and in \code{info$errors}, and
+#'   the other families' results stand. With \code{priors = TRUE} the new terms
+#'   of the extended model would carry the normal(0, 1) prior every parameter
+#'   has; they are tested on the likelihood, without it.
 #'
 #' @param fit A fit from \code{\link{ctFit}} with \code{backend = 'julia'},
 #'   optimised.
@@ -160,7 +198,8 @@
 #'   Covariates are tested only when \code{covariates} is given.
 #' @param form How a covariate enters: \code{'auto'} (indicators for a factor,
 #'   character or logical covariate; linear otherwise), \code{'linear'},
-#'   \code{'spline'} or \code{'factor'}. One value, or one per covariate.
+#'   \code{'spline'}, \code{'factor'} or \code{'threshold'} (a step at an
+#'   unknown cut). One value, or one per covariate.
 #' @param df Degrees of freedom of the spline basis.
 #' @param parameters Optional parameter names to restrict the heterogeneity and
 #'   covariate tests to.
@@ -176,17 +215,32 @@
 #' @param verbose Report progress.
 #' @return An object of class \code{ctScoreTest}: a list with
 #'   \code{heterogeneity} (a data frame, one row per parameter),
+#'   \code{dimension} (the largest eigenvalue, its p-value and the direction,
+#'   when two or more parameters are tested),
 #'   \code{covariates} (one element per covariate, each a list of its
 #'   \code{joint} test and a data frame \code{parameters}),
 #'   \code{statedependence} (a list of \code{terms}, a data frame, and
 #'   \code{joint}, the tests per equation and overall), \code{fixed} (a list
 #'   of \code{cells} and their \code{joint} test), and \code{info} (the
-#'   route, the number of subjects and parameters, the variance used).
+#'   route, the number of subjects and parameters, the variance used, and
+#'   \code{errors}, why any family was not tested). Tables carry \code{class}
+#'   where relaxations are alike.
 #' @references Boos, D. D. (1992). On generalized score tests. The American
 #'   Statistician, 46, 327-333.
 #'
 #'   Chesher, A. (1984). Testing for neglected heterogeneity. Econometrica, 52,
 #'   865-872.
+#'
+#'   Andrews, D. W. K. (1993). Tests for parameter instability and structural
+#'   change with unknown change point. Econometrica, 61, 821-856.
+#'
+#'   Hall, D. B., & Praestgaard, J. T. (2001). Order-restricted score tests for
+#'   homogeneity in generalised linear and nonlinear mixed models.
+#'   Biometrika, 88, 739-751.
+#'
+#'   MacCallum, R. C., Wegener, D. T., Uchino, B. N., & Fabrigar, L. R. (1993).
+#'   The problem of equivalent models in applications of covariance structure
+#'   analysis. Psychological Bulletin, 114, 185-199.
 #'
 #'   Luukkonen, R., Saikkonen, P., & Terasvirta, T. (1988). Testing linearity
 #'   against smooth transition autoregressive models. Biometrika, 75, 491-499.
@@ -203,7 +257,7 @@
 #' @export
 ctScoreTest <- function(fit, covariates = NULL,
   tests = c('heterogeneity', 'covariates', 'statedependence', 'fixed'),
-  form = c('auto', 'linear', 'spline', 'factor'), df = 3, parameters = NULL,
+  form = c('auto', 'linear', 'spline', 'factor', 'threshold'), df = 3, parameters = NULL,
   order = 2L, variance = c('robust', 'model'), nboot = 1999L, cores = 2L,
   verbose = TRUE) {
   if (!.ctFitIsJulia(fit)) stop("ctScoreTest() needs a fit from ",
@@ -214,6 +268,10 @@ ctScoreTest <- function(fit, covariates = NULL,
     "targets the joint density of parameters and states, whose maximum is not ",
     "an estimate of anything (see ?ctFit); there is no fitted model to test.",
     call. = FALSE)
+  # Before anything reaches Julia: a session this call starts is as wide as
+  # `cores`, as ctFit's is. Without it a saved fit tested in a fresh R session
+  # (a cluster job) ran every pass at getOption('mc.cores', 2) threads.
+  .ctBackendResolveThreads(cores)
   testsgiven <- !missing(tests)
   tests <- match.arg(tests, several.ok = TRUE)
   if ('covariates' %in% tests && is.null(covariates)) {
@@ -247,41 +305,73 @@ ctScoreTest <- function(fit, covariates = NULL,
     fixed = NULL, info = list(route = .ctBackendIntOverPop(spec),
       nsubjects = .ctFitNsubjects(fit), npar = length(est)))
   out$info$variance <- variance
+  # A family that cannot be tested on this model says why, in the result and
+  # as a warning, and the others stand: the pilot's state-dependence refusal
+  # once discarded a heterogeneity family that had taken twenty minutes.
+  attempt <- function(label, expr) {
+    ok <- tryCatch({ force(expr); TRUE }, error = function(e) {
+      out$info$errors[[label]] <<- conditionMessage(e)
+      warning(label, ": ", conditionMessage(e), call. = FALSE)
+      FALSE
+    })
+    invisible(ok)
+  }
 
   persubject <- intersect(tests, c('heterogeneity', 'covariates'))
   pieces <- NULL
+  # A reduced-rank level (poprank) carries its variances as loadings and own
+  # sds, so a parameter already varying can still lack a dimension of
+  # variation, and a covariate's effect on its spread has no popsd coordinate
+  # to act on: it acts on the scale of the parameter's row of the loadings.
+  reduced <- any(grepl('^poploading_', ptab$name))
   if (length(persubject)) {
-    het <- .ctScoreSelect(ptab, parameters, 'heterogeneity')
-    cov <- .ctScoreSelect(ptab, parameters, 'covariates')
+    het <- .ctScoreSelect(ptab, parameters, 'heterogeneity', reduced)
+    cov <- .ctScoreSelect(ptab, parameters, 'covariates', reduced)
     if (!'heterogeneity' %in% tests) het <- integer()
     if (!'covariates' %in% tests) cov <- integer()
-    say("Score contributions: ", 2L * length(union(het, cov)) + 1L,
+    # The covariates and their bases are checked before any pass is paid for:
+    # a wrong id column or a non-numeric threshold is the caller's to fix, and
+    # stops the call, where a family the model cannot support does not.
+    bases <- NULL
+    if (length(cov)) {
+      values <- .ctScoreCovariateValues(fit, covariates)
+      forms <- rep_len(form, length(values))
+      bases <- Map(function(z, f, name) {
+        if (!identical(f, 'threshold')) return(.ctScoreBasis(z, f, df, name))
+        if (is.factor(z) || is.character(z) || is.logical(z)) stop("Covariate '", name,
+          "' is not numeric; a threshold needs an ordered covariate.", call. = FALSE)
+        list(threshold = z)
+      }, values, forms, names(values))
+    }
+    dirs <- if (reduced && length(cov)) .ctScoreScaleDirections(est, ptab, parameters) else NULL
+    say("Score contributions: ", 2L * (length(union(het, cov)) + NCOL(dirs)) + 1L,
       " per-subject gradient passes")
     pieces <- .ctScorePieces(fit, est, rows = union(het, cov), second = het,
-      cores = cores)
+      dirs = dirs, cores = cores)
     if (nrow(pieces$S) != .ctFitNsubjects(fit)) stop("This model has a level ",
       "above the subject, so its independent units are not subjects. ",
       "Heterogeneity and covariate tests need subjects; use ",
       "tests = 'statedependence'.", call. = FALSE)
-    if (length(het)) out$heterogeneity <- .ctScoreHeterogeneity(pieces, ptab, het,
-      variance, nboot)
-    if (length(cov)) {
-      values <- .ctScoreCovariateValues(fit, covariates)
-      forms <- rep_len(form, length(values))
-      out$covariates <- Map(function(z, f, name) .ctScoreCovariate(pieces, ptab,
-        cov, .ctScoreBasis(z, f, df, name), variance, nboot), values, forms,
-        names(values))
-    }
+    if (length(het)) attempt('heterogeneity', {
+      out$heterogeneity <- .ctScoreHeterogeneity(pieces, ptab, het, variance, nboot)
+      if (length(het) > 1L) out$dimension <- .ctScoreDimension(pieces, ptab, het, nboot)
+    })
+    if (length(cov)) attempt('covariates', {
+      items <- .ctScoreItems(pieces, ptab, cov)
+      out$covariates <- Map(function(G, name) if (is.list(G) && !is.null(G$threshold))
+        .ctScoreThreshold(pieces, items, G$threshold, name, variance, nboot) else
+        .ctScoreCovariate(pieces, items, G, variance, nboot), bases, names(bases))
+    })
   }
   extended <- intersect(tests, c('statedependence', 'fixed'))
-  if (length(extended)) {
+  if (length(extended)) attempt(paste(extended, collapse = ' and '), {
     say("Preparing the model extended at zero (", paste(extended, collapse = ', '), ")")
     information <- if (!is.null(pieces)) -pieces$Hsum else NULL
     ext <- .ctScoreExtended(fit, est, extended, information, order = order,
       variance = variance, nboot = nboot, cores = cores)
     out$statedependence <- ext$statedependence
     out$fixed <- ext$fixed
-  }
+  })
   structure(out, class = 'ctScoreTest')
 }
 
@@ -316,12 +406,19 @@ ctScoreTest <- function(fit, covariates = NULL,
     slope = slope, stringsAsFactors = FALSE)
 }
 
-# The raw positions a family tests: model parameters for both, minus those
-# already varying and the initial conditions for heterogeneity; plus the
-# population scales for covariates. `parameters` narrows either.
-.ctScoreSelect <- function(ptab, parameters, family) {
+# The raw positions a family tests: model parameters for both, minus the
+# initial conditions and those already varying for heterogeneity (on a
+# reduced-rank level, those with a variance of their own); plus the population
+# scales for covariates. `parameters` narrows either.
+.ctScoreSelect <- function(ptab, parameters, family, reduced = FALSE) {
+  # On a reduced-rank level a varying parameter with no variance of its own
+  # (no popunique_) has none outside the shared dimensions: one of its own is
+  # a boundary, testable as for a parameter that does not vary. A parameter
+  # with its own variance already has that direction free, so a test there
+  # asks nothing the fit did not estimate.
+  own <- paste0('popunique_', ptab$name) %in% ptab$name
   keep <- if (family == 'heterogeneity') {
-    ptab$kind == 'model' & !ptab$indvarying &
+    ptab$kind == 'model' & (!ptab$indvarying | (reduced & !own)) &
       !ptab$matrix %in% c('T0MEANS', 'T0VAR')
   } else ptab$kind %in% c('model', 'popsd')
   if (!is.null(parameters)) {
@@ -345,9 +442,11 @@ ctScoreTest <- function(fit, covariates = NULL,
 # difference (eps / h^2). The full information is the fit's own Hessian, which
 # the optimiser's finish formed already; differencing along every parameter
 # for it cost 2p + 1 passes, 705 on a 352-parameter fit.
-.ctScorePieces <- function(fit, est, rows, second, step = 1e-3, cores = 2L) {
+.ctScorePieces <- function(fit, est, rows, second, dirs = NULL, step = 1e-3,
+  cores = 2L) {
   p <- length(est)
   if (!length(rows)) stop("No parameters to test.", call. = FALSE)
+  Hdir <- NULL
   .ctBackendWithMaxChunks(cores, {
     S <- .ctBackendScoreMatrix(fit, est)
     n <- nrow(S)
@@ -364,10 +463,70 @@ ctScoreTest <- function(fit, covariates = NULL,
       j <- match(k, second)
       if (!is.na(j)) D2[, , j] <- (plus - 2 * S + minus) / h^2
     }
+    # Along each direction, the same difference gives H_i w.
+    if (!is.null(dirs)) {
+      Hdir <- array(0, c(n, ncol(dirs), p))
+      for (d in seq_len(ncol(dirs))) {
+        w <- dirs[, d]
+        h <- step * max(1, max(abs(est[w != 0]))) / max(abs(w))
+        plus <- .ctBackendScoreMatrix(fit, est + h * w)
+        minus <- .ctBackendScoreMatrix(fit, est - h * w)
+        Hdir[, d, ] <- (plus - minus) / (2 * h)
+      }
+    }
     Hsum <- .ctBackendHessian(fit, est)
   })
   Hsum <- (Hsum + t(Hsum)) / 2
-  list(S = S, H = H, rows = rows, D2 = D2, second = second, Hsum = Hsum)
+  list(S = S, H = H, rows = rows, D2 = D2, second = second, Hsum = Hsum,
+    dirs = dirs, Hdir = Hdir)
+}
+
+# The raw-coordinate direction that scales one varying parameter's spread on a
+# reduced-rank level: its row of the loadings (`poploading_<par>_dim<q>`, raw
+# times the parameter's sd scale) and its own sd if it has one
+# (`popunique_<par>`, log1p_exp(2 raw - 1) times the scale; see
+# `_laplace_poploading`). Multiplying that row by exp(g) moves each loading's
+# raw value by g times itself and the own sd's by g f / f'. A covariate's
+# effect on g is its effect on the parameter's log sd, the correlations held.
+.ctScoreScaleDirections <- function(est, ptab, parameters = NULL) {
+  nm <- ptab$name
+  load <- grepl('^poploading_.*_dim[0-9]+$', nm)
+  own <- grepl('^popunique_', nm) & !grepl('\\.', nm)
+  pars <- unique(c(sub('_dim[0-9]+$', '', sub('^poploading_', '', nm[load])),
+    sub('^popunique_', '', nm[own])))
+  if (!is.null(parameters)) pars <- intersect(pars, parameters)
+  W <- matrix(0, length(est), 0)
+  for (par in pars) {
+    w <- numeric(length(est))
+    l <- which(load & startsWith(nm, paste0('poploading_', par, '_dim')) &
+      grepl('^[0-9]+$', substring(nm, nchar(paste0('poploading_', par, '_dim')) + 1L)))
+    w[l] <- est[l]
+    u <- which(own & nm == paste0('popunique_', par))
+    if (length(u)) {
+      x <- 2 * est[u] - 1
+      w[u] <- log1p(exp(x)) / (2 * stats::plogis(x))
+    }
+    if (any(w != 0)) W <- cbind(W, matrix(w, ncol = 1, dimnames = list(NULL, paste0('scale(', par, ')'))))
+  }
+  if (!ncol(W)) NULL else W
+}
+
+# What a covariate's effects act on, each with its score, its Hessian row and
+# its direction in raw coordinates: the tested parameters, and on a
+# reduced-rank level the scale of each varying parameter's spread.
+.ctScoreItems <- function(pieces, ptab, cov) {
+  p <- ncol(pieces$S)
+  items <- lapply(cov, function(j) list(name = ptab$name[j], matrix = ptab$matrix[j],
+    slope = ptab$slope[j], s = pieces$S[, j], H = .ctScoreHrow(pieces, j),
+    dir = replace(numeric(p), j, 1)))
+  if (!is.null(pieces$dirs)) for (d in seq_len(ncol(pieces$dirs))) {
+    H <- pieces$Hdir[, d, , drop = TRUE]
+    if (is.null(dim(H))) H <- matrix(H, nrow = nrow(pieces$S))
+    items[[length(items) + 1L]] <- list(name = colnames(pieces$dirs)[d],
+      matrix = 'POPCOV', slope = 1, s = as.numeric(pieces$S %*% pieces$dirs[, d]),
+      H = H, dir = pieces$dirs[, d])
+  }
+  items
 }
 
 # A symmetric pseudo-inverse and its rank: a direction can carry no
@@ -431,13 +590,63 @@ ctScoreTest <- function(fit, covariates = NULL,
     # can overshoot, and the plain sum is the size to first order anyway.
     if (information <= 0) information <- sum(0.5 * hjj^2)
     sdraw <- if (information > 0) sqrt(max(0, stat / information)) else NA_real_
-    data.frame(parameter = ptab$name[j], matrix = ptab$matrix[j],
+    row <- data.frame(parameter = ptab$name[j], matrix = ptab$matrix[j],
       row = ptab$row[j], col = ptab$col[j], z = z, p = p, sd = sdraw,
       sd_natural = abs(ptab$slope[j]) * sdraw, stringsAsFactors = FALSE)
+    attr(row, 'contribution') <- contribution
+    row
   })
+  contributions <- do.call(cbind, lapply(rows, attr, 'contribution'))
   out <- do.call(rbind, rows)
   out$p_adj <- .ctScoreBH(out$p)
+  out$class <- .ctScoreClasses(contributions)
   out[order(out$p), , drop = FALSE]
+}
+
+# Whether the subjects vary along a direction no single parameter's test
+# isolates -- a new dimension of person variation over several parameters, or
+# on a reduced-rank level one more than its rank. Adding variance tau^2 along
+# a raw direction u changes subject i's log likelihood, at tau^2 = 0, by
+# (u' s_i)^2 / 2 + u' H_i u / 2: the expectation over the subject's posterior
+# of the conditional score's square and Hessian is the marginal's square plus
+# its Hessian. So T = sum_i (s_i s_i' + H_i) / 2 over the tested parameters is
+# the score matrix of every such direction; its diagonal is the
+# per-parameter test. The off-diagonal projections omit the third
+# derivatives the diagonal has, which can only widen the spread and so keeps
+# the test conservative. The statistic is the largest eigenvalue of T scaled
+# by each diagonal's spread (invariant to each parameter's units), against a
+# multiplier bootstrap over subjects; its eigenvector is the direction, read
+# as loadings (Hall & Praestgaard, 2001; Zhu & Zhang, 2006).
+.ctScoreDimension <- function(pieces, ptab, het, nboot = 1999L) {
+  S <- pieces$S
+  n <- nrow(S); K <- length(het)
+  Iinv <- .ctScorePinv(-pieces$Hsum)$inv
+  Hr <- lapply(het, function(j) .ctScoreHrow(pieces, j))
+  C <- array(0, c(n, K, K))
+  for (a in seq_len(K)) for (b in a:K) {
+    ja <- het[a]; jb <- het[b]
+    base <- 0.5 * (S[, ja] * S[, jb] + Hr[[a]][, jb])
+    D <- 0.5 * (colSums(S[, ja] * Hr[[b]]) + colSums(S[, jb] * Hr[[a]]))
+    if (a == b) D <- colSums(S[, ja] * Hr[[a]]) +
+      0.5 * colSums(pieces$D2[, , match(ja, pieces$second), drop = TRUE])
+    C[, a, b] <- C[, b, a] <- base + as.numeric(S %*% (Iinv %*% D))
+  }
+  T <- apply(C, c(2, 3), sum)
+  dsd <- vapply(seq_len(K), function(a) sqrt(.ctScoreSpread(matrix(C[, a, a]))[1, 1]), 0)
+  if (any(!is.finite(dsd) | dsd <= 0)) return(NULL)
+  scale <- sqrt(outer(dsd, dsd))
+  e <- eigen(T / scale, symmetric = TRUE)
+  lambda <- e$values[1]
+  flat <- matrix(C, n, K * K)
+  flat <- sweep(flat, 2, colMeans(flat))
+  G <- matrix(stats::rnorm(nboot * n), nboot, n)
+  Tb <- G %*% flat
+  draws <- apply(Tb, 1, function(t) eigen(matrix(t, K) / scale, symmetric = TRUE,
+    only.values = TRUE)$values[1])
+  u <- e$vectors[, 1] / sqrt(dsd)
+  u <- u / u[which.max(abs(u))]
+  list(lambda = lambda, p = (1 + sum(draws >= lambda)) / (1 + nboot),
+    direction = stats::setNames(u, ptab$name[het])[order(-abs(u))])
 }
 
 # Subject i's Hessian row for raw parameter j, n x p.
@@ -577,22 +786,23 @@ ctScoreTest <- function(fit, covariates = NULL,
 # covariate did not touch (T0MEANS 50 per cent, a population sd 58). Holding
 # them is bigIRT's post-hoc adjustment (its items held, the ability side
 # estimated), here joint over all of the covariate's effects.
-.ctScoreCovariate <- function(pieces, ptab, cov, G, variance = 'robust',
+.ctScoreCovariate <- function(pieces, items, G, variance = 'robust',
   nboot = 1999L) {
   S <- pieces$S
   q <- ncol(G)
-  k <- length(cov)
+  k <- length(items)
   Iinv <- .ctScorePinv(-pieces$Hsum)$inv
   block <- function(a) (a - 1L) * q + seq_len(q)
-  # Contributions g_ia s_ij, ordered by parameter then basis column.
-  C <- do.call(cbind, lapply(cov, function(j) G * S[, j]))
+  # Contributions g_ia s_ij, ordered by item then basis column.
+  C <- do.call(cbind, lapply(items, function(it) G * it$s))
   U <- colSums(C)
   Idt <- matrix(0, q * k, ncol(S))
   Idd <- matrix(0, q * k, q * k)
   for (a in seq_len(k)) {
-    Ha <- .ctScoreHrow(pieces, cov[a])
+    Ha <- items[[a]]$H
     Idt[block(a), ] <- -crossprod(G, Ha)
-    for (b in seq_len(k)) Idd[block(a), block(b)] <- -crossprod(G, G * Ha[, cov[b]])
+    for (b in seq_len(k)) Idd[block(a), block(b)] <-
+      -crossprod(G, G * as.numeric(Ha %*% items[[b]]$dir))
   }
   Idd <- (Idd + t(Idd)) / 2
   A <- Idt %*% Iinv
@@ -619,19 +829,114 @@ ctScoreTest <- function(fit, covariates = NULL,
   }
   rows <- lapply(seq_len(k), function(a) {
     b <- block(a)
-    j <- cov[a]
+    it <- items[[a]]
     one <- function(x) if (q == 1L) x else NA_real_
-    data.frame(parameter = ptab$name[j], matrix = ptab$matrix[j],
+    data.frame(parameter = it$name, matrix = it$matrix,
       estimate = one(held[b]), se = one(sqrt(heldcov[b, b])),
-      estimate_natural = ptab$slope[j] * one(held[b]),
+      estimate_natural = it$slope * one(held[b]),
       p = wald(b, held, heldcov), stringsAsFactors = FALSE)
   })
   parameters <- do.call(rbind, rows)
   parameters$p_adj <- .ctScoreBH(parameters$p)
+  if (q == 1L) parameters$class <- .ctScoreClasses(heldC)
   list(joint = data.frame(covariate = attr(G, 'name'), form = attr(G, 'form'),
     basis = q, LM = lm, df = joint$rank, p = pjoint,
     nmissing = attr(G, 'nmissing'), stringsAsFactors = FALSE),
     parameters = parameters[order(parameters$p), , drop = FALSE])
+}
+
+# A covariate that acts above or below a threshold, at a threshold not known
+# in advance: the joint test of a step at each candidate cut (the 15th to the
+# 85th percentile), and the largest of them, calibrated by one multiplier
+# bootstrap over subjects for every cut at once (Andrews, 1993; the split a
+# score-guided tree makes, Arnold et al., 2021, 2024). The effects reported
+# are those of being above the best cut, held as for a linear covariate.
+.ctScoreThreshold <- function(pieces, items, z, name, variance = 'robust',
+  nboot = 1999L, ncuts = 15L) {
+  if (is.factor(z) || is.character(z) || is.logical(z)) stop("Covariate '", name,
+    "' is not numeric; a threshold needs an ordered covariate.", call. = FALSE)
+  z <- as.numeric(z)
+  ok <- !is.na(z)
+  cuts <- unique(stats::quantile(z[ok], seq(0.15, 0.85, length.out = ncuts),
+    names = FALSE, type = 1))
+  cuts <- cuts[vapply(cuts, function(c) {
+    a <- sum(z[ok] > c); a >= 5 && sum(ok) - a >= 5 }, logical(1))]
+  if (!length(cuts)) stop("Covariate '", name, "' has too few distinct values ",
+    "for a threshold.", call. = FALSE)
+  fits <- lapply(cuts, function(c) {
+    G <- matrix(as.numeric(z > c), ncol = 1L, dimnames = list(NULL, 'step'))
+    G[ok, ] <- G[ok, ] - mean(G[ok, ]); G[!ok, ] <- 0
+    attr(G, 'name') <- name; attr(G, 'form') <- 'threshold'
+    attr(G, 'nmissing') <- sum(!ok)
+    list(G = G)
+  })
+  # The per-subject projected contributions of each cut, for the sup.
+  contrib <- lapply(fits, function(f) .ctScoreCovariateContributions(pieces, items, f$G))
+  stat <- function(C) {
+    v <- .ctScorePinv(.ctScoreSpread(C))
+    u <- colSums(C)
+    as.numeric(t(u) %*% v$inv %*% u)
+  }
+  lms <- vapply(contrib, stat, 0)
+  best <- which.max(lms)
+  centred <- lapply(contrib, function(C) sweep(C, 2, colMeans(C)))
+  vinv <- lapply(contrib, function(C) .ctScorePinv(.ctScoreSpread(C))$inv)
+  n <- nrow(pieces$S)
+  draws <- vapply(seq_len(nboot), function(b) {
+    g <- stats::rnorm(n)
+    max(vapply(seq_along(centred), function(c) {
+      u <- colSums(g * centred[[c]])
+      as.numeric(t(u) %*% vinv[[c]] %*% u)
+    }, 0))
+  }, 0)
+  # The best cut's effects and their tests, with the bootstrap the scan skipped.
+  out <- .ctScoreCovariate(pieces, items, fits[[best]]$G, variance, nboot)
+  out$joint$LM <- lms[best]
+  out$joint$p <- (1 + sum(draws >= lms[best])) / (1 + nboot)
+  out$joint$cut <- cuts[best]
+  out
+}
+
+# Each subject's projected contribution to a covariate's effects: the
+# columns whose sum is the joint test's U*.
+.ctScoreCovariateContributions <- function(pieces, items, G) {
+  S <- pieces$S
+  q <- ncol(G); k <- length(items)
+  Iinv <- .ctScorePinv(-pieces$Hsum)$inv
+  C <- do.call(cbind, lapply(items, function(it) G * it$s))
+  Idt <- do.call(rbind, lapply(items, function(it) -crossprod(G, it$H)))
+  C - S %*% t(Idt %*% Iinv)
+}
+
+# Relaxations the data cannot tell apart at first order: those whose projected
+# per-subject contributions are nearly collinear (|correlation| >= 0.9) would
+# each explain the same signal, as two models that are equivalent locally
+# (MacCallum et al., 1993). Connected groups get a letter; a relaxation alike
+# to no other gets NA.
+.ctScoreClasses <- function(C, threshold = 0.9) {
+  C <- as.matrix(C)
+  k <- ncol(C)
+  out <- rep(NA_character_, k)
+  if (k < 2L) return(out)
+  sdv <- apply(C, 2, stats::sd)
+  r <- suppressWarnings(stats::cor(C))
+  r[!is.finite(r)] <- 0
+  adj <- abs(r) >= threshold & outer(sdv > 0, sdv > 0)
+  diag(adj) <- FALSE
+  group <- rep(0L, k); g <- 0L
+  for (a in seq_len(k)) {
+    if (group[a] || !any(adj[a, ])) next
+    g <- g + 1L
+    todo <- a
+    while (length(todo)) {
+      b <- todo[1]; todo <- todo[-1]
+      if (group[b]) next
+      group[b] <- g
+      todo <- c(todo, which(adj[b, ] & !group))
+    }
+  }
+  out[group > 0] <- LETTERS[((group[group > 0] - 1L) %% 26L) + 1L]
+  out
 }
 
 # The fitted model with a term `d * eta_k * eta_m` in each latent equation's
@@ -815,9 +1120,17 @@ ctScoreTest <- function(fit, covariates = NULL,
   x2[nm1] <- est
   value1 <- ctJuliaEvaluate(fit, est, gradient = FALSE, cores = cores)$value
   ev <- ctJuliaEvaluate(spec2, x2, gradient = TRUE, cores = cores)
-  if (!isTRUE(abs(ev$value - value1) <= 1e-6 * max(1, abs(value1)))) stop(
+  # With priors = TRUE every raw parameter has a normal(0, 1) prior, the new
+  # terms too: at zero each adds log dnorm(0) to the objective, nothing to its
+  # gradient and -1 to its own curvature. The terms are tested on the
+  # likelihood, so that offset is expected and the curvature is taken back out
+  # below. Before this, a four-latent fit with priors refused at 40 terms x
+  # -0.919 = -36.76, which read as a model the rebuild had got wrong.
+  priored <- isTRUE(fit$args$resolved$priors)
+  offset <- if (priored) length(names_new) * stats::dnorm(0, log = TRUE) else 0
+  if (!isTRUE(abs(ev$value - value1 - offset) <= 1e-6 * max(1, abs(value1)))) stop(
     "The extended model does not reproduce the fit at zero (log likelihood ",
-    signif(ev$value, 8), " against ", signif(value1, 8), "), so its scores are ",
+    signif(ev$value - offset, 8), " against ", signif(value1, 8), "), so its scores are ",
     "not the fit's. State dependence and fixed cells cannot be tested for this model.",
     call. = FALSE)
   grad <- setNames(as.numeric(ev$gradient), nm2)
@@ -828,6 +1141,7 @@ ctScoreTest <- function(fit, covariates = NULL,
   Hc <- .ctBackendWithMaxChunks(cores, as.matrix(.ctBackendJuliaValue(
     module$ctsem_hessian_columns(objective, .ctJuliaNumericVector(as.numeric(x2)),
       .ctJuliaVector(as.integer(delta))))))
+  if (priored) Hc[cbind(delta, seq_along(delta))] <- Hc[cbind(delta, seq_along(delta))] + 1
   if (is.null(information)) information <- -.ctBackendHessian(fit, est)
   Iinv <- .ctScorePinv(information)$inv
   Idt <- -t(Hc[theta, , drop = FALSE])
@@ -875,6 +1189,7 @@ ctScoreTest <- function(fit, covariates = NULL,
           latent[terms$k]))),
       per[idx, c('LM', 'p', 'estimate', 'se')], stringsAsFactors = FALSE)
     table$p_adj <- .ctScoreBH(table$p)
+    if (!is.null(Cstar)) table$class <- .ctScoreClasses(Cstar[, idx, drop = FALSE])
     table$i <- terms$i; table$k <- terms$k
     table$monomial <- vapply(seq_len(nrow(terms)), function(r)
       paste(match(strsplit(terms$term[r], '*', fixed = TRUE)[[1]], latent), collapse = ','),
@@ -891,6 +1206,7 @@ ctScoreTest <- function(fit, covariates = NULL,
       col = terms$col, per[idx, c('LM', 'p', 'estimate', 'se')],
       suggested = terms$suggested, transform = terms$transform, stringsAsFactors = FALSE)
     table$p_adj <- .ctScoreBH(table$p)
+    if (!is.null(Cstar)) table$class <- .ctScoreClasses(Cstar[, idx, drop = FALSE])
     out$fixed <- list(cells = table[order(table$p), , drop = FALSE],
       joint = jointtest(idx, 'all'))
   }
@@ -907,29 +1223,42 @@ print.ctScoreTest <- function(x, digits = 3, top = 10, ...) {
   }
   cat("Score tests at the fitted model (", x$info$route, " route, ",
     x$info$nsubjects, " subjects)\n", sep = "")
+  for (e in names(x$info$errors)) cat("Not tested, ", e, ": ", x$info$errors[[e]], "\n", sep = "")
+  withclass <- function(d, cols) if (any(!is.na(d$class))) c(cols, 'class') else cols
   if (!is.null(x$heterogeneity)) {
     cat("\nUnmodelled heterogeneity (one-sided; sd is the one-step estimate, raw scale):\n")
-    fmt(x$heterogeneity[, c('parameter', 'z', 'p', 'p_adj', 'sd', 'sd_natural')])
+    fmt(x$heterogeneity[, withclass(x$heterogeneity, c('parameter', 'z', 'p', 'p_adj',
+      'sd', 'sd_natural'))])
+  }
+  if (!is.null(x$dimension)) {
+    d <- x$dimension
+    cat("\nA new dimension of variation: largest eigenvalue ", signif(d$lambda, digits),
+      ", p = ", signif(d$p, digits), "; direction ",
+      paste0(names(d$direction)[seq_len(min(5, length(d$direction)))], ' ',
+        signif(d$direction[seq_len(min(5, length(d$direction)))], 2), collapse = ', '),
+      "\n", sep = "")
   }
   for (c in x$covariates) {
     j <- c$joint
-    cat("\nCovariate ", j$covariate, " (", j$form, "): joint LM = ",
+    cat("\nCovariate ", j$covariate, " (", j$form,
+      if (!is.null(j$cut)) paste0(", above ", signif(j$cut, digits)), "): joint LM = ",
       signif(j$LM, digits), ", df = ", j$df, ", p = ", signif(j$p, digits), "\n", sep = "")
-    fmt(c$parameters[, c('parameter', 'estimate', 'se', 'estimate_natural', 'p',
-      'p_adj')])
+    fmt(c$parameters[, withclass(c$parameters, c('parameter', 'estimate', 'se',
+      'estimate_natural', 'p', 'p_adj'))])
   }
   if (!is.null(x$statedependence)) {
     cat("\nState dependence of the drift:\n")
     fmt(x$statedependence$joint)
     cat("\n")
-    fmt(x$statedependence$terms[, c('term', 'equation', 'LM', 'p', 'p_adj',
-      'estimate', 'se', 'reads')])
+    fmt(x$statedependence$terms[, withclass(x$statedependence$terms, c('term',
+      'equation', 'LM', 'p', 'p_adj', 'estimate', 'se', 'reads'))])
   }
   if (!is.null(x$fixed)) {
     j <- x$fixed$joint
     cat("\nFixed cells, freed: joint LM = ", signif(j$LM, digits), ", df = ", j$df,
       ", p = ", signif(j$p, digits), "\n", sep = "")
-    fmt(x$fixed$cells[, c('cell', 'LM', 'p', 'p_adj', 'estimate', 'se')])
+    fmt(x$fixed$cells[, withclass(x$fixed$cells, c('cell', 'LM', 'p', 'p_adj',
+      'estimate', 'se'))])
   }
   invisible(x)
 }

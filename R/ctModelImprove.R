@@ -105,6 +105,7 @@ ctModelImprove <- function(fit, covariates = NULL,
     "ctFit(backend = 'julia').", call. = FALSE)
   if (is.null(.ctFitBaseModel(fit))) stop("This fit does not carry the model it ",
     "was built from; refit it with this version of ctsem.", call. = FALSE)
+  .ctBackendResolveThreads(cores)
   relax <- match.arg(relax, several.ok = TRUE)
   criterion <- match.arg(criterion)
   say <- function(...) if (isTRUE(verbose)) message(...)

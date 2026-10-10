@@ -8,7 +8,7 @@ ctScoreTest(
   fit,
   covariates = NULL,
   tests = c("heterogeneity", "covariates", "statedependence", "fixed"),
-  form = c("auto", "linear", "spline", "factor"),
+  form = c("auto", "linear", "spline", "factor", "threshold"),
   df = 3,
   parameters = NULL,
   order = 2L,
@@ -34,7 +34,8 @@ Covariates are tested only when \code{covariates} is given.}
 
 \item{form}{How a covariate enters: \code{'auto'} (indicators for a factor,
 character or logical covariate; linear otherwise), \code{'linear'},
-\code{'spline'} or \code{'factor'}. One value, or one per covariate.}
+\code{'spline'}, \code{'factor'} or \code{'threshold'} (a step at an
+unknown cut). One value, or one per covariate.}
 
 \item{df}{Degrees of freedom of the spline basis.}
 
@@ -59,12 +60,16 @@ section on variance.}
 \value{
 An object of class \code{ctScoreTest}: a list with
   \code{heterogeneity} (a data frame, one row per parameter),
+  \code{dimension} (the largest eigenvalue, its p-value and the direction,
+  when two or more parameters are tested),
   \code{covariates} (one element per covariate, each a list of its
   \code{joint} test and a data frame \code{parameters}),
   \code{statedependence} (a list of \code{terms}, a data frame, and
   \code{joint}, the tests per equation and overall), \code{fixed} (a list
   of \code{cells} and their \code{joint} test), and \code{info} (the
-  route, the number of subjects and parameters, the variance used).
+  route, the number of subjects and parameters, the variance used, and
+  \code{errors}, why any family was not tested). Tables carry \code{class}
+  where relaxations are alike.
 }
 \description{
 Tests, from one fitted model and without refitting it, whether the model
@@ -94,7 +99,21 @@ before interpreting their sizes.
   one-step estimate of the subjects' standard deviation on the raw scale,
   and \code{sd_natural} approximately on the parameter's own. To act on a
   result, set \code{indvarying = TRUE} for the parameter, refit, and test
-  again.
+  again. On a reduced-rank level (\code{poprank}), a parameter that varies
+  only through the shared dimensions, without a variance of its own, is
+  tested too: for variation outside those dimensions.
+
+  \code{dimension} tests every direction at once: whether subjects vary
+  along some combination of the tested parameters -- a new dimension of
+  person variation, or on a reduced-rank level one beyond its rank. Adding
+  variance along a direction \code{u} changes a subject's log likelihood,
+  at zero, by \code{(u's_i)^2/2 + u'H_iu/2}, so the per-parameter tests are
+  the diagonal of one score matrix; its largest eigenvalue, scaled by each
+  diagonal's spread, is the statistic, against a bootstrap over subjects,
+  and its eigenvector is the direction, read as relative loadings (raw
+  scale). It can detect variation spread over parameters that no single
+  test singles out, and is less sensitive than the best single test when
+  one parameter carries it.
 }
 
 \section{Covariates}{
@@ -117,6 +136,19 @@ before interpreting their sizes.
   freedom, for which only \code{p} is given; subjects missing it contribute
   at the mean. To act on a result, add the covariate to the data and to
   \code{TIpredNames} and refit.
+
+  \code{form = 'threshold'} tests a step at an unknown cut instead: the
+  joint test at each cut from the 15th to the 85th percentile, the largest
+  of them against a bootstrap over subjects that takes the search over cuts
+  into account (Andrews, 1993) -- the split a score-guided tree makes. The
+  effects reported are those of being above the best cut, \code{cut} in the
+  joint row.
+
+  On a reduced-rank level the spread of a varying parameter has no
+  \code{popsd_} coordinate, so a covariate's effect on it is tested along
+  the direction that scales that parameter's row of the loadings and its own
+  sd together, reported as \code{scale(<parameter>)}: the effect on its log
+  standard deviation per unit of the covariate, the correlations held.
 }
 
 \section{State dependence}{
@@ -152,6 +184,15 @@ before interpreting their sizes.
   asking for both costs one preparation.
 }
 
+\section{Alike relaxations}{
+ Two relaxations whose per-subject projected
+  contributions are nearly collinear (correlation of 0.9 or more) would
+  each explain the same signal, and the data cannot tell them apart at this
+  order (MacCallum et al., 1993). They share a letter in \code{class};
+  \code{NA} means alike to none. Refit with the most plausible, then test
+  again.
+}
+
 \section{Variance and p-values}{
  The fitted model's curvature projects the
   fitted parameters out of each test and sets the one-step sizes; the
@@ -177,7 +218,11 @@ before interpreting their sizes.
   the route it was fitted on (\code{intoverpop}); they are made at an
   optimum, and refuse a sampled fit. Heterogeneity and covariate tests need
   subjects as the independent units, so a model with a level above the
-  subject can only be tested for state dependence.
+  subject can only be tested for state dependence. A family that cannot be
+  tested on a model says why, as a warning and in \code{info$errors}, and
+  the other families' results stand. With \code{priors = TRUE} the new terms
+  of the extended model would carry the normal(0, 1) prior every parameter
+  has; they are tested on the likelihood, without it.
 }
 
 \examples{
@@ -194,6 +239,17 @@ Boos, D. D. (1992). On generalized score tests. The American
 
   Chesher, A. (1984). Testing for neglected heterogeneity. Econometrica, 52,
   865-872.
+
+  Andrews, D. W. K. (1993). Tests for parameter instability and structural
+  change with unknown change point. Econometrica, 61, 821-856.
+
+  Hall, D. B., & Praestgaard, J. T. (2001). Order-restricted score tests for
+  homogeneity in generalised linear and nonlinear mixed models.
+  Biometrika, 88, 739-751.
+
+  MacCallum, R. C., Wegener, D. T., Uchino, B. N., & Fabrigar, L. R. (1993).
+  The problem of equivalent models in applications of covariance structure
+  analysis. Psychological Bulletin, 114, 185-199.
 
   Luukkonen, R., Saikkonen, P., & Terasvirta, T. (1988). Testing linearity
   against smooth transition autoregressive models. Biometrika, 75, 491-499.
