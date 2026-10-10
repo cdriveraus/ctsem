@@ -633,7 +633,7 @@ test_that('the integration method is read from the fit rather than guessed', {
 # against values derived in R from the raw vector alone -- the TI effects added
 # by hand, the random-effect mode in closed form (with the effect on a manifest
 # mean the model is linear Gaussian in it), and the likelihood as a
-# multivariate normal.
+# multivariate normal, at the mode or with the effect integrated out.
 
 .kalman_ti_model <- function() {
   model <- suppressMessages(ctModel(type = "ct", manifestNames = "Y1",
@@ -654,8 +654,10 @@ test_that('the integration method is read from the fit rather than guessed', {
 }
 
 # Subject `i`'s manifest mean and log likelihood at standardised random effect
-# `u`, or at its mode when `u` is NULL. The engine supplies only population
-# quantities: the transforms, at a raw vector shifted here, and the effect's sd.
+# `u`, or at its mode when `u` is NULL, and its marginal log likelihood with the
+# effect integrated over its population distribution. The engine supplies only
+# population quantities: the transforms, at a raw vector shifted here, and the
+# effect's sd.
 .kalman_ti_reference <- function(fit, data, i, u = NULL) {
   spec <- ctsem:::.ctBackendSpec(fit)
   raw <- fit$estimate$raw
@@ -691,9 +693,12 @@ test_that('the integration method is read from the fit rather than guessed', {
   base <- as.numeric(at$MANIFESTMEANS)
   if (is.null(u)) u <- slope * sum(Vinv %*% (y - base)) / (1 + slope^2 * sum(Vinv))
   mean <- base + slope * u
-  residual <- y - mean
-  list(mean = mean, loglik = -0.5 * (n * log(2 * pi) +
-    as.numeric(determinant(V)$modulus) + sum(residual * (Vinv %*% residual))))
+  normal <- function(residual, S) -0.5 * (n * log(2 * pi) +
+    as.numeric(determinant(S)$modulus) + sum(residual * solve(S, residual)))
+  # A standard normal effect shifting every row by `slope` adds slope^2 to
+  # every cell of the covariance.
+  list(mean = mean, loglik = normal(y - mean, V),
+    marginal = normal(y - base, V + slope^2))
 }
 
 test_that("each Laplace filter consumer applies a subject's TI effects once", {
@@ -712,12 +717,16 @@ test_that("each Laplace filter consumer applies a subject's TI effects once", {
   population <- lapply(ids, function(i) .kalman_ti_reference(fit, data, i, u = 0))
   firstmean <- function(ref) vapply(ref, function(x) x$mean, numeric(1))
   loglik <- function(ref) vapply(ref, function(x) x$loglik, numeric(1))
+  marginal <- vapply(atmode, function(x) x$marginal, numeric(1))
 
-  # The first-row prior mean and each subject's summed log likelihood. On the
-  # fit's own rows ctKalmanArray solves the modes in the engine. ctKalman
-  # rebuilds the rows it filters, even at timestep = 'asdata', and takes the
-  # modes from the fitted specification instead, which is the path every
-  # prediction takes.
+  # The first-row prior mean and each subject's summed log likelihood. By
+  # default both functions predict each row from the subject's earlier rows
+  # only, with the effect at its posterior given those, so the first row is
+  # the population prediction and the rows' log likelihoods sum to the
+  # subject's marginal likelihood -- exact here, the model being linear
+  # Gaussian in the effect. ctKalmanArray filters the fit's own rows; ctKalman
+  # rebuilds the rows it filters, even at timestep = 'asdata', which is the
+  # path every prediction takes.
   fromarray <- function(...) {
     k <- suppressMessages(ctKalmanArray(fit, ...))
     list(first = as.numeric(k$yprior[1L, !duplicated(k$id), 1L]),
@@ -734,8 +743,8 @@ test_that("each Laplace filter consumer applies a subject's TI effects once", {
   }
   for (result in list(fromarray(), kalman(timestep = "asdata"),
     kalman(timestep = 0.25))) {
-    expect_equal(result$first, firstmean(atmode), tolerance = 1e-6)
-    expect_equal(result$loglik, loglik(atmode), tolerance = 1e-6)
+    expect_equal(result$first, firstmean(population), tolerance = 1e-6)
+    expect_equal(result$loglik, marginal, tolerance = 1e-6)
   }
   for (result in list(fromarray(randomEffects = "population"),
     kalman(timestep = "asdata", randomEffects = "population"))) {
