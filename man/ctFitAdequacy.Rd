@@ -116,10 +116,13 @@ a variable.
     log likelihood, for the dynamic and measurement parameters
     (\code{parameters}), correlated with the scores of the same subject's
     other rows, by time gap. Under the model a subject's row scores are
-    uncorrelated whatever the departure being looked for, so this catches
-    dynamic misspecification of any kind; it costs a dual pass of the filter
-    per eight parameters, and on the Laplace route one per truncated record,
-    which is hours on large data.}
+    uncorrelated whatever the departure, so this is a check for dynamic
+    misspecification of any kind; being that broad, over many statistics,
+    it is the least powerful of the families, and the targeted tests of
+    \code{\link{ctScoreTest}} (stability, state dependence) find what they
+    cover far more often. It costs a dual pass of the filter per eight
+    parameters, and on the Laplace route one per truncated record, which is
+    hours on large data.}
   \item{subjects, nonlinear, covariates, lagged}{Statistics of the data
     against datasets generated from the fit: how much subjects differ in
     mean, standard deviation and lag-one correlations; whether change

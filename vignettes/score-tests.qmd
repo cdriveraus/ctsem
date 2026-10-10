@@ -330,8 +330,8 @@ given the others observed at the same time, so a result names a variable.
 * `scores`, when asked for: whether each observation's score is uncorrelated
   with the scores of the same subject's other observations, which holds
   under the model whatever is being looked for. That makes it a check for
-  dynamic misspecification of any kind, at the cost of a pass of the filter
-  per eight parameters.
+  dynamic misspecification of any kind, but a weak one, spread over many
+  statistics; the targeted tests above find what they cover far more often.
 
 The error statistics account for the parameters having been estimated from
 the same data. Each subject's contribution is projected on its scores, which
