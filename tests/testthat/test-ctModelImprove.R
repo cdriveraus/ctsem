@@ -35,12 +35,33 @@ test_that("adequacy is reported per family, and the residual family needs no dra
   x <- .improve_fit(0)
   ad <- ctFitAdequacy(x$fit, nsamples = 40, cores = 1)
   expect_s3_class(ad, 'ctFitAdequacy')
-  expect_setequal(ad$families$family, c('lagged', 'subjects', 'nonlinear', 'residuals'))
+  expect_setequal(ad$families$family, c('lagged', 'subjects', 'nonlinear', 'residuals',
+    'distribution', 'fit', 'dependence'))
   expect_true(all(ad$families$p > 0 & ad$families$p <= 1))
   expect_true(ad$adequate)
   # Reuses what the fit generated.
   expect_equal(dim(ad$fit$generated$Y)[1], 40L)
   expect_output(print(ad), 'adequate')
+})
+
+test_that("a strong misfit is not floored at one over the number of datasets", {
+  # Subjects' means follow z, which the model does not have: the covariate
+  # family's p-value used to be the share of 40 datasets beyond the data's,
+  # so no smaller than 1/41, and Holm over the families then hid it.
+  x <- .improve_fit(0.8)
+  ad <- ctFitAdequacy(x$fit, covariates = unique(x$data[, c('id', 'z')]), nsamples = 40,
+    cores = 1)
+  expect_lt(ad$families$p[ad$families$family == 'covariates'], 1e-4)
+  expect_false(ad$adequate)
+})
+
+test_that("the Anderson-Darling reference holds its level", {
+  set.seed(3)
+  p <- replicate(400, .ctAdequacyAD(stats::runif(200))[2])
+  # 0.05, within three binomial sds at 400 draws.
+  expect_gt(mean(p < 0.05), 0.017)
+  expect_lt(mean(p < 0.05), 0.083)
+  expect_lt(.ctAdequacyAD(stats::pnorm(stats::rnorm(500, 0.3)))[2], 0.001)
 })
 
 test_that("a covariate the model lacks is added, an unrelated one is not, and the search stops", {

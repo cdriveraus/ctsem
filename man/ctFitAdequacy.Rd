@@ -54,22 +54,42 @@ model can fall short, and gives each family a p-value.
     products of the variables' deviations from their subject means, and of
     the squared change with those deviations: a drift or a diffusion that
     depends on the state.}
-  \item{residuals}{Whether the standardised one-step-ahead prediction
-    errors are white, as they are under the model whatever the spacing of
-    the observations: their autocorrelations and cross-correlations within
-    subject at lags 1 to \code{max(lags)}, and the lag-one autocorrelation
-    of their squares (volatility that clusters). This is the residual ACF and
-    CCF, and needs no generated data: its reference is the normal one of a
-    correlation between independent errors, with a Sidak correction over
-    the family.}
   \item{covariates}{With \code{covariates}: the correlation of each subject
     statistic above with each covariate, against the model, whose generated
     subjects do not depend on it.}
 }
 
-A family's p-value is the share of generated datasets whose largest
-standardised discrepancy over the family's statistics is at least the
-data's, which accounts for the number of statistics and their correlation.
+Four more families are built on the one-step-ahead prediction errors, each
+variable's error standardised given the row's other errors, so that it
+carries the variable's name. Under the model those errors are standard
+normal and independent of everything before their row, whatever the
+spacing of the observations, so these families need no generated data:
+their references are exact for a linear Gaussian model with known
+parameters (Sidak over each family, or a permutation where stated).
+\describe{
+  \item{residuals}{Their autocorrelations and cross-correlations within
+    subject at lags 1 to \code{max(lags)}, and the lag-one autocorrelation
+    of their squares (volatility that clusters): the residual ACF and CCF.}
+  \item{distribution}{Each variable's errors against the standard normal,
+    and each row's squared whitened distance against the chi-square, by
+    Anderson-Darling: skew, heavy tails, outlying occasions.}
+  \item{fit}{Each subject's summed squared distance against the
+    chi-square on its number of observations: whether subjects are fitted
+    more unevenly than the model allows, and the worst one.}
+  \item{dependence}{The distance correlation of each variable's error, and
+    of its square, with what came before -- the predicted latent states, the
+    previous errors, the time interval -- by permutation: a conditional mean
+    or variance the model gets wrong, in any functional form.}
+}
+
+For the families compared with generated data, each statistic is
+standardised by its mean and standard deviation over the generated
+datasets and referred to the normal, and a family's p-value is its
+smallest, Sidak-corrected for the number of statistics -- conservative
+when they are correlated, as they are. The references ignore that the parameters were estimated from the same
+data, which makes the checks conservative for what the parameters fit.
+Detection is not localization: a failure in one variable's equation
+reaches the others' errors through the fitted covariance.
 \code{adequate} is \code{TRUE} when no family's Holm-adjusted p-value is
 below \code{alpha}. The statistics are descriptive and can miss what they
 do not measure; \code{\link{ctScoreTest}} is the more sensitive check for
