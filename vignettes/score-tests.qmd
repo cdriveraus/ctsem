@@ -117,6 +117,13 @@ differ, and roughly where; it cannot always say which of two related
 parameters is the source. The way to find out is to relax the strongest
 candidate and test again.
 
+The line under the table tests every direction at once: whether the subjects
+vary along some combination of these parameters, which no single row would
+isolate when the variation is spread over several of them. On a model whose
+population covariance has reduced rank (`poprank`), it is the test of one more
+dimension. Here one parameter carries the variation, and its own row is the
+sharper test.
+
 ```{r het-refit}
 model1b <- model
 model1b$pars$indvarying[model1b$pars$param %in% "drift_eta1"] <- TRUE
@@ -169,7 +176,10 @@ take in the age differences -- and an estimate that lets those parameters move
 too extrapolates the model's curvature across that whole change.
 
 The tests also cover the random effects' standard deviations (the `popsd_`
-rows): whether subjects differ more at some ages than others.
+rows): whether subjects differ more at some ages than others. A covariate can
+also be tested as a step at an unknown threshold, `form = "threshold"`, which
+scans the cuts and accounts for having chosen the best one: an effect that
+switches on above some age, say.
 
 The refit puts `age` into the model as a time independent predictor, with
 effects on every parameter:
@@ -268,20 +278,37 @@ refit, and test again.
 The usual check of a dynamic model compares the data with data the fitted
 model generates: the autocorrelations and cross-correlations (ACF and CCF),
 how much subjects differ from each other, and so on. `ctFitAdequacy()` makes
-those comparisons numbers with p-values, in families aimed at different
-departures. Four compare statistics of the data with the same statistics of
-generated data: the lagged correlations; the spread over subjects of each
-subject's own mean, standard deviation and lag-one correlations; whether
-change depends on level nonlinearly; and, given covariates, whether subjects'
-statistics depend on them. Four more need no generated data, because they
-work on the one-step-ahead prediction errors, which under the model are
-independent and standard normal however the observations are spaced: whether
-those errors are white (the residual ACF and CCF), whether they are normal,
-whether some subjects are fitted worse than the model allows, and whether an
-error or its size depends, in any form, on what came before it -- the
-predicted states, the previous errors, the time since the last observation.
-Each variable's error is taken given the others observed at the same time,
-so a result names a variable.
+those comparisons tests, in families aimed at different departures.
+
+Most of the families work on the one-step-ahead prediction errors, which
+under the model are independent and standard normal however the observations
+are spaced, so they need no generated data. Each variable's error is taken
+given the others observed at the same time, so a result names a variable.
+
+* `residuals`: the errors' correlations within subjects, for every pair of a
+  subject's observations, binned by the time between them. This is the
+  residual ACF and CCF in continuous time, and a slow process the model lacks
+  shows as correlation over the gaps it spans.
+* `volatility`: the same for the squared errors, for variance that clusters
+  in time.
+* `pairs`: whether two variables' errors at the same time correlate as the
+  model says, for a wrong measurement error covariance or loading.
+* `distribution`: skewness, kurtosis and outlying occasions.
+* `fit`: whether some subjects are fitted much worse than the model allows.
+* `dependence`: whether an error or its size depends, in any form, on what
+  came before it: the predicted states, the previous errors, the time since
+  the last observation.
+
+The error statistics account for the parameters having been estimated from
+the same data. Each subject's contribution is projected on its scores, which
+removes what estimation did to the statistic, as the score tests do. Three
+more families compare statistics of the data with generated data: the spread
+over subjects of their own means, standard deviations and lag-one
+correlations; whether change depends on level nonlinearly; and, given
+covariates, whether subjects' statistics depend on them. With many
+observations every misfit is significant, so the size of what remains is
+reported too, as a root mean square residual correlation with an interval and
+a test that it is at most `close` (0.05 by default).
 
 On the second example's fit, which lacks `age`, the checks fail, through the
 subjects' spread and their relation to age:
@@ -298,14 +325,16 @@ ctFitAdequacy(fit3)
 
 Every family passes, though this model is missing the state dependence the
 score test found at p = 5e-6. A moderated drift, averaged over the data,
-still decays much like a single exponential, and summary statistics are
-coarse instruments for a departure the likelihood sees directly. The lagged
-correlations are the bluntest: they are close to what the fit was chosen to
-reproduce, so they sit near the model's whatever else is wrong. The checks
-are worth having: they catch what lies outside every score test's reach,
-such as a process of the wrong order or errors with heavy tails. But passing
-them is necessary rather than sufficient, which is why the next section
-screens with the score tests and stops on the checks.
+still decays much like a single exponential, so the errors it leaves are
+nearly uncorrelated: the root mean square residual correlation is
+indistinguishable from zero. The checks are worth having for what lies
+outside every score test's reach: a slow process the model lacks, variance
+that clusters, errors with heavy tails, a process of the wrong order. In
+simulation the residual correlations over time gaps found a missing slow
+process (a time constant ten times the fast one's) in 65 of 100 datasets,
+where correlations at a few lags of the observations found it in 5. But
+passing the checks is necessary rather than sufficient, which is why the next
+section screens with the score tests and stops on the checks.
 
 ## Automating the search
 
@@ -362,8 +391,12 @@ s$popmeans[grepl("^sdep", rownames(s$popmeans)), ]
 
 The model was chosen by the data it is fitted to, so its standard errors and
 tests are too optimistic about the structure the search added. Treat that
-structure as a hypothesis: confirm it on other data, or hold out some
-subjects from the search for that purpose.
+structure as a hypothesis, and confirm it on other data. Within one dataset,
+`holdout = 0.3` sets aside 30 per cent of the subjects: the search runs on
+the rest, and each change it keeps is then tested on the held-out subjects
+alone. With a large dataset, `close = 0.05` also stops the search once the
+residual correlations that remain are not significantly larger than that,
+where every small misfit would otherwise be significant.
 
 ## How the tests work, briefly
 
