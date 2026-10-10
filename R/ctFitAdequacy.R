@@ -491,7 +491,7 @@ ctFitAdequacy <- function(fit, covariates = NULL,
 # first index fastest), its variance under the model from the products'
 # squares (`V0`), and the number of pairs that contribute (`N`). Missing
 # values contribute nothing.
-.ctAdequacyPairBlock <- function(X, unit, time, n, setup, robust = FALSE) {
+.ctAdequacyPairBlock <- function(X, unit, time, n, setup) {
   X <- as.matrix(X)
   K <- ncol(X)
   B <- length(setup$labels)
@@ -513,8 +513,7 @@ ctFitAdequacy <- function(fit, covariates = NULL,
       if (!any(W > 0)) next
       cols <- (b - 1L) * K * K + seq_len(K * K)
       M[i, cols] <- as.numeric(crossprod(x, W %*% x))
-      V0[i, cols] <- if (robust) as.numeric(crossprod(crossprod(W, x)^2, x2)) else
-        as.numeric(crossprod(x2, W %*% x2))
+      V0[i, cols] <- as.numeric(crossprod(x2, W %*% x2))
       N[cols] <- N[cols] + as.numeric(crossprod(o, W %*% o))
     }
   }
@@ -604,20 +603,29 @@ ctFitAdequacy <- function(fit, covariates = NULL,
 # White's dynamic information matrix test: each row's score for the chosen
 # parameters, multiplied by the scores of the same unit's later rows, by
 # time gap. Under the model a unit's row scores are a martingale difference
-# sequence, so every such product has mean zero. Their variance given the past
-# is not constant -- a drift parameter's score scales with the predicted state
-# -- so the per-pair variance the errors use, which assumes it is, rejected a
-# correct model a quarter of the time at .05; the variance here is each later
-# row's squared score times the square of its earlier partners' summed scores,
-# which needs only the martingale property.
+# sequence, so every such product has mean zero.
+#
+# Unit-level, like the distribution family, rather than with the pairwise
+# variance the errors use. A row score's variance given the past is not
+# constant -- a drift score scales with the predicted state -- and the per-pair
+# variance, which assumes it is, rejected a correct model a quarter of the time
+# at .05. The form that needs only the martingale property, each later row's
+# squared score times its earlier partners' summed score squared, got the
+# median variance right (ratio to the projected spread 0.96-1.05 over six null
+# fits) but not the tails: products of chi-square-like variance scores over
+# long gaps are far from normal, and where estimation takes half a statistic's
+# variance the difference of two noisy terms is fragile, so the largest of 64
+# |z| reached 3.5-4.7. The units' spread and the studentised bootstrap over
+# units see both.
 .ctAdequacyScoreMoments <- function(fit, x, err, setup, directions, cores) {
   if (is.null(x)) x <- .ctFitRawEstimate(fit)
   R <- .ctBackendRowScores(fit, x, directions, cores)
-  blk <- .ctAdequacyPairBlock(R, err$unit, err$time, err$nunits, setup, robust = TRUE)
+  blk <- .ctAdequacyPairBlock(R, err$unit, err$time, err$nunits, setup)
   K <- ncol(R)
   grid <- expand.grid(j = seq_len(K), k = seq_len(K), b = seq_len(length(setup$labels)))
   par <- colnames(directions)
-  list(M = blk$M, V0 = blk$V0, meta = data.frame(family = 'scores',
+  list(M = blk$M, V0 = matrix(NA_real_, nrow(blk$M), ncol(blk$M)),
+    meta = data.frame(family = 'scores',
     name = paste0('s(', par[grid$j], ')~s(', par[grid$k], ') gap ', setup$labels[grid$b]),
     count = blk$N, kind = 'moment', bin = grid$b, stringsAsFactors = FALSE))
 }
