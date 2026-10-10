@@ -1524,6 +1524,12 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # worth having: this one also covers a chain that only exists after
 # `.ctModelIntOverPop()` has rewritten the cells.
 .CT_JULIA_PARSREF <- "\\bPARS\\s*\\[\\s*\\d+\\s*,\\s*\\d+\\s*\\]"
+# A T0MEANS or T0VAR cell may also read the subject's TI predictors, which
+# `ctModelWriter.R` has already written as `tipreds[j]`. They stay in the text:
+# the engine reads them from a tail of the subject's parameter vector
+# (`EKFParameters.ti_tail`), since these cells are evaluated from that vector
+# before any row, with no row context to read them from.
+.CT_JULIA_TIPREDREF <- "\\btipreds\\s*\\[\\s*\\d+\\s*\\]"
 
 .ctJuliaResolveStaticRefs <- function(p, rows) {
 
@@ -1567,8 +1573,19 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     if (grepl("\\bstate\\s*\\[", text, perl = TRUE)) return(list(kind = "no", why = paste0(
       what, " depends on a latent state")))
     refs <- refs_of(text)
-    if (!length(refs)) return(list(kind = "no", why = paste0(
-      what, " contains an index the julia backend does not recognise: ", text)))
+    reads_tipreds <- grepl(.CT_JULIA_TIPREDREF, text, perl = TRUE)
+    # Anything indexed but PARS and the TI predictors is not something this
+    # matrix can read.
+    other <- gsub(.CT_JULIA_TIPREDREF, "", gsub(.CT_JULIA_PARSREF, "", text, perl = TRUE),
+      perl = TRUE)
+    if (grepl("[", other, fixed = TRUE) || (!length(refs) && !reads_tipreds)) {
+      return(list(kind = "no", why = paste0(
+        what, " contains an index the julia backend does not recognise: ", text)))
+    }
+    if (!length(refs)) {
+      return(list(kind = "data", parnumber = NA_integer_, parnumbers = integer(0),
+        text = text))
+    }
     # Each distinct reference is resolved on its own and substituted at its own
     # occurrences, so an expression over several PARS cells composes exactly as
     # one over a single cell does. Substitution goes through placeholders
@@ -1592,6 +1609,12 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       } else paste0("(", inner[[k]]$text, ")"), outer, fixed = TRUE)
     }
     parnumbers <- unique(unlist(lapply(inner, `[[`, "parnumbers")))
+    # Predictors and no parameter: a value per subject that is data, carried
+    # by the engine's predictor tail rather than by a raw parameter.
+    if (!length(parnumbers) && reads_tipreds) {
+      return(list(kind = "data", parnumber = NA_integer_, parnumbers = integer(0),
+        text = outer))
+    }
     if (!length(parnumbers)) {
       # Every reference was a fixed value, so the whole cell is one too.
       folded <- try(eval(parse(text = outer)), silent = TRUE)
@@ -1617,6 +1640,12 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       p$value[i] <- r$value
       p$transform[i] <- NA_character_
       p$parnumber[i] <- NA_integer_
+    } else if (identical(r$kind, "data")) {
+      # No parameter number: the engine gives the cell its first predictor's
+      # tail position (`_ctsem_ti_tail_rendering`).
+      p$value[i] <- NA_real_
+      p$parnumber[i] <- NA_integer_
+      p$transform[i] <- r$text
     } else {
       # Already in final `param[k]` form. This row is not in `free` -- that
       # was computed with `!grepl("[", param)` and this cell's param had one
@@ -3903,6 +3932,13 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       predictor = c(as.integer(effects$predictor), as.integer(fixed$predictor)),
       coefficient = c(as.integer(effects$coefficient), integer(nrow(fixed))),
       value = c(numeric(nrow(effects)), as.numeric(fixed$value)))
+  }
+  # A T0MEANS or T0VAR cell reading a TI predictor reads it from the tail of
+  # the subject's parameter vector, after every raw parameter.
+  if (any(grepl(.CT_JULIA_TIPREDREF, .ctJuliaNoNA(as.character(table$transform), ""),
+      perl = TRUE))) {
+    arguments$ti_tail_offset <- .ctBackendNpar(spec)
+    arguments$n_tipreds <- as.integer(spec$standata$ntipred)[1L]
   }
   if (nrow(effects)) {
     arguments$ti_parameter <- V(as.integer(effects$parameter))

@@ -326,6 +326,14 @@ function _ctsem_ti_pullback!(values_bar::AbstractVector,
             values_bar[spec.parameter_index[k]] += cotangent * _ctsem_ti_effect(sp, values, i)
         end
     end
+    # A T0MEANS or T0VAR cell that reads a sampled predictor reads it from the
+    # tail (`EKFParameters.ti_tail`), and its cotangent lands there.
+    if !isempty(sp.ti_tail)
+        @inbounds for k in eachindex(spec.predictor_index)
+            values_bar[spec.parameter_index[k]] +=
+                subject_values_bar[first(sp.ti_tail) - 1 + spec.predictor_index[k]]
+        end
+    end
     return values_bar
 end
 
