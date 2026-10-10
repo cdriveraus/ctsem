@@ -305,6 +305,7 @@ ctScoreTest <- function(fit, covariates = NULL,
     fixed = NULL, info = list(route = .ctBackendIntOverPop(spec),
       nsubjects = .ctFitNsubjects(fit), npar = length(est)))
   out$info$variance <- variance
+  out$info$nboot <- nboot
   # A family that cannot be tested on this model says why, in the result and
   # as a warning, and the others stand: the pilot's state-dependence refusal
   # once discarded a heterogeneity family that had taken twenty minutes.
@@ -600,7 +601,7 @@ ctScoreTest <- function(fit, covariates = NULL,
   out <- do.call(rbind, rows)
   out$p_adj <- .ctScoreBH(out$p)
   out$class <- .ctScoreClasses(contributions)
-  out[order(out$p), , drop = FALSE]
+  out[order(out$p, -out$z), , drop = FALSE]
 }
 
 # Whether the subjects vary along a direction no single parameter's test
@@ -842,7 +843,8 @@ ctScoreTest <- function(fit, covariates = NULL,
   list(joint = data.frame(covariate = attr(G, 'name'), form = attr(G, 'form'),
     basis = q, LM = lm, df = joint$rank, p = pjoint,
     nmissing = attr(G, 'nmissing'), stringsAsFactors = FALSE),
-    parameters = parameters[order(parameters$p), , drop = FALSE])
+    parameters = parameters[order(parameters$p, -abs(parameters$estimate /
+      parameters$se)), , drop = FALSE])
 }
 
 # A covariate that acts above or below a threshold, at a threshold not known
@@ -1197,7 +1199,8 @@ ctScoreTest <- function(fit, covariates = NULL,
     joint <- do.call(rbind, c(lapply(unique(terms$equation), function(e)
       jointtest(idx[terms$equation == e], e)), list(jointtest(idx, 'all'))))
     names(joint)[1] <- 'equation'
-    out$statedependence <- list(terms = table[order(table$p), , drop = FALSE], joint = joint)
+    out$statedependence <- list(terms = table[order(table$p, -table$LM), , drop = FALSE],
+      joint = joint)
   }
   if (!is.null(fixed$terms)) {
     idx <- length(state$terms$name) + seq_len(nrow(fixed$terms))
@@ -1207,7 +1210,7 @@ ctScoreTest <- function(fit, covariates = NULL,
       suggested = terms$suggested, transform = terms$transform, stringsAsFactors = FALSE)
     table$p_adj <- .ctScoreBH(table$p)
     if (!is.null(Cstar)) table$class <- .ctScoreClasses(Cstar[, idx, drop = FALSE])
-    out$fixed <- list(cells = table[order(table$p), , drop = FALSE],
+    out$fixed <- list(cells = table[order(table$p, -table$LM), , drop = FALSE],
       joint = jointtest(idx, 'all'))
   }
   out
@@ -1215,10 +1218,19 @@ ctScoreTest <- function(fit, covariates = NULL,
 
 #' @export
 print.ctScoreTest <- function(x, digits = 3, top = 10, ...) {
+  # A bootstrap p-value cannot go below 1 / (nboot + 1); at that floor it
+  # says only that, and the table is ordered by the statistic instead.
+  floor <- if (identical(x$info$variance, 'robust') && !is.null(x$info$nboot))
+    1 / (x$info$nboot + 1) else 0
   fmt <- function(d) {
     d <- utils::head(d, top)
+    atfloor <- if ('p' %in% names(d)) !is.na(d$p) & d$p <= floor * (1 + 1e-9) else NULL
     num <- vapply(d, is.numeric, logical(1))
     d[num] <- lapply(d[num], function(v) signif(v, digits))
+    if (any(atfloor)) {
+      d$p <- format(d$p)
+      d$p[atfloor] <- paste0('<', signif(floor, 2))
+    }
     print(d, row.names = FALSE)
   }
   cat("Score tests at the fitted model (", x$info$route, " route, ",

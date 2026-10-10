@@ -40,6 +40,14 @@
 #'   \item{order}{a latent process made second order.}
 #' }
 #'
+#' On a reduced-rank level (\code{poprank}) a heterogeneity result for a
+#' parameter that already varies through the shared dimensions gives it a
+#' variance of its own (\code{popunique}), and a significant \code{dimension}
+#' test raises the rank by one; without reduced rank, a significant
+#' \code{dimension} test makes the parameters its direction loads on vary
+#' together. Relaxations the score tests cannot tell apart (the same
+#' \code{class}) are not refitted in the same round.
+#'
 #' When the search stops, each change kept is tried out again, by refitting
 #' without it (\code{prune}), and dropped if the others make it redundant.
 #'
@@ -64,10 +72,19 @@
 #'   data showed was subjects differing in variance.
 #'
 #' The result is a model chosen by the data it is fitted to, and its
-#' standard errors and tests do not account for that choice. Treat the
-#' selected structure as a hypothesis to check on other data, or hold out
-#' subjects for that from the start. Every step, and every refit tried and
+#' standard errors and tests do not account for that choice (MacCallum,
+#' Roznowski & Necowitz, 1992). \code{holdout} sets aside a share of the
+#' subjects: the search runs on the rest, and each change it keeps is then
+#' tested on the held-out subjects alone, by refitting the final model without
+#' it there; \code{confirmation} says which held, and the final model, refitted
+#' to every subject, keeps only those. Every step, and every refit tried and
 #' rejected, is in \code{history}.
+#'
+#' With many observations a model can be rejected by the checks for
+#' departures too small to matter. With \code{close}, the search also stops
+#' when every check that fails is a residual or within-row correlation family
+#' whose size is not significantly above \code{close}
+#' (\code{\link{ctFitAdequacy}}).
 #'
 #' @param fit A fit from \code{\link{ctFit}} with \code{backend = 'julia'}.
 #' @param covariates Optional subject-level covariates the model may add, as
@@ -84,6 +101,12 @@
 #' @param prune After the search, try dropping each kept change in turn and
 #'   drop it if the likelihood does not need it given the others: a change
 #'   kept early can be made redundant by one kept later.
+#' @param close Optional root mean square residual correlation regarded as a
+#'   close enough fit to stop at; see Details.
+#' @param holdout Share of subjects, between 0 and 0.5, held out of the search
+#'   to confirm its changes on.
+#' @param form How covariates are screened, as for \code{\link{ctScoreTest}};
+#'   \code{'threshold'} lets the search add a covariate as a step.
 #' @param nsamples Generated datasets for the adequacy checks.
 #' @param cores Cores for fitting and testing.
 #' @param verbose Report progress.
@@ -92,15 +115,20 @@
 #'   screening p-value, the change in log likelihood and parameters, the
 #'   criterion's verdict, and whether it was kept; a pruning row, \code{family}
 #'   \code{'prune'}, says whether the change was dropped), \code{screens} (the score
-#'   tests of each round), \code{adequacy} (the final checks), and
-#'   \code{stopped} (why the search ended).
+#'   tests of each round), \code{adequacy} (the final checks),
+#'   \code{confirmation} (with \code{holdout}: each kept change's likelihood
+#'   ratio test on the held-out subjects), and \code{stopped} (why the search
+#'   ended). With \code{holdout}, \code{fit} is the model with the confirmed
+#'   changes refitted to every subject, and \code{selected} the search's own
+#'   choice fitted to the subjects it searched on.
 #' @seealso \code{vignette('score-tests')}.
 #' @export
 ctModelImprove <- function(fit, covariates = NULL,
   relax = c('heterogeneity', 'covariates', 'statedependence', 'fixed', 'order'),
   candidates = NULL, alpha = 0.05, maxsteps = 10L, ntry = 3L,
   criterion = c('LR', 'AIC', 'BIC'), adequacy = TRUE, prune = TRUE,
-  nsamples = 100L, cores = 2L, verbose = TRUE) {
+  close = NULL, holdout = 0, form = 'auto', nsamples = 100L, cores = 2L,
+  verbose = TRUE) {
   if (!.ctFitIsJulia(fit)) stop("ctModelImprove() needs a fit from ",
     "ctFit(backend = 'julia').", call. = FALSE)
   if (is.null(.ctFitBaseModel(fit))) stop("This fit does not carry the model it ",
@@ -116,9 +144,28 @@ ctModelImprove <- function(fit, covariates = NULL,
   if (!is.null(covariates) && !idname %in% names(covariates))
     names(covariates)[names(covariates) == 'id'] <- idname
   data <- as.data.frame(.ctFitLongData(fit))
+  selected <- NULL
+  if (!is.numeric(holdout) || holdout < 0 || holdout > 0.5) stop("holdout is a ",
+    "share of subjects between 0 and 0.5.", call. = FALSE)
+  held <- NULL
+  if (holdout > 0) {
+    # A fixed stream, so a search is reproducible, leaving the caller's alone.
+    if (exists('.Random.seed', envir = globalenv(), inherits = FALSE)) {
+      oldseed <- get('.Random.seed', envir = globalenv(), inherits = FALSE)
+      on.exit(assign('.Random.seed', oldseed, envir = globalenv()), add = TRUE)
+    } else on.exit(rm('.Random.seed', envir = globalenv()), add = TRUE)
+    set.seed(20261011L)
+    ids <- unique(data[[idname]])
+    held <- sample(ids, max(2L, round(holdout * length(ids))))
+    alldata <- data
+    data <- data[!data[[idname]] %in% held, , drop = FALSE]
+    say("Holding out ", length(held), " of ", length(ids), " subjects; refitting on the rest")
+    fit <- .ctImproveRefit(fit, .ctFitBaseModel(fit), data, cores)
+  }
   current <- fit
   startdata <- data
   kept <- list()
+  extraargs <- list()
   history <- list(); screens <- list(); rejected <- character()
   ad <- NULL
   stopped <- 'maxsteps'
@@ -132,17 +179,18 @@ ctModelImprove <- function(fit, covariates = NULL,
     if (is.null(available)) tests <- setdiff(tests, 'covariates')
     say("Round ", step, ": screening")
     st <- if (length(tests)) suppressMessages(ctScoreTest(current, covariates = available,
-      tests = tests, cores = cores, verbose = FALSE)) else NULL
+      tests = tests, form = form, cores = cores, verbose = FALSE)) else NULL
     screens[[step]] <- st
-    proposals <- .ctImproveProposals(st, model, alpha)
+    proposals <- .ctImproveProposals(st, model, alpha, current)
     proposals <- proposals[!vapply(proposals, `[[`, '', 'key') %in% rejected]
     structural <- FALSE
     if (!length(proposals)) {
       if (isTRUE(adequacy)) {
         say("Round ", step, ": nothing indicated; checking adequacy")
         ad <- ctFitAdequacy(current, covariates = available, nsamples = nsamples,
-          alpha = alpha, cores = cores)
+          alpha = alpha, close = if (is.null(close)) 0.05 else close, cores = cores)
         if (ad$adequate) { stopped <- 'adequate'; break }
+        if (!is.null(close) && isTRUE(ad$close_fit)) { stopped <- 'close fit'; break }
       } else { stopped <- 'nothing indicated'; break }
       proposals <- .ctImproveStructural(model, relax, candidates, ad)
       proposals <- proposals[!vapply(proposals, `[[`, '', 'key') %in% rejected]
@@ -150,15 +198,21 @@ ctModelImprove <- function(fit, covariates = NULL,
       if (!length(proposals)) { stopped <- 'not adequate, nothing left to try'; break }
     }
     # Ranked by each test's own asymptotic p-value: the bootstrap's floors at
-    # 1 / (nboot + 1), and strong signals would tie there.
-    proposals <- utils::head(proposals[order(vapply(proposals, `[[`, 0, 'rank'))], ntry)
+    # 1 / (nboot + 1), and strong signals would tie there. Of relaxations the
+    # tests cannot tell apart (one class), only the strongest is refitted this
+    # round; if it fails, the next round's screen says whether another is
+    # still indicated.
+    proposals <- proposals[order(vapply(proposals, `[[`, 0, 'rank'))]
+    cls <- vapply(proposals, function(p) if (is.null(p$class) || is.na(p$class)) NA_character_ else
+      paste(p$family, p$class), '')
+    proposals <- utils::head(proposals[is.na(cls) | !duplicated(cls)], ntry)
     tried <- list()
     for (prop in proposals) {
       say("Round ", step, ": refitting with ", prop$label)
       edited <- try(prop$edit(model, data, covariates), silent = TRUE)
       refit <- if (inherits(edited, 'try-error')) edited else
-        try(.ctImproveRefit(current, edited$model, edited$data, cores, prop$start),
-          silent = TRUE)
+        try(.ctImproveRefit(current, edited$model, edited$data, cores, prop$start,
+          edited$args), silent = TRUE)
       verdict <- .ctImproveCompare(current, refit, criterion, alpha / length(proposals))
       tried[[length(tried) + 1L]] <- list(prop = prop, refit = refit, edited = edited,
         verdict = verdict)
@@ -176,6 +230,7 @@ ctModelImprove <- function(fit, covariates = NULL,
     best <- which(ok)[which.max(vapply(tried[ok], function(t) t$verdict$score, 0))]
     current <- tried[[best]]$refit
     data <- tried[[best]]$edited$data
+    extraargs <- utils::modifyList(extraargs, as.list(tried[[best]]$edited$args))
     kept[[length(kept) + 1L]] <- tried[[best]]$prop
     history[[length(history) - length(tried) + best]]$kept <- TRUE
     ad <- NULL
@@ -190,10 +245,9 @@ ctModelImprove <- function(fit, covariates = NULL,
     k <- 1L
     while (k <= length(kept) && length(kept) > 1L) {
       say("Pruning: refitting without ", kept[[k]]$label)
-      m <- .ctFitBaseModel(fit); d <- startdata
       rebuilt <- try({
-        for (p in kept[-k]) { e <- p$edit(m, d, covariates); m <- e$model; d <- e$data }
-        .ctImproveRefit(current, m, d, cores)
+        r <- .ctImproveRebuild(.ctFitBaseModel(fit), startdata, kept[-k], covariates)
+        .ctImproveRefit(current, r$model, r$data, cores, args = r$args)
       }, silent = TRUE)
       verdict <- if (inherits(rebuilt, 'try-error')) list(accept = TRUE,
         dloglik = NA_real_, dpar = NA_integer_, value = NA_real_,
@@ -208,7 +262,8 @@ ctModelImprove <- function(fit, covariates = NULL,
         stringsAsFactors = FALSE)
       if (drop) {
         say("Pruning: dropped ", kept[[k]]$label)
-        current <- rebuilt; data <- d; kept <- kept[-k]; ad <- NULL
+        r <- .ctImproveRebuild(.ctFitBaseModel(fit), startdata, kept[-k], covariates)
+        current <- rebuilt; data <- r$data; extraargs <- r$args; kept <- kept[-k]; ad <- NULL
       } else k <- k + 1L
     }
   }
@@ -219,44 +274,137 @@ ctModelImprove <- function(fit, covariates = NULL,
         drop = FALSE]
     if (!is.null(available) && ncol(available) < 2L) available <- NULL
     ad <- ctFitAdequacy(current, covariates = available, nsamples = nsamples,
-      alpha = alpha, cores = cores)
+      alpha = alpha, close = if (is.null(close)) 0.05 else close, cores = cores)
+  }
+  confirmation <- NULL
+  if (!is.null(held) && length(kept)) {
+    say("Confirming ", length(kept), " change(s) on the ", length(held), " held-out subjects")
+    holddata <- alldata[alldata[[idname]] %in% held, , drop = FALSE]
+    full <- .ctImproveRebuild(.ctFitBaseModel(fit), holddata, kept, covariates)
+    fullfit <- try(.ctImproveRefit(current, full$model, full$data, cores, args = full$args),
+      silent = TRUE)
+    confirmation <- do.call(rbind, lapply(seq_along(kept), function(k) {
+      without <- .ctImproveRebuild(.ctFitBaseModel(fit), holddata, kept[-k], covariates)
+      w <- try(.ctImproveRefit(current, without$model, without$data, cores,
+        args = without$args), silent = TRUE)
+      verdict <- if (inherits(fullfit, 'try-error')) list(dloglik = NA_real_,
+        dpar = NA_integer_, value = NA_real_, accept = NA, note = 'refit failed') else
+        .ctImproveCompare(w, fullfit, 'LR', alpha)
+      data.frame(change = kept[[k]]$label, dloglik = verdict$dloglik, dpar = verdict$dpar,
+        p = verdict$value, confirmed = isTRUE(verdict$accept), note = verdict$note,
+        stringsAsFactors = FALSE)
+    }))
+    # The final model keeps what the held-out subjects confirmed; the search's
+    # own choice stays in `selected`.
+    selected <- current
+    confirmedkept <- kept[confirmation$confirmed]
+    say("Refitting the final model, with the ", length(confirmedkept),
+      " confirmed change(s), to every subject")
+    final <- .ctImproveRebuild(.ctFitBaseModel(fit), alldata, confirmedkept, covariates)
+    current <- .ctImproveRefit(current, final$model, final$data, cores, args = final$args)
   }
   history <- if (length(history)) do.call(rbind, history) else data.frame()
   structure(list(fit = current, history = history, screens = screens,
-    adequacy = ad, stopped = stopped, start = fit), class = 'ctModelImprove')
+    adequacy = ad, confirmation = confirmation, stopped = stopped, start = fit,
+    selected = selected,
+    holdout = held), class = 'ctModelImprove')
+}
+
+# The base model with a sequence of kept changes applied, for some data: the
+# model, the data the changes need (added covariates), and the ctFit
+# arguments they change (popunique, poprank).
+.ctImproveRebuild <- function(model, data, kept, covariates) {
+  args <- list()
+  for (p in kept) {
+    e <- p$edit(model, data, covariates, args)
+    model <- e$model; data <- e$data
+    if (!is.null(e$args)) args <- utils::modifyList(args, e$args)
+  }
+  list(model = model, data = data, args = args)
 }
 
 # What the screen indicates, as edits: one per heterogeneity parameter, state
 # term and fixed cell significant within its family, and one per covariate
 # whose joint test is significant, adding it with effects on the parameters
 # its tests single out.
-.ctImproveProposals <- function(st, model, alpha) {
+.ctImproveProposals <- function(st, model, alpha, current = NULL) {
   out <- list()
   if (is.null(st)) return(out)
+  # The ctFit arguments the current fit was made with, for edits that change
+  # a reduced-rank level rather than the model.
+  replay <- if (is.null(current)) list() else .ctFitReplayArgs(current)
   h <- st$heterogeneity
   if (!is.null(h)) for (r in which(h$p_adj < alpha)) {
     par <- h$parameter[r]
-    out[[length(out) + 1L]] <- list(key = paste0('het:', par), family = 'heterogeneity',
-      label = paste0(par, ' individually varying'), p = h$p[r],
-      rank = stats::pnorm(h$z[r], lower.tail = FALSE),
+    varying <- par %in% model$pars$param[as.logical(model$pars$indvarying) %in% TRUE]
+    out[[length(out) + 1L]] <- if (!varying) list(key = paste0('het:', par),
+      family = 'heterogeneity', label = paste0(par, ' individually varying'), p = h$p[r],
+      rank = stats::pnorm(h$z[r], lower.tail = FALSE), class = h$class[r],
       start = .ctImprovePopsdStart(model, par, h$sd[r]),
-      edit = local({ par <- par; function(model, data, covs) {
+      edit = local({ par <- par; function(model, data, covs, args = list()) {
         model$pars$indvarying[model$pars$param %in% par] <- TRUE
         list(model = model, data = data)
+      } })) else list(key = paste0('own:', par), family = 'heterogeneity',
+      label = paste0(par, ' given a variance of its own'), p = h$p[r],
+      rank = stats::pnorm(h$z[r], lower.tail = FALSE), class = h$class[r],
+      edit = local({ par <- par; pu <- replay$popunique; function(model, data, covs, args = list()) {
+        old <- if (!is.null(args$popunique)) args$popunique else pu
+        if (isTRUE(old)) stop('every parameter already has a variance of its own')
+        old <- if (is.null(old) || isFALSE(old)) character() else as.character(old)
+        list(model = model, data = data, args = list(popunique = unique(c(old, par))))
       } }))
+  }
+  d <- st$dimension
+  if (!is.null(d) && isTRUE(d$p < alpha)) {
+    rk <- replay$poprank
+    if (!is.null(current) && any(grepl('^poploading_', .ctFitRawParNames(current)))) {
+      if (is.numeric(rk) && length(rk) == 1L && is.finite(rk)) out[[length(out) + 1L]] <-
+        list(key = paste0('rank:', rk + 1L), family = 'dimension',
+          label = paste0('population rank raised to ', rk + 1L), p = d$p, rank = d$p,
+          edit = local({ rk <- rk; function(model, data, covs, args = list()) {
+            r <- if (!is.null(args$poprank)) args$poprank else rk
+            list(model = model, data = data, args = list(poprank = r + 1L))
+          } }))
+    } else {
+      pars <- names(d$direction)[abs(d$direction) >= 0.5]
+      pars <- setdiff(pars, model$pars$param[as.logical(model$pars$indvarying) %in% TRUE])
+      if (length(pars) > 1L) out[[length(out) + 1L]] <- list(
+        key = paste0('dim:', paste(sort(pars), collapse = ',')), family = 'dimension',
+        label = paste0(paste(pars, collapse = ', '), ' individually varying together'),
+        p = d$p, rank = d$p, edit = local({ pars <- pars; function(model, data, covs,
+          args = list()) {
+          model$pars$indvarying[model$pars$param %in% pars] <- TRUE
+          list(model = model, data = data)
+        } }))
+    }
   }
   for (cv in st$covariates) {
     if (!isTRUE(cv$joint$p < alpha)) next
     z <- cv$joint$covariate
+    cut <- cv$joint$cut
     pt <- cv$parameters
-    pt <- pt[!grepl('^popsd_', pt$parameter), , drop = FALSE]
+    # Effects on spreads (popsd_, scale()) are reported, not added: a time
+    # independent predictor acts on a parameter's value.
+    pt <- pt[!grepl('^popsd_|^scale\\(', pt$parameter), , drop = FALSE]
     pars <- pt$parameter[pt$p_adj < alpha]
     if (!length(pars)) next
-    out[[length(out) + 1L]] <- list(key = paste0('cov:', z, ':', paste(sort(pars), collapse = ',')),
-      family = 'covariates', label = paste0(z, ' as a predictor of ', paste(pars, collapse = ', ')),
-      p = cv$joint$p, rank = stats::pchisq(cv$joint$LM, cv$joint$df, lower.tail = FALSE), edit = local({ z <- z; pars <- pars; function(model, data, covs) {
+    # A column name the model can take: the sign and point as letters, since
+    # 'age_above_-0.297' was not found in the data it had just been added to.
+    zname <- if (is.null(cut)) z else paste0(z, '_above_',
+      gsub('.', 'p', sub('^-', 'm', format(signif(cut, 3))), fixed = TRUE))
+    out[[length(out) + 1L]] <- list(key = paste0('cov:', zname, ':', paste(sort(pars), collapse = ',')),
+      family = 'covariates', label = paste0(if (is.null(cut)) z else paste0(z, ' above ',
+        signif(cut, 3)), ' as a predictor of ', paste(pars, collapse = ', ')),
+      p = cv$joint$p, rank = stats::pchisq(cv$joint$LM, cv$joint$df, lower.tail = FALSE),
+      edit = local({ z <- z; pars <- pars; cut <- cut; zname <- zname
+        function(model, data, covs, args = list()) {
         idname <- model$subjectIDname
         add <- unique(covs[, c(idname, z)])
+        if (!is.null(cut)) {
+          add[[zname]] <- as.numeric(add[[z]] > cut)
+          add <- add[, c(idname, zname)]
+          z <- zname
+        }
         data <- merge(data[, setdiff(names(data), z), drop = FALSE], add, by = idname,
           all.x = TRUE, sort = FALSE)
         data <- data[order(data[[idname]], data[[model$timeName]]), , drop = FALSE]
@@ -273,8 +421,8 @@ ctModelImprove <- function(fit, covariates = NULL,
     name <- paste0('sdep_', s$equation[r], '_', gsub('*', '_', s$term[r], fixed = TRUE))
     out[[length(out) + 1L]] <- list(key = paste0('sdep:', i, ':', s$monomial[r]),
       family = 'statedependence', label = paste0(s$term[r], ' in the drift of ',
-        s$equation[r]), p = s$p[r], rank = s$p[r],
-      edit = local({ i <- i; mono <- mono; name <- name; function(model, data, covs) {
+        s$equation[r]), p = s$p[r], rank = s$p[r], class = s$class[r],
+      edit = local({ i <- i; mono <- mono; name <- name; function(model, data, covs, args = list()) {
         list(model = .ctAddCintTerms(model, i, name, list(mono)), data = data)
       } }))
   }
@@ -282,8 +430,8 @@ ctModelImprove <- function(fit, covariates = NULL,
   if (!is.null(f)) for (r in which(f$p_adj < alpha)) {
     cell <- f[r, ]
     out[[length(out) + 1L]] <- list(key = paste0('fixed:', cell$cell), family = 'fixed',
-      label = paste0(cell$cell, ' freed'), p = cell$p, rank = cell$p,
-      edit = local({ cell <- cell; function(model, data, covs) {
+      label = paste0(cell$cell, ' freed'), p = cell$p, rank = cell$p, class = cell$class,
+      edit = local({ cell <- cell; function(model, data, covs, args = list()) {
         k <- which(model$pars$matrix == cell$matrix & model$pars$row == cell$row &
           model$pars$col == cell$col)
         name <- cell$suggested
@@ -306,14 +454,14 @@ ctModelImprove <- function(fit, covariates = NULL,
       if (paste0('d', model$latentNames[i]) %in% model$latentNames) next
       out[[length(out) + 1L]] <- list(key = paste0('order:', model$latentNames[i]),
         family = 'order', label = paste0(model$latentNames[i], ' made second order'),
-        p = NA_real_, rank = 1, edit = local({ i <- i; function(model, data, covs)
-          list(model = ctModelHigherOrder(model, i), data = data) }))
+        p = NA_real_, rank = 1, edit = local({ i <- i; function(model, data, covs,
+          args = list()) list(model = ctModelHigherOrder(model, i), data = data) }))
     }
   }
   for (k in seq_along(candidates)) {
     out[[length(out) + 1L]] <- list(key = paste0('candidate:', k), family = 'candidate',
       label = paste0('candidate model ', k), p = NA_real_, rank = 1,
-      edit = local({ k <- k; function(model, data, covs) {
+      edit = local({ k <- k; function(model, data, covs, args = list()) {
         list(model = candidates[[k]], data = data) } }))
   }
   out
@@ -325,8 +473,10 @@ ctModelImprove <- function(fit, covariates = NULL,
 # new random effect at an arbitrary scale can leave a Laplace unit's inner mode
 # unconverged at the start, which ended two of three refits in testing -- so a
 # refit that fails from there is tried once from ctsem's own start.
-.ctImproveRefit <- function(current, model, data, cores, start = NULL) {
+.ctImproveRefit <- function(current, model, data, cores, start = NULL, args = NULL) {
+  extra <- args
   args <- .ctFitReplayArgs(current)
+  if (length(extra)) args <- utils::modifyList(args, extra)
   args$model <- model
   args$datalong <- data
   args$verbose <- 0
@@ -384,9 +534,15 @@ ctModelImprove <- function(fit, covariates = NULL,
 #' @export
 print.ctModelImprove <- function(x, digits = 3, ...) {
   cat("Model improvement: stopped because ", x$stopped, "\n", sep = "")
+  # With held-out subjects the start and the search's result are fits to the
+  # subjects searched on, and the final fit is to every subject: compare the
+  # first two.
+  end <- if (is.null(x$selected)) x$fit else x$selected
   cat("Log likelihood ", signif(x$start$estimate$loglik, 7), " -> ",
-    signif(x$fit$estimate$loglik, 7), " (", length(.ctFitRawEstimate(x$start)), " -> ",
-    length(.ctFitRawEstimate(x$fit)), " parameters)\n\n", sep = "")
+    signif(end$estimate$loglik, 7), " (", length(.ctFitRawEstimate(x$start)), " -> ",
+    length(.ctFitRawEstimate(end)), " parameters)",
+    if (!is.null(x$selected)) paste0(", on the ", .ctFitNsubjects(x$start),
+      " subjects searched"), "\n\n", sep = "")
   if (nrow(x$history)) {
     h <- x$history
     h[c('screen_p', 'dloglik', 'criterion')] <- lapply(h[c('screen_p', 'dloglik', 'criterion')],
@@ -395,6 +551,12 @@ print.ctModelImprove <- function(x, digits = 3, ...) {
     names(h)[names(h) == 'kept'] <- 'done'
     print(h[, c('round', 'change', 'screen_p', 'dloglik', 'dpar', 'done', 'note')],
       row.names = FALSE)
+  }
+  if (!is.null(x$confirmation)) {
+    cat("\nConfirmed on ", length(x$holdout), " held-out subjects:\n", sep = "")
+    cf <- x$confirmation
+    cf[c('dloglik', 'p')] <- lapply(cf[c('dloglik', 'p')], signif, digits)
+    print(cf[, c('change', 'dloglik', 'dpar', 'p', 'confirmed')], row.names = FALSE)
   }
   if (!is.null(x$adequacy)) { cat("\n"); print(x$adequacy) }
   invisible(x)

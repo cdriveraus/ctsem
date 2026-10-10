@@ -2,99 +2,150 @@
 % Please edit documentation in R/ctFitAdequacy.R
 \name{ctFitAdequacy}
 \alias{ctFitAdequacy}
-\title{Posterior predictive adequacy of a fitted model, as tests}
+\title{Adequacy of a fitted model, as tests}
 \usage{
 ctFitAdequacy(
   fit,
   covariates = NULL,
+  families = c("residuals", "volatility", "pairs", "distribution", "fit", "dependence",
+    "subjects", "nonlinear", "covariates"),
+  gaps = NULL,
+  close = 0.05,
+  alpha = 0.05,
+  projection = c("auto", "derivative", "opg", "none"),
   nsamples = 100,
   lags = 0:3,
-  alpha = 0.05,
+  nboot = 1999L,
   cores = 2
 )
 }
 \arguments{
-\item{fit}{A fit from \code{\link{ctFit}}, either backend.}
+\item{fit}{A fit from \code{\link{ctFit}}, either backend. The projection
+and the scores it needs require \code{backend = 'julia'}.}
 
 \item{covariates}{Optional subject-level covariates, as for
-\code{\link{ctScoreTest}}.}
+\code{\link{ctScoreTest}}, for the \code{covariates} family.}
 
-\item{nsamples}{Number of generated datasets. Reused from \code{fit} when it
-already carries at least as many.}
+\item{families}{Which families to run; see Details.}
 
-\item{lags}{Observation lags for the lagged family.}
+\item{gaps}{Break points, in the data's time units, for the residual
+correlations' gap bins. By default the eighth, quarter and half quantiles
+of the time between every pair of a unit's rows.}
 
-\item{alpha}{Level for \code{adequate}.}
+\item{close}{The root mean square residual correlation regarded as a close
+fit.}
 
-\item{cores}{Cores for generating.}
+\item{alpha}{Level for \code{adequate} and \code{close_fit}.}
+
+\item{projection}{How the error-based statistics account for estimation:
+\code{'derivative'} differences the statistics along every parameter (two
+passes of the filter per parameter) and projects with the fit's Hessian;
+\code{'opg'} uses the outer product of the scores, valid when units
+outnumber parameters many times; \code{'none'} ignores estimation, which
+is conservative. \code{'auto'} takes the first that is affordable:
+\code{'derivative'} when the fit's Hessian is stored and the passes take
+under \code{getOption('ctsem.adequacy.budget', 120)} seconds,
+\code{'opg'} with at least ten units a parameter, else \code{'none'}.}
+
+\item{nsamples}{Number of generated datasets, for the families that need
+them. Reused from \code{fit} when it already carries at least as many.}
+
+\item{lags}{Observation lags for the \code{lagged} family.}
+
+\item{nboot}{Bootstrap draws for each family's calibration.}
+
+\item{cores}{Cores for the engine and for generating.}
 }
 \value{
 An object of class \code{ctFitAdequacy}: \code{families} (one row
-  per family: its p-value, the Holm-adjusted one, the number of
-  statistics and the worst), \code{statistics} (every statistic: observed,
-  generated mean and sd, z, two-sided p), \code{adequate}, and \code{fit}
-  (with its generated data, for reuse).
+  per family: the number of statistics, the worst, its z, the family's
+  p-value and the Holm-adjusted one), \code{statistics} (every statistic:
+  observed value, z, two-sided p), \code{size} (the root mean square
+  residual correlations, their intervals and close-fit tests),
+  \code{adequate}, \code{close_fit}, \code{projection} (the method used),
+  and \code{fit} (with any generated data, for reuse).
 }
 \description{
-Compares statistics of the data with the same statistics of datasets
-generated from the fit, in families aimed at the ways a continuous time
-model can fall short, and gives each family a p-value.
+Tests a fitted model in families, each aimed at one way a continuous time
+model can fall short, and gives each family a p-value. Most families use the
+one-step-ahead prediction errors, which under the model are independent and
+standard normal whatever the spacing of the observations; each variable's
+error is taken given the others observed at the same time, so a result names
+a variable.
 }
 \details{
 \describe{
-  \item{lagged}{The lagged correlations within and across variables (the
-    ACF and CCF, lags 0 to \code{max(lags)}), as \code{\link{ctFitCheckCov}}
-    computes them: wrong dynamics, wrong measurement error, a missing
-    process.}
-  \item{subjects}{How much subjects differ in their own mean, standard
-    deviation and lag-one autocorrelation and cross-correlation of each
-    variable: individual differences the model does not carry.}
-  \item{nonlinear}{Whether change depends on level nonlinearly: the
-    correlation, pooled within subjects, of each variable's change with the
-    products of the variables' deviations from their subject means, and of
-    the squared change with those deviations: a drift or a diffusion that
-    depends on the state.}
-  \item{covariates}{With \code{covariates}: the correlation of each subject
-    statistic above with each covariate, against the model, whose generated
-    subjects do not depend on it.}
-}
-
-Four more families are built on the one-step-ahead prediction errors, each
-variable's error standardised given the row's other errors, so that it
-carries the variable's name. Under the model those errors are standard
-normal and independent of everything before their row, whatever the
-spacing of the observations, so these families need no generated data:
-their references are exact for a linear Gaussian model with known
-parameters (Sidak over each family, or a permutation where stated).
-\describe{
-  \item{residuals}{Their autocorrelations and cross-correlations within
-    subject at lags 1 to \code{max(lags)}, and the lag-one autocorrelation
-    of their squares (volatility that clusters): the residual ACF and CCF.}
-  \item{distribution}{Each variable's errors against the standard normal,
-    and each row's squared whitened distance against the chi-square, by
-    Anderson-Darling: skew, heavy tails, outlying occasions.}
-  \item{fit}{Each subject's summed squared distance against the
-    chi-square on its number of observations: whether subjects are fitted
-    more unevenly than the model allows, and the worst one.}
+  \item{residuals}{Correlations of the errors within units, for every pair
+    of rows, by time gap (\code{gaps}): the residual autocorrelation and
+    cross-correlation in continuous time. Slow structure the model lacks
+    shows as correlation over the gaps it spans.}
+  \item{volatility}{The same for the squared errors, per variable: variance
+    that clusters in time.}
+  \item{pairs}{Each pair of variables' errors in the same row against the
+    correlation the model implies: a wrong measurement error covariance or
+    loading.}
+  \item{distribution}{Skewness and kurtosis of each variable's errors, and
+    each row's squared whitened distance against its chi-square mean and
+    variance, together with Anderson-Darling tests against the normal and
+    chi-square.}
+  \item{fit}{How unevenly units are fitted: the spread of each unit's
+    summed distance against the chi-square's, and the worst unit.}
   \item{dependence}{The distance correlation of each variable's error, and
     of its square, with what came before -- the predicted latent states, the
     previous errors, the time interval -- by permutation: a conditional mean
-    or variance the model gets wrong, in any functional form.}
+    or variance the model gets wrong, in any form.}
+  \item{subjects, nonlinear, covariates, lagged}{Statistics of the data
+    against datasets generated from the fit: how much subjects differ in
+    mean, standard deviation and lag-one correlations; whether change
+    depends on level nonlinearly; with \code{covariates}, whether subjects'
+    statistics depend on them; and the data's own lagged correlations
+    (\code{lags}). These use the data twice and are conservative; the
+    lagged correlations especially, as the fit reproduces them, so they are
+    not run unless asked for.}
 }
 
-For the families compared with generated data, each statistic is
-standardised by its mean and standard deviation over the generated
-datasets and referred to the normal, and a family's p-value is its
-smallest, Sidak-corrected for the number of statistics -- conservative
-when they are correlated, as they are. The references ignore that the parameters were estimated from the same
-data, which makes the checks conservative for what the parameters fit.
-Detection is not localization: a failure in one variable's equation
-reaches the others' errors through the fitted covariance.
-\code{adequate} is \code{TRUE} when no family's Holm-adjusted p-value is
-below \code{alpha}. The statistics are descriptive and can miss what they
-do not measure; \code{\link{ctScoreTest}} is the more sensitive check for
-the departures it covers, and \code{\link{ctModelImprove}} uses both.
+The error-based statistics are moment tests: each unit's contribution is
+projected on its scores, which removes what estimating the parameters did
+to the statistic (\code{projection}), and the variance is the errors' own:
+they are independent over rows under the model, so a sum of products over
+pairs of rows has the sum of the products' squares as its variance, which
+holds with heavy tails or a changing variance; estimating the parameters
+takes a known part of it away. That is the variance of the residual,
+volatility and within-row families; the distribution and fit families,
+whose statistics are sums of high powers, use the spread of the units'
+contributions and a studentised bootstrap over units. Within a family the
+largest standardised statistic and the sum of their squares are calibrated
+with the statistics' correlation over units
+and combined, with any exact p-values the family has, by the Cauchy
+combination; families are combined by Holm. \code{adequate} is \code{TRUE}
+when no family's adjusted p-value is below \code{alpha}.
+
+With many observations every misfit is significant, so the sizes of the
+residual and within-row correlations the model leaves are reported too, as
+root mean squares (the unbiased form of the SRMR, Maydeu-Olivares 2017),
+with intervals and a test that the size is at most \code{close}.
+\code{close_fit} is \code{TRUE} when every family that fails is one of those
+two and its size is not significantly above \code{close}.
+
+Detection is not localization: a failure in one variable's equation reaches
+the others' errors through the fitted covariance. \code{\link{ctScoreTest}}
+is the more sensitive check for the departures it covers, and
+\code{\link{ctModelImprove}} uses both.
+}
+\references{
+Newey, W. K. (1985). Maximum likelihood specification testing
+  and conditional moment tests. \emph{Econometrica, 53}, 1047-1070.
+
+  Chang, J., Yao, Q., & Zhou, W. (2017). Testing for high-dimensional white
+  noise using maximum cross-correlations. \emph{Biometrika, 104}, 111-127.
+
+  Liu, Y., & Xie, J. (2020). Cauchy combination test. \emph{Journal of the
+  American Statistical Association, 115}, 393-402.
+
+  Maydeu-Olivares, A. (2017). Assessing the size of model misfit in
+  structural equation models. \emph{Psychometrika, 82}, 533-558.
 }
 \seealso{
-\code{\link{ctPostPredPlots}} to see the same comparisons.
+\code{\link{ctPostPredPlots}} and \code{\link{ctFitCheckCov}} to
+  see the data against the fit.
 }

@@ -54,9 +54,12 @@ test_that("the per-subject pieces reproduce the engine's derivatives", {
   ptab <- ctsem:::.ctScoreParameterTable(fit)
   model <- which(ptab$kind == 'model')
   pieces <- ctsem:::.ctScorePieces(fit, est, rows = model, second = integer(), cores = 1)
-  # Summed per-subject Hessians are the fit's exact Hessian.
+  # Each subject's Hessian row is differenced along the tested parameter alone
+  # (its symmetry gives the row), so summed over subjects the rows must be the
+  # fit's exact Hessian's.
   exact <- ctsem:::.ctBackendHessian(fit, est)
-  expect_equal(pieces$Hsum, exact, tolerance = 1e-6, ignore_attr = TRUE)
+  for (a in seq_along(model)) expect_equal(colSums(pieces$H[, a, ]),
+    as.numeric(exact[model[a], ]), tolerance = 1e-5)
   # A covariate's score is the gradient, at zero, in the TI effect it would add:
   # the same model with z as a TI predictor, effects on every parameter.
   withz <- suppressMessages(ctModel(type = 'ct', manifestNames = 'Y1',
@@ -140,4 +143,58 @@ test_that("what cannot be tested is refused by name", {
     tests = 'covariates', verbose = FALSE), 'one row per subject')
   expect_error(ctScoreTest(x$fit, parameters = 'nosuch', tests = 'heterogeneity',
     verbose = FALSE), 'Unknown parameters')
+})
+
+test_that("joint heterogeneity: a dimension test beside the per-parameter ones", {
+  x <- .score_fit('het')
+  st <- suppressMessages(ctScoreTest(x$fit, tests = 'heterogeneity', cores = 1,
+    verbose = FALSE, nboot = 499))
+  d <- st$dimension
+  expect_true(is.finite(d$lambda))
+  expect_true(d$p > 0 && d$p <= 1)
+  expect_setequal(names(d$direction), st$heterogeneity$parameter)
+  # The largest eigenvalue of the standardised score matrix is at least its
+  # largest diagonal, the per-parameter z.
+  expect_gte(d$lambda, max(st$heterogeneity$z) - 1e-8)
+  expect_true('class' %in% names(st$heterogeneity))
+  expect_output(print(st), 'new dimension')
+})
+
+test_that("a threshold covariate finds the step and reports where", {
+  x <- .score_fit('cov')
+  covs <- unique(x$data[, c('id', 'z')])
+  covs$step <- as.numeric(covs$z > 0.3)
+  st <- suppressMessages(ctScoreTest(x$fit, covariates = covs[, c('id', 'z')],
+    tests = 'covariates', form = 'threshold', cores = 1, verbose = FALSE, nboot = 499))
+  j <- st$covariates$z$joint
+  expect_identical(j$form, 'threshold')
+  expect_true(is.finite(j$cut))
+  expect_lt(j$p, 0.01)
+  expect_error(ctScoreTest(x$fit, covariates = data.frame(id = covs$id,
+    f = letters[seq_len(nrow(covs)) %% 3 + 1]), tests = 'covariates', form = 'threshold',
+    verbose = FALSE), 'not numeric')
+})
+
+test_that("a family that fails is reported and the others stand", {
+  x <- .score_fit('het')
+  local_mocked_bindings(.ctScoreExtended = function(...) stop('cannot extend this model'))
+  st <- suppressWarnings(suppressMessages(ctScoreTest(x$fit,
+    tests = c('heterogeneity', 'statedependence'), cores = 1, verbose = FALSE, nboot = 199)))
+  expect_false(is.null(st$heterogeneity))
+  expect_null(st$statedependence)
+  expect_match(st$info$errors[['statedependence']], 'cannot extend')
+  expect_output(print(st), 'Not tested')
+})
+
+test_that("with priors on every parameter, the extended terms are tested on the likelihood", {
+  x <- .score_fit('sdep', seed = 4L)
+  args <- ctsem:::.ctFitReplayArgs(x$fit)
+  args$model <- .score_model(); args$datalong <- x$data[, c('id', 'time', 'Y1')]
+  args$priors <- TRUE; args$verbose <- 0
+  fitp <- suppressMessages(do.call(ctFit, args))
+  a <- suppressMessages(ctScoreTest(x$fit, tests = 'statedependence', cores = 1, verbose = FALSE))
+  b <- suppressMessages(ctScoreTest(fitp, tests = 'statedependence', cores = 1, verbose = FALSE))
+  expect_null(b$info$errors)
+  # The prior moves the estimates a little; the statistic follows, no more.
+  expect_equal(b$statedependence$terms$LM, a$statedependence$terms$LM, tolerance = 0.1)
 })

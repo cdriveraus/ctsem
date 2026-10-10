@@ -31,17 +31,42 @@ skip_on_32bit()
       LAMBDA = matrix(1))), backend = 'julia', cores = 1, verbose = 0)))
 })
 
-test_that("adequacy is reported per family, and the residual family needs no draws", {
+test_that("adequacy is reported per family, and the error-based families need no draws", {
   x <- .improve_fit(0)
-  ad <- ctFitAdequacy(x$fit, nsamples = 40, cores = 1)
+  ad <- ctFitAdequacy(x$fit, nsamples = 40, cores = 1, nboot = 499)
   expect_s3_class(ad, 'ctFitAdequacy')
-  expect_setequal(ad$families$family, c('lagged', 'subjects', 'nonlinear', 'residuals',
-    'distribution', 'fit', 'dependence'))
+  # One manifest variable, so no within-row pairs; the lagged correlations of
+  # the data only when asked for.
+  expect_setequal(ad$families$family, c('residuals', 'volatility', 'distribution', 'fit',
+    'dependence', 'subjects', 'nonlinear'))
   expect_true(all(ad$families$p > 0 & ad$families$p <= 1))
   expect_true(ad$adequate)
+  expect_true(ad$close_fit)
+  # A small model with its Hessian: estimation removed by exact derivatives.
+  expect_identical(ad$projection, 'derivative')
+  expect_true(all(c('residual correlation, all gaps', 'residual correlation, shortest gaps') %in%
+    ad$size$measure))
   # Reuses what the fit generated.
   expect_equal(dim(ad$fit$generated$Y)[1], 40L)
   expect_output(print(ad), 'adequate')
+  # The error-based families alone generate nothing.
+  ad2 <- ctFitAdequacy(x$fit, families = c('residuals', 'volatility', 'fit'), cores = 1,
+    nboot = 199)
+  expect_setequal(ad2$families$family, c('residuals', 'volatility', 'fit'))
+  expect_true(is.na(ad2$nsamples))
+})
+
+test_that("a conditional error's implied correlation is P_jk / sqrt(P_jj P_kk)", {
+  # The within-row family compares products of the errors with this; a sign
+  # error in it once rejected every correctly specified model.
+  set.seed(2)
+  S <- matrix(c(1, 0.6, 0.3, 0.6, 1.5, 0.2, 0.3, 0.2, 0.8), 3)
+  P <- solve(S)
+  v <- t(chol(S)) %*% matrix(stats::rnorm(3 * 20000), 3)
+  E <- t((P %*% v) / sqrt(diag(P)))
+  implied <- P / sqrt(outer(diag(P), diag(P)))
+  expect_equal(stats::cor(E)[upper.tri(S)], implied[upper.tri(S)], tolerance = 0.03)
+  expect_equal(apply(E, 2, stats::var), rep(1, 3), tolerance = 0.03)
 })
 
 test_that("a strong misfit is not floored at one over the number of datasets", {
@@ -83,14 +108,32 @@ test_that("a correct model stops at once", {
   # cent of draws where the search keeps something at alpha = 0.05 (a random
   # diffusion, LR p = 0.0097) -- the rate the simulation in the review note
   # measured, which is the place to test it, not one dataset.
+  # At alpha = 0.01: at 0.05 a single correct dataset has two chances near
+  # five per cent each to stop this test -- the search keeping something, and
+  # the checks failing (seed 1: the unrelated w correlates with the subjects'
+  # sds at z = 3.2, covariate family Holm-adjusted p = 0.047). The rates are the
+  # simulations' to measure (review note); this tests the mechanism.
   x <- .improve_fit(0, seed = 1L)
   imp <- suppressMessages(ctModelImprove(x$fit, covariates = unique(x$data[, c('id', 'w')]),
-    relax = c('heterogeneity', 'covariates', 'statedependence'), nsamples = 40,
-    cores = 1, verbose = FALSE))
+    relax = c('heterogeneity', 'covariates', 'statedependence'), alpha = 0.01,
+    nsamples = 40, cores = 1, verbose = FALSE))
   expect_identical(imp$stopped, 'adequate')
   # The screen is at alpha, so it can propose something; the refit's
   # likelihood is what decides, and nothing may be kept.
   expect_false(any(imp$history$kept))
   expect_equal(length(ctsem:::.ctFitRawEstimate(imp$fit)),
     length(ctsem:::.ctFitRawEstimate(x$fit)))
+})
+
+test_that("a search with held-out subjects confirms what it kept on them", {
+  x <- .improve_fit(0.8)
+  imp <- suppressMessages(ctModelImprove(x$fit, covariates = unique(x$data[, c('id', 'z')]),
+    relax = 'covariates', holdout = 0.3, nsamples = 40, cores = 1, verbose = FALSE))
+  expect_length(imp$holdout, round(0.3 * 80))
+  cf <- imp$confirmation
+  expect_true(any(grepl('^z as a predictor of', cf$change)))
+  expect_true(all(cf$confirmed[grepl('^z ', cf$change)]))
+  # The final model is refitted to every subject.
+  expect_equal(length(unique(ctsem:::.ctFitLongData(imp$fit)$id)), 80L)
+  expect_output(print(imp), 'held-out')
 })

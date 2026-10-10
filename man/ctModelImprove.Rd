@@ -15,6 +15,9 @@ ctModelImprove(
   criterion = c("LR", "AIC", "BIC"),
   adequacy = TRUE,
   prune = TRUE,
+  close = NULL,
+  holdout = 0,
+  form = "auto",
   nsamples = 100L,
   cores = 2L,
   verbose = TRUE
@@ -46,6 +49,15 @@ for the likelihood ratio decision, and for adequacy.}
 drop it if the likelihood does not need it given the others: a change
 kept early can be made redundant by one kept later.}
 
+\item{close}{Optional root mean square residual correlation regarded as a
+close enough fit to stop at; see Details.}
+
+\item{holdout}{Share of subjects, between 0 and 0.5, held out of the search
+to confirm its changes on.}
+
+\item{form}{How covariates are screened, as for \code{\link{ctScoreTest}};
+\code{'threshold'} lets the search add a covariate as a step.}
+
 \item{nsamples}{Generated datasets for the adequacy checks.}
 
 \item{cores}{Cores for fitting and testing.}
@@ -58,8 +70,12 @@ An object of class \code{ctModelImprove}: \code{fit} (the final
   screening p-value, the change in log likelihood and parameters, the
   criterion's verdict, and whether it was kept; a pruning row, \code{family}
   \code{'prune'}, says whether the change was dropped), \code{screens} (the score
-  tests of each round), \code{adequacy} (the final checks), and
-  \code{stopped} (why the search ended).
+  tests of each round), \code{adequacy} (the final checks),
+  \code{confirmation} (with \code{holdout}: each kept change's likelihood
+  ratio test on the held-out subjects), and \code{stopped} (why the search
+  ended). With \code{holdout}, \code{fit} is the model with the confirmed
+  changes refitted to every subject, and \code{selected} the search's own
+  choice fitted to the subjects it searched on.
 }
 \description{
 Starting from a fitted model, repeatedly: screens it with
@@ -86,6 +102,14 @@ The relaxations, in the language of the model:
   \item{order}{a latent process made second order.}
 }
 
+On a reduced-rank level (\code{poprank}) a heterogeneity result for a
+parameter that already varies through the shared dimensions gives it a
+variance of its own (\code{popunique}), and a significant \code{dimension}
+test raises the rank by one; without reduced rank, a significant
+\code{dimension} test makes the parameters its direction loads on vary
+together. Relaxations the score tests cannot tell apart (the same
+\code{class}) are not refitted in the same round.
+
 When the search stops, each change kept is tried out again, by refitting
 without it (\code{prune}), and dropped if the others make it redundant.
 
@@ -111,10 +135,19 @@ boundary.
   data showed was subjects differing in variance.
 
 The result is a model chosen by the data it is fitted to, and its
-standard errors and tests do not account for that choice. Treat the
-selected structure as a hypothesis to check on other data, or hold out
-subjects for that from the start. Every step, and every refit tried and
+standard errors and tests do not account for that choice (MacCallum,
+Roznowski & Necowitz, 1992). \code{holdout} sets aside a share of the
+subjects: the search runs on the rest, and each change it keeps is then
+tested on the held-out subjects alone, by refitting the final model without
+it there; \code{confirmation} says which held, and the final model, refitted
+to every subject, keeps only those. Every step, and every refit tried and
 rejected, is in \code{history}.
+
+With many observations a model can be rejected by the checks for
+departures too small to matter. With \code{close}, the search also stops
+when every check that fails is a residual or within-row correlation family
+whose size is not significantly above \code{close}
+(\code{\link{ctFitAdequacy}}).
 }
 
 \seealso{
