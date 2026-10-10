@@ -255,7 +255,8 @@ ctScoreTest <- function(fit, covariates = NULL,
     cov <- .ctScoreSelect(ptab, parameters, 'covariates')
     if (!'heterogeneity' %in% tests) het <- integer()
     if (!'covariates' %in% tests) cov <- integer()
-    say("Score contributions: ", 2L * length(est) + 1L, " per-subject gradient passes")
+    say("Score contributions: ", 2L * length(union(het, cov)) + 1L,
+      " per-subject gradient passes")
     pieces <- .ctScorePieces(fit, est, rows = union(het, cov), second = het,
       cores = cores)
     if (nrow(pieces$S) != .ctFitNsubjects(fit)) stop("This model has a level ",
@@ -334,12 +335,16 @@ ctScoreTest <- function(fit, covariates = NULL,
 
 # Each subject's score at the estimate, and its Hessian rows for the tested
 # parameters, by central differences of the engine's exact per-subject
-# gradients (2p + 1 passes). The same passes give, for the heterogeneity
-# parameters, the second derivative of every score component along that
-# parameter, which is the third derivative the heterogeneity test's projection
-# needs: d H_i[j,j] / d theta_k = d^2 s_ik / d theta_j^2. A step of 1e-3 on the
-# raw scale balances truncation (h^2) against the rounding of the second
-# difference (eps / h^2).
+# gradients along the tested parameters only (2 * length(rows) + 1 passes): a
+# subject's Hessian is symmetric, so its column along a tested parameter is the
+# row the tests read. The same passes give, for the heterogeneity parameters,
+# the second derivative of every score component along that parameter, which
+# is the third derivative the heterogeneity test's projection needs:
+# d H_i[j,j] / d theta_k = d^2 s_ik / d theta_j^2. A step of 1e-3 on the raw
+# scale balances truncation (h^2) against the rounding of the second
+# difference (eps / h^2). The full information is the fit's own Hessian, which
+# the optimiser's finish formed already; differencing along every parameter
+# for it cost 2p + 1 passes, 705 on a 352-parameter fit.
 .ctScorePieces <- function(fit, est, rows, second, step = 1e-3, cores = 2L) {
   p <- length(est)
   if (!length(rows)) stop("No parameters to test.", call. = FALSE)
@@ -348,19 +353,18 @@ ctScoreTest <- function(fit, covariates = NULL,
     n <- nrow(S)
     H <- array(0, c(n, length(rows), p))
     D2 <- array(0, c(n, p, length(second)))
-    Hsum <- matrix(0, p, p)
-    for (k in seq_len(p)) {
+    for (a in seq_along(rows)) {
+      k <- rows[a]
       h <- step * max(1, abs(est[k]))
       e <- est; e[k] <- est[k] + h
       plus <- .ctBackendScoreMatrix(fit, e)
       e[k] <- est[k] - h
       minus <- .ctBackendScoreMatrix(fit, e)
-      column <- (plus - minus) / (2 * h)
-      Hsum[, k] <- colSums(column)
-      H[, , k] <- column[, rows, drop = FALSE]
+      H[, a, ] <- (plus - minus) / (2 * h)
       j <- match(k, second)
       if (!is.na(j)) D2[, , j] <- (plus - 2 * S + minus) / h^2
     }
+    Hsum <- .ctBackendHessian(fit, est)
   })
   Hsum <- (Hsum + t(Hsum)) / 2
   list(S = S, H = H, rows = rows, D2 = D2, second = second, Hsum = Hsum)
