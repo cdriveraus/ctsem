@@ -43,7 +43,10 @@ screens: they point at what to relax, and the refit says how much it matters.
 
 The three examples below each generate data with one thing the fitted model
 lacks, fit the model without it, ask `ctScoreTest()`, and then refit with what
-it found.
+it found. The sections after them add a fourth family of tests (cells the
+model fixes at zero), the posterior predictive checks as tests
+(`ctFitAdequacy()`), and a search that combines the two and does the
+refitting itself (`ctModelImprove()`).
 
 ```{r libs}
 library(ctsem)
@@ -244,8 +247,10 @@ simulation, nearly always.
 
 ## Everything at once
 
-By default `ctScoreTest()` runs all three families (covariates when given).
-On the last dataset:
+By default `ctScoreTest()` runs every family: the three above (covariates when
+given) and a fourth, the cells the model fixes at zero -- here the measurement
+error covariance and the cross loadings -- each tested as though freed. On the
+last dataset:
 
 ```{r all}
 ctScoreTest(fit3)
@@ -257,6 +262,89 @@ subject, like a drift that differs between subjects, and in simulations a
 missing nonlinearity did move them. A badly misspecified model can light up
 several tests at once, so read them as a map: relax what stands out most,
 refit, and test again.
+
+## Do the model's predictions look like the data?
+
+The usual check of a dynamic model compares the data with data the fitted
+model generates: the autocorrelations and cross-correlations (ACF and CCF),
+how much subjects differ from each other, and so on. `ctFitAdequacy()` makes
+those comparisons numbers with p-values, in families aimed at different
+departures: the lagged correlations; the spread over subjects of each
+subject's own mean, standard deviation and lag-one correlations; whether
+change depends on level nonlinearly; whether the one-step-ahead prediction
+errors are white; and, given covariates, whether subjects' statistics depend
+on them. On the linear fit to the state-dependent data:
+
+```{r adequacy}
+ctFitAdequacy(fit3)
+```
+
+Every family passes -- the lagged correlations, the subjects, the
+nonlinearity statistics, the residuals -- though this model is missing the
+state dependence the score test found at p = 5e-6. A moderated drift,
+averaged over the data, still decays much like a single exponential, and
+summary statistics of the data are coarse instruments for a departure the
+likelihood sees directly. The checks are worth having: they catch what lies
+outside every score test's reach, such as a process of the wrong order. But
+passing them is necessary rather than sufficient, which is why the next
+section screens with the score tests and stops on the checks.
+
+## Automating the search
+
+`ctModelImprove()` puts the tests into a loop. It screens the fit, refits with
+the most strongly indicated relaxations one at a time (warm started from the
+current estimates), and keeps the best if the refit's likelihood confirms it.
+It repeats until nothing more is indicated, then checks the model with
+`ctFitAdequacy()`. If a check fails, it tries structural changes the score
+tests cannot reach, such as making a process second order
+(`ctModelHigherOrder()`) or models you supply. Finally it tries dropping each
+change it kept, in case a later one made it redundant.
+
+Here the data contain two of the departures above at once: `age` acts on the
+intercept of `Y1` and on the cross effect, `eta2` moderates how `eta1`
+regulates, and `w` is unrelated.
+
+```{r improve-generate}
+gen4 <- generator(DRIFT = matrix(c("-0.6 + 0.3 * tanh(eta2)", "drift21||||age=0.3",
+  0, -0.4), 2, 2),
+  MANIFESTMEANS = c("mm1|param|TRUE|1|age=0.6", "mm2|param|TRUE|1"),
+  TIpredNames = c("age", "w"))
+d4 <- data.frame(ctGenerate(gen4, n = 150, Tpoints = 30, dtmean = 1,
+  logdtsd = 0.5, backend = "julia", popmeans = c(drift21 = 0.25, mm1 = 0, mm2 = 0)))
+fit4 <- ctFit(d4[, c("id", "time", "Y1", "Y2")], model, backend = "julia", cores = 2)
+```
+
+```{r improve}
+imp <- ctModelImprove(fit4, covariates = unique(d4[, c("id", "age", "w")]))
+imp
+```
+
+Each round shows what was tried, the score test that proposed it, and what
+the refit's likelihood said. The first round kept `age`, with effects on the
+cross effect and on both intercepts; it also tried a random effect on the
+cross effect, which the score tests had flagged because subjects of different
+ages differ in it -- a covariate that explains the variation beats a random
+effect that only describes it. The second round kept the moderation. Then
+nothing more was indicated, every adequacy check passed, and trying each kept
+change out again showed both were still needed. The effects found are near
+those that generated the data (0.3 on the cross effect, 0.6 on the intercept
+of `Y1`). The effect on the intercept of `Y2` was not generated: it is small,
+and only just significant -- a search that decides at `alpha = 0.05` keeps
+such things about one time in twenty, and `alpha = 0.01` is the stricter
+choice.
+
+The final fit is an ordinary fit:
+
+```{r improve-final}
+s <- summary(imp$fit)
+s$tipreds
+s$popmeans[grepl("^sdep", rownames(s$popmeans)), ]
+```
+
+The model was chosen by the data it is fitted to, so its standard errors and
+tests are too optimistic about the structure the search added. Treat that
+structure as a hypothesis: confirm it on other data, or hold out some
+subjects from the search for that purpose.
 
 ## How the tests work, briefly
 
