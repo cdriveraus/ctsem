@@ -198,3 +198,79 @@ test_that("with priors on every parameter, the extended terms are tested on the 
   # The prior moves the estimates a little; the statistic follows, no more.
   expect_equal(b$statedependence$terms$LM, a$statedependence$terms$LM, tolerance = 0.1)
 })
+
+test_that("row scores sum to the subjects' scores, on the filter and the Laplace route", {
+  # Identities, not plausibility: a subject's rows' log predictive densities
+  # sum to its log likelihood, so their derivatives must sum to its score.
+  x <- .score_fit('het')
+  fit <- x$fit
+  est <- ctsem:::.ctFitRawEstimate(fit)
+  ptab <- ctsem:::.ctScoreParameterTable(fit)
+  model <- which(ptab$kind == 'model')
+  D <- diag(length(est))[, model, drop = FALSE]
+  R <- ctsem:::.ctBackendRowScores(fit, est, D, cores = 1)
+  unit <- ctsem:::.ctAdequacyErrors(fit)$unit
+  S <- ctsem:::.ctBackendScoreMatrix(fit, est)
+  expect_equal(unname(rowsum(R, unit)), unname(S[, model, drop = FALSE]), tolerance = 1e-8)
+
+  # The Laplace route: rows from the sequential predictions, each the
+  # difference of the subject's terms on its record up to the row and before.
+  lfit <- fit_cached('scoretest het laplace', suppressMessages(ctFit(
+    x$data[, c('id', 'time', 'Y1')], .score_model(), backend = 'julia',
+    intoverpop = 'laplace', cores = 1, verbose = 0)))
+  lest <- ctsem:::.ctFitRawEstimate(lfit)
+  lptab <- ctsem:::.ctScoreParameterTable(lfit)
+  lmodel <- which(lptab$kind %in% c('model', 'popsd'))
+  LD <- diag(length(lest))[, lmodel, drop = FALSE]
+  LR <- ctsem:::.ctBackendRowScores(lfit, lest, LD, cores = 1)
+  lunit <- ctsem:::.ctAdequacyErrors(lfit)$unit
+  LS <- ctsem:::.ctBackendScoreMatrix(lfit, lest)
+  expect_equal(unname(rowsum(LR, lunit)), unname(LS[, lmodel, drop = FALSE]), tolerance = 1e-6)
+
+  # Effect likelihoods integrate to each unit's marginal. The effects here are
+  # the intercept and the initial mean, which shift the means affinely, so a
+  # unit's log likelihood is exactly quadratic in them: six points give it,
+  # a seventh checks it, and its integral against the standard normal is in
+  # closed form, which the adaptive quadrature must reproduce.
+  d <- ctsem:::.ctBackendUnitDims(lfit)[1]
+  expect_equal(d, 2L)
+  pts <- cbind(c(0, 0), c(1, 0), c(-1, 0), c(0, 1), c(0, -1), c(1, 1), c(2, -1))
+  L <- ctsem:::.ctBackendEffectLoglik(lfit, lest, pts, cores = 1)
+  a <- L[, 1]
+  b1 <- (L[, 2] - L[, 3]) / 2; c11 <- -(L[, 2] + L[, 3] - 2 * a)
+  b2 <- (L[, 4] - L[, 5]) / 2; c22 <- -(L[, 4] + L[, 5] - 2 * a)
+  c12 <- a + b1 + b2 - c11 / 2 - c22 / 2 - L[, 6]
+  predicted <- a + 2 * b1 - b2 - (4 * c11 - 4 * c12 + c22) / 2
+  expect_equal(L[, 7], predicted, tolerance = 1e-6)
+  closed <- vapply(seq_len(nrow(L)), function(i) {
+    A <- diag(2) + matrix(c(c11[i], c12[i], c12[i], c22[i]), 2)
+    b <- c(b1[i], b2[i])
+    a[i] - as.numeric(determinant(A)$modulus) / 2 + sum(b * solve(A, b)) / 2
+  }, 0)
+  quad <- ctsem:::.ctBackendUnitMarginals(lfit, lest, nodes = 3L, cores = 1)
+  expect_equal(quad, closed, tolerance = 1e-6)
+
+  # The effect-distribution family runs there, and is quiet on normal effects.
+  ad <- suppressMessages(ctFitAdequacy(lfit, families = 'effects', cores = 1, nboot = 199))
+  expect_identical(ad$families$family, 'effects')
+  expect_gt(ad$families$p, 0.01)
+})
+
+test_that("stability along a predicted state finds a drift that depends on it", {
+  x <- .score_fit('sdep', seed = 4L)
+  st <- suppressMessages(ctScoreTest(x$fit, tests = 'instability', cores = 1,
+    verbose = FALSE, nboot = 499))
+  j <- st$instability$joint
+  expect_setequal(j$ordering, c('time', 'state eta1'))
+  expect_lt(j$p[j$ordering == 'state eta1'], 0.05)
+  # A drift that depends on the state also changes how widely the process
+  # moves at the extremes, so the diffusion's score answers too; the drift is
+  # among the two it points at.
+  par <- st$instability$parameters
+  expect_true('drift_eta1' %in% utils::head(par$parameter[par$ordering == 'state eta1'], 2))
+  expect_output(print(st), 'Stability')
+  # Not run unless asked for.
+  st0 <- suppressMessages(ctScoreTest(x$fit, tests = 'heterogeneity', cores = 1,
+    verbose = FALSE, nboot = 99))
+  expect_null(st0$instability)
+})

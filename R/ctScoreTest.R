@@ -151,6 +151,20 @@
 #'   State dependence and fixed cells are tested on one extended model, so
 #'   asking for both costs one preparation.
 #'
+#' @section Stability: \code{tests = 'instability'}, not run unless asked
+#'   for, tests whether each parameter is stable across the data: ordered by
+#'   time, and by each latent's state as predicted from earlier observations.
+#'   It uses each data row's score -- the derivative of its one-step log
+#'   likelihood -- whose partial sums, under the model, behave as a Brownian
+#'   bridge in any order fixed in advance (Nyblom, 1989). A parameter that
+#'   changes over the study, or differs at high and low levels of a state,
+#'   bends them. Ordered by a state, that is a test of state dependence of
+#'   unknown form, beside the polynomial terms of \code{statedependence}. The
+#'   estimation effect is removed with the information accumulated along the
+#'   ordering, and the p-values are from a wild bootstrap over rows. It costs a
+#'   dual pass of the filter per eight parameters, and on the Laplace route one
+#'   per truncated record of every subject.
+#'
 #' @section Alike relaxations: Two relaxations whose per-subject projected
 #'   contributions are nearly collinear (correlation of 0.9 or more) would
 #'   each explain the same signal, and the data cannot tell them apart at this
@@ -194,8 +208,9 @@
 #'   covariate is constant within subject. Without an id column, one row per
 #'   subject in the fit's subject order.
 #' @param tests Which families to run: any of \code{'heterogeneity'},
-#'   \code{'covariates'}, \code{'statedependence'}, \code{'fixed'}.
-#'   Covariates are tested only when \code{covariates} is given.
+#'   \code{'covariates'}, \code{'statedependence'}, \code{'fixed'},
+#'   \code{'instability'}. By default all but \code{'instability'}; covariates
+#'   are tested only when \code{covariates} is given.
 #' @param form How a covariate enters: \code{'auto'} (indicators for a factor,
 #'   character or logical covariate; linear otherwise), \code{'linear'},
 #'   \code{'spline'}, \code{'factor'} or \code{'threshold'} (a step at an
@@ -221,7 +236,9 @@
 #'   \code{joint} test and a data frame \code{parameters}),
 #'   \code{statedependence} (a list of \code{terms}, a data frame, and
 #'   \code{joint}, the tests per equation and overall), \code{fixed} (a list
-#'   of \code{cells} and their \code{joint} test), and \code{info} (the
+#'   of \code{cells} and their \code{joint} test), \code{instability} (a list
+#'   of \code{parameters}, one row per ordering and parameter, and
+#'   \code{joint}, per ordering), and \code{info} (the
 #'   route, the number of subjects and parameters, the variance used, and
 #'   \code{errors}, why any family was not tested). Tables carry \code{class}
 #'   where relaxations are alike.
@@ -233,6 +250,9 @@
 #'
 #'   Andrews, D. W. K. (1993). Tests for parameter instability and structural
 #'   change with unknown change point. Econometrica, 61, 821-856.
+#'
+#'   Nyblom, J. (1989). Testing for the constancy of parameters over time.
+#'   Journal of the American Statistical Association, 84, 223-230.
 #'
 #'   Hall, D. B., & Praestgaard, J. T. (2001). Order-restricted score tests for
 #'   homogeneity in generalised linear and nonlinear mixed models.
@@ -256,7 +276,7 @@
 #' }
 #' @export
 ctScoreTest <- function(fit, covariates = NULL,
-  tests = c('heterogeneity', 'covariates', 'statedependence', 'fixed'),
+  tests = c('heterogeneity', 'covariates', 'statedependence', 'fixed', 'instability'),
   form = c('auto', 'linear', 'spline', 'factor', 'threshold'), df = 3, parameters = NULL,
   order = 2L, variance = c('robust', 'model'), nboot = 1999L, cores = 2L,
   verbose = TRUE) {
@@ -274,6 +294,9 @@ ctScoreTest <- function(fit, covariates = NULL,
   .ctBackendResolveThreads(cores)
   testsgiven <- !missing(tests)
   tests <- match.arg(tests, several.ok = TRUE)
+  # Stability needs a dual pass of the filter per eight parameters (on the
+  # Laplace route one per truncated record), so it is run when asked for.
+  if (!testsgiven) tests <- setdiff(tests, 'instability')
   if ('covariates' %in% tests && is.null(covariates)) {
     if (testsgiven) stop("tests includes 'covariates' but no covariates were ",
       "given.", call. = FALSE)
@@ -373,6 +396,10 @@ ctScoreTest <- function(fit, covariates = NULL,
       variance = variance, nboot = nboot, cores = cores)
     out$statedependence <- ext$statedependence
     out$fixed <- ext$fixed
+  })
+  if ('instability' %in% tests) attempt('instability', {
+    say("Row scores for the stability tests")
+    out$instability <- .ctScoreInstability(fit, est, ptab, parameters, nboot, cores)
   })
   structure(out, class = 'ctScoreTest')
 }
@@ -942,6 +969,83 @@ ctScoreTest <- function(fit, covariates = NULL,
   out
 }
 
+# Whether parameters are stable across the data, ordered by time and by each
+# latent's predicted state: Nyblom's (1989) test from each data row's score.
+# Under the model a subject's row scores are a martingale difference
+# sequence, so their partial sums in any order fixed in advance -- by time, or
+# by the state predicted from earlier rows -- behave as a Brownian motion; at
+# the estimate they are pulled to zero at the end, a bridge. A parameter that
+# drifts over the study, or differs between low and high levels of a state,
+# bends its partial sums away from the bridge. L_j is the mean squared partial
+# sum of parameter j's score over its total, the Cramer-von Mises form.
+#
+# The estimation effect is removed by projecting the partial sums with the
+# information accumulated up to each row, H_t H_N^-1 S_N, with H the rows'
+# outer products -- not with the share of rows, which is right only when the
+# information accrues evenly along the ordering, and along a state it does
+# not (a drift is informed by large states). That needs every parameter's
+# row scores; above `maxall` parameters only the tested ones are used, and the
+# others' estimation is ignored. Calibration: a wild bootstrap with a normal
+# weight per row, which keeps the rows' variance and nothing else -- what the
+# null has, since the scores are uncorrelated over rows (Hansen 1992; Zeileis
+# & Hornik 2007 for the fluctuation-test family).
+.ctScoreInstability <- function(fit, est, ptab, parameters = NULL, nboot = 1999L,
+  cores = 2L, maxall = 48L) {
+  tested <- which(ptab$kind == 'model' & !ptab$matrix %in% c('T0MEANS', 'T0VAR'))
+  if (!is.null(parameters)) tested <- intersect(tested, which(ptab$name %in% parameters))
+  if (!length(tested)) stop("No parameters to test for stability.", call. = FALSE)
+  p <- length(est)
+  all <- if (p <= maxall) seq_len(p) else tested
+  R <- .ctBackendRowScores(fit, est, diag(p)[, all, drop = FALSE], cores)
+  err <- .ctAdequacyErrors(fit)
+  okrow <- apply(is.finite(R), 1, all)
+  R[!okrow, ] <- 0
+  Tc <- match(tested, all)
+  k <- length(Tc)
+  N <- sum(okrow)
+  latent <- .ctFitModelObject(fit)$latentNames
+  nl <- min(ncol(err$eta), length(latent))
+  keys <- c(list(time = err$time), stats::setNames(lapply(seq_len(nl), function(j)
+    err$eta[, j]), paste0('state ', latent[seq_len(nl)])))
+  rows <- list(); joint <- list()
+  for (o in names(keys)) {
+    # Ties broken at random: the data's own order within a tie is the
+    # subjects', which a statistic over the ordering would read as structure.
+    idx <- order(keys[[o]], stats::runif(length(keys[[o]])))
+    idx <- idx[okrow[idx]]
+    s <- R[idx, , drop = FALSE]
+    H <- crossprod(s)
+    Hinv <- .ctScorePinv(H)$inv
+    VT <- H[Tc, Tc, drop = FALSE]
+    VTinv <- .ctScorePinv(VT)$inv
+    vd <- diag(VT)
+    sT <- s[, Tc, drop = FALSE]
+    bridge <- function(sm) {
+      B <- Hinv %*% colSums(sm)
+      matrix(apply(sm[, Tc, drop = FALSE] - sT * as.numeric(s %*% B), 2, cumsum), ncol = k)
+    }
+    statistic <- function(St) c(colSums(St^2) / (N * vd), sum((St %*% VTinv) * St) / N)
+    observed <- statistic(bridge(s))
+    draws <- vapply(seq_len(nboot), function(b) statistic(bridge(s * stats::rnorm(nrow(s)))),
+      observed)
+    draws <- matrix(draws, nrow = length(observed))
+    pv <- (1 + rowSums(draws >= observed)) / (1 + nboot)
+    one <- data.frame(ordering = o, parameter = ptab$name[tested], L = observed[seq_len(k)],
+      p = pv[seq_len(k)], stringsAsFactors = FALSE)
+    one$p_adj <- .ctScoreBH(one$p)
+    rows[[o]] <- one
+    joint[[o]] <- data.frame(ordering = o, L = observed[k + 1L], df = k, p = pv[k + 1L],
+      stringsAsFactors = FALSE)
+  }
+  out <- do.call(rbind, rows)
+  rownames(out) <- NULL
+  list(parameters = out[order(out$p, -out$L), , drop = FALSE],
+    joint = do.call(rbind, joint),
+    note = if (p > maxall) paste0("Only the ", k, " tested parameters' row scores were ",
+      "used; the other parameters' estimation is ignored, which can move the ",
+      "level along a state.") else NULL)
+}
+
 # The fitted model with a term `d * eta_k * eta_m` in each latent equation's
 # CINT, for k <= m (and degree three with `order = 3`), every d a new PARS
 # parameter with an identity transform.
@@ -1265,6 +1369,13 @@ print.ctScoreTest <- function(x, digits = 3, top = 10, ...) {
     cat("\n")
     fmt(x$statedependence$terms[, withclass(x$statedependence$terms, c('term',
       'equation', 'LM', 'p', 'p_adj', 'estimate', 'se', 'reads'))])
+  }
+  if (!is.null(x$instability)) {
+    cat("\nStability across the data (Nyblom), by ordering:\n")
+    fmt(x$instability$joint)
+    cat("\n")
+    fmt(x$instability$parameters[, c('ordering', 'parameter', 'L', 'p', 'p_adj')])
+    if (!is.null(x$instability$note)) cat(x$instability$note, "\n")
   }
   if (!is.null(x$fixed)) {
     j <- x$fixed$joint

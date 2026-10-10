@@ -7,7 +7,7 @@
 ctScoreTest(
   fit,
   covariates = NULL,
-  tests = c("heterogeneity", "covariates", "statedependence", "fixed"),
+  tests = c("heterogeneity", "covariates", "statedependence", "fixed", "instability"),
   form = c("auto", "linear", "spline", "factor", "threshold"),
   df = 3,
   parameters = NULL,
@@ -29,8 +29,9 @@ covariate is constant within subject. Without an id column, one row per
 subject in the fit's subject order.}
 
 \item{tests}{Which families to run: any of \code{'heterogeneity'},
-\code{'covariates'}, \code{'statedependence'}, \code{'fixed'}.
-Covariates are tested only when \code{covariates} is given.}
+\code{'covariates'}, \code{'statedependence'}, \code{'fixed'},
+\code{'instability'}. By default all but \code{'instability'}; covariates
+are tested only when \code{covariates} is given.}
 
 \item{form}{How a covariate enters: \code{'auto'} (indicators for a factor,
 character or logical covariate; linear otherwise), \code{'linear'},
@@ -66,7 +67,9 @@ An object of class \code{ctScoreTest}: a list with
   \code{joint} test and a data frame \code{parameters}),
   \code{statedependence} (a list of \code{terms}, a data frame, and
   \code{joint}, the tests per equation and overall), \code{fixed} (a list
-  of \code{cells} and their \code{joint} test), and \code{info} (the
+  of \code{cells} and their \code{joint} test), \code{instability} (a list
+  of \code{parameters}, one row per ordering and parameter, and
+  \code{joint}, per ordering), and \code{info} (the
   route, the number of subjects and parameters, the variance used, and
   \code{errors}, why any family was not tested). Tables carry \code{class}
   where relaxations are alike.
@@ -184,6 +187,22 @@ before interpreting their sizes.
   asking for both costs one preparation.
 }
 
+\section{Stability}{
+ \code{tests = 'instability'}, not run unless asked
+  for, tests whether each parameter is stable across the data: ordered by
+  time, and by each latent's state as predicted from earlier observations.
+  It uses each data row's score -- the derivative of its one-step log
+  likelihood -- whose partial sums, under the model, behave as a Brownian
+  bridge in any order fixed in advance (Nyblom, 1989). A parameter that
+  changes over the study, or differs at high and low levels of a state,
+  bends them. Ordered by a state, that is a test of state dependence of
+  unknown form, beside the polynomial terms of \code{statedependence}. The
+  estimation effect is removed with the information accumulated along the
+  ordering, and the p-values are from a wild bootstrap over rows. It costs a
+  dual pass of the filter per eight parameters, and on the Laplace route one
+  per truncated record of every subject.
+}
+
 \section{Alike relaxations}{
  Two relaxations whose per-subject projected
   contributions are nearly collinear (correlation of 0.9 or more) would
@@ -242,6 +261,9 @@ Boos, D. D. (1992). On generalized score tests. The American
 
   Andrews, D. W. K. (1993). Tests for parameter instability and structural
   change with unknown change point. Econometrica, 61, 821-856.
+
+  Nyblom, J. (1989). Testing for the constancy of parameters over time.
+  Journal of the American Statistical Association, 84, 223-230.
 
   Hall, D. B., & Praestgaard, J. T. (2001). Order-restricted score tests for
   homogeneity in generalised linear and nonlinear mixed models.

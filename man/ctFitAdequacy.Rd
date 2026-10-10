@@ -8,11 +8,12 @@ ctFitAdequacy(
   fit,
   covariates = NULL,
   families = c("residuals", "volatility", "pairs", "distribution", "fit", "dependence",
-    "subjects", "nonlinear", "covariates"),
+    "effects", "subjects", "nonlinear", "covariates"),
   gaps = NULL,
   close = 0.05,
   alpha = 0.05,
   projection = c("auto", "derivative", "opg", "none"),
+  parameters = NULL,
   nsamples = 100,
   lags = 0:3,
   nboot = 1999L,
@@ -46,6 +47,10 @@ is conservative. \code{'auto'} takes the first that is affordable:
 \code{'derivative'} when the fit's Hessian is stored and the passes take
 under \code{getOption('ctsem.adequacy.budget', 120)} seconds,
 \code{'opg'} with at least ten units a parameter, else \code{'none'}.}
+
+\item{parameters}{For the \code{scores} family, the raw parameters whose
+row scores are used: by default up to 16 of the dynamic and measurement
+parameters, those in DRIFT, DIFFUSION and CINT first.}
 
 \item{nsamples}{Number of generated datasets, for the families that need
 them. Reused from \code{fit} when it already carries at least as many.}
@@ -94,6 +99,23 @@ a variable.
     of its square, with what came before -- the predicted latent states, the
     previous errors, the time interval -- by permutation: a conditional mean
     or variance the model gets wrong, in any form.}
+  \item{effects}{On a single-level Laplace fit, whether the random effects'
+    normal distribution is adequate: the gradient function (Verbeke &
+    Molenberghs, 2013), each subject's likelihood with its effects fixed at
+    points along each axis of their standardised space, relative to its
+    marginal likelihood. Under the model its mean is one at every point; more
+    subjects than the normal allows near a point -- a skewed or bimodal
+    distribution, a subgroup -- raises it there (Drikvandi, Verbeke &
+    Molenberghs, 2017).}
+  \item{scores}{Not run unless asked for. White's (1987) dynamic information
+    matrix test: each data row's score, the derivative of its one-step
+    log likelihood, for the dynamic and measurement parameters
+    (\code{parameters}), correlated with the scores of the same subject's
+    other rows, by time gap. Under the model a subject's row scores are
+    uncorrelated whatever the departure being looked for, so this catches
+    dynamic misspecification of any kind; it costs a dual pass of the filter
+    per eight parameters, and on the Laplace route one per truncated record,
+    which is hours on large data.}
   \item{subjects, nonlinear, covariates, lagged}{Statistics of the data
     against datasets generated from the fit: how much subjects differ in
     mean, standard deviation and lag-one correlations; whether change
@@ -135,6 +157,18 @@ is the more sensitive check for the departures it covers, and
 \references{
 Newey, W. K. (1985). Maximum likelihood specification testing
   and conditional moment tests. \emph{Econometrica, 53}, 1047-1070.
+
+  White, H. (1987). Specification testing in dynamic models. In T. Bewley
+  (Ed.), \emph{Advances in Econometrics: Fifth World Congress}. Cambridge
+  University Press.
+
+  Verbeke, G., & Molenberghs, G. (2013). The gradient function as an
+  exploratory goodness-of-fit assessment of the random-effects distribution
+  in mixed models. \emph{Biostatistics, 14}, 477-490.
+
+  Drikvandi, R., Verbeke, G., & Molenberghs, G. (2017). Diagnosing
+  misspecification of the random-effects distribution in mixed models.
+  \emph{Biometrics, 73}, 63-71.
 
   Chang, J., Yao, Q., & Zhou, W. (2017). Testing for high-dimensional white
   noise using maximum cross-correlations. \emph{Biometrika, 104}, 111-127.
