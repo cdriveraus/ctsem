@@ -255,27 +255,43 @@ ctFitCheckCov <- function(fit, cor = TRUE, plot = TRUE, splitby = NULL,
   if(any(is.na(varidx))) varidx <- match(variables, ctmb$manifestNames)
   
   basedat <- dat[, c(idname, 'WhichObs', '.splitgroup'), with = FALSE]
-  .generated_one <- function(i){
+  # A parallel worker receives each function it runs with the environment the
+  # function was defined in. Defined in this frame, that was the fit, its
+  # generated data and the data: on the SNSF pilot each of three closures
+  # weighed 400 MB, sixteen workers copied them, and a 64 GB job ran out of
+  # memory. The summaries get an environment holding only what they read, and
+  # each sample's data travels as the argument.
+  slim <- new.env(parent = asNamespace('ctsem'))
+  for(nm in c('lags', 'idname', 'variables', 'minpairn', 'cor', 'basedat'))
+    assign(nm, get(nm), envir = slim)
+  for(nm in c('.pair_stat', '.lagged_stat', '.lag_summary')) {
+    f <- get(nm)
+    environment(f) <- slim
+    assign(nm, f, envir = slim)
+  }
+  .generated_one <- function(item){
     gd <- copy(basedat)
-    ymat <- matrix(aperm(fit$generated$Y[i, , varidx, drop = FALSE], c(2, 1, 3)),
-      ncol = length(varidx))
-    ydt <- as.data.table(ymat)
+    ydt <- as.data.table(item$ymat)
     setnames(ydt, variables)
     gd[, (variables) := ydt]
-    .lag_summary(gd, sample = i)
+    .lag_summary(gd, sample = item$sample)
   }
-  
+  environment(.generated_one) <- slim
+  items <- lapply(samples, function(i) list(sample = i,
+    ymat = matrix(aperm(fit$generated$Y[i, , varidx, drop = FALSE], c(2, 1, 3)),
+      ncol = length(varidx))))
+
   cores <- min(cores, length(samples))
   if(cores > 1L && requireNamespace('future.apply', quietly = TRUE) &&
       requireNamespace('future', quietly = TRUE)) {
     oldplan <- future::plan()
     on.exit(future::plan(oldplan), add = TRUE)
     future::plan(future::multisession, workers = cores)
-    gens <- rbindlist(future.apply::future_lapply(samples, .generated_one,
+    gens <- rbindlist(future.apply::future_lapply(items, .generated_one,
       future.seed = TRUE))
   } else {
     if(cores > 1L) warning('future and future.apply are required for parallel ctFitCheckCov summaries; using one core')
-    gens <- rbindlist(lapply(samples, .generated_one))
+    gens <- rbindlist(lapply(items, .generated_one))
   }
   
   gensum <- gens[, .(
