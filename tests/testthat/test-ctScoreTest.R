@@ -227,28 +227,30 @@ test_that("row scores sum to the subjects' scores, on the filter and the Laplace
   LS <- ctsem:::.ctBackendScoreMatrix(lfit, lest)
   expect_equal(unname(rowsum(LR, lunit)), unname(LS[, lmodel, drop = FALSE]), tolerance = 1e-6)
 
-  # Effect likelihoods integrate to each unit's marginal. The effects here are
-  # the intercept and the initial mean, which shift the means affinely, so a
-  # unit's log likelihood is exactly quadratic in them: six points give it,
-  # a seventh checks it, and its integral against the standard normal is in
-  # closed form, which the adaptive quadrature must reproduce.
+  # Each unit's posterior, as the quadrature's own rule. The effects here are
+  # the intercept and the initial mean, which shift the means affinely, so
+  # every posterior is exactly normal: three nodes a dimension and five give
+  # the same marginal, mean and covariance, and the marginal is the
+  # quadrature's unit term.
   d <- ctsem:::.ctBackendUnitDims(lfit)[1]
   expect_equal(d, 2L)
-  pts <- cbind(c(0, 0), c(1, 0), c(-1, 0), c(0, 1), c(0, -1), c(1, 1), c(2, -1))
-  L <- ctsem:::.ctBackendEffectLoglik(lfit, lest, pts, cores = 1)
-  a <- L[, 1]
-  b1 <- (L[, 2] - L[, 3]) / 2; c11 <- -(L[, 2] + L[, 3] - 2 * a)
-  b2 <- (L[, 4] - L[, 5]) / 2; c22 <- -(L[, 4] + L[, 5] - 2 * a)
-  c12 <- a + b1 + b2 - c11 / 2 - c22 / 2 - L[, 6]
-  predicted <- a + 2 * b1 - b2 - (4 * c11 - 4 * c12 + c22) / 2
-  expect_equal(L[, 7], predicted, tolerance = 1e-6)
-  closed <- vapply(seq_len(nrow(L)), function(i) {
-    A <- diag(2) + matrix(c(c11[i], c12[i], c12[i], c22[i]), 2)
-    b <- c(b1[i], b2[i])
-    a[i] - as.numeric(determinant(A)$modulus) / 2 + sum(b * solve(A, b)) / 2
-  }, 0)
-  quad <- ctsem:::.ctBackendUnitMarginals(lfit, lest, nodes = 3L, cores = 1)
-  expect_equal(quad, closed, tolerance = 1e-6)
+  p3 <- ctsem:::.ctBackendPosteriorNodes(lfit, lest, nodes = 3L, cores = 1)
+  p5 <- ctsem:::.ctBackendPosteriorNodes(lfit, lest, nodes = 5L, cores = 1)
+  expect_equal(dim(p3$points), c(nrow(p3$weights), 9L, 2L))
+  expect_equal(rowSums(p5$weights), rep(1, nrow(p5$weights)))
+  postmoments <- function(p) {
+    w <- p$weights; a <- p$points[, , 1]; b <- p$points[, , 2]
+    m1 <- rowSums(w * a); m2 <- rowSums(w * b)
+    cbind(m1, m2, rowSums(w * a^2) - m1^2, rowSums(w * b^2) - m2^2,
+      rowSums(w * a * b) - m1 * m2)
+  }
+  expect_equal(postmoments(p3), postmoments(p5), tolerance = 1e-6)
+  expect_equal(p3$logmarginal, p5$logmarginal, tolerance = 1e-8)
+  module <- ctsem:::.ctJuliaModule(lfit$model_spec$project)
+  quad <- ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_quadrature(
+    ctsem:::.ctJuliaObjective(lfit, hybrid = TRUE), ctsem:::.ctJuliaNumericVector(lest),
+    nodes = 3L, contributions = TRUE))
+  expect_equal(p3$logmarginal, as.numeric(quad$subject_loglik), tolerance = 1e-10)
 
   # The effect-distribution family runs there, and is quiet on normal effects.
   ad <- suppressMessages(ctFitAdequacy(lfit, families = 'effects', cores = 1, nboot = 199))

@@ -255,6 +255,23 @@ as covariates instead -- regressing something on the estimated states after
 the fit -- does not have that property, and rejects correct models: in
 simulation, nearly always.
 
+The polynomial terms assume the dependence is smooth enough to show in a
+linear term. `tests = "instability"` asks without assuming a form. It takes
+each observation's score -- how much that observation pulls each parameter --
+and orders the observations by time, and by each latent's state as predicted
+from earlier observations. Under the model the running sum of those scores
+wanders like a Brownian bridge whatever the order; a parameter that changes
+over the study, or differs between low and high levels of a state, bends it.
+
+```{r sdep-instability}
+ctScoreTest(fit3, tests = "instability")
+```
+
+Ordered by `eta2`'s predicted state, the drift of `eta1` stands out, which is
+the moderation that generated the data, found without being told its form.
+Ordered by time nothing changes. The test needs each observation's score, a
+pass of the filter per eight parameters, so it is not run unless asked for.
+
 ## Everything at once
 
 By default `ctScoreTest()` runs every family: the three above (covariates when
@@ -289,6 +306,12 @@ given the others observed at the same time, so a result names a variable.
   subject's observations, binned by the time between them. This is the
   residual ACF and CCF in continuous time, and a slow process the model lacks
   shows as correlation over the gaps it spans.
+* `latent`: the same for each latent process: how much each observation moves
+  the predicted state, standardised, correlated with the same subject's moves
+  at other times. A model with many indicators per process can leave each
+  item's errors nearly uncorrelated while the processes themselves are
+  misspecified, a cross effect missing, say; one statistic per process rather
+  than per item does not dilute that.
 * `volatility`: the same for the squared errors, for variance that clusters
   in time.
 * `pairs`: whether two variables' errors at the same time correlate as the
@@ -298,6 +321,17 @@ given the others observed at the same time, so a result names a variable.
 * `dependence`: whether an error or its size depends, in any form, on what
   came before it: the predicted states, the previous errors, the time since
   the last observation.
+* `effects`: on a model whose random effects are integrated by
+  `intoverpop = "laplace"`, whether their normal distribution fits. Each
+  subject's posterior probability that its effect lies below a cut, at cuts
+  along each axis, is averaged over subjects; under the model that average is
+  the normal's, and a skewed or bimodal distribution of the subjects moves
+  it.
+* `scores`, when asked for: whether each observation's score is uncorrelated
+  with the scores of the same subject's other observations, which holds
+  under the model whatever is being looked for. That makes it a check for
+  dynamic misspecification of any kind, at the cost of a pass of the filter
+  per eight parameters.
 
 The error statistics account for the parameters having been estimated from
 the same data. Each subject's contribution is projected on its scores, which
@@ -307,8 +341,9 @@ over subjects of their own means, standard deviations and lag-one
 correlations; whether change depends on level nonlinearly; and, given
 covariates, whether subjects' statistics depend on them. With many
 observations every misfit is significant, so the size of what remains is
-reported too, as a root mean square residual correlation with an interval and
-a test that it is at most `close` (0.05 by default).
+reported too, as root mean square residual correlations, of the items and of
+the latent processes, with intervals and a test that each is at most `close`
+(0.05 by default).
 
 On the second example's fit, which lacks `age`, the checks fail, through the
 subjects' spread and their relation to age:

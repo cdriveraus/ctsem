@@ -21,29 +21,19 @@
     dimnames = list(NULL, colnames(directions)))
 }
 
-# Each unit's log likelihood with its random effects fixed at each column of
-# `points` (effects by G, in the unit's standardised coordinates), the
-# deviations its filter integrates integrated exactly. Single-level Laplace
-# fits.
-.ctBackendEffectLoglik <- function(fit, est, points, cores = 2L) {
-  points <- as.matrix(points)
-  storage.mode(points) <- 'double'
+# Each unit's posterior over its standardised random effects, as the adaptive
+# rule the quadrature integrates with (`nodes` a dimension): `points` (units by
+# nodes^d by d), normalised `weights` (units by nodes^d), and `logmarginal`,
+# each unit's quadrature term. Single-level Laplace fits.
+.ctBackendPosteriorNodes <- function(fit, est, nodes = 5L, cores = 2L) {
   module <- .ctJuliaModule(fit$model_spec$project)
   out <- .ctBackendWithMaxChunks(cores, .ctBackendJuliaValue(
-    module$ctsem_laplace_effect_loglik(.ctJuliaObjective(fit, hybrid = TRUE),
-      .ctJuliaNumericVector(as.numeric(est)), .ctJuliaPut(points))))
-  matrix(as.numeric(out), ncol = ncol(points))
-}
-
-# Each unit's log marginal likelihood by adaptive quadrature, the integral the
-# effect likelihoods above are the integrand of.
-.ctBackendUnitMarginals <- function(fit, est, nodes = 5L, cores = 2L) {
-  module <- .ctJuliaModule(fit$model_spec$project)
-  out <- .ctBackendWithMaxChunks(cores, .ctBackendJuliaValue(
-    module$ctsem_laplace_quadrature(.ctJuliaObjective(fit, hybrid = TRUE),
-      .ctJuliaNumericVector(as.numeric(est)), nodes = as.integer(nodes),
-      contributions = TRUE)))
-  as.numeric(out$subject_loglik)
+    module$ctsem_laplace_posterior_nodes(.ctJuliaObjective(fit, hybrid = TRUE),
+      .ctJuliaNumericVector(as.numeric(est)), nodes = as.integer(nodes))))
+  W <- as.matrix(out$weights)
+  d <- length(out$points) / max(1L, length(W))
+  list(points = array(as.numeric(out$points), c(nrow(W), ncol(W), d)), weights = W,
+    logmarginal = as.numeric(out$logmarginal))
 }
 
 # Each unit's number of random-effect coordinates on the Laplace route.

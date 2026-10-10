@@ -7,8 +7,8 @@
 ctFitAdequacy(
   fit,
   covariates = NULL,
-  families = c("residuals", "volatility", "pairs", "distribution", "fit", "dependence",
-    "effects", "subjects", "nonlinear", "covariates"),
+  families = c("residuals", "latent", "volatility", "pairs", "distribution", "fit",
+    "dependence", "effects", "subjects", "nonlinear", "covariates"),
   gaps = NULL,
   close = 0.05,
   alpha = 0.05,
@@ -84,6 +84,10 @@ a variable.
     of rows, by time gap (\code{gaps}): the residual autocorrelation and
     cross-correlation in continuous time. Slow structure the model lacks
     shows as correlation over the gaps it spans.}
+  \item{latent}{The same for each latent process: the update each row makes
+    to the predicted state, standardised, correlated with the same subject's
+    updates at other times. One per process rather than one per item, so a
+    misfit in the dynamics is not diluted by item-specific structure.}
   \item{volatility}{The same for the squared errors, per variable: variance
     that clusters in time.}
   \item{pairs}{Each pair of variables' errors in the same row against the
@@ -100,13 +104,13 @@ a variable.
     previous errors, the time interval -- by permutation: a conditional mean
     or variance the model gets wrong, in any form.}
   \item{effects}{On a single-level Laplace fit, whether the random effects'
-    normal distribution is adequate: the gradient function (Verbeke &
-    Molenberghs, 2013), each subject's likelihood with its effects fixed at
-    points along each axis of their standardised space, relative to its
-    marginal likelihood. Under the model its mean is one at every point; more
-    subjects than the normal allows near a point -- a skewed or bimodal
-    distribution, a subgroup -- raises it there (Drikvandi, Verbeke &
-    Molenberghs, 2017).}
+    normal distribution is adequate: each subject's posterior probability,
+    smoothed, that its standardised effect lies below a cut, at cuts along
+    each axis, against the normal's. Under the model the posterior averages
+    to the prior, so the differences have mean zero; a skewed or bimodal
+    distribution, or a subgroup, moves them. These integrate the gradient
+    function (Verbeke & Molenberghs, 2013; Drikvandi, Verbeke & Molenberghs,
+    2017), which is too heavy tailed to test directly.}
   \item{scores}{Not run unless asked for. White's (1987) dynamic information
     matrix test: each data row's score, the derivative of its one-step
     log likelihood, for the dynamic and measurement parameters
@@ -143,11 +147,12 @@ combination; families are combined by Holm. \code{adequate} is \code{TRUE}
 when no family's adjusted p-value is below \code{alpha}.
 
 With many observations every misfit is significant, so the sizes of the
-residual and within-row correlations the model leaves are reported too, as
+residual, latent and within-row correlations the model leaves are reported
+too, as
 root mean squares (the unbiased form of the SRMR, Maydeu-Olivares 2017),
 with intervals and a test that the size is at most \code{close}.
 \code{close_fit} is \code{TRUE} when every family that fails is one of those
-two and its size is not significantly above \code{close}.
+three and its size is not significantly above \code{close}.
 
 Detection is not localization: a failure in one variable's equation reaches
 the others' errors through the fitted covariance. \code{\link{ctScoreTest}}

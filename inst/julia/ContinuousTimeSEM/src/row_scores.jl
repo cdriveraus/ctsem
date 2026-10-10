@@ -11,11 +11,12 @@
 #                                is what the dynamic information matrix test
 #                                (White 1987) and the parameter-stability
 #                                tests (Nyblom 1989) read.
-#   ctsem_laplace_effect_loglik  each unit's log likelihood with its random
-#                                effects fixed at given values, the deviations
-#                                its filter integrates integrated exactly: the
-#                                integrand the gradient function of Verbeke and
-#                                Molenberghs (2013) compares with the marginal.
+#   ctsem_laplace_posterior_nodes  each unit's posterior over its standardised
+#                                random effects, as the adaptive rule the
+#                                quadrature integrates with: for a test of the
+#                                effects' distribution, whose posterior
+#                                expectations average to their prior ones under
+#                                the model.
 #
 # Neither touches a fitting path. The derivatives are forward mode, seeded in
 # at most `_ROW_SCORE_WIDTH` directions a pass, so one dual type is compiled
@@ -197,54 +198,95 @@ function _laplace_row_scores_unit!(out, laplace::CTSEMLaplaceObjective, U::Integ
 end
 
 """
-    ctsem_laplace_effect_loglik(laplace, values, points)
+    ctsem_laplace_posterior_nodes(laplace, values; nodes=5)
 
-Each unit's log likelihood with its random effects fixed at each column of
-`points` (`d` by `G`, in the unit's standardised coordinates, whose prior is
-standard normal), with the deviations its members' filters integrate
-(`CTSEMHybrid`) integrated exactly -- the integrand quadrature integrates
-(`_laplace_member_loglik`). `nunits` by `G`. Single-level fits only: there a
-unit is one subject and its coordinates are the level's.
+Each unit's posterior over its random effects, in the unit's standardised
+coordinates (prior standard normal), as the adaptive Gauss-Hermite rule
+`ctsem_laplace_quadrature` integrates with: `points` (`nunits` by `nodes^d` by
+`d`), normalised `weights` (`nunits` by `nodes^d`), and `logmarginal`, each
+unit's quadrature term. `sum_j weights[i, j] * g(points[i, j, :])` is then
+E[g(u) | y_i] for a smooth `g`. The nodes are the quadrature's own, through
+`_quadrature_block`'s sink. Single-level fits whose units all have the same
+number of effects; a unit the rule cannot be built for is `NaN`.
 """
-function ctsem_laplace_effect_loglik(laplace::CTSEMLaplaceObjective,
-    values::AbstractVector, points::AbstractMatrix)
+function ctsem_laplace_posterior_nodes(laplace::CTSEMLaplaceObjective,
+    values::AbstractVector; nodes::Integer=5)
+    nodes >= 1 || throw(ArgumentError("need at least one quadrature node"))
     theta = collect(Float64, values)
     _laplace_check_indices(laplace, length(theta))
     units = laplace.units
     all(length(mm) == 1 for mm in units.members) || throw(ArgumentError(
-        "effect likelihoods need every subject to be its own unit: a single " *
-        "level of random effects"))
+        "posterior nodes need every subject to be its own unit: a single level " *
+        "of random effects"))
     nunits = length(units.members)
-    G = size(points, 2)
-    out = fill(NaN, nunits, G)
+    d = nunits == 0 ? 0 : units.dims[1]
+    all(==(d), units.dims) || throw(ArgumentError(
+        "posterior nodes need every unit to have the same number of effects"))
+    Q = Int(nodes)^d
+    points = fill(NaN, nunits, Q, d)
+    weights = fill(NaN, nunits, Q)
+    logmarginal = fill(NaN, nunits)
+    (d == 0 || nunits == 0) && return (points=points, weights=weights,
+        logmarginal=logmarginal)
     Ls = _laplace_popchols(theta, laplace.spec)
     _laplace_ensure_pool!(laplace)
+    _quadrature_warm_caches(laplace, nodes)
     _laplace_parallel(laplace, 1:nunits) do U
-        d = units.dims[U]
-        size(points, 1) == d || throw(DimensionMismatch(
-            "points needs one row per random effect of a unit"))
-        aws = _laplace_workspace!(laplace, Float64, length(theta))
-        so = laplace.objective.subject_objectives[units.members[U][1]]
-        u = zeros(Float64, d)
-        for g in 1:G
-            @inbounds for k in 1:d
-                u[k] = points[k, g]
-            end
-            shifted = _laplace_member_values(theta, laplace.spec, Ls, u,
-                units.offsets[U][1])
-            out[U, g] = _laplace_member_loglik(aws, so, shifted)
+        try
+            _laplace_posterior_nodes_unit!(points, weights, logmarginal, laplace, U,
+                theta, Ls, Int(nodes))
+        catch err
+            # As in the quadrature: a point the model cannot evaluate leaves the
+            # unit NaN; a bug propagates.
+            _ctsem_must_propagate(err) && rethrow()
         end
         return true
     end
-    return out
+    return (points=points, weights=weights, logmarginal=logmarginal)
+end
+
+function _laplace_posterior_nodes_unit!(points, weights, logmarginal,
+    laplace::CTSEMLaplaceObjective, U::Integer, theta::Vector{Float64},
+    Ls::Vector{Matrix{Float64}}, nodes::Int)
+    blocks = laplace.units.blocks[U]
+    length(blocks) == 1 || return nothing
+    aws = _laplace_workspace!(laplace, Float64, length(theta))
+    _laplace_solve_unit_mode!(laplace, U, theta, Ls)
+    mode = copy(laplace.modes[U])
+    M = _laplace_unit_curvature(laplace, U, theta, Ls, mode)
+    factorization = _laplace_factor_repaired!(M, blocks)
+    factorization.ok || return nothing
+    tree = _quadrature_children(blocks)
+    context = (children=tree.children, nodes=nodes, mode=mode,
+        factors=factorization.factors)
+    terms = fill(-Inf, size(weights, 2))
+    sink = function (j, z, term)
+        terms[j] = term
+        @inbounds for k in eachindex(z)
+            points[U, j, k] = z[k]
+        end
+        return nothing
+    end
+    total = _quadrature_block(laplace, U, theta, Ls, tree.roots[1], copy(mode),
+        context, aws; sink=sink)
+    isfinite(total) || return nothing
+    peak = maximum(terms)
+    mass = 0.0
+    @inbounds for j in eachindex(terms)
+        mass += exp(terms[j] - peak)
+    end
+    @inbounds for j in eachindex(terms)
+        weights[U, j] = exp(terms[j] - peak) / mass
+    end
+    logmarginal[U] = total
+    return nothing
 end
 
 """
     ctsem_laplace_unit_dims(laplace)
 
-Each unit's number of random-effect coordinates, the rows
-`ctsem_laplace_effect_loglik` takes.
+Each unit's number of random-effect coordinates.
 """
 ctsem_laplace_unit_dims(laplace::CTSEMLaplaceObjective) = copy(laplace.units.dims)
 
-export ctsem_row_scores, ctsem_laplace_effect_loglik, ctsem_laplace_unit_dims
+export ctsem_row_scores, ctsem_laplace_posterior_nodes, ctsem_laplace_unit_dims

@@ -41,6 +41,10 @@
 #'     of rows, by time gap (\code{gaps}): the residual autocorrelation and
 #'     cross-correlation in continuous time. Slow structure the model lacks
 #'     shows as correlation over the gaps it spans.}
+#'   \item{latent}{The same for each latent process: the update each row makes
+#'     to the predicted state, standardised, correlated with the same subject's
+#'     updates at other times. One per process rather than one per item, so a
+#'     misfit in the dynamics is not diluted by item-specific structure.}
 #'   \item{volatility}{The same for the squared errors, per variable: variance
 #'     that clusters in time.}
 #'   \item{pairs}{Each pair of variables' errors in the same row against the
@@ -57,13 +61,13 @@
 #'     previous errors, the time interval -- by permutation: a conditional mean
 #'     or variance the model gets wrong, in any form.}
 #'   \item{effects}{On a single-level Laplace fit, whether the random effects'
-#'     normal distribution is adequate: the gradient function (Verbeke &
-#'     Molenberghs, 2013), each subject's likelihood with its effects fixed at
-#'     points along each axis of their standardised space, relative to its
-#'     marginal likelihood. Under the model its mean is one at every point; more
-#'     subjects than the normal allows near a point -- a skewed or bimodal
-#'     distribution, a subgroup -- raises it there (Drikvandi, Verbeke &
-#'     Molenberghs, 2017).}
+#'     normal distribution is adequate: each subject's posterior probability,
+#'     smoothed, that its standardised effect lies below a cut, at cuts along
+#'     each axis, against the normal's. Under the model the posterior averages
+#'     to the prior, so the differences have mean zero; a skewed or bimodal
+#'     distribution, or a subgroup, moves them. These integrate the gradient
+#'     function (Verbeke & Molenberghs, 2013; Drikvandi, Verbeke & Molenberghs,
+#'     2017), which is too heavy tailed to test directly.}
 #'   \item{scores}{Not run unless asked for. White's (1987) dynamic information
 #'     matrix test: each data row's score, the derivative of its one-step
 #'     log likelihood, for the dynamic and measurement parameters
@@ -100,11 +104,12 @@
 #' when no family's adjusted p-value is below \code{alpha}.
 #'
 #' With many observations every misfit is significant, so the sizes of the
-#' residual and within-row correlations the model leaves are reported too, as
+#' residual, latent and within-row correlations the model leaves are reported
+#' too, as
 #' root mean squares (the unbiased form of the SRMR, Maydeu-Olivares 2017),
 #' with intervals and a test that the size is at most \code{close}.
 #' \code{close_fit} is \code{TRUE} when every family that fails is one of those
-#' two and its size is not significantly above \code{close}.
+#' three and its size is not significantly above \code{close}.
 #'
 #' Detection is not localization: a failure in one variable's equation reaches
 #' the others' errors through the fitted covariance. \code{\link{ctScoreTest}}
@@ -173,7 +178,7 @@
 #'   see the data against the fit.
 #' @export
 ctFitAdequacy <- function(fit, covariates = NULL,
-  families = c('residuals', 'volatility', 'pairs', 'distribution', 'fit',
+  families = c('residuals', 'latent', 'volatility', 'pairs', 'distribution', 'fit',
     'dependence', 'effects', 'subjects', 'nonlinear', 'covariates'),
   gaps = NULL, close = 0.05, alpha = 0.05,
   projection = c('auto', 'derivative', 'opg', 'none'), parameters = NULL,
@@ -181,7 +186,7 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   if (!.ctFitIsJulia(fit) && !inherits(fit, 'ctStanFit')) stop('Not a ctsem fit.',
     call. = FALSE)
   asked <- !missing(families)
-  families <- match.arg(families, c('residuals', 'volatility', 'pairs',
+  families <- match.arg(families, c('residuals', 'latent', 'volatility', 'pairs',
     'distribution', 'fit', 'dependence', 'effects', 'scores', 'subjects', 'nonlinear',
     'covariates', 'lagged'), several.ok = TRUE)
   if (is.null(covariates)) families <- setdiff(families, 'covariates')
@@ -207,8 +212,8 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   set.seed(20261010L)
 
   statistics <- list(); fams <- list(); size <- NULL; used <- NA_character_
-  moments <- intersect(families, c('residuals', 'volatility', 'pairs', 'distribution', 'fit',
-    'effects', 'scores'))
+  moments <- intersect(families, c('residuals', 'latent', 'volatility', 'pairs',
+    'distribution', 'fit', 'effects', 'scores'))
   if (length(moments) || 'dependence' %in% families) {
     # The errors (on the Laplace route a sequential pass, the expensive part)
     # only for the families that read them: the effect distribution does not.
@@ -219,7 +224,6 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     if (length(moments)) {
       est <- if (.ctFitIsJulia(fit)) .ctFitRawEstimate(fit) else NULL
       extra <- list(
-        points = if ('effects' %in% moments) .ctAdequacyEffectPoints(fit) else NULL,
         directions = if ('scores' %in% moments) .ctAdequacyScoreDirections(fit, parameters) else NULL)
       # Every family's statistics at any parameter vector, so that the
       # projection can difference them all; at the estimate the errors are
@@ -299,13 +303,17 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     if (is.null(raw)) raw <- .ctFitRawEstimate(fit)
     spec <- .ctBackendSpec(fit)
     k <- suppressMessages(.ctBackendKalmanRaw(fit, raw, subjectmatrices = FALSE,
-      fields = c('eta', 'y', 'ycov', 'subject'), sequential = TRUE))
+      fields = c('eta', 'etacov', 'y', 'ycov', 'subject'), sequential = TRUE))
     nrows <- length(spec$times)
     Y <- matrix(t(spec$manifest_data), nrows, m)
     yp <- matrix(k$y[1, , , drop = FALSE], nrows, m)
     yc <- array(k$ycov[1, , , , drop = FALSE], c(nrows, m, m))
     naug <- dim(k$eta)[3]
-    eta <- matrix(k$eta[1, , , drop = FALSE], nrows, naug)[, seq_len(spec$nlatent), drop = FALSE]
+    nl <- spec$nlatent
+    eta <- matrix(k$eta[1, , , drop = FALSE], nrows, naug)[, seq_len(nl), drop = FALSE]
+    etaupd <- matrix(k$eta[2, , , drop = FALSE], nrows, naug)[, seq_len(nl), drop = FALSE]
+    covdiff <- vapply(seq_len(nl), function(j) k$etacov[1, , j, j] - k$etacov[2, , j, j],
+      numeric(nrows))
     unit <- as.integer(k$subject)
     time <- as.numeric(spec$times)
   } else {
@@ -316,6 +324,10 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     yp <- matrix(k$yprior[1, , , drop = FALSE], nrows, m)
     yc <- array(k$ypriorcov[1, , , , drop = FALSE], c(nrows, m, m))
     eta <- matrix(k$etaprior[1, , , drop = FALSE], nrows)
+    nl <- ncol(eta)
+    etaupd <- matrix(k$etaupd[1, , , drop = FALSE], nrows)[, seq_len(nl), drop = FALSE]
+    covdiff <- vapply(seq_len(nl), function(j) k$etapriorcov[1, , j, j] -
+      k$etaupdcov[1, , j, j], numeric(nrows))
     unit <- as.integer(factor(k$id, levels = unique(k$id)))
     time <- as.numeric(k$time)
   }
@@ -335,9 +347,18 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     R[r, obs, obs] <- P / outer(s, s)
     Q[r] <- sum(v * Pv); d[r] <- length(obs)
   }
+  # Each latent's update by the row, standardised: the state moved by K v,
+  # whose covariance under the model is the prior less the updated -- a
+  # function of the row's innovation alone given the past, so uncorrelated
+  # across rows like the errors, but one per latent process rather than one
+  # per item, which is where a structural misfit shows.
+  covdiff <- matrix(covdiff, nrows)
+  Z <- (etaupd - eta) / sqrt(pmax(covdiff, 0))
+  Z[!is.finite(Z) | covdiff <= 1e-12 * pmax(1, abs(covdiff))] <- NA
+  colnames(Z) <- model$latentNames[seq_len(ncol(Z))]
   labels <- tryCatch(as.character(.ctFitIdMap(fit)$original), error = function(e) NULL)
   if (length(labels) < max(unit)) labels <- as.character(seq_len(max(unit)))
-  list(E = E, R = R, Q = Q, d = d, unit = unit, nunits = max(unit), time = time,
+  list(E = E, R = R, Q = Q, d = d, Z = Z, unit = unit, nunits = max(unit), time = time,
     eta = eta, vars = vars, labels = labels)
 }
 
@@ -417,6 +438,14 @@ ctFitAdequacy <- function(fit, covariates = NULL,
         'square', grid$b[own])
     }
   }
+  if ('latent' %in% which) {
+    q <- ncol(err$Z)
+    blk <- .ctAdequacyPairBlock(err$Z, err$unit, err$time, n, setup)
+    grid <- expand.grid(j = seq_len(q), k = seq_len(q), b = seq_len(length(setup$labels)))
+    lat <- colnames(err$Z)
+    addblock(blk$M, blk$V0, 'latent', paste0(lat[grid$j], '~', lat[grid$k], ' gap ',
+      setup$labels[grid$b]), blk$N, 'corr', grid$b)
+  }
   if ('pairs' %in% which && p > 1L) {
     pr <- which(upper.tri(diag(p)), arr.ind = TRUE)
     pr <- pr[order(pr[, 1], pr[, 2]), , drop = FALSE]
@@ -462,7 +491,7 @@ ctFitAdequacy <- function(fit, covariates = NULL,
 # first index fastest), its variance under the model from the products'
 # squares (`V0`), and the number of pairs that contribute (`N`). Missing
 # values contribute nothing.
-.ctAdequacyPairBlock <- function(X, unit, time, n, setup) {
+.ctAdequacyPairBlock <- function(X, unit, time, n, setup, robust = FALSE) {
   X <- as.matrix(X)
   K <- ncol(X)
   B <- length(setup$labels)
@@ -484,7 +513,8 @@ ctFitAdequacy <- function(fit, covariates = NULL,
       if (!any(W > 0)) next
       cols <- (b - 1L) * K * K + seq_len(K * K)
       M[i, cols] <- as.numeric(crossprod(x, W %*% x))
-      V0[i, cols] <- as.numeric(crossprod(x2, W %*% x2))
+      V0[i, cols] <- if (robust) as.numeric(crossprod(crossprod(W, x)^2, x2)) else
+        as.numeric(crossprod(x2, W %*% x2))
       N[cols] <- N[cols] + as.numeric(crossprod(o, W %*% o))
     }
   }
@@ -495,12 +525,13 @@ ctFitAdequacy <- function(fit, covariates = NULL,
 # the estimate of a fit that has no other), from the errors `err` there.
 .ctAdequacyMomentsAll <- function(fit, x, err, setup, which, extra, cores) {
   parts <- list()
-  errfams <- intersect(which, c('residuals', 'volatility', 'pairs', 'distribution', 'fit'))
+  errfams <- intersect(which, c('residuals', 'latent', 'volatility', 'pairs', 'distribution',
+    'fit'))
   if (length(errfams)) parts[[length(parts) + 1L]] <- .ctAdequacyMoments(err, setup, errfams)
   if ('scores' %in% which) parts[[length(parts) + 1L]] <- .ctAdequacyScoreMoments(fit, x,
     err, setup, extra$directions, cores)
   if ('effects' %in% which) parts[[length(parts) + 1L]] <- .ctAdequacyEffectMoments(fit,
-    x, extra$points, cores)
+    x, cores)
   list(M = do.call(cbind, lapply(parts, `[[`, 'M')),
     V0 = do.call(cbind, lapply(parts, `[[`, 'V0')),
     meta = do.call(rbind, lapply(parts, `[[`, 'meta')))
@@ -515,37 +546,39 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   if (inherits(dims, 'try-error')) return("the effects are not at a single level.")
   if (!length(dims) || all(dims == 0)) return("the model has no random effects.")
   if (length(unique(dims)) > 1L) return("the units differ in their number of effects.")
-  if (dims[1] > 4L) return(paste0(dims[1], " effects a unit; the marginal by ",
-    "quadrature would take ", 3^dims[1], " evaluations a unit."))
+  if (dims[1] > 4L) return(paste0(dims[1], " effects a unit; the posterior by ",
+    "quadrature would take ", 4^dims[1], " evaluations a unit."))
   NULL
 }
 
-# Points along each axis of the units' standardised effect space, where the
-# prior is standard normal: three either side, from the shoulders to the tails.
-.ctAdequacyEffectPoints <- function(fit) {
-  d <- .ctBackendUnitDims(fit)[1]
-  at <- c(-2.5, -1.5, -0.75, 0.75, 1.5, 2.5)
-  pts <- do.call(cbind, lapply(seq_len(d), function(k) {
-    P <- matrix(0, d, length(at)); P[k, ] <- at; P }))
-  attr(pts, 'labels') <- paste0('u', rep(seq_len(d), each = length(at)), ' = ', at)
-  pts
-}
-
-# The gradient function, unit by unit: f_i(y | u) / m_i - 1 at each point u,
-# m_i the unit's marginal by quadrature. Under the model each has mean zero:
-# integrating f_i(y | u) over the data gives one. Unit-level (no pairwise
-# variance), and heavy tailed, which the studentised bootstrap is for.
-.ctAdequacyEffectMoments <- function(fit, x, points, cores) {
+# The effects' distribution, unit by unit: the posterior expectation of
+# Phi((c - u_k) / h) along each axis k of the unit's standardised effects, less
+# the prior's, Phi(c / sqrt(1 + h^2)) -- a smoothed posterior probability below
+# each cut. Averaged over units each has mean zero under the model, since the
+# posterior averages to the prior, and each is bounded. The gradient function
+# these integrate, f(y | u) / m(y) at a point u, is not: in the tail it is near
+# zero for almost every unit and huge for the rare one near the point, and a
+# studentised mean of it rejected a correct model a third of the time at .05.
+# The posterior is the quadrature's own rule, whose error for these at h = 0.75
+# is at most 1e-4 a unit for one effect (nine nodes) and 3e-3 for three (five),
+# even with a posterior as wide as the prior.
+.ctAdequacyEffectMoments <- function(fit, x, cores) {
   if (is.null(x)) x <- .ctFitRawEstimate(fit)
-  d <- nrow(points)
-  L <- .ctBackendEffectLoglik(fit, x, points, cores)
-  m <- .ctBackendUnitMarginals(fit, x, nodes = c(9L, 7L, 5L, 3L)[min(d, 4L)], cores)
-  C <- exp(L - m) - 1
+  d <- .ctBackendUnitDims(fit)[1]
+  post <- .ctBackendPosteriorNodes(fit, x, nodes = c(9L, 7L, 5L, 4L)[min(d, 4L)], cores)
+  W <- post$weights
+  h <- 0.75
+  cuts <- c(-1.5, -0.75, 0, 0.75, 1.5)
+  C <- do.call(cbind, lapply(seq_len(d), function(k) {
+    Pk <- matrix(post$points[, , k], nrow(W))
+    vapply(cuts, function(cc) rowSums(W * stats::pnorm((cc - Pk) / h)) -
+      stats::pnorm(cc / sqrt(1 + h^2)), numeric(nrow(W)))
+  }))
   C[!is.finite(C)] <- 0
   n <- nrow(C)
   list(M = C, V0 = matrix(NA_real_, n, ncol(C)), meta = data.frame(family = 'effects',
-    name = attr(points, 'labels'), count = n, kind = 'moment', bin = NA_integer_,
-    stringsAsFactors = FALSE))
+    name = paste0('P(u', rep(seq_len(d), each = length(cuts)), ' < ', cuts, ')'),
+    count = n, kind = 'moment', bin = NA_integer_, stringsAsFactors = FALSE))
 }
 
 # The raw parameters whose row scores the scores family uses: named, or up to
@@ -571,12 +604,16 @@ ctFitAdequacy <- function(fit, covariates = NULL,
 # White's dynamic information matrix test: each row's score for the chosen
 # parameters, multiplied by the scores of the same unit's later rows, by
 # time gap. Under the model a unit's row scores are a martingale difference
-# sequence, so every such product has mean zero, and the pairwise variance
-# holds (Escanciano & Lobato's form).
+# sequence, so every such product has mean zero. Their variance given the past
+# is not constant -- a drift parameter's score scales with the predicted state
+# -- so the per-pair variance the errors use, which assumes it is, rejected a
+# correct model a quarter of the time at .05; the variance here is each later
+# row's squared score times the square of its earlier partners' summed scores,
+# which needs only the martingale property.
 .ctAdequacyScoreMoments <- function(fit, x, err, setup, directions, cores) {
   if (is.null(x)) x <- .ctFitRawEstimate(fit)
   R <- .ctBackendRowScores(fit, x, directions, cores)
-  blk <- .ctAdequacyPairBlock(R, err$unit, err$time, err$nunits, setup)
+  blk <- .ctAdequacyPairBlock(R, err$unit, err$time, err$nunits, setup, robust = TRUE)
   K <- ncol(R)
   grid <- expand.grid(j = seq_len(K), k = seq_len(K), b = seq_len(length(setup$labels)))
   par <- colnames(directions)
@@ -789,10 +826,14 @@ ctFitAdequacy <- function(fit, covariates = NULL,
       overall = !grepl('shortest', label), stringsAsFactors = FALSE)
   }
   res <- which(meta$family == 'residuals' & meta$kind == 'corr')
+  lat <- which(meta$family == 'latent')
   out <- list(
     measure('residual correlation, all gaps', 'residuals', res),
     measure('residual correlation, shortest gaps', 'residuals',
       res[meta$bin[res] %in% 1L]),
+    measure('latent residual correlation, all gaps', 'latent', lat),
+    measure('latent residual correlation, shortest gaps', 'latent',
+      lat[meta$bin[lat] %in% 1L]),
     measure('within-row correlation', 'pairs', which(meta$family == 'pairs')))
   out <- do.call(rbind, out)
   if (!is.null(out)) rownames(out) <- NULL
@@ -973,7 +1014,7 @@ ctFitAdequacy <- function(fit, covariates = NULL,
 print.ctFitAdequacy <- function(x, digits = 3, ...) {
   cat("Adequacy: ", if (x$adequate) "adequate" else "NOT adequate", " at alpha = ",
     x$alpha, if (!x$adequate && isTRUE(x$close_fit)) paste0(
-      ", but a close fit (residual correlations not above ", x$close, ")"), "\n", sep = "")
+      ", but a close fit (remaining correlations not above ", x$close, ")"), "\n", sep = "")
   notes <- c(if (!is.na(x$projection)) paste0("estimation removed by: ", x$projection),
     if (!is.na(x$nsamples)) paste0(x$nsamples, " generated datasets"))
   if (length(notes)) cat("(", paste(notes, collapse = "; "), ")\n", sep = "")

@@ -54,6 +54,11 @@ test_that("adequacy is reported per family, and the error-based families need no
     nboot = 199)
   expect_setequal(ad2$families$family, c('residuals', 'volatility', 'fit'))
   expect_true(is.na(ad2$nsamples))
+  # The dynamic information matrix test, from row scores, when asked for.
+  ad3 <- ctFitAdequacy(x$fit, families = 'scores', cores = 1, nboot = 199)
+  expect_identical(ad3$families$family, 'scores')
+  expect_true(ad3$families$p > 0 && ad3$families$p <= 1)
+  expect_true(all(startsWith(ad3$statistics$statistic, 's(')))
 })
 
 test_that("a conditional error's implied correlation is P_jk / sqrt(P_jj P_kk)", {

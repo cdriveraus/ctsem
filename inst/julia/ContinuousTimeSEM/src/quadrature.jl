@@ -377,10 +377,13 @@ integrated, and whatever sits beneath it recursed into.
 `u` carries the values already chosen for `b`'s ancestors and is written in
 place as the recursion descends. Entries belonging to other branches are stale
 and unread, because a member reads only the blocks on its own path.
+
+`sink(j, z, term)`, when given, sees each of this block's own nodes and its log
+term (`ctsem_laplace_posterior_nodes`); the recursion does not pass it on.
 """
 function _quadrature_block(laplace::CTSEMLaplaceObjective, U::Integer,
     theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, b::Integer,
-    u::Vector{Float64}, context, aws)
+    u::Vector{Float64}, context, aws; sink=nothing)
     blocks = laplace.units.blocks[U]
     block = blocks[b]
     k = block.size
@@ -441,6 +444,7 @@ function _quadrature_block(laplace::CTSEMLaplaceObjective, U::Integer,
         # mass without a word. Only a vanishing likelihood scores `-Inf`.
         leaf || !isnan(inner) || return NaN
         terms[j] = isfinite(inner) ? inner - dot(z, z) / 2 + logweights[j] : -Inf
+        sink === nothing || sink(j, z, terms[j])
     end
     peak = maximum(terms)
     isfinite(peak) || return NaN
