@@ -923,6 +923,64 @@ print.ctLaplaceCorrection <- function(x, ...) {
     start = start, info = info, value = value)
 }
 
+# Newton steps on the continuation's own Hessian, where it says more is left
+# than the rounds' stopping rule did.
+#
+# The rounds stop on a residual whitened by the Laplace fit's curvature
+# (`.ctLaplaceContinueRun()`), and the certification measures the gap on the
+# continuation's own Hessian, formed once they stop. The two estimate the same
+# quantity and can disagree by an order of magnitude: on the affect pilot's
+# slow-component fit (528 units, 352 parameters) the rounds stopped at a
+# residual of 6.4e-07 against a bar of 1e-06, the exact gap was 5.6e-06, and
+# the fit reported `converged = FALSE` for a continuation that had met its own
+# rule. The Hessian also predicts the step that closes the gap, so that step is
+# taken, as the optimiser's finish takes one on its Hessian: at most
+# `maxsteps`, each kept only where the objective with its nodes re-placed did
+# not fall and the gap fell, and only while the estimate stays within
+# `.ctBackendHessianReuse()` standard errors of where `hc` was evaluated, so
+# the matrix still describes the curvature there. A step is a placement and a
+# gradient, against the `2 npar` gradients the Hessian took.
+#
+# `cont` is placed at `x`, `final` is the objective and its gradient there and
+# `value` its quadrature value. Returns where it ended, placed there, with
+# `final`, `info` (NULL when no step was kept) and the gap before and after.
+#' @keywords internal
+.ctLaplaceContinueFinish <- function(module, cont, x, hc, final, value, bar,
+  value_tol, maxsteps = 2L) {
+  get <- .ctJuliaGet
+  at <- x
+  gap <- .ctBackendOptimGap(hc, as.numeric(final$gradient))
+  before <- gap$gap
+  info <- NULL
+  steps <- 0L
+  while (steps < maxsteps && isTRUE(gap$ok) && identical(gap$nnegative, 0L) &&
+      isTRUE(gap$gap > bar)) {
+    xn <- x + gap$step
+    if (!isTRUE(.ctBackendHessianDistance(hc, at, xn) <= .ctBackendHessianReuse())) {
+      break
+    }
+    placed <- get(module[["ctsem_laplace_continuation_recentre!"]](cont,
+      .ctJuliaNumericVector(xn)))
+    after <- get(module$ctsem_laplace_continuation_evaluate(cont,
+      .ctJuliaNumericVector(xn), gradient = TRUE))
+    next_gap <- .ctBackendOptimGap(hc, as.numeric(after$gradient))
+    rose <- as.numeric(placed$quadrature) - value
+    if (!isTRUE(is.finite(rose) && rose >= -value_tol &&
+        next_gap$gap < gap$gap)) {
+      get(module[["ctsem_laplace_continuation_revert!"]](cont))
+      break
+    }
+    steps <- steps + 1L
+    x <- xn
+    final <- after
+    info <- placed
+    value <- as.numeric(placed$quadrature)
+    gap <- next_gap
+  }
+  list(x = x, final = final, info = info, value = value, steps = steps,
+    gap_before = before, gap_after = gap$gap)
+}
+
 # A log-posterior function on the continuation's hybrid objective, in the
 # `lpgFunc` contract `.ctBackendUncertainty()` takes: see `.ctBackendLpgFunc()`,
 # whose guard it copies.
@@ -1219,6 +1277,26 @@ print.ctLaplaceCorrection <- function(x, ...) {
   }
   final <- get(module$ctsem_laplace_continuation_evaluate(cont,
     .ctJuliaNumericVector(x), gradient = TRUE))
+  # Where the continuation's own curvature says more is left than the rounds'
+  # stopping rule saw, the step it predicts is taken before anything is
+  # reported (`.ctLaplaceContinueFinish()`). `hessian_at` keeps the point `hc`
+  # describes, which the estimate may then be a few thousandths of a standard
+  # error from.
+  hessian_at <- x
+  if (reached && is.matrix(hc) && all(is.finite(hc))) {
+    finish <- .ctLaplaceContinueFinish(module, cont, x, hc, final,
+      value = run$value, bar = run$bar, value_tol = control$value_tol)
+    record$newton <- finish[c("steps", "gap_before", "gap_after")]
+    if (finish$steps > 0L) {
+      x <- finish$x
+      final <- finish$final
+      info <- finish$info
+      record$flagged <- as.integer(info$nflagged)
+      record$flagged_units <- as.integer(info$flagged)[seq_len(info$nflagged)]
+      record$bar <- as.numeric(info$bar)
+      record$residual <- as.numeric(info$residual)
+    }
+  }
   record$status <- "continued"
   record$applied <- TRUE
   se <- as.numeric(fit$estimate$se)
@@ -1281,7 +1359,7 @@ print.ctLaplaceCorrection <- function(x, ...) {
     settings <- fit$uncertainty$settings
     finishsamples <- .ctJuliaOr(settings$finishsamples,
       if (!is.null(fit$estimate$rawposterior)) nrow(fit$estimate$rawposterior) else 1000L)
-    fit$uncertainty <- list(hessian = hc, evaluated_at = x,
+    fit$uncertainty <- list(hessian = hc, evaluated_at = hessian_at,
       certification = certification)
     fit <- .ctBackendUncertainty(fit, uncertainty = "hessian", draws = "normal",
       finishsamples = finishsamples, cores = chunks,
