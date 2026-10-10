@@ -126,13 +126,16 @@ ctModelImprove <- function(fit, covariates = NULL,
       structural <- TRUE
       if (!length(proposals)) { stopped <- 'not adequate, nothing left to try'; break }
     }
-    proposals <- utils::head(proposals[order(vapply(proposals, `[[`, 0, 'p'))], ntry)
+    # Ranked by each test's own asymptotic p-value: the bootstrap's floors at
+    # 1 / (nboot + 1), and strong signals would tie there.
+    proposals <- utils::head(proposals[order(vapply(proposals, `[[`, 0, 'rank'))], ntry)
     tried <- list()
     for (prop in proposals) {
       say("Round ", step, ": refitting with ", prop$label)
       edited <- try(prop$edit(model, data, covariates), silent = TRUE)
       refit <- if (inherits(edited, 'try-error')) edited else
-        try(.ctImproveRefit(current, edited$model, edited$data, cores), silent = TRUE)
+        try(.ctImproveRefit(current, edited$model, edited$data, cores, prop$start),
+          silent = TRUE)
       verdict <- .ctImproveCompare(current, refit, criterion, alpha / length(proposals))
       tried[[length(tried) + 1L]] <- list(prop = prop, refit = refit, edited = edited,
         verdict = verdict)
@@ -180,6 +183,8 @@ ctModelImprove <- function(fit, covariates = NULL,
     par <- h$parameter[r]
     out[[length(out) + 1L]] <- list(key = paste0('het:', par), family = 'heterogeneity',
       label = paste0(par, ' individually varying'), p = h$p[r],
+      rank = stats::pnorm(h$z[r], lower.tail = FALSE),
+      start = .ctImprovePopsdStart(model, par, h$sd[r]),
       edit = local({ par <- par; function(model, data, covs) {
         model$pars$indvarying[model$pars$param %in% par] <- TRUE
         list(model = model, data = data)
@@ -194,7 +199,7 @@ ctModelImprove <- function(fit, covariates = NULL,
     if (!length(pars)) next
     out[[length(out) + 1L]] <- list(key = paste0('cov:', z, ':', paste(sort(pars), collapse = ',')),
       family = 'covariates', label = paste0(z, ' as a predictor of ', paste(pars, collapse = ', ')),
-      p = cv$joint$p, edit = local({ z <- z; pars <- pars; function(model, data, covs) {
+      p = cv$joint$p, rank = stats::pchisq(cv$joint$LM, cv$joint$df, lower.tail = FALSE), edit = local({ z <- z; pars <- pars; function(model, data, covs) {
         idname <- model$subjectIDname
         add <- unique(covs[, c(idname, z)])
         data <- merge(data[, setdiff(names(data), z), drop = FALSE], add, by = idname,
@@ -213,7 +218,7 @@ ctModelImprove <- function(fit, covariates = NULL,
     name <- paste0('sdep_', s$equation[r], '_', gsub('*', '_', s$term[r], fixed = TRUE))
     out[[length(out) + 1L]] <- list(key = paste0('sdep:', i, ':', s$monomial[r]),
       family = 'statedependence', label = paste0(s$term[r], ' in the drift of ',
-        s$equation[r]), p = s$p[r],
+        s$equation[r]), p = s$p[r], rank = s$p[r],
       edit = local({ i <- i; mono <- mono; name <- name; function(model, data, covs) {
         list(model = .ctAddCintTerms(model, i, name, list(mono)), data = data)
       } }))
@@ -222,7 +227,7 @@ ctModelImprove <- function(fit, covariates = NULL,
   if (!is.null(f)) for (r in which(f$p_adj < alpha)) {
     cell <- f[r, ]
     out[[length(out) + 1L]] <- list(key = paste0('fixed:', cell$cell), family = 'fixed',
-      label = paste0(cell$cell, ' freed'), p = cell$p,
+      label = paste0(cell$cell, ' freed'), p = cell$p, rank = cell$p,
       edit = local({ cell <- cell; function(model, data, covs) {
         k <- which(model$pars$matrix == cell$matrix & model$pars$row == cell$row &
           model$pars$col == cell$col)
@@ -246,13 +251,13 @@ ctModelImprove <- function(fit, covariates = NULL,
       if (paste0('d', model$latentNames[i]) %in% model$latentNames) next
       out[[length(out) + 1L]] <- list(key = paste0('order:', model$latentNames[i]),
         family = 'order', label = paste0(model$latentNames[i], ' made second order'),
-        p = NA_real_, edit = local({ i <- i; function(model, data, covs)
+        p = NA_real_, rank = 1, edit = local({ i <- i; function(model, data, covs)
           list(model = ctModelHigherOrder(model, i), data = data) }))
     }
   }
   for (k in seq_along(candidates)) {
     out[[length(out) + 1L]] <- list(key = paste0('candidate:', k), family = 'candidate',
-      label = paste0('candidate model ', k), p = NA_real_,
+      label = paste0('candidate model ', k), p = NA_real_, rank = 1,
       edit = local({ k <- k; function(model, data, covs) {
         list(model = candidates[[k]], data = data) } }))
   }
@@ -260,8 +265,12 @@ ctModelImprove <- function(fit, covariates = NULL,
 }
 
 # Refit with an edited model, prepared as the current fit was and warm started
-# from its estimates, matched by name; new parameters start at zero.
-.ctImproveRefit <- function(current, model, data, cores) {
+# from its estimates, matched by name; new parameters start at zero, or where
+# the proposal says (`start`, by raw name). A warm start can still fail -- a
+# new random effect at an arbitrary scale can leave a Laplace unit's inner mode
+# unconverged at the start, which ended two of three refits in testing -- so a
+# refit that fails from there is tried once from ctsem's own start.
+.ctImproveRefit <- function(current, model, data, cores, start = NULL) {
   args <- .ctFitReplayArgs(current)
   args$model <- model
   args$datalong <- data
@@ -275,9 +284,25 @@ ctModelImprove <- function(fit, covariates = NULL,
   init <- setNames(numeric(length(names2)), names2)
   shared <- intersect(names(est), names2)
   init[shared] <- est[shared]
+  start <- start[names(start) %in% names2]
+  init[names(start)] <- start
   args$fit <- TRUE
   args$inits <- unname(init)
+  out <- try(suppressMessages(suppressWarnings(do.call(ctFit, args))), silent = TRUE)
+  if (!inherits(out, 'try-error')) return(out)
+  args$inits <- NULL
   suppressMessages(suppressWarnings(do.call(ctFit, args)))
+}
+
+# The raw start for a new random effect's population sd: the heterogeneity
+# test's one-step sd, through the inverse of the model's sd transform
+# (`log1p_exp(2 * raw - 1) * sdscale`), floored so the optimiser does not start
+# on the boundary where the sd's gradient vanishes.
+.ctImprovePopsdStart <- function(model, par, sd) {
+  sdscale <- suppressWarnings(as.numeric(model$pars$sdscale[match(par, model$pars$param)]))
+  if (!is.finite(sdscale) || sdscale <= 0) sdscale <- 1
+  s <- max(if (is.finite(sd)) sd else 0, 0.05) / sdscale
+  setNames((log(expm1(s)) + 1) / 2, paste0('popsd_', par))
 }
 
 .ctImproveCompare <- function(current, refit, criterion, alpha) {

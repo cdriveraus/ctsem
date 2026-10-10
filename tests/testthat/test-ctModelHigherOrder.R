@@ -77,3 +77,58 @@ test_that("the raised model is still a model ctsem will take", {
   expect_true(all(c('drift_deta1_eta1', 'drift_deta2_eta2',
     'T0mean_d_eta1', 'T0var_deta2_deta2') %in% pars))
 })
+
+# The type = 'ct' form: the same surgery on the parameter table, which is where
+# a ct model keeps everything about a cell. A moved cell keeps its transform
+# and its individual variation; a matrix rebuilt from labels would lose both.
+.ho_ct <- function() {
+  m <- suppressMessages(ctModel(type = 'ct', silent = TRUE,
+    manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
+    LAMBDA = diag(2)))
+  m$pars$indvarying[m$pars$param %in% 'drift_eta2'] <- TRUE
+  m
+}
+
+test_that("a ct model is raised cell by cell, keeping each moved cell's settings", {
+  m <- .ho_ct()
+  ho <- ctModelHigherOrder(m, 2)
+  expect_s3_class(ho, 'ctStanModel')
+  expect_equal(ho$n.latent, 3L)
+  expect_equal(ho$latentNames, c('eta1', 'eta2', 'deta2'))
+  mats <- ctModelMatrices(ho)
+  expect_equal(dim(mats$DRIFT), c(3L, 3L))
+  expect_equal(dim(mats$LAMBDA), c(2L, 3L))
+  # The level is driven by its derivative, the derivative pulled back by the
+  # level, and the level's own autoregression is now the derivative's damping.
+  expect_equal(unname(mats$DRIFT[2, 2]), '0')
+  expect_equal(unname(mats$DRIFT[2, 3]), '1')
+  expect_equal(unname(mats$DRIFT[3, 2]), 'drift_deta2_eta2')
+  expect_equal(unname(mats$DRIFT[3, 3]), 'drift_eta2')
+  moved <- ho$pars[ho$pars$matrix == 'DRIFT' & ho$pars$row == 3 & ho$pars$col == 3, ]
+  orig <- m$pars[m$pars$param %in% 'drift_eta2', ]
+  expect_identical(moved$transform, orig$transform)
+  expect_true(moved$indvarying)
+  # Cross effects stay on the levels unless asked for.
+  expect_equal(unname(mats$DRIFT[1, 2]), 'drift_eta1_eta2')
+  expect_equal(unname(mats$DRIFT[2, 1]), 'drift_eta2_eta1')
+  # Process noise, and its covariance with eta1, move to the derivative.
+  expect_equal(unname(mats$DIFFUSION[2, ]), c('0', '0', '0'))
+  expect_equal(unname(mats$DIFFUSION[3, 3]), 'diff_eta2')
+  expect_equal(unname(mats$DIFFUSION[3, 1]), 'diff_eta2_eta1')
+  # New latent: no indicator, its own initial mean and covariances.
+  expect_equal(as.numeric(mats$LAMBDA[, 3]), c(0, 0))
+  expect_equal(unname(mats$T0MEANS[3, 1]), 'T0mean_deta2')
+  expect_equal(unname(mats$T0VAR[3, ]), c('T0var_deta2_eta1', 'T0var_deta2_eta2', 'T0var_deta2'))
+})
+
+test_that("a ct model raised at a latent that is not the first puts each cell on the new row", {
+  m <- .ho_ct()
+  k <- which(m$pars$matrix == 'CINT' & m$pars$row == 2)
+  m$pars$param[k] <- 'cint2'; m$pars$value[k] <- NA; m$pars$transform[k] <- 'param'
+  ho <- ctModelHigherOrder(m, 2, cint = TRUE, diffusion = FALSE)
+  mats <- ctModelMatrices(ho)
+  expect_equal(unname(mats$CINT[, 1]), c('0', '0', 'cint2'))
+  expect_equal(unname(mats$DIFFUSION[2, 2]), 'diff_eta2')
+  expect_equal(unname(mats$DIFFUSION[3, 3]), '0')
+  expect_error(ctModelHigherOrder(.ho_ct(), 3), 'indices')
+})

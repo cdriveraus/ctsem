@@ -78,6 +78,7 @@
 "test-ctNetwork.R","reporting","core"
 "test-ctReport.R","reporting","core"
 "test-ctScoreTest.R","reporting","core"
+"test-ctModelImprove.R","reporting","core"
 "test-print-model.R","reporting","core"
 "test-ctACF.R","reporting","extended"
 "test-ctModelLatex.R","reporting","extended"
