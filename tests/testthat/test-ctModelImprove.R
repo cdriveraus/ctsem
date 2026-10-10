@@ -37,15 +37,15 @@ test_that("adequacy is reported per family, and the error-based families need no
   expect_s3_class(ad, 'ctFitAdequacy')
   # One manifest variable, so no within-row pairs; the lagged correlations of
   # the data only when asked for.
-  expect_setequal(ad$families$family, c('residuals', 'volatility', 'distribution', 'fit',
-    'dependence', 'subjects', 'nonlinear'))
+  expect_setequal(ad$families$family, c('residuals', 'latent', 'volatility', 'distribution',
+    'fit', 'dependence', 'subjects', 'nonlinear'))
   expect_true(all(ad$families$p > 0 & ad$families$p <= 1))
   expect_true(ad$adequate)
   expect_true(ad$close_fit)
   # A small model with its Hessian: estimation removed by exact derivatives.
   expect_identical(ad$projection, 'derivative')
-  expect_true(all(c('residual correlation, all gaps', 'residual correlation, shortest gaps') %in%
-    ad$size$measure))
+  expect_true(all(c('residual correlation, all gaps', 'residual correlation, shortest gaps',
+    'latent residual correlation, all gaps') %in% ad$size$measure))
   # Reuses what the fit generated.
   expect_equal(dim(ad$fit$generated$Y)[1], 40L)
   expect_output(print(ad), 'adequate')
