@@ -7,7 +7,7 @@
 ctScoreTest(
   fit,
   covariates = NULL,
-  tests = c("heterogeneity", "covariates", "statedependence"),
+  tests = c("heterogeneity", "covariates", "statedependence", "fixed"),
   form = c("auto", "linear", "spline", "factor"),
   df = 3,
   parameters = NULL,
@@ -29,8 +29,8 @@ covariate is constant within subject. Without an id column, one row per
 subject in the fit's subject order.}
 
 \item{tests}{Which families to run: any of \code{'heterogeneity'},
-\code{'covariates'}, \code{'statedependence'}. Covariates are tested only
-when \code{covariates} is given.}
+\code{'covariates'}, \code{'statedependence'}, \code{'fixed'}.
+Covariates are tested only when \code{covariates} is given.}
 
 \item{form}{How a covariate enters: \code{'auto'} (indicators for a factor,
 character or logical covariate; linear otherwise), \code{'linear'},
@@ -62,7 +62,8 @@ An object of class \code{ctScoreTest}: a list with
   \code{covariates} (one element per covariate, each a list of its
   \code{joint} test and a data frame \code{parameters}),
   \code{statedependence} (a list of \code{terms}, a data frame, and
-  \code{joint}, the tests per equation and overall), and \code{info} (the
+  \code{joint}, the tests per equation and overall), \code{fixed} (a list
+  of \code{cells} and their \code{joint} test), and \code{info} (the
   route, the number of subjects and parameters, the variance used).
 }
 \description{
@@ -139,6 +140,18 @@ before interpreting their sizes.
   \code{PARS = c('dr11|-log1p_exp(-param)', 'd')}) and refit.
 }
 
+\section{Fixed cells}{
+ For each cell the model fixes at zero that could
+  sensibly be freed -- a \code{DRIFT} cross effect, a \code{DIFFUSION} or
+  \code{MANIFESTVAR} covariance, a \code{LAMBDA} cross loading, a
+  \code{TDPREDEFFECT} -- the score test of freeing it: the modification
+  index (Sorbom, 1989), with \code{estimate} the expected parameter change.
+  \code{CINT} and \code{MANIFESTMEANS} are not offered, since with the
+  other free either is identified only through the initial transient.
+  State dependence and fixed cells are tested on one extended model, so
+  asking for both costs one preparation.
+}
+
 \section{Variance and p-values}{
  The fitted model's curvature projects the
   fitted parameters out of each test and sets the one-step sizes; the
@@ -184,6 +197,8 @@ Boos, D. D. (1992). On generalized score tests. The American
 
   Luukkonen, R., Saikkonen, P., & Terasvirta, T. (1988). Testing linearity
   against smooth transition autoregressive models. Biometrika, 75, 491-499.
+
+  Sorbom, D. (1989). Model modification. Psychometrika, 54, 371-384.
 }
 \seealso{
 \code{vignette('score-tests')} for three worked examples.

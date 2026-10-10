@@ -2,7 +2,7 @@
 % Please edit documentation in R/ctModelHigherOrder.R
 \name{ctModelHigherOrder}
 \alias{ctModelHigherOrder}
-\title{Raise the order of a ctsem type ='omx' model object.}
+\title{Raise the order of a ctsem model's latent processes.}
 \usage{
 ctModelHigherOrder(
   ctm,
@@ -14,7 +14,7 @@ ctModelHigherOrder(
 )
 }
 \arguments{
-\item{ctm}{ctModel}
+\item{ctm}{ctModel, \code{type = 'ct'} or \code{type = 'omx'}.}
 
 \item{indices}{Vector of integers, which latents to raise the order of.}
 
@@ -30,7 +30,19 @@ ctModelHigherOrder(
 extended ctModel
 }
 \description{
-Raise the order of a ctsem type ='omx' model object.
+Each latent in \code{indices} gains a derivative latent (named \code{d}
+and the latent's name): the level is driven by its derivative with a fixed
+unit coefficient, the derivative is pulled back by the level through an
+estimated coefficient (negative unless \code{explosive}), and the level's
+own autoregression becomes the derivative's damping. That makes each a
+damped oscillator: a second order process, whose autocorrelation can dip
+below zero and rise again, which no first order process can.
+}
+\details{
+Works on a model from \code{ctModel(type = 'ct')}, rewriting its parameter
+table cell by cell so every other setting of each cell -- transform,
+individual variation, predictor effects -- is kept, and on the older
+matrix-list form from \code{ctModel(type = 'omx')}.
 }
 \examples{
 om <- ctModel(LAMBDA=diag(1,2),DRIFT=0, 

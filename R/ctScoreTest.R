@@ -114,6 +114,16 @@
 #'   into the drift cell (\code{DRIFT[1,1] = 'dr11 + d * eta2'} with
 #'   \code{PARS = c('dr11|-log1p_exp(-param)', 'd')}) and refit.
 #'
+#' @section Fixed cells: For each cell the model fixes at zero that could
+#'   sensibly be freed -- a \code{DRIFT} cross effect, a \code{DIFFUSION} or
+#'   \code{MANIFESTVAR} covariance, a \code{LAMBDA} cross loading, a
+#'   \code{TDPREDEFFECT} -- the score test of freeing it: the modification
+#'   index (Sorbom, 1989), with \code{estimate} the expected parameter change.
+#'   \code{CINT} and \code{MANIFESTMEANS} are not offered, since with the
+#'   other free either is identified only through the initial transient.
+#'   State dependence and fixed cells are tested on one extended model, so
+#'   asking for both costs one preparation.
+#'
 #' @section Variance and p-values: The fitted model's curvature projects the
 #'   fitted parameters out of each test and sets the one-step sizes; the
 #'   variance of each test is, by default (\code{variance = 'robust'}), the
@@ -146,8 +156,8 @@
 #'   covariate is constant within subject. Without an id column, one row per
 #'   subject in the fit's subject order.
 #' @param tests Which families to run: any of \code{'heterogeneity'},
-#'   \code{'covariates'}, \code{'statedependence'}. Covariates are tested only
-#'   when \code{covariates} is given.
+#'   \code{'covariates'}, \code{'statedependence'}, \code{'fixed'}.
+#'   Covariates are tested only when \code{covariates} is given.
 #' @param form How a covariate enters: \code{'auto'} (indicators for a factor,
 #'   character or logical covariate; linear otherwise), \code{'linear'},
 #'   \code{'spline'} or \code{'factor'}. One value, or one per covariate.
@@ -169,7 +179,8 @@
 #'   \code{covariates} (one element per covariate, each a list of its
 #'   \code{joint} test and a data frame \code{parameters}),
 #'   \code{statedependence} (a list of \code{terms}, a data frame, and
-#'   \code{joint}, the tests per equation and overall), and \code{info} (the
+#'   \code{joint}, the tests per equation and overall), \code{fixed} (a list
+#'   of \code{cells} and their \code{joint} test), and \code{info} (the
 #'   route, the number of subjects and parameters, the variance used).
 #' @references Boos, D. D. (1992). On generalized score tests. The American
 #'   Statistician, 46, 327-333.
@@ -179,6 +190,8 @@
 #'
 #'   Luukkonen, R., Saikkonen, P., & Terasvirta, T. (1988). Testing linearity
 #'   against smooth transition autoregressive models. Biometrika, 75, 491-499.
+#'
+#'   Sorbom, D. (1989). Model modification. Psychometrika, 54, 371-384.
 #' @seealso \code{vignette('score-tests')} for three worked examples.
 #' @examples
 #' \dontrun{
@@ -189,7 +202,7 @@
 #' }
 #' @export
 ctScoreTest <- function(fit, covariates = NULL,
-  tests = c('heterogeneity', 'covariates', 'statedependence'),
+  tests = c('heterogeneity', 'covariates', 'statedependence', 'fixed'),
   form = c('auto', 'linear', 'spline', 'factor'), df = 3, parameters = NULL,
   order = 2L, variance = c('robust', 'model'), nboot = 1999L, cores = 2L,
   verbose = TRUE) {
@@ -231,7 +244,7 @@ ctScoreTest <- function(fit, covariates = NULL,
   est <- .ctFitRawEstimate(fit)
   ptab <- .ctScoreParameterTable(fit)
   out <- list(heterogeneity = NULL, covariates = NULL, statedependence = NULL,
-    info = list(route = .ctBackendIntOverPop(spec),
+    fixed = NULL, info = list(route = .ctBackendIntOverPop(spec),
       nsubjects = .ctFitNsubjects(fit), npar = length(est)))
   out$info$variance <- variance
 
@@ -259,11 +272,14 @@ ctScoreTest <- function(fit, covariates = NULL,
         names(values))
     }
   }
-  if ('statedependence' %in% tests) {
-    say("State dependence: preparing the model with the drift terms at zero")
+  extended <- intersect(tests, c('statedependence', 'fixed'))
+  if (length(extended)) {
+    say("Preparing the model extended at zero (", paste(extended, collapse = ', '), ")")
     information <- if (!is.null(pieces)) -pieces$Hsum else NULL
-    out$statedependence <- .ctScoreStateDependence(fit, est, information,
-      order = order, variance = variance, nboot = nboot, cores = cores)
+    ext <- .ctScoreExtended(fit, est, extended, information, order = order,
+      variance = variance, nboot = nboot, cores = cores)
+    out$statedependence <- ext$statedependence
+    out$fixed <- ext$fixed
   }
   structure(out, class = 'ctScoreTest')
 }
@@ -615,57 +631,69 @@ ctScoreTest <- function(fit, covariates = NULL,
 }
 
 # The fitted model with a term `d * eta_k * eta_m` in each latent equation's
-# CINT, for k <= m, every d a new PARS parameter with an identity transform.
-# A CINT cell that is a free parameter moves into PARS, transform, variation
-# and predictor effects and all, so its raw coordinate is unchanged; a fixed
-# one keeps its value; an expression keeps its form.
+# CINT, for k <= m (and degree three with `order = 3`), every d a new PARS
+# parameter with an identity transform.
 .ctScoreStateModel <- function(model, order = 2L) {
-  pars <- model$pars
   latent <- model$latentNames
   nl <- length(latent)
-  # The monomials of degree 2 (and 3), each as its sorted state indices: the
-  # first is the state the drift coefficient multiplies, the rest what it
-  # varies with.
+  # The monomials, each as its sorted state indices: the first is the state
+  # the drift coefficient multiplies, the rest what it varies with.
   monomials <- list()
   for (k in seq_len(nl)) for (m in k:nl) {
     monomials[[length(monomials) + 1L]] <- c(k, m)
     if (order >= 3L) for (l in m:nl) monomials[[length(monomials) + 1L]] <- c(k, m, l)
   }
+  terms <- list()
+  for (i in seq_len(nl)) for (mono in monomials) {
+    terms[[length(terms) + 1L]] <- data.frame(name = paste0('ctscoreterm',
+      length(terms) + 1L), equation = latent[i], i = i, k = mono[1L],
+      by = paste(latent[mono[-1L]], collapse = '*'),
+      term = paste(latent[mono], collapse = '*'),
+      other = if (length(mono) == 2L && mono[1L] != mono[2L]) mono[2L] else NA_integer_,
+      stringsAsFactors = FALSE)
+  }
+  terms <- do.call(rbind, terms)
+  model <- .ctAddCintTerms(model, terms$i, terms$name,
+    lapply(strsplit(terms$term, '*', fixed = TRUE), match, latent))
+  list(model = model, terms = terms)
+}
+
+# Add terms `name * eta_k * eta_m ...` to CINT[i], each `name` a new PARS
+# parameter (identity transform unless given), for the score tests at zero and
+# for a refit that keeps one. A CINT cell that is a free parameter moves into
+# PARS -- transform, variation and predictor effects and all -- so its raw
+# coordinate is unchanged; a fixed cell keeps its value; an expression keeps its
+# form. The engine's Jacobian is derived from DRIFT * state + CINT
+# (`ctJacobian`), so a term here is the same model as the drift coefficient
+# varying with the state.
+.ctAddCintTerms <- function(model, i, names, monomials, transform = 'param') {
+  pars <- model$pars
+  latent <- model$latentNames
   effects <- grep('_effect$', names(pars), value = TRUE)
   levelflags <- grep('^indvarying_', names(pars), value = TRUE)
-  ispars <- pars$matrix %in% 'PARS'
-  nextpars <- max(c(0L, as.integer(pars$row[ispars])))
+  nextpars <- max(c(0L, as.integer(pars$row[pars$matrix %in% 'PARS'])))
   template <- pars[which(pars$matrix %in% 'CINT')[1L], , drop = FALSE]
   parsrow <- function(name, from = NULL) {
     r <- if (is.null(from)) template else from
     r$matrix <- 'PARS'; r$row <- nextpars <<- nextpars + 1L; r$col <- 1L
     r$param <- name
     if (is.null(from)) {
-      r$value <- NA; r$transform <- 'param'; r$indvarying <- FALSE
+      r$value <- NA; r$transform <- transform; r$indvarying <- FALSE
       if ('sdscale' %in% names(r)) r$sdscale <- 1
       for (e in effects) r[[e]] <- 'FALSE'
       for (l in levelflags) r[[l]] <- FALSE
     }
     r
   }
-  terms <- list()
   added <- list()
-  for (i in seq_len(nl)) {
-    cell <- which(pars$matrix %in% 'CINT' & pars$row == i)
-    if (length(cell) != 1L) stop("The model has no CINT cell for latent ", i,
+  for (eq in unique(i)) {
+    cell <- which(pars$matrix %in% 'CINT' & pars$row == eq)
+    if (length(cell) != 1L) stop("The model has no CINT cell for latent ", eq,
       ".", call. = FALSE)
-    names_i <- character()
-    for (mono in monomials) {
-      nm <- paste0('ctscoreterm', length(terms) + 1L)
-      terms[[length(terms) + 1L]] <- data.frame(name = nm, equation = latent[i],
-        i = i, k = mono[1L], by = paste(latent[mono[-1L]], collapse = '*'),
-        term = paste(latent[mono], collapse = '*'),
-        other = if (length(mono) == 2L && mono[1L] != mono[2L]) mono[2L] else NA_integer_,
-        stringsAsFactors = FALSE)
-      names_i <- c(names_i, paste(c(nm, latent[mono]), collapse = ' * '))
-      added[[length(added) + 1L]] <- parsrow(nm)
-    }
-    sum_i <- paste(names_i, collapse = ' + ')
+    these <- which(i == eq)
+    sum_i <- paste(vapply(these, function(t) paste(c(names[t], latent[monomials[[t]]]),
+      collapse = ' * '), character(1)), collapse = ' + ')
+    for (t in these) added[[length(added) + 1L]] <- parsrow(names[t])
     current <- pars$param[cell]
     if (is.na(current) || !nzchar(current)) {
       value <- suppressWarnings(as.numeric(pars$value[cell]))
@@ -685,24 +713,84 @@ ctScoreTest <- function(fit, covariates = NULL,
   }
   model$pars <- rbind(pars, do.call(rbind, added))
   rownames(model$pars) <- NULL
-  list(model = model, terms = do.call(rbind, terms))
+  model
 }
 
-# State dependence by the extended model: prepared as the fit was, evaluated
-# with the fitted values and the terms at zero, which must reproduce the fit;
-# then its gradient, its Hessian columns along the terms, and -- for the
-# robust variance -- each unit's gradient, whose term columns projected on
-# the fitted parameters are the contributions.
-.ctScoreStateDependence <- function(fit, est, information = NULL, order = 2L,
+# The fixed cells a model could free, as terms at zero: DRIFT cross effects,
+# DIFFUSION and MANIFESTVAR covariances, LAMBDA cross loadings and
+# TDPREDEFFECT cells fixed at zero. Each becomes a parameter with ctsem's
+# default transform for its cell, kept only where that transform puts a raw
+# zero at zero, so the extended model is the fit at zero. CINT and
+# MANIFESTMEANS are left out: with the other free, either is identified only
+# by the transient from the initial state.
+.ctScoreFixedModel <- function(model) {
+  pars <- model$pars
+  latent <- model$latentNames; manifest <- model$manifestNames
+  tdpred <- model$TDpredNames
+  ct <- isTRUE(model$continuoustime)
+  effects <- grep('_effect$', names(pars), value = TRUE)
+  levelflags <- grep('^indvarying_', names(pars), value = TRUE)
+  value <- suppressWarnings(as.numeric(pars$value))
+  free <- is.na(pars$param) | !nzchar(pars$param)
+  candidate <- which(free & !is.na(value) & value == 0 & (
+    (pars$matrix %in% 'DRIFT' & pars$row != pars$col) |
+      (pars$matrix %in% c('DIFFUSION', 'MANIFESTVAR') & pars$row > pars$col) |
+      pars$matrix %in% c('LAMBDA', 'TDPREDEFFECT')))
+  ns <- asNamespace('ctsem')
+  dims <- function(m) switch(m, DRIFT = list(latent, latent),
+    DIFFUSION = list(latent, latent), MANIFESTVAR = list(manifest, manifest),
+    LAMBDA = list(manifest, latent), TDPREDEFFECT = list(latent, tdpred))
+  terms <- list()
+  for (k in candidate) {
+    m <- pars$matrix[k]; r <- pars$row[k]; c <- pars$col[k]
+    tf <- .ctModelDefaultFreePar(m, r, c, ct)$transform
+    atzero <- try(eval(parse(text = tf), list(param = 0), ns), silent = TRUE)
+    if (inherits(atzero, 'try-error') || !isTRUE(abs(atzero) < 1e-12)) next
+    d <- dims(m)
+    name <- paste0('ctscorefixed', length(terms) + 1L)
+    pars$param[k] <- name
+    pars$value[k] <- NA
+    pars$transform[k] <- tf
+    pars$indvarying[k] <- FALSE
+    for (e in effects) pars[[e]][k] <- 'FALSE'
+    for (l in levelflags) pars[[l]][k] <- FALSE
+    terms[[length(terms) + 1L]] <- data.frame(name = name, matrix = m, row = r,
+      col = c, cell = paste0(m, '[', d[[1]][r], ',', d[[2]][c], ']'),
+      suggested = paste0(tolower(m), '_', d[[1]][r], '_', d[[2]][c]),
+      transform = tf, stringsAsFactors = FALSE)
+  }
+  model$pars <- pars
+  list(model = model, terms = if (length(terms)) do.call(rbind, terms) else NULL)
+}
+
+# The fitted model extended at zero by every term of the families asked for --
+# drift terms written into CINT, fixed cells freed -- prepared as the fit was,
+# evaluated with the fitted values and the terms at zero, which must reproduce
+# the fit; then its gradient, its Hessian columns along the terms, and for the
+# robust variance each unit's gradient, whose term columns projected on the
+# fitted parameters are the contributions. One model for both families, so
+# one compile of the extended shape.
+.ctScoreExtended <- function(fit, est, families, information = NULL, order = 2L,
   variance = 'robust', nboot = 1999L, cores = 2L) {
   spec <- fit$model_spec
   base <- .ctFitBaseModel(fit)
   if (is.null(base)) stop("This fit does not carry the model it was built from, ",
     "so the extended model cannot be prepared. Refit with this version of ctsem.",
     call. = FALSE)
-  ext <- .ctScoreStateModel(base, order)
+  model <- base
+  state <- fixed <- NULL
+  if ('statedependence' %in% families) {
+    state <- .ctScoreStateModel(model, order)
+    model <- state$model
+  }
+  if ('fixed' %in% families) {
+    fixed <- .ctScoreFixedModel(model)
+    model <- fixed$model
+  }
+  names_new <- c(state$terms$name, fixed$terms$name)
+  if (!length(names_new)) return(list(statedependence = NULL, fixed = NULL))
   args <- .ctFitReplayArgs(fit)
-  args$model <- ext$model
+  args$model <- model
   args$fit <- FALSE
   args$inits <- NULL
   args$datalong <- .ctFitLongData(fit)
@@ -715,10 +803,9 @@ ctScoreTest <- function(fit, covariates = NULL,
   lost <- setdiff(nm1, nm2)
   if (length(lost) || anyDuplicated(nm2)) stop("The extended model's parameters ",
     "do not line up with the fit's (", paste(lost, collapse = ', '), "). ",
-    "State dependence cannot be tested for this model.", call. = FALSE)
-  newnames <- setdiff(nm2, nm1)
-  if (!setequal(newnames, ext$terms$name)) stop("The extended model added ",
-    "parameters other than its terms: ", paste(setdiff(newnames, ext$terms$name),
+    "State dependence and fixed cells cannot be tested for this model.", call. = FALSE)
+  if (!setequal(setdiff(nm2, nm1), names_new)) stop("The extended model added ",
+    "parameters other than its terms: ", paste(setdiff(setdiff(nm2, nm1), names_new),
       collapse = ', '), call. = FALSE)
   x2 <- setNames(numeric(length(nm2)), nm2)
   x2[nm1] <- est
@@ -727,11 +814,11 @@ ctScoreTest <- function(fit, covariates = NULL,
   if (!isTRUE(abs(ev$value - value1) <= 1e-6 * max(1, abs(value1)))) stop(
     "The extended model does not reproduce the fit at zero (log likelihood ",
     signif(ev$value, 8), " against ", signif(value1, 8), "), so its scores are ",
-    "not the fit's. State dependence cannot be tested for this model.",
+    "not the fit's. State dependence and fixed cells cannot be tested for this model.",
     call. = FALSE)
   grad <- setNames(as.numeric(ev$gradient), nm2)
   theta <- match(nm1, nm2)
-  delta <- match(ext$terms$name, nm2)
+  delta <- match(names_new, nm2)
   module <- .ctJuliaModule(spec$project)
   objective <- .ctJuliaObjective(spec2, hybrid = TRUE)
   Hc <- .ctBackendWithMaxChunks(cores, as.matrix(.ctBackendJuliaValue(
@@ -757,34 +844,53 @@ ctScoreTest <- function(fit, covariates = NULL,
   }
   v <- diag(V)
   vm <- diag(Vmodel)
-  terms <- ext$terms
-  latent <- base$latentNames
-  lm <- ifelse(v > 0, Ustar^2 / v, NA_real_)
-  table <- data.frame(term = terms$term, equation = terms$equation,
-    reads = paste0('DRIFT[', latent[terms$i], ',', latent[terms$k], '] varies with ',
-      terms$by, ifelse(is.na(terms$other), '', paste0(', or DRIFT[',
-        latent[terms$i], ',', latent[pmax(1L, terms$other)], '] with ',
-        latent[terms$k]))),
-    LM = lm, p = stats::pchisq(lm, 1, lower.tail = FALSE),
-    # One term at a time, the fitted parameters free: a state dependence the
-    # fit lacks is not absorbed by any one parameter the way a covariate is,
-    # and this is the expected parameter change.
+  per <- data.frame(LM = ifelse(v > 0, Ustar^2 / v, NA_real_),
+    # One term at a time, the fitted parameters free: the expected parameter
+    # change. NA where the fitted model's curvature cannot size it -- a strong
+    # departure can leave the projected information indefinite.
     estimate = ifelse(vm > 0, Ustar / vm, NA_real_),
-    se = ifelse(vm > 0, sqrt(v) / vm, NA_real_), stringsAsFactors = FALSE)
-  table$p_adj <- .ctScoreBH(table$p)
+    se = ifelse(vm > 0, sqrt(pmax(v, 0)) / vm, NA_real_))
+  per$p <- stats::pchisq(per$LM, 1, lower.tail = FALSE)
   jointtest <- function(idx, label) {
     j <- .ctScorePinv(V[idx, idx, drop = FALSE])
     stat <- as.numeric(t(Ustar[idx]) %*% j$inv %*% Ustar[idx])
     p <- if (!j$rank) NA_real_ else if (!is.null(Cstar))
       .ctScoreBoot(Cstar[, idx, drop = FALSE], nboot) else
       stats::pchisq(stat, j$rank, lower.tail = FALSE)
-    data.frame(equation = label, LM = stat, df = j$rank, p = p,
-      stringsAsFactors = FALSE)
+    data.frame(set = label, LM = stat, df = j$rank, p = p, stringsAsFactors = FALSE)
   }
-  joint <- do.call(rbind, c(lapply(unique(terms$equation), function(e)
-    jointtest(which(terms$equation == e), e)),
-    list(jointtest(seq_along(delta), 'all'))))
-  list(terms = table[order(table$p), , drop = FALSE], joint = joint)
+  out <- list(statedependence = NULL, fixed = NULL)
+  latent <- base$latentNames
+  if (!is.null(state$terms)) {
+    idx <- seq_len(nrow(state$terms))
+    terms <- state$terms
+    table <- data.frame(term = terms$term, equation = terms$equation,
+      reads = paste0('DRIFT[', latent[terms$i], ',', latent[terms$k], '] varies with ',
+        terms$by, ifelse(is.na(terms$other), '', paste0(', or DRIFT[',
+          latent[terms$i], ',', latent[pmax(1L, terms$other)], '] with ',
+          latent[terms$k]))),
+      per[idx, c('LM', 'p', 'estimate', 'se')], stringsAsFactors = FALSE)
+    table$p_adj <- .ctScoreBH(table$p)
+    table$i <- terms$i; table$k <- terms$k
+    table$monomial <- vapply(seq_len(nrow(terms)), function(r)
+      paste(match(strsplit(terms$term[r], '*', fixed = TRUE)[[1]], latent), collapse = ','),
+      character(1))
+    joint <- do.call(rbind, c(lapply(unique(terms$equation), function(e)
+      jointtest(idx[terms$equation == e], e)), list(jointtest(idx, 'all'))))
+    names(joint)[1] <- 'equation'
+    out$statedependence <- list(terms = table[order(table$p), , drop = FALSE], joint = joint)
+  }
+  if (!is.null(fixed$terms)) {
+    idx <- length(state$terms$name) + seq_len(nrow(fixed$terms))
+    terms <- fixed$terms
+    table <- data.frame(cell = terms$cell, matrix = terms$matrix, row = terms$row,
+      col = terms$col, per[idx, c('LM', 'p', 'estimate', 'se')],
+      suggested = terms$suggested, transform = terms$transform, stringsAsFactors = FALSE)
+    table$p_adj <- .ctScoreBH(table$p)
+    out$fixed <- list(cells = table[order(table$p), , drop = FALSE],
+      joint = jointtest(idx, 'all'))
+  }
+  out
 }
 
 #' @export
@@ -814,6 +920,12 @@ print.ctScoreTest <- function(x, digits = 3, top = 10, ...) {
     cat("\n")
     fmt(x$statedependence$terms[, c('term', 'equation', 'LM', 'p', 'p_adj',
       'estimate', 'se', 'reads')])
+  }
+  if (!is.null(x$fixed)) {
+    j <- x$fixed$joint
+    cat("\nFixed cells, freed: joint LM = ", signif(j$LM, digits), ", df = ", j$df,
+      ", p = ", signif(j$p, digits), "\n", sep = "")
+    fmt(x$fixed$cells[, c('cell', 'LM', 'p', 'p_adj', 'estimate', 'se')])
   }
   invisible(x)
 }
