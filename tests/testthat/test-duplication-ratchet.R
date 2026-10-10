@@ -108,7 +108,10 @@ test_that("the number of two-implementation forks does not grow", {
   for (ex in asts) for (e in as.list(ex)) walk(e)
 
   expect_gt(length(defined), 500L)   # the walk found the package, not nothing
-  expect_lte(nforks, 32L)
+  # 33: ctModelHigherOrder() rewrites a type = 'ct' model's parameter table
+  # (.ctHigherOrderPars) and keeps its old path for the matrix-list form of
+  # type = 'omx', which has no parameter table to rewrite (2026-10-10).
+  expect_lte(nforks, 33L)
 })
 
 test_that("the duplication detectors are present and runnable", {

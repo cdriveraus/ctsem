@@ -76,7 +76,7 @@
 #' @export
 ctFitAdequacy <- function(fit, covariates = NULL, nsamples = 100, lags = 0:3,
   alpha = 0.05, cores = 2) {
-  if (!inherits(fit, c('ctStanFit', 'ctJuliaFit'))) stop('Not a ctsem fit.',
+  if (!.ctFitIsJulia(fit) && !inherits(fit, 'ctStanFit')) stop('Not a ctsem fit.',
     call. = FALSE)
   if (is.null(fit$generated) || dim(fit$generated$Y)[1] < nsamples) {
     fit <- suppressMessages(ctGenerateFromFit(fit, nsamples = nsamples, cores = cores))

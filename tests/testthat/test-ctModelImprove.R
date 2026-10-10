@@ -24,8 +24,8 @@ skip_on_32bit()
   }))
 }
 
-.improve_fit <- function(effect) fit_cached(paste('improve', effect), {
-  d <- .improve_data(effect)
+.improve_fit <- function(effect, seed = 5L) fit_cached(paste('improve', effect, seed), {
+  d <- .improve_data(effect, seed = seed)
   list(data = d, fit = suppressMessages(ctFit(d[, c('id', 'time', 'Y1')],
     suppressMessages(ctModel(type = 'ct', manifestNames = 'Y1', latentNames = 'eta1',
       LAMBDA = matrix(1))), backend = 'julia', cores = 1, verbose = 0)))
@@ -58,7 +58,11 @@ test_that("a covariate the model lacks is added, an unrelated one is not, and th
 })
 
 test_that("a correct model stops at once", {
-  x <- .improve_fit(0)
+  # Its own draw: with seed 5, a correct model's data are one of the five per
+  # cent of draws where the search keeps something at alpha = 0.05 (a random
+  # diffusion, LR p = 0.0097) -- the rate the simulation in the review note
+  # measured, which is the place to test it, not one dataset.
+  x <- .improve_fit(0, seed = 1L)
   imp <- suppressMessages(ctModelImprove(x$fit, covariates = unique(x$data[, c('id', 'w')]),
     relax = c('heterogeneity', 'covariates', 'statedependence'), nsamples = 40,
     cores = 1, verbose = FALSE))
