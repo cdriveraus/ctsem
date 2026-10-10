@@ -74,11 +74,16 @@
       arr <- array(sapply(1:dim(out$yprior)[1], function(i){
         array(sapply(1:nrow(out$y), function(r){
           tmp <- matrix(NA,length(manifestNames))
-          if(sum(!is.na(out$y[r,])) > 0) tmp[which(!is.na(out$y[r,]))] <- 
+          obs <- !is.na(out$y[r,])
+          # The factor of the observed block, not the observed block of the
+          # full factor: those differ whenever a variable earlier in the order
+          # is missing, and the latter divided a later variable's error by its
+          # sd conditional on the unobserved one.
+          if(sum(obs) > 0) tmp[which(obs)] <-
               matrix(solve(
-                t(chol(matrix(out[[paste0('ypriorcov')]][i,r,,],ncol=length(manifestNames)) + diag(1e-10,length(manifestNames))))[
-                  !is.na(out$y[r,]),!is.na(out$y[r,])], 
-                out[[paste0('err',typei)]][i,r,!is.na(out$y[r,])]), nrow=sum(!is.na(out$y[r,])))
+                t(chol(matrix(out[[paste0('ypriorcov')]][i,r,,],ncol=length(manifestNames))[obs,obs,drop=FALSE] +
+                    diag(1e-10,sum(obs)))),
+                out[[paste0('err',typei)]][i,r,obs]), nrow=sum(obs))
           return(tmp)
         },simplify = 'array'), dim=c(length(manifestNames),1,nrow(out$y)))
       },simplify = 'array'), dim=c(length(manifestNames),1,nrow(out$y),nsamples))
