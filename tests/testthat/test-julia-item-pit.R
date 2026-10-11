@@ -32,8 +32,10 @@ skip_without_julia()
   list(data = d,
     filter = suppressMessages(ctFit(d, .pit_model(FALSE), backend = 'julia', cores = 2,
       verbose = 0)),
-    laplace = suppressMessages(ctFit(d, m2, backend = 'julia', intoverpop = 'laplace',
-      cores = 2, verbose = 0)))
+    # The data have no random intercept, so its sd sits at zero and the fit
+    # says the direction is unidentified; the transforms are what is tested.
+    laplace = suppressWarnings(suppressMessages(ctFit(d, m2, backend = 'julia',
+      intoverpop = 'laplace', cores = 2, verbose = 0))))
 })
 
 test_that("a censored value's bounds are the normal's, a binary item's its probabilities", {
