@@ -7,8 +7,8 @@
 ctModelImprove(
   fit,
   covariates = NULL,
-  relax = c("heterogeneity", "covariates", "statedependence", "fixed", "slow", "unique",
-    "periodic", "order"),
+  relax = c("heterogeneity", "covariates", "statedependence", "volatility", "fixed",
+    "slow", "unique", "periodic", "order"),
   candidates = NULL,
   alpha = 0.05,
   maxsteps = 10L,
@@ -109,6 +109,8 @@ The relaxations, in the language of the model:
   \item{statedependence}{a term \code{d * eta_k * eta_m} in a latent's
     drift, written into \code{CINT} with \code{d} a \code{PARS} parameter:
     a drift coefficient that varies with a state.}
+  \item{volatility}{a latent's innovation sd scaled by \code{exp(v *
+    eta_m)}: innovations whose size depends on a state.}
   \item{fixed}{a cell fixed at zero freed: a drift cross effect, a
     diffusion or measurement error covariance, a cross loading.}
   \item{slow}{a slow process driving a latent through its drift, its effect

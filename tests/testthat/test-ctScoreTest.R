@@ -31,7 +31,10 @@ skip_on_32bit()
     for (t in 2:nobs) {
       n <- max(1L, ceiling((times[t] - times[t - 1]) / dtsub))
       h <- (times[t] - times[t - 1]) / n
-      for (s in seq_len(n)) x <- x + (a + b * tanh(x)) * x * h + sigma * sqrt(h) * stats::rnorm(1)
+      # 'vol': the innovation sd rises with the state, exp(0.5 x) within two
+      # sd, bounded beyond.
+      g <- if (scenario == 'vol') exp(0.5 * 2 * tanh(x / 2)) else 1
+      for (s in seq_len(n)) x <- x + (a + b * tanh(x)) * x * h + g * sigma * sqrt(h) * stats::rnorm(1)
       xs[t] <- x
     }
     data.frame(id = i, time = times, Y1 = xs + mm + stats::rnorm(nobs, 0, r), z = z[i], w = w[i])
@@ -121,6 +124,19 @@ test_that("a drift that depends on the state is found by the extended model", {
   st3 <- suppressMessages(ctScoreTest(x$fit, tests = 'statedependence', order = 3,
     cores = 1, verbose = FALSE))
   expect_setequal(st3$statedependence$terms$term, c('eta1*eta1', 'eta1*eta1*eta1'))
+})
+
+test_that("innovations whose size depends on the state are found", {
+  # The extended model reproduces the fit at zero (.ctScoreExtended stops
+  # otherwise), so reaching the table is part of the assertion.
+  x <- .score_fit('vol', seed = 4L)
+  st <- suppressMessages(ctScoreTest(x$fit, tests = 'volatility', cores = 1, verbose = FALSE))
+  terms <- st$volatility$terms
+  expect_equal(nrow(terms), 1L)
+  expect_equal(terms$by, 'eta1')
+  expect_lt(terms$p, 0.01)
+  expect_true(is.na(terms$estimate) || terms$estimate > 0)
+  expect_equal(st$volatility$joint$equation, c('eta1', 'all'))
 })
 
 test_that("results are reproducible and leave the caller's random numbers alone", {

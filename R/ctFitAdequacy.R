@@ -177,7 +177,11 @@
 #'   record rather than row by row -- several times cheaper, and approximate
 #'   (on a pilot-shaped model it recovered the distribution family's misfit,
 #'   z 5.3 against 5.6 exact and 1.8 uncorrected, and half the latent
-#'   family's); \code{'opg'} uses the outer product of the scores, valid when
+#'   family's). Where random effects reach the dynamics or the variances its
+#'   derivatives of the row-level statistics are not the sequential ones', so
+#'   there it projects only the unit-level families (distribution, fit,
+#'   effects, scores) and leaves the rest unprojected, which is conservative;
+#'   \code{'opg'} uses the outer product of the scores, valid when
 #'   units outnumber parameters many times; \code{'none'} ignores estimation,
 #'   which is conservative, and for the distribution family can hide a strong
 #'   misfit. \code{'auto'} takes the first that is affordable:
@@ -620,7 +624,7 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     blk <- .ctAdequacyPeriodBlock(X, err$unit, err$time, n, setup$periods)
     grid <- expand.grid(j = seq_len(ncol(X)), f = seq_along(setup$periods))
     addblock(blk$M, blk$V0, 'periodic', paste0(lab[grid$j], ' period ',
-      format(signif(setup$periods[grid$f], 3))), blk$N, 'corr')
+      as.character(signif(setup$periods[grid$f], 3))), blk$N, 'corr')
   }
   # Each variable's error, and each latent's update, against each time varying
   # covariate at the row and at the unit's previous row. A covariate that is
@@ -920,6 +924,20 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   if (is.null(Gamma) && !is.null(plugin) && (method == 'plugin' ||
       (method == 'auto' && stored))) {
     Gamma <- differences(plugin); used <- 'plugin'
+    # Where the random effects reach the dynamics, the plug-in derivatives of
+    # the row-level statistics are not the sequential ones': on two factors
+    # with person-varying drift (59 correct models), the latent family
+    # rejected 15 per cent at .05 projected with them, 5 unprojected, 2 with
+    # the exact derivatives. There the row-level statistics are left
+    # unprojected, which is conservative, and the unit-level ones, which need
+    # the projection most, keep it.
+    if (.ctAdequacyApproximate(fit, mixture = FALSE)) {
+      rowlevel <- is.finite(colSums(mom$V0))
+      if (any(rowlevel)) {
+        Gamma[rowlevel, ] <- 0
+        used <- 'plugin (unit-level families)'
+      }
+    }
   }
   if (!is.null(Gamma)) {
     H <- .ctBackendWithMaxChunks(cores, .ctBackendHessian(fit, est))

@@ -7,7 +7,8 @@
 ctScoreTest(
   fit,
   covariates = NULL,
-  tests = c("heterogeneity", "covariates", "statedependence", "fixed", "instability"),
+  tests = c("heterogeneity", "covariates", "statedependence", "volatility", "fixed",
+    "instability"),
   form = c("auto", "linear", "spline", "factor", "threshold"),
   df = 3,
   parameters = NULL,
@@ -29,8 +30,8 @@ covariate is constant within subject. Without an id column, one row per
 subject in the fit's subject order.}
 
 \item{tests}{Which families to run: any of \code{'heterogeneity'},
-\code{'covariates'}, \code{'statedependence'}, \code{'fixed'},
-\code{'instability'}. By default all but \code{'instability'}; covariates
+\code{'covariates'}, \code{'statedependence'}, \code{'volatility'},
+\code{'fixed'}, \code{'instability'}. By default all but \code{'instability'}; covariates
 are tested only when \code{covariates} is given.}
 
 \item{form}{How a covariate enters: \code{'auto'} (indicators for a factor,
@@ -66,7 +67,8 @@ An object of class \code{ctScoreTest}: a list with
   \code{covariates} (one element per covariate, each a list of its
   \code{joint} test and a data frame \code{parameters}),
   \code{statedependence} (a list of \code{terms}, a data frame, and
-  \code{joint}, the tests per equation and overall), \code{fixed} (a list
+  \code{joint}, the tests per equation and overall), \code{volatility}
+  (the same, for the innovation sds), \code{fixed} (a list
   of \code{cells} and their \code{joint} test), \code{instability} (a list
   of \code{parameters}, one row per ordering and parameter, and
   \code{joint}, per ordering), and \code{info} (the
@@ -188,6 +190,20 @@ before interpreting their sizes.
   \code{PARS = c('dr11|-log1p_exp(-param)', 'd')}) and refit.
 }
 
+\section{Volatility}{
+ \code{tests = 'volatility'} asks whether the size of
+  each latent's innovations depends on a state: the score test of
+  \code{DIFFUSION[i, i]}, the innovation sd, scaled by \code{exp(v *
+  eta_m)}, at \code{v = 0}, for every latent with innovations and every
+  state. Variance that rises with a process's own level, as when negative
+  affect is more variable when high, is the diagonal term. Evaluated by the
+  filter at the predicted state, as for state dependence. To act on a
+  result, write the scaling into the cell (\code{DIFFUSION[2,2] = 'sd2 *
+  exp(v * eta2)'} with \code{PARS = c('sd2|log1p_exp(param)', 'v')}) and
+  refit; \code{\link{ctModelImprove}} does that. The terms make the model
+  nonlinear, so the test, and a refit, run the extended Kalman filter.
+}
+
 \section{Fixed cells}{
  For each cell the model fixes at zero that could
   sensibly be freed -- a \code{DRIFT} cross effect, a \code{DIFFUSION} or
@@ -196,8 +212,8 @@ before interpreting their sizes.
   index (Sorbom, 1989), with \code{estimate} the expected parameter change.
   \code{CINT} and \code{MANIFESTMEANS} are not offered, since with the
   other free either is identified only through the initial transient.
-  State dependence and fixed cells are tested on one extended model, so
-  asking for both costs one preparation.
+  State dependence, volatility and fixed cells are tested on one extended
+  model, so asking for several costs one preparation.
 }
 
 \section{Stability}{

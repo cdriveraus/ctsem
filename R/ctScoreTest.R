@@ -154,6 +154,18 @@
 #'   into the drift cell (\code{DRIFT[1,1] = 'dr11 + d * eta2'} with
 #'   \code{PARS = c('dr11|-log1p_exp(-param)', 'd')}) and refit.
 #'
+#' @section Volatility: \code{tests = 'volatility'} asks whether the size of
+#'   each latent's innovations depends on a state: the score test of
+#'   \code{DIFFUSION[i, i]}, the innovation sd, scaled by \code{exp(v *
+#'   eta_m)}, at \code{v = 0}, for every latent with innovations and every
+#'   state. Variance that rises with a process's own level, as when negative
+#'   affect is more variable when high, is the diagonal term. Evaluated by the
+#'   filter at the predicted state, as for state dependence. To act on a
+#'   result, write the scaling into the cell (\code{DIFFUSION[2,2] = 'sd2 *
+#'   exp(v * eta2)'} with \code{PARS = c('sd2|log1p_exp(param)', 'v')}) and
+#'   refit; \code{\link{ctModelImprove}} does that. The terms make the model
+#'   nonlinear, so the test, and a refit, run the extended Kalman filter.
+#'
 #' @section Fixed cells: For each cell the model fixes at zero that could
 #'   sensibly be freed -- a \code{DRIFT} cross effect, a \code{DIFFUSION} or
 #'   \code{MANIFESTVAR} covariance, a \code{LAMBDA} cross loading, a
@@ -161,8 +173,8 @@
 #'   index (Sorbom, 1989), with \code{estimate} the expected parameter change.
 #'   \code{CINT} and \code{MANIFESTMEANS} are not offered, since with the
 #'   other free either is identified only through the initial transient.
-#'   State dependence and fixed cells are tested on one extended model, so
-#'   asking for both costs one preparation.
+#'   State dependence, volatility and fixed cells are tested on one extended
+#'   model, so asking for several costs one preparation.
 #'
 #' @section Stability: \code{tests = 'instability'}, not run unless asked
 #'   for, tests whether each parameter is stable across the data: ordered by
@@ -221,8 +233,8 @@
 #'   covariate is constant within subject. Without an id column, one row per
 #'   subject in the fit's subject order.
 #' @param tests Which families to run: any of \code{'heterogeneity'},
-#'   \code{'covariates'}, \code{'statedependence'}, \code{'fixed'},
-#'   \code{'instability'}. By default all but \code{'instability'}; covariates
+#'   \code{'covariates'}, \code{'statedependence'}, \code{'volatility'},
+#'   \code{'fixed'}, \code{'instability'}. By default all but \code{'instability'}; covariates
 #'   are tested only when \code{covariates} is given.
 #' @param form How a covariate enters: \code{'auto'} (indicators for a factor,
 #'   character or logical covariate; linear otherwise), \code{'linear'},
@@ -248,7 +260,8 @@
 #'   \code{covariates} (one element per covariate, each a list of its
 #'   \code{joint} test and a data frame \code{parameters}),
 #'   \code{statedependence} (a list of \code{terms}, a data frame, and
-#'   \code{joint}, the tests per equation and overall), \code{fixed} (a list
+#'   \code{joint}, the tests per equation and overall), \code{volatility}
+#'   (the same, for the innovation sds), \code{fixed} (a list
 #'   of \code{cells} and their \code{joint} test), \code{instability} (a list
 #'   of \code{parameters}, one row per ordering and parameter, and
 #'   \code{joint}, per ordering), and \code{info} (the
@@ -293,7 +306,8 @@
 #' }
 #' @export
 ctScoreTest <- function(fit, covariates = NULL,
-  tests = c('heterogeneity', 'covariates', 'statedependence', 'fixed', 'instability'),
+  tests = c('heterogeneity', 'covariates', 'statedependence', 'volatility', 'fixed',
+    'instability'),
   form = c('auto', 'linear', 'spline', 'factor', 'threshold'), df = 3, parameters = NULL,
   order = 2L, variance = c('robust', 'model'), nboot = 1999L, cores = 2L,
   verbose = TRUE) {
@@ -342,7 +356,7 @@ ctScoreTest <- function(fit, covariates = NULL,
   est <- .ctFitRawEstimate(fit)
   ptab <- .ctScoreParameterTable(fit)
   out <- list(heterogeneity = NULL, covariates = NULL, statedependence = NULL,
-    fixed = NULL, info = list(route = .ctBackendIntOverPop(spec),
+    volatility = NULL, fixed = NULL, info = list(route = .ctBackendIntOverPop(spec),
       nsubjects = .ctFitNsubjects(fit), npar = length(est)))
   out$info$variance <- variance
   out$info$nboot <- nboot
@@ -409,13 +423,14 @@ ctScoreTest <- function(fit, covariates = NULL,
         .ctScoreCovariate(pieces, items, G, variance, nboot), bases, names(bases))
     })
   }
-  extended <- intersect(tests, c('statedependence', 'fixed'))
+  extended <- intersect(tests, c('statedependence', 'volatility', 'fixed'))
   if (length(extended)) attempt(paste(extended, collapse = ' and '), {
     say("Preparing the model extended at zero (", paste(extended, collapse = ', '), ")")
     information <- if (!is.null(pieces)) -pieces$Hsum else NULL
     ext <- .ctScoreExtended(fit, est, extended, information, order = order,
       variance = variance, nboot = nboot, cores = cores)
     out$statedependence <- ext$statedependence
+    out$volatility <- ext$volatility
     out$fixed <- ext$fixed
   })
   if ('instability' %in% tests) attempt('instability', {
@@ -1202,6 +1217,77 @@ ctScoreTest <- function(fit, covariates = NULL,
   model
 }
 
+# The fitted model with each latent's innovation sd scaled by exp(sum over
+# latents m of v * eta_m): a term `v` per latent with innovations and per state
+# it may depend on, every v a new PARS parameter, identity transform. At zero
+# the model is the fit.
+.ctScoreVolatilityModel <- function(model) {
+  latent <- model$latentNames
+  noisy <- .ctImproveNoisyLatents(model)
+  if (!length(noisy)) return(list(model = model, terms = NULL))
+  grid <- expand.grid(m = noisy, i = noisy)
+  terms <- data.frame(name = paste0('ctscorevol', seq_len(nrow(grid))),
+    equation = latent[grid$i], i = grid$i, m = grid$m, by = latent[grid$m],
+    stringsAsFactors = FALSE)
+  list(model = .ctAddDiffusionTerms(model, terms$i, terms$name, terms$m), terms = terms)
+}
+
+# Scale DIFFUSION[i, i], the sd of latent i's innovations, by exp(name *
+# eta_m) for each term, each `name` a new PARS parameter (identity transform
+# unless given). A diagonal cell that is a free parameter moves into PARS --
+# transform, variation and predictor effects and all -- so its raw coordinate
+# and value are unchanged; a fixed cell keeps its value; an expression keeps
+# its form. Off-diagonal cells, correlations under the default covariance
+# transform, are untouched, so the innovations' correlations stay as they were.
+.ctAddDiffusionTerms <- function(model, i, names, m, transform = 'param') {
+  pars <- model$pars
+  latent <- model$latentNames
+  effects <- grep('_effect$', names(pars), value = TRUE)
+  levelflags <- grep('^indvarying_', names(pars), value = TRUE)
+  nextpars <- max(c(0L, as.integer(pars$row[pars$matrix %in% 'PARS'])))
+  template <- pars[which(pars$matrix %in% 'DIFFUSION')[1L], , drop = FALSE]
+  parsrow <- function(name, from = NULL) {
+    r <- if (is.null(from)) template else from
+    r$matrix <- 'PARS'; r$row <- nextpars <<- nextpars + 1L; r$col <- 1L
+    r$param <- name
+    if (is.null(from)) {
+      r$value <- NA; r$transform <- transform; r$indvarying <- FALSE
+      if ('sdscale' %in% names(r)) r$sdscale <- 1
+      for (e in effects) r[[e]] <- 'FALSE'
+      for (l in levelflags) r[[l]] <- FALSE
+    }
+    r
+  }
+  added <- list()
+  for (eq in unique(i)) {
+    cell <- which(pars$matrix %in% 'DIFFUSION' & pars$row == eq & pars$col == eq)
+    if (length(cell) != 1L) stop("The model has no DIFFUSION cell for latent ", eq,
+      ".", call. = FALSE)
+    these <- which(i == eq)
+    scale <- paste0('exp(', paste(vapply(these, function(t) paste(names[t], '*', latent[m[t]]),
+      character(1)), collapse = ' + '), ')')
+    for (t in these) added[[length(added) + 1L]] <- parsrow(names[t])
+    current <- pars$param[cell]
+    if (is.na(current) || !nzchar(current)) {
+      expr <- paste0(as.numeric(pars$value[cell]), ' * ', scale)
+    } else if (grepl('^[A-Za-z.][A-Za-z0-9._]*$', current) && !current %in% latent) {
+      added[[length(added) + 1L]] <- parsrow(current, from = pars[cell, , drop = FALSE])
+      expr <- paste0(current, ' * ', scale)
+    } else {
+      expr <- paste0('(', current, ') * ', scale)
+    }
+    pars$param[cell] <- expr
+    pars$value[cell] <- NA
+    pars$transform[cell] <- NA
+    pars$indvarying[cell] <- FALSE
+    for (e in effects) pars[[e]][cell] <- 'FALSE'
+    for (l in levelflags) pars[[l]][cell] <- FALSE
+  }
+  model$pars <- rbind(pars, do.call(rbind, added))
+  rownames(model$pars) <- NULL
+  model
+}
+
 # The fixed cells a model could free, as terms at zero: DRIFT cross effects,
 # DIFFUSION and MANIFESTVAR covariances, LAMBDA cross loadings and
 # TDPREDEFFECT cells fixed at zero. Each becomes a parameter with ctsem's
@@ -1272,17 +1358,22 @@ ctScoreTest <- function(fit, covariates = NULL,
     "so the extended model cannot be prepared. Refit with this version of ctsem.",
     call. = FALSE)
   model <- base
-  state <- fixed <- NULL
+  state <- vol <- fixed <- NULL
   if ('statedependence' %in% families) {
     state <- .ctScoreStateModel(model, order)
     model <- state$model
+  }
+  if ('volatility' %in% families) {
+    vol <- .ctScoreVolatilityModel(model)
+    model <- vol$model
   }
   if ('fixed' %in% families) {
     fixed <- .ctScoreFixedModel(model)
     model <- fixed$model
   }
-  names_new <- c(state$terms$name, fixed$terms$name)
-  if (!length(names_new)) return(list(statedependence = NULL, fixed = NULL))
+  names_new <- c(state$terms$name, vol$terms$name, fixed$terms$name)
+  if (!length(names_new)) return(list(statedependence = NULL, volatility = NULL,
+    fixed = NULL))
   args <- .ctFitReplayArgs(fit)
   args$model <- model
   args$fit <- FALSE
@@ -1362,7 +1453,7 @@ ctScoreTest <- function(fit, covariates = NULL,
       stats::pchisq(stat, j$rank, lower.tail = FALSE)
     data.frame(set = label, LM = stat, df = j$rank, p = p, stringsAsFactors = FALSE)
   }
-  out <- list(statedependence = NULL, fixed = NULL)
+  out <- list(statedependence = NULL, volatility = NULL, fixed = NULL)
   latent <- base$latentNames
   if (!is.null(state$terms)) {
     idx <- seq_len(nrow(state$terms))
@@ -1385,8 +1476,23 @@ ctScoreTest <- function(fit, covariates = NULL,
     out$statedependence <- list(terms = table[order(table$p, -table$LM), , drop = FALSE],
       joint = joint)
   }
+  if (!is.null(vol$terms)) {
+    idx <- length(state$terms$name) + seq_len(nrow(vol$terms))
+    terms <- vol$terms
+    table <- data.frame(term = paste0('sd(', terms$equation, ') x exp(v * ', terms$by, ')'),
+      equation = terms$equation, by = terms$by, per[idx, c('LM', 'p', 'estimate', 'se')],
+      stringsAsFactors = FALSE)
+    table$p_adj <- .ctScoreBH(table$p)
+    if (!is.null(Cstar)) table$class <- .ctScoreClasses(Cstar[, idx, drop = FALSE])
+    table$i <- terms$i; table$m <- terms$m
+    joint <- do.call(rbind, c(lapply(unique(terms$equation), function(e)
+      jointtest(idx[terms$equation == e], e)), list(jointtest(idx, 'all'))))
+    names(joint)[1] <- 'equation'
+    out$volatility <- list(terms = table[order(table$p, -table$LM), , drop = FALSE],
+      joint = joint)
+  }
   if (!is.null(fixed$terms)) {
-    idx <- length(state$terms$name) + seq_len(nrow(fixed$terms))
+    idx <- length(state$terms$name) + length(vol$terms$name) + seq_len(nrow(fixed$terms))
     terms <- fixed$terms
     table <- data.frame(cell = terms$cell, matrix = terms$matrix, row = terms$row,
       col = terms$col, per[idx, c('LM', 'p', 'estimate', 'se')],
@@ -1447,6 +1553,13 @@ print.ctScoreTest <- function(x, digits = 3, top = 10, ...) {
     cat("\n")
     fmt(x$statedependence$terms[, withclass(x$statedependence$terms, c('term',
       'equation', 'LM', 'p', 'p_adj', 'estimate', 'se', 'reads'))])
+  }
+  if (!is.null(x$volatility)) {
+    cat("\nState dependence of the innovation sds:\n")
+    fmt(x$volatility$joint)
+    cat("\n")
+    fmt(x$volatility$terms[, withclass(x$volatility$terms, c('term', 'LM', 'p', 'p_adj',
+      'estimate', 'se'))])
   }
   if (!is.null(x$instability)) {
     cat("\nStability across the data (Nyblom), by ordering:\n")

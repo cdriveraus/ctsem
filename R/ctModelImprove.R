@@ -43,6 +43,8 @@
 #'   \item{statedependence}{a term \code{d * eta_k * eta_m} in a latent's
 #'     drift, written into \code{CINT} with \code{d} a \code{PARS} parameter:
 #'     a drift coefficient that varies with a state.}
+#'   \item{volatility}{a latent's innovation sd scaled by \code{exp(v *
+#'     eta_m)}: innovations whose size depends on a state.}
 #'   \item{fixed}{a cell fixed at zero freed: a drift cross effect, a
 #'     diffusion or measurement error covariance, a cross loading.}
 #'   \item{slow}{a slow process driving a latent through its drift, its effect
@@ -140,8 +142,8 @@
 #' @seealso \code{vignette('score-tests')}.
 #' @export
 ctModelImprove <- function(fit, covariates = NULL,
-  relax = c('heterogeneity', 'covariates', 'statedependence', 'fixed', 'slow', 'unique',
-    'periodic', 'order'),
+  relax = c('heterogeneity', 'covariates', 'statedependence', 'volatility', 'fixed', 'slow',
+    'unique', 'periodic', 'order'),
   candidates = NULL, alpha = 0.05, maxsteps = 10L, ntry = 3L,
   criterion = c('LR', 'AIC', 'BIC'), adequacy = TRUE, prune = TRUE,
   close = NULL, holdout = 0, form = 'auto', periods = NULL, nsamples = 100L, cores = 2L,
@@ -192,7 +194,8 @@ ctModelImprove <- function(fit, covariates = NULL,
       covariates[, c(idname, setdiff(names(covariates), c(idname, model$TIpredNames))),
         drop = FALSE]
     if (!is.null(available) && ncol(available) < 2L) available <- NULL
-    tests <- intersect(relax, c('heterogeneity', 'covariates', 'statedependence', 'fixed'))
+    tests <- intersect(relax, c('heterogeneity', 'covariates', 'statedependence', 'volatility',
+      'fixed'))
     if (is.null(available)) tests <- setdiff(tests, 'covariates')
     say("Round ", step, ": screening")
     st <- if (length(tests)) suppressMessages(ctScoreTest(current, covariates = available,
@@ -434,6 +437,18 @@ ctModelImprove <- function(fit, covariates = NULL,
       edit = local({ i <- i; mono <- mono; name <- name; function(model, data, covs, args = list()) {
         list(model = .ctAddCintTerms(model, i, name, list(mono)), data = data)
       } }))
+  }
+  v <- st$volatility$terms
+  if (!is.null(v)) for (r in which(v$p_adj < alpha)) {
+    name <- paste0('vol_', v$equation[r], '_', v$by[r])
+    out[[length(out) + 1L]] <- list(key = paste0('vol:', v$i[r], ':', v$m[r]),
+      family = 'volatility', label = paste0('the innovation sd of ', v$equation[r],
+        ' varying with ', v$by[r]), p = v$p[r], rank = v$p[r], class = v$class[r],
+      edit = local({ i <- v$i[r]; m <- v$m[r]; name <- name
+        function(model, data, covs, args = list()) {
+          while (name %in% model$pars$param) name <- paste0(name, '_')
+          list(model = .ctAddDiffusionTerms(model, i, name, m), data = data)
+        } }))
   }
   f <- st$fixed$cells
   if (!is.null(f)) for (r in which(f$p_adj < alpha)) {

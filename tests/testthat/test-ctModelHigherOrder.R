@@ -293,3 +293,37 @@ test_that("the search reads a cycle's period and an item's own correlation from 
   expect_true(is.na(ctsem:::.ctImproveOwnEvidence(ad, 'residuals', 'Y1')))
   expect_null(ctsem:::.ctImprovePeriodicEvidence(NULL))
 })
+
+# The volatility terms: a latent's innovation sd scaled by exp(v * state),
+# the diagonal cell's own parameter moved to PARS with everything it carries.
+test_that("an innovation sd is scaled by a state through PARS, other cells untouched", {
+  m <- .ho_ct()
+  p0 <- m$pars
+  cell0 <- p0[p0$matrix == 'DIFFUSION' & p0$row == 2 & p0$col == 2, ]
+  v <- ctsem:::.ctAddDiffusionTerms(m, c(2L, 2L), c('va', 'vb'), c(2L, 1L))
+  p <- v$pars
+  cell <- p[p$matrix == 'DIFFUSION' & p$row == 2 & p$col == 2, ]
+  expect_equal(cell$param, paste0(cell0$param, ' * exp(va * eta2 + vb * eta1)'))
+  expect_true(is.na(cell$transform))
+  moved <- p[p$matrix == 'PARS' & p$param == cell0$param, ]
+  expect_equal(nrow(moved), 1L)
+  expect_identical(moved$transform, cell0$transform)
+  terms <- p[p$matrix == 'PARS' & p$param %in% c('va', 'vb'), ]
+  expect_equal(terms$transform, c('param', 'param'))
+  expect_false(any(terms$indvarying))
+  # Every other DIFFUSION cell as it was.
+  others <- function(q) { q <- q[q$matrix == 'DIFFUSION' & !(q$row == 2 & q$col == 2), ]
+    q[order(q$row, q$col), c('row', 'col', 'param', 'value', 'transform')] }
+  expect_equal(others(p), others(p0), ignore_attr = TRUE)
+  # A fixed sd keeps its value as a factor.
+  f <- m
+  k <- which(f$pars$matrix == 'DIFFUSION' & f$pars$row == 1 & f$pars$col == 1)
+  f$pars$param[k] <- NA; f$pars$value[k] <- 0.5
+  fv <- ctsem:::.ctAddDiffusionTerms(f, 1L, 'vc', 1L)$pars
+  expect_equal(fv$param[fv$matrix == 'DIFFUSION' & fv$row == 1 & fv$col == 1],
+    '0.5 * exp(vc * eta1)')
+  # The screen tests every latent with innovations against every state.
+  vm <- ctsem:::.ctScoreVolatilityModel(m)
+  expect_equal(nrow(vm$terms), 4L)
+  expect_setequal(paste(vm$terms$i, vm$terms$m), c('1 1', '1 2', '2 1', '2 2'))
+})

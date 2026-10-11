@@ -57,7 +57,11 @@ passes, which filter each subject at effects solved once from the whole
 record rather than row by row -- several times cheaper, and approximate
 (on a pilot-shaped model it recovered the distribution family's misfit,
 z 5.3 against 5.6 exact and 1.8 uncorrected, and half the latent
-family's); \code{'opg'} uses the outer product of the scores, valid when
+family's). Where random effects reach the dynamics or the variances its
+derivatives of the row-level statistics are not the sequential ones', so
+there it projects only the unit-level families (distribution, fit,
+effects, scores) and leaves the rest unprojected, which is conservative;
+\code{'opg'} uses the outer product of the scores, valid when
 units outnumber parameters many times; \code{'none'} ignores estimation,
 which is conservative, and for the distribution family can hide a strong
 misfit. \code{'auto'} takes the first that is affordable:
