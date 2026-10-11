@@ -997,8 +997,9 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     # rejected 15 per cent at .05 projected with them, 5 unprojected, 2 with
     # the exact derivatives. There the row-level statistics are left
     # unprojected, which is conservative, and the unit-level ones, which need
-    # the projection most, keep it.
-    if (.ctAdequacyApproximate(fit, mixture = FALSE)) {
+    # the projection most, keep it. Not when the budget stopped the
+    # differences (`auto`), which leaves no Gamma.
+    if (!is.null(Gamma) && .ctAdequacyApproximate(fit, mixture = FALSE)) {
       rowlevel <- is.finite(colSums(mom$V0))
       if (any(rowlevel)) {
         Gamma[rowlevel, ] <- 0
