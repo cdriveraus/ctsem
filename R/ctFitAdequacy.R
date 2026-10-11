@@ -440,7 +440,16 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   # prior prediction does not, so a mixed pair's correlation is left unknown.
   if (categorical) {
     lo <- matrix(k$pitlower, nrows, m); hi <- matrix(k$pitupper, nrows, m)
-    draw <- outer(seq_len(nrows) * 0.6180339887498949, seq_len(m) * 0.7548776662466927, '+') %% 1
+    # Pseudo-random, from a fixed stream, so every pass draws the same; the
+    # caller's stream is left where it was. A lattice in the row index was
+    # tried first and correlated each row's draw with the next one's, which
+    # put a lag-one correlation of 0.11 into a binary item's transforms.
+    oldseed <- if (exists('.Random.seed', envir = globalenv(), inherits = FALSE))
+      get('.Random.seed', envir = globalenv(), inherits = FALSE) else NULL
+    set.seed(20261012L)
+    draw <- matrix(stats::runif(nrows * m), nrows, m)
+    if (is.null(oldseed)) rm('.Random.seed', envir = globalenv()) else
+      assign('.Random.seed', oldseed, envir = globalenv())
     U <- lo + draw * (hi - lo)
   }
   for (r in seq_len(nrows)) {
