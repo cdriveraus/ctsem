@@ -150,7 +150,8 @@ function _laplace_row_scores_unit!(out, laplace::CTSEMLaplaceObjective, U::Integ
     try
         for t in 1:T
             _laplace_truncate!(so, full, t)
-            _laplace_solve_unit_mode!(laplace, U, theta, Ls)
+            # From the previous row's mode, as the sequential pass solves.
+            _laplace_solve_unit_mode!(laplace, U, theta, Ls; retain=t > 1)
             u = copy(laplace.modes[U])
             M = isempty(u) ? CTSEMBlockMatrix(Float64, blocks) :
                 _laplace_unit_curvature(laplace, U, theta, Ls, u)

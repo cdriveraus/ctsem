@@ -3264,10 +3264,11 @@ function _laplace_factor_repaired!(M::CTSEMBlockMatrix{T},
 end
 
 """
-    _laplace_solve_unit_mode!(laplace, U, values, Ls)
+    _laplace_solve_unit_mode!(laplace, U, values, Ls; retain)
 
 Newton's method on `g_U`, from the origin -- or from the retained mode for
-unit `U` when `ctsem_set_warm_start!` has asked for that -- and then, for a unit
+unit `U` when `retain` is true, which by default it is when
+`ctsem_set_warm_start!` has asked for that -- and then, for a unit
 no wider than `_LAPLACE_PROBE_MAXDIM`, from points along that mode's soft
 directions, keeping the mode with the largest Laplace term
 (`_laplace_probe_modes`).
@@ -3278,20 +3279,27 @@ for a nonlinear process model, it need not be. Two guards, both visible in the
 diagnostics rather than silent: a curvature that is not negative definite is
 shifted until it is and the unit flagged as repaired, and a step that does not
 improve `g_U` is halved before the iteration gives up.
+
+`retain` per call is for a caller that chains related solves and owns what
+`laplace.modes[U]` holds between them: the sequential pass starts each
+truncated record from the mode of the record one row shorter, and the first
+from the origin, so its result is still a function of theta alone.
 """
 _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
-    values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}) =
+    values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}};
+    retain::Bool=_LAPLACE_WARM_START[]) =
     _laplace_solve_unit_mode!(laplace, U, values, Ls,
-        _laplace_workspace!(laplace, Float64, length(values)))
+        _laplace_workspace!(laplace, Float64, length(values)); retain=retain)
 
 # With the slot's workspace in hand: called with it concretely typed, Newton and
 # the probes below are static calls, and nothing they return is boxed.
 function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
-    values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws)
+    values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws;
+    retain::Bool=_LAPLACE_WARM_START[])
     d = laplace.units.dims[U]
     # Newton copies its start, so neither needs a vector of its own.
     origin = _laplace_scratch_vector!(laplace, Float64, d, :mode_origin)
-    retained = _LAPLACE_WARM_START[] ? laplace.modes[U] : fill!(origin, 0.0)
+    retained = retain ? laplace.modes[U] : fill!(origin, 0.0)
     started_warm = any(!iszero, retained)
     warm = _laplace_newton_unit_mode(laplace, U, values, Ls, aws, retained)
     best = warm

@@ -5,8 +5,9 @@
 # modes, solved from the whole record, so its predicted and updated passes see
 # the subject's later data through those effects. Here every row's prediction
 # is the fitted model's own: the subject's Laplace posterior given its rows so
-# far -- the inner mode solved on the truncated record exactly as the
-# objective solves it, from the origin, and the curvature there -- with the
+# far -- the inner mode solved on the truncated record as the objective solves
+# it, probes and all, but started from the mode one row earlier (the first row
+# from the origin), and the curvature there -- with the
 # deviations its filter integrates (`CTSEMHybrid`) at their conditional
 # posterior given the same rows. The mean is the filter's at the mode, and
 # the uncertainty of the effects is added to the filter's own by the delta
@@ -132,7 +133,12 @@ function _laplace_sequential_unit!(out, laplace::CTSEMLaplaceObjective, U::Integ
                 Sigma = Matrix{Float64}(LinearAlgebra.I, d, d)
             else
                 _laplace_truncate!(so, full, t)
-                _laplace_solve_unit_mode!(laplace, U, theta, Ls)
+                # Started from the previous row's mode: one more row moves the
+                # posterior a little, and Newton from there converges in a step
+                # or two. The same values as from the origin where the
+                # posterior has one mode (5e-9 on the pilot-shaped probe), and
+                # the probes still choose among maxima where it has more.
+                _laplace_solve_unit_mode!(laplace, U, theta, Ls; retain=t > 1)
                 u = copy(laplace.modes[U])
                 term = _laplace_unit_term(laplace, U, theta, Ls, u, aws)
                 out.llrow[offset + t] = term - prevterm
