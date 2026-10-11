@@ -200,9 +200,25 @@ exactly. The approximation the fit itself uses there -- the posterior's
 mode on each truncated record, its uncertainty added by the delta method --
 is exact only for effects that enter linearly; elsewhere it put a 1.5 per
 cent bias into the predictive variance, and correct models were rejected
-through it. With non-Gaussian indicators, where the exact predictive is not
-available, the row distances are left out and the latent family's
+through it. Where that predictive cannot be had -- random effects at more
+than one level -- the row distances are left out and the latent family's
 p-values are approximate, and the call says so.
+
+A binary, ordinal, count or censored item's error is not normal, so its
+place is taken by its randomised probability integral transform through
+the normal quantile: the item's predictive distribution function at what was
+observed, given the subject's earlier rows and the items the filter had
+already applied in the row (non-Gaussian items one at a time, in item
+order), with a fixed uniform between its values just below and at the
+observation where that has probability mass. Under the model these are
+standard normal and independent, so every family reads them as it reads
+Gaussian errors; on the Laplace route they come from the exact predictive.
+The latent family's updates on such rows rest on the filter's Gaussian
+projection of each item, so its p-values are approximate there, and the
+call says so.
+Within a row, a non-Gaussian item's transform and a Gaussian item's error
+have no model-implied correlation the pairs family could test against, and
+are not paired.
 
 With many observations every misfit is significant, so the sizes of the
 residual, latent and within-row correlations the model leaves are reported

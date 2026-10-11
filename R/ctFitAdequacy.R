@@ -148,6 +148,9 @@
 #' observation where that has probability mass. Under the model these are
 #' standard normal and independent, so every family reads them as it reads
 #' Gaussian errors; on the Laplace route they come from the exact predictive.
+#' The latent family's updates on such rows rest on the filter's Gaussian
+#' projection of each item, so its p-values are approximate there, and the
+#' call says so.
 #' Within a row, a non-Gaussian item's transform and a Gaussian item's error
 #' have no model-implied correlation the pairs family could test against, and
 #' are not paired.
@@ -293,6 +296,9 @@ ctFitAdequacy <- function(fit, covariates = NULL,
       message("The importance sampling behind the errors was thin for some subjects ",
         "(effective sample size ", round(min(err$ess, na.rm = TRUE)), "); ",
         "options(ctsem.sequential.particles = ) raises the draws.")
+    if (isTRUE(err$latentapprox) && !isTRUE(err$approximate) && 'latent' %in% moments)
+      message("With non-Gaussian items the latent family's p-values are approximate: ",
+        "each update rests on the filter's Gaussian projection of the item.")
     if (isTRUE(err$approximate) && any(c('distribution', 'latent') %in% moments))
       message("On this fit each row's predictive covariance is an approximation ",
         "(random effects in the dynamics or variances at more than one level): ",
@@ -498,6 +504,12 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   list(E = E, R = R, Q = Q, d = d, Z = Z, unit = unit, nunits = max(unit), time = time,
     eta = eta, vars = vars, labels = labels,
     approximate = isTRUE(sequential) && !mixture && .ctAdequacyApproximate(fit),
+    # With non-Gaussian items a latent update rests on the filter's Gaussian
+    # projection after each of them, so its reference is approximate: on
+    # correctly specified interval-censored models (half the responses at the
+    # floor, 100 people, 20 rows) the latent family rejected 3 of 12 at .05,
+    # where the items' transforms rejected at about the nominal rate.
+    latentapprox = categorical,
     ess = if (.ctFitIsJulia(fit) && mixture) k$ess else NULL)
 }
 
