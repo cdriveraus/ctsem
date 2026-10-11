@@ -268,6 +268,23 @@ test_that("row scores sum to the subjects' scores, on the filter and the Laplace
   # dynamics they would not be (.ctAdequacyApproximate).
   expect_false(ctsem:::.ctAdequacyApproximate(lfit))
   expect_true('distance' %in% ap$statistics$statistic)
+
+  # The model's exact sequential predictive by importance sampling over the
+  # effects (what the error families use where the delta method is
+  # approximate). Here the delta method is exact, so the two agree to the
+  # sampler's error, and each subject's rows sum to its marginal likelihood.
+  obj <- ctsem:::.ctJuliaObjective(lfit, hybrid = TRUE)
+  old <- ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_sequential(obj,
+    ctsem:::.ctJuliaNumericVector(lest)))
+  mix <- ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_sequential_mixture(obj,
+    ctsem:::.ctJuliaNumericVector(lest), particles = 512L))
+  e <- (mix$y[1, , 1] - old$y[1, , 1]) / sqrt(old$ycov[1, , 1, 1])
+  expect_lt(sqrt(mean(e^2)), 0.02)
+  expect_lt(sqrt(mean((mix$ycov[1, , 1, 1] / old$ycov[1, , 1, 1] - 1)^2)), 0.04)
+  expect_gt(min(mix$ess), 20)
+  q7 <- ctsem:::.ctBackendJuliaValue(module$ctsem_laplace_quadrature(obj,
+    ctsem:::.ctJuliaNumericVector(lest), nodes = 7L, contributions = TRUE))
+  expect_lt(abs(mean(tapply(mix$llrow, mix$subject, sum) - as.numeric(q7$subject_loglik))), 0.02)
 })
 
 test_that("stability along a predicted state finds a drift that depends on it", {

@@ -94,12 +94,7 @@ a variable.
   \item{latent}{The same for each latent process: the update each row makes
     to the predicted state, standardised, correlated with the same subject's
     updates at other times. One per process rather than one per item, so a
-    misfit in the dynamics is not diluted by item-specific structure. On a
-    Laplace fit whose random effects reach the dynamics or the variances the
-    standardisation is approximate: generated from such a model, it rejected
-    8 per cent of correct models at .05 without the estimation correction
-    and 12 with the plug-in one. Read its p-values there as approximate; its
-    size is not affected in the same way.}
+    misfit in the dynamics is not diluted by item-specific structure.}
   \item{volatility}{The same for the squared errors, per variable: variance
     that clusters in time.}
   \item{pairs}{Each pair of variables' errors in the same row against the
@@ -108,10 +103,7 @@ a variable.
   \item{distribution}{Skewness and kurtosis of each variable's errors, and
     each row's squared whitened distance against its chi-square mean and
     variance, together with Anderson-Darling tests against the normal and
-    chi-square. On a Laplace fit whose random effects reach the dynamics or
-    the variances, each row's predictive covariance is a Gaussian
-    approximation, and the row distances are left out: they would test the
-    approximation, and in simulation rejected correct models.}
+    chi-square.}
   \item{fit}{How unevenly units are fitted: the spread of each unit's
     summed distance against the chi-square's, and the worst unit.}
   \item{dependence}{The distance correlation of each variable's error, and
@@ -163,6 +155,20 @@ with the statistics' correlation over units
 and combined, with any exact p-values the family has, by the Cauchy
 combination; families are combined by Holm. \code{adequate} is \code{TRUE}
 when no family's adjusted p-value is below \code{alpha}.
+
+On a Laplace fit (\code{intoverpop = 'laplace'}) whose random effects reach
+the dynamics or the variances, the errors come from the model's own
+predictive distribution: each row predicted from the subject's earlier rows
+with the random effects integrated against their posterior given those rows
+by importance sampling (\code{getOption('ctsem.sequential.particles', 512)}
+quasi-random draws a subject), the own variances integrated in the filter
+exactly. The approximation the fit itself uses there -- the posterior's
+mode on each truncated record, its uncertainty added by the delta method --
+is exact only for effects that enter linearly; elsewhere it put a 1.5 per
+cent bias into the predictive variance, and correct models were rejected
+through it. With non-Gaussian indicators, where the exact predictive is not
+available, the row distances are left out and the latent family's
+p-values are approximate, and the call says so.
 
 With many observations every misfit is significant, so the sizes of the
 residual, latent and within-row correlations the model leaves are reported

@@ -129,6 +129,9 @@ include("laplace_loo.jl")
 # After laplace_sequential.jl (record truncation) and laplace.jl (the dual mode
 # and the member likelihood); nothing on a fitting path calls it.
 include("row_scores.jl")
+# The sequential predictions of a Laplace fit by importance sampling over the
+# random effects: the exact predictive, for misfit tests that need it.
+include("laplace_mixture.jl")
 include("sample_density.jl")
 include("sample_nuts.jl")
 include("sample_adapt.jl")

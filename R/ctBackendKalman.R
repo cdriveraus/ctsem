@@ -176,9 +176,20 @@
   # each row's log predictive density with them; the smoothed pass stays the
   # plug-in one, conditional on the whole record. Asked for by the calls that
   # return trajectories; the others compare like with like through the plug-in.
-  if (isTRUE(sequential) && .ctBackendSequentialApplies(spec, from)) {
-    seq <- .ctBackendJuliaValue(module$ctsem_laplace_sequential(arguments[[1L]],
-      .ctJuliaNumericVector(raw)))
+  # `sequential = 'mixture'`: the same rows from the model's exact predictive,
+  # the random effects integrated by importance sampling against their
+  # posterior given each row's predecessors (ctsem_laplace_sequential_mixture)
+  # rather than at each truncated record's mode by the delta method -- on the
+  # objective that integrates own variances in the filter, so those are
+  # marginalised exactly inside each draw rather than sampled.
+  mixture <- identical(sequential, 'mixture')
+  if ((isTRUE(sequential) || mixture) && .ctBackendSequentialApplies(spec, from)) {
+    seq <- .ctBackendJuliaValue(if (mixture)
+      module$ctsem_laplace_sequential_mixture(.ctJuliaObjective(fit, hybrid = TRUE),
+        .ctJuliaNumericVector(raw),
+        particles = as.integer(getOption('ctsem.sequential.particles', 512L))) else
+      module$ctsem_laplace_sequential(arguments[[1L]], .ctJuliaNumericVector(raw)))
+    if (mixture) result$ess <- as.numeric(seq$ess)
     for (f in c("eta", "y")) {
       if (!is.null(result[[f]])) result[[f]][1:2, , ] <- seq[[f]]
     }

@@ -44,12 +44,7 @@
 #'   \item{latent}{The same for each latent process: the update each row makes
 #'     to the predicted state, standardised, correlated with the same subject's
 #'     updates at other times. One per process rather than one per item, so a
-#'     misfit in the dynamics is not diluted by item-specific structure. On a
-#'     Laplace fit whose random effects reach the dynamics or the variances the
-#'     standardisation is approximate: generated from such a model, it rejected
-#'     8 per cent of correct models at .05 without the estimation correction
-#'     and 12 with the plug-in one. Read its p-values there as approximate; its
-#'     size is not affected in the same way.}
+#'     misfit in the dynamics is not diluted by item-specific structure.}
 #'   \item{volatility}{The same for the squared errors, per variable: variance
 #'     that clusters in time.}
 #'   \item{pairs}{Each pair of variables' errors in the same row against the
@@ -58,10 +53,7 @@
 #'   \item{distribution}{Skewness and kurtosis of each variable's errors, and
 #'     each row's squared whitened distance against its chi-square mean and
 #'     variance, together with Anderson-Darling tests against the normal and
-#'     chi-square. On a Laplace fit whose random effects reach the dynamics or
-#'     the variances, each row's predictive covariance is a Gaussian
-#'     approximation, and the row distances are left out: they would test the
-#'     approximation, and in simulation rejected correct models.}
+#'     chi-square.}
 #'   \item{fit}{How unevenly units are fitted: the spread of each unit's
 #'     summed distance against the chi-square's, and the worst unit.}
 #'   \item{dependence}{The distance correlation of each variable's error, and
@@ -113,6 +105,20 @@
 #' and combined, with any exact p-values the family has, by the Cauchy
 #' combination; families are combined by Holm. \code{adequate} is \code{TRUE}
 #' when no family's adjusted p-value is below \code{alpha}.
+#'
+#' On a Laplace fit (\code{intoverpop = 'laplace'}) whose random effects reach
+#' the dynamics or the variances, the errors come from the model's own
+#' predictive distribution: each row predicted from the subject's earlier rows
+#' with the random effects integrated against their posterior given those rows
+#' by importance sampling (\code{getOption('ctsem.sequential.particles', 512)}
+#' quasi-random draws a subject), the own variances integrated in the filter
+#' exactly. The approximation the fit itself uses there -- the posterior's
+#' mode on each truncated record, its uncertainty added by the delta method --
+#' is exact only for effects that enter linearly; elsewhere it put a 1.5 per
+#' cent bias into the predictive variance, and correct models were rejected
+#' through it. With non-Gaussian indicators, where the exact predictive is not
+#' available, the row distances are left out and the latent family's
+#' p-values are approximate, and the call says so.
 #'
 #' With many observations every misfit is significant, so the sizes of the
 #' residual, latent and within-row correlations the model leaves are reported
@@ -239,9 +245,14 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     t0 <- proc.time()[['elapsed']]
     err <- if (neederr) .ctAdequacyErrors(fit) else NULL
     setup <- if (neederr) .ctAdequacySetup(err, gaps) else NULL
+    if (!is.null(err$ess) && any(is.finite(err$ess)) && min(err$ess, na.rm = TRUE) < 20)
+      message("The importance sampling behind the errors was thin for some subjects ",
+        "(effective sample size ", round(min(err$ess, na.rm = TRUE)), "); ",
+        "options(ctsem.sequential.particles = ) raises the draws.")
     if (isTRUE(err$approximate) && any(c('distribution', 'latent') %in% moments))
       message("On this fit each row's predictive covariance is an approximation ",
-        "(random effects in the dynamics or variances, on the Laplace route): ",
+        "(random effects in the dynamics or variances, on the Laplace route, with ",
+        "non-Gaussian indicators): ",
         if ('distribution' %in% moments) "the row distances are not tested",
         if (all(c('distribution', 'latent') %in% moments)) ", and ",
         if ('latent' %in% moments) "the latent family's p-values are approximate", ".")
@@ -324,6 +335,11 @@ ctFitAdequacy <- function(fit, covariates = NULL,
 # the predictions are each unit's from its earlier rows alone (sequential), as
 # the errors must be for their independence over rows to hold.
 .ctAdequacyErrors <- function(fit, raw = NULL, sequential = TRUE) {
+  # Where the delta-method sequential predictions are approximate and the
+  # model's exact predictive can be had instead, the latter
+  # (.ctAdequacyApproximate).
+  mixture <- isTRUE(sequential) && .ctAdequacyApproximate(fit, mixture = FALSE) &&
+    .ctAdequacyGaussian(fit)
   model <- .ctFitModelObject(fit)
   vars <- model$manifestNames
   m <- length(vars)
@@ -331,7 +347,8 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     if (is.null(raw)) raw <- .ctFitRawEstimate(fit)
     spec <- .ctBackendSpec(fit)
     k <- suppressMessages(.ctBackendKalmanRaw(fit, raw, subjectmatrices = FALSE,
-      fields = c('eta', 'etacov', 'y', 'ycov', 'subject'), sequential = sequential))
+      fields = c('eta', 'etacov', 'y', 'ycov', 'subject'),
+      sequential = if (mixture) 'mixture' else sequential))
     nrows <- length(spec$times)
     Y <- matrix(t(spec$manifest_data), nrows, m)
     yp <- matrix(k$y[1, , , drop = FALSE], nrows, m)
@@ -387,25 +404,37 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   labels <- tryCatch(as.character(.ctFitIdMap(fit)$original), error = function(e) NULL)
   if (length(labels) < max(unit)) labels <- as.character(seq_len(max(unit)))
   list(E = E, R = R, Q = Q, d = d, Z = Z, unit = unit, nunits = max(unit), time = time,
-    eta = eta, vars = vars, labels = labels, approximate = .ctAdequacyApproximate(fit))
+    eta = eta, vars = vars, labels = labels,
+    approximate = isTRUE(sequential) && !mixture && .ctAdequacyApproximate(fit),
+    ess = if (.ctFitIsJulia(fit) && mixture) k$ess else NULL)
 }
 
-# Whether each row's predictive covariance is a Gaussian approximation: on the
+# Whether the delta-method sequential predictions are approximate: on the
 # Laplace route, where the subject's random effects are integrated by their
-# posterior given the earlier rows, the sequential predictions add that
-# posterior's uncertainty by the delta method, which is exact only where the
-# effects enter the predictions linearly -- intercepts, initial means,
-# predictor effects. Where they reach the dynamics or the variances, the true
-# predictive is a mixture, a little wider. Generated from a pilot-shaped model
-# (random drift and diffusion, 4500 rows), the row distances ran 1.5 per cent
-# high, and with the estimation removed their mean rejected the correct model
-# at z = 6.0 (z = 1.7 without removing it).
-.ctAdequacyApproximate <- function(fit) {
+# posterior given the earlier rows, they add that posterior's uncertainty by
+# the delta method, exact only where the effects enter the predictions
+# linearly -- intercepts, initial means, predictor effects. Where they reach
+# the dynamics or the variances the true predictive is a mixture, a little
+# wider and a little off centre. Generated from a pilot-shaped model (random
+# drift and diffusion, 4500 rows), the row distances ran 1.5 per cent high,
+# and with the estimation removed their mean rejected the correct model at
+# z = 6.0 (z = 1.7 without removing it); the latent family rejected 8 to 12
+# per cent at .05. There the errors come from the exact predictive instead
+# (ctsem_laplace_sequential_mixture), when the indicators are Gaussian;
+# `mixture = TRUE` asks whether what remains is still approximate.
+.ctAdequacyApproximate <- function(fit, mixture = TRUE) {
   if (!.ctFitIsJulia(fit) || !identical(.ctBackendIntOverPop(fit$model_spec), 'laplace'))
     return(FALSE)
   pars <- .ctFitModelObject(fit)$pars
   varying <- pars$matrix[as.logical(pars$indvarying) %in% TRUE & !is.na(pars$param)]
-  any(!varying %in% c('MANIFESTMEANS', 'CINT', 'T0MEANS', 'TDPREDEFFECT'))
+  nonlinear <- any(!varying %in% c('MANIFESTMEANS', 'CINT', 'T0MEANS', 'TDPREDEFFECT'))
+  nonlinear && !(mixture && .ctAdequacyGaussian(fit))
+}
+
+# Whether every indicator is Gaussian, as the exact predictive needs.
+.ctAdequacyGaussian <- function(fit) {
+  types <- .ctFitModelObject(fit)$manifesttype
+  is.null(types) || all(types %in% 0L)
 }
 
 # What stays fixed when the statistics are recomputed at other parameter
