@@ -407,6 +407,7 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     etaupd <- matrix(k$eta12[2, , , drop = FALSE], nrows, naug)[, seq_len(nl), drop = FALSE]
     covdiff <- vapply(seq_len(nl), function(j) k$etavar12[1, , j] - k$etavar12[2, , j],
       numeric(nrows))
+    priorvar <- vapply(seq_len(nl), function(j) k$etavar12[1, , j], numeric(nrows))
     unit <- as.integer(k$subject)
     time <- as.numeric(spec$times)
   } else {
@@ -421,6 +422,7 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     etaupd <- matrix(k$etaupd[1, , , drop = FALSE], nrows)[, seq_len(nl), drop = FALSE]
     covdiff <- vapply(seq_len(nl), function(j) k$etapriorcov[1, , j, j] -
       k$etaupdcov[1, , j, j], numeric(nrows))
+    priorvar <- vapply(seq_len(nl), function(j) k$etapriorcov[1, , j, j], numeric(nrows))
     unit <- as.integer(factor(k$id, levels = unique(k$id)))
     time <- as.numeric(k$time)
   }
@@ -475,8 +477,20 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   # function of the row's innovation alone given the past, so uncorrelated
   # across rows like the errors, but one per latent process rather than one
   # per item, which is where a structural misfit shows.
+  #
+  # On a row with a non-Gaussian item the variance the update removes depends on
+  # what was observed -- far less at a floor than above it -- so dividing by it
+  # gives the update a mean the past predicts, which the latent family found as
+  # a correlation over long gaps (z 4.3 on a correctly specified censored
+  # model). There the update is divided by the prior sd instead, which the past
+  # fixes: still mean zero and uncorrelated across rows, its variance below one.
   covdiff <- matrix(covdiff, nrows)
-  Z <- (etaupd - eta) / sqrt(pmax(covdiff, 0))
+  scale <- covdiff
+  if (categorical) {
+    nongauss <- rowSums(!is.na(Y[, !gauss, drop = FALSE])) > 0
+    scale[nongauss, ] <- matrix(priorvar, nrows)[nongauss, ]
+  }
+  Z <- (etaupd - eta) / sqrt(pmax(scale, 0))
   Z[!is.finite(Z) | covdiff <= 1e-12 * pmax(1, abs(covdiff))] <- NA
   colnames(Z) <- model$latentNames[seq_len(ncol(Z))]
   labels <- tryCatch(as.character(.ctFitIdMap(fit)$original), error = function(e) NULL)
