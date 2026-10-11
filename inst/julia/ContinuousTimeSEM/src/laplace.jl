@@ -6273,12 +6273,12 @@ filter adds each subject's effects itself, from this objective's predictors,
 exactly as it does in the fit.
 """
 function ctsem_kalman(laplace::CTSEMLaplaceObjective, values::AbstractVector;
-    from_level::Integer=1, subject_matrices::Bool=true, fields=String[],
+    from_level::Integer=1, subject_matrices::Bool=true, fields=String[], compact::Bool=false,
     subject_values::Union{Nothing,AbstractMatrix}=nothing)
     persubject = _laplace_filter_values(laplace, values; from_level=from_level,
         subject_values=subject_values)
     return ctsem_kalman(laplace.objective, persubject;
-        subject_matrices=subject_matrices, fields=fields)
+        subject_matrices=subject_matrices, fields=fields, compact=compact)
 end
 
 """

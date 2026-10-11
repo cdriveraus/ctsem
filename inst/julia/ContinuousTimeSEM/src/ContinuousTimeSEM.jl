@@ -118,6 +118,9 @@ include("laplace_continuation.jl")
 # After quadrature.jl: the binary measurement update integrates the
 # observation with the Gauss-Hermite rule defined there.
 include("binary_measurement.jl")
+# After binary_measurement.jl and kalman_trace.jl: the predictive distribution
+# function of a non-Gaussian observation, taken in the update for the trace.
+include("item_pit.jl")
 # After binary_measurement.jl: the conditional observation model it defines --
 # the log likelihood of one observation at a *known* linear predictor -- is
 # exactly what a sampled state supplies, so the state path evaluates the same

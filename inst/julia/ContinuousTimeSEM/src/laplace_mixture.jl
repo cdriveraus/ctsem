@@ -49,6 +49,12 @@ mutable struct CTSEMMixtureTrace
     yUcov::Array{Float64,3}
     llgauss::Vector{Float64}
     llfilter::Vector{Float64}
+    # Each non-Gaussian observation's predictive distribution function bounds
+    # and log predictive probability under this draw (item_pit.jl).
+    pitlower::Matrix{Float64}
+    pitupper::Matrix{Float64}
+    pitlogz::Matrix{Float64}
+    pitwanted::Bool
     # scratch
     Mq::Matrix{Float64}
     Cq::Matrix{Float64}
@@ -69,6 +75,7 @@ function CTSEMMixtureTrace(n::Int, m::Int, nrows::Int, hybrid::CTSEMHybrid)
         zeros(nrows, n), zeros(nrows, n, n), zeros(nrows, n), zeros(nrows, n, n),
         zeros(nrows, m), zeros(nrows, m, m), zeros(nrows, m), zeros(nrows, m, m),
         zeros(nrows), zeros(nrows),
+        fill(NaN, nrows, m), fill(NaN, nrows, m), fill(NaN, nrows, m), false,
         zeros(0, 0), zeros(0, 0), Float64[], Float64[], Float64[],
         zeros(n, 0), zeros(m, 0), zeros(m, m), zeros(m), zeros(Int, m),
         zeros(max(n, m), 0), zeros(m, n))
@@ -86,6 +93,14 @@ end
 @inline _record_stationary!(::CTSEMMixtureTrace, args...) = nothing
 @inline _record_transition!(::CTSEMMixtureTrace, args...) = nothing
 @inline _record_td_transition!(::CTSEMMixtureTrace, args...) = nothing
+
+# A row's non-Gaussian observations: each one's distribution function bounds
+# and log predictive probability, as the update applies it.
+function _record_binary!(tr::CTSEMMixtureTrace, ws, pars, data, obs_col, rows, n)
+    (tr.pitwanted && !isempty(rows)) || return nothing
+    return CTSEMPITRecord(tr.pitlower, tr.pitupper, tr.pitlogz, Int(obs_col),
+        collect(Int, rows), 0)
+end
 
 """Each hybrid column's scale (an item's own sd times its intercept's slope),
 as `_hybrid_marginal!` computes it, and the scratch sized to `q`."""
@@ -321,11 +336,14 @@ given the record cut at rows T/8, T/4, T/2 and T (covariances scaled by
 `scale^2`), so some component sits near every row's posterior, and weighted by
 their mixture (deterministic multiple importance sampling, the balance
 heuristic). `ess` is each unit's smallest effective sample size over its rows.
-Single-level fits with Gaussian indicators.
+Single-level fits. With non-Gaussian indicators, each one's predictive
+distribution function just below and at what was observed, in the filter's
+order (`pitlower`, `pitupper`), for the probability integral transforms the
+misfit tests use in place of their errors (item_pit.jl).
 """
 function ctsem_laplace_sequential_mixture(laplace::CTSEMLaplaceObjective,
     values::AbstractVector; particles::Integer=128, scale::Real=1.15,
-    seed::Integer=20261011)
+    seed::Integer=20261011, compact::Bool=false)
     theta = collect(Float64, values)
     units = laplace.units
     all(length(m) == 1 for m in units.members) || throw(ArgumentError(
@@ -337,8 +355,6 @@ function ctsem_laplace_sequential_mixture(laplace::CTSEMLaplaceObjective,
     n = _val(ws0.state_dim)
     m = _val(ws0.manifest_dim)
     types = ws0.manifesttype
-    (!isempty(types) && any(i -> _ekf_is_categorical(types, i), 1:m)) && throw(
-        ArgumentError("the mixture predictive is for Gaussian indicators"))
     Ls = _laplace_popchols(theta, laplace.spec)
     subjects = laplace.objective.subject_objectives
     rows = [size(s.data, 2) for s in subjects]
@@ -347,7 +363,8 @@ function ctsem_laplace_sequential_mixture(laplace::CTSEMLaplaceObjective,
     out = (eta=fill(NaN, 2, nrows, n), etacov=fill(NaN, 2, nrows, n, n),
         y=fill(NaN, 2, nrows, m), ycov=fill(NaN, 2, nrows, m, m),
         llrow=fill(NaN, nrows), subject=zeros(Int, nrows),
-        ess=fill(NaN, length(units.members)))
+        ess=fill(NaN, length(units.members)),
+        pitlower=fill(NaN, nrows, m), pitupper=fill(NaN, nrows, m))
     for (i, r) in enumerate(rows)
         out.subject[(first_row[i] + 1):(first_row[i] + r)] .= i
     end
@@ -357,7 +374,7 @@ function ctsem_laplace_sequential_mixture(laplace::CTSEMLaplaceObjective,
             first_row[units.members[U][1]], Int(particles), Float64(scale), Int(seed))
         return true
     end
-    return out
+    return compact ? _ctsem_kalman_compact(out) : out
 end
 
 function _laplace_mixture_unit!(out, laplace::CTSEMLaplaceObjective, U::Integer,
@@ -462,17 +479,34 @@ function _laplace_mixture_unit!(out, laplace::CTSEMLaplaceObjective, U::Integer,
         return isfinite(ll)
     end
 
-    # First pass: each draw's row log densities, for the weights.
+    # First pass: each draw's row log densities, for the weights, and with
+    # non-Gaussian indicators each observation's distribution function bounds
+    # and log probability under the draw.
+    types = ws.manifesttype
+    cats = [j for j in 1:m if _ekf_is_categorical(types, j)]
+    nc = length(cats)
+    PL = nc > 0 ? fill(NaN, K, T, nc) : zeros(0, 0, 0)
+    PH = similar(PL); PZ = similar(PL)
     LL = fill(-Inf, K, T)
     ok = falses(K)
+    tr.pitwanted = nc > 0
     for k in 1:K
+        if nc > 0
+            fill!(tr.pitlower, NaN); fill!(tr.pitupper, NaN); fill!(tr.pitlogz, NaN)
+        end
         ok[k] = pass!(k)
         ok[k] || continue
         rl = _mixture_rowll(tr, ws.hyb)
         @inbounds for t in 1:T
             LL[k, t] = isfinite(rl[t]) ? rl[t] : -Inf
+            for (c, j) in enumerate(cats)
+                PL[k, t, c] = tr.pitlower[t, j]
+                PH[k, t, c] = tr.pitupper[t, j]
+                PZ[k, t, c] = tr.pitlogz[t, j]
+            end
         end
     end
+    tr.pitwanted = false
     any(ok) || return nothing
     # Weights before each row (its prediction) and after it (its update).
     WP = zeros(K, T)
@@ -497,6 +531,36 @@ function _laplace_mixture_unit!(out, laplace::CTSEMLaplaceObjective, U::Integer,
         minESS = min(minESS, 1 / sum(abs2, view(WP, :, t)))
     end
     out.ess[U] = minESS
+
+    # Each non-Gaussian observation's predictive distribution function under
+    # the mixture, in the order the filter applies them: the draws weighted by
+    # the row's prediction weights times each draw's probability of the row's
+    # earlier non-Gaussian observations, so that it conditions on what the
+    # filter had applied before it (item_pit.jl).
+    if nc > 0
+        logw = zeros(K)
+        @inbounds for t in 1:T
+            for k in 1:K
+                logw[k] = ok[k] && WP[k, t] > 0 ? log(WP[k, t]) : -Inf
+            end
+            for c in 1:nc
+                any(k -> ok[k] && isfinite(PL[k, t, c]), 1:K) || continue
+                a = _logsumexp(logw)
+                lo = 0.0; hi = 0.0
+                for k in 1:K
+                    isfinite(logw[k]) || continue
+                    w = exp(logw[k] - a)
+                    lo += w * PL[k, t, c]
+                    hi += w * PH[k, t, c]
+                end
+                out.pitlower[offset + t, cats[c]] = lo
+                out.pitupper[offset + t, cats[c]] = hi
+                for k in 1:K
+                    logw[k] += isfinite(PZ[k, t, c]) ? PZ[k, t, c] : -Inf
+                end
+            end
+        end
+    end
 
     # Second pass: the weighted moments, with the spread between draws.
     sP = zeros(T, n); sPP = zeros(T, n, n); sU = zeros(T, n); sUU = zeros(T, n, n)

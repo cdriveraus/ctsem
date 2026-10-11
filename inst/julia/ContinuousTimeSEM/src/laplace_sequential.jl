@@ -59,7 +59,8 @@ the top of this file describes; `llrow` each row's log predictive density.
 Single-level fits only: in a nested unit a person's truncated record moves the
 effects shared with the other members.
 """
-function ctsem_laplace_sequential(laplace::CTSEMLaplaceObjective, values::AbstractVector)
+function ctsem_laplace_sequential(laplace::CTSEMLaplaceObjective, values::AbstractVector;
+    compact::Bool=false)
     theta = collect(Float64, values)
     units = laplace.units
     all(length(m) == 1 for m in units.members) || throw(ArgumentError(
@@ -74,7 +75,8 @@ function ctsem_laplace_sequential(laplace::CTSEMLaplaceObjective, values::Abstra
     rows = [size(s.data, 2) for s in subjects]
     first_row = cumsum(vcat(0, rows[1:(end - 1)]))
     nrows = sum(rows)
-    out = (eta=fill(NaN, 2, nrows, n), etacov=fill(NaN, 2, nrows, n, n),
+    out = (pitlower=fill(NaN, 0, 0), pitupper=fill(NaN, 0, 0),
+        eta=fill(NaN, 2, nrows, n), etacov=fill(NaN, 2, nrows, n, n),
         y=fill(NaN, 2, nrows, m), ycov=fill(NaN, 2, nrows, m, m),
         llrow=fill(NaN, nrows), subject=zeros(Int, nrows))
     for (i, r) in enumerate(rows)
@@ -90,7 +92,7 @@ function ctsem_laplace_sequential(laplace::CTSEMLaplaceObjective, values::Abstra
             first_row[units.members[U][1]], S)
         return true
     end
-    return out
+    return compact ? _ctsem_kalman_compact(out) : out
 end
 
 function _laplace_sequential_unit!(out, laplace::CTSEMLaplaceObjective, U::Integer,

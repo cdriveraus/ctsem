@@ -128,3 +128,4 @@
 "test-subject-ids.R","filter","core"
 "test-data-guards.R","spec","core"
 "test-ctcov.R","spec","extended"
+"test-julia-item-pit.R","categorical","core"

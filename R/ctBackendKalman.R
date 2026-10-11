@@ -134,7 +134,7 @@
 }
 
 .ctBackendKalmanRaw <- function(fit, raw, subjectmatrices = TRUE,
-  randomEffects = NULL, fields = NULL, sequential = FALSE) {
+  randomEffects = NULL, fields = NULL, sequential = FALSE, compact = FALSE) {
   raw <- as.numeric(raw)
   spec <- .ctBackendSpec(fit)
   module <- .ctJuliaModule(spec$project)
@@ -142,6 +142,10 @@
   arguments <- list(.ctJuliaObjective(fit, hybrid = hybrid), .ctJuliaNumericVector(raw),
     subject_matrices = isTRUE(subjectmatrices))
   if (length(fields)) arguments$fields <- .ctJuliaVector(as.character(fields))
+  # `compact`: only what the misfit tests read (`_ctsem_kalman_compact`) --
+  # `eta12`, `etavar12`, `y1`, `ycov1` -- in place of the full arrays, whose
+  # transfer was most of an adequacy pass.
+  if (isTRUE(compact)) arguments$compact <- TRUE
   from <- 1L
 
   # The Laplace route is the same call with two more keywords: which levels of
@@ -187,14 +191,25 @@
     seq <- .ctBackendJuliaValue(if (mixture)
       module$ctsem_laplace_sequential_mixture(.ctJuliaObjective(fit, hybrid = TRUE),
         .ctJuliaNumericVector(raw),
-        particles = as.integer(getOption('ctsem.sequential.particles', 512L))) else
-      module$ctsem_laplace_sequential(arguments[[1L]], .ctJuliaNumericVector(raw)))
+        particles = as.integer(getOption('ctsem.sequential.particles', 512L)),
+        compact = isTRUE(compact)) else
+      module$ctsem_laplace_sequential(arguments[[1L]], .ctJuliaNumericVector(raw),
+        compact = isTRUE(compact)))
     if (mixture) result$ess <- as.numeric(seq$ess)
-    for (f in c("eta", "y")) {
-      if (!is.null(result[[f]])) result[[f]][1:2, , ] <- seq[[f]]
+    # Non-Gaussian items' distribution function bounds, from the same draws.
+    if (mixture && !is.null(result$pitlower)) {
+      result$pitlower <- seq$pitlower
+      result$pitupper <- seq$pitupper
     }
-    for (f in c("etacov", "ycov")) {
-      if (!is.null(result[[f]])) result[[f]][1:2, , , ] <- seq[[f]]
+    if (isTRUE(compact)) {
+      for (f in c("eta12", "etavar12", "y1", "ycov1")) result[[f]] <- seq[[f]]
+    } else {
+      for (f in c("eta", "y")) {
+        if (!is.null(result[[f]])) result[[f]][1:2, , ] <- seq[[f]]
+      }
+      for (f in c("etacov", "ycov")) {
+        if (!is.null(result[[f]])) result[[f]][1:2, , , ] <- seq[[f]]
+      }
     }
     if (!is.null(result$llrow)) result$llrow <- as.numeric(seq$llrow)
   }

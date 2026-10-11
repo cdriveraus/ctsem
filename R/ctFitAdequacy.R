@@ -135,9 +135,22 @@
 #' mode on each truncated record, its uncertainty added by the delta method --
 #' is exact only for effects that enter linearly; elsewhere it put a 1.5 per
 #' cent bias into the predictive variance, and correct models were rejected
-#' through it. With non-Gaussian indicators, where the exact predictive is not
-#' available, the row distances are left out and the latent family's
+#' through it. Where that predictive cannot be had -- random effects at more
+#' than one level -- the row distances are left out and the latent family's
 #' p-values are approximate, and the call says so.
+#'
+#' A binary, ordinal, count or censored item's error is not normal, so its
+#' place is taken by its randomised probability integral transform through
+#' the normal quantile: the item's predictive distribution function at what was
+#' observed, given the subject's earlier rows and the items the filter had
+#' already applied in the row (non-Gaussian items one at a time, in item
+#' order), with a fixed uniform between its values just below and at the
+#' observation where that has probability mass. Under the model these are
+#' standard normal and independent, so every family reads them as it reads
+#' Gaussian errors; on the Laplace route they come from the exact predictive.
+#' Within a row, a non-Gaussian item's transform and a Gaussian item's error
+#' have no model-implied correlation the pairs family could test against, and
+#' are not paired.
 #'
 #' With many observations every misfit is significant, so the sizes of the
 #' residual, latent and within-row correlations the model leaves are reported
@@ -282,8 +295,7 @@ ctFitAdequacy <- function(fit, covariates = NULL,
         "options(ctsem.sequential.particles = ) raises the draws.")
     if (isTRUE(err$approximate) && any(c('distribution', 'latent') %in% moments))
       message("On this fit each row's predictive covariance is an approximation ",
-        "(random effects in the dynamics or variances, on the Laplace route, with ",
-        "non-Gaussian indicators): ",
+        "(random effects in the dynamics or variances at more than one level): ",
         if ('distribution' %in% moments) "the row distances are not tested",
         if (all(c('distribution', 'latent') %in% moments)) ", and ",
         if ('latent' %in% moments) "the latent family's p-values are approximate", ".")
@@ -369,26 +381,31 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   # Where the delta-method sequential predictions are approximate and the
   # model's exact predictive can be had instead, the latter
   # (.ctAdequacyApproximate).
-  mixture <- isTRUE(sequential) && .ctAdequacyApproximate(fit, mixture = FALSE) &&
-    .ctAdequacyGaussian(fit)
   model <- .ctFitModelObject(fit)
   vars <- model$manifestNames
   m <- length(vars)
+  types <- if (is.null(model$manifesttype)) rep(0L, m) else as.integer(model$manifesttype)
+  categorical <- .ctFitIsJulia(fit) && any(types > 0L)
+  # Non-Gaussian items' transforms need each row's predictive distribution, which
+  # on the Laplace route only the exact predictive gives.
+  laplace <- .ctFitIsJulia(fit) && identical(.ctBackendIntOverPop(fit$model_spec), 'laplace')
+  mixture <- isTRUE(sequential) && (.ctAdequacyApproximate(fit, mixture = FALSE) ||
+    (laplace && categorical))
   if (.ctFitIsJulia(fit)) {
     if (is.null(raw)) raw <- .ctFitRawEstimate(fit)
     spec <- .ctBackendSpec(fit)
     k <- suppressMessages(.ctBackendKalmanRaw(fit, raw, subjectmatrices = FALSE,
-      fields = c('eta', 'etacov', 'y', 'ycov', 'subject'),
-      sequential = if (mixture) 'mixture' else sequential))
+      fields = if (categorical) c('pitlower', 'pitupper') else 'subject',
+      sequential = if (mixture) 'mixture' else sequential, compact = TRUE))
     nrows <- length(spec$times)
     Y <- matrix(t(spec$manifest_data), nrows, m)
-    yp <- matrix(k$y[1, , , drop = FALSE], nrows, m)
-    yc <- array(k$ycov[1, , , , drop = FALSE], c(nrows, m, m))
-    naug <- dim(k$eta)[3]
+    yp <- matrix(k$y1, nrows, m)
+    yc <- array(k$ycov1, c(nrows, m, m))
+    naug <- dim(k$eta12)[3]
     nl <- spec$nlatent
-    eta <- matrix(k$eta[1, , , drop = FALSE], nrows, naug)[, seq_len(nl), drop = FALSE]
-    etaupd <- matrix(k$eta[2, , , drop = FALSE], nrows, naug)[, seq_len(nl), drop = FALSE]
-    covdiff <- vapply(seq_len(nl), function(j) k$etacov[1, , j, j] - k$etacov[2, , j, j],
+    eta <- matrix(k$eta12[1, , , drop = FALSE], nrows, naug)[, seq_len(nl), drop = FALSE]
+    etaupd <- matrix(k$eta12[2, , , drop = FALSE], nrows, naug)[, seq_len(nl), drop = FALSE]
+    covdiff <- vapply(seq_len(nl), function(j) k$etavar12[1, , j] - k$etavar12[2, , j],
       numeric(nrows))
     unit <- as.integer(k$subject)
     time <- as.numeric(spec$times)
@@ -411,8 +428,29 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   E <- matrix(NA_real_, nrows, m, dimnames = list(NULL, vars))
   R <- array(NA_real_, c(nrows, m, m))
   Q <- rep(NA_real_, nrows); d <- integer(nrows)
+  gauss <- types == 0L
+  # A non-Gaussian item's error is its randomised probability integral
+  # transform, through the normal quantile: the predictive distribution
+  # function's bounds just below and at what was observed, taken by the filter
+  # given the earlier rows and the items it had already applied in the row
+  # (item_pit.jl), and a fixed uniform between them, the same at every
+  # parameter value so the statistics stay smooth in them. Standard normal
+  # and independent of every other such value under the model; independent
+  # of the row's Gaussian errors only once those condition on it, which the
+  # prior prediction does not, so a mixed pair's correlation is left unknown.
+  if (categorical) {
+    lo <- matrix(k$pitlower, nrows, m); hi <- matrix(k$pitupper, nrows, m)
+    draw <- outer(seq_len(nrows) * 0.6180339887498949, seq_len(m) * 0.7548776662466927, '+') %% 1
+    U <- lo + draw * (hi - lo)
+  }
   for (r in seq_len(nrows)) {
-    obs <- which(!is.na(Y[r, ]))
+    obs <- which(!is.na(Y[r, ]) & gauss)
+    cats <- if (categorical) which(!is.na(Y[r, ]) & !gauss & is.finite(U[r, ])) else integer()
+    if (length(cats)) {
+      E[r, cats] <- stats::qnorm(pmin(pmax(U[r, cats], 1e-12), 1 - 1e-12))
+      R[r, cats, cats] <- diag(1, length(cats))
+      if (!length(obs)) { Q[r] <- sum(E[r, cats]^2); d[r] <- length(cats) }
+    }
     if (!length(obs)) next
     v <- Y[r, obs] - yp[r, obs]
     P <- try(solve(matrix(yc[r, obs, obs], length(obs))), silent = TRUE)
@@ -451,21 +489,15 @@ ctFitAdequacy <- function(fit, covariates = NULL,
 # and with the estimation removed their mean rejected the correct model at
 # z = 6.0 (z = 1.7 without removing it); the latent family rejected 8 to 12
 # per cent at .05. There the errors come from the exact predictive instead
-# (ctsem_laplace_sequential_mixture), when the indicators are Gaussian;
-# `mixture = TRUE` asks whether what remains is still approximate.
+# (ctsem_laplace_sequential_mixture), which also gives non-Gaussian items'
+# transforms; `mixture = TRUE` asks whether what remains is still approximate.
 .ctAdequacyApproximate <- function(fit, mixture = TRUE) {
   if (!.ctFitIsJulia(fit) || !identical(.ctBackendIntOverPop(fit$model_spec), 'laplace'))
     return(FALSE)
   pars <- .ctFitModelObject(fit)$pars
   varying <- pars$matrix[as.logical(pars$indvarying) %in% TRUE & !is.na(pars$param)]
   nonlinear <- any(!varying %in% c('MANIFESTMEANS', 'CINT', 'T0MEANS', 'TDPREDEFFECT'))
-  nonlinear && !(mixture && .ctAdequacyGaussian(fit))
-}
-
-# Whether every indicator is Gaussian, as the exact predictive needs.
-.ctAdequacyGaussian <- function(fit) {
-  types <- .ctFitModelObject(fit)$manifesttype
-  is.null(types) || all(types %in% 0L)
+  nonlinear && !mixture
 }
 
 # What stays fixed when the statistics are recomputed at other parameter
