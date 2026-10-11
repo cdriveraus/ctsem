@@ -129,9 +129,11 @@
 #'   the direction that scales that parameter's row of the loadings and its own
 #'   sd together, reported as \code{scale(<parameter>)}: the effect on its log
 #'   standard deviation per unit of the covariate, the correlations held. In
-#'   simulation (100 subjects, rank 1) these rows rejected 9 to 10 per cent
-#'   of correct models at .05 where the covariate's joint test held its
-#'   level: read them as attribution once the joint test has screened.
+#'   simulation (100 subjects, rank 1, 200 replicates) these rows rejected 6.5
+#'   to 8 per cent of correct models at .05, where the covariate's joint test
+#'   and the unprojected score held their level: the projection on the fitted
+#'   parameters leaves a variance a little too small. Read them as attribution
+#'   once the joint test has screened.
 #'
 #' @section State dependence: For each latent equation and each pair of
 #'   latent states \code{k <= m}, the score test of a term \code{d * eta_k *
