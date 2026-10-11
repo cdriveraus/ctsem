@@ -296,18 +296,16 @@ function _kalman_store_response_rows!(trace::CTSEMKalmanTrace, kind::Int, row::I
     @inbounds for i in 1:m
         _is_response_scale(types, i) || continue
         # The predictor the Gaussian pass just wrote, and its variance in the
-        # same direction. `LAMBDA` rather than `Jy` because the scalar
-        # categorical update integrates against `LAMBDA`; the two coincide
-        # wherever the measurement equation is linear in the augmented state,
-        # and where they do not, this is the direction the likelihood used.
+        # direction the categorical update integrates against, the
+        # measurement's Jacobian `Jy` (`_ekf_categorical_offset`).
         ηbar = trace.y[kind, row, i]
         s2 = zero(eltype(statecov))
         for a in 1:n
             inner = zero(eltype(statecov))
             for b in 1:n
-                inner += statecov[a, b] * pars.LAMBDA[i, b]
+                inner += statecov[a, b] * pars.Jy[i, b]
             end
-            s2 += pars.LAMBDA[i, a] * inner
+            s2 += pars.Jy[i, a] * inner
         end
         τ = _ordinal_thresholds!(ws, pars, i)
         value, variance = _response_moments(promote(ηbar, s2)..., Int(types[i]),

@@ -204,6 +204,12 @@ struct ContinuousEKFWorkspace{T, N, M, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF
     # thresholds, a binary one's asymptotes, a censored one's limits and sd, a
     # count's dispersion. Long enough for the widest of them in the model.
     thresholds::Vector{T}
+    # The row's prior state, where a categorical observation's measurement is
+    # linearised (`_ekf_categorical_offset`): the state moves as the row's
+    # categorical observations are applied one at a time, and each must be
+    # linearised where the Gaussian update linearises the row. Empty for a
+    # model with no categorical indicator.
+    catprior::Vector{T}
     censormin::Vector{Float64}
     censormax::Vector{Float64}
     # Which covariance construction the model asked for, copied from the
@@ -486,6 +492,7 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
         ncategories,
         asymptoterow,
         thresholds,
+        zeros(T, isempty(manifesttype) ? 0 : n),
         censormin,
         censormax,
         sp.covmatcode,
