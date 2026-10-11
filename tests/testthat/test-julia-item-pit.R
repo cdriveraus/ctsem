@@ -15,7 +15,8 @@ skip_without_julia()
   LAMBDA = if (fixed) matrix(c(1, 1.2, 1, 0.8), 4) else matrix(c(1, 'l2', 'l3', 'l4'), 4),
   MANIFESTMEANS = if (fixed) matrix(c(0.5, 0.2, 0, 0.3), 4) else
     matrix(c('mm1', 'mm2', 0, 'mm4'), 4),
-  MANIFESTVAR = if (fixed) diag(c(0.5, 0, 0, 0.4)) else diag(c('mv1', 0, 0, 'mv4')),
+  MANIFESTVAR = if (fixed) diag(c(0.5, 0, 0, 0.4)) else
+    matrix(c('mv1', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'mv4'), 4),
   DRIFT = if (fixed) matrix(-0.5) else 'auto', DIFFUSION = if (fixed) matrix(0.8) else 'auto',
   CINT = matrix(0), T0MEANS = if (fixed) matrix(0) else 'auto',
   T0VAR = if (fixed) matrix(1) else 'auto',
