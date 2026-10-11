@@ -94,7 +94,12 @@ a variable.
   \item{latent}{The same for each latent process: the update each row makes
     to the predicted state, standardised, correlated with the same subject's
     updates at other times. One per process rather than one per item, so a
-    misfit in the dynamics is not diluted by item-specific structure.}
+    misfit in the dynamics is not diluted by item-specific structure. On a
+    Laplace fit whose random effects reach the dynamics or the variances the
+    standardisation is approximate: generated from such a model, it rejected
+    8 per cent of correct models at .05 without the estimation correction
+    and 12 with the plug-in one. Read its p-values there as approximate; its
+    size is not affected in the same way.}
   \item{volatility}{The same for the squared errors, per variable: variance
     that clusters in time.}
   \item{pairs}{Each pair of variables' errors in the same row against the

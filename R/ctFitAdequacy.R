@@ -44,7 +44,12 @@
 #'   \item{latent}{The same for each latent process: the update each row makes
 #'     to the predicted state, standardised, correlated with the same subject's
 #'     updates at other times. One per process rather than one per item, so a
-#'     misfit in the dynamics is not diluted by item-specific structure.}
+#'     misfit in the dynamics is not diluted by item-specific structure. On a
+#'     Laplace fit whose random effects reach the dynamics or the variances the
+#'     standardisation is approximate: generated from such a model, it rejected
+#'     8 per cent of correct models at .05 without the estimation correction
+#'     and 12 with the plug-in one. Read its p-values there as approximate; its
+#'     size is not affected in the same way.}
 #'   \item{volatility}{The same for the squared errors, per variable: variance
 #'     that clusters in time.}
 #'   \item{pairs}{Each pair of variables' errors in the same row against the
@@ -234,9 +239,12 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     t0 <- proc.time()[['elapsed']]
     err <- if (neederr) .ctAdequacyErrors(fit) else NULL
     setup <- if (neederr) .ctAdequacySetup(err, gaps) else NULL
-    if ('distribution' %in% moments && isTRUE(err$approximate)) message("The row ",
-      "distances are not tested: on this fit each row's predictive covariance is an ",
-      "approximation (random effects in the dynamics or variances, on the Laplace route).")
+    if (isTRUE(err$approximate) && any(c('distribution', 'latent') %in% moments))
+      message("On this fit each row's predictive covariance is an approximation ",
+        "(random effects in the dynamics or variances, on the Laplace route): ",
+        if ('distribution' %in% moments) "the row distances are not tested",
+        if (all(c('distribution', 'latent') %in% moments)) ", and ",
+        if ('latent' %in% moments) "the latent family's p-values are approximate", ".")
     if (length(moments)) {
       est <- if (.ctFitIsJulia(fit)) .ctFitRawEstimate(fit) else NULL
       extra <- list(
