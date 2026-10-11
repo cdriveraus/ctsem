@@ -276,3 +276,58 @@ test_that("ctKalman reports a censored prediction on the response scale", {
   expect_true(all(predicted <= 5))
   expect_equal(mean(predicted), mean(d$y), tolerance = 0.5)
 })
+
+test_that("censoring under Laplace: a limit nothing reaches is Gaussian, and the adjoint holds at a floor", {
+  skip_without_julia()
+  # Every test above runs on 'augmented'. Under Laplace a censored row's moments
+  # are differentiated twice more in the person's effects -- the inner mode's
+  # curvature, then its derivative in the parameters -- and with own intercept
+  # variances (popunique) a censored item also takes them out of the filter,
+  # since the hybrid needs every item Gaussian, so the same objective comes from
+  # the Laplace layer instead. Two items with person intercepts, a floor at 0.
+  set.seed(5)
+  d <- do.call(rbind, lapply(1:16, function(i) {
+    eta <- as.numeric(stats::filter(stats::rnorm(8, 0, 0.6), 0.6, method = "recursive"))
+    u <- stats::rnorm(2, 0, 0.6)
+    data.frame(id = i, time = cumsum(stats::rexp(8, 2)),
+      y1 = pmax(0.3 + u[1] + eta + stats::rnorm(8, 0, 0.4), 0),
+      y2 = pmax(0.1 + u[2] + 0.8 * eta + stats::rnorm(8, 0, 0.4), 0))
+  }))
+  expect_gt(mean(c(d$y1, d$y2) == 0), 0.25)
+  model <- function(type, lower = 0) {
+    m <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 1,
+      n.manifest = 2, manifestNames = c("y1", "y2"), latentNames = "eta",
+      LAMBDA = matrix(c("1", "lam2"), 2), MANIFESTMEANS = matrix(c("mm1", "mm2"), 2),
+      MANIFESTVAR = matrix(c("mv1", "0", "0", "mv2"), 2), CINT = matrix(0),
+      T0MEANS = matrix(0), manifesttype = rep(type, 2),
+      censormin = if (type == 4L) rep(lower, 2),
+      censormax = if (type == 4L) rep(Inf, 2))))
+    m$pars$indvarying <- m$pars$matrix %in% "MANIFESTMEANS"
+    m
+  }
+  for (unique in c(FALSE, TRUE)) {
+    prep <- function(m) suppressWarnings(suppressMessages(if (unique)
+      ctFit(d, m, backend = "julia", intoverpop = "laplace", fit = FALSE,
+        cores = 1L, poprank = 1, popunique = c(id = "MANIFESTMEANS")) else
+      ctFit(d, m, backend = "julia", intoverpop = "laplace", fit = FALSE, cores = 1L)))
+    gaussian <- prep(model(0L))
+    remote <- prep(model(4L, -1e6))
+    floor <- prep(model(4L, 0))
+    if (unique) {
+      expect_false(is.null(gaussian$laplace$hybrid))
+      expect_null(floor$laplace$hybrid)
+    }
+    npar <- .ctBackendNpar(floor)
+    expect_identical(npar, .ctBackendNpar(gaussian))
+    set.seed(6)
+    at <- stats::rnorm(npar, 0, 0.2)
+    g <- ctJuliaEvaluate(gaussian, at, gradient = TRUE)
+    r <- ctJuliaEvaluate(remote, at, gradient = TRUE)
+    expect_equal(r$value, g$value, tolerance = 1e-9)
+    expect_equal(as.numeric(r$gradient), as.numeric(g$gradient), tolerance = 1e-6)
+    adjoint <- ctJuliaEvaluate(floor, at, gradient = TRUE, gradient_method = "adjoint")
+    forward <- ctJuliaEvaluate(floor, at, gradient = TRUE, gradient_method = "forward")
+    expect_equal(as.numeric(adjoint$gradient), as.numeric(forward$gradient), tolerance = 1e-8)
+    expect_gt(abs(adjoint$value - g$value), 1)
+  }
+})
