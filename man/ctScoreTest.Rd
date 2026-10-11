@@ -160,11 +160,11 @@ before interpreting their sizes.
   the direction that scales that parameter's row of the loadings and its own
   sd together, reported as \code{scale(<parameter>)}: the effect on its log
   standard deviation per unit of the covariate, the correlations held. In
-  simulation (100 subjects, rank 1, 200 replicates) these rows rejected 6.5
-  to 8 per cent of correct models at .05, where the covariate's joint test
-  and the unprojected score held their level: the projection on the fitted
-  parameters leaves a variance a little too small. Read them as attribution
-  once the joint test has screened.
+  simulation (rank 1) these rows rejected 6.5 to 8 per cent of correct
+  models at .05 with 100 subjects and 5 to 6 with 300, where the
+  covariate's joint test held its level: with few subjects the projection
+  on the fitted parameters leaves a variance a little too small. Read them
+  as attribution once the joint test has screened.
 }
 
 \section{State dependence}{
