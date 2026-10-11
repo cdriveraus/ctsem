@@ -263,6 +263,11 @@ test_that("row scores sum to the subjects' scores, on the filter and the Laplace
     projection = 'plugin', cores = 1, nboot = 199))
   expect_identical(ap$projection, 'plugin')
   expect_true(all(ap$families$p > 0 & ap$families$p <= 1))
+  # The effects here shift the means, so each row's predictive is exactly
+  # Gaussian and the row distances are tested; where effects reach the
+  # dynamics they would not be (.ctAdequacyApproximate).
+  expect_false(ctsem:::.ctAdequacyApproximate(lfit))
+  expect_true('distance' %in% ap$statistics$statistic)
 })
 
 test_that("stability along a predicted state finds a drift that depends on it", {
