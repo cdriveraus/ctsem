@@ -4,13 +4,18 @@ The reverse pass for binary observations.
 The forward update (see `binary_measurement.jl`) applies each binary
 observation as an exact scalar conditioning:
 
-    c = Pλ,  b = λ'Pλ,  a = λ'x + μ
+    c = Pλ,  b = λ'Pλ,  a = λ'x + μ,
+    λ = Jy[i, :],  μ = MANIFESTMEANS[i] + (LAMBDA[i, :] - λ)'x₀
     (logZ, m, v) = moments(a, b, y)   # m is the mean's offset from a
     x ← x + c m/b
     P ← P - c c' (1 - v/b)/b
 
 so the reverse is the differential of that, with the moment function's own
-partials supplied by `_binary_moment_jacobian`.
+partials supplied by `_binary_moment_jacobian`. `x₀` is the row's prior, where
+the measurement is linearised (`_ekf_categorical_offset`), so the cotangent of
+`μ` reaches `LAMBDA`, `Jy`, `MANIFESTMEANS` and the prior state, and the
+direction's reaches `Jy`. Where the measurement is linear in the state `Jy`
+holds the same cells as `LAMBDA`, and the two routes agree.
 
 # Why the record holds what the forward saw, not only the prior
 
@@ -40,6 +45,7 @@ would have meant teaching `_reverse_update!` about a preceding step.
 mutable struct CTSEMBinaryRecord{T}
     rows::Vector{Int}         # manifest indices, in application order
     Lambda::Matrix{T}         # LAMBDA[rows, :]
+    Jac::Matrix{T}            # Jy[rows, :], each observation's direction
     manifestmeans::Vector{T}  # MANIFESTMEANS[rows]
     y::Vector{T}              # the observations themselves
     # Cumulated thresholds per observation, empty for a binary one. Copied
@@ -68,6 +74,9 @@ mutable struct CTSEMBinaryRecord{T}
     moments::Vector{Tuple{T,T,Matrix{T}}}
     # The reverse pass's cotangent of `c`, one observation at a time.
     cbar::Vector{T}
+    # The cotangent of the row's prior state through the observations'
+    # intercepts, gathered apart from the chain's and added once it is done.
+    priorbar::Vector{T}
 end
 
 """
@@ -84,8 +93,9 @@ other.
 
 The three rules:
 
-  * censored, whose extras are two constant limits and a standard deviation
-    that belongs to MANIFESTVAR;
+  * censored, whose extras are two constant limits, a standard deviation
+    that belongs to MANIFESTVAR, and with a response scale a half-width and
+    power that are RESPONSE's;
   * binary with asymptotes, whose two extras are the cells `c` and `d` of
     ASYMPTOTES row `asymrow` themselves, so each takes its own cotangent;
   * ordinal, where threshold `k` is the sum of the first `k` cells, so a
@@ -102,6 +112,13 @@ mode.
     kind::Int, cot::F) where {F}
     if kind == CTSEM_OBS_CENSORED
         @inbounds θ̄ca.MANIFESTVAR[row, row] += cot(3)
+        # A response scale's half-width and power are RESPONSE's two cells.
+        if length(τ) >= 5
+            @inbounds begin
+                θ̄ca.RESPONSE[row, 1] += cot(4)
+                θ̄ca.RESPONSE[row, 2] += cot(5)
+            end
+        end
         return nothing
     end
     if kind == CTSEM_OBS_BINARY
@@ -154,15 +171,17 @@ function _record_binary_rows!(tape, ws, pars, data, obs_col, rows, n)
     obs_col = Int(obs_col)
     index = (tape.nbinaries += 1)
     if index > length(tape.binaries)
-        push!(tape.binaries, CTSEMBinaryRecord{T}(Int[], zeros(T, 0, n), T[], T[],
-            Vector{T}[], Int[], Int[], 0, Vector{T}[], Matrix{T}[], Vector{T}[],
-            Tuple{T,T}[], Tuple{T,T,Matrix{T}}[], T[]))
+        push!(tape.binaries, CTSEMBinaryRecord{T}(Int[], zeros(T, 0, n),
+            zeros(T, 0, n), T[], T[], Vector{T}[], Int[], Int[], 0, Vector{T}[],
+            Matrix{T}[], Vector{T}[], Tuple{T,T}[], Tuple{T,T,Matrix{T}}[], T[],
+            T[]))
     end
     # Refilled in place, as the tape's other records are (`_tape_fill!`): the
     # arrays of the last pass at this index already have the row's shape.
     record = tape.binaries[index]
     _tape_fill!(record.rows, rows)
     record.Lambda = _tape_gather!(record.Lambda, pars.LAMBDA, rows, n)
+    record.Jac = _tape_gather!(record.Jac, pars.Jy, rows, n)
     _tape_gather!(record.manifestmeans, pars.MANIFESTMEANS, rows)
     resize!(record.y, length(rows))
     resize!(record.kinds, length(rows))
@@ -249,9 +268,13 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
         record.applied, " of ", k, " observations")
     cbar = record.cbar
     length(cbar) == n || resize!(cbar, n)
+    priorbar = record.priorbar
+    length(priorbar) == n || resize!(priorbar, n)
+    fill!(priorbar, zero(T))
+    prior = record.states[1]
 
     for j in k:-1:1
-        λ = view(record.Lambda, j, :)
+        λ = view(record.Jac, j, :)
         x0 = record.states[j]
         P0 = record.covs[j]
         c = record.cs[j]
@@ -269,9 +292,9 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
             score, _ = _category_score(a, record.y[j], τ, record.kinds[j])
             @inbounds for i in 1:n
                 x̄[i] += score * λ[i]
-                θ̄ca.LAMBDA[row, i] += score * x0[i]
+                θ̄ca.Jy[row, i] += score * x0[i]
             end
-            θ̄ca.MANIFESTMEANS[row] += score
+            _intercept_cotangent!(θ̄ca, priorbar, record, j, row, prior, score, n)
             # A count's extra is excluded: it is not a parameter of
             # `_category_loglikelihood` at all -- see `_count_dispersion` -- so
             # differentiating that against it gives zero, and the `else` below
@@ -360,15 +383,15 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
 
         @inbounds for i in 1:n
             x̄[i] += abar * λ[i]
-            θ̄ca.LAMBDA[row, i] += abar * x0[i]
+            θ̄ca.Jy[row, i] += abar * x0[i]
         end
-        θ̄ca.MANIFESTMEANS[row] += abar
+        _intercept_cotangent!(θ̄ca, priorbar, record, j, row, prior, abar, n)
 
         # b = λ'Pλ, taken directly rather than through c so nothing is counted
         # twice: c's own cotangent below carries only the state and covariance
         # updates.
         @inbounds for i in 1:n
-            θ̄ca.LAMBDA[row, i] += T(2) * bbar * c[i]
+            θ̄ca.Jy[row, i] += T(2) * bbar * c[i]
             for jj in 1:n
                 P̄[i, jj] += bbar * λ[i] * λ[jj]
             end
@@ -383,8 +406,31 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
             for jj in 1:n
                 acc += P0[i, jj] * cbar[jj]
             end
-            θ̄ca.LAMBDA[row, i] += acc
+            θ̄ca.Jy[row, i] += acc
         end
+    end
+    # The intercepts read the prior, which is the state this cotangent now
+    # belongs to: the chain has been walked back to the start of the row.
+    @inbounds for i in 1:n
+        x̄[i] += priorbar[i]
+    end
+    return nothing
+end
+
+"""
+    _intercept_cotangent!(θ̄ca, priorbar, record, j, row, prior, μbar, n)
+
+Push the cotangent `μbar` of observation `j`'s intercept, `MANIFESTMEANS[row] +
+(LAMBDA[row, :] - Jy[row, :])' prior`, onto the cells it read and onto
+`priorbar`, the prior state's share.
+"""
+@inline function _intercept_cotangent!(θ̄ca, priorbar, record, j::Int, row::Int,
+    prior, μbar, n::Int)
+    θ̄ca.MANIFESTMEANS[row] += μbar
+    @inbounds for i in 1:n
+        θ̄ca.LAMBDA[row, i] += μbar * prior[i]
+        θ̄ca.Jy[row, i] -= μbar * prior[i]
+        priorbar[i] += μbar * (record.Lambda[j, i] - record.Jac[j, i])
     end
     return nothing
 end

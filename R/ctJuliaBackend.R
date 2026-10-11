@@ -1895,7 +1895,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 
   dynamic <- !is.na(p$param) & grepl("[", p$param, fixed = TRUE)
   predict_matrices <- c("PARS", "DRIFT", "CINT", "DIFFUSION", "JAx")
-  update_matrices <- c("LAMBDA", "MANIFESTMEANS", "MANIFESTVAR", "Jy")
+  update_matrices <- c("LAMBDA", "MANIFESTMEANS", "MANIFESTVAR", "Jy", "RESPONSE")
   td_matrices <- c("TDPREDEFFECT", "Jtd")
   p$predicttransform[dynamic & p$matrix %in% predict_matrices] <- .ctJuliaTDExpression(p$param[dynamic & p$matrix %in% predict_matrices])
   p$updatetransform[dynamic & p$matrix %in% update_matrices] <- .ctJuliaTDExpression(p$param[dynamic & p$matrix %in% update_matrices])

@@ -68,12 +68,13 @@
 # propagates, so the Jacobian of the observation with respect to a DRIFT
 # carrier state is proportional to the (data-driven, nonzero) state estimate --
 # not because the process mean is nonzero. THRESHOLDS shifts an ordinal
-# indicator's expectation and ASYMPTOTES a binary one's, so they count too.
+# indicator's expectation, ASYMPTOTES a binary one's and RESPONSE a censored
+# one's, so they count too.
 # T0VAR is *not* here: an indvarying T0VAR cell is made redundant by
 # `T0VARredundancies()` on the augmented route.
 .ctPopMeanMatrices <- function() {
   c('T0MEANS', 'LAMBDA', 'DRIFT', 'MANIFESTMEANS', 'CINT', 'TDPREDEFFECT',
-    'THRESHOLDS', 'ASYMPTOTES')
+    'THRESHOLDS', 'ASYMPTOTES', 'RESPONSE')
 }
 
 .ctPopVarianceMatrices <- function() c('DIFFUSION', 'MANIFESTVAR', 'T0VAR')

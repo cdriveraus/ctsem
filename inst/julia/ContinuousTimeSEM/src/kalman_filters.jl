@@ -431,14 +431,21 @@ function _ekf_categorical_rows!(ws::ContinuousEKFWorkspace, pars,
     types = ws.manifesttype
     n = _val(ws.state_dim)
     total = zero(T)
+    prior = ws.catprior
+    @inbounds for j in 1:n
+        prior[j] = ws.state[j]
+    end
     @inbounds for i in observed
         _ekf_is_categorical(types, i) || continue
-        λ = view(pars.LAMBDA, i, :)
+        # The direction the observation informs is the measurement's Jacobian,
+        # as in the Gaussian update; see `_ekf_categorical_offset`.
+        λ = view(pars.Jy, i, :)
+        μ = _ekf_categorical_offset(pars, i, prior, n)
         τ = _ordinal_thresholds!(ws, pars, i)
         y = generate === nothing ? data[i, obs_col] :
-            _generate_binary!(generate, ws, pars, λ, i, obs_col, n, τ,
+            _generate_binary!(generate, ws, pars, λ, μ, i, obs_col, n, τ,
                 Int(types[i]))
-        contribution = _ekf_binary_update!(ws, λ, pars.MANIFESTMEANS[i], y, n,
+        contribution = _ekf_binary_update!(ws, λ, μ, y, n,
             τ, Int(types[i]), record)
         isfinite(contribution) || return nothing
         total += contribution
@@ -447,7 +454,36 @@ function _ekf_categorical_rows!(ws::ContinuousEKFWorkspace, pars,
 end
 
 """
-    _generate_binary!(gen, ws, pars, λ, row, obs_col, n, thresholds, kind)
+    _ekf_categorical_offset(pars, i, prior, n)
+
+The intercept of observation `i`'s linear predictor once its measurement is
+linearised at the row's prior state `prior`: `MANIFESTMEANS[i] + (LAMBDA[i, :]
+- Jy[i, :])' prior`, so that with the Jacobian `Jy[i, :]` as its direction the
+predictor is the measurement's value at the prior plus `Jy[i, :]` times the
+state's move since -- the first-order expansion the Gaussian update makes, in
+which `LAMBDA` and `MANIFESTMEANS` (evaluated at the prior) give the predicted
+value and `Jy` the direction.
+
+The categorical update used `LAMBDA` as the direction and `MANIFESTMEANS` as
+the intercept. Those coincide with this wherever the measurement is linear in
+the state, and are wrong wherever it is not: a link that reads the state
+(`MANIFESTMEANS = 'exp(eta) * s'`, with `LAMBDA` zero) informed nothing, and an
+individually varying intercept under `intoverpop = 'augmented'`, whose carrier
+state `MANIFESTMEANS` reads and `LAMBDA` does not, was never updated by the
+item it is the intercept of. Measured on two censored items with a limit no
+observation reached, against the same items Gaussian: 237 nats apart under a
+nonlinear link, 7.1 under 'augmented' random intercepts; equal to 1e-11 after.
+"""
+@inline function _ekf_categorical_offset(pars, i::Int, prior, n::Int)
+    μ = pars.MANIFESTMEANS[i]
+    @inbounds for j in 1:n
+        μ += (pars.LAMBDA[i, j] - pars.Jy[i, j]) * prior[j]
+    end
+    return μ
+end
+
+"""
+    _generate_binary!(gen, ws, pars, λ, μ, row, obs_col, n, thresholds, kind)
 
 Draw one categorical observation from its own prior predictive, write it out,
 and return it so the filter conditions on what it drew.
@@ -462,13 +498,13 @@ Binary keeps its own two-outcome branch because its data are `0`/`1` while
 ordinal categories are `1..K`; sharing the loop would mean subtracting one on
 the way out and is not worth the confusion.
 """
-function _generate_binary!(gen, ws::ContinuousEKFWorkspace, pars, λ,
+function _generate_binary!(gen, ws::ContinuousEKFWorkspace, pars, λ, μ,
     row::Int, obs_col::Int, n::Int, thresholds, kind::Int)
     T = eltype(ws.state)
     nodes, weights = _binary_rule()
     P = ws.P_predict.data
     s2 = zero(T)
-    ηbar = pars.MANIFESTMEANS[row]
+    ηbar = μ
     @inbounds for i in 1:n
         acc = zero(T)
         for j in 1:n
@@ -490,8 +526,9 @@ function _generate_binary!(gen, ws::ContinuousEKFWorkspace, pars, λ,
         # The standard normal deviate is used directly rather than through its
         # own CDF, which keeps the draw exact rather than approximated.
         lower, upper, sd = _censor_limits(thresholds, T)
+        half, power = _censor_response(thresholds, T)
         draw = ηbar + sqrt(s2 + sd * sd) * T(gen.base[row, r])
-        y = min(max(draw, lower), upper)
+        y = T(_censored_record(draw, lower, upper, half, power))
     elseif kind == CTSEM_OBS_COUNT
         # A count's marginal `∫ Poisson(y | e^η) φ(η; ηbar, s²) dη` has no closed
         # form, so it is drawn in the two stages that define it -- the linear

@@ -530,14 +530,15 @@ simplifystanfunction<-function(bcalc,simplify=TRUE){ #input text of list of comp
   jacobian = c(JAx=52,Jtd=53,Jy=54) #J0=51,
   asymptotic = c(asymCINT=21,asymDIFFUSIONcov=22)
   extra <- c(DIFFUSIONcov=31,MANIFESTcov=32,T0cov=33)
-  # Matrices only the julia engine reads -- ordinal thresholds and binary
-  # asymptotes, both refused by ctFit on stan. Registered here because
+  # Matrices only the julia engine reads -- ordinal thresholds, binary
+  # asymptotes and a censored indicator's response scale, all refused by ctFit
+  # on stan. Registered here because
   # parameter numbers come from matsetup, and a matrix missing from this list
   # would fall back to a separate numbering that collides with it; kept out of
   # `base` because the stan programs are generated from `base`
   # (dev/regenerate-stan.R), and would otherwise declare and compute matrices
   # no stan fit can have.
-  julia <- c(THRESHOLDS=11, ASYMPTOTES=12)
+  julia <- c(THRESHOLDS=11, ASYMPTOTES=12, RESPONSE=13)
   all <- c(base,jacobian,asymptotic, extra, julia)
   mn <- list(base=base, jacobian=jacobian, asymptotic=asymptotic, extra=extra,
     julia=julia, all=all)

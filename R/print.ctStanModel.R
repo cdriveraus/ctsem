@@ -114,7 +114,9 @@ print.ctStanModel <- function(x, matrices = NULL, ...) {
         ifelse(is.finite(x$censormin[censored]),
           paste0("min ", signif(x$censormin[censored], 4)), "no min"), ", ",
         ifelse(is.finite(x$censormax[censored]),
-          paste0("max ", signif(x$censormax[censored], 4)), "no max"), ")"))
+          paste0("max ", signif(x$censormax[censored], 4)), "no max"),
+        ifelse(censored %in% .ctResponseRows(x$pars), ", with RESPONSE", ""),
+        ")"))
     cat("  non-Gaussian indicators: ", paste(described, collapse = ", "),
       "\n", sep = "")
   }

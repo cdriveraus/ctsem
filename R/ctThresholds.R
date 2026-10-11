@@ -313,6 +313,100 @@ NULL
   list(min = lower, max = upper)
 }
 
+#' Check the RESPONSE matrix argument.
+#'
+#' A censored indicator's response scale: column 1 the half-width of the
+#' interval each recorded value stands for, column 2 the power of the transform
+#' from the recorded scale to the latent response (`_response_transform` in
+#' the engine). One row per manifest variable, so the engine reads a row by
+#' the manifest's own index; only the censored rows mean anything, and the
+#' others must sit at the defaults, 0 and 1, so that nothing a reader sees
+#' there applies to nothing. NA keeps a default. A length 2 vector fills every
+#' censored row. A matrix with every censored row at its defaults is no matrix
+#' at all: the censored indicators are exactly what they were without it.
+#' @noRd
+.ctCheckResponseMatrix <- function(RESPONSE, manifesttype, manifestNames) {
+  if (is.null(RESPONSE) || all(is.na(RESPONSE))) return(NULL)
+  censored <- manifesttype %in% 4L
+  if (!any(censored)) stop('RESPONSE applies to censored indicators ',
+    '(manifesttype 4), and this model has none', call. = FALSE)
+  n <- length(manifestNames)
+  if (!is.matrix(RESPONSE)) {
+    if (length(RESPONSE) != 2L) stop('RESPONSE must be a matrix with one row ',
+      'per manifest variable and two columns (halfwidth, power), or a length 2 ',
+      'vector applied to every censored indicator', call. = FALSE)
+    fill <- as.character(RESPONSE)
+    RESPONSE <- matrix(c('0', '1'), n, 2, byrow = TRUE)
+    RESPONSE[censored, ] <- matrix(fill, sum(censored), 2, byrow = TRUE)
+  }
+  if (!identical(dim(RESPONSE), c(n, 2L))) stop('RESPONSE needs one row per ',
+    'manifest variable (', n, ') and two columns (halfwidth, power); got ',
+    paste(dim(RESPONSE), collapse = ' * '), call. = FALSE)
+  out <- matrix(as.character(RESPONSE), n, 2,
+    dimnames = list(manifestNames, c('halfwidth', 'power')))
+  blank <- is.na(out) | trimws(out) %in% 'NA'
+  out[blank[, 1], 1] <- '0'
+  out[blank[, 2], 2] <- '1'
+  moved <- .ctResponseMoved(out)
+  if (any(moved[!censored])) stop('RESPONSE applies to censored indicators ',
+    'only; the rows for ', paste(manifestNames[!censored & moved], collapse = ', '),
+    ' must be 0 and 1', call. = FALSE)
+  .ctCheckResponseValues(suppressWarnings(as.numeric(out[, 1])))
+  if (!any(moved)) return(NULL)
+  out
+}
+
+#' TRUE per row where a RESPONSE cell is free or fixed away from its default,
+#' 0 for the half-width and 1 for the power. Takes the matrix (cells as text)
+#' or a pars subset (`row`, `col`, `param`, `value`).
+#' @noRd
+.ctResponseMoved <- function(x) {
+  if (is.matrix(x)) {
+    num <- suppressWarnings(matrix(as.numeric(x), nrow(x), 2))
+    off <- is.na(num) | num != matrix(c(0, 1), nrow(x), 2, byrow = TRUE)
+    return(off[, 1] | off[, 2])
+  }
+  default <- ifelse(x$col == 1L, 0, 1)
+  off <- !is.na(x$param) | (!is.na(x$value) & x$value != default)
+  # Named by row, which is how the callers find the rows: `as.logical()` alone
+  # would drop the names `tapply()` gives.
+  moved <- tapply(off, x$row, any)
+  stats::setNames(as.logical(moved), names(moved))
+}
+
+.ctCheckResponseValues <- function(halfwidth) {
+  halfwidth <- halfwidth[!is.na(halfwidth)]
+  if (any(halfwidth < 0)) stop('a fixed RESPONSE halfwidth is half a ',
+    'response step, so cannot be negative', call. = FALSE)
+  invisible(NULL)
+}
+
+#' Which manifest rows have a response scale away from the defaults.
+#' @noRd
+.ctResponseRows <- function(pars) {
+  r <- pars[pars$matrix %in% 'RESPONSE', , drop = FALSE]
+  if (!nrow(r)) return(integer())
+  moved <- .ctResponseMoved(r)
+  as.integer(names(moved)[moved])
+}
+
+#' The fit-time half of `.ctCheckResponseMatrix`: `pars` and `manifesttype` can
+#' both be edited after ctModel.
+#' @noRd
+.ctCheckResponsePars <- function(pars, manifesttype) {
+  r <- pars[pars$matrix %in% 'RESPONSE', , drop = FALSE]
+  if (!nrow(r)) return(invisible(NULL))
+  if (max(r$row) != length(manifesttype)) stop('RESPONSE has ', max(r$row),
+    ' rows but the model has ', length(manifesttype), ' manifest variables; it ',
+    'needs one row per manifest -- rebuild the model with ctModel()', call. = FALSE)
+  moved <- .ctResponseMoved(r)
+  rows <- as.integer(names(moved)[moved])
+  if (any(!manifesttype[rows] %in% 4L)) stop('RESPONSE applies to censored ',
+    'indicators only (manifesttype 4); rows ', paste(rows[!manifesttype[rows] %in% 4L],
+      collapse = ', '), ' are not censored', call. = FALSE)
+  .ctCheckResponseValues(r$value[r$col == 1L])
+}
+
 #' Censored data checked against the limits the model declares.
 #' @noRd
 .ctDataCensored <- function(datalong, ctm) {

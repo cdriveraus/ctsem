@@ -587,6 +587,8 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   if (!is.null(e$pop_TDPREDEFFECT)) dimnames(out$TDPREDEFFECT) <- list(ln, tdn)
   if (!is.null(out$ASYMPTOTES) && length(binaryNames) == nrow(out$ASYMPTOTES))
     dimnames(out$ASYMPTOTES) <- list(binaryNames, c('lower', 'upper'))
+  if (!is.null(out$RESPONSE) && length(mn) == nrow(out$RESPONSE))
+    dimnames(out$RESPONSE) <- list(mn, c('halfwidth', 'power'))
 
   out$MANIFESTVAR <- NULL
   out

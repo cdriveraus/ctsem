@@ -499,16 +499,20 @@ identically, not just numerically, which is why the fast path can stay.
         # truncated-normal result and is non-negative for every `z` -- so the
         # scalar posterior stays log-concave and the Newton solve above still
         # cannot diverge. Uncensored, both collapse to the Gaussian forms.
-        if _censored_at(y, lower, false)
-            z = (lower - η) / sd
-            λ = _mills(z)
-            return (-λ / sd, max(λ * (z + λ) * prec, floatmin(T)))
-        elseif _censored_at(y, upper, true)
-            w = (η - upper) / sd
-            λ = _mills(w)
-            return (λ / sd, max(λ * (w + λ) * prec, floatmin(T)))
+        half, power = _censor_response(thresholds, T)
+        atlower = _censored_at(y, lower, false)
+        atupper = _censored_at(y, upper, true)
+        if !atlower && !atupper && !(_primal(half) > 0)
+            g = _response_transform(T(y), _response_origin(lower), power)
+            return ((g - η) * prec, prec)
         end
-        return ((T(y) - η) * prec, prec)
+        # An interval's score is its truncated mean over `sd` and its
+        # information one minus its truncated variance over `sd^2`, the censored
+        # pair above being the open-ended case.
+        lo, hi = _response_interval(y, lower, upper, half, power, atlower, atupper)
+        _, m, d = _interval_moments(lo === nothing ? nothing : (lo - η) / sd,
+            hi === nothing ? nothing : (hi - η) / sd)
+        return (m / sd, max(d * prec, floatmin(T)))
     end
     if kind == CTSEM_OBS_BINARY || isempty(thresholds)
         F = _logistic(η)
@@ -647,6 +651,160 @@ and the mixture moments score it as such.
     return (extras[1], extras[2])
 end
 
+
+"""
+    _censor_response(extras, ::Type{T})
+
+A censored row's response scale, beyond its limits and standard deviation: the
+half-width of the interval each recorded value stands for, and the power of the
+response transform (`_response_transform`), as `RESPONSE` holds them. `(0, 1)`
+-- a value recorded exactly, on a linear scale -- for a row that carries only
+three extras, which is every model without a RESPONSE matrix. Returned as they
+are, for the reason `_censor_limits` gives.
+"""
+@inline function _censor_response(extras, ::Type{T}) where {T}
+    length(extras) >= 5 || return (zero(T), one(T))
+    return (extras[4], extras[5])
+end
+
+"""
+    _response_transform(r, origin, power)
+
+`G(r) = origin + ((1 + r - origin)^power - 1) / power`: where on the latent
+response scale -- the one the linear predictor and the measurement error are
+on -- recorded value `r` sits. `origin` is the floor (`_response_origin`).
+
+One transform for every form of an item, so an item asked on a 7-point scale
+in one study and a slider in another has one curvature, estimated from both;
+the forms differ only in which intervals of the common scale their responses
+stand for (`_response_interval`). `power = 1` is the identity; below one the
+transform is concave, so the latent response moves less per recorded unit high
+on the scale and the recorded value moves faster there; `power = 0` is the
+log, whose inverse is the exponential link. Monotone for every power wherever
+`r > origin - 1`, which every recorded value is.
+"""
+@inline function _response_transform(r, origin::Real, power)
+    _is_linear_power(power) && return r
+    u = log1p(r - origin)
+    κu = power * u
+    # expm1(κu)/κ, continuous through κ = 0, where it is u.
+    return origin + (abs(_primal(power)) < 1e-8 ? u * (1 + κu / 2) :
+        expm1(κu) / power)
+end
+
+"""`log G'(r)`, the transform's log slope, which a density on the latent
+response carries back to the recorded scale."""
+@inline _response_logslope(r, origin::Real, power) =
+    _is_linear_power(power) ? zero(r) : (power - 1) * log1p(r - origin)
+
+"""Whether a power is the identity's, decided where it carries no derivative:
+a free power at one is still a parameter to be differentiated."""
+@inline _is_linear_power(power) = !(power isa ForwardDiff.Dual) && power == 1
+
+"""The transform's origin: the floor where there is one, 0 otherwise."""
+@inline _response_origin(lower::Real) = isfinite(lower) ? lower : zero(lower)
+
+"""
+    _response_inverse(z, origin, power)
+
+The recorded scale at latent response `z`, `G^{-1}(z)`, for generation and the
+reported moments. Where `z` lies beyond the transform's range the recorded value is
+past the scale's end on that side, and the limits clip it.
+"""
+@inline function _response_inverse(z, origin::Real, power)
+    _is_linear_power(power) && return z
+    x = z - origin
+    abs(power) < 1e-8 && return origin + expm1(x)
+    base = 1 + power * x
+    base > 0 || return power > 0 ? oftype(float(z), -Inf) : oftype(float(z), Inf)
+    return origin + expm1(log(base) / power)
+end
+
+"""
+    _censored_record(z, lower, upper, half, power)
+
+What the instrument records for latent response `z`: back to the recorded scale
+(`_response_inverse`), onto the grid of its half-width -- steps of twice it from
+the floor -- and inside the limits. Generation's half of
+`_response_interval`.
+"""
+@inline function _censored_record(z, lower, upper, half, power)
+    origin = _response_origin(_primal(lower))
+    r = _response_inverse(_primal(z), origin, _primal(power))
+    h = _primal(half)
+    if h > 0 && isfinite(r)
+        step = 2 * h
+        r = origin + round((r - origin) / step) * step
+    end
+    return min(max(r, _primal(lower)), _primal(upper))
+end
+
+"""
+    _response_interval(y, lower, upper, half, power, atlower, atupper)
+
+The interval of the latent response that recorded value `y` stands for, as
+`(lo, hi)` with `nothing` for an open end: `[G(y - half), G(y + half))` inside
+the limits, everything below `G(lower + half)` at the floor and above
+`G(upper - half)` at the ceiling -- a 7-point item's bottom category is every
+response below half a step, a slider's below half its finer one. With no
+half-width the limits are the censoring limits themselves, as they always
+were. Each end is held to the limits, so a value recorded nearer a limit than
+the half-width does not reach past it.
+"""
+@inline function _response_interval(y::Real, lower, upper, half, power,
+    atlower::Bool, atupper::Bool)
+    origin = _response_origin(lower)
+    lo = atlower ? nothing : _response_transform(
+        atupper ? upper - half : max(y - half, lower), origin, power)
+    hi = atupper ? nothing : _response_transform(
+        atlower ? lower + half : min(y + half, upper), origin, power)
+    return (lo, hi)
+end
+
+"""
+    _log1mexp(x)
+
+`log(1 - exp(x))` for `x <= 0`, by whichever of the two forms is accurate there.
+"""
+@inline _log1mexp(x::Real) = x > -log(oftype(float(x), 2)) ? log(-expm1(x)) :
+    log1p(-exp(x))
+
+"""
+    _interval_moments(lo, hi)
+
+`(logZ, m, d)` for a standard normal restricted to `[lo, hi)`: the log of its
+probability, its mean, and one minus its variance. `nothing` is an open end.
+
+An open end is the censored case, with the inverse Mills ratio exactly as
+before. A closed interval is worked in whichever tail keeps the cumulative
+probabilities accurate -- reflected so that `lo + hi <= 0`, where `log Phi` is
+-- and every ratio `phi / Z` is formed as a difference of logarithms, which is
+what keeps an interval far out in a tail finite. One minus the variance cancels
+for a narrow interval, its terms growing like `hi / width` while it tends to
+one; on a slider's 0.05-wide interval at ten predicted sds from the response
+that leaves about ten digits.
+"""
+@inline function _interval_moments(lo, hi)
+    if lo === nothing
+        λ = _mills(hi)
+        return (_norm_logcdf(hi), -λ, hi * λ + λ * λ)
+    elseif hi === nothing
+        b = -lo
+        λ = _mills(b)
+        return (_norm_logcdf(b), λ, b * λ + λ * λ)
+    end
+    flip = lo + hi > 0
+    a, b = flip ? (-hi, -lo) : (lo, hi)
+    la = _norm_logcdf(a)
+    lb = _norm_logcdf(b)
+    logZ = lb + _log1mexp(la - lb)
+    ra = exp(_norm_logpdf(a) - logZ)
+    rb = exp(_norm_logpdf(b) - logZ)
+    m = ra - rb
+    d = b * rb - a * ra + m * m
+    return (logZ, flip ? -m : m, d)
+end
+
 """
     _censored_moments(ηbar, s, y, thresholds)
 
@@ -686,29 +844,39 @@ where deep censoring lives and is comfortably enough.
 Nothing special is needed for a zero measurement standard deviation, which the
 formulas reduce to a noiseless observation, or for an infinite limit on one
 side, which `_censored_at` never reports as censored.
+
+*With a response scale* (a RESPONSE matrix: `_censor_response`) each recorded
+value is an interval of the latent response, `_response_interval`, and the
+limits above are the open ends of that; a closed interval conditions on a
+two-sided event in `y*` by the same algebra (`_interval_moments`). A value
+recorded exactly is still a density, of the transformed value, with the
+transform's slope.
 """
 @inline function _censored_moments(ηbar::T, s::T, y::Real, thresholds) where {T}
     lower, upper, sd = _censor_limits(thresholds, T)
+    half, power = _censor_response(thresholds, T)
     s2 = s * s
     V = sd * sd + s2
     rootV = sqrt(V)
     atlower = _censored_at(y, lower, false)
     atupper = _censored_at(y, upper, true)
-    if !atlower && !atupper
-        deviation = y - ηbar
+    if !atlower && !atupper && !(_primal(half) > 0)
+        origin = _response_origin(lower)
+        deviation = _response_transform(T(y), origin, power) - ηbar
         z = deviation / rootV
-        logZ = -z * z / 2 - log(rootV) - log(sqrt(2 * T(pi)))
+        logZ = -z * z / 2 - log(rootV) - log(sqrt(2 * T(pi))) +
+            _response_logslope(T(y), origin, power)
         return (logZ, deviation * s2 / V, s2 * sd * sd / V)
     end
-    # The standardised distance to the limit, signed so that the mass the
-    # observation reports always lies below `b`. The upper case is the lower
-    # one in `-η`, which flips the mean shift and leaves the variance alone.
-    b = atlower ? (lower - ηbar) / rootV : (ηbar - upper) / rootV
-    logZ = _norm_logcdf(b)
-    lambda = _mills(b)
-    shift = (s2 / rootV) * lambda
-    offset = atlower ? -shift : shift
-    variance = s2 - (s2 * s2 / V) * (b * lambda + lambda * lambda)
+    # The standardised interval, and the moments of the latent response
+    # restricted to it; `m` is its mean and `d` one minus its variance, so the
+    # state's conditional moments are the censored ones with `d` for
+    # `b lambda + lambda^2`.
+    lo, hi = _response_interval(y, lower, upper, half, power, atlower, atupper)
+    logZ, m, d = _interval_moments(lo === nothing ? nothing : (lo - ηbar) / rootV,
+        hi === nothing ? nothing : (hi - ηbar) / rootV)
+    offset = (s2 / rootV) * m
+    variance = s2 - (s2 * s2 / V) * d
     return (logZ, offset, max(variance, zero(variance)))
 end
 
@@ -983,17 +1151,24 @@ stops being representable. The product form has neither problem -- see
     end
     if kind == CTSEM_OBS_CENSORED
         lower, upper, sd = _censor_limits(thresholds, T)
+        half, power = _censor_response(thresholds, T)
         # An observation at or beyond a limit is the probability of being there
-        # at all; one inside is the ordinary Gaussian density. Compared with
-        # `<=` and `>=` so a value sitting exactly on the limit counts as
-        # censored, which is how censored data is recorded.
-        if _censored_at(y, lower, false)
-            return _norm_logcdf((lower - η) / sd)
-        elseif _censored_at(y, upper, true)
-            return _norm_logcdf((η - upper) / sd)
+        # at all; one inside is the ordinary Gaussian density, or with a
+        # half-width the probability of its interval (`_response_interval`).
+        # Compared with `<=` and `>=` so a value sitting exactly on the limit
+        # counts as censored, which is how censored data is recorded.
+        atlower = _censored_at(y, lower, false)
+        atupper = _censored_at(y, upper, true)
+        if !atlower && !atupper && !(_primal(half) > 0)
+            origin = _response_origin(lower)
+            z = (_response_transform(T(y), origin, power) - η) / sd
+            return -z * z / 2 - log(sd) - log(sqrt(2 * T(pi))) +
+                _response_logslope(T(y), origin, power)
         end
-        z = (T(y) - η) / sd
-        return -z * z / 2 - log(sd) - log(sqrt(2 * T(pi)))
+        lo, hi = _response_interval(y, lower, upper, half, power, atlower, atupper)
+        logZ, _, _ = _interval_moments(lo === nothing ? nothing : (lo - η) / sd,
+            hi === nothing ? nothing : (hi - η) / sd)
+        return logZ
     end
     if kind == CTSEM_OBS_BINARY || isempty(thresholds)
         # Two, three and four parameter logistic in one expression. With
@@ -1544,6 +1719,16 @@ sum here costs a handful of additions on a vector of length `K-1`.
                 ws.censormax[row] : Inf
             ws.thresholds[3] = pars.MANIFESTVAR[row, row]
         end
+        # Its response scale, when the model has one: the half-width each
+        # recorded value stands for and the transform's power
+        # (`_censor_response`), from the row's RESPONSE cells.
+        if hasproperty(pars, :RESPONSE) && length(ws.thresholds) >= 5
+            @inbounds begin
+                ws.thresholds[4] = pars.RESPONSE[row, 1]
+                ws.thresholds[5] = pars.RESPONSE[row, 2]
+            end
+            return view(ws.thresholds, 1:5)
+        end
         return view(ws.thresholds, 1:3)
     end
     # A count row carries its dispersion in the same slot and for the same
@@ -1820,7 +2005,7 @@ standard deviation (its limits are constants), and none for a count.
 @inline function _extras_read(y::Real, thresholds, kind::Int)
     n = length(thresholds)
     kind == CTSEM_OBS_COUNT && return 1:0
-    kind == CTSEM_OBS_CENSORED && return n >= 3 ? (3:3) : (1:0)
+    kind == CTSEM_OBS_CENSORED && return n >= 5 ? (3:5) : n >= 3 ? (3:3) : (1:0)
     if kind == CTSEM_OBS_ORDINAL && n > 0
         k = Int(y)
         return clamp(k - 1, 1, n):clamp(k, 1, n)

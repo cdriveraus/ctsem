@@ -199,8 +199,27 @@ admits.
         # is doing something: it is the mean of the *latent* observation rather
         # than of the one that can be recorded.
         lower, upper, sd = _censor_limits(thresholds, T)
+        half, power = _censor_response(thresholds, T)
         v = s2 + sd * sd
         spread = sqrt(max(v, zero(T)))
+        # With a transform the recorded value is `G^{-1}` of the latent
+        # response, clipped, and has no closed-form moments; the rule
+        # integrates it. Rounding is left out of the reported moments, which
+        # are of the continuous response the recorded one rounds.
+        if !_is_linear_power(power)
+            origin = _response_origin(lower)
+            nodes, weights = _gauss_hermite(41)
+            m1 = zero(T)
+            m2 = zero(T)
+            @inbounds for k in eachindex(nodes)
+                z = ηbar + sqrt(T(2)) * spread * T(nodes[k])
+                r = min(max(_response_inverse(z, origin, power), lower), upper)
+                w = T(weights[k]) / sqrt(T(pi))
+                m1 += w * r
+                m2 += w * r * r
+            end
+            return (m1, max(m2 - m1 * m1, zero(T)))
+        end
         # No spread at all: the prediction is the latent value as the
         # instrument would record it, and it carries no variance.
         spread > zero(T) || return (min(max(ηbar, lower), upper), zero(T))
@@ -296,18 +315,16 @@ function _kalman_store_response_rows!(trace::CTSEMKalmanTrace, kind::Int, row::I
     @inbounds for i in 1:m
         _is_response_scale(types, i) || continue
         # The predictor the Gaussian pass just wrote, and its variance in the
-        # same direction. `LAMBDA` rather than `Jy` because the scalar
-        # categorical update integrates against `LAMBDA`; the two coincide
-        # wherever the measurement equation is linear in the augmented state,
-        # and where they do not, this is the direction the likelihood used.
+        # direction the categorical update integrates against, the
+        # measurement's Jacobian `Jy` (`_ekf_categorical_offset`).
         ηbar = trace.y[kind, row, i]
         s2 = zero(eltype(statecov))
         for a in 1:n
             inner = zero(eltype(statecov))
             for b in 1:n
-                inner += statecov[a, b] * pars.LAMBDA[i, b]
+                inner += statecov[a, b] * pars.Jy[i, b]
             end
-            s2 += pars.LAMBDA[i, a] * inner
+            s2 += pars.Jy[i, a] * inner
         end
         τ = _ordinal_thresholds!(ws, pars, i)
         value, variance = _response_moments(promote(ηbar, s2)..., Int(types[i]),

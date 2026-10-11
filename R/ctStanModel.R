@@ -1,5 +1,5 @@
 ctModelUnlist<-function(ctmodelobj,
-  matnames=c('T0MEANS','LAMBDA','DRIFT','DIFFUSION','MANIFESTVAR','MANIFESTMEANS', 'CINT', 'TDPREDEFFECT', 'T0VAR','PARS','THRESHOLDS','ASYMPTOTES')){
+  matnames=c('T0MEANS','LAMBDA','DRIFT','DIFFUSION','MANIFESTVAR','MANIFESTMEANS', 'CINT', 'TDPREDEFFECT', 'T0VAR','PARS','THRESHOLDS','ASYMPTOTES','RESPONSE')){
   out<-data.frame(matrix=as.character(NA), row=as.integer(NA), col=as.integer(NA), param=as.character(NA), value=as.numeric(NA),
     stringsAsFactors =FALSE) 
   out[1:sum(sapply(ctmodelobj[names(ctmodelobj) %in% matnames],length)),]=out
@@ -63,6 +63,16 @@ ctModelUnlist<-function(ctmodelobj,
   if(matrix %in% c('ASYMPTOTES')) {
     transform <- 3
     inneroffset <- if(col == 1) -1.5 else 3
+  }
+  # A censored indicator's response scale. A free half-width is positive, by
+  # the positive transform the variances use; a free power is on the real line
+  # with a raw zero at 1, the linear scale, so the prior is centred there.
+  if(matrix %in% c('RESPONSE')) {
+    if(col == 1) {
+      transform <- 1
+      meanscale <- 2
+    }
+    if(col == 2) offset <- 1
   }
 
   if(matrix %in% c('DIFFUSION','MANIFESTVAR', 'T0VAR')) {
