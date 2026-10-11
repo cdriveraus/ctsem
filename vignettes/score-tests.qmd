@@ -33,6 +33,8 @@ whether any of these relaxations would fit better, and if so where:
   its mean?
 * **state dependence**: does a drift coefficient change with the level of a
   latent state, so that the dynamics are nonlinear?
+* **volatility**: does the size of a process's random shocks change with the
+  level of a state -- negative affect more variable when it is high, say?
 
 Each is a score (Lagrange multiplier) test: the slope of the log likelihood,
 at the fitted model, in the direction of the relaxation. It needs a few
@@ -317,6 +319,14 @@ given the others observed at the same time, so a result names a variable.
   in time.
 * `pairs`: whether two variables' errors at the same time correlate as the
   model says, for a wrong measurement error covariance or loading.
+* `periodic`: a cycle the model lacks, such as a daily rhythm: the
+  periodogram of each variable's errors and each process's updates at a
+  period. It depends only on the time between observations, so it finds a
+  rhythm whatever its phase in each subject. Name the periods that matter
+  (`periods = 24` with time in hours), or by default it scans.
+* `tvcovariates`, given `tvcovariates`: whether time varying variables the
+  model does not use predict its errors, at the same and the previous
+  observation.
 * `distribution`: skewness, kurtosis and outlying occasions.
 * `fit`: whether some subjects are fitted much worse than the model allows.
 * `dependence`: whether an error or its size depends, in any form, on what
@@ -380,8 +390,11 @@ current estimates), and keeps the best if the refit's likelihood confirms it.
 It repeats until nothing more is indicated, then checks the model with
 `ctFitAdequacy()`. If a check fails, it tries structural changes the score
 tests cannot reach: a slow process driving a latent (`ctModelSlowComponent()`),
-tried first for a latent whose updates stay correlated over long gaps; making a
-process second order (`ctModelHigherOrder()`); or models you supply. Finally it
+tried first for a latent whose updates stay correlated over long gaps; a daily
+or other cycle at the period the `periodic` family points to
+(`ctModelPeriodicComponent()`); a process of its own for an item whose errors
+stay correlated with its own (`ctModelUniqueProcess()`); making a process
+second order (`ctModelHigherOrder()`); or models you supply. Finally it
 tries dropping each change it kept, in case a later one made it redundant.
 
 Here the data contain two of the departures above at once: `age` acts on the
