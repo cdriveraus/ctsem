@@ -104,7 +104,11 @@ before interpreting their sizes.
   result, set \code{indvarying = TRUE} for the parameter, refit, and test
   again. On a reduced-rank level (\code{poprank}), a parameter that varies
   only through the shared dimensions, without a variance of its own, is
-  tested too: for variation outside those dimensions.
+  tested too: for variation outside those dimensions. A parameter whose
+  test the fitted model already determines -- under one per cent of its
+  spread left once estimation is taken out, as for an intercept that loads
+  on the shared dimensions -- is not tested (\code{NA}) and is left out of
+  \code{dimension}.
 
   \code{dimension} tests every direction at once: whether subjects vary
   along some combination of the tested parameters -- a new dimension of

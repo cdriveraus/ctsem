@@ -155,7 +155,7 @@ test_that("joint heterogeneity: a dimension test beside the per-parameter ones",
   expect_setequal(names(d$direction), st$heterogeneity$parameter)
   # The largest eigenvalue of the standardised score matrix is at least its
   # largest diagonal, the per-parameter z.
-  expect_gte(d$lambda, max(st$heterogeneity$z) - 1e-8)
+  expect_gte(d$lambda, max(st$heterogeneity$z, na.rm = TRUE) - 1e-8)
   expect_true('class' %in% names(st$heterogeneity))
   expect_output(print(st), 'new dimension')
 })

@@ -75,7 +75,11 @@
 #'   result, set \code{indvarying = TRUE} for the parameter, refit, and test
 #'   again. On a reduced-rank level (\code{poprank}), a parameter that varies
 #'   only through the shared dimensions, without a variance of its own, is
-#'   tested too: for variation outside those dimensions.
+#'   tested too: for variation outside those dimensions. A parameter whose
+#'   test the fitted model already determines -- under one per cent of its
+#'   spread left once estimation is taken out, as for an intercept that loads
+#'   on the shared dimensions -- is not tested (\code{NA}) and is left out of
+#'   \code{dimension}.
 #'
 #'   \code{dimension} tests every direction at once: whether subjects vary
 #'   along some combination of the tested parameters -- a new dimension of
@@ -615,9 +619,11 @@ ctScoreTest <- function(fit, covariates = NULL,
     information <- sum(0.5 * hjj^2) - sum(D * w)
     V <- if (variance == 'robust') .ctScoreSpread(matrix(contribution))[1, 1] else
       information
-    z <- if (V > 0) stat / sqrt(V) else NA_real_
-    p <- if (variance == 'robust') .ctScoreBoot(matrix(contribution), nboot,
-      onesided = TRUE) else stats::pnorm(z, lower.tail = FALSE)
+    determined <- .ctScoreDetermined(contribution, 0.5 * (s^2 + hjj))
+    z <- if (V > 0 && !determined) stat / sqrt(V) else NA_real_
+    p <- if (determined) NA_real_ else if (variance == 'robust')
+      .ctScoreBoot(matrix(contribution), nboot, onesided = TRUE) else
+      stats::pnorm(z, lower.tail = FALSE)
     # The one-step variance divides by the information for it. Less what
     # estimating the other parameters takes, when that leaves it positive;
     # the third derivatives that projection needs are differenced twice and
@@ -653,9 +659,21 @@ ctScoreTest <- function(fit, covariates = NULL,
 # as loadings (Hall & Praestgaard, 2001; Zhu & Zhang, 2006).
 .ctScoreDimension <- function(pieces, ptab, het, nboot = 1999L) {
   S <- pieces$S
-  n <- nrow(S); K <- length(het)
+  n <- nrow(S)
   Iinv <- .ctScorePinv(-pieces$Hsum)$inv
   Hr <- lapply(het, function(j) .ctScoreHrow(pieces, j))
+  # Candidates whose own contributions the fit determines say nothing here
+  # (.ctScoreDetermined), and their near-zero spread would scale the rest.
+  live <- vapply(seq_along(het), function(a) {
+    ja <- het[a]
+    raw <- 0.5 * (S[, ja]^2 + Hr[[a]][, ja])
+    D <- colSums(S[, ja] * Hr[[a]]) +
+      0.5 * colSums(pieces$D2[, , match(ja, pieces$second), drop = TRUE])
+    !.ctScoreDetermined(raw + as.numeric(S %*% (Iinv %*% D)), raw)
+  }, logical(1))
+  het <- het[live]; Hr <- Hr[live]
+  K <- length(het)
+  if (K < 2L) return(NULL)
   C <- array(0, c(n, K, K))
   for (a in seq_len(K)) for (b in a:K) {
     ja <- het[a]; jb <- het[b]
@@ -683,6 +701,18 @@ ctScoreTest <- function(fit, covariates = NULL,
   u <- u / u[which.max(abs(u))]
   list(lambda = lambda, p = .ctScoreBoot(matrix(C, n, K * K), nboot, statistic = largest),
     direction = stats::setNames(u, ptab$name[het])[order(-abs(u))])
+}
+
+# Whether a projected contribution is one the fitted scores already determine:
+# under one per cent of its spread left once estimation is taken out (the
+# guard the adequacy families use). On a reduced-rank level the variance of a
+# parameter that loads on the shared dimensions is mostly estimated already,
+# and an intercept's heterogeneity contributions kept 0.6 per cent; divided by
+# what was left, its noise dominated the dimension test (rank 1 against 2
+# found 4 per cent of the time where its parameters' own tests found 67).
+.ctScoreDetermined <- function(projected, raw) {
+  v <- stats::var(as.numeric(projected)); v0 <- stats::var(as.numeric(raw))
+  !is.finite(v) || !is.finite(v0) || v0 <= 0 || v < 0.01 * v0
 }
 
 # Subject i's Hessian row for raw parameter j, n x p.
