@@ -12,7 +12,7 @@ ctFitAdequacy(
   gaps = NULL,
   close = 0.05,
   alpha = 0.05,
-  projection = c("auto", "derivative", "opg", "none"),
+  projection = c("auto", "derivative", "plugin", "opg", "none"),
   parameters = NULL,
   nsamples = 100,
   lags = 0:3,
@@ -41,12 +41,19 @@ fit.}
 \item{projection}{How the error-based statistics account for estimation:
 \code{'derivative'} differences the statistics along every parameter (two
 passes of the filter per parameter) and projects with the fit's Hessian;
-\code{'opg'} uses the outer product of the scores, valid when units
-outnumber parameters many times; \code{'none'} ignores estimation, which
-is conservative. \code{'auto'} takes the first that is affordable:
+\code{'plugin'}, on a Laplace fit, takes those differences from plug-in
+passes, which filter each subject at effects solved once from the whole
+record rather than row by row -- several times cheaper, and approximate
+(on a pilot-shaped model it recovered the distribution family's misfit,
+z 5.3 against 5.6 exact and 1.8 uncorrected, and half the latent
+family's); \code{'opg'} uses the outer product of the scores, valid when
+units outnumber parameters many times; \code{'none'} ignores estimation,
+which is conservative, and for the distribution family can hide a strong
+misfit. \code{'auto'} takes the first that is affordable:
 \code{'derivative'} when the fit's Hessian is stored and the passes take
-under \code{getOption('ctsem.adequacy.budget', 120)} seconds,
-\code{'opg'} with at least ten units a parameter, else \code{'none'}.}
+under \code{getOption('ctsem.adequacy.budget', 120)} seconds, then
+\code{'plugin'} on the same terms, \code{'opg'} with at least ten units
+a parameter, else \code{'none'}.}
 
 \item{parameters}{For the \code{scores} family, the raw parameters whose
 row scores are used: by default up to 16 of the dynamic and measurement

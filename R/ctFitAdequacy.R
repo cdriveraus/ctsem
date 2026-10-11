@@ -133,12 +133,19 @@
 #' @param projection How the error-based statistics account for estimation:
 #'   \code{'derivative'} differences the statistics along every parameter (two
 #'   passes of the filter per parameter) and projects with the fit's Hessian;
-#'   \code{'opg'} uses the outer product of the scores, valid when units
-#'   outnumber parameters many times; \code{'none'} ignores estimation, which
-#'   is conservative. \code{'auto'} takes the first that is affordable:
+#'   \code{'plugin'}, on a Laplace fit, takes those differences from plug-in
+#'   passes, which filter each subject at effects solved once from the whole
+#'   record rather than row by row -- several times cheaper, and approximate
+#'   (on a pilot-shaped model it recovered the distribution family's misfit,
+#'   z 5.3 against 5.6 exact and 1.8 uncorrected, and half the latent
+#'   family's); \code{'opg'} uses the outer product of the scores, valid when
+#'   units outnumber parameters many times; \code{'none'} ignores estimation,
+#'   which is conservative, and for the distribution family can hide a strong
+#'   misfit. \code{'auto'} takes the first that is affordable:
 #'   \code{'derivative'} when the fit's Hessian is stored and the passes take
-#'   under \code{getOption('ctsem.adequacy.budget', 120)} seconds,
-#'   \code{'opg'} with at least ten units a parameter, else \code{'none'}.
+#'   under \code{getOption('ctsem.adequacy.budget', 120)} seconds, then
+#'   \code{'plugin'} on the same terms, \code{'opg'} with at least ten units
+#'   a parameter, else \code{'none'}.
 #' @param parameters For the \code{scores} family, the raw parameters whose
 #'   row scores are used: by default up to 16 of the dynamic and measurement
 #'   parameters, those in DRIFT, DIFFUSION and CINT first.
@@ -184,7 +191,7 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   families = c('residuals', 'latent', 'volatility', 'pairs', 'distribution', 'fit',
     'dependence', 'effects', 'subjects', 'nonlinear', 'covariates'),
   gaps = NULL, close = 0.05, alpha = 0.05,
-  projection = c('auto', 'derivative', 'opg', 'none'), parameters = NULL,
+  projection = c('auto', 'derivative', 'plugin', 'opg', 'none'), parameters = NULL,
   nsamples = 100, lags = 0:3, nboot = 1999L, cores = 2) {
   if (!.ctFitIsJulia(fit) && !inherits(fit, 'ctStanFit')) stop('Not a ctsem fit.',
     call. = FALSE)
@@ -231,14 +238,18 @@ ctFitAdequacy <- function(fit, covariates = NULL,
       # Every family's statistics at any parameter vector, so that the
       # projection can difference them all; at the estimate the errors are
       # already in hand.
-      momentsAt <- function(x, errx = NULL) {
-        if (is.null(errx) && neederr) errx <- .ctAdequacyErrors(fit, x)
+      momentsAt <- function(x, errx = NULL, sequential = TRUE) {
+        if (is.null(errx) && neederr) errx <- .ctAdequacyErrors(fit, x, sequential = sequential)
         .ctAdequacyMomentsAll(fit, x, errx, setup, moments, extra, cores)
       }
       mom <- momentsAt(est, err)
       tpass <- proc.time()[['elapsed']] - t0
+      # Plug-in passes differ from the sequential ones only where the effects
+      # are re-solved row by row: the Laplace route.
+      laplace <- .ctFitIsJulia(fit) && identical(.ctBackendIntOverPop(fit$model_spec), 'laplace')
       proj <- .ctAdequacyProject(fit, mom, function(x) colSums(momentsAt(x)$M),
-        projection, tpass, cores)
+        projection, tpass, cores, plugin = if (laplace)
+          function(x) colSums(momentsAt(x, sequential = FALSE)$M))
       used <- proj$method
       tests <- .ctAdequacyMomentTests(proj$Mstar, mom$V0, proj$reduction, mom$meta,
         nboot, raw = mom$M)
@@ -298,7 +309,7 @@ ctFitAdequacy <- function(fit, covariates = NULL,
 # correctly specified model. On the Laplace route
 # the predictions are each unit's from its earlier rows alone (sequential), as
 # the errors must be for their independence over rows to hold.
-.ctAdequacyErrors <- function(fit, raw = NULL) {
+.ctAdequacyErrors <- function(fit, raw = NULL, sequential = TRUE) {
   model <- .ctFitModelObject(fit)
   vars <- model$manifestNames
   m <- length(vars)
@@ -306,7 +317,7 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     if (is.null(raw)) raw <- .ctFitRawEstimate(fit)
     spec <- .ctBackendSpec(fit)
     k <- suppressMessages(.ctBackendKalmanRaw(fit, raw, subjectmatrices = FALSE,
-      fields = c('eta', 'etacov', 'y', 'ycov', 'subject'), sequential = TRUE))
+      fields = c('eta', 'etacov', 'y', 'ycov', 'subject'), sequential = sequential))
     nrows <- length(spec$times)
     Y <- matrix(t(spec$manifest_data), nrows, m)
     yp <- matrix(k$y[1, , , drop = FALSE], nrows, m)
@@ -649,7 +660,7 @@ ctFitAdequacy <- function(fit, covariates = NULL,
 # nothing more than the scores, but regresses each statistic on the p scores
 # over n units, which with p near n removes variance that is not the
 # estimation's; it is used only at ten units a parameter.
-.ctAdequacyProject <- function(fit, mom, sums, projection, tpass, cores) {
+.ctAdequacyProject <- function(fit, mom, sums, projection, tpass, cores, plugin = NULL) {
   n <- nrow(mom$M)
   none <- function(note = NULL) {
     if (!is.null(note)) message(note)
@@ -667,31 +678,39 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   budget <- getOption('ctsem.adequacy.budget', 120)
   stored <- !is.null(.ctBackendStoredHessian(fit, est))
   method <- projection
-  Gamma <- NULL
-  if (method %in% c('auto', 'derivative') && (method == 'derivative' || stored)) {
-    Gamma <- matrix(0, ncol(mom$M), p)
+  if (method == 'plugin' && is.null(plugin)) method <- 'derivative'
+  # Gamma by central differences of `f` along every parameter, or NULL when
+  # `auto` finds the first parameter's pair would put the whole over budget --
+  # timed there rather than on the base pass, which pays the compile on a
+  # session's first call.
+  differences <- function(f) {
+    G <- matrix(0, ncol(mom$M), p)
     for (k in seq_len(p)) {
       started <- proc.time()[['elapsed']]
       h <- 1e-3 * max(1, abs(est[k]))
       e <- est; e[k] <- est[k] + h
-      plus <- sums(e)
+      plus <- f(e)
       e[k] <- est[k] - h
-      minus <- sums(e)
-      Gamma[, k] <- (plus - minus) / (2 * h)
-      # Timed on the first parameter rather than the base pass, which pays the
-      # compile on a session's first call.
+      minus <- f(e)
+      G[, k] <- (plus - minus) / (2 * h)
       if (k == 1L && method == 'auto' &&
-          (proc.time()[['elapsed']] - started) * p > budget) {
-        Gamma <- NULL
-        break
-      }
+          (proc.time()[['elapsed']] - started) * p > budget) return(NULL)
     }
+    G
+  }
+  Gamma <- NULL; used <- NA_character_
+  if (method %in% c('auto', 'derivative') && (method == 'derivative' || stored)) {
+    Gamma <- differences(sums); used <- 'derivative'
+  }
+  if (is.null(Gamma) && !is.null(plugin) && (method == 'plugin' ||
+      (method == 'auto' && stored))) {
+    Gamma <- differences(plugin); used <- 'plugin'
   }
   if (!is.null(Gamma)) {
     H <- .ctBackendWithMaxChunks(cores, .ctBackendHessian(fit, est))
     A <- Gamma %*% .ctScorePinv(-(H + t(H)) / 2)$inv
     return(list(Mstar = mom$M + S %*% t(A), reduction = rowSums(A * Gamma),
-      method = 'derivative'))
+      method = used))
   }
   if (method %in% c('auto', 'opg') && (method == 'opg' || n >= 10L * p)) {
     coef <- .ctScorePinv(crossprod(S))$inv %*% crossprod(S, mom$M)
@@ -701,7 +720,9 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   }
   none(paste0("The error-based tests ignore estimation (", p, " parameters, ", n,
     " units; projection = 'derivative' would take about ", ceiling(2 * p * tpass / 60),
-    " minutes) and are conservative."))
+    " minutes", if (!is.null(plugin)) paste0(", 'plugin' several times less, and is ",
+      "approximate") else "", ") and are conservative; the distribution family can miss ",
+    "a strong misfit without it."))
 }
 
 # Every statistic's z, and each family's max and sum tests. A statistic's

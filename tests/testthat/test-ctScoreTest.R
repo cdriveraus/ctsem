@@ -256,6 +256,13 @@ test_that("row scores sum to the subjects' scores, on the filter and the Laplace
   ad <- suppressMessages(ctFitAdequacy(lfit, families = 'effects', cores = 1, nboot = 199))
   expect_identical(ad$families$family, 'effects')
   expect_gt(ad$families$p, 0.01)
+
+  # On this route the estimation correction can take its differences from
+  # plug-in passes, and says that it did.
+  ap <- suppressMessages(ctFitAdequacy(lfit, families = c('residuals', 'distribution'),
+    projection = 'plugin', cores = 1, nboot = 199))
+  expect_identical(ap$projection, 'plugin')
+  expect_true(all(ap$families$p > 0 & ap$families$p <= 1))
 })
 
 test_that("stability along a predicted state finds a drift that depends on it", {
