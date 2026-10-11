@@ -109,10 +109,9 @@ The relaxations, in the language of the model:
 
 On a reduced-rank level (\code{poprank}) a heterogeneity result for a
 parameter that already varies through the shared dimensions gives it a
-variance of its own (\code{popunique}), and a significant \code{dimension}
-test raises the rank by one; without reduced rank, a significant
-\code{dimension} test makes the parameters its direction loads on vary
-together. Relaxations the score tests cannot tell apart (the same
+variance of its own (\code{popunique}); without reduced rank, a
+significant \code{dimension} test makes the parameters its direction
+loads on vary together. Relaxations the score tests cannot tell apart (the same
 \code{class}) are not refitted in the same round.
 
 When the search stops, each change kept is tried out again, by refitting

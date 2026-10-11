@@ -82,8 +82,11 @@
 #'   \code{dimension}.
 #'
 #'   \code{dimension} tests every direction at once: whether subjects vary
-#'   along some combination of the tested parameters -- a new dimension of
-#'   person variation, or on a reduced-rank level one beyond its rank. Adding
+#'   along some combination of the tested parameters, a new dimension of
+#'   person variation. It is not computed on a reduced-rank level, where in
+#'   simulation it found a dimension the rank lacked 10 per cent of the time
+#'   and the per-parameter tests of variation outside the shared dimensions 58
+#'   per cent; those are the test there. Adding
 #'   variance along a direction \code{u} changes a subject's log likelihood,
 #'   at zero, by \code{(u's_i)^2/2 + u'H_iu/2}, so the per-parameter tests are
 #'   the diagonal of one score matrix; its largest eigenvalue, scaled by each
@@ -125,7 +128,10 @@
 #'   \code{popsd_} coordinate, so a covariate's effect on it is tested along
 #'   the direction that scales that parameter's row of the loadings and its own
 #'   sd together, reported as \code{scale(<parameter>)}: the effect on its log
-#'   standard deviation per unit of the covariate, the correlations held.
+#'   standard deviation per unit of the covariate, the correlations held. In
+#'   simulation (100 subjects, rank 1) these rows rejected 9 to 10 per cent
+#'   of correct models at .05 where the covariate's joint test held its
+#'   level: read them as attribution once the joint test has screened.
 #'
 #' @section State dependence: For each latent equation and each pair of
 #'   latent states \code{k <= m}, the score test of a term \code{d * eta_k *
@@ -388,7 +394,11 @@ ctScoreTest <- function(fit, covariates = NULL,
       "tests = 'statedependence'.", call. = FALSE)
     if (length(het)) attempt('heterogeneity', {
       out$heterogeneity <- .ctScoreHeterogeneity(pieces, ptab, het, variance, nboot)
-      if (length(het) > 1L) out$dimension <- .ctScoreDimension(pieces, ptab, het, nboot)
+      # Not on a reduced-rank level: there it found a missing dimension 10 per
+      # cent of the time where the per-parameter test of variation outside the
+      # shared dimensions found it 58 (simulation, rank 1 fitted to rank 2).
+      if (length(het) > 1L && !reduced) out$dimension <- .ctScoreDimension(pieces, ptab,
+        het, nboot)
     })
     if (length(cov)) attempt('covariates', {
       items <- .ctScoreItems(pieces, ptab, cov)

@@ -119,10 +119,11 @@ candidate and test again.
 
 The line under the table tests every direction at once: whether the subjects
 vary along some combination of these parameters, which no single row would
-isolate when the variation is spread over several of them. On a model whose
-population covariance has reduced rank (`poprank`), it is the test of one more
-dimension. Here one parameter carries the variation, and its own row is the
-sharper test.
+isolate when the variation is spread over several of them. Here one parameter
+carries the variation, and its own row is the sharper test. On a model whose
+population covariance has reduced rank (`poprank`) the rows test variation
+outside the shared dimensions, and the line is not given: in simulation the
+rows found a missing dimension far more often.
 
 ```{r het-refit}
 model1b <- model

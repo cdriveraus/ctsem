@@ -48,10 +48,9 @@
 #'
 #' On a reduced-rank level (\code{poprank}) a heterogeneity result for a
 #' parameter that already varies through the shared dimensions gives it a
-#' variance of its own (\code{popunique}), and a significant \code{dimension}
-#' test raises the rank by one; without reduced rank, a significant
-#' \code{dimension} test makes the parameters its direction loads on vary
-#' together. Relaxations the score tests cannot tell apart (the same
+#' variance of its own (\code{popunique}); without reduced rank, a
+#' significant \code{dimension} test makes the parameters its direction
+#' loads on vary together. Relaxations the score tests cannot tell apart (the same
 #' \code{class}) are not refitted in the same round.
 #'
 #' When the search stops, each change kept is tried out again, by refitting
@@ -360,29 +359,21 @@ ctModelImprove <- function(fit, covariates = NULL,
         list(model = model, data = data, args = list(popunique = unique(c(old, par))))
       } }))
   }
+  # The dimension test runs only where the level is not of reduced rank
+  # (ctScoreTest), so a significant one makes the parameters its direction
+  # loads on vary together.
   d <- st$dimension
   if (!is.null(d) && isTRUE(d$p < alpha)) {
-    rk <- replay$poprank
-    if (!is.null(current) && any(grepl('^poploading_', .ctFitRawParNames(current)))) {
-      if (is.numeric(rk) && length(rk) == 1L && is.finite(rk)) out[[length(out) + 1L]] <-
-        list(key = paste0('rank:', rk + 1L), family = 'dimension',
-          label = paste0('population rank raised to ', rk + 1L), p = d$p, rank = d$p,
-          edit = local({ rk <- rk; function(model, data, covs, args = list()) {
-            r <- if (!is.null(args$poprank)) args$poprank else rk
-            list(model = model, data = data, args = list(poprank = r + 1L))
-          } }))
-    } else {
-      pars <- names(d$direction)[abs(d$direction) >= 0.5]
-      pars <- setdiff(pars, model$pars$param[as.logical(model$pars$indvarying) %in% TRUE])
-      if (length(pars) > 1L) out[[length(out) + 1L]] <- list(
-        key = paste0('dim:', paste(sort(pars), collapse = ',')), family = 'dimension',
-        label = paste0(paste(pars, collapse = ', '), ' individually varying together'),
-        p = d$p, rank = d$p, edit = local({ pars <- pars; function(model, data, covs,
-          args = list()) {
-          model$pars$indvarying[model$pars$param %in% pars] <- TRUE
-          list(model = model, data = data)
-        } }))
-    }
+    pars <- names(d$direction)[abs(d$direction) >= 0.5]
+    pars <- setdiff(pars, model$pars$param[as.logical(model$pars$indvarying) %in% TRUE])
+    if (length(pars) > 1L) out[[length(out) + 1L]] <- list(
+      key = paste0('dim:', paste(sort(pars), collapse = ',')), family = 'dimension',
+      label = paste0(paste(pars, collapse = ', '), ' individually varying together'),
+      p = d$p, rank = d$p, edit = local({ pars <- pars; function(model, data, covs,
+        args = list()) {
+        model$pars$indvarying[model$pars$param %in% pars] <- TRUE
+        list(model = model, data = data)
+      } }))
   }
   for (cv in st$covariates) {
     if (!isTRUE(cv$joint$p < alpha)) next
