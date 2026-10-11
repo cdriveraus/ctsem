@@ -103,3 +103,17 @@ test_that("on the Laplace route the T0MEANS predictor reaches value and gradient
     class = c("ctJuliaModel", "ctFitModel"))
   expect_gt(abs(ctJuliaEvaluate(spec2, x, gradient = FALSE, cores = 1)$value - out$value), 1)
 })
+
+test_that("a model whose T0MEANS reads a TI predictor fits, not only evaluates", {
+  skip_without_julia()
+  # The fitted specification carries no `standata`; the predictor count the
+  # engine needs came from there and stopped every such fit before its first
+  # evaluation, while the tests above, on `fit = FALSE`, passed.
+  data <- .t0ti_data(n = 40L)
+  fit <- suppressMessages(ctFit(data, .t0ti_model(), backend = "julia", priors = FALSE,
+    cores = 1, verbose = 0))
+  expect_true(is.finite(fit$estimate$loglik))
+  spec <- .t0ti_spec(data)
+  expect_equal(fit$estimate$loglik, ctJuliaEvaluate(spec, ctsem:::.ctFitRawEstimate(fit),
+    gradient = FALSE, cores = 1)$value, tolerance = 1e-6)
+})
