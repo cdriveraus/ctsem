@@ -61,12 +61,15 @@ function apply_complex_transforms_at_indices!(all_params, indices, transforms, s
 end
 
 """Copy population raw parameters and add TI effects into an isolated subject
-buffer: each effect (`_ctsem_ti_effect`) times the subject's predictor."""
+buffer: each effect (`_ctsem_ti_effect`) times the subject's predictor. Then,
+when a regular transform reads one (`sp.ti_tail`), the predictors themselves
+after the raw parameters."""
 function _materialize_subject_values!(subject_values::AbstractVector, values::AbstractVector,
     sp::EKFParameters, tipreds::AbstractVector)
     subject_values isa Vector || throw(ArgumentError("subject parameter buffer must be resizable"))
-    resize!(subject_values, length(values))
-    copyto!(subject_values, values)
+    resize!(subject_values, length(values) + length(sp.ti_tail))
+    copyto!(subject_values, 1, values, 1, length(values))
+    _ctsem_fill_ti_tail!(subject_values, sp, length(values), tipreds)
     @boundscheck length(sp.ti_parameter_indices) == length(sp.ti_predictor_indices) == length(sp.ti_coefficient_indices) ||
         throw(DimensionMismatch("TI effect metadata has inconsistent lengths"))
     @inbounds for i in eachindex(sp.ti_parameter_indices)
@@ -77,6 +80,38 @@ function _materialize_subject_values!(subject_values::AbstractVector, values::Ab
         predictor <= length(tipreds) || throw(BoundsError(tipreds, predictor))
         coefficient <= length(values) || throw(BoundsError(values, coefficient))
         subject_values[parameter] += _ctsem_ti_effect(sp, values, i) * tipreds[predictor]
+    end
+    return subject_values
+end
+
+"""
+    _ctsem_fill_ti_tail!(subject_values, sp, nraw, tipreds)
+
+Write the TI predictors into `sp.ti_tail`, which follows the `nraw` raw
+parameters; nothing when no transform reads one. The tail's place is fixed when
+the transforms are compiled (`_ctsem_ti_tail_rendering`), so a raw vector of
+another length would put the predictors where no transform reads them -- an
+error, not a guess. `tipreds` empty is a caller with no subject (a population
+summary), which reads every predictor at zero, the population's own point.
+"""
+function _ctsem_fill_ti_tail!(subject_values::AbstractVector, sp::EKFParameters,
+    nraw::Integer, tipreds::AbstractVector)
+    isempty(sp.ti_tail) && return subject_values
+    first(sp.ti_tail) == nraw + 1 || throw(DimensionMismatch(string(
+        "the TI predictor tail starts at ", first(sp.ti_tail), " but this raw ",
+        "parameter vector has length ", nraw)))
+    T = eltype(subject_values)
+    if isempty(tipreds)
+        @inbounds for k in sp.ti_tail
+            subject_values[k] = zero(T)
+        end
+    else
+        length(tipreds) == length(sp.ti_tail) || throw(DimensionMismatch(string(
+            "the TI predictor tail holds ", length(sp.ti_tail), " predictors and ",
+            "this subject has ", length(tipreds))))
+        @inbounds for (k, j) in zip(sp.ti_tail, eachindex(tipreds))
+            subject_values[k] = convert(T, tipreds[j])
+        end
     end
     return subject_values
 end
@@ -332,9 +367,11 @@ function _ctsem_transform_derivatives(sp::EKFParameters, values::AbstractVector{
     best = Dict{Int,T}()
     isempty(range) && return best
     D = ForwardDiff.Dual{Nothing,T,1}
-    scratch = Vector{D}(undef, length(values))
-    @inbounds for i in eachindex(values)
-        scratch[i] = D(values[i], ForwardDiff.Partials((zero(T),)))
+    # With the TI predictor tail (`sp.ti_tail`) at zero, the population's own
+    # point, for a cell that reads one.
+    scratch = Vector{D}(undef, length(values) + length(sp.ti_tail))
+    @inbounds for i in eachindex(scratch)
+        scratch[i] = D(i <= length(values) ? values[i] : zero(T), ForwardDiff.Partials((zero(T),)))
     end
     tf_idx = 0
     @inbounds for idx in eachindex(sp.mutables)

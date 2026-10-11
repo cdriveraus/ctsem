@@ -5987,7 +5987,8 @@ function _laplace_add_ti_effects(laplace::CTSEMLaplaceObjective,
         row = view(shifted, i, :)
         _materialize_subject_values!(buffer, row, subject.params,
             _ctsem_tipred_vector(subject.tipreds, row))
-        out[i, :] = buffer
+        # Without the TI predictor tail (`EKFParameters.ti_tail`).
+        out[i, :] = view(buffer, 1:size(out, 2))
     end
     return out
 end

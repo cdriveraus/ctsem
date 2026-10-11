@@ -169,6 +169,9 @@ function CTSEMAdjointWorkspace(::Type{T}, sp::EKFParameters, nvalues::Integer,
     ws = _init_continuous_ekf_workspace(T, sp)
     n = _val(ws.state_dim)
     m = _val(ws.manifest_dim)
+    # The subject vector the regular transforms read: the raw parameters, then
+    # any TI predictor tail (`EKFParameters.ti_tail`).
+    nvalues = Int(nvalues) + length(sp.ti_tail)
 
     predict_indices = findall(sp.predict_transforms_indices)
     update_indices = findall(sp.update_transforms_indices)
@@ -311,6 +314,9 @@ Two things break it:
   * **TI predictor effects.** `_materialize_subject_values!` shifts a
     parameter by `values[coef] * tipred[pred]`, so `subject_values` -- and
     therefore each regular transform's derivative -- differs per subject.
+    So does a T0MEANS or T0VAR cell reading a predictor (`sp.ti_tail`): the
+    predictor is in `subject_values`, and unwinding once at the last
+    subject's values gave every subject that subject's predictor.
   * **State-dependent transforms.** Their reverse *overwrites* (zeroes) the
     cotangent on the cells they write, because the forward pass overwrote the
     values. Running subject 2's reverse over a buffer still holding subject
@@ -326,6 +332,7 @@ and once.
 function _ctsem_parameter_layer_shareable(sp::EKFParameters, predict_indices,
     update_indices, td_indices)
     isempty(sp.ti_parameter_indices) || return false
+    isempty(sp.ti_tail) || return false
     return isempty(predict_indices) && isempty(update_indices) && isempty(td_indices)
 end
 
@@ -644,7 +651,8 @@ function _get_or_init_adjoint_workspaces!(objective::CTSEMObjective, ::Type{T},
     cached = objective.adjoint_ws
     if cached isa Vector{Any} && length(cached) >= nchunks &&
         all(w -> w isa CTSEMAdjointWorkspace{T} &&
-            length(w.regular_dual_scratch) == nvalues, view(cached, 1:nchunks))
+            length(w.regular_dual_scratch) == nvalues + length(objective.params.ti_tail),
+            view(cached, 1:nchunks))
         return cached
     end
     ntdpred = isempty(objective.subject_objectives) ? 0 :

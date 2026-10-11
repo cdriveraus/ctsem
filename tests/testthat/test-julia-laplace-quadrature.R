@@ -224,8 +224,12 @@ test_that("what a continued fit reports is the continuation's own", {
   expect_equal(sum(cont$estimate$subject_loglik), cont$estimate$loglik, tolerance = 1e-8)
   expect_equal(cont$estimate$loglik_laplace, off$estimate$loglik)
   # The covariance and draws come from the continuation's Hessian, evaluated at
-  # its estimate, not from the Laplace curvature at the Laplace optimum.
-  expect_equal(as.numeric(cont$uncertainty$evaluated_at), x)
+  # its estimate -- or where the finish's steps started, within the reuse
+  # distance of it -- not from the Laplace curvature at the Laplace optimum.
+  expect_lte(.ctBackendHessianDistance(corr$hessian,
+    cont$uncertainty$evaluated_at, x), .ctBackendHessianReuse())
+  expect_identical(corr$newton$steps > 0L,
+    !isTRUE(all.equal(as.numeric(cont$uncertainty$evaluated_at), x, tolerance = 0)))
   expect_equal(cont$uncertainty$hessian, corr$hessian)
   expect_false(isTRUE(all.equal(as.matrix(cont$estimate$cov),
     as.matrix(off$estimate$cov))))
@@ -252,6 +256,60 @@ test_that("what a continued fit reports is the continuation's own", {
   printed <- capture.output(print(cont))
   expect_identical(any(grepl("continued on the quadrature objective", printed)),
     isTRUE(corr$material))
+})
+
+test_that("the continuation closes on its own Hessian what its rounds' rule left", {
+  skip_without_julia()
+  # The rounds stop on a residual in the Laplace fit's metric, and the
+  # certification measures the gap on the continuation's Hessian; where that
+  # Hessian says more is left, `.ctLaplaceContinueFinish()` takes the steps it
+  # predicts. Here from points a little off the continued estimate, with the
+  # estimate's Hessian standing in for theirs, as it does within the reuse
+  # distance.
+  fit <- .lc_fits("nonlinear")$quadrature
+  corr <- fit$laplace$correction
+  module <- .ctJuliaModule(fit$model_spec$project)
+  control <- .ctLaplaceContinueDefaults
+  x <- as.numeric(fit$estimate$raw)
+  hc <- corr$hessian
+  se <- sqrt(diag(solve(-(hc + t(hc)) / 2)))
+  signs <- rep_len(c(1, -1), length(x))
+  placed_at <- function(z) {
+    cont <- module$ctsem_laplace_continuation(.ctJuliaObjective(fit, hybrid = TRUE),
+      .ctJuliaNumericVector(z), nodes = as.integer(control$nodes),
+      tolerance = as.numeric(control$tolerance),
+      product_maxdim = as.integer(control$product_maxdim),
+      soft_tau = as.numeric(control$soft_tau),
+      soft_maxdirs = as.integer(control$soft_maxdirs),
+      maxdim = as.integer(control$maxdim))
+    list(cont = cont, final = .ctJuliaGet(module$ctsem_laplace_continuation_evaluate(
+      cont, .ctJuliaNumericVector(z), gradient = TRUE)),
+      value = as.numeric(.ctJuliaGet(
+        module$ctsem_laplace_continuation_info(cont))$quadrature))
+  }
+
+  near <- x + 0.004 * signs * se
+  at <- placed_at(near)
+  out <- .ctLaplaceContinueFinish(module, at$cont, near, hc, at$final,
+    value = at$value, bar = 1e-12, value_tol = control$value_tol)
+  expect_gte(out$steps, 1L)
+  expect_gt(out$gap_before, 1e-6)
+  expect_lt(out$gap_after, out$gap_before / 100)
+  expect_gte(out$value, at$value)
+  # Back where the rounds converged, to the precision their bar left it at.
+  expect_lt(max(abs(out$x - x) / se), 0.003)
+  # What it returns is the continuation placed at its point.
+  expect_equal(as.numeric(.ctJuliaGet(
+    module$ctsem_laplace_continuation_info(at$cont))$quadrature), out$value)
+
+  # A step farther than the Hessian describes is not taken.
+  far <- x + 0.2 * signs * se
+  at <- placed_at(far)
+  out <- .ctLaplaceContinueFinish(module, at$cont, far, hc, at$final,
+    value = at$value, bar = 1e-12, value_tol = control$value_tol)
+  expect_identical(out$steps, 0L)
+  expect_identical(out$x, far)
+  expect_null(out$info)
 })
 
 test_that("the quadrature correction reports progress at the default verbosity", {

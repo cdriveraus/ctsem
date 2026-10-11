@@ -416,7 +416,7 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
     censormax=Float64[], covmatcode::Int=0, population_indices=Int[],
     population_covmatcode::Union{Nothing,Integer}=nothing,
     population_scale=Float64[], affine_dim::Int=0, stationary::Bool=false,
-    ti_fixed_value=Float64[])
+    ti_fixed_value=Float64[], ti_tail_offset::Integer=0, n_tipreds::Integer=0)
 
     n = length(matrix)
     length(row) == n && length(col) == n ||
@@ -431,10 +431,20 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
     axis = retrieve_axes(matrix, row, col)
     values = ComponentVector(fill(NaN, n), axis)
 
+    # A regular transform that reads a TI predictor -- a T0MEANS or T0VAR cell
+    # (`.ctJuliaResolveStaticRefs`) -- reads it from the tail of the subject's
+    # materialised vector, `ti_tail`, so `tipreds[j]` compiles to
+    # `param[ti_tail_offset + j]`. A cell that reads predictors and no
+    # parameter arrives with parnumber 0 and takes the first predictor it
+    # reads as its representative position, which the gradient's support
+    # discovery checks the transform reads (`_ctsem_regular_transform_supports`).
+    ti_tail, regular_text, regular_parnumber = _ctsem_ti_tail_rendering(
+        transform, parnumber, ti_tail_offset, n_tipreds)
+
     # Which flattened position each free parameter occupies.
     map_from = ComponentVector(zeros(Int, n), axis)
     @inbounds for i in 1:n
-        pn = Int(parnumber[i])
+        pn = regular_parnumber[i]
         pn == 0 && continue
         @view(map_from[Symbol(matrix[i])])[Int(row[i]), Int(col[i])] = pn
     end
@@ -444,9 +454,9 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
     # Regular (population) transforms.
     reg_tfs = ComponentVector(Vector{Function}(undef, n), axis)
     @inbounds for i in 1:n
-        pn = Int(parnumber[i])
+        pn = regular_parnumber[i]
         pn == 0 && continue
-        expression = isempty(transform[i]) ? "param[$(pn)]" : String(transform[i])
+        expression = isempty(regular_text[i]) ? "param[$(pn)]" : regular_text[i]
         @view(reg_tfs[Symbol(matrix[i])])[Int(row[i]), Int(col[i])] =
             _regular_transform_closure(expression)
     end
@@ -519,5 +529,36 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
         population_covmatcode === nothing ? covmatcode :
             Int(population_covmatcode),
         Float64.(population_scale), affine_dim, stationary,
-        Float64.(ti_fixed_value))
+        Float64.(ti_fixed_value), ti_tail)
+end
+
+const _CTSEM_TIPRED_REF = r"\btipreds\s*\[\s*(\d+)\s*\]"
+
+"""
+    _ctsem_ti_tail_rendering(transform, parnumber, offset, ntipreds)
+
+The regular transforms' texts with each `tipreds[j]` read rewritten to
+`param[offset + j]`, the parameter number of each cell (a predictor-only cell's
+first read for its 0), and the tail `offset+1:offset+ntipreds` -- `0:-1` when
+no transform reads a predictor. See `EKFParameters.ti_tail`.
+"""
+function _ctsem_ti_tail_rendering(transform, parnumber, offset::Integer,
+    ntipreds::Integer)
+    texts = String[String(t) for t in transform]
+    numbers = Int[Int(p) for p in parnumber]
+    reads = [occursin(_CTSEM_TIPRED_REF, t) for t in texts]
+    any(reads) || return (0:-1), texts, numbers
+    (offset > 0 && ntipreds > 0) || throw(ArgumentError(string(
+        "a T0MEANS or T0VAR cell reads a TI predictor, but the parameter ",
+        "vector's length (ti_tail_offset = ", offset, ") or the number of TI ",
+        "predictors (n_tipreds = ", ntipreds, ") was not given")))
+    for i in findall(reads)
+        js = [parse(Int, m.captures[1]) for m in eachmatch(_CTSEM_TIPRED_REF, texts[i])]
+        all(j -> 1 <= j <= ntipreds, js) || throw(ArgumentError(string(
+            "transform `", texts[i], "` reads a TI predictor outside 1:", ntipreds)))
+        texts[i] = replace(texts[i], _CTSEM_TIPRED_REF =>
+            s -> string("param[", offset + parse(Int, match(r"\d+", s).match), "]"))
+        numbers[i] == 0 && (numbers[i] = offset + first(js))
+    end
+    return (offset + 1):(offset + ntipreds), texts, numbers
 end

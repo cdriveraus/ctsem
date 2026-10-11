@@ -318,6 +318,15 @@ struct EKFParameters{RG,PT,UT,TT,AX,FV}
     # the value times the predictor (`_ctsem_ti_effect`). Declared last and
     # supplied last, for the reason the `manifesttype` comment above gives.
     ti_fixed_values::Vector{Float64}
+    # Where a subject's TI predictor values sit in its materialised parameter
+    # vector, after the raw parameters (`_materialize_subject_values!`), or
+    # `0:-1` when no regular transform reads one. A T0MEANS or T0VAR cell is a
+    # regular transform -- a function of that vector alone, evaluated before
+    # any row -- so a predictor it reads has to be in the vector; the row
+    # groups read theirs from the row context instead (`CTSEMRowContext`).
+    # Declared last and supplied last, for the reason the `manifesttype`
+    # comment above gives.
+    ti_tail::UnitRange{Int}
     # Deviations the filter integrates itself; see `CTSEMHybrid`. Empty unless a
     # Laplace objective filled it. Declared last and supplied last.
     hybrid::CTSEMHybrid
@@ -355,6 +364,7 @@ struct EKFParameters{RG,PT,UT,TT,AX,FV}
         affine_dim::Int=0,
         stationary::Bool=false,
         ti_fixed_values=Float64[],
+        ti_tail::UnitRange{Int}=0:-1,
     )
         # Every argument from `ti_parameter_indices` on is optional and
         # positional, so inserting a field shifts every caller that passes the
@@ -433,6 +443,7 @@ struct EKFParameters{RG,PT,UT,TT,AX,FV}
             stationary,
             isempty(ti_fixed_values) ? zeros(Float64, length(ti_parameter_indices)) :
                 Vector{Float64}(ti_fixed_values),
+            ti_tail,
             CTSEMHybrid(),
         )
     end
