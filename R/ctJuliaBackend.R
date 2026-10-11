@@ -3938,7 +3938,10 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   if (any(grepl(.CT_JULIA_TIPREDREF, .ctJuliaNoNA(as.character(table$transform), ""),
       perl = TRUE))) {
     arguments$ti_tail_offset <- .ctBackendNpar(spec)
-    arguments$n_tipreds <- as.integer(spec$standata$ntipred)[1L]
+    # From the prepared predictors, which every specification carries: a
+    # fitted one has no `standata`, and reading the count from there sent NA
+    # and stopped every fit of such a model before its first evaluation.
+    arguments$n_tipreds <- as.integer(NCOL(spec$tipred_data))
   }
   if (nrow(effects)) {
     arguments$ti_parameter <- V(as.integer(effects$parameter))
