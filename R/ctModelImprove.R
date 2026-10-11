@@ -85,7 +85,16 @@
 #'   so at that size it is not the stricter choice. A drift that varied over
 #'   subjects was never added as such at that size; a random diffusion or
 #'   measurement error variance stood in for it in 10 per cent, since what the
-#'   data showed was subjects differing in variance.
+#'   data showed was subjects differing in variance. A search makes a decision
+#'   per family it screens, so its error rate grows with the families: on two
+#'   processes with three items each (60 subjects, about 48 rows each), where
+#'   the screen also tests state dependence and volatility in each process,
+#'   \code{alpha = 0.05} kept something in 3 of 19 searches with nothing
+#'   missing (a drift term once, a volatility term twice), and \code{alpha =
+#'   0.01} is the stricter choice. With an omitted cross effect, a process of
+#'   an item's own and a daily cycle in the same data, the search kept the
+#'   cross effect in 17 of 18 searches, the cycle in 15 and the item's process
+#'   in 13.
 #'
 #' The result is a model chosen by the data it is fitted to, and its
 #' standard errors and tests do not account for that choice (MacCallum,
