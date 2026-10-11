@@ -378,9 +378,10 @@ the most strongly indicated relaxations one at a time (warm started from the
 current estimates), and keeps the best if the refit's likelihood confirms it.
 It repeats until nothing more is indicated, then checks the model with
 `ctFitAdequacy()`. If a check fails, it tries structural changes the score
-tests cannot reach, such as making a process second order
-(`ctModelHigherOrder()`) or models you supply. Finally it tries dropping each
-change it kept, in case a later one made it redundant.
+tests cannot reach: a slow process driving a latent (`ctModelSlowComponent()`),
+tried first for a latent whose updates stay correlated over long gaps; making a
+process second order (`ctModelHigherOrder()`); or models you supply. Finally it
+tries dropping each change it kept, in case a later one made it redundant.
 
 Here the data contain two of the departures above at once: `age` acts on the
 intercept of `Y1` and on the cross effect, `eta2` moderates how `eta1`

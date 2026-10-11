@@ -141,11 +141,12 @@ before interpreting their sizes.
   \code{TIpredNames} and refit.
 
   \code{form = 'threshold'} tests a step at an unknown cut instead: the
-  joint test at each cut from the 15th to the 85th percentile, the largest
-  of them against a bootstrap over subjects that takes the search over cuts
-  into account (Andrews, 1993) -- the split a score-guided tree makes. The
-  effects reported are those of being above the best cut, \code{cut} in the
-  joint row.
+  joint test at each cut from the 15th to the 85th percentile, and the
+  largest of them (Andrews, 1993) -- the split a score-guided tree makes --
+  against the same scan with the covariate permuted over subjects (Hothorn
+  & Lausen, 2003), which takes the search into account exactly and refits
+  nothing. The effects reported are those of being above the best cut,
+  \code{cut} in the joint row.
 
   On a reduced-rank level the spread of a varying parameter has no
   \code{popsd_} coordinate, so a covariate's effect on it is tested along
@@ -258,6 +259,10 @@ Boos, D. D. (1992). On generalized score tests. The American
 
   Chesher, A. (1984). Testing for neglected heterogeneity. Econometrica, 52,
   865-872.
+
+  Hothorn, T., & Lausen, B. (2003). On the exact distribution of maximally
+  selected rank statistics. Computational Statistics & Data Analysis, 43,
+  121-137.
 
   Andrews, D. W. K. (1993). Tests for parameter instability and structural
   change with unknown change point. Econometrica, 61, 821-856.

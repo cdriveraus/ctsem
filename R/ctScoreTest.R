@@ -110,11 +110,12 @@
 #'   \code{TIpredNames} and refit.
 #'
 #'   \code{form = 'threshold'} tests a step at an unknown cut instead: the
-#'   joint test at each cut from the 15th to the 85th percentile, the largest
-#'   of them against a bootstrap over subjects that takes the search over cuts
-#'   into account (Andrews, 1993) -- the split a score-guided tree makes. The
-#'   effects reported are those of being above the best cut, \code{cut} in the
-#'   joint row.
+#'   joint test at each cut from the 15th to the 85th percentile, and the
+#'   largest of them (Andrews, 1993) -- the split a score-guided tree makes --
+#'   against the same scan with the covariate permuted over subjects (Hothorn
+#'   & Lausen, 2003), which takes the search into account exactly and refits
+#'   nothing. The effects reported are those of being above the best cut,
+#'   \code{cut} in the joint row.
 #'
 #'   On a reduced-rank level the spread of a varying parameter has no
 #'   \code{popsd_} coordinate, so a covariate's effect on it is tested along
@@ -247,6 +248,10 @@
 #'
 #'   Chesher, A. (1984). Testing for neglected heterogeneity. Econometrica, 52,
 #'   865-872.
+#'
+#'   Hothorn, T., & Lausen, B. (2003). On the exact distribution of maximally
+#'   selected rank statistics. Computational Statistics & Data Analysis, 43,
+#'   121-137.
 #'
 #'   Andrews, D. W. K. (1993). Tests for parameter instability and structural
 #'   change with unknown change point. Econometrica, 61, 821-856.
@@ -711,12 +716,11 @@ ctScoreTest <- function(fit, covariates = NULL,
 # against the largest in each resample.
 #
 # The draws must be studentised as the observed statistic is. A Gaussian
-# multiplier with the observed variance held fixed is not, and errs either
-# way: for the threshold search, whose sums are roughly symmetric, the fixed
-# variance made the reference too narrow (21 per cent at .05 under the
-# null); for the dimension test, whose diagonal sums are right-skewed and so
-# left-skewed once studentised, too wide (0 of 100, and 2 per cent power for a
-# missing dimension).
+# multiplier with the observed variance held fixed is not: for the dimension
+# test, whose diagonal sums are right-skewed and so left-skewed once
+# studentised, it made the reference too wide (0 of 100 correct models
+# rejected, and 2 per cent power for a missing dimension). A search over a
+# covariate's cuts is the exception, for which see .ctScoreThreshold.
 .ctScoreBoot <- function(C, nboot = 1999L, onesided = FALSE, statistic = NULL) {
   Cs <- if (is.list(C) && !is.data.frame(C)) lapply(C, as.matrix) else list(as.matrix(C))
   n <- nrow(Cs[[1]])
@@ -894,10 +898,18 @@ ctScoreTest <- function(fit, covariates = NULL,
 
 # A covariate that acts above or below a threshold, at a threshold not known
 # in advance: the joint test of a step at each candidate cut (the 15th to the
-# 85th percentile), and the largest of them, calibrated by one multiplier
-# bootstrap over subjects for every cut at once (Andrews, 1993; the split a
-# score-guided tree makes, Arnold et al., 2021, 2024). The effects reported
-# are those of being above the best cut, held as for a linear covariate.
+# 85th percentile), and the largest of them (Andrews, 1993; the split a
+# score-guided tree makes, Arnold et al., 2021, 2024), against the same scan
+# with the covariate permuted over subjects (maximally selected statistics,
+# Hothorn & Lausen, 2003). Under the null the covariate is unrelated to the
+# subject's data, so the permutation null is exact whatever the statistic's
+# distribution, and the fit does not involve the covariate, so nothing is
+# refitted. A bootstrap failed both ways: with each cut's variance held fixed
+# a correct model was rejected 21 per cent of the time at .05, because at an
+# extreme cut the variance comes from the few subjects on one side; resampled
+# with that variance recomputed, the reference was so wide it found nothing.
+# The effects reported are those of being above the best cut, held as for a
+# linear covariate.
 .ctScoreThreshold <- function(pieces, items, z, name, variance = 'robust',
   nboot = 1999L, ncuts = 15L) {
   if (is.factor(z) || is.character(z) || is.logical(z)) stop("Covariate '", name,
@@ -910,36 +922,45 @@ ctScoreTest <- function(fit, covariates = NULL,
     a <- sum(z[ok] > c); a >= 5 && sum(ok) - a >= 5 }, logical(1))]
   if (!length(cuts)) stop("Covariate '", name, "' has too few distinct values ",
     "for a threshold.", call. = FALSE)
-  fits <- lapply(cuts, function(c) {
-    G <- matrix(as.numeric(z > c), ncol = 1L, dimnames = list(NULL, 'step'))
-    G[ok, ] <- G[ok, ] - mean(G[ok, ]); G[!ok, ] <- 0
-    attr(G, 'name') <- name; attr(G, 'form') <- 'threshold'
-    attr(G, 'nmissing') <- sum(!ok)
-    list(G = G)
+  # The step at each cut, centred over the subjects who have the covariate;
+  # those missing it contribute at the mean.
+  steps <- function(zz) lapply(cuts, function(c) {
+    G <- matrix(0, length(zz), 1L, dimnames = list(NULL, 'step'))
+    G[ok, 1] <- as.numeric(zz[ok] > c)
+    G[ok, 1] <- G[ok, 1] - mean(G[ok, 1])
+    G
   })
-  # The per-subject projected contributions of each cut, for the sup.
-  contrib <- lapply(fits, function(f) .ctScoreCovariateContributions(pieces, items, f$G))
+  Iinv <- .ctScorePinv(-pieces$Hsum)$inv
   stat <- function(C) {
     v <- .ctScorePinv(.ctScoreSpread(C))
     u <- colSums(C)
     as.numeric(t(u) %*% v$inv %*% u)
   }
-  lms <- vapply(contrib, stat, 0)
+  scan <- function(zz) vapply(steps(zz), function(G)
+    stat(.ctScoreCovariateContributions(pieces, items, G, Iinv)), 0)
+  lms <- scan(z)
   best <- which.max(lms)
-  # The best cut's effects and their tests, with the bootstrap the scan skipped.
-  out <- .ctScoreCovariate(pieces, items, fits[[best]]$G, variance, nboot)
+  G <- steps(z)[[best]]
+  attr(G, 'name') <- name; attr(G, 'form') <- 'threshold'
+  attr(G, 'nmissing') <- sum(!ok)
+  out <- .ctScoreCovariate(pieces, items, G, variance, nboot)
+  perms <- vapply(seq_len(nboot), function(b) {
+    zz <- z
+    zz[ok] <- z[ok][sample.int(sum(ok))]
+    max(scan(zz))
+  }, 0)
   out$joint$LM <- lms[best]
-  out$joint$p <- .ctScoreBoot(contrib, nboot)
+  out$joint$p <- (1 + sum(perms >= lms[best])) / (1 + nboot)
   out$joint$cut <- cuts[best]
   out
 }
 
 # Each subject's projected contribution to a covariate's effects: the
 # columns whose sum is the joint test's U*.
-.ctScoreCovariateContributions <- function(pieces, items, G) {
+.ctScoreCovariateContributions <- function(pieces, items, G, Iinv = NULL) {
   S <- pieces$S
   q <- ncol(G); k <- length(items)
-  Iinv <- .ctScorePinv(-pieces$Hsum)$inv
+  if (is.null(Iinv)) Iinv <- .ctScorePinv(-pieces$Hsum)$inv
   C <- do.call(cbind, lapply(items, function(it) G * it$s))
   Idt <- do.call(rbind, lapply(items, function(it) -crossprod(G, it$H)))
   C - S %*% t(Idt %*% Iinv)
