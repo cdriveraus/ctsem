@@ -142,3 +142,35 @@ test_that("a search with held-out subjects confirms what it kept on them", {
   expect_equal(length(unique(ctsem:::.ctFitLongData(imp$fit)$id)), 80L)
   expect_output(print(imp), 'held-out')
 })
+
+test_that("a process driven by a slow one gets a slow process, and the search stops", {
+  # The fast process is pulled towards a slow one with a time constant of 20,
+  # which the model lacks: its updates stay correlated over long gaps (the
+  # latent family), so the search tries a slow process first and keeps it.
+  set.seed(21)
+  d <- do.call(rbind, lapply(1:60, function(i) {
+    nobs <- 40; times <- cumsum(c(0, stats::rexp(nobs - 1, 1)))
+    x <- stats::rnorm(1, 0, 0.7); s <- stats::rnorm(1); xs <- numeric(nobs); xs[1] <- x
+    for (t in 2:nobs) {
+      n <- max(1, ceiling((times[t] - times[t - 1]) / 0.02)); h <- (times[t] - times[t - 1]) / n
+      for (k in 1:n) {
+        x <- x + (-x + 0.5 * s) * h + 0.8 * sqrt(h) * stats::rnorm(1)
+        s <- s - 0.05 * s * h + sqrt(2 * 0.05 * h) * stats::rnorm(1)
+      }
+      xs[t] <- x
+    }
+    data.frame(id = i, time = times, Y1 = xs + stats::rnorm(nobs, 0, 0.4))
+  }))
+  fit <- fit_cached('improve slow', {
+    m <- suppressMessages(ctModel(type = 'ct', manifestNames = 'Y1', latentNames = 'eta1',
+      LAMBDA = matrix(1), MANIFESTMEANS = matrix(0), CINT = matrix(0)))
+    m$pars$indvarying <- FALSE
+    suppressMessages(ctFit(d, m, backend = 'julia', cores = 1, verbose = 0))
+  })
+  imp <- suppressMessages(ctModelImprove(fit, relax = 'slow', nsamples = 40, cores = 1,
+    verbose = FALSE))
+  expect_identical(imp$history$change[imp$history$kept], 'eta1 driven by a slow process')
+  expect_lt(imp$history$screen_p[1], 1e-4)
+  expect_true('slow_eta1' %in% ctsem:::.ctFitBaseModel(imp$fit)$latentNames)
+  expect_identical(imp$stopped, 'adequate')
+})

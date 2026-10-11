@@ -114,11 +114,52 @@ ctModelHigherOrder <- function(ctm, indices,diffusion=TRUE, crosseffects=FALSE,c
   indices <- as.integer(indices)
   if (anyDuplicated(indices) || any(indices < 1L | indices > nl)) stop(
     "indices must be distinct latents, from 1 to ", nl, ".", call. = FALSE)
-  pars <- ctm$pars
   names0 <- ctm$latentNames
-  newnames <- paste0('d', names0[indices])
-  allnames <- c(names0, newnames)
-  N <- nl + length(indices)
+  ed <- .ctParsLatentEditor(ctm, paste0('d', names0[indices]))
+  allnames <- ed$names
+  # The lower-triangle cell between latents a and b, where a covariance's
+  # parameter lives.
+  low <- function(a, b) c(max(a, b), min(a, b))
+  for (k in seq_along(indices)) {
+    i <- indices[k]; n <- nl + k
+    if (crosseffects) {
+      for (j in seq_len(nl)) if (j != i) {
+        ed$copy('DRIFT', i, j, n, j); ed$copy('DRIFT', j, i, j, n)
+        ed$fixed('DRIFT', i, j, 0); ed$fixed('DRIFT', j, i, 0)
+      }
+    }
+    ed$copy('DRIFT', i, i, n, n)
+    ed$fixed('DRIFT', i, i, 0)
+    ed$fixed('DRIFT', i, n, 1)
+    ed$free('DRIFT', n, i, paste0('drift_', allnames[n], '_', names0[i]),
+      transform = if (explosive) 'param * 2 - 1' else '-log1p_exp(-param * 2) - 1e-6')
+    if (diffusion) {
+      for (j in seq_len(nl)) {
+        src <- low(i, j)
+        if (j == i) ed$copy('DIFFUSION', i, i, n, n) else ed$copy('DIFFUSION', src[1], src[2], n, j)
+      }
+      for (j in seq_len(nl)) { ed$fixed('DIFFUSION', i, j, 0); ed$fixed('DIFFUSION', j, i, 0) }
+    }
+    if (cint) { ed$copy('CINT', i, 1, n, 1); ed$fixed('CINT', i, 1, 0) }
+    ed$free('T0MEANS', n, 1, paste0('T0mean_', allnames[n]))
+    for (j in seq_len(n)) ed$free('T0VAR', n, j, if (j == n) paste0('T0var_', allnames[n]) else
+      paste0('T0var_', allnames[n], '_', allnames[j]))
+  }
+  ed$finish()
+}
+
+# A model's parameter table opened to new latents (`newnames`, appended after
+# the existing ones): every cell of their rows and columns set to zero, then
+# edited a cell at a time by the closures returned -- `fixed`; `free`, with
+# ctsem's default transform unless one is given, varying over no one, and
+# predictor effects as `tipred` says; `copy`, a cell with every setting it has
+# -- and `finish()` returns the model. Shared by ctModelHigherOrder() and
+# ctModelSlowComponent(), so a cell written by either is written the same way.
+.ctParsLatentEditor <- function(ctm, newnames) {
+  pars <- ctm$pars
+  nl <- ctm$n.latent
+  allnames <- c(ctm$latentNames, newnames)
+  N <- length(allnames)
   effects <- grep('_effect$', names(pars), value = TRUE)
   levelflags <- grep('^indvarying_', names(pars), value = TRUE)
   template <- pars[1, , drop = FALSE]
@@ -137,14 +178,14 @@ ctModelHigherOrder <- function(ctm, indices,diffusion=TRUE, crosseffects=FALSE,c
     for (l in levelflags) rec[[l]] <- FALSE
     put(m, r, c, rec)
   }
-  free <- function(m, r, c, name, transform = NULL) {
+  free <- function(m, r, c, name, transform = NULL, tipred = isTRUE(ctm$tipredDefault)) {
     rec <- template
     def <- .ctModelDefaultFreePar(m, r, c, TRUE)
     rec$param <- name; rec$value <- NA_real_
     rec$transform <- if (is.null(transform)) def$transform else transform
     rec$indvarying <- FALSE
     if ('sdscale' %in% names(rec)) rec$sdscale <- 1
-    for (e in effects) rec[[e]] <- as.character(isTRUE(ctm$tipredDefault))
+    for (e in effects) rec[[e]] <- as.character(isTRUE(tipred))
     for (l in levelflags) rec[[l]] <- FALSE
     put(m, r, c, rec)
   }
@@ -152,12 +193,7 @@ ctModelHigherOrder <- function(ctm, indices,diffusion=TRUE, crosseffects=FALSE,c
     k <- at(m, fr, fc)
     if (length(k)) put(m, tr, tc, pars[k, , drop = FALSE]) else fixed(m, tr, tc, 0)
   }
-  # The lower-triangle cell between latents a and b, where a covariance's
-  # parameter lives.
-  low <- function(a, b) c(max(a, b), min(a, b))
-
-  # Every new row and column, zero to begin with.
-  for (n in (nl + 1):N) {
+  for (n in seq_len(N)[-seq_len(nl)]) {
     for (j in seq_len(N)) {
       for (m in c('DRIFT', 'DIFFUSION', 'T0VAR')) { fixed(m, n, j, 0); fixed(m, j, n, 0) }
     }
@@ -165,35 +201,13 @@ ctModelHigherOrder <- function(ctm, indices,diffusion=TRUE, crosseffects=FALSE,c
     for (j in seq_len(ctm$n.manifest)) fixed('LAMBDA', j, n, 0)
     for (j in seq_len(ctm$n.TDpred)) fixed('TDPREDEFFECT', n, j, 0)
   }
-  for (k in seq_along(indices)) {
-    i <- indices[k]; n <- nl + k
-    if (crosseffects) {
-      for (j in seq_len(nl)) if (j != i) {
-        copy('DRIFT', i, j, n, j); copy('DRIFT', j, i, j, n)
-        fixed('DRIFT', i, j, 0); fixed('DRIFT', j, i, 0)
-      }
-    }
-    copy('DRIFT', i, i, n, n)
-    fixed('DRIFT', i, i, 0)
-    fixed('DRIFT', i, n, 1)
-    free('DRIFT', n, i, paste0('drift_', allnames[n], '_', names0[i]),
-      transform = if (explosive) 'param * 2 - 1' else '-log1p_exp(-param * 2) - 1e-6')
-    if (diffusion) {
-      for (j in seq_len(nl)) {
-        src <- low(i, j)
-        if (j == i) copy('DIFFUSION', i, i, n, n) else copy('DIFFUSION', src[1], src[2], n, j)
-      }
-      for (j in seq_len(nl)) { fixed('DIFFUSION', i, j, 0); fixed('DIFFUSION', j, i, 0) }
-    }
-    if (cint) { copy('CINT', i, 1, n, 1); fixed('CINT', i, 1, 0) }
-    free('T0MEANS', n, 1, paste0('T0mean_', allnames[n]))
-    for (j in seq_len(n)) free('T0VAR', n, j, if (j == n) paste0('T0var_', allnames[n]) else
-      paste0('T0var_', allnames[n], '_', allnames[j]))
+  finish <- function() {
+    out <- pars[order(match(pars$matrix, unique(ctm$pars$matrix)), pars$col, pars$row), ]
+    rownames(out) <- NULL
+    ctm$pars <- out
+    ctm$latentNames <- allnames
+    ctm$n.latent <- N
+    ctm
   }
-  pars <- pars[order(match(pars$matrix, unique(ctm$pars$matrix)), pars$col, pars$row), ]
-  rownames(pars) <- NULL
-  ctm$pars <- pars
-  ctm$latentNames <- allnames
-  ctm$n.latent <- N
-  ctm
+  list(fixed = fixed, free = free, copy = copy, finish = finish, names = allnames)
 }

@@ -132,3 +132,77 @@ test_that("a ct model raised at a latent that is not the first puts each cell on
   expect_equal(unname(mats$DIFFUSION[3, 3]), '0')
   expect_error(ctModelHigherOrder(.ho_ct(), 3), 'indices')
 })
+
+# ctModelSlowComponent: the same kind of surgery, adding a slow process that
+# drives a latent through its drift (the SNSF pilot's specification).
+test_that("a slow process drives its latent through the drift and nothing else", {
+  m <- .ho_ct()
+  m$tipredDefault <- TRUE
+  sm <- ctModelSlowComponent(m, 1)
+  expect_equal(sm$latentNames, c('eta1', 'eta2', 'slow_eta1'))
+  mats <- ctModelMatrices(sm)
+  # Its persistence and its effect on the latent are free; nothing reaches it
+  # from the fast states; it has no indicators and no intercept.
+  expect_equal(unname(mats$DRIFT[3, 3]), 'drift_slow_eta1')
+  expect_equal(unname(mats$DRIFT[1, 3]), 'drift_eta1_slow_eta1')
+  expect_equal(unname(mats$DRIFT[3, 1:2]), c('0', '0'))
+  expect_equal(unname(mats$DRIFT[2, 3]), '0')
+  expect_equal(as.numeric(mats$LAMBDA[, 3]), c(0, 0))
+  expect_equal(as.numeric(mats$CINT[3, 1]), 0)
+  # Unit innovations, independent of the fast ones.
+  expect_equal(unname(mats$DIFFUSION[3, ]), c('0', '0', '1'))
+  # Its initial state is free, with covariances against every state.
+  expect_equal(unname(mats$T0VAR[3, ]), c('T0var_slow_eta1_eta1', 'T0var_slow_eta1_eta2',
+    'T0var_slow_eta1'))
+  p <- sm$pars
+  slowcells <- p[(p$row == 3 & p$matrix %in% c('DRIFT', 'T0MEANS', 'T0VAR')) |
+    (p$col == 3 & p$matrix == 'DRIFT'), ]
+  free <- slowcells[!is.na(slowcells$param), ]
+  # No individual variation and no predictor effects on any slow cell, even
+  # where the model's default would add them.
+  expect_false(any(free$indvarying))
+  for (e in grep('_effect$', names(p), value = TRUE)) expect_true(all(free[[e]] == 'FALSE'))
+  # The persistence takes ctsem's default drift transform.
+  expect_identical(free$transform[free$param == 'drift_slow_eta1'],
+    .ctModelDefaultFreePar('DRIFT', 3L, 3L, TRUE)$transform)
+  # The latents it was not asked for are untouched.
+  cells <- function(q) { q <- q[q$matrix == 'DRIFT' & q$row <= 2 & q$col <= 2, ]
+    q$param[order(q$row, q$col)] }
+  expect_identical(cells(p), cells(m$pars))
+})
+
+test_that("slow processes' innovations correlate with each other, added together or later", {
+  both <- ctModelMatrices(ctModelSlowComponent(.ho_ct(), 1:2))
+  expect_equal(unname(both$DIFFUSION[4, ]), c('0', '0', 'diff_slow_eta2_slow_eta1', '1'))
+  later <- ctModelSlowComponent(ctModelSlowComponent(.ho_ct(), 1), 2)
+  expect_equal(later$latentNames, c('eta1', 'eta2', 'slow_eta1', 'slow_eta2'))
+  expect_equal(unname(ctModelMatrices(later)$DIFFUSION[4, ]),
+    c('0', '0', 'diff_slow_eta2_slow_eta1', '1'))
+  expect_error(ctModelSlowComponent(ctModelSlowComponent(.ho_ct(), 1), 1), 'already has')
+  expect_error(ctModelSlowComponent(.ho_ct(), 3), 'indices')
+})
+
+test_that("the search starts a slow process away from the stationary point", {
+  m <- .ho_ct()
+  # The effect at one; the persistence a tenth of the latent's, through the
+  # inverse of the default transform. Without a fit to read the latent's drift
+  # from, the pilot's -0.2.
+  st <- ctsem:::.ctImproveSlowStart(m, NULL, 1)
+  expect_equal(unname(st['drift_eta1_slow_eta1']), 1)
+  tf <- function(param) eval(parse(text = .ctModelDefaultFreePar('DRIFT', 3L, 3L, TRUE)$transform),
+    list(param = param, log1p_exp = ctsem:::log1p_exp))
+  expect_equal(tf(unname(st['drift_slow_eta1'])), -0.2, tolerance = 1e-6)
+  fixedfast <- m
+  k <- which(fixedfast$pars$matrix == 'DRIFT' & fixedfast$pars$row == 1 & fixedfast$pars$col == 1)
+  fixedfast$pars$param[k] <- NA; fixedfast$pars$value[k] <- -3
+  expect_equal(tf(unname(ctsem:::.ctImproveSlowStart(fixedfast, NULL, 1)['drift_slow_eta1'])),
+    -0.3, tolerance = 1e-6)
+  # The evidence: the latent's own updates still positively correlated over
+  # some gap; a negative correlation is not evidence of a slow process.
+  ad <- list(statistics = data.frame(family = 'latent', statistic = c('eta1~eta1 gap <=1',
+    'eta1~eta1 gap >5', 'eta2~eta2 gap >5', 'eta1~eta2 gap >5'),
+    z = c(1, 3, -4, 5), p = c(0.3, 0.003, 6e-5, 6e-7), stringsAsFactors = FALSE))
+  expect_equal(ctsem:::.ctImproveSlowEvidence(ad, 'eta1'), 0.003)
+  expect_true(is.na(ctsem:::.ctImproveSlowEvidence(ad, 'eta2')))
+  expect_true(is.na(ctsem:::.ctImproveSlowEvidence(NULL, 'eta1')))
+})

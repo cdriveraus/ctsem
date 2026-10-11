@@ -7,7 +7,7 @@
 ctModelImprove(
   fit,
   covariates = NULL,
-  relax = c("heterogeneity", "covariates", "statedependence", "fixed", "order"),
+  relax = c("heterogeneity", "covariates", "statedependence", "fixed", "slow", "order"),
   candidates = NULL,
   alpha = 0.05,
   maxsteps = 10L,
@@ -84,9 +84,12 @@ relaxations, one at a time, warm started from the current estimates; keeps
 the best of them if the refit's likelihood confirms it; and stops when no
 relaxation is indicated and the model is adequate by
 \code{\link{ctFitAdequacy}}. When nothing is indicated but the model is not
-adequate, raising the order of a latent process
+adequate, a slow process driving a latent
+(\code{\link{ctModelSlowComponent}}), raising the order of a latent process
 (\code{\link{ctModelHigherOrder}}) and any models given in
-\code{candidates} are tried the same way.
+\code{candidates} are tried the same way, slow processes first for the
+latents whose updates stay correlated over time gaps (the \code{latent}
+family of the adequacy check).
 }
 \details{
 The relaxations, in the language of the model:
@@ -99,6 +102,8 @@ The relaxations, in the language of the model:
     a drift coefficient that varies with a state.}
   \item{fixed}{a cell fixed at zero freed: a drift cross effect, a
     diffusion or measurement error covariance, a cross loading.}
+  \item{slow}{a slow process driving a latent through its drift, its effect
+    started at one and its persistence at a tenth of the latent's.}
   \item{order}{a latent process made second order.}
 }
 

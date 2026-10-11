@@ -8,7 +8,8 @@
 # only directions near the current model, and a model that is adequate by
 # every check it was not tuned on is the aim. When the screen is clean and the
 # checks still fail, structural changes the score tests cannot reach -- a
-# higher-order process, a model the user supplies -- are tried by refit.
+# slow process driving a latent, a higher-order process, a model the user
+# supplies -- are tried by refit.
 #
 # Greedy, one change a step, retested after each: a missing relaxation echoes
 # in the tests of related ones (a varying drift moves the diffusion's
@@ -23,9 +24,12 @@
 #' the best of them if the refit's likelihood confirms it; and stops when no
 #' relaxation is indicated and the model is adequate by
 #' \code{\link{ctFitAdequacy}}. When nothing is indicated but the model is not
-#' adequate, raising the order of a latent process
+#' adequate, a slow process driving a latent
+#' (\code{\link{ctModelSlowComponent}}), raising the order of a latent process
 #' (\code{\link{ctModelHigherOrder}}) and any models given in
-#' \code{candidates} are tried the same way.
+#' \code{candidates} are tried the same way, slow processes first for the
+#' latents whose updates stay correlated over time gaps (the \code{latent}
+#' family of the adequacy check).
 #'
 #' The relaxations, in the language of the model:
 #' \describe{
@@ -37,6 +41,8 @@
 #'     a drift coefficient that varies with a state.}
 #'   \item{fixed}{a cell fixed at zero freed: a drift cross effect, a
 #'     diffusion or measurement error covariance, a cross loading.}
+#'   \item{slow}{a slow process driving a latent through its drift, its effect
+#'     started at one and its persistence at a tenth of the latent's.}
 #'   \item{order}{a latent process made second order.}
 #' }
 #'
@@ -124,7 +130,7 @@
 #' @seealso \code{vignette('score-tests')}.
 #' @export
 ctModelImprove <- function(fit, covariates = NULL,
-  relax = c('heterogeneity', 'covariates', 'statedependence', 'fixed', 'order'),
+  relax = c('heterogeneity', 'covariates', 'statedependence', 'fixed', 'slow', 'order'),
   candidates = NULL, alpha = 0.05, maxsteps = 10L, ntry = 3L,
   criterion = c('LR', 'AIC', 'BIC'), adequacy = TRUE, prune = TRUE,
   close = NULL, holdout = 0, form = 'auto', nsamples = 100L, cores = 2L,
@@ -192,7 +198,7 @@ ctModelImprove <- function(fit, covariates = NULL,
         if (ad$adequate) { stopped <- 'adequate'; break }
         if (!is.null(close) && isTRUE(ad$close_fit)) { stopped <- 'close fit'; break }
       } else { stopped <- 'nothing indicated'; break }
-      proposals <- .ctImproveStructural(model, relax, candidates, ad)
+      proposals <- .ctImproveStructural(model, relax, candidates, ad, current)
       proposals <- proposals[!vapply(proposals, `[[`, '', 'key') %in% rejected]
       structural <- TRUE
       if (!length(proposals)) { stopped <- 'not adequate, nothing left to try'; break }
@@ -446,9 +452,27 @@ ctModelImprove <- function(fit, covariates = NULL,
 }
 
 # Changes the score tests cannot reach, for when the screen is clean and the
-# checks fail: each latent made second order, and the user's own candidates.
-.ctImproveStructural <- function(model, relax, candidates, ad) {
+# checks fail: a slow process driving each latent, each latent made second
+# order, and the user's own candidates. A slow process is ranked by the
+# adequacy check's evidence for it, the latent's own standardised updates
+# still positively correlated over some time gap (the smallest such p), and
+# goes first where there is any; the rest rank alike.
+.ctImproveStructural <- function(model, relax, candidates, ad, current = NULL) {
   out <- list()
+  if ('slow' %in% relax && isTRUE(model$continuoustime)) {
+    lat <- model$latentNames
+    for (i in seq_along(lat)) {
+      if (grepl('^slow_', lat[i]) || paste0('slow_', lat[i]) %in% lat ||
+          lat[i] %in% paste0('d', lat)) next
+      evidence <- .ctImproveSlowEvidence(ad, lat[i])
+      out[[length(out) + 1L]] <- list(key = paste0('slow:', lat[i]), family = 'slow',
+        label = paste0(lat[i], ' driven by a slow process'), p = evidence,
+        rank = if (is.finite(evidence)) evidence else 1,
+        start = .ctImproveSlowStart(model, current, i),
+        edit = local({ i <- i; function(model, data, covs, args = list())
+          list(model = ctModelSlowComponent(model, i), data = data) }))
+    }
+  }
   if ('order' %in% relax && isTRUE(model$continuoustime)) {
     for (i in seq_len(model$n.latent)) {
       if (paste0('d', model$latentNames[i]) %in% model$latentNames) next
@@ -465,6 +489,44 @@ ctModelImprove <- function(fit, covariates = NULL,
         list(model = candidates[[k]], data = data) } }))
   }
   out
+}
+
+# The adequacy check's evidence for a slow process in latent `name`: the
+# smallest p of its updates' positive correlations with its own at other times,
+# over every gap bin. NA when the check did not run the latent family.
+.ctImproveSlowEvidence <- function(ad, name) {
+  s <- if (is.null(ad)) NULL else ad$statistics
+  if (is.null(s) || !nrow(s)) return(NA_real_)
+  own <- s$family == 'latent' & startsWith(s$statistic, paste0(name, '~', name, ' gap ')) &
+    is.finite(s$z) & s$z > 0
+  if (!any(own)) return(NA_real_)
+  min(s$p[own])
+}
+
+# Raw starts for a slow process added to latent `i`: its effect at one (zero
+# is a stationary point of both it and the slow process), its persistence a
+# tenth of the latent's own through the inverse of ctsem's default drift
+# transform, -(1e-6 + 2 log1p_exp(-2 raw)). The latent's drift is read off the
+# current fit; where it cannot be, -0.2, the pilot's start.
+.ctImproveSlowStart <- function(model, current, i) {
+  name <- model$latentNames[i]
+  slow <- paste0('slow_', name)
+  target <- -0.2
+  cell <- model$pars[model$pars$matrix == 'DRIFT' & model$pars$row == i &
+    model$pars$col == i, , drop = FALSE]
+  fast <- NA_real_
+  if (nrow(cell) == 1L) {
+    if (is.na(cell$param)) fast <- as.numeric(cell$value) else if (!is.null(current)) {
+      est <- setNames(.ctFitRawEstimate(current), .ctFitRawParNames(current))
+      raw <- est[cell$param]
+      fast <- tryCatch(as.numeric(eval(parse(text = cell$transform),
+        list(param = raw, log1p_exp = log1p_exp))), error = function(e) NA_real_)
+    }
+  }
+  if (is.finite(fast) && fast < 0) target <- fast / 10
+  a <- max(-target - 1e-6, 1e-8) / 2
+  c(setNames(-log(expm1(a)) / 2, paste0('drift_', slow)),
+    setNames(1, paste0('drift_', name, '_', slow)))
 }
 
 # Refit with an edited model, prepared as the current fit was and warm started
