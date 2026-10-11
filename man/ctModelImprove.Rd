@@ -156,12 +156,12 @@ boundary.
   per family it screens, so its error rate grows with the families: on two
   processes with three items each (60 subjects, about 48 rows each), where
   the screen also tests state dependence and volatility in each process,
-  \code{alpha = 0.05} kept something in 3 of 19 searches with nothing
-  missing (a drift term once, a volatility term twice), and \code{alpha =
-  0.01} is the stricter choice. With an omitted cross effect, a process of
-  an item's own and a daily cycle in the same data, the search kept the
-  cross effect in 17 of 18 searches, the cycle in 15 and the item's process
-  in 13.
+  \code{alpha = 0.05} kept something in 4 of 20 searches with nothing
+  missing (a volatility term twice, state dependence once, a random effect
+  once), and \code{alpha = 0.01} is the stricter choice. With an omitted
+  cross effect, a process of an item's own and a daily cycle in the same
+  data, the search kept the cross effect in 19 of 20 searches, the cycle in
+  16 and the item's process in 15.
 
 The result is a model chosen by the data it is fitted to, and its
 standard errors and tests do not account for that choice (MacCallum,
