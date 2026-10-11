@@ -37,8 +37,8 @@ test_that("adequacy is reported per family, and the error-based families need no
   expect_s3_class(ad, 'ctFitAdequacy')
   # One manifest variable, so no within-row pairs; the lagged correlations of
   # the data only when asked for.
-  expect_setequal(ad$families$family, c('residuals', 'latent', 'volatility', 'distribution',
-    'fit', 'dependence', 'subjects', 'nonlinear'))
+  expect_setequal(ad$families$family, c('residuals', 'latent', 'volatility', 'periodic',
+    'distribution', 'fit', 'dependence', 'subjects', 'nonlinear'))
   expect_true(all(ad$families$p > 0 & ad$families$p <= 1))
   expect_true(ad$adequate)
   expect_true(ad$close_fit)
