@@ -25,11 +25,15 @@
 #' relaxation is indicated and the model is adequate by
 #' \code{\link{ctFitAdequacy}}. When nothing is indicated but the model is not
 #' adequate, a slow process driving a latent
-#' (\code{\link{ctModelSlowComponent}}), raising the order of a latent process
+#' (\code{\link{ctModelSlowComponent}}), a cycle such as a daily rhythm
+#' (\code{\link{ctModelPeriodicComponent}}), a process of its own for an item
+#' (\code{\link{ctModelUniqueProcess}}), raising the order of a latent process
 #' (\code{\link{ctModelHigherOrder}}) and any models given in
-#' \code{candidates} are tried the same way, slow processes first for the
-#' latents whose updates stay correlated over time gaps (the \code{latent}
-#' family of the adequacy check).
+#' \code{candidates} are tried the same way, each ranked by the adequacy
+#' check's evidence for it: a slow process for a latent whose updates stay
+#' correlated over time gaps (the \code{latent} family), a cycle at the period
+#' the \code{periodic} family points to, a process of its own for an item
+#' whose errors stay correlated with its own (the \code{residuals} family).
 #'
 #' The relaxations, in the language of the model:
 #' \describe{
@@ -43,6 +47,11 @@
 #'     diffusion or measurement error covariance, a cross loading.}
 #'   \item{slow}{a slow process driving a latent through its drift, its effect
 #'     started at one and its persistence at a tenth of the latent's.}
+#'   \item{periodic}{a cycle of the period the adequacy check points to,
+#'     driving every latent with innovations of its own, each subject's
+#'     phase set from the clock at its first row and free to deviate; the
+#'     phase predictors are added to the data.}
+#'   \item{unique}{a process of its own, persistent, loading on one item.}
 #'   \item{order}{a latent process made second order.}
 #' }
 #'
@@ -110,6 +119,8 @@
 #'   close enough fit to stop at; see Details.
 #' @param holdout Share of subjects, between 0 and 0.5, held out of the search
 #'   to confirm its changes on.
+#' @param periods Periods for the adequacy check's \code{periodic} family, as
+#'   for \code{\link{ctFitAdequacy}}; by default it scans.
 #' @param form How covariates are screened, as for \code{\link{ctScoreTest}};
 #'   \code{'threshold'} lets the search add a covariate as a step.
 #' @param nsamples Generated datasets for the adequacy checks.
@@ -129,10 +140,11 @@
 #' @seealso \code{vignette('score-tests')}.
 #' @export
 ctModelImprove <- function(fit, covariates = NULL,
-  relax = c('heterogeneity', 'covariates', 'statedependence', 'fixed', 'slow', 'order'),
+  relax = c('heterogeneity', 'covariates', 'statedependence', 'fixed', 'slow', 'unique',
+    'periodic', 'order'),
   candidates = NULL, alpha = 0.05, maxsteps = 10L, ntry = 3L,
   criterion = c('LR', 'AIC', 'BIC'), adequacy = TRUE, prune = TRUE,
-  close = NULL, holdout = 0, form = 'auto', nsamples = 100L, cores = 2L,
+  close = NULL, holdout = 0, form = 'auto', periods = NULL, nsamples = 100L, cores = 2L,
   verbose = TRUE) {
   if (!.ctFitIsJulia(fit)) stop("ctModelImprove() needs a fit from ",
     "ctFit(backend = 'julia').", call. = FALSE)
@@ -192,8 +204,8 @@ ctModelImprove <- function(fit, covariates = NULL,
     if (!length(proposals)) {
       if (isTRUE(adequacy)) {
         say("Round ", step, ": nothing indicated; checking adequacy")
-        ad <- ctFitAdequacy(current, covariates = available, nsamples = nsamples,
-          alpha = alpha, close = if (is.null(close)) 0.05 else close, cores = cores)
+        ad <- ctFitAdequacy(current, covariates = available, periods = periods,
+          nsamples = nsamples, alpha = alpha, close = if (is.null(close)) 0.05 else close, cores = cores)
         if (ad$adequate) { stopped <- 'adequate'; break }
         if (!is.null(close) && isTRUE(ad$close_fit)) { stopped <- 'close fit'; break }
       } else { stopped <- 'nothing indicated'; break }
@@ -278,8 +290,8 @@ ctModelImprove <- function(fit, covariates = NULL,
       covariates[, c(idname, setdiff(names(covariates), c(idname, model$TIpredNames))),
         drop = FALSE]
     if (!is.null(available) && ncol(available) < 2L) available <- NULL
-    ad <- ctFitAdequacy(current, covariates = available, nsamples = nsamples,
-      alpha = alpha, close = if (is.null(close)) 0.05 else close, cores = cores)
+    ad <- ctFitAdequacy(current, covariates = available, periods = periods,
+      nsamples = nsamples, alpha = alpha, close = if (is.null(close)) 0.05 else close, cores = cores)
   }
   confirmation <- NULL
   if (!is.null(held) && length(kept)) {
@@ -450,6 +462,39 @@ ctModelImprove <- function(fit, covariates = NULL,
 # goes first where there is any; the rest rank alike.
 .ctImproveStructural <- function(model, relax, candidates, ad, current = NULL) {
   out <- list()
+  # A cycle the periodic family found, at the period its strongest positive
+  # statistic names, driving every latent that has innovations of its own.
+  if ('periodic' %in% relax && isTRUE(model$continuoustime)) {
+    cyc <- .ctImprovePeriodicEvidence(ad)
+    if (!is.null(cyc)) {
+      name <- 'cycle'
+      while (any(startsWith(c(model$latentNames, model$TIpredNames), paste0(name, '_'))))
+        name <- paste0(name, 'x')
+      drives <- .ctImproveNoisyLatents(model)
+      out[[length(out) + 1L]] <- list(key = paste0('periodic:', signif(cyc$period, 3)),
+        family = 'periodic', label = paste0('a cycle of period ', signif(cyc$period, 3)),
+        p = cyc$p, rank = cyc$p,
+        edit = local({ period <- cyc$period; name <- name; drives <- drives
+          function(model, data, covs, args = list()) list(
+            model = ctModelPeriodicComponent(model, period, intersect(drives,
+              seq_len(model$n.latent)), name = name),
+            data = ctPeriodicPhases(data, period, name, id = model$subjectIDname,
+              time = model$timeName)) }))
+    }
+  }
+  # An item whose errors stay correlated with its own over time, given a
+  # process of its own; ranked by that evidence.
+  if ('unique' %in% relax && isTRUE(model$continuoustime)) {
+    for (item in model$manifestNames) {
+      if (paste0('u_', item) %in% model$latentNames) next
+      evidence <- .ctImproveOwnEvidence(ad, 'residuals', item)
+      if (!is.finite(evidence)) next
+      out[[length(out) + 1L]] <- list(key = paste0('unique:', item), family = 'unique',
+        label = paste0(item, ' given a process of its own'), p = evidence, rank = evidence,
+        edit = local({ item <- item; function(model, data, covs, args = list())
+          list(model = ctModelUniqueProcess(model, item), data = data) }))
+    }
+  }
   if ('slow' %in% relax && isTRUE(model$continuoustime)) {
     lat <- model$latentNames
     for (i in seq_along(lat)) {
@@ -485,13 +530,44 @@ ctModelImprove <- function(fit, covariates = NULL,
 # The adequacy check's evidence for a slow process in latent `name`: the
 # smallest p of its updates' positive correlations with its own at other times,
 # over every gap bin. NA when the check did not run the latent family.
-.ctImproveSlowEvidence <- function(ad, name) {
+.ctImproveSlowEvidence <- function(ad, name) .ctImproveOwnEvidence(ad, 'latent', name)
+
+# The smallest p of a variable's positive correlations with itself at other
+# times, over every gap bin, in one family of the adequacy check (`latent`
+# for a latent's updates, `residuals` for an item's errors). NA when the
+# check did not run the family.
+.ctImproveOwnEvidence <- function(ad, family, name) {
   s <- if (is.null(ad)) NULL else ad$statistics
   if (is.null(s) || !nrow(s)) return(NA_real_)
-  own <- s$family == 'latent' & startsWith(s$statistic, paste0(name, '~', name, ' gap ')) &
+  own <- s$family == family & startsWith(s$statistic, paste0(name, '~', name, ' gap ')) &
     is.finite(s$z) & s$z > 0
   if (!any(own)) return(NA_real_)
   min(s$p[own])
+}
+
+# The periodic family's evidence for a cycle: its p-value, and the period of
+# its strongest positive statistic; NULL when the family did not run or found
+# no positive one.
+.ctImprovePeriodicEvidence <- function(ad) {
+  if (is.null(ad) || is.null(ad$families)) return(NULL)
+  f <- ad$families[ad$families$family == 'periodic', , drop = FALSE]
+  s <- ad$statistics[ad$statistics$family == 'periodic' & is.finite(ad$statistics$z) &
+    ad$statistics$z > 0, , drop = FALSE]
+  if (!nrow(f) || !nrow(s)) return(NULL)
+  w <- s$statistic[which.max(s$z)]
+  period <- as.numeric(sub('.* period ', '', w))
+  if (!is.finite(period)) return(NULL)
+  list(p = f$p[1], period = period)
+}
+
+# The latents with innovations of their own: not a cycle's clock, not the
+# level of a higher order process.
+.ctImproveNoisyLatents <- function(model) {
+  p <- model$pars
+  value <- suppressWarnings(as.numeric(p$value))
+  quiet <- p$row[p$matrix %in% 'DIFFUSION' & p$row == p$col &
+    (is.na(p$param) | !nzchar(p$param)) & !is.na(value) & value == 0]
+  setdiff(seq_len(model$n.latent), quiet)
 }
 
 # Raw starts for a slow process added to latent `i`: its effect at one (zero

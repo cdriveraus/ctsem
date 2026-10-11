@@ -1218,10 +1218,18 @@ ctScoreTest <- function(fit, covariates = NULL,
   levelflags <- grep('^indvarying_', names(pars), value = TRUE)
   value <- suppressWarnings(as.numeric(pars$value))
   free <- is.na(pars$param) | !nzchar(pars$param)
+  # A latent with no innovations of its own -- a cycle's clock, the level of a
+  # higher order process -- is driven only as written: freeing a drift into it
+  # would make a clock wander, and a covariance with nothing has no meaning.
+  quiet <- pars$row[pars$matrix %in% 'DIFFUSION' & pars$row == pars$col & free &
+    !is.na(value) & value == 0]
   candidate <- which(free & !is.na(value) & value == 0 & (
-    (pars$matrix %in% 'DRIFT' & pars$row != pars$col) |
-      (pars$matrix %in% c('DIFFUSION', 'MANIFESTVAR') & pars$row > pars$col) |
-      pars$matrix %in% c('LAMBDA', 'TDPREDEFFECT')))
+    (pars$matrix %in% 'DRIFT' & pars$row != pars$col & !pars$row %in% quiet) |
+      (pars$matrix %in% 'DIFFUSION' & pars$row > pars$col & !pars$row %in% quiet &
+        !pars$col %in% quiet) |
+      (pars$matrix %in% 'MANIFESTVAR' & pars$row > pars$col) |
+      (pars$matrix %in% 'TDPREDEFFECT' & !pars$row %in% quiet) |
+      pars$matrix %in% 'LAMBDA'))
   ns <- asNamespace('ctsem')
   dims <- function(m) switch(m, DRIFT = list(latent, latent),
     DIFFUSION = list(latent, latent), MANIFESTVAR = list(manifest, manifest),

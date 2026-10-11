@@ -7,7 +7,8 @@
 ctModelImprove(
   fit,
   covariates = NULL,
-  relax = c("heterogeneity", "covariates", "statedependence", "fixed", "slow", "order"),
+  relax = c("heterogeneity", "covariates", "statedependence", "fixed", "slow", "unique",
+    "periodic", "order"),
   candidates = NULL,
   alpha = 0.05,
   maxsteps = 10L,
@@ -18,6 +19,7 @@ ctModelImprove(
   close = NULL,
   holdout = 0,
   form = "auto",
+  periods = NULL,
   nsamples = 100L,
   cores = 2L,
   verbose = TRUE
@@ -58,6 +60,9 @@ to confirm its changes on.}
 \item{form}{How covariates are screened, as for \code{\link{ctScoreTest}};
 \code{'threshold'} lets the search add a covariate as a step.}
 
+\item{periods}{Periods for the adequacy check's \code{periodic} family, as
+for \code{\link{ctFitAdequacy}}; by default it scans.}
+
 \item{nsamples}{Generated datasets for the adequacy checks.}
 
 \item{cores}{Cores for fitting and testing.}
@@ -85,11 +90,15 @@ the best of them if the refit's likelihood confirms it; and stops when no
 relaxation is indicated and the model is adequate by
 \code{\link{ctFitAdequacy}}. When nothing is indicated but the model is not
 adequate, a slow process driving a latent
-(\code{\link{ctModelSlowComponent}}), raising the order of a latent process
+(\code{\link{ctModelSlowComponent}}), a cycle such as a daily rhythm
+(\code{\link{ctModelPeriodicComponent}}), a process of its own for an item
+(\code{\link{ctModelUniqueProcess}}), raising the order of a latent process
 (\code{\link{ctModelHigherOrder}}) and any models given in
-\code{candidates} are tried the same way, slow processes first for the
-latents whose updates stay correlated over time gaps (the \code{latent}
-family of the adequacy check).
+\code{candidates} are tried the same way, each ranked by the adequacy
+check's evidence for it: a slow process for a latent whose updates stay
+correlated over time gaps (the \code{latent} family), a cycle at the period
+the \code{periodic} family points to, a process of its own for an item
+whose errors stay correlated with its own (the \code{residuals} family).
 }
 \details{
 The relaxations, in the language of the model:
@@ -104,6 +113,11 @@ The relaxations, in the language of the model:
     diffusion or measurement error covariance, a cross loading.}
   \item{slow}{a slow process driving a latent through its drift, its effect
     started at one and its persistence at a tenth of the latent's.}
+  \item{periodic}{a cycle of the period the adequacy check points to,
+    driving every latent with innovations of its own, each subject's
+    phase set from the clock at its first row and free to deviate; the
+    phase predictors are added to the data.}
+  \item{unique}{a process of its own, persistent, loading on one item.}
   \item{order}{a latent process made second order.}
 }
 

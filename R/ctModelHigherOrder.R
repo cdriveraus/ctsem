@@ -153,8 +153,9 @@ ctModelHigherOrder <- function(ctm, indices,diffusion=TRUE, crosseffects=FALSE,c
 # edited a cell at a time by the closures returned -- `fixed`; `free`, with
 # ctsem's default transform unless one is given, varying over no one, and
 # predictor effects as `tipred` says; `copy`, a cell with every setting it has
-# -- and `finish()` returns the model. Shared by ctModelHigherOrder() and
-# ctModelSlowComponent(), so a cell written by either is written the same way.
+# -- and `finish()` returns the model. Shared by ctModelHigherOrder(),
+# ctModelSlowComponent(), ctModelPeriodicComponent() and ctModelUniqueProcess(),
+# so a cell written by any is written the same way.
 .ctParsLatentEditor <- function(ctm, newnames) {
   pars <- ctm$pars
   nl <- ctm$n.latent

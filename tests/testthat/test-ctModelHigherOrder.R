@@ -206,3 +206,90 @@ test_that("the search starts a slow process away from the stationary point", {
   expect_true(is.na(ctsem:::.ctImproveSlowEvidence(ad, 'eta2')))
   expect_true(is.na(ctsem:::.ctImproveSlowEvidence(NULL, 'eta1')))
 })
+
+# ctModelPeriodicComponent: a clock pair that turns at the period, with no
+# noise, set from the subject's first time, driving the latents asked for.
+test_that("a cycle is a noiseless clock pair driving the latents asked for", {
+  m <- .ho_ct()
+  cm <- ctModelPeriodicComponent(m, period = 24, indices = 1)
+  expect_equal(cm$latentNames, c('eta1', 'eta2', 'cycle_cos', 'cycle_sin'))
+  expect_equal(cm$TIpredNames, c('cycle_cos0', 'cycle_sin0'))
+  expect_equal(cm$n.TIpred, 2L)
+  mats <- ctModelMatrices(cm)
+  w <- 2 * pi / 24
+  expect_equal(as.numeric(mats$DRIFT[3:4, 3:4]), c(0, w, -w, 0))
+  expect_equal(unname(mats$DRIFT[1, 3:4]), c('drift_eta1_cycle_cos', 'drift_eta1_cycle_sin'))
+  expect_equal(unname(mats$DRIFT[2, 3:4]), c('0', '0'))
+  expect_equal(unname(mats$DRIFT[3:4, 1:2]), matrix('0', 2, 2))
+  expect_true(all(as.numeric(mats$DIFFUSION[3:4, ]) == 0))
+  expect_equal(as.numeric(mats$LAMBDA[, 3:4]), rep(0, 4))
+  # The initial state reads the phase predictors; each subject may deviate
+  # from the clock by one shared sd, independently of the other states.
+  expect_equal(unname(mats$T0MEANS[3:4, 1]), c('cycle_cos0 * 1', 'cycle_sin0 * 1'))
+  expect_equal(unname(mats$T0VAR[3:4, 3:4]), matrix(c('cycle_T0sd', '0', '0', 'cycle_T0sd'), 2))
+  expect_equal(unname(mats$T0VAR[3:4, 1:2]), matrix('0', 2, 2))
+  # No predictor reaches any parameter: the phases are read only by T0MEANS.
+  p <- cm$pars
+  expect_true(all(p$cycle_cos0_effect == 'FALSE') && all(p$cycle_sin0_effect == 'FALSE'))
+  # Without individual deviations the clock is exact.
+  fixedm <- ctModelMatrices(ctModelPeriodicComponent(m, 24, individual = FALSE))
+  expect_true(all(as.numeric(fixedm$T0VAR[3:4, 3:4]) == 0))
+  expect_error(ctModelPeriodicComponent(cm, 24), 'already has')
+  expect_error(ctModelPeriodicComponent(m, -1), 'period')
+})
+
+test_that("the phase predictors are the clock at each subject's first row", {
+  d <- data.frame(id = rep(1:2, each = 3), time = c(8, 12, 20, 30, 34, 42))
+  out <- ctPeriodicPhases(d, period = 24)
+  expect_equal(out$cycle_cos0, rep(cos(2 * pi * c(8, 30) / 24), each = 3))
+  expect_equal(out$cycle_sin0, rep(sin(2 * pi * c(8, 30) / 24), each = 3))
+  expect_error(ctPeriodicPhases(d, 24, id = 'subject'), 'subject')
+})
+
+# ctModelUniqueProcess: a persistent process loading on one item alone.
+test_that("an item's own process loads on it alone and has its own dynamics", {
+  m <- suppressMessages(ctModel(type = 'ct', silent = TRUE,
+    manifestNames = c('Y1', 'Y2', 'Y3'), latentNames = 'eta',
+    LAMBDA = matrix(c(1, 'l2', 'l3'), 3)))
+  um <- ctModelUniqueProcess(m, c('Y2', 'Y3'))
+  expect_equal(um$latentNames, c('eta', 'u_Y2', 'u_Y3'))
+  mats <- ctModelMatrices(um)
+  expect_equal(as.numeric(mats$LAMBDA[, 2]), c(0, 1, 0))
+  expect_equal(as.numeric(mats$LAMBDA[, 3]), c(0, 0, 1))
+  expect_equal(unname(diag(mats$DRIFT)[2:3]), c('drift_u_Y2', 'drift_u_Y3'))
+  expect_equal(unname(mats$DRIFT[1, 2:3]), c('0', '0'))
+  expect_equal(unname(mats$DRIFT[2, c(1, 3)]), c('0', '0'))
+  expect_equal(unname(diag(mats$DIFFUSION)[2:3]), c('diff_u_Y2', 'diff_u_Y3'))
+  expect_equal(unname(mats$DIFFUSION[2, c(1, 3)]), c('0', '0'))
+  expect_equal(as.numeric(mats$CINT[2:3, 1]), c(0, 0))
+  expect_equal(as.numeric(mats$T0MEANS[2:3, 1]), c(0, 0))
+  expect_equal(unname(diag(mats$T0VAR)[2:3]), c('T0var_u_Y2', 'T0var_u_Y3'))
+  expect_equal(ctModelMatrices(ctModelUniqueProcess(m, 2))$LAMBDA[, 2], mats$LAMBDA[, 2])
+  expect_error(ctModelUniqueProcess(um, 'Y2'), 'already has')
+  expect_error(ctModelUniqueProcess(m, 'Y9'), 'manifest')
+})
+
+test_that("the fixed-cell screen leaves a latent without innovations as written", {
+  cm <- ctModelPeriodicComponent(.ho_ct(), 24, indices = 1, individual = FALSE)
+  terms <- ctsem:::.ctScoreFixedModel(cm)$terms
+  # No drift into the clock, no covariance with it; its effects on the
+  # latents it does not yet drive are candidates.
+  expect_false(any(terms$matrix == 'DRIFT' & terms$row %in% 3:4))
+  expect_false(any(terms$matrix == 'DIFFUSION' & (terms$row %in% 3:4 | terms$col %in% 3:4)))
+  expect_true(any(terms$matrix == 'DRIFT' & terms$row == 2 & terms$col == 3))
+  expect_equal(ctsem:::.ctImproveNoisyLatents(cm), 1:2)
+})
+
+test_that("the search reads a cycle's period and an item's own correlation from the checks", {
+  ad <- list(families = data.frame(family = c('periodic', 'residuals'), p = c(1e-4, 0.01)),
+    statistics = data.frame(family = c('periodic', 'periodic', 'periodic', 'residuals',
+      'residuals'), statistic = c('Y1 period 24', 'Y2 period 12', 'latent eta1 period 8',
+      'Y2~Y2 gap <=3', 'Y1~Y1 gap <=3'), z = c(4, -6, 3, 3.5, -2),
+      p = c(6e-5, 2e-9, 3e-3, 5e-4, 0.05), stringsAsFactors = FALSE))
+  cyc <- ctsem:::.ctImprovePeriodicEvidence(ad)
+  expect_equal(cyc$period, 24)
+  expect_equal(cyc$p, 1e-4)
+  expect_equal(ctsem:::.ctImproveOwnEvidence(ad, 'residuals', 'Y2'), 5e-4)
+  expect_true(is.na(ctsem:::.ctImproveOwnEvidence(ad, 'residuals', 'Y1')))
+  expect_null(ctsem:::.ctImprovePeriodicEvidence(NULL))
+})

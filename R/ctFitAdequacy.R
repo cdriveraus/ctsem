@@ -50,6 +50,16 @@
 #'   \item{pairs}{Each pair of variables' errors in the same row against the
 #'     correlation the model implies: a wrong measurement error covariance or
 #'     loading.}
+#'   \item{periodic}{A cycle the model lacks, such as a daily rhythm: each
+#'     variable's errors, and each latent's updates, correlated with the same
+#'     unit's at other times weighted by the cosine of the time between them
+#'     over a period -- the periodogram of the errors at that period. It
+#'     depends only on the time between rows, so it finds a cycle whatever its
+#'     phase in each unit and needs no clock. At the named \code{periods}, or
+#'     by default scanning the periods a typical record resolves, from half its
+#'     length to twice the typical interval between rows. The estimate is the
+#'     errors' autocorrelation at the period: a cycle of amplitude a, in error
+#'     standard deviations, gives a^2 / 2.}
 #'   \item{distribution}{Skewness and kurtosis of each variable's errors, and
 #'     each row's squared whitened distance against its chi-square mean and
 #'     variance, together with Anderson-Darling tests against the normal and
@@ -68,6 +78,14 @@
 #'     distribution, or a subgroup, moves them. These integrate the gradient
 #'     function (Verbeke & Molenberghs, 2013; Drikvandi, Verbeke & Molenberghs,
 #'     2017), which is too heavy tailed to test directly.}
+#'   \item{tvcovariates}{With \code{tvcovariates}, whether time varying
+#'     variables the model does not use carry information about what it
+#'     predicts: each variable's error, and each latent's update, against each
+#'     covariate at the same row and at the unit's previous row, the covariate
+#'     standardised. The estimate is the regression of the standardised error
+#'     on the covariate. The previous row's value is a test of prediction
+#'     (Granger's sense); the same row's is an association, which a covariate
+#'     the outcome itself moves would show as well.}
 #'   \item{scores}{Not run unless asked for. White's (1987) dynamic information
 #'     matrix test: each data row's score, the derivative of its one-step
 #'     log likelihood, for the dynamic and measurement parameters
@@ -97,7 +115,8 @@
 #' pairs of rows has the sum of the products' squares as its variance, which
 #' holds with heavy tails or a changing variance; estimating the parameters
 #' takes a known part of it away. That is the variance of the residual,
-#' volatility and within-row families; the distribution and fit families,
+#' latent, volatility, within-row, periodic and covariate families; the
+#' distribution and fit families,
 #' whose statistics are sums of high powers, use the spread of the units'
 #' contributions and a studentised bootstrap over units. Within a family the
 #' largest standardised statistic and the sum of their squares are calibrated
@@ -141,6 +160,12 @@
 #' @param gaps Break points, in the data's time units, for the residual
 #'   correlations' gap bins. By default the eighth, quarter and half quantiles
 #'   of the time between every pair of a unit's rows.
+#' @param periods Periods, in the data's time units, for the \code{periodic}
+#'   family: 24 for a daily cycle with time in hours. By default a scan.
+#' @param tvcovariates Optional time varying covariates for the
+#'   \code{tvcovariates} family: a data frame with the model's subject id and
+#'   time columns and one or more numeric columns, matched to the fit's rows
+#'   by id and time.
 #' @param close The root mean square residual correlation regarded as a close
 #'   fit.
 #' @param alpha Level for \code{adequate} and \code{close_fit}.
@@ -202,18 +227,19 @@
 #'   see the data against the fit.
 #' @export
 ctFitAdequacy <- function(fit, covariates = NULL,
-  families = c('residuals', 'latent', 'volatility', 'pairs', 'distribution', 'fit',
-    'dependence', 'effects', 'subjects', 'nonlinear', 'covariates'),
-  gaps = NULL, close = 0.05, alpha = 0.05,
+  families = c('residuals', 'latent', 'volatility', 'pairs', 'periodic', 'distribution',
+    'fit', 'dependence', 'effects', 'tvcovariates', 'subjects', 'nonlinear', 'covariates'),
+  gaps = NULL, periods = NULL, tvcovariates = NULL, close = 0.05, alpha = 0.05,
   projection = c('auto', 'derivative', 'plugin', 'opg', 'none'), parameters = NULL,
   nsamples = 100, lags = 0:3, nboot = 1999L, cores = 2) {
   if (!.ctFitIsJulia(fit) && !inherits(fit, 'ctStanFit')) stop('Not a ctsem fit.',
     call. = FALSE)
   asked <- !missing(families)
   families <- match.arg(families, c('residuals', 'latent', 'volatility', 'pairs',
-    'distribution', 'fit', 'dependence', 'effects', 'scores', 'subjects', 'nonlinear',
-    'covariates', 'lagged'), several.ok = TRUE)
+    'periodic', 'distribution', 'fit', 'dependence', 'effects', 'scores', 'tvcovariates',
+    'subjects', 'nonlinear', 'covariates', 'lagged'), several.ok = TRUE)
   if (is.null(covariates)) families <- setdiff(families, 'covariates')
+  if (is.null(tvcovariates)) families <- setdiff(families, 'tvcovariates')
   # The effect distribution needs effects held as Laplace coordinates at one
   # level; by default it is run where that is so, and said where it is not.
   if ('effects' %in% families) {
@@ -237,14 +263,15 @@ ctFitAdequacy <- function(fit, covariates = NULL,
 
   statistics <- list(); fams <- list(); size <- NULL; used <- NA_character_
   moments <- intersect(families, c('residuals', 'latent', 'volatility', 'pairs',
-    'distribution', 'fit', 'effects', 'scores'))
+    'periodic', 'distribution', 'fit', 'effects', 'scores', 'tvcovariates'))
   if (length(moments) || 'dependence' %in% families) {
     # The errors (on the Laplace route a sequential pass, the expensive part)
     # only for the families that read them: the effect distribution does not.
     neederr <- length(setdiff(c(moments, intersect(families, 'dependence')), 'effects')) > 0
     t0 <- proc.time()[['elapsed']]
     err <- if (neederr) .ctAdequacyErrors(fit) else NULL
-    setup <- if (neederr) .ctAdequacySetup(err, gaps) else NULL
+    setup <- if (neederr) .ctAdequacySetup(err, gaps, periods,
+      if ('tvcovariates' %in% moments) .ctAdequacyTVCovariates(fit, err, tvcovariates)) else NULL
     if (!is.null(err$ess) && any(is.finite(err$ess)) && min(err$ess, na.rm = TRUE) < 20)
       message("The importance sampling behind the errors was thin for some subjects ",
         "(effective sample size ", round(min(err$ess, na.rm = TRUE)), "); ",
@@ -438,14 +465,15 @@ ctFitAdequacy <- function(fit, covariates = NULL,
 }
 
 # What stays fixed when the statistics are recomputed at other parameter
-# values: the gap bins, and the mean the squared errors are centred on.
-# Centring each variable's squares on their overall mean leaves the volatility
-# statistic about clustering in time -- a variance the model gets wrong
-# everywhere is the distribution family's -- and costs no estimation effect,
-# as the statistic's derivative in that mean is zero under the model.
-.ctAdequacySetup <- function(err, gaps = NULL) {
+# values: the gap bins, the periods, the time varying covariates, and the mean
+# the squared errors are centred on. Centring each variable's squares on their
+# overall mean leaves the volatility statistic about clustering in time -- a
+# variance the model gets wrong everywhere is the distribution family's -- and
+# costs no estimation effect, as the statistic's derivative in that mean is
+# zero under the model.
+.ctAdequacySetup <- function(err, gaps = NULL, periods = NULL, tv = NULL) {
+  rows <- split(seq_along(err$unit), err$unit)
   if (is.null(gaps)) {
-    rows <- split(seq_along(err$unit), err$unit)
     g <- unlist(lapply(rows, function(r) {
       if (length(r) < 2L) return(numeric())
       t <- err$time[r]
@@ -463,7 +491,59 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     if (length(gaps) > 1L) paste0(fmt(gaps[-length(gaps)]), '-', fmt(gaps[-1])),
     paste0('>', fmt(gaps[length(gaps)])))
   list(edges = edges, labels = labels,
-    centre = colMeans(err$E^2, na.rm = TRUE))
+    centre = colMeans(err$E^2, na.rm = TRUE),
+    periods = if (is.null(periods)) .ctAdequacyPeriodGrid(err$time, rows) else
+      sort(unique(as.numeric(periods[is.finite(periods) & periods > 0]))),
+    tv = tv)
+}
+
+# The periods the periodic family scans when none are named: the Fourier
+# frequencies of the typical record, k / T for T its median span, from two
+# cycles a record to one every two typical intervals between rows -- beyond
+# that a cycle is not resolved -- thinned evenly in log period to at most 48.
+# In the data's own time units, so nothing about the units is assumed.
+.ctAdequacyPeriodGrid <- function(time, rows, most = 48L) {
+  span <- vapply(rows, function(r) if (length(r) > 1L) diff(range(time[r])) else NA_real_, 0)
+  step <- unlist(lapply(rows, function(r) diff(sort(time[r]))), use.names = FALSE)
+  span <- stats::median(span, na.rm = TRUE); step <- stats::median(step[step > 0])
+  if (!is.finite(span) || !is.finite(step) || span <= 0) return(numeric())
+  k <- seq.int(2L, max(1L, floor(span / (2 * step))))
+  k <- k[k >= 2L]
+  if (length(k) > most) k <- unique(round(exp(seq(log(min(k)), log(max(k)),
+    length.out = most))))
+  sort(span / k)
+}
+
+# Time varying covariates for the tvcovariates family, matched to the errors'
+# rows by subject and time: a rows x covariates matrix, each covariate centred
+# and scaled over every row it is observed on, and the same at each unit's
+# previous row. Matched rows that are missing, and rows not matched, are NA.
+.ctAdequacyTVCovariates <- function(fit, err, tvcovariates) {
+  model <- .ctFitModelObject(fit)
+  tvc <- as.data.frame(tvcovariates)
+  idn <- model$subjectIDname; tn <- model$timeName
+  if (!all(c(idn, tn) %in% names(tvc))) stop("tvcovariates needs the model's '", idn,
+    "' and '", tn, "' columns.", call. = FALSE)
+  cols <- setdiff(names(tvc), c(idn, tn))
+  cols <- cols[vapply(tvc[cols], function(v) is.numeric(v) || is.logical(v), TRUE)]
+  if (!length(cols)) stop("tvcovariates has no numeric columns besides '", idn, "' and '",
+    tn, "'.", call. = FALSE)
+  key <- function(id, time) paste(id, format(signif(as.numeric(time), 12), scientific = TRUE))
+  at <- match(key(err$labels[err$unit], err$time), key(as.character(tvc[[idn]]), tvc[[tn]]))
+  if (all(is.na(at))) stop("No row of tvcovariates matched a row of the fit by '", idn,
+    "' and '", tn, "'.", call. = FALSE)
+  W <- vapply(cols, function(cn) {
+    v <- as.numeric(tvc[[cn]])[at]
+    s <- stats::sd(v, na.rm = TRUE)
+    if (!is.finite(s) || s == 0) return(rep(NA_real_, length(v)))
+    (v - mean(v, na.rm = TRUE)) / s
+  }, numeric(length(at)))
+  W <- matrix(W, length(at), dimnames = list(NULL, cols))
+  n <- length(err$unit)
+  prev <- c(NA_integer_, seq_len(n - 1L))
+  prev[c(TRUE, err$unit[-1] != err$unit[-n])] <- NA_integer_
+  list(W = W, Wprev = W[prev, , drop = FALSE], names = cols,
+    unmatched = sum(is.na(at)))
 }
 
 # Each unit's contribution to every moment statistic, a units x statistics
@@ -534,6 +614,33 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     addblock(unitsum(V), unitsum(V^2), 'pairs', paste0(vars[pr[, 1]], ':', vars[pr[, 2]]),
       N, 'corr')
   }
+  if ('periodic' %in% which && length(setup$periods)) {
+    X <- cbind(E, err$Z)
+    lab <- c(vars, paste('latent', colnames(err$Z)))
+    blk <- .ctAdequacyPeriodBlock(X, err$unit, err$time, n, setup$periods)
+    grid <- expand.grid(j = seq_len(ncol(X)), f = seq_along(setup$periods))
+    addblock(blk$M, blk$V0, 'periodic', paste0(lab[grid$j], ' period ',
+      format(signif(setup$periods[grid$f], 3))), blk$N, 'corr')
+  }
+  # Each variable's error, and each latent's update, against each time varying
+  # covariate at the row and at the unit's previous row. A covariate that is
+  # known before the row is predicted, or unrelated to the row's innovation,
+  # leaves the product with mean zero under the model; one that carries
+  # information the model lacks moves it. Row-level, like the errors.
+  if ('tvcovariates' %in% which && !is.null(setup$tv)) {
+    X <- cbind(E, err$Z)
+    lab <- c(vars, paste('latent', colnames(err$Z)))
+    Xz <- X; Xz[!is.finite(Xz)] <- 0
+    for (lag in 0:1) {
+      W <- if (lag == 0L) setup$tv$W else setup$tv$Wprev
+      Wz <- W; Wz[!is.finite(Wz)] <- 0
+      grid <- expand.grid(j = seq_len(ncol(X)), c = seq_len(ncol(W)))
+      P <- Xz[, grid$j, drop = FALSE] * Wz[, grid$c, drop = FALSE]
+      N <- colSums((is.finite(X[, grid$j, drop = FALSE]) * Wz[, grid$c, drop = FALSE])^2)
+      addblock(unitsum(P), unitsum(P^2), 'tvcovariates', paste0(lab[grid$j], '~',
+        setup$tv$names[grid$c], if (lag == 1L) ' (previous row)'), N, 'corr')
+    }
+  }
   if ('distribution' %in% which) {
     E3 <- E^3; E3[is.na(E3)] <- 0
     E4 <- E^4 - 3; E4[is.na(E4)] <- 0
@@ -600,12 +707,54 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   list(M = M, V0 = V0, N = N)
 }
 
+# The periodogram of each column of X (rows by K) at each period, within
+# units, as a sum over row pairs: sum over s < t of x_s x_t cos(w (t_t - t_s)),
+# w = 2 pi / period. It depends only on the time between rows, so a cycle is
+# found whatever its phase in each unit, and needs no clock. Expanding the
+# cosine of the difference makes it half of (sum x cos(w t))^2 +
+# (sum x sin(w t))^2 - sum x^2, linear in the rows, and the variance under the
+# model -- the products' squares, sum of x_s^2 x_t^2 cos^2, with cos^2 = (1 +
+# cos 2 w gap) / 2 -- and the count of contributing pairs follow the same way.
+# `M`, `V0` are units by K * F (the column index fastest), `N` the summed
+# squared weights over observed pairs. Missing values contribute nothing.
+.ctAdequacyPeriodBlock <- function(X, unit, time, n, periods) {
+  X <- as.matrix(X)
+  K <- ncol(X); nf <- length(periods)
+  Xz <- X; Xz[!is.finite(Xz)] <- 0
+  O <- is.finite(X) * 1
+  w <- 2 * pi / periods
+  ang <- outer(time - min(time), w)
+  C1 <- cos(ang); S1 <- sin(ang); C2 <- cos(2 * ang); S2 <- sin(2 * ang)
+  usum <- function(v) {
+    out <- matrix(0, n, NCOL(v))
+    s <- rowsum(as.matrix(v), unit, reorder = TRUE)
+    out[as.integer(rownames(s)), ] <- s
+    out
+  }
+  # sum over pairs s < t of a_s a_t cos(f (t_t - t_s)), per unit and frequency.
+  pairsum <- function(a, Cm, Sm) (usum(a * Cm)^2 + usum(a * Sm)^2 -
+      matrix(usum(a^2), n, ncol(Cm))) / 2
+  plain <- function(a) {
+    s <- usum(a)
+    matrix((s^2 - usum(a^2)) / 2, n, nf)
+  }
+  M <- V0 <- matrix(0, n, K * nf); N <- numeric(K * nf)
+  for (k in seq_len(K)) {
+    cols <- k + K * (seq_len(nf) - 1L)
+    a <- Xz[, k]; b <- a^2; o <- O[, k]
+    M[, cols] <- pairsum(a, C1, S1)
+    V0[, cols] <- (plain(b) + pairsum(b, C2, S2)) / 2
+    N[cols] <- colSums((plain(o) + pairsum(o, C2, S2)) / 2)
+  }
+  list(M = M, V0 = V0, N = N)
+}
+
 # Every requested family's per-unit statistics at the parameters `x` (NULL:
 # the estimate of a fit that has no other), from the errors `err` there.
 .ctAdequacyMomentsAll <- function(fit, x, err, setup, which, extra, cores) {
   parts <- list()
-  errfams <- intersect(which, c('residuals', 'latent', 'volatility', 'pairs', 'distribution',
-    'fit'))
+  errfams <- intersect(which, c('residuals', 'latent', 'volatility', 'pairs', 'periodic',
+    'distribution', 'fit', 'tvcovariates'))
   if (length(errfams)) parts[[length(parts) + 1L]] <- .ctAdequacyMoments(err, setup, errfams)
   if ('scores' %in% which) parts[[length(parts) + 1L]] <- .ctAdequacyScoreMoments(fit, x,
     err, setup, extra$directions, cores)

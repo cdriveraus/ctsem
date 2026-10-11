@@ -7,9 +7,12 @@
 ctFitAdequacy(
   fit,
   covariates = NULL,
-  families = c("residuals", "latent", "volatility", "pairs", "distribution", "fit",
-    "dependence", "effects", "subjects", "nonlinear", "covariates"),
+  families = c("residuals", "latent", "volatility", "pairs", "periodic", "distribution",
+    "fit", "dependence", "effects", "tvcovariates", "subjects", "nonlinear",
+    "covariates"),
   gaps = NULL,
+  periods = NULL,
+  tvcovariates = NULL,
   close = 0.05,
   alpha = 0.05,
   projection = c("auto", "derivative", "plugin", "opg", "none"),
@@ -32,6 +35,14 @@ and the scores it needs require \code{backend = 'julia'}.}
 \item{gaps}{Break points, in the data's time units, for the residual
 correlations' gap bins. By default the eighth, quarter and half quantiles
 of the time between every pair of a unit's rows.}
+
+\item{periods}{Periods, in the data's time units, for the \code{periodic}
+family: 24 for a daily cycle with time in hours. By default a scan.}
+
+\item{tvcovariates}{Optional time varying covariates for the
+\code{tvcovariates} family: a data frame with the model's subject id and
+time columns and one or more numeric columns, matched to the fit's rows
+by id and time.}
 
 \item{close}{The root mean square residual correlation regarded as a close
 fit.}
@@ -100,6 +111,16 @@ a variable.
   \item{pairs}{Each pair of variables' errors in the same row against the
     correlation the model implies: a wrong measurement error covariance or
     loading.}
+  \item{periodic}{A cycle the model lacks, such as a daily rhythm: each
+    variable's errors, and each latent's updates, correlated with the same
+    unit's at other times weighted by the cosine of the time between them
+    over a period -- the periodogram of the errors at that period. It
+    depends only on the time between rows, so it finds a cycle whatever its
+    phase in each unit and needs no clock. At the named \code{periods}, or
+    by default scanning the periods a typical record resolves, from half its
+    length to twice the typical interval between rows. The estimate is the
+    errors' autocorrelation at the period: a cycle of amplitude a, in error
+    standard deviations, gives a^2 / 2.}
   \item{distribution}{Skewness and kurtosis of each variable's errors, and
     each row's squared whitened distance against its chi-square mean and
     variance, together with Anderson-Darling tests against the normal and
@@ -118,6 +139,14 @@ a variable.
     distribution, or a subgroup, moves them. These integrate the gradient
     function (Verbeke & Molenberghs, 2013; Drikvandi, Verbeke & Molenberghs,
     2017), which is too heavy tailed to test directly.}
+  \item{tvcovariates}{With \code{tvcovariates}, whether time varying
+    variables the model does not use carry information about what it
+    predicts: each variable's error, and each latent's update, against each
+    covariate at the same row and at the unit's previous row, the covariate
+    standardised. The estimate is the regression of the standardised error
+    on the covariate. The previous row's value is a test of prediction
+    (Granger's sense); the same row's is an association, which a covariate
+    the outcome itself moves would show as well.}
   \item{scores}{Not run unless asked for. White's (1987) dynamic information
     matrix test: each data row's score, the derivative of its one-step
     log likelihood, for the dynamic and measurement parameters
@@ -147,7 +176,8 @@ they are independent over rows under the model, so a sum of products over
 pairs of rows has the sum of the products' squares as its variance, which
 holds with heavy tails or a changing variance; estimating the parameters
 takes a known part of it away. That is the variance of the residual,
-volatility and within-row families; the distribution and fit families,
+latent, volatility, within-row, periodic and covariate families; the
+distribution and fit families,
 whose statistics are sums of high powers, use the spread of the units'
 contributions and a studentised bootstrap over units. Within a family the
 largest standardised statistic and the sum of their squares are calibrated
