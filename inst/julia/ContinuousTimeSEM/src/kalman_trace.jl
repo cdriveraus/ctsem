@@ -598,30 +598,6 @@ function _kalman_smooth!(trace::CTSEMKalmanTrace{T}, ws, first::Int,
 end
 
 """
-    ctsem_kalman(objective, values; subject_matrices=true)
-
-Prior, filtered and smoothed states and observations for every data row, plus
-each subject's own model matrices.
-
-`values` is one raw parameter vector, used for every subject -- or a matrix
-whose row `i` is subject `i`'s own. The second form is what a Laplace fit needs,
-where each subject is filtered at its own realized parameters rather than at a
-shared population vector. Either way a row is before TI-predictor effects,
-which the filter adds from each subject's predictors, as it does in a fit; a
-row that already carries them has them twice. The returned named tuple carries
-`eta`, `etacov`, `y`, `ycov` with leading dimension 1 = prior, 2 = updated, 3 =
-smoothed; `llrow`; `subject`; `subject_loglik`; `transition` (the interval
-Jacobian that reached each row, `nrows` by `n` by `n`); and, unless
-`subject_matrices=false`, a `size`-by-`nsubjects` matrix packed in the layout
-`ctsem_parameter_layout` describes.
-
-A subject's matrices are its parameter vector as of its last row with T0MEANS
-replaced by its smoothed initial state. That is where individual differences
-come out: ctsem carries an individually varying parameter as an augmented
-latent state with no drift and no diffusion, so the smoothed t0 estimate of that
-state is the subject's value for it.
-"""
-"""
     _ctsem_kalman_compact(out)
 
 What the misfit tests read of a filter's output, and nothing else: the
@@ -645,6 +621,31 @@ function _ctsem_kalman_compact(out)
         ess=hasproperty(out, :ess) ? out.ess : Float64[])
 end
 
+"""
+    ctsem_kalman(objective, values; subject_matrices=true, fields=String[], compact=false)
+
+Prior, filtered and smoothed states and observations for every data row, plus
+each subject's own model matrices.
+
+`values` is one raw parameter vector, used for every subject -- or a matrix
+whose row `i` is subject `i`'s own. The second form is what a Laplace fit needs,
+where each subject is filtered at its own realized parameters rather than at a
+shared population vector. Either way a row is before TI-predictor effects,
+which the filter adds from each subject's predictors, as it does in a fit; a
+row that already carries them has them twice. The returned named tuple carries
+`eta`, `etacov`, `y`, `ycov` with leading dimension 1 = prior, 2 = updated, 3 =
+smoothed; `llrow`; `subject`; `subject_loglik`; `transition` (the interval
+Jacobian that reached each row, `nrows` by `n` by `n`); and, unless
+`subject_matrices=false`, a `size`-by-`nsubjects` matrix packed in the layout
+`ctsem_parameter_layout` describes.
+`compact=true` returns only what the misfit tests read (`_ctsem_kalman_compact`).
+
+A subject's matrices are its parameter vector as of its last row with T0MEANS
+replaced by its smoothed initial state. That is where individual differences
+come out: ctsem carries an individually varying parameter as an augmented
+latent state with no drift and no diffusion, so the smoothed t0 estimate of that
+state is the subject's value for it.
+"""
 function ctsem_kalman(objective::CTSEMObjective, values::AbstractVecOrMat;
     subject_matrices::Bool=true, fields=String[], compact::Bool=false)
 
