@@ -409,7 +409,9 @@ cross effect, the intercept of `Y1` and the initial level of `eta1`; it also
 tried a random effect on the
 cross effect, which the score tests had flagged because subjects of different
 ages differ in it -- a covariate that explains the variation beats a random
-effect that only describes it. The second round kept the moderation. Then
+effect that only describes it. The second round kept the moderation, and
+turned down the dimension test's suggestion that three dynamic parameters vary
+together, whose refit gained 8 log likelihood units for 18 parameters. Then
 nothing more was indicated, every adequacy check passed, and trying each kept
 change out again showed both were still needed. The effects found are near
 those that generated the data (0.3 on the cross effect, 0.6 on the intercept
