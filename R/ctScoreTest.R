@@ -663,18 +663,20 @@ ctScoreTest <- function(fit, covariates = NULL,
   T <- apply(C, c(2, 3), sum)
   dsd <- vapply(seq_len(K), function(a) sqrt(.ctScoreSpread(matrix(C[, a, a]))[1, 1]), 0)
   if (any(!is.finite(dsd) | dsd <= 0)) return(NULL)
-  scale <- sqrt(outer(dsd, dsd))
-  e <- eigen(T / scale, symmetric = TRUE)
+  e <- eigen(T / sqrt(outer(dsd, dsd)), symmetric = TRUE)
   lambda <- e$values[1]
-  flat <- matrix(C, n, K * K)
-  flat <- sweep(flat, 2, colMeans(flat))
-  G <- matrix(stats::rnorm(nboot * n), nboot, n)
-  Tb <- G %*% flat
-  draws <- apply(Tb, 1, function(t) eigen(matrix(t, K) / scale, symmetric = TRUE,
-    only.values = TRUE)$values[1])
+  # The same statistic from any rows of the flattened contributions: each
+  # diagonal's spread recomputed, so the reference is studentised as lambda is.
+  diagcols <- (seq_len(K) - 1L) * K + seq_len(K)
+  largest <- function(X) {
+    d <- sqrt(pmax(diag(.ctScoreSpread(X[, diagcols, drop = FALSE])), 0))
+    if (any(!is.finite(d) | d <= 0)) return(NA_real_)
+    eigen(matrix(colSums(X), K) / sqrt(outer(d, d)), symmetric = TRUE,
+      only.values = TRUE)$values[1]
+  }
   u <- e$vectors[, 1] / sqrt(dsd)
   u <- u / u[which.max(abs(u))]
-  list(lambda = lambda, p = (1 + sum(draws >= lambda)) / (1 + nboot),
+  list(lambda = lambda, p = .ctScoreBoot(matrix(C, n, K * K), nboot, statistic = largest),
     direction = stats::setNames(u, ptab$name[het])[order(-abs(u))])
 }
 
@@ -702,22 +704,37 @@ ctScoreTest <- function(fit, covariates = NULL,
 # one-sided z rejected a true model at 2 per cent where 5 was asked, and the
 # joint covariate test at 7.5 to 10.5. Studentising and resampling corrects
 # the skewness to second order, and costs milliseconds: nothing is refitted.
-# `onesided` takes a single column and rejects for large U.
-.ctScoreBoot <- function(C, nboot = 1999L, onesided = FALSE) {
-  C <- as.matrix(C)
-  n <- nrow(C)
-  stat <- function(X) {
+# `onesided` takes a single column and rejects for large U. `statistic`
+# replaces U' V^-1 U with another function of the contributions, recomputed the
+# same way. `C` may be a list of contribution matrices over the same units, for
+# the largest of their statistics -- a search, as over a threshold's cuts --
+# against the largest in each resample.
+#
+# The draws must be studentised as the observed statistic is. A Gaussian
+# multiplier with the observed variance held fixed is not, and errs either
+# way: for the threshold search, whose sums are roughly symmetric, the fixed
+# variance made the reference too narrow (21 per cent at .05 under the
+# null); for the dimension test, whose diagonal sums are right-skewed and so
+# left-skewed once studentised, too wide (0 of 100, and 2 per cent power for a
+# missing dimension).
+.ctScoreBoot <- function(C, nboot = 1999L, onesided = FALSE, statistic = NULL) {
+  Cs <- if (is.list(C) && !is.data.frame(C)) lapply(C, as.matrix) else list(as.matrix(C))
+  n <- nrow(Cs[[1]])
+  stat <- if (!is.null(statistic)) statistic else function(X) {
     u <- colSums(X)
     v <- .ctScoreSpread(X)
     if (onesided) return(u / sqrt(v[1, 1]))
     pv <- .ctScorePinv(v)
     as.numeric(t(u) %*% pv$inv %*% u)
   }
-  observed <- stat(C)
+  sup <- function(Xs) max(vapply(Xs, stat, numeric(1)))
+  observed <- sup(Cs)
   if (!is.finite(observed)) return(NA_real_)
-  null <- sweep(C, 2, colMeans(C))
-  draws <- vapply(seq_len(nboot), function(b)
-    stat(null[sample.int(n, n, replace = TRUE), , drop = FALSE]), numeric(1))
+  nulls <- lapply(Cs, function(X) sweep(X, 2, colMeans(X)))
+  draws <- vapply(seq_len(nboot), function(b) {
+    idx <- sample.int(n, n, replace = TRUE)
+    sup(lapply(nulls, function(X) X[idx, , drop = FALSE]))
+  }, numeric(1))
   (1 + sum(draws >= observed, na.rm = TRUE)) / (1 + sum(is.finite(draws)))
 }
 
@@ -909,20 +926,10 @@ ctScoreTest <- function(fit, covariates = NULL,
   }
   lms <- vapply(contrib, stat, 0)
   best <- which.max(lms)
-  centred <- lapply(contrib, function(C) sweep(C, 2, colMeans(C)))
-  vinv <- lapply(contrib, function(C) .ctScorePinv(.ctScoreSpread(C))$inv)
-  n <- nrow(pieces$S)
-  draws <- vapply(seq_len(nboot), function(b) {
-    g <- stats::rnorm(n)
-    max(vapply(seq_along(centred), function(c) {
-      u <- colSums(g * centred[[c]])
-      as.numeric(t(u) %*% vinv[[c]] %*% u)
-    }, 0))
-  }, 0)
   # The best cut's effects and their tests, with the bootstrap the scan skipped.
   out <- .ctScoreCovariate(pieces, items, fits[[best]]$G, variance, nboot)
   out$joint$LM <- lms[best]
-  out$joint$p <- (1 + sum(draws >= lms[best])) / (1 + nboot)
+  out$joint$p <- .ctScoreBoot(contrib, nboot)
   out$joint$cut <- cuts[best]
   out
 }
