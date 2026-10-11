@@ -93,8 +93,9 @@ other.
 
 The three rules:
 
-  * censored, whose extras are two constant limits and a standard deviation
-    that belongs to MANIFESTVAR;
+  * censored, whose extras are two constant limits, a standard deviation
+    that belongs to MANIFESTVAR, and with a response scale a half-width and
+    power that are RESPONSE's;
   * binary with asymptotes, whose two extras are the cells `c` and `d` of
     ASYMPTOTES row `asymrow` themselves, so each takes its own cotangent;
   * ordinal, where threshold `k` is the sum of the first `k` cells, so a
@@ -111,6 +112,13 @@ mode.
     kind::Int, cot::F) where {F}
     if kind == CTSEM_OBS_CENSORED
         @inbounds θ̄ca.MANIFESTVAR[row, row] += cot(3)
+        # A response scale's half-width and power are RESPONSE's two cells.
+        if length(τ) >= 5
+            @inbounds begin
+                θ̄ca.RESPONSE[row, 1] += cot(4)
+                θ̄ca.RESPONSE[row, 2] += cot(5)
+            end
+        end
         return nothing
     end
     if kind == CTSEM_OBS_BINARY

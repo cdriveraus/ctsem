@@ -37,7 +37,10 @@
 #' (\code{intoverpop='augmented'}) carries no per-subject effects, so only
 #' \code{'population'} applies there. Stan fits generate as the fit was
 #' made and refuse the argument.
-#' @return Matrix of generated data -- one dataset per iteration, according to original time and missingness structure.
+#' @return The fit, with a \code{$generated} element: \code{Y}, the generated
+#' data as an array of sample by data row by manifest variable, on the
+#' original time and missingness structure, and \code{llrow}, each generated
+#' row's log likelihood.
 #' @aliases ctStanGenerateFromFit
 #' @export
 #' @examples

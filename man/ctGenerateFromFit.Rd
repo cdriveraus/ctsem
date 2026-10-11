@@ -57,7 +57,10 @@ conditional mode. A fit that integrates the random effects as states
 made and refuse the argument.}
 }
 \value{
-Matrix of generated data -- one dataset per iteration, according to original time and missingness structure.
+The fit, with a \code{$generated} element: \code{Y}, the generated
+data as an array of sample by data row by manifest variable, on the
+original time and missingness structure, and \code{llrow}, each generated
+row's log likelihood.
 }
 \description{
 Add a \code{$generated} object to ctstanfit object, with random data

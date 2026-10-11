@@ -454,11 +454,13 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
     censormin = isdefined(sp, :censormin) ? copy(sp.censormin) : Float64[]
     censormax = isdefined(sp, :censormax) ? copy(sp.censormax) : Float64[]
     # At least three, because a censored row borrows this same scratch to carry
-    # its lower limit, upper limit and standard deviation -- one row at a time,
+    # its lower limit, upper limit and standard deviation (five with a response
+    # scale: its half-width and power too) -- one row at a time,
     # exactly as an ordinal row borrows it for its cumulated thresholds. At
     # least one for a count, which borrows it for its dispersion.
     thresholds = zeros(T, max(hasproperty(pars, :THRESHOLDS) ?
-        size(pars.THRESHOLDS, 2) : 0, any(==(4), manifesttype) ? 3 : 0,
+        size(pars.THRESHOLDS, 2) : 0,
+        any(==(4), manifesttype) ? (hasproperty(pars, :RESPONSE) ? 5 : 3) : 0,
         any(==(3), manifesttype) ? 1 : 0, any(>(0), asymptoterow) ? 2 : 0))
 
     return ContinuousEKFWorkspace(

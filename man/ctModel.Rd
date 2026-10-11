@@ -24,6 +24,7 @@ ctModel(
   MANIFESTMEANS = "auto",
   MANIFESTVAR = "diag",
   ASYMPTOTES = NA,
+  RESPONSE = NA,
   DRIFT = "auto",
   CINT = 0,
   DIFFUSION = "auto",
@@ -136,6 +137,28 @@ one, or both (four parameter); a number between 0 and 1 fixes it, and one
 name shared across rows estimates one asymptote for those items. A length 2
 vector applies to every binary indicator, so \code{c('guess', NA)} is one
 guessing parameter for the whole test. Julia backend only.}
+
+\item{RESPONSE}{Matrix with one row per manifest variable and two columns,
+the response scale of a censored indicator (manifesttype 4); rows for other
+indicators must stay at their defaults. Column 1, \code{halfwidth}: the
+half-width of the interval each recorded value stands for -- a value \code{y}
+is the event that the latent response lies between the transformed
+\code{y - halfwidth} and \code{y + halfwidth}, and a value at
+\code{censormin} or \code{censormax} that it lies below or above half a step
+in from it. 0, the default, is a value recorded exactly. For a rating scale
+it is half the step between categories, so the bottom category of a 7-point
+item and a slider's 0 are each what they are; a step that differs by study
+is a time independent predictor in the cell. Column 2, \code{power}: the
+transform from the recorded scale to the latent response,
+\eqn{G(r) = L + ((1 + r - L)^p - 1)/p} with \eqn{L} the censormin (0 where
+there is none). 1, the default, is linear; below 1 the latent response
+moves less per recorded unit high on the scale, so the recorded value moves
+faster there; 0 is the log, whose inverse is the exponential link. One
+transform serves every form an item is asked in, so a name shared across
+items or studies estimates one curvature from all of them. \code{NA} keeps
+a default, and a length 2 vector fills every censored row, so
+\code{c(0.5, 'power')} is integer data with one estimated transform. Julia
+backend only.}
 
 \item{DRIFT}{n.latent*n.latent DRIFT matrix of continuous auto and cross effects, 
 relating the processes over time. 

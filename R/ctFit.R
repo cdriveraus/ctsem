@@ -2088,6 +2088,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
       call.=FALSE)
   }
   .ctCheckAsymptotePars(ctm$pars, ctm$manifesttype)
+  .ctCheckResponsePars(ctm$pars, ctm$manifesttype)
   if(any(ctm$manifesttype %in% 1)) .ctDataBinary(datalong, ctm)
   if(any(ctm$manifesttype %in% 2)) .ctDataCategories(datalong, ctm)
   if(any(ctm$manifesttype %in% 3)) .ctDataCounts(datalong, ctm)

@@ -526,8 +526,9 @@ function _generate_binary!(gen, ws::ContinuousEKFWorkspace, pars, λ, μ,
         # The standard normal deviate is used directly rather than through its
         # own CDF, which keeps the draw exact rather than approximated.
         lower, upper, sd = _censor_limits(thresholds, T)
+        half, power = _censor_response(thresholds, T)
         draw = ηbar + sqrt(s2 + sd * sd) * T(gen.base[row, r])
-        y = min(max(draw, lower), upper)
+        y = T(_censored_record(draw, lower, upper, half, power))
     elseif kind == CTSEM_OBS_COUNT
         # A count's marginal `∫ Poisson(y | e^η) φ(η; ηbar, s²) dη` has no closed
         # form, so it is drawn in the two stages that define it -- the linear

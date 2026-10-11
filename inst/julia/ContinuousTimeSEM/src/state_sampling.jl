@@ -473,7 +473,8 @@ function _ctsem_draw_categorical(gen::CTSEMStateGenerate, eta::T, row::Int,
             rand(gen.rng), randn(gen.rng))
     elseif kind == CTSEM_OBS_CENSORED
         lower, upper, sd = _censor_limits(thresholds, T)
-        return min(max(eta + sd * z, lower), upper)
+        half, power = _censor_response(thresholds, T)
+        return _censored_record(eta + sd * z, lower, upper, half, power)
     elseif kind == CTSEM_OBS_BINARY || isempty(thresholds)
         # `(0, 1)` when the item has no asymptotes, so this is the plain
         # Bernoulli draw; with them it is the three or four parameter response
