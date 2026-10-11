@@ -103,7 +103,10 @@ a variable.
   \item{distribution}{Skewness and kurtosis of each variable's errors, and
     each row's squared whitened distance against its chi-square mean and
     variance, together with Anderson-Darling tests against the normal and
-    chi-square.}
+    chi-square. On a Laplace fit whose random effects reach the dynamics or
+    the variances, each row's predictive covariance is a Gaussian
+    approximation, and the row distances are left out: they would test the
+    approximation, and in simulation rejected correct models.}
   \item{fit}{How unevenly units are fitted: the spread of each unit's
     summed distance against the chi-square's, and the worst unit.}
   \item{dependence}{The distance correlation of each variable's error, and

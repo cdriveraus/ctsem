@@ -53,7 +53,10 @@
 #'   \item{distribution}{Skewness and kurtosis of each variable's errors, and
 #'     each row's squared whitened distance against its chi-square mean and
 #'     variance, together with Anderson-Darling tests against the normal and
-#'     chi-square.}
+#'     chi-square. On a Laplace fit whose random effects reach the dynamics or
+#'     the variances, each row's predictive covariance is a Gaussian
+#'     approximation, and the row distances are left out: they would test the
+#'     approximation, and in simulation rejected correct models.}
 #'   \item{fit}{How unevenly units are fitted: the spread of each unit's
 #'     summed distance against the chi-square's, and the worst unit.}
 #'   \item{dependence}{The distance correlation of each variable's error, and
@@ -231,6 +234,9 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     t0 <- proc.time()[['elapsed']]
     err <- if (neederr) .ctAdequacyErrors(fit) else NULL
     setup <- if (neederr) .ctAdequacySetup(err, gaps) else NULL
+    if ('distribution' %in% moments && isTRUE(err$approximate)) message("The row ",
+      "distances are not tested: on this fit each row's predictive covariance is an ",
+      "approximation (random effects in the dynamics or variances, on the Laplace route).")
     if (length(moments)) {
       est <- if (.ctFitIsJulia(fit)) .ctFitRawEstimate(fit) else NULL
       extra <- list(
@@ -373,7 +379,25 @@ ctFitAdequacy <- function(fit, covariates = NULL,
   labels <- tryCatch(as.character(.ctFitIdMap(fit)$original), error = function(e) NULL)
   if (length(labels) < max(unit)) labels <- as.character(seq_len(max(unit)))
   list(E = E, R = R, Q = Q, d = d, Z = Z, unit = unit, nunits = max(unit), time = time,
-    eta = eta, vars = vars, labels = labels)
+    eta = eta, vars = vars, labels = labels, approximate = .ctAdequacyApproximate(fit))
+}
+
+# Whether each row's predictive covariance is a Gaussian approximation: on the
+# Laplace route, where the subject's random effects are integrated by their
+# posterior given the earlier rows, the sequential predictions add that
+# posterior's uncertainty by the delta method, which is exact only where the
+# effects enter the predictions linearly -- intercepts, initial means,
+# predictor effects. Where they reach the dynamics or the variances, the true
+# predictive is a mixture, a little wider. Generated from a pilot-shaped model
+# (random drift and diffusion, 4500 rows), the row distances ran 1.5 per cent
+# high, and with the estimation removed their mean rejected the correct model
+# at z = 6.0 (z = 1.7 without removing it).
+.ctAdequacyApproximate <- function(fit) {
+  if (!.ctFitIsJulia(fit) || !identical(.ctBackendIntOverPop(fit$model_spec), 'laplace'))
+    return(FALSE)
+  pars <- .ctFitModelObject(fit)$pars
+  varying <- pars$matrix[as.logical(pars$indvarying) %in% TRUE & !is.na(pars$param)]
+  any(!varying %in% c('MANIFESTMEANS', 'CINT', 'T0MEANS', 'TDPREDEFFECT'))
 }
 
 # What stays fixed when the statistics are recomputed at other parameter
@@ -478,15 +502,20 @@ ctFitAdequacy <- function(fit, covariates = NULL,
     E4 <- E^4 - 3; E4[is.na(E4)] <- 0
     q1 <- err$Q - err$d; q1[!is.finite(q1)] <- 0
     q2 <- (err$Q - err$d)^2 - 2 * err$d; q2[!is.finite(q2)] <- 0
-    terms <- cbind(E3, E4, q1, q2)
     nobs <- colSums(!is.na(E))
+    # The row distances test the predictive covariance's level and spread,
+    # which on an approximate route (.ctAdequacyApproximate) they find wrong
+    # in the approximation rather than the model.
+    distances <- !isTRUE(err$approximate)
+    terms <- if (distances) cbind(E3, E4, q1, q2) else cbind(E3, E4)
     # Unit-level variance and the studentised bootstrap: a sum of fourth powers
     # has a pairwise-style variance in eighth powers, too noisy for a normal
     # reference (4.7 per cent of correct models rejected at .01), and rows stay
     # independent under the departures this family is for, so nothing is lost.
     addblock(unitsum(terms), matrix(NA_real_, n, ncol(terms)), 'distribution',
-      c(paste0('skew(', vars, ')'), paste0('kurtosis(', vars, ')'), 'distance',
-        'distance spread'), c(nobs, nobs, rep(sum(err$d > 0), 2)), 'moment')
+      c(paste0('skew(', vars, ')'), paste0('kurtosis(', vars, ')'),
+        if (distances) c('distance', 'distance spread')),
+      c(nobs, nobs, if (distances) rep(sum(err$d > 0), 2)), 'moment')
   }
   if ('fit' %in% which) {
     Q <- err$Q; Q[!is.finite(Q)] <- 0
