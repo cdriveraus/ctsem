@@ -398,6 +398,53 @@ test_that("a fit asking for more cores than the session has threads says so", {
   expect_true(any(grepl("^cores = ", said(8L, 2L))))
 })
 
+# Every other call heard nothing: ctKalman() starting the session at two
+# threads, then ctFitUncertainty(fit, cores = 16), ran at two in silence. Such
+# a call is told where it sets its ceiling, by the lesser of what the region
+# would use and what the call asked for.
+test_that("a call other than a fit says so when the session is narrower than it asked", {
+  cache <- ctsem:::.ct_julia_cache
+  original <- cache$threads_reported
+  on.exit(cache$threads_reported <- original, add = TRUE)
+  said <- function(chunks, threads, requested) {
+    cache$threads_reported <- NULL
+    seen <- character()
+    withCallingHandlers(
+      ctsem:::.ctBackendReportShortfall(chunks, threads, requested),
+      message = function(m) {
+        seen <<- c(seen, conditionMessage(m)); invokeRestart("muffleMessage")
+      })
+    seen
+  }
+  expect_match(said(4L, 2L, 4L), "^cores = 4 requested, 2 used")
+  # Named by what the call asked for, not by the region's own ceiling.
+  expect_match(said(6L, 2L, 3L), "^cores = 3 requested, 2 used")
+  expect_length(said(4L, 4L, 4L), 0L)
+  # A region held below its call on purpose -- an inner fit at one core under
+  # a wider call -- is short of nothing.
+  expect_length(said(1L, 2L, 8L), 0L)
+  # Nor is a call that asked for nothing, or a count that could not be read.
+  expect_length(said(4L, 2L, NA_integer_), 0L)
+  expect_length(said(4L, NA_integer_, 4L), 0L)
+})
+
+test_that("a call other than a fit in a narrower running session says so", {
+  skip_without_julia()
+  cache <- ctsem:::.ct_julia_cache
+  original <- cache$threads_reported
+  on.exit(cache$threads_reported <- original, add = TRUE)
+  dat <- image_data(nsub = 6L, nobs = 5L, seed = 6L)
+  prepared <- suppressMessages(ctFit(dat, image_model(), backend = "julia",
+    fit = FALSE))
+  pars <- rep(0, ctsem:::.ctBackendNpar(prepared))
+  threads <- as.integer(ctsem:::.ctJuliaEval("Threads.nthreads()"))
+  cache$threads_reported <- NULL
+  expect_message(ctJuliaEvaluate(prepared, pars = pars, cores = threads + 1L),
+    paste0("cores = ", threads + 1L, " requested, ", threads, " used"),
+    fixed = TRUE)
+  expect_no_message(ctJuliaEvaluate(prepared, pars = pars, cores = threads))
+})
+
 test_that("a one-thread session asked for more cores either gets more or says so", {
   skip_without_julia()
   cache <- ctsem:::.ct_julia_cache

@@ -108,6 +108,11 @@ test_that("ctGenerateFromFit returns what the posterior predictive tools expect"
   generated <- ctGenerateFromFit(fit, nsamples = 20, cores = 1)
   expect_equal(dim(generated$generated$Y), c(20L, nrows, 1L))
   expect_identical(dimnames(generated$generated$Y)[[3]], model$manifestNames)
+  # The engine generates one draw at a time: more cores than that are said to
+  # go unused rather than accepted in silence.
+  expect_message(ctGenerateFromFit(fit, nsamples = 2, cores = 3),
+    "cores = 3 requested, 1 used", fixed = TRUE)
+  expect_no_message(ctGenerateFromFit(fit, nsamples = 2, cores = 1))
   expect_equal(dim(generated$generated$llrow), c(20L, nrows))
   # A row with nothing observed contributes nothing, and is reported as NA
   # rather than as a zero that would read as a likelihood.

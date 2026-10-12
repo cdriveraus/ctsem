@@ -24,7 +24,9 @@ ctGenerateFromFit(
 
 \item{verboseErrors}{if TRUE, print verbose output when errors in generation encountered.}
 
-\item{cores}{Number of cpu cores to use.}
+\item{cores}{Number of cpu cores to use, for \code{backend='stan'} fits.
+A julia fit generates its draws one at a time in the engine, and says so
+when given more than one.}
 
 \item{intoverstates}{For \code{backend='julia'} fits: which route generates
 the latent states. \code{'fit'} (the default) mirrors the fit, so a

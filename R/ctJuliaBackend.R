@@ -4398,6 +4398,10 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 # nothing to put back. It is read only when there is a ceiling to set, because
 # reading it is a `juliaEval` and `juliaEval` *starts* a session when none is
 # running -- capping nothing must not be the thing that launches the engine.
+#
+# The same read gives the session's thread count, so this is also where a call
+# other than a fit hears that the session is narrower than it asked for
+# (`.ctBackendReportShortfall()`); a fit has heard already, before it began.
 .ctBackendSetMaxChunks <- function(chunks) {
   chunks <- suppressWarnings(as.integer(chunks)[1L])
   if (is.na(chunks) || chunks < 1L) return(NA_integer_)
@@ -4409,11 +4413,33 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # for the region's duration -- a ctExtract(cores = 8) on a fit restored into a
   # new session would run at the default.
   .ctJuliaModule(.ct_julia_cache$project)
-  previous <- tryCatch(as.integer(.ctBackendJuliaValue(.ctJuliaEval(
-    "ContinuousTimeSEM.ctsem_max_chunks().max_chunks"))), error = function(e) NA_integer_)
+  state <- tryCatch(as.integer(.ctBackendJuliaValue(.ctJuliaEval(paste0(
+    "let s = ContinuousTimeSEM.ctsem_max_chunks(); ",
+    "[s.max_chunks, s.nthreads] end")))), error = function(e) integer())
+  if (length(state) != 2L) state <- c(NA_integer_, NA_integer_)
+  .ctBackendReportShortfall(chunks, threads = state[2L],
+    requested = .ctJuliaCallCores())
   try(.ctJuliaCall("ContinuousTimeSEM.ctsem_set_max_chunks!", chunks),
     silent = TRUE)
-  previous
+  state[1L]
+}
+
+# Say so when a running session has fewer threads than a region would use of
+# what its call asked for. The region runs at up to `chunks`, the call asked
+# for `requested` (`.ctJuliaCallCores()`), and only the lesser of the two can
+# fall short: a region held below its call on purpose -- an inner fit at one
+# core under a wider call -- is short of nothing, and a call that asked for
+# nothing is not told. Only ctFit's `cores` restarts a session
+# (`.ctBackendResolveThreads()`); a call this far in holds Julia objects a
+# restart would end.
+.ctBackendReportShortfall <- function(chunks, threads, requested) {
+  requested <- suppressWarnings(as.integer(requested)[1L])
+  wanted <- min(suppressWarnings(as.integer(chunks)[1L]), requested)
+  threads <- suppressWarnings(as.integer(threads)[1L])
+  if (!is.na(wanted) && !is.na(threads) && threads < wanted) {
+    .ctBackendReportThreads(requested, threads)
+  }
+  invisible(NULL)
 }
 
 .ctBackendRestoreMaxChunks <- function(previous) {

@@ -672,7 +672,7 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
 }
 
 .ctBackendGenerateFromFit <- function(fit, nsamples = 200, fullposterior = FALSE,
-  cores = 2, intoverstates = "fit", effects = c("population", "fitted")) {
+  intoverstates = "fit", effects = c("population", "fitted")) {
   effects <- match.arg(effects)
   spec <- .ctBackendSpec(fit)
   # Which subjects. A Laplace or 'none' fit describes its random effects as

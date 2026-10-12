@@ -60,8 +60,8 @@ called.}
 \item{minpairn}{Minimum number of complete paired observations required for
 an empirical or generated lagged covariance/correlation.}
 
-\item{cores}{Number of cores to use for generating data and summarising
-generated samples.}
+\item{cores}{Number of cores to use for generating data (stan fits; a
+julia fit generates one draw at a time) and summarising generated samples.}
 
 \item{keep}{If `"samples"`, draw-level model diagnostics are attached as the
 `"samples"` attribute of the returned data.}
