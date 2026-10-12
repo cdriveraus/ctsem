@@ -575,30 +575,37 @@ ctModelImprove <- function(fit, covariates = NULL,
 
 # The smallest p of a variable's positive correlations with itself at other
 # times, over every gap bin, in one family of the adequacy check (`latent`
-# for a latent's updates, `residuals` for an item's errors). NA when the
-# check did not run the family.
+# for a latent's updates, `residuals` for an item's errors), times the number
+# of gap bins it is the smallest of. Structural proposals are ranked against
+# each other by this, and a cycle by its strongest period on the same terms
+# (`.ctImprovePeriodicEvidence`). NA when the check did not run the family.
 .ctImproveOwnEvidence <- function(ad, family, name) {
   s <- if (is.null(ad)) NULL else ad$statistics
   if (is.null(s) || !nrow(s)) return(NA_real_)
-  own <- s$family == family & startsWith(s$statistic, paste0(name, '~', name, ' gap ')) &
-    is.finite(s$z) & s$z > 0
+  all <- s$family == family & startsWith(s$statistic, paste0(name, '~', name, ' gap ')) &
+    is.finite(s$z)
+  own <- all & s$z > 0
   if (!any(own)) return(NA_real_)
-  min(s$p[own])
+  min(1, min(s$p[own]) * sum(all))
 }
 
-# The periodic family's evidence for a cycle: its p-value, and the period of
-# its strongest positive statistic; NULL when the family did not run or found
-# no positive one.
+# The periodic family's evidence for a cycle: the period of its strongest
+# positive statistic, and that statistic's p times the number of periods
+# scanned -- on the terms an item's or a latent's own correlations are ranked
+# by (`.ctImproveOwnEvidence`). The family's p, which the bootstrap floors at
+# 1 / (nboot + 1), put a daily rhythm at z = 11 behind every item process on
+# the Fisher data. NULL when the family did not run or found no positive one.
 .ctImprovePeriodicEvidence <- function(ad) {
   if (is.null(ad) || is.null(ad$families)) return(NULL)
   f <- ad$families[ad$families$family == 'periodic', , drop = FALSE]
   s <- ad$statistics[ad$statistics$family == 'periodic' & is.finite(ad$statistics$z) &
     ad$statistics$z > 0, , drop = FALSE]
   if (!nrow(f) || !nrow(s)) return(NULL)
-  w <- s$statistic[which.max(s$z)]
-  period <- as.numeric(sub('.* period ', '', w))
+  best <- which.max(s$z)
+  period <- as.numeric(sub('.* period ', '', s$statistic[best]))
   if (!is.finite(period)) return(NULL)
-  list(p = f$p[1], period = period)
+  scanned <- sum(ad$statistics$family == 'periodic' & is.finite(ad$statistics$z))
+  list(p = min(1, s$p[best] * scanned), period = period)
 }
 
 # The latents with innovations of their own: not a cycle's clock, not the
