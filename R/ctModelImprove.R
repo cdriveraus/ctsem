@@ -120,7 +120,10 @@
 #' @param alpha Level for the screen (Benjamini-Hochberg within each family),
 #'   for the likelihood ratio decision, and for adequacy.
 #' @param maxsteps Most refit rounds.
-#' @param ntry Most refits tried per round.
+#' @param ntry Refits tried at once: a round refits the strongest \code{ntry}
+#'   proposals. When those come from the adequacy check and none improves the
+#'   fit, the next \code{ntry} are tried, and so on until one does or none is
+#'   left, since the check does not change until the model does.
 #' @param criterion \code{'LR'}, \code{'AIC'} or \code{'BIC'}.
 #' @param adequacy Use \code{\link{ctFitAdequacy}} to decide when to stop.
 #' @param prune After the search, try dropping each kept change in turn and
@@ -230,27 +233,40 @@ ctModelImprove <- function(fit, covariates = NULL,
     # 1 / (nboot + 1), and strong signals would tie there. Of relaxations the
     # tests cannot tell apart (one class), only the strongest is refitted this
     # round; if it fails, the next round's screen says whether another is
-    # still indicated.
+    # still indicated. Structural proposals come from a check that cannot
+    # change until the model does, so when a batch of them fails the next
+    # batch follows in the same round, until one improves or none is left;
+    # stopping after the first left a daily cycle untried on the Fisher data
+    # behind three item processes. Their likelihood ratio level is divided
+    # by every structural proposal the round might try, not by the batch.
     proposals <- proposals[order(vapply(proposals, `[[`, 0, 'rank'))]
     cls <- vapply(proposals, function(p) if (is.null(p$class) || is.na(p$class)) NA_character_ else
       paste(p$family, p$class), '')
-    proposals <- utils::head(proposals[is.na(cls) | !duplicated(cls)], ntry)
+    proposals <- proposals[is.na(cls) | !duplicated(cls)]
+    if (!structural) proposals <- utils::head(proposals, ntry)
+    level <- alpha / length(proposals)
     tried <- list()
-    for (prop in proposals) {
-      say("Round ", step, ": refitting with ", prop$label)
-      edited <- try(prop$edit(model, data, covariates), silent = TRUE)
-      refit <- if (inherits(edited, 'try-error')) edited else
-        try(.ctImproveRefit(current, edited$model, edited$data, cores, prop$start,
-          edited$args), silent = TRUE)
-      verdict <- .ctImproveCompare(current, refit, criterion, alpha / length(proposals))
-      tried[[length(tried) + 1L]] <- list(prop = prop, refit = refit, edited = edited,
-        verdict = verdict)
-      history[[length(history) + 1L]] <- data.frame(round = step, family = prop$family,
-        change = prop$label, screen_p = prop$p, dloglik = verdict$dloglik,
-        dpar = verdict$dpar, criterion = verdict$value, kept = FALSE,
-        note = verdict$note, stringsAsFactors = FALSE)
+    ok <- logical()
+    while (length(proposals)) {
+      batch <- utils::head(proposals, ntry)
+      proposals <- proposals[-seq_along(batch)]
+      for (prop in batch) {
+        say("Round ", step, ": refitting with ", prop$label)
+        edited <- try(prop$edit(model, data, covariates), silent = TRUE)
+        refit <- if (inherits(edited, 'try-error')) edited else
+          try(.ctImproveRefit(current, edited$model, edited$data, cores, prop$start,
+            edited$args), silent = TRUE)
+        verdict <- .ctImproveCompare(current, refit, criterion, level)
+        tried[[length(tried) + 1L]] <- list(prop = prop, refit = refit, edited = edited,
+          verdict = verdict)
+        history[[length(history) + 1L]] <- data.frame(round = step, family = prop$family,
+          change = prop$label, screen_p = prop$p, dloglik = verdict$dloglik,
+          dpar = verdict$dpar, criterion = verdict$value, kept = FALSE,
+          note = verdict$note, stringsAsFactors = FALSE)
+      }
+      ok <- vapply(tried, function(t) isTRUE(t$verdict$accept), logical(1))
+      if (any(ok)) break
     }
-    ok <- vapply(tried, function(t) isTRUE(t$verdict$accept), logical(1))
     rejected <- c(rejected, vapply(tried[!ok], function(t) t$prop$key, ''))
     if (!any(ok)) {
       if (structural) { stopped <- 'not adequate, no candidate improved'; break }
@@ -515,6 +531,7 @@ ctModelImprove <- function(fit, covariates = NULL,
       if (!is.finite(evidence)) next
       out[[length(out) + 1L]] <- list(key = paste0('unique:', item), family = 'unique',
         label = paste0(item, ' given a process of its own'), p = evidence, rank = evidence,
+        start = .ctImproveUniqueStart(model, current, item),
         edit = local({ item <- item; function(model, data, covs, args = list())
           list(model = ctModelUniqueProcess(model, item), data = data) }))
     }
@@ -618,6 +635,54 @@ ctModelImprove <- function(fit, covariates = NULL,
   a <- max(-target - 1e-6, 1e-8) / 2
   c(setNames(-log(expm1(a)) / 2, paste0('drift_', slow)),
     setNames(1, paste0('drift_', name, '_', slow)))
+}
+
+# Raw starts for a process of its own for `item`. At raw zero ctsem's drift
+# transform gives -1.39 an hour, a process that forgets within the hour, so on
+# prompts hours apart it is indistinguishable from measurement error and the
+# likelihood is flat in its persistence: on the Fisher data, processes for
+# items whose errors correlate 0.2-0.3 with their own over a day gained 0.01
+# to 2 log likelihood units from there, and none was kept. So it starts with
+# a half-life of the median time between a subject's rows, and a stationary
+# variance of a quarter of the item's error variance at the current fit, with
+# the innovation and initial sds that implies, each through the inverse of its
+# transform. NULL, and raw zero, when they cannot be worked out.
+.ctImproveUniqueStart <- function(model, current, item) {
+  if (is.null(current)) return(NULL)
+  j <- match(item, model$manifestNames)
+  m1 <- try(ctModelUniqueProcess(model, item), silent = TRUE)
+  if (is.na(j) || inherits(m1, 'try-error')) return(NULL)
+  value <- function(transform, raw) tryCatch(as.numeric(eval(parse(text = transform),
+    list(param = raw, log1p_exp = log1p_exp))), error = function(e) NA_real_)
+  inverse <- function(transform, target) tryCatch(stats::uniroot(
+    function(r) value(transform, r) - target, c(-20, 20))$root, error = function(e) NA_real_)
+  d <- try(.ctFitLongData(current), silent = TRUE)
+  if (inherits(d, 'try-error') || is.null(d)) return(NULL)
+  gaps <- unlist(lapply(split(d[[model$timeName]], d[[model$subjectIDname]]),
+    function(t) diff(sort(t))))
+  gap <- stats::median(gaps[is.finite(gaps) & gaps > 0])
+  cell <- model$pars[model$pars$matrix == 'MANIFESTVAR' & model$pars$row == j &
+    model$pars$col == j, , drop = FALSE]
+  sd <- NA_real_
+  if (nrow(cell) == 1L) {
+    if (is.na(cell$param)) sd <- as.numeric(cell$value) else {
+      est <- setNames(.ctFitRawEstimate(current), .ctFitRawParNames(current))
+      sd <- value(cell$transform, est[[cell$param]])
+    }
+  }
+  if (!is.finite(gap) || !is.finite(sd) || sd <= 0) return(NULL)
+  rate <- log(2) / gap
+  v <- sd^2 / 4
+  target <- c(DRIFT = -rate, DIFFUSION = sqrt(2 * rate * v), T0VAR = sqrt(v))
+  u <- length(m1$latentNames)
+  out <- numeric()
+  for (mat in names(target)) {
+    r <- m1$pars[m1$pars$matrix == mat & m1$pars$row == u & m1$pars$col == u, , drop = FALSE]
+    if (nrow(r) != 1L || is.na(r$param)) next
+    raw <- inverse(r$transform, target[[mat]])
+    if (is.finite(raw)) out[r$param] <- raw
+  }
+  if (length(out)) out else NULL
 }
 
 # Refit with an edited model, prepared as the current fit was and warm started
