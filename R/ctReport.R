@@ -1084,7 +1084,7 @@ ctReport <- function(fit, folder = "ctReport", components = "default",
     if (is.null(genfit)) {
       if (is.null(fit$generated)) {
         genfit <<- suppressWarnings(suppressMessages(
-          .ctGenerateFromFitWithin(fit, cores, nsamples = nsamples)))
+          ctGenerateFromFit(fit, nsamples = nsamples, cores = cores)))
       } else genfit <<- fit
     }
     genfit

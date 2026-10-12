@@ -34,8 +34,7 @@ at most \code{cores}. This is enforced after merging each \code{fitArgs}
 entry so that worker fits cannot take more than their share.}
 
 \item{generateCores}{Number of cores for \code{\link{ctGenerateFromFit}}
-when generating replicated datasets from a stan fit, at most \code{cores}
-(a julia fit generates one draw at a time). Defaults to
+when generating replicated datasets, at most \code{cores}. Defaults to
 \code{fitCores}; set it explicitly to use more cores for generation.}
 
 \item{plotEvery}{Print plots every n iterations (default = 10)}

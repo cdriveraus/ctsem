@@ -33,8 +33,8 @@
 #'   called.
 #' @param minpairn Minimum number of complete paired observations required for
 #'   an empirical or generated lagged covariance/correlation.
-#' @param cores Number of cores to use for generating data (stan fits; a
-#'   julia fit generates one draw at a time) and summarising generated samples.
+#' @param cores Number of cores to use for generating data and summarising
+#'   generated samples.
 #' @param keep If `"samples"`, draw-level model diagnostics are attached as the
 #'   `"samples"` attribute of the returned data.
 #' @return Either a plot/list of plots (default, given by `ctFitCovCheckPlot`) or
@@ -243,7 +243,7 @@ ctFitCheckCov <- function(fit, cor = TRUE, plot = TRUE, splitby = NULL,
   if(is.null(fit$generated)) {
     gensamples <- if(is.null(nsamples)) 200L else as.integer(nsamples[1])
     message('No generated data found, generating -- for faster repeated performance use ctGenerateFromFit first')
-    fit <- .ctGenerateFromFitWithin(fit, cores, nsamples = gensamples)
+    fit <- ctGenerateFromFit(fit, nsamples = gensamples, cores = cores)
   }
   if(nrow(dat) != dim(fit$generated$Y)[2]) {
     stop('The empirical data used for ctFitCheckCov must have the same row structure as fit$generated$Y')

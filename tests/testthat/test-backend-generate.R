@@ -108,11 +108,6 @@ test_that("ctGenerateFromFit returns what the posterior predictive tools expect"
   generated <- ctGenerateFromFit(fit, nsamples = 20, cores = 1)
   expect_equal(dim(generated$generated$Y), c(20L, nrows, 1L))
   expect_identical(dimnames(generated$generated$Y)[[3]], model$manifestNames)
-  # The engine generates one draw at a time: more cores than that are said to
-  # go unused rather than accepted in silence.
-  expect_message(ctGenerateFromFit(fit, nsamples = 2, cores = 3),
-    "cores = 3 requested, 1 used", fixed = TRUE)
-  expect_no_message(ctGenerateFromFit(fit, nsamples = 2, cores = 1))
   expect_equal(dim(generated$generated$llrow), c(20L, nrows))
   # A row with nothing observed contributes nothing, and is reported as NA
   # rather than as a zero that would read as a likelihood.
@@ -130,6 +125,38 @@ test_that("ctGenerateFromFit returns what the posterior predictive tools expect"
   fromposterior <- ctGenerateFromFit(fit, nsamples = 10, fullposterior = TRUE,
     cores = 1)
   expect_equal(dim(fromposterior$generated$Y), c(10L, nrows, 1L))
+
+  # Every draw in one engine call, side by side on `cores` threads, is the
+  # data one call a draw makes: the same R draws in the same order, and each
+  # subject's own stream seeded by its draw's seed whatever thread runs it.
+  # Through the filter at a different vector each draw, and along sampled
+  # states, whose subjects each have a workspace of their own one call at a
+  # time and share one per thread here.
+  llrow_of <- function(x) ifelse(x == 0, NA, x)
+  set.seed(5)
+  batched <- ctGenerateFromFit(fit, nsamples = 4, fullposterior = TRUE,
+    cores = 2)$generated
+  set.seed(5)
+  posterior <- fit$estimate$rawposterior
+  rows <- sample(seq_len(nrow(posterior)), 4, replace = 4 > nrow(posterior))
+  for (s in 1:4) {
+    base <- matrix(stats::rnorm(nrows), 1L, nrows)
+    one <- ctsem:::.ctBackendGenerate(fit, posterior[rows[s], ], base)
+    expect_equal(batched$Y[s, , 1], as.numeric(one$Y))
+    expect_equal(batched$llrow[s, ], llrow_of(as.numeric(one$llrow)))
+  }
+  nz <- ctsem:::.ctBackendStateDimension(fit)
+  set.seed(6)
+  batched <- ctGenerateFromFit(fit, nsamples = 3, intoverstates = FALSE,
+    cores = 2)$generated
+  set.seed(6)
+  for (s in 1:3) {
+    z <- stats::rnorm(nz)
+    base <- matrix(stats::rnorm(nrows), 1L, nrows)
+    one <- ctsem:::.ctBackendGenerateStates(fit, fit$estimate$raw, z, base)
+    expect_equal(batched$Y[s, , 1], as.numeric(one$Y))
+    expect_equal(batched$llrow[s, ], llrow_of(as.numeric(one$llrow)))
+  }
 })
 
 test_that("the posterior predictive tools run on a backend fit", {
@@ -427,6 +454,31 @@ test_that("ctGenerateFromFit works on a Laplace fit and matches the augmented ro
   # Averaged over 20 datasets of new subjects, each subject's mean is near the
   # population's, whatever that subject's data said.
   expect_lt(abs(stats::cor(obs_subject_mean, subject_means(gen_laplace))), 0.6)
+
+  # One engine call against one call a draw, as for the augmented route: new
+  # subjects made in the engine from standard normals at each draw's
+  # population covariance, and the fitted subjects at their conditional modes,
+  # solved once for draws that share the point estimate.
+  raw <- fit_laplace$estimate$raw
+  nrows <- length(fit_laplace$model_spec$times)
+  set.seed(8)
+  batched <- ctGenerateFromFit(fit_laplace, nsamples = 3, cores = 2)$generated
+  set.seed(8)
+  for (s in 1:3) {
+    effects <- ctsem:::.ctGeneratePopulationEffects(fit_laplace, raw)
+    base <- matrix(stats::rnorm(nrows), 1L, nrows)
+    one <- ctsem:::.ctBackendGenerate(fit_laplace, raw, base, effects = effects)
+    expect_equal(batched$Y[s, , 1], as.numeric(one$Y))
+  }
+  set.seed(8)
+  batched <- ctGenerateFromFit(fit_laplace, nsamples = 2, effects = "fitted",
+    cores = 2)$generated
+  set.seed(8)
+  for (s in 1:2) {
+    base <- matrix(stats::rnorm(nrows), 1L, nrows)
+    one <- ctsem:::.ctBackendGenerate(fit_laplace, raw, base)
+    expect_equal(batched$Y[s, , 1], as.numeric(one$Y))
+  }
 })
 
 test_that("the posterior predictive tools run on a Laplace backend fit", {

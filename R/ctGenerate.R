@@ -175,7 +175,7 @@ ctModeltoNumeric <- function(ctmodelobj){
     prepared$estimate <- list(raw = rep(0, npar), rawposterior = draws)
     message('Generating ', nsamples, ' datasets from the prior, backend julia.')
     ppf <- .ctBackendGenerateFromFit(prepared, nsamples=nsamples,
-      fullposterior=fullposterior)
+      fullposterior=fullposterior, cores=cores)
     return(list(Y = ppf$generated$Y, llrow = ppf$generated$llrow))
   }
 

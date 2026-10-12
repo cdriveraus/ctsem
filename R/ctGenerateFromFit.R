@@ -8,9 +8,8 @@
 #' @param nsamples Positive integer specifying number of datasets to generate. 
 #' @param fullposterior Logical indicating whether to sample from the full posterior (original nsamples) or the posterior mean.
 #' @param verboseErrors if TRUE, print verbose output when errors in generation encountered.
-#' @param cores Number of cpu cores to use, for \code{backend='stan'} fits.
-#' A julia fit generates its draws one at a time in the engine, and says so
-#' when given more than one.
+#' @param cores Number of cpu cores to use: R worker processes for a stan fit,
+#' and for a julia fit the engine threads its draws are generated on.
 #' @param intoverstates For \code{backend='julia'} fits: which route generates
 #' the latent states. \code{'fit'} (the default) mirrors the fit, so a
 #' state-explicit fit gets a state-explicit predictive and every other fit
@@ -55,14 +54,8 @@ ctGenerateFromFit<-function(fit,nsamples=200,fullposterior=FALSE, verboseErrors=
   # drawing each row from its own prior predictive (see R/ctBackendKalman.R and
   # the engine's kalman_trace.jl).
   if(.ctFitIsJulia(fit)){
-    # Not divided: the engine generates one draw at a time and each subject
-    # in turn. Said rather than refused, because a `cores` written for a stan
-    # fit's sake does no harm here, and ctsemGUI passes one with every call.
-    ncores <- suppressWarnings(as.integer(cores)[1L])
-    if(!missing(cores) && isTRUE(ncores > 1L)) message("cores = ", ncores,
-      " requested, 1 used: the julia engine generates one draw at a time.")
     return(.ctBackendGenerateFromFit(fit,nsamples=nsamples,
-      fullposterior=fullposterior,intoverstates=intoverstates,
+      fullposterior=fullposterior,cores=cores,intoverstates=intoverstates,
       effects=match.arg(effects)))
   }
   if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object!')
@@ -142,11 +135,3 @@ ctGenerateFromFit<-function(fit,nsamples=200,fullposterior=FALSE, verboseErrors=
 
 #' @export
 ctStanGenerateFromFit <- ctGenerateFromFit
-
-# ctGenerateFromFit() for a caller with a `cores` of its own to pass on: a
-# stan fit divides its draws across them, and a julia fit has no use for them
-# and would say so about cores the caller spends elsewhere.
-.ctGenerateFromFitWithin <- function(fit, cores, ...) {
-  if (.ctFitIsJulia(fit)) ctGenerateFromFit(fit, ...) else
-    ctGenerateFromFit(fit, ..., cores = cores)
-}

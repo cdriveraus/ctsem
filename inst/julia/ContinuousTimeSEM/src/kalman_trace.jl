@@ -856,10 +856,20 @@ vector to draw every subject from. `base` is `nmanifest` by `nrows` standard
 normals. Returns `Y` (the generated observations, `NaN` wherever the original
 data was missing), `llrow` (each row's log likelihood *of the generated
 data*) and `subject_loglik`.
+
+`workspace` is a filter workspace for this call alone, made here when none is
+given; `ctsem_generate_draws` hands each of its tasks one.
 """
 function ctsem_generate(objective::CTSEMObjective, values::AbstractVecOrMat,
-    base::AbstractMatrix; seed::Integer=1)
+    base::AbstractMatrix; seed::Integer=1, workspace=nothing)
+    ws = workspace === nothing ?
+        _init_continuous_ekf_workspace(Float64, objective.params) : workspace
+    return _ctsem_generate(ws, objective, values, base, seed)
+end
 
+# Behind a barrier, so the workspace's type is concrete for the filter calls.
+function _ctsem_generate(ws, objective::CTSEMObjective, values::AbstractVecOrMat,
+    base::AbstractMatrix, seed::Integer)
     sp = objective.params
     subjects = objective.subject_objectives
     persubject = values isa AbstractMatrix
@@ -867,7 +877,6 @@ function ctsem_generate(objective::CTSEMObjective, values::AbstractVecOrMat,
         persubject && throw(DimensionMismatch(
             "one row of parameters per subject is required"))
     raw = persubject ? Vector{Float64}(view(values, 1, :)) : Vector{Float64}(values)
-    ws = _init_continuous_ekf_workspace(Float64, sp)
     ws.hyb.mode = _HYBRID_OFF  # as `ctsem_kalman`: deviations are in `values`
     m = _val(ws.manifest_dim)
     nrows = sum(size(sub.data, 2) for sub in subjects)
