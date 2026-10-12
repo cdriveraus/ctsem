@@ -520,12 +520,18 @@ ctStanFitUpdate <- ctFitUpdate
 # T0cov as well would count it twice.
 #
 # They are still *fixed* rather than left free, because taking them out of the
-# parameter vector is the whole job of this function. Neither backend now reads
-# the values: both drop these rows and columns where T0cov is assembled and
-# write RAWPOPVAR's entries over them. A small positive diagonal rather than
-# zero all the same, because the R-side paths that build a covariance straight
-# from T0VAR -- ctGenerate(backend='r'), ctGraph, ctModelLatex -- would meet a
-# singular matrix, and they are not what this function is about.
+# parameter vector is the whole job of this function. Stan and julia's
+# augmented route drop these rows and columns where T0cov is assembled and
+# write RAWPOPVAR's entries over them. Julia's Laplace route reads them: given
+# a subject's effects its initial state is known, and this diagonal is what is
+# left of its variance. With MANIFESTVAR fixed at zero it is also all of the
+# first observation's innovation variance, so it is a floor: at sd 1e-6 every
+# subject's inner mode failed to converge, at 1e-3 some still did, and from
+# 3e-3 to 0.1 all converged to the same likelihood -- the effects' population
+# variance absorbs the floor. Hence 0.01 (a variance of 1e-4). Positive for
+# the R-side paths that build a covariance straight from T0VAR too --
+# ctGenerate(backend='r'), ctGraph, ctModelLatex -- which would meet a
+# singular matrix.
 T0VARredundancies <- function(ctm) {
   whichT0VAR_T0MEANSindvarying <- ctm$pars$matrix %in% 'T0VAR'  &
     is.na(ctm$pars$value) &
@@ -533,7 +539,7 @@ T0VARredundancies <- function(ctm) {
         ctm$pars$col %in% ctm$pars$row[ctm$pars$matrix %in% 'T0MEANS' & ctm$pars$indvarying])
   if(any(whichT0VAR_T0MEANSindvarying)){
     message('T0VAR rows/columns for latents with individually varying T0MEANS disabled: RAWPOPVAR gives their covariance.')
-    ctm$pars$value[whichT0VAR_T0MEANSindvarying & ctm$pars$col == ctm$pars$row ] <- 1e-6
+    ctm$pars$value[whichT0VAR_T0MEANSindvarying & ctm$pars$col == ctm$pars$row ] <- 0.01
     ctm$pars$value[whichT0VAR_T0MEANSindvarying & ctm$pars$col != ctm$pars$row ] <- 0
     ctm$pars$param[whichT0VAR_T0MEANSindvarying] <- NA
     ctm$pars$transform[whichT0VAR_T0MEANSindvarying] <- NA
