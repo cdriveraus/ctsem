@@ -210,7 +210,7 @@ ctSubjectPars <- function(fit,pointest=TRUE,cores=2,nsamples='all',level=NULL){
     if(length(level) != 1L || !level %in% levels) stop("level must be one of ",
       "this model's id levels: ", paste(levels, collapse=', '), call.=FALSE)
     if(!identical(level, levels[1L])){
-      if(!inherits(fit,'ctJuliaFit') || is.null(.ctBackendSpec(fit)$laplace)) stop(
+      if(!.ctFitIsJulia(fit) || is.null(.ctBackendSpec(fit)$laplace)) stop(
         "ctSubjectPars(level=) for a grouping level needs a backend='julia' fit ",
         "with nested ids.", call.=FALSE)
       if(!isTRUE(pointest)) stop("ctSubjectPars(level=) for a grouping level ",
