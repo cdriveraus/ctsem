@@ -233,9 +233,9 @@ test_that("an empty tipreds field means no predictor acts on the cell", {
   # instead, so the two spellings of one cell disagreed.
   expect_equal(.ctCellSpecToPipe('mm, tipreds='), 'mm||||')
   expect_equal(.ctCellSpecToPipe('mm, tipreds=c()'), 'mm||||')
-  expect_equal(ctParSpec('mm', tipreds = character(0)), 'mm||||')
+  expect_equal(ctPar('mm', tipreds = character(0)), 'mm||||')
   # NULL is "not stated", which is a different cell: it keeps the default.
-  expect_equal(ctParSpec('mm', tipreds = NULL), 'mm')
+  expect_equal(ctPar('mm', tipreds = NULL), 'mm')
 
   eff <- function(spec) {
     m <- suppressMessages(ctModel(type = 'ct', n.latent = 1, n.manifest = 1,

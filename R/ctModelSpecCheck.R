@@ -6,7 +6,7 @@
 #
 #   a number            fixed, not estimated
 #   a bare name         a free parameter; the same name twice is one parameter
-#   `name|transform|…`  a free parameter with fields (see R/ctParSpec.R)
+#   `name|transform|…`  a free parameter with fields (see R/ctPar.R)
 #   an expression       computed from latent states, tdpreds and PARS cells
 #
 # The classification is silent, so a cell that means one of these and reads as

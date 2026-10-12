@@ -93,7 +93,7 @@
 "test-ctFit-alias.R","spec","core"
 "test-ctFitCheckCov.R","spec","core"
 "test-ctModelHigherOrder.R","spec","core"
-"test-ctParSpec.R","spec","core"
+"test-ctPar.R","spec","core"
 "test-ctStanModel-matrices.R","spec","core"
 "test-duplication-ratchet.R","spec","core"
 "test-fixed-value-spec.R","spec","core"

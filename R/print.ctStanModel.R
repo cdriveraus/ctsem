@@ -121,33 +121,75 @@ print.ctStanModel <- function(x, matrices = NULL, ...) {
       "\n", sep = "")
   }
 
+  # Counted as ctFit() will see them: T0VAR cells made redundant by a varying
+  # T0MEANS are fixed there, and carry neither a parameter nor an effect. The
+  # matrices below still show the cells as written.
+  shownpars <- pars
+  pars <- suppressMessages(T0VARredundancies(x))$pars
   free <- .ctModelFreeNames(pars)
   cat("\n", length(free), " free parameter", if (length(free) != 1L) "s" else "",
     "\n", sep = "")
 
-  # The implication, stated rather than left to be inferred from a column.
-  varying <- unique(as.character(pars$param[
-    !is.na(pars$indvarying) & pars$indvarying & !is.na(pars$param)]))
-  if (length(varying)) {
-    n <- length(varying)
-    cat("\n", n, " individually varying: ", paste(varying, collapse = ", "),
+  # The implication, stated rather than left to be inferred from a column --
+  # for every level of the id hierarchy, each of which estimates its own
+  # population covariance.
+  levels <- c(x$subjectIDname, x$groupIDnames)
+  columns <- .ctVaryingColumns(x)
+  varying <- lapply(columns, function(cl) unique(as.character(pars$param[
+    .ctVaryingRows(x, cl) & !is.na(pars$param)])))
+  names(varying) <- if (length(levels) == length(columns)) levels else columns
+  counts <- function(n) paste0(n, " standard deviation", if (n != 1L) "s" else "",
+    if (n > 1L) paste0(" and ", n * (n - 1L) / 2L, " correlation",
+      if (n * (n - 1L) / 2L != 1L) "s" else "") else "")
+  nonempty <- varying[lengths(varying) > 0L]
+  if (length(columns) == 1L && length(nonempty)) {
+    n <- length(nonempty[[1L]])
+    cat("\n", n, " individually varying: ", paste(nonempty[[1L]], collapse = ", "),
       "\n", sep = "")
     cat("  This is a multilevel model. It estimates a ", n, " x ", n,
-      " population covariance\n  over those parameters -- ", n,
-      " standard deviation", if (n != 1L) "s" else "",
-      if (n > 1L) paste0(" and ", n * (n - 1L) / 2L, " correlation",
-        if (n * (n - 1L) / 2L != 1L) "s" else "") else "",
+      " population covariance\n  over those parameters -- ", counts(n),
       " on top of the ", length(free), " above.\n", sep = "")
-    cat("  Set pars$indvarying to FALSE for any that should not vary.\n")
+    cat("  Set indvarying = FALSE in a cell (see ?ctPar) for any that should not vary.\n")
+  } else if (length(nonempty)) {
+    cat("\nVarying parameters, by level:\n")
+    width <- max(nchar(names(varying)))
+    for (l in seq_along(varying)) {
+      cat("  ", formatC(names(varying)[l], width = -width), "  ",
+        if (length(varying[[l]])) paste(varying[[l]], collapse = ", ") else "(none)",
+        "\n", sep = "")
+    }
+    cat("  Each level estimates a population covariance over its own parameters:\n  ",
+      paste0(vapply(nonempty, function(v) counts(length(v)), character(1)),
+        " (", names(nonempty), ")", collapse = ", "),
+      ", on top of the ", length(free), " above.\n", sep = "")
+    cat("  Set the levels with indvarying in a cell: TRUE, FALSE or level names",
+      " (see ?ctPar).\n", sep = "")
   } else {
     cat("\nNo individually varying parameters: a fixed effects model.\n")
+  }
+
+  # Which parameters the time independent predictors act on, which otherwise
+  # takes reading a column per predictor.
+  effects <- paste0(x$TIpredNames, "_effect")
+  effects <- effects[effects %in% names(pars)]
+  if (length(effects)) {
+    freerows <- which(is.na(pars$value) & !is.na(pars$param) &
+      !duplicated(pars$param))
+    acting <- vapply(freerows, function(r) {
+      on <- .ctTipredEffectActive(pars[r, effects, drop = FALSE])
+      if (any(on)) paste0(pars$param[r], " (",
+        paste(sub("_effect$", "", effects[on]), collapse = ", "), ")") else NA_character_
+    }, character(1))
+    acting <- acting[!is.na(acting)]
+    if (length(acting)) cat("\nPredictor effects: ", paste(acting, collapse = ", "),
+      "\n", sep = "")
   }
 
   if (is.null(matrices)) matrices <- x$n.latent <= 4L && x$n.manifest <= 6L
   if (isTRUE(matrices)) {
     for (name in c("T0MEANS", "T0VAR", "DRIFT", "DIFFUSION", "CINT",
       "LAMBDA", "MANIFESTMEANS", "MANIFESTVAR", "TDPREDEFFECT", "PARS")) {
-      .ctModelPrintMatrix(pars, name, x)
+      .ctModelPrintMatrix(shownpars, name, x)
     }
   } else {
     cat("\nMatrices not shown; see model$matrices or ctModelMatrices(model).\n")

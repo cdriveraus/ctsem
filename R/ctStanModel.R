@@ -205,7 +205,7 @@ ctModelUnlist<-function(ctmodelobj,
         wasfixed <- !is.na(pars$value[parrow])
         parsed <- .ctModelMatrixValue(mat[rowi,coli])
         # A cell assigned here can carry the same fields a cell given to
-        # ctModel() can, written either way (R/ctParSpec.R). Without this the
+        # ctModel() can, written either way (R/ctPar.R). Without this the
         # separators or `key=value` text would be stored as the parameter name.
         spec <- .ctCellSpecFields(parsed$param)
         parsed$param <- spec$param
@@ -214,7 +214,8 @@ ctModelUnlist<-function(ctmodelobj,
 
         if(!is.na(parsed$value)){
           pars$transform[parrow] <- NA
-          pars$indvarying[parrow] <- FALSE
+          # Every level's flag: a fixed cell varies nowhere.
+          for(cl in grep('^indvarying', names(pars), value=TRUE)) pars[[cl]][parrow] <- FALSE
           pars$sdscale[parrow] <- NA_real_
           if(length(tieffects) > 0) pars[parrow,tieffects] <- 'FALSE'
         } else if(!is.na(parsed$param)){
@@ -230,8 +231,16 @@ ctModelUnlist<-function(ctmodelobj,
 
           # Anything the cell states explicitly beats the default for that cell.
           if(!is.na(spec$transform)) pars$transform[parrow] <- spec$transform
-          if(!is.na(spec$indvarying)) pars$indvarying[parrow] <- spec$indvarying
-          if(!is.na(spec$sdscale)) pars$sdscale[parrow] <- spec$sdscale
+          if(!all(is.na(spec$indvarying))){
+            idlevels <- c(ctm[['subjectIDname']], ctm[['groupIDnames']])
+            if(!length(idlevels)) idlevels <- 'id'
+            pars <- .ctIndvaryingSet(pars, parrow, .ctIndvaryingLevels(
+              spec$indvarying, idlevels,
+              where = paste0(matrixname, '[', rowi, ',', coli, ']')))
+          }
+          if(!is.na(spec$sdscale)){
+            for(cl in grep('^sdscale', names(pars), value=TRUE)) pars[[cl]][parrow] <- spec$sdscale
+          }
           if(!is.null(spec$tipreds)){
             # character(0) means no predictor acts on this cell, so `wanted` has
             # to stay empty; paste0() would recycle it into "_effect".
@@ -418,7 +427,7 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
   # A cell may state its fields with `|` separators ('mm||TRUE|0.5') or by name
   # ('mm, indvarying=TRUE, sdscale=0.5'). Normalise the named form to the `|`
   # form here so the parser below has exactly one thing to read; see
-  # .ctCellSpecToPipe in R/ctParSpec.R for how the two are told apart.
+  # .ctCellSpecToPipe in R/ctPar.R for how the two are told apart.
   ctspec$param <- vapply(ctspec$param, .ctCellSpecToPipe, character(1),
     USE.NAMES = FALSE)
 
@@ -607,9 +616,25 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
       nonzero <- which(!split %in% '')
       ctspec[pi,c('param','transform','indvarying','sdscale')] <- 
         list(NA,ctspec$transform[pi],ctspec$indvarying[pi],1) #base values
-      ctspec[pi,c('param','transform','indvarying','sdscale')[1:(length(split))]][nonzero] <- 
+      ctspec[pi,c('param','transform','indvarying','sdscale')[1:(length(split))]][nonzero] <-
         split[1:(length(split))][nonzero] #update with non zero length split elements
-      
+
+      # The indvarying field names levels -- TRUE every level, or a list of id
+      # names -- and lands on the subject column and each grouping level's
+      # (R/ctPar.R). An sdscale applies wherever the parameter varies.
+      idlevels <- if(length(ctm$id)) ctm$id else 'id'
+      ivmessage <- NULL
+      if(length(split) >= 3 && nzchar(split[3])){
+        ivlevels <- .ctIndvaryingLevels(split[3], idlevels,
+          where = paste0(ctspec$matrix[pi],'[',ctspec$row[pi],',',ctspec$col[pi],']'))
+        ctspec <- .ctIndvaryingSet(ctspec, pi, ivlevels)
+        if(length(idlevels) > 1) ivmessage <- paste0('varying at: ',
+          if(any(ivlevels)) paste(names(ivlevels)[ivlevels], collapse=', ') else 'no level','; ')
+      }
+      if(length(split) >= 4 && nzchar(split[4])){
+        for(nm in idlevels[-1]) ctspec[[paste0('sdscale_', nm)]][pi] <- as.numeric(split[4])
+      }
+
       whichtipreds <- c()
       timessage <- c()
       if(!is.na(tisplit)){
@@ -637,9 +662,9 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
       }
       
       
+      shown <- c('param','transform', if(is.null(ivmessage)) 'indvarying', 'sdscale')
       message('Custom par ',ctspec$param[pi],' set as: ',paste0(
-        colnames(ctspec[pi,c('param','transform','indvarying','sdscale')]),' = ',
-        ctspec[pi,c('param','transform','indvarying','sdscale')],'; '),timessage)
+        colnames(ctspec[pi,shown]),' = ', ctspec[pi,shown],'; '), ivmessage, timessage)
     }
   }
   

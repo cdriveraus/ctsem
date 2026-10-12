@@ -1129,6 +1129,50 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     level = spec$model$subjectIDname)
 }
 
+# Each group's own parameter values at a level above the subject --
+# ctSubjectPars(level = ) for a julia fit with nested ids.
+#
+# The engine builds a subject's raw vector from the population values outward
+# (`ctsem_laplace_subject_values(from_level = )`, which the variance
+# decomposition also reads): from the group level, every level inside it is at
+# zero, so the vector is the group's own and the same for each of its
+# subjects. TI predictor effects are a subject's and are left out. Reported
+# for the parameters that differ between groups at that level -- those varying
+# there or at a level above it -- through the transforms the subject values
+# use.
+.ctBackendGroupPars <- function(fit, level) {
+  spec <- .ctBackendSpec(fit)
+  model <- .ctFitBaseModel(fit)
+  levels <- c(model$subjectIDname, model$groupIDnames)
+  position <- match(level, levels)
+  params <- .ctVaryingParams(model, paste0("indvarying_", levels[position:length(levels)]))
+  if (!length(params)) stop("Nothing varies between groups of '", level,
+    "' or above, so every group's parameters are the population's.", call. = FALSE)
+
+  cells <- .ctBackendFreeParameterCells(fit)
+  cells <- cells[!cells$randomeffect, , drop = FALSE]
+  selected <- cells[.ctBackendParameterNames(cells) %in% params, , drop = FALSE]
+  selected <- selected[!duplicated(.ctBackendParameterNames(selected)), , drop = FALSE]
+  module <- .ctJuliaModule(spec$project)
+  raw <- .ctBackendJuliaValue(module$ctsem_laplace_subject_values(
+    .ctJuliaObjective(fit), .ctJuliaNumericVector(fit$estimate$raw),
+    from_level = as.integer(position), ti_effects = FALSE))
+  raw <- matrix(as.numeric(raw), ncol = length(fit$estimate$raw))
+  values <- .ctBackendPopCellValues(fit, raw, selected, .ctBackendSummaryLayout(fit))
+
+  ids <- as.character(.ctFitIdMap(fit)$original)
+  data <- spec$data
+  group <- as.character(data[[level]][match(ids, as.character(data[[model$subjectIDname]]))])
+  first <- !duplicated(group)
+  names <- colnames(values)
+  alphabetical <- order(names)
+  out <- array(as.numeric(values[first, alphabetical, drop = FALSE]),
+    dim = c(1L, sum(first), length(names)))
+  dimnames(out) <- stats::setNames(list(1L, group[first], names[alphabetical]),
+    c("iter", level, "param"))
+  out
+}
+
 # Subject parameters on the Laplace route.
 #
 # The augmented route reads these off the filter, because there the random

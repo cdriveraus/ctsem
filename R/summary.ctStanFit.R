@@ -150,11 +150,19 @@ ctStanContinuousPars <- ctSummaryMatrices
 #' carries the subject matrices, so there is nothing here to split, and \code{cores} is refused
 #' by name rather than accepted and ignored.
 #' @param nsamples Number of samples to calculate parameters for. Not used if pointest=TRUE.
-#' 
-#' @details This function returns the estimates of individual parameters, taking into account any
-#' covariates and random effects. 
+#' @param level For a model with nested ids (\code{id = c('person', 'couple')}
+#' in \code{\link{ctModel}}), the level to report: the subject level (the
+#' default, the first id) or a grouping level above it, which gives each
+#' group's own parameter values -- the population values shifted by that
+#' group's random effects and those of the levels above it, without the
+#' subject-level ones or TI predictor effects. Grouping levels need a
+#' \code{backend='julia'} fit and \code{pointest=TRUE}.
 #'
-#' @return an nsamples by nsubjects by nparams array.
+#' @details This function returns the estimates of individual parameters, taking into account any
+#' covariates and random effects, at every level of a nested model.
+#'
+#' @return an nsamples by nsubjects by nparams array, with the subjects (or
+#' groups, for a grouping \code{level}) labelled by their ids in the data.
 #' @aliases ctStanSubjectPars
 #' @export
 #'
@@ -162,7 +170,7 @@ ctStanContinuousPars <- ctSummaryMatrices
 #' indpars <- ctSubjectPars(ctstantestfit)
 #' dimnames(indpars)
 #' plot(indpars[1,,'cint1'],indpars[1,,'cint2'])
-ctSubjectPars <- function(fit,pointest=TRUE,cores=2,nsamples='all'){
+ctSubjectPars <- function(fit,pointest=TRUE,cores=2,nsamples='all',level=NULL){
 
   # `cores` is a stan-path argument: with pointest=FALSE it is handed to
   # ctExtract() to rebuild the subject matrices across R worker processes.
@@ -194,11 +202,28 @@ ctSubjectPars <- function(fit,pointest=TRUE,cores=2,nsamples='all'){
     'parameters. Read them with ctSummaryMatrices() at an explicit evaluation ',
     'point instead.'))
 
+  # A grouping level reports each group's own values; the subject level is
+  # what the rest of this function computes.
+  if(!is.null(level)){
+    base <- .ctFitBaseModel(fit)
+    levels <- c(base$subjectIDname, base$groupIDnames)
+    if(length(level) != 1L || !level %in% levels) stop("level must be one of ",
+      "this model's id levels: ", paste(levels, collapse=', '), call.=FALSE)
+    if(!identical(level, levels[1L])){
+      if(!inherits(fit,'ctJuliaFit') || is.null(.ctBackendSpec(fit)$laplace)) stop(
+        "ctSubjectPars(level=) for a grouping level needs a backend='julia' fit ",
+        "with nested ids.", call.=FALSE)
+      if(!isTRUE(pointest)) stop("ctSubjectPars(level=) for a grouping level ",
+        "reports point estimates only; use pointest=TRUE.", call.=FALSE)
+      return(.ctBackendGroupPars(fit, level))
+    }
+  }
+
   # backend='julia' fits reach the same quantity by the same route -- the
   # subject matrices ctExtract() returns -- but reach the model metadata through
   # the spec rather than through matsetup; see R/ctBackendSummary.R.
-  if(inherits(fit,'ctJuliaFit')) return(.ctBackendSubjectPars(fit,
-    pointest=pointest, nsamples=nsamples))
+  if(inherits(fit,'ctJuliaFit')) return(.ctSubjectParsLabel(.ctBackendSubjectPars(fit,
+    pointest=pointest, nsamples=nsamples), fit))
 
   if(!nsamples[1] %in% 'all') fit$stanfit$rawposterior <-
       fit$stanfit$rawposterior[sample(1:nrow(fit$stanfit$rawposterior),nsamples),,drop=FALSE]
@@ -224,7 +249,20 @@ ctSubjectPars <- function(fit,pointest=TRUE,cores=2,nsamples='all'){
     }
   }
   p=p[,,order(dimnames(p)[[3]]),drop=FALSE]
-  return(p)
+  return(.ctSubjectParsLabel(p, fit))
+}
+
+# Subjects labelled by their ids in the data rather than by their position --
+# which is all the second dimension said before, and which for a nested id
+# such as '1005_1' names nothing a user can find.
+.ctSubjectParsLabel <- function(p, fit) {
+  ids <- try(as.character(.ctFitIdMap(fit)$original), silent = TRUE)
+  if (inherits(ids, 'try-error') || length(ids) != dim(p)[2L]) return(p)
+  dn <- dimnames(p)
+  if (is.null(dn)) dn <- list(iter = NULL, subject = NULL, param = NULL)
+  dn[[2L]] <- ids
+  dimnames(p) <- dn
+  p
 }
 
 #' @export

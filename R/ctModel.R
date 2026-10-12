@@ -56,14 +56,17 @@
 #' id data may be of any form, though will be coerced internally to an integer sequence rising from 1.
 #' May instead be a character vector naming a nested hierarchy, innermost first:
 #' \code{id = c('subject','study')} treats each subject as belonging to one
-#' study. The subject level declares its varying parameters in
-#' \code{model$pars$indvarying} as usual and each level above it in
-#' \code{model$pars$indvarying_<idname>}, so a study effect may be estimated
-#' with or without subject level effects alongside it -- an intercept that
-#' varies between studies, with subjects exchangeable within a study, is an
-#' ordinary model and is specified by setting \code{indvarying_study} alone.
-#' Levels above the subject require \code{backend='julia'} with
-#' \code{intoverpop='laplace'}, and the hierarchy must be strictly nested.
+#' study. A cell says where its parameter varies with the \code{indvarying}
+#' field (see \code{\link{ctPar}}): \code{TRUE} at every level, \code{FALSE}
+#' at none, or the names of the levels, so \code{'cint||study'} gives an
+#' intercept that varies between studies with subjects exchangeable within a
+#' study, and \code{'cint||subject,study'} one that varies at both. The
+#' resolved flags are \code{model$pars$indvarying} for the subject level and
+#' \code{model$pars$indvarying_<idname>} for each level above it. Intercepts
+#' (\code{T0MEANS}, \code{MANIFESTMEANS}, \code{CINT}) left unspecified vary at
+#' the subject level only. Levels above the subject require
+#' \code{backend='julia'} with \code{intoverpop='laplace'}, and the hierarchy
+#' must be strictly nested.
 #' @param time character string denoting column name containing timing data. Timing data must be numeric.
 #' 
 #' @param T0VAR lower triangular n.latent*n.latent cholesky matrix of latent process initial variance / covariance. 
@@ -169,20 +172,22 @@
 #'   \item a \strong{number}, which fixes the cell;
 #'   \item a \strong{parameter name}, which frees it -- the same name in two
 #'     cells is one parameter, which is how an equality constraint is written;
-#'   \item a name \strong{with fields}, adding the transform, the
-#'     individual-variation flag, the prior scaling of that variation, and the
-#'     time-independent predictors acting on the parameter;
+#'   \item a name \strong{with fields}, adding the transform, the levels of
+#'     \code{id} at which the parameter varies, the prior scaling of that
+#'     variation, and the time-independent predictors acting on the parameter;
 #'   \item an \strong{expression}, computed from the latent states, the time
 #'     dependent predictors and the \code{PARS} cells.
 #' }
 #'
 #' Fields may be given in either of two interchangeable ways: in a fixed order
 #' separated by \code{|} (\code{'mm||TRUE|0.5'}), or by name
-#' (\code{'mm, indvarying=TRUE, sdscale=0.5'}). A cell containing \code{|} is
+#' (\code{'mm, indvarying=TRUE, sdscale=0.5'}). With nested ids,
+#' \code{indvarying} may name levels instead, as in \code{'mm||study'} or
+#' \code{'mm, indvarying=c(subject, study)'}. A cell containing \code{|} is
 #' read the ordered way; otherwise a cell with a field of the form
 #' \code{name=value} is read the named way, and an unrecognised field name is
 #' an error rather than part of a parameter name.
-#' \code{\link{ctParSpec}} writes the ordered form from the same named
+#' \code{\link{ctPar}} writes the ordered form from the same named
 #' arguments, for when a specification is built programmatically.
 #'
 #' Every name in an expression has to be declared: a latent state, a time
@@ -253,7 +258,7 @@
 #' expression (\code{'log1p(exp(eta1))'}) if a state-dependent \code{PARS}
 #' cell is what is wanted.
 #'
-#' @seealso \code{\link{ctParSpec}} for the fields a matrix cell can carry,
+#' @seealso \code{\link{ctPar}} for the fields a matrix cell can carry,
 #' \code{\link{ctFit}} for fitting the result.
 #'
 #' @examples

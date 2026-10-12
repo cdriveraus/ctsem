@@ -5,7 +5,7 @@
 \alias{ctStanSubjectPars}
 \title{Extract an array of subject specific parameters from a ctStanFit object.}
 \usage{
-ctSubjectPars(fit, pointest = TRUE, cores = 2, nsamples = "all")
+ctSubjectPars(fit, pointest = TRUE, cores = 2, nsamples = "all", level = NULL)
 }
 \arguments{
 \item{fit}{fit object}
@@ -18,9 +18,18 @@ carries the subject matrices, so there is nothing here to split, and \code{cores
 by name rather than accepted and ignored.}
 
 \item{nsamples}{Number of samples to calculate parameters for. Not used if pointest=TRUE.}
+
+\item{level}{For a model with nested ids (\code{id = c('person', 'couple')}
+in \code{\link{ctModel}}), the level to report: the subject level (the
+default, the first id) or a grouping level above it, which gives each
+group's own parameter values -- the population values shifted by that
+group's random effects and those of the levels above it, without the
+subject-level ones or TI predictor effects. Grouping levels need a
+\code{backend='julia'} fit and \code{pointest=TRUE}.}
 }
 \value{
-an nsamples by nsubjects by nparams array.
+an nsamples by nsubjects by nparams array, with the subjects (or
+groups, for a grouping \code{level}) labelled by their ids in the data.
 }
 \description{
 Extract an array of subject specific parameters from a ctStanFit object.
@@ -28,7 +37,7 @@ Extract an array of subject specific parameters from a ctStanFit object.
 }
 \details{
 This function returns the estimates of individual parameters, taking into account any
-covariates and random effects.
+covariates and random effects, at every level of a nested model.
 }
 \examples{
 indpars <- ctSubjectPars(ctstantestfit)
