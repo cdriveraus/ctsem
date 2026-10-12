@@ -202,7 +202,8 @@ test_that("the search starts a slow process away from the stationary point", {
   ad <- list(statistics = data.frame(family = 'latent', statistic = c('eta1~eta1 gap <=1',
     'eta1~eta1 gap >5', 'eta2~eta2 gap >5', 'eta1~eta2 gap >5'),
     z = c(1, 3, -4, 5), p = c(0.3, 0.003, 6e-5, 6e-7), stringsAsFactors = FALSE))
-  expect_equal(ctsem:::.ctImproveSlowEvidence(ad, 'eta1'), 0.003)
+  # The smallest p, times the gap bins it is the smallest of.
+  expect_equal(ctsem:::.ctImproveSlowEvidence(ad, 'eta1'), 0.006)
   expect_true(is.na(ctsem:::.ctImproveSlowEvidence(ad, 'eta2')))
   expect_true(is.na(ctsem:::.ctImproveSlowEvidence(NULL, 'eta1')))
 })
@@ -288,7 +289,9 @@ test_that("the search reads a cycle's period and an item's own correlation from 
       p = c(6e-5, 2e-9, 3e-3, 5e-4, 0.05), stringsAsFactors = FALSE))
   cyc <- ctsem:::.ctImprovePeriodicEvidence(ad)
   expect_equal(cyc$period, 24)
-  expect_equal(cyc$p, 1e-4)
+  # The strongest positive period's p times the periods scanned, not the
+  # family's p, so that a cycle ranks against item processes on their terms.
+  expect_equal(cyc$p, 3 * 6e-5)
   expect_equal(ctsem:::.ctImproveOwnEvidence(ad, 'residuals', 'Y2'), 5e-4)
   expect_true(is.na(ctsem:::.ctImproveOwnEvidence(ad, 'residuals', 'Y1')))
   expect_null(ctsem:::.ctImprovePeriodicEvidence(NULL))
