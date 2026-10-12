@@ -299,6 +299,60 @@ test_that("a session a fit starts is as wide as the fit's cores", {
   expect_identical(Sys.getenv("JULIA_NUM_THREADS", unset = NA), NA_character_)
 })
 
+# Any call taking `cores` can be the first Julia call of an R session -- a fit
+# read back with readRDS() and handed to ctFitUncertainty() -- and only ctFit
+# passed its `cores` on before the session started, so the rest started it at
+# the default: a `cores = 16` call ran on two threads. The session's start
+# reads the width off the stack instead, from the outermost ctsem call holding
+# a usable `cores`.
+test_that("the call starting a session is found by its cores, outermost first", {
+  # Functions as ctsem's own: their top environment is its namespace.
+  own <- new.env(parent = asNamespace("ctsem"))
+  local(envir = own, {
+    inner <- function(cores = 1L) .ctJuliaCallCores()
+    resolving <- function(cores = NULL) {
+      if (is.null(cores)) cores <- 6L
+      inner(cores = 2L)
+    }
+    unresolved <- function(cores = NULL) inner(cores = 3L)
+  })
+  inner <- own$inner; resolving <- own$resolving; unresolved <- own$unresolved
+  # And one that is not ctsem's, whatever it calls its arguments.
+  other <- new.env(parent = globalenv())
+  other$inner <- inner
+  foreign <- local(envir = other, function(cores = 9L) inner(cores = 2L))
+
+  expect_identical(ctsem:::.ctJuliaCallCores(), NA_integer_)
+  expect_identical(inner(5L), 5L)
+  # The outermost is the request; an inner call's `cores` is a share of it.
+  expect_identical(resolving(4L), 4L)
+  # Read as the call holds it now, so a default it has resolved reads resolved,
+  expect_identical(resolving(), 6L)
+  # and one it has not yet resolved defers to the next call in.
+  expect_identical(unresolved(), 3L)
+  expect_identical(inner("maxneeded"), NA_integer_)
+  expect_identical(foreign(), 2L)
+})
+
+test_that("a session a call other than ctFit starts is as wide as that call's cores", {
+  skip_without_julia()
+  withr::local_envvar(JULIA_NUM_THREADS = NA)
+  # A default of one, so a session sized without the call's `cores` is narrower
+  # than one sized with it, on any machine with two cores.
+  withr::local_options(mc.cores = 1L, ctsem.julia.registry = withr::local_tempdir())
+  cache <- ctsem:::.ct_julia_cache
+  cache$threads_from_cores <- NULL
+  dat <- image_data(nsub = 6L, nobs = 5L, seed = 6L)
+  prepared <- suppressWarnings(suppressMessages(ctFit(dat, image_model(),
+    backend = "julia", cores = 1L, fit = FALSE)))
+  pars <- rep(0, ctsem:::.ctBackendNpar(prepared))
+  ctsem:::.ctJuliaClearSession()
+  out <- suppressMessages(ctJuliaEvaluate(prepared, pars = pars, cores = 2L))
+  expect_true(is.finite(out$value))
+  expect_equal(as.integer(ctsem:::.ctJuliaEval("Threads.nthreads()")), 2L)
+  expect_identical(Sys.getenv("JULIA_NUM_THREADS", unset = NA), NA_character_)
+})
+
 test_that("threads asked for by name are kept, whatever ctsem last provisioned", {
   skip_without_julia()
   withr::local_envvar(JULIA_NUM_THREADS = NA)
