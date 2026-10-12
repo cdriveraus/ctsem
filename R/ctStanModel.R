@@ -214,8 +214,7 @@ ctModelUnlist<-function(ctmodelobj,
 
         if(!is.na(parsed$value)){
           pars$transform[parrow] <- NA
-          # Every level's flag: a fixed cell varies nowhere.
-          for(cl in grep('^indvarying', names(pars), value=TRUE)) pars[[cl]][parrow] <- FALSE
+          pars$indvarying[parrow] <- FALSE
           pars$sdscale[parrow] <- NA_real_
           if(length(tieffects) > 0) pars[parrow,tieffects] <- 'FALSE'
         } else if(!is.na(parsed$param)){
@@ -226,7 +225,6 @@ ctModelUnlist<-function(ctmodelobj,
             continuoustime=ctm[['continuoustime']])
           if(wasfixed || is.na(pars$transform[parrow])) pars$transform[parrow] <- defaults$transform
           if(wasfixed || is.na(pars$sdscale[parrow])) pars$sdscale[parrow] <- defaults$sdscale
-          pars$indvarying[parrow] <- as.logical(pars$indvarying[parrow])
           if(wasfixed || is.na(pars$indvarying[parrow])) pars$indvarying[parrow] <- defaults$indvarying
 
           # Anything the cell states explicitly beats the default for that cell.
@@ -234,13 +232,11 @@ ctModelUnlist<-function(ctmodelobj,
           if(!all(is.na(spec$indvarying))){
             idlevels <- c(ctm[['subjectIDname']], ctm[['groupIDnames']])
             if(!length(idlevels)) idlevels <- 'id'
-            pars <- .ctIndvaryingSet(pars, parrow, .ctIndvaryingLevels(
+            pars$indvarying[parrow] <- .ctIndvaryingValue(.ctIndvaryingLevels(
               spec$indvarying, idlevels,
               where = paste0(matrixname, '[', rowi, ',', coli, ']')))
           }
-          if(!is.na(spec$sdscale)){
-            for(cl in grep('^sdscale', names(pars), value=TRUE)) pars[[cl]][parrow] <- spec$sdscale
-          }
+          if(!is.na(spec$sdscale)) pars$sdscale[parrow] <- spec$sdscale
           if(!is.null(spec$tipreds)){
             # character(0) means no predictor acts on this cell, so `wanted` has
             # to stay empty; paste0() would recycle it into "_effect".
@@ -258,6 +254,7 @@ ctModelUnlist<-function(ctmodelobj,
     }
   }
 
+  pars$indvarying <- .ctIndvaryingColumn(pars$indvarying)
   ctm[['pars']] <- pars
   if(is.null(ctm[['matrices']])) ctm[['matrices']] <- .ctModelMatricesPlaceholder()
   ctm
@@ -485,29 +482,15 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
   
   nparams<-sum(freeparams)
 
+  # One `indvarying` column for every level of the id hierarchy: TRUE, FALSE or
+  # level names (R/ctPar.R). Free intercepts vary at every level by default.
   ctspec$indvarying<-FALSE
   ctspec$indvarying[!is.na(ctspec$transform) & ctspec$matrix %in% c('T0MEANS','MANIFESTMEANS','CINT')] <- TRUE
-  
+
+  # And one sdscale, applying at every level where the parameter varies.
   ctspec$sdscale<-NA
   ctspec$sdscale[is.na(ctspec$value)]<-1
 
-
-  # One sdscale per id element, defaulting to 1. `sdscale` is the subject
-  # level's; each grouping level above it gets `sdscale_<idname>`, the same
-  # rectangular encoding `indvarying_<idname>` uses. A genuine list column
-  # would be a more literal "one vector per parameter" but would break every
-  # consumer of `pars`, which indexes it as an ordinary data frame.
-  #
-  # `indvarying_<idname>` is created here too, defaulting to FALSE. Defaulting
-  # an outer level the way `indvarying` defaults -- TRUE for T0MEANS,
-  # MANIFESTMEANS and CINT -- would silently make every model with a grouping
-  # id enormously parameterised, so an outer level varies only where it is
-  # asked to.
-  for(nm in if(length(ctm$id) > 1) ctm$id[-1] else character()){
-    ctspec[[paste0('sdscale_', nm)]] <- ctspec$sdscale
-    ctspec[[paste0('indvarying_', nm)]] <- FALSE
-  }
-  
   
   
   
@@ -620,19 +603,16 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
         split[1:(length(split))][nonzero] #update with non zero length split elements
 
       # The indvarying field names levels -- TRUE every level, or a list of id
-      # names -- and lands on the subject column and each grouping level's
-      # (R/ctPar.R). An sdscale applies wherever the parameter varies.
+      # names (R/ctPar.R) -- checked against the model's ids here and written
+      # back in its tidy form.
       idlevels <- if(length(ctm$id)) ctm$id else 'id'
       ivmessage <- NULL
       if(length(split) >= 3 && nzchar(split[3])){
         ivlevels <- .ctIndvaryingLevels(split[3], idlevels,
           where = paste0(ctspec$matrix[pi],'[',ctspec$row[pi],',',ctspec$col[pi],']'))
-        ctspec <- .ctIndvaryingSet(ctspec, pi, ivlevels)
+        ctspec$indvarying[pi] <- .ctIndvaryingValue(ivlevels)
         if(length(idlevels) > 1) ivmessage <- paste0('varying at: ',
           if(any(ivlevels)) paste(names(ivlevels)[ivlevels], collapse=', ') else 'no level','; ')
-      }
-      if(length(split) >= 4 && nzchar(split[4])){
-        for(nm in idlevels[-1]) ctspec[[paste0('sdscale_', nm)]][pi] <- as.numeric(split[4])
       }
 
       whichtipreds <- c()
@@ -693,7 +673,8 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
   # plausible number instead of an error. See R/ctModelCycleCheck.R.
   .ctCheckModelCycles(ctspec, latentNames, n.latent)
 
-  ctspec$indvarying <- as.logical(ctspec$indvarying)
+  # Logical for a single level; level names where a cell gave them.
+  ctspec$indvarying <- .ctIndvaryingColumn(ctspec$indvarying)
   # A cell's fields arrive as text, which left the whole column character as
   # soon as one cell used them.
   ctspec$sdscale <- as.numeric(ctspec$sdscale)
@@ -766,8 +747,49 @@ ctStanModel <- ctModelConvertOMX
 
 # --- which parameters vary, at which level -----------------------------------
 
-# The subject level is `indvarying`; each grouping level above it is
-# `indvarying_<idname>`, created in `ctModelConvertOMX()` above.
+# A model as the user holds it has one `indvarying` column: TRUE (every level
+# of the id hierarchy), FALSE, or level names (R/ctPar.R), however it was set.
+# Inside ctsem each level is a logical column instead -- `indvarying` for the
+# subject level and `indvarying_<idname>`, with `sdscale_<idname>`, for each
+# grouping level above it -- and this is the one place the first becomes the
+# second. ctFit(), .ctJuliaPrepare(), T0VARredundancies(), the RAWPOPVAR sync
+# and the .ctVarying*() helpers below all start with it, so no reader meets a
+# level name where it expects a logical: as.logical('couple') is NA, which
+# reads as "does not vary" without an error.
+#
+# A model that already has every grouping level's column, and a logical
+# `indvarying`, has been resolved and comes back unchanged, which is what makes
+# calling this anywhere safe. Level names written into a resolved model's
+# `indvarying` resolve again, replacing the columns rather than losing to them.
+.ctResolveLevels <- function(model){
+  pars <- model[['pars']]
+  if(is.null(pars) || is.null(pars$indvarying)) return(model)
+  groups <- as.character(model[['groupIDnames']])
+  if(length(groups) && is.logical(pars$indvarying) &&
+      all(paste0('indvarying_', groups) %in% names(pars))) return(model)
+  subject <- model[['subjectIDname']]
+  levels <- c(if(is.null(subject)) 'id' else as.character(subject), groups)
+  iv <- pars$indvarying
+  if(is.logical(iv) && !length(groups)){
+    pars$indvarying <- iv %in% TRUE
+  } else {
+    resolved <- matrix(FALSE, nrow(pars), length(levels),
+      dimnames = list(NULL, levels))
+    for(i in which(!is.na(iv))){
+      resolved[i, ] <- .ctIndvaryingLevels(iv[i], levels, where = paste0(
+        pars$matrix[i], '[', pars$row[i], ',', pars$col[i], ']'))
+    }
+    pars$indvarying <- resolved[, 1L]
+    for(g in groups){
+      pars[[paste0('indvarying_', g)]] <- resolved[, g]
+      pars[[paste0('sdscale_', g)]] <- pars$sdscale
+    }
+  }
+  model[['pars']] <- pars
+  model
+}
+
+# The per-level columns, subject first.
 #
 # Everything that asks "does this model have random effects" has to ask about
 # every level, not just the subject's. A study effect with no subject effect is
@@ -784,6 +806,7 @@ ctStanModel <- ctModelConvertOMX
 # `isTRUE` per element because these columns carry NA on rows added after the
 # model was built.
 .ctVaryingRows <- function(model, columns = .ctVaryingColumns(model)){
+  model <- .ctResolveLevels(model)
   columns <- columns[columns %in% names(model$pars)]
   free <- is.na(model$pars$value)
   out <- rep(FALSE, nrow(model$pars))
@@ -798,6 +821,7 @@ ctStanModel <- ctModelConvertOMX
 # The same, named. For messages that have to say which parameters a route
 # cannot carry; an unnamed row cannot be reported and is dropped here only.
 .ctVaryingParams <- function(model, columns = .ctVaryingColumns(model)){
+  model <- .ctResolveLevels(model)
   rows <- .ctVaryingRows(model, columns)
   unique(model$pars$param[rows & !is.na(model$pars$param)])
 }

@@ -221,8 +221,8 @@ test_that("T0cov takes the main latents from T0VAR and the population block from
 # level" would delete a parameter the data can identify, and nothing else in
 # the suite would notice.
 #
-# Note that T0MEANS is indvarying by default, so the no-effect case has to
-# turn it off explicitly -- leaving it alone tests the subject-level case
+# Note that T0MEANS is indvarying by default, at every level, so each case
+# states its levels explicitly -- leaving one alone tests the both-levels case
 # twice, which is how this test first came out green for the wrong reason.
 test_that("only a subject level T0MEANS random effect disables T0VAR", {
   skip_on_cran()
@@ -237,15 +237,14 @@ test_that("only a subject level T0MEANS random effect disables T0VAR", {
 
   m <- mk()
   # the higher level is expressible at all, which the rest of this depends on
-  expect_true("indvarying_study" %in% names(m$pars))
+  expect_true("indvarying_study" %in% names(ctsem:::.ctResolveLevels(m)$pars))
   expect_identical(m$groupIDnames, "study")
 
   nfree <- function(mm) sum(mm$pars$matrix %in% "T0VAR" & is.na(mm$pars$value))
 
   none <- mk(); none$pars$indvarying[none$pars$param %in% "t0a"] <- FALSE
-  subj <- mk(); subj$pars$indvarying[subj$pars$param %in% "t0a"] <- TRUE
-  study <- mk(); study$pars$indvarying[study$pars$param %in% "t0a"] <- FALSE
-  study$pars$indvarying_study[study$pars$param %in% "t0a"] <- TRUE
+  subj <- mk(); subj$pars$indvarying[subj$pars$param %in% "t0a"] <- "id"
+  study <- mk(); study$pars$indvarying[study$pars$param %in% "t0a"] <- "study"
 
   expect_equal(nfree(suppressMessages(ctsem:::T0VARredundancies(none))),
     nfree(none))
@@ -270,7 +269,6 @@ test_that("only a subject level T0MEANS random effect disables T0VAR", {
   # nothing about which T0VAR cells survive.
   both <- mk()
   both$pars$indvarying[both$pars$param %in% "t0a"] <- TRUE
-  both$pars$indvarying_study[both$pars$param %in% "t0a"] <- TRUE
   bothout <- suppressMessages(ctsem:::T0VARredundancies(both))
   bothkept <- bothout$pars[bothout$pars$matrix %in% "T0VAR" &
     is.na(bothout$pars$value), ]

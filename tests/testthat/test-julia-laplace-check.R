@@ -126,10 +126,8 @@ test_that("the check refuses what it cannot do", {
     LAMBDA = matrix(1), T0MEANS = matrix(0), CINT = matrix(0),
     T0VAR = matrix(0.5), MANIFESTMEANS = matrix("mmean"),
     id = c("subject", "study"))))
-  model$pars$indvarying <- FALSE
-  model$pars$indvarying[model$pars$param %in% "mmean"] <- TRUE
-  model$pars$indvarying_study <- FALSE
-  model$pars$indvarying_study[model$pars$param %in% "mmean"] <- TRUE
+  # mmean at both levels, nothing else anywhere.
+  model$pars$indvarying <- model$pars$param %in% "mmean"
   model
 }
 

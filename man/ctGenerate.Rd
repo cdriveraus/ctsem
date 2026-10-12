@@ -126,7 +126,7 @@ the scale of its prior, and all of them are named in a message:
   \item a free parameter is at its prior's centre, raw zero, unless
   \code{popmeans} names it;
   \item an individually varying parameter's population sd is its
-  \code{sdscale} (\code{sdscale_<level>} for a grouping level) on the raw,
+  \code{sdscale}, at every level it varies at, on the raw,
   untransformed scale, unless \code{RAWPOPVAR} (\code{RAWPOPVAR_<level>})
   states a number, and random effects are uncorrelated unless it states a
   coordinate -- \code{\link{ctCov}} writes one from a covariance;
