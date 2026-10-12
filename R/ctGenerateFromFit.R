@@ -54,7 +54,7 @@ ctGenerateFromFit<-function(fit,nsamples=200,fullposterior=FALSE, verboseErrors=
   # The julia engine generates from the same forward pass it filters with,
   # drawing each row from its own prior predictive (see R/ctBackendKalman.R and
   # the engine's kalman_trace.jl).
-  if(inherits(fit,'ctJuliaFit')){
+  if(.ctFitIsJulia(fit)){
     # Not divided: the engine generates one draw at a time and each subject
     # in turn. Said rather than refused, because a `cores` written for a stan
     # fit's sake does no harm here, and ctsemGUI passes one with every call.
@@ -147,6 +147,6 @@ ctStanGenerateFromFit <- ctGenerateFromFit
 # stan fit divides its draws across them, and a julia fit has no use for them
 # and would say so about cores the caller spends elsewhere.
 .ctGenerateFromFitWithin <- function(fit, cores, ...) {
-  if (inherits(fit, "ctJuliaFit")) ctGenerateFromFit(fit, ...) else
+  if (.ctFitIsJulia(fit)) ctGenerateFromFit(fit, ...) else
     ctGenerateFromFit(fit, ..., cores = cores)
 }
