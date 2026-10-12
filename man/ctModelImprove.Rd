@@ -41,7 +41,10 @@ for the likelihood ratio decision, and for adequacy.}
 
 \item{maxsteps}{Most refit rounds.}
 
-\item{ntry}{Most refits tried per round.}
+\item{ntry}{Refits tried at once: a round refits the strongest \code{ntry}
+proposals. When those come from the adequacy check and none improves the
+fit, the next \code{ntry} are tried, and so on until one does or none is
+left, since the check does not change until the model does.}
 
 \item{criterion}{\code{'LR'}, \code{'AIC'} or \code{'BIC'}.}
 
@@ -161,7 +164,7 @@ boundary.
   once), and \code{alpha = 0.01} is the stricter choice. With an omitted
   cross effect, a process of an item's own and a daily cycle in the same
   data, the search kept the cross effect in 19 of 20 searches, the cycle in
-  16 and the item's process in 15.
+  16 and the item's process in all 20.
 
 The result is a model chosen by the data it is fitted to, and its
 standard errors and tests do not account for that choice (MacCallum,
