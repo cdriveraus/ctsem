@@ -655,7 +655,8 @@ ctModelImprove <- function(fit, covariates = NULL,
   value <- function(transform, raw) tryCatch(as.numeric(eval(parse(text = transform),
     list(param = raw, log1p_exp = log1p_exp))), error = function(e) NA_real_)
   inverse <- function(transform, target) tryCatch(stats::uniroot(
-    function(r) value(transform, r) - target, c(-20, 20))$root, error = function(e) NA_real_)
+    function(r) value(transform, r) - target, c(-20, 20), tol = 1e-10)$root,
+    error = function(e) NA_real_)
   d <- try(.ctFitLongData(current), silent = TRUE)
   if (inherits(d, 'try-error') || is.null(d)) return(NULL)
   gaps <- unlist(lapply(split(d[[model$timeName]], d[[model$subjectIDname]]),
